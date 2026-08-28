@@ -21,7 +21,7 @@
 import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Db, Tx } from '@/db/client';
-import { event } from '@/db/schema';
+import { event, tool_operation } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
 import {
   findReusableCopilotConversation,
@@ -303,32 +303,56 @@ function operationStatus(
     : null;
 }
 
+function subagentRunStatus(
+  payload: Record<string, unknown>,
+): CopilotTurnSubagentRun['status'] | null {
+  const status = payload.status;
+  return status === 'succeeded' ||
+    status === 'failed' ||
+    status === 'cancelled' ||
+    status === 'lost'
+    ? status
+    : null;
+}
+
 async function selectToolOperationsForReplay(
   dbArg: DbLike,
   sessionId: string,
   taskRunIds: readonly string[],
 ): Promise<Map<string, CopilotTurnToolOperation[]>> {
   if (taskRunIds.length === 0) return new Map();
-  const rows = await dbArg
-    .select({
-      action: event.action,
-      subject_id: event.subject_id,
-      payload: event.payload,
-      task_run_id: event.task_run_id,
-      created_at: event.created_at,
-      id: event.id,
-    })
-    .from(event)
-    .where(
-      and(
-        eq(event.session_id, sessionId),
-        inArray(event.task_run_id, [...taskRunIds]),
-        inArray(event.action, ['tool_operation_yielded', 'tool_operation_settled']),
+  const [rows, operationRows] = await Promise.all([
+    dbArg
+      .select({
+        action: event.action,
+        subject_id: event.subject_id,
+        payload: event.payload,
+        task_run_id: event.task_run_id,
+        created_at: event.created_at,
+        id: event.id,
+      })
+      .from(event)
+      .where(
+        and(
+          eq(event.session_id, sessionId),
+          inArray(event.task_run_id, [...taskRunIds]),
+          inArray(event.action, ['tool_operation_yielded', 'tool_operation_settled']),
+        ),
+      )
+      .orderBy(asc(event.created_at), asc(event.id)),
+    dbArg
+      .select({ id: tool_operation.id, tool_name: tool_operation.tool_name })
+      .from(tool_operation)
+      .where(
+        and(
+          eq(tool_operation.session_id, sessionId),
+          inArray(tool_operation.task_run_id, [...taskRunIds]),
+        ),
       ),
-    )
-    .orderBy(asc(event.created_at), asc(event.id));
+  ]);
 
   const byTaskRun = new Map<string, Map<string, CopilotTurnToolOperation>>();
+  const toolNameByOperationId = new Map(operationRows.map((row) => [row.id, row.tool_name]));
   for (const row of rows) {
     if (!row.task_run_id) continue;
     const payload = (row.payload ?? {}) as Record<string, unknown>;
@@ -340,7 +364,10 @@ async function selectToolOperationsForReplay(
     } else {
       const status = operationStatus(payload);
       const prior = current.get(row.subject_id);
-      if (status && prior) current.set(row.subject_id, { ...prior, status });
+      const toolName = prior?.tool_name ?? toolNameByOperationId.get(row.subject_id);
+      if (status && toolName) {
+        current.set(row.subject_id, { id: row.subject_id, tool_name: toolName, status });
+      }
     }
     byTaskRun.set(row.task_run_id, current);
   }
@@ -400,7 +427,7 @@ async function selectSubagentRunsForReplay(
     if (!row.caused_by) continue;
     const parentId = startedParent.get(row.caused_by);
     const runs = parentId ? runsByParent.get(parentId) : undefined;
-    const status = operationStatus((row.payload ?? {}) as Record<string, unknown>);
+    const status = subagentRunStatus((row.payload ?? {}) as Record<string, unknown>);
     const prior = runs?.get(row.subject_id);
     if (runs && prior && status) runs.set(row.subject_id, { ...prior, status });
   }

@@ -11,11 +11,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { runCopilotChat } from '@/capabilities/copilot/server/chat';
 import { getRecentCopilotTurns } from '@/capabilities/copilot/server/turns';
 import { db } from '@/db/client';
-import { event, learning_session } from '@/db/schema';
+import { event, learning_session, tool_operation } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { Conversation } from '@/server/session';
 
 const writtenEventIds: string[] = [];
+const writtenToolOperationIds: string[] = [];
 const touchedSessionIds: string[] = [];
 
 // codex #3356884484 — replay is now scoped to the live reusable Copilot session
@@ -47,6 +48,10 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  if (writtenToolOperationIds.length > 0) {
+    await db.delete(tool_operation).where(inArray(tool_operation.id, writtenToolOperationIds));
+    writtenToolOperationIds.length = 0;
+  }
   if (writtenEventIds.length > 0) {
     await db.delete(event).where(inArray(event.id, writtenEventIds));
     writtenEventIds.length = 0;
@@ -961,6 +966,63 @@ describe('getRecentCopilotTurns', () => {
     expect(JSON.stringify(aiTurn)).not.toContain('private-process-id');
     expect(JSON.stringify(aiTurn)).not.toContain('private objective');
     expect(JSON.stringify(aiTurn)).not.toContain('private child result');
+  });
+
+  it('replays a settled-only operation from its durable row', async () => {
+    const now = new Date();
+    const sessionId = await createLiveCopilotSession(now);
+    const askId = await writeAsk('查看复习安排。', sessionId, new Date(now.getTime() - 3_000));
+    const operationId = `tool_operation_${createId()}`;
+    const settledEventId = `tool_operation_settled_${createId()}`;
+    writtenToolOperationIds.push(operationId);
+    writtenEventIds.push(settledEventId);
+    const startedAt = new Date(now.getTime() - 2_500);
+    await db.insert(tool_operation).values({
+      id: operationId,
+      session_id: sessionId,
+      task_run_id: 'task_x',
+      tool_name: 'get_review_due',
+      effect: 'read',
+      status: 'succeeded',
+      process_id: 'private-recovery-process',
+      input_hash: 'a'.repeat(64),
+      input_json: {},
+      result_json: { count: 4 },
+      started_at: startedAt,
+      owner_heartbeat_at: startedAt,
+      lease_expires_at: new Date(now.getTime() - 1_500),
+      settled_at: new Date(now.getTime() - 2_000),
+      updated_at: new Date(now.getTime() - 2_000),
+    });
+    await writeEvent(db, {
+      id: settledEventId,
+      session_id: sessionId,
+      actor_kind: 'system',
+      actor_ref: 'tool_operations',
+      action: 'tool_operation_settled',
+      subject_kind: 'tool_operation',
+      subject_id: operationId,
+      outcome: 'success',
+      payload: { state: 'succeeded' },
+      task_run_id: 'task_x',
+      created_at: new Date(now.getTime() - 1_500),
+    });
+    const replyId = await writeReply(
+      '今天有 4 项复习安排。',
+      sessionId,
+      askId,
+      new Date(now.getTime() - 1_000),
+    );
+
+    const aiTurn = (await getRecentCopilotTurns(db, { now })).find(
+      (turn) => turn.event_id === replyId,
+    );
+
+    expect(aiTurn?.tool_operations).toEqual([
+      { id: operationId, tool_name: 'get_review_due', status: 'succeeded' },
+    ]);
+    expect(JSON.stringify(aiTurn)).not.toContain('private-recovery-process');
+    expect(JSON.stringify(aiTurn)).not.toContain('count');
   });
 
   // YUK-457 — failure-outcome mirrors surface as failed cards with errorReason.

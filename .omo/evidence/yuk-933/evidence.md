@@ -76,3 +76,20 @@ The direct command output is retained beside this file:
 - `biome-final.log`, `scoped-unit-final.log`, `build-final.log`, and `git-final.log` record the
   successful scoped checks.
 - `db-blocked-final.log` records the non-zero DB invocation and the Testcontainers runtime error.
+
+## P1 fix round
+
+- P1-1 scenario: a `experimental:subagent_run_settled` payload with `status: succeeded`
+  replaces the root turn's running lifecycle card. The DB regression is in
+  `src/capabilities/copilot/server/turns.db.test.ts`; it is locally `BLOCKED_ENV` because
+  Testcontainers has no runtime, recorded in `p1-db-blocked.log`.
+- P1-2 scenario: an open drawer receives the settled child lifecycle and synthetic root
+  continuation through the existing session turns endpoint, then remains deduplicated across an
+  unchanged poll and remount. Invocation in `p1-final.log` passed with the scoped unit suite.
+- P1-3 scenario: a recovery-written `tool_operation_settled` event without a yielded event uses the
+  durable `tool_operation` row only to recover its safe tool label. The DB regression is in
+  `src/capabilities/copilot/server/turns.db.test.ts`; its local container block is recorded above.
+- Invocation: direct typecheck, scoped Biome, six focused unit files, direct build equivalent, and
+  diff check. Observable: `p1-final.log` reports 6 files / 60 tests passed; `p1-build.log` records
+  successful Vite/server/worker/migrate builds. No local full test gate or dependency installation
+  was run.

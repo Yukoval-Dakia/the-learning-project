@@ -1276,4 +1276,95 @@ describe('CopilotDock accepted durable reconnect', () => {
     expect(screen.getAllByTestId('copilot-msg-ai')).toHaveLength(1);
     expect(screen.getAllByTestId('copilot-subtask-card')).toHaveLength(1);
   });
+
+  it('refreshes an open session once a child settles and its root continuation is replayed', async () => {
+    vi.useFakeTimers();
+    let turnsFetches = 0;
+    apiJsonMock.mockImplementation(async (input: string) => {
+      if (!input.startsWith('/api/copilot/turns')) {
+        throw new Error(`unexpected apiJson call: ${input}`);
+      }
+      turnsFetches += 1;
+      if (turnsFetches === 1) {
+        return {
+          turns: [
+            {
+              role: 'user',
+              text: '核对这组错题。',
+              at: '2026-08-28T08:00:00.000Z',
+              event_id: 'ask_child_refresh',
+            },
+            {
+              role: 'ai',
+              text: '我在核对这组错题。',
+              at: '2026-08-28T08:00:01.000Z',
+              event_id: 'reply_child_refresh',
+              session_id: 'copilot-session-test',
+              reply_event_id: 'reply_child_refresh',
+              subagent_runs: [{ id: 'research_refresh', status: 'running' }],
+            },
+          ],
+        };
+      }
+      return {
+        turns: [
+          {
+            role: 'user',
+            text: '核对这组错题。',
+            at: '2026-08-28T08:00:00.000Z',
+            event_id: 'ask_child_refresh',
+          },
+          {
+            role: 'ai',
+            text: '我在核对这组错题。',
+            at: '2026-08-28T08:00:01.000Z',
+            event_id: 'reply_child_refresh',
+            session_id: 'copilot-session-test',
+            reply_event_id: 'reply_child_refresh',
+            subagent_runs: [{ id: 'research_refresh', status: 'succeeded' }],
+          },
+          {
+            role: 'ai',
+            text: '我已整理好核对结果。',
+            at: '2026-08-28T08:00:02.000Z',
+            event_id: 'reply_child_continuation',
+            session_id: 'copilot-session-test',
+            reply_event_id: 'reply_child_continuation',
+          },
+        ],
+      };
+    });
+
+    try {
+      const first = render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(screen.getByText('我在核对这组错题。')).toBeTruthy();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+      });
+      expect(screen.getByText('我已整理好核对结果。')).toBeTruthy();
+      expect(screen.getAllByText('我在核对这组错题。')).toHaveLength(1);
+      expect(screen.getAllByText('我已整理好核对结果。')).toHaveLength(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+      });
+      expect(screen.getAllByText('我已整理好核对结果。')).toHaveLength(1);
+
+      first.unmount();
+      render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(screen.getByText('我已整理好核对结果。')).toBeTruthy();
+      expect(screen.getAllByText('我已整理好核对结果。')).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

@@ -771,6 +771,8 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         ]
       : [],
   );
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(
     restoredDurableHandle?.sessionId ?? restoredPendingTurn?.requestBody.session_id ?? null,
   );
@@ -1073,8 +1075,9 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   // (YUK-497 wave-3).
   const refetchTurns = useCallback(async (): Promise<boolean> => {
     if (!currentSessionId) return false;
+    const sessionId = currentSessionId;
     const res = await apiJson<CopilotTurnsResponse>(
-      `/api/copilot/turns?limit=${REPLAY_LIMIT}&session_id=${encodeURIComponent(currentSessionId)}`,
+      `/api/copilot/turns?limit=${REPLAY_LIMIT}&session_id=${encodeURIComponent(sessionId)}`,
     );
     const replayed = replayToMessages(res.turns ?? []);
     // Don't clobber a live exchange. The revert button on a PRIOR AI message is clickable even
@@ -1083,7 +1086,8 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     // `map(m => m.id === aiId ? finalized : m)` would silently no-op — the reply vanishes. Skip the
     // replace while a send is in flight (mirrors the prefill's prev.length===0 guard). The revert
     // already landed server-side; the tombstone shows on the next refresh (YUK-497 wave-2, major).
-    if (sendingRef.current) return false;
+    if (sendingRef.current || currentSessionIdRef.current !== sessionId) return false;
+    if (JSON.stringify(messagesRef.current) === JSON.stringify(replayed)) return true;
     setMessages(replayed);
     // A revert may have removed the turn that owned the active teaching skill / focused
     // knowledge — reset both, then recompute from the refreshed list (the same scan the
@@ -1093,6 +1097,14 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     restoreSkillStateFromReplay(replayed);
     return true;
   }, [currentSessionId, restoreSkillStateFromReplay]);
+
+  useEffect(() => {
+    if (!open || !currentSessionId || pendingAcceptanceUnknown) return;
+    const interval = window.setInterval(() => {
+      void refetchTurns().catch(() => undefined);
+    }, 5_000);
+    return () => window.clearInterval(interval);
+  }, [currentSessionId, open, pendingAcceptanceUnknown, refetchTurns]);
 
   const revertCheckpoint = useCallback(
     async (checkpointEventId: string) => {
