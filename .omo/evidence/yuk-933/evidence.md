@@ -93,3 +93,17 @@ The direct command output is retained beside this file:
   diff check. Observable: `p1-final.log` reports 6 files / 60 tests passed; `p1-build.log` records
   successful Vite/server/worker/migrate builds. No local full test gate or dependency installation
   was run.
+
+## Final artifact re-check
+
+Executed after the final completion-evidence hook. This re-check intentionally did not rerun a
+full test gate or wait for CI; it directly verified the pushed revision and that the raw P1
+artifacts are present and non-empty.
+
+- Invocation: `git status --short --branch && git rev-parse HEAD && git show --check --stat --oneline HEAD`.
+- Observable: clean `yuk-933-operation-subagent-cards` worktree at
+  `c52e8c9375ccd8b7611f6adafa9960fe9db2e13a`; `git show --check` emitted no whitespace error.
+- Invocation: `test -s` and `wc -l` for `p1-final.log`, `p1-build.log`, and `p1-db-blocked.log`.
+- Observable: all three are present and non-empty (12, 106, and 37 lines respectively). They
+  preserve the successful 6-file/60-test scoped run and build result, plus the explicitly
+  non-passing local Testcontainers `BLOCKED_ENV` result.
