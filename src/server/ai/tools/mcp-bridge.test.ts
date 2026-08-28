@@ -303,6 +303,46 @@ describe('buildMcpServerFromRegistry', () => {
     expect(captured.events).toHaveLength(1);
   });
 
+  it('claims correlation from the original call before interceptInput rewrites execution args', async () => {
+    const running = toolOperationRecord({
+      input: { args: { query: 'original', limit: 3 }, tool_use_id: 'toolu_original_call' },
+    });
+    const toolOperations = fakeToolOperations({ waited: running, terminal: running });
+    const claimToolUseId = vi.fn(() => 'toolu_original_call');
+    registerTool({
+      ...makeReadTool<{ query: string; limit: number }, { facts: unknown[] }>(
+        'remote_capped_reader',
+        { query: z.string(), limit: z.number().default(10) },
+        () => ({ facts: [] }),
+        () => 'remote capped reader',
+      ),
+      safeHandoff: { transport: 'remote', idempotent: true },
+    });
+    buildMcpServerFromRegistry({
+      ctx: { ...ctx, sessionId: 'session_bridge' },
+      serverName: 'loom',
+      toolNames: ['remote_capped_reader'],
+      toolOperations,
+      claimToolUseId,
+      interceptInput: (_tool, args) => ({
+        args: { ...(args as object), query: 'rewritten', limit: 3 },
+      }),
+    });
+
+    await mockAgentSdk.toolDefs[0]?.handler({ query: 'original' });
+
+    expect(claimToolUseId).toHaveBeenCalledWith('remote_capped_reader', { query: 'original' });
+    expect(toolOperations.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: {
+          args: { query: 'rewritten', limit: 3 },
+          tool_use_id: 'toolu_original_call',
+        },
+      }),
+      expect.any(Function),
+    );
+  });
+
   it('never hands run_task to ToolOperations even if a malformed declaration opts in', async () => {
     expect(() =>
       registerTool({

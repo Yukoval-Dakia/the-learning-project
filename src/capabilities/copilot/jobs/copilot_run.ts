@@ -1029,6 +1029,9 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       { signal: lifecycleAbortController.signal, requestedBy: 'system' },
       { signal: cancellationControl.signal, requestedBy: 'user' },
     ],
+    onSafeOperationRunning: async () => {
+      await cancellationControl.probe();
+    },
     // C4 — tool-call hard ceiling（anti-runaway）。interceptInput 仅回传
     // warning 状态，不执行 capInput，故仍无 per-message row cap。
     beforeExecute: async (tool) =>

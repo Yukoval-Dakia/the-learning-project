@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, or, sql } from 'drizzle-orm';
 import { ZodError } from 'zod';
 import { persistCopilotRunCancellationMarker } from '@/capabilities/copilot/server/copilot-run-cancellation';
 import { acquireCopilotExecutionSettlementLock } from '@/capabilities/copilot/server/copilot-run-coordination';
@@ -13,7 +13,7 @@ import {
   withCopilotDurableDispatchLock,
 } from '@/capabilities/copilot/server/durable-dispatch';
 import { db } from '@/db/client';
-import { event, job_events } from '@/db/schema';
+import { event, job_events, tool_operation } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { writeJobEvent } from '@/server/events/writer';
 import { CopilotRunParamsSchema } from './contracts';
@@ -63,7 +63,29 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
         )
         .orderBy(asc(job_events.id));
 
-      if (events.some(isCopilotRunTerminalEvent)) return 'already_settled' as const;
+      const toolTaskRunId = `copilot_run_tool_${runId}`;
+      const runningOwnedOperations = await tx
+        .select({ id: tool_operation.id })
+        .from(tool_operation)
+        .where(
+          and(
+            eq(tool_operation.session_id, acceptance.sessionId),
+            eq(tool_operation.status, 'running'),
+            or(
+              eq(tool_operation.task_run_id, toolTaskRunId),
+              and(
+                sql`left(${tool_operation.task_run_id}, char_length(${toolTaskRunId})) = ${toolTaskRunId}`,
+                sql`substring(${tool_operation.task_run_id} from char_length(${toolTaskRunId}) + 1) ~ '^_retry_[1-9][0-9]*$'`,
+              ),
+            ),
+          ),
+        )
+        .limit(1);
+      const hasRunningOwnedOperation = runningOwnedOperations.length > 0;
+
+      if (events.some(isCopilotRunTerminalEvent) && !hasRunningOwnedOperation) {
+        return 'already_settled' as const;
+      }
 
       // The domain outcome is authoritative even when its public DONE/FAILED
       // suffix has not yet been projected.
@@ -78,7 +100,7 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
           ),
         )
         .limit(1);
-      if (markers.length > 0) return 'already_settled' as const;
+      if (markers.length > 0 && !hasRunningOwnedOperation) return 'already_settled' as const;
 
       const executionStarted = events.some(
         (item) => item.event_type === COPILOT_RUN_EVENTS.EXECUTION_STARTED,
@@ -118,7 +140,7 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
         payload: { requested_by: 'user', requested_at: new Date().toISOString() },
       });
 
-      if (executionStarted) return 'cancel_requested' as const;
+      if (executionStarted || hasRunningOwnedOperation) return 'cancel_requested' as const;
 
       // The shared dispatch lock makes this atomic with the paid-execution
       // fence: once this commits, the worker cannot enter model/tool execution.

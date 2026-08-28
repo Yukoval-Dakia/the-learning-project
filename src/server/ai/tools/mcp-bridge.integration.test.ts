@@ -3,13 +3,25 @@
 // (`parseEvent` inside `writeEvent`) and the resulting row + the
 // `tool_call_log.mirrored_event_id` linkage land on disk.
 
+import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { capabilities } from '@/capabilities';
+import { POST as cancelCopilotRun } from '@/capabilities/copilot/api/cancel-run';
+import { createCopilotRunCancellationControl } from '@/capabilities/copilot/server/copilot-run-cancellation';
+import {
+  COPILOT_RUN_EVENTS,
+  COPILOT_RUN_TABLE,
+} from '@/capabilities/copilot/server/copilot-run-status';
+import {
+  hashCopilotDurableInput,
+  reserveCopilotDurableAcceptance,
+} from '@/capabilities/copilot/server/durable-dispatch';
 import { event, memory_brief_note, tool_call_log, tool_operation } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
+import { writeJobEvent } from '@/server/events/writer';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, registerTool } from './registry';
@@ -344,6 +356,107 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
       });
     },
   );
+
+  it('observes a user cancellation request after the terminal parent disposed its poller', async () => {
+    const sessionId = `conversation_terminal_parent_${randomUUID()}`;
+    const userMessage =
+      '读取远端记忆事实并核对复杂嵌套证据；父运行回复后仍需允许我停止尚未完成的只读请求。';
+    const accepted = await reserveCopilotDurableAcceptance(testDb(), {
+      sessionId,
+      userMessage,
+      inputHash: hashCopilotDurableInput({ user_message: userMessage, triggered_by: 'chat' }),
+      idempotencyKey: randomUUID(),
+      queuedPayload: {
+        session_id: sessionId,
+        triggered_by: 'chat',
+        pickup_deadline_ms: Date.now() + 15_000,
+      },
+    });
+    const runId = accepted.acceptance.runId;
+    const cancellationControl = createCopilotRunCancellationControl({ db: testDb(), runId });
+    const safeTool: DomainTool<{ query: string }, { hits: string[] }> = {
+      name: 'bridge_test_post_parent_user_cancel',
+      description: 'test-only post-parent cancellable remote read',
+      effect: 'read',
+      inputSchema: z.object({ query: z.string() }),
+      outputSchema: z.object({ hits: z.array(z.string()) }),
+      costClass: 'cheap_llm',
+      safeHandoff: { transport: 'remote', idempotent: true },
+      async execute(toolCtx) {
+        return new Promise((resolve, reject) => {
+          const timer = setTimeout(() => resolve({ hits: ['late'] }), 2_000);
+          toolCtx.signal?.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(timer);
+              reject(new Error('post-parent user cancel observed'));
+            },
+            { once: true },
+          );
+        });
+      },
+      summarize(_input, result) {
+        return `post-parent cancellable · ${result.hits.length}`;
+      },
+      mirrorEvent: 'never',
+    };
+    registerTool(safeTool);
+    buildMcpServerFromRegistry({
+      ctx: {
+        ...ctx(),
+        sessionId,
+        taskRunId: `copilot_run_tool_${runId}`,
+      },
+      serverName: 'loom',
+      toolNames: [safeTool.name],
+      safeHandoffYieldMs: 5,
+      cancellationSignals: [{ signal: cancellationControl.signal, requestedBy: 'user' }],
+      onSafeOperationRunning: async () => {
+        await cancellationControl.probe();
+      },
+    });
+    const yielded = (await mockSdk.toolDefs
+      .find((definition) => definition.name === safeTool.name)
+      ?.handler({ query: 'keep observing after root return' })) as {
+      content: Array<{ text: string }>;
+    };
+    const operationId = (
+      JSON.parse(yielded.content[0]?.text ?? '') as {
+        output: { tool_operation: { id: string } };
+      }
+    ).output.tool_operation.id;
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: COPILOT_RUN_EVENTS.EXECUTION_STARTED,
+      payload: { execution_fence: 'at_most_once' },
+    });
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: COPILOT_RUN_EVENTS.DONE,
+      payload: { task_run_id: `copilot_run_tool_${runId}` },
+    });
+    cancellationControl.dispose();
+
+    const response = await cancelCopilotRun(
+      new Request(`http://test/api/copilot/runs/${encodeURIComponent(runId)}/cancel`, {
+        method: 'POST',
+      }),
+      { id: runId },
+    );
+    expect(await response.json()).toMatchObject({ status: 'cancel_requested' });
+    await vi.waitFor(
+      async () => {
+        const [operation] = await testDb()
+          .select()
+          .from(tool_operation)
+          .where(eq(tool_operation.id, operationId));
+        expect(operation).toMatchObject({ status: 'cancelled', cancelled_by: 'user' });
+      },
+      { timeout: 2_000, interval: 20 },
+    );
+  });
 
   // YUK-862 / F3.1 — output schema enforcement DB-level tests
   it('output_schema_invalid lands in tool_call_log with failure mirror when policy fires', async () => {

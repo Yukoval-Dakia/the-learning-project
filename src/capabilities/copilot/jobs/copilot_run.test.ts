@@ -1174,6 +1174,10 @@ describe('runCopilotRun', () => {
     expect(ctx.canUseTool).toEqual(expect.any(Function));
     expect(mcpOptions?.ctx.sessionId).toBe('sess_durable_subtasks');
     expect(mcpOptions?.cancellationSignals).toHaveLength(2);
+    const probeYieldedOperationCancellation = mcpOptions?.onSafeOperationRunning;
+    expect(probeYieldedOperationCancellation).toEqual(expect.any(Function));
+    if (!probeYieldedOperationCancellation) throw new Error('missing yielded-operation probe');
+    await expect(probeYieldedOperationCancellation()).resolves.toBeUndefined();
     const correlationHook = ctx.hooks?.PreToolUse?.[0]?.hooks[0] as HookCallback;
     await correlationHook(
       {

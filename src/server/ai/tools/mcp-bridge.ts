@@ -125,11 +125,21 @@ async function observeSafeToolOperationTerminal(options: {
   input: Record<string, unknown>;
   mirrorEvent: boolean;
   summarize(record: ToolOperationRecord): string;
+  onOperationRunning?: () => Promise<void> | void;
   onExecutionSettled?: () => Promise<void> | void;
 }): Promise<void> {
   try {
     let record = await options.toolOperations.get(options.operationId);
     while (record.status === 'running') {
+      try {
+        await options.onOperationRunning?.();
+      } catch (error) {
+        console.error('[mcp-bridge] safe ToolOperations running observation failed', {
+          operation_id: options.operationId,
+          task_run_id: options.ctx.taskRunId,
+          err: error,
+        });
+      }
       await new Promise<void>((resolve) => setTimeout(resolve, 250));
       record = await options.toolOperations.get(options.operationId);
     }
@@ -288,6 +298,7 @@ export interface BuildMcpServerOptions {
     signal: AbortSignal;
     requestedBy: 'system' | 'user';
   }>;
+  onSafeOperationRunning?: () => Promise<void> | void;
   /** Optional per-call runtime gate. Return a reason string to block execution. */
   beforeExecute?: (
     tool: ToolExecutionGateInput,
@@ -363,12 +374,21 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
       let deferredExecutionSettled = false;
       let safeOperation: ToolOperationRecord | undefined;
       let safeToolOperations: ToolOperations | undefined;
+      let correlatedToolUseId: string | undefined;
       const gateInput = { name: dt.name, effect: dt.effect };
+      const safeHandoffEnabled =
+        dt.safeHandoff &&
+        dt.effect === 'read' &&
+        dt.name !== 'run_task' &&
+        ctx.sessionId !== undefined;
       let effectContract = proposalEffectContract(dt.name, dt.effect);
 
       try {
         parsedInput = dt.inputSchema.parse(rawArgs);
         execInput = parsedInput;
+        correlatedToolUseId = safeHandoffEnabled
+          ? opts.claimToolUseId?.(dt.name, rawArgs)
+          : undefined;
       } catch (err) {
         errorReason = err instanceof Error ? err.message : String(err);
       }
@@ -407,12 +427,7 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
         try {
           await opts.onExecuteStart?.(gateInput);
           executionStarted = true;
-          const safeHandoff =
-            dt.safeHandoff &&
-            dt.effect === 'read' &&
-            dt.name !== 'run_task' &&
-            ctx.sessionId !== undefined;
-          const toolOperations = safeHandoff
+          const toolOperations = safeHandoffEnabled
             ? (opts.toolOperations ?? getProcessToolOperations(ctx.db))
             : undefined;
           safeToolOperations = toolOperations;
@@ -422,7 +437,7 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
                 sessionId: ctx.sessionId as string,
                 taskRunId: ctx.taskRunId,
                 toolName: dt.name,
-                toolUseId: opts.claimToolUseId?.(dt.name, execInput),
+                toolUseId: correlatedToolUseId,
                 input: execInput as Record<string, unknown>,
                 ...(ctx.providerSessionDeadlineAt !== undefined
                   ? { hardDeadlineAt: new Date(ctx.providerSessionDeadlineAt) }
@@ -457,6 +472,7 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
                 record.status === 'succeeded'
                   ? dt.summarize(parsedInput as never, record.result as never)
                   : `error: ${formatToolOperationFailure(record)}`,
+              onOperationRunning: opts.onSafeOperationRunning,
               onExecutionSettled: opts.onExecuteSettled
                 ? () => opts.onExecuteSettled?.(gateInput)
                 : undefined,
