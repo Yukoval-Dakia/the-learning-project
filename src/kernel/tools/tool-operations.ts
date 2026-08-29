@@ -19,7 +19,6 @@ export const MAX_TOOL_OPERATION_ERROR_MESSAGE_CHARS = 4_000;
 export const MAX_TOOL_OPERATION_NAME_CHARS = 256;
 export const DEFAULT_TOOL_OPERATION_LEASE_MS = 30_000;
 export const DEFAULT_TOOL_OPERATION_HEARTBEAT_MS = 10_000;
-export const SAFE_TOOL_OPERATION_YIELD_MS = 45_000;
 export const SAFE_TOOL_OPERATION_WAIT_MAX_MS = 5_000;
 
 export type ToolOperationState = (typeof TOOL_OPERATION_STATES)[number];
@@ -89,6 +88,7 @@ export type ToolOperationExecutionOutcome =
 export interface ToolOperationHandle {
   id: string;
   wait(options: { timeoutMs: number }): Promise<ToolOperationRecord>;
+  waitUntilSettled(): Promise<ToolOperationRecord>;
   cancel(options: { requestedBy: ToolOperationCancellationOwner }): Promise<ToolOperationRecord>;
 }
 
@@ -99,6 +99,7 @@ export interface ToolOperations {
   ): Promise<ToolOperationHandle>;
   get(id: string): Promise<ToolOperationRecord>;
   wait(id: string, options: { timeoutMs: number }): Promise<ToolOperationRecord>;
+  waitUntilSettled(id: string): Promise<ToolOperationRecord>;
   cancel(
     id: string,
     options: { requestedBy: ToolOperationCancellationOwner },
@@ -107,12 +108,7 @@ export interface ToolOperations {
   recoverLost(): Promise<ToolOperationRecord[]>;
 }
 
-export type SafeToolOperationExecution =
-  | { kind: 'settled'; record: ToolOperationRecord }
-  | {
-      kind: 'yielded';
-      operation: { id: string; status: 'running'; tool_use_id?: string };
-    };
+export type SafeToolOperationExecution = { kind: 'settled'; record: ToolOperationRecord };
 
 export type OwnedToolOperationControl = {
   action: 'get' | 'wait' | 'cancel';
@@ -156,7 +152,6 @@ export async function executeSafeToolOperation(options: {
   toolUseId?: string;
   input: ToolOperationJson;
   hardDeadlineAt?: Date;
-  yieldAfterMs?: number;
   cancellationSignals?: ReadonlyArray<{
     signal: AbortSignal;
     requestedBy: ToolOperationCancellationOwner;
@@ -238,18 +233,8 @@ export async function executeSafeToolOperation(options: {
     if (cancellation.signal.aborted) scheduleCancellation();
     else cancellation.signal.addEventListener('abort', scheduleCancellation, { once: true });
   }
-  const record = await options.toolOperations.wait(handle.id, {
-    timeoutMs: options.yieldAfterMs ?? SAFE_TOOL_OPERATION_YIELD_MS,
-  });
-  if (record.status !== 'running') return { kind: 'settled', record };
-  return {
-    kind: 'yielded',
-    operation: {
-      id: record.id,
-      status: 'running',
-      ...(options.toolUseId ? { tool_use_id: options.toolUseId } : {}),
-    },
-  };
+  const record = await options.toolOperations.waitUntilSettled(handle.id);
+  return { kind: 'settled', record };
 }
 
 export interface ToolOperationsOptions {
@@ -771,11 +756,28 @@ export function createToolOperations(db: Db, options: ToolOperationsOptions): To
       return {
         id,
         wait: (waitOptions) => api.wait(id, waitOptions),
+        waitUntilSettled: () => api.waitUntilSettled(id),
         cancel: (cancelOptions) => api.cancel(id, cancelOptions),
       };
     },
 
     get: (id) => getOperation(db, id),
+
+    async waitUntilSettled(id) {
+      const current = await getOperation(db, id);
+      if (current.status !== 'running') return current;
+      const localSettlement = localSettlements.get(id);
+      if (localSettlement) {
+        await localSettlement;
+        return getOperation(db, id);
+      }
+      let observed = current;
+      while (observed.status === 'running') {
+        await new Promise<void>((resolve) => setTimeout(resolve, pollIntervalMs));
+        observed = await getOperation(db, id);
+      }
+      return observed;
+    },
 
     async wait(id, waitOptions) {
       if (!Number.isInteger(waitOptions.timeoutMs) || waitOptions.timeoutMs < 0) {
