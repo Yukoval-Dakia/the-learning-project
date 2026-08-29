@@ -264,6 +264,54 @@ export async function getCopilotConversation(
   return rows[0] ?? null;
 }
 
+/** YUK-936 — read the stored Agent SDK session id for foreground inline resume. */
+export async function getAgentSdkSessionId(db: Db | Tx, sessionId: string): Promise<string | null> {
+  const rows = await db
+    .select({ agent_sdk_session_id: learning_session.agent_sdk_session_id })
+    .from(learning_session)
+    .where(
+      and(
+        eq(learning_session.id, sessionId),
+        eq(learning_session.type, 'conversation'),
+        eq(learning_session.entrypoint, 'copilot'),
+      ),
+    )
+    .limit(1);
+  return rows[0]?.agent_sdk_session_id ?? null;
+}
+
+/** YUK-936 — persist Agent SDK session id after a successful foreground inline query. */
+export async function setAgentSdkSessionId(
+  db: Db | Tx,
+  sessionId: string,
+  agentSdkSessionId: string,
+): Promise<void> {
+  await db
+    .update(learning_session)
+    .set({ agent_sdk_session_id: agentSdkSessionId, updated_at: new Date() })
+    .where(
+      and(
+        eq(learning_session.id, sessionId),
+        eq(learning_session.type, 'conversation'),
+        eq(learning_session.entrypoint, 'copilot'),
+      ),
+    );
+}
+
+/** YUK-936 — clear stored id on resume miss/fail/restart (ADR-0054 resume-fail). */
+export async function clearAgentSdkSessionId(db: Db | Tx, sessionId: string): Promise<void> {
+  await db
+    .update(learning_session)
+    .set({ agent_sdk_session_id: null, updated_at: new Date() })
+    .where(
+      and(
+        eq(learning_session.id, sessionId),
+        eq(learning_session.type, 'conversation'),
+        eq(learning_session.entrypoint, 'copilot'),
+      ),
+    );
+}
+
 export async function findOrCreateCopilotConversation(
   db: Db,
   opts: { now?: Date; sessionId?: string } = {},

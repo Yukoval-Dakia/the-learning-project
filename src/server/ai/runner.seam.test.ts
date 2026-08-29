@@ -981,4 +981,68 @@ describe('runTask — YUK-924 model-profile seams', () => {
     );
     infoSpy.mockRestore();
   });
+
+  it('YUK-936 — sdkSession.persist/resume seam overrides persistSession for foreground inline only', async () => {
+    mockSdk.messages = [successResult()];
+
+    await runTask(
+      UNMIGRATED_KIND,
+      { question: 'q', wrong_answer: 'a' },
+      {
+        db: fakeDb,
+        sdkSession: {
+          persist: true,
+          resume: 'sdk-resume-id',
+          onSessionId: vi.fn(),
+        },
+      },
+    );
+
+    const opts = mockSdk.capturedOptions as { persistSession?: boolean; resume?: string };
+    expect(opts.persistSession).toBe(true);
+    expect(opts.resume).toBe('sdk-resume-id');
+  });
+
+  it('YUK-936 — omitted sdkSession keeps persistSession false (durable/correction zero regression)', async () => {
+    mockSdk.messages = [successResult()];
+
+    await runTask(UNMIGRATED_KIND, { question: 'q', wrong_answer: 'a' }, { db: fakeDb });
+
+    const opts = mockSdk.capturedOptions as { persistSession?: boolean; resume?: string };
+    expect(opts.persistSession).toBe(false);
+    expect(opts.resume).toBeUndefined();
+  });
+
+  it('YUK-936 — captures SDK session_id from system init and invokes onSessionId', async () => {
+    const onSessionId = vi.fn();
+    mockSdk.messages = [
+      { type: 'system', subtype: 'init', session_id: 'sdk-captured-123' },
+      successResult(),
+    ];
+
+    await runTask(
+      UNMIGRATED_KIND,
+      { question: 'q', wrong_answer: 'a' },
+      {
+        db: fakeDb,
+        sdkSession: { persist: true, onSessionId },
+      },
+    );
+
+    expect(onSessionId).toHaveBeenCalledWith('sdk-captured-123');
+  });
+
+  it('CopilotCorrectionIntentTask stays persistSession false without sdkSession seam', async () => {
+    mockSdk.messages = [successResult()];
+
+    await runTask(
+      'CopilotCorrectionIntentTask',
+      { user_message: 'wrong', prior_turn_candidates: [{ prior_turn_id: 'e1', text: 't' }] },
+      { db: fakeDb },
+    );
+
+    const opts = mockSdk.capturedOptions as { persistSession?: boolean; resume?: string };
+    expect(opts.persistSession).toBe(false);
+    expect(opts.resume).toBeUndefined();
+  });
 });
