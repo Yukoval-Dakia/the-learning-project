@@ -42,6 +42,20 @@ function ctx(): ToolContext {
   };
 }
 
+async function waitForToolOperationId(sessionId: string): Promise<string> {
+  let operationId: string | undefined;
+  await vi.waitFor(async () => {
+    operationId = (
+      await testDb()
+        .select({ id: tool_operation.id })
+        .from(tool_operation)
+        .where(eq(tool_operation.session_id, sessionId))
+    )[0]?.id;
+    expect(operationId).toEqual(expect.any(String));
+  });
+  return operationId as string;
+}
+
 async function seedAttempt() {
   await writeEvent(testDb(), {
     id: 'att_mirror_e2e',
@@ -250,14 +264,7 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
       (definition) => definition.name === safeTool.name,
     )?.handler;
     const execution = handler?.({ query: 'cancel me' });
-    await Promise.resolve();
-    const operationId = (
-      await testDb()
-        .select({ id: tool_operation.id })
-        .from(tool_operation)
-        .where(eq(tool_operation.session_id, 'session_model_owner'))
-    )[0]?.id;
-    expect(operationId).toEqual(expect.any(String));
+    const operationId = await waitForToolOperationId('session_model_owner');
 
     buildMcpServerFromRegistry({
       ctx: { ...ctx(), sessionId: 'session_intruder' },
@@ -330,14 +337,7 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
         (definition) => definition.name === safeTool.name,
       )?.handler;
       const execution = handler?.({ query: 'cancel from parent' });
-      await Promise.resolve();
-      const operationId = (
-        await testDb()
-          .select({ id: tool_operation.id })
-          .from(tool_operation)
-          .where(eq(tool_operation.session_id, `session_${requestedBy}_owner`))
-      )[0]?.id;
-      expect(operationId).toEqual(expect.any(String));
+      const operationId = await waitForToolOperationId(`session_${requestedBy}_owner`);
 
       controller.abort();
       const response = (await execution) as { content: Array<{ text: string }> };
@@ -396,14 +396,7 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
       (definition) => definition.name === safeTool.name,
     )?.handler;
     const execution = handler?.({ query: 'keep blocking after root return' });
-    await Promise.resolve();
-    const operationId = (
-      await testDb()
-        .select({ id: tool_operation.id })
-        .from(tool_operation)
-        .where(eq(tool_operation.session_id, sessionId))
-    )[0]?.id;
-    expect(operationId).toEqual(expect.any(String));
+    const operationId = await waitForToolOperationId(sessionId);
 
     lifecycleAbortController.abort();
     const response = (await execution) as { content: Array<{ text: string }> };

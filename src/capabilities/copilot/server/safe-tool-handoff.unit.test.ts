@@ -47,15 +47,16 @@ function operations(
         wait: vi.fn(async () => waited),
         waitUntilSettled:
           options?.waitUntilSettled ??
-          vi.fn(async (): Promise<ToolOperationRecord> =>
-            waited.status === 'running'
-              ? waited
-              : {
-                  ...waited,
-                  status: 'succeeded',
-                  result: { facts: [{ id: 'fact_1', score: 0.82 }] },
-                  settledAt: new Date('2026-08-27T12:00:52.000Z'),
-                },
+          vi.fn(
+            async (): Promise<ToolOperationRecord> =>
+              waited.status === 'running'
+                ? waited
+                : {
+                    ...waited,
+                    status: 'succeeded',
+                    result: { facts: [{ id: 'fact_1', score: 0.82 }] },
+                    settledAt: new Date('2026-08-27T12:00:52.000Z'),
+                  },
           ),
         cancel: vi.fn(async () => waited),
       };
@@ -64,15 +65,16 @@ function operations(
     wait: vi.fn(async () => waited),
     waitUntilSettled:
       options?.waitUntilSettled ??
-      vi.fn(async (): Promise<ToolOperationRecord> =>
-        waited.status === 'running'
-          ? waited
-          : {
-              ...waited,
-              status: 'succeeded',
-              result: { facts: [{ id: 'fact_1', score: 0.82 }] },
-              settledAt: new Date('2026-08-27T12:00:52.000Z'),
-            },
+      vi.fn(
+        async (): Promise<ToolOperationRecord> =>
+          waited.status === 'running'
+            ? waited
+            : {
+                ...waited,
+                status: 'succeeded',
+                result: { facts: [{ id: 'fact_1', score: 0.82 }] },
+                settledAt: new Date('2026-08-27T12:00:52.000Z'),
+              },
       ),
     cancel: vi.fn(async () => waited),
     recoverLost: vi.fn(async () => []),
