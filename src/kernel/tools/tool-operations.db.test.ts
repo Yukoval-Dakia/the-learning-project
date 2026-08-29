@@ -27,7 +27,7 @@ describe('ToolOperations', () => {
     await resetDb();
   });
 
-  it('starts with a handle, polls with timeoutMs=0, and settles a realistic result', async () => {
+  it('waitUntilSettled blocks without writing a yielded event', async () => {
     let resolveExecution!: (value: {
       status: 'succeeded';
       result: Record<string, unknown>;
@@ -57,8 +57,7 @@ describe('ToolOperations', () => {
       async () => execution,
     );
 
-    await expect(handle.wait({ timeoutMs: 0 })).resolves.toMatchObject({ status: 'running' });
-    await expect(handle.wait({ timeoutMs: 0 })).resolves.toMatchObject({ status: 'running' });
+    const settled = handle.waitUntilSettled();
     resolveExecution({
       status: 'succeeded',
       result: {
@@ -69,11 +68,46 @@ describe('ToolOperations', () => {
       },
       terminalToolCallLogId: 'tool_log_search_notes_1',
     });
-    await expect(handle.wait({ timeoutMs: 250 })).resolves.toMatchObject({
+    await expect(settled).resolves.toMatchObject({
       status: 'succeeded',
       result: { matches: [{ note_id: 'note_long_1' }], truncated: false },
       terminalToolCallLogId: 'tool_log_search_notes_1',
     });
+
+    const events = await testDb()
+      .select({ action: event.action, subjectId: event.subject_id })
+      .from(event)
+      .where(eq(event.subject_id, handle.id));
+    expect(events).toEqual([{ action: 'tool_operation_settled', subjectId: handle.id }]);
+  });
+
+  it('still writes yielded events for explicit control-tool polling', async () => {
+    let resolveExecution!: (value: {
+      status: 'succeeded';
+      result: Record<string, unknown>;
+    }) => void;
+    const execution = new Promise<{
+      status: 'succeeded';
+      result: Record<string, unknown>;
+    }>((resolve) => {
+      resolveExecution = resolve;
+    });
+    const operations = createToolOperations(testDb(), { processId: 'api_boot_poll' });
+    const handle = await operations.start(
+      {
+        id: 'toolop_poll_control',
+        sessionId: 'session_copilot_poll',
+        taskRunId: 'task_run_poll',
+        toolName: 'search_notes',
+        effect: 'read',
+        input: { query: 'poll me later' },
+      },
+      async () => execution,
+    );
+
+    await expect(handle.wait({ timeoutMs: 0 })).resolves.toMatchObject({ status: 'running' });
+    resolveExecution({ status: 'succeeded', result: { matches: [], truncated: false } });
+    await expect(handle.waitUntilSettled()).resolves.toMatchObject({ status: 'succeeded' });
 
     const events = await testDb()
       .select({ action: event.action, subjectId: event.subject_id })

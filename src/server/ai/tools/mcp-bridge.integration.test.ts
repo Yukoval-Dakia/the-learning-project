@@ -8,20 +8,9 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { capabilities } from '@/capabilities';
-import { POST as cancelCopilotRun } from '@/capabilities/copilot/api/cancel-run';
-import { createCopilotRunCancellationControl } from '@/capabilities/copilot/server/copilot-run-cancellation';
-import {
-  COPILOT_RUN_EVENTS,
-  COPILOT_RUN_TABLE,
-} from '@/capabilities/copilot/server/copilot-run-status';
-import {
-  hashCopilotDurableInput,
-  reserveCopilotDurableAcceptance,
-} from '@/capabilities/copilot/server/durable-dispatch';
 import { event, memory_brief_note, tool_call_log, tool_operation } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
-import { writeJobEvent } from '@/server/events/writer';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, registerTool } from './registry';
@@ -146,7 +135,7 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
     expect(tcl[0].mirrored_event_id).toBeNull();
   });
 
-  it('persists one yielded handle then settles, mirrors, logs, and links the terminal call', async () => {
+  it('blocks until settlement, mirrors, logs, and links the terminal call in one MCP response', async () => {
     const safeTool: DomainTool<{ query: string }, { hits: Array<{ id: string; score: number }> }> =
       {
         name: 'bridge_test_safe_remote',
@@ -170,7 +159,6 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
       ctx: { ...ctx(), sessionId: 'session_safe_bridge' },
       serverName: 'loom',
       toolNames: [safeTool.name],
-      safeHandoffYieldMs: 5,
       claimToolUseId: () => 'toolu_safe_bridge_e2e',
     });
 
@@ -178,53 +166,50 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
       .find((definition) => definition.name === safeTool.name)
       ?.handler({ query: 'deep_nested' })) as { content: Array<{ text: string }> };
     const responseBody = JSON.parse(response.content[0]?.text ?? '') as {
-      output: { tool_operation: { id: string; status: string; tool_use_id: string } };
+      output: { hits: Array<{ id: string; score: number }> };
     };
-    expect(responseBody.output.tool_operation).toMatchObject({
-      status: 'running',
-      tool_use_id: 'toolu_safe_bridge_e2e',
+    expect(responseBody.output).toEqual({
+      hits: [{ id: 'deep_nested_result', score: 0.87 }],
+    });
+    expect(JSON.stringify(responseBody)).not.toContain('tool_operation');
+
+    const logs = await testDb()
+      .select()
+      .from(tool_call_log)
+      .where(eq(tool_call_log.tool_name, safeTool.name));
+    expect(logs).toHaveLength(1);
+    expect(logs[0]?.output_json).toEqual({
+      hits: [{ id: 'deep_nested_result', score: 0.87 }],
+    });
+    expect(logs[0]?.mirrored_event_id).toEqual(expect.any(String));
+
+    const operationId = (
+      await testDb()
+        .select()
+        .from(tool_operation)
+        .where(eq(tool_operation.session_id, 'session_safe_bridge'))
+    )[0]?.id;
+    expect(operationId).toEqual(expect.any(String));
+    const [operation] = await testDb()
+      .select()
+      .from(tool_operation)
+      .where(eq(tool_operation.id, operationId));
+    expect(operation).toMatchObject({
+      status: 'succeeded',
+      input_json: {
+        args: { query: 'deep_nested' },
+        tool_use_id: 'toolu_safe_bridge_e2e',
+      },
+      terminal_tool_call_log_id: logs[0]?.id,
     });
 
-    const operationId = responseBody.output.tool_operation.id;
-    await vi.waitFor(
-      async () => {
-        const [operation] = await testDb()
-          .select()
-          .from(tool_operation)
-          .where(eq(tool_operation.id, operationId));
-        expect(operation).toMatchObject({
-          status: 'succeeded',
-          input_json: {
-            args: { query: 'deep_nested' },
-            tool_use_id: 'toolu_safe_bridge_e2e',
-          },
-        });
-        expect(operation.terminal_tool_call_log_id).toEqual(expect.any(String));
-
-        const logs = await testDb()
-          .select()
-          .from(tool_call_log)
-          .where(eq(tool_call_log.tool_name, safeTool.name));
-        expect(logs).toHaveLength(2);
-        const terminalLog = logs.find((log) => log.id === operation.terminal_tool_call_log_id);
-        expect(terminalLog?.output_json).toEqual({
-          hits: [{ id: 'deep_nested_result', score: 0.87 }],
-        });
-        expect(terminalLog?.mirrored_event_id).toEqual(expect.any(String));
-
-        const events = await testDb().select().from(event).where(eq(event.subject_id, operationId));
-        expect(events.map((row) => row.action)).toEqual([
-          'tool_operation_yielded',
-          'tool_operation_settled',
-        ]);
-        const [terminalMirror] = await testDb()
-          .select()
-          .from(event)
-          .where(eq(event.id, terminalLog?.mirrored_event_id ?? 'missing'));
-        expect(terminalMirror).toMatchObject({ action: 'tool_use', outcome: 'success' });
-      },
-      { timeout: 2_000, interval: 20 },
-    );
+    const events = await testDb().select().from(event).where(eq(event.subject_id, operationId));
+    expect(events.map((row) => row.action)).toEqual(['tool_operation_settled']);
+    const [terminalMirror] = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.id, logs[0]?.mirrored_event_id ?? 'missing'));
+    expect(terminalMirror).toMatchObject({ action: 'tool_use', outcome: 'success' });
   });
 
   it('lets the model cancel through the shared control tool but rejects another session', async () => {
@@ -259,17 +244,20 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
       ctx: { ...ctx(), sessionId: 'session_model_owner' },
       serverName: 'loom',
       toolNames: [safeTool.name, 'cancel_tool_operation'],
-      safeHandoffYieldMs: 5,
       claimToolUseId: () => 'toolu_model_cancel',
     });
-    const startResponse = (await mockSdk.toolDefs
-      .find((definition) => definition.name === safeTool.name)
-      ?.handler({ query: 'cancel me' })) as { content: Array<{ text: string }> };
+    const handler = mockSdk.toolDefs.find(
+      (definition) => definition.name === safeTool.name,
+    )?.handler;
+    const execution = handler?.({ query: 'cancel me' });
+    await Promise.resolve();
     const operationId = (
-      JSON.parse(startResponse.content[0]?.text ?? '') as {
-        output: { tool_operation: { id: string } };
-      }
-    ).output.tool_operation.id;
+      await testDb()
+        .select({ id: tool_operation.id })
+        .from(tool_operation)
+        .where(eq(tool_operation.session_id, 'session_model_owner'))
+    )[0]?.id;
+    expect(operationId).toEqual(expect.any(String));
 
     buildMcpServerFromRegistry({
       ctx: { ...ctx(), sessionId: 'session_intruder' },
@@ -290,13 +278,15 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
       (definition) => definition.name === 'cancel_tool_operation',
     );
     await ownerCancel?.handler({ operation_id: operationId });
-    await vi.waitFor(async () => {
-      const [operation] = await testDb()
-        .select()
-        .from(tool_operation)
-        .where(eq(tool_operation.id, operationId));
-      expect(operation).toMatchObject({ status: 'cancelled', cancelled_by: 'model' });
+    const cancelResponse = (await execution) as { content: Array<{ text: string }> };
+    expect(JSON.parse(cancelResponse.content[0]?.text ?? '')).toMatchObject({
+      error: expect.stringContaining('cancelled'),
     });
+    const [operation] = await testDb()
+      .select()
+      .from(tool_operation)
+      .where(eq(tool_operation.id, operationId));
+    expect(operation).toMatchObject({ status: 'cancelled', cancelled_by: 'model' });
   });
 
   it.each(['system', 'user'] as const)(
@@ -334,46 +324,37 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
         ctx: { ...ctx(), sessionId: `session_${requestedBy}_owner` },
         serverName: 'loom',
         toolNames: [safeTool.name],
-        safeHandoffYieldMs: 5,
         cancellationSignals: [{ signal: controller.signal, requestedBy }],
       });
-      const response = (await mockSdk.toolDefs
-        .find((definition) => definition.name === safeTool.name)
-        ?.handler({ query: 'cancel from parent' })) as { content: Array<{ text: string }> };
+      const handler = mockSdk.toolDefs.find(
+        (definition) => definition.name === safeTool.name,
+      )?.handler;
+      const execution = handler?.({ query: 'cancel from parent' });
+      await Promise.resolve();
       const operationId = (
-        JSON.parse(response.content[0]?.text ?? '') as {
-          output: { tool_operation: { id: string } };
-        }
-      ).output.tool_operation.id;
+        await testDb()
+          .select({ id: tool_operation.id })
+          .from(tool_operation)
+          .where(eq(tool_operation.session_id, `session_${requestedBy}_owner`))
+      )[0]?.id;
+      expect(operationId).toEqual(expect.any(String));
 
       controller.abort();
-      await vi.waitFor(async () => {
-        const [operation] = await testDb()
-          .select()
-          .from(tool_operation)
-          .where(eq(tool_operation.id, operationId));
-        expect(operation).toMatchObject({ status: 'cancelled', cancelled_by: requestedBy });
+      const response = (await execution) as { content: Array<{ text: string }> };
+      expect(JSON.parse(response.content[0]?.text ?? '')).toMatchObject({
+        error: expect.stringContaining('cancelled'),
       });
+      const [operation] = await testDb()
+        .select()
+        .from(tool_operation)
+        .where(eq(tool_operation.id, operationId));
+      expect(operation).toMatchObject({ status: 'cancelled', cancelled_by: requestedBy });
     },
   );
 
-  it('observes a user cancellation request after the terminal parent disposed its poller', async () => {
+  it('cancels an in-flight safe read when the parent lifecycle aborts after the run returns', async () => {
     const sessionId = `conversation_terminal_parent_${randomUUID()}`;
-    const userMessage =
-      '读取远端记忆事实并核对复杂嵌套证据；父运行回复后仍需允许我停止尚未完成的只读请求。';
-    const accepted = await reserveCopilotDurableAcceptance(testDb(), {
-      sessionId,
-      userMessage,
-      inputHash: hashCopilotDurableInput({ user_message: userMessage, triggered_by: 'chat' }),
-      idempotencyKey: randomUUID(),
-      queuedPayload: {
-        session_id: sessionId,
-        triggered_by: 'chat',
-        pickup_deadline_ms: Date.now() + 15_000,
-      },
-    });
-    const runId = accepted.acceptance.runId;
-    const cancellationControl = createCopilotRunCancellationControl({ db: testDb(), runId });
+    const lifecycleAbortController = new AbortController();
     const safeTool: DomainTool<{ query: string }, { hits: string[] }> = {
       name: 'bridge_test_post_parent_user_cancel',
       description: 'test-only post-parent cancellable remote read',
@@ -389,7 +370,7 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
             'abort',
             () => {
               clearTimeout(timer);
-              reject(new Error('post-parent user cancel observed'));
+              reject(new Error('post-parent lifecycle cancel observed'));
             },
             { once: true },
           );
@@ -405,57 +386,35 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
       ctx: {
         ...ctx(),
         sessionId,
-        taskRunId: `copilot_run_tool_${runId}`,
+        taskRunId: `copilot_run_tool_${randomUUID()}`,
       },
       serverName: 'loom',
       toolNames: [safeTool.name],
-      safeHandoffYieldMs: 5,
-      cancellationSignals: [{ signal: cancellationControl.signal, requestedBy: 'user' }],
-      onSafeOperationRunning: async () => {
-        await cancellationControl.probe();
-      },
+      cancellationSignals: [{ signal: lifecycleAbortController.signal, requestedBy: 'system' }],
     });
-    const yielded = (await mockSdk.toolDefs
-      .find((definition) => definition.name === safeTool.name)
-      ?.handler({ query: 'keep observing after root return' })) as {
-      content: Array<{ text: string }>;
-    };
+    const handler = mockSdk.toolDefs.find(
+      (definition) => definition.name === safeTool.name,
+    )?.handler;
+    const execution = handler?.({ query: 'keep blocking after root return' });
+    await Promise.resolve();
     const operationId = (
-      JSON.parse(yielded.content[0]?.text ?? '') as {
-        output: { tool_operation: { id: string } };
-      }
-    ).output.tool_operation.id;
-    await writeJobEvent(testDb(), {
-      business_table: COPILOT_RUN_TABLE,
-      business_id: runId,
-      event_type: COPILOT_RUN_EVENTS.EXECUTION_STARTED,
-      payload: { execution_fence: 'at_most_once' },
-    });
-    await writeJobEvent(testDb(), {
-      business_table: COPILOT_RUN_TABLE,
-      business_id: runId,
-      event_type: COPILOT_RUN_EVENTS.DONE,
-      payload: { task_run_id: `copilot_run_tool_${runId}` },
-    });
-    cancellationControl.dispose();
+      await testDb()
+        .select({ id: tool_operation.id })
+        .from(tool_operation)
+        .where(eq(tool_operation.session_id, sessionId))
+    )[0]?.id;
+    expect(operationId).toEqual(expect.any(String));
 
-    const response = await cancelCopilotRun(
-      new Request(`http://test/api/copilot/runs/${encodeURIComponent(runId)}/cancel`, {
-        method: 'POST',
-      }),
-      { id: runId },
-    );
-    expect(await response.json()).toMatchObject({ status: 'cancel_requested' });
-    await vi.waitFor(
-      async () => {
-        const [operation] = await testDb()
-          .select()
-          .from(tool_operation)
-          .where(eq(tool_operation.id, operationId));
-        expect(operation).toMatchObject({ status: 'cancelled', cancelled_by: 'user' });
-      },
-      { timeout: 2_000, interval: 20 },
-    );
+    lifecycleAbortController.abort();
+    const response = (await execution) as { content: Array<{ text: string }> };
+    expect(JSON.parse(response.content[0]?.text ?? '')).toMatchObject({
+      error: expect.stringContaining('cancelled'),
+    });
+    const [operation] = await testDb()
+      .select()
+      .from(tool_operation)
+      .where(eq(tool_operation.id, operationId));
+    expect(operation).toMatchObject({ status: 'cancelled', cancelled_by: 'system' });
   });
 
   // YUK-862 / F3.1 — output schema enforcement DB-level tests

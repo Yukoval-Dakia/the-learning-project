@@ -1124,10 +1124,10 @@ describe('runCopilotRun', () => {
     expect(ctx.signal).toBeInstanceOf(AbortSignal);
     expect(mcpOptions?.ctx.sessionId).toBe('sess_durable_subtasks');
     expect(mcpOptions?.cancellationSignals).toHaveLength(2);
-    const probeYieldedOperationCancellation = mcpOptions?.onSafeOperationRunning;
-    expect(probeYieldedOperationCancellation).toEqual(expect.any(Function));
-    if (!probeYieldedOperationCancellation) throw new Error('missing yielded-operation probe');
-    await expect(probeYieldedOperationCancellation()).resolves.toBeUndefined();
+    expect(mcpOptions?.cancellationSignals?.map((entry) => entry.requestedBy)).toEqual([
+      'system',
+      'user',
+    ]);
     const correlationHook = ctx.hooks?.PreToolUse?.[0]?.hooks[0] as HookCallback;
     await correlationHook(
       {

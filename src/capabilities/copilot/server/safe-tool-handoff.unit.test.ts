@@ -35,18 +35,45 @@ function record(overrides: Partial<ToolOperationRecord> = {}): ToolOperationReco
   };
 }
 
-function operations(waited: ToolOperationRecord): ToolOperations {
+function operations(
+  waited: ToolOperationRecord,
+  options?: { waitUntilSettled?: () => Promise<ToolOperationRecord> },
+): ToolOperations {
   return {
     start: vi.fn(async (_input, execute) => {
       void execute({ operationId: waited.id, signal: new AbortController().signal });
       return {
         id: waited.id,
         wait: vi.fn(async () => waited),
+        waitUntilSettled:
+          options?.waitUntilSettled ??
+          vi.fn(async (): Promise<ToolOperationRecord> =>
+            waited.status === 'running'
+              ? waited
+              : {
+                  ...waited,
+                  status: 'succeeded',
+                  result: { facts: [{ id: 'fact_1', score: 0.82 }] },
+                  settledAt: new Date('2026-08-27T12:00:52.000Z'),
+                },
+          ),
         cancel: vi.fn(async () => waited),
       };
     }),
     get: vi.fn(async () => waited),
     wait: vi.fn(async () => waited),
+    waitUntilSettled:
+      options?.waitUntilSettled ??
+      vi.fn(async (): Promise<ToolOperationRecord> =>
+        waited.status === 'running'
+          ? waited
+          : {
+              ...waited,
+              status: 'succeeded',
+              result: { facts: [{ id: 'fact_1', score: 0.82 }] },
+              settledAt: new Date('2026-08-27T12:00:52.000Z'),
+            },
+      ),
     cancel: vi.fn(async () => waited),
     recoverLost: vi.fn(async () => []),
     linkTerminalToolCallLog: vi.fn(async (_id, terminalToolCallLogId) =>
@@ -59,22 +86,25 @@ function operations(waited: ToolOperationRecord): ToolOperations {
 }
 
 describe('safe ToolOperations handoff', () => {
-  it('does not yield before the exact 45 second boundary', async () => {
+  it('blocks through the exact 45 second boundary without yielding', async () => {
     vi.useFakeTimers();
     try {
       const running = record();
-      const toolOperations = operations(running);
-      toolOperations.start = vi.fn(async () => ({
-        id: running.id,
-        wait: vi.fn(async () => running),
-        cancel: vi.fn(async () => running),
-      }));
-      toolOperations.wait = vi.fn(
-        async (_id, options) =>
-          new Promise<ToolOperationRecord>((resolve) => {
-            setTimeout(() => resolve(running), options.timeoutMs);
-          }),
-      );
+      let releaseWait!: () => void;
+      const waitGate = new Promise<void>((resolve) => {
+        releaseWait = resolve;
+      });
+      const toolOperations = operations(running, {
+        waitUntilSettled: vi.fn(async (): Promise<ToolOperationRecord> => {
+          await waitGate;
+          return {
+            ...running,
+            status: 'succeeded',
+            result: { facts: [], count: 0 },
+            settledAt: new Date('2026-08-27T12:00:45.000Z'),
+          };
+        }),
+      });
       let settled = false;
       const result = executeSafeToolOperation({
         toolOperations,
@@ -90,15 +120,27 @@ describe('safe ToolOperations handoff', () => {
 
       await vi.advanceTimersByTimeAsync(44_999);
       expect(settled).toBe(false);
-      await vi.advanceTimersByTimeAsync(1);
-      await expect(result).resolves.toMatchObject({ kind: 'yielded' });
+      releaseWait();
+      await expect(result).resolves.toMatchObject({
+        kind: 'settled',
+        record: expect.objectContaining({ status: 'succeeded' }),
+      });
+      expect(toolOperations.waitUntilSettled).toHaveBeenCalledWith('toolop_safe_1');
+      expect(toolOperations.wait).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('returns one persisted handle after the safe remote read remains running for 45 seconds', async () => {
-    const toolOperations = operations(record());
+  it('returns the settled MCP result when a safe remote read remains running for 45 seconds', async () => {
+    const settled = record({
+      status: 'succeeded',
+      result: { facts: [{ id: 'fact_1', score: 0.82 }] },
+      settledAt: new Date('2026-08-27T12:00:52.000Z'),
+    });
+    const toolOperations = operations(settled, {
+      waitUntilSettled: vi.fn(async () => settled),
+    });
 
     const result = await executeSafeToolOperation({
       toolOperations,
@@ -108,20 +150,13 @@ describe('safe ToolOperations handoff', () => {
       toolUseId: 'toolu_remote_42',
       input: { query: 'complex nested query', filters: { subject: 'physics' } },
       hardDeadlineAt: new Date('2026-08-27T12:05:00.000Z'),
-      yieldAfterMs: 45_000,
       execute: vi.fn(async () => ({ facts: [{ id: 'fact_1', score: 0.82 }] })),
     });
 
-    expect(result).toEqual({
-      kind: 'yielded',
-      operation: {
-        id: 'toolop_safe_1',
-        status: 'running',
-        tool_use_id: 'toolu_remote_42',
-      },
-    });
+    expect(result).toEqual({ kind: 'settled', record: settled });
     expect(toolOperations.start).toHaveBeenCalledTimes(1);
-    expect(toolOperations.wait).toHaveBeenCalledWith('toolop_safe_1', { timeoutMs: 45_000 });
+    expect(toolOperations.waitUntilSettled).toHaveBeenCalledWith('toolop_safe_1');
+    expect(toolOperations.wait).not.toHaveBeenCalled();
   });
 
   it('returns the observed terminal result instead of yielding a second identity', async () => {
@@ -130,7 +165,9 @@ describe('safe ToolOperations handoff', () => {
       result: { facts: [{ id: 'fact_2', memory: 'uses worked examples' }], count: 1 },
       settledAt: new Date('2026-08-27T12:00:12.000Z'),
     });
-    const toolOperations = operations(settled);
+    const toolOperations = operations(settled, {
+      waitUntilSettled: vi.fn(async () => settled),
+    });
 
     const result = await executeSafeToolOperation({
       toolOperations,
@@ -138,7 +175,6 @@ describe('safe ToolOperations handoff', () => {
       taskRunId: 'task_owner',
       toolName: 'remote_reader',
       input: { query: 'worked examples' },
-      yieldAfterMs: 45_000,
       execute: vi.fn(async () => ({ facts: [], count: 0 })),
     });
 
@@ -157,23 +193,38 @@ describe('safe ToolOperations handoff', () => {
 
     await expect(
       executeSafeToolOperation({
-        toolOperations: operations(lost),
+        toolOperations: operations(lost, { waitUntilSettled: vi.fn(async () => lost) }),
         sessionId: 'session_owner',
         taskRunId: 'task_owner',
         toolName: 'remote_writer',
         input: { target: 'external' },
-        yieldAfterMs: 45_000,
         execute: vi.fn(async () => ({ ok: true })),
       }),
     ).resolves.toEqual({ kind: 'settled', record: lost });
   });
 
   it.each(['system', 'user'] as const)(
-    'routes parent %s cancellation through the owned cancel seam',
+    'routes parent %s cancellation through the owned cancel seam while blocking',
     async (requestedBy) => {
       const controller = new AbortController();
-      const toolOperations = operations(record());
-      const result = await executeSafeToolOperation({
+      const running = record();
+      let releaseWait!: () => void;
+      const waitGate = new Promise<void>((resolve) => {
+        releaseWait = resolve;
+      });
+      const toolOperations = operations(running, {
+        waitUntilSettled: vi.fn(async (): Promise<ToolOperationRecord> => {
+          await waitGate;
+          return {
+            ...running,
+            status: 'cancelled',
+            cancelledBy: requestedBy,
+            error: { code: 'cancelled', message: 'Remote read cancelled by its owner' },
+            settledAt: new Date('2026-08-27T12:00:30.000Z'),
+          };
+        }),
+      });
+      const result = executeSafeToolOperation({
         toolOperations,
         sessionId: 'session_owner',
         taskRunId: 'task_owner',
@@ -182,12 +233,13 @@ describe('safe ToolOperations handoff', () => {
         cancellationSignals: [{ signal: controller.signal, requestedBy }],
         execute: vi.fn(async () => ({ facts: [], count: 0 })),
       });
-      expect(result.kind).toBe('yielded');
 
       controller.abort();
       await vi.waitFor(() => {
         expect(toolOperations.cancel).toHaveBeenCalledWith('toolop_safe_1', { requestedBy });
       });
+      releaseWait();
+      await expect(result).resolves.toMatchObject({ kind: 'settled' });
     },
   );
 
@@ -195,8 +247,24 @@ describe('safe ToolOperations handoff', () => {
     const systemController = new AbortController();
     const userController = new AbortController();
     userController.signal.addEventListener('abort', () => systemController.abort(), { once: true });
-    const toolOperations = operations(record());
-    await executeSafeToolOperation({
+    const running = record();
+    let releaseWait!: () => void;
+    const waitGate = new Promise<void>((resolve) => {
+      releaseWait = resolve;
+    });
+    const toolOperations = operations(running, {
+      waitUntilSettled: vi.fn(async (): Promise<ToolOperationRecord> => {
+        await waitGate;
+        return {
+          ...running,
+          status: 'cancelled',
+          cancelledBy: 'user',
+          error: { code: 'cancelled', message: 'Remote read cancelled by its owner' },
+          settledAt: new Date('2026-08-27T12:00:30.000Z'),
+        };
+      }),
+    });
+    const result = executeSafeToolOperation({
       toolOperations,
       sessionId: 'session_owner',
       taskRunId: 'task_owner',
@@ -216,6 +284,8 @@ describe('safe ToolOperations handoff', () => {
         requestedBy: 'user',
       });
     });
+    releaseWait();
+    await expect(result).resolves.toMatchObject({ kind: 'settled' });
   });
 });
 

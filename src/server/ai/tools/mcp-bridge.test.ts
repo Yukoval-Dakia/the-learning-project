@@ -120,6 +120,7 @@ function fakeToolOperations(options: {
   terminal?: ToolOperationRecord;
   order?: string[];
 }): ToolOperations {
+  const terminal = options.terminal ?? options.waited;
   return {
     start: vi.fn(async (_input, execute) => {
       void execute({
@@ -129,19 +130,24 @@ function fakeToolOperations(options: {
       return {
         id: options.waited.id,
         wait: vi.fn(async () => options.waited),
+        waitUntilSettled: vi.fn(async () => {
+          options.order?.push('settlement-observed');
+          return terminal;
+        }),
         cancel: vi.fn(async () => options.waited),
       };
     }),
-    get: vi.fn(async () => {
-      options.order?.push('settlement-observed');
-      return options.terminal ?? options.waited;
-    }),
+    get: vi.fn(async () => terminal),
     wait: vi.fn(async () => options.waited),
+    waitUntilSettled: vi.fn(async () => {
+      options.order?.push('settlement-observed');
+      return terminal;
+    }),
     cancel: vi.fn(async () => options.waited),
     linkTerminalToolCallLog: vi.fn(async (_id, terminalToolCallLogId) => {
       options.order?.push('terminal-linked');
       return toolOperationRecord({
-        ...(options.terminal ?? options.waited),
+        ...terminal,
         terminalToolCallLogId,
       });
     }),
@@ -248,7 +254,7 @@ describe('buildMcpServerFromRegistry', () => {
     expect(toolOperations.linkTerminalToolCallLog).toHaveBeenCalledTimes(1);
   });
 
-  it('yields one correlated handle then observes terminal log/link before releasing execution', async () => {
+  it('blocks until settlement and returns the final output in the same MCP response', async () => {
     const order: string[] = [];
     const running = toolOperationRecord();
     const terminal = toolOperationRecord({
@@ -272,7 +278,6 @@ describe('buildMcpServerFromRegistry', () => {
       serverName: 'loom',
       toolNames: ['remote_reader'],
       toolOperations,
-      safeHandoffYieldMs: 45_000,
       claimToolUseId: () => 'toolu_bridge_4',
       onExecuteSettled: () => {
         order.push('execution-released');
@@ -283,23 +288,15 @@ describe('buildMcpServerFromRegistry', () => {
       content: Array<{ text: string }>;
     };
     expect(JSON.parse(response.content[0]?.text ?? '')).toMatchObject({
-      output: {
-        tool_operation: {
-          id: 'toolop_bridge_safe',
-          status: 'running',
-          tool_use_id: 'toolu_bridge_4',
-        },
-      },
+      output: { facts: [{ id: 'fact_late' }], count: 1 },
     });
+    expect(JSON.stringify(response)).not.toContain('tool_operation');
     expect(toolOperations.start).toHaveBeenCalledTimes(1);
-    expect(toolOperations.wait).toHaveBeenCalledWith('toolop_bridge_safe', {
-      timeoutMs: 45_000,
-    });
-    await vi.waitFor(() => {
-      expect(captured.toolCallLogs).toHaveLength(2);
-      expect(toolOperations.linkTerminalToolCallLog).toHaveBeenCalledTimes(1);
-      expect(order).toEqual(['settlement-observed', 'terminal-linked', 'execution-released']);
-    });
+    expect(toolOperations.waitUntilSettled).toHaveBeenCalledWith('toolop_bridge_safe');
+    expect(toolOperations.wait).not.toHaveBeenCalled();
+    expect(captured.toolCallLogs).toHaveLength(1);
+    expect(toolOperations.linkTerminalToolCallLog).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['settlement-observed', 'terminal-linked', 'execution-released']);
     expect(captured.events).toHaveLength(1);
   });
 
