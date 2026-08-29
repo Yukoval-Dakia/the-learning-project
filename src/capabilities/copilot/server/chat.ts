@@ -1242,12 +1242,18 @@ async function runCopilotChatImpl(
     }
   }
   const agentAllowedTools = implicitCorrectionClarification ? [] : allowedTools;
+  let pendingAgentSdkSessionId: string | undefined;
   const foregroundSdkSession = {
     persist: true as const,
     ...(resumeAgentSdkSessionId ? { resume: resumeAgentSdkSessionId } : {}),
-    onSessionId: async (agentSdkSessionId: string) => {
-      await setAgentSdkSessionId(db, sessionId, agentSdkSessionId);
+    onSessionId: (agentSdkSessionId: string) => {
+      pendingAgentSdkSessionId = agentSdkSessionId;
     },
+  };
+  const persistPendingAgentSdkSessionId = async () => {
+    if (pendingAgentSdkSessionId) {
+      await setAgentSdkSessionId(db, sessionId, pendingAgentSdkSessionId);
+    }
   };
 
   // YUK-266/YUK-832 — the free-form path runs the CopilotTask token loop. The
@@ -1327,24 +1333,25 @@ async function runCopilotChatImpl(
           candidateComplete = false;
           streamError = streamResult.error;
         }
-        return;
+      } else {
+        const result = await run('CopilotTask', runInput, {
+          db,
+          mcpServers,
+          allowedTools: agentAllowedTools,
+          taskRunId,
+          lifecycleAbortController,
+          sdkSession: foregroundSdkSession,
+          ...(deps.providerSessionDeadlineAt !== undefined
+            ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+            : {}),
+          hooks: sdkHooks,
+          // YUK-284 (C2) — see streaming branch above (spread-when-present).
+          ...(copilotSkills ? { skills: copilotSkills } : {}),
+        });
+        replyText = result.text;
+        replyRunId = result.task_run_id;
       }
-      const result = await run('CopilotTask', runInput, {
-        db,
-        mcpServers,
-        allowedTools: agentAllowedTools,
-        taskRunId,
-        lifecycleAbortController,
-        sdkSession: foregroundSdkSession,
-        ...(deps.providerSessionDeadlineAt !== undefined
-          ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
-          : {}),
-        hooks: sdkHooks,
-        // YUK-284 (C2) — see streaming branch above (spread-when-present).
-        ...(copilotSkills ? { skills: copilotSkills } : {}),
-      });
-      replyText = result.text;
-      replyRunId = result.task_run_id;
+      await persistPendingAgentSdkSessionId();
     };
 
     try {

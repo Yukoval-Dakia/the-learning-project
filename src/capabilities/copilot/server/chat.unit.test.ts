@@ -3603,6 +3603,7 @@ describe('runCopilotChat — Agent SDK session persist/resume (YUK-936)', () => 
 
   it('resume failure clears stored SDK session id', async () => {
     const clearAgentSdkSessionIdFn = vi.fn(async () => {});
+    const setAgentSdkSessionIdFn = vi.fn(async () => {});
     const runAgentTaskFn = vi.fn(async () => {
       throw new Error('resume session not found');
     });
@@ -3615,10 +3616,77 @@ describe('runCopilotChat — Agent SDK session persist/resume (YUK-936)', () => 
           runAgentTaskFn,
           getAgentSdkSessionIdFn: async () => 'dead_sdk_id',
           clearAgentSdkSessionIdFn,
+          setAgentSdkSessionIdFn,
         },
       ),
     ).rejects.toThrow('resume session not found');
     expect(clearAgentSdkSessionIdFn).toHaveBeenCalledTimes(1);
+    expect(setAgentSdkSessionIdFn).not.toHaveBeenCalled();
+  });
+
+  it('cold-start throw after onSessionId does not persist agent_sdk_session_id', async () => {
+    const setAgentSdkSessionIdFn = vi.fn(async () => {});
+    const runAgentTaskFn = vi.fn(
+      async (
+        _kind: string,
+        _input: unknown,
+        ctx: { sdkSession?: { onSessionId?: (id: string) => void } },
+      ) => {
+        ctx.sdkSession?.onSessionId?.('sdk-init-only');
+        throw new Error('query failed after init');
+      },
+    );
+    await expect(
+      runCopilotChat(
+        {} as never,
+        { user_message: '你好', triggered_by: 'chat' },
+        {
+          ...baseDeps,
+          runAgentTaskFn,
+          getAgentSdkSessionIdFn: async () => null,
+          setAgentSdkSessionIdFn,
+        },
+      ),
+    ).rejects.toThrow('query failed after init');
+    expect(setAgentSdkSessionIdFn).not.toHaveBeenCalled();
+  });
+
+  it('successful cold start persists SDK session id only after the agent call resolves', async () => {
+    const setAgentSdkSessionIdFn = vi.fn(async () => {});
+    const runAgentTaskFn = vi.fn(
+      async (
+        _kind: string,
+        _input: unknown,
+        ctx: {
+          sdkSession?: { onSessionId?: (id: string) => void };
+          taskRunId?: string;
+        },
+      ) => {
+        ctx.sdkSession?.onSessionId?.('sdk-success-id');
+        return {
+          task_run_id: ctx.taskRunId ?? 't',
+          text: 'OK',
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 2 },
+        };
+      },
+    );
+    await runCopilotChat(
+      {} as never,
+      { user_message: '你好', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        getAgentSdkSessionIdFn: async () => null,
+        setAgentSdkSessionIdFn,
+      },
+    );
+    expect(setAgentSdkSessionIdFn).toHaveBeenCalledTimes(1);
+    expect(setAgentSdkSessionIdFn).toHaveBeenCalledWith(
+      expect.anything(),
+      'ls_sdk',
+      'sdk-success-id',
+    );
   });
 
   it('conversation mutex serializes overlapping POSTs on the same learning_session', async () => {
