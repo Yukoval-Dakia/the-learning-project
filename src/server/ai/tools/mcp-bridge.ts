@@ -160,95 +160,6 @@ function formatToolOperationFailure(record: ToolOperationRecord): string {
   return `${record.error?.code ?? record.status}: ${record.error?.message ?? 'operation did not succeed'}${risk}`;
 }
 
-async function observeSafeToolOperationTerminal(options: {
-  toolOperations: ReturnType<typeof getProcessToolOperations>;
-  operationId: string;
-  ctx: ToolContext;
-  taskKind: string;
-  toolName: string;
-  effect: ToolEffect;
-  input: Record<string, unknown>;
-  mirrorEvent: boolean;
-  summarize(record: ToolOperationRecord): string;
-  onOperationRunning?: () => Promise<void> | void;
-  onExecutionSettled?: () => Promise<void> | void;
-}): Promise<void> {
-  try {
-    let record = await options.toolOperations.get(options.operationId);
-    while (record.status === 'running') {
-      try {
-        await options.onOperationRunning?.();
-      } catch (error) {
-        console.error('[mcp-bridge] safe ToolOperations running observation failed', {
-          operation_id: options.operationId,
-          task_run_id: options.ctx.taskRunId,
-          err: error,
-        });
-      }
-      await new Promise<void>((resolve) => setTimeout(resolve, 250));
-      record = await options.toolOperations.get(options.operationId);
-    }
-    const errorReason =
-      record.status === 'succeeded' ? undefined : formatToolOperationFailure(record);
-    const toolCallLogId = await writeToolCallLog(options.ctx.db, {
-      task_run_id: options.ctx.taskRunId,
-      task_kind: options.taskKind,
-      tool_name: options.toolName,
-      effect: options.effect,
-      input_json: options.input,
-      output_json: errorReason ? { error: errorReason } : record.result,
-      error_reason: errorReason,
-      iteration: 0,
-      latency_ms: Math.max(
-        0,
-        (record.settledAt ?? new Date()).getTime() - record.startedAt.getTime(),
-      ),
-      cost: 0,
-    });
-    if (options.mirrorEvent) {
-      const summary = options.summarize(record);
-      const mirrorId = `tool_use_${createId()}`;
-      await writeEvent(options.ctx.db, {
-        id: mirrorId,
-        session_id: options.ctx.sessionId ?? null,
-        actor_kind: 'agent',
-        actor_ref: options.ctx.callerActor.ref,
-        action: 'tool_use',
-        subject_kind: 'query',
-        subject_id: mirrorId,
-        outcome: errorReason ? 'failure' : 'success',
-        payload: {
-          tool_name: options.toolName,
-          args: options.input,
-          result_summary: summary,
-          ...(errorReason ? { error_reason: errorReason } : {}),
-        },
-        caused_by_event_id: options.ctx.causedByEventId ?? null,
-        task_run_id: options.ctx.taskRunId,
-        cost_micro_usd: 0,
-      });
-      await setToolCallLogMirroredEventId(options.ctx.db, toolCallLogId, mirrorId);
-    }
-    await options.toolOperations.linkTerminalToolCallLog(record.id, toolCallLogId);
-  } catch (error) {
-    console.error('[mcp-bridge] safe ToolOperations terminal observation failed', {
-      operation_id: options.operationId,
-      task_run_id: options.ctx.taskRunId,
-      err: error,
-    });
-  } finally {
-    try {
-      await options.onExecutionSettled?.();
-    } catch (error) {
-      console.error('[mcp-bridge] deferred onExecuteSettled failed', {
-        operation_id: options.operationId,
-        task_run_id: options.ctx.taskRunId,
-        err: error,
-      });
-    }
-  }
-}
-
 function proposalEffectContract(
   name: string,
   effect: ToolEffect,
@@ -338,12 +249,10 @@ export interface BuildMcpServerOptions {
   taskKind?: string;
   claimToolUseId?: (toolName: string, input: unknown) => string | undefined;
   toolOperations?: ToolOperations;
-  safeHandoffYieldMs?: number;
   cancellationSignals?: ReadonlyArray<{
     signal: AbortSignal;
     requestedBy: 'system' | 'user';
   }>;
-  onSafeOperationRunning?: () => Promise<void> | void;
   /** Optional per-call runtime gate. Return a reason string to block execution. */
   beforeExecute?: (
     tool: ToolExecutionGateInput,
@@ -416,7 +325,6 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
       let execInput: unknown = rawArgs;
       let truncationNote: object | null = null;
       let executionStarted = false;
-      let deferredExecutionSettled = false;
       let safeOperation: ToolOperationRecord | undefined;
       let safeToolOperations: ToolOperations | undefined;
       let correlatedToolUseId: string | undefined;
@@ -488,7 +396,6 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
                   ? { hardDeadlineAt: new Date(ctx.providerSessionDeadlineAt) }
                   : {}),
                 cancellationSignals: opts.cancellationSignals,
-                yieldAfterMs: opts.safeHandoffYieldMs,
                 execute: async (signal) => {
                   const remoteOutput = await dt.execute({ ...ctx, signal }, execInput as never);
                   const parsed = dt.outputSchema.safeParse(remoteOutput);
@@ -500,53 +407,29 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
                 },
               })
             : undefined;
-          if (safeExecution?.kind === 'yielded') {
-            if (!toolOperations) throw new Error('safe ToolOperations owner is unavailable');
-            output = { tool_operation: safeExecution.operation };
-            deferredExecutionSettled = true;
-            void observeSafeToolOperationTerminal({
-              toolOperations,
-              operationId: safeExecution.operation.id,
-              ctx,
-              taskKind,
-              toolName: dt.name,
-              effect: dt.effect,
-              input: parsedInput as Record<string, unknown>,
-              mirrorEvent: __resolveMirrorPolicy(dt.mirrorEvent, ctx.callerActor, dt.effect),
-              summarize: (record) =>
-                record.status === 'succeeded'
-                  ? dt.summarize(parsedInput as never, record.result as never)
-                  : `error: ${formatToolOperationFailure(record)}`,
-              onOperationRunning: opts.onSafeOperationRunning,
-              onExecutionSettled: opts.onExecuteSettled
-                ? () => opts.onExecuteSettled?.(gateInput)
-                : undefined,
-            });
+          safeOperation = safeExecution?.record;
+          const rawOutput = safeOperation
+            ? safeOperation.status === 'succeeded'
+              ? safeOperation.result
+              : null
+            : await dt.execute(ctx, execInput as never);
+          if (safeOperation && safeOperation.status !== 'succeeded') {
+            errorReason = formatToolOperationFailure(safeOperation);
+          }
+          if (errorReason !== undefined) throw new Error(errorReason);
+          // YUK-862 / F3.1 — global output schema enforcement. Runs immediately
+          // after execute, before context-budget decoration, onResult, summarize,
+          // logging, mirroring, or SDK return.
+          const parseResult = dt.outputSchema.safeParse(rawOutput);
+          if (parseResult.success) {
+            output = parseResult.data;
+            effectContract = proposalEffectContract(dt.name, dt.effect, output);
           } else {
-            safeOperation = safeExecution?.record;
-            const rawOutput = safeOperation
-              ? safeOperation.status === 'succeeded'
-                ? safeOperation.result
-                : null
-              : await dt.execute(ctx, execInput as never);
-            if (safeOperation && safeOperation.status !== 'succeeded') {
-              errorReason = formatToolOperationFailure(safeOperation);
-            }
-            if (errorReason !== undefined) throw new Error(errorReason);
-            // YUK-862 / F3.1 — global output schema enforcement. Runs immediately
-            // after execute, before context-budget decoration, onResult, summarize,
-            // logging, mirroring, or SDK return.
-            const parseResult = dt.outputSchema.safeParse(rawOutput);
-            if (parseResult.success) {
-              output = parseResult.data;
-              effectContract = proposalEffectContract(dt.name, dt.effect, output);
-            } else {
-              // Redact actual values; only emit field paths for machine readability.
-              const paths = parseResult.error.issues
-                .map((iss) => iss.path.join('.') || '(root)')
-                .join(', ');
-              errorReason = `output_schema_invalid: ${paths}`;
-            }
+            // Redact actual values; only emit field paths for machine readability.
+            const paths = parseResult.error.issues
+              .map((iss) => iss.path.join('.') || '(root)')
+              .join(', ');
+            errorReason = `output_schema_invalid: ${paths}`;
           }
         } catch (err) {
           errorReason = err instanceof Error ? err.message : String(err);
@@ -589,9 +472,7 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
 
       if (errorReason === undefined) {
         try {
-          summary = deferredExecutionSettled
-            ? 'remote read still running'
-            : dt.summarize(parsedInput as never, output as never);
+          summary = dt.summarize(parsedInput as never, output as never);
         } catch (err) {
           const summaryError = err instanceof Error ? err.message : String(err);
           summary = `summary unavailable: ${summaryError}`;
@@ -608,7 +489,6 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
       // YUK-457 — same resolution as the persisted mirror below: a call that
       // will not mirror must not emit a live done-state card either.
       if (
-        !deferredExecutionSettled &&
         opts.onToolComplete &&
         __resolveMirrorPolicy(dt.mirrorEvent, ctx.callerActor, dt.effect)
       ) {
@@ -665,10 +545,7 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
       // per mirrorEvent policy. Schema (`ToolUseQuery`) requires
       // actor_kind='agent', so user-fired calls never mirror regardless of
       // the tool's policy.
-      if (
-        !deferredExecutionSettled &&
-        __resolveMirrorPolicy(dt.mirrorEvent, ctx.callerActor, dt.effect)
-      ) {
+      if (__resolveMirrorPolicy(dt.mirrorEvent, ctx.callerActor, dt.effect)) {
         const mirrorPayload: Record<string, unknown> = {
           tool_name: dt.name,
           args: (parsedInput ?? {}) as Record<string, unknown>,
@@ -714,7 +591,7 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
         }
       }
 
-      if (executionStarted && !deferredExecutionSettled) {
+      if (executionStarted) {
         try {
           await opts.onExecuteSettled?.(gateInput);
         } catch (settleErr) {

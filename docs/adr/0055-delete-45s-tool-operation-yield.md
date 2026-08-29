@@ -1,6 +1,6 @@
 # ADR-0055 — Delete 45s tool_operation yield; block in live SDK query
 
-**Status:** Proposed
+**Status:** Accepted
 **Decision source:** YUK-937; Eng Lead architecture pass at main `24b84d4491b0195a0eb863b36d24863c2553c905`
 **Related:** ADR-0041 · ADR-0052 · ADR-0053 · ADR-0054 · YUK-842 · YUK-575 · YUK-927 / YUK-931
 (historical F5 1A; do not reopen)
