@@ -44,10 +44,12 @@ Foreground inline `executeSafeToolOperation` waits for settlement (or `hard_dead
 - Do **not** extend the 90s HTTP provider-session budget (`HTTP_PROVIDER_SESSION_BUDGET_MS` in
   `src/kernel/http.ts`) in this ticket. A read that overruns remaining budget fails closed via existing
   `hard_deadline_exceeded`.
-- If cloudflared/~100s idle or the 90s budget kills the POST: close/release that YUK-842 family. The next
-  POST uses ADR-0054 `resume` of `learning_session.agent_sdk_session_id` (new `task_run_id`, charge at
-  acquire, conversation mutex, omit fold on resume hit). Do **not** reintroduce ToolOperations yield as the
-  reconnect path.
+- If cloudflared/~100s idle or the 90s budget kills the POST: close/release that YUK-842 family. When that
+  kill happens mid-`search_memory_facts` (or any remaining safeHandoff read), fence/cancel the in-flight
+  `tool_operation` so the next ADR-0054 resume does **not** double-pay the embedding. Do **not** reintroduce
+  `{ kind: 'yielded' }` as the reconnect path. The next POST uses ADR-0054 `resume` of
+  `learning_session.agent_sdk_session_id` (new `task_run_id`, charge at acquire, conversation mutex, omit fold
+  on resume hit). Resume is still a new admitted family, not ToolOperations yield.
 - `persistSession` remains chat.ts-owned `sdkSession`, never `kind==='CopilotTask'`.
 
 ### 2. Durable stays explicit, but also stop yielding
