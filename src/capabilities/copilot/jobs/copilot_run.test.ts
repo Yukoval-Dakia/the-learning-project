@@ -77,6 +77,7 @@ type AgentCtx = {
   allowedTools?: string[];
   skills?: string[];
   budgetOverride?: { maxIterations?: number; timeoutMs?: number };
+  sdkSession?: { persist: boolean; resume?: string };
   providerSessionDeadlineAt?: number;
   agents?: Record<string, { tools?: string[] }>;
   hooks?: { PreToolUse?: Array<{ hooks: Array<(...args: unknown[]) => Promise<unknown>> }> };
@@ -1967,6 +1968,7 @@ describe('runCopilotRun', () => {
       timeoutMs: DURABLE_BUDGET.timeoutMs,
     });
     expect(ctx.providerSessionDeadlineAt).toBeUndefined();
+    expect(ctx.sdkSession).toBeUndefined();
     // MF-A + YUK-290：25 只是 warning，60 才是 hard ceiling。
     const opts = (
       buildMcp.mock.calls[0] as unknown as [

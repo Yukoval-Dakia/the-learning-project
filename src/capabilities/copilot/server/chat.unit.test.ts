@@ -3495,3 +3495,250 @@ describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
     expect(serialized).toContain('这是你的题。');
   });
 });
+
+// YUK-936 (ADR-0054) — foreground inline Agent SDK persist/resume wiring.
+describe('runCopilotChat — Agent SDK session persist/resume (YUK-936)', () => {
+  const baseDeps = {
+    findOrCreateConversationFn: async () => ({ sessionId: 'ls_sdk', created: false }),
+    resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+    now: () => new Date('2026-06-07T00:00:00.000Z'),
+    writeEventFn: vi.fn(async (_db: unknown, input: { id: string }) => input.id),
+    buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+  };
+
+  const mkTurn = (role: 'user' | 'ai', text: string) =>
+    ({
+      role,
+      text,
+      at: '2026-06-06T00:00:00.000Z',
+      event_id: `e_${text.slice(0, 4)}`,
+    }) as never;
+
+  it('resume hit: omits conversation_history fold and passes sdkSession resume + persist', async () => {
+    const runAgentTaskFn = vi.fn(async (_kind: string, input: unknown, ctx: unknown) => ({
+      task_run_id: (ctx as { taskRunId?: string }).taskRunId ?? 't2',
+      text: 'OK',
+      finishReason: 'stop' as const,
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    await runCopilotChat(
+      {} as never,
+      { user_message: '继续', triggered_by: 'chat', session_id: 'ls_sdk' },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        getAgentSdkSessionIdFn: async () => 'sdk_sess_prev',
+        loadHistoryFn: async () => [mkTurn('user', 'prior ask'), mkTurn('ai', 'prior reply')],
+      },
+    );
+
+    const input = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[1] as {
+      conversation_history: unknown[];
+    };
+    expect(input.conversation_history).toEqual([]);
+    const ctx = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
+      sdkSession?: { persist: boolean; resume?: string; onSessionId?: unknown };
+      taskRunId?: string;
+    };
+    expect(ctx.sdkSession?.persist).toBe(true);
+    expect(ctx.sdkSession?.resume).toBe('sdk_sess_prev');
+    expect(typeof ctx.sdkSession?.onSessionId).toBe('function');
+    expect(ctx.taskRunId).toMatch(/^copilot_task_/);
+  });
+
+  it('cold start: keeps history fold and persistSession without resume', async () => {
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 't1',
+      text: 'OK',
+      finishReason: 'stop' as const,
+      usage: { inputTokens: 1, outputTokens: 2 },
+    }));
+    await runCopilotChat(
+      {} as never,
+      { user_message: '你好', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        getAgentSdkSessionIdFn: async () => null,
+        loadHistoryFn: async () => [mkTurn('user', 'old')],
+      },
+    );
+
+    const input = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[1] as {
+      conversation_history: Array<{ role: string; text: string }>;
+    };
+    expect(input.conversation_history.length).toBeGreaterThan(0);
+    const ctx = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
+      sdkSession?: { persist: boolean; resume?: string };
+    };
+    expect(ctx.sdkSession?.persist).toBe(true);
+    expect(ctx.sdkSession?.resume).toBeUndefined();
+  });
+
+  it('each POST mints a distinct task_run_id', async () => {
+    const taskRunIds: string[] = [];
+    const runAgentTaskFn = vi.fn(async (_k: string, _i: unknown, ctx: { taskRunId?: string }) => {
+      taskRunIds.push(ctx.taskRunId ?? '');
+      return {
+        task_run_id: ctx.taskRunId ?? 't',
+        text: 'OK',
+        finishReason: 'stop' as const,
+        usage: { inputTokens: 1, outputTokens: 2 },
+      };
+    });
+    await runCopilotChat(
+      {} as never,
+      { user_message: 'a', triggered_by: 'chat' },
+      { ...baseDeps, runAgentTaskFn, getAgentSdkSessionIdFn: async () => null },
+    );
+    await runCopilotChat(
+      {} as never,
+      { user_message: 'b', triggered_by: 'chat' },
+      { ...baseDeps, runAgentTaskFn, getAgentSdkSessionIdFn: async () => 'sdk_1' },
+    );
+    expect(taskRunIds).toHaveLength(2);
+    expect(taskRunIds[0]).not.toBe(taskRunIds[1]);
+    expect(taskRunIds.every((id) => id.startsWith('copilot_task_'))).toBe(true);
+  });
+
+  it('resume failure clears stored SDK session id', async () => {
+    const clearAgentSdkSessionIdFn = vi.fn(async () => {});
+    const setAgentSdkSessionIdFn = vi.fn(async () => {});
+    const runAgentTaskFn = vi.fn(async () => {
+      throw new Error('resume session not found');
+    });
+    await expect(
+      runCopilotChat(
+        {} as never,
+        { user_message: '继续', triggered_by: 'chat' },
+        {
+          ...baseDeps,
+          runAgentTaskFn,
+          getAgentSdkSessionIdFn: async () => 'dead_sdk_id',
+          clearAgentSdkSessionIdFn,
+          setAgentSdkSessionIdFn,
+        },
+      ),
+    ).rejects.toThrow('resume session not found');
+    expect(clearAgentSdkSessionIdFn).toHaveBeenCalledTimes(1);
+    expect(setAgentSdkSessionIdFn).not.toHaveBeenCalled();
+  });
+
+  it('cold-start throw after onSessionId does not persist agent_sdk_session_id', async () => {
+    const setAgentSdkSessionIdFn = vi.fn(async () => {});
+    const runAgentTaskFn = vi.fn(
+      async (
+        _kind: string,
+        _input: unknown,
+        ctx: { sdkSession?: { onSessionId?: (id: string) => void } },
+      ) => {
+        ctx.sdkSession?.onSessionId?.('sdk-init-only');
+        throw new Error('query failed after init');
+      },
+    );
+    await expect(
+      runCopilotChat(
+        {} as never,
+        { user_message: '你好', triggered_by: 'chat' },
+        {
+          ...baseDeps,
+          runAgentTaskFn,
+          getAgentSdkSessionIdFn: async () => null,
+          setAgentSdkSessionIdFn,
+        },
+      ),
+    ).rejects.toThrow('query failed after init');
+    expect(setAgentSdkSessionIdFn).not.toHaveBeenCalled();
+  });
+
+  it('successful cold start persists SDK session id only after the agent call resolves', async () => {
+    const setAgentSdkSessionIdFn = vi.fn(async () => {});
+    const runAgentTaskFn = vi.fn(
+      async (
+        _kind: string,
+        _input: unknown,
+        ctx: {
+          sdkSession?: { onSessionId?: (id: string) => void };
+          taskRunId?: string;
+        },
+      ) => {
+        ctx.sdkSession?.onSessionId?.('sdk-success-id');
+        return {
+          task_run_id: ctx.taskRunId ?? 't',
+          text: 'OK',
+          finishReason: 'stop' as const,
+          usage: { inputTokens: 1, outputTokens: 2 },
+        };
+      },
+    );
+    await runCopilotChat(
+      {} as never,
+      { user_message: '你好', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        getAgentSdkSessionIdFn: async () => null,
+        setAgentSdkSessionIdFn,
+      },
+    );
+    expect(setAgentSdkSessionIdFn).toHaveBeenCalledTimes(1);
+    expect(setAgentSdkSessionIdFn).toHaveBeenCalledWith(
+      expect.anything(),
+      'ls_sdk',
+      'sdk-success-id',
+    );
+  });
+
+  it('conversation mutex serializes overlapping POSTs on the same learning_session', async () => {
+    const { withCopilotConversationQueryMutex } = await import(
+      './copilot-conversation-query-mutex'
+    );
+    let releaseFirst!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const runAgentTaskFn = vi.fn(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      if (runAgentTaskFn.mock.calls.length === 1) {
+        await firstStarted;
+      }
+      inFlight -= 1;
+      return {
+        task_run_id: 't',
+        text: 'OK',
+        finishReason: 'stop' as const,
+        usage: { inputTokens: 1, outputTokens: 2 },
+      };
+    });
+    const p1 = runCopilotChat(
+      {} as never,
+      { user_message: 'first', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        getAgentSdkSessionIdFn: async () => 'sdk_live',
+        withConversationQueryMutexFn: withCopilotConversationQueryMutex,
+      },
+    );
+    await vi.waitFor(() => expect(runAgentTaskFn).toHaveBeenCalledTimes(1));
+    const p2 = runCopilotChat(
+      {} as never,
+      { user_message: 'second', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        getAgentSdkSessionIdFn: async () => 'sdk_live',
+        withConversationQueryMutexFn: withCopilotConversationQueryMutex,
+      },
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    expect(runAgentTaskFn).toHaveBeenCalledTimes(1);
+    releaseFirst();
+    await Promise.all([p1, p2]);
+    expect(maxInFlight).toBe(1);
+    expect(runAgentTaskFn).toHaveBeenCalledTimes(2);
+  });
+});

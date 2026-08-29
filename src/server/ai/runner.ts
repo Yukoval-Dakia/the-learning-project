@@ -280,6 +280,16 @@ export interface RunTaskCtx {
    * Streaming runners retain their existing input-only logging contract.
    */
   autoLogToolCalls?: boolean;
+  /**
+   * YUK-936 (ADR-0054) — foreground inline Copilot only. Set explicitly by
+   * chat.ts; never inferred from task kind or budgetOverride (durable/Mission 202
+   * shares CopilotTask kind). Omitted ⇒ persistSession:false, no resume.
+   */
+  sdkSession?: {
+    persist: boolean;
+    resume?: string;
+    onSessionId?: (sessionId: string) => void | Promise<void>;
+  };
 }
 
 export type RunAgentTaskCtx = RunTaskCtx;
@@ -616,7 +626,19 @@ function buildQueryOptions(
   if (modelProfile.execution.meteredUsd) {
     options.maxBudgetUsd = def.budget.maxCost;
   }
+  if (ctx.sdkSession?.persist) {
+    options.persistSession = true;
+    if (ctx.sdkSession.resume) {
+      options.resume = ctx.sdkSession.resume;
+    }
+  }
   return options;
+}
+
+async function notifySdkSessionId(ctx: RunTaskCtx, msg: { session_id?: string }): Promise<void> {
+  const sessionId = msg.session_id;
+  if (!sessionId || !ctx.sdkSession?.onSessionId) return;
+  await ctx.sdkSession.onSessionId(sessionId);
 }
 
 /**
@@ -717,6 +739,9 @@ async function runTaskAttempt(args: {
     }
     await args.onSdkQueryStarted?.();
     for await (const msg of q) {
+      if (msg.type === 'system' && msg.subtype === 'init') {
+        await notifySdkSessionId(ctx, msg);
+      }
       await notifyTaskEvent(ctx, msg);
       if (msg.type === 'assistant') {
         const observedUsage = sdkTerminal.observeAssistant(msg);
@@ -742,6 +767,7 @@ async function runTaskAttempt(args: {
         continue;
       }
       if (msg.type !== 'result') continue;
+      await notifySdkSessionId(ctx, msg);
       lifecycle.recordTerminalResult(sdkTerminal.fromResult(msg));
       if (msg.subtype === 'success') {
         if (isApiErrorSuccessResult(msg)) {
@@ -1180,6 +1206,9 @@ export async function streamTaskCollecting(
     const consumeSdkQuery = async (q: Query) => {
       let stepStartTime = Date.now();
       for await (const msg of q) {
+        if (msg.type === 'system' && msg.subtype === 'init') {
+          await notifySdkSessionId(ctx, msg);
+        }
         await notifyTaskEvent(ctx, msg);
         if (msg.type === 'assistant') {
           const observedUsage = sdkTerminal.observeAssistant(msg);
@@ -1219,6 +1248,7 @@ export async function streamTaskCollecting(
           continue;
         }
         if (msg.type !== 'result') continue;
+        await notifySdkSessionId(ctx, msg);
         lifecycle.recordTerminalResult(sdkTerminal.fromResult(msg));
         if (msg.subtype === 'success') {
           if (isApiErrorSuccessResult(msg)) {

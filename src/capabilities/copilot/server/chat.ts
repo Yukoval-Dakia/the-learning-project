@@ -22,6 +22,7 @@ import {
   reviewCopilotLearningContent,
   validateCopilotLearningContent,
 } from '@/capabilities/copilot/server/content-validation';
+import { withCopilotConversationQueryMutex } from '@/capabilities/copilot/server/copilot-conversation-query-mutex';
 // YUK-575 (A1) — shared free-form run-input assembler (single execution point for
 // inline + durable copilot runs).
 import {
@@ -642,6 +643,11 @@ export interface CopilotChatDeps {
   onSpawnBudgetObservation?: (observation: SpawnBudgetObservation) => void;
   /** Route-owned absolute edge deadline shared with the runner lifecycle. */
   providerSessionDeadlineAt?: number;
+  /** YUK-936 — foreground inline Copilot Agent SDK session id read/write seams. */
+  getAgentSdkSessionIdFn?: typeof Conversation.getAgentSdkSessionId;
+  setAgentSdkSessionIdFn?: typeof Conversation.setAgentSdkSessionId;
+  clearAgentSdkSessionIdFn?: typeof Conversation.clearAgentSdkSessionId;
+  withConversationQueryMutexFn?: <T>(sessionId: string, fn: () => Promise<T>) => Promise<T>;
   now?: () => Date;
 }
 
@@ -761,6 +767,23 @@ async function runCopilotChatImpl(
     now,
     sessionId: req.session_id,
   });
+  const getAgentSdkSessionId = deps.getAgentSdkSessionIdFn ?? Conversation.getAgentSdkSessionId;
+  const setAgentSdkSessionId = deps.setAgentSdkSessionIdFn ?? Conversation.setAgentSdkSessionId;
+  const clearAgentSdkSessionId =
+    deps.clearAgentSdkSessionIdFn ?? Conversation.clearAgentSdkSessionId;
+  const withConversationQueryMutex =
+    deps.withConversationQueryMutexFn ?? withCopilotConversationQueryMutex;
+  let storedAgentSdkSessionId: string | null = null;
+  try {
+    storedAgentSdkSessionId = await getAgentSdkSessionId(db, sessionId);
+  } catch (err) {
+    storedAgentSdkSessionId = null;
+    console.error('[runCopilotChat] getAgentSdkSessionId failed; cold-starting SDK session', {
+      session_id: sessionId,
+      err,
+    });
+  }
+  const resumeAgentSdkSessionId = storedAgentSdkSessionId ?? undefined;
 
   // YUK-267 (C2) — read conversation_history BEFORE writing the current ask event
   // so the just-asked message is STRUCTURALLY excluded from its own history (no
@@ -801,6 +824,7 @@ async function runCopilotChatImpl(
         ...(req.correction_target_turn_id
           ? { correctionTargetTurnId: req.correction_target_turn_id }
           : {}),
+        ...(resumeAgentSdkSessionId ? { omitConversationHistory: true } : {}),
         now,
       },
       {
@@ -1218,14 +1242,27 @@ async function runCopilotChatImpl(
     }
   }
   const agentAllowedTools = implicitCorrectionClarification ? [] : allowedTools;
+  let pendingAgentSdkSessionId: string | undefined;
+  const foregroundSdkSession = {
+    persist: true as const,
+    ...(resumeAgentSdkSessionId ? { resume: resumeAgentSdkSessionId } : {}),
+    onSessionId: (agentSdkSessionId: string) => {
+      pendingAgentSdkSessionId = agentSdkSessionId;
+    },
+  };
+  const persistPendingAgentSdkSessionId = async () => {
+    if (pendingAgentSdkSessionId) {
+      await setAgentSdkSessionId(db, sessionId, pendingAgentSdkSessionId);
+    }
+  };
 
   // YUK-266/YUK-832 — the free-form path runs the CopilotTask token loop. The
   // streaming runner still collects original chunk boundaries and gracefully
   // resolves partial output, but no candidate prose reaches the client until the
   // typed evidence review and reply persistence below succeed. Non-streaming uses
   // the same convergence gate with runAgentTask.
-  let replyText: string;
-  let replyRunId: string;
+  let replyText: string = '';
+  let replyRunId: string = '';
   let streamError: string | undefined;
   let candidateComplete = true;
   const disposeSubagentCancellation = bindSubagentParentCancellation(db, {
@@ -1237,79 +1274,100 @@ async function runCopilotChatImpl(
     ],
   });
   try {
-    if (streaming) {
-      const streamResult = await streamRun(
-        'CopilotTask',
-        runInput,
-        {
+    const runForegroundCopilotAgent = async () => {
+      if (streaming) {
+        const streamResult = await streamRun(
+          'CopilotTask',
+          runInput,
+          {
+            db,
+            mcpServers,
+            allowedTools: agentAllowedTools,
+            taskRunId,
+            signal: streaming.signal,
+            lifecycleAbortController,
+            hooks: sdkHooks,
+            sdkSession: foregroundSdkSession,
+            ...(deps.providerSessionDeadlineAt !== undefined
+              ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+              : {}),
+            ...(deps.onToolUseEvent
+              ? {
+                  // YUK-457 — the runner emits raw SDK block names (mcp__loom__*)
+                  // before execution; gate the live card on the SAME mirror-policy
+                  // resolution that backs the persisted mirror + done-state card, so
+                  // a 'never'-mirror tool (search_memory_facts) opens no card that
+                  // would vanish on refresh.
+                  onToolUse: (call: {
+                    toolName: string;
+                    input: Record<string, unknown>;
+                    toolUseId?: string;
+                  }) => {
+                    if (
+                      !shouldEmitToolUseForCaller(
+                        call.toolName,
+                        DOMAIN_TOOL_MCP_SERVER_NAME,
+                        callerActor,
+                      )
+                    )
+                      return;
+                    deps.onToolUseEvent?.(call);
+                  },
+                }
+              : {}),
+            // YUK-284 (C2) — spread-when-present: when the copilot SKILL.md is absent
+            // (copilotSkills === undefined) the ctx omits `skills` entirely, byte-for-byte
+            // the pre-C2 shape (runner ctx.skills ?? [] unchanged → no regression).
+            ...(copilotSkills ? { skills: copilotSkills } : {}),
+          },
+          // YUK-832 — a candidate that used evidence readers is not trustworthy
+          // until the no-tool typed validator passes or repairs it. Buffer every
+          // candidate delta here so a later read tool cannot make already-emitted
+          // prose impossible to retract. The reviewed, marker-cleaned reply is
+          // emitted once only after durable conversation persistence succeeds.
+          () => {},
+        );
+        replyText = streamResult.text;
+        replyRunId = streamResult.task_run_id;
+        if (streamResult.partial) {
+          candidateComplete = false;
+          streamError = streamResult.error;
+        }
+      } else {
+        const result = await run('CopilotTask', runInput, {
           db,
           mcpServers,
           allowedTools: agentAllowedTools,
           taskRunId,
-          signal: streaming.signal,
           lifecycleAbortController,
-          hooks: sdkHooks,
+          sdkSession: foregroundSdkSession,
           ...(deps.providerSessionDeadlineAt !== undefined
             ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
             : {}),
-          ...(deps.onToolUseEvent
-            ? {
-                // YUK-457 — the runner emits raw SDK block names (mcp__loom__*)
-                // before execution; gate the live card on the SAME mirror-policy
-                // resolution that backs the persisted mirror + done-state card, so
-                // a 'never'-mirror tool (search_memory_facts) opens no card that
-                // would vanish on refresh.
-                onToolUse: (call: {
-                  toolName: string;
-                  input: Record<string, unknown>;
-                  toolUseId?: string;
-                }) => {
-                  if (
-                    !shouldEmitToolUseForCaller(
-                      call.toolName,
-                      DOMAIN_TOOL_MCP_SERVER_NAME,
-                      callerActor,
-                    )
-                  )
-                    return;
-                  deps.onToolUseEvent?.(call);
-                },
-              }
-            : {}),
-          // YUK-284 (C2) — spread-when-present: when the copilot SKILL.md is absent
-          // (copilotSkills === undefined) the ctx omits `skills` entirely, byte-for-byte
-          // the pre-C2 shape (runner ctx.skills ?? [] unchanged → no regression).
+          hooks: sdkHooks,
+          // YUK-284 (C2) — see streaming branch above (spread-when-present).
           ...(copilotSkills ? { skills: copilotSkills } : {}),
-        },
-        // YUK-832 — a candidate that used evidence readers is not trustworthy
-        // until the no-tool typed validator passes or repairs it. Buffer every
-        // candidate delta here so a later read tool cannot make already-emitted
-        // prose impossible to retract. The reviewed, marker-cleaned reply is
-        // emitted once only after durable conversation persistence succeeds.
-        () => {},
-      );
-      replyText = streamResult.text;
-      replyRunId = streamResult.task_run_id;
-      if (streamResult.partial) {
-        candidateComplete = false;
-        streamError = streamResult.error;
+        });
+        replyText = result.text;
+        replyRunId = result.task_run_id;
       }
-    } else {
-      const result = await run('CopilotTask', runInput, {
-        db,
-        mcpServers,
-        allowedTools: agentAllowedTools,
-        taskRunId,
-        lifecycleAbortController,
-        ...(deps.providerSessionDeadlineAt !== undefined
-          ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
-          : {}),
-        hooks: sdkHooks,
-        // YUK-284 (C2) — see streaming branch above (spread-when-present).
-        ...(copilotSkills ? { skills: copilotSkills } : {}),
-      });
-      replyText = result.text;
-      replyRunId = result.task_run_id;
+      await persistPendingAgentSdkSessionId();
+    };
+
+    try {
+      await withConversationQueryMutex(sessionId, runForegroundCopilotAgent);
+    } catch (agentError) {
+      if (resumeAgentSdkSessionId) {
+        try {
+          await clearAgentSdkSessionId(db, sessionId);
+        } catch (clearErr) {
+          console.error('[runCopilotChat] clearAgentSdkSessionId failed after resume error', {
+            session_id: sessionId,
+            err: clearErr,
+          });
+        }
+      }
+      throw agentError;
     }
     // Strip presentation-only metadata before the sealed review. The validator,
     // persisted domain event, terminal envelope and delayed public DELTA must all
