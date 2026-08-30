@@ -17,9 +17,7 @@ const FOREGROUND_MAILBOX_POLL_SUFFIXES = ['launch_researcher', 'get_subagent', '
 function foregroundInlineAllowedTools(baseTools: readonly string[]): string[] {
   const filtered = baseTools.filter(
     (tool) =>
-      !FOREGROUND_MAILBOX_POLL_SUFFIXES.some(
-        (name) => tool === name || tool.endsWith(`__${name}`),
-      ),
+      !FOREGROUND_MAILBOX_POLL_SUFFIXES.some((name) => tool === name || tool.endsWith(`__${name}`)),
   );
   return filtered.includes('Task') ? [...filtered] : [...filtered, 'Task'];
 }
@@ -944,7 +942,9 @@ describe('runCopilotChat (two-surface routing)', () => {
       for (const tool of TAVILY_MCP_ALLOWED_TOOLS) {
         expect(ctx.allowedTools).not.toContain(tool);
       }
-      expect(ctx.allowedTools).toEqual(foregroundInlineAllowedTools(resolveMcpAllowedTools('copilot')));
+      expect(ctx.allowedTools).toEqual(
+        foregroundInlineAllowedTools(resolveMcpAllowedTools('copilot')),
+      );
     });
 
     it('defaults to the env-gated builder: TAVILY_API_KEY present → tavily wired', async () => {
