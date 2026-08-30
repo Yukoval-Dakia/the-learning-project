@@ -1,6 +1,7 @@
 # ADR-0053 — Copilot durable subagent mailbox
 
-**Status:** Accepted
+**Status:** Accepted — **superseded for foreground inline Copilot by ADR-0056** (mailbox continuation
+retired on that path; `subagent_run` noun stays until B3)
 **Decision source:** owner choice 2B; YUK-932
 **Related:** ADR-0051 · ADR-0052 · YUK-927 · YUK-928 · YUK-929 · YUK-931
 
