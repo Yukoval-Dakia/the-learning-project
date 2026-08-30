@@ -98,7 +98,11 @@ import {
 } from '@/server/ai/mcp/tavily';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
-import type { SpawnBudgetObservation } from '@/server/ai/spawn-contract';
+import {
+  SPAWN_TOOL_NAME,
+  type SpawnBudgetObservation,
+  createSpawnContract,
+} from '@/server/ai/spawn-contract';
 import {
   type SdkMcpServer,
   type ToolExecutionResultObservation,
@@ -117,7 +121,7 @@ import { Conversation } from '@/server/session';
 // 散文兜底). Only the free-form CopilotTask token loop loads it; the behavior-pack
 // (teaching/solve/quiz) service-call paths do NOT.
 import { resolveCopilotSkills } from '@/subjects/copilot-skills';
-
+import { copilotTaskSpec } from '../tasks/agent';
 import type {
   CopilotChatRequestT,
   CopilotChatTriggerKind,
@@ -125,8 +129,14 @@ import type {
 } from './chat-contracts';
 import { selectAsksWithMaterializingToolCall } from './materializing-tools';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
-import { bindSubagentParentCancellation } from './subagent-mailbox';
-import type { CopilotSubtaskEvent } from './subagents';
+import { bindSubagentParentCancellation, handleNativeSubagentTaskEvent } from './subagent-mailbox';
+import {
+  type CopilotSubtaskEvent,
+  type CopilotTaskLifecycleMessage,
+  buildCopilotSubagents,
+  createCopilotSubtaskProjector,
+  isCopilotSubagentEnabled,
+} from './subagents';
 
 export * from './chat-contracts';
 
@@ -665,6 +675,29 @@ function selectActorRef(triggeredBy: CopilotChatTriggerKind): string {
   return triggeredBy === 'chip' ? 'agent:copilot_chip' : 'agent:copilot';
 }
 
+const FOREGROUND_MAILBOX_POLL_TOOLS = new Set([
+  'launch_researcher',
+  'get_subagent',
+  'wait_subagent',
+]);
+
+function isForegroundMailboxPollTool(toolName: string): boolean {
+  if (FOREGROUND_MAILBOX_POLL_TOOLS.has(toolName)) return true;
+  const suffix = toolName.includes('__') ? toolName.split('__').at(-1) : toolName;
+  return suffix !== undefined && FOREGROUND_MAILBOX_POLL_TOOLS.has(suffix);
+}
+
+function buildForegroundInlineAllowedTools(
+  baseAllowedTools: readonly string[],
+  subagentEnabled: boolean,
+): string[] {
+  const filtered = baseAllowedTools.filter((tool) => !isForegroundMailboxPollTool(tool));
+  if (subagentEnabled && !filtered.includes(SPAWN_TOOL_NAME)) {
+    return [...filtered, SPAWN_TOOL_NAME];
+  }
+  return [...filtered];
+}
+
 const COPILOT_CORRECTION_INTENT_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(
   CopilotImplicitCorrectionIntentSchema,
 );
@@ -1182,8 +1215,49 @@ async function runCopilotChatImpl(
     ...resolveMcpAllowedTools(surface),
     ...(tavilyCfg ? TAVILY_MCP_ALLOWED_TOOLS : []),
   ];
-  const allowedTools = baseAllowedTools;
-  const sdkHooks = toolUseCorrelation.prepend();
+  const copilotSubagentEnabled = deps.copilotSubagentEnabled ?? isCopilotSubagentEnabled();
+  const allowedTools = buildForegroundInlineAllowedTools(baseAllowedTools, copilotSubagentEnabled);
+  const parentMaxTurns = copilotTaskSpec.definition.budget.maxIterations;
+  const spawnContract = copilotSubagentEnabled
+    ? createSpawnContract({
+        enabled: true,
+        agents: buildCopilotSubagents({
+          parentAllowedTools: allowedTools.filter((tool) => tool !== SPAWN_TOOL_NAME),
+          parentMaxTurns,
+        }),
+        onBudgetObservation: deps.onSpawnBudgetObservation,
+      })
+    : undefined;
+  const subtaskProjector = copilotSubagentEnabled ? createCopilotSubtaskProjector() : undefined;
+  const sdkHooks = spawnContract
+    ? toolUseCorrelation.prepend(spawnContract.hooks)
+    : toolUseCorrelation.prepend();
+  const handleTaskEvent = async (message: CopilotTaskLifecycleMessage) => {
+    if (subtaskProjector) {
+      const projected = subtaskProjector(message);
+      if (projected) await deps.onSubtaskEvent?.(projected);
+    }
+    if (causedByEventId) {
+      await handleNativeSubagentTaskEvent(db, message, {
+        sessionId,
+        parentTurnEventId: causedByEventId,
+        parentTaskRunId: taskRunId,
+      }).catch((error) => {
+        console.error('[copilot] native subagent projection failed', {
+          session_id: sessionId,
+          parent_task_run_id: taskRunId,
+          error,
+        });
+      });
+    }
+  };
+  const foregroundSubagentCtx = spawnContract
+    ? {
+        agents: spawnContract.agents,
+        canUseTool: spawnContract.canUseTool,
+        onTaskEvent: handleTaskEvent,
+      }
+    : {};
 
   // YUK-575 (A1) — the free-form run input assembled by the shared assembler above
   // (before the ask write, read-before-write). When `freeFormRunInput` is undefined
@@ -1319,6 +1393,7 @@ async function runCopilotChatImpl(
             // (copilotSkills === undefined) the ctx omits `skills` entirely, byte-for-byte
             // the pre-C2 shape (runner ctx.skills ?? [] unchanged → no regression).
             ...(copilotSkills ? { skills: copilotSkills } : {}),
+            ...foregroundSubagentCtx,
           },
           // YUK-832 — a candidate that used evidence readers is not trustworthy
           // until the no-tool typed validator passes or repairs it. Buffer every
@@ -1347,6 +1422,7 @@ async function runCopilotChatImpl(
           hooks: sdkHooks,
           // YUK-284 (C2) — see streaming branch above (spread-when-present).
           ...(copilotSkills ? { skills: copilotSkills } : {}),
+          ...foregroundSubagentCtx,
         });
         replyText = result.text;
         replyRunId = result.task_run_id;

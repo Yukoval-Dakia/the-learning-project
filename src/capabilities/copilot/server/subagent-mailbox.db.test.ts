@@ -450,3 +450,59 @@ describe('Copilot subagent mailbox', () => {
     expect(history.map((turn) => turn.event_id)).not.toContain('ask_history_later');
   });
 });
+
+describe('Copilot native Task subagent projection (ADR-0056)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('records native Task lifecycle without minting copilot_continuation', async () => {
+    await seedParent({ id: 'ask_native_task', sessionId: 'session_native_task' });
+    const parentTaskRunId = 'root_task_native_task';
+    const started = await mailbox.recordNativeSubagentStarted(testDb(), {
+      sessionId: 'session_native_task',
+      parentTurnEventId: 'ask_native_task',
+      parentTaskRunId,
+      sdkTaskId: 'sdk-task-native-01',
+      objective: 'Cross-check three monotonicity mistakes against the knowledge graph.',
+    });
+    expect(started?.status).toBe('running');
+
+    const settled = await mailbox.settleNativeSubagentRun(testDb(), {
+      sessionId: 'session_native_task',
+      sdkTaskId: 'sdk-task-native-01',
+      outcome: {
+        status: 'succeeded',
+        result: 'The learner confuses stationary points with extrema.',
+      },
+    });
+    expect(settled?.status).toBe('succeeded');
+
+    const continuations = await testDb().select().from(copilot_continuation);
+    expect(continuations).toHaveLength(0);
+    const resultEvents = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:subagent_run_settled'));
+    expect(resultEvents).toHaveLength(1);
+  });
+
+  it('keeps worker mailbox settle minting continuation for durable launches', async () => {
+    await seedParent({ id: 'ask_worker_mailbox', sessionId: 'session_worker_mailbox' });
+    const launched = await mailbox.launchSubagentRun(testDb(), {
+      sessionId: 'session_worker_mailbox',
+      parentTurnEventId: 'ask_worker_mailbox',
+      parentTaskRunId: 'root_worker_mailbox',
+      launchKey: 'worker-mailbox-v1',
+      objective: 'Worker-owned durable researcher objective.',
+    });
+    const claimed = await mailbox.claimSubagentRun(testDb(), launched.record.id);
+    if (!claimed || 'lost' in claimed) throw new Error('expected worker claim');
+    await mailbox.settleSubagentRun(testDb(), launched.record.id, claimed.claimToken, {
+      status: 'succeeded',
+      result: 'Worker path still mints one continuation.',
+    });
+    const continuations = await testDb().select().from(copilot_continuation);
+    expect(continuations).toHaveLength(1);
+  });
+});

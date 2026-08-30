@@ -33,7 +33,7 @@ describe('buildCopilotSubagents', () => {
       'Task',
     ];
 
-    const agents = buildCopilotSubagents({ parentAllowedTools });
+    const agents = buildCopilotSubagents({ parentAllowedTools, parentMaxTurns: 6 });
     expect(Object.keys(agents)).toEqual([COPILOT_SUBAGENT_NAME]);
 
     const researcher = agents[COPILOT_SUBAGENT_NAME];
@@ -60,6 +60,7 @@ describe('buildCopilotSubagents', () => {
       ]),
     );
     expect(researcher.mcpServers).toEqual(['loom', 'tavily']);
+    expect(researcher.maxTurns).toBe(6);
     expect(researcher.background).toBe(false);
     expect(researcher.prompt).toContain('只把结论交还给 Copilot');
     expect(researcher.prompt).toContain('不得调用 Task');
@@ -69,6 +70,7 @@ describe('buildCopilotSubagents', () => {
   it('does not invent tools or MCP servers when the parent has only a narrow local read surface', () => {
     const agents = buildCopilotSubagents({
       parentAllowedTools: ['mcp__loom__query_events', 'mcp__loom__propose_learning_item_archive'],
+      parentMaxTurns: 4,
     });
     const researcher = agents[COPILOT_SUBAGENT_NAME];
 

@@ -5,6 +5,7 @@ import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, copilot_continuation, event, subagent_run } from '@/db/schema';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { writeEvent } from '@/kernel/events';
+import { COPILOT_SUBAGENT_NAME, type CopilotTaskLifecycleMessage } from './subagents';
 
 export const SUBAGENT_RUN_QUEUE = 'copilot_subagent_run';
 export const COPILOT_CONTINUATION_QUEUE = 'copilot_continuation';
@@ -14,6 +15,8 @@ export const SUBAGENT_LEASE_MS = 30_000;
 export const SUBAGENT_HARD_DEADLINE_MS = 12 * 60_000;
 export const SUBAGENT_OBJECTIVE_MAX_CHARS = 12_000;
 export const SUBAGENT_RESULT_MAX_CHARS = 60_000;
+/** Foreground inline native Task uses the SDK task_id as the durable launch key. */
+export const NATIVE_SUBAGENT_LAUNCH_KEY_MAX_CHARS = 120;
 
 export type SubagentRunStatus =
   | 'queued'
@@ -353,7 +356,9 @@ async function settleSubagentRunTx(
   outcome:
     | { status: 'succeeded'; result: string }
     | { status: 'failed' | 'cancelled' | 'lost'; error: { code: string; message: string } },
+  options: { mintContinuation?: boolean } = {},
 ): Promise<SubagentRunRecord> {
+  const mintContinuation = options.mintContinuation ?? true;
   const now = new Date();
   const settledEventId = `subagent_settled_${row.id}`;
   const result =
@@ -400,18 +405,20 @@ async function settleSubagentRunTx(
     ingest_at: now,
     created_at: now,
   });
-  await tx
-    .insert(copilot_continuation)
-    .values({
-      id: `copilot_continuation_${row.id}`,
-      subagent_run_id: row.id,
-      session_id: row.session_id,
-      parent_turn_event_id: row.parent_turn_event_id,
-      result_event_id: settledEventId,
-      created_at: now,
-      updated_at: now,
-    })
-    .onConflictDoNothing({ target: copilot_continuation.subagent_run_id });
+  if (mintContinuation) {
+    await tx
+      .insert(copilot_continuation)
+      .values({
+        id: `copilot_continuation_${row.id}`,
+        subagent_run_id: row.id,
+        session_id: row.session_id,
+        parent_turn_event_id: row.parent_turn_event_id,
+        result_event_id: settledEventId,
+        created_at: now,
+        updated_at: now,
+      })
+      .onConflictDoNothing({ target: copilot_continuation.subagent_run_id });
+  }
   return mapRun(settled);
 }
 
@@ -511,6 +518,206 @@ export async function cancelSubagentsForParent(
   return db.transaction((tx) =>
     cancelSubagentsForParentTx(tx, sessionId, parentTaskRunId, requestedBy),
   );
+}
+
+function nativeLaunchKey(sdkTaskId: string): string {
+  const trimmed = sdkTaskId.trim();
+  if (trimmed.length < 1 || trimmed.length > NATIVE_SUBAGENT_LAUNCH_KEY_MAX_CHARS) {
+    throw new Error(
+      `native subagent task_id must be 1..${NATIVE_SUBAGENT_LAUNCH_KEY_MAX_CHARS} characters`,
+    );
+  }
+  return trimmed;
+}
+
+export async function recordNativeSubagentStarted(
+  db: Db,
+  input: {
+    sessionId: string;
+    parentTurnEventId: string;
+    parentTaskRunId: string;
+    sdkTaskId: string;
+    objective: string;
+  },
+): Promise<SubagentRunRecord | null> {
+  const launchKey = nativeLaunchKey(input.sdkTaskId);
+  const objective = input.objective.trim();
+  if (objective.length < 1 || objective.length > SUBAGENT_OBJECTIVE_MAX_CHARS) {
+    throw new Error(`objective must be 1..${SUBAGENT_OBJECTIVE_MAX_CHARS} characters`);
+  }
+  const objectiveHash = sha256CanonicalJson({ objective });
+  return db.transaction(async (tx) =>
+    recordNativeSubagentStartedTx(tx, { ...input, launchKey, objective, objectiveHash }),
+  );
+}
+
+async function recordNativeSubagentStartedTx(
+  tx: Tx,
+  input: {
+    sessionId: string;
+    parentTurnEventId: string;
+    parentTaskRunId: string;
+    launchKey: string;
+    objective: string;
+    objectiveHash: string;
+  },
+): Promise<SubagentRunRecord | null> {
+  const [existing] = await tx
+    .select()
+    .from(subagent_run)
+    .where(
+      and(
+        eq(subagent_run.session_id, input.sessionId),
+        eq(subagent_run.parent_turn_event_id, input.parentTurnEventId),
+        eq(subagent_run.launch_key, input.launchKey),
+      ),
+    )
+    .limit(1);
+  if (existing) {
+    if (existing.objective_hash !== input.objectiveHash) {
+      throw new Error('launch_key is already bound to different canonical input');
+    }
+    return mapRun(existing);
+  }
+  const id = `subagent_run_${createId()}`;
+  const startedEventId = `subagent_started_${id}`;
+  const now = new Date();
+  const [created] = await tx
+    .insert(subagent_run)
+    .values({
+      id,
+      session_id: input.sessionId,
+      parent_turn_event_id: input.parentTurnEventId,
+      launch_key: input.launchKey,
+      parent_task_run_id: input.parentTaskRunId,
+      objective_hash: input.objectiveHash,
+      objective: input.objective,
+      status: 'running',
+      started_event_id: startedEventId,
+      started_at: now,
+      created_at: now,
+      updated_at: now,
+    })
+    .returning();
+  if (!created) throw new Error('native subagent run insert failed');
+  await writeEvent(tx, {
+    id: startedEventId,
+    session_id: input.sessionId,
+    actor_kind: 'agent',
+    actor_ref: 'agent:copilot-researcher',
+    action: 'experimental:subagent_run_started',
+    subject_kind: 'subagent_run',
+    subject_id: id,
+    outcome: null,
+    payload: { run_id: id, launch_key: input.launchKey, objective: input.objective },
+    caused_by_event_id: input.parentTurnEventId,
+    task_run_id: input.parentTaskRunId,
+    ingest_at: now,
+    created_at: now,
+  });
+  return mapRun(created);
+}
+
+async function settleNativeSubagentRunTx(
+  tx: Tx,
+  row: RunRow,
+  outcome:
+    | { status: 'succeeded'; result: string }
+    | { status: 'failed' | 'cancelled' | 'lost'; error: { code: string; message: string } },
+): Promise<SubagentRunRecord | null> {
+  if (!['queued', 'running'].includes(row.status)) return mapRun(row);
+  return settleSubagentRunTx(tx, row, outcome, { mintContinuation: false });
+}
+
+export async function settleNativeSubagentRun(
+  db: Db,
+  input: {
+    sessionId: string;
+    sdkTaskId: string;
+    outcome:
+      | { status: 'succeeded'; result: string }
+      | { status: 'failed' | 'cancelled' | 'lost'; error: { code: string; message: string } };
+  },
+): Promise<SubagentRunRecord | null> {
+  const launchKey = nativeLaunchKey(input.sdkTaskId);
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .select()
+      .from(subagent_run)
+      .where(
+        and(eq(subagent_run.session_id, input.sessionId), eq(subagent_run.launch_key, launchKey)),
+      )
+      .for('update');
+    if (!row) return null;
+    return settleNativeSubagentRunTx(tx, row, input.outcome);
+  });
+}
+
+function terminalNativeSubagentOutcome(
+  message: CopilotTaskLifecycleMessage,
+):
+  | { status: 'succeeded'; result: string }
+  | { status: 'failed' | 'cancelled' | 'lost'; error: { code: string; message: string } }
+  | null {
+  if (message.subtype === 'task_notification') {
+    if (message.status === 'completed') {
+      return { status: 'succeeded', result: 'Native Task child completed.' };
+    }
+    return {
+      status: 'failed',
+      error: { code: 'native_task_failed', message: 'Native Task child did not complete.' },
+    };
+  }
+  if (message.subtype === 'task_updated') {
+    if (message.patch.status === 'completed') {
+      return { status: 'succeeded', result: 'Native Task child completed.' };
+    }
+    if (message.patch.status === 'failed' || message.patch.status === 'killed') {
+      return {
+        status: 'failed',
+        error: { code: 'native_task_failed', message: 'Native Task child did not complete.' },
+      };
+    }
+  }
+  return null;
+}
+
+/** Project native SDK Task lifecycle into subagent_run without mailbox continuation. */
+export async function handleNativeSubagentTaskEvent(
+  db: Db,
+  message: CopilotTaskLifecycleMessage,
+  ctx: {
+    sessionId: string;
+    parentTurnEventId: string;
+    parentTaskRunId: string;
+  },
+): Promise<void> {
+  if (message.subtype === 'task_started') {
+    if (
+      message.subagent_type !== COPILOT_SUBAGENT_NAME ||
+      message.task_type === 'local_workflow' ||
+      message.skip_transcript === true
+    ) {
+      return;
+    }
+    const objective = message.description?.trim() || 'Copilot researcher task';
+    await recordNativeSubagentStarted(db, {
+      sessionId: ctx.sessionId,
+      parentTurnEventId: ctx.parentTurnEventId,
+      parentTaskRunId: ctx.parentTaskRunId,
+      sdkTaskId: message.task_id,
+      objective,
+    });
+    return;
+  }
+
+  const outcome = terminalNativeSubagentOutcome(message);
+  if (!outcome) return;
+  await settleNativeSubagentRun(db, {
+    sessionId: ctx.sessionId,
+    sdkTaskId: message.task_id,
+    outcome,
+  });
 }
 
 export function bindSubagentParentCancellation(

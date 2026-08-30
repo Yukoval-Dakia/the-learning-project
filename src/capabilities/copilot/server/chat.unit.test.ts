@@ -12,6 +12,18 @@ import {
 } from './chat';
 import { COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY } from './content-validation';
 
+const FOREGROUND_MAILBOX_POLL_SUFFIXES = ['launch_researcher', 'get_subagent', 'wait_subagent'];
+
+function foregroundInlineAllowedTools(baseTools: readonly string[]): string[] {
+  const filtered = baseTools.filter(
+    (tool) =>
+      !FOREGROUND_MAILBOX_POLL_SUFFIXES.some(
+        (name) => tool === name || tool.endsWith(`__${name}`),
+      ),
+  );
+  return filtered.includes('Task') ? [...filtered] : [...filtered, 'Task'];
+}
+
 describe('runCopilotChat (two-surface routing)', () => {
   it('replaces a question-bearing direct reply when the validation marker is missing', async () => {
     const result = await runCopilotChat(
@@ -285,8 +297,12 @@ describe('runCopilotChat (two-surface routing)', () => {
         user_message: '现在有哪些错题可以推荐',
       }),
       expect.objectContaining({
-        allowedTools: resolveMcpAllowedTools('copilot'),
+        allowedTools: foregroundInlineAllowedTools(resolveMcpAllowedTools('copilot')),
         taskRunId: expect.stringMatching(/^copilot_task_/),
+        agents: expect.objectContaining({
+          'copilot-researcher': expect.objectContaining({ maxTurns: 6, background: false }),
+        }),
+        onTaskEvent: expect.any(Function),
       }),
     );
 
@@ -553,7 +569,10 @@ describe('runCopilotChat (two-surface routing)', () => {
         chip_kind: 'out_3_variants',
       }),
       expect.objectContaining({
-        allowedTools: resolveMcpAllowedTools('copilot_user_suggested_mistake_action'),
+        allowedTools: foregroundInlineAllowedTools(
+          resolveMcpAllowedTools('copilot_user_suggested_mistake_action'),
+        ),
+        onTaskEvent: expect.any(Function),
       }),
     );
   });
@@ -886,10 +905,15 @@ describe('runCopilotChat (two-surface routing)', () => {
       for (const tool of TAVILY_MCP_ALLOWED_TOOLS) {
         expect(ctx.allowedTools).toContain(tool);
       }
-      // Existing domain tools are untouched.
+      // Foreground inline keeps domain tools minus mailbox poll controls, plus native Task.
       for (const tool of resolveMcpAllowedTools('copilot')) {
-        expect(ctx.allowedTools).toContain(tool);
+        if (FOREGROUND_MAILBOX_POLL_SUFFIXES.some((name) => tool.endsWith(`__${name}`))) {
+          expect(ctx.allowedTools).not.toContain(tool);
+        } else {
+          expect(ctx.allowedTools).toContain(tool);
+        }
       }
+      expect(ctx.allowedTools).toContain('Task');
     });
 
     it('does NOT register tavily when buildTavilyMcpServerFn returns null (env-absent no-op)', async () => {
@@ -920,7 +944,7 @@ describe('runCopilotChat (two-surface routing)', () => {
       for (const tool of TAVILY_MCP_ALLOWED_TOOLS) {
         expect(ctx.allowedTools).not.toContain(tool);
       }
-      expect(ctx.allowedTools).toEqual(resolveMcpAllowedTools('copilot'));
+      expect(ctx.allowedTools).toEqual(foregroundInlineAllowedTools(resolveMcpAllowedTools('copilot')));
     });
 
     it('defaults to the env-gated builder: TAVILY_API_KEY present → tavily wired', async () => {
@@ -1538,7 +1562,7 @@ describe('YUK-832 inline final evidence review', () => {
   });
 });
 
-describe('YUK-932 Copilot durable researchers', () => {
+describe('YUK-938 foreground inline native Task (ADR-0056)', () => {
   function baseSubagentDeps() {
     return {
       buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
@@ -1552,7 +1576,7 @@ describe('YUK-932 Copilot durable researchers', () => {
     };
   }
 
-  it('exposes the four mailbox DomainTools without mounting native SDK Task', async () => {
+  it('mounts native SDK Task without mailbox poll tools on foreground inline chat', async () => {
     let capturedCtx: Record<string, unknown> | undefined;
     const runAgentTaskFn = vi.fn(async (_kind, _input, ctx) => {
       capturedCtx = ctx as Record<string, unknown>;
@@ -1574,22 +1598,27 @@ describe('YUK-932 Copilot durable researchers', () => {
       { ...baseSubagentDeps(), runAgentTaskFn },
     );
 
+    expect(capturedCtx?.allowedTools).toContain('Task');
+    expect(capturedCtx?.allowedTools).not.toContain('mcp__loom__launch_researcher');
+    expect(capturedCtx?.allowedTools).not.toContain('mcp__loom__get_subagent');
+    expect(capturedCtx?.allowedTools).not.toContain('mcp__loom__wait_subagent');
     expect(capturedCtx?.allowedTools).toEqual(
-      expect.arrayContaining([
-        'mcp__loom__launch_researcher',
-        'mcp__loom__get_subagent',
-        'mcp__loom__wait_subagent',
-        'mcp__loom__cancel_subagent',
-      ]),
+      expect.arrayContaining(['mcp__loom__cancel_subagent']),
     );
-    expect(capturedCtx?.allowedTools).not.toContain('Task');
+    expect(capturedCtx?.agents).toEqual(
+      expect.objectContaining({
+        'copilot-researcher': expect.objectContaining({
+          background: false,
+          maxTurns: 6,
+        }),
+      }),
+    );
     expect(capturedCtx?.hooks).toHaveProperty('PreToolUse');
-    expect(capturedCtx).not.toHaveProperty('agents');
-    expect(capturedCtx).not.toHaveProperty('canUseTool');
-    expect(capturedCtx).not.toHaveProperty('onTaskEvent');
+    expect(capturedCtx).toHaveProperty('canUseTool');
+    expect(capturedCtx).toHaveProperty('onTaskEvent');
   });
 
-  it('does not let the legacy kill-switch input re-enable native Task', async () => {
+  it('honors the explicit kill switch by omitting native Task mount', async () => {
     let capturedCtx: Record<string, unknown> | undefined;
     const runAgentTaskFn = vi.fn(async (_kind, _input, ctx) => {
       capturedCtx = ctx as Record<string, unknown>;
@@ -1604,7 +1633,7 @@ describe('YUK-932 Copilot durable researchers', () => {
     await runCopilotChat(
       {} as never,
       { user_message: '深入检查这份学习记录', triggered_by: 'chat' },
-      { ...baseSubagentDeps(), runAgentTaskFn, copilotSubagentEnabled: true },
+      { ...baseSubagentDeps(), runAgentTaskFn, copilotSubagentEnabled: false },
     );
 
     expect(capturedCtx?.allowedTools).not.toContain('Task');
@@ -1614,7 +1643,7 @@ describe('YUK-932 Copilot durable researchers', () => {
     expect(capturedCtx).not.toHaveProperty('onTaskEvent');
   });
 
-  it('does not project native SDK task lifecycle as public subtask UI', async () => {
+  it('projects native SDK task lifecycle to the public subtask sink without a second voice', async () => {
     const onSubtaskEvent = vi.fn();
     const deltas: string[] = [];
     const streamAgentTaskFn = vi.fn(
@@ -1624,9 +1653,26 @@ describe('YUK-932 Copilot durable researchers', () => {
         ctx: Record<string, unknown>,
         onDelta: (text: string) => void,
       ) => {
-        expect(ctx).not.toHaveProperty('onTaskEvent');
-        expect(ctx).not.toHaveProperty('agents');
-        expect(ctx).not.toHaveProperty('canUseTool');
+        expect(ctx).toHaveProperty('onTaskEvent');
+        expect(ctx).toHaveProperty('agents');
+        expect(ctx).toHaveProperty('canUseTool');
+        const onTaskEvent = ctx.onTaskEvent as (event: {
+          subtype: string;
+          task_id: string;
+          subagent_type?: string;
+          status?: string;
+          patch?: { status?: string };
+        }) => Promise<void>;
+        await onTaskEvent({
+          subtype: 'task_started',
+          task_id: 'task-fenxi-42',
+          subagent_type: 'copilot-researcher',
+        });
+        await onTaskEvent({
+          subtype: 'task_notification',
+          task_id: 'task-fenxi-42',
+          status: 'completed',
+        });
         onDelta('我正在把证据收拢成一个解释。');
         onDelta('结论：你漏掉的是导数为零后仍需检查变号。');
         return {
@@ -1651,7 +1697,12 @@ describe('YUK-932 Copilot durable researchers', () => {
     expect(deltas).toEqual([
       '我正在把证据收拢成一个解释。结论：你漏掉的是导数为零后仍需检查变号。',
     ]);
-    expect(onSubtaskEvent).not.toHaveBeenCalled();
+    expect(onSubtaskEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ subtask_id: 'task-fenxi-42', status: 'running' }),
+    );
+    expect(onSubtaskEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ subtask_id: 'task-fenxi-42', status: 'completed' }),
+    );
   });
 });
 

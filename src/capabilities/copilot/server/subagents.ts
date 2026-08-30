@@ -16,7 +16,6 @@ import { TAVILY_MCP_ALLOWED_TOOLS, TAVILY_MCP_SERVER_NAME } from '@/server/ai/mc
 
 export const COPILOT_SUBAGENT_NAME = 'copilot-researcher';
 export const COPILOT_SUBAGENT_ENABLED_ENV = 'COPILOT_SUBAGENT_ENABLED';
-export const COPILOT_SUBAGENT_MAX_TURNS = 10;
 
 const TASK_TOOL_NAME = 'Task';
 const RUN_TASK_TOOL_NAME = toMcpAllowedToolName('run_task');
@@ -39,6 +38,8 @@ const COPILOT_RESEARCHER_PROMPT = `你是 Copilot 在后台派出的聚焦研究
 export interface BuildCopilotSubagentsOptions {
   /** The exact top-level SDK allowlist. The nested tools are filtered from it, never widened. */
   parentAllowedTools: readonly string[];
+  /** Foreground inline child shares the parent CopilotTask maxTurns budget (ADR-0056). */
+  parentMaxTurns: number;
 }
 
 /**
@@ -75,7 +76,7 @@ export function buildCopilotSubagents(
       tools,
       disallowedTools: [...new Set(disallowedTools)],
       mcpServers,
-      maxTurns: COPILOT_SUBAGENT_MAX_TURNS,
+      maxTurns: opts.parentMaxTurns,
       // The parent needs the conclusion before it speaks in its single user-facing voice.
       background: false,
     },
