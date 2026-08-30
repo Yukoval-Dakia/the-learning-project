@@ -604,7 +604,7 @@ async function recordNativeSubagentStartedTx(
     id: startedEventId,
     session_id: input.sessionId,
     actor_kind: 'agent',
-    actor_ref: 'agent:copilot-researcher',
+    actor_ref: 'agent:copilot',
     action: 'experimental:subagent_run_started',
     subject_kind: 'subagent_run',
     subject_id: id,

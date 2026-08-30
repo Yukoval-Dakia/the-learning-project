@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ai_task_runs, copilot_continuation, event, subagent_run } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -478,12 +478,20 @@ describe('Copilot native Task subagent projection (ADR-0056)', () => {
     });
     expect(settled?.status).toBe('succeeded');
 
-    const continuations = await testDb().select().from(copilot_continuation);
+    const continuations = await testDb()
+      .select()
+      .from(copilot_continuation)
+      .where(eq(copilot_continuation.session_id, 'session_native_task'));
     expect(continuations).toHaveLength(0);
     const resultEvents = await testDb()
       .select()
       .from(event)
-      .where(eq(event.action, 'experimental:subagent_run_settled'));
+      .where(
+        and(
+          eq(event.action, 'experimental:subagent_run_settled'),
+          eq(event.session_id, 'session_native_task'),
+        ),
+      );
     expect(resultEvents).toHaveLength(1);
   });
 
@@ -502,7 +510,10 @@ describe('Copilot native Task subagent projection (ADR-0056)', () => {
       status: 'succeeded',
       result: 'Worker path still mints one continuation.',
     });
-    const continuations = await testDb().select().from(copilot_continuation);
+    const continuations = await testDb()
+      .select()
+      .from(copilot_continuation)
+      .where(eq(copilot_continuation.session_id, 'session_worker_mailbox'));
     expect(continuations).toHaveLength(1);
   });
 });
