@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // error subtype).
 const mockSdk = vi.hoisted(() => ({
   capturedOptions: undefined as unknown,
+  capturedPrompt: undefined as unknown,
   messages: [] as unknown[],
   queryStarted: vi.fn(),
 }));
@@ -27,7 +28,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   startup: vi.fn(async ({ options }: { options: unknown }) => {
     mockSdk.capturedOptions = options;
     return {
-      query: vi.fn(() => {
+      query: vi.fn((prompt: unknown) => {
+        mockSdk.capturedPrompt = prompt;
         mockSdk.queryStarted();
         return (async function* () {
           for (const m of mockSdk.messages) yield m;
@@ -1044,5 +1046,81 @@ describe('runTask — YUK-924 model-profile seams', () => {
     const opts = mockSdk.capturedOptions as { persistSession?: boolean; resume?: string };
     expect(opts.persistSession).toBe(false);
     expect(opts.resume).toBeUndefined();
+  });
+
+  const copilotRunInput = {
+    surface: 'copilot',
+    triggered_by: 'chat' as const,
+    user_message: '继续学习',
+    proposal_feedback: [],
+    conversation_history: [] as { role: string; text: string }[],
+    correction_contract: {
+      available_prior_turn_ids: [],
+      prior_turn_summaries: {},
+      required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'],
+    },
+  };
+
+  it('YUK-939 — resume-hit CopilotTask sends user_message, not CopilotRunInput JSON envelope', async () => {
+    mockSdk.capturedPrompt = undefined;
+    mockSdk.messages = [successResult()];
+
+    await runTask('CopilotTask', copilotRunInput, {
+      db: fakeDb,
+      sdkSession: {
+        persist: true,
+        resume: 'sdk-resume-id',
+        onSessionId: vi.fn(),
+      },
+    });
+
+    expect(mockSdk.capturedPrompt).toBe('继续学习');
+    expect(JSON.stringify(mockSdk.capturedPrompt)).not.toContain('correction_contract');
+    expect(JSON.stringify(mockSdk.capturedPrompt)).not.toContain('"surface"');
+  });
+
+  it('YUK-939 — cold persist with empty history sends user_message only', async () => {
+    mockSdk.capturedPrompt = undefined;
+    mockSdk.messages = [successResult()];
+
+    await runTask('CopilotTask', copilotRunInput, {
+      db: fakeDb,
+      sdkSession: { persist: true, onSessionId: vi.fn() },
+    });
+
+    expect(mockSdk.capturedPrompt).toBe('继续学习');
+  });
+
+  it('YUK-939 — restart fallback (persist without resume + history fold) keeps JSON envelope', async () => {
+    mockSdk.capturedPrompt = undefined;
+    mockSdk.messages = [successResult()];
+
+    await runTask(
+      'CopilotTask',
+      {
+        ...copilotRunInput,
+        conversation_history: [{ role: 'user', text: 'prior ask' }],
+      },
+      {
+        db: fakeDb,
+        sdkSession: { persist: true, onSessionId: vi.fn() },
+      },
+    );
+
+    expect(typeof mockSdk.capturedPrompt).toBe('string');
+    expect(mockSdk.capturedPrompt).toContain('"surface"');
+    expect(mockSdk.capturedPrompt).toContain('prior ask');
+    expect(mockSdk.capturedPrompt).not.toBe('继续学习');
+  });
+
+  it('YUK-939 — durable CopilotTask without sdkSession keeps JSON envelope', async () => {
+    mockSdk.capturedPrompt = undefined;
+    mockSdk.messages = [successResult()];
+
+    await runTask('CopilotTask', copilotRunInput, { db: fakeDb });
+
+    expect(typeof mockSdk.capturedPrompt).toBe('string');
+    expect(mockSdk.capturedPrompt).toContain('"surface"');
+    expect(mockSdk.capturedPrompt).toContain('correction_contract');
   });
 });

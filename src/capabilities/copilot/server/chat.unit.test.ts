@@ -3672,8 +3672,10 @@ describe('runCopilotChat — Agent SDK session persist/resume (YUK-936)', () => 
 
     const input = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[1] as {
       conversation_history: unknown[];
+      user_message: string;
     };
     expect(input.conversation_history).toEqual([]);
+    expect(input.user_message).toBe('继续');
     const ctx = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
       sdkSession?: { persist: boolean; resume?: string; onSessionId?: unknown };
       taskRunId?: string;

@@ -400,7 +400,27 @@ async function* singleMessagePromptIterable(
   yield userMessage;
 }
 
-function promptFromInput(input: unknown): string | AsyncIterable<SDKUserMessage> {
+/** Duck-type for foreground CopilotTask run input (YUK-939). Durable/worker paths keep JSON envelopes. */
+interface CopilotRunInputLike {
+  user_message: string;
+  conversation_history: unknown[];
+}
+
+function isCopilotRunInputLike(input: unknown): input is CopilotRunInputLike {
+  if (typeof input !== 'object' || input === null) return false;
+  const candidate = input as Record<string, unknown>;
+  return (
+    typeof candidate.user_message === 'string' &&
+    'surface' in candidate &&
+    'triggered_by' in candidate &&
+    Array.isArray(candidate.conversation_history)
+  );
+}
+
+function promptFromInput(
+  input: unknown,
+  ctx?: Pick<RunTaskCtx, 'sdkSession'>,
+): string | AsyncIterable<SDKUserMessage> {
   if (isMultimodalTaskInput(input)) {
     // Materialize image conversion now. An async-generator body is lazy, so
     // doing this inside the iterable would defer ArrayBuffer -> base64 work
@@ -408,6 +428,19 @@ function promptFromInput(input: unknown): string | AsyncIterable<SDKUserMessage>
     return singleMessagePromptIterable(materializeMultimodalUserMessage(input));
   }
   if (typeof input === 'string') return input;
+
+  // YUK-939 — live foreground Copilot SDK sessions carry continuity in the native
+  // transcript. Resume-hit must not stack JSON.stringify(CopilotRunInput) folds.
+  // Restart fallback (persist without resume but with an event fold) still needs
+  // the structured envelope until a new SDK session is minted.
+  if (ctx?.sdkSession?.persist && isCopilotRunInputLike(input)) {
+    const resumeHit = Boolean(ctx.sdkSession.resume);
+    const coldPersistNoFold = input.conversation_history.length === 0;
+    if (resumeHit || coldPersistNoFold) {
+      return input.user_message;
+    }
+  }
+
   return JSON.stringify(input);
 }
 
@@ -727,7 +760,7 @@ async function runTaskAttempt(args: {
   // lease: blocking this event loop after acquire can delay the first
   // heartbeat beyond its DB-derived deadline even though no provider work has
   // started yet.
-  const sdkPrompt = promptFromInput(actualInput);
+  const sdkPrompt = promptFromInput(actualInput, ctx);
   const sdkOptions = buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved);
   const consumeSdkQuery = async (q: Query) => {
     let stepStartTime = Date.now();
@@ -1001,7 +1034,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
         const actualInput = ctx.middleware?.beforeRun
           ? await ctx.middleware.beforeRun(kind, input, ctx)
           : input;
-        const sdkPrompt = promptFromInput(actualInput);
+        const sdkPrompt = promptFromInput(actualInput, ctx);
         const sdkOptions = buildQueryOptions(
           kind,
           ctx,
@@ -1201,7 +1234,7 @@ export async function streamTaskCollecting(
     const actualInput = ctx.middleware?.beforeRun
       ? await ctx.middleware.beforeRun(kind, input, ctx)
       : input;
-    const sdkPrompt = promptFromInput(actualInput);
+    const sdkPrompt = promptFromInput(actualInput, ctx);
     const sdkOptions = buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved);
     const consumeSdkQuery = async (q: Query) => {
       let stepStartTime = Date.now();
