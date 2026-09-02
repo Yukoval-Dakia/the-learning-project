@@ -1,11 +1,7 @@
 import type { HookCallback, Options } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const nativeSubagentTaskEventMock = vi.hoisted(() =>
-  vi
-    .fn<Parameters<typeof import('./subagent-mailbox').handleNativeSubagentTaskEvent>>()
-    .mockResolvedValue(undefined),
-);
+const nativeSubagentTaskEventMock = vi.hoisted(() => vi.fn(async () => {}));
 
 vi.mock('./subagent-mailbox', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./subagent-mailbox')>();
@@ -1773,15 +1769,25 @@ describe('YUK-938 foreground inline native Task (ADR-0056)', () => {
     expect(taskLifecycleEvents).toBe(2);
     expect(onSubtaskEvent).toHaveBeenCalledTimes(2);
     expect(nativeSubagentTaskEventMock).toHaveBeenCalledTimes(2);
-    expect(nativeSubagentTaskEventMock.mock.calls[0]?.[1]).toMatchObject({
-      subtype: 'task_started',
-      task_id: 'task-sse-fail-42',
-    });
-    expect(nativeSubagentTaskEventMock.mock.calls[1]?.[1]).toMatchObject({
-      subtype: 'task_notification',
-      task_id: 'task-sse-fail-42',
-      status: 'completed',
-    });
+    expect(nativeSubagentTaskEventMock).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.objectContaining({
+        subtype: 'task_started',
+        task_id: 'task-sse-fail-42',
+      }),
+      expect.objectContaining({ sessionId: 'ls_subagent_unit' }),
+    );
+    expect(nativeSubagentTaskEventMock).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.objectContaining({
+        subtype: 'task_notification',
+        task_id: 'task-sse-fail-42',
+        status: 'completed',
+      }),
+      expect.objectContaining({ sessionId: 'ls_subagent_unit' }),
+    );
     expect(deltas).toEqual(['结论仍然写回父流。']);
     expect(result.reply).toBe('结论仍然写回父流。');
   });
