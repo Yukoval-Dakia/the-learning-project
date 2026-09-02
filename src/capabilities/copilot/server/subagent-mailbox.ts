@@ -633,6 +633,7 @@ export async function settleNativeSubagentRun(
   db: Db,
   input: {
     sessionId: string;
+    parentTurnEventId: string;
     sdkTaskId: string;
     outcome:
       | { status: 'succeeded'; result: string }
@@ -645,7 +646,11 @@ export async function settleNativeSubagentRun(
       .select()
       .from(subagent_run)
       .where(
-        and(eq(subagent_run.session_id, input.sessionId), eq(subagent_run.launch_key, launchKey)),
+        and(
+          eq(subagent_run.session_id, input.sessionId),
+          eq(subagent_run.parent_turn_event_id, input.parentTurnEventId),
+          eq(subagent_run.launch_key, launchKey),
+        ),
       )
       .for('update');
     if (!row) return null;
@@ -715,6 +720,7 @@ export async function handleNativeSubagentTaskEvent(
   if (!outcome) return;
   await settleNativeSubagentRun(db, {
     sessionId: ctx.sessionId,
+    parentTurnEventId: ctx.parentTurnEventId,
     sdkTaskId: message.task_id,
     outcome,
   });

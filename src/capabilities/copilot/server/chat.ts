@@ -1235,7 +1235,18 @@ async function runCopilotChatImpl(
   const handleTaskEvent = async (message: CopilotTaskLifecycleMessage) => {
     if (subtaskProjector) {
       const projected = subtaskProjector(message);
-      if (projected) await deps.onSubtaskEvent?.(projected);
+      if (projected) {
+        try {
+          await deps.onSubtaskEvent?.(projected);
+        } catch (error) {
+          console.error('[copilot] subtask event projection to SSE failed', {
+            session_id: sessionId,
+            parent_task_run_id: taskRunId,
+            subtask_id: projected.subtask_id,
+            error,
+          });
+        }
+      }
     }
     if (causedByEventId) {
       await handleNativeSubagentTaskEvent(db, message, {

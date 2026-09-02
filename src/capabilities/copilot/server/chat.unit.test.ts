@@ -1,5 +1,20 @@
 import type { HookCallback, Options } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const nativeSubagentTaskEventMock = vi.hoisted(() =>
+  vi
+    .fn<Parameters<typeof import('./subagent-mailbox').handleNativeSubagentTaskEvent>>()
+    .mockResolvedValue(undefined),
+);
+
+vi.mock('./subagent-mailbox', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./subagent-mailbox')>();
+  return {
+    ...actual,
+    handleNativeSubagentTaskEvent: nativeSubagentTaskEventMock,
+  };
+});
+
 import { resolveDomainToolNames, resolveMcpAllowedTools } from '@/kernel/tools/allowlists';
 import { COPILOT_HISTORY_BUDGET } from '@/kernel/tools/budgets';
 import { TAVILY_MCP_ALLOWED_TOOLS, buildTavilyMcpServer } from '@/server/ai/mcp/tavily';
@@ -1703,6 +1718,72 @@ describe('YUK-938 foreground inline native Task (ADR-0056)', () => {
     expect(onSubtaskEvent).toHaveBeenCalledWith(
       expect.objectContaining({ subtask_id: 'task-fenxi-42', status: 'completed' }),
     );
+  });
+
+  it('still persists native subagent lifecycle when SSE subtask projection fails', async () => {
+    nativeSubagentTaskEventMock.mockClear();
+    const onSubtaskEvent = vi.fn().mockRejectedValue(new Error('SSE disconnected'));
+    const deltas: string[] = [];
+    let taskLifecycleEvents = 0;
+    const streamAgentTaskFn = vi.fn(
+      async (
+        _kind: string,
+        _input: unknown,
+        ctx: Record<string, unknown>,
+        onDelta: (text: string) => void,
+      ) => {
+        const onTaskEvent = ctx.onTaskEvent as (event: {
+          subtype: string;
+          task_id: string;
+          subagent_type?: string;
+          status?: string;
+        }) => Promise<void>;
+        await onTaskEvent({
+          subtype: 'task_started',
+          task_id: 'task-sse-fail-42',
+          subagent_type: 'copilot-researcher',
+        });
+        taskLifecycleEvents += 1;
+        await onTaskEvent({
+          subtype: 'task_notification',
+          task_id: 'task-sse-fail-42',
+          status: 'completed',
+        });
+        taskLifecycleEvents += 1;
+        onDelta('结论仍然写回父流。');
+        return {
+          task_run_id: 'task_copilot_sse_fail',
+          text: '结论仍然写回父流。',
+          finishReason: 'stop',
+          usage: { inputTokens: 100, outputTokens: 20 },
+        };
+      },
+    );
+
+    const result = await runCopilotChatStreaming(
+      {} as never,
+      {
+        user_message: '深挖导数判号误区，再预览一道区分题。',
+        triggered_by: 'chat',
+      },
+      (text) => deltas.push(text),
+      { ...baseSubagentDeps(), streamAgentTaskFn, onSubtaskEvent },
+    );
+
+    expect(taskLifecycleEvents).toBe(2);
+    expect(onSubtaskEvent).toHaveBeenCalledTimes(2);
+    expect(nativeSubagentTaskEventMock).toHaveBeenCalledTimes(2);
+    expect(nativeSubagentTaskEventMock.mock.calls[0]?.[1]).toMatchObject({
+      subtype: 'task_started',
+      task_id: 'task-sse-fail-42',
+    });
+    expect(nativeSubagentTaskEventMock.mock.calls[1]?.[1]).toMatchObject({
+      subtype: 'task_notification',
+      task_id: 'task-sse-fail-42',
+      status: 'completed',
+    });
+    expect(deltas).toEqual(['结论仍然写回父流。']);
+    expect(result.reply).toBe('结论仍然写回父流。');
   });
 });
 
