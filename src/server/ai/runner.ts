@@ -429,16 +429,10 @@ function promptFromInput(
   }
   if (typeof input === 'string') return input;
 
-  // YUK-939 — live foreground Copilot SDK sessions carry continuity in the native
-  // transcript. Resume-hit must not stack JSON.stringify(CopilotRunInput) folds.
-  // Restart fallback (persist without resume but with an event fold) still needs
-  // the structured envelope until a new SDK session is minted.
-  if (ctx?.sdkSession?.persist && isCopilotRunInputLike(input)) {
-    const resumeHit = Boolean(ctx.sdkSession.resume);
-    const coldPersistNoFold = input.conversation_history.length === 0;
-    if (resumeHit || coldPersistNoFold) {
-      return input.user_message;
-    }
+  // YUK-939 — resume-hit live foreground Copilot sends plaintext user_message only;
+  // cold persist, restart fallback, and durable paths keep JSON.stringify(CopilotRunInput).
+  if (ctx?.sdkSession?.persist && ctx.sdkSession.resume && isCopilotRunInputLike(input)) {
+    return input.user_message;
   }
 
   return JSON.stringify(input);

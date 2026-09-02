@@ -96,7 +96,9 @@ start. It does not fork a second family for the same turn.
 
 `assembleConversationHistory` stays. On a resume **hit**, omit it from `CopilotRunInput`. Passing
 `resume` plus the 8×800 fold double-stuffs the model. Use the fold only on miss, fail, or restart (no
-stored id, SDK files gone, or `resume` throws). Do not delete event-sourced turns.
+stored id, SDK files gone, or `resume` throws). Do not delete event-sourced turns. On resume hit the
+SDK query prompt is plaintext `user_message`, not a `JSON.stringify(CopilotRunInput)` envelope; the
+fold remains cold/miss/restart only.
 
 ### 4. Non-goals (hard)
 

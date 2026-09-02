@@ -1079,7 +1079,7 @@ describe('runTask — YUK-924 model-profile seams', () => {
     expect(JSON.stringify(mockSdk.capturedPrompt)).not.toContain('"surface"');
   });
 
-  it('YUK-939 — cold persist with empty history sends user_message only', async () => {
+  it('YUK-939 — cold persist with empty history keeps JSON envelope', async () => {
     mockSdk.capturedPrompt = undefined;
     mockSdk.messages = [successResult()];
 
@@ -1088,7 +1088,9 @@ describe('runTask — YUK-924 model-profile seams', () => {
       sdkSession: { persist: true, onSessionId: vi.fn() },
     });
 
-    expect(mockSdk.capturedPrompt).toBe('继续学习');
+    expect(typeof mockSdk.capturedPrompt).toBe('string');
+    expect(mockSdk.capturedPrompt).toContain('"surface"');
+    expect(mockSdk.capturedPrompt).not.toBe('继续学习');
   });
 
   it('YUK-939 — restart fallback (persist without resume + history fold) keeps JSON envelope', async () => {
