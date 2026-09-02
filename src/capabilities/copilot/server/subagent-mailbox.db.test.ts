@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ai_task_runs, copilot_continuation, event, subagent_run } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -448,5 +448,140 @@ describe('Copilot subagent mailbox', () => {
       'reply_history_parent',
     ]);
     expect(history.map((turn) => turn.event_id)).not.toContain('ask_history_later');
+  });
+});
+
+describe('Copilot native Task subagent projection (ADR-0056)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('records native Task lifecycle without minting copilot_continuation', async () => {
+    await seedParent({ id: 'ask_native_task', sessionId: 'session_native_task' });
+    const parentTaskRunId = 'root_task_native_task';
+    const started = await mailbox.recordNativeSubagentStarted(testDb(), {
+      sessionId: 'session_native_task',
+      parentTurnEventId: 'ask_native_task',
+      parentTaskRunId,
+      sdkTaskId: 'sdk-task-native-01',
+      objective: 'Cross-check three monotonicity mistakes against the knowledge graph.',
+    });
+    expect(started?.status).toBe('running');
+
+    const settled = await mailbox.settleNativeSubagentRun(testDb(), {
+      sessionId: 'session_native_task',
+      parentTurnEventId: 'ask_native_task',
+      sdkTaskId: 'sdk-task-native-01',
+      outcome: {
+        status: 'succeeded',
+        result: 'The learner confuses stationary points with extrema.',
+      },
+    });
+    expect(settled?.status).toBe('succeeded');
+
+    const continuations = await testDb()
+      .select()
+      .from(copilot_continuation)
+      .where(eq(copilot_continuation.session_id, 'session_native_task'));
+    expect(continuations).toHaveLength(0);
+    const resultEvents = await testDb()
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:subagent_run_settled'),
+          eq(event.session_id, 'session_native_task'),
+        ),
+      );
+    expect(resultEvents).toHaveLength(1);
+  });
+
+  it('keeps worker mailbox settle minting continuation for durable launches', async () => {
+    await seedParent({ id: 'ask_worker_mailbox', sessionId: 'session_worker_mailbox' });
+    const launched = await mailbox.launchSubagentRun(testDb(), {
+      sessionId: 'session_worker_mailbox',
+      parentTurnEventId: 'ask_worker_mailbox',
+      parentTaskRunId: 'root_worker_mailbox',
+      launchKey: 'worker-mailbox-v1',
+      objective: 'Worker-owned durable researcher objective.',
+    });
+    const claimed = await mailbox.claimSubagentRun(testDb(), launched.record.id);
+    if (!claimed || 'lost' in claimed) throw new Error('expected worker claim');
+    await mailbox.settleSubagentRun(testDb(), launched.record.id, claimed.claimToken, {
+      status: 'succeeded',
+      result: 'Worker path still mints one continuation.',
+    });
+    const continuations = await testDb()
+      .select()
+      .from(copilot_continuation)
+      .where(eq(copilot_continuation.session_id, 'session_worker_mailbox'));
+    expect(continuations).toHaveLength(1);
+  });
+
+  it('settles native runs scoped by parent turn even when sdk task_id repeats', async () => {
+    const sessionId = 'session_native_task_reuse';
+    const sdkTaskId = 'sdk-task-reused-across-turns';
+    await seedParent({ id: 'ask_native_turn_1', sessionId });
+    await seedParent({ id: 'ask_native_turn_2', sessionId });
+
+    const turn1Started = await mailbox.recordNativeSubagentStarted(testDb(), {
+      sessionId,
+      parentTurnEventId: 'ask_native_turn_1',
+      parentTaskRunId: 'root_task_native_turn_1',
+      sdkTaskId,
+      objective: 'Turn one objective for the reused sdk task id.',
+    });
+    const turn1Settled = await mailbox.settleNativeSubagentRun(testDb(), {
+      sessionId,
+      parentTurnEventId: 'ask_native_turn_1',
+      sdkTaskId,
+      outcome: { status: 'succeeded', result: 'Turn one native result.' },
+    });
+    expect(turn1Settled?.id).toBe(turn1Started?.id);
+    expect(turn1Settled?.result).toBe('Turn one native result.');
+
+    const turn2Started = await mailbox.recordNativeSubagentStarted(testDb(), {
+      sessionId,
+      parentTurnEventId: 'ask_native_turn_2',
+      parentTaskRunId: 'root_task_native_turn_2',
+      sdkTaskId,
+      objective: 'Turn two objective for the reused sdk task id.',
+    });
+    expect(turn2Started?.id).not.toBe(turn1Started?.id);
+
+    const turn2Settled = await mailbox.settleNativeSubagentRun(testDb(), {
+      sessionId,
+      parentTurnEventId: 'ask_native_turn_2',
+      sdkTaskId,
+      outcome: { status: 'succeeded', result: 'Turn two native result.' },
+    });
+    expect(turn2Settled?.id).toBe(turn2Started?.id);
+    expect(turn2Settled?.result).toBe('Turn two native result.');
+
+    const rows = await testDb()
+      .select()
+      .from(subagent_run)
+      .where(eq(subagent_run.session_id, sessionId));
+    expect(rows).toHaveLength(2);
+    const turn1Row = rows.find((row) => row.parent_turn_event_id === 'ask_native_turn_1');
+    const turn2Row = rows.find((row) => row.parent_turn_event_id === 'ask_native_turn_2');
+    expect(turn1Row?.status).toBe('succeeded');
+    expect(turn1Row?.result_md).toBe('Turn one native result.');
+    expect(turn2Row?.status).toBe('succeeded');
+    expect(turn2Row?.result_md).toBe('Turn two native result.');
+
+    const settledEvents = await testDb()
+      .select()
+      .from(event)
+      .where(
+        and(eq(event.action, 'experimental:subagent_run_settled'), eq(event.session_id, sessionId)),
+      );
+    expect(settledEvents).toHaveLength(2);
+
+    const continuations = await testDb()
+      .select()
+      .from(copilot_continuation)
+      .where(eq(copilot_continuation.session_id, sessionId));
+    expect(continuations).toHaveLength(0);
   });
 });

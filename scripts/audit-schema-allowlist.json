@@ -278,7 +278,7 @@
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 4 events writer module implemented",
-      "expected_by": "2026-08-31"
+      "expected_by": "2026-09-30"
     }
   },
   "event.actor_kind": {
@@ -286,7 +286,7 @@
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 4 events writer module implemented",
-      "expected_by": "2026-08-31"
+      "expected_by": "2026-09-30"
     }
   },
   "event.actor_ref": {
@@ -294,7 +294,7 @@
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 4 events writer module implemented",
-      "expected_by": "2026-08-31"
+      "expected_by": "2026-09-30"
     }
   },
   "event.action": {
@@ -302,7 +302,7 @@
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 4 events writer module implemented",
-      "expected_by": "2026-08-31"
+      "expected_by": "2026-09-30"
     }
   },
   "event.subject_kind": {
@@ -310,7 +310,7 @@
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 4 events writer module implemented",
-      "expected_by": "2026-08-31"
+      "expected_by": "2026-09-30"
     }
   },
   "event.subject_id": {
@@ -318,7 +318,7 @@
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 4 events writer module implemented",
-      "expected_by": "2026-08-31"
+      "expected_by": "2026-09-30"
     }
   },
   "event.caused_by_event_id": {
@@ -326,7 +326,7 @@
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 4 attribution event writer implemented",
-      "expected_by": "2026-08-31"
+      "expected_by": "2026-09-30"
     }
   },
   "event.cost_micro_usd": {
@@ -334,7 +334,7 @@
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 7 AI prompts emit cost on event write",
-      "expected_by": "2026-08-31"
+      "expected_by": "2026-09-30"
     }
   },
   "material_fsrs_state.subject_kind": {

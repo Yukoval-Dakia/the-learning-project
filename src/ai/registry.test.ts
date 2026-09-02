@@ -37,13 +37,13 @@ import { taskCatalog } from './task-catalog';
 import { getTaskSystemPrompt } from './task-prompts';
 
 const YUK932_PROMPT_HASHES = {
-  'general:CopilotTask': '45d6d0026c8b8274f53cba0519b644a05ccd0bc13e01c342d6886f24fa7184eb',
+  'general:CopilotTask': '6a2ca4fec69a23d935cc3687f86851cd1fa78ef58bf758bd43a4577b31f7e734',
   'general:CopilotResearchTask': 'ef6d0d2f56e4ee45c1b95603a81cec03587ab965e5435609ec6a49d4be34a3e6',
-  'math:CopilotTask': '45d6d0026c8b8274f53cba0519b644a05ccd0bc13e01c342d6886f24fa7184eb',
+  'math:CopilotTask': '6a2ca4fec69a23d935cc3687f86851cd1fa78ef58bf758bd43a4577b31f7e734',
   'math:CopilotResearchTask': 'ef6d0d2f56e4ee45c1b95603a81cec03587ab965e5435609ec6a49d4be34a3e6',
-  'physics:CopilotTask': '45d6d0026c8b8274f53cba0519b644a05ccd0bc13e01c342d6886f24fa7184eb',
+  'physics:CopilotTask': '6a2ca4fec69a23d935cc3687f86851cd1fa78ef58bf758bd43a4577b31f7e734',
   'physics:CopilotResearchTask': 'ef6d0d2f56e4ee45c1b95603a81cec03587ab965e5435609ec6a49d4be34a3e6',
-  'yuwen:CopilotTask': '45d6d0026c8b8274f53cba0519b644a05ccd0bc13e01c342d6886f24fa7184eb',
+  'yuwen:CopilotTask': '6a2ca4fec69a23d935cc3687f86851cd1fa78ef58bf758bd43a4577b31f7e734',
   'yuwen:CopilotResearchTask': 'ef6d0d2f56e4ee45c1b95603a81cec03587ab965e5435609ec6a49d4be34a3e6',
 } as const;
 
@@ -161,7 +161,7 @@ describe('task prompt definitions', () => {
     }
   });
 
-  it('pins the YUK-932 root and read-only researcher prompts byte-for-byte', () => {
+  it('pins the YUK-938 native Task and read-only researcher prompts byte-for-byte', () => {
     for (const [key, expectedHash] of Object.entries(YUK932_PROMPT_HASHES)) {
       const [profileId, task] = key.split(':') as [
         'general' | 'math' | 'physics' | 'yuwen',
@@ -809,17 +809,15 @@ describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
   });
 });
 
-describe('CopilotTask.systemPrompt — YUK-932 durable mailbox', () => {
-  it('pins mailbox controls, one Copilot voice, and non-recursive continuation', () => {
+describe('CopilotTask.systemPrompt — YUK-938 native Task live parent', () => {
+  it('pins native Task delegation, one Copilot voice, and no mailbox continuation', () => {
     const p = getTaskSystemPrompt('CopilotTask');
-    expect(p).toContain('launch_researcher({launch_key,objective})');
-    expect(p).toContain('get_subagent / wait_subagent / cancel_subagent');
-    expect(p).toContain('只回结论，不暴露 transcript / reasoning');
-    expect(p).toContain('由 Copilot 统一向用户叙述');
-    expect(p).toContain('自动 continuation 中不得再次 launch_researcher');
-    expect(p).not.toContain('subagent_type');
-    expect(p).not.toContain('run_in_background');
-    expect(p).not.toContain('不得传 model 或 isolation');
+    expect(p).toContain('subagent_type 固定为 copilot-researcher');
+    expect(p).toContain('tool_result');
+    expect(p).toContain('不得传 model、isolation 或 run_in_background');
+    expect(p).not.toContain('launch_researcher({launch_key,objective})');
+    expect(p).not.toContain('get_subagent / wait_subagent / cancel_subagent');
+    expect(p).not.toContain('自动 continuation 中不得再次 launch_researcher');
 
     const researcher = getTaskSystemPrompt('CopilotResearchTask');
     expect(researcher).toContain('只读研究员');
