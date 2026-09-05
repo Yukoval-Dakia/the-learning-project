@@ -208,7 +208,16 @@ async function main(): Promise<void> {
   if (requested && !CASES.includes(requested as CaseName)) {
     throw new Error(`unknown --case ${requested}; expected ${CASES.join(', ')}`);
   }
-  const selected = requested ? [requested as CaseName] : [...CASES];
+  // These scenarios need real preceding turns; a standalone invocation must not
+  // spend a call and only then discover that its prerequisite session is absent.
+  const prerequisites: Partial<Record<CaseName, CaseName[]>> = {
+    resume: ['cold', 'resume'],
+    'context-change': ['cold', 'resume', 'context-change'],
+    correction: ['cold', 'correction'],
+  };
+  const selected = requested
+    ? (prerequisites[requested as CaseName] ?? [requested as CaseName])
+    : [...CASES];
   const campaignCostLimitUsd = costLimitUsd();
   const baselineRecord = process.argv.includes('--baseline-record');
   if (baselineRecord && selected.length !== 1) {
