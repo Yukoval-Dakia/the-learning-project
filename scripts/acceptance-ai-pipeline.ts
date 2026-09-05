@@ -464,8 +464,7 @@ async function main(): Promise<void> {
         rows[0]?.payload as { reply_finalization?: Record<string, unknown> } | undefined
       )?.reply_finalization;
       if (
-        !receipt ||
-        receipt.assurance !== 'execution_trace_bound' ||
+        receipt?.assurance !== 'execution_trace_bound' ||
         !Array.isArray(receipt.observed_completed_tool_use_ids) ||
         receipt.root_task_run_id !== result.task_run_id ||
         receipt.reply_sha256 !== SHA256(result.reply)
@@ -674,6 +673,12 @@ async function main(): Promise<void> {
       }
       const latestEvidence = caseEvidence.at(-1);
       if (latestEvidence) latestEvidence.reply_finalization = receipt;
+      if (
+        caseName === 'correction' &&
+        (receipt?.correction !== 'corrected' || !result.reply.includes(priorTurnId ?? ''))
+      ) {
+        throw new Error('correction: required bound correction was not completed');
+      }
       const rootRow = observed.rows.find((row) => row.id === result.task_run_id);
       const sessionAgentSdkId = latestEvidence?.session_agent_sdk_id;
       if (!rootRow) throw new Error(`${caseName}: root ai_task_run was not recorded`);

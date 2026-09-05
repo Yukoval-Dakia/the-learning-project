@@ -29,13 +29,13 @@ import { taskCatalog } from './task-catalog';
 import { getTaskSystemPrompt } from './task-prompts';
 
 const YUK932_PROMPT_HASHES = {
-  'general:CopilotTask': '915407b2a29286b6307a242355050f7fd24ec2204e1091c1ed07a2cd014a3719',
+  'general:CopilotTask': 'dfac7561689b9067e00a26381c3d20c01e08ee7c1d2a7a4f693b68556035017d',
   'general:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
-  'math:CopilotTask': '915407b2a29286b6307a242355050f7fd24ec2204e1091c1ed07a2cd014a3719',
+  'math:CopilotTask': 'dfac7561689b9067e00a26381c3d20c01e08ee7c1d2a7a4f693b68556035017d',
   'math:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
-  'physics:CopilotTask': '915407b2a29286b6307a242355050f7fd24ec2204e1091c1ed07a2cd014a3719',
+  'physics:CopilotTask': 'dfac7561689b9067e00a26381c3d20c01e08ee7c1d2a7a4f693b68556035017d',
   'physics:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
-  'yuwen:CopilotTask': '915407b2a29286b6307a242355050f7fd24ec2204e1091c1ed07a2cd014a3719',
+  'yuwen:CopilotTask': 'dfac7561689b9067e00a26381c3d20c01e08ee7c1d2a7a4f693b68556035017d',
   'yuwen:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
 } as const;
 
@@ -635,6 +635,8 @@ describe('CopilotTask.systemPrompt — YUK-939 root finalization', () => {
     expect(prompt).toContain('SDK terminal result 直接输出要向用户展示的完整 Markdown 正文');
     expect(prompt).toContain('不要输出 JSON envelope');
     expect(prompt).not.toContain('relied_on_tool_use_ids');
+    expect(prompt).toContain('"changed":[],"retained":[],"uncertain":[]');
+    expect(prompt).toContain('后三项必须是字符串数组');
     expect(prompt).toMatch(/【最终输出——严格执行】[\s\S]+不要自行列工具调用 ID。$/);
   });
 });

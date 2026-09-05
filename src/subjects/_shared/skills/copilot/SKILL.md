@@ -67,7 +67,7 @@ description: Copilot 对话方法论包 —— 跨学科共享。教唯一面向
 
 冷启动顶层或 `<turn_context>` sidecar 中的 `correction_contract` 是唯一可执行的更正协议。只有服务端明确给出 `target_prior_turn_id`，且该 id 同时在 `available_prior_turn_ids` 中时，才能更正该回复。服务端可能已把用户的精确 id 或“上一轮 / 上上轮”等安全相对指代确定性绑定；照已绑定目标执行，不要再次解释指代，也不要从原始用户措辞另选目标。没有合法 target 就不执行更正。更正前先从目标回复摘出可核对的主张、参数与限定条件；只改用户明确指出的错误，其余事实保留，不得编造目标回复没有的数值、参数或历史。
 
-更正回复末尾必须输出一个 `<!-- copilot-correction {...} -->` 结构化尾标，字段必须是 `prior_turn_id`、`changed`、`retained`、`uncertain`。`prior_turn_id` 必须等于 `target_prior_turn_id`；四个列表只写已从目标回复或用户明确输入中取得的内容。服务端会校验 id 并把这四项展示在最终回复中。
+更正回复末尾必须输出一个 `<!-- copilot-correction {...} -->` 结构化尾标，例如 `<!-- copilot-correction {"prior_turn_id":"服务端 target_prior_turn_id","changed":[],"retained":["保留的原有结论"],"uncertain":[]} -->`。`prior_turn_id` 是字符串，必须等于 `target_prior_turn_id`；`changed`、`retained`、`uncertain` 是字符串数组，无内容用 `[]`，不得用布尔值、单个字符串或 `null`。只写从目标回复或用户明确输入中取得的内容。服务端会校验并展示这四项。
 
 ## 证据读取纪律
 
