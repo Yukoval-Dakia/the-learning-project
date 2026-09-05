@@ -80,5 +80,9 @@ Base: main `090e882c` (foreground turn-context slice, PR #1324 / YUK-939).
   and native SDK returned asynchronously. Correction field types/acceptance tightened in `12f77867`.
   Agent/Task aliases + explicit synchronous policy fixed in `87d7b990` / `8eaf6c0d`; free checks passed.
   Known new spend $0.503605 plus unpriced interrupted child. Paid tests stopped; owner extra-$1 choice pending.
-- Draft PR #1326 is open; exact-head CI running. No merge/deploy while actual correction/native/durable/
+- Draft PR #1326 is open; exact-head GitHub CI is the full test authority. No merge/deploy while actual correction/native/durable/
   semantic gates remain. Two-round review budget is exhausted; root inspected the subsequent SDK fix.
+- CI integration fixes: historical checkpoint fields explicitly classified with retention-review expiry;
+  the actual harness moved to `tests/acceptance/ai-pipeline.ts` (not server configuration), and Agency's
+  migrated-tool contract check now accounts for its new generation tool. Focused regressions and zero-paid
+  Testcontainers preflight passed; server schema/production audit coverage was not weakened.
