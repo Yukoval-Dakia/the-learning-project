@@ -50,7 +50,7 @@ Implementation shape (capability-local, foreground inline Copilot only):
   Attribution, NoteGenerate, or other task kinds.
 - Durable `durable:true` / Mission 202 stays `persistSession: false`. No SDK session id written from
   the worker onto `learning_session`.
-- `CopilotCorrectionIntentTask` stays `persistSession: false`.
+- The correction classifier stayed non-persistent in this slice; ADR-0057 later deletes that task.
 - Teaching `skill_context` still bypasses CopilotTask.
 - After a successful query, keep the SDK session id on the existing product conversation
   (`learning_session`), not on a new table.
@@ -94,9 +94,10 @@ start. It does not fork a second family for the same turn.
 
 ### 3. Product history fold remains the restart fallback, not the happy path
 
-`assembleConversationHistory` stays. On a resume **hit**, omit it from `CopilotRunInput`. Passing
-`resume` plus the 8×800 fold double-stuffs the model. Use the fold only on miss, fail, or restart (no
-stored id, SDK files gone, or `resume` throws). Do not delete event-sourced turns.
+`assembleConversationHistory` stays. On a resume **hit**, omit it from the provider prompt. Passing
+`resume` plus the 8×800 fold double-stuffs the model. The server still loads the product turn projection
+for correction identity and current-turn context as specified by ADR-0057. Use the fold only on cold,
+restart, and durable paths. Do not delete event-sourced turns.
 
 ### 4. Non-goals (hard)
 
@@ -137,12 +138,15 @@ stored id, SDK files gone, or `resume` throws). Do not delete event-sourced turn
 
 - One cloud agent. `/poteto-mode`. Exact-head Gate on a re-verified main SHA.
 - Gate `persistSession: true` on foreground inline `/api/copilot/chat` on the app process. Do not key
-  on `kind === 'CopilotTask'`. Durable/202 and `CopilotCorrectionIntentTask` stay `false`.
+  on `kind === 'CopilotTask'`. Durable/202 stays `false`; ADR-0057 deletes the correction task.
 - Conversation mutex: YUK-842 slots are provider-concurrency, not per-`learning_session`. "Never start a
   resumed query while the previous Copilot query for that conversation is still acquired" needs a
   conversation-level mutex, not just admission slots.
-- Resume-fail: clear the stored SDK id and mint a new session. Do not retry a dead id.
+- Resume-fail: clear the stored SDK id and fail the current request. ADR-0057 supersedes the earlier
+  immediate-mint wording: without typed pre-effect evidence, same-request cold retry could duplicate a
+  tool or product effect. The next user request sees no stored SDK id and cold-starts from the bounded
+  event-sourced history envelope.
 - Tests: two consecutive inline `/api/copilot/chat` POSTs on one `learning_session`; second POST on
   resume hit must have `resume` and `persistSession: true` and must **not** include the fold in
   `CopilotRunInput`; one admission family per POST; fold fallback when resume is absent. Durable/202
-  and correction-intent kinds must stay `persistSession: false`.
+  while durable/202 stays `persistSession: false`.

@@ -10,6 +10,7 @@
 // db config's src/**/*.test.ts glob would sweep it into the testcontainer
 // partition.
 
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -19,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // error subtype).
 const mockSdk = vi.hoisted(() => ({
   capturedOptions: undefined as unknown,
+  capturedPrompt: undefined as unknown,
   messages: [] as unknown[],
   queryStarted: vi.fn(),
 }));
@@ -27,7 +29,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   startup: vi.fn(async ({ options }: { options: unknown }) => {
     mockSdk.capturedOptions = options;
     return {
-      query: vi.fn(() => {
+      query: vi.fn((prompt: unknown) => {
+        mockSdk.capturedPrompt = prompt;
         mockSdk.queryStarted();
         return (async function* () {
           for (const m of mockSdk.messages) yield m;
@@ -95,6 +98,7 @@ import type { JsonSchemaOutputFormat } from '@anthropic-ai/claude-agent-sdk';
 import { tasks } from '@/ai/registry';
 import type { TaskDefinition } from '@/ai/task-spec';
 import { runTask, streamTask, streamTaskCollecting } from './runner';
+import { taskInputHash } from './task-input-hash';
 
 // Minimal db stub — never dereferenced because every ai/log writer is mocked.
 const fakeDb = {} as never;
@@ -147,6 +151,7 @@ const REVIEW_REGRESSION_PACKET = JSON.parse(
 describe('runTask — YUK-590 retry and cost-reporting lane budgets', () => {
   beforeEach(() => {
     mockSdk.capturedOptions = undefined;
+    mockSdk.capturedPrompt = undefined;
     mockSdk.messages = [successResult()];
     vi.stubEnv('XIAOMI_API_KEY', 'sk-test-key');
     vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
@@ -1003,6 +1008,37 @@ describe('runTask — YUK-924 model-profile seams', () => {
     expect(opts.resume).toBe('sdk-resume-id');
   });
 
+  it('uses a caller-compiled provider prompt while auditing the product input separately', async () => {
+    const productInput = { user_message: '继续', conversation_history: [{ text: '历史' }] };
+    const compiledPromptText = '<turn_context>{"v":1}</turn_context>\n继续';
+    const contextDigest = 'a'.repeat(64);
+    const compiledModelPrompt = {
+      text: compiledPromptText,
+      codecVersion: 'copilot-live-turn-v1',
+      mode: 'resume' as const,
+      contextDigest,
+    };
+    logMock.started.mockClear();
+
+    await runTask(UNMIGRATED_KIND, productInput, {
+      db: fakeDb,
+      compiledModelPrompt,
+    });
+
+    expect(mockSdk.capturedPrompt).toBe(compiledPromptText);
+    expect(logMock.started).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({
+        input_hash: taskInputHash(productInput),
+        compiledPromptHash: createHash('sha256').update(compiledPromptText).digest('hex'),
+        promptCodecVersion: 'copilot-live-turn-v1',
+        promptCodecMode: 'resume',
+        promptContextDigest: contextDigest,
+      }),
+    );
+    expect(taskInputHash(productInput)).not.toBe(taskInputHash(compiledPromptText));
+  });
+
   it('YUK-936 — omitted sdkSession keeps persistSession false (durable/correction zero regression)', async () => {
     mockSdk.messages = [successResult()];
 
@@ -1030,19 +1066,5 @@ describe('runTask — YUK-924 model-profile seams', () => {
     );
 
     expect(onSessionId).toHaveBeenCalledWith('sdk-captured-123');
-  });
-
-  it('CopilotCorrectionIntentTask stays persistSession false without sdkSession seam', async () => {
-    mockSdk.messages = [successResult()];
-
-    await runTask(
-      'CopilotCorrectionIntentTask',
-      { user_message: 'wrong', prior_turn_candidates: [{ prior_turn_id: 'e1', text: 't' }] },
-      { db: fakeDb },
-    );
-
-    const opts = mockSdk.capturedOptions as { persistSession?: boolean; resume?: string };
-    expect(opts.persistSession).toBe(false);
-    expect(opts.resume).toBeUndefined();
   });
 });

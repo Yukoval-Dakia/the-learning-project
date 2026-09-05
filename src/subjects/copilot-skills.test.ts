@@ -137,6 +137,25 @@ describe('live SoT — shipped shared SKILL.md packs resolve against the real tr
     expect(content).toContain('只把结论交回主 Copilot');
   });
 
+  it('YUK-939 — dialogue methodology understands live turn context and server-bound correction', () => {
+    const skillFile = join(
+      process.cwd(),
+      'src',
+      'subjects',
+      COPILOT_SHARED_SUBJECT_DIR,
+      'skills',
+      COPILOT_SKILL_NAME,
+      'SKILL.md',
+    );
+    const content = readFileSync(skillFile, 'utf-8');
+    expect(content).toContain('<turn_context>{...}</turn_context>');
+    expect(content).toContain('`correction_contract` 是唯一可执行的更正协议');
+    expect(content).toContain('`target_prior_turn_id`');
+    expect(content).toContain('`available_prior_turn_ids`');
+    expect(content).toContain('不要从原始用户措辞另选目标');
+    expect(content).toContain('<!-- copilot-correction {...} -->');
+  });
+
   it('YUK-832 — dialogue methodology pins evidence-reader semantics and bounded claims', () => {
     const skillFile = join(
       process.cwd(),

@@ -80,6 +80,8 @@ export interface CopilotRunInput {
   chip_kind?: string;
   proposal_feedback: ScopedProposalFeedbackCell[];
   conversation_history: CopilotHistoryTurn[];
+  validator_context_history: CopilotHistoryTurn[];
+  learner_state_header?: string;
   correction_contract: CopilotCorrectionContract;
   ambient_context?: CopilotAmbientContext;
 }
@@ -214,67 +216,63 @@ export async function assembleCopilotRunInput(
 
   // YUK-267 (C2) — bounded, history-only conversation context. A read failure
   // degrades to the pinned header alone (pin-in-budget), never crashes the run.
-  let conversationHistory: CopilotHistoryTurn[];
-  if (omitConversationHistory) {
-    conversationHistory = [];
-  } else {
-    try {
-      let rawTurns: CopilotTurn[];
-      if (hasHistoryAnchor) {
-        try {
-          rawTurns = await loadAnchoredHistory(db, {
-            limit: COPILOT_HISTORY_BUDGET.maxTurns,
-            sessionId,
-            anchorEventId: historyAnchorEventId,
-          });
-        } catch (err) {
-          // YUK-596 locked legacy contract: a genuinely missing anchor predates
-          // or lost the new coordinate, so emit a structured alert and preserve
-          // the former reusable-session history predicate. An anchor that exists
-          // but has the wrong action/session remains an integrity failure and is
-          // handled by the outer header-only fail-closed path.
-          if (!(err instanceof CopilotHistoryAnchorError) || err.reason !== 'missing_anchor') {
-            throw err;
-          }
-          console.error(
-            '[assembleCopilotRunInput] history anchor missing; falling back to reusable-session history',
-            {
-              session_id: sessionId,
-              history_anchor_event_id: historyAnchorEventId,
-              err,
-            },
-          );
-          rawTurns = await loadHistory(db, {
-            limit: COPILOT_HISTORY_BUDGET.maxTurns,
-            now,
-            sessionId,
-          });
+  let rawTurns: CopilotTurn[] = [];
+  let historyReadFailed = false;
+  try {
+    if (hasHistoryAnchor) {
+      try {
+        rawTurns = await loadAnchoredHistory(db, {
+          limit: COPILOT_HISTORY_BUDGET.maxTurns,
+          sessionId,
+          anchorEventId: historyAnchorEventId,
+        });
+      } catch (err) {
+        // YUK-596 locked legacy contract: a genuinely missing anchor predates
+        // or lost the new coordinate, so emit a structured alert and preserve
+        // the former reusable-session history predicate. An anchor that exists
+        // but has the wrong action/session remains an integrity failure and is
+        // handled by the outer header-only fail-closed path.
+        if (!(err instanceof CopilotHistoryAnchorError) || err.reason !== 'missing_anchor') {
+          throw err;
         }
-      } else {
+        console.error(
+          '[assembleCopilotRunInput] history anchor missing; falling back to reusable-session history',
+          {
+            session_id: sessionId,
+            history_anchor_event_id: historyAnchorEventId,
+            err,
+          },
+        );
         rawTurns = await loadHistory(db, {
           limit: COPILOT_HISTORY_BUDGET.maxTurns,
           now,
           sessionId,
         });
       }
-      conversationHistory = assembleConversationHistory(
-        rawTurns,
-        COPILOT_HISTORY_BUDGET,
-        learnerState.header_md,
-      );
-    } catch (err) {
-      conversationHistory = assembleConversationHistory(
-        [],
-        COPILOT_HISTORY_BUDGET,
-        learnerState.header_md,
-      );
-      console.error('[assembleCopilotRunInput] loadHistory failed; degrading to header-only', {
-        session_id: sessionId,
-        ...(hasHistoryAnchor ? { history_anchor_event_id: historyAnchorEventId } : {}),
-        err,
+    } else {
+      rawTurns = await loadHistory(db, {
+        limit: COPILOT_HISTORY_BUDGET.maxTurns,
+        now,
+        sessionId,
       });
     }
+  } catch (err) {
+    historyReadFailed = true;
+    console.error('[assembleCopilotRunInput] loadHistory failed; degrading to header-only', {
+      session_id: sessionId,
+      ...(hasHistoryAnchor ? { history_anchor_event_id: historyAnchorEventId } : {}),
+      err,
+    });
   }
+
+  const projectedHistory = assembleConversationHistory(
+    rawTurns,
+    COPILOT_HISTORY_BUDGET,
+    historyReadFailed ? learnerState.header_md : undefined,
+  );
+  const conversationHistory = omitConversationHistory
+    ? []
+    : assembleConversationHistory(rawTurns, COPILOT_HISTORY_BUDGET, learnerState.header_md);
 
   return {
     surface: selectSurface(triggeredBy),
@@ -283,17 +281,19 @@ export async function assembleCopilotRunInput(
     ...(chipKind ? { chip_kind: chipKind } : {}),
     proposal_feedback: learnerState.proposal_feedback,
     conversation_history: conversationHistory,
+    validator_context_history: projectedHistory,
+    learner_state_header: learnerState.header_md,
     correction_contract: {
       ...(params.correctionTargetTurnId
         ? { target_prior_turn_id: params.correctionTargetTurnId }
         : {}),
-      available_prior_turn_ids: conversationHistory.flatMap((turn) =>
+      available_prior_turn_ids: projectedHistory.flatMap((turn) =>
         turn.role === 'ai' && turn.event_id !== undefined ? [turn.event_id] : [],
       ),
-      prior_turn_summaries: conversationHistory.reduce<Record<string, string>>(
+      prior_turn_summaries: projectedHistory.reduce<Record<string, string>>(
         (summaries, turn, index) => {
           if (turn.role === 'ai' && turn.event_id !== undefined) {
-            const priorUserTurn = conversationHistory
+            const priorUserTurn = projectedHistory
               .slice(0, index)
               .findLast((candidate) => candidate.role === 'user');
             summaries[turn.event_id] = (priorUserTurn?.text ?? turn.text)

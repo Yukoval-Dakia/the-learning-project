@@ -37,13 +37,13 @@ import { taskCatalog } from './task-catalog';
 import { getTaskSystemPrompt } from './task-prompts';
 
 const YUK932_PROMPT_HASHES = {
-  'general:CopilotTask': '6a2ca4fec69a23d935cc3687f86851cd1fa78ef58bf758bd43a4577b31f7e734',
+  'general:CopilotTask': '84a63233176a9b71fd7acac4ca65c7bfc4b12fe39cef2e381ccf9a7b05f36f4c',
   'general:CopilotResearchTask': 'ef6d0d2f56e4ee45c1b95603a81cec03587ab965e5435609ec6a49d4be34a3e6',
-  'math:CopilotTask': '6a2ca4fec69a23d935cc3687f86851cd1fa78ef58bf758bd43a4577b31f7e734',
+  'math:CopilotTask': '84a63233176a9b71fd7acac4ca65c7bfc4b12fe39cef2e381ccf9a7b05f36f4c',
   'math:CopilotResearchTask': 'ef6d0d2f56e4ee45c1b95603a81cec03587ab965e5435609ec6a49d4be34a3e6',
-  'physics:CopilotTask': '6a2ca4fec69a23d935cc3687f86851cd1fa78ef58bf758bd43a4577b31f7e734',
+  'physics:CopilotTask': '84a63233176a9b71fd7acac4ca65c7bfc4b12fe39cef2e381ccf9a7b05f36f4c',
   'physics:CopilotResearchTask': 'ef6d0d2f56e4ee45c1b95603a81cec03587ab965e5435609ec6a49d4be34a3e6',
-  'yuwen:CopilotTask': '6a2ca4fec69a23d935cc3687f86851cd1fa78ef58bf758bd43a4577b31f7e734',
+  'yuwen:CopilotTask': '84a63233176a9b71fd7acac4ca65c7bfc4b12fe39cef2e381ccf9a7b05f36f4c',
   'yuwen:CopilotResearchTask': 'ef6d0d2f56e4ee45c1b95603a81cec03587ab965e5435609ec6a49d4be34a3e6',
 } as const;
 
@@ -61,7 +61,7 @@ describe('copilot task dispatch declarations', () => {
       expect(task.copilot.intentSchema.safeParse).toBeTypeOf('function');
       expect(task.copilot.prepare).toBeTypeOf('function');
     }
-    expect(Object.keys(tasks)).toHaveLength(53);
+    expect(Object.keys(tasks)).toHaveLength(52);
   });
 
   it('is an immutable compatibility projection with only the two dispatch overlays', () => {
@@ -109,7 +109,7 @@ describe('task prompt definitions', () => {
   });
 
   it('defines one non-empty inline or profile prompt for every task', () => {
-    expect(Object.keys(tasks)).toHaveLength(53);
+    expect(Object.keys(tasks)).toHaveLength(52);
 
     for (const task of Object.values(tasks)) {
       switch (task.prompt.kind) {
@@ -145,11 +145,7 @@ describe('task prompt definitions', () => {
     for (const profileId of promptHashOracle.profiles) {
       const profile = resolveSubjectProfile(profileId);
       for (const task of Object.keys(tasks) as Array<keyof typeof tasks>) {
-        if (
-          task === 'CopilotCorrectionIntentTask' ||
-          task === 'CopilotTask' ||
-          task === 'CopilotResearchTask'
-        ) {
+        if (task === 'CopilotTask' || task === 'CopilotResearchTask') {
           continue;
         }
         const key = `${profileId}:${task}` as keyof typeof promptHashOracle.prompts;
@@ -596,6 +592,15 @@ describe('CopilotTask.systemPrompt — C2 memory + ambient clauses', () => {
     const p = getTaskSystemPrompt('CopilotTask');
     expect(p).toContain('ambient_context');
     expect(p).toContain('focused_entity');
+  });
+
+  it('pins resumed turn_context and server-bound correction marker semantics', () => {
+    const p = getTaskSystemPrompt('CopilotTask');
+    expect(p).toContain('<turn_context>{...}</turn_context>');
+    expect(p).toContain('correction_contract.target_prior_turn_id');
+    expect(p).toContain('available_prior_turn_ids');
+    expect(p).toContain('<!-- copilot-correction {...} -->');
+    expect(p).toContain('模型不得自行从用户措辞另选目标');
   });
 });
 

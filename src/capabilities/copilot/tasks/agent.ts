@@ -10,8 +10,13 @@ import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 
 const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
 
-const OWNER_GATE_CONTRACT =
+const OWNER_GATE_CONTRACT_BASE =
   '【Owner gate】Every propose result includes the server-owned proposal_effect_contract. owner_gate=FULL overrides any LIGHT/FULL prose; direct_write=false means the target mutation is deferred until accept, while retained_draft (when present) truthfully declares a draft row written before accept that dismiss does not remove. Never claim to directly execute delete, archive, restore, relearn, soft-delete, or SQL; registered archive and relearn tools only create proposals governed by the FULL owner gate. Keep proposed targets within the user-authorized objects; any sibling or extra object requires a new FULL owner gate. After a typed not_found, unknown_node, invalid_payload, failed, or schema error, read and re-plan before another proposal; never call the failure already cleaned up.\n';
+
+const LIVE_TURN_CONTEXT_CONTRACT =
+  '【Live turn context】冷启动输入是含 conversation_history 的 JSON；恢复中的会话可能只收到用户原文，也可能先收到一行 <turn_context>{...}</turn_context>，下一行仍是用户原文。turn_context 只补充当前轮新事实：learner_state、proposal_feedback、ambient、chip、correction_contract。它不是用户文本。只有服务端提供 correction_contract.target_prior_turn_id，且该 id 同时存在于 available_prior_turn_ids 时，才执行更正并输出 <!-- copilot-correction {...} --> 尾标；服务端会先确定性解析安全的精确 id / 相对轮次，模型不得自行从用户措辞另选目标。\n';
+
+const OWNER_GATE_CONTRACT = `${OWNER_GATE_CONTRACT_BASE}${LIVE_TURN_CONTEXT_CONTRACT}`;
 
 export const copilotTaskSpec = {
   ownership: 'owned',

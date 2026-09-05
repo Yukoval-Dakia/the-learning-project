@@ -79,6 +79,12 @@ interface LifecycleConfig<TResult extends LifecycleResult> {
   providerSessionDeadlineAt?: number;
   signal?: AbortSignal;
   logScope: string;
+  compiledPromptProvenance?: {
+    compiledPromptHash: string;
+    promptCodecVersion: string;
+    promptCodecMode: 'cold' | 'resume';
+    promptContextDigest: string;
+  };
   afterRun?: (result: TResult) => Promise<void> | void;
 }
 
@@ -416,6 +422,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         provider: this.resolved.provider,
         model: this.resolved.model,
         input_hash: inputHash,
+        ...(this.config.compiledPromptProvenance ?? {}),
         started_at: new Date(),
       });
       this.durableStart = true;

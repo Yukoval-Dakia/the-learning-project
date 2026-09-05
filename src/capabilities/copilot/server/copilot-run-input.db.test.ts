@@ -710,6 +710,35 @@ describe('assembleCopilotRunInput — durable causal history anchor', () => {
     expect(runInput.triggered_by).toBe('chip');
   });
 
+  it('resume projection keeps correction ids while omitting conversation history bytes', async () => {
+    const t0 = new Date('2026-07-07T11:30:00Z');
+    const sessionId = await createLiveCopilotSession(t0);
+    const askId = await writeAsk('核对原定义域', sessionId, new Date('2026-07-07T11:31:00Z'));
+    const replyId = await writeReply(
+      '定义域暂记为全体实数。',
+      sessionId,
+      askId,
+      new Date('2026-07-07T11:31:30Z'),
+    );
+
+    const runInput = await assembleCopilotRunInput(
+      db,
+      {
+        sessionId,
+        userMessage: '请更正上一轮',
+        triggeredBy: 'chat',
+        correctionTargetTurnId: replyId,
+        omitConversationHistory: true,
+        now: new Date('2026-07-07T11:32:00Z'),
+      },
+      { resolveLearnerStateHeaderFn: emptyLearnerState },
+    );
+
+    expect(runInput.conversation_history).toEqual([]);
+    expect(runInput.correction_contract.available_prior_turn_ids).toEqual([replyId]);
+    expect(runInput.correction_contract.target_prior_turn_id).toBe(replyId);
+  });
+
   it('omits ambient_context / chip_kind keys when absent (byte-parity spread-when-present)', async () => {
     const t0 = new Date('2026-07-07T13:00:00Z');
     const sessionId = await createLiveCopilotSession(t0);

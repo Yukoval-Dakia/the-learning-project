@@ -127,6 +127,7 @@ const stubRunInput: NonNullable<RunCopilotRunParams['resolveCopilotRunInputFn']>
   ...(params.chipKind ? { chip_kind: params.chipKind } : {}),
   proposal_feedback: [],
   conversation_history: [],
+  validator_context_history: [],
   correction_contract: {
     available_prior_turn_ids: [],
     prior_turn_summaries: {},
@@ -144,6 +145,9 @@ function targetedRunInput(
     user_message: params.userMessage,
     proposal_feedback: [],
     conversation_history: [
+      { role: 'ai', text: '水箱 D02：原推导用了错误高度。', event_id: targetId },
+    ],
+    validator_context_history: [
       { role: 'ai', text: '水箱 D02：原推导用了错误高度。', event_id: targetId },
     ],
     correction_contract: {

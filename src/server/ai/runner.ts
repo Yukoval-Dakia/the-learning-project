@@ -24,6 +24,7 @@
 //     Memory module decorates input ahead of the model call and observes
 //     output after.
 
+import { createHash } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -92,6 +93,13 @@ export interface RunTaskResult {
    * text-fallback parse. Pure passthrough; runner never interprets it.
    */
   structured_output?: unknown;
+}
+
+export interface CompiledModelPrompt {
+  text: string;
+  codecVersion: string;
+  mode: 'cold' | 'resume';
+  contextDigest: string;
 }
 
 /**
@@ -289,6 +297,17 @@ export interface RunTaskCtx {
     persist: boolean;
     resume?: string;
     onSessionId?: (sessionId: string) => void | Promise<void>;
+  };
+  compiledModelPrompt?: CompiledModelPrompt;
+}
+
+function compiledPromptProvenance(prompt?: CompiledModelPrompt) {
+  if (!prompt) return undefined;
+  return {
+    compiledPromptHash: createHash('sha256').update(prompt.text, 'utf8').digest('hex'),
+    promptCodecVersion: prompt.codecVersion,
+    promptCodecMode: prompt.mode,
+    promptContextDigest: prompt.contextDigest,
   };
 }
 
@@ -727,7 +746,7 @@ async function runTaskAttempt(args: {
   // lease: blocking this event loop after acquire can delay the first
   // heartbeat beyond its DB-derived deadline even though no provider work has
   // started yet.
-  const sdkPrompt = promptFromInput(actualInput);
+  const sdkPrompt = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
   const sdkOptions = buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved);
   const consumeSdkQuery = async (q: Query) => {
     let stepStartTime = Date.now();
@@ -888,6 +907,7 @@ export async function runTask(
       taskRunId: attempt === 1 ? ctx.taskRunId : undefined,
       signal: ctx.signal,
       logScope: 'runTask',
+      compiledPromptProvenance: compiledPromptProvenance(ctx.compiledModelPrompt),
       afterRun: ctx.middleware?.afterRun
         ? (result) => ctx.middleware?.afterRun?.(kind, result, ctx)
         : undefined,
@@ -983,6 +1003,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
     taskRunId: ctx.taskRunId,
     signal: ctx.signal,
     logScope: 'streamTask',
+    compiledPromptProvenance: compiledPromptProvenance(ctx.compiledModelPrompt),
     afterRun: ctx.middleware?.afterRun
       ? (result) => ctx.middleware?.afterRun?.(kind, result, ctx)
       : undefined,
@@ -1001,7 +1022,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
         const actualInput = ctx.middleware?.beforeRun
           ? await ctx.middleware.beforeRun(kind, input, ctx)
           : input;
-        const sdkPrompt = promptFromInput(actualInput);
+        const sdkPrompt = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
         const sdkOptions = buildQueryOptions(
           kind,
           ctx,
@@ -1189,6 +1210,7 @@ export async function streamTaskCollecting(
     taskRunId: ctx.taskRunId,
     signal: ctx.signal,
     logScope: 'streamTaskCollecting',
+    compiledPromptProvenance: compiledPromptProvenance(ctx.compiledModelPrompt),
     afterRun: ctx.middleware?.afterRun
       ? (result) => ctx.middleware?.afterRun?.(kind, result, ctx)
       : undefined,
@@ -1201,7 +1223,7 @@ export async function streamTaskCollecting(
     const actualInput = ctx.middleware?.beforeRun
       ? await ctx.middleware.beforeRun(kind, input, ctx)
       : input;
-    const sdkPrompt = promptFromInput(actualInput);
+    const sdkPrompt = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
     const sdkOptions = buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved);
     const consumeSdkQuery = async (q: Query) => {
       let stepStartTime = Date.now();
