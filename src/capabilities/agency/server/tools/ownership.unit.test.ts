@@ -120,9 +120,9 @@ describe('Agency tool and proposal lifecycle ownership', () => {
     expect(reader).not.toMatch(/\bwrite(?:AiProposal|JobEvent|SessionEvent)\s*\(/);
   });
 
-  it('loads unchanged names, schemas, effects, and allowlist exposure from Agency', async () => {
-    expect(agencyCapability.copilotTools?.tools.map((tool) => tool.name)).toEqual(
-      AGENCY_TOOL_NAMES,
+  it('preserves migrated contracts alongside the new owner generation tool', async () => {
+    expect(agencyCapability.copilotTools?.tools.map((tool) => tool.name).sort()).toEqual(
+      [...AGENCY_TOOL_NAMES, 'generate_goal_outline'].sort(),
     );
     await registerCapabilityTools([agencyCapability]);
     const fullAllowlist = [...READ_TOOLS, ...PROPOSE_WRITE_TOOLS];

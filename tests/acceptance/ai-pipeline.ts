@@ -1,5 +1,5 @@
 /**
- * Bounded, opt-in actual-provider acceptance for the Copilot root.
+ * Test-only, bounded actual-provider acceptance for the Copilot root.
  *
  * This is deliberately a script rather than a Vitest suite: it starts a private
  * pgvector container, makes paid calls only behind ACTUAL_PROVIDER_ACCEPTANCE=1,
