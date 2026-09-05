@@ -125,7 +125,14 @@ import {
   type CopilotContinuationRecord,
   type SubagentRunRecord,
   bindSubagentParentCancellation,
+  handleNativeSubagentTaskEvent,
 } from '../server/subagent-mailbox';
+import {
+  type CopilotTaskLifecycleMessage,
+  buildCopilotNativeResearchConfig,
+  createCopilotSubtaskProjector,
+  isCopilotSubagentEnabled,
+} from '../server/subagents';
 import { getCopilotContinuationHistory } from '../server/turns';
 
 // dispatch 入口投递的 job 体。run_id = checkpoint_id = user_ask event id（route
@@ -1056,8 +1063,33 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     ...resolveMcpAllowedTools(surface),
     ...(tavilyCfg ? TAVILY_MCP_ALLOWED_TOOLS : []),
   ];
-  const allowedTools = baseAllowedTools;
-  const sdkHooks = toolUseCorrelation.prepend(cancellationControl.prependSdkHook());
+  const copilotSubagentEnabled = params.copilotSubagentEnabled ?? isCopilotSubagentEnabled();
+  const { allowedTools, spawnContract } = buildCopilotNativeResearchConfig({
+    baseAllowedTools,
+    enabled: copilotSubagentEnabled,
+    parentMaxTurns: DURABLE_BUDGET.maxIterations,
+    onBudgetObservation: params.onSpawnBudgetObservation,
+  });
+  const sdkHooks = toolUseCorrelation.prepend(
+    cancellationControl.prependSdkHook(spawnContract?.hooks),
+  );
+  const nativeTaskProjector = spawnContract ? createCopilotSubtaskProjector() : undefined;
+  const onTaskEvent = spawnContract
+    ? async (message: CopilotTaskLifecycleMessage) => {
+        if (!nativeTaskProjector?.(message)) return;
+        await handleNativeSubagentTaskEvent(db, message, {
+          sessionId: data.session_id,
+          parentTurnEventId: runId,
+          parentTaskRunId: taskRunId,
+        }).catch((error) => {
+          console.error('[copilot_run] native subagent projection failed', {
+            session_id: data.session_id,
+            parent_task_run_id: taskRunId,
+            error,
+          });
+        });
+      }
+    : undefined;
 
   // YUK-364 (bot-review C2) — 解析 copilot 对话方法论 SKILL.md 白名单（与 inline
   // 同一份 resolveCopilotSkills；cross-subject 共享 resolver）。命中 → 传 ctx.skills
@@ -1174,6 +1206,13 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
         mcpServers,
         allowedTools,
         hooks: sdkHooks,
+        ...(spawnContract
+          ? {
+              agents: spawnContract.agents,
+              canUseTool: spawnContract.canUseTool,
+              onTaskEvent,
+            }
+          : {}),
         // C2 — spread-when-present：copilotSkills===undefined 时省略 skills 字段，
         // 与 inline chat.ts 同款降级（runner ctx.skills ?? [] 不变 → 零回归）。
         ...(copilotSkills ? { skills: copilotSkills } : {}),

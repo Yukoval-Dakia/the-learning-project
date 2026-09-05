@@ -27,7 +27,14 @@ import {
   COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS,
 } from '@/capabilities/copilot/server/evidence-review';
 import type { Db } from '@/db/client';
-import { ai_task_runs, event, job_events, provider_session_admission } from '@/db/schema';
+import {
+  ai_task_runs,
+  copilot_continuation,
+  event,
+  job_events,
+  provider_session_admission,
+  subagent_run,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/kernel/tools/allowlists';
 import {
@@ -1081,15 +1088,46 @@ describe('runCopilotRun', () => {
     warnSpy.mockRestore();
   });
 
-  it('YUK-932 — durable root exposes mailbox controls without native Task or public subtask steps', async () => {
+  it('YUK-939 — durable root uses one same-parent native read-only Task without continuation', async () => {
     const runId = 'copilot_user_ask_subtask_lifecycle';
+    await writeEvent(testDb(), {
+      id: runId,
+      session_id: 'sess_durable_subtasks',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:copilot_user_ask',
+      subject_kind: 'copilot_turn',
+      subject_id: runId,
+      outcome: null,
+      payload: { message: '核对复杂证据' },
+    });
     let mcpOptions: BuildMcpServerOptions | undefined;
     const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
       mcpOptions = options;
       return { type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME } as never;
     });
     const run = vi.fn(
-      async (_kind: string, _input: unknown, _ctx: AgentCtx, onDelta: (text: string) => void) => {
+      async (_kind: string, _input: unknown, ctx: AgentCtx, onDelta: (text: string) => void) => {
+        await ctx.onTaskEvent?.({
+          type: 'system',
+          subtype: 'task_started',
+          uuid: '00000000-0000-4000-8000-000000000939',
+          session_id: 'sdk-durable-session',
+          task_id: 'native-durable-research-1',
+          tool_use_id: 'toolu-native-durable-1',
+          description: '核对复杂证据',
+          subagent_type: 'copilot-researcher',
+        });
+        await ctx.onTaskEvent?.({
+          type: 'system',
+          subtype: 'task_notification',
+          uuid: '00000000-0000-4000-8000-000000000940',
+          session_id: 'sdk-durable-session',
+          task_id: 'native-durable-research-1',
+          tool_use_id: 'toolu-native-durable-1',
+          status: 'completed',
+          subagent_type: 'copilot-researcher',
+        });
         onDelta('结论：你把“导数为零”误当成了“导数必变号”。');
         return {
           text: '结论：你把“导数为零”误当成了“导数必变号”。',
@@ -1112,19 +1150,33 @@ describe('runCopilotRun', () => {
     expect(result.status).toBe('done');
 
     const ctx = (run.mock.calls[0] as unknown as [string, unknown, AgentCtx])[2];
-    expect(ctx.allowedTools).toEqual(
-      expect.arrayContaining([
-        'mcp__loom__launch_researcher',
-        'mcp__loom__get_subagent',
-        'mcp__loom__wait_subagent',
-        'mcp__loom__cancel_subagent',
-      ]),
-    );
-    expect(ctx.allowedTools).not.toContain('Task');
-    expect(ctx).not.toHaveProperty('agents');
-    expect(ctx).not.toHaveProperty('canUseTool');
-    expect(ctx).not.toHaveProperty('onTaskEvent');
-    expect(ctx.hooks?.PreToolUse).toHaveLength(2);
+    expect(ctx.allowedTools).toContain('Task');
+    for (const legacyControl of [
+      'get_tool_operation',
+      'wait_tool_operation',
+      'cancel_tool_operation',
+      'launch_researcher',
+      'get_subagent',
+      'wait_subagent',
+      'cancel_subagent',
+    ]) {
+      expect(ctx.allowedTools).not.toContain(`mcp__loom__${legacyControl}`);
+    }
+    expect(ctx.agents?.['copilot-researcher']).toMatchObject({
+      maxTurns: DURABLE_BUDGET.maxIterations,
+      background: false,
+    });
+    const researcherTools = ctx.agents?.['copilot-researcher']?.tools ?? [];
+    expect(researcherTools).toContain('mcp__loom__query_events');
+    expect(researcherTools).not.toContain('Task');
+    expect(researcherTools).not.toContain('mcp__loom__run_task');
+    expect(researcherTools.some((tool) => tool.includes('propose'))).toBe(false);
+    expect(researcherTools.some((tool) => tool.includes('generate_'))).toBe(false);
+    expect(researcherTools.some((tool) => tool.includes('researcher'))).toBe(false);
+    expect(ctx).not.toHaveProperty('sdkSession');
+    expect(ctx.canUseTool).toEqual(expect.any(Function));
+    expect(ctx.onTaskEvent).toEqual(expect.any(Function));
+    expect(ctx.hooks?.PreToolUse).toHaveLength(3);
     expect(ctx.signal).toBeInstanceOf(AbortSignal);
     expect(mcpOptions?.ctx.sessionId).toBe('sess_durable_subtasks');
     expect(mcpOptions?.cancellationSignals).toHaveLength(2);
@@ -1153,6 +1205,39 @@ describe('runCopilotRun', () => {
         query: 'durable correlation',
       }),
     ).toBe('toolu_durable_real_9');
+    const cancellationHook = ctx.hooks?.PreToolUse?.[1]?.hooks[0] as HookCallback;
+    await expect(
+      cancellationHook(
+        {
+          hook_event_name: 'PreToolUse',
+          session_id: 'sdk-durable-session',
+          transcript_path: '/tmp/transcript',
+          cwd: '/tmp',
+          permission_mode: 'default',
+          tool_name: 'Task',
+          tool_input: { subagent_type: 'copilot-researcher', description: '核对证据' },
+          tool_use_id: 'toolu_cancel_guard_939',
+        },
+        'toolu_cancel_guard_939',
+        { signal: new AbortController().signal },
+      ),
+    ).resolves.toEqual({ continue: true });
+    await expect(
+      ctx.canUseTool?.(
+        'Task',
+        { subagent_type: 'copilot-researcher', description: '核对证据' },
+        { toolUseID: 'toolu_spawn_guard_939' },
+      ),
+    ).resolves.toMatchObject({ behavior: 'allow' });
+    const [nativeRun] = await testDb().select().from(subagent_run);
+    expect(nativeRun).toMatchObject({
+      session_id: 'sess_durable_subtasks',
+      parent_turn_event_id: runId,
+      status: 'succeeded',
+    });
+    expect(nativeRun?.parent_task_run_id).toBe(ctx.taskRunId);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(await testDb().select().from(copilot_continuation)).toHaveLength(0);
     const events = await replay(runId);
     expect(events.map((event) => event.event_type)).toEqual([
       COPILOT_RUN_EVENTS.STARTED,

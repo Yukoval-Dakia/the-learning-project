@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import {
   COPILOT_SUBAGENT_ENABLED_ENV,
   COPILOT_SUBAGENT_NAME,
+  buildCopilotNativeResearchConfig,
   buildCopilotSubagents,
   createCopilotSubtaskProjector,
   isCopilotSubagentEnabled,
@@ -79,6 +80,66 @@ describe('buildCopilotSubagents', () => {
 
     expect(researcher.tools).toEqual(['mcp__loom__query_events']);
     expect(researcher.mcpServers).toEqual(['loom']);
+  });
+});
+
+describe('buildCopilotNativeResearchConfig', () => {
+  it('gives every new root one native Task path and retires legacy model controls', () => {
+    const config = buildCopilotNativeResearchConfig({
+      baseAllowedTools: [
+        'mcp__loom__query_events',
+        'mcp__loom__search_memory_facts',
+        'mcp__loom__get_tool_operation',
+        'mcp__loom__wait_tool_operation',
+        'mcp__loom__cancel_tool_operation',
+        'mcp__loom__launch_researcher',
+        'mcp__loom__get_subagent',
+        'mcp__loom__wait_subagent',
+        'mcp__loom__cancel_subagent',
+        'mcp__loom__generate_goal_outline',
+        'mcp__loom__generate_question_candidate',
+        'mcp__loom__propose_knowledge_mutation',
+        'mcp__private__finalize_reply',
+      ],
+      enabled: true,
+      parentMaxTurns: 24,
+    });
+
+    expect(config.allowedTools).toEqual([
+      'mcp__loom__query_events',
+      'mcp__loom__search_memory_facts',
+      'mcp__loom__generate_goal_outline',
+      'mcp__loom__generate_question_candidate',
+      'mcp__loom__propose_knowledge_mutation',
+      'mcp__private__finalize_reply',
+      'Task',
+    ]);
+    const researcher = config.spawnContract?.agents[COPILOT_SUBAGENT_NAME];
+    expect(researcher?.tools).toEqual([
+      'mcp__loom__query_events',
+      'mcp__loom__search_memory_facts',
+    ]);
+    expect(researcher?.disallowedTools).toEqual(
+      expect.arrayContaining([
+        'Task',
+        'mcp__loom__generate_goal_outline',
+        'mcp__loom__generate_question_candidate',
+        'mcp__loom__propose_knowledge_mutation',
+        'mcp__private__finalize_reply',
+      ]),
+    );
+    expect(researcher?.maxTurns).toBe(24);
+    expect(researcher?.background).toBe(false);
+  });
+
+  it('keeps the same retired control surface while the kill switch removes Task options', () => {
+    const config = buildCopilotNativeResearchConfig({
+      baseAllowedTools: ['mcp__loom__query_events', 'mcp__loom__launch_researcher', 'Task'],
+      enabled: false,
+      parentMaxTurns: 6,
+    });
+    expect(config.allowedTools).toEqual(['mcp__loom__query_events']);
+    expect(config.spawnContract).toBeUndefined();
   });
 });
 

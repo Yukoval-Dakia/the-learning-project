@@ -1,7 +1,7 @@
 import type { Job } from 'pg-boss';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildSearchMemoryFactsTool } from '@/capabilities/copilot/server/tools/search-memory-facts';
-import { provider_attempt } from '@/db/schema';
+import { provider_attempt, tool_operation } from '@/db/schema';
 import type { ToolContext } from '@/kernel/tools/types';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { createMem0OpaqueOperationContext } from '../ai/provider-attempt-runtime';
@@ -180,6 +180,8 @@ describe('Mem0 opaque operation durable surfaces', () => {
       cost_currency: null,
       cost_source: 'mem0_sdk_cost_unavailable',
     });
+    expect(await testDb().select().from(tool_operation)).toHaveLength(0);
+    expect(tool.safeHandoff).toBeUndefined();
   });
 
   it('shares a stable operation across fresh search attempts and records SDK failure', async () => {

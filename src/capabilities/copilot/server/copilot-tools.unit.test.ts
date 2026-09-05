@@ -25,7 +25,7 @@ const COPILOT_OWNED_TOOL_NAMES = [
 
 const OWNED_TOOL_CONTRACT_HASHES = {
   query_events: 'f3098863057a3ca16c3180c594c634e2f09bde171af1884ed125740359429587',
-  search_memory_facts: '0dd940b4f50b8e8af1e7e2802a6e3931777d88fd01ca92794a9cf5a7c7393a14',
+  search_memory_facts: '44cc3f998658c5568711443e9e17c44135055493a39ac9971e0353dd51d9f929',
   get_tool_operation: '3d2496a0f7e30169532176e32e62b3624a4e08ec8233915f0cc804f28c1701f1',
   wait_tool_operation: '2e010f4b08dae36fcfc3d36c38194f2ce3e8aedbb565516840af6357d33f5782',
   cancel_tool_operation: '6480486a4e1a9ca480a697d42c7ecf0222872e576e159fe22a7ec11a915dc4bc',

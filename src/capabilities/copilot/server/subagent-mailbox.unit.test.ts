@@ -10,21 +10,19 @@ import {
   waitSubagentTool,
 } from './tools/subagent-controls';
 
-describe('foreground inline Copilot subagent contracts (ADR-0056)', () => {
-  it('mounts native SDK Task on inline chat and keeps mailbox tools for durable worker only', () => {
+describe('Copilot native research contracts (YUK-939)', () => {
+  it('mounts the shared native SDK Task configuration on live and durable roots', () => {
     const chatSource = readFileSync(new URL('./chat.ts', import.meta.url), 'utf8');
     const durableSource = readFileSync(new URL('../jobs/copilot_run.ts', import.meta.url), 'utf8');
+    const configSource = readFileSync(new URL('./subagents.ts', import.meta.url), 'utf8');
 
-    expect(chatSource).toContain('createSpawnContract(');
-    expect(chatSource).toContain('buildCopilotSubagents(');
+    expect(chatSource).toContain('buildCopilotNativeResearchConfig(');
     expect(chatSource).toContain('handleNativeSubagentTaskEvent');
-    expect(chatSource).toContain('FOREGROUND_MAILBOX_POLL_TOOLS');
+    expect(configSource).toContain('LEGACY_CONTROL_TOOL_NAMES');
     expect(chatSource).not.toContain('launchResearcherTool');
 
-    expect(durableSource).toContain('launch_researcher');
-    expect(durableSource).toContain('runCopilotResearcher');
-    expect(durableSource).not.toContain('createSpawnContract(');
-    expect(durableSource).not.toContain('buildCopilotSubagents(');
+    expect(durableSource).toContain('buildCopilotNativeResearchConfig(');
+    expect(durableSource).toContain('handleNativeSubagentTaskEvent');
   });
 
   it('keeps the durable worker child fixed, read-only, bounded, and non-recursive', () => {

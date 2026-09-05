@@ -37,12 +37,20 @@ import {
 } from './chat';
 import { COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY } from './content-validation';
 
-const FOREGROUND_MAILBOX_POLL_SUFFIXES = ['launch_researcher', 'get_subagent', 'wait_subagent'];
+const RETIRED_COPILOT_CONTROL_SUFFIXES = [
+  'get_tool_operation',
+  'wait_tool_operation',
+  'cancel_tool_operation',
+  'launch_researcher',
+  'get_subagent',
+  'wait_subagent',
+  'cancel_subagent',
+];
 
 function foregroundInlineAllowedTools(baseTools: readonly string[]): string[] {
   const filtered = baseTools.filter(
     (tool) =>
-      !FOREGROUND_MAILBOX_POLL_SUFFIXES.some((name) => tool === name || tool.endsWith(`__${name}`)),
+      !RETIRED_COPILOT_CONTROL_SUFFIXES.some((name) => tool === name || tool.endsWith(`__${name}`)),
   );
   return filtered.includes('Task') ? [...filtered] : [...filtered, 'Task'];
 }
@@ -923,7 +931,7 @@ describe('runCopilotChat (two-surface routing)', () => {
       }
       // Foreground inline keeps domain tools minus mailbox poll controls, plus native Task.
       for (const tool of resolveMcpAllowedTools('copilot')) {
-        if (FOREGROUND_MAILBOX_POLL_SUFFIXES.some((name) => tool.endsWith(`__${name}`))) {
+        if (RETIRED_COPILOT_CONTROL_SUFFIXES.some((name) => tool.endsWith(`__${name}`))) {
           expect(ctx.allowedTools).not.toContain(tool);
         } else {
           expect(ctx.allowedTools).toContain(tool);
@@ -1620,9 +1628,10 @@ describe('YUK-938 foreground inline native Task (ADR-0056)', () => {
     expect(capturedCtx?.allowedTools).not.toContain('mcp__loom__launch_researcher');
     expect(capturedCtx?.allowedTools).not.toContain('mcp__loom__get_subagent');
     expect(capturedCtx?.allowedTools).not.toContain('mcp__loom__wait_subagent');
-    expect(capturedCtx?.allowedTools).toEqual(
-      expect.arrayContaining(['mcp__loom__cancel_subagent']),
-    );
+    expect(capturedCtx?.allowedTools).not.toContain('mcp__loom__cancel_subagent');
+    expect(capturedCtx?.allowedTools).not.toContain('mcp__loom__get_tool_operation');
+    expect(capturedCtx?.allowedTools).not.toContain('mcp__loom__wait_tool_operation');
+    expect(capturedCtx?.allowedTools).not.toContain('mcp__loom__cancel_tool_operation');
     expect(capturedCtx?.agents).toEqual(
       expect.objectContaining({
         'copilot-researcher': expect.objectContaining({

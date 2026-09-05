@@ -93,6 +93,10 @@ export function buildSearchMemoryFactsTool(
     if (ctx.providerSessionDeadlineAt === undefined) {
       throw new TypeError('search_memory_facts requires a provider session deadline');
     }
+    ctx.signal?.throwIfAborted();
+    if (Date.now() >= ctx.providerSessionDeadlineAt) {
+      throw new Error('hard_deadline_exceeded');
+    }
     const topK = input.topK ?? DEFAULT_FACTS_TOP_K;
     const scopeKey = input.scopeKey ?? null;
     const inputDigest = createHash('sha256')
@@ -125,7 +129,6 @@ export function buildSearchMemoryFactsTool(
     outputSchema: SearchMemoryFactsOutputSchema,
     // Embedding API hit (OpenAI) on every search — memory map bullet 4.
     costClass: 'cheap_llm',
-    safeHandoff: { transport: 'remote', idempotent: true },
     execute,
     summarize(input, output) {
       return `memory facts · "${input.query.slice(0, 24)}" · ${output.count} hits`;

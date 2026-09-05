@@ -94,11 +94,7 @@ import {
   buildTavilyMcpServer,
 } from '@/server/ai/mcp/tavily';
 import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
-import {
-  SPAWN_TOOL_NAME,
-  type SpawnBudgetObservation,
-  createSpawnContract,
-} from '@/server/ai/spawn-contract';
+import type { SpawnBudgetObservation } from '@/server/ai/spawn-contract';
 import {
   type SdkMcpServer,
   type ToolExecutionResultObservation,
@@ -136,7 +132,7 @@ import { bindSubagentParentCancellation, handleNativeSubagentTaskEvent } from '.
 import {
   type CopilotSubtaskEvent,
   type CopilotTaskLifecycleMessage,
-  buildCopilotSubagents,
+  buildCopilotNativeResearchConfig,
   createCopilotSubtaskProjector,
   isCopilotSubagentEnabled,
 } from './subagents';
@@ -664,29 +660,6 @@ function selectActorRef(triggeredBy: CopilotChatTriggerKind): string {
   return triggeredBy === 'chip' ? 'agent:copilot_chip' : 'agent:copilot';
 }
 
-const FOREGROUND_MAILBOX_POLL_TOOLS = new Set([
-  'launch_researcher',
-  'get_subagent',
-  'wait_subagent',
-]);
-
-function isForegroundMailboxPollTool(toolName: string): boolean {
-  if (FOREGROUND_MAILBOX_POLL_TOOLS.has(toolName)) return true;
-  const suffix = toolName.includes('__') ? toolName.split('__').at(-1) : toolName;
-  return suffix !== undefined && FOREGROUND_MAILBOX_POLL_TOOLS.has(suffix);
-}
-
-function buildForegroundInlineAllowedTools(
-  baseAllowedTools: readonly string[],
-  subagentEnabled: boolean,
-): string[] {
-  const filtered = baseAllowedTools.filter((tool) => !isForegroundMailboxPollTool(tool));
-  if (subagentEnabled && !filtered.includes(SPAWN_TOOL_NAME)) {
-    return [...filtered, SPAWN_TOOL_NAME];
-  }
-  return [...filtered];
-}
-
 // YUK-266/YUK-832 — streaming options threaded through the shared chat impl.
 // Free-form candidate chunks are buffered until evidence review + reply
 // persistence, then replayed (pass/skip) or replaced once (repair/fail-closed).
@@ -1167,18 +1140,13 @@ async function runCopilotChatImpl(
     ...(tavilyCfg ? TAVILY_MCP_ALLOWED_TOOLS : []),
   ];
   const copilotSubagentEnabled = deps.copilotSubagentEnabled ?? isCopilotSubagentEnabled();
-  const allowedTools = buildForegroundInlineAllowedTools(baseAllowedTools, copilotSubagentEnabled);
   const parentMaxTurns = copilotTaskSpec.definition.budget.maxIterations;
-  const spawnContract = copilotSubagentEnabled
-    ? createSpawnContract({
-        enabled: true,
-        agents: buildCopilotSubagents({
-          parentAllowedTools: allowedTools.filter((tool) => tool !== SPAWN_TOOL_NAME),
-          parentMaxTurns,
-        }),
-        onBudgetObservation: deps.onSpawnBudgetObservation,
-      })
-    : undefined;
+  const { allowedTools, spawnContract } = buildCopilotNativeResearchConfig({
+    baseAllowedTools,
+    enabled: copilotSubagentEnabled,
+    parentMaxTurns,
+    onBudgetObservation: deps.onSpawnBudgetObservation,
+  });
   const subtaskProjector = copilotSubagentEnabled ? createCopilotSubtaskProjector() : undefined;
   const sdkHooks = spawnContract
     ? toolUseCorrelation.prepend(spawnContract.hooks)

@@ -13,22 +13,34 @@ import {
   toMcpAllowedToolName,
 } from '@/kernel/tools/allowlists';
 import { TAVILY_MCP_ALLOWED_TOOLS, TAVILY_MCP_SERVER_NAME } from '@/server/ai/mcp/tavily';
+import {
+  SPAWN_TOOL_NAME,
+  type SpawnBudgetObservation,
+  type SpawnContract,
+  createSpawnContract,
+} from '@/server/ai/spawn-contract';
 
 export const COPILOT_SUBAGENT_NAME = 'copilot-researcher';
 export const COPILOT_SUBAGENT_ENABLED_ENV = 'COPILOT_SUBAGENT_ENABLED';
 
-const TASK_TOOL_NAME = 'Task';
-const GENERATION_TOOL_NAMES = [
+const GENERATION_TOOL_NAMES = new Set([
   toMcpAllowedToolName('generate_goal_outline'),
   toMcpAllowedToolName('generate_question_candidate'),
-] as const;
+]);
+const LEGACY_CONTROL_TOOL_NAMES = new Set([
+  'get_tool_operation',
+  'wait_tool_operation',
+  'cancel_tool_operation',
+  'launch_researcher',
+  'get_subagent',
+  'wait_subagent',
+  'cancel_subagent',
+]);
 const SAFE_LOOM_READ_TOOLS = new Set<string>(
   READ_TOOLS.filter(
     (name) =>
-      name !== 'generate_goal_outline' &&
-      name !== 'generate_question_candidate' &&
-      name !== 'get_tool_operation' &&
-      name !== 'wait_tool_operation',
+      !GENERATION_TOOL_NAMES.has(toMcpAllowedToolName(name)) &&
+      !LEGACY_CONTROL_TOOL_NAMES.has(name),
   ).map((name) => toMcpAllowedToolName(name)),
 );
 const SAFE_TAVILY_TOOLS = new Set<string>(TAVILY_MCP_ALLOWED_TOOLS);
@@ -44,7 +56,7 @@ const COPILOT_RESEARCHER_PROMPT = `你是 Copilot 在后台派出的聚焦研究
 export interface BuildCopilotSubagentsOptions {
   /** The exact top-level SDK allowlist. The nested tools are filtered from it, never widened. */
   parentAllowedTools: readonly string[];
-  /** Foreground inline child shares the parent CopilotTask maxTurns budget (ADR-0056). */
+  /** Native child uses the enclosing live/Mission CopilotTask maxTurns ceiling. */
   parentMaxTurns: number;
 }
 
@@ -61,9 +73,9 @@ export function buildCopilotSubagents(
     (name) => SAFE_LOOM_READ_TOOLS.has(name) || SAFE_TAVILY_TOOLS.has(name),
   );
   const disallowedTools = [
-    TASK_TOOL_NAME,
+    SPAWN_TOOL_NAME,
     ...GENERATION_TOOL_NAMES,
-    ...opts.parentAllowedTools.filter((name) => !tools.includes(name) && name !== TASK_TOOL_NAME),
+    ...opts.parentAllowedTools.filter((name) => !tools.includes(name) && name !== SPAWN_TOOL_NAME),
   ];
   const mcpServers = [
     ...(tools.some((name) => name.startsWith(`mcp__${DOMAIN_TOOL_MCP_SERVER_NAME}__`))
@@ -87,6 +99,46 @@ export function buildCopilotSubagents(
       background: false,
     },
   };
+}
+
+function isLegacyModelControl(toolName: string): boolean {
+  const name = toolName.includes('__') ? toolName.split('__').at(-1) : toolName;
+  return name !== undefined && LEGACY_CONTROL_TOOL_NAMES.has(name);
+}
+
+export interface BuildCopilotNativeResearchOptions {
+  baseAllowedTools: readonly string[];
+  enabled: boolean;
+  parentMaxTurns: number;
+  onBudgetObservation?: (observation: SpawnBudgetObservation) => void;
+}
+
+export interface CopilotNativeResearchConfig {
+  /** Root model surface. Historical mailbox/tool-operation controls are drain-only. */
+  allowedTools: string[];
+  /** Undefined under the operational kill switch; callers keep their own root lifecycle. */
+  spawnContract?: SpawnContract;
+}
+
+/** Shared SDK-native depth-one research surface for live and Mission roots. */
+export function buildCopilotNativeResearchConfig(
+  options: BuildCopilotNativeResearchOptions,
+): CopilotNativeResearchConfig {
+  const rootTools = [...options.baseAllowedTools].filter((tool) => !isLegacyModelControl(tool));
+  const allowedTools = options.enabled
+    ? [...rootTools.filter((tool) => tool !== SPAWN_TOOL_NAME), SPAWN_TOOL_NAME]
+    : rootTools.filter((tool) => tool !== SPAWN_TOOL_NAME);
+  const spawnContract = options.enabled
+    ? createSpawnContract({
+        enabled: true,
+        agents: buildCopilotSubagents({
+          parentAllowedTools: allowedTools.filter((tool) => tool !== SPAWN_TOOL_NAME),
+          parentMaxTurns: options.parentMaxTurns,
+        }),
+        onBudgetObservation: options.onBudgetObservation,
+      })
+    : undefined;
+  return { allowedTools, ...(spawnContract ? { spawnContract } : {}) };
 }
 
 /** Default-on product capability with an explicit operational kill switch. */
