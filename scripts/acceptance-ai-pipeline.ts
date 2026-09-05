@@ -207,15 +207,36 @@ async function main(): Promise<void> {
     if (migrate.status !== 0) throw new Error(`db:migrate failed (exit ${migrate.status})`);
 
     // Import only after DATABASE_URL and the pinned provider lane are installed.
-    const [{ db }, schema, chat, durable, dispatch, cancellationRoute] = await Promise.all([
+    const [
+      { db },
+      schema,
+      chat,
+      durable,
+      dispatch,
+      cancellationRoute,
+      { capabilities },
+      { registerCapabilityTools },
+      { Conversation },
+      { getTool },
+    ] = await Promise.all([
       import('@/db/client'),
       import('@/db/schema'),
       import('@/capabilities/copilot/server/chat'),
       import('@/capabilities/copilot/jobs/copilot_run'),
       import('@/capabilities/copilot/server/durable-dispatch'),
       import('@/capabilities/copilot/api/cancel-run'),
+      import('@/capabilities'),
+      import('@/server/ai/tools/register-capability-tools'),
+      import('@/server/session'),
+      import('@/server/ai/tools/registry'),
     ]);
     const { and, eq, inArray } = await import('drizzle-orm');
+    // Match the server/worker composition root before constructing a Copilot
+    // MCP bridge. Directly importing chat.ts does not populate this registry.
+    await registerCapabilityTools(capabilities);
+    for (const name of ['query_knowledge', 'propose_knowledge_mutation']) {
+      if (!getTool(name)) throw new Error(`fixture bootstrap missing registered tool: ${name}`);
+    }
     captureFailureState = async () => ({
       active_case: activeCase,
       task_runs: await db
@@ -271,7 +292,13 @@ async function main(): Promise<void> {
     ];
     let knownCost = 0;
     const observedTaskRunIds = new Set<string>();
-    const sessionId = `actual_acceptance_${randomUUID()}`;
+    const createCopilotSession = async () =>
+      (await Conversation.findOrCreateCopilotConversation(db, { now: new Date() })).sessionId;
+    const sessionId = await createCopilotSession();
+    evidence.fixture_readiness = {
+      registered_tools: ['query_knowledge', 'propose_knowledge_mutation'],
+      foreground_session_id: sessionId,
+    };
     let priorTurnId: string | undefined;
 
     const snapshot = async (
@@ -361,19 +388,32 @@ async function main(): Promise<void> {
         const attemptsBefore = await db
           .select({ id: schema.ai_task_runs.id })
           .from(schema.ai_task_runs);
+        const cancelSession = await createCopilotSession();
         const accepted = await dispatch.reserveCopilotDurableAcceptance(db, {
-          sessionId: `${sessionId}_cancel`,
+          sessionId: cancelSession,
           userMessage: 'synthetic cancellation fixture; never execute',
           inputHash: SHA256({ caseName }),
           idempotencyKey: randomUUID(),
-          queuedPayload: { session_id: `${sessionId}_cancel`, triggered_by: 'chat' },
+          queuedPayload: { session_id: cancelSession, triggered_by: 'chat' },
         });
         const runId = accepted.acceptance.runId;
         const response = await cancellationRoute.POST(
           new Request(`http://acceptance/api/copilot/runs/${runId}/cancel`, { method: 'POST' }),
           { id: runId },
         );
-        if (!response.ok) throw new Error('cancel: route failed');
+        const cancelBody = (await response.json().catch(() => ({}))) as {
+          error?: unknown;
+          status?: unknown;
+        };
+        if (!response.ok) {
+          caseEvidence.push({
+            name: caseName,
+            run_id: runId,
+            cancel_http_status: response.status,
+            cancel_error_code: typeof cancelBody.error === 'string' ? cancelBody.error : 'unknown',
+          });
+          throw new Error('cancel: route failed');
+        }
         const attemptsAfter = await db
           .select({ id: schema.ai_task_runs.id })
           .from(schema.ai_task_runs);
@@ -383,12 +423,12 @@ async function main(): Promise<void> {
           name: caseName,
           paid_calls: 0,
           run_id: runId,
-          status: await response.json(),
+          status: cancelBody,
         });
         continue;
       }
       if (caseName === 'durable') {
-        const durableSession = `${sessionId}_durable`;
+        const durableSession = await createCopilotSession();
         const accepted = await dispatch.reserveCopilotDurableAcceptance(db, {
           sessionId: durableSession,
           userMessage: '只回复「已收到合成耐久验收」，不要出题、不要调用工具。',
@@ -579,6 +619,12 @@ async function main(): Promise<void> {
         active_case: activeCase,
         name: errorName,
         reason,
+        ...(errorName === 'ApiError' && typeof (error as { code?: unknown }).code === 'string'
+          ? { api_code: (error as { code: string }).code }
+          : {}),
+        ...(errorName === 'ApiError' && typeof (error as { status?: unknown }).status === 'number'
+          ? { api_status: (error as { status: number }).status }
+          : {}),
       };
       if (captureFailureState) evidence.failure_observation = await captureFailureState();
       const failureEvidencePath = resolve(
