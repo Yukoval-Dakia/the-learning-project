@@ -20,6 +20,8 @@ import {
   createSpawnContract,
 } from '@/server/ai/spawn-contract';
 
+export type { SpawnBudgetObservation } from '@/server/ai/spawn-contract';
+
 export const COPILOT_SUBAGENT_NAME = 'copilot-researcher';
 export const COPILOT_SUBAGENT_ENABLED_ENV = 'COPILOT_SUBAGENT_ENABLED';
 

@@ -98,7 +98,6 @@ import {
   buildTavilyMcpServer,
 } from '@/server/ai/mcp/tavily';
 import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
-import type { SpawnBudgetObservation } from '@/server/ai/spawn-contract';
 import {
   type SdkMcpServer,
   type ToolExecutionResultObservation,
@@ -129,6 +128,7 @@ import {
 } from '../server/subagent-mailbox';
 import {
   type CopilotTaskLifecycleMessage,
+  type SpawnBudgetObservation,
   buildCopilotNativeResearchConfig,
   createCopilotSubtaskProjector,
   isCopilotSubagentEnabled,
