@@ -21,7 +21,7 @@ Base: main `090e882c` (foreground turn-context slice, PR #1324 / YUK-939).
 3. [in progress] Converge native child execution and explicit durable work; retire overlapping dispatch paths
    only after all live consumers and pending-work compatibility are accounted for.
 4. [in progress] Consolidate shared attempt execution/catalog ownership and remove obsolete tests/docs.
-5. [pending] Run scoped unit/DB checks, static gates/build, independent review, and actual-provider
+5. [in progress] Run scoped unit/DB checks, static gates/build, independent review, and actual-provider
    acceptance with revision/input/output/task-run/provider/model/token/cost evidence.
 6. [pending] Commit, push, exact-head CI, merge if green; synchronize board/handoff and retry tracker
    capture if the installed connector becomes callable. Report production and measurement boundaries.
@@ -55,3 +55,5 @@ Base: main `090e882c` (foreground turn-context slice, PR #1324 / YUK-939).
   Evidence: isolated acceptance worktree `.tmp/actual-provider-acceptance/1788607564405-9bc922a5-3d0a-44b8-99ed-f81c8e77e015.json`.
 - Further paid calls stopped on unknown cost; async owner choice requested for up to $2 additional
   new-chain actual acceptance. Code/static/scoped verification continues; no production deployment.
+- Owner explicitly approved up to $2 ADDITIONAL for the new-chain acceptance campaign. The old baseline
+  cost remains a lower bound; new test invocations must share that new $2 allowance, not reset it per run.

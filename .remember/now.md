@@ -22,8 +22,8 @@ Owner：完成 AI pipeline 重构后，再讨论整个项目结构。不得把�
   在 SDK terminal 后一次完成；runner 仅补中性的 terminalText，不理解 Copilot 产品字段。
 - 集成后跑 scoped 单测/DB/static/build、独立审查、exact-head CI；尚未 push/PR/merge/部署本阶段。
 - 实际 old-chain read 基准在 acceptance lane `914a378e`：root + blind 已确认 57,817 input、
-  2,457 output、$0.201614；比较模型超时用量/费用未知，只能报告下界。停止再付费，待 owner 回答
-  最多新增 $2 的新链路验收。取消场景已真实验证零 provider attempts。
+  2,457 output、$0.201614；比较模型超时用量/费用未知，只能报告下界。
+  Owner 已明确允许新链路最多新增 $2 真实验收。取消场景已真实验证零 provider attempts。
 - Evidence path：`tlp-wt-actual-acceptance/.tmp/actual-provider-acceptance/1788607564405-9bc922a5-3d0a-44b8-99ed-f81c8e77e015.json`。
 - SDK `bypassPermissions` 会跳过 canUseTool；安全闸必须在 PreToolUse 和实际工具 callback 中执行。
 

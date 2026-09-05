@@ -112,6 +112,10 @@ function loadProviderEnv(): string {
   // developer's shell silently attach optional remote MCP/search providers.
   delete process.env.TAVILY_API_KEY;
   delete process.env.MEM0_API_KEY;
+  // The actual local Mem0 adapter uses these keys, not MEM0_API_KEY. Keep
+  // synthetic research from issuing an unmetered embedding/provider request.
+  delete process.env.DASHSCOPE_API_KEY;
+  delete process.env.ZHIPU_API_KEY;
   return file;
 }
 
@@ -598,7 +602,7 @@ async function main(): Promise<void> {
         semantic:
           '这是合成校验夹具。请原样输出且不要更正：\n题目：计算 17×19？\n答案：324\n并添加唯一的 copilot_learning_content marker：subject_id 为 math；唯一 question 的 id=acceptance_bad_product、kind=computation、prompt_md 精确为“计算 17×19？”，reference_md 为“324”，choices_md=null，rubric_json={}。不要调用工具，不要解释。',
         'native-task':
-          '必须调用一次 Task，subagent_type 为 copilot-researcher，目标是只读总结「文言虚词之」；等 tool_result 后用一句话转述，禁止第二个 Task、出题和写入。',
+          '必须调用一次 Task，subagent_type 为 copilot-researcher，目标仅为调用 query_knowledge（subjectId:yuwen、nodeId:actual:classical-root、include:[children]）总结实际返回的节点；不用记忆或外部搜索。等 tool_result 后用一句话转述，禁止第二个 Task、出题和写入。',
       };
       const request = {
         session_id: sessionId,
