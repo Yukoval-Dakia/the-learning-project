@@ -1,31 +1,34 @@
-# 当前 handoff — 2026-08-28 AI Pipeline Modernization F5 最终收口
+# 当前 handoff — 2026-09-05 AI pipeline 完整改造进行中
 
-## 已落地边界
+Owner：完成 AI pipeline 重构后，再讨论整个项目结构。不得把本轮再次停在单个切片完成。
 
-- 根 Copilot 是前台交互；默认请求返回前台 SSE，只有 `durable:true` 显式创建 durable run。
-- `ToolOperations` 只承载已声明 `safeHandoff` 的 remote read/idempotent tool；超过 45 秒时交出可 wait/poll/cancel 的 handle。write/propose、`run_task`、未拥有 MCP 与未证明安全的 tool 继续阻塞。
-- `SubagentRuns` 有独立 durable mailbox、身份和 cancellation；完成后仅以幂等 one-shot continuation 恢复同一根请求，用户面没有第二个 agent 声音。
-- Copilot drawer 的 operation/subagent 投影展示处理状态、结果、错误与停止动作；已清除 sequence、async、routing、durable/inline、subagent 协调等内部执行叙述。
+## 工作树与已集成内容
 
-## 合并记录
+- 原始 `/Volumes/YukovalSBak/yukoval-projects/the-learning-project` 是带用户改动的旧 main，保持原样。
+- 集成工作树：`/Volumes/YukovalSBak/yukoval-projects/tlp-wt-pipeline-completion`，
+  分支 `codex/yuk-939-pipeline-completion`，从 main `090e882c` 起步。
+- `d286dcbd`：统一 runner SDK 消费核心（88 focused tests）。
+- `51f7c0c8` + `e707a753`：两个 owner generation tools，删除 run_task 与 registry overlay，
+  复用现有 capability runtime ports（85 integrated focused tests）。
+- `593d2aea` + `7cd5890d`：前台与 Mission 原生 depth-1 只读 Task；停止新 safeHandoff，
+  保持父请求结果回流、取消、审计和历史 mailbox 恢复。
+- `10cc68ea`：七个旧控制工具退出 manifest 与实际 MCP 工具集合；保留 drain-only handlers。
+- 验收脚本已集成至 `b004b0b5`：合成数据、独立 pgvector 容器、真实根入口；direct durable 不等于 queue E2E。
 
-- #1302 YUK-926 `f64f1389`；#1303 YUK-927 `c8f90778`；#1304 YUK-930 `4c223bf5`；#1305 YUK-929 `e4e87b08`。
-- #1306 YUK-928 `ad45e3e1`；#1307 YUK-931 `d28061d0341432417a97edd9d57750a7fd93c773`；#1308 YUK-932 `1cf06f575763fb72b558b6c8a2f064405a8a06bb`；#1309 YUK-933 `82eddbdfcfec66b7c11fa2269ebe0886bc405a45`。
-- #1310 YUK-934 `2e815cd5b3879095a2474d85b2e66e2980bab901` 已合并；exact-head `CI Gate` run `33158219176`
-  在 head `a8759ebe1bf42d0c7beb4fc2115113f66b329e54` 通过 aggregate/static/unit/DB/migration/build/usability。
-- 独立 review 已完成，P1 修复验证后无剩余 P0/P1；task census 最终为 53 registered / 52 statically invoked /
-  1 compatibility。最终 board sync #1311 已合并为 `0ec6fe27d497da36cc3884ca7b100b6161dd9ca3`；Linear
-  YUK-927 与 YUK-934 均为 Done，当前开放 PR 为 0。
+## 当前剩余
 
-## YUK-934 result
+- `tlp-wt-root-finalization` 独立 lane 正在完成终态 JSON finalization、reply receipt 和双 evidence Task 退休。
+  已否决必须调用私有 finalize_reply 工具的第一稿：会额外增加普通回复的模型回合。复用确定性校验，
+  在 SDK terminal 后一次完成；runner 仅补中性的 terminalText，不理解 Copilot 产品字段。
+- 集成后跑 scoped 单测/DB/static/build、独立审查、exact-head CI；尚未 push/PR/merge/部署本阶段。
+- 实际 old-chain read 基准在 acceptance lane `914a378e`：root + blind 已确认 57,817 input、
+  2,457 output、$0.201614；比较模型超时用量/费用未知，只能报告下界。停止再付费，待 owner 回答
+  最多新增 $2 的新链路验收。取消场景已真实验证零 provider attempts。
+- Evidence path：`tlp-wt-actual-acceptance/.tmp/actual-provider-acceptance/1788607564405-9bc922a5-3d0a-44b8-99ed-f81c8e77e015.json`。
+- SDK `bypassPermissions` 会跳过 canUseTool；安全闸必须在 PreToolUse 和实际工具 callback 中执行。
 
-- task census 真实值为 53 registered / 52 statically invoked / 1 compatibility（`AttributionTask`）；architecture audit 输出从 `auditTaskCensus()` 的结果派生，不再写死旧的 50/1 值。
-- 保留 correction-intent、retry 与 job-yield classifier；清除的只是 ordinary chat 的预测性 classifier / auto dual-track 叙述。没有 runtime-promotion consumer 或残留需要删除。
-- 没有真实 consumer 声明需要新增 pg-boss job kind、child-process 或 code-cell handle，因此 YUK-934 未新增这些机制。
-- Postman source `postman/api-endpoints.json` 与生成的 collection 已同步，两份 JSON 均通过 `jq` 校验。
+## 边界
 
-## 收口边界
-
-- 不运行本机完整 `pnpm test` 或本地 gate；本次完整测试由 exact-head GitHub `CI Gate` run `33158219176` 决定并已通过。
-- 不部署、不做生产观察，也不清理主工作树或重装依赖。
-- 生产观察仍需单独授权；其余未决事项留在 PARKED roadmap。
+普通回复的结构化 provenance 不证明语义真值；保留题目/解题/教学独立校验。
+历史 checkpoint/table/task rows 不删；旧队列只排空，不继续接受新生产者。
+Linear 返回 Unknown tool，未同步；生产未授权。完整任务状态与后续见 PLAN.md 和 completion plan。

@@ -46,3 +46,12 @@ Base: main `090e882c` (foreground turn-context slice, PR #1324 / YUK-939).
 - Actual acceptance script integrated through `fb4e245e`. Two pre-provider setup failures exposed missing
   local Docker socket discovery and missing synthetic conversation bootstrap. Both had zero task-run
   rows/no paid attempts; setup correction is in progress. These are not product success/failure results.
+- Bootstrap corrected in `b004b0b5`; isolated real cancel route passed with zero provider attempts.
+- Old read-chain actual baseline at `914a378e`: root `copilot_task_ail1c7jlr5vq393tz00p9yty`
+  used 34,847 input / 185 output tokens ($0.102252); blind reference `lkxc685zj36514bkcfysjr1e`
+  used 22,970 input / 2,272 output tokens ($0.099362). Comparator `vbehvzje16deeysrim6icvk0`
+  timed out with unavailable usage/cost. Reply was timeout-degraded. Confirmed total is a lower bound:
+  57,817 input / 2,457 output tokens and $0.201614, NOT a complete cost or token total.
+  Evidence: isolated acceptance worktree `.tmp/actual-provider-acceptance/1788607564405-9bc922a5-3d0a-44b8-99ed-f81c8e77e015.json`.
+- Further paid calls stopped on unknown cost; async owner choice requested for up to $2 additional
+  new-chain actual acceptance. Code/static/scoped verification continues; no production deployment.
