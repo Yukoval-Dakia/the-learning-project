@@ -33,6 +33,7 @@ export interface ToolExecutionGateInput {
 }
 
 export interface ToolExecutionResultObservation extends ToolExecutionGateInput {
+  readonly tool_use_id?: string;
   readonly input: unknown;
   readonly output: unknown;
   readonly error_reason: string | null;

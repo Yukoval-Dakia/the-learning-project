@@ -49,6 +49,7 @@
     "db:migrate:local": "tsx scripts/migrate-local-db.ts",
     "worker:dev": "tsx scripts/worker.ts",
     "seed:synthetic": "tsx scripts/seed-synthetic.ts",
+    "acceptance:ai-pipeline": "tsx tests/acceptance/ai-pipeline.ts",
     "audit:agent-control-plane": "tsx scripts/audit-agent-control-plane.ts",
     "audit:schema": "tsx scripts/audit-schema-writes.ts",
     "audit:dependencies": "pnpm audit --prod --audit-level=high",

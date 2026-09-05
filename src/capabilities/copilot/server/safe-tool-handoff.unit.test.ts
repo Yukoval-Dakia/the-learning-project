@@ -368,7 +368,7 @@ describe('toolUseId correlation', () => {
     ).toBeUndefined();
   });
 
-  it('does not correlate run_task into safe ToolOperations handoff', async () => {
+  it('correlates every named read tool; safe-handoff policy decides whether it is used', async () => {
     const correlation = createToolUseCorrelation('loom');
     const hook = correlation.hooks.PreToolUse?.[0]?.hooks[0] as HookCallback;
     await hook(
@@ -378,14 +378,16 @@ describe('toolUseId correlation', () => {
         transcript_path: '/tmp/transcript',
         cwd: '/tmp',
         permission_mode: 'default',
-        tool_name: 'mcp__loom__run_task',
-        tool_input: { task_kind: 'QuizGenTask', intent: { subject_id: 'math' } },
-        tool_use_id: 'toolu_run_task_excluded',
+        tool_name: 'mcp__loom__generate_goal_outline',
+        tool_input: { goal_title: 'Learn vector calculus' },
+        tool_use_id: 'toolu_goal_outline_correlated',
       },
-      'toolu_run_task_excluded',
+      'toolu_goal_outline_correlated',
       { signal: new AbortController().signal },
     );
 
-    expect(correlation.claim('run_task', { task_kind: 'QuizGenTask' })).toBeUndefined();
+    expect(
+      correlation.claim('generate_goal_outline', { goal_title: 'Learn vector calculus' }),
+    ).toBe('toolu_goal_outline_correlated');
   });
 });

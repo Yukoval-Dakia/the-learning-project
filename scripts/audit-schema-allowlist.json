@@ -1,4 +1,132 @@
 {
+  "copilot_evidence_checkpoint.task_kind": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.slot": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.protocol_version": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.prompt_fingerprint": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.base_input_sha256": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.source_catalog_sha256": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.binding_extras": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.status": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.revision": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.records_json": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.record_digests_json": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.attempts_json": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.sealed_output_json": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.sealed_digest_sha256": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.sealed_task_run_id": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.expires_at": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
   "_comment": "Schema fields with no INSERT/UPDATE write path. Each entry MUST have reason + resolves_when. When the resolving milestone lands, remove from this allowlist.",
   "intervention.outcome": {
     "reason": "YUK-791 creates and activates the versioned preparation aggregate; YUK-792 owns delayed/transfer verification settlement and is the first writer of the terminal outcome.",

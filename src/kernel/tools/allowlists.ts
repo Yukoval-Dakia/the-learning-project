@@ -24,11 +24,6 @@ export const READ_TOOLS = [
   // YUK-203 U4 / L-memtool — Mem0 fact-layer retrieval (D7②). Granted only to
   // coach / dreaming / copilot below; NOT to evaluator surfaces.
   'search_memory_facts',
-  'get_tool_operation',
-  'wait_tool_operation',
-  'launch_researcher',
-  'get_subagent',
-  'wait_subagent',
   // ADR-0032 D9 / YUK-304 (lane B) — 题池查询 (wraps the YUK-280 listQuestions
   // reader; drafts included by default for duplicate-avoidance). Granted to the
   // copilot surfaces ONLY for now — widening maintenance is A2 territory, so the
@@ -40,8 +35,10 @@ export const READ_TOOLS = [
   // reach the active question face — the MAINTENANCE_READ_TOOLS chokepoint below
   // filters it back out (same containment as query_questions).
   'get_question_block_structure',
-  // YUK-756 — generation-only dispatcher for explicitly invocable registry tasks.
-  'run_task',
+  // YUK-939 — capability-owned generation-only tools. Neither retains a draft
+  // nor writes a proposal; author_question remains the distinct retained path.
+  'generate_goal_outline',
+  'generate_question_candidate',
   // YUK-293 — expiring AI-to-AI hints. Granted only to copilot / dreaming /
   // coach below; evaluator and operator surfaces filter it out.
   'read_agent_notes',
@@ -93,8 +90,6 @@ export const PROPOSE_WRITE_TOOLS = [
   // YUK-293 — direct write to the expiring AI hint channel (not learner data,
   // not an inbox proposal). Surface grants remain narrow below.
   'write_agent_note',
-  'cancel_tool_operation',
-  'cancel_subagent',
 ] as const;
 
 export type ReadDomainToolName = (typeof READ_TOOLS)[number];
@@ -130,7 +125,8 @@ const KNOWLEDGE_REVIEW_TOOLS = [
 // 集合对账均由 src/capabilities/copilot/server/copilot-tools.unit.test.ts 强制。
 export const COPILOT_TOOLS = [
   'query_memory_brief',
-  'run_task',
+  'generate_goal_outline',
+  'generate_question_candidate',
   'get_subject_graph_overview',
   'query_knowledge',
   'query_events',
@@ -174,13 +170,6 @@ export const COPILOT_TOOLS = [
   'author_question',
   // YUK-203 U4 / L-memtool (D7②) — Mem0 fact retrieval.
   'search_memory_facts',
-  'get_tool_operation',
-  'wait_tool_operation',
-  'cancel_tool_operation',
-  'launch_researcher',
-  'get_subagent',
-  'wait_subagent',
-  'cancel_subagent',
   // ADR-0031 决定1/D5 + ADR-0032 D9 (YUK-304 lane B) — the quiz C→A reverse-U6
   // grant: the copilot IS the quiz orchestrator now (the C-form detectQuizIntent
   // / resolveQuizIntent / quiz-skill pre-dispatch is retired), so it carries the
@@ -277,17 +266,15 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
     | 'search_memory_facts'
     | 'query_questions'
     | 'get_question_block_structure'
-    | 'get_tool_operation'
-    | 'wait_tool_operation'
-    | 'run_task'
+    | 'generate_goal_outline'
+    | 'generate_question_candidate'
     | 'read_agent_notes'
   > =>
     name !== 'search_memory_facts' &&
     name !== 'query_questions' &&
     name !== 'get_question_block_structure' &&
-    name !== 'get_tool_operation' &&
-    name !== 'wait_tool_operation' &&
-    name !== 'run_task' &&
+    name !== 'generate_goal_outline' &&
+    name !== 'generate_question_candidate' &&
     name !== 'read_agent_notes',
 );
 

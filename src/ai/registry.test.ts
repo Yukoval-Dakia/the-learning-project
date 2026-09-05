@@ -14,10 +14,6 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  CopilotEvidenceReviewOutputSchema,
-  CopilotEvidenceVerificationOutputSchema,
-} from '@/capabilities/copilot/contracts';
-import {
   attributionRerankTaskSpec,
   attributionTaskSpec,
 } from '@/capabilities/practice/tasks/attribution';
@@ -26,10 +22,6 @@ import { sourceGroundingVerifyTaskSpec } from '@/capabilities/practice/tasks/sou
 import { teachingQualityTaskSpec } from '@/capabilities/practice/tasks/teaching-quality';
 import { variantGenTaskSpec } from '@/capabilities/practice/tasks/variant-gen';
 import { variantVerifyTaskSpec } from '@/capabilities/practice/tasks/variant-verify';
-import {
-  COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS,
-  COPILOT_EVIDENCE_REFERENCE_ALLOWED_TOOLS,
-} from '@/core/copilot-evidence';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import promptHashOracle from './fixtures/task-prompt-hashes.6b3233b1.json' with { type: 'json' };
 import { type TaskDef, type TaskKind, tasks } from './registry';
@@ -37,45 +29,26 @@ import { taskCatalog } from './task-catalog';
 import { getTaskSystemPrompt } from './task-prompts';
 
 const YUK932_PROMPT_HASHES = {
-  'general:CopilotTask': '84a63233176a9b71fd7acac4ca65c7bfc4b12fe39cef2e381ccf9a7b05f36f4c',
-  'general:CopilotResearchTask': 'ef6d0d2f56e4ee45c1b95603a81cec03587ab965e5435609ec6a49d4be34a3e6',
-  'math:CopilotTask': '84a63233176a9b71fd7acac4ca65c7bfc4b12fe39cef2e381ccf9a7b05f36f4c',
-  'math:CopilotResearchTask': 'ef6d0d2f56e4ee45c1b95603a81cec03587ab965e5435609ec6a49d4be34a3e6',
-  'physics:CopilotTask': '84a63233176a9b71fd7acac4ca65c7bfc4b12fe39cef2e381ccf9a7b05f36f4c',
-  'physics:CopilotResearchTask': 'ef6d0d2f56e4ee45c1b95603a81cec03587ab965e5435609ec6a49d4be34a3e6',
-  'yuwen:CopilotTask': '84a63233176a9b71fd7acac4ca65c7bfc4b12fe39cef2e381ccf9a7b05f36f4c',
-  'yuwen:CopilotResearchTask': 'ef6d0d2f56e4ee45c1b95603a81cec03587ab965e5435609ec6a49d4be34a3e6',
+  'general:CopilotTask': 'dfac7561689b9067e00a26381c3d20c01e08ee7c1d2a7a4f693b68556035017d',
+  'general:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
+  'math:CopilotTask': 'dfac7561689b9067e00a26381c3d20c01e08ee7c1d2a7a4f693b68556035017d',
+  'math:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
+  'physics:CopilotTask': 'dfac7561689b9067e00a26381c3d20c01e08ee7c1d2a7a4f693b68556035017d',
+  'physics:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
+  'yuwen:CopilotTask': 'dfac7561689b9067e00a26381c3d20c01e08ee7c1d2a7a4f693b68556035017d',
+  'yuwen:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
 } as const;
 
 describe('copilot task dispatch declarations', () => {
-  it('is deny-by-default and exposes exactly two fully-declared tasks', () => {
-    const invocable = Object.values(tasks).filter(
-      (task) => 'copilot' in task && task.copilot?.invocable === true,
-    );
-    expect(invocable.map((task) => task.kind).sort()).toEqual([
-      'GoalScopeTask',
-      'QuestionAuthorTask',
-    ]);
-    for (const task of invocable) {
-      if (!('copilot' in task) || !task.copilot) throw new Error(task.kind);
-      expect(task.copilot.intentSchema.safeParse).toBeTypeOf('function');
-      expect(task.copilot.prepare).toBeTypeOf('function');
-    }
-    expect(Object.keys(tasks)).toHaveLength(52);
-  });
-
-  it('is an immutable compatibility projection with only the two dispatch overlays', () => {
+  it('is an immutable exact compatibility alias with no invocation metadata overlay', () => {
     expect(Object.isFrozen(tasks)).toBe(true);
     expect(Object.isFrozen(tasks.GoalScopeTask)).toBe(true);
-    expect(Object.isFrozen(tasks.GoalScopeTask.copilot)).toBe(true);
     expect(Object.isFrozen(tasks.QuestionAuthorTask)).toBe(true);
-    expect(Object.isFrozen(tasks.QuestionAuthorTask.copilot)).toBe(true);
-    expect(tasks.GoalScopeTask).not.toBe(taskCatalog.GoalScopeTask);
-    expect(tasks.QuestionAuthorTask).not.toBe(taskCatalog.QuestionAuthorTask);
+    expect(tasks).toBe(taskCatalog);
     for (const kind of Object.keys(taskCatalog) as TaskKind[]) {
-      if (kind === 'GoalScopeTask' || kind === 'QuestionAuthorTask') continue;
       expect(tasks[kind], kind).toBe(taskCatalog[kind]);
     }
+    expect(Object.keys(tasks)).toHaveLength(50);
   });
 
   it('contains no prompt builders or task business definitions', () => {
@@ -83,6 +56,9 @@ describe('copilot task dispatch declarations', () => {
     expect(source).not.toMatch(/\bfunction\s+build/);
     expect(source).not.toMatch(/\b(description|defaultProvider|defaultModel|budget|prompt)\s*:/);
     expect(source).not.toContain('DEFAULT_TASK_BUDGET');
+    expect(source).not.toContain('copilot:');
+    expect(source).not.toContain('prepareGoalScopeTask');
+    expect(source).not.toContain('prepareQuestionAuthorTask');
   });
 });
 
@@ -109,7 +85,7 @@ describe('task prompt definitions', () => {
   });
 
   it('defines one non-empty inline or profile prompt for every task', () => {
-    expect(Object.keys(tasks)).toHaveLength(52);
+    expect(Object.keys(tasks)).toHaveLength(50);
 
     for (const task of Object.values(tasks)) {
       switch (task.prompt.kind) {
@@ -139,8 +115,8 @@ describe('task prompt definitions', () => {
   it('matches the unchanged prompts byte-for-byte with the exact pre-refactor oracle', () => {
     expect(promptHashOracle.baseCommit).toBe('6b3233b10633c93497a8211956fddcb795ebd2da');
     expect(promptHashOracle.algorithm).toBe('sha256');
-    expect(promptHashOracle.taskCount).toBe(51);
-    expect(Object.keys(promptHashOracle.prompts)).toHaveLength(204);
+    expect(promptHashOracle.taskCount).toBe(49);
+    expect(Object.keys(promptHashOracle.prompts)).toHaveLength(196);
 
     for (const profileId of promptHashOracle.profiles) {
       const profile = resolveSubjectProfile(profileId);
@@ -157,7 +133,7 @@ describe('task prompt definitions', () => {
     }
   });
 
-  it('pins the YUK-938 native Task and read-only researcher prompts byte-for-byte', () => {
+  it('pins the YUK-939 finalized Copilot and read-only researcher prompts byte-for-byte', () => {
     for (const [key, expectedHash] of Object.entries(YUK932_PROMPT_HASHES)) {
       const [profileId, task] = key.split(':') as [
         'general' | 'math' | 'physics' | 'yuwen',
@@ -653,164 +629,15 @@ describe('CopilotTask.systemPrompt — YUK-340 quiet-manuscript reply tone', () 
   });
 });
 
-describe('CopilotEvidenceReviewTask — YUK-832 typed final-reply gate', () => {
-  it('is a bounded Xiaomi append-only blind-reference task with a server-owned sealed schema', () => {
-    const def = tasks.CopilotEvidenceReviewTask;
-    expect(def.defaultProvider).toBe('xiaomi');
-    expect(def.defaultModel).toBe('mimo-v2.5-pro');
-    expect(def.needsToolCall).toBe(true);
-    expect(def.allowedTools).toEqual([...COPILOT_EVIDENCE_REFERENCE_ALLOWED_TOOLS]);
-    // Accepted records need at most 16 turns; actual A01 then proved an exact
-    // 16-turn ceiling leaves no bounded correction room for rejected chunks.
-    // The 24-turn ceiling remains subordinate to the durable wall clock.
-    expect(def.budget.maxIterations).toBe(24);
-    expect(def.budget.timeout).toBe(120_000);
-    expect(def).not.toHaveProperty('structuredOutputSchema');
-
-    expect(
-      CopilotEvidenceReviewOutputSchema.safeParse({
-        protocol_version: 1,
-        evidence_points: [
-          {
-            point_index: 0,
-            request_unit_indices: [0],
-            kind: 'actual_gap',
-            statement_md: 'cross-subject descendants were not covered by this exact subject window',
-            source_refs: [
-              {
-                call_index: 0,
-                side: 'output',
-                json_pointer: '/claim_boundaries/supports_cross_subject_causal_descendant_claim',
-                role: 'coverage',
-              },
-            ],
-          },
-        ],
-        request_coverage: [
-          { request_unit_index: 0, status: 'actual_gap', evidence_point_indices: [0] },
-        ],
-        trace_coverage: [
-          {
-            call_index: 0,
-            relevance: 'scope_only',
-            request_unit_indices: [0],
-            evidence_point_indices: [0],
-            rationale_md: '该 typed boundary 限定 exact subject window 的结论范围。',
-          },
-        ],
-        safe_reply: '已核验 exact window；跨 subject 后续仍需沿显式关系读取。',
-      }).success,
-    ).toBe(true);
-    expect(
-      CopilotEvidenceReviewOutputSchema.safeParse({
-        verdict: 'pass',
-        protocol_version: 1,
-        evidence_points: [],
-        request_coverage: [],
-        safe_reply: '不得接受 provider verdict。',
-      }).success,
-    ).toBe(false);
-  });
-
-  it('uses a separate append-only comparator whose output cannot authorize itself or author a third draft', () => {
-    const def = tasks.CopilotEvidenceVerificationTask;
-    expect(def.defaultProvider).toBe('xiaomi');
-    expect(def.defaultModel).toBe('mimo-v2.5-pro');
-    expect(def.needsToolCall).toBe(true);
-    expect(def.allowedTools).toEqual([...COPILOT_EVIDENCE_COMPARISON_ALLOWED_TOOLS]);
-    // Accepted records need at most 18 turns. Use the same 24-turn bounded
-    // correction ceiling as the blind leg; wall-clock timeout remains final.
-    expect(def.budget.maxIterations).toBe(24);
-    expect(def.budget.timeout).toBe(120_000);
-    expect(def).not.toHaveProperty('structuredOutputSchema');
-    expect(
-      CopilotEvidenceVerificationOutputSchema.safeParse({
-        protocol_version: 1,
-        reply_checks: [
-          {
-            reply_unit_index: 0,
-            status: 'unsupported',
-            evidence_point_indices: [0],
-            source_refs: [],
-            reason_codes: ['internal_contradiction'],
-          },
-        ],
-        request_checks: [
-          {
-            request_unit_index: 0,
-            status: 'missing',
-            reply_unit_indices: [],
-            evidence_point_indices: [],
-            reason_codes: ['requested_chain_incomplete'],
-          },
-        ],
-      }).success,
-    ).toBe(true);
-    expect(
-      CopilotEvidenceVerificationOutputSchema.safeParse({
-        protocol_version: 1,
-        reply_checks: [],
-        request_checks: [],
-        safe_reply: '不得存在第三版',
-      }).success,
-    ).toBe(false);
-    const p = getTaskSystemPrompt('CopilotEvidenceVerificationTask');
-    expect(p).toContain('看不到其他 comparator attempt 的结果');
-    expect(p).toContain('服务端会生成 request_checks 并派生 pass/fail');
-    expect(p).toContain('trace_coverage');
-    expect(p).toContain('source_complete');
-    expect(p).toContain('不要生成 safe_reply 或第三版');
-  });
-
-  it('pins blind input, actual-burn-in boundaries, and partial-source disclosure', () => {
-    const p = getTaskSystemPrompt('CopilotEvidenceReviewTask');
-    expect(p).toContain('不审阅、也看不到 Copilot 候选回复');
-    expect(p).toContain('source_complete=false');
-    expect(p).toContain('不可信待处理数据');
-    expect(p).toContain('caused_by_event_id');
-    expect(p).toContain('siblings');
-    expect(p).toContain('necessary_conditions/sufficient_conditions=not_supported');
-    expect(p).toContain('causal_descendants_included=false');
-    expect(p).toContain('exact subject_id window');
-    expect(p).toContain('redacted、unprojected/当前投影未提供');
-    expect(p).toContain('event.outcome 与 evidence.outcome');
-    expect(p).toContain('queue_assertion');
-    expect(p).toContain('supports_lifecycle_status_count_claim=false');
-    expect(p).toContain('count_scope=returned_actionable_rows_only');
-    expect(p).toContain('system / ever / never / only / unique');
-    expect(p).toContain('相同时间戳与连续 dispatch_seq 不能证明同一事务');
-    expect(p).toContain('逐个对照 request_context 中每个 material subpart');
-    expect(p).toContain('不得静默省略某个 subpart');
-    expect(p).toContain('query_knowledge 的 nodes=[]');
-    expect(p).toContain('完整链、后续动作、review/judge、队列结论');
-    expect(p).toContain('append_evidence_points');
-    expect(p).toContain('mark_trace_calls_not_material');
-    // YUK-926 — not-material marks must batch by default: the R2 burn-in burned
-    // ~10 full-context rounds on one-per-call submissions despite the 12-item cap.
-    expect(p).toContain('合并成尽可能少的调用批次');
-    expect(p).toContain('set_safe_reply');
-    expect(p).toContain('complete_reference');
-    expect(p).toContain('不要生成最终大 JSON');
-    expect(p).toContain('evidence_trace');
-    expect(p).toContain('[source_id, exact_value]');
-    expect(p).toContain('不得在提交记录中输出 call_index、side 或 JSON Pointer');
-    expect(p).toContain('服务端会从 source_id 还原并生成连续 point_index');
-    expect(p).toContain('auto_completed=true');
-    expect(p).toContain('不再调用 complete_reference');
-    expect(p).toContain('不得清空、替换或覆盖已接受记录');
-    expect(p).toContain('contract_feedback');
-    expect(p).toContain('不是新证据，也不含上次输出');
-    const comparator = getTaskSystemPrompt('CopilotEvidenceVerificationTask');
-    expect(comparator).toContain('append_reply_checks');
-    expect(comparator).toContain('complete_comparison');
-    expect(comparator).toContain('evidence_trace');
-    expect(comparator).toContain('[source_id, exact_value]');
-    expect(comparator).toContain('auto_completed=true');
-    expect(comparator).toContain('不再调用 complete_comparison');
-    expect(comparator).toContain('不要输出 source_refs、call_index、side 或 JSON Pointer');
-    expect(comparator).toContain('服务端会从这些小记录派生 dense request_checks');
-    expect(comparator).toContain('不要输出大 JSON、总 verdict、request_checks');
-    expect(comparator).toContain('不含上次 verdict/output，也不是证据');
+describe('CopilotTask.systemPrompt — YUK-939 root finalization', () => {
+  it('requires direct terminal Markdown after every tool settles', () => {
+    const prompt = getTaskSystemPrompt('CopilotTask');
+    expect(prompt).toContain('SDK terminal result 直接输出要向用户展示的完整 Markdown 正文');
+    expect(prompt).toContain('不要输出 JSON envelope');
+    expect(prompt).not.toContain('relied_on_tool_use_ids');
+    expect(prompt).toContain('"changed":[],"retained":[],"uncertain":[]');
+    expect(prompt).toContain('后三项必须是字符串数组');
+    expect(prompt).toMatch(/【最终输出——严格执行】[\s\S]+不要自行列工具调用 ID。$/);
   });
 });
 
@@ -826,7 +653,9 @@ describe('CopilotTask.systemPrompt — YUK-938 native Task live parent', () => {
 
     const researcher = getTaskSystemPrompt('CopilotResearchTask');
     expect(researcher).toContain('只读研究员');
-    expect(researcher).toContain('不得调用 Task、run_task、launch_researcher');
+    expect(researcher).toContain(
+      '不得调用 Task、generate_goal_outline、generate_question_candidate、launch_researcher',
+    );
     expect(researcher).toContain('不得输出 transcript、隐藏推理或过程日志');
   });
 });

@@ -120,7 +120,7 @@ vi.mock('@/server/ai/log', () => ({
 }));
 
 import { type TaskEventMessage, runTask, streamTaskCollecting } from './runner';
-import { SPAWN_TOOL_NAME, createSpawnContract } from './spawn-contract';
+import { SPAWN_TOOL_ALIASES, SPAWN_TOOL_NAME, createSpawnContract } from './spawn-contract';
 
 const fakeDb = {} as never;
 
@@ -186,7 +186,7 @@ function assistantThinkingWithTask(
         {
           type: 'tool_use',
           id: toolUseId,
-          name: SPAWN_TOOL_NAME,
+          name: 'Agent',
           input: {
             subagent_type: 'diagnostic-scout',
             description: '核对近七日必要条件/充分条件错题、探针与复习轨迹，只回证据结论',
@@ -294,6 +294,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it('fires onDelta once per assistant-message chunk and resolves the concatenated text', async () => {
@@ -306,6 +307,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
 
     expect(deltas).toEqual(['Hello, ', 'world!']);
     expect(result.text).toBe('Hello, world!');
+    expect(result.terminalText).toBe('ignored');
     expect(result.finishReason).toBe('end_turn');
     // usage aggregates input + cache_read.
     expect(result.usage).toEqual({ inputTokens: 7, outputTokens: 7 });
@@ -339,7 +341,10 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect(JSON.stringify(finished)).not.toContain('hidden reasoning');
   });
 
-  it('runTask exposes only typed task events and records native Task tool_use without raw reasoning', async () => {
+  it('runTask exposes only typed task events and records the SDK-emitted Agent tool_use without raw reasoning', async () => {
+    // Agent-enabled product roots override inherited CLI feature flags so an
+    // operator or parent shell cannot re-enable SDK background execution.
+    vi.stubEnv('CLAUDE_CODE_DISABLE_BACKGROUND_TASKS', '0');
     const hiddenReasoning =
       '先推测学习者可能被“只有才”措辞诱导，但这个内部推理绝不能进入 task observer 或 tool log。';
     const foregroundText = '我会在前台只用 Copilot 一个声音汇总后台调查。';
@@ -413,6 +418,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
 
     const captured = mockSdk.capturedOptions as {
       agents: Record<string, { tools?: string[]; disallowedTools?: string[] }>;
+      env: Record<string, string | undefined>;
       hooks: unknown;
       canUseTool: unknown;
       forwardSubagentText: boolean;
@@ -421,9 +427,13 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
       'mcp__copilot__get_attempt_details',
     ]);
     expect(captured.agents['diagnostic-scout']?.disallowedTools).toContain(SPAWN_TOOL_NAME);
+    expect(captured.agents['diagnostic-scout']?.disallowedTools).toEqual(
+      expect.arrayContaining([...SPAWN_TOOL_ALIASES]),
+    );
     expect(captured.hooks).toBe(contract.hooks);
     expect(captured.canUseTool).toBe(contract.canUseTool);
     expect(captured.forwardSubagentText).toBe(false);
+    expect(captured.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe('1');
 
     const { writeToolCallLog } = await import('@/server/ai/log');
     expect(writeToolCallLog).toHaveBeenCalledTimes(1);
@@ -431,7 +441,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
       fakeDb,
       expect.objectContaining({
         task_kind: 'AttributionTask',
-        tool_name: SPAWN_TOOL_NAME,
+        tool_name: 'Agent',
         input_json: {
           subagent_type: 'diagnostic-scout',
           description: '核对近七日必要条件/充分条件错题、探针与复习轨迹，只回证据结论',
@@ -442,6 +452,31 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect(JSON.stringify((writeToolCallLog as ReturnType<typeof vi.fn>).mock.calls)).not.toContain(
       hiddenReasoning,
     );
+  });
+
+  it('does not disable background tasks for a generic caller that explicitly declares a background agent', async () => {
+    vi.stubEnv('CLAUDE_CODE_DISABLE_BACKGROUND_TASKS', undefined);
+    mockSdk.messages = [resultMsg];
+
+    await runTask(
+      'AttributionTask',
+      { question_id: 'q_async_compatibility' },
+      {
+        db: fakeDb,
+        agents: {
+          'background-observer': {
+            description: 'generic compatibility fixture',
+            prompt: 'observe without blocking',
+            background: true,
+          },
+        },
+      },
+    );
+
+    const captured = mockSdk.capturedOptions as {
+      env: Record<string, string | undefined>;
+    };
+    expect(captured.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBeUndefined();
   });
 
   it('streamTaskCollecting preserves interleaved task-event order while thinking/text stay on their own channels', async () => {

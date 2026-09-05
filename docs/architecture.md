@@ -182,9 +182,7 @@ FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
 | `ProfileCriticTask` | mimo-v2.5-pro | compile CLI `--critic` (YUK-203 U7) | 否 | — | draft SubjectProfile 评审 + patch 建议（proposal-only）|
 | `DreamingTask` | mimo-v2.5-pro | pg-boss nightly (Foundation D) | 是 | — | 夜间学习信号 → inbox proposals（DomainTools）|
 | `CoachTask` | mimo-v2.5-pro | pg-boss `coach_daily` / `coach_weekly` (T-D6) | 是 | — | TodayPlan JSON（propose_* 写 inbox）|
-| `CopilotEvidenceReviewTask` | mimo-v2.5-pro | Copilot free-form turn 使用 DomainTool read 后、回复持久化/可见前（YUK-832） | 否 | — | FULL validator 的盲证据腿：不看 candidate，把 server 切好的 request units 绑定到精确 typed tool call + RFC6901 pointer，密封 facts/gaps，并产一份仍需完整认证的唯一 fallback |
-| `CopilotEvidenceVerificationTask` | mimo-v2.5-pro | 盲 evidence ledger 建成后、任何 persistence / public delta 前（YUK-832） | 否 | — | 密封 comparator：逐 reply/request unit 输出 indexed observations，不提供权威 verdict 或第三版；服务端校验 dense indices/pointers/coverage 并派生 pass，pass 必须由两次 valid comparison 确认 |
-| `CopilotTask` | mimo-v2.5-pro | `/api/chat` inline + pg-boss `copilot_run`（AF S4 / YUK-203 / YUK-757） | 是 | — | 唯一面向用户的对话式学习助手；普通 chat 始终前台执行，只有显式 `durable:true` 才受理为 `copilot_run` 并返回 202；默认可在后台派只读 `copilot-researcher`（共享 depth=1/report-only contract，显式 kill switch），只把结构化进度卡与最终结论带回同一 Copilot 声音，不暴露子任务 transcript / reasoning |
+| `CopilotTask` | mimo-v2.5-pro | `/api/chat` inline + pg-boss `copilot_run`（AF S4 / YUK-203 / YUK-757 / YUK-939） | 是 | — | 唯一面向用户的对话式学习助手；terminal Markdown 由服务端绑定精确回复字节、实际 root 工具轨迹、更正、proposal 披露与学习内容质量门；普通 chat 前台执行，显式 `durable:true` 走 `copilot_run` |
 | `CopilotResearchTask` | mimo-v2.5-pro | `copilot_run` 内的 durable depth-1 read-only research objective | 是 | — | `copilot-researcher` 的受限只读研究任务；只把结构化进度与结论交回同一 Copilot 声音 |
 | `QuestionAuthorTask` | mimo-v2.5-pro | `author_question` DomainTool knowledge\|material seed（ADR-0031 / YUK-304） | 否 | — | 单道原创 draft 题（StructuredQuestion 树）+ `question_draft` proposal（单次 structured output，无工具循环；取代 YUK-275 的 `QuizIntentParseTask` C 形态解析器）|
 | `ItemPriorTask` | mimo-v2.5-pro | pg-boss `item_prior_backfill`（B1-W1 / ADR-0035 慢热阶段①） | 否 | — | 给新题估冷启先验难度 b（logit 尺度，抽教学特征路线）+ confidence → `item_calibration`（source=`llm_prior`）|
@@ -239,12 +237,12 @@ interface DomainTool<Input, Output> {
 `src/server/ai/tools/registry.ts` 静态装配 capability manifests；MCP bridge 把选中的 DomainTool
 包成 in-process server。独立远程 MCP server 仍推后，不作为当前产品内 tool 架构核心。
 
-工具默认阻塞。只有显式声明 `safeHandoff` 的 remote read/idempotent DomainTool，才会在执行前
-写入独立 `tool_operation`，并在持续 45 秒后把同一个 durable handle 交回模型；45 秒内完成仍直接
-返回原结果。Copilot 可在同一 conversation owner 下 get/wait/cancel，SDK `toolUseId` 通过
-PreToolUse hook 与持久化 input 关联。system drain、用户取消与模型取消共用相同 ownership seam；
-owner 中断导致 settlement 不确认时由 ToolOperations 保留 `lost` 与 side-effect risk。`run_task`、所有
-propose/write 以及未证明可安全 detached 的 Tavily/手写 MCP 继续阻塞，且不会被 pg-boss 重投。
+当前所有注册工具均阻塞到结果返回；`search_memory_facts` 不再产生新的 `tool_operation`，
+七个旧 operation/subagent 控制工具也不再向模型注册。独立研究使用只读 depth-1 原生 Task，
+结果回到同一个父请求；只有显式 Mission 使用持久化根任务。
+历史 safeHandoff/ToolOperations 的 ownership、取消、lost/side-effect-risk 与队列恢复代码仅保留
+排空兼容义务；删除它们须先取得部署后的零未结算记录、零 queued/active jobs 证据。
+`generate_goal_outline`、`generate_question_candidate`、所有 propose/write 与外部 MCP 都不会自动后台化。
 
 **循环控制现状**：
 

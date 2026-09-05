@@ -63,7 +63,6 @@ export function createToolUseCorrelation(serverName: string): ToolUseCorrelation
       return { continue: true };
     }
     const toolName = input.tool_name.slice(prefix.length);
-    if (toolName === 'run_task') return { continue: true };
     const key = `${toolName}:${sha256CanonicalJson(input.tool_input)}`;
     pending.set(key, [...(pending.get(key) ?? []), input.tool_use_id]);
     return { continue: true };
@@ -72,7 +71,6 @@ export function createToolUseCorrelation(serverName: string): ToolUseCorrelation
   return {
     hooks,
     claim(toolName, input) {
-      if (toolName === 'run_task') return undefined;
       const key = `${toolName}:${sha256CanonicalJson(input)}`;
       const ids = pending.get(key);
       const claimed = ids?.shift();
@@ -330,18 +328,13 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
       let correlatedToolUseId: string | undefined;
       const gateInput = { name: dt.name, effect: dt.effect };
       const safeHandoffEnabled =
-        dt.safeHandoff &&
-        dt.effect === 'read' &&
-        dt.name !== 'run_task' &&
-        ctx.sessionId !== undefined;
+        dt.safeHandoff && dt.effect === 'read' && ctx.sessionId !== undefined;
       let effectContract = proposalEffectContract(dt.name, dt.effect);
 
       try {
         parsedInput = dt.inputSchema.parse(rawArgs);
         execInput = parsedInput;
-        correlatedToolUseId = safeHandoffEnabled
-          ? opts.claimToolUseId?.(dt.name, rawArgs)
-          : undefined;
+        correlatedToolUseId = opts.claimToolUseId?.(dt.name, rawArgs);
       } catch (err) {
         errorReason = err instanceof Error ? err.message : String(err);
       }
@@ -451,6 +444,7 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
       try {
         await opts.onResult?.({
           ...gateInput,
+          ...(correlatedToolUseId ? { tool_use_id: correlatedToolUseId } : {}),
           // The context interceptor may cap a typed input before execution.
           // Review the exact input that produced this output, not the larger
           // request the model originally attempted.
@@ -615,11 +609,13 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
                 ? {
                     error: errorReason,
                     summary,
+                    ...(correlatedToolUseId ? { tool_use_id: correlatedToolUseId } : {}),
                     ...(effectContract ? { proposal_effect_contract: effectContract } : {}),
                   }
                 : {
                     summary,
                     output,
+                    ...(correlatedToolUseId ? { tool_use_id: correlatedToolUseId } : {}),
                     ...(effectContract ? { proposal_effect_contract: effectContract } : {}),
                   },
             ),

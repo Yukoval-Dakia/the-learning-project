@@ -13,7 +13,7 @@
 | `api/accept-chip.ts` | `/api/teaching-sessions/[id]/accept-chip` 教学 chip 接受 |
 | `api/nudges.ts` | 主动 nudge 列表与 dismiss/opened 幂等处置 |
 | `server/` | chat 编排、turns 读取、summary、stream helpers、teaching 编排（`server/teaching.ts`，YUK-878 自 orchestrator 迁入） |
-| `tasks/` + `contracts.ts` | Copilot 自有五个 TaskSpec（dispatch / evidence×2 / agent / teaching-turn）与四条 evidence/dispatch schema（YUK-878） |
+| `tasks/` | Copilot 自有三个 TaskSpec（agent / research / teaching-turn） |
 | `ui/CopilotDock.tsx` | 全局 Copilot 抽屉（壳层在 `web/src/router.tsx` 根挂） |
 
 ## CONVENTIONS
@@ -32,9 +32,8 @@
   fence / legacy worker-touch evidence 做有界修复；只有 QUEUED-only dead delivery 才能标成
   pre-execution loss。不得用 wall-clock 或 heartbeat timestamp 猜测 live queue run 已死。
 - Copilot 自有工具：事件流读、记忆面读、artifact authoring 写。
-- YUK-832 FULL evidence reviewer 的 submission tools 是 validator 内部 append-only collector，
-  只收小记录并由 server 生成 canonical ledger；它们不是 Copilot/DomainTool 产品能力，不进入
-  manifest registry、tool mirror 或用户可见工具面。
+- YUK-939 根任务以 terminal Markdown 收口；服务端在 SDK terminal 后绑定实际 root
+  trace、更正、proposal 披露与学习内容校验，不新增 MCP 工具或额外模型轮次。
 - chip 是 Copilot 回复里的可点击动作卡片，accept-chip 把用户选择物化为教学事件。
 
 ## ANTI-PATTERNS
