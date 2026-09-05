@@ -205,9 +205,9 @@ export interface RunTaskCtx {
    *
    * The SoT lives in src/subjects/<id>/skills/; the runner populates the isolated
    * CLAUDE_CONFIG_DIR/skills once at process start (getIsolatedClaudeConfigDir),
-   * and this array keys WHICH of the populated skills the model actually sees. Per
-   * the YUK-217 spike, `settingSources` (a SEPARATE field) must stay OMITTED —
-   * passing settingSources:[] disables the CONFIG_DIR/skills auto-load.
+   * and this array keys WHICH of the populated skills the model actually sees.
+   * Skill-enabled runs load only the isolated config dir's `user` source; no-skill
+   * runs pass `settingSources: []`. Neither path loads project/local instructions.
    */
   skills?: string[];
   /**
@@ -591,19 +591,18 @@ function buildQueryOptions(
     // be explicit-disable: pass `skills: ctx.skills ?? []`. Only a handler that
     // explicitly whitelists (ctx.skills = ['quiz-gen-<kind>']) sees those skills.
     //
-    // settingSources is handled below: no-skill product runs use SDK isolation;
-    // explicitly skill-enabled runs retain the YUK-217 omitted-source discovery path.
+    // settingSources is handled below: no-skill product runs use full SDK isolation;
+    // explicitly skill-enabled runs load only the isolated CONFIG_DIR user source.
     skills: configuredSkills,
   };
   // SDK default/omitted means "load user + project + local settings", including
   // this repository's CLAUDE.md and SessionStart hooks. Those developer-agent
-  // instructions are not product context. A no-skill server task therefore uses
-  // SDK isolation mode. Skill-enabled tasks keep the key omitted for now because
-  // the verified YUK-217 CONFIG_DIR discovery path depends on filesystem settings;
-  // the explicit skills whitelist still restricts what the model can invoke.
-  if (configuredSkills.length === 0) {
-    options.settingSources = [];
-  }
+  // instructions are not product context. SDK 0.3.220 requires the `project`
+  // source to load CLAUDE.md, so skill-enabled tasks select only `user` from the
+  // generated isolated CONFIG_DIR while the explicit whitelist restricts which
+  // mirrored skills the model can invoke. No-skill tasks disable all filesystem
+  // settings.
+  options.settingSources = configuredSkills.length > 0 ? ['user'] : [];
   // YUK-299 seam: pass outputFormat only to providers that implement the SDK
   // protocol. Mimo callers intentionally omit the option and consume the
   // existing strict-prompt + Zod text fallback instead.
