@@ -154,6 +154,8 @@ describe('createSpawnContract — YUK-757/YUK-572 v2', () => {
     expect(contract.agents['question-preview-author']?.disallowedTools).toEqual([
       ...SPAWN_TOOL_ALIASES,
     ]);
+    expect(contract.agents['diagnostic-scout']?.background).toBe(false);
+    expect(contract.agents['question-preview-author']?.background).toBe(false);
   });
 
   it('fails the spawn surface closed when the kill switch is off without touching non-Task tools', async () => {

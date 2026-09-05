@@ -454,6 +454,31 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     );
   });
 
+  it('does not disable background tasks for a generic caller that explicitly declares a background agent', async () => {
+    vi.stubEnv('CLAUDE_CODE_DISABLE_BACKGROUND_TASKS', undefined);
+    mockSdk.messages = [resultMsg];
+
+    await runTask(
+      'AttributionTask',
+      { question_id: 'q_async_compatibility' },
+      {
+        db: fakeDb,
+        agents: {
+          'background-observer': {
+            description: 'generic compatibility fixture',
+            prompt: 'observe without blocking',
+            background: true,
+          },
+        },
+      },
+    );
+
+    const captured = mockSdk.capturedOptions as {
+      env: Record<string, string | undefined>;
+    };
+    expect(captured.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBeUndefined();
+  });
+
   it('streamTaskCollecting preserves interleaved task-event order while thinking/text stay on their own channels', async () => {
     const hiddenReasoning = '内部比较两条知识轨迹的置信度，不向 UI 或 event sink 暴露。';
     const foregroundText = '两个后台核对任务正在推进，我会统一汇总。';

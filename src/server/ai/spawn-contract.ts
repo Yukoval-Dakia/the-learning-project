@@ -80,6 +80,10 @@ function makeDepthOneAgent(definition: AgentDefinition): AgentDefinition {
     ...definition,
     ...(definition.tools === undefined ? {} : { tools }),
     disallowedTools,
+    // Every contract-managed spawn returns into its parent before that parent
+    // can complete. The runner uses this explicit value to scope the SDK flag
+    // without changing generic callers that intentionally define background agents.
+    background: false,
   };
 }
 

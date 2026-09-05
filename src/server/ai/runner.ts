@@ -564,11 +564,14 @@ function buildQueryOptions(
   const modelProfile = resolveModelProfile(resolved.provider, resolved.model);
   const sdkOutputFormat =
     modelProfile.capabilities.structuredOutput === false ? undefined : ctx.outputFormat;
+  const agents = ctx.agents === undefined ? [] : Object.values(ctx.agents);
+  const disableBackgroundTasks =
+    agents.length > 0 && agents.every((definition) => definition.background === false);
   const options: Options = {
     model: resolved.model,
     systemPrompt: getTaskSystemPrompt(kind, ctx.subjectProfile),
     abortController,
-    env: buildAgentEnv(resolved, { disableBackgroundTasks: ctx.agents !== undefined }),
+    env: buildAgentEnv(resolved, { disableBackgroundTasks }),
     tools: allowedTools,
     mcpServers: ctx.mcpServers,
     // YUK-575 (N5) — durable copilot run overrides the turn ceiling per-call.
