@@ -9,7 +9,7 @@
  * Examples (the named env file is read without printing its values):
  *   ACTUAL_PROVIDER_ENV_FILE=/path/to/.env.local pnpm acceptance:ai-pipeline --preflight
  *   ACTUAL_PROVIDER_ACCEPTANCE=1 ACTUAL_PROVIDER_ENV_FILE=/path/to/.env.local \
- *     pnpm acceptance:ai-pipeline --case read --baseline-record
+ *     pnpm acceptance:ai-pipeline --case read --baseline-record --cost-limit-usd 1.75
  */
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -25,6 +25,7 @@ type CaseName =
   | 'correction'
   | 'read'
   | 'proposal'
+  | 'semantic'
   | 'native-task'
   | 'durable'
   | 'cancel';
@@ -36,12 +37,37 @@ const CASES: readonly CaseName[] = [
   'correction',
   'read',
   'proposal',
+  'semantic',
   'native-task',
   'durable',
   'cancel',
 ];
-const COST_CEILING_USD = 2;
+const DEFAULT_COST_LIMIT_USD = 2;
+const MAX_COST_LIMIT_USD = 2;
 const CASE_TIMEOUT_MS = 90_000;
+// Admission reserves are deliberately conservative campaign controls, not
+// vendor pricing promises. They avoid beginning another case when the remaining
+// owner-approved allowance is obviously too small to finish its expected shape.
+const CASE_COST_RESERVE_USD: Readonly<Record<CaseName, number>> = {
+  cold: 0.25,
+  resume: 0.25,
+  'context-change': 0.25,
+  correction: 0.25,
+  read: 0.25,
+  proposal: 0.25,
+  semantic: 0.75,
+  'native-task': 0.5,
+  durable: 0.25,
+  cancel: 0,
+};
+// Derived from the current content-validation call graph: verify-framework's
+// runQuestionContentValidation → QuizVerifyTask; non-vision computation
+// solve-check → SolutionGenerateTask; runTeachingQualityCheck → TeachingQualityTask.
+const SEMANTIC_VALIDATOR_TASK_KINDS = [
+  'QuizVerifyTask',
+  'SolutionGenerateTask',
+  'TeachingQualityTask',
+] as const;
 const SHA256 = (value: unknown) =>
   createHash('sha256')
     .update(typeof value === 'string' ? value : JSON.stringify(value))
@@ -50,6 +76,16 @@ const SHA256 = (value: unknown) =>
 function arg(name: string): string | undefined {
   const index = process.argv.indexOf(name);
   return index === -1 ? undefined : process.argv[index + 1];
+}
+
+function costLimitUsd(): number {
+  const raw = arg('--cost-limit-usd');
+  if (raw === undefined) return DEFAULT_COST_LIMIT_USD;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > MAX_COST_LIMIT_USD) {
+    throw new Error(`--cost-limit-usd must be >0 and <=${MAX_COST_LIMIT_USD}`);
+  }
+  return parsed;
 }
 
 function assertLoopback(url: string): void {
@@ -168,6 +204,7 @@ async function main(): Promise<void> {
     throw new Error(`unknown --case ${requested}; expected ${CASES.join(', ')}`);
   }
   const selected = requested ? [requested as CaseName] : [...CASES];
+  const campaignCostLimitUsd = costLimitUsd();
   const baselineRecord = process.argv.includes('--baseline-record');
   if (baselineRecord && selected.length !== 1) {
     throw new Error('--baseline-record is intentionally limited to one --case invocation');
@@ -189,6 +226,8 @@ async function main(): Promise<void> {
     model: 'mimo-v2.5-pro',
     credential_source: source,
     baseline_record: baselineRecord,
+    campaign_cost_limit_usd: campaignCostLimitUsd,
+    case_cost_reserves_usd: CASE_COST_RESERVE_USD,
     cases: caseEvidence,
   };
   let activeCase: CaseName | undefined;
@@ -218,6 +257,7 @@ async function main(): Promise<void> {
       { registerCapabilityTools },
       { Conversation },
       { getTool },
+      { COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY },
     ] = await Promise.all([
       import('@/db/client'),
       import('@/db/schema'),
@@ -229,6 +269,7 @@ async function main(): Promise<void> {
       import('@/server/ai/tools/register-capability-tools'),
       import('@/server/session'),
       import('@/server/ai/tools/registry'),
+      import('@/capabilities/copilot/server/content-validation'),
     ]);
     const { and, eq, inArray } = await import('drizzle-orm');
     // Match the server/worker composition root before constructing a Copilot
@@ -284,6 +325,17 @@ async function main(): Promise<void> {
         version: 0,
       },
     ]);
+    const seededKnowledgeState = (
+      await db
+        .select({
+          id: schema.knowledge.id,
+          name: schema.knowledge.name,
+          parent_id: schema.knowledge.parent_id,
+          version: schema.knowledge.version,
+          archived_at: schema.knowledge.archived_at,
+        })
+        .from(schema.knowledge)
+    ).sort((left, right) => left.id.localeCompare(right.id));
 
     evidence.phase = 'running';
     evidence.limitations = [
@@ -300,11 +352,13 @@ async function main(): Promise<void> {
       foreground_session_id: sessionId,
     };
     let priorTurnId: string | undefined;
+    let coldSdkSessionId: string | undefined;
+    let resumeCompiledPromptHash: string | null | undefined;
 
     const snapshot = async (
       caseName: CaseName,
       input: unknown,
-      result: { task_run_id?: string; reply?: string },
+      result: { task_run_id?: string; reply?: string; session_id?: string },
     ) => {
       // A root may synchronously invoke a native child or a retained semantic
       // validator. Capture every new attempt, not only the root id, so the $2
@@ -318,11 +372,21 @@ async function main(): Promise<void> {
           usage: schema.ai_task_runs.usage_json,
           cost: schema.ai_task_runs.cost_usd,
           costBasis: schema.ai_task_runs.cost_basis,
+          compiledPromptHash: schema.ai_task_runs.compiled_prompt_hash,
+          promptCodecMode: schema.ai_task_runs.prompt_codec_mode,
+          promptContextDigest: schema.ai_task_runs.prompt_context_digest,
         })
         .from(schema.ai_task_runs);
       const rows = allRows.filter((row) => !observedTaskRunIds.has(row.id));
       for (const row of rows) observedTaskRunIds.add(row.id);
       const taskIds = rows.map((row) => row.id);
+      const sessionRows = result.session_id
+        ? await db
+            .select({ agent_sdk_session_id: schema.learning_session.agent_sdk_session_id })
+            .from(schema.learning_session)
+            .where(eq(schema.learning_session.id, result.session_id))
+            .limit(1)
+        : [];
       const tools = taskIds.length
         ? await db
             .select({
@@ -344,17 +408,20 @@ async function main(): Promise<void> {
         root_task_run_id: result.task_run_id,
         task_runs: rows,
         tools,
+        session_agent_sdk_id: sessionRows[0]?.agent_sdk_session_id ?? null,
       };
       caseEvidence.push(entry);
       for (const row of rows) {
         if (row.cost === null || row.cost === undefined || row.costBasis === 'unknown') {
           throw new Error(
-            `${caseName}: unknown provider cost; refusing to continue under $${COST_CEILING_USD} ceiling`,
+            `${caseName}: unknown provider cost; refusing to continue under campaign cost limit`,
           );
         }
         knownCost += row.cost;
       }
-      if (knownCost > COST_CEILING_USD) throw new Error(`cost ceiling exceeded: $${knownCost}`);
+      if (knownCost > campaignCostLimitUsd) {
+        throw new Error(`campaign cost limit exceeded: $${knownCost}`);
+      }
       entry.cumulative_cost_usd = knownCost;
       return { rows, tools };
     };
@@ -383,6 +450,12 @@ async function main(): Promise<void> {
     };
 
     for (const caseName of selected) {
+      const reserve = CASE_COST_RESERVE_USD[caseName];
+      if (campaignCostLimitUsd - knownCost < reserve) {
+        throw new Error(
+          `${caseName}: admission refused; remaining campaign budget is below its conservative reserve`,
+        );
+      }
       activeCase = caseName;
       if (caseName === 'cancel') {
         const attemptsBefore = await db
@@ -476,8 +549,18 @@ async function main(): Promise<void> {
         await snapshot(
           caseName,
           { run_id: accepted.acceptance.runId },
-          { task_run_id: result.task_run_id, reply: result.reply },
+          { task_run_id: result.task_run_id, reply: result.reply, session_id: durableSession },
         );
+        const durableSessionRows = await db
+          .select({ agent_sdk_session_id: schema.learning_session.agent_sdk_session_id })
+          .from(schema.learning_session)
+          .where(eq(schema.learning_session.id, durableSession))
+          .limit(1);
+        if (durableSessionRows[0]?.agent_sdk_session_id !== null) {
+          throw new Error(
+            'durable: worker root unexpectedly persisted/resumed a foreground SDK session',
+          );
+        }
         if (!baselineRecord) {
           const replyRows = await db
             .select({ id: schema.event.id })
@@ -512,6 +595,8 @@ async function main(): Promise<void> {
         read: '必须调用 query_knowledge，参数固定为 subjectId:"yuwen"、nodeId:"actual:classical-root"、include:["children"]、limit:10；然后只报告工具实际返回的节点名称。不要出题，不得把空结果说成不存在。',
         proposal:
           '只调用 propose_knowledge_mutation，为「文言虚词之」提出一个新增子节点的提议；不得直接写入或声称已经执行，不要出题。',
+        semantic:
+          '这是合成校验夹具。请原样输出且不要更正：\n题目：计算 17×19？\n答案：324\n并添加唯一的 copilot_learning_content marker：subject_id 为 math；唯一 question 的 id=acceptance_bad_product、kind=computation、prompt_md 精确为“计算 17×19？”，reference_md 为“324”，choices_md=null，rubric_json={}。不要调用工具，不要解释。',
         'native-task':
           '必须调用一次 Task，subagent_type 为 copilot-researcher，目标是只读总结「文言虚词之」；等 tool_result 后用一句话转述，禁止第二个 Task、出题和写入。',
       };
@@ -548,6 +633,33 @@ async function main(): Promise<void> {
       }
       const latestEvidence = caseEvidence.at(-1);
       if (latestEvidence) latestEvidence.reply_finalization = receipt;
+      const rootRow = observed.rows.find((row) => row.id === result.task_run_id);
+      const sessionAgentSdkId = latestEvidence?.session_agent_sdk_id;
+      if (!rootRow) throw new Error(`${caseName}: root ai_task_run was not recorded`);
+      if (caseName === 'cold') {
+        if (rootRow.promptCodecMode !== 'cold' || typeof sessionAgentSdkId !== 'string') {
+          throw new Error('cold: expected cold compiled prompt and persisted SDK session id');
+        }
+        coldSdkSessionId = sessionAgentSdkId;
+      }
+      if (caseName === 'resume') {
+        if (rootRow.promptCodecMode !== 'resume' || sessionAgentSdkId !== coldSdkSessionId) {
+          throw new Error('resume: expected same persisted SDK session and resume compiled prompt');
+        }
+        resumeCompiledPromptHash = rootRow.compiledPromptHash;
+      }
+      if (caseName === 'context-change') {
+        if (
+          rootRow.promptCodecMode !== 'resume' ||
+          sessionAgentSdkId !== coldSdkSessionId ||
+          rootRow.compiledPromptHash === resumeCompiledPromptHash
+        ) {
+          throw new Error(
+            'ambient-change: expected resume session with changed compiled prompt hash',
+          );
+        }
+        if (latestEvidence) latestEvidence.context_change_kind = 'ambient_only';
+      }
       if (
         caseName === 'read' &&
         !observed.tools.some(
@@ -576,11 +688,48 @@ async function main(): Promise<void> {
         throw new Error('proposal: unexpected materializing write tool was observed');
       }
       if (caseName === 'proposal') {
-        const knowledgeAfter = await db.select({ id: schema.knowledge.id }).from(schema.knowledge);
-        const actualIds = knowledgeAfter.map((row) => row.id).sort();
-        const expectedIds = ['actual:classical-object', 'actual:classical-root'];
-        if (JSON.stringify(actualIds) !== JSON.stringify(expectedIds)) {
+        const proposalState = (
+          await db
+            .select({
+              id: schema.knowledge.id,
+              name: schema.knowledge.name,
+              parent_id: schema.knowledge.parent_id,
+              version: schema.knowledge.version,
+              archived_at: schema.knowledge.archived_at,
+            })
+            .from(schema.knowledge)
+        ).sort((left, right) => left.id.localeCompare(right.id));
+        if (JSON.stringify(proposalState) !== JSON.stringify(seededKnowledgeState)) {
           throw new Error('proposal: proposal path mutated synthetic knowledge state');
+        }
+      }
+      if (caseName === 'semantic') {
+        const semanticEvidence = caseEvidence.at(-1);
+        const observedKinds = new Set(observed.rows.map((row) => row.kind));
+        const validatorsObserved = SEMANTIC_VALIDATOR_TASK_KINDS.every((kind) =>
+          observedKinds.has(kind),
+        );
+        if (!validatorsObserved) {
+          if (semanticEvidence) semanticEvidence.semantic_fixture = 'not_emitted';
+          throw new Error('semantic: fixture_not_emitted; dedicated validator attempts absent');
+        }
+        if (
+          receipt?.learning_content !== 'blocked' ||
+          result.reply !== COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY ||
+          result.reply.includes('324') ||
+          result.reply.includes('copilot_learning_content')
+        ) {
+          if (semanticEvidence) semanticEvidence.semantic_fixture = 'not_emitted';
+          throw new Error(
+            'semantic: fixture_not_emitted; unsafe candidate was repaired or accepted',
+          );
+        }
+        if (observed.tools.length > 0) {
+          throw new Error('semantic: unexpected DomainTool activity');
+        }
+        if (semanticEvidence) {
+          semanticEvidence.semantic_fixture = 'rejected_by_existing_validators';
+          semanticEvidence.validator_task_kinds = [...SEMANTIC_VALIDATOR_TASK_KINDS];
         }
       }
       if (caseName === 'native-task') {
@@ -595,8 +744,12 @@ async function main(): Promise<void> {
             schema.copilot_continuation,
             eq(schema.copilot_continuation.subagent_run_id, schema.subagent_run.id),
           );
-        if (children.length !== 1 || children[0]?.continuation !== null)
-          throw new Error('native-task: expected one child and no continuation');
+        if (
+          children.length !== 1 ||
+          children[0]?.continuation !== null ||
+          children[0]?.status !== 'succeeded'
+        )
+          throw new Error('native-task: expected one succeeded child and no continuation');
       }
     }
 
