@@ -38,3 +38,11 @@ Base: main `090e882c` (foreground turn-context slice, PR #1324 / YUK-939).
   not independent semantic truth; dedicated generated-learning-content validators stay.
 - Historical mailbox/operation recovery is a compatibility obligation, not an active second execution
   architecture. Removal of drain handlers requires deployed zero-pending evidence; no deployment assumed.
+- Owned generation tools: integrated `51f7c0c8`, corrected to existing owner ports in `e707a753`;
+  root verification: 4 files / 85 tests, typecheck, Biome errors-only and capability audit passed.
+- Native research: integrated `593d2aea` with both generation denies and legacy-control filtering;
+  root verification: 4 files / 28 tests and typecheck passed. Type ownership cleanup `7cd5890d` lowers
+  capability-to-server edges to 462; no ratchet was relaxed.
+- Actual acceptance script integrated through `fb4e245e`. Two pre-provider setup failures exposed missing
+  local Docker socket discovery and missing synthetic conversation bootstrap. Both had zero task-run
+  rows/no paid attempts; setup correction is in progress. These are not product success/failure results.
