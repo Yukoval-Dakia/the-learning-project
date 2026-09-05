@@ -15,17 +15,21 @@
 - `fe71227b` 已集成根终态 finalization，退休两个重复 evidence Task 与过时 ledger/checkpoint 测试。
 - 集成 scoped 单测、持久化/恢复 DB 场景、typecheck/lint/audits/build 已通过；发现的一处旧工具
   清单测试已按新 manifest 修正，正在复验。任务数为 50；capability→server 依赖从 464 降到 453。
-- 两次真实 read 累计 $0.194333，工具正确但模型未稳定遵守 JSON。已决策删除该模型格式协议，
-  改为明确的 terminal Markdown + 服务端 observed trace 收据；不是静默伪造模型引用的 fallback。
-  初审 P1（无效 durable terminal 错标 DONE）已修正；同时隔离启用技能时加载的项目开发指令。
+- terminal Markdown 与技能隔离已集成。`5c2bdcad` 同输入 read 通过：28,464 input / 215 output /
+  $0.076271；相对旧基准下界输入至少减 50.8%、费用至少减 62.2%，仅限合成样本。
+- 整轮真实验收的冷启动/恢复/ambient/read/proposal 通过；纠错只安全回退，字段类型提示与验收
+  已在 `12f77867` 收紧，尚待真实复验。native 发现 SDK 将 Task 规范化为 Agent 并异步返回，
+  子任务被父请求结束中断：正在修 SDK 兼容性。最新取消入口实际验证 0 provider attempts。
+- 已知新增费用累计 $0.503605，native child 另有未结算费用，付费验收暂停；已请求新增最多 $1。
 - 计划与证据：`docs/planning/2026-09-05-ai-pipeline-completion.md`；具体设计：
   `docs/planning/2026-09-05-pipeline-finalization-design.md`。历史 F5 状态见 Git 中本文件前版。
 
 ## NEXT
 
-1. 集成 terminal Markdown 简化与技能隔离，跑 scoped 验证。
-2. 初审已完成；仅剩一次 P0/P1 修复验证审，不启动第三轮。
-3. 在剩余 $1.805667 内完成同输入比较和会话/子任务/durable/语义校验场景；未知费用立即停止。
+1. 修复 Agent/Task 别名与 native foreground SDK 行为，保留只读/depth-1/父请求回流。
+2. 两轮独立审查已用完：`5c2bdcad` 获批准；新实际兼容性修复由 root 检查 worker diff 与真实证据，
+   不擅自启动第三轮。按修改范围补 scoped/static/build。
+3. 等 owner 对额外 $1 真实验收选择；期间继续免费验证，禁止在未知子任务费用后继续付费。
 4. Push 后以 exact-head GitHub CI Gate 为完整测试权威；通过后按仓库授权合并。
 5. 收尾更新本看板、handoff、Linear 和部署边界；不得把 LOCAL_GREEN 称作完整验收。
 
