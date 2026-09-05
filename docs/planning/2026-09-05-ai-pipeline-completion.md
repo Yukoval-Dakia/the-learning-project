@@ -72,4 +72,13 @@ Base: main `090e882c` (foreground turn-context slice, PR #1324 / YUK-939).
   Evidence: `.tmp/actual-provider-acceptance/1788611872008-684d1dc4-7d19-401a-9fc0-b026b1509d9a.json`.
   Root accepted architecture reassessment: explicit terminal Markdown, server-observed trace IDs and
   execution_trace_bound assurance replace the fragile model envelope (not a raw-text fallback).
-  Skill-enabled SDK calls also need isolated user-only settings; current omission loads project instructions.
+  Skill-enabled SDK calls were isolated to user-only settings in `d09a1557`; zero-prompt SDK init preserved skills.
+- Successful actual read `5c2bdcad`: 28,464 input / 215 output / $0.076271; sample input reduction >=50.8%,
+  cost reduction >=62.2% against the old lower bound. Full evidence and limitations are in
+  `2026-09-05-ai-pipeline-actual-acceptance.md`.
+- Whole journey passed cold/resume/ambient/read/proposal, but correction clarified rather than completed
+  and native SDK returned asynchronously. Correction field types/acceptance tightened in `12f77867`.
+  Agent/Task aliases + explicit synchronous policy fixed in `87d7b990` / `8eaf6c0d`; free checks passed.
+  Known new spend $0.503605 plus unpriced interrupted child. Paid tests stopped; owner extra-$1 choice pending.
+- Draft PR #1326 is open; exact-head CI running. No merge/deploy while actual correction/native/durable/
+  semantic gates remain. Two-round review budget is exhausted; root inspected the subsequent SDK fix.

@@ -21,12 +21,15 @@
   已在 `12f77867` 收紧，尚待真实复验。native 发现 SDK 将 Task 规范化为 Agent 并异步返回，
   子任务被父请求结束中断：正在修 SDK 兼容性。最新取消入口实际验证 0 provider attempts。
 - 已知新增费用累计 $0.503605，native child 另有未结算费用，付费验收暂停；已请求新增最多 $1。
+- `87d7b990` + `8eaf6c0d` 已修 Agent/Task 别名与同步执行控制，root 查看 SDK 源证据与真实 diff。
+  最新集成 162 scoped unit / 76 scoped DB、typecheck/lint/audits/build 通过。
+  Draft PR #1326 已 push；完整 exact-head CI 运行中，剩余 actual gates 未过前不合并、不部署。
 - 计划与证据：`docs/planning/2026-09-05-ai-pipeline-completion.md`；具体设计：
   `docs/planning/2026-09-05-pipeline-finalization-design.md`。历史 F5 状态见 Git 中本文件前版。
 
 ## NEXT
 
-1. 修复 Agent/Task 别名与 native foreground SDK 行为，保留只读/depth-1/父请求回流。
+1. 等 PR #1326 exact-head CI，修复确认的 correctness/release failures。
 2. 两轮独立审查已用完：`5c2bdcad` 获批准；新实际兼容性修复由 root 检查 worker diff 与真实证据，
    不擅自启动第三轮。按修改范围补 scoped/static/build。
 3. 等 owner 对额外 $1 真实验收选择；期间继续免费验证，禁止在未知子任务费用后继续付费。

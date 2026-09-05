@@ -43,7 +43,8 @@ child transcript 有 5,988 input、没有完整终态用量/费用；已暂停�
 worker `implement_native_research` 在新隔离树 `tlp-wt-native-sdk-compat` 修复。
 整轮 correction 仅 clarify，不算成功；`12f77867` 补字符串数组类型并要求 receipt.corrected。
 实际取消 `1788613455779-ab989fc4-9764-4bbb-8e2a-d2bcd678db4a.json` 通过，0 provider attempts。
-不得称全验收完成；尚未 push/PR/merge/部署。
+兼容性修复已集成 `87d7b990` / `8eaf6c0d`，root scoped 162 unit / 76 DB、static/build 通过。
+已 push 并开 Draft PR #1326；exact-head CI 正运行。不得称全验收完成；尚未 merge/部署。
 
 普通回复的结构化 provenance 不证明语义真值；保留题目/解题/教学独立校验。
 历史 checkpoint/table/task rows 不删；旧队列只排空，不继续接受新生产者。
