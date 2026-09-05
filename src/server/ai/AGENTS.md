@@ -28,8 +28,8 @@
   独占一个 terminal evidence collector；result usage 存在时覆盖 assistant 累加值。
 - 无 skill 的产品调用必须设 `settingSources: []`，避免仓库 `CLAUDE.md`、project
   hooks 和开发指令混入模型上下文；同时传稳定 `title`，不要为 ephemeral task 额外
-  发起自动标题模型请求。显式 skill 调用暂保留 omitted settingSources，维持已验证的
-  isolated CONFIG_DIR skill discovery，并继续用 `skills` 白名单收窄可见范围。
+  发起自动标题模型请求。显式 skill 调用必须设 `settingSources: ['user']`，只读取生成的
+  isolated CONFIG_DIR 镜像，并用 `skills` 白名单收窄可见范围；不得加载 project/local。
 - Read tool 返回语义化上下文（graph path / relation meaning / recent failure evidence）。
 - Proposal tool 写 `event(action='propose')`；action/write tool 只包装已有 owner service（AttributionTask / VariantGenTask），不能让 LLM 传任意 mutation payload。
 - release-critical FULL 审查的通用 confirmed state machine 仍在 `sealed-validation.ts`；
