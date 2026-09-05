@@ -15,20 +15,21 @@ import {
 import type { DomainTool } from '@/kernel/tools/types';
 import { zodToJsonSchemaCompat } from '@/kernel/zod-json-schema';
 
-const COPILOT_OWNED_TOOL_NAMES = [
-  'query_events',
-  'search_memory_facts',
+const COPILOT_OWNED_TOOL_NAMES = ['query_events', 'search_memory_facts'] as const;
+
+const LEGACY_MODEL_CONTROL_NAMES = [
   'get_tool_operation',
   'wait_tool_operation',
   'cancel_tool_operation',
+  'launch_researcher',
+  'get_subagent',
+  'wait_subagent',
+  'cancel_subagent',
 ] as const;
 
 const OWNED_TOOL_CONTRACT_HASHES = {
   query_events: 'f3098863057a3ca16c3180c594c634e2f09bde171af1884ed125740359429587',
   search_memory_facts: '44cc3f998658c5568711443e9e17c44135055493a39ac9971e0353dd51d9f929',
-  get_tool_operation: '3d2496a0f7e30169532176e32e62b3624a4e08ec8233915f0cc804f28c1701f1',
-  wait_tool_operation: '2e010f4b08dae36fcfc3d36c38194f2ce3e8aedbb565516840af6357d33f5782',
-  cancel_tool_operation: '6480486a4e1a9ca480a697d42c7ecf0222872e576e159fe22a7ec11a915dc4bc',
 } as const;
 
 const OWNED_TOOL_EXPOSURES = {
@@ -41,9 +42,6 @@ const OWNED_TOOL_EXPOSURES = {
     'ingestion_block_edit',
   ],
   search_memory_facts: ['copilot', 'copilot_user_suggested_mistake_action', 'dreaming', 'coach'],
-  get_tool_operation: ['copilot', 'copilot_user_suggested_mistake_action'],
-  wait_tool_operation: ['copilot', 'copilot_user_suggested_mistake_action'],
-  cancel_tool_operation: ['copilot', 'copilot_user_suggested_mistake_action'],
 } as const;
 
 const OWNED_READER_PATHS = [
@@ -85,7 +83,11 @@ describe('copilotTools 贡献制 ↔ COPILOT_TOOLS allowlist 对账', () => {
     const fullInventory = [...READ_TOOLS, ...PROPOSE_WRITE_TOOLS];
     expect(new Set(declared)).toEqual(new Set(fullInventory));
     expect(declared).toHaveLength(fullInventory.length);
-    expect(fullInventory).toHaveLength(48);
+    expect(fullInventory).toHaveLength(41);
+    for (const name of LEGACY_MODEL_CONTROL_NAMES) {
+      expect(declared, name).not.toContain(name);
+      expect(fullInventory, name).not.toContain(name);
+    }
   });
 
   it('浏览器共享的 Copilot 字面 allowlist 是 manifest 完整 inventory 的精确子集', () => {
@@ -94,11 +96,14 @@ describe('copilotTools 贡献制 ↔ COPILOT_TOOLS allowlist 对账', () => {
     );
     expect(COPILOT_TOOLS.every((name) => declared.has(name))).toBe(true);
     expect(new Set(COPILOT_TOOLS).size).toBe(COPILOT_TOOLS.length);
-    expect(COPILOT_TOOLS).toHaveLength(37);
+    expect(COPILOT_TOOLS).toHaveLength(30);
     expect(COPILOT_TOOLS).toContain('author_question');
     expect(COPILOT_TOOLS).toEqual(
       expect.arrayContaining(['generate_goal_outline', 'generate_question_candidate']),
     );
+    for (const name of LEGACY_MODEL_CONTROL_NAMES) {
+      expect(COPILOT_TOOLS, name).not.toContain(name);
+    }
   });
 });
 
@@ -117,6 +122,24 @@ describe('copilot server ownership (YUK-884)', () => {
       expect(manifest).not.toContain(`@/server/ai/tools/${name}`);
       expect(manifest).toContain(`./server/tools/${name}`);
     }
+  });
+
+  it('keeps legacy control implementations only for internal drain compatibility', () => {
+    const declarations = copilotCapability.copilotTools?.tools ?? [];
+    for (const name of LEGACY_MODEL_CONTROL_NAMES) {
+      expect(
+        declarations.map((declaration) => declaration.name),
+        name,
+      ).not.toContain(name);
+    }
+    expect(
+      existsSync(
+        join(process.cwd(), 'src/capabilities/copilot/server/tools/tool-operation-controls.ts'),
+      ),
+    ).toBe(true);
+    expect(
+      existsSync(join(process.cwd(), 'src/capabilities/copilot/server/tools/subagent-controls.ts')),
+    ).toBe(true);
   });
 
   it('moves Copilot event read branches behind the public capability seam', () => {

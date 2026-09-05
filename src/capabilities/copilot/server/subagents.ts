@@ -20,7 +20,7 @@ import {
   createSpawnContract,
 } from '@/server/ai/spawn-contract';
 
-export type { SpawnBudgetObservation } from '@/server/ai/spawn-contract';
+export type { SpawnBudgetObservation };
 
 export const COPILOT_SUBAGENT_NAME = 'copilot-researcher';
 export const COPILOT_SUBAGENT_ENABLED_ENV = 'COPILOT_SUBAGENT_ENABLED';
@@ -29,21 +29,10 @@ const GENERATION_TOOL_NAMES = new Set([
   toMcpAllowedToolName('generate_goal_outline'),
   toMcpAllowedToolName('generate_question_candidate'),
 ]);
-const LEGACY_CONTROL_TOOL_NAMES = new Set([
-  'get_tool_operation',
-  'wait_tool_operation',
-  'cancel_tool_operation',
-  'launch_researcher',
-  'get_subagent',
-  'wait_subagent',
-  'cancel_subagent',
-]);
 const SAFE_LOOM_READ_TOOLS = new Set<string>(
-  READ_TOOLS.filter(
-    (name) =>
-      !GENERATION_TOOL_NAMES.has(toMcpAllowedToolName(name)) &&
-      !LEGACY_CONTROL_TOOL_NAMES.has(name),
-  ).map((name) => toMcpAllowedToolName(name)),
+  READ_TOOLS.filter((name) => !GENERATION_TOOL_NAMES.has(toMcpAllowedToolName(name))).map((name) =>
+    toMcpAllowedToolName(name),
+  ),
 );
 const SAFE_TAVILY_TOOLS = new Set<string>(TAVILY_MCP_ALLOWED_TOOLS);
 
@@ -103,11 +92,6 @@ export function buildCopilotSubagents(
   };
 }
 
-function isLegacyModelControl(toolName: string): boolean {
-  const name = toolName.includes('__') ? toolName.split('__').at(-1) : toolName;
-  return name !== undefined && LEGACY_CONTROL_TOOL_NAMES.has(name);
-}
-
 export interface BuildCopilotNativeResearchOptions {
   baseAllowedTools: readonly string[];
   enabled: boolean;
@@ -126,7 +110,7 @@ export interface CopilotNativeResearchConfig {
 export function buildCopilotNativeResearchConfig(
   options: BuildCopilotNativeResearchOptions,
 ): CopilotNativeResearchConfig {
-  const rootTools = [...options.baseAllowedTools].filter((tool) => !isLegacyModelControl(tool));
+  const rootTools = [...options.baseAllowedTools];
   const allowedTools = options.enabled
     ? [...rootTools.filter((tool) => tool !== SPAWN_TOOL_NAME), SPAWN_TOOL_NAME]
     : rootTools.filter((tool) => tool !== SPAWN_TOOL_NAME);

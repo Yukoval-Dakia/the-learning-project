@@ -84,18 +84,11 @@ describe('buildCopilotSubagents', () => {
 });
 
 describe('buildCopilotNativeResearchConfig', () => {
-  it('gives every new root one native Task path and retires legacy model controls', () => {
+  it('gives every new root one native Task path while keeping generation and writes root-only', () => {
     const config = buildCopilotNativeResearchConfig({
       baseAllowedTools: [
         'mcp__loom__query_events',
         'mcp__loom__search_memory_facts',
-        'mcp__loom__get_tool_operation',
-        'mcp__loom__wait_tool_operation',
-        'mcp__loom__cancel_tool_operation',
-        'mcp__loom__launch_researcher',
-        'mcp__loom__get_subagent',
-        'mcp__loom__wait_subagent',
-        'mcp__loom__cancel_subagent',
         'mcp__loom__generate_goal_outline',
         'mcp__loom__generate_question_candidate',
         'mcp__loom__propose_knowledge_mutation',
@@ -132,9 +125,9 @@ describe('buildCopilotNativeResearchConfig', () => {
     expect(researcher?.background).toBe(false);
   });
 
-  it('keeps the same retired control surface while the kill switch removes Task options', () => {
+  it('keeps the root read surface while the kill switch removes Task options', () => {
     const config = buildCopilotNativeResearchConfig({
-      baseAllowedTools: ['mcp__loom__query_events', 'mcp__loom__launch_researcher', 'Task'],
+      baseAllowedTools: ['mcp__loom__query_events', 'Task'],
       enabled: false,
       parentMaxTurns: 6,
     });

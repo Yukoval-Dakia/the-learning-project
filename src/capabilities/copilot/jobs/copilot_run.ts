@@ -1845,14 +1845,7 @@ export function buildCopilotRunHandler(db: Db): (jobs: Job<CopilotRunJobData>[])
 }
 
 const COPILOT_RESEARCH_READ_TOOLS = READ_TOOLS.filter(
-  (name) =>
-    name !== 'generate_goal_outline' &&
-    name !== 'generate_question_candidate' &&
-    name !== 'get_tool_operation' &&
-    name !== 'wait_tool_operation' &&
-    name !== 'launch_researcher' &&
-    name !== 'get_subagent' &&
-    name !== 'wait_subagent',
+  (name) => name !== 'generate_goal_outline' && name !== 'generate_question_candidate',
 );
 
 export async function runCopilotResearcher(
@@ -1896,9 +1889,7 @@ export async function runCopilotContinuationTask(
   record: CopilotContinuationRecord,
   child: SubagentRunRecord,
 ): Promise<{ taskRunId: string; text: string }> {
-  const toolNames = resolveDomainToolNames('copilot').filter(
-    (name) => name !== 'launch_researcher',
-  );
+  const toolNames = resolveDomainToolNames('copilot');
   const taskRunId = record.taskRunId ?? `copilot_continuation_task_${record.id}`;
   const mcpServer = buildMcpServerFromRegistry({
     ctx: {
@@ -1950,7 +1941,6 @@ export async function runCopilotContinuationTask(
       mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
       allowedTools: resolveMcpAllowedTools('copilot').filter(
         (tool) =>
-          !tool.endsWith('__launch_researcher') &&
           !tool.endsWith('__generate_goal_outline') &&
           !tool.endsWith('__generate_question_candidate'),
       ),

@@ -24,11 +24,6 @@ export const READ_TOOLS = [
   // YUK-203 U4 / L-memtool — Mem0 fact-layer retrieval (D7②). Granted only to
   // coach / dreaming / copilot below; NOT to evaluator surfaces.
   'search_memory_facts',
-  'get_tool_operation',
-  'wait_tool_operation',
-  'launch_researcher',
-  'get_subagent',
-  'wait_subagent',
   // ADR-0032 D9 / YUK-304 (lane B) — 题池查询 (wraps the YUK-280 listQuestions
   // reader; drafts included by default for duplicate-avoidance). Granted to the
   // copilot surfaces ONLY for now — widening maintenance is A2 territory, so the
@@ -95,8 +90,6 @@ export const PROPOSE_WRITE_TOOLS = [
   // YUK-293 — direct write to the expiring AI hint channel (not learner data,
   // not an inbox proposal). Surface grants remain narrow below.
   'write_agent_note',
-  'cancel_tool_operation',
-  'cancel_subagent',
 ] as const;
 
 export type ReadDomainToolName = (typeof READ_TOOLS)[number];
@@ -177,13 +170,6 @@ export const COPILOT_TOOLS = [
   'author_question',
   // YUK-203 U4 / L-memtool (D7②) — Mem0 fact retrieval.
   'search_memory_facts',
-  'get_tool_operation',
-  'wait_tool_operation',
-  'cancel_tool_operation',
-  'launch_researcher',
-  'get_subagent',
-  'wait_subagent',
-  'cancel_subagent',
   // ADR-0031 决定1/D5 + ADR-0032 D9 (YUK-304 lane B) — the quiz C→A reverse-U6
   // grant: the copilot IS the quiz orchestrator now (the C-form detectQuizIntent
   // / resolveQuizIntent / quiz-skill pre-dispatch is retired), so it carries the
@@ -280,8 +266,6 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
     | 'search_memory_facts'
     | 'query_questions'
     | 'get_question_block_structure'
-    | 'get_tool_operation'
-    | 'wait_tool_operation'
     | 'generate_goal_outline'
     | 'generate_question_candidate'
     | 'read_agent_notes'
@@ -289,8 +273,6 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
     name !== 'search_memory_facts' &&
     name !== 'query_questions' &&
     name !== 'get_question_block_structure' &&
-    name !== 'get_tool_operation' &&
-    name !== 'wait_tool_operation' &&
     name !== 'generate_goal_outline' &&
     name !== 'generate_question_candidate' &&
     name !== 'read_agent_notes',

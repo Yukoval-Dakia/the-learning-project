@@ -338,6 +338,9 @@ describe('runCopilotChat (two-surface routing)', () => {
     );
 
     const mcpOptions = (buildMcpServerFn.mock.calls[0] as unknown as [BuildMcpServerOptions])[0];
+    for (const name of RETIRED_COPILOT_CONTROL_SUFFIXES) {
+      expect(mcpOptions.toolNames, name).not.toContain(name);
+    }
     const mcpCtx = mcpOptions.ctx;
     const runnerCtx = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
       taskRunId?: string;

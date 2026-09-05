@@ -18,7 +18,7 @@ describe('Copilot native research contracts (YUK-939)', () => {
 
     expect(chatSource).toContain('buildCopilotNativeResearchConfig(');
     expect(chatSource).toContain('handleNativeSubagentTaskEvent');
-    expect(configSource).toContain('LEGACY_CONTROL_TOOL_NAMES');
+    expect(configSource).not.toContain('LEGACY_CONTROL_TOOL_NAMES');
     expect(chatSource).not.toContain('launchResearcherTool');
 
     expect(durableSource).toContain('buildCopilotNativeResearchConfig(');

@@ -262,37 +262,6 @@ export const copilotCapability = defineCapability({
         load: () =>
           import('./server/tools/search-memory-facts').then((m) => m.searchMemoryFactsTool),
       },
-      {
-        name: 'get_tool_operation',
-        load: () =>
-          import('./server/tools/tool-operation-controls').then((m) => m.getToolOperationTool),
-      },
-      {
-        name: 'wait_tool_operation',
-        load: () =>
-          import('./server/tools/tool-operation-controls').then((m) => m.waitToolOperationTool),
-      },
-      {
-        name: 'cancel_tool_operation',
-        load: () =>
-          import('./server/tools/tool-operation-controls').then((m) => m.cancelToolOperationTool),
-      },
-      {
-        name: 'launch_researcher',
-        load: () => import('./server/tools/subagent-controls').then((m) => m.launchResearcherTool),
-      },
-      {
-        name: 'get_subagent',
-        load: () => import('./server/tools/subagent-controls').then((m) => m.getSubagentTool),
-      },
-      {
-        name: 'wait_subagent',
-        load: () => import('./server/tools/subagent-controls').then((m) => m.waitSubagentTool),
-      },
-      {
-        name: 'cancel_subagent',
-        load: () => import('./server/tools/subagent-controls').then((m) => m.cancelSubagentTool),
-      },
     ],
   },
 });

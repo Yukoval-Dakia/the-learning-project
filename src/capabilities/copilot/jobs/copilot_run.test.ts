@@ -1179,6 +1179,17 @@ describe('runCopilotRun', () => {
     expect(ctx.hooks?.PreToolUse).toHaveLength(3);
     expect(ctx.signal).toBeInstanceOf(AbortSignal);
     expect(mcpOptions?.ctx.sessionId).toBe('sess_durable_subtasks');
+    for (const legacyControl of [
+      'get_tool_operation',
+      'wait_tool_operation',
+      'cancel_tool_operation',
+      'launch_researcher',
+      'get_subagent',
+      'wait_subagent',
+      'cancel_subagent',
+    ]) {
+      expect(mcpOptions?.toolNames, legacyControl).not.toContain(legacyControl);
+    }
     expect(mcpOptions?.cancellationSignals).toHaveLength(2);
     expect(mcpOptions?.cancellationSignals?.map((entry) => entry.requestedBy)).toEqual([
       'system',
