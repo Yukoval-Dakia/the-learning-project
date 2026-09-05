@@ -153,20 +153,20 @@
   },
   "devDependencies": {
     "@babel/parser": "^7.29.7",
-    "@biomejs/biome": "^2.5.8",
+    "@biomejs/biome": "^2.5.11",
     "@playwright/test": "1.62.1",
     "@tailwindcss/vite": "^4.3.3",
     "@testcontainers/postgresql": "^12.1.0",
-    "@testing-library/react": "^16.3.2",
-    "@testing-library/user-event": "^14.6.4",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.6",
     "@types/katex": "^0.16.8",
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.4.0",
     "@types/pg": "^8.20.0",
     "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
+    "@types/react-dom": "^19.2.5",
     "@typescript/native": "npm:typescript@7.0.2",
-    "@vitejs/plugin-react": "^6.0.5",
-    "@vitest/coverage-v8": "^4.1.10",
+    "@vitejs/plugin-react": "^6.1.1",
+    "@vitest/coverage-v8": "^4.1.11",
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10",
     "esbuild": "^0.28.2",
@@ -175,7 +175,7 @@
     "testcontainers": "^12.1.0",
     "tsx": "^4.23.12",
     "typescript": "npm:@typescript/typescript6@6.0.2",
-    "vite": "^8.2.1",
-    "vitest": "^4.1.10"
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
   }
 }
