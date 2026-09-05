@@ -317,6 +317,9 @@ describe('Foundation D M2 read tools', () => {
     ).toEqual([
       'expand_knowledge_subgraph',
       'find_knowledge_paths',
+      // YUK-939 — generation-only owner tools; no proposal/draft writes.
+      'generate_goal_outline',
+      'generate_question_candidate',
       'get_attempt_context',
       'get_learning_item_context',
       // ADR-0032 D6-draftread (YUK-203 lane L5) — ingestion draft-layer structure reader.
@@ -324,10 +327,7 @@ describe('Foundation D M2 read tools', () => {
       'get_question_context',
       'get_record_context',
       'get_review_due',
-      'get_subagent',
       'get_subject_graph_overview',
-      'get_tool_operation',
-      'launch_researcher',
       'query_events',
       'query_knowledge',
       'query_memory_brief',
@@ -336,12 +336,7 @@ describe('Foundation D M2 read tools', () => {
       'query_questions',
       'query_records',
       'read_agent_notes',
-      // YUK-939 — both generation-only DomainTools are read-effect tools.
-      'generate_goal_outline',
-      'generate_question_candidate',
       'search_memory_facts',
-      'wait_subagent',
-      'wait_tool_operation',
     ]);
   });
 
