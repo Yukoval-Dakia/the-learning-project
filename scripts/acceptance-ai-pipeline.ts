@@ -37,10 +37,11 @@ const CASES: readonly CaseName[] = [
   'correction',
   'read',
   'proposal',
-  'semantic',
   'native-task',
   'durable',
   'cancel',
+  // Negative fixture emission is model-dependent; do it after the core journey.
+  'semantic',
 ];
 const DEFAULT_COST_LIMIT_USD = 2;
 const MAX_COST_LIMIT_USD = 2;
