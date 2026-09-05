@@ -64,15 +64,19 @@ The model does **not** supply the root ID, digests, statuses, proposal contract 
 Those are server-owned closure state. `relied_on_tool_use_ids` are provenance claims only; they do not
 prove the semantic truth or completeness of a sentence.
 
-The factory owns a bounded turn trace. Every PreToolUse receives a monotonically assigned ordinal and
-SDK `tool_use_id`; DomainTool settlement contributes the exact executed input/output/error/effect, while
-PostToolUse/PostToolUseFailure contributes bounded native Task and remote-MCP settlement metadata. Add
-`tool_use_id?: string` to `ToolExecutionResultObservation`, and change the existing bridge correlation to
-claim IDs for every Copilot DomainTool, not only `safeHandoff`. A Copilot finalizer may cite only a known,
-settled, successful current-root ID. Hash large inputs/outputs in the receipt; keep the existing in-memory
-typed DomainTool result only as long as needed for proposal disclosure and content checks. Preserve the
-existing 60-call accident ceiling; do not recreate request/reply units, JSON pointers, dense coverage,
-source catalogs or a model-authored ledger.
+The factory owns a bounded turn trace. Its PreToolUse hook records each SDK `tool_use_id`, a monotonic
+ordinal and in-flight state. When the existing `claimToolUseId` correlation succeeds, the generic MCP
+result envelope exposes that exact ID as an optional `tool_use_id`, and `ToolExecutionResultObservation`
+also carries it. For native Task and remote MCP, PostToolUse settles the trace record and returns a short
+`additionalContext` line containing the exact SDK ID; PostToolUseFailure settles it as non-citable. Thus
+the model never invents or translates an ID. DomainTool `onResult` continues to provide the exact executed
+input/output/error/effect needed for canonical proposal disclosure; existing hooks are composed, not
+replaced. A finalizer may cite only a known, settled, successful current-root ID. Hash large inputs/outputs
+in the receipt; keep typed DomainTool results in memory only as long as needed for proposal disclosure and
+content checks. Preserve the existing 60-call accident ceiling; do not recreate request/reply units, JSON
+pointers, dense coverage, source catalogs or a model-authored ledger. The private `finalize_reply` call
+itself is excluded from the product trace/in-flight count, so accepting it cannot invalidate its own
+snapshot.
 
 `finalize_reply` is retryable until one submission seals. For each submission it performs, in order:
 
@@ -136,7 +140,7 @@ The new assurance is:
 - semantically checked where correctness is load-bearing: generated questions, solutions and teaching
   content continue through `content-validation.ts` and its dedicated model judges;
 - **not independently confirmed:** the root model's interpretation, coverage or factual entailment of
-  ordinary read results. `relied_on_tool_use_ids` are provenance, not truth. Prompt boundaries and actual-
+  ordinary read results. Submitted source IDs are provenance, not truth. Prompt boundaries and actual-
   provider acceptance measure this weaker assurance honestly.
 
 Do not retain `evidence_validation.status='pass'` for new replies. Historical payloads remain readable.
