@@ -83,7 +83,9 @@ If no duplicate exists, use this draft:
 - Title: Verify legacy Copilot work is drained before retiring compatibility handlers.
 - Project: 领域模型重构 (YUK-203); priority: 3; labels: area:copilot, needs-info.
 - Scope: `src/capabilities/copilot/jobs/copilot_subagent_*`, `copilot_continuation`,
-  `src/kernel/tools/tool-operations.ts` and their replay/recovery consumers.
+  `src/kernel/tools/tool-operations.ts`, historical `copilot_evidence_checkpoint` retention and their
+  replay/recovery consumers. Its 16 retired writer fields have explicit schema-audit exceptions with
+  owner retention signoff as the removal condition and 2026-10-05 review date.
 - Acceptance: after owner-authorized deployment, prove zero nonterminal legacy rows and zero
   queued/active jobs across the maximum deadline/retry window; remove only dead handlers/tests,
   preserving historical reads, schema and migrations. No deployment or deletion before authorization.
