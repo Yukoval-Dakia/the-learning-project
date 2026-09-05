@@ -1,120 +1,80 @@
 # AI pipeline finalization and legacy convergence
 
-**Decision:** root-terminal JSON, finalized once by the Copilot capability after the SDK query ends.
-Delete the two post-root evidence-review TaskKinds and their runtime. Keep question/solve/teaching
-semantic validators and deterministic proposal/correction gates. Foreground and explicit durable roots
-use native depth-1 Task; old mailbox and ToolOperations work drains without deleting historical rows.
+**Decision:** finalize exact SDK terminal Markdown once in the Copilot capability.
+Delete the two post-root evidence-review TaskKinds and their ledger/checkpoint runtime.
+Keep question/solve/teaching semantic validators and deterministic proposal/correction gates.
 
-Grounded base: `090e882c`, ADR-0054 through ADR-0057. Owner delegates decisions for low token use,
-modern architecture and advanced agents. No UI changes, production deployment, data deletion, generic
-framework or whole-project re-layout.
+Owner goal: low tokens, maintainable ownership and advanced agents. Grounded base: `090e882c`.
+No UI redesign, deployment, production data deletion, generic framework or whole-project re-layout.
 
-## Cost-driven refinement
+## Evidence-driven decisions
 
-The first draft selected a same-query private `finalize_reply` MCP tool. It is superseded before merge:
-the tool result normally requires another model turn and can replay the root context even for ordinary
-no-tool replies. That conflicts with the low-token objective. There is no verified local SDK evidence
-that `PostToolUse.continue:false` ends as a successful terminal result without another model call.
+A private `finalize_reply` MCP tool was rejected before merge: its result normally requires another
+model turn and repeats the root context even for ordinary replies.
 
-SDK `outputFormat` being unsupported on the current default profile does not prevent prompt-based JSON.
-The repository already uses TaskSpec parsers for that pattern. A strict terminal envelope avoids the
-extra model round and a second interactive state machine. Malformed output fails closed; there is no
-automatic paid repair chain. This deliberately gives up in-query finalizer correction feedback.
+A model-authored terminal JSON envelope was then implemented and tested. Two real read attempts
+returned correct content but failed its transport contract: first prose plus duplicate fenced JSON,
+then prose only despite a stronger final prompt. The first narrow decoder did not solve the second.
+Known costs: $0.103107 + $0.091226. Neither is an accepted end-to-end read.
 
-Actual-provider refinement: the first new read terminal duplicated its correct reply as prose plus a
-fenced JSON envelope. A narrow transport decoder may accept a sole JSON fence, or one suffix fence
-only when the preceding prose exactly equals its decoded `reply_md` after outer trimming. Conflicting
-preambles, multiple candidates and trailing text still fail closed. It never reconstructs an envelope
-from raw prose or asks another model to repair formatting. Missing/unsealed durable terminal results
-must project FAILED rather than DONE; a safe learning-validation fallback retains its separate policy.
+Requiring model-declared source IDs adds no factual-entailment guarantee to a structural receipt.
+The final decision therefore removes that model protocol entirely: plain terminal Markdown is the
+explicit contract, NOT a fallback that silently constructs missing model attestations. There is no
+private finalizer tool, paid repair chain, or parallel raw/JSON implementation.
 
-The actual old read baseline (two synthetic nodes) recorded at least 57,817 input tokens and $0.201614
-before an unmetered comparator timeout. This is a lower bound, not a before/after savings claim.
+## Interface and ownership
 
-## Interface
+The collecting runner exposes neutral `terminalText` from SDK success `result`, separately from
+accumulated `text` and streaming deltas. Copilot uses only terminalText, never concatenated preambles
+or child prose. Non-streaming runTask already returns exact terminal text.
 
-The root emits only this JSON as its final assistant result:
+`reply-finalization.ts` owns trace hooks, DomainTool observations and `finalizeTerminal`:
+- Accept bounded non-empty terminal Markdown (64,000 characters).
+- Record actual SDK tool-use IDs, root/child identity, ordinal, effect, input/output hashes and status.
+- Require a closed, stable trace; in-flight or validation-time mutations fail closed.
+- Compute successful root IDs as `observed_completed_tool_use_ids` on the server. Failed calls stay in
+  the trace digest and proposal disclosure; they are never claimed as successful observed calls.
+- Apply server-bound correction, canonical proposal disclosure, presentation normalization and the
+  existing learning-content semantic validators.
+- Hash candidate/final bytes as exact UTF-8; use canonical JSON hashing only for structured trace.
+- Persist one prepared reply and immutable receipt; stream only those persisted bytes.
+- Missing/invalid terminal content returns fixed server failure text. Durable invalid finalization
+  projects FAILED rather than DONE; redelivery reuses the marker without another paid root.
+- A blocked learning-content answer is a separate safe fallback policy, not a structural success claim
+  about the rejected lesson.
 
-```json
-{"reply_md":"...","relied_on_tool_use_ids":["..."]}
-```
+Receipt assurance is `execution_trace_bound`: exact bytes and execution provenance, NOT factual support,
+request completeness, or proof of what the model relied on. Dedicated question, solution and teaching
+validators retain their semantic role. Historical `evidence_validation` payloads remain readable.
 
-`reply_md` is bounded to 64,000 characters. IDs are unique and bounded by the 60-call turn ceiling.
-The model supplies no root ID, digest, verification status, proposal effect contract or cost identity.
+If normalization changes candidate bytes, invalidate the foreground SDK cursor; the next turn cold-loads
+the actual persisted user-visible history. No same-request retry. Validators retain parent audit,
+cancellation and the original absolute deadline; root provider lease is released before validation.
 
-`reply-finalization.ts` owns a small interface: trace hooks/DomainTool observations and one asynchronous
-`finalizeTerminal` operation. It owns parsing, normalization, semantic gates, trace binding and the
-immutable receipt. There is no private finalization MCP tool or generic runner product branch.
+## Execution boundaries and retirement
 
-The generic collecting runner exposes neutral `terminalText` from the SDK successful result separately
-from existing accumulated `text`/`onDelta` behavior. Copilot parses only terminal text, never a concatenation
-of preambles, earlier assistant blocks or child prose. Non-streaming runTask already returns terminal text.
-
-## Trace and finalization
-
-- PreToolUse records the real SDK tool-use ID/ordinal. DomainTool settlement records exact executed
-  input/output/error/effect; PostToolUse/PostToolUseFailure cover native Task and remote MCP settlement.
-- The bridge correlates every Copilot DomainTool, not only safeHandoff, and exposes optional `tool_use_id`
-  in observations and result envelopes. Native/remote post-hook context exposes their exact IDs.
-- Bound the trace and hash large data; do not recreate dense source ledgers, request units or JSON pointers.
-- After the query settles, reject missing/malformed terminal JSON, duplicate/foreign/failed/in-flight
-  citations, incomplete trace, incorrect root identity or changed trace during finalization.
-- Parse presentation metadata, apply correction against server-owned prior-turn IDs, compose authoritative
-  proposal disclosure, and run existing learning-content checks on the exact visible text/HTML.
-- Keep the existing conservative proposal-only normalization. For mixed prose, canonical disclosure is
-  authority for effects but does not prove the semantic truth of arbitrary model sentences.
-- Only the resulting prepared reply reaches writeCopilotReply. Hash exact UTF-8 candidate/final bytes;
-  use canonical JSON hashing only for structured trace. No post-check normalization or raw trailing prose.
-- Missing terminal/malformed output returns fixed server-authored failure content, including proposal
-  disclosure if effects already occurred. Unsealed partial drafts are never persisted or streamed.
-- Streaming emits the final persisted reply only. Durable recovery reuses the exact outcome marker;
-  it does not mint a replacement paid root to reconstruct already committed output.
-
-Receipt in `experimental:copilot_reply.payload.reply_finalization`: protocol version, assurance
-`root_attested_structural`, server root task ID, candidate/reply/trace hashes, trace call count,
-relied-on IDs, correction result, server proposal disclosure status, learning-content result and
-presentation disposition. Historical `evidence_validation` payloads remain readable; new replies never
-claim independent FULL semantic review.
-
-## Assurance
-
-Structural confirmation covers current-root provenance, bounded complete trace, exact final bytes,
-deterministic correction/proposal contracts and no unvalidated presentation channel. It does NOT prove
-factual entailment or request coverage in ordinary read replies. Dedicated generated question, solution
-and teaching validators retain their semantic role; source IDs never replace them.
-
-Validation after the root terminal must still inherit parent audit identity, cancellation and the
-original absolute provider deadline. Release the root query lease before nested semantic calls so
-the finalizer does not deadlock provider admission while waiting for its own child validation.
-
-## Implementation and retirement
-
-- Wire both `server/chat.ts` and `jobs/copilot_run.ts` to the same finalizer. Their root lifecycle and
-  foreground SDK resume versus explicit durable worker remain separate.
-- Delete CopilotEvidenceReviewTask/VerificationTask, evidence-review/submission/contract/checkpoint
-  runtime and obsolete tests. Retain generic sealed-validation because other capabilities consume it.
-- Move the realistic A01/A03/A04/C01/C04 actual trace corpus to finalization fixtures and use it in
-  interface tests. Unique complex data is not obsolete merely because the old reviewer is removed.
-- Keep old checkpoint/task rows, schema and migrations. No historical data is deleted.
-- New search_memory_facts directly blocks under root cancellation/deadline; no new ToolOperations.
-- All seven legacy operation/subagent controls are removed from manifest and actual MCP inventories,
-  not merely from auto-approval lists. SDK bypassPermissions can skip canUseTool; PreToolUse/callback
-  guards and actual tool availability are authoritative.
-- Native children remain read-only, depth 1, background false, and return into their own live/Mission
-  parent. They produce audit/replay subagent rows but never a mailbox continuation.
-- Preserve legacy queue/reconcile/continuation consumers for pending work. Removing them requires
-  deployed zero-nonterminal rows AND zero queued/active jobs through the maximum deadline/retry window.
-  The production-observation/retention gate is separate from local refactor delivery.
+- Capability-owned ModelTasks, foreground live sessions, and explicit durable Missions remain distinct.
+- Root and Mission use native read-only depth-1 Task; results return to the same parent. No recursive,
+  background or write-capable child. SDK bypassPermissions skips canUseTool, so PreToolUse plus actual
+  callback/tool inventory enforce safety.
+- `generate_goal_outline` and `generate_question_candidate` replace generic run_task through existing
+  Agency/Practice runtime ports. They generate only, never write drafts or proposals.
+- search_memory_facts blocks directly; no new ToolOperations producer.
+- Seven legacy operation/mailbox controls are removed from actual manifests and MCP inventory.
+- Preserve historical tables, migrations, task rows, replay, cancellation and pending queue recovery.
+  Drain-only handler retirement requires deployed zero nonterminal rows AND zero queued/active jobs
+  through the maximum deadline/retry window. Deployment is a separate authorization.
+- Retain the realistic A01/A03/A04/C01/C04 trace fixture; retire tests solely for deleted reviewer internals.
+- Product skills must use only the isolated config mirror, never checkout developer instructions/hooks.
 
 ## Acceptance
 
-Interface scenarios cover plain/read/correction/proposal/learning/presentation, exact byte receipts,
-malformed/partial/foreign IDs, concurrent or incomplete trace, preserved complex fixtures, and no raw
-candidate leakage. Runner tests prove terminalText versus preamble/delta separation without changing
-other callers. Live and durable tests prove one root, native child returns, cancellation/settlement,
-legacy drain and no new old-control producers.
+Scoped tests cover plain/read/correction/proposal/learning/presentation; root versus child observed IDs;
+failed/in-flight/late trace; exact hashes; cancellation, recovery and idempotency; and native same-parent
+results. No local full test run. Require typecheck/lint/audits/build, independent review and exact-head CI.
 
-Run scoped unit/DB, typecheck/lint/audits/build, independent review and exact-head CI. Real-provider
-acceptance records exact revision, input/output hashes, task-run IDs, provider/model, usage and cost.
-Compare identical read fixtures; distinguish reported totals from lower bounds. Stop paid calls on
-unknown costs. No claims that mock tests prove model output quality, or that handler tests prove queue E2E.
+Actual-provider acceptance records exact revision, synthetic input/output/terminal digests, run IDs,
+provider/model, tokens and costs. Compare identical synthetic read requests. Old baseline is a lower
+bound (57,817 input / 2,457 output / $0.201614) because its comparator timed out with unknown cost.
+The separately approved new campaign is $2 total; stop on unknown costs and track cumulative spend.
+Direct durable handler tests are not queue E2E. No production savings claim from a synthetic sample.

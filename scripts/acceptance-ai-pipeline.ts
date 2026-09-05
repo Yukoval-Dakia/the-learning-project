@@ -464,6 +464,8 @@ async function main(): Promise<void> {
       )?.reply_finalization;
       if (
         !receipt ||
+        receipt.assurance !== 'execution_trace_bound' ||
+        !Array.isArray(receipt.observed_completed_tool_use_ids) ||
         receipt.root_task_run_id !== result.task_run_id ||
         receipt.reply_sha256 !== SHA256(result.reply)
       ) {

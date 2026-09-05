@@ -1,42 +1,37 @@
-# ADR-0058 — Root-owned Copilot reply finalization
+# ADR-0058: Root-owned Copilot reply finalization
 
 **Status:** Accepted
-**Decision source:** YUK-939; `docs/planning/2026-09-05-pipeline-finalization-design.md`
+**Date:** 2026-09-05
+**Context:** `docs/planning/2026-09-05-pipeline-finalization-design.md`
 **Related:** ADR-0054 · ADR-0056 · ADR-0057
 
 ## Context
 
-Copilot read-bearing replies previously left the root query for a blind reference task and two
-comparison passes. That path duplicated reply ownership, spent multiple provider calls, and persisted a
-dense evidence ledger. Plain replies had no equivalent typed terminal contract.
+The former blind-reference/comparator chain duplicated reply ownership, model calls and evidence
+ledgers. A private finalizer tool would add a round trip. A strict terminal JSON replacement failed
+two actual-provider reads on formatting despite correct content; narrow wrapper decoding was insufficient.
 
 ## Decision
 
-Foreground and explicit durable Copilot roots end with one strict JSON envelope containing only final
-Markdown and the successful current-root tool-use IDs relied on. The collecting runner exposes the
-exact SDK success `result` as neutral `terminalText`; only the Copilot capability parses it. The server owns root identity, exact UTF-8 candidate/reply
-digests, bounded trace digest, correction binding, canonical proposal disclosure, presentation policy,
-and the existing question/solve/teaching validators. Only a stable sealed result may be persisted or
-published; assistant preambles, malformed JSON, raw and trailing SDK prose fail closed. Missing,
-foreign, failed, in-flight, or validation-time-mutated trace state also fails closed. The transport
-decoder tolerates only a sole JSON fence or one suffix fence with an exactly matching duplicated
-`reply_md` preamble; ambiguous/conflicting wrappers remain invalid. Invalid durable finalization
-projects FAILED, never a successful DONE marker.
+The root produces terminal Markdown. The generic collecting runner exposes exact SDK success
+`result` as neutral `terminalText`; the Copilot capability finalizes it once after the query ends.
+No model-authored envelope, private MCP finalizer, paid repair or parallel fallback protocol.
 
-A private finalizer MCP was rejected because its tool result normally requires another model round trip
-with the full context on every plain turn. Post-terminal service finalization performs no repair call and
-keeps the root model as the sole author.
+The server owns the root ID, successful `observed_completed_tool_use_ids`, bounded complete trace,
+exact UTF-8 candidate/final hashes, correction binding, proposal disclosure, presentation policy and
+existing question/solve/teaching semantic validators. Only finalized persisted bytes reach the client.
+Missing/invalid terminal or unfinished/late trace fails closed; durable structural failures project FAILED.
 
-The receipt assurance is `root_attested_structural`. Tool-use IDs prove provenance, not factual
-entailment. Ordinary read interpretation is no longer called independently FULL-verified. The two
-Copilot evidence-review TaskKinds and active ledger/checkpoint runtime are deleted; historical database
-schema and rows stay readable. Generic `sealed-validation.ts` remains for other consumers.
+Receipt assurance `execution_trace_bound` proves execution provenance, not factual entailment or which
+facts the model relied on. Failed tools remain visible in trace/disclosure, not successful observed IDs.
+
+Delete the two Copilot evidence-review TaskKinds and their ledger/checkpoint runtime and obsolete
+tests. Preserve realistic fixtures, generic sealed validation for other consumers, historical database
+rows/schema/readers and pending queue recovery. No deployment or production data deletion.
 
 ## Consequences
 
-- One Copilot root owns generation and finalization without a paid fallback reviewer chain.
-- Proposal/correction/presentation contracts and semantic learning-content gates bind the exact final
-  bytes.
-- A 60-call trace ceiling remains without request units, JSON pointers, source catalogs, or dense
-  ledgers.
-- Production token reduction remains unclaimed until same-fixture actual-provider evidence is captured.
+One root remains the sole reply author. No format-only paid retry and no repeated reviewer context.
+Semantic learning gates and deterministic effect contracts still bind final bytes. Normalized replies
+invalidate the SDK cursor for next-turn cold recovery. Actual synthetic measurements establish only
+sample-specific savings, not production-wide quality or cost claims.

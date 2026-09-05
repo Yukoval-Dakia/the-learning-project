@@ -32,7 +32,7 @@
   fence / legacy worker-touch evidence 做有界修复；只有 QUEUED-only dead delivery 才能标成
   pre-execution loss。不得用 wall-clock 或 heartbeat timestamp 猜测 live queue run 已死。
 - Copilot 自有工具：事件流读、记忆面读、artifact authoring 写。
-- YUK-939 根任务以严格 terminal JSON envelope 收口；服务端在 SDK terminal 后绑定 root
+- YUK-939 根任务以 terminal Markdown 收口；服务端在 SDK terminal 后绑定实际 root
   trace、更正、proposal 披露与学习内容校验，不新增 MCP 工具或额外模型轮次。
 - chip 是 Copilot 回复里的可点击动作卡片，accept-chip 把用户选择物化为教学事件。
 

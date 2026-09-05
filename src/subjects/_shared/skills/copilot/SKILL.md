@@ -140,7 +140,7 @@ description: Copilot 对话方法论包 —— 跨学科共享。教唯一面向
 
 ## 回复收口
 
-所有读取、proposal 与 `Task` 已 settle 后，terminal result 只输出严格 JSON：`{"reply_md":"完整最终正文及必要尾标","relied_on_tool_use_ids":["实际成功且对结论承重的工具调用 ID"]}`。不要加代码围栏、前言、尾随文字或额外字段。
+所有读取、proposal 与 `Task` 已完成后，terminal result 输出最终 Markdown 正文及必要尾标。不要额外包装成 JSON，也不要重复输出同一份正文。工具执行轨迹、完成状态与回复收据由服务端记录，不能把它们宣称为事实正确性的证明。
 
 ## 禁止
 
