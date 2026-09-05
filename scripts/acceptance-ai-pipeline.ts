@@ -299,6 +299,13 @@ async function main(): Promise<void> {
       active_case: activeCase,
       // Only SDK terminal text for our synthetic fixture, never thinking blocks.
       terminal_outputs: Object.fromEntries(terminals),
+      subagent_runs: await db
+        .select({
+          id: schema.subagent_run.id,
+          status: schema.subagent_run.status,
+          parent_task_run_id: schema.subagent_run.parent_task_run_id,
+        })
+        .from(schema.subagent_run),
       task_runs: await db
         .select({
           id: schema.ai_task_runs.id,
@@ -790,6 +797,7 @@ async function main(): Promise<void> {
             schema.copilot_continuation,
             eq(schema.copilot_continuation.subagent_run_id, schema.subagent_run.id),
           );
+        if (latestEvidence) latestEvidence.subagent_runs = children;
         if (
           children.length !== 1 ||
           children[0]?.continuation !== null ||
