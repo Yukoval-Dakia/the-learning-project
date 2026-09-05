@@ -99,9 +99,17 @@ function streamMock(
     deltas?: string[];
     partial?: boolean;
     error?: string;
+    terminalText?: string;
   } = {},
 ) {
-  const { taskRunId = 'tr_x', finishReason = 'end_turn', deltas, partial, error } = opts;
+  const {
+    taskRunId = 'tr_x',
+    finishReason = 'end_turn',
+    deltas,
+    partial,
+    error,
+    terminalText,
+  } = opts;
   return vi.fn(
     async (_kind: string, _input: unknown, _ctx: AgentCtx, onDelta: (t: string) => void) => {
       if (deltas) for (const d of deltas) onDelta(d);
@@ -110,6 +118,7 @@ function streamMock(
         task_run_id: taskRunId,
         finishReason,
         usage: { inputTokens: 0, outputTokens: 0 },
+        ...(terminalText !== undefined ? { terminalText } : {}),
         ...(partial ? { partial: true, error } : {}),
       };
     },
@@ -194,10 +203,12 @@ function runCopilotRun(params: RunCopilotRunParams): ReturnType<typeof runCopilo
               ? result
               : {
                   ...result,
-                  terminalText: JSON.stringify({
-                    reply_md: result.text,
-                    relied_on_tool_use_ids: [],
-                  }),
+                  terminalText:
+                    result.terminalText ??
+                    JSON.stringify({
+                      reply_md: result.text,
+                      relied_on_tool_use_ids: [],
+                    }),
                 };
           }) as typeof stream,
         }
@@ -488,6 +499,42 @@ describe('runCopilotRun', () => {
         root_task_run_id: `copilot_run_tool_${runId}`,
       },
     });
+  });
+
+  it('YUK-939 — malformed terminal becomes one idempotent nonretry failure', async () => {
+    const runId = 'copilot_user_ask_malformed_terminal';
+    const sessionId = 'sess_malformed_terminal';
+    const run = streamMock('untrusted assistant preamble', {
+      terminalText:
+        'conflicting prose\n```json\n{"reply_md":"candidate","relied_on_tool_use_ids":[]}\n```',
+    });
+    const params = {
+      db: testDb(),
+      data: { ...baseData, run_id: runId, session_id: sessionId },
+      streamTaskCollectingFn: run as never,
+      resolveCopilotRunInputFn: stubRunInput,
+      buildMcpServerFn: mcpMock() as never,
+    } satisfies RunCopilotRunParams;
+
+    expect(await runCopilotRun(params)).toMatchObject({ status: 'failed' });
+    expect((await replay(runId)).map((event) => event.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.STARTED,
+      COPILOT_RUN_EVENTS.EXECUTION_STARTED,
+      COPILOT_RUN_EVENTS.FAILED,
+    ]);
+    const replies = await copilotReplyEvents(sessionId);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]?.payload).toMatchObject({
+      reply_md: '这次回复没有完成可验证的收口，暂不展示未封存的草稿。请重试。',
+      reply_finalization: { assurance: 'root_attested_structural' },
+      durable_failure: { reason: 'exhausted', error: 'root terminal envelope rejected' },
+    });
+    expect(replies[0]?.payload.reply_md).not.toBe('candidate');
+    expect(JSON.stringify(replies)).not.toContain('untrusted assistant preamble');
+
+    expect(await runCopilotRun(params)).toMatchObject({ status: 'failed' });
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(await copilotReplyEvents(sessionId)).toHaveLength(1);
   });
 
   it('YUK-939 — durable root uses one same-parent native read-only Task without continuation', async () => {

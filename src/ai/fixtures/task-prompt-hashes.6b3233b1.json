@@ -51,7 +51,7 @@
     "general:DreamingTask": "c89b08014f059f52f0405e88a93f4c45e1bd8eb8bbb340532fd15def960079dc",
     "general:CoachTask": "465d170e146ac0e82895735d2de1ec96277255264642b3614e013d1efbcff797",
     "general:MemoryBriefTask": "9949834d387da8a50e888ec68b5352b2fa37eb2be77d9cade8e7e6faa46007a8",
-    "general:CopilotTask": "c4576257b67ec17f723d68af52ec5f2c24aaaf5d3fea415fb976e5f607584039",
+    "general:CopilotTask": "ebb88bd56764735a4868ab4ab59ae7633863349e6d989f018055fecfc889266f",
     "general:TeachingTurnTask": "b809eb45e78523d3a40a59b997fde94032f319e70fe1c5ff9e1260e5a591ef84",
     "math:AttributionTask": "3ae983b05d1804d9268587ec8b60697b3bb43ab4c057e102258c205ca1142996",
     "math:AttributionRerankTask": "0227874897e4e3c96aeae42390f01195fb49459cc5b221c26e7b45c8e9b2fab9",
@@ -100,7 +100,7 @@
     "math:DreamingTask": "c89b08014f059f52f0405e88a93f4c45e1bd8eb8bbb340532fd15def960079dc",
     "math:CoachTask": "465d170e146ac0e82895735d2de1ec96277255264642b3614e013d1efbcff797",
     "math:MemoryBriefTask": "9949834d387da8a50e888ec68b5352b2fa37eb2be77d9cade8e7e6faa46007a8",
-    "math:CopilotTask": "c4576257b67ec17f723d68af52ec5f2c24aaaf5d3fea415fb976e5f607584039",
+    "math:CopilotTask": "ebb88bd56764735a4868ab4ab59ae7633863349e6d989f018055fecfc889266f",
     "math:TeachingTurnTask": "99af94cb729508d76f85a332057e7630b556b7715365cbe61f3557cd9e05e981",
     "physics:AttributionTask": "e374496a9ea64c3bb802bbdc33c1a3ca82f0a508e1e1082dcd8aaed181e6ce09",
     "physics:AttributionRerankTask": "e49c2da077d18bab4b063e073b5b61e35dc95b8406671d25c0585e6d3c79e216",
@@ -149,7 +149,7 @@
     "physics:DreamingTask": "c89b08014f059f52f0405e88a93f4c45e1bd8eb8bbb340532fd15def960079dc",
     "physics:CoachTask": "465d170e146ac0e82895735d2de1ec96277255264642b3614e013d1efbcff797",
     "physics:MemoryBriefTask": "9949834d387da8a50e888ec68b5352b2fa37eb2be77d9cade8e7e6faa46007a8",
-    "physics:CopilotTask": "c4576257b67ec17f723d68af52ec5f2c24aaaf5d3fea415fb976e5f607584039",
+    "physics:CopilotTask": "ebb88bd56764735a4868ab4ab59ae7633863349e6d989f018055fecfc889266f",
     "physics:TeachingTurnTask": "e94a970873c5355345122152b4014fb02ded72d6d7c10f8bc239183a96637ffa",
     "yuwen:AttributionTask": "e10e046de215560a8dfbca0ed8c6c2334fcc36d10e8bc3603d4c6e759be9d0e9",
     "yuwen:AttributionRerankTask": "ea47136b07aefd9b3b1b174f4d9924ca969ad028bb0f596139fb7c0f4323f075",
@@ -198,7 +198,7 @@
     "yuwen:DreamingTask": "c89b08014f059f52f0405e88a93f4c45e1bd8eb8bbb340532fd15def960079dc",
     "yuwen:CoachTask": "465d170e146ac0e82895735d2de1ec96277255264642b3614e013d1efbcff797",
     "yuwen:MemoryBriefTask": "9949834d387da8a50e888ec68b5352b2fa37eb2be77d9cade8e7e6faa46007a8",
-    "yuwen:CopilotTask": "c4576257b67ec17f723d68af52ec5f2c24aaaf5d3fea415fb976e5f607584039",
+    "yuwen:CopilotTask": "ebb88bd56764735a4868ab4ab59ae7633863349e6d989f018055fecfc889266f",
     "yuwen:TeachingTurnTask": "d677d1328f02b2a4801602becff25f5e76409a807f43ed966c5cf47e3a382c61"
   }
 }

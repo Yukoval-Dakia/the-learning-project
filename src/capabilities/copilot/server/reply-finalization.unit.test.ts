@@ -69,6 +69,58 @@ describe('Copilot root reply finalization', () => {
     );
   });
 
+  it('accepts the actual provider suffix fence only when duplicated prose equals reply_md', async () => {
+    const value = finalizer();
+    const toolUseId = 'call_8af33fd439f3473cbeb37a32';
+    await pre(value, 'mcp__loom__query_knowledge', toolUseId, {
+      subjectId: 'yuwen',
+      nodeId: 'actual:classical-root',
+      include: ['children'],
+      limit: 10,
+    });
+    value.observeDomainTool({
+      tool_use_id: toolUseId,
+      name: 'query_knowledge',
+      effect: 'read',
+      input: { subjectId: 'yuwen', nodeId: 'actual:classical-root' },
+      output: {
+        nodes: [
+          { id: 'actual:classical-root', name: '文言虚词「之」' },
+          { id: 'actual:classical-object', name: '代词宾语用法' },
+        ],
+      },
+      error_reason: null,
+      executed: true,
+    });
+    const reply = [
+      '工具实际返回了 2 个节点，名称如下：',
+      '',
+      '1. **文言虚词「之」**（id: `actual:classical-root`，无父节点）',
+      '2. **代词宾语用法**（id: `actual:classical-object`，父节点为「文言虚词「之」」）',
+    ].join('\n');
+    const terminal = [
+      reply,
+      '',
+      '```json',
+      JSON.stringify({ reply_md: reply, relied_on_tool_use_ids: [toolUseId] }),
+      '```',
+    ].join('\n');
+
+    const result = await value.finalizeTerminal(terminal);
+
+    expect(result).toMatchObject({ accepted: true, replyText: reply });
+    expect(result.receipt.relied_on_tool_use_ids).toEqual([toolUseId]);
+  });
+
+  it('accepts a sole JSON fence without treating the fence as reply prose', async () => {
+    const value = finalizer();
+    const result = await value.finalizeTerminal(
+      ['```json', '{"reply_md":"仅围栏正文","relied_on_tool_use_ids":[]}', '```'].join('\n'),
+    );
+
+    expect(result).toMatchObject({ accepted: true, replyText: '仅围栏正文' });
+  });
+
   it('persists exactly the sealed bytes and compact receipt on the shared inline/durable writer', async () => {
     const value = finalizer();
     const finalized = await value.finalizeTerminal(
@@ -189,10 +241,14 @@ describe('Copilot root reply finalization', () => {
 
   it('fails closed on malformed or prose-contaminated terminal output', async () => {
     const value = finalizer();
+    const candidate = '{"reply_md":"候选","relied_on_tool_use_ids":[]}';
     for (const terminalText of [
       '普通正文，不是 JSON',
-      '{"reply_md":"候选","relied_on_tool_use_ids":[]} trailing prose',
+      `${candidate} trailing prose`,
       '{"reply_md":"候选","relied_on_tool_use_ids":[],"extra":true}',
+      ['冲突前言', '```json', candidate, '```'].join('\n'),
+      ['候选', '```json', candidate, '```', '尾随正文'].join('\n'),
+      ['```json', candidate, '```', '```json', candidate, '```'].join('\n'),
     ]) {
       const result = await value.finalizeTerminal(terminalText);
       expect(result.accepted).toBe(false);

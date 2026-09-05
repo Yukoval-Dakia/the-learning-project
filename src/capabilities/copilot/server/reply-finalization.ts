@@ -289,11 +289,40 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     })
     .strict();
 
+  function parseTerminalEnvelope(terminalText: string): z.infer<typeof terminalEnvelope> {
+    const trimmed = terminalText.trim();
+    const parseJson = (json: string) => terminalEnvelope.parse(JSON.parse(json));
+    try {
+      return parseJson(trimmed);
+    } catch {
+      // The SDK may render the root's terminal JSON as a Markdown JSON fence.
+      // Only the exact, unambiguous transport shapes below are tolerated.
+    }
+
+    const openFence = '```json\n';
+    const closeFence = '\n```';
+    const openAt = trimmed.indexOf(openFence);
+    if (openAt < 0 || trimmed.indexOf(openFence, openAt + openFence.length) >= 0) {
+      throw new Error('terminal output does not contain exactly one JSON fence');
+    }
+    const payloadAt = openAt + openFence.length;
+    const closeAt = trimmed.indexOf(closeFence, payloadAt);
+    if (closeAt < 0 || closeAt + closeFence.length !== trimmed.length) {
+      throw new Error('terminal JSON fence must be the sole suffix with no trailing prose');
+    }
+    const parsed = parseJson(trimmed.slice(payloadAt, closeAt));
+    const preamble = trimmed.slice(0, openAt).trim();
+    if (preamble.length > 0 && preamble !== parsed.reply_md.trim()) {
+      throw new Error('terminal preamble must exactly duplicate reply_md');
+    }
+    return parsed;
+  }
+
   async function finalizeTerminal(terminalText: string): Promise<CopilotReplyFinalizationResult> {
     const startVersion = traceVersion;
     const startTraceSha = digestTrace(trace);
     try {
-      const parsedInput = terminalEnvelope.parse(JSON.parse(terminalText));
+      const parsedInput = parseTerminalEnvelope(terminalText);
       const relied = parsedInput.relied_on_tool_use_ids.map((id) => byId.get(id));
       if (
         relied.some(

@@ -1283,6 +1283,24 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       });
     }
 
+    if (!finalized.accepted) {
+      return await handleDurableFailure(db, {
+        err: new Error('root terminal envelope rejected'),
+        runId,
+        sessionId: data.session_id,
+        actorRef,
+        taskRunId: result.task_run_id,
+        partialText: reviewedReply,
+        preparedReply: reviewedPreparedReply,
+        projectSuccessfulTerminal,
+        projectFailedTerminal,
+        writeCopilotReplyFn: persistReply,
+        replyFinalization: finalized.receipt,
+        createCancelledMarker: cancellationMarker(),
+        emitReviewedDelta: candidateDeltaObserved,
+      });
+    }
+
     // YUK-364 (F1) — commit the domain outcome marker first, then project the
     // public REPLY/DONE in a second transaction; both phases use the same
     // per-run settlement lock. A projection failure remains repairable from the
