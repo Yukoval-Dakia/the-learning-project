@@ -1064,7 +1064,7 @@ async function runCopilotChatImpl(
   const toolTrace: ToolExecutionResultObservation[] = [];
   // The MCP server is constructed before the central runner creates its
   // lifecycle. Share this controller with both sides so timeout, lease fencing,
-  // and request cancellation abort nested run_task work before the parent permit
+  // and request cancellation abort nested generation work before the parent permit
   // is released. The request signal alone is insufficient: non-streaming calls
   // have none, and the runner's execution timeout is an internal lifecycle event.
   const lifecycleAbortController = new AbortController();

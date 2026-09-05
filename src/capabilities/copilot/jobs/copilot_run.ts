@@ -1807,7 +1807,8 @@ export function buildCopilotRunHandler(db: Db): (jobs: Job<CopilotRunJobData>[])
 
 const COPILOT_RESEARCH_READ_TOOLS = READ_TOOLS.filter(
   (name) =>
-    name !== 'run_task' &&
+    name !== 'generate_goal_outline' &&
+    name !== 'generate_question_candidate' &&
     name !== 'get_tool_operation' &&
     name !== 'wait_tool_operation' &&
     name !== 'launch_researcher' &&
@@ -1909,7 +1910,10 @@ export async function runCopilotContinuationTask(
       taskRunId,
       mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
       allowedTools: resolveMcpAllowedTools('copilot').filter(
-        (tool) => !tool.endsWith('__launch_researcher') && !tool.endsWith('__run_task'),
+        (tool) =>
+          !tool.endsWith('__launch_researcher') &&
+          !tool.endsWith('__generate_goal_outline') &&
+          !tool.endsWith('__generate_question_candidate'),
       ),
       ...(copilotSkills ? { skills: copilotSkills } : {}),
     },

@@ -34,7 +34,7 @@ describe('foreground inline Copilot subagent contracts (ADR-0056)', () => {
       timeout: 600_000,
     });
     expect(copilotResearchTaskSpec.definition.prompt.text).toContain(
-      '不得调用 Task、run_task、launch_researcher',
+      '不得调用 Task、generate_goal_outline、generate_question_candidate、launch_researcher',
     );
     expect(copilotTaskSpec.definition.prompt.text).toContain(
       'subagent_type 固定为 copilot-researcher',

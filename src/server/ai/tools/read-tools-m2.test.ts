@@ -336,8 +336,9 @@ describe('Foundation D M2 read tools', () => {
       'query_questions',
       'query_records',
       'read_agent_notes',
-      // YUK-756 — generation-only registry dispatcher is a read-effect DomainTool.
-      'run_task',
+      // YUK-939 — both generation-only DomainTools are read-effect tools.
+      'generate_goal_outline',
+      'generate_question_candidate',
       'search_memory_facts',
       'wait_subagent',
       'wait_tool_operation',

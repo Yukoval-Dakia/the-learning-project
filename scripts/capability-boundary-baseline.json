@@ -3,9 +3,9 @@
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "debts": {
     "capabilityToServer": {
-      "total": 464,
+      "total": 465,
       "byOwnerPair": {
-        "agency -> ai": 25,
+        "agency -> ai": 26,
         "agency -> boss": 10,
         "agency -> conjectures": 2,
         "agency -> http": 2,
@@ -17,7 +17,7 @@
         "agency -> runtime-env": 1,
         "agency -> subjects": 2,
         "copilot -> advisory-locks": 1,
-        "copilot -> ai": 23,
+        "copilot -> ai": 22,
         "copilot -> boss": 6,
         "copilot -> events": 5,
         "copilot -> http": 1,
@@ -63,7 +63,7 @@
         "observability -> r2": 2,
         "observability -> subjects": 14,
         "practice -> advisory-locks": 7,
-        "practice -> ai": 68,
+        "practice -> ai": 69,
         "practice -> boss": 17,
         "practice -> calibration": 3,
         "practice -> coldstart": 1,

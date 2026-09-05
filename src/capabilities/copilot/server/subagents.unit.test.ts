@@ -24,7 +24,8 @@ describe('buildCopilotSubagents', () => {
       'mcp__loom__get_question_context',
       'mcp__loom__get_attempt_context',
       'mcp__loom__expand_knowledge_subgraph',
-      'mcp__loom__run_task',
+      'mcp__loom__generate_goal_outline',
+      'mcp__loom__generate_question_candidate',
       'mcp__loom__author_question',
       'mcp__loom__propose_knowledge_mutation',
       'mcp__loom__author_artifact',
@@ -49,11 +50,13 @@ describe('buildCopilotSubagents', () => {
     ]);
     expect(researcher.tools?.every((tool) => parentAllowedTools.includes(tool))).toBe(true);
     expect(researcher.tools).not.toContain('Task');
-    expect(researcher.tools).not.toContain('mcp__loom__run_task');
+    expect(researcher.tools).not.toContain('mcp__loom__generate_goal_outline');
+    expect(researcher.tools).not.toContain('mcp__loom__generate_question_candidate');
     expect(researcher.disallowedTools).toEqual(
       expect.arrayContaining([
         'Task',
-        'mcp__loom__run_task',
+        'mcp__loom__generate_goal_outline',
+        'mcp__loom__generate_question_candidate',
         'mcp__loom__author_question',
         'mcp__loom__propose_knowledge_mutation',
         'mcp__loom__author_artifact',

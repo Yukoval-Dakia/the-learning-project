@@ -40,8 +40,10 @@ export const READ_TOOLS = [
   // reach the active question face — the MAINTENANCE_READ_TOOLS chokepoint below
   // filters it back out (same containment as query_questions).
   'get_question_block_structure',
-  // YUK-756 — generation-only dispatcher for explicitly invocable registry tasks.
-  'run_task',
+  // YUK-939 — capability-owned generation-only tools. Neither retains a draft
+  // nor writes a proposal; author_question remains the distinct retained path.
+  'generate_goal_outline',
+  'generate_question_candidate',
   // YUK-293 — expiring AI-to-AI hints. Granted only to copilot / dreaming /
   // coach below; evaluator and operator surfaces filter it out.
   'read_agent_notes',
@@ -130,7 +132,8 @@ const KNOWLEDGE_REVIEW_TOOLS = [
 // 集合对账均由 src/capabilities/copilot/server/copilot-tools.unit.test.ts 强制。
 export const COPILOT_TOOLS = [
   'query_memory_brief',
-  'run_task',
+  'generate_goal_outline',
+  'generate_question_candidate',
   'get_subject_graph_overview',
   'query_knowledge',
   'query_events',
@@ -279,7 +282,8 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
     | 'get_question_block_structure'
     | 'get_tool_operation'
     | 'wait_tool_operation'
-    | 'run_task'
+    | 'generate_goal_outline'
+    | 'generate_question_candidate'
     | 'read_agent_notes'
   > =>
     name !== 'search_memory_facts' &&
@@ -287,7 +291,8 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
     name !== 'get_question_block_structure' &&
     name !== 'get_tool_operation' &&
     name !== 'wait_tool_operation' &&
-    name !== 'run_task' &&
+    name !== 'generate_goal_outline' &&
+    name !== 'generate_question_candidate' &&
     name !== 'read_agent_notes',
 );
 

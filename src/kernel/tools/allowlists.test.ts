@@ -119,8 +119,9 @@ describe('DomainTool allowlist policy', () => {
     // This assertion now locks the post-YUK-270 exact set.
     expect(DOMAIN_TOOL_ALLOWLISTS.copilot).toEqual([
       'query_memory_brief',
-      // YUK-756 — explicit generation-only task dispatcher; unrelated to U6.
-      'run_task',
+      // YUK-939 — capability-owned generation-only tools; unrelated to U6.
+      'generate_goal_outline',
+      'generate_question_candidate',
       'get_subject_graph_overview',
       'query_knowledge',
       'query_events',
@@ -191,7 +192,8 @@ describe('DomainTool allowlist policy', () => {
           name !== 'search_memory_facts' &&
           name !== 'query_questions' &&
           name !== 'get_question_block_structure' &&
-          name !== 'run_task' &&
+          name !== 'generate_goal_outline' &&
+          name !== 'generate_question_candidate' &&
           name !== 'read_agent_notes' &&
           name !== 'get_tool_operation' &&
           name !== 'wait_tool_operation',

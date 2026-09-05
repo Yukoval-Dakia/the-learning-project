@@ -38,44 +38,25 @@ import { getTaskSystemPrompt } from './task-prompts';
 
 const YUK932_PROMPT_HASHES = {
   'general:CopilotTask': '84a63233176a9b71fd7acac4ca65c7bfc4b12fe39cef2e381ccf9a7b05f36f4c',
-  'general:CopilotResearchTask': 'ef6d0d2f56e4ee45c1b95603a81cec03587ab965e5435609ec6a49d4be34a3e6',
+  'general:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
   'math:CopilotTask': '84a63233176a9b71fd7acac4ca65c7bfc4b12fe39cef2e381ccf9a7b05f36f4c',
-  'math:CopilotResearchTask': 'ef6d0d2f56e4ee45c1b95603a81cec03587ab965e5435609ec6a49d4be34a3e6',
+  'math:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
   'physics:CopilotTask': '84a63233176a9b71fd7acac4ca65c7bfc4b12fe39cef2e381ccf9a7b05f36f4c',
-  'physics:CopilotResearchTask': 'ef6d0d2f56e4ee45c1b95603a81cec03587ab965e5435609ec6a49d4be34a3e6',
+  'physics:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
   'yuwen:CopilotTask': '84a63233176a9b71fd7acac4ca65c7bfc4b12fe39cef2e381ccf9a7b05f36f4c',
-  'yuwen:CopilotResearchTask': 'ef6d0d2f56e4ee45c1b95603a81cec03587ab965e5435609ec6a49d4be34a3e6',
+  'yuwen:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
 } as const;
 
 describe('copilot task dispatch declarations', () => {
-  it('is deny-by-default and exposes exactly two fully-declared tasks', () => {
-    const invocable = Object.values(tasks).filter(
-      (task) => 'copilot' in task && task.copilot?.invocable === true,
-    );
-    expect(invocable.map((task) => task.kind).sort()).toEqual([
-      'GoalScopeTask',
-      'QuestionAuthorTask',
-    ]);
-    for (const task of invocable) {
-      if (!('copilot' in task) || !task.copilot) throw new Error(task.kind);
-      expect(task.copilot.intentSchema.safeParse).toBeTypeOf('function');
-      expect(task.copilot.prepare).toBeTypeOf('function');
-    }
-    expect(Object.keys(tasks)).toHaveLength(52);
-  });
-
-  it('is an immutable compatibility projection with only the two dispatch overlays', () => {
+  it('is an immutable exact compatibility alias with no invocation metadata overlay', () => {
     expect(Object.isFrozen(tasks)).toBe(true);
     expect(Object.isFrozen(tasks.GoalScopeTask)).toBe(true);
-    expect(Object.isFrozen(tasks.GoalScopeTask.copilot)).toBe(true);
     expect(Object.isFrozen(tasks.QuestionAuthorTask)).toBe(true);
-    expect(Object.isFrozen(tasks.QuestionAuthorTask.copilot)).toBe(true);
-    expect(tasks.GoalScopeTask).not.toBe(taskCatalog.GoalScopeTask);
-    expect(tasks.QuestionAuthorTask).not.toBe(taskCatalog.QuestionAuthorTask);
+    expect(tasks).toBe(taskCatalog);
     for (const kind of Object.keys(taskCatalog) as TaskKind[]) {
-      if (kind === 'GoalScopeTask' || kind === 'QuestionAuthorTask') continue;
       expect(tasks[kind], kind).toBe(taskCatalog[kind]);
     }
+    expect(Object.keys(tasks)).toHaveLength(52);
   });
 
   it('contains no prompt builders or task business definitions', () => {
@@ -83,6 +64,9 @@ describe('copilot task dispatch declarations', () => {
     expect(source).not.toMatch(/\bfunction\s+build/);
     expect(source).not.toMatch(/\b(description|defaultProvider|defaultModel|budget|prompt)\s*:/);
     expect(source).not.toContain('DEFAULT_TASK_BUDGET');
+    expect(source).not.toContain('copilot:');
+    expect(source).not.toContain('prepareGoalScopeTask');
+    expect(source).not.toContain('prepareQuestionAuthorTask');
   });
 });
 
@@ -826,7 +810,9 @@ describe('CopilotTask.systemPrompt — YUK-938 native Task live parent', () => {
 
     const researcher = getTaskSystemPrompt('CopilotResearchTask');
     expect(researcher).toContain('只读研究员');
-    expect(researcher).toContain('不得调用 Task、run_task、launch_researcher');
+    expect(researcher).toContain(
+      '不得调用 Task、generate_goal_outline、generate_question_candidate、launch_researcher',
+    );
     expect(researcher).toContain('不得输出 transcript、隐藏推理或过程日志');
   });
 });
