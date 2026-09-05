@@ -21,6 +21,13 @@ The repository already uses TaskSpec parsers for that pattern. A strict terminal
 extra model round and a second interactive state machine. Malformed output fails closed; there is no
 automatic paid repair chain. This deliberately gives up in-query finalizer correction feedback.
 
+Actual-provider refinement: the first new read terminal duplicated its correct reply as prose plus a
+fenced JSON envelope. A narrow transport decoder may accept a sole JSON fence, or one suffix fence
+only when the preceding prose exactly equals its decoded `reply_md` after outer trimming. Conflicting
+preambles, multiple candidates and trailing text still fail closed. It never reconstructs an envelope
+from raw prose or asks another model to repair formatting. Missing/unsealed durable terminal results
+must project FAILED rather than DONE; a safe learning-validation fallback retains its separate policy.
+
 The actual old read baseline (two synthetic nodes) recorded at least 57,817 input tokens and $0.201614
 before an unmetered comparator timeout. This is a lower bound, not a before/after savings claim.
 

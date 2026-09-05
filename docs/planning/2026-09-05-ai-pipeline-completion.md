@@ -16,11 +16,11 @@ Base: main `090e882c` (foreground turn-context slice, PR #1324 / YUK-939).
 ## Active plan
 
 1. [complete] Trace current evidence finalization, native/durable execution, and live legacy consumers.
-2. [in progress] Decide and implement capability-owned finalization and eliminate redundant model chains,
+2. [complete] Decide and implement capability-owned finalization and eliminate redundant model chains,
    preserving semantic validation where it is genuinely required.
-3. [in progress] Converge native child execution and explicit durable work; retire overlapping dispatch paths
+3. [complete] Converge native child execution and explicit durable work; retire overlapping dispatch paths
    only after all live consumers and pending-work compatibility are accounted for.
-4. [in progress] Consolidate shared attempt execution/catalog ownership and remove obsolete tests/docs.
+4. [complete] Consolidate shared attempt execution/catalog ownership and remove obsolete tests/docs.
 5. [in progress] Run scoped unit/DB checks, static gates/build, independent review, and actual-provider
    acceptance with revision/input/output/task-run/provider/model/token/cost evidence.
 6. [pending] Commit, push, exact-head CI, merge if green; synchronize board/handoff and retry tracker
@@ -57,3 +57,13 @@ Base: main `090e882c` (foreground turn-context slice, PR #1324 / YUK-939).
   new-chain actual acceptance. Code/static/scoped verification continues; no production deployment.
 - Owner explicitly approved up to $2 ADDITIONAL for the new-chain acceptance campaign. The old baseline
   cost remains a lower bound; new test invocations must share that new $2 allowance, not reset it per run.
+- Finalization integrated `fe71227b`; root verified 232 + 238 scoped unit tests (disjoint invocations),
+  51 durable DB tests, typecheck, lint (exit 0 with existing warnings), build and architecture/census gates.
+  Task census is 50 registered / 49 invoked / 1 compatibility; capability-to-server edges are 453.
+- New-chain first read at `fe71227b` spent $0.103107 (33,652 input / 343 output); no reviewer calls.
+  It is NOT an accepted read: actual model terminal repeated prose before a matching fenced envelope,
+  which strict parsing rejected. Narrow deterministic transport correction is in progress.
+  New allowance remaining: $1.896893; no unknown costs in this new campaign so far.
+  Evidence: `.tmp/actual-provider-acceptance/1788611012778-406b4b3d-d33a-491f-97ff-18c626f00373.json`.
+- Independent initial review found one P1: durable unsealed terminal was marked DONE. Fix/one verification
+  round pending. P2 UI partial-text comment drift is non-blocking and remains outside this backend scope.

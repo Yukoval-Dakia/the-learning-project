@@ -237,12 +237,12 @@ interface DomainTool<Input, Output> {
 `src/server/ai/tools/registry.ts` 静态装配 capability manifests；MCP bridge 把选中的 DomainTool
 包成 in-process server。独立远程 MCP server 仍推后，不作为当前产品内 tool 架构核心。
 
-工具默认阻塞。只有显式声明 `safeHandoff` 的 remote read/idempotent DomainTool，才会在执行前
-写入独立 `tool_operation`，并在持续 45 秒后把同一个 durable handle 交回模型；45 秒内完成仍直接
-返回原结果。Copilot 可在同一 conversation owner 下 get/wait/cancel，SDK `toolUseId` 通过
-PreToolUse hook 与持久化 input 关联。system drain、用户取消与模型取消共用相同 ownership seam；
-owner 中断导致 settlement 不确认时由 ToolOperations 保留 `lost` 与 side-effect risk。`generate_goal_outline`、
-`generate_question_candidate`、所有 propose/write 以及未证明可安全 detached 的 Tavily/手写 MCP 继续阻塞，且不会被 pg-boss 重投。
+当前所有注册工具均阻塞到结果返回；`search_memory_facts` 不再产生新的 `tool_operation`，
+七个旧 operation/subagent 控制工具也不再向模型注册。独立研究使用只读 depth-1 原生 Task，
+结果回到同一个父请求；只有显式 Mission 使用持久化根任务。
+历史 safeHandoff/ToolOperations 的 ownership、取消、lost/side-effect-risk 与队列恢复代码仅保留
+排空兼容义务；删除它们须先取得部署后的零未结算记录、零 queued/active jobs 证据。
+`generate_goal_outline`、`generate_question_candidate`、所有 propose/write 与外部 MCP 都不会自动后台化。
 
 **循环控制现状**：
 

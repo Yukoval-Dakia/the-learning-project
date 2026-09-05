@@ -18,7 +18,10 @@ exact SDK success `result` as neutral `terminalText`; only the Copilot capabilit
 digests, bounded trace digest, correction binding, canonical proposal disclosure, presentation policy,
 and the existing question/solve/teaching validators. Only a stable sealed result may be persisted or
 published; assistant preambles, malformed JSON, raw and trailing SDK prose fail closed. Missing,
-foreign, failed, in-flight, or validation-time-mutated trace state also fails closed.
+foreign, failed, in-flight, or validation-time-mutated trace state also fails closed. The transport
+decoder tolerates only a sole JSON fence or one suffix fence with an exactly matching duplicated
+`reply_md` preamble; ambiguous/conflicting wrappers remain invalid. Invalid durable finalization
+projects FAILED, never a successful DONE marker.
 
 A private finalizer MCP was rejected because its tool result normally requires another model round trip
 with the full context on every plain turn. Post-terminal service finalization performs no repair call and

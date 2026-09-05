@@ -276,6 +276,18 @@ async function main(): Promise<void> {
       import('@/capabilities/copilot/server/content-validation'),
     ]);
     const { and, eq, inArray } = await import('drizzle-orm');
+    const runner = await import('@/server/ai/runner');
+    const terminals = new Map<string, string>();
+    const captureStream: typeof runner.streamTaskCollecting = async (...args) => {
+      const result = await runner.streamTaskCollecting(...args);
+      if (result.terminalText !== undefined) terminals.set(result.task_run_id, result.terminalText);
+      return result;
+    };
+    const captureRun: typeof runner.runAgentTask = async (...args) => {
+      const result = await runner.runAgentTask(...args);
+      terminals.set(result.task_run_id, result.text);
+      return result;
+    };
     // Match the server/worker composition root before constructing a Copilot
     // MCP bridge. Directly importing chat.ts does not populate this registry.
     await registerCapabilityTools(capabilities);
@@ -284,6 +296,8 @@ async function main(): Promise<void> {
     }
     captureFailureState = async () => ({
       active_case: activeCase,
+      // Only SDK terminal text for our synthetic fixture, never thinking blocks.
+      terminal_outputs: Object.fromEntries(terminals),
       task_runs: await db
         .select({
           id: schema.ai_task_runs.id,
@@ -410,6 +424,11 @@ async function main(): Promise<void> {
         input,
         output: result.reply,
         root_task_run_id: result.task_run_id,
+        terminal_output: result.task_run_id ? terminals.get(result.task_run_id) : undefined,
+        terminal_sha256:
+          result.task_run_id && terminals.has(result.task_run_id)
+            ? SHA256(terminals.get(result.task_run_id))
+            : undefined,
         task_runs: rows,
         tools,
         session_agent_sdk_id: sessionRows[0]?.agent_sdk_session_id ?? null,
@@ -535,6 +554,7 @@ async function main(): Promise<void> {
         try {
           result = await durable.runCopilotRun({
             db,
+            streamTaskCollectingFn: captureStream,
             data: {
               run_id: accepted.acceptance.runId,
               session_id: durableSession,
@@ -622,15 +642,29 @@ async function main(): Promise<void> {
       };
       // The production root owns cancellation. Await its lifecycle settlement;
       // do not Promise.race a paid request and then tear down its database.
-      const result = await chat.runCopilotChat(db, request, {
+      const deps: Parameters<typeof chat.runCopilotChat>[2] = {
         providerSessionDeadlineAt: Date.now() + CASE_TIMEOUT_MS,
-      });
+        runAgentTaskFn: (kind, input, ctx) =>
+          captureRun(kind as Parameters<typeof captureRun>[0], input, ctx),
+        streamAgentTaskFn: (kind, input, ctx, onDelta) =>
+          captureStream(kind as Parameters<typeof captureStream>[0], input, ctx, onDelta),
+      };
+      // Keep the old/new read comparison on the same non-streaming entrypoint;
+      // exercise the actual collecting/visible-delta path for the full journey.
+      const delivered: string[] = [];
+      const result =
+        caseName === 'read'
+          ? await chat.runCopilotChat(db, request, deps)
+          : await chat.runCopilotChatStreaming(db, request, (delta) => delivered.push(delta), deps);
       if (!result.reply.trim()) throw new Error(`${caseName}: empty reply`);
       // correction contracts name prior *assistant* turn event ids, not asks.
       if (caseName === 'cold') priorTurnId = result.reply_event_id;
       if (caseName === 'correction' && !priorTurnId)
         throw new Error('correction: missing prior turn');
       const observed = await snapshot(caseName, request, result);
+      if (caseName !== 'read' && delivered.join('') !== result.reply) {
+        throw new Error(`${caseName}: public deltas mismatched persisted reply`);
+      }
       const receipt = await assertFinalizationReceipt(caseName, result);
       if (!baselineRecord && observed.rows.some((row) => /^CopilotEvidence/.test(row.kind))) {
         throw new Error(`${caseName}: retired post-root evidence task was invoked`);
