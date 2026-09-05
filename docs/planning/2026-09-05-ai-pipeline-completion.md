@@ -67,3 +67,9 @@ Base: main `090e882c` (foreground turn-context slice, PR #1324 / YUK-939).
   Evidence: `.tmp/actual-provider-acceptance/1788611012778-406b4b3d-d33a-491f-97ff-18c626f00373.json`.
 - Independent initial review found one P1: durable unsealed terminal was marked DONE. Fix/one verification
   round pending. P2 UI partial-text comment drift is non-blocking and remains outside this backend scope.
+- `5eb1cdc6` fixes durable FAILED and narrow terminal wrappers, but a second actual read returned correct
+  plain prose without JSON. Cost $0.091226; cumulative new spend $0.194333, remaining $1.805667.
+  Evidence: `.tmp/actual-provider-acceptance/1788611872008-684d1dc4-7d19-401a-9fc0-b026b1509d9a.json`.
+  Root accepted architecture reassessment: explicit terminal Markdown, server-observed trace IDs and
+  execution_trace_bound assurance replace the fragile model envelope (not a raw-text fallback).
+  Skill-enabled SDK calls also need isolated user-only settings; current omission loads project instructions.

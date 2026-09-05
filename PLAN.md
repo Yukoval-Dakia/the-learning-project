@@ -15,16 +15,17 @@
 - `fe71227b` 已集成根终态 finalization，退休两个重复 evidence Task 与过时 ledger/checkpoint 测试。
 - 集成 scoped 单测、持久化/恢复 DB 场景、typecheck/lint/audits/build 已通过；发现的一处旧工具
   清单测试已按新 manifest 修正，正在复验。任务数为 50；capability→server 依赖从 464 降到 453。
-- 真实 read 首轮 $0.103107，正确工具结果被“正文 + 同文 JSON”包装挡住，正用无额外模型调用的
-  窄格式解码修复；新增 $2 预算剩 $1.896893。初审唯一 P1（无效 durable terminal 错标 DONE）同步修复。
+- 两次真实 read 累计 $0.194333，工具正确但模型未稳定遵守 JSON。已决策删除该模型格式协议，
+  改为明确的 terminal Markdown + 服务端 observed trace 收据；不是静默伪造模型引用的 fallback。
+  初审 P1（无效 durable terminal 错标 DONE）已修正；同时隔离启用技能时加载的项目开发指令。
 - 计划与证据：`docs/planning/2026-09-05-ai-pipeline-completion.md`；具体设计：
   `docs/planning/2026-09-05-pipeline-finalization-design.md`。历史 F5 状态见 Git 中本文件前版。
 
 ## NEXT
 
-1. 集成真实包装回归与 durable FAILED 修复，跑 scoped 验证。
+1. 集成 terminal Markdown 简化与技能隔离，跑 scoped 验证。
 2. 初审已完成；仅剩一次 P0/P1 修复验证审，不启动第三轮。
-3. 在剩余 $1.896893 内完成同输入比较和会话/子任务/durable/语义校验场景；未知费用立即停止。
+3. 在剩余 $1.805667 内完成同输入比较和会话/子任务/durable/语义校验场景；未知费用立即停止。
 4. Push 后以 exact-head GitHub CI Gate 为完整测试权威；通过后按仓库授权合并。
 5. 收尾更新本看板、handoff、Linear 和部署边界；不得把 LOCAL_GREEN 称作完整验收。
 
