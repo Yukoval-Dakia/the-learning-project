@@ -33,6 +33,7 @@ describe('buildCopilotSubagents', () => {
       'mcp__tavily__tavily_search',
       'mcp__tavily__tavily_extract',
       'Task',
+      'Agent',
     ];
 
     const agents = buildCopilotSubagents({ parentAllowedTools, parentMaxTurns: 6 });
@@ -51,11 +52,13 @@ describe('buildCopilotSubagents', () => {
     ]);
     expect(researcher.tools?.every((tool) => parentAllowedTools.includes(tool))).toBe(true);
     expect(researcher.tools).not.toContain('Task');
+    expect(researcher.tools).not.toContain('Agent');
     expect(researcher.tools).not.toContain('mcp__loom__generate_goal_outline');
     expect(researcher.tools).not.toContain('mcp__loom__generate_question_candidate');
     expect(researcher.disallowedTools).toEqual(
       expect.arrayContaining([
         'Task',
+        'Agent',
         'mcp__loom__generate_goal_outline',
         'mcp__loom__generate_question_candidate',
         'mcp__loom__author_question',
@@ -115,6 +118,7 @@ describe('buildCopilotNativeResearchConfig', () => {
     expect(researcher?.disallowedTools).toEqual(
       expect.arrayContaining([
         'Task',
+        'Agent',
         'mcp__loom__generate_goal_outline',
         'mcp__loom__generate_question_candidate',
         'mcp__loom__propose_knowledge_mutation',
@@ -127,7 +131,7 @@ describe('buildCopilotNativeResearchConfig', () => {
 
   it('keeps the root read surface while the kill switch removes Task options', () => {
     const config = buildCopilotNativeResearchConfig({
-      baseAllowedTools: ['mcp__loom__query_events', 'Task'],
+      baseAllowedTools: ['mcp__loom__query_events', 'Task', 'Agent'],
       enabled: false,
       parentMaxTurns: 6,
     });

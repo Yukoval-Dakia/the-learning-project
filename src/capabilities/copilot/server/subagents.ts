@@ -14,10 +14,12 @@ import {
 } from '@/kernel/tools/allowlists';
 import { TAVILY_MCP_ALLOWED_TOOLS, TAVILY_MCP_SERVER_NAME } from '@/server/ai/mcp/tavily';
 import {
+  SPAWN_TOOL_ALIASES,
   SPAWN_TOOL_NAME,
   type SpawnBudgetObservation,
   type SpawnContract,
   createSpawnContract,
+  isSpawnToolName,
 } from '@/server/ai/spawn-contract';
 
 export type { SpawnBudgetObservation };
@@ -64,9 +66,9 @@ export function buildCopilotSubagents(
     (name) => SAFE_LOOM_READ_TOOLS.has(name) || SAFE_TAVILY_TOOLS.has(name),
   );
   const disallowedTools = [
-    SPAWN_TOOL_NAME,
+    ...SPAWN_TOOL_ALIASES,
     ...GENERATION_TOOL_NAMES,
-    ...opts.parentAllowedTools.filter((name) => !tools.includes(name) && name !== SPAWN_TOOL_NAME),
+    ...opts.parentAllowedTools.filter((name) => !tools.includes(name) && !isSpawnToolName(name)),
   ];
   const mcpServers = [
     ...(tools.some((name) => name.startsWith(`mcp__${DOMAIN_TOOL_MCP_SERVER_NAME}__`))
@@ -112,13 +114,13 @@ export function buildCopilotNativeResearchConfig(
 ): CopilotNativeResearchConfig {
   const rootTools = [...options.baseAllowedTools];
   const allowedTools = options.enabled
-    ? [...rootTools.filter((tool) => tool !== SPAWN_TOOL_NAME), SPAWN_TOOL_NAME]
-    : rootTools.filter((tool) => tool !== SPAWN_TOOL_NAME);
+    ? [...rootTools.filter((tool) => !isSpawnToolName(tool)), SPAWN_TOOL_NAME]
+    : rootTools.filter((tool) => !isSpawnToolName(tool));
   const spawnContract = options.enabled
     ? createSpawnContract({
         enabled: true,
         agents: buildCopilotSubagents({
-          parentAllowedTools: allowedTools.filter((tool) => tool !== SPAWN_TOOL_NAME),
+          parentAllowedTools: allowedTools.filter((tool) => !isSpawnToolName(tool)),
           parentMaxTurns: options.parentMaxTurns,
         }),
         onBudgetObservation: options.onBudgetObservation,

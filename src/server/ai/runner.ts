@@ -70,7 +70,7 @@ import {
   maxLifecycleAttempts,
 } from './run-lifecycle';
 import { createSdkTerminalEvidenceCollector } from './sdk-terminal';
-import { SPAWN_TOOL_NAME } from './spawn-contract';
+import { SPAWN_DISABLE_BACKGROUND_TASKS_ENV, isSpawnToolName } from './spawn-contract';
 
 // ============================================================================
 // Public surface
@@ -459,7 +459,10 @@ function getIsolatedClaudeConfigDir(): string {
 // subprocess (used by the YUK-365 oauth lane to guarantee no parent-process
 // ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN wins precedence
 // over the subscription token).
-function buildAgentEnv(resolved: ResolvedProvider): Record<string, string | undefined> {
+function buildAgentEnv(
+  resolved: ResolvedProvider,
+  options: { disableBackgroundTasks: boolean },
+): Record<string, string | undefined> {
   const base: Record<string, string | undefined> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (typeof v === 'string') base[k] = v;
@@ -512,6 +515,14 @@ function buildAgentEnv(resolved: ResolvedProvider): Record<string, string | unde
   if (base.CLAUDE_CODE_MAX_RETRIES === undefined) {
     base.CLAUDE_CODE_MAX_RETRIES = '2';
   }
+  // SDK 0.3.220's Agent input defaults to background and a foreground task can
+  // also auto-background. A root that declares native agents must synchronously
+  // receive the child result before it can finish its one user-facing response.
+  // This SDK-owned switch disables both paths. It is deliberately scoped to
+  // agent-enabled roots so all other task options retain their existing env.
+  if (options.disableBackgroundTasks) {
+    base[SPAWN_DISABLE_BACKGROUND_TASKS_ENV] = '1';
+  }
   return base;
 }
 
@@ -557,7 +568,7 @@ function buildQueryOptions(
     model: resolved.model,
     systemPrompt: getTaskSystemPrompt(kind, ctx.subjectProfile),
     abortController,
-    env: buildAgentEnv(resolved),
+    env: buildAgentEnv(resolved, { disableBackgroundTasks: ctx.agents !== undefined }),
     tools: allowedTools,
     mcpServers: ctx.mcpServers,
     // YUK-575 (N5) — durable copilot run overrides the turn ceiling per-call.
@@ -865,7 +876,7 @@ async function runTaskAttempt(args: {
       lifecycle,
       notifySessionId: true,
       shouldRecordToolCall: (block) =>
-        block.name === SPAWN_TOOL_NAME && ctx.autoLogToolCalls !== false,
+        isSpawnToolName(block.name) && ctx.autoLogToolCalls !== false,
       onSuccess: (msg) => {
         resultText = msg.result ?? '';
       },

@@ -170,6 +170,7 @@ describe('runTask — YUK-590 retry and cost-reporting lane budgets', () => {
       maxBudgetUsd?: number;
     };
     expect(opts.env.CLAUDE_CODE_MAX_RETRIES).toBe('2');
+    expect(opts.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBeUndefined();
     expect('maxBudgetUsd' in opts).toBe(false);
   });
 

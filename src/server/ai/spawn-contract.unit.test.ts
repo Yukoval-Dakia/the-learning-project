@@ -1,6 +1,11 @@
 import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it, vi } from 'vitest';
-import { SPAWN_BUDGET_MODE, SPAWN_TOOL_NAME, createSpawnContract } from './spawn-contract';
+import {
+  SPAWN_BUDGET_MODE,
+  SPAWN_TOOL_ALIASES,
+  SPAWN_TOOL_NAME,
+  createSpawnContract,
+} from './spawn-contract';
 
 const signal = new AbortController().signal;
 
@@ -143,10 +148,12 @@ describe('createSpawnContract — YUK-757/YUK-572 v2', () => {
     ]);
     expect(contract.agents['diagnostic-scout']?.disallowedTools).toEqual([
       'mcp__copilot__propose_change',
-      SPAWN_TOOL_NAME,
+      ...SPAWN_TOOL_ALIASES,
     ]);
     expect(contract.agents['question-preview-author']?.tools).toBeUndefined();
-    expect(contract.agents['question-preview-author']?.disallowedTools).toEqual([SPAWN_TOOL_NAME]);
+    expect(contract.agents['question-preview-author']?.disallowedTools).toEqual([
+      ...SPAWN_TOOL_ALIASES,
+    ]);
   });
 
   it('fails the spawn surface closed when the kill switch is off without touching non-Task tools', async () => {
@@ -196,7 +203,64 @@ describe('createSpawnContract — YUK-757/YUK-572 v2', () => {
     });
   });
 
-  it('rejects fallback agents and model/isolation/background overrides instead of escaping the declared surface', async () => {
+  it('guards the SDK-emitted Agent name and forces foreground input on both guard surfaces', async () => {
+    const observations = vi.fn();
+    const contract = createSpawnContract({
+      enabled: true,
+      agents: agentsFixture(),
+      onBudgetObservation: observations,
+    });
+    const hook = contract.hooks.PreToolUse?.[0]?.hooks[0];
+    if (!hook) throw new Error('missing PreToolUse spawn hook');
+
+    const actualSdkInput = {
+      subagent_type: 'diagnostic-scout',
+      description: '核对最近七日错题与复习轨迹，只把结论交回同一父会话',
+    };
+    const actualSdkHook = await hook(
+      {
+        ...taskHookInput('spawn-agent-runtime-01', 'Agent'),
+        tool_input: actualSdkInput,
+      },
+      'spawn-agent-runtime-01',
+      { signal },
+    );
+    const actualSdkPermission = await contract.canUseTool(
+      'Agent',
+      actualSdkInput,
+      permissionOptions('spawn-agent-runtime-01'),
+    );
+
+    expect(SPAWN_TOOL_ALIASES).toEqual(['Agent', 'Task']);
+    expect(actualSdkHook).toMatchObject({
+      continue: true,
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        updatedInput: { ...actualSdkInput, run_in_background: false },
+      },
+    });
+    expect(actualSdkPermission).toEqual({
+      behavior: 'allow',
+      updatedInput: { ...actualSdkInput, run_in_background: false },
+    });
+    expect(observations).toHaveBeenCalledTimes(1);
+  });
+
+  it('denies both SDK Agent and compatibility Task names under the kill switch', async () => {
+    const contract = createSpawnContract({ enabled: false, agents: agentsFixture() });
+
+    for (const toolName of SPAWN_TOOL_ALIASES) {
+      const denied = await contract.canUseTool(
+        toolName,
+        taskHookInput(`disabled-${toolName}`).tool_input,
+        permissionOptions(`disabled-${toolName}`),
+      );
+      expect(denied).toMatchObject({ behavior: 'deny' });
+    }
+    expect(contract.readBudgetReport().deniedByKillSwitch).toBe(2);
+  });
+
+  it('rejects fallback agents and model/isolation/name/background overrides instead of escaping the declared surface', async () => {
     const observations = vi.fn();
     const contract = createSpawnContract({
       enabled: true,
@@ -244,6 +308,15 @@ describe('createSpawnContract — YUK-757/YUK-572 v2', () => {
       },
       permissionOptions('spawn-background-override'),
     );
+    const nameOverride = await contract.canUseTool(
+      'Agent',
+      {
+        subagent_type: 'diagnostic-scout',
+        name: 'parallel-researcher',
+        description: '尝试进入继承的 agent-team 分支而不阻塞父回复',
+      },
+      permissionOptions('spawn-name-override'),
+    );
 
     expect(unknownHook).toMatchObject({
       hookSpecificOutput: {
@@ -257,30 +330,35 @@ describe('createSpawnContract — YUK-757/YUK-572 v2', () => {
     });
     expect(modelOverride).toEqual({
       behavior: 'deny',
-      message: 'Task model/isolation/background overrides are not allowed',
+      message: 'Agent model/isolation/name/background overrides are not allowed',
     });
     expect(isolationOverride).toMatchObject({
       hookSpecificOutput: {
         permissionDecision: 'deny',
-        permissionDecisionReason: 'Task model/isolation/background overrides are not allowed',
+        permissionDecisionReason: 'Agent model/isolation/name/background overrides are not allowed',
       },
     });
     expect(backgroundOverride).toEqual({
       behavior: 'deny',
-      message: 'Task model/isolation/background overrides are not allowed',
+      message: 'Agent model/isolation/name/background overrides are not allowed',
     });
-    expect(observations).toHaveBeenCalledTimes(4);
+    expect(nameOverride).toEqual({
+      behavior: 'deny',
+      message: 'Agent model/isolation/name/background overrides are not allowed',
+    });
+    expect(observations).toHaveBeenCalledTimes(5);
     expect(contract.readBudgetReport()).toEqual({
       mode: SPAWN_BUDGET_MODE,
-      observedAttempts: 4,
+      observedAttempts: 5,
       allowedAttempts: 0,
       deniedByKillSwitch: 0,
-      deniedByContract: 4,
+      deniedByContract: 5,
       toolUseIds: [
         'spawn-unknown-general-purpose',
         'spawn-model-override',
         'spawn-isolation-override',
         'spawn-background-override',
+        'spawn-name-override',
       ],
     });
   });
