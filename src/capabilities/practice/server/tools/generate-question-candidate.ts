@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { QuestionAuthorIntentSchema } from '@/ai/task-intents';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
-import { type BoundRunTaskFn, type RunTaskCallCtx, makeRunTaskFn } from '@/server/ai/runner-fn';
+import { type BoundRunTaskFn, type RunTaskCallCtx, makeRunTaskFn } from '../task-runtime';
 import { prepareQuestionAuthorTask } from './question-author';
 
 export const GenerateQuestionCandidateInputSchema = QuestionAuthorIntentSchema;
