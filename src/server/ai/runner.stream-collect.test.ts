@@ -306,6 +306,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
 
     expect(deltas).toEqual(['Hello, ', 'world!']);
     expect(result.text).toBe('Hello, world!');
+    expect(result.terminalText).toBe('ignored');
     expect(result.finishReason).toBe('end_turn');
     // usage aggregates input + cache_read.
     expect(result.usage).toEqual({ inputTokens: 7, outputTokens: 7 });

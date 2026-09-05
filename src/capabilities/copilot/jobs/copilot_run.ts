@@ -21,14 +21,8 @@ import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { isDurableWorkerTouchEvent } from '@/capabilities/copilot/durable-pickup';
+import { type PreparedCopilotReply, writeCopilotReply } from '@/capabilities/copilot/server/chat';
 import {
-  type CopilotEvidenceValidationRef,
-  type PreparedCopilotReply,
-  extractPrimaryView,
-  writeCopilotReply,
-} from '@/capabilities/copilot/server/chat';
-import {
-  copilotLearningContentRequiresValidation,
   reviewCopilotLearningContent,
   validateCopilotLearningContent,
 } from '@/capabilities/copilot/server/content-validation';
@@ -57,22 +51,13 @@ import {
   hasCancelRequest,
   isCopilotRunTerminalEvent,
 } from '@/capabilities/copilot/server/copilot-run-status';
-import { resolveCorrectionReply } from '@/capabilities/copilot/server/correction-contract';
 import { withCopilotDurableDispatchLock } from '@/capabilities/copilot/server/durable-dispatch';
-import {
-  COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS,
-  type CopilotEvidenceReviewDecision,
-  durableEvidenceLaneModel,
-  durableEvidenceTimeoutsFor,
-  reviewCopilotEvidenceReply,
-} from '@/capabilities/copilot/server/evidence-review';
 import { copilotSessionContextDigest } from '@/capabilities/copilot/server/live-session-context';
 import {
   COPILOT_TURN_CONTEXT_CODEC_VERSION,
   compileCopilotModelInput,
 } from '@/capabilities/copilot/server/live-turn-context';
 import { selectAsksWithMaterializingToolCall } from '@/capabilities/copilot/server/materializing-tools';
-import { COPILOT_EVIDENCE_MAX_TRACE_CALLS } from '@/core/copilot-evidence';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
 import {
@@ -117,6 +102,11 @@ import { writeJobEvent } from '@/server/events/writer';
 // subjectId 参数），inline + durable 直接复用同一份，零漂移。
 import { resolveCopilotSkills } from '@/subjects/copilot-skills';
 import { createCopilotProposalFlowGate } from '../server/proposal-flow-gate';
+import {
+  type CopilotReplyFinalizationReceipt,
+  createCopilotReplyFinalizer,
+  prependCopilotFinalizationHooks,
+} from '../server/reply-finalization';
 
 export { enqueueCopilotMailboxJob } from '../api/chat';
 
@@ -179,7 +169,7 @@ export interface CopilotRunJobData {
 // 安全帽不是目标——健康流靠模型返回 final reply 自然收，天花板只挡病态 loop。
 export const DURABLE_BUDGET = {
   maxIterations: 24,
-  maxToolCalls: COPILOT_EVIDENCE_MAX_TRACE_CALLS,
+  maxToolCalls: 60,
   timeoutMs: 12 * 60_000,
 } as const;
 
@@ -232,8 +222,6 @@ export interface RunCopilotRunParams {
   writeFailedTerminalProjectionFn?: WriteFailedTerminalProjectionFn;
   /** Test seam for the domain outcome marker written after paid execution. */
   writeCopilotReplyFn?: typeof writeCopilotReply;
-  /** YUK-832 — no-tool final evidence validator; injectable for product-level tests. */
-  reviewEvidenceReplyFn?: typeof reviewCopilotEvidenceReply;
   /** Test seam for the load-bearing atomic paid-execution claim. */
   claimExecutionFenceFn?: ClaimCopilotExecutionFenceFn;
   /** Test seam for the cross-process cancellation observer/controller. */
@@ -571,23 +559,10 @@ async function findPersistedDurableReply(
   };
 }
 
-function evidenceValidationRef(
-  decision: CopilotEvidenceReviewDecision,
-): CopilotEvidenceValidationRef | undefined {
-  if (decision.status === 'skipped') return undefined;
-  return {
-    status: decision.status,
-    reference_task_run_ids: decision.referenceTaskRunIds ?? [],
-    comparison_task_run_ids: decision.comparisonTaskRunIds ?? [],
-  };
-}
-
 const CLAIMED_EXECUTION_POLL_MS = 250;
 export const CLAIMED_EXECUTION_SETTLE_GRACE_MS = 30_000;
 export const DURABLE_OWNER_SETTLEMENT_BUDGET_MS =
-  DURABLE_BUDGET.timeoutMs +
-  COPILOT_DURABLE_EVIDENCE_REVIEW_TOTAL_TIMEOUT_MS +
-  CLAIMED_EXECUTION_SETTLE_GRACE_MS;
+  DURABLE_BUDGET.timeoutMs + CLAIMED_EXECUTION_SETTLE_GRACE_MS;
 
 export function hasCopilotSettlementTerminal(events: TerminalProjectionEvent[]): boolean {
   return events.some(isCopilotRunTerminalEvent);
@@ -703,7 +678,7 @@ async function projectCopilotOutcomeMarker(
       const marker = await findPersistedDurableReply(tx, runId);
       if (!marker) throw new Error(`durable outcome marker missing for ${runId}`);
       // YUK-832: the domain marker records whether the primary stream produced
-      // user-facing text. Publish one reviewed full-text DELTA inside this same
+      // user-facing text. Publish one finalized full-text DELTA inside this same
       // settlement transaction, immediately before the terminal projection.
       // An owner crash after marker commit is therefore repaired identically by
       // redelivery/reconcile, and no interleaving can produce REPLY,DONE,DELTA.
@@ -797,7 +772,6 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   const projectFailedTerminal =
     params.writeFailedTerminalProjectionFn ?? writeFailedTerminalProjection;
   const persistReply = params.writeCopilotReplyFn ?? writeCopilotReply;
-  const reviewEvidenceReply = params.reviewEvidenceReplyFn ?? reviewCopilotEvidenceReply;
   const claimExecutionFence = params.claimExecutionFenceFn ?? claimCopilotExecutionFence;
   const createCancellationControl =
     params.createCancellationControlFn ?? createCopilotRunCancellationControl;
@@ -959,7 +933,9 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     db,
     runId,
   });
-  const toolTrace: ToolExecutionResultObservation[] = [];
+  let beforeFinalizerDomainTool = (_tool: { name: string; effect: 'read' | 'propose' | 'write' }) =>
+    undefined as string | undefined;
+  let observeFinalizerDomainTool = (_result: ToolExecutionResultObservation) => {};
   // One exact signal spans the outer provider attempt and every nested central
   // task invoked through its in-process MCP tools. The cancellation poll remains
   // the caller signal; the runner additionally aborts this controller on its own
@@ -1031,6 +1007,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     // warning 状态，不执行 capInput，故仍无 per-message row cap。
     beforeExecute: async (tool) =>
       (await cancellationControl.beforeTool()) ??
+      beforeFinalizerDomainTool(tool) ??
       proposalFlowGate.beforeExecute(tool) ??
       budgetTracker.beforeExecute(tool),
     onExecuteStart: (tool) => cancellationControl.onToolExecutionStarted(tool),
@@ -1042,10 +1019,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     }),
     onResult: (result) => {
       proposalFlowGate.observe(result);
-      // Reserve the sealed-review contract ceiling: rejected 61st callbacks must
-      // not append after the 60-call budget and trip fail-closed on length alone.
-      if (toolTrace.length >= COPILOT_EVIDENCE_MAX_TRACE_CALLS) return;
-      toolTrace.push(result);
+      observeFinalizerDomainTool(result);
     },
   });
 
@@ -1070,7 +1044,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     parentMaxTurns: DURABLE_BUDGET.maxIterations,
     onBudgetObservation: params.onSpawnBudgetObservation,
   });
-  const sdkHooks = toolUseCorrelation.prepend(
+  let sdkHooks = toolUseCorrelation.prepend(
     cancellationControl.prependSdkHook(spawnContract?.hooks),
   );
   const nativeTaskProjector = spawnContract ? createCopilotSubtaskProjector() : undefined;
@@ -1115,6 +1089,28 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     now: new Date(),
     historyAnchorEventId: runId,
   });
+  const replyFinalizer = createCopilotReplyFinalizer({
+    rootTaskRunId: taskRunId,
+    correctionContract: runInput.correction_contract,
+    userContextText: [
+      data.user_message,
+      ...(runInput.validator_context_history ?? []).map((turn) => turn.text),
+    ].join('\n'),
+    validateLearningContent: async (text, contextText, validationTaskRunId, primaryView) => {
+      await cancellationControl.probe();
+      validationSignal.throwIfAborted();
+      return reviewCopilotLearningContent(text, contextText, validationTaskRunId, {
+        db,
+        runTaskFn: validationRunner,
+        ...(primaryView?.source === 'ephemeral_html'
+          ? { additionalVisibleText: primaryView.ref }
+          : {}),
+      });
+    },
+  });
+  beforeFinalizerDomainTool = replyFinalizer.beforeDomainTool;
+  observeFinalizerDomainTool = replyFinalizer.observeDomainTool;
+  sdkHooks = prependCopilotFinalizationHooks(replyFinalizer.hooks, sdkHooks);
   const modelInput = compileCopilotModelInput(runInput, 'cold');
   const compiledModelPrompt = {
     text: modelInput,
@@ -1148,17 +1144,31 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   }
 
   cancellationControl.startPolling();
-  const cancellationMarker = (partialText?: string, providerTaskRunId?: string) => (tx: Tx) =>
-    persistCopilotRunCancellationMarker(tx, {
-      runId,
-      sessionId: data.session_id,
-      actorRef,
-      ...(partialText ? { partialText } : {}),
-      ...(providerTaskRunId ? { taskRunId: providerTaskRunId } : {}),
-      checkpointSafe: !cancellationControl.materializingToolStarted,
-      writeCopilotReplyFn: persistReply,
-    });
-  const settleObservedCancellation = async (partialText?: string, providerTaskRunId?: string) => {
+  const cancellationMarker =
+    (
+      partialText?: string,
+      providerTaskRunId?: string,
+      replyFinalization?: CopilotReplyFinalizationReceipt,
+      preparedReply?: PreparedCopilotReply,
+    ) =>
+    (tx: Tx) =>
+      persistCopilotRunCancellationMarker(tx, {
+        runId,
+        sessionId: data.session_id,
+        actorRef,
+        ...(partialText ? { partialText } : {}),
+        ...(providerTaskRunId ? { taskRunId: providerTaskRunId } : {}),
+        ...(replyFinalization ? { replyFinalization } : {}),
+        ...(preparedReply ? { preparedReply } : {}),
+        checkpointSafe: !cancellationControl.materializingToolStarted,
+        writeCopilotReplyFn: persistReply,
+      });
+  const settleObservedCancellation = async (
+    partialText?: string,
+    providerTaskRunId?: string,
+    replyFinalization?: CopilotReplyFinalizationReceipt,
+    preparedReply?: PreparedCopilotReply,
+  ) => {
     const drained = await cancellationControl.waitForInFlight(COPILOT_CANCEL_DRAIN_GRACE_MS);
     if (!drained) {
       return handleAmbiguousExecution(db, {
@@ -1176,6 +1186,8 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       actorRef,
       ...(partialText ? { partialText } : {}),
       ...(providerTaskRunId ? { taskRunId: providerTaskRunId } : {}),
+      ...(replyFinalization ? { replyFinalization } : {}),
+      ...(preparedReply ? { preparedReply } : {}),
       checkpointSafe: !cancellationControl.materializingToolStarted,
       projectSuccessfulTerminal,
       projectFailedTerminal,
@@ -1228,111 +1240,19 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     // S3 — 排空 delta 链：所有 delta id 落定后再写 terminal。
     await drainDeltaChain(progressChain, runId);
 
-    // Normalize and validate before either cancellation persistence or sealed
-    // evidence review. No terminal path may observe the raw correction candidate.
-    const correctionResolution = resolveCorrectionReply(result.text, runInput.correction_contract);
-    const preparedCandidate = extractPrimaryView(correctionResolution.reply, {
-      taskRunId: result.task_run_id,
-    });
+    // The SDK terminal envelope owns the only public bytes. Assistant preambles
+    // and malformed/trailing prose are never candidates for persistence.
+    const finalized = await replyFinalizer.finalizeTerminal(result.terminalText ?? '');
+    const reviewedReply = finalized.replyText;
+    const reviewedPreparedReply: PreparedCopilotReply = finalized.preparedReply;
+    const reviewedCancellationReply = finalized.accepted ? reviewedReply : undefined;
     if ((await cancellationControl.probe()) === 'cancel_requested') {
-      // A read-bearing candidate has not passed evidence review and cannot become
-      // a cancellation partial. Learning content likewise cannot be persisted
-      // before its independent validators pass. Pure-text turns preserve only
-      // correction-contract-validated, presentation-cleaned text.
-      const cancellationReply =
-        toolTrace.some((entry) => entry.effect === 'read') ||
-        copilotLearningContentRequiresValidation(preparedCandidate.text)
-          ? undefined
-          : preparedCandidate.text;
-      return await settleObservedCancellation(cancellationReply, result.task_run_id);
-    }
-
-    const learningReview = await reviewCopilotLearningContent(
-      preparedCandidate.text,
-      [data.user_message, ...runInput.validator_context_history.map((turn) => turn.text)].join(
-        '\n',
-      ),
-      result.task_run_id,
-      {
-        db,
-        runTaskFn: validationRunner,
-        ...(preparedCandidate.primaryView?.source === 'ephemeral_html'
-          ? { additionalVisibleText: preparedCandidate.primaryView.ref }
-          : {}),
-      },
-    );
-    const evidenceReview =
-      correctionResolution.kind === 'clarify'
-        ? { status: 'skipped' as const, replyText: learningReview.replyText }
-        : await reviewEvidenceReply({
-            db,
-            requestContext: {
-              user_message: data.user_message,
-              surface,
-              triggered_by: data.triggered_by,
-              ...(data.chip_kind ? { chip_kind: data.chip_kind } : {}),
-              ...(data.ambient ? { ambient_context: data.ambient } : {}),
-            },
-            candidateReply: learningReview.replyText,
-            candidateTaskRunId: result.task_run_id,
-            toolTrace,
-            signal: cancellationControl.signal,
-            // YUK-839 ruling ①b — scale the durable leg budgets to the lane the paid
-            // validator legs will actually resolve (env switch, else the registry
-            // mimo default): glm-5.3-flash gets the burn-in-sized flash tier, every
-            // other lane keeps the mimo constants byte-identical.
-            attemptTimeouts: durableEvidenceTimeoutsFor(durableEvidenceLaneModel()),
-            beforeVerification: async () => {
-              await cancellationControl.probe();
-              cancellationControl.signal.throwIfAborted();
-            },
-            candidateComplete: !result.partial,
-          });
-    // Both evidence repair and timeout-degraded blind replies are replacement
-    // prose: re-apply the correction binding, then re-run the learning-content
-    // gate, mirroring the inline chat.ts path.
-    const correctionReviewedReply =
-      evidenceReview.status === 'repair' || evidenceReview.status === 'degraded'
-        ? resolveCorrectionReply(evidenceReview.replyText, runInput.correction_contract).reply
-        : evidenceReview.replyText;
-    const replacementLearningReview =
-      evidenceReview.status === 'repair' || evidenceReview.status === 'degraded'
-        ? await reviewCopilotLearningContent(
-            correctionReviewedReply,
-            [
-              data.user_message,
-              ...runInput.validator_context_history.map((turn) => turn.text),
-            ].join('\n'),
-            result.task_run_id,
-            { db, runTaskFn: validationRunner },
-          )
-        : undefined;
-    const reviewedReply = replacementLearningReview?.replyText ?? correctionReviewedReply;
-    // The validator seals text, not the presentation side channel. Drop every
-    // primary_view on read-bearing pass/repair/fail-closed decisions; otherwise
-    // unreviewed ephemeral_html or an unbound artifact ref could contradict the
-    // certified prose. Pure-text/no-read skipped turns keep legacy behavior.
-    const reviewedPreparedReply: PreparedCopilotReply = {
-      text: reviewedReply,
-      ...(evidenceReview.status === 'skipped' &&
-      learningReview.passed &&
-      preparedCandidate.primaryView
-        ? { primaryView: preparedCandidate.primaryView }
-        : {}),
-    };
-    // A Stop that wins only under the settlement lock must obey the same
-    // evidence boundary as the explicit post-review probe below. Read-bearing
-    // candidate/repair text is never a cancellation partial; pure-text turns
-    // keep the established partial-reply UX.
-    const reviewedCancellationReply = toolTrace.some((entry) => entry.effect === 'read')
-      ? undefined
-      : reviewedReply;
-
-    // Stop can arrive during any blind-reference/comparator paid call. The same
-    // AbortSignal reaches the FULL validator; re-probe before any domain reply
-    // or public suffix.
-    if ((await cancellationControl.probe()) === 'cancel_requested') {
-      return await settleObservedCancellation(reviewedCancellationReply, result.task_run_id);
+      return await settleObservedCancellation(
+        reviewedCancellationReply,
+        result.task_run_id,
+        finalized.accepted ? finalized.receipt : undefined,
+        finalized.accepted ? finalized.preparedReply : undefined,
+      );
     }
 
     // YUK-575 — streamTaskCollecting graceful-degrade：run 出错时它 resolve
@@ -1352,8 +1272,13 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
         projectSuccessfulTerminal,
         projectFailedTerminal,
         writeCopilotReplyFn: persistReply,
-        evidenceValidation: evidenceValidationRef(evidenceReview),
-        createCancelledMarker: cancellationMarker(reviewedCancellationReply, result.task_run_id),
+        replyFinalization: finalized.receipt,
+        createCancelledMarker: cancellationMarker(
+          reviewedCancellationReply,
+          result.task_run_id,
+          finalized.accepted ? finalized.receipt : undefined,
+          finalized.accepted ? finalized.preparedReply : undefined,
+        ),
         emitReviewedDelta: candidateDeltaObserved,
       });
     }
@@ -1374,7 +1299,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
             preparedReply: reviewedPreparedReply,
             actorRef,
             taskRunId: result.task_run_id,
-            evidenceValidation: evidenceValidationRef(evidenceReview),
+            replyFinalization: finalized.receipt,
             outcome: 'success',
             durableFinishReason: result.finishReason,
             durableEmitReviewedDelta: candidateDeltaObserved,
@@ -1388,7 +1313,12 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
           };
         },
         {
-          createCancelled: cancellationMarker(reviewedCancellationReply, result.task_run_id),
+          createCancelled: cancellationMarker(
+            reviewedCancellationReply,
+            result.task_run_id,
+            finalized.accepted ? finalized.receipt : undefined,
+            finalized.accepted ? finalized.preparedReply : undefined,
+          ),
         },
       );
       if (markerClaim.outcome === 'already_terminal') {
@@ -1491,15 +1421,15 @@ async function handleDurableFailure(
     taskRunId?: string;
     /** streamTaskCollecting graceful-degrade 的半程文本（若有），作 phantom-reply 正文。 */
     partialText?: string;
-    /** Byte-authoritative reviewed projection for an evidence-bearing partial. */
+    /** Byte-authoritative finalized projection for a failed or partial run. */
     preparedReply?: PreparedCopilotReply;
     projectSuccessfulTerminal: WriteSuccessfulTerminalProjectionFn;
     projectFailedTerminal: WriteFailedTerminalProjectionFn;
     writeCopilotReplyFn: typeof writeCopilotReply;
-    evidenceValidation?: CopilotEvidenceValidationRef;
+    replyFinalization?: CopilotReplyFinalizationReceipt;
     /** Settlement-lock race winner when Stop committed before this failure marker. */
     createCancelledMarker?: (tx: Tx) => Promise<PersistedDurableReply>;
-    /** Persisted recovery flag for one reviewed full-text DELTA before FAILED. */
+    /** Persisted recovery flag for one finalized full-text DELTA before FAILED. */
     emitReviewedDelta?: boolean;
   },
 ): Promise<RunCopilotRunResult> {
@@ -1514,7 +1444,7 @@ async function handleDurableFailure(
     projectSuccessfulTerminal,
     projectFailedTerminal,
     writeCopilotReplyFn,
-    evidenceValidation,
+    replyFinalization,
     createCancelledMarker,
     emitReviewedDelta,
   } = args;
@@ -1536,7 +1466,7 @@ async function handleDurableFailure(
           ...(preparedReply?.text === replyText ? { preparedReply } : {}),
           actorRef,
           taskRunId: failureTaskRunId,
-          evidenceValidation,
+          replyFinalization,
           outcome: 'failure',
           durableFailure: { reason: 'exhausted', error: message },
           durableEmitReviewedDelta: emitReviewedDelta,

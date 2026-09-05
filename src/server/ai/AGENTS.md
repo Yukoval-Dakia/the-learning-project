@@ -32,10 +32,9 @@
   isolated CONFIG_DIR skill discovery，并继续用 `skills` 白名单收窄可见范围。
 - Read tool 返回语义化上下文（graph path / relation meaning / recent failure evidence）。
 - Proposal tool 写 `event(action='propose')`；action/write tool 只包装已有 owner service（AttributionTask / VariantGenTask），不能让 LLM 传任意 mutation payload。
-- release-critical FULL 审查复用 `sealed-validation.ts` 的 confirmed state machine。若产物含
-  大量 dense arrays、交叉索引或 source pointers，不要求 provider 一次重写大 JSON；用有界
-  internal append-only collector 收小记录，由 server 规范化 coverage、pointer、digest 与 verdict。
-  internal collector 不是 DomainTool，不得读取/改写产品状态或登记到 capability tool registry。
+- release-critical FULL 审查的通用 confirmed state machine 仍在 `sealed-validation.ts`；
+  collecting runner 额外透传 SDK success `result` 为 `terminalText`，但不解释其结构；
+  Copilot terminal envelope 的解析与回复收口归 capability，见其 `AGENTS.md`。
 
 ## ANTI-PATTERNS
 - generic `/api/ai/[task]` 已整体退场；新 task 走 capability 领域 route / worker，禁止复活通用 dispatch 入口。

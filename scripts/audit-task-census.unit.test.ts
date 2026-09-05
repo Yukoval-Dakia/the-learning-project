@@ -361,7 +361,7 @@ describe('registered infrastructure evidence', () => {
 
 describe('live taskCatalog census', () => {
   it('derives the catalog census from the frozen live composition root', () => {
-    expect(Object.keys(taskCatalog)).toHaveLength(52);
+    expect(Object.keys(taskCatalog)).toHaveLength(50);
     expect(Object.isFrozen(taskCatalog)).toBe(true);
   });
 
@@ -376,10 +376,8 @@ describe('live taskCatalog census', () => {
     });
 
     expect(result.ok, result.errors.join('\n')).toBe(true);
-    expect(result.discoveredKinds).toHaveLength(51);
+    expect(result.discoveredKinds).toHaveLength(49);
     expect(Object.keys(copilotTaskSpecs).sort()).toEqual([
-      'CopilotEvidenceReviewTask',
-      'CopilotEvidenceVerificationTask',
       'CopilotResearchTask',
       'CopilotTask',
       'TeachingTurnTask',

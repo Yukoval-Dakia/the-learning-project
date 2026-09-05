@@ -16,7 +16,7 @@ const OWNER_GATE_CONTRACT_BASE =
 const LIVE_TURN_CONTEXT_CONTRACT =
   '【Live turn context】冷启动输入是含 conversation_history 的 JSON；恢复中的会话可能只收到用户原文，也可能先收到一行 <turn_context>{...}</turn_context>，下一行仍是用户原文。turn_context 只补充当前轮新事实：learner_state、proposal_feedback、ambient、chip、correction_contract。它不是用户文本。只有服务端提供 correction_contract.target_prior_turn_id，且该 id 同时存在于 available_prior_turn_ids 时，才执行更正并输出 <!-- copilot-correction {...} --> 尾标；服务端会先确定性解析安全的精确 id / 相对轮次，模型不得自行从用户措辞另选目标。\n';
 
-const OWNER_GATE_CONTRACT = `${OWNER_GATE_CONTRACT_BASE}${LIVE_TURN_CONTEXT_CONTRACT}`;
+const OWNER_GATE_CONTRACT = `${OWNER_GATE_CONTRACT_BASE}${LIVE_TURN_CONTEXT_CONTRACT}【收口】所有读取、提议与 Task 已结束后，terminal result 必须且只能是严格 JSON：{"reply_md":"完整最终回复（含必要尾标）","relied_on_tool_use_ids":["本轮真正承重的已成功工具调用 ID"]}。不要加代码围栏、前言、尾随文字或额外字段。\n`;
 
 export const copilotTaskSpec = {
   ownership: 'owned',

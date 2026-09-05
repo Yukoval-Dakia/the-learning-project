@@ -5,6 +5,7 @@ import { job_events } from '@/db/schema';
 import { writeCopilotReply } from './chat';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import { MATERIALIZING_TOOL_NAMES } from './materializing-tools';
+import type { CopilotReplyFinalizationReceipt, PreparedCopilotReply } from './reply-finalization';
 
 export const COPILOT_CANCEL_POLL_INTERVAL_MS = 500;
 export const COPILOT_CANCEL_DRAIN_GRACE_MS = 30_000;
@@ -18,6 +19,8 @@ export interface PersistCopilotRunCancellationArgs {
   partialText?: string;
   /** Actual provider run when stream collection reached a terminal result. */
   taskRunId?: string;
+  preparedReply?: PreparedCopilotReply;
+  replyFinalization?: CopilotReplyFinalizationReceipt;
   checkpointSafe: boolean;
   writeCopilotReplyFn?: typeof writeCopilotReply;
 }
@@ -49,8 +52,10 @@ export async function persistCopilotRunCancellationMarker(
     sessionId: args.sessionId,
     userAskEventId: args.runId,
     replyText,
+    ...(args.preparedReply?.text === replyText ? { preparedReply: args.preparedReply } : {}),
     actorRef: args.actorRef,
     taskRunId,
+    ...(args.replyFinalization ? { replyFinalization: args.replyFinalization } : {}),
     outcome: 'failure',
     durableFailure: {
       reason: 'cancelled',

@@ -334,9 +334,7 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
       try {
         parsedInput = dt.inputSchema.parse(rawArgs);
         execInput = parsedInput;
-        correlatedToolUseId = safeHandoffEnabled
-          ? opts.claimToolUseId?.(dt.name, rawArgs)
-          : undefined;
+        correlatedToolUseId = opts.claimToolUseId?.(dt.name, rawArgs);
       } catch (err) {
         errorReason = err instanceof Error ? err.message : String(err);
       }
@@ -446,6 +444,7 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
       try {
         await opts.onResult?.({
           ...gateInput,
+          ...(correlatedToolUseId ? { tool_use_id: correlatedToolUseId } : {}),
           // The context interceptor may cap a typed input before execution.
           // Review the exact input that produced this output, not the larger
           // request the model originally attempted.
@@ -610,11 +609,13 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
                 ? {
                     error: errorReason,
                     summary,
+                    ...(correlatedToolUseId ? { tool_use_id: correlatedToolUseId } : {}),
                     ...(effectContract ? { proposal_effect_contract: effectContract } : {}),
                   }
                 : {
                     summary,
                     output,
+                    ...(correlatedToolUseId ? { tool_use_id: correlatedToolUseId } : {}),
                     ...(effectContract ? { proposal_effect_contract: effectContract } : {}),
                   },
             ),

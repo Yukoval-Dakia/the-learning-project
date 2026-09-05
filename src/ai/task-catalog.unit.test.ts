@@ -23,10 +23,6 @@ import { learningIntentOutlineTaskSpec } from '@/capabilities/agency/tasks/learn
 import { memoryBriefTaskSpec } from '@/capabilities/agency/tasks/memory-brief';
 import { researchMeetingDirectorTaskSpec } from '@/capabilities/agency/tasks/research-meeting-director';
 import { copilotTaskSpec } from '@/capabilities/copilot/tasks/agent';
-import {
-  copilotEvidenceReviewTaskSpec,
-  copilotEvidenceVerificationTaskSpec,
-} from '@/capabilities/copilot/tasks/evidence';
 import { copilotTaskSpecs } from '@/capabilities/copilot/tasks/index';
 import { copilotResearchTaskSpec } from '@/capabilities/copilot/tasks/research';
 import { teachingTurnTaskSpec } from '@/capabilities/copilot/tasks/teaching-turn';
@@ -111,8 +107,6 @@ const EXPECTED_KINDS = [
   'ProfileCriticTask',
   'DreamingTask',
   'CoachTask',
-  'CopilotEvidenceReviewTask',
-  'CopilotEvidenceVerificationTask',
   'CopilotTask',
   'CopilotResearchTask',
   'KnowledgeReviewTask',
@@ -165,7 +159,7 @@ const EXPECTED_OWNER_COUNTS = {
   ingestion: 8,
   knowledge: 3,
   agency: 13,
-  copilot: 5,
+  copilot: 3,
 } as const;
 
 const OWNED_SPECS: ReadonlySet<object> = new Set([
@@ -185,8 +179,6 @@ const OWNED_SPECS: ReadonlySet<object> = new Set([
   selectionOrchestratorTaskSpec,
   sessionSummaryTaskSpec,
   sourcingTaskSpec,
-  copilotEvidenceReviewTaskSpec,
-  copilotEvidenceVerificationTaskSpec,
   copilotTaskSpec,
   copilotResearchTaskSpec,
   teachingTurnTaskSpec,
@@ -356,8 +348,6 @@ describe('taskCatalog', () => {
     }
 
     expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
-    for (const kind of Object.keys(expected)) {
-    }
   });
 
   it('owns the three Knowledge TaskSpecs without central quarry definitions', () => {
@@ -416,8 +406,6 @@ describe('taskCatalog', () => {
     ]);
 
     expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
-    for (const kind of Object.keys(expected)) {
-    }
   });
 
   it('owns the thirteen agency TaskSpecs without quarry definitions', () => {
@@ -474,8 +462,6 @@ describe('taskCatalog', () => {
     }
 
     expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
-    for (const kind of Object.keys(agencyTaskSpecs)) {
-    }
   });
 
   // YUK-870 (F3.5b) — the last transitional quarry entry is now Practice-owned.
@@ -533,14 +519,10 @@ describe('taskCatalog', () => {
     }
 
     expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
-    for (const kind of kinds) {
-    }
   });
 
-  it('owns the five Copilot TaskSpecs without central quarry definitions', () => {
+  it('owns the three Copilot TaskSpecs without central quarry definitions', () => {
     const expected = {
-      CopilotEvidenceReviewTask: copilotEvidenceReviewTaskSpec,
-      CopilotEvidenceVerificationTask: copilotEvidenceVerificationTaskSpec,
       CopilotTask: copilotTaskSpec,
       CopilotResearchTask: copilotResearchTaskSpec,
       TeachingTurnTask: teachingTurnTaskSpec,
@@ -556,11 +538,9 @@ describe('taskCatalog', () => {
     }
 
     expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
-    for (const kind of Object.keys(expected)) {
-    }
   });
 
-  it('retains 52 full owned TaskSpecs with the quarry deleted (YUK-870/YUK-885)', () => {
+  it('retains 50 full owned TaskSpecs with the quarry deleted (YUK-870/YUK-939)', () => {
     for (const specs of Object.values(OWNER_MAPS)) {
       for (const [kind, entry] of Object.entries(specs)) {
         expect(entry.ownership, kind).toBe('owned');
@@ -861,15 +841,15 @@ describe('composeTaskCatalog', () => {
     ).toThrow('key "WrongKey" does not match spec.kind "RightKind"');
   });
 
-  it.each([50, 51])('rejects an expected 52-kind catalog with %i entries', (count) => {
+  it.each([48, 49])('rejects an expected 50-kind catalog with %i entries', (count) => {
     const entries = Object.fromEntries(
       Array.from({ length: count }, (_, index) => {
         const spec = makeOwnedSpec(`Task${index}`);
         return [spec.definition.kind, spec];
       }),
     );
-    expect(() => composeTaskCatalog([{ owner: 'practice', specs: entries }], 52)).toThrow(
-      `expected 52 definitions, received ${count}`,
+    expect(() => composeTaskCatalog([{ owner: 'practice', specs: entries }], 50)).toThrow(
+      `expected 50 definitions, received ${count}`,
     );
   });
 });

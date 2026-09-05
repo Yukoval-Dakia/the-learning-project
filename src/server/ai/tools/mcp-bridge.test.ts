@@ -340,6 +340,33 @@ describe('buildMcpServerFromRegistry', () => {
     );
   });
 
+  it('exposes the real SDK tool-use id for an ordinary directly executed DomainTool', async () => {
+    const claimToolUseId = vi.fn(() => 'toolu_direct_reader');
+    registerTool(
+      makeReadTool<{ query: string }, { facts: string[] }>(
+        'direct_reader',
+        { query: z.string() },
+        () => ({ facts: ['fact_1'] }),
+        () => 'direct reader',
+      ),
+    );
+    buildMcpServerFromRegistry({
+      ctx,
+      serverName: 'loom',
+      toolNames: ['direct_reader'],
+      claimToolUseId,
+    });
+
+    const response = (await mockAgentSdk.toolDefs[0]?.handler({ query: 'evidence' })) as {
+      content: Array<{ text: string }>;
+    };
+    expect(JSON.parse(response.content[0]?.text ?? '')).toMatchObject({
+      tool_use_id: 'toolu_direct_reader',
+      output: { facts: ['fact_1'] },
+    });
+    expect(claimToolUseId).toHaveBeenCalledWith('direct_reader', { query: 'evidence' });
+  });
+
   it('rejects safe handoff for a non-read declaration', async () => {
     expect(() =>
       registerTool({

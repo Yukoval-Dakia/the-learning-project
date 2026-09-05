@@ -96,7 +96,6 @@ vi.mock('@/server/ai/log', () => ({
 
 import type { JsonSchemaOutputFormat } from '@anthropic-ai/claude-agent-sdk';
 import { tasks } from '@/ai/registry';
-import type { TaskDefinition } from '@/ai/task-spec';
 import { runTask, streamTask, streamTaskCollecting } from './runner';
 import { taskInputHash } from './task-input-hash';
 
@@ -542,23 +541,6 @@ describe('runTask — YUK-923 reasoning effort seam', () => {
     const opts = mockSdk.capturedOptions as Record<string, unknown>;
     expect('effort' in opts).toBe(false);
   });
-
-  it("threads a declared reasoningEffort through to Options.effort (validator 'high')", async () => {
-    await runTask('CopilotEvidenceReviewTask', { units: [] }, { db: fakeDb });
-
-    const opts = mockSdk.capturedOptions as { effort?: unknown };
-    expect(opts.effort).toBe('high');
-  });
-
-  it('pins both evidence validator specs at high while undeclared tasks stay undefined', () => {
-    expect(tasks.CopilotEvidenceReviewTask.reasoningEffort).toBe('high');
-    expect(tasks.CopilotEvidenceVerificationTask.reasoningEffort).toBe('high');
-    // Baseline: absent declaration must remain absent (not a leaked default).
-    // Read through the declared interface — the registry's inferred literal for
-    // an undeclaring task has no reasoningEffort key at the type level.
-    const undeclared: TaskDefinition = tasks[UNMIGRATED_KIND];
-    expect(undeclared.reasoningEffort).toBeUndefined();
-  });
 });
 
 // YUK-365 — subscription-OAuth lane env block. Asserts that when AI_PROVIDER_OVERRIDE
@@ -960,28 +942,6 @@ describe('runTask — YUK-924 model-profile seams', () => {
         profile_source: 'binding',
         reasoning_effort: null,
         profile_effort_default: null,
-      }),
-    );
-    infoSpy.mockRestore();
-  });
-
-  it('emits catalog-source metadata and the declared reasoning effort for the flash evidence lane', async () => {
-    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
-
-    await runTask(
-      'CopilotEvidenceReviewTask',
-      { units: [] },
-      { db: fakeDb, override: { provider: 'zhipu', model: 'glm-5.3-flash' } },
-    );
-
-    expect(infoSpy).toHaveBeenCalledWith(
-      '[runTask] model_profile_resolved',
-      expect.objectContaining({
-        provider: 'zhipu',
-        model: 'glm-5.3-flash',
-        profile_source: 'binding',
-        reasoning_effort: 'high',
-        profile_effort_default: 'high',
       }),
     );
     infoSpy.mockRestore();

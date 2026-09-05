@@ -1191,6 +1191,8 @@ function extractAssistantText(msg: SDKAssistantMessage): string {
 // marker but still finishes). A terminal-settlement failure rejects instead: the
 // caller must never persist partial model output against an unsettled attempt id.
 export interface StreamCollectResult extends RunTaskResult {
+  /** Exact SDK success `result`; unlike `text`, excludes assistant preambles. */
+  terminalText?: string;
   /** Set when the stream errored mid-flight; `text` is whatever was collected. */
   partial?: boolean;
   /** Present on a partial result — the underlying error message. */
@@ -1224,6 +1226,7 @@ export async function streamTaskCollecting(
       : undefined,
   });
   let resultText = '';
+  let terminalText: string | undefined;
 
   try {
     const actualInput = ctx.middleware?.beforeRun
@@ -1245,6 +1248,9 @@ export async function streamTaskCollecting(
             onDelta(text);
             resultText += text;
           }
+        },
+        onSuccess: (msg) => {
+          terminalText = msg.result;
         },
         onToolUse: ctx.onToolUse
           ? (block) => {
@@ -1279,6 +1285,7 @@ export async function streamTaskCollecting(
     const result: StreamCollectResult = {
       task_run_id: lifecycle.taskRunId,
       text: resultText,
+      ...(terminalText !== undefined ? { terminalText } : {}),
       finishReason: lifecycle.finishReason,
       usage: lifecycle.usage,
       cost_usd: lifecycle.costUsd,
