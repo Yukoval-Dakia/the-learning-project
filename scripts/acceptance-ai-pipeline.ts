@@ -98,29 +98,12 @@ function preflight(): void {
   );
 }
 
-async function withTimeout<T>(label: string, operation: Promise<T>): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      operation,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`${label} exceeded ${CASE_TIMEOUT_MS}ms`)),
-          CASE_TIMEOUT_MS,
-        );
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
-function persistEvidence(evidence: Record<string, unknown>): string {
+function persistEvidence(evidence: Record<string, unknown>, outputPath?: string): string {
   const outputDir = resolve('.tmp/actual-provider-acceptance');
   mkdirSync(outputDir, { recursive: true });
-  const outputPath = resolve(outputDir, `${Date.now()}-${randomUUID()}.json`);
-  writeFileSync(outputPath, `${JSON.stringify(evidence, null, 2)}\n`);
-  return outputPath;
+  const target = outputPath ?? resolve(outputDir, `${Date.now()}-${randomUUID()}.json`);
+  writeFileSync(target, `${JSON.stringify(evidence, null, 2)}\n`);
+  return target;
 }
 
 async function main(): Promise<void> {
@@ -141,6 +124,8 @@ async function main(): Promise<void> {
 
   let container: StartedPostgreSqlContainer | undefined;
   let evidence: Record<string, unknown> | undefined;
+  let activeCase: CaseName | undefined;
+  let captureFailureState: (() => Promise<Record<string, unknown>>) | undefined;
   try {
     container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
     const databaseUrl = container.getConnectionUri();
@@ -163,6 +148,28 @@ async function main(): Promise<void> {
       import('@/capabilities/copilot/api/cancel-run'),
     ]);
     const { and, eq, inArray } = await import('drizzle-orm');
+    captureFailureState = async () => ({
+      active_case: activeCase,
+      task_runs: await db
+        .select({
+          id: schema.ai_task_runs.id,
+          kind: schema.ai_task_runs.task_kind,
+          provider: schema.ai_task_runs.provider,
+          model: schema.ai_task_runs.model,
+          usage: schema.ai_task_runs.usage_json,
+          cost: schema.ai_task_runs.cost_usd,
+          cost_basis: schema.ai_task_runs.cost_basis,
+        })
+        .from(schema.ai_task_runs),
+      tools: await db
+        .select({
+          task_run_id: schema.tool_call_log.task_run_id,
+          name: schema.tool_call_log.tool_name,
+          effect: schema.tool_call_log.effect,
+          error: schema.tool_call_log.error_reason,
+        })
+        .from(schema.tool_call_log),
+    });
     const now = new Date();
     await db.insert(schema.knowledge).values([
       {
@@ -294,6 +301,7 @@ async function main(): Promise<void> {
     };
 
     for (const caseName of selected) {
+      activeCase = caseName;
       if (caseName === 'cancel') {
         const attemptsBefore = await db
           .select({ id: schema.ai_task_runs.id })
@@ -406,7 +414,7 @@ async function main(): Promise<void> {
         'context-change':
           '当前页面从复习切到知识页。只回复「上下文变化已确认」，不要出题、不要调用工具。',
         correction: '更正刚才的回答：保留已确认内容，明确没有新增事实；不要出题、不要调用工具。',
-        read: '必须调用 query_knowledge 查询「文言虚词之」，然后只报告工具返回的节点名称；不要出题，不得把空结果说成不存在。',
+        read: '必须调用 query_knowledge，参数固定为 subjectId:"yuwen"、nodeId:"actual:classical-root"、include:["children"]、limit:10；然后只报告工具实际返回的节点名称。不要出题，不得把空结果说成不存在。',
         proposal:
           '只调用 propose_knowledge_mutation，为「文言虚词之」提出一个新增子节点的提议；不得直接写入或声称已经执行，不要出题。',
         'native-task':
@@ -428,15 +436,11 @@ async function main(): Promise<void> {
           ? { correction_target_turn_id: priorTurnId }
           : {}),
       };
-      // The production root owns cancellation; this absolute session deadline is
-      // passed through its existing dependency seam rather than relying only on
-      // Promise.race (which would abandon a still-paid remote request).
-      const result = await withTimeout(
-        caseName,
-        chat.runCopilotChat(db, request, {
-          providerSessionDeadlineAt: Date.now() + CASE_TIMEOUT_MS,
-        }),
-      );
+      // The production root owns cancellation. Await its lifecycle settlement;
+      // do not Promise.race a paid request and then tear down its database.
+      const result = await chat.runCopilotChat(db, request, {
+        providerSessionDeadlineAt: Date.now() + CASE_TIMEOUT_MS,
+      });
       if (!result.reply.trim()) throw new Error(`${caseName}: empty reply`);
       // correction contracts name prior *assistant* turn event ids, not asks.
       if (caseName === 'cold') priorTurnId = result.reply_event_id;
@@ -507,11 +511,30 @@ async function main(): Promise<void> {
     );
   } catch (error) {
     if (evidence) {
+      const errorName = error instanceof Error ? error.name : 'unknown';
+      const rawMessage = error instanceof Error ? error.message : '';
+      const reason = /unknown provider cost/u.test(rawMessage)
+        ? 'unknown_cost'
+        : /deadline|timeout|timed out/u.test(rawMessage)
+          ? 'deadline'
+          : /expected|required|missing|mismatched|unexpected|omitted|unsupported/u.test(rawMessage)
+            ? 'assertion'
+            : 'runtime';
       evidence.failure = {
-        name: error instanceof Error ? error.name : 'unknown',
-        message: error instanceof Error ? error.message : String(error),
+        active_case: activeCase,
+        name: errorName,
+        reason,
       };
-      evidence.failure_evidence_path = persistEvidence(evidence);
+      if (captureFailureState) evidence.failure_observation = await captureFailureState();
+      const failureEvidencePath = resolve(
+        '.tmp/actual-provider-acceptance',
+        `${Date.now()}-${randomUUID()}.json`,
+      );
+      evidence.failure_evidence_path = failureEvidencePath;
+      persistEvidence(evidence, failureEvidencePath);
+      console.error(
+        JSON.stringify({ ok: false, failure_evidence_path: failureEvidencePath, reason }),
+      );
     }
     throw error;
   } finally {
@@ -520,6 +543,8 @@ async function main(): Promise<void> {
 }
 
 void main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
+  // Provider failures may contain upstream diagnostics; evidence stores only a
+  // classified reason and this terminal line intentionally avoids raw messages.
+  console.error(`actual acceptance failed: ${error instanceof Error ? error.name : 'unknown'}`);
   process.exitCode = 1;
 });
