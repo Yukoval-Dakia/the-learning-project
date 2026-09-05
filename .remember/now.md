@@ -17,10 +17,13 @@ Owner：完成 AI pipeline 重构后，再讨论整个项目结构。不得把�
 
 ## 当前剩余
 
-- `tlp-wt-root-finalization` 独立 lane 正在完成终态 JSON finalization、reply receipt 和双 evidence Task 退休。
-  已否决必须调用私有 finalize_reply 工具的第一稿：会额外增加普通回复的模型回合。复用确定性校验，
-  在 SDK terminal 后一次完成；runner 仅补中性的 terminalText，不理解 Copilot 产品字段。
-- 集成后跑 scoped 单测/DB/static/build、独立审查、exact-head CI；尚未 push/PR/merge/部署本阶段。
+- `fe71227b` 已集成终态 JSON finalization、reply receipt 和双 evidence Task 退休。
+  静态/构建/多组 scoped 测试已通过。真实 read 格式回归修复与 durable FAILED 修复在独立 lane；
+  初审仅一个 P1，剩一次修复验证审。尚未 push/PR/merge/部署本阶段。
+- 新首轮 read 成本 $0.103107，33,652 input / 343 output；工具成功，但模型“正文 + 同文 fenced JSON”
+  被严格解析挡住。采用窄确定性包装解码，不自动调用模型修复；剩余额度 $1.896893。
+  Evidence: 集成树 `.tmp/actual-provider-acceptance/1788611012778-406b4b3d-d33a-491f-97ff-18c626f00373.json`。
+  验收脚本现记录 synthetic terminal + digest，整段会话走真实 streaming（比较 read 仍走原 non-stream）。
 - 实际 old-chain read 基准在 acceptance lane `914a378e`：root + blind 已确认 57,817 input、
   2,457 output、$0.201614；比较模型超时用量/费用未知，只能报告下界。
   Owner 已明确允许新链路最多新增 $2 真实验收。取消场景已真实验证零 provider attempts。

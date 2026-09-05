@@ -12,18 +12,19 @@
 - 已集成：单一 SDK 消息消费核心；业务自有 `generate_goal_outline` 与
   `generate_question_candidate`；前台/Mission 原生只读 Task；停止新 ToolOperations；
   七个旧控制工具已从 manifest 与实际 MCP 工具集合移除。保留历史任务恢复与重放。
-- 尚未集成：根任务终态 JSON 的最终回复校验器、两个重复 evidence Task 的退休及配套测试替换。
-- 当前集成检查：runner 88 tests、生成工具/目录 85 tests、原生配置 28 tests、
-  工具退休 15 tests；各组可能交叠，不作为唯一测试总数相加。类型/架构/任务清单检查通过。
-  跨能力到 server 的依赖数已从基线 464 降至 462，没有放宽 ratchet。
+- `fe71227b` 已集成根终态 finalization，退休两个重复 evidence Task 与过时 ledger/checkpoint 测试。
+- 集成 scoped 单测、持久化/恢复 DB 场景、typecheck/lint/audits/build 已通过；发现的一处旧工具
+  清单测试已按新 manifest 修正，正在复验。任务数为 50；capability→server 依赖从 464 降到 453。
+- 真实 read 首轮 $0.103107，正确工具结果被“正文 + 同文 JSON”包装挡住，正用无额外模型调用的
+  窄格式解码修复；新增 $2 预算剩 $1.896893。初审唯一 P1（无效 durable terminal 错标 DONE）同步修复。
 - 计划与证据：`docs/planning/2026-09-05-ai-pipeline-completion.md`；具体设计：
   `docs/planning/2026-09-05-pipeline-finalization-design.md`。历史 F5 状态见 Git 中本文件前版。
 
 ## NEXT
 
-1. 集成最终回复提交器，保留出题/解题/教学语义校验、提案权限和取消结算。
-2. 完成集成 scoped unit/DB、typecheck/lint/audits/build；一轮独立 review，必要时仅一次 P0/P1 验证审。
-3. Owner 已授权新链路新增最多 $2；完成集成后运行同输入比较和会话/子任务/durable/语义校验场景。
+1. 集成真实包装回归与 durable FAILED 修复，跑 scoped 验证。
+2. 初审已完成；仅剩一次 P0/P1 修复验证审，不启动第三轮。
+3. 在剩余 $1.896893 内完成同输入比较和会话/子任务/durable/语义校验场景；未知费用立即停止。
 4. Push 后以 exact-head GitHub CI Gate 为完整测试权威；通过后按仓库授权合并。
 5. 收尾更新本看板、handoff、Linear 和部署边界；不得把 LOCAL_GREEN 称作完整验收。
 
