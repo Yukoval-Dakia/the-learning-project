@@ -136,6 +136,10 @@ export interface AiTaskRunStartEntry {
   provider: string;
   model: string;
   input_hash: string;
+  compiledPromptHash?: string;
+  promptCodecVersion?: string;
+  promptCodecMode?: 'cold' | 'resume';
+  promptContextDigest?: string;
   started_at?: Date;
 }
 
@@ -146,6 +150,10 @@ export async function writeAiTaskRunStarted(db: Db, entry: AiTaskRunStartEntry):
     provider: entry.provider,
     model: entry.model,
     input_hash: entry.input_hash,
+    compiled_prompt_hash: entry.compiledPromptHash ?? null,
+    prompt_codec_version: entry.promptCodecVersion ?? null,
+    prompt_codec_mode: entry.promptCodecMode ?? null,
+    prompt_context_digest: entry.promptContextDigest ?? null,
     status: 'running',
     finish_reason: null,
     usage_json: { inputTokens: 0, outputTokens: 0 },

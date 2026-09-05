@@ -28,7 +28,7 @@ import {
 // YUK-886 (F4.1) — red fixtures for the consolidated architecture-deepening
 // audit. Every category named by the issue must FAIL on a synthetic fixture
 // and PASS on a clean one:
-//   1. 50/53 tasks (census count drift)
+//   1. 50/52 tasks (census count drift)
 //   2. missing CLI caller (ProfileCriticTask / compile-profile)
 //   3. duplicate/missing owner (TaskSpec, tool, queue, proposal kind)
 //   4. copied TaskDef (central registry copy / aliased definition)
@@ -170,8 +170,8 @@ describe('scanTaskSpecOwnership', () => {
 
 describe('scanTaskCensusConformance', () => {
   const clean = {
-    catalogCount: 53,
-    expectedCount: 53,
+    catalogCount: 52,
+    expectedCount: 52,
     errors: [],
     profileCriticCallerPresent: true,
     forbiddenPatternViolations: [],
@@ -181,9 +181,9 @@ describe('scanTaskCensusConformance', () => {
     expect(scanTaskCensusConformance(clean)).toEqual([]);
   });
 
-  it('fails the 52/53 census count drift', () => {
-    const violations = scanTaskCensusConformance({ ...clean, catalogCount: 52 });
-    expect(violations.some((violation) => violation.reason.includes('expected exactly 53'))).toBe(
+  it('fails the 51/52 census count drift', () => {
+    const violations = scanTaskCensusConformance({ ...clean, catalogCount: 51 });
+    expect(violations.some((violation) => violation.reason.includes('expected exactly 52'))).toBe(
       true,
     );
   });

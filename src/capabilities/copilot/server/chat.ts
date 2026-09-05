@@ -30,10 +30,8 @@ import {
   assembleCopilotRunInput,
 } from '@/capabilities/copilot/server/copilot-run-input';
 import {
-  type CopilotImplicitCorrectionIntent,
-  CopilotImplicitCorrectionIntentSchema,
   resolveCorrectionReply,
-  resolveImplicitCorrectionContract,
+  resolveDeterministicCorrectionContract,
 } from '@/capabilities/copilot/server/correction-contract';
 import { reviewCopilotEvidenceReply } from '@/capabilities/copilot/server/evidence-review';
 // YUK-574 — session-anchored learner-state header (assemble-once + invalidation).
@@ -87,7 +85,6 @@ import {
 import { resolveContextBudget } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
 import type { ValidateLearningContentFn } from '@/kernel/tools/types';
-import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 // YUK-198 — Tavily remote MCP (web grounding) for the Copilot surface only.
 // Gated on TAVILY_API_KEY: when absent, buildTavilyMcpServer() returns null and
 // the Copilot run is byte-for-byte unchanged (no tavily server, no extra tools).
@@ -96,7 +93,6 @@ import {
   TAVILY_MCP_SERVER_NAME,
   buildTavilyMcpServer,
 } from '@/server/ai/mcp/tavily';
-import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
 import {
   SPAWN_TOOL_NAME,
@@ -127,6 +123,13 @@ import type {
   CopilotChatTriggerKind,
   CopilotSkillContextT,
 } from './chat-contracts';
+import {
+  clearCopilotSessionContextDelivery,
+  copilotSessionContextDigest,
+  markCopilotSessionContextDelivered,
+  shouldDeliverCopilotSessionContext,
+} from './live-session-context';
+import { COPILOT_TURN_CONTEXT_CODEC_VERSION, compileCopilotModelInput } from './live-turn-context';
 import { selectAsksWithMaterializingToolCall } from './materializing-tools';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
 import { bindSubagentParentCancellation, handleNativeSubagentTaskEvent } from './subagent-mailbox';
@@ -545,6 +548,8 @@ type StreamAgentTaskFn = (
     canUseTool?: Parameters<typeof streamTaskCollecting>[2]['canUseTool'];
     onTaskEvent?: Parameters<typeof streamTaskCollecting>[2]['onTaskEvent'];
     onToolUse?: Parameters<typeof streamTaskCollecting>[2]['onToolUse'];
+    sdkSession?: Parameters<typeof streamTaskCollecting>[2]['sdkSession'];
+    compiledModelPrompt?: Parameters<typeof streamTaskCollecting>[2]['compiledModelPrompt'];
   },
   onDelta: (text: string) => void,
 ) => Promise<CopilotStreamResult>;
@@ -576,21 +581,6 @@ type ResolveLearnerStateHeaderFn = (
 // inject a fixture so the {}-stub db is never touched. Session-scoped by
 // construction (turns.ts filters by the current reusable conversation).
 type LoadHistoryFn = typeof getRecentCopilotTurns;
-type ResolveImplicitCorrectionIntentFn = (
-  db: Db,
-  input: {
-    readonly user_message: string;
-    readonly prior_turn_candidates: readonly {
-      readonly prior_turn_id: string;
-      readonly text: string;
-    }[];
-  },
-  opts: {
-    readonly signal?: AbortSignal;
-    readonly providerSessionDeadlineAt?: number;
-  },
-) => Promise<CopilotImplicitCorrectionIntent | undefined>;
-
 export interface CopilotChatDeps {
   runAgentTaskFn?: RunAgentTaskFn;
   // YUK-266 (C1) — defaults to streamTaskCollecting. Used ONLY by
@@ -613,7 +603,6 @@ export interface CopilotChatDeps {
   // YUK-267 (C2) — defaults to getRecentCopilotTurns. The unit test injects a
   // fixture so the {}-stub db is never touched. A read failure degrades to [].
   loadHistoryFn?: LoadHistoryFn;
-  resolveImplicitCorrectionIntentFn?: ResolveImplicitCorrectionIntentFn;
   // AF S3a / YUK-203 U3 — defaults to Conversation.findOrCreateCopilotConversation.
   findOrCreateConversationFn?: FindOrCreateConversationFn;
   // AF S4 / YUK-203 U6 — swappable skill runners (unit tests inject fixtures so
@@ -696,44 +685,6 @@ function buildForegroundInlineAllowedTools(
     return [...filtered, SPAWN_TOOL_NAME];
   }
   return [...filtered];
-}
-
-const COPILOT_CORRECTION_INTENT_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(
-  CopilotImplicitCorrectionIntentSchema,
-);
-
-async function resolveImplicitCorrectionIntent(
-  db: Db,
-  input: Parameters<ResolveImplicitCorrectionIntentFn>[1],
-  opts: Parameters<ResolveImplicitCorrectionIntentFn>[2],
-): Promise<CopilotImplicitCorrectionIntent | undefined> {
-  const taskRunId = `copilot_correction_intent_${createId()}`;
-  try {
-    const result = await runAgentTask('CopilotCorrectionIntentTask', input, {
-      db,
-      taskRunId,
-      signal: opts.signal,
-      outputFormat: COPILOT_CORRECTION_INTENT_OUTPUT_FORMAT,
-      ...(opts.providerSessionDeadlineAt !== undefined
-        ? { providerSessionDeadlineAt: opts.providerSessionDeadlineAt }
-        : {}),
-    });
-    if (result.structured_output !== undefined && result.structured_output !== null) {
-      return CopilotImplicitCorrectionIntentSchema.parse(result.structured_output);
-    }
-    const extracted = parseJsonObjectLoose(result.text, 'copilot correction intent', {
-      riskyRepair: 'reject',
-    });
-    if (!extracted || extracted.repaired !== false) return undefined;
-    return CopilotImplicitCorrectionIntentSchema.parse(extracted.json);
-  } catch (error) {
-    console.warn('[copilot] correction intent classifier unavailable; preserving normal reply', {
-      event: 'copilot_correction_intent_fallback',
-      task_run_id: taskRunId,
-      error_name: error instanceof Error ? error.name : 'UnknownError',
-    });
-    return undefined;
-  }
 }
 
 // YUK-266/YUK-832 — streaming options threaded through the shared chat impl.
@@ -1284,6 +1235,8 @@ async function runCopilotChatImpl(
     ...(req.chip_kind ? { chip_kind: req.chip_kind } : {}),
     proposal_feedback: [],
     conversation_history: [],
+    validator_context_history: [],
+    learner_state_header: '',
     correction_contract: {
       ...(req.correction_target_turn_id
         ? { target_prior_turn_id: req.correction_target_turn_id }
@@ -1295,36 +1248,14 @@ async function runCopilotChatImpl(
     ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
   };
   let implicitCorrectionClarification: string | undefined;
-  if (
-    runInput.correction_contract.target_prior_turn_id === undefined &&
-    runInput.correction_contract.available_prior_turn_ids.length > 0
-  ) {
-    const priorTurnCandidates = runInput.conversation_history.flatMap((turn) =>
-      turn.role === 'ai' && turn.event_id !== undefined
-        ? [{ prior_turn_id: turn.event_id, text: turn.text }]
-        : [],
-    );
-    const resolveIntent =
-      deps.resolveImplicitCorrectionIntentFn ??
-      (deps.runAgentTaskFn === undefined ? resolveImplicitCorrectionIntent : undefined);
-    const intent = await resolveIntent?.(
-      db,
-      { user_message: req.user_message, prior_turn_candidates: priorTurnCandidates },
-      {
-        ...(streaming?.signal ? { signal: streaming.signal } : {}),
-        ...(deps.providerSessionDeadlineAt !== undefined
-          ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
-          : {}),
-      },
-    );
-    if (intent !== undefined) {
-      const resolution = resolveImplicitCorrectionContract(runInput.correction_contract, intent);
-      if (resolution.kind === 'clarify') {
-        implicitCorrectionClarification = resolution.reply;
-      } else {
-        runInput = { ...runInput, correction_contract: resolution.contract };
-      }
-    }
+  const correctionResolution = resolveDeterministicCorrectionContract(
+    req.user_message,
+    runInput.correction_contract,
+  );
+  if (correctionResolution.kind === 'clarify') {
+    implicitCorrectionClarification = correctionResolution.reply;
+  } else {
+    runInput = { ...runInput, correction_contract: correctionResolution.contract };
   }
   const agentAllowedTools = implicitCorrectionClarification ? [] : allowedTools;
   let pendingAgentSdkSessionId: string | undefined;
@@ -1340,6 +1271,7 @@ async function runCopilotChatImpl(
       await setAgentSdkSessionId(db, sessionId, pendingAgentSdkSessionId);
     }
   };
+  const sessionContextDigest = copilotSessionContextDigest(runInput);
 
   // YUK-266/YUK-832 — the free-form path runs the CopilotTask token loop. The
   // streaming runner still collects original chunk boundaries and gracefully
@@ -1360,6 +1292,21 @@ async function runCopilotChatImpl(
   });
   try {
     const runForegroundCopilotAgent = async () => {
+      const modelInput = compileCopilotModelInput(
+        runInput,
+        resumeAgentSdkSessionId ? 'resume' : 'cold',
+        {
+          includeSessionContext:
+            !resumeAgentSdkSessionId ||
+            shouldDeliverCopilotSessionContext(resumeAgentSdkSessionId, sessionContextDigest),
+        },
+      );
+      const compiledModelPrompt = {
+        text: modelInput,
+        codecVersion: COPILOT_TURN_CONTEXT_CODEC_VERSION,
+        mode: resumeAgentSdkSessionId ? ('resume' as const) : ('cold' as const),
+        contextDigest: sessionContextDigest,
+      };
       if (streaming) {
         const streamResult = await streamRun(
           'CopilotTask',
@@ -1373,6 +1320,7 @@ async function runCopilotChatImpl(
             lifecycleAbortController,
             hooks: sdkHooks,
             sdkSession: foregroundSdkSession,
+            compiledModelPrompt,
             ...(deps.providerSessionDeadlineAt !== undefined
               ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
               : {}),
@@ -1416,6 +1364,9 @@ async function runCopilotChatImpl(
         replyText = streamResult.text;
         replyRunId = streamResult.task_run_id;
         if (streamResult.partial) {
+          if (resumeAgentSdkSessionId) {
+            throw new Error('resumed Agent SDK session returned partial output');
+          }
           candidateComplete = false;
           streamError = streamResult.error;
         }
@@ -1427,6 +1378,7 @@ async function runCopilotChatImpl(
           taskRunId,
           lifecycleAbortController,
           sdkSession: foregroundSdkSession,
+          compiledModelPrompt,
           ...(deps.providerSessionDeadlineAt !== undefined
             ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
             : {}),
@@ -1439,12 +1391,20 @@ async function runCopilotChatImpl(
         replyRunId = result.task_run_id;
       }
       await persistPendingAgentSdkSessionId();
+      const deliveredSdkSessionId = pendingAgentSdkSessionId ?? resumeAgentSdkSessionId;
+      if (deliveredSdkSessionId) {
+        if (resumeAgentSdkSessionId && resumeAgentSdkSessionId !== deliveredSdkSessionId) {
+          clearCopilotSessionContextDelivery(resumeAgentSdkSessionId);
+        }
+        markCopilotSessionContextDelivered(deliveredSdkSessionId, sessionContextDigest);
+      }
     };
 
     try {
       await withConversationQueryMutex(sessionId, runForegroundCopilotAgent);
     } catch (agentError) {
       if (resumeAgentSdkSessionId) {
+        clearCopilotSessionContextDelivery(resumeAgentSdkSessionId);
         try {
           await clearAgentSdkSessionId(db, sessionId);
         } catch (clearErr) {
@@ -1468,7 +1428,7 @@ async function runCopilotChatImpl(
     });
     const learningReview = await reviewCopilotLearningContent(
       preparedCandidate.text,
-      [req.user_message, ...runInput.conversation_history.map((turn) => turn.text)].join('\n'),
+      [req.user_message, ...runInput.validator_context_history.map((turn) => turn.text)].join('\n'),
       replyRunId,
       {
         db,
@@ -1513,7 +1473,7 @@ async function runCopilotChatImpl(
       evidenceReview.status === 'repair' || evidenceReview.status === 'degraded'
         ? await reviewCopilotLearningContent(
             correctionReviewedReply,
-            [req.user_message, ...runInput.conversation_history.map((turn) => turn.text)].join(
+            [req.user_message, ...runInput.validator_context_history.map((turn) => turn.text)].join(
               '\n',
             ),
             replyRunId,

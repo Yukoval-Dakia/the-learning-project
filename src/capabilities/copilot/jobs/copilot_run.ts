@@ -66,6 +66,11 @@ import {
   durableEvidenceTimeoutsFor,
   reviewCopilotEvidenceReply,
 } from '@/capabilities/copilot/server/evidence-review';
+import { copilotSessionContextDigest } from '@/capabilities/copilot/server/live-session-context';
+import {
+  COPILOT_TURN_CONTEXT_CODEC_VERSION,
+  compileCopilotModelInput,
+} from '@/capabilities/copilot/server/live-turn-context';
 import { selectAsksWithMaterializingToolCall } from '@/capabilities/copilot/server/materializing-tools';
 import { COPILOT_EVIDENCE_MAX_TRACE_CALLS } from '@/core/copilot-evidence';
 import type { Db, Tx } from '@/db/client';
@@ -1078,6 +1083,13 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     now: new Date(),
     historyAnchorEventId: runId,
   });
+  const modelInput = compileCopilotModelInput(runInput, 'cold');
+  const compiledModelPrompt = {
+    text: modelInput,
+    codecVersion: COPILOT_TURN_CONTEXT_CODEC_VERSION,
+    mode: 'cold' as const,
+    contextDigest: copilotSessionContextDigest(runInput),
+  };
 
   // YUK-575 (N2/S3) — STEP 进度继续用 FIFO promise-chain 落 job_events。
   // YUK-832 将模型正文完整缓冲：只有在 no-tool typed validator
@@ -1158,6 +1170,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
         taskRunId,
         signal: cancellationControl.signal,
         lifecycleAbortController,
+        compiledModelPrompt,
         mcpServers,
         allowedTools,
         hooks: sdkHooks,
@@ -1197,7 +1210,9 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
 
     const learningReview = await reviewCopilotLearningContent(
       preparedCandidate.text,
-      [data.user_message, ...runInput.conversation_history.map((turn) => turn.text)].join('\n'),
+      [data.user_message, ...runInput.validator_context_history.map((turn) => turn.text)].join(
+        '\n',
+      ),
       result.task_run_id,
       {
         db,
@@ -1245,9 +1260,10 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       evidenceReview.status === 'repair' || evidenceReview.status === 'degraded'
         ? await reviewCopilotLearningContent(
             correctionReviewedReply,
-            [data.user_message, ...runInput.conversation_history.map((turn) => turn.text)].join(
-              '\n',
-            ),
+            [
+              data.user_message,
+              ...runInput.validator_context_history.map((turn) => turn.text),
+            ].join('\n'),
             result.task_run_id,
             { db, runTaskFn: validationRunner },
           )

@@ -921,6 +921,10 @@ export const ai_task_runs = pgTable(
     // binding. Critical readers require both fields for their own task kinds.
     prompt_fingerprint: text('prompt_fingerprint'),
     result_digest: text('result_digest'),
+    compiled_prompt_hash: text('compiled_prompt_hash'),
+    prompt_codec_version: text('prompt_codec_version'),
+    prompt_codec_mode: text('prompt_codec_mode'),
+    prompt_context_digest: text('prompt_context_digest'),
     status: text('status').notNull().default('running'),
     finish_reason: text('finish_reason'),
     usage_json: jsonb('usage_json')
@@ -958,6 +962,24 @@ export const ai_task_runs = pgTable(
           (${t.cost_basis} = 'unknown' AND ${t.cost_usd} IS NULL)
           OR (${t.cost_basis} IN ('reported','estimated') AND ${t.cost_usd} IS NOT NULL AND ${t.cost_usd} >= 0)
         )
+      )`,
+    ),
+    check(
+      'ai_task_runs_compiled_prompt_provenance_ck',
+      sql`(
+        ${t.compiled_prompt_hash} IS NULL
+        AND ${t.prompt_codec_version} IS NULL
+        AND ${t.prompt_codec_mode} IS NULL
+        AND ${t.prompt_context_digest} IS NULL
+      ) OR (
+        ${t.compiled_prompt_hash} IS NOT NULL
+        AND ${t.compiled_prompt_hash} ~ '^[0-9a-f]{64}$'
+        AND ${t.prompt_codec_version} IS NOT NULL
+        AND btrim(${t.prompt_codec_version}) <> ''
+        AND ${t.prompt_codec_mode} IS NOT NULL
+        AND ${t.prompt_codec_mode} IN ('cold','resume')
+        AND ${t.prompt_context_digest} IS NOT NULL
+        AND ${t.prompt_context_digest} ~ '^[0-9a-f]{64}$'
       )`,
     ),
   ],

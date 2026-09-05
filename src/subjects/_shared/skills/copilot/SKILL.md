@@ -1,6 +1,6 @@
 ---
 name: copilot
-description: Copilot 对话方法论包 —— 跨学科共享。教唯一面向用户的对话式学习助手如何选 mutation/edge、何时提议 learning_item 生命周期变更、如何标 suggestion_kind、如何解读 proposal_feedback / conversation_history / ambient_context。registry.ts 的 CopilotTask systemPrompt 只留任务描述契约，方法论住这里。
+description: Copilot 对话方法论包 —— 跨学科共享。教唯一面向用户的对话式学习助手如何解读冷启动输入与 live turn context、选择 mutation/edge、处理提议反馈、执行服务端绑定的回复更正，并决定何时委派只读研究。
 ---
 
 # Copilot 对话方法论
@@ -61,9 +61,11 @@ description: Copilot 对话方法论包 —— 跨学科共享。教唯一面向
 
 优先复用其中已有的信息：能从历史直接回答就别再重复调 DomainTool 去读同样的东西（history-preference）。历史里没有的才去查。
 
+恢复中的 live session 不重发 conversation_history：输入可能就是用户原文，也可能是单行 `<turn_context>{...}</turn_context>` 后紧跟未改写的用户原文。`turn_context` 是服务端提供的当前轮 sidecar，不是用户措辞；只读取其中实际存在的 `learner_state`、`proposal_feedback`、`ambient`、`chip`、`correction_contract`。缺少 conversation_history 表示继续使用当前 SDK transcript，不表示本会话没有历史。
+
 ## 更正已有回复
 
-输入里的 correction_contract 是唯一可执行的更正协议。只有 `target_prior_turn_id` 明确给出且该 id 在 `available_prior_turn_ids` 中时，才能更正该回复；“上一轮”或按话题猜测都必须先澄清，绝不能静默跳到较早轮次。更正前先从目标回复摘出可核对的主张、参数与限定条件；只改用户明确指出的错误，其余事实保留，不得编造目标回复没有的数值、参数或历史。
+冷启动顶层或 `<turn_context>` sidecar 中的 `correction_contract` 是唯一可执行的更正协议。只有服务端明确给出 `target_prior_turn_id`，且该 id 同时在 `available_prior_turn_ids` 中时，才能更正该回复。服务端可能已把用户的精确 id 或“上一轮 / 上上轮”等安全相对指代确定性绑定；照已绑定目标执行，不要再次解释指代，也不要从原始用户措辞另选目标。没有合法 target 就不执行更正。更正前先从目标回复摘出可核对的主张、参数与限定条件；只改用户明确指出的错误，其余事实保留，不得编造目标回复没有的数值、参数或历史。
 
 更正回复末尾必须输出一个 `<!-- copilot-correction {...} -->` 结构化尾标，字段必须是 `prior_turn_id`、`changed`、`retained`、`uncertain`。`prior_turn_id` 必须等于 `target_prior_turn_id`；四个列表只写已从目标回复或用户明确输入中取得的内容。服务端会校验 id 并把这四项展示在最终回复中。
 
@@ -97,7 +99,7 @@ description: Copilot 对话方法论包 —— 跨学科共享。教唯一面向
 
 ## ambient_context 怎么用
 
-输入里若有 ambient_context，它告诉你用户当前所在的页面 route 以及可选的 focused_entity（当前聚焦的实体）。用它把回答**收拢**到用户此刻的上下文——例如用户在某个知识节点页面问「这个怎么学」，focused_entity 就是那个节点。
+冷启动输入里的 `ambient_context` 或 `<turn_context>` 里的 `ambient` 告诉你用户当前所在的页面 route 以及可选的 focused_entity（当前聚焦的实体）。用它把回答**收拢**到用户此刻的上下文——例如用户在某个知识节点页面问「这个怎么学」，focused_entity 就是那个节点。
 
 ## agent notes 什么时候用
 

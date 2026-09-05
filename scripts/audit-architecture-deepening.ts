@@ -26,7 +26,7 @@ import type { DependencySnapshot } from './audit-capability-boundaries';
 //      stay kind-branch-free, the central boss book stays housekeeping-only,
 //      the central events directory is transport/envelope only, and the
 //      central tools directory holds infrastructure only — no concrete tools;
-//   6. TaskSpec ownership census — exactly 53 supported TaskSpecs, each with one
+//   6. TaskSpec ownership census — exactly 52 supported TaskSpecs, each with one
 //      capability owner, ProfileCriticTask Ingestion-owned with its live CLI
 //      caller, no copied central TaskDef, no runtime task locator/discovery;
 //   7. DomainTool ownership — every registered tool has one owner, input/output
@@ -1388,10 +1388,10 @@ async function runCli(): Promise<void> {
 
   const result = auditArchitectureDeepening(projectRoot, publicReadCycleCatalog, {
     ownerMaps,
-    expectedTaskCount: 53,
+    expectedTaskCount: 52,
     taskCensus: {
       catalogCount: census.catalogCount,
-      expectedCount: 53,
+      expectedCount: 52,
       errors: census.errors,
       profileCriticCallerPresent: census.profileCriticCaller !== null,
       forbiddenPatternViolations: scanForbiddenTaskCatalogPatterns(projectRoot).map(

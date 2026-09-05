@@ -2,12 +2,26 @@ import type { HookCallback, Options } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const nativeSubagentTaskEventMock = vi.hoisted(() => vi.fn(async () => {}));
+const learningReviewContexts = vi.hoisted(() => [] as string[]);
 
 vi.mock('./subagent-mailbox', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./subagent-mailbox')>();
   return {
     ...actual,
     handleNativeSubagentTaskEvent: nativeSubagentTaskEventMock,
+  };
+});
+
+vi.mock('./content-validation', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./content-validation')>();
+  return {
+    ...actual,
+    reviewCopilotLearningContent: async (
+      ...args: Parameters<typeof actual.reviewCopilotLearningContent>
+    ) => {
+      learningReviewContexts.push(args[1]);
+      return actual.reviewCopilotLearningContent(...args);
+    },
   };
 });
 
@@ -682,7 +696,7 @@ describe('runCopilotChat (two-surface routing)', () => {
 
     const result = await runCopilotChat(
       db,
-      { user_message: '上一轮的水箱题请改正 h*=4/9，k 不变', triggered_by: 'chat' },
+      { user_message: '把之前的回答改一下', triggered_by: 'chat' },
       {
         buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
         runAgentTaskFn,
@@ -703,10 +717,6 @@ describe('runCopilotChat (two-surface routing)', () => {
             event_id: batteryReplyId,
           },
         ],
-        resolveImplicitCorrectionIntentFn: async () => ({
-          intent: 'correction',
-          candidate_prior_turn_ids: [waterTankReplyId, batteryReplyId],
-        }),
         now: () => new Date('2026-08-01T10:02:00.000Z'),
       },
     );
@@ -724,6 +734,8 @@ describe('runCopilotChat (two-surface routing)', () => {
       allowedTools?: string[];
     };
     expect(taskContext.allowedTools).toEqual([]);
+    expect(runAgentTaskFn).toHaveBeenCalledTimes(1);
+    expect((runAgentTaskFn.mock.calls[0] as unknown as unknown[])[0]).toBe('CopilotTask');
     expect(result.reply).toContain('prior_turn_id');
     expect(result.reply).toContain(waterTankReplyId);
     expect(result.reply).not.toContain('已把上一轮改正');
@@ -739,7 +751,7 @@ describe('runCopilotChat (two-surface routing)', () => {
 
     const result = await runCopilotChat(
       db,
-      { user_message: '上一题再按额定容量改一下', triggered_by: 'chat' },
+      { user_message: '上一轮再按额定容量改一下', triggered_by: 'chat' },
       {
         buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
         runAgentTaskFn,
@@ -757,10 +769,6 @@ describe('runCopilotChat (two-surface routing)', () => {
             event_id: batteryReplyId,
           },
         ],
-        resolveImplicitCorrectionIntentFn: async () => ({
-          intent: 'correction',
-          candidate_prior_turn_ids: [batteryReplyId],
-        }),
         now: () => new Date('2026-08-01T10:02:00.000Z'),
       },
     );
@@ -802,7 +810,6 @@ describe('runCopilotChat (two-surface routing)', () => {
             event_id: 'copilot_reply_method_two',
           },
         ],
-        resolveImplicitCorrectionIntentFn: async () => ({ intent: 'not_correction' }),
         now: () => new Date('2026-08-01T10:02:00.000Z'),
       },
     );
@@ -3653,7 +3660,7 @@ describe('runCopilotChat — Agent SDK session persist/resume (YUK-936)', () => 
     }) as never;
 
   it('resume hit: omits conversation_history fold and passes sdkSession resume + persist', async () => {
-    const runAgentTaskFn = vi.fn(async (_kind: string, input: unknown, ctx: unknown) => ({
+    const runAgentTaskFn = vi.fn(async (_kind: string, _input: unknown, ctx: unknown) => ({
       task_run_id: (ctx as { taskRunId?: string }).taskRunId ?? 't2',
       text: 'OK',
       finishReason: 'stop' as const,
@@ -3677,11 +3684,193 @@ describe('runCopilotChat — Agent SDK session persist/resume (YUK-936)', () => 
     const ctx = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
       sdkSession?: { persist: boolean; resume?: string; onSessionId?: unknown };
       taskRunId?: string;
+      compiledModelPrompt?: { text: string; mode: string };
     };
     expect(ctx.sdkSession?.persist).toBe(true);
     expect(ctx.sdkSession?.resume).toBe('sdk_sess_prev');
     expect(typeof ctx.sdkSession?.onSessionId).toBe('function');
     expect(ctx.taskRunId).toMatch(/^copilot_task_/);
+    expect(ctx.compiledModelPrompt?.text).toBe('继续');
+    expect(ctx.compiledModelPrompt?.mode).toBe('resume');
+    expect(ctx.compiledModelPrompt?.text).not.toContain('prior reply');
+  });
+
+  it('keeps bounded prior turns for validation without sending them to the resumed provider', async () => {
+    learningReviewContexts.length = 0;
+    const priorQuestion = '求参数 a 使方程有两个实根？';
+    const priorReply = '上一轮的长解释不应再次发送给 provider。';
+    const runAgentTaskFn = vi.fn(async () => ({ task_run_id: 't_validator_context', text: 'OK' }));
+
+    await runCopilotChat(
+      {} as never,
+      { user_message: '答案是 a>0', triggered_by: 'chat', session_id: 'ls_sdk' },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        getAgentSdkSessionIdFn: async () => 'sdk_sess_validator',
+        loadHistoryFn: async () => [mkTurn('user', priorQuestion), mkTurn('ai', priorReply)],
+      },
+    );
+
+    const ctx = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
+      compiledModelPrompt?: { text: string };
+    };
+    expect(ctx.compiledModelPrompt?.text).toBe('答案是 a>0');
+    expect(ctx.compiledModelPrompt?.text).not.toContain(priorQuestion);
+    expect(ctx.compiledModelPrompt?.text).not.toContain(priorReply);
+    expect(learningReviewContexts[0]).toContain(priorQuestion);
+    expect(learningReviewContexts[0]).toContain(priorReply);
+  });
+
+  it('resume hit: sends ambient focused entity in a compact sidecar without history prose', async () => {
+    const runAgentTaskFn = vi.fn(async () => ({ task_run_id: 't_ambient', text: 'OK' }));
+    await runCopilotChat(
+      {} as never,
+      {
+        user_message: '解释这个节点',
+        triggered_by: 'chat',
+        session_id: 'ls_sdk',
+        ambient_context: {
+          route: '/knowledge/graph',
+          focused_entity: { kind: 'knowledge', id: 'knowledge_boundary_42' },
+        },
+      },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        getAgentSdkSessionIdFn: async () => 'sdk_sess_prev',
+        loadHistoryFn: async () => [mkTurn('ai', '不得重发的旧回答')],
+      },
+    );
+
+    const ctx = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
+      compiledModelPrompt?: { text: string };
+    };
+    expect(ctx.compiledModelPrompt?.text).toContain('knowledge_boundary_42');
+    expect(ctx.compiledModelPrompt?.text).toContain('</turn_context>\n解释这个节点');
+    expect(ctx.compiledModelPrompt?.text).not.toContain('不得重发的旧回答');
+  });
+
+  it('delivers a session snapshot once per digest while ambient remains per-turn', async () => {
+    const sdkSessionId = 'sdk_context_revision_unique';
+    let storedSessionId: string | null = null;
+    let header = '当前目标：边界条件 A';
+    const prompts: string[] = [];
+    const runAgentTaskFn = vi.fn(
+      async (
+        _kind: string,
+        _input: unknown,
+        ctx: {
+          taskRunId?: string;
+          compiledModelPrompt?: { text: string };
+          sdkSession?: { onSessionId?: (id: string) => void | Promise<void> };
+        },
+      ) => {
+        prompts.push(ctx.compiledModelPrompt?.text ?? '');
+        await ctx.sdkSession?.onSessionId?.(sdkSessionId);
+        return { task_run_id: ctx.taskRunId ?? 't', text: 'OK' };
+      },
+    );
+    const deps = {
+      ...baseDeps,
+      runAgentTaskFn,
+      getAgentSdkSessionIdFn: async () => storedSessionId,
+      setAgentSdkSessionIdFn: async (_db: unknown, _sessionId: string, id: string) => {
+        storedSessionId = id;
+      },
+      resolveLearnerStateHeaderFn: async () => ({ header_md: header, proposal_feedback: [] }),
+    };
+
+    await runCopilotChat(
+      {} as never,
+      { user_message: '第一轮', triggered_by: 'chat' },
+      deps as never,
+    );
+    await runCopilotChat(
+      {} as never,
+      { user_message: '第二轮', triggered_by: 'chat' },
+      deps as never,
+    );
+    header = '当前目标：边界条件 B';
+    await runCopilotChat(
+      {} as never,
+      { user_message: '第三轮', triggered_by: 'chat' },
+      deps as never,
+    );
+    await runCopilotChat(
+      {} as never,
+      {
+        user_message: '第四轮',
+        triggered_by: 'chat',
+        ambient_context: { route: '/knowledge/graph' },
+      },
+      deps as never,
+    );
+    await runCopilotChat(
+      {} as never,
+      {
+        user_message: '第五轮',
+        triggered_by: 'chat',
+        ambient_context: { route: '/knowledge/graph' },
+      },
+      deps as never,
+    );
+
+    expect(prompts[0]).toContain('当前目标：边界条件 A');
+    expect(prompts[1]).toBe('第二轮');
+    expect(prompts[2]).toContain('当前目标：边界条件 B');
+    expect(prompts[3]).toContain('/knowledge/graph');
+    expect(prompts[3]).not.toContain('当前目标：边界条件 B');
+    expect(prompts[4]).toContain('/knowledge/graph');
+    expect(prompts[4]).not.toContain('当前目标：边界条件 B');
+  });
+
+  it('resume hit: binds explicit correction from product turns without a classifier attempt', async () => {
+    const replyId = 'copilot_reply_resume_target';
+    const historicalReply = '不得重发的旧推导正文。'.repeat(8);
+    const runAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 't_correction',
+      text: `更正后的推导。\n\n<!-- copilot-correction {"prior_turn_id":"${replyId}","changed":["定义域"],"retained":["代数步骤"],"uncertain":[]} -->`,
+    }));
+
+    const result = await runCopilotChat(
+      {} as never,
+      {
+        user_message: '请更正上一轮',
+        triggered_by: 'chat',
+        session_id: 'ls_sdk',
+        correction_target_turn_id: replyId,
+      },
+      {
+        ...baseDeps,
+        runAgentTaskFn,
+        getAgentSdkSessionIdFn: async () => 'sdk_sess_prev',
+        loadHistoryFn: async () => [
+          {
+            role: 'ai',
+            text: historicalReply,
+            at: '2026-06-06T00:00:00.000Z',
+            event_id: replyId,
+          },
+        ],
+      },
+    );
+
+    expect(runAgentTaskFn).toHaveBeenCalledTimes(1);
+    const call = runAgentTaskFn.mock.calls[0] as unknown as unknown[];
+    expect(call[0]).toBe('CopilotTask');
+    const input = call[1] as {
+      conversation_history: unknown[];
+      correction_contract: { target_prior_turn_id?: string };
+    };
+    const ctx = call[2] as { compiledModelPrompt?: { text: string } };
+    expect(input.conversation_history).toEqual([]);
+    expect(input.correction_contract.target_prior_turn_id).toBe(replyId);
+    expect(ctx.compiledModelPrompt?.text).toContain('"correction_contract"');
+    expect(ctx.compiledModelPrompt?.text).toContain(replyId);
+    expect(ctx.compiledModelPrompt?.text).not.toContain(historicalReply);
+    expect(ctx.compiledModelPrompt?.text).not.toContain('conversation_history');
+    expect(result.reply).toContain(`更正目标 prior_turn_id：${replyId}`);
   });
 
   it('cold start: keeps history fold and persistSession without resume', async () => {
@@ -3708,9 +3897,14 @@ describe('runCopilotChat — Agent SDK session persist/resume (YUK-936)', () => 
     expect(input.conversation_history.length).toBeGreaterThan(0);
     const ctx = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
       sdkSession?: { persist: boolean; resume?: string };
+      compiledModelPrompt?: { text: string; mode: string };
     };
     expect(ctx.sdkSession?.persist).toBe(true);
     expect(ctx.sdkSession?.resume).toBeUndefined();
+    expect(ctx.compiledModelPrompt?.mode).toBe('cold');
+    expect(JSON.parse(ctx.compiledModelPrompt?.text ?? '{}').conversation_history).toEqual([
+      { role: 'user', text: 'old' },
+    ]);
   });
 
   it('each POST mints a distinct task_run_id', async () => {
@@ -3739,7 +3933,7 @@ describe('runCopilotChat — Agent SDK session persist/resume (YUK-936)', () => 
     expect(taskRunIds.every((id) => id.startsWith('copilot_task_'))).toBe(true);
   });
 
-  it('resume failure clears stored SDK session id', async () => {
+  it('resume failure clears the SDK id and fails without a same-request cold retry', async () => {
     const clearAgentSdkSessionIdFn = vi.fn(async () => {});
     const setAgentSdkSessionIdFn = vi.fn(async () => {});
     const runAgentTaskFn = vi.fn(async () => {
@@ -3760,6 +3954,39 @@ describe('runCopilotChat — Agent SDK session persist/resume (YUK-936)', () => 
     ).rejects.toThrow('resume session not found');
     expect(clearAgentSdkSessionIdFn).toHaveBeenCalledTimes(1);
     expect(setAgentSdkSessionIdFn).not.toHaveBeenCalled();
+    expect(runAgentTaskFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('resume partial clears the SDK id and emits no reply event', async () => {
+    const clearAgentSdkSessionIdFn = vi.fn(async () => {});
+    const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
+    const streamAgentTaskFn = vi.fn(async () => ({
+      task_run_id: 'task_resume_partial',
+      text: 'untrusted partial',
+      partial: true,
+      error: 'stream interrupted',
+    }));
+
+    await expect(
+      runCopilotChatStreaming(
+        {} as never,
+        { user_message: '继续', triggered_by: 'chat', session_id: 'ls_sdk' },
+        vi.fn(),
+        {
+          ...baseDeps,
+          writeEventFn,
+          streamAgentTaskFn,
+          getAgentSdkSessionIdFn: async () => 'sdk_resume_partial',
+          clearAgentSdkSessionIdFn,
+        },
+      ),
+    ).rejects.toThrow('resumed Agent SDK session returned partial output');
+    expect(clearAgentSdkSessionIdFn).toHaveBeenCalledTimes(1);
+    expect(
+      writeEventFn.mock.calls.some(
+        (call) => (call[1] as { action?: string }).action === 'experimental:copilot_reply',
+      ),
+    ).toBe(false);
   });
 
   it('cold-start throw after onSessionId does not persist agent_sdk_session_id', async () => {

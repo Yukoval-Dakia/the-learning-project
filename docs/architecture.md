@@ -108,8 +108,8 @@ Question (统一题库，single source of truth)
 > 拥有；Notes 也已拥有 NoteGenerate/NoteVerify 的 parser + output schema；Ingestion 已拥有
 > Vision/Structure/MistakeEnroll/Tagging/ColdStart/BlockAssembly/ProfileCritic 八个 TaskSpec；Knowledge
 > 已拥有 KnowledgeEdgePropose/FrontierPrerequisite/KnowledgeReview 三个 TaskSpec。
-> owner maps 现在保存全部 53 个完整 TaskSpec（20 Practice + 3 Notes + 8 Ingestion + 3 Knowledge
-> + 13 Agency + 6 Copilot；Copilot 的第六项为 `CopilotResearchTask`）。YUK-870 收编了
+> owner maps 现在保存全部 52 个完整 TaskSpec（20 Practice + 3 Notes + 8 Ingestion + 3 Knowledge
+> + 13 Agency + 5 Copilot）。YUK-870 收编了
 > `SessionSummaryTask`；registry 只做静态 compatibility projection；YUK-885 已删除中央 semantic quarry
 > （`legacy-task-definitions.ts`）与 transitional 机制（`defineTransitionalTask`），
 > 由 `scripts/audit-architecture-ownership.ts` 守住。
@@ -127,11 +127,11 @@ FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
 ### 5.1 Task 注册
 
 > **Canonical source**: `src/ai/task-catalog.ts` 的 `taskCatalog`。六个 capability owner maps
-> 保存 staged semantic ownership：53 个完整 owned TaskSpec（20 Practice + 3 Notes + 8 Ingestion + 3 Knowledge
-> + 13 Agency + 6 Copilot；其中 `CopilotResearchTask` 是第六个 Copilot task）与 0 个 identity-backed transitional entry（YUK-870 后中央 semantic
+> 保存 staged semantic ownership：52 个完整 owned TaskSpec（20 Practice + 3 Notes + 8 Ingestion + 3 Knowledge
+> + 13 Agency + 5 Copilot）与 0 个 identity-backed transitional entry（YUK-870 后中央 semantic
 > quarry 为空）；composer 把每个 entry 的精确 `definition` 投影为冻结的
 > runtime map。`src/ai/registry.ts` 仅是带 Copilot dispatch overlay 的 compatibility projection。
-> 当前恰有 **53 个 registered/runnable kinds、52 个静态 production invocation kinds、1 个显式
+> 当前恰有 **52 个 registered/runnable kinds、51 个静态 production invocation kinds、1 个显式
 > compatibility kind**：`AttributionTask` 为持久历史/registry 兼容而保留，现行 Failure Learning
 > 在 deterministic retrieval 后调用 `AttributionRerankTask`，不伪造 `AttributionTask` caller。
 > `pnpm audit:task-census` 同时验证 capability manifest/job 与 legacy handler 注册可达性，以及
@@ -327,18 +327,14 @@ Dreaming 和 Maintenance lane 当前跑在 self-hosted Node worker + pg-boss 上
 
 ---
 
-### 5.7 Copilot durable researcher mailbox
+### 5.7 Copilot foreground and durable research
 
-Copilot remains the only user-facing agent. A foreground root may call the owner-local
-`launch_researcher` DomainTool, which creates a durable `subagent_run` keyed by the conversation session,
-the ask/chip event, and a stable launch key. The fixed child is read-only, owns an independent task run and
-provider lease, and never inherits the parent HTTP deadline or task-run admission.
-
-The causal chain is parent ask/chip → `experimental:subagent_run_started` →
-`experimental:subagent_run_settled` → `experimental:copilot_reply`. Child settlement atomically creates
-one `copilot_continuation`; the continuation waits for the foreground reply and serializes per session
-before starting a new root Copilot turn. The synthetic result is untrusted input and automatic
-continuations cannot launch another researcher. See ADR-0053.
+Foreground Copilot resumes an Agent SDK session across HTTP turns. Native SDK `Task` performs bounded
+read-only research inside the live parent query and returns its tool result to that same parent. It does
+not create a mailbox continuation or a second user-facing voice. The older `subagent_run` /
+`copilot_continuation` mailbox remains an active worker-owned durable path until its queued obligations
+are drained and a later deletion slice removes its producers and consumers. Explicit durable Copilot and
+Mission runs never resume the foreground SDK session. See ADR-0053–0057.
 
 ## 六、技术栈
 
