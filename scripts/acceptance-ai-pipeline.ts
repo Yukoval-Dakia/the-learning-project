@@ -72,6 +72,10 @@ function loadProviderEnv(): string {
   // turn a comparable Xiaomi run into a subscription or another provider run.
   process.env.AI_PROVIDER_OVERRIDE = 'xiaomi';
   process.env.AI_PROVIDER_MODEL = 'mimo-v2.5-pro';
+  // This fixture exercises only registered in-process DB tools. Do not let a
+  // developer's shell silently attach optional remote MCP/search providers.
+  delete process.env.TAVILY_API_KEY;
+  delete process.env.MEM0_API_KEY;
   return file;
 }
 
@@ -111,6 +115,14 @@ async function withTimeout<T>(label: string, operation: Promise<T>): Promise<T> 
   }
 }
 
+function persistEvidence(evidence: Record<string, unknown>): string {
+  const outputDir = resolve('.tmp/actual-provider-acceptance');
+  mkdirSync(outputDir, { recursive: true });
+  const outputPath = resolve(outputDir, `${Date.now()}-${randomUUID()}.json`);
+  writeFileSync(outputPath, `${JSON.stringify(evidence, null, 2)}\n`);
+  return outputPath;
+}
+
 async function main(): Promise<void> {
   if (process.argv.includes('--preflight')) return preflight();
   if (process.env.ACTUAL_PROVIDER_ACCEPTANCE !== '1') {
@@ -128,6 +140,7 @@ async function main(): Promise<void> {
   }
 
   let container: StartedPostgreSqlContainer | undefined;
+  let evidence: Record<string, unknown> | undefined;
   try {
     container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
     const databaseUrl = container.getConnectionUri();
@@ -149,7 +162,7 @@ async function main(): Promise<void> {
       import('@/capabilities/copilot/server/durable-dispatch'),
       import('@/capabilities/copilot/api/cancel-run'),
     ]);
-    const { eq, inArray } = await import('drizzle-orm');
+    const { and, eq, inArray } = await import('drizzle-orm');
     const now = new Date();
     await db.insert(schema.knowledge).values([
       {
@@ -177,7 +190,7 @@ async function main(): Promise<void> {
     ]);
 
     const caseEvidence: Array<Record<string, unknown>> = [];
-    const evidence: Record<string, unknown> = {
+    evidence = {
       protocol_version: 1,
       exact_head: spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim(),
       dirty_diff_sha256: SHA256(
@@ -231,16 +244,7 @@ async function main(): Promise<void> {
             .from(schema.tool_call_log)
             .where(inArray(schema.tool_call_log.task_run_id, taskIds))
         : [];
-      for (const row of rows) {
-        if (row.cost === null || row.cost === undefined || row.costBasis === 'unknown') {
-          throw new Error(
-            `${caseName}: unknown provider cost; refusing to continue under $${COST_CEILING_USD} ceiling`,
-          );
-        }
-        knownCost += row.cost;
-      }
-      if (knownCost > COST_CEILING_USD) throw new Error(`cost ceiling exceeded: $${knownCost}`);
-      caseEvidence.push({
+      const entry: Record<string, unknown> = {
         name: caseName,
         input_sha256: SHA256(input),
         output_sha256: result.reply ? SHA256(result.reply) : undefined,
@@ -251,8 +255,18 @@ async function main(): Promise<void> {
         root_task_run_id: result.task_run_id,
         task_runs: rows,
         tools,
-        cumulative_cost_usd: knownCost,
-      });
+      };
+      caseEvidence.push(entry);
+      for (const row of rows) {
+        if (row.cost === null || row.cost === undefined || row.costBasis === 'unknown') {
+          throw new Error(
+            `${caseName}: unknown provider cost; refusing to continue under $${COST_CEILING_USD} ceiling`,
+          );
+        }
+        knownCost += row.cost;
+      }
+      if (knownCost > COST_CEILING_USD) throw new Error(`cost ceiling exceeded: $${knownCost}`);
+      entry.cumulative_cost_usd = knownCost;
       return { rows, tools };
     };
 
@@ -281,6 +295,9 @@ async function main(): Promise<void> {
 
     for (const caseName of selected) {
       if (caseName === 'cancel') {
+        const attemptsBefore = await db
+          .select({ id: schema.ai_task_runs.id })
+          .from(schema.ai_task_runs);
         const accepted = await dispatch.reserveCopilotDurableAcceptance(db, {
           sessionId: `${sessionId}_cancel`,
           userMessage: 'synthetic cancellation fixture; never execute',
@@ -294,8 +311,10 @@ async function main(): Promise<void> {
           { id: runId },
         );
         if (!response.ok) throw new Error('cancel: route failed');
-        const attempts = await db.select({ id: schema.ai_task_runs.id }).from(schema.ai_task_runs);
-        if (attempts.length !== 0)
+        const attemptsAfter = await db
+          .select({ id: schema.ai_task_runs.id })
+          .from(schema.ai_task_runs);
+        if (attemptsAfter.length !== attemptsBefore.length)
           throw new Error('cancel: pre-fence cancellation made a provider attempt');
         caseEvidence.push({
           name: caseName,
@@ -314,9 +333,27 @@ async function main(): Promise<void> {
           idempotencyKey: randomUUID(),
           queuedPayload: { session_id: durableSession, triggered_by: 'chat' },
         });
-        const result = await withTimeout(
-          caseName,
-          durable.runCopilotRun({
+        let cancellationPromise: Promise<void> | undefined;
+        const durableTimer = setTimeout(() => {
+          // Unlike Promise.race, this follows the product cancellation path;
+          // runCopilotRun's cancellation control observes it, aborts the SDK
+          // request, and projects a terminal result before cleanup proceeds.
+          cancellationPromise = cancellationRoute
+            .POST(
+              new Request(
+                `http://acceptance/api/copilot/runs/${accepted.acceptance.runId}/cancel`,
+                { method: 'POST' },
+              ),
+              { id: accepted.acceptance.runId },
+            )
+            .then(async (response) => {
+              if (!response.ok) throw new Error('durable timeout cancellation route failed');
+              await response.json();
+            });
+        }, CASE_TIMEOUT_MS);
+        let result: Awaited<ReturnType<typeof durable.runCopilotRun>>;
+        try {
+          result = await durable.runCopilotRun({
             db,
             data: {
               run_id: accepted.acceptance.runId,
@@ -324,10 +361,15 @@ async function main(): Promise<void> {
               user_message: '只回复「已收到合成耐久验收」，不要出题、不要调用工具。',
               triggered_by: 'chat',
             },
-          }),
-        );
-        if (result.status !== 'done')
-          throw new Error(`durable: expected done, got ${result.status}`);
+          });
+        } finally {
+          clearTimeout(durableTimer);
+          await cancellationPromise;
+        }
+        if (result.status !== 'done') {
+          await snapshot(caseName, { run_id: accepted.acceptance.runId }, {});
+          throw new Error(`durable: expected done before deadline, got ${result.status}`);
+        }
         await snapshot(
           caseName,
           { run_id: accepted.acceptance.runId },
@@ -337,7 +379,13 @@ async function main(): Promise<void> {
           const replyRows = await db
             .select({ id: schema.event.id })
             .from(schema.event)
-            .where(eq(schema.event.caused_by_event_id, accepted.acceptance.runId))
+            .where(
+              and(
+                eq(schema.event.caused_by_event_id, accepted.acceptance.runId),
+                eq(schema.event.action, 'experimental:copilot_reply'),
+                eq(schema.event.subject_kind, 'query'),
+              ),
+            )
             .limit(1);
           const replyEventId = replyRows[0]?.id;
           if (!replyEventId) throw new Error('durable: missing persisted reply event');
@@ -390,7 +438,8 @@ async function main(): Promise<void> {
         }),
       );
       if (!result.reply.trim()) throw new Error(`${caseName}: empty reply`);
-      if (caseName === 'cold') priorTurnId = result.user_ask_event_id;
+      // correction contracts name prior *assistant* turn event ids, not asks.
+      if (caseName === 'cold') priorTurnId = result.reply_event_id;
       if (caseName === 'correction' && !priorTurnId)
         throw new Error('correction: missing prior turn');
       const observed = await snapshot(caseName, request, result);
@@ -409,6 +458,14 @@ async function main(): Promise<void> {
         throw new Error('read: required query_knowledge read tool was not observed');
       }
       if (
+        caseName === 'read' &&
+        (!result.reply.includes('文言虚词「之」') ||
+          !result.reply.includes('代词宾语用法') ||
+          /(?:不存在|从未存在|从未挂载)/u.test(result.reply))
+      ) {
+        throw new Error('read: reply omitted seeded names or made an unsupported absence claim');
+      }
+      if (
         caseName === 'proposal' &&
         !observed.tools.some(
           (tool) => tool.name.includes('propose_knowledge_mutation') && tool.effect === 'propose',
@@ -418,6 +475,14 @@ async function main(): Promise<void> {
       }
       if (caseName === 'proposal' && observed.tools.some((tool) => tool.effect === 'write')) {
         throw new Error('proposal: unexpected materializing write tool was observed');
+      }
+      if (caseName === 'proposal') {
+        const knowledgeAfter = await db.select({ id: schema.knowledge.id }).from(schema.knowledge);
+        const actualIds = knowledgeAfter.map((row) => row.id).sort();
+        const expectedIds = ['actual:classical-object', 'actual:classical-root'];
+        if (JSON.stringify(actualIds) !== JSON.stringify(expectedIds)) {
+          throw new Error('proposal: proposal path mutated synthetic knowledge state');
+        }
       }
       if (caseName === 'native-task') {
         const children = await db
@@ -436,13 +501,19 @@ async function main(): Promise<void> {
       }
     }
 
-    const outputDir = resolve('.tmp/actual-provider-acceptance');
-    mkdirSync(outputDir, { recursive: true });
-    const outputPath = resolve(outputDir, `${Date.now()}-${randomUUID()}.json`);
-    writeFileSync(outputPath, `${JSON.stringify(evidence, null, 2)}\n`);
+    const outputPath = persistEvidence(evidence);
     console.log(
       JSON.stringify({ ok: true, evidence_path: outputPath, cumulative_cost_usd: knownCost }),
     );
+  } catch (error) {
+    if (evidence) {
+      evidence.failure = {
+        name: error instanceof Error ? error.name : 'unknown',
+        message: error instanceof Error ? error.message : String(error),
+      };
+      evidence.failure_evidence_path = persistEvidence(evidence);
+    }
+    throw error;
   } finally {
     await container?.stop();
   }
