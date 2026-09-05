@@ -79,12 +79,61 @@ function loadProviderEnv(): string {
   return file;
 }
 
-function preflight(): void {
+function localSocketFromDockerHost(value: string): string | undefined {
+  if (!value.startsWith('unix://')) return undefined;
+  const socket = value.slice('unix://'.length);
+  return socket.length > 0 && existsSync(socket) ? socket : undefined;
+}
+
+function configureLocalDockerHost(): string {
+  const configured = process.env.DOCKER_HOST;
+  if (configured) {
+    const socket = localSocketFromDockerHost(configured);
+    if (!socket)
+      throw new Error('acceptance refused: DOCKER_HOST must name an existing local Unix socket');
+    return socket;
+  }
+  const context = spawnSync(
+    'docker',
+    ['context', 'inspect', '--format', '{{.Endpoints.docker.Host}}'],
+    {
+      encoding: 'utf8',
+    },
+  );
+  if (context.status === 0 && context.stdout.trim()) {
+    const fromContext = context.stdout.trim();
+    const socket = localSocketFromDockerHost(fromContext);
+    if (!socket)
+      throw new Error('acceptance refused: active Docker context is not a local Unix socket');
+    process.env.DOCKER_HOST = fromContext;
+    return socket;
+  }
+  const fallbackSockets = [
+    `${process.env.HOME ?? ''}/.orbstack/run/docker.sock`,
+    `${process.env.HOME ?? ''}/.docker/run/docker.sock`,
+  ];
+  const socket = fallbackSockets.find((candidate) => existsSync(candidate));
+  if (!socket) throw new Error('acceptance refused: no local Docker Unix socket found');
+  process.env.DOCKER_HOST = `unix://${socket}`;
+  return socket;
+}
+
+async function preflight(): Promise<void> {
   const source = loadProviderEnv();
+  const dockerSocket = configureLocalDockerHost();
   const docker = spawnSync('docker', ['version', '--format', '{{.Server.Version}}'], {
     encoding: 'utf8',
   });
   if (docker.status !== 0) throw new Error('docker version preflight failed');
+  // Testcontainers does not necessarily inherit the Docker CLI context. Starting
+  // and stopping this private container proves the exact API path used by the
+  // acceptance run without a migration or any provider call.
+  const container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+  try {
+    assertLoopback(container.getConnectionUri());
+  } finally {
+    await container.stop();
+  }
   console.log(
     JSON.stringify({
       ok: true,
@@ -92,7 +141,9 @@ function preflight(): void {
       provider: 'xiaomi',
       model: 'mimo-v2.5-pro',
       credential_source: source,
+      docker_socket: dockerSocket,
       docker_server: docker.stdout.trim(),
+      testcontainers_api: 'ok',
       paid_calls: false,
     }),
   );
@@ -107,7 +158,7 @@ function persistEvidence(evidence: Record<string, unknown>, outputPath?: string)
 }
 
 async function main(): Promise<void> {
-  if (process.argv.includes('--preflight')) return preflight();
+  if (process.argv.includes('--preflight')) return await preflight();
   if (process.env.ACTUAL_PROVIDER_ACCEPTANCE !== '1') {
     throw new Error('ACTUAL_PROVIDER_ACCEPTANCE=1 is required before any provider call');
   }
@@ -122,11 +173,28 @@ async function main(): Promise<void> {
     throw new Error('--baseline-record is intentionally limited to one --case invocation');
   }
 
+  const caseEvidence: Array<Record<string, unknown>> = [];
   let container: StartedPostgreSqlContainer | undefined;
-  let evidence: Record<string, unknown> | undefined;
+  // Create the evidence envelope before Testcontainers setup. A Docker/migrate
+  // failure must still leave a safe phase marker, not only a bare process Error.
+  const evidence: Record<string, unknown> | undefined = {
+    protocol_version: 1,
+    phase: 'container_setup',
+    exact_head: spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim(),
+    dirty_diff_sha256: SHA256(
+      spawnSync('git', ['diff', '--binary', 'HEAD'], { encoding: 'utf8' }).stdout,
+    ),
+    harness_sha256: SHA256(readFileSync(new URL(import.meta.url), 'utf8')),
+    provider: 'xiaomi',
+    model: 'mimo-v2.5-pro',
+    credential_source: source,
+    baseline_record: baselineRecord,
+    cases: caseEvidence,
+  };
   let activeCase: CaseName | undefined;
   let captureFailureState: (() => Promise<Record<string, unknown>>) | undefined;
   try {
+    configureLocalDockerHost();
     container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
     const databaseUrl = container.getConnectionUri();
     assertLoopback(databaseUrl);
@@ -196,24 +264,11 @@ async function main(): Promise<void> {
       },
     ]);
 
-    const caseEvidence: Array<Record<string, unknown>> = [];
-    evidence = {
-      protocol_version: 1,
-      exact_head: spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim(),
-      dirty_diff_sha256: SHA256(
-        spawnSync('git', ['diff', '--binary', 'HEAD'], { encoding: 'utf8' }).stdout,
-      ),
-      harness_sha256: SHA256(readFileSync(new URL(import.meta.url), 'utf8')),
-      provider: 'xiaomi',
-      model: 'mimo-v2.5-pro',
-      credential_source: source,
-      baseline_record: baselineRecord,
-      cases: caseEvidence,
-      limitations: [
-        'direct durable handler is not pg-boss queue E2E',
-        'structural assertions do not establish factual entailment or semantic correctness',
-      ],
-    };
+    evidence.phase = 'running';
+    evidence.limitations = [
+      'direct durable handler is not pg-boss queue E2E',
+      'structural assertions do not establish factual entailment or semantic correctness',
+    ];
     let knownCost = 0;
     const observedTaskRunIds = new Set<string>();
     const sessionId = `actual_acceptance_${randomUUID()}`;
