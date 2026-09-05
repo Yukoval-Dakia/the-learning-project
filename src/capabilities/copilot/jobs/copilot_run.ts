@@ -1240,8 +1240,8 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     // S3 — 排空 delta 链：所有 delta id 落定后再写 terminal。
     await drainDeltaChain(progressChain, runId);
 
-    // The SDK terminal envelope owns the only public bytes. Assistant preambles
-    // and malformed/trailing prose are never candidates for persistence.
+    // The complete SDK terminal Markdown owns the only public candidate bytes.
+    // Earlier assistant deltas remain buffered and are never persisted directly.
     const finalized = await replyFinalizer.finalizeTerminal(result.terminalText ?? '');
     const reviewedReply = finalized.replyText;
     const reviewedPreparedReply: PreparedCopilotReply = finalized.preparedReply;
@@ -1285,7 +1285,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
 
     if (!finalized.accepted) {
       return await handleDurableFailure(db, {
-        err: new Error('root terminal envelope rejected'),
+        err: new Error('root terminal reply rejected'),
         runId,
         sessionId: data.session_id,
         actorRef,

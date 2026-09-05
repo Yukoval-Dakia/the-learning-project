@@ -54,22 +54,24 @@ async function pre(
 describe('Copilot root reply finalization', () => {
   it('seals one plain reply and binds the exact persisted bytes to its receipt', async () => {
     const value = finalizer();
-    const result = await value.finalizeTerminal(
-      JSON.stringify({ reply_md: '已整理为 3 个要点。', relied_on_tool_use_ids: [] }),
-    );
+    const result = await value.finalizeTerminal('已整理为 3 个要点。');
 
     expect(result).toMatchObject({ accepted: true, replyText: '已整理为 3 个要点。' });
     expect(result.receipt).toMatchObject({
-      assurance: 'root_attested_structural',
+      assurance: 'execution_trace_bound',
       trace_call_count: 0,
+      observed_completed_tool_use_ids: [],
       learning_content: 'not_applicable',
     });
     expect(result.receipt.reply_sha256).toBe(
       createHash('sha256').update(result.replyText, 'utf8').digest('hex'),
     );
+    expect(result.receipt.candidate_sha256).toBe(
+      createHash('sha256').update('已整理为 3 个要点。', 'utf8').digest('hex'),
+    );
   });
 
-  it('accepts the actual provider suffix fence only when duplicated prose equals reply_md', async () => {
+  it('accepts the actual provider plain Markdown terminal and binds its observed root read', async () => {
     const value = finalizer();
     const toolUseId = 'call_8af33fd439f3473cbeb37a32';
     await pre(value, 'mcp__loom__query_knowledge', toolUseId, {
@@ -92,40 +94,30 @@ describe('Copilot root reply finalization', () => {
       error_reason: null,
       executed: true,
     });
-    const reply = [
-      '工具实际返回了 2 个节点，名称如下：',
-      '',
-      '1. **文言虚词「之」**（id: `actual:classical-root`，无父节点）',
-      '2. **代词宾语用法**（id: `actual:classical-object`，父节点为「文言虚词「之」」）',
-    ].join('\n');
     const terminal = [
-      reply,
+      '工具返回了 2 个节点：',
       '',
-      '```json',
-      JSON.stringify({ reply_md: reply, relied_on_tool_use_ids: [toolUseId] }),
-      '```',
+      '1. **文言虚词「之」**（id: `actual:classical-root`，根节点）',
+      '2. **代词宾语用法**（id: `actual:classical-object`，子节点）',
+      '',
+      '`returned_nodes_complete_after_expansion=true`，以上即为该范围内全部返回节点。',
+      '',
+      '<!--primary_view:{"source":"tool_result","ref":{"kind":"query_knowledge","id":"actual:classical-root"}}-->',
     ].join('\n');
 
     const result = await value.finalizeTerminal(terminal);
 
-    expect(result).toMatchObject({ accepted: true, replyText: reply });
-    expect(result.receipt.relied_on_tool_use_ids).toEqual([toolUseId]);
-  });
-
-  it('accepts a sole JSON fence without treating the fence as reply prose', async () => {
-    const value = finalizer();
-    const result = await value.finalizeTerminal(
-      ['```json', '{"reply_md":"仅围栏正文","relied_on_tool_use_ids":[]}', '```'].join('\n'),
-    );
-
-    expect(result).toMatchObject({ accepted: true, replyText: '仅围栏正文' });
+    expect(result).toMatchObject({
+      accepted: true,
+      replyText: terminal.slice(0, terminal.indexOf('\n\n<!--primary_view:')),
+    });
+    expect(result.receipt.observed_completed_tool_use_ids).toEqual([toolUseId]);
+    expect(result.receipt.primary_view).toBe('dropped');
   });
 
   it('persists exactly the sealed bytes and compact receipt on the shared inline/durable writer', async () => {
     const value = finalizer();
-    const finalized = await value.finalizeTerminal(
-      JSON.stringify({ reply_md: '已整理为 3 个要点。', relied_on_tool_use_ids: [] }),
-    );
+    const finalized = await value.finalizeTerminal('已整理为 3 个要点。');
     const writes: Array<Record<string, unknown>> = [];
     await writeCopilotReply({} as never, {
       sessionId: 'session_1',
@@ -160,7 +152,7 @@ describe('Copilot root reply finalization', () => {
     ).rejects.toThrow(/digest does not match persisted bytes/);
   });
 
-  it('accepts only distinct, settled, successful current-root provenance ids', async () => {
+  it('server-computes completed root ids while retaining child and failed calls in the trace', async () => {
     const value = finalizer();
     await pre(value, 'mcp__loom__query_events', 'tool_1', { subjectId: 'A01' });
     await pre(value, 'mcp__loom__query_events', 'tool_2', { subjectId: 'A01' });
@@ -193,23 +185,22 @@ describe('Copilot root reply finalization', () => {
       executed: true,
     });
 
-    for (const ids of [['tool_2'], ['foreign_1'], ['tool_1', 'tool_1']]) {
-      const rejected = await value.finalizeTerminal(
-        JSON.stringify({ reply_md: '核对完成。', relied_on_tool_use_ids: ids }),
-      );
-      expect(rejected.accepted).toBe(false);
-    }
     const accepted = await value.finalizeTerminal(
-      JSON.stringify({ reply_md: '核对完成。', relied_on_tool_use_ids: ['tool_1'] }),
+      '核对完成；A01 读取成功，A03 子任务已结束，另一次读取失败。',
     );
     expect(accepted.receipt).toMatchObject({
       trace_call_count: 3,
-      relied_on_tool_use_ids: ['tool_1'],
+      observed_completed_tool_use_ids: ['tool_1'],
       primary_view: 'absent',
     });
+    expect(accepted.accepted).toBe(true);
+
+    const incomplete = finalizer();
+    await pre(incomplete, 'mcp__loom__query_events', 'inflight_1', { subjectId: 'A01' });
+    expect((await incomplete.finalizeTerminal('仍在读取。')).accepted).toBe(false);
   });
 
-  it('rejects a terminal envelope when the trace changes during validation', async () => {
+  it('rejects terminal Markdown when the trace changes during validation', async () => {
     let releaseValidation!: () => void;
     const validationStarted = new Promise<void>((resolve) => {
       releaseValidation = resolve;
@@ -223,9 +214,7 @@ describe('Copilot root reply finalization', () => {
       await validationStarted;
       return { replyText: text, passed: true };
     });
-    const sealing = value.finalizeTerminal(
-      JSON.stringify({ reply_md: '稳定候选。', relied_on_tool_use_ids: [] }),
-    );
+    const sealing = value.finalizeTerminal('稳定候选。');
     await entered;
     const late = await pre(value, 'mcp__tavily__tavily_search', 'late_1', {
       query: '后续搜索',
@@ -239,20 +228,12 @@ describe('Copilot root reply finalization', () => {
     expect(result.replyText).not.toBe('稳定候选。');
   });
 
-  it('fails closed on malformed or prose-contaminated terminal output', async () => {
+  it('fails closed only on empty or over-limit terminal Markdown', async () => {
     const value = finalizer();
-    const candidate = '{"reply_md":"候选","relied_on_tool_use_ids":[]}';
-    for (const terminalText of [
-      '普通正文，不是 JSON',
-      `${candidate} trailing prose`,
-      '{"reply_md":"候选","relied_on_tool_use_ids":[],"extra":true}',
-      ['冲突前言', '```json', candidate, '```'].join('\n'),
-      ['候选', '```json', candidate, '```', '尾随正文'].join('\n'),
-      ['```json', candidate, '```', '```json', candidate, '```'].join('\n'),
-    ]) {
+    for (const terminalText of ['', ' \n\t ', 'x'.repeat(64_001)]) {
       const result = await value.finalizeTerminal(terminalText);
       expect(result.accepted).toBe(false);
-      expect(result.replyText).not.toContain('候选');
+      expect(result.replyText).toBe('这次回复没有完成可验证的收口，暂不展示未封存的草稿。请重试。');
     }
   });
 
@@ -316,10 +297,7 @@ describe('Copilot root reply finalization', () => {
       },
     });
     const result = await value.finalizeTerminal(
-      JSON.stringify({
-        reply_md: '已直接归档，LIGHT 即可，无需 owner 通过 FULL gate 接受。',
-        relied_on_tool_use_ids: [],
-      }),
+      '已直接归档，LIGHT 即可，无需 owner 通过 FULL gate 接受。',
     );
     expect(result.replyText).toContain('owner gate: FULL');
     expect(result.replyText).toContain('direct target write: false');
@@ -347,12 +325,7 @@ describe('Copilot root reply finalization', () => {
       userContextText: '更正上一轮。',
       validateLearningContent: validate,
     });
-    const result = await value.finalizeTerminal(
-      JSON.stringify({
-        reply_md: '缺少更正尾标，并给出练习题。',
-        relied_on_tool_use_ids: [],
-      }),
-    );
+    const result = await value.finalizeTerminal('缺少更正尾标，并给出练习题。');
     expect(result.replyText).toContain('prior_turn_id');
     expect(result.receipt.correction).toBe('clarify');
     expect(result.receipt.learning_content).toBe('blocked');
@@ -372,11 +345,7 @@ describe('Copilot root reply finalization', () => {
       executed: true,
     });
     const result = await value.finalizeTerminal(
-      JSON.stringify({
-        reply_md:
-          '已核对。\n<!--primary_view:{"source":"ephemeral_html","ref":"<p>未校验题面</p>"}-->',
-        relied_on_tool_use_ids: ['read_1'],
-      }),
+      '已核对。\n<!--primary_view:{"source":"ephemeral_html","ref":"<p>未校验题面</p>"}-->',
     );
     expect(result.preparedReply).toEqual({ text: '已核对。' });
     expect(result.receipt.primary_view).toBe('dropped');
@@ -396,10 +365,7 @@ describe('Copilot root reply finalization', () => {
         });
       }
       const result = await value.finalizeTerminal(
-        JSON.stringify({
-          reply_md: '已核对 A01 与 A03 的 exact window；跨 subject 后段仍未被该 window 穷尽。',
-          relied_on_tool_use_ids: ['real_call_0', 'real_call_1'],
-        }),
+        '已核对 A01 与 A03 的 exact window；跨 subject 后段仍未被该 window 穷尽。',
       );
       return result.receipt;
     }

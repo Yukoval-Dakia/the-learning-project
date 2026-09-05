@@ -88,13 +88,13 @@ export function extractPrimaryView(
 export const CopilotReplyFinalizationReceiptSchema = z
   .object({
     protocol_version: z.literal(1),
-    assurance: z.literal('root_attested_structural'),
+    assurance: z.literal('execution_trace_bound'),
     root_task_run_id: z.string().min(1),
     candidate_sha256: z.string().length(64),
     reply_sha256: z.string().length(64),
     trace_sha256: z.string().length(64),
     trace_call_count: z.number().int().min(0).max(COPILOT_REPLY_TRACE_MAX_CALLS),
-    relied_on_tool_use_ids: z.array(z.string().min(1)).max(COPILOT_REPLY_TRACE_MAX_CALLS),
+    observed_completed_tool_use_ids: z.array(z.string().min(1)).max(COPILOT_REPLY_TRACE_MAX_CALLS),
     correction: z.enum(['normal', 'clarify', 'corrected']),
     proposal_disclosure: z.enum(['none', 'server_composed']),
     learning_content: z.enum(['not_applicable', 'passed', 'blocked']),
@@ -279,69 +279,28 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     PostToolUseFailure: [{ hooks: [postHook] }],
   };
 
-  const terminalEnvelope = z
-    .object({
-      reply_md: z.string().min(1).max(MAX_REPLY_CHARS),
-      relied_on_tool_use_ids: z
-        .array(z.string().min(1))
-        .max(COPILOT_REPLY_TRACE_MAX_CALLS)
-        .refine((ids) => new Set(ids).size === ids.length, 'tool use ids must be unique'),
-    })
-    .strict();
-
-  function parseTerminalEnvelope(terminalText: string): z.infer<typeof terminalEnvelope> {
-    const trimmed = terminalText.trim();
-    const parseJson = (json: string) => terminalEnvelope.parse(JSON.parse(json));
-    try {
-      return parseJson(trimmed);
-    } catch {
-      // The SDK may render the root's terminal JSON as a Markdown JSON fence.
-      // Only the exact, unambiguous transport shapes below are tolerated.
-    }
-
-    const openFence = '```json\n';
-    const closeFence = '\n```';
-    const openAt = trimmed.indexOf(openFence);
-    if (openAt < 0 || trimmed.indexOf(openFence, openAt + openFence.length) >= 0) {
-      throw new Error('terminal output does not contain exactly one JSON fence');
-    }
-    const payloadAt = openAt + openFence.length;
-    const closeAt = trimmed.indexOf(closeFence, payloadAt);
-    if (closeAt < 0 || closeAt + closeFence.length !== trimmed.length) {
-      throw new Error('terminal JSON fence must be the sole suffix with no trailing prose');
-    }
-    const parsed = parseJson(trimmed.slice(payloadAt, closeAt));
-    const preamble = trimmed.slice(0, openAt).trim();
-    if (preamble.length > 0 && preamble !== parsed.reply_md.trim()) {
-      throw new Error('terminal preamble must exactly duplicate reply_md');
-    }
-    return parsed;
+  function observedCompletedToolUseIds(): string[] {
+    return trace
+      .filter(
+        (entry) => entry.root_call && entry.status === 'succeeded' && entry.output_sha256 !== null,
+      )
+      .map((entry) => entry.tool_use_id);
   }
 
   async function finalizeTerminal(terminalText: string): Promise<CopilotReplyFinalizationResult> {
     const startVersion = traceVersion;
     const startTraceSha = digestTrace(trace);
     try {
-      const parsedInput = parseTerminalEnvelope(terminalText);
-      const relied = parsedInput.relied_on_tool_use_ids.map((id) => byId.get(id));
-      if (
-        relied.some(
-          (entry) =>
-            !entry?.root_call || entry.status !== 'succeeded' || entry.output_sha256 === null,
-        )
-      ) {
-        throw new Error('relied_on_tool_use_ids must name settled successful current-root calls');
+      if (terminalText.length > MAX_REPLY_CHARS || terminalText.trim().length === 0) {
+        throw new Error('terminal Markdown must be non-empty and within the reply limit');
       }
-      if (trace.some((entry) => entry.status === 'in_flight')) {
-        throw new Error('cannot seal while a tool call is in flight');
+      if (trace.some((entry) => entry.status === 'in_flight' || entry.output_sha256 === null)) {
+        throw new Error('cannot seal an incomplete tool trace');
       }
-      const candidateSha = sha256Text(parsedInput.reply_md);
-      const presented = extractPrimaryView(
-        options.authoritativeReply?.reply ?? parsedInput.reply_md,
-        {
-          taskRunId: options.rootTaskRunId,
-        },
-      );
+      const candidateSha = sha256Text(terminalText);
+      const presented = extractPrimaryView(options.authoritativeReply?.reply ?? terminalText, {
+        taskRunId: options.rootTaskRunId,
+      });
       const correction = resolveCorrectionReply(presented.text, options.correctionContract);
       const disclosure = proposalDisclosure(trace);
       const disclosed = applyProposalDisclosure(correction.reply, disclosure);
@@ -383,13 +342,13 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
           : undefined;
       const receipt: CopilotReplyFinalizationReceipt = {
         protocol_version: 1,
-        assurance: 'root_attested_structural',
+        assurance: 'execution_trace_bound',
         root_task_run_id: options.rootTaskRunId,
         candidate_sha256: candidateSha,
         reply_sha256: sha256Text(fixed),
         trace_sha256: startTraceSha,
         trace_call_count: trace.length,
-        relied_on_tool_use_ids: parsedInput.relied_on_tool_use_ids,
+        observed_completed_tool_use_ids: observedCompletedToolUseIds(),
         correction: options.authoritativeReply?.correction ?? correction.kind,
         proposal_disclosure: disclosure ? 'server_composed' : 'none',
         learning_content: learningBlocked
@@ -433,13 +392,13 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       accepted: false,
       receipt: {
         protocol_version: 1,
-        assurance: 'root_attested_structural',
+        assurance: 'execution_trace_bound',
         root_task_run_id: options.rootTaskRunId,
         candidate_sha256: sha256Text(''),
         reply_sha256: sha256Text(replyText),
         trace_sha256: traceSha,
         trace_call_count: trace.length,
-        relied_on_tool_use_ids: [],
+        observed_completed_tool_use_ids: observedCompletedToolUseIds(),
         correction: 'normal',
         proposal_disclosure: disclosure ? 'server_composed' : 'none',
         learning_content: 'blocked',

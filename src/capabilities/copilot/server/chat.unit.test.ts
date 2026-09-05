@@ -57,28 +57,16 @@ function foregroundInlineAllowedTools(baseTools: readonly string[]): string[] {
 }
 
 function withFixtureFinalizer(deps: CopilotChatDeps): CopilotChatDeps {
-  const run = deps.runAgentTaskFn;
   const stream = deps.streamAgentTaskFn;
   return {
     ...deps,
-    ...(run
-      ? {
-          runAgentTaskFn: async (...args: Parameters<NonNullable<typeof run>>) => {
-            const result = await run(...args);
-            return {
-              ...result,
-              text: JSON.stringify({ reply_md: result.text, relied_on_tool_use_ids: [] }),
-            };
-          },
-        }
-      : {}),
     ...(stream
       ? {
           streamAgentTaskFn: async (...args: Parameters<NonNullable<typeof stream>>) => {
             const result = await stream(...args);
             return {
               ...result,
-              terminalText: JSON.stringify({ reply_md: result.text, relied_on_tool_use_ids: [] }),
+              terminalText: result.terminalText ?? result.text,
             };
           },
         }
@@ -1067,7 +1055,7 @@ describe('runCopilotChat (two-surface routing)', () => {
 });
 
 describe('YUK-939 inline root finalization wiring', () => {
-  it('consumes the root terminal envelope and persists only its finalized reply', async () => {
+  it('consumes root terminal Markdown and persists only its finalized reply', async () => {
     const writes: Array<{ payload?: Record<string, unknown> }> = [];
     const result = await runCopilotChat(
       {} as never,
@@ -1097,7 +1085,7 @@ describe('YUK-939 inline root finalization wiring', () => {
     expect(writes.at(-1)?.payload).toMatchObject({
       reply_md: result.reply,
       reply_finalization: {
-        assurance: 'root_attested_structural',
+        assurance: 'execution_trace_bound',
         root_task_run_id: expect.any(String),
       },
     });

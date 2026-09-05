@@ -1361,7 +1361,7 @@ async function runCopilotChatImpl(
             ...foregroundSubagentCtx,
             ...(finalCanUseTool ? { canUseTool: finalCanUseTool } : {}),
           },
-          // Buffer every candidate delta until the terminal envelope and semantic gates settle;
+          // Buffer every candidate delta until terminal Markdown and semantic gates settle;
           // candidate delta here so a later read tool cannot make already-emitted
           // prose impossible to retract. The finalized, marker-cleaned reply is
           // emitted once only after durable conversation persistence succeeds.

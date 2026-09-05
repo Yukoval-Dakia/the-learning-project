@@ -1,7 +1,7 @@
 // YUK-878 — CopilotTask spec (the single user-facing conversational agent),
 // moved verbatim from the central src/ai quarry. Assistant text remains buffered
-// for progress accounting; only the SDK terminal result carries the root JSON
-// envelope parsed by reply-finalization.ts.
+// for progress accounting; the SDK terminal Markdown is finalized and bound to
+// the server-observed execution trace by reply-finalization.ts.
 
 import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
@@ -16,7 +16,7 @@ const LIVE_TURN_CONTEXT_CONTRACT =
 
 const OWNER_GATE_CONTRACT = `${OWNER_GATE_CONTRACT_BASE}${LIVE_TURN_CONTEXT_CONTRACT}`;
 const ROOT_TERMINAL_CONTRACT =
-  '【最终输出——严格执行】所有读取、提议与 Task 已结束后，terminal result 必须且只能是单个 JSON 对象：{"reply_md":"完整最终回复（含必要尾标）","relied_on_tool_use_ids":["本轮真正承重的已成功工具调用 ID"]}。不要先输出回复正文，不要加代码围栏、前言、尾随文字或额外字段。';
+  '【最终输出——严格执行】所有读取、提议与 Task 已结束后，SDK terminal result 直接输出要向用户展示的完整 Markdown 正文（含必要尾标）。不要输出 JSON envelope，不要重复正文，也不要添加协议说明。工具调用的完成状态与来源由服务端执行 trace 绑定，不要自行列工具调用 ID。';
 
 export const copilotTaskSpec = {
   ownership: 'owned',

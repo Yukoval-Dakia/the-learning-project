@@ -203,12 +203,7 @@ function runCopilotRun(params: RunCopilotRunParams): ReturnType<typeof runCopilo
               ? result
               : {
                   ...result,
-                  terminalText:
-                    result.terminalText ??
-                    JSON.stringify({
-                      reply_md: result.text,
-                      relied_on_tool_use_ids: [],
-                    }),
+                  terminalText: result.terminalText ?? result.text,
                 };
           }) as typeof stream,
         }
@@ -472,9 +467,9 @@ describe('runCopilotRun', () => {
     expect(result.reply).not.toContain('已把水箱题改正');
   });
 
-  it('YUK-939 — durable root consumes terminal JSON and persists one structural receipt', async () => {
+  it('YUK-939 — durable root consumes terminal Markdown and persists one trace-bound receipt', async () => {
     const runId = 'copilot_user_ask_durable_finalized';
-    const run = streamMock('后台回复只由 terminal envelope 收口。', { deltas: ['raw ignored'] });
+    const run = streamMock('后台回复只由 terminal Markdown 收口。', { deltas: ['raw ignored'] });
     const result = await runCopilotRun({
       db: testDb(),
       data: { ...baseData, run_id: runId, session_id: 'sess_durable_finalized' },
@@ -484,7 +479,7 @@ describe('runCopilotRun', () => {
     });
     expect(result).toMatchObject({
       status: 'done',
-      reply: '后台回复只由 terminal envelope 收口。',
+      reply: '后台回复只由 terminal Markdown 收口。',
     });
     expect(run.mock.calls[0]?.[2]).toMatchObject({ hooks: { PreToolUse: expect.any(Array) } });
     expect(run.mock.calls[0]?.[2].allowedTools).not.toContain(
@@ -493,10 +488,11 @@ describe('runCopilotRun', () => {
     expect(run.mock.calls[0]?.[2].mcpServers).not.toHaveProperty('copilot_internal');
     const replies = await copilotReplyEvents('sess_durable_finalized');
     expect(replies[0]?.payload).toMatchObject({
-      reply_md: '后台回复只由 terminal envelope 收口。',
+      reply_md: '后台回复只由 terminal Markdown 收口。',
       reply_finalization: {
-        assurance: 'root_attested_structural',
+        assurance: 'execution_trace_bound',
         root_task_run_id: `copilot_run_tool_${runId}`,
+        observed_completed_tool_use_ids: [],
       },
     });
   });
@@ -504,10 +500,7 @@ describe('runCopilotRun', () => {
   it('YUK-939 — malformed terminal becomes one idempotent nonretry failure', async () => {
     const runId = 'copilot_user_ask_malformed_terminal';
     const sessionId = 'sess_malformed_terminal';
-    const run = streamMock('untrusted assistant preamble', {
-      terminalText:
-        'conflicting prose\n```json\n{"reply_md":"candidate","relied_on_tool_use_ids":[]}\n```',
-    });
+    const run = streamMock('untrusted assistant preamble', { terminalText: ' \n\t ' });
     const params = {
       db: testDb(),
       data: { ...baseData, run_id: runId, session_id: sessionId },
@@ -526,10 +519,9 @@ describe('runCopilotRun', () => {
     expect(replies).toHaveLength(1);
     expect(replies[0]?.payload).toMatchObject({
       reply_md: '这次回复没有完成可验证的收口，暂不展示未封存的草稿。请重试。',
-      reply_finalization: { assurance: 'root_attested_structural' },
-      durable_failure: { reason: 'exhausted', error: 'root terminal envelope rejected' },
+      reply_finalization: { assurance: 'execution_trace_bound' },
+      durable_failure: { reason: 'exhausted', error: 'root terminal reply rejected' },
     });
-    expect(replies[0]?.payload.reply_md).not.toBe('candidate');
     expect(JSON.stringify(replies)).not.toContain('untrusted assistant preamble');
 
     expect(await runCopilotRun(params)).toMatchObject({ status: 'failed' });

@@ -29,13 +29,13 @@ import { taskCatalog } from './task-catalog';
 import { getTaskSystemPrompt } from './task-prompts';
 
 const YUK932_PROMPT_HASHES = {
-  'general:CopilotTask': 'ebb88bd56764735a4868ab4ab59ae7633863349e6d989f018055fecfc889266f',
+  'general:CopilotTask': '915407b2a29286b6307a242355050f7fd24ec2204e1091c1ed07a2cd014a3719',
   'general:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
-  'math:CopilotTask': 'ebb88bd56764735a4868ab4ab59ae7633863349e6d989f018055fecfc889266f',
+  'math:CopilotTask': '915407b2a29286b6307a242355050f7fd24ec2204e1091c1ed07a2cd014a3719',
   'math:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
-  'physics:CopilotTask': 'ebb88bd56764735a4868ab4ab59ae7633863349e6d989f018055fecfc889266f',
+  'physics:CopilotTask': '915407b2a29286b6307a242355050f7fd24ec2204e1091c1ed07a2cd014a3719',
   'physics:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
-  'yuwen:CopilotTask': 'ebb88bd56764735a4868ab4ab59ae7633863349e6d989f018055fecfc889266f',
+  'yuwen:CopilotTask': '915407b2a29286b6307a242355050f7fd24ec2204e1091c1ed07a2cd014a3719',
   'yuwen:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
 } as const;
 
@@ -630,12 +630,12 @@ describe('CopilotTask.systemPrompt — YUK-340 quiet-manuscript reply tone', () 
 });
 
 describe('CopilotTask.systemPrompt — YUK-939 root finalization', () => {
-  it('requires one strict terminal envelope after every tool settles', () => {
+  it('requires direct terminal Markdown after every tool settles', () => {
     const prompt = getTaskSystemPrompt('CopilotTask');
-    expect(prompt).toContain('terminal result 必须且只能是单个 JSON 对象');
-    expect(prompt).toContain('relied_on_tool_use_ids');
-    expect(prompt).toContain('不要加代码围栏、前言、尾随文字或额外字段');
-    expect(prompt).toMatch(/【最终输出——严格执行】[\s\S]+额外字段。$/);
+    expect(prompt).toContain('SDK terminal result 直接输出要向用户展示的完整 Markdown 正文');
+    expect(prompt).toContain('不要输出 JSON envelope');
+    expect(prompt).not.toContain('relied_on_tool_use_ids');
+    expect(prompt).toMatch(/【最终输出——严格执行】[\s\S]+不要自行列工具调用 ID。$/);
   });
 });
 
