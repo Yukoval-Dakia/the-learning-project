@@ -36,6 +36,16 @@
 - root当前独占949工作树，ed693e16已合入main9e02c48b，保留945/964。唯一验证审原5P1已修，
   新发现storage kind无UI导航；root将owner lookup改为canonical ref发布，6DB导航契约与76unit绿。
   208集成unit、49durableDB、typecheck绿。新增4个opt-in actualcases，preflight通过、尚无新付费。
+  以上为actual前状态，当前更新：root59156663，唯一验证审PASS（原5P1+canonical-ref均收口）。
+  8个shipped浏览器case三类/none、inline/durable与刷新重放均绿；本地server82638已停止。
+  949实际7回合estimated $0.0214406071，预留$2.8；新$10池总estimate $0.0345102949、
+  reserve $3.70823，安全剩$6.29177。没有付费调用运行中，旧池$0.28771982仍单列。
+  成功：process/nohero、tool_result精确真实call_id、author_artifact真实保存后artifact。
+  未通过语义：HTML三次错误称关闭消失/未持久化/未写入持久存储；prompt澄清和control返回
+  typed lifecycle都未奏效，当前停付费，repair_primary_view_contract仅只读设计咨询不得写树。
+  首个tool actual因root harness JSON键序误判失败，改isDeepStrictEqual复验过；首失败也计费并保留。
+  docs/planning/evidence/2026-09-06-presentation-control-actual.json封存全部7个原始终文/digests/runIDs，
+  不把结构script pass当人工semantic pass，不持久化CoT。尚无949 PR。
 - 原implement_primary_view_owner已停止；review_primary_view_owner初审已用，唯一验证审正在收口最后canonical-ref问题，不开启第三轮。
   不信任原worker的完成或“lint错误已有”说法，后者被实际diff和review否证。
 
@@ -50,6 +60,9 @@
 - 既有Pipeline/Goal/Knowledge/Import/execution/ReviewSettlement/客户端状态/测试退休均有合并证据。
   946仅原生catalog/body渐进加载验证Done，不建第二catalog、不删quiz。
 - 下一条948Mission、950steer、960分类器与全业务扩展验收继续；不是当前PR即整体完成。
+  960已在独立tlp-wt-report-question-boundary修复并推PR1344 exact960d0b64：29unit+全部localgates+唯一复审。
+  CI34038363273初次仅旧proposal-tools归因DB超时60s+后续preparedstatement错误；精确两例本机通过，
+  已重跑failed lane，同类原762已去重重开Todo。两次worker把新format errors错说baseline，被root纠正。
 - 依赖438/0/47与5capability SCC/20命令消费者保留；不为数字重做已封装learning-intent。
 - 不动原始脏main、不部署/改SoT/backfill/删历史；887需独立生产副本授权，
   951需完整drain窗口；921/572/832HOLD不解锁。

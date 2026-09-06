@@ -16,11 +16,17 @@
 - Owner新增$10验收预算；945两样本共10个真实请求，公开USD卡估算$0.0130696878。
   保守请求预留合计$0.90823；此前余额$0.28771982单列，历史未知费用不填0。
   公开费率估算不冒充账户账单，SDK派生USD保留为独立观察。
+  949另跑7个受控回合（含失败）：estimated $0.0214406071，case预留$2.8。
+  新$10池合计estimated $0.0345102949，保守预留$3.70823、剩$6.29177；当前停付费。
 - YUK949：owner明确选FULL，允许按需短presentation control交互，ADR0061；
   agent看完结果提名，server校验，保留tool_result/artifact/ephemeral_html；不提高预算、不改生产UI。
   初稿ea8367c7的5P1已由81eb7f3e修复，ed693e16集成main9e02c48b。
   唯一验证审确认原5项已修；新发现raw artifact类型无导航，root改为owner-resolved canonical ref。
-  208集成unit+76针对性unit/49durableDB/6引用DB通过；真实模型展示验收待执行，尚未交付。
+  208集成unit+76针对性unit/49durableDB/6引用DB通过；唯一验证审PASS，无第三轮。
+  8个shipped浏览器用例验证三类hero/无hero的inline+durable+刷新恢复，无生产UI改动。
+  actual过程无hero/read引用/author→artifact通过；一次性HTML控制+保存成功，但连续3次保存误述，
+  已完整保留语义失败，不能把script绿色当质量通过。prompt及typed lifecycle事实仍未足够约束模型。
+  root当前59156663；只读咨询最小业务收口方案中。tool_result仍是既有named placeholder，未新增数据卡。
 - YUK961 Done：Agency拥有pool-gap提示政策，Practice仅提交verify事实；
   PR1340 exact69542b2d CI34032977403绿，main50ba305b；48DB/独立review通过。
 - YUK962 Done：5个纯测试文件移入unit，59tests通过，总1043文件不减；
@@ -44,7 +50,9 @@
 ## NEXT
 
 1. YUK949完整呈现actual与exact CI交付，后台/前台/恢复共享发布语义。
-2. YUK960独立lane修报告问句误拦；真实长报告回放+对抗边界，不关闭学习内容保护。
+2. YUK960 exact960d0b64，29unit/typecheck/lint/build及唯一复审PASS，PR1344。
+   CI34038363273原unit/static/build绿；旧attribution DB测试60s超时后连接错误，scoped两例本地绿，
+   同exact失败lane已重跑。原762去重重开Todo，不加timeout、不删保护；960尚未合并。
 3. YUK948显式Mission入口、950同轮steer、960报告问句误拦；保留真实学习内容保护。
 4. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
 5. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
@@ -54,6 +62,7 @@
 ## PARKED
 
 - 951旧mailbox/ToolOperations仅drain-only；退休需零pending/零队列活动覆盖完整重试窗。
+- 762归因DB测试60s超时复发，需查等待与连接生命周期；当前因果未证，不把资源压力当结论。
 - 921多provider、572夜间教研、832HOLD不解锁。
 - 计费、重试、prompt/skill、复杂parser、并发/回滚/恢复、UI安全测试仍保留，不按数量硬删。
 
