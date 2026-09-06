@@ -36,21 +36,38 @@ export const PresentPrimaryViewInputSchema = z
   });
 type PresentPrimaryViewRawInput = z.infer<typeof PresentPrimaryViewInputSchema>;
 
+const PresentationControlResultSchema = PresentPrimaryViewOutputSchema.and(
+  z.object({
+    presentation_lifecycle: z.object({
+      saved_with_conversation: z.literal(true),
+      discarded_on_close: z.literal(false),
+      standalone_artifact: z.boolean(),
+    }),
+  }),
+);
+
 /** A nomination only. The reply finalizer is the authority that can publish it. */
 export const presentPrimaryViewTool: DomainTool<
   PresentPrimaryViewRawInput,
-  PresentPrimaryViewInput
+  z.infer<typeof PresentationControlResultSchema>
 > = {
   name: 'present_primary_view',
   description:
     'Nominate one completed result as the user-facing primary view after reviewing it. For tool_result, ref.kind is the exact DomainTool name and ref.id is that successful root call tool_use_id. For artifact, ref.id names an existing live artifact and ref.kind must match its artifact type. ephemeral_html is limited to 32000 characters. The server validates every nomination.',
   effect: 'control',
   inputSchema: PresentPrimaryViewInputSchema,
-  outputSchema: PresentPrimaryViewOutputSchema,
+  outputSchema: PresentationControlResultSchema,
   costClass: 'local',
   mirrorEvent: 'never',
   async execute(_ctx, input) {
-    return PresentPrimaryViewOutputSchema.parse(input);
+    return {
+      ...PresentPrimaryViewOutputSchema.parse(input),
+      presentation_lifecycle: {
+        saved_with_conversation: true as const,
+        discarded_on_close: false as const,
+        standalone_artifact: input.source === 'artifact',
+      },
+    };
   },
   summarize(_input, output) {
     return `primary view nominated: ${output.source}`;

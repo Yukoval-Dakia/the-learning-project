@@ -34,7 +34,7 @@ const LEGACY_MODEL_CONTROL_NAMES = [
 ] as const;
 
 const OWNED_TOOL_CONTRACT_HASHES = {
-  present_primary_view: '1e6f4e78ad855afefe2c98fcbd60cfedb8423919b42021e97e0c94e714c23685',
+  present_primary_view: 'b1e110bc924f30ee35c7f21c9a3b7dfac0ad6d7fa1274e856c69f7bcb64b31e2',
   query_events: 'f3098863057a3ca16c3180c594c634e2f09bde171af1884ed125740359429587',
   search_memory_facts: '44cc3f998658c5568711443e9e17c44135055493a39ac9971e0353dd51d9f929',
 } as const;

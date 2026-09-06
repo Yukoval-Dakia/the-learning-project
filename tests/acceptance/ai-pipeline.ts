@@ -876,7 +876,7 @@ async function main(): Promise<void> {
         }
         if (
           caseName === 'presentation-html' &&
-          /关闭[^。\n]{0,30}消失|未存入系统|没有持久化/u.test(result.reply)
+          /关闭[^。\n]{0,30}消失|未存入系统|(?:没有|未)持久化|仅本轮可见/u.test(result.reply)
         )
           throw new Error(`${caseName}: unsupported claim about conversation persistence`);
         if (latestEvidence)

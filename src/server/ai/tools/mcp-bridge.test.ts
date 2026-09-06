@@ -490,7 +490,14 @@ describe('buildMcpServerFromRegistry', () => {
         effect: 'control',
         tool_use_id: 'toolu_present_1',
         input: nomination,
-        output: nomination,
+        output: {
+          ...nomination,
+          presentation_lifecycle: {
+            saved_with_conversation: true,
+            discarded_on_close: false,
+            standalone_artifact: false,
+          },
+        },
         error_reason: null,
         executed: true,
       },
