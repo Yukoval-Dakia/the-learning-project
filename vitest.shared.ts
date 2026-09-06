@@ -282,6 +282,10 @@ export const fastTestInclude = [
   // P5.1 / YUK-143 — pure (no-DB) budget constants + per-message context throttle.
   'src/server/ai/tools/budgets.test.ts',
   'src/server/ai/tools/context-throttle.test.ts',
+  // YUK-962 — pure no-DB provider admission config and provenance arithmetic.
+  // src/server/ai/** has no unit glob, so enumerate these fast tests explicitly.
+  'src/server/ai/provider-attempt-admission-config.test.ts',
+  'src/server/ai/provenance.test.ts',
   // M3 (YUK-317) — body-blocks-snippet / hub-dismiss / note-refine-triggers 三条
   // unit 条目已随 notes 域迁入 src/capabilities/notes/（重命名 *.unit.test.ts），
   // 由约定 glob 接管。editing-session / presence 留旧位置（dwell ⚖️ 争议行未裁）。
