@@ -12,9 +12,6 @@ import {
   sanitizeToolResultForSse,
   sanitizeToolUseForSse,
 } from '@/capabilities/copilot/api/tool-use-sse';
-// YUK-575 (N6/MF-C) — the pickup-timeout deadline stamped on the QUEUED event so a
-// consumer (PR2 Dock, isDurablePickupStalled) can detect a worker-down stall.
-import { PICKUP_TIMEOUT_MS } from '@/capabilities/copilot/durable-pickup';
 import {
   CopilotChatRequest,
   runCopilotChatStreaming,
@@ -32,16 +29,18 @@ import {
   COPILOT_IDEMPOTENCY_KEY_MAX_LENGTH,
   type CopilotDurableAcceptance,
   type ReserveCopilotDurableAcceptanceResult,
+  dispatchSessionHead,
   findCopilotDurableAcceptance,
   hasTerminalCopilotRun,
   hashCopilotDurableInput,
+  isCopilotSessionQueueRun,
   reconcileCopilotDurableAcceptance,
   reserveCopilotDurableAcceptance,
   withCopilotDurableDispatchLock,
 } from '@/capabilities/copilot/server/durable-dispatch';
 import { db } from '@/db/client';
 import { ApiError, HTTP_PROVIDER_SESSION_BUDGET_MS, errorResponse } from '@/kernel/http';
-import { getStartedBoss } from '@/server/boss/client';
+import { fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
 import { writeJobEvent } from '@/server/events/writer';
 import { checkRateLimit } from '@/server/http/rate-limit';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
@@ -132,6 +131,19 @@ async function dispatchAcceptedRun(
   parsed: ParsedCopilotChatRequest,
 ): Promise<void> {
   try {
+    if (await isCopilotSessionQueueRun(db, acceptance.runId)) {
+      // v2 acceptance already committed its physical head job atomically. This
+      // idempotent wake only matters for an accepted turn that was waiting when
+      // a prior terminal settled between request attempts.
+      await dispatchSessionHead(db, acceptance.sessionId, {
+        boss: await getStartedBoss(),
+        transactionDb: fromPgBossDrizzleTx,
+      });
+      return;
+    }
+
+    // Retained v1 acceptances did not persist a replayable worker job body or a
+    // DISPATCHED marker. Keep their old exact-run recovery path during rollout.
     const outcome = await withCopilotDurableDispatchLock(db, acceptance.runId, async (tx) => {
       // A terminal replay is still the same accepted operation. Never recreate a
       // deleted pg-boss row after its durable public result already exists.
@@ -383,19 +395,35 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
       // a changed input is an explicit 409 rather than a second paid run.
       let reservation: ReserveCopilotDurableAcceptanceResult;
       try {
-        reservation = await reserveCopilotDurableAcceptance(db, {
-          sessionId: conv.sessionId,
-          userMessage: parsed.user_message,
-          inputHash: durableInputHash,
-          ...(idempotencyKey ? { idempotencyKey } : {}),
-          queuedPayload: {
-            session_id: conv.sessionId,
-            triggered_by: parsed.triggered_by,
-            pickup_deadline_ms: Date.now() + PICKUP_TIMEOUT_MS,
-            dispatch: { source: 'request_flag' },
+        reservation = await reserveCopilotDurableAcceptance(
+          db,
+          {
+            sessionId: conv.sessionId,
+            userMessage: parsed.user_message,
+            inputHash: durableInputHash,
+            ...(idempotencyKey ? { idempotencyKey } : {}),
+            queuedPayload: {
+              session_id: conv.sessionId,
+              triggered_by: parsed.triggered_by,
+              dispatch: { source: 'request_flag' },
+            },
+            jobData: {
+              user_message: parsed.user_message,
+              triggered_by: parsed.triggered_by,
+              ...(parsed.chip_kind ? { chip_kind: parsed.chip_kind } : {}),
+              ...(parsed.ambient_context ? { ambient: parsed.ambient_context } : {}),
+              ...(parsed.correction_target_turn_id
+                ? { correction_target_turn_id: parsed.correction_target_turn_id }
+                : {}),
+              ...(parsed.skill_context ? { skill_context: parsed.skill_context } : {}),
+            },
+            assertActive: () => assertRequestActive(req.signal),
           },
-          assertActive: () => assertRequestActive(req.signal),
-        });
+          {
+            boss: await getStartedBoss(),
+            transactionDb: fromPgBossDrizzleTx,
+          },
+        );
       } catch (reserveErr) {
         if (!idempotencyKey) throw reserveErr;
         let reconciled: CopilotDurableAcceptance | null;
@@ -429,20 +457,20 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
       }
       acceptance = reservation.acceptance;
       // ask + QUEUED is now committed: this is the server-side acceptance
-      // boundary. Do not strand that durable run if the client disconnects in
-      // the commit→send window. Dispatch must finish; a lost response is safely
-      // recovered by replaying the same Idempotency-Key.
-      // 3) 投递 durable job。run 在 worker 进程跑、进度落 job_events、SSE 经泛化
+      // boundary. If this turn was the session head, its physical job and
+      // DISPATCHED marker committed in that same transaction; otherwise its
+      // complete job_data remains accepted for a later terminal wake.
+      // 3) 幂等唤醒当前 session head。run 在 worker 进程跑、进度落 job_events、SSE 经泛化
       //    GET /api/jobs/copilot_run/[run_id]/events（YUK-310 caller-agnostic 路由，
       //    copilot_run 已在其 allowlist）重连；dock 消费端由 YUK-596（PR2）接。
-      //    YUK-575 (S4) — ambient RIDE 进 payload（request-only、从不 persisted，worker
-      //    拾取时无处可重读；conversation_history / learner-state 则从事件重建）。
+      //    ambient/chip/correction/skill context 随 QUEUED job_data 持久化，等待 turn
+      //    被推进时无需客户端重发；conversation_history / learner-state 仍从事件重建。
       await dispatchAcceptedRun(acceptance, parsed);
       return durableAcceptanceResponse(acceptance);
     } catch (err) {
-      // dispatchAcceptedRun owns the complete dispatch-lock critical section,
-      // including definitive enqueue-failure compensation. Ambiguous send or
-      // readback state intentionally leaves QUEUED for same-key recovery.
+      // Session-queue v2 acceptance and physical head dispatch roll back
+      // together. dispatchAcceptedRun retains the old compensation/readback
+      // protocol only for legacy acceptances encountered during rollout.
       // enqueue 链路任一步失败 → 普通 JSON error（绝不开半截 SSE 流）。run 未受理。
       return errorResponse(err);
     } finally {

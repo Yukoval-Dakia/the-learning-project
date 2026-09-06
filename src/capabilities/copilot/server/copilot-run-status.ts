@@ -17,6 +17,8 @@ export const COPILOT_RUN_TABLE = 'copilot_run' as const;
 export const COPILOT_RUN_EVENTS = {
   /** enqueue 落地后、handler 拾起前的初态（route dispatch 写）。 */
   QUEUED: 'copilot_run.queued',
+  /** Session head 的物理 pg-boss job 与此事件在同一事务内提交。 */
+  DISPATCHED: 'copilot_run.dispatched',
   /** handler 拾起、SDK run 启动前。 */
   STARTED: 'copilot_run.started',
   /** deterministic setup 完成、紧邻 paid model/tool gateway 的 at-most-once fence。 */

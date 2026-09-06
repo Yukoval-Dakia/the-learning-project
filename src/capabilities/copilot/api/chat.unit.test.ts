@@ -7,6 +7,7 @@ const writeReplyMock = vi.hoisted(() => vi.fn());
 const bossSendMock = vi.hoisted(() => vi.fn());
 const bossGetJobByIdMock = vi.hoisted(() => vi.fn());
 const getStartedBossMock = vi.hoisted(() => vi.fn());
+const fromPgBossDrizzleTxMock = vi.hoisted(() => vi.fn());
 const findOrCreateMock = vi.hoisted(() => vi.fn());
 const writeJobEventMock = vi.hoisted(() => vi.fn());
 const shouldEnqueueMock = vi.hoisted(() => vi.fn());
@@ -17,6 +18,8 @@ const reserveAcceptanceMock = vi.hoisted(() => vi.fn());
 const hasTerminalMock = vi.hoisted(() => vi.fn());
 const withDispatchLockMock = vi.hoisted(() => vi.fn());
 const hashDurableInputMock = vi.hoisted(() => vi.fn());
+const isSessionQueueRunMock = vi.hoisted(() => vi.fn());
+const dispatchSessionHeadMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/db/client', () => ({ db: { execute: dbExecuteMock } }));
 // YUK-364 — schema 镜像真实形态的关键字段（durable / triggered_by / user_message），
@@ -63,8 +66,13 @@ vi.mock('@/capabilities/copilot/server/durable-dispatch', () => ({
   hasTerminalCopilotRun: hasTerminalMock,
   withCopilotDurableDispatchLock: withDispatchLockMock,
   hashCopilotDurableInput: hashDurableInputMock,
+  isCopilotSessionQueueRun: isSessionQueueRunMock,
+  dispatchSessionHead: dispatchSessionHeadMock,
 }));
-vi.mock('@/server/boss/client', () => ({ getStartedBoss: getStartedBossMock }));
+vi.mock('@/server/boss/client', () => ({
+  getStartedBoss: getStartedBossMock,
+  fromPgBossDrizzleTx: fromPgBossDrizzleTxMock,
+}));
 vi.mock('@/server/events/writer', () => ({ writeJobEvent: writeJobEventMock }));
 vi.mock('@/server/runtime-env', () => ({ shouldEnqueueBackgroundJobs: shouldEnqueueMock }));
 vi.mock('@/server/session', () => ({
@@ -97,6 +105,8 @@ beforeEach(() => {
   findAcceptanceMock.mockReset().mockResolvedValue(null);
   reconcileAcceptanceMock.mockReset().mockResolvedValue(null);
   hashDurableInputMock.mockReset().mockImplementation((input) => JSON.stringify(input));
+  isSessionQueueRunMock.mockReset().mockResolvedValue(false);
+  dispatchSessionHeadMock.mockReset().mockResolvedValue(null);
   hasTerminalMock.mockReset().mockResolvedValue(false);
   withDispatchLockMock
     .mockReset()
@@ -138,6 +148,7 @@ beforeEach(() => {
     send: bossSendMock,
     getJobById: bossGetJobByIdMock,
   });
+  fromPgBossDrizzleTxMock.mockReset();
 });
 
 afterEach(() => {
@@ -644,6 +655,27 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
         event_type: 'copilot_run.queued',
       }),
     );
+    expect(reserveAcceptanceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ execute: dbExecuteMock }),
+      expect.objectContaining({
+        queuedPayload: {
+          session_id: 'sess_1',
+          triggered_by: 'chat',
+          dispatch: { source: 'request_flag' },
+        },
+        jobData: {
+          user_message: '讲讲这道题',
+          triggered_by: 'chat',
+        },
+      }),
+      {
+        boss: expect.objectContaining({
+          send: bossSendMock,
+          getJobById: bossGetJobByIdMock,
+        }),
+        transactionDb: expect.any(Function),
+      },
+    );
     // 投递 durable job——session_id 透传进 job data（handler F1 写 reply 要用）。
     expect(bossSendMock).toHaveBeenCalledWith(
       'copilot_run',
@@ -666,6 +698,39 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     const sendOrder = bossSendMock.mock.invocationCallOrder[0] as number;
     expect(askOrder).toBeLessThan(queuedOrder);
     expect(queuedOrder).toBeLessThan(sendOrder);
+  });
+
+  it('replays a v2 acceptance through the session-head wake without legacy redispatch', async () => {
+    shouldEnqueueMock.mockReturnValue(true);
+    const acceptance = {
+      runId: 'copilot_user_ask_v2_replay',
+      sessionId: 'sess_v2_replay',
+      inputHash: 'v2-input-hash',
+      bossJobId: '22222222-2222-5222-8222-222222222222',
+    };
+    findAcceptanceMock.mockResolvedValue(acceptance);
+    hashDurableInputMock.mockReturnValue(acceptance.inputHash);
+    isSessionQueueRunMock.mockResolvedValue(true);
+
+    const response = await post(
+      { user_message: '继续核对上一轮证据。', triggered_by: 'chat', durable: true },
+      'v2-replay-key',
+    );
+
+    expect(response.status).toBe(202);
+    expect(dispatchSessionHeadMock).toHaveBeenCalledWith(
+      expect.objectContaining({ execute: dbExecuteMock }),
+      acceptance.sessionId,
+      {
+        boss: expect.objectContaining({
+          send: bossSendMock,
+          getJobById: bossGetJobByIdMock,
+        }),
+        transactionDb: expect.any(Function),
+      },
+    );
+    expect(bossSendMock).not.toHaveBeenCalled();
+    expect(reserveAcceptanceMock).not.toHaveBeenCalled();
   });
 
   it('F2 — boss.send throw（user_ask/QUEUED 已 commit）→ 补偿写 FAILED + reply error event，该轮不 phantom，返 500', async () => {
@@ -874,7 +939,7 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     // is no committed phantom to compensate and no job may be sent.
     expect(writeJobEventMock).not.toHaveBeenCalled();
     expect(writeReplyMock).not.toHaveBeenCalled();
-    expect(getStartedBossMock).not.toHaveBeenCalled();
+    expect(getStartedBossMock).toHaveBeenCalledTimes(1);
     expect(bossSendMock).not.toHaveBeenCalled();
   });
 
@@ -925,7 +990,7 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
       expect.objectContaining({ event_type: 'copilot_run.queued' }),
     );
     expect(writeReplyMock).not.toHaveBeenCalled();
-    expect(getStartedBossMock).not.toHaveBeenCalled();
+    expect(getStartedBossMock).toHaveBeenCalledTimes(1);
     expect(bossSendMock).not.toHaveBeenCalled();
   });
 

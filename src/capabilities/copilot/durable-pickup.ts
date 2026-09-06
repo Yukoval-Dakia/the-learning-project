@@ -6,9 +6,10 @@
 // So if the worker is down / crash-looping / started without RW_WORKER, a durable
 // run is enqueued but never picked up: the run sits at QUEUED forever (deriveCopilot
 // RunStatus → 'queued'), an infinite spinner with no error. This module is the
-// honest DETECTION primitive: the dispatch stamps a `pickup_deadline_ms` on the
-// QUEUED event, and this pure predicate flags a run that blew past it without the
-// worker ever touching it.
+// honest DETECTION primitive: a physical dispatch stamps `pickup_deadline_ms`
+// on DISPATCHED (or, for legacy runs, QUEUED), and this pure predicate flags a
+// run that blew past it without the worker ever touching it. An accepted v2
+// turn waiting behind an active session head has no pickup clock yet.
 //
 // The Dock consumes the same pure contract and surfaces a recoverable "still
 // waiting" state after the deadline. It deliberately does NOT fail the run or
@@ -47,11 +48,17 @@ export function hasDurableWorkerTouch(events: DurablePickupEvent[]): boolean {
   return events.some(isDurableWorkerTouchEvent);
 }
 
-/** Return the first valid QUEUED pickup deadline carried by the durable log. */
+/**
+ * Return the physical-dispatch pickup deadline. Session-queue v2 turns may
+ * remain accepted-but-waiting with only QUEUED, so their clock starts at
+ * DISPATCHED. Legacy runs keep their deadline on QUEUED.
+ */
 export function getDurablePickupDeadlineMs(events: DurablePickupEvent[]): number | undefined {
+  const dispatched = events.find((event) => event.event_type === COPILOT_RUN_EVENTS.DISPATCHED);
   const queued = events.find((event) => event.event_type === COPILOT_RUN_EVENTS.QUEUED);
-  const deadline = (queued?.payload as { pickup_deadline_ms?: unknown } | undefined)
-    ?.pickup_deadline_ms;
+  const deadline = (
+    (dispatched?.payload ?? queued?.payload) as { pickup_deadline_ms?: unknown } | undefined
+  )?.pickup_deadline_ms;
   return typeof deadline === 'number' && Number.isFinite(deadline) && deadline > 0
     ? deadline
     : undefined;
@@ -60,12 +67,12 @@ export function getDurablePickupDeadlineMs(events: DurablePickupEvent[]): number
 /**
  * Pure predicate: has this durable run stalled un-picked-up past its pickup deadline?
  *
- * true ⟺ a QUEUED event exists carrying a numeric `pickup_deadline_ms`, the worker
+ * true ⟺ a physical dispatch (or legacy QUEUED) carries a numeric deadline, the worker
  * has NOT yet touched the run (no STARTED/EXECUTION_STARTED/DELTA/STEP/REPLY/DONE/FAILED),
  * and `nowMs` is past the deadline. Any worker touch (even a terminal FAILED) →
- * false (the run is not stalled-at-pickup; it ran). No deadline / no QUEUED → false
- * (nothing to judge). Unit-tested in durable-pickup.unit.test.ts; consumed by the
- * PR2 Dock run-state renderer (YUK-596).
+ * false (the run is not stalled-at-pickup; it ran). No dispatch deadline → false
+ * (nothing to judge). Unit-tested in durable-pickup.unit.test.ts; consumed by
+ * the PR2 Dock run-state renderer (YUK-596).
  */
 export function isDurablePickupStalled(events: DurablePickupEvent[], nowMs: number): boolean {
   const deadline = getDurablePickupDeadlineMs(events);

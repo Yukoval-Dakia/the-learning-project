@@ -56,6 +56,7 @@ function mappedBoss(
   activeCount: number,
 ): CopilotRunReconcileBoss {
   return {
+    send: vi.fn(async () => null),
     getJobById: vi.fn(async (_queue, id) => {
       const state = states.get(id) ?? 'missing';
       if (state === 'unknown') throw new Error(`queue lookup unavailable for ${id}`);

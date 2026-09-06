@@ -2,6 +2,10 @@ import { PgBoss } from 'pg-boss';
 
 import { getServerEnv } from '@/server/env';
 
+// Queue-owning callers import one boss runtime port for both the singleton and
+// pg-boss's transaction adapter; the adapter itself remains independently testable.
+export { fromPgBossDrizzleTx } from './pg-boss-drizzle';
+
 // Singleton PgBoss instance —— pg-boss 内部维护连接池，每进程一个。
 // 复用模式与 src/db/client.ts 的 db 单例一致。
 //

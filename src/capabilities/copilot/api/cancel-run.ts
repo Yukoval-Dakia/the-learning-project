@@ -21,15 +21,24 @@ import { CopilotRunParamsSchema } from './contracts';
 
 type CancelRunStatus = 'cancel_requested' | 'cancelled' | 'already_requested' | 'already_settled';
 
+export interface CancelCopilotRunHandlerDeps {
+  /** Wake the next accepted session turn after this cancellation commits. */
+  wakeSession?: (sessionId: string) => Promise<unknown>;
+}
+
 function response(runId: string, status: CancelRunStatus): Response {
   return Response.json({ ok: true, run_id: runId, status });
 }
 
 /** Request cooperative cancellation of one accepted durable Copilot run. */
-export async function POST(_req: Request, params: Record<string, string>): Promise<Response> {
+async function cancelCopilotRun(
+  _req: Request,
+  params: Record<string, string>,
+  wakeSession: CancelCopilotRunHandlerDeps['wakeSession'],
+): Promise<Response> {
   try {
     const { id: runId } = CopilotRunParamsSchema.parse(params);
-    const status = await withCopilotDurableDispatchLock(db, runId, async (tx) => {
+    const result = await withCopilotDurableDispatchLock(db, runId, async (tx) => {
       // Lock order is always dispatch -> settlement. The worker's paid loop
       // holds neither lock; only its fence and short outcome commit do.
       await acquireCopilotExecutionSettlementLock(tx, runId);
@@ -85,7 +94,7 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
       const hasRunningOwnedOperation = runningOwnedOperations.length > 0;
 
       if (events.some(isCopilotRunTerminalEvent) && !hasRunningOwnedOperation) {
-        return 'already_settled' as const;
+        return { status: 'already_settled' as const, sessionId: acceptance.sessionId };
       }
 
       // The domain outcome is authoritative even when its public DONE/FAILED
@@ -101,7 +110,9 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
           ),
         )
         .limit(1);
-      if (markers.length > 0 && !hasRunningOwnedOperation) return 'already_settled' as const;
+      if (markers.length > 0 && !hasRunningOwnedOperation) {
+        return { status: 'already_settled' as const, sessionId: acceptance.sessionId };
+      }
 
       const executionStarted = events.some(
         (item) => item.event_type === COPILOT_RUN_EVENTS.EXECUTION_STARTED,
@@ -129,9 +140,9 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
               checkpoint_event_id: runId,
             },
           });
-          return 'cancelled' as const;
+          return { status: 'cancelled' as const, sessionId: acceptance.sessionId };
         }
-        return 'already_requested' as const;
+        return { status: 'already_requested' as const, sessionId: acceptance.sessionId };
       }
 
       await writeJobEvent(tx, {
@@ -142,7 +153,9 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
       });
       await cancelSubagentsForParentTx(tx, acceptance.sessionId, toolTaskRunId, 'user');
 
-      if (executionStarted || hasRunningOwnedOperation) return 'cancel_requested' as const;
+      if (executionStarted || hasRunningOwnedOperation) {
+        return { status: 'cancel_requested' as const, sessionId: acceptance.sessionId };
+      }
 
       // The shared dispatch lock makes this atomic with the paid-execution
       // fence: once this commits, the worker cannot enter model/tool execution.
@@ -162,10 +175,22 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
           checkpoint_event_id: runId,
         },
       });
-      return 'cancelled' as const;
+      return { status: 'cancelled' as const, sessionId: acceptance.sessionId };
     });
 
-    return response(runId, status);
+    if (wakeSession && (result.status === 'cancelled' || result.status === 'already_settled')) {
+      // Cancellation/terminalization is already committed. A wake failure must
+      // not turn a successful Stop into a false failure; the reconciler retries.
+      await wakeSession(result.sessionId).catch((error) => {
+        console.error('[copilot/cancel-run] failed to dispatch next session head', {
+          session_id: result.sessionId,
+          run_id: runId,
+          error,
+        });
+      });
+    }
+
+    return response(runId, result.status);
   } catch (err) {
     if (err instanceof ZodError) {
       return errorResponse(
@@ -175,3 +200,11 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
     return errorResponse(err);
   }
 }
+
+export function buildCancelCopilotRunHandler(deps: CancelCopilotRunHandlerDeps = {}) {
+  return (req: Request, params: Record<string, string>) =>
+    cancelCopilotRun(req, params, deps.wakeSession);
+}
+
+/** Direct test/compatibility seam; the manifest injects the production session wake. */
+export const POST = buildCancelCopilotRunHandler();
