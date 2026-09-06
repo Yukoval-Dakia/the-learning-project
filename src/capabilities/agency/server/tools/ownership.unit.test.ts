@@ -1,5 +1,4 @@
-import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -11,8 +10,6 @@ import {
   PROPOSE_WRITE_TOOLS,
   READ_TOOLS,
 } from '@/kernel/tools/allowlists';
-import type { DomainTool } from '@/kernel/tools/types';
-import { zodToJsonSchemaCompat } from '@/kernel/zod-json-schema';
 import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
 import { __resetRegistryForTests, getTool } from '@/server/ai/tools/registry';
 
@@ -26,15 +23,14 @@ const AGENCY_TOOL_NAMES = [
   'write_agent_note',
 ] as const;
 
-const AGENCY_TOOL_CONTRACT_HASHES = {
-  get_learning_item_context: 'f77f6fca2b98528000982a2dc728d6c10dcf1cc424b0271843a9ca0deea1da9a',
-  propose_learning_item_completion:
-    '8099f4796d96a2ec50d3bc738b55aeb09ce69c8bb951250a39888d8aa5d0fb25',
-  propose_learning_item_relearn: '810d7684325138b1309c7952db3c8cf9a29f59bb882e02cfd12d5fdcb38eaadd',
-  propose_learning_item_defer: 'de99d9f68cebfcef8ac33101fa4456d12f8271ce12b12c58dc31e3c9d38763c5',
-  propose_learning_item_archive: '82242132dbd7bbf38c06a97203837bb6e06f024e4f8ff097bf0543c3777861f3',
-  read_agent_notes: 'f3a39469959a1a992f8de1a3720ec83db855cc0d088f0b41737dac08c97fc735',
-  write_agent_note: 'd124de33522d813f7de541a1ce231432413f0ea3fecbe3e3bbb552c17e3690b3',
+const AGENCY_TOOL_EFFECTS = {
+  get_learning_item_context: 'read',
+  propose_learning_item_completion: 'propose',
+  propose_learning_item_relearn: 'propose',
+  propose_learning_item_defer: 'propose',
+  propose_learning_item_archive: 'propose',
+  read_agent_notes: 'read',
+  write_agent_note: 'write',
 } as const;
 
 const AGENCY_TOOL_EXPOSURES = {
@@ -79,44 +75,9 @@ function source(path: string): string {
   return readFileSync(join(process.cwd(), path), 'utf8');
 }
 
-function contractFingerprint(tool: DomainTool<unknown, unknown>): string {
-  const contract = {
-    name: tool.name,
-    effect: tool.effect,
-    costClass: tool.costClass,
-    mirrorEvent: tool.mirrorEvent,
-    inputSchema: zodToJsonSchemaCompat(tool.inputSchema, {
-      target: 'draft-07',
-      io: 'input',
-      reused: 'inline',
-    }),
-    outputSchema: zodToJsonSchemaCompat(tool.outputSchema, {
-      target: 'draft-07',
-      io: 'input',
-      reused: 'inline',
-    }),
-  };
-  return createHash('sha256').update(JSON.stringify(contract)).digest('hex');
-}
-
 describe('Agency tool and proposal lifecycle ownership', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-  });
-
-  it('moves learning-item tools out of mixed central modules', () => {
-    const readerPath = 'src/capabilities/agency/server/tools/learning-item-context.ts';
-    const proposalsPath = 'src/capabilities/agency/server/tools/proposal-tools.ts';
-    expect(existsSync(join(process.cwd(), readerPath))).toBe(true);
-    expect(existsSync(join(process.cwd(), proposalsPath))).toBe(true);
-
-    // YUK-892 — the transitional central concrete tool files are deleted wholesale.
-    expect(existsSync(join(process.cwd(), 'src/server/ai/tools/context-readers.ts'))).toBe(false);
-    expect(existsSync(join(process.cwd(), 'src/server/ai/tools/proposal-tools.ts'))).toBe(false);
-
-    const manifest = source('src/capabilities/agency/manifest.ts');
-    expect(manifest).not.toContain('@/server/ai/tools/context-readers');
-    expect(manifest).not.toContain('@/server/ai/tools/proposal-tools');
   });
 
   it('keeps the Agency reader free of hidden writes', () => {
@@ -125,7 +86,7 @@ describe('Agency tool and proposal lifecycle ownership', () => {
     expect(reader).not.toMatch(/\bwrite(?:AiProposal|JobEvent|SessionEvent)\s*\(/);
   });
 
-  it('preserves migrated contracts alongside the new owner generation tool', async () => {
+  it('loads owned tools with the intended effects, costs and permissions', async () => {
     expect(agencyCapability.copilotTools?.tools.map((tool) => tool.name).sort()).toEqual(
       [...AGENCY_TOOL_NAMES, 'generate_goal_outline'].sort(),
     );
@@ -135,7 +96,12 @@ describe('Agency tool and proposal lifecycle ownership', () => {
       const tool = getTool(name);
       expect(tool, name).toBeDefined();
       if (!tool) throw new Error(`missing Agency tool: ${name}`);
-      expect(contractFingerprint(tool), name).toBe(AGENCY_TOOL_CONTRACT_HASHES[name]);
+      expect(tool.name).toBe(name);
+      expect(tool.effect).toBe(AGENCY_TOOL_EFFECTS[name]);
+      expect(tool.costClass).toBe('local');
+      expect(tool.mirrorEvent).toBe(
+        name === 'get_learning_item_context' ? 'when_user_visible' : 'when_causal',
+      );
       expect(fullAllowlist.some((allowedName) => allowedName === name)).toBe(true);
       expect(
         Object.entries(DOMAIN_TOOL_ALLOWLISTS)

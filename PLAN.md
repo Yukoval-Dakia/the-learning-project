@@ -1,13 +1,19 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：967/969已全绿合并；762归因测试深比较耗时已定位并修复，待review/exactCI，整体goal active。
+> Linear 是权威 tracker；更新于 2026-09-07：762已全绿合并；970退休剩余迁移期测试，生产副本尚未授权，整体goal active。
 
 ## NOW
 
-- Active 762：root独占tlp-wt-unified-conversation / codex/yuk-762-db-context-identity，base main5cac4753。
+- Active 970：root独占tlp-wt-unified-conversation / codex/yuk-970-tool-contract-tests，base main15eceba0。
+  退休Agency/Ingestion整体schema迁移指纹、指纹自测及Agency/Copilot重复旧路径断言；明确effect/cost/mirror断言。
+  保留真实loader、全部权限、公共reader、central registry、legacy drain及rich DB行为检查；15unit/103DB通过。
+  architecture/capability audits与typecheck/lint/build通过；独立初审PASS无finding，待PR/exactCI，无产品修改/paid。
+  录入完成/判分落库/知识合并只读复核已有owner与事务回滚；判分同步/队列不等于Copilot产品生命周期分裂。
+- YUK762 Done：PR1351 exact36da8192347383de1d0f4d73c2f011f5ad56fa15，CI34065494164首轮全绿，
+  2026-09-06T23:04:09Z squash main15eceba0dfebe5b4b06ac3cf3e52f69be12df597，Linear Done，未部署。
   原归因case14460ms中14390ms耗在深比较Drizzle连接对象；改直接连接身份断言后同case34ms。
   23项全文件DB通过（1.47s测试体）；原业务/权限/幂等/失败断言与60s门槛保留，无产品代码变化。
-  初审无P0/P1，typecheck/lint/build通过，待新PR/exactCI；不是把旧CI重跑绿当根因修复。
+  初审无P0/P1，typecheck/lint/build通过；不是把旧CI重跑绿当根因修复。
   全ADR漂移审计未完成，不作全量结论。
 - YUK967/969 Done：PR1350 exacta290eafed56c283e088a7e8f0a8e3646e81cba44，CI34064877513 attempt2全绿；
   2026-09-06T22:54:49Z squash合并main5cac4753cd2e8235562eddab2ece3d6618d3e56d，Linear均Done，未部署。
@@ -110,7 +116,7 @@
 
 ## NEXT
 
-1. 762测试连接身份修复review/exactCI；967/969/968已Done，不重开review或降低保护。
+1. 970剩余迁移测试退休验收；762/967/969/968已Done，不重开review或降低保护。
 2. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
 3. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
@@ -118,12 +124,14 @@
 
 ## PARKED
 
+- 971现役Ingestion/Copilot AGENTS约束漂移已代码核验：自动VLM结构化/Notes artifact owner/显式presentation控制。
+  970之后修正三份导航，不改产品prompt/provider；全历史ADR审计仍未完成，不冒充全量通过。
 - 951旧mailbox/ToolOperations仅drain-only；退休需零pending/零队列活动覆盖完整重试窗。
 - 921多provider、572夜间教研、832HOLD不解锁。
 - 计费、重试、prompt/skill、复杂parser、并发/回滚/恢复、UI安全测试仍保留，不按数量硬删。
 
 ## BLOCKED-ON
 
-- 967/969/968/966/965已交付，review预算结束，不重开；762暂无owner决策阻塞。
+- 762/967/969/968/966/965已交付；970暂无owner决策阻塞，生产副本验收仍需独立授权。
 - 未授权部署、生产clone、SoT开关、backfill或历史数据删除；均未执行。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。
