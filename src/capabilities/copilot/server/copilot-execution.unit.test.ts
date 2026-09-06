@@ -91,7 +91,7 @@ describe('Copilot execution owner', () => {
         delivery: 'single',
         signal: requestController.signal,
         deadlineAt: 42_000,
-        subagentsEnabled: false,
+        subagentsEnabled: true,
       },
     );
 
@@ -104,6 +104,9 @@ describe('Copilot execution owner', () => {
       sdkSession: { persist: true },
     });
     expect(ctx?.lifecycleAbortController).toBeInstanceOf(AbortController);
+    expect(ctx?.allowedTools).toContain('Task');
+    expect(ctx?.agents?.['copilot-researcher']).toMatchObject({ background: false });
+    expect(ctx?.onTaskEvent).toEqual(expect.any(Function));
     expect(mcp?.ctx).toMatchObject({
       sessionId: 'session_1',
       taskRunId: 'root_1',
@@ -146,7 +149,7 @@ describe('Copilot execution owner', () => {
         kind: 'durable',
         cancellation,
         deadlineAt: 900_000,
-        subagentsEnabled: false,
+        subagentsEnabled: true,
       },
     );
 
@@ -161,6 +164,12 @@ describe('Copilot execution owner', () => {
       },
     });
     expect(ctx?.sdkSession).toBeUndefined();
+    expect(ctx?.allowedTools).toContain('Task');
+    expect(ctx?.agents?.['copilot-researcher']).toMatchObject({
+      background: false,
+      maxTurns: DURABLE_COPILOT_EXECUTION_BUDGET.maxIterations,
+    });
+    expect(ctx?.onTaskEvent).toEqual(expect.any(Function));
     expect(ctx?.providerSessionDeadlineAt).toBeUndefined();
     expect(mcp?.ctx.providerSessionDeadlineAt).toBe(900_000);
     expect(mcp?.ctx.signal).toBe(ctx?.lifecycleAbortController?.signal);

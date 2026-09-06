@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { SPAWN_TOOL_NAME } from '@/server/ai/spawn-contract';
 import { copilotTaskSpec } from '../tasks/agent';
@@ -11,20 +10,6 @@ import {
 } from './tools/subagent-controls';
 
 describe('Copilot native research contracts (YUK-939)', () => {
-  it('mounts the shared native SDK Task configuration on live and durable roots', () => {
-    const chatSource = readFileSync(new URL('./chat.ts', import.meta.url), 'utf8');
-    const durableSource = readFileSync(new URL('../jobs/copilot_run.ts', import.meta.url), 'utf8');
-    const configSource = readFileSync(new URL('./subagents.ts', import.meta.url), 'utf8');
-
-    expect(chatSource).toContain('buildCopilotNativeResearchConfig(');
-    expect(chatSource).toContain('handleNativeSubagentTaskEvent');
-    expect(configSource).not.toContain('LEGACY_CONTROL_TOOL_NAMES');
-    expect(chatSource).not.toContain('launchResearcherTool');
-
-    expect(durableSource).toContain('buildCopilotNativeResearchConfig(');
-    expect(durableSource).toContain('handleNativeSubagentTaskEvent');
-  });
-
   it('keeps the durable worker child fixed, read-only, bounded, and non-recursive', () => {
     expect(copilotResearchTaskSpec.definition.kind).toBe('CopilotResearchTask');
     expect(copilotResearchTaskSpec.definition.budget).toMatchObject({

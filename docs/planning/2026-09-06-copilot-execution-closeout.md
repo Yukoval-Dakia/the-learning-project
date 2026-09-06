@@ -37,3 +37,8 @@ remain unknown. This is not a production test or durable queue E2E.
 Subsequent integration combines the already-reviewed Goal/Knowledge changes and
 tightens the dependency baseline to 443/0/47; it does not change this executor's code.
 Exact-head CI is still required before merge. No UI or deployment is included.
+
+The first CI exposed one stale caller-source assertion for native Task assembly.
+It is replaced by checks on the actual runner context in both existing execution
+behavior tests. Native permission, mailbox DB and actual-child gates are retained;
+no duplicate assembly is restored to satisfy a file-location assertion.
