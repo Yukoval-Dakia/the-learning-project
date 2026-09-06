@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { QuestionAuthorDraft, normalizeAuthorStructured } from '@/core/schema/question_author';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import type { COPILOT_TOOLS } from '@/kernel/tools/allowlists';
 import { getTool } from '@/server/ai/tools/registry';
@@ -219,7 +220,25 @@ export function buildCopilotToolResultSnapshot(
     const parsed = tool.outputSchema.safeParse(output);
     if (!parsed.success || !record(parsed.data)) throw new Error('invalid observed output');
     let projected = structuredClone(parsed.data);
-    if (policy === 'generated') projected = select(projected, ['text']);
+    if (name === 'generate_question_candidate') {
+      const draft = QuestionAuthorDraft.parse(JSON.parse(z.string().parse(projected.text)));
+      let ordinal = 0;
+      const normalized = normalizeAuthorStructured(
+        draft.structured,
+        () => `preview-node-${++ordinal}`,
+      );
+      projected = {
+        subject_id: z.string().min(1).parse(projected.subject_id),
+        question: {
+          kind: draft.kind,
+          prompt_md: normalized.prompt_md,
+          reference_md: normalized.reference_md,
+          choices_md: draft.choices_md ?? null,
+          rubric_json: draft.rubric_json ?? null,
+          knowledge_ids: draft.knowledge_ids,
+        },
+      };
+    } else if (policy === 'generated') projected = select(projected, ['text']);
     else if (Array.isArray(policy)) projected = select(projected, policy);
     else if (policy === 'record' && record(projected.attribution)) {
       projected.attribution = select(projected.attribution, ['chosen_source']);

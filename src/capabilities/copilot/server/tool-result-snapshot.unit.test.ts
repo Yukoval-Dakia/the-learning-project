@@ -90,7 +90,7 @@ describe('bounded public result projection', () => {
   it('does not truncate generated content into a misleading successful fragment', () => {
     schema(z.object({ text: z.string(), cost_usd: z.number().nullable() }));
     expect(
-      buildCopilotToolResultSnapshot('generate_question_candidate', {
+      buildCopilotToolResultSnapshot('generate_goal_outline', {
         text: '求解 x，说明定义域。',
         cost_usd: null,
       }),
@@ -100,7 +100,7 @@ describe('bounded public result projection', () => {
       completeness: 'projected',
     });
     expect(
-      buildCopilotToolResultSnapshot('generate_question_candidate', {
+      buildCopilotToolResultSnapshot('generate_goal_outline', {
         text: '界'.repeat(12_000),
         cost_usd: 0,
       }),

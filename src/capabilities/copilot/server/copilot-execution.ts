@@ -50,6 +50,7 @@ import {
   createCopilotReplyFinalizer,
   prependCopilotFinalizationHooks,
   primaryViewLearningContent,
+  primaryViewLearningQuestions,
 } from './reply-finalization';
 import { bindSubagentParentCancellation, handleNativeSubagentTaskEvent } from './subagent-mailbox';
 import {
@@ -250,6 +251,7 @@ export function createCopilotExecutionOwner(
           db,
           runTaskFn: validationRunner,
           additionalVisibleText: primaryViewLearningContent(primaryView),
+          additionalQuestionContent: primaryViewLearningQuestions(primaryView),
         });
       },
       resolveArtifactReference: (ref) => resolveLivePrimaryViewArtifact(db, ref),

@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { QuestionAuthorIntentSchema } from '@/ai/task-intents';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
+import { parseQuestionAuthorOutput } from '../../tasks/question-author';
 import { type BoundRunTaskFn, type RunTaskCallCtx, makeRunTaskFn } from '../task-runtime';
 import { prepareQuestionAuthorTask } from './question-author';
 
@@ -9,6 +10,7 @@ export const GenerateQuestionCandidateInputSchema = QuestionAuthorIntentSchema;
 
 export const GenerateQuestionCandidateOutputSchema = z.object({
   text: z.string(),
+  subject_id: z.string().min(1),
   task_run_id: z.string().nullable(),
   cost_usd: z.number().nullable(),
   cost_basis: z.enum(['reported', 'estimated', 'unknown']),
@@ -41,8 +43,16 @@ export function createGenerateQuestionCandidateExecutor(
       ctx.db,
     )('QuestionAuthorTask', prepared.input, prepared.ctx);
 
+    const draft = parseQuestionAuthorOutput(result.text);
+    const allowedIds = new Set(prepared.input.knowledge_context.map((node) => node.id));
     return {
-      text: result.text,
+      // Canonical task output, with owner-resolved subject and knowledge scope.
+      // No second model call, draft, proposal or duplicated validation manifest.
+      text: JSON.stringify({
+        ...draft,
+        knowledge_ids: draft.knowledge_ids.filter((id) => allowedIds.has(id)),
+      }),
+      subject_id: prepared.ctx.subjectProfile.id,
       task_run_id: result.task_run_id ?? null,
       cost_usd: result.cost_usd ?? null,
       cost_basis: result.cost_basis,

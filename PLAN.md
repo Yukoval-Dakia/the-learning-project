@@ -1,15 +1,17 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：全产品核对确认tool_result主卡片仍只有名称占位；去重创建966，补真实结果快照与恢复，不操作生产。
+> Linear 是权威 tracker；更新于 2026-09-07：966真实读取卡片交付通过；初审生成题校验绕过P1已修，准备实际验收；新增967记录未查询≠零的语义缺口。
 
 ## NOW
 
 - Active线YUK966：root独占tlp-wt-unified-conversation，branch codex/yuk-966-tool-result-delivery，base main fbc87f3b+65985eae交付记录。
   全产品核对发现真实缺口：agent提名tool_result后HeroCard只显示工具名，未交付结果，设计§2.2/2.3要求完整只读视图且不重复取数。
   计划①真实root观察生成有界可信快照；②live/persist/replay同一协议；③既有drawer展示/刷新不重查；④针对性安全/恢复/浏览器验证与独立review/exactCI。
-  Owner已批准现有drawer发送/恢复/消息展示；根负责集成真实结果卡，复用ToolUseCard与同一live/replay协议。无新paid，安全剩4.44177。
+  Owner已批准现有drawer发送/恢复/消息展示；根负责集成真实结果卡，复用ToolUseCard与同一live/replay协议。
   初稿通用字段过滤被root拒绝；改复用真实领域outputSchema，并逐工具指定公开策略与opaque剥离，不复制第二套reader契约。
-  78unit与15实际契约DB绿；worker→历史读取新增检查发现测试缺少真实session，正在补齐场景并验证。
+  78unit/108DB/20browser绿；初审1P1已修：题目按既有schema规范化并无条件独立校验；修后52unit/16契约DB绿。
+  PR1348 f439a0be首轮CI只失败旧迁移schema指纹断言；保留8项行为测试，删除过期hash，待新exactCI/唯一验证审。
+  真实read快照live/persist一致通过，estimate0.0039958367；终文擅称无recent_failures，去重967待修，非整体语义绿。
   业务owner只读复核：知识合并/录入完成/判分完成已有真实事务与失败恢复，不为9个必要owner造registry。
   SoT仍有部署兼容；仓库compose值不等于生产运行态，不擅删guard或翻flag。Notes分散写入需按不同业务操作判断，尚无重复规则证据。
 - YUK965 Done：PR1347 exact6015f2a0fe1163eefc168ec782a5fb657099c0d7，CI34053995106全部success，
@@ -42,7 +44,7 @@
   保守请求预留合计$0.90823；此前余额$0.28771982单列，历史未知费用不填0。
   公开费率估算不冒充账户账单，SDK派生USD保留为独立观察。
   949另跑7个受控回合（含失败）：estimated $0.0214406071，case预留$2.8。
-  新$10池合计estimated $0.0359138701；965 read后总reserve$5.55823、安全剩$4.44177；当前停付费。
+  新$10池合计estimated $0.0399097068；966 read后总reserve$5.95823、安全剩$4.04177；候选题实际验收待预留$0.90。
 - YUK949：owner明确选FULL，允许按需短presentation control交互，ADR0061；
   agent看完结果提名，server校验，保留tool_result/artifact/ephemeral_html；不提高预算、不改生产UI。
   初稿ea8367c7的5P1已由81eb7f3e修复，ed693e16集成main9e02c48b。

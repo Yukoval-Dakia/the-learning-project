@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { QuestionAuthorIntentSchema } from '@/ai/task-intents';
 import type { RunTaskCallCtx } from '@/server/ai/runner-fn';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   createGenerateQuestionCandidateExecutor,
   generateQuestionCandidateTool,
@@ -43,16 +44,30 @@ describe('generate_question_candidate', () => {
   });
 
   it('forwards cancellation, parent audit identity, deadline, and cost metadata without creating a draft', async () => {
+    const profile = resolveSubjectProfile('math');
+    const draft = {
+      kind: 'computation',
+      difficulty: 4,
+      knowledge_ids: ['k1'],
+      structured: {
+        id: 'model-placeholder',
+        role: 'standalone',
+        prompt_text: '计算 17×19，并用分配律检验',
+        answers: ['323'],
+        analysis: '17×(20−1)=340−17=323。',
+      },
+      choices_md: null,
+    };
     const prepare = vi.fn(async () => ({
       input: {
         seed_mode: 'knowledge',
         knowledge_context: [{ id: 'k1', name: 'Newton laws' }],
         requested_difficulty: 4,
       },
-      ctx: { subjectProfile: undefined },
+      ctx: { subjectProfile: profile },
     }));
     const run = vi.fn(async (_kind: string, _input: unknown, _ctx?: RunTaskCallCtx) => ({
-      text: '{"kind":"short_answer"}',
+      text: JSON.stringify({ ...draft, knowledge_ids: ['k1', 'hallucinated'] }),
       task_run_id: 'question_generation_run',
       cost_usd: 0.34,
       cost_basis: 'estimated' as const,
@@ -69,7 +84,8 @@ describe('generate_question_candidate', () => {
     await expect(
       execute(ctx, { seed_mode: 'knowledge', knowledge_ids: ['k1'], difficulty: 4 }),
     ).resolves.toEqual({
-      text: '{"kind":"short_answer"}',
+      text: JSON.stringify(draft),
+      subject_id: profile.id,
       task_run_id: 'question_generation_run',
       cost_usd: 0.34,
       cost_basis: 'estimated',
@@ -96,7 +112,7 @@ describe('generate_question_candidate', () => {
         knowledge_context: [{ id: 'k1', name: 'Newton laws' }],
         requested_difficulty: 4,
       },
-      { subjectProfile: undefined },
+      { subjectProfile: profile },
     );
     expect(writes.insert).not.toHaveBeenCalled();
     expect(writes.update).not.toHaveBeenCalled();

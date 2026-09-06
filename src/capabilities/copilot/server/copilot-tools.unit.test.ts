@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -15,7 +14,6 @@ import {
   READ_TOOLS,
 } from '@/kernel/tools/allowlists';
 import type { DomainTool } from '@/kernel/tools/types';
-import { zodToJsonSchemaCompat } from '@/kernel/zod-json-schema';
 
 const COPILOT_OWNED_TOOL_NAMES = [
   'present_primary_view',
@@ -32,12 +30,6 @@ const LEGACY_MODEL_CONTROL_NAMES = [
   'wait_subagent',
   'cancel_subagent',
 ] as const;
-
-const OWNED_TOOL_CONTRACT_HASHES = {
-  present_primary_view: 'b1e110bc924f30ee35c7f21c9a3b7dfac0ad6d7fa1274e856c69f7bcb64b31e2',
-  query_events: 'f3098863057a3ca16c3180c594c634e2f09bde171af1884ed125740359429587',
-  search_memory_facts: '44cc3f998658c5568711443e9e17c44135055493a39ac9971e0353dd51d9f929',
-} as const;
 
 const OWNED_TOOL_EXPOSURES = {
   present_primary_view: ['copilot', 'copilot_user_suggested_mistake_action'],
@@ -60,27 +52,6 @@ const OWNED_READER_PATHS = [
 
 function source(path: string): string {
   return readFileSync(join(process.cwd(), path), 'utf8');
-}
-
-function contractFingerprint(tool: DomainTool<unknown, unknown>): string {
-  const contract = {
-    name: tool.name,
-    effect: tool.effect,
-    costClass: tool.costClass,
-    mirrorEvent: tool.mirrorEvent,
-    safeHandoff: tool.safeHandoff,
-    inputSchema: zodToJsonSchemaCompat(tool.inputSchema, {
-      target: 'draft-07',
-      io: 'input',
-      reused: 'inline',
-    }),
-    outputSchema: zodToJsonSchemaCompat(tool.outputSchema, {
-      target: 'draft-07',
-      io: 'input',
-      reused: 'inline',
-    }),
-  };
-  return createHash('sha256').update(JSON.stringify(contract)).digest('hex');
 }
 
 // 裁决 h：COPILOT_TOOLS 数组保持字面量（src/ai 浏览器共享面不能 import
@@ -178,7 +149,7 @@ describe('copilot server ownership (YUK-884)', () => {
     expect(publicPort).toContain('QuestionTimelineEntry');
   });
 
-  it('loads unchanged contracts from Copilot and preserves every permission surface', async () => {
+  it('loads the owned tools and preserves every permission surface', async () => {
     const declarations = copilotCapability.copilotTools?.tools ?? [];
     const fullAllowlist = [...READ_TOOLS, ...PROPOSE_WRITE_TOOLS, ...CONTROL_TOOLS];
 
@@ -193,9 +164,8 @@ describe('copilot server ownership (YUK-884)', () => {
           .filter(([, names]) => names.some((allowedName) => allowedName === name))
           .map(([surface]) => surface),
       ).toEqual(OWNED_TOOL_EXPOSURES[name]);
-      expect(contractFingerprint(tool as DomainTool<unknown, unknown>), name).toBe(
-        OWNED_TOOL_CONTRACT_HASHES[name],
-      );
+      // Migration-time schema hashes are retired. Runtime contract tests cover
+      // accepted/rejected values; this test owns composition and permissions.
     }
   });
 

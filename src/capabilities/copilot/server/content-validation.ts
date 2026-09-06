@@ -31,7 +31,7 @@ export interface CopilotLearningContent {
   questions: CopilotLearningContentQuestion[];
 }
 
-const CopilotLearningContentSchema = z.object({
+export const CopilotLearningContentSchema = z.object({
   subject_id: z.string().min(1),
   questions: z
     .array(
@@ -197,6 +197,8 @@ export interface CopilotLearningContentValidationDeps {
   db: Db;
   runTaskFn: ValidationRunTaskFn;
   additionalVisibleText?: string;
+  /** Server-derived generated question, never a model-authored reply marker. */
+  additionalQuestionContent?: CopilotLearningContent;
 }
 
 export type CopilotLearningContentValidationItem = {
@@ -363,7 +365,24 @@ export async function reviewCopilotLearningContent(
     });
     return { replyText: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY, passed: false };
   }
-  if (extracted.status === 'absent') return { replyText: extracted.text, passed: true };
+  let additionalValidated = false;
+  if (deps.additionalQuestionContent) {
+    // A typed candidate is always a question, even JSON or prose without '?'.
+    // Validate its real normalized fields independently of terminal heuristics.
+    try {
+      const validation = await validateCopilotLearningContent(deps.additionalQuestionContent, deps);
+      if (validation.verdict !== 'pass')
+        return { replyText: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY, passed: false };
+      additionalValidated = true;
+    } catch {
+      return { replyText: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY, passed: false };
+    }
+  }
+  if (extracted.status === 'absent')
+    return {
+      replyText: additionalValidated ? `${extracted.text}\n\n独立内容验证：通过` : extracted.text,
+      passed: true,
+    };
   if (!contentMatchesReply(extracted.content, validationSurface, contextText)) {
     console.error('[copilot-learning-content] manifest does not match visible content', {
       task_run_id: taskRunId,

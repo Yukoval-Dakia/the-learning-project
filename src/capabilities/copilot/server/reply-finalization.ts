@@ -10,7 +10,11 @@ import type {
   ToolExecutionGateInput,
   ToolExecutionResultObservation,
 } from '@/kernel/tools/types';
-import { copilotLearningContentRequiresValidation } from './content-validation';
+import {
+  type CopilotLearningContent,
+  CopilotLearningContentSchema,
+  copilotLearningContentRequiresValidation,
+} from './content-validation';
 import type { CopilotCorrectionContract } from './correction-contract';
 import { resolveCorrectionReply } from './correction-contract';
 import {
@@ -159,6 +163,24 @@ export function primaryViewLearningContent(view?: CopilotPrimaryView): string | 
   )
     return view.snapshot.value.text;
   return undefined;
+}
+
+export function primaryViewLearningQuestions(
+  view?: CopilotPrimaryView,
+): CopilotLearningContent | undefined {
+  if (
+    view?.source !== 'tool_result' ||
+    view.ref.kind !== 'generate_question_candidate' ||
+    view.snapshot?.state !== 'available'
+  )
+    return undefined;
+  if (!isRecord(view.snapshot.value) || !isRecord(view.snapshot.value.question))
+    throw new Error('invalid generated question snapshot');
+  const content = CopilotLearningContentSchema.parse({
+    subject_id: view.snapshot.value.subject_id,
+    questions: [{ ...view.snapshot.value.question, id: `preview:${view.ref.id}`.slice(0, 120) }],
+  });
+  return { subjectId: content.subject_id, questions: content.questions };
 }
 
 export interface CopilotReplyFinalizationResult {
@@ -410,6 +432,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       const disclosure = proposalDisclosure(trace);
       const disclosed = applyProposalDisclosure(correction.reply, disclosure);
       const requiresLearningValidation =
+        primaryViewLearningQuestions(presented.primaryView) !== undefined ||
         copilotLearningContentRequiresValidation(disclosed) ||
         copilotLearningContentRequiresValidation(
           primaryViewLearningContent(presented.primaryView) ?? '',

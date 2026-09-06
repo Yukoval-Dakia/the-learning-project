@@ -22,15 +22,20 @@ ADR-0062 supersedes the old document's foreground/background lifecycle.
   Typed readers reuse registered domain output schemas, including existing
   redaction, correction and evidence boundaries. It does not duplicate those
   schemas or use a global field-name filter. Mem0 passthrough, opaque attribution
-  and raw FSRS fields receive explicit narrowing; generated output publishes
-  text only; write/proposal results publish stable receipts, not HTML/diagnostics.
+  and raw FSRS fields receive explicit narrowing; generated questions publish
+  task-owned normalized fields; write/proposal results publish stable receipts,
+  not HTML/diagnostics.
 - Public JSON is capped at 32,000 UTF-8 bytes. Natural result lists may omit
   complete trailing entries with a separate count; original coverage and totals
   remain intact. Atomic content is never clipped into a misleading fragment.
   Missing history, unavailable results, real empty arrays, false, zero and null
   remain distinct. Optional JS undefined follows the existing JSON wire behavior.
-- Generated text joins the existing learning-validation surface. Ordinary reads
-  do not add model calls. Snapshots never enter model conversation history.
+- Generated outlines join the existing learning-validation surface. Question
+  candidates always run the existing independent question/solve/teaching checks,
+  even when their JSON contains no question mark or the reply has no manifest.
+  The task owner resolves subject/scope and parses its existing output contract;
+  no second draft, hidden marker or copied validator schema is introduced.
+  Ordinary reads do not add model calls. Snapshots never enter model history.
 - One pure DTO/parser serves finalization, API contracts and client live/replay.
   The existing commit/outcome/REPLY/history chain persists that same snapshot.
   The drawer uses ToolUseCard, inert text and native expansion; it never fetches
@@ -55,9 +60,23 @@ wrapper solely to conceal the edge was rejected.
   content, zero/null/false and no repeated submission/result request.
 - Local typecheck, lint, build, API contracts, generated API client/Postman,
   partition and learner-copy checks passed. Lint retains existing warnings.
-- Independent review and exact-head CI are still required; not yet merged.
-- No new paid calls, no production changes. The $10 pool remains conservative
-  reserve $5.55823 / safe remainder $4.44177; estimates are not account invoices.
+- Initial independent review found one P1: raw generated JSON bypassed the
+  prose-based content gate. The typed candidate path above fixes it; 16 actual
+  contract DB tests and 52 focused unit tests passed. Sole verification is pending.
+- Initial CI at f439a0be failed one obsolete migration-only schema fingerprint;
+  the eight real tool permission/composition cases remain, frozen hashes do not.
+  New exact-head CI is required; not yet merged.
+- Actual read at clean f439a0be delivered the identical 1,236-byte snapshot live
+  and persisted: two knowledge nodes, real null/zero/parent/coverage preserved.
+  One root, one read and one nomination; input 41,280 / output 360; estimated
+  $0.0039958367. This is delivery PASS, not a token-saving comparison.
+- Manual prose review is PARTIAL: the model additionally claimed no recent
+  failures, although that optional field was not queried. Deduplicated YUK-967
+  tracks reader-owned observation scope; the original output remains sealed in
+  evidence/2026-09-07-tool-result-snapshot-actual.json.
+- No production changes. The $10 pool now has cumulative estimate $0.0399097068,
+  conservative reserve $5.95823 / safe remainder $4.04177. A candidate actual
+  case will reserve $0.90 before starting; estimates are not account invoices.
 
 ## Scope exclusions
 

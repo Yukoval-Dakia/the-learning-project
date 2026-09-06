@@ -1,0 +1,431 @@
+{
+  "protocol_version": 1,
+  "phase": "running",
+  "exact_head": "f439a0bec4107c7ec821135c639a92ccbe8783c9",
+  "dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "harness_sha256": "bf93fce78b5975dbcf85863b198d78fceb235bd813bfc00237106166302ba801",
+  "provider": "xiaomi",
+  "model": "mimo-v2.5-pro",
+  "credential_source": "/Volumes/YukovalSBak/yukoval-projects/the-learning-project/.env",
+  "baseline_record": false,
+  "campaign_cost_limit_usd": 0.4,
+  "case_cost_reserves_usd": {
+    "cold": 0.25,
+    "resume": 0.25,
+    "context-change": 0.25,
+    "correction": 0.25,
+    "read": 0.25,
+    "claims": 0.3,
+    "presentation-process": 0.4,
+    "presentation-tool": 0.4,
+    "presentation-artifact": 0.4,
+    "presentation-html": 0.4,
+    "proposal": 0.25,
+    "semantic": 0.75,
+    "native-task": 0.5,
+    "durable": 0.25,
+    "unified": 1.6,
+    "cancel": 0
+  },
+  "cases": [
+    {
+      "name": "presentation-tool",
+      "input_sha256": "d4a831739e0a6d40d042388cedffae8030d5c98d7331578d70ef49c97dc16df5",
+      "output_sha256": "cf61993ba79852cf113295b40a3380948d82071064ea2d6938564b7b627a14da",
+      "input": {
+        "session_id": "u8gb4itfe1685vkhmm3b0vdr",
+        "user_message": "调用 query_knowledge（subjectId:yuwen、nodeId:actual:classical-root、include:[children]、limit:10）读取节点，先看实际结果，再将这次成功的根工具结果作为本轮主要成品展示（tool_result），正文保留两个实际节点名称。不要新建artifact、不出题、不写入，不在正文输出隐藏标记。",
+        "triggered_by": "chat"
+      },
+      "output": "已读取节点「actual:classical-root」及其子节点，共返回 2 个活跃节点。\n\n- **文言虚词「之」**（根节点，1 个子节点）\n- **代词宾语用法**（子节点，挂在「文言虚词「之」」下）\n\n两节点之间当前无 mesh 边，无最近失败记录。",
+      "primary_view": {
+        "source": "tool_result",
+        "ref": {
+          "kind": "query_knowledge",
+          "id": "call_81b1653996d7400498c8ad5a"
+        },
+        "snapshot": {
+          "version": 1,
+          "state": "available",
+          "value": {
+            "edges": [],
+            "nodes": [
+              {
+                "id": "actual:classical-root",
+                "name": "文言虚词「之」",
+                "path": ["文言虚词「之」"],
+                "version": 0,
+                "parent_id": null,
+                "edge_count": 0,
+                "children_count": 1
+              },
+              {
+                "id": "actual:classical-object",
+                "name": "代词宾语用法",
+                "path": ["文言虚词「之」", "代词宾语用法"],
+                "version": 0,
+                "parent_id": "actual:classical-root",
+                "edge_count": 0,
+                "children_count": 0
+              }
+            ],
+            "coverage": {
+              "seed_match_count": 1,
+              "returned_node_count": 2,
+              "seed_matches_complete": true,
+              "returned_nodes_complete_after_expansion": true,
+              "selected_seed_expansion_candidate_count": 2,
+              "edges_complete_between_returned_nodes_for_requested_relation_types": true
+            },
+            "query_scope": {
+              "limit": 10,
+              "query": null,
+              "include": ["children"],
+              "node_id": "actual:classical-root",
+              "active_only": true,
+              "relation_types": null,
+              "subject_domain": "yuwen",
+              "subject_id_semantics": "active_effective_domain"
+            },
+            "lookup_status": "matched_active_nodes",
+            "claim_boundaries": {
+              "edge_scope": "between_returned_active_nodes_for_requested_relation_types",
+              "supports_never_existed_claim": false,
+              "supports_complete_expansion_claim": true,
+              "supports_global_edge_absence_claim": false,
+              "supports_global_node_absence_claim": false,
+              "supports_archived_node_absence_claim": false,
+              "supports_unrequested_relation_absence_claim": false
+            }
+          },
+          "sha256": "32f24a2b481070dd83581adbb73388037bcbc55dd0b0ed77fc89fcd02c7e764c",
+          "byte_length": 1236,
+          "completeness": "complete",
+          "omissions": []
+        }
+      },
+      "root_task_run_id": "copilot_run_tool_copilot_user_ask_a7ef5c428a2d1e3ac57b3b328888404510e4ba57e0caeb68dfc5f259059c7c35",
+      "terminal_output": "已读取节点「actual:classical-root」及其子节点，共返回 2 个活跃节点。\n\n- **文言虚词「之」**（根节点，1 个子节点）\n- **代词宾语用法**（子节点，挂在「文言虚词「之」」下）\n\n两节点之间当前无 mesh 边，无最近失败记录。",
+      "terminal_sha256": "cf61993ba79852cf113295b40a3380948d82071064ea2d6938564b7b627a14da",
+      "task_runs": [
+        {
+          "id": "copilot_run_tool_copilot_user_ask_a7ef5c428a2d1e3ac57b3b328888404510e4ba57e0caeb68dfc5f259059c7c35",
+          "kind": "CopilotTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 41280,
+            "outputTokens": 360,
+            "thinkingBlocks": 3,
+            "thinkingCharacters": 562
+          },
+          "cost": 0.0039958367,
+          "costBasis": "estimated",
+          "costRef": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": "322b40c0348d27e8233aee034597adc6fb58097d836f6b81f07e3efa7ddb9669",
+          "promptCodecMode": "cold",
+          "promptContextDigest": "374c798b9fbc747f0c0ae604bfb42baddf89ae021969cf26320627d8e8810d50"
+        }
+      ],
+      "tools": [
+        {
+          "name": "mcp__loom__query_knowledge",
+          "effect": null,
+          "error": null,
+          "input": {
+            "limit": 10,
+            "nodeId": "actual:classical-root",
+            "include": ["children"],
+            "subjectId": "yuwen"
+          },
+          "output": {}
+        },
+        {
+          "name": "query_knowledge",
+          "effect": "read",
+          "error": null,
+          "input": {
+            "limit": 10,
+            "nodeId": "actual:classical-root",
+            "include": ["children"],
+            "subjectId": "yuwen"
+          },
+          "output": {
+            "edges": [],
+            "nodes": [
+              {
+                "id": "actual:classical-root",
+                "name": "文言虚词「之」",
+                "path": ["文言虚词「之」"],
+                "version": 0,
+                "parent_id": null,
+                "edge_count": 0,
+                "children_count": 1
+              },
+              {
+                "id": "actual:classical-object",
+                "name": "代词宾语用法",
+                "path": ["文言虚词「之」", "代词宾语用法"],
+                "version": 0,
+                "parent_id": "actual:classical-root",
+                "edge_count": 0,
+                "children_count": 0
+              }
+            ],
+            "coverage": {
+              "seed_match_count": 1,
+              "returned_node_count": 2,
+              "seed_matches_complete": true,
+              "returned_nodes_complete_after_expansion": true,
+              "selected_seed_expansion_candidate_count": 2,
+              "edges_complete_between_returned_nodes_for_requested_relation_types": true
+            },
+            "query_scope": {
+              "limit": 10,
+              "query": null,
+              "include": ["children"],
+              "node_id": "actual:classical-root",
+              "active_only": true,
+              "relation_types": null,
+              "subject_domain": "yuwen",
+              "subject_id_semantics": "active_effective_domain"
+            },
+            "lookup_status": "matched_active_nodes",
+            "claim_boundaries": {
+              "edge_scope": "between_returned_active_nodes_for_requested_relation_types",
+              "supports_never_existed_claim": false,
+              "supports_complete_expansion_claim": true,
+              "supports_global_edge_absence_claim": false,
+              "supports_global_node_absence_claim": false,
+              "supports_archived_node_absence_claim": false,
+              "supports_unrequested_relation_absence_claim": false
+            }
+          }
+        },
+        {
+          "name": "mcp__loom__present_primary_view",
+          "effect": null,
+          "error": null,
+          "input": {
+            "ref": {
+              "id": "call_81b1653996d7400498c8ad5a",
+              "kind": "query_knowledge"
+            },
+            "source": "tool_result"
+          },
+          "output": {}
+        },
+        {
+          "name": "present_primary_view",
+          "effect": "control",
+          "error": null,
+          "input": {
+            "ref": {
+              "id": "call_81b1653996d7400498c8ad5a",
+              "kind": "query_knowledge"
+            },
+            "source": "tool_result"
+          },
+          "output": {
+            "ref": {
+              "id": "call_81b1653996d7400498c8ad5a",
+              "kind": "query_knowledge"
+            },
+            "source": "tool_result",
+            "presentation_lifecycle": {
+              "discarded_on_close": false,
+              "standalone_artifact": false,
+              "saved_with_conversation": true
+            }
+          }
+        }
+      ],
+      "session_agent_sdk_id": "89471c5f-1f3e-4b0b-b444-1f0d875e3041",
+      "cumulative_cost_usd": 0.0039958367,
+      "reply_finalization": {
+        "protocol_version": 1,
+        "assurance": "execution_trace_bound",
+        "root_task_run_id": "copilot_run_tool_copilot_user_ask_a7ef5c428a2d1e3ac57b3b328888404510e4ba57e0caeb68dfc5f259059c7c35",
+        "candidate_sha256": "cf61993ba79852cf113295b40a3380948d82071064ea2d6938564b7b627a14da",
+        "reply_sha256": "cf61993ba79852cf113295b40a3380948d82071064ea2d6938564b7b627a14da",
+        "trace_sha256": "83618ca113321b949d51aa1f5ad10f69d09accfd7a160dd34a317adead22c033",
+        "trace_call_count": 2,
+        "observed_completed_tool_use_ids": [
+          "call_81b1653996d7400498c8ad5a",
+          "call_cce04240432c4223907de6a6"
+        ],
+        "correction": "normal",
+        "proposal_disclosure": "none",
+        "learning_content": "not_applicable",
+        "primary_view": "retained"
+      },
+      "persisted_primary_view": {
+        "ref": {
+          "id": "call_81b1653996d7400498c8ad5a",
+          "kind": "query_knowledge"
+        },
+        "source": "tool_result",
+        "snapshot": {
+          "state": "available",
+          "value": {
+            "edges": [],
+            "nodes": [
+              {
+                "id": "actual:classical-root",
+                "name": "文言虚词「之」",
+                "path": ["文言虚词「之」"],
+                "version": 0,
+                "parent_id": null,
+                "edge_count": 0,
+                "children_count": 1
+              },
+              {
+                "id": "actual:classical-object",
+                "name": "代词宾语用法",
+                "path": ["文言虚词「之」", "代词宾语用法"],
+                "version": 0,
+                "parent_id": "actual:classical-root",
+                "edge_count": 0,
+                "children_count": 0
+              }
+            ],
+            "coverage": {
+              "seed_match_count": 1,
+              "returned_node_count": 2,
+              "seed_matches_complete": true,
+              "returned_nodes_complete_after_expansion": true,
+              "selected_seed_expansion_candidate_count": 2,
+              "edges_complete_between_returned_nodes_for_requested_relation_types": true
+            },
+            "query_scope": {
+              "limit": 10,
+              "query": null,
+              "include": ["children"],
+              "node_id": "actual:classical-root",
+              "active_only": true,
+              "relation_types": null,
+              "subject_domain": "yuwen",
+              "subject_id_semantics": "active_effective_domain"
+            },
+            "lookup_status": "matched_active_nodes",
+            "claim_boundaries": {
+              "edge_scope": "between_returned_active_nodes_for_requested_relation_types",
+              "supports_never_existed_claim": false,
+              "supports_complete_expansion_claim": true,
+              "supports_global_edge_absence_claim": false,
+              "supports_global_node_absence_claim": false,
+              "supports_archived_node_absence_claim": false,
+              "supports_unrequested_relation_absence_claim": false
+            }
+          },
+          "sha256": "32f24a2b481070dd83581adbb73388037bcbc55dd0b0ed77fc89fcd02c7e764c",
+          "version": 1,
+          "omissions": [],
+          "byte_length": 1236,
+          "completeness": "complete"
+        }
+      },
+      "presentation_acceptance": {
+        "expected_source": "tool_result",
+        "persisted_primary_view": {
+          "ref": {
+            "id": "call_81b1653996d7400498c8ad5a",
+            "kind": "query_knowledge"
+          },
+          "source": "tool_result",
+          "snapshot": {
+            "state": "available",
+            "value": {
+              "edges": [],
+              "nodes": [
+                {
+                  "id": "actual:classical-root",
+                  "name": "文言虚词「之」",
+                  "path": ["文言虚词「之」"],
+                  "version": 0,
+                  "parent_id": null,
+                  "edge_count": 0,
+                  "children_count": 1
+                },
+                {
+                  "id": "actual:classical-object",
+                  "name": "代词宾语用法",
+                  "path": ["文言虚词「之」", "代词宾语用法"],
+                  "version": 0,
+                  "parent_id": "actual:classical-root",
+                  "edge_count": 0,
+                  "children_count": 0
+                }
+              ],
+              "coverage": {
+                "seed_match_count": 1,
+                "returned_node_count": 2,
+                "seed_matches_complete": true,
+                "returned_nodes_complete_after_expansion": true,
+                "selected_seed_expansion_candidate_count": 2,
+                "edges_complete_between_returned_nodes_for_requested_relation_types": true
+              },
+              "query_scope": {
+                "limit": 10,
+                "query": null,
+                "include": ["children"],
+                "node_id": "actual:classical-root",
+                "active_only": true,
+                "relation_types": null,
+                "subject_domain": "yuwen",
+                "subject_id_semantics": "active_effective_domain"
+              },
+              "lookup_status": "matched_active_nodes",
+              "claim_boundaries": {
+                "edge_scope": "between_returned_active_nodes_for_requested_relation_types",
+                "supports_never_existed_claim": false,
+                "supports_complete_expansion_claim": true,
+                "supports_global_edge_absence_claim": false,
+                "supports_global_node_absence_claim": false,
+                "supports_archived_node_absence_claim": false,
+                "supports_unrequested_relation_absence_claim": false
+              }
+            },
+            "sha256": "32f24a2b481070dd83581adbb73388037bcbc55dd0b0ed77fc89fcd02c7e764c",
+            "version": 1,
+            "omissions": [],
+            "byte_length": 1236,
+            "completeness": "complete"
+          }
+        },
+        "semantic_review": "manual_required_not_proven_by_trace"
+      }
+    }
+  ],
+  "sdk_outcomes": [
+    {
+      "task_run_id": "copilot_run_tool_copilot_user_ask_a7ef5c428a2d1e3ac57b3b328888404510e4ba57e0caeb68dfc5f259059c7c35",
+      "elapsed_ms": 18242,
+      "finish_reason": "end_turn",
+      "partial": false,
+      "terminal_present": true,
+      "error_subtype": null
+    }
+  ],
+  "limitations": [
+    "direct durable handler is not pg-boss queue E2E",
+    "structural assertions do not establish factual entailment or semantic correctness"
+  ],
+  "fixture_readiness": {
+    "registered_tools": ["query_knowledge", "propose_knowledge_mutation"],
+    "conversation_session_id": "u8gb4itfe1685vkhmm3b0vdr"
+  },
+  "worker_driver": {
+    "admission": "production HTTP adapter + v2 transaction + pg-boss",
+    "execution": "manual physical fetch + production runCopilotRun + terminal wake + complete",
+    "automatic_poller_verified": false
+  },
+  "raw_evidence_sha256": "1def869f35685800721e938b6e17922e3cd4f996212cea3178aa916922b0e647",
+  "manual_review": {
+    "snapshot_delivery": "pass: exact 2 nodes, parent relation, 0/null and source/coverage preserved",
+    "model_prose": "partial: terminal claims no recent failures although recent_failures was not requested or returned",
+    "scope": "Actual HTTP admission and worker/manual pg-boss driver; not production or automatic poller; no claim of token reduction"
+  }
+}
