@@ -49,6 +49,7 @@ import {
   type CopilotReplyFinalizationResult,
   createCopilotReplyFinalizer,
   prependCopilotFinalizationHooks,
+  primaryViewLearningContent,
 } from './reply-finalization';
 import { bindSubagentParentCancellation, handleNativeSubagentTaskEvent } from './subagent-mailbox';
 import {
@@ -248,9 +249,7 @@ export function createCopilotExecutionOwner(
         return reviewCopilotLearningContent(text, contextText, validationTaskRunId, {
           db,
           runTaskFn: validationRunner,
-          ...(primaryView?.source === 'ephemeral_html'
-            ? { additionalVisibleText: primaryView.ref }
-            : {}),
+          additionalVisibleText: primaryViewLearningContent(primaryView),
         });
       },
       resolveArtifactReference: (ref) => resolveLivePrimaryViewArtifact(db, ref),

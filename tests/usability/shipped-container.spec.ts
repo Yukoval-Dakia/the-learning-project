@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { type Page, expect, test } from '@playwright/test';
 import { installApiFixtures } from './api-fixtures';
 
@@ -263,6 +264,25 @@ for (const transport of ['persistent'] as const) {
       page,
     }) => {
       await installApiFixtures(page, 'existing-evidence');
+      const resultValue = {
+        nodes: [{ name: '函数与定义域', stats: { mastery_estimate: 0, last_touched_at: null } }],
+        coverage: { returned_node_count: 1, seed_matches_complete: false },
+      };
+      const resultSnapshot = {
+        version: 1,
+        state: 'available',
+        value: resultValue,
+        sha256: createHash('sha256').update(JSON.stringify(resultValue)).digest('hex'),
+        byte_length: Buffer.byteLength(JSON.stringify(resultValue)),
+        completeness: 'complete',
+        omissions: [],
+      };
+      let submissions = 0;
+      const resultRequests: string[] = [];
+      page.on('request', (request) => {
+        if (/\/api\/(knowledge|tools)\b/.test(new URL(request.url()).pathname))
+          resultRequests.push(request.url());
+      });
       const primaryView =
         source === 'none'
           ? undefined
@@ -274,6 +294,7 @@ for (const transport of ['persistent'] as const) {
                   kind: source === 'artifact' ? 'note' : 'query_knowledge',
                   id: 'presented-42',
                 },
+                ...(source === 'tool_result' ? { snapshot: resultSnapshot } : {}),
               };
       const content = '已整理本轮资料。';
       const turns: Array<Record<string, unknown>> = [];
@@ -296,6 +317,7 @@ for (const transport of ['persistent'] as const) {
         if (path === '/api/copilot/turns')
           return route.fulfill({ json: { session_id: 'session-42', turns, active_runs: [] } });
         if (path === '/api/copilot/chat') {
+          submissions += 1;
           expect(route.request().headers()['idempotency-key']).toBeTruthy();
           turns.push({
             role: 'user',
@@ -343,8 +365,13 @@ for (const transport of ['persistent'] as const) {
         await expect(page.getByText(content, { exact: true })).toHaveCount(1);
         if (source === 'none')
           await expect(page.locator('[data-testid^="copilot-hero-"]')).toHaveCount(0);
-        if (source === 'tool_result')
-          await expect(page.getByTestId('copilot-hero-tool-result')).toHaveText('query_knowledge');
+        if (source === 'tool_result') {
+          const card = page.getByTestId('copilot-hero-tool-result');
+          await expect(card.getByText('函数与定义域', { exact: true })).toBeVisible();
+          await expect(card.getByText('未知（null）', { exact: true })).toBeVisible();
+          await expect(card.getByText('否（false）', { exact: true })).toBeVisible();
+          await expect(card.getByText('0', { exact: true })).toBeVisible();
+        }
         if (source === 'artifact')
           await expect(page.getByTestId('copilot-hero-artifact')).toHaveRole('button');
         if (source === 'ephemeral_html')
@@ -360,9 +387,15 @@ for (const transport of ['persistent'] as const) {
       await page.getByLabel('问 Loom 任何事', { exact: true }).fill('展示本轮资料');
       await page.getByRole('button', { name: '发送', exact: true }).click();
       await assertPrimaryView();
+      expect(submissions).toBe(1);
+      expect(resultRequests).toEqual([]);
+      if (source === 'tool_result')
+        await page.screenshot({ path: `${SHOT_DIR}/copilot-result-snapshot.png`, fullPage: true });
       await page.reload();
       await page.getByRole('banner').getByRole('button', { name: 'Copilot', exact: true }).click();
       await assertPrimaryView();
+      expect(submissions).toBe(1);
+      expect(resultRequests).toEqual([]);
     });
   }
 }

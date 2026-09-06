@@ -2,6 +2,14 @@
 
 ## 最新状态
 
+- Active YUK966，root独占tlp-wt-unified-conversation / codex/yuk-966-tool-result-delivery。
+  Owner批准现有drawer发送/恢复/消息展示；已补真实工具结果快照，model仅提名ref，server校验并独立捕获。
+  初稿通用字段过滤不合格已由root替换：复用真实registered outputSchema，逐工具公开policy，opaque/私有字段剥离。
+  单一DTO贯穿live/worker修复/history/client；真实空值与缺失区分，刷新不重查，不增加模型history token。
+  78unit/108DB/20built-browser已绿；后续独立review与exactCI仍待，不冒充已合并或生产交付。
+  文档docs/planning/2026-09-07-copilot-result-snapshots.md；新增registry读取边baseline439/0/47，无新SCC/writer豁免。
+  无新增paid，安全剩4.44177；原脏main不动。临时本地built server仅用于browser fixture，收尾须停止。
+
 - PR1347已合并：exact6015f2a0fe1163eefc168ec782a5fb657099c0d7，CI34053995106所有job成功；
   main fbc87f3b1ade3bc726d9371033a4c073d6c6f1a3，mergedAt2026-09-06T19:20:27Z，Linear965 Done。
   初审1P1已修，唯一验证审PASS，预算结束不第三轮；126unit/143DB、actual read和零付费队列验收留存。

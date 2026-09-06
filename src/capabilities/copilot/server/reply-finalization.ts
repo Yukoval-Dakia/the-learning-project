@@ -14,6 +14,10 @@ import { copilotLearningContentRequiresValidation } from './content-validation';
 import type { CopilotCorrectionContract } from './correction-contract';
 import { resolveCorrectionReply } from './correction-contract';
 import {
+  buildCopilotToolResultSnapshot,
+  requiresToolResultLearningValidation,
+} from './tool-result-snapshot';
+import {
   type PresentPrimaryViewInput,
   PresentPrimaryViewOutputSchema,
 } from './tools/present-primary-view';
@@ -139,6 +143,22 @@ interface TraceEntry {
   root_call: boolean;
   proposal_effect_contract?: ProposalEffectContract;
   domain_output?: unknown;
+  domain_executed?: boolean;
+}
+
+/** Only newly generated content adds a learning-validation surface. Read-model
+ * facts keep their existing owner validation, with no extra model evaluation. */
+export function primaryViewLearningContent(view?: CopilotPrimaryView): string | undefined {
+  if (view?.source === 'ephemeral_html') return view.ref;
+  if (
+    view?.source === 'tool_result' &&
+    view.snapshot?.state === 'available' &&
+    requiresToolResultLearningValidation(view.ref.kind) &&
+    isRecord(view.snapshot.value) &&
+    typeof view.snapshot.value.text === 'string'
+  )
+    return view.snapshot.value.text;
+  return undefined;
 }
 
 export interface CopilotReplyFinalizationResult {
@@ -258,15 +278,21 @@ async function resolvePrimaryViewNomination(
 ): Promise<CopilotPrimaryView | undefined> {
   if (nomination.source === 'ephemeral_html') return nomination;
   if (nomination.source === 'tool_result') {
-    const valid = trace.some(
+    const observed = trace.find(
       (entry) =>
         entry.root_call &&
         entry.status === 'succeeded' &&
+        entry.domain_executed === true &&
         entry.effect !== 'control' &&
         entry.tool_use_id === nomination.ref.id &&
         domainToolName(entry.tool_name) === nomination.ref.kind,
     );
-    return valid ? nomination : undefined;
+    if (!observed || observed.output_sha256 !== sha256CanonicalJson(observed.domain_output))
+      return undefined;
+    return {
+      ...nomination,
+      snapshot: buildCopilotToolResultSnapshot(nomination.ref.kind, observed.domain_output),
+    };
   }
   try {
     const ref = await resolveArtifactReference(nomination.ref);
@@ -362,11 +388,16 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         (entry) =>
           entry.root_call &&
           domainToolName(entry.tool_name) === 'present_primary_view' &&
+          entry.domain_executed === true &&
           entry.status === 'succeeded',
       );
-      const parsedNomination = PresentPrimaryViewOutputSchema.safeParse(
-        successfulControls.at(-1)?.domain_output,
-      );
+      const controlOutput = successfulControls.at(-1)?.domain_output;
+      // The lifecycle metadata is produced by the control, not nomination data.
+      // Reject every other extra field, especially a model-supplied snapshot.
+      const { presentation_lifecycle: _lifecycle, ...nominationOutput } = isRecord(controlOutput)
+        ? controlOutput
+        : {};
+      const parsedNomination = PresentPrimaryViewOutputSchema.safeParse(nominationOutput);
       const nomination = parsedNomination.success ? parsedNomination.data : undefined;
       const resolvedNomination = nomination
         ? await resolvePrimaryViewNomination(nomination, trace, options.resolveArtifactReference)
@@ -380,8 +411,9 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       const disclosed = applyProposalDisclosure(correction.reply, disclosure);
       const requiresLearningValidation =
         copilotLearningContentRequiresValidation(disclosed) ||
-        (presented.primaryView?.source === 'ephemeral_html' &&
-          copilotLearningContentRequiresValidation(presented.primaryView.ref));
+        copilotLearningContentRequiresValidation(
+          primaryViewLearningContent(presented.primaryView) ?? '',
+        );
       const learning = await options.validateLearningContent(
         disclosed,
         options.userContextText,
@@ -445,7 +477,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     const id = result.tool_use_id;
     if (!id) return;
     const entry = byId.get(id);
-    if (entry?.status !== 'in_flight') return;
+    if (entry?.status !== 'in_flight' || domainToolName(entry.tool_name) !== result.name) return;
     // Capture the observed value once. A caller retaining the mutable output
     // cannot later change a nomination or displayed result behind its trace hash.
     const output = structuredClone(result.output);
@@ -454,6 +486,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     entry.output_sha256 = sha256CanonicalJson(output);
     entry.proposal_effect_contract = result.proposal_effect_contract;
     entry.domain_output = output;
+    entry.domain_executed = result.executed;
     traceVersion += 1;
   }
 

@@ -7,7 +7,9 @@
 - Active线YUK966：root独占tlp-wt-unified-conversation，branch codex/yuk-966-tool-result-delivery，base main fbc87f3b+65985eae交付记录。
   全产品核对发现真实缺口：agent提名tool_result后HeroCard只显示工具名，未交付结果，设计§2.2/2.3要求完整只读视图且不重复取数。
   计划①真实root观察生成有界可信快照；②live/persist/replay同一协议；③既有drawer展示/刷新不重查；④针对性安全/恢复/浏览器验证与独立review/exactCI。
-  UI精确范围已发preflight，未收到确认前只做后端/测试；无新paid，本池安全剩4.44177。
+  Owner已批准现有drawer发送/恢复/消息展示；根负责集成真实结果卡，复用ToolUseCard与同一live/replay协议。无新paid，安全剩4.44177。
+  初稿通用字段过滤被root拒绝；改复用真实领域outputSchema，并逐工具指定公开策略与opaque剥离，不复制第二套reader契约。
+  78unit与15实际契约DB绿；worker→历史读取新增检查发现测试缺少真实session，正在补齐场景并验证。
   业务owner只读复核：知识合并/录入完成/判分完成已有真实事务与失败恢复，不为9个必要owner造registry。
   SoT仍有部署兼容；仓库compose值不等于生产运行态，不擅删guard或翻flag。Notes分散写入需按不同业务操作判断，尚无重复规则证据。
 - YUK965 Done：PR1347 exact6015f2a0fe1163eefc168ec782a5fb657099c0d7，CI34053995106全部success，
@@ -81,7 +83,7 @@
 
 ## NEXT
 
-1. 966先完成服务端真实快照与协议保护，再在UI批准后补卡片；模型不能伪造快照，不重执行工具或加模型调用。
+1. 966完成快照/卡片集成，继续恢复DB、built-browser、独立review与exact CI；模型不能伪造快照，不重执行工具。
 2. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
 3. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
@@ -96,6 +98,6 @@
 
 ## BLOCKED-ON
 
-- 966卡片UI精确文件范围待确认，后端与测试可独立继续；965 review已结束，不重开。
+- 966暂无owner决策阻塞；965 review已结束，不重开。
 - 未授权部署、生产clone、SoT开关、backfill或历史数据删除；均未执行。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。

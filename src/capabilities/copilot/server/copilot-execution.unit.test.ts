@@ -14,6 +14,7 @@ import {
   copilotSessionContextDigest,
   markCopilotSessionContextDelivered,
 } from './live-session-context';
+import { buildCopilotToolResultSnapshot } from './tool-result-snapshot';
 
 const input: CopilotRunInput = {
   surface: 'copilot',
@@ -489,7 +490,10 @@ describe('Copilot execution owner', () => {
 
     expect(result.finalization.preparedReply).toEqual({
       text: '已核对函数知识点。',
-      primaryView: nomination,
+      primaryView: {
+        ...nomination,
+        snapshot: buildCopilotToolResultSnapshot('query_knowledge', { nodes: [{ id: 'kc_1' }] }),
+      },
     });
     expect(result.finalization.receipt.primary_view).toBe('retained');
   });

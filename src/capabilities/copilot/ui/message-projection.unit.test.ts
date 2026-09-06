@@ -36,6 +36,47 @@ const reply = {
 };
 
 describe('Copilot message projection', () => {
+  it('preserves the same result snapshot on live/replay and drops it on failed delivery', () => {
+    const value = {
+      nodes: [{ name: '磁通量', mastery: 0, evidence: null, approved: false }],
+      coverage: { has_more: null },
+    };
+    const primary_view = {
+      source: 'tool_result' as const,
+      ref: { kind: 'query_knowledge', id: 'read-42' },
+      snapshot: {
+        version: 1 as const,
+        state: 'available' as const,
+        value,
+        sha256: 'a'.repeat(64),
+        byte_length: new TextEncoder().encode(JSON.stringify(value)).byteLength,
+        completeness: 'complete' as const,
+        omissions: [],
+      },
+    };
+    const live = projectCopilotReply(base, { ...reply, primary_view });
+    const [replayed] = replayToMessages([
+      {
+        ...reply,
+        primary_view,
+        role: 'ai',
+        event_id: 'reply-42',
+        text: reply.reply,
+        at: '2026-09-07T00:00:00Z',
+      },
+    ]);
+    expect(live?.primary_view).toEqual(primary_view);
+    expect(replayed.primary_view).toEqual(live?.primary_view);
+    expect(
+      projectCopilotReply(base, { ...reply, primary_view }, undefined, true)?.primary_view,
+    ).toBeUndefined();
+    const corrupted = projectCopilotReply(base, {
+      ...reply,
+      primary_view: { ...primary_view, snapshot: { ...primary_view.snapshot, byte_length: 0 } },
+    });
+    expect(corrupted?.text).toBe(reply.reply);
+    expect(corrupted?.primary_view).toEqual({ source: 'tool_result', ref: primary_view.ref });
+  });
   it('durable live projection and replay agree on authoritative content and product state', () => {
     const live = projectCopilotReply(base, reply);
     const view = foldCopilotRunFrames(createCopilotRunView(), [

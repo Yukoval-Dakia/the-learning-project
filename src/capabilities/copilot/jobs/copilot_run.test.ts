@@ -13,6 +13,7 @@ import { createHash } from 'node:crypto';
 import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { capabilities } from '@/capabilities';
 import { COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY } from '@/capabilities/copilot/server/content-validation';
 import { writeCopilotReply } from '@/capabilities/copilot/server/conversation-writes';
 import {
@@ -45,11 +46,14 @@ import {
 } from '@/server/ai/provider-session-admission';
 import { createRunLifecycle } from '@/server/ai/run-lifecycle';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
+import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
 import { STUCK_RUN_THRESHOLD_MS } from '@/server/boss/handlers/ai_task_run_reconcile';
 import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
-
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { REALISTIC_EVIDENCE_TRACE } from '../server/reply-finalization.actual-fixture';
+import { buildCopilotToolResultSnapshot } from '../server/tool-result-snapshot';
+import { getRecentCopilotTurns } from '../server/turns';
 import {
   CLAIMED_EXECUTION_SETTLE_GRACE_MS,
   type CopilotRunJobData,
@@ -1657,14 +1661,21 @@ describe('runCopilotRun', () => {
   it.each(['tool_result', 'ephemeral_html'] as const)(
     'persists %s across live durable delivery, repair, and replay',
     async (source) => {
+      await registerCapabilityTools(capabilities);
+      const observation = REALISTIC_EVIDENCE_TRACE.find((row) => row.name === 'query_knowledge');
+      if (!observation) throw new Error('missing knowledge evidence');
+      const snapshot = buildCopilotToolResultSnapshot(observation.name, observation.output);
+      expect(snapshot.state).toBe('available');
       const runId = `copilot_user_ask_primary_view_repair_${source}`;
       const sessionId = `sess_primary_view_repair_${source}`;
+      await seedCopilotConversation(sessionId);
       const reply = '已核对函数知识点。';
       const primaryView =
         source === 'tool_result'
           ? {
               source,
               ref: { kind: 'query_knowledge', id: 'toolu_root_read_1' },
+              snapshot,
             }
           : { source, ref: '<section>资料</section>' };
       const committedReply =
@@ -1723,6 +1734,8 @@ describe('runCopilotRun', () => {
         primary_view: primaryView,
       });
       expect(execute).toHaveBeenCalledTimes(1);
+      const turns = await getRecentCopilotTurns(testDb(), { sessionId });
+      expect(turns.find((turn) => turn.role === 'ai')?.primary_view).toEqual(primaryView);
       const durableReply = (await replay(runId)).find(
         (item) => item.event_type === COPILOT_RUN_EVENTS.REPLY,
       );
