@@ -14,25 +14,17 @@
 // write to keep accept atomic.
 
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { updateGoalScope } from '@/capabilities/agency/public';
+import { rewriteGoalScopeOnMerge } from '@/capabilities/agency/public';
 import {
   rewriteLearningItemKnowledgeIds,
   rewriteQuestionKnowledgeIds,
 } from '@/capabilities/practice/server/merge-attribution';
 import { newId } from '@/core/ids';
-import { applyKnowledgeMergeToIds } from '@/core/projections/learning_item';
 import { AgentRef } from '@/core/schema/business';
 import type { MergeRepairEntryT, SuggestionKindT } from '@/core/schema/event/known';
 import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
-import {
-  event,
-  goal,
-  knowledge,
-  knowledge_edge,
-  learning_item,
-  misconception_edge,
-} from '@/db/schema';
+import { event, knowledge, knowledge_edge, learning_item, misconception_edge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { writeArchiveProposal } from '@/kernel/proposals/producers';
@@ -597,25 +589,6 @@ export async function applySplit(
 // experimental:goal_scope_update writer (updateGoalScope) per affected goal. That writer emits the
 // fold-visible event, does the row write, runs the flip-guard + its own parity assert — so no
 // separate assert is needed here.
-async function rewriteGoalScopeOnMerge(
-  tx: Tx,
-  fromId: string,
-  intoId: string,
-  now: Date,
-): Promise<string[]> {
-  const rows = await tx
-    .select({ id: goal.id, scope_knowledge_ids: goal.scope_knowledge_ids })
-    .from(goal)
-    .where(sql`${goal.scope_knowledge_ids} @> ${JSON.stringify([fromId])}::jsonb`);
-  const rewritten: string[] = [];
-  for (const r of rows) {
-    const next = applyKnowledgeMergeToIds(r.scope_knowledge_ids ?? [], new Set([fromId]), intoId);
-    await updateGoalScope(tx, r.id, { scope_knowledge_ids: next }, now);
-    rewritten.push(r.id);
-  }
-  return rewritten;
-}
-
 // misconception_edge.to_id (to_kind='knowledge') — imperative, no fold, dark
 // (MISCONCEPTION_PROMOTE_ENABLED OFF). Re-point every live edge whose knowledge TARGET is fromId.
 //
