@@ -5,7 +5,8 @@
 - 965实施已在root独占树完成：旧chat/mutex退休，shared conversation-writes保留；唯一执行policy与必需history anchor。
   actual harness迁生产HTTP adapter/v2事务接纳/物理fetch/runCopilotRun/终态wake，旧v1草稿未合入。
   143 scoped DB、取消及统一HTTP admission-only零付费通过；typecheck/lint/build/audits已绿。
-  122unit与143DB通过，PR1347 exact88a4a603已push；独立初审/CI34053656351运行中。
+  122unit与143DB通过；PR1347初审88a4a603发现unified超时可接纳迟到成功P1，修复共用deadline helper。
+  旧逻辑2RED含unhandled Stop rejection；修复4GREEN，真实cancel/pickup零付费再验绿；唯一验证审与最终CI待做。
   965 read actual在clean88a4a603通过，estimate0.0006681774；新池reserve5.55823、安全剩4.44177、累计estimate0.0359138701。
   已封存docs/planning/evidence/2026-09-07-retired-adapter-read-actual.json；无正在运行付费进程、未merge/deploy。
   下方“仅计划”是之前handoff，已由本条取代。

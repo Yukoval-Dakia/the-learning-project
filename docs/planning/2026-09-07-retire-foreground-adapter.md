@@ -51,7 +51,11 @@ actual 脚本使用生产 HTTP adapter（非合成 reservation）、真实 v2 �
 - raw evidence：`.tmp/actual-provider-acceptance/1788721088198-1711cb44-4cae-4aa9-9431-e3d8bff1ea48.json`；
   `.tmp/actual-provider-acceptance/1788721121954-05bc4d25-6477-4650-bc01-81c002281d90.json`。
 - 依赖基线 439→438 仅来自旧 session 调用消失；无新增豁免，仍有五模块 SCC，不能用审计绿代替全项目完成。
-- 独立 review、exact-head CI 与 merge 尚待；未部署。
+- 独立初审88a4a603发现1项P1：原unified watchdog在90秒后发Stop却可能接纳竞态迟到成功。
+  root将两处真实调用统一到测试内部的settleWithAcceptanceDeadline：超时无条件失败，
+  Stop rejection即时捕获为cause，仍等待execution与Stop都结算；不新增产品接口。
+  等价旧逻辑下2项RED（含未处理Stop rejection），修复后4项GREEN；随后真实cancel/pickup零付费再验通过。
+  exact-head CI、唯一验证审与merge待完成；未部署。
 
 ## 实际输出与预算
 

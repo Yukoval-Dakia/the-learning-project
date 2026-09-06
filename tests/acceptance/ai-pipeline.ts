@@ -20,6 +20,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { config } from 'dotenv';
 import type { CopilotRunJobData } from '@/capabilities/copilot/server/durable-dispatch';
+import { settleWithAcceptanceDeadline } from './deadline';
 
 type CaseName =
   | 'cold'
@@ -690,36 +691,29 @@ async function main(): Promise<void> {
         )
       )
         throw new Error('worker pickup: mismatched committed physical job id');
-      let timedOut = false;
-      let stopError: unknown;
-      let stopping: Promise<void> | undefined;
-      const timer = setTimeout(() => {
-        timedOut = true;
-        stopping = stop(handle.run_id).catch((error) => {
-          stopError = error;
-        });
-      }, CASE_TIMEOUT_MS);
-      let result: Awaited<ReturnType<typeof durable.runCopilotRun>>;
-      try {
-        result = await durable.runCopilotRun({
-          db,
-          data: job.data,
-          executeCopilotTurnFn: executeCopilotTurn,
-        });
-      } finally {
-        clearTimeout(timer);
-        await stopping;
-        if (await dispatch.hasTerminalCopilotRun(db, handle.run_id)) {
-          await dispatch.dispatchSessionHead(db, handle.session_id, {
-            boss,
-            transactionDb: fromPgBossDrizzleTx,
-          });
-        }
-      }
-      await boss.complete('copilot_run', job.id);
-      if (stopError) throw stopError;
-      if (timedOut) throw new Error('worker deadline exceeded after lifecycle settlement');
-      return result;
+      return settleWithAcceptanceDeadline(
+        async () => {
+          let result: Awaited<ReturnType<typeof durable.runCopilotRun>>;
+          try {
+            result = await durable.runCopilotRun({
+              db,
+              data: job.data,
+              executeCopilotTurnFn: executeCopilotTurn,
+            });
+          } finally {
+            if (await dispatch.hasTerminalCopilotRun(db, handle.run_id)) {
+              await dispatch.dispatchSessionHead(db, handle.session_id, {
+                boss,
+                transactionDb: fromPgBossDrizzleTx,
+              });
+            }
+          }
+          await boss.complete('copilot_run', job.id);
+          return result;
+        },
+        () => stop(handle.run_id),
+        CASE_TIMEOUT_MS,
+      );
     };
     const runAccepted = async (caseName: CaseName, request: unknown) => {
       const handle = await accept(request);
@@ -927,22 +921,18 @@ async function main(): Promise<void> {
           connection.abort();
           await reader.cancel().catch(() => undefined);
           disconnected.push(handle.run_id);
-          let stop: Promise<void> | undefined;
-          const timer = setTimeout(() => {
-            stop = fetch(`${origin}/api/copilot/runs/${handle.run_id}/cancel`, {
-              method: 'POST',
-              headers,
-            }).then(async (response) => {
+          await settleWithAcceptanceDeadline(
+            () => handleJobs(jobs),
+            async () => {
+              const response = await fetch(`${origin}/api/copilot/runs/${handle.run_id}/cancel`, {
+                method: 'POST',
+                headers,
+              });
               if (!response.ok) throw new Error('unified timeout Stop failed');
               await response.json();
-            });
-          }, CASE_TIMEOUT_MS);
-          try {
-            await handleJobs(jobs);
-          } finally {
-            clearTimeout(timer);
-            await stop;
-          }
+            },
+            CASE_TIMEOUT_MS,
+          );
           const [replyRow] = await db
             .select({
               id: schema.event.id,

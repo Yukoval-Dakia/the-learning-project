@@ -10,7 +10,8 @@
   已删除旧chat执行/mutex，保留conversation-writes；执行policy与history anchor收敛为持久生命周期。
   actual脚本走真实HTTP adapter/v2接纳/物理fetch/worker/终态wake，不声称自动poller。
   122unit/143DB、零付费cancel与HTTP admission-only、typecheck/lint/build/audits通过。
-  PR1347 exact88a4a603已push，独立初审与CI34053656351运行中，尚未merge/deploy。
+  PR1347初审88a4a603发现unified验收超时迟到成功P1；共用test deadline helper已修，2RED→4GREEN。
+  修复后cancel/pickup零付费通过；唯一验证审与最终exact CI待做，尚未merge/deploy。
   scoped输入测试由隔离lane提交并经root修订核验；无其它writer，不新增调度框架。
   一条真实read通过，clean exact88a4a603，estimatedUSD0.0006681774；新池reserve5.55823、安全剩4.44177。
   详情docs/planning/2026-09-07-retire-foreground-adapter.md。
