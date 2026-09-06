@@ -100,22 +100,6 @@ describe('copilot server ownership (YUK-884)', () => {
     ).toBe(false);
   });
 
-  it('deletes central implementations and owns its local tools under Copilot', () => {
-    for (const name of ['present-primary-view', 'query-events', 'search-memory-facts']) {
-      expect(
-        existsSync(join(process.cwd(), `src/capabilities/copilot/server/tools/${name}.ts`)),
-        name,
-      ).toBe(true);
-      expect(existsSync(join(process.cwd(), `src/server/ai/tools/${name}.ts`)), name).toBe(false);
-    }
-
-    const manifest = source('src/capabilities/copilot/manifest.ts');
-    for (const name of ['query-events', 'search-memory-facts']) {
-      expect(manifest).not.toContain(`@/server/ai/tools/${name}`);
-      expect(manifest).toContain(`./server/tools/${name}`);
-    }
-  });
-
   it('keeps legacy control implementations only for internal drain compatibility', () => {
     const declarations = copilotCapability.copilotTools?.tools ?? [];
     for (const name of LEGACY_MODEL_CONTROL_NAMES) {
@@ -134,11 +118,8 @@ describe('copilot server ownership (YUK-884)', () => {
     ).toBe(true);
   });
 
-  it('moves Copilot event read branches behind the public capability seam', () => {
+  it('exposes Copilot event readers through the public capability seam', () => {
     const publicPort = source('src/capabilities/copilot/public.ts');
-    // YUK-892 — the central events transport module is deleted; the read models
-    // live in kernel/read-models and are re-published through the public port.
-    expect(existsSync(join(process.cwd(), 'src/server/events/queries.ts'))).toBe(false);
     for (const name of [
       'getRecentReviewEvents',
       'getQuestionTimeline',

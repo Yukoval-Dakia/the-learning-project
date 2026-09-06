@@ -2,6 +2,16 @@
 
 ## 最新状态
 
+- Active970：root独占tlp-wt-unified-conversation / codex/yuk-970-tool-contract-tests，base main15eceba0。
+  Agency/Ingestion整体schema迁移指纹与自测、Agency/Copilot纯搬迁路径断言退休；effect/cost/mirror显式保留。
+  15unit/103DB及architecture/capability audits/typecheck/lint/build通过，独立初审PASS无finding；待PR/exactCI，无产品/paid/生产变化。
+  762实际已PR1351合并：exact36da8192，CI34065494164首轮全绿，main15eceba0，LinearDone。
+  971已查重登记Todo：三份现役Ingestion/Copilot AGENTS仍有与VLM baseline、Notes工具归属、FULL presentation冲突的约束。
+  三业务owner复核无新增重复规则；Practice同步/队列判分不等于Copilot产品分前后台，不为此造新wrapper。
+  audit-drift自动模式未完成全ADR读取/查证，不得宣称完成全量审计，不生成审计专用文件/PR。
+
+## 762历史记录（已由上方交付状态取代）
+
 - Active 762：root独占tlp-wt-unified-conversation / codex/yuk-762-db-context-identity，base main5cac4753。
   CI34064877513原同一归因case60s超时后preparedstatement错误复发；两例本机通过，失败lane第二次绿。
   后续临时时序探针证实14460ms中14390ms耗在toMatchObject深遍历Drizzle连接，不是已证DB锁/资源原因。
