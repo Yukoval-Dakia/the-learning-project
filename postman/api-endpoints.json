@@ -492,7 +492,7 @@
         ],
         "contentType": null,
         "bodyExample": null,
-        "notes": "limit 正整数，省略用服务端默认；session_id 指定 Copilot session，省略时读取 current reusable session。响应同一数据库快照 { session_id, turns, active_runs }；active_runs 含 run_id/session_id/status/events_url，不依赖浏览器本地任务缓存。"
+        "notes": "limit 正整数，省略用服务端默认；session_id 指定 Copilot session，省略时读取 current reusable session。响应同一数据库快照 { session_id, turns, active_runs }；active_runs 含 run_id/session_id/status/events_url，不依赖浏览器本地任务缓存。AI turn 的可选 run_id 仅关联同会话 ask/chip 根输入，用于合并恢复消息；不代表可撤回，撤回资格仍由 checkpoint_event_id 表达。"
       }
     ]
   },

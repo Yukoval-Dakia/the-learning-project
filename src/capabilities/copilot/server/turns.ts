@@ -77,6 +77,8 @@ export interface CopilotTurn {
   text: string;
   at: string; // ISO timestamp
   event_id: string;
+  /** Accepted ask/chip owner of an AI reply; independent of revert eligibility. */
+  run_id?: string;
   // PR round-2 (CR 3360614432): session_id + reply_event_id let the Dock
   // chip-renderer anchor a corrective chip on the correct event/session after
   // page refresh. session_id = the Copilot conversation envelope id; both are
@@ -445,6 +447,7 @@ async function projectCopilotTurnRows(
     toolCallsByParent,
     toolOperationsByTaskRun,
     subagentRunsByParent,
+    replyRoots,
   ] = await Promise.all([
     getCorrectionStatuses(dbArg, [...new Set([...rows.map((row) => row.id), ...replyParentIds])]),
     // YUK-497 wave-4 — asks whose turn called a MATERIALIZING tool (author_question / author_artifact
@@ -453,7 +456,20 @@ async function projectCopilotTurnRows(
     selectToolCallsForReplay(dbArg, toolCallParentIds),
     selectToolOperationsForReplay(dbArg, sessionId, taskRunIds),
     selectSubagentRunsForReplay(dbArg, sessionId, toolCallParentIds),
+    replyParentIds.length
+      ? dbArg
+          .select({ id: event.id })
+          .from(event)
+          .where(
+            and(
+              inArray(event.id, replyParentIds),
+              eq(event.session_id, sessionId),
+              inArray(event.action, [...USER_ACTIONS]),
+            ),
+          )
+      : Promise.resolve([]),
   ]);
+  const replyRunIds = new Set(replyRoots.map((root) => root.id));
   // Retracted roots include out-of-window parents: a reply under such a parent is skipped (its parent
   // row isn't loaded, so it renders as a hidden skip, not a tombstone) rather than shown stale.
   const retractedParentIds = new Set(
@@ -528,6 +544,9 @@ async function projectCopilotTurnRows(
         text,
         at: row.created_at.toISOString(),
         event_id: row.id,
+        ...(row.caused_by_event_id && replyRunIds.has(row.caused_by_event_id)
+          ? { run_id: row.caused_by_event_id }
+          : {}),
         // PR round-2 (CR 3360614432): Dock chip renderer needs session_id to
         // resolve the conversation and reply_event_id to anchor the chip.
         session_id: sessionId,
