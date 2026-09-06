@@ -1,17 +1,25 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-06：完整重构目标持续推进，当前 active 为 YUK-944 证据规则单一权威与上下文降本。
+> Linear 是权威 tracker；更新于 2026-09-06：当前active为YUK962纯逻辑测试分区，945真实摘要验收待费用授权。
 
 ## NOW
 
 - Owner 授权 AI pipeline、全项目业务封装与测试精简；不把目录归属或 audit 数量当整体完成。
-- YUK944：c03b5b3e 原五读取实际样本通过核心 claim/正事实/展示检查；不是整体生产质量完成。
-  reader v2明确事件/作答、直子覆盖和确定性边；比较规则只在typed合同，不增加query或模型层。
-  79.098s，input40410/output3179，$0.164021；与原主线baseline input40401持平，不称token下降。
-  944累计$1.31710818，含owner追加$1后余额$0.28771982；低于reserve，暂停新增付费调用。
-  13DB/22unit/typecheck/lint/build通过；初审与唯一验证审完成，不启动第三轮。
-  草稿PR1338最终证据待push/exact-head CI；上一remote3a735ffc CI34027572879全绿。
-  原主线报告问句误拦已去重登记YUK960，保留真实无标签题保护，未将缺陷假称修复。
+- YUK962 active：3 kernel tests原字节改名unit、2 AI纯逻辑测试归入fast，删除3条已失效旧路径。
+  59 scoped unit在无DB环境通过，独立review PASS且DB收集零条；1043文件总数不变。
+  617unit/426DB，警告8→3，保留传递DB候选与Bun插件测试；typecheck/lint/build通过。
+  当前bf59af8d，下一步PR/exact CI；没有删除预算/权限/unknown-cost断言。
+- YUK961：Agency recordQuestionPoolGap拥有coach提示文案、目标、refs、30天expiry和来源；
+  Practice只提交已完成验证的事实，保留事务外best-effort与入池成功不提示。
+  48 scoped DB tests/typecheck/lint/build和两项architecture audits通过，独立review PASS，PR1340 exact69542b2d CI34032977403进行中。
+  不新增框架/模型/schema/UI；依赖基线仍438/0/47，不用计数冒充业务封装完成。
+- YUK944已合并PR1338：exact3fd90c4d CI34030191329全绿，main db5a57b1。
+  原五读取actual核心通过；input40410与baseline40401持平，不称此样本降本。
+  944累计$1.31710818，余额$0.28771982。YUK945新增最多$1验收授权待答复，不付费调用。
+- YUK945在独立tlp-wt-native-compaction完成接线/初审P1修复/唯一复审：143 scoped tests；
+  草稿PR1339 exact821184ac CI34031520139全绿，未真实模型摘要验收，未合并。
+  Native loopback仅证明SDK compact/reinject/same-session，不把合成usage当真实节省。
+- YUK960报告问句误拦已登记，后续与949一起收口，不能降低无标签真实题保护。
 - AI finalization #1326、Goal #1327、Knowledge merge #1328、Ingestion completion #1329、
   ReviewSettlement #1332、测试精简 #1331/#1333 已经各自 exact-head CI 绿色并合并。
 - YUK-954 #1330：共享执行 owner，权限/校验/取消/原生子代理规则一份实现；
@@ -33,8 +41,7 @@
 
 ## NEXT
 
-1. YUK-944：原五读取actual核心样本已过，推最终证据并等待exact-head CI后收口。
-   不能把单样本当生产质量/降本；SDK原生长会话压缩仍属945未完成。
+1. YUK962 PR/exact CI；YUK961 CI后收口；945保留草稿等待真实摘要验收，不以CI代替模型质量。
 2. YUK-946离线native SDK验证通过：首请求仅catalog，Skill调用后才出现body，真实模型费用$0。
    原eager-body前提已否证；不重建目录、不删除free-form quiz能力，不声称移除正文带来普通轮降本。
    946已按原生能力验证收口Done，不代表实现了新目录或验证了生产模型选择。
