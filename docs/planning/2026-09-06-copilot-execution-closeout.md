@@ -42,3 +42,11 @@ The first CI exposed one stale caller-source assertion for native Task assembly.
 It is replaced by checks on the actual runner context in both existing execution
 behavior tests. Native permission, mailbox DB and actual-child gates are retained;
 no duplicate assembly is restored to satisfy a file-location assertion.
+
+One advisory finding was confirmed as a foreground regression: filtering hidden
+native terminal messages from UI activity also skipped lifecycle persistence.
+The real DB regression first left the child `running`, then passed after separating
+visibility from settlement. Root and the one allowed verification review each ran
+15 mailbox DB cases successfully; review approved. No further review round remains.
+The durable deadline advisory did not match the old code: validation already used
+the owner settlement budget. It is now one absolute bound, not renewed per validator.

@@ -363,8 +363,9 @@ export function createCopilotExecutionOwner(
     const onTaskEvent = spawnContract
       ? async (message: CopilotTaskLifecycleMessage) => {
           const projected = subtaskProjector?.(message);
-          if (!projected) return;
-          await emitActivity(policy, { kind: 'subtask', event: projected });
+          if (projected) await emitActivity(policy, { kind: 'subtask', event: projected });
+          // Visibility is not lifecycle ownership: hidden terminal messages still
+          // settle an admitted child; the persistence owner checks its identity.
           if (turn.sourceEventId) {
             await handleNativeSubagentTaskEvent(db, message, {
               sessionId: turn.sessionId,
