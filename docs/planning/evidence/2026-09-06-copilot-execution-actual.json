@@ -1,10 +1,7 @@
 {
   "status": "passed",
   "scope": "Named synthetic Copilot execution-owner regression gates; not production or queue E2E.",
-  "process_exit_codes": [
-    0,
-    0
-  ],
+  "process_exit_codes": [0, 0],
   "additional_reported_cost_usd": 0.146376,
   "remaining_incremental_allowance_usd": 0.604828,
   "accounting_notes": "Reported model costs only; earlier interrupted baseline/child calls remain unknown, never counted as zero. Original harness records retain their phase field; successful process exit and case assertions establish completion.",
@@ -151,11 +148,7 @@
             "observed_completed_tool_use_ids": []
           },
           "semantic_fixture": "rejected_by_existing_validators",
-          "validator_task_kinds": [
-            "QuizVerifyTask",
-            "SolutionGenerateTask",
-            "TeachingQualityTask"
-          ]
+          "validator_task_kinds": ["QuizVerifyTask", "SolutionGenerateTask", "TeachingQualityTask"]
         }
       ],
       "limitations": [
@@ -163,10 +156,7 @@
         "structural assertions do not establish factual entailment or semantic correctness"
       ],
       "fixture_readiness": {
-        "registered_tools": [
-          "query_knowledge",
-          "propose_knowledge_mutation"
-        ],
+        "registered_tools": ["query_knowledge", "propose_knowledge_mutation"],
         "foreground_session_id": "tgxft9i2xx8tr7ac1hs7ylfy"
       }
     },
@@ -257,9 +247,7 @@
             "root_task_run_id": "copilot_task_rz503g0wyc4tnbcor3zh1zxd",
             "trace_call_count": 2,
             "proposal_disclosure": "none",
-            "observed_completed_tool_use_ids": [
-              "call_398b00d938954d628688b511"
-            ]
+            "observed_completed_tool_use_ids": ["call_398b00d938954d628688b511"]
           },
           "subagent_runs": [
             {
@@ -275,10 +263,7 @@
         "structural assertions do not establish factual entailment or semantic correctness"
       ],
       "fixture_readiness": {
-        "registered_tools": [
-          "query_knowledge",
-          "propose_knowledge_mutation"
-        ],
+        "registered_tools": ["query_knowledge", "propose_knowledge_mutation"],
         "foreground_session_id": "aefp66uqygon8w9l6jljlm8s"
       }
     }
