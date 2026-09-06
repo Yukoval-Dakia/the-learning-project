@@ -26,7 +26,7 @@ import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree'
 // BEFORE the action event is written: only a goal that already has a base (genesis / proposal)
 // folds to a row the update can apply onto; a pre-event-sourced goal would FALSE-mismatch (fold
 // null vs live row), so it is correctly SKIPPED (mirrors W1's assertAcceptParity applicability gate).
-import { mutateGoal, type GoalStatus, type InsertGoalInput } from './commands';
+import { type GoalStatus, type InsertGoalInput, mutateGoal } from './commands';
 
 type DbLike = Db | Tx;
 
@@ -70,14 +70,7 @@ export async function updateGoalStatus(
   status: GoalStatus,
   now: Date = new Date(),
 ): Promise<void> {
-  await mutateGoal(db, {
-    goalId,
-    action: 'status',
-    payload: { status },
-    rowPatch: { status },
-    actorRef: 'goal-status-update',
-    now,
-  });
+  await mutateGoal(db, goalId, { kind: 'status', status, actorRef: 'goal-status-update', now });
 }
 
 /**
@@ -101,30 +94,7 @@ export async function updateGoalScope(
   // Lock/read/version capture must happen in the same transaction as the event and row write.
   // Reading `existing` before this boundary permits a concurrent owner update to be overwritten
   // by a stale replacement patch after the row lock is eventually acquired.
-  const payload = {
-    ...(patch.title !== undefined ? { title: patch.title } : {}),
-    ...(patch.scope_knowledge_ids !== undefined
-      ? { scope_knowledge_ids: patch.scope_knowledge_ids }
-      : {}),
-    ...(patch.sequence_hint !== undefined ? { sequence_hint: patch.sequence_hint } : {}),
-    ...(patch.placement_starter_augmentation
-      ? { placement_starter_augmentation: true as const }
-      : {}),
-  };
-  await mutateGoal(db, {
-    goalId,
-    action: 'scope',
-    payload,
-    actorRef,
-    now,
-    rowPatch: {
-      ...(patch.title !== undefined ? { title: patch.title } : {}),
-      ...(patch.scope_knowledge_ids !== undefined
-        ? { scope_knowledge_ids: patch.scope_knowledge_ids }
-        : {}),
-      ...(patch.sequence_hint !== undefined ? { sequence_hint: patch.sequence_hint } : {}),
-    },
-  });
+  await mutateGoal(db, goalId, { kind: 'scope', ...patch, actorRef, now });
 }
 
 /**

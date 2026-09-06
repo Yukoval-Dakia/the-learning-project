@@ -1,17 +1,17 @@
 import { and, eq } from 'drizzle-orm';
-
+import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { goal } from '@/db/schema';
-import { newId } from '@/core/ids';
 import { writeEvent } from '@/kernel/events';
-import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 import { projectGoal, projectGoalGuarded } from '@/server/projections/goal';
+import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 import {
   assertGoalParity,
   goalLiveRowToSnapshot,
   hasGoalGenesisAnchor,
 } from '@/server/projections/parity';
 import { projectionIsWriter } from '@/server/projections/sot-flag';
+
 type GoalDb = Db | Tx;
 
 export type GoalStatus = 'active' | 'dormant' | 'done';
@@ -29,47 +29,61 @@ export interface InsertGoalInput {
   now?: Date;
 }
 
-export async function mutateGoal(
-  db: GoalDb,
-  input: {
-    goalId: string;
-    action: 'status' | 'scope';
-    payload: Record<string, unknown>;
-    rowPatch: Record<string, unknown>;
-    actorRef: string;
-    now: Date;
-  },
-): Promise<void> {
+type GoalMutation =
+  | { kind: 'status'; status: GoalStatus; actorRef: string; now: Date }
+  | {
+      kind: 'scope';
+      title?: string;
+      scope_knowledge_ids?: string[];
+      sequence_hint?: number;
+      placement_starter_augmentation?: boolean;
+      actorRef: string;
+      now: Date;
+    };
+
+export async function mutateGoal(db: GoalDb, goalId: string, input: GoalMutation): Promise<void> {
   await db.transaction(async (tx) => {
     const [existing] = await tx
       .select({ version: goal.version })
       .from(goal)
-      .where(eq(goal.id, input.goalId))
+      .where(eq(goal.id, goalId))
       .for('update');
     if (!existing) return;
-    const wasEventSourced = await hasGoalGenesisAnchor(tx, input.goalId);
+    const wasEventSourced = await hasGoalGenesisAnchor(tx, goalId);
+    const isStatus = input.kind === 'status';
+    const payload = isStatus
+      ? { status: input.status }
+      : {
+          ...(input.title !== undefined ? { title: input.title } : {}),
+          ...(input.scope_knowledge_ids !== undefined
+            ? { scope_knowledge_ids: input.scope_knowledge_ids }
+            : {}),
+          ...(input.sequence_hint !== undefined ? { sequence_hint: input.sequence_hint } : {}),
+          ...(input.placement_starter_augmentation
+            ? { placement_starter_augmentation: true as const }
+            : {}),
+        };
+    const rowPatch = isStatus
+      ? { status: input.status }
+      : {
+          ...(input.title !== undefined ? { title: input.title } : {}),
+          ...(input.scope_knowledge_ids !== undefined
+            ? { scope_knowledge_ids: input.scope_knowledge_ids }
+            : {}),
+          ...(input.sequence_hint !== undefined ? { sequence_hint: input.sequence_hint } : {}),
+        };
     await writeEvent(tx, {
       id: newId(),
       actor_kind: 'system',
       actor_ref: input.actorRef,
-      action:
-        input.action === 'status'
-          ? 'experimental:goal_status_update'
-          : 'experimental:goal_scope_update',
+      action: isStatus ? 'experimental:goal_status_update' : 'experimental:goal_scope_update',
       subject_kind: 'goal',
-      subject_id: input.goalId,
+      subject_id: goalId,
       outcome: 'success',
-      payload: input.payload,
+      payload,
       created_at: input.now,
     });
-    await applyGoalRow(
-      tx,
-      input.goalId,
-      input.rowPatch,
-      input.now,
-      wasEventSourced,
-      existing.version,
-    );
+    await applyGoalRow(tx, goalId, rowPatch, input.now, wasEventSourced, existing.version);
   });
 }
 
@@ -103,27 +117,39 @@ export async function materializeGoalRow(db: GoalDb, input: InsertGoalInput): Pr
 
 export async function createGoalFromGenesis(
   db: GoalDb,
-  input: InsertGoalInput & { genesisEventId: string; snapshot: unknown },
-): Promise<void> {
+  input: Omit<InsertGoalInput, 'id' | 'source_ref'>,
+): Promise<string> {
+  const id = newId();
   const now = input.now ?? new Date();
+  const genesisEventId = newId();
+  const snapshot = {
+    ...input,
+    id,
+    source_ref: null,
+    now: undefined,
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  };
   await writeEvent(db, {
-    id: input.genesisEventId,
+    id: genesisEventId,
     actor_kind: 'system',
     actor_ref: 'goal-create',
     action: 'experimental:genesis',
     subject_kind: 'goal',
-    subject_id: input.id,
+    subject_id: id,
     outcome: 'success',
-    payload: { row: input.snapshot },
+    payload: { row: snapshot },
     created_at: now,
     ingest_at: now,
   });
   await upsertMaterializedIdIndex(db, {
-    materialized_id: input.id,
-    anchor_event_id: input.genesisEventId,
+    materialized_id: id,
+    anchor_event_id: genesisEventId,
     subject_kind: 'goal',
   });
-  await materializeGoalRow(db, input);
+  await materializeGoalRow(db, { ...input, id, source_ref: null, now });
+  return id;
 }
 
 async function applyGoalRow(

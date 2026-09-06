@@ -25,8 +25,6 @@
 // 'subject_live' (readers derive from subject_id at read time; frozen stays []).
 
 import { eq } from 'drizzle-orm';
-import { newId } from '@/core/ids';
-import type { GoalRowSnapshotT } from '@/core/schema/event/genesis';
 import { db } from '@/db/client';
 import { goal } from '@/db/schema';
 import { ApiError, errorResponse, resourceResponse } from '@/kernel/http';
@@ -96,25 +94,8 @@ export async function POST(req: Request): Promise<Response> {
       explicitScope.length === 0 && subjectId ? 'subject_live' : 'explicit';
     const scopeKnowledgeIds = explicitScope;
 
-    const id = newId();
+    let id = '';
     const now = new Date();
-    // The full goal snapshot for the genesis seed (manual goals have no proposal — genesis is
-    // the originating event). version 0 mirrors insertGoal's DB default.
-    const snapshot: GoalRowSnapshotT = {
-      id,
-      title,
-      subject_id: subjectId ?? null,
-      scope_knowledge_ids: scopeKnowledgeIds,
-      scope_mode: scopeMode,
-      sequence_hint: 0,
-      status: 'active',
-      source: 'manual',
-      source_ref: null,
-      created_at: now,
-      updated_at: now,
-      version: 0,
-    };
-    const genesisEventId = newId();
     await db.transaction(async (tx) => {
       // YUK-600（阻断④防线步 2）—— 建根安全网：挂在两 writer 分岔**之前**的共享
       // 事务步骤（projectGoal 路完全绕过 insertGoal，防线不能挂 writer 内）。
@@ -125,8 +106,7 @@ export async function POST(req: Request): Promise<Response> {
         const profile = getDefaultSubjectRegistry().get(subjectId);
         await ensureSubjectRoot(tx, subjectId, profile?.displayName ?? subjectId);
       }
-      await createGoalFromGenesis(tx, {
-        id,
+      id = await createGoalFromGenesis(tx, {
         title,
         subject_id: subjectId ?? null,
         scope_knowledge_ids: scopeKnowledgeIds,
@@ -135,8 +115,6 @@ export async function POST(req: Request): Promise<Response> {
         status: 'active',
         source: 'manual',
         now,
-        genesisEventId,
-        snapshot,
       });
     });
 
