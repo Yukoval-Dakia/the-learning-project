@@ -1,37 +1,17 @@
-// YUK-143 / ADR-0025 — North-Star `goal` queries (Wave-9 core).
-//
-// Goal rows are materialized from an accepted `goal_scope` proposal (see
-// accept.ts) — the evidence-first default (ADR-0025). Exception (YUK-472): the
-// cold-start at-entry path (`api/goal-create.ts`) also calls `insertGoal`
-// directly with `source='manual'`, so a day-one user can declare a goal + KC
-// scope before any evidence exists. Both paths share this single write surface.
-// This module is the single write/read surface for the `goal` table:
-//   - insertGoal       — INSERT write path (used by the materializer + tx)
-//   - updateGoalStatus — UPDATE: active | dormant | done transition
-//   - updateGoalScope  — UPDATE: re-proposed scope / sequence / title (AI may
-//                        re-scope as the user progresses, ND-2; still via accept)
-//   - listActiveGoals  — read for the Coach goal strand (ND-5 additive input)
+// Goal reads and backward-compatible semantic command entrypoints.
+// Live creation and mutation rules belong to commands.ts. insertGoal is retained
+// only for historical import/test fixtures; it deliberately does not synthesize events.
 
 import { asc, eq } from 'drizzle-orm';
-
 import type { Db, Tx } from '@/db/client';
 import { goal } from '@/db/schema';
 import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
-// YUK-471 W2 — goal status/scope events make these transitions fold-visible. These helpers have
-// NO live caller today, but per defer-flip-not-build the event path + write-through are wired now
-// so the moment a caller appears the goal fold already models the transition. The per-entity flag
-// projectionIsWriter('goal') gates ONLY who writes the ROW (projection write-through when ON,
-// imperative UPDATE when OFF).
-// HIGH-2 — write-time fold==row guard on the OFF branch. Gated on hasGoalGenesisAnchor checked
-// BEFORE the action event is written: only a goal that already has a base (genesis / proposal)
-// folds to a row the update can apply onto; a pre-event-sourced goal would FALSE-mismatch (fold
-// null vs live row), so it is correctly SKIPPED (mirrors W1's assertAcceptParity applicability gate).
-import { type GoalStatus, type InsertGoalInput, mutateGoal } from './commands';
+import { type GoalScopeMode, type GoalStatus, mutateGoal } from './commands';
 
 type DbLike = Db | Tx;
 
-export type GoalScopeMode = 'explicit' | 'subject_live';
-export type { GoalStatus, InsertGoalInput } from './commands';
+export type { GoalScopeMode, GoalStatus, InsertGoalInput } from './commands';
+export { insertLegacyGoal as insertGoal } from './commands';
 
 export interface ActiveGoal {
   id: string;
@@ -40,24 +20,6 @@ export interface ActiveGoal {
   scope_knowledge_ids: string[];
   scope_mode: GoalScopeMode;
   sequence_hint: number;
-}
-
-export async function insertGoal(db: DbLike, input: InsertGoalInput): Promise<string> {
-  const now = input.now ?? new Date();
-  await db.insert(goal).values({
-    id: input.id,
-    title: input.title,
-    subject_id: input.subject_id ?? null,
-    scope_knowledge_ids: input.scope_knowledge_ids,
-    scope_mode: input.scope_mode ?? 'explicit',
-    sequence_hint: input.sequence_hint,
-    status: input.status ?? 'active',
-    source: input.source,
-    source_ref: input.source_ref ?? null,
-    created_at: now,
-    updated_at: now,
-  });
-  return input.id;
 }
 
 /**

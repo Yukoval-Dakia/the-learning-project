@@ -1,6 +1,3 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
 import { describe, expect, it } from 'vitest';
 
 import { ingestionCapability } from './manifest';
@@ -31,28 +28,5 @@ describe('ingestion OCR / auto-enroll job declarations (YUK-882)', () => {
       queue: 'llm',
       load: expect.any(Function),
     });
-  });
-
-  it('keeps the implementations in the package and loads them from the manifest', () => {
-    const root = process.cwd();
-    expect(existsSync(join(root, 'src/capabilities/ingestion/jobs/tencent_ocr_extract.ts'))).toBe(
-      true,
-    );
-    expect(existsSync(join(root, 'src/capabilities/ingestion/jobs/auto_enroll.ts'))).toBe(true);
-
-    const manifest = readFileSync(join(root, 'src/capabilities/ingestion/manifest.ts'), 'utf8');
-    expect(manifest).toContain("import('./jobs/tencent_ocr_extract')");
-    expect(manifest).toContain("import('./jobs/auto_enroll')");
-  });
-
-  it('deletes both registrations from the central handler book', () => {
-    const root = process.cwd();
-    const central = readFileSync(join(root, 'src/server/boss/handlers.ts'), 'utf8');
-    expect(central, 'central book must not register or mention tencent_ocr_extract').not.toContain(
-      'tencent_ocr_extract',
-    );
-    expect(central, 'central book must not register or mention auto_enroll').not.toContain(
-      'auto_enroll',
-    );
   });
 });

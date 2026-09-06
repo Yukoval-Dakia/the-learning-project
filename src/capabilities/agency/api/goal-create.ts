@@ -9,7 +9,7 @@
 // server/goals/queries.ts docblock + goal_scope_propose_nightly). That reactive
 // path needs pre-existing evidence, so day-one (zero data) it yields no goal.
 // This handler is the ADDITIVE at-entry write path (source='manual'); it does NOT
-// replace the proposal path — both call the single `insertGoal` write surface.
+// replace the proposal path — both use the goal command owner.
 //
 // COLD-START (YUK-473 live find): a day-one user declares a goal on an EMPTY tree
 // (only subject-root seeds — often a cross-subject goal or no subject picked). The goal
@@ -28,15 +28,8 @@ import { eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { goal } from '@/db/schema';
 import { ApiError, errorResponse, resourceResponse } from '@/kernel/http';
-// YUK-471 W2 — goal projection seam. The MANUAL at-entry path has NO proposal chain, so the
-// only originating event is a genesis seed: the tx always writes the genesis event + the
-// materialized_id_index anchor (the event log + anchor is the source of truth), then the
-// per-entity flag projectionIsWriter('goal') gates ONLY who writes the ROW (projection
-// write-through when ON, imperative insertGoal when OFF — defer-flip-not-build).
-// HIGH-2 — write-time fold==row guard on the OFF branch (genesis written this tx → event-sourced).
-import { ensureSubjectRoot } from '@/server/subjects/ensure-subject-root';
-import { getDefaultSubjectRegistry, resolveKnownSubjectId } from '@/subjects/profile';
-import { createGoalFromGenesis } from '../server/goals/commands';
+import { resolveKnownSubjectId } from '@/subjects/profile';
+import { createManualGoal } from '../server/goals/commands';
 import { CreateGoalBody } from './goal-contracts';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
@@ -94,28 +87,12 @@ export async function POST(req: Request): Promise<Response> {
       explicitScope.length === 0 && subjectId ? 'subject_live' : 'explicit';
     const scopeKnowledgeIds = explicitScope;
 
-    let id = '';
-    const now = new Date();
-    await db.transaction(async (tx) => {
-      // YUK-600（阻断④防线步 2）—— 建根安全网：挂在两 writer 分岔**之前**的共享
-      // 事务步骤（projectGoal 路完全绕过 insertGoal，防线不能挂 writer 内）。
-      // 幂等 ON CONFLICT no-op；root.name 只从服务端 registry 读（v1 的
-      // subjectDisplayName passthrough 已废除，不信任何 client 串）。
-      // goal-parity 零成本：assertGoalParity 不读 knowledge，同 tx 建根安全。
-      if (subjectId) {
-        const profile = getDefaultSubjectRegistry().get(subjectId);
-        await ensureSubjectRoot(tx, subjectId, profile?.displayName ?? subjectId);
-      }
-      id = await createGoalFromGenesis(tx, {
-        title,
-        subject_id: subjectId ?? null,
-        scope_knowledge_ids: scopeKnowledgeIds,
-        scope_mode: scopeMode,
-        sequence_hint: 0,
-        status: 'active',
-        source: 'manual',
-        now,
-      });
+    const id = await createManualGoal(db, {
+      title,
+      subject_id: subjectId ?? null,
+      scope_knowledge_ids: scopeKnowledgeIds,
+      scope_mode: scopeMode,
+      sequence_hint: 0,
     });
 
     return resourceResponse(

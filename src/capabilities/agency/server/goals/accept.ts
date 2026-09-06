@@ -18,17 +18,8 @@ import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
-// YUK-471 W2 — goal projection seam. The accept tx always writes the materialized_id_index
-// anchor (goalId → the propose event) so the SoT-flip guard's O(1) genesis-anchor check resolves
-// a proposal-materialized goal; the per-entity flag projectionIsWriter('goal') gates ONLY who
-// writes the ROW (projection write-through when ON, imperative insertGoal when OFF).
-import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
-// YUK-471 W2 HIGH-2 — write-time fold==row guard on the OFF (imperative) branch (dev/test throw,
-// prod warn). The goal is event-sourced this tx (proposal + rate + index anchor), so the assert
-// always applies. Mirrors W1's assertKnowledgeNodeParity at the knowledge accept site.
-import { ensureSubjectRoot } from '@/server/subjects/ensure-subject-root';
-import { getDefaultSubjectRegistry, resolveKnownSubjectId } from '@/subjects/profile';
-import { materializeGoalRow } from './commands';
+import { resolveKnownSubjectId } from '@/subjects/profile';
+import { materializeAcceptedGoal } from './commands';
 
 export interface GoalScopeAcceptResult {
   kind: 'goal_scope';
@@ -141,36 +132,13 @@ export async function acceptGoalScopeProposal(
       caused_by_event_id: proposalId,
       created_at: now,
     });
-    // 2. ALWAYS write the materialized_id_index anchor (goalId → the propose event) regardless
-    //    of the flag. The event log + anchor is the source of truth; the flag only switches the
-    //    ROW writer. The anchor lets the SoT-flip guard resolve this proposal-materialized goal
-    //    O(1) (mirrors the W1 accept seam writing the propose anchor).
-    await upsertMaterializedIdIndex(tx, {
-      materialized_id: goalId,
-      anchor_event_id: proposalId,
-      subject_kind: 'goal',
-    });
-    // YUK-600（阻断④防线步 2）—— 与 goal-create 同构：两 writer 分岔前建根（幂等）。
-    if (subjectId) {
-      const profile = getDefaultSubjectRegistry().get(subjectId);
-      await ensureSubjectRoot(tx, subjectId, profile?.displayName ?? subjectId);
-    }
-    // 3. ROW writer — gated on the per-entity flag (critic A1, defer-flip-not-build):
-    //    ON  → the projection write-through folds (propose + rate) and writes the row;
-    //    OFF → the imperative insertGoal stays the writer (current behavior).
-    await materializeGoalRow(tx, {
+    await materializeAcceptedGoal(tx, {
       id: goalId,
       title,
       subject_id: subjectId,
       scope_knowledge_ids: scopeKnowledgeIds,
-      // YUK-603 — accept 恒 explicit: the proposal's scope is an evidence-first narrow
-      // selection the user confirmed in the inbox; it never live-derives. Mirrors the fold's
-      // proposal-materialization branch stamp (fold == row).
-      scope_mode: 'explicit',
       sequence_hint: sequenceHint,
-      status: 'active',
-      source: 'goal_scope_proposal',
-      source_ref: proposalId,
+      proposalId,
       now,
     });
   });

@@ -10,7 +10,7 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { event, goal, knowledge } from '@/db/schema';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { createGoalFromGenesis } from './commands';
+import { createManualGoal } from './commands';
 import { insertGoal, listActiveGoalsWithResolvedScope, updateGoalStatus } from './queries';
 
 const db = testDb();
@@ -159,15 +159,29 @@ describe('listActiveGoalsWithResolvedScope (YUK-603 goal-strand live read)', () 
 });
 
 describe('goal mutation command concurrency (YUK-952)', () => {
+  it('orders mutations by ownership even when the later owner receives an older request timestamp', async () => {
+    const start = new Date('2026-09-01T00:00:00Z');
+    const goalId = await createManualGoal(db, {
+      title: '时序相反但两次意图都应保留',
+      scope_knowledge_ids: ['kc-a', 'kc-b'],
+      sequence_hint: 2,
+      now: start,
+    });
+    await updateGoalStatus(db, goalId, 'done', new Date(start.getTime() + 2_000));
+    await updateGoalStatus(db, goalId, 'dormant', new Date(start.getTime() + 1_000));
+    const [row] = await db.select().from(goal).where(eq(goal.id, goalId));
+    expect(row).toMatchObject({ status: 'dormant', version: 2 });
+    expect(row.updated_at.getTime()).toBeGreaterThan(start.getTime() + 2_000);
+  });
+
   it('serializes two status writes and preserves both events, version +2, and fold parity', async () => {
-    const goalId = await createGoalFromGenesis(db, {
+    const goalId = await createManualGoal(db, {
       title: 'concurrent goal',
       subject_id: null,
       scope_knowledge_ids: ['kc-a'],
       scope_mode: 'explicit',
       sequence_hint: 0,
       status: 'active',
-      source: 'manual',
     });
     const transitionAt = Date.now() + 1_000;
     await Promise.all([

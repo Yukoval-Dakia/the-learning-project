@@ -3,7 +3,7 @@
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "debts": {
     "capabilityToServer": {
-      "total": 453,
+      "total": 445,
       "byOwnerPair": {
         "agency -> ai": 25,
         "agency -> boss": 10,
@@ -11,11 +11,11 @@
         "agency -> http": 2,
         "agency -> learning-items": 1,
         "agency -> mastery": 3,
-        "agency -> projections": 15,
+        "agency -> projections": 8,
         "agency -> proposals": 4,
         "agency -> questions": 1,
         "agency -> runtime-env": 1,
-        "agency -> subjects": 2,
+        "agency -> subjects": 1,
         "copilot -> advisory-locks": 1,
         "copilot -> ai": 12,
         "copilot -> boss": 6,
