@@ -1,14 +1,14 @@
 # src/capabilities/copilot — Copilot 单人格对话
 
-> D14 单人格对话面：自由对话 + chip 直触 SSE 流、turns 重放、今日摘要、教学 accept-chip 与主动 nudge。工具面经 `copilotTools` 贡献制聚合自各 capability 包。
+> 单人格对话面：自由对话与 chip 共用持续会话、可恢复进度和 turns 重放；另有今日摘要、教学 accept-chip 与主动 nudge。工具面经 `copilotTools` 贡献制聚合自各 capability 包。
 
 ## WHERE TO LOOK
 | 文件 | 职责 |
 |------|------|
-| `manifest.ts` | 9 条 API 路由 + 3 个 jobs + 6 个自有 copilot tools + 7 个 event actions |
-| `api/chat.ts` | `/api/copilot/chat` SSE 流入口 |
+| `manifest.ts` | API、jobs、copilot tools 与 event actions 的组合入口 |
+| `api/chat.ts` | `/api/copilot/chat` 持久接纳入口（202、稳定幂等键） |
 | `api/cancel-run.ts` | `/api/copilot/runs/[id]/cancel` durable Stop 原子写入面 |
-| `api/turns.ts` | `/api/copilot/turns` turns 重放 |
+| `api/turns.ts` | `/api/copilot/turns` 会话快照、turns 与 active_runs 恢复 |
 | `api/copilot-summary.ts` | `/api/today/copilot-summary` 今日摘要 |
 | `api/accept-chip.ts` | `/api/teaching-sessions/[id]/accept-chip` 教学 chip 接受 |
 | `api/nudges.ts` | 主动 nudge 列表与 dismiss/opened 幂等处置 |
@@ -17,10 +17,14 @@
 | `ui/CopilotDock.tsx` | 全局 Copilot 抽屉（壳层在 `web/src/router.tsx` 根挂） |
 
 ## CONVENTIONS
-- 统一记忆读取面 = `server/chat.ts` ambient context + `server/turns.ts`：inline/UI replay
-  用 `getRecentCopilotTurns`，durable pickup 用 `getCopilotTurnsBeforeAnchor`，两者复用同一
-  row→turn projection；不要另建第三套 reader/projection。
-- durable copilot run 走 `copilot_run` pg-boss job（queue='agent'），进度落 `job_events`。
+- 生命周期遵循 ADR-0062：消息持久接纳后由服务端执行；断线/关抽屉只脱离订阅，只有显式 Stop 取消。
+  后续消息在同一会话按输入事件顺序排队，不以 session_busy 或先 Stop 为发送前提。
+- `server/turns.ts` 统一历史投影：快照使用当前会话 reader，worker 使用因果 anchor reader，
+  将晚于后续输入到达的前轮回复归回前轮；不要另建第三套 reader/projection。
+- `server/durable-dispatch.ts` 拥有 FIFO 接纳和派发：只有最早未终结消息有物理 `copilot_run` job。
+  终态提交后才能唤醒后继；合法等待消息没有 pickup 超时，DISPATCHED 才启动 pickup 计时。
+- `server/copilot-execution.ts` 拥有公共模型/工具/读取预算与发布校验；持续运行不意味着抬高默认预算。
+  SDK id 只有本进程确实持有且实际提交文本匹配时才可复用；异进程从产品历史冷启，不重烧已执行消息。
 - Stop 以 `job_events` 的 `CANCEL_REQUESTED` 为跨 app/worker 真相源。API 用固定顺序
   dispatch→settlement advisory locks 与 execution fence / outcome marker 线性化；worker 用
   500ms 非重叠 poll、SDK `PreToolUse` 与 async DomainTool gate 覆盖纯文本、SDK 工具和本地

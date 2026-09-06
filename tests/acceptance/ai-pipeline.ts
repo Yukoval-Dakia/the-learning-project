@@ -13,6 +13,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
+import { once } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -34,6 +35,7 @@ type CaseName =
   | 'semantic'
   | 'native-task'
   | 'durable'
+  | 'unified'
   | 'cancel';
 
 const CASES: readonly CaseName[] = [
@@ -50,6 +52,7 @@ const CASES: readonly CaseName[] = [
   'proposal',
   'native-task',
   'durable',
+  'unified',
   'cancel',
   // Negative fixture emission is model-dependent; do it after the core journey.
   'semantic',
@@ -75,6 +78,7 @@ const CASE_COST_RESERVE_USD: Readonly<Record<CaseName, number>> = {
   semantic: 0.75,
   'native-task': 0.5,
   durable: 0.25,
+  unified: 1.6,
   cancel: 0,
 };
 // Derived from the current content-validation call graph: verify-framework's
@@ -236,7 +240,9 @@ async function main(): Promise<void> {
   };
   const selected = requested
     ? (prerequisites[requested as CaseName] ?? [requested as CaseName])
-    : CASES.filter((name) => name !== 'claims' && !name.startsWith('presentation-'));
+    : CASES.filter(
+        (name) => name !== 'claims' && name !== 'unified' && !name.startsWith('presentation-'),
+      );
   const campaignCostLimitUsd = costLimitUsd();
   const baselineRecord = process.argv.includes('--baseline-record');
   if (baselineRecord && selected.length !== 1) {
@@ -245,6 +251,7 @@ async function main(): Promise<void> {
 
   const caseEvidence: Array<Record<string, unknown>> = [];
   let container: StartedPostgreSqlContainer | undefined;
+  let closeUnifiedFixture: (() => Promise<void>) | undefined;
   // Create the evidence envelope before Testcontainers setup. A Docker/migrate
   // failure must still leave a safe phase marker, not only a bare process Error.
   const evidence: Record<string, unknown> | undefined = {
@@ -617,6 +624,239 @@ async function main(): Promise<void> {
         );
       }
       activeCase = caseName;
+      if (caseName === 'unified') {
+        const [{ serve }, { buildHonoApp }, { getStartedBoss }, contracts] = await Promise.all([
+          import('@hono/node-server'),
+          import('../../server/app'),
+          import('@/server/boss/client'),
+          import('@/capabilities/copilot/api/contracts'),
+        ]);
+        process.env.INTERNAL_TOKEN = randomUUID();
+        const headers = { 'x-internal-token': process.env.INTERNAL_TOKEN };
+        const boss = await getStartedBoss();
+        if (!(await boss.getQueue('copilot_run'))) await boss.createQueue('copilot_run');
+        const app = buildHonoApp(capabilities);
+        const server = serve({ fetch: app.fetch, hostname: '127.0.0.1', port: 0 });
+        closeUnifiedFixture = async () => {
+          if ('closeAllConnections' in server) server.closeAllConnections();
+          await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+          await boss.stop({ graceful: true, timeout: 5_000 });
+        };
+        if (!server.listening) await once(server, 'listening');
+        const address = server.address();
+        if (!address || typeof address === 'string')
+          throw new Error('unified: missing loopback address');
+        const origin = `http://127.0.0.1:${address.port}`;
+        const fixture = {
+          observation_id: 'OBS-A17',
+          subject: 'physics',
+          estimate: 0.42,
+          evidence_count: 7,
+          zero_state: { observation_id: 'OBS-B29', estimate: 0, evidence_count: 0 },
+          unknown_state: { observation_id: 'OBS-C31', estimate: null, evidence_count: null },
+          relation: { from: 'OBS-A17', to: 'OBS-B29', kind: 'analogy', confidence: 0.73 },
+          reverse_relation: 'unobserved',
+          approved: false,
+          source: 'snapshot-synth-2031',
+        };
+        const firstInput = {
+          session_id: sessionId,
+          triggered_by: 'chat' as const,
+          user_message: `这是合成数据状态审计，不是题目、判分或教学。本轮记住以下结构，不调用任何工具，不写入、不提案、不生成卡片。只用一句中文确认收到，不解释数据。${JSON.stringify(fixture)}`,
+        };
+        const secondInput = {
+          session_id: sessionId,
+          triggered_by: 'chat' as const,
+          user_message:
+            '继续刚才的数据状态审计：不调用工具、不写入、不提案、不生成卡片。只输出一个JSON对象，不用代码围栏，逐字段原样复述上一轮完整结构，保留零与null、方向与未观测、未批准状态；再增加current_context字段，值为UPDATED-92。这不是题目，不解释。',
+        };
+        const inputs = [firstInput, secondInput];
+        const keys = inputs.map(() => randomUUID());
+        const accepted: Array<{ run_id: string; session_id: string; events_url: string }> = [];
+        for (const [index, input] of inputs.entries()) {
+          const response = await fetch(`${origin}/api/copilot/chat`, {
+            method: 'POST',
+            headers: {
+              ...headers,
+              'content-type': 'application/json',
+              'Idempotency-Key': keys[index],
+            },
+            body: JSON.stringify(input),
+          });
+          if (response.status !== 202)
+            throw new Error(`unified: expected202, got${response.status}`);
+          const handle = contracts.CopilotDurableRunResponseSchema.parse(await response.json());
+          const location = response.headers.get('Location');
+          if (!location) throw new Error('unified: missing events location');
+          accepted.push({ ...handle, events_url: location });
+        }
+        const state = async () =>
+          contracts.CopilotTurnsResponseSchema.parse(
+            await (await fetch(`${origin}/api/copilot/turns`, { headers })).json(),
+          );
+        const initialState = await state();
+        if (
+          !isDeepStrictEqual(
+            initialState.active_runs.map((item) => item.run_id),
+            accepted.map((item) => item.run_id),
+          )
+        )
+          throw new Error('unified: missing ordered accepted turns');
+        const queueBefore = await boss.findJobs('copilot_run', { data: { session_id: sessionId } });
+        if (queueBefore.length !== 1)
+          throw new Error('unified: more than one physical session head');
+        if (process.argv.includes('--admission-only')) {
+          for (const handle of accepted) {
+            const stopped = await fetch(`${origin}/api/copilot/runs/${handle.run_id}/cancel`, {
+              method: 'POST',
+              headers,
+            });
+            if (!stopped.ok) throw new Error('unified admission-only: Stop failed');
+          }
+          const attempts = await db
+            .select({ id: schema.ai_task_runs.id })
+            .from(schema.ai_task_runs);
+          if (attempts.length !== 0 || (await state()).active_runs.length !== 0)
+            throw new Error('unified admission-only: unexpected execution or active turn');
+          caseEvidence.push({
+            name: caseName,
+            admission_only: true,
+            paid_calls: 0,
+            handles: accepted,
+          });
+          continue;
+        }
+        evidence.unified_transport = {
+          actual_http: true,
+          actual_pg_boss: true,
+          worker_driver: 'bounded fetch + production handler',
+          subscription_disconnected: [],
+          handles: accepted,
+          automatic_poller_verified: false,
+        };
+        const disconnected = (evidence.unified_transport as { subscription_disconnected: string[] })
+          .subscription_disconnected;
+        let firstSdkId: string | null = null;
+        for (const [index, handle] of accepted.entries()) {
+          if (campaignCostLimitUsd - knownCost < 0.8)
+            throw new Error('unified: insufficient remaining reserve before next paid turn');
+          const jobs = await boss.fetch<
+            import('@/capabilities/copilot/jobs/copilot_run').CopilotRunJobData
+          >('copilot_run', { batchSize: 1 });
+          if (jobs.length !== 1 || jobs[0].data.run_id !== handle.run_id)
+            throw new Error('unified: FIFO pickup mismatch');
+          const connection = new AbortController();
+          const progress = await fetch(new URL(handle.events_url, origin), {
+            headers,
+            signal: connection.signal,
+          });
+          if (!progress.ok || !progress.body) throw new Error('unified: missing progress stream');
+          const reader = progress.body.getReader();
+          await reader.read();
+          connection.abort();
+          await reader.cancel().catch(() => undefined);
+          disconnected.push(handle.run_id);
+          let stop: Promise<void> | undefined;
+          const timer = setTimeout(() => {
+            stop = fetch(`${origin}/api/copilot/runs/${handle.run_id}/cancel`, {
+              method: 'POST',
+              headers,
+            }).then(async (response) => {
+              if (!response.ok) throw new Error('unified timeout Stop failed');
+              await response.json();
+            });
+          }, CASE_TIMEOUT_MS);
+          try {
+            await durable.buildCopilotRunHandler(db)(jobs);
+          } finally {
+            clearTimeout(timer);
+            await stop;
+          }
+          const [replyRow] = await db
+            .select({
+              id: schema.event.id,
+              task_run_id: schema.event.task_run_id,
+              payload: schema.event.payload,
+              outcome: schema.event.outcome,
+            })
+            .from(schema.event)
+            .where(
+              and(
+                eq(schema.event.caused_by_event_id, handle.run_id),
+                eq(schema.event.action, 'experimental:copilot_reply'),
+              ),
+            )
+            .limit(1);
+          const reply = replyRow?.payload.reply_md;
+          if (!replyRow?.task_run_id || typeof reply !== 'string') {
+            await snapshot(caseName, inputs[index], { session_id: sessionId });
+            throw new Error('unified: missing persisted reply');
+          }
+          const result = {
+            session_id: sessionId,
+            task_run_id: replyRow.task_run_id,
+            reply,
+            reply_event_id: replyRow.id,
+          };
+          const observed = await snapshot(caseName, inputs[index], result);
+          const receipt = await assertFinalizationReceipt(caseName, result);
+          const entry = caseEvidence.at(-1);
+          if (entry) {
+            entry.reply_finalization = receipt;
+            entry.run_id = handle.run_id;
+            entry.turn_index = index;
+          }
+          if (
+            replyRow.outcome !== 'success' ||
+            observed.rows.length !== 1 ||
+            observed.tools.length !== 0
+          )
+            throw new Error('unified: unexpected failure, descendant or tool execution');
+          const [session] = await db
+            .select({ sdk: schema.learning_session.agent_sdk_session_id })
+            .from(schema.learning_session)
+            .where(eq(schema.learning_session.id, sessionId));
+          if (!session?.sdk) throw new Error('unified: missing committed native session');
+          if (index === 0) firstSdkId = session.sdk;
+          else {
+            if (session.sdk !== firstSdkId)
+              throw new Error('unified: native session changed across sequential turns');
+            let decoded: unknown;
+            try {
+              decoded = JSON.parse(reply);
+            } catch {
+              throw new Error('unified: expected JSON recall output');
+            }
+            if (!isDeepStrictEqual(decoded, { ...fixture, current_context: 'UPDATED-92' }))
+              throw new Error(
+                'unified: recall lost zero/unknown/direction/approval/current context',
+              );
+          }
+          await boss.complete('copilot_run', jobs[0].id);
+        }
+        const restored = await state();
+        if (
+          restored.active_runs.length !== 0 ||
+          restored.turns.filter((turn) => turn.role === 'ai').length !== 2
+        )
+          throw new Error('unified: final restored conversation mismatch');
+        const replay = await fetch(`${origin}/api/copilot/chat`, {
+          method: 'POST',
+          headers: { ...headers, 'content-type': 'application/json', 'Idempotency-Key': keys[0] },
+          body: JSON.stringify(firstInput),
+        });
+        const replayHandle = contracts.CopilotDurableRunResponseSchema.parse(await replay.json());
+        if (replay.status !== 202 || replayHandle.run_id !== accepted[0].run_id)
+          throw new Error('unified: terminal replay changed accepted handle');
+        const jobsAfterReplay = await boss.fetch('copilot_run', { batchSize: 1 });
+        if (jobsAfterReplay.length !== 0)
+          throw new Error('unified: terminal replay requeued paid work');
+        evidence.limitations = [
+          'real HTTP + pg-boss fetch + production worker handler; automatic polling and browser UX not verified',
+          'synthetic recall covers zero/null/direction/approval continuity, not broad learning quality or automatic compaction',
+        ];
+        continue;
+      }
       if (caseName === 'cancel') {
         const attemptsBefore = await db
           .select({ id: schema.ai_task_runs.id })
@@ -747,7 +987,7 @@ async function main(): Promise<void> {
         continue;
       }
 
-      const messages: Record<Exclude<CaseName, 'durable' | 'cancel'>, string> = {
+      const messages: Record<Exclude<CaseName, 'durable' | 'unified' | 'cancel'>, string> = {
         cold: '只回复「冷启动已确认」，不要出题、不要调用工具。',
         resume: '只回复「恢复会话已确认」，不要出题、不要调用工具。',
         'context-change':
@@ -1085,6 +1325,7 @@ async function main(): Promise<void> {
     }
     throw error;
   } finally {
+    await closeUnifiedFixture?.();
     await container?.stop();
   }
 }
