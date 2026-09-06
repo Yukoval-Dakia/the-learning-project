@@ -68,7 +68,7 @@ import {
 } from '@/server/boss/job-observation';
 import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
-import { getAgentSdkSessionId } from '@/server/session/conversation';
+import { clearAgentSdkSessionId, getAgentSdkSessionId, setAgentSdkSessionId } from '@/server/session/conversation';
 import { resolveCopilotSkills } from '@/subjects/copilot-skills';
 import type {
   CopilotModeState,
@@ -880,7 +880,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   // process, and only while the conversation row still points at that id.
   // Persisted ids from another process/app are intentionally cold-started.
   const persistedSdkSessionId = await getAgentSdkSessionId(db, data.session_id);
-  const resumeSessionId = isCopilotWorkerSessionOwned(persistedSdkSessionId)
+  const resumeSessionId = isCopilotWorkerSessionOwned(data.session_id, persistedSdkSessionId)
     ? persistedSdkSessionId ?? undefined
     : undefined;
   const progressChain: Promise<void> = Promise.resolve();
@@ -904,6 +904,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     runId,
   });
   cancellationControl.startPolling();
+  let sdkSessionCommitted = false;
   const cancellationMarker =
     (
       partialText?: string,
@@ -1094,13 +1095,18 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       if (markerClaim.outcome === 'already_terminal') {
         return terminalRunResult(markerClaim.events, taskRunId);
       }
-      return await projectCopilotOutcomeMarker(
+      const projected = await projectCopilotOutcomeMarker(
         db,
         runId,
         taskRunId,
         projectSuccessfulTerminal,
         projectFailedTerminal,
       );
+      if (projected.status === 'done' && result.sdkSessionId) {
+        await setAgentSdkSessionId(db, data.session_id, result.sdkSessionId);
+        sdkSessionCommitted = true;
+      }
+      return projected;
     } catch (settlementErr) {
       throw new DurableTerminalProjectionError(runId, 'success', settlementErr);
     }
@@ -1123,6 +1129,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       createCancelledMarker: cancellationMarker(),
     });
   } finally {
+    if (!sdkSessionCommitted) await clearAgentSdkSessionId(db, data.session_id);
     cancellationControl.dispose();
   }
 }

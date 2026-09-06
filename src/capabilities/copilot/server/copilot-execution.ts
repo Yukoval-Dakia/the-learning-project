@@ -415,7 +415,7 @@ export function createCopilotExecutionOwner(
       ...(resumeSessionId ? { resume: resumeSessionId } : {}),
       onSessionId: (sessionId: string) => {
         observedSdkSessionId = sessionId;
-        registerCopilotWorkerSession(sessionId);
+        registerCopilotWorkerSession(turn.sessionId, sessionId);
       },
     };
     const runnerContext: Parameters<typeof streamTaskCollecting>[2] = {
@@ -504,8 +504,8 @@ export function createCopilotExecutionOwner(
       };
     } finally {
       if (!retainSdkSession) {
-        if (observedSdkSessionId) clearCopilotWorkerSession(observedSdkSessionId);
-        if (resumeSessionId) clearCopilotWorkerSession(resumeSessionId);
+        if (observedSdkSessionId) clearCopilotWorkerSession(turn.sessionId, observedSdkSessionId);
+        if (resumeSessionId) clearCopilotWorkerSession(turn.sessionId, resumeSessionId);
       }
       await disposeSubagentCancellation();
     }
