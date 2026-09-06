@@ -17,6 +17,11 @@ Owner 已授权 AI pipeline 与基于1e61da8d报告的全项目业务封装/测�
   B/C仍断言唯一差异/B链中断，另把B parent写成直接lookup结果；不能合并/关闭944。
   费用reported$0.158656；944合计$0.33490018，当前余额$0.26992782，低于单次reserve$0.30。
   Owner已明确允许修复后最多追加$1；当前可用$1.26992782。运行成功不等于语义验收通过。
+  第四次a8cfd734实际费用$0.218690、88.843s、权威终文，但仍错误A01/唯一差异/链终止，
+  还虚构prediction_score孙事件；手工验收失败。当前余额$1.05123782，累计944成本$0.55359018。
+  停止逐句加词付费重试，先查实际上下文和reader表示。未推送/未PR/未合并，goal仍active。
+  免费native SDK loopback探针已证明首请求catalog有/body无，Skill调用后body才出现；
+  946 eager-body前提被否证，不能按SDK initialize注释猜测全文预载，不建第二套目录。
   版本证据2026-09-06-claim-context-actual.json；停止无诊断付费重试，不缩小五read质量要求。
 - reviewer review_claim_context初审2P1均属harness：额外tools未隔离、缺失reader未在付费前检查；已修。
   另已要求claims显式budget、拒绝无terminal/额外model/tool，并新增SDK安全子类型/耗时记录。

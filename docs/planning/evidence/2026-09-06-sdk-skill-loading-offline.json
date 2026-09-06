@@ -1,0 +1,44 @@
+{
+  "status": "verified_native_catalog_then_invoke_body",
+  "sdk_version": "0.3.220",
+  "transport": "loopback_http_127.0.0.1_only",
+  "paid_calls": 0,
+  "provider_credentials": "synthetic_offline_key",
+  "options": {
+    "systemPrompt": "custom_string",
+    "settingSources": ["user"],
+    "skills": ["offline-proof"],
+    "tools": ["Skill"],
+    "persistSession": false,
+    "maxTurns": 3,
+    "isolatedConfigDir": true,
+    "nonessentialTrafficDisabled": true,
+    "sdkRetryCount": 0
+  },
+  "protocol": "Native SDK starts against a local synthetic Anthropic-compatible SSE endpoint. First response invokes Skill(offline-proof); second response ends the turn. Capture only presence of distinct description/body sentinels in outgoing request bodies, not credentials or hidden reasoning.",
+  "captures": [
+    {
+      "request": 1,
+      "path": "/v1/messages?beta=true",
+      "has_catalog_sentinel": true,
+      "has_body_sentinel": false,
+      "tool_names": ["Skill"],
+      "stream": true
+    },
+    {
+      "request": 2,
+      "path": "/v1/messages?beta=true",
+      "has_catalog_sentinel": true,
+      "has_body_sentinel": true,
+      "tool_names": ["Skill"],
+      "stream": true
+    }
+  ],
+  "terminal": "success",
+  "conclusion": "Options.skills does not eagerly inline the selected body's contents in this installed SDK path. The catalog is visible initially; the body appears after native Skill invocation. Do not rebuild a second catalog or claim ordinary-turn savings from removing the quiz-gen body.",
+  "limitations": [
+    "Synthetic skill and model protocol, not actual model selection behavior or production Copilot E2E.",
+    "Does not establish that any particular live turn invoked a skill.",
+    "Ordinary free-form quiz is a live consumer; removing its catalog visibility would change capability access, not merely remove eager body duplication."
+  ]
+}
