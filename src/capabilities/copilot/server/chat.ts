@@ -75,7 +75,9 @@ import { Conversation } from '@/server/session';
 import type {
   CopilotChatRequestT,
   CopilotChatTriggerKind,
+  CopilotModeState,
   CopilotSkillContextT,
+  CopilotSkillTurn,
 } from './chat-contracts';
 import {
   type CopilotExecutionActivity,
@@ -87,6 +89,7 @@ import {
   markCopilotSessionContextDelivered,
 } from './live-session-context';
 import { selectAsksWithMaterializingToolCall } from './materializing-tools';
+import { resolveCopilotModeCompletion } from './mode-completion';
 import {
   type CopilotReplyFinalizationReceipt,
   type PreparedCopilotReply,
@@ -119,22 +122,6 @@ function buildAskFields(
   };
 }
 
-// AF S4 / YUK-203 U6 — structured carrier for a skill turn (teaching ask_check /
-// explain / end). Rides as an ADDITIVE optional field on CopilotChatResult so
-// the existing text-only consumers are byte-for-byte unaffected; the Dock reads
-// it only when present to render the inline question + suggested-next chips.
-export interface CopilotSkillTurn {
-  kind: 'explain' | 'ask_check' | 'end';
-  /** Present only for an ask_check turn that materialized a question. */
-  structured_question?: {
-    id: string;
-    kind: string;
-    prompt_md: string;
-    choices_md: string[] | null;
-  };
-  suggested_next?: 'continue' | 'end';
-}
-
 export interface CopilotChatResult {
   task_run_id: string;
   reply: string;
@@ -148,9 +135,9 @@ export interface CopilotChatResult {
   // and the persisted reply event id.
   session_id: string;
   reply_event_id: string;
-  // AF S4 / YUK-203 U6 — additive optional structured-turn carrier (§4.1). Set
-  // only when a teaching skill ran an ask_check/explain/end turn; absent for
-  // free-form chat replies so existing consumers are unaffected.
+  // AF S4 / YUK-203 U6 — additive optional structured-turn carrier (§4.1).
+  // Teaching supplies ask_check/explain/end; a successful one-shot quiz uses
+  // the same end state. Ordinary free-form and unsuccessful turns omit it.
   skill_turn?: CopilotSkillTurn;
   // YUK-266 (C1) — additive optional partial-degrade signal. Set ONLY by the
   // streaming entrypoint when the SDK stream errored mid-flight but some text was
@@ -261,6 +248,8 @@ export async function writeCopilotReply(
     evidenceValidation?: CopilotEvidenceValidationRef;
     /** Compact root-owned structural finalization receipt for new Copilot replies. */
     replyFinalization?: CopilotReplyFinalizationReceipt;
+    /** Product mode state persisted with the reply; never included in model input. */
+    modeState?: CopilotModeState;
     /**
      * Optional terminal outcome for durable recovery. Inline callers omit it,
      * preserving the existing null outcome byte-for-byte. A durable success
@@ -329,6 +318,7 @@ export async function writeCopilotReply(
       ...(params.durableFinishReason ? { durable_finish_reason: params.durableFinishReason } : {}),
       ...(params.durableEmitReviewedDelta ? { durable_emit_reviewed_delta: true } : {}),
       ...(params.durableFailure ? { durable_failure: params.durableFailure } : {}),
+      ...(params.modeState ?? {}),
       in_reply_to_event_id: params.userAskEventId ?? null,
       // YUK-307 (S3a additive) — persist hero nomination so Dock replay can restore
       // it. Reply METADATA only（assembleConversationHistory 的 {role,text} strip 把
@@ -883,6 +873,14 @@ async function runCopilotChatImpl(
   const replyText = finalized.replyText;
   const replyRunId = execution.taskRunId;
   const streamError = execution.partial ? execution.error : undefined;
+  const modeState = resolveCopilotModeCompletion(
+    req.skill_context,
+    execution.partial
+      ? { kind: 'partial' }
+      : finalized.accepted
+        ? { kind: 'success', learningContent: finalized.receipt.learning_content }
+        : { kind: 'failed' },
+  );
 
   // YUK-307 — single convergence point for BOTH the JSON and streaming paths:
   // parse + strip the primary_view marker ONCE from the collected reply, then
@@ -912,6 +910,7 @@ async function runCopilotChatImpl(
     actorRef,
     taskRunId: replyRunId,
     replyFinalization: finalized.receipt,
+    ...(modeState ? { modeState } : {}),
     now,
     writeFn: write,
   });
@@ -971,6 +970,7 @@ async function runCopilotChatImpl(
     // YUK-266 (C1) — surface the partial-degrade note only when the stream errored
     // mid-flight (additive optional; absent on the non-stream + clean-stream paths).
     ...(streamError ? { error: streamError } : {}),
+    ...(modeState ? { skill_turn: modeState.skill_turn } : {}),
     // YUK-307 — additive optional hero nomination (see CopilotChatResult). The
     // route's terminal `reply` SSE event passes the whole result through, so the
     // streaming mode carries it with zero route changes.

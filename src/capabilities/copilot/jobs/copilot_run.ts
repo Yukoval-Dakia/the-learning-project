@@ -68,11 +68,20 @@ import {
 import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
 import { resolveCopilotSkills } from '@/subjects/copilot-skills';
+import type {
+  CopilotModeState,
+  CopilotSkillContextT,
+  CopilotSkillTurn,
+} from '../server/chat-contracts';
 import {
   DURABLE_COPILOT_EXECUTION_BUDGET,
   type ExecuteCopilotTurn,
   executeCopilotTurn,
 } from '../server/copilot-execution';
+import {
+  parseCopilotModeCompletion,
+  resolveCopilotModeCompletion,
+} from '../server/mode-completion';
 import type { CopilotReplyFinalizationReceipt } from '../server/reply-finalization';
 
 export { enqueueCopilotMailboxJob } from '../api/chat';
@@ -98,6 +107,8 @@ export interface CopilotRunJobData {
   triggered_by: 'chat' | 'chip';
   /** chip 直触可选标识，透传进 run input（同步面 chip_kind）。 */
   chip_kind?: string;
+  /** Product-only mode metadata; never copied into CopilotRunInput/model prompt. */
+  skill_context?: CopilotSkillContextT;
   correction_target_turn_id?: string;
   /**
    * YUK-575 (S4) — ambient context（用户当前 route + 可选 focused_entity）。它是
@@ -151,7 +162,7 @@ export interface RunCopilotRunParams {
 }
 
 export type RunCopilotRunResult =
-  | { status: 'done'; reply: string; task_run_id: string }
+  | { status: 'done'; reply: string; task_run_id: string; skill_turn?: CopilotSkillTurn }
   | { status: 'cancelled' }
   | { status: 'failed'; error: string };
 
@@ -160,6 +171,7 @@ interface SuccessfulTerminalProjection {
   replyMd: string;
   taskRunId: string;
   finishReason: string;
+  modeState?: CopilotModeState;
 }
 
 export interface TerminalProjectionEvent {
@@ -352,6 +364,7 @@ export async function writeSuccessfulTerminalProjection(
         payload: {
           reply_md: projection.replyMd,
           task_run_id: projection.taskRunId,
+          ...(projection.modeState ?? {}),
           ...checkpointPayload,
         },
       });
@@ -363,6 +376,7 @@ export async function writeSuccessfulTerminalProjection(
       payload: {
         task_run_id: projection.taskRunId,
         finish_reason: projection.finishReason,
+        ...(projection.modeState ?? {}),
         ...checkpointPayload,
       },
     });
@@ -469,6 +483,7 @@ async function findPersistedDurableReply(
     };
   }
   if (row.outcome !== 'success') return null;
+  const modeState = parseCopilotModeCompletion(payload);
   return {
     outcome: 'success',
     replyMd,
@@ -478,6 +493,7 @@ async function findPersistedDurableReply(
         ? payload.durable_finish_reason
         : 'recovered',
     ...(payload.durable_emit_reviewed_delta === true ? { emitReviewedDelta: true } : {}),
+    ...(modeState ? { modeState } : {}),
   };
 }
 
@@ -532,6 +548,9 @@ function terminalRunResult(
   const done = newestFirst.find((event) => event.event_type === COPILOT_RUN_EVENTS.DONE);
   if (done) {
     const reply = newestFirst.find((event) => event.event_type === COPILOT_RUN_EVENTS.REPLY);
+    const modeState =
+      (reply?.payload ? parseCopilotModeCompletion(reply.payload) : undefined) ??
+      (done.payload ? parseCopilotModeCompletion(done.payload) : undefined);
     return {
       status: 'done',
       reply: typeof reply?.payload?.reply_md === 'string' ? reply.payload.reply_md : '',
@@ -539,6 +558,7 @@ function terminalRunResult(
         typeof done.payload?.task_run_id === 'string'
           ? done.payload.task_run_id
           : fallbackTaskRunId,
+      ...(modeState ? { skill_turn: modeState.skill_turn } : {}),
     };
   }
   const failed = newestFirst.find(
@@ -618,6 +638,7 @@ async function projectCopilotOutcomeMarker(
           status: 'done' as const,
           reply: marker.replyMd,
           task_run_id: marker.taskRunId,
+          ...(marker.modeState ? { skill_turn: marker.modeState.skill_turn } : {}),
         };
       }
       await projectFailedTerminal(
@@ -733,12 +754,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   //             12-min run（下方 priorExhausted）。
   const priorDone = priorEvents.some((e) => e.event_type === COPILOT_RUN_EVENTS.DONE);
   if (priorDone) {
-    const reply = priorEvents.find((e) => e.event_type === COPILOT_RUN_EVENTS.REPLY);
-    const replyMd = (reply?.payload as { reply_md?: string } | undefined)?.reply_md ?? '';
-    const doneEvent = priorEvents.find((e) => e.event_type === COPILOT_RUN_EVENTS.DONE);
-    const priorTaskRunId =
-      (doneEvent?.payload as { task_run_id?: string } | undefined)?.task_run_id ?? taskRunId;
-    return { status: 'done', reply: replyMd, task_run_id: priorTaskRunId };
+    return terminalRunResult(priorEvents, taskRunId);
   }
 
   // The API writes enqueue_failed only after a deterministic pg-boss readback
@@ -996,6 +1012,11 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       });
     }
 
+    const modeState = resolveCopilotModeCompletion(data.skill_context, {
+      kind: 'success',
+      learningContent: finalized.receipt.learning_content,
+    });
+
     // YUK-364 (F1) — commit the domain outcome marker first, then project the
     // public REPLY/DONE in a second transaction; both phases use the same
     // per-run settlement lock. A projection failure remains repairable from the
@@ -1016,6 +1037,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
             outcome: 'success',
             durableFinishReason: result.finishReason,
             durableEmitReviewedDelta: candidateDeltaObserved,
+            ...(modeState ? { modeState } : {}),
             now: new Date(),
           });
           return {
@@ -1023,6 +1045,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
             replyMd: cleanedReply,
             taskRunId: result.taskRunId,
             finishReason: result.finishReason,
+            ...(modeState ? { modeState } : {}),
           };
         },
         {

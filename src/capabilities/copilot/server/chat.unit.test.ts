@@ -125,9 +125,17 @@ function runCopilotChatStreaming(
 
 describe('runCopilotChat (two-surface routing)', () => {
   it('replaces a question-bearing direct reply when the validation marker is missing', async () => {
+    const writeEventFn = vi.fn(async (_db, input) => input.id);
     const result = await runCopilotChat(
       {} as never,
-      { user_message: '给我一道题', triggered_by: 'chat' },
+      {
+        user_message: '给我一道题',
+        triggered_by: 'chat',
+        skill_context: {
+          skill: 'quiz',
+          ref: { kind: 'knowledge', id: 'knowledge_unverified_quiz' },
+        },
+      },
       {
         buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
         runAgentTaskFn: vi.fn(async () => ({
@@ -136,7 +144,7 @@ describe('runCopilotChat (two-surface routing)', () => {
           finishReason: 'stop' as const,
           usage: { inputTokens: 1, outputTokens: 2 },
         })),
-        writeEventFn: vi.fn(async (_db, input) => input.id),
+        writeEventFn,
         resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
         findOrCreateConversationFn: async () => ({ sessionId: 'ls_missing_marker', created: true }),
       },
@@ -144,6 +152,12 @@ describe('runCopilotChat (two-surface routing)', () => {
 
     expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
     expect(result.reply).not.toContain('1+1');
+    expect(result.skill_turn).toBeUndefined();
+    const reply = writeEventFn.mock.calls[1]?.[1] as {
+      payload?: { skill_turn?: unknown; skill_context?: unknown };
+    };
+    expect(reply.payload?.skill_turn).toBeUndefined();
+    expect(reply.payload?.skill_context).toBeUndefined();
   });
 
   it('blocks assessed ephemeral HTML when the learning-content marker is missing', async () => {
@@ -1237,6 +1251,58 @@ describe('runCopilotChat — skill routing (U6)', () => {
     expect(result.checkpoint_event_id).toBeUndefined();
   });
 
+  it.each([
+    {
+      kind: 'explain' as const,
+      suggestedNext: 'continue' as const,
+      text: '先比较判别式与根的个数，再进入下一轮检查。',
+    },
+    {
+      kind: 'end' as const,
+      suggestedNext: 'end' as const,
+      text: '这轮教学已经完成，可以回到自由提问。',
+    },
+  ])('teaching keeps the $kind product state from its behavior pack', async (turn) => {
+    const db = {
+      transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb({})),
+    } as never;
+    const writeEventFn = vi.fn(
+      async (_db: unknown, input: unknown) => (input as { id: string }).id,
+    );
+    const runTeachingSkillFn = vi.fn(async () => ({
+      text_md: turn.text,
+      kind: turn.kind,
+      suggested_next: turn.suggestedNext,
+      task_run_id: `teaching_${turn.kind}`,
+    }));
+
+    const result = await runCopilotChat(
+      db,
+      {
+        user_message: turn.kind === 'end' ? '结束教学' : '继续解释',
+        triggered_by: 'chat',
+        skill_context: {
+          skill: 'teaching',
+          ref: { kind: 'learning_item', id: 'li_multi_round' },
+        },
+      },
+      { ...baseDeps, writeEventFn, runTeachingSkillFn },
+    );
+
+    expect(result.skill_turn).toEqual({
+      kind: turn.kind,
+      suggested_next: turn.suggestedNext,
+    });
+    const reply = writeEventFn.mock.calls[1]?.[1] as {
+      payload?: { skill_turn?: unknown; skill_context?: unknown };
+    };
+    expect(reply.payload?.skill_turn).toEqual(result.skill_turn);
+    expect(reply.payload?.skill_context).toEqual({
+      skill: 'teaching',
+      ref: { kind: 'learning_item', id: 'li_multi_round' },
+    });
+  });
+
   // T-C3-3 (YUK-284) — solve was extracted from the skill_context protocol. A
   // skill_context:{skill:'solve'} (a persisted-old / anomalous value — no live UI
   // seeds it) now 降级 to the free-form CopilotTask path: it does NOT throw and does
@@ -1315,13 +1381,13 @@ describe('runCopilotChat — skill routing (U6)', () => {
       },
     );
 
-    // The free-form loop ran; no behavior pack, no skill_turn.
+    // The free-form loop ran; its successful one-shot mode now ends explicitly.
     expect(runAgentTaskFn).toHaveBeenCalledTimes(1);
     expect(runTeachingSkillFn).not.toHaveBeenCalled();
     expect(result.surface).toBe('copilot');
     expect(result.reply).toContain('/practice/art_model');
     expect(result.task_run_id).toBe('task_quiz_freeform');
-    expect(result.skill_turn).toBeUndefined();
+    expect(result.skill_turn).toEqual({ kind: 'end' });
 
     // The model received the focused knowledge id via ambient_context (the Dock
     // already sends focused_entity on every skill-active send — zero new plumbing).
@@ -1336,10 +1402,11 @@ describe('runCopilotChat — skill routing (U6)', () => {
       }),
       expect.anything(),
     );
+    const modelInput = (runAgentTaskFn.mock.calls[0] as unknown as [string, object])[1];
+    expect(modelInput).not.toHaveProperty('skill_context');
 
-    // S3a envelope: two events (ask + reply); the reply is the FREE-FORM write —
-    // deliberate behavior change: no skill_context persisted on quiz replies any
-    // more (Dock replay no longer restores the quiz card from these turns).
+    // S3a envelope: two events (ask + reply); product mode state is reply metadata
+    // and never part of the model input above.
     expect(writeEventFn).toHaveBeenCalledTimes(2);
     const replyCall = writeEventFn.mock.calls[1]?.[1] as {
       action?: string;
@@ -1349,8 +1416,11 @@ describe('runCopilotChat — skill routing (U6)', () => {
     expect(replyCall?.action).toBe('experimental:copilot_reply');
     expect(replyCall?.task_run_id).toBe('task_quiz_freeform');
     expect(replyCall?.payload?.reply_md).toContain('/practice/art_model');
-    expect(replyCall?.payload?.skill_context).toBeUndefined();
-    expect(replyCall?.payload?.skill_turn).toBeUndefined();
+    expect(replyCall?.payload?.skill_context).toEqual({
+      skill: 'quiz',
+      ref: { kind: 'knowledge', id: 'kn_x' },
+    });
+    expect(replyCall?.payload?.skill_turn).toEqual({ kind: 'end' });
   });
 
   it('no skill_context: unchanged free-form CopilotTask path (no skill_turn)', async () => {
@@ -1744,7 +1814,7 @@ describe('runCopilotChatStreaming (C1 — SSE streaming entrypoint)', () => {
     expect(result.surface).toBe('copilot');
   });
 
-  it('degrade: a mid-stream throw still persists the collected text + returns an error note', async () => {
+  it('degrade: a partial quiz reply persists safely but does not falsely end the mode', async () => {
     const db = {} as never;
     const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
     // streamTaskCollecting resolves a partial result (it does NOT throw) on SDK
@@ -1767,7 +1837,14 @@ describe('runCopilotChatStreaming (C1 — SSE streaming entrypoint)', () => {
 
     const result = await runCopilotChatStreaming(
       db,
-      { user_message: '随便聊聊', triggered_by: 'chat' },
+      {
+        user_message: '根据这个知识点出一组题',
+        triggered_by: 'chat',
+        skill_context: {
+          skill: 'quiz',
+          ref: { kind: 'knowledge', id: 'knowledge_partial_quiz' },
+        },
+      },
       (t) => deltas.push(t),
       { ...baseDeps, buildMcpServerFn, streamAgentTaskFn, writeEventFn },
     );
@@ -1777,14 +1854,22 @@ describe('runCopilotChatStreaming (C1 — SSE streaming entrypoint)', () => {
     expect(writeEventFn).toHaveBeenCalledTimes(2);
     const replyCall = writeEventFn.mock.calls[1]?.[1] as {
       action?: string;
-      payload?: { reply_md?: string; task_run_id?: string };
+      payload?: {
+        reply_md?: string;
+        task_run_id?: string;
+        skill_turn?: unknown;
+        skill_context?: unknown;
+      };
     };
     expect(replyCall?.action).toBe('experimental:copilot_reply');
     expect(replyCall?.payload?.reply_md).toBe('partial');
     expect(replyCall?.payload?.task_run_id).toBe('task_stream_partial');
+    expect(replyCall?.payload?.skill_turn).toBeUndefined();
+    expect(replyCall?.payload?.skill_context).toBeUndefined();
     // The result carries the error note (graceful degrade — turn never lost).
     expect(result.reply).toBe('partial');
     expect(result.error).toBe('sdk blew up mid-stream');
+    expect(result.skill_turn).toBeUndefined();
   });
 
   it('bypasses runAgentTask when streamAgentTaskFn is injected on the streaming path', async () => {
