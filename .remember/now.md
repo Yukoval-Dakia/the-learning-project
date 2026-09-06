@@ -1,43 +1,43 @@
-# 当前 handoff — 2026-09-06（完整重构goal active）
+# 当前 handoff — 2026-09-06，完整重构goal active
 
-## Active：YUK962 测试分区收口
+## 当前945集成
 
-- 工作树 /Volumes/YukovalSBak/yukoval-projects/tlp-wt-pure-test-partition；
-  branch codex/yuk-962-pure-test-partition，代码bf59af8d（base main db5a57b1）。
-- 3 kernel测试原字节改名unit，2 server/ai纯逻辑测试加入fast；删3个不存在的旧include路径。
-  5files/59tests在无DB环境通过；独立review PASS且DB收集零条；总1043测试文件不变。
-  partition617unit/426DB（原612/431），无新增P0；剩余3传递DB候选和2 Bun插件测试不删除。
-- typecheck/lint/build通过；下一步提交状态/PR/exact CI。详细证据见
-  docs/planning/2026-09-06-pure-test-partition.md。没有新模型调用/生产变更。
+- /Volumes/YukovalSBak/yukoval-projects/tlp-wt-native-compaction，codex/yuk-945-native-compaction。
+- 产品18702ab9经143scoped/唯一复审PASS；草稿PR1339旧exact821184ac CI34031520139绿。
+- 新实际harness8f7a438a、长样本de18fcaa；真实摘要质量已通过两样本，正合入mainc43d51be。
+  只有PLAN/.remember文字冲突，业务代码无冲突；新exact CI仍待执行。
+- 短样本session8e50d9a1-b8dc-42ff-91d3-e2017a703754：1057→1388，不称降本；
+  长样本session8709f3db-a35e-4b87-91d3-c2a3981dbf93：11977→1590。
+  120个过期学习记录，保留现行3节点/关系方向/数值/来源/未知vs零/未批准更正；
+  同session续问有更新learner且不重发旧fixture。native manual compact，不是auto阈值或队列E2E。
+- 新$10池估算花费$0.0130696878，保守请求预留$0.90823；此前$0.28771982另列。
+  估算基于官方公开USD卡，不是账户账单；旧未知timeout/child仍未知。没有其他新付费调用。
+- .env.local无key预检0调用；正确凭据源是原树.env，仅加载不打印/修改。
+- 初稿scripts/ai/native-compaction-actual.ts因缺预算/输出/保留验收被root撤掉；
+  正式tests/acceptance/native-compaction.ts有5请求/字节/output/90s/预留限制及失败证据。
+- SDK autoCompactWindow最低100000；不能用非法小窗口或合成usage声称真实节省。
+  learner每轮注入、proposal digest、原权限/6轮/预算不变，rawCoT/summary不写产品usage。
 
-## 并行交付及依赖
+## 949独立实施
 
-- YUK961 / tlp-wt-pool-gap-owner：Agency拥有pool-gap提示规则，Practice只提交已完成验证事实。
-  exact69542b2d，root与独立review均48DB通过，typecheck/lint/build/audits通过。
-  PR1340 / exact CI34032977403全绿，已合并main50ba305b，Linear Done。
-  三项low advisory有明确skip理由并resolve；仅命令识别漏项去重登记YUK963，不为nit建issue。
-- YUK944 Done：PR1338 exact3fd90c4d CI34030191329全绿，已合并main db5a57b1。
-  原五读取actual核心通过；input40410 vs baseline40401，不称此复杂样本token下降。
-- YUK945 / tlp-wt-native-compaction：代码18702ab9已修初审两P1、唯一复审PASS，root143tests。
-  PR1339 exact821184ac CI34031520139全绿，仍draft；06d01dbc仅本地证据/状态补充未推。
-  尚未真实模型摘要质量验收，不能关闭/合并。原生loopback同session compact/reinject/resume已验证。
-  SDK窗口最低100000；更小值被忽略。人工usage不是实测节省，协议证据不是生产E2E。
-- 944累计成本$1.31710818，剩余授权$0.28771982。945追加最多$1请求仍待owner答复；
-  不新增付费调用。此前超时/child未知费用仍未知，不能填0。
-- YUK949成品选择正在只读设计：删除reply-tail primary_view marker，同时保留三source与
-  agent呈现意图；不按工具/effect盲猜。尚未实施；生产UI若改代码需设计预检批准。
-- YUK960报告问句被题目检测误拦仍未修，需保留无标签真实题保护。
+- /Volumes/YukovalSBak/yukoval-projects/tlp-wt-primary-view-owner；ADR0061在799ea23c。
+- Owner明确FULL，允许按需短control交互；保留3source/agent意图，server最终验证；不提预算、不改UI。
+- ea8367c7初稿未完成：初审5P1（read丢hero/任意ref+legacy绕过/durable丢pv/
+  删除944prompt关键约束/4个新增lint错误）。repair_primary_view_contract独占写入修复。
+- 原implement_primary_view_owner已停止；review_primary_view_owner初审已用，剩唯一验证审。
+  不信任原worker的完成或“lint错误已有”说法，后者被实际diff和review否证。
 
-## 已交付与剩余范围
+## 已交付与下一步
 
-- Pipeline1326、Goal1327、Knowledge1328、Import1329、Copilot execution1330、
-  ReviewSettlement1332、测试精简1331/1333、客户端状态1334/1336已各自验证合并。
-  历史证据见docs/planning/2026-09-06-business-architecture-closeout.md及evidence。
-- 946 Done为原生skill catalog→调用后body验证，不建第二目录，不删除quiz能力。
-  943/947 Canceled为被锁定设计替代，不是伪称实现。
-- 主线依赖438/0/47，五capability SCC/20命令消费者仍在；正常公共命令协作不等于规则多头维护。
-  learning-intent已拥有单事务及owner失败全回滚，不为SCC计数再次重构。
-- 整体945/948/949/950/960/961/962与跨业务验收继续，不能用当前PR替代完整goal。
-- 原始the-learning-project脏main不动。不部署/切SoT/backfill/删除历史。
-  887生产副本验证需独立授权；951退休需部署后零pending覆盖完整重试窗口；
-  921多provider、572夜间教研、832HOLD均不解锁。
+- 961 PR1340 exact69542b2d CI34032977403绿，main50ba305b，48DB/reviewPASS，LinearDone。
+- 963 PR1342 exact417623b5 CI34034266076绿，main4034859c，70unit/reviewPASS，LinearDone。
+- 962 PR1341 exacta522a60f CI34034085071绿，mainc43d51be，59unit/reviewPASS，LinearDone；
+  617unit/426DB共1043文件，不删断言、不移动尚有传递DB依赖或Bun独立测试。
+- 944 PR1338 main db5a57b1；五读取actual核心通过，40410vs40401不证降本；960仍开放。
+- 964已去重登记：更新MiMo本地占位估算卡与来源，官方价格页2026-08-06已公开分模型费率。
+- 既有Pipeline/Goal/Knowledge/Import/execution/ReviewSettlement/客户端状态/测试退休均有合并证据。
+  946仅原生catalog/body渐进加载验证Done，不建第二catalog、不删quiz。
+- 下一条948Mission、950steer、960分类器与全业务扩展验收继续；不是当前PR即整体完成。
+- 依赖438/0/47与5capability SCC/20命令消费者保留；不为数字重做已封装learning-intent。
+- 不动原始脏main、不部署/改SoT/backfill/删历史；887需独立生产副本授权，
+  951需完整drain窗口；921/572/832HOLD不解锁。

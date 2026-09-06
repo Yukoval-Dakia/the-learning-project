@@ -172,6 +172,11 @@ export interface AiTaskUsage {
   /** Metadata-only proof that the SDK returned reasoning blocks; raw CoT is never persisted. */
   thinkingBlocks?: number;
   thinkingCharacters?: number;
+  /** Bounded native context metadata, separate from billable token usage; no transcript or summary. */
+  compaction?: {
+    count: number;
+    last: { trigger: 'manual' | 'auto'; preTokens: number; postTokens?: number };
+  };
 }
 
 export interface AiTaskRunFinishEntry {
