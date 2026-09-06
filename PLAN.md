@@ -9,9 +9,10 @@
   ④保留shared writer/教学/取消/claim/预算/SDK保护，scoped验证、必要actual、独立review、exact CI。
   已删除旧chat执行/mutex，保留conversation-writes；执行policy与history anchor收敛为持久生命周期。
   actual脚本走真实HTTP adapter/v2接纳/物理fetch/worker/终态wake，不声称自动poller。
-  143DB、零付费cancel与HTTP admission-only、typecheck/lint/build/audits通过；独立review/exact CI待做。
+  122unit/143DB、零付费cancel与HTTP admission-only、typecheck/lint/build/audits通过。
+  PR1347 exact88a4a603已push，独立初审与CI34053656351运行中，尚未merge/deploy。
   scoped输入测试由隔离lane提交并经root修订核验；无其它writer，不新增调度框架。
-  下一条真实read预留USD0.25，纳入新池reserve5.55823、安全剩4.44177；尚未调用，estimate暂不变。
+  一条真实read通过，clean exact88a4a603，estimatedUSD0.0006681774；新池reserve5.55823、安全剩4.44177。
   详情docs/planning/2026-09-07-retire-foreground-adapter.md。
 - YUK948/950 Done：PR1346 exactcd1f7c54916c4d75dc1b64f29be2ec3fd1d363d9，CI34050991978全绿，
   独立初审与唯一验证PASS，review预算结束；已squash合并main9ebee3aebe4c2840120d577bdf08512dfc3596e6。
@@ -33,7 +34,7 @@
   保守请求预留合计$0.90823；此前余额$0.28771982单列，历史未知费用不填0。
   公开费率估算不冒充账户账单，SDK派生USD保留为独立观察。
   949另跑7个受控回合（含失败）：estimated $0.0214406071，case预留$2.8。
-  新$10池合计estimated $0.0352456927；965 read预留后总reserve$5.55823、安全剩$4.44177。
+  新$10池合计estimated $0.0359138701；965 read后总reserve$5.55823、安全剩$4.44177；当前停付费。
 - YUK949：owner明确选FULL，允许按需短presentation control交互，ADR0061；
   agent看完结果提名，server校验，保留tool_result/artifact/ephemeral_html；不提高预算、不改生产UI。
   初稿ea8367c7的5P1已由81eb7f3e修复，ed693e16集成main9e02c48b。

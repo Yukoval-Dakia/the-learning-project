@@ -45,7 +45,7 @@ actual 脚本使用生产 HTTP adapter（非合成 reservation）、真实 v2 �
 ## 验证状态
 
 - 143 tests / 10 scoped DB files 通过。
-- targeted unit、typecheck、Biome、build、capability/architecture/partition audit 已执行；最终汇总待提交。
+- 122 tests / 8 scoped unit files、typecheck、Biome、build、capability/architecture/partition audit 通过。
 - 两项零付费运行通过：cancel 走生产接纳、Stop、物理 pickup 后 cancelled；
   unified admission-only 验证两消息一个物理 head 与无活动残留。
 - raw evidence：`.tmp/actual-provider-acceptance/1788721088198-1711cb44-4cae-4aa9-9431-e3d8bff1ea48.json`；
@@ -55,8 +55,14 @@ actual 脚本使用生产 HTTP adapter（非合成 reservation）、真实 v2 �
 
 ## 实际输出与预算
 
-准备仅新增一条 read 实际输出，保守预留 USD 0.25 已纳入授权池。
-新 USD10 池 reserve 5.55823、安全剩 4.44177，累计 estimated USD0.0352456927 暂未变化；
+一条 read 实际输出已在 clean exact `88a4a60314f2c9be5d4840d5da7caed041acb008` 通过。
+证据见 [封存输出](evidence/2026-09-07-retired-adapter-read-actual.json)。一个根任务，
+一个真实 query_knowledge 调用（SDK 与 domain 各一条 trace，不是两个工具执行），
+终稿准确保留「文言虚词「之」」「代词宾语用法」及父子关系，未声称空结果不存在。
+SDK terminal 非 partial，candidate/reply/terminal 三个 digest 相同；持久回复与公开终态断言通过。
+模型输入26951/output177，不以这条不同链路样本声称可比 token 降幅。
+公开 USD 卡估算0.0006681774，非账户账单；保守预留 USD0.25 不回收。
+新 USD10 池 reserve 5.55823、安全剩 4.44177，累计 estimated USD0.0359138701；
 旧池0.28771982单列，历史未知费用仍未知。无需重刷已封存的压缩、教学、成品和恢复付费样本。
 
 本次发现与修复均归入已去重的 YUK-965；没有新增需另开 issue 的独立问题。
