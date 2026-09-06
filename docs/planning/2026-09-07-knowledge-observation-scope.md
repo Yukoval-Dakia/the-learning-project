@@ -10,9 +10,17 @@ Plan:
 2. Verify omitted, empty, nonempty and unmatched-node reads against real DB rows;
    verify the same contract survives the public result snapshot.
 3. Run the unchanged presentation-tool actual from a clean integrated revision,
-   reserving before any paid call. Current pool safe0.44177; no call reserved yet.
+   reserving before any paid call. Reserve0.40 for the original presentation-tool
+   case: total authorized10 pool reserve9.95823/safe0.04177. Estimates remain
+   0.0690050668 before this run; no historical reserve is reclaimed.
 4. Independent review, local scoped gates and exact-head CI before merge.
 
 No extra query/model call, reply rewriting, new evaluator or UI change. Existing
 failure snippets are latest10 across recorded attempts; stats counts remain30d.
 Do not silently turn either into the other or claim global absence from no nodes.
+
+Implemented at e0bba356.12 reader DB and34 snapshot/fixture DB tests, typecheck,
+lint and build pass; independent initial review PASS. No extra model/query call.
+The new worktree uses its own frozen-lock dependencies; an initial shared-modules
+symlink failed pnpm's dependency check, was removed (link only), and no shared
+modules were changed. No RED claim is based on that environment failure.
