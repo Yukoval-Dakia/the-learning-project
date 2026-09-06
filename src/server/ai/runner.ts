@@ -229,6 +229,11 @@ export interface RunTaskCtx {
   agents?: Options['agents'];
   /** YUK-572 seam: SDK hook callbacks with undefined-guard zero-regression. */
   hooks?: Options['hooks'];
+  /** Native SDK compaction is explicitly enabled only for the Copilot live-session lane. */
+  nativeCompaction?: {
+    /** Context to reintroduce after SDK compaction; never contains raw summary/CoT. */
+    sessionContext: string;
+  };
   /** YUK-572 seam: optional SDK permission callback, re-exported 1:1. */
   canUseTool?: Options['canUseTool'];
   /**
@@ -638,6 +643,31 @@ function buildQueryOptions(
   if (ctx.hooks !== undefined) {
     options.hooks = ctx.hooks;
   }
+  if (ctx.nativeCompaction && ctx.sdkSession?.persist) {
+    const sessionContext = ctx.nativeCompaction.sessionContext;
+    options.settings = { autoCompactEnabled: true, precomputeCompactionEnabled: false };
+    options.hooks = {
+      ...options.hooks,
+      SessionStart: [
+        ...(options.hooks?.SessionStart ?? []),
+        {
+          hooks: [
+            async (input) =>
+              input.hook_event_name === 'SessionStart' &&
+              input.source === 'compact' &&
+              sessionContext
+                ? {
+                    hookSpecificOutput: {
+                      hookEventName: 'SessionStart',
+                      additionalContext: sessionContext,
+                    },
+                  }
+                : {},
+          ],
+        },
+      ],
+    };
+  }
   if (ctx.canUseTool !== undefined) {
     options.canUseTool = ctx.canUseTool;
   }
@@ -760,6 +790,11 @@ async function consumeSdkAttempt<TResult extends RunTaskResult>(args: {
       await notifySdkSessionId(args.ctx, msg);
     }
     await notifyTaskEvent(args.ctx, msg);
+
+    if (msg.type === 'system' && msg.subtype === 'compact_boundary') {
+      args.lifecycle.recordObservedUsage(sdkTerminal.observeCompaction(msg));
+      continue;
+    }
 
     if (msg.type === 'assistant') {
       const observedUsage = sdkTerminal.observeAssistant(msg);

@@ -94,13 +94,112 @@ vi.mock('@/server/ai/log', () => ({
   writeToolCallLog: logMock.tool,
 }));
 
-import type { JsonSchemaOutputFormat } from '@anthropic-ai/claude-agent-sdk';
+import type { JsonSchemaOutputFormat, Options } from '@anthropic-ai/claude-agent-sdk';
 import { tasks } from '@/ai/registry';
 import { runTask, streamTask, streamTaskCollecting } from './runner';
 import { taskInputHash } from './task-input-hash';
 
 // Minimal db stub — never dereferenced because every ai/log writer is mocked.
 const fakeDb = {} as never;
+
+describe('native live-session compaction', () => {
+  beforeEach(() => {
+    vi.stubEnv('XIAOMI_API_KEY', 'test-key');
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+  it('uses SDK settings and preserves caller hooks while reinjecting after compact', async () => {
+    mockSdk.messages = [successResult()];
+    const existing = vi.fn(async () => ({}));
+    const hooks: Options['hooks'] = {
+      Stop: [{ hooks: [existing] }],
+      SessionStart: [{ hooks: [existing] }],
+    };
+    const context =
+      '<turn_context>{"v":1,"learner_state":"当前目标：含参方程；先核对定义域"}</turn_context>';
+    await runTask(
+      'AttributionTask',
+      { q: 1 },
+      {
+        db: fakeDb,
+        sdkSession: { persist: true, resume: 'same-session' },
+        hooks,
+        nativeCompaction: { sessionContext: context },
+      },
+    );
+    const options = mockSdk.capturedOptions as Options;
+    expect(options.settings).toEqual({
+      autoCompactEnabled: true,
+      precomputeCompactionEnabled: false,
+    });
+    expect(options).not.toHaveProperty('autoCompactEnabled');
+    expect(options.resume).toBe('same-session');
+    expect(options.hooks?.Stop).toBe(hooks.Stop);
+    expect(options.hooks?.SessionStart).toHaveLength(2);
+    const compactHook = options.hooks?.SessionStart?.[1]?.hooks[0];
+    const input = {
+      hook_event_name: 'SessionStart' as const,
+      source: 'compact' as const,
+      session_id: 'same-session',
+      cwd: '/fixture',
+      transcript_path: '/fixture/session.jsonl',
+    };
+    expect(await compactHook?.(input, undefined, { signal: new AbortController().signal })).toEqual(
+      {
+        hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: context },
+      },
+    );
+    expect(
+      await compactHook?.({ ...input, source: 'resume' }, undefined, {
+        signal: new AbortController().signal,
+      }),
+    ).toEqual({});
+  });
+
+  it('does not configure ordinary non-session tasks', async () => {
+    mockSdk.messages = [successResult()];
+    await runTask('AttributionTask', { q: 1 }, { db: fakeDb });
+    const options = mockSdk.capturedOptions as Options;
+    expect(options.settings).toBeUndefined();
+    expect(options.hooks).toBeUndefined();
+  });
+
+  it('persists only bounded compact metadata without subtracting billable usage or accepting failure', async () => {
+    mockSdk.messages = [
+      {
+        type: 'system',
+        subtype: 'compact_boundary',
+        session_id: 'same-session',
+        compact_metadata: {
+          trigger: 'auto',
+          pre_tokens: 185065,
+          post_tokens: 458,
+          compact_summary: 'PRIVATE_SUMMARY',
+          preserved_messages: { uuids: ['private-message'] },
+        },
+      },
+      successResult(),
+    ];
+    await runTask('AttributionTask', { q: 1 }, { db: fakeDb });
+    const row = logMock.finished.mock.calls.at(-1)?.[1];
+    expect(row).toMatchObject({
+      usage: {
+        inputTokens: 10,
+        outputTokens: 5,
+        compaction: { count: 1, last: { trigger: 'auto', preTokens: 185065, postTokens: 458 } },
+      },
+    });
+    expect(JSON.stringify(row)).not.toContain('PRIVATE_SUMMARY');
+    expect(JSON.stringify(row)).not.toContain('private-message');
+    mockSdk.messages = [mockSdk.messages[0], errorResult('error_during_execution')];
+    await expect(runTask('AttributionTask', { q: 1 }, { db: fakeDb })).rejects.toThrow();
+    expect(logMock.finished.mock.calls.at(-1)?.[1]).toMatchObject({
+      status: 'failure',
+      usage: { compaction: { count: 1 } },
+    });
+  });
+});
 
 function successResult(opts: { text?: string; structured_output?: unknown } = {}) {
   const base: Record<string, unknown> = {
