@@ -531,9 +531,9 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
       'src/server/session/ingestion.ts',
       // docx ingestion: the creation INSERT + its `experimental:question_block_create` event.
       'src/server/session/docx-ingestion.ts',
-      // import POST: the virtual (merged/split) card INSERT + create event; the enroll/ignore status
+      // Import completion owner: the virtual (merged/split) card INSERT + create event; enroll/ignore
       // UPDATEs each emit `experimental:question_block_lifecycle` (op='set_status').
-      'src/capabilities/ingestion/api/import.ts',
+      'src/capabilities/ingestion/server/import-completion.ts',
       // auto-enroll: the status UPDATE → `experimental:question_block_lifecycle` (op='set_status',
       // status='auto_enrolled' + imported_*).
       'src/capabilities/ingestion/server/auto-enroll.ts',

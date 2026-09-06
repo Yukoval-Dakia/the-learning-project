@@ -254,6 +254,7 @@ describe('scanQuestionInserts (classification)', () => {
 
 // No-false-positive regression — run the REAL scanner over the real source sites.
 const REAL_SETTERS = [
+  'src/capabilities/ingestion/server/import-completion.ts',
   'src/capabilities/ingestion/server/image-candidate-accept.ts',
   'src/capabilities/practice/server/proposal-appliers.ts',
   // YUK-697 — the tier-2 web_sourced draft INSERT moved OUT of sourcing.ts into the shared
@@ -274,7 +275,6 @@ const REAL_SETTERS = [
   'src/capabilities/ingestion/server/auto-enroll.ts',
 ];
 const REAL_NULL_OWNERS = [
-  'src/capabilities/ingestion/api/import.ts',
   'src/capabilities/ingestion/api/mistakes.ts',
   'src/server/questions/parts.ts',
 ];
