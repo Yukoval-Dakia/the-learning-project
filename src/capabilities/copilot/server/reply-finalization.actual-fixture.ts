@@ -8,6 +8,11 @@ import type { ToolExecutionResultObservation } from '@/server/ai/tools/mcp-bridg
  * the A03 exact-subject rows below are copied from 0d8e03b0 result SHA-256
  * 5507bc72f59eae1aa62e6e819d3544e8391e410dbd8acb0ce740093b98df6270
  * and carry the corrected YUK-832 typed source boundaries.
+ * YUK-944 adds the current reader's comparison/absence/outcome claim fields;
+ * reader v2 also separates event lookup from answer enrichment and binds causal
+ * coverage to the exact focal id. These annotations do not change source facts.
+ * original observations remain unchanged. Pre-change run digests are archived
+ * separately and must not be presented as digests of this updated fixture.
  *
  * It deliberately retains complete query_events/get_attempt_context/get_review_due
  * inputs and typed outputs instead of a hand-written miniature schema. The
@@ -189,8 +194,10 @@ export const REALISTIC_EVIDENCE_TRACE = [
     },
     output: {
       cause: null,
+      reader_version: 2,
+      answer_activity_status: 'not_applicable',
       lookup: {
-        status: 'unsupported_event',
+        status: 'found',
         observed: {
           action: 'experimental:proposal',
           outcome: 'partial',
@@ -261,6 +268,15 @@ export const REALISTIC_EVIDENCE_TRACE = [
         activation_policy: 'not_observed',
         necessary_conditions: 'not_supported',
         sufficient_conditions: 'not_supported',
+        comparison_scope: 'observed_fields_only',
+        comparison_guidance:
+          '比较两条链时，只能称“已观测的直接分叉”；存在 redacted 或未投影字段时，不得称唯一差异、上游完全相同或精确根因。',
+        whole_chain_equivalence: 'not_supported',
+        unique_difference: 'not_supported',
+        chain_termination: 'not_supported',
+        focal_event_siblings: 'not_observed',
+        payload_omissions: 'not_absence',
+        outcome_namespaces: 'event_outcome_distinct_from_evidence_outcome',
       },
       linked_records: [],
       timeline_scope: 'same_question_context_noncausal',
@@ -271,8 +287,23 @@ export const REALISTIC_EVIDENCE_TRACE = [
         returned_count: 0,
       },
       causal_neighborhood: {
+        observed_edges: [
+          {
+            cause_event_id: 'conjecture_yuk792_canary_20260731c',
+            effect_event_id: 'sg6aqgpq6l3wp5maslkvz12j',
+            different_subject_ids: true,
+          },
+          {
+            cause_event_id: 'conjecture_yuk792_canary_20260731c',
+            effect_event_id: 'weitr0eg3au983xxf4bpowkr',
+            different_subject_ids: true,
+          },
+        ],
         parent: null,
         coverage: {
+          focal_event_id: 'conjecture_yuk792_canary_20260731c',
+          scope: 'focal_event_direct_children_only',
+          descendant_subtrees: 'not_observed',
           limit: 10,
           complete: true,
           has_more: false,
@@ -359,8 +390,10 @@ export const REALISTIC_EVIDENCE_TRACE = [
     },
     output: {
       cause: null,
+      reader_version: 2,
+      answer_activity_status: 'not_applicable',
       lookup: {
-        status: 'unsupported_event',
+        status: 'found',
         observed: {
           action: 'experimental:probe_result',
           outcome: null,
@@ -409,6 +442,15 @@ export const REALISTIC_EVIDENCE_TRACE = [
         activation_policy: 'not_observed',
         necessary_conditions: 'not_supported',
         sufficient_conditions: 'not_supported',
+        comparison_scope: 'observed_fields_only',
+        comparison_guidance:
+          '比较两条链时，只能称“已观测的直接分叉”；存在 redacted 或未投影字段时，不得称唯一差异、上游完全相同或精确根因。',
+        whole_chain_equivalence: 'not_supported',
+        unique_difference: 'not_supported',
+        chain_termination: 'not_supported',
+        focal_event_siblings: 'not_observed',
+        payload_omissions: 'not_absence',
+        outcome_namespaces: 'event_outcome_distinct_from_evidence_outcome',
       },
       linked_records: [],
       timeline_scope: 'same_question_context_noncausal',
@@ -419,6 +461,23 @@ export const REALISTIC_EVIDENCE_TRACE = [
         returned_count: 0,
       },
       causal_neighborhood: {
+        observed_edges: [
+          {
+            cause_event_id: 'conjecture_yuk792_canary_20260731b',
+            effect_event_id: 'q2lm07istehqzj8ar2slphpy',
+            different_subject_ids: true,
+          },
+          {
+            cause_event_id: 'q2lm07istehqzj8ar2slphpy',
+            effect_event_id: 'r7vz1nhfaswxtjqlc0oe0ub5',
+            different_subject_ids: true,
+          },
+          {
+            cause_event_id: 'q2lm07istehqzj8ar2slphpy',
+            effect_event_id: 'prediction_score:q2lm07istehqzj8ar2slphpy',
+            different_subject_ids: true,
+          },
+        ],
         parent: {
           action: 'experimental:proposal',
           outcome: 'partial',
@@ -479,6 +538,9 @@ export const REALISTIC_EVIDENCE_TRACE = [
           payload_projection_exhaustive: false,
         },
         coverage: {
+          focal_event_id: 'q2lm07istehqzj8ar2slphpy',
+          scope: 'focal_event_direct_children_only',
+          descendant_subtrees: 'not_observed',
           limit: 10,
           complete: true,
           has_more: false,
@@ -557,8 +619,10 @@ export const REALISTIC_EVIDENCE_TRACE = [
     },
     output: {
       cause: null,
+      reader_version: 2,
+      answer_activity_status: 'not_applicable',
       lookup: {
-        status: 'unsupported_event',
+        status: 'found',
         observed: {
           action: 'experimental:probe_result',
           outcome: null,
@@ -607,6 +671,15 @@ export const REALISTIC_EVIDENCE_TRACE = [
         activation_policy: 'not_observed',
         necessary_conditions: 'not_supported',
         sufficient_conditions: 'not_supported',
+        comparison_scope: 'observed_fields_only',
+        comparison_guidance:
+          '比较两条链时，只能称“已观测的直接分叉”；存在 redacted 或未投影字段时，不得称唯一差异、上游完全相同或精确根因。',
+        whole_chain_equivalence: 'not_supported',
+        unique_difference: 'not_supported',
+        chain_termination: 'not_supported',
+        focal_event_siblings: 'not_observed',
+        payload_omissions: 'not_absence',
+        outcome_namespaces: 'event_outcome_distinct_from_evidence_outcome',
       },
       linked_records: [],
       timeline_scope: 'same_question_context_noncausal',
@@ -617,6 +690,23 @@ export const REALISTIC_EVIDENCE_TRACE = [
         returned_count: 0,
       },
       causal_neighborhood: {
+        observed_edges: [
+          {
+            cause_event_id: 'conjecture_yuk792_canary_20260731c',
+            effect_event_id: 'sg6aqgpq6l3wp5maslkvz12j',
+            different_subject_ids: true,
+          },
+          {
+            cause_event_id: 'sg6aqgpq6l3wp5maslkvz12j',
+            effect_event_id: 'ee4x94n2wt1o8sh8z6zxn0yj',
+            different_subject_ids: true,
+          },
+          {
+            cause_event_id: 'sg6aqgpq6l3wp5maslkvz12j',
+            effect_event_id: 'prediction_score:sg6aqgpq6l3wp5maslkvz12j',
+            different_subject_ids: true,
+          },
+        ],
         parent: {
           action: 'experimental:proposal',
           outcome: 'partial',
@@ -677,6 +767,9 @@ export const REALISTIC_EVIDENCE_TRACE = [
           payload_projection_exhaustive: false,
         },
         coverage: {
+          focal_event_id: 'sg6aqgpq6l3wp5maslkvz12j',
+          scope: 'focal_event_direct_children_only',
+          descendant_subtrees: 'not_observed',
           limit: 10,
           complete: true,
           has_more: false,
@@ -1021,6 +1114,8 @@ export const REALISTIC_EVIDENCE_TRACE = [
     },
     output: {
       cause: null,
+      reader_version: 2,
+      answer_activity_status: 'available',
       lookup: {
         status: 'found',
         observed: {
@@ -1108,6 +1203,15 @@ export const REALISTIC_EVIDENCE_TRACE = [
         activation_policy: 'not_observed',
         necessary_conditions: 'not_supported',
         sufficient_conditions: 'not_supported',
+        comparison_scope: 'observed_fields_only',
+        comparison_guidance:
+          '比较两条链时，只能称“已观测的直接分叉”；存在 redacted 或未投影字段时，不得称唯一差异、上游完全相同或精确根因。',
+        whole_chain_equivalence: 'not_supported',
+        unique_difference: 'not_supported',
+        chain_termination: 'not_supported',
+        focal_event_siblings: 'not_observed',
+        payload_omissions: 'not_absence',
+        outcome_namespaces: 'event_outcome_distinct_from_evidence_outcome',
       },
       linked_records: [],
       timeline_scope: 'same_question_context_noncausal',
@@ -1118,8 +1222,23 @@ export const REALISTIC_EVIDENCE_TRACE = [
         returned_count: 1,
       },
       causal_neighborhood: {
+        observed_edges: [
+          {
+            cause_event_id: 'si6y0w14iihyogdifj7w60c1',
+            effect_event_id: 'si6y0w14iihyogdifj7w60c1:checkpoint:fsrs',
+            different_subject_ids: true,
+          },
+          {
+            cause_event_id: 'si6y0w14iihyogdifj7w60c1',
+            effect_event_id: 'al4jmr463c173csm8c6x45hs',
+            different_subject_ids: true,
+          },
+        ],
         parent: null,
         coverage: {
+          focal_event_id: 'si6y0w14iihyogdifj7w60c1',
+          scope: 'focal_event_direct_children_only',
+          descendant_subtrees: 'not_observed',
           limit: 10,
           complete: true,
           has_more: false,
@@ -1190,8 +1309,10 @@ export const REALISTIC_EVIDENCE_TRACE = [
     },
     output: {
       cause: null,
+      reader_version: 2,
+      answer_activity_status: 'not_applicable',
       lookup: {
-        status: 'unsupported_event',
+        status: 'found',
         observed: {
           action: 'judge',
           outcome: 'success',
@@ -1226,6 +1347,15 @@ export const REALISTIC_EVIDENCE_TRACE = [
         activation_policy: 'not_observed',
         necessary_conditions: 'not_supported',
         sufficient_conditions: 'not_supported',
+        comparison_scope: 'observed_fields_only',
+        comparison_guidance:
+          '比较两条链时，只能称“已观测的直接分叉”；存在 redacted 或未投影字段时，不得称唯一差异、上游完全相同或精确根因。',
+        whole_chain_equivalence: 'not_supported',
+        unique_difference: 'not_supported',
+        chain_termination: 'not_supported',
+        focal_event_siblings: 'not_observed',
+        payload_omissions: 'not_absence',
+        outcome_namespaces: 'event_outcome_distinct_from_evidence_outcome',
       },
       linked_records: [],
       timeline_scope: 'same_question_context_noncausal',
@@ -1236,6 +1366,13 @@ export const REALISTIC_EVIDENCE_TRACE = [
         returned_count: 0,
       },
       causal_neighborhood: {
+        observed_edges: [
+          {
+            cause_event_id: 'si6y0w14iihyogdifj7w60c1',
+            effect_event_id: 'al4jmr463c173csm8c6x45hs',
+            different_subject_ids: true,
+          },
+        ],
         parent: {
           action: 'review',
           outcome: 'success',
@@ -1255,6 +1392,9 @@ export const REALISTIC_EVIDENCE_TRACE = [
           payload_projection_exhaustive: false,
         },
         coverage: {
+          focal_event_id: 'al4jmr463c173csm8c6x45hs',
+          scope: 'focal_event_direct_children_only',
+          descendant_subtrees: 'not_observed',
           limit: 10,
           complete: true,
           has_more: false,

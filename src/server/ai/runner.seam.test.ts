@@ -635,7 +635,7 @@ describe('runTask / streamTaskCollecting — YUK-575 budgetOverride seam', () =>
   });
 
   // CopilotTask registry defaults (the durable target task): maxIterations 6,
-  // timeout 60_000 (registry.ts DEFAULT_BUDGET + CopilotTask). Byte-identical
+  // timeout 90_000 (registry.ts DEFAULT_BUDGET + CopilotTask). Byte-identical
   // baselines the override must not touch when omitted.
   const COPILOT = 'CopilotTask';
 
@@ -676,10 +676,10 @@ describe('runTask / streamTaskCollecting — YUK-575 budgetOverride seam', () =>
       { db: fakeDb, budgetOverride: { timeoutMs: 240_000 } },
     );
     expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 240_000);
-    expect(setTimeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), 60_000);
+    expect(setTimeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), 90_000);
   });
 
-  it('streamTaskCollecting: budgetOverride.timeoutMs → abort timer uses the override (~12min, not 60s)', async () => {
+  it('streamTaskCollecting: budgetOverride.timeoutMs → abort timer uses the override (~12min, not 90s)', async () => {
     const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
     await streamTaskCollecting(
       COPILOT,
@@ -687,16 +687,16 @@ describe('runTask / streamTaskCollecting — YUK-575 budgetOverride seam', () =>
       { db: fakeDb, budgetOverride: { maxIterations: 24, timeoutMs: 12 * 60_000 } },
       () => {},
     );
-    // The durable abort timer is armed with the override, NOT the 60_000 registry
+    // The durable abort timer is armed with the override, NOT the 90_000 registry
     // default — guards against the timeout override landing in a no-op position.
     expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 12 * 60_000);
-    expect(setTimeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), 60_000);
+    expect(setTimeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), 90_000);
     // maxTurns override still threads through buildQueryOptions on the stream path.
     const opts = mockSdk.capturedOptions as Record<string, unknown>;
     expect(opts.maxTurns).toBe(24);
   });
 
-  it('streamTaskCollecting: omitted budgetOverride → abort timer uses registry default (60s)', async () => {
+  it('streamTaskCollecting: omitted budgetOverride → abort timer uses registry default (90s)', async () => {
     const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
     await streamTaskCollecting(
       COPILOT,
@@ -704,7 +704,7 @@ describe('runTask / streamTaskCollecting — YUK-575 budgetOverride seam', () =>
       { db: fakeDb },
       () => {},
     );
-    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 60_000);
+    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 90_000);
   });
 });
 

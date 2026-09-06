@@ -29,13 +29,13 @@ import { taskCatalog } from './task-catalog';
 import { getTaskSystemPrompt } from './task-prompts';
 
 const YUK932_PROMPT_HASHES = {
-  'general:CopilotTask': 'dfac7561689b9067e00a26381c3d20c01e08ee7c1d2a7a4f693b68556035017d',
+  'general:CopilotTask': '428e1a69f40aba83ca69cacb6d9e800a711685c9350e0cc7b449bce49d131fdc',
   'general:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
-  'math:CopilotTask': 'dfac7561689b9067e00a26381c3d20c01e08ee7c1d2a7a4f693b68556035017d',
+  'math:CopilotTask': '428e1a69f40aba83ca69cacb6d9e800a711685c9350e0cc7b449bce49d131fdc',
   'math:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
-  'physics:CopilotTask': 'dfac7561689b9067e00a26381c3d20c01e08ee7c1d2a7a4f693b68556035017d',
+  'physics:CopilotTask': '428e1a69f40aba83ca69cacb6d9e800a711685c9350e0cc7b449bce49d131fdc',
   'physics:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
-  'yuwen:CopilotTask': 'dfac7561689b9067e00a26381c3d20c01e08ee7c1d2a7a4f693b68556035017d',
+  'yuwen:CopilotTask': '428e1a69f40aba83ca69cacb6d9e800a711685c9350e0cc7b449bce49d131fdc',
   'yuwen:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
 } as const;
 
@@ -580,35 +580,22 @@ describe('CopilotTask.systemPrompt — C2 memory + ambient clauses', () => {
   });
 });
 
-describe('CopilotTask.systemPrompt — YUK-832 evidence-claim contract', () => {
-  it('pins scope completion, explicit causality, projection, and queue authority', () => {
+describe('CopilotTask.systemPrompt — typed evidence authority', () => {
+  it('keeps a bounded authority pointer instead of duplicating every reader contract', () => {
     const p = getTaskSystemPrompt('CopilotTask');
-    expect(p).toContain('【证据断言契约】');
-    expect(p).toContain('causal_descendants_included=false');
-    expect(p).toContain('follow_causal_relations_from_returned_events');
-    expect(p).toContain('subjectId 的 exact window');
-    expect(p).toContain('requires_complete_pagination_chain');
-    expect(p).toContain('not_subject_scoped 永不授权');
-    expect(p).toContain('repeat_with_subject_id_only');
-    expect(p).toContain('follow_next_cursor_aggregate_then_follow_causal_relations');
-    expect(p).toContain('activation_policy=not_observed');
-    expect(p).toContain('necessary_conditions=not_supported');
-    expect(p).toContain('sufficient_conditions=not_supported');
-    expect(p).toContain('evidence_refs / source_ref / 时间相邻都不是因果边');
-    expect(p).toContain('只能称“已观测的直接分叉”');
-    expect(p).toContain('redacted、未投影、字段缺失与显式 null 必须分开');
-    expect(p).toContain('顶层 event outcome 与 evidence.outcome 必须写全路径');
-    expect(p).toContain('沿 exact subject 与 direct children 核到该段');
-    expect(p).toContain('queue_assertion');
-    expect(p).toContain('null 一律回答“无法裁决”');
-    expect(p).toContain('supports_lifecycle_status_count_claim=false');
-    expect(p).toContain('count_scope=returned_actionable_rows_only');
-    expect(p).toContain('相同时间戳不能证明同一事务');
-    expect(p).toContain('query_knowledge 空结果');
-    expect(p).toContain('只有实际调用并收到结果的工具');
-    expect(p).toContain('逐个回答请求中的 material subpart');
-    expect(p).toContain('repeat_with_relation_only_without_subject_id');
-    expect(p).toContain('returned_nodes_complete_after_expansion=false');
+    const evidence = p.split('【证据边界】')[1]?.split('【后台委派】')[0];
+    expect(evidence).toBeDefined();
+    expect(evidence?.length).toBeLessThan(400);
+    for (const field of [
+      'claim_boundaries',
+      'claim_support',
+      'queue_assertion',
+      'coverage',
+      'required_followup',
+    ]) {
+      expect(evidence).toContain(field);
+    }
+    expect(evidence).toContain('保留已核验的相关 ID、时间与数值');
   });
 });
 

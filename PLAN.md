@@ -1,10 +1,17 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-06：YUK-958 前后台与回放投影已通过 exact-head CI 并合并 #1336。
+> Linear 是权威 tracker；更新于 2026-09-06：完整重构目标持续推进，当前 active 为 YUK-944 证据规则单一权威与上下文降本。
 
 ## NOW
 
 - Owner 授权 AI pipeline、全项目业务封装与测试精简；不把目录归属或 audit 数量当整体完成。
+- YUK944：c03b5b3e 原五读取实际样本通过核心 claim/正事实/展示检查；不是整体生产质量完成。
+  reader v2明确事件/作答、直子覆盖和确定性边；比较规则只在typed合同，不增加query或模型层。
+  79.098s，input40410/output3179，$0.164021；与原主线baseline input40401持平，不称token下降。
+  944累计$1.31710818，含owner追加$1后余额$0.28771982；低于reserve，暂停新增付费调用。
+  13DB/22unit/typecheck/lint/build通过；初审与唯一验证审完成，不启动第三轮。
+  草稿PR1338最终证据待push/exact-head CI；上一remote3a735ffc CI34027572879全绿。
+  原主线报告问句误拦已去重登记YUK960，保留真实无标签题保护，未将缺陷假称修复。
 - AI finalization #1326、Goal #1327、Knowledge merge #1328、Ingestion completion #1329、
   ReviewSettlement #1332、测试精简 #1331/#1333 已经各自 exact-head CI 绿色并合并。
 - YUK-954 #1330：共享执行 owner，权限/校验/取消/原生子代理规则一份实现；
@@ -18,26 +25,29 @@
 - 当前main dce62f79重新实测依赖基线438/0/47（此前98f15bda为439/0/47）；
   五 capability SCC 与20个命令消费者仍在，未宣称消环。
 - 实际输出：同输入 read 样本 input 至少降50.8%、费用至少降62.2%；仅限 synthetic。
-  共享执行层新增实际回归$0.146376，本次增量合计$0.395172，剩余授权$0.604828。
+  共享执行层新增实际回归$0.146376，截至958增量合计$0.395172；944后余额以上述最新账本为准。
   历史未计价超时/child仍未知；durable actual不是queue E2E。
-- Linear 939/940/941/942/952/953/954/955/956/957/958/959 Done；943/947为设计替代而Canceled。
+- Linear 939/940/941/942/946/952/953/954/955/956/957/958/959 Done；943/947为设计替代而Canceled。
 - 详细责任、验证与剩余边界见 docs/planning/2026-09-06-business-architecture-closeout.md。
   原始 the-learning-project 脏main始终保留，所有改动在隔离工作树。
 
 ## NEXT
 
-1. 后端集成交付已完成；不部署，不重复已完成的模型验收。
-2. YUK-958前后台/回放收口已交付。15条生产bundle浏览器流程全绿；
-   原drawer外观不变，技能名终态猜测与重复消息映射已删除；无新增付费调用。
-3. YUK-887：获得独立生产副本/部署授权后，逐实体提供backfill/audit/rebuild/golden证据，
-   再决定SoT兼容分支退休；不能从本机默认开关推断生产状态。
-4. 每PR最多初审+一次P0/P1验证审；954及958客户端预算已用尽，无未决P0/P1。
+1. YUK-944：原五读取actual核心样本已过，推最终证据并等待exact-head CI后收口。
+   不能把单样本当生产质量/降本；SDK原生长会话压缩仍属945未完成。
+2. YUK-946离线native SDK验证通过：首请求仅catalog，Skill调用后才出现body，真实模型费用$0。
+   原eager-body前提已否证；不重建目录、不删除free-form quiz能力，不声称移除正文带来普通轮降本。
+   946已按原生能力验证收口Done，不代表实现了新目录或验证了生产模型选择。
+3. YUK-945同session compact/reinject→YUK-949成品选择→948显式Mission入口→950同轮steer。
+   UI步骤另按设计预检；后端与纯测试可继续。不得用结束一个PR代替整个goal完成。
+4. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者和扩展成本；
+   消除剩余有害写依赖与双规则，替换重复测试，按实际行为与扩展压力验收。
+   YUK960报告问句误拦与949一起明确内容责任，不能降低无标签真实题保护。
+5. YUK-887生产副本backfill/audit/rebuild/golden与SoT退休需要独立授权；不阻断安全的实现工作。
 
 ## PARKED
 
-- 944/945/946：剩余prompt精简、transcript compact、skill可见集优化；不将whitelist
-  误认作每轮eager body加载。949 primary_view marker、950 live steer未实现。
-- 948显式Mission API入口迁移仍待后续；当前durable由显式请求触发，不自动后台化根请求。
+- 944/945/948/949/950已列入NEXT的完整重构顺序，尚未完成，不再作为无限期PARKED；946已验证收口。
 - 951历史mailbox/ToolOperations仅drain-only恢复；退休需零pending/零队列活动跨完整重试窗口。
 - YUK-921多provider、572夜间教研、832 HOLD未解锁。
 - 保留计费、重试、prompt/skill、富结构解析、并发/回滚/恢复、UI加载安全测试；不按数量硬删。

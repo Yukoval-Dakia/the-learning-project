@@ -307,7 +307,7 @@ describe('getAttemptContextTool', () => {
     expect(output.causal_neighborhood.direct_children.map((row) => row.action)).toContain('judge');
   });
 
-  it('distinguishes an absent id from an unsupported exact event without fabricating an attempt', async () => {
+  it('separates event existence from unsupported payload and answer enrichment', async () => {
     const output = await getAttemptContextTool.execute(ctx(), {
       attemptEventId: 'nope',
     });
@@ -317,6 +317,8 @@ describe('getAttemptContextTool', () => {
       observed: null,
     });
     expect(output.attempt).toBeNull();
+    expect(output.reader_version).toBe(2);
+    expect(output.answer_activity_status).toBe('unavailable');
     expect(output.question).toBeNull();
     expect(output.question_availability).toBe('not_resolved');
     expect(output.cause).toBeNull();
@@ -348,7 +350,7 @@ describe('getAttemptContextTool', () => {
       attemptEventId: 'attempt_named_probe',
     });
     expect(unsupported.lookup).toMatchObject({
-      status: 'unsupported_event',
+      status: 'found',
       observed: {
         event_id: 'attempt_named_probe',
         action: 'experimental:attempt_named_probe',
@@ -362,6 +364,98 @@ describe('getAttemptContextTool', () => {
       },
     });
     expect(unsupported.attempt).toBeNull();
+    expect(unsupported.answer_activity_status).toBe('not_applicable');
+    expect(unsupported.lookup.observed?.payload_projection_status).toBe('unsupported_action');
+    expect(unsupported.causal_neighborhood.coverage).toMatchObject({
+      focal_event_id: 'attempt_named_probe',
+      scope: 'focal_event_direct_children_only',
+      descendant_subtrees: 'not_observed',
+    });
+  });
+
+  it('keeps a corrected non-answer event inactive with its exact correction identity', async () => {
+    await writeEvent(testDb(), {
+      id: 'non_answer_to_retract',
+      session_id: null,
+      actor_kind: 'system',
+      actor_ref: 'reader_v2_fixture',
+      action: 'experimental:reader_observation',
+      subject_kind: 'event',
+      subject_id: 'parent_not_loaded',
+      outcome: 'success',
+      payload: { nested: { diagnostics: ['historical', 'not_current'], sample_count: 17 } },
+    });
+    await writeEvent(testDb(), {
+      id: 'retract_non_answer',
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'non_answer_to_retract',
+      caused_by_event_id: 'non_answer_to_retract',
+      outcome: 'success',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: 'Duplicated diagnostic import; retain history but do not treat it as current.',
+        affected_refs: [{ kind: 'question', id: 'question_with_duplicate_diagnostic' }],
+      },
+    });
+    const output = await getAttemptContextTool.execute(ctx(), {
+      attemptEventId: 'non_answer_to_retract',
+    });
+    expect(output).toMatchObject({
+      reader_version: 2,
+      answer_activity_status: 'unavailable',
+      attempt: null,
+      lookup: {
+        status: 'inactive',
+        observed: {
+          event_id: 'non_answer_to_retract',
+          correction_state: 'retracted',
+          correction_event_id: 'retract_non_answer',
+        },
+      },
+    });
+  });
+
+  it('distinguishes event targets without inventing missing-parent or unrelated edges', async () => {
+    for (const [id, target, cause] of [
+      ['scope_root', 'question_alpha', 'missing_parent'],
+      ['same_target', 'question_alpha', 'scope_root'],
+      ['different_target', 'scope_root', 'scope_root'],
+      ['unrelated_same_target', 'question_alpha', null],
+    ] as const) {
+      await writeEvent(testDb(), {
+        id,
+        session_id: null,
+        actor_kind: 'system',
+        actor_ref: 'reader_scope_fixture',
+        action: 'experimental:scope_observation',
+        subject_kind: 'event',
+        subject_id: target,
+        caused_by_event_id: cause,
+        outcome: 'success',
+        payload: { nested: { source: 'scope fixture', observations: [17, 23, 41] } },
+      });
+    }
+    const output = await getAttemptContextTool.execute(ctx(), { attemptEventId: 'scope_root' });
+    expect(output.causal_neighborhood.parent).toBeNull();
+    expect(output.causal_neighborhood.observed_edges).toHaveLength(2);
+    expect(output.causal_neighborhood.observed_edges).toEqual(
+      expect.arrayContaining([
+        {
+          cause_event_id: 'scope_root',
+          effect_event_id: 'same_target',
+          different_subject_ids: false,
+        },
+        {
+          cause_event_id: 'scope_root',
+          effect_event_id: 'different_target',
+          different_subject_ids: true,
+        },
+      ]),
+    );
   });
 
   it('reports an inactive exact attempt with its correction identity instead of hiding it', async () => {
@@ -632,8 +726,9 @@ describe('getAttemptContextTool', () => {
     const checkpoint = await getAttemptContextTool.execute(ctx(), {
       attemptEventId: 'review_bayes:checkpoint:fsrs',
     });
+    expect(checkpoint.answer_activity_status).toBe('not_applicable');
     expect(checkpoint.lookup).toMatchObject({
-      status: 'unsupported_event',
+      status: 'found',
       observed: {
         action: 'experimental:grading_checkpoint',
         caused_by_event_id: 'review_bayes',
@@ -1044,6 +1139,15 @@ describe('getAttemptContextTool', () => {
       activation_policy: 'not_observed',
       necessary_conditions: 'not_supported',
       sufficient_conditions: 'not_supported',
+      comparison_scope: 'observed_fields_only',
+      comparison_guidance:
+        '比较两条链时，只能称“已观测的直接分叉”；存在 redacted 或未投影字段时，不得称唯一差异、上游完全相同或精确根因。',
+      whole_chain_equivalence: 'not_supported',
+      unique_difference: 'not_supported',
+      chain_termination: 'not_supported',
+      focal_event_siblings: 'not_observed',
+      payload_omissions: 'not_absence',
+      outcome_namespaces: 'event_outcome_distinct_from_evidence_outcome',
     });
     expect(proposal.lookup.observed?.redacted_payload_groups).toEqual(
       expect.arrayContaining([
@@ -1127,6 +1231,50 @@ describe('getAttemptContextTool', () => {
 
     const probe = await getAttemptContextTool.execute(ctx(), {
       attemptEventId: 'probe_result_chain_rule',
+    });
+    // The rate sibling exists above, but this exact probe read does not return
+    // it. Complete direct-child coverage cannot support "no rate" or whole-chain
+    // equivalence, even when all visible probe fields agree.
+    expect(probe.causal_neighborhood.coverage.complete).toBe(true);
+    expect(probe.lookup.status).toBe('found');
+    expect(probe.causal_neighborhood.observed_edges).toEqual(
+      expect.arrayContaining([
+        {
+          cause_event_id: 'conjecture_chain_rule',
+          effect_event_id: 'probe_result_chain_rule',
+          different_subject_ids: true,
+        },
+        {
+          cause_event_id: 'probe_result_chain_rule',
+          effect_event_id: 'intervention_chain_activated',
+          different_subject_ids: true,
+        },
+      ]),
+    );
+    expect(
+      probe.causal_neighborhood.observed_edges.filter(
+        (edge) => edge.cause_event_id === 'intervention_chain_activated',
+      ),
+    ).toEqual([]);
+    expect(probe.answer_activity_status).toBe('not_applicable');
+    expect(probe.causal_neighborhood.coverage).toMatchObject({
+      focal_event_id: 'probe_result_chain_rule',
+      scope: 'focal_event_direct_children_only',
+      descendant_subtrees: 'not_observed',
+    });
+    expect(probe.causal_neighborhood.direct_children.map((child) => child.event_id)).not.toContain(
+      'rate_chain_rule',
+    );
+    expect(probe.claim_support).toMatchObject({
+      comparison_scope: 'observed_fields_only',
+      comparison_guidance:
+        '比较两条链时，只能称“已观测的直接分叉”；存在 redacted 或未投影字段时，不得称唯一差异、上游完全相同或精确根因。',
+      whole_chain_equivalence: 'not_supported',
+      unique_difference: 'not_supported',
+      chain_termination: 'not_supported',
+      focal_event_siblings: 'not_observed',
+      payload_omissions: 'not_absence',
+      outcome_namespaces: 'event_outcome_distinct_from_evidence_outcome',
     });
     expect(probe.lookup.observed).toMatchObject({
       payload_projection_status: 'typed_safe',
@@ -1738,6 +1886,8 @@ describe('getAttemptContextTool', () => {
     const summary = getAttemptContextTool.summarize(
       { attemptEventId: 'att_abcdef123' },
       {
+        reader_version: 2,
+        answer_activity_status: 'available',
         lookup: {
           requested_event_id: 'att_abcdef123',
           status: 'found',
@@ -1797,12 +1947,25 @@ describe('getAttemptContextTool', () => {
           activation_policy: 'not_observed',
           necessary_conditions: 'not_supported',
           sufficient_conditions: 'not_supported',
+          comparison_scope: 'observed_fields_only',
+          comparison_guidance:
+            '比较两条链时，只能称“已观测的直接分叉”；存在 redacted 或未投影字段时，不得称唯一差异、上游完全相同或精确根因。',
+          whole_chain_equivalence: 'not_supported',
+          unique_difference: 'not_supported',
+          chain_termination: 'not_supported',
+          focal_event_siblings: 'not_observed',
+          payload_omissions: 'not_absence',
+          outcome_namespaces: 'event_outcome_distinct_from_evidence_outcome',
         },
         causal_neighborhood: {
           parent: null,
           direct_children: [],
+          observed_edges: [],
           relation_semantics: 'direct_children_only',
           coverage: {
+            focal_event_id: 'att_abcdef123',
+            scope: 'focal_event_direct_children_only',
+            descendant_subtrees: 'not_observed',
             returned_count: 0,
             limit: 20,
             total_direct_children: 0,
