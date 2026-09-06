@@ -17,6 +17,7 @@
 // YUK-328 后独立 worker 在注册 handlers 前从 capability manifests 装配完整
 // DomainTool registry；buildMcpServerFromRegistry 只读该启动期 inventory。
 
+import { createHash } from 'node:crypto';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { isDurableWorkerTouchEvent } from '@/capabilities/copilot/durable-pickup';
@@ -29,6 +30,10 @@ import {
   persistCopilotRunCancellationMarker,
 } from '@/capabilities/copilot/server/copilot-run-cancellation';
 import { acquireCopilotExecutionSettlementLock } from '@/capabilities/copilot/server/copilot-run-coordination';
+import {
+  isCopilotWorkerSessionOwned,
+  registerCopilotWorkerSession,
+} from '@/capabilities/copilot/server/copilot-worker-session';
 // YUK-575 (A1/N3) — the shared free-form run-input assembler. The durable handler
 // assembles the FULL run input at pickup time (YUK-596: pass run_id as a causal
 // history anchor in the job's fixed session; conversation_history / learner-state
@@ -67,6 +72,7 @@ import {
 } from '@/server/boss/job-observation';
 import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
+import { clearAgentSdkSessionId, getAgentSdkSessionId, setAgentSdkSessionId } from '@/server/session/conversation';
 import { resolveCopilotSkills } from '@/subjects/copilot-skills';
 import type {
   CopilotModeState,
@@ -86,6 +92,7 @@ import {
   CopilotPrimaryViewSchema,
   type CopilotReplyFinalizationReceipt,
 } from '../server/reply-finalization';
+import { EPHEMERAL_PRESENTATION_STORAGE_NOTICE } from '../server/reply-finalization';
 import type { CopilotPrimaryView } from '../server/turns';
 
 export { enqueueCopilotMailboxJob } from '../api/chat';
@@ -93,6 +100,7 @@ export { enqueueCopilotMailboxJob } from '../api/chat';
 import type { CopilotContinuationRecord, SubagentRunRecord } from '../server/subagent-mailbox';
 import type { SpawnBudgetObservation } from '../server/subagents';
 import { getCopilotContinuationHistory } from '../server/turns';
+import { copilotSessionContextDigest } from '../server/live-session-context';
 
 // dispatch 入口投递的 job 体。run_id = checkpoint_id = user_ask event id（route
 // 在 enqueue 前已写 user_ask domain event，本 handler 以它做 causedByEventId 让
@@ -874,6 +882,14 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     now: new Date(),
     historyAnchorEventId: runId,
   });
+  // A worker may resume only a session it observed and registered in this
+  // process, and only while the conversation row still points at that id.
+  // Persisted ids from another process/app are intentionally cold-started.
+  const persistedSdkSessionId = await getAgentSdkSessionId(db, data.session_id);
+  const resumeSessionId = isCopilotWorkerSessionOwned(data.session_id, persistedSdkSessionId)
+    ? persistedSdkSessionId ?? undefined
+    : undefined;
+  const contextDigest = copilotSessionContextDigest(runInput);
   const progressChain: Promise<void> = Promise.resolve();
   // Load-bearing execution fence, deliberately placed after every deterministic
   // setup/read and immediately before the only paid/external-effect gateway.
@@ -895,6 +911,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     runId,
   });
   cancellationControl.startPolling();
+  let sdkSessionCommitted = false;
   const cancellationMarker =
     (
       partialText?: string,
@@ -958,6 +975,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
         kind: 'durable',
         cancellation: cancellationControl,
         deadlineAt: Date.now() + DURABLE_OWNER_SETTLEMENT_BUDGET_MS,
+        ...(resumeSessionId ? { resumeSessionId } : {}),
         ...(params.copilotSubagentEnabled !== undefined
           ? { subagentsEnabled: params.copilotSubagentEnabled }
           : {}),
@@ -1084,13 +1102,24 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       if (markerClaim.outcome === 'already_terminal') {
         return terminalRunResult(markerClaim.events, taskRunId);
       }
-      return await projectCopilotOutcomeMarker(
+      const projected = await projectCopilotOutcomeMarker(
         db,
         runId,
         taskRunId,
         projectSuccessfulTerminal,
         projectFailedTerminal,
       );
+      const publishedText = reviewedPreparedReply.primaryView?.source === 'ephemeral_html'
+        ? reviewedReply + EPHEMERAL_PRESENTATION_STORAGE_NOTICE
+        : reviewedReply;
+      const candidateMatchesPublished =
+        finalized.receipt.candidate_sha256 === createHash('sha256').update(publishedText, 'utf8').digest('hex');
+      if (projected.status === 'done' && result.sdkSessionId && candidateMatchesPublished) {
+        await setAgentSdkSessionId(db, data.session_id, result.sdkSessionId);
+        registerCopilotWorkerSession(data.session_id, result.sdkSessionId, contextDigest);
+        sdkSessionCommitted = true;
+      }
+      return projected;
     } catch (settlementErr) {
       throw new DurableTerminalProjectionError(runId, 'success', settlementErr);
     }
@@ -1113,6 +1142,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       createCancelledMarker: cancellationMarker(),
     });
   } finally {
+    if (!sdkSessionCommitted) await clearAgentSdkSessionId(db, data.session_id);
     cancellationControl.dispose();
   }
 }
