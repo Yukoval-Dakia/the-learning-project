@@ -268,7 +268,6 @@ export const fastTestInclude = [
   'src/capabilities/practice/server/question-supply/jyeoo-spawn.test.ts',
   'src/capabilities/practice/server/question-supply/jyeoo-supply-config.test.ts',
   'src/server/ai/tools/registry.test.ts',
-  'src/server/ai/tools/allowlists.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
   // M5-T3 (YUK-321) — copilotTools 组合根聚合器：纯 registry 操作，无 DB。
   'src/server/ai/tools/register-capability-tools.unit.test.ts',
@@ -279,9 +278,6 @@ export const fastTestInclude = [
   // YUK-198 — pure (no-DB) Tavily remote MCP builder: reads TAVILY_API_KEY via
   // vi.stubEnv, returns a static McpHttpServerConfig. No live DB / AI / network.
   'src/server/ai/mcp/tavily.test.ts',
-  // P5.1 / YUK-143 — pure (no-DB) budget constants + per-message context throttle.
-  'src/server/ai/tools/budgets.test.ts',
-  'src/server/ai/tools/context-throttle.test.ts',
   // YUK-962 — pure no-DB provider admission config and provenance arithmetic.
   // src/server/ai/** has no unit glob, so enumerate these fast tests explicitly.
   'src/server/ai/provider-attempt-admission-config.test.ts',
