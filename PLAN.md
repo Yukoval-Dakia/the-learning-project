@@ -29,7 +29,8 @@
   PR1342 exact417623b5 CI34034266076绿，main4034859c。
 - YUK964：复用catalog公开分模型USD卡，不再把正数MiMo SDK派生金额当reported账单。
   4项RED后37unit/24runnerDB通过，10条已封存真实wire免费回放全部匹配，review PASS。
-  typecheck/lint/build/audit通过；PR1343，正集成main8e534d3c，尚未合并。
+  CI暴露4条旧失败路径成本断言，保留失败/恢复/usage断言并更新estimate；AI目录418unit全绿。
+  typecheck/lint/build/audit通过；PR1343已集成main8e534d3c，待修订后的exact CI，尚未合并。
 - YUK944 Done：PR1338 exact3fd90c4d CI34030191329绿，main db5a57b1。
   五读取actual核心通过，但input40410 vs40401持平，不能称该复杂样本降本。
 - 已交付：Pipeline1326、Goal1327、Knowledge1328、Import1329、execution1330、

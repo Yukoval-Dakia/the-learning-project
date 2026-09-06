@@ -21,3 +21,8 @@ replay through the new cost owner with matching estimates and no new paid calls.
 Typecheck/lint/build and architecture audit pass; independent initial review PASS.
 The review's non-blocking historical-header wording suggestion is not treated as
 a fixed defect or a separate issue. Exact-head CI and merge remain delivery gates.
+
+The first CI run identified four additional old SDK-USD expectations in failure,
+partial-stream and budget-error tests. Their terminal failure, usage, retry and
+logging assertions remain intact; only expected amount/basis changed. The scoped
+AI-directory unit gate now passes32files/418tests, including those failure paths.

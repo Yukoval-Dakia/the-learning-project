@@ -374,7 +374,8 @@ describe('runTask — YUK-576 transient retry loop', () => {
       fakeDb,
       expect.objectContaining({
         outcome: 'failed_retryable',
-        cost: 0.42,
+        cost: 0.0465846,
+        cost_basis: 'estimated',
         tokens_in: 107_000,
         tokens_out: 5_500,
       }),
@@ -384,7 +385,8 @@ describe('runTask — YUK-576 transient retry loop', () => {
       expect.objectContaining({
         status: 'failure',
         usage: { inputTokens: 107_000, outputTokens: 5_500 },
-        cost_usd: 0.42,
+        cost_usd: 0.0465846,
+        cost_basis: 'estimated',
       }),
     );
   });
