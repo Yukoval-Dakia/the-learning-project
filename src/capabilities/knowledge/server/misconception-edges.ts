@@ -31,7 +31,7 @@ import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import type { z } from 'zod';
 
 import { newId } from '@/core/ids';
-import type { AgentRef } from '@/core/schema/business';
+import { AgentRef } from '@/core/schema/business';
 import { MisconceptionEdgeInsert } from '@/core/schema/misconception-edge';
 import type { Db, Tx } from '@/db/client';
 import { misconception_edge } from '@/db/schema';
