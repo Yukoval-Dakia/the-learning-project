@@ -1,4 +1,29 @@
-# 当前 handoff — 2026-09-06，完整重构goal active
+# 当前 handoff — 2026-09-07，完整重构goal active
+
+## 最新状态（以下历史步骤不替代本节）
+
+- 949/960已交付：PR1345 exact630571bc7cf53689780e4a501f8dc2283d153508，CI34043412808全绿，
+  已squash合并main4d475ac2b95004dc4c166e84a49ba575de7a82c9（2026-09-06 16:00:56Z）。
+  62内容校验/finalization tests覆盖同一行题目答案及礼貌请求，实际报告与修辞问句仍不误拦。
+  两个P2已defer到948：receipt最终视图状态、artifact ready eligibility；无第三轮独立review。
+- 当前root独占 /Volumes/YukovalSBak/yukoval-projects/tlp-wt-unified-conversation，branch codex/yuk-948-unified-conversation。
+  ADR0062 f5a9c3cb锁定统一持续会话；4bf68959教学原子commit+cancel传播；236e5999集成SDK lane。
+  root修复该lane早登记/未持久DB/digest未投递/重复拼notice/earlycancel清理，不能信任原worker初稿完成声明。
+  最终字节必须来自sharedwriter实际return，candidate一致才保存cursor；本进程conversation→SDK绑定有256上限。
+  teaching已走worker同一paid fence/outcome marker、真实taskid/Stop/原子question+reply；三kind共享live/repair/replay。
+  root还修复失败去view后receipt retained字段；artifact ready资格尚未收口。
+  85集成DB（55worker+4teaching lifecycle+26turns）、123unit、typecheck/lint/build通过。
+  测试仅mock外部模型，writer/marker/DB实际运行；未声称实际模型/浏览器统一会话已通过。
+- Queue工作树tlp-wt-session-queue，branch codex/yuk-948-session-queue，architect repair_primary_view_contract独占写。
+  原worker f571a469/7e9af683不完整不可直接交付；architect已证5真实pg-boss DB+17既有DB+59unit绿，最终scope gates中。
+  root待合入queue，按其说明接terminal wake；再flip默认统一入口/6轮预算、补服务端active_runs快照。
+  SDK tree tlp-wt-worker-session latest测试f5dee551，已合入root；原worker与tester都已释放，无其它writer。
+- UI预检仍待批准：现有drawer的CopilotDock.tsx/message-projection.ts/subtask-events.ts/durable-reconnect-storage.ts。
+  不新增Mission/后台按钮，不改视觉，不把session_busy或先Stop作为追加消息实现；UI代码未写。
+- 新$10池：estimatedUSD0.0345102949（非账单）、reservedUSD3.70823、安全剩USD6.29177；旧池USD0.28771982独立。
+  本轮没有任何新的付费调用。原始脏main不动，未部署/clone/改SoT/删历史。
+
+## 历史步骤（保留证据，不是当前待办）
 
 ## 当前949收口；下一条948/950统一持续会话
 

@@ -27,7 +27,7 @@ import {
   findReusableCopilotConversation,
   getCopilotConversation,
 } from '@/server/session/conversation';
-import type { CopilotSkillTurn } from './chat-contracts';
+import { type CopilotSkillTurn, readCopilotSkillTurn as replySkillTurn } from './chat-contracts';
 import { selectAsksWithMaterializingToolCall } from './materializing-tools';
 
 export type CopilotTurnRole = 'user' | 'ai' | 'tombstone';
@@ -141,42 +141,6 @@ function userText(payload: Record<string, unknown>): string | null {
 function replyText(payload: Record<string, unknown>): string | null {
   const v = payload.reply_md;
   return typeof v === 'string' && v.length > 0 ? v : null;
-}
-
-function replySkillTurn(payload: Record<string, unknown>): CopilotTurnSkillTurn | undefined {
-  const st = payload.skill_turn;
-  if (!st || typeof st !== 'object') return undefined;
-  const s = st as Record<string, unknown>;
-  const kind = s.kind;
-  if (kind !== 'explain' && kind !== 'ask_check' && kind !== 'end') return undefined;
-  // Narrow the shape to what the UI needs; extra fields pass through.
-  const result: CopilotTurnSkillTurn = { kind };
-  if (s.suggested_next === 'continue' || s.suggested_next === 'end') {
-    result.suggested_next = s.suggested_next;
-  }
-  if (s.structured_question && typeof s.structured_question === 'object') {
-    const sq = s.structured_question as Record<string, unknown>;
-    if (
-      typeof sq.id === 'string' &&
-      typeof sq.kind === 'string' &&
-      typeof sq.prompt_md === 'string'
-    ) {
-      // PR round-2 (CR 3360606340): validate every element is a string before
-      // passing through; a corrupt array (e.g. [{text:'...'}]) becomes null.
-      const rawChoices = sq.choices_md;
-      const choices_md =
-        Array.isArray(rawChoices) && rawChoices.every((el) => typeof el === 'string')
-          ? (rawChoices as string[])
-          : null;
-      result.structured_question = {
-        id: sq.id,
-        kind: sq.kind,
-        prompt_md: sq.prompt_md,
-        choices_md,
-      };
-    }
-  }
-  return result;
 }
 
 // YUK-307 — hand-rolled narrower mirroring replySkillContext (turns.ts stays

@@ -32,6 +32,7 @@ import { reviewCopilotLearningContent, validateCopilotLearningContent } from './
 import type { CopilotRunCancellationControl } from './copilot-run-cancellation';
 import type { CopilotRunInput } from './copilot-run-input';
 import { selectActorRef } from './copilot-run-input';
+import { clearCopilotWorkerSession } from './copilot-worker-session';
 import { resolveDeterministicCorrectionContract } from './correction-contract';
 import {
   copilotSessionContextDigest,
@@ -44,7 +45,6 @@ import {
 } from './live-turn-context';
 import { resolveLivePrimaryViewArtifact } from './primary-view-reference';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
-import { clearCopilotWorkerSession, registerCopilotWorkerSession } from './copilot-worker-session';
 import {
   type CopilotReplyFinalizationResult,
   createCopilotReplyFinalizer,

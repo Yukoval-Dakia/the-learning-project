@@ -199,14 +199,16 @@ async function replay(runId: string) {
 }
 
 async function seedCopilotConversation(sessionId: string, sdkSessionId?: string) {
-  await testDb().insert(learning_session).values({
-    id: sessionId,
-    type: 'conversation',
-    status: 'active',
-    entrypoint: 'copilot',
-    ...(sdkSessionId ? { agent_sdk_session_id: sdkSessionId } : {}),
-    updated_at: new Date(),
-  });
+  await testDb()
+    .insert(learning_session)
+    .values({
+      id: sessionId,
+      type: 'conversation',
+      status: 'active',
+      entrypoint: 'copilot',
+      ...(sdkSessionId ? { agent_sdk_session_id: sdkSessionId } : {}),
+      updated_at: new Date(),
+    });
 }
 
 async function persistedSdkSessionId(sessionId: string) {
@@ -1678,6 +1680,9 @@ describe('runCopilotRun', () => {
     const [persistedReply] = await copilotReplyEvents(sessionId);
     expect(persistedReply?.payload).toMatchObject({ reply_md: reply });
     expect(persistedReply?.payload).not.toHaveProperty('primary_view');
+    expect(persistedReply?.payload).toMatchObject({
+      reply_finalization: { primary_view: 'dropped' },
+    });
     for (const event of await replay(runId)) {
       expect(event.payload).not.toHaveProperty('primary_view');
     }
@@ -2762,10 +2767,14 @@ describe('runCopilotRun', () => {
         };
       });
 
-    await expect(runCopilotRun({
-      db: testDb(), data: { ...baseData, run_id: 'run_worker_ephemeral_first', session_id: sessionId },
-      executeCopilotTurnFn: execute, resolveCopilotRunInputFn: stubRunInput,
-    })).resolves.toMatchObject({ status: 'done' });
+    await expect(
+      runCopilotRun({
+        db: testDb(),
+        data: { ...baseData, run_id: 'run_worker_ephemeral_first', session_id: sessionId },
+        executeCopilotTurnFn: execute,
+        resolveCopilotRunInputFn: stubRunInput,
+      }),
+    ).resolves.toMatchObject({ status: 'done' });
     const [reply] = await copilotReplyEvents(sessionId);
     expect(reply?.payload).toMatchObject({
       reply_md: candidate + EPHEMERAL_PRESENTATION_STORAGE_NOTICE,
@@ -2773,10 +2782,14 @@ describe('runCopilotRun', () => {
     });
     expect(await persistedSdkSessionId(sessionId)).toBeNull();
 
-    await expect(runCopilotRun({
-      db: testDb(), data: { ...baseData, run_id: 'run_worker_ephemeral_second', session_id: sessionId },
-      executeCopilotTurnFn: execute, resolveCopilotRunInputFn: stubRunInput,
-    })).resolves.toMatchObject({ status: 'done' });
+    await expect(
+      runCopilotRun({
+        db: testDb(),
+        data: { ...baseData, run_id: 'run_worker_ephemeral_second', session_id: sessionId },
+        executeCopilotTurnFn: execute,
+        resolveCopilotRunInputFn: stubRunInput,
+      }),
+    ).resolves.toMatchObject({ status: 'done' });
     expect(policies.map((policy) => policy.resumeSessionId)).toEqual([undefined, undefined]);
   });
 
@@ -2786,39 +2799,71 @@ describe('runCopilotRun', () => {
     await seedCopilotConversation(sessionId);
     const seen: Array<{ policy: { resumeSessionId?: string }; learnerHeader?: string }> = [];
     const runInput = async (_db: Db, params: Parameters<typeof stubRunInput>[1]) => ({
-      ...(await stubRunInput(_db, params)), learner_state_header: learnerHeader,
+      ...(await stubRunInput(_db, params)),
+      learner_state_header: learnerHeader,
     });
-    const replyFor = (taskRunId: string, replyText: string, sdkSessionId?: string) => async (
-      _db: Db, request: { input: { learner_state_header?: string } }, policy: { resumeSessionId?: string },
-    ) => {
-      seen.push({ policy, learnerHeader: request.input.learner_state_header });
-      return {
-        taskRunId, finishReason: 'end_turn', ...(sdkSessionId ? { sdkSessionId } : {}),
-        finalization: {
-          replyText, preparedReply: { text: replyText },
-          receipt: {
-            protocol_version: 1 as const, assurance: 'execution_trace_bound' as const,
-            root_task_run_id: taskRunId,
-            candidate_sha256: createHash('sha256').update(replyText).digest('hex'),
-            reply_sha256: createHash('sha256').update(replyText).digest('hex'),
-            trace_sha256: createHash('sha256').update(taskRunId).digest('hex'), trace_call_count: 0,
-            observed_completed_tool_use_ids: [], correction: 'normal' as const,
-            proposal_disclosure: 'none' as const, learning_content: 'not_applicable' as const,
-            primary_view: 'absent' as const,
-          }, accepted: true,
-        }, partial: false, candidateDeltaObserved: false, contextDigest: 'ignored-by-worker',
+    const replyFor =
+      (taskRunId: string, replyText: string, sdkSessionId?: string) =>
+      async (
+        _db: Db,
+        request: { input: { learner_state_header?: string } },
+        policy: { resumeSessionId?: string },
+      ) => {
+        seen.push({ policy, learnerHeader: request.input.learner_state_header });
+        return {
+          taskRunId,
+          finishReason: 'end_turn',
+          ...(sdkSessionId ? { sdkSessionId } : {}),
+          finalization: {
+            replyText,
+            preparedReply: { text: replyText },
+            receipt: {
+              protocol_version: 1 as const,
+              assurance: 'execution_trace_bound' as const,
+              root_task_run_id: taskRunId,
+              candidate_sha256: createHash('sha256').update(replyText).digest('hex'),
+              reply_sha256: createHash('sha256').update(replyText).digest('hex'),
+              trace_sha256: createHash('sha256').update(taskRunId).digest('hex'),
+              trace_call_count: 0,
+              observed_completed_tool_use_ids: [],
+              correction: 'normal' as const,
+              proposal_disclosure: 'none' as const,
+              learning_content: 'not_applicable' as const,
+              primary_view: 'absent' as const,
+            },
+            accepted: true,
+          },
+          partial: false,
+          candidateDeltaObserved: false,
+          contextDigest: 'ignored-by-worker',
+        };
       };
-    };
-    const execute = vi.fn<NonNullable<RunCopilotRunParams['executeCopilotTurnFn']>>()
-      .mockImplementationOnce(replyFor('tr_worker_resume_first', '第一轮成功保存。', 'sdk_worker_resume'))
+    const execute = vi
+      .fn<NonNullable<RunCopilotRunParams['executeCopilotTurnFn']>>()
+      .mockImplementationOnce(
+        replyFor('tr_worker_resume_first', '第一轮成功保存。', 'sdk_worker_resume'),
+      )
       .mockImplementationOnce(replyFor('tr_worker_resume_second', '第二轮恢复成功。'));
 
-    await runCopilotRun({ db: testDb(), data: { ...baseData, run_id: 'run_worker_resume_first', session_id: sessionId }, executeCopilotTurnFn: execute, resolveCopilotRunInputFn: runInput });
+    await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: 'run_worker_resume_first', session_id: sessionId },
+      executeCopilotTurnFn: execute,
+      resolveCopilotRunInputFn: runInput,
+    });
     expect(await persistedSdkSessionId(sessionId)).toBe('sdk_worker_resume');
-    await runCopilotRun({ db: testDb(), data: { ...baseData, run_id: 'run_worker_resume_second', session_id: sessionId }, executeCopilotTurnFn: execute, resolveCopilotRunInputFn: runInput });
+    await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: 'run_worker_resume_second', session_id: sessionId },
+      executeCopilotTurnFn: execute,
+      resolveCopilotRunInputFn: runInput,
+    });
 
     expect(seen).toEqual([
-      { policy: expect.not.objectContaining({ resumeSessionId: expect.anything() }), learnerHeader },
+      {
+        policy: expect.not.objectContaining({ resumeSessionId: expect.anything() }),
+        learnerHeader,
+      },
       { policy: expect.objectContaining({ resumeSessionId: 'sdk_worker_resume' }), learnerHeader },
     ]);
   });
@@ -2827,35 +2872,77 @@ describe('runCopilotRun', () => {
     const sessionId = 'sess_worker_foreign_cursor';
     await seedCopilotConversation(sessionId, 'sdk_owned_elsewhere');
     const policy = vi.fn();
-    const execute = vi.fn<NonNullable<RunCopilotRunParams['executeCopilotTurnFn']>>(async (_db, _request, receivedPolicy) => {
-      policy(receivedPolicy);
-      const replyText = 'foreign cursor must not resume';
-      return {
-        taskRunId: 'tr_worker_foreign_cursor', finishReason: 'end_turn',
-        finalization: { replyText, preparedReply: { text: replyText }, receipt: {
-          protocol_version: 1, assurance: 'execution_trace_bound', root_task_run_id: 'tr_worker_foreign_cursor',
-          candidate_sha256: createHash('sha256').update(replyText).digest('hex'), reply_sha256: createHash('sha256').update(replyText).digest('hex'),
-          trace_sha256: createHash('sha256').update('foreign').digest('hex'), trace_call_count: 0, observed_completed_tool_use_ids: [], correction: 'normal', proposal_disclosure: 'none', learning_content: 'not_applicable', primary_view: 'absent',
-        }, accepted: true }, partial: false, candidateDeltaObserved: false, contextDigest: 'ignored-by-worker',
-      };
+    const execute = vi.fn<NonNullable<RunCopilotRunParams['executeCopilotTurnFn']>>(
+      async (_db, _request, receivedPolicy) => {
+        policy(receivedPolicy);
+        const replyText = 'foreign cursor must not resume';
+        return {
+          taskRunId: 'tr_worker_foreign_cursor',
+          finishReason: 'end_turn',
+          finalization: {
+            replyText,
+            preparedReply: { text: replyText },
+            receipt: {
+              protocol_version: 1,
+              assurance: 'execution_trace_bound',
+              root_task_run_id: 'tr_worker_foreign_cursor',
+              candidate_sha256: createHash('sha256').update(replyText).digest('hex'),
+              reply_sha256: createHash('sha256').update(replyText).digest('hex'),
+              trace_sha256: createHash('sha256').update('foreign').digest('hex'),
+              trace_call_count: 0,
+              observed_completed_tool_use_ids: [],
+              correction: 'normal',
+              proposal_disclosure: 'none',
+              learning_content: 'not_applicable',
+              primary_view: 'absent',
+            },
+            accepted: true,
+          },
+          partial: false,
+          candidateDeltaObserved: false,
+          contextDigest: 'ignored-by-worker',
+        };
+      },
+    );
+    await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: 'run_worker_foreign_cursor', session_id: sessionId },
+      executeCopilotTurnFn: execute,
+      resolveCopilotRunInputFn: stubRunInput,
     });
-    await runCopilotRun({ db: testDb(), data: { ...baseData, run_id: 'run_worker_foreign_cursor', session_id: sessionId }, executeCopilotTurnFn: execute, resolveCopilotRunInputFn: stubRunInput });
-    expect(policy).toHaveBeenCalledWith(expect.not.objectContaining({ resumeSessionId: expect.anything() }));
+    expect(policy).toHaveBeenCalledWith(
+      expect.not.objectContaining({ resumeSessionId: expect.anything() }),
+    );
   });
 
   it('YUK-948 — a partial resumed turn clears the persisted worker cursor', async () => {
     const sessionId = 'sess_worker_partial_cleanup';
     await seedCopilotConversation(sessionId);
-    const executions = vi.fn<NonNullable<RunCopilotRunParams['executeCopilotTurnFn']>>()
-      .mockImplementationOnce(async () => successfulWorkerExecution('tr_worker_partial_seed', 'seed', 'sdk_worker_partial'))
+    const executions = vi
+      .fn<NonNullable<RunCopilotRunParams['executeCopilotTurnFn']>>()
+      .mockImplementationOnce(async () =>
+        successfulWorkerExecution('tr_worker_partial_seed', 'seed', 'sdk_worker_partial'),
+      )
       .mockImplementationOnce(async (_db, _request, policy) => ({
         ...successfulWorkerExecution('tr_worker_partial_fail', 'partial final'),
         partial: true,
         error: `resumed=${policy.resumeSessionId ?? 'none'} then provider failed`,
       }));
-    await runCopilotRun({ db: testDb(), data: { ...baseData, run_id: 'run_worker_partial_seed', session_id: sessionId }, executeCopilotTurnFn: executions, resolveCopilotRunInputFn: stubRunInput });
+    await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: 'run_worker_partial_seed', session_id: sessionId },
+      executeCopilotTurnFn: executions,
+      resolveCopilotRunInputFn: stubRunInput,
+    });
     expect(await persistedSdkSessionId(sessionId)).toBe('sdk_worker_partial');
-    await expect(runCopilotRun({ db: testDb(), data: { ...baseData, run_id: 'run_worker_partial_fail', session_id: sessionId }, executeCopilotTurnFn: executions, resolveCopilotRunInputFn: stubRunInput })).resolves.toMatchObject({ status: 'failed' });
+    await expect(
+      runCopilotRun({
+        db: testDb(),
+        data: { ...baseData, run_id: 'run_worker_partial_fail', session_id: sessionId },
+        executeCopilotTurnFn: executions,
+        resolveCopilotRunInputFn: stubRunInput,
+      }),
+    ).resolves.toMatchObject({ status: 'failed' });
     expect(await persistedSdkSessionId(sessionId)).toBeNull();
   });
 
@@ -2865,10 +2952,27 @@ describe('runCopilotRun', () => {
     const execute = vi.fn<NonNullable<RunCopilotRunParams['executeCopilotTurnFn']>>(async () =>
       successfulWorkerExecution('tr_worker_cancel_seed', 'seed', 'sdk_worker_cancel'),
     );
-    await runCopilotRun({ db: testDb(), data: { ...baseData, run_id: 'run_worker_cancel_seed', session_id: sessionId }, executeCopilotTurnFn: execute, resolveCopilotRunInputFn: stubRunInput });
+    await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: 'run_worker_cancel_seed', session_id: sessionId },
+      executeCopilotTurnFn: execute,
+      resolveCopilotRunInputFn: stubRunInput,
+    });
     expect(await persistedSdkSessionId(sessionId)).toBe('sdk_worker_cancel');
-    await writeJobEvent(testDb(), { business_table: COPILOT_RUN_TABLE, business_id: 'run_worker_cancelled', event_type: COPILOT_RUN_EVENTS.CANCEL_REQUESTED, payload: { by: 'user' } });
-    await expect(runCopilotRun({ db: testDb(), data: { ...baseData, run_id: 'run_worker_cancelled', session_id: sessionId }, executeCopilotTurnFn: execute, resolveCopilotRunInputFn: stubRunInput })).resolves.toEqual({ status: 'cancelled' });
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: 'run_worker_cancelled',
+      event_type: COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
+      payload: { by: 'user' },
+    });
+    await expect(
+      runCopilotRun({
+        db: testDb(),
+        data: { ...baseData, run_id: 'run_worker_cancelled', session_id: sessionId },
+        executeCopilotTurnFn: execute,
+        resolveCopilotRunInputFn: stubRunInput,
+      }),
+    ).resolves.toEqual({ status: 'cancelled' });
     expect(execute).toHaveBeenCalledTimes(1);
     expect(await persistedSdkSessionId(sessionId)).toBeNull();
   });

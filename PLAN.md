@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-06：948/950统一持续会话实施，ADR0062；949 fresh CI待完成。
+> Linear 是权威 tracker；更新于 2026-09-07：949/960已合并；948/950统一持续会话后端集成，UI预检待批准。
 
 ## NOW
 
@@ -9,6 +9,12 @@
   当前任务计划：①唯一SDK owner parity；②持久接纳/FIFO与故障恢复；③教学原子路径迁入；
   ④统一API、服务端快照与已预检UI；⑤scoped/真实断线与模型验收、独立review、exact CI。
   UI预检已提交等待批准，后端步骤继续；尚未宣称统一入口完成。
+  root已集成SDK lane并修掉初稿的早登记、DB未写、context digest未投递、重复拼保存说明等缺口；
+  真实writer返回字节决定是否保留cursor，本进程绑定+256上限，失败/改写/Stop冷启，不同轮不重烧。
+  teaching已走同一worker栅栏与终态marker：三种教学状态live/repair/replay，题目和回复原子提交；
+  ask_check禁止错误revert anchor，Stop后不materialize。当前85集成DB与typecheck通过。
+  Queue lane原worker初稿未验收；architect在独立session-queue树补齐内核/恢复，5真实pg-boss DB已绿。
+  尚待queue合入/terminal wake、统一入口与预算、无本地缓存服务端快照、UI批准后接线和最终验收。
 - Owner授权AI pipeline和全项目业务封装/测试精简；完整goal仍active，不以audit数量或单个PR代替完成。
 - YUK945：foreground原生SDK compaction、每轮learner状态、compact后结构化再注入；
   原6轮/费用/row/tool/deadline不重置，usage仅存bounded compact元数据。
@@ -32,9 +38,10 @@
   actual过程无hero/read引用/author→artifact通过；三次HTML模型保存误述完整保留，不冒充模型遵循。
   081471e4将真实保存说明交给shared commit owner，保留实质正文并明确权威状态；同步reseal/hash及SDK cursor。
   三条真实失败终文免费重放全部通过；322scoped unit、56DB、typecheck/lint/build通过。
-  PR1345 cc3afecd CI34039845298仅DB2到30分钟取消，其余lane绿；未合并，不冒充绿。
-  已集成960 main3791bf4d；210c6051恢复mid-line锚后，同一行题目+答案的真实P1由root补直接指令保护。
-  三个RED回归后58scoped tests绿；保留报告/修辞问句边界，未增付费/第三轮review。tool_result仍为既有placeholder。
+  PR1345最终exact630571bc7cf53689780e4a501f8dc2283d153508 CI34043412808全绿，已squash合并main4d475ac2。
+  960后续同一行题目/礼貌请求P1均RED后修复，最终62scoped tests/typecheck/lint/build绿。
+  949/960 Linear Done；旧cc3afecd DB2超时不计通过。未增付费/第三轮review，tool_result仍为既有placeholder。
+  非阻塞P2随948收口：root已修commit receipt丢view仍retained；artifact ready eligibility待所属领域收口。
 - YUK948/950 owner新决定：Copilot不分前后台，默认不中断；关闭面板/刷新/断线只脱离订阅。
   服务端唯一执行owner；同一会话后续消息持久接纳并顺序消费，不409 busy、不要求先Stop。
   撤回Mission按钮方案及其UI preflight；保留显式Stop与安全/预算限制。新UI尚未实施或获preflight批准。
@@ -61,15 +68,12 @@
 
 ## NEXT
 
-1. YUK949完整呈现actual与exact CI交付，后台/前台/恢复共享发布语义。
-2. YUK960 PR1344 exact960d0b64，CI34038363273失败lane重跑后绿，已合并3791bf4d。
-   同类762去重重开Todo；非归因逻辑变更，不加timeout/删保护。小范围mid-line边界回归由949中的210c6051收口。
-3. YUK948统一持续执行与服务端恢复；950同会话追加消息，禁止以先Stop/409拒绝替代。
+1. YUK948统一持续执行与服务端恢复；950同会话追加消息，禁止以先Stop/409拒绝替代。
    先后端接纳/顺序执行与teaching/native session parity，再按新方案完成UI preflight和断线实际验收。
-4. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
-5. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
+2. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
+3. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
-6. 887生产副本backfill/audit/rebuild/golden与SoT退休仍需独立授权。
+4. 887生产副本backfill/audit/rebuild/golden与SoT退休仍需独立授权。
 
 ## PARKED
 
@@ -80,6 +84,6 @@
 
 ## BLOCKED-ON
 
-- 当前949/960有安全实施路径，不标完整goal blocked或complete。
+- 当前948/950后端有安全实施路径；UI预检待owner批准，不标完整goal blocked或complete。
 - 未授权部署、生产clone、SoT开关、backfill或历史数据删除；均未执行。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。
