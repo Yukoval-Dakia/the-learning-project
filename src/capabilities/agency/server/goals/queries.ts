@@ -14,10 +14,8 @@
 
 import { asc, eq } from 'drizzle-orm';
 
-import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { goal } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
 import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
 // YUK-471 W2 — goal status/scope events make these transitions fold-visible. These helpers have
 // NO live caller today, but per defer-flip-not-build the event path + write-through are wired now
@@ -28,28 +26,12 @@ import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree'
 // BEFORE the action event is written: only a goal that already has a base (genesis / proposal)
 // folds to a row the update can apply onto; a pre-event-sourced goal would FALSE-mismatch (fold
 // null vs live row), so it is correctly SKIPPED (mirrors W1's assertAcceptParity applicability gate).
-import { hasGoalGenesisAnchor } from '@/server/projections/parity';
-import { applyGoalScopeRow, applyGoalStatusRow } from './commands';
+import { mutateGoal, type GoalStatus, type InsertGoalInput } from './commands';
 
 type DbLike = Db | Tx;
 
-export type GoalStatus = 'active' | 'dormant' | 'done';
-
 export type GoalScopeMode = 'explicit' | 'subject_live';
-
-export interface InsertGoalInput {
-  id: string;
-  title: string;
-  subject_id?: string | null;
-  scope_knowledge_ids: string[];
-  /** YUK-603 — omitted ⇒ 'explicit' (mirrors the column default; the proposal-accept path). */
-  scope_mode?: GoalScopeMode;
-  sequence_hint: number;
-  status?: GoalStatus;
-  source: string;
-  source_ref?: string | null;
-  now?: Date;
-}
+export type { GoalStatus, InsertGoalInput } from './commands';
 
 export interface ActiveGoal {
   id: string;
@@ -88,45 +70,13 @@ export async function updateGoalStatus(
   status: GoalStatus,
   now: Date = new Date(),
 ): Promise<void> {
-  // A3 (OCR major) — wrap the event write + ROW write in ONE tx so they commit atomically. A
-  // future caller passing a plain Db (not an outer tx) would otherwise persist the status event
-  // and then, if the UPDATE / parity throws, be left with the event but no matching row → a
-  // permanent fold!=row divergence. db.transaction() opens a savepoint when `db` is already a Tx.
-  await db.transaction(async (tx) => {
-    // YUK-499 — lock the goal row FOR UPDATE before the action event + ROW write so concurrent goal
-    // writers serialize on this row. On the ON path projectGoalGuarded has no version-CAS, so without
-    // the lock two ON-path projects could interleave between the event write and the upsert: the
-    // later gather would miss the earlier (uncommitted) event → stale fold → live row drifts from
-    // fold(all events). The lock makes the read→fold→write-through atomic per goal id. No-op cost on
-    // the OFF path, which already holds the row through its version-CAS UPDATE below. Mirrors the
-    // artifact ON-path lock in body-blocks-edit.ts.
-    const [existing] = await tx
-      .select({ version: goal.version })
-      .from(goal)
-      .where(eq(goal.id, goalId))
-      .for('update');
-    if (!existing) return;
-    const wasEventSourced = await hasGoalGenesisAnchor(tx, goalId);
-    // YUK-471 W2 — append the fold-visible status event FIRST so the goal fold reproduces the
-    // transition (status→new, version+1). The reducer mirrors the imperative +1 below.
-    await writeEvent(tx, {
-      id: newId(),
-      actor_kind: 'system',
-      actor_ref: 'goal-status-update',
-      action: 'experimental:goal_status_update',
-      subject_kind: 'goal',
-      subject_id: goalId,
-      outcome: 'success',
-      payload: { status },
-      created_at: now,
-    });
-    // A2 (OCR blocker) — only let the projection WRITE the row when the goal was already
-    // event-sourced BEFORE this status event. The status event is itself a goal anchor, so by now
-    // hasGoalGenesisAnchor would read true even for a base-less goal — calling projectGoalGuarded
-    // on one would fold null yet PASS its (now-defeated) anchor guard → DELETE the live row. Fall
-    // back to the imperative UPDATE to preserve it (the imperative write stays the SoT until the
-    // goal is genuinely event-sourced).
-    await applyGoalStatusRow(tx, goalId, status, now, wasEventSourced, existing.version);
+  await mutateGoal(db, {
+    goalId,
+    action: 'status',
+    payload: { status },
+    rowPatch: { status },
+    actorRef: 'goal-status-update',
+    now,
   });
 }
 
@@ -151,56 +101,29 @@ export async function updateGoalScope(
   // Lock/read/version capture must happen in the same transaction as the event and row write.
   // Reading `existing` before this boundary permits a concurrent owner update to be overwritten
   // by a stale replacement patch after the row lock is eventually acquired.
-  await db.transaction(async (tx) => {
-    const [existing] = await tx
-      .select({ version: goal.version })
-      .from(goal)
-      .where(eq(goal.id, goalId))
-      .for('update');
-    if (!existing) return;
-    // HIGH-2 applicability gate — resolve base presence while the canonical goal row is locked.
-    const wasEventSourced = await hasGoalGenesisAnchor(tx, goalId);
-    // YUK-471 W2 — append the fold-visible scope event FIRST. The payload carries ONLY the patch
-    // fields (the .strict() schema rejects mutating set-once provenance like subject_id). The
-    // reducer applies the same patch + version+1 the imperative UPDATE does below.
-    await writeEvent(tx, {
-      id: newId(),
-      actor_kind: 'system',
-      actor_ref: actorRef,
-      action: 'experimental:goal_scope_update',
-      subject_kind: 'goal',
-      subject_id: goalId,
-      outcome: 'success',
-      payload: {
-        ...(patch.title !== undefined ? { title: patch.title } : {}),
-        ...(patch.scope_knowledge_ids !== undefined
-          ? { scope_knowledge_ids: patch.scope_knowledge_ids }
-          : {}),
-        ...(patch.sequence_hint !== undefined ? { sequence_hint: patch.sequence_hint } : {}),
-        ...(patch.placement_starter_augmentation
-          ? { placement_starter_augmentation: true as const }
-          : {}),
-      },
-      created_at: now,
-    });
-    // A2 (OCR blocker) — only let the projection WRITE the row when the goal was already
-    // event-sourced BEFORE this scope event (see updateGoalStatus): the scope event is itself a
-    // goal anchor, so projectGoalGuarded on a base-less goal would fold null, pass its
-    // now-defeated anchor guard, and DELETE the live row. Fall back to the imperative UPDATE.
-    await applyGoalScopeRow(
-      tx,
-      goalId,
-      {
-        ...(patch.title !== undefined ? { title: patch.title } : {}),
-        ...(patch.scope_knowledge_ids !== undefined
-          ? { scope_knowledge_ids: patch.scope_knowledge_ids }
-          : {}),
-        ...(patch.sequence_hint !== undefined ? { sequence_hint: patch.sequence_hint } : {}),
-      },
-      now,
-      wasEventSourced,
-      existing.version,
-    );
+  const payload = {
+    ...(patch.title !== undefined ? { title: patch.title } : {}),
+    ...(patch.scope_knowledge_ids !== undefined
+      ? { scope_knowledge_ids: patch.scope_knowledge_ids }
+      : {}),
+    ...(patch.sequence_hint !== undefined ? { sequence_hint: patch.sequence_hint } : {}),
+    ...(patch.placement_starter_augmentation
+      ? { placement_starter_augmentation: true as const }
+      : {}),
+  };
+  await mutateGoal(db, {
+    goalId,
+    action: 'scope',
+    payload,
+    actorRef,
+    now,
+    rowPatch: {
+      ...(patch.title !== undefined ? { title: patch.title } : {}),
+      ...(patch.scope_knowledge_ids !== undefined
+        ? { scope_knowledge_ids: patch.scope_knowledge_ids }
+        : {}),
+      ...(patch.sequence_hint !== undefined ? { sequence_hint: patch.sequence_hint } : {}),
+    },
   });
 }
 

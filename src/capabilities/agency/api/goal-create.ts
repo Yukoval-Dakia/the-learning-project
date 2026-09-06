@@ -29,18 +29,16 @@ import { newId } from '@/core/ids';
 import type { GoalRowSnapshotT } from '@/core/schema/event/genesis';
 import { db } from '@/db/client';
 import { goal } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
 import { ApiError, errorResponse, resourceResponse } from '@/kernel/http';
 // YUK-471 W2 — goal projection seam. The MANUAL at-entry path has NO proposal chain, so the
 // only originating event is a genesis seed: the tx always writes the genesis event + the
 // materialized_id_index anchor (the event log + anchor is the source of truth), then the
 // per-entity flag projectionIsWriter('goal') gates ONLY who writes the ROW (projection
 // write-through when ON, imperative insertGoal when OFF — defer-flip-not-build).
-import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 // HIGH-2 — write-time fold==row guard on the OFF branch (genesis written this tx → event-sourced).
 import { ensureSubjectRoot } from '@/server/subjects/ensure-subject-root';
 import { getDefaultSubjectRegistry, resolveKnownSubjectId } from '@/subjects/profile';
-import { materializeGoalRow } from '../server/goals/commands';
+import { createGoalFromGenesis } from '../server/goals/commands';
 import { CreateGoalBody } from './goal-contracts';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
@@ -118,28 +116,6 @@ export async function POST(req: Request): Promise<Response> {
     };
     const genesisEventId = newId();
     await db.transaction(async (tx) => {
-      // 1. ALWAYS write the genesis seed (the manual goal's only originating event) +
-      //    materialized_id_index anchor, regardless of the flag. ingest_at=now → memory outbox
-      //    opt-out (this is a structural seed, not a learning activity).
-      await writeEvent(tx, {
-        id: genesisEventId,
-        actor_kind: 'system',
-        actor_ref: 'goal-create',
-        action: 'experimental:genesis',
-        subject_kind: 'goal',
-        subject_id: id,
-        outcome: 'success',
-        payload: { row: snapshot },
-        // A7 — stamp created_at explicitly (parity with the accept path) so the genesis event's
-        // fold-order timestamp is the same `now` as the row snapshot, not a separate DB default.
-        created_at: now,
-        ingest_at: now,
-      });
-      await upsertMaterializedIdIndex(tx, {
-        materialized_id: id,
-        anchor_event_id: genesisEventId,
-        subject_kind: 'goal',
-      });
       // YUK-600（阻断④防线步 2）—— 建根安全网：挂在两 writer 分岔**之前**的共享
       // 事务步骤（projectGoal 路完全绕过 insertGoal，防线不能挂 writer 内）。
       // 幂等 ON CONFLICT no-op；root.name 只从服务端 registry 读（v1 的
@@ -149,8 +125,7 @@ export async function POST(req: Request): Promise<Response> {
         const profile = getDefaultSubjectRegistry().get(subjectId);
         await ensureSubjectRoot(tx, subjectId, profile?.displayName ?? subjectId);
       }
-      // 2. ROW writer — gated on the per-entity flag (critic A1).
-      await materializeGoalRow(tx, {
+      await createGoalFromGenesis(tx, {
         id,
         title,
         subject_id: subjectId ?? null,
@@ -160,6 +135,8 @@ export async function POST(req: Request): Promise<Response> {
         status: 'active',
         source: 'manual',
         now,
+        genesisEventId,
+        snapshot,
       });
     });
 
