@@ -1,18 +1,14 @@
 import { eq } from 'drizzle-orm';
 import { emitArtifactLifecycleEvent } from '@/capabilities/notes/public';
 import type { Tx } from '@/db/client';
-import { goal, knowledge, learning_item, mistake_variant } from '@/db/schema';
-import { projectGoalGuarded } from '@/server/projections/goal';
+import { knowledge, learning_item, mistake_variant } from '@/db/schema';
 import { projectLearningItemGuarded } from '@/server/projections/learning_item';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 import { projectMistakeVariantGuarded } from '@/server/projections/mistake_variant';
 import {
-  assertGoalParity,
   assertKnowledgeNodeParity,
   assertLearningItemParity,
   assertMistakeVariantParity,
-  goalLiveRowToSnapshot,
-  hasGoalGenesisAnchor,
   hasLearningItemGenesisAnchor,
   hasMistakeVariantGenesisAnchor,
   knowledgeLiveRowToSnapshot,
@@ -36,10 +32,8 @@ export {
   writeProposalRateEvent,
 } from './applier-helpers';
 export {
-  hasGoalGenesisAnchor,
   hasLearningItemGenesisAnchor,
   hasMistakeVariantGenesisAnchor,
-  projectGoalGuarded,
   projectLearningItemGuarded,
   projectMistakeVariantGuarded,
   projectionIsWriter,
@@ -53,11 +47,6 @@ export function learningItemSnapshot(row: typeof learning_item.$inferSelect): un
 export async function assertCurrentLearningItemParity(tx: Tx, itemId: string): Promise<void> {
   const [row] = await tx.select().from(learning_item).where(eq(learning_item.id, itemId));
   await assertLearningItemParity(tx, itemId, row ? learningItemLiveRowToSnapshot(row) : null);
-}
-
-export async function assertCurrentGoalParity(tx: Tx, goalId: string): Promise<void> {
-  const [row] = await tx.select().from(goal).where(eq(goal.id, goalId));
-  await assertGoalParity(tx, goalId, row ? goalLiveRowToSnapshot(row) : null);
 }
 
 export async function assertCurrentKnowledgeNodeParity(tx: Tx, nodeId: string): Promise<void> {

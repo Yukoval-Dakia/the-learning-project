@@ -1,62 +1,45 @@
-# PLAN — 活看板 (cockpit)
+# PLAN — 活看板
 
-> Linear 是权威 tracker；本文件只镜像 NOW / NEXT / PARKED / BLOCKED-ON。
-> 更新于：2026-09-06（owner 扩大授权：AI pipeline、全项目业务封装与测试精简）
+> Linear 是权威 tracker；更新于 2026-09-06：AI pipeline已合并，业务封装与测试精简继续。
 
 ## NOW
 
-- Owner 已授权继续完整 AI pipeline 重构，由 agent 决策；目标为低 token、清晰的能力归属、
-  原生子 agent 与明确的 durable 根任务。本次继续授权报告中的全项目架构实施与测试精简。
-- main 基线 `090e882c` / PR #1324 已完成前台上下文改造。当前隔离集成分支：
-  `codex/yuk-939-pipeline-completion`，不修改原始脏 main。
-- 已集成：单一 SDK 消息消费核心；业务自有 `generate_goal_outline` 与
-  `generate_question_candidate`；前台/Mission 原生只读 Task；停止新 ToolOperations；
-  七个旧控制工具已从 manifest 与实际 MCP 工具集合移除。保留历史任务恢复与重放。
-- `fe71227b` 已集成根终态 finalization，退休两个重复 evidence Task 与过时 ledger/checkpoint 测试。
-- 集成 scoped 单测、持久化/恢复 DB 场景、typecheck/lint/audits/build 已通过；发现的一处旧工具
-  清单测试已按新 manifest 修正，正在复验。任务数为 50；capability→server 依赖从 464 降到 453。
-- terminal Markdown 与技能隔离已集成。`5c2bdcad` 同输入 read 通过：28,464 input / 215 output /
-  $0.076271；相对旧基准下界输入至少减 50.8%、费用至少减 62.2%，仅限合成样本。
-- 冷启动/恢复/ambient/read/proposal/cancel 通过；`1e61da8d` 的 native/correction/durable/
-  semantic 真实复验全部通过。本次新增报告费用 $0.248796；完整输入输出/收据封存在
-  `docs/planning/evidence/2026-09-06-pipeline-actual.json`。direct durable 不等于queue E2E。
-- 此前已知费用 $0.503605，native child 另有未结算费用。本次“继续”续上此前请求的
-  最多新增 $1 真实验收；跨调用累计，若再遇未结算调用则停止付费。
-- `87d7b990` + `8eaf6c0d` 已修 Agent/Task 别名与同步执行控制，root 查看 SDK 源证据与真实 diff。
-  最新集成 162 scoped unit / 76 scoped DB、typecheck/lint/audits/build 通过。
-  Draft PR #1326 已 push；三个旧工具测试断言已修，33 scoped DB复验通过；等待新head CI后合并，不部署。
-- 计划与证据：`docs/planning/2026-09-05-ai-pipeline-completion.md`；具体设计：
-  `docs/planning/2026-09-05-pipeline-finalization-design.md`。历史 F5 状态见 Git 中本文件前版。
+- Owner 本次授权整个项目架构与测试精简；一条active线：业务复杂度收进明确owner，
+  保留低token与高级agent，不把目录归属/audit绿色当完成。
+- AI pipeline PR #1326 已合并 main `dda46441`；exact-head `7d456998` CI全绿。
+  命名synthetic actual gates全部通过，本次报告费用$0.248796；此前未知child未算作0。
+  read样本输入至少降50.8%、费用至少降62.2%，旧基准不完整，仅限样本。
+- 根集成工作树 tlp-wt-business-architecture；原始the-learning-project脏main保持不动。
+- YUK-952：Goal manual/accepted creation、status/scope/retract集中command；legacy raw
+  insert仅留import/fixture兼容；修复锁外version读取与逆序timestamp导致的有效更新回滚。
+  首审P1已红测复现并修复；41 scoped DB绿，早先67 DB覆盖rebuild/golden；
+  45 scoped unit、typecheck/lint/build通过；唯一验证审APPROVE，独立9+20 DB通过，CI待完成。
+- 测试第一批仅删除4个文件搬迁/Options全字段快照用例；权限、结算、取消、恢复覆盖不动。
+- YUK-953：merge owner与命名两个独立lane；root修掉旧重复实现和跨包deep import，
+  加锁防止归因覆盖并移回owner的post-accept parity。90 scoped DB绿；待集成/审查。
+- YUK-954：Copilot共同执行规则封装在独立lane实施，保留前台/耐久生命周期差异。
+- YUK-955：录入完成command在独立lane实施；保留原子导入、source约束与四类outcome。
+- Linear已恢复读写（部分调用偶发transport失败）；939/940/941 Done，952/953/954/955进行中。
 
 ## NEXT
 
-1. PR #1326 `1e61da8d` exact-head static/unit/build/migration/usability/DB 1/2 通过，
-   DB 2/2 三个旧工具断言已修；推送后复验。
-2. 两轮独立审查已用完：`5c2bdcad` 获批准；新实际兼容性修复由 root 检查 worker diff 与真实证据，
-   不擅自启动第三轮。按修改范围补 scoped/static/build。
-3. 命名真实场景已全部通过；复用证据，不为同一结论重复付费。
-4. Push 后以 exact-head GitHub CI Gate 为完整测试权威；通过后按仓库授权合并。
-5. 收尾更新本看板、handoff、Linear 和部署边界；不得把 LOCAL_GREEN 称作完整验收。
-6. YUK-952 独立 goal-owner lane：事件、写入与 legacy 兼容收进唯一业务命令；
-   首版仅搬SQL已要求深化，尚未集成；不擅自切生产 flag 或 backfill。
-7. Knowledge merge 跨域写入交还 owner，保持同一事务回滚、幂等、收据；拆除命名反向依赖。
-8. 收敛录入/判分完成规则与失败恢复；AI 共同规则归执行服务，服务端表达产品终态。
-9. 随行为重构替换重复内部测试，并盘点全项目低价值测试。验收看责任主体数、规则
-   实现份数与恢复 owner，不以 audit 通过/文件减少替代。UI 代码先走精确设计清单批准。
+1. Goal修复完成唯一验证审、最终scoped/static/build与exact-head CI后合并。
+2. 集成Knowledge/Practice/Agency归因owner、单向命名adapter；验证9surface rollback、
+   幂等、no-version-bump与历史record不可变。
+3. 集成Copilot execution owner和Ingestion completion；接口测试替换内部装配断言。
+4. 收敛paper/review判分完成的真实重复结算规则，保留各自生命周期、late-result fences。
+5. 服务端表达明确模式终态，客户端统一消息投影；待UI具体文件清单批准后实现。
+6. 随业务封装继续全项目测试精简，记录每项删除的替代行为证据；不按用例计数硬删。
+7. 每片独立review预算最多初审+一次P0/P1验证审；本机不跑full pnpm test。
 
 ## PARKED
 
-- Production deploy/observation：未授权。本次不删除数据库记录、旧 migration 或历史回复。
-- 旧 mailbox/ToolOperations 恢复器退休：需部署后确认旧非终态记录和队列工作全部排空；
-  当前只停止新生产者，保留 drain-only 义务。
-- YUK-921 多 provider 方案一、YUK-572 夜间教研、YUK-832 HOLD、Architecture FULL 的生产观察，
-  不因本次工程改造自动开启。
+- 生产deploy/observation、历史数据删除、SoT flags切换：无授权，未执行。
+- 旧mailbox/ToolOperations drain-only恢复器：需部署后零pending证据，不删历史读/表/migrations。
+- YUK-921多provider、YUK-572夜间教研、YUK-832 HOLD不因工程改造自动开启。
 
 ## BLOCKED-ON
 
-- Linear 已实际恢复，正在去重和同步；YUK-939 当前 In Progress。
-- 逐实体最终移除过渡 flag 需生产 clone 的 backfill/audit/rebuild 证据；
-  不阻塞先将兼容策略从业务入口收进唯一 owner。
-- 旧链路真实只读基准总量不可补全：至少 57,817 input / 2,457 output tokens、$0.201614，
-  比较模型超时后费用未知。Owner 已另外授权新链路最多新增 $2；不得把旧基准下界当作完整总量。
-- 无生产部署或历史数据清理授权；不影响本地实现、审查与 CI。
+- UI改动需已提交的精确设计原文/组件类型/文件清单批准；等待期间后端照常实施。
+- 逐实体最终去掉迁移开关需获准production clone上的backfill/audit/rebuild/golden证据；
+  当前先消除各业务入口的重复兼容实现，不伪称状态迁移已完成。

@@ -7,7 +7,7 @@ import type {
 
 export type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 
-import { type GoalRetractRuntime, retractGoalScopeProposal } from './proposal-retract-goal';
+import { retractGoalScopeProposal } from './proposal-retract-goal';
 import {
   type LearningItemRetractRuntime,
   retractLearningItemProposal,
@@ -18,8 +18,7 @@ import {
   retractRelearnProposal,
 } from './proposal-retract-learning-state';
 
-type AgencyLifecycleRuntime = GoalRetractRuntime &
-  LearningItemRetractRuntime &
+type AgencyLifecycleRuntime = LearningItemRetractRuntime &
   LearningStateRetractRuntime & {
     acquireProposalDecisionLock: (tx: Tx, proposalId: string) => Promise<void>;
     recordDismissSignal: (tx: Tx, input: ProposalDismissInput) => Promise<void>;
@@ -60,8 +59,7 @@ export function createAgencyProposalLifecycle(runtime: AgencyLifecycleRuntime): 
       }),
     learningItemProposalRetractApplier: (db, input) =>
       retractLearningItemProposal(db as Tx, input, runtime),
-    goalScopeProposalRetractApplier: (db, input) =>
-      retractGoalScopeProposal(db as Tx, input, runtime),
+    goalScopeProposalRetractApplier: (db, input) => retractGoalScopeProposal(db as Tx, input),
     completionProposalRetractApplier: (db, input) =>
       retractCompletionProposal(db as Tx, input, runtime),
     relearnProposalRetractApplier: (db, input) => retractRelearnProposal(db as Tx, input, runtime),

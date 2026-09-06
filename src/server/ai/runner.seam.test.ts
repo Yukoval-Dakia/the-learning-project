@@ -317,35 +317,6 @@ describe('runTask — YUK-299 outputFormat seam', () => {
     expect('outputFormat' in opts).toBe(false);
   });
 
-  it('keeps the un-migrated Options key set stable (no field drift from the const refactor)', async () => {
-    mockSdk.messages = [successResult()];
-
-    await runTask(UNMIGRATED_KIND, { question: 'q', wrong_answer: 'a' }, { db: fakeDb });
-
-    const opts = mockSdk.capturedOptions as Record<string, unknown>;
-    // The exact Options key set buildQueryOptions emits with no outputFormat.
-    // Guards the literal→const+mutate refactor against accidental field add/drop.
-    const EXPECTED_KEYS = [
-      'model',
-      'systemPrompt',
-      'abortController',
-      'env',
-      'tools',
-      'mcpServers',
-      'maxTurns',
-      'permissionMode',
-      'allowDangerouslySkipPermissions',
-      'persistSession',
-      'cwd',
-      'title',
-      'skills',
-      'settingSources',
-    ].sort();
-    expect(Object.keys(opts).sort()).toEqual(EXPECTED_KEYS);
-    expect(opts.settingSources).toEqual([]);
-    expect(opts.title).toBe(UNMIGRATED_KIND);
-  });
-
   it('threads ctx.outputFormat through on an SDK-structured-output provider', async () => {
     mockSdk.messages = [successResult()];
     vi.stubEnv('ANTHROPIC_API_KEY', 'sk-anthropic-test-key');
