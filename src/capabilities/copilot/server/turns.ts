@@ -27,6 +27,7 @@ import {
   findReusableCopilotConversation,
   getCopilotConversation,
 } from '@/server/session/conversation';
+import { type CopilotPrimaryView, parseCopilotPrimaryView } from '../primary-view-contract';
 import { type CopilotSkillTurn, readCopilotSkillTurn as replySkillTurn } from './chat-contracts';
 import {
   COPILOT_RUN_EVENTS,
@@ -52,25 +53,7 @@ export interface CopilotTurnSkillContext {
   ref: { kind: string; id: string };
 }
 
-// YUK-307 (presentation layer §2.3, RULED) — the agent-nominated hero deliverable
-// for one reply turn: `primary_view?: { source: 'tool_result' | 'artifact' |
-// 'ephemeral_html', ref }`. Persisted as an ADDITIVE field on the copilot_reply
-// payload so Dock replay can restore the hero nomination (ADR-0033 D5:
-// primary_view:{source:'artifact', ref} opens the reference card). Plain types
-// live here (the zod parse schema lives at the extraction point in chat.ts —
-// same import direction as CopilotTurnSkillTurn: chat.ts → turns.ts, never back).
-export const PRIMARY_VIEW_SOURCES = ['tool_result', 'artifact', 'ephemeral_html'] as const;
-export type PrimaryViewSource = (typeof PRIMARY_VIEW_SOURCES)[number];
-// Bound for the ephemeral_html inline carrier so the jsonb payload stays bounded.
-export const EPHEMERAL_HTML_REF_MAX_CHARS = 32_000;
-export type CopilotPrimaryView =
-  | { source: 'tool_result' | 'artifact'; ref: { kind: string; id: string } }
-  // PHASE-DEFERRED (UI slice): for ephemeral_html the ref string IS the inline
-  // HTML body (the carrier is the content — there is no persisted row to point
-  // at). If the UI slice rules a different carrier (e.g. a reply_md html-block
-  // reference), this is the single place to re-anchor; see the presentation
-  // design doc §2.5 (docs/design/2026-06-09-copilot-presentation-layer.md).
-  | { source: 'ephemeral_html'; ref: string };
+export { type CopilotPrimaryView, EPHEMERAL_HTML_REF_MAX_CHARS } from '../primary-view-contract';
 
 export interface CopilotTurn {
   role: CopilotTurnRole;
@@ -152,35 +135,8 @@ function replyText(payload: Record<string, unknown>): string | null {
   return typeof v === 'string' && v.length > 0 ? v : null;
 }
 
-// YUK-307 — hand-rolled narrower mirroring replySkillContext (turns.ts stays
-// zod-free; the strict parse lives at the emission point in chat.ts). Any shape
-// that does not match one of the three ruled source variants → undefined (the
-// turn is still returned — replay is best-effort prefill, never the SoT).
 function replyPrimaryView(payload: Record<string, unknown>): CopilotPrimaryView | undefined {
-  const pv = payload.primary_view;
-  if (!pv || typeof pv !== 'object') return undefined;
-  const p = pv as Record<string, unknown>;
-  const source = p.source;
-  if (source === 'tool_result' || source === 'artifact') {
-    const ref = p.ref;
-    if (!ref || typeof ref !== 'object') return undefined;
-    const r = ref as Record<string, unknown>;
-    if (typeof r.kind !== 'string' || typeof r.id !== 'string') return undefined;
-    // Mirror the emission-side PrimaryViewRefSchema bounds (chat.ts) so the
-    // replay narrower can't drift looser than what chat.ts will ever write
-    // (PR #375 review LOW-1).
-    if (r.kind.length === 0 || r.kind.length > 40) return undefined;
-    if (r.id.length === 0 || r.id.length > 120) return undefined;
-    return { source, ref: { kind: r.kind, id: r.id } };
-  }
-  if (source === 'ephemeral_html') {
-    const ref = p.ref;
-    if (typeof ref !== 'string' || ref.length === 0 || ref.length > EPHEMERAL_HTML_REF_MAX_CHARS) {
-      return undefined;
-    }
-    return { source, ref };
-  }
-  return undefined;
+  return parseCopilotPrimaryView(payload.primary_view);
 }
 
 function replySkillContext(payload: Record<string, unknown>): CopilotTurnSkillContext | undefined {

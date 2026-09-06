@@ -132,6 +132,41 @@ async function pre(
 }
 
 describe('Copilot root reply finalization', () => {
+  it('captures nomination output immutably instead of following later caller mutation', async () => {
+    const value = finalizer();
+    await pre(value, 'mcp__loom__query_knowledge', 'observed-root', {});
+    value.observeDomainTool({
+      tool_use_id: 'observed-root',
+      name: 'query_knowledge',
+      effect: 'read',
+      input: {},
+      output: { nodes: [{ id: 'zero', estimate: 0, evidence: null }] },
+      error_reason: null,
+      executed: true,
+    });
+    const nomination = {
+      source: 'tool_result',
+      ref: { kind: 'query_knowledge', id: 'observed-root' },
+    };
+    await pre(value, 'mcp__loom__present_primary_view', 'observed-control', nomination);
+    value.observeDomainTool({
+      tool_use_id: 'observed-control',
+      name: 'present_primary_view',
+      effect: 'control',
+      input: nomination,
+      output: nomination,
+      error_reason: null,
+      executed: true,
+    });
+    nomination.ref.id = 'forged-after-observation';
+    const result = await value.finalizeTerminal('已核对观测。');
+    expect(result.preparedReply.primaryView).toMatchObject({
+      source: 'tool_result',
+      ref: { kind: 'query_knowledge', id: 'observed-root' },
+    });
+    expect(result.receipt.primary_view).toBe('retained');
+  });
+
   it('retains read-then-present when the control names an actual successful root result', async () => {
     const value = finalizer();
     await pre(value, 'mcp__loom__query_knowledge', 'root-result', { query: '函数' });

@@ -1,12 +1,15 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：965经真实输出/独立审查/exact CI交付main fbc87f3b；接续全产品扩展成本复核，不操作生产。
+> Linear 是权威 tracker；更新于 2026-09-07：全产品核对确认tool_result主卡片仍只有名称占位；去重创建966，补真实结果快照与恢复，不操作生产。
 
 ## NOW
 
-- 接续线：全产品学习行为与扩展成本最终复核；root独占tlp-wt-unified-conversation，
-  branch codex/yuk-965-delivery-notes，base origin/main fbc87f3b；此branch仅记交付，不改产品。
-  先按录入完成/判分完成/知识合并及学习闭环核对明确owner与恢复，再记录实际剩余项；不按计数补重构。
+- Active线YUK966：root独占tlp-wt-unified-conversation，branch codex/yuk-966-tool-result-delivery，base main fbc87f3b+65985eae交付记录。
+  全产品核对发现真实缺口：agent提名tool_result后HeroCard只显示工具名，未交付结果，设计§2.2/2.3要求完整只读视图且不重复取数。
+  计划①真实root观察生成有界可信快照；②live/persist/replay同一协议；③既有drawer展示/刷新不重查；④针对性安全/恢复/浏览器验证与独立review/exactCI。
+  UI精确范围已发preflight，未收到确认前只做后端/测试；无新paid，本池安全剩4.44177。
+  业务owner只读复核：知识合并/录入完成/判分完成已有真实事务与失败恢复，不为9个必要owner造registry。
+  SoT仍有部署兼容；仓库compose值不等于生产运行态，不擅删guard或翻flag。Notes分散写入需按不同业务操作判断，尚无重复规则证据。
 - YUK965 Done：PR1347 exact6015f2a0fe1163eefc168ec782a5fb657099c0d7，CI34053995106全部success，
   已于2026-09-06T19:20:27Z squash合并main fbc87f3b1ade3bc726d9371033a4c073d6c6f1a3。
   已删除旧chat执行/mutex，保留conversation-writes；执行policy与history anchor收敛为持久生命周期。
@@ -78,7 +81,7 @@
 
 ## NEXT
 
-1. 以main fbc87f3b及已合并业务owner/test census证据收口全产品修改责任与恢复边界，发现真实缺口才开去重follow-up。
+1. 966先完成服务端真实快照与协议保护，再在UI批准后补卡片；模型不能伪造快照，不重执行工具或加模型调用。
 2. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
 3. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
@@ -93,6 +96,6 @@
 
 ## BLOCKED-ON
 
-- 965已交付，整体goal仍active；全产品证据复核可独立继续，不等生产权限、不重开已完成review。
+- 966卡片UI精确文件范围待确认，后端与测试可独立继续；965 review已结束，不重开。
 - 未授权部署、生产clone、SoT开关、backfill或历史数据删除；均未执行。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。

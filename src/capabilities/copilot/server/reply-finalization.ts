@@ -2,6 +2,9 @@ import { createHash } from 'node:crypto';
 import type { HookCallback, Options } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
+
+export { CopilotPrimaryViewSchema } from '../primary-view-contract';
+
 import type {
   ProposalEffectContract,
   ToolExecutionGateInput,
@@ -46,8 +49,6 @@ export function sealCommittedPresentationReply(
   };
 }
 
-export const CopilotPrimaryViewSchema = PresentPrimaryViewOutputSchema;
-
 export const PRIMARY_VIEW_MARKER_START = '<!--primary_view';
 const PRIMARY_VIEW_MARKER_RE = /<!--primary_view:([\s\S]*?)-->/g;
 
@@ -60,7 +61,7 @@ export function extractPrimaryView(
   let sawMalformed = false;
   const tryParse = (jsonText: string): CopilotPrimaryView | undefined => {
     try {
-      const parsed = CopilotPrimaryViewSchema.safeParse(JSON.parse(jsonText));
+      const parsed = PresentPrimaryViewOutputSchema.safeParse(JSON.parse(jsonText));
       if (parsed.success) return parsed.data;
     } catch {
       // handled below
@@ -137,7 +138,7 @@ interface TraceEntry {
   effect: ToolExecutionResultObservation['effect'] | null;
   root_call: boolean;
   proposal_effect_contract?: ProposalEffectContract;
-  proposal_output?: unknown;
+  domain_output?: unknown;
 }
 
 export interface CopilotReplyFinalizationResult {
@@ -174,7 +175,7 @@ function proposalDisclosure(trace: readonly TraceEntry[]): string | undefined {
   const proposals = trace.filter((entry) => entry.proposal_effect_contract !== undefined);
   if (proposals.length === 0) return undefined;
   const rows = proposals.map((entry) => {
-    const output = isRecord(entry.proposal_output) ? entry.proposal_output : undefined;
+    const output = isRecord(entry.domain_output) ? entry.domain_output : undefined;
     const status = typeof output?.status === 'string' ? output.status : undefined;
     const proposalId = typeof output?.proposal_id === 'string' ? output.proposal_id : undefined;
     const succeeded =
@@ -192,7 +193,7 @@ function proposalDisclosure(trace: readonly TraceEntry[]): string | undefined {
     ].join('\n');
   });
   const hasPending = proposals.some((entry) => {
-    const output = isRecord(entry.proposal_output) ? entry.proposal_output : undefined;
+    const output = isRecord(entry.domain_output) ? entry.domain_output : undefined;
     const status = typeof output?.status === 'string' ? output.status : undefined;
     return (
       entry.status === 'succeeded' &&
@@ -242,7 +243,7 @@ function sha256Text(value: string): string {
 }
 
 function digestTrace(trace: readonly TraceEntry[]): string {
-  return sha256CanonicalJson(trace.map(({ proposal_output: _output, ...entry }) => entry));
+  return sha256CanonicalJson(trace.map(({ domain_output: _output, ...entry }) => entry));
 }
 
 function domainToolName(toolName: string): string {
@@ -364,7 +365,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
           entry.status === 'succeeded',
       );
       const parsedNomination = PresentPrimaryViewOutputSchema.safeParse(
-        successfulControls.at(-1)?.proposal_output,
+        successfulControls.at(-1)?.domain_output,
       );
       const nomination = parsedNomination.success ? parsedNomination.data : undefined;
       const resolvedNomination = nomination
@@ -445,11 +446,14 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     if (!id) return;
     const entry = byId.get(id);
     if (entry?.status !== 'in_flight') return;
+    // Capture the observed value once. A caller retaining the mutable output
+    // cannot later change a nomination or displayed result behind its trace hash.
+    const output = structuredClone(result.output);
     entry.effect = result.effect;
     entry.status = result.error_reason === null ? 'succeeded' : 'failed';
-    entry.output_sha256 = sha256CanonicalJson(result.output);
+    entry.output_sha256 = sha256CanonicalJson(output);
     entry.proposal_effect_contract = result.proposal_effect_contract;
-    entry.proposal_output = result.output;
+    entry.domain_output = output;
     traceVersion += 1;
   }
 
