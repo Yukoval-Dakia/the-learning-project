@@ -10,7 +10,7 @@ describe('CopilotDock checkpoint revert', () => {
     );
 
     expect(source).toContain(
-      '/api/copilot/checkpoints/${encodeURIComponent(checkpointEventId)}/revert',
+      '/api/copilot/checkpoints/$' + '{encodeURIComponent(checkpointEventId)}/revert',
     );
     expect(source).toContain('await refetchTurns()');
     expect(source).toContain('checkpoint_event_id');
@@ -42,11 +42,8 @@ describe('CopilotDock checkpoint revert', () => {
     expect(source).toContain('setRefreshFailed(true)');
     expect(source).toContain('copilot-refresh-error');
     expect(source).toContain('const retryRefresh');
-    // The generic error banner is suppressed while either post-revert banner shows.
-    expect(source).toContain('error && !refreshFailed && !refreshSkipped');
-    // TchmY — a refetch SKIP (a send is streaming) is deferred, not failed → its own calmer banner.
-    expect(source).toContain('setRefreshSkipped(true)');
-    expect(source).toContain('copilot-refresh-skipped');
+    // The generic error banner is suppressed while the post-revert banner shows.
+    expect(source).toContain('error && !refreshFailed');
   });
 
   it('recomputes skill state on the post-revert refetch (wave-2 F2)', async () => {
@@ -60,36 +57,33 @@ describe('CopilotDock checkpoint revert', () => {
     expect(source).toContain('restoreSkillStateFromReplay(replayed)');
   });
 
-  it('refetchTurns does not clobber a live streaming send (wave-2 F3)', async () => {
+  it('refetchTurns reconciles without clobbering live run or pending rows (YUK-948)', async () => {
     const source = await readFile(
       join(process.cwd(), 'src/capabilities/copilot/ui/CopilotDock.tsx'),
       'utf8',
     );
-    // A full setMessages(replayed) during an active send would orphan the streaming aiId; guard on
-    // the synchronous single-flight ref so the in-flight reply survives the revert refetch.
+    // Snapshot replacement goes through the shared projection, which retains
+    // client rows only when they have a concrete run or idempotency identity.
     const refetchBody = source.slice(
       source.indexOf('const refetchTurns'),
       source.indexOf('const revertCheckpoint'),
     );
-    expect(refetchBody).toContain('if (sendingRef.current) return false;');
-    // The guard must precede the clobbering replace statement (match the `;` to skip the comment).
-    expect(refetchBody.indexOf('if (sendingRef.current) return false;')).toBeLessThan(
-      refetchBody.indexOf('setMessages(replayed);'),
+    expect(source).toContain('reconcileCopilotSnapshotMessages');
+    expect(refetchBody).toContain(
+      'synchronizeSnapshot(sessionId, snapshot, runsKnownWhenRequested)',
     );
+    expect(refetchBody).not.toContain('setMessages(replayed)');
   });
 
-  it('refetchTurns returns a boolean callers act on (wave-3 G5)', async () => {
+  it('refetchTurns returns false only when session identity changed (YUK-948)', async () => {
     const source = await readFile(
       join(process.cwd(), 'src/capabilities/copilot/ui/CopilotDock.tsx'),
       'utf8',
     );
-    // refetchTurns is now typed Promise<boolean> — false on the sendingRef skip, true after replace.
+    // Active sends are no longer a skip reason; run-keyed reconciliation is safe.
     expect(source).toContain('const refetchTurns = useCallback(async (): Promise<boolean> =>');
-    // revertCheckpoint surfaces the calmer SKIP banner when the refetch was SKIPPED (false) — the
-    // refetch never returns false for a failure (that throws), so this branch is skip-only (TchmY).
-    expect(source).toContain('if (!refreshed) setRefreshSkipped(true);');
-    // retryRefresh clears BOTH banners only when the refetch actually ran (true).
-    expect(source).toContain('setRefreshSkipped(false);');
+    expect(source).toContain('if (currentSessionIdRef.current !== sessionId) return false;');
+    expect(source).not.toContain('sendingRef.current');
   });
 
   it('surfaces the cascade refusal reason and clears refreshFailed on send (wave-2 F4)', async () => {

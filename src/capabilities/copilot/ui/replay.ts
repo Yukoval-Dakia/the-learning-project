@@ -54,6 +54,8 @@ export interface ReplayTurn {
   skill_turn?: ReplaySkillTurn;
   session_id?: string;
   reply_event_id?: string;
+  /** Causal Copilot run id, independent of checkpoint/revert eligibility. */
+  run_id?: string;
   // AF S4 / YUK-203 U6 (round-2) — the skill_context that produced this turn.
   skill_context?: ReplaySkillContext;
   // YUK-307 — present on AI turns whose reply nominated a hero deliverable.
@@ -75,6 +77,8 @@ export interface ReplayChatMessage {
   skill_turn?: ReplaySkillTurn;
   session_id?: string;
   reply_event_id?: string;
+  /** Causal Copilot run id, independent of checkpoint/revert eligibility. */
+  run_id?: string;
   // AF S4 / YUK-203 U6 (round-2) — forwarded so CopilotDock can restore
   // activeSkillRef by folding explicit state, including end barriers, on replay.
   skill_context?: ReplaySkillContext;
