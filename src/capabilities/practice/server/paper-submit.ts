@@ -41,6 +41,7 @@ import { ApiError } from '@/kernel/http';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
+import { settleFsrsSubject } from './review-settlement';
 import { checkRateLimit } from '@/server/http/rate-limit';
 import { recordFamilyObservationForAttempt } from '@/server/mastery/personalized-difficulty';
 import {
@@ -725,34 +726,27 @@ export async function submitPaperSlot(
     // retained for the state_snapshot append (null = cold-start → revert deletes row).
     let fsrsBefore: FsrsStateSchemaT | null = null;
     if (!photoOnlyUnsupported) {
-      // Per-knowledge FSRS advisory lock (ADR-0028) — serializes read/compute/
-      // upsert even across different questions touching the same knowledge.
-      await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtext(${`fsrs:${fsrsSubjectKind}:${fsrsSubjectId}`}))`,
-      );
-
-      let prevStateRow = await getFsrsState(tx, fsrsSubjectKind, fsrsSubjectId);
+      const settled = await settleFsrsSubject({
+        tx,
+        subjectKind: fsrsSubjectKind,
+        subjectId: fsrsSubjectId,
+        questionId: input.questionId,
+        rating,
+        at: now,
+        eventId: attemptEventId,
+      });
+      let prevStateRow = settled.before ? { state: settled.before } : null;
       // YUK-471 W0 (augment review) — snapshot `before` must reflect the SNAPSHOT SUBJECT
       // row's own existence (null = cold-start → revert DELETEs the row), NOT the legacy
       // question-card fallback below (which only seeds scheduleReview). Captured BEFORE the
       // fallback overwrites prevStateRow — else a knowledge subject whose own row was absent
       // would snapshot a non-null `before` and revert would UPSERT a row that never existed.
-      fsrsBefore = prevStateRow?.state ?? null;
+      fsrsBefore = settled.before;
       if (!prevStateRow && fsrsSubjectKind === 'knowledge') {
         prevStateRow = await getFsrsState(tx, 'question', input.questionId);
       }
-      scheduled = scheduleReview(
-        prevStateRow?.state
-          ? { ...prevStateRow.state, last_review: prevStateRow.state.last_review ?? null }
-          : null,
-        rating,
-        now,
-      );
-      stateAfter = {
-        ...scheduled.nextState,
-        due: scheduled.nextState.due,
-        last_review: scheduled.nextState.last_review ?? null,
-      };
+      scheduled = { nextState: settled.stateAfter, dueAt: settled.dueAt };
+      stateAfter = settled.stateAfter;
     }
 
     // (a) attempt event — always written (the answer IS captured, even when the
@@ -871,15 +865,8 @@ export async function submitPaperSlot(
     // Re-state the explicit predicate (not `if (fsrsWrote)`) so TS narrows the mutable
     // `let scheduled` / `let stateAfter` inside the block — an aliased boolean const does
     // NOT propagate narrowing to reassignable lets. `fsrsWrote` is still consumed by (e).
-    if (!photoOnlyUnsupported && scheduled !== null && stateAfter !== null) {
-      await upsertFsrsState(tx, {
-        subject_kind: fsrsSubjectKind,
-        subject_id: fsrsSubjectId,
-        state: stateAfter,
-        due_at: scheduled.dueAt,
-        last_review_event_id: attemptEventId,
-      });
-    }
+    // The sealed settlement seam materializes FSRS before the attempt event;
+    // the enclosing transaction makes both writes atomic.
 
     // (d) B1-W1 (ADR-0035) — θ̂ 在线更新（p(L) 诊断维，与 (c) FSRS R 轴正交）。
     // 门：跳过 (i) photoOnlyUnsupported（照片无法判分）+ (ii) 任何 coarseOutcome
