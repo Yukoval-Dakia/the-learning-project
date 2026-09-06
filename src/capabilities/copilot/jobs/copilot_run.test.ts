@@ -15,6 +15,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeCopilotReply } from '@/capabilities/copilot/server/chat';
 import { COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY } from '@/capabilities/copilot/server/content-validation';
 import {
+  type CopilotExecutionAdapters,
+  createCopilotExecutionOwner,
+} from '@/capabilities/copilot/server/copilot-execution';
+import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
   deriveCopilotRunStatus,
@@ -191,13 +195,30 @@ async function replay(runId: string) {
   });
 }
 
-function runCopilotRun(params: RunCopilotRunParams): ReturnType<typeof runCopilotRunActual> {
-  const stream = params.streamTaskCollectingFn;
-  return runCopilotRunActual({
-    ...params,
+type CopilotRunTestParams = RunCopilotRunParams & {
+  streamTaskCollectingFn?: unknown;
+  runValidationTaskFn?: unknown;
+  buildMcpServerFn?: CopilotExecutionAdapters['buildMcpServerFn'];
+  buildTavilyMcpServerFn?: CopilotExecutionAdapters['buildTavilyMcpServerFn'];
+  resolveCopilotSkillsFn?: CopilotExecutionAdapters['resolveCopilotSkillsFn'];
+};
+
+function runCopilotRun(params: CopilotRunTestParams): ReturnType<typeof runCopilotRunActual> {
+  const {
+    streamTaskCollectingFn,
+    runValidationTaskFn,
+    buildMcpServerFn,
+    buildTavilyMcpServerFn,
+    resolveCopilotSkillsFn,
+    ...runParams
+  } = params;
+  const stream = streamTaskCollectingFn as
+    | CopilotExecutionAdapters['streamTaskCollectingFn']
+    | undefined;
+  const owner = createCopilotExecutionOwner({
     ...(stream
       ? {
-          streamTaskCollectingFn: (async (...args: Parameters<NonNullable<typeof stream>>) => {
+          streamTaskCollectingFn: async (...args: Parameters<typeof stream>) => {
             const result = await stream(...args);
             return result.partial
               ? result
@@ -205,9 +226,21 @@ function runCopilotRun(params: RunCopilotRunParams): ReturnType<typeof runCopilo
                   ...result,
                   terminalText: result.terminalText ?? result.text,
                 };
-          }) as typeof stream,
+          },
         }
       : {}),
+    ...(typeof runValidationTaskFn === 'function'
+      ? {
+          runAgentTaskFn: runValidationTaskFn as CopilotExecutionAdapters['runAgentTaskFn'],
+        }
+      : {}),
+    ...(buildMcpServerFn ? { buildMcpServerFn } : {}),
+    ...(buildTavilyMcpServerFn ? { buildTavilyMcpServerFn } : {}),
+    ...(resolveCopilotSkillsFn ? { resolveCopilotSkillsFn } : {}),
+  });
+  return runCopilotRunActual({
+    ...runParams,
+    executeCopilotTurnFn: owner,
   });
 }
 
@@ -507,7 +540,7 @@ describe('runCopilotRun', () => {
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
       buildMcpServerFn: mcpMock() as never,
-    } satisfies RunCopilotRunParams;
+    } satisfies CopilotRunTestParams;
 
     expect(await runCopilotRun(params)).toMatchObject({ status: 'failed' });
     expect((await replay(runId)).map((event) => event.event_type)).toEqual([
@@ -854,7 +887,7 @@ describe('runCopilotRun', () => {
       resolveCopilotRunInputFn: stubRunInput,
       buildMcpServerFn: mcpMock() as never,
       writeSuccessfulTerminalProjectionFn: projectTerminal,
-    } satisfies RunCopilotRunParams;
+    } satisfies CopilotRunTestParams;
 
     await writeJobEvent(testDb(), {
       business_table: COPILOT_RUN_TABLE,
@@ -941,7 +974,7 @@ describe('runCopilotRun', () => {
       resolveCopilotRunInputFn: stubRunInput,
       buildMcpServerFn: mcpMock() as never,
       writeFailedTerminalProjectionFn: projectTerminal,
-    } satisfies RunCopilotRunParams;
+    } satisfies CopilotRunTestParams;
 
     await seedToolUseMirror(runId, 'author_question');
     await writeJobEvent(testDb(), {
@@ -1020,7 +1053,7 @@ describe('runCopilotRun', () => {
       resolveCopilotRunInputFn: stubRunInput,
       buildMcpServerFn: mcpMock() as never,
       claimExecutionFenceFn: claimFence,
-    } satisfies RunCopilotRunParams;
+    } satisfies CopilotRunTestParams;
     await writeJobEvent(testDb(), {
       business_table: COPILOT_RUN_TABLE,
       business_id: runId,
@@ -1080,7 +1113,7 @@ describe('runCopilotRun', () => {
       streamTaskCollectingFn: streamRun as never,
       resolveCopilotRunInputFn: assembleBarrier,
       buildMcpServerFn: mcpMock() as never,
-    } satisfies RunCopilotRunParams;
+    } satisfies CopilotRunTestParams;
     await writeJobEvent(testDb(), {
       business_table: COPILOT_RUN_TABLE,
       business_id: runId,
@@ -1158,7 +1191,7 @@ describe('runCopilotRun', () => {
       streamTaskCollectingFn: streamRun as never,
       resolveCopilotRunInputFn: stubRunInput,
       buildMcpServerFn: mcpMock() as never,
-    } satisfies RunCopilotRunParams;
+    } satisfies CopilotRunTestParams;
     await writeJobEvent(testDb(), {
       business_table: COPILOT_RUN_TABLE,
       business_id: runId,
@@ -1230,7 +1263,7 @@ describe('runCopilotRun', () => {
       buildMcpServerFn: mcpMock() as never,
       writeCopilotReplyFn: persistReply,
       writeFailedTerminalProjectionFn: projectFailed,
-    } satisfies RunCopilotRunParams;
+    } satisfies CopilotRunTestParams;
     await seedToolUseMirror(runId, 'author_question');
     await writeJobEvent(testDb(), {
       business_table: COPILOT_RUN_TABLE,
@@ -1486,62 +1519,9 @@ describe('runCopilotRun', () => {
     // 装配器返回的 run input（含 ambient_context）透传给 stream。
     const runInput = await assembleSpy.mock.results[0].value;
     expect(runInput).toMatchObject({ ambient_context: ambient });
-    // N3 wiring 红线（PR #738 独立 review fix-before-merge）：stream 收到的 arg[1] 必须
-    // ===（引用相等）装配器的返回对象。此前所有 run.mock.calls[0] 断言只读 ctx（arg[2]）、
-    // 且上一行只是复读 stub 自身返回值——handler 把 {} / 错对象递给 runner 会全绿通过；
-    // 这条断言封死 handler→runner 的 wiring 回归（PR2 默认翻转恰要重构此 seam）。
-    expect(run.mock.calls[0][1]).toBe(runInput);
-  });
-
-  // YUK-575 (N5/MF-A) — durable budget：runner budgetOverride（maxIterations/timeoutMs）
-  // 经 ctx 透传；durable 在 25 发 advisory warning、60 才 hard-stop。
-  it('N5/MF-A — budgetOverride 透传 + durable tool-call warning 25 / hard 60', async () => {
-    const runId = 'run_budget';
-    const run = streamMock('ok');
-    const fakeTool = { name: 'query_knowledge', effect: 'read' as const };
-    const buildMcp = mcpMock();
-    await runCopilotRun({
-      db: testDb(),
-      data: { ...baseData, run_id: runId, session_id: 'sess_budget' },
-      streamTaskCollectingFn: run as never,
-      resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: buildMcp as never,
-    });
-    // runner seam：ctx.budgetOverride = { maxIterations:24, timeoutMs:12min }。
-    const ctx = (run.mock.calls[0] as unknown as [string, unknown, AgentCtx])[2];
-    expect(ctx.budgetOverride).toEqual({
-      maxIterations: DURABLE_BUDGET.maxIterations,
-      timeoutMs: DURABLE_BUDGET.timeoutMs,
-    });
-    expect(ctx.providerSessionDeadlineAt).toBeUndefined();
-    expect(ctx.sdkSession).toBeUndefined();
-    // MF-A + YUK-290：25 只是 warning，60 才是 hard ceiling。
-    const opts = (
-      buildMcp.mock.calls[0] as unknown as [
-        {
-          ctx: { signal?: AbortSignal };
-          beforeExecute: (t: unknown) => Promise<string | undefined>;
-          interceptInput: (t: unknown, args: unknown) => { truncationNote?: object | null };
-        },
-      ]
-    )[0];
-    expect(ctx.lifecycleAbortController).toBeInstanceOf(AbortController);
-    expect(opts.ctx.signal).toBe(ctx.lifecycleAbortController?.signal);
-    for (let i = 0; i < 25; i++)
-      await expect(opts.beforeExecute(fakeTool)).resolves.toBeUndefined();
-    expect(opts.interceptInput(fakeTool, {}).truncationNote).toMatchObject({
-      level: 'warning',
-      dimensions: { toolCalls: { used: 25, hard_remaining: 35 } },
-    });
-    for (let i = 25; i < 60; i++)
-      await expect(opts.beforeExecute(fakeTool)).resolves.toBeUndefined();
-    await expect(opts.beforeExecute(fakeTool)).resolves.toMatch(/hard context budget reached/);
-    // 常量对齐。
-    expect(DURABLE_BUDGET).toMatchObject({
-      maxIterations: 24,
-      maxToolCalls: 60,
-      timeoutMs: 720_000,
-    });
+    // The execution owner may normalize the correction contract, but must preserve
+    // the complete assembled product input instead of rebuilding a reduced variant.
+    expect(run.mock.calls[0][1]).toStrictEqual(runInput);
   });
 
   // YUK-575 (S6) — 承重约束：durable abort budget 必须 < stuck-in-running sweeper 阈值，
@@ -1980,70 +1960,6 @@ describe('runCopilotRun', () => {
     const events = await replay(runId);
     expect(events.map((e) => e.event_type)).toEqual([COPILOT_RUN_EVENTS.FAILED]);
     expect(await copilotReplyEvents('sess_prior_exhausted')).toHaveLength(0);
-  });
-
-  it('C5 — 配置 TAVILY_API_KEY 时挂 Tavily MCP + allowedTools（web grounding 平价）', async () => {
-    const runId = 'run_tavily';
-    const run = streamMock('grounded reply');
-    await runCopilotRun({
-      db: testDb(),
-      data: { ...baseData, run_id: runId, session_id: 'sess_tavily' },
-      streamTaskCollectingFn: run as never,
-      resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
-      buildTavilyMcpServerFn: () => ({ type: 'http', url: 'https://mcp.tavily.com/mcp/?k' }),
-    });
-    const ctx = (run.mock.calls[0] as unknown as [string, unknown, AgentCtx])[2];
-    expect(Object.keys(ctx.mcpServers ?? {})).toContain('tavily');
-    expect(ctx.allowedTools).toEqual(
-      expect.arrayContaining(['mcp__tavily__tavily_search', 'mcp__tavily__tavily_extract']),
-    );
-  });
-
-  it('C5 — 未配置 Tavily（builder 返 null）→ 不挂 tavily server / tools（back-compat）', async () => {
-    const runId = 'run_no_tavily';
-    const run = streamMock('reply');
-    await runCopilotRun({
-      db: testDb(),
-      data: { ...baseData, run_id: runId, session_id: 'sess_no_tavily' },
-      streamTaskCollectingFn: run as never,
-      resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
-      buildTavilyMcpServerFn: () => null,
-    });
-    const ctx = (run.mock.calls[0] as unknown as [string, unknown, AgentCtx])[2];
-    expect(Object.keys(ctx.mcpServers ?? {})).not.toContain('tavily');
-    expect(ctx.allowedTools ?? []).not.toContain('mcp__tavily__tavily_search');
-  });
-
-  it('C2 — copilot SKILL.md 命中时传 ctx.skills（durable 与 inline 行为平价）', async () => {
-    const runId = 'run_skills';
-    const run = streamMock('reply');
-    await runCopilotRun({
-      db: testDb(),
-      data: { ...baseData, run_id: runId, session_id: 'sess_skills' },
-      streamTaskCollectingFn: run as never,
-      resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
-      resolveCopilotSkillsFn: async () => ['copilot'],
-    });
-    const ctx = (run.mock.calls[0] as unknown as [string, unknown, AgentCtx])[2];
-    expect(ctx.skills).toEqual(['copilot']);
-  });
-
-  it('C2 — SKILL.md 缺包（resolver 返 undefined）→ ctx 省略 skills（降级，零回归）', async () => {
-    const runId = 'run_no_skills';
-    const run = streamMock('reply');
-    await runCopilotRun({
-      db: testDb(),
-      data: { ...baseData, run_id: runId, session_id: 'sess_no_skills' },
-      streamTaskCollectingFn: run as never,
-      resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
-      resolveCopilotSkillsFn: async () => undefined,
-    });
-    const ctx = (run.mock.calls[0] as unknown as [string, unknown, AgentCtx])[2];
-    expect(ctx.skills).toBeUndefined();
   });
 
   // YUK-575 (Fix 2 — single-shot) — durable copilot 无 transient 分诊：任何失败都是

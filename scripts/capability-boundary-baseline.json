@@ -17,7 +17,7 @@
         "agency -> runtime-env": 1,
         "agency -> subjects": 1,
         "copilot -> advisory-locks": 1,
-        "copilot -> ai": 12,
+        "copilot -> ai": 11,
         "copilot -> boss": 6,
         "copilot -> events": 5,
         "copilot -> http": 1,

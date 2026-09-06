@@ -10,6 +10,7 @@ import type {
 import { copilotLearningContentRequiresValidation } from './content-validation';
 import type { CopilotCorrectionContract } from './correction-contract';
 import { resolveCorrectionReply } from './correction-contract';
+import { type CopilotPrimaryView, EPHEMERAL_HTML_REF_MAX_CHARS } from './turns';
 
 export const COPILOT_REPLY_TRACE_MAX_CALLS = 60;
 
@@ -25,10 +26,11 @@ export const CopilotPrimaryViewSchema = z.discriminatedUnion('source', [
     source: z.literal('artifact'),
     ref: z.object({ kind: z.string().min(1).max(40), id: z.string().min(1).max(120) }),
   }),
-  z.object({ source: z.literal('ephemeral_html'), ref: z.string().min(1).max(32_000) }),
+  z.object({
+    source: z.literal('ephemeral_html'),
+    ref: z.string().min(1).max(EPHEMERAL_HTML_REF_MAX_CHARS),
+  }),
 ]);
-
-export type CopilotPrimaryView = z.infer<typeof CopilotPrimaryViewSchema>;
 
 export const PRIMARY_VIEW_MARKER_START = '<!--primary_view';
 const PRIMARY_VIEW_MARKER_RE = /<!--primary_view:([\s\S]*?)-->/g;

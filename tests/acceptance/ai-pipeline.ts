@@ -264,6 +264,7 @@ async function main(): Promise<void> {
       { db },
       schema,
       chat,
+      copilotExecution,
       durable,
       dispatch,
       cancellationRoute,
@@ -276,6 +277,7 @@ async function main(): Promise<void> {
       import('@/db/client'),
       import('@/db/schema'),
       import('@/capabilities/copilot/server/chat'),
+      import('@/capabilities/copilot/server/copilot-execution'),
       import('@/capabilities/copilot/jobs/copilot_run'),
       import('@/capabilities/copilot/server/durable-dispatch'),
       import('@/capabilities/copilot/api/cancel-run'),
@@ -298,6 +300,10 @@ async function main(): Promise<void> {
       terminals.set(result.task_run_id, result.text);
       return result;
     };
+    const executeCopilotTurn = copilotExecution.createCopilotExecutionOwner({
+      runAgentTaskFn: captureRun,
+      streamTaskCollectingFn: captureStream,
+    });
     // Match the server/worker composition root before constructing a Copilot
     // MCP bridge. Directly importing chat.ts does not populate this registry.
     await registerCapabilityTools(capabilities);
@@ -572,7 +578,7 @@ async function main(): Promise<void> {
         try {
           result = await durable.runCopilotRun({
             db,
-            streamTaskCollectingFn: captureStream,
+            executeCopilotTurnFn: executeCopilotTurn,
             data: {
               run_id: accepted.acceptance.runId,
               session_id: durableSession,
@@ -662,10 +668,7 @@ async function main(): Promise<void> {
       // do not Promise.race a paid request and then tear down its database.
       const deps: Parameters<typeof chat.runCopilotChat>[2] = {
         providerSessionDeadlineAt: Date.now() + CASE_TIMEOUT_MS,
-        runAgentTaskFn: (kind, input, ctx) =>
-          captureRun(kind as Parameters<typeof captureRun>[0], input, ctx),
-        streamAgentTaskFn: (kind, input, ctx, onDelta) =>
-          captureStream(kind as Parameters<typeof captureStream>[0], input, ctx, onDelta),
+        executeCopilotTurnFn: executeCopilotTurn,
       };
       // Keep the old/new read comparison on the same non-streaming entrypoint;
       // exercise the actual collecting/visible-delta path for the full journey.
