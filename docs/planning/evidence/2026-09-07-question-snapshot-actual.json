@@ -1,0 +1,494 @@
+{
+  "protocol_version": 1,
+  "phase": "running",
+  "exact_head": "947be81cb964e002a9b37184462eb9b6077477f9",
+  "dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "harness_sha256": "c4756d3e5d8e96260a17c52dbbb52ddcfc1a2141a3c1b0581fef3c8c3c0bed81",
+  "provider": "xiaomi",
+  "model": "mimo-v2.5-pro",
+  "credential_source": "/Volumes/YukovalSBak/yukoval-projects/the-learning-project/.env",
+  "baseline_record": false,
+  "campaign_cost_limit_usd": 0.9,
+  "case_cost_reserves_usd": {
+    "cold": 0.25,
+    "resume": 0.25,
+    "context-change": 0.25,
+    "correction": 0.25,
+    "read": 0.25,
+    "claims": 0.3,
+    "presentation-process": 0.4,
+    "presentation-tool": 0.4,
+    "presentation-candidate": 0.9,
+    "presentation-artifact": 0.4,
+    "presentation-html": 0.4,
+    "proposal": 0.25,
+    "semantic": 0.75,
+    "native-task": 0.5,
+    "durable": 0.25,
+    "unified": 1.6,
+    "cancel": 0
+  },
+  "cases": [
+    {
+      "name": "presentation-candidate",
+      "input_sha256": "f7a8f2eaae8d11b25e5ef4f2a77ebc5e6643810c30b3fc30c5fe7539ee873fd4",
+      "output_sha256": "98bb04ab3923099b1d88c74800c75ad150a2ce5f5ee95269f6af337f4818ec66",
+      "input": {
+        "session_id": "i2wpxgf4z8cwutgkc5rdkdn7",
+        "user_message": "请调用一次 generate_question_candidate（seed_mode:knowledge、knowledge_ids:[actual:distribution]、requested_kind:computation、difficulty:1），生成一道自包含的整数乘法与分配律练习。看完结果后调用一次 present_primary_view 将这次成功根调用作为 tool_result 展示。不保存为题库或artifact，不调用author_question。正文只说“已准备练习”，不要在正文重复题面、答案或隐藏标记，系统会校验卡片里的题目。",
+        "triggered_by": "chat"
+      },
+      "output": "这份学习内容未完成独立校验，暂不展示。请重试，我会先校验再发送。",
+      "primary_view": null,
+      "root_task_run_id": "copilot_run_tool_copilot_user_ask_c779c7a62c5233b71b5587f2027191f3236ea499087554a7aa8920a3d75f2705",
+      "terminal_output": "已准备练习。",
+      "terminal_sha256": "647902493066f1127f3bd1a4958ccb630569bd0de2fa3a3c9d33b41f9556e1c8",
+      "task_runs": [
+        {
+          "id": "o0h9jbebocvzxdlq6pwq8g76",
+          "kind": "QuestionAuthorTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 1193,
+            "outputTokens": 343,
+            "thinkingBlocks": 1,
+            "thinkingCharacters": 276
+          },
+          "cost": 0.000817365,
+          "costBasis": "estimated",
+          "costRef": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": null,
+          "promptCodecMode": null,
+          "promptContextDigest": null
+        },
+        {
+          "id": "z43kbgxazdjk89of8wrccf2a",
+          "kind": "QuestionAuthorTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 1193,
+            "outputTokens": 523,
+            "thinkingBlocks": 1,
+            "thinkingCharacters": 932
+          },
+          "cost": 0.0004769922,
+          "costBasis": "estimated",
+          "costRef": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": null,
+          "promptCodecMode": null,
+          "promptContextDigest": null
+        },
+        {
+          "id": "copilot_run_tool_copilot_user_ask_c779c7a62c5233b71b5587f2027191f3236ea499087554a7aa8920a3d75f2705",
+          "kind": "CopilotTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 56801,
+            "outputTokens": 488,
+            "thinkingBlocks": 4,
+            "thinkingCharacters": 1082
+          },
+          "cost": 0.0016096157,
+          "costBasis": "estimated",
+          "costRef": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": "96ad87d5905dddee37a24213fd31e92298722ecd5f32d197958d7863018cc0aa",
+          "promptCodecMode": "cold",
+          "promptContextDigest": "374c798b9fbc747f0c0ae604bfb42baddf89ae021969cf26320627d8e8810d50"
+        },
+        {
+          "id": "i68l90s1wr7z8h8bexfiq7n0",
+          "kind": "SolutionGenerateTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 1107,
+            "outputTokens": 411,
+            "thinkingBlocks": 1,
+            "thinkingCharacters": 68
+          },
+          "cost": 0.000839115,
+          "costBasis": "estimated",
+          "costRef": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": null,
+          "promptCodecMode": null,
+          "promptContextDigest": null
+        },
+        {
+          "id": "ldxf8p3ejbvi5gvps35zuisc",
+          "kind": "TeachingQualityTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 946,
+            "outputTokens": 929,
+            "thinkingBlocks": 1,
+            "thinkingCharacters": 3084
+          },
+          "cost": 0.00121974,
+          "costBasis": "estimated",
+          "costRef": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": null,
+          "promptCodecMode": null,
+          "promptContextDigest": null
+        },
+        {
+          "id": "j5sb3ge0s20fdzh70an2t2mg",
+          "kind": "SemanticJudgeTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 757,
+            "outputTokens": 489,
+            "thinkingBlocks": 1,
+            "thinkingCharacters": 1132
+          },
+          "cost": 0.000754725,
+          "costBasis": "estimated",
+          "costRef": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": null,
+          "promptCodecMode": null,
+          "promptContextDigest": null
+        },
+        {
+          "id": "ta2g9tvm3osgnrt5cv40mui7",
+          "kind": "QuizVerifyTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 1959,
+            "outputTokens": 1085,
+            "thinkingBlocks": 1,
+            "thinkingCharacters": 3563
+          },
+          "cost": 0.001796115,
+          "costBasis": "estimated",
+          "costRef": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": null,
+          "promptCodecMode": null,
+          "promptContextDigest": null
+        }
+      ],
+      "tools": [
+        {
+          "name": "mcp__loom__generate_question_candidate",
+          "effect": null,
+          "error": null,
+          "input": {
+            "seed_mode": "knowledge",
+            "difficulty": 1,
+            "knowledge_ids": ["actual:distribution"],
+            "requested_kind": "computation"
+          },
+          "output": {}
+        },
+        {
+          "name": "generate_question_candidate",
+          "effect": "read",
+          "error": "[\n  {\n    \"expected\": \"array\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"structured\",\n      \"options\"\n    ],\n    \"message\": \"Invalid input: expected array, received null\"\n  },\n  {\n    \"expected\": \"array\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"structured\",\n      \"sub_questions\"\n    ],\n    \"message\": \"Invalid input: expected array, received null\"\n  }\n]",
+          "input": {
+            "seed_mode": "knowledge",
+            "difficulty": 1,
+            "knowledge_ids": ["actual:distribution"],
+            "requested_kind": "computation"
+          },
+          "output": {
+            "error": "[\n  {\n    \"expected\": \"array\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"structured\",\n      \"options\"\n    ],\n    \"message\": \"Invalid input: expected array, received null\"\n  },\n  {\n    \"expected\": \"array\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"structured\",\n      \"sub_questions\"\n    ],\n    \"message\": \"Invalid input: expected array, received null\"\n  }\n]"
+          }
+        },
+        {
+          "name": "mcp__loom__generate_question_candidate",
+          "effect": null,
+          "error": null,
+          "input": {
+            "seed_mode": "knowledge",
+            "difficulty": 1,
+            "knowledge_ids": ["actual:distribution"],
+            "requested_kind": "computation"
+          },
+          "output": {}
+        },
+        {
+          "name": "generate_question_candidate",
+          "effect": "read",
+          "error": null,
+          "input": {
+            "seed_mode": "knowledge",
+            "difficulty": 1,
+            "knowledge_ids": ["actual:distribution"],
+            "requested_kind": "computation"
+          },
+          "output": {
+            "text": "{\"kind\":\"computation\",\"difficulty\":1,\"knowledge_ids\":[\"actual:distribution\"],\"structured\":{\"id\":\"q1\",\"role\":\"standalone\",\"prompt_text\":\"利用分配律计算：104 × 5。\",\"answers\":[\"520\"],\"analysis\":\"运用分配律将 104 拆分为 100 + 4，再分别与 5 相乘：\\n104 × 5\\n= (100 + 4) × 5\\n= 100 × 5 + 4 × 5\\n= 500 + 20\\n= 520\\n\\n关键步骤：识别 104 = 100 + 4，对括号内两项分别应用乘法分配律，最后将两个积相加。\"},\"judge_kind_override\":\"exact\"}",
+            "cost_ref": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+            "cost_usd": 0.0004769922,
+            "cost_basis": "estimated",
+            "subject_id": "math",
+            "task_run_id": "z43kbgxazdjk89of8wrccf2a",
+            "finish_reason": "end_turn"
+          }
+        },
+        {
+          "name": "mcp__loom__present_primary_view",
+          "effect": null,
+          "error": null,
+          "input": {
+            "ref": {
+              "id": "call_d9793d0c73214a129e7e5a9a",
+              "kind": "generate_question_candidate"
+            },
+            "source": "tool_result"
+          },
+          "output": {}
+        },
+        {
+          "name": "present_primary_view",
+          "effect": "control",
+          "error": null,
+          "input": {
+            "ref": {
+              "id": "call_d9793d0c73214a129e7e5a9a",
+              "kind": "generate_question_candidate"
+            },
+            "source": "tool_result"
+          },
+          "output": {
+            "ref": {
+              "id": "call_d9793d0c73214a129e7e5a9a",
+              "kind": "generate_question_candidate"
+            },
+            "source": "tool_result",
+            "presentation_lifecycle": {
+              "discarded_on_close": false,
+              "standalone_artifact": false,
+              "saved_with_conversation": true
+            }
+          }
+        }
+      ],
+      "session_agent_sdk_id": null,
+      "cumulative_cost_usd": 0.007513667900000001,
+      "reply_finalization": {
+        "protocol_version": 1,
+        "assurance": "execution_trace_bound",
+        "root_task_run_id": "copilot_run_tool_copilot_user_ask_c779c7a62c5233b71b5587f2027191f3236ea499087554a7aa8920a3d75f2705",
+        "candidate_sha256": "647902493066f1127f3bd1a4958ccb630569bd0de2fa3a3c9d33b41f9556e1c8",
+        "reply_sha256": "98bb04ab3923099b1d88c74800c75ad150a2ce5f5ee95269f6af337f4818ec66",
+        "trace_sha256": "0238a3f8424a361628a1bd9062005fc0381b732ac56fef8cebd7e41a405c47a0",
+        "trace_call_count": 3,
+        "observed_completed_tool_use_ids": [
+          "call_d9793d0c73214a129e7e5a9a",
+          "call_3e920f29b2cb46dfba662e49"
+        ],
+        "correction": "normal",
+        "proposal_disclosure": "none",
+        "learning_content": "blocked",
+        "primary_view": "dropped"
+      }
+    }
+  ],
+  "sdk_outcomes": [
+    {
+      "task_run_id": "copilot_run_tool_copilot_user_ask_c779c7a62c5233b71b5587f2027191f3236ea499087554a7aa8920a3d75f2705",
+      "elapsed_ms": 51088,
+      "finish_reason": "end_turn",
+      "partial": false,
+      "terminal_present": true,
+      "error_subtype": null
+    }
+  ],
+  "limitations": [
+    "direct durable handler is not pg-boss queue E2E",
+    "structural assertions do not establish factual entailment or semantic correctness"
+  ],
+  "fixture_readiness": {
+    "registered_tools": ["query_knowledge", "propose_knowledge_mutation"],
+    "conversation_session_id": "i2wpxgf4z8cwutgkc5rdkdn7"
+  },
+  "worker_driver": {
+    "admission": "production HTTP adapter + v2 transaction + pg-boss",
+    "execution": "manual physical fetch + production runCopilotRun + terminal wake + complete",
+    "automatic_poller_verified": false
+  },
+  "failure": {
+    "active_case": "presentation-candidate",
+    "name": "Error",
+    "reason": "assertion"
+  },
+  "failure_observation": {
+    "active_case": "presentation-candidate",
+    "terminal_outputs": {
+      "copilot_run_tool_copilot_user_ask_c779c7a62c5233b71b5587f2027191f3236ea499087554a7aa8920a3d75f2705": "已准备练习。",
+      "i68l90s1wr7z8h8bexfiq7n0": "{\"reference_solution\":{\"expected_signals\":[\"将104拆分为100+4\",\"应用分配律：104×5 = (100+4)×5\",\"分别计算100×5 = 500\",\"分别计算4×5 = 20\",\"将两部分相加：500 + 20 = 520\"],\"final_answer\":\"520\",\"answer_equivalents\":[\"520\",\"520.0\"]},\"worked_solution_md\":\"## 利用分配律计算 $104 \\\\times 5$\\n\\n**核心思路：** 分配律（乘法对加法的分配律）告诉我们：\\n$$\\n(a + b) \\\\times c = a \\\\times c + b \\\\times c\\n$$\\n\\n### 解题步骤\\n\\n**第一步：拆分因数**\\n\\n将 104 拆成一个整百数与一个较小数之和：\\n$$\\n104 = 100 + 4\\n$$\\n\\n**第二步：应用分配律**\\n\\n$$\\n104 \\\\times 5 = (100 + 4) \\\\times 5 = 100 \\\\times 5 + 4 \\\\times 5\\n$$\\n\\n**第三步：分别计算**\\n\\n$$\\n100 \\\\times 5 = 500\\n$$\\n$$\\n4 \\\\times 5 = 20\\n$$\\n\\n**第四步：合并结果**\\n\\n$$\\n500 + 20 = 520\\n$$\\n\\n### 最终结果\\n\\n$$\\n\\\\boxed{104 \\\\times 5 = 520}\\n$$\",\"confidence\":1.0}",
+      "ldxf8p3ejbvi5gvps35zuisc": "{\"clarity\":{\"verdict\":\"pass\",\"reason\":\"The stem clearly instructs to use the distributive property to calculate 104 × 5, with no ambiguity or missing context.\"},\"unique_answer\":{\"verdict\":\"pass\",\"reason\":\"The correct answer is uniquely 520, and no alternative defensible answer exists when following the specified method.\"},\"summary\":\"The question is well-specified and has a single correct answer, suitable for learning the distributive property.\"}",
+      "j5sb3ge0s20fdzh70an2t2mg": "{\"score\":0.4,\"coarse_outcome\":\"partial\",\"confidence\":0.9,\"feedback_md\":\"最终结果 520 正确。但题目要求「利用分配律计算」，需要展示分配律的应用过程。建议写出：104 × 5 = (100 + 4) × 5 = 100 × 5 + 4 × 5 = 500 + 20 = 520，这样才能体现对分配律的理解和运用。\",\"evidence_json\":{\"matched_points\":[\"最终结果 520 正确\"],\"missing_points\":[\"未展示将 104 拆分为 100 + 4 的步骤\",\"未写出分配律展开式 (100 + 4) × 5 = 100 × 5 + 4 × 5\",\"缺少分步计算过程\"],\"notes\":\"题目明确要求「利用分配律」，仅给出结果无法体现分配律的运用，按题目要求应扣分。\"}}",
+      "ta2g9tvm3osgnrt5cv40mui7": "{\"grounding\":{\"verdict\":\"pass\",\"note\":\"104×5=520，拆分104=100+4后应用分配律(100+4)×5=500+20=520，计算与推导步骤均正确，属于可独立核验的基本算术性质。\"},\"copy_safety\":{\"verdict\":\"unknown\",\"max_overlap\":0.0},\"knowledge_hit\":{\"verdict\":\"pass\",\"note\":\"题面明确要求'利用分配律计算'，reference中展示了将104拆分为100+4后分别与5相乘的分配律应用过程，与knowledge_id 'actual:distribution'完全对应。\"},\"overall\":\"needs_review\",\"summary_md\":\"数学内容正确，知识点命中（分配律）。但source_refs为空、self_copy_safety未提供，无法判断题面是否与已有题库/教材原文过度重合，copy_safety标记unknown。建议补充来源比对后再行发布。\",\"confidence\":0.82}"
+    },
+    "subagent_runs": [],
+    "task_runs": [
+      {
+        "id": "o0h9jbebocvzxdlq6pwq8g76",
+        "kind": "QuestionAuthorTask",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "usage": {
+          "inputTokens": 1193,
+          "outputTokens": 343,
+          "thinkingBlocks": 1,
+          "thinkingCharacters": 276
+        },
+        "cost": 0.000817365,
+        "cost_basis": "estimated"
+      },
+      {
+        "id": "z43kbgxazdjk89of8wrccf2a",
+        "kind": "QuestionAuthorTask",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "usage": {
+          "inputTokens": 1193,
+          "outputTokens": 523,
+          "thinkingBlocks": 1,
+          "thinkingCharacters": 932
+        },
+        "cost": 0.0004769922,
+        "cost_basis": "estimated"
+      },
+      {
+        "id": "copilot_run_tool_copilot_user_ask_c779c7a62c5233b71b5587f2027191f3236ea499087554a7aa8920a3d75f2705",
+        "kind": "CopilotTask",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "usage": {
+          "inputTokens": 56801,
+          "outputTokens": 488,
+          "thinkingBlocks": 4,
+          "thinkingCharacters": 1082
+        },
+        "cost": 0.0016096157,
+        "cost_basis": "estimated"
+      },
+      {
+        "id": "i68l90s1wr7z8h8bexfiq7n0",
+        "kind": "SolutionGenerateTask",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "usage": {
+          "inputTokens": 1107,
+          "outputTokens": 411,
+          "thinkingBlocks": 1,
+          "thinkingCharacters": 68
+        },
+        "cost": 0.000839115,
+        "cost_basis": "estimated"
+      },
+      {
+        "id": "ldxf8p3ejbvi5gvps35zuisc",
+        "kind": "TeachingQualityTask",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "usage": {
+          "inputTokens": 946,
+          "outputTokens": 929,
+          "thinkingBlocks": 1,
+          "thinkingCharacters": 3084
+        },
+        "cost": 0.00121974,
+        "cost_basis": "estimated"
+      },
+      {
+        "id": "j5sb3ge0s20fdzh70an2t2mg",
+        "kind": "SemanticJudgeTask",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "usage": {
+          "inputTokens": 757,
+          "outputTokens": 489,
+          "thinkingBlocks": 1,
+          "thinkingCharacters": 1132
+        },
+        "cost": 0.000754725,
+        "cost_basis": "estimated"
+      },
+      {
+        "id": "ta2g9tvm3osgnrt5cv40mui7",
+        "kind": "QuizVerifyTask",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "usage": {
+          "inputTokens": 1959,
+          "outputTokens": 1085,
+          "thinkingBlocks": 1,
+          "thinkingCharacters": 3563
+        },
+        "cost": 0.001796115,
+        "cost_basis": "estimated"
+      }
+    ],
+    "tools": [
+      {
+        "task_run_id": "copilot_run_tool_copilot_user_ask_c779c7a62c5233b71b5587f2027191f3236ea499087554a7aa8920a3d75f2705",
+        "name": "mcp__loom__generate_question_candidate",
+        "effect": null,
+        "error": null
+      },
+      {
+        "task_run_id": "copilot_run_tool_copilot_user_ask_c779c7a62c5233b71b5587f2027191f3236ea499087554a7aa8920a3d75f2705",
+        "name": "generate_question_candidate",
+        "effect": "read",
+        "error": "[\n  {\n    \"expected\": \"array\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"structured\",\n      \"options\"\n    ],\n    \"message\": \"Invalid input: expected array, received null\"\n  },\n  {\n    \"expected\": \"array\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"structured\",\n      \"sub_questions\"\n    ],\n    \"message\": \"Invalid input: expected array, received null\"\n  }\n]"
+      },
+      {
+        "task_run_id": "copilot_run_tool_copilot_user_ask_c779c7a62c5233b71b5587f2027191f3236ea499087554a7aa8920a3d75f2705",
+        "name": "mcp__loom__generate_question_candidate",
+        "effect": null,
+        "error": null
+      },
+      {
+        "task_run_id": "copilot_run_tool_copilot_user_ask_c779c7a62c5233b71b5587f2027191f3236ea499087554a7aa8920a3d75f2705",
+        "name": "generate_question_candidate",
+        "effect": "read",
+        "error": null
+      },
+      {
+        "task_run_id": "copilot_run_tool_copilot_user_ask_c779c7a62c5233b71b5587f2027191f3236ea499087554a7aa8920a3d75f2705",
+        "name": "mcp__loom__present_primary_view",
+        "effect": null,
+        "error": null
+      },
+      {
+        "task_run_id": "copilot_run_tool_copilot_user_ask_c779c7a62c5233b71b5587f2027191f3236ea499087554a7aa8920a3d75f2705",
+        "name": "present_primary_view",
+        "effect": "control",
+        "error": null
+      }
+    ]
+  },
+  "failure_evidence_path": "/Volumes/YukovalSBak/yukoval-projects/tlp-wt-unified-conversation/.tmp/actual-provider-acceptance/1788727462631-09b849f6-385a-4bec-b342-83e61895a084.json",
+  "raw_evidence_sha256": "bb30bdcc3c785e345ad4652849892f7d574615053c6ac4e65ad9b77c35666091",
+  "manual_review": {
+    "verdict": "not_accepted",
+    "delivery": "blocked_as_designed",
+    "findings": [
+      "First generation used null for optional arrays and was retried; two QuestionAuthorTask runs, not one.",
+      "Independent solver produced correct final answer and worked solution, but semantic comparator received only final answer and faulted missing method.",
+      "QuizVerify returned needs_review because copy_safety was unknown with no comparison sources; no pass is claimed."
+    ]
+  }
+}

@@ -6,11 +6,14 @@
   Owner批准现有drawer发送/恢复/消息展示；已补真实工具结果快照，model仅提名ref，server校验并独立捕获。
   初稿通用字段过滤不合格已由root替换：复用真实registered outputSchema，逐工具公开policy，opaque/私有字段剥离。
   单一DTO贯穿live/worker修复/history/client；真实空值与缺失区分，刷新不重查，不增加模型history token。
-  78unit/108DB/20built-browser已绿；初审1P1生成JSON绕过内容校验已修，52unit/16契约DB绿，唯一复核待。
+  78unit/108DB/20built-browser已绿；初审1P1生成JSON绕过内容校验已修，唯一复核947be81c PASS，review预算结束。
   PR1348 f439a0be首轮CI只旧迁移schema指纹断言失败；去掉过期hash，保留8项真实权限/组合行为检查。
   真实read卡片交付PASS；终文未查询recent_failures却声称无，原始输出完整保留，去重创建967，不称整体语义绿。
   文档docs/planning/2026-09-07-copilot-result-snapshots.md；新增registry读取边baseline439/0/47，无新SCC/writer豁免。
-  新池累计estimate0.0399097068/reserve5.95823/safe4.04177；候选题actual待预留0.90；当前无paid进程。
+  候选题actual947be81c未通过（正确拦截），7tasks estimate0.0075136679；原始证据已封存question-snapshot-actual.json。
+  实际发现optional数组null重生成/solve-check未传已有解题过程，root均RED→GREEN修复，182unit/typecheck/build通过。
+  正向生成卡仍待968闭卷来源/原创性验证语义收口；未降低copy_safety/grounding门槛。967读取未观测≠零也开放。
+  新池累计estimate0.0474233747/reserve6.85823/safe3.14177；当前无paid进程，不回收保守reserve。
   原脏main不动。临时本地built server仅用于browser fixture，收尾须停止。未合并/部署，整体goal active。
 
 - PR1347已合并：exact6015f2a0fe1163eefc168ec782a5fb657099c0d7，CI34053995106所有job成功；

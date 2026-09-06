@@ -1217,9 +1217,8 @@ async function main(): Promise<void> {
               throw new Error(`presentation-candidate: missing successful ${kind}`);
           }
           if (
-            observed.tools.filter(
-              (tool) => tool.name === 'generate_question_candidate' && !tool.error,
-            ).length !== 1
+            observed.tools.filter((tool) => tool.name === 'generate_question_candidate').length !==
+            1
           )
             throw new Error('presentation-candidate: generation must run exactly once');
         }

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { QuestionAuthorIntentSchema } from '@/ai/task-intents';
 import type { RunTaskCallCtx } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { parseQuestionAuthorOutput } from '../../tasks/question-author';
 import {
   createGenerateQuestionCandidateExecutor,
   generateQuestionCandidateTool,
@@ -26,6 +27,34 @@ const ctx = {
 };
 
 describe('generate_question_candidate', () => {
+  it('normalizes only absent optional author arrays, preserving answers and rejecting malformed data', () => {
+    const draft = {
+      kind: 'computation',
+      difficulty: 1,
+      knowledge_ids: ['distribution'],
+      structured: {
+        id: 'q1',
+        role: 'standalone',
+        prompt_text: '利用分配律计算 104×5。',
+        answers: ['520'],
+        analysis: '104×5=(100+4)×5=500+20=520。',
+        options: null,
+        sub_questions: null,
+      },
+    };
+    const parsed = parseQuestionAuthorOutput(JSON.stringify(draft));
+    expect(parsed.structured.options).toBeUndefined();
+    expect(parsed.structured.sub_questions).toBeUndefined();
+    expect(parsed.structured.answers).toEqual(['520']);
+    expect(parsed.structured.analysis).toContain('500+20');
+    for (const options of ['not-an-array', [{ label: 'A' }]])
+      expect(() =>
+        parseQuestionAuthorOutput(
+          JSON.stringify({ ...draft, structured: { ...draft.structured, options } }),
+        ),
+      ).toThrow();
+  });
+
   it('rejects invalid intent before owner preparation or any retained write', async () => {
     const prepare = vi.fn();
     const execute = createGenerateQuestionCandidateExecutor({

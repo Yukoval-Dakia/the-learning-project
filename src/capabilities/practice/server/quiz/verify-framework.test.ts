@@ -1046,6 +1046,45 @@ describe('runSolveCheck — A1 fallback candidates (答案+解析 reference_md)'
 // ---------- EFF-1 (YUK-554 review) — cost/provenance threading ----------
 
 describe('runSolveCheck — EFF-1 cost/provenance threading', () => {
+  it('passes the independently worked method to the semantic comparator without adding a model leg', async () => {
+    const worked = '104×5=(100+4)×5=100×5+4×5=500+20=520。';
+    const runTaskFn = vi.fn(async (kind: string, _input: unknown) => {
+      if (kind === 'SolutionGenerateTask')
+        return {
+          text: JSON.stringify({
+            reference_solution: {
+              final_answer: '520',
+              expected_signals: ['分配律展开'],
+              answer_equivalents: [],
+            },
+            worked_solution_md: worked,
+            confidence: 0.99,
+          }),
+        };
+      if (kind === 'SemanticJudgeTask') {
+        return { text: semanticOutput('correct', 0.99) };
+      }
+      throw new Error(`unexpected task ${kind}`);
+    });
+    const result = await runSolveCheck(
+      {
+        ...openQuestion,
+        kind: 'computation',
+        prompt_md: '利用分配律计算 104×5。',
+        reference_md: `520\n${worked}`,
+      },
+      { runTaskFn, profile: fakeProfile, db: fakeDb },
+    );
+    expect(result).toMatchObject({ verdict: 'pass', compared_by: 'semantic' });
+    expect(runTaskFn.mock.calls.find(([kind]) => kind === 'SemanticJudgeTask')?.[1]).toMatchObject({
+      answer: { content: `520\n\n${worked}` },
+    });
+    expect(runTaskFn.mock.calls.map(([kind]) => kind)).toEqual([
+      'SolutionGenerateTask',
+      'SemanticJudgeTask',
+    ]);
+  });
+
   it('captures the solver leg task_run_id + cost_usd on the exact path', async () => {
     const runTaskFn = vi.fn(async () => ({
       text: solverOutput('公元前202年'),

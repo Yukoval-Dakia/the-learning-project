@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：966真实读取卡片交付通过；初审生成题校验绕过P1已修，准备实际验收；新增967记录未查询≠零的语义缺口。
+> Linear 是权威 tracker；更新于 2026-09-07：966读取卡片actual通过、生成卡被安全拦截；契约缺失已修，967/968继续语义验收，待PR1348新exactCI。
 
 ## NOW
 
@@ -10,7 +10,9 @@
   Owner已批准现有drawer发送/恢复/消息展示；根负责集成真实结果卡，复用ToolUseCard与同一live/replay协议。
   初稿通用字段过滤被root拒绝；改复用真实领域outputSchema，并逐工具指定公开策略与opaque剥离，不复制第二套reader契约。
   78unit/108DB/20browser绿；初审1P1已修：题目按既有schema规范化并无条件独立校验；修后52unit/16契约DB绿。
-  PR1348 f439a0be首轮CI只失败旧迁移schema指纹断言；保留8项行为测试，删除过期hash，待新exactCI/唯一验证审。
+  PR1348 f439a0be首轮CI只失败旧迁移schema指纹断言；保留8项行为测试，删除过期hash，待新exactCI。
+  唯一验证审947be81c PASS，review预算结束；其后actual发现数组null重生成/solver过程丢失，root已RED→GREEN修复。
+  最终182相关unit/typecheck/build绿；生成题仍被copy_safety unknown正确拦截，968负责闭卷来源语义与正向实际验收。
   真实read快照live/persist一致通过，estimate0.0039958367；终文擅称无recent_failures，去重967待修，非整体语义绿。
   业务owner只读复核：知识合并/录入完成/判分完成已有真实事务与失败恢复，不为9个必要owner造registry。
   SoT仍有部署兼容；仓库compose值不等于生产运行态，不擅删guard或翻flag。Notes分散写入需按不同业务操作判断，尚无重复规则证据。
@@ -44,7 +46,7 @@
   保守请求预留合计$0.90823；此前余额$0.28771982单列，历史未知费用不填0。
   公开费率估算不冒充账户账单，SDK派生USD保留为独立观察。
   949另跑7个受控回合（含失败）：estimated $0.0214406071，case预留$2.8。
-  新$10池合计estimated $0.0399097068；966 read后总reserve$5.95823、安全剩$4.04177；候选题实际验收待预留$0.90。
+  新$10池合计estimated $0.0474233747；966候选题后总reserve$6.85823、安全剩$3.14177；当前无paid进程。
 - YUK949：owner明确选FULL，允许按需短presentation control交互，ADR0061；
   agent看完结果提名，server校验，保留tool_result/artifact/ephemeral_html；不提高预算、不改生产UI。
   初稿ea8367c7的5P1已由81eb7f3e修复，ed693e16集成main9e02c48b。
@@ -85,11 +87,12 @@
 
 ## NEXT
 
-1. 966完成快照/卡片集成，继续恢复DB、built-browser、独立review与exact CI；模型不能伪造快照，不重执行工具。
-2. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
-3. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
+1. 966等待新exact CI后交付快照链路；不把候选题拦截称作正向验收，不再开启第三轮review。
+2. 968闭卷生成与来源/原创性验证语义收口，967未请求recent_failures不能当零；同实际样本验收，不降低保护。
+3. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
+4. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
-4. 887生产副本backfill/audit/rebuild/golden与SoT退休仍需独立授权。
+5. 887生产副本backfill/audit/rebuild/golden与SoT退休仍需独立授权。
 
 ## PARKED
 
