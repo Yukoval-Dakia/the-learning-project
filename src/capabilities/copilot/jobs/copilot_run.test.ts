@@ -515,7 +515,12 @@ describe('runCopilotRun', () => {
       status: 'done',
       reply: '请在卡片里作答。',
     });
-    expect(JSON.stringify(await replay(runId))).not.toContain('323');
+    expect(result).not.toHaveProperty('primary_view');
+    for (const frame of await replay(runId)) {
+      expect(frame.payload).not.toHaveProperty('primary_view');
+      // Check user-visible payload, not unrelated timestamp/sequence digits.
+      expect(JSON.stringify(frame.payload)).not.toContain('323');
+    }
   });
 
   it('provides durable artifact tools a parent-bound learning validator', async () => {

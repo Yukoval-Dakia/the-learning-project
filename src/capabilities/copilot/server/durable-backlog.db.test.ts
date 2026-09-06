@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { job_events } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
@@ -18,7 +18,15 @@ async function write(
 }
 
 describe('countOutstandingDurableRuns (YUK-693)', () => {
-  beforeEach(() => resetDb());
+  beforeEach(async () => {
+    await resetDb();
+    // resetDb covers domain rows, not this operational ledger. Each Vitest fork
+    // has its own DB; isolate the global aggregate from preceding test files.
+    await testDb().delete(job_events);
+  });
+  afterEach(async () => {
+    await testDb().delete(job_events);
+  });
 
   it('counts retry frames as outstanding; only successful or deliberate failure terminals release capacity', async () => {
     await write('run_queued', COPILOT_RUN_EVENTS.QUEUED);

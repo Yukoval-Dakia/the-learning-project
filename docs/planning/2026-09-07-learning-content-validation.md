@@ -107,5 +107,12 @@ learner-visible success. Existing conservative pool consumers are unchanged.
   PR1349 awaits exact CI. Model terminal repeated a harmless sentence; solver
   generated an incorrect unused answer-equivalent, excluded from the published
   card and strict comparison. This does not establish universal model quality.
+- Exactf9d52ab1 CI34062662435 failed only DB2: backlog fixture expected3 but saw6
+  from prior operational rows; all other jobs passed. Root injected three prior
+  QUEUED rows to reproduce6≠3, then scoped ledger setup/teardown made that same
+  test pass without changing3→2 business assertions. Temporary injection removed.
+  A serial run also caught a false privacy failure from timestamp milliseconds323;
+  the test now checks payloads and explicitly rejects primary_view, not unrelated
+  envelope digits. Product code and paid actual evidence are unchanged.
 - No deployment, SoT switch, backfill, production clone or history deletion.
   YUK-967 observation-scope semantics and the overall goal remain open.

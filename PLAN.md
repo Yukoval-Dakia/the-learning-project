@@ -1,23 +1,25 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：968同样本正向actual通过，review预算完成，PR1349等待exact CI；966已合并，整体goal active。
+> Linear 是权威 tracker；更新于 2026-09-07：968真实正向通过，CI隔离问题已修；967/969独立修复已审，继续集成，不重开生产边界。
 
 ## NOW
 
-- Active YUK968：root独占tlp-wt-unified-conversation / codex/yuk-968-closed-book-validation，base main5cf5dcca+交付记录9cf76668。
-  计划①核对生成来源/验证轴与发布资格；②由现有领域owner收口契约并做真实复杂fixture回归；
-  ③干净revision同样本actual，预留预算前不付费；④独立review与exactCI。只读设计lane协助，无并行writer。
-  不伪造来源、不把未比较称原创；保持grounding/too_close/独立解题和教学质量保护。不改UI/生产。
-  PR1349 draft，exactf3b6b3b4；初审无P0/P1。182unit/73workerDB/16ownerDB/12authorDB与本地gate通过。
-  CI34061769583两项旧prompt hash失败已局部复现修复，保留实质政策断言；211unit/typecheck/build通过。
-  真实一次生成/解题/教学通过，但内容验证终态缺失，90秒deadline失败。修basis shape/重叠rollup后同样本再验。
-  已封存learning-content-deadline-actual.json；新增estimate0.0061130977，不能冒充账单或完整质量通过。
-  ae7c7a3c第二轮真实7×102=714、one author/全部validator通过、live/persisted一致；重复2次展示提名使整项失败。
-  证据learning-content-presentation-repeat-actual.json；estimate0.0067764702。工具说明明确成功后回复/不要重复同一提名。
-  唯一验证审PASS，预算结束；52题池/ownerDB通过。评审旧题池rollup疑点去重YUK969，尚待独立复现。
-  第三轮clean219a1816实际one author/one presentation，全validator与持久卡片一致通过；7×12=84和分配律正确。
-  learning-content-positive-actual.json封存；estimate0.0086921242，原90s/canary/次数门槛不变。
-  36presentation tests/typecheck/build/lint通过；当前无paid进程，CI34062503809运行中，未merge/deploy。
+- Active pipeline closure：YUK968 PR1349 ready；root保留tlp-wt-unified-conversation独占集成，无生产动作。
+  Practice统一内容验证/真实工具来源绑定，重复author parser退休；未改变题池历史政策。
+  原提示词真实正向clean219a1816已过：one author/one presentation，7×12=84/分配律正确，
+  全validator与live/REPLY/persisted一致；deadline/重复control失败和positive证据均封存。
+  初审与唯一验证PASS，review预算结束；182unit/73workerDB/16ownerDB/12authorDB，
+  另211unit/4deadline/52poolDB/36presentation与typecheck/lint/build通过（重叠，不累加）。
+  exactf9d52ab1 CI34062662435仅DB2 backlog计数6≠3失败，其余全部success，未merge/deploy。
+  root注入3条旧运行记录复现同样RED，隔离operational ledger后GREEN；注入已撤，保留原3→2断言。
+  串行复测还复现timestamp毫秒323误触答案泄漏断言，改为只检查payload并明确无primary_view。
+  CI修复串行57DB与最终3targeted/typecheck/lint通过，未改产品代码或重开review。
+  967原读取canary另预留0.40，pool estimate0.0690050668非账单/reserve9.95823/safe0.04177。
+- 独立后续lane（同一pipeline收口）：969 worker独占tlp-wt-pool-rollup，ab29f20e；
+  题池pass+unknown误晋级已RED→GREEN，37DB/typecheck/lint/build与独立初审PASS，待集成/PR。
+  967 root独占tlp-wt-knowledge-observations，e0bba356；reader明确未请求/无节点/已观察，
+  保持latest10历史失败与30d计数语义，12readerDB+34snapshot/fixtureDB/typecheck/lint/build过；
+  初审PASS，clean5717bcbd原读取canary运行中（预留0.40）。不修改UI或制造第二评估器。
 - YUK966 Done：PR1348 exactfefcf70e1a07b4ef554deb3d4c1b9eab4a1401fa，CI34059429533全部success；
   2026-09-06T21:05:27Z合并main5cf5dccab207c32b47b6ddb15163dff10c379080，未部署。
   既有drawer用同一DTO交付真实结果快照/恢复，不重查、不增加模型history token；复用领域schema与原验证owner。
@@ -57,7 +59,7 @@
   保守请求预留合计$0.90823；此前余额$0.28771982单列，历史未知费用不填0。
   公开费率估算不冒充账户账单，SDK派生USD保留为独立观察。
   949另跑7个受控回合（含失败）：estimated $0.0214406071，case预留$2.8。
-  新$10池合计estimated $0.0690050668；968第三轮后总reserve$9.55823、安全剩$0.44177，不回收reserve。
+  新$10池合计estimated $0.0690050668；967读取预留后总reserve$9.95823、安全剩$0.04177，不回收reserve。
 - YUK949：owner明确选FULL，允许按需短presentation control交互，ADR0061；
   agent看完结果提名，server校验，保留tool_result/artifact/ephemeral_html；不提高预算、不改生产UI。
   初稿ea8367c7的5P1已由81eb7f3e修复，ed693e16集成main9e02c48b。

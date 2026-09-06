@@ -2,24 +2,22 @@
 
 ## 最新状态
 
-- Active YUK968，root独占tlp-wt-unified-conversation / codex/yuk-968-closed-book-validation。
-  Practice联合验证owner+真实工具input/output来源绑定；Copilot只匹配可见内容，复用kernel已有DTO。
-  额外grounding.basis仅learner-visible purpose必需；旧题池/intervention兼容。copy unknown不伪称原创，限定预览并明示未比较。
-  strict solve须明确等价，partial/unsupported/低置信不再当可见成功；旧保守题池政策不变。重复作者parser已退休。
-  182unit/73worker-snapshotDB/16ownerDB/12作者DB、typecheck/build/lint/架构通过；独立初审无P0/P1。
-  PR1349 draft exactf3b6b3b4，CI34061769583 unit失败待修。首轮actual一次生成、解题和教学通过，90秒超时未通过。
-  QuizVerify终态缺失，不凭usage认定完成。证据learning-content-deadline-actual.json；当前无paid进程。
-  新池estimate0.0535364724/reserve7.75823/safe2.24177，不回收reserve。正在对齐prompt basis输出及互斥rollup。
-  上述prompt/旧hash失败已修，211unit/typecheck/build通过；第二轮同样本预留0.90，新reserve8.65823/safe1.34177。
-  第二轮ae7c7a3c内容正向通过：one author，7×102=714，全validator通过，live/persisted一致；2次相同展示提名使全case失败。
-  封存learning-content-presentation-repeat-actual.json；新增estimate0.0067764702，累计0.0603129426。
-  明确工具成功后收尾不重复同一提名；第三轮另reserve0.90后总9.55823/safe0.44177。唯一验证审PASS，review预算结束。
-  52题池/ownerDB通过。旧题池矛盾rollup疑点去重YUK969 Todo，不伪称生产漏洞或已复现。
-  第三轮clean219a1816正向actual完整通过：one author/one presentation、7×12=84与分配律正确、全部validator和live/persisted一致。
-  证据learning-content-positive-actual.json；estimate新增0.0086921242，累计0.0690050668/reserve9.55823/safe0.44177。
-  36presentation tests/typecheck/build/lint绿；无paid进程。CI34062503809运行中，PR1349待exactCI，未merge/deploy。
-  不夸大模型内部质量：terminal无害重复句、solver未消费equivalent错字完整保留，发布题面/答案正确。
-  设计docs/planning/2026-09-07-learning-content-validation.md。原脏main与生产不动，整体goal active。
+- Active pipeline closure：YUK968 PR1349 ready；root保留tlp-wt-unified-conversation独占集成，无生产动作。
+  Practice统一内容验证/真实工具来源绑定，重复author parser退休；未改变题池历史政策。
+  原提示词真实正向clean219a1816已过：one author/one presentation，7×12=84/分配律正确，
+  全validator与live/REPLY/persisted一致；deadline/重复control失败和positive证据均封存。
+  初审与唯一验证PASS，review预算结束；182unit/73workerDB/16ownerDB/12authorDB，
+  另211unit/4deadline/52poolDB/36presentation与typecheck/lint/build通过（重叠，不累加）。
+  exactf9d52ab1 CI34062662435仅DB2 backlog计数6≠3失败，其余全部success，未merge/deploy。
+  root注入3条旧运行记录复现同样RED，隔离operational ledger后GREEN；注入已撤，保留原3→2断言。
+  串行复测还复现timestamp毫秒323误触答案泄漏断言，改为只检查payload并明确无primary_view。
+  CI修复串行57DB与最终3targeted/typecheck/lint通过，未改产品代码或重开review。
+  967原读取canary另预留0.40，pool estimate0.0690050668非账单/reserve9.95823/safe0.04177。
+- 独立后续lane（同一pipeline收口）：969 worker独占tlp-wt-pool-rollup，ab29f20e；
+  题池pass+unknown误晋级已RED→GREEN，37DB/typecheck/lint/build与独立初审PASS，待集成/PR。
+  967 root独占tlp-wt-knowledge-observations，e0bba356；reader明确未请求/无节点/已观察，
+  保持latest10历史失败与30d计数语义，12readerDB+34snapshot/fixtureDB/typecheck/lint/build过；
+  初审PASS，clean5717bcbd原读取canary运行中（预留0.40）。不修改UI或制造第二评估器。
 
 - YUK966 Done：PR1348 exactfefcf70e1a07b4ef554deb3d4c1b9eab4a1401fa，CI34059429533全部success；
   2026-09-06T21:05:27Z合并main5cf5dccab207c32b47b6ddb15163dff10c379080。
