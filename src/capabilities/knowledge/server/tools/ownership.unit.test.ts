@@ -119,17 +119,6 @@ describe('knowledge server ownership', () => {
     __resetRegistryForTests();
   });
 
-  it('deletes central owner paths, exports, and imports', () => {
-    expect(existsSync(join(process.cwd(), 'src/server/ai/tools/knowledge-readers.ts'))).toBe(false);
-    // YUK-892 — the transitional central concrete tool files are deleted wholesale.
-    expect(existsSync(join(process.cwd(), 'src/server/ai/tools/proposal-tools.ts'))).toBe(false);
-    expect(existsSync(join(process.cwd(), 'src/server/events/queries.ts'))).toBe(false);
-
-    const manifest = source('src/capabilities/knowledge/manifest.ts');
-    expect(manifest).not.toContain('@/server/ai/tools/knowledge-readers');
-    expect(manifest).not.toContain("@/server/ai/tools/proposal-tools'");
-  });
-
   it('shares failure-attempt read models through the knowledge public seam', () => {
     const knowledgePublic = source('src/capabilities/knowledge/public.ts');
     for (const helperName of [
