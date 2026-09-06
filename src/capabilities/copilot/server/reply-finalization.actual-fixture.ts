@@ -9,6 +9,8 @@ import type { ToolExecutionResultObservation } from '@/server/ai/tools/mcp-bridg
  * 5507bc72f59eae1aa62e6e819d3544e8391e410dbd8acb0ce740093b98df6270
  * and carry the corrected YUK-832 typed source boundaries.
  * YUK-944 adds the current reader's comparison/absence/outcome claim fields;
+ * reader v2 also separates event lookup from answer enrichment and binds causal
+ * coverage to the exact focal id. These annotations do not change source facts.
  * original observations remain unchanged. Pre-change run digests are archived
  * separately and must not be presented as digests of this updated fixture.
  *
@@ -192,8 +194,10 @@ export const REALISTIC_EVIDENCE_TRACE = [
     },
     output: {
       cause: null,
+      reader_version: 2,
+      answer_activity_status: 'not_applicable',
       lookup: {
-        status: 'unsupported_event',
+        status: 'found',
         observed: {
           action: 'experimental:proposal',
           outcome: 'partial',
@@ -283,6 +287,9 @@ export const REALISTIC_EVIDENCE_TRACE = [
       causal_neighborhood: {
         parent: null,
         coverage: {
+          focal_event_id: 'conjecture_yuk792_canary_20260731c',
+          scope: 'focal_event_direct_children_only',
+          descendant_subtrees: 'not_observed',
           limit: 10,
           complete: true,
           has_more: false,
@@ -369,8 +376,10 @@ export const REALISTIC_EVIDENCE_TRACE = [
     },
     output: {
       cause: null,
+      reader_version: 2,
+      answer_activity_status: 'not_applicable',
       lookup: {
-        status: 'unsupported_event',
+        status: 'found',
         observed: {
           action: 'experimental:probe_result',
           outcome: null,
@@ -496,6 +505,9 @@ export const REALISTIC_EVIDENCE_TRACE = [
           payload_projection_exhaustive: false,
         },
         coverage: {
+          focal_event_id: 'q2lm07istehqzj8ar2slphpy',
+          scope: 'focal_event_direct_children_only',
+          descendant_subtrees: 'not_observed',
           limit: 10,
           complete: true,
           has_more: false,
@@ -574,8 +586,10 @@ export const REALISTIC_EVIDENCE_TRACE = [
     },
     output: {
       cause: null,
+      reader_version: 2,
+      answer_activity_status: 'not_applicable',
       lookup: {
-        status: 'unsupported_event',
+        status: 'found',
         observed: {
           action: 'experimental:probe_result',
           outcome: null,
@@ -701,6 +715,9 @@ export const REALISTIC_EVIDENCE_TRACE = [
           payload_projection_exhaustive: false,
         },
         coverage: {
+          focal_event_id: 'sg6aqgpq6l3wp5maslkvz12j',
+          scope: 'focal_event_direct_children_only',
+          descendant_subtrees: 'not_observed',
           limit: 10,
           complete: true,
           has_more: false,
@@ -1045,6 +1062,8 @@ export const REALISTIC_EVIDENCE_TRACE = [
     },
     output: {
       cause: null,
+      reader_version: 2,
+      answer_activity_status: 'available',
       lookup: {
         status: 'found',
         observed: {
@@ -1151,6 +1170,9 @@ export const REALISTIC_EVIDENCE_TRACE = [
       causal_neighborhood: {
         parent: null,
         coverage: {
+          focal_event_id: 'si6y0w14iihyogdifj7w60c1',
+          scope: 'focal_event_direct_children_only',
+          descendant_subtrees: 'not_observed',
           limit: 10,
           complete: true,
           has_more: false,
@@ -1221,8 +1243,10 @@ export const REALISTIC_EVIDENCE_TRACE = [
     },
     output: {
       cause: null,
+      reader_version: 2,
+      answer_activity_status: 'not_applicable',
       lookup: {
-        status: 'unsupported_event',
+        status: 'found',
         observed: {
           action: 'judge',
           outcome: 'success',
@@ -1293,6 +1317,9 @@ export const REALISTIC_EVIDENCE_TRACE = [
           payload_projection_exhaustive: false,
         },
         coverage: {
+          focal_event_id: 'al4jmr463c173csm8c6x45hs',
+          scope: 'focal_event_direct_children_only',
+          descendant_subtrees: 'not_observed',
           limit: 10,
           complete: true,
           has_more: false,

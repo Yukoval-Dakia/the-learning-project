@@ -13,6 +13,8 @@
   不称稳定延迟达标。下一步先查实际上下文与reader表示，须有实质修复再付费验证。
   本次173 scoped unit/11 reader DB、typecheck/build与lint ratchet通过；不代表actual质量通过。
   夹具初审P1和终文假绿门已修，唯一验证审通过（不是语义质量通过）；不追加第三轮。
+  草稿PR1338已推923ecb22，仅CI验收，不可合并。后续reader v2在现有工具内分离事件/作答可用性，
+  明确focal直子覆盖和未查询子树，修复非作答撤回状态；12DB/19unit/typecheck/build/lint通过，待actual。
 - AI finalization #1326、Goal #1327、Knowledge merge #1328、Ingestion completion #1329、
   ReviewSettlement #1332、测试精简 #1331/#1333 已经各自 exact-head CI 绿色并合并。
 - YUK-954 #1330：共享执行 owner，权限/校验/取消/原生子代理规则一份实现；

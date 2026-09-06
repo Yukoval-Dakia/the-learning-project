@@ -1,9 +1,9 @@
 // YUK-81 / Foundation D M1 Lane C; YUK-832 evidence-reader hardening.
 //
-// `get_attempt_context` is the exact-id activity reader for answer events. It
-// preserves the historical tool/input name, but now distinguishes lookup
-// failure modes and supports both attempt and review events. Same-question
-// history is explicitly non-causal; causal evidence comes from getEventChain.
+// Exact-id event evidence reader, preserving the historical tool/input name.
+// Reader v2 separates event availability from optional answer enrichment.
+// Same-question history is non-causal; the causal neighborhood covers only the
+// focal event's parent and direct children, never the children's subtrees.
 
 import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
@@ -311,11 +311,13 @@ const CausalEventRefSchema = z.object({
 const ExactEventIdentitySchema = CausalEventRefSchema;
 
 const OutputSchema = z.object({
+  reader_version: z.literal(2),
   lookup: z.object({
     requested_event_id: z.string(),
-    status: z.enum(['found', 'not_found', 'unsupported_event', 'inactive']),
+    status: z.enum(['found', 'not_found', 'inactive']),
     observed: ExactEventIdentitySchema.nullable(),
   }),
+  answer_activity_status: z.enum(['available', 'not_applicable', 'unavailable']),
   // Compatibility: successful lookups retain the historical `attempt` key.
   // It is nullable instead of fabricating an epoch sentinel when lookup fails.
   attempt: AnswerActivitySchema.nullable(),
@@ -354,6 +356,9 @@ const OutputSchema = z.object({
     direct_children: z.array(CausalEventRefSchema),
     relation_semantics: z.literal('direct_children_only'),
     coverage: z.object({
+      focal_event_id: z.string(),
+      scope: z.literal('focal_event_direct_children_only'),
+      descendant_subtrees: z.literal('not_observed'),
       returned_count: z.number().int().nonnegative(),
       limit: z.number().int().positive(),
       total_direct_children: z.number().int().nonnegative().nullable(),
@@ -368,10 +373,10 @@ type Input = z.infer<typeof InputSchema>;
 type Output = z.infer<typeof OutputSchema>;
 
 const DESCRIPTION = [
-  'Fetch exact evidence for one answer event id. Supports action=attempt and action=review,',
-  'including successful reviews; never infers an action from id text and never fabricates a row.',
+  'Fetch exact event evidence. Answer activity is enriched for attempt/review, including successful reviews.',
+  'Event lookup and answer_activity_status are independent; found non-answer events still carry usable typed evidence.',
   '',
-  '- lookup.status distinguishes found, not_found, unsupported_event, and inactive.',
+  '- lookup.status distinguishes found, not_found, and inactive; payload_projection_status describes payload support.',
   '- attempt is the compatible answer-activity field and includes exact action/outcome/dispatch_seq.',
   '- causal_neighborhood contains the exact parent and direct children only. It does not call',
   '  same-question history causal. Check coverage and each event correction_state before treating',
@@ -923,13 +928,16 @@ function answerActivity(value: EnvelopedEvent): z.infer<typeof AnswerActivitySch
 
 function emptyOutput(
   input: Input,
-  status: 'not_found' | 'unsupported_event' | 'inactive',
+  status: 'found' | 'not_found' | 'inactive',
   observed: z.infer<typeof ExactEventIdentitySchema> | null,
   causal: Output['causal_neighborhood'],
+  answerActivityStatus: 'not_applicable' | 'unavailable' = 'unavailable',
 ): Output {
   const timelineLimit = input.timelineLimit ?? TOOL_COURTESY_DEFAULTS.get_attempt_context;
   return OutputSchema.parse({
+    reader_version: 2,
     lookup: { requested_event_id: input.attemptEventId, status, observed },
+    answer_activity_status: answerActivityStatus,
     attempt: null,
     question: null,
     question_availability: 'not_resolved',
@@ -974,6 +982,9 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     direct_children: [],
     relation_semantics: 'direct_children_only',
     coverage: {
+      focal_event_id: input.attemptEventId,
+      scope: 'focal_event_direct_children_only',
+      descendant_subtrees: 'not_observed',
       returned_count: 0,
       limit: causalLimit,
       // caused_by_event_id is intentionally not a foreign key. A missing focal
@@ -1004,6 +1015,9 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     direct_children: directChildren.map((entry) => eventRef(entry, rawPayloadById.get(entry.id))),
     relation_semantics: 'direct_children_only',
     coverage: {
+      focal_event_id: focal.id,
+      scope: 'focal_event_direct_children_only',
+      descendant_subtrees: 'not_observed',
       returned_count: directChildren.length,
       limit: causalLimit,
       total_direct_children: chain.caused_events.length,
@@ -1015,10 +1029,21 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     focal,
     rawPayloadById.get(focal.id),
   );
-  const activity = answerActivity(focal);
-  if (!activity) return emptyOutput(input, 'unsupported_event', observed, causal);
   if (focal.correction_status.state !== 'active') {
     return emptyOutput(input, 'inactive', observed, causal);
+  }
+  const activity = answerActivity(focal);
+  if (!activity) {
+    const isAnswerEvent =
+      (focal.action === 'attempt' || focal.action === 'review') &&
+      focal.subject_kind === 'question';
+    return emptyOutput(
+      input,
+      'found',
+      observed,
+      causal,
+      isAnswerEvent ? 'unavailable' : 'not_applicable',
+    );
   }
 
   const questionRows = await ctx.db
@@ -1061,6 +1086,8 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   });
 
   return OutputSchema.parse({
+    reader_version: 2,
+    answer_activity_status: 'available',
     lookup: {
       requested_event_id: input.attemptEventId,
       status: 'found',

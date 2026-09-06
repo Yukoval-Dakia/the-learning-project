@@ -6,7 +6,7 @@ Owner 已授权 AI pipeline 与基于1e61da8d报告的全项目业务封装/测�
 ## 当前实施（优先于下方历史完成记录）
 
 - 完整目标仍active，不能以958或当前切片替代。验收契约见2026-09-06-refactor-completion-contract.md。
-- main9427202c；active branch codex/yuk-944-context-contract，尚未推送/开PR。
+- main9427202c；active branch codex/yuk-944-context-contract，已推草稿PR1338（923ecb22），不可合并。
 - 944将claim完整定义留typed reader，TaskSpec证据2105→282chars、skill9735→4901；工具description精简。
 - 83 registry/skill unit+19 finalization/content unit+26 reader DB、typecheck/build/audits通过。
 - 首次actual04e9b83e五read完成但无权威终文，旧harness错误返回ok；第二次af811146修正门后正确失败。
@@ -19,9 +19,13 @@ Owner 已授权 AI pipeline 与基于1e61da8d报告的全项目业务封装/测�
   Owner已明确允许修复后最多追加$1；当前可用$1.26992782。运行成功不等于语义验收通过。
   第四次a8cfd734实际费用$0.218690、88.843s、权威终文，但仍错误A01/唯一差异/链终止，
   还虚构prediction_score孙事件；手工验收失败。当前余额$1.05123782，累计944成本$0.55359018。
-  停止逐句加词付费重试，先查实际上下文和reader表示。未推送/未PR/未合并，goal仍active。
+  停止逐句加词付费重试，先查实际上下文和reader表示。PR1338为草稿，未合并，goal仍active。
   免费native SDK loopback探针已证明首请求catalog有/body无，Skill调用后body才出现；
   946 eager-body前提被否证，不能按SDK initialize注释猜测全文预载，不建第二套目录。
+- Reader v2由现有get_attempt_context拥有：lookup found/not_found/inactive与answer_activity_status分离，
+  已存在非作答不再报unsupported_event；inactive优先于non-answer；coverage明确focal id/直子/未查子树。
+  保留原queries/事实/隐藏字段/兼容空字段。13项fixture去掉版本/状态/coverage元数据后与a8cfd734逐字同构。
+  12DB+19unit/typecheck/build/lint通过；须再跑同一五读取actual，当前资金$1.05123782。
   版本证据2026-09-06-claim-context-actual.json；停止无诊断付费重试，不缩小五read质量要求。
 - reviewer review_claim_context初审2P1均属harness：额外tools未隔离、缺失reader未在付费前检查；已修。
   另已要求claims显式budget、拒绝无terminal/额外model/tool，并新增SDK安全子类型/耗时记录。

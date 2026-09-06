@@ -28,3 +28,16 @@ AI-driven框架对齐以v0.3框架文档的共享SubjectProfile、统一Judge/Pr
 - 本轮不启用YUK832 HOLD、不添加通用harness/第二套skill系统、不部署/修改生产数据。
 
 后续顺序与状态在PLAN/Linear维护；结束一个切片只记录进展，完整goal继续active。
+
+### Reader v2：事件可用性不等于作答活动支持
+
+四次完整actual暴露了表示层歧义：存在且返回typed evidence的conjecture/probe被标为
+`unsupported_event`；`coverage.complete`则被模型扩张为整条链或孙代覆盖。
+这是确定的接口歧义，但修正能否充分改善模型质量仍须同一五读取actual证明。
+
+- `reader_version=2`；lookup仅说明found/not_found/inactive，不再将“非作答活动”写成查证失败。
+- `answer_activity_status`独立说明available/not_applicable/unavailable；未知或无效作答不伪造attempt。
+- inactive先于非作答分支判定，保留撤回/替代身份和原payload/redaction保护。
+- 因果coverage携带`focal_event_id`、`scope=focal_event_direct_children_only`、`descendant_subtrees=not_observed`。
+- 保持原工具/输入名、查询次数、源事实、兼容空字段及MCP适配层；不新增工具或第二套证据处理系统。
+- 原actual证据不改写；新版夹具仅迁移上述合同元数据，原查询参数和事件事实不变。
