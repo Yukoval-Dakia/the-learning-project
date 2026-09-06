@@ -66,7 +66,9 @@ wrapper solely to conceal the edge was rejected.
   947be81c passed (independent 45 unit/16 DB); review budget is closed.
 - Initial CI at f439a0be failed one obsolete migration-only schema fingerprint;
   the eight real tool permission/composition cases remain, frozen hashes do not.
-  New exact-head CI is required; not yet merged.
+  Final exact fefcf70e1a07b4ef554deb3d4c1b9eab4a1401fa passed every job in
+  CI Gate34059429533; PR1348 squash merged main5cf5dccab207c32b47b6ddb15163dff10c379080
+  at2026-09-06T21:05:27Z. YUK-966 is Done; the overall goal remains active.
 - Actual read at clean f439a0be delivered the identical 1,236-byte snapshot live
   and persisted: two knowledge nodes, real null/zero/parent/coverage preserved.
   One root, one read and one nomination; input 41,280 / output 360; estimated
@@ -87,7 +89,7 @@ wrapper solely to conceal the edge was rejected.
   positive generated-card run. Full generated-content acceptance is incomplete;
   the original failure is sealed in evidence/2026-09-07-question-snapshot-actual.json.
 - After those deterministic fixes, 182 scoped unit tests, typecheck and build
-  passed; 7 current Copilot browser cases and 16 contract DB tests also passed.
+  passed; 7 current Copilot browser cases and 28 author/snapshot DB tests also passed.
   The method-forwarding regression asserts outside the external adapter so the
   judge's catch cannot swallow an assertion; old code was confirmed RED.
 - No production changes. The $10 pool has cumulative estimate $0.0474233747,
