@@ -2,9 +2,15 @@ import { randomUUID } from 'node:crypto';
 
 import { and, asc, eq, sql } from 'drizzle-orm';
 import type { PgBoss } from 'pg-boss';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildCancelCopilotRunHandler } from '@/capabilities/copilot/api/cancel-run';
+import { POST as sendMessage } from '@/capabilities/copilot/api/chat';
+import {
+  CopilotDurableRunResponseSchema,
+  CopilotTurnsResponseSchema,
+} from '@/capabilities/copilot/api/contracts';
+import { GET as readConversation } from '@/capabilities/copilot/api/turns';
 import { isDurablePickupStalled } from '@/capabilities/copilot/durable-pickup';
 import {
   buildCopilotRunHandler,
@@ -14,7 +20,10 @@ import { reconcileOutstandingCopilotRuns } from '@/capabilities/copilot/jobs/cop
 import { event, job_events } from '@/db/schema';
 import { _resetBossForTests, fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
 import { writeJobEvent } from '@/server/events/writer';
+import { __resetRateLimitForTests } from '@/server/http/rate-limit';
+import * as runtimeEnv from '@/server/runtime-env';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { writeCopilotReply } from './chat';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import {
   type CopilotAcceptedJobData,
@@ -24,6 +33,7 @@ import {
   hashCopilotDurableInput,
   reserveCopilotDurableAcceptance,
 } from './durable-dispatch';
+import { getCopilotTurnsBeforeAnchor } from './turns';
 
 const SESSION_ID = 'conversation_fifo_cross_subject_transfer';
 const FIXED_NOW_MS = Date.parse('2026-09-06T13:30:00.000Z');
@@ -111,12 +121,155 @@ describe('durable Copilot session FIFO — real pg-boss contract', () => {
     await resetDb();
     await testDb().delete(job_events);
     await boss.deleteAllJobs('copilot_run');
+    __resetRateLimitForTests();
   });
+
+  afterEach(() => vi.restoreAllMocks());
 
   afterAll(async () => {
     await boss.deleteAllJobs('copilot_run').catch(() => undefined);
     await boss.stop({ graceful: false, timeout: 1_000 });
     _resetBossForTests();
+  });
+
+  it('recovers an accepted disconnected request, accepts follow-ups, and resumes the next turn through real route owners', async () => {
+    // Only enable test queue admission; conversation, transactions, queue,
+    // history and cancellation all use production owners with real Postgres.
+    vi.spyOn(runtimeEnv, 'shouldEnqueueBackgroundJobs').mockReturnValue(true);
+    const key = randomUUID();
+    const controller = new AbortController();
+    const firstInput = {
+      user_message:
+        '请核对近 48 次含参函数作答中的定义域与退化条件，保留尚未验证的分支，不要把推测标成已掌握。',
+      triggered_by: 'chat',
+      ambient_context: {
+        route: '/today',
+        focused_entity: { kind: 'knowledge', id: 'kc_parameter_boundary' },
+      },
+    };
+    const request = (input: unknown, requestKey: string, signal?: AbortSignal) =>
+      new Request('http://test/api/copilot/chat', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': requestKey },
+        body: JSON.stringify(input),
+        signal,
+      });
+    const initial = await sendMessage(request(firstInput, key, controller.signal), {});
+    expect(initial.status).toBe(202);
+    // Lose the response body after server acceptance; reconnect has no local handle.
+    controller.abort();
+    const snapshotResponse = await readConversation(new Request('http://test/api/copilot/turns'));
+    const snapshot = CopilotTurnsResponseSchema.parse(await snapshotResponse.json());
+    expect(snapshot.active_runs).toHaveLength(1);
+    const replayResponse = await sendMessage(request(firstInput, key), {});
+    expect(replayResponse.status).toBe(202);
+    const first = CopilotDurableRunResponseSchema.parse(await replayResponse.json());
+    expect(first.run_id).toBe(snapshot.active_runs[0]?.run_id);
+    expect(first.session_id).toBe(snapshot.session_id);
+    const secondResponse = await sendMessage(
+      request(
+        {
+          ...firstInput,
+          session_id: first.session_id,
+          user_message: '先不要生成题目，只解释第二个退化分支。',
+          skill_context: {
+            skill: 'teaching',
+            ref: { kind: 'learning_item', id: 'li_parameter_review' },
+          },
+        },
+        randomUUID(),
+      ),
+      {},
+    );
+    const thirdResponse = await sendMessage(
+      request(
+        {
+          ...firstInput,
+          session_id: first.session_id,
+          user_message: '继续核对刚才尚未验证的分支，保留不确定结论。',
+          triggered_by: 'chip',
+          chip_kind: 'continue_review',
+        },
+        randomUUID(),
+      ),
+      {},
+    );
+    expect([secondResponse.status, thirdResponse.status]).toEqual([202, 202]);
+    const second = CopilotDurableRunResponseSchema.parse(await secondResponse.json());
+    const third = CopilotDurableRunResponseSchema.parse(await thirdResponse.json());
+    expect(
+      await boss.findJobs('copilot_run', { data: { session_id: first.session_id } }),
+    ).toHaveLength(1);
+    const current = CopilotTurnsResponseSchema.parse(
+      await (
+        await readConversation(
+          new Request(`http://test/api/copilot/turns?session_id=${first.session_id}`),
+        )
+      ).json(),
+    );
+    expect(current.active_runs.map((run) => run.run_id)).toEqual([
+      first.run_id,
+      second.run_id,
+      third.run_id,
+    ]);
+    expect(JSON.stringify(current)).not.toContain('job_data');
+
+    // Stop only the waiting teaching turn, leaving the current turn running.
+    const stop = buildCancelCopilotRunHandler({
+      wakeSession: (sessionId) =>
+        dispatchSessionHead(testDb(), sessionId, { boss, transactionDb: fromPgBossDrizzleTx }),
+    });
+    expect((await stop(cancelRequest(second.run_id), { id: second.run_id })).status).toBe(200);
+    expect(
+      await boss.findJobs('copilot_run', { data: { session_id: first.session_id } }),
+    ).toHaveLength(1);
+    const reply = '已核对定义域；第二个退化分支证据不足，仍未确认掌握。';
+    await writeCopilotReply(testDb(), {
+      sessionId: first.session_id,
+      userAskEventId: first.run_id,
+      replyText: reply,
+      actorRef: 'agent:copilot',
+      taskRunId: 'task_route_recovered',
+      now: new Date(),
+      outcome: 'success',
+    });
+    await writeSuccessfulTerminalProjection(
+      testDb(),
+      {
+        runId: first.run_id,
+        replyMd: reply,
+        taskRunId: 'task_route_recovered',
+        finishReason: 'stop',
+      },
+      await runEvents(first.run_id),
+    );
+    const [physicalFirst] = await boss.findJobs<CopilotRunJobData>('copilot_run', {
+      data: { run_id: first.run_id },
+    });
+    if (!physicalFirst) throw new Error('missing accepted head');
+    await buildCopilotRunHandler(testDb(), {
+      wakeSession: (sessionId) =>
+        dispatchSessionHead(testDb(), sessionId, { boss, transactionDb: fromPgBossDrizzleTx }),
+    })([physicalFirst]);
+    const [physicalThird] = await boss.findJobs<CopilotRunJobData>('copilot_run', {
+      data: { run_id: third.run_id },
+    });
+    expect(physicalThird?.data).toMatchObject({
+      triggered_by: 'chip',
+      chip_kind: 'continue_review',
+      session_id: first.session_id,
+      ambient: firstInput.ambient_context,
+    });
+    const history = await getCopilotTurnsBeforeAnchor(testDb(), {
+      sessionId: first.session_id,
+      anchorEventId: third.run_id,
+    });
+    expect(history.some((turn) => turn.role === 'ai' && turn.text === reply)).toBe(true);
+    const restored = CopilotTurnsResponseSchema.parse(
+      await (await readConversation(new Request('http://test/api/copilot/turns'))).json(),
+    );
+    expect(restored.active_runs.map((run) => run.run_id)).toEqual([third.run_id]);
+    expect(restored.turns.filter((turn) => turn.event_id === first.run_id)).toHaveLength(1);
   });
 
   it('accepts three turns but dispatches only the head, then advances with the complete job body', async () => {

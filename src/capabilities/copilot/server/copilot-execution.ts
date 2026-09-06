@@ -317,9 +317,6 @@ export function createCopilotExecutionOwner(
           }
         : {}),
       interceptInput: (tool, args) => {
-        if (policy.kind === 'durable') {
-          return { args, truncationNote: budgetTracker.currentNotice(), softStop: null };
-        }
         const { args: capped, contextBudget, softStop } = budgetTracker.capInput(tool.name, args);
         return { args: capped, truncationNote: contextBudget, softStop };
       },

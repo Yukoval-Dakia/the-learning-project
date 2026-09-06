@@ -8,7 +8,7 @@
   ADR0062锁定一个会话生命周期，服务端顺序接纳/唯一执行；并行lane不共享写工作树。
   当前任务计划：①唯一SDK owner parity；②持久接纳/FIFO与故障恢复；③教学原子路径迁入；
   ④统一API、服务端快照与已预检UI；⑤scoped/真实断线与模型验收、独立review、exact CI。
-  UI预检已提交等待批准，后端步骤继续；尚未宣称统一入口完成。
+  UI预检已提交等待批准，后端入口已统一；尚未宣称统一产品体验完成。
   root已集成SDK lane并修掉初稿的早登记、DB未写、context digest未投递、重复拼保存说明等缺口；
   真实writer返回字节决定是否保留cursor，本进程绑定+256上限，失败/改写/Stop冷启，不同轮不重烧。
   teaching已走同一worker栅栏与终态marker：三种教学状态live/repair/replay，题目和回复原子提交；
@@ -20,6 +20,9 @@
   chip使用共享输入writer但保留system事件身份，不暴露typed-ask撤回锚；Stop同样识别chip。
   已删除旧HTTP SSE执行分支及其专属测试，保留幂等/歧义/取消/校验/回滚测试；没有按数量硬删。
   最新126unit、89worker/FIFO/history DB、typecheck/Biome/build通过；948/950 Linear均In Progress。
+  后续真实route→PG接纳/丢响应/无缓存恢复/追加/等待Stop/worker后继/因果历史场景通过；queue现8项。
+  发现durable默认跳过累计读取量预算，已删除分支复用capInput；合法60节点请求第17次仅余40，RED→GREEN。
+  保留6轮/25工具和原row上限；105相关unit、64集成DB及typecheck/Biome/build通过，无新增付费。
   仍待UI批准后统一发送/恢复/工具进度接线、实际模型和浏览器验收、独立review与exact-head CI。
 - Owner授权AI pipeline和全项目业务封装/测试精简；完整goal仍active，不以audit数量或单个PR代替完成。
 - YUK945：foreground原生SDK compaction、每轮learner状态、compact后结构化再注入；

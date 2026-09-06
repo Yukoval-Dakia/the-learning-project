@@ -2,6 +2,15 @@
 
 ## 最新状态（以下历史步骤不替代本节）
 
+- 后续goal continuation：上一轮9f8798ef属实质progress，本轮UI批准仍未收到；继续独立后端工作。
+  新增真实/chat→queue→/turns→Stop→worker-terminal-wake→history综合场景，仅mock测试enqueue开关，
+  验证丢202 body后无本地handle恢复、追加3轮、Stop等待轮不误停当前、后继保留context、读到晚到前轮reply。
+  queue8项与worker56项共64DB通过，不冒充真实HTTP socket断线或模型实际输出。
+  发现统一durable仍绕过capInput累计读取量限制；共享owner删除该例外，6/25与原1000node/4000event上限不变。
+  使用真实schema允许的60节点/次，前16次960、第17次仅40、第18次softstop；恢复旧分支RED，再修复GREEN。
+  105相关unit/typecheck/Biome/build通过。初始explorer误读旧worktree结果被拒，复查精确9f8798ef后才采纳。
+  该只读bounded核对不是948最终独立PR review；review预算仍未启动。没有新增paid/UI/deploy。
+
 - 2026-09-07后续集成：7c92403cf合入queue最终5fcae986；当前root无其它writer。
   /chat全部消息统一202持久接纳，必需稳定Idempotency-Key；旧durable值不控制执行路径；queue禁用显式503。
   terminal/Stop在事务提交后唤醒后继，失败由reconciler接管。chip输入共享writeCopilotInputEvent，
