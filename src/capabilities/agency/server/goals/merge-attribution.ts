@@ -1,5 +1,5 @@
 /** Agency-owned goal scope rewrite used by knowledge merge orchestration. */
-import { sql } from 'drizzle-orm';
+import { asc, sql } from 'drizzle-orm';
 import { applyKnowledgeMergeToIds } from '@/core/projections/learning_item';
 import type { Tx } from '@/db/client';
 import { goal } from '@/db/schema';
@@ -14,7 +14,9 @@ export async function rewriteGoalScopeOnMerge(
   const rows = await tx
     .select({ id: goal.id, scope_knowledge_ids: goal.scope_knowledge_ids })
     .from(goal)
-    .where(sql`${goal.scope_knowledge_ids} @> ${JSON.stringify([fromId])}::jsonb`);
+    .where(sql`${goal.scope_knowledge_ids} @> ${JSON.stringify([fromId])}::jsonb`)
+    .orderBy(asc(goal.id))
+    .for('update');
   const rewritten: string[] = [];
   for (const row of rows) {
     const next = applyKnowledgeMergeToIds(row.scope_knowledge_ids ?? [], new Set([fromId]), intoId);
