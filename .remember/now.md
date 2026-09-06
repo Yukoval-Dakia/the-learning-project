@@ -2,6 +2,19 @@
 
 ## 最新状态（以下历史步骤不替代本节）
 
+- 2026-09-07后续集成：7c92403cf合入queue最终5fcae986；当前root无其它writer。
+  /chat全部消息统一202持久接纳，必需稳定Idempotency-Key；旧durable值不控制执行路径；queue禁用显式503。
+  terminal/Stop在事务提交后唤醒后继，失败由reconciler接管。chip输入共享writeCopilotInputEvent，
+  保留system/chip action，不伪装typed ask；取消与终态同样不暴露chip撤回锚。
+  worker持久化安全tool/subtask STEP，串行drain先于terminal；Task内部prompt/result不公开。
+  原api/tool-use-sse及其4项保护测试已迁server/tool-activity，由worker实际消费，不留仅被测试调用的死代码。
+  最终126 scoped unit、89 worker/FIFO/history DB、typecheck、Biome与build通过；另8取消DB、17教学/API/skill DB已绿。
+  server/turns已有按根事件顺序纳入晚到前轮reply的规则，不另写第三历史reader。
+  新增worker活动测试最初复用了旧runID而读到旧job_events，已改独立ID；旧workerfixture补真实input root，
+  防止无root导致materializing/checkpoint测试假绿。未削弱原失败/恢复断言。
+  UI四文件预检仍待批准；未写UI、未新增paid、未push/PR/merge/deploy。948/950 Linear均In Progress。
+  最终review与真实统一会话验收尚缺；整个goal保持active。
+
 - 949/960已交付：PR1345 exact630571bc7cf53689780e4a501f8dc2283d153508，CI34043412808全绿，
   已squash合并main4d475ac2b95004dc4c166e84a49ba575de7a82c9（2026-09-06 16:00:56Z）。
   62内容校验/finalization tests覆盖同一行题目答案及礼貌请求，实际报告与修辞问句仍不误拦。
@@ -11,12 +24,12 @@
   root修复该lane早登记/未持久DB/digest未投递/重复拼notice/earlycancel清理，不能信任原worker初稿完成声明。
   最终字节必须来自sharedwriter实际return，candidate一致才保存cursor；本进程conversation→SDK绑定有256上限。
   teaching已走worker同一paid fence/outcome marker、真实taskid/Stop/原子question+reply；三kind共享live/repair/replay。
-  root还修复失败去view后receipt retained字段；artifact ready资格尚未收口。
+  root还修复失败去view后receipt retained字段；artifact ready资格已复用Notes owner并经16相关DB验证。
   85集成DB（55worker+4teaching lifecycle+26turns）、123unit、typecheck/lint/build通过。
   测试仅mock外部模型，writer/marker/DB实际运行；未声称实际模型/浏览器统一会话已通过。
-- Queue工作树tlp-wt-session-queue，branch codex/yuk-948-session-queue，architect repair_primary_view_contract独占写。
-  原worker f571a469/7e9af683不完整不可直接交付；architect已证5真实pg-boss DB+17既有DB+59unit绿，最终scope gates中。
-  root待合入queue，按其说明接terminal wake；再flip默认统一入口/6轮预算、补服务端active_runs快照。
+- Queue工作树tlp-wt-session-queue，branch codex/yuk-948-session-queue，最终5fcae986已合入root并释放。
+  原worker f571a469/7e9af683不完整不可直接交付；architect最终22DB/61unit及本地gates/audits通过。
+  root已接terminal wake、默认统一入口、6轮/25工具预算及服务端active_runs快照。
   SDK tree tlp-wt-worker-session latest测试f5dee551，已合入root；原worker与tester都已释放，无其它writer。
 - UI预检仍待批准：现有drawer的CopilotDock.tsx/message-projection.ts/subtask-events.ts/durable-reconnect-storage.ts。
   不新增Mission/后台按钮，不改视觉，不把session_busy或先Stop作为追加消息实现；UI代码未写。

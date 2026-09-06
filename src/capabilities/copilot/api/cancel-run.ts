@@ -47,19 +47,23 @@ async function cancelCopilotRun(
       if (!acceptance) throw new ApiError('not_found', 'copilot run not found', 404);
 
       // A QUEUED row alone is not enough: bind the public handle back to the
-      // canonical user ask and its fixed conversation session.
+      // canonical input event and its fixed conversation session.
       const roots = await tx
-        .select({ id: event.id })
+        .select({ id: event.id, action: event.action })
         .from(event)
         .where(
           and(
             eq(event.id, runId),
-            eq(event.action, 'experimental:copilot_user_ask'),
+            inArray(event.action, [
+              'experimental:copilot_user_ask',
+              'experimental:copilot_chip_trigger',
+            ]),
             eq(event.session_id, acceptance.sessionId),
           ),
         )
         .limit(1);
       if (roots.length === 0) throw new ApiError('not_found', 'copilot run not found', 404);
+      const typedAsk = roots[0]?.action === 'experimental:copilot_user_ask';
 
       const events = await tx
         .select({
@@ -128,7 +132,7 @@ async function cancelCopilotRun(
             runId,
             sessionId: acceptance.sessionId,
             actorRef,
-            checkpointSafe: true,
+            checkpointSafe: typedAsk,
           });
           await writeJobEvent(tx, {
             business_table: COPILOT_RUN_TABLE,
@@ -137,7 +141,7 @@ async function cancelCopilotRun(
             payload: {
               reason: 'cancelled',
               cancelled_before_start: true,
-              checkpoint_event_id: runId,
+              ...(typedAsk ? { checkpoint_event_id: runId } : {}),
             },
           });
           return { status: 'cancelled' as const, sessionId: acceptance.sessionId };
@@ -163,7 +167,7 @@ async function cancelCopilotRun(
         runId,
         sessionId: acceptance.sessionId,
         actorRef,
-        checkpointSafe: true,
+        checkpointSafe: typedAsk,
       });
       await writeJobEvent(tx, {
         business_table: COPILOT_RUN_TABLE,
@@ -172,7 +176,7 @@ async function cancelCopilotRun(
         payload: {
           reason: 'cancelled',
           cancelled_before_start: true,
-          checkpoint_event_id: runId,
+          ...(typedAsk ? { checkpoint_event_id: runId } : {}),
         },
       });
       return { status: 'cancelled' as const, sessionId: acceptance.sessionId };

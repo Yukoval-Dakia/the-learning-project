@@ -164,11 +164,13 @@ const REPLY_EVENT_ACTION = 'experimental:copilot_reply';
 // 写下作为 run handle / checkpoint_id 的 user_ask）共用同一份写入逻辑，防止两份
 // 事件形态分叉。生成 id、写事件、返回 id。session_id 列写在 user ask 上让 idle
 // 时钟把这视为本会话的一个 user turn（codex #3356884490，与 inline 同理）。
-export async function writeCopilotUserAsk(
+export async function writeCopilotInputEvent(
   db: Db | Tx,
   params: {
     sessionId: string;
     userMessage: string;
+    triggeredBy?: 'chat' | 'chip';
+    chipKind?: string;
     now: Date;
     /** Stable id for an idempotently accepted durable turn; inline callers omit it. */
     eventId?: string;
@@ -176,19 +178,22 @@ export async function writeCopilotUserAsk(
   },
 ): Promise<string> {
   const write = params.writeFn ?? writeEvent;
-  const userAskEventId = params.eventId ?? `copilot_user_ask_${createId()}`;
+  const isChip = params.triggeredBy === 'chip';
+  const userAskEventId =
+    params.eventId ?? `${isChip ? 'copilot_chip' : 'copilot_user_ask'}_${createId()}`;
   await write(db, {
     id: userAskEventId,
     session_id: params.sessionId,
-    actor_kind: 'user',
-    actor_ref: 'user:self',
-    action: USER_ASK_EVENT_ACTION,
+    actor_kind: isChip ? 'system' : 'user',
+    actor_ref: isChip ? 'ui:copilot_chip' : 'user:self',
+    action: isChip ? CHIP_TRIGGER_EVENT_ACTION : USER_ASK_EVENT_ACTION,
     subject_kind: 'query',
     subject_id: userAskEventId,
     outcome: null,
     payload: {
       surface: 'copilot',
       user_message: params.userMessage,
+      ...(isChip ? { chip_kind: params.chipKind ?? null } : {}),
       // AF S3a — redundant portable copy of the conversation envelope id.
       session_id: params.sessionId,
     },
@@ -598,42 +603,15 @@ async function runCopilotChatImpl(
   //               write a lightweight `experimental:copilot_chip_trigger`
   //               so analytics + cause-chain links work.
   // ──────────────────────────────────────────────────────────────────────
-  if (req.triggered_by === 'chat') {
-    // YUK-364 — 经共享 writeCopilotUserAsk（与 durable route dispatch 同一份写入
-    // 逻辑，防事件形态分叉）。writeFn 透传 deps.writeEventFn ?? writeEvent 保持
-    // 既有可注入语义；id 生成 + session_id 列 + payload 形态 byte-identical。
-    userAskEventId = await writeCopilotUserAsk(db, {
-      sessionId,
-      userMessage: req.user_message,
-      now,
-      writeFn: write,
-    });
-    causedByEventId = userAskEventId;
-  } else {
-    const chipEventId = `copilot_chip_${createId()}`;
-    await write(db, {
-      id: chipEventId,
-      // codex #3356884490 — write the session_id column on the chip trigger too,
-      // so chip-driven user activity is attributed to THIS conversation session
-      // (same idle-clock + replay reasons as the ask path above).
-      session_id: sessionId,
-      actor_kind: 'system',
-      actor_ref: 'ui:copilot_chip',
-      action: CHIP_TRIGGER_EVENT_ACTION,
-      subject_kind: 'query',
-      subject_id: chipEventId,
-      outcome: null,
-      payload: {
-        surface: 'copilot',
-        chip_kind: req.chip_kind ?? null,
-        user_message: req.user_message,
-        // AF S3a — redundant portable copy of the conversation envelope id.
-        session_id: sessionId,
-      },
-      created_at: now,
-    });
-    causedByEventId = chipEventId;
-  }
+  causedByEventId = await writeCopilotInputEvent(db, {
+    sessionId,
+    userMessage: req.user_message,
+    triggeredBy: req.triggered_by,
+    chipKind: req.chip_kind,
+    now,
+    writeFn: write,
+  });
+  if (req.triggered_by === 'chat') userAskEventId = causedByEventId;
 
   // ADR-0031 / YUK-304 (lane B) — emitQuizReply / emitQuizClarifyReply are
   // deleted with the C-form: quiz turns produce their reply through the SAME

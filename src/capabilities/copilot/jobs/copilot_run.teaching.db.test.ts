@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { writeCopilotUserAsk } from '@/capabilities/copilot/server/chat';
+import { writeCopilotInputEvent } from '@/capabilities/copilot/server/chat';
 import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
@@ -30,7 +30,11 @@ async function acceptedTeachingTurn(kind: TeachingSkillResult['kind']) {
     updated_at: new Date(),
   });
   const message = '继续讲解这组含义不同的句子，保留语境；检查时请让我解释推理。';
-  const runId = await writeCopilotUserAsk(db, { sessionId, userMessage: message, now: new Date() });
+  const runId = await writeCopilotInputEvent(db, {
+    sessionId,
+    userMessage: message,
+    now: new Date(),
+  });
   const text = '比较“送孟浩然之广陵”和“人之立志”中“之”的作用，说明判断依据。';
   const result: TeachingSkillResult = {
     kind,

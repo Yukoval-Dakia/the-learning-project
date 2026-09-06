@@ -15,7 +15,7 @@ import { writeEvent } from '@/kernel/events';
 import { writeJobEvent } from '@/server/events/writer';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { writeCopilotUserAsk } from '../server/chat';
+import { writeCopilotInputEvent } from '../server/chat';
 import {
   hashCopilotDurableInput,
   reserveCopilotDurableAcceptance,
@@ -123,7 +123,7 @@ describe('POST /api/copilot/runs/:id/cancel', () => {
       },
     });
 
-    const nextRunId = await writeCopilotUserAsk(testDb(), {
+    const nextRunId = await writeCopilotInputEvent(testDb(), {
       sessionId: accepted.sessionId,
       userMessage: '继续刚才的证据审查，但先总结上一轮状态。',
       now: new Date(Date.now() + 1_000),

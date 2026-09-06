@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：949/960已合并；948/950统一持续会话后端集成，UI预检待批准。
+> Linear 是权威 tracker；更新于 2026-09-07：948/950统一接纳/FIFO/恢复后端已接通；UI预检与端到端验收待完成。
 
 ## NOW
 
-- Active线948/950，root工作树tlp-wt-unified-conversation；SDK parity独立lane tlp-wt-worker-session。
+- Active线948/950，root独占工作树tlp-wt-unified-conversation；SDK与FIFO独立lane已合入并释放。
   ADR0062锁定一个会话生命周期，服务端顺序接纳/唯一执行；并行lane不共享写工作树。
   当前任务计划：①唯一SDK owner parity；②持久接纳/FIFO与故障恢复；③教学原子路径迁入；
   ④统一API、服务端快照与已预检UI；⑤scoped/真实断线与模型验收、独立review、exact CI。
@@ -13,8 +13,14 @@
   真实writer返回字节决定是否保留cursor，本进程绑定+256上限，失败/改写/Stop冷启，不同轮不重烧。
   teaching已走同一worker栅栏与终态marker：三种教学状态live/repair/replay，题目和回复原子提交；
   ask_check禁止错误revert anchor，Stop后不materialize。当前85集成DB与typecheck通过。
-  Queue lane原worker初稿未验收；architect在独立session-queue树补齐内核/恢复，5真实pg-boss DB已绿。
-  尚待queue合入/terminal wake、统一入口与预算、无本地缓存服务端快照、UI批准后接线和最终验收。
+  Queue lane最终5fcae986经7c92403cf合入；terminal/Stop在提交后唤醒后继，失败由现有reconciler恢复。
+  /chat普通/chip/teaching统一202，必须稳定幂等key；durable旧字段不再选择生命周期，禁用queue不回退inline。
+  head任务与接纳同事务；后续轮持久等待，不409 busy；默认仍6轮/25工具，12分钟安全墙钟。
+  server snapshot已含session/turns/active_runs；公开tool/subtask进度顺序持久化，不泄漏Task prompt。
+  chip使用共享输入writer但保留system事件身份，不暴露typed-ask撤回锚；Stop同样识别chip。
+  已删除旧HTTP SSE执行分支及其专属测试，保留幂等/歧义/取消/校验/回滚测试；没有按数量硬删。
+  最新126unit、89worker/FIFO/history DB、typecheck/Biome/build通过；948/950 Linear均In Progress。
+  仍待UI批准后统一发送/恢复/工具进度接线、实际模型和浏览器验收、独立review与exact-head CI。
 - Owner授权AI pipeline和全项目业务封装/测试精简；完整goal仍active，不以audit数量或单个PR代替完成。
 - YUK945：foreground原生SDK compaction、每轮learner状态、compact后结构化再注入；
   原6轮/费用/row/tool/deadline不重置，usage仅存bounded compact元数据。
@@ -41,7 +47,7 @@
   PR1345最终exact630571bc7cf53689780e4a501f8dc2283d153508 CI34043412808全绿，已squash合并main4d475ac2。
   960后续同一行题目/礼貌请求P1均RED后修复，最终62scoped tests/typecheck/lint/build绿。
   949/960 Linear Done；旧cc3afecd DB2超时不计通过。未增付费/第三轮review，tool_result仍为既有placeholder。
-  非阻塞P2随948收口：root已修commit receipt丢view仍retained；artifact ready eligibility待所属领域收口。
+  非阻塞P2随948收口：root已修commit receipt丢view仍retained；artifact引用复用Notes-owned ready资格，16相关DB绿。
 - YUK948/950 owner新决定：Copilot不分前后台，默认不中断；关闭面板/刷新/断线只脱离订阅。
   服务端唯一执行owner；同一会话后续消息持久接纳并顺序消费，不409 busy、不要求先Stop。
   撤回Mission按钮方案及其UI preflight；保留显式Stop与安全/预算限制。新UI尚未实施或获preflight批准。

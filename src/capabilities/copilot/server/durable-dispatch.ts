@@ -7,7 +7,7 @@ import { PICKUP_TIMEOUT_MS } from '@/capabilities/copilot/durable-pickup';
 import type { Db, Tx } from '@/db/client';
 import { job_events } from '@/db/schema';
 import { writeJobEvent } from '@/server/events/writer';
-import { writeCopilotUserAsk } from './chat';
+import { writeCopilotInputEvent } from './chat';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import { copilotRunTerminalSql } from './copilot-run-terminal-sql';
 
@@ -248,9 +248,11 @@ export async function reserveCopilotDurableAcceptance(
     }
 
     input.assertActive?.();
-    const runId = await writeCopilotUserAsk(tx, {
+    const runId = await writeCopilotInputEvent(tx, {
       sessionId: input.sessionId,
       userMessage: input.userMessage,
+      triggeredBy: input.jobData?.triggered_by,
+      chipKind: input.jobData?.chip_kind,
       now: new Date(),
       ...(deterministicRunId ? { eventId: deterministicRunId } : {}),
     });
@@ -332,7 +334,7 @@ export async function readCopilotSessionHead(
     WHERE q.business_table = ${COPILOT_RUN_TABLE}
       AND q.event_type = ${COPILOT_RUN_EVENTS.QUEUED}
       AND (q.payload->>'session_id') = ${sessionId}
-      AND ask.action = 'experimental:copilot_user_ask'
+      AND ask.action IN ('experimental:copilot_user_ask', 'experimental:copilot_chip_trigger')
       AND NOT EXISTS (
         SELECT 1 FROM job_events t
         WHERE t.business_table = q.business_table AND t.business_id = q.business_id

@@ -9,7 +9,7 @@ export const CopilotRouteIdParamsSchema = ApiIdParamsSchema;
 export const CopilotRunParamsSchema = ApiIdParamsSchema;
 export const CopilotCheckpointParamsSchema = z.object({ eventId: z.string().min(1) });
 export const CopilotChatHeadersSchema = z.object({
-  'Idempotency-Key': z.string().min(1).max(200).optional(),
+  'Idempotency-Key': z.string().min(1).max(200),
 });
 
 // YUK-497 review F3 — the cascade-revert refusal envelope the handler emits at 404
@@ -74,12 +74,10 @@ export const CopilotCheckpointRevertSuccessSchema = z.discriminatedUnion('status
   }),
 ]);
 
-export const CopilotChatStreamResponseSchema = z.string();
-
 export const CopilotDurableRunResponseSchema = z.object({
   run_id: z.string(),
   session_id: z.string(),
-  checkpoint_event_id: z.string(),
+  checkpoint_event_id: z.string().optional(),
 });
 
 export const CopilotCancelRunResponseSchema = z.object({

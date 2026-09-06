@@ -6,6 +6,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { buildCancelCopilotRunHandler } from '@/capabilities/copilot/api/cancel-run';
 import { isDurablePickupStalled } from '@/capabilities/copilot/durable-pickup';
+import {
+  buildCopilotRunHandler,
+  writeSuccessfulTerminalProjection,
+} from '@/capabilities/copilot/jobs/copilot_run';
 import { reconcileOutstandingCopilotRuns } from '@/capabilities/copilot/jobs/copilot_run_reconcile';
 import { event, job_events } from '@/db/schema';
 import { _resetBossForTests, fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
@@ -148,13 +152,63 @@ describe('durable Copilot session FIFO — real pg-boss contract', () => {
     expect(await boss.getJobById('copilot_run', third.bossJobId)).toBeNull();
 
     const roots = await testDb()
-      .select({ id: event.id })
+      .select({
+        id: event.id,
+        action: event.action,
+        actor_kind: event.actor_kind,
+        actor_ref: event.actor_ref,
+        payload: event.payload,
+      })
       .from(event)
-      .where(
-        and(eq(event.session_id, SESSION_ID), eq(event.action, 'experimental:copilot_user_ask')),
-      )
+      .where(eq(event.session_id, SESSION_ID))
       .orderBy(asc(event.dispatch_seq));
     expect(roots.map((row) => row.id)).toEqual([first.runId, second.runId, third.runId]);
+    expect(roots[0]).toMatchObject({
+      action: 'experimental:copilot_chip_trigger',
+      actor_kind: 'system',
+      actor_ref: 'ui:copilot_chip',
+      payload: { chip_kind: 'continue_one' },
+    });
+  });
+
+  it('wakes the next accepted turn after a worker terminal replay without another model call', async () => {
+    const first = await accept(boss, 'worker-complete');
+    const second = await accept(boss, 'worker-next');
+    const job = await boss.getJobById<CopilotRunJobData>('copilot_run', first.bossJobId);
+    if (!job) throw new Error('missing physical head');
+    await settleWithoutWorker(boss, first);
+    await buildCopilotRunHandler(testDb(), {
+      wakeSession: (sessionId) =>
+        dispatchSessionHead(testDb(), sessionId, { boss, transactionDb: fromPgBossDrizzleTx }),
+    })([job]);
+    expect(await boss.getJobById('copilot_run', second.bossJobId)).toMatchObject({
+      id: second.bossJobId,
+      state: 'created',
+    });
+    expect(
+      (await runEvents(second.runId)).filter(
+        (row) => row.event_type === COPILOT_RUN_EVENTS.DISPATCHED,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('never publishes a typed-ask revert checkpoint for a chip-triggered reply', async () => {
+    const accepted = await accept(boss, 'chip-projection');
+    await writeSuccessfulTerminalProjection(
+      testDb(),
+      {
+        runId: accepted.runId,
+        taskRunId: `task_${accepted.runId}`,
+        replyMd: '已核对近两轮练习；定义域仍需结合退化条件检查，方向与单位分别保留证据。',
+        finishReason: 'stop',
+      },
+      await runEvents(accepted.runId),
+    );
+    const terminal = (await runEvents(accepted.runId)).filter((row) =>
+      [COPILOT_RUN_EVENTS.REPLY, COPILOT_RUN_EVENTS.DONE].some((type) => type === row.event_type),
+    );
+    expect(terminal).toHaveLength(2);
+    for (const row of terminal) expect(row.payload).not.toHaveProperty('checkpoint_event_id');
   });
 
   it('lets concurrent head dispatch attempts commit exactly one physical job and marker', async () => {
@@ -253,6 +307,9 @@ describe('durable Copilot session FIFO — real pg-boss contract', () => {
       run_id: waiting.runId,
       status: 'cancelled',
     });
+    expect((await runEvents(waiting.runId)).at(-1)?.payload).not.toHaveProperty(
+      'checkpoint_event_id',
+    );
     expect(await boss.getJobById('copilot_run', waiting.bossJobId)).toBeNull();
     expect(await boss.getJobById('copilot_run', afterCancelled.bossJobId)).toMatchObject({
       id: afterCancelled.bossJobId,

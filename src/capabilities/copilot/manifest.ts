@@ -7,7 +7,6 @@ import {
   CopilotCancelRunResponseSchema,
   CopilotChatHeadersSchema,
   CopilotChatRequest,
-  CopilotChatStreamResponseSchema,
   CopilotCheckpointParamsSchema,
   CopilotCheckpointRevertErrorSchema,
   CopilotCheckpointRevertSuccessSchema,
@@ -56,14 +55,12 @@ export const copilotCapability = defineCapability({
         operationId: 'runCopilotChat',
         request: { headers: CopilotChatHeadersSchema, body: CopilotChatRequest },
         responses: {
-          200: CopilotChatStreamResponseSchema,
           202: CopilotDurableRunResponseSchema,
           ...API_ERROR_RESPONSES,
           499: ApiErrorResponseSchema,
           503: ApiErrorResponseSchema,
         },
-        responseMediaTypes: { 200: 'text/event-stream' },
-        successStatus: [200, 202],
+        successStatus: [202],
         load: () => import('./api/chat').then((m) => m.POST),
       },
       {

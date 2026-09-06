@@ -41,7 +41,6 @@ import { acquireCopilotExecutionSettlementLock } from '@/capabilities/copilot/se
 // inline. Before YUK-575 the durable run shipped a minimal {surface,triggered_by,
 // user_message} with NO session memory.
 import {
-  type CopilotAmbientContext,
   type CopilotRunInput,
   assembleCopilotRunInput,
   selectActorRef,
@@ -58,7 +57,12 @@ import {
   isCopilotWorkerSessionOwned,
   registerCopilotWorkerSession,
 } from '@/capabilities/copilot/server/copilot-worker-session';
-import { withCopilotDurableDispatchLock } from '@/capabilities/copilot/server/durable-dispatch';
+import {
+  type CopilotRunJobData,
+  dispatchSessionHead,
+  hasTerminalCopilotRun,
+  withCopilotDurableDispatchLock,
+} from '@/capabilities/copilot/server/durable-dispatch';
 import { selectAsksWithMaterializingToolCall } from '@/capabilities/copilot/server/materializing-tools';
 import { runTeachingSkill } from '@/capabilities/copilot/server/skills/teaching-skill';
 import type { Db, Tx } from '@/db/client';
@@ -71,6 +75,7 @@ import {
 } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
 import { buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
+import { fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
 import {
   type BossJobObservation,
   type BossJobObserver,
@@ -84,11 +89,7 @@ import {
   setAgentSdkSessionId,
 } from '@/server/session/conversation';
 import { resolveCopilotSkills } from '@/subjects/copilot-skills';
-import type {
-  CopilotModeState,
-  CopilotSkillContextT,
-  CopilotSkillTurn,
-} from '../server/chat-contracts';
+import type { CopilotModeState, CopilotSkillTurn } from '../server/chat-contracts';
 import {
   DURABLE_COPILOT_EXECUTION_BUDGET,
   type ExecuteCopilotTurn,
@@ -105,36 +106,10 @@ export { enqueueCopilotMailboxJob } from '../api/chat';
 
 import type { CopilotContinuationRecord, SubagentRunRecord } from '../server/subagent-mailbox';
 import type { SpawnBudgetObservation } from '../server/subagents';
+import { projectCopilotActivity } from '../server/tool-activity';
 import { getCopilotContinuationHistory } from '../server/turns';
 
-// dispatch 入口投递的 job 体。run_id = checkpoint_id = user_ask event id（route
-// 在 enqueue 前已写 user_ask domain event，本 handler 以它做 causedByEventId 让
-// tool-use mirror 串到同一因果链，与 quiz_gen triggerEventId 同款）。
-export interface CopilotRunJobData {
-  /** checkpoint_id = user_ask event id；既是 run handle 也是 job_events business_id。 */
-  run_id: string;
-  /**
-   * YUK-364 — durable run 所属的 conversation 会话 id（dispatch 时 findOrCreate 得到、
-   * 已写在 user_ask 上）。handler 成功路径据它写 copilot_reply domain event，让回复对
-   * turns.ts 的 conversation_history 可见、user_ask 不成 phantom。
-   */
-  session_id: string;
-  user_message: string;
-  /** 'chat' | 'chip'——决定 surface / actorRef（与同步面 selectSurface 同语义）。 */
-  triggered_by: 'chat' | 'chip';
-  /** chip 直触可选标识，透传进 run input（同步面 chip_kind）。 */
-  chip_kind?: string;
-  /** Product-only mode metadata; never copied into CopilotRunInput/model prompt. */
-  skill_context?: CopilotSkillContextT;
-  correction_target_turn_id?: string;
-  /**
-   * YUK-575 (S4) — ambient context（用户当前 route + 可选 focused_entity）。它是
-   * request-only、**从不 persisted**（防循环 ②：绝不写进任何 turn payload），所以
-   * 必须 RIDE 这个 job payload 才能在 worker 拾取时进 run input——不像
-   * conversation_history / learner-state（从事件重建），ambient 无处可重读。
-   */
-  ambient?: CopilotAmbientContext;
-}
+export type { CopilotRunJobData } from '../server/durable-dispatch';
 
 // One execution owner resolves the budget. Unified persistent conversations
 // retain the normal six model turns and 25-tool cap; moving off HTTP is not an
@@ -246,7 +221,11 @@ export async function markCopilotRunStarted(
         business_table: COPILOT_RUN_TABLE,
         business_id: runId,
         event_type: COPILOT_RUN_EVENTS.FAILED,
-        payload: { reason: 'cancelled', cancelled_before_start: true, checkpoint_event_id: runId },
+        payload: {
+          reason: 'cancelled',
+          cancelled_before_start: true,
+          ...(await durableCheckpointPayload(tx, runId)),
+        },
       });
       return { outcome: 'cancelled' };
     }
@@ -291,7 +270,11 @@ export async function claimCopilotExecutionFence(
         business_table: COPILOT_RUN_TABLE,
         business_id: runId,
         event_type: COPILOT_RUN_EVENTS.FAILED,
-        payload: { reason: 'cancelled', cancelled_before_start: true, checkpoint_event_id: runId },
+        payload: {
+          reason: 'cancelled',
+          cancelled_before_start: true,
+          ...(await durableCheckpointPayload(tx, runId)),
+        },
       });
       return { outcome: 'cancelled' };
     }
@@ -341,6 +324,12 @@ async function durableCheckpointPayload(
 ): Promise<Record<string, string>> {
   let turnMaterialized: boolean;
   try {
+    const [root] = await db
+      .select({ action: event.action })
+      .from(event)
+      .where(eq(event.id, runId))
+      .limit(1);
+    if (root?.action !== 'experimental:copilot_user_ask') return {};
     turnMaterialized = (await selectAsksWithMaterializingToolCall(db, [runId])).has(runId);
   } catch (probeErr) {
     console.error('[copilot_run] materializing-tool probe failed; suppressing revert anchor', {
@@ -896,7 +885,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   const resumeSessionId = isCopilotWorkerSessionOwned(data.session_id, persistedSdkSessionId)
     ? (persistedSdkSessionId ?? undefined)
     : undefined;
-  const progressChain: Promise<void> = Promise.resolve();
+  let progressChain: Promise<void> = Promise.resolve();
   // Load-bearing execution fence, deliberately placed after every deterministic
   // setup/read and immediately before the only paid/external-effect gateway.
   // The claim rechecks under a per-run transaction lock: two overlapping
@@ -1039,15 +1028,25 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
         ...(params.copilotSubagentEnabled !== undefined
           ? { subagentsEnabled: params.copilotSubagentEnabled }
           : {}),
-        ...(params.onSpawnBudgetObservation
-          ? {
-              observe: (activity) => {
-                if (activity.kind === 'spawn_budget') {
-                  params.onSpawnBudgetObservation?.(activity.observation);
-                }
-              },
-            }
-          : {}),
+        observe: (activity) => {
+          if (activity.kind === 'spawn_budget') {
+            params.onSpawnBudgetObservation?.(activity.observation);
+            return;
+          }
+          const payload = projectCopilotActivity(activity);
+          if (!payload) return;
+          progressChain = progressChain
+            .catch(() => undefined)
+            .then(async () => {
+              await writeJobEvent(db, {
+                business_table: COPILOT_RUN_TABLE,
+                business_id: runId,
+                event_type: COPILOT_RUN_EVENTS.STEP,
+                payload,
+              });
+            });
+          return progressChain;
+        },
       },
     );
     await drainDeltaChain(progressChain, runId);
@@ -1607,7 +1606,17 @@ export async function reconcileCopilotDurableRun(
  * 注册器（register-capability-jobs.ts）固定 { pollingIntervalSeconds:2, batchSize:1 }
  * → 天然 n=1 单线程一次一 run（串行化由 batchSize:1 提供）。
  */
-export function buildCopilotRunHandler(db: Db): (jobs: Job<CopilotRunJobData>[]) => Promise<void> {
+export function buildCopilotRunHandler(
+  db: Db,
+  options: { wakeSession?: (sessionId: string) => Promise<unknown> } = {},
+): (jobs: Job<CopilotRunJobData>[]) => Promise<void> {
+  const wakeSession =
+    options.wakeSession ??
+    (async (sessionId: string) =>
+      dispatchSessionHead(db, sessionId, {
+        boss: await getStartedBoss(),
+        transactionDb: fromPgBossDrizzleTx,
+      }));
   return async (jobs) => {
     for (const job of jobs) {
       const data = job.data;
@@ -1620,8 +1629,22 @@ export function buildCopilotRunHandler(db: Db): (jobs: Job<CopilotRunJobData>[])
           `copilot_run job ${job.id} missing run_id/session_id/user_message/triggered_by`,
         );
       }
-      const result = await runCopilotRun({ db, data });
-      console.log(`[copilot_run] ${data.run_id} -> ${result.status}`);
+      try {
+        const result = await runCopilotRun({ db, data });
+        console.log(`[copilot_run] ${data.run_id} -> ${result.status}`);
+      } finally {
+        // Only after the terminal transaction has committed may the successor
+        // run start. A wake failure never invalidates an already-paid outcome;
+        // the existing reconciler provides the durable retry floor.
+        try {
+          if (await hasTerminalCopilotRun(db, data.run_id)) await wakeSession(data.session_id);
+        } catch (error) {
+          console.error('[copilot_run] successor wake deferred to reconciliation', {
+            runId: data.run_id,
+            error,
+          });
+        }
+      }
     }
   };
 }

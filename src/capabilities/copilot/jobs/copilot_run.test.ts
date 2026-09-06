@@ -257,7 +257,30 @@ type CopilotRunTestParams = RunCopilotRunParams & {
   resolveCopilotSkillsFn?: CopilotExecutionAdapters['resolveCopilotSkillsFn'];
 };
 
-function runCopilotRun(params: CopilotRunTestParams): ReturnType<typeof runCopilotRunActual> {
+async function runCopilotRun(params: CopilotRunTestParams): ReturnType<typeof runCopilotRunActual> {
+  // A dispatched worker job always has a committed input root. Preserve that
+  // real admission precondition even when model execution is injected here;
+  // otherwise missing roots can falsely pass checkpoint-suppression tests.
+  const isChip = params.data.triggered_by === 'chip';
+  await params.db
+    .insert(event)
+    .values({
+      id: params.data.run_id,
+      session_id: params.data.session_id,
+      actor_kind: isChip ? 'system' : 'user',
+      actor_ref: isChip ? 'ui:copilot_chip' : 'user:self',
+      action: isChip ? 'experimental:copilot_chip_trigger' : 'experimental:copilot_user_ask',
+      subject_kind: 'query',
+      subject_id: params.data.run_id,
+      payload: {
+        surface: 'copilot',
+        user_message: params.data.user_message,
+        session_id: params.data.session_id,
+        ...(isChip ? { chip_kind: params.data.chip_kind ?? null } : {}),
+      },
+      created_at: new Date(),
+    })
+    .onConflictDoNothing();
   const {
     executeCopilotTurnFn,
     streamTaskCollectingFn,
@@ -306,6 +329,83 @@ describe('runCopilotRun', () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  it('persists safe tool and subtask activity in order before the terminal, without private Task prompts', async () => {
+    const runId = 'copilot_user_ask_safe_activity_48';
+    const result = await runCopilotRun({
+      db: testDb(),
+      data: { ...baseData, run_id: runId },
+      resolveCopilotRunInputFn: stubRunInput,
+      executeCopilotTurnFn: async (_db, turn, policy) => {
+        // Match SDK callbacks that do not await each observer. The worker must
+        // drain the serialized public events before publishing its final reply.
+        void policy.observe?.({
+          kind: 'tool_started',
+          toolName: 'Task',
+          input: { prompt: 'private cross-subject reasoning', subagent_type: 'copilot-researcher' },
+        });
+        void policy.observe?.({
+          kind: 'tool_started',
+          toolName: 'query_mistakes',
+          toolUseId: 'tool_read_48',
+          input: { subject_id: 'math', limit: 48, filter: { concepts: ['定义域', '退化条件'] } },
+        });
+        void policy.observe?.({
+          kind: 'subtask',
+          event: {
+            step_kind: 'subtask',
+            subtask_id: 'child_evidence',
+            label: '正在深入核对证据',
+            status: 'running',
+          },
+        });
+        void policy.observe?.({
+          kind: 'tool_finished',
+          toolName: 'query_mistakes',
+          input: { subject_id: 'math', limit: 48 },
+          summary: '读取完成：48 条作答，包含三轮延迟复习。',
+        });
+        void policy.observe?.({
+          kind: 'tool_finished',
+          toolName: 'Task',
+          input: { prompt: 'private cross-subject reasoning' },
+          summary: 'private child result',
+        });
+        void policy.observe?.({
+          kind: 'subtask',
+          event: {
+            step_kind: 'subtask',
+            subtask_id: 'child_evidence',
+            label: '子任务已完成',
+            status: 'completed',
+          },
+        });
+        return successfulWorkerExecution(
+          turn.taskRunId,
+          '已完成证据核对，保留定义域与退化条件的区分。',
+        );
+      },
+    });
+    expect(result.status).toBe('done');
+    const events = await replay(runId);
+    const steps = events.filter((item) => item.event_type === COPILOT_RUN_EVENTS.STEP);
+    expect(steps.map((item) => item.payload.step_kind)).toEqual([
+      'tool_started',
+      'subtask',
+      'tool_finished',
+      'subtask',
+    ]);
+    expect(steps[0]?.payload).toMatchObject({
+      tool_use_id: 'tool_read_48',
+      tool_name: 'query_mistakes',
+      input: { filter: { concepts: ['定义域', '退化条件'] } },
+    });
+    expect(events.slice(-2).map((item) => item.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.REPLY,
+      COPILOT_RUN_EVENTS.DONE,
+    ]);
+    expect(JSON.stringify(events)).not.toContain('private');
   });
 
   it('① happy path — 写 started→reply→done 序列，computeReplay 末态 done', async () => {
@@ -796,11 +896,20 @@ describe('runCopilotRun', () => {
     expect(events.map((event) => event.event_type)).toEqual([
       COPILOT_RUN_EVENTS.STARTED,
       COPILOT_RUN_EVENTS.EXECUTION_STARTED,
+      COPILOT_RUN_EVENTS.STEP,
+      COPILOT_RUN_EVENTS.STEP,
       COPILOT_RUN_EVENTS.DELTA,
       COPILOT_RUN_EVENTS.REPLY,
       COPILOT_RUN_EVENTS.DONE,
     ]);
-    expect(events.some((event) => event.event_type === COPILOT_RUN_EVENTS.STEP)).toBe(false);
+    expect(
+      events
+        .filter((event) => event.event_type === COPILOT_RUN_EVENTS.STEP)
+        .map((event) => event.payload),
+    ).toEqual([
+      expect.objectContaining({ step_kind: 'subtask', status: 'running' }),
+      expect.objectContaining({ step_kind: 'subtask', status: 'completed' }),
+    ]);
   });
 
   it('YUK-757 — durable kill switch removes Task and spawn-only runner options', async () => {

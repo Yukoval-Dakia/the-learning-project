@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { event, learning_session } from '@/db/schema';
 import { writeJobEvent } from '@/server/events/writer';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { writeCopilotUserAsk } from '../server/chat';
+import { writeCopilotInputEvent } from '../server/chat';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from '../server/copilot-run-status';
 import { POST as acceptChip } from './accept-chip';
 import {
@@ -185,7 +185,7 @@ describe('Copilot declared route response contracts', () => {
     const ids: string[] = [];
     for (let index = 0; index < 5; index++) {
       const sessionId = index === 4 ? foreign.id : session.id;
-      const runId = await writeCopilotUserAsk(testDb(), {
+      const runId = await writeCopilotInputEvent(testDb(), {
         sessionId,
         userMessage: `第${index + 1}条：比较近期复习与延迟探针，区分已掌握和未验证的知识点；保持前一条执行，不要重复修改目标。`,
         // Deliberately reverse timestamps: acceptance order is dispatch_seq.

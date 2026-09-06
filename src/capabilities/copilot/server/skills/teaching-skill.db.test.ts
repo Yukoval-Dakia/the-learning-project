@@ -15,7 +15,7 @@ import { materializeAskCheckQuestion } from '@/capabilities/copilot/server/teach
 import { event, learning_item, learning_session, question } from '@/db/schema';
 import { Conversation } from '@/server/session';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { writeCopilotUserAsk, writeTeachingCopilotReply } from '../chat';
+import { writeCopilotInputEvent, writeTeachingCopilotReply } from '../chat';
 import { runTeachingSkill } from './teaching-skill';
 
 const db = testDb();
@@ -199,7 +199,7 @@ describe('runTeachingSkill (U6 teaching skill — single session)', () => {
       await seedLearningItem(learningItemId);
       const sessionId = await seedCopilotSession();
       const now = new Date();
-      const askId = await writeCopilotUserAsk(db, {
+      const askId = await writeCopilotInputEvent(db, {
         sessionId,
         userMessage: '比较代词、动词和结构助词在完整语境中的不同用法。',
         now,
