@@ -103,7 +103,7 @@ export function containsLearningQuestion(text: string): boolean {
   // line. Anchor the imperative, not the question's end, so rhetorical report
   // prose such as “为什么选择这个方案？因为预算有限。” is not newly classified.
   const directInstruction =
-    /(?:^|\n|[。？?；;])\s*(?:#{1,6}\s*)?(?:请(?:你)?\s*|试\s*|尝试\s*|please\s+)?(?:求|计算|证明|选择|判断|解答|solve\b|calculate\b|prove\b|choose\b)[^\n？?]{1,600}[？?]/im;
+    /(?:^|\n|[。？?；;])\s*(?:#{1,6}\s*)?(?:(?:请(?:问|你)?|帮我|麻烦你?|试|尝试|(?:你)?(?:能否|能|可以)|可否)\s*){0,2}(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:求|计算|证明|选择|判断|解答|solve\b|calculate\b|prove\b|choose\b)[^\n？?]{1,600}[？?]/im;
   const instructionalQuestionCandidates =
     /(?:^|\n)[^\n]{0,300}(?:求|计算|证明|选择|判断|解答|solve|calculate|prove|choose)[^\n]{0,300}[？?](?:\n|$)/gim;
   const activeInstructionalQuestion = [...text.matchAll(instructionalQuestionCandidates)].some(
