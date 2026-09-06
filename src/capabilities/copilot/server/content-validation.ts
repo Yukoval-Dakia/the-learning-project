@@ -100,7 +100,7 @@ export function containsLearningQuestion(text: string): boolean {
   const numberedQuestion =
     /(?:^|\n)\s*(?:\d+[.)、]|[（(][一二三四五六七八九十\d]+[）)])[^\n]{1,500}[？?]/m;
   const instructionalQuestionCandidates =
-    /(?:^|\n)[^\n]{0,300}(?:求|计算|证明|选择|判断|解答|solve|calculate|prove|choose)[^\n]{0,300}[？?]/gim;
+    /(?:^|\n)[^\n]{0,300}(?:求|计算|证明|选择|判断|解答|solve|calculate|prove|choose)[^\n]{0,300}[？?](?:\n|$)/gim;
   const activeInstructionalQuestion = [...text.matchAll(instructionalQuestionCandidates)].some(
     ([match]) => {
       const candidate = match;

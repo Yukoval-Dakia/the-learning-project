@@ -100,6 +100,11 @@ describe('validateCopilotLearningContent', () => {
     expect(containsLearningQuestion('是否已经证明 P？\n\n请计算 Q？')).toBe(true);
   });
 
+  it('preserves the existing boundary for an embedded rhetorical question with prose after it', () => {
+    expect(containsLearningQuestion('为什么选择这个方案？因为预算有限。')).toBe(false);
+    expect(containsLearningQuestion('是否已证明 P？请证明 Q？')).toBe(true);
+  });
+
   it('does not let completed wording bypass explicit question protections', () => {
     expect(containsLearningQuestion('题目：是否已证明 P？')).toBe(true);
     expect(containsLearningQuestion('1. 是否已证明 P？')).toBe(true);
