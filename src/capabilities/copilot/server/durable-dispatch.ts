@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
-import { job_events } from '@/db/schema';
+import { event, job_events } from '@/db/schema';
+import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
+import { getStartedBoss } from '@/server/boss/client';
 import { writeJobEvent } from '@/server/events/writer';
 import { writeCopilotUserAsk } from './chat';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
@@ -16,6 +18,13 @@ export interface CopilotDurableAcceptance {
   sessionId: string;
   inputHash: string;
   bossJobId: string;
+}
+
+export interface CopilotSessionHead {
+  runId: string;
+  sessionId: string;
+  bossJobId: string;
+  payload: Record<string, unknown>;
 }
 
 export type ReserveCopilotDurableAcceptanceResult =
@@ -157,6 +166,7 @@ export async function reserveCopilotDurableAcceptance(
       event_type: COPILOT_RUN_EVENTS.QUEUED,
       payload: {
         ...input.queuedPayload,
+        run_id: runId,
         input_hash: input.inputHash,
         boss_job_id: bossJobId,
         ...(input.idempotencyKey ? { idempotency_key: input.idempotencyKey } : {}),
@@ -188,6 +198,70 @@ export async function hasTerminalCopilotRun(db: Db | Tx, runId: string): Promise
     )
     .limit(1);
   return rows.length > 0;
+}
+
+/**
+ * Pick the oldest non-terminal accepted turn for a session.  The session lock
+ * and the SQL ordering make this a single-winner operation; dispatch_seq stays
+ * in SQL and is never converted through JavaScript.
+ */
+export async function readCopilotSessionHead(tx: Tx, sessionId: string): Promise<CopilotSessionHead | null> {
+  const rows = await tx.execute(sql`
+    SELECT q.business_id AS run_id, q.payload
+    FROM job_events q
+    JOIN event ask ON ask.id = q.business_id
+    WHERE q.business_table = ${COPILOT_RUN_TABLE}
+      AND q.event_type = ${COPILOT_RUN_EVENTS.QUEUED}
+      AND (q.payload->>'session_id') = ${sessionId}
+      AND ask.action = 'experimental:copilot_user_ask'
+      AND NOT EXISTS (
+        SELECT 1 FROM job_events t
+        WHERE t.business_table = q.business_table AND t.business_id = q.business_id
+          AND ${copilotRunTerminalSql(sql.raw('t.event_type'), sql.raw('t.payload'))}
+      )
+    ORDER BY ask.dispatch_seq ASC, ask.id ASC
+    LIMIT 1
+  `) as Array<{ run_id: string; payload: unknown }>;
+  const row = rows[0];
+  if (!row || row.payload === null || typeof row.payload !== 'object' || Array.isArray(row.payload)) return null;
+  const payload = row.payload as Record<string, unknown>;
+  const bossJobId = payload.boss_job_id;
+  if (typeof bossJobId !== 'string') return null;
+  return { runId: row.run_id, sessionId, bossJobId, payload };
+}
+
+/** Dispatch exactly the current session head, idempotently, in the acceptance transaction. */
+export async function dispatchSessionHead(db: Db, sessionId: string): Promise<string | null> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('copilot-session-queue'), hashtext(${sessionId}))`);
+    const head = await readCopilotSessionHead(tx, sessionId);
+    if (!head) return null;
+    const boss = await getStartedBoss();
+    const job = { ...head.payload };
+    job.run_id = head.runId;
+    job.session_id = head.sessionId;
+    delete job.input_hash;
+    delete job.idempotency_key;
+    delete job.pickup_deadline_ms;
+    delete job.dispatch;
+    const sent = await boss.send('copilot_run', job, {
+      id: head.bossJobId,
+      db: fromPgBossDrizzleTx(tx),
+    });
+    if (!sent) throw new Error(`copilot session head ${head.runId} was not dispatched`);
+    await writeJobEvent(tx, {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: head.runId,
+      event_type: 'copilot_run.dispatched',
+      payload: {
+        boss_job_id: head.bossJobId,
+        session_id: sessionId,
+        protocol_version: 2,
+        pickup_deadline_ms: Date.now() + 10_000,
+      },
+    });
+    return head.runId;
+  });
 }
 
 /** Serialize accepted→pg-boss dispatch and any definitive-failure compensation. */

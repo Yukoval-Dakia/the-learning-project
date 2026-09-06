@@ -36,12 +36,14 @@ import {
   hasTerminalCopilotRun,
   hashCopilotDurableInput,
   reconcileCopilotDurableAcceptance,
+  readCopilotSessionHead,
   reserveCopilotDurableAcceptance,
   withCopilotDurableDispatchLock,
 } from '@/capabilities/copilot/server/durable-dispatch';
 import { db } from '@/db/client';
 import { ApiError, HTTP_PROVIDER_SESSION_BUDGET_MS, errorResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
+import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
 import { writeJobEvent } from '@/server/events/writer';
 import { checkRateLimit } from '@/server/http/rate-limit';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
@@ -133,6 +135,10 @@ async function dispatchAcceptedRun(
 ): Promise<void> {
   try {
     const outcome = await withCopilotDurableDispatchLock(db, acceptance.runId, async (tx) => {
+      const head = await readCopilotSessionHead(tx, acceptance.sessionId);
+      if (head && head.runId !== acceptance.runId) {
+        return { status: 'waiting' as const };
+      }
       // A terminal replay is still the same accepted operation. Never recreate a
       // deleted pg-boss row after its durable public result already exists.
       if (await hasTerminalCopilotRun(tx, acceptance.runId)) {
@@ -165,7 +171,7 @@ async function dispatchAcceptedRun(
               : {}),
             ...(parsed.skill_context ? { skill_context: parsed.skill_context } : {}),
           },
-          { id: acceptance.bossJobId },
+          { id: acceptance.bossJobId, db: fromPgBossDrizzleTx(tx) },
         );
       } catch (sendErr) {
         // `send` may have committed and only lost its acknowledgement. Read back
@@ -390,6 +396,7 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
           ...(idempotencyKey ? { idempotencyKey } : {}),
           queuedPayload: {
             session_id: conv.sessionId,
+            user_message: parsed.user_message,
             triggered_by: parsed.triggered_by,
             pickup_deadline_ms: Date.now() + PICKUP_TIMEOUT_MS,
             dispatch: { source: 'request_flag' },
