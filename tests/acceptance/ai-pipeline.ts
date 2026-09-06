@@ -15,6 +15,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { config } from 'dotenv';
 
@@ -841,7 +842,10 @@ async function main(): Promise<void> {
           .where(eq(schema.event.id, result.reply_event_id));
         const savedPrimaryView = (persistedReply?.payload as { primary_view?: unknown })
           ?.primary_view;
-        if (SHA256(savedPrimaryView ?? null) !== SHA256(result.primary_view ?? null))
+        if (latestEvidence) latestEvidence.persisted_primary_view = savedPrimaryView ?? null;
+        // jsonb normalizes object key ordering; compare the product value, not
+        // JSON.stringify insertion order from the model's control input.
+        if (!isDeepStrictEqual(savedPrimaryView ?? null, result.primary_view ?? null))
           throw new Error(`${caseName}: persisted primary-view mismatched live reply`);
         if (result.reply.includes('<!--primary_view'))
           throw new Error(`${caseName}: unexpected legacy marker in visible reply`);
