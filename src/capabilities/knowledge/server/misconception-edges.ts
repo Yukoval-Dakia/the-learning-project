@@ -242,3 +242,47 @@ export async function archiveMisconceptionEdge(
 
   return { id, archived: true };
 }
+
+/** Repoint live misconception edges during a KC merge. This is the only owner
+ * of collision/reactivation semantics for misconception_edge. */
+export async function rewireMisconceptionEdgesForKnowledgeMerge(
+  tx: Tx,
+  fromId: string,
+  intoId: string,
+  now: Date,
+): Promise<string[]> {
+  const rows = await tx
+    .select({
+      id: misconception_edge.id,
+      from_id: misconception_edge.from_id,
+      relation_type: misconception_edge.relation_type,
+      weight: misconception_edge.weight,
+      created_by: misconception_edge.created_by,
+      proposed_by_ai: misconception_edge.proposed_by_ai,
+    })
+    .from(misconception_edge)
+    .where(
+      and(
+        eq(misconception_edge.to_kind, 'knowledge'),
+        eq(misconception_edge.to_id, fromId),
+        isNull(misconception_edge.archived_at),
+      ),
+    );
+  const handled: string[] = [];
+  for (const row of rows) {
+    await archiveMisconceptionEdge(tx, row.id, now);
+    await createMisconceptionEdge(tx, {
+      from_id: row.from_id,
+      to_kind: 'knowledge',
+      to_id: intoId,
+      relation_type: row.relation_type,
+      weight: row.weight,
+      created_by: AgentRef.parse(row.created_by),
+      proposed_by_ai: row.proposed_by_ai,
+      now,
+      reactivate: true,
+    });
+    handled.push(row.id);
+  }
+  return handled;
+}

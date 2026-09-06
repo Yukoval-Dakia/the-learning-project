@@ -60,7 +60,11 @@ import {
   listLiveEdgesTouchingNode,
   reactivateKnowledgeEdge,
 } from './edges';
-import { archiveMisconceptionEdge, createMisconceptionEdge } from './misconception-edges';
+import {
+  archiveMisconceptionEdge,
+  createMisconceptionEdge,
+  rewireMisconceptionEdgesForKnowledgeMerge,
+} from './misconception-edges';
 import { type TopologyEdge, checkEdgeTopology } from './topology-gate';
 
 type DbLike = Db | Tx;
@@ -971,7 +975,12 @@ export async function repairMergeAttributionForFromId(
     fsrs_state: await retireFsrsStateOnMerge(tx, fromId, intoId),
     axis_state: await retireLearnerAxisStateOnMerge(tx, fromId, intoId),
     kc_typed_state: await retireKcTypedStateOnMerge(tx, fromId, intoId),
-    misconception_edges_rewritten: await rewireMisconceptionEdgeTargets(tx, fromId, intoId, now),
+    misconception_edges_rewritten: await rewireMisconceptionEdgesForKnowledgeMerge(
+      tx,
+      fromId,
+      intoId,
+      now,
+    ),
   };
 }
 
