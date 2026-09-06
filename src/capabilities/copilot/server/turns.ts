@@ -27,24 +27,16 @@ import {
   findReusableCopilotConversation,
   getCopilotConversation,
 } from '@/server/session/conversation';
+import type { CopilotSkillTurn } from './chat-contracts';
 import { selectAsksWithMaterializingToolCall } from './materializing-tools';
 
 export type CopilotTurnRole = 'user' | 'ai' | 'tombstone';
 
 // AF S4 / YUK-203 U6 (PR #305 review comment #2) — skill_turn is persisted in
 // the copilot_reply event payload so replay can surface the structured question
-// card without re-running the LLM. Shape mirrors CopilotSkillTurn in chat.ts;
-// kept here as a plain interface to avoid circular imports.
-export interface CopilotTurnSkillTurn {
-  kind: 'explain' | 'ask_check' | 'end';
-  structured_question?: {
-    id: string;
-    kind: string;
-    prompt_md: string;
-    choices_md: string[] | null;
-  };
-  suggested_next?: 'continue' | 'end';
-}
+// card without re-running the LLM. The canonical type lives in chat-contracts,
+// which is dependency-light and shared with the emission side.
+export type CopilotTurnSkillTurn = CopilotSkillTurn;
 
 // PR round-2 — skill_context persisted in copilot_reply payload so replay can
 // restore the skill card even after page refresh (without re-running the LLM).
@@ -86,9 +78,9 @@ export interface CopilotTurn {
   reply_event_id?: string;
   /** Typed user_ask root that owns this reversible turn. */
   checkpoint_event_id?: string;
-  /** Present for AI turns that carried a skill turn (teaching ask_check / explain / end). */
+  /** Present for AI turns that carried a teaching turn or completed quiz end. */
   skill_turn?: CopilotTurnSkillTurn;
-  /** Present for AI turns produced by a skill (teaching / solve) — lets replay restore the skill card. */
+  /** Originating skill selector; paired with skill_turn for deterministic replay state. */
   skill_context?: CopilotTurnSkillContext;
   /** YUK-307 — present for AI turns whose reply nominated a hero deliverable (§2.3). */
   primary_view?: CopilotPrimaryView;

@@ -19,6 +19,25 @@ export const CopilotSkillContext = z.object({
 });
 export type CopilotSkillContextT = z.infer<typeof CopilotSkillContext>;
 
+/** Existing product-state carrier shared by inline, durable, and replay paths. */
+export interface CopilotSkillTurn {
+  kind: 'explain' | 'ask_check' | 'end';
+  /** Present only for an ask_check turn that materialized a question. */
+  structured_question?: {
+    id: string;
+    kind: string;
+    prompt_md: string;
+    choices_md: string[] | null;
+  };
+  suggested_next?: 'continue' | 'end';
+}
+
+/** The persisted pair needed to interpret a skill turn after reconnect/replay. */
+export interface CopilotModeState {
+  skill_turn: CopilotSkillTurn;
+  skill_context: CopilotSkillContextT;
+}
+
 export const CopilotChatRequest = z
   .object({
     session_id: z.string().min(1).max(160).optional(),
