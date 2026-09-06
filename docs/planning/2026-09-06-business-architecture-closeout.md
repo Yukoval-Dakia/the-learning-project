@@ -3,7 +3,7 @@
 本轮以业务行为而非文件搬迁为单位收口。原始脏工作树未覆盖，未部署或修改生产数据。
 逐项实现与 exact-head CI 由以下 PR 留存；不能把这些代码验证称为生产验收。
 基线快照：main `98f15bda` 为439/0/47；#1330/#1334合并后main `dce62f79` 重新审计为438/0/47。
-表中编号PR均已在exact-head CI绿色、独立审查通过后合并；YUK-958客户端现已本机验收，待CI合并。
+表中PR均已在exact-head CI绿色、独立审查通过后合并；YUK-958客户端#1336已交付。
 
 | 行为 | 唯一协调责任 | 收入内部的共同规则 | 验证入口 |
 |---|---|---|---|
@@ -12,7 +12,7 @@
 | 知识合并 | Knowledge 事务协调器 + 各状态 owner | Practice 归因、Agency 范围、误区碰撞等由各自命令处理 | #1328 |
 | 录入完成 | Ingestion completion command | 源卡锁、导入、归属、终态回执与重复投递恢复 | #1329 |
 | 判分完成 | Practice 的三个 settlement commands | FSRS、掌握度、证据、回滚快照、提交后信号 | #1332 |
-| 模式结束 | Copilot mode-completion contract + message projection | 成功 quiz end、失败不结束、inline/durable/replay 一致 | #1334 后端；当前客户端分支 |
+| 模式结束 | Copilot mode-completion contract + message projection | 成功 quiz end、失败不结束、inline/durable/replay 一致 | #1334 后端、#1336 客户端 |
 
 知识合并仍需要跨业务事务；改善点是协调器不再直接修改题目、学习项和目标的内部表。
 录入的业务数据与操作完成回执在同一事务内提交。判分的三种入口共用学习效果实现，
@@ -51,7 +51,10 @@ Owner已批准既有drawer文件范围；没有视觉设计变化。终态消息
 拥有终文，DONE只能补产品状态，迟到delta也不能污染终文。唯一验证审PASS。
 本机116 scoped tests、typecheck/lint/build及438/0/47 audits通过；生产bundle上的
 inline/durable出题→后续发送→reload回放2条浏览器流程通过。新增付费调用为零。
-当前仅LOCAL_GREEN；exact-head CI与合并状态以当前客户端PR为准。
+最终整组15条浏览器流程通过。#1336 exact `0581aab529a643d4c6837dc382ef831452846a24`
+的[CI Gate34015722399](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/34015722399)
+所有分区绿色；已合并main `92ed46452b9af726cf09d64d360fae80e755fb3f`，YUK958完成。
+浏览器使用API fixture、后端为隔离静态构建服务；不是付费模型/生产数据库E2E或生产部署。
 
 ## 尚未完成的边界
 

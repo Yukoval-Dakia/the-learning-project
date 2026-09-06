@@ -14,6 +14,8 @@ Owner 已授权 AI pipeline 与基于1e61da8d报告的全项目业务封装/测�
 - 958服务端mode completion完成初审+scoped gates；647882b4 PR1334最终CI绿色并合并dce62f79。
   该head后端等于已全绿2089b0ce，仅含主线已验证Notes测试/文档合并差异。
 - Docs handoff PR1335已更新1334合并事实，exact CI是合并门；不部署。
+- 客户端PR1336 exact0581aab529a643d4c6837dc382ef831452846a24的CI Gate34015722399
+  所有分区绿色，已合并main92ed46452b9af726cf09d64d360fae80e755fb3f。YUK958整票完成。
 - 全项目测试结构盘点保留计费、retry、prompt/skill、复杂parser、并发/回滚/恢复与UI加载保护；
   删除旧路径/重复装配/退休evidence链内部断言，不按数量硬删。
 
@@ -30,7 +32,8 @@ durable actual直接handler不是queue E2E。无需更多付费验证。
 - 958 UI已获owner「继续」批准并实施：CopilotDock/subtask-events/replay/skill-lifecycle
   共用message-projection；只有权威REPLY+明确end结束模式，失败保留重试。无视觉变化。
   116 scoped tests、生产bundle inline/durable发送→后续发送→reload回放2条流程已通过；
-  草稿+DONE无REPLY的P1红绿复现修复，唯一验证审PASS。当前分支待final gates/CI合并。
+  草稿+DONE无REPLY的P1红绿复现修复，唯一验证审PASS。最终整组15条浏览器流程与CI全绿；
+  已合并#1336，不再等待客户端实施。单独docs closeout仅对齐交付状态。
 - SoT最终退休需要单独生产副本backfill/audit/rebuild/golden证据与授权（YUK887）。
 - 不部署、不切生产flags、不backfill、不删历史数据/表；旧mailbox/ToolOperations仅drain-only，
   退休需部署后零pending和零队列活动跨完整deadline/retry窗。

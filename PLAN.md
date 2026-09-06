@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-06：YUK-958 客户端统一投影已完成本机验收与独立复核，待 exact-head CI 合并。
+> Linear 是权威 tracker；更新于 2026-09-06：YUK-958 前后台与回放投影已通过 exact-head CI 并合并 #1336。
 
 ## NOW
 
@@ -14,21 +14,21 @@
   后端独立 review、exact-head CI 绿色并合并main dce62f79。
 - YUK-958客户端：owner已批准，inline/durable/replay共用终态投影和显式模式状态；
   草稿不能冒充权威REPLY。116 scoped tests及2条生产bundle Copilot流程通过；
-  初审P1已红绿修复，唯一验证审通过。等待当前分支exact CI后合并/关票。
+  初审P1已红绿修复，唯一验证审通过。#1336 exact0581aab5全绿，合并main92ed4645。
 - 当前main dce62f79重新实测依赖基线438/0/47（此前98f15bda为439/0/47）；
   五 capability SCC 与20个命令消费者仍在，未宣称消环。
 - 实际输出：同输入 read 样本 input 至少降50.8%、费用至少降62.2%；仅限 synthetic。
   共享执行层新增实际回归$0.146376，本次增量合计$0.395172，剩余授权$0.604828。
   历史未计价超时/child仍未知；durable actual不是queue E2E。
-- Linear 939/940/941/942/952/953/954/955/956/957/959 Done；943/947为设计替代而Canceled。
+- Linear 939/940/941/942/952/953/954/955/956/957/958/959 Done；943/947为设计替代而Canceled。
 - 详细责任、验证与剩余边界见 docs/planning/2026-09-06-business-architecture-closeout.md。
   原始 the-learning-project 脏main始终保留，所有改动在隔离工作树。
 
 ## NEXT
 
 1. 后端集成交付已完成；不部署，不重复已完成的模型验收。
-2. active codex/yuk-958-client-projection：最终scoped/浏览器整组复测→exact-head CI→合并。
-   原drawer外观不变，删除技能名终态猜测与重复消息映射；不新增付费调用。
+2. YUK-958前后台/回放收口已交付。15条生产bundle浏览器流程全绿；
+   原drawer外观不变，技能名终态猜测与重复消息映射已删除；无新增付费调用。
 3. YUK-887：获得独立生产副本/部署授权后，逐实体提供backfill/audit/rebuild/golden证据，
    再决定SoT兼容分支退休；不能从本机默认开关推断生产状态。
 4. 每PR最多初审+一次P0/P1验证审；954及958客户端预算已用尽，无未决P0/P1。
@@ -44,6 +44,5 @@
 
 ## BLOCKED-ON
 
-- YUK-958 UI预检已批准；仅改CopilotDock/subtask-events/replay/skill-lifecycle及测试，
-  新建message-projection及测试。无额外UI设计门阻塞。
+- 本轮没有未决UI设计门或CI阻塞；开放backlog不因本轮交付而虚假关闭。
 - 生产clone验证、部署、SoT flag切换与历史数据删除均无授权，未执行。
