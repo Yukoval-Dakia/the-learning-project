@@ -37,13 +37,13 @@ import { makeRunTaskFn } from '@/server/ai/runner-fn';
 // experimental:variant_verify event; the per-entity flag gates whether the projection (ON) or the
 // imperative UPDATE (OFF) writes the row (broken+failure_reasons on fail / touch updated_at on
 // pass). OFF still runs the write-time fold==row parity assert.
-import { projectMistakeVariantGuarded } from '@/server/projections/mistake_variant';
 import {
   assertMistakeVariantParity,
   hasMistakeVariantGenesisAnchor,
   mistakeVariantLiveRowToSnapshot,
-} from '@/server/projections/parity';
-import { projectionIsWriter } from '@/server/projections/sot-flag';
+  projectMistakeVariantGuarded,
+  projectionWritesMistakeVariant,
+} from '@/server/projections/mistake-variant-runtime';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 export interface VariantVerifyJobData {
@@ -292,7 +292,7 @@ export async function runVariantVerify(
   });
 
   // YUK-471 W2 — gate who writes the mistake_variant ROW (read ONCE outside the tx).
-  const flip = projectionIsWriter('mistake_variant');
+  const flip = projectionWritesMistakeVariant();
 
   await db.transaction(async (tx) => {
     // YUK-499 — lock the mistake_variant row FOR UPDATE as the FIRST statement, before the verify

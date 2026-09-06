@@ -1,24 +1,25 @@
+import type { NameKcFn } from '@/capabilities/knowledge/public';
+import { getDefaultSubjectRegistry } from '@/subjects/profile';
 import { type ColdStartBridgeRunTaskFn, runColdStartBridge } from './cold-start-bridge';
-
-export type KnowledgeNamer = (args: {
-  questionText: string;
-  knowledgeHint: string | null;
-  subjectId: string;
-  knownSubjects: ReadonlyArray<{ id: string; display_name: string; aliases?: string[] }>;
-}) => Promise<{ kc_name: string }>;
 
 export function createKnowledgeNamer(params: {
   db: Parameters<typeof runColdStartBridge>[0]['db'];
   runTaskFn?: ColdStartBridgeRunTaskFn;
   ctx?: unknown;
-}): KnowledgeNamer {
-  return async ({ questionText, knowledgeHint, subjectId, knownSubjects }) => {
+}): NameKcFn {
+  return async ({ questionText, knowledgeHint, subjectId }) => {
     const bridge = await runColdStartBridge({
       db: params.db,
       questionMd: questionText,
       existingReferenceMd: '(reference answer not needed for tagging)',
       knowledgeHint,
-      knownSubjects: knownSubjects.filter((subject) => subject.id === subjectId),
+      // Preserve the single-subject vocabulary even for custom roots not in a caller's list.
+      knownSubjects: [
+        {
+          id: subjectId,
+          display_name: getDefaultSubjectRegistry().get(subjectId)?.displayName ?? subjectId,
+        },
+      ],
       runTaskFn: params.runTaskFn,
       ctx: params.ctx ?? { db: params.db },
     });

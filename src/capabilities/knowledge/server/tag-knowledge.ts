@@ -62,9 +62,8 @@ export function isTagKnowledgeInvariantError(error: unknown): boolean {
 
 /**
  * Naming seam — given the question (subject already resolved), return a concise
- * child-KC name. Injected in tests (stub returns a controlled name so NO real model
- * is called). The production default delegates to ColdStartPlacementBridgeTask's
- * naming, reusing the existing invoker (no new AI registry task).
+ * child-KC name. The ingestion caller owns model naming (or reuses an existing
+ * bridge result); Knowledge owns only the match-or-propose decision and its writes.
  */
 export type NameKcFn = (args: {
   questionText: string;
@@ -84,12 +83,8 @@ export interface TagKnowledgeDeps {
   /** Embed the question text → query vector. Injected in tests. Defaults to embedText. */
   embedFn?: (text: string) => Promise<number[]>;
   providerAttempt?: EmbedProviderAttemptOptions;
-  /** Name the proposed KC. Injected in tests. Defaults to the cold-start-bridge naming. */
+  /** Caller-owned naming: a model adapter or a previously resolved bridge result. */
   nameKcFn: NameKcFn;
-  /**
-   * Forwarded to the default naming invoker's runTask seam (so callers/tests can stub the
-   * model at the runTask layer instead of replacing nameKcFn). Ignored when nameKcFn is set.
-   */
   /** Override the MATCH cutoff (cosine distance). Defaults to MATCH_THRESHOLD. */
   threshold?: number;
   /**
@@ -106,7 +101,6 @@ export interface TagKnowledgeDeps {
    * callers loop sequentially (auto-enroll per-question, import per-block), satisfying this.
    */
   batchCache?: Map<string, string>;
-  /** Forwarded to runTask ctx (db / subjectProfile). Ignored when nameKcFn is set. */
 }
 
 export interface TagKnowledgeInput {

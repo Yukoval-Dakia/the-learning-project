@@ -10,6 +10,7 @@
 
 import { and, eq, inArray } from 'drizzle-orm';
 
+import { retrievabilityForKc } from '@/core/fsrs';
 import { newId } from '@/core/ids';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
@@ -22,6 +23,19 @@ import {
 
 type DbLike = Db | Tx;
 export type FsrsSubjectKind = 'question' | 'knowledge';
+
+/** Retention is a state-owner query, not a consumer's interpretation of card storage.
+ * Missing cards stay absent (unknown), distinct from a real New card's zero retention.
+ */
+export async function getFsrsRetrievabilityByIds(
+  db: DbLike,
+  subjectKind: FsrsSubjectKind,
+  ids: string[],
+  now: Date,
+): Promise<Map<string, number>> {
+  const rows = await getFsrsStatesByIds(db, subjectKind, ids);
+  return new Map([...rows].map(([id, row]) => [id, retrievabilityForKc(row.state, now)]));
+}
 
 export interface UpsertFsrsStateInput {
   subject_kind: FsrsSubjectKind;

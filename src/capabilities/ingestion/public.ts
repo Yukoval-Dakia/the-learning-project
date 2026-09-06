@@ -9,7 +9,6 @@ export type {
   ImageCandidateAcceptDeps,
   ImageCandidateAcceptResult,
 } from './server/image-candidate-accept';
-export { type KnowledgeNamer, createKnowledgeNamer } from './server/knowledge-namer';
 export type {
   RecordLinksAcceptResult,
   RecordPromotionAcceptResult,

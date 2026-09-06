@@ -1258,7 +1258,7 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     // rolling back Practice, Agency and learning-state changes made earlier.
     await db
       .update(misconception_edge)
-      .set({ created_by: { actor_kind: 'invalid' } })
+      .set({ created_by: sql`'{"actor_kind":"invalid"}'::jsonb` })
       .where(eq(misconception_edge.id, 'rollback-edge'));
     await expect(mergeFromInto('k_from', 'k_into')).rejects.toThrow();
     expect(
