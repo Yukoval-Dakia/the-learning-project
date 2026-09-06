@@ -231,10 +231,8 @@ export async function getFsrsState(
  * caller treats "no row" as "no retrievability data yet", NOT R=0).
  *
  * SoT read only — this stays the single-owner module for `material_fsrs_state`.
- * It never computes retrievability (no ts-fsrs dependency here); the per-KC
- * R(t) ∈ [0,1] mapping lives in the knowledge-capability read that consumes this
- * (retrievabilityForKc is a practice-capability pure function — keeping it out of
- * src/server avoids a server→capability layering inversion).
+ * Consumers needing only retention use getFsrsRetrievabilityByIds instead of
+ * interpreting raw cards. Both operations share the cross-subject scheduling math.
  */
 export async function getFsrsStatesByIds(
   db: DbLike,

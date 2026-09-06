@@ -172,7 +172,7 @@ export interface RunAutoEnrollParams {
    * (embedding match-or-propose). DB tests inject a stub so the embedding/naming model is not
    * called (mirrors tag-knowledge.db.test.ts's embedFn/nameKcFn stubs at one level up): the stub
    * returns the attributed ids directly, and a throw routes the block to review (tagging outage).
-   * Receives the same deps shape tagKnowledge does (db / runTaskFn / ctx / batchCache) plus the
+   * Receives the same deps shape tagKnowledge does (db / nameKcFn / batchCache) plus the
    * input, so a real-default test can still seed embeddings + stub only the naming model.
    */
   tagKnowledgeFn?: typeof tagKnowledge;
@@ -194,11 +194,9 @@ export interface RunAutoEnrollParams {
    */
   runBlockAssemblyFn?: BlockAssemblyRunTaskFn;
   /**
-   * P3 (YUK-489) — model seam for the unified `tagKnowledge` step's NAMING invoker. tagKnowledge's
-   * default `nameKcFn` (makeDefaultNameKc → runColdStartBridge) names a PROPOSE child KC via one
-   * LLM pass; this fn is threaded as tagKnowledge's `runTaskFn` so DB tests stub the model without
-   * a real call. (The name is historical — the cold-start bridge module is now tagKnowledge's
-   * naming engine, not a direct caller here.) Mirrors image-candidate-accept's `runColdStartBridgeFn`.
+   * Model seam for the ingestion-owned naming adapter supplied to `tagKnowledge`.
+   * One ColdStartBridge call names a PROPOSE child; tests can replace that call while
+   * retaining Knowledge's real match/propose behavior. Existing bridge results can be reused.
    */
   runColdStartBridgeFn?: ColdStartBridgeRunTaskFn;
   /**
