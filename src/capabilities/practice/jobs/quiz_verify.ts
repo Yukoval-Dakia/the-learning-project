@@ -35,7 +35,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, ne } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
-import { writeAgentNote } from '@/capabilities/agency/public';
+import { recordQuestionPoolGap } from '@/capabilities/agency/public';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import {
@@ -962,35 +962,18 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       });
     });
 
-    // U8 / AF §4 — leave_agent_note producer (real example, U3 L-note).
-    // When a generated draft FAILS to enter the review pool (needs_review / fail
-    // / too_close), the knowledge points it probed still lack a usable question —
-    // a pool gap the next Coach round should weigh. This is the out-of-band HINT
-    // channel (§4.1: best-effort, with expiry), distinct from the structured
-    // needs[] channel on a plan artifact. Best-effort: a note-write failure must
-    // NOT fail the (already-committed) verify, so it is fire-and-log only. Fires
-    // outside the verify txn so a note never references an event the txn rolled
-    // back. Targets coach; shares the signal_kind vocabulary (§4.1).
+    // Notify Agency only after verification commits. It owns hint interpretation;
+    // its failure must not undo or retry the already-committed verification.
     if (!promote) {
-      const poolGapRefs = (
-        row.knowledge_ids && row.knowledge_ids.length > 0 ? row.knowledge_ids : [questionId]
-      ).map((id) => ({
-        kind: row.knowledge_ids?.length ? 'knowledge' : 'question',
-        id,
-      }));
       try {
-        await writeAgentNote(db, {
-          target_agents: ['coach'],
-          source_task_kind: 'quiz_verify',
-          source_task_run_id: result.task_run_id ?? undefined,
-          refs: poolGapRefs,
-          signal_kind: 'question_pool_gap',
-          summary_md: `Generated question ${questionId} did not enter the review pool (verification ${verificationStatus}); its knowledge point(s) may still lack a usable question.`,
+        await recordQuestionPoolGap(db, {
+          questionId,
+          knowledgeIds: row.knowledge_ids,
+          verificationStatus,
           confidence: parsed.confidence,
-          // 30-day soft expiry: a stale pool-gap hint should age out rather than
-          // linger once the pool likely changed.
-          expires_at: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-          caused_by_event_id: verifyEventId,
+          taskRunId: result.task_run_id ?? null,
+          verificationEventId: verifyEventId,
+          observedAt: now,
         });
       } catch (noteErr) {
         console.error('[quiz_verify] leave_agent_note failed (non-fatal) for', questionId, noteErr);

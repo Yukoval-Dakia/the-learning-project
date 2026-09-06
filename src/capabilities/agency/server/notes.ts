@@ -26,7 +26,7 @@
 //
 // YUK-293 adds a bounded DomainTool pair over this storage seam for Copilot,
 // Dreaming, and Coach. Deterministic writers (quiz_verify, etc.) continue to call
-// writeAgentNote directly.
+// owner commands (for example recordQuestionPoolGap) for product-specific hints.
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, notInArray, or, sql } from 'drizzle-orm';
@@ -142,6 +142,36 @@ export async function writeAgentNote(db: DbLike, input: WriteAgentNoteInput): Pr
     task_run_id: input.source_task_run_id ?? null,
   });
   return noteId;
+}
+
+/** Interpret a committed verification's pool gap as an expiring coach hint, not a durable fact. */
+export function recordQuestionPoolGap(
+  db: DbLike,
+  observation: {
+    questionId: string;
+    knowledgeIds: readonly string[] | null;
+    verificationStatus: string;
+    confidence: number;
+    taskRunId: string | null;
+    verificationEventId: string;
+    observedAt: Date;
+  },
+): Promise<string> {
+  const knowledgeIds = observation.knowledgeIds ?? [];
+  return writeAgentNote(db, {
+    target_agents: ['coach'],
+    source_task_kind: 'quiz_verify',
+    source_task_run_id: observation.taskRunId ?? undefined,
+    refs:
+      knowledgeIds.length > 0
+        ? knowledgeIds.map((id) => ({ kind: 'knowledge', id }))
+        : [{ kind: 'question', id: observation.questionId }],
+    signal_kind: 'question_pool_gap',
+    summary_md: `Generated question ${observation.questionId} did not enter the review pool (verification ${observation.verificationStatus}); its knowledge point(s) may still lack a usable question.`,
+    confidence: observation.confidence,
+    expires_at: new Date(observation.observedAt.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    caused_by_event_id: observation.verificationEventId,
+  });
 }
 
 export interface ReadAgentNotesOpts {
