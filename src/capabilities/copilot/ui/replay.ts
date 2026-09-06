@@ -1,17 +1,7 @@
-// AF S3a / YUK-203 U3 — pure replay mapping for CopilotDock.
-//
-// The drawer prefills its in-memory message list from GET /api/copilot/turns on
-// open (replay-last-N). The mapping from the turns API shape to the drawer's
-// ChatMessage shape is extracted here as a pure function so it is unit-testable
-// without jsdom / @testing-library (the unit vitest env is 'node' and neither is
-// installed — see L-copilot pre-flight缺口表). The drawer imports replayToMessages
-// and feeds it the fetched turns; on fetch failure it skips replay (stays on the
-// current in-memory list — graceful degradation to pre-S3a behaviour).
-//
-// AF S4 / YUK-203 U6 (PR #305) — AI turns from GET /api/copilot/turns now carry
-// optional skill_turn, session_id, and reply_event_id fields (backend additive
-// extension). replayToMessages transparently propagates them so ask_check cards
-// and corrective chips re-appear after a drawer reopen / page refresh.
+import { projectReplayMessage } from './message-projection';
+
+// Replay owns stable ordering/deduplication of persisted turns. The shared
+// message projection validates their presentation metadata just like live replies.
 
 export type ReplayTurnRole = 'user' | 'ai' | 'tombstone';
 
@@ -36,18 +26,8 @@ export interface ReplaySkillTurn {
 // request. CopilotDock restores activeSkillRef from this field on replay so
 // composer answers after a page refresh still route to the teaching/solve skill.
 export interface ReplaySkillContext {
-  // YUK-272 (C3) — widened to include 'quiz' so a persisted quiz reply
-  // (chat.ts writes skill_context:{skill:'quiz'}) round-trips through replay
-  // without an `as` cast. Type-only; replayToMessages forwards the field
-  // untouched. Because C3 clears activeSkillRef immediately for one-shot quiz, the
-  // replay-restore effect never restores quiz context (a quiz turn carries no
-  // skill_turn, so CopilotDock's restore guard skips it).
-  //
-  // YUK-284 (C3) — 'solve' is KEPT in the union for backward compatibility: solve was
-  // extracted from the skill_context protocol (chat.ts no longer routes it), but a
-  // persisted-old solve reply may still carry skill_context:{skill:'solve'} and must
-  // round-trip through replay without a cast. A solve reply carries no skill_turn, so
-  // (like quiz) CopilotDock's restore guard never restores solve context.
+  // Legacy solve turns still round-trip. Mode lifetime is determined by the
+  // explicit skill_turn state, never by membership in this compatibility union.
   skill: 'teaching' | 'solve' | 'quiz';
   ref: { kind: string; id: string };
 }
@@ -93,7 +73,7 @@ export interface ReplayChatMessage {
   session_id?: string;
   reply_event_id?: string;
   // AF S4 / YUK-203 U6 (round-2) — forwarded so CopilotDock can restore
-  // activeSkillRef from the last non-end skill turn on replay.
+  // activeSkillRef by folding explicit state, including end barriers, on replay.
   skill_context?: ReplaySkillContext;
   // YUK-307 — forwarded so the (future) UI slice can restore the hero
   // nomination on replay; pure passthrough, zero rendering here.
@@ -129,54 +109,18 @@ export interface ReplaySubagentRun {
  * ChatMessage list. The turn's event_id is reused as the stable message id
  * (replayed messages are addressable; live messages keep their nextId()). Empty
  * / malformed turns (no text) are dropped — replay is best-effort prefill.
- * Skill-turn fields are transparently forwarded when present.
+ * Skill-turn fields are validated by the shared reply projection when present.
  */
 export function replayToMessages(turns: ReplayTurn[]): ReplayChatMessage[] {
   const out: ReplayChatMessage[] = [];
-  // A stable domain event may appear twice when a caller combines overlapping
-  // replay windows. Preserve the first usable projection and never render a
-  // second "ghost" user/assistant bubble for the same event.
   const seenEventIds = new Set<string>();
-  for (const t of turns) {
-    if (t.role !== 'user' && t.role !== 'ai' && t.role !== 'tombstone') continue;
-    // Classify tombstones BEFORE the text guard — a tombstone must still render even with empty
-    // text (the user/ai text check below would otherwise drop it). Prefer the server-provided
-    // t.text (turns.ts is the source of truth) and fall back to a LOCAL COPY of the literal it
-    // emits. NOTE: this is a duplicated literal, not a shared constant — turns.ts is client/server
-    // split so it can't be imported here; if turns.ts changes the tombstone text, update both
-    // (YUK-497 wave-3).
-    if (t.role === 'tombstone') {
-      if (seenEventIds.has(t.event_id)) continue;
-      seenEventIds.add(t.event_id);
-      out.push({
-        id: t.event_id,
-        role: 'tombstone',
-        text: t.text || '本轮更改已撤回',
-        checkpoint_event_id: t.checkpoint_event_id ?? t.event_id,
-      });
-      continue;
-    }
-    // user / ai turns must carry real text — drop empty/malformed (best-effort prefill).
-    if (typeof t.text !== 'string' || t.text.length === 0) continue;
-    if (seenEventIds.has(t.event_id)) continue;
-    seenEventIds.add(t.event_id);
-    out.push({
-      id: t.event_id,
-      role: t.role,
-      text: t.text,
-      checkpoint_event_id: t.checkpoint_event_id,
-      skill_turn: t.skill_turn,
-      session_id: t.session_id,
-      reply_event_id: t.reply_event_id,
-      skill_context: t.skill_context,
-      // YUK-307 — field copy only (skill_turn precedent): without it the
-      // nomination dies at this boundary and the UI slice would have to reopen
-      // backend files. NOT a rendering change.
-      primary_view: t.primary_view,
-      tool_calls: t.tool_calls,
-      tool_operations: t.tool_operations,
-      subagent_runs: t.subagent_runs,
-    });
+  for (const turn of turns) {
+    if (turn.role !== 'user' && turn.role !== 'ai' && turn.role !== 'tombstone') continue;
+    if (seenEventIds.has(turn.event_id)) continue;
+    const message = projectReplayMessage(turn);
+    if (!message) continue;
+    seenEventIds.add(turn.event_id);
+    out.push(message);
   }
   return out;
 }

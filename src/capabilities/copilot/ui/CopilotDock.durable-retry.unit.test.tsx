@@ -132,7 +132,12 @@ import {
   DURABLE_COPILOT_RECONNECT_STORAGE_KEY,
   PENDING_COPILOT_TURN_STORAGE_KEY,
 } from './durable-reconnect-storage';
-import { type CopilotRunView, DurablePickupStalledError } from './subtask-events';
+import {
+  type CopilotRunView,
+  DurablePickupStalledError,
+  createCopilotRunView,
+  foldCopilotRunFrames,
+} from './subtask-events';
 
 const partialView = {
   phase: 'running' as const,
@@ -172,43 +177,30 @@ const partialView = {
   ],
 } satisfies CopilotRunView;
 
-const completedView = {
-  phase: 'completed' as const,
-  lastEventId: 416,
-  replyText: '证据核对完成：错误集中在含参题的定义域前置检查。下一组练习先固定定义域，再处理通分。',
-  checkpointEventId: 'ask_transfer_audit',
-  subtasks: [
-    {
-      ...partialView.subtasks[0],
-      status: 'completed' as const,
+const completedView = foldCopilotRunFrames(createCopilotRunView(), [
+  ...partialView.frames,
+  {
+    event_id: 413,
+    event_type: 'copilot_run.step',
+    payload: {
+      step_kind: 'subtask',
+      subtask_id: 'audit-transfer-evidence',
+      label: '核对 27 次作答、5 次延迟复习与 3 个未教学探针',
+      status: 'completed',
       summary: '三个独立探针复现同一错误，已排除偶然失误。',
-      lastEventId: 413,
     },
-  ],
-  frames: [
-    ...partialView.frames,
-    {
-      event_id: 413,
-      event_type: 'copilot_run.step',
-      payload: {
-        step_kind: 'subtask',
-        subtask_id: 'audit-transfer-evidence',
-        label: '核对 27 次作答、5 次延迟复习与 3 个未教学探针',
-        status: 'completed',
-        summary: '三个独立探针复现同一错误，已排除偶然失误。',
-      },
+  },
+  {
+    event_id: 415,
+    event_type: 'copilot_run.reply',
+    payload: {
+      checkpoint_event_id: 'ask_transfer_audit',
+      reply_md:
+        '证据核对完成：错误集中在含参题的定义域前置检查。下一组练习先固定定义域，再处理通分。',
     },
-    {
-      event_id: 415,
-      event_type: 'copilot_run.reply',
-      payload: {
-        reply_md:
-          '证据核对完成：错误集中在含参题的定义域前置检查。下一组练习先固定定义域，再处理通分。',
-      },
-    },
-    { event_id: 416, event_type: 'copilot_run.done', payload: {} },
-  ],
-} satisfies CopilotRunView;
+  },
+  { event_id: 416, event_type: 'copilot_run.done', payload: {} },
+]);
 
 const queuedView = {
   phase: 'queued' as const,
@@ -233,63 +225,41 @@ const queuedView = {
   ],
 } satisfies CopilotRunView;
 
-const queuedRecoveryView = {
-  phase: 'completed' as const,
-  lastEventId: 608,
-  replyText: '后台核对完成：36 道题分成定义域、增根与迁移三类；下一轮按两次延迟复习结果调梯度。',
-  checkpointEventId: 'ask_queued_gradient_rebuild',
-  subtasks: [
-    {
-      id: 'audit-delayed-review',
+const queuedRecoveryView = foldCopilotRunFrames(createCopilotRunView(), [
+  ...queuedView.frames,
+  { event_id: 602, event_type: 'copilot_run.started', payload: {} },
+  {
+    event_id: 604,
+    event_type: 'copilot_run.step',
+    payload: {
+      step_kind: 'subtask',
+      subtask_id: 'audit-delayed-review',
       label: '核对 36 道跨章节练习与两轮延迟复习',
-      status: 'completed' as const,
+      status: 'completed',
       summary: '定位 7 道定义域遗漏与 3 道增根误判。',
-      lastEventId: 604,
     },
-    {
-      id: 'validate-transfer-gradient',
+  },
+  {
+    event_id: 605,
+    event_type: 'copilot_run.step',
+    payload: {
+      step_kind: 'subtask',
+      subtask_id: 'validate-transfer-gradient',
       label: '用四个未教学探针验证三档迁移梯度',
-      status: 'completed' as const,
+      status: 'completed',
       summary: '三档题目均通过确定性 validator，最高档保留一个增根陷阱。',
-      lastEventId: 605,
     },
-  ],
-  frames: [
-    ...queuedView.frames,
-    { event_id: 602, event_type: 'copilot_run.started', payload: {} },
-    {
-      event_id: 604,
-      event_type: 'copilot_run.step',
-      payload: {
-        step_kind: 'subtask',
-        subtask_id: 'audit-delayed-review',
-        label: '核对 36 道跨章节练习与两轮延迟复习',
-        status: 'completed',
-        summary: '定位 7 道定义域遗漏与 3 道增根误判。',
-      },
+  },
+  {
+    event_id: 607,
+    event_type: 'copilot_run.reply',
+    payload: {
+      checkpoint_event_id: 'ask_queued_gradient_rebuild',
+      reply_md: '后台核对完成：36 道题分成定义域、增根与迁移三类；下一轮按两次延迟复习结果调梯度。',
     },
-    {
-      event_id: 605,
-      event_type: 'copilot_run.step',
-      payload: {
-        step_kind: 'subtask',
-        subtask_id: 'validate-transfer-gradient',
-        label: '用四个未教学探针验证三档迁移梯度',
-        status: 'completed',
-        summary: '三档题目均通过确定性 validator，最高档保留一个增根陷阱。',
-      },
-    },
-    {
-      event_id: 607,
-      event_type: 'copilot_run.reply',
-      payload: {
-        reply_md:
-          '后台核对完成：36 道题分成定义域、增根与迁移三类；下一轮按两次延迟复习结果调梯度。',
-      },
-    },
-    { event_id: 608, event_type: 'copilot_run.done', payload: {} },
-  ],
-} satisfies CopilotRunView;
+  },
+  { event_id: 608, event_type: 'copilot_run.done', payload: {} },
+]);
 
 const failedView = {
   phase: 'failed' as const,
@@ -395,6 +365,101 @@ describe('CopilotDock accepted durable reconnect', () => {
     apiJsonMock.mockReset();
     consumeDurableMock.mockReset();
   });
+
+  it.each([
+    ['inline', 'end', false],
+    ['inline', 'legacy', true],
+    ['inline', 'partial', true],
+    ['durable', 'end', false],
+    ['durable', 'cancelled', true],
+    ['durable', 'draft-only', true],
+  ] as const)(
+    '%s %s preserves explicit mode semantics on the next user turn',
+    async (transport, outcome, keepsContext) => {
+      const skillContext = {
+        skill: 'quiz',
+        ref: { kind: 'knowledge', id: 'kc-domain-boundary-42' },
+      };
+      apiJsonMock.mockResolvedValue({
+        turns: [
+          {
+            role: 'ai',
+            event_id: 'prior_quiz',
+            text: '上一次练习已经完成。',
+            at: '2026-09-06T06:00:00Z',
+            skill_turn: { kind: 'end' },
+            skill_context: skillContext,
+          },
+        ],
+      });
+      const response = (payload: Record<string, unknown>) =>
+        new Response(`event: reply\ndata: ${JSON.stringify(payload)}\n\n`, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      const content = '本轮已核对定义域、增根与边界条件。';
+      if (transport === 'inline') {
+        apiFetchMock.mockResolvedValueOnce(
+          response({
+            reply: content,
+            session_id: 'copilot-session-test',
+            reply_event_id: 'quiz_current',
+            ...(outcome !== 'legacy' ? { skill_turn: { kind: 'end' } } : {}),
+            ...(outcome === 'partial' ? { error: '回复被截断' } : {}),
+          }),
+        );
+      } else {
+        apiFetchMock.mockResolvedValueOnce(
+          new Response(JSON.stringify({ run_id: 'quiz_current' }), {
+            status: 202,
+            headers: { Location: '/api/jobs/copilot_run/quiz_current/events' },
+          }),
+        );
+        const view = foldCopilotRunFrames(createCopilotRunView(), [
+          outcome === 'draft-only'
+            ? { event_id: 1, event_type: 'copilot_run.delta', payload: { text: content } }
+            : { event_id: 1, event_type: 'copilot_run.reply', payload: { reply_md: content } },
+          {
+            event_id: 2,
+            event_type: outcome === 'cancelled' ? 'copilot_run.failed' : 'copilot_run.done',
+            payload: {
+              skill_turn: { kind: 'end' },
+              skill_context: skillContext,
+              ...(outcome === 'cancelled' ? { reason: 'cancelled' } : {}),
+            },
+          },
+        ]);
+        consumeDurableMock.mockImplementationOnce(
+          async (options: { onUpdate?: (view: CopilotRunView) => void }) => {
+            options.onUpdate?.(view);
+            return view;
+          },
+        );
+      }
+      apiFetchMock.mockResolvedValueOnce(response({ reply: '收到后续问题。' }));
+      render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+      const user = userEvent.setup();
+      await waitFor(() =>
+        expect(screen.getByTestId('copilot-quiz-chip').textContent).toContain('当前知识点'),
+      );
+      await user.click(screen.getByTestId('copilot-quiz-chip'));
+      if (outcome === 'draft-only') {
+        await screen.findByText('请求失败');
+        expect(screen.queryByText(content)).toBeNull();
+        expect(screen.getByRole('button', { name: /^重试$/ })).toBeTruthy();
+      } else {
+        await screen.findByText(content);
+      }
+      await user.type(screen.getByTestId('copilot-composer-input'), '继续核对反例');
+      await user.click(screen.getByTestId('copilot-composer-send'));
+      await waitFor(() => expect(apiFetchMock).toHaveBeenCalledTimes(2));
+      const first = JSON.parse(String(apiFetchMock.mock.calls[0]?.[1]?.body));
+      const second = JSON.parse(String(apiFetchMock.mock.calls[1]?.[1]?.body));
+      expect(first.skill_context).toEqual(skillContext);
+      expect(second.skill_context).toEqual(keepsContext ? skillContext : undefined);
+      expect(screen.queryAllByText(content)).toHaveLength(outcome === 'draft-only' ? 0 : 1);
+    },
+  );
 
   it('sends a new turn to the session selected from the session panel', async () => {
     apiFetchMock.mockResolvedValue(
