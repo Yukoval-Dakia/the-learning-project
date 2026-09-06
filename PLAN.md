@@ -5,15 +5,13 @@
 ## NOW
 
 - Owner 授权 AI pipeline、全项目业务封装与测试精简；不把目录归属或 audit 数量当整体完成。
-- YUK944 active：typed reader 是 claim 合同唯一权威，reader v2 分离事件与作答可用性，
-  明确直子覆盖、确定性 observed_edges；同查询不新增模型层。TaskSpec/Skill 删除重复规则。
-  六次 candidate 和一轮原主线受控 baseline 均未完整验收；累计 $1.15308718，余额 $0.45174082。
-  第六次7b3919d5正确列出跨对象直接边，但B/C仍把未观测写成“无”、断言唯一差异。
-  baseline a1f72e94 同样漏认跨对象事实，但比较约束更准确；现将其指引仅恢复至 typed 合同。
-  原主线报告问句标题还会误触学习内容拦截，未修；保留无标签真实学习题的保护。
-  13DB/typecheck 已过；继续 scoped unit/lint/build，提交后仅做一轮同样本组合验证。
-  草稿PR1338：remote3a735ffc exact CI Gate34027572879全绿；本地7b3919d5及后续尚未推。
-  独立初审及唯一验证审预算已用，不启动第三轮；语义质量未过，不合并、不关闭944。
+- YUK944：c03b5b3e 原五读取实际样本通过核心 claim/正事实/展示检查；不是整体生产质量完成。
+  reader v2明确事件/作答、直子覆盖和确定性边；比较规则只在typed合同，不增加query或模型层。
+  79.098s，input40410/output3179，$0.164021；与原主线baseline input40401持平，不称token下降。
+  944累计$1.31710818，含owner追加$1后余额$0.28771982；低于reserve，暂停新增付费调用。
+  13DB/22unit/typecheck/lint/build通过；初审与唯一验证审完成，不启动第三轮。
+  草稿PR1338最终证据待push/exact-head CI；上一remote3a735ffc CI34027572879全绿。
+  原主线报告问句误拦已去重登记YUK960，保留真实无标签题保护，未将缺陷假称修复。
 - AI finalization #1326、Goal #1327、Knowledge merge #1328、Ingestion completion #1329、
   ReviewSettlement #1332、测试精简 #1331/#1333 已经各自 exact-head CI 绿色并合并。
 - YUK-954 #1330：共享执行 owner，权限/校验/取消/原生子代理规则一份实现；
@@ -35,8 +33,8 @@
 
 ## NEXT
 
-1. YUK-944：补齐typed合同并核对执行窗口后，完整actual仍待过；修复跨读取证据合成/过度断言后再验。
-   未取得真实终文质量证据前不合并、不关闭944。SDK原生长会话压缩仍属945未完成。
+1. YUK-944：原五读取actual核心样本已过，推最终证据并等待exact-head CI后收口。
+   不能把单样本当生产质量/降本；SDK原生长会话压缩仍属945未完成。
 2. YUK-946离线native SDK验证通过：首请求仅catalog，Skill调用后才出现body，真实模型费用$0。
    原eager-body前提已否证；不重建目录、不删除free-form quiz能力，不声称移除正文带来普通轮降本。
    946已按原生能力验证收口Done，不代表实现了新目录或验证了生产模型选择。
@@ -44,6 +42,7 @@
    UI步骤另按设计预检；后端与纯测试可继续。不得用结束一个PR代替整个goal完成。
 4. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者和扩展成本；
    消除剩余有害写依赖与双规则，替换重复测试，按实际行为与扩展压力验收。
+   YUK960报告问句误拦与949一起明确内容责任，不能降低无标签真实题保护。
 5. YUK-887生产副本backfill/audit/rebuild/golden与SoT退休需要独立授权；不阻断安全的实现工作。
 
 ## PARKED

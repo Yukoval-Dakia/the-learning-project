@@ -5,24 +5,25 @@ Owner 已授权 AI pipeline 与基于1e61da8d报告的全项目业务封装/测�
 
 ## 当前实施（优先于下方历史完成记录）
 
-- goal active；主线9427202c，分支codex/yuk-944-context-contract，草稿PR1338不可合并。
-- remote3a735ffc exact CI Gate34027572879全绿；local7b3919d5未推，当前 comparison_guidance 待提交。
-- typed reader v2 拥有 claim 边界、事件/作答可用性、focal/direct-child范围和确定性 observed_edges。
-  不新增query、bridge或evaluator；TaskSpec/Skill只保留导航，禁止重新堆叠重复规则。
-- 六次candidate均未完整语义通过。第六次7b3919d5：70.324s/$0.191851，终文可见且全部七条
-  直接边正确；仍把B其他事件未知写成无、称唯一差异。
-- 原主线受控baseline a1f72e94（/tmp/tlp-claim-baseline.yuNFPU，base9427202c，仅测试harness
-  与90s窗口变更）：64.173s/$0.209183，仍漏认跨subject，但正确限定B/C已观测直接分叉。
-  报告证明问句标题还会误触学习校验；免费确认当前检测仍为true，未降低真实题目保护。
-- 当前将原主线有效 comparison 指引放入唯一 typed 合同；13DB/typecheck已通过。
-  完成unit/lint/build及提交后，用相同五读取/模型/90s做一次组合验证；不能结构绿冒充语义绿。
-- 944 candidate+baseline累计 $1.15308718（首轮估算、其余reported），含owner追加$1后余额
-  $0.45174082。所有输入/输出/hash/root run/model/cost见2026-09-06-claim-context-actual.json。
-- 内容表格3-step数据误判已红绿修复，observed_edges 13DB+22unit/typecheck/build/lint通过。
-- review_claim_context初审P1已修，唯一验证审通过但非语义验收；不再启动第三轮。
-- 946 Done：离线native SDK首请求catalog有/body无，调用Skill后body才出现，付费0；
-  不重建目录、不移除现有quiz可见性。SDK0.3.220原生compact/reinject仍属945未实现。
-- 945/948/949/950与全项目业务封装仍须完成，951需部署后drain证据，887需生产副本授权。
+- 完整goal active；main9427202c，当前codex/yuk-944-context-contract，PR1338待最终exact CI。
+- c03b5b3e 五固定读取actual核心检查通过：正因果边、非穷尽/非唯一比较、激活策略未知、
+  队列unknown非zero、具体ID/数值、权威终文展示、只有5reads/1model。不是生产或queue E2E。
+- 79.098s；input40410/output3179；$0.164021 reported；root copilot_task_cywdi90plz9kxagie1jkn6rv。
+  对照原主线input40401：此复杂样本没有token下降证据；不外推单样本费用或稳定性。
+  redacted组数未明确endpoint，证据保留此精度局限。原六candidate和baseline失败记录不删除。
+- 当前累计944 candidate+baseline $1.31710818，owner追加$1后余额$0.28771982；低于0.30reserve，
+  不新增付费调用。evidence在2026-09-06-claim-context-actual.json，包含全输入输出/hash/cost。
+- typed reader v2集中事件/作答可用性、focal直子/未查孙树、确定性observed_edges；原比较指引
+  恢复到唯一typed合同，TaskSpec/Skill仅导航。无新增DBquery/bridge/evaluator。
+- 内容表格3-step数据误判已修；原主线报告证明问句误拦未修，已登记YUK960。
+  不按A01/fixture白名单或全删标题降低真实题保护；后续与949产品成品责任一起推进。
+- 13DB+22unit/typecheck/lint/build通过；review初审与唯一验证审完成，不启动第三轮。
+  上一remote3a735ffc exact CI34027572879全绿，最终封存需新的exact CI；尚未合并/部署。
+- 946 Done：离线native catalog→调用后body验证，付费0，不重建目录或移除quiz能力。
+- 945只读接线检查完成：runner.buildQueryOptions和consumeSdkAttempt是统一seam；SDK0.3.220
+  有autoCompactEnabled/window、Pre/PostCompact和compact_boundary，但未接线；无公开compact()。
+  PostCompact未声明additionalContext，不凭类型猜测注入，需要原生离线运行验证。
+- 945/948/949/950/960与全项目业务封装仍须完成；951需部署后drain，887需生产副本授权。
 
 ## 完成与验收
 
