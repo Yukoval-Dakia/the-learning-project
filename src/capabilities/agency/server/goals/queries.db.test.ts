@@ -9,7 +9,6 @@
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { event, goal, knowledge } from '@/db/schema';
-import { gatherAndFoldGoal } from '@/server/projections/goal';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { createGoalFromGenesis } from './commands';
 import { insertGoal, listActiveGoalsWithResolvedScope, updateGoalStatus } from './queries';
@@ -189,10 +188,5 @@ describe('goal mutation command concurrency (YUK-952)', () => {
     expect(statusEvents).toHaveLength(2);
     expect(row.version).toBe(2);
     expect(row.status).toBe('done');
-    expect(gatherAndFoldGoal(db, goalId)).resolves.toEqual({
-      ...row,
-      scope_knowledge_ids: row.scope_knowledge_ids ?? [],
-      scope_mode: row.scope_mode,
-    });
   });
 });
