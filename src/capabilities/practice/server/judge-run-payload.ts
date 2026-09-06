@@ -27,7 +27,7 @@ type QuestionRow = typeof question.$inferSelect;
 export interface JudgeRunJobData {
   /**
    * run handle + job_events business_id。**W2 submit 面**：= 该次作答 attempt/outcome
-   * event id（persistSubmit 以它做 eventId，见 opts.attemptEventId）。此「= attempt
+   * event id（deferred settlement 以它做 attemptEventId）。此「= attempt
    * event id」契约是 submit 面特化，不对全部面通用（advice 面无 event，W3 另定）。
    */
   run_id: string;
@@ -197,7 +197,7 @@ export async function reconstructDoneFromDomainEvents(
     .limit(1);
   const judgePayload = (judgeEvent?.payload ?? {}) as Record<string, unknown>;
   const attemptPayload = (attempt.payload ?? {}) as Record<string, unknown>;
-  // W5 #TuxJL — read from where `persistSubmit` ACTUALLY writes each field, not from a
+  // W5 #TuxJL — read from where deferred settlement ACTUALLY writes each field, not from a
   // shape that looked plausible. The judge event's payload carries `coarse_outcome` /
   // `score` / `feedback_md` / `capability_ref` / `judge_route`, but NOT `evidence_json`
   // — that lives on the REVIEW event's embedded `payload.judge` block. Reading it off the
@@ -224,7 +224,7 @@ export async function reconstructDoneFromDomainEvents(
     judgePayload.capability_ref,
   );
   const route = pick<string>(isStr, embedded.route, judgePayload.judge_route);
-  // YUK-777 D3 (#TuxJL) — `score_meaning` IS reconstructable now: `persistSubmit` writes it
+  // YUK-777 D3 (#TuxJL) — `score_meaning` IS reconstructable now: settlement writes it
   // into the review event's embedded `payload.judge` block, next to the `score` it qualifies.
   // Still `pick`ed rather than assumed: an attempt persisted before that write landed has no
   // such key, and omitting the field for those rows is the honest answer (the terminal schema

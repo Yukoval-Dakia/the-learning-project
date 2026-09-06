@@ -340,7 +340,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
   });
 
   // YUK-561 S2 (revert-bracket §4.1, was YUK-471 W0) — REVERSE invariant: each A-class
-  // attempt tx (solo submit.ts + paper paper-submit.ts) MUST bracket the θ̂/FSRS
+  // attempt settlement (shared by solo and paper) MUST bracket the θ̂/FSRS
   // in-place overwrite it performs, so the transition is always revertable. Post-S2 the
   // bracket write moved into the shared `writeAttemptSnapshotBrackets` helper (O2 dual-
   // sibling: θ̂ + FSRS each get their own checkpoint + snapshot). This static walker
@@ -349,11 +349,8 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
   // both the grading_checkpoint anchor + the state_snapshot with the correct caused_by
   // chain + outbox opt-out. It is the source-level companion to the DB tests
   // (submit-snapshot / paper-submit-snapshot).
-  it('each attempt tx (solo + paper) brackets its θ̂/FSRS transition via the shared writeAttemptSnapshotBrackets helper', async () => {
-    const ATTEMPT_PATHS = [
-      'src/capabilities/practice/api/submit.ts',
-      'src/capabilities/practice/server/paper-submit.ts',
-    ] as const;
+  it('the settlement owner brackets its θ̂/FSRS transition via the shared writeAttemptSnapshotBrackets helper', async () => {
+    const ATTEMPT_PATHS = ['src/capabilities/practice/server/review-settlement.ts'] as const;
     for (const rel of ATTEMPT_PATHS) {
       const src = await fs.readFile(path.join(REPO_ROOT, rel), 'utf8');
       // Exactly one call to the shared bracket writer (the single append site).
