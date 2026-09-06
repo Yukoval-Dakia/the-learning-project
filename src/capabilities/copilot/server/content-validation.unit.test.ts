@@ -72,6 +72,42 @@ describe('validateCopilotLearningContent', () => {
     expect(copilotLearningContentRequiresValidation(mixed)).toBe(true);
   });
 
+  it.each(['是否已证明 P？', '是否已经证明 P？', '这个结论证明了？'])(
+    'ignores completed instructional wording: %s',
+    (reportQuestion) => {
+      expect(containsLearningQuestion(reportQuestion)).toBe(false);
+    },
+  );
+
+  it('keeps an active instruction after a multiline report question', () => {
+    expect(containsLearningQuestion('是否已经证明 P？\n\n请计算 Q？')).toBe(true);
+  });
+
+  it('does not let completed wording bypass explicit question protections', () => {
+    expect(containsLearningQuestion('题目：是否已证明 P？')).toBe(true);
+    expect(containsLearningQuestion('1. 是否已证明 P？')).toBe(true);
+  });
+
+  it('keeps HTML assessments protected even when visible prose is a report', async () => {
+    let validatorCalls = 0;
+    const result = await reviewCopilotLearningContent(
+      '是否已证明 P？',
+      '',
+      'html-assessment-960',
+      {
+        db: {} as never,
+        additionalVisibleText: '<p>答案：323</p>',
+        runTaskFn: async () => {
+          validatorCalls += 1;
+          throw new Error('manifest-free assessment must fail before provider work');
+        },
+      },
+    );
+
+    expect(result.passed).toBe(false);
+    expect(validatorCalls).toBe(0);
+  });
+
   it.each(['证明 1+1=2？', '请计算三角形面积？', '能否证明这个命题？'])(
     'keeps active instructional questions: %s',
     (question) => {
