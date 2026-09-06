@@ -1,13 +1,18 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-06：当前active为YUK961提示规则归属，945真实摘要验收待费用授权。
+> Linear 是权威 tracker；更新于 2026-09-06：当前active为YUK962纯逻辑测试分区，945真实摘要验收待费用授权。
 
 ## NOW
 
 - Owner 授权 AI pipeline、全项目业务封装与测试精简；不把目录归属或 audit 数量当整体完成。
-- YUK961 active：Agency recordQuestionPoolGap拥有coach提示文案、目标、refs、30天expiry和来源；
+- YUK962 active：3 kernel tests原字节改名unit、2 AI纯逻辑测试归入fast，删除3条已失效旧路径。
+  59 scoped unit在无DB环境通过，独立review PASS且DB收集零条；1043文件总数不变。
+  617unit/426DB，警告8→3，保留传递DB候选与Bun插件测试；typecheck/lint/build通过。
+  当前bf59af8d，下一步PR/exact CI；没有删除预算/权限/unknown-cost断言。
+- YUK961：Agency recordQuestionPoolGap拥有coach提示文案、目标、refs、30天expiry和来源；
   Practice只提交已完成验证的事实，保留事务外best-effort与入池成功不提示。
-  48 scoped DB tests/typecheck/lint/build和两项architecture audits通过，待独立审查/PR/exact CI。
+  48 scoped DB tests/typecheck/lint/build和两项architecture audits通过，独立review PASS。
+  PR1340 exact69542b2d CI34032977403全绿，已合并main50ba305b，Linear Done。
   不新增框架/模型/schema/UI；依赖基线仍438/0/47，不用计数冒充业务封装完成。
 - YUK944已合并PR1338：exact3fd90c4d CI34030191329全绿，main db5a57b1。
   原五读取actual核心通过；input40410与baseline40401持平，不称此样本降本。
@@ -37,7 +42,7 @@
 
 ## NEXT
 
-1. YUK961审查/PR/exact CI收口；945保留草稿等待真实摘要验收，不以CI代替模型质量。
+1. YUK962 PR/exact CI；945保留草稿等待真实摘要验收，不以CI代替模型质量。
 2. YUK-946离线native SDK验证通过：首请求仅catalog，Skill调用后才出现body，真实模型费用$0。
    原eager-body前提已否证；不重建目录、不删除free-form quiz能力，不声称移除正文带来普通轮降本。
    946已按原生能力验证收口Done，不代表实现了新目录或验证了生产模型选择。
@@ -50,6 +55,7 @@
 
 ## PARKED
 
+- YUK963：审计命令识别遗漏record前缀；当前消费者已登记command，不是运行故障，后续补有界回归。
 - 944/945/948/949/950已列入NEXT的完整重构顺序，尚未完成，不再作为无限期PARKED；946已验证收口。
 - 951历史mailbox/ToolOperations仅drain-only恢复；退休需零pending/零队列活动跨完整重试窗口。
 - YUK-921多provider、572夜间教研、832 HOLD未解锁。
