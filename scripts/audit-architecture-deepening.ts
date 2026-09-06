@@ -486,7 +486,7 @@ export function scanCentralRoots(sources: readonly SourceFile[]): OwnershipViola
     }
   }
 
-  for (const { path, code } of sources) {
+  for (const { path } of sources) {
     if (!path.startsWith('src/server/events/') || TEST_RE.test(path)) continue;
     if (!CENTRAL_EVENTS_TRANSPORT_FILES.has(path)) {
       violations.push({
@@ -1388,10 +1388,10 @@ async function runCli(): Promise<void> {
 
   const result = auditArchitectureDeepening(projectRoot, publicReadCycleCatalog, {
     ownerMaps,
-    expectedTaskCount: 52,
+    expectedTaskCount: 50,
     taskCensus: {
       catalogCount: census.catalogCount,
-      expectedCount: 52,
+      expectedCount: 50,
       errors: census.errors,
       profileCriticCallerPresent: census.profileCriticCaller !== null,
       forbiddenPatternViolations: scanForbiddenTaskCatalogPatterns(projectRoot).map(

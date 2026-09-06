@@ -1188,6 +1188,13 @@ export const practiceCapability = defineCapability({
         load: () => import('./server/tools/proposal-tools').then((m) => m.authorQuestionTool),
       },
       {
+        name: 'generate_question_candidate',
+        load: () =>
+          import('./server/tools/generate-question-candidate').then(
+            (m) => m.generateQuestionCandidateTool,
+          ),
+      },
+      {
         name: 'query_questions',
         load: () => import('./server/tools/query-questions').then((m) => m.queryQuestionsTool),
       },

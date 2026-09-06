@@ -6,6 +6,8 @@ import {
   makeRunTaskTextFn,
 } from '@/server/ai/runner-fn';
 
+export { type BoundRunTaskFn, type RunTaskCallCtx, makeRunTaskFn } from '@/server/ai/runner-fn';
+
 /** Capability-local AI runtime port. Product code does not depend on runner internals. */
 export type PracticeTaskRunFn = BoundRunTaskTextFn;
 export type PracticeTaskCallCtx = RunTaskCallCtx;

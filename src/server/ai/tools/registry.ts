@@ -24,7 +24,7 @@ export function registerTool<I, O>(tool: DomainTool<I, O>): void {
       `DomainTool '${tool.name}' outputSchema must be a Zod schema with a safeParse method. Got ${String(tool.outputSchema)}.`,
     );
   }
-  if (tool.safeHandoff && (tool.effect !== 'read' || tool.name === 'run_task')) {
+  if (tool.safeHandoff && tool.effect !== 'read') {
     throw new Error(
       `DomainTool '${tool.name}' safeHandoff requires an explicitly idempotent remote read`,
     );

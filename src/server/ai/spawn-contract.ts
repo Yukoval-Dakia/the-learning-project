@@ -5,8 +5,17 @@ import type {
   Options,
 } from '@anthropic-ai/claude-agent-sdk';
 
-/** Runtime tool name used by the Agent SDK to start a nested agent. */
+/** Compatibility name accepted by the SDK for starting a nested agent. */
 export const SPAWN_TOOL_NAME = 'Task';
+/** The SDK emits `Agent`; `Task` remains a canonicalized compatibility alias. */
+export const SPAWN_TOOL_ALIASES = ['Agent', SPAWN_TOOL_NAME] as const;
+export const SPAWN_DISABLE_BACKGROUND_TASKS_ENV = 'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS';
+
+const SPAWN_TOOL_NAME_SET = new Set<string>(SPAWN_TOOL_ALIASES);
+
+export function isSpawnToolName(toolName: string): boolean {
+  return SPAWN_TOOL_NAME_SET.has(toolName);
+}
 
 /**
  * YUK-572/YUK-757 v2 deliberately observes real spend before choosing a number.
@@ -63,12 +72,18 @@ export interface SpawnContract {
 const DEFAULT_DISABLED_REASON = 'subagent spawn kill switch is disabled';
 
 function makeDepthOneAgent(definition: AgentDefinition): AgentDefinition {
-  const tools = definition.tools?.filter((toolName) => toolName !== SPAWN_TOOL_NAME);
-  const disallowedTools = [...new Set([...(definition.disallowedTools ?? []), SPAWN_TOOL_NAME])];
+  const tools = definition.tools?.filter((toolName) => !isSpawnToolName(toolName));
+  const disallowedTools = [
+    ...new Set([...(definition.disallowedTools ?? []), ...SPAWN_TOOL_ALIASES]),
+  ];
   return {
     ...definition,
     ...(definition.tools === undefined ? {} : { tools }),
     disallowedTools,
+    // Every contract-managed spawn returns into its parent before that parent
+    // can complete. The runner uses this explicit value to scope the SDK flag
+    // without changing generic callers that intentionally define background agents.
+    background: false,
   };
 }
 
@@ -116,6 +131,7 @@ export function createSpawnContract(options: CreateSpawnContractOptions): SpawnC
       } else if (
         'model' in taskInput ||
         'isolation' in taskInput ||
+        'name' in taskInput ||
         taskInput.run_in_background === true
       ) {
         // Role definitions, not model-emitted Task input, own model/isolation and
@@ -125,7 +141,7 @@ export function createSpawnContract(options: CreateSpawnContractOptions): SpawnC
         // correlation-id keyed decision and the attempted privilege change is visible.
         record = {
           decision: 'deny_input_override',
-          message: 'Task model/isolation/background overrides are not allowed',
+          message: 'Agent model/isolation/name/background overrides are not allowed',
         };
       } else {
         record = { decision: 'allow' };
@@ -150,12 +166,27 @@ export function createSpawnContract(options: CreateSpawnContractOptions): SpawnC
     return record;
   }
 
+  function forceForegroundInput(input: unknown): Record<string, unknown> {
+    return {
+      ...(input !== null && typeof input === 'object' ? (input as Record<string, unknown>) : {}),
+      run_in_background: false,
+    };
+  }
+
   const preToolUseHook: HookCallback = async (input) => {
-    if (input.hook_event_name !== 'PreToolUse' || input.tool_name !== SPAWN_TOOL_NAME) {
+    if (input.hook_event_name !== 'PreToolUse' || !isSpawnToolName(input.tool_name)) {
       return { continue: true };
     }
     const decision = decide(input.tool_use_id, input.tool_input);
-    if (decision.decision === 'allow') return { continue: true };
+    if (decision.decision === 'allow') {
+      return {
+        continue: true,
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          updatedInput: forceForegroundInput(input.tool_input),
+        },
+      };
+    }
     return {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
@@ -166,9 +197,11 @@ export function createSpawnContract(options: CreateSpawnContractOptions): SpawnC
   };
 
   const canUseTool: CanUseTool = async (toolName, input, permissionOptions) => {
-    if (toolName !== SPAWN_TOOL_NAME) return { behavior: 'allow' };
+    if (!isSpawnToolName(toolName)) return { behavior: 'allow' };
     const decision = decide(permissionOptions.toolUseID, input);
-    if (decision.decision === 'allow') return { behavior: 'allow' };
+    if (decision.decision === 'allow') {
+      return { behavior: 'allow', updatedInput: forceForegroundInput(input) };
+    }
     return { behavior: 'deny', message: decision.message ?? 'spawn denied by contract' };
   };
 

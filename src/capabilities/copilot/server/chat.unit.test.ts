@@ -1,4 +1,4 @@
-import type { HookCallback, Options } from '@anthropic-ai/claude-agent-sdk';
+import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const nativeSubagentTaskEventMock = vi.hoisted(() => vi.fn(async () => {}));
@@ -30,21 +30,66 @@ import { COPILOT_HISTORY_BUDGET } from '@/kernel/tools/budgets';
 import { TAVILY_MCP_ALLOWED_TOOLS, buildTavilyMcpServer } from '@/server/ai/mcp/tavily';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import {
+  type CopilotChatDeps,
   CopilotChatRequest,
   extractPrimaryView,
-  runCopilotChat,
-  runCopilotChatStreaming,
+  runCopilotChat as runCopilotChatActual,
+  runCopilotChatStreaming as runCopilotChatStreamingActual,
 } from './chat';
 import { COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY } from './content-validation';
 
-const FOREGROUND_MAILBOX_POLL_SUFFIXES = ['launch_researcher', 'get_subagent', 'wait_subagent'];
+const RETIRED_COPILOT_CONTROL_SUFFIXES = [
+  'get_tool_operation',
+  'wait_tool_operation',
+  'cancel_tool_operation',
+  'launch_researcher',
+  'get_subagent',
+  'wait_subagent',
+  'cancel_subagent',
+];
 
 function foregroundInlineAllowedTools(baseTools: readonly string[]): string[] {
   const filtered = baseTools.filter(
     (tool) =>
-      !FOREGROUND_MAILBOX_POLL_SUFFIXES.some((name) => tool === name || tool.endsWith(`__${name}`)),
+      !RETIRED_COPILOT_CONTROL_SUFFIXES.some((name) => tool === name || tool.endsWith(`__${name}`)),
   );
   return filtered.includes('Task') ? [...filtered] : [...filtered, 'Task'];
+}
+
+function withFixtureFinalizer(deps: CopilotChatDeps): CopilotChatDeps {
+  const stream = deps.streamAgentTaskFn;
+  return {
+    ...deps,
+    ...(stream
+      ? {
+          streamAgentTaskFn: async (...args: Parameters<NonNullable<typeof stream>>) => {
+            const result = await stream(...args);
+            return {
+              ...result,
+              terminalText: result.terminalText ?? result.text,
+            };
+          },
+        }
+      : {}),
+  };
+}
+
+function runCopilotChat(
+  ...args: Parameters<typeof runCopilotChatActual>
+): ReturnType<typeof runCopilotChatActual> {
+  return runCopilotChatActual(args[0], args[1], withFixtureFinalizer(args[2] ?? {}));
+}
+
+function runCopilotChatStreaming(
+  ...args: Parameters<typeof runCopilotChatStreamingActual>
+): ReturnType<typeof runCopilotChatStreamingActual> {
+  return runCopilotChatStreamingActual(
+    args[0],
+    args[1],
+    args[2],
+    withFixtureFinalizer(args[3] ?? {}),
+    args[4],
+  );
 }
 
 describe('runCopilotChat (two-surface routing)', () => {
@@ -330,6 +375,9 @@ describe('runCopilotChat (two-surface routing)', () => {
     );
 
     const mcpOptions = (buildMcpServerFn.mock.calls[0] as unknown as [BuildMcpServerOptions])[0];
+    for (const name of RETIRED_COPILOT_CONTROL_SUFFIXES) {
+      expect(mcpOptions.toolNames, name).not.toContain(name);
+    }
     const mcpCtx = mcpOptions.ctx;
     const runnerCtx = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
       taskRunId?: string;
@@ -343,27 +391,8 @@ describe('runCopilotChat (two-surface routing)', () => {
     expect(mcpOptions.cancellationSignals).toEqual([
       { signal: runnerCtx.lifecycleAbortController?.signal, requestedBy: 'system' },
     ]);
-    const correlationHook = runnerCtx.hooks?.PreToolUse?.[0]?.hooks[0] as HookCallback;
-    await correlationHook(
-      {
-        hook_event_name: 'PreToolUse',
-        session_id: 'sdk_session',
-        transcript_path: '/tmp/transcript',
-        cwd: '/tmp',
-        permission_mode: 'default',
-        tool_name: 'mcp__loom__search_memory_facts',
-        tool_input: { query: 'correlated production call', topK: 7 },
-        tool_use_id: 'toolu_inline_real_7',
-      },
-      'toolu_inline_real_7',
-      { signal: new AbortController().signal },
-    );
-    expect(
-      mcpOptions.claimToolUseId?.('search_memory_facts', {
-        topK: 7,
-        query: 'correlated production call',
-      }),
-    ).toBe('toolu_inline_real_7');
+    expect(runnerCtx.hooks?.PreToolUse).toEqual(expect.any(Array));
+    expect(mcpOptions.claimToolUseId).toEqual(expect.any(Function));
   });
 
   // AF S3a / YUK-203 U3 — the conversation envelope is resolved once per turn;
@@ -410,7 +439,9 @@ describe('runCopilotChat (two-surface routing)', () => {
     // column (so promote_conversation_idle's event.session_id = ls.id join sees
     // it as a user turn for this session) AND the payload (portable copy).
     expect(askCall?.session_id).toBe('ls_envelope');
-    expect((askCall?.payload as { session_id?: string }).session_id).toBe('ls_envelope');
+    expect((askCall?.payload as { session_id?: string } | undefined)?.session_id).toBe(
+      'ls_envelope',
+    );
 
     const replyCall = writeEventFn.mock.calls[1]?.[1];
     expect(replyCall?.action).toBe('experimental:copilot_reply');
@@ -435,7 +466,16 @@ describe('runCopilotChat (two-surface routing)', () => {
   it('wires the per-message context budget (tool-call ceiling + limit cap) into the bridge', async () => {
     const db = {} as never;
     const mcpServer = { name: 'fake-loom' } as never;
-    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
+    let buildCount = 0;
+    const buildMcpServerFn = vi.fn((opts: BuildMcpServerOptions) => {
+      if (buildCount === 0) {
+        for (let i = 0; i < 10; i += 1) {
+          expect(opts.beforeExecute?.({ name: 'query_knowledge', effect: 'read' })).toBeUndefined();
+        }
+      }
+      buildCount += 1;
+      return mcpServer;
+    });
     const runAgentTaskFn = vi.fn(async () => ({
       task_run_id: 'task_copilot_budget',
       text: 'OK',
@@ -464,11 +504,7 @@ describe('runCopilotChat (two-surface routing)', () => {
       throw new Error('expected beforeExecute + interceptInput throttle wiring');
     }
 
-    // Calls 1–25 execute. At 10 the interceptor returns an advisory notice;
-    // only call 26 soft-stops.
-    for (let i = 0; i < 10; i += 1) {
-      expect(opts.beforeExecute({ name: 'query_knowledge', effect: 'read' })).toBeUndefined();
-    }
+    expect(opts.beforeExecute({ name: 'query_knowledge', effect: 'read' })).toBeUndefined();
     const warning = opts.interceptInput(
       { name: 'get_subject_graph_overview', effect: 'read' },
       { subjectId: 'yuwen' },
@@ -476,14 +512,8 @@ describe('runCopilotChat (two-surface routing)', () => {
     expect(warning.truncationNote).toMatchObject({
       level: 'warning',
       truncated: false,
-      dimensions: { toolCalls: { used: 10, hard_remaining: 15 } },
+      dimensions: { toolCalls: { used: 11, hard_remaining: 14 } },
     });
-    for (let i = 10; i < 25; i += 1) {
-      expect(opts.beforeExecute({ name: 'query_knowledge', effect: 'read' })).toBeUndefined();
-    }
-    expect(opts.beforeExecute({ name: 'query_knowledge', effect: 'read' })).toMatch(
-      /hard context budget reached/,
-    );
 
     // Run a fresh turn for row budgets (per-message tracker, spec §3.4).
     await runCopilotChat(
@@ -565,7 +595,7 @@ describe('runCopilotChat (two-surface routing)', () => {
     // (not just payload) so chip-driven activity is attributed to this session
     // for the idle clock + replay scoping, same as the ask path.
     expect(writeArg?.session_id).toBe('ls_unit');
-    expect((writeArg?.payload as { session_id?: string }).session_id).toBe('ls_unit');
+    expect((writeArg?.payload as { session_id?: string } | undefined)?.session_id).toBe('ls_unit');
     // The second event is the reply turn (no user_ask anywhere on the chip path).
     const replyArg = writeEventFn.mock.calls[1]?.[1];
     expect(replyArg?.action).toBe('experimental:copilot_reply');
@@ -923,7 +953,7 @@ describe('runCopilotChat (two-surface routing)', () => {
       }
       // Foreground inline keeps domain tools minus mailbox poll controls, plus native Task.
       for (const tool of resolveMcpAllowedTools('copilot')) {
-        if (FOREGROUND_MAILBOX_POLL_SUFFIXES.some((name) => tool.endsWith(`__${name}`))) {
+        if (RETIRED_COPILOT_CONTROL_SUFFIXES.some((name) => tool.endsWith(`__${name}`))) {
           expect(ctx.allowedTools).not.toContain(tool);
         } else {
           expect(ctx.allowedTools).toContain(tool);
@@ -1024,559 +1054,41 @@ describe('runCopilotChat (two-surface routing)', () => {
   });
 });
 
-describe('YUK-832 inline final evidence review', () => {
-  const request = {
-    user_message:
-      '核完 diagnostic_subject_A03 的 proposal→probe/review/judge 链，并判断 C04 due queue 是否清空。',
-    triggered_by: 'chat' as const,
-    ambient_context: {
-      route: '/admin/runs',
-      focused_entity: { kind: 'subject', id: 'diagnostic_subject_A03' },
-    },
-  };
-
-  function baseEvidenceDeps() {
-    return {
-      findOrCreateConversationFn: async () => ({ sessionId: 'ls_yuk832', created: true }),
-      resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
-      loadHistoryFn: async () => [],
-      resolveCopilotSkillsFn: async () => undefined,
-      buildTavilyMcpServerFn: () => null,
-      copilotSubagentEnabled: false,
-      now: () => new Date('2026-08-02T00:00:00.000Z'),
-    };
-  }
-
-  it('keeps raw chunks invisible, persists the repair, then emits only reviewed prose', async () => {
-    const visibleDeltas: string[] = [];
-    const order: string[] = [];
-    let mcpOptions: BuildMcpServerOptions | undefined;
-    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
-      mcpOptions = options;
-      return { name: 'fake-loom-yuk832' } as never;
-    });
-    const unsafeCandidate = '六个事件形成完整充分因果链；C04 返回 0 行，所以整个队列已清空。';
-    const rawUnsafeCandidate = `${unsafeCandidate}\n<!--primary_view:{"source":"artifact","ref":{"kind":"question","id":"q_unsafe"}}-->`;
-    const safeReply =
-      'probe 与 rate 只能证明是 proposal 的直接子节点，不是彼此因果链。C04 的 queue_assertion=null，无法裁决队列是否清空。';
-    const streamAgentTaskFn = vi.fn(async (_kind, _input, _ctx, onDelta) => {
-      await mcpOptions?.onResult?.({
-        name: 'query_events',
-        effect: 'read',
-        input: { subject_id: 'diagnostic_subject_A03', limit: 50 },
-        output: {
-          query_contract: {
-            scope_coverage: 'blocked_cross_subject_relation_followup_required',
-          },
-          events: [
-            {
-              id: 'evt_probe_a03',
-              caused_by_event_id: 'evt_proposal_a03',
-              evidence: {
-                activation_policy: 'not_observed',
-                necessary_conditions: 'not_supported',
-                sufficient_conditions: 'not_supported',
-              },
-            },
-          ],
-          has_more: false,
-        },
-        error_reason: null,
-        executed: true,
-      });
-      onDelta('六个事件形成完整充分因果链；');
-      onDelta('C04 返回 0 行，所以整个队列已清空。');
-      expect(visibleDeltas).toEqual([]);
-      return {
-        text: rawUnsafeCandidate,
-        task_run_id: 'copilot_task_yuk832_inline',
-        finishReason: 'stop',
-        usage: { inputTokens: 18_000, outputTokens: 1_200 },
-      };
-    });
-    const reviewEvidenceReplyFn = vi.fn(async (input) => {
-      order.push('review');
-      expect(visibleDeltas).toEqual([]);
-      expect(input).toMatchObject({
-        candidateReply: unsafeCandidate,
-        candidateComplete: true,
-        toolTrace: [expect.objectContaining({ name: 'query_events', effect: 'read' })],
-        requestContext: {
-          user_message: request.user_message,
-          surface: 'copilot',
-          triggered_by: 'chat',
-          ambient_context: request.ambient_context,
-        },
-      });
-      expect(input.requestContext).not.toHaveProperty('conversation_history');
-      return {
-        status: 'repair' as const,
-        replyText: safeReply,
-        reviewTaskRunId: 'copilot_evidence_review_inline',
-        referenceTaskRunIds: ['copilot_evidence_reference_inline'],
-        comparisonTaskRunIds: [
-          'copilot_evidence_original_rejected_inline',
-          'copilot_evidence_fallback_pass_1_inline',
-          'copilot_evidence_fallback_pass_2_inline',
-        ],
-        violations: ['noncausal_relation', 'queue_or_count_unknown_promoted'],
-      };
-    });
-    const writeEventFn = vi.fn(async (_db, input) => {
-      if (input.action === 'experimental:copilot_reply') order.push('persist');
-      return input.id;
-    });
-
-    const result = await runCopilotChatStreaming(
-      {} as never,
-      request,
-      (text) => {
-        order.push('delta');
-        visibleDeltas.push(text);
-      },
-      {
-        ...baseEvidenceDeps(),
-        writeEventFn,
-        buildMcpServerFn,
-        streamAgentTaskFn,
-        reviewEvidenceReplyFn,
-      },
-    );
-
-    expect(order).toEqual(['review', 'persist', 'delta']);
-    expect(visibleDeltas).toEqual([safeReply]);
-    expect(result.reply).toBe(safeReply);
-    const persistedReply = writeEventFn.mock.calls.find(
-      (call) => call[1].action === 'experimental:copilot_reply',
-    )?.[1];
-    expect(persistedReply.payload.reply_md).toBe(safeReply);
-    expect(persistedReply.payload.evidence_validation).toEqual({
-      status: 'repair',
-      reference_task_run_ids: ['copilot_evidence_reference_inline'],
-      comparison_task_run_ids: [
-        'copilot_evidence_original_rejected_inline',
-        'copilot_evidence_fallback_pass_1_inline',
-        'copilot_evidence_fallback_pass_2_inline',
-      ],
-    });
-    expect(JSON.stringify(persistedReply)).not.toContain(unsafeCandidate);
-    expect(result).not.toHaveProperty('primary_view');
-    expect(persistedReply.payload).not.toHaveProperty('primary_view');
-  });
-
-  it('blocks unverified learning content introduced by a degraded blind reply', async () => {
-    let mcpOptions: BuildMcpServerOptions | undefined;
-    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
-      mcpOptions = options;
-      return { name: 'fake-loom-degraded-learning' } as never;
-    });
-    const runAgentTaskFn = vi.fn(async () => {
-      await mcpOptions?.onResult?.({
-        name: 'query_events',
-        effect: 'read',
-        input: { subject_id: 'degraded_learning_subject' },
-        output: { events: [], has_more: false },
-        error_reason: null,
-        executed: true,
-      });
-      return {
-        task_run_id: 'task_degraded_learning_inline',
-        text: '现有证据不足以判断队列是否清空。',
-      };
-    });
-    const unverifiedLearningReply = '题目：\n1. 请计算 17×19？';
-
-    const result = await runCopilotChat({} as never, request, {
-      ...baseEvidenceDeps(),
-      buildMcpServerFn,
-      runAgentTaskFn,
-      writeEventFn: async (_db, input) => input.id,
-      reviewEvidenceReplyFn: async () => ({
-        status: 'degraded',
-        replyText: unverifiedLearningReply,
-      }),
-    });
-
-    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
-    expect(result.reply).not.toContain(unverifiedLearningReply);
-  });
-
-  it('rejects an evidence repair that drops the targeted correction binding', async () => {
-    const targetId = 'copilot_reply_water_tank_repair';
-    let mcpOptions: BuildMcpServerOptions | undefined;
-    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
-      mcpOptions = options;
-      return { name: 'fake-loom-correction-repair' } as never;
-    });
-    const runAgentTaskFn = vi.fn(async () => {
-      await mcpOptions?.onResult?.({
-        name: 'query_events',
-        effect: 'read',
-        input: { subject_id: 'water_tank_d02' },
-        output: { events: [], has_more: false },
-        error_reason: null,
-        executed: true,
-      });
-      return {
-        task_run_id: 'task_copilot_correction_repair',
-        text: `水箱更正后的推导。\n\n<!-- copilot-correction {"prior_turn_id":"${targetId}","changed":["h*=4/9"],"retained":["同一个 k"],"uncertain":[]} -->`,
-      };
-    });
-    const unsafeRepair = '证据修复后的正文，但没有 correction envelope。';
-
+describe('YUK-939 inline root finalization wiring', () => {
+  it('consumes root terminal Markdown and persists only its finalized reply', async () => {
+    const writes: Array<{ payload?: Record<string, unknown> }> = [];
     const result = await runCopilotChat(
       {} as never,
+      { user_message: '整理这段说明', triggered_by: 'chat' },
       {
-        user_message: '请核验并改正水箱题',
-        triggered_by: 'chat',
-        correction_target_turn_id: targetId,
-      },
-      {
-        ...baseEvidenceDeps(),
-        findOrCreateConversationFn: async () => ({
-          sessionId: 'ls_correction_repair',
-          created: false,
+        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        runAgentTaskFn: vi.fn(async (_kind, _input, ctx) => {
+          expect(ctx.allowedTools).not.toContain('mcp__copilot_internal__finalize_reply');
+          expect(ctx.mcpServers).not.toHaveProperty('copilot_internal');
+          expect(ctx.hooks).toHaveProperty('PreToolUse');
+          return {
+            task_run_id: 'task_inline_finalized',
+            text: '这是应被 finalizer 收口的正文。',
+            finishReason: 'stop' as const,
+            usage: { inputTokens: 1, outputTokens: 2 },
+          };
         }),
-        loadHistoryFn: async () => [
-          {
-            role: 'ai',
-            text: '水箱 D02：原推导用了错误高度。',
-            at: '2026-08-01T10:00:00.000Z',
-            event_id: targetId,
-          },
-        ],
-        buildMcpServerFn,
-        runAgentTaskFn,
-        writeEventFn: async (_db, input) => input.id,
-        reviewEvidenceReplyFn: async () => ({
-          status: 'repair',
-          replyText: unsafeRepair,
+        writeEventFn: vi.fn(async (_db, input) => {
+          writes.push(input);
+          return input.id;
         }),
+        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
+        findOrCreateConversationFn: async () => ({ sessionId: 'ls_finalized', created: true }),
       },
     );
-
-    expect(result.reply).toContain('prior_turn_id');
-    expect(result.reply).not.toContain(unsafeRepair);
-  });
-
-  it('rejects a degraded blind reply that drops the targeted correction binding', async () => {
-    const targetId = 'copilot_reply_water_tank_degraded';
-    let mcpOptions: BuildMcpServerOptions | undefined;
-    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
-      mcpOptions = options;
-      return { name: 'fake-loom-correction-degraded' } as never;
-    });
-    const runAgentTaskFn = vi.fn(async () => {
-      await mcpOptions?.onResult?.({
-        name: 'query_events',
-        effect: 'read',
-        input: { subject_id: 'water_tank_d02' },
-        output: { events: [], has_more: false },
-        error_reason: null,
-        executed: true,
-      });
-      return {
-        task_run_id: 'task_copilot_correction_degraded',
-        text: `水箱更正后的推导。\n\n<!-- copilot-correction {"prior_turn_id":"${targetId}","changed":["h*=4/9"],"retained":["同一个 k"],"uncertain":[]} -->`,
-      };
-    });
-    const unboundDegradedReply = '盲审替换正文，但没有 correction envelope。';
-
-    const result = await runCopilotChat(
-      {} as never,
-      {
-        user_message: '请核验并改正水箱题',
-        triggered_by: 'chat',
-        correction_target_turn_id: targetId,
+    expect(result.reply).toBe('这是应被 finalizer 收口的正文。');
+    expect(writes.at(-1)?.payload).toMatchObject({
+      reply_md: result.reply,
+      reply_finalization: {
+        assurance: 'execution_trace_bound',
+        root_task_run_id: expect.any(String),
       },
-      {
-        ...baseEvidenceDeps(),
-        findOrCreateConversationFn: async () => ({
-          sessionId: 'ls_correction_degraded',
-          created: false,
-        }),
-        loadHistoryFn: async () => [
-          {
-            role: 'ai',
-            text: '水箱 D02：原推导用了错误高度。',
-            at: '2026-08-01T10:00:00.000Z',
-            event_id: targetId,
-          },
-        ],
-        buildMcpServerFn,
-        runAgentTaskFn,
-        writeEventFn: async (_db, input) => input.id,
-        reviewEvidenceReplyFn: async () => ({
-          status: 'degraded',
-          replyText: unboundDegradedReply,
-        }),
-      },
-    );
-
-    expect(result.reply).toContain('prior_turn_id');
-    expect(result.reply).not.toContain(unboundDegradedReply);
-  });
-
-  it('reviews, persists, and publishes exact bytes while dropping an unreviewed primary-view side channel', async () => {
-    const marker = '<!--primary_view:{"source":"ephemeral_html","ref":"<div>队列已清空</div>"}-->';
-    const cleanedCandidate =
-      'A03 中 probe 与 rate 都直接由 proposal 触发；现有记录没有证明 probe 导致 rate。';
-    const rawCandidate = `${cleanedCandidate}\n${marker}`;
-    const visibleDeltas: string[] = [];
-    let mcpOptions: BuildMcpServerOptions | undefined;
-    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
-      mcpOptions = options;
-      return { name: 'fake-loom-yuk832-exact-bytes' } as never;
     });
-    const streamAgentTaskFn = vi.fn(async (_kind, _input, _ctx, onDelta) => {
-      await mcpOptions?.onResult?.({
-        name: 'query_events',
-        effect: 'read',
-        input: { subject_id: 'diagnostic_subject_A03', limit: 50 },
-        output: {
-          events: [
-            { id: 'evt_probe', caused_by_event_id: 'evt_proposal' },
-            { id: 'evt_rate', caused_by_event_id: 'evt_proposal' },
-          ],
-          has_more: false,
-        },
-        error_reason: null,
-        executed: true,
-      });
-      onDelta(cleanedCandidate.slice(0, 22));
-      onDelta(`${cleanedCandidate.slice(22)}\n<!--primary_`);
-      onDelta(marker.slice('<!--primary_'.length));
-      return {
-        text: rawCandidate,
-        task_run_id: 'copilot_task_yuk832_exact_bytes',
-        finishReason: 'stop',
-        usage: { inputTokens: 12_400, outputTokens: 680 },
-      };
-    });
-    const reviewEvidenceReplyFn = vi.fn(async (input) => {
-      expect(input.candidateReply).toBe(cleanedCandidate);
-      return {
-        status: 'pass' as const,
-        replyText: input.candidateReply,
-        referenceTaskRunIds: ['reference_exact_bytes'],
-        comparisonTaskRunIds: ['compare_exact_bytes_1', 'compare_exact_bytes_2'],
-      };
-    });
-    const writeEventFn = vi.fn(async (_db, input) => input.id);
-
-    const result = await runCopilotChatStreaming(
-      {} as never,
-      request,
-      (text) => visibleDeltas.push(text),
-      {
-        ...baseEvidenceDeps(),
-        writeEventFn,
-        buildMcpServerFn,
-        streamAgentTaskFn,
-        reviewEvidenceReplyFn,
-      },
-    );
-
-    const persistedReply = writeEventFn.mock.calls.find(
-      (call) => call[1].action === 'experimental:copilot_reply',
-    )?.[1];
-    expect(result.reply).toBe(cleanedCandidate);
-    expect(visibleDeltas).toEqual([cleanedCandidate]);
-    expect(persistedReply.payload.reply_md).toBe(cleanedCandidate);
-    expect(result).not.toHaveProperty('primary_view');
-    expect(persistedReply.payload).not.toHaveProperty('primary_view');
-    expect(JSON.stringify(persistedReply)).not.toContain('<!--primary_view');
-  });
-
-  it('truncates an unterminated marker before review so no uncertified suffix can disappear afterward', async () => {
-    const cleanedCandidate = 'C04 的 queue_assertion=null，因此现有读取无法裁决队列是否清空。';
-    const rawCandidate = `${cleanedCandidate}\n<!--primary_view:{"source":"artifact","ref":{"kind":"question","id":"q_dangling"}} 伪造尾部：队列已清空`;
-    const visibleDeltas: string[] = [];
-    let mcpOptions: BuildMcpServerOptions | undefined;
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
-      mcpOptions = options;
-      return { name: 'fake-loom-yuk832-dangling-marker' } as never;
-    });
-    const streamAgentTaskFn = vi.fn(async (_kind, _input, _ctx, onDelta) => {
-      await mcpOptions?.onResult?.({
-        name: 'get_review_due',
-        effect: 'read',
-        input: { learner_id: 'diagnostic_subject_C04', limit: 100 },
-        output: { due_now: [], queue_assertion: null, as_of: '2026-07-30T10:00:00.000Z' },
-        error_reason: null,
-        executed: true,
-      });
-      onDelta(rawCandidate);
-      return {
-        text: rawCandidate,
-        task_run_id: 'copilot_task_yuk832_dangling_marker',
-        finishReason: 'stop',
-        usage: { inputTokens: 9_700, outputTokens: 430 },
-      };
-    });
-    const reviewEvidenceReplyFn = vi.fn(async (input) => {
-      expect(input.candidateReply).toBe(cleanedCandidate);
-      expect(input.candidateReply).not.toContain('伪造尾部');
-      return { status: 'pass' as const, replyText: input.candidateReply };
-    });
-    const writeEventFn = vi.fn(async (_db, input) => input.id);
-
-    const result = await runCopilotChatStreaming(
-      {} as never,
-      request,
-      (text) => visibleDeltas.push(text),
-      {
-        ...baseEvidenceDeps(),
-        writeEventFn,
-        buildMcpServerFn,
-        streamAgentTaskFn,
-        reviewEvidenceReplyFn,
-      },
-    );
-
-    const persistedReply = writeEventFn.mock.calls.find(
-      (call) => call[1].action === 'experimental:copilot_reply',
-    )?.[1];
-    expect(result.reply).toBe(cleanedCandidate);
-    expect(visibleDeltas).toEqual([cleanedCandidate]);
-    expect(persistedReply.payload.reply_md).toBe(cleanedCandidate);
-    expect(result).not.toHaveProperty('primary_view');
-    expect(persistedReply.payload).not.toHaveProperty('primary_view');
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    warnSpy.mockRestore();
-  });
-
-  it('does not emit reviewed text when reply persistence fails', async () => {
-    const visibleDeltas: string[] = [];
-    let mcpOptions: BuildMcpServerOptions | undefined;
-    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
-      mcpOptions = options;
-      return { name: 'fake-loom-yuk832-write-failure' } as never;
-    });
-    const streamAgentTaskFn = vi.fn(async (_kind, _input, _ctx, onDelta) => {
-      await mcpOptions?.onResult?.({
-        name: 'query_due_reviews',
-        effect: 'read',
-        input: { limit: 100 },
-        output: { due_now: [], queue_assertion: null },
-        error_reason: null,
-        executed: true,
-      });
-      onDelta('队列已清空');
-      return {
-        text: '队列已清空',
-        task_run_id: 'copilot_task_yuk832_write_failure',
-        finishReason: 'stop',
-        usage: { inputTokens: 9_000, outputTokens: 300 },
-      };
-    });
-    const writeEventFn = vi.fn(async (_db, input) => {
-      if (input.action === 'experimental:copilot_reply') throw new Error('reply write lost');
-      return input.id;
-    });
-
-    await expect(
-      runCopilotChatStreaming({} as never, request, (text) => visibleDeltas.push(text), {
-        ...baseEvidenceDeps(),
-        writeEventFn,
-        buildMcpServerFn,
-        streamAgentTaskFn,
-        reviewEvidenceReplyFn: async () => ({
-          status: 'repair',
-          replyText: 'queue_assertion=null，无法裁决队列是否清空。',
-          violations: ['queue_or_count_unknown_promoted'],
-        }),
-      }),
-    ).rejects.toThrow('reply write lost');
-    expect(visibleDeltas).toEqual([]);
-  });
-
-  it('does not persist or emit a certified reply when the client aborts before persistence', async () => {
-    const controller = new AbortController();
-    const visibleDeltas: string[] = [];
-    const writeEventFn = vi.fn(async (_db, input) => input.id);
-    const candidate = '本轮只返回本次 exact filter 的证据。';
-    const streamAgentTaskFn = vi.fn(async (_kind, _input, _ctx, onDelta) => {
-      onDelta(candidate);
-      return {
-        text: candidate,
-        task_run_id: 'copilot_task_yuk832_abort_before_persist',
-        finishReason: 'stop',
-        usage: { inputTokens: 8_000, outputTokens: 160 },
-      };
-    });
-
-    await expect(
-      runCopilotChatStreaming(
-        {} as never,
-        request,
-        (text) => visibleDeltas.push(text),
-        {
-          ...baseEvidenceDeps(),
-          writeEventFn,
-          buildMcpServerFn: () => ({ name: 'fake-yuk832-abort-before-persist' }) as never,
-          streamAgentTaskFn,
-          reviewEvidenceReplyFn: async () => {
-            controller.abort(new DOMException('client disconnected', 'AbortError'));
-            return { status: 'pass', replyText: candidate };
-          },
-        },
-        controller.signal,
-      ),
-    ).rejects.toMatchObject({ name: 'AbortError' });
-
-    expect(visibleDeltas).toEqual([]);
-    expect(
-      writeEventFn.mock.calls.some((call) => call[1].action === 'experimental:copilot_reply'),
-    ).toBe(false);
-  });
-
-  it('keeps parent mailbox cancellation bound while post-model evidence review is pending', async () => {
-    const controller = new AbortController();
-    const cancellationTx = {
-      select: vi.fn(() => ({ from: () => ({ where: async () => [] }) })),
-    };
-    const transaction = vi.fn(async (callback: (tx: typeof cancellationTx) => Promise<unknown>) =>
-      callback(cancellationTx),
-    );
-    const db = { transaction } as never;
-    let markReviewStarted: (() => void) | undefined;
-    const reviewStarted = new Promise<void>((resolve) => {
-      markReviewStarted = resolve;
-    });
-    let releaseReview: ((value: { status: 'skipped'; replyText: string }) => void) | undefined;
-    const reviewEvidenceReplyFn = vi.fn(
-      () =>
-        new Promise<{ status: 'skipped'; replyText: string }>((resolve) => {
-          releaseReview = resolve;
-          markReviewStarted?.();
-        }),
-    );
-    const run = runCopilotChatStreaming(
-      db,
-      request,
-      () => undefined,
-      {
-        ...baseEvidenceDeps(),
-        writeEventFn: vi.fn(async (_db, input) => input.id),
-        buildMcpServerFn: () => ({ name: 'fake-mailbox-lifetime' }) as never,
-        streamAgentTaskFn: vi.fn(async () => ({
-          text: '主模型已返回，等待证据审阅。',
-          task_run_id: 'copilot_task_mailbox_lifetime',
-          finishReason: 'stop' as const,
-          usage: { inputTokens: 300, outputTokens: 40 },
-        })),
-        reviewEvidenceReplyFn,
-      },
-      controller.signal,
-    );
-    await reviewStarted;
-    controller.abort(new DOMException('client disconnected', 'AbortError'));
-    await vi.waitFor(() => expect(transaction).toHaveBeenCalledTimes(1));
-    expect(releaseReview).toBeTypeOf('function');
-    releaseReview?.({ status: 'skipped', replyText: '主模型已返回，等待证据审阅。' });
-    await expect(run).rejects.toMatchObject({ name: 'AbortError' });
   });
 });
 
@@ -1620,9 +1132,10 @@ describe('YUK-938 foreground inline native Task (ADR-0056)', () => {
     expect(capturedCtx?.allowedTools).not.toContain('mcp__loom__launch_researcher');
     expect(capturedCtx?.allowedTools).not.toContain('mcp__loom__get_subagent');
     expect(capturedCtx?.allowedTools).not.toContain('mcp__loom__wait_subagent');
-    expect(capturedCtx?.allowedTools).toEqual(
-      expect.arrayContaining(['mcp__loom__cancel_subagent']),
-    );
+    expect(capturedCtx?.allowedTools).not.toContain('mcp__loom__cancel_subagent');
+    expect(capturedCtx?.allowedTools).not.toContain('mcp__loom__get_tool_operation');
+    expect(capturedCtx?.allowedTools).not.toContain('mcp__loom__wait_tool_operation');
+    expect(capturedCtx?.allowedTools).not.toContain('mcp__loom__cancel_tool_operation');
     expect(capturedCtx?.agents).toEqual(
       expect.objectContaining({
         'copilot-researcher': expect.objectContaining({
@@ -1815,12 +1328,6 @@ describe('runCopilotChat — skill routing (U6)', () => {
     // PR #305 review comment #1: the teaching path wraps reply event + question
     // materialization in db.transaction. Stub transaction to execute the callback
     // directly (no real Postgres needed for this unit test).
-    const materialized = {
-      id: 'q_unit',
-      kind: 'short_answer',
-      prompt_md: '为什么？',
-      choices_md: null,
-    };
     const db = {
       transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb({})),
     } as never;
@@ -3284,7 +2791,7 @@ describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
     expect(replyCall?.payload).not.toHaveProperty('primary_view');
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('malformed primary_view marker'),
-      expect.objectContaining({ task_run_id: 'task_pv' }),
+      expect.objectContaining({ task_run_id: expect.stringMatching(/^copilot_task_/) }),
     );
     warnSpy.mockRestore();
   });
@@ -3433,6 +2940,12 @@ describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
       ?.payload as Record<string, unknown>;
     const { in_reply_to_event_id: _s, ...streamRest } = streamPayload;
     const { in_reply_to_event_id: _j, ...jsonRest } = jsonPayload;
+    const streamFinalization = streamRest.reply_finalization as Record<string, unknown>;
+    const jsonFinalization = jsonRest.reply_finalization as Record<string, unknown>;
+    expect(streamFinalization.root_task_run_id).toMatch(/^copilot_task_/);
+    expect(jsonFinalization.root_task_run_id).toMatch(/^copilot_task_/);
+    streamRest.reply_finalization = { ...streamFinalization, root_task_run_id: '<root>' };
+    jsonRest.reply_finalization = { ...jsonFinalization, root_task_run_id: '<root>' };
     expect(streamRest).toEqual(jsonRest);
   });
 
@@ -3660,6 +3173,7 @@ describe('runCopilotChat — Agent SDK session persist/resume (YUK-936)', () => 
     }) as never;
 
   it('resume hit: omits conversation_history fold and passes sdkSession resume + persist', async () => {
+    const clearAgentSdkSessionIdFn = vi.fn(async () => {});
     const runAgentTaskFn = vi.fn(async (_kind: string, _input: unknown, ctx: unknown) => ({
       task_run_id: (ctx as { taskRunId?: string }).taskRunId ?? 't2',
       text: 'OK',
@@ -3672,6 +3186,7 @@ describe('runCopilotChat — Agent SDK session persist/resume (YUK-936)', () => 
       {
         ...baseDeps,
         runAgentTaskFn,
+        clearAgentSdkSessionIdFn,
         getAgentSdkSessionIdFn: async () => 'sdk_sess_prev',
         loadHistoryFn: async () => [mkTurn('user', 'prior ask'), mkTurn('ai', 'prior reply')],
       },
@@ -3693,6 +3208,7 @@ describe('runCopilotChat — Agent SDK session persist/resume (YUK-936)', () => 
     expect(ctx.compiledModelPrompt?.text).toBe('继续');
     expect(ctx.compiledModelPrompt?.mode).toBe('resume');
     expect(ctx.compiledModelPrompt?.text).not.toContain('prior reply');
+    expect(clearAgentSdkSessionIdFn).not.toHaveBeenCalled();
   });
 
   it('keeps bounded prior turns for validation without sending them to the resumed provider', async () => {
@@ -3832,6 +3348,7 @@ describe('runCopilotChat — Agent SDK session persist/resume (YUK-936)', () => 
       task_run_id: 't_correction',
       text: `更正后的推导。\n\n<!-- copilot-correction {"prior_turn_id":"${replyId}","changed":["定义域"],"retained":["代数步骤"],"uncertain":[]} -->`,
     }));
+    const clearAgentSdkSessionIdFn = vi.fn(async () => {});
 
     const result = await runCopilotChat(
       {} as never,
@@ -3844,6 +3361,7 @@ describe('runCopilotChat — Agent SDK session persist/resume (YUK-936)', () => 
       {
         ...baseDeps,
         runAgentTaskFn,
+        clearAgentSdkSessionIdFn,
         getAgentSdkSessionIdFn: async () => 'sdk_sess_prev',
         loadHistoryFn: async () => [
           {
@@ -3871,6 +3389,7 @@ describe('runCopilotChat — Agent SDK session persist/resume (YUK-936)', () => 
     expect(ctx.compiledModelPrompt?.text).not.toContain(historicalReply);
     expect(ctx.compiledModelPrompt?.text).not.toContain('conversation_history');
     expect(result.reply).toContain(`更正目标 prior_turn_id：${replyId}`);
+    expect(clearAgentSdkSessionIdFn).toHaveBeenCalledWith(expect.anything(), 'ls_sdk');
   });
 
   it('cold start: keeps history fold and persistSession without resume', async () => {

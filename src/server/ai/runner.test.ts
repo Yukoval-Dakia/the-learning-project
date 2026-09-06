@@ -417,20 +417,33 @@ describe('runTask — YUK-217 spike invariants (slice 4 skills wiring)', () => {
     process.env.XIAOMI_API_KEY = 'sk-test-key';
   });
 
-  // (a) Skill-enabled invariant: settingSources stays omitted only when the
-  // CONFIG_DIR skill discovery path is actually needed. No-skill product runs
-  // are isolated separately below so repo CLAUDE.md/hooks cannot leak in.
-  it('omits settingSources for an explicitly skill-enabled run', async () => {
+  // (a) Skill-enabled invariant: load only the isolated CONFIG_DIR's user source.
+  // SDK 0.3.220 requires the project source to load CLAUDE.md, so excluding it
+  // keeps repository instructions/hooks out while retaining mirrored skill discovery.
+  it('uses only the isolated user source for an explicitly skill-enabled run', async () => {
+    const { existsSync } = await import('node:fs');
+    const { join } = await import('node:path');
     mockSdk.messages = [successResult('ok')];
 
     await runTask(
       'NoteGenerateTask',
       { test: 'payload' },
-      { db: testDb(), r2: memR2(), skills: ['quiz-gen-translation'] },
+      { db: testDb(), r2: memR2(), skills: ['yuwen--quiz-gen-translation'] },
     );
 
-    const opts = mockSdk.capturedOptions as Record<string, unknown>;
-    expect('settingSources' in opts).toBe(false);
+    const opts = mockSdk.capturedOptions as {
+      env: Record<string, string>;
+      settingSources?: string[];
+      skills?: string[];
+      title?: string;
+    };
+    expect(opts.settingSources).toEqual(['user']);
+    expect(opts.skills).toEqual(['yuwen--quiz-gen-translation']);
+    expect(
+      existsSync(
+        join(opts.env.CLAUDE_CONFIG_DIR, 'skills', 'yuwen--quiz-gen-translation', 'SKILL.md'),
+      ),
+    ).toBe(true);
     expect(opts.title).toBe('NoteGenerateTask');
   });
 

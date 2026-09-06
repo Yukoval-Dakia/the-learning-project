@@ -1,31 +1,33 @@
-# 当前 handoff — 2026-08-28 AI Pipeline Modernization F5 最终收口
+# 当前 handoff — 2026-09-06
 
-## 已落地边界
+Owner 已继续授权 AI pipeline，并依据 1e61da8d 报告扩大为全项目业务封装和测试精简。
 
-- 根 Copilot 是前台交互；默认请求返回前台 SSE，只有 `durable:true` 显式创建 durable run。
-- `ToolOperations` 只承载已声明 `safeHandoff` 的 remote read/idempotent tool；超过 45 秒时交出可 wait/poll/cancel 的 handle。write/propose、`run_task`、未拥有 MCP 与未证明安全的 tool 继续阻塞。
-- `SubagentRuns` 有独立 durable mailbox、身份和 cancellation；完成后仅以幂等 one-shot continuation 恢复同一根请求，用户面没有第二个 agent 声音。
-- Copilot drawer 的 operation/subagent 投影展示处理状态、结果、错误与停止动作；已清除 sequence、async、routing、durable/inline、subagent 协调等内部执行叙述。
+## 当前真实状态
 
-## 合并记录
+- 原始 the-learning-project 脏 main 保留；集成 tlp-wt-pipeline-completion，分支 codex/yuk-939-pipeline-completion。
+- 远端 main 090e882c；Draft PR #1326。流水线代码 1e61da8d 完成全部命名 synthetic actual gates。
+- 本次 native $0.129296、cold+correction $0.028107、durable $0.014379、semantic $0.077014；
+  合计 $0.248796，在本次最多新增 $1 内。此前已知 $0.503605 + 一笔未结算 child 仍保留未知。
+- Semantic 实际生成17×19=324，四个真实 validator 尝试后拒绝，只展示安全回退；
+  native 1个成功子Agent、无continuation、结果回前台；correction绑定原reply且使SDKcursor失效。
+- 原 cold/resume/ambient/read/proposal/cancel 证据复用。read样本输入至少降50.8%、费用至少降62.2%；
+  旧基准为不完整下界，不外推全场景。
+- 证据封存 docs/planning/evidence/2026-09-06-pipeline-actual.json。
+- exact-head CI 的 DB2/2 三个失败均为已退休工具断言。已修，33 scoped DB通过；
+  typecheck/lint/build通过。需推送最终head并等CI，不可称已合并/部署。
+- 本PR两轮独立review已用完；不启动第三轮，后续兼容修复root检查真实diff和SDK源证据。
 
-- #1302 YUK-926 `f64f1389`；#1303 YUK-927 `c8f90778`；#1304 YUK-930 `4c223bf5`；#1305 YUK-929 `e4e87b08`。
-- #1306 YUK-928 `ad45e3e1`；#1307 YUK-931 `d28061d0341432417a97edd9d57750a7fd93c773`；#1308 YUK-932 `1cf06f575763fb72b558b6c8a2f064405a8a06bb`；#1309 YUK-933 `82eddbdfcfec66b7c11fa2269ebe0886bc405a45`。
-- #1310 YUK-934 `2e815cd5b3879095a2474d85b2e66e2980bab901` 已合并；exact-head `CI Gate` run `33158219176`
-  在 head `a8759ebe1bf42d0c7beb4fc2115113f66b329e54` 通过 aggregate/static/unit/DB/migration/build/usability。
-- 独立 review 已完成，P1 修复验证后无剩余 P0/P1；task census 最终为 53 registered / 52 statically invoked /
-  1 compatibility。最终 board sync #1311 已合并为 `0ec6fe27d497da36cc3884ca7b100b6161dd9ca3`；Linear
-  YUK-927 与 YUK-934 均为 Done，当前开放 PR 为 0。
+## 扩大范围实施
 
-## YUK-934 result
+- Linear workspace/get/save恢复，list部分偶发传输错误；YUK-939已更新，YUK-952已创建。
+- YUK-952在独立 tlp-wt-goal-owner / codex/yuk-952-goal-owner 实施。
+  首版752f6ea1只是抽SQL、仍复制status/scope规则，root已要求继续深化，尚未集成或完成。
+- 下一步：目标单一语义写入命令→知识合并各状态owner→录入/判分完成责任→
+  AI共同规则封装→服务端产品状态+统一UI投影→跨项目测试精简。
+- 测试不按数量裁剪：替换退休实现/源文本断言，保留权限、计费未知、并发、回滚、恢复与实际输出。
+- UI实现前仍需精确设计原文/组件类型/文件清单批准；后端继续。
 
-- task census 真实值为 53 registered / 52 statically invoked / 1 compatibility（`AttributionTask`）；architecture audit 输出从 `auditTaskCensus()` 的结果派生，不再写死旧的 50/1 值。
-- 保留 correction-intent、retry 与 job-yield classifier；清除的只是 ordinary chat 的预测性 classifier / auto dual-track 叙述。没有 runtime-promotion consumer 或残留需要删除。
-- 没有真实 consumer 声明需要新增 pg-boss job kind、child-process 或 code-cell handle，因此 YUK-934 未新增这些机制。
-- Postman source `postman/api-endpoints.json` 与生成的 collection 已同步，两份 JSON 均通过 `jq` 校验。
+## 边界
 
-## 收口边界
-
-- 不运行本机完整 `pnpm test` 或本地 gate；本次完整测试由 exact-head GitHub `CI Gate` run `33158219176` 决定并已通过。
-- 不部署、不做生产观察，也不清理主工作树或重装依赖。
-- 生产观察仍需单独授权；其余未决事项留在 PARKED roadmap。
+不部署、不切生产SoT flags、不backfill或删除历史表/数据。旧mailbox/ToolOperations恢复器仍drain-only；
+退休须部署后零pending证据。逐实体最终去掉过渡策略需要prod-clone验证，不能靠默认配置推断线上状态。

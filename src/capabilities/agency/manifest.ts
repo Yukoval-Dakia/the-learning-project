@@ -396,6 +396,11 @@ export const agencyCapability = defineCapability({
         load: () => import('./server/tools/agent-note-tools').then((m) => m.readAgentNotesTool),
       },
       {
+        name: 'generate_goal_outline',
+        load: () =>
+          import('./server/tools/generate-goal-outline').then((m) => m.generateGoalOutlineTool),
+      },
+      {
         name: 'write_agent_note',
         load: () => import('./server/tools/agent-note-tools').then((m) => m.writeAgentNoteTool),
       },

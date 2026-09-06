@@ -340,35 +340,72 @@ describe('buildMcpServerFromRegistry', () => {
     );
   });
 
-  it('never hands run_task to ToolOperations even if a malformed declaration opts in', async () => {
+  it('exposes the real SDK tool-use id for an ordinary directly executed DomainTool', async () => {
+    const claimToolUseId = vi.fn(() => 'toolu_direct_reader');
+    registerTool(
+      makeReadTool<{ query: string }, { facts: string[] }>(
+        'direct_reader',
+        { query: z.string() },
+        () => ({ facts: ['fact_1'] }),
+        () => 'direct reader',
+      ),
+    );
+    buildMcpServerFromRegistry({
+      ctx,
+      serverName: 'loom',
+      toolNames: ['direct_reader'],
+      claimToolUseId,
+    });
+
+    const response = (await mockAgentSdk.toolDefs[0]?.handler({ query: 'evidence' })) as {
+      content: Array<{ text: string }>;
+    };
+    expect(JSON.parse(response.content[0]?.text ?? '')).toMatchObject({
+      tool_use_id: 'toolu_direct_reader',
+      output: { facts: ['fact_1'] },
+    });
+    expect(claimToolUseId).toHaveBeenCalledWith('direct_reader', { query: 'evidence' });
+  });
+
+  it('rejects safe handoff for a non-read declaration', async () => {
     expect(() =>
       registerTool({
         ...makeReadTool<{ intent: string }, { accepted: true }>(
-          'run_task',
+          'non_read_generator',
           { intent: z.string() },
           () => ({ accepted: true }),
           () => 'run task accepted',
         ),
+        effect: 'write',
         safeHandoff: { transport: 'remote', idempotent: true },
       }),
-    ).toThrow("DomainTool 'run_task' safeHandoff requires an explicitly idempotent remote read");
+    ).toThrow(
+      "DomainTool 'non_read_generator' safeHandoff requires an explicitly idempotent remote read",
+    );
   });
 
-  it('constructs the production MCP server with run_task and query_events included', async () => {
+  it('constructs the production MCP server with both owned generation tools and query_events', async () => {
     await registerCapabilityTools(capabilities);
 
     expect(() =>
       buildMcpServerFromRegistry({
         ctx,
         serverName: 'loom_v2',
-        toolNames: ['run_task', 'query_events'],
+        toolNames: ['generate_goal_outline', 'generate_question_candidate', 'query_events'],
       }),
     ).not.toThrow();
-    expect(mockAgentSdk.toolDefs.map((tool) => tool.name)).toEqual(['run_task', 'query_events']);
-    const runTaskSchema = mockAgentSdk.toolDefs[0].schema as Record<string, unknown>;
-    expect(runTaskSchema.task_kind).toBeDefined();
-    expect(runTaskSchema.intent).toBeDefined();
-    const queryEventsSchema = mockAgentSdk.toolDefs[1].schema as Record<string, unknown>;
+    expect(mockAgentSdk.toolDefs.map((tool) => tool.name)).toEqual([
+      'generate_goal_outline',
+      'generate_question_candidate',
+      'query_events',
+    ]);
+    const goalOutlineSchema = mockAgentSdk.toolDefs[0].schema as Record<string, unknown>;
+    expect(goalOutlineSchema.goal_title).toBeDefined();
+    expect(goalOutlineSchema.task_kind).toBeUndefined();
+    const questionCandidateSchema = mockAgentSdk.toolDefs[1].schema as Record<string, unknown>;
+    expect(questionCandidateSchema.seed_mode).toBeDefined();
+    expect(questionCandidateSchema.knowledge_ids).toBeDefined();
+    const queryEventsSchema = mockAgentSdk.toolDefs[2].schema as Record<string, unknown>;
     expect(queryEventsSchema.filter).toBeDefined();
     expect(queryEventsSchema.cursor).toBeDefined();
   });

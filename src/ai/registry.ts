@@ -1,52 +1,11 @@
-import type { ZodType } from 'zod';
-import { GoalScopeIntentSchema } from '@/kernel/task-intents';
-import type { ToolContext } from '@/kernel/tools/types';
-import type { RunTaskCallCtx } from '@/server/ai/runner-fn';
 import { taskCatalog } from './task-catalog';
-import { QuestionAuthorIntentSchema } from './task-intents';
 import type { TaskDefinition } from './task-spec';
 
 export type { ModelId, Provider, TaskBudget, TaskPrompt } from './task-spec';
 
-export type TaskPrepareResult = { readonly input: unknown; readonly ctx?: RunTaskCallCtx };
-export type TaskPrepare = (ctx: ToolContext, intent: never) => Promise<TaskPrepareResult>;
+export type TaskDef = TaskDefinition;
 
-export interface TaskDef extends TaskDefinition {
-  readonly copilot?: {
-    readonly intentSchema: ZodType<unknown>;
-    readonly prepare: () => Promise<TaskPrepare>;
-    readonly invocable: boolean;
-  };
-}
-
-const goalScopeTask = Object.freeze({
-  ...taskCatalog.GoalScopeTask,
-  copilot: Object.freeze({
-    intentSchema: GoalScopeIntentSchema,
-    prepare: () =>
-      import('@/capabilities/agency/server/goals/scope').then(
-        (module) => module.prepareGoalScopeTask,
-      ),
-    invocable: true,
-  }),
-});
-
-const questionAuthorTask = Object.freeze({
-  ...taskCatalog.QuestionAuthorTask,
-  copilot: Object.freeze({
-    intentSchema: QuestionAuthorIntentSchema,
-    prepare: () =>
-      import('@/capabilities/practice/server/tools/question-author').then(
-        (module) => module.prepareQuestionAuthorTask,
-      ),
-    invocable: true,
-  }),
-});
-
-export const tasks = Object.freeze({
-  ...taskCatalog,
-  GoalScopeTask: goalScopeTask,
-  QuestionAuthorTask: questionAuthorTask,
-});
+/** Browser-safe exact alias of the capability-owned TaskSpec catalog. */
+export const tasks = taskCatalog;
 
 export type TaskKind = keyof typeof tasks;

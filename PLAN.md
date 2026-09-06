@@ -1,41 +1,62 @@
 # PLAN — 活看板 (cockpit)
 
 > Linear 是权威 tracker；本文件只镜像 NOW / NEXT / PARKED / BLOCKED-ON。
-> 更新于：2026-08-28（AI Pipeline Modernization F5 最终收口）
+> 更新于：2026-09-06（owner 扩大授权：AI pipeline、全项目业务封装与测试精简）
 
 ## NOW
 
-- **F5 实施与收口已完成。** 根 Copilot 保持前台；只有
-  `durable:true` 才明确请求 durable run。安全的 remote read/idempotent tool 超过 45 秒才交出
-  `tool_operation` handle；write/propose、`run_task` 与未证明安全的外部工具继续阻塞。
-- 已合并的 F5 PR：#1302 YUK-926 `f64f1389`、#1303 YUK-927 `c8f90778`、#1304 YUK-930
-  `4c223bf5`、#1305 YUK-929 `e4e87b08`、#1306 YUK-928 `ad45e3e1`、#1307 YUK-931
-  `d28061d0341432417a97edd9d57750a7fd93c773`、#1308 YUK-932
-  `1cf06f575763fb72b558b6c8a2f064405a8a06bb`、#1309 YUK-933
-  `82eddbdfcfec66b7c11fa2269ebe0886bc405a45`、#1310 YUK-934
-  `2e815cd5b3879095a2474d85b2e66e2980bab901`。
-- YUK-934 exact-head `CI Gate` run `33158219176` 在 head
-  `a8759ebe1bf42d0c7beb4fc2115113f66b329e54` 通过 aggregate/static/unit/DB/migration/build/usability；
-  独立 review 已完成，P1 修复验证后无剩余 P0/P1。task census 最终为 53 registered / 52 statically invoked /
-  1 compatibility。
-- 最终 board sync #1311 已合并为 `0ec6fe27d497da36cc3884ca7b100b6161dd9ca3`；Linear
-  YUK-927 与 YUK-934 均为 Done，当前开放 PR 为 0。
-- 真实持久化边界：`copilot_run` / reconcile、`ToolOperations` 与 `SubagentRuns` 各自拥有生命周期；
-  mailbox 的 one-shot continuation 只恢复同一根请求，用户面保持一个声音。drawer 只展示状态、结果、错误
-  与操作，不展示执行架构术语。
+- Owner 已授权继续完整 AI pipeline 重构，由 agent 决策；目标为低 token、清晰的能力归属、
+  原生子 agent 与明确的 durable 根任务。本次继续授权报告中的全项目架构实施与测试精简。
+- main 基线 `090e882c` / PR #1324 已完成前台上下文改造。当前隔离集成分支：
+  `codex/yuk-939-pipeline-completion`，不修改原始脏 main。
+- 已集成：单一 SDK 消息消费核心；业务自有 `generate_goal_outline` 与
+  `generate_question_candidate`；前台/Mission 原生只读 Task；停止新 ToolOperations；
+  七个旧控制工具已从 manifest 与实际 MCP 工具集合移除。保留历史任务恢复与重放。
+- `fe71227b` 已集成根终态 finalization，退休两个重复 evidence Task 与过时 ledger/checkpoint 测试。
+- 集成 scoped 单测、持久化/恢复 DB 场景、typecheck/lint/audits/build 已通过；发现的一处旧工具
+  清单测试已按新 manifest 修正，正在复验。任务数为 50；capability→server 依赖从 464 降到 453。
+- terminal Markdown 与技能隔离已集成。`5c2bdcad` 同输入 read 通过：28,464 input / 215 output /
+  $0.076271；相对旧基准下界输入至少减 50.8%、费用至少减 62.2%，仅限合成样本。
+- 冷启动/恢复/ambient/read/proposal/cancel 通过；`1e61da8d` 的 native/correction/durable/
+  semantic 真实复验全部通过。本次新增报告费用 $0.248796；完整输入输出/收据封存在
+  `docs/planning/evidence/2026-09-06-pipeline-actual.json`。direct durable 不等于queue E2E。
+- 此前已知费用 $0.503605，native child 另有未结算费用。本次“继续”续上此前请求的
+  最多新增 $1 真实验收；跨调用累计，若再遇未结算调用则停止付费。
+- `87d7b990` + `8eaf6c0d` 已修 Agent/Task 别名与同步执行控制，root 查看 SDK 源证据与真实 diff。
+  最新集成 162 scoped unit / 76 scoped DB、typecheck/lint/audits/build 通过。
+  Draft PR #1326 已 push；三个旧工具测试断言已修，33 scoped DB复验通过；等待新head CI后合并，不部署。
+- 计划与证据：`docs/planning/2026-09-05-ai-pipeline-completion.md`；具体设计：
+  `docs/planning/2026-09-05-pipeline-finalization-design.md`。历史 F5 状态见 Git 中本文件前版。
 
 ## NEXT
 
-1. 不自动继续、不部署；仅在取得单独授权后进行生产观察。
-2. 其余工作仅限 owner 重新开启的 parked roadmap；closeout capture gate 未发现需要新增的可执行 issue。
+1. PR #1326 `1e61da8d` exact-head static/unit/build/migration/usability/DB 1/2 通过，
+   DB 2/2 三个旧工具断言已修；推送后复验。
+2. 两轮独立审查已用完：`5c2bdcad` 获批准；新实际兼容性修复由 root 检查 worker diff 与真实证据，
+   不擅自启动第三轮。按修改范围补 scoped/static/build。
+3. 命名真实场景已全部通过；复用证据，不为同一结论重复付费。
+4. Push 后以 exact-head GitHub CI Gate 为完整测试权威；通过后按仓库授权合并。
+5. 收尾更新本看板、handoff、Linear 和部署边界；不得把 LOCAL_GREEN 称作完整验收。
+6. YUK-952 独立 goal-owner lane：事件、写入与 legacy 兼容收进唯一业务命令；
+   首版仅搬SQL已要求深化，尚未集成；不擅自切生产 flag 或 backfill。
+7. Knowledge merge 跨域写入交还 owner，保持同一事务回滚、幂等、收据；拆除命名反向依赖。
+8. 收敛录入/判分完成规则与失败恢复；AI 共同规则归执行服务，服务端表达产品终态。
+9. 随行为重构替换重复内部测试，并盘点全项目低价值测试。验收看责任主体数、规则
+   实现份数与恢复 owner，不以 audit 通过/文件减少替代。UI 代码先走精确设计清单批准。
 
 ## PARKED
 
-- 多 provider 方案一（YUK-921）、YUK-572 夜间教研 agent、YUK-832 HOLD 与 Architecture FULL 的生产观察均不属于 F5。
-- 不新增 pg-boss job kind、child-process 或 code-cell handle：当前没有声明 owner 的真实 consumer。
-- 本地脏 `main` 不清理、不覆盖；F5 只在外接卷隔离 worktree 中修改。
+- Production deploy/observation：未授权。本次不删除数据库记录、旧 migration 或历史回复。
+- 旧 mailbox/ToolOperations 恢复器退休：需部署后确认旧非终态记录和队列工作全部排空；
+  当前只停止新生产者，保留 drain-only 义务。
+- YUK-921 多 provider 方案一、YUK-572 夜间教研、YUK-832 HOLD、Architecture FULL 的生产观察，
+  不因本次工程改造自动开启。
 
 ## BLOCKED-ON
 
-- 生产部署与生产观察需单独授权；本次没有部署授权。
-- 完整测试权威是 push 后的 exact-head GitHub `CI Gate`，本地 scoped 结果不替代它。
+- Linear 已实际恢复，正在去重和同步；YUK-939 当前 In Progress。
+- 逐实体最终移除过渡 flag 需生产 clone 的 backfill/audit/rebuild 证据；
+  不阻塞先将兼容策略从业务入口收进唯一 owner。
+- 旧链路真实只读基准总量不可补全：至少 57,817 input / 2,457 output tokens、$0.201614，
+  比较模型超时后费用未知。Owner 已另外授权新链路最多新增 $2；不得把旧基准下界当作完整总量。
+- 无生产部署或历史数据清理授权；不影响本地实现、审查与 CI。

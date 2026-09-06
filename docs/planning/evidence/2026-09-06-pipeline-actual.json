@@ -1,0 +1,501 @@
+{
+  "status": "passed",
+  "scope": "synthetic actual-provider cases; direct durable handler, not queue E2E",
+  "reported_cost_usd": 0.248796,
+  "records": [
+    {
+      "source": "1788662146217-1be11633-9e7c-474c-b0b6-66854ce159de.json",
+      "evidence": {
+        "protocol_version": 1,
+        "phase": "running",
+        "exact_head": "1e61da8d2d6a7dc950dc4a599dea78a31c744cda",
+        "dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "harness_sha256": "6c36c221d008106ec07582256857a01d6c6430144b6ef83f88583d99c2305409",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "credential_source": "/Volumes/YukovalSBak/yukoval-projects/the-learning-project/.env",
+        "baseline_record": false,
+        "campaign_cost_limit_usd": 1,
+        "case_cost_reserves_usd": {
+          "cold": 0.25,
+          "resume": 0.25,
+          "context-change": 0.25,
+          "correction": 0.25,
+          "read": 0.25,
+          "proposal": 0.25,
+          "semantic": 0.75,
+          "native-task": 0.5,
+          "durable": 0.25,
+          "cancel": 0
+        },
+        "cases": [
+          {
+            "name": "native-task",
+            "input_sha256": "125ea6cc28724a7d096c2e849344d7a318e607830cc8c3818adb6b267c5df0a2",
+            "output_sha256": "5a1c57f0f18c9eac9d0b6f360e1b5be73f66af1d0a5d81f81b0155f993e4e3a8",
+            "input": {
+              "session_id": "fcagv4j48ond14ctvzzgrmme",
+              "user_message": "必须调用一次 Task，subagent_type 为 copilot-researcher，目标仅为调用 query_knowledge（subjectId:yuwen、nodeId:actual:classical-root、include:[children]）总结实际返回的节点；不用记忆或外部搜索。等 tool_result 后用一句话转述，禁止第二个 Task、出题和写入。",
+              "triggered_by": "chat"
+            },
+            "output": "`actual:classical-root`（文言虚词「之」）下目前挂有 1 个子节点：`actual:classical-object`（代词宾语用法）。",
+            "root_task_run_id": "copilot_task_kbvl2pcf4uaq4929w9rnaf4w",
+            "terminal_output": "`actual:classical-root`（文言虚词「之」）下目前挂有 1 个子节点：`actual:classical-object`（代词宾语用法）。",
+            "terminal_sha256": "5a1c57f0f18c9eac9d0b6f360e1b5be73f66af1d0a5d81f81b0155f993e4e3a8",
+            "task_runs": [
+              {
+                "id": "copilot_task_kbvl2pcf4uaq4929w9rnaf4w",
+                "kind": "CopilotTask",
+                "provider": "xiaomi",
+                "model": "mimo-v2.5-pro",
+                "usage": {
+                  "inputTokens": 28090,
+                  "outputTokens": 225,
+                  "thinkingBlocks": 2,
+                  "thinkingCharacters": 264
+                },
+                "cost": 0.129296,
+                "costBasis": "reported",
+                "compiledPromptHash": "c791d925dcaea81f47013b1b1b7b7f09ebf8f04f51ddae21aefc4c1e23e8e6d3",
+                "promptCodecMode": "cold",
+                "promptContextDigest": "374c798b9fbc747f0c0ae604bfb42baddf89ae021969cf26320627d8e8810d50"
+              }
+            ],
+            "tools": [
+              {
+                "name": "Agent",
+                "effect": null,
+                "error": null
+              },
+              {
+                "name": "mcp__loom__query_knowledge",
+                "effect": null,
+                "error": null
+              },
+              {
+                "name": "query_knowledge",
+                "effect": "read",
+                "error": null
+              }
+            ],
+            "session_agent_sdk_id": "438ccd2c-2929-4561-bc65-077ca3a1fa78",
+            "cumulative_cost_usd": 0.129296,
+            "reply_finalization": {
+              "assurance": "execution_trace_bound",
+              "correction": "normal",
+              "primary_view": "absent",
+              "reply_sha256": "5a1c57f0f18c9eac9d0b6f360e1b5be73f66af1d0a5d81f81b0155f993e4e3a8",
+              "trace_sha256": "d22d23fac57ae216623740d4912b4f5c5d5dafbf576cd0d2b0ce5bc7a08ec4e9",
+              "candidate_sha256": "5a1c57f0f18c9eac9d0b6f360e1b5be73f66af1d0a5d81f81b0155f993e4e3a8",
+              "learning_content": "not_applicable",
+              "protocol_version": 1,
+              "root_task_run_id": "copilot_task_kbvl2pcf4uaq4929w9rnaf4w",
+              "trace_call_count": 2,
+              "proposal_disclosure": "none",
+              "observed_completed_tool_use_ids": ["call_a099259ce6c446c5bfdf0258"]
+            },
+            "subagent_runs": [
+              {
+                "id": "subagent_run_bvjtkp10d6et8olnneloyray",
+                "status": "succeeded",
+                "continuation": null
+              }
+            ]
+          }
+        ],
+        "limitations": [
+          "direct durable handler is not pg-boss queue E2E",
+          "structural assertions do not establish factual entailment or semantic correctness"
+        ],
+        "fixture_readiness": {
+          "registered_tools": ["query_knowledge", "propose_knowledge_mutation"],
+          "foreground_session_id": "fcagv4j48ond14ctvzzgrmme"
+        }
+      }
+    },
+    {
+      "source": "1788662205317-4d72bc13-aba2-4b31-b6fa-a6b6c5833064.json",
+      "evidence": {
+        "protocol_version": 1,
+        "phase": "running",
+        "exact_head": "1e61da8d2d6a7dc950dc4a599dea78a31c744cda",
+        "dirty_diff_sha256": "7f76106b3a0918630bdaca505faab47b3058f812745d04b8a9467e9c66c0190f",
+        "harness_sha256": "6c36c221d008106ec07582256857a01d6c6430144b6ef83f88583d99c2305409",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "credential_source": "/Volumes/YukovalSBak/yukoval-projects/the-learning-project/.env",
+        "baseline_record": false,
+        "campaign_cost_limit_usd": 0.870704,
+        "case_cost_reserves_usd": {
+          "cold": 0.25,
+          "resume": 0.25,
+          "context-change": 0.25,
+          "correction": 0.25,
+          "read": 0.25,
+          "proposal": 0.25,
+          "semantic": 0.75,
+          "native-task": 0.5,
+          "durable": 0.25,
+          "cancel": 0
+        },
+        "cases": [
+          {
+            "name": "cold",
+            "input_sha256": "5d851e59a5d6a0cf6a277e543dbb23ba85f7d02d9afeda27efa96e4d91bae72d",
+            "output_sha256": "5684022bfc6e7941da667e605b7fdf98b5bea6cd5e92ddd402add95461476c91",
+            "input": {
+              "session_id": "g3nh09258xyuwfbqk9nh9q5u",
+              "user_message": "只回复「冷启动已确认」，不要出题、不要调用工具。",
+              "triggered_by": "chat"
+            },
+            "output": "冷启动已确认",
+            "root_task_run_id": "copilot_task_id88o7kgk9y949uc0c0p6v8i",
+            "terminal_output": "冷启动已确认",
+            "terminal_sha256": "5684022bfc6e7941da667e605b7fdf98b5bea6cd5e92ddd402add95461476c91",
+            "task_runs": [
+              {
+                "id": "copilot_task_id88o7kgk9y949uc0c0p6v8i",
+                "kind": "CopilotTask",
+                "provider": "xiaomi",
+                "model": "mimo-v2.5-pro",
+                "usage": {
+                  "inputTokens": 13733,
+                  "outputTokens": 38,
+                  "thinkingBlocks": 1,
+                  "thinkingCharacters": 151
+                },
+                "cost": 0.014319,
+                "costBasis": "reported",
+                "compiledPromptHash": "6f5a2220051e09dd92ea546d87446e1c2abe9fc5718d49386957fc48c3f6b6c6",
+                "promptCodecMode": "cold",
+                "promptContextDigest": "374c798b9fbc747f0c0ae604bfb42baddf89ae021969cf26320627d8e8810d50"
+              }
+            ],
+            "tools": [],
+            "session_agent_sdk_id": "5e9c821b-d02f-492e-ac6b-8c3efe7c1c45",
+            "cumulative_cost_usd": 0.014319,
+            "reply_finalization": {
+              "assurance": "execution_trace_bound",
+              "correction": "normal",
+              "primary_view": "absent",
+              "reply_sha256": "5684022bfc6e7941da667e605b7fdf98b5bea6cd5e92ddd402add95461476c91",
+              "trace_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "candidate_sha256": "5684022bfc6e7941da667e605b7fdf98b5bea6cd5e92ddd402add95461476c91",
+              "learning_content": "not_applicable",
+              "protocol_version": 1,
+              "root_task_run_id": "copilot_task_id88o7kgk9y949uc0c0p6v8i",
+              "trace_call_count": 0,
+              "proposal_disclosure": "none",
+              "observed_completed_tool_use_ids": []
+            }
+          },
+          {
+            "name": "correction",
+            "input_sha256": "504e0f94d9a5712bf8d14475ce745ee77a4b1ea81393a0d2eebf8e868c3436e8",
+            "output_sha256": "ee21517589f28247901f8d5911be54ccfd335552e30527f37f34e80442c3023d",
+            "input": {
+              "session_id": "g3nh09258xyuwfbqk9nh9q5u",
+              "user_message": "更正刚才的回答：保留已确认内容，明确没有新增事实；不要出题、不要调用工具。",
+              "triggered_by": "chat",
+              "correction_target_turn_id": "copilot_reply_qbtzw1assqdb8sg1pn53jkdu"
+            },
+            "output": "冷启动已确认。无新增事实。\n\n更正目标 prior_turn_id：copilot_reply_qbtzw1assqdb8sg1pn53jkdu\n已变更：无\n保留：冷启动已确认\n不确定：无",
+            "root_task_run_id": "copilot_task_drpcwgnkctdidi5xz9yajvfo",
+            "terminal_output": "冷启动已确认。无新增事实。\n\n<!-- copilot-correction {\"prior_turn_id\":\"copilot_reply_qbtzw1assqdb8sg1pn53jkdu\",\"changed\":[],\"retained\":[\"冷启动已确认\"],\"uncertain\":[]} -->",
+            "terminal_sha256": "f485b3c2f1bcb77c46f20b89f05ed5715abb29cc767a8a15b27000c543703b47",
+            "task_runs": [
+              {
+                "id": "copilot_task_drpcwgnkctdidi5xz9yajvfo",
+                "kind": "CopilotTask",
+                "provider": "xiaomi",
+                "model": "mimo-v2.5-pro",
+                "usage": {
+                  "inputTokens": 13924,
+                  "outputTokens": 232,
+                  "thinkingBlocks": 1,
+                  "thinkingCharacters": 573
+                },
+                "cost": 0.013788,
+                "costBasis": "reported",
+                "compiledPromptHash": "acf37fa3a1f3a4321bfb7334c9f3c814dd72c30bb0fe1978a8776e7f718a68c8",
+                "promptCodecMode": "resume",
+                "promptContextDigest": "374c798b9fbc747f0c0ae604bfb42baddf89ae021969cf26320627d8e8810d50"
+              }
+            ],
+            "tools": [],
+            "session_agent_sdk_id": null,
+            "cumulative_cost_usd": 0.028107,
+            "reply_finalization": {
+              "assurance": "execution_trace_bound",
+              "correction": "corrected",
+              "primary_view": "absent",
+              "reply_sha256": "ee21517589f28247901f8d5911be54ccfd335552e30527f37f34e80442c3023d",
+              "trace_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "candidate_sha256": "f485b3c2f1bcb77c46f20b89f05ed5715abb29cc767a8a15b27000c543703b47",
+              "learning_content": "not_applicable",
+              "protocol_version": 1,
+              "root_task_run_id": "copilot_task_drpcwgnkctdidi5xz9yajvfo",
+              "trace_call_count": 0,
+              "proposal_disclosure": "none",
+              "observed_completed_tool_use_ids": []
+            }
+          }
+        ],
+        "limitations": [
+          "direct durable handler is not pg-boss queue E2E",
+          "structural assertions do not establish factual entailment or semantic correctness"
+        ],
+        "fixture_readiness": {
+          "registered_tools": ["query_knowledge", "propose_knowledge_mutation"],
+          "foreground_session_id": "g3nh09258xyuwfbqk9nh9q5u"
+        }
+      }
+    },
+    {
+      "source": "1788662310458-bdbc064c-d870-465e-875f-30b40c38c39f.json",
+      "evidence": {
+        "protocol_version": 1,
+        "phase": "running",
+        "exact_head": "1e61da8d2d6a7dc950dc4a599dea78a31c744cda",
+        "dirty_diff_sha256": "17eb9d9e00f9f21d111ff94df4e38989b79fb69a99459658ad213371059e9331",
+        "harness_sha256": "6c36c221d008106ec07582256857a01d6c6430144b6ef83f88583d99c2305409",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "credential_source": "/Volumes/YukovalSBak/yukoval-projects/the-learning-project/.env",
+        "baseline_record": false,
+        "campaign_cost_limit_usd": 0.842597,
+        "case_cost_reserves_usd": {
+          "cold": 0.25,
+          "resume": 0.25,
+          "context-change": 0.25,
+          "correction": 0.25,
+          "read": 0.25,
+          "proposal": 0.25,
+          "semantic": 0.75,
+          "native-task": 0.5,
+          "durable": 0.25,
+          "cancel": 0
+        },
+        "cases": [
+          {
+            "name": "durable",
+            "input_sha256": "da2ff93350046769f894add0987d1def14fca7159a5071e8f4442c52172d8913",
+            "output_sha256": "408fbe9261ab37ddf1bfaa7e30afafbbea3184439421c74a7599c4c17b76876c",
+            "input": {
+              "run_id": "copilot_user_ask_226ae377081af99c921f67e405dd847ded71a9bbe58321afff0127eff1e86f10"
+            },
+            "output": "已收到合成耐久验收",
+            "root_task_run_id": "copilot_run_tool_copilot_user_ask_226ae377081af99c921f67e405dd847ded71a9bbe58321afff0127eff1e86f10",
+            "terminal_output": "已收到合成耐久验收",
+            "terminal_sha256": "408fbe9261ab37ddf1bfaa7e30afafbbea3184439421c74a7599c4c17b76876c",
+            "task_runs": [
+              {
+                "id": "copilot_run_tool_copilot_user_ask_226ae377081af99c921f67e405dd847ded71a9bbe58321afff0127eff1e86f10",
+                "kind": "CopilotTask",
+                "provider": "xiaomi",
+                "model": "mimo-v2.5-pro",
+                "usage": {
+                  "inputTokens": 13735,
+                  "outputTokens": 40,
+                  "thinkingBlocks": 1,
+                  "thinkingCharacters": 137
+                },
+                "cost": 0.014379,
+                "costBasis": "reported",
+                "compiledPromptHash": "9d7a0fad6a62d8a4454bd29e486eed05787af778d38742a491c724215a59857f",
+                "promptCodecMode": "cold",
+                "promptContextDigest": "374c798b9fbc747f0c0ae604bfb42baddf89ae021969cf26320627d8e8810d50"
+              }
+            ],
+            "tools": [],
+            "session_agent_sdk_id": null,
+            "cumulative_cost_usd": 0.014379,
+            "reply_finalization": {
+              "assurance": "execution_trace_bound",
+              "correction": "normal",
+              "primary_view": "absent",
+              "reply_sha256": "408fbe9261ab37ddf1bfaa7e30afafbbea3184439421c74a7599c4c17b76876c",
+              "trace_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "candidate_sha256": "408fbe9261ab37ddf1bfaa7e30afafbbea3184439421c74a7599c4c17b76876c",
+              "learning_content": "not_applicable",
+              "protocol_version": 1,
+              "root_task_run_id": "copilot_run_tool_copilot_user_ask_226ae377081af99c921f67e405dd847ded71a9bbe58321afff0127eff1e86f10",
+              "trace_call_count": 0,
+              "proposal_disclosure": "none",
+              "observed_completed_tool_use_ids": []
+            }
+          }
+        ],
+        "limitations": [
+          "direct durable handler is not pg-boss queue E2E",
+          "structural assertions do not establish factual entailment or semantic correctness"
+        ],
+        "fixture_readiness": {
+          "registered_tools": ["query_knowledge", "propose_knowledge_mutation"],
+          "foreground_session_id": "umkwham3t86rw4u30qzj236l"
+        }
+      }
+    },
+    {
+      "source": "1788662443804-c097b86c-7063-4249-b204-6b57865c951b.json",
+      "evidence": {
+        "protocol_version": 1,
+        "phase": "running",
+        "exact_head": "1e61da8d2d6a7dc950dc4a599dea78a31c744cda",
+        "dirty_diff_sha256": "17eb9d9e00f9f21d111ff94df4e38989b79fb69a99459658ad213371059e9331",
+        "harness_sha256": "6c36c221d008106ec07582256857a01d6c6430144b6ef83f88583d99c2305409",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "credential_source": "/Volumes/YukovalSBak/yukoval-projects/the-learning-project/.env",
+        "baseline_record": false,
+        "campaign_cost_limit_usd": 0.828218,
+        "case_cost_reserves_usd": {
+          "cold": 0.25,
+          "resume": 0.25,
+          "context-change": 0.25,
+          "correction": 0.25,
+          "read": 0.25,
+          "proposal": 0.25,
+          "semantic": 0.75,
+          "native-task": 0.5,
+          "durable": 0.25,
+          "cancel": 0
+        },
+        "cases": [
+          {
+            "name": "semantic",
+            "input_sha256": "fb0d4fd01817681cde48ad39caa7c4ef3bd072e802d4b7e52598b539f4604409",
+            "output_sha256": "98bb04ab3923099b1d88c74800c75ad150a2ce5f5ee95269f6af337f4818ec66",
+            "input": {
+              "session_id": "yzbhce622n5dsyj93x2qnn2k",
+              "user_message": "这是合成校验夹具。请原样输出且不要更正：\n题目：计算 17×19？\n答案：324\n并添加唯一的 copilot_learning_content marker：subject_id 为 math；唯一 question 的 id=acceptance_bad_product、kind=computation、prompt_md 精确为“计算 17×19？”，reference_md 为“324”，choices_md=null，rubric_json={}。不要调用工具，不要解释。",
+              "triggered_by": "chat"
+            },
+            "output": "这份学习内容未完成独立校验，暂不展示。请重试，我会先校验再发送。",
+            "root_task_run_id": "copilot_task_npark6rzfo6d8ve4hqoxcngd",
+            "terminal_output": "题目：计算 17×19？\n答案：324\n\n<!--copilot_learning_content:{\"subject_id\":\"math\",\"questions\":[{\"id\":\"acceptance_bad_product\",\"kind\":\"computation\",\"prompt_md\":\"计算 17×19？\",\"reference_md\":\"324\",\"choices_md\":null,\"rubric_json\":{}}]}-->",
+            "terminal_sha256": "2c61a2861461b34ae745671a8a98133c09025828bd507764499e6a96a083293d",
+            "task_runs": [
+              {
+                "id": "copilot_task_npark6rzfo6d8ve4hqoxcngd",
+                "kind": "CopilotTask",
+                "provider": "xiaomi",
+                "model": "mimo-v2.5-pro",
+                "usage": {
+                  "inputTokens": 13823,
+                  "outputTokens": 160,
+                  "thinkingBlocks": 1,
+                  "thinkingCharacters": 318
+                },
+                "cost": 0.017819,
+                "costBasis": "reported",
+                "compiledPromptHash": "e20c9f7d1e3ec4fdfa02a3b6ec8ce4d5c701e01a75647ee93a4de5cd72d155c4",
+                "promptCodecMode": "cold",
+                "promptContextDigest": "374c798b9fbc747f0c0ae604bfb42baddf89ae021969cf26320627d8e8810d50"
+              },
+              {
+                "id": "o8qu1oshr9komvksvhidwl5q",
+                "kind": "TeachingQualityTask",
+                "provider": "xiaomi",
+                "model": "mimo-v2.5-pro",
+                "usage": {
+                  "inputTokens": 822,
+                  "outputTokens": 308,
+                  "thinkingBlocks": 1,
+                  "thinkingCharacters": 627
+                },
+                "cost": 0.01181,
+                "costBasis": "reported",
+                "compiledPromptHash": null,
+                "promptCodecMode": null,
+                "promptContextDigest": null
+              },
+              {
+                "id": "bmadfykysjvd5icf7h9wb21p",
+                "kind": "SolutionGenerateTask",
+                "provider": "xiaomi",
+                "model": "mimo-v2.5-pro",
+                "usage": {
+                  "inputTokens": 1103,
+                  "outputTokens": 376,
+                  "thinkingBlocks": 1,
+                  "thinkingCharacters": 140
+                },
+                "cost": 0.014915,
+                "costBasis": "reported",
+                "compiledPromptHash": null,
+                "promptCodecMode": null,
+                "promptContextDigest": null
+              },
+              {
+                "id": "b7rw5p1vbqs5e5c7wx4vaoi6",
+                "kind": "QuizVerifyTask",
+                "provider": "xiaomi",
+                "model": "mimo-v2.5-pro",
+                "usage": {
+                  "inputTokens": 1809,
+                  "outputTokens": 546,
+                  "thinkingBlocks": 1,
+                  "thinkingCharacters": 1395
+                },
+                "cost": 0.022695,
+                "costBasis": "reported",
+                "compiledPromptHash": null,
+                "promptCodecMode": null,
+                "promptContextDigest": null
+              },
+              {
+                "id": "z676pcnf2khui5t9e74e8mkq",
+                "kind": "SemanticJudgeTask",
+                "provider": "xiaomi",
+                "model": "mimo-v2.5-pro",
+                "usage": {
+                  "inputTokens": 610,
+                  "outputTokens": 269,
+                  "thinkingBlocks": 1,
+                  "thinkingCharacters": 399
+                },
+                "cost": 0.009775,
+                "costBasis": "reported",
+                "compiledPromptHash": null,
+                "promptCodecMode": null,
+                "promptContextDigest": null
+              }
+            ],
+            "tools": [],
+            "session_agent_sdk_id": null,
+            "cumulative_cost_usd": 0.077014,
+            "reply_finalization": {
+              "assurance": "execution_trace_bound",
+              "correction": "normal",
+              "primary_view": "absent",
+              "reply_sha256": "98bb04ab3923099b1d88c74800c75ad150a2ce5f5ee95269f6af337f4818ec66",
+              "trace_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "candidate_sha256": "2c61a2861461b34ae745671a8a98133c09025828bd507764499e6a96a083293d",
+              "learning_content": "blocked",
+              "protocol_version": 1,
+              "root_task_run_id": "copilot_task_npark6rzfo6d8ve4hqoxcngd",
+              "trace_call_count": 0,
+              "proposal_disclosure": "none",
+              "observed_completed_tool_use_ids": []
+            },
+            "semantic_fixture": "rejected_by_existing_validators",
+            "validator_task_kinds": [
+              "QuizVerifyTask",
+              "SolutionGenerateTask",
+              "TeachingQualityTask"
+            ]
+          }
+        ],
+        "limitations": [
+          "direct durable handler is not pg-boss queue E2E",
+          "structural assertions do not establish factual entailment or semantic correctness"
+        ],
+        "fixture_readiness": {
+          "registered_tools": ["query_knowledge", "propose_knowledge_mutation"],
+          "foreground_session_id": "yzbhce622n5dsyj93x2qnn2k"
+        }
+      }
+    }
+  ]
+}
