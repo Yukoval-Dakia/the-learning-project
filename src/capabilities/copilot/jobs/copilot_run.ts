@@ -59,7 +59,6 @@ import {
 } from '@/capabilities/copilot/server/copilot-worker-session';
 import {
   type CopilotRunJobData,
-  dispatchSessionHead,
   hasTerminalCopilotRun,
   withCopilotDurableDispatchLock,
 } from '@/capabilities/copilot/server/durable-dispatch';
@@ -75,7 +74,6 @@ import {
 } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
 import { buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
-import { fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
 import {
   type BossJobObservation,
   type BossJobObserver,
@@ -1608,15 +1606,9 @@ export async function reconcileCopilotDurableRun(
  */
 export function buildCopilotRunHandler(
   db: Db,
-  options: { wakeSession?: (sessionId: string) => Promise<unknown> } = {},
+  options: { wakeSession: (sessionId: string) => Promise<unknown> },
 ): (jobs: Job<CopilotRunJobData>[]) => Promise<void> {
-  const wakeSession =
-    options.wakeSession ??
-    (async (sessionId: string) =>
-      dispatchSessionHead(db, sessionId, {
-        boss: await getStartedBoss(),
-        transactionDb: fromPgBossDrizzleTx,
-      }));
+  const { wakeSession } = options;
   return async (jobs) => {
     for (const job of jobs) {
       const data = job.data;

@@ -17,6 +17,7 @@ import {
   writeSuccessfulTerminalProjection,
 } from '@/capabilities/copilot/jobs/copilot_run';
 import { reconcileOutstandingCopilotRuns } from '@/capabilities/copilot/jobs/copilot_run_reconcile';
+import { copilotCapability } from '@/capabilities/copilot/manifest';
 import { event, job_events } from '@/db/schema';
 import { _resetBossForTests, fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
 import { writeJobEvent } from '@/server/events/writer';
@@ -330,10 +331,11 @@ describe('durable Copilot session FIFO — real pg-boss contract', () => {
     const job = await boss.getJobById<CopilotRunJobData>('copilot_run', first.bossJobId);
     if (!job) throw new Error('missing physical head');
     await settleWithoutWorker(boss, first);
-    await buildCopilotRunHandler(testDb(), {
-      wakeSession: (sessionId) =>
-        dispatchSessionHead(testDb(), sessionId, { boss, transactionDb: fromPgBossDrizzleTx }),
-    })([job]);
+    const worker = copilotCapability.jobs?.handlers.find(
+      (handler) => handler.name === 'copilot_run',
+    );
+    if (!worker?.load) throw new Error('missing manifest worker');
+    await (await worker.load())(testDb())([job]);
     expect(await boss.getJobById('copilot_run', second.bossJobId)).toMatchObject({
       id: second.bossJobId,
       state: 'created',

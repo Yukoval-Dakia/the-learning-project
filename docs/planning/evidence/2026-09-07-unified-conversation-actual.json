@@ -1,0 +1,169 @@
+{
+  "protocol_version": 1,
+  "phase": "running",
+  "exact_head": "a5bfa5a3925e4fc53b11638fa0c6486472fd6374",
+  "dirty_diff_sha256": "689cbaf3da327ca213131f7d6b8926b48dcfda9edd065cc7c5d82662588db564",
+  "harness_sha256": "7cc89c014218bd1ac962f3249484da102d92494c123d2afc3bd869a1bb242b53",
+  "provider": "xiaomi",
+  "model": "mimo-v2.5-pro",
+  "credential_source": "/Volumes/YukovalSBak/yukoval-projects/the-learning-project/.env",
+  "baseline_record": false,
+  "campaign_cost_limit_usd": 1.6,
+  "case_cost_reserves_usd": {
+    "cold": 0.25,
+    "resume": 0.25,
+    "context-change": 0.25,
+    "correction": 0.25,
+    "read": 0.25,
+    "claims": 0.3,
+    "presentation-process": 0.4,
+    "presentation-tool": 0.4,
+    "presentation-artifact": 0.4,
+    "presentation-html": 0.4,
+    "proposal": 0.25,
+    "semantic": 0.75,
+    "native-task": 0.5,
+    "durable": 0.25,
+    "unified": 1.6,
+    "cancel": 0
+  },
+  "cases": [
+    {
+      "name": "unified",
+      "input_sha256": "51f05ef529add7e3e456cf327191e26d35d35f353cf934e234f2130a9f47bbca",
+      "output_sha256": "0aaa511d4d4d1f1c580fffbc52dcbcc205724138d05519d2a6fed5818bb8c8e3",
+      "input": {
+        "session_id": "yi3bfgdd9a4pgdlwwmjpk3l5",
+        "triggered_by": "chat",
+        "user_message": "这是合成数据状态审计，不是题目、判分或教学。本轮记住以下结构，不调用任何工具，不写入、不提案、不生成卡片。只用一句中文确认收到，不解释数据。{\"observation_id\":\"OBS-A17\",\"subject\":\"physics\",\"estimate\":0.42,\"evidence_count\":7,\"zero_state\":{\"observation_id\":\"OBS-B29\",\"estimate\":0,\"evidence_count\":0},\"unknown_state\":{\"observation_id\":\"OBS-C31\",\"estimate\":null,\"evidence_count\":null},\"relation\":{\"from\":\"OBS-A17\",\"to\":\"OBS-B29\",\"kind\":\"analogy\",\"confidence\":0.73},\"reverse_relation\":\"unobserved\",\"approved\":false,\"source\":\"snapshot-synth-2031\"}"
+      },
+      "output": "已收到该合成数据结构。",
+      "root_task_run_id": "copilot_run_tool_copilot_user_ask_e13d9dbd9e8d419a3a01be8b47bb3ff2e30b8a36a64afd6cf2f78a1d18581e31",
+      "task_runs": [
+        {
+          "id": "copilot_run_tool_copilot_user_ask_e13d9dbd9e8d419a3a01be8b47bb3ff2e30b8a36a64afd6cf2f78a1d18581e31",
+          "kind": "CopilotTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 13203,
+            "outputTokens": 60,
+            "thinkingBlocks": 1,
+            "thinkingCharacters": 282
+          },
+          "cost": 0.0002459754,
+          "costBasis": "estimated",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": "78aee8cfc11b83623a5bf0502828c2f7473dd2e628e0b1807f0672adf8faf171",
+          "promptCodecMode": "cold",
+          "promptContextDigest": "374c798b9fbc747f0c0ae604bfb42baddf89ae021969cf26320627d8e8810d50"
+        }
+      ],
+      "tools": [],
+      "session_agent_sdk_id": "6ed0df57-04c2-485d-8042-aaa9a9ba2d10",
+      "cumulative_cost_usd": 0.0002459754,
+      "reply_finalization": {
+        "assurance": "execution_trace_bound",
+        "correction": "normal",
+        "primary_view": "absent",
+        "reply_sha256": "0aaa511d4d4d1f1c580fffbc52dcbcc205724138d05519d2a6fed5818bb8c8e3",
+        "trace_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "candidate_sha256": "0aaa511d4d4d1f1c580fffbc52dcbcc205724138d05519d2a6fed5818bb8c8e3",
+        "learning_content": "not_applicable",
+        "protocol_version": 1,
+        "root_task_run_id": "copilot_run_tool_copilot_user_ask_e13d9dbd9e8d419a3a01be8b47bb3ff2e30b8a36a64afd6cf2f78a1d18581e31",
+        "trace_call_count": 0,
+        "proposal_disclosure": "none",
+        "observed_completed_tool_use_ids": []
+      },
+      "run_id": "copilot_user_ask_e13d9dbd9e8d419a3a01be8b47bb3ff2e30b8a36a64afd6cf2f78a1d18581e31",
+      "turn_index": 0
+    },
+    {
+      "name": "unified",
+      "input_sha256": "616d252798e6ec154413711c4441bab150d3ce55c768f268d6faf5382e14027c",
+      "output_sha256": "45ce71164cb1d2fdb470da00376c1f8d5fc9b505bfab4e3e56a0f3221dd0a57c",
+      "input": {
+        "session_id": "yi3bfgdd9a4pgdlwwmjpk3l5",
+        "triggered_by": "chat",
+        "user_message": "继续刚才的数据状态审计：不调用工具、不写入、不提案、不生成卡片。只输出一个JSON对象，不用代码围栏，逐字段原样复述上一轮完整结构，保留零与null、方向与未观测、未批准状态；再增加current_context字段，值为UPDATED-92。这不是题目，不解释。"
+      },
+      "output": "{\"observation_id\":\"OBS-A17\",\"subject\":\"physics\",\"estimate\":0.42,\"evidence_count\":7,\"zero_state\":{\"observation_id\":\"OBS-B29\",\"estimate\":0,\"evidence_count\":0},\"unknown_state\":{\"observation_id\":\"OBS-C31\",\"estimate\":null,\"evidence_count\":null},\"relation\":{\"from\":\"OBS-A17\",\"to\":\"OBS-B29\",\"kind\":\"analogy\",\"confidence\":0.73},\"reverse_relation\":\"unobserved\",\"approved\":false,\"source\":\"snapshot-synth-2031\",\"current_context\":\"UPDATED-92\"}",
+      "root_task_run_id": "copilot_run_tool_copilot_user_ask_4ab325482de412b68c0848f06d3342ba3d169123babbb2a1db3dd3269e5a5643",
+      "task_runs": [
+        {
+          "id": "copilot_run_tool_copilot_user_ask_4ab325482de412b68c0848f06d3342ba3d169123babbb2a1db3dd3269e5a5643",
+          "kind": "CopilotTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 13370,
+            "outputTokens": 415,
+            "thinkingBlocks": 1,
+            "thinkingCharacters": 948
+          },
+          "cost": 0.0004894224,
+          "costBasis": "estimated",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": "d5a77c02cce548cc8a3fbba7fccbaa3e5de3a454556f7e4b782d850ab10e451a",
+          "promptCodecMode": "resume",
+          "promptContextDigest": "374c798b9fbc747f0c0ae604bfb42baddf89ae021969cf26320627d8e8810d50"
+        }
+      ],
+      "tools": [],
+      "session_agent_sdk_id": "6ed0df57-04c2-485d-8042-aaa9a9ba2d10",
+      "cumulative_cost_usd": 0.0007353978,
+      "reply_finalization": {
+        "assurance": "execution_trace_bound",
+        "correction": "normal",
+        "primary_view": "absent",
+        "reply_sha256": "45ce71164cb1d2fdb470da00376c1f8d5fc9b505bfab4e3e56a0f3221dd0a57c",
+        "trace_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "candidate_sha256": "45ce71164cb1d2fdb470da00376c1f8d5fc9b505bfab4e3e56a0f3221dd0a57c",
+        "learning_content": "not_applicable",
+        "protocol_version": 1,
+        "root_task_run_id": "copilot_run_tool_copilot_user_ask_4ab325482de412b68c0848f06d3342ba3d169123babbb2a1db3dd3269e5a5643",
+        "trace_call_count": 0,
+        "proposal_disclosure": "none",
+        "observed_completed_tool_use_ids": []
+      },
+      "run_id": "copilot_user_ask_4ab325482de412b68c0848f06d3342ba3d169123babbb2a1db3dd3269e5a5643",
+      "turn_index": 1
+    }
+  ],
+  "sdk_outcomes": [],
+  "limitations": [
+    "real HTTP + pg-boss fetch + production worker handler; automatic polling and browser UX not verified",
+    "synthetic recall covers zero/null/direction/approval continuity, not broad learning quality or automatic compaction"
+  ],
+  "fixture_readiness": {
+    "registered_tools": ["query_knowledge", "propose_knowledge_mutation"],
+    "foreground_session_id": "yi3bfgdd9a4pgdlwwmjpk3l5"
+  },
+  "unified_transport": {
+    "actual_http": true,
+    "actual_pg_boss": true,
+    "worker_driver": "bounded fetch + production handler",
+    "subscription_disconnected": [
+      "copilot_user_ask_e13d9dbd9e8d419a3a01be8b47bb3ff2e30b8a36a64afd6cf2f78a1d18581e31",
+      "copilot_user_ask_4ab325482de412b68c0848f06d3342ba3d169123babbb2a1db3dd3269e5a5643"
+    ],
+    "handles": [
+      {
+        "run_id": "copilot_user_ask_e13d9dbd9e8d419a3a01be8b47bb3ff2e30b8a36a64afd6cf2f78a1d18581e31",
+        "session_id": "yi3bfgdd9a4pgdlwwmjpk3l5",
+        "checkpoint_event_id": "copilot_user_ask_e13d9dbd9e8d419a3a01be8b47bb3ff2e30b8a36a64afd6cf2f78a1d18581e31",
+        "events_url": "/api/jobs/copilot_run/copilot_user_ask_e13d9dbd9e8d419a3a01be8b47bb3ff2e30b8a36a64afd6cf2f78a1d18581e31/events"
+      },
+      {
+        "run_id": "copilot_user_ask_4ab325482de412b68c0848f06d3342ba3d169123babbb2a1db3dd3269e5a5643",
+        "session_id": "yi3bfgdd9a4pgdlwwmjpk3l5",
+        "checkpoint_event_id": "copilot_user_ask_4ab325482de412b68c0848f06d3342ba3d169123babbb2a1db3dd3269e5a5643",
+        "events_url": "/api/jobs/copilot_run/copilot_user_ask_4ab325482de412b68c0848f06d3342ba3d169123babbb2a1db3dd3269e5a5643/events"
+      }
+    ],
+    "automatic_poller_verified": false
+  }
+}

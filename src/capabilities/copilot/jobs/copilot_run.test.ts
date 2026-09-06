@@ -3094,7 +3094,7 @@ describe('buildCopilotRunHandler', () => {
 
   it('缺字段的 job 抛给 pg-boss 保留 retry/failed 证据，不写事件、不调 AI', async () => {
     const db = testDb();
-    const handler = buildCopilotRunHandler(db);
+    const handler = buildCopilotRunHandler(db, { wakeSession: async () => undefined });
     await expect(
       handler([
         { id: 'j2', data: { run_id: '', user_message: '', triggered_by: 'chat' } },

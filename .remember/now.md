@@ -2,6 +2,22 @@
 
 ## 最新状态（以下历史步骤不替代本节）
 
+- Owner已明确批准现有Copilot抽屉发送/恢复/消息展示四文件改动，UI不再blocked。
+  独立tlp-wt-conversation-dock branch codex/yuk-948-conversation-dock；worker初稿f6cd585/751361390不完整，
+  已释放并由architect complete_unified_dock_ownership独占继续，当前在做Map<runId>订阅/Stop/snapshot恢复。
+  root独占tlp-wt-unified-conversation，最新a5bfa5a3实际验收harness+文档，尚有manifest装配/证据/账本改动待commit。
+  真实actual2轮通过：.tmp/actual-provider-acceptance/1788714763712-2c71c672-f7a1-4345-9264-1349f295d1e5.json，
+  已封存docs/planning/evidence/2026-09-07-unified-conversation-actual.json；exacta5bfa5a3，dirty仅当时PLAN更新，
+  real HTTP+pg-boss fetch+production handler（不是自动poller）：两轮订阅均断开仍done，native SDK同6ed0df57-04c2-485d-8042-aaa9a9ba2d10。
+  promptCodecMode cold→resume，第二轮精确复述0/null/有向关系/unobserved/未批准，并加入UPDATED-92。
+  input13203→13370、output60→415，不声称token减少；两root均无tool/child，原始思考仅计数，不持久化。
+  本次estimatedUSD0.0007353978（非账单），reservedUSD1.6；新$10总estimateUSD0.0352456927，
+  reserveUSD5.30823、安全余USD4.69177；旧池USD0.28771982单列。无正在运行付费调用。
+  架构audit发现新增boss/session边，root把后继runtime装配归manifest，worker只接wake回调；
+  session持久化的1条owner调用合法保留并更新baseline439/0/47，不用shallow wrapper藏计数，未改SCC/豁免。
+  64worker/FIFO DB通过；实际manifest loader接线纳入queue用例，admission-only预检另跑0调用。
+  最终UI集成/浏览器/独立review/exactCI仍待完成，未push/merge/deploy，整个goalactive。
+
 - 后续goal continuation：上一轮9f8798ef属实质progress，本轮UI批准仍未收到；继续独立后端工作。
   新增真实/chat→queue→/turns→Stop→worker-terminal-wake→history综合场景，仅mock测试enqueue开关，
   验证丢202 body后无本地handle恢复、追加3轮、Stop等待轮不误停当前、后继保留context、读到晚到前轮reply。

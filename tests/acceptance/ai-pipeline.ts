@@ -635,6 +635,11 @@ async function main(): Promise<void> {
         const headers = { 'x-internal-token': process.env.INTERNAL_TOKEN };
         const boss = await getStartedBoss();
         if (!(await boss.getQueue('copilot_run'))) await boss.createQueue('copilot_run');
+        const workerSpec = capabilities
+          .flatMap((capability) => capability.jobs?.handlers ?? [])
+          .find((job) => job.name === 'copilot_run');
+        if (!workerSpec?.load) throw new Error('unified: missing manifest worker');
+        const handleJobs = (await workerSpec.load())(db);
         const app = buildHonoApp(capabilities);
         const server = serve({ fetch: app.fetch, hostname: '127.0.0.1', port: 0 });
         closeUnifiedFixture = async () => {
@@ -767,7 +772,7 @@ async function main(): Promise<void> {
             });
           }, CASE_TIMEOUT_MS);
           try {
-            await durable.buildCopilotRunHandler(db)(jobs);
+            await handleJobs(jobs);
           } finally {
             clearTimeout(timer);
             await stop;

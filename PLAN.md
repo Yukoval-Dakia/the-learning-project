@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：948/950统一接纳/FIFO/恢复后端已接通；UI预检与端到端验收待完成。
+> Linear 是权威 tracker；更新于 2026-09-07：948/950界面已获批准并独立实施；真实HTTP/native连续会话验收进行中。
 
 ## NOW
 
@@ -8,7 +8,7 @@
   ADR0062锁定一个会话生命周期，服务端顺序接纳/唯一执行；并行lane不共享写工作树。
   当前任务计划：①唯一SDK owner parity；②持久接纳/FIFO与故障恢复；③教学原子路径迁入；
   ④统一API、服务端快照与已预检UI；⑤scoped/真实断线与模型验收、独立review、exact CI。
-  UI预检已提交等待批准，后端入口已统一；尚未宣称统一产品体验完成。
+  UI四文件预检已获owner批准，独立conversation-dock lane实施；后端入口已统一，完整体验尚待集成验收。
   root已集成SDK lane并修掉初稿的早登记、DB未写、context digest未投递、重复拼保存说明等缺口；
   真实writer返回字节决定是否保留cursor，本进程绑定+256上限，失败/改写/Stop冷启，不同轮不重烧。
   teaching已走同一worker栅栏与终态marker：三种教学状态live/repair/replay，题目和回复原子提交；
@@ -23,7 +23,12 @@
   后续真实route→PG接纳/丢响应/无缓存恢复/追加/等待Stop/worker后继/因果历史场景通过；queue现8项。
   发现durable默认跳过累计读取量预算，已删除分支复用capInput；合法60节点请求第17次仅余40，RED→GREEN。
   保留6轮/25工具和原row上限；105相关unit、64集成DB及typecheck/Biome/build通过，无新增付费。
-  仍待UI批准后统一发送/恢复/工具进度接线、实际模型和浏览器验收、独立review与exact-head CI。
+  UI lane旧worker f6cd585/751361390仅初稿，per-run Stop/恢复仍不完整；architect接手完成，不直接合入。
+  a5bfa5a3真实HTTP/pg-boss/worker两轮actual通过；SSE断开后完成，SDK同id cold→resume，精确保留0/null/方向/未批准。
+  公开卡estimated $0.0007353978、保守reserve $1.6；实际输入13203→13370不声称token下降。
+  此证据不覆盖自动poller/浏览器/自动compact；manifest后继装配的真实DB和0付费admission-only另验。
+  boss唤醒装配归manifest，不让worker创建runtime；原生session持久化新增1条合法owner依赖，baseline439/0/47。
+  仍待UI完整发送/恢复/工具进度接线、真实模型/浏览器验收、独立review与exact-head CI。
 - Owner授权AI pipeline和全项目业务封装/测试精简；完整goal仍active，不以audit数量或单个PR代替完成。
 - YUK945：foreground原生SDK compaction、每轮learner状态、compact后结构化再注入；
   原6轮/费用/row/tool/deadline不重置，usage仅存bounded compact元数据。
@@ -37,7 +42,7 @@
   保守请求预留合计$0.90823；此前余额$0.28771982单列，历史未知费用不填0。
   公开费率估算不冒充账户账单，SDK派生USD保留为独立观察。
   949另跑7个受控回合（含失败）：estimated $0.0214406071，case预留$2.8。
-  新$10池合计estimated $0.0345102949，保守预留$3.70823、剩$6.29177；当前停付费。
+  新$10池合计estimated $0.0352456927，保守预留$5.30823、剩$4.69177；当前停付费。
 - YUK949：owner明确选FULL，允许按需短presentation control交互，ADR0061；
   agent看完结果提名，server校验，保留tool_result/artifact/ephemeral_html；不提高预算、不改生产UI。
   初稿ea8367c7的5P1已由81eb7f3e修复，ed693e16集成main9e02c48b。
@@ -53,7 +58,7 @@
   非阻塞P2随948收口：root已修commit receipt丢view仍retained；artifact引用复用Notes-owned ready资格，16相关DB绿。
 - YUK948/950 owner新决定：Copilot不分前后台，默认不中断；关闭面板/刷新/断线只脱离订阅。
   服务端唯一执行owner；同一会话后续消息持久接纳并顺序消费，不409 busy、不要求先Stop。
-  撤回Mission按钮方案及其UI preflight；保留显式Stop与安全/预算限制。新UI尚未实施或获preflight批准。
+  撤回Mission按钮方案及其UI preflight；保留显式Stop与安全/预算限制。现有drawer四文件改动已获批准并在独立lane实施。
   复用copilot_run并补teaching、native compaction、无本地缓存恢复的parity，不新增第二调度框架。
 - YUK961 Done：Agency拥有pool-gap提示政策，Practice仅提交verify事实；
   PR1340 exact69542b2d CI34032977403绿，main50ba305b；48DB/独立review通过。
@@ -72,13 +77,14 @@
 - 已交付：Pipeline1326、Goal1327、Knowledge1328、Import1329、execution1330、
   ReviewSettlement1332、测试1331/1333、客户端/后端状态1334/1336，各自review/exact CI绿。
   954 hidden child终态及958权威REPLY恢复已修；客户端116unit+15browser流程验证。
-- 主线依赖438/0/47，五capability SCC与20命令消费者仍在；正常owner命令合作不等于重复规则。
+- 主线依赖438/0/47，集成线因原生session owner调用为439/0/47，五capability SCC与20命令消费者仍在；
+  新增持久化所需合法调用不是重复状态实现，不用包装转发隐藏它以压数字。
   learning-intent已有单事务/失败全回滚，不为减少SCC计数再次重构。
 
 ## NEXT
 
 1. YUK948统一持续执行与服务端恢复；950同会话追加消息，禁止以先Stop/409拒绝替代。
-   先后端接纳/顺序执行与teaching/native session parity，再按新方案完成UI preflight和断线实际验收。
+   后端接纳/顺序执行与teaching/native session parity已接通，继续已批准UI实施和浏览器断线实际验收。
 2. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
 3. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
@@ -93,6 +99,6 @@
 
 ## BLOCKED-ON
 
-- 当前948/950后端有安全实施路径；UI预检待owner批准，不标完整goal blocked或complete。
+- 当前948/950已获UI批准，实施与验收进行中，不标完整goal blocked或complete。
 - 未授权部署、生产clone、SoT开关、backfill或历史数据删除；均未执行。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。
