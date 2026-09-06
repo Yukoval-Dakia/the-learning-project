@@ -1,12 +1,12 @@
 # PLAN — 活看板 (cockpit)
 
 > Linear 是权威 tracker；本文件只镜像 NOW / NEXT / PARKED / BLOCKED-ON。
-> 更新于：2026-09-05（AI pipeline 完整改造进行中；尚未收口）
+> 更新于：2026-09-06（owner 扩大授权：AI pipeline、全项目业务封装与测试精简）
 
 ## NOW
 
 - Owner 已授权继续完整 AI pipeline 重构，由 agent 决策；目标为低 token、清晰的能力归属、
-  原生子 agent 与明确的 durable 根任务。整个项目结构优化在本线完成后再讨论。
+  原生子 agent 与明确的 durable 根任务。本次继续授权报告中的全项目架构实施与测试精简。
 - main 基线 `090e882c` / PR #1324 已完成前台上下文改造。当前隔离集成分支：
   `codex/yuk-939-pipeline-completion`，不修改原始脏 main。
 - 已集成：单一 SDK 消息消费核心；业务自有 `generate_goal_outline` 与
@@ -17,28 +17,35 @@
   清单测试已按新 manifest 修正，正在复验。任务数为 50；capability→server 依赖从 464 降到 453。
 - terminal Markdown 与技能隔离已集成。`5c2bdcad` 同输入 read 通过：28,464 input / 215 output /
   $0.076271；相对旧基准下界输入至少减 50.8%、费用至少减 62.2%，仅限合成样本。
-- 整轮真实验收的冷启动/恢复/ambient/read/proposal 通过；纠错只安全回退，字段类型提示与验收
-  已在 `12f77867` 收紧，尚待真实复验。native 发现 SDK 将 Task 规范化为 Agent 并异步返回，
-  子任务被父请求结束中断：正在修 SDK 兼容性。最新取消入口实际验证 0 provider attempts。
-- 已知新增费用累计 $0.503605，native child 另有未结算费用，付费验收暂停；已请求新增最多 $1。
+- 冷启动/恢复/ambient/read/proposal/cancel 通过；`1e61da8d` 的 native/correction/durable/
+  semantic 真实复验全部通过。本次新增报告费用 $0.248796；完整输入输出/收据封存在
+  `docs/planning/evidence/2026-09-06-pipeline-actual.json`。direct durable 不等于queue E2E。
+- 此前已知费用 $0.503605，native child 另有未结算费用。本次“继续”续上此前请求的
+  最多新增 $1 真实验收；跨调用累计，若再遇未结算调用则停止付费。
 - `87d7b990` + `8eaf6c0d` 已修 Agent/Task 别名与同步执行控制，root 查看 SDK 源证据与真实 diff。
   最新集成 162 scoped unit / 76 scoped DB、typecheck/lint/audits/build 通过。
-  Draft PR #1326 已 push；提交级验证以 GitHub exact-head CI 为准，剩余 actual gates 未过前不合并、不部署。
+  Draft PR #1326 已 push；三个旧工具测试断言已修，33 scoped DB复验通过；等待新head CI后合并，不部署。
 - 计划与证据：`docs/planning/2026-09-05-ai-pipeline-completion.md`；具体设计：
   `docs/planning/2026-09-05-pipeline-finalization-design.md`。历史 F5 状态见 Git 中本文件前版。
 
 ## NEXT
 
-1. PR #1326 的 exact-head CI 是完整测试权威；修复确认的 correctness/release failures。
+1. PR #1326 `1e61da8d` exact-head static/unit/build/migration/usability/DB 1/2 通过，
+   DB 2/2 三个旧工具断言已修；推送后复验。
 2. 两轮独立审查已用完：`5c2bdcad` 获批准；新实际兼容性修复由 root 检查 worker diff 与真实证据，
    不擅自启动第三轮。按修改范围补 scoped/static/build。
-3. 等 owner 对额外 $1 真实验收选择；期间继续免费验证，禁止在未知子任务费用后继续付费。
+3. 命名真实场景已全部通过；复用证据，不为同一结论重复付费。
 4. Push 后以 exact-head GitHub CI Gate 为完整测试权威；通过后按仓库授权合并。
 5. 收尾更新本看板、handoff、Linear 和部署边界；不得把 LOCAL_GREEN 称作完整验收。
+6. YUK-952 独立 goal-owner lane：事件、写入与 legacy 兼容收进唯一业务命令；
+   首版仅搬SQL已要求深化，尚未集成；不擅自切生产 flag 或 backfill。
+7. Knowledge merge 跨域写入交还 owner，保持同一事务回滚、幂等、收据；拆除命名反向依赖。
+8. 收敛录入/判分完成规则与失败恢复；AI 共同规则归执行服务，服务端表达产品终态。
+9. 随行为重构替换重复内部测试，并盘点全项目低价值测试。验收看责任主体数、规则
+   实现份数与恢复 owner，不以 audit 通过/文件减少替代。UI 代码先走精确设计清单批准。
 
 ## PARKED
 
-- 整个项目目录/模块结构优化：owner 明确排在 AI pipeline 验收之后。
 - Production deploy/observation：未授权。本次不删除数据库记录、旧 migration 或历史回复。
 - 旧 mailbox/ToolOperations 恢复器退休：需部署后确认旧非终态记录和队列工作全部排空；
   当前只停止新生产者，保留 drain-only 义务。
@@ -47,7 +54,9 @@
 
 ## BLOCKED-ON
 
-- Linear 安装后当前工具仍返回 `Unknown tool`，无法读取或同步 issue；不声称 tracker 已同步。
+- Linear 已实际恢复，正在去重和同步；YUK-939 当前 In Progress。
+- 逐实体最终移除过渡 flag 需生产 clone 的 backfill/audit/rebuild 证据；
+  不阻塞先将兼容策略从业务入口收进唯一 owner。
 - 旧链路真实只读基准总量不可补全：至少 57,817 input / 2,457 output tokens、$0.201614，
   比较模型超时后费用未知。Owner 已另外授权新链路最多新增 $2；不得把旧基准下界当作完整总量。
 - 无生产部署或历史数据清理授权；不影响本地实现、审查与 CI。

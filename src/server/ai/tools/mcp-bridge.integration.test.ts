@@ -226,74 +226,15 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
     expect(terminalMirror).toMatchObject({ action: 'tool_use', outcome: 'success' });
   });
 
-  it('lets the model cancel through the shared control tool but rejects another session', async () => {
-    const safeTool: DomainTool<{ query: string }, { hits: string[] }> = {
-      name: 'bridge_test_model_cancel',
-      description: 'test-only cancellable remote read',
-      effect: 'read',
-      inputSchema: z.object({ query: z.string() }),
-      outputSchema: z.object({ hits: z.array(z.string()) }),
-      costClass: 'cheap_llm',
-      safeHandoff: { transport: 'remote', idempotent: true },
-      async execute(toolCtx) {
-        return new Promise((resolve, reject) => {
-          const timer = setTimeout(() => resolve({ hits: ['late'] }), 500);
-          toolCtx.signal?.addEventListener(
-            'abort',
-            () => {
-              clearTimeout(timer);
-              reject(new Error('cancel observed'));
-            },
-            { once: true },
-          );
-        });
-      },
-      summarize(_input, result) {
-        return `cancellable remote · ${result.hits.length}`;
-      },
-      mirrorEvent: 'never',
-    };
-    registerTool(safeTool);
-    buildMcpServerFromRegistry({
-      ctx: { ...ctx(), sessionId: 'session_model_owner' },
-      serverName: 'loom',
-      toolNames: [safeTool.name, 'cancel_tool_operation'],
-      claimToolUseId: () => 'toolu_model_cancel',
-    });
-    const handler = mockSdk.toolDefs.find(
-      (definition) => definition.name === safeTool.name,
-    )?.handler;
-    const execution = handler?.({ query: 'cancel me' });
-    const operationId = await waitForToolOperationId('session_model_owner');
-
-    buildMcpServerFromRegistry({
-      ctx: { ...ctx(), sessionId: 'session_intruder' },
-      serverName: 'loom_intruder',
-      toolNames: ['cancel_tool_operation'],
-    });
-    const intruderCancel = mockSdk.toolDefs
-      .filter((definition) => definition.name === 'cancel_tool_operation')
-      .at(-1);
-    const denied = (await intruderCancel?.handler({ operation_id: operationId })) as {
-      content: Array<{ text: string }>;
-    };
-    expect(JSON.parse(denied.content[0]?.text ?? '')).toMatchObject({
-      error: 'tool operation not found',
-    });
-
-    const ownerCancel = mockSdk.toolDefs.find(
-      (definition) => definition.name === 'cancel_tool_operation',
-    );
-    await ownerCancel?.handler({ operation_id: operationId });
-    const cancelResponse = (await execution) as { content: Array<{ text: string }> };
-    expect(JSON.parse(cancelResponse.content[0]?.text ?? '')).toMatchObject({
-      error: expect.stringContaining('cancelled'),
-    });
-    const [operation] = await testDb()
-      .select()
-      .from(tool_operation)
-      .where(eq(tool_operation.id, operationId));
-    expect(operation).toMatchObject({ status: 'cancelled', cancelled_by: 'model' });
+  it('does not expose retired operation controls to the model', () => {
+    expect(() =>
+      buildMcpServerFromRegistry({
+        ctx: { ...ctx(), sessionId: 'session_model_owner' },
+        serverName: 'loom',
+        toolNames: ['cancel_tool_operation'],
+      }),
+    ).toThrow("tool 'cancel_tool_operation' is not registered");
+    expect(mockSdk.toolDefs).toEqual([]);
   });
 
   it.each(['system', 'user'] as const)(

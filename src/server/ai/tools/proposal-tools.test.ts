@@ -319,8 +319,6 @@ describe('Wave 3 proposal/action DomainTools', () => {
       // written HTML → versioned type='interactive' artifact).
       'author_artifact',
       // YUK-195 — question structure-edit write tools (draft layer).
-      'cancel_subagent',
-      'cancel_tool_operation',
       'merge_questions',
       'reassign_figure',
       'set_question_type',
