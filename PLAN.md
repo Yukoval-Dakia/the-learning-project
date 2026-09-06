@@ -1,9 +1,14 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-06：949收口校验P1；owner改定Copilot统一持续运行，撤回前后台入口方案。
+> Linear 是权威 tracker；更新于 2026-09-06：948/950统一持续会话实施，ADR0062；949 fresh CI待完成。
 
 ## NOW
 
+- Active线948/950，root工作树tlp-wt-unified-conversation；SDK parity独立lane tlp-wt-worker-session。
+  ADR0062锁定一个会话生命周期，服务端顺序接纳/唯一执行；并行lane不共享写工作树。
+  当前任务计划：①唯一SDK owner parity；②持久接纳/FIFO与故障恢复；③教学原子路径迁入；
+  ④统一API、服务端快照与已预检UI；⑤scoped/真实断线与模型验收、独立review、exact CI。
+  UI预检已提交等待批准，后端步骤继续；尚未宣称统一入口完成。
 - Owner授权AI pipeline和全项目业务封装/测试精简；完整goal仍active，不以audit数量或单个PR代替完成。
 - YUK945：foreground原生SDK compaction、每轮learner状态、compact后结构化再注入；
   原6轮/费用/row/tool/deadline不重置，usage仅存bounded compact元数据。
