@@ -31,7 +31,6 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { memo, useCallback, useEffect, useId, useRef, useState } from 'react';
-import type { CopilotSkillContextT } from '@/capabilities/copilot/server/chat';
 import { ApiError, apiFetch, apiJson } from '@/ui/lib/api';
 import {
   DeferredMarkdownRenderer,
@@ -65,18 +64,27 @@ import {
   persistPendingCopilotTurn,
 } from './durable-reconnect-storage';
 import { learnerGlobalBrief } from './learner-global-brief';
+import {
+  type ChatMessage,
+  type ToolCallRecord,
+  projectCopilotReply,
+  projectDurableCopilotMessage,
+  projectToolEvent,
+  upsertCopilotMessage,
+} from './message-projection';
 import { nextNudgeSessionAfterTurn, resolveTurnAmbientFocus } from './nudge-focus';
 import {
+  type ReplaySkillContext as CopilotSkillContextT,
   type ReplayPrimaryView,
   type ReplaySubagentRun,
   type ReplayToolOperation,
   type ReplayTurn,
+  type ReplaySkillTurn as SkillTurn,
   replayToMessages,
 } from './replay';
-import { isOneShotSkill } from './skill-lifecycle';
+import { nextSkillContext, restoreSkillContext } from './skill-lifecycle';
 import {
   type CopilotRunView,
-  type CopilotSubtaskView,
   DurablePickupStalledError,
   consumeDurableCopilotRun,
   createCopilotRunView,
@@ -86,6 +94,8 @@ import {
   subtaskEventToFrame,
 } from './subtask-events';
 import { useCopilotNudges } from './useCopilotNudges';
+
+export type { ChatMessage, ToolCallRecord } from './message-projection';
 
 interface DreamingPreviewRow {
   proposal_id: string;
@@ -109,25 +119,6 @@ function durableReconnectErrorMessage(error: unknown): string {
   return error instanceof DurablePickupStalledError
     ? '任务还在等待开始，可能正在排队；本次请求已保留，可以稍后重新连接。'
     : '进度连接仍未恢复；任务可能仍在运行，可以再次连接。';
-}
-
-// AF S4 / YUK-203 U6 — UI-side mirror of the server CopilotSkillTurn carrier
-// (src/capabilities/copilot/server/chat.ts). Set only when a teaching/solve skill ran a
-// structured turn; absent for free-form chat (so the existing text-only render
-// path is untouched). The Dock reads `structured_question` + `suggested_next`
-// to render the inline question card + corrective chip.
-interface SkillTurn {
-  kind: 'explain' | 'ask_check' | 'end';
-  structured_question?: {
-    id: string;
-    kind: string;
-    prompt_md: string;
-    choices_md: string[] | null;
-  };
-  // Contract mirror of the server CopilotSkillTurn.suggested_next field.
-  // Reserved for future chip-level UX (e.g. auto-suggest "继续" / "结束" chips).
-  // End-of-session rendering is driven by kind==='end', not this field.
-  suggested_next?: 'continue' | 'end';
 }
 
 // POST /api/copilot/chat response shape — see src/capabilities/copilot/server/chat.ts
@@ -208,50 +199,6 @@ interface CopilotCreateSessionResponse {
   session: CopilotSessionResponse;
 }
 
-export interface ChatMessage {
-  id: string;
-  role: 'user' | 'ai' | 'tombstone';
-  text: string;
-  checkpoint_event_id?: string;
-  // AF S4 / YUK-203 U6 — set on an AI message produced by a teaching/solve
-  // skill turn. `skill_turn` drives the structured-question card + chips;
-  // `session_id` is the Copilot session id the corrective accept-chip posts to;
-  // `reply_event_id` is the precise anchor for the corrective chip resolver
-  // (PR #305 — avoids wrong-anchor on multi-card sessions);
-  // `skill_context` is the originating skill selector, forwarded from the turns
-  // API (round-2) so activeSkillRef can be restored on replay.
-  skill_turn?: SkillTurn;
-  session_id?: string;
-  reply_event_id?: string;
-  skill_context?: CopilotSkillContextT;
-  // YUK-266 (C1) — true while SSE deltas are still flowing into this AI message;
-  // drives the typing caret affordance. Cleared on the terminal `reply` event.
-  streaming?: boolean;
-  // YUK-307 (presentation layer §2.5) — the agent's hero nomination for this AI
-  // turn, rendered below the reply text by CopilotHeroCard. Forwarded from the
-  // terminal reply event (live) or replayToMessages (reopen). Absent = no hero.
-  primary_view?: ReplayPrimaryView;
-  // YUK-757 — public child lifecycle only. The raw nested-agent transcript,
-  // prompt and reasoning never enter ChatMessage.
-  subtasks?: CopilotSubtaskView[];
-  // YUK-457 — per-call tool-use records from live SSE and replay prefill.
-  // Appended on `tool_use`, enriched on `tool_result`, preserved on the terminal
-  // `reply` event so the full call log stays on the AI turn after finalize.
-  tool_calls?: ToolCallRecord[];
-  tool_operations?: ReplayToolOperation[];
-  subagent_runs?: ReplaySubagentRun[];
-}
-
-/** YUK-457 — a single tool-use record (live stream or replay). */
-export interface ToolCallRecord {
-  toolName: string;
-  input: Record<string, unknown>;
-  toolUseId?: string;
-  summary?: string;
-  status?: 'running' | 'done' | 'failed';
-  errorReason?: string;
-}
-
 const LEARNER_TOOL_LABELS: Readonly<Record<string, string>> = {
   query_mistakes: '错题整理',
   get_review_due: '复习安排',
@@ -286,114 +233,6 @@ function toolCallCardStatus(call: ToolCallRecord): ToolCallCardStatus {
   if (call.status === 'failed') return 'failed';
   if (call.status === 'running') return 'running';
   return 'done';
-}
-
-/**
- * YUK-913 — the streaming runner emits raw SDK block names (`mcp__<server>__<tool>`)
- * on tool_use, while tool_result frames and replay mirrors carry the DOMAIN tool
- * name. Normalize at the parse boundary so one logical call correlates across
- * the live + replay lanes (and `LEARNER_TOOL_LABELS` resolves on both).
- */
-function normalizeToolName(name: string): string {
-  const match = /^mcp__[a-z0-9_-]+__(.+)$/i.exec(name);
-  return match ? match[1] : name;
-}
-
-function parseToolUseSse(data: string): ToolCallRecord | null {
-  try {
-    const raw = JSON.parse(data) as {
-      toolName?: unknown;
-      input?: unknown;
-      toolUseId?: unknown;
-    };
-    if (typeof raw.toolName !== 'string') return null;
-    return {
-      toolName: normalizeToolName(raw.toolName),
-      input:
-        raw.input !== null && typeof raw.input === 'object' && !Array.isArray(raw.input)
-          ? (raw.input as Record<string, unknown>)
-          : {},
-      ...(typeof raw.toolUseId === 'string' ? { toolUseId: raw.toolUseId } : {}),
-      status: 'running',
-    };
-  } catch {
-    return null;
-  }
-}
-
-function parseToolResultSse(data: string): ToolCallRecord | null {
-  try {
-    const raw = JSON.parse(data) as {
-      toolName?: unknown;
-      input?: unknown;
-      summary?: unknown;
-      errorReason?: unknown;
-      toolUseId?: unknown;
-    };
-    if (typeof raw.toolName !== 'string') return null;
-    const summary = typeof raw.summary === 'string' ? raw.summary : undefined;
-    const errorReason =
-      typeof raw.errorReason === 'string' && raw.errorReason.length > 0
-        ? raw.errorReason
-        : undefined;
-    return {
-      toolName: normalizeToolName(raw.toolName),
-      input:
-        raw.input !== null && typeof raw.input === 'object' && !Array.isArray(raw.input)
-          ? (raw.input as Record<string, unknown>)
-          : {},
-      ...(typeof raw.toolUseId === 'string' ? { toolUseId: raw.toolUseId } : {}),
-      ...(summary ? { summary } : {}),
-      ...(errorReason ? { errorReason } : {}),
-      status: errorReason ? 'failed' : 'done',
-    };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * YUK-913 — fold a tool_use frame into the call list WITHOUT ever creating a
- * second card for one logical call: an id-carrying duplicate frame (same
- * toolUseId) is a no-op; an id-less duplicate while the same tool is already
- * running is treated as the same call (a second 调用中 card would strand
- * forever). A genuinely new call — distinct toolUseId, or no running same-name
- * card — appends.
- */
-function mergeToolUseEvent(calls: ToolCallRecord[], call: ToolCallRecord): ToolCallRecord[] {
-  if (call.toolUseId !== undefined && calls.some((c) => c.toolUseId === call.toolUseId)) {
-    return calls;
-  }
-  if (
-    call.toolUseId === undefined &&
-    calls.some((c) => c.toolName === call.toolName && c.status === 'running')
-  ) {
-    return calls;
-  }
-  return [...calls, call];
-}
-
-/**
- * YUK-913 — resolve ONE running call IN PLACE (never append beside it): prefer
- * the stable toolUseId correlation; an id-less result (the current wire
- * contract) resolves the OLDEST running call of the same normalized tool name
- * (serial execution order). With no running match, the result still lands as
- * its own single terminal card (result-before-call / lost tool_use frame).
- */
-function applyToolResult(calls: ToolCallRecord[], result: ToolCallRecord): ToolCallRecord[] {
-  const idx = calls.findIndex(
-    (call) =>
-      call.status === 'running' &&
-      (result.toolUseId !== undefined
-        ? call.toolUseId === result.toolUseId
-        : call.toolName === result.toolName),
-  );
-  if (idx === -1) {
-    return [...calls, result];
-  }
-  const next = [...calls];
-  next[idx] = { ...next[idx], ...result };
-  return next;
 }
 
 // YUK-913 — one COMPRESSED card per tool call: a single-line row (label +
@@ -983,20 +822,12 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     }
   }, [createConversation, currentSessionId, open, optimisticSession, sessionsQ.data]);
 
-  // AF S4 / YUK-203 U6 — restore skill state from a replayed message list: adopt the
-  // latest non-end AI skill_context as activeSkillRef, and surface the latest in-scope
-  // knowledge entity for the quiz chip. Newest-first scan (replayed is oldest→newest).
-  // Set-if-found (no reset) so the drawer-open prefill keeps its exact semantics; callers
-  // that must drop stale context (post-revert refetch) reset the refs before calling.
+  // Fold explicit mode transitions oldest→newest, including end barriers. The
+  // quiz chip independently keeps the latest in-scope knowledge entity. A full
+  // post-revert refresh resets both before restoring the remaining history.
   const restoreSkillStateFromReplay = useCallback(
     (replayed: ReturnType<typeof replayToMessages>) => {
-      for (let i = replayed.length - 1; i >= 0; i--) {
-        const m = replayed[i];
-        if (m.role !== 'ai' || !m.skill_turn) continue;
-        if (m.skill_turn.kind === 'end') break; // ended session → leave ref null
-        if (m.skill_context) activeSkillRef.current = m.skill_context;
-        break; // found the latest skill turn — done either way
-      }
+      activeSkillRef.current = restoreSkillContext(replayed, activeSkillRef.current);
       for (let i = replayed.length - 1; i >= 0; i--) {
         const sc = replayed[i].skill_context;
         if (sc?.ref.kind === 'knowledge') {
@@ -1032,7 +863,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         const res = await apiJson<CopilotTurnsResponse>(
           `/api/copilot/turns?limit=${REPLAY_LIMIT}&session_id=${encodeURIComponent(currentSessionId)}`,
         );
-        if (cancelled) return;
+        if (cancelled || sendingRef.current || messagesRef.current.length > 0) return;
         const replayed = replayToMessages(res.turns ?? []);
         if (replayed.length === 0 && !restoredPendingTurn) return;
         // Only prefill if the user has not already started typing/sending in this
@@ -1175,23 +1006,27 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     (aiMessageId: string, view: CopilotRunView, fallbackText: string) => {
       const terminal = view.phase === 'completed' || view.phase === 'failed';
       setProgressStage(terminal ? null : copilotProgressStage(view));
+      if (view.phase === 'completed') {
+        const mode = projectDurableCopilotMessage(
+          { id: aiMessageId, role: 'ai', text: '' },
+          view,
+          fallbackText,
+        );
+        if (!mode) {
+          setMessages((prev) => prev.filter((message) => message.id !== aiMessageId));
+          setError('请求失败');
+          return;
+        }
+        activeSkillRef.current = nextSkillContext(activeSkillRef.current, mode);
+      }
       setMessages((prev) => {
-        const existing = prev.find((message) => message.id === aiMessageId);
-        const next: ChatMessage = {
-          ...(existing ?? { id: aiMessageId, role: 'ai' as const }),
-          text:
-            view.replyText ||
-            (view.phase === 'failed' ? fallbackText : existing?.text || fallbackText),
-          checkpoint_event_id:
-            view.failureReason === 'ambiguous_execution'
-              ? undefined
-              : (view.checkpointEventId ?? existing?.checkpoint_event_id),
-          subtasks: view.subtasks,
-          streaming: !terminal,
+        const existing = prev.find((message) => message.id === aiMessageId) ?? {
+          id: aiMessageId,
+          role: 'ai' as const,
+          text: '',
         };
-        return existing
-          ? prev.map((message) => (message.id === aiMessageId ? next : message))
-          : [...prev, next];
+        const next = projectDurableCopilotMessage(existing, view, fallbackText);
+        return next ? upsertCopilotMessage(prev, next) : prev;
       });
     },
     [],
@@ -1630,25 +1465,10 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
               setAwaitingFirstFrame(false);
             }
             applyRunViewToMessage(aiId, inlineRunView, '正在处理你的请求，结果会在这里显示。');
-          } else if (evt.event === 'tool_use') {
-            const call = parseToolUseSse(evt.data);
-            if (call) {
-              // YUK-913 — merge (never blind-append): duplicate frames for one
-              // logical call must not open a second 调用中 card.
-              const merged = mergeToolUseEvent(inlineToolCalls, call);
-              if (merged !== inlineToolCalls) {
-                inlineToolCalls.splice(0, inlineToolCalls.length, ...merged);
-                publishToolCalls();
-              }
-            }
-          } else if (evt.event === 'tool_result') {
-            const result = parseToolResultSse(evt.data);
-            if (result) {
-              inlineToolCalls.splice(
-                0,
-                inlineToolCalls.length,
-                ...applyToolResult(inlineToolCalls, result),
-              );
+          } else if (evt.event === 'tool_use' || evt.event === 'tool_result') {
+            const next = projectToolEvent(inlineToolCalls, evt.event, evt.data);
+            if (next !== inlineToolCalls) {
+              inlineToolCalls.splice(0, inlineToolCalls.length, ...next);
               publishToolCalls();
             }
           } else if (evt.event === 'reply') {
@@ -1670,60 +1490,29 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       }
 
       const res2 = finalReply;
-      // AF S4 / YUK-203 U6 — clear the active skill on end turn so subsequent
-      // free-form messages are not re-routed to the stale skill context.
-      if (res2.skill_turn?.kind === 'end') {
-        activeSkillRef.current = null;
-      }
-      // YUK-272 (C3) / YUK-213 F2 — one-shot-stuck minimal fix. quiz + solve return
-      // NO terminal skill_turn, so the `end`-turn clear above never fires for them
-      // and the stale skill_context would re-send on every follow-up. Clear it after
-      // a SUCCESSFUL one-shot send (a failed send keeps the context so 重试 reuses
-      // it). The server-side skill_turn redesign is the real fix (YUK-213); this is
-      // the Dock-only guard. If YUK-213 later makes solve multi-turn, the server will
-      // emit a non-`end` skill_turn and this rule must be revisited.
-      if (skillContext && isOneShotSkill(skillContext.skill)) {
-        activeSkillRef.current = null;
-      }
-      // YUK-577 (Codex P2-1) — one-shot nudge focus: the ingestion-session anchor a 「看看」click
-      // seeded only applies to the FIRST turn after the click, then clears. Same rule as the
-      // one-shot skill clear above — a FAILED send never reaches here (it early-returns at the
-      // no-terminal-payload guard / throws to catch), so 重试 keeps the anchor. Without this, every
-      // later free-form turn would keep re-sending the stale learning_session focus until the
-      // drawer closes (the nudge anchor should not stick to the whole session).
-      nudgeSessionRef.current = nextNudgeSessionAfterTurn(nudgeSessionRef.current, true);
-      const finalized: ChatMessage = {
-        id: aiId,
-        role: 'ai',
-        // The terminal reply is authoritative (reconciles any delta drift).
-        text: res2.reply,
-        checkpoint_event_id: res2.checkpoint_event_id,
-        skill_turn: res2.skill_turn,
-        session_id: res2.session_id,
-        reply_event_id: res2.reply_event_id,
-        // Store the originating skill_context on the message so the replay
-        // path can reconstruct activeSkillRef on next open without waiting
-        // for the turns API to echo it back.
-        skill_context: skillContext ?? undefined,
-        streaming: false,
-        // YUK-307 — the hero nomination from the terminal reply event (chat.ts
-        // CopilotChatResult.primary_view). Undefined ⇒ no hero rendered.
-        primary_view: res2.primary_view,
-        subtasks: inlineRunView.subtasks,
-        // YUK-457 / YUK-913 — preserve accumulated tool-use records; mark any still-running
-        // calls done when the terminal reply lands (remote MCP paths may skip tool_result).
-        // No synthetic summary: the compact row's 已完成 pill needs none.
-        ...(inlineToolCalls.length > 0
-          ? {
-              tool_calls: inlineToolCalls.map((call) =>
-                call.status === 'running' ? { ...call, status: 'done' as const } : call,
-              ),
-            }
-          : {}),
-      };
-      setMessages((prev) =>
-        aiCreated ? prev.map((m) => (m.id === aiId ? finalized : m)) : [...prev, finalized],
+
+      const finalized = projectCopilotReply(
+        {
+          id: aiId,
+          role: 'ai',
+          text: '',
+          subtasks: inlineRunView.subtasks,
+          ...(inlineToolCalls.length ? { tool_calls: inlineToolCalls } : {}),
+        },
+        res2,
+        skillContext,
       );
+      if (!finalized) {
+        if (aiCreated) setMessages((prev) => prev.filter((message) => message.id !== aiId));
+        reportSendError('请求失败');
+        return;
+      }
+      // The ingestion-session nudge belongs to this successful turn only. An
+      // unusable or partial reply preserves its anchor for retry.
+      if (!res2.error)
+        nudgeSessionRef.current = nextNudgeSessionAfterTurn(nudgeSessionRef.current, true);
+      activeSkillRef.current = nextSkillContext(activeSkillRef.current, finalized);
+      setMessages((prev) => upsertCopilotMessage(prev, finalized));
       // YUK-266 (C1) — a partial-degrade reply still rendered (text persisted);
       // surface the error affordance alongside it so the user knows it was cut.
       if (res2.error) reportSendError(res2.error);
@@ -1802,8 +1591,8 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   }, []);
 
   // YUK-272 (C3) — quiz quick-chip. When a knowledge node is in scope, seed a quiz
-  // skill turn with that real id; `send` clears the one-shot context afterwards via
-  // isOneShotSkill. ADR-0031 / YUK-304 retired the hard quiz intercept, so without a
+  // skill turn with that real id; `send` clears context only on explicit server
+  // end state. ADR-0031 / YUK-304 retired the hard quiz intercept, so without a
   // focused node the same user-readable prompt deliberately follows normal Copilot
   // routing and lets the model clarify/orchestrate instead of becoming a dead chip.
   const sendQuiz = useCallback(() => {

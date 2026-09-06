@@ -27,8 +27,10 @@ durable actual直接handler不是queue E2E。无需更多付费验证。
 
 ## 下一步与禁止项
 
-- 958 UI仍等待精确设计原文、drawer类型、文件清单批准：CopilotDock/subtask-events/replay/
-  skill-lifecycle及tests，新message-projection与test。未改UI；服务端end不等于客户端收口完成。
+- 958 UI已获owner「继续」批准并实施：CopilotDock/subtask-events/replay/skill-lifecycle
+  共用message-projection；只有权威REPLY+明确end结束模式，失败保留重试。无视觉变化。
+  116 scoped tests、生产bundle inline/durable发送→后续发送→reload回放2条流程已通过；
+  草稿+DONE无REPLY的P1红绿复现修复，唯一验证审PASS。当前分支待final gates/CI合并。
 - SoT最终退休需要单独生产副本backfill/audit/rebuild/golden证据与授权（YUK887）。
 - 不部署、不切生产flags、不backfill、不删历史数据/表；旧mailbox/ToolOperations仅drain-only，
   退休需部署后零pending和零队列活动跨完整deadline/retry窗。

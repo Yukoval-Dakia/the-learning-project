@@ -17,6 +17,108 @@ async function expectNoInternalCopy(page: Page, route: string): Promise<void> {
   ).not.toMatch(/\bM[45]\b|暂未接线|尚未接线|暂未接通|尚未接通|(?:假|伪)成功/);
 }
 
+for (const transport of ['inline', 'durable'] as const) {
+  test(`Copilot ${transport} explicit completion survives the shipped drawer and replay`, async ({
+    page,
+  }) => {
+    const fixture = await installApiFixtures(page, 'existing-evidence');
+    const context = { skill: 'quiz', ref: { kind: 'knowledge', id: 'kc-domain-boundary-42' } };
+    const content = '已核对定义域、增根与边界条件，练习已经完成。';
+    const turns = [
+      {
+        role: 'ai',
+        text: '上一次练习已经完成。',
+        event_id: 'prior-quiz',
+        at: '2026-09-06T06:00:00Z',
+        skill_context: context,
+        skill_turn: { kind: 'end' },
+      },
+    ];
+    const posts: Array<Record<string, unknown>> = [];
+    const terminal = { reply: content, skill_context: context, skill_turn: { kind: 'end' } };
+    await page.route('**/api/**', async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path === '/api/copilot/sessions')
+        return route.fulfill({
+          json: {
+            sessions: [
+              {
+                id: 'session-42',
+                status: 'active',
+                title: '边界条件复盘',
+                created_at: '2026-09-06T06:00:00Z',
+                updated_at: '2026-09-06T06:00:00Z',
+              },
+            ],
+          },
+        });
+      if (path === '/api/copilot/turns') return route.fulfill({ json: { turns } });
+      if (path === '/api/today/copilot-summary')
+        return route.fulfill({
+          json: {
+            daily_focus: '定义域与边界条件',
+            plan_adjustments_count: 0,
+            review_due_count: 2,
+            brief_global_md: null,
+            dreaming_preview: [],
+            pending_proposals_total: 0,
+          },
+        });
+      if (path === '/api/copilot/chat') {
+        posts.push(route.request().postDataJSON());
+        if (posts.length === 1) {
+          turns.push({ ...turns[0], text: content, event_id: 'current-quiz' });
+          if (transport === 'durable')
+            return route.fulfill({
+              status: 202,
+              headers: { Location: '/api/jobs/copilot_run/quiz-42/events' },
+              json: { run_id: 'quiz-42' },
+            });
+        }
+        return route.fulfill({
+          contentType: 'text/event-stream',
+          body: `event: reply\ndata: ${JSON.stringify(posts.length === 1 ? terminal : { reply: '收到后续问题。' })}\n\n`,
+        });
+      }
+      if (path === '/api/jobs/copilot_run/quiz-42/events') {
+        const frames = [
+          { event_id: 1, event_type: 'copilot_run.delta', payload: { text: '正在核对草稿' } },
+          { event_id: 2, event_type: 'copilot_run.reply', payload: { reply_md: content } },
+          { event_id: 3, event_type: 'copilot_run.done', payload: terminal },
+        ];
+        return route.fulfill({
+          contentType: 'text/event-stream',
+          body: frames
+            .map((frame) => `event: job_event\ndata: ${JSON.stringify(frame)}\n\n`)
+            .join(''),
+        });
+      }
+      return route.fallback();
+    });
+    await page.goto('/today');
+    await page.getByRole('banner').getByRole('button', { name: 'Copilot', exact: true }).click();
+    const quiz = page.getByTestId('copilot-quiz-chip');
+    await expect(quiz).toContainText('当前知识点');
+    await quiz.click();
+    await expect(page.getByText(content, { exact: true })).toHaveCount(1);
+    await expect(page.getByText('正在核对草稿', { exact: true })).toHaveCount(0);
+    await page.getByLabel('问 Loom 任何事', { exact: true }).fill('继续核对反例');
+    await page.getByRole('button', { name: '发送', exact: true }).click();
+    await expect.poll(() => posts.length).toBe(2);
+    expect(posts[0].skill_context).toEqual(context);
+    expect(posts[1].skill_context).toBeUndefined();
+    await expect(page.getByText('收到后续问题。', { exact: true })).toBeVisible();
+    await page.reload();
+    await page.getByRole('banner').getByRole('button', { name: 'Copilot', exact: true }).click();
+    await expect(page.getByText(content, { exact: true })).toHaveCount(1);
+    await page.getByLabel('问 Loom 任何事', { exact: true }).fill('刷新后继续讨论');
+    await page.getByRole('button', { name: '发送', exact: true }).click();
+    await expect.poll(() => posts.length).toBe(3);
+    expect(posts[2].skill_context).toBeUndefined();
+    expect(fixture.unexpectedRequests).toEqual([]);
+  });
+}
+
 test.describe('shipped-container usability regression', () => {
   test('route=/today keeps existing evidence out of cold start without an active goal', async ({
     page,

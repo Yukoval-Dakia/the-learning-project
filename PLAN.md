@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-06：业务完成责任与测试精简已收口，客户端与生产迁移边界保留。
+> Linear 是权威 tracker；更新于 2026-09-06：YUK-958 客户端统一投影已完成本机验收与独立复核，待 exact-head CI 合并。
 
 ## NOW
 
@@ -11,7 +11,10 @@
   隐藏 child 终态结算已红绿复现并修复，唯一验证审 APPROVE；已合并main9302f08b。
 - YUK-958 #1334：后端成功 quiz 显式 end，失败/取消/blocked 不结束；
   inline、durable、marker repair、replay 共用产品状态，不增加模型输入。
-  独立 review、exact-head CI 绿色并合并main dce62f79；UI 尚未修改，不能关闭整票。
+  后端独立 review、exact-head CI 绿色并合并main dce62f79。
+- YUK-958客户端：owner已批准，inline/durable/replay共用终态投影和显式模式状态；
+  草稿不能冒充权威REPLY。116 scoped tests及2条生产bundle Copilot流程通过；
+  初审P1已红绿修复，唯一验证审通过。等待当前分支exact CI后合并/关票。
 - 当前main dce62f79重新实测依赖基线438/0/47（此前98f15bda为439/0/47）；
   五 capability SCC 与20个命令消费者仍在，未宣称消环。
 - 实际输出：同输入 read 样本 input 至少降50.8%、费用至少降62.2%；仅限 synthetic。
@@ -24,11 +27,11 @@
 ## NEXT
 
 1. 后端集成交付已完成；不部署，不重复已完成的模型验收。
-2. YUK-958（待批准）：UI预检获批后，客户端消费显式结束状态，统一前台/后台消息投影，
-   删除按技能名猜测终态的补丁；保持原drawer外观与失败恢复。
+2. active codex/yuk-958-client-projection：最终scoped/浏览器整组复测→exact-head CI→合并。
+   原drawer外观不变，删除技能名终态猜测与重复消息映射；不新增付费调用。
 3. YUK-887：获得独立生产副本/部署授权后，逐实体提供backfill/audit/rebuild/golden证据，
    再决定SoT兼容分支退休；不能从本机默认开关推断生产状态。
-4. 每PR最多初审+一次P0/P1验证审；954预算已用尽，958初审通过。
+4. 每PR最多初审+一次P0/P1验证审；954及958客户端预算已用尽，无未决P0/P1。
 
 ## PARKED
 
@@ -41,6 +44,6 @@
 
 ## BLOCKED-ON
 
-- YUK-958 UI需要owner对已提交的设计原文、drawer类型和精确文件清单批准。
-  待改CopilotDock/subtask-events/replay/skill-lifecycle及测试，新建message-projection及测试。
+- YUK-958 UI预检已批准；仅改CopilotDock/subtask-events/replay/skill-lifecycle及测试，
+  新建message-projection及测试。无额外UI设计门阻塞。
 - 生产clone验证、部署、SoT flag切换与历史数据删除均无授权，未执行。

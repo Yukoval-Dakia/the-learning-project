@@ -3,7 +3,7 @@
 本轮以业务行为而非文件搬迁为单位收口。原始脏工作树未覆盖，未部署或修改生产数据。
 逐项实现与 exact-head CI 由以下 PR 留存；不能把这些代码验证称为生产验收。
 基线快照：main `98f15bda` 为439/0/47；#1330/#1334合并后main `dce62f79` 重新审计为438/0/47。
-表中各PR均已在exact-head CI绿色、独立审查通过后合并；YUK-958只完成后端部分。
+表中编号PR均已在exact-head CI绿色、独立审查通过后合并；YUK-958客户端现已本机验收，待CI合并。
 
 | 行为 | 唯一协调责任 | 收入内部的共同规则 | 验证入口 |
 |---|---|---|---|
@@ -12,7 +12,7 @@
 | 知识合并 | Knowledge 事务协调器 + 各状态 owner | Practice 归因、Agency 范围、误区碰撞等由各自命令处理 | #1328 |
 | 录入完成 | Ingestion completion command | 源卡锁、导入、归属、终态回执与重复投递恢复 | #1329 |
 | 判分完成 | Practice 的三个 settlement commands | FSRS、掌握度、证据、回滚快照、提交后信号 | #1332 |
-| 模式结束 | Copilot mode-completion contract | 成功 quiz end、失败不结束、durable/replay 一致 | #1334，后端部分 |
+| 模式结束 | Copilot mode-completion contract + message projection | 成功 quiz end、失败不结束、inline/durable/replay 一致 | #1334 后端；当前客户端分支 |
 
 知识合并仍需要跨业务事务；改善点是协调器不再直接修改题目、学习项和目标的内部表。
 录入的业务数据与操作完成回执在同一事务内提交。判分的三种入口共用学习效果实现，
@@ -41,10 +41,20 @@
 模型实际输出及 UI 加载保护。CI 暴露旧 owner guard 时更新真实负责人或显式状态，
 没有通过增加豁免、抬高阈值或删掉单写入保护来过关。
 
+## 客户端投影验收（YUK-958）
+
+Owner已批准既有drawer文件范围；没有视觉设计变化。终态消息、工具结果关联与模式恢复
+由共享投影负责；Dock仅保留各传输的调度、重连和渲染。没有把整个SSE生命周期冒称同一实现。
+旧one-shot配置测试由显式产品行为测试替代；不对私有函数拆分逐项新增低价值断言。
+
+独立初审发现delta草稿+DONE可被误当权威终文，已红绿复现并修复：只有REPLY.reply_md
+拥有终文，DONE只能补产品状态，迟到delta也不能污染终文。唯一验证审PASS。
+本机116 scoped tests、typecheck/lint/build及438/0/47 audits通过；生产bundle上的
+inline/durable出题→后续发送→reload回放2条浏览器流程通过。新增付费调用为零。
+当前仅LOCAL_GREEN；exact-head CI与合并状态以当前客户端PR为准。
+
 ## 尚未完成的边界
 
-- YUK-958 客户端：等待精确 drawer/file 设计预检批准。后端新增明确状态，但尚未
-  删除 CopilotDock 的 one-shot 补丁，也未合并两种传输的消息展示投影。
 - 逐实体 SoT 迁移退休：需要生产副本上的 backfill/audit/rebuild/golden 证据与授权；
   本轮未翻生产开关、未删除历史表和事件。
 - 历史 mailbox/ToolOperations drain-only 恢复器：需部署后零 pending、零队列活动

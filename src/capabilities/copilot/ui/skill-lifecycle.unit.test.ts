@@ -1,32 +1,54 @@
-// YUK-272 (C3) — pure unit for the one-shot-skill lifecycle rule. Lives under
-// src/capabilities/copilot/ui/ (M5-T3 / YUK-321 — moved from src/ui/copilot/) and is
-// auto-allowlisted into the unit partition by the src/capabilities/**/*.unit.test.ts
-// convention glob (no manual fastTestInclude edit). No DOM needed.
-
 import { describe, expect, it } from 'vitest';
-import { ONE_SHOT_SKILLS, isOneShotSkill } from './skill-lifecycle';
+import type { ReplaySkillContext } from './replay';
+import {
+  nextSkillContext,
+  parseSkillContext,
+  parseSkillTurn,
+  restoreSkillContext,
+} from './skill-lifecycle';
 
-describe('isOneShotSkill (YUK-272 / YUK-213 F2)', () => {
-  it('treats quiz as one-shot (it returns no terminal skill_turn)', () => {
-    expect(isOneShotSkill('quiz')).toBe(true);
+const quiz: ReplaySkillContext = {
+  skill: 'quiz',
+  ref: { kind: 'knowledge', id: 'kc-磁场方向-42' },
+};
+const teaching: ReplaySkillContext = {
+  skill: 'teaching',
+  ref: { kind: 'learning_item', id: 'item-24' },
+};
+
+describe('explicit Copilot mode lifecycle', () => {
+  it.each([quiz, teaching])('only an explicit end closes $skill', (context) => {
+    expect(nextSkillContext(context, {})).toBe(context);
+    expect(nextSkillContext(context, { skill_turn: { kind: 'explain' } })).toBe(context);
+    expect(nextSkillContext(context, { skill_turn: { kind: 'end' } })).toBeNull();
   });
-
-  // YUK-284 (C3) — solve is no longer one-shot config: it has no UI seed, so
-  // activeSkillRef never becomes {skill:'solve'}. It was removed from ONE_SHOT_SKILLS.
-  it('does NOT treat solve as one-shot (no UI seed → dead config removed)', () => {
-    expect(isOneShotSkill('solve')).toBe(false);
+  it('replay folds end barriers without reviving an earlier teaching mode', () => {
+    expect(
+      restoreSkillContext([
+        { role: 'ai', skill_turn: { kind: 'explain' }, skill_context: teaching },
+        { role: 'user' },
+        { role: 'ai', skill_turn: { kind: 'end' }, skill_context: quiz },
+        { role: 'ai' },
+      ]),
+    ).toBeNull();
+    expect(restoreSkillContext([{ role: 'ai', skill_context: quiz }])).toBeNull();
   });
-
-  it('does NOT treat teaching as one-shot (it clears on its own end turn)', () => {
-    expect(isOneShotSkill('teaching')).toBe(false);
+  it('restores a later explicit continuation with its own context', () => {
+    expect(
+      restoreSkillContext([
+        { role: 'ai', skill_turn: { kind: 'end' }, skill_context: quiz },
+        { role: 'ai', skill_turn: { kind: 'explain' }, skill_context: teaching },
+      ]),
+    ).toEqual(teaching);
   });
-
-  it('returns false for unknown / empty skill names', () => {
-    expect(isOneShotSkill('')).toBe(false);
-    expect(isOneShotSkill('nonsense')).toBe(false);
-  });
-
-  it('ONE_SHOT_SKILLS is exactly { quiz }', () => {
-    expect([...ONE_SHOT_SKILLS].sort()).toEqual(['quiz']);
+  it('narrows malformed and private metadata before mode transitions', () => {
+    expect(parseSkillTurn({ kind: 'unknown' })).toBeUndefined();
+    expect(
+      parseSkillTurn({ kind: 'ask_check', structured_question: { id: 'broken' } }),
+    ).toBeUndefined();
+    expect(parseSkillContext({ skill: 'quiz', ref: { id: 'missing-kind' } })).toBeUndefined();
+    expect(
+      parseSkillTurn({ kind: 'end', prompt: 'private', structured_question: { id: 'hidden' } }),
+    ).toEqual({ kind: 'end' });
   });
 });

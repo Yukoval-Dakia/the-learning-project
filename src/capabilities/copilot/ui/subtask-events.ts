@@ -47,6 +47,8 @@ export interface CopilotRunView {
   phase: CopilotRunPhase;
   lastEventId: number;
   replyText: string;
+  /** Authoritative reply metadata; decoded into presentation only by message-projection. */
+  replyPayload?: Record<string, unknown>;
   failureReason?: string;
   checkpointEventId?: string;
   subtasks: CopilotSubtaskView[];
@@ -205,6 +207,7 @@ export function foldCopilotRunFrames(
   const frames = [...byId.values()].sort((a, b) => a.event_id - b.event_id);
   let phase: CopilotRunPhase = 'queued';
   let replyText = '';
+  let replyPayload: Record<string, unknown> | undefined;
   let failureReason: string | undefined;
   let checkpointEventId: string | undefined;
   const subtasks = new Map<string, MutableSubtask>();
@@ -248,6 +251,7 @@ export function foldCopilotRunFrames(
       }
       case 'copilot_run.reply': {
         if (terminalRun) break;
+        replyPayload = { ...replyPayload, ...item.payload };
         phase = 'running';
         if (typeof item.payload.reply_md === 'string') replyText = item.payload.reply_md;
         if (typeof item.payload.checkpoint_event_id === 'string') {
@@ -257,6 +261,8 @@ export function foldCopilotRunFrames(
       }
       case 'copilot_run.done':
         if (!terminalRun) {
+          // Only REPLY owns terminal content; DONE may add product metadata.
+          replyPayload = { ...replyPayload, ...item.payload, reply_md: replyPayload?.reply_md };
           phase = 'completed';
           if (typeof item.payload.checkpoint_event_id === 'string') {
             checkpointEventId = item.payload.checkpoint_event_id;
@@ -274,6 +280,7 @@ export function foldCopilotRunFrames(
             break;
           }
           phase = 'failed';
+          replyPayload = undefined;
           if (typeof item.payload.reply_md === 'string') replyText = item.payload.reply_md;
           if (typeof item.payload.reason === 'string') failureReason = item.payload.reason;
           if (failureReason === 'ambiguous_execution') {
@@ -295,6 +302,7 @@ export function foldCopilotRunFrames(
     phase,
     lastEventId: frames.at(-1)?.event_id ?? 0,
     replyText,
+    ...(replyPayload ? { replyPayload } : {}),
     ...(failureReason ? { failureReason } : {}),
     ...(checkpointEventId ? { checkpointEventId } : {}),
     subtasks: [...subtasks.values()]
