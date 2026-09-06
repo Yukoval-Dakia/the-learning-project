@@ -624,7 +624,9 @@ describe('Wave 3 proposal/action DomainTools', () => {
     // still flow through (candidates is added on top, so toMatchObject passes).
     expect(taskKind).toBe('AttributionRerankTask');
     expect(taskInput).toMatchObject({ wrong_answer_md: '代词' });
-    expect(taskCtx).toMatchObject({ db: toolCtx.db, subjectProfile: expect.any(Object) });
+    // Check connection identity without recursively traversing Drizzle's live client/schema.
+    expect(taskCtx.db).toBe(toolCtx.db);
+    expect(taskCtx).toMatchObject({ subjectProfile: expect.any(Object) });
     expect(taskCtx).not.toHaveProperty('enableTransientRetry');
 
     const skipped = await attributeMistakeTool.execute(ctx(), { attempt_event_id: 'att_failure' });
