@@ -9307,8 +9307,8 @@ export interface operations {
     runCopilotChat: {
         parameters: {
             query?: never;
-            header?: {
-                "Idempotency-Key"?: string;
+            header: {
+                "Idempotency-Key": string;
             };
             path?: never;
             cookie?: never;
@@ -9343,22 +9343,13 @@ export interface operations {
         };
         responses: {
             /** @description Successful response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/event-stream": string;
-                };
-            };
-            /** @description Successful response */
             202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": {
-                        checkpoint_event_id: string;
+                        checkpoint_event_id?: string;
                         run_id: string;
                         session_id: string;
                     };
@@ -10456,6 +10447,14 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        active_runs: {
+                            events_url: string;
+                            run_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            status: "queued" | "started" | "running" | "cancel_requested";
+                        }[];
+                        session_id: string | null;
                         turns: {
                             /** Format: date-time */
                             at: string;
@@ -10476,6 +10475,7 @@ export interface operations {
                             reply_event_id?: string;
                             /** @enum {string} */
                             role: "user" | "ai" | "tombstone";
+                            run_id?: string;
                             session_id?: string;
                             skill_context?: {
                                 ref: {

@@ -19,7 +19,9 @@ import {
 import { reconcileOutstandingCopilotRuns } from '@/capabilities/copilot/jobs/copilot_run_reconcile';
 import { copilotCapability } from '@/capabilities/copilot/manifest';
 import { event, job_events } from '@/db/schema';
+import * as agentRunner from '@/server/ai/runner';
 import { _resetBossForTests, fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
+import { registerCapabilityJobs } from '@/server/boss/register-capability-jobs';
 import { writeJobEvent } from '@/server/events/writer';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import * as runtimeEnv from '@/server/runtime-env';
@@ -325,20 +327,55 @@ describe('durable Copilot session FIFO — real pg-boss contract', () => {
     });
   });
 
-  it('wakes the next accepted turn after a worker terminal replay without another model call', async () => {
+  it('automatically polls a terminal replay and its cancelled successor through the manifest without a model call', async () => {
+    const model = vi.spyOn(agentRunner, 'runAgentTask').mockImplementation(async () => {
+      throw new Error('No model execution is authorized in the automatic polling fixture');
+    });
     const first = await accept(boss, 'worker-complete');
     const second = await accept(boss, 'worker-next');
-    const job = await boss.getJobById<CopilotRunJobData>('copilot_run', first.bossJobId);
-    if (!job) throw new Error('missing physical head');
-    await settleWithoutWorker(boss, first);
+    // The physical head is still created; only its product terminal was already
+    // committed before a worker restart. Its redelivery must wake the successor.
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: first.runId,
+      event_type: COPILOT_RUN_EVENTS.DONE,
+      payload: { task_run_id: `task_${first.runId}` },
+    });
+    // A Stop arrived for the waiting successor. It still has no physical job;
+    // automatic pickup must settle it without opening a paid execution.
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: second.runId,
+      event_type: COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
+      payload: { reason: 'user_requested' },
+    });
     const worker = copilotCapability.jobs?.handlers.find(
       (handler) => handler.name === 'copilot_run',
     );
     if (!worker?.load) throw new Error('missing manifest worker');
-    await (await worker.load())(testDb())([job]);
-    expect(await boss.getJobById('copilot_run', second.bossJobId)).toMatchObject({
-      id: second.bossJobId,
-      state: 'created',
+    try {
+      // Scope only the target production declaration: no unrelated scheduled
+      // capability jobs run in this isolated database. Registrar/options/load
+      // and pg-boss's automatic work/complete loop are unchanged.
+      await registerCapabilityJobs(boss, testDb(), [
+        { ...copilotCapability, jobs: { handlers: [worker] } },
+      ]);
+      await expect
+        .poll(
+          async () => [
+            (await boss.getJobById('copilot_run', first.bossJobId))?.state,
+            (await boss.getJobById('copilot_run', second.bossJobId))?.state,
+          ],
+          { timeout: 12_000, interval: 100 },
+        )
+        .toEqual(['completed', 'completed']);
+    } finally {
+      await boss.offWork('copilot_run');
+    }
+    expect(model).not.toHaveBeenCalled();
+    expect((await runEvents(second.runId)).at(-1)).toMatchObject({
+      event_type: COPILOT_RUN_EVENTS.FAILED,
+      payload: { reason: 'cancelled' },
     });
     expect(
       (await runEvents(second.runId)).filter(
