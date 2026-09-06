@@ -2,6 +2,12 @@
 
 ## 最新状态
 
+- 965实施已在root独占树完成：旧chat/mutex退休，shared conversation-writes保留；唯一执行policy与必需history anchor。
+  actual harness迁生产HTTP adapter/v2事务接纳/物理fetch/runCopilotRun/终态wake，旧v1草稿未合入。
+  143 scoped DB、取消及统一HTTP admission-only零付费通过；typecheck/lint/build/audits已绿。
+  965 read下一条预留USD0.25已记账，reserve5.55823、安全剩4.44177，estimate暂0.0352456927。
+  尚未新增付费、未push/PR；独立review与exact CI待做。下方“仅计划”是之前handoff，已由本条取代。
+
 - PR1346已合并：exact cd1f7c54916c4d75dc1b64f29be2ec3fd1d363d9，CI34050991978全部success，
   main9ebee3aebe4c2840120d577bdf08512dfc3596e6，mergedAt2026-09-06T18:24:16Z。
   初审70189a91 PASS，test-only修复唯一复核cd1f7c54 PASS；review预算结束，无第三轮。

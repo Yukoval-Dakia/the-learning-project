@@ -2,6 +2,29 @@ import { describe, expect, it } from 'vitest';
 
 import { CopilotChatRequest } from './chat-contracts';
 
+describe('CopilotChatRequest wire enum (C3 / YUK-284)', () => {
+  it('accepts skill_context.skill = teaching | solve | quiz (向后兼容)', () => {
+    for (const skill of ['teaching', 'solve', 'quiz'] as const) {
+      const parsed = CopilotChatRequest.parse({
+        user_message: 'x',
+        triggered_by: 'chat',
+        skill_context: { skill, ref: { kind: 'knowledge', id: 'k1' } },
+      });
+      expect(parsed.skill_context?.skill).toBe(skill);
+    }
+  });
+
+  it('rejects an unknown skill_context.skill value', () => {
+    expect(() =>
+      CopilotChatRequest.parse({
+        user_message: 'x',
+        triggered_by: 'chat',
+        skill_context: { skill: 'bogus', ref: { kind: 'knowledge', id: 'k1' } },
+      }),
+    ).toThrow();
+  });
+});
+
 describe('CopilotChatRequest', () => {
   it('rejects a correction target on the teaching behavior-pack path', () => {
     const result = CopilotChatRequest.safeParse({

@@ -1,28 +1,8 @@
-// YUK-575 (A1, PR1) — shared Copilot run-input assembler.
-//
-// SINGLE execution point for the free-form CopilotTask run input, shared by the
-// inline path (`runCopilotChatImpl`, chat.ts) and the durable path (the
-// copilot_run pg-boss handler). Before this module the assembly logic lived only
-// in chat.ts; the durable handler shipped a minimal `{user_message, triggered_by}`
-// run input with NO conversation_history / learner-state header / proposal_feedback
-// / ambient — so a durable turn would lose the session memory + YUK-574 learner
-// state + ambient the inline turn has. Extracting the assembly here makes the two
-// paths byte-parity by construction (OQ-D → A1: the panel upgraded this from a
-// taste question to a correctness requirement — the drift it prevents is in the
-// ASSEMBLY logic: history budget / learner-state header / proposal_feedback shape).
-//
-// Time-model adaptation (YUK-596): the two paths bind history differently, and
-// that difference is NOT drift — it preserves their real causal ordering:
-//   • inline  — reads the current reusable session BEFORE writing the ask.
-//   • durable — dispatch has already written the ask, so pickup uses that event
-//               as a stable history anchor in the job's fixed session. Later
-//               roots/their replies and a newly reusable session cannot leak;
-//               a late reply to an earlier causal root remains eligible.
-//
-// Additive-input red line (preserved verbatim from chat.ts): every read here
-// degrades to an empty result on failure and NEVER crashes the run — a learner-
-// state read failure → empty header + [] digest; a history read failure → header-
-// only (pinned header still rides).
+// Copilot's persistent execution owner assembles bounded causal history and
+// current learner state here. Native resume encoding happens later, so validators
+// and correction contracts always retain the same bounded context.
+// Optional state/history read failures degrade to empty/header-only context;
+// legacy missing anchors retain their explicitly locked compatibility fallback.
 
 import type { Db } from '@/db/client';
 import type { DomainToolSurface } from '@/kernel/tools/allowlists';
@@ -41,7 +21,7 @@ import {
   getRecentCopilotTurns,
 } from './turns';
 
-/** chat trigger surface selector — single source (was module-private in chat.ts). */
+/** Chat and chip share execution; only their tool surface and actor differ. */
 export type CopilotTriggeredBy = 'chat' | 'chip';
 
 export function selectSurface(triggeredBy: CopilotTriggeredBy): DomainToolSurface {
@@ -72,7 +52,7 @@ export interface CopilotAmbientContext {
   focused_entity?: { kind: string; id: string };
 }
 
-// The free-form CopilotTask run input (byte-parity with chat.ts:1101-1122).
+// The free-form CopilotTask input before native cold/resume encoding.
 export interface CopilotRunInput {
   surface: DomainToolSurface;
   triggered_by: CopilotTriggeredBy;
@@ -146,16 +126,16 @@ export function assembleConversationHistory(
   return pinned ? [pinned, ...mapped] : mapped;
 }
 
-/** Swappable seams so unit tests never touch a live DB (mirrors CopilotChatDeps). */
+/** Read adapters for bounded context assembly. */
 export interface AssembleCopilotRunInputDeps {
   resolveLearnerStateHeaderFn?: (
     db: Db,
     sessionId: string,
     opts: { now?: () => Date },
   ) => Promise<LearnerStateHeader>;
-  /** Current reusable-session reader for inline read-before-write assembly. */
+  /** Compatibility reader only for legacy missing anchors. */
   loadHistoryFn?: typeof getRecentCopilotTurns;
-  /** Fixed-session causal reader for durable pickup assembly. */
+  /** Fixed-session causal reader for persistent pickup assembly. */
   loadAnchoredHistoryFn?: typeof getCopilotTurnsBeforeAnchor;
 }
 
@@ -166,23 +146,12 @@ export interface AssembleCopilotRunInputParams {
   chipKind?: string;
   ambient?: CopilotAmbientContext;
   now: Date;
-  /** Durable pickup's run_id (= persisted user_ask event id). Inline omits it. */
-  historyAnchorEventId?: string;
+  /** Accepted run_id (= persisted input event id). */
+  historyAnchorEventId: string;
   correctionTargetTurnId?: string;
-  /**
-   * YUK-936 — resume hit omits the event fold from CopilotRunInput (ADR-0054 §3).
-   * Durable pickup always uses fold; only foreground inline chat sets this.
-   */
-  omitConversationHistory?: boolean;
 }
 
-/**
- * Assemble the free-form CopilotTask run input (byte-parity with chat.ts:1101-1122).
- * Resolves the session-anchored learner-state header ONCE (supplying BOTH the
- * pinned header and the migrated Facet A proposal_feedback digest), loads the
- * bounded history (current reusable session for inline; fixed causal anchor for
- * durable pickup), and returns the run input the runner serializes.
- */
+/** Resolve current state once and project history before this accepted input. */
 export async function assembleCopilotRunInput(
   db: Db,
   params: AssembleCopilotRunInputParams,
@@ -190,14 +159,12 @@ export async function assembleCopilotRunInput(
 ): Promise<CopilotRunInput> {
   const { sessionId, userMessage, triggeredBy, chipKind, ambient, now, historyAnchorEventId } =
     params;
-  const omitConversationHistory = params.omitConversationHistory === true;
   const resolveLearnerState =
     deps.resolveLearnerStateHeaderFn ??
     ((d: Db, sid: string, opts: { now?: () => Date }) =>
       resolveLearnerStateHeader(d, sid, { now: opts.now }));
   const loadHistory = deps.loadHistoryFn ?? getRecentCopilotTurns;
   const loadAnchoredHistory = deps.loadAnchoredHistoryFn ?? getCopilotTurnsBeforeAnchor;
-  const hasHistoryAnchor = historyAnchorEventId !== undefined;
 
   // YUK-574 — resolve the session-anchored learner-state header FIRST (assemble-once
   // per validity window; cached bytes when fresh). It carries BOTH the pinned header
@@ -219,37 +186,29 @@ export async function assembleCopilotRunInput(
   let rawTurns: CopilotTurn[] = [];
   let historyReadFailed = false;
   try {
-    if (hasHistoryAnchor) {
-      try {
-        rawTurns = await loadAnchoredHistory(db, {
-          limit: COPILOT_HISTORY_BUDGET.maxTurns,
-          sessionId,
-          anchorEventId: historyAnchorEventId,
-        });
-      } catch (err) {
-        // YUK-596 locked legacy contract: a genuinely missing anchor predates
-        // or lost the new coordinate, so emit a structured alert and preserve
-        // the former reusable-session history predicate. An anchor that exists
-        // but has the wrong action/session remains an integrity failure and is
-        // handled by the outer header-only fail-closed path.
-        if (!(err instanceof CopilotHistoryAnchorError) || err.reason !== 'missing_anchor') {
-          throw err;
-        }
-        console.error(
-          '[assembleCopilotRunInput] history anchor missing; falling back to reusable-session history',
-          {
-            session_id: sessionId,
-            history_anchor_event_id: historyAnchorEventId,
-            err,
-          },
-        );
-        rawTurns = await loadHistory(db, {
-          limit: COPILOT_HISTORY_BUDGET.maxTurns,
-          now,
-          sessionId,
-        });
+    try {
+      rawTurns = await loadAnchoredHistory(db, {
+        limit: COPILOT_HISTORY_BUDGET.maxTurns,
+        sessionId,
+        anchorEventId: historyAnchorEventId,
+      });
+    } catch (err) {
+      // YUK-596 locked legacy contract: a genuinely missing anchor predates
+      // or lost the new coordinate, so emit a structured alert and preserve
+      // the former reusable-session history predicate. An anchor that exists
+      // but has the wrong action/session remains an integrity failure and is
+      // handled by the outer header-only fail-closed path.
+      if (!(err instanceof CopilotHistoryAnchorError) || err.reason !== 'missing_anchor') {
+        throw err;
       }
-    } else {
+      console.error(
+        '[assembleCopilotRunInput] history anchor missing; falling back to reusable-session history',
+        {
+          session_id: sessionId,
+          history_anchor_event_id: historyAnchorEventId,
+          err,
+        },
+      );
       rawTurns = await loadHistory(db, {
         limit: COPILOT_HISTORY_BUDGET.maxTurns,
         now,
@@ -260,7 +219,7 @@ export async function assembleCopilotRunInput(
     historyReadFailed = true;
     console.error('[assembleCopilotRunInput] loadHistory failed; degrading to header-only', {
       session_id: sessionId,
-      ...(hasHistoryAnchor ? { history_anchor_event_id: historyAnchorEventId } : {}),
+      history_anchor_event_id: historyAnchorEventId,
       err,
     });
   }
@@ -270,9 +229,11 @@ export async function assembleCopilotRunInput(
     COPILOT_HISTORY_BUDGET,
     historyReadFailed ? learnerState.header_md : undefined,
   );
-  const conversationHistory = omitConversationHistory
-    ? []
-    : assembleConversationHistory(rawTurns, COPILOT_HISTORY_BUDGET, learnerState.header_md);
+  const conversationHistory = assembleConversationHistory(
+    rawTurns,
+    COPILOT_HISTORY_BUDGET,
+    learnerState.header_md,
+  );
 
   return {
     surface: selectSurface(triggeredBy),

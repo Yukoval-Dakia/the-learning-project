@@ -15,7 +15,7 @@ import { writeEvent } from '@/kernel/events';
 import { writeJobEvent } from '@/server/events/writer';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { writeCopilotInputEvent } from '../server/chat';
+import { writeCopilotInputEvent } from '../server/conversation-writes';
 import {
   hashCopilotDurableInput,
   reserveCopilotDurableAcceptance,

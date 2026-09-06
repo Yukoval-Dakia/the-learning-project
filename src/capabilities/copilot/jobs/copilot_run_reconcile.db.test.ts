@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, eq } from 'drizzle-orm';
 import type { JobWithMetadata, QueueStats } from 'pg-boss';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { writeCopilotReply } from '@/capabilities/copilot/server/chat';
+import { writeCopilotReply } from '@/capabilities/copilot/server/conversation-writes';
 import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,

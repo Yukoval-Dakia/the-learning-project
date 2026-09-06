@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it, vi } from 'vitest';
-import { writeCopilotReply } from './chat';
+import { writeCopilotReply } from './conversation-writes';
 import {
   EPHEMERAL_PRESENTATION_STORAGE_NOTICE,
   createCopilotReplyFinalizer,

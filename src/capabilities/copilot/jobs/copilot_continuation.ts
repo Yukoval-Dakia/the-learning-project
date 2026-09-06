@@ -2,7 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { copilot_continuation } from '@/db/schema';
-import { writeCopilotReply } from '../server/chat';
+import { writeCopilotReply } from '../server/conversation-writes';
 import { claimCopilotContinuation, settleCopilotContinuation } from '../server/subagent-mailbox';
 import { runCopilotContinuationTask } from './copilot_run';
 

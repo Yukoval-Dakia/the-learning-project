@@ -1,13 +1,18 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：948/950经独立审查与exact CI交付main9ebee3ae；下一条965退休仅验收使用的旧前台适配器。
+> Linear 是权威 tracker；更新于 2026-09-07：965已移除旧前台适配器，持久owner与验收合流；本地143DB通过，待actual/独立review/exact CI。
 
 ## NOW
 
 - Active线YUK965：root独占tlp-wt-unified-conversation，branch codex/yuk-965-retire-foreground-adapter，base main9ebee3ae。
   当前计划：①核对旧chat adapter与验收消费者；②迁移有效验收到持久owner；③删除死执行分支与专属测试；
   ④保留shared writer/教学/取消/claim/预算/SDK保护，scoped验证、必要actual、独立review、exact CI。
-  此分支当前仅交付handoff/计划，尚未删除代码；无其它writer，不新增调度框架。
+  已删除旧chat执行/mutex，保留conversation-writes；执行policy与history anchor收敛为持久生命周期。
+  actual脚本走真实HTTP adapter/v2接纳/物理fetch/worker/终态wake，不声称自动poller。
+  143DB、零付费cancel与HTTP admission-only、typecheck/lint/build/audits通过；独立review/exact CI待做。
+  scoped输入测试由隔离lane提交并经root修订核验；无其它writer，不新增调度框架。
+  下一条真实read预留USD0.25，纳入新池reserve5.55823、安全剩4.44177；尚未调用，estimate暂不变。
+  详情docs/planning/2026-09-07-retire-foreground-adapter.md。
 - YUK948/950 Done：PR1346 exactcd1f7c54916c4d75dc1b64f29be2ec3fd1d363d9，CI34050991978全绿，
   独立初审与唯一验证PASS，review预算结束；已squash合并main9ebee3aebe4c2840120d577bdf08512dfc3596e6。
   /chat统一202/FIFO，per-run订阅/Stop，无缓存快照恢复；关闭/刷新/切会话不取消，延迟202不污染其它会话。
@@ -28,7 +33,7 @@
   保守请求预留合计$0.90823；此前余额$0.28771982单列，历史未知费用不填0。
   公开费率估算不冒充账户账单，SDK派生USD保留为独立观察。
   949另跑7个受控回合（含失败）：estimated $0.0214406071，case预留$2.8。
-  新$10池合计estimated $0.0352456927，保守预留$5.30823、剩$4.69177；当前停付费。
+  新$10池合计estimated $0.0352456927；965 read预留后总reserve$5.55823、安全剩$4.44177。
 - YUK949：owner明确选FULL，允许按需短presentation control交互，ADR0061；
   agent看完结果提名，server校验，保留tool_result/artifact/ephemeral_html；不提高预算、不改生产UI。
   初稿ea8367c7的5P1已由81eb7f3e修复，ed693e16集成main9e02c48b。
@@ -63,7 +68,7 @@
 - 已交付：Pipeline1326、Goal1327、Knowledge1328、Import1329、execution1330、
   ReviewSettlement1332、测试1331/1333、客户端/后端状态1334/1336，各自review/exact CI绿。
   954 hidden child终态及958权威REPLY恢复已修；客户端116unit+15browser流程验证。
-- 主线依赖438/0/47，集成线因原生session owner调用为439/0/47，五capability SCC与20命令消费者仍在；
+- 965删除旧adapter session调用后依赖438/0/47，五capability SCC与20命令消费者仍在；
   新增持久化所需合法调用不是重复状态实现，不用包装转发隐藏它以压数字。
   learning-intent已有单事务/失败全回滚，不为减少SCC计数再次重构。
 

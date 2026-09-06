@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { assembleCopilotRunInput } from '@/capabilities/copilot/server/copilot-run-input';
 import type { LearnerStateHeader } from '@/capabilities/copilot/server/learner-state';
+import { compileCopilotModelInput } from '@/capabilities/copilot/server/live-turn-context';
 import { db } from '@/db/client';
 import { event, learning_session } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -662,33 +663,10 @@ describe('assembleCopilotRunInput — durable causal history anchor', () => {
     }
   });
 
-  it('inline (no history anchor): read-before-write — history has no current ask because it is not yet written', async () => {
-    const t0 = new Date('2026-07-07T11:00:00Z');
-    const sessionId = await createLiveCopilotSession(t0);
-    const priorAsk = await writeAsk('历史问题', sessionId, new Date('2026-07-07T11:01:00Z'));
-    await writeReply('历史回答', sessionId, priorAsk, new Date('2026-07-07T11:01:30Z'));
-
-    // Inline calls the assembler BEFORE writing the current ask, so the current ask
-    // simply is not in the table yet. Omit historyAnchorEventId.
-    const runInput = await assembleCopilotRunInput(
-      db,
-      {
-        sessionId,
-        userMessage: '当前内联问题',
-        triggeredBy: 'chat',
-        now: new Date('2026-07-07T11:02:00Z'),
-      },
-      { resolveLearnerStateHeaderFn: emptyLearnerState },
-    );
-
-    const users = userTexts(runInput.conversation_history);
-    expect(users).toContain('历史问题');
-    expect(users).not.toContain('当前内联问题');
-  });
-
   it('ambient + chip_kind ride the run input when present (S4)', async () => {
     const t0 = new Date('2026-07-07T12:00:00Z');
     const sessionId = await createLiveCopilotSession(t0);
+    const anchor = await writeAsk('q', sessionId, new Date(t0.getTime() + 500));
     const runInput = await assembleCopilotRunInput(
       db,
       {
@@ -696,6 +674,7 @@ describe('assembleCopilotRunInput — durable causal history anchor', () => {
         userMessage: 'q',
         triggeredBy: 'chip',
         chipKind: 'out_3_variants',
+        historyAnchorEventId: anchor,
         ambient: { route: '/learn/x', focused_entity: { kind: 'knowledge', id: 'k_1' } },
         now: new Date('2026-07-07T12:00:01Z'),
       },
@@ -728,13 +707,23 @@ describe('assembleCopilotRunInput — durable causal history anchor', () => {
         userMessage: '请更正上一轮',
         triggeredBy: 'chat',
         correctionTargetTurnId: replyId,
-        omitConversationHistory: true,
+        historyAnchorEventId: await writeAsk(
+          '请更正上一轮',
+          sessionId,
+          new Date('2026-07-07T11:32:00Z'),
+        ),
         now: new Date('2026-07-07T11:32:00Z'),
       },
       { resolveLearnerStateHeaderFn: emptyLearnerState },
     );
 
-    expect(runInput.conversation_history).toEqual([]);
+    expect(runInput.conversation_history).toHaveLength(2);
+    const resumed = compileCopilotModelInput(runInput, 'resume', {
+      includeProposalFeedback: false,
+    });
+    expect(resumed).not.toContain('conversation_history');
+    expect(resumed).not.toContain('定义域暂记为全体实数。');
+    expect(resumed).toContain(replyId);
     expect(runInput.correction_contract.available_prior_turn_ids).toEqual([replyId]);
     expect(runInput.correction_contract.target_prior_turn_id).toBe(replyId);
   });
@@ -744,7 +733,13 @@ describe('assembleCopilotRunInput — durable causal history anchor', () => {
     const sessionId = await createLiveCopilotSession(t0);
     const runInput = await assembleCopilotRunInput(
       db,
-      { sessionId, userMessage: 'q', triggeredBy: 'chat', now: new Date('2026-07-07T13:00:01Z') },
+      {
+        sessionId,
+        userMessage: 'q',
+        triggeredBy: 'chat',
+        now: new Date('2026-07-07T13:00:01Z'),
+        historyAnchorEventId: await writeAsk('q', sessionId, new Date(t0.getTime() + 500)),
+      },
       { resolveLearnerStateHeaderFn: emptyLearnerState },
     );
     expect('ambient_context' in runInput).toBe(false);

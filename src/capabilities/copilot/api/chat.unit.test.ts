@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { z } from 'zod';
 
 const runMock = vi.hoisted(() => vi.fn());
 const writeUserAskMock = vi.hoisted(() => vi.fn());
@@ -22,31 +21,13 @@ const isSessionQueueRunMock = vi.hoisted(() => vi.fn());
 const dispatchSessionHeadMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/db/client', () => ({ db: { execute: dbExecuteMock } }));
-// YUK-364 — schema 镜像真实形态的关键字段（durable / triggered_by / user_message），
-// 让 durable 分支可被触发；其余字段省略（route 只读这几个）。
-vi.mock('@/capabilities/copilot/server/chat', () => ({
-  CopilotChatRequest: z.object({
-    user_message: z.string(),
-    triggered_by: z.enum(['chat', 'chip']),
-    chip_kind: z.string().optional(),
-    session_id: z.string().optional(),
-    durable: z.boolean().optional(),
-    correction_target_turn_id: z.string().optional(),
-    ambient_context: z
-      .object({
-        route: z.string(),
-        focused_entity: z.object({ kind: z.string(), id: z.string() }).optional(),
-      })
-      .optional(),
-    // Product mode context rides the accepted job without entering free-form model input.
-    skill_context: z
-      .object({
-        skill: z.enum(['teaching', 'solve', 'quiz']),
-        ref: z.object({ kind: z.string(), id: z.string() }),
-      })
-      .optional(),
-  }),
-  runCopilotChatStreaming: runMock,
+// Request parsing uses the real public schema. Only side-effect owners are mocked.
+vi.mock('@/server/ai/runner', () => ({
+  runAgentTask: runMock,
+  runTask: runMock,
+  streamTaskCollecting: runMock,
+}));
+vi.mock('@/capabilities/copilot/server/conversation-writes', () => ({
   writeCopilotInputEvent: writeUserAskMock,
   writeCopilotReply: writeReplyMock,
 }));
@@ -81,6 +62,7 @@ vi.mock('@/server/session', () => ({
 
 import { POST } from '@/capabilities/copilot/api/chat';
 import { CopilotDurableRunResponseSchema } from '@/capabilities/copilot/api/contracts';
+import { CopilotChatRequest } from '@/capabilities/copilot/server/chat-contracts';
 import { __resetRateLimitForTests, checkRateLimit } from '@/server/http/rate-limit';
 
 const post = (body: unknown, idempotencyKey = 'unified-test-key') =>
@@ -314,7 +296,7 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     const acceptance = {
       runId: 'copilot_user_ask_lost_202_lookup_recovery',
       sessionId: 'sess_lost_202_lookup_recovery',
-      inputHash: JSON.stringify(body),
+      inputHash: JSON.stringify(CopilotChatRequest.parse(body)),
       bossJobId: '66666666-6666-5666-8666-666666666666',
     };
     findAcceptanceMock.mockRejectedValueOnce(new Error('read replica connection reset'));
@@ -407,7 +389,7 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     const acceptance = {
       runId: 'copilot_user_ask_acceptance_commit_ack_lost',
       sessionId: 'sess_acceptance_commit_ack_lost',
-      inputHash: JSON.stringify(body),
+      inputHash: JSON.stringify(CopilotChatRequest.parse(body)),
       bossJobId: '55555555-5555-5555-8555-555555555555',
     };
     findOrCreateMock.mockResolvedValue({ sessionId: acceptance.sessionId, created: true });

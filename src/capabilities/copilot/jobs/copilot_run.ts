@@ -1,21 +1,11 @@
-// YUK-364 (ADR-0041 endurance W1 L2) — durable copilot run handler。
-//
-// 把 copilot 从同步面（src/capabilities/copilot/server/chat.ts 的 inline
-// streamTaskCollecting）桥到异步 durable pg-boss 面：route dispatch（durable
-// 标记）→ boss.send('copilot_run', {...}) → 本 handler 在 worker 进程跑一个
-// CopilotTask run，边跑边写安全 STEP 进度；模型正文先缓冲并经 YUK-832 最终证据
-// 审阅，outcome marker 提交后才把审阅终稿写进 job_events。SSE 消费者经
-// computeReplay 订阅。
-//
-// 蓝本：src/capabilities/practice/jobs/quiz_gen.ts 的 runQuizGen——MCP mount
-// (buildMcpServerFromRegistry) + ToolContext(causedByEventId=triggerEventId) +
-// runAgentTask + 成功/失败 writeEvent。差别：本 handler 走 CopilotTask + copilot
-// 工具全集 surface，进度落 job_events（writeJobEvent）而非 domain event 表，
-// 不新增表（run handle = run_id = checkpoint_id = user_ask event id；状态从
-// computeReplay 末事件派生，见 copilot-run-status.ts）。
-//
-// YUK-328 后独立 worker 在注册 handlers 前从 capability manifests 装配完整
-// DomainTool registry；buildMcpServerFromRegistry 只读该启动期 inventory。
+// Copilot's single persistent execution owner (ADR-0062).
+// HTTP admission commits the input and queues its session head; this worker
+// owns execution, Stop, native session reuse and outcome settlement. Safe STEP
+// progress may publish during execution; reply text publishes only after the
+// reviewed domain outcome is committed. Closing a subscriber cannot cancel it.
+// Input/reply writes live in conversation-writes; the execution/validation
+// policy lives in copilot-execution. Registered tools come from capability
+// manifests before worker pickup, never from an extra chat adapter.
 
 import { createHash } from 'node:crypto';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
@@ -25,7 +15,7 @@ import {
   type PreparedCopilotReply,
   writeCopilotReply,
   writeTeachingCopilotReply,
-} from '@/capabilities/copilot/server/chat';
+} from '@/capabilities/copilot/server/conversation-writes';
 import {
   COPILOT_CANCEL_DRAIN_GRACE_MS,
   type CopilotRunCancellationControl,
@@ -1019,7 +1009,6 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
         sourceEventId: runId,
       },
       {
-        kind: 'durable',
         cancellation: cancellationControl,
         deadlineAt: Date.now() + DURABLE_OWNER_SETTLEMENT_BUDGET_MS,
         ...(resumeSessionId ? { resumeSessionId } : {}),

@@ -19,6 +19,7 @@ import { resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { config } from 'dotenv';
+import type { CopilotRunJobData } from '@/capabilities/copilot/server/durable-dispatch';
 
 type CaseName =
   | 'cold'
@@ -252,6 +253,7 @@ async function main(): Promise<void> {
   const caseEvidence: Array<Record<string, unknown>> = [];
   let container: StartedPostgreSqlContainer | undefined;
   let closeUnifiedFixture: (() => Promise<void>) | undefined;
+  let closeBoss: (() => Promise<void>) | undefined;
   // Create the evidence envelope before Testcontainers setup. A Docker/migrate
   // failure must still leave a safe phase marker, not only a bare process Error.
   const evidence: Record<string, unknown> | undefined = {
@@ -289,7 +291,7 @@ async function main(): Promise<void> {
     const [
       { db },
       schema,
-      chat,
+      admission,
       copilotExecution,
       durable,
       dispatch,
@@ -302,7 +304,7 @@ async function main(): Promise<void> {
     ] = await Promise.all([
       import('@/db/client'),
       import('@/db/schema'),
-      import('@/capabilities/copilot/server/chat'),
+      import('@/capabilities/copilot/api/chat'),
       import('@/capabilities/copilot/server/copilot-execution'),
       import('@/capabilities/copilot/jobs/copilot_run'),
       import('@/capabilities/copilot/server/durable-dispatch'),
@@ -313,11 +315,20 @@ async function main(): Promise<void> {
       import('@/server/ai/tools/registry'),
       import('@/capabilities/copilot/server/content-validation'),
     ]);
-    const { and, eq, inArray } = await import('drizzle-orm');
-    const runner = await import('@/server/ai/runner');
-    const { EPHEMERAL_PRESENTATION_STORAGE_NOTICE } = await import(
-      '@/capabilities/copilot/server/reply-finalization'
+    const { and, asc, eq, inArray } = await import('drizzle-orm');
+    const { getStartedBoss, fromPgBossDrizzleTx } = await import('@/server/boss/client');
+    const { CopilotDurableRunResponseSchema } = await import(
+      '@/capabilities/copilot/api/contracts'
     );
+    const { COPILOT_RUN_EVENTS: EVENTS, isCopilotRunTerminalFailureReason } = await import(
+      '@/capabilities/copilot/server/copilot-run-status'
+    );
+    const boss = await getStartedBoss();
+    closeBoss = () => boss.stop({ graceful: true, timeout: 5_000 });
+    if (!(await boss.getQueue('copilot_run'))) await boss.createQueue('copilot_run');
+    const runner = await import('@/server/ai/runner');
+    const { EPHEMERAL_PRESENTATION_STORAGE_NOTICE, CopilotReplyFinalizationReceiptSchema } =
+      await import('@/capabilities/copilot/server/reply-finalization');
     const terminals = new Map<string, string>();
     const sdkOutcomes: Array<Record<string, unknown>> = [];
     evidence.sdk_outcomes = sdkOutcomes;
@@ -346,7 +357,7 @@ async function main(): Promise<void> {
       streamTaskCollectingFn: captureStream,
     });
     // Match the server/worker composition root before constructing a Copilot
-    // MCP bridge. Directly importing chat.ts does not populate this registry.
+    // MCP bridge. Importing the HTTP adapter does not populate this registry.
     await registerCapabilityTools(capabilities);
     // Opt-in model-quality fixture: real SDK/MCP/trace/finalization, deterministic
     // typed reader results. Never substitutes readers in a normal journey or server.
@@ -494,7 +505,7 @@ async function main(): Promise<void> {
     const sessionId = await createCopilotSession();
     evidence.fixture_readiness = {
       registered_tools: ['query_knowledge', 'propose_knowledge_mutation'],
-      foreground_session_id: sessionId,
+      conversation_session_id: sessionId,
     };
     let priorTurnId: string | undefined;
     let coldSdkSessionId: string | undefined;
@@ -522,6 +533,7 @@ async function main(): Promise<void> {
           usage: schema.ai_task_runs.usage_json,
           cost: schema.ai_task_runs.cost_usd,
           costBasis: schema.ai_task_runs.cost_basis,
+          costRef: schema.ai_task_runs.cost_ref,
           status: schema.ai_task_runs.status,
           finishReason: schema.ai_task_runs.finish_reason,
           compiledPromptHash: schema.ai_task_runs.compiled_prompt_hash,
@@ -578,7 +590,14 @@ async function main(): Promise<void> {
       };
       caseEvidence.push(entry);
       for (const row of rows) {
-        if (row.cost === null || row.cost === undefined || row.costBasis === 'unknown') {
+        if (
+          row.cost === null ||
+          row.cost === undefined ||
+          !Number.isFinite(row.cost) ||
+          row.cost < 0 ||
+          !['reported', 'estimated'].includes(row.costBasis ?? '') ||
+          !row.costRef
+        ) {
           throw new Error(
             `${caseName}: unknown provider cost; refusing to continue under campaign cost limit`,
           );
@@ -602,9 +621,10 @@ async function main(): Promise<void> {
         .from(schema.event)
         .where(eq(schema.event.id, result.reply_event_id))
         .limit(1);
-      const receipt = (
-        rows[0]?.payload as { reply_finalization?: Record<string, unknown> } | undefined
-      )?.reply_finalization;
+      const receipt = CopilotReplyFinalizationReceiptSchema.parse(
+        (rows[0]?.payload as { reply_finalization?: Record<string, unknown> } | undefined)
+          ?.reply_finalization,
+      );
       if (
         receipt?.assurance !== 'execution_trace_bound' ||
         !Array.isArray(receipt.observed_completed_tool_use_ids) ||
@@ -616,6 +636,153 @@ async function main(): Promise<void> {
       return receipt;
     };
 
+    // Actual acceptance uses the shipped HTTP adapter, including normalized
+    // input, v2 transactional admission and physical session-head dispatch.
+    // Only the worker pickup/settle/wake loop is driven manually for capture.
+    const accept = async (request: unknown) => {
+      const response = await admission.POST(
+        new Request('http://acceptance/api/copilot/chat', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'Idempotency-Key': randomUUID() },
+          body: JSON.stringify(request),
+        }),
+        {},
+      );
+      if (response.status !== 202)
+        throw new Error(`admission: expected 202, got ${response.status}`);
+      const handle = CopilotDurableRunResponseSchema.parse(await response.json());
+      if (!(await dispatch.isCopilotSessionQueueRun(db, handle.run_id)))
+        throw new Error('admission: missing persistent v2 protocol');
+      return handle;
+    };
+    const readRunEvents = (runId: string) =>
+      db
+        .select()
+        .from(schema.job_events)
+        .where(
+          and(
+            eq(schema.job_events.business_table, 'copilot_run'),
+            eq(schema.job_events.business_id, runId),
+          ),
+        )
+        .orderBy(asc(schema.job_events.id));
+    const stop = async (runId: string) => {
+      const response = await cancellationRoute.POST(
+        new Request(`http://acceptance/api/copilot/runs/${runId}/cancel`, { method: 'POST' }),
+        { id: runId },
+      );
+      if (!response.ok) throw new Error('deadline Stop route failed');
+      await response.json();
+    };
+    const executeAccepted = async (handle: { run_id: string; session_id: string }) => {
+      const jobs = await boss.fetch<CopilotRunJobData>('copilot_run', { batchSize: 1 });
+      const job = jobs[0];
+      if (
+        jobs.length !== 1 ||
+        job?.data.run_id !== handle.run_id ||
+        job.data.session_id !== handle.session_id
+      )
+        throw new Error('worker pickup: missing exact physical session head');
+      const frames = await readRunEvents(handle.run_id);
+      if (
+        !frames.some(
+          (frame) => frame.event_type === EVENTS.DISPATCHED && frame.payload.boss_job_id === job.id,
+        )
+      )
+        throw new Error('worker pickup: mismatched committed physical job id');
+      let timedOut = false;
+      let stopError: unknown;
+      let stopping: Promise<void> | undefined;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        stopping = stop(handle.run_id).catch((error) => {
+          stopError = error;
+        });
+      }, CASE_TIMEOUT_MS);
+      let result: Awaited<ReturnType<typeof durable.runCopilotRun>>;
+      try {
+        result = await durable.runCopilotRun({
+          db,
+          data: job.data,
+          executeCopilotTurnFn: executeCopilotTurn,
+        });
+      } finally {
+        clearTimeout(timer);
+        await stopping;
+        if (await dispatch.hasTerminalCopilotRun(db, handle.run_id)) {
+          await dispatch.dispatchSessionHead(db, handle.session_id, {
+            boss,
+            transactionDb: fromPgBossDrizzleTx,
+          });
+        }
+      }
+      await boss.complete('copilot_run', job.id);
+      if (stopError) throw stopError;
+      if (timedOut) throw new Error('worker deadline exceeded after lifecycle settlement');
+      return result;
+    };
+    const runAccepted = async (caseName: CaseName, request: unknown) => {
+      const handle = await accept(request);
+      const result = await executeAccepted(handle);
+      if (result.status !== 'done')
+        throw new Error(`${caseName}: expected done, got ${result.status}`);
+      const frames = await readRunEvents(handle.run_id);
+      const replies = frames.filter((frame) => frame.event_type === EVENTS.REPLY);
+      const dones = frames.filter((frame) => frame.event_type === EVENTS.DONE);
+      const deltas = frames.filter((frame) => frame.event_type === EVENTS.DELTA);
+      const saved = await db
+        .select()
+        .from(schema.event)
+        .where(
+          and(
+            eq(schema.event.session_id, handle.session_id),
+            eq(schema.event.caused_by_event_id, handle.run_id),
+            eq(schema.event.action, 'experimental:copilot_reply'),
+            eq(schema.event.subject_kind, 'query'),
+          ),
+        );
+      const persisted = saved[0]?.payload as Record<string, unknown> | undefined;
+      if (
+        saved.length !== 1 ||
+        replies.length !== 1 ||
+        dones.length !== 1 ||
+        replies[0].id >= dones[0].id ||
+        persisted?.task_run_id !== result.task_run_id ||
+        persisted?.reply_md !== result.reply ||
+        replies[0].payload.reply_md !== result.reply ||
+        replies[0].payload.task_run_id !== result.task_run_id ||
+        dones[0].payload.task_run_id !== result.task_run_id ||
+        !isDeepStrictEqual(persisted?.primary_view ?? null, result.primary_view ?? null) ||
+        !isDeepStrictEqual(replies[0].payload.primary_view ?? null, result.primary_view ?? null) ||
+        deltas.length > 1 ||
+        deltas.some((frame) => frame.id >= replies[0].id || frame.payload.text !== result.reply) ||
+        frames.some(
+          (frame) =>
+            frame.event_type === EVENTS.FAILED &&
+            isCopilotRunTerminalFailureReason(frame.payload.reason),
+        )
+      )
+        throw new Error(`${caseName}: mismatched public and persisted terminal settlement`);
+      const outcomes = sdkOutcomes.filter((outcome) => outcome.task_run_id === result.task_run_id);
+      if (
+        outcomes.length !== 1 ||
+        outcomes[0].partial ||
+        !outcomes[0].terminal_present ||
+        !terminals.get(result.task_run_id)?.trim()
+      )
+        throw new Error(`${caseName}: missing successful authoritative SDK terminal`);
+      return {
+        ...result,
+        session_id: handle.session_id,
+        run_id: handle.run_id,
+        reply_event_id: saved[0].id,
+      };
+    };
+    evidence.worker_driver = {
+      admission: 'production HTTP adapter + v2 transaction + pg-boss',
+      execution: 'manual physical fetch + production runCopilotRun + terminal wake + complete',
+      automatic_poller_verified: false,
+    };
     for (const caseName of selected) {
       const reserve = CASE_COST_RESERVE_USD[caseName];
       if (campaignCostLimitUsd - knownCost < reserve) {
@@ -645,7 +812,6 @@ async function main(): Promise<void> {
         closeUnifiedFixture = async () => {
           if ('closeAllConnections' in server) server.closeAllConnections();
           await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
-          await boss.stop({ graceful: true, timeout: 5_000 });
         };
         if (!server.listening) await once(server, 'listening');
         const address = server.address();
@@ -866,127 +1032,48 @@ async function main(): Promise<void> {
         const attemptsBefore = await db
           .select({ id: schema.ai_task_runs.id })
           .from(schema.ai_task_runs);
-        const cancelSession = await createCopilotSession();
-        const accepted = await dispatch.reserveCopilotDurableAcceptance(db, {
-          sessionId: cancelSession,
-          userMessage: 'synthetic cancellation fixture; never execute',
-          inputHash: SHA256({ caseName }),
-          idempotencyKey: randomUUID(),
-          queuedPayload: { session_id: cancelSession, triggered_by: 'chat' },
+        const handle = await accept({
+          session_id: await createCopilotSession(),
+          user_message: 'synthetic cancellation fixture; never execute',
+          triggered_by: 'chat',
         });
-        const runId = accepted.acceptance.runId;
-        const response = await cancellationRoute.POST(
-          new Request(`http://acceptance/api/copilot/runs/${runId}/cancel`, { method: 'POST' }),
-          { id: runId },
-        );
-        const cancelBody = (await response.json().catch(() => ({}))) as {
-          error?: unknown;
-          status?: unknown;
-        };
-        if (!response.ok) {
-          caseEvidence.push({
-            name: caseName,
-            run_id: runId,
-            cancel_http_status: response.status,
-            cancel_error_code: typeof cancelBody.error === 'string' ? cancelBody.error : 'unknown',
-          });
-          throw new Error('cancel: route failed');
-        }
+        await stop(handle.run_id);
+        const result = await executeAccepted(handle);
+        const frames = await readRunEvents(handle.run_id);
         const attemptsAfter = await db
           .select({ id: schema.ai_task_runs.id })
           .from(schema.ai_task_runs);
-        if (attemptsAfter.length !== attemptsBefore.length)
-          throw new Error('cancel: pre-fence cancellation made a provider attempt');
+        if (
+          result.status !== 'cancelled' ||
+          attemptsAfter.length !== attemptsBefore.length ||
+          frames.some((frame) =>
+            ([EVENTS.EXECUTION_STARTED, EVENTS.REPLY, EVENTS.DONE] as string[]).includes(
+              frame.event_type,
+            ),
+          )
+        )
+          throw new Error('cancel: unexpected provider attempt or success after pre-fence Stop');
         caseEvidence.push({
           name: caseName,
           paid_calls: 0,
-          run_id: runId,
-          status: cancelBody,
+          run_id: handle.run_id,
+          status: result.status,
         });
         continue;
       }
       if (caseName === 'durable') {
-        const durableSession = await createCopilotSession();
-        const accepted = await dispatch.reserveCopilotDurableAcceptance(db, {
-          sessionId: durableSession,
-          userMessage: '只回复「已收到合成耐久验收」，不要出题、不要调用工具。',
-          inputHash: SHA256({ caseName }),
-          idempotencyKey: randomUUID(),
-          queuedPayload: { session_id: durableSession, triggered_by: 'chat' },
-        });
-        let cancellationPromise: Promise<void> | undefined;
-        const durableTimer = setTimeout(() => {
-          // Unlike Promise.race, this follows the product cancellation path;
-          // runCopilotRun's cancellation control observes it, aborts the SDK
-          // request, and projects a terminal result before cleanup proceeds.
-          cancellationPromise = cancellationRoute
-            .POST(
-              new Request(
-                `http://acceptance/api/copilot/runs/${accepted.acceptance.runId}/cancel`,
-                { method: 'POST' },
-              ),
-              { id: accepted.acceptance.runId },
-            )
-            .then(async (response) => {
-              if (!response.ok) throw new Error('durable timeout cancellation route failed');
-              await response.json();
-            });
-        }, CASE_TIMEOUT_MS);
-        let result: Awaited<ReturnType<typeof durable.runCopilotRun>>;
-        try {
-          result = await durable.runCopilotRun({
-            db,
-            executeCopilotTurnFn: executeCopilotTurn,
-            data: {
-              run_id: accepted.acceptance.runId,
-              session_id: durableSession,
-              user_message: '只回复「已收到合成耐久验收」，不要出题、不要调用工具。',
-              triggered_by: 'chat',
-            },
-          });
-        } finally {
-          clearTimeout(durableTimer);
-          await cancellationPromise;
-        }
-        if (result.status !== 'done') {
-          await snapshot(caseName, { run_id: accepted.acceptance.runId }, {});
-          throw new Error(`durable: expected done before deadline, got ${result.status}`);
-        }
-        await snapshot(
-          caseName,
-          { run_id: accepted.acceptance.runId },
-          { task_run_id: result.task_run_id, reply: result.reply, session_id: durableSession },
-        );
-        const durableSessionRows = await db
-          .select({ agent_sdk_session_id: schema.learning_session.agent_sdk_session_id })
-          .from(schema.learning_session)
-          .where(eq(schema.learning_session.id, durableSession))
-          .limit(1);
-        if (!baselineRecord && !durableSessionRows[0]?.agent_sdk_session_id) {
-          throw new Error('durable: worker root did not retain its committed native SDK session');
-        }
-        if (!baselineRecord) {
-          const replyRows = await db
-            .select({ id: schema.event.id })
-            .from(schema.event)
-            .where(
-              and(
-                eq(schema.event.caused_by_event_id, accepted.acceptance.runId),
-                eq(schema.event.action, 'experimental:copilot_reply'),
-                eq(schema.event.subject_kind, 'query'),
-              ),
-            )
-            .limit(1);
-          const replyEventId = replyRows[0]?.id;
-          if (!replyEventId) throw new Error('durable: missing persisted reply event');
-          const receipt = await assertFinalizationReceipt(caseName, {
-            task_run_id: result.task_run_id,
-            reply: result.reply,
-            reply_event_id: replyEventId,
-          });
-          const latestEvidence = caseEvidence.at(-1);
-          if (latestEvidence) latestEvidence.reply_finalization = receipt;
-        }
+        const request = {
+          session_id: await createCopilotSession(),
+          user_message: '只回复「已收到合成耐久验收」，不要出题、不要调用工具。',
+          triggered_by: 'chat',
+        };
+        const result = await runAccepted(caseName, request);
+        await snapshot(caseName, request, result);
+        const receipt = await assertFinalizationReceipt(caseName, result);
+        const latestEvidence = caseEvidence.at(-1);
+        if (latestEvidence) latestEvidence.reply_finalization = receipt;
+        if (!baselineRecord && !latestEvidence?.session_agent_sdk_id)
+          throw new Error('durable: missing committed native SDK session');
         continue;
       }
 
@@ -1029,28 +1116,13 @@ async function main(): Promise<void> {
           ? { correction_target_turn_id: priorTurnId }
           : {}),
       };
-      // The production root owns cancellation. Await its lifecycle settlement;
-      // do not Promise.race a paid request and then tear down its database.
-      const deps: Parameters<typeof chat.runCopilotChat>[2] = {
-        providerSessionDeadlineAt: Date.now() + CASE_TIMEOUT_MS,
-        executeCopilotTurnFn: executeCopilotTurn,
-      };
-      // Keep the old/new read comparison on the same non-streaming entrypoint;
-      // exercise the actual collecting/visible-delta path for the full journey.
-      const delivered: string[] = [];
-      const result =
-        caseName === 'read'
-          ? await chat.runCopilotChat(db, request, deps)
-          : await chat.runCopilotChatStreaming(db, request, (delta) => delivered.push(delta), deps);
+      const result = await runAccepted(caseName, request);
       if (!result.reply.trim()) throw new Error(`${caseName}: empty reply`);
       // correction contracts name prior *assistant* turn event ids, not asks.
       if (caseName === 'cold') priorTurnId = result.reply_event_id;
       if (caseName === 'correction' && !priorTurnId)
         throw new Error('correction: missing prior turn');
       const observed = await snapshot(caseName, request, result);
-      if (caseName !== 'read' && delivered.join('') !== result.reply) {
-        throw new Error(`${caseName}: public deltas mismatched persisted reply`);
-      }
       const receipt = await assertFinalizationReceipt(caseName, result);
       if (!baselineRecord && observed.rows.some((row) => /^CopilotEvidence/.test(row.kind))) {
         throw new Error(`${caseName}: retired post-root evidence task was invoked`);
@@ -1071,7 +1143,7 @@ async function main(): Promise<void> {
             | 'presentation-html'
         ];
         const controls = observed.tools.filter((tool) => tool.name === 'present_primary_view');
-        if (result.error || !terminals.get(result.task_run_id)?.trim())
+        if (!terminals.get(result.task_run_id)?.trim())
           throw new Error(`${caseName}: missing successful authoritative terminal`);
         if ((result.primary_view?.source ?? null) !== expectedSource)
           throw new Error(`${caseName}: expected primary-view source was not published`);
@@ -1158,7 +1230,11 @@ async function main(): Promise<void> {
         const actual = new Set(
           claimFixtureCalls.map((item) => `${item.name}:${item.input_sha256}`),
         );
-        if ([...expected].some((key) => !actual.has(key)))
+        if (
+          claimFixtureCalls.length !== expected.size ||
+          actual.size !== expected.size ||
+          [...expected].some((key) => !actual.has(key))
+        )
           throw new Error('claims: required fixed observations were not all read');
         if (latestEvidence) latestEvidence.semantic_review = 'manual_required_not_proven_by_trace';
       }
@@ -1329,6 +1405,7 @@ async function main(): Promise<void> {
     throw error;
   } finally {
     await closeUnifiedFixture?.();
+    await closeBoss?.();
     await container?.stop();
   }
 }

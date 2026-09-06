@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { writeCopilotInputEvent } from '@/capabilities/copilot/server/chat';
+import { writeCopilotInputEvent } from '@/capabilities/copilot/server/conversation-writes';
 import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
