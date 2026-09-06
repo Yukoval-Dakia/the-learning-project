@@ -1,17 +1,19 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：965已移除旧前台适配器，持久owner与验收合流；本地143DB通过，待actual/独立review/exact CI。
+> Linear 是权威 tracker；更新于 2026-09-07：965经真实输出/独立审查/exact CI交付main fbc87f3b；接续全产品扩展成本复核，不操作生产。
 
 ## NOW
 
-- Active线YUK965：root独占tlp-wt-unified-conversation，branch codex/yuk-965-retire-foreground-adapter，base main9ebee3ae。
-  当前计划：①核对旧chat adapter与验收消费者；②迁移有效验收到持久owner；③删除死执行分支与专属测试；
-  ④保留shared writer/教学/取消/claim/预算/SDK保护，scoped验证、必要actual、独立review、exact CI。
+- 接续线：全产品学习行为与扩展成本最终复核；root独占tlp-wt-unified-conversation，
+  branch codex/yuk-965-delivery-notes，base origin/main fbc87f3b；此branch仅记交付，不改产品。
+  先按录入完成/判分完成/知识合并及学习闭环核对明确owner与恢复，再记录实际剩余项；不按计数补重构。
+- YUK965 Done：PR1347 exact6015f2a0fe1163eefc168ec782a5fb657099c0d7，CI34053995106全部success，
+  已于2026-09-06T19:20:27Z squash合并main fbc87f3b1ade3bc726d9371033a4c073d6c6f1a3。
   已删除旧chat执行/mutex，保留conversation-writes；执行policy与history anchor收敛为持久生命周期。
   actual脚本走真实HTTP adapter/v2接纳/物理fetch/worker/终态wake，不声称自动poller。
   122unit/143DB、零付费cancel与HTTP admission-only、typecheck/lint/build/audits通过。
   PR1347初审88a4a603发现unified验收超时迟到成功P1；共用test deadline helper已修，2RED→4GREEN。
-  修复后cancel/pickup零付费通过；唯一验证审与最终exact CI待做，尚未merge/deploy。
+  修复后cancel/pickup零付费通过；唯一验证审6015f2a0 PASS，review预算结束；未部署。
   scoped输入测试由隔离lane提交并经root修订核验；无其它writer，不新增调度框架。
   一条真实read通过，clean exact88a4a603，estimatedUSD0.0006681774；新池reserve5.55823、安全剩4.44177。
   详情docs/planning/2026-09-07-retire-foreground-adapter.md。
@@ -76,7 +78,7 @@
 
 ## NEXT
 
-1. YUK965退休仅验收使用的runCopilotChat旧适配器；迁移有效actual场景后删死路径，不删除失败/恢复保护。
+1. 以main fbc87f3b及已合并业务owner/test census证据收口全产品修改责任与恢复边界，发现真实缺口才开去重follow-up。
 2. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
 3. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
@@ -91,6 +93,6 @@
 
 ## BLOCKED-ON
 
-- 当前965可继续独立实施，完整goal不因948/950交付标blocked或complete。
+- 965已交付，整体goal仍active；全产品证据复核可独立继续，不等生产权限、不重开已完成review。
 - 未授权部署、生产clone、SoT开关、backfill或历史数据删除；均未执行。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。
