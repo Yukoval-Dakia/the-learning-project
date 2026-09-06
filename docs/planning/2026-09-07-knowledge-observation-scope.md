@@ -24,3 +24,11 @@ lint and build pass; independent initial review PASS. No extra model/query call.
 The new worktree uses its own frozen-lock dependencies; an initial shared-modules
 symlink failed pnpm's dependency check, was removed (link only), and no shared
 modules were changed. No RED claim is based on that environment failure.
+
+Actual passes at clean5717bcbdf66de6a80d2cad4cac11259f6a769c42, unchanged original
+presentation-tool prompt. One root/read/presentation, both node names correct,
+no invented unobserved failures.1502-byte live/persisted snapshot retains statuses
+and scoped claim authority. Evidence: `evidence/2026-09-07-knowledge-observation-actual.json`.
+Input41516 vs earlier41280 (+236); this correctness change does not claim token
+reduction. Estimate0.0031086707, cumulative0.0721137375 (not invoice), reserve9.95823,
+safe0.04177. No paid process remains. Integration/exact CI pending; no production.
