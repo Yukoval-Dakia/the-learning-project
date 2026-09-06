@@ -36,14 +36,11 @@ import { ApiError, errorResponse, resourceResponse } from '@/kernel/http';
 // materialized_id_index anchor (the event log + anchor is the source of truth), then the
 // per-entity flag projectionIsWriter('goal') gates ONLY who writes the ROW (projection
 // write-through when ON, imperative insertGoal when OFF — defer-flip-not-build).
-import { projectGoal } from '@/server/projections/goal';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 // HIGH-2 — write-time fold==row guard on the OFF branch (genesis written this tx → event-sourced).
-import { assertGoalParity, goalLiveRowToSnapshot } from '@/server/projections/parity';
-import { projectionIsWriter } from '@/server/projections/sot-flag';
 import { ensureSubjectRoot } from '@/server/subjects/ensure-subject-root';
 import { getDefaultSubjectRegistry, resolveKnownSubjectId } from '@/subjects/profile';
-import { insertGoal } from '../server/goals/queries';
+import { materializeGoalRow } from '../server/goals/commands';
 import { CreateGoalBody } from './goal-contracts';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
@@ -153,25 +150,17 @@ export async function POST(req: Request): Promise<Response> {
         await ensureSubjectRoot(tx, subjectId, profile?.displayName ?? subjectId);
       }
       // 2. ROW writer — gated on the per-entity flag (critic A1).
-      if (projectionIsWriter('goal')) {
-        await projectGoal(tx, id);
-      } else {
-        await insertGoal(tx, {
-          id,
-          title,
-          subject_id: subjectId ?? null,
-          scope_knowledge_ids: scopeKnowledgeIds,
-          scope_mode: scopeMode,
-          sequence_hint: 0,
-          status: 'active',
-          source: 'manual',
-          now,
-        });
-        // HIGH-2 — re-select + assert fold(genesis) == row (the genesis written above makes the
-        // manual goal event-sourced this tx, so the fold reproduces it byte-for-byte).
-        const [written] = await tx.select().from(goal).where(eq(goal.id, id)).limit(1);
-        await assertGoalParity(tx, id, written ? goalLiveRowToSnapshot(written) : null);
-      }
+      await materializeGoalRow(tx, {
+        id,
+        title,
+        subject_id: subjectId ?? null,
+        scope_knowledge_ids: scopeKnowledgeIds,
+        scope_mode: scopeMode,
+        sequence_hint: 0,
+        status: 'active',
+        source: 'manual',
+        now,
+      });
     });
 
     return resourceResponse(
