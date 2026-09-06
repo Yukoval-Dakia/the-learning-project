@@ -1,9 +1,12 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
   containsLearningQuestion,
   copilotLearningContentRequiresValidation,
   extractCopilotLearningContent,
+  reviewCopilotLearningContent,
   validateCopilotLearningContent,
 } from './content-validation';
 
@@ -29,6 +32,100 @@ describe('validateCopilotLearningContent', () => {
     expect(missing.status).toBe('absent');
     expect(malformed).toMatchObject({ status: 'malformed', text: '题目\n1. 求 1+1？' });
   });
+
+  it('does not classify completed report claims as learning questions', () => {
+    const report = '### A01：是否已证明无跨 subject 的后续 probe / review？';
+
+    expect(containsLearningQuestion(report)).toBe(false);
+    expect(copilotLearningContentRequiresValidation(report)).toBe(false);
+  });
+
+  it('accepts the versioned real report without invoking a learning validator', async () => {
+    const evidence = JSON.parse(
+      readFileSync(
+        resolve(process.cwd(), 'docs/planning/evidence/2026-09-06-claim-context-actual.json'),
+        'utf8',
+      ),
+    ) as { records: Array<{ exact_head: string; cases: Array<{ terminal_output: string }> }> };
+    const report = evidence.records.find(
+      (record) => record.exact_head === 'a1f72e94ca803b61576fa01a17e80420b96f63a6',
+    )?.cases[0]?.terminal_output;
+    expect(report).toBeTruthy();
+
+    let validatorCalls = 0;
+    const result = await reviewCopilotLearningContent(report ?? '', '', 'report-960', {
+      db: {} as never,
+      runTaskFn: async () => {
+        validatorCalls += 1;
+        throw new Error('report must not invoke learning validation');
+      },
+    });
+
+    expect(result).toEqual({ replyText: report, passed: true });
+    expect(validatorCalls).toBe(0);
+  });
+
+  it('keeps a real teaching instruction when it follows a completed report claim', () => {
+    const mixed = '是否已证明 P？请证明 Q？';
+
+    expect(containsLearningQuestion(mixed)).toBe(true);
+    expect(copilotLearningContentRequiresValidation(mixed)).toBe(true);
+  });
+
+  it.each(['是否已证明 P？', '是否已经证明 P？', '是否已经计算出本批指标？'])(
+    'ignores completed instructional wording: %s',
+    (reportQuestion) => {
+      expect(containsLearningQuestion(reportQuestion)).toBe(false);
+    },
+  );
+
+  it.each([
+    '欧几里得证明了什么？',
+    '小明计算了什么？',
+    '他选择了哪个答案？',
+    '谁已经证明这个命题？',
+    '是否已证明了什么结论？',
+  ])('keeps an unlabelled question about completed work protected: %s', async (text) => {
+    expect(containsLearningQuestion(text)).toBe(true);
+    const result = await reviewCopilotLearningContent(text, '', 'completed-work-question', {
+      db: {} as never,
+      runTaskFn: async () => {
+        throw new Error('missing manifest must fail before paid validation');
+      },
+    });
+    expect(result.passed).toBe(false);
+  });
+
+  it('keeps an active instruction after a multiline report question', () => {
+    expect(containsLearningQuestion('是否已经证明 P？\n\n请计算 Q？')).toBe(true);
+  });
+
+  it('does not let completed wording bypass explicit question protections', () => {
+    expect(containsLearningQuestion('题目：是否已证明 P？')).toBe(true);
+    expect(containsLearningQuestion('1. 是否已证明 P？')).toBe(true);
+  });
+
+  it('keeps HTML assessments protected even when visible prose is a report', async () => {
+    let validatorCalls = 0;
+    const result = await reviewCopilotLearningContent('是否已证明 P？', '', 'html-assessment-960', {
+      db: {} as never,
+      additionalVisibleText: '<p>答案：323</p>',
+      runTaskFn: async () => {
+        validatorCalls += 1;
+        throw new Error('manifest-free assessment must fail before provider work');
+      },
+    });
+
+    expect(result.passed).toBe(false);
+    expect(validatorCalls).toBe(0);
+  });
+
+  it.each(['证明 1+1=2？', '请计算三角形面积？', '能否证明这个命题？'])(
+    'keeps active instructional questions: %s',
+    (question) => {
+      expect(containsLearningQuestion(question)).toBe(true);
+    },
+  );
 
   it('fails closed when a reply contains more than one learning-content marker', () => {
     const first =

@@ -99,11 +99,25 @@ export function containsLearningQuestion(text: string): boolean {
     /(?:^|\n)\s*(?:#{1,6}\s*)?(?:(?:题目|练习(?:题)?|测验)(?=\s|[:：])|(?:quiz|question|exercise)\b)/im;
   const numberedQuestion =
     /(?:^|\n)\s*(?:\d+[.)、]|[（(][一二三四五六七八九十\d]+[）)])[^\n]{1,500}[？?]/m;
-  const instructionalQuestion =
-    /(?:^|\n)[^\n]{0,300}(?:求|计算|证明|选择|判断|解答|solve|calculate|prove|choose)[^\n]{0,300}[？?](?:\n|$)/im;
-  return (
-    explicitLabel.test(text) || numberedQuestion.test(text) || instructionalQuestion.test(text)
+  const instructionalQuestionCandidates =
+    /(?:^|\n)[^\n]{0,300}(?:求|计算|证明|选择|判断|解答|solve|calculate|prove|choose)[^\n]{0,300}[？?]/gim;
+  const activeInstructionalQuestion = [...text.matchAll(instructionalQuestionCandidates)].some(
+    ([match]) => {
+      const candidate = match;
+      const verbs = /求|计算|证明|选择|判断|解答|solve|calculate|prove|choose/gi;
+      return [...candidate.matchAll(verbs)].some((verbMatch) => {
+        // Exempt only a completed-observation status question. Past tense alone
+        // is not enough: “欧几里得证明了什么？” is still an unlabelled learning question.
+        // Evaluate each verb independently so a later real instruction remains protected.
+        const verb = verbMatch[0];
+        const offset = verbMatch.index ?? 0;
+        const prefix = candidate.slice(Math.max(0, offset - 4), offset);
+        const clause = candidate.slice(offset + verb.length).split(/[？?。；;]/u)[0];
+        return !/是否已(?:经)?$/.test(prefix) || /什么|哪|如何|怎样|为何|为什么/u.test(clause);
+      });
+    },
   );
+  return explicitLabel.test(text) || numberedQuestion.test(text) || activeInstructionalQuestion;
 }
 
 function containsLearningSolution(text: string): boolean {
