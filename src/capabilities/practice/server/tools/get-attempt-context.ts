@@ -309,6 +309,8 @@ const CausalEventRefSchema = z.object({
 });
 
 const ExactEventIdentitySchema = CausalEventRefSchema;
+const COMPARISON_GUIDANCE =
+  '比较两条链时，只能称“已观测的直接分叉”；存在 redacted 或未投影字段时，不得称唯一差异、上游完全相同或精确根因。';
 
 const OutputSchema = z.object({
   reader_version: z.literal(2),
@@ -344,6 +346,7 @@ const OutputSchema = z.object({
     necessary_conditions: z.literal('not_supported'),
     sufficient_conditions: z.literal('not_supported'),
     comparison_scope: z.literal('observed_fields_only'),
+    comparison_guidance: z.literal(COMPARISON_GUIDANCE),
     whole_chain_equivalence: z.literal('not_supported'),
     unique_difference: z.literal('not_supported'),
     chain_termination: z.literal('not_supported'),
@@ -968,6 +971,7 @@ function emptyOutput(
       necessary_conditions: 'not_supported',
       sufficient_conditions: 'not_supported',
       comparison_scope: 'observed_fields_only',
+      comparison_guidance: COMPARISON_GUIDANCE,
       whole_chain_equivalence: 'not_supported',
       unique_difference: 'not_supported',
       chain_termination: 'not_supported',
@@ -1178,6 +1182,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       necessary_conditions: 'not_supported',
       sufficient_conditions: 'not_supported',
       comparison_scope: 'observed_fields_only',
+      comparison_guidance: COMPARISON_GUIDANCE,
       whole_chain_equivalence: 'not_supported',
       unique_difference: 'not_supported',
       chain_termination: 'not_supported',

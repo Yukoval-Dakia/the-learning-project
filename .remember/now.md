@@ -5,40 +5,24 @@ Owner 已授权 AI pipeline 与基于1e61da8d报告的全项目业务封装/测�
 
 ## 当前实施（优先于下方历史完成记录）
 
-- 完整目标仍active，不能以958或当前切片替代。验收契约见2026-09-06-refactor-completion-contract.md。
-- main9427202c；active branch codex/yuk-944-context-contract，已推草稿PR1338（923ecb22），不可合并。
-- 944将claim完整定义留typed reader，TaskSpec证据2105→282chars、skill9735→4901；工具description精简。
-- 83 registry/skill unit+19 finalization/content unit+26 reader DB、typecheck/build/audits通过。
-- 首次actual04e9b83e五read完成但无权威终文，旧harness错误返回ok；第二次af811146修正门后正确失败。
-  第二次root status=failure/finishReason=error；免费转录诊断见61.792s迟到正文，超过60s预算，
-  但SDK错误子类型未捕获，不声称已证明精确原因。该正文还错误断言B无rate/唯一差异。
-  已补typed比较/缺失/outcome边界，任务时限90s与既有请求上限一致，保留6轮及绝对deadline保护。
-- 第三次exact8c280cae拿到权威终文，运行89.573s；手工语义验收失败：A01跨subject正事实自相矛盾、
-  B/C仍断言唯一差异/B链中断，另把B parent写成直接lookup结果；不能合并/关闭944。
-  费用reported$0.158656；944合计$0.33490018，当前余额$0.26992782，低于单次reserve$0.30。
-  Owner已明确允许修复后最多追加$1；当前可用$1.26992782。运行成功不等于语义验收通过。
-  第四次a8cfd734实际费用$0.218690、88.843s、权威终文，但仍错误A01/唯一差异/链终止，
-  还虚构prediction_score孙事件；手工验收失败。当前余额$1.05123782，累计944成本$0.55359018。
-  停止逐句加词付费重试，先查实际上下文和reader表示。PR1338为草稿，未合并，goal仍active。
-  免费native SDK loopback探针已证明首请求catalog有/body无，Skill调用后body才出现；
-  946 eager-body前提被否证，不能按SDK initialize注释猜测全文预载，不建第二套目录。
-- Reader v2由现有get_attempt_context拥有：lookup found/not_found/inactive与answer_activity_status分离，
-  已存在非作答不再报unsupported_event；inactive优先于non-answer；coverage明确focal id/直子/未查子树。
-  保留原queries/事实/隐藏字段/兼容空字段。13项fixture去掉版本/状态/coverage元数据后与a8cfd734逐字同构。
-  12DB+19unit/typecheck/build/lint通过；须再跑同一五读取actual，当前资金$1.05123782。
-- 第五次3a735ffc实际70.511s/$0.198463，权威终文仍混淆subject对象与共同起因、过度断言probe一致。
-  学习校验还被数据单元格3-step diagnostics误触；已用原始终文免费复现/修正（不是语义通过）。
-  944累计$0.75205318，余额$0.85277482。当前新增observed_edges确定性cause/effect配对及对象ID比较，
-  不增加查询；13DB+22unit/typecheck/build/lint通过，需原五读取actual。blocked最终回复不再被harness接受。
-  946已Done：native目录→调用后正文已有实测，不移除现有quiz可见性，不建第二套目录。
-  版本证据2026-09-06-claim-context-actual.json；停止无诊断付费重试，不缩小五read质量要求。
-- reviewer review_claim_context初审2P1均属harness：额外tools未隔离、缺失reader未在付费前检查；已修。
-  另已要求claims显式budget、拒绝无terminal/额外model/tool，并新增SDK安全子类型/耗时记录。
-  唯一验证审已通过（不代表模型质量通过）；不能开第三轮。SDK agent原生压缩结果仍需实现验证。
-- SDK0.3.220据本地类型有原生autoCompactEnabled/autoCompactWindow、Pre/PostCompact、boundary metadata、
-  streaming prompt/streamInput；没有公开compact()。不得据文档推断实际enabled或原因。
-- 下一步：验证harness修复，核对原生SDK终止/压缩与现有6iterations/60s控制，再处理944/945/946依赖；
-  不新增第二套skill catalog/summary系统。948/949/950与剩余业务封装仍须做；生产权限边界仍保留。
+- goal active；主线9427202c，分支codex/yuk-944-context-contract，草稿PR1338不可合并。
+- remote3a735ffc exact CI Gate34027572879全绿；local7b3919d5未推，当前 comparison_guidance 待提交。
+- typed reader v2 拥有 claim 边界、事件/作答可用性、focal/direct-child范围和确定性 observed_edges。
+  不新增query、bridge或evaluator；TaskSpec/Skill只保留导航，禁止重新堆叠重复规则。
+- 六次candidate均未完整语义通过。第六次7b3919d5：70.324s/$0.191851，终文可见且全部七条
+  直接边正确；仍把B其他事件未知写成无、称唯一差异。
+- 原主线受控baseline a1f72e94（/tmp/tlp-claim-baseline.yuNFPU，base9427202c，仅测试harness
+  与90s窗口变更）：64.173s/$0.209183，仍漏认跨subject，但正确限定B/C已观测直接分叉。
+  报告证明问句标题还会误触学习校验；免费确认当前检测仍为true，未降低真实题目保护。
+- 当前将原主线有效 comparison 指引放入唯一 typed 合同；13DB/typecheck已通过。
+  完成unit/lint/build及提交后，用相同五读取/模型/90s做一次组合验证；不能结构绿冒充语义绿。
+- 944 candidate+baseline累计 $1.15308718（首轮估算、其余reported），含owner追加$1后余额
+  $0.45174082。所有输入/输出/hash/root run/model/cost见2026-09-06-claim-context-actual.json。
+- 内容表格3-step数据误判已红绿修复，observed_edges 13DB+22unit/typecheck/build/lint通过。
+- review_claim_context初审P1已修，唯一验证审通过但非语义验收；不再启动第三轮。
+- 946 Done：离线native SDK首请求catalog有/body无，调用Skill后body才出现，付费0；
+  不重建目录、不移除现有quiz可见性。SDK0.3.220原生compact/reinject仍属945未实现。
+- 945/948/949/950与全项目业务封装仍须完成，951需部署后drain证据，887需生产副本授权。
 
 ## 完成与验收
 
@@ -59,7 +43,7 @@ Owner 已授权 AI pipeline 与基于1e61da8d报告的全项目业务封装/测�
 ## Actual与费用
 
 本次追加共享执行层semantic/native actual费用$0.146376；增量campaign合计$0.395172，
-当时剩余授权$0.604828；944三次后当前余额$0.26992782。旧未知超时/child账单仍未知。
+当时剩余授权$0.604828；944最新余额以上方当前实施为准。旧未知超时/child账单仍未知。
 同输入read样本input至少降50.8%、费用至少降62.2%；只限synthetic，不外推生产。
 Evidence在docs/planning/evidence/2026-09-06-{pipeline,copilot-execution}-actual.json。
 durable actual直接handler不是queue E2E。完整goal的944真实质量验证仍未通过。
@@ -75,4 +59,4 @@ durable actual直接handler不是queue E2E。完整goal的944真实质量验证�
 - 不部署、不切生产flags、不backfill、不删历史数据/表；旧mailbox/ToolOperations仅drain-only，
   退休需部署后零pending和零队列活动跨完整deadline/retry窗。
 - Linear已恢复；942 Done；943/947是锁定设计替代而Canceled；951保留drain/noun剩余Backlog。
-  944/945/946/948/949/950未虚假标Done。YUK921/572/832 HOLD不解锁。
+  946按原生能力验证Done；944/945/948/949/950未完成。YUK921/572/832 HOLD不解锁。

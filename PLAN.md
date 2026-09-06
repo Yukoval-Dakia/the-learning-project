@@ -5,19 +5,15 @@
 ## NOW
 
 - Owner 授权 AI pipeline、全项目业务封装与测试精简；不把目录归属或 audit 数量当整体完成。
-- YUK944 active：prompt证据段2105→282字符、skill9735→4901；83unit/11DB/build通过。
-  前两次完整五读取actual无权威终文；第三次8c280cae获得终文，但跨subject正事实自相矛盾、
-  仍有唯一差异过度断言；第四次a8cfd734仍语义失败（含虚构孙事件），不再逐句加词付费重试。
-  944累计$0.55359018（估算+reported）；含owner新增$1，当前余额$1.05123782。
-  已补typed比较/缺失边界，移除内部60s截断、保持90s请求上限和6轮；第三次耗时89.573s，
-  不称稳定延迟达标。下一步先查实际上下文与reader表示，须有实质修复再付费验证。
-  本次173 scoped unit/11 reader DB、typecheck/build与lint ratchet通过；不代表actual质量通过。
-  夹具初审P1和终文假绿门已修，唯一验证审通过（不是语义质量通过）；不追加第三轮。
-  草稿PR1338已推923ecb22，仅CI验收，不可合并。后续reader v2在现有工具内分离事件/作答可用性，
-  明确focal直子覆盖和未查询子树，修复非作答撤回状态；12DB/19unit/typecheck/build/lint通过，待actual。
-  第五次3a735ffc仍语义失败，$0.198463；累计944$0.75205318，当前余额$0.85277482。
-  已红绿修复3-step数据单元格被当计算表头的误拦；新增确定性observed_edges/对象ID比较，不增加查询。
-  本次13DB/22unit/typecheck/build/lint通过；同输入真实验收仍未完成，不宣称降本或语义通过。
+- YUK944 active：typed reader 是 claim 合同唯一权威，reader v2 分离事件与作答可用性，
+  明确直子覆盖、确定性 observed_edges；同查询不新增模型层。TaskSpec/Skill 删除重复规则。
+  六次 candidate 和一轮原主线受控 baseline 均未完整验收；累计 $1.15308718，余额 $0.45174082。
+  第六次7b3919d5正确列出跨对象直接边，但B/C仍把未观测写成“无”、断言唯一差异。
+  baseline a1f72e94 同样漏认跨对象事实，但比较约束更准确；现将其指引仅恢复至 typed 合同。
+  原主线报告问句标题还会误触学习内容拦截，未修；保留无标签真实学习题的保护。
+  13DB/typecheck 已过；继续 scoped unit/lint/build，提交后仅做一轮同样本组合验证。
+  草稿PR1338：remote3a735ffc exact CI Gate34027572879全绿；本地7b3919d5及后续尚未推。
+  独立初审及唯一验证审预算已用，不启动第三轮；语义质量未过，不合并、不关闭944。
 - AI finalization #1326、Goal #1327、Knowledge merge #1328、Ingestion completion #1329、
   ReviewSettlement #1332、测试精简 #1331/#1333 已经各自 exact-head CI 绿色并合并。
 - YUK-954 #1330：共享执行 owner，权限/校验/取消/原生子代理规则一份实现；
@@ -52,7 +48,7 @@
 
 ## PARKED
 
-- 944/945/946/948/949/950已列入NEXT的完整重构顺序，尚未完成，不再作为无限期PARKED。
+- 944/945/948/949/950已列入NEXT的完整重构顺序，尚未完成，不再作为无限期PARKED；946已验证收口。
 - 951历史mailbox/ToolOperations仅drain-only恢复；退休需零pending/零队列活动跨完整重试窗口。
 - YUK-921多provider、572夜间教研、832 HOLD未解锁。
 - 保留计费、重试、prompt/skill、富结构解析、并发/回滚/恢复、UI加载安全测试；不按数量硬删。

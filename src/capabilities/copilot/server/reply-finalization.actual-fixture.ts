@@ -269,6 +269,8 @@ export const REALISTIC_EVIDENCE_TRACE = [
         necessary_conditions: 'not_supported',
         sufficient_conditions: 'not_supported',
         comparison_scope: 'observed_fields_only',
+        comparison_guidance:
+          '比较两条链时，只能称“已观测的直接分叉”；存在 redacted 或未投影字段时，不得称唯一差异、上游完全相同或精确根因。',
         whole_chain_equivalence: 'not_supported',
         unique_difference: 'not_supported',
         chain_termination: 'not_supported',
@@ -441,6 +443,8 @@ export const REALISTIC_EVIDENCE_TRACE = [
         necessary_conditions: 'not_supported',
         sufficient_conditions: 'not_supported',
         comparison_scope: 'observed_fields_only',
+        comparison_guidance:
+          '比较两条链时，只能称“已观测的直接分叉”；存在 redacted 或未投影字段时，不得称唯一差异、上游完全相同或精确根因。',
         whole_chain_equivalence: 'not_supported',
         unique_difference: 'not_supported',
         chain_termination: 'not_supported',
@@ -668,6 +672,8 @@ export const REALISTIC_EVIDENCE_TRACE = [
         necessary_conditions: 'not_supported',
         sufficient_conditions: 'not_supported',
         comparison_scope: 'observed_fields_only',
+        comparison_guidance:
+          '比较两条链时，只能称“已观测的直接分叉”；存在 redacted 或未投影字段时，不得称唯一差异、上游完全相同或精确根因。',
         whole_chain_equivalence: 'not_supported',
         unique_difference: 'not_supported',
         chain_termination: 'not_supported',
@@ -1198,6 +1204,8 @@ export const REALISTIC_EVIDENCE_TRACE = [
         necessary_conditions: 'not_supported',
         sufficient_conditions: 'not_supported',
         comparison_scope: 'observed_fields_only',
+        comparison_guidance:
+          '比较两条链时，只能称“已观测的直接分叉”；存在 redacted 或未投影字段时，不得称唯一差异、上游完全相同或精确根因。',
         whole_chain_equivalence: 'not_supported',
         unique_difference: 'not_supported',
         chain_termination: 'not_supported',
@@ -1340,6 +1348,8 @@ export const REALISTIC_EVIDENCE_TRACE = [
         necessary_conditions: 'not_supported',
         sufficient_conditions: 'not_supported',
         comparison_scope: 'observed_fields_only',
+        comparison_guidance:
+          '比较两条链时，只能称“已观测的直接分叉”；存在 redacted 或未投影字段时，不得称唯一差异、上游完全相同或精确根因。',
         whole_chain_equivalence: 'not_supported',
         unique_difference: 'not_supported',
         chain_termination: 'not_supported',
