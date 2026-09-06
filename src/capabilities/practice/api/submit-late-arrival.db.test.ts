@@ -24,8 +24,8 @@ import { upsertMasteryState } from '@/server/mastery/state';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { recordJudgePendingAttempt } from '../server/judge-run-dispatch';
+import { settleDeferredSoloReview } from '../server/review-settlement';
 import { CreateAttemptBodySchema } from './contracts';
-import { persistSubmit } from './submit';
 
 const MINUTE = 60_000;
 
@@ -123,13 +123,23 @@ describe('late-arrival guard — evidence water mark (YUK-777 B2)', () => {
     expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
     expect(await testDb().select().from(mastery_state)).toHaveLength(0);
 
-    const persisted = await persistSubmit(
-      await buildValidated(olderQ, older, { rating: 'good', referenced_knowledge_ids: ['k1'] }),
-      manualJudged(),
-      { attemptEventId: newId(), enforceAttemptOrdering: true },
-    );
+    const persisted = await settleDeferredSoloReview(testDb(), {
+      validated: await buildValidated(olderQ, older, {
+        rating: 'good',
+        referenced_knowledge_ids: ['k1'],
+      }),
+      judged: manualJudged(),
+      runId: newId(),
+      frozenAbilityGlobalByKnowledgeId: { k1: 'math' },
+    });
 
     expect(persisted.lateArrival).toBe(true);
+    expect(persisted.effect).toBe('evidence_only_late');
+    expect(persisted.terminalResult).toMatchObject({
+      attempt_event_id: persisted.attemptEventId,
+      outcome: 'success',
+      final_rating: 'good',
+    });
     // Late ⇒ evidence only. The schedule must not have moved onto older evidence.
     expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
   });
@@ -177,11 +187,15 @@ describe('late-arrival guard — evidence water mark (YUK-777 B2)', () => {
       submittedAt: relatedAt,
     });
 
-    const result = await persistSubmit(
-      await buildValidated(oldQ, old, { rating: 'good', referenced_knowledge_ids: ['k1'] }),
-      manualJudged(),
-      { attemptEventId: newId(), enforceAttemptOrdering: true },
-    );
+    const result = await settleDeferredSoloReview(testDb(), {
+      validated: await buildValidated(oldQ, old, {
+        rating: 'good',
+        referenced_knowledge_ids: ['k1'],
+      }),
+      judged: manualJudged(),
+      runId: newId(),
+      frozenAbilityGlobalByKnowledgeId: { k1: 'math' },
+    });
     expect(result.lateArrival).toBe(true);
   });
 
@@ -209,11 +223,12 @@ describe('late-arrival guard — evidence water mark (YUK-777 B2)', () => {
       submittedAt: at,
     });
 
-    const persisted = await persistSubmit(
-      await buildValidated(questionId, at, { rating: 'good' }),
-      manualJudged(),
-      { attemptEventId: runId, enforceAttemptOrdering: true },
-    );
+    const persisted = await settleDeferredSoloReview(testDb(), {
+      validated: await buildValidated(questionId, at, { rating: 'good' }),
+      judged: manualJudged(),
+      runId,
+      frozenAbilityGlobalByKnowledgeId: { k1: 'math' },
+    });
 
     expect(persisted.lateArrival).toBe(false);
     expect(await testDb().select().from(material_fsrs_state)).toHaveLength(1);
@@ -244,11 +259,12 @@ describe('late-arrival guard — evidence water mark (YUK-777 B2)', () => {
       submittedAt: newer,
     });
 
-    const persisted = await persistSubmit(
-      await buildValidated(mine, older, { rating: 'good' }),
-      manualJudged(),
-      { attemptEventId: newId(), enforceAttemptOrdering: true },
-    );
+    const persisted = await settleDeferredSoloReview(testDb(), {
+      validated: await buildValidated(mine, older, { rating: 'good' }),
+      judged: manualJudged(),
+      runId: newId(),
+      frozenAbilityGlobalByKnowledgeId: { k1: 'math' },
+    });
 
     // A guard that fired on any newer attempt anywhere would freeze the whole schedule
     // whenever a learner answers two questions out of order.
@@ -293,11 +309,12 @@ describe('late-arrival guard — shared θ_global domain row (YUK-777 B1)', () =
 
     // The newer attempt was itself skipped: no projection records the shared-domain collision.
     expect(await testDb().select().from(mastery_state)).toHaveLength(0);
-    const persisted = await persistSubmit(
-      await buildValidated(olderQ, older, { rating: 'good' }),
-      manualJudged(),
-      { attemptEventId: newId(), enforceAttemptOrdering: true },
-    );
+    const persisted = await settleDeferredSoloReview(testDb(), {
+      validated: await buildValidated(olderQ, older, { rating: 'good' }),
+      judged: manualJudged(),
+      runId: newId(),
+      frozenAbilityGlobalByKnowledgeId: { k1: 'math' },
+    });
 
     expect(persisted.lateArrival).toBe(true);
     expect(await testDb().select().from(mastery_state)).toHaveLength(0);
@@ -331,11 +348,12 @@ describe('late-arrival guard — shared θ_global domain row (YUK-777 B1)', () =
       last_outcome_at: newer,
     });
 
-    const persisted = await persistSubmit(
-      await buildValidated(questionId, older, { rating: 'good' }),
-      manualJudged(),
-      { attemptEventId: newId(), enforceAttemptOrdering: true },
-    );
+    const persisted = await settleDeferredSoloReview(testDb(), {
+      validated: await buildValidated(questionId, older, { rating: 'good' }),
+      judged: manualJudged(),
+      runId: newId(),
+      frozenAbilityGlobalByKnowledgeId: { k1: 'math' },
+    });
 
     expect(persisted.lateArrival).toBe(true);
     // The shared domain row must not have absorbed the older observation, and its
@@ -365,11 +383,12 @@ describe('late-arrival guard — shared θ_global domain row (YUK-777 B1)', () =
       last_outcome_at: long_ago,
     });
 
-    const persisted = await persistSubmit(
-      await buildValidated(questionId, new Date(), { rating: 'good' }),
-      manualJudged(),
-      { attemptEventId: newId(), enforceAttemptOrdering: true },
-    );
+    const persisted = await settleDeferredSoloReview(testDb(), {
+      validated: await buildValidated(questionId, new Date(), { rating: 'good' }),
+      judged: manualJudged(),
+      runId: newId(),
+      frozenAbilityGlobalByKnowledgeId: { k1: 'math' },
+    });
 
     expect(persisted.lateArrival).toBe(false);
     expect(await testDb().select().from(material_fsrs_state)).toHaveLength(1);
@@ -388,10 +407,11 @@ describe('late-arrival guard — shared θ_global domain row (YUK-777 B1)', () =
       .set({ domain: 'math-after', updated_at: new Date() })
       .where(eq(knowledge.id, 'k1'));
 
-    const persisted = await persistSubmit(validated, manualJudged(), {
-      attemptEventId: newId(),
-      enforceAttemptOrdering: true,
-      abilityGlobalByKnowledgeId: { k1: 'math-before' },
+    const persisted = await settleDeferredSoloReview(testDb(), {
+      validated,
+      judged: manualJudged(),
+      runId: newId(),
+      frozenAbilityGlobalByKnowledgeId: { k1: 'math-before' },
     });
 
     expect(persisted.lateArrival).toBe(false);
