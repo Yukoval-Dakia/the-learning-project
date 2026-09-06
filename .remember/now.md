@@ -1,71 +1,43 @@
-# 当前 handoff — 2026-09-06（完整重构goal active，YUK945）
+# 当前 handoff — 2026-09-06，完整重构goal active
 
-Owner 已授权 AI pipeline 与基于1e61da8d报告的全项目业务封装/测试精简。
-原始the-learning-project脏main保持不动；此handoff在隔离tlp-wt-native-compaction工作树。
+## 当前945集成
 
-## 当前实施（优先于下方历史完成记录）
+- /Volumes/YukovalSBak/yukoval-projects/tlp-wt-native-compaction，codex/yuk-945-native-compaction。
+- 产品18702ab9经143scoped/唯一复审PASS；草稿PR1339旧exact821184ac CI34031520139绿。
+- 新实际harness8f7a438a、长样本de18fcaa；真实摘要质量已通过两样本，正合入mainc43d51be。
+  只有PLAN/.remember文字冲突，业务代码无冲突；新exact CI仍待执行。
+- 短样本session8e50d9a1-b8dc-42ff-91d3-e2017a703754：1057→1388，不称降本；
+  长样本session8709f3db-a35e-4b87-91d3-c2a3981dbf93：11977→1590。
+  120个过期学习记录，保留现行3节点/关系方向/数值/来源/未知vs零/未批准更正；
+  同session续问有更新learner且不重发旧fixture。native manual compact，不是auto阈值或队列E2E。
+- 新$10池估算花费$0.0130696878，保守请求预留$0.90823；此前$0.28771982另列。
+  估算基于官方公开USD卡，不是账户账单；旧未知timeout/child仍未知。没有其他新付费调用。
+- .env.local无key预检0调用；正确凭据源是原树.env，仅加载不打印/修改。
+- 初稿scripts/ai/native-compaction-actual.ts因缺预算/输出/保留验收被root撤掉；
+  正式tests/acceptance/native-compaction.ts有5请求/字节/output/90s/预留限制及失败证据。
+- SDK autoCompactWindow最低100000；不能用非法小窗口或合成usage声称真实节省。
+  learner每轮注入、proposal digest、原权限/6轮/预算不变，rawCoT/summary不写产品usage。
 
-- goal active；当前 /Volumes/YukovalSBak/yukoval-projects/tlp-wt-native-compaction，
-  branch codex/yuk-945-native-compaction，PR1339 exact821184ac CI34031520139全绿，仍draft未合并。
-  本handoff在该head之后仅补证据/状态，未推；产品代码与已复审18702ab9相同。
-- 944 Done：PR1338 exact3fd90c4d CI34030191329全绿，2026-09-06T11:44:48Z合并main db5a57b1。
-  c03b5b3e五读取actual核心checks通过、权威终文可见，79.098s/$0.164021；input40410 vs baseline40401
-  不证明token下降。原六candidate和baseline失败均保留；报告问句误拦开放YUK960。
-- 944累计$1.31710818，owner此前追加$1后余额$0.28771982；低于reserve，不再新增付费调用。
-  已询问945真实压缩/事实保留/同session续聊是否额外允许最多$1，待答复；免费工作继续。
-- 945接线：Options.settings autoCompactEnabled=true/precompute=false，仅foreground。
-  原caller hooks后追加SessionStart(compact)，重新注入结构化当前context；空context返回空。
-  learner每轮保留，proposal保持digest；cold/durable历史行为不改；codec v2。
-  consumeSdkAttempt收到compact_boundary→terminal collector→usage_json bounded count/last
-  （trigger/pre/post context tokens），禁止原摘要/CoT/消息IDs；不扣减billable tokens或重置预算。
-- 初稿0f011b4d被独立初审两P1否决（顶层Settings/hook覆盖），root18702ab9已红绿修复。
-  root143scoped tests/typecheck/lint/build通过；唯一复审PASS，独立137tests，不再第三轮。
-  945最终代码CI已过；仍未真实模型摘要验收，不能合并或关闭945。Linear已同步In Progress。
-- SDK0.3.220零费用loopback实测：PreCompact(auto)→SessionStart(compact)→PostCompact；
-  session1526e361-1fd6-4046-a94d-8812a3d2300e compact与resume两次success；后续请求有注入状态，
-  新turn有更新learner状态。185065→458是人为usage，不是token节省。证据JSON已在docs/planning/evidence。
-- 946已Done原生catalog→调用后body验证，不重建catalog/移除quiz。
-- 剩余945/948/949/950/960和业务整体验证继续；951drain/887生产副本仍需独立授权。
-- 对SCC新增只读复核：learning-intent已有acceptLearningIntentOwned事务与owner失败全回滚测试，
-  不把正常跨owner命令装配再次判缺陷；quiz_verify的coach pool-gap具体note/expiry规则尚留在Practice，
-  已去重登记YUK961作为后续有边界的业务封装点，未实施。
-- SDK settings源码schema限制autoCompactWindow为100000..1000000，非法小值catch(undefined)。
-  免费probe：window20000/usage25000没有compact；window100000/usage95000触发compact并同session续聊。
-  后续actual不得用静默忽略的窗口假称压缩，也不能把这些人工usage当真实token节省。
+## 949独立实施
 
-## 完成与验收
+- /Volumes/YukovalSBak/yukoval-projects/tlp-wt-primary-view-owner；ADR0061在799ea23c。
+- Owner明确FULL，允许按需短control交互；保留3source/agent意图，server最终验证；不提预算、不改UI。
+- ea8367c7初稿未完成：初审5P1（read丢hero/任意ref+legacy绕过/durable丢pv/
+  删除944prompt关键约束/4个新增lint错误）。repair_primary_view_contract独占写入修复。
+- 原implement_primary_view_owner已停止；review_primary_view_owner初审已用，剩唯一验证审。
+  不信任原worker的完成或“lint错误已有”说法，后者被实际diff和review否证。
 
-- Pipeline1326、Goal1327、Knowledge1328、Import1329、Copilot execution1330、
-  ReviewSettlement1332、测试精简1331/1333均已exact-head CI绿色并合并。
-- main dce62f79已实测438/0/47；5capability SCC与20命令消费者仍保留，不称消环。
-- Goal集中command并保留私有legacy兼容；知识合并各owner处理状态、单向命名adapter；
-  Import业务提交与operation receipt同事务、并发source锁；Review三个命令共用学习效果/恢复。
-- 954隐藏native终态P1红绿复现并修复，root和独立15DB通过；其两轮review预算用尽。
-- 958服务端mode completion完成初审+scoped gates；647882b4 PR1334最终CI绿色并合并dce62f79。
-  该head后端等于已全绿2089b0ce，仅含主线已验证Notes测试/文档合并差异。
-- Docs handoff PR1335已更新1334合并事实，exact CI是合并门；不部署。
-- 客户端PR1336 exact0581aab529a643d4c6837dc382ef831452846a24的CI Gate34015722399
-  所有分区绿色，已合并main92ed46452b9af726cf09d64d360fae80e755fb3f。YUK958整票完成。
-- 全项目测试结构盘点保留计费、retry、prompt/skill、复杂parser、并发/回滚/恢复与UI加载保护；
-  删除旧路径/重复装配/退休evidence链内部断言，不按数量硬删。
+## 已交付与下一步
 
-## Actual与费用
-
-本次追加共享执行层semantic/native actual费用$0.146376；增量campaign合计$0.395172，
-当时剩余授权$0.604828；944最新余额以上方当前实施为准。旧未知超时/child账单仍未知。
-同输入read样本input至少降50.8%、费用至少降62.2%；只限synthetic，不外推生产。
-Evidence在docs/planning/evidence/2026-09-06-{pipeline,copilot-execution}-actual.json。
-durable actual直接handler不是queue E2E。完整goal的944真实质量验证仍未通过。
-
-## 下一步与禁止项
-
-- 958 UI已获owner「继续」批准并实施：CopilotDock/subtask-events/replay/skill-lifecycle
-  共用message-projection；只有权威REPLY+明确end结束模式，失败保留重试。无视觉变化。
-  116 scoped tests、生产bundle inline/durable发送→后续发送→reload回放2条流程已通过；
-  草稿+DONE无REPLY的P1红绿复现修复，唯一验证审PASS。最终整组15条浏览器流程与CI全绿；
-  已合并#1336，不再等待客户端实施。单独docs closeout仅对齐交付状态。
-- SoT最终退休需要单独生产副本backfill/audit/rebuild/golden证据与授权（YUK887）。
-- 不部署、不切生产flags、不backfill、不删历史数据/表；旧mailbox/ToolOperations仅drain-only，
-  退休需部署后零pending和零队列活动跨完整deadline/retry窗。
-- Linear已恢复；942 Done；943/947是锁定设计替代而Canceled；951保留drain/noun剩余Backlog。
-  944已交付、946按原生能力验证Done；945/948/949/950/960未完成。YUK921/572/832 HOLD不解锁。
+- 961 PR1340 exact69542b2d CI34032977403绿，main50ba305b，48DB/reviewPASS，LinearDone。
+- 963 PR1342 exact417623b5 CI34034266076绿，main4034859c，70unit/reviewPASS，LinearDone。
+- 962 PR1341 exacta522a60f CI34034085071绿，mainc43d51be，59unit/reviewPASS，LinearDone；
+  617unit/426DB共1043文件，不删断言、不移动尚有传递DB依赖或Bun独立测试。
+- 944 PR1338 main db5a57b1；五读取actual核心通过，40410vs40401不证降本；960仍开放。
+- 964已去重登记：更新MiMo本地占位估算卡与来源，官方价格页2026-08-06已公开分模型费率。
+- 既有Pipeline/Goal/Knowledge/Import/execution/ReviewSettlement/客户端状态/测试退休均有合并证据。
+  946仅原生catalog/body渐进加载验证Done，不建第二catalog、不删quiz。
+- 下一条948Mission、950steer、960分类器与全业务扩展验收继续；不是当前PR即整体完成。
+- 依赖438/0/47与5capability SCC/20命令消费者保留；不为数字重做已封装learning-intent。
+- 不动原始脏main、不部署/改SoT/backfill/删历史；887需独立生产副本授权，
+  951需完整drain窗口；921/572/832HOLD不解锁。
