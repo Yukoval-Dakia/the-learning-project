@@ -1,8 +1,9 @@
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ai_task_runs, copilot_continuation, event, subagent_run } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { createCopilotExecutionOwner } from './copilot-execution';
 import * as mailbox from './subagent-mailbox';
 import { getCopilotContinuationHistory } from './turns';
 
@@ -23,6 +24,74 @@ async function seedParent(input: { id: string; sessionId: string; action?: strin
 describe('Copilot subagent mailbox', () => {
   beforeEach(async () => {
     await resetDb();
+  });
+
+  it('settles a hidden native terminal independently of public activity delivery', async () => {
+    const sessionId = 'session_hidden_native';
+    const sourceEventId = 'ask_hidden_native';
+    await seedParent({ id: sourceEventId, sessionId });
+    const observe = vi.fn(() => {
+      throw new Error('disconnected activity consumer');
+    });
+    const execute = createCopilotExecutionOwner({
+      buildMcpServerFn: () => ({ type: 'sdk', name: 'loom' }) as never,
+      buildTavilyMcpServerFn: () => null,
+      resolveCopilotSkillsFn: async () => undefined,
+      runAgentTaskFn: async (_kind, _input, ctx) => {
+        if (!ctx.onTaskEvent) throw new Error('native lifecycle not mounted');
+        await ctx.onTaskEvent({
+          type: 'system',
+          subtype: 'task_started',
+          session_id: sessionId,
+          uuid: '00000000-0000-4000-8000-000000000031',
+          task_id: 'native_hidden_31',
+          subagent_type: 'copilot-researcher',
+          description: '核对三份长材料的矛盾、缺失证据和适用边界。',
+        });
+        await ctx.onTaskEvent({
+          type: 'system',
+          subtype: 'task_notification',
+          session_id: sessionId,
+          uuid: '00000000-0000-4000-8000-000000000032',
+          task_id: 'native_hidden_31',
+          status: 'completed',
+          skip_transcript: true,
+          output_file: '/private/synthetic-child.txt',
+          summary: 'Hidden child result must settle without becoming public activity.',
+        });
+        return { task_run_id: 'root_hidden_native', text: '已完成核对。' };
+      },
+    });
+    await execute(
+      testDb(),
+      {
+        sessionId,
+        sourceEventId,
+        taskRunId: 'root_hidden_native',
+        input: {
+          surface: 'copilot',
+          triggered_by: 'chat',
+          user_message: '核对三份材料的矛盾与证据边界。',
+          proposal_feedback: [],
+          conversation_history: [],
+          validator_context_history: [],
+          correction_contract: {
+            available_prior_turn_ids: [],
+            prior_turn_summaries: {},
+            required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'],
+          },
+        },
+      },
+      { kind: 'foreground', delivery: 'single', subagentsEnabled: true, observe },
+    );
+    const rows = await testDb().select().from(subagent_run);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      status: 'succeeded',
+      parent_task_run_id: 'root_hidden_native',
+    });
+    expect(observe).toHaveBeenCalledTimes(1);
+    expect(await testDb().select().from(copilot_continuation)).toEqual([]);
   });
 
   it('binds launch identity to session + ask/chip parent + canonical input', async () => {

@@ -1,0 +1,503 @@
+import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import type { Db } from '@/db/client';
+import {
+  DOMAIN_TOOL_MCP_SERVER_NAME,
+  resolveDomainToolNames,
+  resolveMcpAllowedTools,
+} from '@/kernel/tools/allowlists';
+import { resolveContextBudget } from '@/kernel/tools/budgets';
+import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
+import type { ValidateLearningContentFn } from '@/kernel/tools/types';
+import {
+  TAVILY_MCP_ALLOWED_TOOLS,
+  TAVILY_MCP_SERVER_NAME,
+  buildTavilyMcpServer,
+} from '@/server/ai/mcp/tavily';
+import {
+  type RunTaskResult,
+  type StreamCollectResult,
+  runAgentTask,
+  streamTaskCollecting,
+} from '@/server/ai/runner';
+import {
+  type BuildMcpServerOptions,
+  type SdkMcpServer,
+  buildMcpServerFromRegistry,
+  createToolUseCorrelation,
+  shouldEmitToolUseForCaller,
+} from '@/server/ai/tools/mcp-bridge';
+import { resolveCopilotSkills } from '@/subjects/copilot-skills';
+import { copilotTaskSpec } from '../tasks/agent';
+import { reviewCopilotLearningContent, validateCopilotLearningContent } from './content-validation';
+import type { CopilotRunCancellationControl } from './copilot-run-cancellation';
+import type { CopilotRunInput } from './copilot-run-input';
+import { selectActorRef } from './copilot-run-input';
+import { resolveDeterministicCorrectionContract } from './correction-contract';
+import {
+  copilotSessionContextDigest,
+  shouldDeliverCopilotSessionContext,
+} from './live-session-context';
+import { COPILOT_TURN_CONTEXT_CODEC_VERSION, compileCopilotModelInput } from './live-turn-context';
+import { createCopilotProposalFlowGate } from './proposal-flow-gate';
+import {
+  type CopilotReplyFinalizationResult,
+  createCopilotReplyFinalizer,
+  prependCopilotFinalizationHooks,
+} from './reply-finalization';
+import { bindSubagentParentCancellation, handleNativeSubagentTaskEvent } from './subagent-mailbox';
+import {
+  type CopilotSubtaskEvent,
+  type CopilotTaskLifecycleMessage,
+  type SpawnBudgetObservation,
+  buildCopilotNativeResearchConfig,
+  createCopilotSubtaskProjector,
+  isCopilotSubagentEnabled,
+} from './subagents';
+
+/** The durable policy is intentionally different from the latency-bounded foreground policy. */
+export const DURABLE_COPILOT_EXECUTION_BUDGET = {
+  maxIterations: 24,
+  maxToolCalls: 60,
+  timeoutMs: 12 * 60_000,
+} as const;
+
+export type CopilotExecutionActivity =
+  | { kind: 'subtask'; event: CopilotSubtaskEvent }
+  | {
+      kind: 'tool_started';
+      toolName: string;
+      input: Record<string, unknown>;
+      toolUseId?: string;
+    }
+  | {
+      kind: 'tool_finished';
+      toolName: string;
+      input: Record<string, unknown>;
+      summary: string;
+      errorReason?: string;
+    }
+  | { kind: 'spawn_budget'; observation: SpawnBudgetObservation };
+
+export interface CopilotExecutionTurn {
+  input: CopilotRunInput;
+  sessionId: string;
+  taskRunId: string;
+  /** User ask/chip event that owns tool mirrors and native child records. */
+  sourceEventId?: string;
+}
+
+export type CopilotExecutionPolicy =
+  | {
+      kind: 'foreground';
+      delivery: 'single' | 'stream';
+      signal?: AbortSignal;
+      deadlineAt?: number;
+      resumeSessionId?: string;
+      subagentsEnabled?: boolean;
+      observe?: (activity: CopilotExecutionActivity) => Promise<void> | void;
+    }
+  | {
+      kind: 'durable';
+      /** Durable job owns polling/settlement; this module owns every propagation point. */
+      cancellation: CopilotRunCancellationControl;
+      deadlineAt: number;
+      subagentsEnabled?: boolean;
+      observe?: (activity: CopilotExecutionActivity) => Promise<void> | void;
+    };
+
+export interface CopilotExecutionResult {
+  taskRunId: string;
+  finishReason: string;
+  finalization: CopilotReplyFinalizationResult;
+  partial: boolean;
+  error?: string;
+  candidateDeltaObserved: boolean;
+  sdkSessionId?: string;
+  contextDigest: string;
+}
+
+export type ExecuteCopilotTurn = (
+  db: Db,
+  turn: CopilotExecutionTurn,
+  policy: CopilotExecutionPolicy,
+) => Promise<CopilotExecutionResult>;
+
+type AgentResult = Pick<RunTaskResult, 'task_run_id' | 'text'> & { finishReason?: string };
+type StreamResult = Pick<
+  StreamCollectResult,
+  'task_run_id' | 'text' | 'terminalText' | 'partial' | 'error'
+> & { finishReason?: string };
+
+/** Process-level adapters. Product callers use ExecuteCopilotTurn, never this SDK-shaped seam. */
+export interface CopilotExecutionAdapters {
+  runAgentTaskFn: (
+    kind: string,
+    input: unknown,
+    ctx: Parameters<typeof runAgentTask>[2],
+  ) => Promise<AgentResult>;
+  streamTaskCollectingFn: (
+    kind: string,
+    input: unknown,
+    ctx: Parameters<typeof streamTaskCollecting>[2],
+    onDelta: (text: string) => void,
+  ) => Promise<StreamResult>;
+  buildMcpServerFn: (options: BuildMcpServerOptions) => SdkMcpServer;
+  buildTavilyMcpServerFn: () => McpHttpServerConfig | null;
+  resolveCopilotSkillsFn: typeof resolveCopilotSkills;
+}
+
+const defaultAdapters: CopilotExecutionAdapters = {
+  runAgentTaskFn: runAgentTask,
+  streamTaskCollectingFn: streamTaskCollecting,
+  buildMcpServerFn: buildMcpServerFromRegistry,
+  buildTavilyMcpServerFn: buildTavilyMcpServer,
+  resolveCopilotSkillsFn: resolveCopilotSkills,
+};
+
+async function emitActivity(
+  policy: CopilotExecutionPolicy,
+  activity: CopilotExecutionActivity,
+): Promise<void> {
+  try {
+    await policy.observe?.(activity);
+  } catch (error) {
+    console.error('[copilot-execution] activity observer failed', { kind: activity.kind, error });
+  }
+}
+
+/**
+ * Build the one Copilot execution owner. The factory exists for the real SDK/external test
+ * adapters; foreground and durable callers only receive the small execute function.
+ */
+export function createCopilotExecutionOwner(
+  overrides: Partial<CopilotExecutionAdapters> = {},
+): ExecuteCopilotTurn {
+  const adapters = { ...defaultAdapters, ...overrides };
+
+  return async (db, turn, policy) => {
+    const lifecycleAbortController = new AbortController();
+    const cancellationSignals = [
+      { signal: lifecycleAbortController.signal, requestedBy: 'system' as const },
+      ...(policy.kind === 'foreground' && policy.signal
+        ? [{ signal: policy.signal, requestedBy: 'user' as const }]
+        : []),
+      ...(policy.kind === 'durable'
+        ? [{ signal: policy.cancellation.signal, requestedBy: 'user' as const }]
+        : []),
+    ];
+    const validationSignal =
+      policy.kind === 'durable'
+        ? AbortSignal.any([lifecycleAbortController.signal, policy.cancellation.signal])
+        : lifecycleAbortController.signal;
+    const deadlineAt = policy.deadlineAt;
+    const actorRef = selectActorRef(turn.input.triggered_by);
+    const callerActor = { kind: 'agent' as const, ref: actorRef };
+    const correctionResolution = resolveDeterministicCorrectionContract(
+      turn.input.user_message,
+      turn.input.correction_contract,
+    );
+    const input: CopilotRunInput =
+      correctionResolution.kind === 'clarify'
+        ? turn.input
+        : { ...turn.input, correction_contract: correctionResolution.contract };
+    const authoritativeReply =
+      correctionResolution.kind === 'clarify'
+        ? { reply: correctionResolution.reply, correction: 'clarify' as const }
+        : undefined;
+
+    const validationTaskContext = (
+      callCtx: Parameters<Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn']>[2],
+    ) => ({
+      ...callCtx,
+      db,
+      signal: validationSignal,
+      lifecycleAbortController,
+      parentTaskRunId: turn.taskRunId,
+      ...(deadlineAt !== undefined ? { providerSessionDeadlineAt: deadlineAt } : {}),
+    });
+    const validationRunner: Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn'] =
+      async (kind, taskInput, callCtx) => {
+        if (policy.kind === 'durable') {
+          await policy.cancellation.probe();
+          validationSignal.throwIfAborted();
+        }
+        const ctx = validationTaskContext(callCtx);
+        switch (kind) {
+          case 'QuizVerifyTask':
+            return adapters.runAgentTaskFn('QuizVerifyTask', taskInput, ctx) as ReturnType<
+              Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn']
+            >;
+          case 'SolutionGenerateTask':
+            return adapters.runAgentTaskFn('SolutionGenerateTask', taskInput, ctx) as ReturnType<
+              Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn']
+            >;
+          case 'SemanticJudgeTask':
+            return adapters.runAgentTaskFn('SemanticJudgeTask', taskInput, ctx) as ReturnType<
+              Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn']
+            >;
+          case 'TeachingQualityTask':
+            return adapters.runAgentTaskFn('TeachingQualityTask', taskInput, ctx) as ReturnType<
+              Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn']
+            >;
+          default:
+            throw new Error(`unsupported learning-content validation task: ${kind}`);
+        }
+      };
+    const validateLearningContent: ValidateLearningContentFn = (content) =>
+      validateCopilotLearningContent(content, { db, runTaskFn: validationRunner });
+    const finalizer = createCopilotReplyFinalizer({
+      rootTaskRunId: turn.taskRunId,
+      correctionContract: input.correction_contract,
+      userContextText: [
+        input.user_message,
+        ...(input.validator_context_history ?? []).map((historyTurn) => historyTurn.text),
+      ].join('\n'),
+      ...(authoritativeReply ? { authoritativeReply } : {}),
+      validateLearningContent: async (text, contextText, validationTaskRunId, primaryView) => {
+        if (policy.kind === 'durable') {
+          await policy.cancellation.probe();
+          validationSignal.throwIfAborted();
+        }
+        return reviewCopilotLearningContent(text, contextText, validationTaskRunId, {
+          db,
+          runTaskFn: validationRunner,
+          ...(primaryView?.source === 'ephemeral_html'
+            ? { additionalVisibleText: primaryView.ref }
+            : {}),
+        });
+      },
+    });
+
+    const surface = input.surface;
+    const baseContextBudget = resolveContextBudget(surface);
+    const budgetTracker = new ContextBudgetTracker(
+      policy.kind === 'durable'
+        ? {
+            ...baseContextBudget,
+            toolCalls: {
+              warning: baseContextBudget.toolCalls.hard,
+              hard: DURABLE_COPILOT_EXECUTION_BUDGET.maxToolCalls,
+            },
+          }
+        : baseContextBudget,
+    );
+    const proposalFlowGate = createCopilotProposalFlowGate();
+    const toolUseCorrelation = createToolUseCorrelation(DOMAIN_TOOL_MCP_SERVER_NAME);
+    const mcpServer = adapters.buildMcpServerFn({
+      ctx: {
+        db,
+        sessionId: turn.sessionId,
+        taskRunId: turn.taskRunId,
+        providerAttemptCaller: policy.kind === 'durable' ? 'worker' : 'api',
+        signal: lifecycleAbortController.signal,
+        ...(deadlineAt !== undefined ? { providerSessionDeadlineAt: deadlineAt } : {}),
+        callerActor,
+        ...(turn.sourceEventId ? { causedByEventId: turn.sourceEventId } : {}),
+        validateLearningContent,
+      },
+      serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
+      toolNames: resolveDomainToolNames(surface),
+      taskKind: 'CopilotTask',
+      claimToolUseId: toolUseCorrelation.claim,
+      cancellationSignals,
+      beforeExecute:
+        policy.kind === 'durable'
+          ? async (tool) =>
+              (await policy.cancellation.beforeTool()) ??
+              finalizer.beforeDomainTool(tool) ??
+              proposalFlowGate.beforeExecute(tool) ??
+              budgetTracker.beforeExecute(tool)
+          : (tool) =>
+              finalizer.beforeDomainTool(tool) ??
+              proposalFlowGate.beforeExecute(tool) ??
+              budgetTracker.beforeExecute(tool),
+      ...(policy.kind === 'durable'
+        ? {
+            onExecuteStart: (tool: { name: string }) =>
+              policy.cancellation.onToolExecutionStarted(tool),
+            onExecuteSettled: () => policy.cancellation.onToolExecutionSettled(),
+          }
+        : {}),
+      interceptInput: (tool, args) => {
+        if (policy.kind === 'durable') {
+          return { args, truncationNote: budgetTracker.currentNotice(), softStop: null };
+        }
+        const { args: capped, contextBudget, softStop } = budgetTracker.capInput(tool.name, args);
+        return { args: capped, truncationNote: contextBudget, softStop };
+      },
+      onResult: (result) => {
+        proposalFlowGate.observe(result);
+        finalizer.observeDomainTool(result);
+      },
+      onToolComplete: (result) => {
+        void Promise.resolve(emitActivity(policy, { kind: 'tool_finished', ...result })).catch(
+          () => undefined,
+        );
+      },
+    });
+    const tavily = adapters.buildTavilyMcpServerFn();
+    const mcpServers: Record<string, SdkMcpServer | McpHttpServerConfig> = {
+      [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer,
+      ...(tavily ? { [TAVILY_MCP_SERVER_NAME]: tavily } : {}),
+    };
+    const baseAllowedTools = [
+      ...resolveMcpAllowedTools(surface),
+      ...(tavily ? TAVILY_MCP_ALLOWED_TOOLS : []),
+    ];
+    const subagentsEnabled = policy.subagentsEnabled ?? isCopilotSubagentEnabled();
+    const parentMaxTurns =
+      policy.kind === 'durable'
+        ? DURABLE_COPILOT_EXECUTION_BUDGET.maxIterations
+        : copilotTaskSpec.definition.budget.maxIterations;
+    const { allowedTools, spawnContract } = buildCopilotNativeResearchConfig({
+      baseAllowedTools,
+      enabled: subagentsEnabled,
+      parentMaxTurns,
+      onBudgetObservation: (observation) => {
+        void Promise.resolve(emitActivity(policy, { kind: 'spawn_budget', observation })).catch(
+          () => undefined,
+        );
+      },
+    });
+    const subtaskProjector = spawnContract ? createCopilotSubtaskProjector() : undefined;
+    const onTaskEvent = spawnContract
+      ? async (message: CopilotTaskLifecycleMessage) => {
+          const projected = subtaskProjector?.(message);
+          if (projected) await emitActivity(policy, { kind: 'subtask', event: projected });
+          // Visibility is not lifecycle ownership: hidden terminal messages still
+          // settle an admitted child; the persistence owner checks its identity.
+          if (turn.sourceEventId) {
+            await handleNativeSubagentTaskEvent(db, message, {
+              sessionId: turn.sessionId,
+              parentTurnEventId: turn.sourceEventId,
+              parentTaskRunId: turn.taskRunId,
+            }).catch((error) => {
+              console.error('[copilot-execution] native subagent projection failed', {
+                session_id: turn.sessionId,
+                parent_task_run_id: turn.taskRunId,
+                error,
+              });
+            });
+          }
+        }
+      : undefined;
+
+    let sdkHooks = toolUseCorrelation.prepend(
+      policy.kind === 'durable'
+        ? policy.cancellation.prependSdkHook(spawnContract?.hooks)
+        : spawnContract?.hooks,
+    );
+    sdkHooks = prependCopilotFinalizationHooks(finalizer.hooks, sdkHooks);
+    const skills = await adapters.resolveCopilotSkillsFn();
+    const contextDigest = copilotSessionContextDigest(input);
+    const resumeSessionId = policy.kind === 'foreground' ? policy.resumeSessionId : undefined;
+    const mode: 'cold' | 'resume' = resumeSessionId ? 'resume' : 'cold';
+    const compiledModelPrompt = {
+      text: compileCopilotModelInput(input, mode, {
+        includeSessionContext:
+          mode === 'cold' ||
+          !resumeSessionId ||
+          shouldDeliverCopilotSessionContext(resumeSessionId, contextDigest),
+      }),
+      codecVersion: COPILOT_TURN_CONTEXT_CODEC_VERSION,
+      mode,
+      contextDigest,
+    };
+    let observedSdkSessionId: string | undefined;
+    const sdkSession =
+      policy.kind === 'foreground'
+        ? {
+            persist: true as const,
+            ...(resumeSessionId ? { resume: resumeSessionId } : {}),
+            onSessionId: (sessionId: string) => {
+              observedSdkSessionId = sessionId;
+            },
+          }
+        : undefined;
+    const runnerContext: Parameters<typeof streamTaskCollecting>[2] = {
+      db,
+      taskRunId: turn.taskRunId,
+      signal: policy.kind === 'durable' ? policy.cancellation.signal : policy.signal,
+      lifecycleAbortController,
+      compiledModelPrompt,
+      mcpServers,
+      allowedTools: authoritativeReply ? [] : allowedTools,
+      hooks: sdkHooks,
+      ...(spawnContract
+        ? {
+            agents: spawnContract.agents,
+            canUseTool: spawnContract.canUseTool,
+            onTaskEvent,
+          }
+        : {}),
+      ...(skills ? { skills } : {}),
+      ...(policy.kind === 'foreground' && deadlineAt !== undefined
+        ? { providerSessionDeadlineAt: deadlineAt }
+        : {}),
+      ...(policy.kind === 'durable'
+        ? {
+            budgetOverride: {
+              maxIterations: DURABLE_COPILOT_EXECUTION_BUDGET.maxIterations,
+              timeoutMs: DURABLE_COPILOT_EXECUTION_BUDGET.timeoutMs,
+            },
+          }
+        : { sdkSession }),
+      onToolUse: (call) => {
+        if (!shouldEmitToolUseForCaller(call.toolName, DOMAIN_TOOL_MCP_SERVER_NAME, callerActor)) {
+          return;
+        }
+        void Promise.resolve(emitActivity(policy, { kind: 'tool_started', ...call })).catch(
+          () => undefined,
+        );
+      },
+    };
+    let candidateDeltaObserved = false;
+    const disposeSubagentCancellation = bindSubagentParentCancellation(db, {
+      sessionId: turn.sessionId,
+      parentTaskRunId: turn.taskRunId,
+      signals: cancellationSignals,
+    });
+
+    try {
+      let result: AgentResult | StreamResult;
+      let terminalText: string;
+      let partial = false;
+      let executionError: string | undefined;
+      if (policy.kind === 'foreground' && policy.delivery === 'single') {
+        result = await adapters.runAgentTaskFn('CopilotTask', input, runnerContext);
+        terminalText = result.text;
+      } else {
+        const streamResult = await adapters.streamTaskCollectingFn(
+          'CopilotTask',
+          input,
+          runnerContext,
+          (text) => {
+            if (text.length > 0) candidateDeltaObserved = true;
+          },
+        );
+        result = streamResult;
+        terminalText = streamResult.terminalText ?? '';
+        partial = streamResult.partial === true;
+        executionError = streamResult.error;
+        if (policy.kind === 'foreground' && resumeSessionId && partial) {
+          throw new Error('resumed Agent SDK session returned partial output');
+        }
+      }
+      const finalization = await finalizer.finalizeTerminal(terminalText);
+      return {
+        taskRunId: result.task_run_id,
+        finishReason: result.finishReason ?? 'unknown',
+        finalization,
+        partial,
+        ...(executionError ? { error: executionError } : {}),
+        candidateDeltaObserved,
+        ...(observedSdkSessionId ? { sdkSessionId: observedSdkSessionId } : {}),
+        contextDigest,
+      };
+    } finally {
+      await disposeSubagentCancellation();
+    }
+  };
+}
+
+export const executeCopilotTurn: ExecuteCopilotTurn = createCopilotExecutionOwner();

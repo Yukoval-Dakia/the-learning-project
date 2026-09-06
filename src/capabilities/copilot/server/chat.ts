@@ -16,21 +16,16 @@
 // Mirror tool-use events still flow via mcp-bridge (caller actor is agent).
 
 import { createHash } from 'node:crypto';
-import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { createId } from '@paralleldrive/cuid2';
-import { z } from 'zod';
-import {
-  reviewCopilotLearningContent,
-  validateCopilotLearningContent,
-} from '@/capabilities/copilot/server/content-validation';
 import { withCopilotConversationQueryMutex } from '@/capabilities/copilot/server/copilot-conversation-query-mutex';
 // YUK-575 (A1) — shared free-form run-input assembler (single execution point for
 // inline + durable copilot runs).
 import {
   type CopilotRunInput,
   assembleCopilotRunInput,
+  selectActorRef,
+  selectSurface,
 } from '@/capabilities/copilot/server/copilot-run-input';
-import { resolveDeterministicCorrectionContract } from '@/capabilities/copilot/server/correction-contract';
 // YUK-574 — session-anchored learner-state header (assemble-once + invalidation).
 // The Facet A (YUK-174) per-turn `proposal_feedback` digest is MIGRATED into this
 // same session-anchored block (folded in, same invalidation rules, proposal
@@ -62,83 +57,50 @@ import {
 // YUK-267 (C2) — the SAME session-scoped turn reader the drawer replay uses. The
 // free-form run input reuses it to assemble conversation_history (防循环 ①: history
 // = persisted ask原文 + reply正文 only). NO new schema, NO new read source.
-// YUK-307 — CopilotPrimaryView (+ the ephemeral_html cap) lives in turns.ts (the
-// payload-shape home; same direction as CopilotTurnSkillTurn — chat.ts → turns.ts, // never back). The zod parse schema lives HERE at the extraction point.
+// YUK-307 — CopilotPrimaryView lives in turns.ts; extraction/finalization is owned
+// by reply-finalization and reused here for legacy reply persistence.
 import {
   type CopilotPrimaryView,
-  EPHEMERAL_HTML_REF_MAX_CHARS,
   getRecentCopilotTurns,
 } from '@/capabilities/copilot/server/turns';
 import type { Db, Tx } from '@/db/client';
 import type { WriteEventInput } from '@/kernel/events';
 import { writeEvent } from '@/kernel/events';
-import {
-  DOMAIN_TOOL_MCP_SERVER_NAME,
-  type DomainToolSurface,
-  resolveDomainToolNames,
-  resolveMcpAllowedTools,
-} from '@/kernel/tools/allowlists';
-import { resolveContextBudget } from '@/kernel/tools/budgets';
-import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
-import type { ValidateLearningContentFn } from '@/kernel/tools/types';
-// YUK-198 — Tavily remote MCP (web grounding) for the Copilot surface only.
-// Gated on TAVILY_API_KEY: when absent, buildTavilyMcpServer() returns null and
-// the Copilot run is byte-for-byte unchanged (no tavily server, no extra tools).
-import {
-  TAVILY_MCP_ALLOWED_TOOLS,
-  TAVILY_MCP_SERVER_NAME,
-  buildTavilyMcpServer,
-} from '@/server/ai/mcp/tavily';
-import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
-import {
-  type SdkMcpServer,
-  type ToolExecutionResultObservation,
-  buildMcpServerFromRegistry,
-  createToolUseCorrelation,
-  shouldEmitToolUseForCaller,
-} from '@/server/ai/tools/mcp-bridge';
+import type { DomainToolSurface } from '@/kernel/tools/allowlists';
 // AF S3a / YUK-203 U3 — durable conversation envelope. runCopilotChat now
 // find-or-creates a learning_session(type='conversation') so turns persist and
 // the drawer can replay-last-N (AF spec §1.5 + §7 S3a). Session ownership stays
 // in src/server/session/conversation.ts (ADR-0005 single-owner).
 import { Conversation } from '@/server/session';
-// YUK-284 (C2) — cross-subject Copilot dialogue-methodology Agent Skill resolver.
-// resolveCopilotSkills() returns ['copilot'] when the shared SKILL.md exists, else
-// undefined (降级链: free-form ctx omits skills → runner skills ?? [] → systemPrompt
-// 散文兜底). Only the free-form CopilotTask token loop loads it; the behavior-pack
-// (teaching/solve/quiz) service-call paths do NOT.
-import { resolveCopilotSkills } from '@/subjects/copilot-skills';
-import { copilotTaskSpec } from '../tasks/agent';
 import type {
   CopilotChatRequestT,
   CopilotChatTriggerKind,
   CopilotSkillContextT,
 } from './chat-contracts';
 import {
+  type CopilotExecutionActivity,
+  type ExecuteCopilotTurn,
+  executeCopilotTurn,
+} from './copilot-execution';
+import {
   clearCopilotSessionContextDelivery,
-  copilotSessionContextDigest,
   markCopilotSessionContextDelivered,
-  shouldDeliverCopilotSessionContext,
 } from './live-session-context';
-import { COPILOT_TURN_CONTEXT_CODEC_VERSION, compileCopilotModelInput } from './live-turn-context';
 import { selectAsksWithMaterializingToolCall } from './materializing-tools';
-import { createCopilotProposalFlowGate } from './proposal-flow-gate';
 import {
   type CopilotReplyFinalizationReceipt,
-  createCopilotReplyFinalizer,
-  prependCopilotFinalizationHooks,
+  type PreparedCopilotReply,
+  extractPrimaryView,
 } from './reply-finalization';
-import { bindSubagentParentCancellation, handleNativeSubagentTaskEvent } from './subagent-mailbox';
-import {
-  type CopilotSubtaskEvent,
-  type CopilotTaskLifecycleMessage,
-  type SpawnBudgetObservation,
-  buildCopilotNativeResearchConfig,
-  createCopilotSubtaskProjector,
-  isCopilotSubagentEnabled,
-} from './subagents';
+import type { CopilotSubtaskEvent, SpawnBudgetObservation } from './subagents';
 
 export * from './chat-contracts';
+export type { PreparedCopilotReply } from './reply-finalization';
+export {
+  CopilotPrimaryViewSchema as PrimaryViewSchema,
+  PRIMARY_VIEW_MARKER_START,
+  extractPrimaryView,
+} from './reply-finalization';
 
 // E4 (TeA_E) — the provenance + revert-anchor fields shared by both CopilotChatResult return sites
 // (the skill-turn path and the free-form path). `user_ask_event_id` is always carried (provenance);
@@ -171,141 +133,6 @@ export interface CopilotSkillTurn {
     choices_md: string[] | null;
   };
   suggested_next?: 'continue' | 'end';
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// YUK-307 — primary_view hero nomination (presentation layer §2.3, RULED).
-//
-// The copilot MODEL nominates the hero deliverable of a turn by appending an
-// HTML-comment marker as the LAST output of its reply (prompt contract in
-// registry.ts CopilotTask.systemPrompt):
-//
-//   <!--primary_view:{"source":"artifact","ref":{"kind":"question","id":"q_x"}}-->
-//
-// Why a reply-tail marker and not...
-//   • a DomainTool — design doc §2.3 verbatim: 「不是 DomainTool——呈现不是
-//     domain mutation」.
-//   • SDK outputFormat — the 2026-06-08 structured-output audit rules CopilotTask
-//     plain-text-ok / 保持现状; forcing whole-reply JSON would destroy the
-//     YUK-266 streaming prose deltas, and mimo-endpoint honor is unproven (the
-//     dual-path fallback in src/capabilities/practice/jobs/variant_verify.ts ~:102-125
-//     exists precisely because of that).
-// The marker is parsed + STRIPPED server-side at the single reply convergence
-// point (extractPrimaryView below), so reply_md / the API reply / replayed
-// history NEVER contain it. Validation is lenient: a missing / garbled marker
-// degrades to "no hero" (absent field) and never fails the turn.
-//
-// YUK-267 红线 — primary_view is REPLY METADATA (a fact about the reply), so
-// persisting it on the copilot_reply payload is fine; it must never re-enter the
-// prompt-assembly path. It cannot: assembleConversationHistory strips every turn
-// to {role, text} (防循环 ①, structural), and the marker text itself is removed
-// from reply_md BEFORE persistence (text channel clean). 防循环专项 tests pin both.
-
-const PrimaryViewRefSchema = z.object({
-  kind: z.string().min(1).max(40),
-  id: z.string().min(1).max(120),
-});
-export const PrimaryViewSchema = z.discriminatedUnion('source', [
-  z.object({ source: z.literal('tool_result'), ref: PrimaryViewRefSchema }),
-  z.object({ source: z.literal('artifact'), ref: PrimaryViewRefSchema }),
-  z.object({
-    source: z.literal('ephemeral_html'),
-    // The ref string IS the inline HTML body (bounded; see turns.ts phase-deferred
-    // note). An HTML payload containing `-->` is handled by the tail-anchored
-    // GREEDY pass in extractPrimaryView (PR #375 review MEDIUM-1) — it swallows
-    // inner `-->` for the end-of-reply marker; only a non-tail marker with an
-    // embedded `-->` still mis-frames → lenient absent + warn.
-    ref: z.string().min(1).max(EPHEMERAL_HTML_REF_MAX_CHARS),
-  }),
-]);
-
-// The marker-start token. Doubles as the streaming tail-filter trigger: the
-// prompt instructs the model to emit the marker on its own line as the LAST
-// output, so suppressing the live stream from this token onward loses nothing.
-export const PRIMARY_VIEW_MARKER_START = '<!--primary_view';
-const PRIMARY_VIEW_MARKER_RE = /<!--primary_view:([\s\S]*?)-->/g;
-
-/**
- * YUK-307 — parse + strip the primary_view marker from a collected reply text.
- * Runs ONCE at the JSON/streaming convergence point. Last VALID marker wins;
- * every marker occurrence is stripped regardless of validity (the marker is an
- * instruction, not content). Lenient: malformed JSON / shape → absent + one
- * console.warn; the turn never fails on this field.
- */
-export function extractPrimaryView(
-  text: string,
-  opts: { taskRunId: string },
-): { text: string; primaryView?: CopilotPrimaryView } {
-  let primaryView: CopilotPrimaryView | undefined;
-  let sawMarker = false;
-  let sawMalformed = false;
-
-  const tryParse = (jsonText: string): CopilotPrimaryView | undefined => {
-    try {
-      const parsed = PrimaryViewSchema.safeParse(JSON.parse(jsonText));
-      if (parsed.success) return parsed.data;
-    } catch {
-      // fall through to the malformed flag below
-    }
-    sawMalformed = true;
-    return undefined;
-  };
-
-  // Pass 1 — tail-anchored GREEDY parse of the LAST marker (PR #375 review
-  // MEDIUM-1). The prompt pins the marker as the reply's last output, so for
-  // that final marker a greedy match to the trailing `-->` at EOF safely
-  // swallows `-->` sequences INSIDE the payload (e.g. HTML comments in an
-  // ephemeral_html body) that would mis-frame the lazy regex — and removing
-  // the whole region guarantees no payload residue leaks into reply_md.
-  // Anchored at lastIndexOf (NOT a bare greedy regex): a greedy match from an
-  // EARLIER marker would swallow the prose between two markers.
-  let working = text;
-  const lastStart = working.lastIndexOf(PRIMARY_VIEW_MARKER_START);
-  if (lastStart !== -1) {
-    const tail = working.slice(lastStart).match(/^<!--primary_view:([\s\S]*)-->\s*$/);
-    if (tail) {
-      sawMarker = true;
-      primaryView = tryParse(tail[1] as string);
-      working = working.slice(0, lastStart);
-    }
-  }
-
-  // Pass 2 — lazy GLOBAL strip of any earlier occurrences. Among these the last
-  // valid one wins only when the tail marker was absent/invalid, preserving
-  // overall last-VALID-wins in document order.
-  const earlier: CopilotPrimaryView[] = [];
-  const stripped = working.replace(PRIMARY_VIEW_MARKER_RE, (_match, jsonText: string) => {
-    sawMarker = true;
-    const parsed = tryParse(jsonText);
-    if (parsed) earlier.push(parsed);
-    return '';
-  });
-  if (!primaryView && earlier.length > 0) {
-    primaryView = earlier[earlier.length - 1];
-  }
-
-  // Pass 3 — unterminated-marker guard (PR #375 review MEDIUM-2). A marker with
-  // no closing `-->` matches neither pass; concrete trigger: the YUK-266 stream
-  // partial-degrade persists text aborted MID-marker. Truncate from the last
-  // surviving start-token — mirrors the live tail-filter, which also suppresses
-  // from the token onward, so the visible stream and the persisted reply agree.
-  let cleaned = stripped;
-  const dangling = cleaned.lastIndexOf(PRIMARY_VIEW_MARKER_START);
-  if (dangling !== -1) {
-    sawMarker = true;
-    sawMalformed = true;
-    cleaned = cleaned.slice(0, dangling);
-  }
-
-  if (sawMalformed) {
-    console.warn('[runCopilotChat] malformed primary_view marker; treating as absent', {
-      task_run_id: opts.taskRunId,
-    });
-  }
-  // Tidy the tail left by stripping an end-of-reply marker; untouched when no
-  // marker was present (byte-compat with the pre-YUK-307 reply).
-  cleaned = sawMarker ? cleaned.trimEnd() : cleaned;
-  return primaryView ? { text: cleaned, primaryView } : { text: cleaned };
 }
 
 export interface CopilotChatResult {
@@ -404,13 +231,6 @@ export interface WriteCopilotReplyResult {
   /** 剥掉 primary_view marker 后的终稿（持久化 / 返回 / 重放历史都用这份）。 */
   cleanedReply: string;
   /** 模型 nominate 的 hero（无则 undefined）。 */
-  primaryView?: CopilotPrimaryView;
-}
-
-export interface PreparedCopilotReply {
-  /** Exact public/persisted bytes after reply-tail metadata removal. */
-  text: string;
-  /** Metadata extracted from the same raw candidate, retained only when selected. */
   primaryView?: CopilotPrimaryView;
 }
 
@@ -523,50 +343,6 @@ export async function writeCopilotReply(
   return primaryView ? { replyEventId, cleanedReply, primaryView } : { replyEventId, cleanedReply };
 }
 
-type RunAgentTaskFn = (
-  kind: string,
-  input: unknown,
-  ctx: Parameters<typeof runAgentTask>[2],
-) => Promise<{ task_run_id: string; text: string; structured_output?: unknown }>;
-// YUK-266 (C1) — swappable streaming agent runner. Streams text deltas to
-// `onDelta` then resolves the full StreamCollectResult (text + task_run_id + the
-// optional partial/error degrade flags). Defaults to streamTaskCollecting; unit
-// tests inject a vi.fn that calls onDelta then resolves a fixture so the {}-stub
-// db is never touched. Mirrors RunAgentTaskFn's ctx shape + adds the onDelta arg.
-type CopilotStreamResult = Pick<
-  StreamCollectResult,
-  'task_run_id' | 'text' | 'terminalText' | 'partial' | 'error'
->;
-type StreamAgentTaskFn = (
-  kind: string,
-  input: unknown,
-  ctx: {
-    db: Db;
-    mcpServers?: Record<string, SdkMcpServer | McpHttpServerConfig>;
-    allowedTools?: string[];
-    signal?: AbortSignal;
-    lifecycleAbortController?: AbortController;
-    /** Caller-owned id shared with the in-process MCP tool log. */
-    taskRunId?: string;
-    providerSessionDeadlineAt?: number;
-    // YUK-284 (C2) — see RunAgentTaskFn.ctx.skills. Same forward to the streaming
-    // runner so the free-form streaming path loads the copilot SKILL.md too.
-    skills?: string[];
-    agents?: Parameters<typeof streamTaskCollecting>[2]['agents'];
-    hooks?: Parameters<typeof streamTaskCollecting>[2]['hooks'];
-    canUseTool?: Parameters<typeof streamTaskCollecting>[2]['canUseTool'];
-    onTaskEvent?: Parameters<typeof streamTaskCollecting>[2]['onTaskEvent'];
-    onToolUse?: Parameters<typeof streamTaskCollecting>[2]['onToolUse'];
-    sdkSession?: Parameters<typeof streamTaskCollecting>[2]['sdkSession'];
-    compiledModelPrompt?: Parameters<typeof streamTaskCollecting>[2]['compiledModelPrompt'];
-  },
-  onDelta: (text: string) => void,
-) => Promise<CopilotStreamResult>;
-type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
-// YUK-198 — swappable Tavily MCP builder. Defaults to the env-gated
-// buildTavilyMcpServer; unit tests inject a fixture (or null) instead of
-// touching process.env.
-type BuildTavilyMcpServerFn = () => McpHttpServerConfig | null;
 // Accepts both Db and Tx so the skill path can call write() inside a db.transaction.
 type WriteEventFn = (db: Db | Tx, input: WriteEventInput) => Promise<string>;
 // AF S3a / YUK-203 U3 — swappable conversation find-or-create (unit tests inject
@@ -591,16 +367,8 @@ type ResolveLearnerStateHeaderFn = (
 // construction (turns.ts filters by the current reusable conversation).
 type LoadHistoryFn = typeof getRecentCopilotTurns;
 export interface CopilotChatDeps {
-  runAgentTaskFn?: RunAgentTaskFn;
-  // YUK-266 (C1) — defaults to streamTaskCollecting. Used ONLY by
-  // runCopilotChatStreaming's free-form path; runCopilotChat (non-streaming)
-  // ignores it. Unit tests inject a vi.fn so the {}-stub db is never touched.
-  streamAgentTaskFn?: StreamAgentTaskFn;
-  buildMcpServerFn?: BuildMcpServerFn;
-  // YUK-198 — defaults to buildTavilyMcpServer (reads TAVILY_API_KEY). Returns
-  // null when unconfigured → Tavily is not registered and no extra allowedTools
-  // are added (back-compat no-op).
-  buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
+  /** The only free-form AI seam: callers provide product intent, not SDK wiring. */
+  executeCopilotTurnFn?: ExecuteCopilotTurn;
   writeEventFn?: WriteEventFn;
   // YUK-574 — defaults to resolveLearnerStateHeader. The unit test injects a
   // fixture so the {}-stub db is never touched. It supplies BOTH the session-
@@ -621,12 +389,6 @@ export interface CopilotChatDeps {
   runTeachingSkillFn?: typeof runTeachingSkill;
   // PR #305 review comment #1 — swappable for unit tests (stub tx has no .select).
   materializeAskCheckFn?: typeof materializeAskCheckQuestion;
-  // YUK-284 (C2) — swappable Copilot skill resolver. Defaults to resolveCopilotSkills
-  // (reads <cwd>/src/subjects/_shared/skills/copilot/SKILL.md). Unit tests inject
-  // () => ['copilot'] (命中) or () => undefined (降级) so they don't depend on disk.
-  resolveCopilotSkillsFn?: typeof resolveCopilotSkills;
-  /** Test/ops seam for the default-on COPILOT_SUBAGENT_ENABLED kill switch. */
-  copilotSubagentEnabled?: boolean;
   /** Sanitized task lifecycle sink used by inline SSE; never receives SDK prose/reasoning. */
   onSubtaskEvent?: (event: CopilotSubtaskEvent) => Promise<void> | void;
   /** YUK-457 — per-call tool-use sink for inline SSE rendering. Receives only the sanitized
@@ -663,14 +425,6 @@ export interface CopilotChatDeps {
 // requirement). This file now routes free-form assembly through
 // `assembleCopilotRunInput`.
 
-function selectSurface(triggeredBy: CopilotChatTriggerKind): DomainToolSurface {
-  return triggeredBy === 'chip' ? 'copilot_user_suggested_mistake_action' : 'copilot';
-}
-
-function selectActorRef(triggeredBy: CopilotChatTriggerKind): string {
-  return triggeredBy === 'chip' ? 'agent:copilot_chip' : 'agent:copilot';
-}
-
 // YUK-266/YUK-832 — streaming options threaded through the shared chat impl.
 // Free-form candidate chunks are buffered until terminal finalization + reply
 // persistence, then the stable reply is emitted once.
@@ -688,10 +442,7 @@ async function runCopilotChatImpl(
   streaming: CopilotStreamOptions | undefined,
 ): Promise<CopilotChatResult> {
   const now = deps.now?.() ?? new Date();
-  const run = deps.runAgentTaskFn ?? runAgentTask;
-  const streamRun = deps.streamAgentTaskFn ?? streamTaskCollecting;
-  const buildMcpServer = deps.buildMcpServerFn ?? buildMcpServerFromRegistry;
-  const buildTavily = deps.buildTavilyMcpServerFn ?? buildTavilyMcpServer;
+  const execute = deps.executeCopilotTurnFn ?? executeCopilotTurn;
   const write = deps.writeEventFn ?? writeEvent;
   // YUK-574 — the session-anchored learner-state resolver (assemble-once +
   // invalidation). Supplies the pinned header + the migrated Facet A digest, so
@@ -708,13 +459,6 @@ async function runCopilotChatImpl(
   // ADR-0031 / YUK-304 (lane B) — quiz seams removed: no pre-dispatch, no quiz
   // service out-port; quiz turns run the free-form CopilotTask loop below.
   const materializeAskCheck = deps.materializeAskCheckFn ?? materializeAskCheckQuestion;
-  // YUK-284 (C2) — resolve the Copilot skill whitelist ONCE (one fs.access), reused
-  // by both the streaming and non-streaming free-form ctx below. undefined when the
-  // shared SKILL.md is absent → free-form ctx omits skills (spread-when-present) →
-  // byte-for-byte the pre-C2 ctx shape. The behavior-pack paths never touch this.
-  const resolveSkills = deps.resolveCopilotSkillsFn ?? resolveCopilotSkills;
-  const copilotSkills = await resolveSkills();
-
   const surface = selectSurface(req.triggered_by);
   const actorRef = selectActorRef(req.triggered_by);
   const taskRunId = `copilot_task_${createId()}`;
@@ -1036,170 +780,6 @@ async function runCopilotChatImpl(
     });
   }
 
-  // P5.1 / YUK-143 — per-message context-budget throttle. One tracker lives for
-  // the duration of THIS user message's agent turn (created here, discarded
-  // when runCopilotChat returns), so the bound sums across all the message's
-  // tool calls (spec §3.4 "tracked"). It mirrors the per-run proposalWrites
-  // accumulator Dreaming/Coach hold. Both chat + chip surfaces run the same
-  // user-facing CopilotTask, so both get the Copilot budget.
-  const budgetTracker = new ContextBudgetTracker(resolveContextBudget(surface));
-  const proposalFlowGate = createCopilotProposalFlowGate();
-  let beforeFinalizerDomainTool = (_tool: { name: string; effect: 'read' | 'propose' | 'write' }) =>
-    undefined as string | undefined;
-  let observeFinalizerDomainTool = (_result: ToolExecutionResultObservation) => {};
-  // The MCP server is constructed before the central runner creates its
-  // lifecycle. Share this controller with both sides so timeout, lease fencing,
-  // and request cancellation abort nested generation work before the parent permit
-  // is released. The request signal alone is insufficient: non-streaming calls
-  // have none, and the runner's execution timeout is an internal lifecycle event.
-  const lifecycleAbortController = new AbortController();
-  // YUK-457 — one actor for the bridge ctx, the persisted mirrors, AND the
-  // live tool_use gate below: all three must resolve the same mirror policy.
-  const callerActor = { kind: 'agent' as const, ref: actorRef };
-  const toolUseCorrelation = createToolUseCorrelation(DOMAIN_TOOL_MCP_SERVER_NAME);
-  const validationTaskContext = (
-    callCtx: Parameters<Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn']>[2],
-  ) => ({
-    ...callCtx,
-    db,
-    signal: lifecycleAbortController.signal,
-    lifecycleAbortController,
-    parentTaskRunId: taskRunId,
-    ...(deps.providerSessionDeadlineAt !== undefined
-      ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
-      : {}),
-  });
-  const runValidationTask: Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn'] =
-    async (kind, input, callCtx) => {
-      const ctx = validationTaskContext(callCtx);
-      switch (kind) {
-        case 'QuizVerifyTask':
-          return run('QuizVerifyTask', input, ctx);
-        case 'SolutionGenerateTask':
-          return run('SolutionGenerateTask', input, ctx);
-        case 'SemanticJudgeTask':
-          return run('SemanticJudgeTask', input, ctx);
-        case 'TeachingQualityTask':
-          return run('TeachingQualityTask', input, ctx);
-        default:
-          throw new Error(`unsupported learning-content validation task: ${kind}`);
-      }
-    };
-  const validateLearningContent: ValidateLearningContentFn = (content) =>
-    validateCopilotLearningContent(content, {
-      db,
-      runTaskFn: runValidationTask,
-    });
-
-  const mcpServer = buildMcpServer({
-    ctx: {
-      db,
-      sessionId,
-      taskRunId,
-      providerAttemptCaller: 'api',
-      signal: lifecycleAbortController.signal,
-      ...(deps.providerSessionDeadlineAt !== undefined
-        ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
-        : {}),
-      callerActor,
-      causedByEventId,
-      validateLearningContent,
-    },
-    serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
-    toolNames: resolveDomainToolNames(surface),
-    taskKind: 'CopilotTask',
-    claimToolUseId: toolUseCorrelation.claim,
-    cancellationSignals: [
-      { signal: lifecycleAbortController.signal, requestedBy: 'system' },
-      ...(streaming?.signal ? [{ signal: streaming.signal, requestedBy: 'user' as const }] : []),
-    ],
-    // Tool-call ceiling: soft-stop only at the YUK-290 hard watermark (same
-    // mechanism as Dreaming/Coach's proposal cap; the model reads + stops).
-    beforeExecute: (tool) =>
-      beforeFinalizerDomainTool(tool) ??
-      proposalFlowGate.beforeExecute(tool) ??
-      budgetTracker.beforeExecute(tool),
-    // Two-tier accounting: warning leaves args intact and informs the model;
-    // only the materially higher hard ceiling caps or soft-stops.
-    interceptInput: (tool, args) => {
-      const { args: capped, contextBudget, softStop } = budgetTracker.capInput(tool.name, args);
-      // FIX 1 (YUK-143): when the dimension is exhausted, propagate the
-      // soft-stop string so the bridge skips execute (graceful stop, never a
-      // limit:0 → Zod throw). Otherwise pass the (possibly capped) args + note.
-      return { args: capped, truncationNote: contextBudget, softStop };
-    },
-    onResult: (result) => {
-      proposalFlowGate.observe(result);
-      observeFinalizerDomainTool(result);
-    },
-    onToolComplete: deps.onToolResultEvent,
-  });
-
-  // YUK-198 — optionally fold in the remote Tavily MCP (web grounding) for the
-  // Copilot surface. Env-gated: when TAVILY_API_KEY is unset, buildTavily()
-  // returns null and both the mcpServers map and allowedTools are identical to
-  // the pre-YUK-198 behaviour (no tavily server, no tavily tools). Only Copilot
-  // gets this — Dreaming / Coach / other cron handlers are untouched (they must
-  // not reach the network).
-  const tavilyCfg = buildTavily();
-  const mcpServers: Record<string, SdkMcpServer | McpHttpServerConfig> = {
-    [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer,
-    ...(tavilyCfg ? { [TAVILY_MCP_SERVER_NAME]: tavilyCfg } : {}),
-  };
-  const baseAllowedTools = [
-    ...resolveMcpAllowedTools(surface),
-    ...(tavilyCfg ? TAVILY_MCP_ALLOWED_TOOLS : []),
-  ];
-  const copilotSubagentEnabled = deps.copilotSubagentEnabled ?? isCopilotSubagentEnabled();
-  const parentMaxTurns = copilotTaskSpec.definition.budget.maxIterations;
-  const { allowedTools, spawnContract } = buildCopilotNativeResearchConfig({
-    baseAllowedTools,
-    enabled: copilotSubagentEnabled,
-    parentMaxTurns,
-    onBudgetObservation: deps.onSpawnBudgetObservation,
-  });
-  const subtaskProjector = copilotSubagentEnabled ? createCopilotSubtaskProjector() : undefined;
-  let sdkHooks = spawnContract
-    ? toolUseCorrelation.prepend(spawnContract.hooks)
-    : toolUseCorrelation.prepend();
-  const handleTaskEvent = async (message: CopilotTaskLifecycleMessage) => {
-    if (subtaskProjector) {
-      const projected = subtaskProjector(message);
-      if (projected) {
-        try {
-          await deps.onSubtaskEvent?.(projected);
-        } catch (error) {
-          console.error('[copilot] subtask event projection to SSE failed', {
-            session_id: sessionId,
-            parent_task_run_id: taskRunId,
-            subtask_id: projected.subtask_id,
-            error,
-          });
-        }
-      }
-    }
-    if (causedByEventId) {
-      await handleNativeSubagentTaskEvent(db, message, {
-        sessionId,
-        parentTurnEventId: causedByEventId,
-        parentTaskRunId: taskRunId,
-      }).catch((error) => {
-        console.error('[copilot] native subagent projection failed', {
-          session_id: sessionId,
-          parent_task_run_id: taskRunId,
-          error,
-        });
-      });
-    }
-  };
-  const foregroundSubagentCtx = spawnContract
-    ? {
-        agents: spawnContract.agents,
-        canUseTool: spawnContract.canUseTool,
-        onTaskEvent: handleTaskEvent,
-      }
-    : {};
-
   // YUK-575 (A1) — the free-form run input assembled by the shared assembler above
   // (before the ask write, read-before-write). When `freeFormRunInput` is undefined
   // it is the non-teaching / non-quiz `skill_context` 降级 case (e.g. a legacy
@@ -1207,7 +787,7 @@ async function runCopilotChatImpl(
   // byte-parity with the pre-YUK-575 code, which left `conversationHistory` / the
   // learner-state at their empty defaults for this path — build a minimal run input
   // with empty history + empty proposal_feedback (no session memory injected).
-  let runInput: CopilotRunInput = freeFormRunInput ?? {
+  const runInput: CopilotRunInput = freeFormRunInput ?? {
     surface,
     triggered_by: req.triggered_by,
     user_message: req.user_message,
@@ -1226,309 +806,181 @@ async function runCopilotChatImpl(
     },
     ...(req.ambient_context ? { ambient_context: req.ambient_context } : {}),
   };
-  let implicitCorrectionClarification: string | undefined;
-  const correctionResolution = resolveDeterministicCorrectionContract(
-    req.user_message,
-    runInput.correction_contract,
-  );
-  if (correctionResolution.kind === 'clarify') {
-    implicitCorrectionClarification = correctionResolution.reply;
-  } else {
-    runInput = { ...runInput, correction_contract: correctionResolution.contract };
-  }
-  const replyFinalizer = createCopilotReplyFinalizer({
-    rootTaskRunId: taskRunId,
-    correctionContract: runInput.correction_contract,
-    userContextText: [
-      req.user_message,
-      ...runInput.validator_context_history.map((turn) => turn.text),
-    ].join('\n'),
-    ...(implicitCorrectionClarification
-      ? {
-          authoritativeReply: {
-            reply: implicitCorrectionClarification,
-            correction: 'clarify' as const,
-          },
-        }
-      : {}),
-    validateLearningContent: async (text, contextText, validationTaskRunId, primaryView) =>
-      reviewCopilotLearningContent(text, contextText, validationTaskRunId, {
-        db,
-        runTaskFn: runValidationTask,
-        ...(primaryView?.source === 'ephemeral_html'
-          ? { additionalVisibleText: primaryView.ref }
-          : {}),
-      }),
-  });
-  beforeFinalizerDomainTool = replyFinalizer.beforeDomainTool;
-  observeFinalizerDomainTool = replyFinalizer.observeDomainTool;
-  sdkHooks = prependCopilotFinalizationHooks(replyFinalizer.hooks, sdkHooks);
-  const agentAllowedTools = implicitCorrectionClarification ? [] : allowedTools;
-  const finalCanUseTool = spawnContract?.canUseTool;
-  let pendingAgentSdkSessionId: string | undefined;
-  const foregroundSdkSession = {
-    persist: true as const,
-    ...(resumeAgentSdkSessionId ? { resume: resumeAgentSdkSessionId } : {}),
-    onSessionId: (agentSdkSessionId: string) => {
-      pendingAgentSdkSessionId = agentSdkSessionId;
-    },
-  };
-  const persistPendingAgentSdkSessionId = async () => {
-    if (pendingAgentSdkSessionId) {
-      await setAgentSdkSessionId(db, sessionId, pendingAgentSdkSessionId);
+
+  const observeExecution = async (activity: CopilotExecutionActivity) => {
+    switch (activity.kind) {
+      case 'subtask':
+        await deps.onSubtaskEvent?.(activity.event);
+        return;
+      case 'tool_started':
+        deps.onToolUseEvent?.({
+          toolName: activity.toolName,
+          input: activity.input,
+          ...(activity.toolUseId ? { toolUseId: activity.toolUseId } : {}),
+        });
+        return;
+      case 'tool_finished':
+        deps.onToolResultEvent?.({
+          toolName: activity.toolName,
+          input: activity.input,
+          summary: activity.summary,
+          ...(activity.errorReason ? { errorReason: activity.errorReason } : {}),
+        });
+        return;
+      case 'spawn_budget':
+        deps.onSpawnBudgetObservation?.(activity.observation);
     }
   };
-  const sessionContextDigest = copilotSessionContextDigest(runInput);
-
-  // YUK-266/YUK-832 — the free-form path runs the CopilotTask token loop. The
-  // streaming runner still collects original chunk boundaries and gracefully
-  // resolves partial output, but no candidate prose reaches the client until the
-  // terminal-envelope finalization and reply persistence below succeed.
-  let replyText: string = '';
-  let replyTerminalText: string = '';
-  let replyRunId: string = '';
-  let streamError: string | undefined;
-  const disposeSubagentCancellation = bindSubagentParentCancellation(db, {
-    sessionId,
-    parentTaskRunId: taskRunId,
-    signals: [
-      { signal: lifecycleAbortController.signal, requestedBy: 'system' },
-      ...(streaming?.signal ? [{ signal: streaming.signal, requestedBy: 'user' as const }] : []),
-    ],
-  });
+  let execution: Awaited<ReturnType<ExecuteCopilotTurn>>;
   try {
-    const runForegroundCopilotAgent = async () => {
-      const modelInput = compileCopilotModelInput(
-        runInput,
-        resumeAgentSdkSessionId ? 'resume' : 'cold',
+    execution = await withConversationQueryMutex(sessionId, () =>
+      execute(
+        db,
         {
-          includeSessionContext:
-            !resumeAgentSdkSessionId ||
-            shouldDeliverCopilotSessionContext(resumeAgentSdkSessionId, sessionContextDigest),
-        },
-      );
-      const compiledModelPrompt = {
-        text: modelInput,
-        codecVersion: COPILOT_TURN_CONTEXT_CODEC_VERSION,
-        mode: resumeAgentSdkSessionId ? ('resume' as const) : ('cold' as const),
-        contextDigest: sessionContextDigest,
-      };
-      if (streaming) {
-        const streamResult = await streamRun(
-          'CopilotTask',
-          runInput,
-          {
-            db,
-            mcpServers,
-            allowedTools: agentAllowedTools,
-            taskRunId,
-            signal: streaming.signal,
-            lifecycleAbortController,
-            hooks: sdkHooks,
-            sdkSession: foregroundSdkSession,
-            compiledModelPrompt,
-            ...(deps.providerSessionDeadlineAt !== undefined
-              ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
-              : {}),
-            ...(deps.onToolUseEvent
-              ? {
-                  // YUK-457 — the runner emits raw SDK block names (mcp__loom__*)
-                  // before execution; gate the live card on the SAME mirror-policy
-                  // resolution that backs the persisted mirror + done-state card, so
-                  // a 'never'-mirror tool (search_memory_facts) opens no card that
-                  // would vanish on refresh.
-                  onToolUse: (call: {
-                    toolName: string;
-                    input: Record<string, unknown>;
-                    toolUseId?: string;
-                  }) => {
-                    if (
-                      !shouldEmitToolUseForCaller(
-                        call.toolName,
-                        DOMAIN_TOOL_MCP_SERVER_NAME,
-                        callerActor,
-                      )
-                    )
-                      return;
-                    deps.onToolUseEvent?.(call);
-                  },
-                }
-              : {}),
-            // YUK-284 (C2) — spread-when-present: when the copilot SKILL.md is absent
-            // (copilotSkills === undefined) the ctx omits `skills` entirely, byte-for-byte
-            // the pre-C2 shape (runner ctx.skills ?? [] unchanged → no regression).
-            ...(copilotSkills ? { skills: copilotSkills } : {}),
-            ...foregroundSubagentCtx,
-            ...(finalCanUseTool ? { canUseTool: finalCanUseTool } : {}),
-          },
-          // Buffer every candidate delta until terminal Markdown and semantic gates settle;
-          // candidate delta here so a later read tool cannot make already-emitted
-          // prose impossible to retract. The finalized, marker-cleaned reply is
-          // emitted once only after durable conversation persistence succeeds.
-          () => {},
-        );
-        replyText = streamResult.text;
-        replyTerminalText = streamResult.terminalText ?? '';
-        replyRunId = streamResult.task_run_id;
-        if (streamResult.partial) {
-          if (resumeAgentSdkSessionId) {
-            throw new Error('resumed Agent SDK session returned partial output');
-          }
-          streamError = streamResult.error;
-        }
-      } else {
-        const result = await run('CopilotTask', runInput, {
-          db,
-          mcpServers,
-          allowedTools: agentAllowedTools,
+          input: runInput,
+          sessionId,
           taskRunId,
-          lifecycleAbortController,
-          sdkSession: foregroundSdkSession,
-          compiledModelPrompt,
+          ...(causedByEventId ? { sourceEventId: causedByEventId } : {}),
+        },
+        {
+          kind: 'foreground',
+          delivery: streaming ? 'stream' : 'single',
+          ...(streaming?.signal ? { signal: streaming.signal } : {}),
           ...(deps.providerSessionDeadlineAt !== undefined
-            ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
+            ? { deadlineAt: deps.providerSessionDeadlineAt }
             : {}),
-          hooks: sdkHooks,
-          // YUK-284 (C2) — see streaming branch above (spread-when-present).
-          ...(copilotSkills ? { skills: copilotSkills } : {}),
-          ...foregroundSubagentCtx,
-          ...(finalCanUseTool ? { canUseTool: finalCanUseTool } : {}),
-        });
-        replyText = result.text;
-        replyTerminalText = result.text;
-        replyRunId = result.task_run_id;
-      }
-      await persistPendingAgentSdkSessionId();
-      const deliveredSdkSessionId = pendingAgentSdkSessionId ?? resumeAgentSdkSessionId;
-      if (deliveredSdkSessionId) {
-        if (resumeAgentSdkSessionId && resumeAgentSdkSessionId !== deliveredSdkSessionId) {
-          clearCopilotSessionContextDelivery(resumeAgentSdkSessionId);
-        }
-        markCopilotSessionContextDelivered(deliveredSdkSessionId, sessionContextDigest);
-      }
-    };
-
-    try {
-      await withConversationQueryMutex(sessionId, runForegroundCopilotAgent);
-    } catch (agentError) {
-      if (resumeAgentSdkSessionId) {
-        clearCopilotSessionContextDelivery(resumeAgentSdkSessionId);
-        try {
-          await clearAgentSdkSessionId(db, sessionId);
-        } catch (clearErr) {
-          console.error('[runCopilotChat] clearAgentSdkSessionId failed after resume error', {
-            session_id: sessionId,
-            err: clearErr,
-          });
-        }
-      }
-      throw agentError;
-    }
-    streaming?.signal?.throwIfAborted();
-    const finalized = await replyFinalizer.finalizeTerminal(replyTerminalText);
-    replyText = finalized.replyText;
-
-    // YUK-307 — single convergence point for BOTH the JSON and streaming paths:
-    // parse + strip the primary_view marker ONCE from the collected reply, then
-    // persist the reply turn. From here on, ONLY cleanedReply is used (persisted
-    // reply_md / returned reply / — via persistence — any future replayed history),
-    // so the marker text never survives the turn (YUK-267 text-channel guarantee).
-    //
-    // AF S3a / YUK-203 U3 — persist the reply turn so the drawer can replay-last-N.
-    // The reply chains to the user ask/chip event (causedByEventId) so the turn
-    // pair is reconstructable. actor = the running agent (matches the chat run's
-    // actorRef). Payload free-form per ExperimentalEvent (zero schema).
-    //
-    // YUK-364 — 经共享 writeCopilotReply（与 durable worker handler 成功路径同一份
-    // 写入逻辑，防 copilot_reply domain event 形态分叉）。extractPrimaryView 剥 marker
-    // + created_at=now+1ms offset + payload/顶层字段形态 byte-identical（writeFn 透传
-    // deps.writeEventFn ?? writeEvent 保持既有可注入语义）。
-    const { replyEventId, cleanedReply, primaryView } = await writeCopilotReply(db, {
-      sessionId,
-      userAskEventId: causedByEventId,
-      replyText,
-      preparedReply: {
-        text: replyText,
-        ...(finalized.preparedReply.primaryView
-          ? { primaryView: finalized.preparedReply.primaryView }
-          : {}),
-      },
-      actorRef,
-      taskRunId: replyRunId,
-      replyFinalization: finalized.receipt,
-      now,
-      writeFn: write,
-    });
-
-    // A normalized reply can differ from the candidate stored in the resumed SDK
-    // transcript. Drop that cursor so the next turn cold-starts from the exact
-    // product history the user actually saw.
-    const deliveredSdkSessionId = pendingAgentSdkSessionId ?? resumeAgentSdkSessionId;
-    if (
-      deliveredSdkSessionId &&
-      finalized.receipt.candidate_sha256 !== finalized.receipt.reply_sha256
-    ) {
-      await clearAgentSdkSessionId(db, sessionId);
-      clearCopilotSessionContextDelivery(deliveredSdkSessionId);
-    }
-
-    // Publish the exact finalized/persisted bytes once, after the domain write.
-    // Replaying raw candidate chunks could retain whitespace removed with a tail
-    // marker and make the public stream differ from the sealed hash.
-    if (streaming && cleanedReply.length > 0) streaming.onDelta(cleanedReply);
-
-    // YUK-497 wave-4 — suppress the revert anchor when this turn called a MATERIALIZING tool (writes a
-    // question/artifact row outside the event chain that cascade-revert can't compensate). Keyed on the
-    // persisted tool_use mirrors under this ask (same rows the replay path reads) so live and replay
-    // can't diverge. See materializing-tools.ts for the invariant. The DB-less routing unit tests pass a
-    // {}-stub db (every real db op is injected + stubbed), so the probe is guarded on db being queryable
-    // (typeof db.select === 'function') — they need no new stub; production and the DB tests always carry
-    // a real client (mirrors the "stub tx has no .select" seam above).
-    let turnMaterialized: boolean;
-    if (userAskEventId === undefined || typeof (db as { select?: unknown }).select !== 'function') {
-      // No ask id, or the DB-less routing-unit stub → nothing to probe; expose the anchor as before.
-      turnMaterialized = false;
-    } else {
+          ...(resumeAgentSdkSessionId ? { resumeSessionId: resumeAgentSdkSessionId } : {}),
+          observe: observeExecution,
+        },
+      ),
+    );
+  } catch (agentError) {
+    if (resumeAgentSdkSessionId) {
+      clearCopilotSessionContextDelivery(resumeAgentSdkSessionId);
       try {
-        turnMaterialized = (await selectAsksWithMaterializingToolCall(db, [userAskEventId])).has(
-          userAskEventId,
-        );
-      } catch (err) {
-        // F1 (TdYwg) — this probe runs AFTER the reply is persisted (additive read). If it throws,
-        // degrade gracefully: log + SUPPRESS the anchor (a missing revert button is safe; a lying one
-        // that 409s / orphans a row is not). Never crash the turn over a post-reply read.
-        console.error('[copilot] materializing-tool probe failed; suppressing revert anchor', {
-          userAskEventId,
-          error: err,
+        await clearAgentSdkSessionId(db, sessionId);
+      } catch (clearErr) {
+        console.error('[runCopilotChat] clearAgentSdkSessionId failed after resume error', {
+          session_id: sessionId,
+          err: clearErr,
         });
-        turnMaterialized = true;
       }
     }
-
-    return {
-      task_run_id: replyRunId,
-      reply: cleanedReply,
-      surface,
-      triggered_by: req.triggered_by,
-      session_id: sessionId,
-      reply_event_id: replyEventId,
-      ...buildAskFields(userAskEventId, turnMaterialized),
-      // YUK-266 (C1) — surface the partial-degrade note only when the stream errored
-      // mid-flight (additive optional; absent on the non-stream + clean-stream paths).
-      ...(streamError ? { error: streamError } : {}),
-      // YUK-307 — additive optional hero nomination (see CopilotChatResult). The
-      // route's terminal `reply` SSE event passes the whole result through, so the
-      // streaming mode carries it with zero route changes.
-      ...(primaryView ? { primary_view: primaryView } : {}),
-    };
-  } finally {
-    await disposeSubagentCancellation();
+    throw agentError;
   }
+  streaming?.signal?.throwIfAborted();
+  if (execution.sdkSessionId) {
+    await setAgentSdkSessionId(db, sessionId, execution.sdkSessionId);
+  }
+  const deliveredSdkSessionId = execution.sdkSessionId ?? resumeAgentSdkSessionId;
+  if (deliveredSdkSessionId) {
+    if (resumeAgentSdkSessionId && resumeAgentSdkSessionId !== deliveredSdkSessionId) {
+      clearCopilotSessionContextDelivery(resumeAgentSdkSessionId);
+    }
+    markCopilotSessionContextDelivered(deliveredSdkSessionId, execution.contextDigest);
+  }
+  const finalized = execution.finalization;
+  const replyText = finalized.replyText;
+  const replyRunId = execution.taskRunId;
+  const streamError = execution.partial ? execution.error : undefined;
+
+  // YUK-307 — single convergence point for BOTH the JSON and streaming paths:
+  // parse + strip the primary_view marker ONCE from the collected reply, then
+  // persist the reply turn. From here on, ONLY cleanedReply is used (persisted
+  // reply_md / returned reply / — via persistence — any future replayed history),
+  // so the marker text never survives the turn (YUK-267 text-channel guarantee).
+  //
+  // AF S3a / YUK-203 U3 — persist the reply turn so the drawer can replay-last-N.
+  // The reply chains to the user ask/chip event (causedByEventId) so the turn
+  // pair is reconstructable. actor = the running agent (matches the chat run's
+  // actorRef). Payload free-form per ExperimentalEvent (zero schema).
+  //
+  // YUK-364 — 经共享 writeCopilotReply（与 durable worker handler 成功路径同一份
+  // 写入逻辑，防 copilot_reply domain event 形态分叉）。extractPrimaryView 剥 marker
+  // + created_at=now+1ms offset + payload/顶层字段形态 byte-identical（writeFn 透传
+  // deps.writeEventFn ?? writeEvent 保持既有可注入语义）。
+  const { replyEventId, cleanedReply, primaryView } = await writeCopilotReply(db, {
+    sessionId,
+    userAskEventId: causedByEventId,
+    replyText,
+    preparedReply: {
+      text: replyText,
+      ...(finalized.preparedReply.primaryView
+        ? { primaryView: finalized.preparedReply.primaryView }
+        : {}),
+    },
+    actorRef,
+    taskRunId: replyRunId,
+    replyFinalization: finalized.receipt,
+    now,
+    writeFn: write,
+  });
+
+  // A normalized reply can differ from the candidate stored in the resumed SDK
+  // transcript. Drop that cursor so the next turn cold-starts from the exact
+  // product history the user actually saw.
+  if (
+    deliveredSdkSessionId &&
+    finalized.receipt.candidate_sha256 !== finalized.receipt.reply_sha256
+  ) {
+    await clearAgentSdkSessionId(db, sessionId);
+    clearCopilotSessionContextDelivery(deliveredSdkSessionId);
+  }
+
+  // Publish the exact finalized/persisted bytes once, after the domain write.
+  // Replaying raw candidate chunks could retain whitespace removed with a tail
+  // marker and make the public stream differ from the sealed hash.
+  if (streaming && cleanedReply.length > 0) streaming.onDelta(cleanedReply);
+
+  // YUK-497 wave-4 — suppress the revert anchor when this turn called a MATERIALIZING tool (writes a
+  // question/artifact row outside the event chain that cascade-revert can't compensate). Keyed on the
+  // persisted tool_use mirrors under this ask (same rows the replay path reads) so live and replay
+  // can't diverge. See materializing-tools.ts for the invariant. The DB-less routing unit tests pass a
+  // {}-stub db (every real db op is injected + stubbed), so the probe is guarded on db being queryable
+  // (typeof db.select === 'function') — they need no new stub; production and the DB tests always carry
+  // a real client (mirrors the "stub tx has no .select" seam above).
+  let turnMaterialized: boolean;
+  if (userAskEventId === undefined || typeof (db as { select?: unknown }).select !== 'function') {
+    // No ask id, or the DB-less routing-unit stub → nothing to probe; expose the anchor as before.
+    turnMaterialized = false;
+  } else {
+    try {
+      turnMaterialized = (await selectAsksWithMaterializingToolCall(db, [userAskEventId])).has(
+        userAskEventId,
+      );
+    } catch (err) {
+      // F1 (TdYwg) — this probe runs AFTER the reply is persisted (additive read). If it throws,
+      // degrade gracefully: log + SUPPRESS the anchor (a missing revert button is safe; a lying one
+      // that 409s / orphans a row is not). Never crash the turn over a post-reply read.
+      console.error('[copilot] materializing-tool probe failed; suppressing revert anchor', {
+        userAskEventId,
+        error: err,
+      });
+      turnMaterialized = true;
+    }
+  }
+
+  return {
+    task_run_id: replyRunId,
+    reply: cleanedReply,
+    surface,
+    triggered_by: req.triggered_by,
+    session_id: sessionId,
+    reply_event_id: replyEventId,
+    ...buildAskFields(userAskEventId, turnMaterialized),
+    // YUK-266 (C1) — surface the partial-degrade note only when the stream errored
+    // mid-flight (additive optional; absent on the non-stream + clean-stream paths).
+    ...(streamError ? { error: streamError } : {}),
+    // YUK-307 — additive optional hero nomination (see CopilotChatResult). The
+    // route's terminal `reply` SSE event passes the whole result through, so the
+    // streaming mode carries it with zero route changes.
+    ...(primaryView ? { primary_view: primaryView } : {}),
+  };
 }
 
 // Non-streaming entrypoint — unchanged public contract. Existing unit tests + any
-// non-stream caller keep working byte-for-byte; the shared impl runs with no
-// streaming options so the free-form path uses runAgentTask and emits no deltas.
+// non-stream caller keep working byte-for-byte; the execution policy selects the
+// single-result adapter and emits no deltas.
 export async function runCopilotChat(
   db: Db,
   req: CopilotChatRequestT,

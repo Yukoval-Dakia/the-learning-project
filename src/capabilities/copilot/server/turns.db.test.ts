@@ -9,6 +9,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { runCopilotChat } from '@/capabilities/copilot/server/chat';
+import { createCopilotExecutionOwner } from '@/capabilities/copilot/server/copilot-execution';
 import { getRecentCopilotTurns } from '@/capabilities/copilot/server/turns';
 import { db } from '@/db/client';
 import { event, learning_session, tool_operation } from '@/db/schema';
@@ -1091,6 +1092,12 @@ describe('runCopilotChat — conversation session envelope (S3a)', () => {
     usage: { inputTokens: 1, outputTokens: 2 },
   });
   const buildMcpServerFn = () => ({ name: 'fake-loom' }) as never;
+  const executeCopilotTurnFn = createCopilotExecutionOwner({
+    runAgentTaskFn,
+    buildMcpServerFn,
+    buildTavilyMcpServerFn: () => null,
+    resolveCopilotSkillsFn: async () => undefined,
+  });
 
   it('find-or-creates a conversation session, persists ask + reply, and reuses within 24h', async () => {
     // Explicit, increasing `now` per turn so the replay ordering is deterministic
@@ -1101,8 +1108,7 @@ describe('runCopilotChat — conversation session envelope (S3a)', () => {
       db,
       { user_message: '第一条消息', triggered_by: 'chat' },
       {
-        runAgentTaskFn,
-        buildMcpServerFn,
+        executeCopilotTurnFn,
         now: () => t1,
       },
     );
@@ -1128,8 +1134,7 @@ describe('runCopilotChat — conversation session envelope (S3a)', () => {
       db,
       { user_message: '第二条消息', triggered_by: 'chat' },
       {
-        runAgentTaskFn,
-        buildMcpServerFn,
+        executeCopilotTurnFn,
         now: () => t2,
       },
     );

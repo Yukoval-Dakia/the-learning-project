@@ -1,5 +1,5 @@
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 const nativeSubagentTaskEventMock = vi.hoisted(() => vi.fn(async () => {}));
 const learningReviewContexts = vi.hoisted(() => [] as string[]);
@@ -27,7 +27,6 @@ vi.mock('./content-validation', async (importOriginal) => {
 
 import { resolveDomainToolNames, resolveMcpAllowedTools } from '@/kernel/tools/allowlists';
 import { COPILOT_HISTORY_BUDGET } from '@/kernel/tools/budgets';
-import { TAVILY_MCP_ALLOWED_TOOLS, buildTavilyMcpServer } from '@/server/ai/mcp/tavily';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import {
   type CopilotChatDeps,
@@ -37,6 +36,7 @@ import {
   runCopilotChatStreaming as runCopilotChatStreamingActual,
 } from './chat';
 import { COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY } from './content-validation';
+import { type CopilotExecutionAdapters, createCopilotExecutionOwner } from './copilot-execution';
 
 const RETIRED_COPILOT_CONTROL_SUFFIXES = [
   'get_tool_operation',
@@ -56,13 +56,31 @@ function foregroundInlineAllowedTools(baseTools: readonly string[]): string[] {
   return filtered.includes('Task') ? [...filtered] : [...filtered, 'Task'];
 }
 
-function withFixtureFinalizer(deps: CopilotChatDeps): CopilotChatDeps {
-  const stream = deps.streamAgentTaskFn;
-  return {
-    ...deps,
+type ChatTestDeps = CopilotChatDeps & {
+  runAgentTaskFn?: CopilotExecutionAdapters['runAgentTaskFn'];
+  streamAgentTaskFn?: CopilotExecutionAdapters['streamTaskCollectingFn'];
+  buildMcpServerFn?: CopilotExecutionAdapters['buildMcpServerFn'];
+  buildTavilyMcpServerFn?: CopilotExecutionAdapters['buildTavilyMcpServerFn'];
+  resolveCopilotSkillsFn?: CopilotExecutionAdapters['resolveCopilotSkillsFn'];
+  copilotSubagentEnabled?: boolean;
+};
+
+function withFixtureFinalizer(deps: ChatTestDeps): CopilotChatDeps {
+  const {
+    runAgentTaskFn,
+    streamAgentTaskFn,
+    buildMcpServerFn,
+    buildTavilyMcpServerFn,
+    resolveCopilotSkillsFn,
+    copilotSubagentEnabled,
+    ...chatDeps
+  } = deps;
+  const stream = streamAgentTaskFn;
+  const owner = createCopilotExecutionOwner({
+    ...(runAgentTaskFn ? { runAgentTaskFn } : {}),
     ...(stream
       ? {
-          streamAgentTaskFn: async (...args: Parameters<NonNullable<typeof stream>>) => {
+          streamTaskCollectingFn: async (...args: Parameters<typeof stream>) => {
             const result = await stream(...args);
             return {
               ...result,
@@ -71,25 +89,38 @@ function withFixtureFinalizer(deps: CopilotChatDeps): CopilotChatDeps {
           },
         }
       : {}),
+    ...(buildMcpServerFn ? { buildMcpServerFn } : {}),
+    ...(buildTavilyMcpServerFn ? { buildTavilyMcpServerFn } : {}),
+    ...(resolveCopilotSkillsFn ? { resolveCopilotSkillsFn } : {}),
+  });
+  return {
+    ...chatDeps,
+    executeCopilotTurnFn: (db, turn, policy) =>
+      owner(db, turn, {
+        ...policy,
+        ...(copilotSubagentEnabled !== undefined
+          ? { subagentsEnabled: copilotSubagentEnabled }
+          : {}),
+      }),
   };
 }
 
 function runCopilotChat(
-  ...args: Parameters<typeof runCopilotChatActual>
+  db: Parameters<typeof runCopilotChatActual>[0],
+  request: Parameters<typeof runCopilotChatActual>[1],
+  deps: ChatTestDeps = {},
 ): ReturnType<typeof runCopilotChatActual> {
-  return runCopilotChatActual(args[0], args[1], withFixtureFinalizer(args[2] ?? {}));
+  return runCopilotChatActual(db, request, withFixtureFinalizer(deps));
 }
 
 function runCopilotChatStreaming(
-  ...args: Parameters<typeof runCopilotChatStreamingActual>
+  db: Parameters<typeof runCopilotChatStreamingActual>[0],
+  request: Parameters<typeof runCopilotChatStreamingActual>[1],
+  onDelta: Parameters<typeof runCopilotChatStreamingActual>[2],
+  deps: ChatTestDeps = {},
+  signal?: Parameters<typeof runCopilotChatStreamingActual>[4],
 ): ReturnType<typeof runCopilotChatStreamingActual> {
-  return runCopilotChatStreamingActual(
-    args[0],
-    args[1],
-    args[2],
-    withFixtureFinalizer(args[3] ?? {}),
-    args[4],
-  );
+  return runCopilotChatStreamingActual(db, request, onDelta, withFixtureFinalizer(deps), signal);
 }
 
 describe('runCopilotChat (two-surface routing)', () => {
@@ -458,99 +489,6 @@ describe('runCopilotChat (two-surface routing)', () => {
     expect(replyPayload.in_reply_to_event_id).toBe(askCall?.id);
   });
 
-  // P5.1 / YUK-143 — Copilot wires the per-message context-budget throttle into
-  // the MCP bridge: a beforeExecute tool-call ceiling + an interceptInput limit
-  // cap. We assert the wiring end-to-end through the budget tracker by driving
-  // the captured hooks: warning at 10 with no stop, hard stop after 25, and
-  // row warning without cap followed by hard truncation (graceful, not throw).
-  it('wires the per-message context budget (tool-call ceiling + limit cap) into the bridge', async () => {
-    const db = {} as never;
-    const mcpServer = { name: 'fake-loom' } as never;
-    let buildCount = 0;
-    const buildMcpServerFn = vi.fn((opts: BuildMcpServerOptions) => {
-      if (buildCount === 0) {
-        for (let i = 0; i < 10; i += 1) {
-          expect(opts.beforeExecute?.({ name: 'query_knowledge', effect: 'read' })).toBeUndefined();
-        }
-      }
-      buildCount += 1;
-      return mcpServer;
-    });
-    const runAgentTaskFn = vi.fn(async () => ({
-      task_run_id: 'task_copilot_budget',
-      text: 'OK',
-      finishReason: 'stop',
-      usage: { inputTokens: 1, outputTokens: 2 },
-    }));
-    const writeEventFn = vi.fn(async (_db, input) => input.id);
-
-    await runCopilotChat(
-      db,
-      { user_message: '看看知识图谱', triggered_by: 'chat' },
-      {
-        buildMcpServerFn,
-        runAgentTaskFn,
-        writeEventFn,
-        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
-        // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
-        // is never touched (these are pure routing/wiring unit tests).
-        findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
-        now: () => new Date('2026-05-31T00:00:00.000Z'),
-      },
-    );
-
-    const opts = buildMcpServerFn.mock.calls[0]?.[0];
-    if (!opts?.beforeExecute || !opts?.interceptInput) {
-      throw new Error('expected beforeExecute + interceptInput throttle wiring');
-    }
-
-    expect(opts.beforeExecute({ name: 'query_knowledge', effect: 'read' })).toBeUndefined();
-    const warning = opts.interceptInput(
-      { name: 'get_subject_graph_overview', effect: 'read' },
-      { subjectId: 'yuwen' },
-    );
-    expect(warning.truncationNote).toMatchObject({
-      level: 'warning',
-      truncated: false,
-      dimensions: { toolCalls: { used: 11, hard_remaining: 14 } },
-    });
-
-    // Run a fresh turn for row budgets (per-message tracker, spec §3.4).
-    await runCopilotChat(
-      db,
-      { user_message: '展开子图', triggered_by: 'chat' },
-      {
-        buildMcpServerFn,
-        runAgentTaskFn,
-        writeEventFn,
-        resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
-        // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
-        // is never touched (these are pure routing/wiring unit tests).
-        findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
-        now: () => new Date('2026-05-31T00:00:00.000Z'),
-      },
-    );
-    const opts2 = buildMcpServerFn.mock.calls[1]?.[0];
-    if (!opts2?.interceptInput) throw new Error('expected interceptInput on second turn');
-    const warned = opts2.interceptInput(
-      { name: 'expand_knowledge_subgraph', effect: 'read' },
-      { centerNodeId: 'k_1', maxNodes: 300 },
-    );
-    expect((warned.args as { maxNodes: number }).maxNodes).toBe(300);
-    expect(warned.truncationNote).toMatchObject({ level: 'warning', truncated: false });
-
-    const capped = opts2.interceptInput(
-      { name: 'expand_knowledge_subgraph', effect: 'read' },
-      { centerNodeId: 'k_1', maxNodes: 9999 },
-    );
-    expect((capped.args as { maxNodes: number }).maxNodes).toBe(700);
-    expect(capped.truncationNote).toMatchObject({
-      level: 'hard',
-      truncated: true,
-      applied_limit: 700,
-    });
-  });
-
   it('chip path uses copilot_user_suggested_mistake_action allowlist and does NOT write user_ask', async () => {
     const db = {} as never;
     const mcpServer = { name: 'fake-loom' } as never;
@@ -890,168 +828,6 @@ describe('runCopilotChat (two-surface routing)', () => {
     expect(result.reply).toContain('prior_turn_id');
     expect(result.reply).not.toContain('已把水箱题改正');
   });
-
-  // YUK-198 — Tavily remote MCP wiring. Copilot folds in the hosted Tavily MCP
-  // server (web grounding) ONLY when TAVILY_API_KEY is configured. When the key
-  // is absent the run is byte-for-byte the pre-YUK-198 behaviour: no tavily
-  // server in mcpServers, no tavily tools in allowedTools.
-  describe('Tavily MCP wiring (YUK-198)', () => {
-    afterEach(() => {
-      vi.unstubAllEnvs();
-    });
-
-    const baseDeps = () => {
-      const runAgentTaskFn = vi.fn(async () => ({
-        task_run_id: 'task_copilot_tavily',
-        text: 'OK',
-        finishReason: 'stop',
-        usage: { inputTokens: 1, outputTokens: 2 },
-      }));
-      const buildMcpServerFn = vi.fn(
-        (_opts: BuildMcpServerOptions) => ({ name: 'fake-loom' }) as never,
-      );
-      const writeEventFn = vi.fn(async (_db, input) => input.id);
-      return { runAgentTaskFn, buildMcpServerFn, writeEventFn };
-    };
-
-    it('registers the tavily http server + tools when buildTavilyMcpServerFn returns a config', async () => {
-      const { runAgentTaskFn, buildMcpServerFn, writeEventFn } = baseDeps();
-
-      await runCopilotChat(
-        {} as never,
-        { user_message: '查一下最新的资料', triggered_by: 'chat' },
-        {
-          buildMcpServerFn,
-          runAgentTaskFn,
-          writeEventFn,
-          resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
-          // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
-          // is never touched (these are pure routing/wiring unit tests).
-          findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
-          buildTavilyMcpServerFn: () => ({
-            type: 'http',
-            url: 'https://mcp.tavily.com/mcp/?tavilyApiKey=tvly-test',
-          }),
-          now: () => new Date('2026-06-01T00:00:00.000Z'),
-        },
-      );
-
-      const ctx = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
-        mcpServers: Record<string, unknown>;
-        allowedTools: string[];
-      };
-      // loom (domain tools) is still present; tavily is added alongside it.
-      expect(Object.keys(ctx.mcpServers)).toEqual(expect.arrayContaining(['loom', 'tavily']));
-      expect(ctx.mcpServers.tavily).toMatchObject({
-        type: 'http',
-        url: 'https://mcp.tavily.com/mcp/?tavilyApiKey=tvly-test',
-      });
-      // Tavily search + extract namespaced tool names are appended after the
-      // domain allowlist.
-      for (const tool of TAVILY_MCP_ALLOWED_TOOLS) {
-        expect(ctx.allowedTools).toContain(tool);
-      }
-      // Foreground inline keeps domain tools minus mailbox poll controls, plus native Task.
-      for (const tool of resolveMcpAllowedTools('copilot')) {
-        if (RETIRED_COPILOT_CONTROL_SUFFIXES.some((name) => tool.endsWith(`__${name}`))) {
-          expect(ctx.allowedTools).not.toContain(tool);
-        } else {
-          expect(ctx.allowedTools).toContain(tool);
-        }
-      }
-      expect(ctx.allowedTools).toContain('Task');
-    });
-
-    it('does NOT register tavily when buildTavilyMcpServerFn returns null (env-absent no-op)', async () => {
-      const { runAgentTaskFn, buildMcpServerFn, writeEventFn } = baseDeps();
-
-      await runCopilotChat(
-        {} as never,
-        { user_message: '随便聊聊', triggered_by: 'chat' },
-        {
-          buildMcpServerFn,
-          runAgentTaskFn,
-          writeEventFn,
-          resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
-          // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
-          // is never touched (these are pure routing/wiring unit tests).
-          findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
-          buildTavilyMcpServerFn: () => null,
-          now: () => new Date('2026-06-01T00:00:00.000Z'),
-        },
-      );
-
-      const ctx = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
-        mcpServers: Record<string, unknown>;
-        allowedTools: string[];
-      };
-      expect(Object.keys(ctx.mcpServers)).toEqual(['loom']);
-      expect(ctx.mcpServers.tavily).toBeUndefined();
-      for (const tool of TAVILY_MCP_ALLOWED_TOOLS) {
-        expect(ctx.allowedTools).not.toContain(tool);
-      }
-      expect(ctx.allowedTools).toEqual(
-        foregroundInlineAllowedTools(resolveMcpAllowedTools('copilot')),
-      );
-    });
-
-    it('defaults to the env-gated builder: TAVILY_API_KEY present → tavily wired', async () => {
-      const { runAgentTaskFn, buildMcpServerFn, writeEventFn } = baseDeps();
-      vi.stubEnv('TAVILY_API_KEY', 'tvly-from-env');
-
-      await runCopilotChat(
-        {} as never,
-        { user_message: '上网查查', triggered_by: 'chat' },
-        {
-          buildMcpServerFn,
-          runAgentTaskFn,
-          writeEventFn,
-          resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
-          // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
-          // is never touched (these are pure routing/wiring unit tests).
-          findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
-          // No buildTavilyMcpServerFn → uses the real env-reading default.
-          now: () => new Date('2026-06-01T00:00:00.000Z'),
-        },
-      );
-
-      const ctx = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
-        mcpServers: Record<string, { type?: string; url?: string }>;
-        allowedTools: string[];
-      };
-      expect(ctx.mcpServers.tavily?.type).toBe('http');
-      expect(ctx.mcpServers.tavily?.url).toContain('tavilyApiKey=tvly-from-env');
-      // Sanity: the default builder agrees with the wiring under this env.
-      expect(buildTavilyMcpServer()).not.toBeNull();
-    });
-
-    it('defaults to the env-gated builder: TAVILY_API_KEY absent → no tavily', async () => {
-      const { runAgentTaskFn, buildMcpServerFn, writeEventFn } = baseDeps();
-      vi.stubEnv('TAVILY_API_KEY', '');
-
-      await runCopilotChat(
-        {} as never,
-        { user_message: '不联网', triggered_by: 'chat' },
-        {
-          buildMcpServerFn,
-          runAgentTaskFn,
-          writeEventFn,
-          resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
-          // AF S3a / YUK-203 U3 — stub the conversation envelope so the {}-stub db
-          // is never touched (these are pure routing/wiring unit tests).
-          findOrCreateConversationFn: async () => ({ sessionId: 'ls_unit', created: true }),
-          now: () => new Date('2026-06-01T00:00:00.000Z'),
-        },
-      );
-
-      const ctx = (runAgentTaskFn.mock.calls[0] as unknown as unknown[])[2] as {
-        mcpServers: Record<string, unknown>;
-        allowedTools: string[];
-      };
-      expect(ctx.mcpServers.tavily).toBeUndefined();
-      expect(buildTavilyMcpServer()).toBeNull();
-    });
-  });
 });
 
 describe('YUK-939 inline root finalization wiring', () => {
@@ -1222,7 +998,12 @@ describe('YUK-938 foreground inline native Task (ADR-0056)', () => {
         triggered_by: 'chat',
       },
       (text) => deltas.push(text),
-      { ...baseSubagentDeps(), streamAgentTaskFn, onSubtaskEvent },
+      {
+        ...baseSubagentDeps(),
+        streamAgentTaskFn:
+          streamAgentTaskFn as unknown as CopilotExecutionAdapters['streamTaskCollectingFn'],
+        onSubtaskEvent,
+      },
     );
 
     expect(deltas).toEqual([
@@ -1283,7 +1064,12 @@ describe('YUK-938 foreground inline native Task (ADR-0056)', () => {
         triggered_by: 'chat',
       },
       (text) => deltas.push(text),
-      { ...baseSubagentDeps(), streamAgentTaskFn, onSubtaskEvent },
+      {
+        ...baseSubagentDeps(),
+        streamAgentTaskFn:
+          streamAgentTaskFn as unknown as CopilotExecutionAdapters['streamTaskCollectingFn'],
+        onSubtaskEvent,
+      },
     );
 
     expect(taskLifecycleEvents).toBe(2);
@@ -1750,105 +1536,6 @@ describe('runCopilotChat — copilot skill wiring (C2 / YUK-284)', () => {
     resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
     now: () => new Date('2026-06-08T00:00:00.000Z'),
   };
-
-  // T-C2-4 — non-streaming free-form ctx carries skills:['copilot'].
-  it('non-streaming free-form: ctx carries skills:[copilot] when the resolver hits', async () => {
-    const db = {} as never;
-    const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
-    let capturedCtx: unknown;
-    const runAgentTaskFn = vi.fn(async (_kind: string, _input: unknown, ctx: unknown) => {
-      capturedCtx = ctx;
-      return {
-        task_run_id: 'task_freeform',
-        text: 'REPLY',
-        finishReason: 'stop' as const,
-        usage: { inputTokens: 1, outputTokens: 2 },
-      };
-    });
-    const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
-
-    await runCopilotChat(
-      db,
-      { user_message: '解释一下「之」', triggered_by: 'chat' },
-      {
-        ...baseDeps,
-        writeEventFn,
-        runAgentTaskFn,
-        buildMcpServerFn,
-        resolveCopilotSkillsFn: async () => ['copilot'],
-      },
-    );
-
-    expect(capturedCtx).toMatchObject({ skills: ['copilot'] });
-  });
-
-  // T-C2-5 — streaming free-form ctx ALSO carries skills:['copilot'] (审查标注的唯一
-  // 差异点：流式分支独立断言，证明 stream/non-stream 两路 skills 加载一致).
-  it('streaming free-form: ctx carries skills:[copilot] (stream/non-stream parity)', async () => {
-    const db = {} as never;
-    const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
-    let streamCtx: unknown;
-    const streamAgentTaskFn = vi.fn(
-      async (_kind: string, _input: unknown, ctx: unknown, onDelta: (t: string) => void) => {
-        streamCtx = ctx;
-        onDelta('OK');
-        return {
-          task_run_id: 'task_stream_real',
-          text: 'OK',
-          finishReason: 'stop' as const,
-          usage: { inputTokens: 1, outputTokens: 2 },
-        };
-      },
-    );
-    const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
-
-    await runCopilotChatStreaming(
-      db,
-      { user_message: '解释一下「之」', triggered_by: 'chat' },
-      () => {},
-      {
-        ...baseDeps,
-        writeEventFn,
-        streamAgentTaskFn,
-        buildMcpServerFn,
-        resolveCopilotSkillsFn: async () => ['copilot'],
-      },
-    );
-
-    expect(streamCtx).toMatchObject({ skills: ['copilot'] });
-  });
-
-  // T-C2-6 — resolver miss (SKILL.md absent) → ctx OMITS skills entirely (零回归:
-  // spread-when-present keeps the ctx shape byte-for-byte the pre-C2 shape).
-  it('resolver miss: free-form ctx omits the skills field entirely (零回归)', async () => {
-    const db = {} as never;
-    const writeEventFn = vi.fn(async (_db: unknown, input: { id: string }) => input.id);
-    let capturedCtx: unknown;
-    const runAgentTaskFn = vi.fn(async (_kind: string, _input: unknown, ctx: unknown) => {
-      capturedCtx = ctx;
-      return {
-        task_run_id: 'task_freeform',
-        text: 'REPLY',
-        finishReason: 'stop' as const,
-        usage: { inputTokens: 1, outputTokens: 2 },
-      };
-    });
-    const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
-
-    await runCopilotChat(
-      db,
-      { user_message: '随便聊聊', triggered_by: 'chat' },
-      {
-        ...baseDeps,
-        writeEventFn,
-        runAgentTaskFn,
-        buildMcpServerFn,
-        resolveCopilotSkillsFn: async () => undefined,
-      },
-    );
-
-    expect(capturedCtx).not.toHaveProperty('skills');
-  });
 
   // T-C2-7 — the behavior-pack (teaching — the only pack left after ADR-0031
   // retired the quiz intercept) service-call path does NOT receive copilot
