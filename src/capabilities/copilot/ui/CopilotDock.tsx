@@ -181,6 +181,12 @@ function copilotProgressStage(view: CopilotRunView): CopilotProgressStage {
 // GET /api/copilot/turns response shape — see src/capabilities/copilot/server/turns.ts.
 interface CopilotTurnsResponse {
   turns: ReplayTurn[];
+  active_runs?: Array<{
+    run_id: string;
+    session_id: string;
+    status: string;
+    events_url: string;
+  }>;
 }
 
 interface CopilotSessionResponse {
@@ -731,6 +737,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   // POST the user message again and accidentally create a second run.
   const durableReconnectRef = useRef<DurableCopilotReconnect | null>(restoredDurableHandle);
   const restoredReconnectStartedRef = useRef(false);
+  const discoveredRunIdsRef = useRef(new Set<string>());
   const activeTransportAbortRef = useRef<AbortController | null>(null);
   const stoppingRunRef = useRef<string | null>(null);
   useEffect(
@@ -760,7 +767,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   }, []);
 
   const createConversation = useCallback(async () => {
-    if (creatingSession || sendingRef.current || pendingAcceptanceUnknown) return;
+    if (creatingSession || pendingAcceptanceUnknown) return;
     setCreatingSession(true);
     setError(null);
     try {
@@ -786,7 +793,6 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
 
   const selectConversation = useCallback(
     (sessionId: string) => {
-      if (sendingRef.current) return;
       resetRecoveryForSessionChange();
       activeSkillRef.current = null;
       setFocusedKnowledgeId(null);
@@ -1043,10 +1049,10 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
 
   const reconnectDurable = useCallback(
     async (handle: DurableCopilotReconnect) => {
-      if (sendingRef.current) return;
       sendingRef.current = true;
       const abortController = new AbortController();
-      activeTransportAbortRef.current?.abort();
+      // Each accepted run owns its transport. A later queued message must not
+      // abort an earlier run; the server's FIFO scheduler is the arbiter.
       activeTransportAbortRef.current = abortController;
       setError(null);
       setRefreshFailed(false);
@@ -1167,6 +1173,51 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     void reconnectDurable(restoredDurableHandle);
   }, [open, reconnectDurable, restoredDurableHandle]);
 
+  // Refresh/reopen recovery: the server is authoritative for every live run.
+  // Discover each run once per mount and subscribe independently; sessionStorage
+  // is only a handoff optimization and must not hide runs accepted in another tab.
+  useEffect(() => {
+    if (!open || !currentSessionId) return;
+    let cancelled = false;
+    void apiJson<CopilotTurnsResponse>(
+      `/api/copilot/turns?session_id=${encodeURIComponent(currentSessionId)}`,
+    ).then((result) => {
+      if (cancelled) return;
+      for (const run of result.active_runs ?? []) {
+        if (run.session_id !== currentSessionId || discoveredRunIdsRef.current.has(run.run_id)) {
+          continue;
+        }
+        const runId = durableRunIdFromLocation(run.events_url) === run.run_id ? run.run_id : null;
+        if (!runId) continue;
+        discoveredRunIdsRef.current.add(runId);
+        const aiMessageId = `recovered-${runId}`;
+        const handle: DurableCopilotReconnect = {
+          v: 1,
+          sessionId: run.session_id,
+          runId,
+          location: run.events_url,
+          userMessageId: `recovered-user-${runId}`,
+          aiMessageId,
+          userMessage: '（已恢复的请求）',
+          view: createCopilotRunView(),
+        };
+        setMessages((previous) =>
+          previous.some((message) => message.id === aiMessageId)
+            ? previous
+            : [
+                ...previous,
+                { id: handle.userMessageId, role: 'user', text: handle.userMessage },
+                { id: aiMessageId, role: 'ai', text: '正在恢复这次请求；不会重复提交。', streaming: true },
+              ],
+        );
+        void reconnectDurable(handle);
+      }
+    }).catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [currentSessionId, open, reconnectDurable]);
+
   // Auto-scroll the message stream to the bottom on new messages / loading.
   // `sending` is an intentional trigger dep: when it flips true the thinking
   // bubble mounts and we want to scroll to it, even though the effect body
@@ -1180,7 +1231,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   // biome-ignore lint/correctness/useExhaustiveDependencies: helpers are stable for this component lifetime; refs carry live turn context
   const send = useCallback(async (raw: string, retryIdempotencyKey?: string) => {
     const text = raw.trim();
-    if (!text || sendingRef.current) return;
+    if (!text) return;
     const selectedSessionId = currentSessionIdRef.current;
     if (!selectedSessionId) {
       setError('对话仍在加载，请稍后再试。');
@@ -1188,7 +1239,8 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     }
     sendingRef.current = true;
     const turnAbortController = new AbortController();
-    activeTransportAbortRef.current?.abort();
+    // Do not cancel another message's stream when the user queues a new turn.
+    // Cancellation is exclusively owned by the explicit Stop action.
     activeTransportAbortRef.current = turnAbortController;
     // A deliberate new message supersedes this single-run reconnect affordance.
     // The old server run/reply stays durable, but its live progress is no longer
@@ -1596,14 +1648,9 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   // focused node the same user-readable prompt deliberately follows normal Copilot
   // routing and lets the model clarify/orchestrate instead of becoming a dead chip.
   const sendQuiz = useCallback(() => {
-    // YUK-266 — single-flight guard. On the first SSE delta `send` flips `sending`
-    // false (to re-open the composer for the live reply) while `sendingRef.current`
-    // stays true until the turn settles. In that window the quiz chip re-enables;
-    // without this guard a click would mutate activeSkillRef to {skill:'quiz',…}
-    // and then `send('出题')` would early-return on its own sendingRef guard — the
-    // quiz turn is dropped BUT activeSkillRef is left polluted, mis-routing the
-    // user's NEXT free-form message as a quiz turn. No-op while a send is in flight.
-    if (sendingRef.current) return;
+    // Queued turns are independent logical messages. Only unresolved acceptance
+    // blocks dispatch; the explicit Stop action owns cancellation.
+    if (pendingAcceptanceUnknown) return;
     if (focusedKnowledgeId) {
       activeSkillRef.current = {
         skill: 'quiz',
@@ -1617,7 +1664,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       activeSkillRef.current = null;
     }
     void send('出题');
-  }, [focusedKnowledgeId, send]);
+  }, [focusedKnowledgeId, pendingAcceptanceUnknown, send]);
 
   // AF S4 / YUK-203 U6 — corrective accept-chip writer. A corrective chip click
   // on an ask_check turn posts an AcceptSuggestionChip to the accept-chip
@@ -1830,7 +1877,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           sessions={sessionItems}
           currentSessionId={currentSessionId}
           creating={creatingSession}
-          disabled={sending || pendingAcceptanceUnknown}
+          disabled={pendingAcceptanceUnknown}
           onSelect={selectConversation}
           onCreate={() => void createConversation()}
         />
@@ -1877,7 +1924,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
             key={chip}
             type="button"
             className="chip"
-            disabled={sending || !conversationReady}
+            disabled={pendingAcceptanceUnknown || !conversationReady}
             onClick={() => void send(chip)}
           >
             {chip}
@@ -1890,7 +1937,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           type="button"
           className="chip"
           data-testid="copilot-quiz-chip"
-          disabled={sending || !conversationReady}
+          disabled={pendingAcceptanceUnknown || !conversationReady}
           onClick={sendQuiz}
         >
           {focusedKnowledgeId ? '出题 · 当前知识点' : '出题'}
@@ -1903,7 +1950,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           placeholder="问 Loom 任何事…"
           aria-label="问 Loom 任何事"
           data-testid="copilot-composer-input"
-          disabled={sending || !conversationReady}
+          disabled={pendingAcceptanceUnknown || !conversationReady}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             // isComposing guard: Enter during IME composition (中文选词确认)
@@ -1920,7 +1967,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           icon="send"
           aria-label="发送"
           data-testid="copilot-composer-send"
-          disabled={sending || !conversationReady || input.trim().length === 0}
+          disabled={pendingAcceptanceUnknown || !conversationReady || input.trim().length === 0}
           onClick={() => void send(input)}
         />
       </div>

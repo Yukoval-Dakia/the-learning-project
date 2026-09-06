@@ -1145,7 +1145,7 @@ describe('CopilotDock accepted durable reconnect', () => {
     ).toBeTruthy();
     expect(screen.getByTestId('copilot-run-stage').textContent).toContain('证据审阅中…');
     expect((screen.getByTestId('copilot-composer-input') as HTMLTextAreaElement).disabled).toBe(
-      true,
+      false,
     );
     expect((screen.getByTestId('copilot-composer-send') as HTMLButtonElement).disabled).toBe(true);
 
