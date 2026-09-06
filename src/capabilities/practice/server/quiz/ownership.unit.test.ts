@@ -23,7 +23,6 @@ const RETIRED_JOB_MODULES = [
   'source_verify',
   'variant_verify',
 ] as const;
-const OWNERSHIP_TEST = 'src/capabilities/practice/server/quiz/ownership.unit.test.ts' as const;
 function sourceFiles(directory: string): string[] {
   return readdirSync(directory).flatMap((name) => {
     const path = resolve(directory, name);
