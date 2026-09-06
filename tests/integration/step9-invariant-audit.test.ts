@@ -350,9 +350,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
   // chain + outbox opt-out. It is the source-level companion to the DB tests
   // (submit-snapshot / paper-submit-snapshot).
   it('the settlement owner brackets its θ̂/FSRS transition via the shared writeAttemptSnapshotBrackets helper', async () => {
-    const ATTEMPT_PATHS = [
-      'src/capabilities/practice/server/review-settlement.ts',
-    ] as const;
+    const ATTEMPT_PATHS = ['src/capabilities/practice/server/review-settlement.ts'] as const;
     for (const rel of ATTEMPT_PATHS) {
       const src = await fs.readFile(path.join(REPO_ROOT, rel), 'utf8');
       // Exactly one call to the shared bracket writer (the single append site).
