@@ -1,6 +1,7 @@
 import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { capabilities } from '@/capabilities';
+import { knowledge } from '@/db/schema';
 import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
 import { getTool } from '@/server/ai/tools/registry';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -89,14 +90,23 @@ describe('result snapshots use real registered domain output contracts', () => {
     expect(JSON.stringify(snapshot)).not.toContain('internal_prompt');
   });
 
-  it.each(['pass', 'fail'] as const)(
+  it.each(['pass', 'fail', 'input-mismatch'] as const)(
     'publishes a generated candidate only after real validation contracts %s',
-    async (verdict) => {
+    async (outcome) => {
+      const verdict = outcome === 'fail' ? 'fail' : 'pass';
+      await testDb().insert(knowledge).values({
+        id: 'k_snapshot_math',
+        name: '整数乘法',
+        domain: 'math',
+        created_at: new Date(),
+        updated_at: new Date(),
+      });
+      const intent = { seed_mode: 'knowledge', knowledge_ids: ['k_snapshot_math'] };
       const name = 'generate_question_candidate';
       const text = JSON.stringify({
         kind: 'computation',
         difficulty: 2,
-        knowledge_ids: [],
+        knowledge_ids: ['k_snapshot_math'],
         structured: {
           id: 'model-placeholder',
           role: 'standalone',
@@ -120,10 +130,10 @@ describe('result snapshots use real registered domain output contracts', () => {
         calls.push(kind);
         const results: Record<string, unknown> = {
           QuizVerifyTask: {
-            grounding: { verdict: 'pass', reason: 'self-contained' },
-            copy_safety: { verdict: 'original', max_overlap: 0 },
+            grounding: { verdict: 'pass', reason: 'self-contained', basis: 'closed_world_givens' },
+            copy_safety: { verdict: 'unknown' },
             knowledge_hit: { verdict: 'pass', reason: 'on topic' },
-            overall: 'pass',
+            overall: 'needs_review',
             summary_md: '结构正确',
             confidence: 0.9,
           },
@@ -158,12 +168,14 @@ describe('result snapshots use real registered domain output contracts', () => {
           _context: string,
           _task: string,
           view?: Parameters<typeof primaryViewLearningContent>[0],
+          observedQuestion?: { input: unknown; output: unknown },
         ) =>
           reviewCopilotLearningContent(reply, _context, _task, {
             db: testDb(),
             runTaskFn: runner,
             additionalVisibleText: primaryViewLearningContent(view),
             additionalQuestionContent: primaryViewLearningQuestions(view),
+            observedQuestion,
           }),
       );
       const finalizer = createCopilotReplyFinalizer({
@@ -196,20 +208,32 @@ describe('result snapshots use real registered domain output contracts', () => {
             cwd: '/tmp',
             tool_name: `mcp__loom__${observation.name}`,
             tool_use_id: observation.tool_use_id,
-            tool_input: {},
+            tool_input: observation.name === name ? intent : {},
           },
           observation.tool_use_id,
           { signal: new AbortController().signal },
         );
         finalizer.observeDomainTool({
           ...observation,
-          input: {},
+          input:
+            observation.name === name
+              ? outcome === 'input-mismatch'
+                ? { ...intent, knowledge_ids: ['forged'] }
+                : intent
+              : {},
           executed: true,
           error_reason: null,
         });
       }
       output.text = 'mutated after observation';
+      intent.knowledge_ids[0] = 'mutated after observation';
       const result = await finalizer.finalizeTerminal('已准备练习。');
+      if (outcome === 'input-mismatch') {
+        expect(result.accepted).toBe(false);
+        expect(result.preparedReply.primaryView).toBeUndefined();
+        expect(calls).toEqual([]);
+        return;
+      }
       const published = validate.mock.calls[0][3];
       expect(primaryViewLearningQuestions(published)?.questions[0].prompt_md).toBe('计算 17×19');
       expect(calls).toEqual(
@@ -220,6 +244,7 @@ describe('result snapshots use real registered domain output contracts', () => {
       if (verdict === 'pass') expect(result.preparedReply.primaryView).toEqual(published);
       else expect(result.preparedReply.primaryView).toBeUndefined();
       expect(result.receipt.learning_content).toBe(verdict === 'pass' ? 'passed' : 'blocked');
+      if (verdict === 'pass') expect(result.replyText).toContain('未对外部题库进行原创性比对');
     },
   );
 });

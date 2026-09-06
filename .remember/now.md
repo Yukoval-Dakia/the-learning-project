@@ -2,7 +2,26 @@
 
 ## 最新状态
 
-- Active YUK966，root独占tlp-wt-unified-conversation / codex/yuk-966-tool-result-delivery。
+- Active pipeline closure：YUK968 PR1349 ready；root保留tlp-wt-unified-conversation独占集成，无生产动作。
+  Practice统一内容验证/真实工具来源绑定，重复author parser退休；未改变题池历史政策。
+  原提示词真实正向clean219a1816已过：one author/one presentation，7×12=84/分配律正确，
+  全validator与live/REPLY/persisted一致；deadline/重复control失败和positive证据均封存。
+  初审与唯一验证PASS，review预算结束；182unit/73workerDB/16ownerDB/12authorDB，
+  另211unit/4deadline/52poolDB/36presentation与typecheck/lint/build通过（重叠，不累加）。
+  exactf9d52ab1 CI34062662435仅DB2 backlog计数6≠3失败，其余全部success，未merge/deploy。
+  root注入3条旧运行记录复现同样RED，隔离operational ledger后GREEN；注入已撤，保留原3→2断言。
+  串行复测还复现timestamp毫秒323误触答案泄漏断言，改为只检查payload并明确无primary_view。
+  CI修复串行57DB与最终3targeted/typecheck/lint通过，未改产品代码或重开review。
+  967原读取canary另预留0.40，pool estimate0.0690050668非账单/reserve9.95823/safe0.04177。
+- 独立后续lane（同一pipeline收口）：969 worker独占tlp-wt-pool-rollup，ab29f20e；
+  题池pass+unknown误晋级已RED→GREEN，37DB/typecheck/lint/build与独立初审PASS，待集成/PR。
+  967 root独占tlp-wt-knowledge-observations，e0bba356；reader明确未请求/无节点/已观察，
+  保持latest10历史失败与30d计数语义，12readerDB+34snapshot/fixtureDB/typecheck/lint/build过；
+  初审PASS，clean5717bcbd原读取canary运行中（预留0.40）。不修改UI或制造第二评估器。
+
+- YUK966 Done：PR1348 exactfefcf70e1a07b4ef554deb3d4c1b9eab4a1401fa，CI34059429533全部success；
+  2026-09-06T21:05:27Z合并main5cf5dccab207c32b47b6ddb15163dff10c379080。
+  root独占tlp-wt-unified-conversation，当前codex/yuk-966-delivery-notes仅交付记录；下一条968，之后967。
   Owner批准现有drawer发送/恢复/消息展示；已补真实工具结果快照，model仅提名ref，server校验并独立捕获。
   初稿通用字段过滤不合格已由root替换：复用真实registered outputSchema，逐工具公开policy，opaque/私有字段剥离。
   单一DTO贯穿live/worker修复/history/client；真实空值与缺失区分，刷新不重查，不增加模型history token。
@@ -14,7 +33,8 @@
   实际发现optional数组null重生成/solve-check未传已有解题过程，root均RED→GREEN修复，182unit/typecheck/build通过。
   正向生成卡仍待968闭卷来源/原创性验证语义收口；未降低copy_safety/grounding门槛。967读取未观测≠零也开放。
   新池累计estimate0.0474233747/reserve6.85823/safe3.14177；当前无paid进程，不回收保守reserve。
-  原脏main不动。临时本地built server仅用于browser fixture，收尾须停止。未合并/部署，整体goal active。
+  原脏main不动。临时built server94648已TERM并确认退出，无paid/测试服务进程；未部署，整体goal active。
+  最终28关联DB（author_question+snapshot）也通过；同一生成器原题库流程未降级。
 
 - PR1347已合并：exact6015f2a0fe1163eefc168ec782a5fb657099c0d7，CI34053995106所有job成功；
   main fbc87f3b1ade3bc726d9371033a4c073d6c6f1a3，mergedAt2026-09-06T19:20:27Z，Linear965 Done。

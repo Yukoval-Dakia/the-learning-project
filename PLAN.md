@@ -1,19 +1,32 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：966读取卡片actual通过、生成卡被安全拦截；契约缺失已修，967/968继续语义验收，待PR1348新exactCI。
+> Linear 是权威 tracker；更新于 2026-09-07：968真实正向通过，CI隔离问题已修；967/969独立修复已审，继续集成，不重开生产边界。
 
 ## NOW
 
-- Active线YUK966：root独占tlp-wt-unified-conversation，branch codex/yuk-966-tool-result-delivery，base main fbc87f3b+65985eae交付记录。
-  全产品核对发现真实缺口：agent提名tool_result后HeroCard只显示工具名，未交付结果，设计§2.2/2.3要求完整只读视图且不重复取数。
-  计划①真实root观察生成有界可信快照；②live/persist/replay同一协议；③既有drawer展示/刷新不重查；④针对性安全/恢复/浏览器验证与独立review/exactCI。
-  Owner已批准现有drawer发送/恢复/消息展示；根负责集成真实结果卡，复用ToolUseCard与同一live/replay协议。
-  初稿通用字段过滤被root拒绝；改复用真实领域outputSchema，并逐工具指定公开策略与opaque剥离，不复制第二套reader契约。
-  78unit/108DB/20browser绿；初审1P1已修：题目按既有schema规范化并无条件独立校验；修后52unit/16契约DB绿。
-  PR1348 f439a0be首轮CI只失败旧迁移schema指纹断言；保留8项行为测试，删除过期hash，待新exactCI。
-  唯一验证审947be81c PASS，review预算结束；其后actual发现数组null重生成/solver过程丢失，root已RED→GREEN修复。
-  最终182相关unit/typecheck/build绿；生成题仍被copy_safety unknown正确拦截，968负责闭卷来源语义与正向实际验收。
-  真实read快照live/persist一致通过，estimate0.0039958367；终文擅称无recent_failures，去重967待修，非整体语义绿。
+- Active pipeline closure：YUK968 PR1349 ready；root保留tlp-wt-unified-conversation独占集成，无生产动作。
+  Practice统一内容验证/真实工具来源绑定，重复author parser退休；未改变题池历史政策。
+  原提示词真实正向clean219a1816已过：one author/one presentation，7×12=84/分配律正确，
+  全validator与live/REPLY/persisted一致；deadline/重复control失败和positive证据均封存。
+  初审与唯一验证PASS，review预算结束；182unit/73workerDB/16ownerDB/12authorDB，
+  另211unit/4deadline/52poolDB/36presentation与typecheck/lint/build通过（重叠，不累加）。
+  exactf9d52ab1 CI34062662435仅DB2 backlog计数6≠3失败，其余全部success，未merge/deploy。
+  root注入3条旧运行记录复现同样RED，隔离operational ledger后GREEN；注入已撤，保留原3→2断言。
+  串行复测还复现timestamp毫秒323误触答案泄漏断言，改为只检查payload并明确无primary_view。
+  CI修复串行57DB与最终3targeted/typecheck/lint通过，未改产品代码或重开review。
+  967原读取canary另预留0.40，pool estimate0.0690050668非账单/reserve9.95823/safe0.04177。
+- 独立后续lane（同一pipeline收口）：969 worker独占tlp-wt-pool-rollup，ab29f20e；
+  题池pass+unknown误晋级已RED→GREEN，37DB/typecheck/lint/build与独立初审PASS，待集成/PR。
+  967 root独占tlp-wt-knowledge-observations，e0bba356；reader明确未请求/无节点/已观察，
+  保持latest10历史失败与30d计数语义，12readerDB+34snapshot/fixtureDB/typecheck/lint/build过；
+  初审PASS，clean5717bcbd原读取canary运行中（预留0.40）。不修改UI或制造第二评估器。
+- YUK966 Done：PR1348 exactfefcf70e1a07b4ef554deb3d4c1b9eab4a1401fa，CI34059429533全部success；
+  2026-09-06T21:05:27Z合并main5cf5dccab207c32b47b6ddb15163dff10c379080，未部署。
+  既有drawer用同一DTO交付真实结果快照/恢复，不重查、不增加模型history token；复用领域schema与原验证owner。
+  初审1P1已修，唯一验证947be81c PASS；实际发现数组null重生成/solver过程丢失，root RED→GREEN修复。
+  182相关unit/28关联DB、既有108DB/20browser与全CI绿；删旧schema指纹但保留8项行为检查。
+  read快照actual PASS但正文未请求recent_failures却说无，967待修；生成actual被安全拦截，968继续正向质量验收。
+  review预算结束；无paid/测试服务进程。root独占tlp-wt-unified-conversation，当前codex/yuk-966-delivery-notes仅交付记录。
   业务owner只读复核：知识合并/录入完成/判分完成已有真实事务与失败恢复，不为9个必要owner造registry。
   SoT仍有部署兼容；仓库compose值不等于生产运行态，不擅删guard或翻flag。Notes分散写入需按不同业务操作判断，尚无重复规则证据。
 - YUK965 Done：PR1347 exact6015f2a0fe1163eefc168ec782a5fb657099c0d7，CI34053995106全部success，
@@ -46,7 +59,7 @@
   保守请求预留合计$0.90823；此前余额$0.28771982单列，历史未知费用不填0。
   公开费率估算不冒充账户账单，SDK派生USD保留为独立观察。
   949另跑7个受控回合（含失败）：estimated $0.0214406071，case预留$2.8。
-  新$10池合计estimated $0.0474233747；966候选题后总reserve$6.85823、安全剩$3.14177；当前无paid进程。
+  新$10池合计estimated $0.0690050668；967读取预留后总reserve$9.95823、安全剩$0.04177，不回收reserve。
 - YUK949：owner明确选FULL，允许按需短presentation control交互，ADR0061；
   agent看完结果提名，server校验，保留tool_result/artifact/ephemeral_html；不提高预算、不改生产UI。
   初稿ea8367c7的5P1已由81eb7f3e修复，ed693e16集成main9e02c48b。
@@ -87,12 +100,11 @@
 
 ## NEXT
 
-1. 966等待新exact CI后交付快照链路；不把候选题拦截称作正向验收，不再开启第三轮review。
-2. 968闭卷生成与来源/原创性验证语义收口，967未请求recent_failures不能当零；同实际样本验收，不降低保护。
-3. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
-4. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
+1. 968闭卷生成与来源/原创性验证语义收口，967未请求recent_failures不能当零；同实际样本验收，不降低保护。
+2. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
+3. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
-5. 887生产副本backfill/audit/rebuild/golden与SoT退休仍需独立授权。
+4. 887生产副本backfill/audit/rebuild/golden与SoT退休仍需独立授权。
 
 ## PARKED
 
@@ -103,6 +115,6 @@
 
 ## BLOCKED-ON
 
-- 966暂无owner决策阻塞；965 review已结束，不重开。
+- 966/965已交付，review预算结束，不重开；968/967暂无owner决策阻塞。
 - 未授权部署、生产clone、SoT开关、backfill或历史数据删除；均未执行。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。

@@ -1,16 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-
 import {
   containsLearningQuestion,
   copilotLearningContentRequiresValidation,
   extractCopilotLearningContent,
   reviewCopilotLearningContent,
-  validateCopilotLearningContent,
 } from './content-validation';
+import { validateLearningContent as validatePreparedLearningContent } from './practice-port';
 
-describe('validateCopilotLearningContent', () => {
+describe('validatePreparedLearningContent', () => {
   it('removes the machine-readable validation manifest from a direct reply', () => {
     const extracted = extractCopilotLearningContent(
       '题目草稿\n<!--copilot_learning_content:{"subject_id":"math","questions":[{"id":"q1","kind":"computation","prompt_md":"求 1+1","reference_md":"2","choices_md":null,"rubric_json":{}}]}-->',
@@ -220,7 +219,7 @@ describe('validateCopilotLearningContent', () => {
   );
 
   it('fails closed when an independent validator finds a contradictory question pack', async () => {
-    const result = await validateCopilotLearningContent(
+    const result = await validatePreparedLearningContent(
       {
         subjectId: 'math',
         questions: [
@@ -241,7 +240,11 @@ describe('validateCopilotLearningContent', () => {
             return {
               task_run_id: 'verify-1',
               text: JSON.stringify({
-                grounding: { verdict: 'pass', reason: 'self-contained' },
+                grounding: {
+                  verdict: 'pass',
+                  reason: 'self-contained',
+                  basis: 'closed_world_givens',
+                },
                 copy_safety: { verdict: 'original', max_overlap: 0 },
                 knowledge_hit: { verdict: 'pass', reason: 'on topic' },
                 overall: 'pass',
@@ -297,7 +300,7 @@ describe('validateCopilotLearningContent', () => {
 
   it('fails closed without starting provider work when validation bounds are exceeded', async () => {
     let calls = 0;
-    const result = await validateCopilotLearningContent(
+    const result = await validatePreparedLearningContent(
       {
         subjectId: 'math',
         questions: Array.from({ length: 6 }, (_, index) => ({

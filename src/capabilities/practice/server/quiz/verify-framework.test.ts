@@ -1046,6 +1046,38 @@ describe('runSolveCheck — A1 fallback candidates (答案+解析 reference_md)'
 // ---------- EFF-1 (YUK-554 review) — cost/provenance threading ----------
 
 describe('runSolveCheck — EFF-1 cost/provenance threading', () => {
+  it.each([
+    ['partial', 0.99],
+    ['correct', 0.2],
+    ['incorrect', 0.2],
+    ['unparseable', 0.99],
+  ] as const)(
+    'release-strict keeps semantic %s at confidence %s unresolved, without changing pool policy',
+    async (outcome, confidence) => {
+      const runTaskFn = vi.fn(async (kind: string) => ({
+        text:
+          kind === 'SolutionGenerateTask'
+            ? solverOutput('独立完整解答')
+            : outcome === 'unparseable'
+              ? 'not-json'
+              : semanticOutput(outcome, confidence),
+      }));
+      const legacy = await runSolveCheck(openQuestion, {
+        runTaskFn,
+        profile: fakeProfile,
+        db: fakeDb,
+      });
+      const strict = await runSolveCheck(openQuestion, {
+        runTaskFn,
+        profile: fakeProfile,
+        db: fakeDb,
+        validationMode: 'release_strict',
+      });
+      expect(legacy.verdict).toBe('pass');
+      expect(strict.verdict).toBe('unsupported');
+    },
+  );
+
   it('passes the independently worked method to the semantic comparator without adding a model leg', async () => {
     const worked = '104×5=(100+4)×5=100×5+4×5=500+20=520。';
     const runTaskFn = vi.fn(async (kind: string, _input: unknown) => {

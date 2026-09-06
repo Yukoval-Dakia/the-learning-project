@@ -147,6 +147,8 @@ interface TraceEntry {
   root_call: boolean;
   proposal_effect_contract?: ProposalEffectContract;
   domain_output?: unknown;
+  /** In-memory provenance only; raw source material never enters the receipt. */
+  domain_input?: unknown;
   domain_executed?: boolean;
 }
 
@@ -201,6 +203,7 @@ export interface CreateCopilotReplyFinalizerOptions {
     contextText: string,
     taskRunId: string,
     primaryView?: CopilotPrimaryView,
+    observedQuestion?: { input: unknown; output: unknown },
   ) => Promise<{ replyText: string; passed: boolean }>;
   /** Owned live-row validation plus canonical product reference. Null rejects the nomination. */
   resolveArtifactReference: (ref: {
@@ -285,7 +288,9 @@ function sha256Text(value: string): string {
 }
 
 function digestTrace(trace: readonly TraceEntry[]): string {
-  return sha256CanonicalJson(trace.map(({ domain_output: _output, ...entry }) => entry));
+  return sha256CanonicalJson(
+    trace.map(({ domain_output: _output, domain_input: _input, ...entry }) => entry),
+  );
 }
 
 function domainToolName(toolName: string): string {
@@ -442,6 +447,19 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         options.userContextText,
         options.rootTaskRunId,
         presented.primaryView,
+        (() => {
+          const view = presented.primaryView;
+          if (
+            view?.source !== 'tool_result' ||
+            view.ref.kind !== 'generate_question_candidate' ||
+            view.snapshot?.state !== 'available'
+          )
+            return undefined;
+          const observed = byId.get(view.ref.id);
+          if (observed?.domain_input === undefined)
+            throw new Error('generated question input is not trace-bound');
+          return structuredClone({ input: observed.domain_input, output: observed.domain_output });
+        })(),
       );
       let fixed = applyProposalDisclosure(
         !learning.passed && correction.kind !== 'normal' ? correction.reply : learning.replyText,
@@ -504,6 +522,11 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     // Capture the observed value once. A caller retaining the mutable output
     // cannot later change a nomination or displayed result behind its trace hash.
     const output = structuredClone(result.output);
+    if (
+      result.name === 'generate_question_candidate' &&
+      sha256CanonicalJson(result.input) === entry.input_sha256
+    )
+      entry.domain_input = structuredClone(result.input);
     entry.effect = result.effect;
     entry.status = result.error_reason === null ? 'succeeded' : 'failed';
     entry.output_sha256 = sha256CanonicalJson(output);

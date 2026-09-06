@@ -28,7 +28,7 @@ import {
 } from '@/server/ai/tools/mcp-bridge';
 import { resolveCopilotSkills } from '@/subjects/copilot-skills';
 import { copilotTaskSpec } from '../tasks/agent';
-import { reviewCopilotLearningContent, validateCopilotLearningContent } from './content-validation';
+import { reviewCopilotLearningContent } from './content-validation';
 import type { CopilotRunCancellationControl } from './copilot-run-cancellation';
 import type { CopilotRunInput } from './copilot-run-input';
 import { selectActorRef } from './copilot-run-input';
@@ -43,6 +43,7 @@ import {
   compileCopilotModelInput,
   compileCopilotSessionContext,
 } from './live-turn-context';
+import { validateLearningContent as validatePreparedLearningContent } from './practice-port';
 import { resolveLivePrimaryViewArtifact } from './primary-view-reference';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
 import {
@@ -199,7 +200,7 @@ export function createCopilotExecutionOwner(
         : undefined;
 
     const validationTaskContext = (
-      callCtx: Parameters<Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn']>[2],
+      callCtx: Parameters<Parameters<typeof validatePreparedLearningContent>[1]['runTaskFn']>[2],
     ) => ({
       ...callCtx,
       db,
@@ -208,7 +209,7 @@ export function createCopilotExecutionOwner(
       parentTaskRunId: turn.taskRunId,
       ...(deadlineAt !== undefined ? { providerSessionDeadlineAt: deadlineAt } : {}),
     });
-    const validationRunner: Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn'] =
+    const validationRunner: Parameters<typeof validatePreparedLearningContent>[1]['runTaskFn'] =
       async (kind, taskInput, callCtx) => {
         await policy.cancellation.probe();
         validationSignal.throwIfAborted();
@@ -216,26 +217,26 @@ export function createCopilotExecutionOwner(
         switch (kind) {
           case 'QuizVerifyTask':
             return adapters.runAgentTaskFn('QuizVerifyTask', taskInput, ctx) as ReturnType<
-              Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn']
+              Parameters<typeof validatePreparedLearningContent>[1]['runTaskFn']
             >;
           case 'SolutionGenerateTask':
             return adapters.runAgentTaskFn('SolutionGenerateTask', taskInput, ctx) as ReturnType<
-              Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn']
+              Parameters<typeof validatePreparedLearningContent>[1]['runTaskFn']
             >;
           case 'SemanticJudgeTask':
             return adapters.runAgentTaskFn('SemanticJudgeTask', taskInput, ctx) as ReturnType<
-              Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn']
+              Parameters<typeof validatePreparedLearningContent>[1]['runTaskFn']
             >;
           case 'TeachingQualityTask':
             return adapters.runAgentTaskFn('TeachingQualityTask', taskInput, ctx) as ReturnType<
-              Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn']
+              Parameters<typeof validatePreparedLearningContent>[1]['runTaskFn']
             >;
           default:
             throw new Error(`unsupported learning-content validation task: ${kind}`);
         }
       };
     const validateLearningContent: ValidateLearningContentFn = (content) =>
-      validateCopilotLearningContent(content, { db, runTaskFn: validationRunner });
+      validatePreparedLearningContent(content, { db, runTaskFn: validationRunner });
     const finalizer = createCopilotReplyFinalizer({
       rootTaskRunId: turn.taskRunId,
       correctionContract: input.correction_contract,
@@ -244,7 +245,13 @@ export function createCopilotExecutionOwner(
         ...(input.validator_context_history ?? []).map((historyTurn) => historyTurn.text),
       ].join('\n'),
       ...(authoritativeReply ? { authoritativeReply } : {}),
-      validateLearningContent: async (text, contextText, validationTaskRunId, primaryView) => {
+      validateLearningContent: async (
+        text,
+        contextText,
+        validationTaskRunId,
+        primaryView,
+        observedQuestion,
+      ) => {
         await policy.cancellation.probe();
         validationSignal.throwIfAborted();
         return reviewCopilotLearningContent(text, contextText, validationTaskRunId, {
@@ -252,6 +259,7 @@ export function createCopilotExecutionOwner(
           runTaskFn: validationRunner,
           additionalVisibleText: primaryViewLearningContent(primaryView),
           additionalQuestionContent: primaryViewLearningQuestions(primaryView),
+          observedQuestion,
         });
       },
       resolveArtifactReference: (ref) => resolveLivePrimaryViewArtifact(db, ref),

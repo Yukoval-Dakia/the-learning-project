@@ -393,6 +393,7 @@ describe('Copilot root reply finalization', () => {
       '用户正在核对一条复杂学习链。',
       'root_run_1',
       nomination,
+      undefined,
     );
     expect(result.preparedReply).toEqual({ text: '学习内容未通过校验。' });
     expect(result.receipt.primary_view).toBe('dropped');
