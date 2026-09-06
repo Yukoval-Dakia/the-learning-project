@@ -15,6 +15,10 @@
 
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { updateGoalScope } from '@/capabilities/agency/public';
+import {
+  rewriteLearningItemKnowledgeIds,
+  rewriteQuestionKnowledgeIds,
+} from '@/capabilities/practice/server/merge-attribution';
 import { newId } from '@/core/ids';
 import { applyKnowledgeMergeToIds } from '@/core/projections/learning_item';
 import { AgentRef } from '@/core/schema/business';
@@ -28,7 +32,6 @@ import {
   knowledge_edge,
   learning_item,
   misconception_edge,
-  question,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
@@ -589,49 +592,6 @@ export async function applySplit(
 // parameters from un-aggregated observations, Sentry-fingerprint style) and MUST stay outside
 // every rewrite pass, including this one (YUK-543 review L2; see the schema.ts contract comment).
 // =============================================================================
-
-// question.knowledge_ids — imperative (no fold). Rewrite every question tagged with fromId.
-async function rewriteQuestionKnowledgeIds(
-  tx: Tx,
-  fromId: string,
-  intoId: string,
-): Promise<string[]> {
-  const rows = await tx
-    .select({ id: question.id, knowledge_ids: question.knowledge_ids })
-    .from(question)
-    .where(sql`${question.knowledge_ids} @> ${JSON.stringify([fromId])}::jsonb`);
-  const rewritten: string[] = [];
-  for (const r of rows) {
-    const next = applyKnowledgeMergeToIds(r.knowledge_ids ?? [], new Set([fromId]), intoId);
-    await tx.update(question).set({ knowledge_ids: next }).where(eq(question.id, r.id));
-    rewritten.push(r.id);
-  }
-  return rewritten;
-}
-
-// learning_item.knowledge_ids — fold-owned (flag OFF today), event-native via the SHARED
-// experimental:knowledge_merge event (gather Q3 + reducer branch). Here we keep the imperative
-// UPDATE (OFF path = imperative row is SoT); the merge accept event + gather/reducer make the fold
-// reproduce it. ONLY knowledge_ids changes (no version/updated_at bump — mirrors the reducer's
-// no-bump branch, spec §2). Parity is asserted by acceptProposal AFTER the rate event is written
-// (the fold gates the rewrite on the merge's acceptance, which is not visible until then).
-async function rewriteLearningItemKnowledgeIds(
-  tx: Tx,
-  fromId: string,
-  intoId: string,
-): Promise<string[]> {
-  const rows = await tx
-    .select({ id: learning_item.id, knowledge_ids: learning_item.knowledge_ids })
-    .from(learning_item)
-    .where(sql`${learning_item.knowledge_ids} @> ${JSON.stringify([fromId])}::jsonb`);
-  const rewritten: string[] = [];
-  for (const r of rows) {
-    const next = applyKnowledgeMergeToIds(r.knowledge_ids ?? [], new Set([fromId]), intoId);
-    await tx.update(learning_item).set({ knowledge_ids: next }).where(eq(learning_item.id, r.id));
-    rewritten.push(r.id);
-  }
-  return rewritten;
-}
 
 // goal.scope_knowledge_ids — fold-owned (flag OFF today), event-native by REUSING the existing
 // experimental:goal_scope_update writer (updateGoalScope) per affected goal. That writer emits the
