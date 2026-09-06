@@ -13,7 +13,10 @@ Owner 已授权 AI pipeline 与基于1e61da8d报告的全项目业务封装/测�
   第二次root status=failure/finishReason=error；免费转录诊断见61.792s迟到正文，超过60s预算，
   但SDK错误子类型未捕获，不声称已证明精确原因。该正文还错误断言B无rate/唯一差异。
   已补typed比较/缺失/outcome边界，任务时限90s与既有请求上限一致，保留6轮及绝对deadline保护。
-- 两次费用分别estimated$0.02766318、reported$0.148581；最新剩余授权$0.42858382。
+- 第三次exact8c280cae拿到权威终文，运行89.573s；手工语义验收失败：A01跨subject正事实自相矛盾、
+  B/C仍断言唯一差异/B链中断，另把B parent写成直接lookup结果；不能合并/关闭944。
+  费用reported$0.158656；944合计$0.33490018，当前余额$0.26992782，低于单次reserve$0.30。
+  已问owner修复后最多追加$1；未获答复前无新增付费调用。运行成功不等于语义验收通过。
   版本证据2026-09-06-claim-context-actual.json；停止无诊断付费重试，不缩小五read质量要求。
 - reviewer review_claim_context初审2P1均属harness：额外tools未隔离、缺失reader未在付费前检查；已修。
   另已要求claims显式budget、拒绝无terminal/额外model/tool，并新增SDK安全子类型/耗时记录。
@@ -42,7 +45,7 @@ Owner 已授权 AI pipeline 与基于1e61da8d报告的全项目业务封装/测�
 ## Actual与费用
 
 本次追加共享执行层semantic/native actual费用$0.146376；增量campaign合计$0.395172，
-当时剩余授权$0.604828；944两次后当前余额$0.42858382。旧未知超时/child账单仍未知。
+当时剩余授权$0.604828；944三次后当前余额$0.26992782。旧未知超时/child账单仍未知。
 同输入read样本input至少降50.8%、费用至少降62.2%；只限synthetic，不外推生产。
 Evidence在docs/planning/evidence/2026-09-06-{pipeline,copilot-execution}-actual.json。
 durable actual直接handler不是queue E2E。完整goal的944真实质量验证仍未通过。
