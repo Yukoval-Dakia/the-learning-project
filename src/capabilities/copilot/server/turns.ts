@@ -27,7 +27,14 @@ import {
   findReusableCopilotConversation,
   getCopilotConversation,
 } from '@/server/session/conversation';
-import type { CopilotSkillTurn } from './chat-contracts';
+import { type CopilotSkillTurn, readCopilotSkillTurn as replySkillTurn } from './chat-contracts';
+import {
+  COPILOT_RUN_EVENTS,
+  COPILOT_RUN_TABLE,
+  type CopilotRunStatus,
+  deriveCopilotRunStatus,
+} from './copilot-run-status';
+import { copilotRunTerminalSql } from './copilot-run-terminal-sql';
 import { selectAsksWithMaterializingToolCall } from './materializing-tools';
 
 export type CopilotTurnRole = 'user' | 'ai' | 'tombstone';
@@ -70,6 +77,8 @@ export interface CopilotTurn {
   text: string;
   at: string; // ISO timestamp
   event_id: string;
+  /** Accepted ask/chip owner of an AI reply; independent of revert eligibility. */
+  run_id?: string;
   // PR round-2 (CR 3360614432): session_id + reply_event_id let the Dock
   // chip-renderer anchor a corrective chip on the correct event/session after
   // page refresh. session_id = the Copilot conversation envelope id; both are
@@ -141,42 +150,6 @@ function userText(payload: Record<string, unknown>): string | null {
 function replyText(payload: Record<string, unknown>): string | null {
   const v = payload.reply_md;
   return typeof v === 'string' && v.length > 0 ? v : null;
-}
-
-function replySkillTurn(payload: Record<string, unknown>): CopilotTurnSkillTurn | undefined {
-  const st = payload.skill_turn;
-  if (!st || typeof st !== 'object') return undefined;
-  const s = st as Record<string, unknown>;
-  const kind = s.kind;
-  if (kind !== 'explain' && kind !== 'ask_check' && kind !== 'end') return undefined;
-  // Narrow the shape to what the UI needs; extra fields pass through.
-  const result: CopilotTurnSkillTurn = { kind };
-  if (s.suggested_next === 'continue' || s.suggested_next === 'end') {
-    result.suggested_next = s.suggested_next;
-  }
-  if (s.structured_question && typeof s.structured_question === 'object') {
-    const sq = s.structured_question as Record<string, unknown>;
-    if (
-      typeof sq.id === 'string' &&
-      typeof sq.kind === 'string' &&
-      typeof sq.prompt_md === 'string'
-    ) {
-      // PR round-2 (CR 3360606340): validate every element is a string before
-      // passing through; a corrupt array (e.g. [{text:'...'}]) becomes null.
-      const rawChoices = sq.choices_md;
-      const choices_md =
-        Array.isArray(rawChoices) && rawChoices.every((el) => typeof el === 'string')
-          ? (rawChoices as string[])
-          : null;
-      result.structured_question = {
-        id: sq.id,
-        kind: sq.kind,
-        prompt_md: sq.prompt_md,
-        choices_md,
-      };
-    }
-  }
-  return result;
 }
 
 // YUK-307 — hand-rolled narrower mirroring replySkillContext (turns.ts stays
@@ -474,6 +447,7 @@ async function projectCopilotTurnRows(
     toolCallsByParent,
     toolOperationsByTaskRun,
     subagentRunsByParent,
+    replyRoots,
   ] = await Promise.all([
     getCorrectionStatuses(dbArg, [...new Set([...rows.map((row) => row.id), ...replyParentIds])]),
     // YUK-497 wave-4 — asks whose turn called a MATERIALIZING tool (author_question / author_artifact
@@ -482,7 +456,20 @@ async function projectCopilotTurnRows(
     selectToolCallsForReplay(dbArg, toolCallParentIds),
     selectToolOperationsForReplay(dbArg, sessionId, taskRunIds),
     selectSubagentRunsForReplay(dbArg, sessionId, toolCallParentIds),
+    replyParentIds.length
+      ? dbArg
+          .select({ id: event.id })
+          .from(event)
+          .where(
+            and(
+              inArray(event.id, replyParentIds),
+              eq(event.session_id, sessionId),
+              inArray(event.action, [...USER_ACTIONS]),
+            ),
+          )
+      : Promise.resolve([]),
   ]);
+  const replyRunIds = new Set(replyRoots.map((root) => root.id));
   // Retracted roots include out-of-window parents: a reply under such a parent is skipped (its parent
   // row isn't loaded, so it renders as a hidden skip, not a tombstone) rather than shown stale.
   const retractedParentIds = new Set(
@@ -557,6 +544,9 @@ async function projectCopilotTurnRows(
         text,
         at: row.created_at.toISOString(),
         event_id: row.id,
+        ...(row.caused_by_event_id && replyRunIds.has(row.caused_by_event_id)
+          ? { run_id: row.caused_by_event_id }
+          : {}),
         // PR round-2 (CR 3360614432): Dock chip renderer needs session_id to
         // resolve the conversation and reply_event_id to anchor the chip.
         session_id: sessionId,
@@ -629,7 +619,7 @@ export async function getRecentCopilotTurns(
   // session → this is a brand-new conversation; return nothing to prefill.
   const session = opts.sessionId
     ? await getCopilotConversation(dbArg, opts.sessionId)
-    : await findReusableCopilotConversation(dbArg as Db, { now: opts.now });
+    : await findReusableCopilotConversation(dbArg, { now: opts.now });
   if (session === null) return [];
 
   // One query over all three actions for THIS session, newest first, bounded by
@@ -657,6 +647,61 @@ export async function getRecentCopilotTurns(
     .limit(limit * 2);
 
   return projectCopilotTurnRows(dbArg, session.id, rows, limit);
+}
+
+export interface CopilotActiveRun {
+  run_id: string;
+  session_id: string;
+  status: CopilotRunStatus;
+  events_url: string;
+}
+
+/** One database snapshot; a new browser needs no local cache to discover accepted work. */
+export async function getCopilotConversationSnapshot(
+  dbArg: Db,
+  opts: { limit?: number; now?: Date; sessionId?: string } = {},
+): Promise<{ session_id: string | null; turns: CopilotTurn[]; active_runs: CopilotActiveRun[] }> {
+  return dbArg.transaction(
+    async (tx) => {
+      const session = opts.sessionId
+        ? await getCopilotConversation(tx, opts.sessionId)
+        : await findReusableCopilotConversation(tx, { now: opts.now });
+      if (!session) return { session_id: null, turns: [], active_runs: [] };
+      const turns = await getRecentCopilotTurns(tx, { ...opts, sessionId: session.id });
+      const terminal = copilotRunTerminalSql(
+        sql.raw('terminal.event_type'),
+        sql.raw('terminal.payload'),
+      );
+      const runs = (await tx.execute(sql`
+      SELECT queued.business_id AS run_id,
+        ARRAY(SELECT DISTINCT progress.event_type FROM job_events progress
+          WHERE progress.business_table = queued.business_table AND progress.business_id = queued.business_id
+            AND progress.event_type IN (${COPILOT_RUN_EVENTS.STARTED}, ${COPILOT_RUN_EVENTS.EXECUTION_STARTED}, ${COPILOT_RUN_EVENTS.STEP}, ${COPILOT_RUN_EVENTS.CANCEL_REQUESTED})) AS event_types
+      FROM job_events queued
+      JOIN event ask ON ask.id = queued.business_id
+      WHERE queued.business_table = ${COPILOT_RUN_TABLE}
+        AND queued.event_type = ${COPILOT_RUN_EVENTS.QUEUED}
+        AND ask.session_id = ${session.id}
+        AND queued.payload->>'session_id' = ${session.id}
+        AND queued.id = (SELECT min(first_queued.id) FROM job_events first_queued
+          WHERE first_queued.business_table = queued.business_table AND first_queued.business_id = queued.business_id AND first_queued.event_type = ${COPILOT_RUN_EVENTS.QUEUED})
+        AND NOT EXISTS (SELECT 1 FROM job_events terminal
+          WHERE terminal.business_table = queued.business_table AND terminal.business_id = queued.business_id AND ${terminal})
+      ORDER BY ask.dispatch_seq ASC, ask.id ASC
+    `)) as Array<{ run_id: string; event_types: string[] }>;
+      return {
+        session_id: session.id,
+        turns,
+        active_runs: runs.map((run) => ({
+          run_id: run.run_id,
+          session_id: session.id,
+          status: deriveCopilotRunStatus(run.event_types.map((event_type) => ({ event_type }))),
+          events_url: `/api/jobs/copilot_run/${encodeURIComponent(run.run_id)}/events`,
+        })),
+      };
+    },
+    { isolationLevel: 'repeatable read', accessMode: 'read only' },
+  );
 }
 
 export type CopilotHistoryAnchorErrorReason =

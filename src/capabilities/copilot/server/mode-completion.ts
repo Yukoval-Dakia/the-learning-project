@@ -2,6 +2,7 @@ import {
   type CopilotModeState,
   CopilotSkillContext,
   type CopilotSkillContextT,
+  readCopilotSkillTurn,
 } from './chat-contracts';
 
 export type CopilotTerminalOutcome =
@@ -46,4 +47,15 @@ export function parseCopilotModeCompletion(
     skill_turn: { kind: 'end' },
     skill_context: context.data,
   };
+}
+
+/** Teaching progress and free-form completion share the same persisted product carrier. */
+export function parseCopilotModeState(
+  payload: Record<string, unknown>,
+): CopilotModeState | undefined {
+  const context = CopilotSkillContext.safeParse(payload.skill_context);
+  if (!context.success || context.data.skill !== 'teaching')
+    return parseCopilotModeCompletion(payload);
+  const turn = readCopilotSkillTurn(payload);
+  return turn ? { skill_turn: turn, skill_context: context.data } : undefined;
 }

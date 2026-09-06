@@ -213,8 +213,8 @@ describe('Copilot execution owner', () => {
         timeoutMs: DURABLE_COPILOT_EXECUTION_BUDGET.timeoutMs,
       },
     });
-    expect(ctx?.sdkSession).toBeUndefined();
-    expect(ctx?.nativeCompaction).toBeUndefined();
+    expect(ctx?.sdkSession).toMatchObject({ persist: true });
+    expect(ctx?.nativeCompaction).toMatchObject({ sessionContext: expect.anything() });
     expect(ctx?.allowedTools).toContain('Task');
     expect(ctx?.agents?.['copilot-researcher']).toMatchObject({
       background: false,
@@ -233,9 +233,32 @@ describe('Copilot execution owner', () => {
     );
     expect(cancellation.beforeTool).toHaveBeenCalledTimes(1);
     const durableTool = { name: 'query_knowledge', effect: 'read' as const };
-    for (let index = 1; index < 60; index += 1) {
-      await expect(mcp?.beforeExecute?.(durableTool)).resolves.toBeUndefined();
+    expect(DURABLE_COPILOT_EXECUTION_BUDGET).toMatchObject({ maxIterations: 6, maxToolCalls: 25 });
+    const graphTool = { name: 'expand_knowledge_subgraph', effect: 'read' as const };
+    // Each request is valid under the real tool schema's maxNodes <=60.
+    // Only cumulative reads cross the per-message ceiling (16*60 +40).
+    const graphArgs = {
+      centerNodeId: 'kc_parameter_boundary',
+      maxNodes: 60,
+      depth: 3,
+      include: ['ancestors', 'neighbors', 'recent_failures'],
+      relationTypes: ['prerequisite', 'related'],
+    };
+    for (let index = 1; index < DURABLE_COPILOT_EXECUTION_BUDGET.maxToolCalls; index += 1) {
+      await expect(mcp?.beforeExecute?.(graphTool)).resolves.toBeUndefined();
+      const capped = mcp?.interceptInput?.(graphTool, graphArgs);
+      if (index <= 16) expect(capped?.args).toEqual(graphArgs);
+      else if (index === 17) {
+        expect(capped?.args).toEqual({ ...graphArgs, maxNodes: 40 });
+        expect(capped?.truncationNote).toMatchObject({
+          level: 'hard',
+          truncated: true,
+          applied_limit: 40,
+          requested_limit: 60,
+        });
+      } else expect(capped?.softStop).toMatch(/hard context budget exhausted/);
     }
+    expect(graphArgs.maxNodes).toBe(60);
     await expect(mcp?.beforeExecute?.(durableTool)).resolves.toMatch(/hard context budget reached/);
   });
 

@@ -29,13 +29,20 @@ export function sealCommittedPresentationReply(
   preparedReply: PreparedCopilotReply,
   receipt?: CopilotReplyFinalizationReceipt,
 ): { preparedReply: PreparedCopilotReply; receipt?: CopilotReplyFinalizationReceipt } {
-  if (preparedReply.primaryView?.source !== 'ephemeral_html') return { preparedReply, receipt };
+  const committedReceipt =
+    !preparedReply.primaryView && receipt?.primary_view === 'retained'
+      ? { ...receipt, primary_view: 'dropped' as const }
+      : receipt;
+  if (preparedReply.primaryView?.source !== 'ephemeral_html')
+    return { preparedReply, receipt: committedReceipt };
   const text = preparedReply.text.endsWith(EPHEMERAL_PRESENTATION_STORAGE_NOTICE)
     ? preparedReply.text
     : preparedReply.text + EPHEMERAL_PRESENTATION_STORAGE_NOTICE;
   return {
     preparedReply: { ...preparedReply, text },
-    ...(receipt ? { receipt: { ...receipt, reply_sha256: sha256Text(text) } } : {}),
+    ...(committedReceipt
+      ? { receipt: { ...committedReceipt, reply_sha256: sha256Text(text) } }
+      : {}),
   };
 }
 

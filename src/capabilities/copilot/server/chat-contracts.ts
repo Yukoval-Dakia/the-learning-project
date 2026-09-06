@@ -38,6 +38,40 @@ export interface CopilotModeState {
   skill_context: CopilotSkillContextT;
 }
 
+/** Narrow the persisted teaching projection identically for history and live recovery. */
+export function readCopilotSkillTurn(
+  payload: Record<string, unknown>,
+): CopilotSkillTurn | undefined {
+  const st = payload.skill_turn;
+  if (!st || typeof st !== 'object' || Array.isArray(st)) return undefined;
+  const s = st as Record<string, unknown>;
+  const kind = s.kind;
+  if (kind !== 'explain' && kind !== 'ask_check' && kind !== 'end') return undefined;
+  const result: CopilotSkillTurn = { kind };
+  if (s.suggested_next === 'continue' || s.suggested_next === 'end')
+    result.suggested_next = s.suggested_next;
+  if (s.structured_question && typeof s.structured_question === 'object') {
+    const sq = s.structured_question as Record<string, unknown>;
+    if (
+      typeof sq.id === 'string' &&
+      typeof sq.kind === 'string' &&
+      typeof sq.prompt_md === 'string'
+    ) {
+      const rawChoices = sq.choices_md;
+      result.structured_question = {
+        id: sq.id,
+        kind: sq.kind,
+        prompt_md: sq.prompt_md,
+        choices_md:
+          Array.isArray(rawChoices) && rawChoices.every((el) => typeof el === 'string')
+            ? rawChoices
+            : null,
+      };
+    }
+  }
+  return result;
+}
+
 export const CopilotChatRequest = z
   .object({
     session_id: z.string().min(1).max(160).optional(),

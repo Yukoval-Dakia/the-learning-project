@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   sanitizeToolResultForSse,
   sanitizeToolUseForSse,
-} from '@/capabilities/copilot/api/tool-use-sse';
+} from '@/capabilities/copilot/server/tool-activity';
 
 describe('tool-use SSE sanitization — YUK-457 P1', () => {
   it('drops native Task tool_use frames that would leak subagent prompts', () => {

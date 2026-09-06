@@ -9,7 +9,7 @@ export const CopilotRouteIdParamsSchema = ApiIdParamsSchema;
 export const CopilotRunParamsSchema = ApiIdParamsSchema;
 export const CopilotCheckpointParamsSchema = z.object({ eventId: z.string().min(1) });
 export const CopilotChatHeadersSchema = z.object({
-  'Idempotency-Key': z.string().min(1).max(200).optional(),
+  'Idempotency-Key': z.string().min(1).max(200),
 });
 
 // YUK-497 review F3 — the cascade-revert refusal envelope the handler emits at 404
@@ -74,12 +74,10 @@ export const CopilotCheckpointRevertSuccessSchema = z.discriminatedUnion('status
   }),
 ]);
 
-export const CopilotChatStreamResponseSchema = z.string();
-
 export const CopilotDurableRunResponseSchema = z.object({
   run_id: z.string(),
   session_id: z.string(),
-  checkpoint_event_id: z.string(),
+  checkpoint_event_id: z.string().optional(),
 });
 
 export const CopilotCancelRunResponseSchema = z.object({
@@ -145,6 +143,7 @@ export const CopilotTurnSchema = z.object({
   text: z.string(),
   at: z.string().datetime(),
   event_id: z.string(),
+  run_id: z.string().optional(),
   session_id: z.string().optional(),
   reply_event_id: z.string().optional(),
   checkpoint_event_id: z.string().optional(),
@@ -159,7 +158,18 @@ export const CopilotTurnSchema = z.object({
   tool_calls: z.array(CopilotTurnToolCallSchema).optional(),
 });
 
-export const CopilotTurnsResponseSchema = z.object({ turns: z.array(CopilotTurnSchema) });
+export const CopilotTurnsResponseSchema = z.object({
+  session_id: z.string().nullable(),
+  turns: z.array(CopilotTurnSchema),
+  active_runs: z.array(
+    z.object({
+      run_id: z.string(),
+      session_id: z.string(),
+      status: z.enum(['queued', 'started', 'running', 'cancel_requested']),
+      events_url: z.string(),
+    }),
+  ),
+});
 
 export const CopilotSummaryResponseSchema = z.object({
   daily_focus: z.string(),

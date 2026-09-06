@@ -1,7 +1,80 @@
-# 当前 handoff — 2026-09-06，完整重构goal active
+# 当前 handoff — 2026-09-07，完整重构goal active
+
+## 最新状态（以下历史步骤不替代本节）
+
+- PR1346已push exact70189a91，独立初审review_unified_conversation PASS，无P0/P1。
+  CI34050192068仅DB2失败，durable-backlog计数4≠3；root用queue+backlog两文件单fork稳定复现。
+  原因是新queue suite最后的等待轮job_events未清理；resetDb仅domain tables，不包含operational ledger。
+  root已补该suite afterEach清理physical jobs+job_events；同一串行9/9 GREEN，旧断言/产品逻辑不动，未新增付费。
+  本地build服务已停止；PR未merge/deploy。整个goal active，965后继尚Todo。
+
+- Owner已明确批准现有Copilot抽屉发送/恢复/消息展示四文件改动，UI不再blocked。
+  独立tlp-wt-conversation-dock branch codex/yuk-948-conversation-dock；worker初稿f6cd585/751361390不完整，
+  已释放并由architect complete_unified_dock_ownership独占继续，当前在做Map<runId>订阅/Stop/snapshot恢复。
+  root独占tlp-wt-unified-conversation，a5bfa5a3实际验收harness+文档、1f705b5e装配/证据/账本均已commit。
+  最新9f61ba1d增加AI replay run_id（同session ask/chip才有），不改变checkpoint撤回资格；27DB/类型检查绿。
+  UI最终6895c4f5经b92177f86合入root；已释放writer，108 UI unit通过。自动合并的重复run_id字段root已修。
+  root的7个built-browser Copilot场景通过（连续发送/独立Stop/无缓存恢复/原key歧义恢复/四类展示/模式结束）。
+  48117a8f用真实registrar/manifest自动poller消费已终态head并推进已Stop后继，queue8/8、模型零调用；另82相关DB通过。
+  新增YUK965 Todo记录仅验收还消费旧runCopilotChat适配器的结构残留，待948/950交付后接续，不冒充整个goal完成。
+  真实actual2轮通过：.tmp/actual-provider-acceptance/1788714763712-2c71c672-f7a1-4345-9264-1349f295d1e5.json，
+  已封存docs/planning/evidence/2026-09-07-unified-conversation-actual.json；exacta5bfa5a3，dirty仅当时PLAN更新，
+  real HTTP+pg-boss fetch+production handler（不是自动poller）：两轮订阅均断开仍done，native SDK同6ed0df57-04c2-485d-8042-aaa9a9ba2d10。
+  promptCodecMode cold→resume，第二轮精确复述0/null/有向关系/unobserved/未批准，并加入UPDATED-92。
+  input13203→13370、output60→415，不声称token减少；两root均无tool/child，原始思考仅计数，不持久化。
+  本次estimatedUSD0.0007353978（非账单），reservedUSD1.6；新$10总estimateUSD0.0352456927，
+  reserveUSD5.30823、安全余USD4.69177；旧池USD0.28771982单列。无正在运行付费调用。
+  架构audit发现新增boss/session边，root把后继runtime装配归manifest，worker只接wake回调；
+  session持久化的1条owner调用合法保留并更新baseline439/0/47，不用shallow wrapper藏计数，未改SCC/豁免。
+  64worker/FIFO DB通过；实际manifest loader接线纳入queue用例，admission-only预检另跑0调用。
+  最终UI集成/20浏览器/独立初审已过；PR1346已push，首轮CI需上述test-only修复，未merge/deploy，整个goalactive。
+
+- 后续goal continuation：上一轮9f8798ef属实质progress，本轮UI批准仍未收到；继续独立后端工作。
+  新增真实/chat→queue→/turns→Stop→worker-terminal-wake→history综合场景，仅mock测试enqueue开关，
+  验证丢202 body后无本地handle恢复、追加3轮、Stop等待轮不误停当前、后继保留context、读到晚到前轮reply。
+  queue8项与worker56项共64DB通过，不冒充真实HTTP socket断线或模型实际输出。
+  发现统一durable仍绕过capInput累计读取量限制；共享owner删除该例外，6/25与原1000node/4000event上限不变。
+  使用真实schema允许的60节点/次，前16次960、第17次仅40、第18次softstop；恢复旧分支RED，再修复GREEN。
+  105相关unit/typecheck/Biome/build通过。初始explorer误读旧worktree结果被拒，复查精确9f8798ef后才采纳。
+  该只读bounded核对不是948最终独立PR review；review预算仍未启动。没有新增paid/UI/deploy。
+
+- 2026-09-07后续集成：7c92403cf合入queue最终5fcae986；当前root无其它writer。
+  /chat全部消息统一202持久接纳，必需稳定Idempotency-Key；旧durable值不控制执行路径；queue禁用显式503。
+  terminal/Stop在事务提交后唤醒后继，失败由reconciler接管。chip输入共享writeCopilotInputEvent，
+  保留system/chip action，不伪装typed ask；取消与终态同样不暴露chip撤回锚。
+  worker持久化安全tool/subtask STEP，串行drain先于terminal；Task内部prompt/result不公开。
+  原api/tool-use-sse及其4项保护测试已迁server/tool-activity，由worker实际消费，不留仅被测试调用的死代码。
+  最终126 scoped unit、89 worker/FIFO/history DB、typecheck、Biome与build通过；另8取消DB、17教学/API/skill DB已绿。
+  server/turns已有按根事件顺序纳入晚到前轮reply的规则，不另写第三历史reader。
+  新增worker活动测试最初复用了旧runID而读到旧job_events，已改独立ID；旧workerfixture补真实input root，
+  防止无root导致materializing/checkpoint测试假绿。未削弱原失败/恢复断言。
+  UI四文件预检仍待批准；未写UI、未新增paid、未push/PR/merge/deploy。948/950 Linear均In Progress。
+  最终review与真实统一会话验收尚缺；整个goal保持active。
+
+- 949/960已交付：PR1345 exact630571bc7cf53689780e4a501f8dc2283d153508，CI34043412808全绿，
+  已squash合并main4d475ac2b95004dc4c166e84a49ba575de7a82c9（2026-09-06 16:00:56Z）。
+  62内容校验/finalization tests覆盖同一行题目答案及礼貌请求，实际报告与修辞问句仍不误拦。
+  两个P2已defer到948：receipt最终视图状态、artifact ready eligibility；无第三轮独立review。
+- 当前root独占 /Volumes/YukovalSBak/yukoval-projects/tlp-wt-unified-conversation，branch codex/yuk-948-unified-conversation。
+  ADR0062 f5a9c3cb锁定统一持续会话；4bf68959教学原子commit+cancel传播；236e5999集成SDK lane。
+  root修复该lane早登记/未持久DB/digest未投递/重复拼notice/earlycancel清理，不能信任原worker初稿完成声明。
+  最终字节必须来自sharedwriter实际return，candidate一致才保存cursor；本进程conversation→SDK绑定有256上限。
+  teaching已走worker同一paid fence/outcome marker、真实taskid/Stop/原子question+reply；三kind共享live/repair/replay。
+  root还修复失败去view后receipt retained字段；artifact ready资格已复用Notes owner并经16相关DB验证。
+  85集成DB（55worker+4teaching lifecycle+26turns）、123unit、typecheck/lint/build通过。
+  测试仅mock外部模型，writer/marker/DB实际运行；未声称实际模型/浏览器统一会话已通过。
+- Queue工作树tlp-wt-session-queue，branch codex/yuk-948-session-queue，最终5fcae986已合入root并释放。
+  原worker f571a469/7e9af683不完整不可直接交付；architect最终22DB/61unit及本地gates/audits通过。
+  root已接terminal wake、默认统一入口、6轮/25工具预算及服务端active_runs快照。
+  SDK tree tlp-wt-worker-session latest测试f5dee551，已合入root；原worker与tester都已释放，无其它writer。
+- UI预检仍待批准：现有drawer的CopilotDock.tsx/message-projection.ts/subtask-events.ts/durable-reconnect-storage.ts。
+  不新增Mission/后台按钮，不改视觉，不把session_busy或先Stop作为追加消息实现；UI代码未写。
+- 新$10池：estimatedUSD0.0345102949（非账单）、reservedUSD3.70823、安全剩USD6.29177；旧池USD0.28771982独立。
+  本轮没有任何新的付费调用。原始脏main不动，未部署/clone/改SoT/删历史。
+
+## 历史步骤（保留证据，不是当前待办）
 
 ## 当前949收口；下一条948/950统一持续会话
-
 - Owner最新决定：Copilot消息不分前后台，默认不中断，对标ChatGPT；旧Mission按钮提案撤回。
   后端复用copilot_run唯一owner，HTTP断线仅取消订阅；关闭/刷新可从服务端恢复，不依赖sessionStorage。
   后续消息必须持久接纳同一会话并顺序消费；不接受session_busy409或“先Stop再发”降级。

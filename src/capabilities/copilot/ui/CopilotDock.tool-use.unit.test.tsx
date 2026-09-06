@@ -9,7 +9,7 @@
 //   2. the compact render: single-line row (label + status + one-line
 //      summary), details collapsed behind an expandable toggle.
 
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -110,7 +110,9 @@ vi.mock('@/ui/primitives/CopilotDrawer', () => ({
 }));
 vi.mock('./CopilotHeroCard', () => ({ CopilotHeroCard: () => null }));
 
-import { type ChatMessage, CopilotDock, MessageRow } from './CopilotDock';
+import { type ChatMessage, MessageRow } from './CopilotDock';
+import { projectDurableCopilotMessage } from './message-projection';
+import { createCopilotRunView, foldCopilotRunFrames } from './subtask-events';
 
 const noopNavigate = (_to: string) => {};
 const noopAccept = (_sessionId: string, _questionId: string, _replyEventId?: string) => {};
@@ -128,33 +130,6 @@ function renderRow(message: ChatMessage) {
   );
 }
 
-/** Controllable SSE body — frames queued before/after the consumer attaches. */
-function controlledSseStream() {
-  let enqueue!: (chunk: string) => void;
-  let closeStream!: () => void;
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      enqueue = (chunk: string) => controller.enqueue(new TextEncoder().encode(chunk));
-      closeStream = () => controller.close();
-    },
-  });
-  const response = new Response(body, {
-    status: 200,
-    headers: { 'Content-Type': 'text/event-stream' },
-  });
-  return { response, emit: enqueue, close: closeStream };
-}
-
-const sseFrame = (event: string, data: unknown) =>
-  `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-
-async function sendTurn(question: string) {
-  const user = userEvent.setup();
-  await user.type(screen.getByTestId('copilot-composer-input'), question);
-  await user.click(screen.getByTestId('copilot-composer-send'));
-  return user;
-}
-
 describe('CopilotDock tool-use merged cards (YUK-913)', () => {
   beforeEach(() => {
     window.sessionStorage.clear();
@@ -170,148 +145,136 @@ describe('CopilotDock tool-use merged cards (YUK-913)', () => {
     apiJsonMock.mockReset();
   });
 
-  it('evolves ONE card in place when the result names the domain tool while tool_use named the raw SDK block', async () => {
-    const { response, emit, close } = controlledSseStream();
-    apiFetchMock.mockResolvedValue(response);
-    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
-    await sendTurn('帮我整理错题');
-
-    await act(async () => {
-      emit(
-        sseFrame('tool_use', {
-          toolName: 'mcp__loom__query_mistakes',
+  it('evolves one durable STEP card in place from started to finished', () => {
+    const running = foldCopilotRunFrames(createCopilotRunView(), [
+      {
+        event_id: 1,
+        event_type: 'copilot_run.step',
+        payload: {
+          step_kind: 'tool_started',
+          tool_name: 'mcp__loom__query_mistakes',
           input: { limit: 8 },
-          toolUseId: 'toolu_913_1',
-        }),
-      );
-    });
-    let cards = await screen.findAllByTestId('copilot-tool-use-card');
+          tool_use_id: 'toolu_913_1',
+        },
+      },
+    ]);
+    const runningMessage = projectDurableCopilotMessage(
+      { id: 'run-reply', role: 'ai', text: '' },
+      running,
+      '处理中',
+    );
+    if (!runningMessage) throw new Error('running projection missing');
+    const rendered = renderRow(runningMessage);
+    let cards = screen.getAllByTestId('copilot-tool-use-card');
     expect(cards).toHaveLength(1);
     expect(cards[0].getAttribute('data-status')).toBe('running');
     expect(screen.getByText('错题整理')).toBeTruthy();
     expect(screen.getByText('调用中')).toBeTruthy();
 
-    await act(async () => {
-      emit(
-        sseFrame('tool_result', {
-          toolName: 'query_mistakes',
+    const completed = foldCopilotRunFrames(running, [
+      {
+        event_id: 2,
+        event_type: 'copilot_run.step',
+        payload: {
+          step_kind: 'tool_finished',
+          tool_name: 'query_mistakes',
           input: { limit: 8 },
           summary: 'mistakes · 8 行 · 3 道过期',
-        }),
-      );
-    });
-    await waitFor(() => {
-      cards = screen.getAllByTestId('copilot-tool-use-card');
-      expect(cards).toHaveLength(1);
-      expect(cards[0].getAttribute('data-status')).toBe('done');
-    });
-    // The result landed on the SAME card — no second card, no stale 调用中.
+        },
+      },
+      {
+        event_id: 3,
+        event_type: 'copilot_run.reply',
+        payload: { reply_md: '我已核对完错题，建议先复习通假字。' },
+      },
+      { event_id: 4, event_type: 'copilot_run.done', payload: {} },
+    ]);
+    const completedMessage = projectDurableCopilotMessage(runningMessage, completed, '处理中');
+    if (!completedMessage) throw new Error('completed projection missing');
+    rendered.rerender(
+      <MessageRow
+        message={completedMessage}
+        navigate={noopNavigate}
+        onAcceptCorrective={noopAccept}
+        chipPending={false}
+        chipAcked={false}
+        revertPending={false}
+      />,
+    );
+    cards = screen.getAllByTestId('copilot-tool-use-card');
+    expect(cards).toHaveLength(1);
+    expect(cards[0].getAttribute('data-status')).toBe('done');
     expect(screen.getByText('mistakes · 8 行 · 3 道过期')).toBeTruthy();
     expect(screen.queryByText('调用中')).toBeNull();
-
-    await act(async () => {
-      emit(
-        sseFrame('reply', {
-          reply: '我已核对完错题，建议先复习通假字。',
-          session_id: 'copilot-session-tools',
-          reply_event_id: 'copilot_reply_tools',
-          checkpoint_event_id: 'copilot_ask_tools',
-        }),
-      );
-      close();
-    });
-    await screen.findByText('我已核对完错题，建议先复习通假字。');
-    expect(screen.getAllByTestId('copilot-tool-use-card')).toHaveLength(1);
-    expect(screen.getByText('mistakes · 8 行 · 3 道过期')).toBeTruthy();
+    expect(screen.getByText('我已核对完错题，建议先复习通假字。')).toBeTruthy();
   });
 
-  it('dedupes repeated tool_use frames and keeps same-name concurrent calls on separate cards', async () => {
-    const { response, emit, close } = controlledSseStream();
-    apiFetchMock.mockResolvedValue(response);
-    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
-    await sendTurn('连查两次错题');
-
-    await act(async () => {
-      emit(
-        sseFrame('tool_use', {
-          toolName: 'mcp__loom__query_mistakes',
+  it('dedupes repeated starts and keeps same-name calls separately correlated', () => {
+    const view = foldCopilotRunFrames(createCopilotRunView(), [
+      {
+        event_id: 1,
+        event_type: 'copilot_run.step',
+        payload: {
+          step_kind: 'tool_started',
+          tool_name: 'mcp__loom__query_mistakes',
           input: { limit: 8 },
-          toolUseId: 'toolu_913_a',
-        }),
-      );
-      emit(
-        sseFrame('tool_use', {
-          toolName: 'mcp__loom__query_mistakes',
+          tool_use_id: 'toolu_913_a',
+        },
+      },
+      {
+        event_id: 2,
+        event_type: 'copilot_run.step',
+        payload: {
+          step_kind: 'tool_started',
+          tool_name: 'mcp__loom__query_mistakes',
           input: { limit: 8 },
-          toolUseId: 'toolu_913_a',
-        }),
-      );
-    });
-    let cards = await screen.findAllByTestId('copilot-tool-use-card');
-    expect(cards).toHaveLength(1);
-
-    await act(async () => {
-      emit(
-        sseFrame('tool_use', {
-          toolName: 'mcp__loom__query_mistakes',
+          tool_use_id: 'toolu_913_a',
+        },
+      },
+      {
+        event_id: 3,
+        event_type: 'copilot_run.step',
+        payload: {
+          step_kind: 'tool_started',
+          tool_name: 'mcp__loom__query_mistakes',
           input: { limit: 12 },
-          toolUseId: 'toolu_913_b',
-        }),
-      );
-    });
-    cards = await waitFor(() => {
-      const found = screen.getAllByTestId('copilot-tool-use-card');
-      expect(found).toHaveLength(2);
-      return found;
-    });
-    expect(cards[0].getAttribute('data-status')).toBe('running');
-    expect(cards[1].getAttribute('data-status')).toBe('running');
-
-    await act(async () => {
-      emit(
-        sseFrame('tool_result', {
-          toolName: 'query_mistakes',
+          tool_use_id: 'toolu_913_b',
+        },
+      },
+      {
+        event_id: 4,
+        event_type: 'copilot_run.step',
+        payload: {
+          step_kind: 'tool_finished',
+          tool_name: 'query_mistakes',
           input: { limit: 8 },
           summary: '第一次核对：8 行',
-        }),
-      );
-    });
-    await waitFor(() => {
-      cards = screen.getAllByTestId('copilot-tool-use-card');
-      expect(cards[0].getAttribute('data-status')).toBe('done');
-      expect(cards[1].getAttribute('data-status')).toBe('running');
-    });
-
-    await act(async () => {
-      emit(
-        sseFrame('tool_result', {
-          toolName: 'query_mistakes',
+        },
+      },
+      {
+        event_id: 5,
+        event_type: 'copilot_run.step',
+        payload: {
+          step_kind: 'tool_finished',
+          tool_name: 'query_mistakes',
           input: { limit: 12 },
           summary: '第二次核对：12 行',
-        }),
-      );
-    });
-    await waitFor(() => {
-      cards = screen.getAllByTestId('copilot-tool-use-card');
-      expect(cards[0].getAttribute('data-status')).toBe('done');
-      expect(cards[1].getAttribute('data-status')).toBe('done');
-    });
+        },
+      },
+    ]);
+    const message = projectDurableCopilotMessage(
+      { id: 'run-twice', role: 'ai', text: '' },
+      view,
+      '处理中',
+    );
+    if (!message) throw new Error('tool projection missing');
+    renderRow(message);
+    const cards = screen.getAllByTestId('copilot-tool-use-card');
+    expect(cards).toHaveLength(2);
+    expect(cards[0].getAttribute('data-status')).toBe('done');
+    expect(cards[1].getAttribute('data-status')).toBe('done');
     expect(within(cards[0]).getByText('第一次核对：8 行')).toBeTruthy();
     expect(within(cards[1]).getByText('第二次核对：12 行')).toBeTruthy();
-
-    await act(async () => {
-      emit(
-        sseFrame('reply', {
-          reply: '两轮核对都完成了。',
-          session_id: 'copilot-session-tools',
-          reply_event_id: 'copilot_reply_twice',
-          checkpoint_event_id: 'copilot_ask_twice',
-        }),
-      );
-      close();
-    });
-    await screen.findByText('两轮核对都完成了。');
-    expect(screen.getAllByTestId('copilot-tool-use-card')).toHaveLength(2);
   });
 
   it('renders compact done rows with the summary line before the reply text', () => {

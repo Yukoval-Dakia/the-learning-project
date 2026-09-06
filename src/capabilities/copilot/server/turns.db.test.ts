@@ -366,10 +366,31 @@ describe('getRecentCopilotTurns', () => {
       text: '有 3 道题到期。',
       at: new Date('2026-06-04T10:00:05.000Z').toISOString(),
       event_id: replyId,
+      run_id: askId,
       session_id: sessionId,
       reply_event_id: replyId,
       checkpoint_event_id: askId,
     });
+  });
+
+  it('does not correlate replies to foreign-session asks or non-input parents', async () => {
+    const now = new Date();
+    const { sessionId } = await Conversation.createCopilotConversation(db, { now });
+    const foreign = await Conversation.createCopilotConversation(db, { now });
+    touchedSessionIds.push(sessionId, foreign.sessionId);
+    const foreignAsk = await writeAsk('其他会话的消息', foreign.sessionId, now);
+    const localAsk = await writeAsk('本会话的问题', sessionId, now);
+    const localReply = await writeReply('本会话的回答', sessionId, localAsk, now);
+    const foreignReply = await writeReply('错误跨会话父事件', sessionId, foreignAsk, now);
+    const nestedReply = await writeReply('回复不是接纳输入', sessionId, localReply, now);
+
+    const turns = await getRecentCopilotTurns(db, { sessionId });
+    expect(turns.find((turn) => turn.event_id === localReply)?.run_id).toBe(localAsk);
+    for (const id of [foreignReply, nestedReply]) {
+      const reply = turns.find((turn) => turn.event_id === id);
+      expect(reply?.role).toBe('ai');
+      expect(reply).not.toHaveProperty('run_id');
+    }
   });
 
   it('does NOT surface a revert checkpoint on a chip-triggered reply (YUK-497 wave-2)', async () => {
@@ -402,9 +423,11 @@ describe('getRecentCopilotTurns', () => {
     const chipTurn = turns.find((t) => t.event_id === chipId);
     const askReply = turns.find((t) => t.event_id === askReplyId);
     expect(chipReply?.role).toBe('ai');
+    expect(chipReply?.run_id).toBe(chipId);
     expect(chipReply?.checkpoint_event_id).toBeUndefined();
     expect(chipTurn?.checkpoint_event_id).toBeUndefined();
     expect(askReply?.checkpoint_event_id).toBe(askId);
+    expect(askReply?.run_id).toBe(askId);
   });
 
   it('does NOT surface a revert checkpoint on a replayed teaching ask_check reply (wave-3 G1)', async () => {
@@ -443,6 +466,7 @@ describe('getRecentCopilotTurns', () => {
     const teachReply = turns.find((t) => t.event_id === replyTeach);
     const freeReply = turns.find((t) => t.event_id === replyFree);
     expect(teachReply?.role).toBe('ai');
+    expect(teachReply?.run_id).toBe(askTeach);
     expect(teachReply?.checkpoint_event_id).toBeUndefined();
     // The suppression is scoped: a plain reply still exposes its checkpoint anchor.
     expect(freeReply?.checkpoint_event_id).toBe(askFree);

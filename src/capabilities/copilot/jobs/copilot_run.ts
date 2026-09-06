@@ -17,10 +17,15 @@
 // YUK-328 后独立 worker 在注册 handlers 前从 capability manifests 装配完整
 // DomainTool registry；buildMcpServerFromRegistry 只读该启动期 inventory。
 
+import { createHash } from 'node:crypto';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { isDurableWorkerTouchEvent } from '@/capabilities/copilot/durable-pickup';
-import { type PreparedCopilotReply, writeCopilotReply } from '@/capabilities/copilot/server/chat';
+import {
+  type PreparedCopilotReply,
+  writeCopilotReply,
+  writeTeachingCopilotReply,
+} from '@/capabilities/copilot/server/chat';
 import {
   COPILOT_CANCEL_DRAIN_GRACE_MS,
   type CopilotRunCancellationControl,
@@ -36,7 +41,6 @@ import { acquireCopilotExecutionSettlementLock } from '@/capabilities/copilot/se
 // inline. Before YUK-575 the durable run shipped a minimal {surface,triggered_by,
 // user_message} with NO session memory.
 import {
-  type CopilotAmbientContext,
   type CopilotRunInput,
   assembleCopilotRunInput,
   selectActorRef,
@@ -48,8 +52,18 @@ import {
   hasCancelRequest,
   isCopilotRunTerminalEvent,
 } from '@/capabilities/copilot/server/copilot-run-status';
-import { withCopilotDurableDispatchLock } from '@/capabilities/copilot/server/durable-dispatch';
+import {
+  clearCopilotWorkerSession,
+  isCopilotWorkerSessionOwned,
+  registerCopilotWorkerSession,
+} from '@/capabilities/copilot/server/copilot-worker-session';
+import {
+  type CopilotRunJobData,
+  hasTerminalCopilotRun,
+  withCopilotDurableDispatchLock,
+} from '@/capabilities/copilot/server/durable-dispatch';
 import { selectAsksWithMaterializingToolCall } from '@/capabilities/copilot/server/materializing-tools';
+import { runTeachingSkill } from '@/capabilities/copilot/server/skills/teaching-skill';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
 import {
@@ -67,21 +81,19 @@ import {
 } from '@/server/boss/job-observation';
 import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
+import {
+  clearAgentSdkSessionId,
+  getAgentSdkSessionId,
+  setAgentSdkSessionId,
+} from '@/server/session/conversation';
 import { resolveCopilotSkills } from '@/subjects/copilot-skills';
-import type {
-  CopilotModeState,
-  CopilotSkillContextT,
-  CopilotSkillTurn,
-} from '../server/chat-contracts';
+import type { CopilotModeState, CopilotSkillTurn } from '../server/chat-contracts';
 import {
   DURABLE_COPILOT_EXECUTION_BUDGET,
   type ExecuteCopilotTurn,
   executeCopilotTurn,
 } from '../server/copilot-execution';
-import {
-  parseCopilotModeCompletion,
-  resolveCopilotModeCompletion,
-} from '../server/mode-completion';
+import { parseCopilotModeState, resolveCopilotModeCompletion } from '../server/mode-completion';
 import {
   CopilotPrimaryViewSchema,
   type CopilotReplyFinalizationReceipt,
@@ -92,51 +104,15 @@ export { enqueueCopilotMailboxJob } from '../api/chat';
 
 import type { CopilotContinuationRecord, SubagentRunRecord } from '../server/subagent-mailbox';
 import type { SpawnBudgetObservation } from '../server/subagents';
+import { projectCopilotActivity } from '../server/tool-activity';
 import { getCopilotContinuationHistory } from '../server/turns';
 
-// dispatch 入口投递的 job 体。run_id = checkpoint_id = user_ask event id（route
-// 在 enqueue 前已写 user_ask domain event，本 handler 以它做 causedByEventId 让
-// tool-use mirror 串到同一因果链，与 quiz_gen triggerEventId 同款）。
-export interface CopilotRunJobData {
-  /** checkpoint_id = user_ask event id；既是 run handle 也是 job_events business_id。 */
-  run_id: string;
-  /**
-   * YUK-364 — durable run 所属的 conversation 会话 id（dispatch 时 findOrCreate 得到、
-   * 已写在 user_ask 上）。handler 成功路径据它写 copilot_reply domain event，让回复对
-   * turns.ts 的 conversation_history 可见、user_ask 不成 phantom。
-   */
-  session_id: string;
-  user_message: string;
-  /** 'chat' | 'chip'——决定 surface / actorRef（与同步面 selectSurface 同语义）。 */
-  triggered_by: 'chat' | 'chip';
-  /** chip 直触可选标识，透传进 run input（同步面 chip_kind）。 */
-  chip_kind?: string;
-  /** Product-only mode metadata; never copied into CopilotRunInput/model prompt. */
-  skill_context?: CopilotSkillContextT;
-  correction_target_turn_id?: string;
-  /**
-   * YUK-575 (S4) — ambient context（用户当前 route + 可选 focused_entity）。它是
-   * request-only、**从不 persisted**（防循环 ②：绝不写进任何 turn payload），所以
-   * 必须 RIDE 这个 job payload 才能在 worker 拾取时进 run input——不像
-   * conversation_history / learner-state（从事件重建），ambient 无处可重读。
-   */
-  ambient?: CopilotAmbientContext;
-}
+export type { CopilotRunJobData } from '../server/durable-dispatch';
 
-// Durable policy 的三旋钮由 copilot-execution 唯一解释：runner 获得
-// maxIterations/timeoutMs，execution-owned tracker 获得 maxToolCalls。它覆盖 inline CopilotTask
-// registry 默认（maxIterations:6 / warning:10 / hard:25 / timeout:60_000），**不 mutate
-// 共享 registry**（YUK-458 revert 教训：抬 inline 默认只把 error_max_turns 变成
-// inline-request abort，不解 endurance）。
-//   • maxIterations:24 — 给多步 propose 编排足够回合（YUK-458 证 6 太紧）。
-//   • maxToolCalls:60 — **MF-A**：durable 与 inline 同 surface='copilot'，共用
-//     COPILOT_CONTEXT_BUDGET.toolCalls.hard=25；不抬它则 24 回合 × ~2-4
-//     tool-call/回合会提前 soft-stop。durable 以 25 为 warning、60 为 hard，覆盖
-//     24 × 2.5/回合均值，把「谁先 bind」推回 iterations 侧。
-//   • timeoutMs:12min — 封病态 loop 的浪费上限；**承重约束（S6）**：必须 <
-//     STUCK_RUN_THRESHOLD_MS(1h)，否则 stuck-in-running sweeper 误收敛 live run
-//     （见 copilot_run.test.ts 的 static 约束断言）。远 < EXPIRE_AGENT(2h)。
-// 安全帽不是目标——健康流靠模型返回 final reply 自然收，天花板只挡病态 loop。
+// One execution owner resolves the budget. Unified persistent conversations
+// retain the normal six model turns and 25-tool cap; moving off HTTP is not an
+// authorization to multiply model usage. The 12-minute wall-clock safety cap
+// accommodates slow tools while staying below stuck-run recovery thresholds.
 export const DURABLE_BUDGET = DURABLE_COPILOT_EXECUTION_BUDGET;
 
 export interface RunCopilotRunParams {
@@ -144,6 +120,7 @@ export interface RunCopilotRunParams {
   data: CopilotRunJobData;
   /** One semantic AI seam; SDK/MCP/finalization assembly belongs to Copilot execution. */
   executeCopilotTurnFn?: ExecuteCopilotTurn;
+  runTeachingSkillFn?: typeof runTeachingSkill;
   /**
    * YUK-575 (A1/N3) test seam — 默认 assembleCopilotRunInput。注入 fixture 断言
    * pickup-time 装配参数（historyAnchorEventId=run_id、ambient 透传等）而不打真 DB。
@@ -242,7 +219,11 @@ export async function markCopilotRunStarted(
         business_table: COPILOT_RUN_TABLE,
         business_id: runId,
         event_type: COPILOT_RUN_EVENTS.FAILED,
-        payload: { reason: 'cancelled', cancelled_before_start: true, checkpoint_event_id: runId },
+        payload: {
+          reason: 'cancelled',
+          cancelled_before_start: true,
+          ...(await durableCheckpointPayload(tx, runId)),
+        },
       });
       return { outcome: 'cancelled' };
     }
@@ -287,7 +268,11 @@ export async function claimCopilotExecutionFence(
         business_table: COPILOT_RUN_TABLE,
         business_id: runId,
         event_type: COPILOT_RUN_EVENTS.FAILED,
-        payload: { reason: 'cancelled', cancelled_before_start: true, checkpoint_event_id: runId },
+        payload: {
+          reason: 'cancelled',
+          cancelled_before_start: true,
+          ...(await durableCheckpointPayload(tx, runId)),
+        },
       });
       return { outcome: 'cancelled' };
     }
@@ -337,6 +322,12 @@ async function durableCheckpointPayload(
 ): Promise<Record<string, string>> {
   let turnMaterialized: boolean;
   try {
+    const [root] = await db
+      .select({ action: event.action })
+      .from(event)
+      .where(eq(event.id, runId))
+      .limit(1);
+    if (root?.action !== 'experimental:copilot_user_ask') return {};
     turnMaterialized = (await selectAsksWithMaterializingToolCall(db, [runId])).has(runId);
   } catch (probeErr) {
     console.error('[copilot_run] materializing-tool probe failed; suppressing revert anchor', {
@@ -364,7 +355,11 @@ export async function writeSuccessfulTerminalProjection(
   const existingTypes = new Set(priorEvents.map((item) => item.event_type));
   if (existingTypes.has(COPILOT_RUN_EVENTS.DONE)) return;
 
-  const checkpointPayload = await durableCheckpointPayload(db, projection.runId);
+  // A teaching_check row is not compensated by event-chain revert. The same
+  // persisted skill projection suppresses the anchor on live output and repair.
+  const checkpointPayload = projection.modeState?.skill_turn.structured_question
+    ? {}
+    : await durableCheckpointPayload(db, projection.runId);
 
   await withinExistingOrNewTransaction(db, async (tx) => {
     if (!existingTypes.has(COPILOT_RUN_EVENTS.REPLY)) {
@@ -495,7 +490,7 @@ async function findPersistedDurableReply(
     };
   }
   if (row.outcome !== 'success') return null;
-  const modeState = parseCopilotModeCompletion(payload);
+  const modeState = parseCopilotModeState(payload);
   const primaryView = CopilotPrimaryViewSchema.safeParse(payload.primary_view);
   return {
     outcome: 'success',
@@ -563,8 +558,8 @@ function terminalRunResult(
   if (done) {
     const reply = newestFirst.find((event) => event.event_type === COPILOT_RUN_EVENTS.REPLY);
     const modeState =
-      (reply?.payload ? parseCopilotModeCompletion(reply.payload) : undefined) ??
-      (done.payload ? parseCopilotModeCompletion(done.payload) : undefined);
+      (reply?.payload ? parseCopilotModeState(reply.payload) : undefined) ??
+      (done.payload ? parseCopilotModeState(done.payload) : undefined);
     return {
       status: 'done',
       reply: typeof reply?.payload?.reply_md === 'string' ? reply.payload.reply_md : '',
@@ -735,6 +730,10 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   const claimExecutionFence = params.claimExecutionFenceFn ?? claimCopilotExecutionFence;
   const createCancellationControl =
     params.createCancellationControlFn ?? createCopilotRunCancellationControl;
+  const discardWorkerCursor = async () => {
+    clearCopilotWorkerSession(data.session_id);
+    await clearAgentSdkSessionId(db, data.session_id);
+  };
 
   // 启动前 replay 一次：F3 terminal-already-present 守卫 + pre-fence 协作取消。
   // 运行中 Stop 由下方 cancellation control 的 poll / SDK hook / DomainTool gate
@@ -855,7 +854,10 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     triggered_by: data.triggered_by,
   });
   if (started.outcome === 'terminal') return terminalRunResult(started.events, taskRunId);
-  if (started.outcome === 'cancelled') return { status: 'cancelled' };
+  if (started.outcome === 'cancelled') {
+    await discardWorkerCursor();
+    return { status: 'cancelled' };
+  }
 
   // YUK-575 (A1/N3/MF-B) — 组装 FULL run input（与 inline byte-parity）。**pickup 时**
   // 重读 conversation_history / learner-state header(YUK-574) / proposal_feedback（保
@@ -874,7 +876,14 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     now: new Date(),
     historyAnchorEventId: runId,
   });
-  const progressChain: Promise<void> = Promise.resolve();
+  // A worker may resume only a session it observed and registered in this
+  // process, and only while the conversation row still points at that id.
+  // Persisted ids from another process/app are intentionally cold-started.
+  const persistedSdkSessionId = await getAgentSdkSessionId(db, data.session_id);
+  const resumeSessionId = isCopilotWorkerSessionOwned(data.session_id, persistedSdkSessionId)
+    ? (persistedSdkSessionId ?? undefined)
+    : undefined;
+  let progressChain: Promise<void> = Promise.resolve();
   // Load-bearing execution fence, deliberately placed after every deterministic
   // setup/read and immediately before the only paid/external-effect gateway.
   // The claim rechecks under a per-run transaction lock: two overlapping
@@ -885,7 +894,10 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   if (executionClaim.outcome === 'terminal') {
     return terminalRunResult(executionClaim.events, taskRunId);
   }
-  if (executionClaim.outcome === 'cancelled') return { status: 'cancelled' };
+  if (executionClaim.outcome === 'cancelled') {
+    await discardWorkerCursor();
+    return { status: 'cancelled' };
+  }
   if (executionClaim.outcome === 'existing') {
     return awaitClaimedCopilotExecution(params, Date.now() + DURABLE_OWNER_SETTLEMENT_BUDGET_MS);
   }
@@ -895,6 +907,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     runId,
   });
   cancellationControl.startPolling();
+  let sdkSessionCommitted = false;
   const cancellationMarker =
     (
       partialText?: string,
@@ -946,6 +959,57 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     });
   };
   try {
+    if (data.skill_context?.skill === 'teaching') {
+      const skillContext = data.skill_context;
+      const skillResult = await (params.runTeachingSkillFn ?? runTeachingSkill)({
+        db,
+        sessionId: data.session_id,
+        learningItemId: skillContext.ref.id,
+        userMessage: data.user_message,
+        taskRunId,
+        signal: cancellationControl.signal,
+        providerSessionDeadlineAt: Date.now() + DURABLE_OWNER_SETTLEMENT_BUDGET_MS,
+      });
+      if ((await cancellationControl.probe()) === 'cancel_requested')
+        return await settleObservedCancellation();
+      try {
+        const markerClaim = await ensureCopilotOutcomeMarker(
+          db,
+          runId,
+          async (tx) => {
+            const committed = await writeTeachingCopilotReply(tx, {
+              sessionId: data.session_id,
+              userAskEventId: runId,
+              actorRef,
+              skillContext,
+              skillResult,
+              outcome: 'success',
+              durableFinishReason: 'end_turn',
+              now: new Date(),
+            });
+            return {
+              outcome: 'success' as const,
+              replyMd: committed.cleanedReply,
+              taskRunId: skillResult.task_run_id,
+              finishReason: 'end_turn',
+              modeState: { skill_turn: committed.skillTurn, skill_context: skillContext },
+            };
+          },
+          { createCancelled: cancellationMarker() },
+        );
+        if (markerClaim.outcome === 'already_terminal')
+          return terminalRunResult(markerClaim.events, taskRunId);
+        return await projectCopilotOutcomeMarker(
+          db,
+          runId,
+          skillResult.task_run_id,
+          projectSuccessfulTerminal,
+          projectFailedTerminal,
+        );
+      } catch (error) {
+        throw new DurableTerminalProjectionError(runId, 'success', error);
+      }
+    }
     const result = await execute(
       db,
       {
@@ -958,18 +1022,29 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
         kind: 'durable',
         cancellation: cancellationControl,
         deadlineAt: Date.now() + DURABLE_OWNER_SETTLEMENT_BUDGET_MS,
+        ...(resumeSessionId ? { resumeSessionId } : {}),
         ...(params.copilotSubagentEnabled !== undefined
           ? { subagentsEnabled: params.copilotSubagentEnabled }
           : {}),
-        ...(params.onSpawnBudgetObservation
-          ? {
-              observe: (activity) => {
-                if (activity.kind === 'spawn_budget') {
-                  params.onSpawnBudgetObservation?.(activity.observation);
-                }
-              },
-            }
-          : {}),
+        observe: (activity) => {
+          if (activity.kind === 'spawn_budget') {
+            params.onSpawnBudgetObservation?.(activity.observation);
+            return;
+          }
+          const payload = projectCopilotActivity(activity);
+          if (!payload) return;
+          progressChain = progressChain
+            .catch(() => undefined)
+            .then(async () => {
+              await writeJobEvent(db, {
+                business_table: COPILOT_RUN_TABLE,
+                business_id: runId,
+                event_type: COPILOT_RUN_EVENTS.STEP,
+                payload,
+              });
+            });
+          return progressChain;
+        },
       },
     );
     await drainDeltaChain(progressChain, runId);
@@ -1043,6 +1118,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     // per-run settlement lock. A projection failure remains repairable from the
     // marker, while a recovery that wins first blocks a contradictory outcome.
     try {
+      let committedReplyText: string | undefined;
       const markerClaim = await ensureCopilotOutcomeMarker(
         db,
         runId,
@@ -1061,6 +1137,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
             ...(modeState ? { modeState } : {}),
             now: new Date(),
           });
+          committedReplyText = cleanedReply;
           return {
             outcome: 'success' as const,
             replyMd: cleanedReply,
@@ -1084,13 +1161,23 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       if (markerClaim.outcome === 'already_terminal') {
         return terminalRunResult(markerClaim.events, taskRunId);
       }
-      return await projectCopilotOutcomeMarker(
+      const projected = await projectCopilotOutcomeMarker(
         db,
         runId,
         taskRunId,
         projectSuccessfulTerminal,
         projectFailedTerminal,
       );
+      const candidateMatchesPublished =
+        committedReplyText !== undefined &&
+        finalized.receipt.candidate_sha256 ===
+          createHash('sha256').update(committedReplyText, 'utf8').digest('hex');
+      if (projected.status === 'done' && result.sdkSessionId && candidateMatchesPublished) {
+        await setAgentSdkSessionId(db, data.session_id, result.sdkSessionId);
+        registerCopilotWorkerSession(data.session_id, result.sdkSessionId, result.contextDigest);
+        sdkSessionCommitted = true;
+      }
+      return projected;
     } catch (settlementErr) {
       throw new DurableTerminalProjectionError(runId, 'success', settlementErr);
     }
@@ -1113,6 +1200,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       createCancelledMarker: cancellationMarker(),
     });
   } finally {
+    if (!sdkSessionCommitted) await discardWorkerCursor();
     cancellationControl.dispose();
   }
 }
@@ -1516,7 +1604,11 @@ export async function reconcileCopilotDurableRun(
  * 注册器（register-capability-jobs.ts）固定 { pollingIntervalSeconds:2, batchSize:1 }
  * → 天然 n=1 单线程一次一 run（串行化由 batchSize:1 提供）。
  */
-export function buildCopilotRunHandler(db: Db): (jobs: Job<CopilotRunJobData>[]) => Promise<void> {
+export function buildCopilotRunHandler(
+  db: Db,
+  options: { wakeSession: (sessionId: string) => Promise<unknown> },
+): (jobs: Job<CopilotRunJobData>[]) => Promise<void> {
+  const { wakeSession } = options;
   return async (jobs) => {
     for (const job of jobs) {
       const data = job.data;
@@ -1529,8 +1621,22 @@ export function buildCopilotRunHandler(db: Db): (jobs: Job<CopilotRunJobData>[])
           `copilot_run job ${job.id} missing run_id/session_id/user_message/triggered_by`,
         );
       }
-      const result = await runCopilotRun({ db, data });
-      console.log(`[copilot_run] ${data.run_id} -> ${result.status}`);
+      try {
+        const result = await runCopilotRun({ db, data });
+        console.log(`[copilot_run] ${data.run_id} -> ${result.status}`);
+      } finally {
+        // Only after the terminal transaction has committed may the successor
+        // run start. A wake failure never invalidates an already-paid outcome;
+        // the existing reconciler provides the durable retry floor.
+        try {
+          if (await hasTerminalCopilotRun(db, data.run_id)) await wakeSession(data.session_id);
+        } catch (error) {
+          console.error('[copilot_run] successor wake deferred to reconciliation', {
+            runId: data.run_id,
+            error,
+          });
+        }
+      }
     }
   };
 }

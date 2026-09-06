@@ -12,9 +12,10 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { materializeAskCheckQuestion } from '@/capabilities/copilot/server/teaching/materialize-ask-check';
-import { learning_item, learning_session, question } from '@/db/schema';
+import { event, learning_item, learning_session, question } from '@/db/schema';
 import { Conversation } from '@/server/session';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { writeCopilotInputEvent, writeTeachingCopilotReply } from '../chat';
 import { runTeachingSkill } from './teaching-skill';
 
 const db = testDb();
@@ -50,6 +51,7 @@ describe('runTeachingSkill (U6 teaching skill — single session)', () => {
   it('explain turn: returns text + kind, returns no pendingQuestion', async () => {
     await seedLearningItem('li_skill_explain');
     const sessionId = await seedCopilotSession();
+    const controller = new AbortController();
     const runAgentTaskFn = vi.fn(async () => ({
       task_run_id: 'task_t1',
       text: JSON.stringify({
@@ -68,6 +70,8 @@ describe('runTeachingSkill (U6 teaching skill — single session)', () => {
         learningItemId: 'li_skill_explain',
         userMessage: '帮我讲讲',
         providerSessionDeadlineAt: 456_789,
+        taskRunId: 'conversation_attempt_teaching_1',
+        signal: controller.signal,
       },
       { runAgentTaskFn },
     );
@@ -87,9 +91,53 @@ describe('runTeachingSkill (U6 teaching skill — single session)', () => {
       expect.objectContaining({
         allowedTools: [],
         providerSessionDeadlineAt: 456_789,
+        taskRunId: 'conversation_attempt_teaching_1',
+        signal: controller.signal,
       }),
     );
   });
+
+  it.each(['before_start', 'during_provider'] as const)(
+    'does not return a materializable assessment after explicit Stop: %s',
+    async (when) => {
+      await seedLearningItem('li_cancelled_teaching');
+      const sessionId = await seedCopilotSession();
+      const controller = new AbortController();
+      const stop = new Error('explicit conversation stop');
+      const runAgentTaskFn = vi.fn(async () => {
+        controller.abort(stop);
+        return {
+          task_run_id: 'stopped_teaching_attempt',
+          text: JSON.stringify({
+            kind: 'ask_check',
+            text_md: '比较“送孟浩然之广陵”与“人之立志”的“之”，说明两句语法差别。',
+            suggested_next: 'continue',
+            structured_question: {
+              kind: 'short_answer',
+              prompt_md: '前者表示前往，后者连接主谓。请结合句子解释，不能只记一个翻译。',
+              reference_md: '前句“之”是动词，后句是结构助词；需结合上下文判别。',
+            },
+          }),
+        };
+      });
+      if (when === 'before_start') controller.abort(stop);
+      await expect(
+        runTeachingSkill(
+          {
+            db,
+            sessionId,
+            learningItemId: 'li_cancelled_teaching',
+            userMessage: '用这两个含义不同的句子考我，不要混淆词性。',
+            taskRunId: 'stopped_teaching_attempt',
+            signal: controller.signal,
+          },
+          { runAgentTaskFn },
+        ),
+      ).rejects.toBe(stop);
+      expect(runAgentTaskFn).toHaveBeenCalledTimes(when === 'before_start' ? 0 : 1);
+      expect(await db.select().from(question)).toHaveLength(0);
+    },
+  );
 
   it('ask_check turn: returns pendingQuestion (NOT persisted) with correct params', async () => {
     await seedLearningItem('li_skill_ask');
@@ -143,6 +191,78 @@ describe('runTeachingSkill (U6 teaching skill — single session)', () => {
     expect(sessions[0].id).toBe(sessionId);
     expect(sessions[0].entrypoint).toBe('copilot');
   });
+
+  it.each([false, true])(
+    'commits teaching question and durable reply atomically (fail reply: %s)',
+    async (failReply) => {
+      const learningItemId = 'li_atomic_teaching_commit';
+      await seedLearningItem(learningItemId);
+      const sessionId = await seedCopilotSession();
+      const now = new Date();
+      const askId = await writeCopilotInputEvent(db, {
+        sessionId,
+        userMessage: '比较代词、动词和结构助词在完整语境中的不同用法。',
+        now,
+      });
+      const structuredQuestion = {
+        kind: 'short_answer' as const,
+        prompt_md: '“送孟浩然之广陵”和“人之立志”中，“之”各起什么作用？',
+        reference_md: '前者是表示前往的动词，后者是结构助词；回答须结合前后词语说明。',
+      };
+      const commit = writeTeachingCopilotReply(db, {
+        sessionId,
+        userAskEventId: askId,
+        actorRef: 'agent:copilot',
+        outcome: 'success',
+        durableFinishReason: 'end_turn',
+        now,
+        skillContext: { skill: 'teaching', ref: { kind: 'learning_item', id: learningItemId } },
+        skillResult: {
+          task_run_id: 'teaching_atomic_actual_identity',
+          kind: 'ask_check',
+          text_md: structuredQuestion.prompt_md,
+          suggested_next: 'continue',
+          pendingQuestion: {
+            structured_question: structuredQuestion,
+            learningItemId,
+            sessionId,
+            fallbackPromptMd: structuredQuestion.prompt_md,
+          },
+        },
+        ...(failReply
+          ? {
+              writeFn: async () => {
+                throw new Error('reply commit unavailable');
+              },
+            }
+          : {}),
+      });
+      if (failReply) {
+        await expect(commit).rejects.toThrow('reply commit unavailable');
+        expect(await db.select().from(question)).toHaveLength(0);
+        expect(
+          await db.select().from(event).where(eq(event.caused_by_event_id, askId)),
+        ).toHaveLength(0);
+        return;
+      }
+      const written = await commit;
+      const [reply] = await db.select().from(event).where(eq(event.id, written.replyEventId));
+      const [savedQuestion] = await db.select().from(question);
+      expect(savedQuestion.source_ref).toBe(written.replyEventId);
+      expect(reply).toMatchObject({
+        outcome: 'success',
+        caused_by_event_id: askId,
+        task_run_id: 'teaching_atomic_actual_identity',
+      });
+      expect(reply.payload).toMatchObject({
+        durable_finish_reason: 'end_turn',
+        turn_kind: 'ask_check',
+        skill_turn: { kind: 'ask_check', structured_question: { id: savedQuestion.id } },
+        skill_context: { skill: 'teaching', ref: { id: learningItemId } },
+      });
+      expect(reply.payload).not.toHaveProperty('primary_view');
+    },
+  );
 
   it('ask_check turn: caller can materialize question stamped with the session id', async () => {
     // This test simulates what runCopilotChat does: take the pendingQuestion and

@@ -32,6 +32,7 @@ import { reviewCopilotLearningContent, validateCopilotLearningContent } from './
 import type { CopilotRunCancellationControl } from './copilot-run-cancellation';
 import type { CopilotRunInput } from './copilot-run-input';
 import { selectActorRef } from './copilot-run-input';
+import { clearCopilotWorkerSession } from './copilot-worker-session';
 import { resolveDeterministicCorrectionContract } from './correction-contract';
 import {
   copilotSessionContextDigest,
@@ -59,10 +60,10 @@ import {
   isCopilotSubagentEnabled,
 } from './subagents';
 
-/** The durable policy is intentionally different from the latency-bounded foreground policy. */
+/** Persistence removes the HTTP deadline, not the existing default model/tool cost caps. */
 export const DURABLE_COPILOT_EXECUTION_BUDGET = {
-  maxIterations: 24,
-  maxToolCalls: 60,
+  maxIterations: copilotTaskSpec.definition.budget.maxIterations,
+  maxToolCalls: resolveContextBudget('copilot').toolCalls.hard,
   timeoutMs: 12 * 60_000,
 } as const;
 
@@ -106,6 +107,7 @@ export type CopilotExecutionPolicy =
       /** Durable job owns polling/settlement; this module owns every propagation point. */
       cancellation: CopilotRunCancellationControl;
       deadlineAt: number;
+      resumeSessionId?: string;
       subagentsEnabled?: boolean;
       observe?: (activity: CopilotExecutionActivity) => Promise<void> | void;
     };
@@ -276,17 +278,7 @@ export function createCopilotExecutionOwner(
 
     const surface = input.surface;
     const baseContextBudget = resolveContextBudget(surface);
-    const budgetTracker = new ContextBudgetTracker(
-      policy.kind === 'durable'
-        ? {
-            ...baseContextBudget,
-            toolCalls: {
-              warning: baseContextBudget.toolCalls.hard,
-              hard: DURABLE_COPILOT_EXECUTION_BUDGET.maxToolCalls,
-            },
-          }
-        : baseContextBudget,
-    );
+    const budgetTracker = new ContextBudgetTracker(baseContextBudget);
     const proposalFlowGate = createCopilotProposalFlowGate();
     const toolUseCorrelation = createToolUseCorrelation(DOMAIN_TOOL_MCP_SERVER_NAME);
     const mcpServer = adapters.buildMcpServerFn({
@@ -325,9 +317,6 @@ export function createCopilotExecutionOwner(
           }
         : {}),
       interceptInput: (tool, args) => {
-        if (policy.kind === 'durable') {
-          return { args, truncationNote: budgetTracker.currentNotice(), softStop: null };
-        }
         const { args: capped, contextBudget, softStop } = budgetTracker.capInput(tool.name, args);
         return { args: capped, truncationNote: contextBudget, softStop };
       },
@@ -396,7 +385,7 @@ export function createCopilotExecutionOwner(
     sdkHooks = prependCopilotFinalizationHooks(finalizer.hooks, sdkHooks);
     const skills = await adapters.resolveCopilotSkillsFn();
     const contextDigest = copilotSessionContextDigest(input);
-    const resumeSessionId = policy.kind === 'foreground' ? policy.resumeSessionId : undefined;
+    const resumeSessionId = policy.resumeSessionId;
     const mode: 'cold' | 'resume' = resumeSessionId ? 'resume' : 'cold';
     const compiledModelPrompt = {
       text: compileCopilotModelInput(input, mode, {
@@ -408,16 +397,13 @@ export function createCopilotExecutionOwner(
       contextDigest,
     };
     let observedSdkSessionId: string | undefined;
-    const sdkSession =
-      policy.kind === 'foreground'
-        ? {
-            persist: true as const,
-            ...(resumeSessionId ? { resume: resumeSessionId } : {}),
-            onSessionId: (sessionId: string) => {
-              observedSdkSessionId = sessionId;
-            },
-          }
-        : undefined;
+    const sdkSession = {
+      persist: true as const,
+      ...(resumeSessionId ? { resume: resumeSessionId } : {}),
+      onSessionId: (sessionId: string) => {
+        observedSdkSessionId = sessionId;
+      },
+    };
     const runnerContext: Parameters<typeof streamTaskCollecting>[2] = {
       db,
       taskRunId: turn.taskRunId,
@@ -445,11 +431,9 @@ export function createCopilotExecutionOwner(
               timeoutMs: DURABLE_COPILOT_EXECUTION_BUDGET.timeoutMs,
             },
           }
-        : { sdkSession }),
-      nativeCompaction:
-        policy.kind === 'foreground'
-          ? { sessionContext: compileCopilotSessionContext(input) }
-          : undefined,
+        : {}),
+      sdkSession,
+      nativeCompaction: { sessionContext: compileCopilotSessionContext(input) },
       onToolUse: (call) => {
         if (!shouldEmitToolUseForCaller(call.toolName, DOMAIN_TOOL_MCP_SERVER_NAME, callerActor)) {
           return;
@@ -460,6 +444,7 @@ export function createCopilotExecutionOwner(
       },
     };
     let candidateDeltaObserved = false;
+    let retainSdkSession = false;
     const disposeSubagentCancellation = bindSubagentParentCancellation(db, {
       sessionId: turn.sessionId,
       parentTaskRunId: turn.taskRunId,
@@ -487,11 +472,12 @@ export function createCopilotExecutionOwner(
         terminalText = streamResult.terminalText ?? '';
         partial = streamResult.partial === true;
         executionError = streamResult.error;
-        if (policy.kind === 'foreground' && resumeSessionId && partial) {
+        if (resumeSessionId && partial) {
           throw new Error('resumed Agent SDK session returned partial output');
         }
       }
       const finalization = await finalizer.finalizeTerminal(terminalText);
+      retainSdkSession = !partial && finalization.accepted;
       return {
         taskRunId: result.task_run_id,
         finishReason: result.finishReason ?? 'unknown',
@@ -503,6 +489,10 @@ export function createCopilotExecutionOwner(
         contextDigest,
       };
     } finally {
+      if (!retainSdkSession) {
+        if (observedSdkSessionId) clearCopilotWorkerSession(turn.sessionId, observedSdkSessionId);
+        if (resumeSessionId) clearCopilotWorkerSession(turn.sessionId, resumeSessionId);
+      }
       await disposeSubagentCancellation();
     }
   };

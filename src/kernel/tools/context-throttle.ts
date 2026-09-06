@@ -271,7 +271,7 @@ export class ContextBudgetTracker {
     else this.eventRowsUsed += amount;
   }
 
-  /** Current warning state, also used by durable runs that opt out of row caps. */
+  /** Current warning state, shared by row caps and tool-call accounting. */
   currentNotice(truncation?: {
     applied: number;
     requested: number;
