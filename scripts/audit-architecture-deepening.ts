@@ -103,7 +103,7 @@ export const WRITE_SIGNATURES: readonly RegExp[] = [
 // Public symbols whose names mark them as commands (mutation / LLM / dispatch
 // surface) rather than read models. A "read" consumer may not import these.
 export const COMMAND_NAME_RE =
-  /^(?:accept|apply|archive|propose|create|write|enqueue|spawn|dismiss|retract|promote|merge|upsert|tag|author|induce|dispatch|persist|update)/;
+  /^(?:accept|apply|archive|propose|create|write|record(?=[A-Z])|enqueue|spawn|dismiss|retract|promote|merge|upsert|tag|author|induce|dispatch|persist|update)/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
