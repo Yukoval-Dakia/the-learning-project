@@ -1,11 +1,17 @@
 # 当前 handoff — 2026-09-06，完整重构goal active
 
-## 当前945集成
+## 当前964成本口径集成；945已交付
+
+- 当前writer /Volumes/YukovalSBak/yukoval-projects/tlp-wt-mimo-cost-truth，codex/yuk-964-mimo-cost-truth。
+  实施25ae0dc4，PR1343；37unit/24runnerDB/reviewPASS/typecheck/lint/build/audit通过。
+  正数MiMo SDK派生USD改为catalog公开卡estimated，未知保持null；不重写历史/不改其它provider。
+  10条945实际wire免费回放与新成本owner完全相符，无新付费；已合入main8e534d3c，待最新exactCI。
 
 - /Volumes/YukovalSBak/yukoval-projects/tlp-wt-native-compaction，codex/yuk-945-native-compaction。
 - 产品18702ab9经143scoped/唯一复审PASS；草稿PR1339旧exact821184ac CI34031520139绿。
-- 新实际harness8f7a438a、长样本de18fcaa；真实摘要质量已通过两样本，正合入mainc43d51be。
-  只有PLAN/.remember文字冲突，业务代码无冲突；新exact CI仍待执行。
+- 新实际harness8f7a438a、长样本de18fcaa；真实摘要质量已通过两样本。
+  PR1339 exact60429d44 CI34035583914全绿，已于13:27:30Z合并main8e534d3c，Linear Done。
+  最终集成148scoped/typecheck/lint/build通过，无生产部署。
 - 短样本session8e50d9a1-b8dc-42ff-91d3-e2017a703754：1057→1388，不称降本；
   长样本session8709f3db-a35e-4b87-91d3-c2a3981dbf93：11977→1590。
   120个过期学习记录，保留现行3节点/关系方向/数值/来源/未知vs零/未批准更正；

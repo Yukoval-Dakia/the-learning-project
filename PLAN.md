@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-06：945真实压缩验收通过两样本，正在集成；949完整展示控制修复中。
+> Linear 是权威 tracker；更新于 2026-09-06：945真实验收并合并；964成本口径进入交付，949完整展示控制修复中。
 
 ## NOW
 
@@ -11,7 +11,8 @@
   两项真实MiMo样本通过同session事实保留与更新learner；旧fixture未重新发送。
   短会话1057→1388变长；120条过期记录样本11977→1590（上下文约减86.7%）。
   这是manual native compact质量/大小证据，不是自动阈值、净费用节省或生产/queue E2E。
-  PR1339旧exact821184ac CI已绿；现需含证据与main集成的exact-head CI，尚未合并。
+  PR1339 exact60429d44 CI34035583914全绿，已合并main8e534d3c，Linear Done。
+  最终集成148 scoped tests/typecheck/lint/build通过；未部署。
 - Owner新增$10验收预算；945两样本共10个真实请求，公开USD卡估算$0.0130696878。
   保守请求预留合计$0.90823；此前余额$0.28771982单列，历史未知费用不填0。
   公开费率估算不冒充账户账单，SDK派生USD保留为独立观察。
@@ -26,6 +27,9 @@
   CI34034085071绿，mainc43d51be；独立review/typecheck/lint/build通过。
 - YUK963 Done：record命令审计缺口红绿复现，70tests通过；不增豁免。
   PR1342 exact417623b5 CI34034266076绿，main4034859c。
+- YUK964：复用catalog公开分模型USD卡，不再把正数MiMo SDK派生金额当reported账单。
+  4项RED后37unit/24runnerDB通过，10条已封存真实wire免费回放全部匹配，review PASS。
+  typecheck/lint/build/audit通过；PR1343，正集成main8e534d3c，尚未合并。
 - YUK944 Done：PR1338 exact3fd90c4d CI34030191329绿，main db5a57b1。
   五读取actual核心通过，但input40410 vs40401持平，不能称该复杂样本降本。
 - 已交付：Pipeline1326、Goal1327、Knowledge1328、Import1329、execution1330、
@@ -36,10 +40,10 @@
 
 ## NEXT
 
-1. YUK945封存真实输入/输出digest、usage与边界，集成main后scoped/typecheck/lint/build/exact CI交付。
+1. YUK964集成后exact CI交付；历史ledger/其它provider策略不变，不追加付费调用。
 2. YUK949修复5P1后唯一验证审，再做完整呈现actual；UI若要改代码仍需设计预检。
 3. YUK948显式Mission入口、950同轮steer、960报告问句误拦；保留真实学习内容保护。
-4. YUK964把MiMo占位估算卡收口至有日期的公开分模型价格，保留estimated/unknown及历史账本。
+4. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
 5. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
 6. 887生产副本backfill/audit/rebuild/golden与SoT退休仍需独立授权。
