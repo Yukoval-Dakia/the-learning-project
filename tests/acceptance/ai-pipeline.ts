@@ -24,6 +24,7 @@ type CaseName =
   | 'context-change'
   | 'correction'
   | 'read'
+  | 'claims'
   | 'proposal'
   | 'semantic'
   | 'native-task'
@@ -36,6 +37,7 @@ const CASES: readonly CaseName[] = [
   'context-change',
   'correction',
   'read',
+  'claims',
   'proposal',
   'native-task',
   'durable',
@@ -55,6 +57,7 @@ const CASE_COST_RESERVE_USD: Readonly<Record<CaseName, number>> = {
   'context-change': 0.25,
   correction: 0.25,
   read: 0.25,
+  claims: 0.3,
   proposal: 0.25,
   semantic: 0.75,
   'native-task': 0.5,
@@ -217,7 +220,7 @@ async function main(): Promise<void> {
   };
   const selected = requested
     ? (prerequisites[requested as CaseName] ?? [requested as CaseName])
-    : [...CASES];
+    : CASES.filter((name) => name !== 'claims');
   const campaignCostLimitUsd = costLimitUsd();
   const baselineRecord = process.argv.includes('--baseline-record');
   if (baselineRecord && selected.length !== 1) {
@@ -271,7 +274,7 @@ async function main(): Promise<void> {
       { capabilities },
       { registerCapabilityTools },
       { Conversation },
-      { getTool },
+      { getTool, listTools, registerTool, __resetRegistryForTests },
       { COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY },
     ] = await Promise.all([
       import('@/db/client'),
@@ -307,6 +310,56 @@ async function main(): Promise<void> {
     // Match the server/worker composition root before constructing a Copilot
     // MCP bridge. Directly importing chat.ts does not populate this registry.
     await registerCapabilityTools(capabilities);
+    // Opt-in model-quality fixture: real SDK/MCP/trace/finalization, deterministic
+    // typed reader results. Never substitutes readers in a normal journey or server.
+    let claimFixtureRequests: Array<{ name: string; input: unknown }> = [];
+    const claimFixtureCalls: Array<{ name: string; input_sha256: string; output_sha256: string }> =
+      [];
+    if (requested === 'claims') {
+      const { REALISTIC_EVIDENCE_TRACE } = await import(
+        '@/capabilities/copilot/server/reply-finalization.actual-fixture'
+      );
+      const observations = [0, 2, 3, 4, 12].map((index) => REALISTIC_EVIDENCE_TRACE[index]);
+      claimFixtureRequests = observations.map(({ name, input }) => ({ name, input }));
+      const canonical = (value: unknown): string =>
+        JSON.stringify(value, (_key, item) =>
+          item && typeof item === 'object' && !Array.isArray(item)
+            ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)))
+            : item,
+        );
+      const originals = listTools();
+      const fixtureTools = originals.map((tool) => {
+        const matches = observations.filter((observation) => observation.name === tool.name);
+        if (!matches.length) return tool;
+        // Fail before any paid attempt if historical fixture contracts drifted.
+        const values = matches.map((observation) => ({
+          input: tool.inputSchema.parse(observation.input),
+          output: tool.outputSchema.parse(observation.output),
+        }));
+        return {
+          ...tool,
+          execute: async (_ctx: unknown, input: unknown) => {
+            const match = values.find((value) => canonical(value.input) === canonical(input));
+            if (!match)
+              throw new Error('claim fixture: requested read is outside the fixed observation set');
+            claimFixtureCalls.push({
+              name: tool.name,
+              input_sha256: SHA256(input),
+              output_sha256: SHA256(match.output),
+            });
+            return structuredClone(match.output);
+          },
+        };
+      });
+      __resetRegistryForTests();
+      for (const tool of fixtureTools) registerTool(tool);
+      evidence.claim_fixture = {
+        mode: 'real_model_fixed_typed_readers_not_live_database_quality',
+        observations_sha256: SHA256(observations),
+        requests: claimFixtureRequests,
+        calls: claimFixtureCalls,
+      };
+    }
     for (const name of ['query_knowledge', 'propose_knowledge_mutation']) {
       if (!getTool(name)) throw new Error(`fixture bootstrap missing registered tool: ${name}`);
     }
@@ -641,6 +694,7 @@ async function main(): Promise<void> {
           '当前页面从复习切到知识页。只回复「上下文变化已确认」，不要出题、不要调用工具。',
         correction: '更正刚才的回答：保留已确认内容，明确没有新增事实；不要出题、不要调用工具。',
         read: '必须调用 query_knowledge，参数固定为 subjectId:"yuwen"、nodeId:"actual:classical-root"、include:["children"]、limit:10；然后只报告工具实际返回的节点名称。不要出题，不得把空结果说成不存在。',
+        claims: `请调用以下五项读取，参数原样使用；本次只检查这些已有观测，不调用其它工具、不出题、不写入。${JSON.stringify(claimFixtureRequests)}\n依据结果逐项核对：A01是否已经证明没有跨subject的后续probe/review？conjecture的必要/充分激活条件能否裁决？B/C两条链是否完全同构、能否确定唯一差异？复习队列是否已清空，pending/in-progress是否为0？同时列出已知的直接因果边、至少两个真实事件ID及相应数值或时间，不能只泛泛回答无法裁决。`,
         proposal:
           '只调用 propose_knowledge_mutation，为「文言虚词之」提出一个新增子节点的提议；不得直接写入或声称已经执行，不要出题。',
         semantic:
@@ -692,6 +746,19 @@ async function main(): Promise<void> {
       }
       const latestEvidence = caseEvidence.at(-1);
       if (latestEvidence) latestEvidence.reply_finalization = receipt;
+      if (caseName === 'claims') {
+        const expected = new Set(
+          claimFixtureRequests.map(
+            (item) => `${item.name}:${SHA256(getTool(item.name)?.inputSchema.parse(item.input))}`,
+          ),
+        );
+        const actual = new Set(
+          claimFixtureCalls.map((item) => `${item.name}:${item.input_sha256}`),
+        );
+        if ([...expected].some((key) => !actual.has(key)))
+          throw new Error('claims: required fixed observations were not all read');
+        if (latestEvidence) latestEvidence.semantic_review = 'manual_required_not_proven_by_trace';
+      }
       if (
         caseName === 'correction' &&
         (receipt?.correction !== 'corrected' || !result.reply.includes(priorTurnId ?? ''))

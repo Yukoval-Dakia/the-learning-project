@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-06：YUK-958 前后台与回放投影已通过 exact-head CI 并合并 #1336。
+> Linear 是权威 tracker；更新于 2026-09-06：完整重构目标持续推进，当前 active 为 YUK-944 证据规则单一权威与上下文降本。
 
 ## NOW
 
@@ -26,18 +26,17 @@
 
 ## NEXT
 
-1. 后端集成交付已完成；不部署，不重复已完成的模型验收。
-2. YUK-958前后台/回放收口已交付。15条生产bundle浏览器流程全绿；
-   原drawer外观不变，技能名终态猜测与重复消息映射已删除；无新增付费调用。
-3. YUK-887：获得独立生产副本/部署授权后，逐实体提供backfill/audit/rebuild/golden证据，
-   再决定SoT兼容分支退休；不能从本机默认开关推断生产状态。
-4. 每PR最多初审+一次P0/P1验证审；954及958客户端预算已用尽，无未决P0/P1。
+1. YUK-944：核对typed边界→删除三处重复说明→scoped复杂证据回归→受余额约束actual→独立审查/CI。
+2. YUK-946核实SDK原生catalog/on-invoke后精简可见技能；不凭白名单推断正文eager加载，不建第二套目录。
+3. YUK-945同session compact/reinject→YUK-949成品选择→948显式Mission入口→950同轮steer。
+   UI步骤另按设计预检；后端与纯测试可继续。不得用结束一个PR代替整个goal完成。
+4. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者和扩展成本；
+   消除剩余有害写依赖与双规则，替换重复测试，按实际行为与扩展压力验收。
+5. YUK-887生产副本backfill/audit/rebuild/golden与SoT退休需要独立授权；不阻断安全的实现工作。
 
 ## PARKED
 
-- 944/945/946：剩余prompt精简、transcript compact、skill可见集优化；不将whitelist
-  误认作每轮eager body加载。949 primary_view marker、950 live steer未实现。
-- 948显式Mission API入口迁移仍待后续；当前durable由显式请求触发，不自动后台化根请求。
+- 944/945/946/948/949/950已列入NEXT的完整重构顺序，尚未完成，不再作为无限期PARKED。
 - 951历史mailbox/ToolOperations仅drain-only恢复；退休需零pending/零队列活动跨完整重试窗口。
 - YUK-921多provider、572夜间教研、832 HOLD未解锁。
 - 保留计费、重试、prompt/skill、富结构解析、并发/回滚/恢复、UI加载安全测试；不按数量硬删。
