@@ -17,6 +17,7 @@
 // YUK-328 后独立 worker 在注册 handlers 前从 capability manifests 装配完整
 // DomainTool registry；buildMcpServerFromRegistry 只读该启动期 inventory。
 
+import { createHash } from 'node:crypto';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { isDurableWorkerTouchEvent } from '@/capabilities/copilot/durable-pickup';
@@ -91,6 +92,7 @@ import {
   CopilotPrimaryViewSchema,
   type CopilotReplyFinalizationReceipt,
 } from '../server/reply-finalization';
+import { EPHEMERAL_PRESENTATION_STORAGE_NOTICE } from '../server/reply-finalization';
 import type { CopilotPrimaryView } from '../server/turns';
 
 export { enqueueCopilotMailboxJob } from '../api/chat';
@@ -1107,7 +1109,12 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
         projectSuccessfulTerminal,
         projectFailedTerminal,
       );
-      if (projected.status === 'done' && result.sdkSessionId) {
+      const publishedText = reviewedPreparedReply.primaryView?.source === 'ephemeral_html'
+        ? reviewedReply + EPHEMERAL_PRESENTATION_STORAGE_NOTICE
+        : reviewedReply;
+      const candidateMatchesPublished =
+        finalized.receipt.candidate_sha256 === createHash('sha256').update(publishedText, 'utf8').digest('hex');
+      if (projected.status === 'done' && result.sdkSessionId && candidateMatchesPublished) {
         await setAgentSdkSessionId(db, data.session_id, result.sdkSessionId);
         registerCopilotWorkerSession(data.session_id, result.sdkSessionId, contextDigest);
         sdkSessionCommitted = true;
