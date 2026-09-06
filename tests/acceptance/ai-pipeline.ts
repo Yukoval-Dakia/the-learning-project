@@ -355,18 +355,32 @@ async function main(): Promise<void> {
       return result;
     };
     const captureRun: typeof runner.runAgentTask = async (...args) => {
-      const result = await runner.runAgentTask(...args);
-      terminals.set(result.task_run_id, result.text);
-      if (requested === 'presentation-candidate')
-        validatorObservations.push({
+      const startedAt = Date.now();
+      const observation: Record<string, unknown> = {
+        kind: args[0],
+        input: structuredClone(args[1]),
+        input_sha256: SHA256(args[1]),
+        started_at: new Date(startedAt).toISOString(),
+        status: 'running',
+      };
+      if (requested === 'presentation-candidate') validatorObservations.push(observation);
+      try {
+        const result = await runner.runAgentTask(...args);
+        terminals.set(result.task_run_id, result.text);
+        Object.assign(observation, {
           task_run_id: result.task_run_id,
-          kind: args[0],
-          input: structuredClone(args[1]),
-          input_sha256: SHA256(args[1]),
+          status: 'completed',
           output: result.text,
           output_sha256: SHA256(result.text),
         });
-      return result;
+        return result;
+      } catch (error) {
+        observation.status = 'rejected';
+        // Do not persist provider error bodies or partial reasoning content.
+        throw error;
+      } finally {
+        observation.elapsed_ms = Date.now() - startedAt;
+      }
     };
     const executeCopilotTurn = copilotExecution.createCopilotExecutionOwner({
       runAgentTaskFn: captureRun,
@@ -461,6 +475,8 @@ async function main(): Promise<void> {
           usage: schema.ai_task_runs.usage_json,
           cost: schema.ai_task_runs.cost_usd,
           cost_basis: schema.ai_task_runs.cost_basis,
+          status: schema.ai_task_runs.status,
+          finish_reason: schema.ai_task_runs.finish_reason,
         })
         .from(schema.ai_task_runs),
       tools: await db

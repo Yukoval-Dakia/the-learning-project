@@ -6,7 +6,11 @@
   Practice联合验证owner+真实工具input/output来源绑定；Copilot只匹配可见内容，复用kernel已有DTO。
   额外grounding.basis仅learner-visible purpose必需；旧题池/intervention兼容。copy unknown不伪称原创，限定预览并明示未比较。
   strict solve须明确等价，partial/unsupported/低置信不再当可见成功；旧保守题池政策不变。重复作者parser已退休。
-  182unit/73worker-snapshotDB/15ownerDB/12作者DB、typecheck/build/lint/架构通过；无新paid，review/actual待。
+  182unit/73worker-snapshotDB/16ownerDB/12作者DB、typecheck/build/lint/架构通过；独立初审无P0/P1。
+  PR1349 draft exactf3b6b3b4，CI34061769583 unit失败待修。首轮actual一次生成、解题和教学通过，90秒超时未通过。
+  QuizVerify终态缺失，不凭usage认定完成。证据learning-content-deadline-actual.json；当前无paid进程。
+  新池estimate0.0535364724/reserve7.75823/safe2.24177，不回收reserve。正在对齐prompt basis输出及互斥rollup。
+  上述prompt/旧hash失败已修，211unit/typecheck/build通过；第二轮同样本预留0.90，新reserve8.65823/safe1.34177。
   设计docs/planning/2026-09-07-learning-content-validation.md。原脏main与生产不动，整体goal active。
 
 - YUK966 Done：PR1348 exactfefcf70e1a07b4ef554deb3d4c1b9eab4a1401fa，CI34059429533全部success；

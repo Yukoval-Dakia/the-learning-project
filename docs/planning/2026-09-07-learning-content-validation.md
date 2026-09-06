@@ -58,7 +58,7 @@ learner-visible success. Existing conservative pool consumers are unchanged.
 
 ## Verification and remaining work
 
-- 182 scoped unit, 73 worker/snapshot DB, 15 assessment-owner DB, and 12 retained
+- 182 scoped unit, 73 worker/snapshot DB, 16 assessment-owner DB, and 12 retained
   author DB tests passed. These counts overlap separate verification runs and
   are not presented as one deduplicated total.
 - Actual-shaped fixtures cover unknown vs observed provenance, tampered input
@@ -71,8 +71,20 @@ learner-visible success. Existing conservative pool consumers are unchanged.
   generated-card case, requires one generation including failed attempts, and
   checks honest copy-comparison disclosure. Same original distribution exercise
   is still the paid positive gate, not a simpler substitute.
-- Actual acceptance and independent review are pending. No paid call yet in968;
-  the authorized pool remains estimate0.0474233747 (not an invoice), reserve6.85823,
-  safe3.14177. Reserve before starting any further call.
+- Initial independent review passed (no P0/P1). Draft PR1349 atf3b6b3b4 has a
+  failing CI unit job under investigation; local passes are not exact CI success.
+- First actual968 at cleanf3b6b3b4 failed the unchanged90s deadline. One author,
+  passing independent solve/comparison and teaching outputs were observed, but
+  QuizVerify terminal output was unavailable. Token/cost metadata is not a pass.
+  Raw evidence is sealed in `evidence/2026-09-07-learning-content-deadline-actual.json`.
+  Estimated cost0.0061130977; pool estimate0.0535364724 (not invoice), reserve7.75823,
+  safe2.24177. No live paid process. No reserve reclaimed.
+- Inspection found the prompt's required basis missing from its output shape,
+  and overlapping pass/needs_review rollups. Align those contracts and capture
+  validator start/rejection/timing before another actual; deadline causality is
+  not established by these prompt defects. Do not raise the acceptance deadline.
+- Prompt alignment and stale QuizVerify-only migration fingerprints are fixed;
+  semantic policy assertions remain.211 scoped units, typecheck and build pass.
+  Reserve a second0.90 same-prompt actual: total reserve8.65823/safe1.34177.
 - No deployment, SoT switch, backfill, production clone or history deletion.
   YUK-967 observation-scope semantics and the overall goal remain open.

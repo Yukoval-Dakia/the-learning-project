@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：968闭卷生成验证契约收口启动，先真实失败与现有政策，后同样本actual；966已合并，整体goal active。
+> Linear 是权威 tracker；更新于 2026-09-07：968实现与初审通过；首轮actual超时不接受，正在修验证prompt矛盾与CI失败。966已合并，整体goal active。
 
 ## NOW
 
@@ -8,6 +8,10 @@
   计划①核对生成来源/验证轴与发布资格；②由现有领域owner收口契约并做真实复杂fixture回归；
   ③干净revision同样本actual，预留预算前不付费；④独立review与exactCI。只读设计lane协助，无并行writer。
   不伪造来源、不把未比较称原创；保持grounding/too_close/独立解题和教学质量保护。不改UI/生产。
+  PR1349 draft，exactf3b6b3b4；初审无P0/P1。182unit/73workerDB/16ownerDB/12authorDB与本地gate通过。
+  CI34061769583两项旧prompt hash失败已局部复现修复，保留实质政策断言；211unit/typecheck/build通过。
+  真实一次生成/解题/教学通过，但内容验证终态缺失，90秒deadline失败。修basis shape/重叠rollup后同样本再验。
+  已封存learning-content-deadline-actual.json；新增estimate0.0061130977，不能冒充账单或完整质量通过。
 - YUK966 Done：PR1348 exactfefcf70e1a07b4ef554deb3d4c1b9eab4a1401fa，CI34059429533全部success；
   2026-09-06T21:05:27Z合并main5cf5dccab207c32b47b6ddb15163dff10c379080，未部署。
   既有drawer用同一DTO交付真实结果快照/恢复，不重查、不增加模型history token；复用领域schema与原验证owner。
@@ -47,7 +51,7 @@
   保守请求预留合计$0.90823；此前余额$0.28771982单列，历史未知费用不填0。
   公开费率估算不冒充账户账单，SDK派生USD保留为独立观察。
   949另跑7个受控回合（含失败）：estimated $0.0214406071，case预留$2.8。
-  新$10池合计estimated $0.0474233747；966候选题后总reserve$6.85823、安全剩$3.14177；当前无paid进程。
+  新$10池合计estimated $0.0535364724；968第二轮另预留$0.90后总reserve$8.65823、安全剩$1.34177。
 - YUK949：owner明确选FULL，允许按需短presentation control交互，ADR0061；
   agent看完结果提名，server校验，保留tool_result/artifact/ephemeral_html；不提高预算、不改生产UI。
   初稿ea8367c7的5P1已由81eb7f3e修复，ed693e16集成main9e02c48b。

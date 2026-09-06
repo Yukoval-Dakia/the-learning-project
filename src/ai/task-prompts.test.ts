@@ -399,6 +399,9 @@ describe('getTaskSystemPrompt', () => {
       expect(prompt).toContain('closed-book');
       // two-axis output shape name.
       expect(prompt).toContain('QuizVerificationResult');
+      // The output shape must agree with the learner-visible evidence contract.
+      expect(prompt).toMatch(/"basis":"closed_world_givens"/);
+      expect(prompt).toContain("validation_purpose='learning_content'");
       // per-check verdict + overall verdict.
       expect(prompt).toContain('overall');
       // copy_safety verdict vocabulary.

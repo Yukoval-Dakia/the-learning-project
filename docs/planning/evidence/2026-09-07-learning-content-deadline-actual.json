@@ -1,0 +1,256 @@
+{
+  "protocol_version": 1,
+  "phase": "running",
+  "exact_head": "f3b6b3b459e5edb2d84c8241865227e836ea27a8",
+  "dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "harness_sha256": "43d101210bd792d8ad00e54350441b51cc77b49a89dc84359b6966622d942a70",
+  "provider": "xiaomi",
+  "model": "mimo-v2.5-pro",
+  "credential_source": "/Volumes/YukovalSBak/yukoval-projects/the-learning-project/.env",
+  "baseline_record": false,
+  "campaign_cost_limit_usd": 0.9,
+  "case_cost_reserves_usd": {
+    "cold": 0.25,
+    "resume": 0.25,
+    "context-change": 0.25,
+    "correction": 0.25,
+    "read": 0.25,
+    "claims": 0.3,
+    "presentation-process": 0.4,
+    "presentation-tool": 0.4,
+    "presentation-candidate": 0.9,
+    "presentation-artifact": 0.4,
+    "presentation-html": 0.4,
+    "proposal": 0.25,
+    "semantic": 0.75,
+    "native-task": 0.5,
+    "durable": 0.25,
+    "unified": 1.6,
+    "cancel": 0
+  },
+  "cases": [],
+  "validator_observations": [
+    {
+      "task_run_id": "x0vefmxsnua822ui46ujmx0k",
+      "kind": "TeachingQualityTask",
+      "input": {
+        "prompt_md": "利用分配律计算： 4 × (5 + 3)。",
+        "kind": "computation",
+        "reference_md": "32\n根据整数乘法的分配律，4 × (5 + 3) = 4 × 5 + 4 × 3 = 20 + 12 = 32。",
+        "choices_md": [],
+        "rubric_json": null,
+        "is_choice": false
+      },
+      "input_sha256": "d2acb1acdfa43d0300a0fe53f955389c7e62fb967816b2a87533ce24a5504fbc",
+      "output": "{\"clarity\":{\"verdict\":\"pass\",\"reason\":\"题干明确要求使用分配律计算一个具体的算式，信息完整，无歧义。\"},\"unique_answer\":{\"verdict\":\"pass\",\"reason\":\"4 × (5 + 3) 经分配律展开为 4×5 + 4×3 = 20 + 12 = 32，唯一正确答案为 32。\"},\"summary\":\"题目简单明确，考查分配律基本应用，无任何质量问题。\"}",
+      "output_sha256": "0ec283343a5ccc9522dfbede8c1492ce29cc12a010e8a7abef04b7d3d314a015"
+    },
+    {
+      "task_run_id": "ydpep8u1jfdp20albdkl5v26",
+      "kind": "SolutionGenerateTask",
+      "input": {
+        "prompt_md": "利用分配律计算： 4 × (5 + 3)。",
+        "kind": "computation",
+        "subject_id": "math",
+        "choices_md": [],
+        "existing_answers_hint": null,
+        "existing_analysis_hint": null,
+        "figures_hint": null,
+        "prompt_image_refs": []
+      },
+      "input_sha256": "e96655969d6057b7f8439c759a7438f68a62d5d1ba37581ea79b3750e67f625f",
+      "output": "{\"reference_solution\":{\"expected_signals\":[\"1. 识别题目要求使用分配律（乘法对加法的分配律）展开表达式 4 × (5 + 3)\",\"2. 写出分配律公式：a × (b + c) = a × b + a × c\",\"3. 将 a = 4, b = 5, c = 3 代入分配律公式\",\"4. 计算 4 × 5 = 20\",\"5. 计算 4 × 3 = 12\",\"6. 将两部分相加：20 + 12 = 32\"],\"final_answer\":\"32\",\"answer_equivalents\":[\"32\"]},\"worked_solution_md\":\"## 利用分配律计算 4 × (5 + 3)\\n\\n### 分配律公式\\n\\n乘法对加法的分配律为：\\n\\n$$a \\\\times (b + c) = a \\\\times b + a \\\\times c$$\\n\\n### 代入计算\\n\\n令 $a = 4$，$b = 5$，$c = 3$，则：\\n\\n$$4 \\\\times (5 + 3) = 4 \\\\times 5 + 4 \\\\times 3$$\\n\\n分别计算两部分：\\n\\n- $4 \\\\times 5 = 20$\\n- $4 \\\\times 3 = 12$\\n\\n将结果相加：\\n\\n$$20 + 12 = 32$$\\n\\n### 验证\\n\\n直接计算：$4 \\\\times (5 + 3) = 4 \\\\times 8 = 32$ ✓\\n\\n**最终答案：$32$**\",\"confidence\":1.0}",
+      "output_sha256": "9971444018bfd401675cffe717ded3407b2137a891e6cef38586a554af406aaf"
+    },
+    {
+      "task_run_id": "dldudh0sxejbja4hp6q6m142",
+      "kind": "SemanticJudgeTask",
+      "input": {
+        "question": {
+          "question_id": "preview:call_1a11e5a6ebf847d29bdc3929",
+          "kind": "computation",
+          "prompt_md": "利用分配律计算： 4 × (5 + 3)。",
+          "reference_md": "32\n根据整数乘法的分配律，4 × (5 + 3) = 4 × 5 + 4 × 3 = 20 + 12 = 32。",
+          "choices_md": [],
+          "rubric_json": null,
+          "required_points": [],
+          "acceptable_answers": [],
+          "keywords": [],
+          "subject_profile": {
+            "id": "math",
+            "display_name": "数学",
+            "language_style": "中文讲解，强调定义、条件、推导步骤和符号一致性。"
+          },
+          "figures": [],
+          "image_refs": [],
+          "structured": null
+        },
+        "answer": {
+          "content": "32\n\n## 利用分配律计算 4 × (5 + 3)\n\n### 分配律公式\n\n乘法对加法的分配律为：\n\n$$a \\times (b + c) = a \\times b + a \\times c$$\n\n### 代入计算\n\n令 $a = 4$，$b = 5$，$c = 3$，则：\n\n$$4 \\times (5 + 3) = 4 \\times 5 + 4 \\times 3$$\n\n分别计算两部分：\n\n- $4 \\times 5 = 20$\n- $4 \\times 3 = 12$\n\n将结果相加：\n\n$$20 + 12 = 32$$\n\n### 验证\n\n直接计算：$4 \\times (5 + 3) = 4 \\times 8 = 32$ ✓\n\n**最终答案：$32$**"
+        }
+      },
+      "input_sha256": "cafef0f4c56e03dfc54c97b7762e908a1ac219fd7dc34fd365452df4dee4ed97",
+      "output": "{\"score\":1.0,\"coarse_outcome\":\"correct\",\"confidence\":1.0,\"feedback_md\":\"回答正确且完整。准确写出了分配律公式，正确代入计算 $4×5=20$、$4×3=12$，并得出 $20+12=32$，还用直接计算做了验证，步骤清晰。\",\"evidence_json\":{\"matched_points\":[\"明确写出分配律公式 $a×(b+c)=a×b+a×c$\",\"正确代入 $4×5=20$、$4×3=12$\",\"正确求和 $20+12=32$\",\"最终答案 32\"],\"missing_points\":[],\"notes\":\"无 required_points，参照 reference_md 全部命中。\"}}",
+      "output_sha256": "53ba1cb4505b2c1a62e1a8c48cfa552a54d72fb205af6c837b0f55882adb2881"
+    }
+  ],
+  "sdk_outcomes": [
+    {
+      "task_run_id": "copilot_run_tool_copilot_user_ask_ca613a9bc38ddd76713cc172be464800e24bfb37c4dfa15eec839b6e8d2c117e",
+      "elapsed_ms": 56329,
+      "finish_reason": "end_turn",
+      "partial": false,
+      "terminal_present": true,
+      "error_subtype": null
+    }
+  ],
+  "limitations": [
+    "direct durable handler is not pg-boss queue E2E",
+    "structural assertions do not establish factual entailment or semantic correctness"
+  ],
+  "fixture_readiness": {
+    "registered_tools": ["query_knowledge", "propose_knowledge_mutation"],
+    "conversation_session_id": "ka1cqegnseyiz9z5vd8pt8cu"
+  },
+  "worker_driver": {
+    "admission": "production HTTP adapter + v2 transaction + pg-boss",
+    "execution": "manual physical fetch + production runCopilotRun + terminal wake + complete",
+    "automatic_poller_verified": false
+  },
+  "failure": {
+    "active_case": "presentation-candidate",
+    "name": "Error",
+    "reason": "deadline"
+  },
+  "failure_observation": {
+    "active_case": "presentation-candidate",
+    "terminal_outputs": {
+      "copilot_run_tool_copilot_user_ask_ca613a9bc38ddd76713cc172be464800e24bfb37c4dfa15eec839b6e8d2c117e": "已准备练习。",
+      "x0vefmxsnua822ui46ujmx0k": "{\"clarity\":{\"verdict\":\"pass\",\"reason\":\"题干明确要求使用分配律计算一个具体的算式，信息完整，无歧义。\"},\"unique_answer\":{\"verdict\":\"pass\",\"reason\":\"4 × (5 + 3) 经分配律展开为 4×5 + 4×3 = 20 + 12 = 32，唯一正确答案为 32。\"},\"summary\":\"题目简单明确，考查分配律基本应用，无任何质量问题。\"}",
+      "ydpep8u1jfdp20albdkl5v26": "{\"reference_solution\":{\"expected_signals\":[\"1. 识别题目要求使用分配律（乘法对加法的分配律）展开表达式 4 × (5 + 3)\",\"2. 写出分配律公式：a × (b + c) = a × b + a × c\",\"3. 将 a = 4, b = 5, c = 3 代入分配律公式\",\"4. 计算 4 × 5 = 20\",\"5. 计算 4 × 3 = 12\",\"6. 将两部分相加：20 + 12 = 32\"],\"final_answer\":\"32\",\"answer_equivalents\":[\"32\"]},\"worked_solution_md\":\"## 利用分配律计算 4 × (5 + 3)\\n\\n### 分配律公式\\n\\n乘法对加法的分配律为：\\n\\n$$a \\\\times (b + c) = a \\\\times b + a \\\\times c$$\\n\\n### 代入计算\\n\\n令 $a = 4$，$b = 5$，$c = 3$，则：\\n\\n$$4 \\\\times (5 + 3) = 4 \\\\times 5 + 4 \\\\times 3$$\\n\\n分别计算两部分：\\n\\n- $4 \\\\times 5 = 20$\\n- $4 \\\\times 3 = 12$\\n\\n将结果相加：\\n\\n$$20 + 12 = 32$$\\n\\n### 验证\\n\\n直接计算：$4 \\\\times (5 + 3) = 4 \\\\times 8 = 32$ ✓\\n\\n**最终答案：$32$**\",\"confidence\":1.0}",
+      "dldudh0sxejbja4hp6q6m142": "{\"score\":1.0,\"coarse_outcome\":\"correct\",\"confidence\":1.0,\"feedback_md\":\"回答正确且完整。准确写出了分配律公式，正确代入计算 $4×5=20$、$4×3=12$，并得出 $20+12=32$，还用直接计算做了验证，步骤清晰。\",\"evidence_json\":{\"matched_points\":[\"明确写出分配律公式 $a×(b+c)=a×b+a×c$\",\"正确代入 $4×5=20$、$4×3=12$\",\"正确求和 $20+12=32$\",\"最终答案 32\"],\"missing_points\":[],\"notes\":\"无 required_points，参照 reference_md 全部命中。\"}}"
+    },
+    "subagent_runs": [],
+    "task_runs": [
+      {
+        "id": "ve8psnii3a4oad9lstwt50i5",
+        "kind": "QuestionAuthorTask",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "usage": {
+          "inputTokens": 1193,
+          "outputTokens": 1608,
+          "thinkingBlocks": 1,
+          "thinkingCharacters": 3276
+        },
+        "cost": 0.0014209423,
+        "cost_basis": "estimated"
+      },
+      {
+        "id": "copilot_run_tool_copilot_user_ask_ca613a9bc38ddd76713cc172be464800e24bfb37c4dfa15eec839b6e8d2c117e",
+        "kind": "CopilotTask",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "usage": {
+          "inputTokens": 41168,
+          "outputTokens": 266,
+          "thinkingBlocks": 3,
+          "thinkingCharacters": 530
+        },
+        "cost": 0.0008558904,
+        "cost_basis": "estimated"
+      },
+      {
+        "id": "x0vefmxsnua822ui46ujmx0k",
+        "kind": "TeachingQualityTask",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "usage": {
+          "inputTokens": 871,
+          "outputTokens": 248,
+          "thinkingBlocks": 1,
+          "thinkingCharacters": 539
+        },
+        "cost": 0.000594645,
+        "cost_basis": "estimated"
+      },
+      {
+        "id": "ydpep8u1jfdp20albdkl5v26",
+        "kind": "SolutionGenerateTask",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "usage": {
+          "inputTokens": 1110,
+          "outputTokens": 405,
+          "thinkingBlocks": 1,
+          "thinkingCharacters": 74
+        },
+        "cost": 0.0008352,
+        "cost_basis": "estimated"
+      },
+      {
+        "id": "dldudh0sxejbja4hp6q6m142",
+        "kind": "SemanticJudgeTask",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "usage": {
+          "inputTokens": 907,
+          "outputTokens": 195,
+          "thinkingBlocks": 1,
+          "thinkingCharacters": 111
+        },
+        "cost": 0.000564195,
+        "cost_basis": "estimated"
+      },
+      {
+        "id": "g4z5ghpe7slskvliua5i33lr",
+        "kind": "QuizVerifyTask",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "usage": {
+          "inputTokens": 2081,
+          "outputTokens": 1077,
+          "thinkingBlocks": 1,
+          "thinkingCharacters": 3612
+        },
+        "cost": 0.001842225,
+        "cost_basis": "estimated"
+      }
+    ],
+    "tools": [
+      {
+        "task_run_id": "copilot_run_tool_copilot_user_ask_ca613a9bc38ddd76713cc172be464800e24bfb37c4dfa15eec839b6e8d2c117e",
+        "name": "mcp__loom__generate_question_candidate",
+        "effect": null,
+        "error": null
+      },
+      {
+        "task_run_id": "copilot_run_tool_copilot_user_ask_ca613a9bc38ddd76713cc172be464800e24bfb37c4dfa15eec839b6e8d2c117e",
+        "name": "generate_question_candidate",
+        "effect": "read",
+        "error": null
+      },
+      {
+        "task_run_id": "copilot_run_tool_copilot_user_ask_ca613a9bc38ddd76713cc172be464800e24bfb37c4dfa15eec839b6e8d2c117e",
+        "name": "mcp__loom__present_primary_view",
+        "effect": null,
+        "error": null
+      },
+      {
+        "task_run_id": "copilot_run_tool_copilot_user_ask_ca613a9bc38ddd76713cc172be464800e24bfb37c4dfa15eec839b6e8d2c117e",
+        "name": "present_primary_view",
+        "effect": "control",
+        "error": null
+      }
+    ]
+  },
+  "failure_evidence_path": "/Volumes/YukovalSBak/yukoval-projects/tlp-wt-unified-conversation/.tmp/actual-provider-acceptance/1788730807987-f0c409ee-3c01-426c-ac36-90b64bd3d89e.json",
+  "raw_evidence_sha256": "8f9da222a0886d4ba3121c475ab40dcb747b3675afbe87fefbe90cde387d0bcd",
+  "manual_review": {
+    "verdict": "not_accepted",
+    "reason": "deadline",
+    "observed": "One author, independent solver and semantic comparison correct, teaching checks pass. QuizVerify terminal output unavailable; its token/cost metadata does not establish completion or admission.",
+    "estimated_usd": 0.0061130977,
+    "reserved_usd": 0.9
+  }
+}
