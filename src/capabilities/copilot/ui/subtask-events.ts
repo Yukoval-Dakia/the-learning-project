@@ -1,11 +1,10 @@
-// YUK-757 — public subtask lifecycle carrier shared by inline Copilot SSE and
-// durable copilot_run job-event replay.
+// YUK-757/YUK-948 — public progress lifecycle carried only by reconnectable
+// copilot_run job events.
 //
 // The SDK child transcript, prompt and reasoning never cross this seam. The
-// only accepted payload is a small user-facing projection: stable id, label,
-// lifecycle status and an optional terminal summary/error. Durable frames use
-// job_events.id as their version; inline frames receive a local monotonic id in
-// CopilotDock before entering the same fold.
+// accepted payloads are small user-facing projections. Every frame uses
+// job_events.id as its stable version. Subtasks and tool calls share this fold
+// so the Dock has one progress projection rather than separate pipelines.
 
 import {
   PICKUP_TIMEOUT_MS,
@@ -35,13 +34,22 @@ export interface CopilotSubtaskView {
   lastEventId: number;
 }
 
+export interface CopilotToolCallRecord {
+  toolName: string;
+  input: Record<string, unknown>;
+  toolUseId?: string;
+  summary?: string;
+  status: 'running' | 'done' | 'failed';
+  errorReason?: string;
+}
+
 export interface CopilotRunJobFrame {
   event_id: number;
   event_type: string;
   payload: Record<string, unknown>;
 }
 
-export type CopilotRunPhase = 'queued' | 'running' | 'completed' | 'failed';
+export type CopilotRunPhase = 'queued' | 'running' | 'cancel_requested' | 'completed' | 'failed';
 
 export interface CopilotRunView {
   phase: CopilotRunPhase;
@@ -52,6 +60,7 @@ export interface CopilotRunView {
   failureReason?: string;
   checkpointEventId?: string;
   subtasks: CopilotSubtaskView[];
+  toolCalls?: CopilotToolCallRecord[];
   /** Internal replay inventory. Kept immutable so out-of-order arrivals can be re-folded. */
   frames: CopilotRunJobFrame[];
 }
@@ -108,7 +117,7 @@ function clampedDisplayText(value: unknown, maxChars: number): string | undefine
  */
 export function parseSubtaskPayload(value: unknown): CopilotSubtaskEvent | null {
   const payload = objectRecord(value);
-  if (!payload || payload.step_kind !== 'subtask') return null;
+  if (payload?.step_kind !== 'subtask') return null;
   const subtaskId = boundedText(payload.subtask_id, MAX_SUBTASK_ID_CHARS);
   const label = clampedDisplayText(payload.label, MAX_SUBTASK_LABEL_CHARS);
   const status = payload.status;
@@ -134,19 +143,78 @@ export function parseSubtaskPayload(value: unknown): CopilotSubtaskEvent | null 
   };
 }
 
-export function parseInlineSubtaskEvent(data: string): CopilotSubtaskEvent | null {
-  try {
-    return parseSubtaskPayload(JSON.parse(data));
-  } catch {
-    return null;
-  }
+function normalizeToolName(name: string): string {
+  const match = /^mcp__[a-z0-9_-]+__(.+)$/i.exec(name);
+  return match ? match[1] : name;
 }
 
-export function subtaskEventToFrame(
-  payload: CopilotSubtaskEvent,
-  eventId: number,
-): CopilotRunJobFrame {
-  return { event_id: eventId, event_type: COPILOT_RUN_STEP_EVENT, payload: { ...payload } };
+function parseToolStepPayload(value: unknown): CopilotToolCallRecord | null {
+  const payload = objectRecord(value);
+  if (!payload || (payload.step_kind !== 'tool_started' && payload.step_kind !== 'tool_finished')) {
+    return null;
+  }
+  const toolName = boundedText(payload.tool_name, 200);
+  const input = objectRecord(payload.input);
+  if (!toolName || !input) return null;
+  const toolUseId = boundedText(payload.tool_use_id, 200);
+  if (payload.step_kind === 'tool_started') {
+    return {
+      toolName: normalizeToolName(toolName),
+      input,
+      ...(toolUseId ? { toolUseId } : {}),
+      status: 'running',
+    };
+  }
+  const summary = clampedDisplayText(payload.summary, MAX_TERMINAL_COPY_CHARS);
+  if (!summary) return null;
+  const errorReason = clampedDisplayText(payload.error_reason, MAX_TERMINAL_COPY_CHARS);
+  return {
+    toolName: normalizeToolName(toolName),
+    input,
+    summary,
+    ...(errorReason ? { errorReason } : {}),
+    status: errorReason ? 'failed' : 'done',
+  };
+}
+
+function mergeToolStarted(
+  calls: CopilotToolCallRecord[],
+  call: CopilotToolCallRecord,
+): CopilotToolCallRecord[] {
+  if (call.toolUseId && calls.some((current) => current.toolUseId === call.toolUseId)) return calls;
+  if (
+    !call.toolUseId &&
+    calls.some((current) => current.toolName === call.toolName && current.status === 'running')
+  ) {
+    return calls;
+  }
+  return [...calls, call];
+}
+
+function mergeToolFinished(
+  calls: CopilotToolCallRecord[],
+  result: CopilotToolCallRecord,
+): CopilotToolCallRecord[] {
+  // tool_finished intentionally carries no SDK id. Durable execution is
+  // serialized, so the oldest running call with the same normalized name is
+  // the only safe correlation target.
+  const index = calls.findIndex(
+    (call) => call.status === 'running' && call.toolName === result.toolName,
+  );
+  if (index === -1) {
+    const duplicateTerminal = calls.some(
+      (call) =>
+        call.status === result.status &&
+        call.toolName === result.toolName &&
+        call.summary === result.summary &&
+        call.errorReason === result.errorReason &&
+        JSON.stringify(call.input) === JSON.stringify(result.input),
+    );
+    return duplicateTerminal ? calls : [...calls, result];
+  }
+  const next = [...calls];
+  next[index] = { ...next[index], ...result, toolUseId: next[index].toolUseId };
+  return next;
 }
 
 export function parseCopilotRunJobFrame(data: string): CopilotRunJobFrame | null {
@@ -178,6 +246,7 @@ export function createCopilotRunView(): CopilotRunView {
     lastEventId: 0,
     replyText: '',
     subtasks: [],
+    toolCalls: [],
     frames: [],
   };
 }
@@ -211,11 +280,13 @@ export function foldCopilotRunFrames(
   let failureReason: string | undefined;
   let checkpointEventId: string | undefined;
   const subtasks = new Map<string, MutableSubtask>();
+  let toolCalls: CopilotToolCallRecord[] = [];
 
   for (const item of frames) {
     const terminalRun = TERMINAL_RUN_PHASES.has(phase);
     switch (item.event_type) {
       case 'copilot_run.queued':
+      case 'copilot_run.dispatched':
         break;
       case 'copilot_run.started':
         if (!terminalRun) phase = 'running';
@@ -224,22 +295,31 @@ export function foldCopilotRunFrames(
         if (terminalRun) break;
         phase = 'running';
         const event = parseSubtaskPayload(item.payload);
-        if (!event) break;
-        const current = subtasks.get(event.subtask_id);
-        if (current && TERMINAL_SUBTASKS.has(current.status)) break;
-        subtasks.set(event.subtask_id, {
-          id: event.subtask_id,
-          // SDK task_notification has no description, so the backend uses a
-          // generic terminal fallback. Keep the prior descriptive label when
-          // one exists; the card must not jump from “核对 42 次作答” to merely
-          // “子任务已完成”. A terminal-only replay still uses the fallback.
-          label: current && TERMINAL_FALLBACK_LABELS.has(event.label) ? current.label : event.label,
-          status: event.status,
-          ...(event.summary ? { summary: event.summary } : {}),
-          ...(event.error ? { error: event.error } : {}),
-          lastEventId: item.event_id,
-          firstEventId: current?.firstEventId ?? item.event_id,
-        });
+        if (event) {
+          const current = subtasks.get(event.subtask_id);
+          if (current && TERMINAL_SUBTASKS.has(current.status)) break;
+          subtasks.set(event.subtask_id, {
+            id: event.subtask_id,
+            // SDK task_notification has no description, so the backend uses a
+            // generic terminal fallback. Keep the prior descriptive label when
+            // one exists; the card must not jump from “核对 42 次作答” to merely
+            // “子任务已完成”. A terminal-only replay still uses the fallback.
+            label:
+              current && TERMINAL_FALLBACK_LABELS.has(event.label) ? current.label : event.label,
+            status: event.status,
+            ...(event.summary ? { summary: event.summary } : {}),
+            ...(event.error ? { error: event.error } : {}),
+            lastEventId: item.event_id,
+            firstEventId: current?.firstEventId ?? item.event_id,
+          });
+          break;
+        }
+        const tool = parseToolStepPayload(item.payload);
+        if (!tool) break;
+        toolCalls =
+          item.payload.step_kind === 'tool_started'
+            ? mergeToolStarted(toolCalls, tool)
+            : mergeToolFinished(toolCalls, tool);
         break;
       }
       case 'copilot_run.delta': {
@@ -292,6 +372,9 @@ export function foldCopilotRunFrames(
           }
         }
         break;
+      case 'copilot_run.cancel_requested':
+        if (!terminalRun) phase = 'cancel_requested';
+        break;
       default:
         // Cursor still advances over unknown events; their payload never enters UI state.
         break;
@@ -308,11 +391,12 @@ export function foldCopilotRunFrames(
     subtasks: [...subtasks.values()]
       .sort((a, b) => a.firstEventId - b.firstEventId)
       .map(({ firstEventId: _firstEventId, ...subtask }) => subtask),
+    toolCalls,
     frames,
   };
 }
 
-/** SSE parser shared by the inline chat response and durable job-event stream. */
+/** SSE parser for the authenticated durable job-event stream. */
 export async function* parseCopilotSseStream(
   body: ReadableStream<Uint8Array>,
   options: ParseCopilotSseStreamOptions = {},

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,6 +12,7 @@ const { apiFetchMock, apiJsonMock, consumeDurableMock } = vi.hoisted(() => ({
 }));
 
 vi.mock('@/ui/lib/api', () => ({
+  ApiAuthError: class ApiAuthError extends Error {},
   ApiError: class ApiError extends Error {
     details: Record<string, unknown>;
     constructor(
@@ -38,15 +39,15 @@ vi.mock('@tanstack/react-query', () => ({
                 id: 'copilot-session-test',
                 status: 'active',
                 title: '跨章节迁移核对',
-                created_at: '2026-08-16T08:00:00.000Z',
-                updated_at: '2026-08-16T08:00:00.000Z',
+                created_at: '2026-09-07T08:00:00.000Z',
+                updated_at: '2026-09-07T08:00:00.000Z',
               },
               {
                 id: 'copilot-session-old',
                 status: 'active',
                 title: '旧对话：定义域复盘',
-                created_at: '2026-08-15T08:00:00.000Z',
-                updated_at: '2026-08-15T08:00:00.000Z',
+                created_at: '2026-09-06T08:00:00.000Z',
+                updated_at: '2026-09-06T08:00:00.000Z',
               },
             ],
           },
@@ -97,13 +98,18 @@ vi.mock('@/ui/primitives/CopilotDrawer', () => ({
     footer,
     headActions,
     summary,
+    onClose,
   }: {
     children: ReactNode;
     footer: ReactNode;
     headActions: ReactNode;
     summary: ReactNode;
+    onClose: () => void;
   }) => (
     <section>
+      <button type="button" data-testid="drawer-close" onClick={onClose}>
+        关闭
+      </button>
       {headActions}
       {summary}
       {children}
@@ -120,1316 +126,533 @@ vi.mock('@/ui/primitives/ToolUseCard', () => ({
   ),
 }));
 vi.mock('./CopilotHeroCard', () => ({ CopilotHeroCard: () => null }));
-
 vi.mock('./subtask-events', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./subtask-events')>();
   return { ...actual, consumeDurableCopilotRun: consumeDurableMock };
 });
 
-import { ApiError } from '@/ui/lib/api';
+import { ApiAuthError, ApiError } from '@/ui/lib/api';
 import { CopilotDock } from './CopilotDock';
-import {
-  DURABLE_COPILOT_RECONNECT_STORAGE_KEY,
-  PENDING_COPILOT_TURN_STORAGE_KEY,
-} from './durable-reconnect-storage';
-import {
-  type CopilotRunView,
-  DurablePickupStalledError,
-  createCopilotRunView,
-  foldCopilotRunFrames,
-} from './subtask-events';
+import { PENDING_COPILOT_TURN_STORAGE_KEY } from './durable-reconnect-storage';
+import { type CopilotRunView, createCopilotRunView, foldCopilotRunFrames } from './subtask-events';
 
-const partialView = {
-  phase: 'running' as const,
-  lastEventId: 412,
-  replyText: '我已核对 27 次分式方程作答，正在用未教学探针排除偶然失误。',
-  checkpointEventId: 'ask_transfer_audit',
-  subtasks: [
-    {
-      id: 'audit-transfer-evidence',
-      label: '核对 27 次作答、5 次延迟复习与 3 个未教学探针',
-      status: 'running' as const,
-      lastEventId: 411,
-    },
-  ],
-  frames: [
-    {
-      event_id: 409,
-      event_type: 'copilot_run.queued',
-      payload: { session_id: 'copilot-session-transfer-audit' },
-    },
-    { event_id: 410, event_type: 'copilot_run.started', payload: {} },
-    {
-      event_id: 411,
-      event_type: 'copilot_run.step',
-      payload: {
-        step_kind: 'subtask',
-        subtask_id: 'audit-transfer-evidence',
-        label: '核对 27 次作答、5 次延迟复习与 3 个未教学探针',
-        status: 'running',
-      },
-    },
-    {
-      event_id: 412,
-      event_type: 'copilot_run.delta',
-      payload: { text: '我已核对 27 次分式方程作答，正在用未教学探针排除偶然失误。' },
-    },
-  ],
-} satisfies CopilotRunView;
+interface Snapshot {
+  session_id: string;
+  turns: Array<Record<string, unknown>>;
+  active_runs: Array<{
+    run_id: string;
+    session_id: string;
+    status: 'queued' | 'started' | 'running' | 'cancel_requested';
+    events_url: string;
+  }>;
+}
 
-const completedView = foldCopilotRunFrames(createCopilotRunView(), [
-  ...partialView.frames,
-  {
-    event_id: 413,
-    event_type: 'copilot_run.step',
-    payload: {
-      step_kind: 'subtask',
-      subtask_id: 'audit-transfer-evidence',
-      label: '核对 27 次作答、5 次延迟复习与 3 个未教学探针',
-      status: 'completed',
-      summary: '三个独立探针复现同一错误，已排除偶然失误。',
-    },
-  },
-  {
-    event_id: 415,
-    event_type: 'copilot_run.reply',
-    payload: {
-      checkpoint_event_id: 'ask_transfer_audit',
-      reply_md:
-        '证据核对完成：错误集中在含参题的定义域前置检查。下一组练习先固定定义域，再处理通分。',
-    },
-  },
-  { event_id: 416, event_type: 'copilot_run.done', payload: {} },
-]);
+function snapshot(sessionId: string, activeRuns: Snapshot['active_runs'] = []): Snapshot {
+  return { session_id: sessionId, turns: [], active_runs: activeRuns };
+}
 
-const queuedView = {
-  phase: 'queued' as const,
-  lastEventId: 601,
-  replyText: '',
-  checkpointEventId: 'ask_queued_gradient_rebuild',
-  subtasks: [],
-  frames: [
-    {
-      event_id: 601,
-      event_type: 'copilot_run.queued',
-      payload: {
-        session_id: 'copilot-session-queued-gradient-rebuild',
-        pickup_deadline_ms: 1_000_000,
-        dispatch: {
-          source: 'model_triage',
-          reason_code: 'multi_artifact_work',
-          task_run_id: 'copilot_dispatch_queued_gradient_rebuild',
-        },
-      },
-    },
-  ],
-} satisfies CopilotRunView;
+function activeRun(
+  runId: string,
+  status: 'queued' | 'started' | 'running' | 'cancel_requested' = 'queued',
+  sessionId = 'copilot-session-test',
+) {
+  return {
+    run_id: runId,
+    session_id: sessionId,
+    status,
+    events_url: `/api/jobs/copilot_run/${runId}/events`,
+  } as const;
+}
 
-const queuedRecoveryView = foldCopilotRunFrames(createCopilotRunView(), [
-  ...queuedView.frames,
-  { event_id: 602, event_type: 'copilot_run.started', payload: {} },
-  {
-    event_id: 604,
-    event_type: 'copilot_run.step',
-    payload: {
-      step_kind: 'subtask',
-      subtask_id: 'audit-delayed-review',
-      label: '核对 36 道跨章节练习与两轮延迟复习',
-      status: 'completed',
-      summary: '定位 7 道定义域遗漏与 3 道增根误判。',
+function accepted(runId: string): Response {
+  return new Response(JSON.stringify({ run_id: runId, session_id: 'copilot-session-test' }), {
+    status: 202,
+    headers: {
+      Location: `/api/jobs/copilot_run/${runId}/events`,
+      'Content-Type': 'application/json',
     },
-  },
-  {
-    event_id: 605,
-    event_type: 'copilot_run.step',
-    payload: {
-      step_kind: 'subtask',
-      subtask_id: 'validate-transfer-gradient',
-      label: '用四个未教学探针验证三档迁移梯度',
-      status: 'completed',
-      summary: '三档题目均通过确定性 validator，最高档保留一个增根陷阱。',
-    },
-  },
-  {
-    event_id: 607,
-    event_type: 'copilot_run.reply',
-    payload: {
-      checkpoint_event_id: 'ask_queued_gradient_rebuild',
-      reply_md: '后台核对完成：36 道题分成定义域、增根与迁移三类；下一轮按两次延迟复习结果调梯度。',
-    },
-  },
-  { event_id: 608, event_type: 'copilot_run.done', payload: {} },
-]);
-
-const failedView = {
-  phase: 'failed' as const,
-  lastEventId: 705,
-  replyText: '',
-  subtasks: [
-    {
-      id: 'validate-parametric-transfer',
-      label: '用五个未教学探针验证含参分式方程迁移题',
-      status: 'failed' as const,
-      error: '子任务未完成',
-      lastEventId: 704,
-    },
-  ],
-  frames: [
-    {
-      event_id: 701,
-      event_type: 'copilot_run.queued',
-      payload: { session_id: 'copilot-session-failed-transfer' },
-    },
-    { event_id: 702, event_type: 'copilot_run.started', payload: {} },
-    {
-      event_id: 703,
-      event_type: 'copilot_run.step',
-      payload: {
-        step_kind: 'subtask',
-        subtask_id: 'validate-parametric-transfer',
-        label: '用五个未教学探针验证含参分式方程迁移题',
-        status: 'running',
-      },
-    },
-    {
-      event_id: 704,
-      event_type: 'copilot_run.step',
-      payload: {
-        step_kind: 'subtask',
-        subtask_id: 'validate-parametric-transfer',
-        label: '用五个未教学探针验证含参分式方程迁移题',
-        status: 'failed',
-        error: '子任务未完成',
-      },
-    },
-    {
-      event_id: 705,
-      event_type: 'copilot_run.failed',
-      payload: { reason: 'exhausted', error: 'provider budget exhausted' },
-    },
-  ],
-} satisfies CopilotRunView;
-
-const ambiguousWarning =
-  '这次后台运行已经开始，但结果没有可靠保存。为避免重复执行可能已经发生的操作，我没有自动重跑；请先确认现有结果，再决定是否重新发起。';
-const ambiguousFailedView = {
-  phase: 'failed' as const,
-  lastEventId: 805,
-  replyText: ambiguousWarning,
-  failureReason: 'ambiguous_execution',
-  subtasks: [],
-  frames: [
-    {
-      event_id: 801,
-      event_type: 'copilot_run.queued',
-      payload: { session_id: 'copilot-session-ambiguous-materialization' },
-    },
-    { event_id: 802, event_type: 'copilot_run.started', payload: {} },
-    { event_id: 803, event_type: 'copilot_run.execution_started', payload: {} },
-    {
-      event_id: 805,
-      event_type: 'copilot_run.failed',
-      payload: {
-        reason: 'ambiguous_execution',
-        error: 'execution outcome could not be confirmed after worker recovery',
-        reply_md: ambiguousWarning,
-      },
-    },
-  ],
-} satisfies CopilotRunView;
-
-describe('CopilotDock accepted durable reconnect', () => {
-  beforeEach(() => {
-    window.sessionStorage.clear();
-    apiJsonMock.mockImplementation(async (input: string, init?: RequestInit) => {
-      if (input.startsWith('/api/copilot/turns')) return { turns: [] };
-      if (input === '/api/copilot/sessions' && init?.method === 'POST') {
-        return {
-          session: {
-            id: 'copilot-session-new',
-            status: 'active',
-            title: null,
-            created_at: '2026-08-16T09:00:00.000Z',
-            updated_at: '2026-08-16T09:00:00.000Z',
-          },
-        };
-      }
-      throw new Error(`unexpected apiJson call: ${input}`);
-    });
   });
+}
 
-  afterEach(() => {
-    cleanup();
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (cause: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function pendingSubscription(options: { signal?: AbortSignal }): Promise<CopilotRunView> {
+  return new Promise((_resolve, reject) => {
+    options.signal?.addEventListener(
+      'abort',
+      () => reject(new DOMException('Aborted', 'AbortError')),
+      { once: true },
+    );
+  });
+}
+
+async function sendMessage(user: ReturnType<typeof userEvent.setup>, text: string) {
+  const input = screen.getByTestId('copilot-composer-input');
+  await user.clear(input);
+  await user.type(input, text);
+  await user.click(screen.getByTestId('copilot-composer-send'));
+}
+
+describe('CopilotDock unified durable conversation', () => {
+  const snapshots = new Map<string, Snapshot>();
+
+  beforeEach(() => {
     window.sessionStorage.clear();
     apiFetchMock.mockReset();
     apiJsonMock.mockReset();
     consumeDurableMock.mockReset();
-  });
-
-  it.each([
-    ['inline', 'end', false],
-    ['inline', 'legacy', true],
-    ['inline', 'partial', true],
-    ['durable', 'end', false],
-    ['durable', 'cancelled', true],
-    ['durable', 'draft-only', true],
-  ] as const)(
-    '%s %s preserves explicit mode semantics on the next user turn',
-    async (transport, outcome, keepsContext) => {
-      const skillContext = {
-        skill: 'quiz',
-        ref: { kind: 'knowledge', id: 'kc-domain-boundary-42' },
-      };
-      apiJsonMock.mockResolvedValue({
-        turns: [
-          {
-            role: 'ai',
-            event_id: 'prior_quiz',
-            text: '上一次练习已经完成。',
-            at: '2026-09-06T06:00:00Z',
-            skill_turn: { kind: 'end' },
-            skill_context: skillContext,
-          },
-        ],
-      });
-      const response = (payload: Record<string, unknown>) =>
-        new Response(`event: reply\ndata: ${JSON.stringify(payload)}\n\n`, {
-          status: 200,
-          headers: { 'Content-Type': 'text/event-stream' },
-        });
-      const content = '本轮已核对定义域、增根与边界条件。';
-      if (transport === 'inline') {
-        apiFetchMock.mockResolvedValueOnce(
-          response({
-            reply: content,
-            session_id: 'copilot-session-test',
-            reply_event_id: 'quiz_current',
-            ...(outcome !== 'legacy' ? { skill_turn: { kind: 'end' } } : {}),
-            ...(outcome === 'partial' ? { error: '回复被截断' } : {}),
-          }),
-        );
-      } else {
-        apiFetchMock.mockResolvedValueOnce(
-          new Response(JSON.stringify({ run_id: 'quiz_current' }), {
-            status: 202,
-            headers: { Location: '/api/jobs/copilot_run/quiz_current/events' },
-          }),
-        );
-        const view = foldCopilotRunFrames(createCopilotRunView(), [
-          outcome === 'draft-only'
-            ? { event_id: 1, event_type: 'copilot_run.delta', payload: { text: content } }
-            : { event_id: 1, event_type: 'copilot_run.reply', payload: { reply_md: content } },
-          {
-            event_id: 2,
-            event_type: outcome === 'cancelled' ? 'copilot_run.failed' : 'copilot_run.done',
-            payload: {
-              skill_turn: { kind: 'end' },
-              skill_context: skillContext,
-              ...(outcome === 'cancelled' ? { reason: 'cancelled' } : {}),
-            },
-          },
-        ]);
-        consumeDurableMock.mockImplementationOnce(
-          async (options: { onUpdate?: (view: CopilotRunView) => void }) => {
-            options.onUpdate?.(view);
-            return view;
-          },
-        );
+    snapshots.clear();
+    snapshots.set('copilot-session-test', snapshot('copilot-session-test'));
+    snapshots.set('copilot-session-old', snapshot('copilot-session-old'));
+    apiJsonMock.mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/copilot/turns')) {
+        const sessionId = new URL(url, 'http://local').searchParams.get('session_id') ?? '';
+        return snapshots.get(sessionId) ?? snapshot(sessionId);
       }
-      apiFetchMock.mockResolvedValueOnce(response({ reply: '收到后续问题。' }));
-      render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
-      const user = userEvent.setup();
-      await waitFor(() =>
-        expect(screen.getByTestId('copilot-quiz-chip').textContent).toContain('当前知识点'),
-      );
-      await user.click(screen.getByTestId('copilot-quiz-chip'));
-      if (outcome === 'draft-only') {
-        await screen.findByText('请求失败');
-        expect(screen.queryByText(content)).toBeNull();
-        expect(screen.getByRole('button', { name: /^重试$/ })).toBeTruthy();
-      } else {
-        await screen.findByText(content);
+      if (url.startsWith('/api/copilot/runs/')) {
+        const runId = decodeURIComponent(url.split('/')[4] ?? '');
+        return { ok: true, run_id: runId, status: 'cancel_requested' };
       }
-      await user.type(screen.getByTestId('copilot-composer-input'), '继续核对反例');
-      await user.click(screen.getByTestId('copilot-composer-send'));
-      await waitFor(() => expect(apiFetchMock).toHaveBeenCalledTimes(2));
-      const first = JSON.parse(String(apiFetchMock.mock.calls[0]?.[1]?.body));
-      const second = JSON.parse(String(apiFetchMock.mock.calls[1]?.[1]?.body));
-      expect(first.skill_context).toEqual(skillContext);
-      expect(second.skill_context).toEqual(keepsContext ? skillContext : undefined);
-      expect(screen.queryAllByText(content)).toHaveLength(outcome === 'draft-only' ? 0 : 1);
-    },
-  );
-
-  it('sends a new turn to the session selected from the session panel', async () => {
-    apiFetchMock.mockResolvedValue(
-      new Response(
-        `event: reply\ndata: ${JSON.stringify({
-          reply: '已按旧对话继续。',
-          session_id: 'copilot-session-old',
-          reply_event_id: 'copilot_reply_old',
-          checkpoint_event_id: 'copilot_ask_old',
-        })}\n\n`,
-        { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
-      ),
-    );
-
-    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
-    const user = userEvent.setup();
-    await user.click(screen.getByTestId('copilot-session-list-toggle'));
-    await user.click(screen.getByRole('button', { name: /旧对话：定义域复盘/ }));
-    await user.type(screen.getByTestId('copilot-composer-input'), '继续这段对话');
-    await user.click(screen.getByTestId('copilot-composer-send'));
-
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledTimes(1));
-    const request = apiFetchMock.mock.calls[0]?.[1] as RequestInit;
-    expect(JSON.parse(String(request.body))).toMatchObject({
-      session_id: 'copilot-session-old',
-      user_message: '继续这段对话',
+      throw new Error(`unexpected apiJson call: ${url}`);
     });
+    consumeDurableMock.mockImplementation(pendingSubscription);
   });
 
-  it('sends the selected AI reply id as the correction target and clears the selection', async () => {
-    apiJsonMock.mockImplementation(async (input: string) => {
-      if (input.startsWith('/api/copilot/turns')) {
-        return {
-          turns: [
-            {
-              role: 'ai',
-              text: '第一轮把定义域写成了所有实数。',
-              at: '2026-08-16T08:01:00.000Z',
-              event_id: 'copilot_reply_domain_first',
-              session_id: 'copilot-session-test',
-              reply_event_id: 'copilot_reply_domain_first',
-            },
-            {
-              role: 'ai',
-              text: '第二轮又漏掉了分母不能为零。',
-              at: '2026-08-16T08:02:00.000Z',
-              event_id: 'copilot_reply_domain_second',
-              session_id: 'copilot-session-test',
-              reply_event_id: 'copilot_reply_domain_second',
-            },
-          ],
-        };
-      }
-      throw new Error(`unexpected apiJson call: ${input}`);
-    });
-    apiFetchMock.mockResolvedValue(
-      new Response(
-        `event: reply\ndata: ${JSON.stringify({
-          reply: '已更正第二轮：定义域需要排除使分母为零的值。',
-          session_id: 'copilot-session-test',
-          reply_event_id: 'copilot_reply_domain_corrected',
-          checkpoint_event_id: 'copilot_ask_domain_corrected',
-        })}\n\n`,
-        { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
-      ),
-    );
-
-    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
-    const user = userEvent.setup();
-    const correctionButtons = await screen.findAllByRole('button', { name: '更正这轮' });
-    expect(correctionButtons).toHaveLength(2);
-
-    await user.click(correctionButtons[1]);
-    expect(screen.getByText('将更正第 2 轮')).toBeTruthy();
-
-    await user.type(screen.getByTestId('copilot-composer-input'), '请按我刚才指出的问题更正。');
-    await user.click(screen.getByTestId('copilot-composer-send'));
-
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledTimes(1));
-    const request = apiFetchMock.mock.calls[0]?.[1] as RequestInit;
-    expect(JSON.parse(String(request.body))).toMatchObject({
-      session_id: 'copilot-session-test',
-      user_message: '请按我刚才指出的问题更正。',
-      correction_target_turn_id: 'copilot_reply_domain_second',
-    });
-    expect(screen.queryByText('将更正第 2 轮')).toBeNull();
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
   });
 
-  it('keeps a newly created session selected while the session list refetches', async () => {
-    apiFetchMock.mockResolvedValue(
-      new Response(
-        `event: reply\ndata: ${JSON.stringify({
-          reply: '新对话已开始。',
-          session_id: 'copilot-session-new',
-          reply_event_id: 'copilot_reply_new',
-          checkpoint_event_id: 'copilot_ask_new',
-        })}\n\n`,
-        { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
-      ),
-    );
-
+  it('keeps two same-session sends distinct when their 202 responses arrive out of order', async () => {
+    const user = userEvent.setup();
+    const first = deferred<Response>();
+    const second = deferred<Response>();
+    apiFetchMock.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
     render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
-    const user = userEvent.setup();
-    await user.click(screen.getByTestId('copilot-session-list-toggle'));
-    await user.click(screen.getByRole('button', { name: '新对话' }));
-    await user.type(screen.getByTestId('copilot-composer-input'), '新会话里的第一问');
-    await user.click(screen.getByTestId('copilot-composer-send'));
+    await waitFor(() => expect(apiJsonMock).toHaveBeenCalled());
 
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledTimes(1));
-    const request = apiFetchMock.mock.calls[0]?.[1] as RequestInit;
-    expect(JSON.parse(String(request.body))).toMatchObject({
-      session_id: 'copilot-session-new',
-      user_message: '新会话里的第一问',
-    });
-  });
-
-  it('keeps a restored durable run bound to a session absent from the first list response', async () => {
-    window.sessionStorage.setItem(
-      DURABLE_COPILOT_RECONNECT_STORAGE_KEY,
-      JSON.stringify({
-        v: 1,
-        sessionId: 'copilot-session-restored-only',
-        runId: 'ask_restored_only',
-        location: '/api/jobs/copilot_run/ask_restored_only/events',
-        userMessageId: 'm_restored_user',
-        aiMessageId: 'm_restored_ai',
-        userMessage: '恢复仅存在于持久句柄中的旧会话。',
-      }),
+    await sendMessage(user, '先核对函数定义域。');
+    await sendMessage(user, '再生成电磁感应迁移题。');
+    expect((screen.getByTestId('copilot-composer-input') as HTMLTextAreaElement).disabled).toBe(
+      false,
     );
-    consumeDurableMock.mockResolvedValue(completedView);
-
-    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
-    const user = userEvent.setup();
-    await user.click(screen.getByTestId('copilot-session-list-toggle'));
-
-    const restoredSession = screen.getByRole('button', { name: /正在恢复的对话/ });
-    expect(restoredSession.getAttribute('aria-current')).toBe('true');
-  });
-
-  it('reuses one Idempotency-Key for pre-202 retry and mints a new key for the next turn', async () => {
-    const location = '/api/jobs/copilot_run/ask_lost_202_recovered/events';
-    const inlineReply = new Response(
-      `event: reply\ndata: ${JSON.stringify({
-        reply: '补充核对完成：极端参数下仍需先固定定义域，再检查增根。',
-        session_id: 'copilot-session-after-recovery',
-        reply_event_id: 'copilot_reply_after_recovery',
-        checkpoint_event_id: 'copilot_user_ask_after_recovery',
-      })}\n\n`,
-      { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
-    );
-    apiFetchMock
-      .mockRejectedValueOnce(new Error('proxy reset before response headers'))
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ run_id: 'ask_lost_202_recovered' }), {
-          status: 202,
-          headers: { Location: location, 'Content-Type': 'application/json' },
-        }),
-      )
-      .mockResolvedValueOnce(inlineReply);
-    consumeDurableMock.mockImplementationOnce(
-      async (options: { onUpdate?: (view: typeof completedView) => void }) => {
-        options.onUpdate?.(completedView);
-        return completedView;
-      },
-    );
-
-    const rendered = render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
-    const user = userEvent.setup();
-    const firstQuestion =
-      '交叉核对近 45 天 36 道含参函数与电磁感应错题、三轮延迟复习和五个未教学探针，再逐题保留 validator 证据。';
-    await user.type(screen.getByTestId('copilot-composer-input'), firstQuestion);
-    await user.click(screen.getByTestId('copilot-composer-send'));
-    expect(await screen.findByRole('button', { name: '恢复' })).toBeTruthy();
-
-    // Navigation changed after the ambiguous POST. Retry must preserve the
-    // original /practice ambient body, otherwise the server correctly returns
-    // idempotency_conflict instead of recovering the lost 202.
-    rendered.rerender(<CopilotDock pathname="/subjects/math/mistakes" navigate={vi.fn()} />);
-    await user.click(screen.getByRole('button', { name: '恢复' }));
-    await screen.findByText(completedView.replyText);
-
     const firstHeaders = new Headers(apiFetchMock.mock.calls[0]?.[1]?.headers);
-    const retryHeaders = new Headers(apiFetchMock.mock.calls[1]?.[1]?.headers);
-    const firstKey = firstHeaders.get('Idempotency-Key');
-    expect(firstKey).toMatch(/^[0-9a-f-]{36}$/i);
-    expect(retryHeaders.get('Idempotency-Key')).toBe(firstKey);
-    expect(apiFetchMock.mock.calls[1]?.[1]?.body).toBe(apiFetchMock.mock.calls[0]?.[1]?.body);
-    expect(String(apiFetchMock.mock.calls[1]?.[1]?.body)).toContain('"route":"/practice"');
-    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
+    const secondHeaders = new Headers(apiFetchMock.mock.calls[1]?.[1]?.headers);
+    expect(firstHeaders.get('Idempotency-Key')).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(secondHeaders.get('Idempotency-Key')).not.toBe(firstHeaders.get('Idempotency-Key'));
 
-    await user.type(
-      screen.getByTestId('copilot-composer-input'),
-      '再单独核对极端参数下的定义域与增根分支。',
+    await act(async () => second.resolve(accepted('run-second')));
+    await waitFor(() =>
+      expect(consumeDurableMock).toHaveBeenCalledWith(
+        expect.objectContaining({ location: '/api/jobs/copilot_run/run-second/events' }),
+      ),
     );
-    await user.click(screen.getByTestId('copilot-composer-send'));
-    await screen.findByText('补充核对完成：极端参数下仍需先固定定义域，再检查增根。');
+    await act(async () => first.resolve(accepted('run-first')));
+    await waitFor(() => expect(consumeDurableMock).toHaveBeenCalledTimes(2));
 
-    const nextHeaders = new Headers(apiFetchMock.mock.calls[2]?.[1]?.headers);
-    expect(nextHeaders.get('Idempotency-Key')).toMatch(/^[0-9a-f-]{36}$/i);
-    expect(nextHeaders.get('Idempotency-Key')).not.toBe(firstKey);
+    expect(screen.getAllByTestId('copilot-stop-run')).toHaveLength(2);
+    expect(screen.getAllByTestId('copilot-msg-user').map((row) => row.textContent)).toEqual([
+      expect.stringContaining('先核对函数定义域。'),
+      expect.stringContaining('再生成电磁感应迁移题。'),
+    ]);
+    expect(window.sessionStorage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY)).toBeNull();
   });
 
-  it('keeps the exact pending turn after explicit 503 enqueue ambiguity', async () => {
-    const location = '/api/jobs/copilot_run/ask_structured_503_recovered/events';
-    apiFetchMock
-      .mockRejectedValueOnce(
-        new ApiError(
-          'durable run accepted but queue state is unknown',
-          503,
-          'copilot_enqueue_ambiguous',
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ run_id: 'ask_structured_503_recovered' }), {
-          status: 202,
-          headers: { Location: location, 'Content-Type': 'application/json' },
-        }),
-      );
-    consumeDurableMock.mockImplementationOnce(
-      async (options: { onUpdate?: (view: CopilotRunView) => void }) => {
-        options.onUpdate?.(completedView);
-        return completedView;
-      },
-    );
-
-    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+  it('retries an ambiguous POST with the exact same key and body while another turn remains usable', async () => {
     const user = userEvent.setup();
-    await user.type(
-      screen.getByTestId('copilot-composer-input'),
-      '交叉核对 38 道含参作答、两轮延迟复习和四个未教学探针，再按 validator 证据生成三档迁移题。',
-    );
-    await user.click(screen.getByTestId('copilot-composer-send'));
+    apiFetchMock
+      .mockRejectedValueOnce(new ApiError('ambiguous enqueue', 503, 'copilot_enqueue_ambiguous'))
+      .mockResolvedValueOnce(accepted('run-recovered'))
+      .mockResolvedValueOnce(accepted('run-new'));
+    const rendered = render(<CopilotDock pathname="/subjects/math/mistakes" navigate={vi.fn()} />);
+    await waitFor(() => expect(apiJsonMock).toHaveBeenCalled());
 
-    expect(await screen.findByRole('button', { name: '恢复' })).toBeTruthy();
-    expect(window.sessionStorage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY)).not.toBeNull();
+    await sendMessage(user, '核对 42 次含参函数作答。');
+    await screen.findByTestId('copilot-pending-recovery');
     const firstHeaders = new Headers(apiFetchMock.mock.calls[0]?.[1]?.headers);
     const firstBody = apiFetchMock.mock.calls[0]?.[1]?.body;
 
-    await user.click(screen.getByRole('button', { name: '恢复' }));
-    await screen.findByText(completedView.replyText);
-
-    const retryHeaders = new Headers(apiFetchMock.mock.calls[1]?.[1]?.headers);
-    expect(retryHeaders.get('Idempotency-Key')).toBe(firstHeaders.get('Idempotency-Key'));
+    rendered.rerender(<CopilotDock pathname="/subjects/physics/review" navigate={vi.fn()} />);
+    await user.click(within(screen.getByTestId('copilot-pending-recovery')).getByText('恢复'));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledTimes(2));
+    expect(new Headers(apiFetchMock.mock.calls[1]?.[1]?.headers).get('Idempotency-Key')).toBe(
+      firstHeaders.get('Idempotency-Key'),
+    );
     expect(apiFetchMock.mock.calls[1]?.[1]?.body).toBe(firstBody);
-    expect(window.sessionStorage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY)).toBeNull();
+
+    await sendMessage(user, '继续检查退化分支。');
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledTimes(3));
+    expect(new Headers(apiFetchMock.mock.calls[2]?.[1]?.headers).get('Idempotency-Key')).not.toBe(
+      firstHeaders.get('Idempotency-Key'),
+    );
   });
 
-  it('replaces stale progress and retries a terminal FAILED run as a new keyed attempt', async () => {
-    const runId = 'ask_failed_transfer';
-    const location = `/api/jobs/copilot_run/${runId}/events`;
-    const retryRunId = 'ask_failed_transfer_retry';
-    const retryLocation = `/api/jobs/copilot_run/${retryRunId}/events`;
-    apiFetchMock
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ run_id: runId }), {
-          status: 202,
-          headers: { Location: location, 'Content-Type': 'application/json' },
-        }),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ run_id: retryRunId }), {
-          status: 202,
-          headers: { Location: retryLocation, 'Content-Type': 'application/json' },
-        }),
-      );
-    consumeDurableMock
-      .mockImplementationOnce(async (options: { onUpdate?: (view: typeof failedView) => void }) => {
-        options.onUpdate?.(failedView);
-        return failedView;
-      })
-      .mockImplementationOnce(
-        async (options: { onUpdate?: (view: typeof completedView) => void }) => {
-          options.onUpdate?.(completedView);
-          return completedView;
-        },
-      );
-
-    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+  it('dedupes an already-persisted answer when ambiguous recovery replays its 202', async () => {
     const user = userEvent.setup();
-    await user.type(
-      screen.getByTestId('copilot-composer-input'),
-      '用五个未教学探针验证含参分式方程迁移题，并把无法收敛的证据明确保留下来。',
-    );
-    await user.click(screen.getByTestId('copilot-composer-send'));
-
-    expect(await screen.findByText('这次请求没有完成。可以换个更聚焦的问法再试。')).toBeTruthy();
-    expect(
-      screen.queryByText('这件事需要多步处理，我已转到后台；进度会在这里持续更新。'),
-    ).toBeNull();
-    expect(screen.getByText('用五个未教学探针验证含参分式方程迁移题')).toBeTruthy();
-    expect(screen.queryByTestId('copilot-msg-streaming')).toBeNull();
-    expect((screen.getByTestId('copilot-composer-input') as HTMLTextAreaElement).disabled).toBe(
-      false,
-    );
-    expect(apiFetchMock).toHaveBeenCalledTimes(1);
-
-    const failedKey = new Headers(apiFetchMock.mock.calls[0]?.[1]?.headers).get('Idempotency-Key');
-    await user.click(screen.getByRole('button', { name: '重试' }));
-    await screen.findByText(completedView.replyText);
-
-    const retryKey = new Headers(apiFetchMock.mock.calls[1]?.[1]?.headers).get('Idempotency-Key');
-    expect(retryKey).toMatch(/^[0-9a-f-]{36}$/i);
-    expect(retryKey).not.toBe(failedKey);
-    expect(apiFetchMock.mock.calls[1]?.[1]?.body).toBe(apiFetchMock.mock.calls[0]?.[1]?.body);
-    expect(consumeDurableMock.mock.calls[1]?.[0]).toEqual(
-      expect.objectContaining({ location: retryLocation }),
-    );
-    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(2);
-  });
-
-  it('shows the ambiguous-execution safety warning live without a blind one-click retry', async () => {
-    const runId = 'ask_ambiguous_materialization';
-    apiFetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ run_id: runId }), {
-        status: 202,
-        headers: {
-          Location: `/api/jobs/copilot_run/${runId}/events`,
-          'Content-Type': 'application/json',
-        },
-      }),
-    );
-    consumeDurableMock.mockImplementationOnce(
-      async (options: { onUpdate?: (view: CopilotRunView) => void }) => {
-        // A prior live update exposed a checkpoint. The ambiguous terminal
-        // must actively remove it instead of Dock's row merge reviving it.
-        options.onUpdate?.(partialView);
-        options.onUpdate?.(ambiguousFailedView);
-        return ambiguousFailedView;
-      },
-    );
-
-    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
-    const user = userEvent.setup();
-    await user.type(
-      screen.getByTestId('copilot-composer-input'),
-      '读取 42 次真实作答和五个未教学探针，再物化九道含参迁移题并逐题验证。',
-    );
-    await user.click(screen.getByTestId('copilot-composer-send'));
-
-    expect(await screen.findByText(ambiguousWarning)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: '重试' })).toBeNull();
-    expect(screen.queryByRole('button', { name: '重新连接' })).toBeNull();
-    expect(screen.queryByTestId('copilot-revert-button')).toBeNull();
-    expect(apiFetchMock).toHaveBeenCalledTimes(1);
-    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
-    expect((screen.getByTestId('copilot-composer-input') as HTMLTextAreaElement).disabled).toBe(
-      false,
-    );
-  });
-
-  it('reconnects the same run after network progress loss without a second chat POST or duplicate rows', async () => {
-    const location = '/api/jobs/copilot_run/ask_transfer_audit/events';
-    apiFetchMock.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          run_id: 'ask_transfer_audit',
-          session_id: 'copilot-session-transfer-audit',
-          checkpoint_event_id: 'ask_transfer_audit',
-        }),
-        { status: 202, headers: { Location: location, 'Content-Type': 'application/json' } },
-      ),
-    );
-    consumeDurableMock
-      .mockImplementationOnce(
-        async (options: { onUpdate?: (view: typeof partialView) => void }) => {
-          options.onUpdate?.(partialView);
-          throw new Error('proxy closed the SSE after automatic reconnects');
-        },
-      )
-      .mockImplementationOnce(
-        async (options: {
-          location: string;
-          initialState?: typeof partialView;
-          onUpdate?: (view: typeof completedView) => void;
-        }) => {
-          options.onUpdate?.(completedView);
-          return completedView;
-        },
-      );
-
-    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
-    const user = userEvent.setup();
-    await user.type(
-      screen.getByTestId('copilot-composer-input'),
-      '请核对近两周分式方程错因，结合延迟复习和未教学探针，再生成三档迁移练习。',
-    );
-    await user.click(screen.getByTestId('copilot-composer-send'));
-
-    expect(await screen.findByRole('button', { name: '重新连接' })).toBeTruthy();
-    expect(screen.getByText('进度连接仍未恢复；任务可能仍在运行，可以再次连接。')).toBeTruthy();
-    expect(apiFetchMock).toHaveBeenCalledTimes(1);
-    expect(apiFetchMock).toHaveBeenCalledWith(
-      '/api/copilot/chat',
-      expect.objectContaining({ method: 'POST' }),
-    );
-    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
-    expect(screen.getAllByTestId('copilot-msg-ai')).toHaveLength(1);
-    expect(screen.getAllByTestId('copilot-subtask-card')).toHaveLength(1);
-
-    await user.click(screen.getByRole('button', { name: '重新连接' }));
-    await screen.findByText(completedView.replyText);
-    await waitFor(() => expect(screen.queryByTestId('copilot-error')).toBeNull());
-
-    expect(apiFetchMock).toHaveBeenCalledTimes(1);
-    expect(consumeDurableMock).toHaveBeenCalledTimes(2);
-    expect(consumeDurableMock.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ location }));
-    expect(consumeDurableMock.mock.calls[0]?.[0].signal).toBeInstanceOf(AbortSignal);
-    expect(consumeDurableMock.mock.calls[1]?.[0]).toEqual(
-      expect.objectContaining({ location, initialState: partialView }),
-    );
-    expect(consumeDurableMock.mock.calls[1]?.[0].signal).toBeInstanceOf(AbortSignal);
-    expect(consumeDurableMock.mock.calls[1]?.[0].signal).not.toBe(
-      consumeDurableMock.mock.calls[0]?.[0].signal,
-    );
-    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
-    expect(screen.getAllByTestId('copilot-msg-ai')).toHaveLength(1);
-    expect(screen.getAllByTestId('copilot-subtask-card')).toHaveLength(1);
-    expect(screen.getByText('三个独立探针复现同一错误，已排除偶然失误。')).toBeTruthy();
-  });
-
-  it('unlocks a queued pickup stall and later resumes the accepted Location in the same row', async () => {
-    const location = '/api/jobs/copilot_run/ask_queued_gradient_rebuild/events';
-    apiFetchMock.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          run_id: 'ask_queued_gradient_rebuild',
-          session_id: 'copilot-session-queued-gradient-rebuild',
-          checkpoint_event_id: 'ask_queued_gradient_rebuild',
-        }),
-        { status: 202, headers: { Location: location, 'Content-Type': 'application/json' } },
-      ),
-    );
-    consumeDurableMock
-      .mockImplementationOnce(async (options: { onUpdate?: (view: CopilotRunView) => void }) => {
-        options.onUpdate?.(queuedView);
-        throw new DurablePickupStalledError(1_000_000);
-      })
-      .mockImplementationOnce(
-        async (options: {
-          location: string;
-          initialState?: CopilotRunView;
-          onUpdate?: (view: CopilotRunView) => void;
-        }) => {
-          options.onUpdate?.(queuedRecoveryView);
-          return queuedRecoveryView;
-        },
-      );
-
-    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
-    const user = userEvent.setup();
-    await user.type(
-      screen.getByTestId('copilot-composer-input'),
-      '请后台核对 36 道跨章节练习、两轮延迟复习和四个未教学探针，再生成三档迁移梯度。',
-    );
-    await user.click(screen.getByTestId('copilot-composer-send'));
-
-    expect(await screen.findByRole('button', { name: '重新连接' })).toBeTruthy();
-    expect(
-      screen.getByText('任务还在等待开始，可能正在排队；本次请求已保留，可以稍后重新连接。'),
-    ).toBeTruthy();
-    expect((screen.getByTestId('copilot-composer-input') as HTMLTextAreaElement).disabled).toBe(
-      false,
-    );
-    expect(apiFetchMock).toHaveBeenCalledTimes(1);
-    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
-    expect(screen.getAllByTestId('copilot-msg-ai')).toHaveLength(1);
-
-    await user.click(screen.getByRole('button', { name: '重新连接' }));
-    await screen.findByText(queuedRecoveryView.replyText);
-
-    expect(apiFetchMock).toHaveBeenCalledTimes(1);
-    expect(consumeDurableMock).toHaveBeenCalledTimes(2);
-    expect(consumeDurableMock.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ location }));
-    expect(consumeDurableMock.mock.calls[1]?.[0]).toEqual(
-      expect.objectContaining({ location, initialState: queuedView }),
-    );
-    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
-    expect(screen.getAllByTestId('copilot-msg-ai')).toHaveLength(1);
-    expect(screen.getAllByTestId('copilot-subtask-card')).toHaveLength(2);
-    expect(screen.getByText('定位 7 道定义域遗漏与 3 道增根误判。')).toBeTruthy();
-  });
-
-  it('stops an accepted durable run and returns the composer to idle', async () => {
-    const runId = 'ask_stop_from_dock';
-    let stopConsumer: (() => void) | undefined;
-    apiFetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ run_id: runId }), {
-        status: 202,
-        headers: {
-          Location: `/api/jobs/copilot_run/${runId}/events`,
-          'Content-Type': 'application/json',
-        },
-      }),
-    );
-    apiJsonMock.mockImplementation(async (input: string) => {
-      if (input.startsWith('/api/copilot/turns')) return { turns: [] };
-      if (input === `/api/copilot/runs/${runId}/cancel`) {
-        return { ok: true, run_id: runId, status: 'cancelled' };
-      }
-      throw new Error(`unexpected apiJson call: ${input}`);
-    });
-    consumeDurableMock.mockImplementationOnce(
-      async (options: { signal?: AbortSignal; onUpdate?: (view: typeof queuedView) => void }) => {
-        options.onUpdate?.(queuedView);
-        await new Promise<never>((_, reject) => {
-          stopConsumer = () => reject(new DOMException('aborted', 'AbortError'));
-          options.signal?.addEventListener('abort', stopConsumer, { once: true });
-        });
-      },
-    );
-
-    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
-    const user = userEvent.setup();
-    await user.type(
-      screen.getByTestId('copilot-composer-input'),
-      '请后台核对错题证据并生成一组迁移练习。',
-    );
-    await user.click(screen.getByTestId('copilot-composer-send'));
-
-    expect(await screen.findByTestId('copilot-stop-run')).toBeTruthy();
-    expect(screen.getByTestId('copilot-run-stage-footer').textContent).toContain('准备中…');
-    await user.click(screen.getByTestId('copilot-stop-run'));
-
-    await waitFor(() => {
-      expect(screen.getByText('已停止这次运行。')).toBeTruthy();
-      expect(screen.queryByTestId('copilot-stop-run')).toBeNull();
-      expect(screen.queryByTestId('copilot-run-stage')).toBeNull();
-      expect((screen.getByTestId('copilot-composer-input') as HTMLTextAreaElement).disabled).toBe(
-        false,
-      );
-    });
-    expect(apiJsonMock).toHaveBeenCalledWith(
-      `/api/copilot/runs/${runId}/cancel`,
-      expect.objectContaining({ method: 'POST' }),
-    );
-    stopConsumer?.();
-  });
-
-  it('reconstructs an accepted durable handle from the 202 JSON when a proxy strips Location', async () => {
-    const runId = 'ask_proxy_stripped_location';
-    const reconstructedLocation = `/api/jobs/copilot_run/${runId}/events`;
-    apiFetchMock.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          run_id: runId,
-          session_id: 'copilot-session-proxy-stripped-location',
-          checkpoint_event_id: runId,
-        }),
-        { status: 202, headers: { 'Content-Type': 'application/json' } },
-      ),
-    );
-    consumeDurableMock.mockImplementationOnce(
-      async (options: { onUpdate?: (view: typeof completedView) => void }) => {
-        options.onUpdate?.(completedView);
-        return completedView;
-      },
-    );
-
-    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
-    const user = userEvent.setup();
-    await user.type(
-      screen.getByTestId('copilot-composer-input'),
-      '请后台核对 24 道含参方程、三轮延迟复习与四个迁移探针。',
-    );
-    await user.click(screen.getByTestId('copilot-composer-send'));
-
-    await screen.findByText(completedView.replyText);
-    expect(apiFetchMock).toHaveBeenCalledTimes(1);
-    expect(consumeDurableMock).toHaveBeenCalledWith(
-      expect.objectContaining({ location: reconstructedLocation }),
-    );
-    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
-    expect(screen.getAllByTestId('copilot-msg-ai')).toHaveLength(1);
-    expect(window.sessionStorage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY)).toBeNull();
-  });
-
-  it('preserves the exact key and rich body for human recovery when 202 has no usable handle', async () => {
-    const recoveredRunId = 'ask_proxy_stripped_and_truncated_recovered';
-    const recoveredLocation = `/api/jobs/copilot_run/${recoveredRunId}/events`;
-    const acceptedWithoutHandle = new Response('{"run_id":"truncated-after-headers"', {
-      status: 202,
-      headers: { 'Content-Type': 'application/json' },
-    });
-    apiFetchMock.mockResolvedValueOnce(acceptedWithoutHandle).mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          run_id: recoveredRunId,
-          session_id: 'copilot-session-proxy-recovery',
-          checkpoint_event_id: recoveredRunId,
-        }),
-        {
-          status: 202,
-          headers: { Location: recoveredLocation, 'Content-Type': 'application/json' },
-        },
-      ),
-    );
-    consumeDurableMock.mockImplementationOnce(
-      async (options: { onUpdate?: (view: typeof completedView) => void }) => {
-        options.onUpdate?.(completedView);
-        return completedView;
-      },
-    );
-
-    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
-    const user = userEvent.setup();
-    await user.type(
-      screen.getByTestId('copilot-composer-input'),
-      '请后台交叉核对 48 道含参方程、六个未教学探针和九道迁移题；逐题验证定义域、退化分支与唯一解。',
-    );
-    await user.click(screen.getByTestId('copilot-composer-send'));
-
-    expect(
-      await screen.findByText('请求已受理，但暂时无法显示进度；请用原请求恢复。'),
-    ).toBeTruthy();
-    expect(screen.getByRole('button', { name: '恢复' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: '不再恢复' })).toBeTruthy();
-    const pending = window.sessionStorage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY);
-    expect(pending).not.toBeNull();
-    expect(pending).toContain('48 道含参方程');
-
-    const originalHeaders = new Headers(apiFetchMock.mock.calls[0]?.[1]?.headers);
-    const originalBody = apiFetchMock.mock.calls[0]?.[1]?.body;
-    await user.click(screen.getByRole('button', { name: '恢复' }));
-    await screen.findByText(completedView.replyText);
-
-    expect(apiFetchMock).toHaveBeenCalledTimes(2);
-    const recoveredHeaders = new Headers(apiFetchMock.mock.calls[1]?.[1]?.headers);
-    expect(recoveredHeaders.get('Idempotency-Key')).toBe(originalHeaders.get('Idempotency-Key'));
-    expect(apiFetchMock.mock.calls[1]?.[1]?.body).toBe(originalBody);
-    expect(String(originalBody)).toContain('六个未教学探针');
-    expect(consumeDurableMock).toHaveBeenCalledWith(
-      expect.objectContaining({ location: recoveredLocation }),
-    );
-    expect(window.sessionStorage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY)).toBeNull();
-  });
-
-  it('keeps the composer honestly disabled while an inline subtask is still running', async () => {
-    let releaseTerminalReply: (() => void) | undefined;
-    const body = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(
-          new TextEncoder().encode(
-            `event: subtask\ndata: ${JSON.stringify({
-              step_kind: 'subtask',
-              subtask_id: 'audit-inline-transfer-evidence',
-              label: '核对 36 道跨章节练习、两轮延迟复习与四个未教学探针',
-              status: 'running',
-            })}\n\n`,
-          ),
-        );
-        releaseTerminalReply = () => {
-          controller.enqueue(
-            new TextEncoder().encode(
-              `event: reply\ndata: ${JSON.stringify({
-                reply: '核对完成：定义域遗漏与增根误判是两类稳定错因，下一轮分别安排迁移题。',
-                session_id: 'copilot-session-inline-transfer-audit',
-                reply_event_id: 'copilot_reply_inline_transfer_audit',
-                checkpoint_event_id: 'copilot_user_ask_inline_transfer_audit',
-              })}\n\n`,
-            ),
-          );
-          controller.close();
-        };
-      },
-    });
-    apiFetchMock.mockResolvedValue(
-      new Response(body, {
-        status: 200,
-        headers: { 'Content-Type': 'text/event-stream' },
-      }),
-    );
-
-    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
-    const user = userEvent.setup();
-    await user.type(
-      screen.getByTestId('copilot-composer-input'),
-      '核对我的跨章节练习与延迟复习证据，再区分定义域遗漏和增根误判。',
-    );
-    await user.click(screen.getByTestId('copilot-composer-send'));
-
-    expect(
-      await screen.findByText('核对 36 道跨章节练习、两轮延迟复习与四个未教学探针'),
-    ).toBeTruthy();
-    expect(screen.getByTestId('copilot-run-stage').textContent).toContain('证据审阅中…');
-    expect((screen.getByTestId('copilot-composer-input') as HTMLTextAreaElement).disabled).toBe(
-      false,
-    );
-    expect((screen.getByTestId('copilot-composer-send') as HTMLButtonElement).disabled).toBe(true);
-
-    await act(async () => releaseTerminalReply?.());
-    await screen.findByText('核对完成：定义域遗漏与增根误判是两类稳定错因，下一轮分别安排迁移题。');
-    expect((screen.getByTestId('copilot-composer-input') as HTMLTextAreaElement).disabled).toBe(
-      false,
-    );
-    await user.type(screen.getByTestId('copilot-composer-input'), '继续生成下一档迁移题');
-    expect((screen.getByTestId('copilot-composer-send') as HTMLButtonElement).disabled).toBe(false);
-    expect(apiFetchMock).toHaveBeenCalledTimes(1);
-    expect(consumeDurableMock).not.toHaveBeenCalled();
-  });
-
-  it('persists an accepted handle across unmount and resumes it without posting the turn again', async () => {
-    const location = '/api/jobs/copilot_run/ask_unmount_transfer_audit/events';
-    apiFetchMock.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          run_id: 'ask_unmount_transfer_audit',
-          session_id: 'copilot-session-unmount-transfer-audit',
-          checkpoint_event_id: 'ask_unmount_transfer_audit',
-        }),
-        { status: 202, headers: { Location: location, 'Content-Type': 'application/json' } },
-      ),
-    );
-    let transportSignal: AbortSignal | undefined;
-    consumeDurableMock
-      .mockImplementationOnce(
-        async (options: { signal?: AbortSignal }): Promise<typeof completedView> => {
-          transportSignal = options.signal;
-          return await new Promise((_resolve, reject) => {
-            options.signal?.addEventListener(
-              'abort',
-              () => reject(new DOMException('dock unmounted', 'AbortError')),
-              { once: true },
-            );
-          });
-        },
-      )
-      .mockImplementationOnce(
-        async (options: {
-          location: string;
-          initialState?: CopilotRunView;
-          onUpdate?: (view: CopilotRunView) => void;
-        }) => {
-          options.onUpdate?.(completedView);
-          return completedView;
-        },
-      );
-
-    const rendered = render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
-    const user = userEvent.setup();
-    await user.type(
-      screen.getByTestId('copilot-composer-input'),
-      '请后台核对 36 道跨章节练习、两轮延迟复习与四个未教学探针，并保留每档 validator 证据。',
-    );
-    await user.click(screen.getByTestId('copilot-composer-send'));
-    await waitFor(() => expect(transportSignal).toBeDefined());
-
-    rendered.unmount();
-
-    expect(transportSignal?.aborted).toBe(true);
-    expect(window.sessionStorage.getItem(DURABLE_COPILOT_RECONNECT_STORAGE_KEY)).not.toBeNull();
-
-    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
-    await screen.findByText(completedView.replyText);
-
-    expect(apiFetchMock).toHaveBeenCalledTimes(1);
-    expect(apiFetchMock).toHaveBeenCalledWith(
-      '/api/copilot/chat',
-      expect.objectContaining({ method: 'POST' }),
-    );
-    expect(consumeDurableMock).toHaveBeenCalledTimes(2);
-    expect(consumeDurableMock.mock.calls[1]?.[0]).toEqual(
-      expect.objectContaining({
-        location,
-        initialState: expect.objectContaining({ lastEventId: 0, frames: [] }),
-      }),
-    );
-    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
-    expect(screen.getAllByTestId('copilot-msg-ai')).toHaveLength(1);
-    expect(screen.getAllByTestId('copilot-subtask-card')).toHaveLength(1);
-    expect(window.sessionStorage.getItem(DURABLE_COPILOT_RECONNECT_STORAGE_KEY)).toBeNull();
-  });
-
-  it('persists a pre-202 unmount and restores it only after an explicit same-key human retry', async () => {
-    let dispatchSignal: AbortSignal | undefined;
-    const recoveredLocation = '/api/jobs/copilot_run/ask_pre_202_unmount_recovered/events';
-    apiFetchMock
-      .mockImplementationOnce(async (_input: string, init?: RequestInit): Promise<Response> => {
-        dispatchSignal = init?.signal ?? undefined;
-        return await new Promise((_resolve, reject) => {
-          dispatchSignal?.addEventListener(
-            'abort',
-            () => reject(new DOMException('dock unmounted before 202', 'AbortError')),
-            { once: true },
-          );
-        });
-      })
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ run_id: 'ask_pre_202_unmount_recovered' }), {
-          status: 202,
-          headers: { Location: recoveredLocation, 'Content-Type': 'application/json' },
-        }),
-      );
-    consumeDurableMock.mockImplementationOnce(
-      async (options: { onUpdate?: (view: CopilotRunView) => void }) => {
-        options.onUpdate?.(completedView);
-        return completedView;
-      },
-    );
-
-    const rendered = render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
-    const user = userEvent.setup();
-    const originalQuestion =
-      '请在后台交叉核对 48 道真实作答、三轮延迟复习与六个未教学探针，再生成完整迁移题组。';
-    await user.type(screen.getByTestId('copilot-composer-input'), originalQuestion);
-    await user.click(screen.getByTestId('copilot-composer-send'));
-    await waitFor(() => expect(dispatchSignal).toBeDefined());
-    const originalHeaders = new Headers(apiFetchMock.mock.calls[0]?.[1]?.headers);
-    const originalBody = apiFetchMock.mock.calls[0]?.[1]?.body;
-
-    rendered.unmount();
-
-    expect(dispatchSignal?.aborted).toBe(true);
-    await Promise.resolve();
-    expect(consumeDurableMock).not.toHaveBeenCalled();
-    expect(apiFetchMock).toHaveBeenCalledTimes(1);
-    expect(window.sessionStorage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY)).not.toBeNull();
-
-    render(<CopilotDock pathname="/subjects/math/mistakes" navigate={vi.fn()} />);
-    expect(await screen.findByText(originalQuestion)).toBeTruthy();
-    expect(
-      screen.getByText(
-        '上次请求的受理状态未知：它可能尚未执行，也可能已经完成。请先查看现有结果，再决定是否恢复这次请求。',
-      ),
-    ).toBeTruthy();
-    // Remount is observational. It must not silently replay a possibly-complete
-    // inline turn; the user explicitly chooses whether to resume.
-    expect(apiFetchMock).toHaveBeenCalledTimes(1);
-    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
-    expect(screen.getByRole('button', { name: '不再恢复' })).toBeTruthy();
-
-    const recoveryUser = userEvent.setup();
-    await recoveryUser.click(screen.getByRole('button', { name: '恢复' }));
-    await screen.findByText(completedView.replyText);
-
-    expect(apiFetchMock).toHaveBeenCalledTimes(2);
-    const recoveredHeaders = new Headers(apiFetchMock.mock.calls[1]?.[1]?.headers);
-    expect(recoveredHeaders.get('Idempotency-Key')).toBe(originalHeaders.get('Idempotency-Key'));
-    expect(apiFetchMock.mock.calls[1]?.[1]?.body).toBe(originalBody);
-    expect(String(originalBody)).toContain('"route":"/practice"');
-    expect(consumeDurableMock).toHaveBeenCalledWith(
-      expect.objectContaining({ location: recoveredLocation }),
-    );
-    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
-    expect(window.sessionStorage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY)).toBeNull();
-  });
-
-  it('treats 202 Location as accepted even when the informational JSON body is unreadable', async () => {
-    const location = '/api/jobs/copilot_run/ask_truncated_acceptance/events';
-    const accepted = new Response('{"run_id":"ask_truncated_acceptance"', {
-      status: 202,
-      headers: { Location: location, 'Content-Type': 'application/json' },
-    });
-    const jsonMock = vi.fn(async () => {
-      throw new SyntaxError('truncated JSON after 202 headers');
-    });
-    Object.defineProperty(accepted, 'json', { value: jsonMock });
-    apiFetchMock.mockResolvedValue(accepted);
-    consumeDurableMock.mockImplementationOnce(
-      async (options: { onUpdate?: (view: typeof completedView) => void }) => {
-        options.onUpdate?.(completedView);
-        return completedView;
-      },
-    );
-
-    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
-    const user = userEvent.setup();
-    await user.type(
-      screen.getByTestId('copilot-composer-input'),
-      '请后台核验 32 道真实作答与四组未教学探针，并按 validator 证据重建迁移梯度。',
-    );
-    await user.click(screen.getByTestId('copilot-composer-send'));
-    await screen.findByText(completedView.replyText);
-
-    expect(jsonMock).not.toHaveBeenCalled();
-    expect(apiFetchMock).toHaveBeenCalledTimes(1);
-    expect(consumeDurableMock).toHaveBeenCalledTimes(1);
-    expect(consumeDurableMock.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ location }));
-    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
-    expect(screen.getAllByTestId('copilot-msg-ai')).toHaveLength(1);
-    expect(screen.getAllByTestId('copilot-subtask-card')).toHaveLength(1);
-  });
-
-  it('refreshes an open session once a child settles and its root continuation is replayed', async () => {
-    vi.useFakeTimers();
-    let turnsFetches = 0;
-    apiJsonMock.mockImplementation(async (input: string) => {
-      if (!input.startsWith('/api/copilot/turns')) {
-        throw new Error(`unexpected apiJson call: ${input}`);
-      }
-      turnsFetches += 1;
-      if (turnsFetches === 1) {
-        return {
-          turns: [
-            {
-              role: 'user',
-              text: '核对这组错题。',
-              at: '2026-08-28T08:00:00.000Z',
-              event_id: 'ask_child_refresh',
-            },
-            {
-              role: 'ai',
-              text: '我在核对这组错题。',
-              at: '2026-08-28T08:00:01.000Z',
-              event_id: 'reply_child_refresh',
-              session_id: 'copilot-session-test',
-              reply_event_id: 'reply_child_refresh',
-              subagent_runs: [{ id: 'research_refresh', status: 'running' }],
-            },
-          ],
-        };
-      }
-      return {
+    const idempotencyKey = '97310f9e-cd35-4640-ad3b-6a3cc7b79188';
+    const runId = 'run-ambiguous-already-complete';
+    window.sessionStorage.setItem(
+      PENDING_COPILOT_TURN_STORAGE_KEY,
+      JSON.stringify({
+        v: 2,
         turns: [
           {
-            role: 'user',
-            text: '核对这组错题。',
-            at: '2026-08-28T08:00:00.000Z',
-            event_id: 'ask_child_refresh',
-          },
-          {
-            role: 'ai',
-            text: '我在核对这组错题。',
-            at: '2026-08-28T08:00:01.000Z',
-            event_id: 'reply_child_refresh',
-            session_id: 'copilot-session-test',
-            reply_event_id: 'reply_child_refresh',
-            subagent_runs: [{ id: 'research_refresh', status: 'succeeded' }],
-          },
-          {
-            role: 'ai',
-            text: '我已整理好核对结果。',
-            at: '2026-08-28T08:00:02.000Z',
-            event_id: 'reply_child_continuation',
-            session_id: 'copilot-session-test',
-            reply_event_id: 'reply_child_continuation',
+            v: 2,
+            idempotencyKey,
+            userMessageId: 'optimistic-user-ambiguous',
+            aiMessageId: 'optimistic-ai-ambiguous',
+            userMessage: '恢复已经执行完成的歧义请求。',
+            requestBody: {
+              session_id: 'copilot-session-test',
+              user_message: '恢复已经执行完成的歧义请求。',
+              triggered_by: 'chat',
+              ambient_context: { route: '/practice' },
+            },
           },
         ],
-      };
+      }),
+    );
+    snapshots.set('copilot-session-test', {
+      session_id: 'copilot-session-test',
+      turns: [
+        {
+          role: 'user',
+          text: '恢复已经执行完成的歧义请求。',
+          at: '2026-09-07T08:00:00.000Z',
+          event_id: runId,
+          session_id: 'copilot-session-test',
+        },
+        {
+          role: 'ai',
+          text: '服务端只执行并持久化了一次。',
+          at: '2026-09-07T08:00:01.000Z',
+          event_id: 'reply-ambiguous-already-complete',
+          reply_event_id: 'reply-ambiguous-already-complete',
+          session_id: 'copilot-session-test',
+          run_id: runId,
+        },
+      ],
+      active_runs: [],
+    });
+    apiFetchMock.mockResolvedValueOnce(accepted(runId));
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+
+    const recovery = await screen.findByTestId('copilot-pending-recovery');
+    await user.click(within(recovery).getByText('恢复'));
+    await waitFor(() =>
+      expect(window.sessionStorage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY)).toBeNull(),
+    );
+
+    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
+    expect(screen.getAllByTestId('copilot-msg-ai')).toHaveLength(1);
+    expect(screen.getByText('服务端只执行并持久化了一次。')).toBeTruthy();
+    expect(screen.queryByText('正在等待处理这次请求。')).toBeNull();
+  });
+
+  it('treats authentication rejection as definitive and does not offer paid-run recovery', async () => {
+    const user = userEvent.setup();
+    apiFetchMock.mockRejectedValueOnce(new ApiAuthError('token expired'));
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    await waitFor(() => expect(apiJsonMock).toHaveBeenCalled());
+
+    await sendMessage(user, '检查权限失败不会创建恢复任务。');
+
+    expect(await screen.findAllByText('访问令牌已失效，请重新输入。')).toHaveLength(2);
+    expect(screen.queryByTestId('copilot-pending-recovery')).toBeNull();
+    expect(window.sessionStorage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY)).toBeNull();
+    expect(screen.getAllByTestId('copilot-msg-user')).toHaveLength(1);
+    expect(screen.getAllByTestId('copilot-msg-ai')).toHaveLength(1);
+  });
+
+  it('recovers every active run from one server snapshot with no accepted local cache', async () => {
+    const runningId = 'run-running';
+    const waitingId = 'run-waiting';
+    window.sessionStorage.setItem(
+      'loom:copilot:durable-reconnect:v1',
+      JSON.stringify({ runId: 'obsolete-singleton' }),
+    );
+    snapshots.set('copilot-session-test', {
+      session_id: 'copilot-session-test',
+      turns: [
+        {
+          role: 'user',
+          text: '运行中的证据核对',
+          at: '2026-09-07T08:00:00.000Z',
+          event_id: runningId,
+          session_id: 'copilot-session-test',
+        },
+        {
+          role: 'user',
+          text: '排队中的迁移题生成',
+          at: '2026-09-07T08:00:01.000Z',
+          event_id: waitingId,
+          session_id: 'copilot-session-test',
+        },
+      ],
+      active_runs: [activeRun(runningId, 'running'), activeRun(waitingId, 'queued')],
     });
 
-    try {
-      const first = render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
-      await act(async () => {
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      expect(screen.getByText('我在核对这组错题。')).toBeTruthy();
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    await waitFor(() => expect(consumeDurableMock).toHaveBeenCalledTimes(2));
 
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(5_000);
-      });
-      expect(screen.getByText('我已整理好核对结果。')).toBeTruthy();
-      expect(screen.getAllByText('我在核对这组错题。')).toHaveLength(1);
-      expect(screen.getAllByText('我已整理好核对结果。')).toHaveLength(1);
+    expect(consumeDurableMock.mock.calls.map((call) => call[0].location).sort()).toEqual([
+      `/api/jobs/copilot_run/${runningId}/events`,
+      `/api/jobs/copilot_run/${waitingId}/events`,
+    ]);
+    expect(screen.getAllByTestId('copilot-stop-run')).toHaveLength(2);
+    expect(screen.getByText('运行中的证据核对')).toBeTruthy();
+    expect(screen.getByText('排队中的迁移题生成')).toBeTruthy();
+    expect(window.sessionStorage.getItem('loom:copilot:durable-reconnect:v1')).toBeNull();
+  });
 
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(5_000);
-      });
-      expect(screen.getAllByText('我已整理好核对结果。')).toHaveLength(1);
+  it('stops the selected waiting successor, not the running session head', async () => {
+    const user = userEvent.setup();
+    snapshots.set('copilot-session-test', {
+      session_id: 'copilot-session-test',
+      turns: [
+        {
+          role: 'user',
+          text: '当前执行',
+          at: '2026-09-07T08:00:00.000Z',
+          event_id: 'run-head',
+          session_id: 'copilot-session-test',
+        },
+        {
+          role: 'user',
+          text: '等待执行',
+          at: '2026-09-07T08:00:01.000Z',
+          event_id: 'run-waiting',
+          session_id: 'copilot-session-test',
+        },
+      ],
+      active_runs: [activeRun('run-head', 'running'), activeRun('run-waiting', 'queued')],
+    });
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    const stopButtons = await screen.findAllByTestId('copilot-stop-run');
+    const waitingButton = stopButtons.find(
+      (button) => button.closest('[data-run-id]')?.getAttribute('data-run-id') === 'run-waiting',
+    );
+    if (!waitingButton) throw new Error('waiting Stop button missing');
+    expect(waitingButton.closest('[data-run-id]')?.getAttribute('data-run-status')).toBe('queued');
 
-      first.unmount();
-      render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
-      await act(async () => {
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      expect(screen.getByText('我已整理好核对结果。')).toBeTruthy();
-      expect(screen.getAllByText('我已整理好核对结果。')).toHaveLength(1);
-    } finally {
-      vi.useRealTimers();
-    }
+    await user.click(waitingButton);
+    await waitFor(() =>
+      expect(apiJsonMock).toHaveBeenCalledWith('/api/copilot/runs/run-waiting/cancel', {
+        method: 'POST',
+      }),
+    );
+    expect(apiJsonMock).not.toHaveBeenCalledWith('/api/copilot/runs/run-head/cancel', {
+      method: 'POST',
+    });
+    expect(consumeDurableMock.mock.calls[0]?.[0]?.signal.aborted).toBe(false);
+    expect(consumeDurableMock.mock.calls[1]?.[0]?.signal.aborted).toBe(false);
+  });
+
+  it('reconciles an optimistic ask with the same run from a later snapshot', async () => {
+    const user = userEvent.setup();
+    apiFetchMock.mockResolvedValueOnce(accepted('run-associated'));
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    await waitFor(() => expect(apiJsonMock).toHaveBeenCalled());
+    await sendMessage(user, '核对定义域并生成三档题。');
+    await waitFor(() => expect(consumeDurableMock).toHaveBeenCalledTimes(1));
+
+    const options = consumeDurableMock.mock.calls[0]?.[0] as {
+      onUpdate: (view: CopilotRunView) => void;
+    };
+    act(() => {
+      options.onUpdate(
+        foldCopilotRunFrames(createCopilotRunView(), [
+          { event_id: 1, event_type: 'copilot_run.started', payload: {} },
+          { event_id: 2, event_type: 'copilot_run.delta', payload: { text: '正在核对。' } },
+        ]),
+      );
+    });
+    snapshots.set('copilot-session-test', {
+      session_id: 'copilot-session-test',
+      turns: [
+        {
+          role: 'user',
+          text: '核对定义域并生成三档题。',
+          at: '2026-09-07T08:00:00.000Z',
+          event_id: 'run-associated',
+          session_id: 'copilot-session-test',
+        },
+      ],
+      active_runs: [activeRun('run-associated', 'running')],
+    });
+    await user.click(screen.getByTestId('copilot-session-list-toggle'));
+    await user.click(screen.getByText('旧对话：定义域复盘'));
+    await user.click(screen.getByText('跨章节迁移核对'));
+    await waitFor(() => expect(consumeDurableMock).toHaveBeenCalledTimes(2));
+
+    expect(screen.getAllByText('核对定义域并生成三档题。')).toHaveLength(1);
+    expect(screen.getAllByText('正在核对。')).toHaveLength(1);
+  });
+
+  it('does not let a snapshot requested before 202 delete the newly accepted run', async () => {
+    const user = userEvent.setup();
+    const staleSnapshot = deferred<Snapshot>();
+    apiJsonMock.mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/copilot/turns')) return staleSnapshot.promise;
+      throw new Error(`unexpected apiJson call: ${url}`);
+    });
+    apiFetchMock.mockResolvedValueOnce(accepted('run-after-snapshot-start'));
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+
+    await sendMessage(user, '在快照请求之后受理这轮。');
+    await waitFor(() => expect(consumeDurableMock).toHaveBeenCalledTimes(1));
+    const signal = consumeDurableMock.mock.calls[0]?.[0]?.signal as AbortSignal;
+    await act(async () => staleSnapshot.resolve(snapshot('copilot-session-test')));
+
+    expect(signal.aborted).toBe(false);
+    expect(screen.getAllByTestId('copilot-stop-run')).toHaveLength(1);
+    expect(screen.getByText('在快照请求之后受理这轮。')).toBeTruthy();
+  });
+
+  it('reuses a run already discovered by snapshot when its delayed 202 arrives', async () => {
+    const user = userEvent.setup();
+    const delayed202 = deferred<Response>();
+    apiFetchMock.mockReturnValueOnce(delayed202.promise);
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    await waitFor(() => expect(apiJsonMock).toHaveBeenCalled());
+
+    await sendMessage(user, '响应迟到但服务端已经受理。');
+    snapshots.set('copilot-session-test', {
+      session_id: 'copilot-session-test',
+      turns: [
+        {
+          role: 'user',
+          text: '响应迟到但服务端已经受理。',
+          at: '2026-09-07T08:00:00.000Z',
+          event_id: 'run-delayed-202',
+          session_id: 'copilot-session-test',
+        },
+      ],
+      active_runs: [activeRun('run-delayed-202', 'running')],
+    });
+    await user.click(screen.getByTestId('copilot-session-list-toggle'));
+    await user.click(screen.getByText('旧对话：定义域复盘'));
+    await user.click(screen.getByText('跨章节迁移核对'));
+    await waitFor(() => expect(consumeDurableMock).toHaveBeenCalledTimes(1));
+    expect(consumeDurableMock).toHaveBeenCalledTimes(1);
+    const firstSignal = consumeDurableMock.mock.calls[0]?.[0]?.signal as AbortSignal;
+
+    await act(async () => delayed202.resolve(accepted('run-delayed-202')));
+    await waitFor(() => expect(screen.getAllByTestId('copilot-stop-run')).toHaveLength(1));
+    expect(consumeDurableMock).toHaveBeenCalledTimes(1);
+    expect(firstSignal.aborted).toBe(false);
+    expect(screen.getAllByText('响应迟到但服务端已经受理。')).toHaveLength(1);
+  });
+
+  it('keeps a delayed 202 in its original session when the user switches conversations', async () => {
+    const user = userEvent.setup();
+    const delayed202 = deferred<Response>();
+    apiFetchMock.mockReturnValueOnce(delayed202.promise);
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    await waitFor(() => expect(apiJsonMock).toHaveBeenCalled());
+
+    await sendMessage(user, '只属于原对话的延迟受理。');
+    await user.click(screen.getByTestId('copilot-session-list-toggle'));
+    await user.click(screen.getByText('旧对话：定义域复盘'));
+    expect(screen.queryByText('只属于原对话的延迟受理。')).toBeNull();
+
+    await act(async () => delayed202.resolve(accepted('run-delayed-background')));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText('只属于原对话的延迟受理。')).toBeNull();
+    expect(screen.queryByTestId('copilot-stop-run')).toBeNull();
+    expect(consumeDurableMock).not.toHaveBeenCalled();
+
+    snapshots.set('copilot-session-test', {
+      session_id: 'copilot-session-test',
+      turns: [
+        {
+          role: 'user',
+          text: '只属于原对话的延迟受理。',
+          at: '2026-09-07T08:00:00.000Z',
+          event_id: 'run-delayed-background',
+          session_id: 'copilot-session-test',
+        },
+      ],
+      active_runs: [activeRun('run-delayed-background', 'queued')],
+    });
+    await user.click(screen.getByText('跨章节迁移核对'));
+    await waitFor(() => expect(consumeDurableMock).toHaveBeenCalledTimes(1));
+    expect(screen.getAllByText('只属于原对话的延迟受理。')).toHaveLength(1);
+    expect(screen.getAllByTestId('copilot-stop-run')).toHaveLength(1);
+  });
+
+  it('session switching, drawer close, and unmount only unsubscribe transports', async () => {
+    const user = userEvent.setup();
+    snapshots.set('copilot-session-test', {
+      ...snapshot('copilot-session-test'),
+      active_runs: [activeRun('run-detach', 'running')],
+      turns: [
+        {
+          role: 'user',
+          text: '保持服务端运行',
+          at: '2026-09-07T08:00:00.000Z',
+          event_id: 'run-detach',
+          session_id: 'copilot-session-test',
+        },
+      ],
+    });
+    const rendered = render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    await waitFor(() => expect(consumeDurableMock).toHaveBeenCalledTimes(1));
+    const firstSignal = consumeDurableMock.mock.calls[0]?.[0]?.signal as AbortSignal;
+
+    await user.click(screen.getByTestId('copilot-session-list-toggle'));
+    await user.click(screen.getByText('旧对话：定义域复盘'));
+    await waitFor(() => expect(firstSignal.aborted).toBe(true));
+    expect(apiJsonMock.mock.calls.some(([url]) => String(url).includes('/cancel'))).toBe(false);
+
+    await user.click(screen.getByText('跨章节迁移核对'));
+    await waitFor(() => expect(consumeDurableMock).toHaveBeenCalledTimes(2));
+    const secondSignal = consumeDurableMock.mock.calls[1]?.[0]?.signal as AbortSignal;
+    await user.click(screen.getByTestId('drawer-close'));
+    expect(secondSignal.aborted).toBe(true);
+    expect(apiJsonMock.mock.calls.some(([url]) => String(url).includes('/cancel'))).toBe(false);
+
+    rendered.unmount();
+    expect(apiJsonMock.mock.calls.some(([url]) => String(url).includes('/cancel'))).toBe(false);
+  });
+
+  it('reconnects one accepted run after network loss without another chat POST', async () => {
+    const user = userEvent.setup();
+    snapshots.set('copilot-session-test', {
+      ...snapshot('copilot-session-test'),
+      active_runs: [activeRun('run-network', 'running')],
+      turns: [
+        {
+          role: 'user',
+          text: '恢复网络连接',
+          at: '2026-09-07T08:00:00.000Z',
+          event_id: 'run-network',
+          session_id: 'copilot-session-test',
+        },
+      ],
+    });
+    consumeDurableMock
+      .mockRejectedValueOnce(new Error('network lost'))
+      .mockImplementationOnce(pendingSubscription);
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+
+    const banner = await screen.findByTestId('copilot-run-reconnect');
+    await user.click(within(banner).getByText('重新连接'));
+    await waitFor(() => expect(consumeDurableMock).toHaveBeenCalledTimes(2));
+    expect(consumeDurableMock.mock.calls[0]?.[0]?.location).toBe(
+      '/api/jobs/copilot_run/run-network/events',
+    );
+    expect(consumeDurableMock.mock.calls[1]?.[0]?.location).toBe(
+      '/api/jobs/copilot_run/run-network/events',
+    );
+    expect(apiFetchMock).not.toHaveBeenCalled();
   });
 });

@@ -1,16 +1,19 @@
-// YUK-757 — page-reload handoff for one pending/accepted durable Copilot run.
+// YUK-948 — reload handoff for POSTs whose 202 acceptance is not yet known.
 //
-// The server-side run remains authoritative in job_events. sessionStorage only
-// preserves either the pre-acceptance key + exact request body or the accepted
-// stable Location long enough for this tab to recover after a Dock remount.
-// No progress, model transcript, reasoning, credentials or provider data is stored.
+// Accepted runs are deliberately NOT cached here. GET /api/copilot/turns is the
+// authority for every accepted/queued/running run, including runs accepted by a
+// different tab. The only browser-owned recovery state is the exact
+// Idempotency-Key + normalized body for a POST that may have committed before
+// its response was lost. Retrying that tuple can only recover the same run.
 
 import type { CopilotChatRequestT } from '@/capabilities/copilot/server/chat-contracts';
 
-export const DURABLE_COPILOT_RECONNECT_STORAGE_KEY = 'loom:copilot:durable-reconnect:v1';
-export const PENDING_COPILOT_TURN_STORAGE_KEY = 'loom:copilot:pending-turn:v1';
+export const PENDING_COPILOT_TURN_STORAGE_KEY = 'loom:copilot:pending-turns:v2';
+const LEGACY_PENDING_COPILOT_TURN_STORAGE_KEY = 'loom:copilot:pending-turn:v1';
+const LEGACY_DURABLE_COPILOT_RECONNECT_STORAGE_KEY = 'loom:copilot:durable-reconnect:v1';
 
-const STORAGE_VERSION = 1;
+const STORAGE_VERSION = 2;
+const MAX_PENDING_TURNS = 32;
 const MAX_RUN_ID_CHARS = 256;
 const MAX_MESSAGE_ID_CHARS = 160;
 const MAX_USER_MESSAGE_CHARS = 4_000;
@@ -29,18 +32,14 @@ export interface PersistedPendingCopilotTurn {
   v: typeof STORAGE_VERSION;
   idempotencyKey: string;
   userMessageId: string;
+  aiMessageId: string;
   userMessage: string;
   requestBody: PersistedPendingCopilotRequestBody;
 }
 
-export interface PersistedDurableCopilotReconnect {
+interface PersistedPendingCopilotTurns {
   v: typeof STORAGE_VERSION;
-  sessionId: string;
-  runId: string;
-  location: string;
-  userMessageId: string;
-  aiMessageId: string;
-  userMessage: string;
+  turns: PersistedPendingCopilotTurn[];
 }
 
 function browserSessionStorage(): Storage | null {
@@ -55,7 +54,7 @@ function removeStorageItem(storage: Storage, key: string): void {
   try {
     storage.removeItem(key);
   } catch {
-    // Storage is best-effort.
+    // Storage is best-effort; server idempotency remains authoritative.
   }
 }
 
@@ -77,16 +76,20 @@ function boundedEntityRef(value: unknown): { kind: string; id: string } | null {
   return kind && id ? { kind, id } : null;
 }
 
-function parsePersistedPendingCopilotTurn(value: unknown): PersistedPendingCopilotTurn | null {
+function parsePendingCopilotTurn(value: unknown): PersistedPendingCopilotTurn | null {
   const candidate = objectRecord(value);
-  if (!candidate || candidate.v !== STORAGE_VERSION) return null;
+  if (!candidate || (candidate.v !== STORAGE_VERSION && candidate.v !== 1)) return null;
   const idempotencyKey = boundedString(candidate.idempotencyKey, MAX_IDEMPOTENCY_KEY_CHARS);
   const userMessageId = boundedString(candidate.userMessageId, MAX_MESSAGE_ID_CHARS);
+  const aiMessageId =
+    boundedString(candidate.aiMessageId, MAX_MESSAGE_ID_CHARS) ??
+    (userMessageId ? boundedString(`${userMessageId}_reply`, MAX_MESSAGE_ID_CHARS) : null);
   const userMessage = boundedString(candidate.userMessage, MAX_USER_MESSAGE_CHARS);
   const rawBody = objectRecord(candidate.requestBody);
   if (
     !idempotencyKey ||
     !userMessageId ||
+    !aiMessageId ||
     !userMessage ||
     !rawBody ||
     rawBody.triggered_by !== 'chat' ||
@@ -135,6 +138,7 @@ function parsePersistedPendingCopilotTurn(value: unknown): PersistedPendingCopil
     v: STORAGE_VERSION,
     idempotencyKey,
     userMessageId,
+    aiMessageId,
     userMessage,
     requestBody: {
       session_id: sessionId,
@@ -147,34 +151,78 @@ function parsePersistedPendingCopilotTurn(value: unknown): PersistedPendingCopil
   };
 }
 
-export function loadPersistedPendingCopilotTurn(
-  storage: Storage | null = browserSessionStorage(),
-): PersistedPendingCopilotTurn | null {
-  if (!storage) return null;
-  try {
-    const raw = storage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = parsePersistedPendingCopilotTurn(JSON.parse(raw));
-    if (!parsed) removeStorageItem(storage, PENDING_COPILOT_TURN_STORAGE_KEY);
-    return parsed;
-  } catch {
-    removeStorageItem(storage, PENDING_COPILOT_TURN_STORAGE_KEY);
-    return null;
+function parsePendingCollection(value: unknown): PersistedPendingCopilotTurn[] | null {
+  const candidate = objectRecord(value);
+  if (!candidate || candidate.v !== STORAGE_VERSION || !Array.isArray(candidate.turns)) return null;
+  if (candidate.turns.length > MAX_PENDING_TURNS) return null;
+  const turns: PersistedPendingCopilotTurn[] = [];
+  const keys = new Set<string>();
+  for (const value of candidate.turns) {
+    const turn = parsePendingCopilotTurn(value);
+    if (!turn || keys.has(turn.idempotencyKey)) return null;
+    keys.add(turn.idempotencyKey);
+    turns.push(turn);
   }
+  return turns;
 }
 
-export function persistPendingCopilotTurn(
-  turn: PersistedPendingCopilotTurn,
-  storage: Storage | null = browserSessionStorage(),
-): boolean {
-  const parsed = parsePersistedPendingCopilotTurn(turn);
-  if (!storage || !parsed) return false;
+function writePendingCollection(storage: Storage, turns: PersistedPendingCopilotTurn[]): boolean {
   try {
-    storage.setItem(PENDING_COPILOT_TURN_STORAGE_KEY, JSON.stringify(parsed));
+    if (turns.length === 0) {
+      storage.removeItem(PENDING_COPILOT_TURN_STORAGE_KEY);
+      return true;
+    }
+    const record: PersistedPendingCopilotTurns = { v: STORAGE_VERSION, turns };
+    storage.setItem(PENDING_COPILOT_TURN_STORAGE_KEY, JSON.stringify(record));
     return true;
   } catch {
     return false;
   }
+}
+
+/** Load every unresolved POST. A bounded v1 singleton is migrated once. */
+export function loadPersistedPendingCopilotTurns(
+  storage: Storage | null = browserSessionStorage(),
+): PersistedPendingCopilotTurn[] {
+  if (!storage) return [];
+  try {
+    const raw = storage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY);
+    if (raw) {
+      const parsed = parsePendingCollection(JSON.parse(raw));
+      if (parsed) {
+        removeStorageItem(storage, LEGACY_PENDING_COPILOT_TURN_STORAGE_KEY);
+        return parsed;
+      }
+      removeStorageItem(storage, PENDING_COPILOT_TURN_STORAGE_KEY);
+    }
+
+    const legacyRaw = storage.getItem(LEGACY_PENDING_COPILOT_TURN_STORAGE_KEY);
+    if (!legacyRaw) return [];
+    const legacy = parsePendingCopilotTurn(JSON.parse(legacyRaw));
+    removeStorageItem(storage, LEGACY_PENDING_COPILOT_TURN_STORAGE_KEY);
+    if (!legacy) return [];
+    writePendingCollection(storage, [legacy]);
+    return [legacy];
+  } catch {
+    removeStorageItem(storage, PENDING_COPILOT_TURN_STORAGE_KEY);
+    removeStorageItem(storage, LEGACY_PENDING_COPILOT_TURN_STORAGE_KEY);
+    return [];
+  }
+}
+
+/** Upsert one logical POST without overwriting another unresolved turn. */
+export function persistPendingCopilotTurn(
+  turn: PersistedPendingCopilotTurn,
+  storage: Storage | null = browserSessionStorage(),
+): boolean {
+  const parsed = parsePendingCopilotTurn(turn);
+  if (!storage || !parsed) return false;
+  const current = loadPersistedPendingCopilotTurns(storage);
+  const next = current.some((item) => item.idempotencyKey === parsed.idempotencyKey)
+    ? current.map((item) => (item.idempotencyKey === parsed.idempotencyKey ? parsed : item))
+    : [...current, parsed];
+  if (next.length > MAX_PENDING_TURNS) return false;
+  return writePendingCollection(storage, next);
 }
 
 /** Clear only the logical turn whose response is now definitive. */
@@ -183,25 +231,19 @@ export function clearPersistedPendingCopilotTurn(
   storage: Storage | null = browserSessionStorage(),
 ): void {
   if (!storage) return;
-  try {
-    const current = loadPersistedPendingCopilotTurn(storage);
-    if (current?.idempotencyKey === idempotencyKey) {
-      storage.removeItem(PENDING_COPILOT_TURN_STORAGE_KEY);
-    }
-  } catch {
-    // Storage is best-effort; server idempotency remains authoritative.
-  }
+  const current = loadPersistedPendingCopilotTurns(storage);
+  if (!current.some((turn) => turn.idempotencyKey === idempotencyKey)) return;
+  writePendingCollection(
+    storage,
+    current.filter((turn) => turn.idempotencyKey !== idempotencyKey),
+  );
 }
 
-/** An accepted Location supersedes any pre-acceptance handoff record. */
-export function discardPersistedPendingCopilotTurn(
+/** Old accepted-handle caches must never compete with the server snapshot. */
+export function discardLegacyDurableCopilotReconnect(
   storage: Storage | null = browserSessionStorage(),
 ): void {
-  try {
-    storage?.removeItem(PENDING_COPILOT_TURN_STORAGE_KEY);
-  } catch {
-    // Storage is best-effort.
-  }
+  if (storage) removeStorageItem(storage, LEGACY_DURABLE_COPILOT_RECONNECT_STORAGE_KEY);
 }
 
 /** Accept only the same-origin generic Copilot job-events path emitted by chat.ts. */
@@ -215,76 +257,5 @@ export function durableRunIdFromLocation(location: unknown): string | null {
     return location === `/api/jobs/copilot_run/${encodeURIComponent(runId)}/events` ? runId : null;
   } catch {
     return null;
-  }
-}
-
-function parsePersistedDurableCopilotReconnect(
-  value: unknown,
-): PersistedDurableCopilotReconnect | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const candidate = value as Record<string, unknown>;
-  if (candidate.v !== STORAGE_VERSION) return null;
-  const location = boundedString(candidate.location, 512);
-  const sessionId = boundedString(candidate.sessionId, 160);
-  const runId = boundedString(candidate.runId, MAX_RUN_ID_CHARS);
-  const userMessageId = boundedString(candidate.userMessageId, MAX_MESSAGE_ID_CHARS);
-  const aiMessageId = boundedString(candidate.aiMessageId, MAX_MESSAGE_ID_CHARS);
-  const userMessage = boundedString(candidate.userMessage, MAX_USER_MESSAGE_CHARS);
-  if (!location || !sessionId || !runId || !userMessageId || !aiMessageId || !userMessage) {
-    return null;
-  }
-  if (durableRunIdFromLocation(location) !== runId) return null;
-  return {
-    v: STORAGE_VERSION,
-    sessionId,
-    runId,
-    location,
-    userMessageId,
-    aiMessageId,
-    userMessage,
-  };
-}
-
-export function loadPersistedDurableCopilotReconnect(
-  storage: Storage | null = browserSessionStorage(),
-): PersistedDurableCopilotReconnect | null {
-  if (!storage) return null;
-  try {
-    const raw = storage.getItem(DURABLE_COPILOT_RECONNECT_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = parsePersistedDurableCopilotReconnect(JSON.parse(raw));
-    if (!parsed) removeStorageItem(storage, DURABLE_COPILOT_RECONNECT_STORAGE_KEY);
-    return parsed;
-  } catch {
-    removeStorageItem(storage, DURABLE_COPILOT_RECONNECT_STORAGE_KEY);
-    return null;
-  }
-}
-
-export function persistDurableCopilotReconnect(
-  handle: PersistedDurableCopilotReconnect,
-  storage: Storage | null = browserSessionStorage(),
-): boolean {
-  const parsed = parsePersistedDurableCopilotReconnect(handle);
-  if (!storage || !parsed) return false;
-  try {
-    storage.setItem(DURABLE_COPILOT_RECONNECT_STORAGE_KEY, JSON.stringify(parsed));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Clear only the run that just settled; never erase a newer accepted handle. */
-export function clearPersistedDurableCopilotReconnect(
-  runId: string,
-  storage: Storage | null = browserSessionStorage(),
-): void {
-  if (!storage) return;
-  try {
-    const current = loadPersistedDurableCopilotReconnect(storage);
-    if (current?.runId === runId) storage.removeItem(DURABLE_COPILOT_RECONNECT_STORAGE_KEY);
-  } catch {
-    // Storage is best-effort. The accepted server run remains authoritative.
   }
 }

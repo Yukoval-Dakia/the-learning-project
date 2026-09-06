@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { getDurablePickupDeadlineMs } from '@/capabilities/copilot/durable-pickup';
 import {
   type CopilotRunJobFrame,
   DurablePickupStalledError,
@@ -6,7 +7,7 @@ import {
   createCopilotRunView,
   foldCopilotRunFrames,
   parseCopilotSseStream,
-  parseInlineSubtaskEvent,
+  parseSubtaskPayload,
 } from './subtask-events';
 
 function frame(
@@ -111,19 +112,91 @@ describe('Copilot subtask event fold', () => {
     expect(JSON.stringify(result.subtasks)).not.toContain('reasoning_content');
   });
 
-  it('accepts only the public inline payload and rejects malformed lifecycle frames', () => {
+  it('folds durable STEP tool activity by stable start id and FIFO same-name completion', () => {
+    const result = foldCopilotRunFrames(createCopilotRunView(), [
+      frame(201, 'copilot_run.step', {
+        step_kind: 'tool_started',
+        tool_name: 'mcp__loom__query_mistakes',
+        tool_use_id: 'tool-first',
+        input: { subject_id: 'math', limit: 48, nested: { concepts: ['定义域', '退化条件'] } },
+      }),
+      frame(202, 'copilot_run.step', {
+        step_kind: 'tool_started',
+        tool_name: 'mcp__loom__query_mistakes',
+        tool_use_id: 'tool-second',
+        input: { subject_id: 'physics', limit: 36 },
+      }),
+      frame(203, 'copilot_run.step', {
+        step_kind: 'tool_finished',
+        tool_name: 'mcp__loom__query_mistakes',
+        input: { subject_id: 'math', limit: 48 },
+        summary: '读取完成：48 条作答，包含三轮延迟复习。',
+      }),
+      frame(204, 'copilot_run.step', {
+        step_kind: 'tool_finished',
+        tool_name: 'mcp__loom__query_mistakes',
+        input: { subject_id: 'physics', limit: 36 },
+        summary: '读取完成，但 2 条图像证据缺失。',
+        error_reason: 'two source images unavailable',
+        private_prompt: 'must not enter the tool card',
+      }),
+      frame(205, 'copilot_run.step', {
+        step_kind: 'tool_finished',
+        tool_name: 'mcp__loom__query_mistakes',
+        input: { subject_id: 'physics', limit: 36 },
+        summary: '读取完成，但 2 条图像证据缺失。',
+        error_reason: 'two source images unavailable',
+      }),
+    ]);
+
+    expect(result.toolCalls).toEqual([
+      {
+        toolName: 'query_mistakes',
+        toolUseId: 'tool-first',
+        input: { subject_id: 'math', limit: 48 },
+        summary: '读取完成：48 条作答，包含三轮延迟复习。',
+        status: 'done',
+      },
+      {
+        toolName: 'query_mistakes',
+        toolUseId: 'tool-second',
+        input: { subject_id: 'physics', limit: 36 },
+        summary: '读取完成，但 2 条图像证据缺失。',
+        errorReason: 'two source images unavailable',
+        status: 'failed',
+      },
+    ]);
+    expect(JSON.stringify(result.toolCalls)).not.toContain('private_prompt');
+  });
+
+  it('does not start a pickup clock for a FIFO-waiting QUEUED turn', () => {
+    const waiting = foldCopilotRunFrames(createCopilotRunView(), [
+      frame(301, 'copilot_run.queued', {
+        session_id: 'copilot-session-fifo',
+        dispatch: { source: 'unified_conversation' },
+      }),
+    ]);
+    expect(waiting.phase).toBe('queued');
+    expect(getDurablePickupDeadlineMs(waiting.frames)).toBeUndefined();
+
+    const dispatched = foldCopilotRunFrames(waiting, [
+      frame(302, 'copilot_run.dispatched', { pickup_deadline_ms: 9_999_999 }),
+    ]);
+    expect(dispatched.phase).toBe('queued');
+    expect(getDurablePickupDeadlineMs(dispatched.frames)).toBe(9_999_999);
+  });
+
+  it('accepts only the public subtask payload and rejects malformed lifecycle frames', () => {
     expect(
-      parseInlineSubtaskEvent(
-        JSON.stringify({
-          step_kind: 'subtask',
-          subtask_id: 'preview-rational-equations',
-          label: '预演含参数的一元分式方程题组',
-          status: 'completed',
-          summary: '三题均通过确定性 validator；保留一个增根陷阱作为最高梯度。',
-          reasoning_content: 'private chain of thought',
-          prompt: 'private child prompt',
-        }),
-      ),
+      parseSubtaskPayload({
+        step_kind: 'subtask',
+        subtask_id: 'preview-rational-equations',
+        label: '预演含参数的一元分式方程题组',
+        status: 'completed',
+        summary: '三题均通过确定性 validator；保留一个增根陷阱作为最高梯度。',
+        reasoning_content: 'private chain of thought',
+        prompt: 'private child prompt',
+      }),
     ).toEqual({
       step_kind: 'subtask',
       subtask_id: 'preview-rational-equations',
@@ -132,54 +205,46 @@ describe('Copilot subtask event fold', () => {
       summary: '三题均通过确定性 validator；保留一个增根陷阱作为最高梯度。',
     });
     expect(
-      parseInlineSubtaskEvent(
-        JSON.stringify({
-          step_kind: 'subtask',
-          subtask_id: 'missing-label',
-          status: 'running',
-        }),
-      ),
+      parseSubtaskPayload({
+        step_kind: 'subtask',
+        subtask_id: 'missing-label',
+        status: 'running',
+      }),
     ).toBeNull();
-    expect(parseInlineSubtaskEvent('{broken-json')).toBeNull();
+    expect(parseSubtaskPayload('broken payload')).toBeNull();
   });
 
   it('keeps lifecycle identity strict while clamping overlong display copy', () => {
     const label = `核对${'含参分式方程与定义域证据'.repeat(30)}`;
     const summary = `完成：${'三个独立未教学探针复现同一错误；'.repeat(70)}`;
-    const parsed = parseInlineSubtaskEvent(
-      JSON.stringify({
-        step_kind: 'subtask',
-        subtask_id: 'audit-transfer-evidence',
-        label,
-        status: 'completed',
-        summary,
-      }),
-    );
+    const parsed = parseSubtaskPayload({
+      step_kind: 'subtask',
+      subtask_id: 'audit-transfer-evidence',
+      label,
+      status: 'completed',
+      summary,
+    });
 
     expect(parsed?.label).toHaveLength(160);
     expect(parsed?.label.endsWith('…')).toBe(true);
     expect(parsed?.summary).toHaveLength(800);
     expect(parsed?.summary?.endsWith('…')).toBe(true);
-    const failed = parseInlineSubtaskEvent(
-      JSON.stringify({
-        step_kind: 'subtask',
-        subtask_id: 'audit-image-evidence',
-        label: '复核图文题的几何证据链',
-        status: 'failed',
-        error: `未完成：${'原始扫描页缺少可辨识的辅助线，无法确定性复原作图条件；'.repeat(50)}`,
-      }),
-    );
+    const failed = parseSubtaskPayload({
+      step_kind: 'subtask',
+      subtask_id: 'audit-image-evidence',
+      label: '复核图文题的几何证据链',
+      status: 'failed',
+      error: `未完成：${'原始扫描页缺少可辨识的辅助线，无法确定性复原作图条件；'.repeat(50)}`,
+    });
     expect(failed?.error).toHaveLength(800);
     expect(failed?.error?.endsWith('…')).toBe(true);
     expect(
-      parseInlineSubtaskEvent(
-        JSON.stringify({
-          step_kind: 'subtask',
-          subtask_id: 'x'.repeat(161),
-          label: '这个帧必须因折叠键不可信而被拒绝',
-          status: 'running',
-        }),
-      ),
+      parseSubtaskPayload({
+        step_kind: 'subtask',
+        subtask_id: 'x'.repeat(161),
+        label: '这个帧必须因折叠键不可信而被拒绝',
+        status: 'running',
+      }),
     ).toBeNull();
   });
 

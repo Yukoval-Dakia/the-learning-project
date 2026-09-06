@@ -8,13 +8,13 @@ describe('CopilotDock quiz quick-chip', () => {
     'utf8',
   );
   const sendQuizStart = source.indexOf('const sendQuiz = useCallback');
-  const sendQuizEnd = source.indexOf('}, [focusedKnowledgeId, pendingAcceptanceUnknown, send]);', sendQuizStart);
+  const sendQuizEnd = source.indexOf('}, [focusedKnowledgeId, send]);', sendQuizStart);
   const sendQuizSource = source.slice(sendQuizStart, sendQuizEnd);
   const quizChipMarker = source.indexOf('data-testid="copilot-quiz-chip"');
   const quizChipSource = source.slice(quizChipMarker - 120, quizChipMarker + 320);
 
   it('keeps the prompt actionable without fabricating a knowledge context', () => {
-    expect(quizChipSource).toContain('disabled={pendingAcceptanceUnknown || !conversationReady}');
+    expect(quizChipSource).toContain('disabled={!conversationReady}');
     expect(quizChipSource).not.toContain('disabled={sending || !focusedKnowledgeId}');
     expect(sendQuizSource).not.toContain('if (!focusedKnowledgeId) return;');
     expect(sendQuizSource).toContain('activeSkillRef.current = null;');

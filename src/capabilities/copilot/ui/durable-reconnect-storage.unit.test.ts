@@ -2,158 +2,127 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  DURABLE_COPILOT_RECONNECT_STORAGE_KEY,
   PENDING_COPILOT_TURN_STORAGE_KEY,
-  clearPersistedDurableCopilotReconnect,
   clearPersistedPendingCopilotTurn,
+  discardLegacyDurableCopilotReconnect,
   durableRunIdFromLocation,
-  loadPersistedDurableCopilotReconnect,
-  loadPersistedPendingCopilotTurn,
-  persistDurableCopilotReconnect,
+  loadPersistedPendingCopilotTurns,
   persistPendingCopilotTurn,
 } from './durable-reconnect-storage';
 
-const richHandle = {
-  v: 1 as const,
-  sessionId: 'copilot-session-gradient-transfer',
-  runId: 'copilot_user_ask_gradient_transfer_42',
-  location: '/api/jobs/copilot_run/copilot_user_ask_gradient_transfer_42/events',
-  userMessageId: 'm_2000000_owner',
-  aiMessageId: 'm_2000001_loom',
-  userMessage: '请后台核对 36 道跨章节练习、两轮延迟复习和四个未教学探针，再生成三档迁移梯度。',
-};
-
-const richPendingTurn = {
-  v: 1 as const,
-  idempotencyKey: 'turn-gradient-transfer-42',
-  userMessageId: 'm_1999999_owner',
-  userMessage:
-    '请交叉核对 42 次含参函数作答、三轮延迟复习和五个未教学探针，再生成三档迁移题并保留 validator 证据。',
-  requestBody: {
-    session_id: 'copilot-session-gradient-transfer',
-    user_message:
-      '请交叉核对 42 次含参函数作答、三轮延迟复习和五个未教学探针，再生成三档迁移题并保留 validator 证据。',
-    triggered_by: 'chat' as const,
-    skill_context: {
-      skill: 'teaching' as const,
-      ref: { kind: 'knowledge', id: 'kc_parametric_domain_transfer' },
+function pending(sequence: number) {
+  return {
+    v: 2 as const,
+    idempotencyKey: `turn-gradient-transfer-${sequence}`,
+    userMessageId: `m_${sequence}_owner`,
+    aiMessageId: `m_${sequence}_loom`,
+    userMessage: `请核对第 ${sequence} 组含参函数作答、延迟复习和未教学探针。`,
+    requestBody: {
+      session_id: 'copilot-session-gradient-transfer',
+      user_message: `请核对第 ${sequence} 组含参函数作答、延迟复习和未教学探针。`,
+      triggered_by: 'chat' as const,
+      skill_context: {
+        skill: 'teaching' as const,
+        ref: { kind: 'knowledge', id: 'kc_parametric_domain_transfer' },
+      },
+      ambient_context: {
+        route: '/subjects/math/mistakes?window=45d',
+        focused_entity: { kind: 'knowledge', id: 'kc_parametric_domain_transfer' },
+      },
     },
-    ambient_context: {
-      route: '/subjects/math/mistakes?window=45d',
-      focused_entity: { kind: 'knowledge', id: 'kc_parametric_domain_transfer' },
-    },
-  },
-};
+  };
+}
 
-describe('durable Copilot reconnect storage', () => {
+describe('pending Copilot acceptance storage', () => {
   beforeEach(() => window.sessionStorage.clear());
 
-  it('round-trips only the bounded same-origin handle and clears the matching terminal run', () => {
-    const runtimeHandle = {
-      ...richHandle,
-      view: {
-        frames: [
-          {
-            event_id: 42,
-            event_type: 'copilot_run.delta',
-            payload: { text: '这段进度只能留在内存，不能写入 sessionStorage。' },
-          },
-        ],
+  it('round-trips multiple exact key/body tuples and clears only the accepted turn', () => {
+    const first = pending(1);
+    const second = {
+      ...pending(2),
+      requestBody: {
+        ...pending(2).requestBody,
+        correction_target_turn_id: 'copilot_reply_prior_42',
       },
     };
-    expect(persistDurableCopilotReconnect(runtimeHandle)).toBe(true);
-    expect(loadPersistedDurableCopilotReconnect()).toEqual(richHandle);
-    expect(
-      JSON.parse(window.sessionStorage.getItem(DURABLE_COPILOT_RECONNECT_STORAGE_KEY) ?? '{}'),
-    ).toEqual(richHandle);
 
-    clearPersistedDurableCopilotReconnect('a_newer_run_must_not_clear_it');
-    expect(loadPersistedDurableCopilotReconnect()).toEqual(richHandle);
-    clearPersistedDurableCopilotReconnect(richHandle.runId);
-    expect(loadPersistedDurableCopilotReconnect()).toBeNull();
-  });
+    expect(persistPendingCopilotTurn(first)).toBe(true);
+    expect(persistPendingCopilotTurn(second)).toBe(true);
+    expect(loadPersistedPendingCopilotTurns()).toEqual([first, second]);
 
-  it('rejects cross-route/tampered Locations and removes a corrupt record', () => {
-    expect(durableRunIdFromLocation('https://evil.example/jobs/run/events')).toBeNull();
-    expect(durableRunIdFromLocation('/api/jobs/other/run/events')).toBeNull();
-    expect(
-      persistDurableCopilotReconnect({
-        ...richHandle,
-        location: '/api/jobs/copilot_run/a_different_run/events',
-      }),
-    ).toBe(false);
-
-    window.sessionStorage.setItem(
-      DURABLE_COPILOT_RECONNECT_STORAGE_KEY,
-      JSON.stringify({ ...richHandle, userMessage: 'x'.repeat(4_001) }),
-    );
-    expect(loadPersistedDurableCopilotReconnect()).toBeNull();
-    expect(window.sessionStorage.getItem(DURABLE_COPILOT_RECONNECT_STORAGE_KEY)).toBeNull();
-  });
-
-  it('round-trips the exact bounded pre-acceptance key/body and clears only the matching turn', () => {
-    expect(persistPendingCopilotTurn(richPendingTurn)).toBe(true);
-    expect(loadPersistedPendingCopilotTurn()).toEqual(richPendingTurn);
+    clearPersistedPendingCopilotTurn(first.idempotencyKey);
+    expect(loadPersistedPendingCopilotTurns()).toEqual([second]);
     expect(
       JSON.parse(window.sessionStorage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY) ?? '{}'),
-    ).toEqual(richPendingTurn);
-
-    clearPersistedPendingCopilotTurn('a-newer-logical-turn-must-not-clear-it');
-    expect(loadPersistedPendingCopilotTurn()).toEqual(richPendingTurn);
-    clearPersistedPendingCopilotTurn(richPendingTurn.idempotencyKey);
-    expect(loadPersistedPendingCopilotTurn()).toBeNull();
+    ).toEqual({ v: 2, turns: [second] });
   });
 
-  it('preserves an explicit correction target in the exact retry body', () => {
-    const correctionTurn = {
-      ...richPendingTurn,
-      requestBody: {
-        session_id: richPendingTurn.requestBody.session_id,
-        user_message: richPendingTurn.requestBody.user_message,
-        triggered_by: 'chat' as const,
-        ambient_context: richPendingTurn.requestBody.ambient_context,
-        correction_target_turn_id: 'copilot_reply_parametric_domain_41',
-      },
+  it('upserts a same-key retry without overwriting another pending message', () => {
+    const first = pending(1);
+    const second = pending(2);
+    persistPendingCopilotTurn(first);
+    persistPendingCopilotTurn(second);
+
+    expect(persistPendingCopilotTurn({ ...first, aiMessageId: 'm_1_loom_restored' })).toBe(true);
+    expect(loadPersistedPendingCopilotTurns()).toEqual([
+      { ...first, aiMessageId: 'm_1_loom_restored' },
+      second,
+    ]);
+  });
+
+  it('migrates one bounded v1 pending tuple and discards obsolete accepted-handle cache', () => {
+    const legacy = pending(3);
+    const { aiMessageId: _aiMessageId, ...legacyWithoutAi } = legacy;
+    window.sessionStorage.setItem(
+      'loom:copilot:pending-turn:v1',
+      JSON.stringify({ ...legacyWithoutAi, v: 1 }),
+    );
+    window.sessionStorage.setItem(
+      'loom:copilot:durable-reconnect:v1',
+      JSON.stringify({ runId: 'obsolete-local-authority' }),
+    );
+
+    expect(loadPersistedPendingCopilotTurns()).toEqual([
+      { ...legacy, aiMessageId: `${legacy.userMessageId}_reply` },
+    ]);
+    discardLegacyDurableCopilotReconnect();
+    expect(window.sessionStorage.getItem('loom:copilot:pending-turn:v1')).toBeNull();
+    expect(window.sessionStorage.getItem('loom:copilot:durable-reconnect:v1')).toBeNull();
+  });
+
+  it('rejects divergent visible/body content and removes a corrupt collection', () => {
+    const corrupted = {
+      ...pending(4),
+      requestBody: { ...pending(4).requestBody, user_message: '被篡改的另一条请求' },
     };
-
-    expect(persistPendingCopilotTurn(correctionTurn)).toBe(true);
-    expect(loadPersistedPendingCopilotTurn()).toEqual(correctionTurn);
-  });
-
-  it('rejects a pending record whose visible message and replay body diverge', () => {
     window.sessionStorage.setItem(
       PENDING_COPILOT_TURN_STORAGE_KEY,
-      JSON.stringify({
-        ...richPendingTurn,
-        requestBody: {
-          ...richPendingTurn.requestBody,
-          user_message: '被篡改成另一道题，不得与原 key 重放。',
-        },
-      }),
+      JSON.stringify({ v: 2, turns: [corrupted] }),
     );
 
-    expect(loadPersistedPendingCopilotTurn()).toBeNull();
+    expect(loadPersistedPendingCopilotTurns()).toEqual([]);
     expect(window.sessionStorage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY)).toBeNull();
   });
 
-  it('rejects a legacy pending record without a session binding', () => {
-    const { session_id: _sessionId, ...legacyBody } = richPendingTurn.requestBody;
+  it('rejects duplicate keys and malformed JSON rather than choosing one silently', () => {
+    const turn = pending(5);
     window.sessionStorage.setItem(
       PENDING_COPILOT_TURN_STORAGE_KEY,
-      JSON.stringify({ ...richPendingTurn, requestBody: legacyBody }),
+      JSON.stringify({ v: 2, turns: [turn, turn] }),
     );
+    expect(loadPersistedPendingCopilotTurns()).toEqual([]);
 
-    expect(loadPersistedPendingCopilotTurn()).toBeNull();
+    window.sessionStorage.setItem(PENDING_COPILOT_TURN_STORAGE_KEY, '{broken json');
+    expect(loadPersistedPendingCopilotTurns()).toEqual([]);
     expect(window.sessionStorage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY)).toBeNull();
   });
 
-  it('removes malformed JSON instead of reparsing it on every Dock mount', () => {
-    window.sessionStorage.setItem(PENDING_COPILOT_TURN_STORAGE_KEY, '{broken pending json');
-    window.sessionStorage.setItem(DURABLE_COPILOT_RECONNECT_STORAGE_KEY, '{broken handle json');
-
-    expect(loadPersistedPendingCopilotTurn()).toBeNull();
-    expect(loadPersistedDurableCopilotReconnect()).toBeNull();
-    expect(window.sessionStorage.getItem(PENDING_COPILOT_TURN_STORAGE_KEY)).toBeNull();
-    expect(window.sessionStorage.getItem(DURABLE_COPILOT_RECONNECT_STORAGE_KEY)).toBeNull();
+  it('accepts only the canonical same-origin run events location', () => {
+    expect(durableRunIdFromLocation('/api/jobs/copilot_run/copilot_user_ask_42/events')).toBe(
+      'copilot_user_ask_42',
+    );
+    expect(durableRunIdFromLocation('https://evil.example/jobs/run/events')).toBeNull();
+    expect(durableRunIdFromLocation('/api/jobs/other/run/events')).toBeNull();
+    expect(durableRunIdFromLocation('/api/jobs/copilot_run/%ZZ/events')).toBeNull();
   });
 });
