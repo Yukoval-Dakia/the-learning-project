@@ -1,0 +1,507 @@
+{
+  "protocol_version": 1,
+  "phase": "running",
+  "exact_head": "219a18166c4dea6e5e188c335e4cf0ae70c186fc",
+  "dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "harness_sha256": "6c9e59a613c637e01377be6f54c01d5b6380b98ebad745a9dc744ba598460f98",
+  "provider": "xiaomi",
+  "model": "mimo-v2.5-pro",
+  "credential_source": "/Volumes/YukovalSBak/yukoval-projects/the-learning-project/.env",
+  "baseline_record": false,
+  "campaign_cost_limit_usd": 0.9,
+  "case_cost_reserves_usd": {
+    "cold": 0.25,
+    "resume": 0.25,
+    "context-change": 0.25,
+    "correction": 0.25,
+    "read": 0.25,
+    "claims": 0.3,
+    "presentation-process": 0.4,
+    "presentation-tool": 0.4,
+    "presentation-candidate": 0.9,
+    "presentation-artifact": 0.4,
+    "presentation-html": 0.4,
+    "proposal": 0.25,
+    "semantic": 0.75,
+    "native-task": 0.5,
+    "durable": 0.25,
+    "unified": 1.6,
+    "cancel": 0
+  },
+  "cases": [
+    {
+      "name": "presentation-candidate",
+      "input_sha256": "4335c6bee87fcdab524c612aa2112a5bab6f43e40314b7ef2a682c8606aafe57",
+      "output_sha256": "b39419973ce308e690c845ac4e25a6fbf67442d084dca730eb56966c30751b13",
+      "input": {
+        "session_id": "om1g73taga69zunztbnzbn0l",
+        "user_message": "请调用一次 generate_question_candidate（seed_mode:knowledge、knowledge_ids:[actual:distribution]、requested_kind:computation、difficulty:1），生成一道自包含的整数乘法与分配律练习。看完结果后调用一次 present_primary_view 将这次成功根调用作为 tool_result 展示。不保存为题库或artifact，不调用author_question。正文只说“已准备练习”，不要在正文重复题面、答案或隐藏标记，系统会校验卡片里的题目。",
+        "triggered_by": "chat"
+      },
+      "output": "已准备练习。\n\n已准备练习。\n\n独立内容验证：通过；未对外部题库进行原创性比对。",
+      "primary_view": {
+        "source": "tool_result",
+        "ref": {
+          "kind": "generate_question_candidate",
+          "id": "call_aef1335e62df43cfac720462"
+        },
+        "snapshot": {
+          "version": 1,
+          "state": "available",
+          "value": {
+            "question": {
+              "kind": "computation",
+              "prompt_md": "计算：7 × 12\n\n提示：可以将 12 拆分为 10 + 2，再运用分配律进行简便计算。",
+              "choices_md": null,
+              "rubric_json": null,
+              "reference_md": "84\n根据分配律：\n7 × 12\n= 7 × (10 + 2)\n= 7 × 10 + 7 × 2\n= 70 + 14\n= 84",
+              "knowledge_ids": ["actual:distribution"]
+            },
+            "subject_id": "math"
+          },
+          "sha256": "8800b3d8089fb716764c8729e2e62e194e1757716fea48efc18dab8058026111",
+          "byte_length": 350,
+          "completeness": "projected",
+          "omissions": [
+            {
+              "path": "/",
+              "reason": "private",
+              "omitted_count": 6
+            }
+          ]
+        }
+      },
+      "root_task_run_id": "copilot_run_tool_copilot_user_ask_c7fe4c1a0f44078017d59501e08d88fbb01e71e97e96aef8a2fddb41970228b4",
+      "terminal_output": "已准备练习。\n\n已准备练习。",
+      "terminal_sha256": "38e1f4a68e22f1cb64704c196301d89f187888783d4904d56c9af2361d865e9d",
+      "task_runs": [
+        {
+          "id": "eg15x48or56hg18c48ipoalt",
+          "kind": "QuestionAuthorTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 1193,
+            "outputTokens": 416,
+            "thinkingBlocks": 1,
+            "thinkingCharacters": 1181
+          },
+          "cost": 0.0003839022,
+          "costBasis": "estimated",
+          "costRef": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": null,
+          "promptCodecMode": null,
+          "promptContextDigest": null
+        },
+        {
+          "id": "copilot_run_tool_copilot_user_ask_c7fe4c1a0f44078017d59501e08d88fbb01e71e97e96aef8a2fddb41970228b4",
+          "kind": "CopilotTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 41393,
+            "outputTokens": 404,
+            "thinkingBlocks": 3,
+            "thinkingCharacters": 1119
+          },
+          "cost": 0.004055662,
+          "costBasis": "estimated",
+          "costRef": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": "96ad87d5905dddee37a24213fd31e92298722ecd5f32d197958d7863018cc0aa",
+          "promptCodecMode": "cold",
+          "promptContextDigest": "374c798b9fbc747f0c0ae604bfb42baddf89ae021969cf26320627d8e8810d50"
+        },
+        {
+          "id": "k8y0oqacmrp4cp1ti9767ivo",
+          "kind": "TeachingQualityTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 900,
+            "outputTokens": 261,
+            "thinkingBlocks": 1,
+            "thinkingCharacters": 611
+          },
+          "cost": 0.00061857,
+          "costBasis": "estimated",
+          "costRef": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": null,
+          "promptCodecMode": null,
+          "promptContextDigest": null
+        },
+        {
+          "id": "wnrxuth0fgohg0eo2aaionwp",
+          "kind": "SolutionGenerateTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 1130,
+            "outputTokens": 433,
+            "thinkingBlocks": 1,
+            "thinkingCharacters": 118
+          },
+          "cost": 0.00086826,
+          "costBasis": "estimated",
+          "costRef": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": null,
+          "promptCodecMode": null,
+          "promptContextDigest": null
+        },
+        {
+          "id": "o6oj3c6h1cqxw0fn1bz5kayi",
+          "kind": "QuizVerifyTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 2150,
+            "outputTokens": 906,
+            "thinkingBlocks": 1,
+            "thinkingCharacters": 1382
+          },
+          "cost": 0.00172347,
+          "costBasis": "estimated",
+          "costRef": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": null,
+          "promptCodecMode": null,
+          "promptContextDigest": null
+        },
+        {
+          "id": "o7ztut8yurmfvguwhulhdd4p",
+          "kind": "SemanticJudgeTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 944,
+            "outputTokens": 726,
+            "thinkingBlocks": 1,
+            "thinkingCharacters": 1369
+          },
+          "cost": 0.00104226,
+          "costBasis": "estimated",
+          "costRef": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": null,
+          "promptCodecMode": null,
+          "promptContextDigest": null
+        }
+      ],
+      "tools": [
+        {
+          "name": "mcp__loom__generate_question_candidate",
+          "effect": null,
+          "error": null,
+          "input": {
+            "seed_mode": "knowledge",
+            "difficulty": 1,
+            "knowledge_ids": ["actual:distribution"],
+            "requested_kind": "computation"
+          },
+          "output": {}
+        },
+        {
+          "name": "generate_question_candidate",
+          "effect": "read",
+          "error": null,
+          "input": {
+            "seed_mode": "knowledge",
+            "difficulty": 1,
+            "knowledge_ids": ["actual:distribution"],
+            "requested_kind": "computation"
+          },
+          "output": {
+            "text": "{\"kind\":\"computation\",\"difficulty\":1,\"knowledge_ids\":[\"actual:distribution\"],\"structured\":{\"id\":\"q1\",\"role\":\"standalone\",\"prompt_text\":\"计算：7 × 12\\n\\n提示：可以将 12 拆分为 10 + 2，再运用分配律进行简便计算。\",\"answers\":[\"84\"],\"analysis\":\"根据分配律：\\n7 × 12\\n= 7 × (10 + 2)\\n= 7 × 10 + 7 × 2\\n= 70 + 14\\n= 84\"},\"choices_md\":null,\"judge_kind_override\":\"exact\",\"rubric_json\":null}",
+            "cost_ref": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+            "cost_usd": 0.0003839022,
+            "cost_basis": "estimated",
+            "subject_id": "math",
+            "task_run_id": "eg15x48or56hg18c48ipoalt",
+            "finish_reason": "end_turn"
+          }
+        },
+        {
+          "name": "mcp__loom__present_primary_view",
+          "effect": null,
+          "error": null,
+          "input": {
+            "ref": {
+              "id": "call_aef1335e62df43cfac720462",
+              "kind": "generate_question_candidate"
+            },
+            "source": "tool_result"
+          },
+          "output": {}
+        },
+        {
+          "name": "present_primary_view",
+          "effect": "control",
+          "error": null,
+          "input": {
+            "ref": {
+              "id": "call_aef1335e62df43cfac720462",
+              "kind": "generate_question_candidate"
+            },
+            "source": "tool_result"
+          },
+          "output": {
+            "ref": {
+              "id": "call_aef1335e62df43cfac720462",
+              "kind": "generate_question_candidate"
+            },
+            "source": "tool_result",
+            "presentation_lifecycle": {
+              "discarded_on_close": false,
+              "standalone_artifact": false,
+              "saved_with_conversation": true
+            }
+          }
+        }
+      ],
+      "session_agent_sdk_id": null,
+      "cumulative_cost_usd": 0.0086921242,
+      "reply_finalization": {
+        "protocol_version": 1,
+        "assurance": "execution_trace_bound",
+        "root_task_run_id": "copilot_run_tool_copilot_user_ask_c7fe4c1a0f44078017d59501e08d88fbb01e71e97e96aef8a2fddb41970228b4",
+        "candidate_sha256": "38e1f4a68e22f1cb64704c196301d89f187888783d4904d56c9af2361d865e9d",
+        "reply_sha256": "b39419973ce308e690c845ac4e25a6fbf67442d084dca730eb56966c30751b13",
+        "trace_sha256": "df1d951f1515c147beb40d56141924a7618996676f98899cec294f4b5526ad6b",
+        "trace_call_count": 2,
+        "observed_completed_tool_use_ids": [
+          "call_aef1335e62df43cfac720462",
+          "call_7c54692e80914275bb77c953"
+        ],
+        "correction": "normal",
+        "proposal_disclosure": "none",
+        "learning_content": "passed",
+        "primary_view": "retained"
+      },
+      "persisted_primary_view": {
+        "ref": {
+          "id": "call_aef1335e62df43cfac720462",
+          "kind": "generate_question_candidate"
+        },
+        "source": "tool_result",
+        "snapshot": {
+          "state": "available",
+          "value": {
+            "question": {
+              "kind": "computation",
+              "prompt_md": "计算：7 × 12\n\n提示：可以将 12 拆分为 10 + 2，再运用分配律进行简便计算。",
+              "choices_md": null,
+              "rubric_json": null,
+              "reference_md": "84\n根据分配律：\n7 × 12\n= 7 × (10 + 2)\n= 7 × 10 + 7 × 2\n= 70 + 14\n= 84",
+              "knowledge_ids": ["actual:distribution"]
+            },
+            "subject_id": "math"
+          },
+          "sha256": "8800b3d8089fb716764c8729e2e62e194e1757716fea48efc18dab8058026111",
+          "version": 1,
+          "omissions": [
+            {
+              "path": "/",
+              "reason": "private",
+              "omitted_count": 6
+            }
+          ],
+          "byte_length": 350,
+          "completeness": "projected"
+        }
+      },
+      "presentation_acceptance": {
+        "expected_source": "tool_result",
+        "persisted_primary_view": {
+          "ref": {
+            "id": "call_aef1335e62df43cfac720462",
+            "kind": "generate_question_candidate"
+          },
+          "source": "tool_result",
+          "snapshot": {
+            "state": "available",
+            "value": {
+              "question": {
+                "kind": "computation",
+                "prompt_md": "计算：7 × 12\n\n提示：可以将 12 拆分为 10 + 2，再运用分配律进行简便计算。",
+                "choices_md": null,
+                "rubric_json": null,
+                "reference_md": "84\n根据分配律：\n7 × 12\n= 7 × (10 + 2)\n= 7 × 10 + 7 × 2\n= 70 + 14\n= 84",
+                "knowledge_ids": ["actual:distribution"]
+              },
+              "subject_id": "math"
+            },
+            "sha256": "8800b3d8089fb716764c8729e2e62e194e1757716fea48efc18dab8058026111",
+            "version": 1,
+            "omissions": [
+              {
+                "path": "/",
+                "reason": "private",
+                "omitted_count": 6
+              }
+            ],
+            "byte_length": 350,
+            "completeness": "projected"
+          }
+        },
+        "semantic_review": "manual_required_not_proven_by_trace"
+      }
+    }
+  ],
+  "validator_observations": [
+    {
+      "kind": "QuizVerifyTask",
+      "input": {
+        "question": {
+          "id": "preview:call_aef1335e62df43cfac720462",
+          "kind": "computation",
+          "prompt_md": "计算：7 × 12\n\n提示：可以将 12 拆分为 10 + 2，再运用分配律进行简便计算。",
+          "reference_md": "84\n根据分配律：\n7 × 12\n= 7 × (10 + 2)\n= 7 × 10 + 7 × 2\n= 70 + 14\n= 84",
+          "choices_md": null,
+          "knowledge_ids": ["actual:distribution"]
+        },
+        "knowledge_context": [
+          {
+            "id": "actual:distribution",
+            "name": "整数乘法与分配律"
+          }
+        ],
+        "source_pack": null,
+        "source_refs": [],
+        "self_copy_safety": null,
+        "generation_method": "closed_book",
+        "validation_mode": "release_strict",
+        "validation_purpose": "learning_content"
+      },
+      "input_sha256": "6f64983c38445c75891ef1a9a2a59b314047330f3c186a108869914860535040",
+      "started_at": "2026-09-06T21:56:12.827Z",
+      "status": "completed",
+      "task_run_id": "o6oj3c6h1cqxw0fn1bz5kayi",
+      "output": "{\"grounding\":{\"basis\":\"closed_world_givens\",\"verdict\":\"pass\",\"note\":\"题干为‘7 × 12’的整数乘法运算，参考答案展示了通过分配律 7×(10+2)=7×10+7×2=70+14=84 的完整推导，计算过程与结果均正确，仅依赖于题面给定算式及可独立核验的分配律定义。\"},\"copy_safety\":{\"verdict\":\"unknown\",\"max_overlap\":0.0},\"knowledge_hit\":{\"verdict\":\"pass\",\"note\":\"题目明确提示‘运用分配律’并声明考查知识点‘actual:distribution’（整数乘法与分配律），实际解题步骤完全围绕分配律展开，知识命中准确。\"},\"overall\":\"needs_review\",\"summary_md\":\"题面计算与分配律应用均正确。但 source_refs 为空，无法对题干措辞进行原创性比对，copy_safety 为 unknown，需人工复核是否存在与其他常见习题的过度相似。\",\"confidence\":0.85}",
+      "output_sha256": "c19990704cf02e8af962f21ab90a5df30d59257003f31c84d582811b66688041",
+      "elapsed_ms": 27912
+    },
+    {
+      "kind": "TeachingQualityTask",
+      "input": {
+        "prompt_md": "计算：7 × 12\n\n提示：可以将 12 拆分为 10 + 2，再运用分配律进行简便计算。",
+        "kind": "computation",
+        "reference_md": "84\n根据分配律：\n7 × 12\n= 7 × (10 + 2)\n= 7 × 10 + 7 × 2\n= 70 + 14\n= 84",
+        "choices_md": [],
+        "rubric_json": null,
+        "is_choice": false
+      },
+      "input_sha256": "2184cd9350d3c0c6810c8222996ecf02430b0ec968bba9a83807e954052978b4",
+      "started_at": "2026-09-06T21:56:12.834Z",
+      "status": "completed",
+      "task_run_id": "k8y0oqacmrp4cp1ti9767ivo",
+      "output": "{\"clarity\":{\"verdict\":\"pass\",\"reason\":\"题干明确要求计算 7 × 12，指令清晰，自包含，无歧义。\"},\"unique_answer\":{\"verdict\":\"pass\",\"reason\":\"7 × 12 = 84 是唯一正确结果，无其他可辩护的答案。\"},\"summary\":\"基础乘法计算题，题干清晰，答案唯一，无明显缺陷。\"}",
+      "output_sha256": "2f3f2e339971387b526e262b1f39c071c425052f74dd2de05e7919600b5af111",
+      "elapsed_ms": 10270
+    },
+    {
+      "kind": "SolutionGenerateTask",
+      "input": {
+        "prompt_md": "计算：7 × 12\n\n提示：可以将 12 拆分为 10 + 2，再运用分配律进行简便计算。",
+        "kind": "computation",
+        "subject_id": "math",
+        "choices_md": [],
+        "existing_answers_hint": null,
+        "existing_analysis_hint": null,
+        "figures_hint": null,
+        "prompt_image_refs": []
+      },
+      "input_sha256": "72dd79090617335b17902a2995c798dcab1b83bf7cfc7feded1e67338c173099",
+      "started_at": "2026-09-06T21:56:12.835Z",
+      "status": "completed",
+      "task_run_id": "wnrxuth0fgohg0eo2aaionwp",
+      "output": "```json\n{\n  \"reference_solution\": {\n    \"expected_signals\": [\n      \"将12拆分为10+2\",\n      \"运用乘法分配律：7×12 = 7×(10+2)\",\n      \"展开为 7×10 + 7×2\",\n      \"计算 7×10 = 70\",\n      \"计算 7×2 = 14\",\n      \"求和 70 + 14 = 84\"\n    ],\n    \"final_answer\": \"84\",\n    \"answer_equivalents\": [\"84\", \"七十二乘七等于八十四\"]\n  },\n  \"worked_solution_md\": \"## 计算 $7 \\\\times 12$\\n\\n### 方法：拆分法 + 乘法分配律\\n\\n**第一步：拆分**\\n\\n将 $12$ 拆分为 $10 + 2$，即：\\n\\n$$7 \\\\times 12 = 7 \\\\times (10 + 2)$$\\n\\n**第二步：运用乘法分配律**\\n\\n乘法分配律告诉我们：$a \\\\times (b + c) = a \\\\times b + a \\\\times c$，因此：\\n\\n$$7 \\\\times (10 + 2) = 7 \\\\times 10 + 7 \\\\times 2$$\\n\\n**第三步：分别计算**\\n\\n$$7 \\\\times 10 = 70$$\\n$$7 \\\\times 2 = 14$$\\n\\n**第四步：求和**\\n\\n$$70 + 14 = 84$$\\n\\n$$\\\\boxed{7 \\\\times 12 = 84}$$\",\n  \"confidence\": 1.0\n}\n```",
+      "output_sha256": "c63a1788c9f1e5c0501eba57f56ee0d84921e214b3b92faa8630b556fe98f132",
+      "elapsed_ms": 10689
+    },
+    {
+      "kind": "SemanticJudgeTask",
+      "input": {
+        "question": {
+          "question_id": "preview:call_aef1335e62df43cfac720462",
+          "kind": "computation",
+          "prompt_md": "计算：7 × 12\n\n提示：可以将 12 拆分为 10 + 2，再运用分配律进行简便计算。",
+          "reference_md": "84\n根据分配律：\n7 × 12\n= 7 × (10 + 2)\n= 7 × 10 + 7 × 2\n= 70 + 14\n= 84",
+          "choices_md": [],
+          "rubric_json": null,
+          "required_points": [],
+          "acceptable_answers": [],
+          "keywords": [],
+          "subject_profile": {
+            "id": "math",
+            "display_name": "数学",
+            "language_style": "中文讲解，强调定义、条件、推导步骤和符号一致性。"
+          },
+          "figures": [],
+          "image_refs": [],
+          "structured": null
+        },
+        "answer": {
+          "content": "84\n\n## 计算 $7 \\times 12$\n\n### 方法：拆分法 + 乘法分配律\n\n**第一步：拆分**\n\n将 $12$ 拆分为 $10 + 2$，即：\n\n$$7 \\times 12 = 7 \\times (10 + 2)$$\n\n**第二步：运用乘法分配律**\n\n乘法分配律告诉我们：$a \\times (b + c) = a \\times b + a \\times c$，因此：\n\n$$7 \\times (10 + 2) = 7 \\times 10 + 7 \\times 2$$\n\n**第三步：分别计算**\n\n$$7 \\times 10 = 70$$\n$$7 \\times 2 = 14$$\n\n**第四步：求和**\n\n$$70 + 14 = 84$$\n\n$$\\boxed{7 \\times 12 = 84}$$"
+        }
+      },
+      "input_sha256": "34fa81358255efff9983a47038b7b9ae0ba220a1c372004ba527d60bb2fd4a4d",
+      "started_at": "2026-09-06T21:56:23.527Z",
+      "status": "completed",
+      "task_run_id": "o7ztut8yurmfvguwhulhdd4p",
+      "output": "{\"score\":1.0,\"coarse_outcome\":\"correct\",\"confidence\":1.0,\"feedback_md\":\"计算正确，使用了分配律进行简便计算，过程清晰。\",\"evidence_json\":{\"matched_points\":[\"正确应用乘法分配律\",\"计算步骤正确\",\"最终结果84正确\"],\"missing_points\":[],\"notes\":\"\"}}",
+      "output_sha256": "f89fe5e3b3b92d0a434eb75937187daef4cd4d3ba3607db8c4c332b2c0ecccda",
+      "elapsed_ms": 20041
+    }
+  ],
+  "sdk_outcomes": [
+    {
+      "task_run_id": "copilot_run_tool_copilot_user_ask_c7fe4c1a0f44078017d59501e08d88fbb01e71e97e96aef8a2fddb41970228b4",
+      "elapsed_ms": 30835,
+      "finish_reason": "end_turn",
+      "partial": false,
+      "terminal_present": true,
+      "error_subtype": null
+    }
+  ],
+  "limitations": [
+    "direct durable handler is not pg-boss queue E2E",
+    "structural assertions do not establish factual entailment or semantic correctness"
+  ],
+  "fixture_readiness": {
+    "registered_tools": ["query_knowledge", "propose_knowledge_mutation"],
+    "conversation_session_id": "om1g73taga69zunztbnzbn0l"
+  },
+  "worker_driver": {
+    "admission": "production HTTP adapter + v2 transaction + pg-boss",
+    "execution": "manual physical fetch + production runCopilotRun + terminal wake + complete",
+    "automatic_poller_verified": false
+  },
+  "raw_evidence_sha256": "1e70df4ece344302ddcc3747bb7eb13133b57030b5f4c69ad6770dce5da89ce6",
+  "manual_review": {
+    "verdict": "accepted_for_learner_visible_generated_card",
+    "checks": [
+      "Original canary prompt unchanged; 90 second strict deadline passed.",
+      "One QuestionAuthorTask and one successful present_primary_view; no artifact or pool write.",
+      "Published 7*12=84 and distribution steps correct; live, REPLY and persisted view agree.",
+      "Actual bound knowledge scope and closed_world_givens basis present; raw copy unknown/needs_review retained and disclosed.",
+      "Independent final answer, worked solution, semantic comparison and teaching checks support published content."
+    ],
+    "limitations": [
+      "Not production deployment or automatic worker-poller acceptance.",
+      "Model repeated harmless prepared sentence in terminal; not claiming flawless prose.",
+      "Solver also returned an incorrect unused answer-equivalents string. It was not published or used by this strict comparison; acceptance is for the published card, not every internal generated field.",
+      "No claim of net token or invoice cost savings from this sample."
+    ],
+    "estimated_usd": 0.0086921242,
+    "reserved_usd": 0.9
+  }
+}

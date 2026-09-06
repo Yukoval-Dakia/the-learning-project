@@ -97,5 +97,15 @@ learner-visible success. Existing conservative pool consumers are unchanged.
   deadline increase or relaxed count. Sole verification review PASS; budget closed.
   Additional52 pool/assessment DB tests pass. Pre-existing pool rollup inconsistency
   is captured as YUK-969 for independent reproduction; it is not a968 regression.
+- Third actual at clean219a18166c4dea6e5e188c335e4cf0ae70c186fc passes the original
+  canary, unchanged90s deadline, exactly one author and one presentation call.
+  Published7×12=84 and worked distribution are correct; all validators completed,
+  real knowledge/basis/copy uncertainty are preserved, and live/REPLY/persisted
+  snapshots agree. Seal: `evidence/2026-09-07-learning-content-positive-actual.json`.
+  Estimate0.0086921242; pool estimate0.0690050668/reserve9.55823/safe0.44177.
+  No paid process remains.36 presentation tests/typecheck/build/lint pass;
+  PR1349 awaits exact CI. Model terminal repeated a harmless sentence; solver
+  generated an incorrect unused answer-equivalent, excluded from the published
+  card and strict comparison. This does not establish universal model quality.
 - No deployment, SoT switch, backfill, production clone or history deletion.
   YUK-967 observation-scope semantics and the overall goal remain open.

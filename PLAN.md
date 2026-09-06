@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：968内容正向actual通过但重复展示调用使整项未过；明确工具收尾后第三轮受控验收。966已合并，整体goal active。
+> Linear 是权威 tracker；更新于 2026-09-07：968同样本正向actual通过，review预算完成，PR1349等待exact CI；966已合并，整体goal active。
 
 ## NOW
 
@@ -15,6 +15,9 @@
   ae7c7a3c第二轮真实7×102=714、one author/全部validator通过、live/persisted一致；重复2次展示提名使整项失败。
   证据learning-content-presentation-repeat-actual.json；estimate0.0067764702。工具说明明确成功后回复/不要重复同一提名。
   唯一验证审PASS，预算结束；52题池/ownerDB通过。评审旧题池rollup疑点去重YUK969，尚待独立复现。
+  第三轮clean219a1816实际one author/one presentation，全validator与持久卡片一致通过；7×12=84和分配律正确。
+  learning-content-positive-actual.json封存；estimate0.0086921242，原90s/canary/次数门槛不变。
+  36presentation tests/typecheck/build/lint通过；当前无paid进程，CI34062503809运行中，未merge/deploy。
 - YUK966 Done：PR1348 exactfefcf70e1a07b4ef554deb3d4c1b9eab4a1401fa，CI34059429533全部success；
   2026-09-06T21:05:27Z合并main5cf5dccab207c32b47b6ddb15163dff10c379080，未部署。
   既有drawer用同一DTO交付真实结果快照/恢复，不重查、不增加模型history token；复用领域schema与原验证owner。
@@ -54,7 +57,7 @@
   保守请求预留合计$0.90823；此前余额$0.28771982单列，历史未知费用不填0。
   公开费率估算不冒充账户账单，SDK派生USD保留为独立观察。
   949另跑7个受控回合（含失败）：estimated $0.0214406071，case预留$2.8。
-  新$10池合计estimated $0.0603129426；968第三轮另预留$0.90后总reserve$9.55823、安全剩$0.44177。
+  新$10池合计estimated $0.0690050668；968第三轮后总reserve$9.55823、安全剩$0.44177，不回收reserve。
 - YUK949：owner明确选FULL，允许按需短presentation control交互，ADR0061；
   agent看完结果提名，server校验，保留tool_result/artifact/ephemeral_html；不提高预算、不改生产UI。
   初稿ea8367c7的5P1已由81eb7f3e修复，ed693e16集成main9e02c48b。
