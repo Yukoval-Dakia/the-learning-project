@@ -55,13 +55,6 @@ export async function completeIngestionImport(
   if (!session) {
     throw new ApiError('not_found', `learning_session ${sessionId} not found`, 404);
   }
-  if (session.status !== 'extracted' && session.status !== 'reviewed') {
-    throw new ApiError(
-      'conflict',
-      `learning_session ${sessionId} is in status '${session.status}'; only 'extracted' or 'reviewed' can be imported`,
-      409,
-    );
-  }
   // type='ingestion' invariant — these fields are required for the import flow.
   // The DB schema marks them nullable because learning_session is polymorphic;
   // an ingestion-flavored session always has both set (initiateUpload enforces it).

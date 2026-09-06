@@ -50,7 +50,9 @@ import { gatherAndFoldQuestionBlock } from '@/server/projections/gather';
 import { questionBlockLiveRowToSnapshot } from '@/server/projections/parity';
 import { diffSnapshots } from '@/server/projections/snapshot-diff';
 import { backfillQuestionBlockGenesis } from '../../../../scripts/backfill-genesis-events';
+import { completeIngestionImport } from '../server/import-completion';
 import { POST } from './import';
+import { ImportBody } from './import-schema';
 
 // ---- helpers ----
 
@@ -198,6 +200,21 @@ describe('POST /api/ingestion/[id]/import', () => {
     r2._store.clear();
     await resetDb();
     vi.clearAllMocks();
+  });
+
+  it('direct command completes a parsed body without HTTP adapters', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db);
+    await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId });
+    await insertKnowledge(db, 'k1');
+    const result = await completeIngestionImport(db, sessionId, ImportBody.parse(makeImportBody()));
+    expect(result.question_ids).toHaveLength(1);
+    expect(result.mistake_ids).toHaveLength(1);
+    const [session] = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
+    expect(session.status).toBe('imported');
   });
 
   it('unchanged card happy path: cause=null → inserts 1 question + 1 attempt event, session=imported', async () => {
