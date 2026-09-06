@@ -1,17 +1,20 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-06：完整重构目标持续推进，当前 active 为 YUK-944 证据规则单一权威与上下文降本。
+> Linear 是权威 tracker；更新于 2026-09-06：944已合并，当前active为945原生长会话压缩与学习状态再注入。
 
 ## NOW
 
 - Owner 授权 AI pipeline、全项目业务封装与测试精简；不把目录归属或 audit 数量当整体完成。
-- YUK944：c03b5b3e 原五读取实际样本通过核心 claim/正事实/展示检查；不是整体生产质量完成。
-  reader v2明确事件/作答、直子覆盖和确定性边；比较规则只在typed合同，不增加query或模型层。
-  79.098s，input40410/output3179，$0.164021；与原主线baseline input40401持平，不称token下降。
-  944累计$1.31710818，含owner追加$1后余额$0.28771982；低于reserve，暂停新增付费调用。
-  13DB/22unit/typecheck/lint/build通过；初审与唯一验证审完成，不启动第三轮。
-  草稿PR1338最终证据待push/exact-head CI；上一remote3a735ffc CI34027572879全绿。
-  原主线报告问句误拦已去重登记YUK960，保留真实无标签题保护，未将缺陷假称修复。
+- YUK945 active：native auto-compaction接入foreground现有SDK会话；压缩后SessionStart注入
+  当前TurnContext，每轮learner状态保留、proposal按digest；不重置费用/row/tool/iteration/deadline。
+  compact_boundary写现有usage_json的count/last元数据，不存summary/CoT或消息ID。
+  18702ab9 root143scoped tests/typecheck/lint/build通过；初审两P1已红绿修复，唯一复审PASS。
+  离线native SDK压缩→再注入→同session resume已验证（合成usage，付费0），不能称真实摘要质量通过。
+  当前7953c44c已并入main db5a57b1，代码与已复审版本相同；准备PR/exact CI。
+- YUK944已合并PR1338：exact3fd90c4d CI34030191329全绿，main db5a57b1。
+  c03b5b3e原五读取核心actual通过；input40410与旧基准40401持平，不宣称此样本降本。
+  944累计$1.31710818，余额$0.28771982；945额外最多$1的申请待owner答复，不新增付费调用。
+  原主线报告问句误拦已登记YUK960，后续必须修复但不能降低无标签真实题保护。
 - AI finalization #1326、Goal #1327、Knowledge merge #1328、Ingestion completion #1329、
   ReviewSettlement #1332、测试精简 #1331/#1333 已经各自 exact-head CI 绿色并合并。
 - YUK-954 #1330：共享执行 owner，权限/校验/取消/原生子代理规则一份实现；
@@ -33,8 +36,7 @@
 
 ## NEXT
 
-1. YUK-944：原五读取actual核心样本已过，推最终证据并等待exact-head CI后收口。
-   不能把单样本当生产质量/降本；SDK原生长会话压缩仍属945未完成。
+1. YUK-945：提交已复审修复并跑exact CI；真实模型压缩后事实保留需新增授权，不能用合成usage充数。
 2. YUK-946离线native SDK验证通过：首请求仅catalog，Skill调用后才出现body，真实模型费用$0。
    原eager-body前提已否证；不重建目录、不删除free-form quiz能力，不声称移除正文带来普通轮降本。
    946已按原生能力验证收口Done，不代表实现了新目录或验证了生产模型选择。
@@ -47,7 +49,7 @@
 
 ## PARKED
 
-- 944/945/948/949/950已列入NEXT的完整重构顺序，尚未完成，不再作为无限期PARKED；946已验证收口。
+- 945/948/949/950已列入NEXT的完整重构顺序，尚未完成，不再作为无限期PARKED；944/946已收口。
 - 951历史mailbox/ToolOperations仅drain-only恢复；退休需零pending/零队列活动跨完整重试窗口。
 - YUK-921多provider、572夜间教研、832 HOLD未解锁。
 - 保留计费、重试、prompt/skill、富结构解析、并发/回滚/恢复、UI加载安全测试；不按数量硬删。
