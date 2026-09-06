@@ -46,6 +46,24 @@
   "first_terminal": "success",
   "resumed_session_id": "1526e361-1fd6-4046-a94d-8812a3d2300e",
   "resumed_terminal": "success",
+  "window_validation": {
+    "source": "Installed SDK 0.3.220 sdk.mjs Settings schema: number().int().min(100000).max(1000000).optional().catch(undefined)",
+    "ignored_small_window": {
+      "configured_window": 20000,
+      "synthetic_usage": 25000,
+      "compact_observed": false
+    },
+    "valid_window": {
+      "configured_window": 100000,
+      "synthetic_usage": 95000,
+      "compact_observed": true,
+      "pre_tokens": 95065,
+      "post_tokens": 458,
+      "same_session_resumed": true,
+      "session_id": "d0e5574c-51d9-45c8-92be-12bc1ba09e6f"
+    },
+    "paid_calls": 0
+  },
   "limitations": [
     "Pre-token usage is deliberately synthetic. These figures are NOT measured token/cost savings.",
     "Probe uses native SDK directly, not Hono/PG/production Copilot. Public runner and execution-owner tests separately verify product option/hook wiring.",

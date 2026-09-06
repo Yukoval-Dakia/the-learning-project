@@ -10,7 +10,8 @@
   compact_boundary写现有usage_json的count/last元数据，不存summary/CoT或消息ID。
   18702ab9 root143scoped tests/typecheck/lint/build通过；初审两P1已红绿修复，唯一复审PASS。
   离线native SDK压缩→再注入→同session resume已验证（合成usage，付费0），不能称真实摘要质量通过。
-  当前7953c44c已并入main db5a57b1，代码与已复审版本相同；准备PR/exact CI。
+  草稿PR1339 exact821184ac的CI Gate34031520139全绿；基于main db5a57b1，尚未合并。
+  当前仅真实模型摘要保留验收待新增费用授权；SDK小于100000的compact窗口会被忽略，不能假触发。
 - YUK944已合并PR1338：exact3fd90c4d CI34030191329全绿，main db5a57b1。
   c03b5b3e原五读取核心actual通过；input40410与旧基准40401持平，不宣称此样本降本。
   944累计$1.31710818，余额$0.28771982；945额外最多$1的申请待owner答复，不新增付费调用。
@@ -45,6 +46,7 @@
 4. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者和扩展成本；
    消除剩余有害写依赖与双规则，替换重复测试，按实际行为与扩展压力验收。
    YUK960报告问句误拦与949一起明确内容责任，不能降低无标签真实题保护。
+   YUK961封装pool-gap coach提示：Practice只提交验证事实，Agency拥有提示文案/refs/expiry。
 5. YUK-887生产副本backfill/audit/rebuild/golden与SoT退休需要独立授权；不阻断安全的实现工作。
 
 ## PARKED

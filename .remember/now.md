@@ -6,7 +6,8 @@ Owner 已授权 AI pipeline 与基于1e61da8d报告的全项目业务封装/测�
 ## 当前实施（优先于下方历史完成记录）
 
 - goal active；当前 /Volumes/YukovalSBak/yukoval-projects/tlp-wt-native-compaction，
-  branch codex/yuk-945-native-compaction，7953c44c（已并入main db5a57b1，无源码差异）。
+  branch codex/yuk-945-native-compaction，PR1339 exact821184ac CI34031520139全绿，仍draft未合并。
+  本handoff在该head之后仅补证据/状态，未推；产品代码与已复审18702ab9相同。
 - 944 Done：PR1338 exact3fd90c4d CI34030191329全绿，2026-09-06T11:44:48Z合并main db5a57b1。
   c03b5b3e五读取actual核心checks通过、权威终文可见，79.098s/$0.164021；input40410 vs baseline40401
   不证明token下降。原六candidate和baseline失败均保留；报告问句误拦开放YUK960。
@@ -19,7 +20,7 @@ Owner 已授权 AI pipeline 与基于1e61da8d报告的全项目业务封装/测�
   （trigger/pre/post context tokens），禁止原摘要/CoT/消息IDs；不扣减billable tokens或重置预算。
 - 初稿0f011b4d被独立初审两P1否决（顶层Settings/hook覆盖），root18702ab9已红绿修复。
   root143scoped tests/typecheck/lint/build通过；唯一复审PASS，独立137tests，不再第三轮。
-  下一步提交945证据/看板并PR、exact CI；仍未真实模型摘要验收，不能合并或关闭945。
+  945最终代码CI已过；仍未真实模型摘要验收，不能合并或关闭945。Linear已同步In Progress。
 - SDK0.3.220零费用loopback实测：PreCompact(auto)→SessionStart(compact)→PostCompact；
   session1526e361-1fd6-4046-a94d-8812a3d2300e compact与resume两次success；后续请求有注入状态，
   新turn有更新learner状态。185065→458是人为usage，不是token节省。证据JSON已在docs/planning/evidence。
@@ -27,7 +28,10 @@ Owner 已授权 AI pipeline 与基于1e61da8d报告的全项目业务封装/测�
 - 剩余945/948/949/950/960和业务整体验证继续；951drain/887生产副本仍需独立授权。
 - 对SCC新增只读复核：learning-intent已有acceptLearningIntentOwned事务与owner失败全回滚测试，
   不把正常跨owner命令装配再次判缺陷；quiz_verify的coach pool-gap具体note/expiry规则尚留在Practice，
-  可作为后续有边界的业务封装点，未实施。
+  已去重登记YUK961作为后续有边界的业务封装点，未实施。
+- SDK settings源码schema限制autoCompactWindow为100000..1000000，非法小值catch(undefined)。
+  免费probe：window20000/usage25000没有compact；window100000/usage95000触发compact并同session续聊。
+  后续actual不得用静默忽略的窗口假称压缩，也不能把这些人工usage当真实token节省。
 
 ## 完成与验收
 
