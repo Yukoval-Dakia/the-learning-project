@@ -32,3 +32,8 @@ and scoped claim authority. Evidence: `evidence/2026-09-07-knowledge-observation
 Input41516 vs earlier41280 (+236); this correctness change does not claim token
 reduction. Estimate0.0031086707, cumulative0.0721137375 (not invoice), reserve9.95823,
 safe0.04177. No paid process remains. Integration/exact CI pending; no production.
+
+Integrated with YUK-969 on main5bd921e3 (YUK-968 delivered). Root100 DB/41 unit,
+typecheck/lint/build and architecture gates pass; each lane has independent initial
+review PASS. AI guidance now points at existing capability tool/judge owners,
+removing stale central paths without duplicating inventory. Exact PR CI remains.

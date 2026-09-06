@@ -1,25 +1,28 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：968真实正向通过，CI隔离问题已修；967/969独立修复已审，继续集成，不重开生产边界。
+> Linear 是权威 tracker；更新于 2026-09-07：968已全绿合并，967/969真实/DB与独立审查完成，集成验收进行中，整体goal active。
 
 ## NOW
 
-- Active pipeline closure：YUK968 PR1349 ready；root保留tlp-wt-unified-conversation独占集成，无生产动作。
-  Practice统一内容验证/真实工具来源绑定，重复author parser退休；未改变题池历史政策。
-  原提示词真实正向clean219a1816已过：one author/one presentation，7×12=84/分配律正确，
-  全validator与live/REPLY/persisted一致；deadline/重复control失败和positive证据均封存。
-  初审与唯一验证PASS，review预算结束；182unit/73workerDB/16ownerDB/12authorDB，
-  另211unit/4deadline/52poolDB/36presentation与typecheck/lint/build通过（重叠，不累加）。
-  exactf9d52ab1 CI34062662435仅DB2 backlog计数6≠3失败，其余全部success，未merge/deploy。
-  root注入3条旧运行记录复现同样RED，隔离operational ledger后GREEN；注入已撤，保留原3→2断言。
-  串行复测还复现timestamp毫秒323误触答案泄漏断言，改为只检查payload并明确无primary_view。
-  CI修复串行57DB与最终3targeted/typecheck/lint通过，未改产品代码或重开review。
-  967原读取canary另预留0.40，pool estimate0.0690050668非账单/reserve9.95823/safe0.04177。
-- 独立后续lane（同一pipeline收口）：969 worker独占tlp-wt-pool-rollup，ab29f20e；
-  题池pass+unknown误晋级已RED→GREEN，37DB/typecheck/lint/build与独立初审PASS，待集成/PR。
-  967 root独占tlp-wt-knowledge-observations，e0bba356；reader明确未请求/无节点/已观察，
-  保持latest10历史失败与30d计数语义，12readerDB+34snapshot/fixtureDB/typecheck/lint/build过；
-  初审PASS，clean5717bcbd原读取canary运行中（预留0.40）。不修改UI或制造第二评估器。
+- Active 967/969 integration：root独占tlp-wt-unified-conversation / codex/yuk-967-969-integration，
+  base origin/main5bd921e3；已逐提交cherry-pick隔离lane，88a7f10cc，无冲突，无其它writer。
+  967知识读取owner明确not_requested/no_returned_nodes/observed及限定absence资格；stats30d与failure历史latest10分开。
+  12readerDB+34snapshot/fixtureDB/typecheck/lint/build与独立初审PASS。
+  clean5717bcbd原presentation-tool actual通过，one root/read/presentation，无凭空失败记录断言；
+  live/persisted同1502B snapshot，input41516较旧41280多236，不声称降token或费用。证据knowledge-observation-actual.json。
+  969题池pass+copyunknown已真实DB RED→GREEN，不晋级/不FSRS/不继续paid validators，rawunknown保留；
+  37DB/typecheck/lint/build与独立初审PASS，未改learner-visible特殊政策或旧solver保守政策。
+  两lane均完成初审，无P0/P1。root集成100DB/41unit/typecheck/lint/build及架构gate通过，准备PR/exactCI。
+  实际检索发现AI AGENTS旧tools/judges路径已不存在，导航改指kernel allowlist与capability manifest/Practice judge。
+  无paid进程；新池estimate0.0721137375非账单/reserve9.95823/safe0.04177；原脏main与生产不动。
+- YUK968 Done：PR1349 exact0e9bade2fb8bfd14d1e17ceb812ad7e0ea01ecae，CI34063583368全job success。
+  2026-09-06T22:29:03Z squash合并main5bd921e3feed2a0de1490ba3ee49b37488420b37，未部署。
+  Practice共同内容验证/真实工具来源绑定与重复author parser退休；原90s/权限/预算不放宽。
+  clean219a1816正向actual：one author/one presentation，7×12=84和分配律正确，全validator/live/persisted一致。
+  deadline、重复control与positive三份证据完整保留，原raw digest复核全部匹配。
+  CI首轮旧prompt指纹已按实质政策替代；后续backlog6≠3已注入旧ledger RED→GREEN，
+  再修timestamp323误判泄漏，57串行DB+3targeted/typecheck/lint过，未改产品实际输出代码。
+  初审+唯一验证PASS，review预算结束，不再启动第三轮。全局goal仍active。
 - YUK966 Done：PR1348 exactfefcf70e1a07b4ef554deb3d4c1b9eab4a1401fa，CI34059429533全部success；
   2026-09-06T21:05:27Z合并main5cf5dccab207c32b47b6ddb15163dff10c379080，未部署。
   既有drawer用同一DTO交付真实结果快照/恢复，不重查、不增加模型history token；复用领域schema与原验证owner。
@@ -59,7 +62,7 @@
   保守请求预留合计$0.90823；此前余额$0.28771982单列，历史未知费用不填0。
   公开费率估算不冒充账户账单，SDK派生USD保留为独立观察。
   949另跑7个受控回合（含失败）：estimated $0.0214406071，case预留$2.8。
-  新$10池合计estimated $0.0690050668；967读取预留后总reserve$9.95823、安全剩$0.04177，不回收reserve。
+  新$10池合计estimated $0.0721137375；967读取后总reserve$9.95823、安全剩$0.04177，不回收reserve。
 - YUK949：owner明确选FULL，允许按需短presentation control交互，ADR0061；
   agent看完结果提名，server校验，保留tool_result/artifact/ephemeral_html；不提高预算、不改生产UI。
   初稿ea8367c7的5P1已由81eb7f3e修复，ed693e16集成main9e02c48b。
@@ -100,7 +103,7 @@
 
 ## NEXT
 
-1. 968闭卷生成与来源/原创性验证语义收口，967未请求recent_failures不能当零；同实际样本验收，不降低保护。
+1. 967读取语义/969题池矛盾裁决集成与exactCI；968已Done，不重开review或降低保护。
 2. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
 3. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
@@ -115,6 +118,6 @@
 
 ## BLOCKED-ON
 
-- 966/965已交付，review预算结束，不重开；968/967暂无owner决策阻塞。
+- 968/966/965已交付，review预算结束，不重开；967/969暂无owner决策阻塞。
 - 未授权部署、生产clone、SoT开关、backfill或历史数据删除；均未执行。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。
