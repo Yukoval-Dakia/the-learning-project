@@ -696,17 +696,21 @@ describe('scanCataloguedReads', () => {
     expect(scanCataloguedReads([entry], sources)).toHaveLength(1);
   });
 
-  it('fails a catalogued read consuming a command symbol from the port (directed command cycle)', () => {
-    const sources = [
-      fixture(
-        'src/capabilities/agency/server/meeting/director.ts',
-        `import { applyArchive } from '@/capabilities/knowledge/public';\nexport const marker = 1;\n`,
-      ),
-    ];
-    const violations = scanCataloguedReads([entry], sources);
-    expect(violations).toHaveLength(1);
-    expect(violations[0]?.reason).toContain('command');
-  });
+  it.each(['applyArchive', 'recordQuestionPoolGap', 'recordPlacementAttemptOutput'])(
+    'rejects undeclared command %s while allowing the explicitly owned consumer',
+    (symbol) => {
+      const sources = [
+        fixture(
+          'src/capabilities/agency/server/meeting/director.ts',
+          `import { ${symbol} as command } from '@/capabilities/knowledge/public';\nexport const marker = command;\n`,
+        ),
+      ];
+      const violations = scanCataloguedReads([entry], sources);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.reason).toContain('command');
+      expect(scanCataloguedReads([{ ...entry, commandFiles: entry.files }], sources)).toEqual([]);
+    },
+  );
 
   it('passes a pure read consumer and a declared command file', () => {
     const sources = [
