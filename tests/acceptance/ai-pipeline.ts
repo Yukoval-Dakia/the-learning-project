@@ -296,8 +296,20 @@ async function main(): Promise<void> {
     const { and, eq, inArray } = await import('drizzle-orm');
     const runner = await import('@/server/ai/runner');
     const terminals = new Map<string, string>();
+    const sdkOutcomes: Array<Record<string, unknown>> = [];
+    evidence.sdk_outcomes = sdkOutcomes;
     const captureStream: typeof runner.streamTaskCollecting = async (...args) => {
+      const startedAt = Date.now();
       const result = await runner.streamTaskCollecting(...args);
+      sdkOutcomes.push({
+        task_run_id: result.task_run_id,
+        elapsed_ms: Date.now() - startedAt,
+        finish_reason: result.finishReason,
+        partial: result.partial === true,
+        terminal_present: Boolean(result.terminalText?.trim()),
+        // Classify only the stable error code; never copy provider error bodies.
+        error_subtype: result.error?.match(/subtype=([a-z_]+)/)?.[1] ?? null,
+      });
       if (result.terminalText !== undefined) terminals.set(result.task_run_id, result.terminalText);
       return result;
     };
@@ -325,7 +337,7 @@ async function main(): Promise<void> {
       const observations = [0, 2, 3, 4, 12].map((index) => REALISTIC_EVIDENCE_TRACE[index]);
       for (const observation of observations) {
         const tool = getTool(observation.name);
-        if (!tool || tool.effect !== 'read')
+        if (tool?.effect !== 'read')
           throw new Error(`claim fixture: missing read tool ${observation.name}`);
         tool.inputSchema.parse(observation.input);
         tool.outputSchema.parse(observation.output);

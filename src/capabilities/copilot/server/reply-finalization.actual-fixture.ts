@@ -8,6 +8,9 @@ import type { ToolExecutionResultObservation } from '@/server/ai/tools/mcp-bridg
  * the A03 exact-subject rows below are copied from 0d8e03b0 result SHA-256
  * 5507bc72f59eae1aa62e6e819d3544e8391e410dbd8acb0ce740093b98df6270
  * and carry the corrected YUK-832 typed source boundaries.
+ * YUK-944 adds the current reader's comparison/absence/outcome claim fields;
+ * original observations remain unchanged. Pre-change run digests are archived
+ * separately and must not be presented as digests of this updated fixture.
  *
  * It deliberately retains complete query_events/get_attempt_context/get_review_due
  * inputs and typed outputs instead of a hand-written miniature schema. The
@@ -261,6 +264,12 @@ export const REALISTIC_EVIDENCE_TRACE = [
         activation_policy: 'not_observed',
         necessary_conditions: 'not_supported',
         sufficient_conditions: 'not_supported',
+        comparison_scope: 'observed_fields_only',
+        whole_chain_equivalence: 'not_supported',
+        unique_difference: 'not_supported',
+        focal_event_siblings: 'not_observed',
+        payload_omissions: 'not_absence',
+        outcome_namespaces: 'event_outcome_distinct_from_evidence_outcome',
       },
       linked_records: [],
       timeline_scope: 'same_question_context_noncausal',
@@ -409,6 +418,12 @@ export const REALISTIC_EVIDENCE_TRACE = [
         activation_policy: 'not_observed',
         necessary_conditions: 'not_supported',
         sufficient_conditions: 'not_supported',
+        comparison_scope: 'observed_fields_only',
+        whole_chain_equivalence: 'not_supported',
+        unique_difference: 'not_supported',
+        focal_event_siblings: 'not_observed',
+        payload_omissions: 'not_absence',
+        outcome_namespaces: 'event_outcome_distinct_from_evidence_outcome',
       },
       linked_records: [],
       timeline_scope: 'same_question_context_noncausal',
@@ -607,6 +622,12 @@ export const REALISTIC_EVIDENCE_TRACE = [
         activation_policy: 'not_observed',
         necessary_conditions: 'not_supported',
         sufficient_conditions: 'not_supported',
+        comparison_scope: 'observed_fields_only',
+        whole_chain_equivalence: 'not_supported',
+        unique_difference: 'not_supported',
+        focal_event_siblings: 'not_observed',
+        payload_omissions: 'not_absence',
+        outcome_namespaces: 'event_outcome_distinct_from_evidence_outcome',
       },
       linked_records: [],
       timeline_scope: 'same_question_context_noncausal',
@@ -1108,6 +1129,12 @@ export const REALISTIC_EVIDENCE_TRACE = [
         activation_policy: 'not_observed',
         necessary_conditions: 'not_supported',
         sufficient_conditions: 'not_supported',
+        comparison_scope: 'observed_fields_only',
+        whole_chain_equivalence: 'not_supported',
+        unique_difference: 'not_supported',
+        focal_event_siblings: 'not_observed',
+        payload_omissions: 'not_absence',
+        outcome_namespaces: 'event_outcome_distinct_from_evidence_outcome',
       },
       linked_records: [],
       timeline_scope: 'same_question_context_noncausal',
@@ -1226,6 +1253,12 @@ export const REALISTIC_EVIDENCE_TRACE = [
         activation_policy: 'not_observed',
         necessary_conditions: 'not_supported',
         sufficient_conditions: 'not_supported',
+        comparison_scope: 'observed_fields_only',
+        whole_chain_equivalence: 'not_supported',
+        unique_difference: 'not_supported',
+        focal_event_siblings: 'not_observed',
+        payload_omissions: 'not_absence',
+        outcome_namespaces: 'event_outcome_distinct_from_evidence_outcome',
       },
       linked_records: [],
       timeline_scope: 'same_question_context_noncausal',

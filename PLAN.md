@@ -6,8 +6,11 @@
 
 - Owner 授权 AI pipeline、全项目业务封装与测试精简；不把目录归属或 audit 数量当整体完成。
 - YUK944 active：prompt证据段2105→282字符、skill9735→4901；83unit/11DB/build通过。
-  首次五读取actual无权威终文，不算通过；估算成本$0.02766318，剩余授权$0.57716482。
-  夹具初审P1（非fixture工具隔离、缺失reader付费前检查）已修，终文假绿门已修；需复核与实际验收。
+  两次完整五读取actual均无权威终文，不算通过；944成本$0.17624418（估算+reported），
+  剩余授权$0.42858382。免费诊断发现61.792s迟到正文，且含B无rate/唯一差异的过度断言。
+  已补typed比较/缺失边界，移除内部60s截断、保持现有90s请求上限和6轮；待真实重验。
+  本次173 scoped unit/11 reader DB、typecheck/build与lint ratchet通过；不代表actual质量通过。
+  夹具初审P1和终文假绿门已修，唯一验证审通过（不是语义质量通过）；不追加第三轮。
 - AI finalization #1326、Goal #1327、Knowledge merge #1328、Ingestion completion #1329、
   ReviewSettlement #1332、测试精简 #1331/#1333 已经各自 exact-head CI 绿色并合并。
 - YUK-954 #1330：共享执行 owner，权限/校验/取消/原生子代理规则一份实现；
@@ -29,7 +32,8 @@
 
 ## NEXT
 
-1. YUK-944：核对typed边界→删除三处重复说明→scoped复杂证据回归→受余额约束actual→独立审查/CI。
+1. YUK-944：补齐typed合同并核对执行窗口后，完整actual仍待过；在余额内重验原五读取输入。
+   未取得真实终文质量证据前不合并、不关闭944。SDK原生长会话压缩仍属945未完成。
 2. YUK-946核实SDK原生catalog/on-invoke后精简可见技能；不凭白名单推断正文eager加载，不建第二套目录。
 3. YUK-945同session compact/reinject→YUK-949成品选择→948显式Mission入口→950同轮steer。
    UI步骤另按设计预检；后端与纯测试可继续。不得用结束一个PR代替整个goal完成。

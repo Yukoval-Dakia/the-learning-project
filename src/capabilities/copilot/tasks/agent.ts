@@ -24,16 +24,13 @@ export const copilotTaskSpec = {
     kind: 'CopilotTask',
     description:
       'AF S4 / YUK-203 — the single user-facing conversational agent (teach / solve / explain / critique / plan / inspect). The chat endpoint resolves the per-request DomainTool allowlist surface (`copilot` for free-form chat, `copilot_user_suggested_mistake_action` for chip-direct-trigger); teaching/solve skills compose TeachingTurnTask at the service layer, never adding tools to this surface.',
-    // GLM-5.2 (zhipu) + 10-turn budget were trialed here as the orchestrator
-    // (YUK-458) and REVERTED: the copilot propose failure is an endurance gap —
-    // durable run is dead code (no caller sets durable → all turns run inline),
-    // so long runs die in the inline request window. NOT a model-strength problem;
-    // a slower model just turned error_max_turns into an inline-request abort.
-    // zhipu stays an available provider (providers.ts) for a future durable lane.
-    // Root-cause audit: docs/audit/2026-06-20-copilot-agentic-ux-wiring-audit.md.
+    // YUK-944: use the existing 90s inline request envelope instead of a hidden
+    // 60s task cliff. Startup still consumes the route's absolute deadline;
+    // six turns, foreground ownership and authoritative SDK completion remain.
+    // Durable execution supplies its own bounded override via the shared owner.
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    budget: { ...DEFAULT_BUDGET, maxIterations: 6, timeout: 60_000 },
+    budget: { ...DEFAULT_BUDGET, maxIterations: 6, timeout: 90_000 },
     needsToolCall: true,
     isMultimodal: false,
     // The chat endpoint resolves surface per request (see two-surface routing).

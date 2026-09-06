@@ -1,7 +1,27 @@
-# 当前 handoff — 2026-09-06
+# 当前 handoff — 2026-09-06（完整重构goal active，YUK944）
 
 Owner 已授权 AI pipeline 与基于1e61da8d报告的全项目业务封装/测试精简。
 原始the-learning-project脏main保持不动；此handoff在隔离tlp-wt-test-pruning工作树。
+
+## 当前实施（优先于下方历史完成记录）
+
+- 完整目标仍active，不能以958或当前切片替代。验收契约见2026-09-06-refactor-completion-contract.md。
+- main9427202c；active branch codex/yuk-944-context-contract，尚未推送/开PR。
+- 944将claim完整定义留typed reader，TaskSpec证据2105→282chars、skill9735→4901；工具description精简。
+- 83 registry/skill unit+19 finalization/content unit+26 reader DB、typecheck/build/audits通过。
+- 首次actual04e9b83e五read完成但无权威终文，旧harness错误返回ok；第二次af811146修正门后正确失败。
+  第二次root status=failure/finishReason=error；免费转录诊断见61.792s迟到正文，超过60s预算，
+  但SDK错误子类型未捕获，不声称已证明精确原因。该正文还错误断言B无rate/唯一差异。
+  已补typed比较/缺失/outcome边界，任务时限90s与既有请求上限一致，保留6轮及绝对deadline保护。
+- 两次费用分别estimated$0.02766318、reported$0.148581；最新剩余授权$0.42858382。
+  版本证据2026-09-06-claim-context-actual.json；停止无诊断付费重试，不缩小五read质量要求。
+- reviewer review_claim_context初审2P1均属harness：额外tools未隔离、缺失reader未在付费前检查；已修。
+  另已要求claims显式budget、拒绝无terminal/额外model/tool，并新增SDK安全子类型/耗时记录。
+  唯一验证审已通过（不代表模型质量通过）；不能开第三轮。SDK agent原生压缩结果仍需实现验证。
+- SDK0.3.220据本地类型有原生autoCompactEnabled/autoCompactWindow、Pre/PostCompact、boundary metadata、
+  streaming prompt/streamInput；没有公开compact()。不得据文档推断实际enabled或原因。
+- 下一步：验证harness修复，核对原生SDK终止/压缩与现有6iterations/60s控制，再处理944/945/946依赖；
+  不新增第二套skill catalog/summary系统。948/949/950与剩余业务封装仍须做；生产权限边界仍保留。
 
 ## 完成与验收
 
@@ -22,10 +42,10 @@ Owner 已授权 AI pipeline 与基于1e61da8d报告的全项目业务封装/测�
 ## Actual与费用
 
 本次追加共享执行层semantic/native actual费用$0.146376；增量campaign合计$0.395172，
-剩余授权$0.604828。此前$0.503605与旧read下界之外的未知超时/child账单仍未知。
+当时剩余授权$0.604828；944两次后当前余额$0.42858382。旧未知超时/child账单仍未知。
 同输入read样本input至少降50.8%、费用至少降62.2%；只限synthetic，不外推生产。
 Evidence在docs/planning/evidence/2026-09-06-{pipeline,copilot-execution}-actual.json。
-durable actual直接handler不是queue E2E。无需更多付费验证。
+durable actual直接handler不是queue E2E。完整goal的944真实质量验证仍未通过。
 
 ## 下一步与禁止项
 

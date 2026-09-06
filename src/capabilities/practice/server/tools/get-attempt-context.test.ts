@@ -1044,6 +1044,12 @@ describe('getAttemptContextTool', () => {
       activation_policy: 'not_observed',
       necessary_conditions: 'not_supported',
       sufficient_conditions: 'not_supported',
+      comparison_scope: 'observed_fields_only',
+      whole_chain_equivalence: 'not_supported',
+      unique_difference: 'not_supported',
+      focal_event_siblings: 'not_observed',
+      payload_omissions: 'not_absence',
+      outcome_namespaces: 'event_outcome_distinct_from_evidence_outcome',
     });
     expect(proposal.lookup.observed?.redacted_payload_groups).toEqual(
       expect.arrayContaining([
@@ -1127,6 +1133,21 @@ describe('getAttemptContextTool', () => {
 
     const probe = await getAttemptContextTool.execute(ctx(), {
       attemptEventId: 'probe_result_chain_rule',
+    });
+    // The rate sibling exists above, but this exact probe read does not return
+    // it. Complete direct-child coverage cannot support "no rate" or whole-chain
+    // equivalence, even when all visible probe fields agree.
+    expect(probe.causal_neighborhood.coverage.complete).toBe(true);
+    expect(probe.causal_neighborhood.direct_children.map((child) => child.event_id)).not.toContain(
+      'rate_chain_rule',
+    );
+    expect(probe.claim_support).toMatchObject({
+      comparison_scope: 'observed_fields_only',
+      whole_chain_equivalence: 'not_supported',
+      unique_difference: 'not_supported',
+      focal_event_siblings: 'not_observed',
+      payload_omissions: 'not_absence',
+      outcome_namespaces: 'event_outcome_distinct_from_evidence_outcome',
     });
     expect(probe.lookup.observed).toMatchObject({
       payload_projection_status: 'typed_safe',
@@ -1797,6 +1818,12 @@ describe('getAttemptContextTool', () => {
           activation_policy: 'not_observed',
           necessary_conditions: 'not_supported',
           sufficient_conditions: 'not_supported',
+          comparison_scope: 'observed_fields_only',
+          whole_chain_equivalence: 'not_supported',
+          unique_difference: 'not_supported',
+          focal_event_siblings: 'not_observed',
+          payload_omissions: 'not_absence',
+          outcome_namespaces: 'event_outcome_distinct_from_evidence_outcome',
         },
         causal_neighborhood: {
           parent: null,
