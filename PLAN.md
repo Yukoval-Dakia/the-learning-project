@@ -9,7 +9,7 @@
   前两次完整五读取actual无权威终文；第三次8c280cae获得终文，但跨subject正事实自相矛盾、
   仍有唯一差异过度断言，语义验收未过。944成本$0.33490018（估算+reported），余额$0.26992782。
   已补typed比较/缺失边界，移除内部60s截断、保持90s请求上限和6轮；第三次耗时89.573s，
-  不称稳定延迟达标。停止付费重试；已询问修复后最多追加$1验收，未答复不得新增调用。
+  不称稳定延迟达标。owner已追加最多$1，当前可用$1.26992782；仅在具体修复后复验，不盲重试。
   本次173 scoped unit/11 reader DB、typecheck/build与lint ratchet通过；不代表actual质量通过。
   夹具初审P1和终文假绿门已修，唯一验证审通过（不是语义质量通过）；不追加第三轮。
 - AI finalization #1326、Goal #1327、Knowledge merge #1328、Ingestion completion #1329、

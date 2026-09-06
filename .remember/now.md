@@ -16,7 +16,7 @@ Owner 已授权 AI pipeline 与基于1e61da8d报告的全项目业务封装/测�
 - 第三次exact8c280cae拿到权威终文，运行89.573s；手工语义验收失败：A01跨subject正事实自相矛盾、
   B/C仍断言唯一差异/B链中断，另把B parent写成直接lookup结果；不能合并/关闭944。
   费用reported$0.158656；944合计$0.33490018，当前余额$0.26992782，低于单次reserve$0.30。
-  已问owner修复后最多追加$1；未获答复前无新增付费调用。运行成功不等于语义验收通过。
+  Owner已明确允许修复后最多追加$1；当前可用$1.26992782。运行成功不等于语义验收通过。
   版本证据2026-09-06-claim-context-actual.json；停止无诊断付费重试，不缩小五read质量要求。
 - reviewer review_claim_context初审2P1均属harness：额外tools未隔离、缺失reader未在付费前检查；已修。
   另已要求claims显式budget、拒绝无terminal/额外model/tool，并新增SDK安全子类型/耗时记录。

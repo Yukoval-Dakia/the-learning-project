@@ -3,7 +3,9 @@
   "reason": "Third attempt obtained authoritative SDK terminal but failed manual semantic review: cross-subject positive evidence contradicted and unsupported unique difference asserted. All three attempts remain not accepted.",
   "cost_basis": "mixed: first estimated, second reported",
   "additional_cost_usd": 0.33490018,
-  "remaining_authorized_usd": 0.26992782,
+  "remaining_authorized_usd": 1.26992782,
+  "additional_authorization_usd": 1,
+  "authorization_note": "Owner explicitly allowed up to $1 more after the third attempt, for verification after a concrete fix.",
   "second_run_transcript_diagnostic": {
     "status": "unaccepted_assistant_text_not_authoritative_sdk_result",
     "first_user_at": "2026-09-06T06:44:57.483Z",
