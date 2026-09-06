@@ -5,6 +5,9 @@
 ## NOW
 
 - Owner 授权 AI pipeline、全项目业务封装与测试精简；不把目录归属或 audit 数量当整体完成。
+- YUK944 active：prompt证据段2105→282字符、skill9735→4901；83unit/11DB/build通过。
+  首次五读取actual无权威终文，不算通过；估算成本$0.02766318，剩余授权$0.57716482。
+  夹具初审P1（非fixture工具隔离、缺失reader付费前检查）已修，终文假绿门已修；需复核与实际验收。
 - AI finalization #1326、Goal #1327、Knowledge merge #1328、Ingestion completion #1329、
   ReviewSettlement #1332、测试精简 #1331/#1333 已经各自 exact-head CI 绿色并合并。
 - YUK-954 #1330：共享执行 owner，权限/校验/取消/原生子代理规则一份实现；
@@ -18,7 +21,7 @@
 - 当前main dce62f79重新实测依赖基线438/0/47（此前98f15bda为439/0/47）；
   五 capability SCC 与20个命令消费者仍在，未宣称消环。
 - 实际输出：同输入 read 样本 input 至少降50.8%、费用至少降62.2%；仅限 synthetic。
-  共享执行层新增实际回归$0.146376，本次增量合计$0.395172，剩余授权$0.604828。
+  共享执行层新增实际回归$0.146376，截至958增量合计$0.395172；944后余额以上述最新账本为准。
   历史未计价超时/child仍未知；durable actual不是queue E2E。
 - Linear 939/940/941/942/952/953/954/955/956/957/958/959 Done；943/947为设计替代而Canceled。
 - 详细责任、验证与剩余边界见 docs/planning/2026-09-06-business-architecture-closeout.md。

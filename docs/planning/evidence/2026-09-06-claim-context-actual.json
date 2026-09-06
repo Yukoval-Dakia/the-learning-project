@@ -1,0 +1,229 @@
+{
+  "status": "not_accepted",
+  "reason": "All five expected fixed reads completed, but no authoritative model terminal was produced; safe failure text is not quality acceptance.",
+  "cost_basis": "estimated",
+  "additional_cost_usd": 0.02766318,
+  "remaining_authorized_usd": 0.57716482,
+  "limitations": [
+    "Original harness returned ok incorrectly; new claims gate rejects empty terminal and non-fixture calls.",
+    "This run's logs show exactly expected read calls and no extra model attempt, but runtime finish reason was not selected into the original snapshot.",
+    "Fixed production-contract synthetic typed outputs through real SDK/MCP; not production data or queue E2E."
+  ],
+  "records": [
+    {
+      "protocol_version": 1,
+      "phase": "running",
+      "exact_head": "04e9b83ef67eb0efd6eeec7db47176d1610fa56a",
+      "dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "harness_sha256": "dd3ba3b789cc478bb59d9209b5524465f3c5f5607c8818cbe6d52a116bbd2cbe",
+      "provider": "xiaomi",
+      "model": "mimo-v2.5-pro",
+      "credential_source": "/Volumes/YukovalSBak/yukoval-projects/the-learning-project/.env",
+      "baseline_record": false,
+      "campaign_cost_limit_usd": 0.604828,
+      "case_cost_reserves_usd": {
+        "cold": 0.25,
+        "resume": 0.25,
+        "context-change": 0.25,
+        "correction": 0.25,
+        "read": 0.25,
+        "claims": 0.3,
+        "proposal": 0.25,
+        "semantic": 0.75,
+        "native-task": 0.5,
+        "durable": 0.25,
+        "cancel": 0
+      },
+      "cases": [
+        {
+          "name": "claims",
+          "input_sha256": "ad707d590c1dcfb6910d1cc2c2140ec74abdee159052a2306250f727557716ec",
+          "output_sha256": "3438c82fbd0d8a2a39f191aba04e646ad2ec1c6ecdcd83034638faff46be8590",
+          "input": {
+            "session_id": "rpe8ligur7yemmv6ax5vrw0q",
+            "user_message": "请调用以下五项读取，参数原样使用；本次只检查这些已有观测，不调用其它工具、不出题、不写入。[{\"name\":\"query_events\",\"input\":{\"filter\":{\"limit\":20,\"subjectId\":\"kc_yuk792_canary_20260731c\"}}},{\"name\":\"get_attempt_context\",\"input\":{\"causalLimit\":10,\"timelineLimit\":10,\"attemptEventId\":\"conjecture_yuk792_canary_20260731c\"}},{\"name\":\"get_attempt_context\",\"input\":{\"causalLimit\":10,\"attemptEventId\":\"q2lm07istehqzj8ar2slphpy\"}},{\"name\":\"get_attempt_context\",\"input\":{\"causalLimit\":10,\"attemptEventId\":\"sg6aqgpq6l3wp5maslkvz12j\"}},{\"name\":\"get_review_due\",\"input\":{\"limit\":50,\"includeReason\":true}}]\n依据结果逐项核对：A01是否已经证明没有跨subject的后续probe/review？conjecture的必要/充分激活条件能否裁决？B/C两条链是否完全同构、能否确定唯一差异？复习队列是否已清空，pending/in-progress是否为0？同时列出已知的直接因果边、至少两个真实事件ID及相应数值或时间，不能只泛泛回答无法裁决。",
+            "triggered_by": "chat"
+          },
+          "output": "这次回复没有完成可验证的收口，暂不展示未封存的草稿。请重试。",
+          "root_task_run_id": "copilot_task_lltr8zbpqy8dd6xqvfpz0e5w",
+          "task_runs": [
+            {
+              "id": "copilot_task_lltr8zbpqy8dd6xqvfpz0e5w",
+              "kind": "CopilotTask",
+              "provider": "xiaomi",
+              "model": "mimo-v2.5-pro",
+              "usage": {
+                "inputTokens": 103961,
+                "outputTokens": 0,
+                "thinkingBlocks": 2,
+                "thinkingCharacters": 5100
+              },
+              "cost": 0.02766318,
+              "costBasis": "estimated",
+              "compiledPromptHash": "3e7e36f2d111134e54fdfb0d4f45770fc0a9c2b7fce130c455440d2783abb123",
+              "promptCodecMode": "cold",
+              "promptContextDigest": "374c798b9fbc747f0c0ae604bfb42baddf89ae021969cf26320627d8e8810d50"
+            }
+          ],
+          "tools": [
+            {
+              "name": "mcp__loom__query_events",
+              "effect": null,
+              "error": null
+            },
+            {
+              "name": "query_events",
+              "effect": "read",
+              "error": null
+            },
+            {
+              "name": "mcp__loom__get_attempt_context",
+              "effect": null,
+              "error": null
+            },
+            {
+              "name": "get_attempt_context",
+              "effect": "read",
+              "error": null
+            },
+            {
+              "name": "mcp__loom__get_attempt_context",
+              "effect": null,
+              "error": null
+            },
+            {
+              "name": "get_attempt_context",
+              "effect": "read",
+              "error": null
+            },
+            {
+              "name": "mcp__loom__get_attempt_context",
+              "effect": null,
+              "error": null
+            },
+            {
+              "name": "get_attempt_context",
+              "effect": "read",
+              "error": null
+            },
+            {
+              "name": "mcp__loom__get_review_due",
+              "effect": null,
+              "error": null
+            },
+            {
+              "name": "get_review_due",
+              "effect": "read",
+              "error": null
+            }
+          ],
+          "session_agent_sdk_id": null,
+          "cumulative_cost_usd": 0.02766318,
+          "reply_finalization": {
+            "assurance": "execution_trace_bound",
+            "correction": "normal",
+            "primary_view": "absent",
+            "reply_sha256": "3438c82fbd0d8a2a39f191aba04e646ad2ec1c6ecdcd83034638faff46be8590",
+            "trace_sha256": "8d84c2c04d38ed9457f4dca647df5c2c3ef678b8e580683c1b21d333480c3f95",
+            "candidate_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "learning_content": "blocked",
+            "protocol_version": 1,
+            "root_task_run_id": "copilot_task_lltr8zbpqy8dd6xqvfpz0e5w",
+            "trace_call_count": 5,
+            "proposal_disclosure": "none",
+            "observed_completed_tool_use_ids": [
+              "call_12e0407240f44a62af803707",
+              "call_fbfabd1fa53c4483a83010c7",
+              "call_897a7cad78e24f328d180685",
+              "call_6e9b053b654a476db5149478",
+              "call_e8167955d3bc46b48eff5af8"
+            ]
+          },
+          "semantic_review": "manual_required_not_proven_by_trace"
+        }
+      ],
+      "claim_fixture": {
+        "mode": "real_model_fixed_typed_readers_not_live_database_quality",
+        "observations_sha256": "699126a51c6d9ce242adccbe393650575b4dac0167b162d0d9d728b06afad946",
+        "requests": [
+          {
+            "name": "query_events",
+            "input": {
+              "filter": {
+                "limit": 20,
+                "subjectId": "kc_yuk792_canary_20260731c"
+              }
+            }
+          },
+          {
+            "name": "get_attempt_context",
+            "input": {
+              "causalLimit": 10,
+              "timelineLimit": 10,
+              "attemptEventId": "conjecture_yuk792_canary_20260731c"
+            }
+          },
+          {
+            "name": "get_attempt_context",
+            "input": {
+              "causalLimit": 10,
+              "attemptEventId": "q2lm07istehqzj8ar2slphpy"
+            }
+          },
+          {
+            "name": "get_attempt_context",
+            "input": {
+              "causalLimit": 10,
+              "attemptEventId": "sg6aqgpq6l3wp5maslkvz12j"
+            }
+          },
+          {
+            "name": "get_review_due",
+            "input": {
+              "limit": 50,
+              "includeReason": true
+            }
+          }
+        ],
+        "calls": [
+          {
+            "name": "query_events",
+            "input_sha256": "26d08ea36f7d9317616100cc055012ac3d84a6aed0c1950b39acadeb304aaae0",
+            "output_sha256": "0872db340460dc55b2e02a1642b7b13c18a11c7c77e16c6bc2a31815fb9f3a1c"
+          },
+          {
+            "name": "get_attempt_context",
+            "input_sha256": "e14612bdefb992520f04b0ffc521df4fa81ca2eb155ce2319a615774d6b33597",
+            "output_sha256": "c16af44ee3e6b113b3a5d5a7884ff8c698486fa24636b7ae1dcacd67f98a0755"
+          },
+          {
+            "name": "get_attempt_context",
+            "input_sha256": "5d7e5b3b21543a4cbbc1991f52a2d9412b40eac84cd3c8026771cd00bc5dfa89",
+            "output_sha256": "02e15cfb2791a26d824011913b21a211757d2bbd071f9ce61ce77cea6178324e"
+          },
+          {
+            "name": "get_attempt_context",
+            "input_sha256": "1c6379d9934f54969a3654f126cffcdb3d42e6054f3aefa656e622659ae61fb8",
+            "output_sha256": "486a3d9906941d4dece634bf3babae7a05d96a62e32071f155a9186aa9f26e19"
+          },
+          {
+            "name": "get_review_due",
+            "input_sha256": "0efa40ffed4de8a9e4ca274132f5c465b3f0f2a247adc8a1bd3eb34f39a209d1",
+            "output_sha256": "cd352a83a5c41c36bf50b130adad304274565059df688f594040bb8849d2c36a"
+          }
+        ]
+      },
+      "limitations": [
+        "direct durable handler is not pg-boss queue E2E",
+        "structural assertions do not establish factual entailment or semantic correctness"
+      ],
+      "fixture_readiness": {
+        "registered_tools": [
+          "query_knowledge",
+          "propose_knowledge_mutation"
+        ],
+        "foreground_session_id": "rpe8ligur7yemmv6ax5vrw0q"
+      }
+    }
+  ]
+}

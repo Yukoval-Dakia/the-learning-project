@@ -208,6 +208,9 @@ async function main(): Promise<void> {
   }
   const source = loadProviderEnv();
   const requested = arg('--case');
+  if (requested === 'claims' && arg('--cost-limit-usd') === undefined) {
+    throw new Error('claims requires the explicit remaining authorized --cost-limit-usd');
+  }
   if (requested && !CASES.includes(requested as CaseName)) {
     throw new Error(`unknown --case ${requested}; expected ${CASES.join(', ')}`);
   }
@@ -320,6 +323,13 @@ async function main(): Promise<void> {
         '@/capabilities/copilot/server/reply-finalization.actual-fixture'
       );
       const observations = [0, 2, 3, 4, 12].map((index) => REALISTIC_EVIDENCE_TRACE[index]);
+      for (const observation of observations) {
+        const tool = getTool(observation.name);
+        if (!tool || tool.effect !== 'read')
+          throw new Error(`claim fixture: missing read tool ${observation.name}`);
+        tool.inputSchema.parse(observation.input);
+        tool.outputSchema.parse(observation.output);
+      }
       claimFixtureRequests = observations.map(({ name, input }) => ({ name, input }));
       const canonical = (value: unknown): string =>
         JSON.stringify(value, (_key, item) =>
@@ -330,7 +340,13 @@ async function main(): Promise<void> {
       const originals = listTools();
       const fixtureTools = originals.map((tool) => {
         const matches = observations.filter((observation) => observation.name === tool.name);
-        if (!matches.length) return tool;
+        if (!matches.length)
+          return {
+            ...tool,
+            execute: async () => {
+              throw new Error('claim fixture: non-fixture tool execution denied');
+            },
+          };
         // Fail before any paid attempt if historical fixture contracts drifted.
         const values = matches.map((observation) => ({
           input: tool.inputSchema.parse(observation.input),
@@ -466,6 +482,8 @@ async function main(): Promise<void> {
           usage: schema.ai_task_runs.usage_json,
           cost: schema.ai_task_runs.cost_usd,
           costBasis: schema.ai_task_runs.cost_basis,
+          status: schema.ai_task_runs.status,
+          finishReason: schema.ai_task_runs.finish_reason,
           compiledPromptHash: schema.ai_task_runs.compiled_prompt_hash,
           promptCodecMode: schema.ai_task_runs.prompt_codec_mode,
           promptContextDigest: schema.ai_task_runs.prompt_context_digest,
@@ -747,6 +765,21 @@ async function main(): Promise<void> {
       const latestEvidence = caseEvidence.at(-1);
       if (latestEvidence) latestEvidence.reply_finalization = receipt;
       if (caseName === 'claims') {
+        if (!terminals.get(result.task_run_id)?.trim())
+          throw new Error(
+            'claims: no authoritative model terminal; a safe failure reply is not acceptance',
+          );
+        const expectedNames = new Set(claimFixtureRequests.map((item) => item.name));
+        if (
+          observed.rows.length !== 1 ||
+          observed.tools.some(
+            (tool) =>
+              !expectedNames.has(tool.name.replace(/^mcp__loom__/, '')) ||
+              tool.error !== null ||
+              (tool.effect !== null && tool.effect !== 'read'),
+          )
+        )
+          throw new Error('claims: unexpected tool or model attempt outside fixed observations');
         const expected = new Set(
           claimFixtureRequests.map(
             (item) => `${item.name}:${SHA256(getTool(item.name)?.inputSchema.parse(item.input))}`,
