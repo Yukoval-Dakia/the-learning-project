@@ -15,6 +15,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { config } from 'dotenv';
 
@@ -25,6 +26,10 @@ type CaseName =
   | 'correction'
   | 'read'
   | 'claims'
+  | 'presentation-process'
+  | 'presentation-tool'
+  | 'presentation-artifact'
+  | 'presentation-html'
   | 'proposal'
   | 'semantic'
   | 'native-task'
@@ -38,6 +43,10 @@ const CASES: readonly CaseName[] = [
   'correction',
   'read',
   'claims',
+  'presentation-process',
+  'presentation-tool',
+  'presentation-artifact',
+  'presentation-html',
   'proposal',
   'native-task',
   'durable',
@@ -58,6 +67,10 @@ const CASE_COST_RESERVE_USD: Readonly<Record<CaseName, number>> = {
   correction: 0.25,
   read: 0.25,
   claims: 0.3,
+  'presentation-process': 0.4,
+  'presentation-tool': 0.4,
+  'presentation-artifact': 0.4,
+  'presentation-html': 0.4,
   proposal: 0.25,
   semantic: 0.75,
   'native-task': 0.5,
@@ -223,7 +236,7 @@ async function main(): Promise<void> {
   };
   const selected = requested
     ? (prerequisites[requested as CaseName] ?? [requested as CaseName])
-    : CASES.filter((name) => name !== 'claims');
+    : CASES.filter((name) => name !== 'claims' && !name.startsWith('presentation-'));
   const campaignCostLimitUsd = costLimitUsd();
   const baselineRecord = process.argv.includes('--baseline-record');
   if (baselineRecord && selected.length !== 1) {
@@ -295,6 +308,9 @@ async function main(): Promise<void> {
     ]);
     const { and, eq, inArray } = await import('drizzle-orm');
     const runner = await import('@/server/ai/runner');
+    const { EPHEMERAL_PRESENTATION_STORAGE_NOTICE } = await import(
+      '@/capabilities/copilot/server/reply-finalization'
+    );
     const terminals = new Map<string, string>();
     const sdkOutcomes: Array<Record<string, unknown>> = [];
     evidence.sdk_outcomes = sdkOutcomes;
@@ -480,7 +496,12 @@ async function main(): Promise<void> {
     const snapshot = async (
       caseName: CaseName,
       input: unknown,
-      result: { task_run_id?: string; reply?: string; session_id?: string },
+      result: {
+        task_run_id?: string;
+        reply?: string;
+        session_id?: string;
+        primary_view?: unknown;
+      },
     ) => {
       // A root may synchronously invoke a native child or a retained semantic
       // validator. Capture every new attempt, not only the root id, so the $2
@@ -517,6 +538,12 @@ async function main(): Promise<void> {
               name: schema.tool_call_log.tool_name,
               effect: schema.tool_call_log.effect,
               error: schema.tool_call_log.error_reason,
+              ...(caseName.startsWith('presentation-')
+                ? {
+                    input: schema.tool_call_log.input_json,
+                    output: schema.tool_call_log.output_json,
+                  }
+                : {}),
             })
             .from(schema.tool_call_log)
             .where(inArray(schema.tool_call_log.task_run_id, taskIds))
@@ -529,6 +556,9 @@ async function main(): Promise<void> {
         // values lets the owner review actual behavior without exposing user data.
         input,
         output: result.reply,
+        ...(caseName.startsWith('presentation-')
+          ? { primary_view: result.primary_view ?? null }
+          : {}),
         root_task_run_id: result.task_run_id,
         terminal_output: result.task_run_id ? terminals.get(result.task_run_id) : undefined,
         terminal_sha256:
@@ -724,6 +754,14 @@ async function main(): Promise<void> {
           '当前页面从复习切到知识页。只回复「上下文变化已确认」，不要出题、不要调用工具。',
         correction: '更正刚才的回答：保留已确认内容，明确没有新增事实；不要出题、不要调用工具。',
         read: '必须调用 query_knowledge，参数固定为 subjectId:"yuwen"、nodeId:"actual:classical-root"、include:["children"]、limit:10；然后只报告工具实际返回的节点名称。不要出题，不得把空结果说成不存在。',
+        'presentation-process':
+          '调用 query_knowledge（subjectId:yuwen、nodeId:actual:classical-root、include:[children]、limit:10）核对两个节点名称。本轮只是过程检查，仅用一句正文报告已有名称，不生成成品卡、不出题、不写入。',
+        'presentation-tool':
+          '调用 query_knowledge（subjectId:yuwen、nodeId:actual:classical-root、include:[children]、limit:10）读取节点，先看实际结果，再将这次成功的根工具结果作为本轮主要成品展示（tool_result），正文保留两个实际节点名称。不要新建artifact、不出题、不写入，不在正文输出隐藏标记。',
+        'presentation-artifact':
+          '为我创建并保存一个极简的中文学习资料导航互动页，标题“资料导航”：HTML只包含“原文”和“笔记”两个本地切换按钮及对应说明，无外链、无题目、无解答、无测验。调用 author_artifact 保存，检查返回的真实artifact ID后，将该已保存interactive作为本轮主要成品展示。正文只说明已保存的标题和ID，不输出隐藏标记。',
+        'presentation-html':
+          '直接展示一个不保存的极简HTML参考卡：标题“文言资料目录”，只含“原文”“注释”“背景”三个静态栏目，不含题目、答案、输入框、脚本、外链或测验。它是本轮一次性成品，请用ephemeral_html展示，不调用author_artifact，不写入；正文只说明三个栏目，不输出隐藏标记。',
         claims: `请调用以下五项读取，参数原样使用；本次只检查这些已有观测，不调用其它工具、不出题、不写入。${JSON.stringify(claimFixtureRequests)}\n依据结果逐项核对：A01是否已经证明没有跨subject的后续probe/review？conjecture的必要/充分激活条件能否裁决？B/C两条链是否完全同构、能否确定唯一差异？复习队列是否已清空，pending/in-progress是否为0？同时列出已知的直接因果边、至少两个真实事件ID及相应数值或时间，不能只泛泛回答无法裁决。`,
         proposal:
           '只调用 propose_knowledge_mutation，为「文言虚词之」提出一个新增子节点的提议；不得直接写入或声称已经执行，不要出题。',
@@ -776,6 +814,81 @@ async function main(): Promise<void> {
       }
       const latestEvidence = caseEvidence.at(-1);
       if (latestEvidence) latestEvidence.reply_finalization = receipt;
+      if (caseName.startsWith('presentation-')) {
+        const expectedSource = {
+          'presentation-process': null,
+          'presentation-tool': 'tool_result',
+          'presentation-artifact': 'artifact',
+          'presentation-html': 'ephemeral_html',
+        }[
+          caseName as
+            | 'presentation-process'
+            | 'presentation-tool'
+            | 'presentation-artifact'
+            | 'presentation-html'
+        ];
+        const controls = observed.tools.filter((tool) => tool.name === 'present_primary_view');
+        if (result.error || !terminals.get(result.task_run_id)?.trim())
+          throw new Error(`${caseName}: missing successful authoritative terminal`);
+        if ((result.primary_view?.source ?? null) !== expectedSource)
+          throw new Error(`${caseName}: expected primary-view source was not published`);
+        if (
+          controls.length !== (expectedSource === null ? 0 : 1) ||
+          controls.some((tool) => tool.error)
+        )
+          throw new Error(`${caseName}: unexpected presentation control count or failure`);
+        if (receipt?.primary_view !== (expectedSource === null ? 'absent' : 'retained'))
+          throw new Error(`${caseName}: mismatched primary-view receipt`);
+        const [persistedReply] = await db
+          .select({ payload: schema.event.payload })
+          .from(schema.event)
+          .where(eq(schema.event.id, result.reply_event_id));
+        const savedPrimaryView = (persistedReply?.payload as { primary_view?: unknown })
+          ?.primary_view;
+        if (latestEvidence) latestEvidence.persisted_primary_view = savedPrimaryView ?? null;
+        // jsonb normalizes object key ordering; compare the product value, not
+        // JSON.stringify insertion order from the model's control input.
+        if (!isDeepStrictEqual(savedPrimaryView ?? null, result.primary_view ?? null))
+          throw new Error(`${caseName}: persisted primary-view mismatched live reply`);
+        if (result.reply.includes('<!--primary_view'))
+          throw new Error(`${caseName}: unexpected legacy marker in visible reply`);
+        if (caseName === 'presentation-tool' || caseName === 'presentation-process') {
+          if (
+            !observed.tools.some((tool) => tool.name === 'query_knowledge' && !tool.error) ||
+            !result.reply.includes('代词宾语用法') ||
+            !result.reply.includes('文言虚词')
+          )
+            throw new Error(`${caseName}: missing inspected knowledge result`);
+        }
+        if (caseName === 'presentation-artifact') {
+          if (
+            result.primary_view?.source !== 'artifact' ||
+            result.primary_view.ref.kind !== 'interactive'
+          )
+            throw new Error(`${caseName}: expected interactive artifact reference`);
+          const [created] = await db
+            .select({ title: schema.artifact.title, type: schema.artifact.type })
+            .from(schema.artifact)
+            .where(eq(schema.artifact.id, result.primary_view.ref.id));
+          if (
+            created?.type !== 'interactive' ||
+            created.title !== '资料导航' ||
+            !observed.tools.some((tool) => tool.name === 'author_artifact' && !tool.error)
+          )
+            throw new Error(`${caseName}: missing actual author-owned artifact`);
+        }
+        if (
+          caseName === 'presentation-html' &&
+          !result.reply.endsWith(EPHEMERAL_PRESENTATION_STORAGE_NOTICE)
+        )
+          throw new Error(`${caseName}: missing authoritative committed storage policy`);
+        if (latestEvidence)
+          latestEvidence.presentation_acceptance = {
+            expected_source: expectedSource,
+            persisted_primary_view: savedPrimaryView ?? null,
+            semantic_review: 'manual_required_not_proven_by_trace',
+          };
+      }
       if (caseName === 'claims') {
         if (receipt?.learning_content === 'blocked')
           throw new Error('claims: finalization blocked the authoritative reply');

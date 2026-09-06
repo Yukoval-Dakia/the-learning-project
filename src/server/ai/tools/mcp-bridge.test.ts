@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { capabilities } from '@/capabilities';
+import { presentPrimaryViewTool } from '@/capabilities/copilot/server/tools/present-primary-view';
 import type { ToolOperationRecord, ToolOperations } from '@/kernel/tools/tool-operations';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { registerCapabilityTools } from './register-capability-tools';
@@ -455,6 +456,53 @@ describe('buildMcpServerFromRegistry', () => {
         executed: true,
       },
     ]);
+  });
+
+  it('executes and logs the presentation control without mirroring a domain event', async () => {
+    const observedResults: unknown[] = [];
+    registerTool(presentPrimaryViewTool as DomainTool<unknown, unknown>);
+    buildMcpServerFromRegistry({
+      ctx,
+      serverName: 'loom',
+      toolNames: ['present_primary_view'],
+      claimToolUseId: () => 'toolu_present_1',
+      onResult: (result) => {
+        observedResults.push(result);
+      },
+    });
+
+    const nomination = {
+      source: 'tool_result',
+      ref: { kind: 'query_knowledge', id: 'toolu_read_1' },
+    };
+    const result = (await mockAgentSdk.toolDefs[0]?.handler(nomination)) as {
+      content: Array<{ text: string }>;
+    };
+
+    expect(JSON.parse(result.content[0]?.text ?? '')).toMatchObject({ output: nomination });
+    expect(captured.toolCallLogs[0]).toMatchObject({
+      tool_name: 'present_primary_view',
+      effect: 'control',
+    });
+    expect(observedResults).toEqual([
+      {
+        name: 'present_primary_view',
+        effect: 'control',
+        tool_use_id: 'toolu_present_1',
+        input: nomination,
+        output: {
+          ...nomination,
+          presentation_lifecycle: {
+            saved_with_conversation: true,
+            discarded_on_close: false,
+            standalone_artifact: false,
+          },
+        },
+        error_reason: null,
+        executed: true,
+      },
+    ]);
+    expect(captured.events).toEqual([]);
   });
 
   it('binds proposal calls to a server-owned FULL owner gate instead of model prose', async () => {

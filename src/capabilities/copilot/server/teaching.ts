@@ -19,7 +19,6 @@
 import { asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 
-import { bodyBlocksToNoteSections } from '@/capabilities/notes/public';
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge, learning_item } from '@/db/schema';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -29,6 +28,7 @@ import {
   type TeachingTurnOutputT,
   parseTurnOutput,
 } from '../tasks/teaching-turn';
+import { bodyBlocksToNoteSections } from './notes-integration';
 
 export {
   TeachingError,

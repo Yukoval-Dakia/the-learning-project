@@ -2,6 +2,7 @@ import type { HookCallback, Options } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createCopilotRunCancellationControl,
+  persistCopilotRunCancellationMarker,
   prependCopilotCancellationHook,
 } from './copilot-run-cancellation';
 
@@ -161,5 +162,30 @@ describe('Copilot run cancellation control', () => {
 
     control.onToolExecutionSettled();
     await expect(waiting).resolves.toBe(true);
+  });
+
+  it('never carries a prepared primary view into a cancelled outcome marker', async () => {
+    const write = vi.fn(async (_db: unknown, params: { preparedReply?: unknown }) => {
+      expect(params.preparedReply).toEqual({ text: '已完成但随后取消。' });
+      return { replyEventId: 'reply_cancelled', cleanedReply: '已完成但随后取消。' };
+    });
+
+    await persistCopilotRunCancellationMarker({} as never, {
+      runId: 'run_cancelled_primary_view',
+      sessionId: 'session_cancelled_primary_view',
+      actorRef: 'agent:copilot',
+      partialText: '已完成但随后取消。',
+      preparedReply: {
+        text: '已完成但随后取消。',
+        primaryView: {
+          source: 'tool_result',
+          ref: { kind: 'query_knowledge', id: 'toolu_read_1' },
+        },
+      },
+      checkpointSafe: true,
+      writeCopilotReplyFn: write as never,
+    });
+
+    expect(write).toHaveBeenCalledTimes(1);
   });
 });

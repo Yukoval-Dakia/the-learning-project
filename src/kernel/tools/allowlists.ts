@@ -92,9 +92,17 @@ export const PROPOSE_WRITE_TOOLS = [
   'write_agent_note',
 ] as const;
 
+// YUK-949 — model-authored presentation intent. This is neither a data read nor
+// a proposal/write; the server validates it against the completed root trace.
+export const CONTROL_TOOLS = ['present_primary_view'] as const;
+
 export type ReadDomainToolName = (typeof READ_TOOLS)[number];
 export type ProposeWriteDomainToolName = (typeof PROPOSE_WRITE_TOOLS)[number];
-export type DomainToolName = ReadDomainToolName | ProposeWriteDomainToolName;
+export type ControlDomainToolName = (typeof CONTROL_TOOLS)[number];
+export type DomainToolName =
+  | ReadDomainToolName
+  | ProposeWriteDomainToolName
+  | ControlDomainToolName;
 
 export type DomainToolSurface =
   | 'knowledge_review'
@@ -124,6 +132,7 @@ const KNOWLEDGE_REVIEW_TOOLS = [
 // @/capabilities 拉进 web bundle（plan 裁决 h）。完整 inventory 与 Copilot 子集的
 // 集合对账均由 src/capabilities/copilot/server/copilot-tools.unit.test.ts 强制。
 export const COPILOT_TOOLS = [
+  'present_primary_view',
   'query_memory_brief',
   'generate_goal_outline',
   'generate_question_candidate',

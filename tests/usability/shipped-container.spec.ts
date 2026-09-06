@@ -9,6 +9,109 @@ const SHOT_DIR = process.env.USABILITY_SHOT_DIR ?? 'test-results/usability';
 const TB_DESKTOP_SHOT = `${SHOT_DIR}/tb-desktop.png`;
 const TB_MOBILE_SHOT = `${SHOT_DIR}/tb-mobile.png`;
 
+for (const transport of ['inline', 'durable'] as const) {
+  for (const source of ['none', 'tool_result', 'artifact', 'ephemeral_html'] as const) {
+    test(`Copilot ${transport} primary view ${source} survives live delivery and replay`, async ({
+      page,
+    }) => {
+      await installApiFixtures(page, 'existing-evidence');
+      const primaryView =
+        source === 'none'
+          ? undefined
+          : source === 'ephemeral_html'
+            ? { source, ref: '<section><h2>本轮资料目录</h2><p>原文、注释、背景</p></section>' }
+            : {
+                source,
+                ref: {
+                  kind: source === 'artifact' ? 'note' : 'query_knowledge',
+                  id: 'presented-42',
+                },
+              };
+      const content = '已整理本轮资料。';
+      const turns: Array<Record<string, unknown>> = [];
+      const terminal = { reply: content, ...(primaryView ? { primary_view: primaryView } : {}) };
+      await page.route('**/api/**', async (route) => {
+        const path = new URL(route.request().url()).pathname;
+        if (path === '/api/copilot/sessions')
+          return route.fulfill({
+            json: {
+              sessions: [
+                {
+                  id: 'session-42',
+                  status: 'active',
+                  title: '展示验收',
+                  created_at: '2026-09-06T06:00:00Z',
+                  updated_at: '2026-09-06T06:00:00Z',
+                },
+              ],
+            },
+          });
+        if (path === '/api/copilot/turns') return route.fulfill({ json: { turns } });
+        if (path === '/api/copilot/chat') {
+          turns.push({
+            role: 'ai',
+            text: content,
+            event_id: 'view-reply-42',
+            at: '2026-09-06T06:00:00Z',
+            ...(primaryView ? { primary_view: primaryView } : {}),
+          });
+          return transport === 'inline'
+            ? route.fulfill({
+                contentType: 'text/event-stream',
+                body: `event: reply\ndata: ${JSON.stringify(terminal)}\n\n`,
+              })
+            : route.fulfill({ status: 202, json: { run_id: 'view-run-42' } });
+        }
+        if (path === '/api/jobs/copilot_run/view-run-42/events') {
+          const frames = [
+            {
+              event_id: 1,
+              event_type: 'copilot_run.reply',
+              payload: { reply_md: content, ...(primaryView ? { primary_view: primaryView } : {}) },
+            },
+            {
+              event_id: 2,
+              event_type: 'copilot_run.done',
+              payload: { task_run_id: 'view-task-42' },
+            },
+          ];
+          return route.fulfill({
+            contentType: 'text/event-stream',
+            body: frames
+              .map((frame) => `event: job_event\ndata: ${JSON.stringify(frame)}\n\n`)
+              .join(''),
+          });
+        }
+        return route.fallback();
+      });
+      const assertPrimaryView = async () => {
+        await expect(page.getByText(content, { exact: true })).toHaveCount(1);
+        if (source === 'none')
+          await expect(page.locator('[data-testid^="copilot-hero-"]')).toHaveCount(0);
+        if (source === 'tool_result')
+          await expect(page.getByTestId('copilot-hero-tool-result')).toHaveText('query_knowledge');
+        if (source === 'artifact')
+          await expect(page.getByTestId('copilot-hero-artifact')).toHaveRole('button');
+        if (source === 'ephemeral_html')
+          await expect(
+            page
+              .getByTestId('copilot-hero-ephemeral')
+              .frameLocator('iframe')
+              .getByText('本轮资料目录'),
+          ).toBeVisible();
+      };
+      await page.goto('/today');
+      await page.getByRole('banner').getByRole('button', { name: 'Copilot', exact: true }).click();
+      await page.getByLabel('问 Loom 任何事', { exact: true }).fill('展示本轮资料');
+      await page.getByRole('button', { name: '发送', exact: true }).click();
+      await assertPrimaryView();
+      await page.reload();
+      await page.getByRole('banner').getByRole('button', { name: 'Copilot', exact: true }).click();
+      await assertPrimaryView();
+    });
+  }
+}
+
 async function expectNoInternalCopy(page: Page, route: string): Promise<void> {
   const copy = await page.locator('body').innerText();
   expect(

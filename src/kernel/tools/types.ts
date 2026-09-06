@@ -13,7 +13,7 @@
 import type { z } from 'zod';
 import type { Db } from '@/db/client';
 
-export type ToolEffect = 'read' | 'propose' | 'write';
+export type ToolEffect = 'read' | 'propose' | 'write' | 'control';
 
 export interface ProposalEffectContract {
   readonly owner_gate: 'FULL';

@@ -3,6 +3,7 @@ import { capabilities } from '@/capabilities';
 import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
 import { __resetRegistryForTests, listTools } from '@/server/ai/tools/registry';
 import {
+  CONTROL_TOOLS,
   DOMAIN_TOOL_ALLOWLISTS,
   PROPOSE_WRITE_TOOLS,
   READ_TOOLS,
@@ -114,8 +115,10 @@ describe('DomainTool allowlist policy', () => {
     // knowledge_mutation + the learning_item lifecycle quartet. That was a
     // deliberate owner-decided surface expansion, NOT the U6 skill merge. The U6
     // red line still holds: the teaching/solve skill merge itself adds no tool.
-    // This assertion now locks the post-YUK-270 exact set.
+    // This assertion now locks the post-YUK-949 exact set; the presentation
+    // control is unrelated to the teaching/solve skill merge.
     expect(DOMAIN_TOOL_ALLOWLISTS.copilot).toEqual([
+      'present_primary_view',
       'query_memory_brief',
       // YUK-939 — capability-owned generation-only tools; unrelated to U6.
       'generate_goal_outline',
@@ -201,8 +204,12 @@ describe('DomainTool allowlist policy', () => {
     // YUK-328 — manifest ownership determines registration order, so inventory equality is a
     // set contract rather than the old CORE_TOOLS array's incidental ordering.
     const registered = listTools().map((tool) => tool.name);
-    expect(new Set(registered)).toEqual(new Set([...READ_TOOLS, ...PROPOSE_WRITE_TOOLS]));
-    expect(registered).toHaveLength(READ_TOOLS.length + PROPOSE_WRITE_TOOLS.length);
+    expect(new Set(registered)).toEqual(
+      new Set([...READ_TOOLS, ...PROPOSE_WRITE_TOOLS, ...CONTROL_TOOLS]),
+    );
+    expect(registered).toHaveLength(
+      READ_TOOLS.length + PROPOSE_WRITE_TOOLS.length + CONTROL_TOOLS.length,
+    );
   });
 
   it('grants search_memory_facts to coach / dreaming / copilot only (D7②/③)', () => {

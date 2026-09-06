@@ -10,27 +10,36 @@ import type {
 import { copilotLearningContentRequiresValidation } from './content-validation';
 import type { CopilotCorrectionContract } from './correction-contract';
 import { resolveCorrectionReply } from './correction-contract';
-import { type CopilotPrimaryView, EPHEMERAL_HTML_REF_MAX_CHARS } from './turns';
+import {
+  type PresentPrimaryViewInput,
+  PresentPrimaryViewOutputSchema,
+} from './tools/present-primary-view';
+import type { CopilotPrimaryView } from './turns';
 
 export const COPILOT_REPLY_TRACE_MAX_CALLS = 60;
 
 const MAX_REPLY_CHARS = 64_000;
 const FINALIZATION_FAILURE_REPLY = '这次回复没有完成可验证的收口，暂不展示未封存的草稿。请重试。';
 
-export const CopilotPrimaryViewSchema = z.discriminatedUnion('source', [
-  z.object({
-    source: z.literal('tool_result'),
-    ref: z.object({ kind: z.string().min(1).max(40), id: z.string().min(1).max(120) }),
-  }),
-  z.object({
-    source: z.literal('artifact'),
-    ref: z.object({ kind: z.string().min(1).max(40), id: z.string().min(1).max(120) }),
-  }),
-  z.object({
-    source: z.literal('ephemeral_html'),
-    ref: z.string().min(1).max(EPHEMERAL_HTML_REF_MAX_CHARS),
-  }),
-]);
+export const EPHEMERAL_PRESENTATION_STORAGE_NOTICE =
+  '\n\n> 保存说明（系统，以此为准）：这张卡片会随对话保存，重新打开仍可恢复；关闭面板不会删除。它不会另存为独立资料。当前不支持仅临时查看且完全不保存；正文中的其他保存描述不代表实际状态。';
+
+/** Called only at the shared commit boundary, after unsuccessful paths remove the view. */
+export function sealCommittedPresentationReply(
+  preparedReply: PreparedCopilotReply,
+  receipt?: CopilotReplyFinalizationReceipt,
+): { preparedReply: PreparedCopilotReply; receipt?: CopilotReplyFinalizationReceipt } {
+  if (preparedReply.primaryView?.source !== 'ephemeral_html') return { preparedReply, receipt };
+  const text = preparedReply.text.endsWith(EPHEMERAL_PRESENTATION_STORAGE_NOTICE)
+    ? preparedReply.text
+    : preparedReply.text + EPHEMERAL_PRESENTATION_STORAGE_NOTICE;
+  return {
+    preparedReply: { ...preparedReply, text },
+    ...(receipt ? { receipt: { ...receipt, reply_sha256: sha256Text(text) } } : {}),
+  };
+}
+
+export const CopilotPrimaryViewSchema = PresentPrimaryViewOutputSchema;
 
 export const PRIMARY_VIEW_MARKER_START = '<!--primary_view';
 const PRIMARY_VIEW_MARKER_RE = /<!--primary_view:([\s\S]*?)-->/g;
@@ -143,6 +152,11 @@ export interface CreateCopilotReplyFinalizerOptions {
     taskRunId: string,
     primaryView?: CopilotPrimaryView,
   ) => Promise<{ replyText: string; passed: boolean }>;
+  /** Owned live-row validation plus canonical product reference. Null rejects the nomination. */
+  resolveArtifactReference: (ref: {
+    kind: string;
+    id: string;
+  }) => Promise<{ kind: string; id: string } | null>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -224,6 +238,36 @@ function digestTrace(trace: readonly TraceEntry[]): string {
   return sha256CanonicalJson(trace.map(({ proposal_output: _output, ...entry }) => entry));
 }
 
+function domainToolName(toolName: string): string {
+  const separator = toolName.lastIndexOf('__');
+  return separator === -1 ? toolName : toolName.slice(separator + 2);
+}
+
+async function resolvePrimaryViewNomination(
+  nomination: PresentPrimaryViewInput,
+  trace: readonly TraceEntry[],
+  resolveArtifactReference: CreateCopilotReplyFinalizerOptions['resolveArtifactReference'],
+): Promise<CopilotPrimaryView | undefined> {
+  if (nomination.source === 'ephemeral_html') return nomination;
+  if (nomination.source === 'tool_result') {
+    const valid = trace.some(
+      (entry) =>
+        entry.root_call &&
+        entry.status === 'succeeded' &&
+        entry.effect !== 'control' &&
+        entry.tool_use_id === nomination.ref.id &&
+        domainToolName(entry.tool_name) === nomination.ref.kind,
+    );
+    return valid ? nomination : undefined;
+  }
+  try {
+    const ref = await resolveArtifactReference(nomination.ref);
+    return ref ? { source: 'artifact', ref } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizerOptions) {
   const trace: TraceEntry[] = [];
   const byId = new Map<string, TraceEntry>();
@@ -300,9 +344,29 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         throw new Error('cannot seal an incomplete tool trace');
       }
       const candidateSha = sha256Text(terminalText);
-      const presented = extractPrimaryView(options.authoritativeReply?.reply ?? terminalText, {
-        taskRunId: options.rootTaskRunId,
-      });
+      const legacyPresented = extractPrimaryView(
+        options.authoritativeReply?.reply ?? terminalText,
+        {
+          taskRunId: options.rootTaskRunId,
+        },
+      );
+      const successfulControls = trace.filter(
+        (entry) =>
+          entry.root_call &&
+          domainToolName(entry.tool_name) === 'present_primary_view' &&
+          entry.status === 'succeeded',
+      );
+      const parsedNomination = PresentPrimaryViewOutputSchema.safeParse(
+        successfulControls.at(-1)?.proposal_output,
+      );
+      const nomination = parsedNomination.success ? parsedNomination.data : undefined;
+      const resolvedNomination = nomination
+        ? await resolvePrimaryViewNomination(nomination, trace, options.resolveArtifactReference)
+        : undefined;
+      const presented = {
+        text: legacyPresented.text,
+        ...(resolvedNomination ? { primaryView: resolvedNomination } : {}),
+      };
       const correction = resolveCorrectionReply(presented.text, options.correctionContract);
       const disclosure = proposalDisclosure(trace);
       const disclosed = applyProposalDisclosure(correction.reply, disclosure);
@@ -338,10 +402,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         throw new Error('tool trace changed while reply validation was in progress');
       }
       const learningBlocked = !learning.passed;
-      const primaryView =
-        learning.passed && !trace.some((entry) => entry.effect === 'read')
-          ? presented.primaryView
-          : undefined;
+      const primaryView = learning.passed ? presented.primaryView : undefined;
       const receipt: CopilotReplyFinalizationReceipt = {
         protocol_version: 1,
         assurance: 'execution_trace_bound',
@@ -358,7 +419,8 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
           : requiresLearningValidation
             ? 'passed'
             : 'not_applicable',
-        primary_view: presented.primaryView ? (primaryView ? 'retained' : 'dropped') : 'absent',
+        primary_view:
+          successfulControls.length > 0 ? (primaryView ? 'retained' : 'dropped') : 'absent',
       };
       return {
         replyText: fixed,

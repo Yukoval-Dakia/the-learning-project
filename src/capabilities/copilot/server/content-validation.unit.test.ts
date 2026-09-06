@@ -100,6 +100,33 @@ describe('validateCopilotLearningContent', () => {
     expect(containsLearningQuestion('是否已经证明 P？\n\n请计算 Q？')).toBe(true);
   });
 
+  it('preserves the existing boundary for an embedded rhetorical question with prose after it', () => {
+    expect(containsLearningQuestion('为什么选择这个方案？因为预算有限。')).toBe(false);
+    expect(containsLearningQuestion('是否已证明 P？请证明 Q？')).toBe(true);
+  });
+
+  it.each([
+    '请计算 2+2？答案是 4。',
+    'Solve 2+2? The answer is 4.',
+    '是否已证明 P？请计算 2+2？答案是 4。',
+    'Can you solve 2+2? The answer is 5.',
+    '你能计算 2+2 吗？答案是 5。',
+    'Could you please prove this identity? The proof is below.',
+    '请帮我判断这个答案正确吗？答案是正确。',
+  ])('validates a direct instruction even with its answer on the same line: %s', async (text) => {
+    expect(containsLearningQuestion(text)).toBe(true);
+    let validatorCalls = 0;
+    const result = await reviewCopilotLearningContent(text, '', 'inline-instruction-answer', {
+      db: {} as never,
+      runTaskFn: async () => {
+        validatorCalls += 1;
+        throw new Error('missing manifest must fail before paid validation');
+      },
+    });
+    expect(result.passed).toBe(false);
+    expect(validatorCalls).toBe(0);
+  });
+
   it('does not let completed wording bypass explicit question protections', () => {
     expect(containsLearningQuestion('题目：是否已证明 P？')).toBe(true);
     expect(containsLearningQuestion('1. 是否已证明 P？')).toBe(true);

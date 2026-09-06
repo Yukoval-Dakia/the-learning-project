@@ -23,8 +23,8 @@ export interface ToolCallLogEntry {
   iteration: number;
   latency_ms: number;
   cost: number;
-  /** YUK-79: 'read' | 'propose' | 'write' for tools dispatched via DomainTool registry. Omit for legacy SDK auto-mirror. */
-  effect?: 'read' | 'propose' | 'write';
+  /** DomainTool registry effect, including local control tools. Omit for legacy SDK auto-mirror. */
+  effect?: 'read' | 'propose' | 'write' | 'control';
   /** YUK-79: set when tool execution hard-fails (timeout / parse / unsupported). */
   error_reason?: string;
   /** YUK-79: set by Lane D when mirrorEvent policy writes an event mirror; FK to event.id. */

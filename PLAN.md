@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-06：945真实验收并合并；964成本口径进入交付，949完整展示控制修复中。
+> Linear 是权威 tracker；更新于 2026-09-06：949收口校验P1；owner改定Copilot统一持续运行，撤回前后台入口方案。
 
 ## NOW
 
@@ -16,10 +16,24 @@
 - Owner新增$10验收预算；945两样本共10个真实请求，公开USD卡估算$0.0130696878。
   保守请求预留合计$0.90823；此前余额$0.28771982单列，历史未知费用不填0。
   公开费率估算不冒充账户账单，SDK派生USD保留为独立观察。
+  949另跑7个受控回合（含失败）：estimated $0.0214406071，case预留$2.8。
+  新$10池合计estimated $0.0345102949，保守预留$3.70823、剩$6.29177；当前停付费。
 - YUK949：owner明确选FULL，允许按需短presentation control交互，ADR0061；
   agent看完结果提名，server校验，保留tool_result/artifact/ephemeral_html；不提高预算、不改生产UI。
-  tlp-wt-primary-view-owner初稿ea8367c7被初审5P1否决：read路径丢hero、未校验ref、
-  durable恢复丢pv、误删944 prompt约束、4个新增lint错误。修复中，尚未交付。
+  初稿ea8367c7的5P1已由81eb7f3e修复，ed693e16集成main9e02c48b。
+  唯一验证审确认原5项已修；新发现raw artifact类型无导航，root改为owner-resolved canonical ref。
+  208集成unit+76针对性unit/49durableDB/6引用DB通过；唯一验证审PASS，无第三轮。
+  8个shipped浏览器用例验证三类hero/无hero的inline+durable+刷新恢复，无生产UI改动。
+  actual过程无hero/read引用/author→artifact通过；三次HTML模型保存误述完整保留，不冒充模型遵循。
+  081471e4将真实保存说明交给shared commit owner，保留实质正文并明确权威状态；同步reseal/hash及SDK cursor。
+  三条真实失败终文免费重放全部通过；322scoped unit、56DB、typecheck/lint/build通过。
+  PR1345 cc3afecd CI34039845298仅DB2到30分钟取消，其余lane绿；未合并，不冒充绿。
+  已集成960 main3791bf4d；210c6051恢复mid-line锚后，同一行题目+答案的真实P1由root补直接指令保护。
+  三个RED回归后58scoped tests绿；保留报告/修辞问句边界，未增付费/第三轮review。tool_result仍为既有placeholder。
+- YUK948/950 owner新决定：Copilot不分前后台，默认不中断；关闭面板/刷新/断线只脱离订阅。
+  服务端唯一执行owner；同一会话后续消息持久接纳并顺序消费，不409 busy、不要求先Stop。
+  撤回Mission按钮方案及其UI preflight；保留显式Stop与安全/预算限制。新UI尚未实施或获preflight批准。
+  复用copilot_run并补teaching、native compaction、无本地缓存恢复的parity，不新增第二调度框架。
 - YUK961 Done：Agency拥有pool-gap提示政策，Practice仅提交verify事实；
   PR1340 exact69542b2d CI34032977403绿，main50ba305b；48DB/独立review通过。
 - YUK962 Done：5个纯测试文件移入unit，59tests通过，总1043文件不减；
@@ -27,10 +41,11 @@
   CI34034085071绿，mainc43d51be；独立review/typecheck/lint/build通过。
 - YUK963 Done：record命令审计缺口红绿复现，70tests通过；不增豁免。
   PR1342 exact417623b5 CI34034266076绿，main4034859c。
-- YUK964：复用catalog公开分模型USD卡，不再把正数MiMo SDK派生金额当reported账单。
+- YUK964 Done：复用catalog公开分模型USD卡，不再把正数MiMo SDK派生金额当reported账单。
   4项RED后37unit/24runnerDB通过，10条已封存真实wire免费回放全部匹配，review PASS。
   CI暴露4条旧失败路径成本断言，保留失败/恢复/usage断言并更新estimate；AI目录418unit全绿。
-  typecheck/lint/build/audit通过；PR1343已集成main8e534d3c，待修订后的exact CI，尚未合并。
+  typecheck/lint/build/audit通过；PR1343 exactc1afae75 CI34036794558绿，已合并main9e02c48b。
+  无新增付费、不改历史ledger、未部署。
 - YUK944 Done：PR1338 exact3fd90c4d CI34030191329绿，main db5a57b1。
   五读取actual核心通过，但input40410 vs40401持平，不能称该复杂样本降本。
 - 已交付：Pipeline1326、Goal1327、Knowledge1328、Import1329、execution1330、
@@ -41,9 +56,11 @@
 
 ## NEXT
 
-1. YUK964集成后exact CI交付；历史ledger/其它provider策略不变，不追加付费调用。
-2. YUK949修复5P1后唯一验证审，再做完整呈现actual；UI若要改代码仍需设计预检。
-3. YUK948显式Mission入口、950同轮steer、960报告问句误拦；保留真实学习内容保护。
+1. YUK949完整呈现actual与exact CI交付，后台/前台/恢复共享发布语义。
+2. YUK960 PR1344 exact960d0b64，CI34038363273失败lane重跑后绿，已合并3791bf4d。
+   同类762去重重开Todo；非归因逻辑变更，不加timeout/删保护。小范围mid-line边界回归由949中的210c6051收口。
+3. YUK948统一持续执行与服务端恢复；950同会话追加消息，禁止以先Stop/409拒绝替代。
+   先后端接纳/顺序执行与teaching/native session parity，再按新方案完成UI preflight和断线实际验收。
 4. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
 5. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
@@ -52,11 +69,12 @@
 ## PARKED
 
 - 951旧mailbox/ToolOperations仅drain-only；退休需零pending/零队列活动覆盖完整重试窗。
+- 762归因DB测试60s超时复发，需查等待与连接生命周期；当前因果未证，不把资源压力当结论。
 - 921多provider、572夜间教研、832HOLD不解锁。
 - 计费、重试、prompt/skill、复杂parser、并发/回滚/恢复、UI安全测试仍保留，不按数量硬删。
 
 ## BLOCKED-ON
 
-- 当前945/949有安全实施路径，不标完整goal blocked或complete。
+- 当前949/960有安全实施路径，不标完整goal blocked或complete。
 - 未授权部署、生产clone、SoT开关、backfill或历史数据删除；均未执行。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。

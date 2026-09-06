@@ -94,6 +94,7 @@ import {
   type CopilotReplyFinalizationReceipt,
   type PreparedCopilotReply,
   extractPrimaryView,
+  sealCommittedPresentationReply,
 } from './reply-finalization';
 import type { CopilotSubtaskEvent, SpawnBudgetObservation } from './subagents';
 
@@ -145,9 +146,9 @@ export interface CopilotChatResult {
   // non-streaming path never sets it, so existing consumers are unaffected; the
   // Dock surfaces its existing error affordance alongside the partial reply.
   error?: string;
-  // YUK-307 — additive optional hero nomination (§2.3). Set when the model's
-  // reply carried a valid primary_view marker (free-form path only; the teaching
-  // behavior pack is deterministic and never nominates). Rides the terminal
+  // YUK-307 / YUK-949 — additive optional hero nomination (§2.3). Set only when
+  // root reply finalization accepted an explicit present_primary_view control;
+  // the teaching behavior pack is deterministic and never nominates. Rides the terminal
   // `reply` SSE event in streaming mode and the JSON result in non-streaming
   // mode — both modes carry it on the final reply envelope. Absent → no hero.
   primary_view?: CopilotPrimaryView;
@@ -203,11 +204,12 @@ export async function writeCopilotUserAsk(
 // （runCopilotChatImpl free-form 收敛点）与 durable 路径（worker handler 成功路径）
 // 共用同一份写入逻辑，防止 conversation 历史可见的 copilot_reply domain event 形态
 // 在两条路径上分叉。durable run 之前只把终稿写进 job_events（SSE 进度），从不写
-// experimental:copilot_reply domain event，也不剥 primary_view marker —— turns.ts
+// experimental:copilot_reply domain event，也不剥遗留 primary_view marker —— turns.ts
 // 的 conversation_history 只读 copilot_user_ask + copilot_reply domain event，所以
 // durable 回复对历史不可见、user_ask 成 phantom（下一轮模型没有自己上一条 durable
-// 答复的记忆）。本 helper 收口该写入：extractPrimaryView 剥 marker + 写正确形态的
-// copilot_reply domain event（chained caused_by → userAskEventId，同 session_id）。
+// 答复的记忆）。本 helper 收口该写入：接受 root-finalized primary view、剥除遗留
+// marker，并写正确形态的 copilot_reply domain event（chained caused_by →
+// userAskEventId，同 session_id）。
 //
 // 注意：teaching behavior pack（runTeachingBehaviorPack）有自己的 reply 写入（在
 // 一个 db.transaction 内 + turn_kind/skill_turn/skill_context 字段），那是确定性
@@ -215,7 +217,7 @@ export async function writeCopilotUserAsk(
 // free-form 路径（inline free-form 收敛点 + durable handler，两者皆 free-form 等价）。
 export interface WriteCopilotReplyResult {
   replyEventId: string;
-  /** 剥掉 primary_view marker 后的终稿（持久化 / 返回 / 重放历史都用这份）。 */
+  /** 剥掉 legacy primary_view marker 后的终稿（持久化 / 返回 / 重放历史都用这份）。 */
   cleanedReply: string;
   /** 模型 nominate 的 hero（无则 undefined）。 */
   primaryView?: CopilotPrimaryView;
@@ -233,11 +235,11 @@ export async function writeCopilotReply(
     sessionId: string;
     /** caused_by + in_reply_to 锚——通常是 user_ask（chat）或 chip trigger event id。 */
     userAskEventId?: string;
-    /** 模型原始终稿（含可能的 primary_view marker；本 helper 负责剥）。 */
+    /** 模型终稿；遗留 primary_view marker 只会被剥除，不再授予展示权限。 */
     replyText: string;
     /**
      * A reply already normalized by root finalization. When present,
-     * this is the byte-authoritative payload and MUST NOT be transformed again.
+     * its digest is checked before the commit owner seals product-state disclosure.
      */
     preparedReply?: PreparedCopilotReply;
     /** copilot_reply 的 actor_ref（inline=selectActorRef；durable handler 同款）。 */
@@ -277,22 +279,25 @@ export async function writeCopilotReply(
   if (params.preparedReply && params.preparedReply.text !== params.replyText) {
     throw new Error('prepared copilot reply bytes do not match replyText');
   }
-  // YUK-939 — finalized replies pass through this convergence point byte-for-byte. Legacy callers
-  // still normalize here. Never certify raw bytes and persist a transformed
-  // suffix (notably an unterminated primary_view marker) afterward.
+  // Verify the incoming seal before applying the commit-owned storage policy.
+  // Model normalization is already complete; legacy callers only strip markers.
+  // The product policy reseals its own final bytes below, never a stale digest.
   const prepared =
     params.preparedReply ??
-    extractPrimaryView(params.replyText, {
-      taskRunId: params.taskRunId,
-    });
-  const cleanedReply = prepared.text;
+    ({
+      text: extractPrimaryView(params.replyText, {
+        taskRunId: params.taskRunId,
+      }).text,
+    } satisfies PreparedCopilotReply);
   if (
     params.replyFinalization &&
     params.replyFinalization.reply_sha256 !==
-      createHash('sha256').update(cleanedReply, 'utf8').digest('hex')
+      createHash('sha256').update(prepared.text, 'utf8').digest('hex')
   ) {
     throw new Error('copilot reply finalization digest does not match persisted bytes');
   }
+  const sealed = sealCommittedPresentationReply(prepared, params.replyFinalization);
+  const cleanedReply = sealed.preparedReply.text;
   const primaryView = prepared.primaryView;
   // created_at 严格晚于 ask（now + 1ms）：整轮共享一个 now，无偏移则 ask/reply
   // 在 created_at 上打平，turns 读取器的 (created_at, id) 排序可能把 reply 排到自己
@@ -314,7 +319,7 @@ export async function writeCopilotReply(
       reply_md: cleanedReply,
       task_run_id: params.taskRunId,
       ...(params.evidenceValidation ? { evidence_validation: params.evidenceValidation } : {}),
-      ...(params.replyFinalization ? { reply_finalization: params.replyFinalization } : {}),
+      ...(sealed.receipt ? { reply_finalization: sealed.receipt } : {}),
       ...(params.durableFinishReason ? { durable_finish_reason: params.durableFinishReason } : {}),
       ...(params.durableEmitReviewedDelta ? { durable_emit_reviewed_delta: true } : {}),
       ...(params.durableFailure ? { durable_failure: params.durableFailure } : {}),
@@ -882,9 +887,9 @@ async function runCopilotChatImpl(
         : { kind: 'failed' },
   );
 
-  // YUK-307 — single convergence point for BOTH the JSON and streaming paths:
-  // parse + strip the primary_view marker ONCE from the collected reply, then
-  // persist the reply turn. From here on, ONLY cleanedReply is used (persisted
+  // YUK-307 / YUK-949 — single convergence point for BOTH the JSON and streaming
+  // paths: persist the root-finalized control projection, while stripping any
+  // legacy primary_view marker from the collected reply. From here on, ONLY cleanedReply is used (persisted
   // reply_md / returned reply / — via persistence — any future replayed history),
   // so the marker text never survives the turn (YUK-267 text-channel guarantee).
   //
@@ -894,8 +899,9 @@ async function runCopilotChatImpl(
   // actorRef). Payload free-form per ExperimentalEvent (zero schema).
   //
   // YUK-364 — 经共享 writeCopilotReply（与 durable worker handler 成功路径同一份
-  // 写入逻辑，防 copilot_reply domain event 形态分叉）。extractPrimaryView 剥 marker
-  // + created_at=now+1ms offset + payload/顶层字段形态 byte-identical（writeFn 透传
+  // 写入逻辑，防 copilot_reply domain event 形态分叉）。root finalization 授权 hero，
+  // writer 仅剥 legacy marker；created_at=now+1ms offset + payload/顶层字段形态
+  // byte-identical（writeFn 透传
   // deps.writeEventFn ?? writeEvent 保持既有可注入语义）。
   const { replyEventId, cleanedReply, primaryView } = await writeCopilotReply(db, {
     sessionId,
@@ -903,7 +909,7 @@ async function runCopilotChatImpl(
     replyText,
     preparedReply: {
       text: replyText,
-      ...(finalized.preparedReply.primaryView
+      ...(!execution.partial && finalized.accepted && finalized.preparedReply.primaryView
         ? { primaryView: finalized.preparedReply.primaryView }
         : {}),
     },
@@ -920,7 +926,8 @@ async function runCopilotChatImpl(
   // product history the user actually saw.
   if (
     deliveredSdkSessionId &&
-    finalized.receipt.candidate_sha256 !== finalized.receipt.reply_sha256
+    finalized.receipt.candidate_sha256 !==
+      createHash('sha256').update(cleanedReply, 'utf8').digest('hex')
   ) {
     await clearAgentSdkSessionId(db, sessionId);
     clearCopilotSessionContextDelivery(deliveredSdkSessionId);

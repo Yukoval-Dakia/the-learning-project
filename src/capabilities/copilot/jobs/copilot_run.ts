@@ -82,7 +82,11 @@ import {
   parseCopilotModeCompletion,
   resolveCopilotModeCompletion,
 } from '../server/mode-completion';
-import type { CopilotReplyFinalizationReceipt } from '../server/reply-finalization';
+import {
+  CopilotPrimaryViewSchema,
+  type CopilotReplyFinalizationReceipt,
+} from '../server/reply-finalization';
+import type { CopilotPrimaryView } from '../server/turns';
 
 export { enqueueCopilotMailboxJob } from '../api/chat';
 
@@ -162,7 +166,13 @@ export interface RunCopilotRunParams {
 }
 
 export type RunCopilotRunResult =
-  | { status: 'done'; reply: string; task_run_id: string; skill_turn?: CopilotSkillTurn }
+  | {
+      status: 'done';
+      reply: string;
+      task_run_id: string;
+      skill_turn?: CopilotSkillTurn;
+      primary_view?: CopilotPrimaryView;
+    }
   | { status: 'cancelled' }
   | { status: 'failed'; error: string };
 
@@ -172,6 +182,7 @@ interface SuccessfulTerminalProjection {
   taskRunId: string;
   finishReason: string;
   modeState?: CopilotModeState;
+  primaryView?: CopilotPrimaryView;
 }
 
 export interface TerminalProjectionEvent {
@@ -364,6 +375,7 @@ export async function writeSuccessfulTerminalProjection(
         payload: {
           reply_md: projection.replyMd,
           task_run_id: projection.taskRunId,
+          ...(projection.primaryView ? { primary_view: projection.primaryView } : {}),
           ...(projection.modeState ?? {}),
           ...checkpointPayload,
         },
@@ -484,6 +496,7 @@ async function findPersistedDurableReply(
   }
   if (row.outcome !== 'success') return null;
   const modeState = parseCopilotModeCompletion(payload);
+  const primaryView = CopilotPrimaryViewSchema.safeParse(payload.primary_view);
   return {
     outcome: 'success',
     replyMd,
@@ -494,6 +507,7 @@ async function findPersistedDurableReply(
         : 'recovered',
     ...(payload.durable_emit_reviewed_delta === true ? { emitReviewedDelta: true } : {}),
     ...(modeState ? { modeState } : {}),
+    ...(primaryView.success ? { primaryView: primaryView.data } : {}),
   };
 }
 
@@ -559,6 +573,12 @@ function terminalRunResult(
           ? done.payload.task_run_id
           : fallbackTaskRunId,
       ...(modeState ? { skill_turn: modeState.skill_turn } : {}),
+      ...(reply?.payload
+        ? (() => {
+            const primaryView = CopilotPrimaryViewSchema.safeParse(reply.payload.primary_view);
+            return primaryView.success ? { primary_view: primaryView.data } : {};
+          })()
+        : {}),
     };
   }
   const failed = newestFirst.find(
@@ -639,6 +659,7 @@ async function projectCopilotOutcomeMarker(
           reply: marker.replyMd,
           task_run_id: marker.taskRunId,
           ...(marker.modeState ? { skill_turn: marker.modeState.skill_turn } : {}),
+          ...(marker.primaryView ? { primary_view: marker.primaryView } : {}),
         };
       }
       await projectFailedTerminal(
@@ -1046,6 +1067,9 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
             taskRunId: result.taskRunId,
             finishReason: result.finishReason,
             ...(modeState ? { modeState } : {}),
+            ...(reviewedPreparedReply.primaryView
+              ? { primaryView: reviewedPreparedReply.primaryView }
+              : {}),
           };
         },
         {
@@ -1198,7 +1222,9 @@ async function handleDurableFailure(
           sessionId,
           userAskEventId: runId,
           replyText,
-          ...(preparedReply?.text === replyText ? { preparedReply } : {}),
+          ...(preparedReply?.text === replyText
+            ? { preparedReply: { text: preparedReply.text } }
+            : {}),
           actorRef,
           taskRunId: failureTaskRunId,
           replyFinalization,

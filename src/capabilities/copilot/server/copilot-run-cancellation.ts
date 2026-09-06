@@ -52,7 +52,9 @@ export async function persistCopilotRunCancellationMarker(
     sessionId: args.sessionId,
     userAskEventId: args.runId,
     replyText,
-    ...(args.preparedReply?.text === replyText ? { preparedReply: args.preparedReply } : {}),
+    ...(args.preparedReply?.text === replyText
+      ? { preparedReply: { text: args.preparedReply.text } }
+      : {}),
     actorRef: args.actorRef,
     taskRunId,
     ...(args.replyFinalization ? { replyFinalization: args.replyFinalization } : {}),

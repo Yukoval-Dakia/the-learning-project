@@ -9,6 +9,7 @@
 //   YUK-575/YUK-832: N2 reviewed full-delta settlement（S3）/ N3+S4 ambient 装配往返 / N5+MF-A budget /
 //            MF1/MF2 transient·exhausted 分诊 + 幂等守卫 / S6 static 约束。
 
+import { createHash } from 'node:crypto';
 import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -25,6 +26,7 @@ import {
 } from '@/capabilities/copilot/server/copilot-run-status';
 import { countOutstandingDurableRuns } from '@/capabilities/copilot/server/durable-backlog';
 import { withCopilotDurableDispatchLock } from '@/capabilities/copilot/server/durable-dispatch';
+import { EPHEMERAL_PRESENTATION_STORAGE_NOTICE } from '@/capabilities/copilot/server/reply-finalization';
 import type { Db } from '@/db/client';
 import {
   ai_task_runs,
@@ -205,6 +207,7 @@ type CopilotRunTestParams = RunCopilotRunParams & {
 
 function runCopilotRun(params: CopilotRunTestParams): ReturnType<typeof runCopilotRunActual> {
   const {
+    executeCopilotTurnFn,
     streamTaskCollectingFn,
     runValidationTaskFn,
     buildMcpServerFn,
@@ -240,7 +243,7 @@ function runCopilotRun(params: CopilotRunTestParams): ReturnType<typeof runCopil
   });
   return runCopilotRunActual({
     ...runParams,
-    executeCopilotTurnFn: owner,
+    executeCopilotTurnFn: executeCopilotTurnFn ?? owner,
   });
 }
 
@@ -335,7 +338,7 @@ describe('runCopilotRun', () => {
       label: 'inline tags splitting assessment labels',
       html: '<section><h2>题<span>目</span></h2><p>17×19？</p><p>答<span>案</span>：323</p></section>',
     },
-  ])('fails closed for durable ephemeral HTML hidden with $label', async ({ html }) => {
+  ])('strips durable legacy ephemeral HTML hidden with $label', async ({ html }) => {
     const runId = `copilot_user_ask_durable_obfuscated_${html.includes('&#') ? 'entity' : 'tag'}`;
     const marker = `<!--primary_view:${JSON.stringify({ source: 'ephemeral_html', ref: html })}-->`;
 
@@ -354,7 +357,7 @@ describe('runCopilotRun', () => {
 
     expect(result).toMatchObject({
       status: 'done',
-      reply: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY,
+      reply: '请在卡片里作答。',
     });
     expect(JSON.stringify(await replay(runId))).not.toContain('323');
   });
@@ -1462,7 +1465,7 @@ describe('runCopilotRun', () => {
     },
   );
 
-  it('F1 — primary_view marker 在 domain event 与 job_events 里都被剥掉', async () => {
+  it('F1 — legacy primary_view marker is stripped but cannot authorize either durable surface', async () => {
     const runId = 'run_primary_view';
     const sessionId = 'sess_primary_view';
     const marked =
@@ -1478,14 +1481,153 @@ describe('runCopilotRun', () => {
 
     const replies = await copilotReplyEvents(sessionId);
     expect(replies).toHaveLength(1);
-    expect(replies[0]?.payload).toMatchObject({
-      reply_md: '这是正文',
-      primary_view: { source: 'artifact', ref: { kind: 'question', id: 'q_1' } },
-    });
+    expect(replies[0]?.payload).toMatchObject({ reply_md: '这是正文' });
+    expect(replies[0]?.payload).not.toHaveProperty('primary_view');
 
     const events = await replay(runId);
     const replyJobEvent = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.REPLY);
     expect(replyJobEvent?.payload).toMatchObject({ reply_md: '这是正文' });
+    expect(replyJobEvent?.payload).not.toHaveProperty('primary_view');
+  });
+
+  it.each(['tool_result', 'ephemeral_html'] as const)(
+    'persists %s across live durable delivery, repair, and replay',
+    async (source) => {
+      const runId = `copilot_user_ask_primary_view_repair_${source}`;
+      const sessionId = `sess_primary_view_repair_${source}`;
+      const reply = '已核对函数知识点。';
+      const primaryView =
+        source === 'tool_result'
+          ? {
+              source,
+              ref: { kind: 'query_knowledge', id: 'toolu_root_read_1' },
+            }
+          : { source, ref: '<section>资料</section>' };
+      const committedReply =
+        source === 'ephemeral_html' ? reply + EPHEMERAL_PRESENTATION_STORAGE_NOTICE : reply;
+      const execute = vi.fn<NonNullable<RunCopilotRunParams['executeCopilotTurnFn']>>(async () => ({
+        taskRunId: 'tr_primary_view_repair',
+        finishReason: 'end_turn',
+        finalization: {
+          replyText: reply,
+          preparedReply: { text: reply, primaryView },
+          receipt: {
+            protocol_version: 1,
+            assurance: 'execution_trace_bound',
+            root_task_run_id: 'tr_primary_view_repair',
+            candidate_sha256: createHash('sha256').update(reply).digest('hex'),
+            reply_sha256: createHash('sha256').update(reply).digest('hex'),
+            trace_sha256: createHash('sha256').update('trace').digest('hex'),
+            trace_call_count: 2,
+            observed_completed_tool_use_ids: ['toolu_root_read_1', 'toolu_present_1'],
+            correction: 'normal',
+            proposal_disclosure: 'none',
+            learning_content: 'not_applicable',
+            primary_view: 'retained',
+          },
+          accepted: true,
+        },
+        partial: false,
+        candidateDeltaObserved: true,
+        contextDigest: 'primary-view-context',
+      }));
+      const projectTerminal = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('projection temporarily unavailable'))
+        .mockImplementation(writeSuccessfulTerminalProjection);
+      const params = {
+        db: testDb(),
+        data: { ...baseData, run_id: runId, session_id: sessionId },
+        executeCopilotTurnFn: execute,
+        resolveCopilotRunInputFn: stubRunInput,
+        writeSuccessfulTerminalProjectionFn: projectTerminal,
+      } satisfies CopilotRunTestParams;
+
+      await expect(runCopilotRun(params)).rejects.toThrow(
+        `durable success terminal projection failed for ${runId}`,
+      );
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect((await copilotReplyEvents(sessionId))[0]?.payload).toMatchObject({
+        reply_md: committedReply,
+        primary_view: primaryView,
+      });
+
+      await expect(runCopilotRun(params)).resolves.toEqual({
+        status: 'done',
+        reply: committedReply,
+        task_run_id: 'tr_primary_view_repair',
+        primary_view: primaryView,
+      });
+      expect(execute).toHaveBeenCalledTimes(1);
+      const durableReply = (await replay(runId)).find(
+        (item) => item.event_type === COPILOT_RUN_EVENTS.REPLY,
+      );
+      expect(durableReply?.payload).toMatchObject({
+        reply_md: committedReply,
+        primary_view: primaryView,
+      });
+
+      await expect(runCopilotRun(params)).resolves.toEqual({
+        status: 'done',
+        reply: committedReply,
+        task_run_id: 'tr_primary_view_repair',
+        primary_view: primaryView,
+      });
+      expect(execute).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('drops a finalized primary view when the durable attempt is partial/failed', async () => {
+    const runId = 'copilot_user_ask_partial_primary_view';
+    const sessionId = 'sess_partial_primary_view';
+    const reply = '只完成了部分核对。';
+    const primaryView = {
+      source: 'tool_result' as const,
+      ref: { kind: 'query_knowledge', id: 'toolu_partial_read' },
+    };
+    const execute = vi.fn<NonNullable<RunCopilotRunParams['executeCopilotTurnFn']>>(async () => ({
+      taskRunId: 'tr_partial_primary_view',
+      finishReason: 'error',
+      finalization: {
+        replyText: reply,
+        preparedReply: { text: reply, primaryView },
+        receipt: {
+          protocol_version: 1,
+          assurance: 'execution_trace_bound',
+          root_task_run_id: 'tr_partial_primary_view',
+          candidate_sha256: createHash('sha256').update(reply).digest('hex'),
+          reply_sha256: createHash('sha256').update(reply).digest('hex'),
+          trace_sha256: createHash('sha256').update('partial-trace').digest('hex'),
+          trace_call_count: 2,
+          observed_completed_tool_use_ids: ['toolu_partial_read', 'toolu_partial_present'],
+          correction: 'normal',
+          proposal_disclosure: 'none',
+          learning_content: 'not_applicable',
+          primary_view: 'retained',
+        },
+        accepted: true,
+      },
+      partial: true,
+      error: 'provider stream ended before terminal completion',
+      candidateDeltaObserved: true,
+      contextDigest: 'partial-primary-view-context',
+    }));
+
+    await expect(
+      runCopilotRun({
+        db: testDb(),
+        data: { ...baseData, run_id: runId, session_id: sessionId },
+        executeCopilotTurnFn: execute,
+        resolveCopilotRunInputFn: stubRunInput,
+      }),
+    ).resolves.toMatchObject({ status: 'failed' });
+
+    const [persistedReply] = await copilotReplyEvents(sessionId);
+    expect(persistedReply?.payload).toMatchObject({ reply_md: reply });
+    expect(persistedReply?.payload).not.toHaveProperty('primary_view');
+    for (const event of await replay(runId)) {
+      expect(event.payload).not.toHaveProperty('primary_view');
+    }
   });
 
   // YUK-575/YUK-832 (N2/S3) — 原始 chunks 只作“有正文”信号；review 后的完整安全

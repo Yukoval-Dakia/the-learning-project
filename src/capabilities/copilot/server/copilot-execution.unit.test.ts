@@ -154,6 +154,7 @@ describe('Copilot execution owner', () => {
     });
     expect(ctx?.lifecycleAbortController).toBeInstanceOf(AbortController);
     expect(ctx?.allowedTools).toContain('Task');
+    expect(ctx?.allowedTools).toContain('mcp__loom__present_primary_view');
     expect(ctx?.agents?.['copilot-researcher']).toMatchObject({ background: false });
     expect(ctx?.onTaskEvent).toEqual(expect.any(Function));
     expect(mcp?.ctx).toMatchObject({
@@ -365,5 +366,71 @@ describe('Copilot execution owner', () => {
       trace_call_count: 2,
       observed_completed_tool_use_ids: ['root_tool_1'],
     });
+  });
+
+  it('captures the real MCP control output and retains its successful root tool result', async () => {
+    let mcp: BuildMcpServerOptions | undefined;
+    const readInput = { query: '函数' };
+    const nomination = {
+      source: 'tool_result' as const,
+      ref: { kind: 'query_knowledge', id: 'root_read_1' },
+    };
+    const run = vi.fn<CopilotExecutionAdapters['runAgentTaskFn']>(async (_kind, _input, ctx) => {
+      await invokeHooks(ctx.hooks, 'PreToolUse', {
+        hook_event_name: 'PreToolUse',
+        session_id: 'sdk_session',
+        transcript_path: '/tmp/transcript',
+        cwd: '/tmp',
+        tool_name: 'mcp__loom__query_knowledge',
+        tool_use_id: 'root_read_1',
+        tool_input: readInput,
+      });
+      expect(mcp?.claimToolUseId?.('query_knowledge', readInput)).toBe('root_read_1');
+      mcp?.onResult?.({
+        tool_use_id: 'root_read_1',
+        name: 'query_knowledge',
+        effect: 'read',
+        input: readInput,
+        output: { nodes: [{ id: 'kc_1' }] },
+        error_reason: null,
+        executed: true,
+      });
+
+      await invokeHooks(ctx.hooks, 'PreToolUse', {
+        hook_event_name: 'PreToolUse',
+        session_id: 'sdk_session',
+        transcript_path: '/tmp/transcript',
+        cwd: '/tmp',
+        tool_name: 'mcp__loom__present_primary_view',
+        tool_use_id: 'root_present_1',
+        tool_input: nomination,
+      });
+      expect(mcp?.claimToolUseId?.('present_primary_view', nomination)).toBe('root_present_1');
+      mcp?.onResult?.({
+        tool_use_id: 'root_present_1',
+        name: 'present_primary_view',
+        effect: 'control',
+        input: nomination,
+        output: nomination,
+        error_reason: null,
+        executed: true,
+      });
+      return { task_run_id: 'presentation_task', text: '已核对函数知识点。' };
+    });
+    const execute = ownerWith(run, vi.fn(), (options) => {
+      mcp = options;
+    });
+
+    const result = await execute(
+      {} as never,
+      { input, sessionId: 'session_present', taskRunId: 'root_present' },
+      { kind: 'foreground', delivery: 'single', subagentsEnabled: false },
+    );
+
+    expect(result.finalization.preparedReply).toEqual({
+      text: '已核对函数知识点。',
+      primaryView: nomination,
+    });
+    expect(result.finalization.receipt.primary_view).toBe('retained');
   });
 });
