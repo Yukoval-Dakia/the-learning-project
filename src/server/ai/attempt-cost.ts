@@ -23,8 +23,9 @@ export function unknownAttemptCostTruth(provider: string, model: string): Attemp
  * Classify one attempt without turning "unpriced" into numeric zero.
  *
  * Anthropic direct is the only lane where SDK-reported zero is contractual
- * evidence. Compatibility endpoints commonly emit placeholder zero, so they
- * need a positive SDK amount or an explicit pricebook/contract estimate.
+ * evidence. MiMo SDK USD totals are derived from SDK fallback prices, even
+ * when positive: use the explicit local estimate, never call them an invoice.
+ * Other compatibility-lane policy remains unchanged in this bounded correction.
  */
 export function resolveAttemptCostTruth(input: {
   provider: Provider;
@@ -42,6 +43,7 @@ export function resolveAttemptCostTruth(input: {
 
   const reported = input.reportedCostUsd;
   const hasTrustworthyReportedAmount =
+    input.provider !== 'xiaomi' &&
     reported !== undefined &&
     Number.isFinite(reported) &&
     reported >= 0 &&
