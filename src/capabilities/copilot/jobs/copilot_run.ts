@@ -29,6 +29,7 @@ import {
   persistCopilotRunCancellationMarker,
 } from '@/capabilities/copilot/server/copilot-run-cancellation';
 import { acquireCopilotExecutionSettlementLock } from '@/capabilities/copilot/server/copilot-run-coordination';
+import { isCopilotWorkerSessionOwned } from '@/capabilities/copilot/server/copilot-worker-session';
 // YUK-575 (A1/N3) — the shared free-form run-input assembler. The durable handler
 // assembles the FULL run input at pickup time (YUK-596: pass run_id as a causal
 // history anchor in the job's fixed session; conversation_history / learner-state
@@ -67,6 +68,7 @@ import {
 } from '@/server/boss/job-observation';
 import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
+import { getAgentSdkSessionId } from '@/server/session/conversation';
 import { resolveCopilotSkills } from '@/subjects/copilot-skills';
 import type {
   CopilotModeState,
@@ -874,6 +876,13 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
     now: new Date(),
     historyAnchorEventId: runId,
   });
+  // A worker may resume only a session it observed and registered in this
+  // process, and only while the conversation row still points at that id.
+  // Persisted ids from another process/app are intentionally cold-started.
+  const persistedSdkSessionId = await getAgentSdkSessionId(db, data.session_id);
+  const resumeSessionId = isCopilotWorkerSessionOwned(persistedSdkSessionId)
+    ? persistedSdkSessionId ?? undefined
+    : undefined;
   const progressChain: Promise<void> = Promise.resolve();
   // Load-bearing execution fence, deliberately placed after every deterministic
   // setup/read and immediately before the only paid/external-effect gateway.
@@ -958,6 +967,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
         kind: 'durable',
         cancellation: cancellationControl,
         deadlineAt: Date.now() + DURABLE_OWNER_SETTLEMENT_BUDGET_MS,
+        ...(resumeSessionId ? { resumeSessionId } : {}),
         ...(params.copilotSubagentEnabled !== undefined
           ? { subagentsEnabled: params.copilotSubagentEnabled }
           : {}),

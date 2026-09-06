@@ -44,6 +44,7 @@ import {
 } from './live-turn-context';
 import { resolveLivePrimaryViewArtifact } from './primary-view-reference';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
+import { clearCopilotWorkerSession, registerCopilotWorkerSession } from './copilot-worker-session';
 import {
   type CopilotReplyFinalizationResult,
   createCopilotReplyFinalizer,
@@ -106,6 +107,7 @@ export type CopilotExecutionPolicy =
       /** Durable job owns polling/settlement; this module owns every propagation point. */
       cancellation: CopilotRunCancellationControl;
       deadlineAt: number;
+      resumeSessionId?: string;
       subagentsEnabled?: boolean;
       observe?: (activity: CopilotExecutionActivity) => Promise<void> | void;
     };
@@ -396,7 +398,7 @@ export function createCopilotExecutionOwner(
     sdkHooks = prependCopilotFinalizationHooks(finalizer.hooks, sdkHooks);
     const skills = await adapters.resolveCopilotSkillsFn();
     const contextDigest = copilotSessionContextDigest(input);
-    const resumeSessionId = policy.kind === 'foreground' ? policy.resumeSessionId : undefined;
+    const resumeSessionId = policy.resumeSessionId;
     const mode: 'cold' | 'resume' = resumeSessionId ? 'resume' : 'cold';
     const compiledModelPrompt = {
       text: compileCopilotModelInput(input, mode, {
@@ -408,16 +410,14 @@ export function createCopilotExecutionOwner(
       contextDigest,
     };
     let observedSdkSessionId: string | undefined;
-    const sdkSession =
-      policy.kind === 'foreground'
-        ? {
-            persist: true as const,
-            ...(resumeSessionId ? { resume: resumeSessionId } : {}),
-            onSessionId: (sessionId: string) => {
-              observedSdkSessionId = sessionId;
-            },
-          }
-        : undefined;
+    const sdkSession = {
+      persist: true as const,
+      ...(resumeSessionId ? { resume: resumeSessionId } : {}),
+      onSessionId: (sessionId: string) => {
+        observedSdkSessionId = sessionId;
+        registerCopilotWorkerSession(sessionId);
+      },
+    };
     const runnerContext: Parameters<typeof streamTaskCollecting>[2] = {
       db,
       taskRunId: turn.taskRunId,
@@ -445,11 +445,9 @@ export function createCopilotExecutionOwner(
               timeoutMs: DURABLE_COPILOT_EXECUTION_BUDGET.timeoutMs,
             },
           }
-        : { sdkSession }),
-      nativeCompaction:
-        policy.kind === 'foreground'
-          ? { sessionContext: compileCopilotSessionContext(input) }
-          : undefined,
+        : {}),
+      sdkSession,
+      nativeCompaction: { sessionContext: compileCopilotSessionContext(input) },
       onToolUse: (call) => {
         if (!shouldEmitToolUseForCaller(call.toolName, DOMAIN_TOOL_MCP_SERVER_NAME, callerActor)) {
           return;
@@ -460,6 +458,7 @@ export function createCopilotExecutionOwner(
       },
     };
     let candidateDeltaObserved = false;
+    let retainSdkSession = false;
     const disposeSubagentCancellation = bindSubagentParentCancellation(db, {
       sessionId: turn.sessionId,
       parentTaskRunId: turn.taskRunId,
@@ -487,11 +486,12 @@ export function createCopilotExecutionOwner(
         terminalText = streamResult.terminalText ?? '';
         partial = streamResult.partial === true;
         executionError = streamResult.error;
-        if (policy.kind === 'foreground' && resumeSessionId && partial) {
+        if (resumeSessionId && partial) {
           throw new Error('resumed Agent SDK session returned partial output');
         }
       }
       const finalization = await finalizer.finalizeTerminal(terminalText);
+      retainSdkSession = !partial && finalization.accepted;
       return {
         taskRunId: result.task_run_id,
         finishReason: result.finishReason ?? 'unknown',
@@ -503,6 +503,10 @@ export function createCopilotExecutionOwner(
         contextDigest,
       };
     } finally {
+      if (!retainSdkSession) {
+        if (observedSdkSessionId) clearCopilotWorkerSession(observedSdkSessionId);
+        if (resumeSessionId) clearCopilotWorkerSession(resumeSessionId);
+      }
       await disposeSubagentCancellation();
     }
   };

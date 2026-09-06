@@ -213,8 +213,8 @@ describe('Copilot execution owner', () => {
         timeoutMs: DURABLE_COPILOT_EXECUTION_BUDGET.timeoutMs,
       },
     });
-    expect(ctx?.sdkSession).toBeUndefined();
-    expect(ctx?.nativeCompaction).toBeUndefined();
+    expect(ctx?.sdkSession).toMatchObject({ persist: true });
+    expect(ctx?.nativeCompaction).toMatchObject({ sessionContext: expect.anything() });
     expect(ctx?.allowedTools).toContain('Task');
     expect(ctx?.agents?.['copilot-researcher']).toMatchObject({
       background: false,
