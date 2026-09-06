@@ -90,19 +90,14 @@ describe('validateCopilotLearningContent', () => {
 
   it('keeps HTML assessments protected even when visible prose is a report', async () => {
     let validatorCalls = 0;
-    const result = await reviewCopilotLearningContent(
-      '是否已证明 P？',
-      '',
-      'html-assessment-960',
-      {
-        db: {} as never,
-        additionalVisibleText: '<p>答案：323</p>',
-        runTaskFn: async () => {
-          validatorCalls += 1;
-          throw new Error('manifest-free assessment must fail before provider work');
-        },
+    const result = await reviewCopilotLearningContent('是否已证明 P？', '', 'html-assessment-960', {
+      db: {} as never,
+      additionalVisibleText: '<p>答案：323</p>',
+      runTaskFn: async () => {
+        validatorCalls += 1;
+        throw new Error('manifest-free assessment must fail before provider work');
       },
-    );
+    });
 
     expect(result.passed).toBe(false);
     expect(validatorCalls).toBe(0);

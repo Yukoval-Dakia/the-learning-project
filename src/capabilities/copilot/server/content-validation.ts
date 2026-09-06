@@ -116,11 +116,7 @@ export function containsLearningQuestion(text: string): boolean {
       });
     },
   );
-  return (
-    explicitLabel.test(text) ||
-    numberedQuestion.test(text) ||
-    activeInstructionalQuestion
-  );
+  return explicitLabel.test(text) || numberedQuestion.test(text) || activeInstructionalQuestion;
 }
 
 function containsLearningSolution(text: string): boolean {
