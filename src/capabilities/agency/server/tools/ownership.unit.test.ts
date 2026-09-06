@@ -5,7 +5,12 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { agencyCapability } from '@/capabilities/agency/manifest';
-import { DOMAIN_TOOL_ALLOWLISTS, PROPOSE_WRITE_TOOLS, READ_TOOLS } from '@/kernel/tools/allowlists';
+import {
+  CONTROL_TOOLS,
+  DOMAIN_TOOL_ALLOWLISTS,
+  PROPOSE_WRITE_TOOLS,
+  READ_TOOLS,
+} from '@/kernel/tools/allowlists';
 import type { DomainTool } from '@/kernel/tools/types';
 import { zodToJsonSchemaCompat } from '@/kernel/zod-json-schema';
 import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
@@ -125,7 +130,7 @@ describe('Agency tool and proposal lifecycle ownership', () => {
       [...AGENCY_TOOL_NAMES, 'generate_goal_outline'].sort(),
     );
     await registerCapabilityTools([agencyCapability]);
-    const fullAllowlist = [...READ_TOOLS, ...PROPOSE_WRITE_TOOLS];
+    const fullAllowlist = [...READ_TOOLS, ...PROPOSE_WRITE_TOOLS, ...CONTROL_TOOLS];
     for (const name of AGENCY_TOOL_NAMES) {
       const tool = getTool(name);
       expect(tool, name).toBeDefined();

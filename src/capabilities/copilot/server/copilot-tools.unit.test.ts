@@ -3,10 +3,12 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import { capabilities } from '@/capabilities';
 import { copilotCapability } from '@/capabilities/copilot/manifest';
 import {
+  CONTROL_TOOLS,
   COPILOT_TOOLS,
   DOMAIN_TOOL_ALLOWLISTS,
   PROPOSE_WRITE_TOOLS,
@@ -15,7 +17,11 @@ import {
 import type { DomainTool } from '@/kernel/tools/types';
 import { zodToJsonSchemaCompat } from '@/kernel/zod-json-schema';
 
-const COPILOT_OWNED_TOOL_NAMES = ['query_events', 'search_memory_facts'] as const;
+const COPILOT_OWNED_TOOL_NAMES = [
+  'present_primary_view',
+  'query_events',
+  'search_memory_facts',
+] as const;
 
 const LEGACY_MODEL_CONTROL_NAMES = [
   'get_tool_operation',
@@ -28,11 +34,13 @@ const LEGACY_MODEL_CONTROL_NAMES = [
 ] as const;
 
 const OWNED_TOOL_CONTRACT_HASHES = {
+  present_primary_view: '1e6f4e78ad855afefe2c98fcbd60cfedb8423919b42021e97e0c94e714c23685',
   query_events: 'f3098863057a3ca16c3180c594c634e2f09bde171af1884ed125740359429587',
   search_memory_facts: '44cc3f998658c5568711443e9e17c44135055493a39ac9971e0353dd51d9f929',
 } as const;
 
 const OWNED_TOOL_EXPOSURES = {
+  present_primary_view: ['copilot', 'copilot_user_suggested_mistake_action'],
   query_events: [
     'knowledge_review',
     'copilot',
@@ -80,10 +88,10 @@ function contractFingerprint(tool: DomainTool<unknown, unknown>): string {
 describe('copilotTools 贡献制 ↔ COPILOT_TOOLS allowlist 对账', () => {
   it('五包声明聚合覆盖完整 DomainTool inventory 且无重复', () => {
     const declared = capabilities.flatMap((c) => c.copilotTools?.tools.map((t) => t.name) ?? []);
-    const fullInventory = [...READ_TOOLS, ...PROPOSE_WRITE_TOOLS];
+    const fullInventory = [...READ_TOOLS, ...PROPOSE_WRITE_TOOLS, ...CONTROL_TOOLS];
     expect(new Set(declared)).toEqual(new Set(fullInventory));
     expect(declared).toHaveLength(fullInventory.length);
-    expect(fullInventory).toHaveLength(41);
+    expect(fullInventory).toHaveLength(42);
     for (const name of LEGACY_MODEL_CONTROL_NAMES) {
       expect(declared, name).not.toContain(name);
       expect(fullInventory, name).not.toContain(name);
@@ -96,7 +104,7 @@ describe('copilotTools 贡献制 ↔ COPILOT_TOOLS allowlist 对账', () => {
     );
     expect(COPILOT_TOOLS.every((name) => declared.has(name))).toBe(true);
     expect(new Set(COPILOT_TOOLS).size).toBe(COPILOT_TOOLS.length);
-    expect(COPILOT_TOOLS).toHaveLength(30);
+    expect(COPILOT_TOOLS).toHaveLength(31);
     expect(COPILOT_TOOLS).toContain('author_question');
     expect(COPILOT_TOOLS).toEqual(
       expect.arrayContaining(['generate_goal_outline', 'generate_question_candidate']),
@@ -108,8 +116,21 @@ describe('copilotTools 贡献制 ↔ COPILOT_TOOLS allowlist 对账', () => {
 });
 
 describe('copilot server ownership (YUK-884)', () => {
+  it('exposes primary-view intent as an actual MCP-compatible control schema', async () => {
+    const declaration = copilotCapability.copilotTools?.tools.find(
+      (tool) => tool.name === 'present_primary_view',
+    );
+    const tool = (await declaration?.load?.()) as DomainTool<unknown, unknown> | undefined;
+    expect(tool?.effect).toBe('control');
+    expect(tool?.mirrorEvent).toBe('never');
+    expect(tool?.inputSchema).toBeInstanceOf(z.ZodObject);
+    expect(
+      tool?.inputSchema.safeParse({ source: 'artifact', ref: '<p>wrong carrier</p>' }).success,
+    ).toBe(false);
+  });
+
   it('deletes central implementations and owns its local tools under Copilot', () => {
-    for (const name of ['query-events', 'search-memory-facts']) {
+    for (const name of ['present-primary-view', 'query-events', 'search-memory-facts']) {
       expect(
         existsSync(join(process.cwd(), `src/capabilities/copilot/server/tools/${name}.ts`)),
         name,
@@ -159,7 +180,7 @@ describe('copilot server ownership (YUK-884)', () => {
 
   it('loads unchanged contracts from Copilot and preserves every permission surface', async () => {
     const declarations = copilotCapability.copilotTools?.tools ?? [];
-    const fullAllowlist = [...READ_TOOLS, ...PROPOSE_WRITE_TOOLS];
+    const fullAllowlist = [...READ_TOOLS, ...PROPOSE_WRITE_TOOLS, ...CONTROL_TOOLS];
 
     for (const name of COPILOT_OWNED_TOOL_NAMES) {
       const matches = declarations.filter((declaration) => declaration.name === name);

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -67,6 +68,7 @@ type ChatTestDeps = CopilotChatDeps & {
 
 function withFixtureFinalizer(deps: ChatTestDeps): CopilotChatDeps {
   const {
+    executeCopilotTurnFn,
     runAgentTaskFn,
     streamAgentTaskFn,
     buildMcpServerFn,
@@ -95,13 +97,15 @@ function withFixtureFinalizer(deps: ChatTestDeps): CopilotChatDeps {
   });
   return {
     ...chatDeps,
-    executeCopilotTurnFn: (db, turn, policy) =>
-      owner(db, turn, {
-        ...policy,
-        ...(copilotSubagentEnabled !== undefined
-          ? { subagentsEnabled: copilotSubagentEnabled }
-          : {}),
-      }),
+    executeCopilotTurnFn:
+      executeCopilotTurnFn ??
+      ((db, turn, policy) =>
+        owner(db, turn, {
+          ...policy,
+          ...(copilotSubagentEnabled !== undefined
+            ? { subagentsEnabled: copilotSubagentEnabled }
+            : {}),
+        })),
   };
 }
 
@@ -160,7 +164,7 @@ describe('runCopilotChat (two-surface routing)', () => {
     expect(reply.payload?.skill_context).toBeUndefined();
   });
 
-  it('blocks assessed ephemeral HTML when the learning-content marker is missing', async () => {
+  it('strips legacy assessed ephemeral HTML before it becomes visible', async () => {
     const html = '<section><p>1. 求 17×19？</p><p>17×20-17=323</p></section>';
     const marker = `<!--primary_view:${JSON.stringify({ source: 'ephemeral_html', ref: html })}-->`;
 
@@ -184,7 +188,7 @@ describe('runCopilotChat (two-surface routing)', () => {
       },
     );
 
-    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
+    expect(result.reply).toBe('请在卡片里作答。');
     expect(result).not.toHaveProperty('primary_view');
   });
 
@@ -197,7 +201,7 @@ describe('runCopilotChat (two-surface routing)', () => {
       label: 'inline tags splitting assessment labels',
       html: '<section><h2>题<span>目</span></h2><p>17×19？</p><p>答<span>案</span>：323</p></section>',
     },
-  ])('blocks assessed ephemeral HTML hidden with $label', async ({ html }) => {
+  ])('strips legacy assessed ephemeral HTML hidden with $label', async ({ html }) => {
     const marker = `<!--primary_view:${JSON.stringify({ source: 'ephemeral_html', ref: html })}-->`;
 
     const result = await runCopilotChat(
@@ -220,7 +224,7 @@ describe('runCopilotChat (two-surface routing)', () => {
       },
     );
 
-    expect(result.reply).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
+    expect(result.reply).toBe('请在卡片里作答。');
     expect(result).not.toHaveProperty('primary_view');
   });
 
@@ -2491,18 +2495,18 @@ describe('runCopilotChat — learner-state header (YUK-574)', () => {
   });
 });
 
-// YUK-307 (C1 — presentation layer §2.3) — primary_view hero nomination. The
-// model appends an HTML-comment marker as its reply's LAST output; chat.ts
-// parses + strips it at the single JSON/streaming convergence point, persists
-// it as an ADDITIVE reply-payload field, and returns it on CopilotChatResult.
-// Lenient by contract: a malformed marker degrades to absent and never fails
-// the turn. 防循环 红线: the field is reply METADATA and must never re-enter
-// prompt assembly (T8a/T8b below).
+// YUK-307 / YUK-949 (presentation layer §2.3) — root finalization validates the
+// explicit presentation control, then chat.ts persists its projection as an
+// additive reply-payload field and returns it on CopilotChatResult. Legacy
+// marker syntax is strip-only: malformed input degrades to absent and never
+// fails the turn. 防循环 红线: the field is reply METADATA and must never
+// re-enter prompt assembly (T8a/T8b below).
 describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
   const baseDeps = {
     findOrCreateConversationFn: async () => ({ sessionId: 'ls_pv', created: false }),
     resolveLearnerStateHeaderFn: async () => ({ header_md: '', proposal_feedback: [] }),
     loadHistoryFn: async () => [],
+    getAgentSdkSessionIdFn: async () => null,
     now: () => new Date('2026-06-10T00:00:00.000Z'),
   };
   const VALID_MARKER =
@@ -2517,7 +2521,45 @@ describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
     }));
   const mkWrite = () => vi.fn(async (_db: unknown, input: { id: string }) => input.id);
 
-  it('T1: a valid artifact marker → result + persisted payload carry primary_view; reply_md is cleaned', async () => {
+  const mkFinalizedPrimaryExecution = (
+    text: string,
+    primaryView: {
+      source: 'tool_result' | 'artifact';
+      ref: { kind: string; id: string };
+    },
+    partial = false,
+  ): NonNullable<CopilotChatDeps['executeCopilotTurnFn']> => {
+    const execute: NonNullable<CopilotChatDeps['executeCopilotTurnFn']> = async () => ({
+      taskRunId: 'task_pv',
+      finishReason: 'end_turn',
+      finalization: {
+        replyText: text,
+        preparedReply: { text, primaryView },
+        receipt: {
+          protocol_version: 1,
+          assurance: 'execution_trace_bound',
+          root_task_run_id: 'task_pv',
+          candidate_sha256: createHash('sha256').update(text).digest('hex'),
+          reply_sha256: createHash('sha256').update(text).digest('hex'),
+          trace_sha256: createHash('sha256').update('primary-view-trace').digest('hex'),
+          trace_call_count: 2,
+          observed_completed_tool_use_ids: ['toolu_read', 'toolu_present'],
+          correction: 'normal',
+          proposal_disclosure: 'none',
+          learning_content: 'not_applicable',
+          primary_view: 'retained',
+        },
+        accepted: true,
+      },
+      partial,
+      ...(partial ? { error: 'provider stream ended before terminal completion' } : {}),
+      candidateDeltaObserved: true,
+      contextDigest: 'primary-view-context',
+    });
+    return vi.fn(execute);
+  };
+
+  it('T1: a legacy artifact marker is stripped and cannot authorize primary_view', async () => {
     const runAgentTaskFn = mkRunFn(`这是你的题。\n${VALID_MARKER}`);
     const writeEventFn = mkWrite();
 
@@ -2527,22 +2569,66 @@ describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
       { ...baseDeps, runAgentTaskFn, writeEventFn, buildMcpServerFn: mkBuild() },
     );
 
-    expect(result.primary_view).toEqual({
-      source: 'artifact',
-      ref: { kind: 'question', id: 'q_abc' },
-    });
+    expect(result).not.toHaveProperty('primary_view');
     // The marker is an instruction, not content — stripped from the API reply…
     expect(result.reply).toBe('这是你的题。');
     expect(result.reply).not.toContain('<!--');
-    // …and from the persisted reply_md; the nomination rides as a payload sibling.
+    // …and from persisted reply_md; it cannot create a payload sibling.
     const replyCall = writeEventFn.mock.calls[1]?.[1] as {
       payload?: { reply_md?: string; primary_view?: unknown };
     };
     expect(replyCall?.payload?.reply_md).toBe('这是你的题。');
-    expect(replyCall?.payload?.primary_view).toEqual({
-      source: 'artifact',
-      ref: { kind: 'question', id: 'q_abc' },
+    expect(replyCall?.payload).not.toHaveProperty('primary_view');
+  });
+
+  it('T1b: an explicit validated control projection reaches inline result and persistence', async () => {
+    const primaryView = {
+      source: 'tool_result' as const,
+      ref: { kind: 'query_knowledge', id: 'toolu_read' },
+    };
+    const writeEventFn = mkWrite();
+    const result = await runCopilotChat(
+      {} as never,
+      { user_message: '我最近哪些知识点易错', triggered_by: 'chat' },
+      {
+        ...baseDeps,
+        executeCopilotTurnFn: mkFinalizedPrimaryExecution('已整理最近易错点。', primaryView),
+        writeEventFn,
+      },
+    );
+
+    expect(result).toMatchObject({ reply: '已整理最近易错点。', primary_view: primaryView });
+    expect((writeEventFn.mock.calls[1]?.[1] as { payload?: unknown })?.payload).toMatchObject({
+      reply_md: '已整理最近易错点。',
+      primary_view: primaryView,
     });
+  });
+
+  it('T1c: a partial inline attempt cannot publish its finalized primary view', async () => {
+    const primaryView = {
+      source: 'tool_result' as const,
+      ref: { kind: 'query_knowledge', id: 'toolu_read' },
+    };
+    const writeEventFn = mkWrite();
+    const result = await runCopilotChatStreaming(
+      {} as never,
+      { user_message: '继续核对', triggered_by: 'chat' },
+      () => {},
+      {
+        ...baseDeps,
+        executeCopilotTurnFn: mkFinalizedPrimaryExecution('只完成了部分核对。', primaryView, true),
+        writeEventFn,
+      },
+    );
+
+    expect(result).toMatchObject({
+      reply: '只完成了部分核对。',
+      error: 'provider stream ended before terminal completion',
+    });
+    expect(result).not.toHaveProperty('primary_view');
+    expect((writeEventFn.mock.calls[1]?.[1] as { payload?: unknown })?.payload).not.toHaveProperty(
+      'primary_view',
+    );
   });
 
   it('T2: malformed marker JSON → absent, marker still stripped, turn succeeds, warn logged', async () => {
@@ -2657,19 +2743,12 @@ describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
     warnSpy.mockRestore();
   });
 
-  it('T6: streaming — terminal result carries primary_view + cleaned reply; persisted payload matches non-stream', async () => {
-    const fullText = `这是你的题。\n${VALID_MARKER}`;
-    const streamAgentTaskFn = vi.fn(
-      async (_k: string, _i: unknown, _c: unknown, onDelta: (t: string) => void) => {
-        onDelta(fullText);
-        return {
-          task_run_id: 'task_pv',
-          text: fullText,
-          finishReason: 'stop' as const,
-          usage: { inputTokens: 1, outputTokens: 2 },
-        };
-      },
-    );
+  it('T6: streaming — validated control projection matches non-stream persistence', async () => {
+    const fullText = '已整理最近易错点。';
+    const primaryView = {
+      source: 'tool_result' as const,
+      ref: { kind: 'query_mistakes', id: 'toolu_read' },
+    };
     const writeEventFnStream = mkWrite();
     const deltas: string[] = [];
 
@@ -2679,19 +2758,15 @@ describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
       (t) => deltas.push(t),
       {
         ...baseDeps,
-        streamAgentTaskFn,
+        executeCopilotTurnFn: mkFinalizedPrimaryExecution(fullText, primaryView),
         writeEventFn: writeEventFnStream,
-        buildMcpServerFn: mkBuild(),
       },
     );
 
-    expect(result.primary_view).toEqual({
-      source: 'artifact',
-      ref: { kind: 'question', id: 'q_abc' },
-    });
-    expect(result.reply).toBe('这是你的题。');
+    expect(result.primary_view).toEqual(primaryView);
+    expect(result.reply).toBe(fullText);
     // Delayed publication is byte-identical to the normalized terminal reply.
-    expect(deltas).toEqual(['这是你的题。']);
+    expect(deltas).toEqual([fullText]);
 
     // Persisted payload is identical to the non-stream path for the same text
     // (modulo in_reply_to_event_id, which embeds the per-run ask event cuid).
@@ -2701,9 +2776,8 @@ describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
       { user_message: '出一道题', triggered_by: 'chat' },
       {
         ...baseDeps,
-        runAgentTaskFn: mkRunFn(fullText),
+        executeCopilotTurnFn: mkFinalizedPrimaryExecution(fullText, primaryView),
         writeEventFn: writeEventFnJson,
-        buildMcpServerFn: mkBuild(),
       },
     );
     const streamPayload = (writeEventFnStream.mock.calls[1]?.[1] as { payload?: unknown })
@@ -2714,8 +2788,8 @@ describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
     const { in_reply_to_event_id: _j, ...jsonRest } = jsonPayload;
     const streamFinalization = streamRest.reply_finalization as Record<string, unknown>;
     const jsonFinalization = jsonRest.reply_finalization as Record<string, unknown>;
-    expect(streamFinalization.root_task_run_id).toMatch(/^copilot_task_/);
-    expect(jsonFinalization.root_task_run_id).toMatch(/^copilot_task_/);
+    expect(streamFinalization.root_task_run_id).toBe('task_pv');
+    expect(jsonFinalization.root_task_run_id).toBe('task_pv');
     streamRest.reply_finalization = { ...streamFinalization, root_task_run_id: '<root>' };
     jsonRest.reply_finalization = { ...jsonFinalization, root_task_run_id: '<root>' };
     expect(streamRest).toEqual(jsonRest);
@@ -2750,10 +2824,7 @@ describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
 
     expect(deltas.join('')).toBe('回答正文');
     expect(deltas.join('')).not.toContain('<!--');
-    expect(result.primary_view).toEqual({
-      source: 'artifact',
-      ref: { kind: 'question', id: 'q1' },
-    });
+    expect(result).not.toHaveProperty('primary_view');
     expect(result.reply).toBe('回答正文');
   });
 
@@ -2871,18 +2942,21 @@ describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
     expect(serialized).not.toContain('primary_view');
   });
 
-  it('T8b 防循环回灌: a marker-bearing reply, persisted then replayed as history, re-enters NO marker syntax', async () => {
-    // Turn 1: the model emits a marker; chat.ts strips it from reply_md and
-    // persists the nomination as a payload sibling.
+  it('T8b 防循环回灌: a controlled primary view persisted then replayed stays out of history text', async () => {
+    // Turn 1: root finalization validates the control and persistence keeps the
+    // nomination as a payload sibling.
     const writeEventFn1 = mkWrite();
+    const primaryView = {
+      source: 'tool_result' as const,
+      ref: { kind: 'query_knowledge', id: 'toolu_read' },
+    };
     await runCopilotChat(
       {} as never,
       { user_message: '出题', triggered_by: 'chat' },
       {
         ...baseDeps,
-        runAgentTaskFn: mkRunFn(`这是你的题。\n${VALID_MARKER}`),
+        executeCopilotTurnFn: mkFinalizedPrimaryExecution('这是你的题。', primaryView),
         writeEventFn: writeEventFn1,
-        buildMcpServerFn: mkBuild(),
       },
     );
     const persisted = (

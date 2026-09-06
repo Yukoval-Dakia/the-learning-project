@@ -251,7 +251,8 @@ export const copilotCapability = defineCapability({
     tools: [
       {
         name: 'present_primary_view',
-        load: () => import('./server/tools/present-primary-view').then((m) => m.presentPrimaryViewTool),
+        load: () =>
+          import('./server/tools/present-primary-view').then((m) => m.presentPrimaryViewTool),
       },
       {
         name: 'query_events',

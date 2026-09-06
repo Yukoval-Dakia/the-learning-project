@@ -14,6 +14,7 @@ export {
   isMasteredForFrontier,
   learnableFrontierResolved,
 } from './server/learnable-frontier';
+export { isLiveQuestionReference } from './server/live-question-reference';
 export { loadAttemptQuestionSnapshot } from './server/question-evidence-snapshot';
 export { mergeExactQuestionDuplicateKnowledgeIds } from './server/quiz/content-fingerprint';
 export { resolveSolveOverrideFromEnv } from './server/quiz/solve-lane';

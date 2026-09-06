@@ -38,6 +38,7 @@ import {
   shouldDeliverCopilotSessionContext,
 } from './live-session-context';
 import { COPILOT_TURN_CONTEXT_CODEC_VERSION, compileCopilotModelInput } from './live-turn-context';
+import { isLivePrimaryViewArtifact } from './primary-view-reference';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
 import {
   type CopilotReplyFinalizationResult,
@@ -266,6 +267,7 @@ export function createCopilotExecutionOwner(
             : {}),
         });
       },
+      validateArtifactReference: (ref) => isLivePrimaryViewArtifact(db, ref),
     });
 
     const surface = input.surface;

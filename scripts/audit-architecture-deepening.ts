@@ -1284,7 +1284,9 @@ async function runCli(): Promise<void> {
   const { collectDependencySnapshot, compareDependencySnapshot } = await import(
     './audit-capability-boundaries.js'
   );
-  const { READ_TOOLS, PROPOSE_WRITE_TOOLS } = await import('../src/kernel/tools/allowlists.js');
+  const { CONTROL_TOOLS, READ_TOOLS, PROPOSE_WRITE_TOOLS } = await import(
+    '../src/kernel/tools/allowlists.js'
+  );
   const { AiProposalPayload } = await import('../src/core/schema/proposal.js');
   const { z } = await import('zod');
   const projectRoot = process.cwd();
@@ -1402,7 +1404,7 @@ async function runCli(): Promise<void> {
     tools: {
       declarations: toolDeclarations,
       loadedTools,
-      allowlistNames: [...READ_TOOLS, ...PROPOSE_WRITE_TOOLS],
+      allowlistNames: [...READ_TOOLS, ...PROPOSE_WRITE_TOOLS, ...CONTROL_TOOLS],
       bridgeValidatesOutput: bridgeSource.includes('outputSchema.safeParse'),
     },
     queues: {

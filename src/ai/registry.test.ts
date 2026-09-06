@@ -28,14 +28,14 @@ import { type TaskDef, type TaskKind, tasks } from './registry';
 import { taskCatalog } from './task-catalog';
 import { getTaskSystemPrompt } from './task-prompts';
 
-const YUK932_PROMPT_HASHES = {
-  'general:CopilotTask': '428e1a69f40aba83ca69cacb6d9e800a711685c9350e0cc7b449bce49d131fdc',
+const YUK949_PROMPT_HASHES = {
+  'general:CopilotTask': '2421327057b1e60375184928e7a26471d39edc754a00f57cb0dbf16b27671de8',
   'general:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
-  'math:CopilotTask': '428e1a69f40aba83ca69cacb6d9e800a711685c9350e0cc7b449bce49d131fdc',
+  'math:CopilotTask': '2421327057b1e60375184928e7a26471d39edc754a00f57cb0dbf16b27671de8',
   'math:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
-  'physics:CopilotTask': '428e1a69f40aba83ca69cacb6d9e800a711685c9350e0cc7b449bce49d131fdc',
+  'physics:CopilotTask': '2421327057b1e60375184928e7a26471d39edc754a00f57cb0dbf16b27671de8',
   'physics:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
-  'yuwen:CopilotTask': '428e1a69f40aba83ca69cacb6d9e800a711685c9350e0cc7b449bce49d131fdc',
+  'yuwen:CopilotTask': '2421327057b1e60375184928e7a26471d39edc754a00f57cb0dbf16b27671de8',
   'yuwen:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
 } as const;
 
@@ -133,8 +133,8 @@ describe('task prompt definitions', () => {
     }
   });
 
-  it('pins the YUK-939 finalized Copilot and read-only researcher prompts byte-for-byte', () => {
-    for (const [key, expectedHash] of Object.entries(YUK932_PROMPT_HASHES)) {
+  it('pins the YUK-949 presentation-control Copilot and unchanged researcher prompts byte-for-byte', () => {
+    for (const [key, expectedHash] of Object.entries(YUK949_PROMPT_HASHES)) {
       const [profileId, task] = key.split(':') as [
         'general' | 'math' | 'physics' | 'yuwen',
         'CopilotTask' | 'CopilotResearchTask',
@@ -647,17 +647,14 @@ describe('CopilotTask.systemPrompt — YUK-938 native Task live parent', () => {
   });
 });
 
-// YUK-307 — pin the CopilotTask 【呈现提名】(primary_view) envelope clause. The
-// chat.ts streaming tail-filter and extractPrimaryView's last-marker-wins
-// semantics both depend on the marker being the reply's LAST output, so the
-// 末尾/最后 placement wording is load-bearing, not copy.
-describe('CopilotTask.systemPrompt — primary_view nomination clause (YUK-307)', () => {
-  it('pins the marker syntax and the end-of-reply placement', () => {
+// YUK-949 — the agent retains in-loop presentation intent through an explicit
+// control after observing results; reply-tail marker syntax is retired.
+describe('CopilotTask.systemPrompt — primary_view control clause (YUK-949)', () => {
+  it('pins the explicit control and rejects the legacy reply marker contract', () => {
     const p = getTaskSystemPrompt('CopilotTask');
-    expect(p).toContain('<!--primary_view:');
-    // Placement contract: end of reply, the very last output.
-    expect(p).toMatch(/末尾/);
-    expect(p).toMatch(/最后一个输出/);
+    expect(p).toContain('present_primary_view');
+    expect(p).toContain('先完成读取并检查结果');
+    expect(p).not.toContain('<!--primary_view:');
   });
 
   it('pins the three ruled sources and the default-no-hero criterion', () => {
@@ -665,6 +662,7 @@ describe('CopilotTask.systemPrompt — primary_view nomination clause (YUK-307)'
     expect(p).toContain('tool_result');
     expect(p).toContain('artifact');
     expect(p).toContain('ephemeral_html');
+    expect(p).toContain('tool_use_id');
     // 缺省 → 无 hero（design doc §2.3 RULED）+ 纯答疑/纯过程不提名的判据句.
     expect(p).toMatch(/缺省即无 hero/);
     expect(p).toMatch(/纯答疑/);

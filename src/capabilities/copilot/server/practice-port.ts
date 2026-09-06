@@ -1,6 +1,7 @@
 export {
   SolveError,
   buildSolveHintInput,
+  isLiveQuestionReference,
   parseHintTurn,
   runQuestionContentValidation,
   runSolveCheck,

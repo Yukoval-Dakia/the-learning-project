@@ -15,12 +15,16 @@ function finalizer(
   validateLearningContent: Parameters<
     typeof createCopilotReplyFinalizer
   >[0]['validateLearningContent'] = async (text) => ({ replyText: text, passed: true }),
+  validateArtifactReference: Parameters<
+    typeof createCopilotReplyFinalizer
+  >[0]['validateArtifactReference'] = async () => false,
 ) {
   return createCopilotReplyFinalizer({
     rootTaskRunId: 'root_run_1',
     correctionContract,
     userContextText: '用户正在核对一条复杂学习链。',
     validateLearningContent,
+    validateArtifactReference,
   });
 }
 
@@ -52,8 +56,18 @@ async function pre(
 }
 
 describe('Copilot root reply finalization', () => {
-  it('retains an explicit presentation nomination only after the root control call succeeds', async () => {
+  it('retains read-then-present when the control names an actual successful root result', async () => {
     const value = finalizer();
+    await pre(value, 'mcp__loom__query_knowledge', 'root-result', { query: '函数' });
+    value.observeDomainTool({
+      tool_use_id: 'root-result',
+      name: 'query_knowledge',
+      effect: 'read',
+      input: { query: '函数' },
+      output: { nodes: [{ id: 'kc_1', name: '函数' }] },
+      error_reason: null,
+      executed: true,
+    });
     await pre(value, 'mcp__loom__present_primary_view', 'present_1', {
       source: 'tool_result',
       ref: { kind: 'query_knowledge', id: 'root-result' },
@@ -73,6 +87,159 @@ describe('Copilot root reply finalization', () => {
       ref: { kind: 'query_knowledge', id: 'root-result' },
     });
     expect(result.receipt.primary_view).toBe('retained');
+  });
+
+  it.each([
+    { label: 'child', sourceId: 'child-result', sourceAgentId: 'researcher_1', sourceError: null },
+    {
+      label: 'failed',
+      sourceId: 'failed-result',
+      sourceAgentId: undefined,
+      sourceError: 'timeout',
+    },
+    {
+      label: 'unknown root id',
+      sourceId: 'successful-result',
+      nominatedId: 'missing-result',
+      sourceAgentId: undefined,
+      sourceError: null,
+    },
+    {
+      label: 'mismatched tool kind',
+      sourceId: 'successful-result',
+      nominatedKind: 'query_questions',
+      sourceAgentId: undefined,
+      sourceError: null,
+    },
+  ])(
+    'drops a $label tool-result nomination that is not a successful root call',
+    async (fixture) => {
+      const value = finalizer();
+      await pre(
+        value,
+        'mcp__loom__query_knowledge',
+        fixture.sourceId,
+        { query: '函数' },
+        fixture.sourceAgentId,
+      );
+      value.observeDomainTool({
+        tool_use_id: fixture.sourceId,
+        name: 'query_knowledge',
+        effect: 'read',
+        input: { query: '函数' },
+        output: fixture.sourceError ? { error: fixture.sourceError } : { nodes: [{ id: 'kc_1' }] },
+        error_reason: fixture.sourceError,
+        executed: true,
+      });
+      const nominatedKind = fixture.nominatedKind ?? 'query_knowledge';
+      const nominatedId = fixture.nominatedId ?? fixture.sourceId;
+      await pre(value, 'mcp__loom__present_primary_view', `present_${fixture.label}`, {
+        source: 'tool_result',
+        ref: { kind: nominatedKind, id: nominatedId },
+      });
+      value.observeDomainTool({
+        tool_use_id: `present_${fixture.label}`,
+        name: 'present_primary_view',
+        effect: 'control',
+        input: { source: 'tool_result', ref: { kind: nominatedKind, id: nominatedId } },
+        output: { source: 'tool_result', ref: { kind: nominatedKind, id: nominatedId } },
+        error_reason: null,
+        executed: true,
+      });
+
+      const result = await value.finalizeTerminal('已核对。');
+      expect(result.preparedReply).toEqual({ text: '已核对。' });
+      expect(result.receipt.primary_view).toBe('dropped');
+    },
+  );
+
+  it.each([
+    { label: 'missing', resolvedType: null, nominatedKind: 'interactive' },
+    { label: 'archived', resolvedType: null, nominatedKind: 'note_atomic' },
+    { label: 'wrong type', resolvedType: 'tool_quiz', nominatedKind: 'interactive' },
+  ])('drops a $label artifact nomination', async ({ resolvedType, nominatedKind }) => {
+    const value = finalizer(undefined, async () => resolvedType === nominatedKind);
+    await pre(value, 'mcp__loom__present_primary_view', 'present_artifact', {
+      source: 'artifact',
+      ref: { kind: nominatedKind, id: 'artifact_1' },
+    });
+    value.observeDomainTool({
+      tool_use_id: 'present_artifact',
+      name: 'present_primary_view',
+      effect: 'control',
+      input: { source: 'artifact', ref: { kind: nominatedKind, id: 'artifact_1' } },
+      output: { source: 'artifact', ref: { kind: nominatedKind, id: 'artifact_1' } },
+      error_reason: null,
+      executed: true,
+    });
+
+    const result = await value.finalizeTerminal('已完成成品。');
+    expect(result.preparedReply).toEqual({ text: '已完成成品。' });
+    expect(result.receipt.primary_view).toBe('dropped');
+  });
+
+  it('retains an artifact nomination only when its live persisted type matches', async () => {
+    const value = finalizer(undefined, async () => true);
+    const nomination = {
+      source: 'artifact' as const,
+      ref: { kind: 'quiz', id: 'artifact_quiz_1' },
+    };
+    await pre(value, 'mcp__loom__present_primary_view', 'present_quiz', nomination);
+    value.observeDomainTool({
+      tool_use_id: 'present_quiz',
+      name: 'present_primary_view',
+      effect: 'control',
+      input: nomination,
+      output: nomination,
+      error_reason: null,
+      executed: true,
+    });
+
+    const result = await value.finalizeTerminal('已生成 6 题练习。');
+    expect(result.preparedReply).toEqual({ text: '已生成 6 题练习。', primaryView: nomination });
+    expect(result.receipt.primary_view).toBe('retained');
+  });
+
+  it('applies the existing learning-content gate to controlled ephemeral HTML', async () => {
+    const validate = vi
+      .fn<Parameters<typeof createCopilotReplyFinalizer>[0]['validateLearningContent']>()
+      .mockResolvedValueOnce({ replyText: '学习内容未通过校验。', passed: false })
+      .mockImplementation(async (text) => ({ replyText: text, passed: true }));
+    const value = finalizer(validate);
+    const nomination = {
+      source: 'ephemeral_html' as const,
+      ref: '<section><h2>题目</h2><p>17×19？</p><p>答案：323</p></section>',
+    };
+    await pre(value, 'mcp__loom__present_primary_view', 'present_html', nomination);
+    value.observeDomainTool({
+      tool_use_id: 'present_html',
+      name: 'present_primary_view',
+      effect: 'control',
+      input: nomination,
+      output: nomination,
+      error_reason: null,
+      executed: true,
+    });
+
+    const result = await value.finalizeTerminal('请在卡片里作答。');
+    expect(validate).toHaveBeenNthCalledWith(
+      1,
+      '请在卡片里作答。',
+      '用户正在核对一条复杂学习链。',
+      'root_run_1',
+      nomination,
+    );
+    expect(result.preparedReply).toEqual({ text: '学习内容未通过校验。' });
+    expect(result.receipt.primary_view).toBe('dropped');
+    expect(result.receipt.learning_content).toBe('blocked');
+  });
+
+  it('strips a legacy marker without authorizing a primary view', async () => {
+    const result = await finalizer().finalizeTerminal(
+      '已完成。\n<!--primary_view:{"source":"ephemeral_html","ref":"<p>legacy</p>"}-->',
+    );
+    expect(result.preparedReply).toEqual({ text: '已完成。' });
+    expect(result.receipt.primary_view).toBe('absent');
   });
 
   it('seals one plain reply and binds the exact persisted bytes to its receipt', async () => {
@@ -135,7 +302,7 @@ describe('Copilot root reply finalization', () => {
       replyText: terminal.slice(0, terminal.indexOf('\n\n<!--primary_view:')),
     });
     expect(result.receipt.observed_completed_tool_use_ids).toEqual([toolUseId]);
-    expect(result.receipt.primary_view).toBe('dropped');
+    expect(result.receipt.primary_view).toBe('absent');
   });
 
   it('persists exactly the sealed bytes and compact receipt on the shared inline/durable writer', async () => {
@@ -347,6 +514,7 @@ describe('Copilot root reply finalization', () => {
       },
       userContextText: '更正上一轮。',
       validateLearningContent: validate,
+      validateArtifactReference: async () => false,
     });
     const result = await value.finalizeTerminal('缺少更正尾标，并给出练习题。');
     expect(result.replyText).toContain('prior_turn_id');
@@ -355,7 +523,7 @@ describe('Copilot root reply finalization', () => {
     expect(validate).toHaveBeenCalledTimes(2);
   });
 
-  it('drops a read-bearing presentation side channel', async () => {
+  it('drops a legacy read-bearing presentation side channel without a control call', async () => {
     const value = finalizer();
     await pre(value, 'mcp__loom__query_knowledge', 'read_1', { query: '函数' });
     value.observeDomainTool({
@@ -371,7 +539,7 @@ describe('Copilot root reply finalization', () => {
       '已核对。\n<!--primary_view:{"source":"ephemeral_html","ref":"<p>未校验题面</p>"}-->',
     );
     expect(result.preparedReply).toEqual({ text: '已核对。' });
-    expect(result.receipt.primary_view).toBe('dropped');
+    expect(result.receipt.primary_view).toBe('absent');
   });
 
   it('bounds the realistic A01/A03 trace and changes its digest when a source result changes', async () => {
