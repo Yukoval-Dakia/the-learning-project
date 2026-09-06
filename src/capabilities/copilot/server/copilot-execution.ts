@@ -42,7 +42,7 @@ import {
   compileCopilotModelInput,
   compileCopilotSessionContext,
 } from './live-turn-context';
-import { isLivePrimaryViewArtifact } from './primary-view-reference';
+import { resolveLivePrimaryViewArtifact } from './primary-view-reference';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
 import {
   type CopilotReplyFinalizationResult,
@@ -271,7 +271,7 @@ export function createCopilotExecutionOwner(
             : {}),
         });
       },
-      validateArtifactReference: (ref) => isLivePrimaryViewArtifact(db, ref),
+      resolveArtifactReference: (ref) => resolveLivePrimaryViewArtifact(db, ref),
     });
 
     const surface = input.surface;

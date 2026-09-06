@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-06：945真实验收并合并；964成本口径进入交付，949完整展示控制修复中。
+> Linear 是权威 tracker；更新于 2026-09-06：945/964已合并；949完整展示控制集成及真实验收，960有界修复。
 
 ## NOW
 
@@ -18,8 +18,9 @@
   公开费率估算不冒充账户账单，SDK派生USD保留为独立观察。
 - YUK949：owner明确选FULL，允许按需短presentation control交互，ADR0061；
   agent看完结果提名，server校验，保留tool_result/artifact/ephemeral_html；不提高预算、不改生产UI。
-  tlp-wt-primary-view-owner初稿ea8367c7被初审5P1否决：read路径丢hero、未校验ref、
-  durable恢复丢pv、误删944 prompt约束、4个新增lint错误。修复中，尚未交付。
+  初稿ea8367c7的5P1已由81eb7f3e修复，ed693e16集成main9e02c48b。
+  唯一验证审确认原5项已修；新发现raw artifact类型无导航，root改为owner-resolved canonical ref。
+  208集成unit+76针对性unit/49durableDB/6引用DB通过；真实模型展示验收待执行，尚未交付。
 - YUK961 Done：Agency拥有pool-gap提示政策，Practice仅提交verify事实；
   PR1340 exact69542b2d CI34032977403绿，main50ba305b；48DB/独立review通过。
 - YUK962 Done：5个纯测试文件移入unit，59tests通过，总1043文件不减；
@@ -27,10 +28,11 @@
   CI34034085071绿，mainc43d51be；独立review/typecheck/lint/build通过。
 - YUK963 Done：record命令审计缺口红绿复现，70tests通过；不增豁免。
   PR1342 exact417623b5 CI34034266076绿，main4034859c。
-- YUK964：复用catalog公开分模型USD卡，不再把正数MiMo SDK派生金额当reported账单。
+- YUK964 Done：复用catalog公开分模型USD卡，不再把正数MiMo SDK派生金额当reported账单。
   4项RED后37unit/24runnerDB通过，10条已封存真实wire免费回放全部匹配，review PASS。
   CI暴露4条旧失败路径成本断言，保留失败/恢复/usage断言并更新estimate；AI目录418unit全绿。
-  typecheck/lint/build/audit通过；PR1343已集成main8e534d3c，待修订后的exact CI，尚未合并。
+  typecheck/lint/build/audit通过；PR1343 exactc1afae75 CI34036794558绿，已合并main9e02c48b。
+  无新增付费、不改历史ledger、未部署。
 - YUK944 Done：PR1338 exact3fd90c4d CI34030191329绿，main db5a57b1。
   五读取actual核心通过，但input40410 vs40401持平，不能称该复杂样本降本。
 - 已交付：Pipeline1326、Goal1327、Knowledge1328、Import1329、execution1330、
@@ -41,8 +43,8 @@
 
 ## NEXT
 
-1. YUK964集成后exact CI交付；历史ledger/其它provider策略不变，不追加付费调用。
-2. YUK949修复5P1后唯一验证审，再做完整呈现actual；UI若要改代码仍需设计预检。
+1. YUK949完整呈现actual与exact CI交付，后台/前台/恢复共享发布语义。
+2. YUK960独立lane修报告问句误拦；真实长报告回放+对抗边界，不关闭学习内容保护。
 3. YUK948显式Mission入口、950同轮steer、960报告问句误拦；保留真实学习内容保护。
 4. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
 5. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
@@ -57,6 +59,6 @@
 
 ## BLOCKED-ON
 
-- 当前945/949有安全实施路径，不标完整goal blocked或complete。
+- 当前949/960有安全实施路径，不标完整goal blocked或complete。
 - 未授权部署、生产clone、SoT开关、backfill或历史数据删除；均未执行。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。

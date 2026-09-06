@@ -20,10 +20,18 @@ function artifactKindMatchesType(kind: string, artifactType: string): boolean {
 }
 
 /** Validate Copilot's semantic kind against the Notes-owned live artifact row. */
-export async function isLiveArtifactPrimaryView(
+export async function resolveLiveArtifactPrimaryView(
   db: Db,
   ref: { kind: string; id: string },
-): Promise<boolean> {
+): Promise<{ kind: string; id: string } | null> {
   const artifactType = await getLiveArtifactType(db, ref.id);
-  return artifactType !== null && artifactKindMatchesType(ref.kind, artifactType);
+  if (artifactType === null || !artifactKindMatchesType(ref.kind, artifactType)) return null;
+  // Publish the existing product navigation contract, not a storage type that
+  // the client can only render as a link-less label.
+  const kind = artifactType.startsWith('note_')
+    ? 'note'
+    : artifactType === 'tool_quiz'
+      ? 'quiz'
+      : artifactType;
+  return { kind, id: ref.id };
 }

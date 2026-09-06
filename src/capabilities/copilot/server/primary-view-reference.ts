@@ -1,16 +1,18 @@
 import type { Db } from '@/db/client';
-import { isLiveArtifactPrimaryView } from './notes-integration';
+import { resolveLiveArtifactPrimaryView } from './notes-integration';
 import { isLiveQuestionReference } from './practice-port';
 
 const QUESTION_KINDS = new Set(['question', '题', '题目']);
 
 /** Validate a persisted hero through the capability that owns its product row. */
-export function isLivePrimaryViewArtifact(
+export async function resolveLivePrimaryViewArtifact(
   db: Db,
   ref: { kind: string; id: string },
-): Promise<boolean> {
+): Promise<{ kind: string; id: string } | null> {
   const normalized = ref.kind.trim().toLowerCase();
   return QUESTION_KINDS.has(normalized)
-    ? isLiveQuestionReference(db, ref.id)
-    : isLiveArtifactPrimaryView(db, ref);
+    ? (await isLiveQuestionReference(db, ref.id))
+      ? { kind: 'question', id: ref.id }
+      : null
+    : resolveLiveArtifactPrimaryView(db, ref);
 }

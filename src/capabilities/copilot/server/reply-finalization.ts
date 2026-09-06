@@ -134,8 +134,11 @@ export interface CreateCopilotReplyFinalizerOptions {
     taskRunId: string,
     primaryView?: CopilotPrimaryView,
   ) => Promise<{ replyText: string; passed: boolean }>;
-  /** Copilot-to-Notes adapter. False means missing, archived, unknown, or type-mismatched. */
-  validateArtifactReference: (ref: { kind: string; id: string }) => Promise<boolean>;
+  /** Owned live-row validation plus canonical product reference. Null rejects the nomination. */
+  resolveArtifactReference: (ref: {
+    kind: string;
+    id: string;
+  }) => Promise<{ kind: string; id: string } | null>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -222,14 +225,14 @@ function domainToolName(toolName: string): string {
   return separator === -1 ? toolName : toolName.slice(separator + 2);
 }
 
-async function validatePrimaryViewNomination(
+async function resolvePrimaryViewNomination(
   nomination: PresentPrimaryViewInput,
   trace: readonly TraceEntry[],
-  validateArtifactReference: CreateCopilotReplyFinalizerOptions['validateArtifactReference'],
-): Promise<boolean> {
-  if (nomination.source === 'ephemeral_html') return true;
+  resolveArtifactReference: CreateCopilotReplyFinalizerOptions['resolveArtifactReference'],
+): Promise<CopilotPrimaryView | undefined> {
+  if (nomination.source === 'ephemeral_html') return nomination;
   if (nomination.source === 'tool_result') {
-    return trace.some(
+    const valid = trace.some(
       (entry) =>
         entry.root_call &&
         entry.status === 'succeeded' &&
@@ -237,11 +240,13 @@ async function validatePrimaryViewNomination(
         entry.tool_use_id === nomination.ref.id &&
         domainToolName(entry.tool_name) === nomination.ref.kind,
     );
+    return valid ? nomination : undefined;
   }
   try {
-    return await validateArtifactReference(nomination.ref);
+    const ref = await resolveArtifactReference(nomination.ref);
+    return ref ? { source: 'artifact', ref } : undefined;
   } catch {
-    return false;
+    return undefined;
   }
 }
 
@@ -337,12 +342,12 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         successfulControls.at(-1)?.proposal_output,
       );
       const nomination = parsedNomination.success ? parsedNomination.data : undefined;
-      const nominationValid = nomination
-        ? await validatePrimaryViewNomination(nomination, trace, options.validateArtifactReference)
-        : false;
+      const resolvedNomination = nomination
+        ? await resolvePrimaryViewNomination(nomination, trace, options.resolveArtifactReference)
+        : undefined;
       const presented = {
         text: legacyPresented.text,
-        ...(nominationValid && nomination ? { primaryView: nomination } : {}),
+        ...(resolvedNomination ? { primaryView: resolvedNomination } : {}),
       };
       const correction = resolveCorrectionReply(presented.text, options.correctionContract);
       const disclosure = proposalDisclosure(trace);

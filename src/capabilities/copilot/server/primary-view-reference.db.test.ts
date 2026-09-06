@@ -1,12 +1,44 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { artifact, question } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { isLivePrimaryViewArtifact } from './primary-view-reference';
+import { resolveArtifactHero } from '../ui/hero';
+import { resolveLivePrimaryViewArtifact } from './primary-view-reference';
 
 describe('Copilot primary-view reference ownership', () => {
   beforeEach(async () => {
     await resetDb();
   });
+
+  it.each(['note_atomic', 'note_long', 'note_hub', 'tool_quiz', 'interactive'])(
+    'publishes a navigable product reference for stored %s',
+    async (type) => {
+      await testDb()
+        .insert(artifact)
+        .values({
+          id: 'artifact_navigation',
+          type,
+          title: '现有资料',
+          intent_source: 'declared',
+          source: 'user',
+          created_at: new Date('2026-09-06T10:00:00Z'),
+          updated_at: new Date('2026-09-06T10:00:00Z'),
+        });
+      const ref = await resolveLivePrimaryViewArtifact(testDb(), {
+        kind: type,
+        id: 'artifact_navigation',
+      });
+      const kind = type.startsWith('note_')
+        ? 'note'
+        : type === 'tool_quiz'
+          ? 'quiz'
+          : 'interactive';
+      expect(ref).toEqual({ kind, id: 'artifact_navigation' });
+      if (!ref) throw new Error('owned artifact was unexpectedly rejected');
+      expect(resolveArtifactHero(ref)).toMatchObject({
+        href: `${kind === 'quiz' ? '/practice' : '/notes'}/artifact_navigation`,
+      });
+    },
+  );
 
   it('accepts only an existing non-archived artifact with a matching product type', async () => {
     const now = new Date('2026-09-06T10:00:00Z');
@@ -73,31 +105,31 @@ describe('Copilot primary-view reference ownership', () => {
       ]);
 
     await expect(
-      isLivePrimaryViewArtifact(testDb(), { kind: 'quiz', id: 'artifact_live_quiz' }),
-    ).resolves.toBe(true);
+      resolveLivePrimaryViewArtifact(testDb(), { kind: 'quiz', id: 'artifact_live_quiz' }),
+    ).resolves.toEqual({ kind: 'quiz', id: 'artifact_live_quiz' });
     await expect(
-      isLivePrimaryViewArtifact(testDb(), {
+      resolveLivePrimaryViewArtifact(testDb(), {
         kind: 'interactive',
         id: 'artifact_live_quiz',
       }),
-    ).resolves.toBe(false);
+    ).resolves.toBeNull();
     await expect(
-      isLivePrimaryViewArtifact(testDb(), { kind: 'note', id: 'artifact_archived_note' }),
-    ).resolves.toBe(false);
+      resolveLivePrimaryViewArtifact(testDb(), { kind: 'note', id: 'artifact_archived_note' }),
+    ).resolves.toBeNull();
     await expect(
-      isLivePrimaryViewArtifact(testDb(), { kind: 'note', id: 'artifact_missing' }),
-    ).resolves.toBe(false);
+      resolveLivePrimaryViewArtifact(testDb(), { kind: 'note', id: 'artifact_missing' }),
+    ).resolves.toBeNull();
     await expect(
-      isLivePrimaryViewArtifact(testDb(), {
+      resolveLivePrimaryViewArtifact(testDb(), {
         kind: 'future_unknown_type',
         id: 'artifact_unknown_type',
       }),
-    ).resolves.toBe(false);
+    ).resolves.toBeNull();
     await expect(
-      isLivePrimaryViewArtifact(testDb(), { kind: 'question', id: 'question_live' }),
-    ).resolves.toBe(true);
+      resolveLivePrimaryViewArtifact(testDb(), { kind: 'question', id: 'question_live' }),
+    ).resolves.toEqual({ kind: 'question', id: 'question_live' });
     await expect(
-      isLivePrimaryViewArtifact(testDb(), { kind: '题目', id: 'question_archived' }),
-    ).resolves.toBe(false);
+      resolveLivePrimaryViewArtifact(testDb(), { kind: '题目', id: 'question_archived' }),
+    ).resolves.toBeNull();
   });
 });

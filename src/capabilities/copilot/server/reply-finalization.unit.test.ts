@@ -15,16 +15,16 @@ function finalizer(
   validateLearningContent: Parameters<
     typeof createCopilotReplyFinalizer
   >[0]['validateLearningContent'] = async (text) => ({ replyText: text, passed: true }),
-  validateArtifactReference: Parameters<
+  resolveArtifactReference: Parameters<
     typeof createCopilotReplyFinalizer
-  >[0]['validateArtifactReference'] = async () => false,
+  >[0]['resolveArtifactReference'] = async () => null,
 ) {
   return createCopilotReplyFinalizer({
     rootTaskRunId: 'root_run_1',
     correctionContract,
     userContextText: '用户正在核对一条复杂学习链。',
     validateLearningContent,
-    validateArtifactReference,
+    resolveArtifactReference,
   });
 }
 
@@ -158,7 +158,9 @@ describe('Copilot root reply finalization', () => {
     { label: 'archived', resolvedType: null, nominatedKind: 'note_atomic' },
     { label: 'wrong type', resolvedType: 'tool_quiz', nominatedKind: 'interactive' },
   ])('drops a $label artifact nomination', async ({ resolvedType, nominatedKind }) => {
-    const value = finalizer(undefined, async () => resolvedType === nominatedKind);
+    const value = finalizer(undefined, async (ref) =>
+      resolvedType === nominatedKind ? ref : null,
+    );
     await pre(value, 'mcp__loom__present_primary_view', 'present_artifact', {
       source: 'artifact',
       ref: { kind: nominatedKind, id: 'artifact_1' },
@@ -178,11 +180,11 @@ describe('Copilot root reply finalization', () => {
     expect(result.receipt.primary_view).toBe('dropped');
   });
 
-  it('retains an artifact nomination only when its live persisted type matches', async () => {
-    const value = finalizer(undefined, async () => true);
+  it('publishes the owner-resolved artifact reference rather than its storage kind', async () => {
+    const value = finalizer(undefined, async (ref) => ({ ...ref, kind: 'quiz' }));
     const nomination = {
       source: 'artifact' as const,
-      ref: { kind: 'quiz', id: 'artifact_quiz_1' },
+      ref: { kind: 'tool_quiz', id: 'artifact_quiz_1' },
     };
     await pre(value, 'mcp__loom__present_primary_view', 'present_quiz', nomination);
     value.observeDomainTool({
@@ -196,7 +198,13 @@ describe('Copilot root reply finalization', () => {
     });
 
     const result = await value.finalizeTerminal('已生成 6 题练习。');
-    expect(result.preparedReply).toEqual({ text: '已生成 6 题练习。', primaryView: nomination });
+    expect(result.preparedReply).toEqual({
+      text: '已生成 6 题练习。',
+      primaryView: {
+        source: 'artifact',
+        ref: { kind: 'quiz', id: 'artifact_quiz_1' },
+      },
+    });
     expect(result.receipt.primary_view).toBe('retained');
   });
 
@@ -514,7 +522,7 @@ describe('Copilot root reply finalization', () => {
       },
       userContextText: '更正上一轮。',
       validateLearningContent: validate,
-      validateArtifactReference: async () => false,
+      resolveArtifactReference: async () => null,
     });
     const result = await value.finalizeTerminal('缺少更正尾标，并给出练习题。');
     expect(result.replyText).toContain('prior_turn_id');
