@@ -4,7 +4,7 @@
 // event + FSRS advance + terminal DONE); idempotent re-delivery does not double-write;
 // judge failure writes a terminal FAILED trace AND rethrows for pg-boss re-delivery;
 // a non-retryable caller writes FAILED without rethrowing. The judge itself is mocked
-// at the judgeSubmit seam (no LLM call); the REAL persistSubmit runs the backfill tx.
+// at the judgeSubmit seam (no LLM call); the REAL deferred settlement command runs the backfill tx.
 
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -290,7 +290,7 @@ describe('runJudgeRun — backfill', () => {
       })
       .where(eq(question.id, questionId));
 
-    const persistSubmitFn = vi.fn();
+    const settleDeferredSoloReviewFn = vi.fn();
     await expect(
       runJudgeRun(
         db,
@@ -310,11 +310,12 @@ describe('runJudgeRun — backfill', () => {
               prompt_template_revision: 'judge-v1',
             },
           }),
-          persistSubmitFn: persistSubmitFn as JudgeRunDeps['persistSubmitFn'],
+          settleDeferredSoloReviewFn:
+            settleDeferredSoloReviewFn as JudgeRunDeps['settleDeferredSoloReviewFn'],
         },
       ),
     ).rejects.toThrow('requires a verified judge execution');
-    expect(persistSubmitFn).not.toHaveBeenCalled();
+    expect(settleDeferredSoloReviewFn).not.toHaveBeenCalled();
     const [row] = await db
       .select({ draftStatus: question.draft_status })
       .from(question)
@@ -785,15 +786,18 @@ describe('runJudgeRun — late-arriving backfill (#TtWiA)', () => {
 
 // ── #1 (major) — duplicate-delivery race ────────────────────────────────────
 // pg-boss can hand the same job to a second worker while the first is inside its LLM call.
-// Both clear the entry guard; the winner commits; the loser's persistSubmit dies on the
+// Both clear the entry guard; the winner commits; the loser's settlement dies on the
 // event PK. That must NOT terminalize the run as FAILED — the run was judged and persisted.
 describe('runJudgeRun — duplicate-delivery race (#1)', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
-  /** persistSubmit stand-in for the RACE LOSER: the winner's attempt row lands, then the PK blows up. */
-  function losingPersist(runId: string, questionId: string): JudgeRunDeps['persistSubmitFn'] {
+  /** Settlement stand-in for the RACE LOSER: the winner's attempt row lands, then the PK blows up. */
+  function losingPersist(
+    runId: string,
+    questionId: string,
+  ): JudgeRunDeps['settleDeferredSoloReviewFn'] {
     return (async () => {
       // Worker A committed its backfill in the window between our entry guard and here.
       await testDb().insert(event).values({
@@ -809,7 +813,7 @@ describe('runJudgeRun — duplicate-delivery race (#1)', () => {
       throw new Error(
         `duplicate key value violates unique constraint "event_pkey" (id)=(${runId})`,
       );
-    }) as JudgeRunDeps['persistSubmitFn'];
+    }) as JudgeRunDeps['settleDeferredSoloReviewFn'];
   }
 
   it('a PK conflict from the winning delivery recovers instead of writing a permanent FAILED', async () => {
@@ -820,7 +824,7 @@ describe('runJudgeRun — duplicate-delivery race (#1)', () => {
 
     const result = await runJudgeRun(db, jobData(runId, questionId), META0, {
       judgeSubmitFn: mockJudgeSubmit(),
-      persistSubmitFn: losingPersist(runId, questionId),
+      settleDeferredSoloReviewFn: losingPersist(runId, questionId),
     });
 
     // The loser recognises "already persisted" and recovers — it does not fail the run.
@@ -848,12 +852,12 @@ describe('runJudgeRun — duplicate-delivery race (#1)', () => {
     // Worker B was already past its entry guard and now fails on the PK.
     const stillPersisted = (async () => {
       throw new Error('duplicate key value violates unique constraint "event_pkey"');
-    }) as JudgeRunDeps['persistSubmitFn'];
+    }) as JudgeRunDeps['settleDeferredSoloReviewFn'];
     const second = await runJudgeRun(
       db,
       jobData(runId, questionId),
       { retryCount: 1, retryLimit: 2 },
-      { judgeSubmitFn: mockJudgeSubmit(), persistSubmitFn: stillPersisted },
+      { judgeSubmitFn: mockJudgeSubmit(), settleDeferredSoloReviewFn: stillPersisted },
     );
     expect(second.status).toBe('skipped');
 

@@ -4,7 +4,8 @@
 // durable pg-boss 面：submit dispatch（JUDGE_DURABLE_ENABLED=1）→ 写 attempt/outcome
 // 占位（run_id）+ boss.send('judge_run') → 本 handler 在 worker 进程判分 → 回填事务
 // 原子写 review event(id=run_id) + 独立 judge event + FSRS/θ̂/snapshot/family/calibration
-// （复用 submit.ts 的 persistSubmit，零漂移）+ 终态 job_event 携判词，SSE/poll 消费。
+// （复用 server/review-settlement 的 deferred sealed command）+ 终态 job_event 携判词，
+// SSE/poll 消费。
 //
 // 蓝本：copilot_run.ts（YUK-575 durable copilot）。差别：judge 是单次无状态 LLM 调用
 // （无对话记忆/工具循环/取消语义），故 handler 远薄；且 judge 需要 pg-boss redelivery
@@ -19,7 +20,7 @@
 //   强制 enableTransientRetry:false）；queue redelivery 是唯一 transient 层，worst-case
 //   付费调用 = 1 + JOB_RETRY_LIMIT。
 
-import { and, desc, eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { JobWithMetadata } from 'pg-boss';
 import { ZodError } from 'zod';
 import type { Db } from '@/db/client';
@@ -38,6 +39,7 @@ import {
   reconstructDoneFromDomainEvents,
 } from '../server/judge-run-payload';
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
+import { settleDeferredSoloReview } from '../server/review-settlement';
 
 /**
  * judge_run job 体。submit 面投递（submit.ts enqueueDurableJudge），YUK-777 起 reconcile
@@ -56,8 +58,8 @@ export type JudgeRunOutcome =
 export interface JudgeRunDeps {
   /** test seam — 默认动态 import submit.ts 的 judgeSubmit（durable 复用同步面判分头）。 */
   judgeSubmitFn?: typeof import('../api/submit')['judgeSubmit'];
-  /** test seam — 默认动态 import submit.ts 的 persistSubmit（durable 复用同步面回填体）。 */
-  persistSubmitFn?: typeof import('../api/submit')['persistSubmit'];
+  /** test seam — sealed deferred settlement command; never reaches through the HTTP module. */
+  settleDeferredSoloReviewFn?: typeof settleDeferredSoloReview;
 }
 
 /** pg-boss 投递的 job metadata（retryCount/retryLimit 驱动跨 provider lane 决策）。 */
@@ -78,7 +80,7 @@ export async function runJudgeRun(
 
   // ── 幂等守卫 ────────────────────────────────────────────────────────────
   // 回填事务已 commit（attempt event id=run_id 已写）但终态 job_event 写前 worker
-  // 崩溃 → pg-boss redeliver。此时重跑 persistSubmit 会因 event PK=run_id 冲突炸，
+  // 崩溃 → pg-boss redeliver。此时重跑 deferred settlement 会因 event PK=run_id 冲突炸，
   // 且会重复判分/双写 FSRS。守卫：attempt event 已存在 → 回填已发生，补齐缺失的
   // DONE 终态（供 SSE/poll 消费）后早返，绝不重判重写。见 recoverAlreadyPersisted；
   // 同一条恢复路径也是 #1 重复投递竞态（catch 里）的落点。
@@ -111,7 +113,7 @@ export async function runJudgeRun(
 
     const submitModule = await import('../api/submit');
     const judgeSubmit = deps.judgeSubmitFn ?? submitModule.judgeSubmit;
-    const persistSubmit = deps.persistSubmitFn ?? submitModule.persistSubmit;
+    const settleDeferred = deps.settleDeferredSoloReviewFn ?? settleDeferredSoloReview;
 
     // 重建 ValidatedSubmit（body 复校、profile 用冻结值 D5、题面用冻结快照 #2、
     // now=作答时刻）。冻结面从「只钉 profile」扩到「profile + 题面」——见下方 #2。
@@ -190,16 +192,16 @@ export async function runJudgeRun(
     });
     submitModule.assertTrustedInterventionDiagnosticJudgment(q, judged);
 
-    // 回填事务（复用同步面 persistSubmit：review event(id=run_id) + judge event +
+    // 回填事务（deferred sealed command：review event(id=run_id) + judge event +
     // FSRS/θ̂/snapshot/family/calibration 原子 tx + post-commit 信号）。attemptEventId=
     // run_id 让 attempt event id 与 run handle 对齐（幂等守卫据它跳重投）。
-    // W5 — `enforceAttemptOrdering` is the durable lane's opt-in to the late-arrival guard.
-    // Only a deferred verdict can commit an older attempt after a newer one, so the check
-    // (and its two extra reads) belongs here, not on the synchronous face.
-    const persisted = await persistSubmit(validated, judged, {
-      attemptEventId: runId,
-      enforceAttemptOrdering: true,
-      abilityGlobalByKnowledgeId,
+    // The deferred command owns late-arrival handling by construction; there is
+    // no caller-controlled boolean that can silently omit the guard.
+    const persisted = await settleDeferred(db, {
+      validated,
+      judged,
+      runId,
+      frozenAbilityGlobalByKnowledgeId: abilityGlobalByKnowledgeId,
     });
     persistedOk = true;
 
@@ -211,12 +213,12 @@ export async function runJudgeRun(
       businessId: runId,
       eventType: JUDGE_RUN_EVENTS.DONE,
       payload: {
-        attempt_event_id: runId,
+        attempt_event_id: persisted.terminalResult.attempt_event_id,
         ...(meta.deliveryId ? { delivery_id: meta.deliveryId } : {}),
-        judge_event_id: persisted.judgeEventId,
-        outcome: persisted.outcome,
-        final_rating: judged.finalRating,
-        route: judged.judgeRoute,
+        judge_event_id: persisted.terminalResult.judge_event_id,
+        outcome: persisted.terminalResult.outcome,
+        final_rating: persisted.terminalResult.final_rating,
+        route: persisted.terminalResult.route,
         // W5 #Tunnw — the FULL JudgeResultV2, not a convenient subset. `score` is
         // uninterpretable without `score_meaning` (steps / unit_dimension carry different
         // score semantics), and dropping `evidence_json` left SSE/poll clients unable to show
@@ -279,7 +281,7 @@ export async function runJudgeRun(
     // #1 (major) — DUPLICATE-DELIVERY RACE. pg-boss can hand the same job to a second
     // worker while the first is still inside its slow LLM call (expire window exceeded).
     // Both pass the entry guard (no attempt event yet). Worker A commits + writes DONE;
-    // worker B's persistSubmit then dies on the event PK (id=runId already inserted).
+    // worker B's deferred settlement then dies on the event PK (id=runId already inserted).
     // Treating that like any other failure wrote a terminal FAILED which, being the LAST
     // terminal event, made deriveJudgeRunStatus report 'failed' FOREVER for a run that was
     // correctly judged and persisted. A committed attempt event means "someone else already
@@ -296,7 +298,7 @@ export async function runJudgeRun(
     // A malformed job payload (Zod parse of body/profile/question snapshot, or an invalid
     // date) is a permanent defect: re-delivery would just re-fail identically and waste the
     // retry budget. Classify ZodError as non-retryable alongside our explicit marker.
-    // W5 #Tu1cZ — a persistence VALIDATION failure is permanent, not transient. `persistSubmit`
+    // W5 #Tu1cZ — a persistence VALIDATION failure is permanent, not transient. Settlement
     // throws `ApiError('corrupt_state', …, 422)` when an existing FSRS card cannot be parsed;
     // that is deterministic, so every redelivery re-runs a PAID judge before failing the same
     // way, burning the whole retry budget and ending as `retries_exhausted` — which also buries
