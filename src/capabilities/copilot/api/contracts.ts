@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { NudgeKind, SuggestionKind } from '@/kernel/capability-contract-schemas';
 import { ApiErrorResponseSchema, ApiIdParamsSchema } from '@/kernel/http-contracts';
+import { CopilotPrimaryViewSchema } from '../primary-view-contract';
 import { CopilotChatRequest } from '../server/chat-contracts';
 
 export { CopilotChatRequest };
@@ -121,14 +122,6 @@ const CopilotTurnSkillSchema = z.object({
   structured_question: CopilotStructuredQuestionSchema.optional(),
   suggested_next: z.enum(['continue', 'end']).optional(),
 });
-
-const CopilotPrimaryViewSchema = z.discriminatedUnion('source', [
-  z.object({
-    source: z.enum(['tool_result', 'artifact']),
-    ref: z.object({ kind: z.string(), id: z.string() }),
-  }),
-  z.object({ source: z.literal('ephemeral_html'), ref: z.string() }),
-]);
 
 const CopilotTurnToolCallSchema = z.object({
   toolName: z.string(),

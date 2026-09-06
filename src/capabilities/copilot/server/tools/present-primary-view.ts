@@ -1,20 +1,26 @@
 import { z } from 'zod';
 import type { DomainTool } from '@/kernel/tools/types';
-import { EPHEMERAL_HTML_REF_MAX_CHARS } from '../turns';
+import { EPHEMERAL_HTML_REF_MAX_CHARS } from '../../primary-view-contract';
 
 export const PresentPrimaryViewOutputSchema = z.discriminatedUnion('source', [
-  z.object({
-    source: z.literal('tool_result'),
-    ref: z.object({ kind: z.string().min(1).max(40), id: z.string().min(1).max(120) }),
-  }),
-  z.object({
-    source: z.literal('artifact'),
-    ref: z.object({ kind: z.string().min(1).max(40), id: z.string().min(1).max(120) }),
-  }),
-  z.object({
-    source: z.literal('ephemeral_html'),
-    ref: z.string().min(1).max(EPHEMERAL_HTML_REF_MAX_CHARS),
-  }),
+  z
+    .object({
+      source: z.literal('tool_result'),
+      ref: z.object({ kind: z.string().min(1).max(40), id: z.string().min(1).max(120) }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      source: z.literal('artifact'),
+      ref: z.object({ kind: z.string().min(1).max(40), id: z.string().min(1).max(120) }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      source: z.literal('ephemeral_html'),
+      ref: z.string().min(1).max(EPHEMERAL_HTML_REF_MAX_CHARS),
+    })
+    .strict(),
 ]);
 
 export type PresentPrimaryViewInput = z.infer<typeof PresentPrimaryViewOutputSchema>;
@@ -26,25 +32,31 @@ export const PresentPrimaryViewInputSchema = z
   .object({
     source: z.enum(['tool_result', 'artifact', 'ephemeral_html']),
     ref: z.union([
-      z.object({ kind: z.string().min(1).max(40), id: z.string().min(1).max(120) }),
+      z.object({ kind: z.string().min(1).max(40), id: z.string().min(1).max(120) }).strict(),
       z.string().min(1).max(EPHEMERAL_HTML_REF_MAX_CHARS),
     ]),
   })
+  .strict()
   .superRefine((value, ctx) => {
     if (PresentPrimaryViewOutputSchema.safeParse(value).success) return;
     ctx.addIssue({ code: 'custom', message: 'ref shape does not match primary-view source' });
   });
 type PresentPrimaryViewRawInput = z.infer<typeof PresentPrimaryViewInputSchema>;
 
-const PresentationControlResultSchema = PresentPrimaryViewOutputSchema.and(
-  z.object({
-    presentation_lifecycle: z.object({
-      saved_with_conversation: z.literal(true),
-      discarded_on_close: z.literal(false),
-      standalone_artifact: z.boolean(),
-    }),
+const lifecycle = {
+  presentation_lifecycle: z.object({
+    saved_with_conversation: z.literal(true),
+    discarded_on_close: z.literal(false),
+    standalone_artifact: z.boolean(),
   }),
-);
+};
+const [toolResultNomination, artifactNomination, htmlNomination] =
+  PresentPrimaryViewOutputSchema.options;
+const PresentationControlResultSchema = z.discriminatedUnion('source', [
+  toolResultNomination.extend(lifecycle),
+  artifactNomination.extend(lifecycle),
+  htmlNomination.extend(lifecycle),
+]);
 
 /** A nomination only. The reply finalizer is the authority that can publish it. */
 export const presentPrimaryViewTool: DomainTool<

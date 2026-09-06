@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { QuestionAuthorDraft, type QuestionAuthorDraftT } from '@/core/schema/question_author';
 import type { SubjectProfile } from '@/subjects/profile';
@@ -43,7 +44,25 @@ structured 树形（StructuredQuestion，二选一）：
 }
 
 export function parseQuestionAuthorOutput(text: string): QuestionAuthorDraftT {
-  return parseTaskOutput(text, 'parseQuestionAuthorOutput', QuestionAuthorDraft);
+  // Some providers emit null for omitted optional arrays. Normalize only these
+  // two author-owned fields; answers, node shapes and malformed arrays still fail.
+  const normalizeNode = (value: unknown): unknown => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    const node = { ...value } as Record<string, unknown>;
+    if (node.options === null) delete node.options;
+    if (node.sub_questions === null) delete node.sub_questions;
+    else if (Array.isArray(node.sub_questions))
+      node.sub_questions = node.sub_questions.map(normalizeNode);
+    return node;
+  };
+  return parseTaskOutput(
+    text,
+    'parseQuestionAuthorOutput',
+    z.preprocess((value) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+      return { ...value, structured: normalizeNode((value as Record<string, unknown>).structured) };
+    }, QuestionAuthorDraft),
+  );
 }
 
 export const questionAuthorTaskSpec = {

@@ -10465,8 +10465,41 @@ export interface operations {
                                     id: string;
                                     kind: string;
                                 };
+                                snapshot?: {
+                                    byte_length: number;
+                                    /** @enum {string} */
+                                    completeness: "complete" | "projected";
+                                    omissions: {
+                                        omitted_count?: number;
+                                        path: string;
+                                        /** @enum {string} */
+                                        reason: "private" | "opaque" | "display_limit";
+                                    }[];
+                                    sha256: string;
+                                    /** @enum {string} */
+                                    state: "available";
+                                    value: string | number | boolean | (null) | unknown[] | {
+                                        [key: string]: unknown;
+                                    };
+                                    /** @enum {number} */
+                                    version: 1;
+                                } | {
+                                    /** @enum {string} */
+                                    reason: "internal_only" | "content_rejected" | "size_limit" | "unsupported_result";
+                                    /** @enum {string} */
+                                    state: "unavailable";
+                                    /** @enum {number} */
+                                    version: 1;
+                                };
                                 /** @enum {string} */
-                                source: "tool_result" | "artifact";
+                                source: "tool_result";
+                            } | {
+                                ref: {
+                                    id: string;
+                                    kind: string;
+                                };
+                                /** @enum {string} */
+                                source: "artifact";
                             } | {
                                 ref: string;
                                 /** @enum {string} */

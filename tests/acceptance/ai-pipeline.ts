@@ -31,6 +31,7 @@ type CaseName =
   | 'claims'
   | 'presentation-process'
   | 'presentation-tool'
+  | 'presentation-candidate'
   | 'presentation-artifact'
   | 'presentation-html'
   | 'proposal'
@@ -49,6 +50,7 @@ const CASES: readonly CaseName[] = [
   'claims',
   'presentation-process',
   'presentation-tool',
+  'presentation-candidate',
   'presentation-artifact',
   'presentation-html',
   'proposal',
@@ -74,6 +76,7 @@ const CASE_COST_RESERVE_USD: Readonly<Record<CaseName, number>> = {
   claims: 0.3,
   'presentation-process': 0.4,
   'presentation-tool': 0.4,
+  'presentation-candidate': 0.9,
   'presentation-artifact': 0.4,
   'presentation-html': 0.4,
   proposal: 0.25,
@@ -482,6 +485,18 @@ async function main(): Promise<void> {
         version: 0,
       },
     ]);
+    if (requested === 'presentation-candidate')
+      await db.insert(schema.knowledge).values({
+        id: 'actual:distribution',
+        name: '整数乘法与分配律',
+        domain: 'math',
+        parent_id: null,
+        approval_status: 'approved',
+        proposed_by_ai: false,
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      });
     const seededKnowledgeState = (
       await db
         .select({
@@ -1078,6 +1093,8 @@ async function main(): Promise<void> {
           '调用 query_knowledge（subjectId:yuwen、nodeId:actual:classical-root、include:[children]、limit:10）核对两个节点名称。本轮只是过程检查，仅用一句正文报告已有名称，不生成成品卡、不出题、不写入。',
         'presentation-tool':
           '调用 query_knowledge（subjectId:yuwen、nodeId:actual:classical-root、include:[children]、limit:10）读取节点，先看实际结果，再将这次成功的根工具结果作为本轮主要成品展示（tool_result），正文保留两个实际节点名称。不要新建artifact、不出题、不写入，不在正文输出隐藏标记。',
+        'presentation-candidate':
+          '请调用一次 generate_question_candidate（seed_mode:knowledge、knowledge_ids:[actual:distribution]、requested_kind:computation、difficulty:1），生成一道自包含的整数乘法与分配律练习。看完结果后调用一次 present_primary_view 将这次成功根调用作为 tool_result 展示。不保存为题库或artifact，不调用author_question。正文只说“已准备练习”，不要在正文重复题面、答案或隐藏标记，系统会校验卡片里的题目。',
         'presentation-artifact':
           '为我创建并保存一个极简的中文学习资料导航互动页，标题“资料导航”：HTML只包含“原文”和“笔记”两个本地切换按钮及对应说明，无外链、无题目、无解答、无测验。调用 author_artifact 保存，检查返回的真实artifact ID后，将该已保存interactive作为本轮主要成品展示。正文只说明已保存的标题和ID，不输出隐藏标记。',
         'presentation-html':
@@ -1123,12 +1140,14 @@ async function main(): Promise<void> {
         const expectedSource = {
           'presentation-process': null,
           'presentation-tool': 'tool_result',
+          'presentation-candidate': 'tool_result',
           'presentation-artifact': 'artifact',
           'presentation-html': 'ephemeral_html',
         }[
           caseName as
             | 'presentation-process'
             | 'presentation-tool'
+            | 'presentation-candidate'
             | 'presentation-artifact'
             | 'presentation-html'
         ];
@@ -1181,6 +1200,27 @@ async function main(): Promise<void> {
             !observed.tools.some((tool) => tool.name === 'author_artifact' && !tool.error)
           )
             throw new Error(`${caseName}: missing actual author-owned artifact`);
+        }
+        if (caseName === 'presentation-candidate') {
+          const view = result.primary_view;
+          if (
+            view?.source !== 'tool_result' ||
+            view.ref.kind !== 'generate_question_candidate' ||
+            view.snapshot?.state !== 'available' ||
+            receipt?.learning_content !== 'passed'
+          )
+            throw new Error(
+              'presentation-candidate: a generated question was not independently validated and published',
+            );
+          for (const kind of ['QuestionAuthorTask', ...SEMANTIC_VALIDATOR_TASK_KINDS]) {
+            if (!observed.rows.some((row) => row.kind === kind && row.status === 'success'))
+              throw new Error(`presentation-candidate: missing successful ${kind}`);
+          }
+          if (
+            observed.tools.filter((tool) => tool.name === 'generate_question_candidate').length !==
+            1
+          )
+            throw new Error('presentation-candidate: generation must run exactly once');
         }
         if (
           caseName === 'presentation-html' &&

@@ -1,9 +1,5 @@
-import type {
-  ReplayChatMessage,
-  ReplayPrimaryView,
-  ReplaySkillContext,
-  ReplayTurn,
-} from './replay';
+import { parseCopilotPrimaryView } from '../primary-view-contract';
+import type { ReplayChatMessage, ReplaySkillContext, ReplayTurn } from './replay';
 import { parseSkillContext, parseSkillTurn } from './skill-lifecycle';
 import type { CopilotRunView, CopilotSubtaskView, CopilotToolCallRecord } from './subtask-events';
 
@@ -27,24 +23,6 @@ function record(value: unknown): Record<string, unknown> | undefined {
 
 function text(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
-function parsePrimaryView(value: unknown): ReplayPrimaryView | undefined {
-  const view = record(value);
-  if (!view) return undefined;
-  if (view.source === 'ephemeral_html' && typeof view.ref === 'string') {
-    return { source: view.source, ref: view.ref };
-  }
-  const ref = record(view.ref);
-  if (
-    (view.source === 'artifact' || view.source === 'tool_result') &&
-    ref &&
-    typeof ref.kind === 'string' &&
-    typeof ref.id === 'string'
-  ) {
-    return { source: view.source, ref: { kind: ref.kind, id: ref.id } };
-  }
-  return undefined;
 }
 
 function settleTools(
@@ -75,7 +53,7 @@ export function projectCopilotReply(
     reply_event_id: text(reply.reply_event_id),
     skill_turn: incomplete ? undefined : parseSkillTurn(reply.skill_turn),
     skill_context: parseSkillContext(reply.skill_context) ?? context,
-    primary_view: parsePrimaryView(reply.primary_view),
+    primary_view: incomplete ? undefined : parseCopilotPrimaryView(reply.primary_view),
     ...(previous.tool_calls ? { tool_calls: settleTools(previous.tool_calls, incomplete) } : {}),
   };
 }

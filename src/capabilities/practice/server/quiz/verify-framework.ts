@@ -1176,7 +1176,12 @@ export async function runSolveCheck(
       knowledge_ids: question.knowledge_ids ?? null,
       metadata: question.metadata ?? null,
     },
-    answer_md: solverFinalAnswer,
+    // Method/derivation questions must compare the independent worked solution,
+    // not discard it and then penalize the solver for providing only a number.
+    // Keep the final answer explicit, including for legacy answer-only outputs.
+    answer_md: independentlySolved.worked_solution_md
+      ? `${solverFinalAnswer}\n\n${independentlySolved.worked_solution_md}`
+      : solverFinalAnswer,
     subjectProfile: opts.profile.full,
     runTaskFn: recordingRunTaskFn,
   };

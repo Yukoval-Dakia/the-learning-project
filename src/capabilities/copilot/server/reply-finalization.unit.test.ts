@@ -9,6 +9,11 @@ import {
   sealCommittedPresentationReply,
 } from './reply-finalization';
 import { REALISTIC_EVIDENCE_TRACE } from './reply-finalization.actual-fixture';
+import { buildCopilotToolResultSnapshot } from './tool-result-snapshot';
+import {
+  PresentPrimaryViewInputSchema,
+  presentPrimaryViewTool,
+} from './tools/present-primary-view';
 
 const correctionContract = {
   available_prior_turn_ids: [] as string[],
@@ -132,6 +137,41 @@ async function pre(
 }
 
 describe('Copilot root reply finalization', () => {
+  it('captures nomination output immutably instead of following later caller mutation', async () => {
+    const value = finalizer();
+    await pre(value, 'mcp__loom__query_knowledge', 'observed-root', {});
+    value.observeDomainTool({
+      tool_use_id: 'observed-root',
+      name: 'query_knowledge',
+      effect: 'read',
+      input: {},
+      output: { nodes: [{ id: 'zero', estimate: 0, evidence: null }] },
+      error_reason: null,
+      executed: true,
+    });
+    const nomination = {
+      source: 'tool_result',
+      ref: { kind: 'query_knowledge', id: 'observed-root' },
+    };
+    await pre(value, 'mcp__loom__present_primary_view', 'observed-control', nomination);
+    value.observeDomainTool({
+      tool_use_id: 'observed-control',
+      name: 'present_primary_view',
+      effect: 'control',
+      input: nomination,
+      output: nomination,
+      error_reason: null,
+      executed: true,
+    });
+    nomination.ref.id = 'forged-after-observation';
+    const result = await value.finalizeTerminal('已核对观测。');
+    expect(result.preparedReply.primaryView).toMatchObject({
+      source: 'tool_result',
+      ref: { kind: 'query_knowledge', id: 'observed-root' },
+    });
+    expect(result.receipt.primary_view).toBe('retained');
+  });
+
   it('retains read-then-present when the control names an actual successful root result', async () => {
     const value = finalizer();
     await pre(value, 'mcp__loom__query_knowledge', 'root-result', { query: '函数' });
@@ -161,12 +201,16 @@ describe('Copilot root reply finalization', () => {
     expect(result.preparedReply.primaryView).toEqual({
       source: 'tool_result',
       ref: { kind: 'query_knowledge', id: 'root-result' },
+      snapshot: buildCopilotToolResultSnapshot('query_knowledge', {
+        nodes: [{ id: 'kc_1', name: '函数' }],
+      }),
     });
     expect(result.receipt.primary_view).toBe('retained');
   });
 
   it.each([
     { label: 'child', sourceId: 'child-result', sourceAgentId: 'researcher_1', sourceError: null },
+    { label: 'not executed', sourceId: 'skipped-result', sourceError: null, executed: false },
     {
       label: 'failed',
       sourceId: 'failed-result',
@@ -205,7 +249,7 @@ describe('Copilot root reply finalization', () => {
         input: { query: '函数' },
         output: fixture.sourceError ? { error: fixture.sourceError } : { nodes: [{ id: 'kc_1' }] },
         error_reason: fixture.sourceError,
-        executed: true,
+        executed: fixture.executed ?? true,
       });
       const nominatedKind = fixture.nominatedKind ?? 'query_knowledge';
       const nominatedId = fixture.nominatedId ?? fixture.sourceId;
@@ -228,6 +272,43 @@ describe('Copilot root reply finalization', () => {
       expect(result.receipt.primary_view).toBe('dropped');
     },
   );
+
+  it('keeps presentation controls ref-only while accepting server lifecycle metadata', async () => {
+    const nomination = {
+      source: 'tool_result' as const,
+      ref: { kind: 'query_knowledge', id: 'read-42' },
+    };
+    const forged = {
+      ...nomination,
+      snapshot: buildCopilotToolResultSnapshot('query_knowledge', { nodes: [] }),
+    };
+    expect(PresentPrimaryViewInputSchema.safeParse(forged).success).toBe(false);
+    expect(
+      PresentPrimaryViewInputSchema.safeParse({
+        ...nomination,
+        ref: { ...nomination.ref, snapshot: forged.snapshot },
+      }).success,
+    ).toBe(false);
+    const output = await presentPrimaryViewTool.execute({} as never, nomination);
+    expect(presentPrimaryViewTool.outputSchema.safeParse(output).success).toBe(true);
+    expect(output.presentation_lifecycle).toEqual({
+      saved_with_conversation: true,
+      discarded_on_close: false,
+      standalone_artifact: false,
+    });
+    const value = finalizer();
+    await pre(value, 'mcp__loom__present_primary_view', 'forged-control', nomination);
+    value.observeDomainTool({
+      tool_use_id: 'forged-control',
+      name: 'present_primary_view',
+      effect: 'control',
+      input: nomination,
+      output: forged,
+      error_reason: null,
+      executed: true,
+    });
+    expect((await value.finalizeTerminal('已核对。')).preparedReply.primaryView).toBeUndefined();
+  });
 
   it.each([
     { label: 'missing', resolvedType: null, nominatedKind: 'interactive' },

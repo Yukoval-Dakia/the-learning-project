@@ -1,3 +1,4 @@
+import type { CopilotPrimaryView } from '../primary-view-contract';
 import { projectReplayMessage } from './message-projection';
 
 // Replay owns stable ordering/deduplication of persisted turns. The shared
@@ -32,15 +33,8 @@ export interface ReplaySkillContext {
   ref: { kind: string; id: string };
 }
 
-// YUK-307 — the agent-nominated hero deliverable persisted on a reply turn
-// (presentation layer §2.3). Mirrors CopilotPrimaryView (src/capabilities/copilot/server/
-// turns.ts), declared inline so replay.ts stays self-contained (same precedent
-// as ReplaySkillTurn / ReplaySkillContext above). replayToMessages forwards it
-// untouched; RENDERING the nomination (hero card density / Dock policy) is the
-// separate UI slice — nothing here interprets the field.
-export type ReplayPrimaryView =
-  | { source: 'tool_result' | 'artifact'; ref: { kind: string; id: string } }
-  | { source: 'ephemeral_html'; ref: string };
+// Live delivery and persisted replay share the same pure product contract.
+export type ReplayPrimaryView = CopilotPrimaryView;
 
 export interface ReplayTurn {
   role: ReplayTurnRole;

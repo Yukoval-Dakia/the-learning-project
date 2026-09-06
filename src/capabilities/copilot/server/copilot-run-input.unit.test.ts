@@ -16,7 +16,21 @@ const turn = (role: 'user' | 'ai' | 'tombstone', text: string, event_id?: string
     skill_context: { skill: 'quiz' },
     proposal_feedback: [{ marker: 'must-not-replay' }],
     ambient_context: { route: '/private' },
-    primary_view: { kind: 'secret' },
+    primary_view: {
+      source: 'tool_result',
+      ref: { kind: 'query_knowledge', id: 'read-private' },
+      snapshot: {
+        version: 1,
+        state: 'available',
+        value: { text: 'must-not-replay'.repeat(500) },
+        sha256: 'a'.repeat(64),
+        byte_length: new TextEncoder().encode(
+          JSON.stringify({ text: 'must-not-replay'.repeat(500) }),
+        ).byteLength,
+        completeness: 'complete',
+        omissions: [],
+      },
+    },
   }) as unknown as CopilotTurn;
 
 describe('assembleConversationHistory', () => {

@@ -854,7 +854,7 @@
                 }
               ]
             },
-            "description": "获取 Copilot 会话快照：历史轮次与按接纳顺序排列的未结束运行\n\n**Query:**\n- `limit` (optional) e.g. `20`\n- `session_id` (optional) e.g. `REPLACE_COPILOT_SESSION_ID`\n\n**Notes:** limit 正整数，省略用服务端默认；session_id 指定 Copilot session，省略时读取 current reusable session。响应同一数据库快照 { session_id, turns, active_runs }；active_runs 含 run_id/session_id/status/events_url，不依赖浏览器本地任务缓存。AI turn 的可选 run_id 仅关联同会话 ask/chip 根输入，用于合并恢复消息；不代表可撤回，撤回资格仍由 checkpoint_event_id 表达。"
+            "description": "获取 Copilot 会话快照：历史轮次与按接纳顺序排列的未结束运行\n\n**Query:**\n- `limit` (optional) e.g. `20`\n- `session_id` (optional) e.g. `REPLACE_COPILOT_SESSION_ID`\n\n**Notes:** limit 正整数，省略用服务端默认；session_id 指定 Copilot session，省略时读取 current reusable session。响应同一数据库快照 { session_id, turns, active_runs }；active_runs 含 run_id/session_id/status/events_url，不依赖浏览器本地任务缓存。AI turn 的可选 run_id 仅关联同会话 ask/chip 根输入，用于合并恢复消息；不代表可撤回，撤回资格仍由 checkpoint_event_id 表达。primary_view.source=tool_result 可含服务端生成的 snapshot：available 时为有界公开结果及完整性说明，unavailable 时为原因；历史 ref-only 仍可读取。恢复不重新执行工具，快照不进入后续模型历史。"
           },
           "response": []
         },

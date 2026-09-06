@@ -1,17 +1,28 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：965已移除旧前台适配器，持久owner与验收合流；本地143DB通过，待actual/独立review/exact CI。
+> Linear 是权威 tracker；更新于 2026-09-07：966读取卡片actual通过、生成卡被安全拦截；契约缺失已修，967/968继续语义验收，待PR1348新exactCI。
 
 ## NOW
 
-- Active线YUK965：root独占tlp-wt-unified-conversation，branch codex/yuk-965-retire-foreground-adapter，base main9ebee3ae。
-  当前计划：①核对旧chat adapter与验收消费者；②迁移有效验收到持久owner；③删除死执行分支与专属测试；
-  ④保留shared writer/教学/取消/claim/预算/SDK保护，scoped验证、必要actual、独立review、exact CI。
+- Active线YUK966：root独占tlp-wt-unified-conversation，branch codex/yuk-966-tool-result-delivery，base main fbc87f3b+65985eae交付记录。
+  全产品核对发现真实缺口：agent提名tool_result后HeroCard只显示工具名，未交付结果，设计§2.2/2.3要求完整只读视图且不重复取数。
+  计划①真实root观察生成有界可信快照；②live/persist/replay同一协议；③既有drawer展示/刷新不重查；④针对性安全/恢复/浏览器验证与独立review/exactCI。
+  Owner已批准现有drawer发送/恢复/消息展示；根负责集成真实结果卡，复用ToolUseCard与同一live/replay协议。
+  初稿通用字段过滤被root拒绝；改复用真实领域outputSchema，并逐工具指定公开策略与opaque剥离，不复制第二套reader契约。
+  78unit/108DB/20browser绿；初审1P1已修：题目按既有schema规范化并无条件独立校验；修后52unit/16契约DB绿。
+  PR1348 f439a0be首轮CI只失败旧迁移schema指纹断言；保留8项行为测试，删除过期hash，待新exactCI。
+  唯一验证审947be81c PASS，review预算结束；其后actual发现数组null重生成/solver过程丢失，root已RED→GREEN修复。
+  最终182相关unit/typecheck/build绿；生成题仍被copy_safety unknown正确拦截，968负责闭卷来源语义与正向实际验收。
+  真实read快照live/persist一致通过，estimate0.0039958367；终文擅称无recent_failures，去重967待修，非整体语义绿。
+  业务owner只读复核：知识合并/录入完成/判分完成已有真实事务与失败恢复，不为9个必要owner造registry。
+  SoT仍有部署兼容；仓库compose值不等于生产运行态，不擅删guard或翻flag。Notes分散写入需按不同业务操作判断，尚无重复规则证据。
+- YUK965 Done：PR1347 exact6015f2a0fe1163eefc168ec782a5fb657099c0d7，CI34053995106全部success，
+  已于2026-09-06T19:20:27Z squash合并main fbc87f3b1ade3bc726d9371033a4c073d6c6f1a3。
   已删除旧chat执行/mutex，保留conversation-writes；执行policy与history anchor收敛为持久生命周期。
   actual脚本走真实HTTP adapter/v2接纳/物理fetch/worker/终态wake，不声称自动poller。
   122unit/143DB、零付费cancel与HTTP admission-only、typecheck/lint/build/audits通过。
   PR1347初审88a4a603发现unified验收超时迟到成功P1；共用test deadline helper已修，2RED→4GREEN。
-  修复后cancel/pickup零付费通过；唯一验证审与最终exact CI待做，尚未merge/deploy。
+  修复后cancel/pickup零付费通过；唯一验证审6015f2a0 PASS，review预算结束；未部署。
   scoped输入测试由隔离lane提交并经root修订核验；无其它writer，不新增调度框架。
   一条真实read通过，clean exact88a4a603，estimatedUSD0.0006681774；新池reserve5.55823、安全剩4.44177。
   详情docs/planning/2026-09-07-retire-foreground-adapter.md。
@@ -35,7 +46,7 @@
   保守请求预留合计$0.90823；此前余额$0.28771982单列，历史未知费用不填0。
   公开费率估算不冒充账户账单，SDK派生USD保留为独立观察。
   949另跑7个受控回合（含失败）：estimated $0.0214406071，case预留$2.8。
-  新$10池合计estimated $0.0359138701；965 read后总reserve$5.55823、安全剩$4.44177；当前停付费。
+  新$10池合计estimated $0.0474233747；966候选题后总reserve$6.85823、安全剩$3.14177；当前无paid进程。
 - YUK949：owner明确选FULL，允许按需短presentation control交互，ADR0061；
   agent看完结果提名，server校验，保留tool_result/artifact/ephemeral_html；不提高预算、不改生产UI。
   初稿ea8367c7的5P1已由81eb7f3e修复，ed693e16集成main9e02c48b。
@@ -76,11 +87,12 @@
 
 ## NEXT
 
-1. YUK965退休仅验收使用的runCopilotChat旧适配器；迁移有效actual场景后删死路径，不删除失败/恢复保护。
-2. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
-3. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
+1. 966等待新exact CI后交付快照链路；不把候选题拦截称作正向验收，不再开启第三轮review。
+2. 968闭卷生成与来源/原创性验证语义收口，967未请求recent_failures不能当零；同实际样本验收，不降低保护。
+3. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
+4. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
-4. 887生产副本backfill/audit/rebuild/golden与SoT退休仍需独立授权。
+5. 887生产副本backfill/audit/rebuild/golden与SoT退休仍需独立授权。
 
 ## PARKED
 
@@ -91,6 +103,6 @@
 
 ## BLOCKED-ON
 
-- 当前965可继续独立实施，完整goal不因948/950交付标blocked或complete。
+- 966暂无owner决策阻塞；965 review已结束，不重开。
 - 未授权部署、生产clone、SoT开关、backfill或历史数据删除；均未执行。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。
