@@ -1,41 +1,20 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：948/950已集成且本地/浏览器/独立初审通过；修复PR1346首轮CI暴露的测试清理泄漏。
+> Linear 是权威 tracker；更新于 2026-09-07：948/950经独立审查与exact CI交付main9ebee3ae；下一条965退休仅验收使用的旧前台适配器。
 
 ## NOW
 
-- Active线948/950，root独占工作树tlp-wt-unified-conversation；SDK与FIFO独立lane已合入并释放。
-  ADR0062锁定一个会话生命周期，服务端顺序接纳/唯一执行；并行lane不共享写工作树。
-  当前任务计划：①唯一SDK owner parity；②持久接纳/FIFO与故障恢复；③教学原子路径迁入；
-  ④统一API、服务端快照与已预检UI；⑤scoped/真实断线与模型验收、独立review、exact CI。
-  UI四文件预检已获owner批准，独立conversation-dock lane实施；后端入口已统一，完整体验尚待集成验收。
-  root已集成SDK lane并修掉初稿的早登记、DB未写、context digest未投递、重复拼保存说明等缺口；
-  真实writer返回字节决定是否保留cursor，本进程绑定+256上限，失败/改写/Stop冷启，不同轮不重烧。
-  teaching已走同一worker栅栏与终态marker：三种教学状态live/repair/replay，题目和回复原子提交；
-  ask_check禁止错误revert anchor，Stop后不materialize。当前85集成DB与typecheck通过。
-  Queue lane最终5fcae986经7c92403cf合入；terminal/Stop在提交后唤醒后继，失败由现有reconciler恢复。
-  /chat普通/chip/teaching统一202，必须稳定幂等key；durable旧字段不再选择生命周期，禁用queue不回退inline。
-  head任务与接纳同事务；后续轮持久等待，不409 busy；默认仍6轮/25工具，12分钟安全墙钟。
-  server snapshot已含session/turns/active_runs；公开tool/subtask进度顺序持久化，不泄漏Task prompt。
-  chip使用共享输入writer但保留system事件身份，不暴露typed-ask撤回锚；Stop同样识别chip。
-  已删除旧HTTP SSE执行分支及其专属测试，保留幂等/歧义/取消/校验/回滚测试；没有按数量硬删。
-  最新126unit、89worker/FIFO/history DB、typecheck/Biome/build通过；948/950 Linear均In Progress。
-  后续真实route→PG接纳/丢响应/无缓存恢复/追加/等待Stop/worker后继/因果历史场景通过；queue现8项。
-  发现durable默认跳过累计读取量预算，已删除分支复用capInput；合法60节点请求第17次仅余40，RED→GREEN。
-  保留6轮/25工具和原row上限；105相关unit、64集成DB及typecheck/Biome/build通过，无新增付费。
-  UI lane旧worker f6cd585/751361390仅初稿，per-run Stop/恢复仍不完整；architect接手完成，不直接合入。
-  a5bfa5a3真实HTTP/pg-boss/worker两轮actual通过；SSE断开后完成，SDK同id cold→resume，精确保留0/null/方向/未批准。
-  公开卡estimated $0.0007353978、保守reserve $1.6；实际输入13203→13370不声称token下降。
-  此证据不覆盖自动poller/浏览器/自动compact；manifest后继装配的真实DB和0付费admission-only另验。
-  boss唤醒装配归manifest，不让worker创建runtime；原生session持久化新增1条合法owner依赖，baseline439/0/47。
-  9f61ba1d增加服务端同会话ask/chip run_id，与checkpoint撤回资格独立；27历史DB/类型检查通过。
-  UI最终6895c4f5经b92177f86合入；per-run Map/订阅/Stop与延迟202跨会话保护完成，108 UI unit通过。
-  root修正自动合并带来的重复run_id类型声明；7个built-browser Copilot场景通过，未调用模型。
-  全部既有shipped-browser smoke20/20；typecheck/lint/build与API/架构/control-plane检查通过，准备PR独立review。
-  PR1346 exact70189a91独立初审PASS无P0/P1；CI34050192068仅DB2失败：新queue suite遗留1个job_events等待轮。
-  两文件单fork串行稳定复现4≠3；只补新suite teardown，不改产品计数/旧断言；修复后9/9通过，继续exact CI。
-  自动pg-boss poller另验：真实registrar/manifest消费已完成head并推进已Stop后继，两physical job完成、model零调用；queue8/8绿。
-  仍待UI集成与浏览器验收、独立review与exact-head CI；上述真实模型验收已通过但不替代这些门。
+- Active线YUK965：root独占tlp-wt-unified-conversation，branch codex/yuk-965-retire-foreground-adapter，base main9ebee3ae。
+  当前计划：①核对旧chat adapter与验收消费者；②迁移有效验收到持久owner；③删除死执行分支与专属测试；
+  ④保留shared writer/教学/取消/claim/预算/SDK保护，scoped验证、必要actual、独立review、exact CI。
+  此分支当前仅交付handoff/计划，尚未删除代码；无其它writer，不新增调度框架。
+- YUK948/950 Done：PR1346 exactcd1f7c54916c4d75dc1b64f29be2ec3fd1d363d9，CI34050991978全绿，
+  独立初审与唯一验证PASS，review预算结束；已squash合并main9ebee3aebe4c2840120d577bdf08512dfc3596e6。
+  /chat统一202/FIFO，per-run订阅/Stop，无缓存快照恢复；关闭/刷新/切会话不取消，延迟202不污染其它会话。
+  SDK本进程owner与终文字节栅栏、教学原子提交、原6轮/25工具/累计读取量上限保留。
+  108UI unit、27历史DB、82集成DB、20built-browser通过；自动poller零付费DB与两轮真实HTTP/native输出分别封存。
+  首轮CI发现新queue suite泄漏等待轮；串行4≠3 RED后仅修teardown，9/9 GREEN，未改产品计数/旧断言。
+  详见docs/planning/2026-09-07-unified-conversation-closeout.md；本轮UI/修复无新付费，未部署。
 - Owner授权AI pipeline和全项目业务封装/测试精简；完整goal仍active，不以audit数量或单个PR代替完成。
 - YUK945：foreground原生SDK compaction、每轮learner状态、compact后结构化再注入；
   原6轮/费用/row/tool/deadline不重置，usage仅存bounded compact元数据。
@@ -65,7 +44,7 @@
   非阻塞P2随948收口：root已修commit receipt丢view仍retained；artifact引用复用Notes-owned ready资格，16相关DB绿。
 - YUK948/950 owner新决定：Copilot不分前后台，默认不中断；关闭面板/刷新/断线只脱离订阅。
   服务端唯一执行owner；同一会话后续消息持久接纳并顺序消费，不409 busy、不要求先Stop。
-  撤回Mission按钮方案及其UI preflight；保留显式Stop与安全/预算限制。现有drawer四文件改动已获批准并在独立lane实施。
+  撤回Mission按钮方案及其UI preflight；保留显式Stop与安全/预算限制。现有drawer批准改动已随PR1346交付。
   复用copilot_run并补teaching、native compaction、无本地缓存恢复的parity，不新增第二调度框架。
 - YUK961 Done：Agency拥有pool-gap提示政策，Practice仅提交verify事实；
   PR1340 exact69542b2d CI34032977403绿，main50ba305b；48DB/独立review通过。
@@ -90,9 +69,7 @@
 
 ## NEXT
 
-1. YUK948统一持续执行与服务端恢复；950同会话追加消息，禁止以先Stop/409拒绝替代。
-   后端/UI已集成且7个Copilot浏览器场景通过，继续全页面smoke、独立review与exact CI。
-   后继YUK965退休仅验收使用的runCopilotChat旧适配器；迁移有效actual场景后删死路径，不删除失败/恢复保护。
+1. YUK965退休仅验收使用的runCopilotChat旧适配器；迁移有效actual场景后删死路径，不删除失败/恢复保护。
 2. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
 3. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
@@ -107,6 +84,6 @@
 
 ## BLOCKED-ON
 
-- 当前948/950已获UI批准，实施与验收进行中，不标完整goal blocked或complete。
+- 当前965可继续独立实施，完整goal不因948/950交付标blocked或complete。
 - 未授权部署、生产clone、SoT开关、backfill或历史数据删除；均未执行。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。

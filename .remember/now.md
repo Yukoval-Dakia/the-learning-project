@@ -1,6 +1,19 @@
 # 当前 handoff — 2026-09-07，完整重构goal active
 
-## 最新状态（以下历史步骤不替代本节）
+## 最新状态
+
+- PR1346已合并：exact cd1f7c54916c4d75dc1b64f29be2ec3fd1d363d9，CI34050991978全部success，
+  main9ebee3aebe4c2840120d577bdf08512dfc3596e6，mergedAt2026-09-06T18:24:16Z。
+  初审70189a91 PASS，test-only修复唯一复核cd1f7c54 PASS；review预算结束，无第三轮。
+  首轮CI34050192068的queue→backlog泄漏已串行RED→GREEN修复；108UI/27历史DB/82集成DB/20browser绿。
+  所有UI/SDK/FIFO writer已释放，无运行paid/server/watch进程，未部署，原始脏main不动。
+- 当前root仍独占tlp-wt-unified-conversation，已切新branch codex/yuk-965-retire-foreground-adapter，base origin/main9ebee3ae。
+  本分支当前只提交交付记录/任务计划，尚未实施965代码：先盘点旧adapter验收消费者，再迁到persistent owner，
+  退休旧foreground lifecycle与专属测试，保留shared writer/教学/claim/取消/预算/SDK保护。
+  YUK948/950 Done；YUK965接续In Progress；整体goal仍active。
+  $10池安全剩4.69177，estimate0.0352456927非账单/reserve5.30823；旧池0.28771982单列，无新付费。
+
+## 历史实施过程（不替代以上最新状态）
 
 - PR1346已push exact70189a91，独立初审review_unified_conversation PASS，无P0/P1。
   CI34050192068仅DB2失败，durable-backlog计数4≠3；root用queue+backlog两文件单fork稳定复现。

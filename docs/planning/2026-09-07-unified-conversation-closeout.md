@@ -1,5 +1,11 @@
 # YUK-948 / YUK-950 — 统一持续会话验收
 
+已交付：[PR1346](https://github.com/Yukoval-Dakia/the-learning-project/pull/1346)，
+exact `cd1f7c54916c4d75dc1b64f29be2ec3fd1d363d9` 的
+[CI34050991978](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/34050991978) 全绿。
+独立初审与 test-only 修复的唯一复核均 PASS；已于 2026-09-06T18:24:16Z squash 合并至
+`9ebee3aebe4c2840120d577bdf08512dfc3596e6`。未部署。后继结构退休见 YUK-965。
+
 ## 产品边界
 
 Owner 已批准现有 Copilot drawer 的发送、恢复和消息展示改动。消息不再分前后台：
