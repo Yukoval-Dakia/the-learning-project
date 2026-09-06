@@ -24,9 +24,10 @@
   唯一验证审确认原5项已修；新发现raw artifact类型无导航，root改为owner-resolved canonical ref。
   208集成unit+76针对性unit/49durableDB/6引用DB通过；唯一验证审PASS，无第三轮。
   8个shipped浏览器用例验证三类hero/无hero的inline+durable+刷新恢复，无生产UI改动。
-  actual过程无hero/read引用/author→artifact通过；一次性HTML控制+保存成功，但连续3次保存误述，
-  已完整保留语义失败，不能把script绿色当质量通过。prompt及typed lifecycle事实仍未足够约束模型。
-  root当前59156663；只读咨询最小业务收口方案中。tool_result仍是既有named placeholder，未新增数据卡。
+  actual过程无hero/read引用/author→artifact通过；三次HTML模型保存误述完整保留，不冒充模型遵循。
+  081471e4将真实保存说明交给shared commit owner，保留实质正文并明确权威状态；同步reseal/hash及SDK cursor。
+  三条真实失败终文免费重放全部通过；322scoped unit、56DB、typecheck/lint/build通过，待PR/exactCI。
+  已集成960 main3791bf4d；210c6051恢复原mid-line问句边界，修掉一次无意扩大检测。tool_result仍是既有placeholder。
 - YUK961 Done：Agency拥有pool-gap提示政策，Practice仅提交verify事实；
   PR1340 exact69542b2d CI34032977403绿，main50ba305b；48DB/独立review通过。
 - YUK962 Done：5个纯测试文件移入unit，59tests通过，总1043文件不减；
@@ -50,9 +51,8 @@
 ## NEXT
 
 1. YUK949完整呈现actual与exact CI交付，后台/前台/恢复共享发布语义。
-2. YUK960 exact960d0b64，29unit/typecheck/lint/build及唯一复审PASS，PR1344。
-   CI34038363273原unit/static/build绿；旧attribution DB测试60s超时后连接错误，scoped两例本地绿，
-   同exact失败lane已重跑。原762去重重开Todo，不加timeout、不删保护；960尚未合并。
+2. YUK960 PR1344 exact960d0b64，CI34038363273失败lane重跑后绿，已合并3791bf4d。
+   同类762去重重开Todo；非归因逻辑变更，不加timeout/删保护。小范围mid-line边界回归由949中的210c6051收口。
 3. YUK948显式Mission入口、950同轮steer、960报告问句误拦；保留真实学习内容保护。
 4. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
 5. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。

@@ -41,8 +41,10 @@
   949实际7回合estimated $0.0214406071，预留$2.8；新$10池总estimate $0.0345102949、
   reserve $3.70823，安全剩$6.29177。没有付费调用运行中，旧池$0.28771982仍单列。
   成功：process/nohero、tool_result精确真实call_id、author_artifact真实保存后artifact。
-  未通过语义：HTML三次错误称关闭消失/未持久化/未写入持久存储；prompt澄清和control返回
-  typed lifecycle都未奏效，当前停付费，repair_primary_view_contract仅只读设计咨询不得写树。
+  未通过语义：HTML三次错误称关闭消失/未持久化/未写入持久存储，原始模型失败保留。
+  只读咨询后root081471e4实施shared commit-owned说明，不做regex删句/模型评估/新增paid。
+  writer检查输入hash→追加固定权威保存说明→reseal；durable repair/replay共享，前台清理不一致SDK cursor。
+  三条真实终文免费重放policy全部通过；当前322unit/56DB/typecheck/lint/build绿；无第三轮review。
   首个tool actual因root harness JSON键序误判失败，改isDeepStrictEqual复验过；首失败也计费并保留。
   docs/planning/evidence/2026-09-06-presentation-control-actual.json封存全部7个原始终文/digests/runIDs，
   不把结构script pass当人工semantic pass，不持久化CoT。尚无949 PR。
@@ -63,6 +65,8 @@
   960已在独立tlp-wt-report-question-boundary修复并推PR1344 exact960d0b64：29unit+全部localgates+唯一复审。
   CI34038363273初次仅旧proposal-tools归因DB超时60s+后续preparedstatement错误；精确两例本机通过，
   已重跑failed lane，同类原762已去重重开Todo。两次worker把新format errors错说baseline，被root纠正。
+  PR1344同exact失败lane重跑后全绿，已合并3791bf4d，root已合入949树。
+  210c6051恢复原mid-line问句锚避免无意扩大检测；与949一起交付，不改变实际报告修复。
 - 依赖438/0/47与5capability SCC/20命令消费者保留；不为数字重做已封装learning-intent。
 - 不动原始脏main、不部署/改SoT/backfill/删历史；887需独立生产副本授权，
   951需完整drain窗口；921/572/832HOLD不解锁。
