@@ -1,11 +1,12 @@
 import { createId } from '@paralleldrive/cuid2';
-import { type SQL, and, eq, sql } from 'drizzle-orm';
+import { type SQL, and, asc, eq, sql } from 'drizzle-orm';
 import type { PgBoss } from 'pg-boss';
 
 import type { BBoxT, FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { learning_session, question_block } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { writeJobEvent } from '@/server/events/writer';
 import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
 
@@ -27,6 +28,7 @@ import { assertFromState } from './guards';
 // commitImport) write NO domain event — reconsider in Phase 1d.
 
 const SESSION_TABLE = 'ingestion_session' as const;
+export const IMPORTABLE_SESSION_STATUSES = ['extracted', 'reviewed'] as const;
 const OPERATION_DISPATCH_SINGLETON_SECONDS = 24 * 60 * 60;
 
 // job_events business_table label kept as 'ingestion_session' for SSE replay
@@ -566,16 +568,25 @@ export async function assertSessionAvailableForImport(
   tx: Tx,
   sessionId: string,
 ): Promise<{ source_document_id: string | null }> {
+  // Auto-enrollment claims G then its block, without a session lock. Import must
+  // follow G -> session -> sorted blocks, including the later draft-ignore sweep.
+  await acquireLearningStateWriteLock(tx);
   const current = await loadSessionForUpdate(tx, sessionId);
   if (!current) {
     throw new ApiError('not_found', `learning_session ${sessionId} not found`, 404);
   }
   assertFromState(
     current.status,
-    ['extracted', 'reviewed'] as const,
+    IMPORTABLE_SESSION_STATUSES,
     sessionId,
     'Ingestion.assertSessionAvailableForImport',
   );
+  await tx
+    .select({ id: question_block.id })
+    .from(question_block)
+    .where(eq(question_block.ingestion_session_id, sessionId))
+    .orderBy(asc(question_block.id))
+    .for('update');
   return { source_document_id: current.source_document_id };
 }
 
@@ -601,12 +612,7 @@ export async function commitImport(tx: Db | Tx, sessionId: string): Promise<void
   if (!current) {
     throw new ApiError('not_found', `learning_session ${sessionId} not found`, 404);
   }
-  assertFromState(
-    current.status,
-    ['extracted', 'reviewed'] as const,
-    sessionId,
-    'Ingestion.commitImport',
-  );
+  assertFromState(current.status, IMPORTABLE_SESSION_STATUSES, sessionId, 'Ingestion.commitImport');
 
   const now = new Date();
   await tx

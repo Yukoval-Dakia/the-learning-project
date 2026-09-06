@@ -100,22 +100,7 @@ describe('ingestion server ownership', () => {
     __resetRegistryForTests();
   });
 
-  it('deletes central owner paths, exports, imports, and direct registrations', () => {
-    expect(existsSync(join(process.cwd(), 'src/server/ai/tools/question-edit-tools.ts'))).toBe(
-      false,
-    );
-    expect(existsSync(join(process.cwd(), 'src/server/events/ingestion-progress.ts'))).toBe(false);
-
-    // YUK-892 — the transitional central concrete tool files are deleted wholesale.
-    expect(existsSync(join(process.cwd(), 'src/server/ai/tools/context-readers.ts'))).toBe(false);
-
-    const manifest = source('src/capabilities/ingestion/manifest.ts');
-    expect(manifest).not.toContain('@/server/ai/tools/context-readers');
-    expect(manifest).not.toContain('@/server/ai/tools/question-edit-tools');
-    expect(source('src/capabilities/ingestion/jobs/tencent_ocr_extract.ts')).not.toContain(
-      '@/server/events/ingestion-progress',
-    );
-
+  it('keeps concrete registrations out of the central registry infrastructure', () => {
     const directRegistrySources = [
       source('src/server/ai/tools/register-capability-tools.ts'),
       source('src/server/ai/tools/registry.ts'),

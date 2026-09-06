@@ -10,11 +10,13 @@
  */
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
+import type { Job } from 'pg-boss';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   event,
+  job_events,
   knowledge,
   learning_record,
   learning_session,
@@ -50,7 +52,16 @@ import { gatherAndFoldQuestionBlock } from '@/server/projections/gather';
 import { questionBlockLiveRowToSnapshot } from '@/server/projections/parity';
 import { diffSnapshots } from '@/server/projections/snapshot-diff';
 import { backfillQuestionBlockGenesis } from '../../../../scripts/backfill-genesis-events';
+import {
+  type IngestionOperationJobData,
+  buildIngestionOperationHandler,
+} from '../jobs/ingestion_operation';
+import { runAutoEnrollForSession } from '../server/auto-enroll';
+import * as enrollment from '../server/enroll';
+import { completeIngestionImport } from '../server/import-completion';
+import { readIngestionOperation, reserveIngestionOperation } from '../server/operation-store';
 import { POST } from './import';
+import { ImportBody } from './import-schema';
 
 // ---- helpers ----
 
@@ -198,6 +209,181 @@ describe('POST /api/ingestion/[id]/import', () => {
     r2._store.clear();
     await resetDb();
     vi.clearAllMocks();
+  });
+
+  it('durable import calls the owner once across concurrent delivery and replay', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db);
+    await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId });
+    await insertKnowledge(db, 'k1');
+    const operationId = 'ingop_duplicate_import';
+    await reserveIngestionOperation(db, {
+      operationId,
+      sessionId,
+      operationKind: 'import',
+      inputHash: 'test-input',
+    });
+    const jobs = [
+      {
+        id: 'job-import',
+        data: {
+          operationId,
+          sessionId,
+          request: { kind: 'import', input: ImportBody.parse(makeImportBody()) },
+        },
+      },
+    ] as Job<IngestionOperationJobData>[];
+    const handler = buildIngestionOperationHandler(db);
+    await Promise.all([handler(jobs), handler(jobs)]);
+    const receipt = await readIngestionOperation(db, operationId);
+    expect(receipt).toMatchObject({
+      status: 'succeeded',
+      result: {
+        question_ids: [expect.any(String)],
+        mistake_ids: [expect.any(String)],
+        record_ids: [expect.any(String)],
+      },
+    });
+    await handler(jobs);
+    expect(await readIngestionOperation(db, operationId)).toEqual(receipt);
+    expect(await db.select().from(question)).toHaveLength(1);
+    expect(await db.select().from(learning_record)).toHaveLength(1);
+    const completed = await db
+      .select()
+      .from(job_events)
+      .where(
+        and(
+          eq(job_events.business_id, operationId),
+          eq(job_events.event_type, 'operation.completed'),
+        ),
+      );
+    expect(completed).toHaveLength(1);
+    const [session] = await db
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
+    expect(session.status).toBe('imported');
+  });
+
+  it('manual import and auto-enroll cannot consume the same source block concurrently', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db);
+    await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId });
+    await insertKnowledge(db, 'k1');
+    await db
+      .update(question_block)
+      .set({
+        structured: {
+          id: 'structured-a',
+          role: 'standalone',
+          prompt_text: '解释下列句子中之字的用法，并指出代词与结构助词的区别。',
+          source: 'vlm_structure',
+        },
+        layout_quality: 'structured',
+      })
+      .where(eq(question_block.id, 'block_a'));
+    const paused = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const realEnroll = enrollment.enrollCapturedBlock;
+    const enrollmentSpy = vi
+      .spyOn(enrollment, 'enrollCapturedBlock')
+      .mockImplementationOnce(async (tx, input) => {
+        // Manual path has validated the source and inserted its question, but has
+        // not yet written the block's terminal status: the historical double-consume gap.
+        paused.resolve();
+        await release.promise;
+        return realEnroll(tx, input);
+      });
+    const manual = completeIngestionImport(db, sessionId, ImportBody.parse(makeImportBody()));
+    await paused.promise;
+    let autoFinished = false;
+    const automatic = runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'yuwen',
+      env: { WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: 'true' },
+      tagKnowledgeFn: async () => ({ kind: 'match', knowledge_ids: ['k1'] }),
+    }).finally(() => {
+      autoFinished = true;
+    });
+    try {
+      // Wait for the actual database lock wait (fixed path), or completion (old
+      // path), not a guessed sleep duration. Then let manual import settle.
+      await vi.waitFor(
+        async () => {
+          const [waiter] = await db.execute(sql`SELECT EXISTS(
+          SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND NOT granted
+            AND objid = hashtext('learning-state:write')::oid
+        ) AS blocked`);
+          expect(autoFinished || waiter.blocked === true).toBe(true);
+        },
+        { timeout: 5_000, interval: 10 },
+      );
+      release.resolve();
+      const [, result] = await Promise.all([manual, automatic]);
+      expect(await db.select().from(question)).toHaveLength(1);
+      expect(await db.select().from(learning_record)).toHaveLength(1);
+      expect(await db.select().from(event).where(eq(event.action, 'attempt'))).toHaveLength(1);
+      expect(result.enrolled).toBe(0);
+    } finally {
+      release.resolve();
+      await Promise.allSettled([manual, automatic]);
+      enrollmentSpy.mockRestore();
+    }
+  });
+
+  it('receipt failure rolls back all imported facts and queue retry completes without duplication', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db);
+    await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId });
+    await insertKnowledge(db, 'k1');
+    const operationId = 'ingop_atomic_receipt_failure';
+    await reserveIngestionOperation(db, {
+      operationId,
+      sessionId,
+      operationKind: 'import',
+      inputHash: 'test-input',
+    });
+    const jobs = [
+      {
+        id: 'job-import',
+        data: {
+          operationId,
+          sessionId,
+          request: { kind: 'import', input: ImportBody.parse(makeImportBody()) },
+        },
+      },
+    ] as Job<IngestionOperationJobData>[];
+    const handler = buildIngestionOperationHandler(db);
+    // Fail the final real database write, after question/record/attempt/block/session writes.
+    await db.execute(sql`ALTER TABLE job_events ADD CONSTRAINT import_receipt_fault
+      CHECK (business_id <> 'ingop_atomic_receipt_failure' OR event_type <> 'operation.completed')`);
+    try {
+      await expect(handler(jobs)).rejects.toThrow();
+      expect(await db.select().from(question)).toHaveLength(0);
+      expect(await db.select().from(learning_record)).toHaveLength(0);
+      expect(await db.select().from(event).where(eq(event.action, 'attempt'))).toHaveLength(0);
+      const [session] = await db
+        .select()
+        .from(learning_session)
+        .where(eq(learning_session.id, sessionId));
+      expect(session.status).toBe('extracted');
+      const [block] = await db
+        .select()
+        .from(question_block)
+        .where(eq(question_block.id, 'block_a'));
+      expect(block).toMatchObject({
+        status: 'draft',
+        imported_question_id: null,
+        imported_attempt_event_id: null,
+      });
+      expect(await readIngestionOperation(db, operationId)).toMatchObject({ status: 'queued' });
+    } finally {
+      await db.execute(sql`ALTER TABLE job_events DROP CONSTRAINT import_receipt_fault`);
+    }
+    await handler(jobs);
+    expect(await readIngestionOperation(db, operationId)).toMatchObject({ status: 'succeeded' });
+    expect(await db.select().from(question)).toHaveLength(1);
   });
 
   it('unchanged card happy path: cause=null → inserts 1 question + 1 attempt event, session=imported', async () => {
@@ -1088,15 +1274,16 @@ describe('POST /api/ingestion/[id]/import', () => {
     await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId });
     await insertKnowledge(db, 'k1');
 
-    const [resA, resB] = await Promise.all([
-      post(sessionId, makeImportBody()),
-      post(sessionId, makeImportBody()),
+    const results = await Promise.allSettled([
+      completeIngestionImport(db, sessionId, ImportBody.parse(makeImportBody())),
+      completeIngestionImport(db, sessionId, ImportBody.parse(makeImportBody())),
     ]);
-
-    const statuses = [resA.status, resB.status].sort();
-    // Exactly one 200 and one 409 (status guard). NEVER two 200 (would imply
-    // duplicate imports), NEVER 500 (would imply torn writes).
-    expect(statuses).toEqual([200, 409]);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const rejected = results.find((result) => result.status === 'rejected');
+    expect(rejected).toMatchObject({
+      status: 'rejected',
+      reason: { code: 'conflict', status: 409 },
+    });
 
     // Exactly one question and one attempt event were inserted (the winning import).
     // Step 9 dropped the mistake table — the attempt event id doubles as the
