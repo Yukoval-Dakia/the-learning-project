@@ -29,7 +29,10 @@ import {
   persistCopilotRunCancellationMarker,
 } from '@/capabilities/copilot/server/copilot-run-cancellation';
 import { acquireCopilotExecutionSettlementLock } from '@/capabilities/copilot/server/copilot-run-coordination';
-import { isCopilotWorkerSessionOwned } from '@/capabilities/copilot/server/copilot-worker-session';
+import {
+  isCopilotWorkerSessionOwned,
+  registerCopilotWorkerSession,
+} from '@/capabilities/copilot/server/copilot-worker-session';
 // YUK-575 (A1/N3) — the shared free-form run-input assembler. The durable handler
 // assembles the FULL run input at pickup time (YUK-596: pass run_id as a causal
 // history anchor in the job's fixed session; conversation_history / learner-state
@@ -95,6 +98,7 @@ export { enqueueCopilotMailboxJob } from '../api/chat';
 import type { CopilotContinuationRecord, SubagentRunRecord } from '../server/subagent-mailbox';
 import type { SpawnBudgetObservation } from '../server/subagents';
 import { getCopilotContinuationHistory } from '../server/turns';
+import { copilotSessionContextDigest } from '../server/live-session-context';
 
 // dispatch 入口投递的 job 体。run_id = checkpoint_id = user_ask event id（route
 // 在 enqueue 前已写 user_ask domain event，本 handler 以它做 causedByEventId 让
@@ -883,6 +887,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
   const resumeSessionId = isCopilotWorkerSessionOwned(data.session_id, persistedSdkSessionId)
     ? persistedSdkSessionId ?? undefined
     : undefined;
+  const contextDigest = copilotSessionContextDigest(runInput);
   const progressChain: Promise<void> = Promise.resolve();
   // Load-bearing execution fence, deliberately placed after every deterministic
   // setup/read and immediately before the only paid/external-effect gateway.
@@ -1104,6 +1109,7 @@ export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCop
       );
       if (projected.status === 'done' && result.sdkSessionId) {
         await setAgentSdkSessionId(db, data.session_id, result.sdkSessionId);
+        registerCopilotWorkerSession(data.session_id, result.sdkSessionId, contextDigest);
         sdkSessionCommitted = true;
       }
       return projected;

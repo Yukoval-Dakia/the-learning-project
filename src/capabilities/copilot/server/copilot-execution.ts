@@ -415,7 +415,6 @@ export function createCopilotExecutionOwner(
       ...(resumeSessionId ? { resume: resumeSessionId } : {}),
       onSessionId: (sessionId: string) => {
         observedSdkSessionId = sessionId;
-        registerCopilotWorkerSession(turn.sessionId, sessionId);
       },
     };
     const runnerContext: Parameters<typeof streamTaskCollecting>[2] = {
