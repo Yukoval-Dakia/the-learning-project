@@ -43,7 +43,6 @@ import {
 import { db } from '@/db/client';
 import { ApiError, HTTP_PROVIDER_SESSION_BUDGET_MS, errorResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
-import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
 import { writeJobEvent } from '@/server/events/writer';
 import { checkRateLimit } from '@/server/http/rate-limit';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
@@ -166,12 +165,16 @@ async function dispatchAcceptedRun(
             triggered_by: parsed.triggered_by,
             ...(parsed.chip_kind ? { chip_kind: parsed.chip_kind } : {}),
             ...(parsed.ambient_context ? { ambient: parsed.ambient_context } : {}),
+            ...(parsed.correction_target_turn_id ? { correction_target_turn_id: parsed.correction_target_turn_id } : {}),
+            ...(parsed.skill_context ? { skill_context: parsed.skill_context } : {}),
+            ...(parsed.chip_kind ? { chip_kind: parsed.chip_kind } : {}),
+            ...(parsed.ambient_context ? { ambient: parsed.ambient_context } : {}),
             ...(parsed.correction_target_turn_id
               ? { correction_target_turn_id: parsed.correction_target_turn_id }
               : {}),
             ...(parsed.skill_context ? { skill_context: parsed.skill_context } : {}),
           },
-          { id: acceptance.bossJobId, db: fromPgBossDrizzleTx(tx) },
+          { id: acceptance.bossJobId },
         );
       } catch (sendErr) {
         // `send` may have committed and only lost its acknowledgement. Read back

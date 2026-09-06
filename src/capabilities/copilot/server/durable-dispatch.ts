@@ -137,6 +137,7 @@ export async function reserveCopilotDurableAcceptance(
   },
 ): Promise<ReserveCopilotDurableAcceptanceResult> {
   return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('copilot-session-queue'), hashtext(${input.sessionId}))`);
     const deterministicRunId = input.idempotencyKey
       ? copilotRunIdForIdempotencyKey(input.idempotencyKey)
       : undefined;
@@ -172,6 +173,9 @@ export async function reserveCopilotDurableAcceptance(
         ...(input.idempotencyKey ? { idempotency_key: input.idempotencyKey } : {}),
       },
     });
+    // The first accepted turn is dispatched while acceptance is still open;
+    // later turns remain QUEUED until terminal wake-up.
+    await dispatchSessionHeadTx(tx, input.sessionId);
     input.assertActive?.();
     return {
       outcome: 'created',
@@ -230,37 +234,24 @@ export async function readCopilotSessionHead(tx: Tx, sessionId: string): Promise
   return { runId: row.run_id, sessionId, bossJobId, payload };
 }
 
+async function dispatchSessionHeadTx(tx: Tx, sessionId: string): Promise<string | null> {
+  const head = await readCopilotSessionHead(tx, sessionId);
+  if (!head) return null;
+  const existing = (await tx.execute(sql`SELECT 1 FROM job_events WHERE business_table=${COPILOT_RUN_TABLE} AND business_id=${head.runId} AND event_type='copilot_run.dispatched' LIMIT 1`)) as unknown[];
+  if (existing.length > 0) return null;
+  const job: Record<string, unknown> = { ...head.payload, run_id: head.runId, session_id: sessionId };
+  delete job.input_hash; delete job.idempotency_key; delete job.pickup_deadline_ms; delete job.dispatch;
+  const sent = await (await getStartedBoss()).send('copilot_run', job, { id: head.bossJobId, db: fromPgBossDrizzleTx(tx) });
+  if (!sent) throw new Error(`copilot session head ${head.runId} was not dispatched`);
+  await writeJobEvent(tx, { business_table: COPILOT_RUN_TABLE, business_id: head.runId, event_type: 'copilot_run.dispatched', payload: { boss_job_id: head.bossJobId, session_id: sessionId, protocol_version: 2, pickup_deadline_ms: Date.now() + 10_000 } });
+  return head.runId;
+}
+
 /** Dispatch exactly the current session head, idempotently, in the acceptance transaction. */
 export async function dispatchSessionHead(db: Db, sessionId: string): Promise<string | null> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('copilot-session-queue'), hashtext(${sessionId}))`);
-    const head = await readCopilotSessionHead(tx, sessionId);
-    if (!head) return null;
-    const boss = await getStartedBoss();
-    const job = { ...head.payload };
-    job.run_id = head.runId;
-    job.session_id = head.sessionId;
-    delete job.input_hash;
-    delete job.idempotency_key;
-    delete job.pickup_deadline_ms;
-    delete job.dispatch;
-    const sent = await boss.send('copilot_run', job, {
-      id: head.bossJobId,
-      db: fromPgBossDrizzleTx(tx),
-    });
-    if (!sent) throw new Error(`copilot session head ${head.runId} was not dispatched`);
-    await writeJobEvent(tx, {
-      business_table: COPILOT_RUN_TABLE,
-      business_id: head.runId,
-      event_type: 'copilot_run.dispatched',
-      payload: {
-        boss_job_id: head.bossJobId,
-        session_id: sessionId,
-        protocol_version: 2,
-        pickup_deadline_ms: Date.now() + 10_000,
-      },
-    });
-    return head.runId;
+    return dispatchSessionHeadTx(tx, sessionId);
   });
 }
 
