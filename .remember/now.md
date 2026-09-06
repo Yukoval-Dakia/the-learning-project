@@ -1,33 +1,36 @@
 # 当前 handoff — 2026-09-06
 
-Owner 已继续授权 AI pipeline，并依据 1e61da8d 报告扩大为全项目业务封装和测试精简。
+Owner 已授权 AI pipeline 与基于1e61da8d报告的全项目业务封装/测试精简。
+原始the-learning-project脏main保持不动；此handoff在隔离tlp-wt-test-pruning工作树。
 
-## 当前真实状态
+## 完成与验收
 
-- 原始 the-learning-project 脏 main 保留；集成 tlp-wt-pipeline-completion，分支 codex/yuk-939-pipeline-completion。
-- 远端 main 090e882c；Draft PR #1326。流水线代码 1e61da8d 完成全部命名 synthetic actual gates。
-- 本次 native $0.129296、cold+correction $0.028107、durable $0.014379、semantic $0.077014；
-  合计 $0.248796，在本次最多新增 $1 内。此前已知 $0.503605 + 一笔未结算 child 仍保留未知。
-- Semantic 实际生成17×19=324，四个真实 validator 尝试后拒绝，只展示安全回退；
-  native 1个成功子Agent、无continuation、结果回前台；correction绑定原reply且使SDKcursor失效。
-- 原 cold/resume/ambient/read/proposal/cancel 证据复用。read样本输入至少降50.8%、费用至少降62.2%；
-  旧基准为不完整下界，不外推全场景。
-- 证据封存 docs/planning/evidence/2026-09-06-pipeline-actual.json。
-- exact-head CI 的 DB2/2 三个失败均为已退休工具断言。已修，33 scoped DB通过；
-  typecheck/lint/build通过。需推送最终head并等CI，不可称已合并/部署。
-- 本PR两轮独立review已用完；不启动第三轮，后续兼容修复root检查真实diff和SDK源证据。
+- Pipeline1326、Goal1327、Knowledge1328、Import1329、Copilot execution1330、
+  ReviewSettlement1332、测试精简1331/1333均已exact-head CI绿色并合并。
+- main dce62f79已实测438/0/47；5capability SCC与20命令消费者仍保留，不称消环。
+- Goal集中command并保留私有legacy兼容；知识合并各owner处理状态、单向命名adapter；
+  Import业务提交与operation receipt同事务、并发source锁；Review三个命令共用学习效果/恢复。
+- 954隐藏native终态P1红绿复现并修复，root和独立15DB通过；其两轮review预算用尽。
+- 958服务端mode completion完成初审+scoped gates；647882b4 PR1334最终CI绿色并合并dce62f79。
+  该head后端等于已全绿2089b0ce，仅含主线已验证Notes测试/文档合并差异。
+- Docs handoff PR1335已更新1334合并事实，exact CI是合并门；不部署。
+- 全项目测试结构盘点保留计费、retry、prompt/skill、复杂parser、并发/回滚/恢复与UI加载保护；
+  删除旧路径/重复装配/退休evidence链内部断言，不按数量硬删。
 
-## 扩大范围实施
+## Actual与费用
 
-- Linear workspace/get/save恢复，list部分偶发传输错误；YUK-939已更新，YUK-952已创建。
-- YUK-952在独立 tlp-wt-goal-owner / codex/yuk-952-goal-owner 实施。
-  首版752f6ea1只是抽SQL、仍复制status/scope规则，root已要求继续深化，尚未集成或完成。
-- 下一步：目标单一语义写入命令→知识合并各状态owner→录入/判分完成责任→
-  AI共同规则封装→服务端产品状态+统一UI投影→跨项目测试精简。
-- 测试不按数量裁剪：替换退休实现/源文本断言，保留权限、计费未知、并发、回滚、恢复与实际输出。
-- UI实现前仍需精确设计原文/组件类型/文件清单批准；后端继续。
+本次追加共享执行层semantic/native actual费用$0.146376；增量campaign合计$0.395172，
+剩余授权$0.604828。此前$0.503605与旧read下界之外的未知超时/child账单仍未知。
+同输入read样本input至少降50.8%、费用至少降62.2%；只限synthetic，不外推生产。
+Evidence在docs/planning/evidence/2026-09-06-{pipeline,copilot-execution}-actual.json。
+durable actual直接handler不是queue E2E。无需更多付费验证。
 
-## 边界
+## 下一步与禁止项
 
-不部署、不切生产SoT flags、不backfill或删除历史表/数据。旧mailbox/ToolOperations恢复器仍drain-only；
-退休须部署后零pending证据。逐实体最终去掉过渡策略需要prod-clone验证，不能靠默认配置推断线上状态。
+- 958 UI仍等待精确设计原文、drawer类型、文件清单批准：CopilotDock/subtask-events/replay/
+  skill-lifecycle及tests，新message-projection与test。未改UI；服务端end不等于客户端收口完成。
+- SoT最终退休需要单独生产副本backfill/audit/rebuild/golden证据与授权（YUK887）。
+- 不部署、不切生产flags、不backfill、不删历史数据/表；旧mailbox/ToolOperations仅drain-only，
+  退休需部署后零pending和零队列活动跨完整deadline/retry窗。
+- Linear已恢复；942 Done；943/947是锁定设计替代而Canceled；951保留drain/noun剩余Backlog。
+  944/945/946/948/949/950未虚假标Done。YUK921/572/832 HOLD不解锁。
