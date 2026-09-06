@@ -227,11 +227,11 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
       'InterventionAuthoringContextT',
       'guardInterventionPreparationStage',
       'listActiveGoalsWithResolvedScope',
-      'writeAgentNote',
+      'recordQuestionPoolGap',
     ],
     dto: 'ActiveGoal / intervention authoring context reads',
     justification:
-      'review due-list + intervention authoring read agency-owned goals; quiz verify writes agent notes back.',
+      'review due-list + intervention authoring read agency-owned goals; quiz verify submits a committed pool-gap observation, and Agency owns the coach hint policy.',
     reviewIssue: 'YUK-885',
     commandFiles: ['src/capabilities/practice/jobs/quiz_verify.ts'],
   },

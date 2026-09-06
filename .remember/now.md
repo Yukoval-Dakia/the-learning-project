@@ -14,7 +14,8 @@
 
 - YUK961 / tlp-wt-pool-gap-owner：Agency拥有pool-gap提示规则，Practice只提交已完成验证事实。
   exact69542b2d，root与独立review均48DB通过，typecheck/lint/build/audits通过。
-  PR1340 / CI34032977403运行中，只有确切CI绿且无未裁决P0/P1后合并；不得重复启动验证。
+  PR1340 / exact CI34032977403全绿，已合并main50ba305b，Linear Done。
+  三项low advisory有明确skip理由并resolve；仅命令识别漏项去重登记YUK963，不为nit建issue。
 - YUK944 Done：PR1338 exact3fd90c4d CI34030191329全绿，已合并main db5a57b1。
   原五读取actual核心通过；input40410 vs baseline40401，不称此复杂样本token下降。
 - YUK945 / tlp-wt-native-compaction：代码18702ab9已修初审两P1、唯一复审PASS，root143tests。

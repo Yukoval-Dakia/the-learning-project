@@ -10,7 +10,7 @@
 //     verification.status='needs_review' + NO FSRS enroll.
 //   - idempotency — a second run skips (no duplicate verify event, no re-promote).
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { readAgentNotes } from '@/capabilities/agency/public';
@@ -636,6 +636,42 @@ describe('runQuizVerify', () => {
     // U8 / AF §4 (U3 L-note) — a draft that did NOT enter the pool leaves a
     // coach-addressed question_pool_gap hint referencing its knowledge point(s).
     expect(await poolGapNotesForKnowledge('k1')).toBe(1);
+  });
+
+  it('retains committed verification when the downstream coach hint cannot be stored', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    await seedDraftQuestion({ id: 'q_hint_unavailable', knowledgeId: 'k1' });
+    await db.execute(sql`CREATE FUNCTION test_reject_pool_gap() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.action = 'experimental:agent_note' THEN RAISE EXCEPTION 'hint store unavailable'; END IF;
+        RETURN NEW;
+      END $$`);
+    try {
+      await db.execute(sql`CREATE TRIGGER test_reject_pool_gap BEFORE INSERT ON event
+        FOR EACH ROW EXECUTE FUNCTION test_reject_pool_gap()`);
+      const result = await runQuizVerify({
+        db,
+        questionId: 'q_hint_unavailable',
+        runTaskFn: runTaskMock(
+          verifyOutput({ overall: 'pass', copySafety: 'too_close' }),
+          'tr_hint_failure',
+        ),
+      });
+      expect(result.status).toBe('needs_review');
+      expect(await countVerifyEvents('q_hint_unavailable')).toBe(1);
+      expect((await verifyEventsFor('q_hint_unavailable'))[0].payload).toMatchObject({
+        verification_status: 'needs_review',
+        promoted: false,
+      });
+      expect((await readMeta('q_hint_unavailable'))?.verification).toMatchObject({
+        status: 'needs_review',
+      });
+      expect(await poolGapNotesForKnowledge('k1')).toBe(0);
+    } finally {
+      await db.execute(sql`DROP TRIGGER IF EXISTS test_reject_pool_gap ON event`);
+      await db.execute(sql`DROP FUNCTION test_reject_pool_gap()`);
+    }
   });
 
   it('too_close (deterministic overlap): blocks promotion even when the LLM says original', async () => {
