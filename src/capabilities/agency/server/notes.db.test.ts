@@ -13,11 +13,61 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { event } from '@/db/schema';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { readAgentNotes, readAllAgentNotes, writeAgentNote } from './notes';
+import { readAgentNotes, readAllAgentNotes, recordQuestionPoolGap, writeAgentNote } from './notes';
 
 describe('writeAgentNote', () => {
   beforeEach(async () => {
     await resetDb();
+  });
+
+  it('owns pool-gap targeting, references, provenance and expiry for committed verification observations', async () => {
+    const db = testDb();
+    const now = new Date('2026-08-31T23:59:30Z');
+    const first = await recordQuestionPoolGap(db, {
+      questionId: 'q_multiaxis',
+      knowledgeIds: ['k_definition', 'k_counterexample'],
+      verificationStatus: 'needs_review',
+      confidence: 0.78,
+      taskRunId: 'verify_long_run',
+      verificationEventId: 'verify_event_committed',
+      observedAt: now,
+    });
+    const second = await recordQuestionPoolGap(db, {
+      questionId: 'q_unlinked',
+      knowledgeIds: null,
+      verificationStatus: 'failed',
+      confidence: 0,
+      taskRunId: null,
+      verificationEventId: 'verify_event_unlinked',
+      observedAt: now,
+    });
+    const notes = await readAgentNotes(db, { for_agent: 'coach', now });
+    expect(notes.find((note) => note.id === first)).toMatchObject({
+      target_agents: ['coach'],
+      signal_kind: 'question_pool_gap',
+      source_task_kind: 'quiz_verify',
+      source_task_run_id: 'verify_long_run',
+      caused_by_event_id: 'verify_event_committed',
+      confidence: 0.78,
+      refs: [
+        { kind: 'knowledge', id: 'k_definition' },
+        { kind: 'knowledge', id: 'k_counterexample' },
+      ],
+      expires_at: '2026-09-30T23:59:30.000Z',
+    });
+    expect(notes.find((note) => note.id === second)).toMatchObject({
+      refs: [{ kind: 'question', id: 'q_unlinked' }],
+      confidence: 0,
+      caused_by_event_id: 'verify_event_unlinked',
+    });
+    expect(notes.find((note) => note.id === second)?.source_task_run_id).toBeUndefined();
+    expect(notes.find((note) => note.id === first)?.summary_md).toContain(
+      'verification needs_review',
+    );
+    expect(await readAgentNotes(db, { for_agent: 'maintenance', now })).toEqual([]);
+    expect(
+      await readAgentNotes(db, { for_agent: 'coach', now: new Date('2026-09-30T23:59:30Z') }),
+    ).toEqual([]);
   });
 
   it('writes an experimental:agent_note event with the full payload', async () => {

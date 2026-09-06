@@ -52,7 +52,7 @@ export {
   planLearningIntent,
 } from './server/learning-intent';
 export { misconceptionHardConfirmEnabled } from './server/misconception-promote';
-export { readAgentNotes, writeAgentNote } from './server/notes';
+export { readAgentNotes, recordQuestionPoolGap, writeAgentNote } from './server/notes';
 export type {
   CompletionAcceptResult,
   EnqueueLearningIntentNoteFn,
