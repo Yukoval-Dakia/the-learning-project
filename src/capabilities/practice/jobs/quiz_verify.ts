@@ -411,6 +411,10 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     // off-topic question. Such inconsistency stays draft (needs_review). copy_safety
     // 'too_close' (LLM verdict OR deterministic overlap) also blocks promotion.
     const isTooClose = copySafetyVerdict === 'too_close';
+    // A passing overall verdict cannot promote while copy safety remains unresolved.
+    // Keep the raw/persisted `unknown` judgment for review instead of treating it as
+    // equivalent to an originality verdict.
+    const copySafetyResolved = copySafetyVerdict !== 'unknown';
     const checksPass =
       parsed.grounding.verdict === 'pass' && parsed.knowledge_hit.verdict === 'pass';
     // YUK-224 tier 3 — material_grounding gate (two parts).
@@ -452,6 +456,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     const freeChecksPass =
       parsed.overall === 'pass' &&
       checksPass &&
+      copySafetyResolved &&
       !isTooClose &&
       materialGroundingOk &&
       kindConformanceOk;
