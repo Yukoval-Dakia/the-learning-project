@@ -86,5 +86,16 @@ learner-visible success. Existing conservative pool consumers are unchanged.
 - Prompt alignment and stale QuizVerify-only migration fingerprints are fixed;
   semantic policy assertions remain.211 scoped units, typecheck and build pass.
   Reserve a second0.90 same-prompt actual: total reserve8.65823/safe1.34177.
+- Second actual at cleanae7c7a3c confirmed correct7×102=714, one author, all
+  validators passing and live/persisted settlement consistency. Unknown external
+  originality was preserved and disclosed. Full case still failed: two identical
+  presentation nominations violated the unchanged exactly-one control assertion.
+  Seal: `evidence/2026-09-07-learning-content-presentation-repeat-actual.json`.
+  Estimated0.0067764702; cumulative0.0603129426. Tool description now explicitly
+  says successful selection should be followed by normal reply, not repeated.
+  Third same-prompt actual reserves0.90: total9.55823/safe0.44177. No new evaluator,
+  deadline increase or relaxed count. Sole verification review PASS; budget closed.
+  Additional52 pool/assessment DB tests pass. Pre-existing pool rollup inconsistency
+  is captured as YUK-969 for independent reproduction; it is not a968 regression.
 - No deployment, SoT switch, backfill, production clone or history deletion.
   YUK-967 observation-scope semantics and the overall goal remain open.

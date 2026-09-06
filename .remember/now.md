@@ -11,6 +11,10 @@
   QuizVerify终态缺失，不凭usage认定完成。证据learning-content-deadline-actual.json；当前无paid进程。
   新池estimate0.0535364724/reserve7.75823/safe2.24177，不回收reserve。正在对齐prompt basis输出及互斥rollup。
   上述prompt/旧hash失败已修，211unit/typecheck/build通过；第二轮同样本预留0.90，新reserve8.65823/safe1.34177。
+  第二轮ae7c7a3c内容正向通过：one author，7×102=714，全validator通过，live/persisted一致；2次相同展示提名使全case失败。
+  封存learning-content-presentation-repeat-actual.json；新增estimate0.0067764702，累计0.0603129426。
+  明确工具成功后收尾不重复同一提名；第三轮另reserve0.90后总9.55823/safe0.44177。唯一验证审PASS，review预算结束。
+  52题池/ownerDB通过。旧题池矛盾rollup疑点去重YUK969 Todo，不伪称生产漏洞或已复现。
   设计docs/planning/2026-09-07-learning-content-validation.md。原脏main与生产不动，整体goal active。
 
 - YUK966 Done：PR1348 exactfefcf70e1a07b4ef554deb3d4c1b9eab4a1401fa，CI34059429533全部success；

@@ -65,7 +65,7 @@ export const presentPrimaryViewTool: DomainTool<
 > = {
   name: 'present_primary_view',
   description:
-    'Nominate one completed result as the user-facing primary view after reviewing it. For tool_result, ref.kind is the exact DomainTool name and ref.id is that successful root call tool_use_id. For artifact, ref.id names an existing live artifact and ref.kind must match its artifact type. ephemeral_html is limited to 32000 characters. The server validates every nomination.',
+    'Nominate one completed result as the user-facing primary view after reviewing it. A successful return records the selection for final reply validation; finish your normal reply without repeating the same nomination. Call again only to select a different result. For tool_result, ref.kind is the exact DomainTool name and ref.id is that successful root call tool_use_id. For artifact, ref.id names an existing live artifact and ref.kind must match its artifact type. ephemeral_html is limited to 32000 characters. The server validates every nomination.',
   effect: 'control',
   inputSchema: PresentPrimaryViewInputSchema,
   outputSchema: PresentationControlResultSchema,

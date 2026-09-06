@@ -1,0 +1,619 @@
+{
+  "protocol_version": 1,
+  "phase": "running",
+  "exact_head": "ae7c7a3c456a34316fd27af9def19d8024352efe",
+  "dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "harness_sha256": "6c9e59a613c637e01377be6f54c01d5b6380b98ebad745a9dc744ba598460f98",
+  "provider": "xiaomi",
+  "model": "mimo-v2.5-pro",
+  "credential_source": "/Volumes/YukovalSBak/yukoval-projects/the-learning-project/.env",
+  "baseline_record": false,
+  "campaign_cost_limit_usd": 0.9,
+  "case_cost_reserves_usd": {
+    "cold": 0.25,
+    "resume": 0.25,
+    "context-change": 0.25,
+    "correction": 0.25,
+    "read": 0.25,
+    "claims": 0.3,
+    "presentation-process": 0.4,
+    "presentation-tool": 0.4,
+    "presentation-candidate": 0.9,
+    "presentation-artifact": 0.4,
+    "presentation-html": 0.4,
+    "proposal": 0.25,
+    "semantic": 0.75,
+    "native-task": 0.5,
+    "durable": 0.25,
+    "unified": 1.6,
+    "cancel": 0
+  },
+  "cases": [
+    {
+      "name": "presentation-candidate",
+      "input_sha256": "17fe25dc24771f6d5c116b7ad31097d97fca3e6b44883943dd2ca5d40cdffb34",
+      "output_sha256": "4eda32d380b5891193edd69feea8d2a09e6a2f02c7ec639507b0c71df871616a",
+      "input": {
+        "session_id": "egv07sbhkn32s0fkqxyps6cb",
+        "user_message": "请调用一次 generate_question_candidate（seed_mode:knowledge、knowledge_ids:[actual:distribution]、requested_kind:computation、difficulty:1），生成一道自包含的整数乘法与分配律练习。看完结果后调用一次 present_primary_view 将这次成功根调用作为 tool_result 展示。不保存为题库或artifact，不调用author_question。正文只说“已准备练习”，不要在正文重复题面、答案或隐藏标记，系统会校验卡片里的题目。",
+        "triggered_by": "chat"
+      },
+      "output": "已准备练习。\n\n独立内容验证：通过；未对外部题库进行原创性比对。",
+      "primary_view": {
+        "source": "tool_result",
+        "ref": {
+          "kind": "generate_question_candidate",
+          "id": "call_88f54ea1ae4b42369fff7ef5"
+        },
+        "snapshot": {
+          "version": 1,
+          "state": "available",
+          "value": {
+            "question": {
+              "kind": "computation",
+              "prompt_md": "利用分配律计算：7 × 102",
+              "choices_md": null,
+              "rubric_json": null,
+              "reference_md": "714\n利用分配律：7 × 102 = 7 × (100 + 2) = 7 × 100 + 7 × 2 = 700 + 14 = 714",
+              "knowledge_ids": ["actual:distribution"]
+            },
+            "subject_id": "math"
+          },
+          "sha256": "ac164c66a759bbf980e4c613ab2374e348395f40d93334b1b0cea87629ae6151",
+          "byte_length": 282,
+          "completeness": "projected",
+          "omissions": [
+            {
+              "path": "/",
+              "reason": "private",
+              "omitted_count": 6
+            }
+          ]
+        }
+      },
+      "root_task_run_id": "copilot_run_tool_copilot_user_ask_7a501b35b9cdfd74ee8ef499701795612acf274e9a8e92418e0641f12dea8c7b",
+      "terminal_output": "已准备练习。",
+      "terminal_sha256": "647902493066f1127f3bd1a4958ccb630569bd0de2fa3a3c9d33b41f9556e1c8",
+      "task_runs": [
+        {
+          "id": "nc9rvnwh1b9ds71gu301nv6u",
+          "kind": "QuestionAuthorTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 1193,
+            "outputTokens": 646,
+            "thinkingBlocks": 1,
+            "thinkingCharacters": 1685
+          },
+          "cost": 0.0005840022,
+          "costBasis": "estimated",
+          "costRef": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": null,
+          "promptCodecMode": null,
+          "promptContextDigest": null
+        },
+        {
+          "id": "copilot_run_tool_copilot_user_ask_7a501b35b9cdfd74ee8ef499701795612acf274e9a8e92418e0641f12dea8c7b",
+          "kind": "CopilotTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 55859,
+            "outputTokens": 731,
+            "thinkingBlocks": 4,
+            "thinkingCharacters": 1948
+          },
+          "cost": 0.001604523,
+          "costBasis": "estimated",
+          "costRef": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": "96ad87d5905dddee37a24213fd31e92298722ecd5f32d197958d7863018cc0aa",
+          "promptCodecMode": "cold",
+          "promptContextDigest": "374c798b9fbc747f0c0ae604bfb42baddf89ae021969cf26320627d8e8810d50"
+        },
+        {
+          "id": "konwr4hojxa1f77i7192pfoy",
+          "kind": "SolutionGenerateTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 1106,
+            "outputTokens": 385,
+            "thinkingBlocks": 1,
+            "thinkingCharacters": 68
+          },
+          "cost": 0.00081606,
+          "costBasis": "estimated",
+          "costRef": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": null,
+          "promptCodecMode": null,
+          "promptContextDigest": null
+        },
+        {
+          "id": "fgzq4383qkhi7i6r0qjfok0t",
+          "kind": "TeachingQualityTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 876,
+            "outputTokens": 685,
+            "thinkingBlocks": 1,
+            "thinkingCharacters": 2136
+          },
+          "cost": 0.00097701,
+          "costBasis": "estimated",
+          "costRef": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": null,
+          "promptCodecMode": null,
+          "promptContextDigest": null
+        },
+        {
+          "id": "pcp6bioz36o6ofgfyjreuvgv",
+          "kind": "QuizVerifyTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 2126,
+            "outputTokens": 789,
+            "thinkingBlocks": 1,
+            "thinkingCharacters": 2067
+          },
+          "cost": 0.00161124,
+          "costBasis": "estimated",
+          "costRef": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": null,
+          "promptCodecMode": null,
+          "promptContextDigest": null
+        },
+        {
+          "id": "ptd5br8s0pjuluj3ereis8vg",
+          "kind": "SemanticJudgeTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 925,
+            "outputTokens": 898,
+            "thinkingBlocks": 1,
+            "thinkingCharacters": 1503
+          },
+          "cost": 0.001183635,
+          "costBasis": "estimated",
+          "costRef": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": null,
+          "promptCodecMode": null,
+          "promptContextDigest": null
+        }
+      ],
+      "tools": [
+        {
+          "name": "mcp__loom__generate_question_candidate",
+          "effect": null,
+          "error": null,
+          "input": {
+            "seed_mode": "knowledge",
+            "difficulty": 1,
+            "knowledge_ids": ["actual:distribution"],
+            "requested_kind": "computation"
+          },
+          "output": {}
+        },
+        {
+          "name": "generate_question_candidate",
+          "effect": "read",
+          "error": null,
+          "input": {
+            "seed_mode": "knowledge",
+            "difficulty": 1,
+            "knowledge_ids": ["actual:distribution"],
+            "requested_kind": "computation"
+          },
+          "output": {
+            "text": "{\"kind\":\"computation\",\"difficulty\":1,\"knowledge_ids\":[\"actual:distribution\"],\"structured\":{\"id\":\"placeholder\",\"role\":\"standalone\",\"prompt_text\":\"利用分配律计算：7 × 102\",\"answers\":[\"714\"],\"analysis\":\"利用分配律：7 × 102 = 7 × (100 + 2) = 7 × 100 + 7 × 2 = 700 + 14 = 714\"},\"choices_md\":null,\"judge_kind_override\":\"exact\",\"rubric_json\":null}",
+            "cost_ref": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+            "cost_usd": 0.0005840022,
+            "cost_basis": "estimated",
+            "subject_id": "math",
+            "task_run_id": "nc9rvnwh1b9ds71gu301nv6u",
+            "finish_reason": "end_turn"
+          }
+        },
+        {
+          "name": "mcp__loom__present_primary_view",
+          "effect": null,
+          "error": null,
+          "input": {
+            "ref": {
+              "id": "call_88f54ea1ae4b42369fff7ef5",
+              "kind": "generate_question_candidate"
+            },
+            "source": "tool_result"
+          },
+          "output": {}
+        },
+        {
+          "name": "present_primary_view",
+          "effect": "control",
+          "error": null,
+          "input": {
+            "ref": {
+              "id": "call_88f54ea1ae4b42369fff7ef5",
+              "kind": "generate_question_candidate"
+            },
+            "source": "tool_result"
+          },
+          "output": {
+            "ref": {
+              "id": "call_88f54ea1ae4b42369fff7ef5",
+              "kind": "generate_question_candidate"
+            },
+            "source": "tool_result",
+            "presentation_lifecycle": {
+              "discarded_on_close": false,
+              "standalone_artifact": false,
+              "saved_with_conversation": true
+            }
+          }
+        },
+        {
+          "name": "mcp__loom__present_primary_view",
+          "effect": null,
+          "error": null,
+          "input": {
+            "ref": {
+              "id": "call_88f54ea1ae4b42369fff7ef5",
+              "kind": "generate_question_candidate"
+            },
+            "source": "tool_result"
+          },
+          "output": {}
+        },
+        {
+          "name": "present_primary_view",
+          "effect": "control",
+          "error": null,
+          "input": {
+            "ref": {
+              "id": "call_88f54ea1ae4b42369fff7ef5",
+              "kind": "generate_question_candidate"
+            },
+            "source": "tool_result"
+          },
+          "output": {
+            "ref": {
+              "id": "call_88f54ea1ae4b42369fff7ef5",
+              "kind": "generate_question_candidate"
+            },
+            "source": "tool_result",
+            "presentation_lifecycle": {
+              "discarded_on_close": false,
+              "standalone_artifact": false,
+              "saved_with_conversation": true
+            }
+          }
+        }
+      ],
+      "session_agent_sdk_id": null,
+      "cumulative_cost_usd": 0.0067764702,
+      "reply_finalization": {
+        "protocol_version": 1,
+        "assurance": "execution_trace_bound",
+        "root_task_run_id": "copilot_run_tool_copilot_user_ask_7a501b35b9cdfd74ee8ef499701795612acf274e9a8e92418e0641f12dea8c7b",
+        "candidate_sha256": "647902493066f1127f3bd1a4958ccb630569bd0de2fa3a3c9d33b41f9556e1c8",
+        "reply_sha256": "4eda32d380b5891193edd69feea8d2a09e6a2f02c7ec639507b0c71df871616a",
+        "trace_sha256": "7a7ec1d942327954ca69e6936ac1140eb2c5bc2e9ace194c6684dd91a650b05a",
+        "trace_call_count": 3,
+        "observed_completed_tool_use_ids": [
+          "call_88f54ea1ae4b42369fff7ef5",
+          "call_83257ad7ca9e4722998aab60",
+          "call_7f1b80a008324565a0fc95b6"
+        ],
+        "correction": "normal",
+        "proposal_disclosure": "none",
+        "learning_content": "passed",
+        "primary_view": "retained"
+      }
+    }
+  ],
+  "validator_observations": [
+    {
+      "kind": "QuizVerifyTask",
+      "input": {
+        "question": {
+          "id": "preview:call_88f54ea1ae4b42369fff7ef5",
+          "kind": "computation",
+          "prompt_md": "利用分配律计算：7 × 102",
+          "reference_md": "714\n利用分配律：7 × 102 = 7 × (100 + 2) = 7 × 100 + 7 × 2 = 700 + 14 = 714",
+          "choices_md": null,
+          "knowledge_ids": ["actual:distribution"]
+        },
+        "knowledge_context": [
+          {
+            "id": "actual:distribution",
+            "name": "整数乘法与分配律"
+          }
+        ],
+        "source_pack": null,
+        "source_refs": [],
+        "self_copy_safety": null,
+        "generation_method": "closed_book",
+        "validation_mode": "release_strict",
+        "validation_purpose": "learning_content"
+      },
+      "input_sha256": "0d531863a00de1749c493bb740ab12cb82b041ec52f5a8c3c09a54fe29a6bdbc",
+      "started_at": "2026-09-06T21:51:16.870Z",
+      "status": "completed",
+      "task_run_id": "pcp6bioz36o6ofgfyjreuvgv",
+      "output": "{\"grounding\":{\"basis\":\"discipline_knowledge\",\"verdict\":\"pass\",\"note\":\"7×102=714正确；102=100+2的拆分合理，分配律应用7×(100+2)=700+14=714无误，可由基本算术与分配律定义独立核验。\"},\"copy_safety\":{\"verdict\":\"unknown\",\"max_overlap\":0.0},\"knowledge_hit\":{\"verdict\":\"pass\",\"note\":\"题面要求用分配律拆分因数后逐项相乘再求和，直接考查 actual:distribution（整数乘法与分配律），匹配明确。\"},\"overall\":\"needs_review\",\"summary_md\":\"算术与分配律应用均正确，知识命中无问题。但 source_refs 为空且 self_copy_safety 未提供，copy_safety 无法判定为 original，在 release_strict 下不能直接放行，需人工确认原创性后方可发布。\",\"confidence\":0.88}",
+      "output_sha256": "0e19c859e579e2e6568b75148c4e45fc3b162a05dc22b7c431c88a8ad9d03dd0",
+      "elapsed_ms": 22492
+    },
+    {
+      "kind": "TeachingQualityTask",
+      "input": {
+        "prompt_md": "利用分配律计算：7 × 102",
+        "kind": "computation",
+        "reference_md": "714\n利用分配律：7 × 102 = 7 × (100 + 2) = 7 × 100 + 7 × 2 = 700 + 14 = 714",
+        "choices_md": [],
+        "rubric_json": null,
+        "is_choice": false
+      },
+      "input_sha256": "bd77d3d4f7750fad6d5a0e056290165f05cd46e59a71814384b9f187ccf4f770",
+      "started_at": "2026-09-06T21:51:16.873Z",
+      "status": "completed",
+      "task_run_id": "fgzq4383qkhi7i6r0qjfok0t",
+      "output": "{\"clarity\":{\"verdict\":\"pass\",\"reason\":\"The stem is clear and unambiguous, directly asking to apply the distributive property to calculate 7 × 102, with no missing context or contradictions.\"},\"unique_answer\":{\"verdict\":\"pass\",\"reason\":\"The calculation yields a single correct numerical result, 714, and there are no alternative defensible answers given the mathematical operation.\"},\"summary\":\"The question is well-defined with a clear task and a unique correct answer, making it suitable for learning and assessment.\"}",
+      "output_sha256": "20c5145ae2bbe9c221bcb64cf30c80cf76cb8e79202b18aea6583581409b3ac6",
+      "elapsed_ms": 19509
+    },
+    {
+      "kind": "SolutionGenerateTask",
+      "input": {
+        "prompt_md": "利用分配律计算：7 × 102",
+        "kind": "computation",
+        "subject_id": "math",
+        "choices_md": [],
+        "existing_answers_hint": null,
+        "existing_analysis_hint": null,
+        "figures_hint": null,
+        "prompt_image_refs": []
+      },
+      "input_sha256": "72c18dcf0c0db6cd349821838bb56618bdd7518626ea65fd2a34e92fde681185",
+      "started_at": "2026-09-06T21:51:16.876Z",
+      "status": "completed",
+      "task_run_id": "konwr4hojxa1f77i7192pfoy",
+      "output": "{\"reference_solution\":{\"expected_signals\":[\"将 102 拆分为 100 + 2\",\"应用分配律：7 × (100 + 2) = 7 × 100 + 7 × 2\",\"计算 7 × 100 = 700\",\"计算 7 × 2 = 14\",\"将两项相加：700 + 14 = 714\"],\"final_answer\":\"714\",\"answer_equivalents\":[\"714\",\"七百一十四\"]},\"worked_solution_md\":\"## 利用分配律计算 7 × 102\\n\\n**核心思路：** 分配律告诉我们，$a \\\\times (b + c) = a \\\\times b + a \\\\times c$。我们可以把 102 拆成一个整百数加一个小数，让计算更简便。\\n\\n**第一步：拆分 102**\\n\\n$$102 = 100 + 2$$\\n\\n**第二步：应用分配律**\\n\\n$$7 \\\\times 102 = 7 \\\\times (100 + 2) = 7 \\\\times 100 + 7 \\\\times 2$$\\n\\n**第三步：分别计算**\\n\\n$$7 \\\\times 100 = 700$$\\n$$7 \\\\times 2 = 14$$\\n\\n**第四步：相加求结果**\\n\\n$$700 + 14 = 714$$\\n\\n$$\\\\boxed{7 \\\\times 102 = 714}$$\",\"confidence\":0.99}",
+      "output_sha256": "c7ae6fea90e1f09676d31f9c86a076120e23aeda4b87c224c09ed33b16feaf78",
+      "elapsed_ms": 10799
+    },
+    {
+      "kind": "SemanticJudgeTask",
+      "input": {
+        "question": {
+          "question_id": "preview:call_88f54ea1ae4b42369fff7ef5",
+          "kind": "computation",
+          "prompt_md": "利用分配律计算：7 × 102",
+          "reference_md": "714\n利用分配律：7 × 102 = 7 × (100 + 2) = 7 × 100 + 7 × 2 = 700 + 14 = 714",
+          "choices_md": [],
+          "rubric_json": null,
+          "required_points": [],
+          "acceptable_answers": [],
+          "keywords": [],
+          "subject_profile": {
+            "id": "math",
+            "display_name": "数学",
+            "language_style": "中文讲解，强调定义、条件、推导步骤和符号一致性。"
+          },
+          "figures": [],
+          "image_refs": [],
+          "structured": null
+        },
+        "answer": {
+          "content": "714\n\n## 利用分配律计算 7 × 102\n\n**核心思路：** 分配律告诉我们，$a \\times (b + c) = a \\times b + a \\times c$。我们可以把 102 拆成一个整百数加一个小数，让计算更简便。\n\n**第一步：拆分 102**\n\n$$102 = 100 + 2$$\n\n**第二步：应用分配律**\n\n$$7 \\times 102 = 7 \\times (100 + 2) = 7 \\times 100 + 7 \\times 2$$\n\n**第三步：分别计算**\n\n$$7 \\times 100 = 700$$\n$$7 \\times 2 = 14$$\n\n**第四步：相加求结果**\n\n$$700 + 14 = 714$$\n\n$$\\boxed{7 \\times 102 = 714}$$"
+        }
+      },
+      "input_sha256": "924c0eedaff0ff32c4b422c4561acdc4fa8c2934fbf9d761d22c56c544fbf143",
+      "started_at": "2026-09-06T21:51:27.678Z",
+      "status": "completed",
+      "task_run_id": "ptd5br8s0pjuluj3ereis8vg",
+      "output": "{\"score\":1.0,\"coarse_outcome\":\"correct\",\"confidence\":0.95,\"feedback_md\":\"回答正确，清晰展示了分配律的应用步骤，计算过程完整。\",\"evidence_json\":{\"matched_points\":[\"正确使用分配律将102拆分为100+2\",\"计算7×100和7×2\",\"相加得714\"],\"missing_points\":[],\"notes\":\"\"}}",
+      "output_sha256": "4a8e526e92ea2c0e7682a0661fbdc3f92933f1e19a545e44b55ac43726db67a1",
+      "elapsed_ms": 24458
+    }
+  ],
+  "sdk_outcomes": [
+    {
+      "task_run_id": "copilot_run_tool_copilot_user_ask_7a501b35b9cdfd74ee8ef499701795612acf274e9a8e92418e0641f12dea8c7b",
+      "elapsed_ms": 40950,
+      "finish_reason": "end_turn",
+      "partial": false,
+      "terminal_present": true,
+      "error_subtype": null
+    }
+  ],
+  "limitations": [
+    "direct durable handler is not pg-boss queue E2E",
+    "structural assertions do not establish factual entailment or semantic correctness"
+  ],
+  "fixture_readiness": {
+    "registered_tools": ["query_knowledge", "propose_knowledge_mutation"],
+    "conversation_session_id": "egv07sbhkn32s0fkqxyps6cb"
+  },
+  "worker_driver": {
+    "admission": "production HTTP adapter + v2 transaction + pg-boss",
+    "execution": "manual physical fetch + production runCopilotRun + terminal wake + complete",
+    "automatic_poller_verified": false
+  },
+  "failure": {
+    "active_case": "presentation-candidate",
+    "name": "Error",
+    "reason": "assertion"
+  },
+  "failure_observation": {
+    "active_case": "presentation-candidate",
+    "terminal_outputs": {
+      "copilot_run_tool_copilot_user_ask_7a501b35b9cdfd74ee8ef499701795612acf274e9a8e92418e0641f12dea8c7b": "已准备练习。",
+      "konwr4hojxa1f77i7192pfoy": "{\"reference_solution\":{\"expected_signals\":[\"将 102 拆分为 100 + 2\",\"应用分配律：7 × (100 + 2) = 7 × 100 + 7 × 2\",\"计算 7 × 100 = 700\",\"计算 7 × 2 = 14\",\"将两项相加：700 + 14 = 714\"],\"final_answer\":\"714\",\"answer_equivalents\":[\"714\",\"七百一十四\"]},\"worked_solution_md\":\"## 利用分配律计算 7 × 102\\n\\n**核心思路：** 分配律告诉我们，$a \\\\times (b + c) = a \\\\times b + a \\\\times c$。我们可以把 102 拆成一个整百数加一个小数，让计算更简便。\\n\\n**第一步：拆分 102**\\n\\n$$102 = 100 + 2$$\\n\\n**第二步：应用分配律**\\n\\n$$7 \\\\times 102 = 7 \\\\times (100 + 2) = 7 \\\\times 100 + 7 \\\\times 2$$\\n\\n**第三步：分别计算**\\n\\n$$7 \\\\times 100 = 700$$\\n$$7 \\\\times 2 = 14$$\\n\\n**第四步：相加求结果**\\n\\n$$700 + 14 = 714$$\\n\\n$$\\\\boxed{7 \\\\times 102 = 714}$$\",\"confidence\":0.99}",
+      "fgzq4383qkhi7i6r0qjfok0t": "{\"clarity\":{\"verdict\":\"pass\",\"reason\":\"The stem is clear and unambiguous, directly asking to apply the distributive property to calculate 7 × 102, with no missing context or contradictions.\"},\"unique_answer\":{\"verdict\":\"pass\",\"reason\":\"The calculation yields a single correct numerical result, 714, and there are no alternative defensible answers given the mathematical operation.\"},\"summary\":\"The question is well-defined with a clear task and a unique correct answer, making it suitable for learning and assessment.\"}",
+      "pcp6bioz36o6ofgfyjreuvgv": "{\"grounding\":{\"basis\":\"discipline_knowledge\",\"verdict\":\"pass\",\"note\":\"7×102=714正确；102=100+2的拆分合理，分配律应用7×(100+2)=700+14=714无误，可由基本算术与分配律定义独立核验。\"},\"copy_safety\":{\"verdict\":\"unknown\",\"max_overlap\":0.0},\"knowledge_hit\":{\"verdict\":\"pass\",\"note\":\"题面要求用分配律拆分因数后逐项相乘再求和，直接考查 actual:distribution（整数乘法与分配律），匹配明确。\"},\"overall\":\"needs_review\",\"summary_md\":\"算术与分配律应用均正确，知识命中无问题。但 source_refs 为空且 self_copy_safety 未提供，copy_safety 无法判定为 original，在 release_strict 下不能直接放行，需人工确认原创性后方可发布。\",\"confidence\":0.88}",
+      "ptd5br8s0pjuluj3ereis8vg": "{\"score\":1.0,\"coarse_outcome\":\"correct\",\"confidence\":0.95,\"feedback_md\":\"回答正确，清晰展示了分配律的应用步骤，计算过程完整。\",\"evidence_json\":{\"matched_points\":[\"正确使用分配律将102拆分为100+2\",\"计算7×100和7×2\",\"相加得714\"],\"missing_points\":[],\"notes\":\"\"}}"
+    },
+    "subagent_runs": [],
+    "task_runs": [
+      {
+        "id": "nc9rvnwh1b9ds71gu301nv6u",
+        "kind": "QuestionAuthorTask",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "usage": {
+          "inputTokens": 1193,
+          "outputTokens": 646,
+          "thinkingBlocks": 1,
+          "thinkingCharacters": 1685
+        },
+        "cost": 0.0005840022,
+        "cost_basis": "estimated",
+        "status": "success",
+        "finish_reason": "end_turn"
+      },
+      {
+        "id": "copilot_run_tool_copilot_user_ask_7a501b35b9cdfd74ee8ef499701795612acf274e9a8e92418e0641f12dea8c7b",
+        "kind": "CopilotTask",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "usage": {
+          "inputTokens": 55859,
+          "outputTokens": 731,
+          "thinkingBlocks": 4,
+          "thinkingCharacters": 1948
+        },
+        "cost": 0.001604523,
+        "cost_basis": "estimated",
+        "status": "success",
+        "finish_reason": "end_turn"
+      },
+      {
+        "id": "konwr4hojxa1f77i7192pfoy",
+        "kind": "SolutionGenerateTask",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "usage": {
+          "inputTokens": 1106,
+          "outputTokens": 385,
+          "thinkingBlocks": 1,
+          "thinkingCharacters": 68
+        },
+        "cost": 0.00081606,
+        "cost_basis": "estimated",
+        "status": "success",
+        "finish_reason": "end_turn"
+      },
+      {
+        "id": "fgzq4383qkhi7i6r0qjfok0t",
+        "kind": "TeachingQualityTask",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "usage": {
+          "inputTokens": 876,
+          "outputTokens": 685,
+          "thinkingBlocks": 1,
+          "thinkingCharacters": 2136
+        },
+        "cost": 0.00097701,
+        "cost_basis": "estimated",
+        "status": "success",
+        "finish_reason": "end_turn"
+      },
+      {
+        "id": "pcp6bioz36o6ofgfyjreuvgv",
+        "kind": "QuizVerifyTask",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "usage": {
+          "inputTokens": 2126,
+          "outputTokens": 789,
+          "thinkingBlocks": 1,
+          "thinkingCharacters": 2067
+        },
+        "cost": 0.00161124,
+        "cost_basis": "estimated",
+        "status": "success",
+        "finish_reason": "end_turn"
+      },
+      {
+        "id": "ptd5br8s0pjuluj3ereis8vg",
+        "kind": "SemanticJudgeTask",
+        "provider": "xiaomi",
+        "model": "mimo-v2.5-pro",
+        "usage": {
+          "inputTokens": 925,
+          "outputTokens": 898,
+          "thinkingBlocks": 1,
+          "thinkingCharacters": 1503
+        },
+        "cost": 0.001183635,
+        "cost_basis": "estimated",
+        "status": "success",
+        "finish_reason": "end_turn"
+      }
+    ],
+    "tools": [
+      {
+        "task_run_id": "copilot_run_tool_copilot_user_ask_7a501b35b9cdfd74ee8ef499701795612acf274e9a8e92418e0641f12dea8c7b",
+        "name": "mcp__loom__generate_question_candidate",
+        "effect": null,
+        "error": null
+      },
+      {
+        "task_run_id": "copilot_run_tool_copilot_user_ask_7a501b35b9cdfd74ee8ef499701795612acf274e9a8e92418e0641f12dea8c7b",
+        "name": "generate_question_candidate",
+        "effect": "read",
+        "error": null
+      },
+      {
+        "task_run_id": "copilot_run_tool_copilot_user_ask_7a501b35b9cdfd74ee8ef499701795612acf274e9a8e92418e0641f12dea8c7b",
+        "name": "mcp__loom__present_primary_view",
+        "effect": null,
+        "error": null
+      },
+      {
+        "task_run_id": "copilot_run_tool_copilot_user_ask_7a501b35b9cdfd74ee8ef499701795612acf274e9a8e92418e0641f12dea8c7b",
+        "name": "present_primary_view",
+        "effect": "control",
+        "error": null
+      },
+      {
+        "task_run_id": "copilot_run_tool_copilot_user_ask_7a501b35b9cdfd74ee8ef499701795612acf274e9a8e92418e0641f12dea8c7b",
+        "name": "mcp__loom__present_primary_view",
+        "effect": null,
+        "error": null
+      },
+      {
+        "task_run_id": "copilot_run_tool_copilot_user_ask_7a501b35b9cdfd74ee8ef499701795612acf274e9a8e92418e0641f12dea8c7b",
+        "name": "present_primary_view",
+        "effect": "control",
+        "error": null
+      }
+    ]
+  },
+  "failure_evidence_path": "/Volumes/YukovalSBak/yukoval-projects/tlp-wt-unified-conversation/.tmp/actual-provider-acceptance/1788731512190-209f4850-eb7f-4202-a153-9eea74bab422.json",
+  "raw_evidence_sha256": "caec959f19d1b25fb22eb4167b458fa35a8088f6016507c2b7d75d3c8bedf860",
+  "manual_review": {
+    "verdict": "partial_not_full_acceptance",
+    "content": "7*102=714, correct distribution method; one author, all independent validators completed, bound closed-book basis and unknown originality disclosed. Published card matches authoritative persistent settlement checked by runAccepted.",
+    "failure": "Two identical present_primary_view nominations violate the unchanged exactly-one control gate.",
+    "estimated_usd": 0.0067764702,
+    "reserved_usd": 0.9
+  }
+}
