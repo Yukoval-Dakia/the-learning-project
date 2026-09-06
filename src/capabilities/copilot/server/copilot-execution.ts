@@ -35,9 +35,13 @@ import { selectActorRef } from './copilot-run-input';
 import { resolveDeterministicCorrectionContract } from './correction-contract';
 import {
   copilotSessionContextDigest,
+  shouldDeliverCopilotSessionContext,
 } from './live-session-context';
-import { COPILOT_TURN_CONTEXT_CODEC_VERSION, compileCopilotModelInput } from './live-turn-context';
-import { compileCopilotSessionContext } from './live-turn-context';
+import {
+  COPILOT_TURN_CONTEXT_CODEC_VERSION,
+  compileCopilotModelInput,
+  compileCopilotSessionContext,
+} from './live-turn-context';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
 import {
   type CopilotReplyFinalizationResult,
@@ -76,13 +80,7 @@ export type CopilotExecutionActivity =
       summary: string;
       errorReason?: string;
     }
-  | { kind: 'spawn_budget'; observation: SpawnBudgetObservation }
-  | {
-      kind: 'compact_boundary';
-      phase: 'pre' | 'post' | 'session_start';
-      trigger?: 'manual' | 'auto';
-      source?: string;
-    };
+  | { kind: 'spawn_budget'; observation: SpawnBudgetObservation };
 
 export interface CopilotExecutionTurn {
   input: CopilotRunInput;
@@ -400,10 +398,8 @@ export function createCopilotExecutionOwner(
     const mode: 'cold' | 'resume' = resumeSessionId ? 'resume' : 'cold';
     const compiledModelPrompt = {
       text: compileCopilotModelInput(input, mode, {
-        // Learner state is a per-turn product fact: inject it on every Copilot
-        // turn even when the proposal digest is unchanged. Resume still avoids
-        // replaying conversation history.
-        includeSessionContext: true,
+        includeProposalFeedback:
+          !resumeSessionId || shouldDeliverCopilotSessionContext(resumeSessionId, contextDigest),
       }),
       codecVersion: COPILOT_TURN_CONTEXT_CODEC_VERSION,
       mode,
@@ -450,17 +446,7 @@ export function createCopilotExecutionOwner(
         : { sdkSession }),
       nativeCompaction:
         policy.kind === 'foreground'
-          ? {
-              sessionContext: compileCopilotSessionContext(input),
-              onBoundary: (event) => {
-                void Promise.resolve(
-                  emitActivity(policy, {
-                    kind: 'compact_boundary',
-                    ...event,
-                  } as CopilotExecutionActivity),
-                ).catch(() => undefined);
-              },
-            }
+          ? { sessionContext: compileCopilotSessionContext(input) }
           : undefined,
       onToolUse: (call) => {
         if (!shouldEmitToolUseForCaller(call.toolName, DOMAIN_TOOL_MCP_SERVER_NAME, callerActor)) {

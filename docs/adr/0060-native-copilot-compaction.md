@@ -3,18 +3,20 @@
 ## Decision
 
 Copilot foreground live sessions explicitly enable the Claude Agent SDK's
-native `autoCompactEnabled` and disable precomputed compaction. The runner
-adds `PreCompact`, `PostCompact`, and `SessionStart(source=compact)` hooks to
-the existing hook seam. The compact-start hook reintroduces only the current
+native `autoCompactEnabled` and disable precomputed compaction through SDK
+`Options.settings`. The runner adds `SessionStart(source=compact)` after
+the caller's existing hooks. The compact-start hook reintroduces only the current
 bounded `TurnContext`; it does not replay history, TaskSpec, skill text, raw
 summary, or chain-of-thought. Learner state is injected on every Copilot turn;
-proposal feedback may continue to use digest-based delivery policy.
+proposal feedback retains digest-based delivery policy. This replaces only the
+learner-state omission policy in ADR-0057; history is still never replayed on resume.
 
 The existing permission, deadline, row/tool budgets, and six-iteration inline
 ceiling remain unchanged. Compaction is context management, not a budget reset
-or a way around cancellation, tool, or iteration limits. Boundary observation
-records only safe phase/trigger/source metadata through the existing activity
-observer seam.
+or a way around cancellation, tool, or iteration limits. `compact_boundary`
+messages feed the existing attempt usage log with a bounded count and last
+trigger/pre/post context-token metadata. Billable usage is not reduced by these
+context counts; neither raw summaries nor message IDs are persisted here.
 
 ## Consequences
 

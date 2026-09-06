@@ -2,7 +2,7 @@ import type { CopilotRunInput } from './copilot-run-input';
 
 export const COPILOT_TURN_CONTEXT_OPEN = '<turn_context>';
 export const COPILOT_TURN_CONTEXT_CLOSE = '</turn_context>';
-export const COPILOT_TURN_CONTEXT_CODEC_VERSION = 'copilot-live-turn-v1';
+export const COPILOT_TURN_CONTEXT_CODEC_VERSION = 'copilot-live-turn-v2';
 
 type TurnContext = {
   readonly v: 1;
@@ -19,7 +19,7 @@ type TurnContext = {
 export function compileCopilotModelInput(
   input: CopilotRunInput,
   mode: 'cold' | 'resume',
-  options: { includeSessionContext?: boolean } = {},
+  options: { includeProposalFeedback?: boolean } = {},
 ): string {
   if (mode === 'cold') {
     const {
@@ -30,12 +30,15 @@ export function compileCopilotModelInput(
     return JSON.stringify(boundedEnvelope);
   }
 
+  const context = compileTurnContext(input, options.includeProposalFeedback !== false);
+  return context ? `${context}\n${input.user_message}` : input.user_message;
+}
+
+function compileTurnContext(input: CopilotRunInput, includeProposalFeedback: boolean): string {
   const context: TurnContext = {
     v: 1,
-    ...(options.includeSessionContext !== false && input.learner_state_header
-      ? { learner_state: input.learner_state_header }
-      : {}),
-    ...(options.includeSessionContext !== false && input.proposal_feedback.length > 0
+    ...(input.learner_state_header ? { learner_state: input.learner_state_header } : {}),
+    ...(includeProposalFeedback && input.proposal_feedback.length > 0
       ? { proposal_feedback: input.proposal_feedback }
       : {}),
     ...(input.ambient_context ? { ambient: input.ambient_context } : {}),
@@ -54,14 +57,11 @@ export function compileCopilotModelInput(
       : {}),
   };
 
-  if (Object.keys(context).length === 1) return input.user_message;
-  return `${COPILOT_TURN_CONTEXT_OPEN}${JSON.stringify(context)}${COPILOT_TURN_CONTEXT_CLOSE}\n${input.user_message}`;
+  if (Object.keys(context).length === 1) return '';
+  return `${COPILOT_TURN_CONTEXT_OPEN}${JSON.stringify(context)}${COPILOT_TURN_CONTEXT_CLOSE}`;
 }
 
 /** The bounded sidecar reintroduced by native SDK compaction. */
 export function compileCopilotSessionContext(input: CopilotRunInput): string {
-  const compiled = compileCopilotModelInput(input, 'resume', { includeSessionContext: true });
-  const marker = `${COPILOT_TURN_CONTEXT_CLOSE}\n`;
-  const end = compiled.indexOf(marker);
-  return end >= 0 ? compiled.slice(0, end + COPILOT_TURN_CONTEXT_CLOSE.length) : compiled;
+  return compileTurnContext(input, true);
 }

@@ -1,0 +1,56 @@
+{
+  "status": "native_protocol_verified_product_wiring_requires_separate_gates",
+  "sdk_version": "0.3.220",
+  "paid_calls": 0,
+  "transport": "loopback_http_127.0.0.1_only",
+  "credential": "synthetic_offline_key",
+  "options": {
+    "model": "claude-sonnet-4-6",
+    "model_note": "Synthetic model label at a local endpoint, not a real Claude provider call",
+    "settings": { "autoCompactEnabled": true, "precomputeCompactionEnabled": false },
+    "settingSources": ["user"],
+    "skills": ["offline-proof"],
+    "tools": ["Skill"],
+    "persistSession": true,
+    "maxTurns": 8,
+    "isolatedConfigDir": true,
+    "nonessentialTrafficDisabled": true
+  },
+  "protocol": "Three synthetic native Skill responses; third reports 185000 input tokens to trigger SDK auto-compaction. Local endpoint returns a synthetic summary and terminal. A second query resumes the observed session with an updated learner sidecar. Only sentinel presence and safe event metadata observed; no hidden reasoning archived.",
+  "hooks": [
+    { "event": "PreCompact", "trigger": "auto" },
+    {
+      "event": "SessionStart",
+      "source": "compact",
+      "returns": "hookSpecificOutput.additionalContext"
+    },
+    { "event": "PostCompact", "trigger": "auto" }
+  ],
+  "requests": [
+    { "number": 1, "messages": 1, "skill_body": false, "reinjected_learner": false },
+    { "number": 2, "messages": 3, "skill_body": true, "reinjected_learner": false },
+    { "number": 3, "messages": 5, "skill_body": true, "reinjected_learner": false },
+    { "number": 4, "messages": 5, "skill_body": true, "reinjected_learner": false },
+    { "number": 5, "messages": 3, "skill_body": true, "reinjected_learner": true, "summary": true },
+    {
+      "number": 6,
+      "messages": 5,
+      "skill_body": true,
+      "reinjected_learner": true,
+      "updated_resume_learner": true,
+      "summary": true
+    }
+  ],
+  "boundary": { "trigger": "auto", "pre_tokens": 185065, "post_tokens": 458 },
+  "session_id": "1526e361-1fd6-4046-a94d-8812a3d2300e",
+  "first_terminal": "success",
+  "resumed_session_id": "1526e361-1fd6-4046-a94d-8812a3d2300e",
+  "resumed_terminal": "success",
+  "limitations": [
+    "Pre-token usage is deliberately synthetic. These figures are NOT measured token/cost savings.",
+    "Probe uses native SDK directly, not Hono/PG/production Copilot. Public runner and execution-owner tests separately verify product option/hook wiring.",
+    "Does not prove real provider summary quality, automatic thresholds for MiMo or production latency.",
+    "No invented compact method; PostCompact is observed only, reinjection uses the runtime-verified SessionStart compact event.",
+    "Initial product patch placed settings at the wrong nesting and overwrote hooks; initial independent review rejected it. Subsequent public-runner regressions cover those errors."
+  ]
+}

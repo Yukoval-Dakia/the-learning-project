@@ -30,7 +30,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   type Options,
-  type HookCallback,
   type OutputFormat,
   type Query,
   type SDKAssistantMessage,
@@ -234,11 +233,6 @@ export interface RunTaskCtx {
   nativeCompaction?: {
     /** Context to reintroduce after SDK compaction; never contains raw summary/CoT. */
     sessionContext: string;
-    onBoundary?: (event: {
-      phase: 'pre' | 'post' | 'session_start';
-      trigger?: 'manual' | 'auto';
-      source?: string;
-    }) => void;
   };
   /** YUK-572 seam: optional SDK permission callback, re-exported 1:1. */
   canUseTool?: Options['canUseTool'];
@@ -620,44 +614,6 @@ function buildQueryOptions(
     // explicitly skill-enabled runs load only the isolated CONFIG_DIR user source.
     skills: configuredSkills,
   };
-  if (ctx.nativeCompaction) {
-    const nativeCompaction = ctx.nativeCompaction;
-    (options as Options & { autoCompactEnabled?: boolean; precomputeCompactionEnabled?: boolean }).autoCompactEnabled = true;
-    (options as Options & { autoCompactEnabled?: boolean; precomputeCompactionEnabled?: boolean }).precomputeCompactionEnabled = false;
-    const compactionHooks: Record<string, Array<{ hooks: HookCallback[] }>> = {
-      PreCompact: [{ hooks: [async (input) => {
-        if (input.hook_event_name === 'PreCompact') {
-          nativeCompaction.onBoundary?.({ phase: 'pre', trigger: input.trigger });
-        }
-        return { continue: true };
-      }] }],
-      PostCompact: [{ hooks: [async (input) => {
-        if (input.hook_event_name === 'PostCompact') {
-          nativeCompaction.onBoundary?.({ phase: 'post', trigger: input.trigger });
-        }
-        return { continue: true };
-      }] }],
-      SessionStart: [{ hooks: [async (input) => {
-        if (input.hook_event_name === 'SessionStart' && input.source === 'compact') {
-          nativeCompaction.onBoundary?.({ phase: 'session_start', source: input.source });
-          return {
-            continue: true,
-            hookSpecificOutput: {
-              hookEventName: 'SessionStart' as const,
-              additionalContext: nativeCompaction.sessionContext,
-            },
-          };
-        }
-        return { continue: true };
-      }] }],
-    };
-    options.hooks = {
-      ...(ctx.hooks ?? {}),
-      PreCompact: [...(ctx.hooks?.PreCompact ?? []), ...compactionHooks.PreCompact],
-      PostCompact: [...(ctx.hooks?.PostCompact ?? []), ...compactionHooks.PostCompact],
-      SessionStart: [...(ctx.hooks?.SessionStart ?? []), ...compactionHooks.SessionStart],
-    };
-  }
   // SDK default/omitted means "load user + project + local settings", including
   // this repository's CLAUDE.md and SessionStart hooks. Those developer-agent
   // instructions are not product context. SDK 0.3.220 requires the `project`
@@ -686,6 +642,31 @@ function buildQueryOptions(
   }
   if (ctx.hooks !== undefined) {
     options.hooks = ctx.hooks;
+  }
+  if (ctx.nativeCompaction && ctx.sdkSession?.persist) {
+    const sessionContext = ctx.nativeCompaction.sessionContext;
+    options.settings = { autoCompactEnabled: true, precomputeCompactionEnabled: false };
+    options.hooks = {
+      ...options.hooks,
+      SessionStart: [
+        ...(options.hooks?.SessionStart ?? []),
+        {
+          hooks: [
+            async (input) =>
+              input.hook_event_name === 'SessionStart' &&
+              input.source === 'compact' &&
+              sessionContext
+                ? {
+                    hookSpecificOutput: {
+                      hookEventName: 'SessionStart',
+                      additionalContext: sessionContext,
+                    },
+                  }
+                : {},
+          ],
+        },
+      ],
+    };
   }
   if (ctx.canUseTool !== undefined) {
     options.canUseTool = ctx.canUseTool;
@@ -809,6 +790,11 @@ async function consumeSdkAttempt<TResult extends RunTaskResult>(args: {
       await notifySdkSessionId(args.ctx, msg);
     }
     await notifyTaskEvent(args.ctx, msg);
+
+    if (msg.type === 'system' && msg.subtype === 'compact_boundary') {
+      args.lifecycle.recordObservedUsage(sdkTerminal.observeCompaction(msg));
+      continue;
+    }
 
     if (msg.type === 'assistant') {
       const observedUsage = sdkTerminal.observeAssistant(msg);

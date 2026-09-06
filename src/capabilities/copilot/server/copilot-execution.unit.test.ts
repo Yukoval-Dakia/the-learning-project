@@ -9,6 +9,11 @@ import {
 } from './copilot-execution';
 import type { CopilotRunCancellationControl } from './copilot-run-cancellation';
 import type { CopilotRunInput } from './copilot-run-input';
+import {
+  clearCopilotSessionContextDelivery,
+  copilotSessionContextDigest,
+  markCopilotSessionContextDelivered,
+} from './live-session-context';
 
 const input: CopilotRunInput = {
   surface: 'copilot',
@@ -71,6 +76,50 @@ async function invokeHooks(
 }
 
 describe('Copilot execution owner', () => {
+  it('reinjects learner state on cached resumes and supplies complete current context for compact', async () => {
+    const current = {
+      ...input,
+      learner_state_header: '当前目标：含参方程；边界仍待核对',
+      proposal_feedback: [
+        {
+          kind: 'knowledge_edge',
+          relation: 'prerequisite',
+          acceptance_rate: 0.25,
+          top_dismiss_reasons: ['范围过宽'],
+          top_rubric_gates: ['先核对定义域'],
+        },
+      ],
+      conversation_history: [{ role: 'ai' as const, text: '旧答案不得重发' }],
+    };
+    const run = vi.fn<CopilotExecutionAdapters['runAgentTaskFn']>(async () => ({
+      task_run_id: 'resume_task',
+      text: '已核对。',
+      finishReason: 'end_turn',
+    }));
+    markCopilotSessionContextDelivered(
+      'compact-resume-session',
+      copilotSessionContextDigest(current),
+    );
+    try {
+      const execute = ownerWith(run, vi.fn());
+      await execute(
+        {} as never,
+        { input: current, sessionId: 'session_context', taskRunId: 'root_context' },
+        { kind: 'foreground', delivery: 'single', resumeSessionId: 'compact-resume-session' },
+      );
+      const ctx = run.mock.calls[0]?.[2];
+      expect(ctx?.sdkSession?.resume).toBe('compact-resume-session');
+      expect(ctx?.compiledModelPrompt?.text).toContain('当前目标：含参方程');
+      expect(ctx?.compiledModelPrompt?.text).not.toContain('范围过宽');
+      expect(ctx?.compiledModelPrompt?.text).not.toContain('旧答案');
+      expect(ctx?.nativeCompaction?.sessionContext).toContain('当前目标：含参方程');
+      expect(ctx?.nativeCompaction?.sessionContext).toContain('范围过宽');
+      expect(ctx?.nativeCompaction?.sessionContext).not.toContain('旧答案');
+      expect(ctx?.hooks?.PreToolUse).toBeDefined();
+    } finally {
+      clearCopilotSessionContextDelivery('compact-resume-session');
+    }
+  });
   it('owns foreground runner/MCP assembly and preserves lifecycle signal identity', async () => {
     let mcp: BuildMcpServerOptions | undefined;
     const run = vi.fn<CopilotExecutionAdapters['runAgentTaskFn']>(async () => ({
@@ -164,6 +213,7 @@ describe('Copilot execution owner', () => {
       },
     });
     expect(ctx?.sdkSession).toBeUndefined();
+    expect(ctx?.nativeCompaction).toBeUndefined();
     expect(ctx?.allowedTools).toContain('Task');
     expect(ctx?.agents?.['copilot-researcher']).toMatchObject({
       background: false,
