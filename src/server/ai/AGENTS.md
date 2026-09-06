@@ -14,9 +14,8 @@
 | `judges/` | 判分 capability 实现 |
 | `tools/registry.ts` + `tools/register-capability-tools.ts` | 统一 Domain Tool Registry；完整 inventory 由 capability manifests 在进程启动期装配 |
 | `tools/mcp-bridge.ts` | 把任意 allowlist 包成 in-process MCP server + 写 `tool_call_log`/`tool_use` mirror |
-| `tools/allowlists.ts` | 生成 surface-specific `mcp__loom__*` allowlist |
-| `tools/{knowledge-readers,context-readers,query-events,query-mistakes}.ts` | read surface（返回语义化上下文）|
-| `tools/proposal-tools.ts` | central mixed-seed `author_question` 与其余 proposal tools；Failure Learning concrete tools 由 Practice manifest 装配 |
+| `../../kernel/tools/allowlists.ts` | surface-specific DomainTool 与 MCP allowlist |
+| `../../capabilities/*/manifest.ts` 的 `copilotTools` | 查工具实现与暴露范围的入口；知识读取、练习供给、Copilot 事件读取等由业务模块拥有，runtime 只装配声明 |
 
 ## 关键约束
 - Domain Tool Registry 是源头；MCP 只是 Claude Agent SDK 的 in-process 适配层。
