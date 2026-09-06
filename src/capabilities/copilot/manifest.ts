@@ -90,7 +90,22 @@ export const copilotCapability = defineCapability({
         request: { params: CopilotRunParamsSchema },
         responses: { 200: CopilotCancelRunResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
-        load: () => import('./api/cancel-run').then((m) => m.POST),
+        load: async () => {
+          const [{ buildCancelCopilotRunHandler }, { dispatchSessionHead }, { db }, bossClient] =
+            await Promise.all([
+              import('./api/cancel-run'),
+              import('./server/durable-dispatch'),
+              import('@/db/client'),
+              import('@/server/boss/client'),
+            ]);
+          return buildCancelCopilotRunHandler({
+            wakeSession: async (sessionId) =>
+              dispatchSessionHead(db, sessionId, {
+                boss: await bossClient.getStartedBoss(),
+                transactionDb: bossClient.fromPgBossDrizzleTx,
+              }),
+          });
+        },
       },
       {
         method: 'GET',

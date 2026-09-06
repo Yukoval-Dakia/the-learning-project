@@ -74,6 +74,21 @@ describe('isDurablePickupStalled', () => {
     ).toBeUndefined();
   });
 
+  it('starts the v2 pickup clock only after the session head is physically dispatched', () => {
+    const acceptedWaiting = {
+      event_type: COPILOT_RUN_EVENTS.QUEUED,
+      payload: { protocol_version: 2, session_id: 'conversation_fifo' },
+    };
+    expect(isDurablePickupStalled([acceptedWaiting], DEADLINE + 100_000)).toBe(false);
+
+    const dispatched = {
+      event_type: COPILOT_RUN_EVENTS.DISPATCHED,
+      payload: { pickup_deadline_ms: DEADLINE },
+    };
+    expect(getDurablePickupDeadlineMs([acceptedWaiting, dispatched])).toBe(DEADLINE);
+    expect(isDurablePickupStalled([acceptedWaiting, dispatched], DEADLINE + 1)).toBe(true);
+  });
+
   it('PICKUP_TIMEOUT_MS is a positive constant', () => {
     expect(PICKUP_TIMEOUT_MS).toBeGreaterThan(0);
   });
