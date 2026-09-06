@@ -10,6 +10,7 @@ import {
   runColdStartBridge,
 } from '@/capabilities/ingestion/server/cold-start-bridge';
 import { enrollCapturedBlock } from '@/capabilities/ingestion/server/enroll';
+import { createKnowledgeNamer } from '@/capabilities/ingestion/server/knowledge-namer';
 import {
   MistakeEnrollTaskError,
   type RunMistakeEnrollTaskParams,
@@ -513,13 +514,13 @@ export async function runAutoEnrollForSession(
           {
             db: params.db,
             providerAttempt: params.providerAttempt,
-            // Thread the bridge runTask seam through tagKnowledge's default naming invoker
-            // (makeDefaultNameKc → runColdStartBridge) so DB tests stub the model exactly as
-            // before. `ctx` defaults to { db } when the caller omits one.
-            runTaskFn: params.runColdStartBridgeFn,
-            ctx: params.ctx ?? { db: params.db },
-            // When the subject was bridge-classified (no subjectId), reuse the already-named KC.
-            ...(bridgeNameKc ? { nameKcFn: bridgeNameKc } : {}),
+            nameKcFn:
+              bridgeNameKc ??
+              createKnowledgeNamer({
+                db: params.db,
+                runTaskFn: params.runColdStartBridgeFn,
+                ctx: params.ctx ?? { db: params.db },
+              }),
             // D5 (YUK-489): ONE per-run cache shared across every block in this session, so
             // sibling questions proposing the same KC name reuse the first-minted id instead of
             // minting duplicates. The loop awaits each block sequentially (the cache's contract).
