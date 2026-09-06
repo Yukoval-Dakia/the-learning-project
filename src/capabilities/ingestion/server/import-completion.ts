@@ -366,6 +366,7 @@ export async function completeIngestionImport(
           knowledge_ids: blockKnowledgeIds,
           difficulty: block.difficulty,
           source: sessionEntrypoint,
+          draft_status: null,
           variant_depth: 0,
           figures: importedFigures,
           image_refs: block.image_refs,
