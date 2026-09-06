@@ -120,7 +120,8 @@ export async function completeIngestionImport(
       // B1b (YUK-164 §2): a merge/split source must still be 'draft' — an
       // already-auto_enrolled (or imported/ignored) source can't be consumed into
       // a virtual card (would orphan its auto-enroll question/attempt without a
-      // retract). Revert it via OC-5 first. Mirrors the direct-import guard below.
+      // retract). Revert it via OC-5 first. Every direct block is also in this
+      // source set; the session owner already holds all block locks until commit.
       if (row.status !== 'draft') {
         throw new ApiError(
           'conflict',
@@ -211,30 +212,6 @@ export async function completeIngestionImport(
         .from(question_block)
         .where(eq(question_block.ingestion_session_id, sessionId));
       manualOrdinalBase = (ordinalRow?.maxOrdinal ?? -1) + 1;
-    }
-
-    // B1b (YUK-164 §2): only 'draft' blocks are importable. A block already
-    // 'auto_enrolled' (WorkflowJudge) / 'imported' / 'ignored' must NOT be
-    // re-imported — that would duplicate the question + attempt. Reject loudly
-    // (no silent skip): the OC-5 surface reverts an auto_enrolled block back to
-    // 'draft' before it can be human-imported. Unreachable until the enroll flag
-    // is ON (no auto_enrolled blocks exist in prod today), but this guard MUST
-    // precede that flip — see the design note §2.
-    if (directlyImportedIds.size > 0) {
-      const existingBlocks = await tx
-        .select({ id: question_block.id, status: question_block.status })
-        .from(question_block)
-        .where(inArray(question_block.id, [...directlyImportedIds]));
-      const nonDraft = existingBlocks.filter((b) => b.status !== 'draft');
-      if (nonDraft.length > 0) {
-        throw new ApiError(
-          'conflict',
-          `cannot import blocks that are not 'draft': ${nonDraft
-            .map((b) => `${b.id} (${b.status})`)
-            .join(', ')}`,
-          409,
-        );
-      }
     }
 
     const toIgnore = new Set<string>();

@@ -56,6 +56,8 @@ import {
   type IngestionOperationJobData,
   buildIngestionOperationHandler,
 } from '../jobs/ingestion_operation';
+import { runAutoEnrollForSession } from '../server/auto-enroll';
+import * as enrollment from '../server/enroll';
 import { completeIngestionImport } from '../server/import-completion';
 import { readIngestionOperation, reserveIngestionOperation } from '../server/operation-store';
 import { POST } from './import';
@@ -261,6 +263,73 @@ describe('POST /api/ingestion/[id]/import', () => {
       .from(learning_session)
       .where(eq(learning_session.id, sessionId));
     expect(session.status).toBe('imported');
+  });
+
+  it('manual import and auto-enroll cannot consume the same source block concurrently', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db);
+    await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId });
+    await insertKnowledge(db, 'k1');
+    await db
+      .update(question_block)
+      .set({
+        structured: {
+          id: 'structured-a',
+          role: 'standalone',
+          prompt_text: '解释下列句子中之字的用法，并指出代词与结构助词的区别。',
+          source: 'vlm_structure',
+        },
+        layout_quality: 'structured',
+      })
+      .where(eq(question_block.id, 'block_a'));
+    const paused = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const realEnroll = enrollment.enrollCapturedBlock;
+    const enrollmentSpy = vi
+      .spyOn(enrollment, 'enrollCapturedBlock')
+      .mockImplementationOnce(async (tx, input) => {
+        // Manual path has validated the source and inserted its question, but has
+        // not yet written the block's terminal status: the historical double-consume gap.
+        paused.resolve();
+        await release.promise;
+        return realEnroll(tx, input);
+      });
+    const manual = completeIngestionImport(db, sessionId, ImportBody.parse(makeImportBody()));
+    await paused.promise;
+    let autoFinished = false;
+    const automatic = runAutoEnrollForSession({
+      db,
+      sessionId,
+      subjectId: 'yuwen',
+      env: { WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: 'true' },
+      tagKnowledgeFn: async () => ({ kind: 'match', knowledge_ids: ['k1'] }),
+    }).finally(() => {
+      autoFinished = true;
+    });
+    try {
+      // Wait for the actual database lock wait (fixed path), or completion (old
+      // path), not a guessed sleep duration. Then let manual import settle.
+      await vi.waitFor(
+        async () => {
+          const [waiter] = await db.execute(sql`SELECT EXISTS(
+          SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND NOT granted
+            AND objid = hashtext('learning-state:write')::oid
+        ) AS blocked`);
+          expect(autoFinished || waiter.blocked === true).toBe(true);
+        },
+        { timeout: 5_000, interval: 10 },
+      );
+      release.resolve();
+      const [, result] = await Promise.all([manual, automatic]);
+      expect(await db.select().from(question)).toHaveLength(1);
+      expect(await db.select().from(learning_record)).toHaveLength(1);
+      expect(await db.select().from(event).where(eq(event.action, 'attempt'))).toHaveLength(1);
+      expect(result.enrolled).toBe(0);
+    } finally {
+      release.resolve();
+      await Promise.allSettled([manual, automatic]);
+      enrollmentSpy.mockRestore();
+    }
   });
 
   it('receipt failure rolls back all imported facts and queue retry completes without duplication', async () => {
