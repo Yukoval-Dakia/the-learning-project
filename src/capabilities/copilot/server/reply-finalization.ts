@@ -11,6 +11,7 @@ import { copilotLearningContentRequiresValidation } from './content-validation';
 import type { CopilotCorrectionContract } from './correction-contract';
 import { resolveCorrectionReply } from './correction-contract';
 import { type CopilotPrimaryView, EPHEMERAL_HTML_REF_MAX_CHARS } from './turns';
+import { PresentPrimaryViewInputSchema } from './tools/present-primary-view';
 
 export const COPILOT_REPLY_TRACE_MAX_CALLS = 60;
 
@@ -300,9 +301,21 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         throw new Error('cannot seal an incomplete tool trace');
       }
       const candidateSha = sha256Text(terminalText);
-      const presented = extractPrimaryView(options.authoritativeReply?.reply ?? terminalText, {
+      const legacyPresented = extractPrimaryView(options.authoritativeReply?.reply ?? terminalText, {
         taskRunId: options.rootTaskRunId,
       });
+      const nomination = trace
+        .filter(
+          (entry) =>
+            entry.root_call &&
+            (entry.tool_name === 'present_primary_view' || entry.tool_name.endsWith('__present_primary_view')) &&
+            entry.status === 'succeeded',
+        )
+        .map((entry) => PresentPrimaryViewInputSchema.safeParse(entry.proposal_output))
+        .find((parsed) => parsed.success)?.data;
+      const presented = nomination
+        ? { text: legacyPresented.text, primaryView: nomination }
+        : legacyPresented;
       const correction = resolveCorrectionReply(presented.text, options.correctionContract);
       const disclosure = proposalDisclosure(trace);
       const disclosed = applyProposalDisclosure(correction.reply, disclosure);

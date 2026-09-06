@@ -52,6 +52,29 @@ async function pre(
 }
 
 describe('Copilot root reply finalization', () => {
+  it('retains an explicit presentation nomination only after the root control call succeeds', async () => {
+    const value = finalizer();
+    await pre(value, 'mcp__loom__present_primary_view', 'present_1', {
+      source: 'tool_result',
+      ref: { kind: 'query_knowledge', id: 'root-result' },
+    });
+    value.observeDomainTool({
+      tool_use_id: 'present_1',
+      name: 'present_primary_view',
+      effect: 'control',
+      input: { source: 'tool_result', ref: { kind: 'query_knowledge', id: 'root-result' } },
+      output: { source: 'tool_result', ref: { kind: 'query_knowledge', id: 'root-result' } },
+      error_reason: null,
+      executed: true,
+    });
+    const result = await value.finalizeTerminal('已整理结果。');
+    expect(result.preparedReply.primaryView).toEqual({
+      source: 'tool_result',
+      ref: { kind: 'query_knowledge', id: 'root-result' },
+    });
+    expect(result.receipt.primary_view).toBe('retained');
+  });
+
   it('seals one plain reply and binds the exact persisted bytes to its receipt', async () => {
     const value = finalizer();
     const result = await value.finalizeTerminal('已整理为 3 个要点。');
