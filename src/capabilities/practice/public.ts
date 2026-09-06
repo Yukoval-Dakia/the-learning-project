@@ -14,6 +14,11 @@ export {
   isMasteredForFrontier,
   learnableFrontierResolved,
 } from './server/learnable-frontier';
+export {
+  LEARNING_CONTENT_MAX_QUESTIONS,
+  type LearningContentValidationDeps,
+  validateLearningContent,
+} from './server/learning-content-validation';
 export { isLiveQuestionReference } from './server/live-question-reference';
 export { loadAttemptQuestionSnapshot } from './server/question-evidence-snapshot';
 export { mergeExactQuestionDuplicateKnowledgeIds } from './server/quiz/content-fingerprint';

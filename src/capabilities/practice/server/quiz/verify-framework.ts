@@ -152,6 +152,8 @@ export interface QuestionContentValidationInput {
   author_material?: { title_md: string; body_md: string };
   placement_authority?: PlacementVerificationAuthority;
   validation_mode?: 'release_strict';
+  /** Selects learner-visible axis admission without changing question-pool policy. */
+  validation_purpose?: 'learning_content';
 }
 
 export interface QuestionContentValidationRun {
@@ -394,7 +396,10 @@ export interface IndependentSolutionOptions {
   ) => Promise<void>;
 }
 
-export interface SolveCheckOptions extends IndependentSolutionOptions {}
+export interface SolveCheckOptions extends IndependentSolutionOptions {
+  /** Learner-visible release needs affirmative agreement, not legacy non-disagreement. */
+  validationMode?: 'release_strict';
+}
 
 // CONSERVATIVE threshold for the open-question semantic path (OF-4 / R2): only an
 // 'incorrect' verdict AT OR ABOVE this confidence fails solve-check. High by design
@@ -990,6 +995,7 @@ export async function runSolveCheck(
   question: SolveCheckQuestion,
   opts: SolveCheckOptions,
 ): Promise<SolveCheckResult> {
+  const releaseStrict = opts.validationMode === 'release_strict';
   // F2: prefer the structured final answer (rubric_json.reference_solution) over the
   // worked-solution prose in reference_md. referenceAnswer is the primary candidate
   // used for human-readable reason strings + the semantic-path reference; the full
@@ -1021,16 +1027,18 @@ export async function runSolveCheck(
       figures: question.figures,
     },
     opts,
-    {
-      // Preserve the ordinary question-supply adapter byte-for-byte while the
-      // exported validator seam remains strictly reference-free.
-      advisoryHints: {
-        existing_answers_hint: meta.tencent_right_answer ?? null,
-        existing_analysis_hint: meta.tencent_answer_analysis ?? null,
-      },
-      includePlacementAuthorityInTaskInput: true,
-      allowPartialContract: true,
-    },
+    releaseStrict
+      ? {}
+      : {
+          // Preserve the ordinary question-supply adapter byte-for-byte while the
+          // exported validator seam remains strictly reference-free.
+          advisoryHints: {
+            existing_answers_hint: meta.tencent_right_answer ?? null,
+            existing_analysis_hint: meta.tencent_answer_analysis ?? null,
+          },
+          includePlacementAuthorityInTaskInput: true,
+          allowPartialContract: true,
+        },
   );
   if (independentlySolved.status === 'unsupported') {
     return {
@@ -1211,15 +1219,15 @@ export async function runSolveCheck(
   // `incorrect` does not establish equivalence. Preserve it as `unsupported`
   // so provenance-anchored tier 2 can hold for review instead of silently
   // promoting; tier 3/4 continues treating unsupported as non-blocking.
-  const exactFallbackUnresolved =
-    normalizedExactMismatch && !confidentlyEquivalent && !confidentlyDisagrees;
+  const comparisonUnresolved =
+    (normalizedExactMismatch || releaseStrict) && !confidentlyEquivalent && !confidentlyDisagrees;
   const fallbackPrefix = normalizedExactMismatch ? 'Normalized exact candidates disagreed; ' : '';
   let verdict: SolveCheckResult['verdict'];
   let reason: string;
   if (confidentlyDisagrees) {
     verdict = 'fail';
     reason = `${fallbackPrefix}SemanticJudge confidently scored the independent solver answer as incorrect (confidence ${judged.confidence.toFixed(2)} >= ${SOLVE_CHECK_SEMANTIC_THRESHOLD})`;
-  } else if (exactFallbackUnresolved) {
+  } else if (comparisonUnresolved) {
     verdict = 'unsupported';
     reason = `${fallbackPrefix}SemanticJudge could not establish equivalence (outcome=${judged.coarse_outcome}, confidence=${judged.confidence.toFixed(2)}) — hold provenance-anchored sources for review`;
   } else if (confidentlyEquivalent) {

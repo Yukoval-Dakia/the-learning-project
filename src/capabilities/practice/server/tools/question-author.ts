@@ -26,7 +26,6 @@ import { and, inArray, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
 import type { QuestionAuthorIntentSchema } from '@/ai/task-intents';
 import {
-  QuestionAuthorDraft,
   type QuestionAuthorDraftT,
   normalizeAuthorStructured,
 } from '@/core/schema/question_author';
@@ -50,6 +49,7 @@ import {
 } from '@/server/questions/question-generation-grounding';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
+import { parseQuestionAuthorOutput } from '../../tasks/question-author';
 
 const PROMPT_PREVIEW_CHARS = 120;
 
@@ -164,36 +164,12 @@ async function buildQuestionAuthorPreparation(db: Db, seed: QuestionAuthorSeed) 
 }
 
 export async function prepareQuestionAuthorTask(
-  ctx: ToolContext,
+  ctx: Pick<ToolContext, 'db'>,
   seed: z.infer<typeof QuestionAuthorIntentSchema>,
 ) {
   const prepared = await buildQuestionAuthorPreparation(ctx.db, seed);
   if (!prepared) throw new Error('QuestionAuthorTask knowledge not found');
   return { input: prepared.input, ctx: prepared.ctx };
-}
-
-// brace-slice + Zod parse for the raw text output (照 quiz_gen parseOutput).
-// Throws on no-JSON / JSON.parse failure / schema mismatch — the tool wrapper
-// (authorQuestionExecute) converts the throw to status:'failed'.
-export function parseQuestionAuthorOutput(text: string): QuestionAuthorDraftT {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('parseQuestionAuthorOutput: no JSON object found in text');
-  }
-  let json: unknown;
-  try {
-    json = JSON.parse(text.slice(start, end + 1));
-  } catch (e) {
-    throw new Error(`parseQuestionAuthorOutput: JSON.parse failed: ${(e as Error).message}`);
-  }
-  const parsed = QuestionAuthorDraft.safeParse(json);
-  if (!parsed.success) {
-    throw new Error(
-      `parseQuestionAuthorOutput: schema invalid: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
-    );
-  }
-  return parsed.data;
 }
 
 /**

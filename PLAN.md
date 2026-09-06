@@ -1,9 +1,13 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：PR1348 exact CI全绿并合并main5cf5dcca，966 Done；968闭卷生成与967观察边界继续，整个goal active。
+> Linear 是权威 tracker；更新于 2026-09-07：968闭卷生成验证契约收口启动，先真实失败与现有政策，后同样本actual；966已合并，整体goal active。
 
 ## NOW
 
+- Active YUK968：root独占tlp-wt-unified-conversation / codex/yuk-968-closed-book-validation，base main5cf5dcca+交付记录9cf76668。
+  计划①核对生成来源/验证轴与发布资格；②由现有领域owner收口契约并做真实复杂fixture回归；
+  ③干净revision同样本actual，预留预算前不付费；④独立review与exactCI。只读设计lane协助，无并行writer。
+  不伪造来源、不把未比较称原创；保持grounding/too_close/独立解题和教学质量保护。不改UI/生产。
 - YUK966 Done：PR1348 exactfefcf70e1a07b4ef554deb3d4c1b9eab4a1401fa，CI34059429533全部success；
   2026-09-06T21:05:27Z合并main5cf5dccab207c32b47b6ddb15163dff10c379080，未部署。
   既有drawer用同一DTO交付真实结果快照/恢复，不重查、不增加模型history token；复用领域schema与原验证owner。

@@ -533,7 +533,7 @@ describe('runCopilotRun', () => {
         return {
           task_run_id: 'durable_verify',
           text: JSON.stringify({
-            grounding: { verdict: 'pass', reason: 'self-contained' },
+            grounding: { verdict: 'pass', reason: 'self-contained', basis: 'closed_world_givens' },
             copy_safety: { verdict: 'original', max_overlap: 0 },
             knowledge_hit: { verdict: 'pass', reason: 'on-topic' },
             overall: 'pass',
@@ -2528,7 +2528,7 @@ describe('runCopilotRun', () => {
         return {
           task_run_id: 'verify-stop',
           text: JSON.stringify({
-            grounding: { verdict: 'pass', reason: 'self-contained' },
+            grounding: { verdict: 'pass', reason: 'self-contained', basis: 'closed_world_givens' },
             copy_safety: { verdict: 'original', max_overlap: 0 },
             knowledge_hit: { verdict: 'pass', reason: 'on topic' },
             overall: 'pass',

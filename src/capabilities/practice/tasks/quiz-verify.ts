@@ -29,6 +29,9 @@ function buildQuizVerifyPrompt(profile: SubjectProfile): string {
 - 对可识别的真实作品、人物、史实、统计、公式出处、引文及其解释方向，必须用 source_refs、持久化 primary material、题面可直接推出的原文证据或本学科可靠知识独立核对。缺少足够独立依据给 grounding='unclear'；与原文或可靠学科事实冲突给 'fail'；绝不能因为作者和 reference 重复同一句解读就给 pass。
 - scope/knowledge 范围只说明考什么，不豁免 factuality。release_strict 的下游只接受 grounding='pass'，所以不确定时如实给 unclear，不要迎合放行。
 
+若 validation_purpose='learning_content'，在 grounding 中另给必需 basis：closed_world_givens（只需题面给定数据/形式运算即可独立核验）、discipline_knowledge（说明可独立核验的可靠学科依据）、source_refs（实际给出的来源）、material（实际给出的原文）、insufficient（依据不足）。判断具体题目，不因 closed_book 或作者自称“原创/假设”就选自包含；涉及真实引文、作品、事实而缺可靠独立依据仍是 insufficient/unclear。没有实际 material/source_refs 时不得选择对应 basis。
+该 purpose 不改变下面 overall 与 copy_safety 的定义。未提供可比较材料时 copy_safety 保留 unknown，不得假称做过题库比对或已证明原创；是否可展示由服务端消费各项真实判断决定。
+
 三项检查（每项独立给 verdict）：
 1. grounding（事实/落地）：题干与 reference_md 是否被 source_refs 的内容支撑、与之一致、无事实错误？若某来源标 used_for='fact' 却与题面矛盾，或题面含 snippet 无法支撑的具体事实断言 → 倾向 'fail'。source_refs 为空且 generation_method 为 closed_book 时，按题面自身是否事实正确判断，不因没来源直接判 fail（给 'unclear' 或依内容判）。
 2. copy_safety（原创/抄袭）：题干措辞是否与任一 source_ref 的 snippet 过于接近（逐句复制 / 仅做同义替换）？给 verdict：'original'（措辞充分原创）/ 'too_close'（与某来源太接近，应重写）/ 'unknown'（信息不足）；尽量给 max_overlap（0-1 粗略重合度）。'too_close' 会**阻止**这题进入复习池。

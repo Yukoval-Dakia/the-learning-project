@@ -388,7 +388,18 @@ export type QuizVerifyCopySafetyT = z.infer<typeof QuizVerifyCopySafety>;
 
 export const QuizVerificationResult = z.object({
   // §5 three checks.
-  grounding: QuizVerifyCheck, // fact / grounding vs the self-reported source_refs
+  grounding: QuizVerifyCheck.extend({
+    // Required by learner-visible assessment, optional for existing pool consumers.
+    basis: z
+      .enum([
+        'closed_world_givens',
+        'discipline_knowledge',
+        'source_refs',
+        'material',
+        'insufficient',
+      ])
+      .optional(),
+  }),
   copy_safety: QuizVerifyCopySafety, // plagiarism / originality vs source snippets
   knowledge_hit: QuizVerifyCheck, // does the question actually test its knowledge_ids
   // YUK-224 (slice 3, tier 3 'material_grounded') — material-grounding verdict axis.

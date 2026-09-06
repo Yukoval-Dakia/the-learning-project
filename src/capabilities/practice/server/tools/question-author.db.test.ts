@@ -93,13 +93,17 @@ describe('runQuestionAuthor (ADR-0031 lane B)', () => {
   it('inserts a draft question + question_draft proposal in one shot (knowledge seed)', async () => {
     const db = testDb();
     await seedKnowledge();
-    const runTaskFn = mockRunTask(draftFixture());
+    const emitted = JSON.parse(draftFixture());
+    emitted.structured.options = null;
+    emitted.structured.sub_questions = null;
+    const runTaskFn = mockRunTask(JSON.stringify(emitted));
 
     const result = await runQuestionAuthor(
       { seed_mode: 'knowledge', knowledge_ids: ['k_zhi'] },
       deps(runTaskFn),
     );
     expect(result.status).toBe('proposed');
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
     if (result.status !== 'proposed') throw new Error('unreachable');
 
     // The model got the validated knowledge context + the subject profile.

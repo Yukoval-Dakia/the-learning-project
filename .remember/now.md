@@ -2,6 +2,13 @@
 
 ## 最新状态
 
+- Active YUK968，root独占tlp-wt-unified-conversation / codex/yuk-968-closed-book-validation。
+  Practice联合验证owner+真实工具input/output来源绑定；Copilot只匹配可见内容，复用kernel已有DTO。
+  额外grounding.basis仅learner-visible purpose必需；旧题池/intervention兼容。copy unknown不伪称原创，限定预览并明示未比较。
+  strict solve须明确等价，partial/unsupported/低置信不再当可见成功；旧保守题池政策不变。重复作者parser已退休。
+  182unit/73worker-snapshotDB/15ownerDB/12作者DB、typecheck/build/lint/架构通过；无新paid，review/actual待。
+  设计docs/planning/2026-09-07-learning-content-validation.md。原脏main与生产不动，整体goal active。
+
 - YUK966 Done：PR1348 exactfefcf70e1a07b4ef554deb3d4c1b9eab4a1401fa，CI34059429533全部success；
   2026-09-06T21:05:27Z合并main5cf5dccab207c32b47b6ddb15163dff10c379080。
   root独占tlp-wt-unified-conversation，当前codex/yuk-966-delivery-notes仅交付记录；下一条968，之后967。

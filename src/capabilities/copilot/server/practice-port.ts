@@ -1,9 +1,9 @@
 export {
+  LEARNING_CONTENT_MAX_QUESTIONS,
+  type LearningContentValidationDeps,
   SolveError,
   buildSolveHintInput,
   isLiveQuestionReference,
   parseHintTurn,
-  runQuestionContentValidation,
-  runSolveCheck,
-  runTeachingQualityCheck,
+  validateLearningContent,
 } from '@/capabilities/practice/public';
