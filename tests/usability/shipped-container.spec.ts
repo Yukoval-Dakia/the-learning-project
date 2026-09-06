@@ -9,7 +9,255 @@ const SHOT_DIR = process.env.USABILITY_SHOT_DIR ?? 'test-results/usability';
 const TB_DESKTOP_SHOT = `${SHOT_DIR}/tb-desktop.png`;
 const TB_MOBILE_SHOT = `${SHOT_DIR}/tb-mobile.png`;
 
-for (const transport of ['inline', 'durable'] as const) {
+test('Copilot accepts consecutive messages and restores each run without cancelling on leave', async ({
+  page,
+}) => {
+  await installApiFixtures(page, 'existing-evidence');
+  const sessionId = 'persistent-session-42';
+  const turns: Array<Record<string, unknown>> = [];
+  const cancelled: string[] = [];
+  const submitted: Array<{ key: string; text: string }> = [];
+  const runs = new Map<
+    string,
+    { active: boolean; result: Promise<string>; finish: (body: string) => void }
+  >();
+  const settle = (runId: string, text: string, stopped = false) => {
+    const run = runs.get(runId);
+    if (!run) throw new Error(`Missing fixture run ${runId}`);
+    run.active = false;
+    turns.push({
+      role: 'ai',
+      run_id: runId,
+      event_id: `${runId}-reply`,
+      session_id: sessionId,
+      text,
+      at: '2026-09-07T08:01:00.000Z',
+    });
+    const frames = [
+      { event_id: 1, event_type: 'copilot_run.reply', payload: { reply_md: text } },
+      {
+        event_id: 2,
+        event_type: stopped ? 'copilot_run.failed' : 'copilot_run.done',
+        payload: stopped ? { reason: 'cancelled' } : { task_run_id: `${runId}-task` },
+      },
+    ];
+    run.finish(
+      frames.map((frame) => `event: job_event\ndata: ${JSON.stringify(frame)}\n\n`).join(''),
+    );
+  };
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/copilot/sessions')
+      return route.fulfill({
+        json: {
+          sessions: [
+            {
+              id: sessionId,
+              status: 'active',
+              title: '连续消息恢复验收',
+              created_at: '2026-09-07T08:00:00.000Z',
+              updated_at: '2026-09-07T08:00:00.000Z',
+            },
+          ],
+        },
+      });
+    if (path === '/api/copilot/turns')
+      return route.fulfill({
+        json: {
+          session_id: sessionId,
+          turns,
+          active_runs: [...runs.entries()]
+            .filter(([, run]) => run.active)
+            .map(([runId], index) => ({
+              run_id: runId,
+              session_id: sessionId,
+              status: index === 0 ? 'running' : 'queued',
+              events_url: `/api/jobs/copilot_run/${runId}/events`,
+            })),
+        },
+      });
+    if (path === '/api/copilot/chat') {
+      const body = route.request().postDataJSON();
+      expect(body.session_id).toBe(sessionId);
+      const key = route.request().headers()['idempotency-key'];
+      expect(key).toBeTruthy();
+      submitted.push({ key, text: body.user_message });
+      const runId = `persistent-run-${submitted.length}`;
+      let finish!: (body: string) => void;
+      const result = new Promise<string>((resolve) => {
+        finish = resolve;
+      });
+      runs.set(runId, { active: true, result, finish });
+      turns.push({
+        role: 'user',
+        event_id: runId,
+        text: body.user_message,
+        at: '2026-09-07T08:00:00.000Z',
+      });
+      return route.fulfill({
+        status: 202,
+        headers: { Location: `/api/jobs/copilot_run/${runId}/events` },
+        json: { run_id: runId, session_id: sessionId },
+      });
+    }
+    const cancel = path.match(/^\/api\/copilot\/runs\/(persistent-run-\d+)\/cancel$/);
+    if (cancel) {
+      cancelled.push(cancel[1]);
+      settle(cancel[1], '这次请求已停止。', true);
+      return route.fulfill({
+        json: { ok: true, run_id: cancel[1], status: 'cancelled' },
+      });
+    }
+    const subscription = path.match(/^\/api\/jobs\/copilot_run\/(persistent-run-\d+)\/events$/);
+    if (subscription) {
+      const run = runs.get(subscription[1]);
+      if (!run) throw new Error('Subscription without acceptance');
+      const body = await run.result;
+      // Refresh/close can abort the original subscription while the fixture
+      // keeps the server-owned run alive for the next browser connection.
+      return route.fulfill({ contentType: 'text/event-stream', body }).catch(() => undefined);
+    }
+    return route.fallback();
+  });
+  const open = () =>
+    page.getByRole('banner').getByRole('button', { name: 'Copilot', exact: true }).click();
+  const send = async (text: string) => {
+    await page.getByLabel('问 Loom 任何事', { exact: true }).fill(text);
+    await page.getByRole('button', { name: '发送', exact: true }).click();
+  };
+  const stop = (id: number) =>
+    page.getByRole('button', { name: `停止这次运行 persistent-run-${id}`, exact: true });
+  await page.goto('/today');
+  await open();
+  await send('先核对定义域，保留未知条件。');
+  await expect(stop(1)).toBeVisible();
+  await send('再比较零值与缺失值，先不要提交更改。');
+  await expect(stop(2)).toBeVisible();
+  await stop(2).click();
+  await expect(stop(2)).toHaveCount(0);
+  await expect(stop(1)).toBeVisible();
+  expect(cancelled).toEqual(['persistent-run-2']);
+  await page.keyboard.press('Escape');
+  await expect(page.getByLabel('问 Loom 任何事', { exact: true })).not.toBeVisible();
+  await page.evaluate(() => sessionStorage.clear());
+  await page.reload();
+  await open();
+  await expect(stop(1)).toBeVisible();
+  expect(cancelled).toEqual(['persistent-run-2']);
+  await send('最后总结有向关系，不把未批准提案当作事实。');
+  await expect(stop(3)).toBeVisible();
+  settle('persistent-run-1', '定义域已核对，未知条件仍保留。');
+  await expect(page.getByText('定义域已核对，未知条件仍保留。', { exact: true })).toHaveCount(1);
+  await expect(stop(1)).toHaveCount(0);
+  await expect(stop(3)).toBeVisible();
+  settle('persistent-run-3', '有向关系已总结，提案仍为未批准。');
+  await expect(stop(3)).toHaveCount(0);
+  await page.reload();
+  await open();
+  for (const { text } of submitted)
+    await expect(page.getByText(text, { exact: true })).toHaveCount(1);
+  await expect(page.getByText('定义域已核对，未知条件仍保留。', { exact: true })).toHaveCount(1);
+  await expect(page.getByText('有向关系已总结，提案仍为未批准。', { exact: true })).toHaveCount(1);
+  expect(submitted).toHaveLength(3);
+  expect(new Set(submitted.map(({ key }) => key)).size).toBe(3);
+  expect(cancelled).toEqual(['persistent-run-2']);
+});
+
+test('Copilot recovers ambiguous acceptance after reload with the original key and body', async ({
+  page,
+}) => {
+  await installApiFixtures(page, 'existing-evidence');
+  const requests: Array<{ key: string; body: string | null }> = [];
+  const turns: Array<Record<string, unknown>> = [];
+  const answer = '零是已观察值，null 仍表示未知；更正尚未获准。';
+  const question = '区分零与未知，并保留更正的批准状态。';
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/copilot/sessions')
+      return route.fulfill({
+        json: {
+          sessions: [
+            {
+              id: 'ambiguous-session',
+              status: 'active',
+              title: '受理恢复',
+              created_at: '2026-09-07T08:00:00.000Z',
+              updated_at: '2026-09-07T08:00:00.000Z',
+            },
+          ],
+        },
+      });
+    if (path === '/api/copilot/turns')
+      return route.fulfill({
+        json: { session_id: 'ambiguous-session', turns, active_runs: [] },
+      });
+    if (path === '/api/copilot/chat') {
+      requests.push({
+        key: route.request().headers()['idempotency-key'],
+        body: route.request().postData(),
+      });
+      if (requests.length === 1) {
+        turns.push(
+          { role: 'user', event_id: 'ambiguous-run', text: question, at: '2026-09-07T08:00:00Z' },
+          {
+            role: 'ai',
+            event_id: 'ambiguous-reply',
+            run_id: 'ambiguous-run',
+            session_id: 'ambiguous-session',
+            text: answer,
+            at: '2026-09-07T08:00:02Z',
+          },
+        );
+        return route.fulfill({
+          status: 503,
+          json: { error: 'copilot_enqueue_ambiguous', message: '受理响应未能确认。' },
+        });
+      }
+      expect(requests[requests.length - 1]).toEqual(requests[0]);
+      return route.fulfill({
+        status: 202,
+        headers: { Location: '/api/jobs/copilot_run/ambiguous-run/events' },
+        json: { run_id: 'ambiguous-run', session_id: 'ambiguous-session' },
+      });
+    }
+    if (path === '/api/jobs/copilot_run/ambiguous-run/events')
+      return route.fulfill({
+        contentType: 'text/event-stream',
+        body: [
+          { event_id: 1, event_type: 'copilot_run.reply', payload: { reply_md: answer } },
+          {
+            event_id: 2,
+            event_type: 'copilot_run.done',
+            payload: { task_run_id: 'ambiguous-task' },
+          },
+        ]
+          .map((frame) => `event: job_event\ndata: ${JSON.stringify(frame)}\n\n`)
+          .join(''),
+      });
+    return route.fallback();
+  });
+  const open = () =>
+    page.getByRole('banner').getByRole('button', { name: 'Copilot', exact: true }).click();
+  await page.goto('/today');
+  await open();
+  await page.getByLabel('问 Loom 任何事', { exact: true }).fill(question);
+  await page.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(page.getByTestId('copilot-pending-recovery')).toBeVisible();
+  await page.reload();
+  await open();
+  await page
+    .getByTestId('copilot-pending-recovery')
+    .getByRole('button', { name: '恢复', exact: true })
+    .click();
+  await expect(page.getByTestId('copilot-pending-recovery')).toHaveCount(0);
+  await expect(page.getByText(question, { exact: true })).toHaveCount(1);
+  await expect(page.getByText(answer, { exact: true })).toHaveCount(1);
+  expect(requests).toHaveLength(2);
+  expect(requests[0].key).toBeTruthy();
+  expect(requests[1]).toEqual(requests[0]);
+});
+
+for (const transport of ['persistent'] as const) {
   for (const source of ['none', 'tool_result', 'artifact', 'ephemeral_html'] as const) {
     test(`Copilot ${transport} primary view ${source} survives live delivery and replay`, async ({
       page,
@@ -29,7 +277,6 @@ for (const transport of ['inline', 'durable'] as const) {
               };
       const content = '已整理本轮资料。';
       const turns: Array<Record<string, unknown>> = [];
-      const terminal = { reply: content, ...(primaryView ? { primary_view: primaryView } : {}) };
       await page.route('**/api/**', async (route) => {
         const path = new URL(route.request().url()).pathname;
         if (path === '/api/copilot/sessions')
@@ -46,21 +293,29 @@ for (const transport of ['inline', 'durable'] as const) {
               ],
             },
           });
-        if (path === '/api/copilot/turns') return route.fulfill({ json: { turns } });
+        if (path === '/api/copilot/turns')
+          return route.fulfill({ json: { session_id: 'session-42', turns, active_runs: [] } });
         if (path === '/api/copilot/chat') {
+          expect(route.request().headers()['idempotency-key']).toBeTruthy();
+          turns.push({
+            role: 'user',
+            text: '展示本轮资料',
+            event_id: 'view-run-42',
+            at: '2026-09-06T06:00:00Z',
+          });
           turns.push({
             role: 'ai',
+            run_id: 'view-run-42',
             text: content,
             event_id: 'view-reply-42',
             at: '2026-09-06T06:00:00Z',
             ...(primaryView ? { primary_view: primaryView } : {}),
           });
-          return transport === 'inline'
-            ? route.fulfill({
-                contentType: 'text/event-stream',
-                body: `event: reply\ndata: ${JSON.stringify(terminal)}\n\n`,
-              })
-            : route.fulfill({ status: 202, json: { run_id: 'view-run-42' } });
+          return route.fulfill({
+            status: 202,
+            headers: { Location: '/api/jobs/copilot_run/view-run-42/events' },
+            json: { run_id: 'view-run-42', session_id: 'session-42' },
+          });
         }
         if (path === '/api/jobs/copilot_run/view-run-42/events') {
           const frames = [
@@ -120,14 +375,14 @@ async function expectNoInternalCopy(page: Page, route: string): Promise<void> {
   ).not.toMatch(/\bM[45]\b|暂未接线|尚未接线|暂未接通|尚未接通|(?:假|伪)成功/);
 }
 
-for (const transport of ['inline', 'durable'] as const) {
+for (const transport of ['persistent'] as const) {
   test(`Copilot ${transport} explicit completion survives the shipped drawer and replay`, async ({
     page,
   }) => {
     const fixture = await installApiFixtures(page, 'existing-evidence');
     const context = { skill: 'quiz', ref: { kind: 'knowledge', id: 'kc-domain-boundary-42' } };
     const content = '已核对定义域、增根与边界条件，练习已经完成。';
-    const turns = [
+    const turns: Array<Record<string, unknown>> = [
       {
         role: 'ai',
         text: '上一次练习已经完成。',
@@ -155,7 +410,8 @@ for (const transport of ['inline', 'durable'] as const) {
             ],
           },
         });
-      if (path === '/api/copilot/turns') return route.fulfill({ json: { turns } });
+      if (path === '/api/copilot/turns')
+        return route.fulfill({ json: { session_id: 'session-42', turns, active_runs: [] } });
       if (path === '/api/today/copilot-summary')
         return route.fulfill({
           json: {
@@ -168,26 +424,45 @@ for (const transport of ['inline', 'durable'] as const) {
           },
         });
       if (path === '/api/copilot/chat') {
+        expect(route.request().headers()['idempotency-key']).toBeTruthy();
         posts.push(route.request().postDataJSON());
-        if (posts.length === 1) {
-          turns.push({ ...turns[0], text: content, event_id: 'current-quiz' });
-          if (transport === 'durable')
-            return route.fulfill({
-              status: 202,
-              headers: { Location: '/api/jobs/copilot_run/quiz-42/events' },
-              json: { run_id: 'quiz-42' },
-            });
-        }
+        const runId = `quiz-42-${posts.length}`;
+        const first = posts.length === 1;
+        turns.push({
+          role: 'user',
+          text: posts.at(-1)?.user_message,
+          event_id: runId,
+          at: '2026-09-06T06:00:00Z',
+        });
+        turns.push({
+          role: 'ai',
+          text: first ? content : '收到后续问题。',
+          run_id: runId,
+          event_id: `reply-${runId}`,
+          at: '2026-09-06T06:00:01Z',
+          ...(first ? { skill_context: context, skill_turn: { kind: 'end' } } : {}),
+        });
         return route.fulfill({
-          contentType: 'text/event-stream',
-          body: `event: reply\ndata: ${JSON.stringify(posts.length === 1 ? terminal : { reply: '收到后续问题。' })}\n\n`,
+          status: 202,
+          headers: { Location: `/api/jobs/copilot_run/${runId}/events` },
+          json: { run_id: runId, session_id: 'session-42' },
         });
       }
-      if (path === '/api/jobs/copilot_run/quiz-42/events') {
+      const match = path.match(/^\/api\/jobs\/copilot_run\/quiz-42-(\d+)\/events$/);
+      if (match) {
+        const first = Number(match[1]) === 1;
         const frames = [
           { event_id: 1, event_type: 'copilot_run.delta', payload: { text: '正在核对草稿' } },
-          { event_id: 2, event_type: 'copilot_run.reply', payload: { reply_md: content } },
-          { event_id: 3, event_type: 'copilot_run.done', payload: terminal },
+          {
+            event_id: 2,
+            event_type: 'copilot_run.reply',
+            payload: { reply_md: first ? content : '收到后续问题。' },
+          },
+          {
+            event_id: 3,
+            event_type: 'copilot_run.done',
+            payload: first ? terminal : { task_run_id: `task-quiz-${match[1]}` },
+          },
         ];
         return route.fulfill({
           contentType: 'text/event-stream',

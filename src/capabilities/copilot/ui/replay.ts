@@ -47,8 +47,6 @@ export interface ReplayTurn {
   text: string;
   at: string;
   event_id: string;
-  /** Causal ask/chip identity, not a promise that the turn can be reverted. */
-  run_id?: string;
   checkpoint_event_id?: string;
   // AF S4 / YUK-203 U6 — present on AI turns that carried a skill result.
   skill_turn?: ReplaySkillTurn;
@@ -68,7 +66,6 @@ export interface ReplayTurn {
 
 export interface ReplayChatMessage {
   id: string;
-  run_id?: string;
   role: 'user' | 'ai' | 'tombstone';
   text: string;
   checkpoint_event_id?: string;

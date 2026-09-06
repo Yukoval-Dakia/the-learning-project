@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：948/950界面已获批准并独立实施；真实HTTP/native连续会话验收进行中。
+> Linear 是权威 tracker；更新于 2026-09-07：948/950界面已获批准；真实HTTP/native连续会话验收通过，继续UI集成与浏览器验收。
 
 ## NOW
 
@@ -28,7 +28,12 @@
   公开卡estimated $0.0007353978、保守reserve $1.6；实际输入13203→13370不声称token下降。
   此证据不覆盖自动poller/浏览器/自动compact；manifest后继装配的真实DB和0付费admission-only另验。
   boss唤醒装配归manifest，不让worker创建runtime；原生session持久化新增1条合法owner依赖，baseline439/0/47。
-  仍待UI完整发送/恢复/工具进度接线、真实模型/浏览器验收、独立review与exact-head CI。
+  9f61ba1d增加服务端同会话ask/chip run_id，与checkpoint撤回资格独立；27历史DB/类型检查通过。
+  UI最终6895c4f5经b92177f86合入；per-run Map/订阅/Stop与延迟202跨会话保护完成，108 UI unit通过。
+  root修正自动合并带来的重复run_id类型声明；7个built-browser Copilot场景通过，未调用模型。
+  全部既有shipped-browser smoke20/20；typecheck/lint/build与API/架构/control-plane检查通过，准备PR独立review。
+  自动pg-boss poller另验：真实registrar/manifest消费已完成head并推进已Stop后继，两physical job完成、model零调用；queue8/8绿。
+  仍待UI集成与浏览器验收、独立review与exact-head CI；上述真实模型验收已通过但不替代这些门。
 - Owner授权AI pipeline和全项目业务封装/测试精简；完整goal仍active，不以audit数量或单个PR代替完成。
 - YUK945：foreground原生SDK compaction、每轮learner状态、compact后结构化再注入；
   原6轮/费用/row/tool/deadline不重置，usage仅存bounded compact元数据。
@@ -84,7 +89,8 @@
 ## NEXT
 
 1. YUK948统一持续执行与服务端恢复；950同会话追加消息，禁止以先Stop/409拒绝替代。
-   后端接纳/顺序执行与teaching/native session parity已接通，继续已批准UI实施和浏览器断线实际验收。
+   后端/UI已集成且7个Copilot浏览器场景通过，继续全页面smoke、独立review与exact CI。
+   后继YUK965退休仅验收使用的runCopilotChat旧适配器；迁移有效actual场景后删死路径，不删除失败/恢复保护。
 2. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
 3. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
