@@ -109,6 +109,10 @@ describe('validateCopilotLearningContent', () => {
     '请计算 2+2？答案是 4。',
     'Solve 2+2? The answer is 4.',
     '是否已证明 P？请计算 2+2？答案是 4。',
+    'Can you solve 2+2? The answer is 5.',
+    '你能计算 2+2 吗？答案是 5。',
+    'Could you please prove this identity? The proof is below.',
+    '请帮我判断这个答案正确吗？答案是正确。',
   ])('validates a direct instruction even with its answer on the same line: %s', async (text) => {
     expect(containsLearningQuestion(text)).toBe(true);
     let validatorCalls = 0;

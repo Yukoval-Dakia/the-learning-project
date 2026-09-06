@@ -26,7 +26,6 @@
 ## 历史步骤（保留证据，不是当前待办）
 
 ## 当前949收口；下一条948/950统一持续会话
-
 - Owner最新决定：Copilot消息不分前后台，默认不中断，对标ChatGPT；旧Mission按钮提案撤回。
   后端复用copilot_run唯一owner，HTTP断线仅取消订阅；关闭/刷新可从服务端恢复，不依赖sessionStorage。
   后续消息必须持久接纳同一会话并顺序消费；不接受session_busy409或“先Stop再发”降级。
