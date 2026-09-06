@@ -111,7 +111,7 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
         execution: { localPricebook: true },
       },
       // YUK-924 site 5 — local USD token pricebook membership (rates remain the
-      // placeholder card in pricing.ts pending owner confirmation).
+      // dated public estimate in pricing.ts, reusing the model catalog).
       'mimo-v2.5': {
         execution: { localPricebook: true },
       },

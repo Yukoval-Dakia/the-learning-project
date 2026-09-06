@@ -94,8 +94,8 @@ export interface ModelProfileExecution {
   meteredUsd: boolean;
   /**
    * Site 5 convergence: the model has a local USD token pricebook entry
-   * (pricing.ts). Membership lives here; the placeholder RATES stay in
-   * pricing.ts pending owner confirmation.
+   * (pricing.ts). Membership lives here; pricing.ts uses the corresponding
+   * committed catalog rates as a dated public-price estimate, not an invoice.
    */
   localPricebook: boolean;
 }

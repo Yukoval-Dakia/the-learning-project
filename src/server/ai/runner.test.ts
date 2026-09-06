@@ -40,6 +40,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { ATTEMPT_PRICEBOOK_VERSION } from './pricing';
 import { runAgentTask, runTask, streamTask } from './runner';
 
 function successResult(text: string, cost_usd = 0.001) {
@@ -67,7 +68,7 @@ describe('runTask (Claude Agent SDK adapter)', () => {
     process.env.XIAOMI_API_KEY = 'sk-test-key';
   });
 
-  it('returns final text + writes cost ledger in USD', async () => {
+  it('returns final text and the same MiMo estimate in result, run and ledger despite positive SDK USD', async () => {
     mockSdk.messages = [successResult('归因结果：concept', 0.001)];
 
     const result = await runTask(
@@ -80,10 +81,10 @@ describe('runTask (Claude Agent SDK adapter)', () => {
     expect(result.finishReason).toBe('end_turn');
     expect(result.usage.inputTokens).toBe(100);
     expect(result.usage.outputTokens).toBe(50);
-    expect(result.cost_usd).toBe(0.001);
+    expect(result.cost_usd).toBeCloseTo(0.000087, 12);
     expect(result).toMatchObject({
-      cost_basis: 'reported',
-      cost_ref: 'sdk:total_cost_usd',
+      cost_basis: 'estimated',
+      cost_ref: `pricebook:${ATTEMPT_PRICEBOOK_VERSION}/xiaomi/mimo-v2.5-pro`,
     });
 
     const { ai_task_runs, cost_ledger } = await import('@/db/schema');
@@ -94,12 +95,12 @@ describe('runTask (Claude Agent SDK adapter)', () => {
       .where(eq(cost_ledger.task_kind, 'AttributionTask'));
     expect(rows).toHaveLength(1);
     // codex P1 fix: cost_ledger.cost is USD float, NOT micro-USD ints.
-    expect(rows[0].cost ?? Number.NaN).toBeCloseTo(0.001, 6);
+    expect(rows[0].cost ?? Number.NaN).toBeCloseTo(0.000087, 12);
     expect(rows[0].task_run_id).toBe(result.task_run_id);
     expect(rows[0]).toMatchObject({
       entry_kind: 'attempt',
-      cost_basis: 'reported',
-      cost_ref: 'sdk:total_cost_usd',
+      cost_basis: 'estimated',
+      cost_ref: `pricebook:${ATTEMPT_PRICEBOOK_VERSION}/xiaomi/mimo-v2.5-pro`,
     });
 
     const runRows = await testDb()
@@ -113,12 +114,12 @@ describe('runTask (Claude Agent SDK adapter)', () => {
       model: 'mimo-v2.5-pro',
       status: 'success',
       finish_reason: 'end_turn',
-      cost_basis: 'reported',
-      cost_ref: 'sdk:total_cost_usd',
+      cost_basis: 'estimated',
+      cost_ref: `pricebook:${ATTEMPT_PRICEBOOK_VERSION}/xiaomi/mimo-v2.5-pro`,
     });
     expect(runRows[0].input_hash).toMatch(/^[a-f0-9]{64}$/);
     expect(runRows[0].usage_json).toEqual({ inputTokens: 100, outputTokens: 50 });
-    expect(runRows[0].cost_usd).toBeCloseTo(0.001, 6);
+    expect(runRows[0].cost_usd).toBeCloseTo(0.000087, 12);
     expect(runRows[0].finished_at).toBeTruthy();
   });
 
@@ -393,7 +394,7 @@ describe('runTask (Claude Agent SDK adapter)', () => {
     );
 
     expect(result.text).toBe('agent-text');
-    expect(result.cost_usd).toBe(0.002);
+    expect(result.cost_usd).toBeCloseTo(0.000087, 12);
   });
 });
 
@@ -653,7 +654,11 @@ describe('streamTask middleware + cost', () => {
       .from(cost_ledger)
       .where(eq(cost_ledger.task_kind, 'AttributionTask'));
     expect(rows).toHaveLength(1);
-    expect(rows[0].cost ?? Number.NaN).toBeCloseTo(0.005, 6);
+    expect(rows[0].cost ?? Number.NaN).toBeCloseTo(0.000087, 12);
+    expect(rows[0]).toMatchObject({
+      cost_basis: 'estimated',
+      cost_ref: `pricebook:${ATTEMPT_PRICEBOOK_VERSION}/xiaomi/mimo-v2.5-pro`,
+    });
     const taskRunId = rows[0].task_run_id;
     expect(taskRunId).toBeTruthy();
     if (!taskRunId) throw new Error('expected cost_ledger.task_run_id');
