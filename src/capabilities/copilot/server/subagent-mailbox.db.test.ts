@@ -4,6 +4,7 @@ import { ai_task_runs, copilot_continuation, event, subagent_run } from '@/db/sc
 import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { createCopilotExecutionOwner } from './copilot-execution';
+import { createCopilotRunCancellationControl } from './copilot-run-cancellation';
 import * as mailbox from './subagent-mailbox';
 import { getCopilotContinuationHistory } from './turns';
 
@@ -37,7 +38,7 @@ describe('Copilot subagent mailbox', () => {
       buildMcpServerFn: () => ({ type: 'sdk', name: 'loom' }) as never,
       buildTavilyMcpServerFn: () => null,
       resolveCopilotSkillsFn: async () => undefined,
-      runAgentTaskFn: async (_kind, _input, ctx) => {
+      streamTaskCollectingFn: async (_kind, _input, ctx) => {
         if (!ctx.onTaskEvent) throw new Error('native lifecycle not mounted');
         await ctx.onTaskEvent({
           type: 'system',
@@ -59,7 +60,12 @@ describe('Copilot subagent mailbox', () => {
           output_file: '/private/synthetic-child.txt',
           summary: 'Hidden child result must settle without becoming public activity.',
         });
-        return { task_run_id: 'root_hidden_native', text: '已完成核对。' };
+        return {
+          task_run_id: 'root_hidden_native',
+          text: '已完成核对。',
+          terminalText: '已完成核对。',
+          partial: false,
+        };
       },
     });
     await execute(
@@ -82,7 +88,12 @@ describe('Copilot subagent mailbox', () => {
           },
         },
       },
-      { kind: 'foreground', delivery: 'single', subagentsEnabled: true, observe },
+      {
+        cancellation: createCopilotRunCancellationControl({ db: testDb(), runId: sourceEventId }),
+        deadlineAt: Date.now() + 60_000,
+        subagentsEnabled: true,
+        observe,
+      },
     );
     const rows = await testDb().select().from(subagent_run);
     expect(rows).toHaveLength(1);

@@ -2,7 +2,8 @@
 // Disconnects after acceptance only detach the client; the worker owns execution.
 
 import { ZodError } from 'zod';
-import { CopilotChatRequest, writeCopilotReply } from '@/capabilities/copilot/server/chat';
+import { CopilotChatRequest } from '@/capabilities/copilot/server/chat-contracts';
+import { writeCopilotReply } from '@/capabilities/copilot/server/conversation-writes';
 import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,

@@ -92,25 +92,14 @@ export interface CopilotExecutionTurn {
   sourceEventId?: string;
 }
 
-export type CopilotExecutionPolicy =
-  | {
-      kind: 'foreground';
-      delivery: 'single' | 'stream';
-      signal?: AbortSignal;
-      deadlineAt?: number;
-      resumeSessionId?: string;
-      subagentsEnabled?: boolean;
-      observe?: (activity: CopilotExecutionActivity) => Promise<void> | void;
-    }
-  | {
-      kind: 'durable';
-      /** Durable job owns polling/settlement; this module owns every propagation point. */
-      cancellation: CopilotRunCancellationControl;
-      deadlineAt: number;
-      resumeSessionId?: string;
-      subagentsEnabled?: boolean;
-      observe?: (activity: CopilotExecutionActivity) => Promise<void> | void;
-    };
+export interface CopilotExecutionPolicy {
+  /** The accepted run owns polling/settlement; this module owns propagation. */
+  cancellation: CopilotRunCancellationControl;
+  deadlineAt: number;
+  resumeSessionId?: string;
+  subagentsEnabled?: boolean;
+  observe?: (activity: CopilotExecutionActivity) => Promise<void> | void;
+}
 
 export interface CopilotExecutionResult {
   taskRunId: string;
@@ -174,7 +163,7 @@ async function emitActivity(
 
 /**
  * Build the one Copilot execution owner. The factory exists for the real SDK/external test
- * adapters; foreground and durable callers only receive the small execute function.
+ * adapters; the persistent worker receives only the small execute function.
  */
 export function createCopilotExecutionOwner(
   overrides: Partial<CopilotExecutionAdapters> = {},
@@ -185,17 +174,12 @@ export function createCopilotExecutionOwner(
     const lifecycleAbortController = new AbortController();
     const cancellationSignals = [
       { signal: lifecycleAbortController.signal, requestedBy: 'system' as const },
-      ...(policy.kind === 'foreground' && policy.signal
-        ? [{ signal: policy.signal, requestedBy: 'user' as const }]
-        : []),
-      ...(policy.kind === 'durable'
-        ? [{ signal: policy.cancellation.signal, requestedBy: 'user' as const }]
-        : []),
+      { signal: policy.cancellation.signal, requestedBy: 'user' as const },
     ];
-    const validationSignal =
-      policy.kind === 'durable'
-        ? AbortSignal.any([lifecycleAbortController.signal, policy.cancellation.signal])
-        : lifecycleAbortController.signal;
+    const validationSignal = AbortSignal.any([
+      lifecycleAbortController.signal,
+      policy.cancellation.signal,
+    ]);
     const deadlineAt = policy.deadlineAt;
     const actorRef = selectActorRef(turn.input.triggered_by);
     const callerActor = { kind: 'agent' as const, ref: actorRef };
@@ -224,10 +208,8 @@ export function createCopilotExecutionOwner(
     });
     const validationRunner: Parameters<typeof validateCopilotLearningContent>[1]['runTaskFn'] =
       async (kind, taskInput, callCtx) => {
-        if (policy.kind === 'durable') {
-          await policy.cancellation.probe();
-          validationSignal.throwIfAborted();
-        }
+        await policy.cancellation.probe();
+        validationSignal.throwIfAborted();
         const ctx = validationTaskContext(callCtx);
         switch (kind) {
           case 'QuizVerifyTask':
@@ -261,10 +243,8 @@ export function createCopilotExecutionOwner(
       ].join('\n'),
       ...(authoritativeReply ? { authoritativeReply } : {}),
       validateLearningContent: async (text, contextText, validationTaskRunId, primaryView) => {
-        if (policy.kind === 'durable') {
-          await policy.cancellation.probe();
-          validationSignal.throwIfAborted();
-        }
+        await policy.cancellation.probe();
+        validationSignal.throwIfAborted();
         return reviewCopilotLearningContent(text, contextText, validationTaskRunId, {
           db,
           runTaskFn: validationRunner,
@@ -286,7 +266,7 @@ export function createCopilotExecutionOwner(
         db,
         sessionId: turn.sessionId,
         taskRunId: turn.taskRunId,
-        providerAttemptCaller: policy.kind === 'durable' ? 'worker' : 'api',
+        providerAttemptCaller: 'worker',
         signal: lifecycleAbortController.signal,
         ...(deadlineAt !== undefined ? { providerSessionDeadlineAt: deadlineAt } : {}),
         callerActor,
@@ -298,24 +278,13 @@ export function createCopilotExecutionOwner(
       taskKind: 'CopilotTask',
       claimToolUseId: toolUseCorrelation.claim,
       cancellationSignals,
-      beforeExecute:
-        policy.kind === 'durable'
-          ? async (tool) =>
-              (await policy.cancellation.beforeTool()) ??
-              finalizer.beforeDomainTool(tool) ??
-              proposalFlowGate.beforeExecute(tool) ??
-              budgetTracker.beforeExecute(tool)
-          : (tool) =>
-              finalizer.beforeDomainTool(tool) ??
-              proposalFlowGate.beforeExecute(tool) ??
-              budgetTracker.beforeExecute(tool),
-      ...(policy.kind === 'durable'
-        ? {
-            onExecuteStart: (tool: { name: string }) =>
-              policy.cancellation.onToolExecutionStarted(tool),
-            onExecuteSettled: () => policy.cancellation.onToolExecutionSettled(),
-          }
-        : {}),
+      beforeExecute: async (tool) =>
+        (await policy.cancellation.beforeTool()) ??
+        finalizer.beforeDomainTool(tool) ??
+        proposalFlowGate.beforeExecute(tool) ??
+        budgetTracker.beforeExecute(tool),
+      onExecuteStart: (tool) => policy.cancellation.onToolExecutionStarted(tool),
+      onExecuteSettled: () => policy.cancellation.onToolExecutionSettled(),
       interceptInput: (tool, args) => {
         const { args: capped, contextBudget, softStop } = budgetTracker.capInput(tool.name, args);
         return { args: capped, truncationNote: contextBudget, softStop };
@@ -340,10 +309,7 @@ export function createCopilotExecutionOwner(
       ...(tavily ? TAVILY_MCP_ALLOWED_TOOLS : []),
     ];
     const subagentsEnabled = policy.subagentsEnabled ?? isCopilotSubagentEnabled();
-    const parentMaxTurns =
-      policy.kind === 'durable'
-        ? DURABLE_COPILOT_EXECUTION_BUDGET.maxIterations
-        : copilotTaskSpec.definition.budget.maxIterations;
+    const parentMaxTurns = DURABLE_COPILOT_EXECUTION_BUDGET.maxIterations;
     const { allowedTools, spawnContract } = buildCopilotNativeResearchConfig({
       baseAllowedTools,
       enabled: subagentsEnabled,
@@ -378,9 +344,7 @@ export function createCopilotExecutionOwner(
       : undefined;
 
     let sdkHooks = toolUseCorrelation.prepend(
-      policy.kind === 'durable'
-        ? policy.cancellation.prependSdkHook(spawnContract?.hooks)
-        : spawnContract?.hooks,
+      policy.cancellation.prependSdkHook(spawnContract?.hooks),
     );
     sdkHooks = prependCopilotFinalizationHooks(finalizer.hooks, sdkHooks);
     const skills = await adapters.resolveCopilotSkillsFn();
@@ -407,7 +371,7 @@ export function createCopilotExecutionOwner(
     const runnerContext: Parameters<typeof streamTaskCollecting>[2] = {
       db,
       taskRunId: turn.taskRunId,
-      signal: policy.kind === 'durable' ? policy.cancellation.signal : policy.signal,
+      signal: policy.cancellation.signal,
       lifecycleAbortController,
       compiledModelPrompt,
       mcpServers,
@@ -421,17 +385,10 @@ export function createCopilotExecutionOwner(
           }
         : {}),
       ...(skills ? { skills } : {}),
-      ...(policy.kind === 'foreground' && deadlineAt !== undefined
-        ? { providerSessionDeadlineAt: deadlineAt }
-        : {}),
-      ...(policy.kind === 'durable'
-        ? {
-            budgetOverride: {
-              maxIterations: DURABLE_COPILOT_EXECUTION_BUDGET.maxIterations,
-              timeoutMs: DURABLE_COPILOT_EXECUTION_BUDGET.timeoutMs,
-            },
-          }
-        : {}),
+      budgetOverride: {
+        maxIterations: DURABLE_COPILOT_EXECUTION_BUDGET.maxIterations,
+        timeoutMs: DURABLE_COPILOT_EXECUTION_BUDGET.timeoutMs,
+      },
       sdkSession,
       nativeCompaction: { sessionContext: compileCopilotSessionContext(input) },
       onToolUse: (call) => {
@@ -452,29 +409,19 @@ export function createCopilotExecutionOwner(
     });
 
     try {
-      let result: AgentResult | StreamResult;
-      let terminalText: string;
-      let partial = false;
-      let executionError: string | undefined;
-      if (policy.kind === 'foreground' && policy.delivery === 'single') {
-        result = await adapters.runAgentTaskFn('CopilotTask', input, runnerContext);
-        terminalText = result.text;
-      } else {
-        const streamResult = await adapters.streamTaskCollectingFn(
-          'CopilotTask',
-          input,
-          runnerContext,
-          (text) => {
-            if (text.length > 0) candidateDeltaObserved = true;
-          },
-        );
-        result = streamResult;
-        terminalText = streamResult.terminalText ?? '';
-        partial = streamResult.partial === true;
-        executionError = streamResult.error;
-        if (resumeSessionId && partial) {
-          throw new Error('resumed Agent SDK session returned partial output');
-        }
+      const result = await adapters.streamTaskCollectingFn(
+        'CopilotTask',
+        input,
+        runnerContext,
+        (text) => {
+          if (text.length > 0) candidateDeltaObserved = true;
+        },
+      );
+      const terminalText = result.terminalText ?? '';
+      const partial = result.partial === true;
+      const executionError = result.error;
+      if (resumeSessionId && partial) {
+        throw new Error('resumed Agent SDK session returned partial output');
       }
       const finalization = await finalizer.finalizeTerminal(terminalText);
       retainSdkSession = !partial && finalization.accepted;

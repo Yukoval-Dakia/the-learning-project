@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { event, learning_session } from '@/db/schema';
 import { writeJobEvent } from '@/server/events/writer';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { writeCopilotInputEvent } from '../server/chat';
+import { writeCopilotInputEvent } from '../server/conversation-writes';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from '../server/copilot-run-status';
 import { POST as acceptChip } from './accept-chip';
 import {

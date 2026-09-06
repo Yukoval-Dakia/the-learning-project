@@ -13,8 +13,8 @@ import { createHash } from 'node:crypto';
 import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { writeCopilotReply } from '@/capabilities/copilot/server/chat';
 import { COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY } from '@/capabilities/copilot/server/content-validation';
+import { writeCopilotReply } from '@/capabilities/copilot/server/conversation-writes';
 import {
   type CopilotExecutionAdapters,
   createCopilotExecutionOwner,

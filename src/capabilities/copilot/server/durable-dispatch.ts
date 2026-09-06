@@ -7,7 +7,7 @@ import { PICKUP_TIMEOUT_MS } from '@/capabilities/copilot/durable-pickup';
 import type { Db, Tx } from '@/db/client';
 import { job_events } from '@/db/schema';
 import { writeJobEvent } from '@/server/events/writer';
-import { writeCopilotInputEvent } from './chat';
+import { writeCopilotInputEvent } from './conversation-writes';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import { copilotRunTerminalSql } from './copilot-run-terminal-sql';
 

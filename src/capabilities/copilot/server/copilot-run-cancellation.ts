@@ -2,7 +2,7 @@ import type { HookCallback, HookJSONOutput, Options } from '@anthropic-ai/claude
 import { and, eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { job_events } from '@/db/schema';
-import { writeCopilotReply } from './chat';
+import { writeCopilotReply } from './conversation-writes';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import { MATERIALIZING_TOOL_NAMES } from './materializing-tools';
 import type { CopilotReplyFinalizationReceipt, PreparedCopilotReply } from './reply-finalization';

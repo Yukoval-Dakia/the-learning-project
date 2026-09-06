@@ -1,0 +1,119 @@
+{
+  "protocol_version": 1,
+  "phase": "running",
+  "exact_head": "88a4a60314f2c9be5d4840d5da7caed041acb008",
+  "dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "harness_sha256": "708cad32ec2784e18ef33a7d484ae060d5fbf2a1c796794573b8a20cf4528ff8",
+  "provider": "xiaomi",
+  "model": "mimo-v2.5-pro",
+  "credential_source": "/Volumes/YukovalSBak/yukoval-projects/the-learning-project/.env",
+  "baseline_record": false,
+  "campaign_cost_limit_usd": 0.25,
+  "case_cost_reserves_usd": {
+    "cold": 0.25,
+    "resume": 0.25,
+    "context-change": 0.25,
+    "correction": 0.25,
+    "read": 0.25,
+    "claims": 0.3,
+    "presentation-process": 0.4,
+    "presentation-tool": 0.4,
+    "presentation-artifact": 0.4,
+    "presentation-html": 0.4,
+    "proposal": 0.25,
+    "semantic": 0.75,
+    "native-task": 0.5,
+    "durable": 0.25,
+    "unified": 1.6,
+    "cancel": 0
+  },
+  "cases": [
+    {
+      "name": "read",
+      "input_sha256": "6335a03f4ccf7dcd8cb226d5cac38156373e2319015c2283c186844791938166",
+      "output_sha256": "6db02af39962077c730e32900d82210d54361d82cb0b6b9e32634ac1f60d8cf2",
+      "input": {
+        "session_id": "v3ab7z4spawumeas8hyrpeso",
+        "user_message": "必须调用 query_knowledge，参数固定为 subjectId:\"yuwen\"、nodeId:\"actual:classical-root\"、include:[\"children\"]、limit:10；然后只报告工具实际返回的节点名称。不要出题，不得把空结果说成不存在。",
+        "triggered_by": "chat"
+      },
+      "output": "工具返回了 2 个节点，名称如下：\n\n1. **文言虚词「之」**（id: `actual:classical-root`，根节点，无父节点）\n2. **代词宾语用法**（id: `actual:classical-object`，父节点为「文言虚词「之」」）",
+      "root_task_run_id": "copilot_run_tool_copilot_user_ask_4c6f7ac94846997514b6f761935ddd56eda1641bb5a742c5b68be084f3a2fbe5",
+      "terminal_output": "工具返回了 2 个节点，名称如下：\n\n1. **文言虚词「之」**（id: `actual:classical-root`，根节点，无父节点）\n2. **代词宾语用法**（id: `actual:classical-object`，父节点为「文言虚词「之」」）",
+      "terminal_sha256": "6db02af39962077c730e32900d82210d54361d82cb0b6b9e32634ac1f60d8cf2",
+      "task_runs": [
+        {
+          "id": "copilot_run_tool_copilot_user_ask_4c6f7ac94846997514b6f761935ddd56eda1641bb5a742c5b68be084f3a2fbe5",
+          "kind": "CopilotTask",
+          "provider": "xiaomi",
+          "model": "mimo-v2.5-pro",
+          "usage": {
+            "inputTokens": 26951,
+            "outputTokens": 177,
+            "thinkingBlocks": 2,
+            "thinkingCharacters": 160
+          },
+          "cost": 0.0006681774,
+          "costBasis": "estimated",
+          "costRef": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro",
+          "status": "success",
+          "finishReason": "end_turn",
+          "compiledPromptHash": "4993555668ad11219f7d88af158c8ea9ffc3765567e77181a451d0cc6d2aaccb",
+          "promptCodecMode": "cold",
+          "promptContextDigest": "374c798b9fbc747f0c0ae604bfb42baddf89ae021969cf26320627d8e8810d50"
+        }
+      ],
+      "tools": [
+        {
+          "name": "mcp__loom__query_knowledge",
+          "effect": null,
+          "error": null
+        },
+        {
+          "name": "query_knowledge",
+          "effect": "read",
+          "error": null
+        }
+      ],
+      "session_agent_sdk_id": "0bc42ccd-9bf7-4cf1-a52a-83159cbe1d04",
+      "cumulative_cost_usd": 0.0006681774,
+      "reply_finalization": {
+        "protocol_version": 1,
+        "assurance": "execution_trace_bound",
+        "root_task_run_id": "copilot_run_tool_copilot_user_ask_4c6f7ac94846997514b6f761935ddd56eda1641bb5a742c5b68be084f3a2fbe5",
+        "candidate_sha256": "6db02af39962077c730e32900d82210d54361d82cb0b6b9e32634ac1f60d8cf2",
+        "reply_sha256": "6db02af39962077c730e32900d82210d54361d82cb0b6b9e32634ac1f60d8cf2",
+        "trace_sha256": "4da1d15fa305f5314b3db0fc3a46104857a5af615f772e82296dcdc963ae51c4",
+        "trace_call_count": 1,
+        "observed_completed_tool_use_ids": ["call_7809fc79e635407397867766"],
+        "correction": "normal",
+        "proposal_disclosure": "none",
+        "learning_content": "not_applicable",
+        "primary_view": "absent"
+      }
+    }
+  ],
+  "sdk_outcomes": [
+    {
+      "task_run_id": "copilot_run_tool_copilot_user_ask_4c6f7ac94846997514b6f761935ddd56eda1641bb5a742c5b68be084f3a2fbe5",
+      "elapsed_ms": 35543,
+      "finish_reason": "end_turn",
+      "partial": false,
+      "terminal_present": true,
+      "error_subtype": null
+    }
+  ],
+  "limitations": [
+    "direct durable handler is not pg-boss queue E2E",
+    "structural assertions do not establish factual entailment or semantic correctness"
+  ],
+  "fixture_readiness": {
+    "registered_tools": ["query_knowledge", "propose_knowledge_mutation"],
+    "conversation_session_id": "v3ab7z4spawumeas8hyrpeso"
+  },
+  "worker_driver": {
+    "admission": "production HTTP adapter + v2 transaction + pg-boss",
+    "execution": "manual physical fetch + production runCopilotRun + terminal wake + complete",
+    "automatic_poller_verified": false
+  }
+}

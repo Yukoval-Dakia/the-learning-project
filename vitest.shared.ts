@@ -480,6 +480,7 @@ export const fastTestInclude = [
   'src/ui/**/*.test.ts',
   'src/ui/**/*.test.tsx',
   'tests/core/**/*.test.ts',
+  'tests/acceptance/deadline.test.ts',
   'tests/schema/**/*.test.ts',
   'tests/subjects/**/*.test.ts',
   'tests/integration/judge-gap-audit.test.ts',

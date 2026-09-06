@@ -29,8 +29,7 @@ const input: CopilotRunInput = {
   },
 };
 
-function fakeCancellation(): CopilotRunCancellationControl {
-  const controller = new AbortController();
+function fakeCancellation(controller = new AbortController()): CopilotRunCancellationControl {
   return {
     signal: controller.signal,
     hasConfirmedCancellation: false,
@@ -48,12 +47,17 @@ function fakeCancellation(): CopilotRunCancellationControl {
 
 function ownerWith(
   run: CopilotExecutionAdapters['runAgentTaskFn'],
-  stream: CopilotExecutionAdapters['streamTaskCollectingFn'],
+  stream: CopilotExecutionAdapters['streamTaskCollectingFn'] | undefined,
   captureMcp: (options: BuildMcpServerOptions) => void = () => {},
 ) {
   return createCopilotExecutionOwner({
     runAgentTaskFn: run,
-    streamTaskCollectingFn: stream,
+    streamTaskCollectingFn:
+      stream ??
+      (async (kind, value, ctx) => {
+        const result = await run(kind, value, ctx);
+        return { ...result, terminalText: result.text, partial: false };
+      }),
     buildMcpServerFn: (options) => {
       captureMcp(options);
       return { type: 'sdk', name: 'loom' } as never;
@@ -101,11 +105,15 @@ describe('Copilot execution owner', () => {
       copilotSessionContextDigest(current),
     );
     try {
-      const execute = ownerWith(run, vi.fn());
+      const execute = ownerWith(run, undefined);
       await execute(
         {} as never,
         { input: current, sessionId: 'session_context', taskRunId: 'root_context' },
-        { kind: 'foreground', delivery: 'single', resumeSessionId: 'compact-resume-session' },
+        {
+          cancellation: fakeCancellation(),
+          deadlineAt: 900_000,
+          resumeSessionId: 'compact-resume-session',
+        },
       );
       const ctx = run.mock.calls[0]?.[2];
       expect(ctx?.sdkSession?.resume).toBe('compact-resume-session');
@@ -120,14 +128,14 @@ describe('Copilot execution owner', () => {
       clearCopilotSessionContextDelivery('compact-resume-session');
     }
   });
-  it('owns foreground runner/MCP assembly and preserves lifecycle signal identity', async () => {
+  it('owns worker runner/MCP assembly and preserves lifecycle signal identity', async () => {
     let mcp: BuildMcpServerOptions | undefined;
     const run = vi.fn<CopilotExecutionAdapters['runAgentTaskFn']>(async () => ({
       task_run_id: 'foreground_task',
       text: '已核对。',
       finishReason: 'end_turn',
     }));
-    const execute = ownerWith(run, vi.fn(), (options) => {
+    const execute = ownerWith(run, undefined, (options) => {
       mcp = options;
     });
     const requestController = new AbortController();
@@ -136,9 +144,7 @@ describe('Copilot execution owner', () => {
       {} as never,
       { input, sessionId: 'session_1', taskRunId: 'root_1', sourceEventId: 'ask_1' },
       {
-        kind: 'foreground',
-        delivery: 'single',
-        signal: requestController.signal,
+        cancellation: fakeCancellation(requestController),
         deadlineAt: 42_000,
         subagentsEnabled: true,
       },
@@ -149,7 +155,6 @@ describe('Copilot execution owner', () => {
     expect(ctx).toMatchObject({
       taskRunId: 'root_1',
       signal: requestController.signal,
-      providerSessionDeadlineAt: 42_000,
       sdkSession: { persist: true },
     });
     expect(ctx?.lifecycleAbortController).toBeInstanceOf(AbortController);
@@ -161,7 +166,8 @@ describe('Copilot execution owner', () => {
       sessionId: 'session_1',
       taskRunId: 'root_1',
       causedByEventId: 'ask_1',
-      providerAttemptCaller: 'api',
+      providerAttemptCaller: 'worker',
+      providerSessionDeadlineAt: 42_000,
     });
     expect(mcp?.ctx.signal).toBe(ctx?.lifecycleAbortController?.signal);
     expect(mcp?.cancellationSignals).toEqual([
@@ -170,7 +176,7 @@ describe('Copilot execution owner', () => {
     ]);
     const readTool = { name: 'query_knowledge', effect: 'read' as const };
     for (let index = 0; index < 10; index += 1) {
-      expect(mcp?.beforeExecute?.(readTool)).toBeUndefined();
+      await expect(mcp?.beforeExecute?.(readTool)).resolves.toBeUndefined();
     }
     const warning = mcp?.interceptInput?.(readTool, { limit: 10 });
     expect(warning?.truncationNote).toMatchObject({
@@ -179,7 +185,7 @@ describe('Copilot execution owner', () => {
     });
   });
 
-  it('keeps durable endurance policy explicit while sharing the same semantic gates', async () => {
+  it('keeps the persistent execution budget and cumulative read gates', async () => {
     let mcp: BuildMcpServerOptions | undefined;
     const stream = vi.fn<CopilotExecutionAdapters['streamTaskCollectingFn']>(async () => ({
       task_run_id: 'durable_task',
@@ -196,7 +202,6 @@ describe('Copilot execution owner', () => {
       {} as never,
       { input, sessionId: 'session_2', taskRunId: 'root_2', sourceEventId: 'ask_2' },
       {
-        kind: 'durable',
         cancellation,
         deadlineAt: 900_000,
         subagentsEnabled: true,
@@ -262,12 +267,16 @@ describe('Copilot execution owner', () => {
     await expect(mcp?.beforeExecute?.(durableTool)).resolves.toMatch(/hard context budget reached/);
   });
 
-  it('owns optional web grounding and skill resolution for both callers', async () => {
+  it('owns optional web grounding and skill resolution', async () => {
     let runnerContext: Parameters<CopilotExecutionAdapters['runAgentTaskFn']>[2] | undefined;
     const execute = createCopilotExecutionOwner({
-      runAgentTaskFn: async (_kind, _input, ctx) => {
+      streamTaskCollectingFn: async (_kind, _input, ctx) => {
         runnerContext = ctx;
-        return { task_run_id: 'grounded_task', text: '已核对公开资料。' };
+        return {
+          task_run_id: 'grounded_task',
+          text: '已核对公开资料。',
+          terminalText: '已核对公开资料。',
+        };
       },
       buildMcpServerFn: () => ({ type: 'sdk', name: 'loom' }) as never,
       buildTavilyMcpServerFn: () => ({
@@ -280,7 +289,7 @@ describe('Copilot execution owner', () => {
     await execute(
       {} as never,
       { input, sessionId: 'session_grounded', taskRunId: 'root_grounded' },
-      { kind: 'foreground', delivery: 'single', subagentsEnabled: false },
+      { cancellation: fakeCancellation(), deadlineAt: 900_000, subagentsEnabled: false },
     );
 
     expect(runnerContext?.mcpServers).toHaveProperty('tavily');
@@ -290,7 +299,7 @@ describe('Copilot execution owner', () => {
     expect(runnerContext?.skills).toEqual(['copilot']);
   });
 
-  it('applies one learning-content fail-closed rule to foreground and durable execution', async () => {
+  it('rejects unmarked learning content through the persistent root', async () => {
     const unsafe = '题目\n1. 求 17×19？\n解：答案是 324。';
     const execute = ownerWith(
       vi.fn(async () => ({ task_run_id: 'foreground_bad', text: unsafe })),
@@ -300,26 +309,54 @@ describe('Copilot execution owner', () => {
         terminalText: unsafe,
       })),
     );
-    const foreground = await execute(
-      {} as never,
-      { input, sessionId: 'session_3', taskRunId: 'root_3' },
-      { kind: 'foreground', delivery: 'single', subagentsEnabled: false },
-    );
     const durable = await execute(
       {} as never,
       { input, sessionId: 'session_4', taskRunId: 'root_4' },
       {
-        kind: 'durable',
         cancellation: fakeCancellation(),
         deadlineAt: 900_000,
         subagentsEnabled: false,
       },
     );
 
-    expect(foreground.finalization.replyText).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
     expect(durable.finalization.replyText).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
-    expect(foreground.finalization.receipt.learning_content).toBe('blocked');
     expect(durable.finalization.receipt.learning_content).toBe('blocked');
+  });
+
+  it.each([
+    new Error('provider secret diagnostic'),
+    new DOMException('validation deadline exceeded', 'AbortError'),
+  ])('settles a rejecting validator into a bounded public fallback: %s', async (failure) => {
+    const candidate =
+      '题目\n1. 求 17×19？\n<!--copilot_learning_content:{"subject_id":"math","questions":[{"id":"q1","kind":"computation","prompt_md":"求 17×19？","reference_md":"323","choices_md":null,"rubric_json":{}}]}-->';
+    const validator = vi.fn(async () => {
+      throw failure;
+    });
+    const stream = vi.fn(async () => ({
+      task_run_id: 'root_validator_failure',
+      text: candidate,
+      terminalText: candidate,
+    }));
+    const execute = ownerWith(validator, stream);
+    const result = await execute(
+      {} as never,
+      {
+        input,
+        sessionId: 'session_validator_failure',
+        taskRunId: 'root_validator_failure',
+      },
+      {
+        cancellation: fakeCancellation(),
+        deadlineAt: Date.now() + 60_000,
+        subagentsEnabled: false,
+      },
+    );
+    expect(result.finalization.replyText).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
+    expect(result.finalization.replyText).not.toContain(failure.message);
+    expect(result.finalization.receipt.learning_content).toBe('blocked');
+    expect(validator.mock.calls.length).toBeGreaterThan(0);
+    expect(validator.mock.calls.length).toBeLessThanOrEqual(3);
+    expect(stream).toHaveBeenCalledTimes(1);
   });
 
   it('binds root and child tool trace while correlating the root MCP call id', async () => {
@@ -375,14 +412,14 @@ describe('Copilot execution owner', () => {
       });
       return { task_run_id: 'trace_task', text: '已根据知识节点核对。' };
     });
-    const execute = ownerWith(run, vi.fn(), (options) => {
+    const execute = ownerWith(run, undefined, (options) => {
       mcp = options;
     });
 
     const result = await execute(
       {} as never,
       { input, sessionId: 'session_5', taskRunId: 'root_5', sourceEventId: 'ask_5' },
-      { kind: 'foreground', delivery: 'single', subagentsEnabled: false },
+      { cancellation: fakeCancellation(), deadlineAt: 900_000, subagentsEnabled: false },
     );
 
     expect(result.finalization.receipt).toMatchObject({
@@ -440,14 +477,14 @@ describe('Copilot execution owner', () => {
       });
       return { task_run_id: 'presentation_task', text: '已核对函数知识点。' };
     });
-    const execute = ownerWith(run, vi.fn(), (options) => {
+    const execute = ownerWith(run, undefined, (options) => {
       mcp = options;
     });
 
     const result = await execute(
       {} as never,
       { input, sessionId: 'session_present', taskRunId: 'root_present' },
-      { kind: 'foreground', delivery: 'single', subagentsEnabled: false },
+      { cancellation: fakeCancellation(), deadlineAt: 900_000, subagentsEnabled: false },
     );
 
     expect(result.finalization.preparedReply).toEqual({

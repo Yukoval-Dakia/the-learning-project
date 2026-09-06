@@ -15,7 +15,7 @@ import { materializeAskCheckQuestion } from '@/capabilities/copilot/server/teach
 import { event, learning_item, learning_session, question } from '@/db/schema';
 import { Conversation } from '@/server/session';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { writeCopilotInputEvent, writeTeachingCopilotReply } from '../chat';
+import { writeCopilotInputEvent, writeTeachingCopilotReply } from '../conversation-writes';
 import { runTeachingSkill } from './teaching-skill';
 
 const db = testDb();

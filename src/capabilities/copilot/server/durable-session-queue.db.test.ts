@@ -26,7 +26,7 @@ import { writeJobEvent } from '@/server/events/writer';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import * as runtimeEnv from '@/server/runtime-env';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { writeCopilotReply } from './chat';
+import { writeCopilotReply } from './conversation-writes';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import {
   type CopilotAcceptedJobData,
