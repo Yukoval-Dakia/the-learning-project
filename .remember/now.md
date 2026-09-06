@@ -2,6 +2,17 @@
 
 ## 最新状态
 
+- Active 762：root独占tlp-wt-unified-conversation / codex/yuk-762-db-context-identity，base main5cac4753。
+  CI34064877513原同一归因case60s超时后preparedstatement错误复发；两例本机通过，失败lane第二次绿。
+  后续临时时序探针证实14460ms中14390ms耗在toMatchObject深遍历Drizzle连接，不是已证DB锁/资源原因。
+  改taskCtx.db.toBe(toolCtx.db)并独立匹配profile后同case34ms，23项全文件DB过（test body1.47s）。
+  不放宽timeout、不删行为断言、不改产品代码，临时时序探针已移除；typecheck/lint/build与初审PASS，待PR/exactCI。
+  PR1350 exacta290eafed56c283e088a7e8f0a8e3646e81cba44，CI34064877513 attempt2全绿，
+  2026-09-06T22:54:49Z合并main5cac4753cd2e8235562eddab2ece3d6618d3e56d，967/969均Linear Done，未部署。
+  全ADR漂移审计未完成，不作全量结论；已核验SoT退休前置条件并更新887/951，生产副本/部署仍未授权。
+
+## 967/969历史实施记录（已由上方合并状态取代）
+
 - Active 967/969 integration：root独占tlp-wt-unified-conversation / codex/yuk-967-969-integration，
   base origin/main5bd921e3；已逐提交cherry-pick隔离lane，88a7f10cc，无冲突，无其它writer。
   967知识读取owner明确not_requested/no_returned_nodes/observed及限定absence资格；stats30d与failure历史latest10分开。

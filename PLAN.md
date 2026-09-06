@@ -1,11 +1,16 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：968已全绿合并，967/969真实/DB与独立审查完成，集成验收进行中，整体goal active。
+> Linear 是权威 tracker；更新于 2026-09-07：967/969已全绿合并；762归因测试深比较耗时已定位并修复，待review/exactCI，整体goal active。
 
 ## NOW
 
-- Active 967/969 integration：root独占tlp-wt-unified-conversation / codex/yuk-967-969-integration，
-  base origin/main5bd921e3；已逐提交cherry-pick隔离lane，88a7f10cc，无冲突，无其它writer。
+- Active 762：root独占tlp-wt-unified-conversation / codex/yuk-762-db-context-identity，base main5cac4753。
+  原归因case14460ms中14390ms耗在深比较Drizzle连接对象；改直接连接身份断言后同case34ms。
+  23项全文件DB通过（1.47s测试体）；原业务/权限/幂等/失败断言与60s门槛保留，无产品代码变化。
+  初审无P0/P1，typecheck/lint/build通过，待新PR/exactCI；不是把旧CI重跑绿当根因修复。
+  全ADR漂移审计未完成，不作全量结论。
+- YUK967/969 Done：PR1350 exacta290eafed56c283e088a7e8f0a8e3646e81cba44，CI34064877513 attempt2全绿；
+  2026-09-06T22:54:49Z squash合并main5cac4753cd2e8235562eddab2ece3d6618d3e56d，Linear均Done，未部署。
   967知识读取owner明确not_requested/no_returned_nodes/observed及限定absence资格；stats30d与failure历史latest10分开。
   12readerDB+34snapshot/fixtureDB/typecheck/lint/build与独立初审PASS。
   clean5717bcbd原presentation-tool actual通过，one root/read/presentation，无凭空失败记录断言；
@@ -13,8 +18,8 @@
   969题池pass+copyunknown已真实DB RED→GREEN，不晋级/不FSRS/不继续paid validators，rawunknown保留；
   37DB/typecheck/lint/build与独立初审PASS，未改learner-visible特殊政策或旧solver保守政策。
   两lane均完成初审，无P0/P1。root集成100DB/41unit/typecheck/lint/build及架构gate通过，PR1350。
-  首轮CI34064358949仅旧knowledge整体schema哈希失败，其余全通过；本机复现后退休迁移指纹与其自测，
-  保留manifest加载、effect/permission并显式断言cost/mirror政策；3unit/typecheck/lint/build通过，待新exactCI。
+  首轮CI34064358949仅旧knowledge整体schema哈希失败；退休迁移指纹与自测，保留加载/权限/成本/mirror政策。
+  3unit/typecheck/lint/build通过；新CI原归因60s超时再现，精确两例本机通过后仅重跑失败lane，762独立根因修复接续。
   实际检索发现AI AGENTS旧tools/judges路径已不存在，导航改指kernel allowlist与capability manifest/Practice judge。
   无paid进程；新池estimate0.0721137375非账单/reserve9.95823/safe0.04177；原脏main与生产不动。
 - YUK968 Done：PR1349 exact0e9bade2fb8bfd14d1e17ceb812ad7e0ea01ecae，CI34063583368全job success。
@@ -105,7 +110,7 @@
 
 ## NEXT
 
-1. 967读取语义/969题池矛盾裁决集成与exactCI；968已Done，不重开review或降低保护。
+1. 762测试连接身份修复review/exactCI；967/969/968已Done，不重开review或降低保护。
 2. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
 3. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
@@ -114,12 +119,11 @@
 ## PARKED
 
 - 951旧mailbox/ToolOperations仅drain-only；退休需零pending/零队列活动覆盖完整重试窗。
-- 762归因DB测试60s超时复发，需查等待与连接生命周期；当前因果未证，不把资源压力当结论。
 - 921多provider、572夜间教研、832HOLD不解锁。
 - 计费、重试、prompt/skill、复杂parser、并发/回滚/恢复、UI安全测试仍保留，不按数量硬删。
 
 ## BLOCKED-ON
 
-- 968/966/965已交付，review预算结束，不重开；967/969暂无owner决策阻塞。
+- 967/969/968/966/965已交付，review预算结束，不重开；762暂无owner决策阻塞。
 - 未授权部署、生产clone、SoT开关、backfill或历史数据删除；均未执行。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。
