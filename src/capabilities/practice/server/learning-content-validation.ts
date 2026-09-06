@@ -91,7 +91,7 @@ async function resolveObservedSource(
     throw new Error('visible question differs from the executed candidate');
   return {
     knowledge_context: prepared.input.knowledge_context,
-    generation_method: intent.seed_mode === 'material' ? 'material_grounded' : 'closed_book',
+    generation_method: prepared.input.material ? 'material_grounded' : 'closed_book',
     ...(prepared.input.material
       ? {
           material: {
@@ -210,7 +210,10 @@ export async function validateLearningContent(
         output?.overall === 'needs_review' &&
         output.copy_safety.verdict === 'unknown' &&
         (basis === 'closed_world_givens' || basis === 'discipline_knowledge');
-      const contentAdmitted = axesPass && (output?.overall === 'pass' || copyOnlyReview);
+      const contentAdmitted =
+        axesPass &&
+        ((output?.overall === 'pass' && output.copy_safety.verdict === 'original') ||
+          copyOnlyReview);
       const questionContentResult =
         questionContent.status === 'fulfilled'
           ? {

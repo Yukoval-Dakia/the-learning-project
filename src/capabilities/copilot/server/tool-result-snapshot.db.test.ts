@@ -94,15 +94,13 @@ describe('result snapshots use real registered domain output contracts', () => {
     'publishes a generated candidate only after real validation contracts %s',
     async (outcome) => {
       const verdict = outcome === 'fail' ? 'fail' : 'pass';
-      await testDb()
-        .insert(knowledge)
-        .values({
-          id: 'k_snapshot_math',
-          name: '整数乘法',
-          domain: 'math',
-          created_at: new Date(),
-          updated_at: new Date(),
-        });
+      await testDb().insert(knowledge).values({
+        id: 'k_snapshot_math',
+        name: '整数乘法',
+        domain: 'math',
+        created_at: new Date(),
+        updated_at: new Date(),
+      });
       const intent = { seed_mode: 'knowledge', knowledge_ids: ['k_snapshot_math'] };
       const name = 'generate_question_candidate';
       const text = JSON.stringify({

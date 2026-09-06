@@ -190,6 +190,7 @@ describe('Practice learner-visible release policy', () => {
       { ...contentResult, knowledge_hit: { verdict: 'unclear', note: '不在已知范围' } },
     ],
     ['failed overall', { ...contentResult, overall: 'fail' }],
+    ['inconsistent copy unknown with overall pass', { ...contentResult, overall: 'pass' }],
   ] satisfies Array<[string, QuizVerificationResultT]>)('blocks %s', async (_name, output) => {
     const fixture = candidate();
     expect(
