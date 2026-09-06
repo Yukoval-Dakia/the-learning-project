@@ -100,9 +100,27 @@ export function containsLearningQuestion(text: string): boolean {
   const numberedQuestion =
     /(?:^|\n)\s*(?:\d+[.)、]|[（(][一二三四五六七八九十\d]+[）)])[^\n]{1,500}[？?]/m;
   const instructionalQuestion =
-    /(?:^|\n)[^\n]{0,300}(?:求|计算|证明|选择|判断|解答|solve|calculate|prove|choose)[^\n]{0,300}[？?](?:\n|$)/im;
+    /(?:^|\n)[^\n]{0,300}(?:求|计算|证明|选择|判断|解答|solve|calculate|prove|choose)[^\n]{0,300}[？?]/im;
+  const instructionalQuestionCandidates =
+    /(?:^|\n)[^\n]{0,300}(?:求|计算|证明|选择|判断|解答|solve|calculate|prove|choose)[^\n]{0,300}[？?]/gim;
+  const activeInstructionalQuestion = [...text.matchAll(instructionalQuestionCandidates)].some(
+    ([match]) => {
+      const candidate = match;
+      const verbs = /求|计算|证明|选择|判断|解答|solve|calculate|prove|choose/gi;
+      return [...candidate.matchAll(verbs)].some(([verb], _index, matches) => {
+        // A completed observation such as “是否已证明 P？” is report prose.
+        // Evaluate each verb independently so a later real instruction remains protected.
+        const offset = matches[_index].index ?? 0;
+        const prefix = candidate.slice(Math.max(0, offset - 2), offset);
+        const suffix = candidate.slice(offset + verb.length, offset + verb.length + 1);
+        return !/(?:已|已经)$/.test(prefix) && suffix !== '了';
+      });
+    },
+  );
   return (
-    explicitLabel.test(text) || numberedQuestion.test(text) || instructionalQuestion.test(text)
+    explicitLabel.test(text) ||
+    numberedQuestion.test(text) ||
+    (instructionalQuestion.test(text) && activeInstructionalQuestion)
   );
 }
 
