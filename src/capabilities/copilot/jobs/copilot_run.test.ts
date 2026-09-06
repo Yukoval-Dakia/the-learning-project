@@ -302,6 +302,10 @@ describe('runCopilotRun', () => {
         run_id: runId,
         session_id: 'sess_durable_unverified_solution',
         user_message: '请计算 1+1。',
+        skill_context: {
+          skill: 'quiz',
+          ref: { kind: 'knowledge', id: 'knowledge_unverified_durable_quiz' },
+        },
       },
       streamTaskCollectingFn: streamMock('解：1+1=3。') as never,
       resolveCopilotRunInputFn: stubRunInput,
@@ -312,6 +316,13 @@ describe('runCopilotRun', () => {
       status: 'done',
       reply: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY,
     });
+    expect(result).not.toHaveProperty('skill_turn');
+    for (const event of await replay(runId)) {
+      expect(event.payload).not.toHaveProperty('skill_turn');
+    }
+    expect(
+      (await copilotReplyEvents('sess_durable_unverified_solution'))[0]?.payload,
+    ).not.toHaveProperty('skill_turn');
     expect(JSON.stringify(await replay(runId))).not.toContain('1+1=3');
   });
 
@@ -871,6 +882,10 @@ describe('runCopilotRun', () => {
     const sessionId = 'sess_terminal_projection_repair';
     const reply =
       '已核对 42 次含参分式方程作答、三轮延迟复习和五个未教学探针：稳定错因是先通分后补定义域，下一组按定义域→增根→参数退化分三档。';
+    const skillContext = {
+      skill: 'quiz' as const,
+      ref: { kind: 'knowledge', id: 'knowledge_redelivery_quiz' },
+    };
     const streamRun = streamMock(reply, {
       taskRunId: 'tr_terminal_projection_repair',
       finishReason: 'end_turn',
@@ -882,7 +897,12 @@ describe('runCopilotRun', () => {
       .mockImplementation(writeSuccessfulTerminalProjection);
     const params = {
       db: testDb(),
-      data: { ...baseData, run_id: runId, session_id: sessionId },
+      data: {
+        ...baseData,
+        run_id: runId,
+        session_id: sessionId,
+        skill_context: skillContext,
+      },
       streamTaskCollectingFn: streamRun as never,
       resolveCopilotRunInputFn: stubRunInput,
       buildMcpServerFn: mcpMock() as never,
@@ -910,6 +930,8 @@ describe('runCopilotRun', () => {
         reply_md: reply,
         durable_finish_reason: 'end_turn',
         durable_emit_reviewed_delta: true,
+        skill_turn: { kind: 'end' },
+        skill_context: skillContext,
       },
     });
     expect((await replay(runId)).map((item) => item.event_type)).toEqual([
@@ -924,6 +946,7 @@ describe('runCopilotRun', () => {
       status: 'done',
       reply,
       task_run_id: 'tr_terminal_projection_repair',
+      skill_turn: { kind: 'end' },
     });
     expect(streamRun).toHaveBeenCalledTimes(1);
     expect(projectTerminal).toHaveBeenCalledTimes(2);
@@ -947,8 +970,22 @@ describe('runCopilotRun', () => {
       task_run_id: 'tr_terminal_projection_repair',
       finish_reason: 'end_turn',
       checkpoint_event_id: runId,
+      skill_turn: { kind: 'end' },
+      skill_context: skillContext,
     });
+    expect(
+      repairedEvents.find((item) => item.event_type === COPILOT_RUN_EVENTS.REPLY)?.payload,
+    ).toMatchObject({ skill_turn: { kind: 'end' }, skill_context: skillContext });
     expect(await countOutstandingDurableRuns(testDb())).toBe(0);
+
+    const replayed = await runCopilotRun(params);
+    expect(replayed).toEqual({
+      status: 'done',
+      reply,
+      task_run_id: 'tr_terminal_projection_repair',
+      skill_turn: { kind: 'end' },
+    });
+    expect(streamRun).toHaveBeenCalledTimes(1);
   });
 
   it('E2 — failed terminal projection redelivers from its durable marker without re-running partial work', async () => {
@@ -1495,14 +1532,23 @@ describe('runCopilotRun', () => {
 
   // YUK-596 (causal history + S4) — handler pickup 时调共享装配器，传
   // historyAnchorEventId=run_id 且 ambient RIDE 自 job payload 进装配参数。
-  it('N3/S4 — 装配器收到 historyAnchorEventId=run_id + ambient（从 job payload 透传）', async () => {
+  it('N3/S4 — product-only quiz context stays out of assembled model input', async () => {
     const runId = 'run_assemble_params';
     const assembleSpy = vi.fn(stubRunInput);
     const run = streamMock('ok');
     const ambient = { route: '/learn/q_9', focused_entity: { kind: 'knowledge', id: 'k_9' } };
     await runCopilotRun({
       db: testDb(),
-      data: { ...baseData, run_id: runId, session_id: 'sess_assemble', ambient },
+      data: {
+        ...baseData,
+        run_id: runId,
+        session_id: 'sess_assemble',
+        ambient,
+        skill_context: {
+          skill: 'quiz',
+          ref: { kind: 'knowledge', id: 'knowledge_product_only' },
+        },
+      },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: assembleSpy,
       buildMcpServerFn: mcpMock() as never,
@@ -1516,12 +1562,14 @@ describe('runCopilotRun', () => {
       historyAnchorEventId: runId,
       ambient,
     });
+    expect(params).not.toHaveProperty('skillContext');
     // 装配器返回的 run input（含 ambient_context）透传给 stream。
     const runInput = await assembleSpy.mock.results[0].value;
     expect(runInput).toMatchObject({ ambient_context: ambient });
     // The execution owner may normalize the correction contract, but must preserve
     // the complete assembled product input instead of rebuilding a reduced variant.
     expect(run.mock.calls[0][1]).toStrictEqual(runInput);
+    expect(runInput).not.toHaveProperty('skill_context');
   });
 
   // YUK-575 (S6) — 承重约束：durable abort budget 必须 < stuck-in-running sweeper 阈值，
@@ -2006,7 +2054,15 @@ describe('runCopilotRun', () => {
     const run = streamMock('半程答复', { partial: true, error: 'stream drop' });
     const result = await runCopilotRun({
       db: testDb(),
-      data: { ...baseData, run_id: runId, session_id: 'sess_partial' },
+      data: {
+        ...baseData,
+        run_id: runId,
+        session_id: 'sess_partial',
+        skill_context: {
+          skill: 'quiz',
+          ref: { kind: 'knowledge', id: 'knowledge_partial_durable_quiz' },
+        },
+      },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
       buildMcpServerFn: mcpMock() as never,
@@ -2018,12 +2074,15 @@ describe('runCopilotRun', () => {
       reason: 'exhausted',
       checkpoint_event_id: runId,
     });
+    expect(failed?.payload).not.toHaveProperty('skill_turn');
     // 未封存的半程文本不能进入 durable reply。
     const replies = await copilotReplyEvents('sess_partial');
     expect(replies).toHaveLength(1);
     expect(replies[0]?.payload).toMatchObject({
       reply_md: '这次回复没有完成可验证的收口，暂不展示未封存的草稿。请重试。',
     });
+    expect(replies[0]?.payload).not.toHaveProperty('skill_turn');
+    expect(replies[0]?.payload).not.toHaveProperty('skill_context');
   });
 
   it('Stop — pure-text long run aborts without leaking an unsealed partial candidate', async () => {
@@ -2394,7 +2453,14 @@ describe('runCopilotRun', () => {
     const run = streamMock('不该被调用');
     const result = await runCopilotRun({
       db: testDb(),
-      data: { ...baseData, run_id: runId },
+      data: {
+        ...baseData,
+        run_id: runId,
+        skill_context: {
+          skill: 'quiz',
+          ref: { kind: 'knowledge', id: 'knowledge_cancelled_durable_quiz' },
+        },
+      },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
       buildMcpServerFn: mcpMock() as never,
@@ -2413,6 +2479,7 @@ describe('runCopilotRun', () => {
       cancelled_before_start: true,
       checkpoint_event_id: runId,
     });
+    expect(failed?.payload).not.toHaveProperty('skill_turn');
   });
 
   it('④ run handle = run_id = job_events.business_id（checkpoint_id 即 handle）', async () => {

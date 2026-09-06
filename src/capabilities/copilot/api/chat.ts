@@ -86,6 +86,12 @@ function assertRequestActive(signal: AbortSignal): void {
 
 type ParsedCopilotChatRequest = ReturnType<typeof CopilotChatRequest.parse>;
 
+function supportsDurableCopilotExecution(request: ParsedCopilotChatRequest): boolean {
+  // Teaching remains an inline behavior pack. Quiz already uses the free-form
+  // CopilotTask and can carry its product-only context through the durable job.
+  return request.skill_context === undefined || request.skill_context.skill === 'quiz';
+}
+
 class CopilotDispatchAmbiguousError extends ApiError {
   constructor(cause: unknown) {
     super(
@@ -157,6 +163,7 @@ async function dispatchAcceptedRun(
             ...(parsed.correction_target_turn_id
               ? { correction_target_turn_id: parsed.correction_target_turn_id }
               : {}),
+            ...(parsed.skill_context ? { skill_context: parsed.skill_context } : {}),
           },
           { id: acceptance.bossJobId },
         );
@@ -287,7 +294,7 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
   const backgroundJobsEnabled = shouldEnqueueBackgroundJobs();
   const shouldReserveDurableCapacity =
     parsed.triggered_by === 'chat' &&
-    !parsed.skill_context &&
+    supportsDurableCopilotExecution(parsed) &&
     backgroundJobsEnabled &&
     parsed.durable === true;
   let preAcceptanceReservation = false;
@@ -333,19 +340,14 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
   // PR2（YUK-596）——不在 dispatch 阻塞 202 等 pickup（batchSize:1 串行下 busy worker
   // 会 false-timeout + 双结果，strictly worse）。
   //
-  // YUK-364 (bot-review C3) — **排除带 skill_context 的 turn**（`!parsed.skill_context`）。
-  // 一个 skill_context:{skill:'teaching'} turn 在 inline 路径短路到 runTeachingSkill
-  // 物化 ask_check 结构化题（turn_kind / skill_turn / skill_context 落 reply payload，
-  // 走确定性服务回复、不经 free-form 收敛点）。但 durable enqueue 只投
-  // {run_id, session_id, user_message, triggered_by, chip_kind?} —— 丢了 skill_context，
-  // worker handler 永远跑 free-form CopilotTask loop（无 teaching 短路）。若放任
-  // durable teaching turn 入队，会丢失整个结构化教学协议（ask_check 物化、suggested_next
-  // chips、corrective-chip 锚）。本 lane durable 暂不能复刻 teaching skill 短路（teaching
-  // 是 SERVICE-层 behavior pack，不是 free-form run），故 skill_context turn 一律留 inline。
+  // Teaching skill_context still stays inline because it owns a deterministic
+  // behavior pack and structured question transaction. Quiz is already a
+  // free-form CopilotTask, so explicit durable quiz is safe: its skill_context
+  // rides only as product metadata in the job and never enters model input.
   if (
     durableRequested &&
     parsed.triggered_by === 'chat' &&
-    !parsed.skill_context &&
+    supportsDurableCopilotExecution(parsed) &&
     backgroundJobsEnabled
   ) {
     let acceptance: CopilotDurableAcceptance | undefined;

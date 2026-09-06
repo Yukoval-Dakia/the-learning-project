@@ -739,26 +739,27 @@ describe('getRecentCopilotTurns', () => {
     expect(aiTurn?.reply_event_id).toBe(replyId);
   });
 
-  // PR round-2 (CR 3360614441): skill_context persisted in payload so replay can
-  // restore the skill card after page refresh.
-  it('replay surfaces skill_context on AI turns that carried a skill', async () => {
+  // A completed quiz persists the existing end turn plus its selector so replay
+  // can observe the same product state without guessing from the skill name.
+  it('replay surfaces the persisted quiz end state and context', async () => {
     const now = new Date();
     const sessionId = await createLiveCopilotSession(now);
     const t0 = new Date('2026-06-05T12:00:00.000Z');
     const t1 = new Date('2026-06-05T12:00:05.000Z');
-    const askId = await writeAsk('讲讲这道题', sessionId, t0);
-    const skillContext = { skill: 'teaching', ref: { kind: 'learning_item', id: 'li_ctx_test' } };
+    const askId = await writeAsk('按这个知识点出一组题', sessionId, t0);
+    const skillContext = { skill: 'quiz', ref: { kind: 'knowledge', id: 'knowledge_quiz_end' } };
     const replyId = await writeReplyWithSkillTurn(
-      '好，我们来分析。',
+      '三档练习已经生成。',
       sessionId,
       askId,
       t1,
-      { kind: 'explain', suggested_next: 'continue' },
+      { kind: 'end' },
       skillContext,
     );
 
     const turns = await getRecentCopilotTurns(db, { now });
     const aiTurn = turns.find((t) => t.event_id === replyId);
+    expect(aiTurn?.skill_turn).toEqual({ kind: 'end' });
     expect(aiTurn?.skill_context).toEqual(skillContext);
     // User turns never carry skill_context.
     const userTurn = turns.find((t) => t.event_id === askId);

@@ -27,14 +27,15 @@ vi.mock('@/capabilities/copilot/server/chat', () => ({
     triggered_by: z.enum(['chat', 'chip']),
     chip_kind: z.string().optional(),
     durable: z.boolean().optional(),
+    correction_target_turn_id: z.string().optional(),
     ambient_context: z
       .object({
         route: z.string(),
         focused_entity: z.object({ kind: z.string(), id: z.string() }).optional(),
       })
       .optional(),
-    // YUK-364 (bot-review C3) — 镜像 skill_context（route 用它把 teaching turn 排除
-    // 出 durable 面）；最小形态够触发分支即可。
+    // Mirror product-only skill_context: teaching stays inline, quiz may ride a
+    // durable job without entering the model input.
     skill_context: z
       .object({
         skill: z.enum(['teaching', 'solve', 'quiz']),
@@ -145,20 +146,24 @@ afterEach(() => {
 });
 
 describe('POST /api/copilot/chat — SSE via SSEStreamingApi', () => {
-  it('delta 帧 FIFO 先于终态 reply 帧，framing 与旧栈逐字节一致', async () => {
+  it('delta FIFO precedes the terminal reply and preserves quiz completion state', async () => {
     shouldEnqueueMock.mockReturnValue(false);
     runMock.mockImplementation(async (_db, _req, onDelta) => {
       onDelta('你');
       onDelta('好');
-      return { session_id: 's1', reply_event_id: 'e1' };
+      return { session_id: 's1', reply_event_id: 'e1', skill_turn: { kind: 'end' } };
     });
-    const res = await post({ user_message: 'hi', triggered_by: 'chat' });
+    const res = await post({
+      user_message: '出题',
+      triggered_by: 'chat',
+      skill_context: { skill: 'quiz', ref: { kind: 'knowledge', id: 'knowledge_sse_quiz' } },
+    });
     expect(res.headers.get('Content-Type')).toBe('text/event-stream; charset=utf-8');
     expect(res.headers.get('Cache-Control')).toBe('no-cache, no-transform');
     expect(await readAll(res)).toBe(
       'event: delta\ndata: {"text":"你"}\n\n' +
         'event: delta\ndata: {"text":"好"}\n\n' +
-        'event: reply\ndata: {"session_id":"s1","reply_event_id":"e1"}\n\n',
+        'event: reply\ndata: {"session_id":"s1","reply_event_id":"e1","skill_turn":{"kind":"end"}}\n\n',
     );
   });
 
@@ -991,5 +996,54 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
     expect(res.headers.get('Content-Type')).toBe('text/event-stream; charset=utf-8');
     expect(bossSendMock).not.toHaveBeenCalled();
     expect(runMock).toHaveBeenCalled();
+  });
+
+  it('durable quiz preserves product and request context in the job payload', async () => {
+    shouldEnqueueMock.mockReturnValue(true);
+    findOrCreateMock
+      .mockReset()
+      .mockResolvedValue({ sessionId: 'sess_quiz_durable', created: true });
+    writeUserAskMock.mockReset().mockResolvedValue('copilot_user_ask_quiz_durable');
+    writeJobEventMock.mockReset().mockResolvedValue(1);
+    bossSendMock.mockReset().mockResolvedValue('job_quiz_durable');
+    runMock.mockClear();
+
+    const skillContext = {
+      skill: 'quiz' as const,
+      ref: { kind: 'knowledge', id: 'knowledge_discriminant' },
+    };
+    const ambientContext = {
+      route: '/knowledge/knowledge_discriminant',
+      focused_entity: { kind: 'knowledge', id: 'knowledge_discriminant' },
+    };
+    const res = await post({
+      user_message: '按这个知识点出一组递进题',
+      triggered_by: 'chat',
+      chip_kind: 'quiz-focused',
+      durable: true,
+      correction_target_turn_id: 'prior_turn_42',
+      skill_context: skillContext,
+      ambient_context: ambientContext,
+    });
+
+    expect(res.status).toBe(202);
+    expect(hashDurableInputMock).toHaveBeenCalledWith(
+      expect.objectContaining({ skill_context: skillContext, ambient_context: ambientContext }),
+    );
+    expect(bossSendMock).toHaveBeenCalledWith(
+      'copilot_run',
+      expect.objectContaining({
+        run_id: 'copilot_user_ask_quiz_durable',
+        session_id: 'sess_quiz_durable',
+        user_message: '按这个知识点出一组递进题',
+        triggered_by: 'chat',
+        chip_kind: 'quiz-focused',
+        correction_target_turn_id: 'prior_turn_42',
+        skill_context: skillContext,
+        ambient: ambientContext,
+      }),
+      { id: '11111111-1111-5111-8111-111111111111' },
+    );
+    expect(runMock).not.toHaveBeenCalled();
   });
 });
