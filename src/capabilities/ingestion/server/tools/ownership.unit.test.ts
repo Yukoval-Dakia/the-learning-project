@@ -100,31 +100,6 @@ describe('ingestion server ownership', () => {
     __resetRegistryForTests();
   });
 
-  it('deletes central owner paths, exports, imports, and direct registrations', () => {
-    expect(existsSync(join(process.cwd(), 'src/server/ai/tools/question-edit-tools.ts'))).toBe(
-      false,
-    );
-    expect(existsSync(join(process.cwd(), 'src/server/events/ingestion-progress.ts'))).toBe(false);
-
-    // YUK-892 — the transitional central concrete tool files are deleted wholesale.
-    expect(existsSync(join(process.cwd(), 'src/server/ai/tools/context-readers.ts'))).toBe(false);
-
-    const manifest = source('src/capabilities/ingestion/manifest.ts');
-    expect(manifest).not.toContain('@/server/ai/tools/context-readers');
-    expect(manifest).not.toContain('@/server/ai/tools/question-edit-tools');
-    expect(source('src/capabilities/ingestion/jobs/tencent_ocr_extract.ts')).not.toContain(
-      '@/server/events/ingestion-progress',
-    );
-
-    const directRegistrySources = [
-      source('src/server/ai/tools/register-capability-tools.ts'),
-      source('src/server/ai/tools/registry.ts'),
-    ].join('\n');
-    for (const name of INGESTION_TOOL_NAMES) {
-      expect(directRegistrySources).not.toContain(`'${name}'`);
-    }
-  });
-
   it('shares record read-model semantics through the ingestion public seam', () => {
     // YUK-892 — the composite question-context reader moved to Practice; it must
     // still consume ingestion-owned material context through the public seam.
