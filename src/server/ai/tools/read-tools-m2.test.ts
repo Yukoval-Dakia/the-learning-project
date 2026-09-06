@@ -340,6 +340,60 @@ describe('Foundation D M2 read tools', () => {
     ]);
   });
 
+  it('distinguishes unrequested, empty, nonempty and unmatched optional knowledge observations', async () => {
+    await seedAll();
+    const unrequested = await queryKnowledgeTool.execute(ctx(), {
+      subjectId: 'yuwen',
+      nodeId: 'k_root',
+      include: ['children'],
+    });
+    expect(unrequested.nodes.length).toBeGreaterThan(1);
+    expect(unrequested.coverage).toMatchObject({
+      stats_observation: 'not_requested',
+      recent_failures_observation: 'not_requested',
+    });
+    expect(unrequested.recent_failures).toBeUndefined();
+    expect(unrequested.nodes.every((node) => node.stats === undefined)).toBe(true);
+    expect(unrequested.claim_boundaries.supports_recent_failure_absence_claim).toBe(false);
+
+    const empty = await queryKnowledgeTool.execute(ctx(), {
+      subjectId: 'yuwen',
+      nodeId: 'k_root',
+      include: ['stats', 'recent_failures'],
+    });
+    expect(empty.coverage).toMatchObject({
+      stats_observation: 'observed',
+      recent_failures_observation: 'observed',
+      recent_failures_time_scope: 'all_recorded_attempts',
+      recent_failures_limit: 10,
+    });
+    expect(empty.recent_failures).toEqual([]);
+    expect(empty.nodes[0].stats?.recent_failure_count_30d).toBe(0);
+    expect(empty.claim_boundaries.supports_recent_failure_absence_claim).toBe(true);
+
+    const nonempty = await queryKnowledgeTool.execute(ctx(), {
+      subjectId: 'yuwen',
+      nodeId: 'k_zhi',
+      include: ['stats', 'recent_failures'],
+    });
+    expect(nonempty.coverage.recent_failures_observation).toBe('observed');
+    expect(nonempty.recent_failures?.map((row) => row.event_id)).toContain('att_new');
+    expect(nonempty.nodes[0].stats?.recent_failure_count_30d).toBe(1);
+    expect(nonempty.claim_boundaries.supports_recent_failure_absence_claim).toBe(false);
+
+    const unmatched = await queryKnowledgeTool.execute(ctx(), {
+      subjectId: 'yuwen',
+      nodeId: 'missing-node',
+      include: ['stats', 'recent_failures'],
+    });
+    expect(unmatched.coverage).toMatchObject({
+      stats_observation: 'no_returned_nodes',
+      recent_failures_observation: 'no_returned_nodes',
+    });
+    expect(unmatched.recent_failures).toEqual([]);
+    expect(unmatched.claim_boundaries.supports_recent_failure_absence_claim).toBe(false);
+  });
+
   it('reads graph overview, local nodes, subgraph, and path explanations', async () => {
     await seedAll();
 

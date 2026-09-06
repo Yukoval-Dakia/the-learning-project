@@ -437,6 +437,31 @@ describe('runQuizVerify', () => {
     expect(await poolGapNotesForKnowledge('k1')).toBe(0);
   });
 
+  it('blocks contradictory overall pass with copy_safety unknown without extra validators', async () => {
+    await seedKnowledge('k-copy-unknown');
+    await seedDraftQuestion({ id: 'q-copy-unknown', knowledgeId: 'k-copy-unknown' });
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass', copySafety: 'unknown' }));
+
+    const result = await runQuizVerify({
+      db: testDb(),
+      questionId: 'q-copy-unknown',
+      runTaskFn,
+    });
+
+    expect(result.status).toBe('needs_review');
+    expect(result.copy_safety_verdict).toBe('unknown');
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    const rows = await testDb()
+      .select({ draftStatus: question.draft_status })
+      .from(question)
+      .where(eq(question.id, 'q-copy-unknown'));
+    expect(rows[0]?.draftStatus).toBe('draft');
+    expect(await fsrsRowCount('knowledge', 'k-copy-unknown')).toBe(0);
+    const meta = await readMeta('q-copy-unknown');
+    expect((meta?.copy_safety as Record<string, unknown>)?.verdict).toBe('unknown');
+    expect((meta?.verification as Record<string, unknown>)?.status).toBe('needs_review');
+  });
+
   // ---------- YUK-608 (异源 solve/verify) — env → quiz_verify → runSolveCheck → ctx.override ----------
 
   it('routes the solve_check leg onto the 异源 override lane when VERIFY_SOLVE_PROVIDER_OVERRIDE is set', async () => {

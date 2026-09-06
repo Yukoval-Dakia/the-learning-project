@@ -23,6 +23,7 @@ import type { DomainTool, ToolContext } from './types';
 
 const TEXT_SNIPPET_MAX = KNOWLEDGE_EXCERPT_MAX;
 const MAX_NODES = 60;
+const QUERY_FAILURE_LIMIT = 10;
 // Exported so tests can assert the window is sourced from the single rubric
 // constant (no hardcoded 30) — see propose_edge.test.ts window-merge case.
 export const RECENT_FAILURE_WINDOW_MS = RUBRIC_EVIDENCE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
@@ -400,6 +401,10 @@ const QueryKnowledgeOutputSchema = z.object({
     seed_matches_complete: z.boolean(),
     returned_nodes_complete_after_expansion: z.boolean(),
     edges_complete_between_returned_nodes_for_requested_relation_types: z.literal(true),
+    stats_observation: z.enum(['not_requested', 'no_returned_nodes', 'observed']),
+    recent_failures_observation: z.enum(['not_requested', 'no_returned_nodes', 'observed']),
+    recent_failures_time_scope: z.literal('all_recorded_attempts'),
+    recent_failures_limit: z.literal(QUERY_FAILURE_LIMIT),
   }),
   claim_boundaries: z.object({
     supports_global_node_absence_claim: z.literal(false),
@@ -409,6 +414,8 @@ const QueryKnowledgeOutputSchema = z.object({
     supports_global_edge_absence_claim: z.literal(false),
     supports_unrequested_relation_absence_claim: z.literal(false),
     supports_complete_expansion_claim: z.boolean(),
+    optional_observation_scope: z.literal('returned_active_nodes_only'),
+    supports_recent_failure_absence_claim: z.boolean(),
   }),
   nodes: z.array(
     z.object({
@@ -535,11 +542,17 @@ async function executeQueryKnowledge(
     ? await loadRecentFailureCounts(ctx.db, ids, recentFailureCutoff())
     : new Map<string, number>();
   const failures = included.includes('recent_failures')
-    ? await loadRecentFailures(ctx.db, ids, 10)
+    ? await loadRecentFailures(ctx.db, ids, QUERY_FAILURE_LIMIT)
     : undefined;
 
   const selectedIds = new Set(ids);
   const expansionComplete = seedMatches.length <= limit && selected.size <= limit;
+  const observationStatus = (section: 'stats' | 'recent_failures') =>
+    !included.includes(section)
+      ? 'not_requested'
+      : ids.length === 0
+        ? 'no_returned_nodes'
+        : 'observed';
   const lookupStatus: QueryKnowledgeOutput['lookup_status'] =
     seedMatches.length > 0
       ? 'matched_active_nodes'
@@ -568,6 +581,10 @@ async function executeQueryKnowledge(
       seed_matches_complete: seedMatches.length <= limit,
       returned_nodes_complete_after_expansion: expansionComplete,
       edges_complete_between_returned_nodes_for_requested_relation_types: true,
+      stats_observation: observationStatus('stats'),
+      recent_failures_observation: observationStatus('recent_failures'),
+      recent_failures_time_scope: 'all_recorded_attempts',
+      recent_failures_limit: QUERY_FAILURE_LIMIT,
     },
     claim_boundaries: {
       supports_global_node_absence_claim: false,
@@ -577,6 +594,8 @@ async function executeQueryKnowledge(
       supports_global_edge_absence_claim: false,
       supports_unrequested_relation_absence_claim: false,
       supports_complete_expansion_claim: expansionComplete,
+      optional_observation_scope: 'returned_active_nodes_only',
+      supports_recent_failure_absence_claim: ids.length > 0 && failures?.length === 0,
     },
     nodes: matches.map((row) => {
       const m = mastery.get(row.id);
@@ -875,7 +894,7 @@ export const getSubjectGraphOverviewTool: DomainTool<OverviewInput, OverviewOutp
 export const queryKnowledgeTool: DomainTool<QueryKnowledgeInput, QueryKnowledgeOutput> = {
   name: 'query_knowledge',
   description:
-    'Find active knowledge nodes by id or text inside one effective subject domain and return path, local edge counts, optional stats, and recent failure snippets. subjectId is the domain scope (for example math/yuwen), never a node id. nodeId and query are mutually exclusive exact selectors. Empty nodes means no active match in that exact domain/query scope; it cannot prove global absence, archived absence, or that a node never existed. edges only cover returned active nodes and requested relation types; an empty edge list is not global absence. Read query_scope, lookup_status, coverage, and claim_boundaries before making a negative or complete-expansion claim.',
+    'Find active knowledge nodes by id or text inside one effective subject domain and return path, local edge counts, optional stats, and recent failure snippets. subjectId is the domain scope (for example math/yuwen), never a node id. nodeId and query are mutually exclusive exact selectors. Empty nodes means no active match in that exact domain/query scope; it cannot prove global absence, archived absence, or that a node never existed. edges only cover returned active nodes and requested relation types; an empty edge list is not global absence. Unrequested stats/recent_failures are not observed, never zero or absent failures. Read query_scope, lookup_status, coverage, and claim_boundaries before making a negative or complete-expansion claim.',
   effect: 'read',
   inputSchema: QueryKnowledgeInputSchema,
   outputSchema: QueryKnowledgeOutputSchema,
