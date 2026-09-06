@@ -17,6 +17,10 @@ const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 const offline = process.argv.includes('--offline');
 const limitIndex = process.argv.indexOf('--cost-limit-usd');
 const limit = limitIndex < 0 ? 0 : Number(process.argv[limitIndex + 1]);
+const archiveIndex = process.argv.indexOf('--archived-attempts');
+const archiveCount = archiveIndex < 0 ? 0 : Number(process.argv[archiveIndex + 1]);
+if (!Number.isInteger(archiveCount) || archiveCount < 0 || archiveCount > 180)
+  throw new Error('--archived-attempts must be an integer in0..180');
 if (!offline && (process.env.ACTUAL_PROVIDER_ACCEPTANCE !== '1' || !(limit > 0 && limit <= 2)))
   throw new Error('Explicit paid gate and --cost-limit-usd >0, <=2 required');
 let key = '';
@@ -54,6 +58,27 @@ const fixture = {
   snapshot: 'snap-2031',
 };
 const expected = { ...fixture, approved: false, learner: 'L-UPDATED-92' };
+const archive = Array.from({ length: archiveCount }, (_, index) => ({
+  id: `retired-attempt-${index + 101}`,
+  session: `past-session-${Math.floor(index / 7)}`,
+  question: {
+    id: `past-question-${index + 301}`,
+    subject: ['physics', 'history', 'biology'][index % 3],
+    prompt: [
+      '解释一个局部观察为何不能代表整个知识点已掌握。',
+      '比较两个历史材料的出处、时间和叙述立场。',
+      '区分实验样本中的相关性与可推导的因果关系。',
+    ][index % 3],
+  },
+  result: {
+    score: (index % 6) / 5,
+    elapsed_seconds: 17 + (index % 29),
+    reviewer: `old-rubric-${index % 4}`,
+    verdict: ['partial', 'incorrect', 'correct'][index % 3],
+  },
+  state: 'superseded_archived',
+  authoritative_for_current_snapshot: false,
+}));
 let learner = 'L-ORIGINAL-17';
 function input(user_message: string): CopilotRunInput {
   return {
@@ -342,7 +367,7 @@ function canonical(value: unknown): string {
 try {
   await turn(
     'initial',
-    `${compileCopilotSessionContext(input(''))}\nHold this synthetic study record for later. Unknown is not zero; an unobserved relation is not a proven impossibility. Acknowledge only.\n${JSON.stringify(fixture)}`,
+    `${compileCopilotSessionContext(input(''))}\nHold this synthetic current study record for later. Unknown is not zero; an unobserved relation is not a proven impossibility. Acknowledge briefly, no per-item recitation.\nCURRENT_SNAPSHOT=${JSON.stringify(fixture)}\nSuperseded archived attempts below are background only; do not recalculate current mastery from them. They can be reduced to an aggregate after compaction.\nARCHIVE=${JSON.stringify(archive)}`,
   );
   await turn(
     'correction',
@@ -355,7 +380,7 @@ try {
   learner = 'L-UPDATED-92';
   await turn(
     'compact',
-    '/compact Preserve the original study records, exact IDs and numbers, provenance, relation direction, unknown versus zero and later approval correction.',
+    '/compact Preserve the current study snapshot, exact IDs and numbers, provenance, relation direction, unknown versus zero and later approval correction. Superseded archived attempts may be reduced to an aggregate; do not copy each archived item or use them to revise the current snapshot.',
   );
   if (!compactObserved) throw new Error('no native compact boundary');
   // Only current learner is reintroduced; none of the old facts tested are resent.
@@ -409,6 +434,8 @@ try {
         price_basis: 'official public USD rates checked2026-09-06; estimate, not account invoice',
         price_source: 'https://mimo.mi.com/docs/en-US/price/pay-as-you-go',
         fixture,
+        archived_attempt_count: archiveCount,
+        archived_attempts_sha256: sha(JSON.stringify(archive)),
         expected,
         prompts,
         outputs,
