@@ -28,6 +28,13 @@ import {
   getCopilotConversation,
 } from '@/server/session/conversation';
 import { type CopilotSkillTurn, readCopilotSkillTurn as replySkillTurn } from './chat-contracts';
+import {
+  COPILOT_RUN_EVENTS,
+  COPILOT_RUN_TABLE,
+  type CopilotRunStatus,
+  deriveCopilotRunStatus,
+} from './copilot-run-status';
+import { copilotRunTerminalSql } from './copilot-run-terminal-sql';
 import { selectAsksWithMaterializingToolCall } from './materializing-tools';
 
 export type CopilotTurnRole = 'user' | 'ai' | 'tombstone';
@@ -593,7 +600,7 @@ export async function getRecentCopilotTurns(
   // session → this is a brand-new conversation; return nothing to prefill.
   const session = opts.sessionId
     ? await getCopilotConversation(dbArg, opts.sessionId)
-    : await findReusableCopilotConversation(dbArg as Db, { now: opts.now });
+    : await findReusableCopilotConversation(dbArg, { now: opts.now });
   if (session === null) return [];
 
   // One query over all three actions for THIS session, newest first, bounded by
@@ -621,6 +628,61 @@ export async function getRecentCopilotTurns(
     .limit(limit * 2);
 
   return projectCopilotTurnRows(dbArg, session.id, rows, limit);
+}
+
+export interface CopilotActiveRun {
+  run_id: string;
+  session_id: string;
+  status: CopilotRunStatus;
+  events_url: string;
+}
+
+/** One database snapshot; a new browser needs no local cache to discover accepted work. */
+export async function getCopilotConversationSnapshot(
+  dbArg: Db,
+  opts: { limit?: number; now?: Date; sessionId?: string } = {},
+): Promise<{ session_id: string | null; turns: CopilotTurn[]; active_runs: CopilotActiveRun[] }> {
+  return dbArg.transaction(
+    async (tx) => {
+      const session = opts.sessionId
+        ? await getCopilotConversation(tx, opts.sessionId)
+        : await findReusableCopilotConversation(tx, { now: opts.now });
+      if (!session) return { session_id: null, turns: [], active_runs: [] };
+      const turns = await getRecentCopilotTurns(tx, { ...opts, sessionId: session.id });
+      const terminal = copilotRunTerminalSql(
+        sql.raw('terminal.event_type'),
+        sql.raw('terminal.payload'),
+      );
+      const runs = (await tx.execute(sql`
+      SELECT queued.business_id AS run_id,
+        ARRAY(SELECT DISTINCT progress.event_type FROM job_events progress
+          WHERE progress.business_table = queued.business_table AND progress.business_id = queued.business_id
+            AND progress.event_type IN (${COPILOT_RUN_EVENTS.STARTED}, ${COPILOT_RUN_EVENTS.EXECUTION_STARTED}, ${COPILOT_RUN_EVENTS.STEP}, ${COPILOT_RUN_EVENTS.CANCEL_REQUESTED})) AS event_types
+      FROM job_events queued
+      JOIN event ask ON ask.id = queued.business_id
+      WHERE queued.business_table = ${COPILOT_RUN_TABLE}
+        AND queued.event_type = ${COPILOT_RUN_EVENTS.QUEUED}
+        AND ask.session_id = ${session.id}
+        AND queued.payload->>'session_id' = ${session.id}
+        AND queued.id = (SELECT min(first_queued.id) FROM job_events first_queued
+          WHERE first_queued.business_table = queued.business_table AND first_queued.business_id = queued.business_id AND first_queued.event_type = ${COPILOT_RUN_EVENTS.QUEUED})
+        AND NOT EXISTS (SELECT 1 FROM job_events terminal
+          WHERE terminal.business_table = queued.business_table AND terminal.business_id = queued.business_id AND ${terminal})
+      ORDER BY ask.dispatch_seq ASC, ask.id ASC
+    `)) as Array<{ run_id: string; event_types: string[] }>;
+      return {
+        session_id: session.id,
+        turns,
+        active_runs: runs.map((run) => ({
+          run_id: run.run_id,
+          session_id: session.id,
+          status: deriveCopilotRunStatus(run.event_types.map((event_type) => ({ event_type }))),
+          events_url: `/api/jobs/copilot_run/${encodeURIComponent(run.run_id)}/events`,
+        })),
+      };
+    },
+    { isolationLevel: 'repeatable read', accessMode: 'read only' },
+  );
 }
 
 export type CopilotHistoryAnchorErrorReason =

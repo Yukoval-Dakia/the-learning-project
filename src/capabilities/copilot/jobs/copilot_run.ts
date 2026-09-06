@@ -136,20 +136,10 @@ export interface CopilotRunJobData {
   ambient?: CopilotAmbientContext;
 }
 
-// Durable policy 的三旋钮由 copilot-execution 唯一解释：runner 获得
-// maxIterations/timeoutMs，execution-owned tracker 获得 maxToolCalls。它覆盖 inline CopilotTask
-// registry 默认（maxIterations:6 / warning:10 / hard:25 / timeout:60_000），**不 mutate
-// 共享 registry**（YUK-458 revert 教训：抬 inline 默认只把 error_max_turns 变成
-// inline-request abort，不解 endurance）。
-//   • maxIterations:24 — 给多步 propose 编排足够回合（YUK-458 证 6 太紧）。
-//   • maxToolCalls:60 — **MF-A**：durable 与 inline 同 surface='copilot'，共用
-//     COPILOT_CONTEXT_BUDGET.toolCalls.hard=25；不抬它则 24 回合 × ~2-4
-//     tool-call/回合会提前 soft-stop。durable 以 25 为 warning、60 为 hard，覆盖
-//     24 × 2.5/回合均值，把「谁先 bind」推回 iterations 侧。
-//   • timeoutMs:12min — 封病态 loop 的浪费上限；**承重约束（S6）**：必须 <
-//     STUCK_RUN_THRESHOLD_MS(1h)，否则 stuck-in-running sweeper 误收敛 live run
-//     （见 copilot_run.test.ts 的 static 约束断言）。远 < EXPIRE_AGENT(2h)。
-// 安全帽不是目标——健康流靠模型返回 final reply 自然收，天花板只挡病态 loop。
+// One execution owner resolves the budget. Unified persistent conversations
+// retain the normal six model turns and 25-tool cap; moving off HTTP is not an
+// authorization to multiply model usage. The 12-minute wall-clock safety cap
+// accommodates slow tools while staying below stuck-run recovery thresholds.
 export const DURABLE_BUDGET = DURABLE_COPILOT_EXECUTION_BUDGET;
 
 export interface RunCopilotRunParams {

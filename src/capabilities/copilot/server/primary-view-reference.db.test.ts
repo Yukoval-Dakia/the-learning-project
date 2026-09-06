@@ -18,6 +18,7 @@ describe('Copilot primary-view reference ownership', () => {
           id: 'artifact_navigation',
           type,
           title: '现有资料',
+          generation_status: 'ready',
           intent_source: 'declared',
           source: 'user',
           created_at: new Date('2026-09-06T10:00:00Z'),
@@ -40,6 +41,35 @@ describe('Copilot primary-view reference ownership', () => {
     },
   );
 
+  it.each(['pending', 'failed'])(
+    'does not present a %s artifact as a ready result',
+    async (status) => {
+      const now = new Date();
+      await testDb()
+        .insert(artifact)
+        .values(
+          ['note_atomic', 'tool_quiz'].map((type) => ({
+            id: `unready_${type}`,
+            type,
+            title: '尚未完成的分析与测验',
+            generation_status: status,
+            intent_source: 'declared',
+            source: 'ai_generated',
+            created_at: now,
+            updated_at: now,
+          })),
+        );
+      for (const [type, kind] of [
+        ['note_atomic', 'note'],
+        ['tool_quiz', 'quiz'],
+      ]) {
+        await expect(
+          resolveLivePrimaryViewArtifact(testDb(), { kind, id: `unready_${type}` }),
+        ).resolves.toBeNull();
+      }
+    },
+  );
+
   it('accepts only an existing non-archived artifact with a matching product type', async () => {
     const now = new Date('2026-09-06T10:00:00Z');
     await testDb()
@@ -49,6 +79,7 @@ describe('Copilot primary-view reference ownership', () => {
           id: 'artifact_live_quiz',
           type: 'tool_quiz',
           title: 'Live quiz',
+          generation_status: 'ready',
           intent_source: 'quiz_gen',
           source: 'ai_generated',
           archived_at: null,
@@ -59,6 +90,7 @@ describe('Copilot primary-view reference ownership', () => {
           id: 'artifact_archived_note',
           type: 'note_atomic',
           title: 'Archived note',
+          generation_status: 'ready',
           intent_source: 'learning_intent',
           source: 'ai_generated',
           archived_at: now,
@@ -69,6 +101,7 @@ describe('Copilot primary-view reference ownership', () => {
           id: 'artifact_unknown_type',
           type: 'future_unknown_type',
           title: 'Unknown type',
+          generation_status: 'ready',
           intent_source: 'declared',
           source: 'user',
           archived_at: null,

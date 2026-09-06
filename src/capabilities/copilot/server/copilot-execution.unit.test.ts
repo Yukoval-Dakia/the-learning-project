@@ -233,7 +233,8 @@ describe('Copilot execution owner', () => {
     );
     expect(cancellation.beforeTool).toHaveBeenCalledTimes(1);
     const durableTool = { name: 'query_knowledge', effect: 'read' as const };
-    for (let index = 1; index < 60; index += 1) {
+    expect(DURABLE_COPILOT_EXECUTION_BUDGET).toMatchObject({ maxIterations: 6, maxToolCalls: 25 });
+    for (let index = 1; index < DURABLE_COPILOT_EXECUTION_BUDGET.maxToolCalls; index += 1) {
       await expect(mcp?.beforeExecute?.(durableTool)).resolves.toBeUndefined();
     }
     await expect(mcp?.beforeExecute?.(durableTool)).resolves.toMatch(/hard context budget reached/);

@@ -60,10 +60,10 @@ import {
   isCopilotSubagentEnabled,
 } from './subagents';
 
-/** The durable policy is intentionally different from the latency-bounded foreground policy. */
+/** Persistence removes the HTTP deadline, not the existing default model/tool cost caps. */
 export const DURABLE_COPILOT_EXECUTION_BUDGET = {
-  maxIterations: 24,
-  maxToolCalls: 60,
+  maxIterations: copilotTaskSpec.definition.budget.maxIterations,
+  maxToolCalls: resolveContextBudget('copilot').toolCalls.hard,
   timeoutMs: 12 * 60_000,
 } as const;
 
@@ -278,17 +278,7 @@ export function createCopilotExecutionOwner(
 
     const surface = input.surface;
     const baseContextBudget = resolveContextBudget(surface);
-    const budgetTracker = new ContextBudgetTracker(
-      policy.kind === 'durable'
-        ? {
-            ...baseContextBudget,
-            toolCalls: {
-              warning: baseContextBudget.toolCalls.hard,
-              hard: DURABLE_COPILOT_EXECUTION_BUDGET.maxToolCalls,
-            },
-          }
-        : baseContextBudget,
-    );
+    const budgetTracker = new ContextBudgetTracker(baseContextBudget);
     const proposalFlowGate = createCopilotProposalFlowGate();
     const toolUseCorrelation = createToolUseCorrelation(DOMAIN_TOOL_MCP_SERVER_NAME);
     const mcpServer = adapters.buildMcpServerFn({

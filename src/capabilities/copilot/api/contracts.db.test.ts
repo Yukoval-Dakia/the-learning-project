@@ -1,7 +1,10 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { event, learning_session } from '@/db/schema';
+import { writeJobEvent } from '@/server/events/writer';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { writeCopilotUserAsk } from '../server/chat';
+import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from '../server/copilot-run-status';
 import { POST as acceptChip } from './accept-chip';
 import {
   AcceptTeachingChipResponseSchema,
@@ -170,6 +173,86 @@ describe('Copilot declared route response contracts', () => {
       dreaming_preview: [],
       pending_proposals_total: 0,
     });
+  });
+
+  it('restores accepted work from the server without a browser run handle, ordered and session-scoped', async () => {
+    const { session } = CopilotCreateSessionResponseSchema.parse(
+      await (await createCopilotSession()).json(),
+    );
+    const { session: foreign } = CopilotCreateSessionResponseSchema.parse(
+      await (await createCopilotSession()).json(),
+    );
+    const ids: string[] = [];
+    for (let index = 0; index < 5; index++) {
+      const sessionId = index === 4 ? foreign.id : session.id;
+      const runId = await writeCopilotUserAsk(testDb(), {
+        sessionId,
+        userMessage: `第${index + 1}条：比较近期复习与延迟探针，区分已掌握和未验证的知识点；保持前一条执行，不要重复修改目标。`,
+        // Deliberately reverse timestamps: acceptance order is dispatch_seq.
+        now: new Date(Date.now() - index * 1000),
+      });
+      ids.push(runId);
+      await writeJobEvent(testDb(), {
+        business_table: COPILOT_RUN_TABLE,
+        business_id: runId,
+        event_type: COPILOT_RUN_EVENTS.QUEUED,
+        payload: { session_id: sessionId, internal_evidence: 'private dispatch metadata' },
+      });
+    }
+    for (const [index, eventType, payload] of [
+      [0, COPILOT_RUN_EVENTS.DONE, {}],
+      [1, COPILOT_RUN_EVENTS.EXECUTION_STARTED, {}],
+      [1, COPILOT_RUN_EVENTS.FAILED, { reason: 'error' }],
+      [2, COPILOT_RUN_EVENTS.CANCEL_REQUESTED, {}],
+    ] as const) {
+      await writeJobEvent(testDb(), {
+        business_table: COPILOT_RUN_TABLE,
+        business_id: ids[index],
+        event_type: eventType,
+        payload,
+      });
+    }
+    const response = await getCopilotTurns(
+      new Request(`http://test/api/copilot/turns?session_id=${session.id}`),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    const snapshot = CopilotTurnsResponseSchema.parse(body);
+    expect(snapshot.session_id).toBe(session.id);
+    expect(snapshot.active_runs).toEqual([
+      {
+        run_id: ids[1],
+        session_id: session.id,
+        status: 'running',
+        events_url: `/api/jobs/copilot_run/${ids[1]}/events`,
+      },
+      {
+        run_id: ids[2],
+        session_id: session.id,
+        status: 'cancel_requested',
+        events_url: `/api/jobs/copilot_run/${ids[2]}/events`,
+      },
+      {
+        run_id: ids[3],
+        session_id: session.id,
+        status: 'queued',
+        events_url: `/api/jobs/copilot_run/${ids[3]}/events`,
+      },
+    ]);
+    expect(new Set(snapshot.turns.map((turn) => turn.event_id))).toEqual(new Set(ids.slice(0, 4)));
+    expect(JSON.stringify(body)).not.toContain('private dispatch metadata');
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: ids[1],
+      event_type: COPILOT_RUN_EVENTS.DONE,
+      payload: {},
+    });
+    const reopened = CopilotTurnsResponseSchema.parse(
+      await (
+        await getCopilotTurns(new Request(`http://test/api/copilot/turns?session_id=${session.id}`))
+      ).json(),
+    );
+    expect(reopened.active_runs.map((run) => run.run_id)).toEqual(ids.slice(2, 4));
   });
 
   it('creates and lists Copilot sessions through the declared contracts', async () => {

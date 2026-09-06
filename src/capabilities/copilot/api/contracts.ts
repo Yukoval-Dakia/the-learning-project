@@ -159,7 +159,18 @@ export const CopilotTurnSchema = z.object({
   tool_calls: z.array(CopilotTurnToolCallSchema).optional(),
 });
 
-export const CopilotTurnsResponseSchema = z.object({ turns: z.array(CopilotTurnSchema) });
+export const CopilotTurnsResponseSchema = z.object({
+  session_id: z.string().nullable(),
+  turns: z.array(CopilotTurnSchema),
+  active_runs: z.array(
+    z.object({
+      run_id: z.string(),
+      session_id: z.string(),
+      status: z.enum(['queued', 'started', 'running', 'cancel_requested']),
+      events_url: z.string(),
+    }),
+  ),
+});
 
 export const CopilotSummaryResponseSchema = z.object({
   daily_focus: z.string(),
