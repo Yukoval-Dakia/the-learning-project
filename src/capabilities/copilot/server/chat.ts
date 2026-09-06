@@ -94,6 +94,7 @@ import {
   type CopilotReplyFinalizationReceipt,
   type PreparedCopilotReply,
   extractPrimaryView,
+  sealCommittedPresentationReply,
 } from './reply-finalization';
 import type { CopilotSubtaskEvent, SpawnBudgetObservation } from './subagents';
 
@@ -238,7 +239,7 @@ export async function writeCopilotReply(
     replyText: string;
     /**
      * A reply already normalized by root finalization. When present,
-     * this is the byte-authoritative payload and MUST NOT be transformed again.
+     * its digest is checked before the commit owner seals product-state disclosure.
      */
     preparedReply?: PreparedCopilotReply;
     /** copilot_reply 的 actor_ref（inline=selectActorRef；durable handler 同款）。 */
@@ -278,9 +279,9 @@ export async function writeCopilotReply(
   if (params.preparedReply && params.preparedReply.text !== params.replyText) {
     throw new Error('prepared copilot reply bytes do not match replyText');
   }
-  // YUK-939 — finalized replies pass through this convergence point byte-for-byte. Legacy callers
-  // still normalize here. Never certify raw bytes and persist a transformed
-  // suffix (notably an unterminated primary_view marker) afterward.
+  // Verify the incoming seal before applying the commit-owned storage policy.
+  // Model normalization is already complete; legacy callers only strip markers.
+  // The product policy reseals its own final bytes below, never a stale digest.
   const prepared =
     params.preparedReply ??
     ({
@@ -288,14 +289,15 @@ export async function writeCopilotReply(
         taskRunId: params.taskRunId,
       }).text,
     } satisfies PreparedCopilotReply);
-  const cleanedReply = prepared.text;
   if (
     params.replyFinalization &&
     params.replyFinalization.reply_sha256 !==
-      createHash('sha256').update(cleanedReply, 'utf8').digest('hex')
+      createHash('sha256').update(prepared.text, 'utf8').digest('hex')
   ) {
     throw new Error('copilot reply finalization digest does not match persisted bytes');
   }
+  const sealed = sealCommittedPresentationReply(prepared, params.replyFinalization);
+  const cleanedReply = sealed.preparedReply.text;
   const primaryView = prepared.primaryView;
   // created_at 严格晚于 ask（now + 1ms）：整轮共享一个 now，无偏移则 ask/reply
   // 在 created_at 上打平，turns 读取器的 (created_at, id) 排序可能把 reply 排到自己
@@ -317,7 +319,7 @@ export async function writeCopilotReply(
       reply_md: cleanedReply,
       task_run_id: params.taskRunId,
       ...(params.evidenceValidation ? { evidence_validation: params.evidenceValidation } : {}),
-      ...(params.replyFinalization ? { reply_finalization: params.replyFinalization } : {}),
+      ...(sealed.receipt ? { reply_finalization: sealed.receipt } : {}),
       ...(params.durableFinishReason ? { durable_finish_reason: params.durableFinishReason } : {}),
       ...(params.durableEmitReviewedDelta ? { durable_emit_reviewed_delta: true } : {}),
       ...(params.durableFailure ? { durable_failure: params.durableFailure } : {}),
@@ -924,7 +926,8 @@ async function runCopilotChatImpl(
   // product history the user actually saw.
   if (
     deliveredSdkSessionId &&
-    finalized.receipt.candidate_sha256 !== finalized.receipt.reply_sha256
+    finalized.receipt.candidate_sha256 !==
+      createHash('sha256').update(cleanedReply, 'utf8').digest('hex')
   ) {
     await clearAgentSdkSessionId(db, sessionId);
     clearCopilotSessionContextDelivery(deliveredSdkSessionId);

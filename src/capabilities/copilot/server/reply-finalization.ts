@@ -21,6 +21,24 @@ export const COPILOT_REPLY_TRACE_MAX_CALLS = 60;
 const MAX_REPLY_CHARS = 64_000;
 const FINALIZATION_FAILURE_REPLY = '这次回复没有完成可验证的收口，暂不展示未封存的草稿。请重试。';
 
+export const EPHEMERAL_PRESENTATION_STORAGE_NOTICE =
+  '\n\n> 保存说明（系统，以此为准）：这张卡片会随对话保存，重新打开仍可恢复；关闭面板不会删除。它不会另存为独立资料。当前不支持仅临时查看且完全不保存；正文中的其他保存描述不代表实际状态。';
+
+/** Called only at the shared commit boundary, after unsuccessful paths remove the view. */
+export function sealCommittedPresentationReply(
+  preparedReply: PreparedCopilotReply,
+  receipt?: CopilotReplyFinalizationReceipt,
+): { preparedReply: PreparedCopilotReply; receipt?: CopilotReplyFinalizationReceipt } {
+  if (preparedReply.primaryView?.source !== 'ephemeral_html') return { preparedReply, receipt };
+  const text = preparedReply.text.endsWith(EPHEMERAL_PRESENTATION_STORAGE_NOTICE)
+    ? preparedReply.text
+    : preparedReply.text + EPHEMERAL_PRESENTATION_STORAGE_NOTICE;
+  return {
+    preparedReply: { ...preparedReply, text },
+    ...(receipt ? { receipt: { ...receipt, reply_sha256: sha256Text(text) } } : {}),
+  };
+}
+
 export const CopilotPrimaryViewSchema = PresentPrimaryViewOutputSchema;
 
 export const PRIMARY_VIEW_MARKER_START = '<!--primary_view';

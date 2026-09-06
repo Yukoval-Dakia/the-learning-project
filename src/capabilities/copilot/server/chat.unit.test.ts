@@ -38,6 +38,8 @@ import {
 } from './chat';
 import { COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY } from './content-validation';
 import { type CopilotExecutionAdapters, createCopilotExecutionOwner } from './copilot-execution';
+import { EPHEMERAL_PRESENTATION_STORAGE_NOTICE } from './reply-finalization';
+import type { CopilotPrimaryView } from './turns';
 
 const RETIRED_COPILOT_CONTROL_SUFFIXES = [
   'get_tool_operation',
@@ -2523,10 +2525,7 @@ describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
 
   const mkFinalizedPrimaryExecution = (
     text: string,
-    primaryView: {
-      source: 'tool_result' | 'artifact';
-      ref: { kind: string; id: string };
-    },
+    primaryView: CopilotPrimaryView,
     partial = false,
   ): NonNullable<CopilotChatDeps['executeCopilotTurnFn']> => {
     const execute: NonNullable<CopilotChatDeps['executeCopilotTurnFn']> = async () => ({
@@ -2558,6 +2557,49 @@ describe('runCopilotChat — primary_view nomination (YUK-307)', () => {
     });
     return vi.fn(execute);
   };
+
+  it.each([false, true])(
+    'seals storage policy only for a committed HTML view (partial=%s)',
+    async (partial) => {
+      const text = '目录含原文、注释与背景。未写入持久存储。';
+      const write = mkWrite();
+      const clear = vi.fn(async () => {});
+      const delivered: string[] = [];
+      const result = await runCopilotChatStreaming(
+        {} as never,
+        {
+          user_message: '展示资料目录',
+          triggered_by: 'chat',
+        },
+        (delta) => delivered.push(delta),
+        {
+          ...baseDeps,
+          getAgentSdkSessionIdFn: async () => 'sdk_prior_presentation',
+          clearAgentSdkSessionIdFn: clear,
+          writeEventFn: write,
+          executeCopilotTurnFn: mkFinalizedPrimaryExecution(
+            text,
+            { source: 'ephemeral_html', ref: '<section>原文、注释与背景</section>' },
+            partial,
+          ),
+        },
+      );
+      expect(result.reply).toBe(text + (partial ? '' : EPHEMERAL_PRESENTATION_STORAGE_NOTICE));
+      expect(delivered.join('')).toBe(result.reply);
+      const lastWrite = write.mock.calls.at(-1);
+      if (!lastWrite) throw new Error('reply was not persisted');
+      const payload = (
+        lastWrite[1] as unknown as {
+          payload: { reply_md: string; reply_finalization: { reply_sha256: string } };
+        }
+      ).payload;
+      expect(payload.reply_md).toBe(result.reply);
+      expect(payload.reply_finalization.reply_sha256).toBe(
+        createHash('sha256').update(result.reply).digest('hex'),
+      );
+      if (!partial) expect(clear).toHaveBeenCalledWith(expect.anything(), 'ls_pv');
+    },
+  );
 
   it('T1: a legacy artifact marker is stripped and cannot authorize primary_view', async () => {
     const runAgentTaskFn = mkRunFn(`这是你的题。\n${VALID_MARKER}`);

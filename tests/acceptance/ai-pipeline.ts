@@ -308,6 +308,9 @@ async function main(): Promise<void> {
     ]);
     const { and, eq, inArray } = await import('drizzle-orm');
     const runner = await import('@/server/ai/runner');
+    const { EPHEMERAL_PRESENTATION_STORAGE_NOTICE } = await import(
+      '@/capabilities/copilot/server/reply-finalization'
+    );
     const terminals = new Map<string, string>();
     const sdkOutcomes: Array<Record<string, unknown>> = [];
     evidence.sdk_outcomes = sdkOutcomes;
@@ -876,9 +879,9 @@ async function main(): Promise<void> {
         }
         if (
           caseName === 'presentation-html' &&
-          /关闭[^。\n]{0,30}消失|未存入系统|(?:没有|未)持久化|仅本轮可见/u.test(result.reply)
+          !result.reply.endsWith(EPHEMERAL_PRESENTATION_STORAGE_NOTICE)
         )
-          throw new Error(`${caseName}: unsupported claim about conversation persistence`);
+          throw new Error(`${caseName}: missing authoritative committed storage policy`);
         if (latestEvidence)
           latestEvidence.presentation_acceptance = {
             expected_source: expectedSource,

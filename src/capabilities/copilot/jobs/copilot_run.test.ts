@@ -26,6 +26,7 @@ import {
 } from '@/capabilities/copilot/server/copilot-run-status';
 import { countOutstandingDurableRuns } from '@/capabilities/copilot/server/durable-backlog';
 import { withCopilotDurableDispatchLock } from '@/capabilities/copilot/server/durable-dispatch';
+import { EPHEMERAL_PRESENTATION_STORAGE_NOTICE } from '@/capabilities/copilot/server/reply-finalization';
 import type { Db } from '@/db/client';
 import {
   ai_task_runs,
@@ -1489,81 +1490,92 @@ describe('runCopilotRun', () => {
     expect(replyJobEvent?.payload).not.toHaveProperty('primary_view');
   });
 
-  it('persists an explicit primary view across live durable delivery, repair, and replay', async () => {
-    const runId = 'copilot_user_ask_primary_view_repair';
-    const sessionId = 'sess_primary_view_repair';
-    const reply = '已核对函数知识点。';
-    const primaryView = {
-      source: 'tool_result' as const,
-      ref: { kind: 'query_knowledge', id: 'toolu_root_read_1' },
-    };
-    const execute = vi.fn<NonNullable<RunCopilotRunParams['executeCopilotTurnFn']>>(async () => ({
-      taskRunId: 'tr_primary_view_repair',
-      finishReason: 'end_turn',
-      finalization: {
-        replyText: reply,
-        preparedReply: { text: reply, primaryView },
-        receipt: {
-          protocol_version: 1,
-          assurance: 'execution_trace_bound',
-          root_task_run_id: 'tr_primary_view_repair',
-          candidate_sha256: createHash('sha256').update(reply).digest('hex'),
-          reply_sha256: createHash('sha256').update(reply).digest('hex'),
-          trace_sha256: createHash('sha256').update('trace').digest('hex'),
-          trace_call_count: 2,
-          observed_completed_tool_use_ids: ['toolu_root_read_1', 'toolu_present_1'],
-          correction: 'normal',
-          proposal_disclosure: 'none',
-          learning_content: 'not_applicable',
-          primary_view: 'retained',
+  it.each(['tool_result', 'ephemeral_html'] as const)(
+    'persists %s across live durable delivery, repair, and replay',
+    async (source) => {
+      const runId = `copilot_user_ask_primary_view_repair_${source}`;
+      const sessionId = `sess_primary_view_repair_${source}`;
+      const reply = '已核对函数知识点。';
+      const primaryView =
+        source === 'tool_result'
+          ? {
+              source,
+              ref: { kind: 'query_knowledge', id: 'toolu_root_read_1' },
+            }
+          : { source, ref: '<section>资料</section>' };
+      const committedReply =
+        source === 'ephemeral_html' ? reply + EPHEMERAL_PRESENTATION_STORAGE_NOTICE : reply;
+      const execute = vi.fn<NonNullable<RunCopilotRunParams['executeCopilotTurnFn']>>(async () => ({
+        taskRunId: 'tr_primary_view_repair',
+        finishReason: 'end_turn',
+        finalization: {
+          replyText: reply,
+          preparedReply: { text: reply, primaryView },
+          receipt: {
+            protocol_version: 1,
+            assurance: 'execution_trace_bound',
+            root_task_run_id: 'tr_primary_view_repair',
+            candidate_sha256: createHash('sha256').update(reply).digest('hex'),
+            reply_sha256: createHash('sha256').update(reply).digest('hex'),
+            trace_sha256: createHash('sha256').update('trace').digest('hex'),
+            trace_call_count: 2,
+            observed_completed_tool_use_ids: ['toolu_root_read_1', 'toolu_present_1'],
+            correction: 'normal',
+            proposal_disclosure: 'none',
+            learning_content: 'not_applicable',
+            primary_view: 'retained',
+          },
+          accepted: true,
         },
-        accepted: true,
-      },
-      partial: false,
-      candidateDeltaObserved: true,
-      contextDigest: 'primary-view-context',
-    }));
-    const projectTerminal = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('projection temporarily unavailable'))
-      .mockImplementation(writeSuccessfulTerminalProjection);
-    const params = {
-      db: testDb(),
-      data: { ...baseData, run_id: runId, session_id: sessionId },
-      executeCopilotTurnFn: execute,
-      resolveCopilotRunInputFn: stubRunInput,
-      writeSuccessfulTerminalProjectionFn: projectTerminal,
-    } satisfies CopilotRunTestParams;
+        partial: false,
+        candidateDeltaObserved: true,
+        contextDigest: 'primary-view-context',
+      }));
+      const projectTerminal = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('projection temporarily unavailable'))
+        .mockImplementation(writeSuccessfulTerminalProjection);
+      const params = {
+        db: testDb(),
+        data: { ...baseData, run_id: runId, session_id: sessionId },
+        executeCopilotTurnFn: execute,
+        resolveCopilotRunInputFn: stubRunInput,
+        writeSuccessfulTerminalProjectionFn: projectTerminal,
+      } satisfies CopilotRunTestParams;
 
-    await expect(runCopilotRun(params)).rejects.toThrow(
-      `durable success terminal projection failed for ${runId}`,
-    );
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect((await copilotReplyEvents(sessionId))[0]?.payload).toMatchObject({
-      reply_md: reply,
-      primary_view: primaryView,
-    });
+      await expect(runCopilotRun(params)).rejects.toThrow(
+        `durable success terminal projection failed for ${runId}`,
+      );
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect((await copilotReplyEvents(sessionId))[0]?.payload).toMatchObject({
+        reply_md: committedReply,
+        primary_view: primaryView,
+      });
 
-    await expect(runCopilotRun(params)).resolves.toEqual({
-      status: 'done',
-      reply,
-      task_run_id: 'tr_primary_view_repair',
-      primary_view: primaryView,
-    });
-    expect(execute).toHaveBeenCalledTimes(1);
-    const durableReply = (await replay(runId)).find(
-      (item) => item.event_type === COPILOT_RUN_EVENTS.REPLY,
-    );
-    expect(durableReply?.payload).toMatchObject({ reply_md: reply, primary_view: primaryView });
+      await expect(runCopilotRun(params)).resolves.toEqual({
+        status: 'done',
+        reply: committedReply,
+        task_run_id: 'tr_primary_view_repair',
+        primary_view: primaryView,
+      });
+      expect(execute).toHaveBeenCalledTimes(1);
+      const durableReply = (await replay(runId)).find(
+        (item) => item.event_type === COPILOT_RUN_EVENTS.REPLY,
+      );
+      expect(durableReply?.payload).toMatchObject({
+        reply_md: committedReply,
+        primary_view: primaryView,
+      });
 
-    await expect(runCopilotRun(params)).resolves.toEqual({
-      status: 'done',
-      reply,
-      task_run_id: 'tr_primary_view_repair',
-      primary_view: primaryView,
-    });
-    expect(execute).toHaveBeenCalledTimes(1);
-  });
+      await expect(runCopilotRun(params)).resolves.toEqual({
+        status: 'done',
+        reply: committedReply,
+        task_run_id: 'tr_primary_view_repair',
+        primary_view: primaryView,
+      });
+      expect(execute).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it('drops a finalized primary view when the durable attempt is partial/failed', async () => {
     const runId = 'copilot_user_ask_partial_primary_view';

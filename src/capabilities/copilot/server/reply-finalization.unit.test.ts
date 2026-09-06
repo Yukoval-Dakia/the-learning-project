@@ -1,8 +1,13 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it, vi } from 'vitest';
 import { writeCopilotReply } from './chat';
-import { createCopilotReplyFinalizer } from './reply-finalization';
+import {
+  EPHEMERAL_PRESENTATION_STORAGE_NOTICE,
+  createCopilotReplyFinalizer,
+  sealCommittedPresentationReply,
+} from './reply-finalization';
 import { REALISTIC_EVIDENCE_TRACE } from './reply-finalization.actual-fixture';
 
 const correctionContract = {
@@ -10,6 +15,77 @@ const correctionContract = {
   prior_turn_summaries: {},
   required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'] as const,
 };
+
+const presentationEvidence = JSON.parse(
+  readFileSync(
+    new URL(
+      '../../../../docs/planning/evidence/2026-09-06-presentation-control-actual.json',
+      import.meta.url,
+    ),
+    'utf8',
+  ),
+) as {
+  records: Array<{ cases: Array<{ name: string; terminal_output: string }> }>;
+};
+
+describe('committed presentation storage policy', () => {
+  it.each(
+    presentationEvidence.records
+      .flatMap((record) => record.cases)
+      .filter((item) => item.name === 'presentation-html'),
+  )(
+    'preserves a captured model reply and seals the actual saving policy without another model call',
+    async ({ terminal_output: text }) => {
+      const value = finalizer();
+      const nomination = {
+        source: 'ephemeral_html' as const,
+        ref: '<section>原文、注释、背景</section>',
+      };
+      await pre(value, 'mcp__loom__present_primary_view', 'present_html', nomination);
+      value.observeDomainTool({
+        tool_use_id: 'present_html',
+        name: 'present_primary_view',
+        effect: 'control',
+        input: nomination,
+        output: nomination,
+        error_reason: null,
+        executed: true,
+      });
+      const finalized = await value.finalizeTerminal(text);
+      const write = vi.fn(async () => 'event_id');
+      const written = await writeCopilotReply({} as never, {
+        sessionId: 'session_1',
+        taskRunId: 'root_run_1',
+        actorRef: 'self',
+        now: new Date(),
+        replyText: finalized.replyText,
+        preparedReply: finalized.preparedReply,
+        replyFinalization: finalized.receipt,
+        writeFn: write,
+      });
+      expect(written.cleanedReply).toBe(text + EPHEMERAL_PRESENTATION_STORAGE_NOTICE);
+      const persisted = (
+        write.mock.calls as unknown as Array<[unknown, { payload: Record<string, unknown> }]>
+      )[0][1].payload;
+      const receipt = persisted.reply_finalization as typeof finalized.receipt;
+      expect(receipt.reply_sha256).toBe(
+        createHash('sha256').update(written.cleanedReply).digest('hex'),
+      );
+      expect(persisted.reply_md).toBe(written.cleanedReply);
+      expect(
+        sealCommittedPresentationReply(
+          { text: written.cleanedReply, primaryView: nomination },
+          receipt,
+        ).preparedReply.text,
+      ).toBe(written.cleanedReply);
+    },
+  );
+
+  it('does not imply a saved card when the finalized view is absent', () => {
+    const text = '部分内容尚未完成。';
+    expect(sealCommittedPresentationReply({ text }).preparedReply.text).toBe(text);
+  });
+});
 
 function finalizer(
   validateLearningContent: Parameters<
