@@ -2,6 +2,12 @@
 
 ## 最新状态（以下历史步骤不替代本节）
 
+- PR1346已push exact70189a91，独立初审review_unified_conversation PASS，无P0/P1。
+  CI34050192068仅DB2失败，durable-backlog计数4≠3；root用queue+backlog两文件单fork稳定复现。
+  原因是新queue suite最后的等待轮job_events未清理；resetDb仅domain tables，不包含operational ledger。
+  root已补该suite afterEach清理physical jobs+job_events；同一串行9/9 GREEN，旧断言/产品逻辑不动，未新增付费。
+  本地build服务已停止；PR未merge/deploy。整个goal active，965后继尚Todo。
+
 - Owner已明确批准现有Copilot抽屉发送/恢复/消息展示四文件改动，UI不再blocked。
   独立tlp-wt-conversation-dock branch codex/yuk-948-conversation-dock；worker初稿f6cd585/751361390不完整，
   已释放并由architect complete_unified_dock_ownership独占继续，当前在做Map<runId>订阅/Stop/snapshot恢复。
@@ -21,7 +27,7 @@
   架构audit发现新增boss/session边，root把后继runtime装配归manifest，worker只接wake回调；
   session持久化的1条owner调用合法保留并更新baseline439/0/47，不用shallow wrapper藏计数，未改SCC/豁免。
   64worker/FIFO DB通过；实际manifest loader接线纳入queue用例，admission-only预检另跑0调用。
-  最终UI集成/浏览器/独立review/exactCI仍待完成，未push/merge/deploy，整个goalactive。
+  最终UI集成/20浏览器/独立初审已过；PR1346已push，首轮CI需上述test-only修复，未merge/deploy，整个goalactive。
 
 - 后续goal continuation：上一轮9f8798ef属实质progress，本轮UI批准仍未收到；继续独立后端工作。
   新增真实/chat→queue→/turns→Stop→worker-terminal-wake→history综合场景，仅mock测试enqueue开关，

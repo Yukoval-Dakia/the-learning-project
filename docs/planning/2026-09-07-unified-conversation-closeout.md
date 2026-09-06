@@ -29,7 +29,10 @@ Owner 已批准现有 Copilot drawer 的发送、恢复和消息展示改动。�
 - 完整既有 shipped-browser smoke 20/20，typecheck、lint（仅既有 warning）、build、
   capability/architecture/control-plane/API 合同检查通过。
 
-独立审查与 exact-head CI 尚未完成时不得标为交付。未部署、未操作生产数据库。
+独立初审对 exact `70189a91` PASS，无 P0/P1。PR1346 首轮 CI `34050192068` 的
+DB2 揭示测试清理泄漏：queue suite 留下一个等待轮，后续 global backlog 计数 4≠3。
+两文件单 fork 串行复现，修复仅清理 queue suite 自己的 physical jobs + job_events，
+不改生产计数、不放宽旧断言，同一串行 9/9 GREEN。最终 exact-head CI 通过前不得标为交付；未部署或操作生产库。
 
 ## 真实模型与成本
 

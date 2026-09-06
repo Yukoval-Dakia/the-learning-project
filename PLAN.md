@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：948/950界面已获批准；真实HTTP/native连续会话验收通过，继续UI集成与浏览器验收。
+> Linear 是权威 tracker；更新于 2026-09-07：948/950已集成且本地/浏览器/独立初审通过；修复PR1346首轮CI暴露的测试清理泄漏。
 
 ## NOW
 
@@ -32,6 +32,8 @@
   UI最终6895c4f5经b92177f86合入；per-run Map/订阅/Stop与延迟202跨会话保护完成，108 UI unit通过。
   root修正自动合并带来的重复run_id类型声明；7个built-browser Copilot场景通过，未调用模型。
   全部既有shipped-browser smoke20/20；typecheck/lint/build与API/架构/control-plane检查通过，准备PR独立review。
+  PR1346 exact70189a91独立初审PASS无P0/P1；CI34050192068仅DB2失败：新queue suite遗留1个job_events等待轮。
+  两文件单fork串行稳定复现4≠3；只补新suite teardown，不改产品计数/旧断言；修复后9/9通过，继续exact CI。
   自动pg-boss poller另验：真实registrar/manifest消费已完成head并推进已Stop后继，两physical job完成、model零调用；queue8/8绿。
   仍待UI集成与浏览器验收、独立review与exact-head CI；上述真实模型验收已通过但不替代这些门。
 - Owner授权AI pipeline和全项目业务封装/测试精简；完整goal仍active，不以audit数量或单个PR代替完成。

@@ -127,7 +127,14 @@ describe('durable Copilot session FIFO — real pg-boss contract', () => {
     __resetRateLimitForTests();
   });
 
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await boss.deleteAllJobs('copilot_run');
+    // resetDb resets domain tables, not the operational event ledger. Leaving
+    // the last queued successor here contaminates later global backlog tests
+    // when Vitest reuses this fork/database for another file.
+    await testDb().delete(job_events);
+  });
 
   afterAll(async () => {
     await boss.deleteAllJobs('copilot_run').catch(() => undefined);
