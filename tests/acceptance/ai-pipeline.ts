@@ -874,6 +874,11 @@ async function main(): Promise<void> {
           )
             throw new Error(`${caseName}: missing actual author-owned artifact`);
         }
+        if (
+          caseName === 'presentation-html' &&
+          /关闭[^。\n]{0,30}消失|未存入系统|没有持久化/u.test(result.reply)
+        )
+          throw new Error(`${caseName}: unsupported claim about conversation persistence`);
         if (latestEvidence)
           latestEvidence.presentation_acceptance = {
             expected_source: expectedSource,

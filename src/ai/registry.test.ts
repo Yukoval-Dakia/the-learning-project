@@ -29,13 +29,13 @@ import { taskCatalog } from './task-catalog';
 import { getTaskSystemPrompt } from './task-prompts';
 
 const YUK949_PROMPT_HASHES = {
-  'general:CopilotTask': '2421327057b1e60375184928e7a26471d39edc754a00f57cb0dbf16b27671de8',
+  'general:CopilotTask': 'e7190278f0b4c44e8a3cac4f607adae54d3f73bdc474e17a8b99f5cfd6f8162b',
   'general:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
-  'math:CopilotTask': '2421327057b1e60375184928e7a26471d39edc754a00f57cb0dbf16b27671de8',
+  'math:CopilotTask': 'e7190278f0b4c44e8a3cac4f607adae54d3f73bdc474e17a8b99f5cfd6f8162b',
   'math:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
-  'physics:CopilotTask': '2421327057b1e60375184928e7a26471d39edc754a00f57cb0dbf16b27671de8',
+  'physics:CopilotTask': 'e7190278f0b4c44e8a3cac4f607adae54d3f73bdc474e17a8b99f5cfd6f8162b',
   'physics:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
-  'yuwen:CopilotTask': '2421327057b1e60375184928e7a26471d39edc754a00f57cb0dbf16b27671de8',
+  'yuwen:CopilotTask': 'e7190278f0b4c44e8a3cac4f607adae54d3f73bdc474e17a8b99f5cfd6f8162b',
   'yuwen:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
 } as const;
 
