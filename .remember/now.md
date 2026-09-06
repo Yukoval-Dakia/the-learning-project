@@ -1,6 +1,13 @@
 # 当前 handoff — 2026-09-06，完整重构goal active
 
-## 当前949完整呈现验收；945/964已交付
+## 当前949收口；下一条948/950统一持续会话
+
+- Owner最新决定：Copilot消息不分前后台，默认不中断，对标ChatGPT；旧Mission按钮提案撤回。
+  后端复用copilot_run唯一owner，HTTP断线仅取消订阅；关闭/刷新可从服务端恢复，不依赖sessionStorage。
+  后续消息必须持久接纳同一会话并顺序消费；不接受session_busy409或“先Stop再发”降级。
+  显式Stop、安全/预算限制仍有效；需补teaching与945原生compaction到worker，不能丢已有能力。
+  不做shared SDK卷/亲和部署；worker只恢复本进程确实拥有的SDK session，否则事件cold start。
+  Linear948 In Progress、950 Todo已对齐。新UI代码未实施，旧UI preflight已撤回。
 
 - 964工作树 /Volumes/YukovalSBak/yukoval-projects/tlp-wt-mimo-cost-truth，codex/yuk-964-mimo-cost-truth。
   实施25ae0dc4，PR1343；37unit/24runnerDB/reviewPASS/typecheck/lint/build/audit通过。
@@ -47,7 +54,10 @@
   三条真实终文免费重放policy全部通过；当前322unit/56DB/typecheck/lint/build绿；无第三轮review。
   首个tool actual因root harness JSON键序误判失败，改isDeepStrictEqual复验过；首失败也计费并保留。
   docs/planning/evidence/2026-09-06-presentation-control-actual.json封存全部7个原始终文/digests/runIDs，
-  不把结构script pass当人工semantic pass，不持久化CoT。尚无949 PR。
+  不把结构script pass当人工semantic pass，不持久化CoT。
+  PR1345已推cc3afecd；CI34039845298其余lane绿，DB2运行30分钟后取消，未合并。
+  新advisory P1确认为同一行题目+答案绕过校验；三例RED，补句首直接指令识别后58unit绿。
+  保留实际报告/修辞问句不误拦；等待新提交与fresh exact CI，无新付费、无第三轮review。
 - 原implement_primary_view_owner已停止；review_primary_view_owner初审已用，唯一验证审正在收口最后canonical-ref问题，不开启第三轮。
   不信任原worker的完成或“lint错误已有”说法，后者被实际diff和review否证。
 
@@ -61,7 +71,7 @@
 - 964已去重登记：更新MiMo本地占位估算卡与来源，官方价格页2026-08-06已公开分模型费率。
 - 既有Pipeline/Goal/Knowledge/Import/execution/ReviewSettlement/客户端状态/测试退休均有合并证据。
   946仅原生catalog/body渐进加载验证Done，不建第二catalog、不删quiz。
-- 下一条948Mission、950steer、960分类器与全业务扩展验收继续；不是当前PR即整体完成。
+- 下一条948/950统一持续会话、960分类器与全业务扩展验收继续；不是当前PR即整体完成。
   960已在独立tlp-wt-report-question-boundary修复并推PR1344 exact960d0b64：29unit+全部localgates+唯一复审。
   CI34038363273初次仅旧proposal-tools归因DB超时60s+后续preparedstatement错误；精确两例本机通过，
   已重跑failed lane，同类原762已去重重开Todo。两次worker把新format errors错说baseline，被root纠正。

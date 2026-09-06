@@ -99,6 +99,11 @@ export function containsLearningQuestion(text: string): boolean {
     /(?:^|\n)\s*(?:#{1,6}\s*)?(?:(?:题目|练习(?:题)?|测验)(?=\s|[:：])|(?:quiz|question|exercise)\b)/im;
   const numberedQuestion =
     /(?:^|\n)\s*(?:\d+[.)、]|[（(][一二三四五六七八九十\d]+[）)])[^\n]{1,500}[？?]/m;
+  // Direct instructions remain assessments when an answer follows on the same
+  // line. Anchor the imperative, not the question's end, so rhetorical report
+  // prose such as “为什么选择这个方案？因为预算有限。” is not newly classified.
+  const directInstruction =
+    /(?:^|\n|[。？?；;])\s*(?:#{1,6}\s*)?(?:请(?:你)?\s*|试\s*|尝试\s*|please\s+)?(?:求|计算|证明|选择|判断|解答|solve\b|calculate\b|prove\b|choose\b)[^\n？?]{1,600}[？?]/im;
   const instructionalQuestionCandidates =
     /(?:^|\n)[^\n]{0,300}(?:求|计算|证明|选择|判断|解答|solve|calculate|prove|choose)[^\n]{0,300}[？?](?:\n|$)/gim;
   const activeInstructionalQuestion = [...text.matchAll(instructionalQuestionCandidates)].some(
@@ -117,7 +122,12 @@ export function containsLearningQuestion(text: string): boolean {
       });
     },
   );
-  return explicitLabel.test(text) || numberedQuestion.test(text) || activeInstructionalQuestion;
+  return (
+    explicitLabel.test(text) ||
+    numberedQuestion.test(text) ||
+    directInstruction.test(text) ||
+    activeInstructionalQuestion
+  );
 }
 
 function containsLearningSolution(text: string): boolean {

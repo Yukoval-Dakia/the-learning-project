@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-06：945/964已合并；949完整展示控制集成及真实验收，960有界修复。
+> Linear 是权威 tracker；更新于 2026-09-06：949收口校验P1；owner改定Copilot统一持续运行，撤回前后台入口方案。
 
 ## NOW
 
@@ -26,8 +26,14 @@
   8个shipped浏览器用例验证三类hero/无hero的inline+durable+刷新恢复，无生产UI改动。
   actual过程无hero/read引用/author→artifact通过；三次HTML模型保存误述完整保留，不冒充模型遵循。
   081471e4将真实保存说明交给shared commit owner，保留实质正文并明确权威状态；同步reseal/hash及SDK cursor。
-  三条真实失败终文免费重放全部通过；322scoped unit、56DB、typecheck/lint/build通过，待PR/exactCI。
-  已集成960 main3791bf4d；210c6051恢复原mid-line问句边界，修掉一次无意扩大检测。tool_result仍是既有placeholder。
+  三条真实失败终文免费重放全部通过；322scoped unit、56DB、typecheck/lint/build通过。
+  PR1345 cc3afecd CI34039845298仅DB2到30分钟取消，其余lane绿；未合并，不冒充绿。
+  已集成960 main3791bf4d；210c6051恢复mid-line锚后，同一行题目+答案的真实P1由root补直接指令保护。
+  三个RED回归后58scoped tests绿；保留报告/修辞问句边界，未增付费/第三轮review。tool_result仍为既有placeholder。
+- YUK948/950 owner新决定：Copilot不分前后台，默认不中断；关闭面板/刷新/断线只脱离订阅。
+  服务端唯一执行owner；同一会话后续消息持久接纳并顺序消费，不409 busy、不要求先Stop。
+  撤回Mission按钮方案及其UI preflight；保留显式Stop与安全/预算限制。新UI尚未实施或获preflight批准。
+  复用copilot_run并补teaching、native compaction、无本地缓存恢复的parity，不新增第二调度框架。
 - YUK961 Done：Agency拥有pool-gap提示政策，Practice仅提交verify事实；
   PR1340 exact69542b2d CI34032977403绿，main50ba305b；48DB/独立review通过。
 - YUK962 Done：5个纯测试文件移入unit，59tests通过，总1043文件不减；
@@ -53,7 +59,8 @@
 1. YUK949完整呈现actual与exact CI交付，后台/前台/恢复共享发布语义。
 2. YUK960 PR1344 exact960d0b64，CI34038363273失败lane重跑后绿，已合并3791bf4d。
    同类762去重重开Todo；非归因逻辑变更，不加timeout/删保护。小范围mid-line边界回归由949中的210c6051收口。
-3. YUK948显式Mission入口、950同轮steer、960报告问句误拦；保留真实学习内容保护。
+3. YUK948统一持续执行与服务端恢复；950同会话追加消息，禁止以先Stop/409拒绝替代。
+   先后端接纳/顺序执行与teaching/native session parity，再按新方案完成UI preflight和断线实际验收。
 4. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
 5. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。

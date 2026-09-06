@@ -105,6 +105,24 @@ describe('validateCopilotLearningContent', () => {
     expect(containsLearningQuestion('是否已证明 P？请证明 Q？')).toBe(true);
   });
 
+  it.each([
+    '请计算 2+2？答案是 4。',
+    'Solve 2+2? The answer is 4.',
+    '是否已证明 P？请计算 2+2？答案是 4。',
+  ])('validates a direct instruction even with its answer on the same line: %s', async (text) => {
+    expect(containsLearningQuestion(text)).toBe(true);
+    let validatorCalls = 0;
+    const result = await reviewCopilotLearningContent(text, '', 'inline-instruction-answer', {
+      db: {} as never,
+      runTaskFn: async () => {
+        validatorCalls += 1;
+        throw new Error('missing manifest must fail before paid validation');
+      },
+    });
+    expect(result.passed).toBe(false);
+    expect(validatorCalls).toBe(0);
+  });
+
   it('does not let completed wording bypass explicit question protections', () => {
     expect(containsLearningQuestion('题目：是否已证明 P？')).toBe(true);
     expect(containsLearningQuestion('1. 是否已证明 P？')).toBe(true);
