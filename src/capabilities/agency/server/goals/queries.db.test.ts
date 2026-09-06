@@ -6,10 +6,13 @@
 // now default to THIS resolved read: explicit → frozen passthrough; subject_live →
 // resolveSubjectKnowledgeIds per DISTINCT subject (one resolve per subject, Map-deduped).
 
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { knowledge } from '@/db/schema';
+import { event, goal, knowledge } from '@/db/schema';
+import { gatherAndFoldGoal } from '@/server/projections/goal';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { insertGoal, listActiveGoalsWithResolvedScope } from './queries';
+import { createGoalFromGenesis } from './commands';
+import { insertGoal, listActiveGoalsWithResolvedScope, updateGoalStatus } from './queries';
 
 const db = testDb();
 
@@ -153,5 +156,43 @@ describe('listActiveGoalsWithResolvedScope (YUK-603 goal-strand live read)', () 
       status: 'dormant',
     });
     expect(await listActiveGoalsWithResolvedScope(db)).toEqual([]);
+  });
+});
+
+describe('goal mutation command concurrency (YUK-952)', () => {
+  it('serializes two status writes and preserves both events, version +2, and fold parity', async () => {
+    const goalId = await createGoalFromGenesis(db, {
+      title: 'concurrent goal',
+      subject_id: null,
+      scope_knowledge_ids: ['kc-a'],
+      scope_mode: 'explicit',
+      sequence_hint: 0,
+      status: 'active',
+      source: 'manual',
+    });
+    const transitionAt = Date.now() + 1_000;
+    await Promise.all([
+      updateGoalStatus(db, goalId, 'dormant', new Date(transitionAt)),
+      updateGoalStatus(db, goalId, 'done', new Date(transitionAt + 1_000)),
+    ]);
+    const [row] = await db.select().from(goal).where(eq(goal.id, goalId));
+    const statusEvents = await db
+      .select({ id: event.id })
+      .from(event)
+      .where(
+        and(
+          eq(event.subject_kind, 'goal'),
+          eq(event.subject_id, goalId),
+          eq(event.action, 'experimental:goal_status_update'),
+        ),
+      );
+    expect(statusEvents).toHaveLength(2);
+    expect(row.version).toBe(2);
+    expect(row.status).toBe('done');
+    expect(gatherAndFoldGoal(db, goalId)).resolves.toEqual({
+      ...row,
+      scope_knowledge_ids: row.scope_knowledge_ids ?? [],
+      scope_mode: row.scope_mode,
+    });
   });
 });

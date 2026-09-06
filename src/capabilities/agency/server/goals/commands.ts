@@ -123,10 +123,15 @@ export async function createGoalFromGenesis(
   const now = input.now ?? new Date();
   const genesisEventId = newId();
   const snapshot = {
-    ...input,
     id,
+    title: input.title,
+    subject_id: input.subject_id ?? null,
+    scope_knowledge_ids: input.scope_knowledge_ids,
+    scope_mode: input.scope_mode ?? 'explicit',
+    sequence_hint: input.sequence_hint,
+    status: input.status ?? 'active',
+    source: input.source,
     source_ref: null,
-    now: undefined,
     created_at: now,
     updated_at: now,
     version: 0,
