@@ -418,10 +418,10 @@ describe('streamTask — YUK-590 terminal failure honesty', () => {
       fakeDb,
       expect.objectContaining({
         outcome: 'failed_permanent',
-        cost: 0.5,
+        cost: 0.000001305,
         tokens_in: 1,
         tokens_out: 1,
-        cost_basis: 'reported',
+        cost_basis: 'estimated',
       }),
     );
     expect(body).toContain('error_max_budget_usd');

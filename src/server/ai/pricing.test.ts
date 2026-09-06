@@ -8,6 +8,28 @@ function knownCost(model: string, inputTokens: number, outputTokens: number): nu
 }
 
 describe('localCostUsd', () => {
+  it.each([
+    ['mimo-v2.5', 0.0002856],
+    ['mimo-v2.5-pro', 0.0008772],
+  ])('uses the dated public per-model USD estimate for %s', (model, expected) => {
+    expect(
+      localCostUsd(model, {
+        inputTokens: 1000,
+        outputTokens: 500,
+        cacheReadTokens: 2000,
+        cacheCreationTokens: 3000,
+      }),
+    ).toBeCloseTo(expected, 12);
+  });
+
+  it('rejects each malformed bucket even if other buckets would offset it', () => {
+    for (const cacheReadTokens of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(
+        localCostUsd('mimo-v2.5-pro', { inputTokens: 1000, outputTokens: 500, cacheReadTokens }),
+      ).toBeNull();
+    }
+  });
+
   it('returns null for an unknown model instead of fabricating free usage', () => {
     expect(
       localCostUsd('definitely-not-a-real-model', { inputTokens: 1000, outputTokens: 1000 }),

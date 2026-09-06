@@ -37,7 +37,11 @@ import {
   copilotSessionContextDigest,
   shouldDeliverCopilotSessionContext,
 } from './live-session-context';
-import { COPILOT_TURN_CONTEXT_CODEC_VERSION, compileCopilotModelInput } from './live-turn-context';
+import {
+  COPILOT_TURN_CONTEXT_CODEC_VERSION,
+  compileCopilotModelInput,
+  compileCopilotSessionContext,
+} from './live-turn-context';
 import { isLivePrimaryViewArtifact } from './primary-view-reference';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
 import {
@@ -396,10 +400,8 @@ export function createCopilotExecutionOwner(
     const mode: 'cold' | 'resume' = resumeSessionId ? 'resume' : 'cold';
     const compiledModelPrompt = {
       text: compileCopilotModelInput(input, mode, {
-        includeSessionContext:
-          mode === 'cold' ||
-          !resumeSessionId ||
-          shouldDeliverCopilotSessionContext(resumeSessionId, contextDigest),
+        includeProposalFeedback:
+          !resumeSessionId || shouldDeliverCopilotSessionContext(resumeSessionId, contextDigest),
       }),
       codecVersion: COPILOT_TURN_CONTEXT_CODEC_VERSION,
       mode,
@@ -444,6 +446,10 @@ export function createCopilotExecutionOwner(
             },
           }
         : { sdkSession }),
+      nativeCompaction:
+        policy.kind === 'foreground'
+          ? { sessionContext: compileCopilotSessionContext(input) }
+          : undefined,
       onToolUse: (call) => {
         if (!shouldEmitToolUseForCaller(call.toolName, DOMAIN_TOOL_MCP_SERVER_NAME, callerActor)) {
           return;

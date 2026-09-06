@@ -3113,7 +3113,7 @@ describe('runCopilotChat — Agent SDK session persist/resume (YUK-936)', () => 
     expect(ctx.compiledModelPrompt?.text).not.toContain('不得重发的旧回答');
   });
 
-  it('delivers a session snapshot once per digest while ambient remains per-turn', async () => {
+  it('delivers the current learner snapshot every turn without replaying conversation history', async () => {
     const sdkSessionId = 'sdk_context_revision_unique';
     let storedSessionId: string | null = null;
     let header = '当前目标：边界条件 A';
@@ -3179,12 +3179,13 @@ describe('runCopilotChat — Agent SDK session persist/resume (YUK-936)', () => 
     );
 
     expect(prompts[0]).toContain('当前目标：边界条件 A');
-    expect(prompts[1]).toBe('第二轮');
+    expect(prompts[1]).toContain('当前目标：边界条件 A');
+    expect(prompts[1]).toContain('第二轮');
     expect(prompts[2]).toContain('当前目标：边界条件 B');
     expect(prompts[3]).toContain('/knowledge/graph');
-    expect(prompts[3]).not.toContain('当前目标：边界条件 B');
+    expect(prompts[3]).toContain('当前目标：边界条件 B');
     expect(prompts[4]).toContain('/knowledge/graph');
-    expect(prompts[4]).not.toContain('当前目标：边界条件 B');
+    expect(prompts[4]).toContain('当前目标：边界条件 B');
   });
 
   it('resume hit: binds explicit correction from product turns without a classifier attempt', async () => {

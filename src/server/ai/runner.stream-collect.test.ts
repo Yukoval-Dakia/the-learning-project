@@ -823,7 +823,8 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
       finishReason: 'error',
       partial: true,
       usage: { inputTokens: 14, outputTokens: 3 },
-      cost_usd: 0.25,
+      cost_usd: 0.0000069744,
+      cost_basis: 'estimated',
       error: expect.stringContaining('api_error_result http=429'),
     });
 
@@ -835,7 +836,8 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
         status: 'failure',
         finish_reason: 'error',
         usage: { inputTokens: 14, outputTokens: 3 },
-        cost_usd: 0.25,
+        cost_usd: 0.0000069744,
+        cost_basis: 'estimated',
         error_message: expect.stringContaining('api_error_result http=429'),
       }),
     );
@@ -844,10 +846,10 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
       fakeDb,
       expect.objectContaining({
         outcome: 'failed_retryable',
-        cost: 0.25,
+        cost: 0.0000069744,
         tokens_in: 14,
         tokens_out: 3,
-        cost_basis: 'reported',
+        cost_basis: 'estimated',
       }),
     );
   });
@@ -884,7 +886,8 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
       fakeDb,
       expect.objectContaining({
         outcome: 'failed_retryable',
-        cost: 0.1,
+        cost: 0.0059232,
+        cost_basis: 'estimated',
         tokens_in: 14_000,
         tokens_out: 800,
       }),

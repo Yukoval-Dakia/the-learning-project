@@ -5,6 +5,27 @@ import { ANTHROPIC_SUB_CONTRACT_REF, ATTEMPT_PRICEBOOK_VERSION } from './pricing
 const tokens = { inputTokens: 1000, outputTokens: 500 };
 
 describe('resolveAttemptCostTruth', () => {
+  it('does not mistake a positive SDK MiMo estimate for a provider invoice', () => {
+    const truth = resolveAttemptCostTruth({
+      provider: 'xiaomi',
+      model: 'mimo-v2.5-pro',
+      tokens: { inputTokens: 405, outputTokens: 389 },
+      reportedCostUsd: 0.01175,
+    });
+    expect(truth).toEqual({
+      basis: 'estimated',
+      amountUsd: 0.000514605,
+      ref: `pricebook:${ATTEMPT_PRICEBOOK_VERSION}/xiaomi/mimo-v2.5-pro`,
+    });
+    expect(
+      resolveAttemptCostTruth({
+        provider: 'xiaomi',
+        model: 'mimo-future',
+        tokens,
+        reportedCostUsd: 0.42,
+      }),
+    ).toEqual({ basis: 'unknown', amountUsd: null, ref: 'unpriced:xiaomi/mimo-future' });
+  });
   it('accepts Anthropic direct reported zero and positive amounts', () => {
     expect(
       resolveAttemptCostTruth({
