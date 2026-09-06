@@ -54,6 +54,7 @@
 - **学习会话（learning_session）**（ADR-0008 修订）：通用 session envelope。type ∈ `ingestion | review | conversation | tutor | explore | create`。一个 session 内的 event 流自然成 timeline。`type='conversation'` **替代** ADR-0004 原规划的独立 agent_sessions / agent_messages 表。
 - **AI 平等 actor**（ADR-0006 v2 核心原则）：event.actor_kind ∈ {'user', 'agent', 'cron', 'system'} —— AI 不是注释层，是和用户对等的事件发起者。Copilot 对话、Dreaming 夜间产出、Critique 自批改全部 first-class。
 - **事件链（event chaining）**：event.caused_by_event_id 把因果连成 DAG。可重放、可审计、可让 critique agent 作用在历史 event 上。
+- **事件对象（event subject）**：一次学习动作直接作用的对象，例如知识点、题目或另一条事件。同一条因果链可以经过不同事件对象；“事件对象不同”不表示跨学科，也不表示没有共同起因。
 - **核心 6+ action 严守 Zod + experimental:* 松守**（ADR-0006 v2 Option 折中）：已稳定的 `attempt / judge / propose / generate / review / rate / extract` 用 discriminated union 严守 payload；新交互用 `experimental:*` 命名空间先跑，稳了再 promote。
 
 ### 概念 → event 流映射（Phase 1c.1 已落地）

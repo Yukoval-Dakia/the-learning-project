@@ -15,6 +15,9 @@
   夹具初审P1和终文假绿门已修，唯一验证审通过（不是语义质量通过）；不追加第三轮。
   草稿PR1338已推923ecb22，仅CI验收，不可合并。后续reader v2在现有工具内分离事件/作答可用性，
   明确focal直子覆盖和未查询子树，修复非作答撤回状态；12DB/19unit/typecheck/build/lint通过，待actual。
+  第五次3a735ffc仍语义失败，$0.198463；累计944$0.75205318，当前余额$0.85277482。
+  已红绿修复3-step数据单元格被当计算表头的误拦；新增确定性observed_edges/对象ID比较，不增加查询。
+  本次13DB/22unit/typecheck/build/lint通过；同输入真实验收仍未完成，不宣称降本或语义通过。
 - AI finalization #1326、Goal #1327、Knowledge merge #1328、Ingestion completion #1329、
   ReviewSettlement #1332、测试精简 #1331/#1333 已经各自 exact-head CI 绿色并合并。
 - YUK-954 #1330：共享执行 owner，权限/校验/取消/原生子代理规则一份实现；
@@ -30,7 +33,7 @@
 - 实际输出：同输入 read 样本 input 至少降50.8%、费用至少降62.2%；仅限 synthetic。
   共享执行层新增实际回归$0.146376，截至958增量合计$0.395172；944后余额以上述最新账本为准。
   历史未计价超时/child仍未知；durable actual不是queue E2E。
-- Linear 939/940/941/942/952/953/954/955/956/957/958/959 Done；943/947为设计替代而Canceled。
+- Linear 939/940/941/942/946/952/953/954/955/956/957/958/959 Done；943/947为设计替代而Canceled。
 - 详细责任、验证与剩余边界见 docs/planning/2026-09-06-business-architecture-closeout.md。
   原始 the-learning-project 脏main始终保留，所有改动在隔离工作树。
 
@@ -40,6 +43,7 @@
    未取得真实终文质量证据前不合并、不关闭944。SDK原生长会话压缩仍属945未完成。
 2. YUK-946离线native SDK验证通过：首请求仅catalog，Skill调用后才出现body，真实模型费用$0。
    原eager-body前提已否证；不重建目录、不删除free-form quiz能力，不声称移除正文带来普通轮降本。
+   946已按原生能力验证收口Done，不代表实现了新目录或验证了生产模型选择。
 3. YUK-945同session compact/reinject→YUK-949成品选择→948显式Mission入口→950同轮steer。
    UI步骤另按设计预检；后端与纯测试可继续。不得用结束一个PR代替整个goal完成。
 4. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者和扩展成本；

@@ -111,8 +111,10 @@ function containsLearningSolution(text: string): boolean {
     /(?:^|\n)\s*(?:解[:：]|答案[:：]|解答[:：]|solution\b|answer\b)|(?:所以|因此|故|therefore)[^\n]{0,300}(?:答案|=)/im;
   const arithmeticEquation =
     /(?:^|\n)\s*(?:\d+(?:\.\d+)?|\d*[a-z](?:\^\d+)?)(?:\s*[+\-×÷*/^]\s*(?:\d+(?:\.\d+)?|\d*[a-z](?:\^\d+)?))+\s*=\s*[-+]?(?:\d+(?:\.\d+)?|\d*[a-z](?:\^\d+)?)(?:\s*[。.;；]|(?=\s*(?:\n|$)))/im;
+  // A step label must be in a Markdown header (followed by the delimiter row),
+  // not a data cell such as "3-step diagnostics" in an event comparison report.
   const computationTableHeader =
-    /(?:^|\n)\s*\|[^\n]*(?:step|iteration|迭代|步数|第.?步)[^\n]*\|(?=\n|$)/im;
+    /(?:^|\n)\s*\|[^\n]*(?:\bsteps?\b|\biterations?\b|迭代|步数|第.?步)[^\n]*\|[^\S\r\n]*\r?\n[^\S\r\n]*\|(?:[^\S\r\n]*:?-+:?[^\S\r\n]*\|)+[^\S\r\n]*(?=\r?\n|$)/im;
   const numericTableRowCount = (text.match(/(?:^|\n)\s*\|[^\n]*\d[^\n]*\|(?=\n|$)/gm) ?? []).length;
   return (
     explicitSolution.test(text) ||

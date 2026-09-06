@@ -1,9 +1,9 @@
 {
   "status": "not_accepted",
-  "reason": "Four full five-read attempts remain not accepted. Last two completed authoritatively but manual review found contradictory cross-subject claims, unsupported unique differences and fabricated downstream topology. Stop wording-only paid retries; inspect actual context and reader representation before another attempt.",
+  "reason": "Five full five-read attempts remain not accepted. Reader v2 fixed lookup/coverage ambiguity but the fifth still confuses event subject with causal root and overclaims probe projection identity; a separate computation-table false positive blocked delivery and was reproduced/fixed without another model call. No semantic pass or merge.",
   "cost_basis": "mixed: first estimated, second reported",
-  "additional_cost_usd": 0.55359018,
-  "remaining_authorized_usd": 1.05123782,
+  "additional_cost_usd": 0.75205318,
+  "remaining_authorized_usd": 0.85277482,
   "additional_authorization_usd": 1,
   "authorization_note": "Owner explicitly allowed up to $1 more after the third attempt, for verification after a concrete fix.",
   "second_run_transcript_diagnostic": {
@@ -1035,6 +1035,248 @@
           "Some exact IDs/times/numeric facts retained"
         ],
         "runtime_limitation": "88.843s, near 90s ceiling; not evidence of stable latency."
+      }
+    },
+    {
+      "protocol_version": 1,
+      "phase": "running",
+      "exact_head": "3a735ffca86852f52536e175f7e9186a842b01ea",
+      "dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "harness_sha256": "b89de3cdb0a92aaa2ce17bbd8dd3abb97a4537feb4eccde9377a48458484e7ed",
+      "provider": "xiaomi",
+      "model": "mimo-v2.5-pro",
+      "credential_source": "/Volumes/YukovalSBak/yukoval-projects/the-learning-project/.env",
+      "baseline_record": false,
+      "campaign_cost_limit_usd": 1.05123782,
+      "case_cost_reserves_usd": {
+        "cold": 0.25,
+        "resume": 0.25,
+        "context-change": 0.25,
+        "correction": 0.25,
+        "read": 0.25,
+        "claims": 0.3,
+        "proposal": 0.25,
+        "semantic": 0.75,
+        "native-task": 0.5,
+        "durable": 0.25,
+        "cancel": 0
+      },
+      "cases": [
+        {
+          "name": "claims",
+          "input_sha256": "7feac2ae69cee806e30bdad5607eeda30a317cf43334f48a92f35d9b190ff0b7",
+          "output_sha256": "98bb04ab3923099b1d88c74800c75ad150a2ce5f5ee95269f6af337f4818ec66",
+          "input": {
+            "session_id": "se5i0vcls8bde9nfwvummr3z",
+            "user_message": "请调用以下五项读取，参数原样使用；本次只检查这些已有观测，不调用其它工具、不出题、不写入。[{\"name\":\"query_events\",\"input\":{\"filter\":{\"limit\":20,\"subjectId\":\"kc_yuk792_canary_20260731c\"}}},{\"name\":\"get_attempt_context\",\"input\":{\"causalLimit\":10,\"timelineLimit\":10,\"attemptEventId\":\"conjecture_yuk792_canary_20260731c\"}},{\"name\":\"get_attempt_context\",\"input\":{\"causalLimit\":10,\"attemptEventId\":\"q2lm07istehqzj8ar2slphpy\"}},{\"name\":\"get_attempt_context\",\"input\":{\"causalLimit\":10,\"attemptEventId\":\"sg6aqgpq6l3wp5maslkvz12j\"}},{\"name\":\"get_review_due\",\"input\":{\"limit\":50,\"includeReason\":true}}]\n依据结果逐项核对：A01是否已经证明没有跨subject的后续probe/review？conjecture的必要/充分激活条件能否裁决？B/C两条链是否完全同构、能否确定唯一差异？复习队列是否已清空，pending/in-progress是否为0？同时列出已知的直接因果边、至少两个真实事件ID及相应数值或时间，不能只泛泛回答无法裁决。",
+            "triggered_by": "chat"
+          },
+          "output": "这份学习内容未完成独立校验，暂不展示。请重试，我会先校验再发送。",
+          "root_task_run_id": "copilot_task_s7ryikgyddsjqi6ag45rzejx",
+          "terminal_output": "五项读取全部返回，以下是逐项核对结果。\n\n---\n\n## A01：是否已证明没有跨 subject 的后续 probe/review\n\n**不能完全证明，但已观测范围内无跨 subject 后续。**\n\n`query_events` 对 subjectId=`kc_yuk792_canary_20260731c` 返回 3 行，全部 subject_id 一致，无跨 subject 事件。但 `claim_boundaries.supports_cross_subject_causal_descendant_claim: false`，`cross_stage_claim_status: blocked_cross_subject_relation_followup_required`，说明该工具本身不支持\"没有跨 subject 后代\"这一否定结论。\n\n从 `conjecture_yuk792_canary_20260731c` 的 `causal_neighborhood`（direct_children=2，complete=true）来看，两个子节点是：\n- `sg6aqgpq6l3wp5maslkvz12j`（probe_result，question subject，2026-07-31T02:45:58Z）\n- `weitr0eg3au983xxf4bpowkr`（rate → accept，2026-07-31T01:33:28Z）\n\n两者均 caused_by 同一 conjecture，未出现跨 subject 的 direct children。但 `descendant_subtrees: not_observed`，更深层级的子树未读取。\n\n---\n\n## Conjecture 激活条件：能否裁决\n\n**不能裁决必要/充分条件。**\n\n`conjecture_yuk792_canary_20260731c` 的已观测字段：\n- `cause_category: concept_misunderstanding`\n- `recurrence_gate_satisfied: true`\n- `discriminating: true`\n- `probe_quality.passed: true, attempt_count: 1`\n- `claim_present: true`, `diagnostic_contract_present: true`, `primary_probe_contract_present: true`, `followup_probe_contract_present: true`\n\n但 `claim_support` 明确声明：\n- `activation_policy: not_observed`\n- `necessary_conditions: not_supported`\n- `sufficient_conditions: not_supported`\n\n这些字段的存在只是已投影的 payload 字段，不能推导为充分或必要条件满足。redacted_payload_groups 包含 6 类内容（anti_guilt_metrics / execution_metadata / free_text / future_diagnostics / private_metadata / review_prose），未投影部分不可推断。\n\n---\n\n## B/C 两条链：是否完全同构、能否确定唯一差异\n\n**不完全同构，已可确定至少 2 处结构差异。**\n\n| 维度 | Chain B (`q2lm07is…`) | Chain C (`sg6aqgpq…`) |\n|---|---|---|\n| probe_result event | `q2lm07istehqzj8ar2slphpy` (seq=30) | `sg6aqgpq6l3wp5maslkvz12j` (seq=37) |\n| caused_by | `conjecture_yuk792_canary_20260731**b**` (seq=23, 2026-07-31T00:31:14Z) | `conjecture_yuk792_canary_20260731**c**` (seq=34, 2026-07-31T01:33:04Z) |\n| parent knowledge_id | `kc_yuk792_canary_20260731b` | `kc_yuk792_canary_20260731c` |\n| probe question | `v7glkid9penckj7zm4i5ub4q` | `kbpvpcl6o9oep5s1e2oav5s0` |\n| downstream child 1 | `r7vz1nhfa…` = **intervention_preparation_failed** (failure, code=`author_output_invalid`, 2026-07-31T01:04:11Z) | `ee4x94n2w…` = **intervention_activated** (success, method=`refutation`, 3-step diagnostics, 2026-07-31T02:47:43Z) |\n| downstream child 2 | prediction_score (seq=46, discriminating=true) | prediction_score (seq=47, discriminating=true) |\n\n**共同点**：两者 probe_result 的 evidence 结构完全一致（outcome=0, resolution=evidence_for, answer_result=incorrect, target_error_match=matched, reason_code=target_error_signature_matched, discriminating=true, score_basis=single_point）。\n\n**关键差异**：\n1. **下游分支完全不同**：B 的 intervention 准备失败（`failure_code: author_output_invalid`）；C 的 intervention 成功激活，生成了 immediate（due 2026-07-31T02:47:43Z）、delayed（due 2026-08-07）、transfer（due 2026-08-21）三个诊断节点。\n2. **上游 conjecture 不同**：suffix _b vs _c，不同的 knowledge_id（`kc_…20260731b` vs `kc_…20260731c`），不同的 dispatch_seq（23 vs 34），时间差约 1 小时 2 分钟。\n\n两条链的 probe 环节同构，但从 probe 往下游已产生不可合并的分歧。\n\n---\n\n## 复习队列：是否已清空、pending/in-progress 是否为 0\n\n**已返回 actionable 行为 0，但不能证明队列清空或 pending/in-progress 为 0。**\n\n- `queue_assertion.cleared: null`（不支持\"已清空\"断言）\n- `actionable_due_returned_count: 0`\n- `queue_coverage.completeness: unknown`，`supports_exhaustive_zero_claim: false`\n- `entity_status_coverage`: learning_item=`not_observed`, intervention=`not_observed`\n- `queue_assertion.queued_entity_count: null`, `in_progress_entity_count: null`, `failed_entity_count: null`\n\n已知的 FSRS 投影（future_projections，complete=true，2/2）：\n- `intervention:…:v1:delayed` → due **2026-08-07T02:51:12.154Z**（state=new, reps=0）\n- `intervention:…:v1:transfer` → due **2026-08-21T02:51:12.154Z**（state=new, reps=0）\n\n两项均为 future timing，当前不属于 due-now 范围。\n\n---\n\n## 已知直接因果边与真实事件 ID / 数值\n\n| 因果边 (caused_by) | 子事件 ID | 子事件 action | 关键数值/时间 |\n|---|---|---|---|\n| `conjecture_yuk792_canary_20260731c` (seq=34) | `sg6aqgpq6l3wp5maslkvz12j` (seq=37) | probe_result | outcome=0, resolution=evidence_for, created 2026-07-31T02:45:58.045Z |\n| `conjecture_yuk792_canary_20260731c` (seq=34) | `weitr0eg3au983xxf4bpowkr` (seq=35) | rate | rating=accept, created 2026-07-31T01:33:28.365Z |\n| `conjecture_yuk792_canary_20260731b` (seq=23) | `q2lm07istehqzj8ar2slphpy` (seq=30) | probe_result | outcome=0, resolution=evidence_for, created 2026-07-31T01:02:19.777Z |\n| `sg6aqgpq6l3wp5maslkvz12j` (seq=37) | `ee4x94n2wt1o8sh8z6zxn0yj` (seq=38) | intervention_activated | success, 3 diagnostics (immediate due 2026-07-31T02:47:43Z, delayed due 2026-08-07, transfer due 2026-08-21) |\n| `q2lm07istehqzj8ar2slphpy` (seq=30) | `r7vz1nhfaswxtjqlc0oe0ub5` (seq=31) | intervention_preparation_failed | failure, code=author_output_invalid, created 2026-07-31T01:04:11.786Z |\n\n所有 5 条因果边均来自 `causal_neighborhood.direct_children`（complete=true），`caused_by_event_id` 字段为唯一直接因果依据。",
+          "terminal_sha256": "4e409bcc1486496d760d2083baac69c81e48d2d215c90dbb47b9741c13f4d7b5",
+          "task_runs": [
+            {
+              "id": "copilot_task_s7ryikgyddsjqi6ag45rzejx",
+              "kind": "CopilotTask",
+              "provider": "xiaomi",
+              "model": "mimo-v2.5-pro",
+              "usage": {
+                "inputTokens": 39287,
+                "outputTokens": 3180,
+                "thinkingBlocks": 2,
+                "thinkingCharacters": 2914
+              },
+              "cost": 0.198463,
+              "costBasis": "reported",
+              "status": "success",
+              "finishReason": "end_turn",
+              "compiledPromptHash": "3e7e36f2d111134e54fdfb0d4f45770fc0a9c2b7fce130c455440d2783abb123",
+              "promptCodecMode": "cold",
+              "promptContextDigest": "374c798b9fbc747f0c0ae604bfb42baddf89ae021969cf26320627d8e8810d50"
+            }
+          ],
+          "tools": [
+            {
+              "name": "mcp__loom__query_events",
+              "effect": null,
+              "error": null
+            },
+            {
+              "name": "query_events",
+              "effect": "read",
+              "error": null
+            },
+            {
+              "name": "mcp__loom__get_attempt_context",
+              "effect": null,
+              "error": null
+            },
+            {
+              "name": "get_attempt_context",
+              "effect": "read",
+              "error": null
+            },
+            {
+              "name": "mcp__loom__get_attempt_context",
+              "effect": null,
+              "error": null
+            },
+            {
+              "name": "get_attempt_context",
+              "effect": "read",
+              "error": null
+            },
+            {
+              "name": "mcp__loom__get_attempt_context",
+              "effect": null,
+              "error": null
+            },
+            {
+              "name": "get_attempt_context",
+              "effect": "read",
+              "error": null
+            },
+            {
+              "name": "mcp__loom__get_review_due",
+              "effect": null,
+              "error": null
+            },
+            {
+              "name": "get_review_due",
+              "effect": "read",
+              "error": null
+            }
+          ],
+          "session_agent_sdk_id": null,
+          "cumulative_cost_usd": 0.198463,
+          "reply_finalization": {
+            "assurance": "execution_trace_bound",
+            "correction": "normal",
+            "primary_view": "absent",
+            "reply_sha256": "98bb04ab3923099b1d88c74800c75ad150a2ce5f5ee95269f6af337f4818ec66",
+            "trace_sha256": "0bc5ad7a8559c19d14ff0d7bca66b4cb235561392720bd28c03b1fbe62d32a5a",
+            "candidate_sha256": "4e409bcc1486496d760d2083baac69c81e48d2d215c90dbb47b9741c13f4d7b5",
+            "learning_content": "blocked",
+            "protocol_version": 1,
+            "root_task_run_id": "copilot_task_s7ryikgyddsjqi6ag45rzejx",
+            "trace_call_count": 5,
+            "proposal_disclosure": "none",
+            "observed_completed_tool_use_ids": [
+              "call_adb02d7f1db6448b92b6ea43",
+              "call_684034e8f234408dbc5ff209",
+              "call_115d585e71e846998c9250e2",
+              "call_a82c303ea1ab455bba8d5f7a",
+              "call_49eacaa8c2624f3692753186"
+            ]
+          },
+          "semantic_review": "manual_required_not_proven_by_trace"
+        }
+      ],
+      "sdk_outcomes": [
+        {
+          "task_run_id": "copilot_task_s7ryikgyddsjqi6ag45rzejx",
+          "elapsed_ms": 70511,
+          "finish_reason": "end_turn",
+          "partial": false,
+          "terminal_present": true,
+          "error_subtype": null
+        }
+      ],
+      "claim_fixture": {
+        "mode": "real_model_fixed_typed_readers_not_live_database_quality",
+        "observations_sha256": "9d06bd08d16d3e2bd9dbae7e4db1c39c343fbcc8e62057f15cdfe64bb6d1c112",
+        "requests": [
+          {
+            "name": "query_events",
+            "input": {
+              "filter": {
+                "limit": 20,
+                "subjectId": "kc_yuk792_canary_20260731c"
+              }
+            }
+          },
+          {
+            "name": "get_attempt_context",
+            "input": {
+              "causalLimit": 10,
+              "timelineLimit": 10,
+              "attemptEventId": "conjecture_yuk792_canary_20260731c"
+            }
+          },
+          {
+            "name": "get_attempt_context",
+            "input": {
+              "causalLimit": 10,
+              "attemptEventId": "q2lm07istehqzj8ar2slphpy"
+            }
+          },
+          {
+            "name": "get_attempt_context",
+            "input": {
+              "causalLimit": 10,
+              "attemptEventId": "sg6aqgpq6l3wp5maslkvz12j"
+            }
+          },
+          {
+            "name": "get_review_due",
+            "input": {
+              "limit": 50,
+              "includeReason": true
+            }
+          }
+        ],
+        "calls": [
+          {
+            "name": "query_events",
+            "input_sha256": "26d08ea36f7d9317616100cc055012ac3d84a6aed0c1950b39acadeb304aaae0",
+            "output_sha256": "0872db340460dc55b2e02a1642b7b13c18a11c7c77e16c6bc2a31815fb9f3a1c"
+          },
+          {
+            "name": "get_attempt_context",
+            "input_sha256": "e14612bdefb992520f04b0ffc521df4fa81ca2eb155ce2319a615774d6b33597",
+            "output_sha256": "f45489aa45a3223cd4e80b4677dc289cbf3bb092130d7a5e2431016c4d6c5a37"
+          },
+          {
+            "name": "get_attempt_context",
+            "input_sha256": "5d7e5b3b21543a4cbbc1991f52a2d9412b40eac84cd3c8026771cd00bc5dfa89",
+            "output_sha256": "c4f1c7f911e7929030088ad4f870f39cb28c9ec38e379bceba8ef92a586c5054"
+          },
+          {
+            "name": "get_attempt_context",
+            "input_sha256": "1c6379d9934f54969a3654f126cffcdb3d42e6054f3aefa656e622659ae61fb8",
+            "output_sha256": "effc84c6add4d57b284974249d89338da8318c9977ebcd255a6601a6a8e8fbd2"
+          },
+          {
+            "name": "get_review_due",
+            "input_sha256": "0efa40ffed4de8a9e4ca274132f5c465b3f0f2a247adc8a1bd3eb34f39a209d1",
+            "output_sha256": "cd352a83a5c41c36bf50b130adad304274565059df688f594040bb8849d2c36a"
+          }
+        ]
+      },
+      "limitations": [
+        "direct durable handler is not pg-boss queue E2E",
+        "structural assertions do not establish factual entailment or semantic correctness"
+      ],
+      "fixture_readiness": {
+        "registered_tools": ["query_knowledge", "propose_knowledge_mutation"],
+        "foreground_session_id": "se5i0vcls8bde9nfwvummr3z"
+      },
+      "manual_semantic_review": {
+        "status": "failed",
+        "findings": [
+          "A01 still denies cross-subject direct children even while listing the conjecture mind_model and probe question with distinct event subject IDs. A common caused_by root does not make their event subjects equal.",
+          "Asserts probe evidence structures are completely identical despite non-exhaustive projections and different visible optional keys.",
+          "Delivery was blocked because the learning-content detector treated 3-step diagnostics in a data cell as a computation-table header; not a passed visible reply."
+        ],
+        "passed_facets": [
+          "One model, all five exact reads, authoritative SDK terminal",
+          "Reader v2 no longer reports existing typed non-answer events as unsupported_event",
+          "Queue null/unknown remained distinct from zero",
+          "Some exact causal edges, source IDs/times and intervention difference retained"
+        ],
+        "free_reclassification_check": "After requiring a computation label in the actual Markdown header before a delimiter row, the archived full terminal returns requires_learning_validation=false. Targeted old-code test reproduced true; new tests preserve genuine numeric iteration and question/solution checks. No model call used for this check.",
+        "runtime_limitation": "70.511s sample; does not establish stable latency or semantic quality."
       }
     }
   ]

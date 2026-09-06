@@ -39,5 +39,7 @@ AI-driven框架对齐以v0.3框架文档的共享SubjectProfile、统一Judge/Pr
 - `answer_activity_status`独立说明available/not_applicable/unavailable；未知或无效作答不伪造attempt。
 - inactive先于非作答分支判定，保留撤回/替代身份和原payload/redaction保护。
 - 因果coverage携带`focal_event_id`、`scope=focal_event_direct_children_only`、`descendant_subtrees=not_observed`。
+- `observed_edges`仅由已返回且caused_by匹配的parent→focal、focal→child生成；`different_subject_ids`
+  由两端事件对象ID确定性计算（任一未知则null），不把同起因或同学科当作同一事件对象。
 - 保持原工具/输入名、查询次数、源事实、兼容空字段及MCP适配层；不新增工具或第二套证据处理系统。
 - 原actual证据不改写；新版夹具仅迁移上述合同元数据，原查询参数和事件事实不变。

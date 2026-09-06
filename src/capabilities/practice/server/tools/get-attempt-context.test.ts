@@ -419,6 +419,45 @@ describe('getAttemptContextTool', () => {
     });
   });
 
+  it('distinguishes event targets without inventing missing-parent or unrelated edges', async () => {
+    for (const [id, target, cause] of [
+      ['scope_root', 'question_alpha', 'missing_parent'],
+      ['same_target', 'question_alpha', 'scope_root'],
+      ['different_target', 'scope_root', 'scope_root'],
+      ['unrelated_same_target', 'question_alpha', null],
+    ] as const) {
+      await writeEvent(testDb(), {
+        id,
+        session_id: null,
+        actor_kind: 'system',
+        actor_ref: 'reader_scope_fixture',
+        action: 'experimental:scope_observation',
+        subject_kind: 'event',
+        subject_id: target,
+        caused_by_event_id: cause,
+        outcome: 'success',
+        payload: { nested: { source: 'scope fixture', observations: [17, 23, 41] } },
+      });
+    }
+    const output = await getAttemptContextTool.execute(ctx(), { attemptEventId: 'scope_root' });
+    expect(output.causal_neighborhood.parent).toBeNull();
+    expect(output.causal_neighborhood.observed_edges).toHaveLength(2);
+    expect(output.causal_neighborhood.observed_edges).toEqual(
+      expect.arrayContaining([
+        {
+          cause_event_id: 'scope_root',
+          effect_event_id: 'same_target',
+          different_subject_ids: false,
+        },
+        {
+          cause_event_id: 'scope_root',
+          effect_event_id: 'different_target',
+          different_subject_ids: true,
+        },
+      ]),
+    );
+  });
+
   it('reports an inactive exact attempt with its correction identity instead of hiding it', async () => {
     await seedAttemptScenario('att_retracted', 'q_retracted');
     await writeEvent(testDb(), {
@@ -1196,6 +1235,25 @@ describe('getAttemptContextTool', () => {
     // equivalence, even when all visible probe fields agree.
     expect(probe.causal_neighborhood.coverage.complete).toBe(true);
     expect(probe.lookup.status).toBe('found');
+    expect(probe.causal_neighborhood.observed_edges).toEqual(
+      expect.arrayContaining([
+        {
+          cause_event_id: 'conjecture_chain_rule',
+          effect_event_id: 'probe_result_chain_rule',
+          different_subject_ids: true,
+        },
+        {
+          cause_event_id: 'probe_result_chain_rule',
+          effect_event_id: 'intervention_chain_activated',
+          different_subject_ids: true,
+        },
+      ]),
+    );
+    expect(
+      probe.causal_neighborhood.observed_edges.filter(
+        (edge) => edge.cause_event_id === 'intervention_chain_activated',
+      ),
+    ).toEqual([]);
     expect(probe.answer_activity_status).toBe('not_applicable');
     expect(probe.causal_neighborhood.coverage).toMatchObject({
       focal_event_id: 'probe_result_chain_rule',
@@ -1896,6 +1954,7 @@ describe('getAttemptContextTool', () => {
         causal_neighborhood: {
           parent: null,
           direct_children: [],
+          observed_edges: [],
           relation_semantics: 'direct_children_only',
           coverage: {
             focal_event_id: 'att_abcdef123',

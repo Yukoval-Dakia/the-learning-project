@@ -71,11 +71,29 @@ describe('validateCopilotLearningContent', () => {
     expect(copilotLearningContentRequiresValidation(reply)).toBe(false);
   });
 
-  it('requires validation for an unlabeled iterative numeric table', () => {
-    const reply = ['| 迭代步数 | x |', '| --- | ---: |', '| 1 | 0.5 |', '| 2 | 0.25 |'].join('\n');
+  it('does not mistake a diagnostic step count in table data for a computation header', () => {
+    const reply = [
+      '已读取两个 probe 的直接子事件；未查询孙代，不能裁决整条链是否终止。',
+      '| 维度 | Chain B | Chain C |',
+      '| --- | --- | --- |',
+      '| downstream child 1 | intervention_preparation_failed (seq=31) | intervention_activated (seq=38), 3-step diagnostics |',
+      '| downstream child 2 | prediction_score (seq=46) | prediction_score (seq=47) |',
+      '隐藏字段不支持完全同构或唯一差异；当前 due 行为 0，但 queued/in_progress 均未观测。',
+    ].join('\n');
 
-    expect(copilotLearningContentRequiresValidation(reply)).toBe(true);
+    expect(copilotLearningContentRequiresValidation(reply)).toBe(false);
   });
+
+  it.each(['迭代步数', 'Step', 'Iteration'])(
+    'requires validation for a numeric %s table',
+    (label) => {
+      const reply = [`| ${label} | x |`, '| --- | ---: |', '| 1 | 0.5 |', '| 2 | 0.25 |'].join(
+        '\n',
+      );
+
+      expect(copilotLearningContentRequiresValidation(reply)).toBe(true);
+    },
+  );
 
   it('fails closed when an independent validator finds a contradictory question pack', async () => {
     const result = await validateCopilotLearningContent(

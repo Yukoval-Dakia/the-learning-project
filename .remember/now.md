@@ -26,6 +26,11 @@ Owner 已授权 AI pipeline 与基于1e61da8d报告的全项目业务封装/测�
   已存在非作答不再报unsupported_event；inactive优先于non-answer；coverage明确focal id/直子/未查子树。
   保留原queries/事实/隐藏字段/兼容空字段。13项fixture去掉版本/状态/coverage元数据后与a8cfd734逐字同构。
   12DB+19unit/typecheck/build/lint通过；须再跑同一五读取actual，当前资金$1.05123782。
+- 第五次3a735ffc实际70.511s/$0.198463，权威终文仍混淆subject对象与共同起因、过度断言probe一致。
+  学习校验还被数据单元格3-step diagnostics误触；已用原始终文免费复现/修正（不是语义通过）。
+  944累计$0.75205318，余额$0.85277482。当前新增observed_edges确定性cause/effect配对及对象ID比较，
+  不增加查询；13DB+22unit/typecheck/build/lint通过，需原五读取actual。blocked最终回复不再被harness接受。
+  946已Done：native目录→调用后正文已有实测，不移除现有quiz可见性，不建第二套目录。
   版本证据2026-09-06-claim-context-actual.json；停止无诊断付费重试，不缩小五read质量要求。
 - reviewer review_claim_context初审2P1均属harness：额外tools未隔离、缺失reader未在付费前检查；已修。
   另已要求claims显式budget、拒绝无terminal/额外model/tool，并新增SDK安全子类型/耗时记录。

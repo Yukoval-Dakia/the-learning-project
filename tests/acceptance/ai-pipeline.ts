@@ -777,6 +777,8 @@ async function main(): Promise<void> {
       const latestEvidence = caseEvidence.at(-1);
       if (latestEvidence) latestEvidence.reply_finalization = receipt;
       if (caseName === 'claims') {
+        if (receipt?.learning_content === 'blocked')
+          throw new Error('claims: finalization blocked the authoritative reply');
         if (!terminals.get(result.task_run_id)?.trim())
           throw new Error(
             'claims: no authoritative model terminal; a safe failure reply is not acceptance',

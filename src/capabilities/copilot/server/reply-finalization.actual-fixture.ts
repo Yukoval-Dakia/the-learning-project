@@ -285,6 +285,18 @@ export const REALISTIC_EVIDENCE_TRACE = [
         returned_count: 0,
       },
       causal_neighborhood: {
+        observed_edges: [
+          {
+            cause_event_id: 'conjecture_yuk792_canary_20260731c',
+            effect_event_id: 'sg6aqgpq6l3wp5maslkvz12j',
+            different_subject_ids: true,
+          },
+          {
+            cause_event_id: 'conjecture_yuk792_canary_20260731c',
+            effect_event_id: 'weitr0eg3au983xxf4bpowkr',
+            different_subject_ids: true,
+          },
+        ],
         parent: null,
         coverage: {
           focal_event_id: 'conjecture_yuk792_canary_20260731c',
@@ -445,6 +457,23 @@ export const REALISTIC_EVIDENCE_TRACE = [
         returned_count: 0,
       },
       causal_neighborhood: {
+        observed_edges: [
+          {
+            cause_event_id: 'conjecture_yuk792_canary_20260731b',
+            effect_event_id: 'q2lm07istehqzj8ar2slphpy',
+            different_subject_ids: true,
+          },
+          {
+            cause_event_id: 'q2lm07istehqzj8ar2slphpy',
+            effect_event_id: 'r7vz1nhfaswxtjqlc0oe0ub5',
+            different_subject_ids: true,
+          },
+          {
+            cause_event_id: 'q2lm07istehqzj8ar2slphpy',
+            effect_event_id: 'prediction_score:q2lm07istehqzj8ar2slphpy',
+            different_subject_ids: true,
+          },
+        ],
         parent: {
           action: 'experimental:proposal',
           outcome: 'partial',
@@ -655,6 +684,23 @@ export const REALISTIC_EVIDENCE_TRACE = [
         returned_count: 0,
       },
       causal_neighborhood: {
+        observed_edges: [
+          {
+            cause_event_id: 'conjecture_yuk792_canary_20260731c',
+            effect_event_id: 'sg6aqgpq6l3wp5maslkvz12j',
+            different_subject_ids: true,
+          },
+          {
+            cause_event_id: 'sg6aqgpq6l3wp5maslkvz12j',
+            effect_event_id: 'ee4x94n2wt1o8sh8z6zxn0yj',
+            different_subject_ids: true,
+          },
+          {
+            cause_event_id: 'sg6aqgpq6l3wp5maslkvz12j',
+            effect_event_id: 'prediction_score:sg6aqgpq6l3wp5maslkvz12j',
+            different_subject_ids: true,
+          },
+        ],
         parent: {
           action: 'experimental:proposal',
           outcome: 'partial',
@@ -1168,6 +1214,18 @@ export const REALISTIC_EVIDENCE_TRACE = [
         returned_count: 1,
       },
       causal_neighborhood: {
+        observed_edges: [
+          {
+            cause_event_id: 'si6y0w14iihyogdifj7w60c1',
+            effect_event_id: 'si6y0w14iihyogdifj7w60c1:checkpoint:fsrs',
+            different_subject_ids: true,
+          },
+          {
+            cause_event_id: 'si6y0w14iihyogdifj7w60c1',
+            effect_event_id: 'al4jmr463c173csm8c6x45hs',
+            different_subject_ids: true,
+          },
+        ],
         parent: null,
         coverage: {
           focal_event_id: 'si6y0w14iihyogdifj7w60c1',
@@ -1298,6 +1356,13 @@ export const REALISTIC_EVIDENCE_TRACE = [
         returned_count: 0,
       },
       causal_neighborhood: {
+        observed_edges: [
+          {
+            cause_event_id: 'si6y0w14iihyogdifj7w60c1',
+            effect_event_id: 'al4jmr463c173csm8c6x45hs',
+            different_subject_ids: true,
+          },
+        ],
         parent: {
           action: 'review',
           outcome: 'success',

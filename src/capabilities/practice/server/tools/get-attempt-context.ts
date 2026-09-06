@@ -354,6 +354,13 @@ const OutputSchema = z.object({
   causal_neighborhood: z.object({
     parent: CausalEventRefSchema.nullable(),
     direct_children: z.array(CausalEventRefSchema),
+    observed_edges: z.array(
+      z.object({
+        cause_event_id: z.string(),
+        effect_event_id: z.string(),
+        different_subject_ids: z.boolean().nullable(),
+      }),
+    ),
     relation_semantics: z.literal('direct_children_only'),
     coverage: z.object({
       focal_event_id: z.string(),
@@ -381,6 +388,8 @@ const DESCRIPTION = [
   '- causal_neighborhood contains the exact parent and direct children only. It does not call',
   '  same-question history causal. Check coverage and each event correction_state before treating',
   '  any parent/child evidence as current.',
+  '- observed_edges pairs returned causes/effects. different_subject_ids compares event target ids,',
+  '  not school subjects or causal roots; null means a target id is unknown.',
   '- payload_present reports whether persisted JSON exists. evidence is only a typed safe projection:',
   '  evidence=null never means the stored payload was null. payload_projection_exhaustive=false is',
   '  explicit for every event. Inspect payload_projection_status and redacted_payload_groups;',
@@ -980,6 +989,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   const noCausal: Output['causal_neighborhood'] = {
     parent: null,
     direct_children: [],
+    observed_edges: [],
     relation_semantics: 'direct_children_only',
     coverage: {
       focal_event_id: input.attemptEventId,
@@ -1008,11 +1018,30 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     .where(inArray(event.id, [...new Set(chainEvents.map((entry) => entry.id))]));
   const rawPayloadById = new Map(rawPayloadRows.map((row) => [row.id, row.payload]));
   const directChildren = chain.caused_events.slice(0, causalLimit);
+  const observed = eventRef(focal, rawPayloadById.get(focal.id));
+  const parent = chain.caused_by
+    ? eventRef(chain.caused_by, rawPayloadById.get(chain.caused_by.id))
+    : null;
+  const children = directChildren.map((entry) => eventRef(entry, rawPayloadById.get(entry.id)));
+  const pairs = [
+    ...(parent && observed.caused_by_event_id === parent.event_id
+      ? [[parent, observed] as const]
+      : []),
+    ...children
+      .filter((child) => child.caused_by_event_id === observed.event_id)
+      .map((child) => [observed, child] as const),
+  ];
   const causal: Output['causal_neighborhood'] = {
-    parent: chain.caused_by
-      ? eventRef(chain.caused_by, rawPayloadById.get(chain.caused_by.id))
-      : null,
-    direct_children: directChildren.map((entry) => eventRef(entry, rawPayloadById.get(entry.id))),
+    parent,
+    direct_children: children,
+    observed_edges: pairs.map(([cause, effect]) => ({
+      cause_event_id: cause.event_id,
+      effect_event_id: effect.event_id,
+      different_subject_ids:
+        cause.subject_id === null || effect.subject_id === null
+          ? null
+          : cause.subject_id !== effect.subject_id,
+    })),
     relation_semantics: 'direct_children_only',
     coverage: {
       focal_event_id: focal.id,
@@ -1025,10 +1054,6 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       complete: chain.caused_events.length <= directChildren.length,
     },
   };
-  const observed: z.infer<typeof ExactEventIdentitySchema> = eventRef(
-    focal,
-    rawPayloadById.get(focal.id),
-  );
   if (focal.correction_status.state !== 'active') {
     return emptyOutput(input, 'inactive', observed, causal);
   }
@@ -1173,7 +1198,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
 
 function summarize(input: Input, output: Output): string {
   const qid = output.attempt?.question_id ?? '(missing)';
-  const action = output.attempt?.action ?? output.lookup.status;
+  const action = output.attempt?.action ?? output.lookup.observed?.action ?? output.lookup.status;
   const cause = output.cause?.primary_category ?? 'no-cause';
   const more = output.causal_neighborhood.coverage.has_more ? ' · causal-more' : '';
   return `${action} ${input.attemptEventId.slice(0, 8)} · q=${qid.slice(0, 8)} · cause=${cause} · timeline=${output.timeline.length} · records=${output.linked_records.length}${more}`;
