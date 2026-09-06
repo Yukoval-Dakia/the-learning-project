@@ -57,3 +57,11 @@ export function compileCopilotModelInput(
   if (Object.keys(context).length === 1) return input.user_message;
   return `${COPILOT_TURN_CONTEXT_OPEN}${JSON.stringify(context)}${COPILOT_TURN_CONTEXT_CLOSE}\n${input.user_message}`;
 }
+
+/** The bounded sidecar reintroduced by native SDK compaction. */
+export function compileCopilotSessionContext(input: CopilotRunInput): string {
+  const compiled = compileCopilotModelInput(input, 'resume', { includeSessionContext: true });
+  const marker = `${COPILOT_TURN_CONTEXT_CLOSE}\n`;
+  const end = compiled.indexOf(marker);
+  return end >= 0 ? compiled.slice(0, end + COPILOT_TURN_CONTEXT_CLOSE.length) : compiled;
+}
