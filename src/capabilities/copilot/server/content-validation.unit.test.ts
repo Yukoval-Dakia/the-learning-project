@@ -72,12 +72,29 @@ describe('validateCopilotLearningContent', () => {
     expect(copilotLearningContentRequiresValidation(mixed)).toBe(true);
   });
 
-  it.each(['是否已证明 P？', '是否已经证明 P？', '这个结论证明了？'])(
+  it.each(['是否已证明 P？', '是否已经证明 P？', '是否已经计算出本批指标？'])(
     'ignores completed instructional wording: %s',
     (reportQuestion) => {
       expect(containsLearningQuestion(reportQuestion)).toBe(false);
     },
   );
+
+  it.each([
+    '欧几里得证明了什么？',
+    '小明计算了什么？',
+    '他选择了哪个答案？',
+    '谁已经证明这个命题？',
+    '是否已证明了什么结论？',
+  ])('keeps an unlabelled question about completed work protected: %s', async (text) => {
+    expect(containsLearningQuestion(text)).toBe(true);
+    const result = await reviewCopilotLearningContent(text, '', 'completed-work-question', {
+      db: {} as never,
+      runTaskFn: async () => {
+        throw new Error('missing manifest must fail before paid validation');
+      },
+    });
+    expect(result.passed).toBe(false);
+  });
 
   it('keeps an active instruction after a multiline report question', () => {
     expect(containsLearningQuestion('是否已经证明 P？\n\n请计算 Q？')).toBe(true);

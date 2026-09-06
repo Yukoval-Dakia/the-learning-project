@@ -106,13 +106,14 @@ export function containsLearningQuestion(text: string): boolean {
       const candidate = match;
       const verbs = /求|计算|证明|选择|判断|解答|solve|calculate|prove|choose/gi;
       return [...candidate.matchAll(verbs)].some((verbMatch) => {
-        // A completed observation such as “是否已证明 P？” is report prose.
+        // Exempt only a completed-observation status question. Past tense alone
+        // is not enough: “欧几里得证明了什么？” is still an unlabelled learning question.
         // Evaluate each verb independently so a later real instruction remains protected.
         const verb = verbMatch[0];
         const offset = verbMatch.index ?? 0;
-        const prefix = candidate.slice(Math.max(0, offset - 2), offset);
-        const suffix = candidate.slice(offset + verb.length, offset + verb.length + 1);
-        return !/(?:已|已经)$/.test(prefix) && suffix !== '了';
+        const prefix = candidate.slice(Math.max(0, offset - 4), offset);
+        const clause = candidate.slice(offset + verb.length).split(/[？?。；;]/u)[0];
+        return !/是否已(?:经)?$/.test(prefix) || /什么|哪|如何|怎样|为何|为什么/u.test(clause);
       });
     },
   );
