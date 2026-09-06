@@ -962,9 +962,9 @@ async function main(): Promise<void> {
           .from(schema.learning_session)
           .where(eq(schema.learning_session.id, durableSession))
           .limit(1);
-        if (durableSessionRows[0]?.agent_sdk_session_id !== null) {
+        if (!baselineRecord && !durableSessionRows[0]?.agent_sdk_session_id) {
           throw new Error(
-            'durable: worker root unexpectedly persisted/resumed a foreground SDK session',
+            'durable: worker root did not retain its committed native SDK session',
           );
         }
         if (!baselineRecord) {
