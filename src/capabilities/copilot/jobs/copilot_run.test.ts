@@ -33,6 +33,7 @@ import {
   copilot_continuation,
   event,
   job_events,
+  learning_session,
   provider_session_admission,
   subagent_run,
 } from '@/db/schema';
@@ -195,6 +196,55 @@ async function replay(runId: string) {
     businessId: runId,
     lastEventId: 0,
   });
+}
+
+async function seedCopilotConversation(sessionId: string, sdkSessionId?: string) {
+  await testDb().insert(learning_session).values({
+    id: sessionId,
+    type: 'conversation',
+    status: 'active',
+    entrypoint: 'copilot',
+    ...(sdkSessionId ? { agent_sdk_session_id: sdkSessionId } : {}),
+    updated_at: new Date(),
+  });
+}
+
+async function persistedSdkSessionId(sessionId: string) {
+  const [row] = await testDb()
+    .select({ sdkSessionId: learning_session.agent_sdk_session_id })
+    .from(learning_session)
+    .where(eq(learning_session.id, sessionId));
+  return row?.sdkSessionId ?? null;
+}
+
+function successfulWorkerExecution(taskRunId: string, replyText: string, sdkSessionId?: string) {
+  return {
+    taskRunId,
+    finishReason: 'end_turn',
+    ...(sdkSessionId ? { sdkSessionId } : {}),
+    finalization: {
+      replyText,
+      preparedReply: { text: replyText },
+      receipt: {
+        protocol_version: 1 as const,
+        assurance: 'execution_trace_bound' as const,
+        root_task_run_id: taskRunId,
+        candidate_sha256: createHash('sha256').update(replyText).digest('hex'),
+        reply_sha256: createHash('sha256').update(replyText).digest('hex'),
+        trace_sha256: createHash('sha256').update(taskRunId).digest('hex'),
+        trace_call_count: 0,
+        observed_completed_tool_use_ids: [],
+        correction: 'normal' as const,
+        proposal_disclosure: 'none' as const,
+        learning_content: 'not_applicable' as const,
+        primary_view: 'absent' as const,
+      },
+      accepted: true,
+    },
+    partial: false,
+    candidateDeltaObserved: false,
+    contextDigest: 'ignored-by-worker',
+  };
 }
 
 type CopilotRunTestParams = RunCopilotRunParams & {
@@ -661,7 +711,10 @@ describe('runCopilotRun', () => {
     expect(researcherTools.some((tool) => tool.includes('propose'))).toBe(false);
     expect(researcherTools.some((tool) => tool.includes('generate_'))).toBe(false);
     expect(researcherTools.some((tool) => tool.includes('researcher'))).toBe(false);
-    expect(ctx).not.toHaveProperty('sdkSession');
+    // Durable work now owns a native SDK transcript too; a cold first turn
+    // persists it but deliberately supplies no resume id.
+    expect(ctx.sdkSession).toMatchObject({ persist: true });
+    expect(ctx.sdkSession).not.toHaveProperty('resume');
     expect(ctx.canUseTool).toEqual(expect.any(Function));
     expect(ctx.onTaskEvent).toEqual(expect.any(Function));
     expect(ctx.hooks?.PreToolUse).toHaveLength(4);
@@ -2639,6 +2692,185 @@ describe('runCopilotRun', () => {
       expect(e.business_table).toBe(COPILOT_RUN_TABLE);
       expect(e.business_id).toBe(runId);
     }
+  });
+
+  it('YUK-948 — ephemeral_html published bytes differ from candidate, so the worker clears its cursor and cold-starts the next turn', async () => {
+    const sessionId = 'sess_worker_ephemeral_candidate';
+    const candidate = '这是候选原文，互动图表会在本次对话关闭后消失。';
+    const primaryView = { source: 'ephemeral_html' as const, ref: '<section>互动图表</section>' };
+    await seedCopilotConversation(sessionId);
+    const policies: Array<{ resumeSessionId?: string }> = [];
+    const execute = vi
+      .fn<NonNullable<RunCopilotRunParams['executeCopilotTurnFn']>>()
+      .mockImplementationOnce(async (_db, _request, policy) => {
+        policies.push(policy);
+        return {
+          taskRunId: 'tr_worker_ephemeral_first',
+          finishReason: 'end_turn',
+          sdkSessionId: 'sdk_worker_ephemeral_candidate',
+          finalization: {
+            replyText: candidate,
+            preparedReply: { text: candidate, primaryView },
+            receipt: {
+              protocol_version: 1,
+              assurance: 'execution_trace_bound',
+              root_task_run_id: 'tr_worker_ephemeral_first',
+              candidate_sha256: createHash('sha256').update(candidate).digest('hex'),
+              reply_sha256: createHash('sha256').update(candidate).digest('hex'),
+              trace_sha256: createHash('sha256').update('ephemeral-first').digest('hex'),
+              trace_call_count: 0,
+              observed_completed_tool_use_ids: [],
+              correction: 'normal',
+              proposal_disclosure: 'none',
+              learning_content: 'not_applicable',
+              primary_view: 'retained',
+            },
+            accepted: true,
+          },
+          partial: false,
+          candidateDeltaObserved: true,
+          contextDigest: 'ignored-by-worker',
+        };
+      })
+      .mockImplementationOnce(async (_db, _request, policy) => {
+        policies.push(policy);
+        return {
+          taskRunId: 'tr_worker_ephemeral_second',
+          finishReason: 'end_turn',
+          finalization: {
+            replyText: '第二轮冷启动后的回答。',
+            preparedReply: { text: '第二轮冷启动后的回答。' },
+            receipt: {
+              protocol_version: 1,
+              assurance: 'execution_trace_bound',
+              root_task_run_id: 'tr_worker_ephemeral_second',
+              candidate_sha256: createHash('sha256').update('第二轮冷启动后的回答。').digest('hex'),
+              reply_sha256: createHash('sha256').update('第二轮冷启动后的回答。').digest('hex'),
+              trace_sha256: createHash('sha256').update('ephemeral-second').digest('hex'),
+              trace_call_count: 0,
+              observed_completed_tool_use_ids: [],
+              correction: 'normal',
+              proposal_disclosure: 'none',
+              learning_content: 'not_applicable',
+              primary_view: 'absent',
+            },
+            accepted: true,
+          },
+          partial: false,
+          candidateDeltaObserved: false,
+          contextDigest: 'ignored-by-worker',
+        };
+      });
+
+    await expect(runCopilotRun({
+      db: testDb(), data: { ...baseData, run_id: 'run_worker_ephemeral_first', session_id: sessionId },
+      executeCopilotTurnFn: execute, resolveCopilotRunInputFn: stubRunInput,
+    })).resolves.toMatchObject({ status: 'done' });
+    const [reply] = await copilotReplyEvents(sessionId);
+    expect(reply?.payload).toMatchObject({
+      reply_md: candidate + EPHEMERAL_PRESENTATION_STORAGE_NOTICE,
+      primary_view: primaryView,
+    });
+    expect(await persistedSdkSessionId(sessionId)).toBeNull();
+
+    await expect(runCopilotRun({
+      db: testDb(), data: { ...baseData, run_id: 'run_worker_ephemeral_second', session_id: sessionId },
+      executeCopilotTurnFn: execute, resolveCopilotRunInputFn: stubRunInput,
+    })).resolves.toMatchObject({ status: 'done' });
+    expect(policies.map((policy) => policy.resumeSessionId)).toEqual([undefined, undefined]);
+  });
+
+  it('YUK-948 — a published candidate persists the SDK cursor and resumes only in this worker with the same injected context', async () => {
+    const sessionId = 'sess_worker_resume_same_process';
+    const learnerHeader = 'learner-state: mastery=0.42; unresolved=quadratic-domain';
+    await seedCopilotConversation(sessionId);
+    const seen: Array<{ policy: { resumeSessionId?: string }; learnerHeader?: string }> = [];
+    const runInput = async (_db: Db, params: Parameters<typeof stubRunInput>[1]) => ({
+      ...(await stubRunInput(_db, params)), learner_state_header: learnerHeader,
+    });
+    const replyFor = (taskRunId: string, replyText: string, sdkSessionId?: string) => async (
+      _db: Db, request: { input: { learner_state_header?: string } }, policy: { resumeSessionId?: string },
+    ) => {
+      seen.push({ policy, learnerHeader: request.input.learner_state_header });
+      return {
+        taskRunId, finishReason: 'end_turn', ...(sdkSessionId ? { sdkSessionId } : {}),
+        finalization: {
+          replyText, preparedReply: { text: replyText },
+          receipt: {
+            protocol_version: 1 as const, assurance: 'execution_trace_bound' as const,
+            root_task_run_id: taskRunId,
+            candidate_sha256: createHash('sha256').update(replyText).digest('hex'),
+            reply_sha256: createHash('sha256').update(replyText).digest('hex'),
+            trace_sha256: createHash('sha256').update(taskRunId).digest('hex'), trace_call_count: 0,
+            observed_completed_tool_use_ids: [], correction: 'normal' as const,
+            proposal_disclosure: 'none' as const, learning_content: 'not_applicable' as const,
+            primary_view: 'absent' as const,
+          }, accepted: true,
+        }, partial: false, candidateDeltaObserved: false, contextDigest: 'ignored-by-worker',
+      };
+    };
+    const execute = vi.fn<NonNullable<RunCopilotRunParams['executeCopilotTurnFn']>>()
+      .mockImplementationOnce(replyFor('tr_worker_resume_first', '第一轮成功保存。', 'sdk_worker_resume'))
+      .mockImplementationOnce(replyFor('tr_worker_resume_second', '第二轮恢复成功。'));
+
+    await runCopilotRun({ db: testDb(), data: { ...baseData, run_id: 'run_worker_resume_first', session_id: sessionId }, executeCopilotTurnFn: execute, resolveCopilotRunInputFn: runInput });
+    expect(await persistedSdkSessionId(sessionId)).toBe('sdk_worker_resume');
+    await runCopilotRun({ db: testDb(), data: { ...baseData, run_id: 'run_worker_resume_second', session_id: sessionId }, executeCopilotTurnFn: execute, resolveCopilotRunInputFn: runInput });
+
+    expect(seen).toEqual([
+      { policy: expect.not.objectContaining({ resumeSessionId: expect.anything() }), learnerHeader },
+      { policy: expect.objectContaining({ resumeSessionId: 'sdk_worker_resume' }), learnerHeader },
+    ]);
+  });
+
+  it('YUK-948 — a persisted cursor from another worker cold-starts rather than resuming foreign state', async () => {
+    const sessionId = 'sess_worker_foreign_cursor';
+    await seedCopilotConversation(sessionId, 'sdk_owned_elsewhere');
+    const policy = vi.fn();
+    const execute = vi.fn<NonNullable<RunCopilotRunParams['executeCopilotTurnFn']>>(async (_db, _request, receivedPolicy) => {
+      policy(receivedPolicy);
+      const replyText = 'foreign cursor must not resume';
+      return {
+        taskRunId: 'tr_worker_foreign_cursor', finishReason: 'end_turn',
+        finalization: { replyText, preparedReply: { text: replyText }, receipt: {
+          protocol_version: 1, assurance: 'execution_trace_bound', root_task_run_id: 'tr_worker_foreign_cursor',
+          candidate_sha256: createHash('sha256').update(replyText).digest('hex'), reply_sha256: createHash('sha256').update(replyText).digest('hex'),
+          trace_sha256: createHash('sha256').update('foreign').digest('hex'), trace_call_count: 0, observed_completed_tool_use_ids: [], correction: 'normal', proposal_disclosure: 'none', learning_content: 'not_applicable', primary_view: 'absent',
+        }, accepted: true }, partial: false, candidateDeltaObserved: false, contextDigest: 'ignored-by-worker',
+      };
+    });
+    await runCopilotRun({ db: testDb(), data: { ...baseData, run_id: 'run_worker_foreign_cursor', session_id: sessionId }, executeCopilotTurnFn: execute, resolveCopilotRunInputFn: stubRunInput });
+    expect(policy).toHaveBeenCalledWith(expect.not.objectContaining({ resumeSessionId: expect.anything() }));
+  });
+
+  it('YUK-948 — a partial resumed turn clears the persisted worker cursor', async () => {
+    const sessionId = 'sess_worker_partial_cleanup';
+    await seedCopilotConversation(sessionId);
+    const executions = vi.fn<NonNullable<RunCopilotRunParams['executeCopilotTurnFn']>>()
+      .mockImplementationOnce(async () => successfulWorkerExecution('tr_worker_partial_seed', 'seed', 'sdk_worker_partial'))
+      .mockImplementationOnce(async (_db, _request, policy) => ({
+        ...successfulWorkerExecution('tr_worker_partial_fail', 'partial final'),
+        partial: true,
+        error: `resumed=${policy.resumeSessionId ?? 'none'} then provider failed`,
+      }));
+    await runCopilotRun({ db: testDb(), data: { ...baseData, run_id: 'run_worker_partial_seed', session_id: sessionId }, executeCopilotTurnFn: executions, resolveCopilotRunInputFn: stubRunInput });
+    expect(await persistedSdkSessionId(sessionId)).toBe('sdk_worker_partial');
+    await expect(runCopilotRun({ db: testDb(), data: { ...baseData, run_id: 'run_worker_partial_fail', session_id: sessionId }, executeCopilotTurnFn: executions, resolveCopilotRunInputFn: stubRunInput })).resolves.toMatchObject({ status: 'failed' });
+    expect(await persistedSdkSessionId(sessionId)).toBeNull();
+  });
+
+  it('YUK-948 — a cancelled follow-up clears a previously owned worker cursor', async () => {
+    const sessionId = 'sess_worker_cancel_cleanup';
+    await seedCopilotConversation(sessionId);
+    const execute = vi.fn<NonNullable<RunCopilotRunParams['executeCopilotTurnFn']>>(async () =>
+      successfulWorkerExecution('tr_worker_cancel_seed', 'seed', 'sdk_worker_cancel'),
+    );
+    await runCopilotRun({ db: testDb(), data: { ...baseData, run_id: 'run_worker_cancel_seed', session_id: sessionId }, executeCopilotTurnFn: execute, resolveCopilotRunInputFn: stubRunInput });
+    expect(await persistedSdkSessionId(sessionId)).toBe('sdk_worker_cancel');
+    await writeJobEvent(testDb(), { business_table: COPILOT_RUN_TABLE, business_id: 'run_worker_cancelled', event_type: COPILOT_RUN_EVENTS.CANCEL_REQUESTED, payload: { by: 'user' } });
+    await expect(runCopilotRun({ db: testDb(), data: { ...baseData, run_id: 'run_worker_cancelled', session_id: sessionId }, executeCopilotTurnFn: execute, resolveCopilotRunInputFn: stubRunInput })).resolves.toEqual({ status: 'cancelled' });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(await persistedSdkSessionId(sessionId)).toBeNull();
   });
 });
 
