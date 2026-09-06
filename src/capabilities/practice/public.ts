@@ -52,6 +52,11 @@ export {
   materializeInterventionDiagnostics,
   retireInterventionDiagnosticQuestion,
 } from './server/intervention-diagnostics';
+export {
+  assertMergedLearningItemParity,
+  rewriteLearningItemKnowledgeIds,
+  rewriteQuestionKnowledgeIds,
+} from './server/merge-attribution';
 export type {
   EnqueueVariantVerifyFn,
   QuestionDraftAcceptResult,
@@ -213,6 +218,5 @@ export {
   MEM0_PRIOR_ITEM_CHAR_CAP,
   SELECTION_ORCHESTRATOR_CANDIDATE_CAP,
 } from './server/selection-constants';
-
 // YUK-892 — due-review queue reader for non-LLM read paths (today summary).
 export { executeGetReviewDue } from './server/tools/question-context';

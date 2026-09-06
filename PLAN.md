@@ -13,17 +13,21 @@
 - YUK-952：Goal manual/accepted creation、status/scope/retract集中command；legacy raw
   insert仅留import/fixture兼容；修复锁外version读取与逆序timestamp导致的有效更新回滚。
   首审P1已红测复现并修复；41 scoped DB绿，早先67 DB覆盖rebuild/golden；
-  45 scoped unit、typecheck/lint/build通过；唯一验证审APPROVE，独立9+20 DB通过，CI待完成。
+  45 scoped unit、typecheck/lint/build通过；唯一验证审APPROVE，独立9+20 DB通过。
+  PR #1327 exact-head CI绿色并合并 main `8a1b06d1`；YUK-952 Done。
 - 测试第一批仅删除4个文件搬迁/Options全字段快照用例；权限、结算、取消、恢复覆盖不动。
 - YUK-953：merge owner与命名两个独立lane；root修掉旧重复实现和跨包deep import，
-  加锁防止归因覆盖并移回owner的post-accept parity。90 scoped DB绿；待集成/审查。
+  加锁防止归因覆盖并移回owner的post-accept parity。182 scoped DB与13 unit绿；
+  保留单次命名、retention由FSRS owner读取；ratchet收紧444/0/47；
+  独立首审APPROVE、typecheck/lint/build/audits绿色，准备push exact-head CI。
 - YUK-954：Copilot共同执行规则封装在独立lane实施，保留前台/耐久生命周期差异。
 - YUK-955：录入完成command在独立lane实施；保留原子导入、source约束与四类outcome。
-- Linear已恢复读写（部分调用偶发transport失败）；939/940/941 Done，952/953/954/955进行中。
+- YUK-956：ReviewSettlement封闭三个命令，共同学习状态规则与恢复契约正在独立lane实施。
+- Linear已恢复读写（部分调用偶发transport失败）；939/940/941/952 Done，953—956进行中。
 
 ## NEXT
 
-1. Goal修复完成唯一验证审、最终scoped/static/build与exact-head CI后合并。
+1. Goal已合并；不部署、不扩大历史数据修复范围。
 2. 集成Knowledge/Practice/Agency归因owner、单向命名adapter；验证9surface rollback、
    幂等、no-version-bump与历史record不可变。
 3. 集成Copilot execution owner和Ingestion completion；接口测试替换内部装配断言。

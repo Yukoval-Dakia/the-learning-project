@@ -32,11 +32,6 @@
 // model call inside a DB tx). The only DB writes are applyProposeNew + the audit event.
 
 import { eq } from 'drizzle-orm';
-import {
-  ColdStartBridgeError,
-  type ColdStartBridgeRunTaskFn,
-  runColdStartBridge,
-} from '@/capabilities/ingestion/public';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
@@ -53,7 +48,7 @@ import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
 import { assertKnowledgeNodeParity, knowledgeLiveRowToSnapshot } from '@/server/projections/parity';
 // YUK-471 W1 PR-B — the SoT-flip gate (default OFF; projection writes the row when ON).
 import { projectionIsWriter } from '@/server/projections/sot-flag';
-import { getDefaultSubjectRegistry, getKnownSubjects } from '@/subjects/profile';
+import { getKnownSubjects } from '@/subjects/profile';
 import { type KnowledgeSimilarityCandidate, matchKnowledgeBySimilarity } from './match-similarity';
 import { applyProposeNew } from './proposals';
 import { MATCH_THRESHOLD } from './tagging-flags';
@@ -67,9 +62,8 @@ export function isTagKnowledgeInvariantError(error: unknown): boolean {
 
 /**
  * Naming seam — given the question (subject already resolved), return a concise
- * child-KC name. Injected in tests (stub returns a controlled name so NO real model
- * is called). The production default delegates to ColdStartPlacementBridgeTask's
- * naming, reusing the existing invoker (no new AI registry task).
+ * child-KC name. The ingestion caller owns model naming (or reuses an existing
+ * bridge result); Knowledge owns only the match-or-propose decision and its writes.
  */
 export type NameKcFn = (args: {
   questionText: string;
@@ -89,13 +83,8 @@ export interface TagKnowledgeDeps {
   /** Embed the question text → query vector. Injected in tests. Defaults to embedText. */
   embedFn?: (text: string) => Promise<number[]>;
   providerAttempt?: EmbedProviderAttemptOptions;
-  /** Name the proposed KC. Injected in tests. Defaults to the cold-start-bridge naming. */
-  nameKcFn?: NameKcFn;
-  /**
-   * Forwarded to the default naming invoker's runTask seam (so callers/tests can stub the
-   * model at the runTask layer instead of replacing nameKcFn). Ignored when nameKcFn is set.
-   */
-  runTaskFn?: ColdStartBridgeRunTaskFn;
+  /** Caller-owned naming: a model adapter or a previously resolved bridge result. */
+  nameKcFn: NameKcFn;
   /** Override the MATCH cutoff (cosine distance). Defaults to MATCH_THRESHOLD. */
   threshold?: number;
   /**
@@ -112,8 +101,6 @@ export interface TagKnowledgeDeps {
    * callers loop sequentially (auto-enroll per-question, import per-block), satisfying this.
    */
   batchCache?: Map<string, string>;
-  /** Forwarded to runTask ctx (db / subjectProfile). Ignored when nameKcFn is set. */
-  ctx?: unknown;
 }
 
 export interface TagKnowledgeInput {
@@ -174,7 +161,7 @@ export async function tagKnowledge(
 ): Promise<TagKnowledgeResult> {
   const { db } = deps;
   const embedFn = deps.embedFn ?? ((text: string) => embedText(text, deps.providerAttempt));
-  const nameKcFn = deps.nameKcFn ?? makeDefaultNameKc(deps);
+  const nameKcFn = deps.nameKcFn;
   const threshold = deps.threshold ?? MATCH_THRESHOLD;
   // Guard the explicit-empty-array case too: `?? default` fires only on `undefined`, so a
   // caller passing `[]` would otherwise leave `knownSubjectIds[0]` undefined and propagate
@@ -380,36 +367,3 @@ export async function tagKnowledge(
 
   return { kind: 'propose', knowledge_ids: [newKcId], kc_name };
 }
-
-/**
- * Production naming fn — reuses ColdStartPlacementBridgeTask via its existing invoker, with
- * the subject PINNED (single-element known_subjects → the classifier cannot pick another
- * subject; anti-hallucination still satisfied). We read back ONLY `kc_name`; the bridge's
- * `subject_id` (pinned, redundant) and `reference_md` (P4a's concern, not ours) are discarded.
- * `existing_reference_md` is a non-empty placeholder so the bridge takes its ECHO path (no
- * answer-regeneration cost). `runTaskFn` / `ctx` thread through so the model can be stubbed at
- * the runTask layer (mirrors auto-enroll's `runColdStartBridgeFn` seam). `deps.db` is forwarded
- * only into the runTask ctx (naming is a pure LLM pass — no DB read), so it never touches a tx.
- */
-function makeDefaultNameKc(deps: TagKnowledgeDeps): NameKcFn {
-  return async ({ questionText, knowledgeHint, subjectId }) => {
-    const bridge = await runColdStartBridge({
-      db: deps.db,
-      questionMd: questionText,
-      existingReferenceMd: '(reference answer not needed for tagging)',
-      knowledgeHint,
-      // 单科 PIN（anti-hallucination）：display_name 从活 registry 解析，miss 回 id。
-      knownSubjects: [
-        {
-          id: subjectId,
-          display_name: getDefaultSubjectRegistry().get(subjectId)?.displayName ?? subjectId,
-        },
-      ],
-      runTaskFn: deps.runTaskFn,
-      ctx: deps.ctx ?? { db: deps.db },
-    });
-    return { kc_name: bridge.kc_name };
-  };
-}
-
-export { ColdStartBridgeError };

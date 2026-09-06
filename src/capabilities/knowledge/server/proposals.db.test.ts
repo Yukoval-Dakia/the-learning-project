@@ -1245,6 +1245,48 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     expect(mcLive[0].archived_at).not.toBeNull(); // the source edge is archived
   });
 
+  it('rolls back earlier owner writes when a later misconception owner rejects corrupted provenance', async () => {
+    const db = testDb();
+    await insertKnowledge({ id: 'k_from', version: 0 });
+    await insertKnowledge({ id: 'k_into', version: 0 });
+    await insertQ('rollback-q', ['k_from', 'k_other']);
+    await insertLI('rollback-li', ['k_from', 'k_other']);
+    await insertG('rollback-goal', ['k_from', 'k_other']);
+    await db.insert(mastery_state).values({ id: 'rollback-mastery', subject_id: 'k_from' });
+    await insertMisc('rollback-edge', 'k_from');
+    // JSONB can contain historical corruption; the edge owner must reject it,
+    // rolling back Practice, Agency and learning-state changes made earlier.
+    await db
+      .update(misconception_edge)
+      .set({ created_by: sql`'{"actor_kind":"invalid"}'::jsonb` })
+      .where(eq(misconception_edge.id, 'rollback-edge'));
+    await expect(mergeFromInto('k_from', 'k_into')).rejects.toThrow();
+    expect(
+      (await db.select().from(question).where(eq(question.id, 'rollback-q')))[0].knowledge_ids,
+    ).toEqual(['k_from', 'k_other']);
+    expect(
+      (await db.select().from(learning_item).where(eq(learning_item.id, 'rollback-li')))[0],
+    ).toMatchObject({ knowledge_ids: ['k_from', 'k_other'], version: 0 });
+    expect((await db.select().from(goal).where(eq(goal.id, 'rollback-goal')))[0]).toMatchObject({
+      scope_knowledge_ids: ['k_from', 'k_other'],
+      version: 0,
+    });
+    expect((await db.select().from(knowledge).where(eq(knowledge.id, 'k_from')))[0]).toMatchObject({
+      archived_at: null,
+      version: 0,
+    });
+    expect(
+      (await db.select().from(mastery_state).where(eq(mastery_state.id, 'rollback-mastery')))[0]
+        .subject_id,
+    ).toBe('k_from');
+    expect(
+      (
+        await db.select().from(misconception_edge).where(eq(misconception_edge.id, 'rollback-edge'))
+      )[0].archived_at,
+    ).toBeNull();
+    expect(await db.select().from(event).where(eq(event.subject_id, 'rollback-goal'))).toEqual([]);
+  });
+
   it('multi-from_id ordering: first from renames mastery, second freezes (deterministic)', async () => {
     await insertKnowledge({ id: 'k_from1', version: 0 });
     await insertKnowledge({ id: 'k_from2', version: 0 });

@@ -141,25 +141,15 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
       'src/capabilities/knowledge/server/proposals.ts',
       'src/capabilities/knowledge/server/review.ts',
     ],
-    symbols: ['readAgentNotes', 'updateGoalScope'],
+    symbols: ['readAgentNotes', 'rewriteGoalScopeOnMerge'],
     dto: 'goal-scope update command + agent-note reads',
     justification:
-      'knowledge proposals update goal scope on accept; knowledge review reads agent notes for grounding.',
-    reviewIssue: 'YUK-885',
+      'knowledge coordinates the atomic merge; Agency owns locked scope attribution updates. Knowledge review reads agent notes.',
+    reviewIssue: 'YUK-953',
     commandFiles: [
       'src/capabilities/knowledge/server/proposals.ts',
       'src/capabilities/knowledge/server/review.ts',
     ],
-  },
-  {
-    owner: 'ingestion',
-    consumer: 'knowledge',
-    files: ['src/capabilities/knowledge/server/tag-knowledge.ts'],
-    symbols: ['ColdStartBridgeError', 'ColdStartBridgeRunTaskFn', 'runColdStartBridge'],
-    dto: 'cold-start bridge runner + error type',
-    justification: 'knowledge tagging delegates cold-start node bridging to the ingestion owner.',
-    reviewIssue: 'YUK-885',
-    commandFiles: ['src/capabilities/knowledge/server/tag-knowledge.ts'],
   },
   {
     owner: 'notes',
@@ -187,21 +177,24 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     files: [
       'src/capabilities/knowledge/jobs/frontier_fill_nightly.ts',
       'src/capabilities/knowledge/server/frontier-read.ts',
-      'src/capabilities/knowledge/server/node-page.ts',
+      'src/capabilities/knowledge/server/proposals.ts',
     ],
     symbols: [
       'FrontierResolution',
       'isMasteredForFrontier',
       'learnableFrontierResolved',
-      'retrievabilityForKc',
+      'rewriteQuestionKnowledgeIds',
+      'rewriteLearningItemKnowledgeIds',
+      'assertMergedLearningItemParity',
     ],
-    dto: 'FrontierResolution / FSRS retrievability reads',
+    dto: 'FrontierResolution / merge attribution receipts',
     justification:
-      'knowledge-owned frontier read models resolve against practice-owned FSRS state; effective-truth moved to kernel/events (YUK-892).',
-    reviewIssue: 'YUK-885',
+      'frontier reads remain bounded; the merge transaction calls Practice-owned attribution commands instead of mutating foreign rows. Retention reads now belong to the FSRS state owner.',
+    reviewIssue: 'YUK-953',
     commandFiles: [
       'src/capabilities/knowledge/jobs/frontier_fill_nightly.ts',
       'src/capabilities/knowledge/server/frontier-read.ts',
+      'src/capabilities/knowledge/server/proposals.ts',
     ],
   },
   {

@@ -26,6 +26,7 @@ export type { EffectiveProbeResultStatus } from './server/conjecture/probe-evide
 export { getEffectiveProbeResultStatuses } from './server/conjecture/probe-evidence';
 export type { ConjectureAcceptResult } from './server/conjecture-accept';
 export type { GoalScopeAcceptResult } from './server/goals/accept';
+export { rewriteGoalScopeOnMerge } from './server/goals/merge-attribution';
 export type { ActiveGoal } from './server/goals/queries';
 export {
   listActiveGoalsWithResolvedScope,

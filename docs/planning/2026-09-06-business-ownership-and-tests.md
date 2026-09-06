@@ -14,7 +14,8 @@ are supporting checks, not completion. Deterministic learning features and seman
 
 1. **AI pipeline closeout**: same-input read, native child completion, bound correction, durable
    settlement, unsafe-learning-content rejection and cancellation. Named synthetic gates passed
-   at `1e61da8d`; `7d456998` fixes stale retired-tool tests. PR #1326 still requires exact-head CI.
+   at `1e61da8d`; `7d456998` fixes stale retired-tool tests. PR #1326 merged as `dda46441`
+   after exact-head CI; Goal PR #1327 merged as `8a1b06d1` after exact-head CI and independent review.
 2. **Goal — YUK-952**: one typed mutation command owns lock/read/event/materialization/parity.
    Creation callers must not construct both genesis snapshots and row state. Historical no-anchor
    compatibility remains inside the owner, never as repeated business-entry branches. Demonstrate
@@ -24,7 +25,7 @@ are supporting checks, not completion. Deterministic learning features and seman
    test, owner-specific collision/idempotence tests and append-only history. No generic event bus.
    Resolve ingestion → knowledge → ingestion naming into one-direction dependency and one actual
    implementation; provider failure must still preserve draft/review instead of auto-enrolling.
-4. **Ingestion/judging completion**: inspect real completion and recovery consumers, encapsulate
+4. **Ingestion/judging completion — YUK-955/YUK-956**: inspect real completion and recovery consumers, encapsulate
    duplicated completion rules at the existing behavior owner. Preserve source snapshots, late
    arrival fences, version checks and interrupted-worker recovery. Do not create an inert framework.
 5. **Copilot execution owner**: root chat and durable worker choose lifecycle; one internal service
@@ -49,6 +50,24 @@ Do not collapse distinct test scenarios merely to report fewer test cases. No en
 has been deleted by this batch. Further retirement follows the replacement owner's interface tests.
 
 ## State-authority boundary
+
+### Knowledge merge implementation evidence
+
+- Knowledge retains the merge transaction and audit receipt; Practice owns question/item attribution
+  (including post-accept item parity), Agency owns scope attribution, and misconception edges own
+  collision handling. Ordered row locks prevent rewriting stale arrays. No-version-bump attribution
+  semantics and historical repair idempotence stay unchanged.
+- One rich late-owner-failure test proves earlier question/item/goal/mastery writes all roll back;
+  the existing nine-surface/collision/tombstone/backfill suites remain. The combined focused DB
+  run passed 182 cases; prior merge/state/backfill run passed 90.
+- Ingestion supplies the naming adapter; Knowledge no longer imports Ingestion at runtime.
+  The adapter preserves the old pinned registry subject, fallback ID, exact question and caller
+  context; four unit cases prove one call and fail-closed malformed/cross-subject output.
+- Retention reads return a semantic map from the FSRS owner, not raw card rows interpreted by
+  Knowledge. Missing cards remain unknown, not zero. Shared scheduler math is unchanged.
+- Variant verification now uses its existing entity projection gateway instead of assembling
+  three generic projection imports. Ratchets tighten to 444/0/47; no threshold is raised.
+  The five-capability SCC still exists: this is not claimed as elimination of all command cycles.
 
 Repo flags/configuration do not establish live production settings or data readiness. The final
 removal of per-entity migration switches needs an authorized production clone, backfill/audit/rebuild

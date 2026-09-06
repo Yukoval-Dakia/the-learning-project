@@ -28,13 +28,12 @@ import {
   notesForKnowledge,
   resolveOwningLearningItemIds,
 } from '@/capabilities/notes/public';
-import { retrievabilityForKc } from '@/capabilities/practice/public';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge } from '@/db/schema';
 import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
-import { getFsrsStatesByIds } from '@/server/fsrs/state';
+import { getFsrsRetrievabilityByIds } from '@/server/fsrs/state';
 import { getMasteryProjection, getRepresentativeKcBeta } from '@/server/mastery/state';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
 
@@ -160,12 +159,7 @@ export async function loadRetrievabilityMap(
   knowledgeIds: string[],
   now: Date = new Date(),
 ): Promise<Map<string, number>> {
-  const states = await getFsrsStatesByIds(db, 'knowledge', knowledgeIds);
-  const out = new Map<string, number>();
-  for (const [id, row] of states) {
-    out.set(id, retrievabilityForKc(row.state, now));
-  }
-  return out;
+  return getFsrsRetrievabilityByIds(db, 'knowledge', knowledgeIds, now);
 }
 
 /**

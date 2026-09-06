@@ -10,6 +10,7 @@ import {
   runColdStartBridge,
 } from '@/capabilities/ingestion/server/cold-start-bridge';
 import { enrollCapturedBlock } from '@/capabilities/ingestion/server/enroll';
+import { createKnowledgeNamer } from '@/capabilities/ingestion/server/knowledge-namer';
 import {
   MistakeEnrollTaskError,
   type RunMistakeEnrollTaskParams,
@@ -171,7 +172,7 @@ export interface RunAutoEnrollParams {
    * (embedding match-or-propose). DB tests inject a stub so the embedding/naming model is not
    * called (mirrors tag-knowledge.db.test.ts's embedFn/nameKcFn stubs at one level up): the stub
    * returns the attributed ids directly, and a throw routes the block to review (tagging outage).
-   * Receives the same deps shape tagKnowledge does (db / runTaskFn / ctx / batchCache) plus the
+   * Receives the same deps shape tagKnowledge does (db / nameKcFn / batchCache) plus the
    * input, so a real-default test can still seed embeddings + stub only the naming model.
    */
   tagKnowledgeFn?: typeof tagKnowledge;
@@ -193,11 +194,9 @@ export interface RunAutoEnrollParams {
    */
   runBlockAssemblyFn?: BlockAssemblyRunTaskFn;
   /**
-   * P3 (YUK-489) — model seam for the unified `tagKnowledge` step's NAMING invoker. tagKnowledge's
-   * default `nameKcFn` (makeDefaultNameKc → runColdStartBridge) names a PROPOSE child KC via one
-   * LLM pass; this fn is threaded as tagKnowledge's `runTaskFn` so DB tests stub the model without
-   * a real call. (The name is historical — the cold-start bridge module is now tagKnowledge's
-   * naming engine, not a direct caller here.) Mirrors image-candidate-accept's `runColdStartBridgeFn`.
+   * Model seam for the ingestion-owned naming adapter supplied to `tagKnowledge`.
+   * One ColdStartBridge call names a PROPOSE child; tests can replace that call while
+   * retaining Knowledge's real match/propose behavior. Existing bridge results can be reused.
    */
   runColdStartBridgeFn?: ColdStartBridgeRunTaskFn;
   /**
@@ -513,13 +512,13 @@ export async function runAutoEnrollForSession(
           {
             db: params.db,
             providerAttempt: params.providerAttempt,
-            // Thread the bridge runTask seam through tagKnowledge's default naming invoker
-            // (makeDefaultNameKc → runColdStartBridge) so DB tests stub the model exactly as
-            // before. `ctx` defaults to { db } when the caller omits one.
-            runTaskFn: params.runColdStartBridgeFn,
-            ctx: params.ctx ?? { db: params.db },
-            // When the subject was bridge-classified (no subjectId), reuse the already-named KC.
-            ...(bridgeNameKc ? { nameKcFn: bridgeNameKc } : {}),
+            nameKcFn:
+              bridgeNameKc ??
+              createKnowledgeNamer({
+                db: params.db,
+                runTaskFn: params.runColdStartBridgeFn,
+                ctx: params.ctx ?? { db: params.db },
+              }),
             // D5 (YUK-489): ONE per-run cache shared across every block in this session, so
             // sibling questions proposing the same KC name reuse the first-minted id instead of
             // minting duplicates. The loop awaits each block sequentially (the cache's contract).
