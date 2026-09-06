@@ -27,6 +27,7 @@ import { assertFromState } from './guards';
 // commitImport) write NO domain event — reconsider in Phase 1d.
 
 const SESSION_TABLE = 'ingestion_session' as const;
+export const IMPORTABLE_SESSION_STATUSES = ['extracted', 'reviewed'] as const;
 const OPERATION_DISPATCH_SINGLETON_SECONDS = 24 * 60 * 60;
 
 // job_events business_table label kept as 'ingestion_session' for SSE replay
@@ -572,7 +573,7 @@ export async function assertSessionAvailableForImport(
   }
   assertFromState(
     current.status,
-    ['extracted', 'reviewed'] as const,
+    IMPORTABLE_SESSION_STATUSES,
     sessionId,
     'Ingestion.assertSessionAvailableForImport',
   );
@@ -601,12 +602,7 @@ export async function commitImport(tx: Db | Tx, sessionId: string): Promise<void
   if (!current) {
     throw new ApiError('not_found', `learning_session ${sessionId} not found`, 404);
   }
-  assertFromState(
-    current.status,
-    ['extracted', 'reviewed'] as const,
-    sessionId,
-    'Ingestion.commitImport',
-  );
+  assertFromState(current.status, IMPORTABLE_SESSION_STATUSES, sessionId, 'Ingestion.commitImport');
 
   const now = new Date();
   await tx

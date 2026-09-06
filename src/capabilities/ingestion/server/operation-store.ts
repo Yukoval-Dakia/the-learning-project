@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 
 import type { IngestionOperationKind } from '@/capabilities/ingestion/api/operation-schema';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { job_events, learning_session } from '@/db/schema';
 import { writeJobEvent } from '@/server/events/writer';
 
@@ -134,7 +134,7 @@ export async function reserveIngestionOperation(
 }
 
 export async function writeIngestionOperationEvent(
-  db: Db,
+  db: Db | Tx,
   input: {
     operationId: string;
     eventType:
@@ -189,7 +189,7 @@ export async function withIngestionOperationDispatchLock<T>(
 
 /** 从 append-only job_events 投影可轮询的 operation 资源。 */
 export async function readIngestionOperation(
-  db: Db,
+  db: Db | Tx,
   operationId: string,
 ): Promise<IngestionOperationResource | null> {
   const events = await db

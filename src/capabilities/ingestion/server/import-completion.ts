@@ -23,7 +23,7 @@ import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 // attempt(outcome='failure') + learning_record(kind='mistake'). See ADR-0024.
 import { enrollCapturedBlock } from '@/capabilities/ingestion/server/enroll';
 import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { knowledge, learning_session, question, question_block } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import {
@@ -34,184 +34,172 @@ import { writeQuestionBlockCreateEvent } from '@/server/projections/question_blo
 import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { Ingestion } from '@/server/session';
+import {
+  isTerminalIngestionOperation,
+  readIngestionOperation,
+  writeIngestionOperationEvent,
+} from './operation-store';
 // YUK-234 (SEC-4): request-body schema (incl. per-array .max() bounds) lives in
 // ./schema so the bounds are unit-testable without the route's DB/R2/AI import
 // graph. The capture-outcome / cause / kind semantics are unchanged.
 
 export async function completeIngestionImport(
-  db: Db,
+  db: Db | Tx,
   sessionId: string,
   body: import('../api/import-schema').ImportBodyParsed,
 ): Promise<{ question_ids: string[]; mistake_ids: string[]; record_ids: string[] }> {
-  // 1. Validate session exists and is in an importable state. Reads from
-  //    learning_session (Step 5 post-migration). Status-machine guard is
-  //    applied a second time at commit time by Ingestion.commitImport (also
-  //    holds a FOR UPDATE lock).
-  const sessionRows = await db
-    .select()
-    .from(learning_session)
-    .where(and(eq(learning_session.id, sessionId), eq(learning_session.type, 'ingestion')));
-  const session = sessionRows[0] ?? null;
-  if (!session) {
-    throw new ApiError('not_found', `learning_session ${sessionId} not found`, 404);
-  }
-  // type='ingestion' invariant — these fields are required for the import flow.
-  // The DB schema marks them nullable because learning_session is polymorphic;
-  // an ingestion-flavored session always has both set (initiateUpload enforces it).
-  if (session.entrypoint === null) {
-    throw new ApiError(
-      'validation_error',
-      `learning_session ${sessionId} (type=ingestion) is missing entrypoint`,
-      400,
-    );
-  }
-  const sessionEntrypoint: string = session.entrypoint;
-  if (session.source_document_id === null) {
-    throw new ApiError(
-      'validation_error',
-      `learning_session ${sessionId} (type=ingestion) is missing source_document_id`,
-      400,
-    );
-  }
-  const sessionSourceDocumentId: string = session.source_document_id;
-
-  const sessionAssetIds = session.source_asset_ids as string[];
-  const sessionAssetSet = new Set(sessionAssetIds);
-
-  // 2. Validate every source_block_id belongs to this session, and block_id (if present) is in source_block_ids
-  const sourceBlockRows = new Map<string, typeof question_block.$inferSelect>();
-  const allSourceIds = new Set<string>();
-  for (const block of body.blocks) {
-    const isManual = block.block_id === undefined && block.source_block_ids.length === 0;
-    if (isManual && block.image_refs.length === 0) {
-      throw new ApiError(
-        'validation_error',
-        'manual block must reference at least one image_ref',
-        400,
-      );
-    }
-    for (const sid of block.source_block_ids) allSourceIds.add(sid);
-    if (block.block_id !== undefined && !block.source_block_ids.includes(block.block_id)) {
-      throw new ApiError(
-        'validation_error',
-        `block_id ${block.block_id} must be in its source_block_ids`,
-        400,
-      );
-    }
-  }
-
-  for (const sid of allSourceIds) {
-    const rows = await db.select().from(question_block).where(eq(question_block.id, sid));
-    const row = rows[0] ?? null;
-    if (!row) {
-      throw new ApiError('validation_error', `unknown source_block_id: ${sid}`, 400);
-    }
-    if (row.ingestion_session_id !== sessionId) {
-      throw new ApiError(
-        'validation_error',
-        `source_block_id ${sid} does not belong to session ${sessionId}`,
-        400,
-      );
-    }
-    // B1b (YUK-164 §2): a merge/split source must still be 'draft' — an
-    // already-auto_enrolled (or imported/ignored) source can't be consumed into
-    // a virtual card (would orphan its auto-enroll question/attempt without a
-    // retract). Revert it via OC-5 first. Mirrors the direct-import guard below.
-    if (row.status !== 'draft') {
-      throw new ApiError(
-        'conflict',
-        `source_block_id ${sid} is '${row.status}'; only 'draft' blocks can be imported`,
-        409,
-      );
-    }
-    sourceBlockRows.set(sid, row);
-  }
-
-  // 3. Validate image_refs belong to session.source_asset_ids
-  for (const block of body.blocks) {
-    for (const ref of block.image_refs) {
-      if (!sessionAssetSet.has(ref)) {
-        throw new ApiError(
-          'validation_error',
-          `image_ref ${ref} not in session source_asset_ids`,
-          400,
-        );
-      }
-    }
-  }
-
-  // 3b. Validate page_spans page_index against session asset count
-  for (const block of body.blocks) {
-    for (const span of block.page_spans) {
-      if (span.page_index >= sessionAssetIds.length) {
-        throw new ApiError(
-          'validation_error',
-          `page_index ${span.page_index} out of range (session has ${sessionAssetIds.length} assets)`,
-          400,
-        );
-      }
-    }
-  }
-
-  // 4. Per-block knowledge_ids are client-supplied + authoritative (schema enforces ≥1).
-  //    /api/import carries no subject signal (the ingestion session has no subject column —
-  //    subject is a derived view), so the unified `tagKnowledge` cannot auto-attribute an
-  //    empty-ids block (it needs a subjectRootId for the PROPOSE parent + D1 filter). Imported
-  //    blocks therefore stay ids-required; auto-tagging import via tagKnowledge is a YUK-489
-  //    follow-up that needs a request-level subject signal first.
-  const effectiveKnowledgeIds: string[][] = body.blocks.map((b) => b.knowledge_ids);
-
-  // Validate every distinct id in one round-trip, then preserve request order when reporting the
-  // first bad id. This stays in the pre-validation phase: the write transaction + FOR UPDATE
-  // double-submit guard below remain unchanged.
-  const requestedKnowledgeIds = [...new Set(effectiveKnowledgeIds.flat())];
-  const foundKnowledgeRows = await db
-    .select({ id: knowledge.id })
-    .from(knowledge)
-    .where(and(inArray(knowledge.id, requestedKnowledgeIds), isNull(knowledge.archived_at)));
-  const foundKnowledgeIds = new Set(foundKnowledgeRows.map((row) => row.id));
-  const missingKnowledgeId = requestedKnowledgeIds.find((id) => !foundKnowledgeIds.has(id));
-  if (missingKnowledgeId) {
-    throw new ApiError(
-      'validation_error',
-      `unknown or archived knowledge_id: ${missingKnowledgeId}`,
-      400,
-    );
-  }
-  const blockSubjectProfiles = await Promise.all(
-    effectiveKnowledgeIds.map(async (ids) => resolveSubjectProfileForKnowledgeIds(db, ids)),
-  );
-  for (const [index, block] of body.blocks.entries()) {
-    assertCauseAllowedForSubjectProfile(block.cause, blockSubjectProfiles[index]);
-  }
-
-  // ---- All validation passed; build and execute batch ----
-  // Codex P1-A: write phase + commitImport MUST share a transaction so the
-  // status-machine check (FOR UPDATE lock acquired by
-  // Ingestion.assertSessionAvailableForImport) gates concurrent double-submit.
-  // Without this, two POSTs both pass the per-row pre-checks above, both INSERT
-  // question/mistake/question_block rows, then race in commitImport — the loser
-  // throws 409 AFTER its writes have already committed (partial side effects
-  // + duplicate imports on retry).
-  const now = new Date();
-
-  const directlyImportedIds = new Set<string>();
-  for (const b of body.blocks) {
-    if (b.block_id !== undefined) directlyImportedIds.add(b.block_id);
-  }
-  const hasManualBlocks = body.blocks.some(
-    (block) => block.block_id === undefined && block.source_block_ids.length === 0,
-  );
-
-  const questionIds: string[] = [];
-  const mistakeIds: string[] = [];
-  const recordIds: string[] = [];
-  await db.transaction(async (tx) => {
-    // SELECT … FOR UPDATE on the session row + asserts importable status.
-    // Concurrent callers serialise here; the second to acquire the lock sees
-    // status='imported' and throws 409 before any writes happen.
+  return db.transaction(async (tx) => {
     await Ingestion.assertSessionAvailableForImport(tx, sessionId);
+    // Read source context under the same session lock as the authoritative status guard.
+    const sessionRows = await tx
+      .select()
+      .from(learning_session)
+      .where(and(eq(learning_session.id, sessionId), eq(learning_session.type, 'ingestion')));
+    const session = sessionRows[0] ?? null;
+    if (!session) {
+      throw new ApiError('not_found', `learning_session ${sessionId} not found`, 404);
+    }
+    // type='ingestion' invariant — these fields are required for the import flow.
+    // The DB schema marks them nullable because learning_session is polymorphic;
+    // an ingestion-flavored session always has both set (initiateUpload enforces it).
+    if (session.entrypoint === null) {
+      throw new ApiError(
+        'validation_error',
+        `learning_session ${sessionId} (type=ingestion) is missing entrypoint`,
+        400,
+      );
+    }
+    const sessionEntrypoint: string = session.entrypoint;
+    if (session.source_document_id === null) {
+      throw new ApiError(
+        'validation_error',
+        `learning_session ${sessionId} (type=ingestion) is missing source_document_id`,
+        400,
+      );
+    }
+    const sessionSourceDocumentId: string = session.source_document_id;
 
+    const sessionAssetIds = session.source_asset_ids as string[];
+    const sessionAssetSet = new Set(sessionAssetIds);
+
+    // 2. Validate every source_block_id belongs to this session, and block_id (if present) is in source_block_ids
+    const sourceBlockRows = new Map<string, typeof question_block.$inferSelect>();
+    const allSourceIds = new Set<string>();
+    for (const block of body.blocks) {
+      const isManual = block.block_id === undefined && block.source_block_ids.length === 0;
+      if (isManual && block.image_refs.length === 0) {
+        throw new ApiError(
+          'validation_error',
+          'manual block must reference at least one image_ref',
+          400,
+        );
+      }
+      for (const sid of block.source_block_ids) allSourceIds.add(sid);
+      if (block.block_id !== undefined && !block.source_block_ids.includes(block.block_id)) {
+        throw new ApiError(
+          'validation_error',
+          `block_id ${block.block_id} must be in its source_block_ids`,
+          400,
+        );
+      }
+    }
+
+    for (const sid of allSourceIds) {
+      const rows = await tx.select().from(question_block).where(eq(question_block.id, sid));
+      const row = rows[0] ?? null;
+      if (!row) {
+        throw new ApiError('validation_error', `unknown source_block_id: ${sid}`, 400);
+      }
+      if (row.ingestion_session_id !== sessionId) {
+        throw new ApiError(
+          'validation_error',
+          `source_block_id ${sid} does not belong to session ${sessionId}`,
+          400,
+        );
+      }
+      // B1b (YUK-164 §2): a merge/split source must still be 'draft' — an
+      // already-auto_enrolled (or imported/ignored) source can't be consumed into
+      // a virtual card (would orphan its auto-enroll question/attempt without a
+      // retract). Revert it via OC-5 first. Mirrors the direct-import guard below.
+      if (row.status !== 'draft') {
+        throw new ApiError(
+          'conflict',
+          `source_block_id ${sid} is '${row.status}'; only 'draft' blocks can be imported`,
+          409,
+        );
+      }
+      sourceBlockRows.set(sid, row);
+    }
+
+    // 3. Validate image_refs belong to session.source_asset_ids
+    for (const block of body.blocks) {
+      for (const ref of block.image_refs) {
+        if (!sessionAssetSet.has(ref)) {
+          throw new ApiError(
+            'validation_error',
+            `image_ref ${ref} not in session source_asset_ids`,
+            400,
+          );
+        }
+      }
+    }
+
+    // 3b. Validate page_spans page_index against session asset count
+    for (const block of body.blocks) {
+      for (const span of block.page_spans) {
+        if (span.page_index >= sessionAssetIds.length) {
+          throw new ApiError(
+            'validation_error',
+            `page_index ${span.page_index} out of range (session has ${sessionAssetIds.length} assets)`,
+            400,
+          );
+        }
+      }
+    }
+
+    // 4. Per-block knowledge_ids are client-supplied + authoritative (schema enforces ≥1).
+    //    /api/import carries no subject signal (the ingestion session has no subject column —
+    //    subject is a derived view), so the unified `tagKnowledge` cannot auto-attribute an
+    //    empty-ids block (it needs a subjectRootId for the PROPOSE parent + D1 filter). Imported
+    //    blocks therefore stay ids-required; auto-tagging import via tagKnowledge is a YUK-489
+    //    follow-up that needs a request-level subject signal first.
+    const effectiveKnowledgeIds: string[][] = body.blocks.map((b) => b.knowledge_ids);
+
+    // Validate the batch's subject attribution before any materialization.
+    const requestedKnowledgeIds = [...new Set(effectiveKnowledgeIds.flat())];
+    const foundKnowledgeRows = await tx
+      .select({ id: knowledge.id })
+      .from(knowledge)
+      .where(and(inArray(knowledge.id, requestedKnowledgeIds), isNull(knowledge.archived_at)));
+    const foundKnowledgeIds = new Set(foundKnowledgeRows.map((row) => row.id));
+    const missingKnowledgeId = requestedKnowledgeIds.find((id) => !foundKnowledgeIds.has(id));
+    if (missingKnowledgeId) {
+      throw new ApiError(
+        'validation_error',
+        `unknown or archived knowledge_id: ${missingKnowledgeId}`,
+        400,
+      );
+    }
+    const blockSubjectProfiles = await Promise.all(
+      effectiveKnowledgeIds.map(async (ids) => resolveSubjectProfileForKnowledgeIds(tx, ids)),
+    );
+    for (const [index, block] of body.blocks.entries()) {
+      assertCauseAllowedForSubjectProfile(block.cause, blockSubjectProfiles[index]);
+    }
+
+    const now = new Date();
+
+    const directlyImportedIds = new Set<string>();
+    for (const b of body.blocks) {
+      if (b.block_id !== undefined) directlyImportedIds.add(b.block_id);
+    }
+    const hasManualBlocks = body.blocks.some(
+      (block) => block.block_id === undefined && block.source_block_ids.length === 0,
+    );
+
+    const questionIds: string[] = [];
+    const mistakeIds: string[] = [];
+    const recordIds: string[] = [];
     // YUK-725 — manual cards have no extraction source from which to inherit a position. Give
     // them append semantics in the session's existing ordinal namespace instead of reusing the
     // payload index (which can collide with extraction ordinals). The session row lock above
@@ -508,15 +496,62 @@ export async function completeIngestionImport(
     // under the same lock (no-op vs assertSessionAvailableForImport above
     // unless something inside the txn mutated it, which is impossible).
     await Ingestion.commitImport(tx, sessionId);
+
+    // Failure-learning follow-up is derived from the committed attempt events
+    // by the practice-owned durable subscription. The ingestion route no longer
+    // knows queue names or performs a best-effort post-transaction handoff.
+
+    return {
+      question_ids: questionIds,
+      mistake_ids: mistakeIds,
+      record_ids: recordIds,
+    };
   });
+}
 
-  // Failure-learning follow-up is derived from the committed attempt events
-  // by the practice-owned durable subscription. The ingestion route no longer
-  // knows queue names or performs a best-effort post-transaction handoff.
-
-  return {
-    question_ids: questionIds,
-    mistake_ids: mistakeIds,
-    record_ids: recordIds,
-  };
+/** Durable delivery owns its receipt in the same transaction as the imported facts.
+ * Duplicate deliveries serialize here. Infrastructure/receipt failures roll everything
+ * back and propagate for queue retry; domain rejection is a terminal operation result.
+ */
+export async function completeIngestionImportOperation(
+  db: Db,
+  input: {
+    operationId: string;
+    sessionId: string;
+    body: import('../api/import-schema').ImportBodyParsed;
+  },
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext('ingestion-import-settlement'), hashtext(${input.operationId}))`,
+    );
+    const operation = await readIngestionOperation(tx, input.operationId);
+    if (!operation || isTerminalIngestionOperation(operation)) return;
+    if (operation.operation_kind !== 'import' || operation.session_id !== input.sessionId) {
+      throw new ApiError('conflict', 'Import delivery does not match its reserved operation', 409);
+    }
+    await writeIngestionOperationEvent(tx, {
+      operationId: input.operationId,
+      eventType: 'operation.running',
+    });
+    let result: Awaited<ReturnType<typeof completeIngestionImport>>;
+    try {
+      result = await completeIngestionImport(tx, input.sessionId, input.body);
+    } catch (error) {
+      if (!(error instanceof ApiError)) throw error;
+      await writeIngestionOperationEvent(tx, {
+        operationId: input.operationId,
+        eventType: 'operation.failed',
+        payload: { error: { code: error.code, message: error.message, status: error.status } },
+      });
+      return;
+    }
+    // Keep this outside the domain-error catch: failure to write DONE must roll back
+    // the imported rows, never turn committed business success into a false FAILED.
+    await writeIngestionOperationEvent(tx, {
+      operationId: input.operationId,
+      eventType: 'operation.completed',
+      payload: { result },
+    });
+  });
 }

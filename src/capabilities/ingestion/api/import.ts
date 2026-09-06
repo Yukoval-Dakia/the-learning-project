@@ -3,7 +3,7 @@ import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http'
 import { completeIngestionImport } from '../server/import-completion';
 import { ImportBody } from './import-schema';
 
-export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+async function executePOST(req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const parsed = ImportBody.safeParse(await req.json().catch(() => null));
     if (!parsed.success) {
@@ -14,9 +14,13 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       );
     }
     const result = await completeIngestionImport(db, params.id ?? '', parsed.data);
-    const successor = `/api/ingestion-sessions/${encodeURIComponent(params.id ?? '')}/operations`;
-    return deprecatedRouteResponse(Response.json(result), successor);
+    return Response.json(result);
   } catch (err) {
     return errorResponse(err);
   }
+}
+
+export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
+  const successor = `/api/ingestion-sessions/${encodeURIComponent(params.id ?? '')}/operations`;
+  return deprecatedRouteResponse(await executePOST(req, params), successor);
 }
