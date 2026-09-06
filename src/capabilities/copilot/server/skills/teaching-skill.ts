@@ -44,7 +44,11 @@ type RunAgentTaskFn = (
 
 export interface RunTeachingSkillParams {
   db: Db;
-  /** Absolute edge deadline shared with the enclosing Copilot request. */
+  /** Stable attempt identity owned by the enclosing conversation run. */
+  taskRunId?: string;
+  /** Explicit run cancellation, not the browser subscription signal. */
+  signal?: AbortSignal;
+  /** Absolute deadline shared with the enclosing Copilot run. */
   providerSessionDeadlineAt?: number;
   /** The Copilot session this turn belongs to (already resolved by runCopilotChat). */
   sessionId: string;
@@ -102,7 +106,9 @@ export async function runTeachingSkill(
   const { db, sessionId, learningItemId, userMessage, providerSessionDeadlineAt } = params;
   const run = deps.runAgentTaskFn ?? runAgentTask;
 
+  params.signal?.throwIfAborted();
   const context = await loadTeachingContext(db, learningItemId);
+  params.signal?.throwIfAborted();
 
   // Single-turn teaching: the user's message is the only message. (The legacy
   // route replays prior teach_message events; the Copilot session does not carry
@@ -120,9 +126,14 @@ export async function runTeachingSkill(
     subjectProfile: context.subjectProfile,
     // R5/R6/OQ5: empty tool list → no memory, no tool budget, single structured turn.
     allowedTools: [],
+    ...(params.taskRunId ? { taskRunId: params.taskRunId } : {}),
+    ...(params.signal ? { signal: params.signal } : {}),
     ...(providerSessionDeadlineAt !== undefined ? { providerSessionDeadlineAt } : {}),
   });
 
+  // A provider completing at the same time as Stop does not authorize returning
+  // an ask_check that the caller could subsequently materialize.
+  params.signal?.throwIfAborted();
   const turn = parseTurnOutput(result.text);
 
   let pendingQuestion: PendingAskCheckParams | undefined;

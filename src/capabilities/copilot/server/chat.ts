@@ -50,10 +50,7 @@ import {
   type TeachingSkillResult,
   runTeachingSkill,
 } from '@/capabilities/copilot/server/skills/teaching-skill';
-import {
-  type MaterializedAskCheckQuestion,
-  materializeAskCheckQuestion,
-} from '@/capabilities/copilot/server/teaching/materialize-ask-check';
+import { materializeAskCheckQuestion } from '@/capabilities/copilot/server/teaching/materialize-ask-check';
 // YUK-267 (C2) — the SAME session-scoped turn reader the drawer replay uses. The
 // free-form run input reuses it to assemble conversation_history (防循环 ①: history
 // = persisted ask原文 + reply正文 only). NO new schema, NO new read source.
@@ -211,10 +208,8 @@ export async function writeCopilotUserAsk(
 // marker，并写正确形态的 copilot_reply domain event（chained caused_by →
 // userAskEventId，同 session_id）。
 //
-// 注意：teaching behavior pack（runTeachingBehaviorPack）有自己的 reply 写入（在
-// 一个 db.transaction 内 + turn_kind/skill_turn/skill_context 字段），那是确定性
-// 服务回复、不经 primary_view 收敛点，故 NOT 抽进本 helper —— 本 helper 只服务
-// free-form 路径（inline free-form 收敛点 + durable handler，两者皆 free-form 等价）。
+// Teaching owns its question materialization transaction, but uses this same
+// commit owner for the conversation reply and durable recovery metadata.
 export interface WriteCopilotReplyResult {
   replyEventId: string;
   /** 剥掉 legacy primary_view marker 后的终稿（持久化 / 返回 / 重放历史都用这份）。 */
@@ -233,6 +228,9 @@ export async function writeCopilotReply(
   db: Db | Tx,
   params: {
     sessionId: string;
+    /** Server-generated id shared with teaching question source_ref. */
+    replyEventId?: string;
+    teaching?: { context: CopilotSkillContextT; turn: CopilotSkillTurn };
     /** caused_by + in_reply_to 锚——通常是 user_ask（chat）或 chip trigger event id。 */
     userAskEventId?: string;
     /** 模型终稿；遗留 primary_view marker 只会被剥除，不再授予展示权限。 */
@@ -303,7 +301,7 @@ export async function writeCopilotReply(
   // 在 created_at 上打平，turns 读取器的 (created_at, id) 排序可能把 reply 排到自己
   // 的 ask 之前。reply 真在 ask 之后发生，1ms bump 既忠实又保 pair 顺序（与 inline 同）。
   const replyAt = new Date(params.now.getTime() + 1);
-  const replyEventId = `copilot_reply_${createId()}`;
+  const replyEventId = params.replyEventId ?? `copilot_reply_${createId()}`;
   await write(db, {
     id: replyEventId,
     session_id: params.sessionId,
@@ -324,6 +322,13 @@ export async function writeCopilotReply(
       ...(params.durableEmitReviewedDelta ? { durable_emit_reviewed_delta: true } : {}),
       ...(params.durableFailure ? { durable_failure: params.durableFailure } : {}),
       ...(params.modeState ?? {}),
+      ...(params.teaching
+        ? {
+            turn_kind: params.teaching.turn.kind,
+            skill_turn: params.teaching.turn,
+            skill_context: params.teaching.context,
+          }
+        : {}),
       in_reply_to_event_id: params.userAskEventId ?? null,
       // YUK-307 (S3a additive) — persist hero nomination so Dock replay can restore
       // it. Reply METADATA only（assembleConversationHistory 的 {role,text} strip 把
@@ -336,6 +341,50 @@ export async function writeCopilotReply(
     created_at: replyAt,
   });
   return primaryView ? { replyEventId, cleanedReply, primaryView } : { replyEventId, cleanedReply };
+}
+
+/** Question materialization and the terminal reply are one teaching-owned commit. */
+export async function writeTeachingCopilotReply(
+  db: Db | Tx,
+  params: Pick<
+    Parameters<typeof writeCopilotReply>[1],
+    | 'sessionId'
+    | 'userAskEventId'
+    | 'actorRef'
+    | 'durableFinishReason'
+    | 'durableEmitReviewedDelta'
+    | 'now'
+    | 'writeFn'
+  > & {
+    outcome?: 'success';
+    skillContext: CopilotSkillContextT;
+    skillResult: TeachingSkillResult;
+    materializeAskCheckFn?: typeof materializeAskCheckQuestion;
+  },
+): Promise<WriteCopilotReplyResult & { skillTurn: CopilotSkillTurn; materialized: boolean }> {
+  const { skillContext, skillResult, materializeAskCheckFn, ...commit } = params;
+  return db.transaction(async (tx) => {
+    const replyEventId = `copilot_reply_${createId()}`;
+    const question = skillResult.pendingQuestion
+      ? await (materializeAskCheckFn ?? materializeAskCheckQuestion)(tx, {
+          ...skillResult.pendingQuestion,
+          sourceRef: replyEventId,
+        })
+      : undefined;
+    const skillTurn: CopilotSkillTurn = {
+      kind: skillResult.kind,
+      suggested_next: skillResult.suggested_next,
+      ...(question ? { structured_question: question } : {}),
+    };
+    const reply = await writeCopilotReply(tx, {
+      ...commit,
+      replyEventId,
+      replyText: skillResult.text_md,
+      taskRunId: skillResult.task_run_id,
+      teaching: { context: skillContext, turn: skillTurn },
+    });
+    return { ...reply, skillTurn, materialized: Boolean(question) };
+  });
 }
 
 // Accepts both Db and Tx so the skill path can call write() inside a db.transaction.
@@ -604,90 +653,33 @@ async function runCopilotChatImpl(
   async function runTeachingBehaviorPack(
     skillContext: CopilotSkillContextT,
   ): Promise<CopilotChatResult> {
-    // Pre-generate the reply event id so ask_check materialization (which needs
-    // it as source_ref) and the reply event write can share the same tx (PR #305
-    // review comment #1: prevents dangling question row on reply-write failure).
-    const replyEventId = `copilot_reply_${createId()}`;
     const skillResult: TeachingSkillResult = await runTeachingSkillFn({
       db,
       sessionId,
       learningItemId: skillContext.ref.id,
       userMessage: req.user_message,
+      ...(streaming?.signal ? { signal: streaming.signal } : {}),
       ...(deps.providerSessionDeadlineAt !== undefined
         ? { providerSessionDeadlineAt: deps.providerSessionDeadlineAt }
         : {}),
     });
-    const replyMd = skillResult.text_md;
     // PR #305 review comment #3: use the real task_run_id from the skill runner.
     const realTaskRunId = skillResult.task_run_id;
-    // Carry the teaching turn kind onto the copilot_reply payload so the
-    // accept-chip resolver can anchor a corrective chip on THIS event (R1 pairing,
-    // load-bearing — §4.2). Free-form replies and solve hints carry no turn_kind.
-    const turnKind: 'explain' | 'ask_check' | 'end' = skillResult.kind;
-
-    // PR #305 review comment #1 (atomicity): materialize the ask_check question
-    // INSIDE the reply-event write transaction — both or neither persist.
-    const replyAt = new Date(now.getTime() + 1);
-    const materializedQuestion = await db.transaction(async (tx: Tx) => {
-      let mat: MaterializedAskCheckQuestion | undefined;
-      if (skillResult.pendingQuestion) {
-        mat = await materializeAskCheck(tx, {
-          ...skillResult.pendingQuestion,
-          sourceRef: replyEventId,
-        });
-      }
-      await write(tx, {
-        id: replyEventId,
-        session_id: sessionId,
-        actor_kind: 'agent',
-        actor_ref: actorRef,
-        action: REPLY_EVENT_ACTION,
-        subject_kind: 'query',
-        subject_id: replyEventId,
-        outcome: null,
-        payload: {
-          surface: 'copilot',
-          session_id: sessionId,
-          reply_md: replyMd,
-          // PR #305 review comment #3: real task_run_id from TeachingTurnTask.
-          task_run_id: realTaskRunId,
-          in_reply_to_event_id: causedByEventId ?? null,
-          // AF S4 — corrective-chip anchor key (only for teaching turns).
-          turn_kind: turnKind,
-          // PR #305 review comment #2: persist skill_turn so replay can surface
-          // it without re-running the LLM (ask_check carries structured_question).
-          ...(mat
-            ? {
-                skill_turn: {
-                  kind: skillResult.kind,
-                  suggested_next: skillResult.suggested_next,
-                  structured_question: mat,
-                },
-              }
-            : {
-                skill_turn: {
-                  kind: skillResult.kind,
-                  suggested_next: skillResult.suggested_next,
-                },
-              }),
-          // PR round-2 (CR 3360614441): persist skill_context so replay can
-          // restore the skill card (Dock chip renderer + replayToMessages use it).
-          skill_context: skillContext,
-          // YUK-307 — NO primary_view here, ever: the teaching pack is a
-          // deterministic service reply (no model emission to nominate from).
-        },
-        caused_by_event_id: causedByEventId ?? null,
-        task_run_id: realTaskRunId,
-        created_at: replyAt,
-      });
-      return mat;
+    const {
+      replyEventId,
+      cleanedReply: replyMd,
+      skillTurn,
+      materialized,
+    } = await writeTeachingCopilotReply(db, {
+      sessionId,
+      userAskEventId: causedByEventId,
+      actorRef,
+      skillContext,
+      skillResult,
+      materializeAskCheckFn: materializeAskCheck,
+      writeFn: write,
+      now,
     });
-
-    const skillTurn: CopilotSkillTurn = {
-      kind: skillResult.kind,
-      suggested_next: skillResult.suggested_next,
-      ...(materializedQuestion ? { structured_question: materializedQuestion } : {}),
-    };
 
     // YUK-266 (C1) — skill turns are deterministic / single-shot (no token loop),
     // so when streaming we emit ONE delta carrying the full reply, then the caller
@@ -714,7 +706,7 @@ async function runCopilotChatImpl(
       // question row: cascade revert only compensates the ask/reply event chain, NOT that question row,
       // so exposing the Dock revert button would orphan the draft after a "successful" revert. See
       // buildAskFields (YUK-497 wave-2 codex P2; cascade scope deliberately NOT expanded to question rows).
-      ...buildAskFields(userAskEventId, Boolean(materializedQuestion)),
+      ...buildAskFields(userAskEventId, materialized),
       skill_turn: skillTurn,
     };
   }
