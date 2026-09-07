@@ -1,5 +1,4 @@
 import type { Page, Request as PlaywrightRequest, Route } from '@playwright/test';
-
 import {
   buildCalendarReportWindow,
   resolveReportTimeZone,
@@ -9,9 +8,125 @@ import {
   proposalChangeSummary,
   proposalDisplayTitle,
 } from '../../src/kernel/proposals/presentation';
+import type { ApiOperationJsonResponse } from '../../src/ui/lib/api';
 
 const TOKEN_STORAGE_KEY = 'loom_internal_token';
 const TOKEN = 'usability-fixture-token';
+
+export function costTruthFixture(mode: 'unknown' | 'mixed' | 'zero' | 'empty') {
+  const zero = {
+    currency: 'USD',
+    cost: 0,
+    reported_cost: 0,
+    estimated_cost: 0,
+    legacy_cost: 0,
+    unknown_attempts: 0,
+    legacy_rows: 0,
+    tokens_in: 8912,
+    tokens_out: 731,
+    calls: 1,
+  };
+  const rows =
+    mode === 'empty'
+      ? []
+      : mode === 'zero'
+        ? [zero]
+        : mode === 'unknown'
+          ? [{ ...zero, unknown_attempts: 1 }]
+          : [
+              {
+                ...zero,
+                cost: 0.3,
+                reported_cost: 0.1,
+                estimated_cost: 0.2,
+                unknown_attempts: 1,
+                calls: 3,
+              },
+              {
+                ...zero,
+                currency: 'CNY',
+                cost: 0.4,
+                legacy_cost: 0.4,
+                legacy_rows: 1,
+                tokens_in: 0,
+                tokens_out: 0,
+              },
+            ];
+  const byTruth: ApiOperationJsonResponse<'getAdminCost'>['by_truth'] = rows.flatMap((row) => {
+    const common = {
+      currency: row.currency,
+      tokens_in: 0,
+      tokens_out: 0,
+      calls: 1,
+      unknown_attempts: 0,
+    };
+    const truth: ApiOperationJsonResponse<'getAdminCost'>['by_truth'] = [];
+    if (row.reported_cost > 0 || mode === 'zero')
+      truth.push({
+        ...common,
+        entry_kind: 'attempt',
+        cost_basis: 'reported',
+        cost_ref: 'fixture:reported',
+        cost: row.reported_cost,
+      });
+    if (row.estimated_cost > 0)
+      truth.push({
+        ...common,
+        entry_kind: 'attempt',
+        cost_basis: 'estimated',
+        cost_ref: 'pricebook:fixture',
+        cost: row.estimated_cost,
+      });
+    if (row.legacy_rows > 0)
+      truth.push({
+        ...common,
+        entry_kind: 'legacy',
+        cost_basis: null,
+        cost_ref: null,
+        cost: row.legacy_cost,
+      });
+    if (row.unknown_attempts > 0)
+      truth.push({
+        ...common,
+        entry_kind: 'attempt',
+        cost_basis: 'unknown',
+        cost_ref: 'unpriced:fixture/future-model',
+        cost: 0,
+        unknown_attempts: row.unknown_attempts,
+      });
+    if (truth[0]) {
+      truth[0].tokens_in = row.tokens_in;
+      truth[0].tokens_out = row.tokens_out;
+    }
+    return truth;
+  });
+  const byTask = rows.map((row) => ({ task_kind: `EvidenceValidation_${row.currency}`, ...row }));
+  const admin: ApiOperationJsonResponse<'getAdminCost'> = {
+    days_window: 30,
+    days: rows.map((row) => ({ day: '2026-09-07', ...row })),
+    by_task: byTask,
+    by_truth: byTruth,
+  };
+  const today: ApiOperationJsonResponse<'getTodayCost'> = {
+    window: { from: 1788710400, to: 1788768000, label: 'BJT today' },
+    today: {
+      by_currency: rows,
+      tokens_in: rows.reduce((sum, row) => sum + row.tokens_in, 0),
+      tokens_out: rows.reduce((sum, row) => sum + row.tokens_out, 0),
+      ledger_rows: rows.reduce((sum, row) => sum + row.calls, 0),
+      tool_calls: 0,
+      unknown_attempts: rows.reduce((sum, row) => sum + row.unknown_attempts, 0),
+      legacy_rows: rows.reduce((sum, row) => sum + row.legacy_rows, 0),
+      by_truth: byTruth,
+      by_task: byTask.map((row) => ({
+        task_kind: row.task_kind,
+        calls: row.calls,
+        by_currency: [row],
+      })),
+    },
+  };
+  return { admin, today };
+}
 
 export type UsabilityScenario =
   | 'existing-evidence'
@@ -822,6 +937,9 @@ export async function installApiFixtures(
           tokens_in: 0,
           tokens_out: 0,
           ledger_rows: 0,
+          unknown_attempts: 0,
+          legacy_rows: 0,
+          by_truth: [],
           tool_calls: 0,
           by_task: [],
         },

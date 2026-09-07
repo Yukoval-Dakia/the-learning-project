@@ -1,13 +1,15 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：成本复核确认两UI丢失unknown，976已捕获/待UI预检批准；975仍健康，整体goal active。
+> Linear 是权威 tracker；更新于 2026-09-07：owner批准976两页费用UI，单线实施完整费用真相消费；975仍健康，整体goal active。
 
 ## NOW
 
-- 976只读复核：18成本API/reader DB过；server truth完整，两UI窄类型丢reported/estimated/unknown。
+- Active976：owner已批准六文件UI预检；root独占codex/yuk-976-cost-truth，951只读核对暂停。
+  顺序：两页browser反例→共享显示规则/现成API类型→scoped unit/browser→review/exactCI→Mac部署。
+  18成本API/reader DB过；server truth完整，两UI窄类型丢reported/estimated/unknown。
   shipped AdminCost注入合法unknown USD记录，实见$0.0000且无unknown；未写生产/无paid。
-  既有Today成本卡与AdminCost的UI改动需独立批准，详见docs/design/2026-09-07-cost-truth-preflight.md。
-  Linear976 Todo；无UI代码变更。可继续独立业务扩展成本核对，不将此当整体goal blocked。
+  既有Today成本卡与AdminCost精确范围见docs/design/2026-09-07-cost-truth-preflight.md；无新账本/provider。
+  Linear976 In Progress；本地生产暂不变，无新paid；旧Copilot抽屉产品语义不动。
 - YUK975 Done：PR1359 exact14ea1a81，CI34128362101全job绿，独立初审PASS，main5e6562917。
   API拥有HTTP/runtime停机；原镜像stop137、init对照143，新bundle空闲0、cleanimage SSE30s主动断连0。
   SSE client未abort，clone423event/24job_event/258task/4attempt不变；不把断连变成Copilot Stop。
@@ -171,7 +173,7 @@
 
 ## NEXT
 
-1. 976待批准：Today/Admin Cost复用完整API类型，显示已知小计/估算来源/未知数量，不改账本或费率。
+1. 完成976：Today/Admin Cost复用完整API类型，显示已知小计/估算来源/未知数量，不改账本或费率。
 2. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
 3. 887保留provider/crash矩阵；本地backfill/audit/golden及973/975退休与停机已验证，NAS仍不在范围。
@@ -186,7 +188,7 @@
 
 ## BLOCKED-ON
 
-- 976新增UI范围等待owner批准；旧Copilot抽屉授权不自动覆盖Today/Admin Cost。
+- 976新增两页费用UI已获owner明确批准；不扩大为其它UI重绘。
 - Mac本地生产已授权直接操作；NAS部署/数据操作仍未授权，不执行。
 - 不主动重跑现存failed memory/DLQ或新增超预算模型验收；历史费用unknown保留。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。

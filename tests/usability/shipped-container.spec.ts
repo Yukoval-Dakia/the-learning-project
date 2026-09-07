@@ -1,6 +1,88 @@
 import { createHash } from 'node:crypto';
 import { type Page, expect, test } from '@playwright/test';
-import { installApiFixtures } from './api-fixtures';
+import { costTruthFixture, installApiFixtures } from './api-fixtures';
+
+for (const path of ['/today', '/admin/cost']) {
+  for (const mode of ['unknown', 'mixed', 'zero', 'empty'] as const) {
+    test(`cost truth ${path} ${mode}`, async ({ page }) => {
+      const fixture = await installApiFixtures(page, 'existing-evidence');
+      const data = costTruthFixture(mode);
+      await page.route('**/api/**', async (route) => {
+        const url = new URL(route.request().url()).pathname;
+        if (url === '/api/cost/today') return route.fulfill({ json: data.today });
+        if (url === '/api/admin/cost') return route.fulfill({ json: data.admin });
+        return route.fallback();
+      });
+      await page.goto(path);
+      const surface =
+        path === '/today'
+          ? page.locator('.card').filter({ hasText: '今日 AI 成本' })
+          : page.locator('main');
+      const assertCost = async () => {
+        if (mode === 'unknown') {
+          await expect(surface).toContainText('1 次费用未知');
+          await expect(surface).not.toContainText('$0.00');
+        } else if (mode === 'mixed') {
+          await expect(surface).toContainText('已报告 $0.10');
+          await expect(surface).toContainText('估算 $0.20');
+          await expect(surface).toContainText('历史口径 ¥0.40');
+          await expect(surface).toContainText('1 次费用未知');
+        } else if (mode === 'zero') {
+          await expect(surface).toContainText('已知金额为零');
+          await expect(surface).toContainText('$0.00');
+        } else {
+          await expect(surface).toContainText(
+            path === '/today' ? '今日尚无 AI 花费。' : '暂无费用记录',
+          );
+          await expect(surface).not.toContainText('$0.00');
+        }
+      };
+      await assertCost();
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.reload();
+      await assertCost();
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      ).toBe(true);
+      expect(fixture.unexpectedRequests).toEqual([]);
+    });
+  }
+
+  test(`cost truth ${path} loading and failure never advertise zero`, async ({ page }) => {
+    await installApiFixtures(page, 'existing-evidence');
+    let finish = () => {};
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    await page.route(
+      path === '/today' ? '**/api/cost/today' : '**/api/admin/cost**',
+      async (route) => {
+        await pending;
+        return route.fulfill({
+          status: 503,
+          json: { error: 'cost_read_unavailable', message: 'cost_read_unavailable' },
+        });
+      },
+    );
+    try {
+      await page.goto(path);
+      const surface =
+        path === '/today'
+          ? page.locator('.card').filter({ hasText: '今日 AI 成本' })
+          : page.locator('main');
+      await expect(surface).toBeVisible();
+      await expect(surface).not.toContainText('$0.00');
+      finish();
+      await expect(surface).toContainText(
+        path === '/today' ? '成本服务暂不可用。' : 'cost_read_unavailable',
+        { timeout: 15_000 },
+      );
+      await expect(surface).not.toContainText('$0.00');
+    } finally {
+      finish();
+    }
+  });
+}
 
 // YUK-721 — dual-viewport visual-QA capture of the teaching brief on /today.
 // YUK-789 — the path was a hard-coded macOS scratchpad (`/private/tmp/claude-501/...`), which a

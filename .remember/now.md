@@ -2,7 +2,18 @@
 
 ## 最新状态
 
-- YUK976 Todo/UI预检待owner批准：成本只读复核，main5e656291/f376c6aa，未改UI代码。
+- Active976：owner已明确「批准」六文件UI预检；root独占codex/yuk-976-cost-truth，base5e6562917。
+  951仅曾读取issue/指引，未开实施/未操作数据；收到批准后已暂停，只有976一条写入线。
+  Today/admin复用ApiOperationJsonResponse与describeCosts，删除两窄类型/重复金额格式；unknown-only不显示0。
+  mixed显示已知小计+未知与reported/estimated/legacy细目；加载/错误不伪造金额，零值与空态分开。
+  15helper/Today unit、10新shipped-browser用例通过（两页desktop/mobile及四费用状态+error/loading）。
+  18原cost API/reader DB已过；无backend/provider/ledger改动，保留现有查询重试与权限。
+  mobile Admin旧intrinsic header宽度已本页约束；未改全局CSS，两张390px截图已目检，金额无裁剪。
+  private证据目录cost-976-admin-mobile.png/cost-976-today-mobile.png；浏览器用无provider凭据isolated API。
+  测试API PID59988/session49108，port18787，cwd tlp-cost-ui-976.wpuLuc，DBloom_before_973_verify；结束时只停此PID。
+  当前待final gates/初审/exactCI/本地交付；生产app/worker仍14ea1a81，无paid，恢复专项$3未用。
+
+- YUK976批准前只读记录（现由上方实施状态取代）：main5e656291/f376c6aa，当时未改UI代码。
   server provider-cost-projection/cost-today/admin-cost truth字段完整；18相关API/reader DB全过。
   两真实consumer（TodayPage CostRibbon、admin-cost）手写窄类型丢reported/estimated/legacy/unknown。
   shipped14ea1a81浏览器拦截仅admincost GET，合法unknown USD+8912in/731out/1call，$0.0000可见，无unknown提示。

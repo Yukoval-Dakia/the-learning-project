@@ -1,6 +1,6 @@
 # YUK-976 — Cost truth UI pre-flight
 
-Status: awaiting owner UI approval. No UI code changed.
+Status: owner approved on 2026-09-07; implementation is limited to the six files below.
 
 ## Existing design and surfaces
 
@@ -49,3 +49,22 @@ small known amounts, USD/CNY separation, loading/error and both shipped page con
 After approval: scoped tests, typecheck/lint/build, built-browser verification,
 independent review and exact-head CI, then previously authorized Mac-local deployment.
 NAS and extra model spending remain out of scope.
+
+## Implementation evidence (before review)
+
+Both consumers now use generated `ApiOperationJsonResponse` types and one shared
+`describeCosts` formatter. Unknown-only reads as unknown; partial amounts carry
+`+ 未知`, with reported/estimated/legacy components and unknown counts shown separately.
+Admin loading/error hides monetary KPIs. Empty records and genuine zero stay distinct.
+No backend cost logic, provider rates or historical ledger was changed.
+
+15 scoped helper/Today unit tests pass; all 10 new shipped-browser scenarios pass,
+covering both pages, desktop/mobile, unknown/mixed/zero/empty and loading/error.
+Existing 18 cost API/reader DB tests also passed during the preceding inspection.
+Initial browser tests revealed query retries outlasting a 7s assertion and admin mobile
+intrinsic-width overflow. Tests now wait for the actual error state and reload at the
+mobile viewport; the page-local header width constraint is fixed without global CSS
+changes. Two mobile screenshots were inspected, with 390px document width and no
+clipped monetary content. Build/typecheck/lint and architecture gates precede PR review.
+No paid requests; isolated built API uses the retained clone and no provider credentials.
+Review, exact-head CI and local production delivery are not yet complete.
