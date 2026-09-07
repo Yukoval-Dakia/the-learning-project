@@ -27,6 +27,31 @@ No schema, model calls, NAS deployment, or changes to durable Copilot Stop seman
 - 12 scoped unit tests and 7 existing shutdown tests under the DB partition pass;
   typecheck, lint, partition, architecture/capability audits and production build pass.
   Existing partition warnings and baseline lint warnings are not new clean-sheet claims.
-- Independent review, exact-head CI, merge and clean-image Mac rollout remain required.
+- Independent review, exact-head CI, merge and clean-image Mac rollout were still pending
+  at this checkpoint; their completed evidence is recorded below.
   Exit 137 alone never proves data loss; this slice does not close the full YUK-887
   actual-provider/crash-recovery matrix.
+
+## Delivery
+
+PR #1359, exact `14ea1a8142c867e3b95c619a8441b6d56b65695d`, CI `34128362101`
+all jobs succeeded; merged main `5e65629170d1ef48dfcc8e964bfa64d42f9bc691`.
+Independent initial review PASS, independently reran 8 API unit tests, 7 existing boss
+shutdown tests and typecheck. Additional 37 Copilot admission/cancel unit tests passed.
+
+Clean-image SSE probe: server explicitly logged HTTP drain timeout, disconnected after
+30,319ms and exited 0; the 90-second client deadline had not fired. Clone event/job-event/
+task/attempt counts remained 423/24/258/4. An earlier sample with a coincident client
+deadline is not evidence of server-enforced timeout. Temporary stopped probe containers
+were removed; no user volume was removed.
+
+Mac-local app/worker run the reviewed image at 2026-09-07T13:48Z, healthy with zero
+restarts and StopTimeout 70/40. Image digest:
+`sha256:c4ea66c85bc08dd40d1705c6fdbb24cc00b546f5d4306b9448b6620f431569f8`.
+Original Postgres container, start time and data volume unchanged. Clone/live migration
+added nothing; hydrated projection audit and eight retained goldens have zero drift.
+Live counts remain 423 events / 258 task runs / 4 provider attempts, with no active,
+created or retry queue rows. Health 200, unauthenticated subjects 401, authenticated 200.
+No paid model calls; recovery-specific $3 unused. Prior fbee5c32 image remains available
+for rollback. No new-production stop was performed solely as a probe; isolated image
+shutdown evidence and production-running evidence are distinct. No NAS operation.

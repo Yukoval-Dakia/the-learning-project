@@ -2,6 +2,22 @@
 
 ## 最新状态
 
+- YUK975 Done：PR1359 exact14ea1a8142c867e3b95c619a8441b6d56b65695d，CI34128362101全job success，
+  main5e65629170d1ef48dfcc8e964bfa64d42f9bc691，独立初审PASS（独立8unit/7DB/typecheck），无需第二审。
+  API缺少信号owner：baseline fbee5c32同clonehealth200/stop137，唯一--init对照143；新bundle0。
+  clean14ea1a81实际SSE200，server30s强制断开、client90s未abort、30319ms/exit0；clone423/24/258/4不变。
+  首样本client45s与server30s撞期不作强制断开证据；四个已停止临时probe容器已删除，无用户数据卷。
+  API单owner先HTTP30s、await worker startup、共享boss30s/WIP日志、DB end；总65s，compose API70/worker40。
+  49unit（12shutdown+37Copilot）与7既有DB分区shutdown、typecheck/lint/build/partition/architecture通过。
+  未为测试分区放宽audit；尝试移动旧boss test被拒绝后已撤销，保留原DB分区。
+  Mac13:48Z app/worker运行14ea1a81，image sha256:c4ea66c85bc08dd40d1705c6fdbb24cc00b546f5d4306b9448b6620f431569f8。
+  healthy/零重启、实际StopTimeout70/40；原PG ID7d99236a/StartedAt09:40:42Z及pgdata未变，无NAS/tunnel。
+  clone/live migrate零新增、8类audit/golden零drift；423event/258task/4attempt不变，无活动/待执行队列。
+  health200/无token401/有效token200；未为验证stop而额外重启新生产API，隔离停机与生产运行证据分开。
+  private runtime-975-image.override.yml生效；回退用fbee5c32/runtime-972-image.override.yml，保留原backup。
+  root独占codex/yuk-975-delivery-notes，原脏main不动；无paid，恢复专项$3未用，旧$10safe0.04177不回收reserve。
+  下一项成本真相/全产品扩展成本复核；887完整provider/crash、951完整重试窗drain仍开放，整体goal active。
+
 - YUK972 Done：PR1358 exactfbee5c32c8077f9cda18f7f8953c49367f36184a，CI34126257359成功，
   main4c9ae238eb74d9d4db062a1ab0a5756b9dfc8b93，独立初审PASS无P0/P1；不需第二审。
   Mac于13:24Z运行fbee5c32镜像sha256:d271e3c9b266bfcd5cf58ef1bf8e22a7332680d20ae3a72f4ae53d6cbad60e87。
@@ -14,7 +30,7 @@
   51unit/typecheck/lint/build/architecture/capability过；CI migration/usability按变更跳过，不称新浏览器验收。
   两处直调judge职责分别是照片作答和独立解答对照，未证明同一规则重复，不机械删除。
   root独占codex/yuk-972-delivery-notes，原脏main不动；专项恢复$3未使用，旧$10安全余0.04177不回收reserve。
-  下一项887已捕获shutdown：第三次正常compose stop旧034f35fe仍十秒后exit137，worker exit0。
+  当时887捕获shutdown：第三次正常compose stop旧034f35fe仍十秒后exit137，worker exit0；现已由上方975交付。
   server/index.ts仅RW_WORKER=1安装boss shutdown，生产RW_WORKER=0；serve返回值未持有，compose无grace。
   先隔离真实binary复现，未确定PID1影响/未证明数据丢失；887comment7b8306d5记录，勿混入972。
   整体goal active；provider/crash矩阵、成本真相、951完整重试窗drain仍不能冒充完成。
