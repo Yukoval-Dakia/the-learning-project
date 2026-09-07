@@ -183,7 +183,6 @@ FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
 | `DreamingTask` | mimo-v2.5-pro | pg-boss nightly (Foundation D) | 是 | — | 夜间学习信号 → inbox proposals（DomainTools）|
 | `CoachTask` | mimo-v2.5-pro | pg-boss `coach_daily` / `coach_weekly` (T-D6) | 是 | — | TodayPlan JSON（propose_* 写 inbox）|
 | `CopilotTask` | mimo-v2.5-pro | `/api/chat` inline + pg-boss `copilot_run`（AF S4 / YUK-203 / YUK-757 / YUK-939） | 是 | — | 唯一面向用户的对话式学习助手；terminal Markdown 由服务端绑定精确回复字节、实际 root 工具轨迹、更正、proposal 披露与学习内容质量门；普通 chat 前台执行，显式 `durable:true` 走 `copilot_run` |
-| `CopilotResearchTask` | mimo-v2.5-pro | `copilot_run` 内的 durable depth-1 read-only research objective | 是 | — | `copilot-researcher` 的受限只读研究任务；只把结构化进度与结论交回同一 Copilot 声音 |
 | `QuestionAuthorTask` | mimo-v2.5-pro | `author_question` DomainTool knowledge\|material seed（ADR-0031 / YUK-304） | 否 | — | 单道原创 draft 题（StructuredQuestion 树）+ `question_draft` proposal（单次 structured output，无工具循环；取代 YUK-275 的 `QuizIntentParseTask` C 形态解析器）|
 | `ItemPriorTask` | mimo-v2.5-pro | pg-boss `item_prior_backfill`（B1-W1 / ADR-0035 慢热阶段①） | 否 | — | 给新题估冷启先验难度 b（logit 尺度，抽教学特征路线）+ confidence → `item_calibration`（source=`llm_prior`）|
 | `SelectionOrchestratorTask` | mimo-v2.5 | `composeSoftmaxStream` 选题编排（YUK-361 Phase 3 / ADR-0042 编排档2） | 否 | — | 档2 L2 选题主脑：对每个非到期候选出 weight/role/arrangement/reason（单次 structured output）→ 薄 tempered-softmax sampler 抽样落题 + 记 π_i；不碰到期项/recall 项 |
