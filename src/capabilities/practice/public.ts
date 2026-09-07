@@ -59,7 +59,6 @@ export {
   retireInterventionDiagnosticQuestion,
 } from './server/intervention-diagnostics';
 export {
-  assertMergedLearningItemParity,
   rewriteLearningItemKnowledgeIds,
   rewriteQuestionKnowledgeIds,
 } from './server/merge-attribution';

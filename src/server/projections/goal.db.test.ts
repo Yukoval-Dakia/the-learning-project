@@ -5,15 +5,14 @@
 //     and is idempotent (re-run seeds 0).
 //   - shell parity: gatherAndFoldGoal reproduces the live row for the proposal+accept chain,
 //     the retract chain, and the W2 status/scope events.
-//   - per-entity flag: OFF (imperative insertGoal writes the row) vs ON (projection write-through
-//     writes the row) yield IDENTICAL rows for accept; ditto for retract.
+//   - canonical acceptance and retraction match replay.
 //   - audit:projection goal section: CLEAN on a coherent fixture, DRIFT on an out-of-band write.
 //
 // Hermetic: resetDb() in beforeEach. resetDb truncates `goal` (in ALL_TABLES) but NOT
 // materialized_id_index (no FK → not CASCADE-reached), so we truncate the index explicitly.
 
 import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { acceptGoalScopeProposal } from '@/capabilities/agency/server/goals/accept';
 import { newId } from '@/core/ids';
@@ -30,8 +29,6 @@ import { resetDb, testDb } from '../../../tests/helpers/db';
 import { gatherAndFoldGoal } from './gather';
 
 const T0 = new Date('2026-06-01T00:00:00.000Z');
-
-const FLAG = 'PROJECTION_IS_WRITER_GOAL';
 
 async function resetIndex(): Promise<void> {
   await testDb().delete(materialized_id_index);
@@ -201,7 +198,6 @@ describe('gatherAndFoldGoal — shell parity over the event chain', () => {
   beforeEach(async () => {
     await resetDb();
     await resetIndex();
-    delete process.env[FLAG]; // default OFF
   });
 
   it('reproduces a proposal+accept materialized goal (status=active, version=0)', async () => {
@@ -282,21 +278,16 @@ describe('gatherAndFoldGoal — shell parity over the event chain', () => {
   });
 });
 
-describe('per-entity flag — OFF vs ON yield identical rows', () => {
+describe('canonical goal acceptance', () => {
   beforeEach(async () => {
     await resetDb();
     await resetIndex();
   });
-  afterEach(() => {
-    delete process.env[FLAG];
-  });
 
-  it('accept: OFF (imperative insertGoal) and ON (projection write-through) produce the same row', async () => {
-    // OFF run
-    delete process.env[FLAG];
+  it('accept materializes structural state and exactly matches replay', async () => {
     await writeGoalProposal({
-      proposalId: 'prop_off',
-      goalId: 'goal_off',
+      proposalId: 'prop_accept',
+      goalId: 'goal_accept',
       title: 'G',
       subjectId: 'yuwen',
       scope: ['k_a'],
@@ -305,67 +296,32 @@ describe('per-entity flag — OFF vs ON yield identical rows', () => {
     });
     await acceptGoalScopeProposal(
       testDb() as never,
-      'prop_off',
+      'prop_accept',
       inboxRow({
-        goalId: 'goal_off',
+        goalId: 'goal_accept',
         title: 'G',
         subjectId: 'yuwen',
         scope: ['k_a'],
         sequenceHint: 1,
       }),
     );
-    const offRow = await liveGoal('goal_off');
-    // Parity: fold == imperative row.
-    expect(await gatherAndFoldGoal(testDb(), 'goal_off')).toEqual(offRow);
-
-    // ON run (separate goal)
-    process.env[FLAG] = '1';
-    await writeGoalProposal({
-      proposalId: 'prop_on',
-      goalId: 'goal_on',
-      title: 'G',
-      subjectId: 'yuwen',
-      scope: ['k_a'],
-      sequenceHint: 1,
-      created_at: T0,
-    });
-    await acceptGoalScopeProposal(
-      testDb() as never,
-      'prop_on',
-      inboxRow({
-        goalId: 'goal_on',
-        title: 'G',
-        subjectId: 'yuwen',
-        scope: ['k_a'],
-        sequenceHint: 1,
-      }),
-    );
-    const onRow = await liveGoal('goal_on');
-    expect(onRow).not.toBeNull();
-    // The projection wrote the row; it must match the fold AND be field-identical to the OFF row
-    // (modulo id/source_ref which differ by construction).
-    expect(await gatherAndFoldGoal(testDb(), 'goal_on')).toEqual(onRow);
-    expect(onRow?.status).toBe('active');
-    expect(onRow?.version).toBe(0);
-    expect(onRow?.title).toBe('G');
-    expect(onRow?.subject_id).toBe('yuwen');
-    expect(onRow?.scope_knowledge_ids).toEqual(['k_a']);
-    expect(onRow?.sequence_hint).toBe(1);
-    // structural equality of the two rows except the per-run id/source_ref
-    const norm = (r: GoalRowSnapshotT | null) =>
-      r && { ...r, id: 'X', source_ref: 'X', created_at: 0, updated_at: 0 };
-    expect(norm(onRow)).toEqual(norm(offRow));
+    const acceptedRow = await liveGoal('goal_accept');
+    expect(acceptedRow).not.toBeNull();
+    // The canonical writer materializes the same structural state as replay.
+    expect(await gatherAndFoldGoal(testDb(), 'goal_accept')).toEqual(acceptedRow);
+    expect(acceptedRow?.status).toBe('active');
+    expect(acceptedRow?.version).toBe(0);
+    expect(acceptedRow?.title).toBe('G');
+    expect(acceptedRow?.subject_id).toBe('yuwen');
+    expect(acceptedRow?.scope_knowledge_ids).toEqual(['k_a']);
+    expect(acceptedRow?.sequence_hint).toBe(1);
   });
 });
 
-describe('retractAiProposal (goal_scope, flag OFF) — fold==row parity', () => {
+describe('retractAiProposal (goal_scope) — fold==row parity', () => {
   beforeEach(async () => {
     await resetDb();
     await resetIndex();
-    delete process.env[FLAG]; // OFF — imperative dormant UPDATE writes the row
-  });
-  afterEach(() => {
-    delete process.env[FLAG];
   });
 
   it('the imperative dormant UPDATE stamps the SAME updated_at the fold derives (HIGH-1 double-clock guard)', async () => {
@@ -390,7 +346,7 @@ describe('retractAiProposal (goal_scope, flag OFF) — fold==row parity', () => 
         cooldown_key: `goal_scope:${goalId}`,
       },
     });
-    // 2. Accept it (flag OFF → imperative insertGoal makes the goal active + writes rate + index).
+    // 2. Acceptance records its rate/index and materializes the active goal.
     await acceptGoalScopeProposal(
       db as never,
       proposalId,
@@ -404,7 +360,7 @@ describe('retractAiProposal (goal_scope, flag OFF) — fold==row parity', () => 
     );
     expect((await liveGoal(goalId))?.status).toBe('active');
 
-    // 3. Retract it (flag OFF → writes the `correct` event + the imperative dormant UPDATE).
+    // 3. Retraction records the correction and projects the dormant goal.
     await retractAiProposal(db as never, proposalId, { reason_md: 'changed my mind' });
 
     // 4. Parity: the live dormant row must EQUAL the fold (proposal + rate + correct). The

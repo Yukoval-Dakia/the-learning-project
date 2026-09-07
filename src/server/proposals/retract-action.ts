@@ -3,7 +3,8 @@ import type { ActivityRefT } from '@/core/schema/activity';
 import type { AiProposalPayloadT } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
-import { getProposalLifecycleOperation } from '@/kernel/proposals';
+import { ApiError } from '@/kernel/http';
+import { StaleProposalCorrectionClock, getProposalLifecycleOperation } from '@/kernel/proposals';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import {
   extractRecordEvidenceIds,
@@ -55,39 +56,53 @@ export async function retractAiProposal(
   );
   const applier = declaration ? await declaration.load() : undefined;
 
-  await db.transaction(async (tx) => {
-    await acquireProposalDecisionLock(tx, proposalId);
-    const correctionAt = new Date();
-    await writeEvent(tx, {
-      id: correctionEventId,
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'correct',
-      subject_kind: 'event',
-      subject_id: proposalId,
-      outcome: 'success',
-      payload: {
-        correction_kind: 'retract',
-        reason_md: opts.reason_md ?? 'proposal retracted from inbox',
-        affected_refs: opts.affected_refs ?? activityRefsForProposal(proposal),
-      },
-      caused_by_event_id: proposalId,
-      created_at: correctionAt,
-    });
+  let correctionFloor = 0;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await db.transaction(async (tx) => {
+        await acquireProposalDecisionLock(tx, proposalId);
+        const correctionAt = new Date(Math.max(Date.now(), correctionFloor));
+        await writeEvent(tx, {
+          id: correctionEventId,
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'correct',
+          subject_kind: 'event',
+          subject_id: proposalId,
+          outcome: 'success',
+          payload: {
+            correction_kind: 'retract',
+            reason_md: opts.reason_md ?? 'proposal retracted from inbox',
+            affected_refs: opts.affected_refs ?? activityRefsForProposal(proposal),
+          },
+          caused_by_event_id: proposalId,
+          created_at: correctionAt,
+        });
 
-    if (applier) {
-      await applier(tx, {
-        proposalId,
-        proposal: ownerInput(proposal),
-        correction_at: correctionAt,
-        reason_md: opts.reason_md,
-        affected_refs: opts.affected_refs,
+        if (applier) {
+          await applier(tx, {
+            proposalId,
+            proposal: ownerInput(proposal),
+            correction_at: correctionAt,
+            reason_md: opts.reason_md,
+            affected_refs: opts.affected_refs,
+          });
+        }
+
+        const recordIds = extractRecordEvidenceIds(proposal.payload.evidence_refs);
+        if (recordIds.length > 0) await rollbackRecordsActioned(tx, recordIds);
       });
+      break;
+    } catch (error) {
+      if (!(error instanceof StaleProposalCorrectionClock)) throw error;
+      if (attempt === 2) {
+        throw new ApiError('conflict', 'Proposal target keeps changing; retry the retraction', 409);
+      }
+      // The old event and its outbox intent rolled back. Keep the same logical ID,
+      // but choose a new clock beyond the state observed under the target row lock.
+      correctionFloor = Math.max(correctionFloor, error.requiredAt.getTime());
     }
-
-    const recordIds = extractRecordEvidenceIds(proposal.payload.evidence_refs);
-    if (recordIds.length > 0) await rollbackRecordsActioned(tx, recordIds);
-  });
+  }
 
   return { kind: 'retracted', correction_event_id: correctionEventId };
 }

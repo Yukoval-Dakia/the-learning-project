@@ -193,6 +193,8 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   'experimental:learning_item_complete',
   'experimental:learning_item_relearn',
   'experimental:learning_item_archive',
+  'experimental:learning_item_knowledge_ids_rewrite',
+  'experimental:learning_item_state_restore',
   // YUK-471 Wave 3 (artifact fold, design §3 #2/#3/#4) — the three artifact action events
   // (./artifact-events.ts) make every structural artifact mutation fold-visible + self-sufficient:
   // body_blocks_edit (full AFTER-snapshot), artifact_create (runtime creation BASE, unifying the 8

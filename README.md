@@ -145,6 +145,9 @@ pnpm build            # rw:web:build + 三 esbuild 产物（dist/server.cjs / di
    docker compose stop app worker
    docker compose run --rm migrate
    ```
+   Goal, LearningItem and MistakeVariant now have one structural writer; their old
+   `PROJECTION_IS_WRITER_*` switches are ignored. Rollback requires the previous
+   release plus its recorded writer configuration, not switching these entities OFF.
    Restart worker, then app only after migration succeeds. Do not bypass a failed
    readiness check with `--no-deps` or snapshot over incomplete event history.
 

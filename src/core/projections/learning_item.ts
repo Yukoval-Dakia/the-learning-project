@@ -8,7 +8,9 @@ import { RateEvent } from '../schema/event/known';
 import {
   LearningItemArchiveExperimental,
   LearningItemCompleteExperimental,
+  LearningItemKnowledgeIdsRewriteExperimental,
   LearningItemRelearnExperimental,
+  LearningItemStateRestoreExperimental,
 } from '../schema/event/learning-item-events';
 import type { FoldEvent } from './fold-event';
 
@@ -173,6 +175,44 @@ export function foldLearningItem(
 
     // From here on a base must exist (the action events mutate an already-seeded row).
     if (row === null) continue;
+
+    if (
+      fe.action === 'experimental:learning_item_knowledge_ids_rewrite' &&
+      fe.subject_id === itemId
+    ) {
+      const rewrite = LearningItemKnowledgeIdsRewriteExperimental.safeParse(toParseInput(fe));
+      if (!rewrite.success) {
+        warnMalformed(fe.action, fe.id, rewrite.error);
+        continue;
+      }
+      row = {
+        ...row,
+        knowledge_ids: applyKnowledgeMergeToIds(
+          row.knowledge_ids,
+          new Set([rewrite.data.payload.from_id]),
+          rewrite.data.payload.into_id,
+        ),
+      };
+      continue;
+    }
+
+    if (fe.action === 'experimental:learning_item_state_restore' && fe.subject_id === itemId) {
+      const restore = LearningItemStateRestoreExperimental.safeParse(toParseInput(fe));
+      if (!restore.success) {
+        warnMalformed(fe.action, fe.id, restore.error);
+        continue;
+      }
+      const payload = restore.data.payload;
+      if (row.status !== payload.expected_status) continue;
+      row = {
+        ...row,
+        status: payload.status,
+        completed_at: payload.completed_at === null ? null : new Date(payload.completed_at),
+        updated_at: fe.created_at,
+        version: row.version + 1,
+      };
+      continue;
+    }
 
     // ---------- complete — status→done, completed_at=event time, version+1 ----------
     // Mirrors acceptCompletionProposal (proposal-appliers.ts): the imperative pre-check SELECT is

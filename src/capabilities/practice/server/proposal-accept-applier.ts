@@ -8,11 +8,9 @@ import type {
 import { toProposalLifecycleResult } from '@/kernel/proposals';
 import {
   type ProposalInboxRow,
-  assertCurrentMistakeVariantParity,
   findExistingRateEvent,
   hasMistakeVariantGenesisAnchor,
   projectMistakeVariantGuarded,
-  projectionIsWriter,
   recordProposalDecisionSignal,
   writeProposalRateEvent,
 } from '@/server/proposals/practice-runtime';
@@ -29,11 +27,9 @@ export const {
   variantQuestionProposalDismissApplier,
   variantQuestionProposalRetractApplier,
 } = createPracticeProposalLifecycle({
-  assertCurrentMistakeVariantParity,
   findExistingRateEvent,
   hasMistakeVariantGenesisAnchor,
   projectMistakeVariantGuarded,
-  projectionIsWriter,
   recordDismissSignal: (db: Db, input: ProposalDismissInput) =>
     recordProposalDecisionSignal(
       db,

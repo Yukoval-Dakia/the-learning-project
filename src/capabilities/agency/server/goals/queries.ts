@@ -1,6 +1,4 @@
-// Goal reads and backward-compatible semantic command entrypoints.
-// Live creation and mutation rules belong to commands.ts. insertGoal is retained
-// only for historical import/test fixtures; it deliberately does not synthesize events.
+// Goal reads and semantic command entrypoints. Creation and mutation rules live in commands.ts.
 
 import { asc, eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
@@ -11,7 +9,6 @@ import { type GoalScopeMode, type GoalStatus, mutateGoal } from './commands';
 type DbLike = Db | Tx;
 
 export type { GoalScopeMode, GoalStatus, InsertGoalInput } from './commands';
-export { insertLegacyGoal as insertGoal } from './commands';
 
 export interface ActiveGoal {
   id: string;

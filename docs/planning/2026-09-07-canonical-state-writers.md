@@ -47,3 +47,73 @@ Then require scoped DB gates, typecheck/lint/build, independent review and exact
 Mac-local rollout. Rollback after physical retirement uses the previous release, not a second
 runtime writer implementation. NAS remains outside owner authorization. YUK-973 stays open until
 the branches and configuration are actually retired and verified; this prerequisite alone is not completion.
+
+## Runtime retirement implementation
+
+Migration prerequisite PR #1355 merged as `9607310839b8e02d9b8d17ab9e3b3279fdf24535`;
+final `6d476fc9` passed CI `34112766637`. The separate retirement branch now removes the
+three alternate writers, their environment/compose selections and legacy inline anchoring.
+The raw Goal fixture insertion API had no production consumer and now lives only in tests.
+
+Learning-item attribution runs before live merge acceptance and also serves repair based only
+on `knowledge.merged_from`. A typed subject-keyed `experimental:learning_item_knowledge_ids_rewrite`
+records the mapping and projects in the same transaction. Its fold changes only knowledge IDs;
+version, updated_at and derived state are preserved. Historical accepted-merge replay remains.
+The shared repair operation requires an anchor and orders the event after the latest subject
+event while callers retain their stable row lock. This handles recently backfilled bases and
+same-clock chained repairs without an inline genesis fallback or extra ownership registry.
+
+The final writer inventory found completion/relearn retraction still using raw state updates.
+A typed `experimental:learning_item_state_restore` now records the captured prior status and
+completion time, then projects. It preserves conditional/idempotent reversal and evidence cleanup,
+rather than incorrectly mapping every undo to a new completion or relearn timestamp.
+Completion/relearn acceptance also rechecks locked state and shares its canonical event clock.
+
+Local validation: 312 scoped DB cases, 64 focused unit cases, typecheck, lint and build pass.
+The existing lifecycle suite now checks replay after real completion/relearn acceptance and undo,
+including resting/null, original completion time, evidence removal and repeated retraction.
+Backfill/sweep fixtures include long, completed, versioned LearningItems with derived review data.
+Duplicate OFF/ON cases are removed; migration refusal, null safety and row-lock probes remain.
+Capability, architecture and flag checks pass; dependency baseline decreases 439→437 only.
+
+Exact-head CI and Mac-local rollout are still required; independent review is complete below.
+The advisory fold-write inventory retains 8 other-entity unclassified writes and 5 stale entries;
+YUK-974 captures their individual event-nativeness verification, not an allowlist expansion.
+No new provider calls or production changes occurred in this runtime implementation.
+
+## Initial review correction
+
+PR #1356 initial review found a real retraction race: the proposal correction timestamp was
+chosen before waiting on the target row. A concurrent later status/accept could then replay
+after it and undo the retraction. Root reproduced Goal and MistakeVariant with actual blocked
+Postgres statements (both RED), and the same ordering loss for LearningItem archive vs completion
+(third RED: completed state/version disappeared). Locked owners now reject stale correction clocks;
+the shared retract transaction rolls back the entire old event/outbox and retries with a time
+beyond the locked row watermark. Batches use their maximum watermark. Three attempts bound
+contention; exhaustion returns conflict, never a false success or persisted-event rewrite.
+All three reproductions are GREEN, with one committed correction, exact replay and timestamp parity.
+The related six DB suites pass 101 cases; typecheck/lint/build/architecture gates pass.
+
+First exact-head CI `34117592341` passed non-DB gates; each DB shard failed one old raw fixture
+(completion approval and placement cold start). Both now prepare fixtures through the real migration,
+without relaxing approval/honesty checks; their four cases pass. Unique verification review of
+`4e1dec7c` passed, independently rerunning 67 DB cases and confirming all three locking regressions.
+The review budget is exhausted; no third review is required.
+
+CI `34119067574` passed all gates except one existing deadline-cleanup DB test, whose real
+50ms deadline made success depend on CI database speed. The test now injects semantic time until
+confirmed settlement, then crosses the deadline and asserts the execution signal stays un-aborted.
+Real deadline enforcement cases remain unchanged. All 26 tool-operation DB and 15 unit cases pass;
+typecheck and lint pass. This follow-up changes tests only and awaits a new exact-head CI.
+
+Image `the-learning-project-app:4e1dec7c` was built from a clean archive and its actual bundled
+migration succeeded against the retained production clone. Before deployment, the live hydrated
+projection audit and all eight private golden reaudits have zero drift (423 live events, seven
+LearningItems; Goal and MistakeVariant production sets remain empty). This is not deployed evidence.
+
+Rollback must account for the two new typed LearningItem repair events: the old `55aaac30`
+reducers do not understand them. Use the retained old image with its three structural projection
+flags OFF, preserve materialized rows, and never rebuild with old reducers after new-version writes.
+Re-entering canonical mode after rollback writes requires readiness verification/repair again.
+The private rollback compose override is retained alongside backups; a fresh pre-deploy database
+dump is still required. No NAS deployment or new model calls are authorized by this preparation.

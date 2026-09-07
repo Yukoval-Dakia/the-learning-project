@@ -141,31 +141,6 @@ describe('POST /api/goals (at-entry goal-create)', () => {
     expect(rows[0].scope_mode).toBe('subject_live');
   });
 
-  it('parity holds across both PROJECTION_IS_WRITER_GOAL states for a subject_live goal (§8 test 5)', async () => {
-    // OFF path: assertGoalParity runs in-tx (dev/test THROW on fold!=row) — a scope_mode wiring
-    // gap in GoalRowSnapshot / fold / goalLiveRowToSnapshot would make THIS create throw.
-    await seedKnowledge('kc1', 'yuwen');
-    const offRes = await createGoal(jsonReq({ title: 'G-off', subjectId: 'yuwen' }));
-    expect(offRes.status).toBe(201);
-
-    // ON path: projectGoal write-through folds the genesis and writes the row — the projected
-    // row must carry the same scope_mode the imperative writer would have written.
-    const prev = process.env.PROJECTION_IS_WRITER_GOAL;
-    process.env.PROJECTION_IS_WRITER_GOAL = '1';
-    try {
-      const onRes = await createGoal(jsonReq({ title: 'G-on', subjectId: 'yuwen' }));
-      expect(onRes.status).toBe(201);
-      const onBody = await onRes.json();
-      const rows = await db.select().from(goal).where(eq(goal.id, onBody.id));
-      expect(rows).toHaveLength(1);
-      expect(rows[0].scope_mode).toBe('subject_live');
-      expect(rows[0].scope_knowledge_ids).toEqual([]);
-    } finally {
-      // restore OFF ('0' — projectionIsWriter checks === '1'; precedent parity-writers-c3:144)
-      process.env.PROJECTION_IS_WRITER_GOAL = prev ?? '0';
-    }
-  });
-
   it('400s on a missing title', async () => {
     const res = await createGoal(jsonReq({ knowledgeIds: ['kc1'] }));
     expect(res.status).toBe(400);

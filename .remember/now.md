@@ -2,6 +2,22 @@
 
 ## 最新状态
 
+- Active973 runtime：root独占codex/yuk-973-retire-state-writers，base main960731083（迁移PR1355已合并）。
+  Goal/LI/variant主双轨分支、三旧env/compose开关、LI inline legacy genesis已退休；legacyGoal仅fixture入口移tests/helpers。
+  typed Q1 knowledge_ids_rewrite支持live pre-rate及backfill/sweep；共享repair操作包住anchor/事件钟/append/project。
+  补漏completion/relearn retract raw writer，typed state_restore携带exact prior状态/完成时间，保留evidence清理和状态guard。
+  事件钟保证晚补base/同钟串行rewrite不丢；归属repair不改版本/updated_at/derived。
+  312 scoped DB、64 unit、typecheck/lint/build与capability/architecture/flags通过；依赖437/0/47，仅下调2。
+  raw未准备fixture曾触发guard：修为先真实迁移再提案，不放宽migration的eventful-unanchored拒绝。
+  PR1356 exact28e05daf初审P1：correct时钟早于锁等待期间提交的mutation。root两目标RED，补LI archive第三RED，有限事务重试后3GREEN。
+  整笔旧correct/outbox rollback，复用逻辑id并推进到locked updated_at之后；batch取最大时间，最多3次，持续冲突409。
+  修后101相关DB、typecheck/lint/build/architecture通过；CI34117592341两个DBshard各1raw fixture未迁移，其余4922过。
+  补completion approval与placement coldstart真实迁移后4项过；唯一验证审4e1dec7c PASS（独立67 DB），无第三轮。
+  CI34119067574仅旧deadline cleanup要求DB在50ms完成失败；注入语义钟并补终态signal不abort，26DB/15unit过。
+  待新exactCI/部署；镜像4e1dec7c已构建并实际clone迁移，live423event/audit与8golden零drift，生产仍55aaac30。
+  audit-fold-writes其它实体8未登记写点+5stale已去重登记YUK974 Todo，不新增allowlist；972继续Todo。
+  原脏main和本地生产55aaac30未动，无模型调用；额外恢复$3未用。整体goal active。
+
 - Active973 branch codex/yuk-973-canonical-writers，root独占；迁移前置helper已实现并接入migrate.ts。
   三类实体在同一锁定事务补锚，拒绝orphan history/field drift/ghost，失败回滚新锚，不live rebuild。
   51相关DB与typecheck/lint/build/architecture边界过；fresh/锁超时/重试/并发/派生列覆盖。

@@ -6,17 +6,14 @@
 //     (C3), and the backfilled genesis folds byte-equal to the live row.
 //   - shell parity: gatherAndFoldLearningItem reproduces the live row over genesis →
 //     complete/relearn/archive; excluded columns (ai_score etc.) never enter the diff.
-//   - per-entity flag: OFF (imperative UPDATE) vs ON (projection write-through) yield IDENTICAL rows
-//     for the completion accept.
-//   - retract (actions.ts learning_item block, flag OFF): HIGH-1 single-clock — the archived row's
-//     archived_at/updated_at == the archive event's created_at; genesis-if-missing makes fold==row.
+//   - completion/relearn and retraction require migration, then use one structural writer.
 //   - audit:projection learning_item section: CLEAN on a coherent fixture, DRIFT on an out-of-band
 //     write; a row differing ONLY in an excluded column folds clean.
 //
 // Hermetic: resetDb() TRUNCATEs ALL_TABLES (incl. learning_item + materialized_id_index).
 
 import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LearningItemAcceptResult } from '@/capabilities/agency/public';
 import { planLearningIntent } from '@/capabilities/agency/public';
 import {
@@ -33,12 +30,12 @@ import { acceptAiProposal, retractAiProposal } from '@/server/proposals/actions'
 
 import { auditProjection } from '../../../scripts/audit-projection';
 import { backfillLearningItemGenesis } from '../../../scripts/backfill-genesis-events';
+import { migrateCanonicalProjections } from '../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { assertProposalLifecycleResult } from '../../../tests/helpers/proposal-lifecycle';
 import { gatherAndFoldLearningItem } from './gather';
 
 const T0 = new Date('2026-06-01T00:00:00.000Z');
-const FLAG = 'PROJECTION_IS_WRITER_LEARNING_ITEM';
 
 async function resetIndex(): Promise<void> {
   await testDb().delete(materialized_id_index);
@@ -177,7 +174,6 @@ describe('gatherAndFoldLearningItem — shell parity over the event chain', () =
   beforeEach(async () => {
     await resetDb();
     await resetIndex();
-    delete process.env[FLAG];
   });
 
   it('reproduces genesis → complete → relearn (status + completed_at + version chain)', async () => {
@@ -251,65 +247,15 @@ describe('gatherAndFoldLearningItem — shell parity over the event chain', () =
   });
 });
 
-describe('per-entity flag — completion accept OFF vs ON yield identical rows', () => {
+describe('canonical mutation after legacy migration', () => {
   beforeEach(async () => {
     await resetDb();
     await resetIndex();
   });
-  afterEach(() => {
-    delete process.env[FLAG];
-  });
 
-  it('completion: OFF (imperative UPDATE) and ON (projection write-through) produce the same row', async () => {
+  it('completion rejects unprepared state, then migrated state transitions with one canonical clock', async () => {
     const db = testDb();
 
-    // OFF run — backfill an event-sourced item, then accept a completion proposal (flag OFF). Same
-    // title on both runs so the normalized cross-run comparison only differs by the per-run id.
-    delete process.env[FLAG];
-    await insertEventlessItem('li_off', { title: 'Same', status: 'pending', version: 0 });
-    await backfillLearningItemGenesis(db, T0);
-    const proposalOff = newId();
-    await acceptCompletionProposal(db as never, proposalOff, completionInboxRow('li_off'), {});
-    const offRow = await liveItem('li_off');
-    expect(offRow?.status).toBe('done');
-    expect(await gatherAndFoldLearningItem(db, 'li_off')).toEqual(offRow);
-
-    // ON run (separate item).
-    process.env[FLAG] = '1';
-    await insertEventlessItem('li_on', { title: 'Same', status: 'pending', version: 0 });
-    await backfillLearningItemGenesis(db, T0);
-    const proposalOn = newId();
-    await acceptCompletionProposal(db as never, proposalOn, completionInboxRow('li_on'), {});
-    const onRow = await liveItem('li_on');
-    expect(onRow?.status).toBe('done');
-    expect(await gatherAndFoldLearningItem(db, 'li_on')).toEqual(onRow);
-    expect(onRow?.version).toBe(1);
-
-    // structural equality of the two rows except the per-run id + timestamps.
-    const norm = (r: LearningItemRowSnapshotT | null) =>
-      r && { ...r, id: 'X', created_at: 0, updated_at: 0, completed_at: 0 };
-    expect(norm(onRow)).toEqual(norm(offRow));
-  });
-});
-
-describe('A1 — pre-W2 (un-backfilled) item accept: genesis-if-missing → fold==row + real transition', () => {
-  beforeEach(async () => {
-    await resetDb();
-    await resetIndex();
-  });
-  afterEach(() => {
-    delete process.env[FLAG];
-  });
-
-  // A pre-W2 item is event-LESS (no genesis, no index anchor) — hasLearningItemGenesisAnchor is
-  // FALSE. Without A1 the accept's complete/relearn event folds to NULL (no base): OFF a later
-  // backfill would sort AFTER the action → fold != row; ON the guarded projection keeps the
-  // never-written imperative row → silent no-op. A1 writes a genesis-IF-MISSING base BEFORE the
-  // action, so the row really transitions AND fold(events) == the live row on BOTH paths.
-
-  it('completion OFF: eventless item → genesis written, status→done, fold==row, audit clean', async () => {
-    const db = testDb();
-    delete process.env[FLAG]; // OFF — imperative UPDATE writes the row
     await insertEventlessItem('li_pw2_off', { status: 'pending', version: 0 });
     // sanity: NO event sources the item before the accept.
     const pre = await db
@@ -318,9 +264,17 @@ describe('A1 — pre-W2 (un-backfilled) item accept: genesis-if-missing → fold
       .where(eq(event.subject_id, 'li_pw2_off'));
     expect(pre).toHaveLength(0);
 
+    const before = await liveItem('li_pw2_off');
+    await expect(
+      acceptCompletionProposal(db as never, newId(), completionInboxRow('li_pw2_off'), {}),
+    ).rejects.toThrow('canonical projection migration');
+    expect(await liveItem('li_pw2_off')).toEqual(before);
+    expect(await db.select().from(event)).toEqual([]);
+    // Genesis can be newer than the business row; the action must sort after it.
+    await migrateCanonicalProjections(db);
     await acceptCompletionProposal(db as never, newId(), completionInboxRow('li_pw2_off'), {});
 
-    // the genesis-if-missing fired (the action now has a base) + the row really transitioned.
+    // Formal migration provided the base; the action really transitioned the row.
     const actions = (
       await db
         .select({ action: event.action })
@@ -342,25 +296,9 @@ describe('A1 — pre-W2 (un-backfilled) item accept: genesis-if-missing → fold
     expect(audit.drift.filter((d) => d.id === 'li_pw2_off')).toEqual([]);
   });
 
-  it('completion ON: eventless item → projection write-through transitions the row (no silent no-op)', async () => {
+  it('migrated done item relearns, clears completion and preserves replay parity', async () => {
     const db = testDb();
-    process.env[FLAG] = '1'; // ON — projection write-through is the sole row writer
-    await insertEventlessItem('li_pw2_on', { status: 'pending', version: 0 });
 
-    await acceptCompletionProposal(db as never, newId(), completionInboxRow('li_pw2_on'), {});
-
-    const live = await liveItem('li_pw2_on');
-    // WITHOUT A1 the ON path would leave the row at 'pending' (guarded projection folds null + keeps
-    // the never-written imperative row). With A1 it genuinely transitions.
-    expect(live?.status).toBe('done');
-    expect(live?.completed_at).not.toBeNull();
-    expect(live?.version).toBe(1);
-    expect(await gatherAndFoldLearningItem(db, 'li_pw2_on')).toEqual(live);
-  });
-
-  it('relearn OFF: eventless done item → genesis written, status→in_progress, fold==row', async () => {
-    const db = testDb();
-    delete process.env[FLAG];
     await insertEventlessItem('li_pw2_relearn', {
       status: 'done',
       completed_at: new Date(T0.getTime() + 1000),
@@ -372,6 +310,7 @@ describe('A1 — pre-W2 (un-backfilled) item accept: genesis-if-missing → fold
       .where(eq(event.subject_id, 'li_pw2_relearn'));
     expect(pre).toHaveLength(0);
 
+    await migrateCanonicalProjections(db);
     await acceptRelearnProposal(db as never, newId(), relearnInboxRow('li_pw2_relearn'), {});
 
     const actions = (
@@ -392,14 +331,10 @@ describe('A1 — pre-W2 (un-backfilled) item accept: genesis-if-missing → fold
   });
 });
 
-describe('retractAiProposal (learning_item, flag OFF) — HIGH-1 single-clock + fold==row', () => {
+describe('retractAiProposal (learning_item) — HIGH-1 single-clock + fold==row', () => {
   beforeEach(async () => {
     await resetDb();
     await resetIndex();
-    delete process.env[FLAG]; // OFF — imperative archive UPDATE writes the rows
-  });
-  afterEach(() => {
-    delete process.env[FLAG];
   });
 
   it('archives the materialized hub+atomic; archived_at==the archive event created_at; fold==row', async () => {
@@ -448,7 +383,7 @@ describe('retractAiProposal (learning_item, flag OFF) — HIGH-1 single-clock + 
       expect(r?.archived_at).toBeNull();
     }
 
-    // Retract (flag OFF → writes the `correct` event + per-id archive events + the imperative UPDATE).
+    // Retraction writes the correction and per-item archive events, then projects.
     await retractAiProposal(db, proposalId, { reason_md: 'changed my mind' });
 
     for (const id of itemIds) {
@@ -469,7 +404,7 @@ describe('retractAiProposal (learning_item, flag OFF) — HIGH-1 single-clock + 
     expect(audit.drift.filter((d) => d.subject_kind === 'learning_item')).toEqual([]);
   });
 
-  it('GENESIS-IF-MISSING: retracting an eventless (un-backfilled) item writes the genesis base + archive; fold==row (review #2)', async () => {
+  it('retraction rejects missing migration atomically; prepared legacy item archives with fold parity', async () => {
     const db = testDb();
     // A real learning_item proposal in the inbox (so retractAiProposal's requireProposal resolves)
     // — but NOTHING materialized through the genesis-writing INSERT path.
@@ -482,9 +417,7 @@ describe('retractAiProposal (learning_item, flag OFF) — HIGH-1 single-clock + 
       evidence_refs: [],
       created_at: T0,
     });
-    // Directly INSERT an EVENTLESS item with source_ref=proposalId — NO genesis event, so
-    // hasLearningItemGenesisAnchor is FALSE and the retract MUST exercise the genesis-if-missing
-    // branch (the lane's only novel double-clock path, otherwise never executed by the e2e test).
+    // Model a legacy item; runtime mutation must not fabricate another migration path.
     await insertEventlessItem('li_eventless', {
       source_ref: proposalId,
       status: 'pending',
@@ -497,9 +430,16 @@ describe('retractAiProposal (learning_item, flag OFF) — HIGH-1 single-clock + 
       .where(eq(event.subject_id, 'li_eventless'));
     expect(preGenesis).toHaveLength(0);
 
+    const eventsBefore = await db.select().from(event);
+    await expect(
+      retractAiProposal(db, proposalId, { reason_md: 'eventless retract' }),
+    ).rejects.toThrow('canonical projection migration');
+    expect(await db.select().from(event)).toEqual(eventsBefore);
+    expect((await liveItem('li_eventless'))?.archived_at).toBeNull();
+    await migrateCanonicalProjections(db);
     await retractAiProposal(db, proposalId, { reason_md: 'eventless retract' });
 
-    // the genesis base was written this tx (so the archive event has a base to fold from).
+    // Migration supplied the base before the canonical archive event.
     const genesisRows = await db
       .select({ action: event.action })
       .from(event)
@@ -512,8 +452,7 @@ describe('retractAiProposal (learning_item, flag OFF) — HIGH-1 single-clock + 
     const folded = await gatherAndFoldLearningItem(db, 'li_eventless');
     expect(live?.archived_at).not.toBeNull();
     expect(live?.archived_reason).toBe('proposal_retracted');
-    // The clamp (review #1) guarantees genesis sorts strictly before the archive regardless of the
-    // cuid2 id coin-flip, so the archive ALWAYS hits the seeded row → fold.archived_at == live.
+    // The archive follows the migrated base and uses the correction clock.
     expect(folded).toEqual(live);
     expect(folded?.archived_at?.getTime()).toBe(live?.archived_at?.getTime());
 

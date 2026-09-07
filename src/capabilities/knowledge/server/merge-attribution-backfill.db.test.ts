@@ -4,7 +4,10 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from '@/db/client';
-import { knowledge, mastery_state, question } from '@/db/schema';
+import { event, knowledge, learning_item, mastery_state, question } from '@/db/schema';
+import { gatherAndFoldLearningItem } from '@/server/projections/gather';
+import { learningItemLiveRowToSnapshot } from '@/server/projections/parity';
+import { migrateCanonicalProjections } from '../../../../scripts/migrate-canonical-projections';
 import { resetDb } from '../../../../tests/helpers/db';
 import { resolveMergeChains, runMergeAttributionBackfill } from './merge-attribution-backfill';
 
@@ -54,6 +57,27 @@ describe('merge-attribution backfill (YUK-543)', () => {
     await insertK('k_from', { archived: true });
     await insertQ('q1', ['k_from', 'k_x']);
     await db.insert(mastery_state).values({ id: 'ms1', subject_id: 'k_from' });
+    const stamp = new Date('2026-01-01T00:00:00Z');
+    const [itemBefore] = await db
+      .insert(learning_item)
+      .values({
+        id: 'li_orphan',
+        source: 'learning_intent',
+        title: '条件与反例',
+        content: '保留复杂学习上下文与复习状态。'.repeat(40),
+        knowledge_ids: ['k_from', 'k_x'],
+        status: 'done',
+        version: 7,
+        completed_at: stamp,
+        created_at: stamp,
+        updated_at: stamp,
+        due_at: stamp,
+        reviewed_at: stamp,
+        ai_score: 0.82,
+        user_pinned: true,
+      })
+      .returning();
+    await migrateCanonicalProjections(db);
 
     const first = await runMergeAttributionBackfill(db, { dryRun: false });
     expect(first.resolved).toBe(1);
@@ -66,10 +90,29 @@ describe('merge-attribution backfill (YUK-543)', () => {
       .from(mastery_state)
       .where(eq(mastery_state.subject_id, 'k_into'));
     expect(msInto).toHaveLength(1);
+    const [itemAfter] = await db
+      .select()
+      .from(learning_item)
+      .where(eq(learning_item.id, 'li_orphan'));
+    expect(itemAfter).toEqual({ ...itemBefore, knowledge_ids: ['k_into', 'k_x'] });
+    expect(await gatherAndFoldLearningItem(db, 'li_orphan')).toEqual(
+      learningItemLiveRowToSnapshot(itemAfter),
+    );
+    const rewrites = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:learning_item_knowledge_ids_rewrite'));
+    expect(rewrites).toHaveLength(1);
 
     // second run = no-op (nothing still references k_from).
     const second = await runMergeAttributionBackfill(db, { dryRun: false });
     expect(second.orphanSurfacesFound).toBe(0);
+    expect(
+      await db
+        .select()
+        .from(event)
+        .where(eq(event.action, 'experimental:learning_item_knowledge_ids_rewrite')),
+    ).toEqual(rewrites);
   });
 
   it('resolves a 2-hop chain to the terminal live winner (A→B→C ⇒ C), full hop chain preserved', async () => {

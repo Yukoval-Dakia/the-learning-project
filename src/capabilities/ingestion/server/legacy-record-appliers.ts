@@ -19,16 +19,10 @@ import {
   recordProposalDecisionSignal,
 } from '@/kernel/proposals/signals';
 import { updateLearningRecord } from '@/kernel/records/queries';
-// YUK-471 W2 — learning_item projection seam (ai_dream record_promotion). The INSERT writes a per-id
-// genesis BASE event + index anchor regardless of the flag; projectionIsWriter('learning_item') gates
-// ONLY who writes the ROW (projection write-through when ON, imperative INSERT when OFF + parity assert).
+// Even legacy record promotion creates an event-native item: genesis, index,
+// then the single structural projection writer.
 import { projectLearningItem } from '@/server/projections/learning_item';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
-import {
-  assertLearningItemParity,
-  learningItemLiveRowToSnapshot,
-} from '@/server/projections/parity';
-import { projectionIsWriter } from '@/server/projections/sot-flag';
 import {
   asPlainRecord,
   ensureAcceptOnly,
@@ -430,45 +424,8 @@ export async function acceptRecordPromotionProposal(
         anchor_event_id: genesisEventId,
         subject_kind: 'learning_item',
       });
-      // 3. ROW writer — gated on the per-entity flag (critic A1, defer-flip-not-build):
-      //    ON → projectLearningItem folds the genesis + writes the row; OFF → the imperative INSERT
-      //    stays the writer (current behavior) + a write-time fold==row parity assert.
-      if (projectionIsWriter('learning_item')) {
-        await projectLearningItem(tx, materializedId);
-      } else {
-        // A4 — set ALL snapshot fields explicitly from the genesis `liRow` (not by DB-default
-        // coincidence) so the imperative OFF-path row matches the genesis payload by construction;
-        // a default change can no longer silently diverge the two from the seeded snapshot.
-        await tx.insert(learning_item).values({
-          id: liRow.id,
-          source: liRow.source,
-          source_ref: liRow.source_ref,
-          title: liRow.title,
-          content: liRow.content,
-          knowledge_ids: liRow.knowledge_ids,
-          primary_artifact_id: liRow.primary_artifact_id,
-          parent_learning_item_id: liRow.parent_learning_item_id,
-          status: liRow.status,
-          user_pinned: liRow.user_pinned,
-          completed_at: liRow.completed_at,
-          dismissed_at: liRow.dismissed_at,
-          archived_at: liRow.archived_at,
-          archived_reason: liRow.archived_reason,
-          created_at: liRow.created_at,
-          updated_at: liRow.updated_at,
-          version: liRow.version,
-        });
-        const [written] = await tx
-          .select()
-          .from(learning_item)
-          .where(eq(learning_item.id, materializedId))
-          .limit(1);
-        await assertLearningItemParity(
-          tx,
-          materializedId,
-          written ? learningItemLiveRowToSnapshot(written) : null,
-        );
-      }
+      // Materialize canonical structural state from the events in this transaction.
+      await projectLearningItem(tx, materializedId);
     } else {
       // YUK-471 W3-C1β — INSERT … RETURNING the FULL row (this site relies on table defaults for
       // parent_artifact_id / attrs / tool_* / verification_* / generated_by / verified_by / history /

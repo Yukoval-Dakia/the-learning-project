@@ -4,10 +4,17 @@
 
 ## NOW
 
-- Active973：root独占tlp-wt-unified-conversation / codex/yuk-973-canonical-writers。
-  先迁移事务内补锚+无allowlist fold/live校验，拒绝有mutation但无base历史；失败回滚全部新锚。
-  随后删除Goal/LI/variant业务双轨分支和flag，保留guard/单时钟/并发/LI派生字段，合并重复测试。
-  验收要求rich scoped DB、typecheck/lint/build、独立review、exact-head CI；不新增付费调用。
+- Active973：root独占tlp-wt-unified-conversation / codex/yuk-973-retire-state-writers。
+  前置PR1355已合并main960731083，exact6d476fc9 CI34112766637全绿；review初审+唯一验证完成，无第三轮。
+  runtime84fcb379已物理删除三实体双轨、旧env/compose选择、LI inline genesis；rawGoal fixture移tests/helpers。
+  typed Q1归属repair支持pre-rate及历史sweep；state_restore补掉completion/relearn撤销raw writer，保留exact prior state。
+  312 scoped DB、64 unit+1真实migration bundle unit、typecheck/lint/build与architecture/capability/flags通过。
+  依赖439→437仅下调；保留行锁、migration refusal、null guard、派生字段和重复撤销；无paid/生产变更。
+  PR1356初审P1：correct在行锁前定时，会被并发状态覆盖；3实体真实并发3RED→3GREEN，有限事务重试保留单钟与outbox回滚。
+  修后101 DB与gates通过；唯一验证审4e1dec7c PASS（独立67 DB），review预算结束，无第三轮。
+  CI34119067574仅旧50ms数据库计时前提失败；改注入语义钟并断言终态后signal不被abort，26DB/15unit过。
+  待新exactCI及Mac rollout；镜像4e1dec7c已真实clone迁移，live audit与8golden零drift，生产仍55aaac30。
+  fold-write其它实体8写点/5stale已去重登记974 Todo；972仍Todo，不放宽allowlist掩盖。
 - 887 local-production切片已部署：PR1354 exact0ed35fd3，CI34108722202全绿，main a12667507，独立安全review PASS。
   owner「直接动本地生产即可」仅授权Mac，不含NAS；API/worker/Postgres均healthy，未启动tunnel。
   target=the-learning-project-postgres-1 / the-learning-project_pgdata / 127.0.0.1:5433/loom。

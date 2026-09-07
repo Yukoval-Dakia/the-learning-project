@@ -34,11 +34,8 @@ import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 // event; the per-entity flag gates whether the projection (ON) or the imperative UPDATE (OFF)
 // writes the row. OFF still runs the write-time fold==row parity assert.
 import {
-  assertMistakeVariantParity,
   hasMistakeVariantGenesisAnchor,
-  mistakeVariantLiveRowToSnapshot,
   projectMistakeVariantGuarded,
-  projectionWritesMistakeVariant,
 } from '@/server/projections/mistake-variant-runtime';
 import {
   type ProposalInboxRow,
@@ -166,7 +163,7 @@ export async function acceptVariantQuestionProposal(
         .where(eq(mistake_variant.proposal_event_id, proposalId))
         .limit(1)
     )[0];
-    if (!existingMv || !existingMv.variant_question_id) {
+    if (!existingMv?.variant_question_id) {
       // Rate was written but materialization did not complete — caller should
       // retract + re-run, not silently fix up. Surface explicitly.
       throw new ApiError(
@@ -234,7 +231,6 @@ export async function acceptVariantQuestionProposal(
   const rateEventId = newId();
   // YUK-471 W2 — gate who writes the mistake_variant ROW (the flag is read ONCE outside the tx so a
   // mid-tx env flip can't split the decision). ON → projection write-through; OFF → imperative.
-  const flip = projectionWritesMistakeVariant();
 
   await db.transaction(async (tx) => {
     await lockPlacementSupplyScopes(tx, proposedChange.knowledge_ids ?? []);
@@ -292,41 +288,11 @@ export async function acceptVariantQuestionProposal(
       caused_by_event_id: proposalId,
       created_at: now,
     });
-
-    // ROW writer — gated on the per-entity flag (critic A1). ON → the GUARDED projection folds
-    // (create base + accept rate) and writes status='active' + variant_question_id; OFF → the
-    // imperative UPDATE (current behavior) + the write-time fold==row parity assert. GUARDED (not
-    // bare projectMistakeVariant): a pre-W2 / fixture-seeded variant with no create base folds to
-    // null; the guard's anchor gate keeps that live row instead of DELETing it just after a question
-    // was inserted + linked (B1 data-loss-on-flip — mirrors the dismiss/retract sites).
-    if (flip) {
-      await projectMistakeVariantGuarded(tx, mv.id);
-    } else {
-      await tx
-        .update(mistake_variant)
-        .set({
-          status: 'active',
-          variant_question_id: newQuestionId,
-          updated_at: now,
-        })
-        .where(eq(mistake_variant.id, mv.id));
-      // APPLICABILITY GATE — only assert for an EVENT-SOURCED variant (create-base/genesis/index
-      // anchor). A pre-W2 / fixture-seeded mv row (no base event) folds to null and would
-      // FALSE-mismatch; the backfill anchors those later. variant_gen-created variants always carry
-      // the create base, so the assert runs for the real accept path.
-      if (await hasMistakeVariantGenesisAnchor(tx, mv.id)) {
-        const [written] = await tx
-          .select()
-          .from(mistake_variant)
-          .where(eq(mistake_variant.id, mv.id))
-          .limit(1);
-        await assertMistakeVariantParity(
-          tx,
-          mv.id,
-          written ? mistakeVariantLiveRowToSnapshot(written) : null,
-        );
-      }
+    // Materialize canonical structural state from the events in this transaction.
+    if (!(await hasMistakeVariantGenesisAnchor(tx, mv.id))) {
+      throw new Error(`Variant ${mv.id} needs canonical projection migration`);
     }
+    await projectMistakeVariantGuarded(tx, mv.id);
   });
 
   await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
