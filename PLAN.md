@@ -4,6 +4,11 @@
 
 ## NOW
 
+- Active974：root独占codex/yuk-974-write-ownership，继承973交付记录5d7097b3，main21bc94dcf。
+  计划：逐项核对8未登记写点的同事务事件/派生责任→修真实缺口与旧登记→scoped行为/audit/gates/review/exactCI。
+  一个只读agent核对录入/quiz事件配对，root处理Notes/Agency/edge与集成；不放宽allowlist，不做付费调用。
+  Notes hub完整回放时间差与提案artifact撤销倒时均RED→GREEN；归档责任移Notes，复用已有限次事务重试。
+  120DB/27unit/typecheck/lint/build及严格writer/architecture/capability过，0violation/0stale；42advisory显式保留，待review/CI。
 - YUK973 Done：PR1356 exact4328ab89，CI34120804982全绿，main21bc94dcf；Mac本地部署完成。
   前置PR1355已合并main960731083，exact6d476fc9 CI34112766637全绿；review初审+唯一验证完成，无第三轮。
   runtime84fcb379已物理删除三实体双轨、旧env/compose选择、LI inline genesis；rawGoal fixture移tests/helpers。

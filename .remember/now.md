@@ -2,6 +2,11 @@
 
 ## 最新状态
 
+- Active974：root独占codex/yuk-974-write-ownership，继承973交付记录5d7097b3，base main21bc94dcf。
+  hub-sync两钟漂移与提案artifact撤销早于新编辑均RED→GREEN；Notes拥有整笔归档，Agency不再写artifact表。
+  8未登记/5stale逐项事件责任复核；code-policy替代静态LIVE，0violation/0stale，42advisory不隐藏。
+  120DB/27unit/typecheck/lint/build/严格writer与架构过，待review/exactCI；生产4e1dec7c不变，无paid。
+
 - YUK973 Done：PR1356 exact4328ab89，CI34120804982全绿，main21bc94dcf，Mac部署已验证。
   Goal/LI/variant主双轨分支、三旧env/compose开关、LI inline legacy genesis已退休；legacyGoal仅fixture入口移tests/helpers。
   typed Q1 knowledge_ids_rewrite支持live pre-rate及backfill/sweep；共享repair操作包住anchor/事件钟/append/project。

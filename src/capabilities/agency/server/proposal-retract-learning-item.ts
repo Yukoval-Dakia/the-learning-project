@@ -2,14 +2,14 @@ import { and, eq, isNull } from 'drizzle-orm';
 
 import { newId } from '@/core/ids';
 import type { Tx } from '@/db/client';
-import { artifact, learning_item } from '@/db/schema';
+import { learning_item } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { ProposalRetractInput } from '@/kernel/proposals';
 import { requireLaterProposalCorrection } from '@/kernel/proposals/types';
 export interface LearningItemRetractRuntime {
-  emitProposalArtifactArchive: (
+  archiveProposalArtifacts: (
     tx: Tx,
-    input: { artifactId: string; version: number; proposalId: string; archivedAt: Date },
+    input: { proposalId: string; archivedAt: Date },
   ) => Promise<void>;
   hasLearningItemGenesisAnchor: (tx: Tx, itemId: string) => Promise<boolean>;
   projectLearningItemGuarded: (tx: Tx, itemId: string) => Promise<unknown>;
@@ -53,17 +53,8 @@ export async function retractLearningItemProposal(
 
   for (const item of affectedItems) await runtime.projectLearningItemGuarded(tx, item.id);
 
-  const archivedArtifacts = await tx
-    .update(artifact)
-    .set({ archived_at: input.correction_at, updated_at: input.correction_at })
-    .where(and(eq(artifact.source_ref, input.proposalId), isNull(artifact.archived_at)))
-    .returning({ id: artifact.id, version: artifact.version });
-  for (const archivedArtifact of archivedArtifacts) {
-    await runtime.emitProposalArtifactArchive(tx, {
-      artifactId: archivedArtifact.id,
-      version: archivedArtifact.version,
-      proposalId: input.proposalId,
-      archivedAt: input.correction_at,
-    });
-  }
+  await runtime.archiveProposalArtifacts(tx, {
+    proposalId: input.proposalId,
+    archivedAt: input.correction_at,
+  });
 }

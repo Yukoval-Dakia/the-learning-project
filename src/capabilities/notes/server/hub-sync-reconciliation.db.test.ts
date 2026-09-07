@@ -1619,7 +1619,7 @@ describe('YUK-384 unified hub-sync cycle', () => {
     });
   });
 
-  it('YUK-384 (X1): a reconciler apply is fold-replayable — fold(events).body_blocks == row.body_blocks', async () => {
+  it('a reconciler apply replays the complete artifact, including its exact update time', async () => {
     await seedAppliableHub('hub-a');
     // Genesis BASE (v0, seed body) so the fold has a base, like the real event-sourced stream.
     // `NOW` (2026-07-21) < the apply event's real created_at → genesis sorts first.
@@ -1636,6 +1636,8 @@ describe('YUK-384 unified hub-sync cycle', () => {
     expect(folded).not.toBeNull();
     expect(folded?.body_blocks).toEqual(rows[0].body);
     expect(folded?.version).toBe(rows[0].version);
+    const [live] = await testDb().select().from(artifact).where(eq(artifact.id, 'hub-a'));
+    expect(folded).toEqual(live);
   });
 
   it('YUK-384 (X1): the container-heal apply is also fold-replayable (full snapshot, no op-replay throw)', async () => {

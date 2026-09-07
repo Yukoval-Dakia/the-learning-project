@@ -1,5 +1,7 @@
 import { eq } from 'drizzle-orm';
-import { emitArtifactLifecycleEvent } from '@/capabilities/notes/public';
+
+export { archiveProposalArtifacts } from '@/capabilities/notes/public';
+
 import type { Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { projectLearningItemGuarded } from '@/server/projections/learning_item';
@@ -35,25 +37,4 @@ export {
 export async function assertCurrentKnowledgeNodeParity(tx: Tx, nodeId: string): Promise<void> {
   const [row] = await tx.select().from(knowledge).where(eq(knowledge.id, nodeId));
   await assertKnowledgeNodeParity(tx, nodeId, row ? knowledgeLiveRowToSnapshot(row) : null);
-}
-
-export async function emitProposalArtifactArchive(
-  tx: Tx,
-  input: {
-    artifactId: string;
-    version: number;
-    proposalId: string;
-    archivedAt: Date;
-  },
-): Promise<void> {
-  await emitArtifactLifecycleEvent(tx, {
-    subjectId: input.artifactId,
-    op: 'archive',
-    archivedAt: input.archivedAt,
-    nextVersion: input.version,
-    actorKind: 'user',
-    actorRef: 'self',
-    causedByEventId: input.proposalId,
-    createdAt: input.archivedAt,
-  });
 }
