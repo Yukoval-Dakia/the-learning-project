@@ -12,7 +12,9 @@
   PR1356 exact28e05daf初审P1：correct时钟早于锁等待期间提交的mutation。root两目标RED，补LI archive第三RED，有限事务重试后3GREEN。
   整笔旧correct/outbox rollback，复用逻辑id并推进到locked updated_at之后；batch取最大时间，最多3次，持续冲突409。
   修后101相关DB、typecheck/lint/build/architecture通过；CI34117592341两个DBshard各1raw fixture未迁移，其余4922过。
-  补completion approval与placement coldstart真实迁移后4项过；待唯一验证审、新exactCI/部署。未消耗验证审预算。
+  补completion approval与placement coldstart真实迁移后4项过；唯一验证审4e1dec7c PASS（独立67 DB），无第三轮。
+  CI34119067574仅旧deadline cleanup要求DB在50ms完成失败；注入语义钟并补终态signal不abort，26DB/15unit过。
+  待新exactCI/部署；镜像4e1dec7c已构建并实际clone迁移，live423event/audit与8golden零drift，生产仍55aaac30。
   audit-fold-writes其它实体8未登记写点+5stale已去重登记YUK974 Todo，不新增allowlist；972继续Todo。
   原脏main和本地生产55aaac30未动，无模型调用；额外恢复$3未用。整体goal active。
 

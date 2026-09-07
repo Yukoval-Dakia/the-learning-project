@@ -76,7 +76,7 @@ Backfill/sweep fixtures include long, completed, versioned LearningItems with de
 Duplicate OFF/ON cases are removed; migration refusal, null safety and row-lock probes remain.
 Capability, architecture and flag checks pass; dependency baseline decreases 439→437 only.
 
-Independent runtime review, exact-head CI and Mac-local rollout are still required.
+Exact-head CI and Mac-local rollout are still required; independent review is complete below.
 The advisory fold-write inventory retains 8 other-entity unclassified writes and 5 stale entries;
 YUK-974 captures their individual event-nativeness verification, not an allowlist expansion.
 No new provider calls or production changes occurred in this runtime implementation.
@@ -96,5 +96,24 @@ The related six DB suites pass 101 cases; typecheck/lint/build/architecture gate
 
 First exact-head CI `34117592341` passed non-DB gates; each DB shard failed one old raw fixture
 (completion approval and placement cold start). Both now prepare fixtures through the real migration,
-without relaxing approval/honesty checks; their four cases pass. Unique verification review and
-new exact-head CI remain required before merge or Mac rollout.
+without relaxing approval/honesty checks; their four cases pass. Unique verification review of
+`4e1dec7c` passed, independently rerunning 67 DB cases and confirming all three locking regressions.
+The review budget is exhausted; no third review is required.
+
+CI `34119067574` passed all gates except one existing deadline-cleanup DB test, whose real
+50ms deadline made success depend on CI database speed. The test now injects semantic time until
+confirmed settlement, then crosses the deadline and asserts the execution signal stays un-aborted.
+Real deadline enforcement cases remain unchanged. All 26 tool-operation DB and 15 unit cases pass;
+typecheck and lint pass. This follow-up changes tests only and awaits a new exact-head CI.
+
+Image `the-learning-project-app:4e1dec7c` was built from a clean archive and its actual bundled
+migration succeeded against the retained production clone. Before deployment, the live hydrated
+projection audit and all eight private golden reaudits have zero drift (423 live events, seven
+LearningItems; Goal and MistakeVariant production sets remain empty). This is not deployed evidence.
+
+Rollback must account for the two new typed LearningItem repair events: the old `55aaac30`
+reducers do not understand them. Use the retained old image with its three structural projection
+flags OFF, preserve materialized rows, and never rebuild with old reducers after new-version writes.
+Re-entering canonical mode after rollback writes requires readiness verification/repair again.
+The private rollback compose override is retained alongside backups; a fresh pre-deploy database
+dump is still required. No NAS deployment or new model calls are authorized by this preparation.

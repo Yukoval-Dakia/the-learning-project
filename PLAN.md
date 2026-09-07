@@ -11,7 +11,9 @@
   312 scoped DB、64 unit+1真实migration bundle unit、typecheck/lint/build与architecture/capability/flags通过。
   依赖439→437仅下调；保留行锁、migration refusal、null guard、派生字段和重复撤销；无paid/生产变更。
   PR1356初审P1：correct在行锁前定时，会被并发状态覆盖；3实体真实并发3RED→3GREEN，有限事务重试保留单钟与outbox回滚。
-  修后101 DB与gates通过；首轮CI34117592341仅2旧fixture缺迁移，修后4测试过；待唯一验证审、新exactCI及Mac rollout。
+  修后101 DB与gates通过；唯一验证审4e1dec7c PASS（独立67 DB），review预算结束，无第三轮。
+  CI34119067574仅旧50ms数据库计时前提失败；改注入语义钟并断言终态后signal不被abort，26DB/15unit过。
+  待新exactCI及Mac rollout；镜像4e1dec7c已真实clone迁移，live audit与8golden零drift，生产仍55aaac30。
   fold-write其它实体8写点/5stale已去重登记974 Todo；972仍Todo，不放宽allowlist掩盖。
 - 887 local-production切片已部署：PR1354 exact0ed35fd3，CI34108722202全绿，main a12667507，独立安全review PASS。
   owner「直接动本地生产即可」仅授权Mac，不含NAS；API/worker/Postgres均healthy，未启动tunnel。

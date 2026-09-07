@@ -391,8 +391,14 @@ describe('ToolOperations', () => {
   });
 
   it('clears a hard-deadline timer after confirmed settlement', async () => {
+    // This checks cleanup after success, not whether CI Postgres can persist in 50ms.
+    // Keep semantic time before the cap until settlement, then cross the deadline.
+    let clock = new Date('2026-08-27T12:00:00Z');
+    const deadline = new Date(clock.getTime() + 50);
+    let executionSignal: AbortSignal | undefined;
     const operations = createToolOperations(testDb(), {
       processId: 'api_boot_deadline_cleanup',
+      now: () => clock,
     });
     const handle = await operations.start(
       {
@@ -400,12 +406,18 @@ describe('ToolOperations', () => {
         toolName: 'fast_read',
         effect: 'read',
         input: { query: 'finishes before cap' },
-        hardDeadlineAt: new Date(Date.now() + 50),
+        hardDeadlineAt: deadline,
       },
-      async () => ({ status: 'succeeded', result: { answer: 'confirmed' } }),
+      async ({ signal }) => {
+        executionSignal = signal;
+        return { status: 'succeeded', result: { answer: 'confirmed' } };
+      },
     );
-    await expect(handle.wait({ timeoutMs: 250 })).resolves.toMatchObject({ status: 'succeeded' });
+    await expect(handle.waitUntilSettled()).resolves.toMatchObject({ status: 'succeeded' });
+    clock = new Date(deadline.getTime() + 1);
     await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(executionSignal).toBeDefined();
+    expect(executionSignal?.aborted).toBe(false);
     await expect(handle.wait({ timeoutMs: 0 })).resolves.toMatchObject({ status: 'succeeded' });
     const settledEvents = await testDb()
       .select({ id: event.id })
