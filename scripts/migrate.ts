@@ -15,6 +15,7 @@ import postgres from 'postgres';
 import { seedKnowledge } from '@/capabilities/knowledge/server/seed';
 import * as schema from '@/db/schema';
 import { reconcileBuiltinTraits } from '@/server/subjects/reconcile-builtin-traits';
+import { migrateCanonicalProjections } from './migrate-canonical-projections';
 
 const url = process.env.DATABASE_URL;
 if (!url) {
@@ -52,6 +53,11 @@ async function main(): Promise<void> {
         `+${traits.insertedTraits} traits, ${traits.upgradedTraits} upgraded, ` +
         `${traits.skippedTraits} up-to-date, ${traits.preservedTraits} owner-edited preserved`,
     );
+
+    // YUK-973: prepare legacy data before the canonical writers start. Failure is fatal;
+    // never conceal incomplete history with a fresh snapshot or rebuild live learner rows.
+    const projections = await migrateCanonicalProjections(db);
+    console.log('[migrate] canonical projection readiness:', JSON.stringify(projections));
   } finally {
     await sql.end({ timeout: 5 });
   }

@@ -25,6 +25,7 @@ import { writeAiProposal } from '@/kernel/proposals/writer';
 import { retractAiProposal } from '@/server/proposals/actions';
 import { auditProjection } from '../../../scripts/audit-projection';
 import { backfillGoalGenesis } from '../../../scripts/backfill-genesis-events';
+import { migrateCanonicalProjections } from '../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { gatherAndFoldGoal } from './gather';
 
@@ -419,6 +420,13 @@ describe('retractAiProposal (goal_scope, flag OFF) — fold==row parity', () => 
     // 5. The auditor also sees zero goal drift on this retracted goal.
     const audit = await auditProjection(db, {});
     expect(audit.drift.filter((d) => d.id === goalId)).toEqual([]);
+    // A legitimate retract retains its originating proposal and dormant row;
+    // deployment readiness must not confuse that retained index with an orphan.
+    expect((await migrateCanonicalProjections(db)).goal).toEqual({
+      seeded: 0,
+      skipped: 1,
+      checked: 1,
+    });
   });
 });
 

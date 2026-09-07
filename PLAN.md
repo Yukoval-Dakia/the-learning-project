@@ -4,6 +4,10 @@
 
 ## NOW
 
+- Active973：root独占tlp-wt-unified-conversation / codex/yuk-973-canonical-writers。
+  先迁移事务内补锚+无allowlist fold/live校验，拒绝有mutation但无base历史；失败回滚全部新锚。
+  随后删除Goal/LI/variant业务双轨分支和flag，保留guard/单时钟/并发/LI派生字段，合并重复测试。
+  验收要求rich scoped DB、typecheck/lint/build、独立review、exact-head CI；不新增付费调用。
 - 887 local-production切片已部署：PR1354 exact0ed35fd3，CI34108722202全绿，main a12667507，独立安全review PASS。
   owner「直接动本地生产即可」仅授权Mac，不含NAS；API/worker/Postgres均healthy，未启动tunnel。
   target=the-learning-project-postgres-1 / the-learning-project_pgdata / 127.0.0.1:5433/loom。

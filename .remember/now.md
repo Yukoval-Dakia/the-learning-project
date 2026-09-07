@@ -2,6 +2,15 @@
 
 ## 最新状态
 
+- Active973 branch codex/yuk-973-canonical-writers，root独占；迁移前置helper已实现并接入migrate.ts。
+  三类实体在同一锁定事务补锚，拒绝orphan history/field drift/ghost，失败回滚新锚，不live rebuild。
+  51相关DB与typecheck/lint/build/architecture边界过；fresh/锁超时/重试/并发/派生列覆盖。
+  初审发现index-only dangling origin漏检P1，三实体3RED后修复；正向真实goal撤回链仍通过。
+  将进行唯一验证审与exact-head CI；本PR仅迁移前置，不关闭973。
+  实际dist/migrate.cjs在loom_refactor_verify_sjuacu连续两次成功，seed0/LIchecked7；未改生产/新增模型调用。
+  真正writer/flag删除仍未实现，后继必须完成，不能将此迁移前置PR当973或整个goal完成。
+  设计/剩余验收见docs/planning/2026-09-07-canonical-state-writers.md。
+
 - 887 Mac本地切换完成：PR1354 exact0ed35fd3/CI34108722202全job绿/reviewPASS，main a12667507。
   API+worker运行clean55aaac30镜像sha256:00e6595f0d590c18a0c7ecd02fa7f08c857c4fa87942665cf985260a1048cbfd。
   三容器healthy，原PG volume未换，API127.0.0.1:8787/RW_WORKER0，无cloudflared。
