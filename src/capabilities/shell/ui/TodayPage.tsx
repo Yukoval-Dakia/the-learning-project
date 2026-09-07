@@ -17,7 +17,8 @@ import {
   LearningIntentComposer,
 } from '@/capabilities/agency/ui-public';
 import { ColdStart } from '@/capabilities/onboarding/ui-public';
-import { apiJson } from '@/ui/lib/api';
+import { type ApiOperationJsonResponse, apiJson } from '@/ui/lib/api';
+import { describeCosts } from '@/ui/lib/cost-presentation';
 import { openCopilot } from '@/ui/lib/use-copilot-dwell';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
@@ -112,38 +113,7 @@ export function deriveThreads(s: WorkbenchSummary): Thread[] {
 // memory reconcile) — never a single cross-currency sum.
 // YUK-330: the per-currency amount key is `cost` (unified with /api/_/admin/cost
 // and the cost_ledger.cost source column); cost-today previously sent `spend`.
-interface CurrencySpend {
-  currency: string;
-  cost: number;
-}
-interface CostTodayResponse {
-  window: { from: number; to: number; label: string };
-  today: {
-    by_currency: CurrencySpend[];
-    tokens_in: number;
-    tokens_out: number;
-    ledger_rows: number;
-    tool_calls: number;
-    by_task: Array<{ task_kind: string; calls: number; by_currency: CurrencySpend[] }>;
-  };
-}
-
-const CURRENCY_SYMBOL: Record<string, string> = { USD: '$', CNY: '¥' };
-
-// 成本格式跟设计稿 $X.XX，但 cost_ledger.cost 常见 sub-cent 单价——直接
-// toFixed(2) 会把非零花费渲染成 $0.00，与 quiet-empty 的「真零」语义混淆。
-// 非零但不足半分时显式标 <{sym}0.01，金额可信度优先于格式统一。
-function fmtSpend(spend: number, currency = 'USD'): string {
-  const sym = CURRENCY_SYMBOL[currency] ?? `${currency} `;
-  if (spend > 0 && spend < 0.005) return `<${sym}0.01`;
-  return `${sym}${spend.toFixed(2)}`;
-}
-
-// Render per-currency spend list (e.g. "$0.42 · ¥1.20"); empty → 真零 $0.00.
-function fmtByCurrency(rows: CurrencySpend[]): string {
-  if (rows.length === 0) return fmtSpend(0);
-  return rows.map((r) => fmtSpend(r.cost, r.currency)).join(' · ');
-}
+type CostTodayResponse = ApiOperationJsonResponse<'getTodayCost'>;
 
 export function aiTaskLabel(taskKind: string): string {
   const kind = taskKind.toLowerCase();
@@ -205,6 +175,7 @@ function CostRibbon() {
     queryFn: () => apiJson<CostTodayResponse>('/api/cost/today'),
   });
   const t = q.data?.today;
+  const cost = describeCosts(t?.by_currency ?? []);
   const isEmpty = t !== undefined && t.ledger_rows === 0 && t.tool_calls === 0;
   const status: StatefulStatus = q.isLoading
     ? 'loading'
@@ -231,15 +202,19 @@ function CostRibbon() {
         {t && (
           <>
             <div className="cost-top">
-              <div className="cost-amt serif tnum">{fmtByCurrency(t.by_currency)}</div>
+              <div className="cost-amt serif tnum">{cost.amount}</div>
             </div>
+            <div className="cost-foot">{cost.note}</div>
             <div className="cost-tasks">
-              {t.by_task.map((row) => (
-                <span key={row.task_kind} className="chip">
-                  <span>{aiTaskLabel(row.task_kind)}</span>{' '}
-                  <b className="mono">{fmtByCurrency(row.by_currency)}</b>
-                </span>
-              ))}
+              {t.by_task.map((row) => {
+                const taskCost = describeCosts(row.by_currency);
+                return (
+                  <span key={row.task_kind} className="chip" title={taskCost.note}>
+                    <span>{aiTaskLabel(row.task_kind)}</span>{' '}
+                    <b className="mono">{taskCost.amount}</b>
+                  </span>
+                );
+              })}
             </div>
             <div className="cost-foot nowrap-meta">
               共 {t.by_task.reduce((sum, row) => sum + row.calls, 0)} 次 AI 工作

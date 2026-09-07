@@ -2,6 +2,44 @@
 
 ## 最新状态
 
+- Active976：owner已明确「批准」六文件UI预检；root独占codex/yuk-976-cost-truth，base5e6562917。
+  951仅曾读取issue/指引，未开实施/未操作数据；收到批准后已暂停，只有976一条写入线。
+  Today/admin复用ApiOperationJsonResponse与describeCosts，删除两窄类型/重复金额格式；unknown-only不显示0。
+  mixed显示已知小计+未知与reported/estimated/legacy细目；加载/错误不伪造金额，零值与空态分开。
+  15helper/Today unit、10新shipped-browser用例通过（两页desktop/mobile及四费用状态+error/loading）。
+  18原cost API/reader DB已过；无backend/provider/ledger改动，保留现有查询重试与权限。
+  mobile Admin旧intrinsic header宽度已本页约束；未改全局CSS，两张390px截图已目检，金额无裁剪。
+  private证据目录cost-976-admin-mobile.png/cost-976-today-mobile.png；浏览器用无provider凭据isolated API。
+  测试API PID59988/session49108，port18787，cwd tlp-cost-ui-976.wpuLuc，DBloom_before_973_verify；结束时只停此PID。
+  当前待final gates/初审/exactCI/本地交付；生产app/worker仍14ea1a81，无paid，恢复专项$3未用。
+
+- YUK976批准前只读记录（现由上方实施状态取代）：main5e656291/f376c6aa，当时未改UI代码。
+  server provider-cost-projection/cost-today/admin-cost truth字段完整；18相关API/reader DB全过。
+  两真实consumer（TodayPage CostRibbon、admin-cost）手写窄类型丢reported/estimated/legacy/unknown。
+  shipped14ea1a81浏览器拦截仅admincost GET，合法unknown USD+8912in/731out/1call，$0.0000可见，无unknown提示。
+  两次早期浏览器定位超时是精确文案遗漏「 · USD」，不是产品错误；修正locator后反例已实际捕获。
+  live今日cost API为空，不称生产unknown canary；没有生产writes/paid，专项恢复$3仍未用。
+  已查重并创建976（841/844/964均已Done）；UI预检docs/design/2026-09-07-cost-truth-preflight.md列精确6文件。
+  拟复用src/ui/lib/api.ts的ApiOperationJsonResponse/生成契约，替换两手写窄类型；纯共享展示helper与shipped browser验证。
+  等待这两个page surface批准，旧授权只覆盖Copilot drawer；允许继续独立全产品扩展成本核对。
+  不为UI批准等待将整个goal blocked；生产仍975/14ea1a81，root保持单writer，原脏main未动。
+
+- YUK975 Done：PR1359 exact14ea1a8142c867e3b95c619a8441b6d56b65695d，CI34128362101全job success，
+  main5e65629170d1ef48dfcc8e964bfa64d42f9bc691，独立初审PASS（独立8unit/7DB/typecheck），无需第二审。
+  API缺少信号owner：baseline fbee5c32同clonehealth200/stop137，唯一--init对照143；新bundle0。
+  clean14ea1a81实际SSE200，server30s强制断开、client90s未abort、30319ms/exit0；clone423/24/258/4不变。
+  首样本client45s与server30s撞期不作强制断开证据；四个已停止临时probe容器已删除，无用户数据卷。
+  API单owner先HTTP30s、await worker startup、共享boss30s/WIP日志、DB end；总65s，compose API70/worker40。
+  49unit（12shutdown+37Copilot）与7既有DB分区shutdown、typecheck/lint/build/partition/architecture通过。
+  未为测试分区放宽audit；尝试移动旧boss test被拒绝后已撤销，保留原DB分区。
+  Mac13:48Z app/worker运行14ea1a81，image sha256:c4ea66c85bc08dd40d1705c6fdbb24cc00b546f5d4306b9448b6620f431569f8。
+  healthy/零重启、实际StopTimeout70/40；原PG ID7d99236a/StartedAt09:40:42Z及pgdata未变，无NAS/tunnel。
+  clone/live migrate零新增、8类audit/golden零drift；423event/258task/4attempt不变，无活动/待执行队列。
+  health200/无token401/有效token200；未为验证stop而额外重启新生产API，隔离停机与生产运行证据分开。
+  private runtime-975-image.override.yml生效；回退用fbee5c32/runtime-972-image.override.yml，保留原backup。
+  root独占codex/yuk-975-delivery-notes，原脏main不动；无paid，恢复专项$3未用，旧$10safe0.04177不回收reserve。
+  下一项成本真相/全产品扩展成本复核；887完整provider/crash、951完整重试窗drain仍开放，整体goal active。
+
 - YUK972 Done：PR1358 exactfbee5c32c8077f9cda18f7f8953c49367f36184a，CI34126257359成功，
   main4c9ae238eb74d9d4db062a1ab0a5756b9dfc8b93，独立初审PASS无P0/P1；不需第二审。
   Mac于13:24Z运行fbee5c32镜像sha256:d271e3c9b266bfcd5cf58ef1bf8e22a7332680d20ae3a72f4ae53d6cbad60e87。
@@ -14,7 +52,7 @@
   51unit/typecheck/lint/build/architecture/capability过；CI migration/usability按变更跳过，不称新浏览器验收。
   两处直调judge职责分别是照片作答和独立解答对照，未证明同一规则重复，不机械删除。
   root独占codex/yuk-972-delivery-notes，原脏main不动；专项恢复$3未使用，旧$10安全余0.04177不回收reserve。
-  下一项887已捕获shutdown：第三次正常compose stop旧034f35fe仍十秒后exit137，worker exit0。
+  当时887捕获shutdown：第三次正常compose stop旧034f35fe仍十秒后exit137，worker exit0；现已由上方975交付。
   server/index.ts仅RW_WORKER=1安装boss shutdown，生产RW_WORKER=0；serve返回值未持有，compose无grace。
   先隔离真实binary复现，未确定PID1影响/未证明数据丢失；887comment7b8306d5记录，勿混入972。
   整体goal active；provider/crash矩阵、成本真相、951完整重试窗drain仍不能冒充完成。

@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CSSProperties } from 'react';
-import { apiJson } from '@/ui/lib/api';
+import { type ApiOperationJsonResponse, apiJson } from '@/ui/lib/api';
+import { describeCosts } from '@/ui/lib/cost-presentation';
 import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
 import { PageHeader } from '@/ui/primitives/PageHeader';
@@ -10,39 +11,11 @@ import {
   ErrorCard,
   Kpi,
   LoadingCard,
-  currencySymbol,
-  formatMoney,
   mutedTextStyle,
   sectionTitleStyle,
 } from './observability-shared';
 
-interface CostResponse {
-  days_window: number;
-  days: Array<{
-    day: string;
-    currency: string;
-    cost: number;
-    tokens_in: number;
-    tokens_out: number;
-    calls: number;
-  }>;
-  by_task: Array<{
-    task_kind: string;
-    currency: string;
-    cost: number;
-    tokens_in: number;
-    tokens_out: number;
-    calls: number;
-  }>;
-}
-
-function sumByCurrency(rows: Array<{ currency: string; cost: number }>): Map<string, number> {
-  const totals = new Map<string, number>();
-  for (const row of rows) {
-    totals.set(row.currency, (totals.get(row.currency) ?? 0) + row.cost);
-  }
-  return totals;
-}
+type CostResponse = ApiOperationJsonResponse<'getAdminCost'>;
 
 function maxByCurrency(rows: Array<{ currency: string; cost: number }>): Map<string, number> {
   const maxima = new Map<string, number>();
@@ -55,13 +28,6 @@ function maxByCurrency(rows: Array<{ currency: string; cost: number }>): Map<str
 function barWidthPct(cost: number, currency: string, maxima: Map<string, number>): number {
   const max = Math.max(maxima.get(currency) ?? 0, 0.000001);
   return (cost / max) * 100;
-}
-
-function formatMoneyByCurrency(totals: Map<string, number>): string {
-  if (totals.size === 0) return '$0.0000';
-  return [...totals.entries()]
-    .map(([currency, value]) => `${currencySymbol(currency)}${value.toFixed(4)}`)
-    .join(' · ');
 }
 
 function formatTokens(value: number): string {
@@ -79,66 +45,82 @@ export function AdminCostSurface({ navigate }: AdminSurfaceProps) {
   });
   const days = costQ.data?.days ?? [];
   const byTask = costQ.data?.by_task ?? [];
-  const totalByCurrency = sumByCurrency(days);
+  const totalCost = describeCosts(days, 4);
   const totalCalls = days.reduce((sum, row) => sum + row.calls, 0);
   const totalTokens = days.reduce((sum, row) => sum + row.tokens_in + row.tokens_out, 0);
   const maxDayByCurrency = maxByCurrency(days);
   const maxTaskByCurrency = maxByCurrency(byTask);
 
   return (
-    <main className="page wide">
+    <main className="page wide" style={{ width: '100%', minWidth: 0 }}>
       <PageHeader
+        className="[&_.page-head-actions]:min-w-0 [&_.page-head-actions]:max-w-full"
         title="Cost"
         eyebrow="ADMIN · cost ledger"
-        sub="按日与 task kind 聚合 `cost_ledger`，用于观察预算趋势和高成本任务。"
+        sub="按日与任务汇总已报告、估算和历史口径金额；未知费用单列，不代表账户实际扣款。"
       >
-        <AdminLinks navigate={navigate} />
-        <Button
-          variant="secondary"
-          icon="refresh"
-          onClick={() => {
-            void queryClient.invalidateQueries({ queryKey: ['admin-cost'] });
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 'var(--s-2)',
+            minWidth: 0,
+            maxWidth: '100%',
           }}
         >
-          刷新
-        </Button>
+          <div style={{ maxWidth: '100%', overflowX: 'auto' }}>
+            <AdminLinks navigate={navigate} />
+          </div>
+          <Button
+            variant="secondary"
+            icon="refresh"
+            onClick={() => {
+              void queryClient.invalidateQueries({ queryKey: ['admin-cost'] });
+            }}
+          >
+            刷新
+          </Button>
+        </div>
       </PageHeader>
 
-      <div className="kpi-strip">
-        <Kpi
-          label="30d spend"
-          value={formatMoneyByCurrency(totalByCurrency)}
-          note={`${days.length} rows`}
-        />
-        <Kpi label="calls" value={totalCalls} note="ledger rows" />
-        <Kpi label="tokens" value={formatTokens(totalTokens)} note="in + out" />
-        <Kpi label="tasks" value={byTask.length} note="task kinds" />
-      </div>
+      {costQ.data && !costQ.error && (
+        <div className="kpi-strip">
+          <Kpi label="30d known subtotal" value={totalCost.amount} note="不含未知费用" />
+          <Kpi label="calls" value={totalCalls} note="ledger rows" />
+          <Kpi label="tokens" value={formatTokens(totalTokens)} note="in + out" />
+          <Kpi label="tasks" value={byTask.length} note="task kinds" />
+        </div>
+      )}
+      {costQ.data && !costQ.error && <p style={mutedTextStyle}>{totalCost.note}</p>}
 
       {costQ.isLoading && <LoadingCard label="cost" />}
       {costQ.error && <ErrorCard error={costQ.error} />}
 
-      {costQ.data && (
+      {costQ.data && !costQ.error && (
         <div className="admin-two-column">
           <Card pad="lg">
             <h2 style={sectionTitleStyle}>Daily trend</h2>
             <div style={barListStyle}>
-              {days.map((row) => (
-                <div key={`${row.day}:${row.currency}`} className="admin-bar-row">
-                  <span style={barLabelStyle}>
-                    {row.day} · {row.currency}
-                  </span>
-                  <span style={barTrackStyle} className="admin-bar-track">
-                    <span
-                      style={{
-                        ...barFillStyle,
-                        width: `${barWidthPct(row.cost, row.currency, maxDayByCurrency)}%`,
-                      }}
-                    />
-                  </span>
-                  <span style={barValueStyle}>{formatMoney(row.cost, row.currency)}</span>
-                </div>
-              ))}
+              {days.map((row) => {
+                const cost = describeCosts([row], 4);
+                return (
+                  <div key={`${row.day}:${row.currency}`} className="admin-bar-row">
+                    <span style={barLabelStyle}>
+                      {row.day} · {row.currency}
+                    </span>
+                    <span style={barTrackStyle} className="admin-bar-track">
+                      <span
+                        style={{
+                          ...barFillStyle,
+                          width: `${barWidthPct(row.cost, row.currency, maxDayByCurrency)}%`,
+                        }}
+                      />
+                    </span>
+                    <span style={barValueStyle}>{cost.amount}</span>
+                    <span style={{ ...mutedTextStyle, gridColumn: '1 / -1' }}>{cost.note}</span>
+                  </div>
+                );
+              })}
               {days.length === 0 && <p style={mutedTextStyle}>No cost rows in the window.</p>}
             </div>
           </Card>
@@ -146,24 +128,28 @@ export function AdminCostSurface({ navigate }: AdminSurfaceProps) {
           <Card pad="lg">
             <h2 style={sectionTitleStyle}>By task kind</h2>
             <div style={barListStyle}>
-              {byTask.map((row) => (
-                <div key={`${row.task_kind}:${row.currency}`} className="admin-bar-row">
-                  <span style={barLabelStyle}>
-                    {row.task_kind} · {row.currency}
-                  </span>
-                  <span style={barTrackStyle} className="admin-bar-track">
-                    <span
-                      style={{
-                        ...barFillStyle,
-                        width: `${barWidthPct(row.cost, row.currency, maxTaskByCurrency)}%`,
-                      }}
-                    />
-                  </span>
-                  <span style={barValueStyle}>
-                    {formatMoney(row.cost, row.currency)} · {row.calls}
-                  </span>
-                </div>
-              ))}
+              {byTask.map((row) => {
+                const cost = describeCosts([row], 4);
+                return (
+                  <div key={`${row.task_kind}:${row.currency}`} className="admin-bar-row">
+                    <span style={barLabelStyle}>
+                      {row.task_kind} · {row.currency}
+                    </span>
+                    <span style={barTrackStyle} className="admin-bar-track">
+                      <span
+                        style={{
+                          ...barFillStyle,
+                          width: `${barWidthPct(row.cost, row.currency, maxTaskByCurrency)}%`,
+                        }}
+                      />
+                    </span>
+                    <span style={barValueStyle}>
+                      {cost.amount} · {row.calls}
+                    </span>
+                    <span style={{ ...mutedTextStyle, gridColumn: '1 / -1' }}>{cost.note}</span>
+                  </div>
+                );
+              })}
               {byTask.length === 0 && <p style={mutedTextStyle}>No task cost rows yet.</p>}
             </div>
           </Card>

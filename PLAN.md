@@ -1,18 +1,28 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：972声明式判分已合并/Mac部署验证；下一项核实API停机137，NAS不在范围，整体goal active。
+> Linear 是权威 tracker；更新于 2026-09-07：owner批准976两页费用UI，单线实施完整费用真相消费；975仍健康，整体goal active。
 
 ## NOW
 
-- Active975：root独占codex/yuk-975-api-shutdown；隔离同镜像health200后stop复现137，--init对照143。
-  API缺少信号owner已确认；实现单一有界HTTP/runtime drain，保留boss日志与30s，compose覆盖完整宽限。
-  顺序：回归RED→实现→进程/HTTP/scoped验证→独立review/exactCI→Mac交付；无provider凭据或paid。
+- Active976：owner已批准六文件UI预检；root独占codex/yuk-976-cost-truth，951只读核对暂停。
+  顺序：两页browser反例→共享显示规则/现成API类型→scoped unit/browser→review/exactCI→Mac部署。
+  18成本API/reader DB过；server truth完整，两UI窄类型丢reported/estimated/unknown。
+  shipped AdminCost注入合法unknown USD记录，实见$0.0000且无unknown；未写生产/无paid。
+  既有Today成本卡与AdminCost精确范围见docs/design/2026-09-07-cost-truth-preflight.md；无新账本/provider。
+  Linear976 In Progress；本地生产暂不变，无新paid；旧Copilot抽屉产品语义不动。
+- YUK975 Done：PR1359 exact14ea1a81，CI34128362101全job绿，独立初审PASS，main5e6562917。
+  API拥有HTTP/runtime停机；原镜像stop137、init对照143，新bundle空闲0、cleanimage SSE30s主动断连0。
+  SSE client未abort，clone423event/24job_event/258task/4attempt不变；不把断连变成Copilot Stop。
+  49unit/7既有DB分区shutdown、typecheck/lint/build/partition/architecture过；独立另跑8unit/7DB/typecheck过。
+  Mac13:48Z API/worker运行14ea1a81镜像，healthy/零重启、实际StopTimeout70/40，原PG/volume未变。
+  live迁移零新增，8类audit/golden零drift，423event/258task/4attempt不变；health200/未认证401/认证200。
+  无paid，恢复$3未用；root当前975-delivery-notes，原脏main不动。887完整provider/crash矩阵仍未完成。
 - YUK972 Done：PR1358 exactfbee5c32，CI34126257359成功，main4c9ae238e；独立初审PASS，无P0/P1。
   Mac API/worker运行fbee5c32镜像，healthy/零重启；原PG容器与volume未变，无NAS/tunnel/paid。
   clone/live迁移零新增，423event/258task/4attempt不变；8类audit/golden零drift，恢复$3未用。
   custom真实SubjectRegistry注册通过，calculation/computation原semantic/keyword两RED→unit_dimension两GREEN。
   51unit含内建矩阵/profile注册与调度，typecheck/lint/build与架构门过；CI migration/usability按范围跳过。
-  下一项887已捕获的API正常stop仍137：先隔离复现；worker退出0，不推断数据丢失，不混入972。
+  后续API正常stop137已独立由上方975交付；未混入972，不把137推断为数据丢失。
 - YUK974 Done：PR1357 exact034f35fe，CI34124354408全job绿，main c27202369，Mac部署已验证。
   Notes hub完整回放时间差与提案artifact撤销倒时均RED→GREEN；归档责任移Notes，复用已有限次事务重试。
   120DB/27unit/typecheck/lint/build及严格writer/architecture/capability过，0violation/0stale；42advisory显式保留。
@@ -163,11 +173,10 @@
 
 ## NEXT
 
-1. 核实887已捕获API三次正常stop十秒后137；先隔离进程验证shutdown owner与容器宽限，不重启生产探针。
-2. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
-3. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
+1. 完成976：Today/Admin Cost复用完整API类型，显示已知小计/估算来源/未知数量，不改账本或费率。
+2. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
-4. 887保留provider/crash矩阵；本地backfill/audit/golden及973退休已验证，NAS仍不在范围。
+3. 887保留provider/crash矩阵；本地backfill/audit/golden及973/975退休与停机已验证，NAS仍不在范围。
 
 ## PARKED
 
@@ -179,6 +188,7 @@
 
 ## BLOCKED-ON
 
+- 976新增两页费用UI已获owner明确批准；不扩大为其它UI重绘。
 - Mac本地生产已授权直接操作；NAS部署/数据操作仍未授权，不执行。
 - 不主动重跑现存failed memory/DLQ或新增超预算模型验收；历史费用unknown保留。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。
