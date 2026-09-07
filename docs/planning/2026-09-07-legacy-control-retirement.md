@@ -100,7 +100,27 @@ jobs=1/schedules=1 (exit 1). Fresh loom_retirement_951_fresh_verify migrates and
 seeds with no pg-boss namespace (exit 0); adding only an empty pg-boss namespace
 then correctly fails on missing tables (exit 1), rather than treating it as fresh.
 That isolated diagnostic DB is retained. No production mutation or paid call.
-Independent initial review and exact-head CI/deployment are still pending.
+Delivered as PR1363, exact57a7bbee6a1b193de912abbee94093e3e54fd5de; CI Gate
+34144766869 passed every job. Independent initial review PASS (12 DB/54 unit),
+no second review. First CI exposed only retained historical-column classifications
+and a stale architecture Task row; both were corrected without runtime changes.
+Merged 2026-09-07T16:57:40Z as3c8d5c1b35c10c323e3a3f55dcb294653ad29af1.
+
+Mac app/worker now run clean106ac7ff image
+7c08b3c116ae8d049feb4e89adfcc218f8b66c137c573f7a6d2505a73705ee93.
+Old app stopped normally (exit0), the exact reconcile schedule was unscheduled,
+all pending queue states were empty, and old worker stopped normally (exit0).
+Live migration passed the new guard, zero new migrations/seeds, seven LearningItems
+ready. New appac3e09f4/workerfaa93c5f started16:58:12Z, healthy/zero restarts;
+original PG7d99236a and its09:40:42Z start/volume remained unchanged.
+Counts stayed423events/258tasks/4attempts/0children/0continuations. Health200,
+unauthenticated sessions401/authenticated200; browser drawer reload/reopen and
+settled summary/input passed, zero page errors and zero sent model messages.
+Private runtime-951-image.override.yml selects the image; removing it rolls back
+to582b2e66, whose worker restores the old schedule and therefore requires repeat
+readiness before upgrading again. No historical data/queue or volume was deleted.
+Source README/advisory stale foreground/mailbox descriptions corrected in delivery
+notes; B3 historical physical-name decision remains separate, not claimed complete.
 
 ### Earlier source-only slice
 

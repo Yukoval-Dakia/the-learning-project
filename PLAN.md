@@ -1,12 +1,13 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-08：951完整排空窗已证，退休旧执行链路中；owner批准887转用未用$3。
+> Linear 是权威 tracker；更新于 2026-09-08：951旧mailbox执行已合并/部署；下一线887，转用$3已批准且未消费。
 
 ## NOW
 
 - 951部分交付：PR1361 exactab0bbb909，CI34134547233全job绿，main26e0e2d65；独立初审PASS无finding。
   删7死model control/249行与重复存在性断言；31unit/41DB/typecheck/lint/build/audits过，独立8unit过。
-  未部署/改handler或历史数据；14:39Z三表全空，无旧run/continuation/DLQ，完整retry+抖动窗仍待证，951 Backlog。
+  后续退休已交付：PR1363 exact57a7bbee/CI34144766869全绿/main3c8d5c1b，初审PASS；121DB及本地gates通过。
+  16:58Z Mac app/worker106ac7ff healthy，旧cron撤下且排空，迁移guard过；PG/423event/258task/4attempt未变。
   978 Done：PR1362 exact582b2e66/CI34139494605全绿/main2351d5657；父cancelled/子lost竞态RED→GREEN，唯一验证PASS。
   102DB/18unit/gates过；15:46Z Mac app/worker已582b2e66、PG未变，API/browser/计数过；无paid，详见978记录。
 - YUK976 Done：PR1360 exactc6bbf5e1，CI34132735074全job绿，main722b352b0；独立初审PASS，无P0/P1。
@@ -178,7 +179,7 @@
 
 ## NEXT
 
-1. Active951：16:20Z完整drain窗通过，退休旧mailbox执行/ResearchTask，保留native投影与历史；34DB通过，审查/交付待完成。
+1. Active887：951旧执行已合并部署，下一步只补Notes/Memory真实恢复；不以drain退休冒充历史表名collapse。
 2. 887：七项差集见rollout-evidence-gap；SDK MCP/提案workflow过；owner批准未用$3转Notes/Memory真实恢复，尚未消费。
    977零金额来源是已登记P2，不阻塞主产品；无新代码缺陷不再开文件级清理支线。
 3. 最终按学习意图→录入→判分→复习→提议/撤回的业务owner/单份规则复核，不以测试或依赖数量代替完成。
@@ -187,7 +188,7 @@
 
 - 两处judge直调已核实为照片作答/独立解答一致性，不为调用形式统一机械删除，无新缺陷证据。
 - 全历史ADR审计仍未完成，不冒充全量通过；971仅覆盖三份已确认冲突的现役指引。
-- 951历史表和native投影保留；ToolOperations仍有live remote consumer，不随旧mailbox执行退休。
+- 951历史表/native投影保留；ToolOperations有live remote consumer；最终B3术语决策仍开放，不建Mission表面。
 - 921多provider、572夜间教研、832HOLD不解锁。
 - 计费、重试、prompt/skill、复杂parser、并发/回滚/恢复、UI安全测试仍保留，不按数量硬删。
 

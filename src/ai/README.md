@@ -15,10 +15,10 @@ Task 层抽象。**不是 chat()** —— 每种产物一个 Task；tool-calling
 ## Owner maps 与 catalog
 
 - 六个 capability owner index 用 `defineOwnedTaskSpecs()` 声明 staged ownership；owner map 保存完整 entry，不是只保存 definition 的别名表。
-- 当前 50 个 staged-owned entry；Copilot 保留 `CopilotTask` / `CopilotResearchTask` / `TeachingTurnTask`，题目、解题与教学内容仍由 Practice 的专用质量 Task 校验。
-- YUK-939 后全部 50 个 entry 都是完整 owned TaskSpec；Copilot 的两个事后 evidence TaskKind 已退场，不保留 compatibility 占位。
-- `composeTaskCatalog()` 只把每个 entry 的精确 `definition` 投影成冻结的 50-definition runtime map。`src/ai/registry.ts` 再为 `GoalScopeTask` 与 `QuestionAuthorTask` 加两个 Copilot invocation overlay，作为旧 runner 的 compatibility projection；它不是 semantic source。
-- `pnpm audit:task-census` 从当前 catalog 与生产调用点派生 census；现状为 50 registered / 49 statically invoked / 1 explicit compatibility（`AttributionTask`），并检查 manifest/legacy handler reachability 与 `ai_task_runs.task_kind` run-log path。
+- Copilot 保留 `CopilotTask` / `TeachingTurnTask`；旧独立 ResearchTask 已随 mailbox 执行退休，原生子 agent 留在父回合。题目、解题与教学内容仍由 Practice 的专用质量 Task 校验。
+- owner entry 均为完整 TaskSpec；Copilot 的两个事后 evidence TaskKind 已退场，不保留 compatibility 占位。
+- `composeTaskCatalog()` 只把每个 entry 的精确 `definition` 投影成冻结的 runtime map。`src/ai/registry.ts` 再为 `GoalScopeTask` 与 `QuestionAuthorTask` 加两个 Copilot invocation overlay，作为 runner 的 compatibility projection；它不是 semantic source。
+- `pnpm audit:task-census` 从当前 catalog 与生产调用点派生数量，并检查 manifest/legacy handler reachability 与 `ai_task_runs.task_kind` run-log path。唯一非 live caller 分类为 `AttributionTask`。
 
 ## 加新 Task
 
