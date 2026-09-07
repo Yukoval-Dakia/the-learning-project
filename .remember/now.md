@@ -2,11 +2,22 @@
 
 ## 最新状态
 
-- Active951 source-only：root独占codex/yuk-951-retirement-readiness，base976交付记录3f3314ac。
+- 951 source-only部分已交付：PR1361 exactab0bbb909aca47530f706b2204045f6cd4b12a12，CI34134547233全job绿。
+  2026-09-07T14:54:05Z merge main26e0e2d6550404bdfeaee22df38a56dc56ff140c；独立初审PASS，无finding/无需第二审。
+  独立2文件8unit过；root31unit/41DB/typecheck/lint/build/audits过；生产无live import差异，不为此重启。
+  951仍Backlog（未完成drain/noun retirement）；未改table/handler/native投影/reader/cancel，无paid/生产写入。
+  978新Todo：原生child无terminal时父退出可留running，root与explorer静态核实且真实PG公共owner RED。
+  isolated clone loom_before_973_verify内start→stream抛synthetic_root_transport_failure→recover返回三个空数组。
+  child仍running/lease=null/settled=null，continuation0；sentinel rollback后probe_rows/probe_events均0。
+  临时probe文件已移除，首次误写events.ts导入失败不算有效证据；有效输出已记Linear978。
+  下一条978正式scoped DB RED→parent权威outcome/late-start与late-terminal fence→review/CI；不猜死/不重烧/不mint continuation。
+  root当前codex/yuk-951-delivery-notes，原脏main不动；gh CI watcher3383/merge54999均exit0，无probe进程。
+
+- 951 source-only实施历史：base976交付记录3f3314ac。
   删除7个unregistered模型control适配器（两文件），无production import，仅旧unit与exists断言消费。
   删除重复存在性case和四死tool mirror断言；保留manifest排除/权限、native prompt/config与真实drain行为测试。
   未改mailbox/kernel/handler/schema/native projection/reader/cancel，不能将dead adapter当恢复接口。
-  31unit/41真实mailbox与tooloperations DB/typecheck/lint/build及架构门过；独立初审运行中，待exactCI。
+  31unit/41真实mailbox与tooloperations DB/typecheck/lint/build及架构门过；初审/CI已按上方完成。
   14:39:26Z生产三表全空，无legacy run/continuation/DLQ；reconcile completed274，最早10:06:50Z。
   queue agent实际expire7200/retry2/delay30/backoff，完整窗口未证明；951保持开放，不撤drain handler。
   docs/planning/2026-09-07-legacy-control-retirement.md记录边界；无生产写入/paid，整体goal active。
