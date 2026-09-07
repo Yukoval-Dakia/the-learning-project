@@ -2,6 +2,15 @@
 
 ## 最新状态
 
+- Active978：root独占codex/yuk-978-native-child-settlement，base6e0e205b/main26e0e2d65。
+  6正式DB RED→GREEN；native事件串行接纳/退出排空、exact attempt丢终态收口，失败不覆盖paid root结果。
+  既有root reconciler包含已终态但native未收口父；同一parent Es锁约束late start/terminal，child单独commit可恢复。
+  full marker parser移copilot-run-outcome供真实两consumer共用；不读ai_task状态猜父死，不依赖951旧scheduler。
+  25 mailbox/reconcile DB（实际advisory竞争/sibling/retry/legacy免疫）+76 durable/teaching/queue/StopDB过；18unit过。
+  子投影失败/补lost时不返回SDKcursor；原全表断言暴露操作表fixture泄漏，已suite局部before/after清理，未改global reset。
+  typecheck/lint/build/437/0/47架构门过；独立初审review_978_native_settlement进行中，architect仅设计咨询不当review。
+  文档docs/planning/2026-09-07-native-child-settlement.md；待commit/PR/exactCI/cleanimage/runtime，无paid/生产变化。
+
 - 951 source-only部分已交付：PR1361 exactab0bbb909aca47530f706b2204045f6cd4b12a12，CI34134547233全job绿。
   2026-09-07T14:54:05Z merge main26e0e2d6550404bdfeaee22df38a56dc56ff140c；独立初审PASS，无finding/无需第二审。
   独立2文件8unit过；root31unit/41DB/typecheck/lint/build/audits过；生产无live import差异，不为此重启。

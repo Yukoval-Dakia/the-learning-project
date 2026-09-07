@@ -3,6 +3,7 @@ import type { Db } from '@/db/client';
 
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import { copilotRunTerminalSql } from './copilot-run-terminal-sql';
+import { nativeSubagentProjectionCondition } from './subagent-mailbox';
 
 export interface OutstandingCopilotDurableRun {
   runId: string;
@@ -22,10 +23,11 @@ function payloadRecord(value: unknown): Record<string, unknown> {
 }
 
 /**
- * Read the oldest bounded set of accepted, non-terminal runs.
+ * Read accepted runs with unfinished execution or an unfinished native child projection.
  *
  * Terminal filtering happens before LIMIT. Otherwise a retained prefix of
- * already-settled rows would make every sweep miss a later stranded run.
+ * already-settled rows would make every sweep miss a later stranded run. A
+ * terminal parent stays eligible only until its native child projections settle.
  * Duplicate QUEUED frames collapse to the first acceptance row.
  */
 export async function findOutstandingCopilotDurableRuns(
@@ -62,13 +64,19 @@ export async function findOutstandingCopilotDurableRuns(
           AND first_queued.business_id = queued.business_id
           AND first_queued.event_type = ${COPILOT_RUN_EVENTS.QUEUED}
       )
-      AND NOT EXISTS (
+      AND (NOT EXISTS (
         SELECT 1
         FROM job_events terminal
         WHERE terminal.business_table = queued.business_table
           AND terminal.business_id = queued.business_id
           AND ${terminalPredicate}
-      )
+      ) OR EXISTS (
+        SELECT 1 FROM subagent_run
+        WHERE subagent_run.parent_turn_event_id = queued.business_id
+          AND subagent_run.session_id = queued.payload->>'session_id'
+          AND subagent_run.status = 'running'
+          AND ${nativeSubagentProjectionCondition()}
+      ))
     ORDER BY queued.occurred_at ASC, queued.id ASC
     LIMIT ${limit}
   `)) as Array<{

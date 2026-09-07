@@ -1,12 +1,24 @@
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ai_task_runs, copilot_continuation, event, subagent_run } from '@/db/schema';
+import { and, eq, sql } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ai_task_runs, copilot_continuation, event, job_events, subagent_run } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { writeCopilotReply } from './conversation-writes';
 import { createCopilotExecutionOwner } from './copilot-execution';
 import { createCopilotRunCancellationControl } from './copilot-run-cancellation';
+import { acquireCopilotExecutionSettlementLock } from './copilot-run-coordination';
 import * as mailbox from './subagent-mailbox';
+import type { CopilotTaskLifecycleMessage } from './subagents';
 import { getCopilotContinuationHistory } from './turns';
+
+// These operational tables are intentionally outside resetDb's domain list.
+async function clearMailboxFixtures() {
+  await testDb().delete(copilot_continuation);
+  await testDb().delete(subagent_run);
+  await testDb().delete(job_events);
+}
+beforeEach(clearMailboxFixtures);
+afterEach(clearMailboxFixtures);
 
 async function seedParent(input: { id: string; sessionId: string; action?: string }) {
   await writeEvent(testDb(), {
@@ -26,6 +38,193 @@ describe('Copilot subagent mailbox', () => {
   beforeEach(async () => {
     await resetDb();
   });
+
+  it.each(['start', 'terminal'] as const)(
+    'fences concurrent native %s behind the parent outcome commit',
+    async (delivery) => {
+      const sessionId = `native_fenced_${delivery}`;
+      const parentTurnEventId = `ask_fenced_${delivery}`;
+      const parentTaskRunId = `root_fenced_${delivery}`;
+      await seedParent({ id: parentTurnEventId, sessionId });
+      const started = await mailbox.recordNativeSubagentStarted(testDb(), {
+        sessionId,
+        parentTurnEventId,
+        parentTaskRunId,
+        sdkTaskId: 'native_original',
+        objective: '交叉核对三份材料的来源、反例和未覆盖边界，逐项保留不确定性。',
+      });
+      if (!started) throw new Error('native fixture was not admitted');
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const parentCommit = testDb().transaction(async (tx) => {
+        await acquireCopilotExecutionSettlementLock(tx, parentTurnEventId);
+        await writeCopilotReply(tx, {
+          sessionId,
+          userAskEventId: parentTurnEventId,
+          taskRunId: parentTaskRunId,
+          actorRef: 'agent:copilot',
+          replyText: '已停止这次运行。',
+          outcome: 'failure',
+          durableFailure: { reason: 'cancelled', error: 'owner requested Stop' },
+          now: new Date(),
+        });
+        entered.resolve();
+        await release.promise;
+      });
+      await entered.promise;
+      const late =
+        delivery === 'start'
+          ? mailbox.recordNativeSubagentStarted(testDb(), {
+              sessionId,
+              parentTurnEventId,
+              parentTaskRunId,
+              sdkTaskId: 'native_late_new',
+              objective: '迟到的创建不应在已提交父终态后继续写入。',
+            })
+          : mailbox.settleNativeSubagentRun(testDb(), {
+              sessionId,
+              parentTurnEventId,
+              sdkTaskId: 'native_original',
+              outcome: { status: 'succeeded', result: '迟到的成功消息不能覆盖已取消的父回合。' },
+            });
+      try {
+        await vi.waitFor(
+          async () => {
+            const waiters = await testDb().execute(sql`SELECT pid FROM pg_stat_activity
+          WHERE datname = current_database() AND wait_event = 'advisory' AND state = 'active'`);
+            expect(waiters.length).toBeGreaterThan(0);
+          },
+          { timeout: 5_000, interval: 10 },
+        );
+      } finally {
+        release.resolve();
+        await parentCommit;
+        await Promise.allSettled([late]);
+      }
+      const lateResult = await late;
+      if (delivery === 'start') expect(lateResult).toBeNull();
+      else expect(lateResult?.status).toBe('cancelled');
+      await mailbox.reconcileNativeSubagentsForParent(testDb(), sessionId, parentTurnEventId);
+      const rows = await testDb().select().from(subagent_run);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.status).toBe('cancelled');
+      expect(await testDb().select().from(copilot_continuation)).toEqual([]);
+      expect(
+        await testDb()
+          .select()
+          .from(event)
+          .where(eq(event.action, 'experimental:subagent_run_settled')),
+      ).toHaveLength(1);
+    },
+  );
+
+  it.each(['failed', 'cancelled', 'completed'] as const)(
+    'settles a missing native terminal when its parent %s, without reopening on late SDK events',
+    async (parentOutcome) => {
+      const sessionId = `session_missing_native_${parentOutcome}`;
+      const sourceEventId = `ask_missing_native_${parentOutcome}`;
+      const taskRunId = `root_missing_native_${parentOutcome}`;
+      await seedParent({ id: sourceEventId, sessionId });
+      let cancellationRequested = false;
+      const cancellation = createCopilotRunCancellationControl({
+        db: testDb(),
+        runId: sourceEventId,
+        readCancelRequestFn: async () => cancellationRequested,
+      });
+      let lateTaskEvent:
+        | ((message: CopilotTaskLifecycleMessage) => void | Promise<void>)
+        | undefined;
+      const started: CopilotTaskLifecycleMessage = {
+        type: 'system',
+        subtype: 'task_started',
+        session_id: sessionId,
+        uuid: '00000000-0000-4000-8000-000000000978',
+        task_id: 'native_missing_terminal',
+        subagent_type: 'copilot-researcher',
+        description: '核对三份长材料的相互矛盾、缺失证据和适用边界。',
+      };
+      const execute = createCopilotExecutionOwner({
+        buildMcpServerFn: () => ({ type: 'sdk', name: 'loom' }) as never,
+        buildTavilyMcpServerFn: () => null,
+        resolveCopilotSkillsFn: async () => undefined,
+        streamTaskCollectingFn: async (_kind, _input, ctx) => {
+          if (!ctx.onTaskEvent) throw new Error('native lifecycle not mounted');
+          await ctx.sdkSession?.onSessionId?.('sdk_missing_native_terminal');
+          lateTaskEvent = ctx.onTaskEvent;
+          await ctx.onTaskEvent(started);
+          if (parentOutcome === 'cancelled') {
+            cancellationRequested = true;
+            await cancellation.probe();
+          }
+          if (parentOutcome !== 'completed') throw new Error('synthetic parent stream exit');
+          return {
+            task_run_id: taskRunId,
+            text: '本轮核对已结束。',
+            terminalText: '本轮核对已结束。',
+            partial: false,
+          };
+        },
+      });
+      const result = execute(
+        testDb(),
+        {
+          sessionId,
+          sourceEventId,
+          taskRunId,
+          input: {
+            surface: 'copilot',
+            triggered_by: 'chat',
+            user_message: '核对三份材料的矛盾与证据边界。',
+            proposal_feedback: [],
+            conversation_history: [],
+            validator_context_history: [],
+            correction_contract: {
+              available_prior_turn_ids: [],
+              prior_turn_summaries: {},
+              required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'],
+            },
+          },
+        },
+        { cancellation, deadlineAt: Date.now() + 60_000, subagentsEnabled: true },
+      );
+      if (parentOutcome === 'completed') expect((await result).sdkSessionId).toBeUndefined();
+      else await expect(result).rejects.toThrow('synthetic parent stream exit');
+      const rows = await testDb()
+        .select()
+        .from(subagent_run)
+        .where(eq(subagent_run.session_id, sessionId));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.status).toBe(parentOutcome === 'cancelled' ? 'cancelled' : 'lost');
+      expect(rows[0]?.settled_event_id).toBeTruthy();
+      await lateTaskEvent?.({
+        type: 'system',
+        subtype: 'task_notification',
+        session_id: sessionId,
+        uuid: '00000000-0000-4000-8000-000000000979',
+        task_id: started.task_id,
+        status: 'completed',
+        output_file: '/private/synthetic-child.txt',
+        summary: 'Late result cannot change committed status.',
+      });
+      await lateTaskEvent?.({ ...started, task_id: 'late_new_native_task' });
+      expect(
+        await testDb().select().from(subagent_run).where(eq(subagent_run.session_id, sessionId)),
+      ).toEqual(rows);
+      expect(await testDb().select().from(copilot_continuation)).toEqual([]);
+      expect(
+        await testDb()
+          .select()
+          .from(event)
+          .where(
+            and(
+              eq(event.session_id, sessionId),
+              eq(event.action, 'experimental:subagent_run_settled'),
+            ),
+          ),
+      ).toHaveLength(1);
+      cancellation.dispose();
+    },
+  );
 
   it('settles a hidden native terminal independently of public activity delivery', async () => {
     const sessionId = 'session_hidden_native';

@@ -53,7 +53,11 @@ import {
   primaryViewLearningContent,
   primaryViewLearningQuestions,
 } from './reply-finalization';
-import { bindSubagentParentCancellation, handleNativeSubagentTaskEvent } from './subagent-mailbox';
+import {
+  bindSubagentParentCancellation,
+  handleNativeSubagentTaskEvent,
+  settleNativeSubagentsForParent,
+} from './subagent-mailbox';
 import {
   type CopilotSubtaskEvent,
   type CopilotTaskLifecycleMessage,
@@ -330,25 +334,36 @@ export function createCopilotExecutionOwner(
       },
     });
     const subtaskProjector = spawnContract ? createCopilotSubtaskProjector() : undefined;
+    let nativeTaskEventsClosed = false;
+    let nativeTaskEventsObserved = false;
+    let nativeProjectionFailed = false;
+    let nativeTaskEvents = Promise.resolve();
     const onTaskEvent = spawnContract
-      ? async (message: CopilotTaskLifecycleMessage) => {
-          const projected = subtaskProjector?.(message);
-          if (projected) await emitActivity(policy, { kind: 'subtask', event: projected });
-          // Visibility is not lifecycle ownership: hidden terminal messages still
-          // settle an admitted child; the persistence owner checks its identity.
-          if (turn.sourceEventId) {
-            await handleNativeSubagentTaskEvent(db, message, {
-              sessionId: turn.sessionId,
-              parentTurnEventId: turn.sourceEventId,
-              parentTaskRunId: turn.taskRunId,
-            }).catch((error) => {
-              console.error('[copilot-execution] native subagent projection failed', {
-                session_id: turn.sessionId,
-                parent_task_run_id: turn.taskRunId,
-                error,
+      ? (message: CopilotTaskLifecycleMessage) => {
+          if (nativeTaskEventsClosed) return Promise.resolve();
+          nativeTaskEventsObserved = true;
+          const projectedEvent = nativeTaskEvents.then(async () => {
+            const projected = subtaskProjector?.(message);
+            if (projected) await emitActivity(policy, { kind: 'subtask', event: projected });
+            // Visibility is not lifecycle ownership: hidden terminal messages still
+            // settle an admitted child; the persistence owner checks its identity.
+            if (turn.sourceEventId) {
+              await handleNativeSubagentTaskEvent(db, message, {
+                sessionId: turn.sessionId,
+                parentTurnEventId: turn.sourceEventId,
+                parentTaskRunId: turn.taskRunId,
+              }).catch((error) => {
+                nativeProjectionFailed = true;
+                console.error('[copilot-execution] native subagent projection failed', {
+                  session_id: turn.sessionId,
+                  parent_task_run_id: turn.taskRunId,
+                  error,
+                });
               });
-            });
-          }
+            }
+          });
+          nativeTaskEvents = projectedEvent.catch(() => undefined);
+          return projectedEvent;
         }
       : undefined;
 
@@ -416,6 +431,32 @@ export function createCopilotExecutionOwner(
       parentTaskRunId: turn.taskRunId,
       signals: cancellationSignals,
     });
+    let nativeClosure: Promise<boolean> | undefined;
+    const closeNativeTasks = () => {
+      nativeClosure ??= (async () => {
+        nativeTaskEventsClosed = true;
+        await nativeTaskEvents;
+        await disposeSubagentCancellation();
+        if (!nativeTaskEventsObserved || !turn.sourceEventId) return true;
+        const repaired = await settleNativeSubagentsForParent(db, {
+          sessionId: turn.sessionId,
+          parentTurnEventId: turn.sourceEventId,
+          parentTaskRunId: turn.taskRunId,
+          status: validationSignal.aborted ? 'cancelled' : 'lost',
+        });
+        return repaired === 0 && !nativeProjectionFailed;
+      })().catch((error) => {
+        // Preserve the paid root outcome; durable parent reconciliation can
+        // retry the projection without buying another model execution.
+        console.error('[copilot-execution] native child closure failed', {
+          session_id: turn.sessionId,
+          parent_task_run_id: turn.taskRunId,
+          error,
+        });
+        return false;
+      });
+      return nativeClosure;
+    };
 
     try {
       const result = await adapters.streamTaskCollectingFn(
@@ -427,13 +468,14 @@ export function createCopilotExecutionOwner(
         },
       );
       const terminalText = result.terminalText ?? '';
+      const nativeChildrenComplete = await closeNativeTasks();
       const partial = result.partial === true;
       const executionError = result.error;
       if (resumeSessionId && partial) {
         throw new Error('resumed Agent SDK session returned partial output');
       }
       const finalization = await finalizer.finalizeTerminal(terminalText);
-      retainSdkSession = !partial && finalization.accepted;
+      retainSdkSession = !partial && finalization.accepted && nativeChildrenComplete;
       return {
         taskRunId: result.task_run_id,
         finishReason: result.finishReason ?? 'unknown',
@@ -441,15 +483,15 @@ export function createCopilotExecutionOwner(
         partial,
         ...(executionError ? { error: executionError } : {}),
         candidateDeltaObserved,
-        ...(observedSdkSessionId ? { sdkSessionId: observedSdkSessionId } : {}),
+        ...(observedSdkSessionId && retainSdkSession ? { sdkSessionId: observedSdkSessionId } : {}),
         contextDigest,
       };
     } finally {
+      await closeNativeTasks();
       if (!retainSdkSession) {
         if (observedSdkSessionId) clearCopilotWorkerSession(turn.sessionId, observedSdkSessionId);
         if (resumeSessionId) clearCopilotWorkerSession(turn.sessionId, resumeSessionId);
       }
-      await disposeSubagentCancellation();
     }
   };
 }

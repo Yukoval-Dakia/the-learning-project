@@ -8,6 +8,7 @@ import {
 import { findOutstandingCopilotDurableRuns } from '@/capabilities/copilot/server/durable-run-observation';
 import type { Db } from '@/db/client';
 import { fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
+import { reconcileNativeSubagentsForParent } from '../server/subagent-mailbox';
 
 import {
   COPILOT_RUN_QUEUE,
@@ -109,6 +110,9 @@ export async function reconcileOutstandingCopilotRuns(
         now,
         boss,
       });
+      // Child repair is separately committed: failure cannot roll back an
+      // already-paid parent outcome. The candidate remains eligible for retry.
+      await reconcileNativeSubagentsForParent(db, candidate.sessionId, candidate.runId);
       observations[observation] += 1;
       if (
         observation === 'settled' ||
