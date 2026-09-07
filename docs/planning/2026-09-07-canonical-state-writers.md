@@ -47,3 +47,21 @@ Then require scoped DB gates, typecheck/lint/build, independent review and exact
 Mac-local rollout. Rollback after physical retirement uses the previous release, not a second
 runtime writer implementation. NAS remains outside owner authorization. YUK-973 stays open until
 the branches and configuration are actually retired and verified; this prerequisite alone is not completion.
+
+## Runtime retirement in progress
+
+Migration prerequisite PR #1355 merged as `9607310839b8e02d9b8d17ab9e3b3279fdf24535`;
+final `6d476fc9` passed CI `34112766637`. The separate unpublished retirement branch removes
+the main alternate paths, passes 108 scoped lifecycle DB cases and typecheck, and preserves
+early verification admission and atomic dismissal failure. Flags, duplicate-mode tests and
+remaining structural attribution are not finished or deployed.
+
+The remaining learning-item attribution helper runs before the live merge acceptance event and
+also serves historical repair based on `knowledge.merged_from`. Replaying only old accepted merge
+events cannot repair a stale item whose genesis was recorded later. The next implementation is a
+typed, subject-keyed `experimental:learning_item_knowledge_ids_rewrite` event with `{from_id, into_id}`:
+the existing Practice helper keeps its row lock and affected-ID receipt, emits the correction and
+projects immediately in the same transaction. The fold changes only knowledge IDs, not version or
+updated_at; historical accepted-merge replay remains supported. Do not add another inline genesis
+branch: require the formal migration first, including in historical-maintenance fixtures/entrypoints.
+Verify event ordering against recently backfilled bases and preserve no-op behavior.

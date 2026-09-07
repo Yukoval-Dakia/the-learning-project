@@ -8,7 +8,10 @@
   38初步DB通过；扩大106有9个raw legacy variant fixture失败，接真实迁移后33过，再补early-paid/atomic-dismiss两例35过。
   最终108 scoped DB与类型检查过；flags/ports/旧OFF-ON测试/LI业务内legacy回填和剩余merge归属direct update待完成。
   Practice dismiss已将rate与projection纳入同事务，prepared guard失败不能留下已dismiss信号；verify在paid前检查锚。
-  architect design_973_merge_projection_order只读核对merge现写入早于rate和历史backfill时序，等待最终建议。
+  architect已确认仅post-rate project不保留later-genesis历史repair语义；下一步typed Q1
+  experimental:learning_item_knowledge_ids_rewrite {from_id,into_id}，现有Practice helper内写事件+project，保持版本/updated_at。
+  root选择要求正式迁移先完成，不增加另一处业务inline genesis；需验证刚回填base的事件时序/no-op。
+  详细清单仍由同一只读architect收尾；不再重复调查此结论。
   973 GitHub自动Done后已恢复In Progress；第一次Linear更新/评论报错后get恢复，issue状态更新已重试成功。
   原始脏main与已运行本地生产不动；当前独立分支只root写，未启动本runtime lane独立review。
 
