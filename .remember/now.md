@@ -2,6 +2,12 @@
 
 ## 最新状态
 
+- Active979：root独占codex/yuk-979-mem0-failure-truth；887真实canary embedding200/101tokens后本地限额429阻断LLM。
+  Mem0 3.0.13吞错[]使opaque attempt succeeded；completion锁未放，因此未写误导完成。隔离DBv2/容器已停。
+  固定pnpm补丁恢复失败/strictschema，PGVector单SQL原子写，保留合法空/embedding兼容/辅助history；12unit+4DB通过。
+  Docker依赖stage复制patches；仅patch哈希变化，无依赖升级。review/全gates/部署待完成，生产仍951/106ac7ff。
+  新专项保守预留$1、余$2，不是实际账单；旧$10不回收。详见docs/planning/2026-09-08-memory-failure-truth.md。
+
 - 951旧mailbox执行已交付：PR1363 exact57a7bbee6a1b193de912abbee94093e3e54fd5de，CI34144766869全job绿。
   16:57:40Z merge main3c8d5c1b35c10c323e3a3f55dcb294653ad29af1；初审PASS，独立12DB/54unit，无第二审。
   root121DB/82census-unit/35doc-unit/typecheck/lint/build/audits过；初CI仅历史schema分类/过时Task文档失败，已修。

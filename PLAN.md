@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-08：951旧mailbox执行已合并/部署；下一线887，转用$3已批准且未消费。
+> Linear 是权威 tracker；更新于 2026-09-08：887实际验收发现979 Mem0吞错；修复中，专项预留$1/余$2。
 
 ## NOW
 
@@ -179,8 +179,8 @@
 
 ## NEXT
 
-1. Active887：951旧执行已合并部署，下一步只补Notes/Memory真实恢复；不以drain退休冒充历史表名collapse。
-2. 887：七项差集见rollout-evidence-gap；SDK MCP/提案workflow过；owner批准未用$3转Notes/Memory真实恢复，尚未消费。
+1. Active979：实际embedding200后SDK吞掉LLM失败为[]成功；固定SDK补丁/原子PG写，12unit+4DB过，review/交付待完成。
+2. 887验收暂停付费重试先修979；专项$3已保守预留$1/剩$2，原$10不回收；不称Memory恢复已通过。
    977零金额来源是已登记P2，不阻塞主产品；无新代码缺陷不再开文件级清理支线。
 3. 最终按学习意图→录入→判分→复习→提议/撤回的业务owner/单份规则复核，不以测试或依赖数量代替完成。
 
