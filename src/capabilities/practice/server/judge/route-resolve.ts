@@ -161,7 +161,6 @@ export function resolveQuestionJudgeRoute(
   if (choices.length > 0) return 'exact';
 
   if (
-    subjectProfile.id === 'physics' &&
     isPreferred(subjectProfile, 'unit_dimension') &&
     (q.kind === 'calculation' || q.kind === 'computation')
   ) {
@@ -197,14 +196,13 @@ export function resolveQuestionJudgeRoute(
         return 'semantic';
       }
       // YUK-201 — gated auto-route to multimodal_direct (holistic vision judging).
-      // Placed AFTER the physics unit_dimension branch and AFTER the
-      // derivation→steps branch so steps@1 keeps math derivations and physics calc
-      // keeps unit_dimension. Additive — fires only when ALL hold:
+      // Placed AFTER the profile-declared unit_dimension branch and AFTER the
+      // derivation→steps branch so opted-in calculations and derivations keep
+      // their specialized routes. Fires only when ALL hold:
       //   - kind is non-choice (choices short-circuit to 'exact' earlier) and
       //     non-derivation (handled above);
       //   - the question carries prompt figures (q.image_refs?.length > 0);
-      //   - the profile declares multimodal_direct as a preferred route (yuwen/math
-      //     do NOT → unaffected; only physics opts in);
+      //   - the profile declares multimodal_direct as a preferred route;
       //   - there is NO step-rubric reference_solution (a rubric reference_solution
       //     belongs to steps@1, never multimodal_direct).
       if (

@@ -73,3 +73,32 @@ hard-gate policy is introduced. This removes roughly 140 lines of duplicate owne
 After the fix: 101 related DB cases across five suites, 46 scanner/Step9 unit cases, typecheck,
 lint/build and architecture/capability gates pass. Unique verification review and new exact-head
 CI remain pending; production is unchanged.
+
+## Completed delivery
+
+Unique verification PASS for `034f35fe0fc18c66a753bf8d7db318bec3d580f3`; reviewer independently
+reran all five retraction-clock DB tests. No remaining validated P0/P1, review budget exhausted.
+Every job in exact-head CI `34124354408` passed. PR #1357 merged at 2026-09-07T13:03:32Z as
+`c27202369ec0446cc1991b95c6d4924390a88d13`.
+
+Mac-local delivery used a clean archive-built `the-learning-project-app:034f35fe`, image
+`sha256:f9cb42e8ef00c615e95691d5eace716d5b0d93ed71dae409eb7bf42f45aa97fb`.
+Its bundled migration first passed against retained isolated `loom_before_973_verify`, then
+passed live after stopping app/worker: zero new anchors/trait changes, seven LearningItems checked.
+Worker started before app; both healthy/non-root/zero restarts. Original Postgres container
+`7d99236a099a4216517a63c6511495f7ffff156b6385004af2942069f7bb61ba`, start time and volume unchanged.
+No tunnel or NAS service was started.
+
+Fresh private backup `loom-before-974-034f35fe.dump` SHA256:
+`677b86c7d0fe9f131414d1c65029a7d4200fe7dab8892e615b2678122cb0aa2b`.
+Previous backups and the `4e1dec7c` rollback image/configuration remain retained; no live rebuild
+or automatic DB restore. This change introduces no new event format, and the prior reducer
+already interprets the explicit archive nextVersion.
+
+Post-start hydrated audit and eight private golden reaudits show zero drift/allowances.
+Final counts: 423 events, seven LearningItems, eight artifacts, 258 AI tasks, four provider attempts;
+active/created/retry queues empty. Chromium auth/drawer/refresh-reopen passed with zero page errors;
+private screenshot `copilot-after-974.png`. No model message or paid call was made; recovery-only $3 unused.
+These checks do not claim populated Goal/Variant canaries or the wider provider/crash matrix.
+
+YUK-974 is complete; YUK-972 custom-profile extension is next, and the overall goal remains active.

@@ -2,13 +2,22 @@
 
 ## 最新状态
 
-- Active974：root独占codex/yuk-974-write-ownership，继承973交付记录5d7097b3，base main21bc94dcf。
+- Active972：root独占codex/yuk-972-profile-judge-route，base main c27202369，继承974交付记录9fbfb486。
+  只移除unit_dimension的physics名称门，custom profile行为验证；不新增schema/产品学科/模型调用，生产034f35fe不变。
+  两路由RED→GREEN，真实registry/alias与完整profile验证；override/choices/图片/未opt-in以及内建矩阵保留。
+  51unit/typecheck/lint/build/architecture/capability过，待独立review/exactCI。
+
+- YUK974 Done：PR1357 exact034f35fe，CI34124354408全job绿，main c27202369，Mac部署已验证。
   hub-sync两钟漂移与提案artifact撤销早于新编辑均RED→GREEN；Notes拥有整笔归档，Agency不再写artifact表。
   8未登记/5stale逐项事件责任复核；code-policy替代静态LIVE，0violation/0stale，42advisory不隐藏。
-  120DB/27unit/typecheck/lint/build/严格writer与架构过，待review/exactCI；生产4e1dec7c不变，无paid。
+  初稿120DB/27unit/typecheck/lint/build/严格writer与架构通过；当时生产仍4e1dec7c，无paid。
   初审64a94b71 P1：旧润色读v0后在archive后CAS仍成功；真实PG交错RED→GREEN，archive推进version+事件。
   CI34123408875双DB绿，仅Step9旧名单失败；两份重复名单用同scanner/registry替代，保留原2表硬门。
-  修后101DB/46unit/typecheck/lint/build/architecture过；待唯一验证审、新exactCI，未部署。
+  修后101DB/46unit/typecheck/lint/build/architecture过；唯一验证审034f35fe PASS（独立5DB），无第三轮。
+  app/worker运行034f35fe，healthy/non-root/零重启；原PG容器/volume不变，无tunnel/NAS，live迁移零新增。
+  423event/7LI/8artifact/258task/4attempt不变，live audit与8golden零drift，browser认证/抽屉/刷新重开无pageerror。
+  新backup loom-before-974-034f35fe.dump，镜像clone迁移通过；回退可用原4e1dec7c镜像/973 image override。
+  root当前codex/yuk-974-delivery-notes仅交付记录，无paid/$3恢复预算未用；下一项972，整体goal仍active。
 
 - YUK973 Done：PR1356 exact4328ab89，CI34120804982全绿，main21bc94dcf，Mac部署已验证。
   Goal/LI/variant主双轨分支、三旧env/compose开关、LI inline legacy genesis已退休；legacyGoal仅fixture入口移tests/helpers。

@@ -1,17 +1,22 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：973双轨退休已合并并Mac部署验证；下一项974剩余写入责任，NAS不在范围，整体goal active。
+> Linear 是权威 tracker；更新于 2026-09-07：974笔记写入责任与回放修复已合并/Mac部署验证；下一项972，NAS不在范围，整体goal active。
 
 ## NOW
 
-- Active974：root独占codex/yuk-974-write-ownership，继承973交付记录5d7097b3，main21bc94dcf。
-  计划：逐项核对8未登记写点的同事务事件/派生责任→修真实缺口与旧登记→scoped行为/audit/gates/review/exactCI。
-  一个只读agent核对录入/quiz事件配对，root处理Notes/Agency/edge与集成；不放宽allowlist，不做付费调用。
+- Active972：root独占codex/yuk-972-profile-judge-route，继承974交付记录9fbfb486，base main c27202369。
+  计划：custom profile路由RED→移除physics名称门→保留override/choices/图片优先级验证→review/exactCI交付。
+  不新增schema/学科功能或模型调用；生产034f35fe暂不动。
+  custom真实SubjectRegistry注册通过，calculation/computation原semantic/keyword两RED→unit_dimension两GREEN。
+  51scoped unit含内建冻结路由矩阵、profile注册/调度校验，typecheck/lint/build与架构门过；待独立审查/exactCI。
+- YUK974 Done：PR1357 exact034f35fe，CI34124354408全job绿，main c27202369，Mac部署已验证。
   Notes hub完整回放时间差与提案artifact撤销倒时均RED→GREEN；归档责任移Notes，复用已有限次事务重试。
-  120DB/27unit/typecheck/lint/build及严格writer/architecture/capability过，0violation/0stale；42advisory显式保留，待review/CI。
+  120DB/27unit/typecheck/lint/build及严格writer/architecture/capability过，0violation/0stale；42advisory显式保留。
   初审P1旧润色可在归档后通过旧versionCAS：真实PG并发RED→GREEN，归档推进version并写同值事件。
   首CI仅Step9重复名单失败，双DBshard全过；两份名单收敛既有scanner/registry，原表范围不变，101DB/46unit/gates过。
-  待唯一验证审与新exactCI；下一项972自定义profile扩展契约。
+  唯一验证审034f35fe PASS（独立5DB），无第三轮；镜像034f35fe的app/worker健康、原PG/volume未变。
+  live迁移零新增、7LI就绪；423event/8artifact/258task/4attempt不变，8类audit/golden零drift，browser刷新重开过。
+  无paid，恢复$3未用；root当前codex/yuk-974-delivery-notes仅交付记录，原脏main不动；下一项972。
 - YUK973 Done：PR1356 exact4328ab89，CI34120804982全绿，main21bc94dcf；Mac本地部署完成。
   前置PR1355已合并main960731083，exact6d476fc9 CI34112766637全绿；review初审+唯一验证完成，无第三轮。
   runtime84fcb379已物理删除三实体双轨、旧env/compose选择、LI inline genesis；rawGoal fixture移tests/helpers。
@@ -154,12 +159,11 @@
 
 ## NEXT
 
-1. 974完成当前Notes写入责任与回放修复的review/exactCI交付；973已经Mac部署验收完成。
-2. 972移除学科名称限制，以custom profile证明判分能力的声明式扩展。
-3. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
-4. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
+1. 972移除学科名称限制，以custom profile证明判分能力的声明式扩展。
+2. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
+3. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
-5. 887保留provider/crash矩阵；本地backfill/audit/golden及973退休已验证，NAS仍不在范围。
+4. 887保留provider/crash矩阵；本地backfill/audit/golden及973退休已验证，NAS仍不在范围。
 
 ## PARKED
 
