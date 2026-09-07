@@ -3,6 +3,12 @@
 ## 最新状态
 
 - Active981：root独占codex/yuk-981-note-generation-contract（base395d5d2d交付记录）；生产仍979/93df0528。
+  PR1365初审FAIL 2P1：富编辑丢结构（既有withText，真实组件RED）；引用无目标/无校验已本地修。
+  新UI预检docs/design/2026-09-08-notes-rich-edit-preflight.md（7文件）等待批准；不得套用旧Copilot授权。
+  code mirror保留；当前真实引用目录12artifact/每个8block，17generateDB与115unit/typecheck/lint/build过。
+  初CI34150838539 exacted63127bc两旧Notes prompt断言失败，其余包括双DBshard通过；断言已按新契约修正。
+  初审已用，唯一P0/P1验证审留待两项都修好；未开始验证审，不再发起初审。
+  clean ed63127b image f13c6850已build（SDK下载重试后成功），不含后续引用修复/未部署；所有本地exec终止。
   Notes实际accept→SIGKILL137→新process recoverNoteHandoffs/physical generate成功；生成HTTP200/end_turn却输出坏JSON。
   task bymy8ayqi4gq7q7tvizfk2ep，768input/2894output，estimate0.00285186非账单；artifact rcz6xs92e1rzjdui5em1o0uw failed。
   未到ready/verify；完整Notes恢复未通过。isolated loom_notes_887_actual_v1保留，accept/generate容器已停止，无生产写入。
@@ -10,7 +16,7 @@
   981已Linear In Progress；用codebase-design核对ADR0020/0022，去重复正文但保留完整block tree/links/semantic能力。
   architect咨询完成：仅omit source会令现役reader/editor空白，真实blockText RED后改server派生mirror GREEN。
   compact PM保留富结构；server补ID/trust/source镜像、未知节点fail，旧sections生成退场；12unit/typecheck过。
-  最终59DB（含rich-body/backlink）/12unit/typecheck/lint/build/audit过；formal review/CI/actual待完成，生产未部署981。
+  初版59DB（含rich-body/backlink）/12unit/typecheck/lint/build/audit过；新门状态以上方为准，生产未部署981。
   详见docs/planning/2026-09-08-notes-generation-acceptance.md；887保持In Progress，980/977 P2仍deferred。
 
 - 979 Done：PR1364 exact32d0effbb6c6f5496101899fe7ec0c013dec2c6b，CI34147920619全部job成功。

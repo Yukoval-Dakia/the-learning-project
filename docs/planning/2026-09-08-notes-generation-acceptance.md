@@ -75,3 +75,34 @@ Final coverage is 59 scoped DB tests (58 Notes generate/verify/handoff plus one
 rich-body/backlink persistence case), typecheck, lint, build and architecture audit.
 Independent code review, exact CI and post-fix real output remain pending.
 No deployment of YUK981 and no additional paid call are claimed.
+
+## Initial review and follow-up
+
+PR1365 initial review found two P1 blockers. Root independently reproduced the
+editor issue through the real rendered NoteEditor: one character edit removes a
+nested bulletList. This predates the PR (old prompt already allowed rich PM, and
+NoteEditor is unchanged), but is incompatible with the intended final outcome.
+The reproduction patch is retained privately as `note-editor-loss-repro.patch`;
+no pending RED UI test or UI production code is left in the worktree. The seven-file
+[rich-edit preflight](../design/2026-09-08-notes-rich-edit-preflight.md) awaits
+owner approval. The single verification review is reserved until both findings
+are addressed; no second initial review.
+
+The reference finding is corrected locally: Notes queries at most twelve real,
+unarchived targets in the note family or shared knowledge labels; each target has
+at most eight block summaries. Pending notes remain valid artifact-level targets,
+without invented body content. Only supplied artifact/block IDs may be persisted.
+Seventeen generation DB cases pass, including positive backlink identity and
+out-of-scope/archived/invented-block rejection with no ready content.
+
+CI34150838539 on ed63127bc completed: both DB shards, production build, usability,
+migration and type/lint/audits passed; two obsolete Notes prompt assertions failed.
+The migration-only hash excludes the intentionally evolved Notes prompt, and the
+policy test now expects server-owned metadata rather than instructing the model
+to fill it. The 115 affected unit checks pass; local typecheck/lint/build pass.
+No blind retry of the old CI run was requested.
+
+Clean image ed63127b built successfully (SHA256
+`f13c68503eff0b88d12c2ad0bd35812694b47e5e7d9cf7bc8c0644e590acf78f`);
+it predates the reference correction and is not deployed or accepted for release.
+Production remains93df0528. Budget and UI approvals are still pending.

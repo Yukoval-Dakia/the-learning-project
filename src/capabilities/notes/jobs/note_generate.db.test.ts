@@ -151,8 +151,12 @@ describe('runNoteGenerate', () => {
   });
 
   it('persists one rich body, derived source, safe metadata and matching backlink anchors', async () => {
-    await seedAtomic({ artifactId: 'rich-generated' });
+    await seedAtomic({ artifactId: 'rich-generated', knowledgeId: 'shared-note-knowledge' });
     await seedAtomic({ artifactId: 'reference-note' });
+    await testDb()
+      .update(artifact)
+      .set({ knowledge_ids: ['shared-note-knowledge'] })
+      .where(eq(artifact.id, 'reference-note'));
     const response = JSON.parse(VALID_BODY_BLOCKS);
     const first = response.body_blocks.content[0];
     first.attrs = {
@@ -172,7 +176,12 @@ describe('runNoteGenerate', () => {
       runNoteGenerate({
         db: testDb(),
         artifactId: 'rich-generated',
-        runTaskFn: async () => ({ text: JSON.stringify(response) }),
+        runTaskFn: async (_kind, input) => {
+          expect(input).toMatchObject({
+            reference_artifacts: [{ artifact_id: 'reference-note', generation_status: 'pending' }],
+          });
+          return { text: JSON.stringify(response) };
+        },
       }),
     ).resolves.toMatchObject({ status: 'ready', sections_count: 5 });
     const [row] = await testDb().select().from(artifact).where(eq(artifact.id, 'rich-generated'));
@@ -197,6 +206,48 @@ describe('runNoteGenerate', () => {
       to_artifact_id: 'reference-note',
     });
   });
+
+  it.each(['unrelated', 'archived', 'missing-block'])(
+    'rejects a %s generated reference without publishing ready content',
+    async (mode) => {
+      await seedAtomic({ artifactId: 'reference-owner', knowledgeId: 'reference-scope' });
+      await seedAtomic({ artifactId: 'target' });
+      if (mode !== 'unrelated')
+        await testDb()
+          .update(artifact)
+          .set({
+            knowledge_ids: ['reference-scope'],
+            ...(mode === 'archived' ? { archived_at: new Date() } : {}),
+          })
+          .where(eq(artifact.id, 'target'));
+      const response = JSON.parse(VALID_BODY_BLOCKS);
+      response.body_blocks.content.push({
+        type: 'crossLinkBlock',
+        attrs: {
+          artifact_id: 'target',
+          ...(mode === 'missing-block' ? { block_id: 'invented-block' } : {}),
+        },
+      });
+      await expect(
+        runNoteGenerate({
+          db: testDb(),
+          artifactId: 'reference-owner',
+          runTaskFn: async () => ({ text: JSON.stringify(response) }),
+        }),
+      ).rejects.toThrow(/outside supplied context/);
+      const [row] = await testDb()
+        .select()
+        .from(artifact)
+        .where(eq(artifact.id, 'reference-owner'));
+      expect(row).toMatchObject({ generation_status: 'failed', body_blocks: null, version: 0 });
+      expect(
+        await testDb()
+          .select()
+          .from(artifact_block_ref)
+          .where(eq(artifact_block_ref.from_artifact_id, 'reference-owner')),
+      ).toEqual([]);
+    },
+  );
 
   it('returns skipped:not_found when artifact does not exist', async () => {
     const runTaskFn = vi.fn();

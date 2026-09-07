@@ -23,6 +23,10 @@ import {
   isNoteArtifactType,
 } from '@/capabilities/notes/server/note-artifact-types';
 import {
+  assertNoteGenerationReferences,
+  loadNoteGenerationReferences,
+} from '@/capabilities/notes/server/note-generation-references';
+import {
   dispatchNoteVerification,
   writeNoteVerificationIntent,
 } from '@/capabilities/notes/server/note-handoff';
@@ -171,6 +175,7 @@ export async function runNoteGenerate(
 
   const oneLine = (row.attrs as { one_line_intent?: string } | null)?.one_line_intent ?? null;
   const parentSummary = (parentHub?.attrs as { summary_md?: string } | null)?.summary_md ?? null;
+  const referenceArtifacts = await loadNoteGenerationReferences(db, row);
 
   const input = {
     artifact_id: row.id,
@@ -182,6 +187,7 @@ export async function runNoteGenerate(
     knowledge_nodes: kNodes,
     parent_hub: parentHub ? { title: parentHub.title, summary_md: parentSummary } : null,
     related_knowledge_ids: row.knowledge_ids.slice(1), // Phase 2.5: mesh-walk for related nodes
+    reference_artifacts: referenceArtifacts,
   };
 
   try {
@@ -208,6 +214,7 @@ export async function runNoteGenerate(
       },
     });
     const parsed = parseNoteGenerateOutput(result.text);
+    assertNoteGenerationReferences(parsed.body_blocks, referenceArtifacts);
 
     // W3-C1γ — note_generate is a COMPOUND mutation (body_blocks + generation_status='ready' +
     // verification_status='queued' + generated_by). To make it fold-visible additively it emits TWO
