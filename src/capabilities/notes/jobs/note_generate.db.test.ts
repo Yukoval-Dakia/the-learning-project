@@ -177,16 +177,15 @@ describe('runNoteGenerate', () => {
     ).resolves.toMatchObject({ status: 'ready', sections_count: 5 });
     const [row] = await testDb().select().from(artifact).where(eq(artifact.id, 'rich-generated'));
     expect(row).toMatchObject({ generation_status: 'ready', verification_status: 'queued' });
-    const body = row.body_blocks as {
-      content: Array<{ attrs: Record<string, unknown>; content?: unknown }>;
-    };
+    const body = row.body_blocks;
+    if (!body) throw new Error('Generated body missing');
     expect(body.content[0].attrs).toMatchObject({
       source_markdown: '**「之」是文言虚词。**',
       source_tier: 'llm_only',
       user_verified: false,
       version: 1,
     });
-    expect(body.content[0].attrs.id).not.toBe('model-id');
+    expect(body.content[0].attrs).not.toHaveProperty('id', 'model-id');
     expect(body.content[0].content).toEqual(first.content);
     const refs = await testDb()
       .select()
@@ -194,7 +193,7 @@ describe('runNoteGenerate', () => {
       .where(eq(artifact_block_ref.from_artifact_id, 'rich-generated'));
     expect(refs).toHaveLength(1);
     expect(refs[0]).toMatchObject({
-      from_block_id: body.content[5].attrs.id,
+      from_block_id: (body.content[5].attrs as Record<string, unknown>).id,
       to_artifact_id: 'reference-note',
     });
   });
