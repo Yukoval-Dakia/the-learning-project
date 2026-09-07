@@ -6,11 +6,12 @@
 
 - Active973：root独占tlp-wt-unified-conversation / codex/yuk-973-retire-state-writers。
   前置PR1355已合并main960731083，exact6d476fc9 CI34112766637全绿；review初审+唯一验证完成，无第三轮。
-  原子迁移补锚/值与rowset audit/显式DB目标保护通过51DB+1真实bundle unit，副本实跑通过；未新部署。
-  后续10生产文件已删主要双轨分支（尚未交付）；38初步DB过，扩大106例9个legacy fixture失败已迁移前置修复。
-  再补未准备数据禁止付费/丢弃事务回滚，最终108 scoped DB和typecheck通过；flags、重复OFF/ON测试、LI merge单writer尚待收口。
-  merge归属当前在accept rate之前imperative更新，历史repair共享路径；architect只读核对中，不盲目替换成早投影。
-  最终仍需完整scoped/gates/独立新lane review/exactCI；973保持In Progress，不将前置PR当整体完成。
+  runtime84fcb379已物理删除三实体双轨、旧env/compose选择、LI inline genesis；rawGoal fixture移tests/helpers。
+  typed Q1归属repair支持pre-rate及历史sweep；state_restore补掉completion/relearn撤销raw writer，保留exact prior state。
+  312 scoped DB、64 unit+1真实migration bundle unit、typecheck/lint/build与architecture/capability/flags通过。
+  依赖439→437仅下调；保留行锁、migration refusal、null guard、派生字段和重复撤销；无paid/生产变更。
+  尚需本runtime lane独立初审、exactCI及Mac rollout；不能复用前置PR1355审查或宣称整体完成。
+  fold-write其它实体8写点/5stale已去重登记974 Todo；972仍Todo，不放宽allowlist掩盖。
 - 887 local-production切片已部署：PR1354 exact0ed35fd3，CI34108722202全绿，main a12667507，独立安全review PASS。
   owner「直接动本地生产即可」仅授权Mac，不含NAS；API/worker/Postgres均healthy，未启动tunnel。
   target=the-learning-project-postgres-1 / the-learning-project_pgdata / 127.0.0.1:5433/loom。
