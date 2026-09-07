@@ -9,6 +9,9 @@
   一个只读agent核对录入/quiz事件配对，root处理Notes/Agency/edge与集成；不放宽allowlist，不做付费调用。
   Notes hub完整回放时间差与提案artifact撤销倒时均RED→GREEN；归档责任移Notes，复用已有限次事务重试。
   120DB/27unit/typecheck/lint/build及严格writer/architecture/capability过，0violation/0stale；42advisory显式保留，待review/CI。
+  初审P1旧润色可在归档后通过旧versionCAS：真实PG并发RED→GREEN，归档推进version并写同值事件。
+  首CI仅Step9重复名单失败，双DBshard全过；两份名单收敛既有scanner/registry，原表范围不变，101DB/46unit/gates过。
+  待唯一验证审与新exactCI；下一项972自定义profile扩展契约。
 - YUK973 Done：PR1356 exact4328ab89，CI34120804982全绿，main21bc94dcf；Mac本地部署完成。
   前置PR1355已合并main960731083，exact6d476fc9 CI34112766637全绿；review初审+唯一验证完成，无第三轮。
   runtime84fcb379已物理删除三实体双轨、旧env/compose选择、LI inline genesis；rawGoal fixture移tests/helpers。
@@ -151,11 +154,12 @@
 
 ## NEXT
 
-1. 973收口Goal/LI/variant双轨写入：迁移补锚并验证，业务单路径，保留撤回/并发/派生列保护。
-2. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
-3. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
+1. 974完成当前Notes写入责任与回放修复的review/exactCI交付；973已经Mac部署验收完成。
+2. 972移除学科名称限制，以custom profile证明判分能力的声明式扩展。
+3. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
+4. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
-4. 887本地backfill/audit/rebuild/golden与SoT退休按新授权推进，NAS仍不在范围。
+5. 887保留provider/crash矩阵；本地backfill/audit/golden及973退休已验证，NAS仍不在范围。
 
 ## PARKED
 

@@ -888,9 +888,8 @@ function loadAllowlist(): Allowlist {
   }
 }
 
-function main(): void {
-  const isJson = process.argv.includes('--json');
-  const isStrict = process.argv.includes('--strict');
+/** Shared repository inventory for the CLI and existing table-ownership test gates. */
+export function auditFoldWrites(): FoldWriteAuditResult {
   const today = new Date().toISOString().slice(0, 10);
 
   const files: string[] = [];
@@ -899,7 +898,13 @@ function main(): void {
 
   const sites = findWriteSites(files, readFileOrNull);
   const stale = reverseCheckWriters(SANCTIONED_WRITERS, readFileOrNull);
-  const result = computeFoldWriteAudit(sites, SANCTIONED_WRITERS, stale, loadAllowlist(), today);
+  return computeFoldWriteAudit(sites, SANCTIONED_WRITERS, stale, loadAllowlist(), today);
+}
+
+function main(): void {
+  const isJson = process.argv.includes('--json');
+  const isStrict = process.argv.includes('--strict');
+  const result = auditFoldWrites();
 
   if (isJson) {
     console.log(JSON.stringify(result, null, 2));

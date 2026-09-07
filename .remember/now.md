@@ -6,6 +6,9 @@
   hub-sync两钟漂移与提案artifact撤销早于新编辑均RED→GREEN；Notes拥有整笔归档，Agency不再写artifact表。
   8未登记/5stale逐项事件责任复核；code-policy替代静态LIVE，0violation/0stale，42advisory不隐藏。
   120DB/27unit/typecheck/lint/build/严格writer与架构过，待review/exactCI；生产4e1dec7c不变，无paid。
+  初审64a94b71 P1：旧润色读v0后在archive后CAS仍成功；真实PG交错RED→GREEN，archive推进version+事件。
+  CI34123408875双DB绿，仅Step9旧名单失败；两份重复名单用同scanner/registry替代，保留原2表硬门。
+  修后101DB/46unit/typecheck/lint/build/architecture过；待唯一验证审、新exactCI，未部署。
 
 - YUK973 Done：PR1356 exact4328ab89，CI34120804982全绿，main21bc94dcf，Mac部署已验证。
   Goal/LI/variant主双轨分支、三旧env/compose开关、LI inline legacy genesis已退休；legacyGoal仅fixture入口移tests/helpers。

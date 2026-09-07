@@ -52,3 +52,24 @@ Architecture/capability gates retain 437/0/47 with no baseline expansion.
 typecheck, lint/build and strict writer/architecture/capability audits pass. Independent review
 and exact-head CI are required before merge. Production remains the separately verified YUK-973 image4e1dec7c.
 The full product architecture goal and provider/crash matrix remain open.
+
+## Initial review and CI correction
+
+Initial independent review of `64a94b71` found one P1: archive preserved version, so a refine
+that had already read the old live row could pass its delayed version CAS after retraction.
+A real PostgreSQL interleave reproduced `applied` where `skipped:version_conflict` was required.
+The archive owner now advances the row version and matching lifecycle nextVersion. The same
+test is GREEN, preserving the untouched body, one correction, two archive events and exact replay.
+Other current writers were traced: they either CAS on version or lock/check archive status;
+the fix does not add a second implementation of their guards.
+
+CI `34123408875` passed both DB shards and all other gates except one legacy Step9 unit check.
+That test duplicated Artifact/QuestionBlock writer lists (including retired embedded-check text)
+and rejected the new Notes owner. Replace those two lists with the existing audit scanner and
+verified registry, keeping exactly their table scope and rejecting every non-sanctioned site.
+Raw SQL/DELETE and stale-entry checks are now covered too; no allowlist bypass or new global
+hard-gate policy is introduced. This removes roughly 140 lines of duplicate ownership inventory.
+
+After the fix: 101 related DB cases across five suites, 46 scanner/Step9 unit cases, typecheck,
+lint/build and architecture/capability gates pass. Unique verification review and new exact-head
+CI remain pending; production is unchanged.

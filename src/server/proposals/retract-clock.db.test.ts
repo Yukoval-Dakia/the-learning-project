@@ -2,6 +2,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { updateGoalStatus } from '@/capabilities/agency/server/goals/queries';
 import { emitArtifactLifecycleEvent } from '@/capabilities/notes/public';
+import { persistNoteRefineApply } from '@/capabilities/notes/server/note-refine-apply';
 import type { Tx } from '@/db/client';
 import { artifact, event, goal, learning_item, mistake_variant, question } from '@/db/schema';
 import {
@@ -27,7 +28,7 @@ import { acceptAiProposal, retractAiProposal } from './actions';
 
 beforeEach(resetDb);
 
-it('proposal artifact archive stays after the latest note mutation across the whole batch', async () => {
+async function seedProposalNotes() {
   const db = testDb();
   const proposalId = await writeLearningItemProposal(db, {
     topic: '条件概率',
@@ -58,6 +59,12 @@ it('proposal artifact archive stays after the latest note mutation across the wh
     });
   }
   await backfillArtifactGenesis(db, baseAt);
+  return proposalId;
+}
+
+it('proposal artifact archive stays after the latest note mutation across the whole batch', async () => {
+  const db = testDb();
+  const proposalId = await seedProposalNotes();
   const latestAt = new Date(Date.now() + 2000);
   const attrs = {
     summary: '编辑后的长说明。'.repeat(40),
@@ -91,6 +98,72 @@ it('proposal artifact archive stays after the latest note mutation across the wh
     expect(row.updated_at).toEqual(corrections[0].created_at);
     expect(await gatherAndFoldArtifact(db, id)).toEqual(row);
   }
+});
+
+it('archive invalidates a refine that already read the previous artifact version', async () => {
+  const db = testDb();
+  const proposalId = await seedProposalNotes();
+  let refine: ReturnType<typeof persistNoteRefineApply> | undefined;
+  try {
+    await db.transaction(async (tx) => {
+      await tx.select().from(artifact).where(eq(artifact.id, 'archive-note-a')).for('update');
+      // The separate reader can see v0, but its UPDATE must wait behind this lock.
+      refine = persistNoteRefineApply({
+        db,
+        artifactId: 'archive-note-a',
+        now: new Date(),
+        patch: {
+          ops: [
+            {
+              kind: 'append_block',
+              block: {
+                type: 'paragraph',
+                attrs: { id: 'late-block' },
+                content: [{ type: 'text', text: '已经撤销的笔记不应继续写入。'.repeat(20) }],
+              },
+            },
+          ],
+        },
+      });
+      await expect
+        .poll(
+          async () => {
+            const rows = await db.execute<{ blocked: boolean }>(sql`
+          select exists(select 1 from pg_stat_activity where datname=current_database()
+            and wait_event_type='Lock' and query ilike 'update%artifact%') as blocked
+        `);
+            return rows[0].blocked;
+          },
+          { timeout: 5000, interval: 20 },
+        )
+        .toBe(true);
+      await retractAiProposal(tx as never, proposalId);
+    });
+  } finally {
+    // Never leave the blocked writer running after an assertion/transaction failure.
+    if (refine) await refine;
+  }
+  expect(await refine).toMatchObject({ status: 'skipped:version_conflict' });
+  const [row] = await db.select().from(artifact).where(eq(artifact.id, 'archive-note-a'));
+  expect(row.version).toBe(1);
+  expect(row.body_blocks).toEqual({ type: 'doc', content: [] });
+  expect(await gatherAndFoldArtifact(db, row.id)).toEqual(row);
+  const archives = await db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:artifact_lifecycle'),
+        eq(event.caused_by_event_id, proposalId),
+      ),
+    );
+  expect(archives).toHaveLength(2);
+  const corrections = await db
+    .select()
+    .from(event)
+    .where(and(eq(event.action, 'correct'), eq(event.caused_by_event_id, proposalId)));
+  expect(corrections).toHaveLength(1);
+  expect(row.archived_at).toEqual(corrections[0].created_at);
 });
 
 async function interleaveWithRetract(

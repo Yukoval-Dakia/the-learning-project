@@ -23,15 +23,17 @@ export async function archiveProposalArtifacts(
     new Date(Math.max(...rows.map((row) => row.updated_at.getTime()))),
   );
   for (const row of rows) {
+    // Invalidate writers that read before this lock and later CAS on version.
+    const nextVersion = row.version + 1;
     await tx
       .update(artifact)
-      .set({ archived_at: input.archivedAt, updated_at: input.archivedAt })
+      .set({ archived_at: input.archivedAt, updated_at: input.archivedAt, version: nextVersion })
       .where(eq(artifact.id, row.id));
     await emitArtifactLifecycleEvent(tx, {
       subjectId: row.id,
       op: 'archive',
       archivedAt: input.archivedAt,
-      nextVersion: row.version,
+      nextVersion,
       actorKind: 'user',
       actorRef: 'self',
       causedByEventId: input.proposalId,
