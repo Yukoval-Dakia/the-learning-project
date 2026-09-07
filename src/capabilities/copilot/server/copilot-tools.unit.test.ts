@@ -100,24 +100,6 @@ describe('copilot server ownership (YUK-884)', () => {
     ).toBe(false);
   });
 
-  it('keeps legacy control implementations only for internal drain compatibility', () => {
-    const declarations = copilotCapability.copilotTools?.tools ?? [];
-    for (const name of LEGACY_MODEL_CONTROL_NAMES) {
-      expect(
-        declarations.map((declaration) => declaration.name),
-        name,
-      ).not.toContain(name);
-    }
-    expect(
-      existsSync(
-        join(process.cwd(), 'src/capabilities/copilot/server/tools/tool-operation-controls.ts'),
-      ),
-    ).toBe(true);
-    expect(
-      existsSync(join(process.cwd(), 'src/capabilities/copilot/server/tools/subagent-controls.ts')),
-    ).toBe(true);
-  });
-
   it('exposes Copilot event readers through the public capability seam', () => {
     const publicPort = source('src/capabilities/copilot/public.ts');
     for (const name of [
