@@ -15,7 +15,6 @@ import postgres from 'postgres';
 import { seedKnowledge } from '@/capabilities/knowledge/server/seed';
 import * as schema from '@/db/schema';
 import { reconcileBuiltinTraits } from '@/server/subjects/reconcile-builtin-traits';
-import { migrateCanonicalProjections } from './migrate-canonical-projections';
 
 const url = process.env.DATABASE_URL;
 if (!url) {
@@ -56,6 +55,9 @@ async function main(): Promise<void> {
 
     // YUK-973: prepare legacy data before the canonical writers start. Failure is fatal;
     // never conceal incomplete history with a fresh snapshot or rebuild live learner rows.
+    // The legacy CLI module loads .env: defer it until the explicit URL above has
+    // been required and bound to this connection, preserving the migration target gate.
+    const { migrateCanonicalProjections } = await import('./migrate-canonical-projections');
     const projections = await migrateCanonicalProjections(db);
     console.log('[migrate] canonical projection readiness:', JSON.stringify(projections));
   } finally {

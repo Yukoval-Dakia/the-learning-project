@@ -32,6 +32,10 @@ regressions were RED before the fix and GREEN afterward; missing/mismatched orig
 unreconstructible indexed histories now fail. The existing real Goal proposal→accept→retract DB
 case passes readiness with its retained proposal/index/dormant row. Typecheck, lint, build and
 capability/architecture audits pass; the fixed bundle also passed the restore-clone rehearsal.
+Final entrypoint verification caught the CLI module's eager `.env` load weakening the old
+explicit-DATABASE_URL requirement. Baseline/changed/fixed bundle probes proved the regression
+and repair; the import is now deferred until after the explicit target has been bound. A real
+bundle-and-child-process unit test with a hostile local `.env` protects that target gate.
 
 ## Remaining implementation and acceptance
 
