@@ -11,6 +11,7 @@ import { assertAgentSdkRuntimeUser } from '@/server/ai/runtime-preflight';
 import { warnFlipOrder } from '@/server/projections/sot-flag';
 import { buildHonoApp } from './app';
 import { loadApiEnv } from './env';
+import { installApiShutdown } from './shutdown';
 
 const env = loadApiEnv();
 assertAgentSdkRuntimeUser();
@@ -76,13 +77,11 @@ async function recoverToolOperationsBeforeServe(): Promise<void> {
 async function startInProcessWorker(): Promise<void> {
   // db client / boss 在 loadEnv() 之后才能 import（模块顶层读 DATABASE_URL），
   // 所以走动态 import，不进文件头 import 区。
-  const [{ db }, { startBossWorker }, { installShutdownHandler }] = await Promise.all([
+  const [{ db }, { startBossWorker }] = await Promise.all([
     import('@/db/client'),
     import('@/server/boss/start-worker'),
-    import('@/server/boss/shutdown'),
   ]);
-  const boss = await startBossWorker(db);
-  installShutdownHandler(boss);
+  await startBossWorker(db);
   console.log('[rw:api] in-process pg-boss worker running (RW_WORKER=1)');
 }
 
@@ -94,7 +93,7 @@ void (async () => {
   await hydrateSubjectsBeforeServe();
   await registerToolsBeforeServe();
   await recoverToolOperationsBeforeServe();
-  serve({ fetch: app.fetch, port }, (info) => {
+  const server = serve({ fetch: app.fetch, port }, (info) => {
     const mounted = capabilities.flatMap((c) =>
       (c.api?.routes ?? []).filter((r) => r.load).map((r) => `${r.method} ${r.path}`),
     );
@@ -102,8 +101,26 @@ void (async () => {
     console.log(`[rw:api] mounted from manifests: ${mounted.join(', ') || '(none)'}`);
   });
 
+  let workerStartup: Promise<void> | undefined;
+  installApiShutdown(server, async () => {
+    // Wait for a worker that was still registering when the signal arrived.
+    // HTTP is already drained, so no request can lazily start another boss.
+    await workerStartup;
+    const [{ db }, { getRunningBoss }, { stopBossGracefully }] = await Promise.all([
+      import('@/db/client'),
+      import('@/server/boss/client'),
+      import('@/server/boss/shutdown'),
+    ]);
+    try {
+      const boss = getRunningBoss();
+      if (boss) await stopBossGracefully(boss, 'API shutdown');
+    } finally {
+      await db.$client.end({ timeout: 3 });
+    }
+  });
+
   if (env.RW_WORKER === '1') {
-    void startInProcessWorker().catch((err) => {
+    workerStartup = startInProcessWorker().catch((err) => {
       // worker 起不来不该拖死 API 面：日志醒目 + API 继续服务（上传仍可用，
       // 只是 job 不被消费）；dev 下看到这条就修。
       console.error('[rw:api] in-process worker failed to start — jobs will NOT be consumed', err);

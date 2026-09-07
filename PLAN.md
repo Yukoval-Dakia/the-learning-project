@@ -1,14 +1,18 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：974笔记写入责任与回放修复已合并/Mac部署验证；下一项972，NAS不在范围，整体goal active。
+> Linear 是权威 tracker；更新于 2026-09-07：972声明式判分已合并/Mac部署验证；下一项核实API停机137，NAS不在范围，整体goal active。
 
 ## NOW
 
-- Active972：root独占codex/yuk-972-profile-judge-route，继承974交付记录9fbfb486，base main c27202369。
-  计划：custom profile路由RED→移除physics名称门→保留override/choices/图片优先级验证→review/exactCI交付。
-  不新增schema/学科功能或模型调用；生产034f35fe暂不动。
+- Active975：root独占codex/yuk-975-api-shutdown；隔离同镜像health200后stop复现137，--init对照143。
+  API缺少信号owner已确认；实现单一有界HTTP/runtime drain，保留boss日志与30s，compose覆盖完整宽限。
+  顺序：回归RED→实现→进程/HTTP/scoped验证→独立review/exactCI→Mac交付；无provider凭据或paid。
+- YUK972 Done：PR1358 exactfbee5c32，CI34126257359成功，main4c9ae238e；独立初审PASS，无P0/P1。
+  Mac API/worker运行fbee5c32镜像，healthy/零重启；原PG容器与volume未变，无NAS/tunnel/paid。
+  clone/live迁移零新增，423event/258task/4attempt不变；8类audit/golden零drift，恢复$3未用。
   custom真实SubjectRegistry注册通过，calculation/computation原semantic/keyword两RED→unit_dimension两GREEN。
-  51scoped unit含内建冻结路由矩阵、profile注册/调度校验，typecheck/lint/build与架构门过；待独立审查/exactCI。
+  51unit含内建矩阵/profile注册与调度，typecheck/lint/build与架构门过；CI migration/usability按范围跳过。
+  下一项887已捕获的API正常stop仍137：先隔离复现；worker退出0，不推断数据丢失，不混入972。
 - YUK974 Done：PR1357 exact034f35fe，CI34124354408全job绿，main c27202369，Mac部署已验证。
   Notes hub完整回放时间差与提案artifact撤销倒时均RED→GREEN；归档责任移Notes，复用已有限次事务重试。
   120DB/27unit/typecheck/lint/build及严格writer/architecture/capability过，0violation/0stale；42advisory显式保留。
@@ -16,7 +20,7 @@
   首CI仅Step9重复名单失败，双DBshard全过；两份名单收敛既有scanner/registry，原表范围不变，101DB/46unit/gates过。
   唯一验证审034f35fe PASS（独立5DB），无第三轮；镜像034f35fe的app/worker健康、原PG/volume未变。
   live迁移零新增、7LI就绪；423event/8artifact/258task/4attempt不变，8类audit/golden零drift，browser刷新重开过。
-  无paid，恢复$3未用；root当前codex/yuk-974-delivery-notes仅交付记录，原脏main不动；下一项972。
+  无paid，恢复$3未用；原脏main不动；后续972交付状态以上方为准。
 - YUK973 Done：PR1356 exact4328ab89，CI34120804982全绿，main21bc94dcf；Mac本地部署完成。
   前置PR1355已合并main960731083，exact6d476fc9 CI34112766637全绿；review初审+唯一验证完成，无第三轮。
   runtime84fcb379已物理删除三实体双轨、旧env/compose选择、LI inline genesis；rawGoal fixture移tests/helpers。
@@ -159,7 +163,7 @@
 
 ## NEXT
 
-1. 972移除学科名称限制，以custom profile证明判分能力的声明式扩展。
+1. 核实887已捕获API三次正常stop十秒后137；先隔离进程验证shutdown owner与容器宽限，不重启生产探针。
 2. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
 3. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
@@ -167,7 +171,7 @@
 
 ## PARKED
 
-- 972自定义学科unit_dimension仍被physics名称限制，已代码核验/LinearTodo，887本地frontier后修复。
+- 两处judge直调已核实为照片作答/独立解答一致性，不为调用形式统一机械删除，无新缺陷证据。
 - 全历史ADR审计仍未完成，不冒充全量通过；971仅覆盖三份已确认冲突的现役指引。
 - 951旧mailbox/ToolOperations仅drain-only；退休需零pending/零队列活动覆盖完整重试窗。
 - 921多provider、572夜间教研、832HOLD不解锁。

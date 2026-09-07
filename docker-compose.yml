@@ -19,6 +19,8 @@ services:
     restart: "no"
 
   app:
+    # HTTP drain 30s + boss drain 30s + pool cleanup 5s; leave signal/exit margin.
+    stop_grace_period: 70s
     build:
       context: .
       dockerfile: Dockerfile
@@ -76,6 +78,8 @@ services:
     restart: "no"
 
   worker:
+    # pg-boss owns a 30s graceful drain; Docker must not kill it after 10s.
+    stop_grace_period: 40s
     # Same image as `app` — esbuild bundles scripts/worker.ts to dist/worker.cjs.
     # Runs pg-boss queues + crons:
     #   - knowledge_propose_nightly (cron BJT 02:00)

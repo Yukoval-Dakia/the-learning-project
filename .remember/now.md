@@ -2,10 +2,22 @@
 
 ## 最新状态
 
-- Active972：root独占codex/yuk-972-profile-judge-route，base main c27202369，继承974交付记录9fbfb486。
-  只移除unit_dimension的physics名称门，custom profile行为验证；不新增schema/产品学科/模型调用，生产034f35fe不变。
+- YUK972 Done：PR1358 exactfbee5c32c8077f9cda18f7f8953c49367f36184a，CI34126257359成功，
+  main4c9ae238eb74d9d4db062a1ab0a5756b9dfc8b93，独立初审PASS无P0/P1；不需第二审。
+  Mac于13:24Z运行fbee5c32镜像sha256:d271e3c9b266bfcd5cf58ef1bf8e22a7332680d20ae3a72f4ae53d6cbad60e87。
+  app/worker healthy/零重启，原PG容器/StartedAt 09:40:42Z及volume不变；无NAS/tunnel/paid。
+  clone/live迁移零新增，423event/258task/4attempt不变，queue active/created/retry=0；8类audit/golden零drift。
+  回退仍可用034f35fe与private runtime-974-image.override.yml；本次只换runtime-972-image.override.yml。
+  不涉及schema，沿用最近974前备份，未新dump；空goal/variant/QB不称有数据canary。
+  只移除unit_dimension的physics名称门，custom profile行为验证；不新增schema/产品学科/模型调用。
   两路由RED→GREEN，真实registry/alias与完整profile验证；override/choices/图片/未opt-in以及内建矩阵保留。
-  51unit/typecheck/lint/build/architecture/capability过，待独立review/exactCI。
+  51unit/typecheck/lint/build/architecture/capability过；CI migration/usability按变更跳过，不称新浏览器验收。
+  两处直调judge职责分别是照片作答和独立解答对照，未证明同一规则重复，不机械删除。
+  root独占codex/yuk-972-delivery-notes，原脏main不动；专项恢复$3未使用，旧$10安全余0.04177不回收reserve。
+  下一项887已捕获shutdown：第三次正常compose stop旧034f35fe仍十秒后exit137，worker exit0。
+  server/index.ts仅RW_WORKER=1安装boss shutdown，生产RW_WORKER=0；serve返回值未持有，compose无grace。
+  先隔离真实binary复现，未确定PID1影响/未证明数据丢失；887comment7b8306d5记录，勿混入972。
+  整体goal active；provider/crash矩阵、成本真相、951完整重试窗drain仍不能冒充完成。
 
 - YUK974 Done：PR1357 exact034f35fe，CI34124354408全job绿，main c27202369，Mac部署已验证。
   hub-sync两钟漂移与提案artifact撤销早于新编辑均RED→GREEN；Notes拥有整笔归档，Agency不再写artifact表。
