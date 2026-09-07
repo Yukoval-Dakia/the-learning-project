@@ -2,7 +2,7 @@
 
 ## 最新状态
 
-- Active973 runtime：root独占codex/yuk-973-retire-state-writers，base main960731083（迁移PR1355已合并）。
+- YUK973 Done：PR1356 exact4328ab89，CI34120804982全绿，main21bc94dcf，Mac部署已验证。
   Goal/LI/variant主双轨分支、三旧env/compose开关、LI inline legacy genesis已退休；legacyGoal仅fixture入口移tests/helpers。
   typed Q1 knowledge_ids_rewrite支持live pre-rate及backfill/sweep；共享repair操作包住anchor/事件钟/append/project。
   补漏completion/relearn retract raw writer，typed state_restore携带exact prior状态/完成时间，保留evidence清理和状态guard。
@@ -14,11 +14,13 @@
   修后101相关DB、typecheck/lint/build/architecture通过；CI34117592341两个DBshard各1raw fixture未迁移，其余4922过。
   补completion approval与placement coldstart真实迁移后4项过；唯一验证审4e1dec7c PASS（独立67 DB），无第三轮。
   CI34119067574仅旧deadline cleanup要求DB在50ms完成失败；注入语义钟并补终态signal不abort，26DB/15unit过。
-  待新exactCI/部署；镜像4e1dec7c已构建并实际clone迁移，live423event/audit与8golden零drift，生产仍55aaac30。
+  镜像4e1dec7c已部署（tip后续仅测试/文档），app/worker健康无重启，原PG容器/volume不变，无tunnel。
+  新备份loom-before-973-4e1dec7c.dump已实际恢复loom_before_973_verify；live migrate零新增，7LI就绪。
+  live423event/258task/4attempt不变，hydrated audit与8golden零drift；browser认证/抽屉/刷新重开无pageerror。
   audit-fold-writes其它实体8未登记写点+5stale已去重登记YUK974 Todo，不新增allowlist；972继续Todo。
-  原脏main和本地生产55aaac30未动，无模型调用；额外恢复$3未用。整体goal active。
+  原脏main未动，无模型调用；额外恢复$3未用。root当前codex/yuk-973-delivery-notes仅交付记录；下一单974，整体goal active。
 
-- Active973 branch codex/yuk-973-canonical-writers，root独占；迁移前置helper已实现并接入migrate.ts。
+- 973迁移前置历史记录（已由上方完整交付状态取代）：codex/yuk-973-canonical-writers；helper已实现并接入migrate.ts。
   三类实体在同一锁定事务补锚，拒绝orphan history/field drift/ghost，失败回滚新锚，不live rebuild。
   51相关DB与typecheck/lint/build/architecture边界过；fresh/锁超时/重试/并发/派生列覆盖。
   初审发现index-only dangling origin漏检P1，三实体3RED后修复；正向真实goal撤回链仍通过。

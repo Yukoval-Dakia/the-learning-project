@@ -147,7 +147,12 @@ pnpm build            # rw:web:build + 三 esbuild 产物（dist/server.cjs / di
    ```
    Goal, LearningItem and MistakeVariant now have one structural writer; their old
    `PROJECTION_IS_WRITER_*` switches are ignored. Rollback requires the previous
-   release plus its recorded writer configuration, not switching these entities OFF.
+   release plus a verified recovery configuration, not switching these entities OFF
+   in the new release. The previous reducers cannot replay the new LearningItem repair
+   events: previous-release recovery must preserve materialized rows, disable its three
+   structural projection modes, and never rebuild them with those older reducers.
+   Before returning to canonical mode after rollback writes, repeat readiness checks
+   and repair any mismatch. See the [cutover evidence](docs/planning/2026-09-07-canonical-state-writers.md).
    Restart worker, then app only after migration succeeds. Do not bypass a failed
    readiness check with `--no-deps` or snapshot over incomplete event history.
 

@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：887 Mac本地切换已验证；973接续双轨代码退休，NAS不在范围，整体goal active。
+> Linear 是权威 tracker；更新于 2026-09-07：973双轨退休已合并并Mac部署验证；下一项974剩余写入责任，NAS不在范围，整体goal active。
 
 ## NOW
 
-- Active973：root独占tlp-wt-unified-conversation / codex/yuk-973-retire-state-writers。
+- YUK973 Done：PR1356 exact4328ab89，CI34120804982全绿，main21bc94dcf；Mac本地部署完成。
   前置PR1355已合并main960731083，exact6d476fc9 CI34112766637全绿；review初审+唯一验证完成，无第三轮。
   runtime84fcb379已物理删除三实体双轨、旧env/compose选择、LI inline genesis；rawGoal fixture移tests/helpers。
   typed Q1归属repair支持pre-rate及历史sweep；state_restore补掉completion/relearn撤销raw writer，保留exact prior state。
@@ -13,7 +13,9 @@
   PR1356初审P1：correct在行锁前定时，会被并发状态覆盖；3实体真实并发3RED→3GREEN，有限事务重试保留单钟与outbox回滚。
   修后101 DB与gates通过；唯一验证审4e1dec7c PASS（独立67 DB），review预算结束，无第三轮。
   CI34119067574仅旧50ms数据库计时前提失败；改注入语义钟并断言终态后signal不被abort，26DB/15unit过。
-  待新exactCI及Mac rollout；镜像4e1dec7c已真实clone迁移，live audit与8golden零drift，生产仍55aaac30。
+  runtime4e1dec7c镜像已部署，后续tip仅测试/文档；app/worker healthy，原PG容器/volume不变，无tunnel。
+  新备份已实际恢复隔离DB；live迁移0新增、7LI通过，423event/258task/4attempt不变，audit与8golden零drift。
+  browser认证/抽屉/刷新重开无pageerror，无paid；原脏main不动，root当前973-delivery-notes仅交付记录。
   fold-write其它实体8写点/5stale已去重登记974 Todo；972仍Todo，不放宽allowlist掩盖。
 - 887 local-production切片已部署：PR1354 exact0ed35fd3，CI34108722202全绿，main a12667507，独立安全review PASS。
   owner「直接动本地生产即可」仅授权Mac，不含NAS；API/worker/Postgres均healthy，未启动tunnel。
