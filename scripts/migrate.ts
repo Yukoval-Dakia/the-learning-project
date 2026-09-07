@@ -52,6 +52,14 @@ async function main(): Promise<void> {
         `+${traits.insertedTraits} traits, ${traits.upgradedTraits} upgraded, ` +
         `${traits.skippedTraits} up-to-date, ${traits.preservedTraits} owner-edited preserved`,
     );
+
+    // YUK-973: prepare legacy data before the canonical writers start. Failure is fatal;
+    // never conceal incomplete history with a fresh snapshot or rebuild live learner rows.
+    // The legacy CLI module loads .env: defer it until the explicit URL above has
+    // been required and bound to this connection, preserving the migration target gate.
+    const { migrateCanonicalProjections } = await import('./migrate-canonical-projections');
+    const projections = await migrateCanonicalProjections(db);
+    console.log('[migrate] canonical projection readiness:', JSON.stringify(projections));
   } finally {
     await sql.end({ timeout: 5 });
   }
