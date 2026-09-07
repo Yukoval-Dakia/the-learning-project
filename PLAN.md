@@ -1,10 +1,18 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：887 Mac本地切换已验证；973接续双轨代码退休，NAS不在范围，整体goal active。
+> Linear 是权威 tracker；更新于 2026-09-07：973双轨退休已合并并Mac部署验证；下一项974剩余写入责任，NAS不在范围，整体goal active。
 
 ## NOW
 
-- Active973：root独占tlp-wt-unified-conversation / codex/yuk-973-retire-state-writers。
+- Active974：root独占codex/yuk-974-write-ownership，继承973交付记录5d7097b3，main21bc94dcf。
+  计划：逐项核对8未登记写点的同事务事件/派生责任→修真实缺口与旧登记→scoped行为/audit/gates/review/exactCI。
+  一个只读agent核对录入/quiz事件配对，root处理Notes/Agency/edge与集成；不放宽allowlist，不做付费调用。
+  Notes hub完整回放时间差与提案artifact撤销倒时均RED→GREEN；归档责任移Notes，复用已有限次事务重试。
+  120DB/27unit/typecheck/lint/build及严格writer/architecture/capability过，0violation/0stale；42advisory显式保留，待review/CI。
+  初审P1旧润色可在归档后通过旧versionCAS：真实PG并发RED→GREEN，归档推进version并写同值事件。
+  首CI仅Step9重复名单失败，双DBshard全过；两份名单收敛既有scanner/registry，原表范围不变，101DB/46unit/gates过。
+  待唯一验证审与新exactCI；下一项972自定义profile扩展契约。
+- YUK973 Done：PR1356 exact4328ab89，CI34120804982全绿，main21bc94dcf；Mac本地部署完成。
   前置PR1355已合并main960731083，exact6d476fc9 CI34112766637全绿；review初审+唯一验证完成，无第三轮。
   runtime84fcb379已物理删除三实体双轨、旧env/compose选择、LI inline genesis；rawGoal fixture移tests/helpers。
   typed Q1归属repair支持pre-rate及历史sweep；state_restore补掉completion/relearn撤销raw writer，保留exact prior state。
@@ -13,7 +21,9 @@
   PR1356初审P1：correct在行锁前定时，会被并发状态覆盖；3实体真实并发3RED→3GREEN，有限事务重试保留单钟与outbox回滚。
   修后101 DB与gates通过；唯一验证审4e1dec7c PASS（独立67 DB），review预算结束，无第三轮。
   CI34119067574仅旧50ms数据库计时前提失败；改注入语义钟并断言终态后signal不被abort，26DB/15unit过。
-  待新exactCI及Mac rollout；镜像4e1dec7c已真实clone迁移，live audit与8golden零drift，生产仍55aaac30。
+  runtime4e1dec7c镜像已部署，后续tip仅测试/文档；app/worker healthy，原PG容器/volume不变，无tunnel。
+  新备份已实际恢复隔离DB；live迁移0新增、7LI通过，423event/258task/4attempt不变，audit与8golden零drift。
+  browser认证/抽屉/刷新重开无pageerror，无paid；原脏main不动，root当前973-delivery-notes仅交付记录。
   fold-write其它实体8写点/5stale已去重登记974 Todo；972仍Todo，不放宽allowlist掩盖。
 - 887 local-production切片已部署：PR1354 exact0ed35fd3，CI34108722202全绿，main a12667507，独立安全review PASS。
   owner「直接动本地生产即可」仅授权Mac，不含NAS；API/worker/Postgres均healthy，未启动tunnel。
@@ -144,11 +154,12 @@
 
 ## NEXT
 
-1. 973收口Goal/LI/variant双轨写入：迁移补锚并验证，业务单路径，保留撤回/并发/派生列保护。
-2. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
-3. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
+1. 974完成当前Notes写入责任与回放修复的review/exactCI交付；973已经Mac部署验收完成。
+2. 972移除学科名称限制，以custom profile证明判分能力的声明式扩展。
+3. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
+4. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
-4. 887本地backfill/audit/rebuild/golden与SoT退休按新授权推进，NAS仍不在范围。
+5. 887保留provider/crash矩阵；本地backfill/audit/golden及973退休已验证，NAS仍不在范围。
 
 ## PARKED
 

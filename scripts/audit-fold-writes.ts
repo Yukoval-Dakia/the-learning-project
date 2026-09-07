@@ -16,7 +16,7 @@
  * 是缓存」：每张表的**单写者咽喉** = `src/server/projections/<table>.ts` 的 write-through shell
  * （fold(events)→row），核心 reducer 在 `src/core/projections/<table>.ts`。SoT-flip 由
  * `src/server/projections/sot-flag.ts` 的 `projectionIsWriter(entity?)` 门控：
- *   - knowledge / knowledge_edge：裸全局 `PROJECTION_IS_WRITER`，**已 LIVE**（=1, docker-compose）。
+ *   - knowledge / knowledge_edge：全局 `PROJECTION_IS_WRITER`，运行值须另查部署。
  *   - goal / mistake_variant / learning_item：canonical 单写者，已退休 env 分支。
  *   - artifact / question_block：仍保留 per-entity env 门控，部署状态以真实 runtime 为准。
  *
@@ -37,7 +37,7 @@
  *   - Drizzle 形：`.update(<table>)` / `.insert(<table>)` / `.delete(<table>)`（bare 标识符，
  *     `)` 消歧 knowledge vs knowledge_edge）。
  *   - raw SQL 形：字符串/模板里的 `UPDATE <table>` / `DELETE FROM <table>` / `INSERT INTO <table>`
- *     （今天为零——全走 Drizzle——但保留以抓未来 `sql\`UPDATE knowledge…\`` 直写）。
+ *     （包括 Notes hub reconciliation 的现役 raw SQL 写点）。
  * 命中且其**文件**不在该表的 sanctioned_writers ∪ allowlist ⇒ VIOLATION。
  *
  * 三类输出：
@@ -59,7 +59,7 @@
  * (2) SANCTIONED_WRITERS 手维护：新增合法写 fold-owned 表的文件时须在此补一条（否则误报 VIOLATION）。
  *     反查只防「声明的写者消失」，不能自动发现「未声明的新合法写者」。
  * (3) role 分级是**声明式信息**（供报告分组 + 曝光 LIVE 表的 ungated 写者），不改判据——sanctioned =
- *     在 registry（任一 role）。首跑应为 0 VIOLATION（不变量今天成立），审计的价值是 FORWARD drift-guard。
+ *     在 registry（任一 role）。零 VIOLATION 只证明登记完整，不替代同事务事件/回放行为验证。
  *
  * 用法：
  *   pnpm audit:fold-writes          # 报告（report-only）
@@ -100,15 +100,25 @@ export const FOLD_OWNED_TABLES = [
 ] as const;
 export type FoldOwnedTable = (typeof FOLD_OWNED_TABLES)[number];
 
-/** LIVE = the SoT-flip flag is already ON in prod (raw writes are actively fold-invisible TODAY). */
-export const LIVE_TABLES: ReadonlySet<FoldOwnedTable> = new Set(['knowledge', 'knowledge_edge']);
+/** Code policy, not deployment telemetry. Switchable tables need the same scrutiny when ON. */
+export const FOLD_WRITE_POLICY: Record<FoldOwnedTable, 'canonical' | 'switchable' | 'anchor-only'> =
+  {
+    knowledge: 'switchable',
+    knowledge_edge: 'switchable',
+    goal: 'canonical',
+    mistake_variant: 'canonical',
+    learning_item: 'canonical',
+    artifact: 'switchable',
+    question_block: 'switchable',
+    item_calibration: 'anchor-only',
+  };
 
 export type WriterRole =
   | 'throat' // projection write-through shell (the fold row writer)
   | 'reducer' // core fold reducer
   | 'gated-dual-path' // imperative applier gated on projectionIsWriter (defers to shell when ON)
   | 'event-native-by-caller' // raw row write; caller appends the matching event in the same tx
-  | 'off-path-writer' // imperative writer for an OFF table (sole legit writer until its flip)
+  | 'off-path-writer' // imperative writer under an explicit anchor-only policy
   | 'seed' // initial dataset seed
   | 'maintenance'; // rewrites a non-fold column (e.g. embedding backfill), not a fold-truth mutation
 
@@ -148,8 +158,8 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
     table: 'knowledge',
     file: 'src/capabilities/knowledge/server/learning-intent-knowledge.ts',
     marker: '.insert(knowledge)',
-    role: 'off-path-writer',
-    note: 'Knowledge-owned learning-intent node command; moved without changing proposal materialization events in YUK-873.',
+    role: 'event-native-by-caller',
+    note: 'Tx-only node creation; Agency materialization supplies the accepted learning-item proposal/rate and materialized-id mapping used by knowledge fold.',
   },
   {
     table: 'knowledge',
@@ -209,10 +219,10 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // declared a sanctioned writer (doing so would be dead config).
   {
     table: 'knowledge_edge',
-    file: 'src/server/proposals/actions.ts',
+    file: 'src/capabilities/knowledge/server/edge-proposal-accept.ts',
     marker: 'projectionIsWriter()',
     role: 'gated-dual-path',
-    note: 'knowledge_edge accept-path applier gated on projectionIsWriter() (event-native archive+create).',
+    note: 'Create INSERT is gated; same-tx generate event feeds the topology projector. Archive delegates to the separately audited edges owner.',
   },
 
   // ---- goal (canonical, YUK-973) ----
@@ -242,13 +252,13 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
     note: 'Sole structural row writer; business mutations append events then project in the same transaction.',
   },
 
-  // ---- artifact (OFF: PROJECTION_IS_WRITER_ARTIFACT) ----
+  // ---- artifact (switchable; actual deployment flags are checked separately) ----
   {
     table: 'artifact',
     file: 'src/server/projections/artifact.ts',
     marker: '.insert(artifact)',
     role: 'throat',
-    note: 'projection write-through shell — the fold row writer for artifact (default OFF).',
+    note: 'Artifact projection write-through shell; activation is runtime-specific.',
   },
   {
     table: 'artifact',
@@ -261,101 +271,108 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
     table: 'artifact',
     file: 'src/capabilities/notes/server/note-refine-apply.ts',
     marker: '.update(artifact)',
-    role: 'off-path-writer',
-    note: 'note-refine-apply updates the artifact row (OFF-path sole writer until the artifact flag flips). Mutation events written separately (mutation-events.ts).',
+    role: 'event-native-by-caller',
+    note: 'Version-CAS body/history mutation and undo emit self-contained refine events with the exact paired row timestamp in the caller transaction.',
   },
   {
     table: 'artifact',
     file: 'src/capabilities/notes/server/hub-dismiss.ts',
     marker: '.update(artifact)',
-    role: 'off-path-writer',
-    note: 'hub-dismiss archives a note artifact (OFF-path sole writer until the artifact flag flips).',
+    role: 'event-native-by-caller',
+    note: 'Suppression attrs and body edits share a transaction; lifecycle set_attrs and refine events carry ordered timestamps and exact after-state.',
   },
   {
     table: 'artifact',
     file: 'src/capabilities/notes/server/sections.ts',
     marker: '.update(artifact)',
-    role: 'off-path-writer',
-    note: 'note section edit updates the artifact row (OFF-path sole writer until the artifact flag flips).',
+    role: 'event-native-by-caller',
+    note: 'Section body/history CAS and full body_blocks_edit snapshot share the transaction, version and timestamp.',
   },
   {
     table: 'artifact',
     file: 'src/capabilities/notes/jobs/note_verify.ts',
     marker: '.update(artifact)',
-    role: 'off-path-writer',
-    note: 'note_verify updates the artifact row (OFF-path sole writer until the artifact flag flips).',
+    role: 'event-native-by-caller',
+    note: 'Result persistence runs inside claim-result finalization after artifact/claim locks and epoch/status revalidation; lifecycle shares the update timestamp.',
   },
   {
     table: 'artifact',
     file: 'src/capabilities/notes/server/note-verification-claim-reservation.ts',
     marker: '.update(artifact)',
-    role: 'off-path-writer',
-    note: 'note verification claim atomically terminalizes provider-attempt exhaustion with a set_verification_status lifecycle event (YUK-888: moved with failArtifactVerificationForEpoch into the reservation/transitions module).',
+    role: 'event-native-by-caller',
+    note: 'Epoch/status-guarded exhaustion update and lifecycle event are atomic with the claim transition.',
   },
   {
     table: 'artifact',
     file: 'src/capabilities/notes/jobs/note_generate.ts',
     marker: '.update(artifact)',
-    role: 'off-path-writer',
-    note: 'note_generate creates/updates the artifact row (OFF-path sole writer until the artifact flag flips).',
+    role: 'event-native-by-caller',
+    note: 'Generation status/body updates emit same-tx lifecycle/full body snapshots with exact row timestamps.',
   },
   {
     table: 'artifact',
     file: 'src/capabilities/ingestion/server/make-paper.ts',
     marker: '.insert(artifact)',
-    role: 'off-path-writer',
-    note: 'make-paper inserts a paper artifact (OFF-path sole writer until the artifact flag flips).',
+    role: 'event-native-by-caller',
+    note: 'Paper materialization emits artifact_create from the full returned row in its transaction.',
   },
   {
     table: 'artifact',
     file: 'src/capabilities/practice/jobs/quiz_gen.ts',
     marker: '.insert(artifact)',
-    role: 'off-path-writer',
-    note: 'quiz_gen inserts a quiz artifact (OFF-path sole writer until the artifact flag flips).',
+    role: 'event-native-by-caller',
+    note: 'Quiz artifact INSERT and artifact_create share the generation transaction and timestamp.',
   },
   {
     table: 'artifact',
-    file: 'src/server/ai/tools/tool-quiz-core.ts',
+    file: 'src/capabilities/practice/server/tools/tool-quiz-core.ts',
     marker: '.insert(artifact)',
-    role: 'off-path-writer',
-    note: 'quiz tool inserts a quiz artifact (OFF-path sole writer until the artifact flag flips).',
+    role: 'event-native-by-caller',
+    note: 'Tx-only quiz writer emits artifact_create from the full RETURNING row with the same timestamp; write_quiz owns the enclosing transaction.',
   },
   {
     table: 'artifact',
     file: 'src/capabilities/notes/server/tools/author-artifact.ts',
     marker: '.insert(artifact)',
-    role: 'off-path-writer',
-    note: 'author-artifact tool inserts/updates an artifact (OFF-path sole writer until the artifact flag flips).',
+    role: 'event-native-by-caller',
+    note: 'Tx-owned create snapshot and version-CAS attrs/lifecycle update; invalid event rolls back the paired row mutation.',
   },
   {
     table: 'artifact',
     file: 'src/capabilities/notes/server/learning-intent-note.ts',
     marker: '.insert(artifact)',
-    role: 'off-path-writer',
-    note: 'Notes-owned command inserts artifacts for materialized intents (OFF-path sole writer until the artifact flag flips).',
+    role: 'event-native-by-caller',
+    note: 'Tx-only learning-intent materialization emits artifact_create from the returned row with the supplied creation timestamp.',
   },
   {
     table: 'artifact',
-    file: 'src/server/proposals/legacy-record-appliers.ts',
+    file: 'src/capabilities/ingestion/server/legacy-record-appliers.ts',
     marker: '.insert(artifact)',
-    role: 'off-path-writer',
-    note: 'legacy /record applier inserts an artifact (OFF-path sole writer until the artifact flag flips).',
+    role: 'event-native-by-caller',
+    note: 'Record promotion emits artifact_create from the full RETURNING row in the acceptance transaction, chained to its rate event.',
   },
   {
     table: 'artifact',
-    file: 'src/server/proposals/actions.ts',
+    file: 'src/capabilities/notes/server/proposal-artifacts.ts',
     marker: '.update(artifact)',
-    role: 'off-path-writer',
-    note: 'artifact accept-path applier updates the artifact row (OFF-path until the artifact flag flips).',
+    role: 'event-native-by-caller',
+    note: 'Notes owns locked proposal artifact archive and matching lifecycle events; stale correction clocks roll back the whole proposal transaction.',
+  },
+  {
+    table: 'artifact',
+    file: 'src/capabilities/notes/server/hub-sync-reconciliation.ts',
+    marker: 'update artifact',
+    role: 'event-native-by-caller',
+    note: 'Fenced hub finalization pairs body/version CAS with a full body_blocks_edit snapshot, exact returned update time and cursor acknowledgement in one transaction.',
   },
 
-  // ---- question_block (OFF: PROJECTION_IS_WRITER_QUESTION_BLOCK) ----
+  // ---- question_block (switchable; actual deployment flags are checked separately) ----
   {
     table: 'question_block',
     file: 'src/server/projections/question_block.ts',
     marker: '.insert(question_block)',
     role: 'throat',
-    note: 'projection write-through shell — the fold row writer for question_block (default OFF).',
+    note: 'QuestionBlock projection write-through shell; activation is runtime-specific.',
   },
   {
     table: 'question_block',
@@ -368,36 +385,36 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
     table: 'question_block',
     file: 'src/capabilities/ingestion/server/auto-enroll.ts',
     marker: '.update(question_block)',
-    role: 'off-path-writer',
-    note: 'auto-enroll updates block status (OFF-path sole writer until the question_block flag flips).',
+    role: 'event-native-by-caller',
+    note: 'Enrollment transaction pairs imported block links/status/version with a lifecycle event using the same timestamp.',
   },
   {
     table: 'question_block',
     file: 'src/capabilities/ingestion/server/revert-auto-enroll.ts',
     marker: '.update(question_block)',
-    role: 'off-path-writer',
-    note: 'revert-auto-enroll restores block status (OFF-path sole writer until the question_block flag flips).',
+    role: 'event-native-by-caller',
+    note: 'Revert transaction pairs restored block status/version with a lifecycle event, preserving nullable import references.',
   },
   {
     table: 'question_block',
-    file: 'src/capabilities/ingestion/api/import.ts',
+    file: 'src/capabilities/ingestion/server/import-completion.ts',
     marker: '.insert(question_block)',
-    role: 'off-path-writer',
-    note: 'import inserts/links blocks (OFF-path sole writer until the question_block flag flips).',
+    role: 'event-native-by-caller',
+    note: 'Import completion owns one transaction for create snapshots, import-link and ignore-sweep lifecycle events; extracted_prompt_md/ordinal remain explicit non-fold fields.',
   },
   {
     table: 'question_block',
     file: 'src/server/session/docx-ingestion.ts',
     marker: '.insert(question_block)',
-    role: 'off-path-writer',
-    note: 'docx-ingestion inserts blocks (OFF-path sole writer until the question_block flag flips).',
+    role: 'event-native-by-caller',
+    note: 'DOCX session transaction emits create snapshots for inserted blocks; extraction text/ordinal are explicitly outside fold truth.',
   },
   {
     table: 'question_block',
     file: 'src/server/session/ingestion.ts',
     marker: '.insert(question_block)',
-    role: 'off-path-writer',
-    note: 'session ingestion inserts/updates blocks (OFF-path sole writer until the question_block flag flips).',
+    role: 'event-native-by-caller',
+    note: 'Extraction create/replacement writes emit full question_block_create snapshots on the caller transaction; extraction text/ordinal are non-fold fields.',
   },
   // ---- item_calibration (YUK-496 方案 A — anchor-only coverage, default OFF, no flip planned) ----
   {
@@ -737,33 +754,33 @@ export function validateAllowlistEntry(
 export type SiteStatus = 'sanctioned' | 'allowlisted' | 'violation';
 export type SiteVerdict = WriteSite & { status: SiteStatus; role?: WriterRole };
 
-// A LIVE writer with one of these roles is locally constrained not to bypass fold truth:
+// A writer with one of these roles is locally constrained not to bypass fold truth:
 // throat/reducer IS the fold path; gated-dual-path locally defers to it when ON; maintenance only
 // touches fold-excluded derived columns. Every other role defaults to ADVISORY. This negative
 // classification means a future special role cannot silently disappear merely because someone forgot
 // to extend a hard-coded advisory allow-list (the YUK-587 gap that hid proposals.ts + seed.ts).
-const LOCALLY_CONSTRAINED_LIVE_ROLES: ReadonlySet<WriterRole> = new Set([
+const LOCALLY_CONSTRAINED_ROLES: ReadonlySet<WriterRole> = new Set([
   'throat',
   'reducer',
   'gated-dual-path',
   'maintenance',
 ]);
 
-/** LIVE sanctioned writers whose fold visibility still depends on an event-native caller contract. */
-export function collectLiveWriterAdvisories(verdicts: readonly SiteVerdict[]): SiteVerdict[] {
+/** Canonical or switchable writers whose fold visibility depends on an event-native contract. */
+export function collectWriterAdvisories(verdicts: readonly SiteVerdict[]): SiteVerdict[] {
   return verdicts.filter(
     (v) =>
       v.status === 'sanctioned' &&
-      LIVE_TABLES.has(v.table) &&
+      FOLD_WRITE_POLICY[v.table] !== 'anchor-only' &&
       v.role !== undefined &&
-      !LOCALLY_CONSTRAINED_LIVE_ROLES.has(v.role),
+      !LOCALLY_CONSTRAINED_ROLES.has(v.role),
   );
 }
 
 export type FoldWriteAuditResult = {
   verdicts: SiteVerdict[];
   violations: SiteVerdict[];
-  /** Report-only LIVE writers whose same-tx event-native invariant needs owner review. */
+  /** Report-only canonical/switchable writers whose event-native invariant needs owner review. */
   advisories: SiteVerdict[];
   stale: StaleWriter[];
   allowlistProblems: AllowlistProblem[];
@@ -830,7 +847,7 @@ export function computeFoldWriteAudit(
   return {
     verdicts,
     violations,
-    advisories: collectLiveWriterAdvisories(verdicts),
+    advisories: collectWriterAdvisories(verdicts),
     stale,
     allowlistProblems,
     redundantAllowlist,
@@ -871,9 +888,8 @@ function loadAllowlist(): Allowlist {
   }
 }
 
-function main(): void {
-  const isJson = process.argv.includes('--json');
-  const isStrict = process.argv.includes('--strict');
+/** Shared repository inventory for the CLI and existing table-ownership test gates. */
+export function auditFoldWrites(): FoldWriteAuditResult {
   const today = new Date().toISOString().slice(0, 10);
 
   const files: string[] = [];
@@ -882,7 +898,13 @@ function main(): void {
 
   const sites = findWriteSites(files, readFileOrNull);
   const stale = reverseCheckWriters(SANCTIONED_WRITERS, readFileOrNull);
-  const result = computeFoldWriteAudit(sites, SANCTIONED_WRITERS, stale, loadAllowlist(), today);
+  return computeFoldWriteAudit(sites, SANCTIONED_WRITERS, stale, loadAllowlist(), today);
+}
+
+function main(): void {
+  const isJson = process.argv.includes('--json');
+  const isStrict = process.argv.includes('--strict');
+  const result = auditFoldWrites();
 
   if (isJson) {
     console.log(JSON.stringify(result, null, 2));
@@ -899,10 +921,10 @@ function main(): void {
     }
     console.log('  sanctioned write sites per fold-owned table (role → count):');
     for (const table of FOLD_OWNED_TABLES) {
-      const live = LIVE_TABLES.has(table) ? 'LIVE ' : 'off  ';
+      const policy = FOLD_WRITE_POLICY[table];
       const m = roleByTable.get(table);
       const roles = m ? [...m.entries()].map(([r, c]) => `${r}×${c}`).join(', ') : '(no sites)';
-      console.log(`    [${live}] ${table.padEnd(16)} ${roles}`);
+      console.log(`    [${policy}] ${table.padEnd(16)} ${roles}`);
     }
     console.log('');
 
@@ -915,8 +937,9 @@ function main(): void {
         `  VIOLATIONS (raw write in a file not declared as a sanctioned writer):  ${result.violations.length}`,
       );
       for (const v of result.violations) {
-        const live = LIVE_TABLES.has(v.table) ? ' [LIVE fold table]' : '';
-        console.log(`    - ${v.file}:${v.line}  .${v.op}(${v.table})${live}  (${v.form})`);
+        console.log(
+          `    - ${v.file}:${v.line}  .${v.op}(${v.table}) [${FOLD_WRITE_POLICY[v.table]}]  (${v.form})`,
+        );
       }
       console.log(
         '\n  Fix: route the write through the projection shell (src/server/projections/<table>.ts) or an\n' +
@@ -930,7 +953,7 @@ function main(): void {
     // Negative classification is computed in the result so --json and text share exact coverage.
     if (result.advisories.length > 0) {
       console.log(
-        `  ADVISORY — LIVE fold-table row writers not locally projectionIsWriter-gated (verify event-native; 横切 #2):  ${result.advisories.length}`,
+        `  ADVISORY — canonical/switchable row writers needing event-native verification (not live deployment telemetry):  ${result.advisories.length}`,
       );
       for (const v of result.advisories) {
         console.log(`    - ${v.file}:${v.line}  .${v.op}(${v.table})  [${v.role}]`);

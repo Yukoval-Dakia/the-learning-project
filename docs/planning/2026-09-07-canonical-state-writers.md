@@ -117,3 +117,37 @@ flags OFF, preserve materialized rows, and never rebuild with old reducers after
 Re-entering canonical mode after rollback writes requires readiness verification/repair again.
 The private rollback compose override is retained alongside backups; a fresh pre-deploy database
 dump is still required. No NAS deployment or new model calls are authorized by this preparation.
+
+## Completed Mac-local delivery
+
+PR #1356 exact `4328ab89753e21d3aa90754de02f64cfe1be2db6` passed every CI Gate job in
+run `34120804982`; merged 2026-09-07T12:25:54Z as `21bc94dcfe7b6a940d8c8fc2a4d63c42222890f1`.
+The final tip differs from reviewed runtime `4e1dec7c` only in tests and delivery documentation.
+The final test-only adjustment passed local build as well as the checks above; it was root-verified,
+not a third independent runtime review.
+
+- Fresh private `loom-before-973-4e1dec7c.dump` SHA256:
+  `b7d6299b829b4dba9c3300290b7f42cf83f81d33598ad93a6ccbf3166db69fbd`.
+  Actual restore into new isolated `loom_before_973_verify` succeeded: 423 events, seven
+  LearningItems, 258 AI tasks, four provider attempts. All earlier backups remain retained.
+- Stopped app and worker, then ran the new image's bundled migration against live `loom`.
+  Migration succeeded with zero new anchors/trait changes and seven LearningItems checked.
+  No live rebuild, data deletion, queue redrive or paid model call occurred.
+- Started worker then app using explicit project `the-learning-project` and the private image
+  override. Both run `the-learning-project-app:4e1dec7c`, image
+  `sha256:835951fff624572d31c4812ffe2e48d28e71df248914722c64012f355fb9e0aa`, healthy as `node`,
+  zero restarts. Their three retired writer flags are absent; API remains loopback 8787/RW_WORKER=0.
+- Existing Postgres container `7d99236a099a4216517a63c6511495f7ffff156b6385004af2942069f7bb61ba`
+  retains start time `2026-09-07T09:40:42.502546542Z` and original data volume. No tunnel/NAS change.
+- Post-start hydrated live projection audit has zero drift/allowances across eight kinds;
+  all eight retained goldens re-fold with zero differences. Goal/variant are still empty in
+  production, not populated canaries; rich scoped DB and exact-head CI cover those entities.
+- Chromium verified real authentication, visible drawer, refresh/reopen, with zero page errors.
+  Private screenshot `copilot-after-973.png` was visually inspected. No message was sent;
+  this is surface verification, not a new model-output or crash-recovery claim.
+- Final live counts remain 423 events, seven LearningItems, 258 AI tasks and four provider
+  attempts; active/created/retry queue sets empty. The recovery-specific $3 remains unused.
+
+YUK-973 is complete. The overall architecture goal remains active: YUK-974 tracks remaining
+other-entity writer ownership, YUK-972 the custom-profile constraint, and YUK-887 retains the
+broader provider/crash matrix. This delivery does not claim the entire product refactor complete.

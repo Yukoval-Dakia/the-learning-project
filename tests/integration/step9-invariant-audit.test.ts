@@ -410,146 +410,16 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     });
   }
 
-  it('artifact table writes: confined to Phase 2B + note lifecycle handlers (Pass 2 + embedded check)', async () => {
-    // 'artifact' is the C-tier AI production landing point per ADR-0006 v2.
-    // Phase 2B (Learning Intent Orchestrator) activated the write path with
-    // the accept handler + the `note_generate` pg-boss handler. The note
-    // lifecycle later grew two more single-owner writers, each touching a
-    // distinct status axis on the artifact row:
-    //   - `note_verify`: writes `verification_status` / `verification_summary` /
-    //     `verified_by` after the Pass 2 verifier judges generated sections.
-    //   - `embedded_check_generate`: writes `embedded_check_status` and
-    //     mirrors the generated question ids back onto the `check` section
-    //     after Judge v2 light's question contract is satisfied.
-    //   - YUK-203 P2 `src/capabilities/practice/jobs/quiz_gen.ts`: writes the
-    //     standalone `tool_quiz` artifact that groups QuizGenTask draft
-    //     questions through `tool_state.question_ids[]`.
-    //   - YUK-19 `src/server/proposals/actions.ts`: retracting a learning_intent
-    //     proposal tombstones the paired artifact stubs alongside the materialized
-    //     hub + atomic learning_items (archived_at + version+1 only — no semantic
-    //     content rewrite). Mirrors the variant_question retract tombstone policy.
-    //   - YUK-54 `src/capabilities/notes/server/sections.ts`: the single owner-service for
-    //     user section edits. Routes must call this service so sections/history
-    //     updates and `experimental:artifact_section_edit` stay atomic.
-    //   - YUK-92 `src/capabilities/notes/server/body-blocks-edit.ts`: the single owner-service
-    //     for whole-document block tree edits, keeping artifact.version, history,
-    //     and `experimental:artifact_body_blocks_edit` in one transaction.
-    //   - YUK-127 (T-88 P4-A) `src/capabilities/notes/server/note-refine-apply.ts`: the
-    //     single owner-service for AI-side Living Note block-level patch
-    //     application — applies a NotePatch to body_blocks + bumps version +
-    //     writes `experimental:note_refine_apply` in one transaction.
-    //   - YUK-203 U4 (D5 / CO §7.1) `src/server/ai/tools/review-plan-tools.ts`:
-    //     write_review_plan emits the review-plan `tool_quiz` artifact (the
-    //     paper) — the ReviewPlanTask planner's only write.
-    //   - YUK-95 (P5 Lane-D) `src/capabilities/notes/server/hub-dismiss.ts`: the single
-    //     owner-service for dismissing a hub auto-link — appends
-    //     `attrs.suppressed_block_refs` (no version bump) alongside the paired
-    //     suppress event + the immediate-removal `note_refine_apply`, all atomic
-    //     in one transaction. The route only validates input + opens the tx.
-    //   - YUK-214 (Strategy D S1) `src/capabilities/ingestion/server/make-paper.ts`:
-    //     createIngestionPaper packs an imported ingestion session's questions
-    //     into an `ingestion_paper` tool_quiz artifact (ingest→practice
-    //     bridge). Single INSERT, idempotent by source_ref=sessionId.
-    //   - ADR-0032 RP-2 / YUK-304 (lane B) `src/server/ai/tools/tool-quiz-core.ts`:
-    //     the SHARED tool_quiz artifact INSERT core. write_review_plan
-    //     (review-plan-tools.ts) and write_quiz (write-quiz.ts) both delegate
-    //     their single INSERT here (the wrappers own validation / idempotency /
-    //     semantics; the core owns the constant skeleton + the ToolState Zod
-    //     barrier). The YUK-262 quiz-skill writer is RETIRED (quiz C→A): its
-    //     /practice paper capability moved to the write_quiz DomainTool.
-    // Anything else writing `artifact` should still be reviewed.
-    const hits = await findWriteHits('artifact', { roots: SCAN_RUNTIME_ROOTS });
-    const ALLOWED = [
-      'src/capabilities/notes/server/learning-intent-note.ts',
-      'src/capabilities/notes/jobs/note_generate.ts',
-      'src/capabilities/notes/jobs/note_verify.ts',
-      // YUK-857 — provider-attempt exhaustion atomically sets verification_status=failed and emits
-      // the matching artifact lifecycle projection in the claim transaction.
-      // YUK-888 — the terminalization moved with failArtifactVerificationForEpoch into the
-      // reservation/transitions module; the facade re-exports the public surface only.
-      'src/capabilities/notes/server/note-verification-claim-reservation.ts',
-      'src/server/boss/handlers/embedded_check_generate.ts',
-      'src/capabilities/practice/jobs/quiz_gen.ts',
-      // YUK-864 — learning_item retract ownership moved whole from the central proposal shell.
-      'src/capabilities/agency/server/proposal-retract-learning-item.ts',
-      // M4-T4 (YUK-319) — D11 墓碑：record_links / record_promotion appliers 从
-      // actions.ts 等价平移至此（搬迁不改逻辑）；record_promotion 物化 target 为
-      // artifact 时的单 INSERT 随代码迁入。无活 producer，旧学习记录域退役时一并删。
-      'src/capabilities/ingestion/server/legacy-record-appliers.ts',
-      'src/capabilities/notes/server/sections.ts',
-      'src/capabilities/notes/server/body-blocks-edit.ts',
-      'src/capabilities/notes/server/note-refine-apply.ts',
-      'src/capabilities/notes/server/hub-dismiss.ts',
-      // ADR-0032 RP-2 / YUK-304 (lane B) — the shared tool_quiz artifact INSERT (YUK-892: practice-owned)
-      // core. write_review_plan (review-plan-tools.ts) + write_quiz
-      // (write-quiz.ts) delegate their single INSERT here; review-plan-tools.ts
-      // itself no longer contains a raw artifact insert. The YUK-262 quiz-skill
-      // writer (src/server/copilot/skills/quiz-skill.ts) is retired (quiz C→A).
-      'src/capabilities/practice/server/tools/tool-quiz-core.ts',
-      // YUK-214 (Strategy D S1) — createIngestionPaper packs an imported
-      // ingestion session's questions into an `ingestion_paper` tool_quiz
-      // artifact (the ingest→practice bridge). Single INSERT, idempotent
-      // by source_ref=sessionId; the make-paper route's only write.
-      'src/capabilities/ingestion/server/make-paper.ts',
-      // ADR-0033 D6 / YUK-306 (lane D) — author_artifact INSERT + update_artifact
-      // version-bump UPDATE for type='interactive' rows (opaque to the note
-      // block-tree mesh, body_blocks=null; the render-side sandbox owns
-      // security, the backend stores attrs.html opaquely).
-      // YUK-880 — moved with the Notes capability ownership (server/tools/).
-      'src/capabilities/notes/server/tools/author-artifact.ts',
-      // YUK-471 Wave 3 (W3-B1) — projectArtifact / projectArtifactGuarded: the fold→row
-      // write-back (upsert/delete the materialized artifact row recomputed from the event fold).
-      // INERT until PROJECTION_IS_WRITER_ARTIFACT flips (W3-D); mirrors the W1/W2 projection
-      // writers (src/server/projections/{knowledge,goal,mistake_variant,learning_item}.ts).
-      'src/server/projections/artifact.ts',
-    ];
-    const unexpected = hits.filter((h) => !ALLOWED.includes(h.split(path.sep).join('/')));
+  it('artifact and question_block writers use the shared event-native inventory', async () => {
+    const { auditFoldWrites } = await import('../../scripts/audit-fold-writes');
+    const result = auditFoldWrites();
+    const tables = new Set(['artifact', 'question_block']);
+    // Same table scope as the retired duplicate lists; no allowance can bypass
+    // the original writer gate. Shared scanning also covers raw SQL and DELETE.
     expect(
-      unexpected,
-      `Unexpected artifact writers. Expected only ${ALLOWED.join(' + ')}. Found:\n  ${unexpected.join('\n  ')}`,
+      result.verdicts.filter((site) => tables.has(site.table) && site.status !== 'sanctioned'),
     ).toEqual([]);
-  });
-
-  // YUK-503 (YUK-471 W3-D) — symmetric to the `artifact` writer audit above. Every module that writes
-  // (INSERT or UPDATE) a `question_block` row must ALSO emit the canonical event that lets the W3-B fold
-  // (foldQuestionBlock) reproduce that row from the event log — a `experimental:question_block_create`
-  // BASE for creation/rescue, or a `experimental:question_block_lifecycle` for the set_status /
-  // reassign_figures fold-truth mutators — OR be the projection writer itself. Without this audit, the
-  // 5 formerly-eventless fold-truth mutators stayed invisible until the W3-C3 review; it is the
-  // checkpoint that catches them earlier: a NEW file that mutates question_block but is not in this
-  // allowlist fails here, forcing the author to either wire the event seam or consciously add the file
-  // (and explain its event-sourcing story), exactly the review gate that was missing.
-  it('question_block writes: confined to event-sourcing-aware writer modules (YUK-503)', async () => {
-    const hits = await findWriteHits('question_block', { roots: SCAN_RUNTIME_ROOTS });
-    const ALLOWED = [
-      // OCR ingestion: the creation INSERT + the rescue UPDATE, each paired with a
-      // `experimental:question_block_create` event (writeQuestionBlockCreateEvent) — rescue emits a
-      // create-event overwrite (FIRST-BASE-WINS is bypassed for rescue by design).
-      'src/server/session/ingestion.ts',
-      // docx ingestion: the creation INSERT + its `experimental:question_block_create` event.
-      'src/server/session/docx-ingestion.ts',
-      // Import completion owner: the virtual (merged/split) card INSERT + create event; enroll/ignore
-      // UPDATEs each emit `experimental:question_block_lifecycle` (op='set_status').
-      'src/capabilities/ingestion/server/import-completion.ts',
-      // auto-enroll: the status UPDATE → `experimental:question_block_lifecycle` (op='set_status',
-      // status='auto_enrolled' + imported_*).
-      'src/capabilities/ingestion/server/auto-enroll.ts',
-      // structured edits + figure reassignment: each UPDATE emits its matching structured-edit event or
-      // `experimental:question_block_lifecycle` (op='reassign_figures').
-      'src/capabilities/ingestion/server/block-structured-edit.ts',
-      // revert: the reset UPDATE → `experimental:question_block_lifecycle` (op='set_status',
-      // status='draft', imported_* cleared).
-      'src/capabilities/ingestion/server/revert-auto-enroll.ts',
-      // YUK-471 W3-B — projectQuestionBlock / projectQuestionBlockGuarded: the fold→row write-back
-      // (upsert recomputed from the event fold). INERT until PROJECTION_IS_WRITER_QUESTION_BLOCK flips;
-      // mirrors the artifact projection writer (src/server/projections/artifact.ts) above.
-      'src/server/projections/question_block.ts',
-    ];
-    const unexpected = hits.filter((h) => !ALLOWED.includes(h.split(path.sep).join('/')));
-    expect(
-      unexpected,
-      `Unexpected question_block writers. Every writer must pair its row mutation with the canonical event-source seam (question_block_create / question_block_lifecycle) or be the projection writer — see YUK-471 W3-D. Expected only ${ALLOWED.join(' + ')}. Found:\n  ${unexpected.join('\n  ')}`,
-    ).toEqual([]);
+    expect(result.stale.filter((writer) => tables.has(writer.table))).toEqual([]);
   });
 
   // YUK-384 — hub-sync writer ownership. Locks all four invariants: every

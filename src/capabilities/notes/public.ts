@@ -44,3 +44,4 @@ export {
   notesForKnowledge,
 } from './server/notes-read';
 export type { NoteUpdateAcceptResult } from './server/proposal-accept-applier';
+export { archiveProposalArtifacts } from './server/proposal-artifacts';
