@@ -67,4 +67,28 @@ mobile viewport; the page-local header width constraint is fixed without global 
 changes. Two mobile screenshots were inspected, with 390px document width and no
 clipped monetary content. Build/typecheck/lint and architecture gates precede PR review.
 No paid requests; isolated built API uses the retained clone and no provider credentials.
-Review, exact-head CI and local production delivery are not yet complete.
+Review, exact-head CI and local production delivery are recorded below.
+
+## Delivery
+
+PR1360 exact `c6bbf5e18d121e9da0f694baffc5a0cafe528ea3` passed all jobs in
+CI Gate `34132735074` and merged as `722b352b09a1e628ae003a36eadf14a2fee18dac`
+at 2026-09-07T14:35:12Z. Independent initial review found no P0/P1 and independently
+passed 5 helper tests and all 10 browser cases against the exact clean Docker image.
+One advisory P2 is deferred, not fixed: known-zero reported/estimated provenance can
+be omitted alongside unknown attempts. It is deduplicated and tracked as YUK-977;
+unknown amounts remain unknown, and no ledger calculation is affected.
+
+Mac-local **app only** deployed image `c6bbf5e1` at 14:35:29Z. It is healthy with zero
+restarts. Worker image `14ea1a81`, worker and Postgres IDs/start times and original
+pgdata are unchanged. No migration, NAS/Tunnel change or paid model call occurred.
+Live health/auth checks return 200/401/200; both cost APIs return 200. Actual admin
+history has 7 day rows and visibly retains source/unknown notes; Today is genuinely
+empty. Both real pages were checked at 390px with no overflow or page errors, and the
+production mobile screenshot was inspected. Event/task/attempt counts remain
+423/258/4 and active/created/retry queue counts remain zero.
+
+The private `runtime-976-app.override.yml` selects only app; removing this overlay
+returns app to the retained 975 image without changing worker or Postgres. The isolated
+test container was stopped and removed without deleting data volumes. No claim of a
+fresh full backup restore or real-provider quality acceptance is made for this UI slice.

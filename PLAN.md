@@ -1,15 +1,15 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：owner批准976两页费用UI，单线实施完整费用真相消费；975仍健康，整体goal active。
+> Linear 是权威 tracker；更新于 2026-09-07：976已合并并仅部署Mac app，真实费用页验证通过；977零金额来源跟进，整体goal active。
 
 ## NOW
 
-- Active976：owner已批准六文件UI预检；root独占codex/yuk-976-cost-truth，951只读核对暂停。
-  顺序：两页browser反例→共享显示规则/现成API类型→scoped unit/browser→review/exactCI→Mac部署。
-  18成本API/reader DB过；server truth完整，两UI窄类型丢reported/estimated/unknown。
-  shipped AdminCost注入合法unknown USD记录，实见$0.0000且无unknown；未写生产/无paid。
-  既有Today成本卡与AdminCost精确范围见docs/design/2026-09-07-cost-truth-preflight.md；无新账本/provider。
-  Linear976 In Progress；本地生产暂不变，无新paid；旧Copilot抽屉产品语义不动。
+- YUK976 Done：PR1360 exactc6bbf5e1，CI34132735074全job绿，main722b352b0；独立初审PASS，无P0/P1。
+  两页复用完整API类型与共享费用显示；15unit/18既有DB/cleanimage10browser及typecheck/lint/build过。
+  独立另跑5unit/10browser过；P2零金额known来源省略已查重登记977 Todo，明确deferred-not-fixed。
+  Mac14:35Z仅app部署c6bbf5e1，healthy/零重启；worker14ea1a81与原PG ID/StartedAt未变。
+  生产费用API200、health200/未认证401/认证200；真实历史来源/unknown可见，Today真空态，390px无溢出/错误。
+  event423/task258/attempt4与空活动队列不变，无paid/迁移/NAS；临时验收容器已移除，未删数据卷。
 - YUK975 Done：PR1359 exact14ea1a81，CI34128362101全job绿，独立初审PASS，main5e6562917。
   API拥有HTTP/runtime停机；原镜像stop137、init对照143，新bundle空闲0、cleanimage SSE30s主动断连0。
   SSE client未abort，clone423event/24job_event/258task/4attempt不变；不把断连变成Copilot Stop。
@@ -173,7 +173,7 @@
 
 ## NEXT
 
-1. 完成976：Today/Admin Cost复用完整API类型，显示已知小计/估算来源/未知数量，不改账本或费率。
+1. 977零金额known来源跟进；976已交付，保留shared formatter与现有聚合维度，不新增计费系统。
 2. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
 3. 887保留provider/crash矩阵；本地backfill/audit/golden及973/975退休与停机已验证，NAS仍不在范围。
@@ -188,7 +188,7 @@
 
 ## BLOCKED-ON
 
-- 976新增两页费用UI已获owner明确批准；不扩大为其它UI重绘。
+- 976两页费用UI已批准并交付；其它UI重绘仍须独立预检，不因整体goal扩张授权。
 - Mac本地生产已授权直接操作；NAS部署/数据操作仍未授权，不执行。
 - 不主动重跑现存failed memory/DLQ或新增超预算模型验收；历史费用unknown保留。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。

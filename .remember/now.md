@@ -2,7 +2,20 @@
 
 ## 最新状态
 
-- Active976：owner已明确「批准」六文件UI预检；root独占codex/yuk-976-cost-truth，base5e6562917。
+- YUK976 Done：PR1360 exactc6bbf5e18d121e9da0f694baffc5a0cafe528ea3，CI34132735074全job success。
+  2026-09-07T14:35:12Z合并main722b352b09a1e628ae003a36eadf14a2fee18dac；初审PASS，独立5unit/10browser过。
+  advisory P2 known-zero来源省略已核实、查重登记977 Todo，回复deferred-not-fixed并resolve，无第二审。
+  Mac14:35:29Z仅app部署c6bbf5e1，image0e7c1a0de9af98ca515b5a8bcd4caacfbb3c784378af3b774057595412b61a8d。
+  app5a4d3f1d healthy/零重启；worker7dc3538e仍14ea1a81/StartedAt13:48:05Z，PG7d99236a/09:40:42Z未变。
+  原pgdata保留，未执行迁移；event423/task258/attempt4与零active/created/retry不变，无paid/NAS/tunnel。
+  health200/未认证401/认证200，cost两API200；实际Admin7day rows展示来源与unknown，Today真空态。
+  两页真实390px browser无溢出/pageerror；production mobile截图已目检，证据cost-976-production-mobile.png。
+  runtime-976-app.override.yml只覆盖app，回退去掉该overlay回到975 app；无需重启worker/PG。
+  临时host PID59988已确认停止，不得重复signal；cleanimage容器tlp-cost-ui-c6bbf5e1已停并移除，无volume删除。
+  root独占codex/yuk-976-delivery-notes，原脏main未动；恢复专项$3未用，旧$10safe0.04177不回收reserve。
+  976已交付；977零来源、951完整重试窗drain、887完整provider/crash矩阵仍开放，整体goal active。
+
+- 976实施历史（由上方交付状态取代）：owner已明确「批准」六文件UI预检；base5e6562917。
   951仅曾读取issue/指引，未开实施/未操作数据；收到批准后已暂停，只有976一条写入线。
   Today/admin复用ApiOperationJsonResponse与describeCosts，删除两窄类型/重复金额格式；unknown-only不显示0。
   mixed显示已知小计+未知与reported/estimated/legacy细目；加载/错误不伪造金额，零值与空态分开。
@@ -10,8 +23,8 @@
   18原cost API/reader DB已过；无backend/provider/ledger改动，保留现有查询重试与权限。
   mobile Admin旧intrinsic header宽度已本页约束；未改全局CSS，两张390px截图已目检，金额无裁剪。
   private证据目录cost-976-admin-mobile.png/cost-976-today-mobile.png；浏览器用无provider凭据isolated API。
-  测试API PID59988/session49108，port18787，cwd tlp-cost-ui-976.wpuLuc，DBloom_before_973_verify；结束时只停此PID。
-  当前待final gates/初审/exactCI/本地交付；生产app/worker仍14ea1a81，无paid，恢复专项$3未用。
+  当时测试API port18787，cwd tlp-cost-ui-976.wpuLuc，DBloom_before_973_verify；现已停止。
+  final gates/初审/exactCI/本地交付已按上方完成；无paid，恢复专项$3未用。
 
 - YUK976批准前只读记录（现由上方实施状态取代）：main5e656291/f376c6aa，当时未改UI代码。
   server provider-cost-projection/cost-today/admin-cost truth字段完整；18相关API/reader DB全过。
