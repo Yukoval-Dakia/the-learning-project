@@ -189,6 +189,31 @@ describe('Copilot subagent mailbox', () => {
       );
       if (parentOutcome === 'completed') expect((await result).sdkSessionId).toBeUndefined();
       else await expect(result).rejects.toThrow('synthetic parent stream exit');
+      const provisional = await testDb()
+        .select()
+        .from(subagent_run)
+        .where(eq(subagent_run.session_id, sessionId));
+      expect(provisional[0]?.status).toBe('running');
+      expect(provisional[0]?.settled_event_id).toBeNull();
+      await writeCopilotReply(testDb(), {
+        sessionId,
+        userAskEventId: sourceEventId,
+        taskRunId,
+        actorRef: 'agent:copilot',
+        replyText: '本轮核对已结束。',
+        outcome: parentOutcome === 'completed' ? 'success' : 'failure',
+        ...(parentOutcome === 'completed'
+          ? {}
+          : {
+              durableFailure: {
+                reason:
+                  parentOutcome === 'cancelled' ? ('cancelled' as const) : ('exhausted' as const),
+                error: 'synthetic parent stream exit',
+              },
+            }),
+        now: new Date(),
+      });
+      await mailbox.reconcileNativeSubagentsForParent(testDb(), sessionId, sourceEventId);
       const rows = await testDb()
         .select()
         .from(subagent_run)

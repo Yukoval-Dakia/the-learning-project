@@ -737,6 +737,87 @@ describe('runCopilotRun', () => {
     expect(await copilotReplyEvents(sessionId)).toHaveLength(1);
   });
 
+  it('YUK-978 — Stop after SDK finalization closes the child with the committed parent outcome', async () => {
+    const runId = 'copilot_user_ask_native_late_stop_978';
+    const sessionId = 'sess_native_late_stop_978';
+    const stream = vi.fn<CopilotExecutionAdapters['streamTaskCollectingFn']>(
+      async (_kind, _input, ctx) => {
+        await ctx.sdkSession?.onSessionId?.('sdk_native_late_stop_978');
+        await ctx.onTaskEvent?.({
+          type: 'system',
+          subtype: 'task_started',
+          uuid: '00000000-0000-4000-8000-000000000978',
+          session_id: 'sdk_native_late_stop_978',
+          task_id: 'native_late_stop_978',
+          subagent_type: 'copilot-researcher',
+          description: '逐项核对三份长材料的矛盾、反例及尚未覆盖的证据边界。',
+        });
+        return {
+          task_run_id: 'tr_native_late_stop_978',
+          text: '本轮核对已结束。',
+          terminalText: '本轮核对已结束。',
+          partial: false,
+        };
+      },
+    );
+    const execute = createCopilotExecutionOwner({
+      streamTaskCollectingFn: stream,
+      buildMcpServerFn: () => ({ type: 'sdk', name: 'loom' }) as never,
+      buildTavilyMcpServerFn: () => null,
+      resolveCopilotSkillsFn: async () => undefined,
+    });
+    try {
+      const result = await runCopilotRun({
+        db: testDb(),
+        data: { ...baseData, run_id: runId, session_id: sessionId },
+        resolveCopilotRunInputFn: stubRunInput,
+        executeCopilotTurnFn: async (...args) => {
+          const executed = await execute(...args);
+          expect(executed.sdkSessionId).toBeUndefined();
+          // Deterministically deliver Stop in the gap after SDK/finalizer return
+          // but before the durable worker's final cancellation probe and commit.
+          await writeJobEvent(testDb(), {
+            business_table: COPILOT_RUN_TABLE,
+            business_id: runId,
+            event_type: COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
+            payload: { requested_by: 'user' },
+          });
+          return executed;
+        },
+      });
+      expect(result.status).toBe('cancelled');
+      expect((await copilotReplyEvents(sessionId))[0]?.payload).toMatchObject({
+        durable_failure: { reason: 'cancelled' },
+      });
+      const children = await testDb()
+        .select()
+        .from(subagent_run)
+        .where(eq(subagent_run.session_id, sessionId));
+      expect(children).toHaveLength(1);
+      expect(children[0]?.status).toBe('cancelled');
+      expect(
+        await testDb()
+          .select()
+          .from(event)
+          .where(
+            and(
+              eq(event.session_id, sessionId),
+              eq(event.action, 'experimental:subagent_run_settled'),
+            ),
+          ),
+      ).toHaveLength(1);
+      expect(
+        await testDb()
+          .select()
+          .from(copilot_continuation)
+          .where(eq(copilot_continuation.session_id, sessionId)),
+      ).toEqual([]);
+      expect(stream).toHaveBeenCalledTimes(1);
+    } finally {
+      await testDb().delete(subagent_run).where(eq(subagent_run.session_id, sessionId));
+    }
+  });
+
   it('YUK-939 — durable root uses one same-parent native read-only Task without continuation', async () => {
     const runId = 'copilot_user_ask_subtask_lifecycle';
     await writeEvent(testDb(), {

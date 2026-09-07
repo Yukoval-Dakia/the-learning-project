@@ -1,14 +1,14 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：单线实施978原生子终态缺失修复，已有真实PG RED；951drain与977仍开放。
+> Linear 是权威 tracker；更新于 2026-09-07：978仅收尾已复现P1与交付，随后按产品完成条件盘点剩余项，控制耗时不扩展工程清理。
 
 ## NOW
 
 - 951部分交付：PR1361 exactab0bbb909，CI34134547233全job绿，main26e0e2d65；独立初审PASS无finding。
   删7死model control/249行与重复存在性断言；31unit/41DB/typecheck/lint/build/audits过，独立8unit过。
   未部署/改handler或历史数据；14:39Z三表全空，无旧run/continuation/DLQ，完整retry+抖动窗仍待证，951 Backlog。
-  Active978：root独占codex/yuk-978-native-child-settlement；native start后root抛错已真实PG RED，probe回滚0残留。
-  计划正式RED→父权威终态收口/迟到栅栏→scoped DB/review/CI；architect只读核对锁序，不猜死/不重烧模型。
+  Active978：PR1362/ba4bc7fe初审与CI绿后发现Stop竞态P1，真实父cancelled/子lost RED→GREEN，生产未变。
+  已删SDK退出提前裁决，父提交后统一收口；82DB过，余gate→唯一验证审→exactCI/交付；随后全局收口盘点。
 - YUK976 Done：PR1360 exactc6bbf5e1，CI34132735074全job绿，main722b352b0；独立初审PASS，无P0/P1。
   两页复用完整API类型与共享费用显示；15unit/18既有DB/cleanimage10browser及typecheck/lint/build过。
   独立另跑5unit/10browser过；P2零金额known来源省略已查重登记977 Todo，明确deferred-not-fixed。

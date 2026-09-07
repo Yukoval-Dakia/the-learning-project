@@ -88,8 +88,6 @@ export function nativeSubagentProjectionCondition() {
 type NativeParentClosure = {
   sessionId: string;
   parentTurnEventId: string;
-  /** Local exit closes only this attempt, never another paid retry. */
-  parentTaskRunId?: string;
   status: 'cancelled' | 'lost';
 };
 
@@ -103,9 +101,6 @@ async function settleNativeSubagentsForParentTx(tx: Tx, input: NativeParentClosu
       and(
         eq(subagent_run.session_id, input.sessionId),
         eq(subagent_run.parent_turn_event_id, input.parentTurnEventId),
-        input.parentTaskRunId
-          ? eq(subagent_run.parent_task_run_id, input.parentTaskRunId)
-          : undefined,
         eq(subagent_run.status, 'running'),
         nativeSubagentProjectionCondition(),
       ),
@@ -127,10 +122,6 @@ async function settleNativeSubagentsForParentTx(tx: Tx, input: NativeParentClosu
     );
   }
   return rows.length;
-}
-
-export async function settleNativeSubagentsForParent(db: Db, input: NativeParentClosure) {
-  return db.transaction((tx) => settleNativeSubagentsForParentTx(tx, input));
 }
 
 /** Call under the parent's settlement lock; a cancel request alone is not a terminal. */
@@ -816,7 +807,7 @@ export async function handleNativeSubagentTaskEvent(
     parentTurnEventId: string;
     parentTaskRunId: string;
   },
-): Promise<void> {
+): Promise<SubagentRunRecord | null | undefined> {
   if (message.subtype === 'task_started') {
     if (
       message.subagent_type !== COPILOT_SUBAGENT_NAME ||
@@ -826,19 +817,18 @@ export async function handleNativeSubagentTaskEvent(
       return;
     }
     const objective = message.description?.trim() || 'Copilot researcher task';
-    await recordNativeSubagentStarted(db, {
+    return recordNativeSubagentStarted(db, {
       sessionId: ctx.sessionId,
       parentTurnEventId: ctx.parentTurnEventId,
       parentTaskRunId: ctx.parentTaskRunId,
       sdkTaskId: message.task_id,
       objective,
     });
-    return;
   }
 
   const outcome = terminalNativeSubagentOutcome(message);
   if (!outcome) return;
-  await settleNativeSubagentRun(db, {
+  return settleNativeSubagentRun(db, {
     sessionId: ctx.sessionId,
     parentTurnEventId: ctx.parentTurnEventId,
     sdkTaskId: message.task_id,

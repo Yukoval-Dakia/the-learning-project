@@ -11,6 +11,13 @@
   typecheck/lint/build/437/0/47架构门过；独立初审review_978_native_settlement进行中，architect仅设计咨询不当review。
   文档docs/planning/2026-09-07-native-child-settlement.md；待commit/PR/exactCI/cleanimage/runtime，无paid/生产变化。
 
+- 978 P1收尾覆盖上方旧状态：PR1362/ba4bc7fe初审PASS与CI34137867856绿，但bot发现SDK后Stop竞态，暂不合并部署。
+  真实public worker在SDK返回后写Stop，父cancelled/子lost已RED；改父提交后公共wrapper修复，82DB GREEN。
+  SDK只排空/记录open native以禁cursor；删本地提前终态helper，3旧case明确先commit父marker。
+  baseline/new cleanimage物理reconcile已证RED→GREEN/重复幂等，零task/attempt/continuation；候选worker已stop exit0。
+  仍需唯一P1验证审、新exactCI/newimage交付；生产appc6bbf5e1/worker14ea1a81/原PG未变，无paid。
+  owner强调时间/全局进度：978收尾后按产品完成条件盘点887/951/977，禁止逐文件继续扩张重构。
+
 - 951 source-only部分已交付：PR1361 exactab0bbb909aca47530f706b2204045f6cd4b12a12，CI34134547233全job绿。
   2026-09-07T14:54:05Z merge main26e0e2d6550404bdfeaee22df38a56dc56ff140c；独立初审PASS，无finding/无需第二审。
   独立2文件8unit过；root31unit/41DB/typecheck/lint/build/audits过；生产无live import差异，不为此重启。

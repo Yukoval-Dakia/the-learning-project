@@ -54,6 +54,7 @@ import {
 } from '@/capabilities/copilot/server/durable-dispatch';
 import { selectAsksWithMaterializingToolCall } from '@/capabilities/copilot/server/materializing-tools';
 import { runTeachingSkill } from '@/capabilities/copilot/server/skills/teaching-skill';
+import { reconcileNativeSubagentsForParent } from '@/capabilities/copilot/server/subagent-mailbox';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
 import {
@@ -632,6 +633,30 @@ async function awaitClaimedCopilotExecution(
 }
 
 export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCopilotRunResult> {
+  try {
+    return await executeAcceptedCopilotRun(params);
+  } finally {
+    // Includes replay/early exits and persisted markers whose public suffix
+    // failed. No terminal means no repair; projection failure cannot undo a
+    // paid parent outcome. The existing parent reconciler retries after crashes.
+    try {
+      await reconcileNativeSubagentsForParent(
+        params.db,
+        params.data.session_id,
+        params.data.run_id,
+      );
+    } catch (error) {
+      console.error('[copilot_run] native child settlement failed', {
+        runId: params.data.run_id,
+        error,
+      });
+    }
+  }
+}
+
+async function executeAcceptedCopilotRun(
+  params: RunCopilotRunParams,
+): Promise<RunCopilotRunResult> {
   const { db, data } = params;
   const execute = params.executeCopilotTurnFn ?? executeCopilotTurn;
   const assembleRunInput = params.resolveCopilotRunInputFn ?? assembleCopilotRunInput;
