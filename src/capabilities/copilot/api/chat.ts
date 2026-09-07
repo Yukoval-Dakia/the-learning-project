@@ -32,15 +32,6 @@ import { writeJobEvent } from '@/server/events/writer';
 import { checkRateLimit } from '@/server/http/rate-limit';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 
-export async function enqueueCopilotMailboxJob(
-  queue: string,
-  id: string,
-  data: Record<string, string>,
-): Promise<string | null> {
-  const boss = await getStartedBoss();
-  return boss.send(queue, data, { id });
-}
-
 import { Conversation } from '@/server/session';
 
 // Closes the count-then-enqueue race inside the single Hono API process. A slot

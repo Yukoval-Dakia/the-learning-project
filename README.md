@@ -145,6 +145,15 @@ pnpm build            # rw:web:build + 三 esbuild 产物（dist/server.cjs / di
    docker compose stop app worker
    docker compose run --rm migrate
    ```
+   The runner also refuses an undrained legacy Copilot mailbox. Before upgrading
+   from the mailbox release, prove the full retry window is empty, stop admission,
+   unschedule exactly `copilot_subagent_reconcile` with the previous pg-boss client,
+   and let the previous worker drain any queued housekeeping ticks before stopping it.
+   A remaining legacy child, continuation, queued/active/retry job or old schedule
+   blocks migration; terminal history and native child projections are retained.
+   Never delete pending jobs to pass readiness. Rolling back the worker restores its
+   schedule, so repeat this check before retrying the upgrade. See
+   [ADR-0063](docs/adr/0063-retire-copilot-mailbox-execution.md).
    Goal, LearningItem and MistakeVariant now have one structural writer; their old
    `PROJECTION_IS_WRITER_*` switches are ignored. Rollback requires the previous
    release plus a verified recovery configuration, not switching these entities OFF

@@ -1,14 +1,14 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：978仅收尾已复现P1与交付，随后按产品完成条件盘点剩余项，控制耗时不扩展工程清理。
+> Linear 是权威 tracker；更新于 2026-09-08：951完整排空窗已证，退休旧执行链路中；owner批准887转用未用$3。
 
 ## NOW
 
 - 951部分交付：PR1361 exactab0bbb909，CI34134547233全job绿，main26e0e2d65；独立初审PASS无finding。
   删7死model control/249行与重复存在性断言；31unit/41DB/typecheck/lint/build/audits过，独立8unit过。
   未部署/改handler或历史数据；14:39Z三表全空，无旧run/continuation/DLQ，完整retry+抖动窗仍待证，951 Backlog。
-  Active978：PR1362/ba4bc7fe初审与CI绿后发现Stop竞态P1，真实父cancelled/子lost RED→GREEN，生产未变。
-  已删SDK退出提前裁决，父提交后统一收口；82DB过，余gate→唯一验证审→exactCI/交付；随后全局收口盘点。
+  978 Done：PR1362 exact582b2e66/CI34139494605全绿/main2351d5657；父cancelled/子lost竞态RED→GREEN，唯一验证PASS。
+  102DB/18unit/gates过；15:46Z Mac app/worker已582b2e66、PG未变，API/browser/计数过；无paid，详见978记录。
 - YUK976 Done：PR1360 exactc6bbf5e1，CI34132735074全job绿，main722b352b0；独立初审PASS，无P0/P1。
   两页复用完整API类型与共享费用显示；15unit/18既有DB/cleanimage10browser及typecheck/lint/build过。
   独立另跑5unit/10browser过；P2零金额known来源省略已查重登记977 Todo，明确deferred-not-fixed。
@@ -178,16 +178,16 @@
 
 ## NEXT
 
-1. 优先978原生子投影终态收口；951完整drain窗口与977零来源保持独立，不混入本lane。
-2. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
-   946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
-3. 887保留provider/crash矩阵；本地backfill/audit/golden及973/975退休与停机已验证，NAS仍不在范围。
+1. Active951：16:20Z完整drain窗通过，退休旧mailbox执行/ResearchTask，保留native投影与历史；34DB通过，审查/交付待完成。
+2. 887：七项差集见rollout-evidence-gap；SDK MCP/提案workflow过；owner批准未用$3转Notes/Memory真实恢复，尚未消费。
+   977零金额来源是已登记P2，不阻塞主产品；无新代码缺陷不再开文件级清理支线。
+3. 最终按学习意图→录入→判分→复习→提议/撤回的业务owner/单份规则复核，不以测试或依赖数量代替完成。
 
 ## PARKED
 
 - 两处judge直调已核实为照片作答/独立解答一致性，不为调用形式统一机械删除，无新缺陷证据。
 - 全历史ADR审计仍未完成，不冒充全量通过；971仅覆盖三份已确认冲突的现役指引。
-- 951旧mailbox/ToolOperations仅drain-only；退休需零pending/零队列活动覆盖完整重试窗。
+- 951历史表和native投影保留；ToolOperations仍有live remote consumer，不随旧mailbox执行退休。
 - 921多provider、572夜间教研、832HOLD不解锁。
 - 计费、重试、prompt/skill、复杂parser、并发/回滚/恢复、UI安全测试仍保留，不按数量硬删。
 
@@ -195,5 +195,5 @@
 
 - 976两页费用UI已批准并交付；其它UI重绘仍须独立预检，不因整体goal扩张授权。
 - Mac本地生产已授权直接操作；NAS部署/数据操作仍未授权，不执行。
-- 不主动重跑现存failed memory/DLQ或新增超预算模型验收；历史费用unknown保留。
+- Notes/Memory真实恢复$3转用已批准；只做限定验收，不批量重跑历史failed/DLQ，历史费用unknown保留。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。

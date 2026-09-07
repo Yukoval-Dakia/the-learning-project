@@ -1,4 +1,108 @@
 {
+  "subagent_run.claim_token": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "subagent_run.hard_deadline_at": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "subagent_run.child_task_run_id": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "subagent_run.pg_boss_job_id": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_continuation.claim_token": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_continuation.lease_expires_at": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_continuation.task_run_id": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_continuation.reply_event_id": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_continuation.pg_boss_job_id": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_continuation.error_code": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_continuation.error_message": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_continuation.started_at": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_continuation.settled_at": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
   "copilot_evidence_checkpoint.task_kind": {
     "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
     "resolves_when": {

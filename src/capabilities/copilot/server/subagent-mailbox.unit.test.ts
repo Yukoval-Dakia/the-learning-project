@@ -1,18 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { SPAWN_TOOL_NAME } from '@/server/ai/spawn-contract';
 import { copilotTaskSpec } from '../tasks/agent';
-import { copilotResearchTaskSpec } from '../tasks/research';
 
 describe('Copilot native research contracts (YUK-939)', () => {
-  it('keeps the durable worker child fixed, read-only, bounded, and non-recursive', () => {
-    expect(copilotResearchTaskSpec.definition.kind).toBe('CopilotResearchTask');
-    expect(copilotResearchTaskSpec.definition.budget).toMatchObject({
-      maxIterations: 10,
-      timeout: 600_000,
-    });
-    expect(copilotResearchTaskSpec.definition.prompt.text).toContain(
-      '不得调用 Task、generate_goal_outline、generate_question_candidate、launch_researcher',
-    );
+  it('keeps the parent prompt on one native child result channel', () => {
     expect(copilotTaskSpec.definition.prompt.text).toContain(
       'subagent_type 固定为 copilot-researcher',
     );
@@ -21,7 +12,7 @@ describe('Copilot native research contracts (YUK-939)', () => {
     expect(copilotTaskSpec.definition.prompt.text).not.toContain('自动 continuation');
   });
 
-  it('documents foreground inline native Task as the sole child result channel', () => {
+  it('uses native Task under the parent budget', () => {
     expect(SPAWN_TOOL_NAME).toBe('Task');
     expect(copilotTaskSpec.definition.budget.maxIterations).toBeGreaterThan(0);
   });

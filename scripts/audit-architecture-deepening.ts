@@ -1390,10 +1390,10 @@ async function runCli(): Promise<void> {
 
   const result = auditArchitectureDeepening(projectRoot, publicReadCycleCatalog, {
     ownerMaps,
-    expectedTaskCount: 50,
+    expectedTaskCount: 49,
     taskCensus: {
       catalogCount: census.catalogCount,
-      expectedCount: 50,
+      expectedCount: 49,
       errors: census.errors,
       profileCriticCallerPresent: census.profileCriticCaller !== null,
       forbiddenPatternViolations: scanForbiddenTaskCatalogPatterns(projectRoot).map(

@@ -30,13 +30,9 @@ import { getTaskSystemPrompt } from './task-prompts';
 
 const YUK949_PROMPT_HASHES = {
   'general:CopilotTask': 'e7190278f0b4c44e8a3cac4f607adae54d3f73bdc474e17a8b99f5cfd6f8162b',
-  'general:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
   'math:CopilotTask': 'e7190278f0b4c44e8a3cac4f607adae54d3f73bdc474e17a8b99f5cfd6f8162b',
-  'math:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
   'physics:CopilotTask': 'e7190278f0b4c44e8a3cac4f607adae54d3f73bdc474e17a8b99f5cfd6f8162b',
-  'physics:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
   'yuwen:CopilotTask': 'e7190278f0b4c44e8a3cac4f607adae54d3f73bdc474e17a8b99f5cfd6f8162b',
-  'yuwen:CopilotResearchTask': '1c521c1a6767358d5bb08d30d1ce8481b7cd9ca2c182d683b460488965e20cff',
 } as const;
 
 describe('copilot task dispatch declarations', () => {
@@ -48,7 +44,7 @@ describe('copilot task dispatch declarations', () => {
     for (const kind of Object.keys(taskCatalog) as TaskKind[]) {
       expect(tasks[kind], kind).toBe(taskCatalog[kind]);
     }
-    expect(Object.keys(tasks)).toHaveLength(50);
+    expect(Object.keys(tasks)).toHaveLength(49);
   });
 
   it('contains no prompt builders or task business definitions', () => {
@@ -85,7 +81,7 @@ describe('task prompt definitions', () => {
   });
 
   it('defines one non-empty inline or profile prompt for every task', () => {
-    expect(Object.keys(tasks)).toHaveLength(50);
+    expect(Object.keys(tasks)).toHaveLength(49);
 
     for (const task of Object.values(tasks)) {
       switch (task.prompt.kind) {
@@ -123,7 +119,7 @@ describe('task prompt definitions', () => {
       for (const task of Object.keys(tasks) as Array<keyof typeof tasks>) {
         // These prompts have intentionally evolved since the migration oracle.
         // QuizVerify is covered by its current policy contract below and actual-output gates.
-        if (task === 'CopilotTask' || task === 'CopilotResearchTask' || task === 'QuizVerifyTask') {
+        if (task === 'CopilotTask' || task === 'QuizVerifyTask') {
           continue;
         }
         const key = `${profileId}:${task}` as keyof typeof promptHashOracle.prompts;
@@ -135,11 +131,11 @@ describe('task prompt definitions', () => {
     }
   });
 
-  it('pins the YUK-949 presentation-control Copilot and unchanged researcher prompts byte-for-byte', () => {
+  it('pins the YUK-949 presentation-control Copilot prompt byte-for-byte', () => {
     for (const [key, expectedHash] of Object.entries(YUK949_PROMPT_HASHES)) {
       const [profileId, task] = key.split(':') as [
         'general' | 'math' | 'physics' | 'yuwen',
-        'CopilotTask' | 'CopilotResearchTask',
+        'CopilotTask',
       ];
       const actualHash = createHash('sha256')
         .update(getTaskSystemPrompt(task, resolveSubjectProfile(profileId)), 'utf8')
@@ -634,13 +630,6 @@ describe('CopilotTask.systemPrompt — YUK-938 native Task live parent', () => {
     expect(p).not.toContain('launch_researcher({launch_key,objective})');
     expect(p).not.toContain('get_subagent / wait_subagent / cancel_subagent');
     expect(p).not.toContain('自动 continuation 中不得再次 launch_researcher');
-
-    const researcher = getTaskSystemPrompt('CopilotResearchTask');
-    expect(researcher).toContain('只读研究员');
-    expect(researcher).toContain(
-      '不得调用 Task、generate_goal_outline、generate_question_candidate、launch_researcher',
-    );
-    expect(researcher).toContain('不得输出 transcript、隐藏推理或过程日志');
   });
 });
 

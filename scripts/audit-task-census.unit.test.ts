@@ -37,6 +37,19 @@ afterEach(() => {
 });
 
 describe('auditTaskCensus source discovery', () => {
+  it('discovers the injected collecting-stream runner used by the Copilot execution owner', () => {
+    const result = auditFixture(['CopilotTask'], {
+      'src/execution.ts': `adapters.streamTaskCollectingFn('CopilotTask', input, ctx, onText);`,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.callersByKind.CopilotTask).toEqual([
+      expect.objectContaining({
+        callee: 'adapters.streamTaskCollectingFn',
+        file: 'src/execution.ts',
+      }),
+    ]);
+  });
+
   it('discovers a new literal caller and de-duplicates repeated calls by kind', () => {
     const result = auditFixture(['NewTask'], {
       'src/route.ts': `
@@ -361,7 +374,7 @@ describe('registered infrastructure evidence', () => {
 
 describe('live taskCatalog census', () => {
   it('derives the catalog census from the frozen live composition root', () => {
-    expect(Object.keys(taskCatalog)).toHaveLength(50);
+    expect(Object.keys(taskCatalog)).toHaveLength(49);
     expect(Object.isFrozen(taskCatalog)).toBe(true);
   });
 
@@ -376,18 +389,8 @@ describe('live taskCatalog census', () => {
     });
 
     expect(result.ok, result.errors.join('\n')).toBe(true);
-    expect(result.discoveredKinds).toHaveLength(49);
-    expect(Object.keys(copilotTaskSpecs).sort()).toEqual([
-      'CopilotResearchTask',
-      'CopilotTask',
-      'TeachingTurnTask',
-    ]);
-    expect(result.callersByKind.CopilotResearchTask).toEqual([
-      expect.objectContaining({
-        file: 'src/capabilities/copilot/jobs/copilot_run.ts',
-        callee: 'runAgentTask',
-      }),
-    ]);
+    expect(result.discoveredKinds).toHaveLength(48);
+    expect(Object.keys(copilotTaskSpecs).sort()).toEqual(['CopilotTask', 'TeachingTurnTask']);
     expect(result.registrationEvidence.some((item) => item.registration === 'manifest-job')).toBe(
       true,
     );

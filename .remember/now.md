@@ -2,21 +2,37 @@
 
 ## 最新状态
 
-- Active978：root独占codex/yuk-978-native-child-settlement，base6e0e205b/main26e0e2d65。
-  6正式DB RED→GREEN；native事件串行接纳/退出排空、exact attempt丢终态收口，失败不覆盖paid root结果。
-  既有root reconciler包含已终态但native未收口父；同一parent Es锁约束late start/terminal，child单独commit可恢复。
-  full marker parser移copilot-run-outcome供真实两consumer共用；不读ai_task状态猜父死，不依赖951旧scheduler。
-  25 mailbox/reconcile DB（实际advisory竞争/sibling/retry/legacy免疫）+76 durable/teaching/queue/StopDB过；18unit过。
-  子投影失败/补lost时不返回SDKcursor；原全表断言暴露操作表fixture泄漏，已suite局部before/after清理，未改global reset。
-  typecheck/lint/build/437/0/47架构门过；独立初审review_978_native_settlement进行中，architect仅设计咨询不当review。
-  文档docs/planning/2026-09-07-native-child-settlement.md；待commit/PR/exactCI/cleanimage/runtime，无paid/生产变化。
+- Active951：root独占codex/yuk-951-retire-drained-mailbox；16:20:25Z完整排空窗通过，375条完成reconcile保留历史。
+  旧run/continuation/DLQ全状态零行，三业务表零行；生产仍582b2e66，旧cron尚未unschedule，无生产写入。
+  正在退休旧执行器与ResearchTask，保留native/历史/Stop；新增只读migrate拒绝门，34DB过，unit census修正中。
+  owner最新「批准」承接待答问题：未用$3历史恢复专项转Notes/Memory真实恢复，上限$3；本轮未调用付费模型。
+  单活动实施线先951验证/审查/交付，再887 actual缺项；不关闭整体goal或声称B3物理表名退休。
 
-- 978 P1收尾覆盖上方旧状态：PR1362/ba4bc7fe初审PASS与CI34137867856绿，但bot发现SDK后Stop竞态，暂不合并部署。
-  真实public worker在SDK返回后写Stop，父cancelled/子lost已RED；改父提交后公共wrapper修复，82DB GREEN。
-  SDK只排空/记录open native以禁cursor；删本地提前终态helper，3旧case明确先commit父marker。
-  baseline/new cleanimage物理reconcile已证RED→GREEN/重复幂等，零task/attempt/continuation；候选worker已stop exit0。
-  仍需唯一P1验证审、新exactCI/newimage交付；生产appc6bbf5e1/worker14ea1a81/原PG未变，无paid。
-  owner强调时间/全局进度：978收尾后按产品完成条件盘点887/951/977，禁止逐文件继续扩张重构。
+- Active887证据差集：root独占codex/yuk-887-rollout-evidence-gap；未改产品代码，main/runtime仍978。
+  七项rollout逐项区分现有actual/DB/真实process与缺口，docs/planning/2026-09-07-rollout-evidence-gap.md。
+  实际Agent SDK0.3.220 + MCP1.29 Client/linked InMemoryTransport调用2test-only工具通过，真实clone DB/log/mirror。
+  task canary_887_real_mcp_20260907_v2；valid嵌套长文/0.75/null成功，invalid score string被schema拒绝并failure mirror。
+  clone loom_native_978_ba4bc7fe_verify模型task/attempt仍0；不是生产/paid/networktransport验收，未关闭887。
+  初始probe误读output envelope失败，修断言后PASS；.tmp/yuk887-bridge-canary.cjs可复核，不引入长期harness。
+  已问是否转用未用$3历史恢复专项为Notes/Memory实际恢复，答复前不付费；下一步按capability核actual差集。
+  isolated shipped API582b2e66/port18887提案canary已过：draft不写node，未认证401，accept/dismiss/retract201，重复200同event。
+  accepted node t6aq0h0m4eo7cboxi45lg9mj撤回后归档不删行；0task/attempt，生产423/258/4未增。
+  临时tlp-proposal-887-582b2e66已stop；API-only无worker/provider keys，不称UI点击/模型生成或所有proposal kinds全验收。
+  生产4provider_attempt都是8月15–16旧DashScope embedding，不能算当前矩阵通过；951完整窗口仍待证。
+
+- YUK978 Done：PR1362 exact582b2e66cdd7f809e1f3c1509d60f668a46e9668，CI34139494605全job成功。
+  15:45:36Z合并main2351d5657ec7696bf5da88226d0e33fa873bc405；初审+唯一P1验证PASS，无第三审。
+  SDK后Stop父cancelled/子lost真实public worker RED→GREEN；SDK只排空/禁不完整cursor，父commit后收口。
+  102DB/18unit/typecheck/lint/build/437/0/47架构门过；独立验证7DB过。旧lease恢复不猜native死、不重烧模型。
+  cleanimage349a23af79dbf5a8da127e45fdc781cb22532c26cbd686697c4131824c0bbbac物理reconcile三类父终态+重复过。
+  clone loom_native_978_ba4bc7fe_verify仅synthetic；新3settled/0continuation/0task/0attempt，两个candidate worker均exit0。
+  15:46Z Mac app25df8e2f/worker e0479148均582b2e66 healthy/零重启；原PG7d99236a/09:40:42Z/pgdata未变。
+  原app/worker stop均0，live migrate零新增、7LI readiness过；423event/258task/4attempt/0child与空队列不变。
+  health200/未认证401/认证200/sessions200；browser抽屉刷新重开无pageerror，截图private copilot-after-978.png。
+  runtime-978-image.override.yml已生效；去掉overlay可回appc6bbf5e1/worker14ea1a81。无NAS/tunnel/paid/数据删除。
+  root独占codex/yuk-978-delivery-notes，原脏main不动；旧$10safe0.04177，专项恢复$3未用。
+  下一单887只做7条rollout验收证据差集，再补必要缺项；951完整drain窗与977 P2独立，不新增全仓清理。
+  887 rollout不等于implementation gate；不能靠mock关闭生产证据，也不能为旧验收要求重建已退休provider路径。
 
 - 951 source-only部分已交付：PR1361 exactab0bbb909aca47530f706b2204045f6cd4b12a12，CI34134547233全job绿。
   2026-09-07T14:54:05Z merge main26e0e2d6550404bdfeaee22df38a56dc56ff140c；独立初审PASS，无finding/无需第二审。

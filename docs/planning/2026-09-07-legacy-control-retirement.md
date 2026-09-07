@@ -36,12 +36,73 @@ Native Task events still write the `subagent_run` projection but do not mint a l
 continuation. That table is therefore not wholly obsolete. Event/turn readers and
 explicit cancellation must survive any subsequent legacy-handler deletion.
 
+### Retained-history recheck (2026-09-07 16:09Z)
+
+The deployed pg-boss version is 12.26.3. Its actual retry formula bounds the two
+backoffs at 60 and 120 seconds, so the three active-expiry allowances total
+`3 * 7200 + 60 + 120 = 21780 seconds` (6h03m), before supervision, polling and
+process downtime. Expiry is driven by the supervisor (default 60 seconds), not
+the separately named monitoring interval. Allow for a check on each expiry, not
+only one final check, and for each fetch/downtime gap.
+
+The four legacy main/DLQ queues and reconcile queue were created at 10:06:15Z;
+all actually have retention_seconds **and deletion_seconds** 604800. The library's
+normal cleanup therefore cannot remove their completed/failed job rows in this
+six-hour observation interval. Current non-test production code has no deleteJob,
+deleteAllJobs, purgeQueue, deleteQueue or deleteAfterSeconds override call. All-state
+retained history contains no legacy run/continuation/DLQ jobs; the three operational
+tables remain empty. Reconcile completions span 10:06:51.958Z–16:09:02.305Z, with
+maximum inter-completion gap 94.688489 seconds.
+
+Unlike two endpoint snapshots, those retained all-state records and unchanged queue
+creation identities can establish absence of intermediate queue activity. They do
+not excuse the elapsed-window requirement. Use **no earlier than 16:20Z** for the
+final retirement recheck, then verify the same queue identities/retention, full-state
+history, empty tables, successful recent reconciliation and actual worker identity.
+This margin includes repeated supervision/fetch checks and observed brief restarts;
+do not extrapolate it to another host or a stopped worker with unbounded downtime.
+
+Retirement must remove the three legacy manifest jobs and their dedicated execution
+helpers, while preserving native projection/parent recovery and historical readers.
+The registrar only adds current schedules: removal from the manifest does not
+automatically unschedule an already-persisted copilot_subagent_reconcile cron.
+Its exact schedule must also be retired during authorized local delivery; preserve
+the queue/history rather than deleting them. No handler/schedule has been removed
+at this evidence-only checkpoint.
+
 YUK-951 remains open after this source-only cut. The existing finalization design's
 deployed zero-nonterminal plus zero-queue-activity window still governs deletion of
 drain handlers. No production write, handler shutdown, paid call or historical data
 deletion is authorized by a passing source cleanup test.
 
 ## Validation
+
+### Drained execution retirement, 2026-09-08
+
+Final read at 2026-09-07T16:20:25.695893Z passed the conservative full drain
+window: queue identities were unchanged since 10:06Z, retention/deletion both
+604800 seconds, zero legacy run/continuation/DLQ jobs across all states, 375
+completed reconcile jobs, and zero rows in the three operational tables.
+The production old reconcile schedule is still present; it must be explicitly
+unscheduled and its housekeeping ticks drained during the controlled cutover.
+
+The implementation removes three old handlers/registrations, standalone research
+TaskSpec, mailbox launcher/lease/automatic continuation and its unused context
+assembler. Native children, current history readers, durable Stop and real remote
+ToolOperations remain. Historical fixtures now seed rows directly instead of
+retaining an executable legacy launcher for tests. ADR-0063 records the boundary.
+
+Local evidence: 34 focused DB and 87 current worker/teaching/turns DB tests pass;
+82 census/catalog unit tests pass after repairing discovery of the actual injected
+collecting-stream runner. Typecheck/lint/build and architecture/capability audits
+pass (435/0/47). Real dist/migrate.cjs refuses the existing synthetic clone with
+jobs=1/schedules=1 (exit 1). Fresh loom_retirement_951_fresh_verify migrates and
+seeds with no pg-boss namespace (exit 0); adding only an empty pg-boss namespace
+then correctly fails on missing tables (exit 1), rather than treating it as fresh.
+That isolated diagnostic DB is retained. No production mutation or paid call.
+Independent initial review and exact-head CI/deployment are still pending.
+
+### Earlier source-only slice
 
 31 scoped unit tests pass across actual tool inventory, native contracts/configuration
 and ToolOperations behavior. Typecheck, lint and build pass (existing lint/bundle

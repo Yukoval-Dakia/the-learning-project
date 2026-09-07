@@ -13,7 +13,7 @@
 | `api/accept-chip.ts` | `/api/teaching-sessions/[id]/accept-chip` 教学 chip 接受 |
 | `api/nudges.ts` | 主动 nudge 列表与 dismiss/opened 幂等处置 |
 | `server/` | 持久接纳/执行、turns 读取、summary、stream helpers 与 teaching 编排 |
-| `tasks/` | Copilot 自有三个 TaskSpec（agent / research / teaching-turn） |
+| `tasks/index.ts` | Copilot 自有 TaskSpec 目录；原生子 agent 定义在 `server/subagents.ts` |
 | `ui/CopilotDock.tsx` | 全局 Copilot 抽屉（壳层在 `web/src/router.tsx` 根挂） |
 
 ## CONVENTIONS

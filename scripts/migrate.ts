@@ -32,6 +32,14 @@ async function main(): Promise<void> {
     await migrate(db, { migrationsFolder: './drizzle' });
     console.log('[migrate] done');
 
+    // YUK-951: refuse to strand an unverified installation's old mailbox work.
+    // Resolve only after the explicit DATABASE_URL is bound; this guard is read-only.
+    const { assertCopilotLegacyDrained } = await import(
+      '../src/capabilities/copilot/server/legacy-drain-readiness'
+    );
+    await assertCopilotLegacyDrained(db);
+    console.log('[migrate] Copilot legacy drain readiness: clear');
+
     // 冷启薄 seed（YUK-477）：每个已知科目一个 domain-root 节点。幂等（ON CONFLICT DO NOTHING +
     // 稳定 id，重跑/并发均安全），所以 init container 每次启动安全调用——让 fresh DB 树非空，给上传
     // 子 KC 挂靠锚。**seed 失败有意 fatal**（在 migrate 的 try 内，throw → main().catch 的
