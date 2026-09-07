@@ -12,7 +12,7 @@
 | `api/copilot-summary.ts` | `/api/today/copilot-summary` 今日摘要 |
 | `api/accept-chip.ts` | `/api/teaching-sessions/[id]/accept-chip` 教学 chip 接受 |
 | `api/nudges.ts` | 主动 nudge 列表与 dismiss/opened 幂等处置 |
-| `server/` | chat 编排、turns 读取、summary、stream helpers、teaching 编排（`server/teaching.ts`，YUK-878 自 orchestrator 迁入） |
+| `server/` | 持久接纳/执行、turns 读取、summary、stream helpers 与 teaching 编排 |
 | `tasks/` | Copilot 自有三个 TaskSpec（agent / research / teaching-turn） |
 | `ui/CopilotDock.tsx` | 全局 Copilot 抽屉（壳层在 `web/src/router.tsx` 根挂） |
 
@@ -35,9 +35,9 @@
   `copilot_run_reconcile` 只依据 pg-boss 权威状态、持久化 outcome marker 与 execution
   fence / legacy worker-touch evidence 做有界修复；只有 QUEUED-only dead delivery 才能标成
   pre-execution loss。不得用 wall-clock 或 heartbeat timestamp 猜测 live queue run 已死。
-- Copilot 自有工具：事件流读、记忆面读、artifact authoring 写。
-- YUK-939 根任务以 terminal Markdown 收口；服务端在 SDK terminal 后绑定实际 root
-  trace、更正、proposal 披露与学习内容校验，不新增 MCP 工具或额外模型轮次。
+- 工具归属以 `manifest.ts` 为准；artifact 创建/更新属于 [Notes manifest](../notes/manifest.ts)，Copilot 仅持调用授权与呈现控制。
+- 根任务以 terminal Markdown 收口；服务端在 SDK terminal 后绑定实际 root trace、更正、proposal 披露与学习内容校验。
+  [ADR-0061](../../../docs/adr/0061-copilot-presentation-intent-control.md) 允许 agent 看完结果后按需调用 `present_primary_view` 提名成品，服务端校验后发布；该短交互仍受既有执行预算约束。
 - chip 是 Copilot 回复里的可点击动作卡片，accept-chip 把用户选择物化为教学事件。
 
 ## ANTI-PATTERNS

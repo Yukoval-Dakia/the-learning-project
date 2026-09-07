@@ -1,13 +1,18 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：762已全绿合并；970退休剩余迁移期测试，生产副本尚未授权，整体goal active。
+> Linear 是权威 tracker；更新于 2026-09-07：970已全绿合并；971纠正现役开发指引，生产副本尚未授权，整体goal active。
 
 ## NOW
 
-- Active 970：root独占tlp-wt-unified-conversation / codex/yuk-970-tool-contract-tests，base main15eceba0。
+- Active 971：root独占tlp-wt-unified-conversation / codex/yuk-971-current-agent-guidance，base main07280e6b。
+  仅修正三份Ingestion/Copilot AGENTS：自动VLM baseline、额外rescue授权、Notes artifact owner与FULL呈现控制。
+  纠正导航链接并删除易过时的模型/路由数量缓存；不改产品代码、prompt、provider或生产。
+  6个本地链接、7项文档unit及typecheck/lint/build通过；待独立文档审查和exactCI。
+- YUK970 Done：PR1352 exact46a237c49859d8c8c17c2a81c1aeb8a7da7126ba，CI34066586538全绿，
+  2026-09-06T23:24:57Z squash main07280e6b30a63ed06f927bc2f20d38615996447e，Linear Done，未部署。
   退休Agency/Ingestion整体schema迁移指纹、指纹自测及Agency/Copilot重复旧路径断言；明确effect/cost/mirror断言。
   保留真实loader、全部权限、公共reader、central registry、legacy drain及rich DB行为检查；15unit/103DB通过。
-  architecture/capability audits与typecheck/lint/build通过；独立初审PASS无finding，待PR/exactCI，无产品修改/paid。
+  architecture/capability audits与typecheck/lint/build通过；独立初审PASS无finding，无产品修改/paid。
   录入完成/判分落库/知识合并只读复核已有owner与事务回滚；判分同步/队列不等于Copilot产品生命周期分裂。
 - YUK762 Done：PR1351 exact36da8192347383de1d0f4d73c2f011f5ad56fa15，CI34065494164首轮全绿，
   2026-09-06T23:04:09Z squash main15eceba0dfebe5b4b06ac3cf3e52f69be12df597，Linear Done，未部署。
@@ -116,7 +121,7 @@
 
 ## NEXT
 
-1. 970剩余迁移测试退休验收；762/967/969/968已Done，不重开review或降低保护。
+1. 971现役开发指引修正验收；970/762/967/969/968已Done，不重开review或降低保护。
 2. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
 3. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
@@ -124,14 +129,13 @@
 
 ## PARKED
 
-- 971现役Ingestion/Copilot AGENTS约束漂移已代码核验：自动VLM结构化/Notes artifact owner/显式presentation控制。
-  970之后修正三份导航，不改产品prompt/provider；全历史ADR审计仍未完成，不冒充全量通过。
+- 全历史ADR审计仍未完成，不冒充全量通过；971仅覆盖三份已确认冲突的现役指引。
 - 951旧mailbox/ToolOperations仅drain-only；退休需零pending/零队列活动覆盖完整重试窗。
 - 921多provider、572夜间教研、832HOLD不解锁。
 - 计费、重试、prompt/skill、复杂parser、并发/回滚/恢复、UI安全测试仍保留，不按数量硬删。
 
 ## BLOCKED-ON
 
-- 762/967/969/968/966/965已交付；970暂无owner决策阻塞，生产副本验收仍需独立授权。
+- 970/762/967/969/968/966/965已交付；971暂无owner决策阻塞，生产副本验收仍需独立授权。
 - 未授权部署、生产clone、SoT开关、backfill或历史数据删除；均未执行。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。
