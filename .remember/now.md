@@ -18,7 +18,6 @@
   回退去掉951overlay返回582b2e66；旧worker会恢复cron，下次升级须重复排空门；无历史数据/queue删除。
   owner最新「批准」承接待答问题：未用$3历史恢复专项转Notes/Memory真实恢复，上限$3；本轮未调用付费模型。
   root独占codex/yuk-951-mailbox-delivery-notes；下一线887 actual缺项，951B3术语决策仍开放；goal active。
-
 - Active887证据差集：root独占codex/yuk-887-rollout-evidence-gap；未改产品代码，main/runtime仍978。
   七项rollout逐项区分现有actual/DB/真实process与缺口，docs/planning/2026-09-07-rollout-evidence-gap.md。
   实际Agent SDK0.3.220 + MCP1.29 Client/linked InMemoryTransport调用2test-only工具通过，真实clone DB/log/mirror。
