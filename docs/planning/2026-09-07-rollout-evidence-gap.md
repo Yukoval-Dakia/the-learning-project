@@ -99,6 +99,26 @@ proposal kind.
 
 ## Execution order and spending boundary
 
+The archive was read recursively on 2026-09-08 local time: all 41 encountered
+output/output_sha256 pairs match their stored text. This is an integrity check,
+not 41 independent successes: nested copies and deliberately failed samples are
+included. Current manifest ownership disambiguates the remaining slice coverage:
+
+| Slice | Reusable actual evidence | Not proved by that evidence |
+| --- | --- | --- |
+| Copilot | Unified two-turn sample, native child, correction, compaction, presentation | Live-model crash scenario beyond the named physical recovery tests |
+| Knowledge | query_knowledge and presented snapshot; representative proposal API lifecycle | Every mutation/merge variant as a production operation |
+| Practice supply | QuestionAuthorTask plus four real validators in positive-content sample | Learner attempt grading and FSRS/review settlement |
+| Practice judging | Existing validators validate generated content; get_attempt_context/get_review_due are Practice reads | They are not an actual learner attempt→judging→review-settlement run |
+| Notes | presentation-control archive actually called author_artifact, returning artifact art_sarsg30nxr0pvpdi9pdvscv5 | Automatic note_generate/note_verify and their crash handoffs |
+| Ingestion | Existing deterministic/DB and historical rollout data | No current accepted ingestion actual-output sample located in this archive |
+| Agency | Existing owner/transaction/golden checks | No current accepted Agency actual-output sample located in this archive |
+
+Neither query_events (Copilot-owned) nor get_review_due/get_attempt_context
+(Practice-owned) counts as an Agency actual operation. author_artifact is
+Notes-owned, but its successful interactive page must not stand in for automatic
+note generation. This mapping prevents both unnecessary repeats and false coverage.
+
 1. Reuse the now-completed MCP and representative proposal API scenarios; finish
    the per-capability actual-output coverage map without rerunning accepted cases.
 2. If authorized, run only missing Notes/Memory real recovery scenarios with a

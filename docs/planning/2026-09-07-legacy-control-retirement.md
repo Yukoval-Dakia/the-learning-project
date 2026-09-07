@@ -36,6 +36,40 @@ Native Task events still write the `subagent_run` projection but do not mint a l
 continuation. That table is therefore not wholly obsolete. Event/turn readers and
 explicit cancellation must survive any subsequent legacy-handler deletion.
 
+### Retained-history recheck (2026-09-07 16:09Z)
+
+The deployed pg-boss version is 12.26.3. Its actual retry formula bounds the two
+backoffs at 60 and 120 seconds, so the three active-expiry allowances total
+`3 * 7200 + 60 + 120 = 21780 seconds` (6h03m), before supervision, polling and
+process downtime. Expiry is driven by the supervisor (default 60 seconds), not
+the separately named monitoring interval. Allow for a check on each expiry, not
+only one final check, and for each fetch/downtime gap.
+
+The four legacy main/DLQ queues and reconcile queue were created at 10:06:15Z;
+all actually have retention_seconds **and deletion_seconds** 604800. The library's
+normal cleanup therefore cannot remove their completed/failed job rows in this
+six-hour observation interval. Current non-test production code has no deleteJob,
+deleteAllJobs, purgeQueue, deleteQueue or deleteAfterSeconds override call. All-state
+retained history contains no legacy run/continuation/DLQ jobs; the three operational
+tables remain empty. Reconcile completions span 10:06:51.958Z–16:09:02.305Z, with
+maximum inter-completion gap 94.688489 seconds.
+
+Unlike two endpoint snapshots, those retained all-state records and unchanged queue
+creation identities can establish absence of intermediate queue activity. They do
+not excuse the elapsed-window requirement. Use **no earlier than 16:20Z** for the
+final retirement recheck, then verify the same queue identities/retention, full-state
+history, empty tables, successful recent reconciliation and actual worker identity.
+This margin includes repeated supervision/fetch checks and observed brief restarts;
+do not extrapolate it to another host or a stopped worker with unbounded downtime.
+
+Retirement must remove the three legacy manifest jobs and their dedicated execution
+helpers, while preserving native projection/parent recovery and historical readers.
+The registrar only adds current schedules: removal from the manifest does not
+automatically unschedule an already-persisted copilot_subagent_reconcile cron.
+Its exact schedule must also be retired during authorized local delivery; preserve
+the queue/history rather than deleting them. No handler/schedule has been removed
+at this evidence-only checkpoint.
+
 YUK-951 remains open after this source-only cut. The existing finalization design's
 deployed zero-nonterminal plus zero-queue-activity window still governs deletion of
 drain handlers. No production write, handler shutdown, paid call or historical data
