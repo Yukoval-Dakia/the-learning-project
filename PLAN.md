@@ -1,9 +1,14 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：976已合并并仅部署Mac app，真实费用页验证通过；977零金额来源跟进，整体goal active。
+> Linear 是权威 tracker；更新于 2026-09-07：单线核实951旧执行面退休，分开死代码删除与生产drain门；976已交付，整体goal active。
 
 ## NOW
 
+- Active951：root独占codex/yuk-951-retirement-readiness；只读agent核对旧handler/producer与最大重试窗。
+  计划：live非终态/queue谓词→dead controls与drain owner分界→可安全删除项scoped验证/review/CI。
+  14:39Z三legacy表全空，无run/continuation jobs；reconcile已完成274次，起始10:06:50Z。
+  agent queue现役retry2/delay30/backoff/expire7200，尚不能把单点空态称完整窗口drain通过。
+  架构审计437/0/47与20command消费者保留，不作为业务复杂度封装完成证明；无paid/生产写入。
 - YUK976 Done：PR1360 exactc6bbf5e1，CI34132735074全job绿，main722b352b0；独立初审PASS，无P0/P1。
   两页复用完整API类型与共享费用显示；15unit/18既有DB/cleanimage10browser及typecheck/lint/build过。
   独立另跑5unit/10browser过；P2零金额known来源省略已查重登记977 Todo，明确deferred-not-fixed。
@@ -173,7 +178,7 @@
 
 ## NEXT
 
-1. 977零金额known来源跟进；976已交付，保留shared formatter与现有聚合维度，不新增计费系统。
+1. 951按当前生产与调用证据退休旧入口；977零来源仍Todo，不将P2混入本lane。
 2. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
 3. 887保留provider/crash矩阵；本地backfill/audit/golden及973/975退休与停机已验证，NAS仍不在范围。

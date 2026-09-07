@@ -2,6 +2,15 @@
 
 ## 最新状态
 
+- Active951 source-only：root独占codex/yuk-951-retirement-readiness，base976交付记录3f3314ac。
+  删除7个unregistered模型control适配器（两文件），无production import，仅旧unit与exists断言消费。
+  删除重复存在性case和四死tool mirror断言；保留manifest排除/权限、native prompt/config与真实drain行为测试。
+  未改mailbox/kernel/handler/schema/native projection/reader/cancel，不能将dead adapter当恢复接口。
+  31unit/41真实mailbox与tooloperations DB/typecheck/lint/build及架构门过；独立初审运行中，待exactCI。
+  14:39:26Z生产三表全空，无legacy run/continuation/DLQ；reconcile completed274，最早10:06:50Z。
+  queue agent实际expire7200/retry2/delay30/backoff，完整窗口未证明；951保持开放，不撤drain handler。
+  docs/planning/2026-09-07-legacy-control-retirement.md记录边界；无生产写入/paid，整体goal active。
+
 - YUK976 Done：PR1360 exactc6bbf5e18d121e9da0f694baffc5a0cafe528ea3，CI34132735074全job success。
   2026-09-07T14:35:12Z合并main722b352b09a1e628ae003a36eadf14a2fee18dac；初审PASS，独立5unit/10browser过。
   advisory P2 known-zero来源省略已核实、查重登记977 Todo，回复deferred-not-fixed并resolve，无第二审。
