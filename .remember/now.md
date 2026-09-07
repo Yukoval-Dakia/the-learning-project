@@ -2,11 +2,38 @@
 
 ## 最新状态
 
-- Active951 source-only：root独占codex/yuk-951-retirement-readiness，base976交付记录3f3314ac。
+- Active978：root独占codex/yuk-978-native-child-settlement，base6e0e205b/main26e0e2d65。
+  6正式DB RED→GREEN；native事件串行接纳/退出排空、exact attempt丢终态收口，失败不覆盖paid root结果。
+  既有root reconciler包含已终态但native未收口父；同一parent Es锁约束late start/terminal，child单独commit可恢复。
+  full marker parser移copilot-run-outcome供真实两consumer共用；不读ai_task状态猜父死，不依赖951旧scheduler。
+  25 mailbox/reconcile DB（实际advisory竞争/sibling/retry/legacy免疫）+76 durable/teaching/queue/StopDB过；18unit过。
+  子投影失败/补lost时不返回SDKcursor；原全表断言暴露操作表fixture泄漏，已suite局部before/after清理，未改global reset。
+  typecheck/lint/build/437/0/47架构门过；独立初审review_978_native_settlement进行中，architect仅设计咨询不当review。
+  文档docs/planning/2026-09-07-native-child-settlement.md；待commit/PR/exactCI/cleanimage/runtime，无paid/生产变化。
+
+- 978 P1收尾覆盖上方旧状态：PR1362/ba4bc7fe初审PASS与CI34137867856绿，但bot发现SDK后Stop竞态，暂不合并部署。
+  真实public worker在SDK返回后写Stop，父cancelled/子lost已RED；改父提交后公共wrapper修复，82DB GREEN。
+  SDK只排空/记录open native以禁cursor；删本地提前终态helper，3旧case明确先commit父marker。
+  baseline/new cleanimage物理reconcile已证RED→GREEN/重复幂等，零task/attempt/continuation；候选worker已stop exit0。
+  仍需唯一P1验证审、新exactCI/newimage交付；生产appc6bbf5e1/worker14ea1a81/原PG未变，无paid。
+  owner强调时间/全局进度：978收尾后按产品完成条件盘点887/951/977，禁止逐文件继续扩张重构。
+
+- 951 source-only部分已交付：PR1361 exactab0bbb909aca47530f706b2204045f6cd4b12a12，CI34134547233全job绿。
+  2026-09-07T14:54:05Z merge main26e0e2d6550404bdfeaee22df38a56dc56ff140c；独立初审PASS，无finding/无需第二审。
+  独立2文件8unit过；root31unit/41DB/typecheck/lint/build/audits过；生产无live import差异，不为此重启。
+  951仍Backlog（未完成drain/noun retirement）；未改table/handler/native投影/reader/cancel，无paid/生产写入。
+  978新Todo：原生child无terminal时父退出可留running，root与explorer静态核实且真实PG公共owner RED。
+  isolated clone loom_before_973_verify内start→stream抛synthetic_root_transport_failure→recover返回三个空数组。
+  child仍running/lease=null/settled=null，continuation0；sentinel rollback后probe_rows/probe_events均0。
+  临时probe文件已移除，首次误写events.ts导入失败不算有效证据；有效输出已记Linear978。
+  下一条978正式scoped DB RED→parent权威outcome/late-start与late-terminal fence→review/CI；不猜死/不重烧/不mint continuation。
+  root当前codex/yuk-951-delivery-notes，原脏main不动；gh CI watcher3383/merge54999均exit0，无probe进程。
+
+- 951 source-only实施历史：base976交付记录3f3314ac。
   删除7个unregistered模型control适配器（两文件），无production import，仅旧unit与exists断言消费。
   删除重复存在性case和四死tool mirror断言；保留manifest排除/权限、native prompt/config与真实drain行为测试。
   未改mailbox/kernel/handler/schema/native projection/reader/cancel，不能将dead adapter当恢复接口。
-  31unit/41真实mailbox与tooloperations DB/typecheck/lint/build及架构门过；独立初审运行中，待exactCI。
+  31unit/41真实mailbox与tooloperations DB/typecheck/lint/build及架构门过；初审/CI已按上方完成。
   14:39:26Z生产三表全空，无legacy run/continuation/DLQ；reconcile completed274，最早10:06:50Z。
   queue agent实际expire7200/retry2/delay30/backoff，完整窗口未证明；951保持开放，不撤drain handler。
   docs/planning/2026-09-07-legacy-control-retirement.md记录边界；无生产写入/paid，整体goal active。

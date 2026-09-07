@@ -81,6 +81,49 @@ async function invokeHooks(
 }
 
 describe('Copilot execution owner', () => {
+  it('preserves the paid reply but discards the SDK cursor when native projection persistence fails', async () => {
+    const stream = vi.fn<CopilotExecutionAdapters['streamTaskCollectingFn']>(
+      async (_kind, _input, ctx) => {
+        await ctx.sdkSession?.onSessionId?.('sdk_projection_write_failed');
+        await ctx.onTaskEvent?.({
+          type: 'system',
+          subtype: 'task_started',
+          session_id: 'session_projection_failure',
+          uuid: '00000000-0000-4000-8000-000000000980',
+          task_id: 'native_projection_failure',
+          subagent_type: 'copilot-researcher',
+          description: '比较三份材料的来源、反例、时间范围与尚未覆盖的证据。',
+        });
+        return {
+          task_run_id: 'root_projection_failure',
+          text: '本轮已结束，缺失的材料仍待核对。',
+          terminalText: '本轮已结束，缺失的材料仍待核对。',
+          partial: false,
+        };
+      },
+    );
+    const db = {
+      transaction: vi.fn().mockRejectedValue(new Error('isolated projection write unavailable')),
+    };
+    const run = vi.fn<CopilotExecutionAdapters['runAgentTaskFn']>();
+    const owner = ownerWith(run, stream);
+    const result = await owner(
+      db as never,
+      {
+        input,
+        sessionId: 'session_projection_failure',
+        sourceEventId: 'ask_projection_failure',
+        taskRunId: 'root_projection_failure',
+      },
+      { cancellation: fakeCancellation(), deadlineAt: Date.now() + 60_000, subagentsEnabled: true },
+    );
+    expect(result.finalization.accepted).toBe(true);
+    expect(result.finalization.preparedReply.text).toBe('本轮已结束，缺失的材料仍待核对。');
+    expect(result.sdkSessionId).toBeUndefined();
+    expect(stream).toHaveBeenCalledTimes(1);
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it('reinjects learner state on cached resumes and supplies complete current context for compact', async () => {
     const current = {
       ...input,

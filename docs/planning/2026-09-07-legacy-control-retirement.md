@@ -48,3 +48,22 @@ and ToolOperations behavior. Typecheck, lint and build pass (existing lint/bundl
 warnings remain). All 41 focused real-Postgres mailbox and ToolOperations tests pass;
 independent review and exact-head CI are required before merge. Architecture counts alone are
 not evidence that all business complexity is encapsulated.
+
+## Source-only delivery and next recovery defect
+
+PR1361 exact `ab0bbb909aca47530f706b2204045f6cd4b12a12` passed every job in
+CI Gate `34134547233` and merged at 2026-09-07T14:54:05Z as
+`26e0e2d6550404bdfeaee22df38a56dc56ff140c`. Independent initial review found no
+findings and reran eight unit tests. No second review was needed. No production
+restart is needed for adapters which were already absent from the runtime graph.
+YUK-951 remains open for the explicitly retained drain/noun retirement work.
+
+The retirement lookup exposed YUK-978, distinct from hidden-terminal handling:
+native child start followed by a parent transport exception without a child terminal
+leaves `running` with NULL lease and settled time. A real execution-owner probe with
+only the external SDK stream substituted reproduced this on the retained isolated
+Postgres clone. The actual mailbox recovery returned no work; no continuation was
+created. The outer transaction was rolled back, and a separate read verified zero
+probe rows/events. No provider call or production mutation occurred. This is the
+next lifecycle correctness fix, not proof of production failure or a reason to
+delete native projection/recovery responsibilities.

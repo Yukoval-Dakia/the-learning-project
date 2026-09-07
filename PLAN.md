@@ -1,14 +1,14 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：单线核实951旧执行面退休，分开死代码删除与生产drain门；976已交付，整体goal active。
+> Linear 是权威 tracker；更新于 2026-09-07：978仅收尾已复现P1与交付，随后按产品完成条件盘点剩余项，控制耗时不扩展工程清理。
 
 ## NOW
 
-- Active951：root独占codex/yuk-951-retirement-readiness；只读agent核对旧handler/producer与最大重试窗。
-  计划：live非终态/queue谓词→dead controls与drain owner分界→可安全删除项scoped验证/review/CI。
-  14:39Z三legacy表全空，无run/continuation jobs；reconcile已完成274次，起始10:06:50Z。
-  agent queue现役retry2/delay30/backoff/expire7200，尚不能把单点空态称完整窗口drain通过。
-  架构审计437/0/47与20command消费者保留，不作为业务复杂度封装完成证明；无paid/生产写入。
+- 951部分交付：PR1361 exactab0bbb909，CI34134547233全job绿，main26e0e2d65；独立初审PASS无finding。
+  删7死model control/249行与重复存在性断言；31unit/41DB/typecheck/lint/build/audits过，独立8unit过。
+  未部署/改handler或历史数据；14:39Z三表全空，无旧run/continuation/DLQ，完整retry+抖动窗仍待证，951 Backlog。
+  Active978：PR1362/ba4bc7fe初审与CI绿后发现Stop竞态P1，真实父cancelled/子lost RED→GREEN，生产未变。
+  已删SDK退出提前裁决，父提交后统一收口；82DB过，余gate→唯一验证审→exactCI/交付；随后全局收口盘点。
 - YUK976 Done：PR1360 exactc6bbf5e1，CI34132735074全job绿，main722b352b0；独立初审PASS，无P0/P1。
   两页复用完整API类型与共享费用显示；15unit/18既有DB/cleanimage10browser及typecheck/lint/build过。
   独立另跑5unit/10browser过；P2零金额known来源省略已查重登记977 Todo，明确deferred-not-fixed。
@@ -178,7 +178,7 @@
 
 ## NEXT
 
-1. 951按当前生产与调用证据退休旧入口；977零来源仍Todo，不将P2混入本lane。
+1. 优先978原生子投影终态收口；951完整drain窗口与977零来源保持独立，不混入本lane。
 2. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
 3. 887保留provider/crash矩阵；本地backfill/audit/golden及973/975退休与停机已验证，NAS仍不在范围。

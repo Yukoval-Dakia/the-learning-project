@@ -1,10 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
-import { ai_task_runs, copilot_continuation, event, subagent_run } from '@/db/schema';
+import { ai_task_runs, copilot_continuation, event, job_events, subagent_run } from '@/db/schema';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { writeEvent } from '@/kernel/events';
+import { acquireCopilotExecutionSettlementLock } from './copilot-run-coordination';
+import { findPersistedDurableReply } from './copilot-run-outcome';
+import {
+  COPILOT_RUN_EVENTS,
+  COPILOT_RUN_TABLE,
+  isCopilotRunTerminalEvent,
+} from './copilot-run-status';
 import { COPILOT_SUBAGENT_NAME, type CopilotTaskLifecycleMessage } from './subagents';
 
 export const SUBAGENT_RUN_QUEUE = 'copilot_subagent_run';
@@ -65,6 +72,97 @@ export interface CopilotContinuationRecord {
 
 type DbLike = Db | Tx;
 type RunRow = typeof subagent_run.$inferSelect;
+
+/** Native projections never acquire a mailbox claim or queue delivery. */
+export function nativeSubagentProjectionCondition() {
+  return and(
+    isNotNull(subagent_run.started_at),
+    isNull(subagent_run.claim_token),
+    isNull(subagent_run.pg_boss_job_id),
+    isNull(subagent_run.lease_expires_at),
+    isNull(subagent_run.hard_deadline_at),
+    isNull(subagent_run.child_task_run_id),
+  );
+}
+
+type NativeParentClosure = {
+  sessionId: string;
+  parentTurnEventId: string;
+  status: 'cancelled' | 'lost';
+};
+
+/** Parent authority is established by the caller; never infer it from a clock. */
+async function settleNativeSubagentsForParentTx(tx: Tx, input: NativeParentClosure) {
+  await acquireCopilotExecutionSettlementLock(tx, input.parentTurnEventId);
+  const rows = await tx
+    .select()
+    .from(subagent_run)
+    .where(
+      and(
+        eq(subagent_run.session_id, input.sessionId),
+        eq(subagent_run.parent_turn_event_id, input.parentTurnEventId),
+        eq(subagent_run.status, 'running'),
+        nativeSubagentProjectionCondition(),
+      ),
+    )
+    .orderBy(asc(subagent_run.id))
+    .for('update');
+  for (const row of rows) {
+    await settleSubagentRunTx(
+      tx,
+      row,
+      {
+        status: input.status,
+        error: {
+          code: 'native_parent_terminated',
+          message: 'Parent execution ended without a native child terminal result.',
+        },
+      },
+      { mintContinuation: false },
+    );
+  }
+  return rows.length;
+}
+
+/** Call under the parent's settlement lock; a cancel request alone is not a terminal. */
+async function nativeParentTerminal(tx: Tx, sessionId: string, parentTurnEventId: string) {
+  const frames = await tx
+    .select({ event_type: job_events.event_type, payload: job_events.payload })
+    .from(job_events)
+    .where(
+      and(
+        eq(job_events.business_table, COPILOT_RUN_TABLE),
+        eq(job_events.business_id, parentTurnEventId),
+      ),
+    )
+    .orderBy(asc(job_events.id));
+  const terminal = frames.findLast(isCopilotRunTerminalEvent);
+  if (terminal)
+    return terminal.event_type === COPILOT_RUN_EVENTS.FAILED &&
+      terminal.payload?.reason === 'cancelled'
+      ? ('cancelled' as const)
+      : ('lost' as const);
+  const marker = await findPersistedDurableReply(tx, parentTurnEventId, sessionId);
+  return marker
+    ? marker.outcome === 'failure' && marker.reason === 'cancelled'
+      ? ('cancelled' as const)
+      : ('lost' as const)
+    : null;
+}
+
+/** Repair only children whose exact parent already has a durable authoritative outcome. */
+export async function reconcileNativeSubagentsForParent(
+  db: Db,
+  sessionId: string,
+  parentTurnEventId: string,
+) {
+  await db.transaction(async (tx) => {
+    await acquireCopilotExecutionSettlementLock(tx, parentTurnEventId);
+    const status = await nativeParentTerminal(tx, sessionId, parentTurnEventId);
+    if (status)
+      await settleNativeSubagentsForParentTx(tx, { sessionId, parentTurnEventId, status });
+  });
+}
 
 function matchesParentTaskRunId(parentTaskRunId: string) {
   return or(
@@ -562,6 +660,7 @@ async function recordNativeSubagentStartedTx(
     objectiveHash: string;
   },
 ): Promise<SubagentRunRecord | null> {
+  await acquireCopilotExecutionSettlementLock(tx, input.parentTurnEventId);
   const [existing] = await tx
     .select()
     .from(subagent_run)
@@ -579,6 +678,7 @@ async function recordNativeSubagentStartedTx(
     }
     return mapRun(existing);
   }
+  if (await nativeParentTerminal(tx, input.sessionId, input.parentTurnEventId)) return null;
   const id = `subagent_run_${createId()}`;
   const startedEventId = `subagent_started_${id}`;
   const now = new Date();
@@ -642,6 +742,7 @@ export async function settleNativeSubagentRun(
 ): Promise<SubagentRunRecord | null> {
   const launchKey = nativeLaunchKey(input.sdkTaskId);
   return db.transaction(async (tx) => {
+    await acquireCopilotExecutionSettlementLock(tx, input.parentTurnEventId);
     const [row] = await tx
       .select()
       .from(subagent_run)
@@ -654,6 +755,16 @@ export async function settleNativeSubagentRun(
       )
       .for('update');
     if (!row) return null;
+    const parentTerminal = await nativeParentTerminal(tx, input.sessionId, input.parentTurnEventId);
+    if (parentTerminal) {
+      return settleNativeSubagentRunTx(tx, row, {
+        status: parentTerminal,
+        error: {
+          code: 'native_parent_terminated',
+          message: 'Parent execution ended before this child terminal was observed.',
+        },
+      });
+    }
     return settleNativeSubagentRunTx(tx, row, input.outcome);
   });
 }
@@ -696,7 +807,7 @@ export async function handleNativeSubagentTaskEvent(
     parentTurnEventId: string;
     parentTaskRunId: string;
   },
-): Promise<void> {
+): Promise<SubagentRunRecord | null | undefined> {
   if (message.subtype === 'task_started') {
     if (
       message.subagent_type !== COPILOT_SUBAGENT_NAME ||
@@ -706,19 +817,18 @@ export async function handleNativeSubagentTaskEvent(
       return;
     }
     const objective = message.description?.trim() || 'Copilot researcher task';
-    await recordNativeSubagentStarted(db, {
+    return recordNativeSubagentStarted(db, {
       sessionId: ctx.sessionId,
       parentTurnEventId: ctx.parentTurnEventId,
       parentTaskRunId: ctx.parentTaskRunId,
       sdkTaskId: message.task_id,
       objective,
     });
-    return;
   }
 
   const outcome = terminalNativeSubagentOutcome(message);
   if (!outcome) return;
-  await settleNativeSubagentRun(db, {
+  return settleNativeSubagentRun(db, {
     sessionId: ctx.sessionId,
     parentTurnEventId: ctx.parentTurnEventId,
     sdkTaskId: message.task_id,

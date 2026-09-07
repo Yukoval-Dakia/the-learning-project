@@ -8,7 +8,7 @@
 // manifests before worker pickup, never from an extra chat adapter.
 
 import { createHash } from 'node:crypto';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { isDurableWorkerTouchEvent } from '@/capabilities/copilot/durable-pickup';
 import {
@@ -54,6 +54,7 @@ import {
 } from '@/capabilities/copilot/server/durable-dispatch';
 import { selectAsksWithMaterializingToolCall } from '@/capabilities/copilot/server/materializing-tools';
 import { runTeachingSkill } from '@/capabilities/copilot/server/skills/teaching-skill';
+import { reconcileNativeSubagentsForParent } from '@/capabilities/copilot/server/subagent-mailbox';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
 import {
@@ -83,6 +84,10 @@ import {
   type ExecuteCopilotTurn,
   executeCopilotTurn,
 } from '../server/copilot-execution';
+import {
+  type PersistedDurableReply,
+  findPersistedDurableReply,
+} from '../server/copilot-run-outcome';
 import { parseCopilotModeState, resolveCopilotModeCompletion } from '../server/mode-completion';
 import {
   CopilotPrimaryViewSchema,
@@ -419,83 +424,6 @@ export async function writeFailedTerminalProjection(
   });
 }
 
-type PersistedDurableReply =
-  | (({ outcome: 'success' } & Omit<SuccessfulTerminalProjection, 'runId'>) & {
-      emitReviewedDelta?: boolean;
-    })
-  | {
-      outcome: 'failure';
-      replyMd: string;
-      taskRunId: string;
-      reason: 'cancelled' | 'exhausted' | 'ambiguous_execution' | 'pre_execution_lost';
-      error: string;
-      checkpointSafe?: boolean;
-      emitReviewedDelta?: boolean;
-    };
-
-async function findPersistedDurableReply(
-  db: Db | Tx,
-  runId: string,
-): Promise<PersistedDurableReply | null> {
-  const rows = await db
-    .select({ outcome: event.outcome, payload: event.payload, taskRunId: event.task_run_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'experimental:copilot_reply'),
-        eq(event.caused_by_event_id, runId),
-        inArray(event.outcome, ['success', 'failure']),
-      ),
-    )
-    .orderBy(desc(event.created_at), desc(event.id))
-    .limit(1);
-  const row = rows[0];
-  if (!row) return null;
-  const payload = row.payload as Record<string, unknown>;
-  const replyMd = payload.reply_md;
-  const taskRunId = row.taskRunId ?? payload.task_run_id;
-  if (typeof replyMd !== 'string' || typeof taskRunId !== 'string') return null;
-  if (row.outcome === 'failure') {
-    const failure = payload.durable_failure;
-    const failureRecord =
-      failure && typeof failure === 'object' && !Array.isArray(failure)
-        ? (failure as Record<string, unknown>)
-        : {};
-    const reason =
-      failureRecord.reason === 'cancelled'
-        ? 'cancelled'
-        : failureRecord.reason === 'ambiguous_execution'
-          ? 'ambiguous_execution'
-          : failureRecord.reason === 'pre_execution_lost'
-            ? 'pre_execution_lost'
-            : 'exhausted';
-    return {
-      outcome: 'failure',
-      replyMd,
-      taskRunId,
-      reason,
-      error: typeof failureRecord.error === 'string' ? failureRecord.error : replyMd,
-      ...(failureRecord.checkpoint_safe === false ? { checkpointSafe: false } : {}),
-      ...(payload.durable_emit_reviewed_delta === true ? { emitReviewedDelta: true } : {}),
-    };
-  }
-  if (row.outcome !== 'success') return null;
-  const modeState = parseCopilotModeState(payload);
-  const primaryView = CopilotPrimaryViewSchema.safeParse(payload.primary_view);
-  return {
-    outcome: 'success',
-    replyMd,
-    taskRunId,
-    finishReason:
-      typeof payload.durable_finish_reason === 'string'
-        ? payload.durable_finish_reason
-        : 'recovered',
-    ...(payload.durable_emit_reviewed_delta === true ? { emitReviewedDelta: true } : {}),
-    ...(modeState ? { modeState } : {}),
-    ...(primaryView.success ? { primaryView: primaryView.data } : {}),
-  };
-}
-
 const CLAIMED_EXECUTION_POLL_MS = 250;
 export const CLAIMED_EXECUTION_SETTLE_GRACE_MS = 30_000;
 export const DURABLE_OWNER_SETTLEMENT_BUDGET_MS =
@@ -705,6 +633,30 @@ async function awaitClaimedCopilotExecution(
 }
 
 export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCopilotRunResult> {
+  try {
+    return await executeAcceptedCopilotRun(params);
+  } finally {
+    // Includes replay/early exits and persisted markers whose public suffix
+    // failed. No terminal means no repair; projection failure cannot undo a
+    // paid parent outcome. The existing parent reconciler retries after crashes.
+    try {
+      await reconcileNativeSubagentsForParent(
+        params.db,
+        params.data.session_id,
+        params.data.run_id,
+      );
+    } catch (error) {
+      console.error('[copilot_run] native child settlement failed', {
+        runId: params.data.run_id,
+        error,
+      });
+    }
+  }
+}
+
+async function executeAcceptedCopilotRun(
+  params: RunCopilotRunParams,
+): Promise<RunCopilotRunResult> {
   const { db, data } = params;
   const execute = params.executeCopilotTurnFn ?? executeCopilotTurn;
   const assembleRunInput = params.resolveCopilotRunInputFn ?? assembleCopilotRunInput;
