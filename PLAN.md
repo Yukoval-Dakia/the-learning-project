@@ -4,6 +4,9 @@
 
 ## NOW
 
+- Active975：root独占codex/yuk-975-api-shutdown；隔离同镜像health200后stop复现137，--init对照143。
+  API缺少信号owner已确认；实现单一有界HTTP/runtime drain，保留boss日志与30s，compose覆盖完整宽限。
+  顺序：回归RED→实现→进程/HTTP/scoped验证→独立review/exactCI→Mac交付；无provider凭据或paid。
 - YUK972 Done：PR1358 exactfbee5c32，CI34126257359成功，main4c9ae238e；独立初审PASS，无P0/P1。
   Mac API/worker运行fbee5c32镜像，healthy/零重启；原PG容器与volume未变，无NAS/tunnel/paid。
   clone/live迁移零新增，423event/258task/4attempt不变；8类audit/golden零drift，恢复$3未用。

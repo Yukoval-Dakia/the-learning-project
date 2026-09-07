@@ -33,9 +33,9 @@ function snapshotActiveQueues(boss: PgBoss): { name: string; count: number }[] {
 }
 
 /**
- * Install SIGTERM / SIGINT handlers that gracefully stop pg-boss.
+ * Gracefully stop pg-boss without owning the enclosing process exit.
  *
- * Usage：worker entrypoint（`scripts/worker.ts`, Step 14）启动时调一次。
+ * API and standalone worker share the drain and interrupted-work logging.
  *
  * graceful=true 让正在执行的 job 跑完（最长 30s），expire 之后才退出进程。
  * pg-boss 会在 stop 后释放连接池，所有 SQL listen 也会断开。
@@ -45,38 +45,46 @@ function snapshotActiveQueues(boss: PgBoss): { name: string; count: number }[] {
  * 下次 worker 启动会重试或进 dead-letter），把它们的 queue 名 + 活跃数记进日志，
  * 方便事后排查「这次重启打断了哪些任务」。
  */
+export async function stopBossGracefully(boss: PgBoss, reason: string): Promise<void> {
+  const before = snapshotActiveQueues(boss);
+  console.log(
+    `[boss] ${reason} received, stopping gracefully (timeout 30s)...`,
+    before.length > 0 ? { inFlight: before } : '(no in-flight jobs)',
+  );
+  try {
+    await boss.stop({ graceful: true, timeout: SHUTDOWN_TIMEOUT_MS });
+    // After a graceful stop resolves, any worker STILL active means the 30s
+    // timeout fired and cut its job off mid-run. Log it loudly so the
+    // interrupted work is traceable (it will be retried / dead-lettered on the
+    // next boot via the durable pg-boss job row).
+    const interrupted = snapshotActiveQueues(boss);
+    if (interrupted.length > 0) {
+      console.warn(
+        '[boss] graceful timeout reached — jobs interrupted (will retry/dead-letter on next boot):',
+        { interrupted },
+      );
+    }
+    console.log('[boss] stopped cleanly');
+  } catch (err) {
+    // stop() can reject when the graceful timeout elapses with work still
+    // running. Capture which queues were caught mid-job for the same trace.
+    const interrupted = snapshotActiveQueues(boss);
+    console.error('[boss] error during shutdown', err, {
+      interrupted: interrupted.length > 0 ? interrupted : undefined,
+    });
+    throw err;
+  }
+}
+
 export function installShutdownHandler(boss: PgBoss): void {
   let shuttingDown = false;
   const handler = async (signal: NodeJS.Signals) => {
     if (shuttingDown) return;
     shuttingDown = true;
-    const before = snapshotActiveQueues(boss);
-    console.log(
-      `[boss] ${signal} received, stopping gracefully (timeout 30s)...`,
-      before.length > 0 ? { inFlight: before } : '(no in-flight jobs)',
-    );
     try {
-      await boss.stop({ graceful: true, timeout: SHUTDOWN_TIMEOUT_MS });
-      // After a graceful stop resolves, any worker STILL active means the 30s
-      // timeout fired and cut its job off mid-run. Log it loudly so the
-      // interrupted work is traceable (it will be retried / dead-lettered on the
-      // next boot via the durable pg-boss job row).
-      const interrupted = snapshotActiveQueues(boss);
-      if (interrupted.length > 0) {
-        console.warn(
-          '[boss] graceful timeout reached — jobs interrupted (will retry/dead-letter on next boot):',
-          { interrupted },
-        );
-      }
-      console.log('[boss] stopped cleanly');
+      await stopBossGracefully(boss, signal);
       process.exit(0);
-    } catch (err) {
-      // stop() can reject when the graceful timeout elapses with work still
-      // running. Capture which queues were caught mid-job for the same trace.
-      const interrupted = snapshotActiveQueues(boss);
-      console.error('[boss] error during shutdown', err, {
-        interrupted: interrupted.length > 0 ? interrupted : undefined,
-      });
+    } catch {
       process.exit(1);
     }
   };

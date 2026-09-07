@@ -184,6 +184,11 @@ Dockerfile（node:24-slim 多阶段）build 出 4 件产物：`web/dist`（Vite 
 compose 层 `command: ["node", "dist/worker.cjs"]` 覆盖。**无 Redis 服务**——editing presence 走
 PG 表 `editing_presence`（PgPresenceStore，YUK-321 M5 gate 选项 b）。
 
+停止时 API 先停止接纳 HTTP，请求最多排空 30 秒（超时断开订阅连接，不等于
+Copilot Stop），再等待同进程 worker 就绪并执行 pg-boss 的 30 秒清理、关闭 DB pool。
+API 总退出期限 65 秒，Compose 留 70 秒；独立 worker 保留 30 秒清理，Compose 留 40 秒。
+超出总期限或清理失败以非零退出并记录日志；未完成的持久任务仍按既有恢复策略处理。
+
 ### Verify
 
 ```bash
