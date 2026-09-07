@@ -1,17 +1,20 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：owner授权直接操作Mac本地生产；887进入备份/迁移/逐实体验收，NAS不在范围，整体goal active。
+> Linear 是权威 tracker；更新于 2026-09-07：887 Mac本地切换已验证；973接续双轨代码退休，NAS不在范围，整体goal active。
 
 ## NOW
 
-- Active887 local-production：root独占tlp-wt-unified-conversation / codex/yuk-887-local-production，base main55aaac30。
-  owner「直接动本地生产即可」仅授权Mac，不含NAS；已启动原Stopped OrbStack，app/worker仍未启动。
+- 887 local-production切片已部署：PR1354 exact0ed35fd3，CI34108722202全绿，main a12667507，独立安全review PASS。
+  owner「直接动本地生产即可」仅授权Mac，不含NAS；API/worker/Postgres均healthy，未启动tunnel。
   target=the-learning-project-postgres-1 / the-learning-project_pgdata / 127.0.0.1:5433/loom。
   31MB，12knowledge/7learning_item/8artifact/391event，migration94条；1failed memory ingest及1createdDLQ不自动重烧。
   dump已真实恢复至隔离DB，7个B3 cluster全部GO、8golden birth清洁；77学习闭环DB+36迁移护栏DB通过。
   live迁移94→101，builtin traits升级8；回填9KC+22calibration genesis，重复0新增，live audit无drift，outbox仍0。
   实体数量12/7/8不变，event391→422；item_calibration保持OFF，未live rebuild，无新增paid。
-  tracked Mac override补goal/variant/LI三个flag，两角色一致；镜像clean55aaac30构建中，待PRCI及API/worker运行验证。
+  tracked Mac override补goal/variant/LI三个flag，两角色一致；镜像clean55aaac30，API loopback8787/RW_WORKER0。
+  启动后hydrated audit零drift；浏览器认证/抽屉/刷新恢复/settled summary通过，未发送模型消息。
+  ai_task_runs258/provider_attempt4未增；所谓7个历史恢复经精确谓词核实为0，额外$3授权未使用。
+  887被GitHub自动Done后已恢复In Progress，完整provider/crash矩阵尚缺。
   详见docs/planning/2026-09-07-local-production-state-cutover.md；NAS不在范围。
 - YUK971 Done：PR1353 exactcffec1b5，CI34106719123 docs-only成功，独立初审PASS；main55aaac30，未部署。
   仅修正三份Ingestion/Copilot AGENTS：自动VLM baseline、额外rescue授权、Notes artifact owner与FULL呈现控制。
@@ -130,7 +133,7 @@
 
 ## NEXT
 
-1. 887 Mac本地生产收口；971/970/762/967/969/968已Done，不重开review或降低保护。
+1. 973收口Goal/LI/variant双轨写入：迁移补锚并验证，业务单路径，保留撤回/并发/派生列保护。
 2. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
 3. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。

@@ -66,6 +66,27 @@ Rollback those flags together; if artifact must also roll back, turn learning_it
 Additive schema and genesis events are retained. Restoring the full DB backup is a separate
 stop-writers recovery action, not an automatic overwrite of later learner activity.
 
-At this record's commit time, API/worker startup and runtime verification are still pending.
-Typecheck, lint and local production build passed. Independent safety review approved migration
-and backfill subject to the explicit deployment-target check; exact-head PR CI is still required.
+## Completed local deployment
+
+PR #1354 exact `0ed35fd37f84071753b42da045aa84ac334a20a4` passed all required CI jobs
+in run `34108722202` and independent safety review. It merged as
+`a12667507ece418e37f311a8a2e2f8936f3d1df4`; only compose configuration and evidence changed,
+so the clean runtime code remains the baseline above. Local typecheck, lint and build passed.
+
+- Image ID: `sha256:00e6595f0d590c18a0c7ecd02fa7f08c857c4fa87942665cf985260a1048cbfd`.
+- Existing mem0 volume initialized after backup, then worker started before API. Both run
+  healthy as non-root `node`, with zero restarts; existing Postgres was not recreated.
+- API listens on `127.0.0.1:8787`; `RW_WORKER=0`. No cloudflared service was started.
+- Both roles report knowledge/edge, goal, variant, learning_item, artifact and question_block
+  writers ON, with item_calibration OFF.
+- Post-start hydrated read-only audit again returned zero drift/allowances across all eight kinds.
+- Browser authentication, visible Copilot drawer, refresh/reopen and settled summary rendered
+  successfully, with no page errors. Private screenshot: `copilot-live-settled.png` in the evidence directory.
+  No chat message was sent; this is not new model-output or crash-recovery acceptance.
+- `ai_task_runs=258` and `provider_attempt=4` remained unchanged after startup/browser checks.
+  The suspected seven historical verification recoveries were disproven by the actual dispatch
+  predicates (pending=0, synthesize=0). The owner's recovery-specific additional $3 is unused.
+
+The GitHub integration auto-completed YUK-887 at merge; it was restored to In Progress because
+its broader provider/crash matrix remains incomplete. YUK-973 owns physical retirement of the
+three dual-writer implementations; enabled deployment flags alone do not complete that work.

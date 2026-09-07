@@ -2,6 +2,15 @@
 
 ## 最新状态
 
+- 887 Mac本地切换完成：PR1354 exact0ed35fd3/CI34108722202全job绿/reviewPASS，main a12667507。
+  API+worker运行clean55aaac30镜像sha256:00e6595f0d590c18a0c7ecd02fa7f08c857c4fa87942665cf985260a1048cbfd。
+  三容器healthy，原PG volume未换，API127.0.0.1:8787/RW_WORKER0，无cloudflared。
+  运行后hydrated audit八类零drift；真实browser认证/抽屉/刷新恢复/summary稳定通过，截图external copilot-live-settled.png。
+  无新增模型调用，258task/4attempt保持；7个历史恢复是错误推断，精确pending/synthesize均0，追加$3未使用。
+  887自动Done已纠正In Progress（全部provider/crash矩阵未完成）；下方启动待办均已被本条取代。
+  973下一单active线：迁移前置补锚、退休Goal/LI/variant双轨writer及重复测试，保留真正安全契约。
+  972已登记Todo；NAS仍不在范围；原始脏main不动。
+
 - 2026-09-07 owner新授权「直接动本地生产即可」覆盖Mac本地生产操作，不包括NAS；下方旧未授权状态已取代。
   root当前codex/yuk-887-local-production，base main55aaac30；971已PR1353合并/CI34106719123 docs-only success/reviewPASS。
   OrbStack原Stopped已启动；唯一既存容器the-learning-project-postgres-1，volume the-learning-project_pgdata，DB loom @127.0.0.1:5433。
