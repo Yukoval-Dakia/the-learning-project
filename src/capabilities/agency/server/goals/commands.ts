@@ -5,6 +5,7 @@ import type { GoalRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { goal } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { nextProjectionEventTime } from '@/server/projections/event-clock';
 import { projectGoal, projectGoalGuarded } from '@/server/projections/goal';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 import { hasGoalGenesisAnchor } from '@/server/projections/parity';
@@ -59,12 +60,6 @@ function goalSnapshot(input: InsertGoalInput): GoalRowSnapshotT {
     updated_at: now,
     version: 0,
   };
-}
-
-/** Import/fixture compatibility only: live creation must record its originating event. */
-export async function insertLegacyGoal(db: GoalDb, input: InsertGoalInput): Promise<string> {
-  await db.insert(goal).values(goalSnapshot(input));
-  return input.id;
 }
 
 async function ensureGoalSubject(tx: Tx, subjectId: string | null): Promise<void> {
@@ -154,7 +149,12 @@ export async function mutateGoal(db: GoalDb, goalId: string, input: GoalMutation
     const transitionAt =
       input.kind === 'retract'
         ? input.now
-        : new Date(Math.max(input.now.getTime(), existing.updated_at.getTime() + 1));
+        : await nextProjectionEventTime(
+            tx,
+            'goal',
+            goalId,
+            new Date(Math.max(input.now.getTime(), existing.updated_at.getTime() + 1)),
+          );
     const rowPatch =
       input.kind === 'status' || input.kind === 'retract'
         ? { status: input.kind === 'retract' ? ('dormant' as const) : input.status }

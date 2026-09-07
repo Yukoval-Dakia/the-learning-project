@@ -20,7 +20,9 @@ import { KnownEvent } from './known';
 import {
   LearningItemArchiveExperimental,
   LearningItemCompleteExperimental,
+  LearningItemKnowledgeIdsRewriteExperimental,
   LearningItemRelearnExperimental,
+  LearningItemStateRestoreExperimental,
 } from './learning-item-events';
 import { MistakeVariantCreateExperimental } from './mistake-variant-events';
 import { NudgeExperimental } from './nudge-events';
@@ -119,6 +121,8 @@ export const Event = z.union([
   LearningItemCompleteExperimental,
   LearningItemRelearnExperimental,
   LearningItemArchiveExperimental,
+  LearningItemKnowledgeIdsRewriteExperimental,
+  LearningItemStateRestoreExperimental,
   BodyBlocksEditExperimental,
   ArtifactCreateExperimental,
   ArtifactLifecycleExperimental,

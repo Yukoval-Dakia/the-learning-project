@@ -1,40 +1,10 @@
 import { z } from 'zod';
 
-// ====================================================================
-// learning_item action events — YUK-471 Wave 2 (learning_item fold)
-// ====================================================================
-//
-// learning_item is a WEAK event-sourced entity (design §0). Its status transitions are currently
-// bare imperative UPDATEs whose effect leaks through a `rate` event's payload side-channel
-// (materialized_learning_item_id) rather than a subject_kind='learning_item' action event — so a
-// complete/relearn/archive is INVISIBLE to a Q1 subject-keyed fold. W2 closes that gap with three
-// dedicated typed action events so each transition is fold-visible via Q1 (the recommended route,
-// design §3③ — no fragile payload reverse-lookup). They are reserved experimental actions (see
-// RESERVED_EXPERIMENTAL_ACTIONS in ./experimental.ts) so a malformed payload is rejected at the
-// parseEvent barrier instead of falling through to the loose generic ExperimentalEvent.
-//
-// CREATION uses experimental:genesis directly (design §3②/§3⑥): unlike mistake_variant (whose
-// runtime creation needs a dedicated create event to carry the fold-blind cause_category, critic
-// A4), learning_item has NO fold-blind field — the genesis snapshot fully seeds the row, so the
-// INSERT sites write a per-id genesis as the BASE event. These three action events are ONLY the
-// post-creation status mutations.
-//
-// RETRACT-LANE INTERFACE (design §7): the in-flight retract lane (PR #592) consumes THESE event
-// shapes — completion-retract reopens via learning_item_relearn, relearn-retract re-completes via
-// learning_item_complete, learning_item-proposal retract archives via learning_item_archive. The
-// shapes are defined cleanly here so the retract lane writes W2 events (not its own invented ones).
-//
-// VERSION SEMANTICS (critic B1 — MIRROR the historical imperative writes EXACTLY, per-site):
-//   - genesis seed (INSERT sites): version carried VERBATIM from the snapshot (the INSERT default 0).
-//   - complete (proposal-appliers.ts:298): version +1.
-//   - relearn  (proposal-appliers.ts:382): version +1.
-//   - archive/retract (actions.ts learning_item block): the bare UPDATE does NOT bump version
-//     (archived_at + archived_reason + updated_at only) — the reducer MIRRORS that (NO bump),
-//     behaviour-preserving (§7.7 flags a version-unification question as a follow-up; NOT changed
-//     in this lane).
-//
-// Dedicated FILE (not known.ts) to minimise merge conflict with the in-flight retract lane (PR
-// #592), mirroring goal-events.ts / mistake-variant-events.ts.
+// Learning-item structural mutations are typed, subject-keyed events gathered by Q1.
+// Creation uses one genesis snapshot. Complete/relearn and exact prior-state restore
+// increment version; archive and attribution repair retain the historical no-bump policy.
+// Status restoration carries the captured pre-accept state instead of synthesizing completion.
+// Reserved action names prevent malformed payloads from falling through generic parsing.
 
 // ── experimental:learning_item_complete ──────────────────────────────────────
 //
@@ -108,3 +78,35 @@ export const LearningItemArchiveExperimental = z.object({
   cost_micro_usd: z.number().int().optional(),
 });
 export type LearningItemArchiveExperimentalT = z.infer<typeof LearningItemArchiveExperimental>;
+
+/** Practice-owned attribution repair. Unlike status changes, this preserves version and time. */
+export const LearningItemKnowledgeIdsRewriteExperimental = z.object({
+  actor_kind: z.literal('system'),
+  actor_ref: z.literal('learning-item-attribution-repair'),
+  action: z.literal('experimental:learning_item_knowledge_ids_rewrite'),
+  subject_kind: z.literal('learning_item'),
+  subject_id: z.string().min(1),
+  outcome: z.literal('success'),
+  payload: z
+    .object({ from_id: z.string().min(1), into_id: z.string().min(1) })
+    .strict()
+    .refine((value) => value.from_id !== value.into_id, 'Rewrite must change the knowledge id'),
+});
+
+/** Restore the exact state captured by an accepted completion/relearn proposal. */
+export const LearningItemStateRestoreExperimental = z.object({
+  actor_kind: z.literal('user'),
+  actor_ref: z.literal('self'),
+  action: z.literal('experimental:learning_item_state_restore'),
+  subject_kind: z.literal('learning_item'),
+  subject_id: z.string().min(1),
+  outcome: z.literal('success'),
+  caused_by_event_id: z.string().min(1),
+  payload: z
+    .object({
+      expected_status: z.enum(['done', 'in_progress']),
+      status: z.enum(['pending', 'in_progress', 'done', 'resting']),
+      completed_at: z.string().datetime().nullable(),
+    })
+    .strict(),
+});

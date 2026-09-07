@@ -1,8 +1,7 @@
 // YUK-471 W2 — projectLearningItem: the IO shell around the PURE learning_item fold.
 //
-// The read→fold→write-through shell the learning_intent / ai_dream creation INSERT sites + the
-// complete / relearn / archive(retract) sites flip to as the SOLE writer of a `learning_item` row
-// WHEN the per-entity flag projectionIsWriter('learning_item') is ON (critic A1). It:
+// Canonical structural writer after YUK-973; there is no per-entity mode switch.
+// It:
 //   1. GATHERS the events that can affect `itemId` (Q1-only via gather.ts — the pure reducer filters
 //      internally, but the shell over-collects so a missed event can never silently drop a mutation),
 //   2. maps each DB row → the flat FoldEvent envelope (inside gather.ts),
@@ -24,10 +23,17 @@
 // Db|Tx polymorphic.
 
 import { eq } from 'drizzle-orm';
-
+import type { z } from 'zod';
+import { newId } from '@/core/ids';
 import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
+import type {
+  LearningItemKnowledgeIdsRewriteExperimental,
+  LearningItemStateRestoreExperimental,
+} from '@/core/schema/event/learning-item-events';
 import type { Db, Tx } from '@/db/client';
 import { learning_item } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
+import { nextProjectionEventTime } from './event-clock';
 import { gatherAndFoldLearningItem } from './gather';
 import { hasLearningItemGenesisAnchor } from './parity';
 
@@ -121,4 +127,27 @@ async function upsertProjectedLearningItem(
         version: projected.version,
       },
     });
+}
+
+type LearningItemRepairEvent =
+  | z.infer<typeof LearningItemKnowledgeIdsRewriteExperimental>
+  | z.infer<typeof LearningItemStateRestoreExperimental>;
+
+/** Caller holds the item row lock. Anchor, causal time, append and projection stay inseparable. */
+export async function applyLearningItemRepair(
+  tx: Tx,
+  input: LearningItemRepairEvent,
+  requestedAt: Date,
+): Promise<void> {
+  if (!(await hasLearningItemGenesisAnchor(tx, input.subject_id))) {
+    throw new Error(`Learning item ${input.subject_id} needs canonical projection migration`);
+  }
+  const createdAt = await nextProjectionEventTime(
+    tx,
+    'learning_item',
+    input.subject_id,
+    requestedAt,
+  );
+  await writeEvent(tx, { ...input, id: newId(), created_at: createdAt, ingest_at: requestedAt });
+  await projectLearningItemGuarded(tx, input.subject_id);
 }

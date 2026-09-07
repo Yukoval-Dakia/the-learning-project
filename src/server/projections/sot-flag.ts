@@ -1,133 +1,40 @@
-// YUK-471 W1 PR-B — the SoT-flip gate.
-//
-// OFF (default): the imperative applier writes the knowledge/knowledge_edge row, and the A2b
-// parity assert verifies fold == row (unchanged A2b behavior). This is also the ROLLBACK
-// state — flipping back OFF restores full A2b verification.
-//
-// ON: the projection write-through (projectKnowledge{Node,Edge}) becomes the row writer for
-// the wired sites; the imperative row-write is skipped and the (now tautological) parity
-// assert is skipped. Drift detection on the ON path moves to the offline `pnpm audit:projection`
-// B3 gate.
-//
-// Activation is the B3 GATED-not-timed cutover: rebuild a prod-clone → `audit:projection`
-// CLEAN → set PROJECTION_IS_WRITER=1 in prod env (all three processes — API / worker / Vite —
-// the same way AI_PROVIDER_OVERRIDE is injected) → restart. Rollback = unset the flag +
-// restart, then re-audit (an ON-window row that drifted would fail the OFF-path assert).
-//
-// STAGING: PR-B1 wires ONLY the pure-minting INSERT sites (propose_new / auto_tag / edge
-// create) — those mint a fresh, event-sourced-this-tx entity, so the projection's fold is
-// never null and its delete-on-null branch is unreachable (zero delete risk). The mutation
-// sites (reparent / archive / merge / split / edge archive) and the defensive non-delete
-// guard (never DELETE a live row that has no genesis anchor) land in PR-B2. The flag stays
-// OFF through every PR until the full flip is wired and the B3 gate clears.
-//
-// ── PER-ENTITY ISOLATION (YUK-471 Wave 2, critic A1 — BLOCKER fix) ───────────────────────────
-//
-// The bare `PROJECTION_IS_WRITER` global flag gates ONLY knowledge / knowledge_edge — it was
-// flipped LIVE (=1, docker-compose.mac.yml) when W1's B3 gate cleared. Wave 2/3 entities (goal,
-// mistake_variant, learning_item, …) MUST NOT ride that same global flag: their reducers /
-// gather / genesis backfill ship and clear their OWN B3 gate on independent timelines, so a
-// W2 entity reading the (already-ON) global flag would flip to projection-as-writer the instant
-// its wiring lands — folding an un-backfilled world / corrupting parity in prod.
-//
-// So `projectionIsWriter` is OVERLOADED:
-//   - bare `projectionIsWriter()` → the global `PROJECTION_IS_WRITER` (knowledge/edge, UNCHANGED;
-//     the 5 existing call sites keep their exact behavior — backward-compatible).
-//   - `projectionIsWriter('goal')` → the PER-ENTITY env `PROJECTION_IS_WRITER_GOAL` (default OFF
-//     until goal's own B3 gate clears). Each entity flips independently via its own env var.
-//
-// This is "defer flip not build" (project memory feedback_defer_flip_not_build): goal's full
-// vertical slice — reducer / gather / genesis backfill / event path / write-through wiring —
-// ships now; ONLY the act of switching who writes the goal ROW is deferred behind this flag.
-// When OFF the imperative insertGoal / UPDATE stays the row writer; when ON the projection
-// write-through writes the row. The genesis/event + materialized_id_index ALWAYS write (the
-// event log + anchor is the source of truth; the flag only switches the ROW writer).
-//
-// Read per-call (a cheap `process.env` read) so tests can parameterize OFF/ON; in prod the env
-// is fixed at boot, so the effective activation/rollback unit is an env change + restart.
-
-/**
- * Per-entity SoT-flip flag env var name. Wave 2/3 entities extend this map.
- *
- * `as const` (NOT a `Record<string, string>` annotation): the explicit Record annotation widened
- * the KEY type to `string`, so `ProjectionEntity` (= keyof typeof) collapsed to `string` and
- * `projectionIsWriter('typo')` would compile. `as const` keeps the keys as the literal union
- * (`'goal' | …`) so a non-entity arg is a compile error.
- */
+// Goal, learning_item and mistake_variant have one structural writer after YUK-973.
+// Remaining flags select only writers whose cutover is not retired. Knowledge/edge
+// share the global flag; ItemCalibration stays Scheme A (default OFF).
 const PER_ENTITY_FLAG_ENV = {
-  goal: 'PROJECTION_IS_WRITER_GOAL',
-  // YUK-471 W2 — mistake_variant fold flips independently (default OFF until its own B3 gate).
-  mistake_variant: 'PROJECTION_IS_WRITER_MISTAKE_VARIANT',
-  // YUK-471 W2 — learning_item fold flips independently (default OFF until its own B3 gate).
-  learning_item: 'PROJECTION_IS_WRITER_LEARNING_ITEM',
-  // YUK-471 W3-C3 — artifact fold flips independently (default OFF until its own W3-D B3 gate).
   artifact: 'PROJECTION_IS_WRITER_ARTIFACT',
-  // YUK-471 W3-C3 — question_block fold flips independently (default OFF until its own W3-D B3 gate).
   question_block: 'PROJECTION_IS_WRITER_QUESTION_BLOCK',
-  // YUK-496 (方案 A) — item_calibration anchor-only coverage. Default OFF and NO flip is planned:
-  // the B1 imperative writers stay the live row writers; a future canonical-event route (方案 B) is
-  // the prerequisite for ever flipping it. The flag exists so the kind can ride the per-entity
-  // isolation model (never the bare W1 global) like every post-W1 entity.
   item_calibration: 'PROJECTION_IS_WRITER_ITEM_CALIBRATION',
 } as const;
+const CANONICAL_WRITERS = { goal: true, learning_item: true, mistake_variant: true } as const;
+export type ProjectionEntity = keyof typeof PER_ENTITY_FLAG_ENV | keyof typeof CANONICAL_WRITERS;
 
-/** Which named entities have a per-entity SoT-flip flag (the overloaded arg domain). */
-export type ProjectionEntity = keyof typeof PER_ENTITY_FLAG_ENV;
-
+/** Read-only audit policy; business owners do not branch on retired modes. */
 export function projectionIsWriter(entity?: ProjectionEntity): boolean {
-  if (entity === undefined) {
-    // knowledge / knowledge_edge — the original global flag (W1, LIVE). UNCHANGED.
-    return process.env.PROJECTION_IS_WRITER === '1';
-  }
-  // Per-entity flag — independent of the global. Default OFF until the entity's B3 gate clears.
-  const envName = PER_ENTITY_FLAG_ENV[entity];
-  return envName !== undefined && process.env[envName] === '1';
+  if (entity === undefined) return process.env.PROJECTION_IS_WRITER === '1';
+  if (entity === 'goal' || entity === 'learning_item' || entity === 'mistake_variant') return true;
+  return process.env[PER_ENTITY_FLAG_ENV[entity]] === '1';
 }
 
-/**
- * The current SoT-writer flag vector (YUK-548). knowledge + knowledge_edge share the bare global.
- * Printed at boot for the owner to eyeball two-process consistency (the CHEAP cross-process guard —
- * the spec REJECTs a heavyweight shared fingerprint table as over-engineering for n=1; stop-the-world
- * flipping already closes the split-brain window).
- */
+/** Printed by both process roles so writer policy can be compared without a new table. */
 export function trackedFlagVector(): Record<string, boolean> {
-  // Derived from PER_ENTITY_FLAG_ENV (review O17): Wave 2/3 entities extend that map, and a
-  // hand-enumerated copy here would silently omit a new entity from the boot vector — defeating the
-  // cross-process consistency aid. The bare global (knowledge+knowledge_edge) has no per-entity env
-  // key, so it stays the one explicit entry.
-  const vec: Record<string, boolean> = {
+  const vector: Record<string, boolean> = {
     'knowledge+knowledge_edge': projectionIsWriter(),
+    ...CANONICAL_WRITERS,
   };
-  for (const entity of Object.keys(PER_ENTITY_FLAG_ENV) as ProjectionEntity[]) {
-    vec[entity] = projectionIsWriter(entity);
+  for (const entity of Object.keys(PER_ENTITY_FLAG_ENV) as (keyof typeof PER_ENTITY_FLAG_ENV)[]) {
+    vector[entity] = projectionIsWriter(entity);
   }
-  return vec;
+  return vector;
 }
 
-/**
- * Startup-time flip-order guardrail (YUK-548, component 6). WARN, NEVER throw.
- *
- * The learning_item retract path ALSO archives paired `artifact` rows + emits artifact lifecycle
- * events (src/server/proposals/actions.ts:1308-1325 — the grounded W3 coupling), so learning_item
- * depends on artifact for a coherent retract. If learning_item is ON while artifact is OFF, a WARN
- * flags the reverse-rollback dependency.
- *
- * WHY WARN, NOT A BOOT-THROW (Lens B M3): each entity flips independently (sot-flag.ts:37). A
- * boot-throw here would BRICK app+worker during exactly a single-entity artifact rollback while
- * learning_item is still ON — a rollback DEADLOCK. The real ordering hard-check lives in the CLI /
- * runbook (a human confirms artifact ON before flipping learning_item), not a runtime invariant.
- */
+/** Warning only: artifact rollback must not turn startup into a deadlock. */
 export function warnFlipOrder(): void {
-  if (projectionIsWriter('learning_item') && !projectionIsWriter('artifact')) {
+  if (!projectionIsWriter('artifact')) {
     console.warn(
-      '[sot-flag] learning_item ON while artifact OFF — the learning_item retract path ALSO archives ' +
-        'paired artifact rows + emits artifact lifecycle events (actions.ts:1308-1325, the W3 coupling). ' +
-        'For an artifact-only rollback, roll back learning_item FIRST (reverse rollback order — see the ' +
-        'SoT-flip rollback runbook). WARN, not a boot-throw: throwing would brick app+worker during that ' +
-        'very rollback.',
+      '[sot-flag] canonical learning_item with artifact OFF: paired artifact retraction requires ' +
+        'coherent writer policy. Learning-item rollback requires the previous release, not an env flag.',
     );
   }
-  // Cheap cross-process consistency aid: print this process's flag vector so the owner can eyeball
-  // app vs worker agreement (stop-the-world flipping keeps them consistent; no shared table).
   console.info('[sot-flag] flag vector at boot:', trackedFlagVector());
 }

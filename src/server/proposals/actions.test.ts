@@ -1,7 +1,6 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { LearningItemAcceptResult } from '@/capabilities/agency/public';
 import type { RecordPromotionAcceptResult } from '@/capabilities/ingestion/public';
 import {
   type KnowledgeEdgeProposalDecisionResult,
@@ -24,8 +23,14 @@ import { writeAiProposal } from '@/kernel/proposals/writer';
 import {
   gatherAndFoldKnowledgeEdge,
   gatherAndFoldKnowledgeNode,
+  gatherAndFoldLearningItem,
 } from '@/server/projections/gather';
-import { knowledgeLiveRowToSnapshot } from '@/server/projections/parity';
+import {
+  hasLearningItemGenesisAnchor,
+  knowledgeLiveRowToSnapshot,
+  learningItemLiveRowToSnapshot,
+} from '@/server/projections/parity';
+import { migrateCanonicalProjections } from '../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { assertProposalLifecycleResult } from '../../../tests/helpers/proposal-lifecycle';
 import {
@@ -1426,6 +1431,7 @@ describe('proposal lifecycle owner service', () => {
       created_at: now,
       updated_at: now,
     });
+    await migrateCanonicalProjections(db);
     await writeAiProposal(db, {
       id: 'completion_p1',
       payload: {
@@ -1441,7 +1447,6 @@ describe('proposal lifecycle owner service', () => {
         cooldown_key: 'completion:li_complete',
       },
     });
-
     const result = await acceptAiProposal(db, 'completion_p1');
 
     expect(result).toMatchObject({ kind: 'completion', learning_item_id: 'li_complete' });
@@ -1487,6 +1492,7 @@ describe('proposal lifecycle owner service', () => {
       created_at: completedAt,
       updated_at: completedAt,
     });
+    await migrateCanonicalProjections(db);
     await writeAiProposal(db, {
       id: 'relearn_p1',
       payload: {
@@ -1503,7 +1509,6 @@ describe('proposal lifecycle owner service', () => {
         cooldown_key: 'relearn:li_relearn',
       },
     });
-
     const result = await acceptAiProposal(db, 'relearn_p1');
 
     expect(result).toMatchObject({ kind: 'relearn', learning_item_id: 'li_relearn' });
@@ -1863,6 +1868,15 @@ describe('decideKnowledgeEdgeProposal — PR-B edge SoT flip (PROJECTION_IS_WRIT
 // =============================================================================
 
 describe('retractAiProposal — completion / relearn row reversal (YUK-471)', () => {
+  afterEach(async () => {
+    for (const item of await testDb().select().from(learning_item)) {
+      if (await hasLearningItemGenesisAnchor(testDb(), item.id)) {
+        expect(await gatherAndFoldLearningItem(testDb(), item.id)).toEqual(
+          learningItemLiveRowToSnapshot(item),
+        );
+      }
+    }
+  });
   beforeEach(async () => {
     await resetDb();
   });
@@ -1880,6 +1894,7 @@ describe('retractAiProposal — completion / relearn row reversal (YUK-471)', ()
       created_at: now,
       updated_at: now,
     });
+    await migrateCanonicalProjections(db);
     await writeAiProposal(db, {
       id: 'completion_retract_p1',
       payload: {
@@ -1991,6 +2006,7 @@ describe('retractAiProposal — completion / relearn row reversal (YUK-471)', ()
       created_at: completedAt,
       updated_at: completedAt,
     });
+    await migrateCanonicalProjections(db);
     await writeAiProposal(db, {
       id: 'relearn_retract_p1',
       payload: {
@@ -2039,6 +2055,7 @@ describe('retractAiProposal — completion / relearn row reversal (YUK-471)', ()
       created_at: now,
       updated_at: now,
     });
+    await migrateCanonicalProjections(db);
     await writeAiProposal(db, {
       id: 'relearn_resting_p1',
       payload: {
@@ -2081,6 +2098,7 @@ describe('retractAiProposal — completion / relearn row reversal (YUK-471)', ()
       created_at: now,
       updated_at: now,
     });
+    await migrateCanonicalProjections(db);
     await writeAiProposal(db, {
       id: 'completion_dr_p1',
       payload: {
@@ -2137,6 +2155,7 @@ describe('retractAiProposal — completion / relearn row reversal (YUK-471)', ()
       created_at: completedAt,
       updated_at: completedAt,
     });
+    await migrateCanonicalProjections(db);
     await writeAiProposal(db, {
       id: 'relearn_dr_p1',
       payload: {

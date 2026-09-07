@@ -21,9 +21,7 @@ export {
   requiredString,
 } from './applier-helpers';
 export {
-  assertCurrentMistakeVariantParity,
   hasMistakeVariantGenesisAnchor,
   projectMistakeVariantGuarded,
-  projectionIsWriter,
   writeProposalRateEvent,
 } from './owner-runtime';

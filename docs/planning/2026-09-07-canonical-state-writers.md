@@ -48,20 +48,35 @@ Mac-local rollout. Rollback after physical retirement uses the previous release,
 runtime writer implementation. NAS remains outside owner authorization. YUK-973 stays open until
 the branches and configuration are actually retired and verified; this prerequisite alone is not completion.
 
-## Runtime retirement in progress
+## Runtime retirement implementation
 
 Migration prerequisite PR #1355 merged as `9607310839b8e02d9b8d17ab9e3b3279fdf24535`;
-final `6d476fc9` passed CI `34112766637`. The separate unpublished retirement branch removes
-the main alternate paths, passes 108 scoped lifecycle DB cases and typecheck, and preserves
-early verification admission and atomic dismissal failure. Flags, duplicate-mode tests and
-remaining structural attribution are not finished or deployed.
+final `6d476fc9` passed CI `34112766637`. The separate retirement branch now removes the
+three alternate writers, their environment/compose selections and legacy inline anchoring.
+The raw Goal fixture insertion API had no production consumer and now lives only in tests.
 
-The remaining learning-item attribution helper runs before the live merge acceptance event and
-also serves historical repair based on `knowledge.merged_from`. Replaying only old accepted merge
-events cannot repair a stale item whose genesis was recorded later. The next implementation is a
-typed, subject-keyed `experimental:learning_item_knowledge_ids_rewrite` event with `{from_id, into_id}`:
-the existing Practice helper keeps its row lock and affected-ID receipt, emits the correction and
-projects immediately in the same transaction. The fold changes only knowledge IDs, not version or
-updated_at; historical accepted-merge replay remains supported. Do not add another inline genesis
-branch: require the formal migration first, including in historical-maintenance fixtures/entrypoints.
-Verify event ordering against recently backfilled bases and preserve no-op behavior.
+Learning-item attribution runs before live merge acceptance and also serves repair based only
+on `knowledge.merged_from`. A typed subject-keyed `experimental:learning_item_knowledge_ids_rewrite`
+records the mapping and projects in the same transaction. Its fold changes only knowledge IDs;
+version, updated_at and derived state are preserved. Historical accepted-merge replay remains.
+The shared repair operation requires an anchor and orders the event after the latest subject
+event while callers retain their stable row lock. This handles recently backfilled bases and
+same-clock chained repairs without an inline genesis fallback or extra ownership registry.
+
+The final writer inventory found completion/relearn retraction still using raw state updates.
+A typed `experimental:learning_item_state_restore` now records the captured prior status and
+completion time, then projects. It preserves conditional/idempotent reversal and evidence cleanup,
+rather than incorrectly mapping every undo to a new completion or relearn timestamp.
+Completion/relearn acceptance also rechecks locked state and shares its canonical event clock.
+
+Local validation: 312 scoped DB cases, 64 focused unit cases, typecheck, lint and build pass.
+The existing lifecycle suite now checks replay after real completion/relearn acceptance and undo,
+including resting/null, original completion time, evidence removal and repeated retraction.
+Backfill/sweep fixtures include long, completed, versioned LearningItems with derived review data.
+Duplicate OFF/ON cases are removed; migration refusal, null safety and row-lock probes remain.
+Capability, architecture and flag checks pass; dependency baseline decreases 439→437 only.
+
+Independent runtime review, exact-head CI and Mac-local rollout are still required.
+The advisory fold-write inventory retains 8 other-entity unclassified writes and 5 stale entries;
+YUK-974 captures their individual event-nativeness verification, not an allowlist expansion.
+No new provider calls or production changes occurred in this runtime implementation.

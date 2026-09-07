@@ -2,18 +2,16 @@
 
 ## 最新状态
 
-- 973迁移前置PR1355已合并：exact6d476fc99b23ec6ed71a242a5700d7c2ea0d7f8f，CI34112766637全部success，
-  main9607310839b8e02d9b8d17ab9e3b3279fdf24535，2026-09-07T10:54:25Z；未新部署，无paid。
-  root当前codex/yuk-973-retire-state-writers，10生产文件删除主要双轨分支WIP，不是已交付。
-  38初步DB通过；扩大106有9个raw legacy variant fixture失败，接真实迁移后33过，再补early-paid/atomic-dismiss两例35过。
-  最终108 scoped DB与类型检查过；flags/ports/旧OFF-ON测试/LI业务内legacy回填和剩余merge归属direct update待完成。
-  Practice dismiss已将rate与projection纳入同事务，prepared guard失败不能留下已dismiss信号；verify在paid前检查锚。
-  architect已确认仅post-rate project不保留later-genesis历史repair语义；下一步typed Q1
-  experimental:learning_item_knowledge_ids_rewrite {from_id,into_id}，现有Practice helper内写事件+project，保持版本/updated_at。
-  root选择要求正式迁移先完成，不增加另一处业务inline genesis；需验证刚回填base的事件时序/no-op。
-  详细清单仍由同一只读architect收尾；不再重复调查此结论。
-  973 GitHub自动Done后已恢复In Progress；第一次Linear更新/评论报错后get恢复，issue状态更新已重试成功。
-  原始脏main与已运行本地生产不动；当前独立分支只root写，未启动本runtime lane独立review。
+- Active973 runtime：root独占codex/yuk-973-retire-state-writers，base main960731083（迁移PR1355已合并）。
+  Goal/LI/variant主双轨分支、三旧env/compose开关、LI inline legacy genesis已退休；legacyGoal仅fixture入口移tests/helpers。
+  typed Q1 knowledge_ids_rewrite支持live pre-rate及backfill/sweep；共享repair操作包住anchor/事件钟/append/project。
+  补漏completion/relearn retract raw writer，typed state_restore携带exact prior状态/完成时间，保留evidence清理和状态guard。
+  事件钟保证晚补base/同钟串行rewrite不丢；归属repair不改版本/updated_at/derived。
+  312 scoped DB、64 unit、typecheck/lint/build与capability/architecture/flags通过；依赖437/0/47，仅下调2。
+  raw未准备fixture曾触发guard：修为先真实迁移再提案，不放宽migration的eventful-unanchored拒绝。
+  本runtime lane尚未独立review/PR/CI/部署；不能复用1355的review宣称当前通过。
+  audit-fold-writes其它实体8未登记写点+5stale已去重登记YUK974 Todo，不新增allowlist；972继续Todo。
+  原脏main和本地生产55aaac30未动，无模型调用；额外恢复$3未用。整体goal active。
 
 - Active973 branch codex/yuk-973-canonical-writers，root独占；迁移前置helper已实现并接入migrate.ts。
   三类实体在同一锁定事务补锚，拒绝orphan history/field drift/ghost，失败回滚新锚，不live rebuild。

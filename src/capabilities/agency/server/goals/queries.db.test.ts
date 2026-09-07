@@ -9,9 +9,13 @@
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { event, goal, knowledge } from '@/db/schema';
+import { gatherAndFoldGoal } from '@/server/projections/gather';
+import { goalLiveRowToSnapshot } from '@/server/projections/parity';
+import { migrateCanonicalProjections } from '../../../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { insertLegacyGoal as insertGoal } from '../../../../../tests/helpers/legacy-goal';
 import { createManualGoal } from './commands';
-import { insertGoal, listActiveGoalsWithResolvedScope, updateGoalStatus } from './queries';
+import { listActiveGoalsWithResolvedScope, updateGoalStatus } from './queries';
 
 const db = testDb();
 
@@ -203,4 +207,21 @@ describe('goal mutation command concurrency (YUK-952)', () => {
     expect(row.version).toBe(2);
     expect(row.status).toBe('done');
   });
+});
+
+it('a delayed mutation follows the newer migrated genesis, not the old row timestamp', async () => {
+  const old = new Date('2026-01-01T00:00:00Z');
+  await insertGoal(db, {
+    id: 'legacy_goal',
+    title: '多知识点迁移与迟到更新',
+    scope_knowledge_ids: ['kc-a', 'kc-b'],
+    sequence_hint: 3,
+    source: 'manual',
+    now: old,
+  });
+  await migrateCanonicalProjections(db);
+  await updateGoalStatus(db, 'legacy_goal', 'done', old);
+  const [row] = await db.select().from(goal).where(eq(goal.id, 'legacy_goal'));
+  expect(row).toMatchObject({ status: 'done', version: 1, scope_knowledge_ids: ['kc-a', 'kc-b'] });
+  expect(await gatherAndFoldGoal(db, row.id)).toEqual(goalLiveRowToSnapshot(row));
 });

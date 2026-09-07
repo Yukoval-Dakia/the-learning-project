@@ -21,12 +21,8 @@ import { runProjectionOracleSweep } from './projection_oracle_sweep';
 
 const T0 = new Date('2026-06-01T00:00:00.000Z');
 const NOW = new Date('2026-07-01T00:00:00.000Z');
-const GOAL_FLAG = 'PROJECTION_IS_WRITER_GOAL';
 const ALL_FLAGS = [
   'PROJECTION_IS_WRITER',
-  'PROJECTION_IS_WRITER_GOAL',
-  'PROJECTION_IS_WRITER_MISTAKE_VARIANT',
-  'PROJECTION_IS_WRITER_LEARNING_ITEM',
   'PROJECTION_IS_WRITER_ARTIFACT',
   'PROJECTION_IS_WRITER_QUESTION_BLOCK',
 ];
@@ -64,7 +60,7 @@ describe('runProjectionOracleSweep', () => {
     savedFlags = {};
     for (const f of ALL_FLAGS) {
       savedFlags[f] = process.env[f];
-      delete process.env[f]; // every kind OFF by default
+      delete process.env[f]; // unretired flags OFF by default
     }
   });
   afterEach(() => {
@@ -74,22 +70,21 @@ describe('runProjectionOracleSweep', () => {
     }
   });
 
-  it('OFF: every kind flag off → all skipped, zero audited, zero anomalies', async () => {
+  it('canonical kinds are always audited while uncut kinds remain gated', async () => {
     const db = testDb();
     await insertGoal('g1');
     await backfillGoalGenesis(db, T0);
 
     const report = await runProjectionOracleSweep(db, { now: NOW });
 
-    expect(report.auditedKinds).toEqual([]);
-    expect(report.skippedKinds).toContain('goal');
+    expect([...report.auditedKinds].sort()).toEqual(['goal', 'learning_item', 'mistake_variant']);
+    expect(report.skippedKinds).toContain('artifact');
     expect(report.anomalies).toBe(0);
     expect(report.forensicWritten).toBe(0);
   });
 
   it('CLEAN: an ON, coherently-backfilled entity → zero anomalies, zero forensic', async () => {
     const db = testDb();
-    process.env[GOAL_FLAG] = '1';
     await insertGoal('g1');
     await backfillGoalGenesis(db, T0);
 
@@ -103,7 +98,6 @@ describe('runProjectionOracleSweep', () => {
 
   it('FIELD_DRIFT: an out-of-band value change is classified + a fold-inert forensic is written; the row is NOT touched', async () => {
     const db = testDb();
-    process.env[GOAL_FLAG] = '1';
     await insertGoal('g1', 'Original');
     await backfillGoalGenesis(db, T0);
     // out-of-band structural mutation → live diverges from fold(genesis).
@@ -127,7 +121,6 @@ describe('runProjectionOracleSweep', () => {
 
   it('GHOST: an event-only row (live row dropped) is classified GHOST', async () => {
     const db = testDb();
-    process.env[GOAL_FLAG] = '1';
     await insertGoal('g_ghost');
     await backfillGoalGenesis(db, T0);
     await db.delete(goal).where(eq(goal.id, 'g_ghost')); // events remain, live row gone
@@ -142,7 +135,6 @@ describe('runProjectionOracleSweep', () => {
 
   it('MISSING: an index-anchored row whose base event was dropped folds null → classified MISSING', async () => {
     const db = testDb();
-    process.env[GOAL_FLAG] = '1';
     await insertGoal('g_missing');
     await backfillGoalGenesis(db, T0); // genesis event + index anchor
     // drop the genesis EVENT, keep the index anchor + live row → still "anchored", but folds null.
@@ -164,7 +156,6 @@ describe('runProjectionOracleSweep', () => {
 
   it('M3: an un-anchored live row (no genesis, no index) is SKIPPED — no false GHOST/MISSING', async () => {
     const db = testDb();
-    process.env[GOAL_FLAG] = '1';
     await insertGoal('g_unanchored'); // NO backfill → no genesis, no index anchor
 
     const report = await runProjectionOracleSweep(db, { now: NOW });
@@ -177,7 +168,6 @@ describe('runProjectionOracleSweep', () => {
 
   it('one open forensic record per id: re-running the sweep does not re-write the breadcrumb', async () => {
     const db = testDb();
-    process.env[GOAL_FLAG] = '1';
     await insertGoal('g1', 'Original');
     await backfillGoalGenesis(db, T0);
     await db.update(goal).set({ title: 'TAMPERED' }).where(eq(goal.id, 'g1'));
@@ -193,7 +183,6 @@ describe('runProjectionOracleSweep', () => {
 
   it('M4: the REPEATABLE READ snapshot does not see a concurrent commit made mid-sweep', async () => {
     const db = testDb();
-    process.env[GOAL_FLAG] = '1';
     await insertGoal('g1', 'Original');
     await backfillGoalGenesis(db, T0);
 

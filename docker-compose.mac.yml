@@ -25,11 +25,8 @@ services:
       PROJECTION_IS_WRITER: "1"
       PROJECTION_IS_WRITER_ARTIFACT: "1"
       PROJECTION_IS_WRITER_QUESTION_BLOCK: "1"
-      # YUK-887 local cutover: restored-backup B3/golden gate passed on 2026-09-07.
-      # Roll back learning_item before artifact. item_calibration stays Scheme A / OFF.
-      PROJECTION_IS_WRITER_GOAL: "1"
-      PROJECTION_IS_WRITER_MISTAKE_VARIANT: "1"
-      PROJECTION_IS_WRITER_LEARNING_ITEM: "1"
+      # Goal/learning_item/mistake_variant are canonical writers without mode switches.
+      # item_calibration stays Scheme A / OFF.
   worker:
     environment:
       # Mirror app exactly; ingestion enrollment runs in the worker, while the
@@ -39,9 +36,6 @@ services:
       PROJECTION_IS_WRITER: "1"
       PROJECTION_IS_WRITER_ARTIFACT: "1"
       PROJECTION_IS_WRITER_QUESTION_BLOCK: "1"
-      PROJECTION_IS_WRITER_GOAL: "1"
-      PROJECTION_IS_WRITER_MISTAKE_VARIANT: "1"
-      PROJECTION_IS_WRITER_LEARNING_ITEM: "1"
   postgres:
     ports:
       - "127.0.0.1:5433:5432"

@@ -17,8 +17,8 @@
  * （fold(events)→row），核心 reducer 在 `src/core/projections/<table>.ts`。SoT-flip 由
  * `src/server/projections/sot-flag.ts` 的 `projectionIsWriter(entity?)` 门控：
  *   - knowledge / knowledge_edge：裸全局 `PROJECTION_IS_WRITER`，**已 LIVE**（=1, docker-compose）。
- *   - goal / mistake_variant / learning_item / artifact / question_block：per-entity env
- *     （`PROJECTION_IS_WRITER_<ENTITY>`），默认 OFF，各自 B3 gate 清后独立翻转。
+ *   - goal / mistake_variant / learning_item：canonical 单写者，已退休 env 分支。
+ *   - artifact / question_block：仍保留 per-entity env 门控，部署状态以真实 runtime 为准。
  *
  * 「咽喉」= 当 flag ON 时 projection shell 写行；当 OFF 时命令式 applier 写行（**同 tx writeEvent
  * + guarded by projectionIsWriter** 的 dual-path）。红线要防的失效：一个**既不是 projection shell、
@@ -215,108 +215,31 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
     note: 'knowledge_edge accept-path applier gated on projectionIsWriter() (event-native archive+create).',
   },
 
-  // ---- goal (OFF: PROJECTION_IS_WRITER_GOAL) ----
+  // ---- goal (canonical, YUK-973) ----
   {
     table: 'goal',
     file: 'src/server/projections/goal.ts',
     marker: '.insert(goal)',
     role: 'throat',
-    note: 'projection write-through shell — the fold row writer for goal (default OFF until goal B3 gate clears).',
-  },
-  {
-    table: 'goal',
-    file: 'src/capabilities/agency/server/goals/queries.ts',
-    marker: "projectionIsWriter('goal')",
-    role: 'gated-dual-path',
-    note: "goal insert/update gated on projectionIsWriter('goal') — imperative writer is the OFF-path; shell takes over when the goal flag flips ON.",
-  },
-  {
-    table: 'goal',
-    file: 'src/server/proposals/actions.ts',
-    marker: "projectionIsWriter('goal')",
-    role: 'gated-dual-path',
-    note: "goal accept-path applier gated on projectionIsWriter('goal').",
+    note: 'Sole structural row writer; business mutations append events then project in the same transaction.',
   },
 
-  // ---- mistake_variant (OFF: PROJECTION_IS_WRITER_MISTAKE_VARIANT) ----
+  // ---- mistake_variant (canonical, YUK-973) ----
   {
     table: 'mistake_variant',
     file: 'src/server/projections/mistake_variant.ts',
     marker: '.insert(mistake_variant)',
     role: 'throat',
-    note: 'projection write-through shell — the fold row writer for mistake_variant (default OFF).',
-  },
-  {
-    table: 'mistake_variant',
-    file: 'src/capabilities/practice/server/failure-learning-variant.ts',
-    marker: 'projectionWritesMistakeVariant()',
-    role: 'gated-dual-path',
-    note: 'Failure Learning variant insert is gated through the mistake-variant projection gateway.',
-  },
-  {
-    table: 'mistake_variant',
-    file: 'src/capabilities/practice/jobs/variant_verify.ts',
-    marker: "projectionIsWriter('mistake_variant')",
-    role: 'gated-dual-path',
-    note: "variant_verify update gated on projectionIsWriter('mistake_variant').",
-  },
-  {
-    table: 'mistake_variant',
-    file: 'src/capabilities/practice/server/proposal-appliers.ts',
-    marker: 'projectionWritesMistakeVariant()',
-    role: 'gated-dual-path',
-    note: 'mistake_variant accept path is gated through the projection gateway.',
-  },
-  {
-    table: 'mistake_variant',
-    file: 'src/server/proposals/actions.ts',
-    marker: "projectionIsWriter('mistake_variant')",
-    role: 'gated-dual-path',
-    note: "mistake_variant accept-path applier gated on projectionIsWriter('mistake_variant').",
+    note: 'Sole structural row writer; business mutations append events then project in the same transaction.',
   },
 
-  // ---- learning_item (OFF: PROJECTION_IS_WRITER_LEARNING_ITEM) ----
+  // ---- learning_item (canonical, YUK-973) ----
   {
     table: 'learning_item',
     file: 'src/server/projections/learning_item.ts',
     marker: '.insert(learning_item)',
     role: 'throat',
-    note: 'projection write-through shell — the fold row writer for learning_item (default OFF).',
-  },
-  {
-    table: 'learning_item',
-    file: 'src/capabilities/agency/server/learning-intent.ts',
-    marker: "projectionIsWriter('learning_item')",
-    role: 'gated-dual-path',
-    note: "orchestrator learning_item mint gated on projectionIsWriter('learning_item').",
-  },
-  {
-    table: 'learning_item',
-    file: 'src/capabilities/agency/server/proposal-appliers.ts',
-    marker: "projectionIsWriter('learning_item')",
-    role: 'gated-dual-path',
-    note: "learning_item accept-path applier gated on projectionIsWriter('learning_item').",
-  },
-  {
-    table: 'learning_item',
-    file: 'src/capabilities/knowledge/server/proposals.ts',
-    marker: '.update(learning_item)',
-    role: 'gated-dual-path',
-    note: 'learning_item update rides the same proposals.ts accept path (projectionIsWriter-gated).',
-  },
-  {
-    table: 'learning_item',
-    file: 'src/server/proposals/legacy-record-appliers.ts',
-    marker: "projectionIsWriter('learning_item')",
-    role: 'gated-dual-path',
-    note: "legacy /record applier for learning_item gated on projectionIsWriter('learning_item').",
-  },
-  {
-    table: 'learning_item',
-    file: 'src/server/proposals/actions.ts',
-    marker: "projectionIsWriter('learning_item')",
-    role: 'gated-dual-path',
-    note: "learning_item accept-path applier gated on projectionIsWriter('learning_item').",
+    note: 'Sole structural row writer; business mutations append events then project in the same transaction.',
   },
 
   // ---- artifact (OFF: PROJECTION_IS_WRITER_ARTIFACT) ----

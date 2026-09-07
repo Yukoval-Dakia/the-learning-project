@@ -692,3 +692,43 @@ describe('foldLearningItem — Q7(b) same-millisecond complete/relearn (fold == 
     expect(folded).toEqual(oracle);
   });
 });
+
+describe('exact prior-state restoration', () => {
+  it('preserves content/attribution and old completion time, guards status and ignores another item', () => {
+    const row = liSnapshot({
+      status: 'in_progress',
+      version: 9,
+      content: '保留边界与上下文。'.repeat(40),
+      knowledge_ids: ['k_a', 'k_b'],
+    });
+    const seed = genesis({ created_at: T0, row });
+    const restore: FoldEvent = {
+      id: nextId('restore'),
+      created_at: at(10),
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:learning_item_state_restore',
+      subject_kind: 'learning_item',
+      subject_id: row.id,
+      outcome: 'success',
+      caused_by_event_id: 'proposal',
+      payload: {
+        expected_status: 'in_progress',
+        status: 'done',
+        completed_at: at(-1000).toISOString(),
+      },
+    };
+    const expected = {
+      ...row,
+      status: 'done',
+      completed_at: at(-1000),
+      updated_at: at(10),
+      version: 10,
+    };
+    expect(foldLearningItem(row.id, [restore, seed])).toEqual(expected);
+    expect(
+      foldLearningItem(row.id, [seed, restore, { ...restore, id: nextId(), created_at: at(20) }]),
+    ).toEqual(expected);
+    expect(foldLearningItem(row.id, [seed, { ...restore, subject_id: 'other' }])).toEqual(row);
+  });
+});

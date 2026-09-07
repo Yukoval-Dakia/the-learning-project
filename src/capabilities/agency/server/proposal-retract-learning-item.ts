@@ -11,12 +11,7 @@ export interface LearningItemRetractRuntime {
     input: { artifactId: string; version: number; proposalId: string; archivedAt: Date },
   ) => Promise<void>;
   hasLearningItemGenesisAnchor: (tx: Tx, itemId: string) => Promise<boolean>;
-  learningItemSnapshot: (row: typeof learning_item.$inferSelect) => unknown;
   projectLearningItemGuarded: (tx: Tx, itemId: string) => Promise<unknown>;
-  upsertMaterializedIdIndex: (
-    tx: Tx,
-    input: { materialized_id: string; anchor_event_id: string; subject_kind: 'learning_item' },
-  ) => Promise<unknown>;
 }
 
 export async function retractLearningItemProposal(
@@ -32,27 +27,7 @@ export async function retractLearningItemProposal(
 
   for (const item of affectedItems) {
     if (!(await runtime.hasLearningItemGenesisAnchor(tx, item.id))) {
-      const genesisEventId = newId();
-      const genesisAt = new Date(
-        Math.min(item.updated_at.getTime(), input.correction_at.getTime() - 1),
-      );
-      await writeEvent(tx, {
-        id: genesisEventId,
-        actor_kind: 'system',
-        actor_ref: 'genesis-backfill',
-        action: 'experimental:genesis',
-        subject_kind: 'learning_item',
-        subject_id: item.id,
-        outcome: 'success',
-        payload: { row: runtime.learningItemSnapshot(item) },
-        created_at: genesisAt,
-        ingest_at: input.correction_at,
-      });
-      await runtime.upsertMaterializedIdIndex(tx, {
-        materialized_id: item.id,
-        anchor_event_id: genesisEventId,
-        subject_kind: 'learning_item',
-      });
+      throw new Error('learning_item requires canonical projection migration before retraction');
     }
     await writeEvent(tx, {
       id: newId(),

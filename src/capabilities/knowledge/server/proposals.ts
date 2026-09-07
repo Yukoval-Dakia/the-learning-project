@@ -16,7 +16,6 @@
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { rewriteGoalScopeOnMerge } from '@/capabilities/agency/public';
 import {
-  assertMergedLearningItemParity,
   rewriteLearningItemKnowledgeIds,
   rewriteQuestionKnowledgeIds,
 } from '@/capabilities/practice/public';
@@ -893,7 +892,7 @@ export async function repairMergeAttributionForFromId(
   return {
     from_id: fromId,
     question_ids_rewritten: await rewriteQuestionKnowledgeIds(tx, fromId, intoId),
-    learning_item_ids_rewritten: await rewriteLearningItemKnowledgeIds(tx, fromId, intoId),
+    learning_item_ids_rewritten: await rewriteLearningItemKnowledgeIds(tx, fromId, intoId, now),
     goal_ids_rewritten: await rewriteGoalScopeOnMerge(tx, fromId, intoId, now),
     edges_rewired: await rewireKnowledgeEdges(tx, fromId, intoId, now, mergeFromIds),
     mastery_state: await retireMasteryStateOnMerge(tx, fromId, intoId),
@@ -1314,16 +1313,6 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
         }
       } else {
         await assertAcceptParity(tx, result);
-      }
-
-      // YUK-543 — merge-only: verify the learning_item fold reproduces the merge-rewritten rows.
-      // Runs in BOTH flip branches (learning_item is governed by its OWN, still-OFF flag) and AFTER
-      // the rate write (the fold gates its rewrite on the merge's now-written acceptance).
-      if (mergeRepair) {
-        await assertMergedLearningItemParity(
-          tx,
-          mergeRepair.flatMap((entry) => entry.learning_item_ids_rewritten),
-        );
       }
 
       return result;

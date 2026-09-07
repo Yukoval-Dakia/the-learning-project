@@ -23,6 +23,7 @@ import {
   gatherAndFoldKnowledgeEdge,
   gatherAndFoldKnowledgeNode,
 } from '@/server/projections/gather';
+import { migrateCanonicalProjections } from '../../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   acceptProposal,
@@ -983,6 +984,7 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     await insertKnowledge({ id: 'k_into', version: 0 });
     await insertLI('li1', ['k_from']);
     await insertG('g1', ['k_from', 'k_y']);
+    await migrateCanonicalProjections(testDb());
     const log = await mergeFromInto('k_from', 'k_into');
     expect(log[0].learning_item_ids_rewritten).toEqual(['li1']);
     expect(log[0].goal_ids_rewritten).toEqual(['g1']);

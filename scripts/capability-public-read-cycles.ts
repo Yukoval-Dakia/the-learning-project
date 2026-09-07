@@ -185,7 +185,6 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
       'learnableFrontierResolved',
       'rewriteQuestionKnowledgeIds',
       'rewriteLearningItemKnowledgeIds',
-      'assertMergedLearningItemParity',
     ],
     dto: 'FrontierResolution / merge attribution receipts',
     justification:
