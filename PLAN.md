@@ -4,6 +4,11 @@
 
 ## NOW
 
+- Active972：root独占codex/yuk-972-profile-judge-route，继承974交付记录9fbfb486，base main c27202369。
+  计划：custom profile路由RED→移除physics名称门→保留override/choices/图片优先级验证→review/exactCI交付。
+  不新增schema/学科功能或模型调用；生产034f35fe暂不动。
+  custom真实SubjectRegistry注册通过，calculation/computation原semantic/keyword两RED→unit_dimension两GREEN。
+  51scoped unit含内建冻结路由矩阵、profile注册/调度校验，typecheck/lint/build与架构门过；待独立审查/exactCI。
 - YUK974 Done：PR1357 exact034f35fe，CI34124354408全job绿，main c27202369，Mac部署已验证。
   Notes hub完整回放时间差与提案artifact撤销倒时均RED→GREEN；归档责任移Notes，复用已有限次事务重试。
   120DB/27unit/typecheck/lint/build及严格writer/architecture/capability过，0violation/0stale；42advisory显式保留。

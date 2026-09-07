@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Db } from '@/db/client';
-import { resolveSubjectProfile } from '@/subjects/profile';
+import { SubjectRegistry, resolveSubjectProfile } from '@/subjects/profile';
 import {
   type JudgeQuestionRow,
   judgeAnswer,
@@ -14,6 +14,91 @@ import {
 const mockDb = {} as Db;
 
 const yuwenProfile = resolveSubjectProfile('yuwen');
+
+describe('custom profile judge routing', () => {
+  function customProfile(preferUnits = true) {
+    const source = resolveSubjectProfile('physics');
+    const registry = new SubjectRegistry();
+    const id = 'subj_measurement_contract';
+    const registration = registry.register(
+      {
+        ...source,
+        id,
+        displayName: '工程计量',
+        languageStyle: '区分数值、单位和测量不确定度，解释换算依据，不把精度等同于准确度。',
+        judgePolicy: {
+          preferredRoutes: source.judgePolicy.preferredRoutes.filter(
+            (route) => preferUnits || route !== 'unit_dimension',
+          ),
+          notes: ['需要识别等价单位与有效数字。', '没有声明偏好时不自动选择量纲判分。'],
+        },
+        grounding: {
+          ...source.grounding,
+          allowedSources: ['校准记录', '题目给定的测量数据'],
+          uncertaintyPolicy: '缺少校准条件时明确未知，不推断仪器的系统误差。',
+        },
+        promptFragments: { ...source.promptFragments, roleNoun: '工程计量导师' },
+      },
+      ['计量契约'],
+    );
+    expect(registration).toEqual({ id, valid: true, errors: [] });
+    const profile = registry.resolve('计量契约');
+    expect(profile.id).toBe(id);
+    return profile;
+  }
+
+  const measurementQuestion: JudgeQuestionRow = {
+    id: 'custom-measurement',
+    kind: 'calculation',
+    prompt_md: '同一管路流速为 0.025 km/s，请转换为 m/s，并说明数量级、单位约去及有效数字。'.repeat(
+      5,
+    ),
+    reference_md: '25 m/s；1 km = 1000 m，保留两位有效数字。',
+    rubric_json: { criteria: [], keywords: ['换算', '有效数字'] },
+    choices_md: null,
+    judge_kind_override: null,
+    metadata: { calibration: { uncertainty: null, conditions: ['恒定流量', '同一截面'] } },
+  };
+
+  it.each(['calculation', 'computation'])(
+    '%s uses declared unit preference with or without a figure',
+    (kind) => {
+      const profile = customProfile();
+      for (const image_refs of [[], ['calibration-diagram']]) {
+        expect(
+          resolveQuestionJudgeRoute({ ...measurementQuestion, kind, image_refs }, profile),
+        ).toBe('unit_dimension');
+      }
+    },
+  );
+
+  it('keeps choices deterministic and explicit override first for custom profiles', () => {
+    const profile = customProfile();
+    const choice = {
+      ...measurementQuestion,
+      choices_md: ['25 m/s', '0.025 m/s'],
+      image_refs: ['diagram'],
+    };
+    expect(resolveQuestionJudgeRoute(choice, profile)).toBe('exact');
+    expect(resolveQuestionJudgeRoute({ ...choice, judge_kind_override: 'semantic' }, profile)).toBe(
+      'semantic',
+    );
+  });
+
+  it('does not opt into units just because the capability is available', () => {
+    const profile = customProfile(false);
+    expect(resolveQuestionJudgeRoute(measurementQuestion, profile)).toBe('semantic');
+    expect(
+      resolveQuestionJudgeRoute({ ...measurementQuestion, kind: 'computation' }, profile),
+    ).toBe('keyword');
+    expect(
+      resolveQuestionJudgeRoute(
+        { ...measurementQuestion, kind: 'short_answer', image_refs: ['diagram'] },
+        profile,
+      ),
+    ).toBe('multimodal_direct');
+  });
+});
 
 describe('M-1 regression: runnable routes ignore multimodal fields', () => {
   const baseChoice: JudgeQuestionRow = {

@@ -2,10 +2,15 @@
 
 ## 最新状态
 
+- Active972：root独占codex/yuk-972-profile-judge-route，base main c27202369，继承974交付记录9fbfb486。
+  只移除unit_dimension的physics名称门，custom profile行为验证；不新增schema/产品学科/模型调用，生产034f35fe不变。
+  两路由RED→GREEN，真实registry/alias与完整profile验证；override/choices/图片/未opt-in以及内建矩阵保留。
+  51unit/typecheck/lint/build/architecture/capability过，待独立review/exactCI。
+
 - YUK974 Done：PR1357 exact034f35fe，CI34124354408全job绿，main c27202369，Mac部署已验证。
   hub-sync两钟漂移与提案artifact撤销早于新编辑均RED→GREEN；Notes拥有整笔归档，Agency不再写artifact表。
   8未登记/5stale逐项事件责任复核；code-policy替代静态LIVE，0violation/0stale，42advisory不隐藏。
-  120DB/27unit/typecheck/lint/build/严格writer与架构过，待review/exactCI；生产4e1dec7c不变，无paid。
+  初稿120DB/27unit/typecheck/lint/build/严格writer与架构通过；当时生产仍4e1dec7c，无paid。
   初审64a94b71 P1：旧润色读v0后在archive后CAS仍成功；真实PG交错RED→GREEN，archive推进version+事件。
   CI34123408875双DB绿，仅Step9旧名单失败；两份重复名单用同scanner/registry替代，保留原2表硬门。
   修后101DB/46unit/typecheck/lint/build/architecture过；唯一验证审034f35fe PASS（独立5DB），无第三轮。
