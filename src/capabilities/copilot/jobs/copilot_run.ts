@@ -58,14 +58,6 @@ import { reconcileNativeSubagentsForParent } from '@/capabilities/copilot/server
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
 import {
-  DOMAIN_TOOL_MCP_SERVER_NAME,
-  READ_TOOLS,
-  resolveDomainToolNames,
-  resolveMcpAllowedTools,
-} from '@/kernel/tools/allowlists';
-import { runAgentTask } from '@/server/ai/runner';
-import { buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
-import {
   type BossJobObservation,
   type BossJobObserver,
   observeBossJob,
@@ -77,7 +69,6 @@ import {
   getAgentSdkSessionId,
   setAgentSdkSessionId,
 } from '@/server/session/conversation';
-import { resolveCopilotSkills } from '@/subjects/copilot-skills';
 import type { CopilotModeState, CopilotSkillTurn } from '../server/chat-contracts';
 import {
   DURABLE_COPILOT_EXECUTION_BUDGET,
@@ -93,14 +84,9 @@ import {
   CopilotPrimaryViewSchema,
   type CopilotReplyFinalizationReceipt,
 } from '../server/reply-finalization';
-import type { CopilotPrimaryView } from '../server/turns';
-
-export { enqueueCopilotMailboxJob } from '../api/chat';
-
-import type { CopilotContinuationRecord, SubagentRunRecord } from '../server/subagent-mailbox';
 import type { SpawnBudgetObservation } from '../server/subagents';
 import { projectCopilotActivity } from '../server/tool-activity';
-import { getCopilotContinuationHistory } from '../server/turns';
+import type { CopilotPrimaryView } from '../server/turns';
 
 export type { CopilotRunJobData } from '../server/durable-dispatch';
 
@@ -1580,110 +1566,4 @@ export function buildCopilotRunHandler(
       }
     }
   };
-}
-
-const COPILOT_RESEARCH_READ_TOOLS = READ_TOOLS.filter(
-  (name) => name !== 'generate_goal_outline' && name !== 'generate_question_candidate',
-);
-
-export async function runCopilotResearcher(
-  db: Db,
-  record: SubagentRunRecord,
-  abortController: AbortController,
-): Promise<{ taskRunId: string; text: string }> {
-  const taskRunId = record.childTaskRunId ?? `copilot_research_${record.id}`;
-  const mcpServer = buildMcpServerFromRegistry({
-    ctx: {
-      db,
-      sessionId: record.sessionId,
-      taskRunId,
-      providerAttemptCaller: 'worker',
-      signal: abortController.signal,
-      callerActor: { kind: 'agent', ref: 'agent:copilot-researcher' },
-      causedByEventId: record.startedEventId,
-    },
-    serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
-    toolNames: COPILOT_RESEARCH_READ_TOOLS,
-    taskKind: 'CopilotResearchTask',
-  });
-  const result = await runAgentTask(
-    'CopilotResearchTask',
-    { objective: record.objective, untrusted_data_boundary: true },
-    {
-      db,
-      taskRunId,
-      mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
-      allowedTools: resolveMcpAllowedTools('copilot').filter((tool) =>
-        COPILOT_RESEARCH_READ_TOOLS.some((name) => tool.endsWith(`__${name}`)),
-      ),
-      lifecycleAbortController: abortController,
-    },
-  );
-  return { taskRunId: result.task_run_id, text: result.text };
-}
-
-export async function runCopilotContinuationTask(
-  db: Db,
-  record: CopilotContinuationRecord,
-  child: SubagentRunRecord,
-): Promise<{ taskRunId: string; text: string }> {
-  const toolNames = resolveDomainToolNames('copilot');
-  const taskRunId = record.taskRunId ?? `copilot_continuation_task_${record.id}`;
-  const mcpServer = buildMcpServerFromRegistry({
-    ctx: {
-      db,
-      sessionId: record.sessionId,
-      taskRunId,
-      providerAttemptCaller: 'worker',
-      callerActor: { kind: 'agent', ref: 'agent:copilot' },
-      causedByEventId: record.resultEventId,
-    },
-    serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
-    toolNames,
-    taskKind: 'CopilotTask',
-  });
-  const history = await getCopilotContinuationHistory(db, {
-    limit: 20,
-    sessionId: record.sessionId,
-    parentTurnEventId: record.parentTurnEventId,
-    resultEventId: record.resultEventId,
-  });
-  const copilotSkills = await resolveCopilotSkills();
-  const result = await runAgentTask(
-    'CopilotTask',
-    {
-      surface: 'copilot',
-      triggered_by: 'continuation',
-      user_message:
-        'A background researcher settled. Continue the prior root turn once using the untrusted child result below. Do not launch another researcher.',
-      conversation_history: history.map((turn) => ({
-        role: turn.role === 'ai' ? 'assistant' : 'user',
-        text: turn.text,
-        event_id: turn.event_id,
-      })),
-      untrusted_subagent_result: {
-        run_id: child.id,
-        status: child.status,
-        result_md: child.result,
-        error: child.error,
-      },
-      continuation_constraints: {
-        one_shot: true,
-        recursive_subagent_launch: false,
-        user_facing_actor: 'root_copilot',
-      },
-    },
-    {
-      db,
-      taskRunId,
-      mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
-      allowedTools: resolveMcpAllowedTools('copilot').filter(
-        (tool) =>
-          !tool.endsWith('__generate_goal_outline') &&
-          !tool.endsWith('__generate_question_candidate'),
-      ),
-      ...(copilotSkills ? { skills: copilotSkills } : {}),
-    },
-  );
-  return { taskRunId: result.task_run_id, text: result.text };
 }

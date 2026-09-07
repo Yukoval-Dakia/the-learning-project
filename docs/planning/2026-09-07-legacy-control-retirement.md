@@ -77,6 +77,33 @@ deletion is authorized by a passing source cleanup test.
 
 ## Validation
 
+### Drained execution retirement, 2026-09-08
+
+Final read at 2026-09-07T16:20:25.695893Z passed the conservative full drain
+window: queue identities were unchanged since 10:06Z, retention/deletion both
+604800 seconds, zero legacy run/continuation/DLQ jobs across all states, 375
+completed reconcile jobs, and zero rows in the three operational tables.
+The production old reconcile schedule is still present; it must be explicitly
+unscheduled and its housekeeping ticks drained during the controlled cutover.
+
+The implementation removes three old handlers/registrations, standalone research
+TaskSpec, mailbox launcher/lease/automatic continuation and its unused context
+assembler. Native children, current history readers, durable Stop and real remote
+ToolOperations remain. Historical fixtures now seed rows directly instead of
+retaining an executable legacy launcher for tests. ADR-0063 records the boundary.
+
+Local evidence: 34 focused DB and 87 current worker/teaching/turns DB tests pass;
+82 census/catalog unit tests pass after repairing discovery of the actual injected
+collecting-stream runner. Typecheck/lint/build and architecture/capability audits
+pass (435/0/47). Real dist/migrate.cjs refuses the existing synthetic clone with
+jobs=1/schedules=1 (exit 1). Fresh loom_retirement_951_fresh_verify migrates and
+seeds with no pg-boss namespace (exit 0); adding only an empty pg-boss namespace
+then correctly fails on missing tables (exit 1), rather than treating it as fresh.
+That isolated diagnostic DB is retained. No production mutation or paid call.
+Independent initial review and exact-head CI/deployment are still pending.
+
+### Earlier source-only slice
+
 31 scoped unit tests pass across actual tool inventory, native contracts/configuration
 and ToolOperations behavior. Typecheck, lint and build pass (existing lint/bundle
 warnings remain). All 41 focused real-Postgres mailbox and ToolOperations tests pass;

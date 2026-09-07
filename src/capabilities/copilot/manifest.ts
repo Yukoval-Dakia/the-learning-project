@@ -240,34 +240,6 @@ export const copilotCapability = defineCapability({
         load: () =>
           import('./jobs/copilot_run_reconcile').then((m) => m.buildCopilotRunReconcileHandler),
       },
-      {
-        name: 'copilot_subagent_run',
-        queue: 'agent',
-        heartbeatSeconds: 30,
-        load: () =>
-          import('./jobs/copilot_subagent_run').then((m) => m.buildCopilotSubagentRunHandler),
-      },
-      {
-        name: 'copilot_continuation',
-        queue: 'agent',
-        heartbeatSeconds: 30,
-        load: () =>
-          import('./jobs/copilot_continuation').then((m) => m.buildCopilotContinuationHandler),
-      },
-      {
-        name: 'copilot_subagent_reconcile',
-        schedule: {
-          cron: '*/1 * * * *',
-          tz: 'Asia/Shanghai',
-          singletonKey: 'copilot_subagent_reconcile-sweep',
-          singletonSeconds: 60,
-        },
-        queue: 'fast',
-        load: () =>
-          import('./jobs/copilot_subagent_reconcile').then(
-            (m) => m.buildCopilotSubagentReconcileHandler,
-          ),
-      },
     ],
   },
   // M5-T3 (YUK-321) — copilot 自有工具（事件流读 + 记忆面读）。

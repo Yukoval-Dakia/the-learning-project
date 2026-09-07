@@ -5,6 +5,7 @@ const RUNNER_NAMES = new Set([
   'runAgentTask',
   'streamTask',
   'streamTaskCollecting',
+  'streamTaskCollectingFn',
   'runTaskFn',
   'runAgentTaskFn',
 ]);

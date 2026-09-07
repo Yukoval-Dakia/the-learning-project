@@ -13,8 +13,6 @@ import {
   reserveCopilotDurableAcceptance,
 } from '@/capabilities/copilot/server/durable-dispatch';
 import {
-  claimSubagentRun,
-  launchSubagentRun,
   recordNativeSubagentStarted,
   settleNativeSubagentRun,
 } from '@/capabilities/copilot/server/subagent-mailbox';
@@ -22,6 +20,7 @@ import { copilot_continuation, event, job_events, subagent_run } from '@/db/sche
 import { writeJobEvent } from '@/server/events/writer';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { seedLegacySubagentRun } from '../../../../tests/helpers/legacy-subagent';
 import { DURABLE_OWNER_SETTLEMENT_BUDGET_MS } from './copilot_run';
 import {
   type CopilotRunReconcileBoss,
@@ -151,14 +150,14 @@ describe('copilot_run_reconcile (YUK-596)', () => {
           result: '已逐条核对定义域、退化分支和单位方向，缺失材料仍标为未知。',
         },
       });
-      const legacy = await launchSubagentRun(testDb(), {
+      const legacy = await seedLegacySubagentRun(testDb(), {
+        status: 'running',
         sessionId: parent.sessionId,
         parentTurnEventId: parent.runId,
         parentTaskRunId: `copilot_run_tool_${parent.runId}`,
         launchKey: 'legacy_claimed_research',
         objective: richRequest,
       });
-      await claimSubagentRun(testDb(), legacy.record.id);
       if (terminalKind === 'marker') {
         await writeCopilotReply(testDb(), {
           sessionId: parent.sessionId,

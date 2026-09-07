@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：887真实SDK MCP及shipped提案审批/撤回零费用canary通过；只补验收缺项。
+> Linear 是权威 tracker；更新于 2026-09-08：951完整排空窗已证，退休旧执行链路中；owner批准887转用未用$3。
 
 ## NOW
 
@@ -178,8 +178,8 @@
 
 ## NEXT
 
-1. Active887：七项差集见rollout-evidence-gap；真实SDK MCP及shipped提案workflow过，下一步按capability补actual覆盖差集。
-2. 951完整drain窗按实际expire/retry/backoff/jitter与调度证据收口；未满足前保留handler，不忙轮询或提前删除。
+1. Active951：16:20Z完整drain窗通过，退休旧mailbox执行/ResearchTask，保留native投影与历史；34DB通过，审查/交付待完成。
+2. 887：七项差集见rollout-evidence-gap；SDK MCP/提案workflow过；owner批准未用$3转Notes/Memory真实恢复，尚未消费。
    977零金额来源是已登记P2，不阻塞主产品；无新代码缺陷不再开文件级清理支线。
 3. 最终按学习意图→录入→判分→复习→提议/撤回的业务owner/单份规则复核，不以测试或依赖数量代替完成。
 
@@ -187,7 +187,7 @@
 
 - 两处judge直调已核实为照片作答/独立解答一致性，不为调用形式统一机械删除，无新缺陷证据。
 - 全历史ADR审计仍未完成，不冒充全量通过；971仅覆盖三份已确认冲突的现役指引。
-- 951旧mailbox/ToolOperations仅drain-only；退休需零pending/零队列活动覆盖完整重试窗。
+- 951历史表和native投影保留；ToolOperations仍有live remote consumer，不随旧mailbox执行退休。
 - 921多provider、572夜间教研、832HOLD不解锁。
 - 计费、重试、prompt/skill、复杂parser、并发/回滚/恢复、UI安全测试仍保留，不按数量硬删。
 
@@ -195,5 +195,5 @@
 
 - 976两页费用UI已批准并交付；其它UI重绘仍须独立预检，不因整体goal扩张授权。
 - Mac本地生产已授权直接操作；NAS部署/数据操作仍未授权，不执行。
-- Notes/Memory真实恢复待$3专项转用答复；不重跑现存failed memory/DLQ或超预算模型，历史费用unknown保留。
+- Notes/Memory真实恢复$3转用已批准；只做限定验收，不批量重跑历史failed/DLQ，历史费用unknown保留。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。

@@ -2,6 +2,12 @@
 
 ## 最新状态
 
+- Active951：root独占codex/yuk-951-retire-drained-mailbox；16:20:25Z完整排空窗通过，375条完成reconcile保留历史。
+  旧run/continuation/DLQ全状态零行，三业务表零行；生产仍582b2e66，旧cron尚未unschedule，无生产写入。
+  正在退休旧执行器与ResearchTask，保留native/历史/Stop；新增只读migrate拒绝门，34DB过，unit census修正中。
+  owner最新「批准」承接待答问题：未用$3历史恢复专项转Notes/Memory真实恢复，上限$3；本轮未调用付费模型。
+  单活动实施线先951验证/审查/交付，再887 actual缺项；不关闭整体goal或声称B3物理表名退休。
+
 - Active887证据差集：root独占codex/yuk-887-rollout-evidence-gap；未改产品代码，main/runtime仍978。
   七项rollout逐项区分现有actual/DB/真实process与缺口，docs/planning/2026-09-07-rollout-evidence-gap.md。
   实际Agent SDK0.3.220 + MCP1.29 Client/linked InMemoryTransport调用2test-only工具通过，真实clone DB/log/mirror。

@@ -1,1 +1,0 @@
-export { copilotResearchTaskSpec } from './agent';

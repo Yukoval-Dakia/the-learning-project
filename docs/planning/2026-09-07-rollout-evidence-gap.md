@@ -69,6 +69,13 @@ assertion and failed; the corrected run below is the accepted evidence.
 This is isolated component runtime evidence, not a paid model invocation,
 network-transport test, or production rollout completion.
 
+The two local probe scripts were subsequently formatted for the workspace lint
+gate, without rerunning providers. The original hashes above identify the executed
+bytes. Current formatted MCP script SHA256 is
+`27ebaa914d0beb69c72ae5a75038c19a4b73a1fadda103c43d29470934af5e3e`;
+proposal script SHA256 is
+`8ee1d8cb6c3c3c3475736a930765fb0070ed46e2444fb242b0f610c88d40b7f0`.
+
 ## New zero-cost shipped proposal API canary
 
 Started the clean deployed image `582b2e66` as an isolated API-only container on
@@ -98,6 +105,11 @@ client approval, not browser clicks, model proposal generation, or proof for eve
 proposal kind.
 
 ## Execution order and spending boundary
+
+Owner approved the pending budget-transfer request on 2026-09-08: the unused
+$3 historical-recovery allowance may fund the bounded Notes/Memory real recovery
+acceptance instead. This is the same $3, not an additional $3. No paid call has
+yet been started under that transfer; keep the original $10 reserve unchanged.
 
 The archive was read recursively on 2026-09-08 local time: all 41 encountered
 output/output_sha256 pairs match their stored text. This is an integrity check,
@@ -129,7 +141,7 @@ note generation. This mapping prevents both unnecessary repeats and false covera
    proposal behavior, rule uniqueness and recovery ownership, not file/test counts.
 
 The original $10 pool has conservative safe remaining $0.04177. The unused $3
-authorization is restricted to historical recovery; a separate request to repurpose
-it for Notes/Memory acceptance is pending. No transfer or paid call has occurred.
+allowance is now transferred to Notes/Memory acceptance by the approval above;
+no paid call has occurred under it yet.
 YUK-977 remains a deferred P2, not a new blocker. No NAS operation, historical data
 deletion, or broad source-cleanup branch is part of this lane.

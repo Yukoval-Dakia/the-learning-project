@@ -24,7 +24,6 @@ import { memoryBriefTaskSpec } from '@/capabilities/agency/tasks/memory-brief';
 import { researchMeetingDirectorTaskSpec } from '@/capabilities/agency/tasks/research-meeting-director';
 import { copilotTaskSpec } from '@/capabilities/copilot/tasks/agent';
 import { copilotTaskSpecs } from '@/capabilities/copilot/tasks/index';
-import { copilotResearchTaskSpec } from '@/capabilities/copilot/tasks/research';
 import { teachingTurnTaskSpec } from '@/capabilities/copilot/tasks/teaching-turn';
 import { blockAssemblyTaskSpec } from '@/capabilities/ingestion/tasks/block-assembly';
 import { coldStartPlacementBridgeTaskSpec } from '@/capabilities/ingestion/tasks/cold-start-bridge';
@@ -108,7 +107,6 @@ const EXPECTED_KINDS = [
   'DreamingTask',
   'CoachTask',
   'CopilotTask',
-  'CopilotResearchTask',
   'KnowledgeReviewTask',
   'GoalScopeTask',
   'MindModelInductionTask',
@@ -159,7 +157,7 @@ const EXPECTED_OWNER_COUNTS = {
   ingestion: 8,
   knowledge: 3,
   agency: 13,
-  copilot: 3,
+  copilot: 2,
 } as const;
 
 const OWNED_SPECS: ReadonlySet<object> = new Set([
@@ -180,7 +178,6 @@ const OWNED_SPECS: ReadonlySet<object> = new Set([
   sessionSummaryTaskSpec,
   sourcingTaskSpec,
   copilotTaskSpec,
-  copilotResearchTaskSpec,
   teachingTurnTaskSpec,
   noteGenerateTaskSpec,
   noteRefineTaskSpec,
@@ -524,7 +521,6 @@ describe('taskCatalog', () => {
   it('owns the three Copilot TaskSpecs without central quarry definitions', () => {
     const expected = {
       CopilotTask: copilotTaskSpec,
-      CopilotResearchTask: copilotResearchTaskSpec,
       TeachingTurnTask: teachingTurnTaskSpec,
     } as const;
 
@@ -540,7 +536,7 @@ describe('taskCatalog', () => {
     expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
   });
 
-  it('retains 50 full owned TaskSpecs with the quarry deleted (YUK-870/YUK-939)', () => {
+  it('retains full owned TaskSpecs without the retired research executor', () => {
     for (const specs of Object.values(OWNER_MAPS)) {
       for (const [kind, entry] of Object.entries(specs)) {
         expect(entry.ownership, kind).toBe('owned');
