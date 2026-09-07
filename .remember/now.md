@@ -2,11 +2,17 @@
 
 ## 最新状态
 
-- Active979：root独占codex/yuk-979-mem0-failure-truth；887真实canary embedding200/101tokens后本地限额429阻断LLM。
-  Mem0 3.0.13吞错[]使opaque attempt succeeded；completion锁未放，因此未写误导完成。隔离DBv2/容器已停。
-  固定pnpm补丁恢复失败/strictschema，PGVector单SQL原子写，保留合法空/embedding兼容/辅助history；12unit+4DB通过。
-  Docker依赖stage复制patches；仅patch哈希变化，无依赖升级。review/全gates/部署待完成，生产仍951/106ac7ff。
-  新专项保守预留$1、余$2，不是实际账单；旧$10不回收。详见docs/planning/2026-09-08-memory-failure-truth.md。
+- 979 Done：PR1364 exact32d0effbb6c6f5496101899fe7ec0c013dec2c6b，CI34147920619全部job成功。
+  17:44:51Z main61421a4e6d61e0ad96c26c158a68956708f745ad；63unit/20DB/typecheck/lint/build/audits过，独立初审PASS。
+  固定Mem0 3.0.13双export补丁恢复失败/strictschema、PGVector原子写；无依赖升级，Docker frozen install通过。
+  17:45Z Mac app7c48b323/worker a2dacf9a均93df0528 healthy零重启；原PG7d99236a/09:40:42Z与volume不变。
+  migrate零新增/7LI/legacy guard clear；424event/258task/4attempt、空活动队列不变；health200/未认证401/认证200。
+  完整shipped worker免费错误场景failed attempt/无completion PASS。启动早期stop137、ready后stop0另登记980 Backlog P2。
+  887 Memory v3真实GLM5.2+DashScope完成2记忆后SIGKILL137，新进程同physical job重投完成、lookup复用、0新增HTTP。
+  source canary_887_memory_crash_20260908_v3，DB loom_memory_887_actual_v3；组件handler bundle，不称full worker/自动1h过期。
+  v2失败保守$1+v3通过$1，转用$3专项余$1；旧$10不回收。所有canary进程停止，无NAS/tunnel。
+  root独占codex/yuk-979-delivery-notes（从origin/main建）；下一条887 Notes及其它actual差集，整体goal active。
+  详见docs/planning/2026-09-08-memory-failure-truth.md；原脏main没有遗留新增文件或修改。
 
 - 951旧mailbox执行已交付：PR1363 exact57a7bbee6a1b193de912abbee94093e3e54fd5de，CI34144766869全job绿。
   16:57:40Z merge main3c8d5c1b35c10c323e3a3f55dcb294653ad29af1；初审PASS，独立12DB/54unit，无第二审。
