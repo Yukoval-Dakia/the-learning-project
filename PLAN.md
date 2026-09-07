@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：978已合并并本地交付；下一单887仅补验收证据差集，不扩展工程清理。
+> Linear 是权威 tracker；更新于 2026-09-07：887七项证据差集已落盘，真实SDK MCP零费用canary通过；只补验收缺项。
 
 ## NOW
 
@@ -178,7 +178,7 @@
 
 ## NEXT
 
-1. 下一单887：先将现有actual/迁移/恢复/浏览器证据逐项映射7条rollout标准，只补真正缺项；不重跑已通过付费样本。
+1. Active887：七项差集见rollout-evidence-gap；真实SDK MCP合法/非法输出与日志mirror过，下一步零费用提案workflow。
 2. 951完整drain窗按实际expire/retry/backoff/jitter与调度证据收口；未满足前保留handler，不忙轮询或提前删除。
    977零金额来源是已登记P2，不阻塞主产品；无新代码缺陷不再开文件级清理支线。
 3. 最终按学习意图→录入→判分→复习→提议/撤回的业务owner/单份规则复核，不以测试或依赖数量代替完成。
@@ -195,5 +195,5 @@
 
 - 976两页费用UI已批准并交付；其它UI重绘仍须独立预检，不因整体goal扩张授权。
 - Mac本地生产已授权直接操作；NAS部署/数据操作仍未授权，不执行。
-- 不主动重跑现存failed memory/DLQ或新增超预算模型验收；历史费用unknown保留。
+- Notes/Memory真实恢复待$3专项转用答复；不重跑现存failed memory/DLQ或超预算模型，历史费用unknown保留。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。

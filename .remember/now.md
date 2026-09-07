@@ -2,6 +2,15 @@
 
 ## 最新状态
 
+- Active887证据差集：root独占codex/yuk-887-rollout-evidence-gap；未改产品代码，main/runtime仍978。
+  七项rollout逐项区分现有actual/DB/真实process与缺口，docs/planning/2026-09-07-rollout-evidence-gap.md。
+  实际Agent SDK0.3.220 + MCP1.29 Client/linked InMemoryTransport调用2test-only工具通过，真实clone DB/log/mirror。
+  task canary_887_real_mcp_20260907_v2；valid嵌套长文/0.75/null成功，invalid score string被schema拒绝并failure mirror。
+  clone loom_native_978_ba4bc7fe_verify模型task/attempt仍0；不是生产/paid/networktransport验收，未关闭887。
+  初始probe误读output envelope失败，修断言后PASS；.tmp/yuk887-bridge-canary.cjs可复核，不引入长期harness。
+  已问是否转用未用$3历史恢复专项为Notes/Memory实际恢复，答复前不付费；可继续零费用isolated proposal流程。
+  生产4provider_attempt都是8月15–16旧DashScope embedding，不能算当前矩阵通过；951完整窗口仍待证。
+
 - YUK978 Done：PR1362 exact582b2e66cdd7f809e1f3c1509d60f668a46e9668，CI34139494605全job成功。
   15:45:36Z合并main2351d5657ec7696bf5da88226d0e33fa873bc405；初审+唯一P1验证PASS，无第三审。
   SDK后Stop父cancelled/子lost真实public worker RED→GREEN；SDK只排空/禁不完整cursor，父commit后收口。
