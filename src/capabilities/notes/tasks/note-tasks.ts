@@ -1,24 +1,13 @@
 import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
-import {
-  bodyBlocksToNoteSections,
-  noteSectionsToBodyBlocks,
-} from '@/capabilities/notes/server/body-blocks';
-import { ArtifactBodyBlocks, NoteSection, NoteVerificationResult } from '@/core/schema/business';
+import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
+import { materializeGeneratedBodyBlocks } from '@/capabilities/notes/server/generated-body-blocks';
+import { ArtifactBodyBlocks, NoteVerificationResult } from '@/core/schema/business';
 import type { SubjectProfile } from '@/subjects/profile';
 
-const NoteSectionsOutputSchema = z.object({
-  sections: z.array(NoteSection).min(1).max(10),
-});
-
-const NoteBodyBlocksOutputSchema = z.object({
+export const NoteGenerateOutputSchema = z.object({
   body_blocks: ArtifactBodyBlocks,
 });
-
-export const NoteGenerateOutputSchema = z.union([
-  NoteBodyBlocksOutputSchema,
-  NoteSectionsOutputSchema,
-]);
 
 function parseJsonObject(text: string, parserName: string): unknown {
   const start = text.indexOf('{');
@@ -42,9 +31,9 @@ export interface ParsedNoteGenerateOutput {
 
 export function parseNoteGenerateOutput(text: string): ParsedNoteGenerateOutput {
   const json = parseJsonObject(text, 'parseNoteGenerateOutput');
-  const bodyBlocksParsed = NoteBodyBlocksOutputSchema.safeParse(json);
+  const bodyBlocksParsed = NoteGenerateOutputSchema.safeParse(json);
   if (bodyBlocksParsed.success) {
-    const bodyBlocks = bodyBlocksParsed.data.body_blocks;
+    const bodyBlocks = materializeGeneratedBodyBlocks(bodyBlocksParsed.data.body_blocks);
     if (bodyBlocks.content.length === 0) {
       throw new Error(
         'parseNoteGenerateOutput: body_blocks.content must contain at least one block',
@@ -57,20 +46,8 @@ export function parseNoteGenerateOutput(text: string): ParsedNoteGenerateOutput 
     };
   }
 
-  const sectionsParsed = NoteSectionsOutputSchema.safeParse(json);
-  if (sectionsParsed.success) {
-    const bodyBlocks = noteSectionsToBodyBlocks(sectionsParsed.data.sections);
-    return {
-      body_blocks: bodyBlocks,
-      blocks_count: bodyBlocks.content.length,
-      sections_count: sectionsParsed.data.sections.length,
-    };
-  }
-
   throw new Error(
     `parseNoteGenerateOutput: schema invalid: body_blocks=${bodyBlocksParsed.error.issues
-      .map((issue) => issue.message)
-      .join('; ')}; parseSectionsOutput=${sectionsParsed.error.issues
       .map((issue) => issue.message)
       .join('; ')}`,
   );
@@ -110,9 +87,14 @@ artifact_type 只能是 note_atomic / note_long / note_hub；这是同一个 Not
 {"body_blocks":{"type":"doc","content":[...]}}
 
 按 artifact_type 生成 TipTap / ProseMirror JSON body_blocks：
-- note_atomic：至少 5 个 semanticBlock，每种 attrs.semantic_kind 至少 1 个：definition / mechanism / example / pitfall / check。attrs 必须包含 id、semantic_kind、source_tier="llm_only"、user_verified=false、version=1、source_markdown。
+- note_atomic：至少 5 个 semanticBlock，每种 attrs.semantic_kind 至少 1 个：definition / mechanism / example / pitfall / check。每块正文只写在 content 的 PM 节点中，attrs 只需 semantic_kind。
 - note_long：自由 block tree，可用 heading / paragraph / bulletList / calloutBlock / crossLinkBlock，综合 knowledge_nodes，不强制 semantic_kind。
 - note_hub：短 outline + 主题路线，可加入 crossLinkBlock 串起 atomic / long；不要假装是单知识点 atomic。
+
+正文使用 text 节点，强调使用 marks，列表保留嵌套结构；crossLinkBlock 的 artifact_id / block_id 只使用输入中已有的真实引用，没有明确 artifact_id 时省略交叉链。
+正文块使用 paragraph、heading、bulletList/orderedList/listItem、blockquote、codeBlock、calloutBlock、semanticBlock；行内使用 text/hardBreak 与 bold/italic/code/strike/link marks。数学公式保留为 text 中的原文。autoLinksContainer 由系统维护。
+服务端生成 block id、source_tier、user_verified、version、embedded_check。省略这些元数据和 source_markdown，正文只输出一份。
+JSON 字符串中的双引号、反斜杠与换行必须按 JSON 规则转义；普通引文可用「」避免额外转义。
 
 per-subject semantic_kind 内容模板（definition/mechanism/example/pitfall/check 五维，领域规范见 note skill）：
 

@@ -17,8 +17,6 @@ description: 数学学习笔记规范包 —— 合格 atomic / long / hub note 
 | pitfall | 列出易漏条件、计算错误和方法误选。 |
 | check | 给出一个同类小题或一步推导检查。 |
 
-每个 semanticBlock 必须设 `source_tier="llm_only"`、`user_verified=false`、`version=1`、`source_markdown`。
-
 ## 内容质量要求
 
 - **definition**：给出概念的严格数学定义，明确适用范围和约束条件（如「正弦定理仅适用于任意三角形，不要求直角」），符号含义需明示（如 $a, b, c$ 表示对边长，$A, B, C$ 表示对角）。

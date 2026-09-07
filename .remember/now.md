@@ -2,6 +2,17 @@
 
 ## 最新状态
 
+- Active981：root独占codex/yuk-981-note-generation-contract（base395d5d2d交付记录）；生产仍979/93df0528。
+  Notes实际accept→SIGKILL137→新process recoverNoteHandoffs/physical generate成功；生成HTTP200/end_turn却输出坏JSON。
+  task bymy8ayqi4gq7q7tvizfk2ep，768input/2894output，estimate0.00285186非账单；artifact rcz6xs92e1rzjdui5em1o0uw failed。
+  未到ready/verify；完整Notes恢复未通过。isolated loom_notes_887_actual_v1保留，accept/generate容器已停止，无生产写入。
+  单次调用保守$1预留不回收，转用$3专项余0；已问追加最多$3用于修后Notes及其它actual，答复前不再paid。
+  981已Linear In Progress；用codebase-design核对ADR0020/0022，去重复正文但保留完整block tree/links/semantic能力。
+  architect咨询完成：仅omit source会令现役reader/editor空白，真实blockText RED后改server派生mirror GREEN。
+  compact PM保留富结构；server补ID/trust/source镜像、未知节点fail，旧sections生成退场；12unit/typecheck过。
+  最终59DB（含rich-body/backlink）/12unit/typecheck/lint/build/audit过；formal review/CI/actual待完成，生产未部署981。
+  详见docs/planning/2026-09-08-notes-generation-acceptance.md；887保持In Progress，980/977 P2仍deferred。
+
 - 979 Done：PR1364 exact32d0effbb6c6f5496101899fe7ec0c013dec2c6b，CI34147920619全部job成功。
   17:44:51Z main61421a4e6d61e0ad96c26c158a68956708f745ad；63unit/20DB/typecheck/lint/build/audits过，独立初审PASS。
   固定Mem0 3.0.13双export补丁恢复失败/strictschema、PGVector原子写；无依赖升级，Docker frozen install通过。
