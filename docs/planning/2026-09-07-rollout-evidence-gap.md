@@ -14,7 +14,7 @@ requirements, not to restart a general architecture cleanup.
 | Memory crash after paid add, event-id reuse, no reburn | client.findByEventId and ingest recovery owner; DB/unit contracts | Need actual Mem0 add and replay across a process boundary, comparing memory IDs and provider-operation evidence; do not replay the user's existing failed ingestion/DLQ |
 | Valid and intentionally invalid test-only DomainTool output | New actual Agent SDK MCP client/server canary below; real DB log/mirror linkage | Component runtime verified. This is not a model-invoked or deployed-container canary; retain that distinction when closing the broader rollout |
 | A real operation per F3 capability slice, actual output and separate projection/golden judgment | Copilot, knowledge read/presentation and question generation have versioned actual records; 973/974 provide separate projection/golden evidence | Complete a per-capability coverage map, especially Notes/Ingestion/Agency; do not count an adjacent capability's tool call as blanket coverage |
-| Proposal draft→accept/dismiss/retract, human approval intact | Actual proposal-only sample plus owner DB lifecycle tests | Full API/UI approval lifecycle evidence not located. Can be checked on an isolated synthetic proposal without buying a model call |
+| Proposal draft→accept/dismiss/retract, human approval intact | Actual proposal-only sample, owner DB lifecycle tests, and new shipped API scenario below | Representative knowledge-node lifecycle passes; no UI click or blanket assertion for all proposal kinds |
 | Copilot cancellation, worker restart/reconcile, durable run/log continuity | 948/950 real HTTP→physical fetch→worker continuity; 975 real shutdown; 978 actual physical pg-boss missing-child repair and late-Stop DB regression | Reuse those named scopes. They do not prove live-model interruption followed by worker crash; enumerate the exact remaining scenario before testing |
 
 This table is an evidence gap, not seven new implementation tasks. YUK-887 remains
@@ -69,9 +69,38 @@ assertion and failed; the corrected run below is the accepted evidence.
 This is isolated component runtime evidence, not a paid model invocation,
 network-transport test, or production rollout completion.
 
+## New zero-cost shipped proposal API canary
+
+Started the clean deployed image `582b2e66` as an isolated API-only container on
+loopback 18887 against the same synthetic database. No worker or provider credentials
+were supplied. Two synthetic knowledge-node proposals were written through the
+real proposal writer under the seeded yuwen root. The initial malformed decision
+body was rejected with 400 before mutation; after correcting the test client to
+send reason_md only for retract, the full scenario passed:
+
+- Before approval, neither proposed knowledge node existed.
+- Unauthenticated accept returned 401 and still created no node.
+- Explicit authenticated accept returned 201 and materialized exactly one node.
+  Repeating it returned 200 and the identical decision event.
+- Dismiss of the second proposal returned 201 and created no node.
+- Retract of the accepted proposal returned 201 and archived its materialized node,
+  preserving the row/history. Repeating retract returned 200 and the same event.
+- AI task/provider-attempt counts remained zero. Production counts independently
+  stayed 423 events / 258 AI tasks / 4 provider attempts.
+
+Proposal IDs: `canary_887_proposal_accept`, `canary_887_proposal_dismiss`.
+Accept event `kxipbpurfa6jfg0d03wi26cc`; dismiss event `lnjwn53bt6gt26h6hq6pr1uk`;
+retract event `iojv9h70swevpzs00m0jqbox`; materialized node `t6aq0h0m4eo7cboxi45lg9mj`.
+The local probe is `.tmp/yuk887-proposal-canary.cjs`. Container
+`tlp-proposal-887-582b2e66` was stopped after verification. No production data was
+created or deleted. This is actual shipped HTTP/DB behavior with explicit test
+client approval, not browser clicks, model proposal generation, or proof for every
+proposal kind.
+
 ## Execution order and spending boundary
 
-1. Complete the remaining evidence map and zero-cost isolated approval workflow.
+1. Reuse the now-completed MCP and representative proposal API scenarios; finish
+   the per-capability actual-output coverage map without rerunning accepted cases.
 2. If authorized, run only missing Notes/Memory real recovery scenarios with a
    fixed reserve per attempted call. Stop at the authorized cap or unknown spend.
 3. Finish YUK-951 from actual queue expiry/retry/backoff/jitter and durable activity

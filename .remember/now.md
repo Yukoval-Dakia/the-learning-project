@@ -8,7 +8,10 @@
   task canary_887_real_mcp_20260907_v2；valid嵌套长文/0.75/null成功，invalid score string被schema拒绝并failure mirror。
   clone loom_native_978_ba4bc7fe_verify模型task/attempt仍0；不是生产/paid/networktransport验收，未关闭887。
   初始probe误读output envelope失败，修断言后PASS；.tmp/yuk887-bridge-canary.cjs可复核，不引入长期harness。
-  已问是否转用未用$3历史恢复专项为Notes/Memory实际恢复，答复前不付费；可继续零费用isolated proposal流程。
+  已问是否转用未用$3历史恢复专项为Notes/Memory实际恢复，答复前不付费；下一步按capability核actual差集。
+  isolated shipped API582b2e66/port18887提案canary已过：draft不写node，未认证401，accept/dismiss/retract201，重复200同event。
+  accepted node t6aq0h0m4eo7cboxi45lg9mj撤回后归档不删行；0task/attempt，生产423/258/4未增。
+  临时tlp-proposal-887-582b2e66已stop；API-only无worker/provider keys，不称UI点击/模型生成或所有proposal kinds全验收。
   生产4provider_attempt都是8月15–16旧DashScope embedding，不能算当前矩阵通过；951完整窗口仍待证。
 
 - YUK978 Done：PR1362 exact582b2e66cdd7f809e1f3c1509d60f668a46e9668，CI34139494605全job成功。

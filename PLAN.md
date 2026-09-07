@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：887七项证据差集已落盘，真实SDK MCP零费用canary通过；只补验收缺项。
+> Linear 是权威 tracker；更新于 2026-09-07：887真实SDK MCP及shipped提案审批/撤回零费用canary通过；只补验收缺项。
 
 ## NOW
 
@@ -178,7 +178,7 @@
 
 ## NEXT
 
-1. Active887：七项差集见rollout-evidence-gap；真实SDK MCP合法/非法输出与日志mirror过，下一步零费用提案workflow。
+1. Active887：七项差集见rollout-evidence-gap；真实SDK MCP及shipped提案workflow过，下一步按capability补actual覆盖差集。
 2. 951完整drain窗按实际expire/retry/backoff/jitter与调度证据收口；未满足前保留handler，不忙轮询或提前删除。
    977零金额来源是已登记P2，不阻塞主产品；无新代码缺陷不再开文件级清理支线。
 3. 最终按学习意图→录入→判分→复习→提议/撤回的业务owner/单份规则复核，不以测试或依赖数量代替完成。
