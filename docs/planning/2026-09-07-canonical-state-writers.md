@@ -80,3 +80,21 @@ Independent runtime review, exact-head CI and Mac-local rollout are still requir
 The advisory fold-write inventory retains 8 other-entity unclassified writes and 5 stale entries;
 YUK-974 captures their individual event-nativeness verification, not an allowlist expansion.
 No new provider calls or production changes occurred in this runtime implementation.
+
+## Initial review correction
+
+PR #1356 initial review found a real retraction race: the proposal correction timestamp was
+chosen before waiting on the target row. A concurrent later status/accept could then replay
+after it and undo the retraction. Root reproduced Goal and MistakeVariant with actual blocked
+Postgres statements (both RED), and the same ordering loss for LearningItem archive vs completion
+(third RED: completed state/version disappeared). Locked owners now reject stale correction clocks;
+the shared retract transaction rolls back the entire old event/outbox and retries with a time
+beyond the locked row watermark. Batches use their maximum watermark. Three attempts bound
+contention; exhaustion returns conflict, never a false success or persisted-event rewrite.
+All three reproductions are GREEN, with one committed correction, exact replay and timestamp parity.
+The related six DB suites pass 101 cases; typecheck/lint/build/architecture gates pass.
+
+First exact-head CI `34117592341` passed non-DB gates; each DB shard failed one old raw fixture
+(completion approval and placement cold start). Both now prepare fixtures through the real migration,
+without relaxing approval/honesty checks; their four cases pass. Unique verification review and
+new exact-head CI remain required before merge or Mac rollout.

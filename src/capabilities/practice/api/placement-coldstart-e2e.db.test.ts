@@ -18,6 +18,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
 import { event, goal, knowledge, mastery_state, question } from '@/db/schema';
+import { migrateCanonicalProjections } from '../../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 const placementFlag = { value: true };
@@ -70,6 +71,7 @@ async function seedDayOneGoal(id: string): Promise<void> {
     updated_at: now,
     version: 0,
   });
+  await migrateCanonicalProjections(db);
 }
 
 // The placement-eligibility-faithful landed shape: draft_status 'active' + tagged KC match

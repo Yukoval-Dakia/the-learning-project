@@ -10,7 +10,8 @@
   typed Q1归属repair支持pre-rate及历史sweep；state_restore补掉completion/relearn撤销raw writer，保留exact prior state。
   312 scoped DB、64 unit+1真实migration bundle unit、typecheck/lint/build与architecture/capability/flags通过。
   依赖439→437仅下调；保留行锁、migration refusal、null guard、派生字段和重复撤销；无paid/生产变更。
-  尚需本runtime lane独立初审、exactCI及Mac rollout；不能复用前置PR1355审查或宣称整体完成。
+  PR1356初审P1：correct在行锁前定时，会被并发状态覆盖；3实体真实并发3RED→3GREEN，有限事务重试保留单钟与outbox回滚。
+  修后101 DB与gates通过；首轮CI34117592341仅2旧fixture缺迁移，修后4测试过；待唯一验证审、新exactCI及Mac rollout。
   fold-write其它实体8写点/5stale已去重登记974 Todo；972仍Todo，不放宽allowlist掩盖。
 - 887 local-production切片已部署：PR1354 exact0ed35fd3，CI34108722202全绿，main a12667507，独立安全review PASS。
   owner「直接动本地生产即可」仅授权Mac，不含NAS；API/worker/Postgres均healthy，未启动tunnel。

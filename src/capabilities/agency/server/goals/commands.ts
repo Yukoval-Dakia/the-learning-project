@@ -5,6 +5,7 @@ import type { GoalRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { goal } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { requireLaterProposalCorrection } from '@/kernel/proposals/types';
 import { nextProjectionEventTime } from '@/server/projections/event-clock';
 import { projectGoal, projectGoalGuarded } from '@/server/projections/goal';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
@@ -145,7 +146,9 @@ export async function mutateGoal(db: GoalDb, goalId: string, input: GoalMutation
     }
     // The fold orders by event time. Assign mutation time only after acquiring ownership,
     // so simultaneous or delayed callers cannot reverse the committed event sequence.
-    // Retraction already has a canonical correction event and must retain its timestamp.
+    // Retraction retains its one canonical clock. If another owner committed after that
+    // clock was chosen, retry the outer correction transaction after releasing this lock.
+    if (input.kind === 'retract') requireLaterProposalCorrection(input.now, existing.updated_at);
     const transitionAt =
       input.kind === 'retract'
         ? input.now

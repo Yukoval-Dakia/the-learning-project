@@ -5,6 +5,7 @@ import type { Tx } from '@/db/client';
 import { artifact, learning_item } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { ProposalRetractInput } from '@/kernel/proposals';
+import { requireLaterProposalCorrection } from '@/kernel/proposals/types';
 export interface LearningItemRetractRuntime {
   emitProposalArtifactArchive: (
     tx: Tx,
@@ -25,6 +26,12 @@ export async function retractLearningItemProposal(
     .where(and(eq(learning_item.source_ref, input.proposalId), isNull(learning_item.archived_at)))
     .for('update');
 
+  if (affectedItems.length > 0) {
+    requireLaterProposalCorrection(
+      input.correction_at,
+      new Date(Math.max(...affectedItems.map((item) => item.updated_at.getTime()))),
+    );
+  }
   for (const item of affectedItems) {
     if (!(await runtime.hasLearningItemGenesisAnchor(tx, item.id))) {
       throw new Error('learning_item requires canonical projection migration before retraction');

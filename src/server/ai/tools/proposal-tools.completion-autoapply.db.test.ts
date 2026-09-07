@@ -7,6 +7,7 @@ import { event, knowledge, learning_item } from '@/db/schema';
 import { getProposalInboxRow } from '@/kernel/proposals/inbox';
 import type { ToolContext } from '@/kernel/tools/types';
 import { acceptAiProposal } from '@/server/proposals/actions';
+import { migrateCanonicalProjections } from '../../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 const mockRunner = vi.hoisted(() => ({ runTask: vi.fn() }));
@@ -55,6 +56,7 @@ describe('completion proposal human-approval boundary (YUK-525)', () => {
   beforeEach(async () => {
     await resetDb();
     await seedItem();
+    await migrateCanonicalProjections(testDb());
   });
 
   it('writes only a pending proposal and leaves the learning item untouched', async () => {

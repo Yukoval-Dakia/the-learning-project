@@ -9,6 +9,7 @@ import type {
   ProposalRetractApplier,
   ProposalRetractInput,
 } from '@/kernel/proposals';
+import { requireLaterProposalCorrection } from '@/kernel/proposals/types';
 
 interface PracticeLifecycleRuntime {
   findExistingRateEvent: (
@@ -32,7 +33,7 @@ async function retractVariantQuestion(
   runtime: PracticeLifecycleRuntime,
 ): Promise<void> {
   const retractedVariants = await tx
-    .select({ id: mistake_variant.id })
+    .select({ id: mistake_variant.id, updated_at: mistake_variant.updated_at })
     .from(mistake_variant)
     .where(
       and(
@@ -42,6 +43,12 @@ async function retractVariantQuestion(
     )
     .for('update');
 
+  if (retractedVariants.length > 0) {
+    requireLaterProposalCorrection(
+      input.correction_at,
+      new Date(Math.max(...retractedVariants.map((variant) => variant.updated_at.getTime()))),
+    );
+  }
   for (const variant of retractedVariants) {
     if (!(await runtime.hasMistakeVariantGenesisAnchor(tx, variant.id))) {
       throw new Error(`Variant ${variant.id} needs canonical projection migration`);
