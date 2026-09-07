@@ -2,6 +2,14 @@
 
 ## 最新状态
 
+- Active971：root独占tlp-wt-unified-conversation / codex/yuk-971-current-agent-guidance，base main07280e6b。
+  三份现役指引纠正自动VLM baseline/额外rescue、Notes artifact归属与FULL呈现；仅文档。
+  6个本地链接/7项文档unit/typecheck/lint/build通过，待独立review/exactCI。
+  970已PR1352合并：exact46a237c4，CI34066586538全绿，main07280e6b，LinearDone；15unit/103DB及review/gates通过。
+  未部署、无新增paid，整体goal active；全历史ADR审计未完成，生产副本/SoT退休仍须独立授权。
+
+## 970历史实施记录（已由上方合并状态取代）
+
 - Active970：root独占tlp-wt-unified-conversation / codex/yuk-970-tool-contract-tests，base main15eceba0。
   Agency/Ingestion整体schema迁移指纹与自测、Agency/Copilot纯搬迁路径断言退休；effect/cost/mirror显式保留。
   15unit/103DB及architecture/capability audits/typecheck/lint/build通过，独立初审PASS无finding；待PR/exactCI，无产品/paid/生产变化。
