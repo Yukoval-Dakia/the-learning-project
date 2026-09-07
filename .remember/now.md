@@ -2,12 +2,22 @@
 
 ## 最新状态
 
-- Active951：root独占codex/yuk-951-retire-drained-mailbox；16:20:25Z完整排空窗通过，375条完成reconcile保留历史。
-  旧run/continuation/DLQ全状态零行，三业务表零行；生产仍582b2e66，旧cron尚未unschedule，无生产写入。
-  正在退休旧执行器与ResearchTask，保留native/历史/Stop；新增只读migrate拒绝门，34DB过，unit census修正中。
-  owner最新「批准」承接待答问题：未用$3历史恢复专项转Notes/Memory真实恢复，上限$3；本轮未调用付费模型。
-  单活动实施线先951验证/审查/交付，再887 actual缺项；不关闭整体goal或声称B3物理表名退休。
+- Active979：root独占codex/yuk-979-mem0-failure-truth；887真实canary embedding200/101tokens后本地限额429阻断LLM。
+  Mem0 3.0.13吞错[]使opaque attempt succeeded；completion锁未放，因此未写误导完成。隔离DBv2/容器已停。
+  固定pnpm补丁恢复失败/strictschema，PGVector单SQL原子写，保留合法空/embedding兼容/辅助history；12unit+4DB通过。
+  Docker依赖stage复制patches；仅patch哈希变化，无依赖升级。review/全gates/部署待完成，生产仍951/106ac7ff。
+  新专项保守预留$1、余$2，不是实际账单；旧$10不回收。详见docs/planning/2026-09-08-memory-failure-truth.md。
 
+- 951旧mailbox执行已交付：PR1363 exact57a7bbee6a1b193de912abbee94093e3e54fd5de，CI34144766869全job绿。
+  16:57:40Z merge main3c8d5c1b35c10c323e3a3f55dcb294653ad29af1；初审PASS，独立12DB/54unit，无第二审。
+  root121DB/82census-unit/35doc-unit/typecheck/lint/build/audits过；初CI仅历史schema分类/过时Task文档失败，已修。
+  16:58Z Mac appac3e09f4/worker faa93c5f均106ac7ff healthy/零重启；原PG7d99236a/09:40:42Z不变。
+  旧app/worker正常exit0，旧reconcile cron已精确unschedule/空队列；live migrate零新增/7LI就绪/新guard过。
+  423event/258task/4attempt/0child/0continuation不变，APIhealth200/未认证401/认证200，browser刷新重开无错误。
+  candidate image7c08b3c116ae8d049feb4e89adfcc218f8b66c137c573f7a6d2505a73705ee93；runtime-951-image.override.yml。
+  回退去掉951overlay返回582b2e66；旧worker会恢复cron，下次升级须重复排空门；无历史数据/queue删除。
+  owner最新「批准」承接待答问题：未用$3历史恢复专项转Notes/Memory真实恢复，上限$3；本轮未调用付费模型。
+  root独占codex/yuk-951-mailbox-delivery-notes；下一线887 actual缺项，951B3术语决策仍开放；goal active。
 - Active887证据差集：root独占codex/yuk-887-rollout-evidence-gap；未改产品代码，main/runtime仍978。
   七项rollout逐项区分现有actual/DB/真实process与缺口，docs/planning/2026-09-07-rollout-evidence-gap.md。
   实际Agent SDK0.3.220 + MCP1.29 Client/linked InMemoryTransport调用2test-only工具通过，真实clone DB/log/mirror。

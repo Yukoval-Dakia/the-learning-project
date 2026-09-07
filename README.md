@@ -139,7 +139,8 @@ pnpm build            # rw:web:build + 三 esbuild 产物（dist/server.cjs / di
    tracks applied state. The runner also prepares Goal/LearningItem/MistakeVariant
    legacy anchors and checks fold/live values and row sets. Incomplete history or drift
    fails deployment without rebuilding live rows; all newly prepared anchors roll back.
-   Stop application writers before a manual re-run (the preparation takes table locks
+   For an upgrade from the legacy mailbox release, first complete the special drain
+   procedure below. Otherwise, stop application writers before a manual re-run (the preparation takes table locks
    and fails after 5 seconds if an existing transaction prevents acquisition):
    ```bash
    docker compose stop app worker

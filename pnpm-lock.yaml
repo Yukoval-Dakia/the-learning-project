@@ -18,6 +18,9 @@ overrides:
   fast-uri@<3.1.6: '>=3.1.6 <4'
   ip-address@<10.3.1: '>=10.3.1 <11'
 
+patchedDependencies:
+  mem0ai@3.0.13: b326522e68005414f94af22a722e97cc83dba04af5c3acdd127d7d75f37b625d
+
 importers:
 
   .:
@@ -108,7 +111,7 @@ importers:
         version: 15.2.0
       mem0ai:
         specifier: 3.0.13
-        version: 3.0.13(@anthropic-ai/sdk@0.115.0(zod@4.4.3))(@azure/identity@4.13.1)(@azure/search-documents@12.2.0)(@cloudflare/workers-types@4.20260508.1)(@google/genai@1.52.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)))(@langchain/core@1.1.48(@opentelemetry/api@1.9.1)(openai@4.104.0(ws@8.21.0)(zod@4.4.3))(ws@8.21.0))(@mistralai/mistralai@1.15.1)(@qdrant/js-client-rest@1.18.0(@typescript/typescript6@6.0.2))(@supabase/supabase-js@2.106.2)(@types/jest@29.5.14)(@types/pg@8.20.0)(better-sqlite3@12.11.1)(cloudflare@4.5.0)(compromise@14.15.0)(groq-sdk@0.3.0)(natural@8.1.1(@opentelemetry/api@1.9.1))(ollama@0.5.18)(pg@8.22.0)(redis@4.7.1)(supports-color@10.2.2)(ws@8.21.0)
+        version: 3.0.13(patch_hash=b326522e68005414f94af22a722e97cc83dba04af5c3acdd127d7d75f37b625d)(@anthropic-ai/sdk@0.115.0(zod@4.4.3))(@azure/identity@4.13.1)(@azure/search-documents@12.2.0)(@cloudflare/workers-types@4.20260508.1)(@google/genai@1.52.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)))(@langchain/core@1.1.48(@opentelemetry/api@1.9.1)(openai@4.104.0(ws@8.21.0)(zod@4.4.3))(ws@8.21.0))(@mistralai/mistralai@1.15.1)(@qdrant/js-client-rest@1.18.0(@typescript/typescript6@6.0.2))(@supabase/supabase-js@2.106.2)(@types/jest@29.5.14)(@types/pg@8.20.0)(better-sqlite3@12.11.1)(cloudflare@4.5.0)(compromise@14.15.0)(groq-sdk@0.3.0)(natural@8.1.1(@opentelemetry/api@1.9.1))(ollama@0.5.18)(pg@8.22.0)(redis@4.7.1)(supports-color@10.2.2)(ws@8.21.0)
       parse5:
         specifier: ^8.0.1
         version: 8.0.1
@@ -7901,7 +7904,7 @@ snapshots:
 
   media-typer@1.1.0: {}
 
-  mem0ai@3.0.13(@anthropic-ai/sdk@0.115.0(zod@4.4.3))(@azure/identity@4.13.1)(@azure/search-documents@12.2.0)(@cloudflare/workers-types@4.20260508.1)(@google/genai@1.52.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)))(@langchain/core@1.1.48(@opentelemetry/api@1.9.1)(openai@4.104.0(ws@8.21.0)(zod@4.4.3))(ws@8.21.0))(@mistralai/mistralai@1.15.1)(@qdrant/js-client-rest@1.18.0(@typescript/typescript6@6.0.2))(@supabase/supabase-js@2.106.2)(@types/jest@29.5.14)(@types/pg@8.20.0)(better-sqlite3@12.11.1)(cloudflare@4.5.0)(compromise@14.15.0)(groq-sdk@0.3.0)(natural@8.1.1(@opentelemetry/api@1.9.1))(ollama@0.5.18)(pg@8.22.0)(redis@4.7.1)(supports-color@10.2.2)(ws@8.21.0):
+  mem0ai@3.0.13(patch_hash=b326522e68005414f94af22a722e97cc83dba04af5c3acdd127d7d75f37b625d)(@anthropic-ai/sdk@0.115.0(zod@4.4.3))(@azure/identity@4.13.1)(@azure/search-documents@12.2.0)(@cloudflare/workers-types@4.20260508.1)(@google/genai@1.52.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)))(@langchain/core@1.1.48(@opentelemetry/api@1.9.1)(openai@4.104.0(ws@8.21.0)(zod@4.4.3))(ws@8.21.0))(@mistralai/mistralai@1.15.1)(@qdrant/js-client-rest@1.18.0(@typescript/typescript6@6.0.2))(@supabase/supabase-js@2.106.2)(@types/jest@29.5.14)(@types/pg@8.20.0)(better-sqlite3@12.11.1)(cloudflare@4.5.0)(compromise@14.15.0)(groq-sdk@0.3.0)(natural@8.1.1(@opentelemetry/api@1.9.1))(ollama@0.5.18)(pg@8.22.0)(redis@4.7.1)(supports-color@10.2.2)(ws@8.21.0):
     dependencies:
       '@anthropic-ai/sdk': 0.115.0(zod@4.4.3)
       '@azure/identity': 4.13.1

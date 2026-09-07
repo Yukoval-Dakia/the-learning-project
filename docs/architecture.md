@@ -324,14 +324,15 @@ Dreaming 和 Maintenance lane 当前跑在 self-hosted Node worker + pg-boss 上
 
 ---
 
-### 5.7 Copilot foreground and durable research
+### 5.7 Persistent Copilot and native research
 
-Foreground Copilot resumes an Agent SDK session across HTTP turns. Native SDK `Task` performs bounded
-read-only research inside the live parent query and returns its tool result to that same parent. It does
-not create a mailbox continuation or a second user-facing voice. The older `subagent_run` /
-`copilot_continuation` mailbox remains an active worker-owned durable path until its queued obligations
-are drained and a later deletion slice removes its producers and consumers. Explicit durable Copilot and
-Mission runs never resume the foreground SDK session. See ADR-0053–0057.
+Copilot durably accepts every message into one persistent conversation; transport disconnect only
+detaches observation, while explicit Stop cancels execution. Native SDK `Task` performs bounded
+read-only research inside its parent and returns to that same parent. SDK session reuse requires
+the execution owner to retain the matching live cursor; process restart uses causal product history.
+The drained legacy mailbox researcher and automatic continuation have been removed. Historical rows,
+native child projections and parent-owned recovery remain; no separate Mission conversation is created.
+See ADR-0062 and ADR-0063.
 
 ## 六、技术栈
 

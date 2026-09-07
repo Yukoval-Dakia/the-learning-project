@@ -31,3 +31,6 @@ allowBuilds:
   protobufjs: false
   sharp: true
   ssh2: false
+
+patchedDependencies:
+  mem0ai@3.0.13: patches/mem0ai@3.0.13.patch
