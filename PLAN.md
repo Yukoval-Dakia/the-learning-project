@@ -1,13 +1,22 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-07：970已全绿合并；971纠正现役开发指引，生产副本尚未授权，整体goal active。
+> Linear 是权威 tracker；更新于 2026-09-07：owner授权直接操作Mac本地生产；887进入备份/迁移/逐实体验收，NAS不在范围，整体goal active。
 
 ## NOW
 
-- Active 971：root独占tlp-wt-unified-conversation / codex/yuk-971-current-agent-guidance，base main07280e6b。
+- Active887 local-production：root独占tlp-wt-unified-conversation / codex/yuk-887-local-production，base main55aaac30。
+  owner「直接动本地生产即可」仅授权Mac，不含NAS；已启动原Stopped OrbStack，app/worker仍未启动。
+  target=the-learning-project-postgres-1 / the-learning-project_pgdata / 127.0.0.1:5433/loom。
+  31MB，12knowledge/7learning_item/8artifact/391event，migration94条；1failed memory ingest及1createdDLQ不自动重烧。
+  dump已真实恢复至隔离DB，7个B3 cluster全部GO、8golden birth清洁；77学习闭环DB+36迁移护栏DB通过。
+  live迁移94→101，builtin traits升级8；回填9KC+22calibration genesis，重复0新增，live audit无drift，outbox仍0。
+  实体数量12/7/8不变，event391→422；item_calibration保持OFF，未live rebuild，无新增paid。
+  tracked Mac override补goal/variant/LI三个flag，两角色一致；镜像clean55aaac30构建中，待PRCI及API/worker运行验证。
+  详见docs/planning/2026-09-07-local-production-state-cutover.md；NAS不在范围。
+- YUK971 Done：PR1353 exactcffec1b5，CI34106719123 docs-only成功，独立初审PASS；main55aaac30，未部署。
   仅修正三份Ingestion/Copilot AGENTS：自动VLM baseline、额外rescue授权、Notes artifact owner与FULL呈现控制。
   纠正导航链接并删除易过时的模型/路由数量缓存；不改产品代码、prompt、provider或生产。
-  6个本地链接、7项文档unit及typecheck/lint/build通过；待独立文档审查和exactCI。
+  6个本地链接、7项文档unit及本机typecheck/lint/build通过。
 - YUK970 Done：PR1352 exact46a237c49859d8c8c17c2a81c1aeb8a7da7126ba，CI34066586538全绿，
   2026-09-06T23:24:57Z squash main07280e6b30a63ed06f927bc2f20d38615996447e，Linear Done，未部署。
   退休Agency/Ingestion整体schema迁移指纹、指纹自测及Agency/Copilot重复旧路径断言；明确effect/cost/mirror断言。
@@ -121,14 +130,15 @@
 
 ## NEXT
 
-1. 971现役开发指引修正验收；970/762/967/969/968已Done，不重开review或降低保护。
+1. 887 Mac本地生产收口；971/970/762/967/969/968已Done，不重开review或降低保护。
 2. 复核成本展示的reported/estimated/unknown边界，不把公开USD估算说成真实CNY合同或账户扣费。
 3. 全产品复核学习意图→录入→判分→掌握度/复习→提议/撤回的所有者与扩展成本。
    946已按原生Skill catalog→调用后body验证Done，不重建第二目录、不删quiz。
-4. 887生产副本backfill/audit/rebuild/golden与SoT退休仍需独立授权。
+4. 887本地backfill/audit/rebuild/golden与SoT退休按新授权推进，NAS仍不在范围。
 
 ## PARKED
 
+- 972自定义学科unit_dimension仍被physics名称限制，已代码核验/LinearTodo，887本地frontier后修复。
 - 全历史ADR审计仍未完成，不冒充全量通过；971仅覆盖三份已确认冲突的现役指引。
 - 951旧mailbox/ToolOperations仅drain-only；退休需零pending/零队列活动覆盖完整重试窗。
 - 921多provider、572夜间教研、832HOLD不解锁。
@@ -136,6 +146,6 @@
 
 ## BLOCKED-ON
 
-- 970/762/967/969/968/966/965已交付；971暂无owner决策阻塞，生产副本验收仍需独立授权。
-- 未授权部署、生产clone、SoT开关、backfill或历史数据删除；均未执行。
+- Mac本地生产已授权直接操作；NAS部署/数据操作仍未授权，不执行。
+- 不主动重跑现存failed memory/DLQ或新增超预算模型验收；历史费用unknown保留。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。

@@ -2,6 +2,22 @@
 
 ## 最新状态
 
+- 2026-09-07 owner新授权「直接动本地生产即可」覆盖Mac本地生产操作，不包括NAS；下方旧未授权状态已取代。
+  root当前codex/yuk-887-local-production，base main55aaac30；971已PR1353合并/CI34106719123 docs-only success/reviewPASS。
+  OrbStack原Stopped已启动；唯一既存容器the-learning-project-postgres-1，volume the-learning-project_pgdata，DB loom @127.0.0.1:5433。
+  app/worker均未运行；94migration/31MB/12KC/7LI/8artifact/391events。保留1failed memory ingest及1created DLQ，不自动重烧。
+  备份/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/loom-before.dump，sha256=13310b8c88e1d03b5bbc71f9b0ea2b67a55e68f1cf40788936def75054a3a040，pg_restore目录可读。
+  dump已真实恢复loom_refactor_verify_sjuacu；clone迁移+B3所有cluster GO，8个external goldens birth0drift。
+  live migrate94→101（builtintraits升级8）；genesis新增9KC+22calibration，重复0新增；live audit0drift/outbox0。
+  live实体12/7/8不变，events391→422；未live rebuild，无新增paid，item_calibration始终OFF。
+  77学习闭环DB+36B3/backfill/golden DB通过，typecheck/lint/build过；Mac flags补goal/variant/LI两角色，待PRCI。
+  Docker build session68471从clean git archive55aaac30运行，context=tlp-image-55aaac30.fnMhiI，tag the-learning-project-app:55aaac30。
+  部署必须-p the-learning-project；runtime override在上述备份目录，external原pgdata/mem0data/network，DBpostgres:5432/loom。
+  API/worker尚未启动，pending memory失败/DLQ不重烧；副本/B3保护不可绕过，NAS仍未授权。
+  972已查重登记Todo（physics名称特判阻止custom unit_dimension）。另一direct judge候选待核，不把solve-check误判为学习判分重复。
+
+## 旧授权边界及971实施记录（以上方为准）
+
 - Active971：root独占tlp-wt-unified-conversation / codex/yuk-971-current-agent-guidance，base main07280e6b。
   三份现役指引纠正自动VLM baseline/额外rescue、Notes artifact归属与FULL呈现；仅文档。
   6个本地链接/7项文档unit/typecheck/lint/build通过，待独立review/exactCI。
