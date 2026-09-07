@@ -2,6 +2,16 @@
 
 ## 最新状态
 
+- 973迁移前置PR1355已合并：exact6d476fc99b23ec6ed71a242a5700d7c2ea0d7f8f，CI34112766637全部success，
+  main9607310839b8e02d9b8d17ab9e3b3279fdf24535，2026-09-07T10:54:25Z；未新部署，无paid。
+  root当前codex/yuk-973-retire-state-writers，10生产文件删除主要双轨分支WIP，不是已交付。
+  38初步DB通过；扩大106有9个raw legacy variant fixture失败，接真实迁移后33过，再补early-paid/atomic-dismiss两例35过。
+  最终108 scoped DB与类型检查过；flags/ports/旧OFF-ON测试/LI业务内legacy回填和剩余merge归属direct update待完成。
+  Practice dismiss已将rate与projection纳入同事务，prepared guard失败不能留下已dismiss信号；verify在paid前检查锚。
+  architect design_973_merge_projection_order只读核对merge现写入早于rate和历史backfill时序，等待最终建议。
+  973 GitHub自动Done后已恢复In Progress；第一次Linear更新/评论报错后get恢复，issue状态更新已重试成功。
+  原始脏main与已运行本地生产不动；当前独立分支只root写，未启动本runtime lane独立review。
+
 - Active973 branch codex/yuk-973-canonical-writers，root独占；迁移前置helper已实现并接入migrate.ts。
   三类实体在同一锁定事务补锚，拒绝orphan history/field drift/ghost，失败回滚新锚，不live rebuild。
   51相关DB与typecheck/lint/build/architecture边界过；fresh/锁超时/重试/并发/派生列覆盖。

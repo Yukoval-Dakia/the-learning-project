@@ -11,19 +11,15 @@ import type {
 } from '@/kernel/proposals';
 
 interface PracticeLifecycleRuntime {
-  assertCurrentMistakeVariantParity: (tx: Tx, variantId: string) => Promise<void>;
   findExistingRateEvent: (
     tx: Tx,
     proposalId: string,
   ) => Promise<{ decision: string; payload: unknown } | null>;
   hasMistakeVariantGenesisAnchor: (tx: Tx, variantId: string) => Promise<boolean>;
   projectMistakeVariantGuarded: (tx: Tx, variantId: string) => Promise<unknown>;
-  projectionIsWriter: (
-    entity?: 'artifact' | 'goal' | 'learning_item' | 'mistake_variant' | 'question_block',
-  ) => boolean;
   recordDismissSignal: (db: Db, input: ProposalDismissInput) => Promise<void>;
   writeProposalRateEvent: (
-    db: Db,
+    db: Db | Tx,
     proposalId: string,
     rating: 'accept' | 'dismiss',
     userNote?: string,
@@ -46,26 +42,11 @@ async function retractVariantQuestion(
     )
     .for('update');
 
-  if (runtime.projectionIsWriter('mistake_variant')) {
-    for (const variant of retractedVariants) {
-      await runtime.projectMistakeVariantGuarded(tx, variant.id);
-    }
-    return;
-  }
-
-  await tx
-    .update(mistake_variant)
-    .set({ status: 'dismissed', updated_at: input.correction_at })
-    .where(
-      and(
-        eq(mistake_variant.proposal_event_id, input.proposalId),
-        inArray(mistake_variant.status, ['draft', 'active']),
-      ),
-    );
   for (const variant of retractedVariants) {
-    if (await runtime.hasMistakeVariantGenesisAnchor(tx, variant.id)) {
-      await runtime.assertCurrentMistakeVariantParity(tx, variant.id);
+    if (!(await runtime.hasMistakeVariantGenesisAnchor(tx, variant.id))) {
+      throw new Error(`Variant ${variant.id} needs canonical projection migration`);
     }
+    await runtime.projectMistakeVariantGuarded(tx, variant.id);
   }
 }
 
@@ -77,14 +58,14 @@ export function createPracticeProposalLifecycle(runtime: PracticeLifecycleRuntim
   return {
     variantQuestionProposalDismissApplier: async (db, input) => {
       const ownerDb = db as Db;
-      const rate = await runtime.writeProposalRateEvent(
-        ownerDb,
-        input.proposalId,
-        'dismiss',
-        input.user_note,
-      );
-      if (!rate.idempotent) {
-        await ownerDb.transaction(async (tx) => {
+      const rate = await ownerDb.transaction(async (tx) => {
+        const rate = await runtime.writeProposalRateEvent(
+          tx,
+          input.proposalId,
+          'dismiss',
+          input.user_note,
+        );
+        if (!rate.idempotent) {
           const [draftVariant] = await tx
             .select({ id: mistake_variant.id })
             .from(mistake_variant)
@@ -96,25 +77,16 @@ export function createPracticeProposalLifecycle(runtime: PracticeLifecycleRuntim
             )
             .for('update')
             .limit(1);
-          if (!draftVariant) return;
+          if (!draftVariant) return rate;
 
-          if (runtime.projectionIsWriter('mistake_variant')) {
-            await runtime.projectMistakeVariantGuarded(tx, draftVariant.id);
-            return;
+          if (!(await runtime.hasMistakeVariantGenesisAnchor(tx, draftVariant.id))) {
+            throw new Error(`Variant ${draftVariant.id} needs canonical projection migration`);
           }
-          await tx
-            .update(mistake_variant)
-            .set({ status: 'dismissed', updated_at: rate.rate_at })
-            .where(
-              and(
-                eq(mistake_variant.proposal_event_id, input.proposalId),
-                eq(mistake_variant.status, 'draft'),
-              ),
-            );
-          if (await runtime.hasMistakeVariantGenesisAnchor(tx, draftVariant.id)) {
-            await runtime.assertCurrentMistakeVariantParity(tx, draftVariant.id);
-          }
-        });
+          await runtime.projectMistakeVariantGuarded(tx, draftVariant.id);
+        }
+        return rate;
+      });
+      if (!rate.idempotent) {
         await runtime.recordDismissSignal(ownerDb, input);
       }
 

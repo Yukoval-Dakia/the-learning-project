@@ -6,7 +6,6 @@ import { artifact, learning_item } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { ProposalRetractInput } from '@/kernel/proposals';
 export interface LearningItemRetractRuntime {
-  assertCurrentLearningItemParity: (tx: Tx, itemId: string) => Promise<void>;
   emitProposalArtifactArchive: (
     tx: Tx,
     input: { artifactId: string; version: number; proposalId: string; archivedAt: Date },
@@ -14,9 +13,6 @@ export interface LearningItemRetractRuntime {
   hasLearningItemGenesisAnchor: (tx: Tx, itemId: string) => Promise<boolean>;
   learningItemSnapshot: (row: typeof learning_item.$inferSelect) => unknown;
   projectLearningItemGuarded: (tx: Tx, itemId: string) => Promise<unknown>;
-  projectionIsWriter: (
-    entity?: 'artifact' | 'goal' | 'learning_item' | 'mistake_variant' | 'question_block',
-  ) => boolean;
   upsertMaterializedIdIndex: (
     tx: Tx,
     input: { materialized_id: string; anchor_event_id: string; subject_kind: 'learning_item' },
@@ -33,7 +29,6 @@ export async function retractLearningItemProposal(
     .from(learning_item)
     .where(and(eq(learning_item.source_ref, input.proposalId), isNull(learning_item.archived_at)))
     .for('update');
-  const projectionWrites = runtime.projectionIsWriter('learning_item');
 
   for (const item of affectedItems) {
     if (!(await runtime.hasLearningItemGenesisAnchor(tx, item.id))) {
@@ -74,23 +69,7 @@ export async function retractLearningItemProposal(
     });
   }
 
-  if (projectionWrites) {
-    for (const item of affectedItems) await runtime.projectLearningItemGuarded(tx, item.id);
-  } else {
-    await tx
-      .update(learning_item)
-      .set({
-        archived_at: input.correction_at,
-        archived_reason: 'proposal_retracted',
-        updated_at: input.correction_at,
-      })
-      .where(
-        and(eq(learning_item.source_ref, input.proposalId), isNull(learning_item.archived_at)),
-      );
-    for (const item of affectedItems) {
-      await runtime.assertCurrentLearningItemParity(tx, item.id);
-    }
-  }
+  for (const item of affectedItems) await runtime.projectLearningItemGuarded(tx, item.id);
 
   const archivedArtifacts = await tx
     .update(artifact)

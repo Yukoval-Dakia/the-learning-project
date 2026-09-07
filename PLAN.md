@@ -4,10 +4,13 @@
 
 ## NOW
 
-- Active973：root独占tlp-wt-unified-conversation / codex/yuk-973-canonical-writers。
-  先迁移事务内补锚+无allowlist fold/live校验，拒绝有mutation但无base历史；失败回滚全部新锚。
-  随后删除Goal/LI/variant业务双轨分支和flag，保留guard/单时钟/并发/LI派生字段，合并重复测试。
-  验收要求rich scoped DB、typecheck/lint/build、独立review、exact-head CI；不新增付费调用。
+- Active973：root独占tlp-wt-unified-conversation / codex/yuk-973-retire-state-writers。
+  前置PR1355已合并main960731083，exact6d476fc9 CI34112766637全绿；review初审+唯一验证完成，无第三轮。
+  原子迁移补锚/值与rowset audit/显式DB目标保护通过51DB+1真实bundle unit，副本实跑通过；未新部署。
+  后续10生产文件已删主要双轨分支（尚未交付）；38初步DB过，扩大106例9个legacy fixture失败已迁移前置修复。
+  再补未准备数据禁止付费/丢弃事务回滚，最终108 scoped DB和typecheck通过；flags、重复OFF/ON测试、LI merge单writer尚待收口。
+  merge归属当前在accept rate之前imperative更新，历史repair共享路径；architect只读核对中，不盲目替换成早投影。
+  最终仍需完整scoped/gates/独立新lane review/exactCI；973保持In Progress，不将前置PR当整体完成。
 - 887 local-production切片已部署：PR1354 exact0ed35fd3，CI34108722202全绿，main a12667507，独立安全review PASS。
   owner「直接动本地生产即可」仅授权Mac，不含NAS；API/worker/Postgres均healthy，未启动tunnel。
   target=the-learning-project-postgres-1 / the-learning-project_pgdata / 127.0.0.1:5433/loom。

@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 
 import { newId } from '@/core/ids';
 import type { GoalRowSnapshotT } from '@/core/schema/event/genesis';
@@ -7,12 +7,7 @@ import { goal } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { projectGoal, projectGoalGuarded } from '@/server/projections/goal';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
-import {
-  assertGoalParity,
-  goalLiveRowToSnapshot,
-  hasGoalGenesisAnchor,
-} from '@/server/projections/parity';
-import { projectionIsWriter } from '@/server/projections/sot-flag';
+import { hasGoalGenesisAnchor } from '@/server/projections/parity';
 import { ensureSubjectRoot } from '@/server/subjects/ensure-subject-root';
 import { getDefaultSubjectRegistry } from '@/subjects/profile';
 
@@ -80,12 +75,7 @@ async function ensureGoalSubject(tx: Tx, subjectId: string | null): Promise<void
 
 async function materializeCreatedGoal(tx: Tx, snapshot: GoalRowSnapshotT): Promise<void> {
   await ensureGoalSubject(tx, snapshot.subject_id);
-  if (projectionIsWriter('goal')) {
-    await projectGoal(tx, snapshot.id);
-  } else {
-    await tx.insert(goal).values(snapshot);
-    await assertWrittenGoalParity(tx, snapshot.id);
-  }
+  await projectGoal(tx, snapshot.id);
 }
 
 /** A user declaration owns its seed, anchor, subject and materialization atomically. */
@@ -153,7 +143,11 @@ export async function mutateGoal(db: GoalDb, goalId: string, input: GoalMutation
       .for('update');
     if (!existing) return;
     // Must be checked BEFORE the mutation event: a mutation cannot seed a legacy row.
-    const wasEventSourced = await hasGoalGenesisAnchor(tx, goalId);
+    if (!(await hasGoalGenesisAnchor(tx, goalId))) {
+      throw new Error(
+        `Goal ${goalId} is not event-sourced; run the canonical projection migration`,
+      );
+    }
     // The fold orders by event time. Assign mutation time only after acquiring ownership,
     // so simultaneous or delayed callers cannot reverse the committed event sequence.
     // Retraction already has a canonical correction event and must retain its timestamp.
@@ -191,31 +185,6 @@ export async function mutateGoal(db: GoalDb, goalId: string, input: GoalMutation
         },
         created_at: transitionAt,
       });
-    // Deployment compatibility is private. Unanchored historical rows must never be
-    // deleted by a fold that has no originating event. No implicit backfill occurs.
-    if (projectionIsWriter('goal') && (wasEventSourced || input.kind === 'retract')) {
-      await projectGoalGuarded(tx, goalId);
-    } else {
-      await tx
-        .update(goal)
-        .set({
-          ...rowPatch,
-          updated_at: transitionAt,
-          version: existing.version + (input.kind === 'retract' ? 0 : 1),
-        })
-        .where(
-          and(
-            eq(goal.id, goalId),
-            eq(goal.version, existing.version),
-            input.kind === 'retract' ? eq(goal.status, 'active') : undefined,
-          ),
-        );
-      if (wasEventSourced) await assertWrittenGoalParity(tx, goalId);
-    }
+    await projectGoalGuarded(tx, goalId);
   });
-}
-
-async function assertWrittenGoalParity(tx: Tx, goalId: string): Promise<void> {
-  const [written] = await tx.select().from(goal).where(eq(goal.id, goalId)).limit(1);
-  await assertGoalParity(tx, goalId, written ? goalLiveRowToSnapshot(written) : null);
 }

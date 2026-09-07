@@ -13,6 +13,7 @@ import { event, knowledge, mistake_variant, proposal_signals, question } from '@
 import { writeVariantQuestionProposal } from '@/kernel/proposals/producers';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { acceptAiProposal, dismissAiProposal, retractAiProposal } from '@/server/proposals/actions';
+import { migrateCanonicalProjections } from '../../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { assertProposalLifecycleResult } from '../../../../tests/helpers/proposal-lifecycle';
 import type {
@@ -69,7 +70,7 @@ describe('variant_question proposal lifecycle', () => {
     });
   }
 
-  async function seedVariantQuestionProposal(): Promise<{
+  async function seedVariantQuestionProposal(prepare = true): Promise<{
     proposalId: string;
     mistakeVariantId: string;
   }> {
@@ -99,6 +100,8 @@ describe('variant_question proposal lifecycle', () => {
       created_at: now,
       updated_at: now,
     });
+    // This fixture models persisted legacy data entering a migrated deployment.
+    if (prepare) await migrateCanonicalProjections(db);
     return { proposalId, mistakeVariantId: mvId };
   }
 
@@ -214,6 +217,29 @@ describe('variant_question proposal lifecycle', () => {
     expect(signals).toHaveLength(1);
     expect(signals[0]).toMatchObject({ dismiss_count: 0, accept_count: 0 });
     expect(signals[0].cooldown_until).toBeInstanceOf(Date);
+  });
+
+  it('unprepared history rejects dismissal without committing a rate or cooldown', async () => {
+    await seedParentQuestion('q_parent');
+    const { proposalId, mistakeVariantId } = await seedVariantQuestionProposal(false);
+    await expect(dismissAiProposal(testDb(), proposalId)).rejects.toThrow(
+      'canonical projection migration',
+    );
+    expect(
+      await testDb()
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId))),
+    ).toEqual([]);
+    expect(await testDb().select().from(proposal_signals)).toEqual([]);
+    expect(
+      (
+        await testDb()
+          .select()
+          .from(mistake_variant)
+          .where(eq(mistake_variant.id, mistakeVariantId))
+      )[0].status,
+    ).toBe('draft');
   });
 
   it('retract after accept flips mistake_variant row from active to dismissed', async () => {

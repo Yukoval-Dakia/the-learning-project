@@ -20,7 +20,7 @@ import type { CreateLearningIntentNoteFn } from '@/capabilities/notes/public';
 import { newId } from '@/core/ids';
 import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
-import { knowledge, learning_item } from '@/db/schema';
+import { knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeLearningItemProposal } from '@/kernel/proposals/producers';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -33,17 +33,8 @@ import { type TaskTextRunFn, costUsdToMicroUsd } from './ai-runtime';
 export type { LearningIntentOutline } from '../tasks/learning-intent';
 export { LearningIntentError, parseLearningIntentOutline };
 
-// YUK-471 W2 — learning_item projection seam. Each creation INSERT writes a per-id genesis BASE
-// event (the recommended Q1 route — learning_item has no fold-blind field, so genesis fully seeds
-// the row) + the materialized_id_index anchor regardless of the flag; projectionIsWriter('learning_item')
-// gates ONLY who writes the ROW (projection write-through when ON, imperative INSERT when OFF).
-import {
-  assertLearningItemParity,
-  learningItemLiveRowToSnapshot,
-  projectLearningItem,
-  projectionIsWriter,
-  upsertMaterializedIdIndex,
-} from './learning-item-projection-port';
+// Each new item records a per-id genesis and index before its sole structural writer.
+import { projectLearningItem, upsertMaterializedIdIndex } from './learning-item-projection-port';
 
 // ---------- Public types ----------
 
@@ -415,25 +406,14 @@ async function assertNotAlreadyRated(db: Db, proposalId: string): Promise<void> 
   }
 }
 
-// YUK-471 W2 — materialize ONE learning_item under the projection seam (shared by the hub / atomic
-// / long INSERT loops in acceptLearningIntent so all three follow the identical genesis→index→
-// write-through path). The full initial row snapshot is the BASE state; learning_item has NO
-// fold-blind field (unlike mistake_variant), so a per-id experimental:genesis fully seeds the row
-// (design §3②/§3⑥ — NOT a dedicated create event). Steps:
-//   1. ALWAYS write the per-id genesis BASE event (subject_id=row.id) FIRST so the fold (when the
-//      flag is ON) sees it in the same tx. ingest_at=now → outbox opt-out (a creation seed is not a
-//      memory-worthy activity; mirrors the goal/variant accept seams).
-//   2. ALWAYS write the materialized_id_index anchor (id → the genesis event) regardless of the flag
-//      (the event log + anchor is the source of truth; the flag only switches the ROW writer).
-//   3. ROW writer gated on projectionIsWriter('learning_item') (critic A1, defer-flip-not-build):
-//      ON → projectLearningItem folds the genesis + writes the row; OFF → the imperative INSERT
-//      stays the writer + a write-time fold==row parity assert (the item is event-sourced this tx).
+// Hub, atomic and long items share one genesis→index→projection path.
+// The genesis carries the full initial structural state; ingest_at opts this
+// creation seed out of the memory outbox.
 async function materializeLearningItem(
   tx: Tx,
   row: LearningItemRowSnapshotT,
   now: Date,
 ): Promise<void> {
-  const flip = projectionIsWriter('learning_item');
   const genesisEventId = newId();
   await writeEvent(tx, {
     id: genesisEventId,
@@ -452,45 +432,7 @@ async function materializeLearningItem(
     anchor_event_id: genesisEventId,
     subject_kind: 'learning_item',
   });
-  if (flip) {
-    await projectLearningItem(tx, row.id);
-  } else {
-    await tx.insert(learning_item).values({
-      id: row.id,
-      source: row.source,
-      source_ref: row.source_ref,
-      title: row.title,
-      content: row.content,
-      knowledge_ids: row.knowledge_ids,
-      primary_artifact_id: row.primary_artifact_id,
-      parent_learning_item_id: row.parent_learning_item_id,
-      child_learning_item_ids: [],
-      status: row.status,
-      // A4 — set ALL snapshot fields explicitly from the genesis `row` (not by DB-default
-      // coincidence) so the imperative OFF-path row matches the genesis payload by construction; a
-      // default change can no longer silently diverge the two from the seeded genesis snapshot.
-      user_pinned: row.user_pinned,
-      completed_at: row.completed_at,
-      dismissed_at: row.dismissed_at,
-      archived_at: row.archived_at,
-      archived_reason: row.archived_reason,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-      version: row.version,
-    });
-    // write-time fold==row guard: the item is event-sourced this tx (genesis + index anchor), so
-    // the fold reproduces the seeded row. dev/test throw on mismatch, prod warn.
-    const [written] = await tx
-      .select()
-      .from(learning_item)
-      .where(eq(learning_item.id, row.id))
-      .limit(1);
-    await assertLearningItemParity(
-      tx,
-      row.id,
-      written ? learningItemLiveRowToSnapshot(written) : null,
-    );
-  }
+  await projectLearningItem(tx, row.id);
 }
 
 /**

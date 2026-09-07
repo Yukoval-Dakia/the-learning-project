@@ -27,17 +27,11 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, knowledge, mistake_variant, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-// YUK-471 W2 (critic A4) — mistake_variant creation seam. The creation tx ALWAYS writes the
-// runtime BASE event (experimental:mistake_variant_create, carrying the fold-blind cause_category)
-// + the materialized_id_index anchor so the SoT-flip guard resolves the variant O(1); the
-// per-entity flag projectionIsWriter('mistake_variant') gates ONLY who writes the ROW (projection
-// write-through when ON, the imperative INSERT when OFF). NOT genesis (A4: genesis is backfill-only).
+// Runtime creation records its complete base, including cause_category, before
+// index and projection. Genesis remains the legacy backfill event, not runtime creation.
 import {
   anchorMistakeVariant,
-  assertMistakeVariantParity,
-  mistakeVariantLiveRowToSnapshot,
   projectMistakeVariant,
-  projectionWritesMistakeVariant,
 } from '@/server/projections/mistake-variant-runtime';
 import {
   hasProposalWithCooldownKey,
@@ -241,7 +235,6 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
 
   let proposalId = '';
   const mistakeVariantId = createId();
-  const flip = projectionWritesMistakeVariant();
   await db.transaction(async (tx) => {
     proposalId = await writeVariantQuestionProposal(tx, {
       source_question_id: parent.id,
@@ -279,10 +272,7 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
       updated_at: now,
     };
 
-    // 1. ALWAYS write the runtime BASE event (experimental:mistake_variant_create) FIRST so the
-    //    fold (when the flag is ON) sees it in the same tx — it is the row's ground truth incl.
-    //    the fold-blind cause_category. ingest_at=now → outbox opt-out (a creation base is not a
-    //    memory-worthy activity; mirrors the goal accept seam writing the event before the row).
+    // Record the base before materialization; creation seeds opt out of memory ingestion.
     const createEventId = newId();
     await writeEvent(tx, {
       id: createEventId,
@@ -301,30 +291,10 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
       created_at: now,
       ingest_at: now,
     });
-    // 2. ALWAYS write the materialized_id_index anchor (mvId → the create event) regardless of the
-    //    flag. The event log + anchor is the source of truth; the flag only switches the ROW writer.
+    // Anchor the new id to its originating event before materialization.
     await anchorMistakeVariant(tx, mistakeVariantId, createEventId);
-    // 3. ROW writer — gated on the per-entity flag (critic A1, defer-flip-not-build):
-    //    ON  → the projection write-through folds (the create base) and writes the row;
-    //    OFF → the imperative INSERT stays the writer (current behavior — claim the in-flight slot
-    //          so variants_max=3 counting works while the proposal is pending, YUK-17/ADR-0018).
-    if (flip) {
-      await projectMistakeVariant(tx, mistakeVariantId);
-    } else {
-      await tx.insert(mistake_variant).values(baseRow);
-      // write-time fold==row guard: the variant is event-sourced this tx (the create base + index
-      // anchor), so the fold reproduces the draft row. dev/test throw on mismatch, prod warn.
-      const [written] = await tx
-        .select()
-        .from(mistake_variant)
-        .where(eq(mistake_variant.id, mistakeVariantId))
-        .limit(1);
-      await assertMistakeVariantParity(
-        tx,
-        mistakeVariantId,
-        written ? mistakeVariantLiveRowToSnapshot(written) : null,
-      );
-    }
+    // Materialize canonical structural state from the events in this transaction.
+    await projectMistakeVariant(tx, mistakeVariantId);
   });
 
   return {

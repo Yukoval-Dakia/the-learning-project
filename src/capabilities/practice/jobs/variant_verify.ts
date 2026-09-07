@@ -38,11 +38,8 @@ import { makeRunTaskFn } from '@/server/ai/runner-fn';
 // imperative UPDATE (OFF) writes the row (broken+failure_reasons on fail / touch updated_at on
 // pass). OFF still runs the write-time fold==row parity assert.
 import {
-  assertMistakeVariantParity,
   hasMistakeVariantGenesisAnchor,
-  mistakeVariantLiveRowToSnapshot,
   projectMistakeVariantGuarded,
-  projectionWritesMistakeVariant,
 } from '@/server/projections/mistake-variant-runtime';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -176,6 +173,11 @@ export async function runVariantVerify(
   }
   const variantQuestionId: string = row.variant_question_id;
   const proposalEventId: string = row.proposal_event_id;
+  // A direct/legacy worker boot must fail before buying verification for data
+  // that cannot be materialized by the canonical writer.
+  if (!(await hasMistakeVariantGenesisAnchor(db, mistakeVariantId))) {
+    throw new Error(`Variant ${mistakeVariantId} needs canonical projection migration`);
+  }
 
   // Idempotency: a prior verify event already exists for this variant.
   const existingVerifyRows = await db
@@ -292,7 +294,6 @@ export async function runVariantVerify(
   });
 
   // YUK-471 W2 — gate who writes the mistake_variant ROW (read ONCE outside the tx).
-  const flip = projectionWritesMistakeVariant();
 
   await db.transaction(async (tx) => {
     // YUK-499 — lock the mistake_variant row FOR UPDATE as the FIRST statement, before the verify
@@ -343,50 +344,11 @@ export async function runVariantVerify(
       cost_micro_usd: costUsdToMicroUsd(result.cost_usd),
       created_at: now,
     });
-
-    // ROW writer — gated on the per-entity flag (critic A1). ON → the GUARDED projection folds
-    // (create base + accept + this verify) and writes the row; OFF → the imperative UPDATE (current
-    // behavior: fail → broken+failure_reasons, pass → touch updated_at) + the write-time fold==row
-    // assert. GUARDED (not bare projectMistakeVariant): a pre-W2 / fixture-seeded variant with no
-    // create base folds to null; the guard's anchor gate keeps that live row instead of DELETing it
-    // (B1 data-loss-on-flip — mirrors the dismiss/retract sites + projectGoalGuarded).
-    if (flip) {
-      await projectMistakeVariantGuarded(tx, mistakeVariantId);
-    } else {
-      if (parsed.verdict === 'fail') {
-        await tx
-          .update(mistake_variant)
-          .set({
-            status: 'broken',
-            failure_reasons: parsed.failure_reasons,
-            updated_at: now,
-          })
-          .where(eq(mistake_variant.id, mistakeVariantId));
-      } else {
-        // verdict='pass' — touch updated_at only so we can tell verify ran.
-        await tx
-          .update(mistake_variant)
-          .set({ updated_at: now })
-          .where(eq(mistake_variant.id, mistakeVariantId));
-      }
-      // APPLICABILITY GATE (mirror the goal/node asserts): only assert when the variant is
-      // EVENT-SOURCED (has a create-base / genesis / index anchor). A pre-W2 / fixture-seeded row
-      // written by the imperative INSERT without a base event folds to null and would
-      // FALSE-mismatch its live row; the backfill anchors those later. Real variant_gen-created
-      // variants always carry the create base, so the assert always runs for them.
-      if (await hasMistakeVariantGenesisAnchor(tx, mistakeVariantId)) {
-        const [written] = await tx
-          .select()
-          .from(mistake_variant)
-          .where(eq(mistake_variant.id, mistakeVariantId))
-          .limit(1);
-        await assertMistakeVariantParity(
-          tx,
-          mistakeVariantId,
-          written ? mistakeVariantLiveRowToSnapshot(written) : null,
-        );
-      }
+    // Materialize canonical structural state from the events in this transaction.
+    if (!(await hasMistakeVariantGenesisAnchor(tx, mistakeVariantId))) {
+      throw new Error(`Variant ${mistakeVariantId} needs canonical projection migration`);
     }
+    await projectMistakeVariantGuarded(tx, mistakeVariantId);
   });
 
   return {
