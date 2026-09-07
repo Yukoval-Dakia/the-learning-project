@@ -2,21 +2,19 @@
 
 ## 最新状态
 
-- Active978：root独占codex/yuk-978-native-child-settlement，base6e0e205b/main26e0e2d65。
-  6正式DB RED→GREEN；native事件串行接纳/退出排空、exact attempt丢终态收口，失败不覆盖paid root结果。
-  既有root reconciler包含已终态但native未收口父；同一parent Es锁约束late start/terminal，child单独commit可恢复。
-  full marker parser移copilot-run-outcome供真实两consumer共用；不读ai_task状态猜父死，不依赖951旧scheduler。
-  25 mailbox/reconcile DB（实际advisory竞争/sibling/retry/legacy免疫）+76 durable/teaching/queue/StopDB过；18unit过。
-  子投影失败/补lost时不返回SDKcursor；原全表断言暴露操作表fixture泄漏，已suite局部before/after清理，未改global reset。
-  typecheck/lint/build/437/0/47架构门过；独立初审review_978_native_settlement进行中，architect仅设计咨询不当review。
-  文档docs/planning/2026-09-07-native-child-settlement.md；待commit/PR/exactCI/cleanimage/runtime，无paid/生产变化。
-
-- 978 P1收尾覆盖上方旧状态：PR1362/ba4bc7fe初审PASS与CI34137867856绿，但bot发现SDK后Stop竞态，暂不合并部署。
-  真实public worker在SDK返回后写Stop，父cancelled/子lost已RED；改父提交后公共wrapper修复，82DB GREEN。
-  SDK只排空/记录open native以禁cursor；删本地提前终态helper，3旧case明确先commit父marker。
-  baseline/new cleanimage物理reconcile已证RED→GREEN/重复幂等，零task/attempt/continuation；候选worker已stop exit0。
-  仍需唯一P1验证审、新exactCI/newimage交付；生产appc6bbf5e1/worker14ea1a81/原PG未变，无paid。
-  owner强调时间/全局进度：978收尾后按产品完成条件盘点887/951/977，禁止逐文件继续扩张重构。
+- YUK978 Done：PR1362 exact582b2e66cdd7f809e1f3c1509d60f668a46e9668，CI34139494605全job成功。
+  15:45:36Z合并main2351d5657ec7696bf5da88226d0e33fa873bc405；初审+唯一P1验证PASS，无第三审。
+  SDK后Stop父cancelled/子lost真实public worker RED→GREEN；SDK只排空/禁不完整cursor，父commit后收口。
+  102DB/18unit/typecheck/lint/build/437/0/47架构门过；独立验证7DB过。旧lease恢复不猜native死、不重烧模型。
+  cleanimage349a23af79dbf5a8da127e45fdc781cb22532c26cbd686697c4131824c0bbbac物理reconcile三类父终态+重复过。
+  clone loom_native_978_ba4bc7fe_verify仅synthetic；新3settled/0continuation/0task/0attempt，两个candidate worker均exit0。
+  15:46Z Mac app25df8e2f/worker e0479148均582b2e66 healthy/零重启；原PG7d99236a/09:40:42Z/pgdata未变。
+  原app/worker stop均0，live migrate零新增、7LI readiness过；423event/258task/4attempt/0child与空队列不变。
+  health200/未认证401/认证200/sessions200；browser抽屉刷新重开无pageerror，截图private copilot-after-978.png。
+  runtime-978-image.override.yml已生效；去掉overlay可回appc6bbf5e1/worker14ea1a81。无NAS/tunnel/paid/数据删除。
+  root独占codex/yuk-978-delivery-notes，原脏main不动；旧$10safe0.04177，专项恢复$3未用。
+  下一单887只做7条rollout验收证据差集，再补必要缺项；951完整drain窗与977 P2独立，不新增全仓清理。
+  887 rollout不等于implementation gate；不能靠mock关闭生产证据，也不能为旧验收要求重建已退休provider路径。
 
 - 951 source-only部分已交付：PR1361 exactab0bbb909aca47530f706b2204045f6cd4b12a12，CI34134547233全job绿。
   2026-09-07T14:54:05Z merge main26e0e2d6550404bdfeaee22df38a56dc56ff140c；独立初审PASS，无finding/无需第二审。

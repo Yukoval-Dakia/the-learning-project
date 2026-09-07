@@ -75,5 +75,46 @@ child closure; SDK exit alone must leave the child running and withhold its curs
 The initial clean-image physical pg-boss canary proved three restart repairs and
 repeat idempotence with zero AI task/provider-attempt rows. That candidate was not
 deployed; its isolated worker is stopped with exit 0. Production remains unchanged.
-Sole P1 verification review, updated exact-head CI and local delivery remain pending.
 No paid model call, schema migration, UI change or historical data deletion occurred.
+
+## Completed delivery
+
+PR1362 exact `582b2e66cdd7f809e1f3c1509d60f668a46e9668` passed every job in
+CI Gate `34139494605` and the sole P1 verification review (independent seven DB
+cases). Root verification was 102 scoped DB and 18 unit cases, typecheck, lint,
+build and both architecture audits. The PR merged at 2026-09-07T15:45:36Z as
+`2351d5657ec7696bf5da88226d0e33fa873bc405`; the review thread is resolved.
+
+Clean image `the-learning-project-app:582b2e66` has ID
+`sha256:349a23af79dbf5a8da127e45fdc781cb22532c26cbd686697c4131824c0bbbac`.
+It processed physical pg-boss reconciliation job `1b127e7f-ac55-46a0-9d86-f8396e76dde3`
+in the isolated synthetic database `loom_native_978_ba4bc7fe_verify`, closing three
+native children from DONE, FAILED(cancelled), and a reply marker. Explicit repeated
+job `915b0c68-4d87-47ba-b028-60607cd663cb` left exactly three child-settled events,
+zero continuations, zero AI tasks and zero provider attempts. Both candidate workers
+are stopped with exit 0. This proves physical recovery, not paid-model output quality.
+
+At 15:46Z Mac-local API and worker were updated to this image, healthy with zero
+restarts. The prior API/worker stopped with exit 0; bundled live migration applied
+zero new migrations and all seven LearningItems passed readiness. The existing
+Postgres container `7d99236a` (StartedAt 09:40:42Z) and pgdata volume were unchanged.
+Live counts stayed 423 events / 258 AI tasks / 4 provider attempts / 0 native children,
+and the active/created/retry queue was empty at the final snapshot. Health returned
+200; auth check returned 401 without the token and 200 with it; sessions returned 200.
+The shipped browser drawer opened and reopened after refresh without page errors;
+no message was sent. Screenshot is in the private local-production evidence directory.
+
+The private `runtime-978-image.override.yml` selects the new image for both roles.
+Removing that overlay restores the prior API c6bbf5e1 / worker 14ea1a81 images;
+existing backups and append-only data are retained. No NAS/tunnel operation or paid
+model call occurred. The recovery-specific $3 remains unused.
+
+## Remaining work boundary
+
+YUK-978 is Done, not the whole architecture goal. Next, map existing actual-output,
+crash, migration and browser evidence to YUK-887's seven rollout scenarios and only
+fill demonstrated gaps. Its production rollout gate is distinct from implementation
+completion. YUK-951 still needs the deployed full retry/drain window before deleting
+legacy handlers. YUK-977 known-zero provenance remains a non-blocking P2. Do not
+restart a file-by-file architecture cleanup or repeat paid samples merely to make
+every historical verification use the latest SHA.
