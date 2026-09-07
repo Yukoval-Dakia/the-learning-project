@@ -2,6 +2,17 @@
 
 ## 最新状态
 
+- YUK976 Todo/UI预检待owner批准：成本只读复核，main5e656291/f376c6aa，未改UI代码。
+  server provider-cost-projection/cost-today/admin-cost truth字段完整；18相关API/reader DB全过。
+  两真实consumer（TodayPage CostRibbon、admin-cost）手写窄类型丢reported/estimated/legacy/unknown。
+  shipped14ea1a81浏览器拦截仅admincost GET，合法unknown USD+8912in/731out/1call，$0.0000可见，无unknown提示。
+  两次早期浏览器定位超时是精确文案遗漏「 · USD」，不是产品错误；修正locator后反例已实际捕获。
+  live今日cost API为空，不称生产unknown canary；没有生产writes/paid，专项恢复$3仍未用。
+  已查重并创建976（841/844/964均已Done）；UI预检docs/design/2026-09-07-cost-truth-preflight.md列精确6文件。
+  拟复用src/ui/lib/api.ts的ApiOperationJsonResponse/生成契约，替换两手写窄类型；纯共享展示helper与shipped browser验证。
+  等待这两个page surface批准，旧授权只覆盖Copilot drawer；允许继续独立全产品扩展成本核对。
+  不为UI批准等待将整个goal blocked；生产仍975/14ea1a81，root保持单writer，原脏main未动。
+
 - YUK975 Done：PR1359 exact14ea1a8142c867e3b95c619a8441b6d56b65695d，CI34128362101全job success，
   main5e65629170d1ef48dfcc8e964bfa64d42f9bc691，独立初审PASS（独立8unit/7DB/typecheck），无需第二审。
   API缺少信号owner：baseline fbee5c32同clonehealth200/stop137，唯一--init对照143；新bundle0。
