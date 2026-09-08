@@ -90,7 +90,22 @@
   font-size: var(--fs-body);
   line-height: var(--lh-prose);
   padding: var(--s-2) var(--s-3);
-  resize: vertical;
+  min-height: 4em;
+  overflow-wrap: anywhere;
+}
+.note-reader-page .nb-edit-area p {
+  margin: 0 0 var(--s-2);
+}
+.note-reader-page .nb-edit-area ul {
+  list-style: disc;
+  padding-left: var(--s-5);
+}
+.note-reader-page .nb-edit-area ol {
+  list-style: decimal;
+  padding-left: var(--s-5);
+}
+.note-reader-page .nb-edit-area pre {
+  white-space: pre-wrap;
 }
 .note-reader-page .nb-edit-area:focus-visible {
   outline: none;

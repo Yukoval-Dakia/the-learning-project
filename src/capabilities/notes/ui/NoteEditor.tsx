@@ -2,7 +2,7 @@
 // 设计基准 docs/design/loom-refresh/project/note-editor.jsx：每块 gutter
 //（grip 拖拽重排 + plus 斜杠菜单）+ 块内容编辑。落地映射（pre-flight B 偏离②）：
 // 设计稿扁平块 ↔ 真实 semanticBlock 文档——编辑器把 doc.content 当块列表，
-// 文本块编辑 source_markdown。斜杠菜单 = 4 个 semantic kind + 交叉链 + 题目
+// 文本块编辑 canonical PM content 并派生 source mirror。斜杠菜单 = 4 个 semantic kind + 交叉链 + 题目
 // 引用（用户增量）——**quiz 内嵌测验已剔除（D6）**。atom 块（crossLink/
 // questionRef/check 墓碑）不可嵌套编辑，整块删除/移动。
 // 保存由宿主（NoteReaderPage）发 PATCH body-blocks 乐观锁。
@@ -19,6 +19,7 @@ import {
   type SemanticKind,
   searchArtifacts,
 } from './notes-api';
+import { RichNoteBlockEditor } from './RichNoteBlockEditor';
 
 let blockSeq = 0;
 function newBlockId(): string {
@@ -39,16 +40,6 @@ function makeSemanticBlock(kind: Exclude<SemanticKind, 'check'>): BodyBlock {
       source_markdown: text,
     },
     content: [{ type: 'paragraph', content: [] }],
-  };
-}
-
-// 文本同步进 content 段落（server 的 bodyBlocksToNoteSections 读 content 文本，
-// source_markdown 是镜像源——两处一起写保持一致）。
-function withText(b: BodyBlock, text: string): BodyBlock {
-  return {
-    ...b,
-    attrs: { ...b.attrs, source_markdown: text },
-    content: [{ type: 'paragraph', content: text ? [{ type: 'text', text }] : [] }],
   };
 }
 
@@ -373,15 +364,12 @@ export function NoteEditor({
                       {SEMANTIC_KIND_LABEL[b.attrs.semantic_kind]}
                     </span>
                   )}
-                  <textarea
-                    className="nb-edit-area"
-                    rows={Math.max(2, (b.attrs?.source_markdown ?? '').split('\n').length)}
-                    value={b.attrs?.source_markdown ?? ''}
-                    placeholder="写点什么…"
-                    aria-label={`第 ${i + 1} 块「${textAreaType}」内容`}
-                    onChange={(e) => {
+                  <RichNoteBlockEditor
+                    block={b}
+                    label={`第 ${i + 1} 块「${textAreaType}」内容`}
+                    onChange={(edited) => {
                       const next = [...blocks];
-                      next[i] = withText(b, e.target.value);
+                      next[i] = edited;
                       onChange(next);
                     }}
                   />

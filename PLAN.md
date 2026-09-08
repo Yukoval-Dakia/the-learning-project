@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-08：887实际验收发现979 Mem0吞错；修复中，专项预留$1/余$2。
+> Linear 是权威 tracker；更新于 2026-09-08：owner批准Notes七文件富编辑及新增最多$3验收；981恢复实施，95cf627d/CI34151841019全绿。顺序：富编辑保结构→scoped gates/唯一验证审→新exact CI/真实验收→Mac交付；不提前关闭887。
 
 ## NOW
 
-- 951部分交付：PR1361 exactab0bbb909，CI34134547233全job绿，main26e0e2d65；独立初审PASS无finding。
+- 979 Done：PR1364 exact32d0effb/CI34147920619全绿/main61421a4e；初审PASS，63unit/20DB/gates过；Mac93df0528健康，PG/424event/258task/4attempt不变。Memory实际SIGKILL+同job重投PASS/0重烧，887其它缺项继续；980启动停机P2已登记deferred。951部分交付：PR1361 exactab0bbb909，CI34134547233全job绿，main26e0e2d65；初审PASS。
   删7死model control/249行与重复存在性断言；31unit/41DB/typecheck/lint/build/audits过，独立8unit过。
   后续退休已交付：PR1363 exact57a7bbee/CI34144766869全绿/main3c8d5c1b，初审PASS；121DB及本地gates通过。
   16:58Z Mac app/worker106ac7ff healthy，旧cron撤下且排空，迁移guard过；PG/423event/258task/4attempt未变。

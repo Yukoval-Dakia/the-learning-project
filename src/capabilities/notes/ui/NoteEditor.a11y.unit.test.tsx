@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NoteEditor } from './NoteEditor';
 import type { BodyBlock, SemanticKind } from './notes-api';
@@ -31,6 +31,32 @@ function renderEditor(onChange = vi.fn(), value = blocks) {
 }
 
 describe('NoteEditor block controls', () => {
+  it('routes a rich text edit back to its block without flattening nested lists', async () => {
+    const rich = block('rich', '定义');
+    rich.content?.push({
+      type: 'bulletList',
+      content: [
+        {
+          type: 'listItem',
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: '不可丢失的反例' }] }],
+        },
+      ],
+    });
+    const changed = renderEditor(vi.fn(), [rich]);
+    const box = await screen.findByRole('textbox', { name: '第 1 块「定义」内容' });
+    const text = box.querySelector('p')?.firstChild;
+    if (!text) throw new Error('missing editor text');
+    text.textContent = '新定义';
+    fireEvent.input(box);
+    await waitFor(() => expect(changed).toHaveBeenCalled());
+    expect(changed.mock.lastCall?.[0][0]).toMatchObject({
+      attrs: { id: 'rich' },
+      content: [
+        { type: 'paragraph', content: [{ type: 'text', text: '新定义' }] },
+        rich.content?.[1],
+      ],
+    });
+  });
   it('names every editable block by its current order and semantic type', () => {
     const initialBlocks = [block('one', '第一块', 'definition'), block('two', '第二块', 'example')];
     const { rerender } = render(

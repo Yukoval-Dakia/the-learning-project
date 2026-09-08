@@ -17,8 +17,6 @@ description: 物理学习笔记规范包 —— 合格 atomic / long / hub note 
 | pitfall | 列出易错单位换算、矢量方向、适用条件遗漏、量纲错位。 |
 | check | 给出一个量纲检查或单位换算小题。 |
 
-每个 semanticBlock 必须设 `source_tier="llm_only"`、`user_verified=false`、`version=1`、`source_markdown`。
-
 ## 内容质量要求
 
 - **definition**：给出物理量的本质定义（如「加速度是速度对时间的变化率，不是速度本身」），标明 SI 单位（如 $\mathrm{m/s^2}$），声明矢量/标量属性，说明适用条件（如「牛顿第二定律适用于惯性参考系」）。

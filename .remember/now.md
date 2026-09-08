@@ -2,11 +2,41 @@
 
 ## 最新状态
 
-- Active979：root独占codex/yuk-979-mem0-failure-truth；887真实canary embedding200/101tokens后本地限额429阻断LLM。
-  Mem0 3.0.13吞错[]使opaque attempt succeeded；completion锁未放，因此未写误导完成。隔离DBv2/容器已停。
-  固定pnpm补丁恢复失败/strictschema，PGVector单SQL原子写，保留合法空/embedding兼容/辅助history；12unit+4DB通过。
-  Docker依赖stage复制patches；仅patch哈希变化，无依赖升级。review/全gates/部署待完成，生产仍951/106ac7ff。
-  新专项保守预留$1、余$2，不是实际账单；旧$10不回收。详见docs/planning/2026-09-08-memory-failure-truth.md。
+- owner本轮明确「批准」：Notes七文件富编辑及新增最多$3实际验收获授权，981/887恢复In Progress；新预算尚未使用，旧reserve不回收。
+  981 PR1365 Draft/exact95cf627ddc21ed06237681e5f532024c295541ab；引用P1修复已推，UI P1仍未修。
+  CI34151841019 exact95cf627d已终态全绿；正式初审已用，唯一验证审保留至两P1都修完。
+  执行顺序：富编辑保结构→scoped gates/唯一验证审→新exact CI及真实Notes验收→Mac交付，再补887差集。
+  root已切回codex/yuk-981-note-generation-contract并ff纳入handoff，无用户改动覆盖。
+  生产仍93df0528，未部署981、未新增paid。新canary必须fresh DB/容器/证据名，不重烧旧失败任务。
+
+- Active981：root独占codex/yuk-981-note-generation-contract（base395d5d2d交付记录）；生产仍979/93df0528。
+  PR1365初审FAIL 2P1：富编辑丢结构（既有withText，真实组件RED）；引用无目标/无校验已本地修。
+  新UI预检docs/design/2026-09-08-notes-rich-edit-preflight.md（7文件）等待批准；不得套用旧Copilot授权。
+  code mirror保留；当前真实引用目录12artifact/每个8block，17generateDB与115unit/typecheck/lint/build过。
+  初CI34150838539 exacted63127bc两旧Notes prompt断言失败，其余包括双DBshard通过；断言已按新契约修正。
+  初审已用，唯一P0/P1验证审留待两项都修好；未开始验证审，不再发起初审。
+  clean ed63127b image f13c6850已build（SDK下载重试后成功），不含后续引用修复/未部署；所有本地exec终止。
+  Notes实际accept→SIGKILL137→新process recoverNoteHandoffs/physical generate成功；生成HTTP200/end_turn却输出坏JSON。
+  task bymy8ayqi4gq7q7tvizfk2ep，768input/2894output，estimate0.00285186非账单；artifact rcz6xs92e1rzjdui5em1o0uw failed。
+  未到ready/verify；完整Notes恢复未通过。isolated loom_notes_887_actual_v1保留，accept/generate容器已停止，无生产写入。
+  单次调用保守$1预留不回收，转用$3专项余0；已问追加最多$3用于修后Notes及其它actual，答复前不再paid。
+  981已Linear In Progress；用codebase-design核对ADR0020/0022，去重复正文但保留完整block tree/links/semantic能力。
+  architect咨询完成：仅omit source会令现役reader/editor空白，真实blockText RED后改server派生mirror GREEN。
+  compact PM保留富结构；server补ID/trust/source镜像、未知节点fail，旧sections生成退场；12unit/typecheck过。
+  初版59DB（含rich-body/backlink）/12unit/typecheck/lint/build/audit过；新门状态以上方为准，生产未部署981。
+  详见docs/planning/2026-09-08-notes-generation-acceptance.md；887保持In Progress，980/977 P2仍deferred。
+
+- 979 Done：PR1364 exact32d0effbb6c6f5496101899fe7ec0c013dec2c6b，CI34147920619全部job成功。
+  17:44:51Z main61421a4e6d61e0ad96c26c158a68956708f745ad；63unit/20DB/typecheck/lint/build/audits过，独立初审PASS。
+  固定Mem0 3.0.13双export补丁恢复失败/strictschema、PGVector原子写；无依赖升级，Docker frozen install通过。
+  17:45Z Mac app7c48b323/worker a2dacf9a均93df0528 healthy零重启；原PG7d99236a/09:40:42Z与volume不变。
+  migrate零新增/7LI/legacy guard clear；424event/258task/4attempt、空活动队列不变；health200/未认证401/认证200。
+  完整shipped worker免费错误场景failed attempt/无completion PASS。启动早期stop137、ready后stop0另登记980 Backlog P2。
+  887 Memory v3真实GLM5.2+DashScope完成2记忆后SIGKILL137，新进程同physical job重投完成、lookup复用、0新增HTTP。
+  source canary_887_memory_crash_20260908_v3，DB loom_memory_887_actual_v3；组件handler bundle，不称full worker/自动1h过期。
+  v2失败保守$1+v3通过$1，转用$3专项余$1；旧$10不回收。所有canary进程停止，无NAS/tunnel。
+  root独占codex/yuk-979-delivery-notes（从origin/main建）；下一条887 Notes及其它actual差集，整体goal active。
+  详见docs/planning/2026-09-08-memory-failure-truth.md；原脏main没有遗留新增文件或修改。
 
 - 951旧mailbox执行已交付：PR1363 exact57a7bbee6a1b193de912abbee94093e3e54fd5de，CI34144766869全job绿。
   16:57:40Z merge main3c8d5c1b35c10c323e3a3f55dcb294653ad29af1；初审PASS，独立12DB/54unit，无第二审。

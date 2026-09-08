@@ -118,8 +118,8 @@ describe('task prompt definitions', () => {
       const profile = resolveSubjectProfile(profileId);
       for (const task of Object.keys(tasks) as Array<keyof typeof tasks>) {
         // These prompts have intentionally evolved since the migration oracle.
-        // QuizVerify is covered by its current policy contract below and actual-output gates.
-        if (task === 'CopilotTask' || task === 'QuizVerifyTask') {
+        // Current policy/materialization tests replace migration-only identity for evolved tasks.
+        if (task === 'CopilotTask' || task === 'QuizVerifyTask' || task === 'NoteGenerateTask') {
           continue;
         }
         const key = `${profileId}:${task}` as keyof typeof promptHashOracle.prompts;

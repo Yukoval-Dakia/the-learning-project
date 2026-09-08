@@ -117,9 +117,10 @@ describe('getTaskSystemPrompt', () => {
       expect(prompt).toContain('note_atomic');
       expect(prompt).toContain('note_long');
       expect(prompt).toContain('note_hub');
-      // attrs contract
-      expect(prompt).toContain('source_tier="llm_only"');
-      expect(prompt).toContain('user_verified=false');
+      // The Notes owner now materializes trust/IDs from one rich body.
+      expect(prompt).toContain('服务端生成 block id');
+      expect(prompt).toContain('正文只输出一份');
+      expect(prompt).toContain('reference_artifacts');
       expect(prompt).toContain('semantic_kind');
       // fallback: all five semantic_kind names present
       expect(prompt).toContain('definition');

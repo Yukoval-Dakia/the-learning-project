@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
-import { artifact, event, knowledge } from '@/db/schema';
+import { artifact, artifact_block_ref, event, knowledge } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { type RunTaskFn, buildNoteGenerateHandler, runNoteGenerate } from './note_generate';
 
@@ -52,60 +52,264 @@ async function seedAtomic(opts: {
   });
 }
 
-const VALID_SECTIONS = JSON.stringify({
-  sections: [
-    {
-      id: 's1',
-      kind: 'definition',
-      body_md: '「之」是文言虚词。',
-      source_tier: 'llm_only',
-      user_verified: false,
-      embedded_check: null,
-      version: 1,
-    },
-    {
-      id: 's2',
-      kind: 'mechanism',
-      body_md: '助词 / 代词 / 动词三类。',
-      source_tier: 'llm_only',
-      user_verified: false,
-      embedded_check: null,
-      version: 1,
-    },
-    {
-      id: 's3',
-      kind: 'example',
-      body_md: '例：师道之不传也久矣。',
-      source_tier: 'llm_only',
-      user_verified: false,
-      embedded_check: null,
-      version: 1,
-    },
-    {
-      id: 's4',
-      kind: 'pitfall',
-      body_md: '主谓间「之」无义。',
-      source_tier: 'llm_only',
-      user_verified: false,
-      embedded_check: null,
-      version: 1,
-    },
-    {
-      id: 's5',
-      kind: 'check',
-      body_md: '自检 2 题',
-      source_tier: 'llm_only',
-      user_verified: false,
-      embedded_check: { question_ids: [] },
-      version: 1,
-    },
-  ],
+const VALID_BODY_BLOCKS = JSON.stringify({
+  body_blocks: {
+    type: 'doc',
+    content: [
+      {
+        type: 'semanticBlock',
+        attrs: {
+          semantic_kind: 'definition',
+        },
+        content: [
+          {
+            type: 'paragraph',
+            content: [
+              {
+                type: 'text',
+                text: '「之」是文言虚词。',
+              },
+            ],
+          },
+        ],
+      },
+      {
+        type: 'semanticBlock',
+        attrs: {
+          semantic_kind: 'mechanism',
+        },
+        content: [
+          {
+            type: 'paragraph',
+            content: [
+              {
+                type: 'text',
+                text: '助词 / 代词 / 动词三类。',
+              },
+            ],
+          },
+        ],
+      },
+      {
+        type: 'semanticBlock',
+        attrs: {
+          semantic_kind: 'example',
+        },
+        content: [
+          {
+            type: 'paragraph',
+            content: [
+              {
+                type: 'text',
+                text: '例：师道之不传也久矣。',
+              },
+            ],
+          },
+        ],
+      },
+      {
+        type: 'semanticBlock',
+        attrs: {
+          semantic_kind: 'pitfall',
+        },
+        content: [
+          {
+            type: 'paragraph',
+            content: [
+              {
+                type: 'text',
+                text: '主谓间「之」无义。',
+              },
+            ],
+          },
+        ],
+      },
+      {
+        type: 'semanticBlock',
+        attrs: {
+          semantic_kind: 'check',
+        },
+        content: [
+          {
+            type: 'paragraph',
+            content: [
+              {
+                type: 'text',
+                text: '自检 2 题',
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  },
 });
 
 describe('runNoteGenerate', () => {
   beforeEach(async () => {
     await resetDb();
   });
+
+  it('persists one rich body, derived source, safe metadata and matching backlink anchors', async () => {
+    await seedAtomic({ artifactId: 'rich-generated', knowledgeId: 'shared-note-knowledge' });
+    await seedAtomic({ artifactId: 'reference-note' });
+    await testDb()
+      .update(artifact)
+      .set({ knowledge_ids: ['shared-note-knowledge'] })
+      .where(eq(artifact.id, 'reference-note'));
+    const response = JSON.parse(VALID_BODY_BLOCKS);
+    const first = response.body_blocks.content[0];
+    first.attrs = {
+      ...first.attrs,
+      id: 'model-id',
+      source_markdown: '错误镜像',
+      user_verified: true,
+      source_tier: 'human',
+      version: 90,
+    };
+    first.content[0].content[0].marks = [{ type: 'bold' }];
+    response.body_blocks.content.push({
+      type: 'artifactRefBlock',
+      attrs: { id: 'model-id', artifact_id: 'reference-note', title: '已有相关笔记' },
+    });
+    await expect(
+      runNoteGenerate({
+        db: testDb(),
+        artifactId: 'rich-generated',
+        runTaskFn: async (_kind, input) => {
+          expect(input).toMatchObject({
+            reference_artifacts: [{ artifact_id: 'reference-note', generation_status: 'pending' }],
+          });
+          return { text: JSON.stringify(response) };
+        },
+      }),
+    ).resolves.toMatchObject({ status: 'ready', sections_count: 5 });
+    const [row] = await testDb().select().from(artifact).where(eq(artifact.id, 'rich-generated'));
+    expect(row).toMatchObject({ generation_status: 'ready', verification_status: 'queued' });
+    const body = row.body_blocks;
+    if (!body) throw new Error('Generated body missing');
+    expect(body.content[0].attrs).toMatchObject({
+      source_markdown: '**「之」是文言虚词。**',
+      source_tier: 'llm_only',
+      user_verified: false,
+      version: 1,
+    });
+    expect(body.content[0].attrs).not.toHaveProperty('id', 'model-id');
+    expect(body.content[0].content).toEqual(first.content);
+    const refs = await testDb()
+      .select()
+      .from(artifact_block_ref)
+      .where(eq(artifact_block_ref.from_artifact_id, 'rich-generated'));
+    expect(refs).toHaveLength(1);
+    expect(body.content[5].type).toBe('crossLinkBlock');
+    expect(refs[0]).toMatchObject({
+      from_block_id: (body.content[5].attrs as Record<string, unknown>).id,
+      to_artifact_id: 'reference-note',
+    });
+  });
+
+  it.each(['unrelated', 'archived', 'missing-block', 'non-note'])(
+    'rejects a %s generated reference without publishing ready content',
+    async (mode) => {
+      await seedAtomic({ artifactId: 'reference-owner', knowledgeId: 'reference-scope' });
+      await seedAtomic({ artifactId: 'target' });
+      if (mode !== 'unrelated')
+        await testDb()
+          .update(artifact)
+          .set({
+            knowledge_ids: ['reference-scope'],
+            ...(mode === 'archived' ? { archived_at: new Date() } : {}),
+            ...(mode === 'non-note' ? { type: 'tool_quiz' } : {}),
+          })
+          .where(eq(artifact.id, 'target'));
+      const response = JSON.parse(VALID_BODY_BLOCKS);
+      response.body_blocks.content.push({
+        type: 'crossLinkBlock',
+        attrs: {
+          artifact_id: 'target',
+          ...(mode === 'missing-block' ? { block_id: 'invented-block' } : {}),
+        },
+      });
+      await expect(
+        runNoteGenerate({
+          db: testDb(),
+          artifactId: 'reference-owner',
+          runTaskFn: async () => ({ text: JSON.stringify(response) }),
+        }),
+      ).rejects.toThrow(/outside supplied context/);
+      const [row] = await testDb()
+        .select()
+        .from(artifact)
+        .where(eq(artifact.id, 'reference-owner'));
+      expect(row).toMatchObject({ generation_status: 'failed', body_blocks: null, version: 0 });
+      expect(
+        await testDb()
+          .select()
+          .from(artifact_block_ref)
+          .where(eq(artifact_block_ref.from_artifact_id, 'reference-owner')),
+      ).toEqual([]);
+    },
+  );
+
+  it.each(['archive', 'remove-block'])(
+    'rejects target %s during model execution before publishing ready',
+    async (mode) => {
+      const db = testDb();
+      await seedAtomic({ artifactId: 'owner-race', knowledgeId: 'scope-race' });
+      await seedAtomic({ artifactId: 'target-race' });
+      await db
+        .update(artifact)
+        .set({
+          knowledge_ids: ['scope-race'],
+          body_blocks: {
+            type: 'doc',
+            content: [
+              {
+                type: 'paragraph',
+                attrs: { id: 'linked-block' },
+                content: [{ type: 'text', text: '原目标' }],
+              },
+            ],
+          },
+        })
+        .where(eq(artifact.id, 'target-race'));
+      const response = JSON.parse(VALID_BODY_BLOCKS);
+      response.body_blocks.content.push({
+        type: 'crossLinkBlock',
+        attrs: { artifact_id: 'target-race', block_id: 'linked-block' },
+      });
+      await expect(
+        runNoteGenerate({
+          db,
+          artifactId: 'owner-race',
+          runTaskFn: async (_kind, input) => {
+            expect(input).toMatchObject({
+              reference_artifacts: [
+                { artifact_id: 'target-race', blocks: [{ id: 'linked-block' }] },
+              ],
+            });
+            await db
+              .update(artifact)
+              .set(
+                mode === 'archive'
+                  ? { archived_at: new Date() }
+                  : { body_blocks: { type: 'doc', content: [] } },
+              )
+              .where(eq(artifact.id, 'target-race'));
+            return { text: JSON.stringify(response) };
+          },
+        }),
+      ).rejects.toThrow(/reference/);
+      const [row] = await db.select().from(artifact).where(eq(artifact.id, 'owner-race'));
+      expect(row).toMatchObject({ generation_status: 'failed', body_blocks: null, version: 0 });
+      expect(
+        await db
+          .select()
+          .from(artifact_block_ref)
+          .where(eq(artifact_block_ref.from_artifact_id, 'owner-race')),
+      ).toEqual([]);
+    },
+  );
 
   it('returns skipped:not_found when artifact does not exist', async () => {
     const runTaskFn = vi.fn();
@@ -179,7 +383,7 @@ describe('runNoteGenerate', () => {
         model: 'test',
       });
       providerQueries += 1;
-      return { text: VALID_SECTIONS };
+      return { text: VALID_BODY_BLOCKS };
     });
 
     await expect(
@@ -211,7 +415,7 @@ describe('runNoteGenerate', () => {
         model: 'test',
       });
       providerQueries += 1;
-      return { text: VALID_SECTIONS };
+      return { text: VALID_BODY_BLOCKS };
     });
 
     await expect(
@@ -229,7 +433,7 @@ describe('runNoteGenerate', () => {
   it('generates + writes sections on happy path', async () => {
     await seedAtomic({ artifactId: 'a1', knowledgeId: 'k1' });
     const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
-      text: VALID_SECTIONS,
+      text: VALID_BODY_BLOCKS,
       task_run_id: 'tr_note_generate_1',
     }));
     const result = await runNoteGenerate({
@@ -265,7 +469,7 @@ describe('runNoteGenerate', () => {
   it('buildNoteGenerateHandler dispatches verification after the ready transaction commits', async () => {
     await seedAtomic({ artifactId: 'a1', knowledgeId: 'k1' });
     const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
-      text: VALID_SECTIONS,
+      text: VALID_BODY_BLOCKS,
     }));
     const dispatchVerification = vi.fn(async (_artifactId: string) => true);
     const handler = buildNoteGenerateHandler(testDb(), { runTaskFn, dispatchVerification });
@@ -283,7 +487,7 @@ describe('runNoteGenerate', () => {
         .update(artifact)
         .set({ generation_status: 'ready', updated_at: new Date() })
         .where(eq(artifact.id, 'a1'));
-      return { text: VALID_SECTIONS };
+      return { text: VALID_BODY_BLOCKS };
     });
     const dispatchVerification = vi.fn(async (_artifactId: string) => true);
     const handler = buildNoteGenerateHandler(db, { runTaskFn, dispatchVerification });
@@ -296,7 +500,7 @@ describe('runNoteGenerate', () => {
   it('passes the knowledge subject profile to NoteGenerateTask', async () => {
     await seedAtomic({ artifactId: 'a1', knowledgeId: 'k_math', domain: 'math' });
     const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
-      text: VALID_SECTIONS,
+      text: VALID_BODY_BLOCKS,
     }));
 
     await runNoteGenerate({
@@ -335,7 +539,7 @@ describe('runNoteGenerate', () => {
     const runTaskFn = vi.fn(async () => {
       calls += 1;
       if (calls === 1) throw new Error('transient generation failure');
-      return { text: VALID_SECTIONS };
+      return { text: VALID_BODY_BLOCKS };
     });
     const dispatchVerification = vi.fn(async () => true);
     const handler = buildNoteGenerateHandler(testDb(), { runTaskFn, dispatchVerification });
