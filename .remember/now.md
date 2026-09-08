@@ -5,7 +5,11 @@
 - Active984：root独占codex/yuk-984-canonical-knowledge（从983交付docs8c901df3建），原脏main不动。
   关系新建提案已删flag-off直接INSERT；共同runEdgeTopologyGate固定projection，保留锁/retry/错误翻译，不再生产warn-only。
   37相关DB过，新增INSERT-trigger顺序验证含所在文件11DB通过；typecheck/build过。仅实施checkpoint，未审查/PR/部署，生产仍983/5dd7e8ed，无paid。
-  edge全event→projection；node新建/tagging/reparent已迁移，余archive/merge/split及部署历史/flag退休；不保留永久旧writer作rollback。
+  edge全event→projection；node新建/tagging/reparent/archive/split已迁移，余merge结构DML及部署历史/flag退休；不保留永久旧writer作rollback。
+  最新127DB/typecheck/build全过；archive/split删节点DML，撤回真实consumer也prepare→event/rate→project，public raw archive导出删。
+  原子性case发现投影可覆盖out-of-band漂移：现在reparent/archive/split锁内严格比对结构fold/live，派生embedding排除，缺历史/漂移全回滚。
+  历史fixture时钟在genesis前设置、accept时推进，无事件UPDATE；初始SQL日期probe失败无生产写入，已删除。split测试通过真实accept并保持minted IDs/时间/边关系断言。
+  map_984_node_order已收到只读follow-up：核9归因owner是否要求from先archived及learning-state锁序；尚不采用未返回结论。单writer，未review/PR/paid/deploy。
   最新reparent126DB+7guard/typecheck/build过：旧结构UPDATE删，锁内CAS/base校验→accept projection→新位置embedding/hash维护，derived不再写updated_at。
   tests/helpers/knowledge-mutation.ts显式fixture backfill再走真实提案/accept；旧raw applier测试迁移，缺历史/错误subject/并发相同version均有行为护栏。
   两旧fixture缺base已补；race暴露insertProposeEvent伪造subject_id，改按mutation导出真实subject并在accept检查targetbinding，最终双并发只有1提交。无paid/生产变化。

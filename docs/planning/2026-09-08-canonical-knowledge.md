@@ -101,3 +101,18 @@ success without a projection. Final four suites pass126 DB cases, plus7 focused
 reparent guards (one winner for equal-version races, missing history, wrong subject,
 stale version, parent guards); cross-/same-domain embedding, typecheck/build pass.
 Archive/merge/split and deployment/flag retirement remain. No paid or live changes.
+
+Archive/split are now prepared inside the accepting transaction without node DML:
+lock/version/history validation, incident-edge retirement, then acceptance-driven
+projection of source and minted children. The real node-retract applier also uses
+preparation followed by projection. Removed the public raw archive export.
+Existing retract atomicity exposed that non-null history alone could silently
+overwrite out-of-band structural changes; reparent/archive/split now strictly
+compare fold/live structural snapshots before mutation (derived embedding excluded).
+Historical fixture clocks are set before genesis creation and advanced for accept;
+no fixture rewrites an existing event. Final four suites pass127 DB cases, including
+archive/split, retraction rollback and embedding; typecheck/build pass.
+Only merge's node structural DML remains in this coordinator. A read-only follow-up
+is checking whether any attribution owner requires the absorbed row already archived
+before repair, and the global learning-state lock order, before that final removal.
+No review, PR, production mutation or paid call in this checkpoint.

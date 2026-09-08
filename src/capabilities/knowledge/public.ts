@@ -70,7 +70,6 @@ export {
 export type { AcceptResult as KnowledgeAcceptResult } from './server/proposals';
 export {
   ACCEPT_RESULT_KINDS,
-  applyArchive,
   dismissProposal,
 } from './server/proposals';
 export type { NameKcFn } from './server/tag-knowledge';

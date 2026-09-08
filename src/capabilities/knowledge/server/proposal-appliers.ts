@@ -15,9 +15,10 @@ import type {
   ProposalRetractInput,
 } from '@/kernel/proposals';
 import { toProposalLifecycleResult } from '@/kernel/proposals';
+import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
 import * as ownerRuntime from '@/server/proposals/owner-runtime';
 import { decideKnowledgeEdgeProposal } from './edge-proposal-accept';
-import { acceptProposal, applyArchive, dismissProposal } from './proposals';
+import { acceptProposal, dismissProposal, prepareKnowledgeArchive } from './proposals';
 
 function signalProposal(proposal: ProposalAcceptProposal) {
   return {
@@ -128,7 +129,7 @@ async function retractKnowledgeNode(tx: Tx, input: ProposalRetractInput): Promis
 
   const archiveEventId = createId();
   const now = new Date();
-  await applyArchive(
+  await prepareKnowledgeArchive(
     tx,
     { mutation: 'archive', node_id: nodeId, expected_version: node.version },
     now,
@@ -161,6 +162,7 @@ async function retractKnowledgeNode(tx: Tx, input: ProposalRetractInput): Promis
     caused_by_event_id: archiveEventId,
     created_at: now,
   });
+  await projectKnowledgeNodeGuarded(tx, nodeId);
   await ownerRuntime.assertCurrentKnowledgeNodeParity(tx, nodeId);
 }
 

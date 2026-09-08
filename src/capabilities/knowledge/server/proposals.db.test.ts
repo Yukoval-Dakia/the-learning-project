@@ -29,14 +29,19 @@ import { migrateCanonicalProjections } from '../../../../scripts/migrate-canonic
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   acceptProposal,
-  applyArchive,
   applyMerge,
-  applySplit,
   dismissProposal,
   prepareProposedKnowledgeId,
   writeKnowledgeProposeEvent,
 } from './proposals';
 import { seedKnowledge } from './seed';
+
+const applyArchive = acceptKnowledgeMutationFixture;
+async function applySplit(...args: Parameters<typeof acceptKnowledgeMutationFixture>) {
+  const result = await acceptKnowledgeMutationFixture(...args);
+  if (result.kind !== 'split_applied') throw new Error('expected accepted split');
+  return result.new_node_ids;
+}
 
 // liveSnapshot — project the live `knowledge` row down to the structural
 // KnowledgeRowSnapshot subset (drops embed_* columns, coerces timestamps to
@@ -1577,6 +1582,7 @@ describe('acceptProposal — high-tier mutations', () => {
   it('dispatches archive and returns archive_applied result', async () => {
     const db = testDb();
     await insertKnowledge({ id: 'k_node', version: 5 });
+    await backfillKnowledgeGenesis(db);
     await insertProposeEvent({
       id: 'p_arch',
       payload: {
@@ -1850,6 +1856,7 @@ describe('acceptProposal — PR-A2b projection parity', () => {
     await insertKnowledge({ id: 'k_p1', domain: 'yuwen' });
     await insertKnowledge({ id: 'k_p2', domain: 'yuwen' });
     await insertKnowledge({ id: 'k_from', domain: null, parent_id: 'k_p1', version: 7 });
+    await backfillKnowledgeGenesis(db);
     // split subject_id convention = from_id (mutationSubjectId proposals.ts:30-42)
     await insertProposeEvent({
       id: 'p_a2b_split',

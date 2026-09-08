@@ -46,6 +46,7 @@ import {
   knowledgeLiveRowToSnapshot,
   knowledgeNodesWithGenesisAnchor,
 } from '@/server/projections/parity';
+import { diffSnapshots } from '@/server/projections/snapshot-diff';
 // YUK-471 W1 PR-B1 — the SoT-flip gate (default OFF; projection becomes the row writer when ON).
 import { projectionIsWriter } from '@/server/projections/sot-flag';
 import {
@@ -344,13 +345,7 @@ async function prepareReparent(
   // cross-domain move makes the stored vector stale. (Read here, recomputed after
   // the parent_id commit so the walk sees the new position.)
   const beforeRows = await db
-    .select({
-      id: knowledge.id,
-      name: knowledge.name,
-      hash: knowledge.embed_content_hash,
-      version: knowledge.version,
-      archived_at: knowledge.archived_at,
-    })
+    .select()
     .from(knowledge)
     .where(eq(knowledge.id, payload.node_id))
     .limit(1);
@@ -359,10 +354,8 @@ async function prepareReparent(
   if (!moved || moved.version !== payload.expected_version || moved.archived_at !== null) {
     throw new Error(`stale: knowledge ${payload.node_id} version mismatch or archived`);
   }
-  if ((await gatherAndFoldKnowledgeNode(db, payload.node_id)) === null) {
-    throw new Error(`knowledge ${payload.node_id} requires complete history before reparent`);
-  }
-  return moved;
+  await requireKnowledgeHistory(db, moved);
+  return { id: moved.id, name: moved.name, hash: moved.embed_content_hash };
 }
 
 async function refreshReparentEmbedding(
@@ -414,90 +407,52 @@ async function archiveIncidentKnowledgeEdges(
   }
 }
 
-export async function applyArchive(
+async function requireKnowledgeHistory(
   db: DbLike,
-  payload: ArchivePayload,
-  now: Date = new Date(),
+  node: typeof knowledge.$inferSelect,
 ): Promise<void> {
-  await (db as Db).transaction(async (tx) => {
-    const result = await tx
-      .update(knowledge)
-      .set({ archived_at: now, updated_at: now, version: sql`${knowledge.version} + 1` })
-      .where(
-        and(
-          eq(knowledge.id, payload.node_id),
-          eq(knowledge.version, payload.expected_version),
-          isNull(knowledge.archived_at),
-        ),
-      );
-    const changes = (result as { count?: number }).count ?? 0;
-    if (changes !== 1) {
-      throw new Error(`stale: knowledge ${payload.node_id} version mismatch or already archived`);
-    }
-    await archiveIncidentKnowledgeEdges(
-      tx,
-      payload.node_id,
-      now,
-      'archive: incident edge retired with knowledge node (YUK-546)',
-    );
-  });
+  const folded = await gatherAndFoldKnowledgeNode(db, node.id);
+  if (!folded) throw new Error(`knowledge ${node.id} requires complete history before mutation`);
+  if (diffSnapshots(knowledgeLiveRowToSnapshot(node), folded).length > 0) {
+    throw new Error(`knowledge ${node.id} has fold/live drift; repair history before mutation`);
+  }
 }
 
-export async function applySplit(
-  db: DbLike,
-  payload: SplitPayload,
-  now: Date = new Date(),
-): Promise<string[]> {
-  for (const entry of payload.into) {
-    if (entry.parent_id === null) {
-      throw new Error(
-        'PR B: split into root (parent_id=null) not supported in Phase 1a single-domain',
-      );
-    }
-    await assertParentExists(db, entry.parent_id);
+async function requireKnowledgeRetirementBase(tx: Tx, id: string, version: number): Promise<void> {
+  const [node] = await tx.select().from(knowledge).where(eq(knowledge.id, id)).for('update');
+  if (!node || node.version !== version || node.archived_at !== null) {
+    throw new Error(`stale: knowledge ${id} version mismatch or already archived`);
   }
-  const newIds: string[] = payload.into.map(() => newId());
+  await requireKnowledgeHistory(tx, node);
+}
 
-  // Drizzle transaction (the API surface uses Db; transaction wrapping below
-  // works for both top-level db and Tx — Tx call is a no-op nested transaction).
-  return await (db as Db).transaction(async (tx) => {
-    const archiveResult = await tx
-      .update(knowledge)
-      .set({ archived_at: now, updated_at: now, version: sql`${knowledge.version} + 1` })
-      .where(
-        and(
-          eq(knowledge.id, payload.from_id),
-          eq(knowledge.version, payload.expected_version),
-          isNull(knowledge.archived_at),
-        ),
-      );
-    const archiveChanges = (archiveResult as { count?: number }).count ?? 0;
-    if (archiveChanges !== 1) {
-      throw new Error(`stale: knowledge ${payload.from_id} version mismatch or already archived`);
-    }
-    await archiveIncidentKnowledgeEdges(
-      tx,
-      payload.from_id,
-      now,
-      'split: source incident edge retired without child rewire (YUK-546)',
-    );
-    for (let i = 0; i < payload.into.length; i++) {
-      const entry = payload.into[i];
-      await tx.insert(knowledge).values({
-        id: newIds[i],
-        name: entry.name,
-        domain: null,
-        parent_id: entry.parent_id,
-        merged_from: [],
-        proposed_by_ai: true,
-        approval_status: 'approved',
-        created_at: now,
-        updated_at: now,
-        version: 0,
-      });
-    }
-    return newIds;
-  });
+export async function prepareKnowledgeArchive(
+  tx: Tx,
+  payload: ArchivePayload,
+  now: Date,
+): Promise<void> {
+  await requireKnowledgeRetirementBase(tx, payload.node_id, payload.expected_version);
+  await archiveIncidentKnowledgeEdges(
+    tx,
+    payload.node_id,
+    now,
+    'archive: incident edge retired with knowledge node (YUK-546)',
+  );
+}
+
+async function prepareKnowledgeSplit(tx: Tx, payload: SplitPayload, now: Date): Promise<string[]> {
+  for (const entry of payload.into) {
+    if (entry.parent_id === null) throw new Error('split into root (parent_id=null) not supported');
+    await assertParentExists(tx, entry.parent_id);
+  }
+  await requireKnowledgeRetirementBase(tx, payload.from_id, payload.expected_version);
+  await archiveIncidentKnowledgeEdges(
+    tx,
+    payload.from_id,
+    now,
+    'split: source incident edge retired without child rewire (YUK-546)',
+  );
+  return payload.into.map(() => newId());
 }
 
 // =============================================================================
@@ -1042,7 +997,9 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
             break;
           }
           case 'archive': {
-            await applyArchive(tx, apply, now);
+            if (propose.subject_id !== apply.node_id)
+              throw new Error(`archive proposal ${proposalId} does not identify its target node`);
+            await prepareKnowledgeArchive(tx, apply, now);
             result = { kind: 'archive_applied', node_id: apply.node_id };
             break;
           }
@@ -1056,7 +1013,9 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
             break;
           }
           case 'split': {
-            const newIds = await applySplit(tx, apply, now);
+            if (propose.subject_id !== apply.from_id)
+              throw new Error(`split proposal ${proposalId} does not identify its source node`);
+            const newIds = await prepareKnowledgeSplit(tx, apply, now);
             result = {
               kind: 'split_applied',
               archived_id: apply.from_id,
@@ -1162,7 +1121,7 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
       // blind one). This runs AFTER the rate + materialized_id_index writes, in the same tx, so
       // the fold sees them — the exact point the A2b parity assert ran. Flag OFF keeps that
       // assert (true rollback: full fold==row verification restored).
-      if (flip || result.kind === 'propose_new_applied' || result.kind === 'reparent_applied') {
+      if (flip || result.kind !== 'merge_applied') {
         for (const id of affectedNodeIds(result)) {
           await projectKnowledgeNodeGuarded(tx, id);
         }
