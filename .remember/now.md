@@ -2,6 +2,11 @@
 
 ## 最新状态
 
+- 984科目改名/重置root name已删raw UPDATE，保留控制面revision与节点FOR UPDATE→锁后时钟→event→projection。
+  requireKnowledgeHistory从提案私有提至现有knowledge projection模块，两真实consumer共享严格guard；缺base/结构漂移阻止改名并回滚subject/revision/journal/events/root。
+  两套79DB与补充10控制DB/typecheck/build过；旧未使用isDeepStrictEqual import删除。下一三创建入口seedKnowledge/ensureSubjectRoot/placement-starter合并创建责任，保留各自幂等/来源。
+  未984正式review/PR/付费/部署；production983仍不动，部署历史/Q2Q3/globalflag与交付仍未完成。
+
 - 984 LearningIntent创建已canonical：knowledge owner创建genesis/index再project，无raw INSERT；Agency两调用传接受rate因果ID，保持ingest_at outbox optout。
   create-only id锁与existing guard避免projection upsert变成覆盖。3a真实接受验证root+child fold/index/因果、Notes失败全tx回滚、无需backfill即可archive。
   两套56DB/typecheck/build过；最终重复ID护栏含14DB/typecheck复验过。下一统一seed/ensure-subject-root/placement-starter三处INSERT和subject-control-name UPDATE；已root实查都有配对event但仍raw结构写。

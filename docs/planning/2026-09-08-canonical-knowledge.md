@@ -18,6 +18,17 @@ Status: active, not delivered. Production remains the verified983 image.
 
 ## Progress
 
+Subject rename/reset now lock the root, validate history, write the existing name
+event and project the structure instead of directly updating knowledge. The strict
+requireKnowledgeHistory guard moved from the private proposal implementation into
+the existing knowledge projection module, shared by both actual consumers. Subject
+revision checks, root row serialization and lock-after timestamp ordering remain.
+Missing genesis or structural drift rejects and rolls back subject fields/revision,
+journal, events and root together. Two suites pass79 DB tests; the final expanded
+control suite passes10 tests; typecheck/build pass. The three creation entrypoints
+(seedKnowledge, ensureSubjectRoot and placement-starter) remain before migration
+validation/global-flag retirement and full984 review/CI/Mac delivery.
+
 LearningIntent creation now writes per-node genesis/index before projection in its
 Knowledge owner. Agency passes the reserved accept rate ID for birth provenance;
 memory outbox opt-out remains. A per-ID creation lock and existing-row refusal

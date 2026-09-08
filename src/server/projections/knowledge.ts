@@ -50,9 +50,22 @@ import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { gatherAndFoldKnowledgeNode } from './gather';
 // YUK-471 W1 PR-B — the keystone non-delete guard reuses A2b's genesis-anchor check.
-import { hasKnowledgeNodeGenesisAnchor } from './parity';
+import { hasKnowledgeNodeGenesisAnchor, knowledgeLiveRowToSnapshot } from './parity';
+import { diffSnapshots } from './snapshot-diff';
 
 type DbLike = Db | Tx;
+
+/** Strict pre-mutation guard. Caller must hold the node row lock; derived embedding is excluded. */
+export async function requireKnowledgeHistory(
+  db: DbLike,
+  node: typeof knowledge.$inferSelect,
+): Promise<void> {
+  const folded = await gatherAndFoldKnowledgeNode(db, node.id);
+  if (!folded) throw new Error(`knowledge ${node.id} requires complete history before mutation`);
+  if (diffSnapshots(knowledgeLiveRowToSnapshot(node), folded).length > 0) {
+    throw new Error(`knowledge ${node.id} has fold/live drift; repair history before mutation`);
+  }
+}
 
 /**
  * Project the current structural state of a single `knowledge` node from the event log

@@ -35,11 +35,11 @@ import { retireLearnerAxisStateOnMerge } from '@/server/calibration/axis-writer'
 import { retireKcTypedStateOnMerge } from '@/server/conjectures/typed-state';
 import { retireFsrsStateOnMerge } from '@/server/fsrs/state';
 import { retireMasteryStateOnMerge } from '@/server/mastery/state';
-import { gatherAndFoldKnowledgeNode } from '@/server/projections/gather';
-import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
+import {
+  projectKnowledgeNodeGuarded,
+  requireKnowledgeHistory,
+} from '@/server/projections/knowledge';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
-import { knowledgeLiveRowToSnapshot } from '@/server/projections/parity';
-import { diffSnapshots } from '@/server/projections/snapshot-diff';
 import {
   archiveKnowledgeEdgeFromEvents,
   createKnowledgeEdge,
@@ -395,17 +395,6 @@ async function archiveIncidentKnowledgeEdges(
   const touching = await listLiveEdgesTouchingNode(tx, nodeId);
   for (const edge of touching) {
     await archiveKnowledgeEdgeFromEvents(tx, edge.id, { created_at: now, reasoning: reason });
-  }
-}
-
-async function requireKnowledgeHistory(
-  db: DbLike,
-  node: typeof knowledge.$inferSelect,
-): Promise<void> {
-  const folded = await gatherAndFoldKnowledgeNode(db, node.id);
-  if (!folded) throw new Error(`knowledge ${node.id} requires complete history before mutation`);
-  if (diffSnapshots(knowledgeLiveRowToSnapshot(node), folded).length > 0) {
-    throw new Error(`knowledge ${node.id} has fold/live drift; repair history before mutation`);
   }
 }
 
