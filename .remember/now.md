@@ -2,6 +2,12 @@
 
 ## 最新状态
 
+- Active984：root独占codex/yuk-984-canonical-knowledge（从983交付docs8c901df3建），原脏main不动。
+  关系新建提案已删flag-off直接INSERT；共同runEdgeTopologyGate固定projection，保留锁/retry/错误翻译，不再生产warn-only。
+  37相关DB过，新增INSERT-trigger顺序验证含所在文件11DB通过；typecheck/build过。仅实施checkpoint，未审查/PR/部署，生产仍983/5dd7e8ed，无paid。
+  余edge归档/create owner/reactivate/merge及node五操作/迁移/flag退休，见canonical-knowledge计划；不保留永久旧writer作rollback。
+  只读map_984_node_order已终态；其“保留imperative rollback”建议与owner目标不符，不采用。节点顺序结论须root逐项复核。
+
 - 983 Done：PR1368 exactc97eddad098dc80ddd84491ec1218daf85b4e38f/CI34221548520所有job绿，11:46:41Z main7cccb335eb1a4f4d2026198e9e3fac39a393246e。
   Notes及全部六题块编辑统一event→projection；历史完整性迁移/rowlock/CAS/backlinks保留。初审2P1修复，唯一验证PASS，禁止第三审。
   68相关DB/18迁移/9oracle/61unit/27提案DB与typecheck/lint/build/audits过；首CI三fixture缺genesis，补两行准备后全27过，未删除断言。

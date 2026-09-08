@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-08：983 Done，PR1368/c97eddad/CI34221548520全绿/main7cccb335；Mac app/worker5dd7e8ed健康，PG与454/280/21未变，clone真实HTTP保存/CAS/回放及live只读验收通过。下一984知识结构双轨退休；整体未完成，预算无新增可用额度，无paid/NAS。
+> Linear 是权威 tracker；更新于 2026-09-08：984 Active，关系新建提案已删直接INSERT回退、共同拓扑门不再按环境降级，37DB通过；归档/merge/节点与迁移仍待实施。983已Mac交付/CI全绿，生产5dd7e8ed未动；整体未完成，无新增paid/NAS。
 
 ## NOW
 
@@ -180,7 +180,7 @@
 
 ## NEXT
 
-1. 984 Todo：按edge→knowledge结构操作顺序退休剩余双轨；保留拓扑/归因修复/派生列及校准Scheme A，不造新框架。983已交付。
+1. 984 Active：先edge归档/重新启用/merge配对写，再node与历史迁移；保留拓扑/归因/派生列及Scheme A，不造框架。详见2026-09-08-canonical-knowledge.md。
 2. 887剩余证据按原七项矩阵收口：Tencent/GLM-OCR现役wire及完整provider/恢复范围；已有Notes/Memory/learner/Tagging/Agency通过项不重烧。
    新$3已全部保守预留/余0；旧$10不回收。免费代码/DB/回放继续，新增付费须另授权。977/980保持P2。
 3. 最终按学习意图→录入→判分→复习→提议/撤回逐责任核实，并给951名词保留明确处置；不以测试/依赖数字替代完成。

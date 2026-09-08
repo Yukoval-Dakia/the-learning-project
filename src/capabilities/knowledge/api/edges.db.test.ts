@@ -412,13 +412,11 @@ describe('POST /api/knowledge/edges', () => {
 // YUK-737 — the direct POST /edges path had NO accept-time topology gate: a direct caller could write
 // a `prerequisite` edge that closes a cycle the proposal-accept fold would reject. These pin the new
 // gate (cycle → clean 409, not a 500) + a legal regression, under the faithful prod flip (ON).
-describe('POST /api/knowledge/edges — YUK-737 topology gate', () => {
+describe.each(['0', '1'])('POST /api/knowledge/edges — topology gate (legacy flag %s)', (flag) => {
   beforeEach(async () => {
     await resetDb();
-    // PROJECTION_IS_WRITER=1 is the LIVE prod state: the create projects the edge through the fold,
-    // whose ADR-0034 topology reject THROWS and rolls the write back; runEdgeTopologyGate's
-    // translateReject then surfaces it as a clean 409 (mirrors the accept-path lock suite).
-    vi.stubEnv('PROJECTION_IS_WRITER', '1');
+    vi.stubEnv('PROJECTION_IS_WRITER', flag);
+    vi.stubEnv('NODE_ENV', 'production');
   });
 
   afterEach(() => {

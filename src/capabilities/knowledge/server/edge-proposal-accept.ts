@@ -438,20 +438,16 @@ export async function decideKnowledgeEdgeProposal(
 
   const edgeId = createId();
   const generateEventId = createId();
-  // YUK-471 W1 PR-B — SoT flip gate. ON: skip the imperative edge INSERT; runEdgeTopologyGate
-  // (projectKnowledgeEdgeGuarded) writes the edge row from the generate event below.
-  const flip = projectionIsWriter();
-
   // YUK-546 (codex P1) / YUK-737 — the accept tx runs inside the shared bounded-retry wrapper. Inside:
   //   1. acquireEdgeEndpointLocks — endpoint rows FOR UPDATE NOWAIT (id-sorted) + the sorted
   //      knowledge_edge advisory + a lock-scoped endpoint revalidation, so this path and the merge
   //      accept share ONE global lock order and a merge that archives an endpoint under the locks is
   //      caught (codex P2) rather than landing a live edge on a tombstone.
-  //   2. the rate + generate writes (+ the flip-OFF imperative INSERT).
-  //   3. runEdgeTopologyGate — the flip-conditional fold gate that re-runs ADR-0034 topology and
+  //   2. the rate + generate event writes.
+  //   3. runEdgeTopologyGate — the projection writer that re-runs ADR-0034 topology and
   //      THROWS (rolls the accept back) on a cycle / direction reject.
   // The wrapper backs off + retries a NOWAIT lock miss (55P03) and maps a UNIQUE violation (23505,
-  // from the flip-OFF raw INSERT or the flip-ON projection upsert) to a 409.
+  // from the projection upsert) to a 409.
   await withEdgeEndpointLockRetry(
     () =>
       db.transaction(async (tx) => {
@@ -474,25 +470,6 @@ export async function decideKnowledgeEdgeProposal(
           caused_by_event_id: proposeEventId,
           created_at: now,
         });
-
-        // YUK-471 W1 PR-B — under the flip the imperative INSERT is skipped; runEdgeTopologyGate
-        // (projectKnowledgeEdgeGuarded) writes the edge row from the generate event.
-        if (!flip) {
-          await tx.insert(knowledge_edge).values({
-            id: edgeId,
-            from_knowledge_id: fromId,
-            to_knowledge_id: toId,
-            relation_type: relationType,
-            weight,
-            created_by: {
-              actor_kind: 'user',
-              actor_ref: 'self',
-              propose_event_id: proposeEventId,
-            } as never,
-            reasoning: proposePayload.reasoning ?? null,
-            created_at: now,
-          });
-        }
 
         await writeEvent(tx, {
           id: generateEventId,
@@ -517,11 +494,8 @@ export async function decideKnowledgeEdgeProposal(
           created_at: now,
         });
 
-        // Flip ON: projectKnowledgeEdgeGuarded writes the edge row from the generate event + re-runs
-        // ADR-0034 topology (a cycle reject THROWS and rolls back). Flip OFF: the read-only parity
-        // assert re-folds the just-written edge (same reject propagates in dev/test). This branch's
-        // raw plain-Error reject propagates unchanged (no translateReject) — the accept-path contract
-        // #971 pinned.
+        // The event is the only source of the new row. Topology rejection aborts the
+        // complete accept; retain this path's existing plain-Error translation contract.
         await runEdgeTopologyGate(tx, edgeId);
       }),
     { uniqueViolationMessage: `edge already exists: ${fromId} --${relationType}--> ${toId}` },
