@@ -2,6 +2,11 @@
 
 ## 最新状态
 
+- 984 LearningIntent创建已canonical：knowledge owner创建genesis/index再project，无raw INSERT；Agency两调用传接受rate因果ID，保持ingest_at outbox optout。
+  create-only id锁与existing guard避免projection upsert变成覆盖。3a真实接受验证root+child fold/index/因果、Notes失败全tx回滚、无需backfill即可archive。
+  两套56DB/typecheck/build过；最终重复ID护栏含14DB/typecheck复验过。下一统一seed/ensure-subject-root/placement-starter三处INSERT和subject-control-name UPDATE；已root实查都有配对event但仍raw结构写。
+  保留embedding派生writer；迁移当前5实体缺知识Q2/Q3历史校验。没有新增付费/生产变更，正式984 review/PR/交付尚未开始。
+
 - 984 merge已canonical：私有prepareKnowledgeMerge锁内校验全部from/into历史与结构漂移→9归因修复→完整immutable rate receipt→统一projection。
   applyMerge raw导出/两处node DML/accept flag与warn-only parity分支删；仅embedding派生UPDATE保留。重复from与错误subject拒绝。
   原raw测试改真实accept并按精确proposal读取receipt。四旧fixture缺base已显式准备；seed无历史先拒绝且不删行再准备成功。

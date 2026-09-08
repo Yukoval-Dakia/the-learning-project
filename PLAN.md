@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-08：984 Active，edge与五类node操作全event→projection，merge直接结构写/accept flag删，9归因修复保留；131DB/typecheck/build过。余部署历史/全局flag退休及交付，生产983未动，整体未完成，无paid/NAS。
+> Linear 是权威 tracker；更新于 2026-09-08：984 Active，edge/五类node提案及LearningIntent新建已event→projection；后者56DB/typecheck/build过，失败回滚/回放/后续archive过。余seed/root/placement控制写面、部署历史/flag及交付；生产983未动，整体未完成，无paid/NAS。
 
 ## NOW
 

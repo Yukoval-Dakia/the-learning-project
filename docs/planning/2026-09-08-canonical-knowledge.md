@@ -18,6 +18,22 @@ Status: active, not delivered. Production remains the verified983 image.
 
 ## Progress
 
+LearningIntent creation now writes per-node genesis/index before projection in its
+Knowledge owner. Agency passes the reserved accept rate ID for birth provenance;
+memory outbox opt-out remains. A per-ID creation lock and existing-row refusal
+retain create-only semantics instead of silently upserting over an existing node.
+The existing3a acceptance scenario now proves Notes failure rolls back all newly
+created knowledge/events/index, both root and child fold to exact live snapshots,
+births reference the accepting rate, and the child accepts a later archive without
+backfill. Two suites pass56 DB tests; typecheck/build pass. Duplicate-ID refusal
+is also checked for no event or row mutation in the final targeted rerun.
+
+Final source DML census identifies three additional event-paired creation sites:
+knowledge/seed.ts, subjects/ensure-subject-root.ts and Practice placement-starter-store.ts;
+subject-control-write.ts also directly updates root names. These remain in scope
+for structural-owner consolidation. Do not count their paired events as retirement.
+The two embedding maintenance writers remain derived-only and are not removed.
+
 Merge now uses private preparation: validate all locked source/destination histories
 and structural fold/live parity, repair all nine attribution surfaces, write the
 complete immutable acceptance receipt, then project every affected node. Removed

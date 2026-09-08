@@ -491,6 +491,7 @@ export async function acceptLearningIntent(
         domain: root.domain,
         parentId: null,
         createdAt: now,
+        causedByEventId: rateEventId,
       });
     }
 
@@ -521,6 +522,7 @@ export async function acceptLearningIntent(
           domain: child.domain ?? fallbackDomain,
           parentId: rootKnowledgeId,
           createdAt: now,
+          causedByEventId: rateEventId,
         });
       }
     }
