@@ -184,3 +184,32 @@ remaining1 USD. Earlier pools/reserves are unchanged. Ingestion and Agency actua
 acceptance remain open; a production CoachTask success/parsed plan was located,
 but its probability/calculus subject_mix needs semantic verification and cannot
 be accepted merely from its success status. No new paid Coach sample was run.
+
+## Ingestion and Agency actual — subsequent delta
+
+Source `3582ab884384ab917fb54bbf18467c8876a00976`, runtime code equal8bce5f0a,
+fresh DB `loom_import_plan_887_actual_v1`, image8bce5f0a. Two bounded real wires
+passed (one per model, 64KB input / 4096 output ceiling, 0.50 USD reserve each).
+
+- TaggingTask `h2p42dbhmj2gmutvvkg0nu1m`: mimo-v2.5,756 input/434 output,
+  estimate0.00022736 USD. Correct conditional-probability tag, excludes Bayes
+  and polynomial decoys. Explicit client tag selection then real
+  `completeIngestionImport` created question `ey7rsk7flmua801g0tz0weet` and
+  learning record `k14l5t376lmy7zqtojt2lm2x`, imported block/session. Separate
+  read-only questionBlock fold-vs-live golden: diffs[], one question.
+- LearningIntentTask `maqegljxethl9jic861g6spq`: mimo-v2.5-pro,988 input/1820
+  output, estimate0.00201318 USD. Real `planLearningIntent` persisted valid hub
+  proposal `fhs89tf6jz95bqxrer0wp038`, two existing scoped knowledge targets,
+  no invented/decoy targets. Not automatically accepted: zero learning items
+  and artifacts. This is representative planning, not blanket Coach quality.
+
+Ingestion starts at an explicitly synthetic extracted-block checkpoint; no claim
+of file upload, OCR, R2 or shipped worker transport acceptance. Production
+454event/280task/21attempt remained unchanged. Isolated process exited0.
+Private evidence `import-plan887-actual-v1.json` SHA256
+`77da4a1a202dba48fef3af23e29df58e4ce1853d2070fdfdb22ca24ff9fc68ed`;
+golden `import-plan887-golden.jsonl` SHA256
+`ade94572fc81663b02b9110b1ecb83e659fb6a1e9e9f4b88d614ec9ddfa51a48`.
+The new3 USD pool now retains all3 USD (Notes1, judging1, import/planning1),
+remaining0. Estimates are not invoices; earlier reservations are not reclaimed.
+No further paid call is authorized by the later UI-only approval.
