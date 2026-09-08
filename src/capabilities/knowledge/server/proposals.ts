@@ -545,39 +545,6 @@ export async function applySplit(
 // every merge-driven endpoint change (a raw UPDATE would be invisible to the fold → resurrected on
 // rebuild). Actor user/self matches the merge accept.
 
-async function writeEdgeCreateEvent(
-  tx: Tx,
-  newEdgeId: string,
-  from: string,
-  to: string,
-  relationType: string,
-  weight: number,
-  reasoning: string | null,
-  now: Date,
-) {
-  await writeEvent(tx, {
-    id: newId(),
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'generate',
-    subject_kind: 'knowledge_edge',
-    subject_id: newEdgeId,
-    outcome: 'success',
-    payload: {
-      // Explicit edge_op (OCR O3): the fold treats an ABSENT edge_op as create, but every other
-      // writer (api/edges.ts, proposal-tools.ts, frontier_fill_nightly.ts) sets it explicitly —
-      // matching them keeps this event robust if the fold schema ever tightens.
-      edge_op: 'create',
-      from_knowledge_id: from,
-      to_knowledge_id: to,
-      relation_type: relationType,
-      weight,
-      reasoning,
-    },
-    created_at: now,
-  });
-}
-
 type EdgeRewired = MergeRepairEntryT['edges_rewired'][number];
 
 export async function rewireKnowledgeEdges(
@@ -702,16 +669,6 @@ export async function rewireKnowledgeEdges(
           actor_ref: 'self',
           created_at: now,
         });
-        await writeEdgeCreateEvent(
-          sp,
-          id,
-          newFrom,
-          newTo,
-          edge.relation_type,
-          edge.weight,
-          edge.reasoning,
-          now,
-        );
         return id;
       });
       outcome = 'rewired';
@@ -755,16 +712,6 @@ export async function rewireKnowledgeEdges(
             actor_ref: 'self',
             created_at: now,
           });
-          await writeEdgeCreateEvent(
-            tx,
-            holder.id,
-            newFrom,
-            newTo,
-            edge.relation_type,
-            edge.weight,
-            edge.reasoning,
-            now,
-          );
           newEdgeId = holder.id;
           outcome = 'reactivated';
           if (edge.relation_type === 'prerequisite') {

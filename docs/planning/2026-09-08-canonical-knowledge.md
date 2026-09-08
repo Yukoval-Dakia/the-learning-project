@@ -56,11 +56,13 @@ typecheck/build. Initial10 failures were old fixtures without creation history.
 Fixtures explicitly seed history; the old inline-backfill expectation now proves
 rejection/full rollback first, then success after explicit preparation, retaining
 every field/replay assertion. The raw archive entrypoint and writeEdgeArchiveEvent
-have no remaining production definitions/calls. Create/reactivate/node DML and
+have no remaining production definitions/calls. Node DML and
 deployment history validation remain; this is not984 completion or a deploy point.
 
-Remaining direct edge create/archive/reactivate callers still pair raw DML with events;
-the global flag is not yet retired. No completion/rollout claim for this step.
+Create/reactivate now also own event provenance and transactional projection;
+paired generate events in route/merge/supersede are removed, preserving correction
+event IDs. No raw edge INSERT/UPDATE remains in these business owners.
+The global node flag is not yet retired. No completion/rollout claim for this step.
 Read-only node mapping confirms the current fold covers all five operations:
 Q1 subject, Q2 materialized proposal IDs and Q3 merge-from IDs. Root still must
 validate each order-dependent side effect before moving structural writes.
@@ -68,3 +70,11 @@ In particular reparent hash recomputation currently reads the new tree position;
 merge retirement repairs rely on tombstone/locking semantics. Do not blindly move
 all side effects ahead of projection, and do not retain a second writer as rollback.
 Rollback will use the prior release, not a permanent imperative mode.
+
+Final seven suites pass212 DB cases, typecheck/build pass, and Postman regeneration
+has no diff. The first192-case combined run found one stale fixture whose revival
+predated creation; it now uses actual create/archive history. A same-clock
+create→archive→revive regression also pins strict event ordering: under the row lock,
+archive/revive advance beyond existing history instead of relying on random IDs.
+The requested time is a lower bound; memory ingest_at opt-out remains independent.
+No paid call or production change. Node operations and deployment history are next.

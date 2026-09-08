@@ -5,14 +5,15 @@
 - Active984：root独占codex/yuk-984-canonical-knowledge（从983交付docs8c901df3建），原脏main不动。
   关系新建提案已删flag-off直接INSERT；共同runEdgeTopologyGate固定projection，保留锁/retry/错误翻译，不再生产warn-only。
   37相关DB过，新增INSERT-trigger顺序验证含所在文件11DB通过；typecheck/build过。仅实施checkpoint，未审查/PR/部署，生产仍983/5dd7e8ed，无paid。
-  余edge归档/create owner/reactivate/merge及node五操作/迁移/flag退休，见canonical-knowledge计划；不保留永久旧writer作rollback。
+  edge创建/归档/reactivate及merge/supersede已event→projection；余node五操作/迁移/flag退休，见canonical-knowledge计划；不保留永久旧writer作rollback。
+  最新7suite/212DB/typecheck/build全过，gen:postman无diff。create/reactivate原始DML及API/merge/supersede配对generate删除，保留replacement event ID。
+  首192case有1旧fixture revival早于creation；改真实创建/归档历史，owner锁内推进事件时间。同clock三连操作严格顺序回归过；ingest_at optout独立保留，无paid/生产变更。
   只读map_984_node_order已终态；其“保留imperative rollback”建议与owner目标不符，不采用。节点顺序结论须root逐项复核。
   archive proposal已改锁行→校验base→rate/archive→projection，无直接UPDATE或flag。59DB/typecheck/build过；显式排除archive-only假基线后42actionsDB及typecheck/build复验PASS。
   生产只读edge count0；不把空人口当复杂迁移验收。supersede需要先移除旧边再gate新边，重构owner时保持同tx；其它raw writer尚未改。
   archiveKnowledgeEdgeFromEvents共同owner已接proposal/cascade；封装tx/lock/base/event/projection，cascade不再读edge内部/拼事件，保留cause/time/ingest_at。
   raw archive函数现已物理删除；内部incident/merge/supersede全用共同owner，删重复archive事件helper与inline genesis。supersede先archive旧边再引入新边，同tx。
   最新145DB+20edge-ownerDB/typecheck/build过。初10fixture缺历史失败已显式seed，旧自动backfill测试改先拒绝/回滚→准备历史→保持所有字段/回放断言。
-  create/reactivate与node DML及部署迁移仍待完成，生产不动；不是可部署点。多hunk补丁生成失败均无写入，改逐文件最小连续patch后成功。
   61集成DB过；旧cascade空create payload补真实字段/actor/time，最终19cascadeDB/typecheck/build/changed lint过。生产未动，无paid。
   Linear已恢复且list_comments确认上轮comment未送达，本轮统一补记59/42DB和共同owner进展；984仍In Progress。
 

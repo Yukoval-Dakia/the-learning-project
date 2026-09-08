@@ -14,15 +14,12 @@
 // Writes go through `src/server/knowledge/edges.ts` (single-owner per ADR-0005).
 // `relation_type` lock comes from Lane B `RelationTypeSchema`.
 
-import { createId } from '@paralleldrive/cuid2';
-
 import {
   CreateKnowledgeEdgeBodySchema,
   KnowledgeEdgeQuerySchema,
 } from '@/capabilities/knowledge/api/contracts';
 import {
   acquireEdgeEndpointLocks,
-  runEdgeTopologyGate,
   withEdgeEndpointLockRetry,
 } from '@/capabilities/knowledge/server/edge-topology-write';
 import {
@@ -31,7 +28,6 @@ import {
   listKnowledgeEdgesPage,
 } from '@/capabilities/knowledge/server/edges';
 import { db } from '@/db/client';
-import { writeEvent } from '@/kernel/events';
 import { ApiError, collectionPayload, errorResponse, resourceResponse } from '@/kernel/http';
 import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 import { wakeHubSyncAfterCommit } from '@/server/boss/hub-sync-wake';
@@ -133,25 +129,6 @@ export async function POST(req: Request): Promise<Response> {
             actor_ref: 'self',
             created_at: now,
           });
-          await writeEvent(tx, {
-            id: createId(),
-            actor_kind: 'user',
-            actor_ref: 'self',
-            action: 'generate',
-            subject_kind: 'knowledge_edge',
-            subject_id: edgeId,
-            outcome: 'success',
-            payload: {
-              edge_op: 'create',
-              from_knowledge_id: fromId,
-              to_knowledge_id: toId,
-              relation_type: parsed.data.relation_type,
-              weight: parsed.data.weight ?? 1,
-              reasoning: parsed.data.reasoning ?? null,
-            },
-            created_at: now,
-          });
-          await runEdgeTopologyGate(tx, edgeId, { translateReject: true });
           return edgeId;
         }),
       {

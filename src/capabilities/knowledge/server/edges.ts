@@ -1,19 +1,8 @@
-// Phase 1c.1 Step 6 — knowledge_edge single-owner module (ADR-0005 extended to
-// edges per ADR-0010). All INSERTs into `knowledge_edge` go through this module.
-//
-// Read API:
-//   - listKnowledgeEdges(db, filter?) — filter by from / to / relation_type
-//   - getKnowledgeEdgeById(db, id) — single edge lookup
-//
-// Write API:
-//   - createKnowledgeEdge(db, input) — INSERT with FK + Zod validation;
-//     UNIQUE(from, to, relation_type) violation surfaces as ApiError('conflict', 409)
-//
-// Mirrors `src/server/session/` style: per-module single-owner, callers import
-// named fns; raw `db.insert(knowledge_edge)` outside this module is forbidden.
+// Knowledge relation commands own event provenance, transactional projection and validation.
+// Callers must not pair these operations with a second generate/archive event.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { RelationTypeSchema, type RelationTypeSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
@@ -22,9 +11,21 @@ import { ApiError } from '@/kernel/http';
 import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
 import { gatherAndFoldKnowledgeEdge } from '@/server/projections/gather';
 import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
+import { runEdgeTopologyGate } from './edge-topology-write';
 import { isDirectTreePair } from './topology-gate';
 
 type DbLike = Db | Tx;
+
+/** Called under the edge row lock. Event order must not depend on random IDs. */
+async function nextEdgeEventTime(tx: Tx, id: string, requested: Date): Promise<Date> {
+  const [latest] = await tx
+    .select({ created_at: event.created_at })
+    .from(event)
+    .where(and(eq(event.subject_kind, 'knowledge_edge'), eq(event.subject_id, id)))
+    .orderBy(desc(event.created_at))
+    .limit(1);
+  return new Date(Math.max(requested.getTime(), (latest?.created_at.getTime() ?? -1) + 1));
+}
 
 // ---------- Types ----------
 
@@ -229,7 +230,7 @@ export interface ReactivateKnowledgeEdgeInput {
   reasoning: string | null;
   actor_kind: string;
   actor_ref: string;
-  /** MUST equal the paired generate(create) event's created_at (the fold stamps the row from it). */
+  /** Earliest event time; advanced past existing history when clocks coincide. */
   created_at: Date;
 }
 
@@ -240,17 +241,8 @@ export interface ReactivateKnowledgeEdgeInput {
  * blind archive-as-duplicate there would silently evaporate a live relationship. Instead the
  * tombstone is revived in place.
  *
- * FOLD CONTRACT: the caller MUST write a paired `generate`(create) event anchored to THIS edge id
- * with the SAME actor/weight/reasoning/created_at. The edge fold replays create events in order —
- * the new (last) create re-projects this row as live with created_at/created_by/weight/reasoning
- * taken from that event — so this UPDATE refreshes those columns to byte-match the fold output
- * (row == fold, the B3 audit invariant). Single-owner: all knowledge_edge writes stay in this module.
- *
- * TOMBSTONE-ONLY GUARD (OCR O1): the WHERE requires `archived_at IS NOT NULL` — reactivation's
- * precondition is "currently a tombstone". Calling this on a LIVE edge (or a missing id) would
- * otherwise silently overwrite weight/reasoning/created_by/created_at of a live row; instead it
- * matches 0 rows and THROWS. The merge-rewire caller pre-checks the holder is archived, so this is
- * a contract guard for future callers, not a behavior change there.
+ * Records the complete reactivation event and projects it under the tombstone row lock.
+ * Concurrent attempts cannot overwrite a newly live row; failure rolls back the event.
  *
  * @throws ApiError('conflict', 409) when `id` does not exist or is not currently archived.
  */
@@ -259,24 +251,42 @@ export async function reactivateKnowledgeEdge(
   id: string,
   input: ReactivateKnowledgeEdgeInput,
 ): Promise<void> {
-  const result = await db
-    .update(knowledge_edge)
-    .set({
-      archived_at: null,
-      weight: input.weight,
-      reasoning: input.reasoning,
-      created_by: { actor_kind: input.actor_kind, actor_ref: input.actor_ref } as never,
-      created_at: input.created_at,
-    })
-    .where(and(eq(knowledge_edge.id, id), isNotNull(knowledge_edge.archived_at)));
-  const changed = (result as { count?: number }).count ?? 0;
-  if (changed !== 1) {
-    throw new ApiError(
-      'conflict',
-      `reactivateKnowledgeEdge: edge ${id} is not an archived tombstone (live or missing) — refusing to overwrite`,
-      409,
-    );
-  }
+  await db.transaction(async (tx) => {
+    const [current] = await tx
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, id))
+      .for('update');
+    if (!current || current.archived_at === null) {
+      throw new ApiError(
+        'conflict',
+        `reactivateKnowledgeEdge: edge ${id} is not an archived tombstone (live or missing) — refusing to overwrite`,
+        409,
+      );
+    }
+    // Replays sort by timestamp then opaque ID. A revival must follow its archive
+    // even when two commands share a millisecond or the supplied clock is stale.
+    const createdAt = await nextEdgeEventTime(tx, id, input.created_at);
+    await writeEvent(tx, {
+      id: createId(),
+      actor_kind: input.actor_kind,
+      actor_ref: input.actor_ref,
+      action: 'generate',
+      subject_kind: 'knowledge_edge',
+      subject_id: id,
+      outcome: 'success',
+      payload: {
+        edge_op: 'create',
+        from_knowledge_id: current.from_knowledge_id,
+        to_knowledge_id: current.to_knowledge_id,
+        relation_type: current.relation_type,
+        weight: input.weight,
+        reasoning: input.reasoning,
+      },
+      created_at: createdAt,
+    });
+    await projectKnowledgeEdgeGuarded(tx, id);
+  });
 }
 
 export async function getKnowledgeEdgeById(
@@ -302,22 +312,18 @@ export async function getKnowledgeEdgeById(
 // ---------- Create ----------
 
 export interface CreateKnowledgeEdgeInput {
+  /** Preserve a caller-owned provenance identity for correction references. */
+  generate_event_id?: string;
   from_knowledge_id: string;
   to_knowledge_id: string;
   relation_type: string;
   weight?: number;
   reasoning?: string | null;
-  // YUK-471 — created_by is stored as the {actor_kind, actor_ref(, propose_event_id)} shape the
-  // edge FOLD reconstructs (src/core/projections/knowledge_edge.ts rowFromGenerateEvent), NOT a
-  // bare string, so a createKnowledgeEdge-created edge folds == its row (the projection SoT). The
-  // caller MUST write a `generate`(create) event with the SAME actor_kind/actor_ref + this created_at.
-  // Default {user, self} (the manual-user case). A caller that ALSO writes a generate event MUST
-  // pass the matching actor (POST=user/self, reconcile=agent/dreaming) or the fold won't reproduce.
+  // The actor and proposal identify the generated relation's provenance.
   actor_kind?: string;
   actor_ref?: string;
   propose_event_id?: string;
-  // created_at must equal the caller's generate event's created_at — the fold takes the row's
-  // created_at FROM that event. Defaults to now() only for a caller with no paired event.
+  // Shared operation timestamp; otherwise captured by this owner.
   created_at?: Date;
 }
 
@@ -345,16 +351,6 @@ export async function createKnowledgeEdge(
       400,
     );
   }
-
-  // 2) created_by — the edge FOLD's {actor_kind, actor_ref(, propose_event_id)} shape (see the
-  //    input doc). Built from the explicit actor fields so every createKnowledgeEdge edge stores
-  //    the EXACT shape the fold reconstructs → fold(events) == row. (Previously stored a bare
-  //    string default 'user', which the fold could never reproduce — YUK-471 BYPASS-2 fix.)
-  const createdBy: Record<string, string> = {
-    actor_kind: input.actor_kind ?? 'user',
-    actor_ref: input.actor_ref ?? 'self',
-    ...(input.propose_event_id ? { propose_event_id: input.propose_event_id } : {}),
-  };
 
   // 3) FK existence: both endpoints must point at non-archived knowledge nodes.
   //    Drizzle's `.references()` only declares FK at DDL; here we surface a
@@ -402,15 +398,28 @@ export async function createKnowledgeEdge(
   const createdAt = input.created_at ?? new Date();
 
   try {
-    await db.insert(knowledge_edge).values({
-      id,
-      from_knowledge_id: input.from_knowledge_id,
-      to_knowledge_id: input.to_knowledge_id,
-      relation_type: relationParsed.data,
-      weight: input.weight ?? 1,
-      created_by: createdBy as never,
-      reasoning: input.reasoning ?? null,
-      created_at: createdAt,
+    await db.transaction(async (tx) => {
+      await writeEvent(tx, {
+        id: input.generate_event_id ?? createId(),
+        actor_kind: input.actor_kind ?? 'user',
+        actor_ref: input.actor_ref ?? 'self',
+        action: 'generate',
+        subject_kind: 'knowledge_edge',
+        subject_id: id,
+        outcome: 'success',
+        payload: {
+          edge_op: 'create',
+          from_knowledge_id: input.from_knowledge_id,
+          to_knowledge_id: input.to_knowledge_id,
+          relation_type: relationParsed.data,
+          weight: input.weight ?? 1,
+          reasoning: input.reasoning ?? null,
+          ...(input.propose_event_id ? { propose_event_id: input.propose_event_id } : {}),
+        },
+        caused_by_event_id: input.propose_event_id,
+        created_at: createdAt,
+      });
+      await runEdgeTopologyGate(tx, id, { translateReject: true });
     });
   } catch (err) {
     // Drizzle wraps the raw postgres-js error in its own Error. The original pg
@@ -448,6 +457,7 @@ export interface EdgeArchiveProvenance {
   caused_by_event_id?: string;
   propose_event_id?: string;
   reasoning?: string | null;
+  /** Earliest event time; row-locked sequencing advances past existing history. */
   created_at?: Date;
   /** Internal compensation records must not schedule memory ingestion. */
   ingest_at?: Date;
@@ -489,7 +499,7 @@ export async function archiveKnowledgeEdgeFromEvents(
         409,
       );
     }
-    const now = provenance.created_at ?? new Date();
+    const now = await nextEdgeEventTime(tx, id, provenance.created_at ?? new Date());
     await writeEvent(tx, {
       id: provenance.event_id ?? createId(),
       actor_kind: 'user',

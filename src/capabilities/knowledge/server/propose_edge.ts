@@ -733,6 +733,7 @@ export async function applyApprovedEdgeSupersede(
   //    superseded one, which keeps its UNIQUE(from,to,type) slot — was already
   //    `skipped_duplicate_edge` upstream), so this INSERT cannot 23505-conflict.
   const newEdgeId = await createKnowledgeEdge(db, {
+    generate_event_id: newGenerateEventId,
     from_knowledge_id: p.from_knowledge_id,
     to_knowledge_id: p.to_knowledge_id,
     relation_type: p.relation_type,
@@ -743,25 +744,6 @@ export async function applyApprovedEdgeSupersede(
     actor_kind: 'user',
     actor_ref: 'self',
     propose_event_id: proposeEventId,
-    created_at: now,
-  });
-  await writeEvent(db, {
-    id: newGenerateEventId,
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'generate',
-    subject_kind: 'knowledge_edge',
-    subject_id: newEdgeId,
-    outcome: 'success',
-    payload: {
-      from_knowledge_id: p.from_knowledge_id,
-      to_knowledge_id: p.to_knowledge_id,
-      relation_type: p.relation_type,
-      weight: p.weight,
-      reasoning: p.reasoning,
-      propose_event_id: proposeEventId,
-    },
-    caused_by_event_id: proposeEventId,
     created_at: now,
   });
 
