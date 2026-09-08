@@ -16,7 +16,7 @@ Status: delivered on Mac. PR1369 merged to main e9b6f251; production runs tested
 4. Scoped DB/concurrency/revert tests, local typecheck/lint/build, independent
    review and exact-head CI; fresh clone/backup/live Mac delivery. No paid calls.
 
-## Progress
+## Final delivery — authoritative current state
 
 Final delivery: CI Gate34233241153 completed successfully for exacte514ef94;
 independent initial review passed without P0/P1 and no verification round was needed.
@@ -34,9 +34,16 @@ Recovery requires the previous release/configuration, not an environment toggle.
 Linear984 is Done. Remaining overall work is tracked separately under887/951 and
 the final behavior-by-behavior acceptance; no whole-project completion is claimed.
 
-PR1369 is open at exact e514ef94a5f8032e21a8afbe9864294538b5b935; CI Gate
-34233241153 is running; the first full independent review passed with no P0/P1. Build/unit/audits/
-migration/usability jobs have passed; both DB shards remain pending completion.
+## Historical implementation checkpoints — not operational instructions
+
+The records below describe earlier states before the final delivery above. Their
+old SHA, process identities, waiting steps and undeployed observations are retained
+as evidence only; do not repeat review, CI, migration or deployment from this section.
+
+At the pre-merge checkpoint, PR1369 was open at exact
+e514ef94a5f8032e21a8afbe9864294538b5b935; CI Gate34233241153 was running.
+The first full independent review had passed with no P0/P1. Build/unit/audits/
+migration/usability jobs had passed; both DB shards were awaiting completion.
 The review's initial parent-lock candidate was withdrawn after checking the existing
 explicit support for archived ancestors with live children. Only stale fold header
 comments were noted as nonblocking P2; no extra nit issue or verification review is needed.
@@ -49,9 +56,9 @@ validated. Shipped HTTP on that clone renamed math successfully (200, revision0�
 updated the knowledge tree name and rejected the old revision with409. A second
 actual-image migration after the HTTP edit also passed. Clone now has455 events;
 tasks/attempts remain280/21. Its temporary API is stopped; no worker/model credentials
-were supplied. Production stays454/280/21 on5dd7e8ed, all three original containers
-retain their IDs/start times and zero restart counts. This is clone acceptance, not
-deployment or whole-project completion. Private evidence is under the existing
+were supplied. At that checkpoint production stayed454/280/21 on5dd7e8ed, and all
+three original containers retained their IDs/start times and zero restart counts.
+This was clone acceptance, before the final deployment recorded above. Private evidence is under the existing
 tlp-local-prod-20260907.sjUaCU directory (knowledge984-* artifacts).
 
 The global writer switch is retired from runtime policy, environment schema and
@@ -63,9 +70,10 @@ helper; actual field/index/history/concurrency/replay tests remain. Oracle now a
 all seven kinds regardless of retired environment values. Final76 scoped DB tests,
 3 policy unit tests, typecheck/lint/build and boundary/deepening/strict fold audits
 pass. Lint reports316 warnings/1info, exit0; this is not a claim of warning-free code.
-Remote main remains7cccb335 and no984 PR exists at preflight. Next is the first full
-independent review, exact-head CI, fresh-clone migration and authorized Mac delivery.
-No production change or paid call; whole-project goal remains active.
+At the earlier source preflight, remote main was7cccb335 and no984 PR existed.
+The then-pending independent review, exact-head CI, fresh-clone migration and Mac
+delivery were subsequently completed as recorded above. That source checkpoint
+made no production change or paid call.
 
 Deployment preparation now covers all seven canonical entities, adding Knowledge
 and KnowledgeEdge to the migration's table locks, backfills and symmetric audits.
