@@ -3,7 +3,7 @@
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "debts": {
     "capabilityToServer": {
-      "total": 433,
+      "total": 428,
       "byOwnerPair": {
         "agency -> ai": 25,
         "agency -> boss": 10,
@@ -41,7 +41,7 @@
         "ingestion -> r2": 13,
         "ingestion -> records": 1,
         "ingestion -> session": 8,
-        "knowledge -> advisory-locks": 4,
+        "knowledge -> advisory-locks": 5,
         "knowledge -> ai": 12,
         "knowledge -> boss": 3,
         "knowledge -> calibration": 1,
@@ -49,7 +49,7 @@
         "knowledge -> fsrs": 2,
         "knowledge -> mastery": 6,
         "knowledge -> memory": 2,
-        "knowledge -> projections": 19,
+        "knowledge -> projections": 13,
         "knowledge -> proposals": 3,
         "notes -> ai": 8,
         "notes -> artifacts": 2,
@@ -92,7 +92,7 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 47,
+      "total": 48,
       "byOwnerPair": {
         "agency -> ingestion": 1,
         "agency -> knowledge": 4,
@@ -112,7 +112,7 @@
         "onboarding -> practice": 1,
         "practice -> agency": 3,
         "practice -> ingestion": 2,
-        "practice -> knowledge": 2,
+        "practice -> knowledge": 3,
         "shell -> agency": 2,
         "shell -> knowledge": 1,
         "shell -> notes": 2,

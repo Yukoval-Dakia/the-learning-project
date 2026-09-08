@@ -14,14 +14,11 @@
  * ADR-0044 event-sourcing 地基改造把 7 张 projection 表（knowledge / knowledge_edge / goal /
  * mistake_variant / learning_item / artifact / question_block）纳入「事件唯一真相，projection
  * 是缓存」：每张表的**单写者咽喉** = `src/server/projections/<table>.ts` 的 write-through shell
- * （fold(events)→row），核心 reducer 在 `src/core/projections/<table>.ts`。SoT-flip 由
- * `src/server/projections/sot-flag.ts` 的 `projectionIsWriter(entity?)` 门控：
- *   - knowledge / knowledge_edge：全局 `PROJECTION_IS_WRITER`，运行值须另查部署。
- *   - goal / mistake_variant / learning_item：canonical 单写者，已退休 env 分支。
- *   - artifact / question_block：仍保留 per-entity env 门控，部署状态以真实 runtime 为准。
+ * （fold(events)→row），核心 reducer 在 `src/core/projections/<table>.ts`。
+ * 七实体的结构writer均已canonical；sot-flag只保留item_calibration方案A选择。
+ * 已退休结构writer的rollback必须使用旧release，而不是环境开关。
  *
- * 「咽喉」= 当 flag ON 时 projection shell 写行；当 OFF 时命令式 applier 写行（**同 tx writeEvent
- * + guarded by projectionIsWriter** 的 dual-path）。红线要防的失效：一个**既不是 projection shell、
+ * 「咽喉」= projection shell唯一结构写面。红线要防的失效：一个**既不是 projection shell、
  * 又不 event-native**的 raw UPDATE/DELETE/INSERT 直接改 fold-owned 行 —— 它对 fold 不可见，rebuild
  * 时被「复活」或抹掉（kc-dedup spec §7 finding 1 的确诊病灶）。
  *
@@ -150,79 +147,24 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   {
     table: 'knowledge',
     file: 'src/capabilities/knowledge/server/proposals.ts',
-    marker: 'projectionIsWriter()',
-    role: 'event-native-by-caller',
-    note: 'mixed accept-path file: propose_new gates its INSERT, but reparent/archive/merge/split perform unconditional imperative UPDATEs paired with the accepted mutation event in the caller-owned transaction. Classify by its least-locally-guarded writes so LIVE advisory cannot hide them.',
-  },
-  {
-    table: 'knowledge',
-    file: 'src/capabilities/knowledge/server/learning-intent-knowledge.ts',
-    marker: '.insert(knowledge)',
-    role: 'event-native-by-caller',
-    note: 'Tx-only node creation; Agency materialization supplies the accepted learning-item proposal/rate and materialized-id mapping used by knowledge fold.',
-  },
-  {
-    table: 'knowledge',
-    file: 'src/capabilities/knowledge/server/seed.ts',
-    marker: '.insert(knowledge)',
-    role: 'seed',
-    note: 'migrate-time subject-root seed; each newly inserted row writes same-tx experimental:genesis + materialized_id_index anchor. Kept as seed role so LIVE advisory continuously re-verifies that bootstrap contract.',
-  },
-  {
-    table: 'knowledge',
-    file: 'src/server/subjects/ensure-subject-root.ts',
-    marker: '.insert(knowledge)',
-    role: 'event-native-by-caller',
-    note: 'runtime custom-subject root creation accepts Tx only and writes same-tx experimental:genesis + materialized_id_index anchor.',
-  },
-  {
-    table: 'knowledge',
-    file: 'src/server/subjects/subject-control-write.ts',
     marker: '.update(knowledge)',
-    role: 'event-native-by-caller',
-    note: 'rename/reset mirror subject display_name into root.name and append a same-tx experimental:subject_root_name_update carrying the exact version/name transition (YUK-728).',
-  },
-  {
-    table: 'knowledge',
-    file: 'src/capabilities/practice/server/question-supply/placement-starter-store.ts',
-    marker: '.insert(knowledge)',
-    role: 'event-native-by-caller',
-    note: 'placement starter content-KC mint accepts Tx only and writes same-tx experimental:genesis plus deterministic materialized_id_index anchor.',
+    role: 'maintenance',
+    note: 'Reparent refreshes only derived embedding/hash columns after canonical projection; no structural DML remains (YUK-984).',
   },
   {
     table: 'knowledge',
     file: 'src/capabilities/practice/jobs/embed_backfill.ts',
     marker: '.update(knowledge)',
     role: 'maintenance',
-    note: 'embedding backfill rewrites the non-fold `embedding` column only (a search-index side column, not fold-truth identity/state).',
+    note: 'Embedding maintenance writes derived search columns only.',
   },
-
-  // ---- knowledge_edge (LIVE) ----
+  // ---- knowledge_edge (canonical) ----
   {
     table: 'knowledge_edge',
     file: 'src/server/projections/knowledge_edge.ts',
     marker: '.insert(knowledge_edge)',
     role: 'throat',
-    note: 'projection write-through shell — the fold row writer for knowledge_edge (ADR-0044 W1, LIVE).',
-  },
-  {
-    table: 'knowledge_edge',
-    file: 'src/capabilities/knowledge/server/edges.ts',
-    marker: '.insert(knowledge_edge)',
-    role: 'event-native-by-caller',
-    note: 'canonical create/archive/reactivate CRUD has no local projectionIsWriter/event append; every production caller owns a transaction and pairs the row write with fold-visible generate(create|archive). Caller matrix audited in docs/audit/2026-07-19-yuk-587-fold-write-event-nativeness.md.',
-  },
-  // NOTE: frontier_fill_nightly.ts is NOT a knowledge_edge writer — it is PROPOSE-ONLY (writes
-  // `propose` events, never a live row; the file header states "There is NO .insert(knowledge_edge)
-  // anywhere below"). The only `.insert(knowledge_edge)` token in it is that comment, which the
-  // audit's comment-stripper correctly excludes — so it has zero live write sites and must NOT be
-  // declared a sanctioned writer (doing so would be dead config).
-  {
-    table: 'knowledge_edge',
-    file: 'src/capabilities/knowledge/server/edge-proposal-accept.ts',
-    marker: 'projectionIsWriter()',
-    role: 'gated-dual-path',
-    note: 'Create INSERT is gated; same-tx generate event feeds the topology projector. Archive delegates to the separately audited edges owner.',
+    note: 'Sole structural edge writer; create/archive/reactivate consumers emit events then project.',
   },
 
   // ---- goal (canonical, YUK-973) ----

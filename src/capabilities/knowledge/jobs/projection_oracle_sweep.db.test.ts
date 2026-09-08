@@ -80,11 +80,13 @@ describe('runProjectionOracleSweep', () => {
     expect([...report.auditedKinds].sort()).toEqual([
       'artifact',
       'goal',
+      'knowledge',
+      'knowledge_edge',
       'learning_item',
       'mistake_variant',
       'question_block',
     ]);
-    expect(report.skippedKinds).toContain('knowledge');
+    expect(report.skippedKinds).toEqual(['item_calibration']);
     expect(report.anomalies).toBe(0);
     expect(report.forensicWritten).toBe(0);
   });

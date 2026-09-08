@@ -41,7 +41,7 @@ import {
   makeEdgePlannedRow,
   markEdgeReconcileApplied,
 } from './edge-reconcile-store';
-import { archiveKnowledgeEdge, createKnowledgeEdge } from './edges';
+import { archiveKnowledgeEdgeFromEvents, createKnowledgeEdge } from './edges';
 import { type TopologyEdge, checkEdgeTopology } from './topology-gate';
 import { loadTreeSnapshot } from './tree';
 
@@ -692,28 +692,12 @@ export async function applyApprovedEdgeSupersede(
   opts: {
     candidate: EdgeProposalSchemaT;
     supersededEdgeId: string;
-    // CodeRabbit/Bugbot Finding 1 — the SUPERSEDED OLD edge endpoints (resolved at
-    // the call site from the chosen neighbor). The step-4 archive-provenance event
-    // MUST describe THESE, not the candidate's (the neighbor filter only requires a
-    // single shared endpoint, so they can legitimately differ).
-    supersededEdge: {
-      from_knowledge_id: string;
-      to_knowledge_id: string;
-      relation_type: string;
-    };
     decision: EdgeReconcileDecision;
     affectedRefs: ActivityRefT[];
     proposeEventId: string;
   },
 ): Promise<{ edgeId: string; generateEventId: string }> {
-  const {
-    candidate: p,
-    supersededEdgeId,
-    supersededEdge,
-    decision,
-    affectedRefs,
-    proposeEventId,
-  } = opts;
+  const { candidate: p, supersededEdgeId, decision, affectedRefs, proposeEventId } = opts;
   const now = new Date();
 
   const logRow = makeEdgePlannedRow({
@@ -733,12 +717,23 @@ export async function applyApprovedEdgeSupersede(
   // 1) audit-log the SUPERSEDE plan (applied_at stamped in step 6, same tx).
   await insertEdgePlannedRows(db, [logRow]);
 
-  // 2) NEW live edge row first (assigns its id), then its `generate` provenance
+  // Retire old topology before introducing its replacement in this transaction.
+  const archived = await archiveKnowledgeEdgeFromEvents(db, supersededEdgeId, {
+    event_id: oldArchiveGenerateEventId,
+    caused_by_event_id: proposeEventId,
+    created_at: now,
+    reasoning: `reconcile SUPERSEDE: ${decision.reason}`,
+  });
+  if (!archived.archived)
+    throw new Error(`superseded edge ${supersededEdgeId} is already archived`);
+
+  // Create replacement and provenance.
   //    event subject-anchored to that id. The candidate's key is guaranteed
   //    unique here (a key matching ANY existing edge — including the archived
   //    superseded one, which keeps its UNIQUE(from,to,type) slot — was already
   //    `skipped_duplicate_edge` upstream), so this INSERT cannot 23505-conflict.
   const newEdgeId = await createKnowledgeEdge(db, {
+    generate_event_id: newGenerateEventId,
     from_knowledge_id: p.from_knowledge_id,
     to_knowledge_id: p.to_knowledge_id,
     relation_type: p.relation_type,
@@ -749,56 +744,6 @@ export async function applyApprovedEdgeSupersede(
     actor_kind: 'user',
     actor_ref: 'self',
     propose_event_id: proposeEventId,
-    created_at: now,
-  });
-  await writeEvent(db, {
-    id: newGenerateEventId,
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'generate',
-    subject_kind: 'knowledge_edge',
-    subject_id: newEdgeId,
-    outcome: 'success',
-    payload: {
-      from_knowledge_id: p.from_knowledge_id,
-      to_knowledge_id: p.to_knowledge_id,
-      relation_type: p.relation_type,
-      weight: p.weight,
-      reasoning: p.reasoning,
-      propose_event_id: proposeEventId,
-    },
-    caused_by_event_id: proposeEventId,
-    created_at: now,
-  });
-
-  // 3) Archive the OLD edge (the load-bearing removal; idempotent NULL→now).
-  const archived = await archiveKnowledgeEdge(db, supersededEdgeId, now);
-  if (!archived.archived) {
-    throw new Error(`superseded edge ${supersededEdgeId} is already archived`);
-  }
-
-  // 4) OLD edge archive-provenance event — a stable subject the correction can
-  //    target (a CorrectEvent cannot target an edge row, only an event).
-  await writeEvent(db, {
-    id: oldArchiveGenerateEventId,
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'generate',
-    subject_kind: 'knowledge_edge',
-    subject_id: supersededEdgeId,
-    outcome: 'success',
-    payload: {
-      edge_op: 'archive',
-      archive_edge_id: supersededEdgeId,
-      // CodeRabbit/Bugbot Finding 1 — the OLD (superseded) edge endpoints, NOT the
-      // candidate's. Step-2's NEW-edge generate event correctly keeps p.* (the new
-      // edge); this archive-provenance event describes the edge being ARCHIVED.
-      from_knowledge_id: supersededEdge.from_knowledge_id,
-      to_knowledge_id: supersededEdge.to_knowledge_id,
-      relation_type: supersededEdge.relation_type,
-      reasoning: `reconcile SUPERSEDE: ${decision.reason}`,
-    },
-    caused_by_event_id: proposeEventId,
     created_at: now,
   });
 

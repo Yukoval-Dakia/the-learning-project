@@ -2,8 +2,8 @@
 // writes a rate event + (for accept-class decisions) inserts the edge + writes
 // a generate event, all in one transaction.
 
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { and, eq, sql } from 'drizzle-orm';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LegacyKnowledgeEdgeDecisionResponseSchema } from '@/capabilities/knowledge/api/contracts';
 import { newId } from '@/core/ids';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
@@ -82,6 +82,55 @@ async function decide(proposeId: string, body: unknown): Promise<Response> {
 describe('POST /api/knowledge/edges/proposals/[id]', () => {
   beforeEach(async () => {
     await resetDb();
+  });
+
+  it('materializes only after the accepted create event exists, regardless of the retired mode', async () => {
+    const db = testDb();
+    await seedKnowledge(['canonical_from', 'canonical_to']);
+    const proposeId = await seedProposeEdgeEvent({
+      from: 'canonical_from',
+      to: 'canonical_to',
+      relation_type: 'related_to',
+      weight: 0.75,
+      reasoning: '条件方向不可互换：相关关系不是先修关系；保留人工批准和完整来源。',
+    });
+    // A real INSERT-time observer distinguishes event-first execution from a
+    // direct INSERT subsequently overwritten by projection (same final row).
+    await db.execute(sql`CREATE FUNCTION test_edge_requires_event() RETURNS trigger
+      LANGUAGE plpgsql AS $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM event WHERE subject_kind='knowledge_edge'
+          AND subject_id=NEW.id AND action='generate') THEN
+          RAISE EXCEPTION 'edge inserted before its create event';
+        END IF;
+        RETURN NEW;
+      END $$`);
+    try {
+      await db.execute(sql`CREATE TRIGGER test_edge_requires_event BEFORE INSERT ON knowledge_edge
+        FOR EACH ROW EXECUTE FUNCTION test_edge_requires_event()`);
+      vi.stubEnv('PROJECTION_IS_WRITER', '0');
+      vi.stubEnv('NODE_ENV', 'production');
+      const response = await decide(proposeId, { decision: 'accept' });
+      expect(response.status).toBe(200);
+      const result = await response.json();
+      const [row] = await db
+        .select()
+        .from(knowledge_edge)
+        .where(eq(knowledge_edge.id, result.edge_id));
+      expect(row).toMatchObject({
+        from_knowledge_id: 'canonical_from',
+        to_knowledge_id: 'canonical_to',
+        relation_type: 'related_to',
+        weight: 0.75,
+        archived_at: null,
+        created_by: { actor_kind: 'user', actor_ref: 'self', propose_event_id: proposeId },
+      });
+      expect((await decide(proposeId, { decision: 'accept' })).status).toBe(200);
+      expect(await db.select().from(knowledge_edge)).toHaveLength(1);
+    } finally {
+      vi.unstubAllEnvs();
+      await db.execute(sql`DROP TRIGGER IF EXISTS test_edge_requires_event ON knowledge_edge`);
+      await db.execute(sql`DROP FUNCTION test_edge_requires_event()`);
+    }
   });
 
   it('accept: writes rate + generate events and inserts a knowledge_edge row', async () => {

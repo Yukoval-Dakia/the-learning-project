@@ -9,9 +9,9 @@
 //     events (ExperimentalEvent escape hatch; payload carries mutation body)
 //
 // accept/dismiss flow writes a RateEvent (action='rate', subject_kind='event')
-// chained via caused_by_event_id = propose event id. The mutation apply step
-// (insert/update knowledge rows) happens transactionally with the rate event
-// write to keep accept atomic.
+// chained via caused_by_event_id = propose event id. Acceptance validates locked
+// history, prepares side effects, writes the complete decision, then projects nodes
+// in one transaction. There is no second structural writer.
 
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { rewriteGoalScopeOnMerge } from '@/capabilities/agency/public';
@@ -35,22 +35,13 @@ import { retireLearnerAxisStateOnMerge } from '@/server/calibration/axis-writer'
 import { retireKcTypedStateOnMerge } from '@/server/conjectures/typed-state';
 import { retireFsrsStateOnMerge } from '@/server/fsrs/state';
 import { retireMasteryStateOnMerge } from '@/server/mastery/state';
-import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
-import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
+import {
+  projectKnowledgeNodeGuarded,
+  requireKnowledgeHistory,
+} from '@/server/projections/knowledge';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
-// YUK-471 W1 PR-A2b — accept-time projection parity assert (dev/test throws, prod warns) +
-// the applicability gate (skip nodes that predate event-sourcing — no genesis anchor → fold
-// is null → not a real mismatch; the backfill establishes those anchors later).
 import {
-  assertKnowledgeNodeParity,
-  knowledgeEdgesWithGenesisAnchor,
-  knowledgeLiveRowToSnapshot,
-  knowledgeNodesWithGenesisAnchor,
-} from '@/server/projections/parity';
-// YUK-471 W1 PR-B1 — the SoT-flip gate (default OFF; projection becomes the row writer when ON).
-import { projectionIsWriter } from '@/server/projections/sot-flag';
-import {
-  archiveKnowledgeEdge,
+  archiveKnowledgeEdgeFromEvents,
   createKnowledgeEdge,
   listAllLivePrerequisiteEdges,
   listLiveEdgesTouchingNode,
@@ -309,20 +300,12 @@ async function assertParentExists(db: DbLike, parentId: string): Promise<void> {
   }
 }
 
-// YUK-471 W1 PR-A2b — `now` is the SINGLE accept-time timestamp the caller stamps
-// the row with. Defaulted to `new Date()` so the other (non-accept) callers
-// (tag-knowledge.ts, tests) keep working; acceptProposal passes its tx-scoped
-// `now` so the row's created_at/updated_at === the rate=accept event's created_at
-// === what the node reducer stamps from (fold(events) == row byte-exact).
-export async function applyProposeNew(
+// Shared preparation for explicit proposal acceptance and automatic tagging.
+// This does not write a node: each owner records its existing creation contract
+// before projection. No caller-selectable imperative mode remains for new nodes.
+export async function prepareProposedKnowledgeId(
   db: DbLike,
   payload: ProposeNewPayload,
-  now: Date = new Date(),
-  // YUK-471 W1 PR-B1 — when false (SoT flip ON), validate + mint but SKIP the imperative
-  // INSERT; the projection write-through writes the row from events at the accept seam. The
-  // minted node is event-sourced THIS tx (propose + rate + index anchor), so its fold is
-  // non-null — projectKnowledgeNode never hits its delete-on-null branch (zero delete risk).
-  writeRow = true,
 ): Promise<string> {
   if (payload.parent_id === null) {
     throw new Error(
@@ -330,29 +313,15 @@ export async function applyProposeNew(
     );
   }
   await assertParentExists(db, payload.parent_id);
-  const newId_ = newId();
-  if (writeRow) {
-    await db.insert(knowledge).values({
-      id: newId_,
-      name: payload.name,
-      domain: null,
-      parent_id: payload.parent_id,
-      merged_from: [],
-      proposed_by_ai: true,
-      approval_status: 'approved',
-      created_at: now,
-      updated_at: now,
-      version: 0,
-    });
-  }
-  return newId_;
+  return newId();
 }
 
-export async function applyReparent(
+type ReparentEmbeddingSnapshot = { id: string; name: string; hash: string | null };
+
+async function prepareReparent(
   db: DbLike,
   payload: ReparentPayload,
-  now: Date = new Date(),
-): Promise<void> {
+): Promise<ReparentEmbeddingSnapshot> {
   if (payload.new_parent_id === null) {
     throw new Error(
       'PR B: reparent to root (new_parent_id=null) not supported in Phase 1a single-domain',
@@ -367,32 +336,23 @@ export async function applyReparent(
   // cross-domain move makes the stored vector stale. (Read here, recomputed after
   // the parent_id commit so the walk sees the new position.)
   const beforeRows = await db
-    .select({ name: knowledge.name, hash: knowledge.embed_content_hash })
+    .select()
     .from(knowledge)
     .where(eq(knowledge.id, payload.node_id))
     .limit(1);
   const moved = beforeRows[0];
 
-  const result = await db
-    .update(knowledge)
-    .set({
-      parent_id: payload.new_parent_id,
-      domain: null,
-      updated_at: now,
-      version: sql`${knowledge.version} + 1`,
-    })
-    .where(
-      and(
-        eq(knowledge.id, payload.node_id),
-        eq(knowledge.version, payload.expected_version),
-        isNull(knowledge.archived_at),
-      ),
-    );
-  const changes = (result as { count?: number }).count ?? 0;
-  if (changes !== 1) {
+  if (!moved || moved.version !== payload.expected_version || moved.archived_at !== null) {
     throw new Error(`stale: knowledge ${payload.node_id} version mismatch or archived`);
   }
+  await requireKnowledgeHistory(db, moved);
+  return { id: moved.id, name: moved.name, hash: moved.embed_content_hash };
+}
 
+async function refreshReparentEmbedding(
+  db: DbLike,
+  moved: ReparentEmbeddingSnapshot,
+): Promise<void> {
   // YUK-393 — re-embed-on-reparent (KC-ONLY). Resolve the NEW effective domain
   // (the walk now reflects the committed parent_id), recompute the embed hash, and
   // if it differs from the stored one, NULL this KC's embedding so the nightly
@@ -404,7 +364,7 @@ export async function applyReparent(
   if (moved) {
     let newEffectiveDomain: string | null = null;
     try {
-      newEffectiveDomain = await getEffectiveDomain(db, payload.node_id);
+      newEffectiveDomain = await getEffectiveDomain(db, moved.id);
     } catch {
       // Broken tree (root with null domain etc.) — don't fail the reparent over an
       // embed-maintenance recompute; leave the (now possibly stale) vector for the
@@ -417,8 +377,8 @@ export async function applyReparent(
     if (newHash !== moved.hash) {
       await db
         .update(knowledge)
-        .set({ embedding: null, embed_content_hash: newHash, updated_at: now })
-        .where(eq(knowledge.id, payload.node_id));
+        .set({ embedding: null, embed_content_hash: newHash })
+        .where(eq(knowledge.id, moved.id));
     }
   }
 }
@@ -433,139 +393,50 @@ async function archiveIncidentKnowledgeEdges(
   // shared with live edge writers: endpoint knowledge row(s) → knowledge_edge advisory lock.
   await acquireSortedAdvisoryLocks(tx, 'knowledge_edge', [nodeId]);
   const touching = await listLiveEdgesTouchingNode(tx, nodeId);
-  const projectionWrites = projectionIsWriter();
-  const anchored = projectionWrites
-    ? await knowledgeEdgesWithGenesisAnchor(
-        tx,
-        touching.map((edge) => edge.id),
-      )
-    : new Set<string>();
   for (const edge of touching) {
-    const archived = await archiveKnowledgeEdge(tx, edge.id, now);
-    if (!archived.archived) continue;
-    if (projectionWrites && !anchored.has(edge.id)) {
-      await writeEvent(tx, {
-        id: newId(),
-        actor_kind: 'system',
-        actor_ref: 'genesis-backfill',
-        action: 'experimental:genesis',
-        subject_kind: 'knowledge_edge',
-        subject_id: edge.id,
-        outcome: 'success',
-        payload: {
-          row: {
-            id: edge.id,
-            from_knowledge_id: edge.from_knowledge_id,
-            to_knowledge_id: edge.to_knowledge_id,
-            relation_type: edge.relation_type,
-            weight: edge.weight,
-            created_by: edge.created_by,
-            reasoning: edge.reasoning,
-            created_at: edge.created_at,
-            archived_at: null,
-          },
-        },
-        // Keep the seed strictly before the archive even for a malformed future-dated legacy row;
-        // the canonical created_at remains preserved inside payload.row.
-        created_at:
-          edge.created_at < now ? edge.created_at : new Date(Math.max(0, now.getTime() - 1)),
-      });
-    }
-    await writeEdgeArchiveEvent(tx, edge, edge.id, now, reason);
-    if (projectionWrites) {
-      await projectKnowledgeEdgeGuarded(tx, edge.id);
-    }
+    await archiveKnowledgeEdgeFromEvents(tx, edge.id, { created_at: now, reasoning: reason });
   }
 }
 
-export async function applyArchive(
-  db: DbLike,
+async function requireKnowledgeRetirementBase(tx: Tx, id: string, version: number): Promise<void> {
+  const [node] = await tx.select().from(knowledge).where(eq(knowledge.id, id)).for('update');
+  if (!node || node.version !== version || node.archived_at !== null) {
+    throw new Error(`stale: knowledge ${id} version mismatch or already archived`);
+  }
+  await requireKnowledgeHistory(tx, node);
+}
+
+export async function prepareKnowledgeArchive(
+  tx: Tx,
   payload: ArchivePayload,
-  now: Date = new Date(),
+  now: Date,
 ): Promise<void> {
-  await (db as Db).transaction(async (tx) => {
-    const result = await tx
-      .update(knowledge)
-      .set({ archived_at: now, updated_at: now, version: sql`${knowledge.version} + 1` })
-      .where(
-        and(
-          eq(knowledge.id, payload.node_id),
-          eq(knowledge.version, payload.expected_version),
-          isNull(knowledge.archived_at),
-        ),
-      );
-    const changes = (result as { count?: number }).count ?? 0;
-    if (changes !== 1) {
-      throw new Error(`stale: knowledge ${payload.node_id} version mismatch or already archived`);
-    }
-    await archiveIncidentKnowledgeEdges(
-      tx,
-      payload.node_id,
-      now,
-      'archive: incident edge retired with knowledge node (YUK-546)',
-    );
-  });
+  await requireKnowledgeRetirementBase(tx, payload.node_id, payload.expected_version);
+  await archiveIncidentKnowledgeEdges(
+    tx,
+    payload.node_id,
+    now,
+    'archive: incident edge retired with knowledge node (YUK-546)',
+  );
 }
 
-export async function applySplit(
-  db: DbLike,
-  payload: SplitPayload,
-  now: Date = new Date(),
-): Promise<string[]> {
+async function prepareKnowledgeSplit(tx: Tx, payload: SplitPayload, now: Date): Promise<string[]> {
   for (const entry of payload.into) {
-    if (entry.parent_id === null) {
-      throw new Error(
-        'PR B: split into root (parent_id=null) not supported in Phase 1a single-domain',
-      );
-    }
-    await assertParentExists(db, entry.parent_id);
+    if (entry.parent_id === null) throw new Error('split into root (parent_id=null) not supported');
+    await assertParentExists(tx, entry.parent_id);
   }
-  const newIds: string[] = payload.into.map(() => newId());
-
-  // Drizzle transaction (the API surface uses Db; transaction wrapping below
-  // works for both top-level db and Tx — Tx call is a no-op nested transaction).
-  return await (db as Db).transaction(async (tx) => {
-    const archiveResult = await tx
-      .update(knowledge)
-      .set({ archived_at: now, updated_at: now, version: sql`${knowledge.version} + 1` })
-      .where(
-        and(
-          eq(knowledge.id, payload.from_id),
-          eq(knowledge.version, payload.expected_version),
-          isNull(knowledge.archived_at),
-        ),
-      );
-    const archiveChanges = (archiveResult as { count?: number }).count ?? 0;
-    if (archiveChanges !== 1) {
-      throw new Error(`stale: knowledge ${payload.from_id} version mismatch or already archived`);
-    }
-    await archiveIncidentKnowledgeEdges(
-      tx,
-      payload.from_id,
-      now,
-      'split: source incident edge retired without child rewire (YUK-546)',
-    );
-    for (let i = 0; i < payload.into.length; i++) {
-      const entry = payload.into[i];
-      await tx.insert(knowledge).values({
-        id: newIds[i],
-        name: entry.name,
-        domain: null,
-        parent_id: entry.parent_id,
-        merged_from: [],
-        proposed_by_ai: true,
-        approval_status: 'approved',
-        created_at: now,
-        updated_at: now,
-        version: 0,
-      });
-    }
-    return newIds;
-  });
+  await requireKnowledgeRetirementBase(tx, payload.from_id, payload.expected_version);
+  await archiveIncidentKnowledgeEdges(
+    tx,
+    payload.from_id,
+    now,
+    'split: source incident edge retired without child rewire (YUK-546)',
+  );
+  return payload.into.map(() => newId());
 }
 
 // =============================================================================
-// YUK-543 — merge attribution repair. When a KC merge is accepted, applyMerge now
+// YUK-543 — merge attribution repair. When a KC merge is accepted, preparation
 // repairs 9 downstream attribution surfaces per absorbed from_id (in addition to the
 // original knowledge-row archive + merged_from append), returning a forensic
 // MergeRepairEntry[] the accept path pins on its rate event. See the diff-level plan
@@ -581,71 +452,11 @@ export async function applySplit(
 // every rewrite pass, including this one (YUK-543 review L2; see the schema.ts contract comment).
 // =============================================================================
 
-// ── knowledge_edge (LIVE fold, PROJECTION_IS_WRITER=1) — event-native rewire ─────────────────────
+// ── knowledge_edge — canonical event-native rewire ─────────────────────
 // Mirrors applyEdgeSupersede (propose_edge.ts): archive-old + create-new via the imperative
 // edges.ts functions PAIRED with fold-visible `generate` events, so the LIVE edge fold reproduces
 // every merge-driven endpoint change (a raw UPDATE would be invisible to the fold → resurrected on
 // rebuild). Actor user/self matches the merge accept.
-
-async function writeEdgeArchiveEvent(
-  tx: Tx,
-  edge: TopologyEdge,
-  oldEdgeId: string,
-  now: Date,
-  reasoning = 'merge: KC attribution rewrite (YUK-543)',
-) {
-  await writeEvent(tx, {
-    id: newId(),
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'generate',
-    subject_kind: 'knowledge_edge',
-    subject_id: oldEdgeId,
-    outcome: 'success',
-    payload: {
-      edge_op: 'archive',
-      archive_edge_id: oldEdgeId,
-      from_knowledge_id: edge.from_knowledge_id,
-      to_knowledge_id: edge.to_knowledge_id,
-      relation_type: edge.relation_type,
-      reasoning,
-    },
-    created_at: now,
-  });
-}
-
-async function writeEdgeCreateEvent(
-  tx: Tx,
-  newEdgeId: string,
-  from: string,
-  to: string,
-  relationType: string,
-  weight: number,
-  reasoning: string | null,
-  now: Date,
-) {
-  await writeEvent(tx, {
-    id: newId(),
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'generate',
-    subject_kind: 'knowledge_edge',
-    subject_id: newEdgeId,
-    outcome: 'success',
-    payload: {
-      // Explicit edge_op (OCR O3): the fold treats an ABSENT edge_op as create, but every other
-      // writer (api/edges.ts, proposal-tools.ts, frontier_fill_nightly.ts) sets it explicitly —
-      // matching them keeps this event robust if the fold schema ever tightens.
-      edge_op: 'create',
-      from_knowledge_id: from,
-      to_knowledge_id: to,
-      relation_type: relationType,
-      weight,
-      reasoning,
-    },
-    created_at: now,
-  });
-}
 
 type EdgeRewired = MergeRepairEntryT['edges_rewired'][number];
 
@@ -707,20 +518,17 @@ export async function rewireKnowledgeEdges(
     const oldTo = edge.to_knowledge_id;
     const newFrom = mapEndpoint(oldFrom);
     const newTo = mapEndpoint(oldTo);
-    const oldTopo: TopologyEdge = {
-      from_knowledge_id: oldFrom,
-      to_knowledge_id: oldTo,
-      relation_type: edge.relation_type,
-    };
 
     // Self-loop after rewrite (edge already touched intoId, or a loser→loser edge): the edge
     // collapses — archive-only, no create (a self-edge is never meaningful).
     if (newFrom === newTo) {
-      const archived = await archiveKnowledgeEdge(tx, edge.id, now);
+      const archived = await archiveKnowledgeEdgeFromEvents(tx, edge.id, {
+        created_at: now,
+        reasoning: 'merge: KC attribution rewrite (YUK-543)',
+      });
       if (!archived.archived) {
         throw new Error(`merge: knowledge_edge ${edge.id} changed before self-loop collapse`);
       }
-      await writeEdgeArchiveEvent(tx, oldTopo, edge.id, now);
       if (edge.relation_type === 'prerequisite') dropFromMesh(oldFrom, oldTo);
       result.push({ old_edge_id: edge.id, new_edge_id: null, outcome: 'collapsed_self_loop' });
       continue;
@@ -747,11 +555,13 @@ export async function rewireKnowledgeEdges(
     }
 
     // Archive the old edge (+ fold event), then create the rewritten edge (+ fold event).
-    const archived = await archiveKnowledgeEdge(tx, edge.id, now);
+    const archived = await archiveKnowledgeEdgeFromEvents(tx, edge.id, {
+      created_at: now,
+      reasoning: 'merge: KC attribution rewrite (YUK-543)',
+    });
     if (!archived.archived) {
       throw new Error(`merge: knowledge_edge ${edge.id} changed before rewire`);
     }
-    await writeEdgeArchiveEvent(tx, oldTopo, edge.id, now);
     if (edge.relation_type === 'prerequisite') dropFromMesh(oldFrom, oldTo);
 
     let newEdgeId: string | null = null;
@@ -772,16 +582,6 @@ export async function rewireKnowledgeEdges(
           actor_ref: 'self',
           created_at: now,
         });
-        await writeEdgeCreateEvent(
-          sp,
-          id,
-          newFrom,
-          newTo,
-          edge.relation_type,
-          edge.weight,
-          edge.reasoning,
-          now,
-        );
         return id;
       });
       outcome = 'rewired';
@@ -825,16 +625,6 @@ export async function rewireKnowledgeEdges(
             actor_ref: 'self',
             created_at: now,
           });
-          await writeEdgeCreateEvent(
-            tx,
-            holder.id,
-            newFrom,
-            newTo,
-            edge.relation_type,
-            edge.weight,
-            edge.reasoning,
-            now,
-          );
           newEdgeId = holder.id;
           outcome = 'reactivated';
           if (edge.relation_type === 'prerequisite') {
@@ -870,7 +660,7 @@ export async function rewireKnowledgeEdges(
 
 /**
  * YUK-543 — repair ALL 9 downstream attribution surfaces for ONE absorbed `fromId` → `intoId`,
- * returning the MergeRepairEntry. The SINGLE source of merge-repair mechanics, shared by applyMerge
+ * returning the MergeRepairEntry. The SINGLE source of merge-repair mechanics, shared by merge accept
  * (per from_id in the accept tx) AND scripts/backfill-merge-attribution.ts (per pre-fix orphan) — so
  * the retroactive backfill and the live accept path can never diverge in HOW they repair. `mergeFromIds`
  * is the FULL set of absorbed ids mapping to `intoId` (so loser→loser knowledge_edges collapse rather
@@ -884,7 +674,7 @@ export async function repairMergeAttributionForFromId(
   mergeFromIds: ReadonlySet<string>,
 ): Promise<MergeRepairEntryT> {
   // YUK-497 review F1 — global learning-state write lock at ENTRY for every caller of the
-  // shared repair path. applyMerge already holds it (reentrant no-op); the background
+  // shared repair path. merge accept already holds it (reentrant no-op); the background
   // merge_attribution_sweep / merge-attribution-backfill txs previously reached it mid-tx
   // AFTER rewireKnowledgeEdges' knowledge_edge locks → G↔knowledge_edge cycle against a
   // live merge accept (PG 40P01 aborting the user-facing side).
@@ -908,76 +698,41 @@ export async function repairMergeAttributionForFromId(
   };
 }
 
-export async function applyMerge(
-  db: DbLike,
+async function prepareKnowledgeMerge(
+  tx: Tx,
   payload: MergePayload,
-  now: Date = new Date(),
+  now: Date,
 ): Promise<MergeRepairEntryT[]> {
   if (payload.from_ids.includes(payload.into_id)) {
     throw new Error(`merge: into_id (${payload.into_id}) cannot also appear in from_ids`);
+  }
+  if (new Set(payload.from_ids).size !== payload.from_ids.length) {
+    throw new Error('merge: duplicate from_ids');
   }
   for (const fromId of payload.from_ids) {
     if (!(fromId in payload.expected_versions)) {
       throw new Error(`merge: expected_versions missing entry for ${fromId}`);
     }
   }
-
-  return await (db as Db).transaction(async (tx) => {
-    // YUK-497 — global learning-state write lock FIRST (before the knowledge_edge advisory
-    // locks taken inside rewireKnowledgeEdges): the merge tx retires mastery/FSRS state via
-    // retire*OnMerge, so it must share the same tx-entry order as every learning-state writer
-    // and the cascade revert (which holds this lock before touching edge rows).
-    await acquireLearningStateWriteLock(tx);
-    const intoRow = (
-      await tx
-        .select({ id: knowledge.id, merged_from: knowledge.merged_from })
-        .from(knowledge)
-        .where(and(eq(knowledge.id, payload.into_id), isNull(knowledge.archived_at)))
-        .limit(1)
-    )[0];
-    if (!intoRow) {
-      throw new Error(`stale: merge into_id ${payload.into_id} not found or archived`);
-    }
-    // Archive every absorbed node FIRST (version-guarded — throws stale on mismatch).
-    for (const fromId of payload.from_ids) {
-      const archiveResult = await tx
-        .update(knowledge)
-        .set({ archived_at: now, updated_at: now, version: sql`${knowledge.version} + 1` })
-        .where(
-          and(
-            eq(knowledge.id, fromId),
-            eq(knowledge.version, payload.expected_versions[fromId]),
-            isNull(knowledge.archived_at),
-          ),
-        );
-      const archiveChanges = (archiveResult as { count?: number }).count ?? 0;
-      if (archiveChanges !== 1) {
-        throw new Error(`stale: knowledge ${fromId} version mismatch or already archived`);
-      }
-    }
-
-    // Per-absorbed-from_id attribution repair — deterministic order = payload.from_ids array order.
-    const mergeFromIds = new Set(payload.from_ids);
-    const repairLog: MergeRepairEntryT[] = [];
-    for (const fromId of payload.from_ids) {
-      repairLog.push(
-        await repairMergeAttributionForFromId(tx, fromId, payload.into_id, now, mergeFromIds),
-      );
-    }
-
-    const currentMergedFrom = (intoRow.merged_from as string[]) ?? [];
-    const newMergedFrom = [...currentMergedFrom, ...payload.from_ids];
-    await tx
-      .update(knowledge)
-      .set({
-        merged_from: newMergedFrom,
-        updated_at: now,
-        version: sql`${knowledge.version} + 1`,
-      })
-      .where(and(eq(knowledge.id, payload.into_id), isNull(knowledge.archived_at)));
-
-    return repairLog;
-  });
+  // accept owns G -> sorted node locks. Validate all bases before repairing attribution.
+  const [into] = await tx.select().from(knowledge).where(eq(knowledge.id, payload.into_id));
+  if (!into || into.archived_at) {
+    throw new Error(`stale: merge into_id ${payload.into_id} not found or archived`);
+  }
+  await requireKnowledgeHistory(tx, into);
+  for (const fromId of payload.from_ids) {
+    await requireKnowledgeRetirementBase(tx, fromId, payload.expected_versions[fromId]);
+  }
+  // Repairs use explicit identities, not archived node state. Keep nodes locked and live
+  // until the complete immutable accept receipt is written; projection owns structural DML.
+  const mergeFromIds = new Set(payload.from_ids);
+  const repairLog: MergeRepairEntryT[] = [];
+  for (const fromId of payload.from_ids) {
+    repairLog.push(
+      await repairMergeAttributionForFromId(tx, fromId, payload.into_id, now, mergeFromIds),
+    );
+  }
+  return repairLog;
 }
 
 // =============================================================================
@@ -1087,38 +842,6 @@ function affectedNodeIds(result: AcceptResult): string[] {
   }
 }
 
-// YUK-471 W1 PR-A2b — read each affected `knowledge` row from THIS tx, project it to the
-// structural KnowledgeRowSnapshot shape (drops embed_*, coerces timestamps), and assert
-// fold(events) == that row. Read-only gather→fold; dev/test THROW on mismatch, prod
-// warn+returns (see parity.ts).
-//
-// APPLICABILITY GATE: only assert for nodes that are EVENT-SOURCED (have a genesis anchor —
-// genesis seed / auto_tag create / materialized_id_index row). A pre-event-sourcing node
-// (seed root, legacy pre-W1 row) folds to null because it has no originating event, so a
-// reparent/archive/merge of such a node would FALSE-mismatch (fold(null) != live row). Those
-// nodes get their anchor from the PR-A2a backfill later; until then they are correctly
-// SKIPPED here (the standalone audit:projection + its allowlist own that backfill window).
-// A minting accept (propose_new / split) always anchors its new node THIS tx, so those
-// always assert.
-async function assertAcceptParity(db: DbLike, result: AcceptResult): Promise<void> {
-  const ids = affectedNodeIds(result);
-  if (ids.length === 0) return;
-  const eventSourced = await knowledgeNodesWithGenesisAnchor(db, ids);
-  if (eventSourced.size === 0) return;
-  const rows = await db.select().from(knowledge).where(inArray(knowledge.id, ids));
-  const byId = new Map(rows.map((r) => [r.id, r]));
-  for (const id of ids) {
-    if (!eventSourced.has(id)) continue; // pre-event-sourcing node — fold can't reproduce it yet
-    const live = byId.get(id);
-    // knowledgeLiveRowToSnapshot picks the structural fields (drops embed_*) WITHOUT a Zod
-    // parse — a .parse() throw here would abort the live accept in prod (hot-path contract).
-    // A missing row (should not happen on a successful accept) is passed as null — fold must
-    // then also be null for parity to hold.
-    const liveSnapshot = live ? knowledgeLiveRowToSnapshot(live) : null;
-    await assertKnowledgeNodeParity(db, id, liveSnapshot);
-  }
-}
-
 export async function acceptProposal(db: Db, proposalId: string): Promise<AcceptResult> {
   // Codex P1-F — concurrent double-accept must not produce duplicate apply
   // side effects. The status check (assertNotAlreadyRated) and the mutation
@@ -1153,29 +876,29 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
       // locked first so timestamp order matches their actual serialized write order, including
       // subject-root rename/reset transactions that share the same knowledge row. The instant is
       // then threaded through (1) applyX and (2) rate=accept for byte-exact fold == row parity.
+      // Learning-state repair and revert writers acquire G before knowledge rows.
+      // Taking it inside merge preparation would be too late: these row locks are already held.
+      if (apply.mutation === 'merge') await acquireLearningStateWriteLock(tx);
       await lockMutationRows(tx, apply);
       const now = new Date();
-      // YUK-471 W1 PR-B — read the SoT-flip gate ONCE per accept. OFF (default): imperative
-      // appliers write the row + the A2b parity assert verifies fold==row. ON: the projection
-      // is the row writer for EVERY kind the accept touches (propose_new / reparent / archive /
-      // merge / split) — propose_new skips its imperative INSERT; the mutation appliers keep
-      // their version-guarded UPDATE and the projection overwrites from events (see the seam
-      // below). Flag OFF stays the full-verification rollback.
-      const flip = projectionIsWriter();
 
       let result: AcceptResult;
-      // YUK-543 — the merge-repair breadcrumb captured from applyMerge, threaded onto the accept
+      let reparentEmbedding: ReparentEmbeddingSnapshot | null = null;
+      // YUK-543 — the merge-repair breadcrumb captured during preparation, threaded onto the accept
       // rate event's payload below and used to drive the post-rate learning_item parity assert.
       let mergeRepair: MergeRepairEntryT[] | null = null;
       try {
         switch (apply.mutation) {
           case 'propose_new': {
-            const newNodeId = await applyProposeNew(tx, apply, now, /* writeRow */ !flip);
+            const newNodeId = await prepareProposedKnowledgeId(tx, apply);
             result = { kind: 'propose_new_applied', new_node_id: newNodeId };
             break;
           }
           case 'reparent': {
-            await applyReparent(tx, apply, now);
+            if (propose.subject_id !== apply.node_id) {
+              throw new Error(`reparent proposal ${proposalId} does not identify its target node`);
+            }
+            reparentEmbedding = await prepareReparent(tx, apply);
             if (apply.new_parent_id === null) {
               throw new Error('reparent payload must have new_parent_id');
             }
@@ -1187,12 +910,18 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
             break;
           }
           case 'archive': {
-            await applyArchive(tx, apply, now);
+            if (propose.subject_id !== apply.node_id)
+              throw new Error(`archive proposal ${proposalId} does not identify its target node`);
+            await prepareKnowledgeArchive(tx, apply, now);
             result = { kind: 'archive_applied', node_id: apply.node_id };
             break;
           }
           case 'merge': {
-            mergeRepair = await applyMerge(tx, apply, now);
+            if (propose.subject_id !== apply.into_id)
+              throw new Error(
+                `merge proposal ${proposalId} does not identify its destination node`,
+              );
+            mergeRepair = await prepareKnowledgeMerge(tx, apply, now);
             result = {
               kind: 'merge_applied',
               into_id: apply.into_id,
@@ -1201,7 +930,9 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
             break;
           }
           case 'split': {
-            const newIds = await applySplit(tx, apply, now);
+            if (propose.subject_id !== apply.from_id)
+              throw new Error(`split proposal ${proposalId} does not identify its source node`);
+            const newIds = await prepareKnowledgeSplit(tx, apply, now);
             result = {
               kind: 'split_applied',
               archived_id: apply.from_id,
@@ -1289,32 +1020,12 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
         created_at: now,
       });
 
-      // YUK-471 W1 PR-A2b — accept-time projection parity assert. Runs AFTER the rate
-      // write + index write (so the gather sees the chained accept + materialized_ids)
-      // and INSIDE this tx (so it reads the just-written rows + events). The imperative
-      // write stays the SoT; this proves fold(events) == row for every node the accept
-      // touched. Dev/test THROW on divergence (catch reducer bugs immediately); prod
-      // warn+returns (never break a live accept over a fold bug — see parity.ts). NOTE
-      // the merge into_id node also folds here: its merged_from append + version bump
-      // must reproduce.
-      // YUK-471 W1 PR-B — the SoT seam. Flag ON: the projection is the row writer for EVERY
-      // node the accept touched (affectedNodeIds). GUARDED — a touched node that folds to null
-      // but has NO genesis anchor (a seed root / any pre-event-sourced node) is left intact,
-      // NEVER deleted (keystone, see knowledge.ts projectKnowledgeNodeGuarded). For propose_new
-      // the imperative INSERT was skipped (writeRow=false); the mutation appliers (reparent /
-      // archive / merge / split) keep their version-guarded imperative UPDATE and the projection
-      // overwrites it from events (last-write-wins for an event-sourced node, skipped for a
-      // blind one). This runs AFTER the rate + materialized_id_index writes, in the same tx, so
-      // the fold sees them — the exact point the A2b parity assert ran. Flag OFF keeps that
-      // assert (true rollback: full fold==row verification restored).
-      if (flip) {
-        for (const id of affectedNodeIds(result)) {
-          await projectKnowledgeNodeGuarded(tx, id);
-        }
-      } else {
-        await assertAcceptParity(tx, result);
+      // The complete decision and minted identities are visible before the only structural write.
+      for (const id of affectedNodeIds(result)) {
+        await projectKnowledgeNodeGuarded(tx, id);
       }
 
+      if (reparentEmbedding) await refreshReparentEmbedding(tx, reparentEmbedding);
       return result;
     });
   } catch (e) {

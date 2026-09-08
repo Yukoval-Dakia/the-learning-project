@@ -23,7 +23,11 @@ import postgres from 'postgres';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { POST as revertCheckpointPOST } from '@/capabilities/copilot/api/revert-checkpoint';
-import { repairMergeAttributionForFromId } from '@/capabilities/knowledge/server/proposals';
+import {
+  acceptProposal,
+  repairMergeAttributionForFromId,
+  writeKnowledgeProposeEvent,
+} from '@/capabilities/knowledge/server/proposals';
 import { POST as submitPOST } from '@/capabilities/practice/api/submit';
 import { mergeExactQuestionDuplicateKnowledgeIds } from '@/capabilities/practice/public';
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
@@ -43,6 +47,7 @@ import {
   updateThetaForAttempt,
   upsertMasteryState,
 } from '@/server/mastery/state';
+import { backfillKnowledgeGenesis } from '../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../tests/helpers/db';
 
 // The contended production writer must stay blocked at least this long. Unobstructed,
@@ -139,8 +144,8 @@ async function assertBlocksOnGlobalLock<T>(contended: () => Promise<T>): Promise
 /**
  * Like {@link assertBlocksOnGlobalLock}, but ALSO proves lock ORDER: while the contended
  * tx waits on the global lock, its backend must hold ZERO granted advisory locks AND zero
- * granted locks on the `question` relation — i.e. the global lock is the FIRST lock the tx
- * tries to take. The two counts cover both round-1 inversion shapes: F1 held knowledge_edge
+ * mutation locks on the `question` or `knowledge` relation. Proposal event idempotency
+ * locks may precede G; learning-state/mutation locks must not. These counts cover F1's knowledge_edge
  * ADVISORY locks before G; F2 held a question ROW lock (FOR UPDATE → RowShareLock on the
  * relation, invisible to an advisory-only probe) before G.
  */
@@ -150,8 +155,9 @@ async function assertBlocksOnGlobalLockHoldingNoAdvisory<T>(
   const url = process.env.TEST_DATABASE_URL;
   if (!url) throw new Error('TEST_DATABASE_URL not set — globalSetup did not run');
   const holder = postgres(url, { max: 1 });
+  let release: (() => void) | undefined;
+  let drain = async () => {};
   try {
-    let release!: () => void;
     const released = new Promise<void>((r) => {
       release = r;
     });
@@ -164,12 +170,18 @@ async function assertBlocksOnGlobalLockHoldingNoAdvisory<T>(
       acquired();
       await released;
     });
+    drain = async () => {
+      await Promise.allSettled([holdTx]);
+    };
     await acquiredP;
 
     let settled = false;
     const contendedP = contended().finally(() => {
       settled = true;
     });
+    drain = async () => {
+      await Promise.allSettled([holdTx, contendedP]);
+    };
     await new Promise((r) => setTimeout(r, LOCK_PROBE_MS));
     expect(settled).toBe(false);
 
@@ -186,7 +198,11 @@ async function assertBlocksOnGlobalLockHoldingNoAdvisory<T>(
                   -- peek legitimately holds; the F2 inversion shape is FOR UPDATE's
                   -- RowShareLock (and stronger), which is what must be absent while
                   -- waiting on the global lock.
-                  AND g.mode <> 'AccessShareLock') AS granted_question_rel
+                  AND g.mode <> 'AccessShareLock') AS granted_question_rel,
+             (SELECT count(*)::int FROM pg_locks g
+                WHERE g.pid = w.pid AND g.granted
+                  AND g.relation = 'knowledge'::regclass::oid
+                  AND g.mode <> 'AccessShareLock') AS granted_knowledge_rel
         FROM pg_locks w
        WHERE w.locktype = 'advisory' AND NOT w.granted
          AND w.database = (SELECT oid FROM pg_database WHERE datname = current_database())
@@ -194,6 +210,7 @@ async function assertBlocksOnGlobalLockHoldingNoAdvisory<T>(
       pid: number;
       granted_advisory: number;
       granted_question_rel: number;
+      granted_knowledge_rel: number;
     }>;
     expect(rows.length).toBeGreaterThanOrEqual(1);
     for (const row of rows) {
@@ -201,12 +218,15 @@ async function assertBlocksOnGlobalLockHoldingNoAdvisory<T>(
       // F2 shape: a pre-fix dedup tx blocks on G while holding the question FOR UPDATE
       // relation lock — this count would be >=1 and fail the regression.
       expect(row.granted_question_rel).toBe(0);
+      expect(row.granted_knowledge_rel).toBe(0);
     }
 
-    release();
+    release?.();
     await holdTx;
     return await contendedP;
   } finally {
+    release?.();
+    await drain();
     await holder.end({ timeout: 5 });
   }
 }
@@ -425,6 +445,30 @@ describe('YUK-497 — global learning-state write lock (two-connection regressio
       .from(mastery_state)
       .where(eq(mastery_state.subject_kind, 'knowledge'));
     expect(new Set(rows.map((r) => r.subject_id))).toEqual(new Set([kcA, kcB]));
+  });
+
+  it('accepted merge waits for the global lock before locking knowledge rows', async () => {
+    const from = newId();
+    const into = newId();
+    await seedKnowledge(from);
+    await seedKnowledge(into);
+    await backfillKnowledgeGenesis(testDb());
+    const proposal = await writeKnowledgeProposeEvent(testDb(), {
+      payload: {
+        mutation: 'merge',
+        from_ids: [from],
+        into_id: into,
+        expected_versions: { [from]: 0 },
+      },
+      reasoning: 'Verify real merge acceptance lock order against learning-state writers.',
+    });
+    const result = await assertBlocksOnGlobalLockHoldingNoAdvisory(() =>
+      acceptProposal(testDb(), proposal),
+    );
+    expect(result).toEqual({ kind: 'merge_applied', into_id: into, archived_ids: [from] });
+    const [retired] = await testDb().select().from(knowledge).where(eq(knowledge.id, from));
+    expect(retired.archived_at).not.toBeNull();
+    expect(retired.version).toBe(1);
   });
 
   it('merge retire pair (retireMasteryStateOnMerge + retireFsrsStateOnMerge) blocks behind the global lock', async () => {

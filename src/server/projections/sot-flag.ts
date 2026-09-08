@@ -1,10 +1,11 @@
-// Goal, learning_item, mistake_variant, artifact and question_block have canonical editor policy.
-// Remaining flags select only writers whose cutover is not retired. Knowledge/edge
-// share the global flag; ItemCalibration stays Scheme A (default OFF).
+// Seven structural entities have canonical writers. ItemCalibration alone retains
+// Scheme A (default OFF); rollback of retired writers requires the previous release.
 const PER_ENTITY_FLAG_ENV = {
   item_calibration: 'PROJECTION_IS_WRITER_ITEM_CALIBRATION',
 } as const;
 const CANONICAL_WRITERS = {
+  knowledge: true,
+  knowledge_edge: true,
   goal: true,
   learning_item: true,
   mistake_variant: true,
@@ -14,8 +15,7 @@ const CANONICAL_WRITERS = {
 export type ProjectionEntity = keyof typeof PER_ENTITY_FLAG_ENV | keyof typeof CANONICAL_WRITERS;
 
 /** Read-only audit policy; business owners do not branch on retired modes. */
-export function projectionIsWriter(entity?: ProjectionEntity): boolean {
-  if (entity === undefined) return process.env.PROJECTION_IS_WRITER === '1';
+export function projectionIsWriter(entity: ProjectionEntity): boolean {
   if (entity !== 'item_calibration') return true;
   return process.env[PER_ENTITY_FLAG_ENV[entity]] === '1';
 }
@@ -23,7 +23,6 @@ export function projectionIsWriter(entity?: ProjectionEntity): boolean {
 /** Printed by both process roles so writer policy can be compared without a new table. */
 export function trackedFlagVector(): Record<string, boolean> {
   const vector: Record<string, boolean> = {
-    'knowledge+knowledge_edge': projectionIsWriter(),
     ...CANONICAL_WRITERS,
   };
   for (const entity of Object.keys(PER_ENTITY_FLAG_ENV) as (keyof typeof PER_ENTITY_FLAG_ENV)[]) {

@@ -192,13 +192,11 @@ describe('computeFoldWriteAudit — sanction / violation / allowlist / stale', (
     expect(result.ok).toBe(true);
   });
 
-  it('advises writers not locally fold-constrained, including mixed proposals + seed', () => {
+  it('advises remaining writers whose event contract is supplied by callers', () => {
     const files = [
-      'src/capabilities/knowledge/server/proposals.ts',
-      'src/capabilities/knowledge/server/seed.ts',
-      'src/capabilities/knowledge/server/edges.ts',
-      'src/server/subjects/ensure-subject-root.ts',
-      'src/server/subjects/subject-control-write.ts',
+      'src/capabilities/practice/jobs/quiz_gen.ts',
+      'src/capabilities/practice/server/tools/tool-quiz-core.ts',
+      'src/server/session/docx-ingestion.ts',
     ];
     const verdicts = files.map((file, index) => {
       const declared = SANCTIONED_WRITERS.find((w) => w.file === file);
@@ -206,7 +204,7 @@ describe('computeFoldWriteAudit — sanction / violation / allowlist / stale', (
       return {
         file,
         table: declared.table,
-        op: index === 0 ? ('update' as const) : ('insert' as const),
+        op: 'insert' as const,
         form: 'drizzle' as const,
         line: index + 1,
         status: 'sanctioned' as const,

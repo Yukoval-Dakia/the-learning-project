@@ -15,8 +15,7 @@
 //   - acquireEdgeEndpointLocks   — endpoint knowledge rows FOR UPDATE NOWAIT (id-sorted) + the
 //                                  same-namespace sorted `knowledge_edge` advisory + a lock-scoped
 //                                  endpoint revalidation (codex P2 lock-then-revalidate).
-//   - runEdgeTopologyGate        — the flip-conditional fold gate (projectKnowledgeEdgeGuarded under
-//                                  PROJECTION_IS_WRITER, else the read-only parity assert), which
+//   - runEdgeTopologyGate        — the canonical event projection writer, which
 //                                  re-runs ADR-0034 checkEdgeTopology through the fold and THROWS on
 //                                  a cycle / direction reject (rolling the accept back). The optional
 //                                  `translateReject` maps that throw to a clean ApiError for the
@@ -26,16 +25,13 @@
 //                                  surfaces as a 409; everything else (including a topology reject)
 //                                  propagates.
 
-import { eq, inArray } from 'drizzle-orm';
+import { inArray } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
-import { knowledge, knowledge_edge } from '@/db/schema';
+import { knowledge } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
-import { edgeRowToSnapshot } from '@/server/projections/gather';
 import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
-import { assertKnowledgeEdgeParity } from '@/server/projections/parity';
-import { projectionIsWriter } from '@/server/projections/sot-flag';
 import { isDirectTreePair } from './topology-gate';
 
 /**
@@ -154,12 +150,8 @@ function foldRejectToApiError(err: unknown): ApiError | null {
 }
 
 /**
- * YUK-737 — the flip-conditional accept-time fold gate, extracted verbatim from the create branch.
- *
- * PROJECTION_IS_WRITER ON (prod, LIVE): projectKnowledgeEdgeGuarded is the row writer AND re-runs the
- * ADR-0034 gate through the fold — a cycle/direction reject THROWS and rolls the accept back (the
- * real prod gate). OFF: the imperative INSERT already wrote the row; the read-only parity assert
- * re-folds and (dev/test) THROWS on the same reject, (prod) warns.
+ * Materialize the accepted create event and enforce ADR-0034 in the same transaction.
+ * Topology rejection always aborts, independently of environment or legacy writer flags.
  *
  * `opts.translateReject` (the direct-call routes) maps the fold's plain-Error reject to a clean
  * ApiError; without it the raw Error propagates (the create branch's unchanged behaviour).
@@ -170,18 +162,7 @@ export async function runEdgeTopologyGate(
   opts?: { translateReject?: boolean },
 ): Promise<void> {
   try {
-    if (projectionIsWriter()) {
-      await projectKnowledgeEdgeGuarded(tx, edgeId);
-    } else {
-      const writtenEdge = (
-        await tx.select().from(knowledge_edge).where(eq(knowledge_edge.id, edgeId)).limit(1)
-      )[0];
-      await assertKnowledgeEdgeParity(
-        tx,
-        edgeId,
-        writtenEdge ? edgeRowToSnapshot(writtenEdge) : null,
-      );
-    }
+    await projectKnowledgeEdgeGuarded(tx, edgeId);
   } catch (err) {
     if (opts?.translateReject) {
       const apiErr = foldRejectToApiError(err);

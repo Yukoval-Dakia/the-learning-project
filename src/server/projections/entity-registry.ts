@@ -180,12 +180,8 @@ export type _AssertClustersCoverEveryKind = AssertNever<
 
 export interface ProjectionAdapter {
   kind: ProjectionKind;
-  /**
-   * sot-flag entry for `projectionIsWriter(flagEntity)`. knowledge / knowledge_edge ride the BARE
-   * global `PROJECTION_IS_WRITER` (no per-entity env), so their flagEntity is `undefined` — the
-   * oracle sweep's tracked-flag check special-cases that.
-   */
-  flagEntity: ProjectionEntity | undefined;
+  /** Explicit writer policy identity; no implicit global mode. */
+  flagEntity: ProjectionEntity;
   /** live row ids (the materialized table). */
   liveIds(db: DbLike): Promise<Set<string>>;
   /**
@@ -334,7 +330,7 @@ function liveIdsFrom(table: ProjectionTable): (db: DbLike) => Promise<Set<string
 export const PROJECTION_ENTITIES: Record<ProjectionKind, ProjectionAdapter> = {
   knowledge: {
     kind: 'knowledge',
-    flagEntity: undefined, // bare global PROJECTION_IS_WRITER (W1)
+    flagEntity: 'knowledge',
     liveIds: liveIdsFrom(knowledge),
     eventSubjectIds: (db) => eventSubjectIdSet(db, 'knowledge', true),
     project: projectKnowledgeNode,
@@ -357,7 +353,7 @@ export const PROJECTION_ENTITIES: Record<ProjectionKind, ProjectionAdapter> = {
   },
   knowledge_edge: {
     kind: 'knowledge_edge',
-    flagEntity: undefined, // bare global PROJECTION_IS_WRITER (W1)
+    flagEntity: 'knowledge_edge',
     liveIds: liveIdsFrom(knowledge_edge),
     eventSubjectIds: (db) => eventSubjectIdSet(db, 'knowledge_edge', true),
     project: projectKnowledgeEdge,

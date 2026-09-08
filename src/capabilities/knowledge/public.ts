@@ -41,7 +41,11 @@ export type {
   KnowledgeEdgeProposalDecisionResult,
 } from './server/edge-proposal-accept';
 export { decideKnowledgeEdgeProposal } from './server/edge-proposal-accept';
-export { archiveKnowledgeEdge, listKnowledgeEdges, listKnowledgeEdgesPage } from './server/edges';
+export {
+  archiveKnowledgeEdgeFromEvents,
+  listKnowledgeEdges,
+  listKnowledgeEdgesPage,
+} from './server/edges';
 export type { FailureLearningKnowledgeNode } from './server/failure-learning-context';
 export { loadFailureLearningKnowledgeContext } from './server/failure-learning-context';
 export type {
@@ -59,6 +63,7 @@ export {
   archiveMisconceptionEdge,
   createMisconceptionEdge,
 } from './server/misconception-edges';
+export { createKnowledgeNodeFromEvents } from './server/node-creation';
 export {
   type MasteryDecayBucket,
   masteryDecayBucket,
@@ -66,7 +71,6 @@ export {
 export type { AcceptResult as KnowledgeAcceptResult } from './server/proposals';
 export {
   ACCEPT_RESULT_KINDS,
-  applyArchive,
   dismissProposal,
 } from './server/proposals';
 export type { NameKcFn } from './server/tag-knowledge';

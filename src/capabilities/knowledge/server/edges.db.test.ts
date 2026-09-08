@@ -3,9 +3,10 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { knowledge, knowledge_edge } from '@/db/schema';
+import { backfillKnowledgeEdgeGenesis } from '../../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
-  archiveKnowledgeEdge,
+  archiveKnowledgeEdgeFromEvents as archiveKnowledgeEdge,
   createKnowledgeEdge,
   getKnowledgeEdgeById,
   listKnowledgeEdges,
@@ -291,7 +292,7 @@ describe('listKnowledgeEdges', () => {
   });
 });
 
-describe('archiveKnowledgeEdge', () => {
+describe('archiveKnowledgeEdgeFromEvents', () => {
   beforeEach(async () => {
     await resetDb();
   });
@@ -304,12 +305,13 @@ describe('archiveKnowledgeEdge', () => {
       to_knowledge_id: 'k2',
       relation_type: 'related_to',
     });
-    const firstAt = new Date('2026-07-19T12:00:00.000Z');
-    const secondAt = new Date('2026-07-19T12:00:01.000Z');
+    await backfillKnowledgeEdgeGenesis(db);
+    const firstAt = new Date(Date.now() + 10);
+    const secondAt = new Date(firstAt.getTime() + 1000);
 
     const results = await Promise.all([
-      archiveKnowledgeEdge(db, id, firstAt),
-      archiveKnowledgeEdge(db, id, secondAt),
+      archiveKnowledgeEdge(db, id, { created_at: firstAt }),
+      archiveKnowledgeEdge(db, id, { created_at: secondAt }),
     ]);
 
     expect(results.map((result) => result.archived).sort()).toEqual([false, true]);
@@ -327,6 +329,7 @@ describe('archiveKnowledgeEdge', () => {
       relation_type: 'related_to',
     });
 
+    await backfillKnowledgeEdgeGenesis(db);
     expect((await archiveKnowledgeEdge(db, id)).archived).toBe(true);
     expect((await archiveKnowledgeEdge(db, id)).archived).toBe(false);
     await expect(archiveKnowledgeEdge(db, 'missing-edge')).rejects.toMatchObject({
@@ -357,17 +360,32 @@ describe('reactivateKnowledgeEdge', () => {
       from_knowledge_id: 'k1',
       to_knowledge_id: 'k2',
       relation_type: 'related_to',
+      created_at: new Date('2026-07-01T00:00:00.000Z'),
     });
-    await db
-      .update(knowledge_edge)
-      .set({ archived_at: new Date() })
-      .where(eq(knowledge_edge.id, id));
+    await archiveKnowledgeEdge(db, id, { created_at: new Date('2026-07-01T01:00:00.000Z') });
     await reactivateKnowledgeEdge(db, id, REACTIVATE_INPUT);
     const row = (await db.select().from(knowledge_edge).where(eq(knowledge_edge.id, id)))[0];
     expect(row.archived_at).toBeNull();
     expect(row.weight).toBe(0.5);
     expect(row.reasoning).toBe('revived');
     expect(row.created_at).toEqual(REACTIVATE_INPUT.created_at);
+  });
+
+  it('orders create, archive and revival when the caller reuses the same millisecond', async () => {
+    const db = testDb();
+    await seedKnowledge(['k1', 'k2']);
+    const at = new Date('2026-07-03T00:00:00.000Z');
+    const id = await createKnowledgeEdge(db, {
+      from_knowledge_id: 'k1',
+      to_knowledge_id: 'k2',
+      relation_type: 'related_to',
+      created_at: at,
+    });
+    await archiveKnowledgeEdge(db, id, { created_at: at });
+    await reactivateKnowledgeEdge(db, id, { ...REACTIVATE_INPUT, created_at: at });
+    const [row] = await db.select().from(knowledge_edge).where(eq(knowledge_edge.id, id));
+    expect(row).toMatchObject({ archived_at: null, weight: 0.5, reasoning: 'revived' });
+    expect(row.created_at.getTime()).toBe(at.getTime() + 2);
   });
 
   it('THROWS on a LIVE edge (refuses to overwrite a live row) — contract guard', async () => {

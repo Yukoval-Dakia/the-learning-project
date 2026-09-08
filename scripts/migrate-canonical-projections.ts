@@ -6,10 +6,13 @@ import { PROJECTION_ENTITIES } from '@/server/projections/entity-registry';
 import {
   backfillArtifactGenesis,
   backfillGoalGenesis,
+  backfillKnowledgeEdgeGenesis,
+  backfillKnowledgeGenesis,
   backfillLearningItemGenesis,
   backfillMistakeVariantGenesis,
   backfillQuestionBlockGenesis,
 } from './backfill-genesis-events';
+import { validateKnowledgeHistory } from './validate-knowledge-history';
 
 const BACKFILLS = {
   goal: backfillGoalGenesis,
@@ -17,6 +20,8 @@ const BACKFILLS = {
   learning_item: backfillLearningItemGenesis,
   artifact: backfillArtifactGenesis,
   question_block: backfillQuestionBlockGenesis,
+  knowledge: backfillKnowledgeGenesis,
+  knowledge_edge: backfillKnowledgeEdgeGenesis,
 } as const;
 
 /** Deployment-only preparation for the canonical structural writers, never a live rebuild.
@@ -30,7 +35,8 @@ export async function migrateCanonicalProjections(db: Db, now = new Date()) {
     // instead of holding up an active learner transaction indefinitely.
     await tx.execute(sql`SET LOCAL lock_timeout = '5s'`);
     await tx.execute(sql`LOCK TABLE event, materialized_id_index, goal, mistake_variant,
-      learning_item, artifact, question_block IN SHARE ROW EXCLUSIVE MODE`);
+      learning_item, artifact, question_block, knowledge, knowledge_edge IN SHARE ROW EXCLUSIVE MODE`);
+    await validateKnowledgeHistory(tx);
 
     const report: Record<string, { seeded: number; skipped: number; checked: number }> = {};
     for (const kind of Object.keys(BACKFILLS) as (keyof typeof BACKFILLS)[]) {
@@ -44,6 +50,8 @@ export async function migrateCanonicalProjections(db: Db, now = new Date()) {
         .leftJoin(event, eq(event.id, materialized_id_index.anchor_event_id))
         .where(eq(materialized_id_index.subject_kind, kind));
       for (const anchor of anchors) {
+        // Knowledge supports indirect propose/split anchors, checked with their accept chains above.
+        if (kind === 'knowledge' || kind === 'knowledge_edge') continue;
         if (!anchor.origin) {
           throw new Error(
             `[canonical-projections] ${kind}: missing originating event for ${anchor.id}`,
@@ -65,7 +73,13 @@ export async function migrateCanonicalProjections(db: Db, now = new Date()) {
       const ids = [...(await adapter.liveIds(tx))];
       const liveIds = new Set(ids);
       const absent = anchors.filter((anchor) => !liveIds.has(anchor.id));
-      if (absent.length > 0 && kind !== 'artifact' && kind !== 'question_block') {
+      if (
+        absent.length > 0 &&
+        kind !== 'artifact' &&
+        kind !== 'question_block' &&
+        kind !== 'knowledge' &&
+        kind !== 'knowledge_edge'
+      ) {
         const { foldOne } = await adapter.gatherWithContext(tx);
         for (const anchor of absent) {
           // These three folds retain dormant/dismissed/archived tombstones on
@@ -81,9 +95,11 @@ export async function migrateCanonicalProjections(db: Db, now = new Date()) {
       const eventful = await adapter.eventSubjectIds(tx);
       const historyAnchors = await adapter.withGenesisAnchor(tx, [...eventful]);
       const incomplete =
-        kind === 'artifact' || kind === 'question_block'
-          ? [...eventful].filter((id) => !historyAnchors.has(id))
-          : ids.filter((id) => !anchored.has(id) && eventful.has(id));
+        kind === 'knowledge' || kind === 'knowledge_edge'
+          ? []
+          : kind === 'artifact' || kind === 'question_block'
+            ? [...eventful].filter((id) => !historyAnchors.has(id))
+            : ids.filter((id) => !anchored.has(id) && eventful.has(id));
       if (incomplete.length > 0) {
         throw new Error(
           `[canonical-projections] ${kind}: history without a base anchor (${incomplete.slice(0, 10).join(', ')}); repair history before retrying migration`,

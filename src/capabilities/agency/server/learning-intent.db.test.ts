@@ -1,11 +1,17 @@
 // Phase 2B — Learning Intent Orchestrator tests.
 
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createLearningIntentKnowledgeNode } from '@/capabilities/knowledge/public';
+import {
+  acceptProposal,
+  writeKnowledgeProposeEvent,
+} from '@/capabilities/knowledge/server/proposals';
 import { createLearningIntentNote } from '@/capabilities/notes/public';
 import { NOTE_HANDOFF_ACTION } from '@/capabilities/notes/server/note-handoff';
-import { artifact, event, knowledge, learning_item } from '@/db/schema';
+import { artifact, event, knowledge, learning_item, materialized_id_index } from '@/db/schema';
+import { gatherAndFoldKnowledgeNode } from '@/server/projections/gather';
+import { knowledgeLiveRowToSnapshot } from '@/server/projections/parity';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   type AcceptLearningIntentParams,
@@ -447,14 +453,62 @@ describe('acceptLearningIntent', () => {
     }));
     const proposal = await planLearningIntent({ db, topic: '概率论', runTaskFn });
 
+    const eventsBefore = await db.select().from(event).orderBy(event.id);
+    const indexBefore = await db.select().from(materialized_id_index);
+    await expect(
+      acceptLearningIntentOwned({
+        db,
+        proposalId: proposal.proposal_id,
+        createKnowledgeNode: createLearningIntentKnowledgeNode,
+        createNote: async () => {
+          throw new Error('notes failure after knowledge creation');
+        },
+      }),
+    ).rejects.toThrow('notes failure after knowledge creation');
+    expect(await db.select().from(knowledge)).toEqual([]);
+    expect(await db.select().from(event).orderBy(event.id)).toEqual(eventsBefore);
+    expect(await db.select().from(materialized_id_index)).toEqual(indexBefore);
+
     const result = await acceptLearningIntent({ db, proposalId: proposal.proposal_id });
 
     const knowledgeRows = await db.select().from(knowledge);
+    const [decision] = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposal.proposal_id)));
+    for (const row of knowledgeRows) {
+      expect(await gatherAndFoldKnowledgeNode(db, row.id)).toEqual(knowledgeLiveRowToSnapshot(row));
+      const [anchor] = await db
+        .select()
+        .from(materialized_id_index)
+        .where(eq(materialized_id_index.materialized_id, row.id));
+      const [birth] = await db.select().from(event).where(eq(event.id, anchor.anchor_event_id));
+      expect(birth.caused_by_event_id).toBe(decision.id);
+      expect(birth.actor_ref).toBe('learning-intent-accept');
+      expect(birth.ingest_at).not.toBeNull();
+    }
     const root = knowledgeRows.find((row) => row.name === '概率论');
     expect(root).toBeTruthy();
     expect(root?.parent_id).toBeNull();
     expect(root?.domain).toBe('math');
     expect(root?.proposed_by_ai).toBe(true);
+    if (!root) throw new Error('accepted root missing');
+    const beforeDuplicate = await db.select().from(event).orderBy(event.id);
+    await expect(
+      db.transaction((tx) =>
+        createLearningIntentKnowledgeNode(tx, {
+          id: root.id,
+          name: 'must not overwrite existing curriculum',
+          domain: 'math',
+          parentId: null,
+          createdAt: root.created_at,
+          causedByEventId: decision.id,
+        }),
+      ),
+    ).rejects.toThrow(/already exists/);
+    expect(await db.select().from(event).orderBy(event.id)).toEqual(beforeDuplicate);
+    const [unchangedRoot] = await db.select().from(knowledge).where(eq(knowledge.id, root.id));
+    expect(unchangedRoot).toEqual(root);
 
     const child = knowledgeRows.find((row) => row.name === '条件概率');
     expect(child).toBeTruthy();
@@ -479,6 +533,18 @@ describe('acceptLearningIntent', () => {
       await db.select().from(artifact).where(eq(artifact.id, result.atomic_artifact_ids[0]))
     )[0];
     expect(atomicArtifact.knowledge_ids).toEqual([child?.id]);
+    if (!child) throw new Error('accepted child missing');
+    const archive = await writeKnowledgeProposeEvent(db, {
+      payload: { mutation: 'archive', node_id: child.id, expected_version: child.version },
+      reasoning:
+        'Verify a newly accepted learning-intent node supports canonical mutation without backfill.',
+    });
+    await expect(acceptProposal(db, archive)).resolves.toMatchObject({ kind: 'archive_applied' });
+    const [archived] = await db.select().from(knowledge).where(eq(knowledge.id, child.id));
+    expect(archived.archived_at).not.toBeNull();
+    expect(await gatherAndFoldKnowledgeNode(db, child.id)).toEqual(
+      knowledgeLiveRowToSnapshot(archived),
+    );
   });
 
   it('accepts a 3b proposal by creating children under the existing topic', async () => {

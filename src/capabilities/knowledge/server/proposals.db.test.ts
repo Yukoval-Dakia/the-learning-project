@@ -1,3 +1,4 @@
+import { acceptKnowledgeMutationFixture } from '../../../../tests/helpers/knowledge-mutation';
 // Phase 1c.1 Step 9.D — proposals.test rewritten for event-based handlers.
 //
 // Pre-Step-9 tests INSERTed dreaming_proposal rows; post-Step-9 the legacy
@@ -6,6 +7,7 @@
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KnowledgeRowSnapshot } from '@/core/schema/event/genesis';
+import type { MergeRepairEntryT } from '@/core/schema/event/known';
 import {
   event,
   goal,
@@ -23,19 +25,38 @@ import {
   gatherAndFoldKnowledgeEdge,
   gatherAndFoldKnowledgeNode,
 } from '@/server/projections/gather';
+import { backfillKnowledgeGenesis } from '../../../../scripts/backfill-genesis-events';
 import { migrateCanonicalProjections } from '../../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   acceptProposal,
-  applyArchive,
-  applyMerge,
-  applyProposeNew,
-  applyReparent,
-  applySplit,
   dismissProposal,
+  prepareProposedKnowledgeId,
   writeKnowledgeProposeEvent,
 } from './proposals';
 import { seedKnowledge } from './seed';
+
+const applyArchive = acceptKnowledgeMutationFixture;
+// Exercise the real accept seam; inspect the persisted forensic receipt, not an internal applier.
+async function applyMerge(...args: Parameters<typeof acceptKnowledgeMutationFixture>) {
+  await backfillKnowledgeGenesis(args[0]);
+  const proposalId = await writeKnowledgeProposeEvent(args[0], {
+    payload: args[1],
+    reasoning: 'Exercise merge acceptance with complete attribution and rollback evidence.',
+  });
+  await acceptProposal(args[0], proposalId);
+  const [rate] = await args[0]
+    .select()
+    .from(event)
+    .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)))
+    .limit(1);
+  return (rate.payload as { merge_repair: MergeRepairEntryT[] }).merge_repair;
+}
+async function applySplit(...args: Parameters<typeof acceptKnowledgeMutationFixture>) {
+  const result = await acceptKnowledgeMutationFixture(...args);
+  if (result.kind !== 'split_applied') throw new Error('expected accepted split');
+  return result.new_node_ids;
+}
 
 // liveSnapshot — project the live `knowledge` row down to the structural
 // KnowledgeRowSnapshot subset (drops embed_* columns, coerces timestamps to
@@ -124,7 +145,20 @@ async function insertKnowledgeEdge(opts: {
         },
         created_at: createdAt,
       });
+  } else if (opts.anchored !== false) {
+    await seedEdgeHistory();
   }
+}
+
+// Test-only pre-cutover snapshot: preserve every structural field and its history.
+async function seedEdgeHistory() {
+  await testDb().execute(sql`INSERT INTO event
+    (id, actor_kind, actor_ref, action, subject_kind, subject_id, outcome, payload, created_at)
+    SELECT 'fixture_genesis_' || k.id, 'system', 'genesis-backfill', 'experimental:genesis',
+      'knowledge_edge', k.id, 'success', jsonb_build_object('row', to_jsonb(k)), k.created_at
+    FROM knowledge_edge k WHERE NOT EXISTS
+      (SELECT 1 FROM event e WHERE e.subject_kind='knowledge_edge' AND e.subject_id=k.id
+        AND e.action IN ('generate','experimental:genesis'))`);
 }
 
 async function edgeArchiveEvents(ids: string[]) {
@@ -158,6 +192,13 @@ async function insertProposeEvent(opts: {
       ? 'propose'
       : `experimental:knowledge_${opts.payload.mutation}`);
   const isProposeNew = opts.payload.mutation === 'propose_new';
+  const mutationSubject = isProposeNew
+    ? opts.payload.parent_id
+    : opts.payload.mutation === 'merge'
+      ? opts.payload.into_id
+      : opts.payload.mutation === 'split'
+        ? opts.payload.from_id
+        : opts.payload.node_id;
   // Strip mutation key for event payload (it's encoded in action)
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { mutation, ...rest } = opts.payload;
@@ -171,7 +212,9 @@ async function insertProposeEvent(opts: {
     actor_ref: 'dreaming',
     action,
     subject_kind: 'knowledge',
-    subject_id: opts.subject_id ?? `subject_${opts.id}`,
+    subject_id:
+      opts.subject_id ??
+      (typeof mutationSubject === 'string' ? mutationSubject : `subject_${opts.id}`),
     outcome: 'partial',
     payload: eventPayload,
     caused_by_event_id: null,
@@ -265,38 +308,40 @@ describe('writeKnowledgeProposeEvent', () => {
   });
 });
 
-describe('applyProposeNew', () => {
+describe('prepareProposedKnowledgeId', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
-  it('inserts a new knowledge row with proposed_by_ai=true', async () => {
+  it('validates the parent and allocates identity without prematurely materializing a node', async () => {
     const db = testDb();
     await insertKnowledge({ id: 'seed:yuwen:shici', domain: 'yuwen' });
-    const newId_ = await applyProposeNew(db, {
+    const newId_ = await prepareProposedKnowledgeId(db, {
       mutation: 'propose_new',
       name: '通假字',
       parent_id: 'seed:yuwen:shici',
     });
     expect(newId_).toMatch(/^[a-z0-9]+$/);
     const rows = await db.select().from(knowledge).where(eq(knowledge.id, newId_));
-    expect(rows[0]?.name).toBe('通假字');
-    expect(rows[0]?.domain).toBeNull();
-    expect(rows[0]?.parent_id).toBe('seed:yuwen:shici');
-    expect(rows[0]?.proposed_by_ai).toBe(true);
+    expect(rows).toEqual([]);
+    expect(await db.select().from(event)).toEqual([]);
   });
 
   it('rejects propose_new with parent_id=null (PR A single-domain scope)', async () => {
     const db = testDb();
     await expect(
-      applyProposeNew(db, { mutation: 'propose_new', name: 'x', parent_id: null }),
+      prepareProposedKnowledgeId(db, { mutation: 'propose_new', name: 'x', parent_id: null }),
     ).rejects.toThrow(/root creation.*not supported/i);
   });
 
   it('rejects propose_new when parent_id does not exist in knowledge', async () => {
     const db = testDb();
     await expect(
-      applyProposeNew(db, { mutation: 'propose_new', name: 'x', parent_id: 'ghost-parent' }),
+      prepareProposedKnowledgeId(db, {
+        mutation: 'propose_new',
+        name: 'x',
+        parent_id: 'ghost-parent',
+      }),
     ).rejects.toThrow(/parent knowledge node not found.*ghost-parent/i);
   });
 });
@@ -326,6 +371,14 @@ describe('acceptProposal (propose_new only)', () => {
       .from(knowledge)
       .where(eq(knowledge.id, result.new_node_id));
     expect(knowledgeRows).toHaveLength(1);
+    expect(knowledgeRows[0]).toMatchObject({
+      name: '通假字',
+      domain: null,
+      parent_id: 'seed:yuwen:shici',
+      proposed_by_ai: true,
+      approval_status: 'approved',
+      version: 0,
+    });
     // rate=accept event chained
     const rateRows = await db
       .select()
@@ -396,9 +449,97 @@ describe('dismissProposal', () => {
   });
 });
 
-describe('applyReparent', () => {
+describe('accepted reparent', () => {
   beforeEach(async () => {
     await resetDb();
+  });
+
+  it('refuses a proposal whose event subject does not identify its target', async () => {
+    const db = testDb();
+    await insertKnowledge({ id: 'bound_parent', domain: 'yuwen' });
+    await insertKnowledge({
+      id: 'bound_node',
+      parent_id: 'bound_parent',
+      domain: null,
+      version: 3,
+    });
+    await backfillKnowledgeGenesis(db);
+    await insertProposeEvent({
+      id: 'mismatched_move',
+      subject_id: 'different_node',
+      payload: {
+        mutation: 'reparent',
+        node_id: 'bound_node',
+        new_parent_id: 'bound_parent',
+        expected_version: 3,
+      },
+    });
+    await expect(acceptProposal(db, 'mismatched_move')).rejects.toThrow(
+      'does not identify its target',
+    );
+    const [row] = await db.select().from(knowledge).where(eq(knowledge.id, 'bound_node'));
+    expect(row.version).toBe(3);
+  });
+
+  it('serializes two moves against the same expected version without a lost update', async () => {
+    const db = testDb();
+    for (const id of ['move_old', 'move_a', 'move_b'])
+      await insertKnowledge({ id, domain: 'yuwen' });
+    await insertKnowledge({ id: 'moving', domain: null, parent_id: 'move_old', version: 3 });
+    await backfillKnowledgeGenesis(db);
+    for (const side of ['a', 'b'])
+      await insertProposeEvent({
+        id: `race_move_${side}`,
+        payload: {
+          mutation: 'reparent',
+          node_id: 'moving',
+          new_parent_id: `move_${side}`,
+          expected_version: 3,
+        },
+      });
+    const results = await Promise.allSettled(
+      ['a', 'b'].map((side) => acceptProposal(db, `race_move_${side}`)),
+    );
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    const [row] = await db.select().from(knowledge).where(eq(knowledge.id, 'moving'));
+    expect(row.version).toBe(4);
+    expect(['move_a', 'move_b']).toContain(row.parent_id);
+    const decisions = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'rate'),
+          inArray(event.caused_by_event_id, ['race_move_a', 'race_move_b']),
+        ),
+      );
+    expect(
+      decisions.filter((row) => (row.payload as { rating?: string }).rating === 'accept'),
+    ).toHaveLength(1);
+  });
+
+  it('refuses missing creation history without committing a move or accepting the proposal', async () => {
+    const db = testDb();
+    await insertKnowledge({ id: 'move_parent', domain: 'yuwen' });
+    await insertKnowledge({ id: 'move_node', domain: null, parent_id: 'move_parent', version: 3 });
+    await insertProposeEvent({
+      id: 'unanchored_move',
+      payload: {
+        mutation: 'reparent',
+        node_id: 'move_node',
+        new_parent_id: 'move_parent',
+        expected_version: 3,
+      },
+    });
+    await expect(acceptProposal(db, 'unanchored_move')).rejects.toThrow(
+      'requires complete history',
+    );
+    const [row] = await db.select().from(knowledge).where(eq(knowledge.id, 'move_node'));
+    expect(row).toMatchObject({ parent_id: 'move_parent', version: 3 });
+    expect(
+      await db.select().from(event).where(eq(event.caused_by_event_id, 'unanchored_move')),
+    ).toEqual([]);
   });
 
   it('moves a child node to a new parent (happy path)', async () => {
@@ -406,7 +547,7 @@ describe('applyReparent', () => {
     await insertKnowledge({ id: 'k_oldparent', domain: 'yuwen' });
     await insertKnowledge({ id: 'k_newparent', domain: 'yuwen' });
     await insertKnowledge({ id: 'k_node', domain: null, parent_id: 'k_oldparent', version: 3 });
-    await applyReparent(db, {
+    await acceptKnowledgeMutationFixture(db, {
       mutation: 'reparent',
       node_id: 'k_node',
       new_parent_id: 'k_newparent',
@@ -423,7 +564,7 @@ describe('applyReparent', () => {
   it('rejects reparent → null (root creation, PR A guard)', async () => {
     const db = testDb();
     await expect(
-      applyReparent(db, {
+      acceptKnowledgeMutationFixture(db, {
         mutation: 'reparent',
         node_id: 'k_node',
         new_parent_id: null,
@@ -436,7 +577,7 @@ describe('applyReparent', () => {
     const db = testDb();
     await insertKnowledge({ id: 'k_archived', archived: true });
     await expect(
-      applyReparent(db, {
+      acceptKnowledgeMutationFixture(db, {
         mutation: 'reparent',
         node_id: 'k_node',
         new_parent_id: 'k_archived',
@@ -450,7 +591,7 @@ describe('applyReparent', () => {
     await insertKnowledge({ id: 'k_newparent', domain: 'yuwen' });
     await insertKnowledge({ id: 'k_node', domain: null, parent_id: 'k_newparent', version: 5 });
     await expect(
-      applyReparent(db, {
+      acceptKnowledgeMutationFixture(db, {
         mutation: 'reparent',
         node_id: 'k_node',
         new_parent_id: 'k_newparent',
@@ -564,6 +705,7 @@ describe('applyArchive', () => {
       })),
     );
 
+    await seedEdgeHistory();
     await applyArchive(db, { mutation: 'archive', node_id: 'k_node', expected_version: 1 }, now);
 
     const liveIncidents = await db
@@ -607,7 +749,7 @@ describe('applyArchive', () => {
     },
   );
 
-  it('preserves every non-archive field when flag-on cascade archives an event-less legacy edge', async () => {
+  it('refuses missing history and preserves all fields after explicit legacy preparation', async () => {
     const db = testDb();
     vi.stubEnv('PROJECTION_IS_WRITER', '1');
     const now = new Date('2026-07-23T12:46:00.456Z');
@@ -621,6 +763,7 @@ describe('applyArchive', () => {
     await insertKnowledge({ id: 'k_other' });
     await insertKnowledgeEdge({
       id: 'e_legacy',
+      anchored: false,
       from: 'k_node',
       to: 'k_other',
       relation: 'related_to',
@@ -631,6 +774,13 @@ describe('applyArchive', () => {
     });
     const before = await db.select().from(knowledge_edge).where(eq(knowledge_edge.id, 'e_legacy'));
 
+    await expect(
+      applyArchive(db, { mutation: 'archive', node_id: 'k_node', expected_version: 2 }, now),
+    ).rejects.toThrow('requires complete history');
+    expect(await db.select().from(knowledge_edge).where(eq(knowledge_edge.id, 'e_legacy'))).toEqual(
+      before,
+    );
+    await seedEdgeHistory();
     await applyArchive(db, { mutation: 'archive', node_id: 'k_node', expected_version: 2 }, now);
 
     const after = await db.select().from(knowledge_edge).where(eq(knowledge_edge.id, 'e_legacy'));
@@ -802,6 +952,72 @@ describe('applyMerge', () => {
     await resetDb();
   });
 
+  it('writes the complete acceptance receipt before either structural node update', async () => {
+    const db = testDb();
+    await insertKnowledge({ id: 'canonical-into' });
+    await insertKnowledge({ id: 'canonical-from' });
+    await backfillKnowledgeGenesis(db);
+    await db.execute(sql`CREATE FUNCTION require_merge_receipt_984() RETURNS trigger AS $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM event r JOIN event p ON r.caused_by_event_id = p.id
+          WHERE p.subject_id = 'canonical-into' AND p.action = 'experimental:knowledge_merge'
+            AND r.action = 'rate' AND r.payload->>'rating' = 'accept'
+            AND jsonb_array_length(r.payload->'merge_repair') = 1
+        ) THEN RAISE EXCEPTION 'structural mutation before complete merge receipt'; END IF;
+        RETURN NEW;
+      END;
+    $$ LANGUAGE plpgsql`);
+    await db.execute(sql`CREATE TRIGGER require_merge_receipt_984
+      BEFORE UPDATE ON knowledge FOR EACH ROW EXECUTE FUNCTION require_merge_receipt_984()`);
+    try {
+      await applyMerge(db, {
+        mutation: 'merge',
+        into_id: 'canonical-into',
+        from_ids: ['canonical-from'],
+        expected_versions: { 'canonical-from': 0 },
+      });
+      for (const id of ['canonical-into', 'canonical-from']) {
+        expect(await gatherAndFoldKnowledgeNode(db, id)).toEqual(await liveSnapshot(id));
+      }
+    } finally {
+      await db.execute(sql`DROP TRIGGER require_merge_receipt_984 ON knowledge`);
+      await db.execute(sql`DROP FUNCTION require_merge_receipt_984()`);
+    }
+  });
+
+  it.each(['missing history', 'structural drift', 'wrong subject'])(
+    'rejects merge with %s before changing either node or writing acceptance',
+    async (failure) => {
+      const db = testDb();
+      await insertKnowledge({ id: 'guard-into' });
+      await insertKnowledge({ id: 'guard-from' });
+      if (failure !== 'missing history') await backfillKnowledgeGenesis(db);
+      if (failure === 'structural drift') {
+        await db
+          .update(knowledge)
+          .set({ name: 'out-of-band edit' })
+          .where(eq(knowledge.id, 'guard-from'));
+      }
+      await insertProposeEvent({
+        id: 'guard-merge',
+        subject_id: failure === 'wrong subject' ? 'wrong-node' : 'guard-into',
+        payload: {
+          mutation: 'merge',
+          into_id: 'guard-into',
+          from_ids: ['guard-from'],
+          expected_versions: { 'guard-from': 0 },
+        },
+      });
+      const before = await db.select().from(knowledge).orderBy(knowledge.id);
+      await expect(acceptProposal(db, 'guard-merge')).rejects.toThrow(/history|drift|destination/);
+      expect(await db.select().from(knowledge).orderBy(knowledge.id)).toEqual(before);
+      expect(
+        await db.select().from(event).where(eq(event.caused_by_event_id, 'guard-merge')),
+      ).toEqual([]);
+    },
+  );
+
   it('archives all from_ids + pushes to into.merged_from (happy path)', async () => {
     const db = testDb();
     await insertKnowledge({ id: 'k_into', domain: 'yuwen', version: 1, merged_from: [] });
@@ -937,6 +1153,7 @@ describe('applyMerge — YUK-543 attribution repair', () => {
         ...(opts.created_at ? { created_at: opts.created_at } : {}),
         ...(opts.archived ? { archived_at: new Date() } : {}),
       });
+    await seedEdgeHistory();
   }
   async function insertMisc(id: string, toId: string, opts: { archived?: boolean } = {}) {
     const now = new Date();
@@ -1329,6 +1546,7 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     const now0 = new Date('2026-07-02T00:00:00.000Z');
     await insertKnowledge({ id: 'k_from', version: 0 });
     await insertKnowledge({ id: 'k_into', version: 0 });
+    await backfillKnowledgeGenesis(testDb());
     // learning_item seeded WITH a genesis anchor (event-sourced) so the parity assert actually runs.
     const liRow = {
       id: 'li1',
@@ -1386,6 +1604,7 @@ describe('applyMerge — YUK-543 attribution repair', () => {
   it('acceptProposal on a merge pins merge_repair on the rate=accept event', async () => {
     await insertKnowledge({ id: 'k_from', version: 0 });
     await insertKnowledge({ id: 'k_into', version: 0 });
+    await backfillKnowledgeGenesis(testDb());
     await insertQ('q1', ['k_from']);
     await insertProposeEvent({
       id: 'merge_prop',
@@ -1424,6 +1643,7 @@ describe('acceptProposal — high-tier mutations', () => {
     await insertKnowledge({ id: 'k_oldparent', domain: 'yuwen' });
     await insertKnowledge({ id: 'k_newparent', domain: 'yuwen' });
     await insertKnowledge({ id: 'k_node', domain: null, parent_id: 'k_oldparent', version: 3 });
+    await backfillKnowledgeGenesis(db);
     await insertProposeEvent({
       id: 'p_reparent',
       payload: {
@@ -1445,6 +1665,7 @@ describe('acceptProposal — high-tier mutations', () => {
   it('dispatches archive and returns archive_applied result', async () => {
     const db = testDb();
     await insertKnowledge({ id: 'k_node', version: 5 });
+    await backfillKnowledgeGenesis(db);
     await insertProposeEvent({
       id: 'p_arch',
       payload: {
@@ -1585,6 +1806,7 @@ describe('acceptProposal — PR-A2b projection parity', () => {
     await seedKnowledge(db);
     const rootId = 'seed:yuwen:root';
     await insertKnowledge({ id: 'k_merge_waiter', domain: 'yuwen', version: 0 });
+    await backfillKnowledgeGenesis(db);
     await insertProposeEvent({
       id: 'p_merge_waiter',
       subject_id: rootId,
@@ -1718,6 +1940,7 @@ describe('acceptProposal — PR-A2b projection parity', () => {
     await insertKnowledge({ id: 'k_p1', domain: 'yuwen' });
     await insertKnowledge({ id: 'k_p2', domain: 'yuwen' });
     await insertKnowledge({ id: 'k_from', domain: null, parent_id: 'k_p1', version: 7 });
+    await backfillKnowledgeGenesis(db);
     // split subject_id convention = from_id (mutationSubjectId proposals.ts:30-42)
     await insertProposeEvent({
       id: 'p_a2b_split',
@@ -1852,40 +2075,7 @@ describe('acceptProposal — PR-A2b projection parity', () => {
   });
 });
 
-// =============================================================================
-// YUK-471 W1 PR-B1 — propose_new SoT flip (PROJECTION_IS_WRITER). Flag ON: the
-// imperative applier INSERT is SKIPPED (writeRow=false); the projection writes the
-// row from events at the accept seam. The row must EXIST (proving the seam fired —
-// without the projection call it would be absent) and equal its own fold, and be
-// structurally identical to the flag-OFF imperative row. Flag OFF keeps A2b behavior
-// (imperative write + parity assert) — the rollback state.
-// =============================================================================
-
-function stripVolatile(r: {
-  name: string;
-  domain: string | null;
-  parent_id: string | null;
-  merged_from: string[];
-  proposed_by_ai: boolean;
-  approval_status: string;
-  version: number;
-  archived_at: Date | null;
-}) {
-  // id + created_at/updated_at differ across runs by construction (fresh mint + fresh `now`);
-  // compare only the structural fields the imperative writer and the projection must agree on.
-  return {
-    name: r.name,
-    domain: r.domain,
-    parent_id: r.parent_id,
-    merged_from: r.merged_from,
-    proposed_by_ai: r.proposed_by_ai,
-    approval_status: r.approval_status,
-    version: r.version,
-    archived_at: r.archived_at,
-  };
-}
-
-describe('acceptProposal — PR-B1 propose_new SoT flip (PROJECTION_IS_WRITER)', () => {
+describe('acceptProposal — legacy history refusal', () => {
   beforeEach(async () => {
     vi.unstubAllEnvs();
     await resetDb();
@@ -1894,90 +2084,7 @@ describe('acceptProposal — PR-B1 propose_new SoT flip (PROJECTION_IS_WRITER)',
     vi.unstubAllEnvs();
   });
 
-  it('flag OFF (default): imperative INSERT writes the row; A2b fold==row holds', async () => {
-    const db = testDb();
-    await insertKnowledge({ id: 'seed:yuwen:p', domain: 'yuwen' });
-    await insertProposeEvent({
-      id: 'pb1_off',
-      payload: { mutation: 'propose_new', name: '通假字', parent_id: 'seed:yuwen:p' },
-    });
-    const result = await acceptProposal(db, 'pb1_off');
-    if (result.kind !== 'propose_new_applied') throw new Error('unexpected kind');
-    const live = await liveSnapshot(result.new_node_id);
-    expect(live).not.toBeNull();
-    const folded = await gatherAndFoldKnowledgeNode(db, result.new_node_id);
-    expect(folded).toEqual(live);
-  });
-
-  it('flag ON: the projection writes the row (imperative INSERT skipped) — row exists and equals its fold', async () => {
-    vi.stubEnv('PROJECTION_IS_WRITER', '1');
-    const db = testDb();
-    await insertKnowledge({ id: 'seed:yuwen:p', domain: 'yuwen' });
-    await insertProposeEvent({
-      id: 'pb1_on',
-      payload: { mutation: 'propose_new', name: '通假字', parent_id: 'seed:yuwen:p' },
-    });
-    const result = await acceptProposal(db, 'pb1_on');
-    if (result.kind !== 'propose_new_applied') throw new Error('unexpected kind');
-
-    // The imperative INSERT was skipped (writeRow=false). The row EXISTS only because the
-    // projection wrote it from the events — a broken seam would leave the row absent.
-    const live = await liveSnapshot(result.new_node_id);
-    expect(live).not.toBeNull();
-    const folded = await gatherAndFoldKnowledgeNode(db, result.new_node_id);
-    expect(folded).toEqual(live);
-  });
-
-  it('flag ON vs OFF: the projected row is structurally identical to the imperative row', async () => {
-    const db = testDb();
-    // OFF run
-    await insertKnowledge({ id: 'seed:yuwen:p', domain: 'yuwen' });
-    await insertProposeEvent({
-      id: 'pb1_cmp_off',
-      payload: { mutation: 'propose_new', name: '互文', parent_id: 'seed:yuwen:p' },
-    });
-    const off = await acceptProposal(db, 'pb1_cmp_off');
-    if (off.kind !== 'propose_new_applied') throw new Error('unexpected kind');
-    const offRow = await liveSnapshot(off.new_node_id);
-
-    await resetDb();
-
-    // ON run (fresh DB, same shape)
-    vi.stubEnv('PROJECTION_IS_WRITER', '1');
-    await insertKnowledge({ id: 'seed:yuwen:p', domain: 'yuwen' });
-    await insertProposeEvent({
-      id: 'pb1_cmp_on',
-      payload: { mutation: 'propose_new', name: '互文', parent_id: 'seed:yuwen:p' },
-    });
-    const on = await acceptProposal(db, 'pb1_cmp_on');
-    if (on.kind !== 'propose_new_applied') throw new Error('unexpected kind');
-    const onRow = await liveSnapshot(on.new_node_id);
-
-    expect(offRow).not.toBeNull();
-    expect(onRow).not.toBeNull();
-    if (!offRow || !onRow) throw new Error('rows missing');
-    expect(stripVolatile(onRow)).toEqual(stripVolatile(offRow));
-  });
-});
-
-// =============================================================================
-// YUK-471 W1 PR-B (full flip) — the keystone NON-DELETE guard + mutation projection.
-// The full flip generalizes the seam to project EVERY touched node (guarded). The guard
-// is what makes activation safe before backfill: a touched node that folds to null but has
-// NO genesis anchor (a seed root / any pre-event-sourced row) must be LEFT INTACT, never
-// deleted. A naive (unguarded) flip would DELETE it on a normal merge/reparent/archive.
-// =============================================================================
-
-describe('acceptProposal — PR-B full flip: keystone non-delete guard + mutation projection', () => {
-  beforeEach(async () => {
-    vi.unstubAllEnvs();
-    await resetDb();
-  });
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it('flag ON: merge into a SEED ROOT (no events / no anchor) leaves BOTH rows surviving — guard skips the delete', async () => {
+  it('merge refuses eventless seed rows without deleting them; explicit history preparation enables acceptance', async () => {
     const db = testDb();
     // Seed root + a from node, BOTH inserted directly with NO events (pre-event-sourced).
     await insertKnowledge({ id: 'seed_root', domain: 'yuwen', version: 0, merged_from: [] });
@@ -1993,61 +2100,20 @@ describe('acceptProposal — PR-B full flip: keystone non-delete guard + mutatio
       },
     });
 
-    vi.stubEnv('PROJECTION_IS_WRITER', '1');
+    await expect(acceptProposal(db, 'p_merge_seed')).rejects.toThrow(/complete history/);
+    expect((await liveSnapshot('seed_root'))?.merged_from).toEqual([]);
+    expect((await liveSnapshot('k_from_seed'))?.archived_at).toBeNull();
+    await backfillKnowledgeGenesis(db);
     const result = await acceptProposal(db, 'p_merge_seed');
     expect(result.kind).toBe('merge_applied');
 
-    // The seam projects [seed_root, k_from_seed] GUARDED. Both fold to null (no creating
-    // event) and have NO genesis anchor → the guard SKIPS the delete. A naive unguarded
-    // projection would DELETE both = data loss. Assert BOTH rows survive.
+    // Both nodes survive as reconstructible rows, with only the source soft-archived.
     const root = await liveSnapshot('seed_root');
     const from = await liveSnapshot('k_from_seed');
     expect(root).not.toBeNull(); // seed root NOT deleted (this is the keystone)
     expect(from).not.toBeNull(); // from node NOT deleted (only soft-archived)
-    // The imperative mutation still applied: into.merged_from gained the from; from archived.
+    // The canonical projection appends attribution and archives the source.
     expect(root?.merged_from).toContain('k_from_seed');
     expect(from?.archived_at).toBeTruthy();
-  });
-
-  it('flag ON vs OFF: reparent of an EVENT-SOURCED node projects a structurally identical row', async () => {
-    // run() builds an event-sourced node via a propose_new accept (so it HAS a genesis anchor),
-    // then reparents it under the given flag and returns the structural row.
-    async function run(flip: boolean) {
-      await resetDb();
-      const db = testDb();
-      await insertKnowledge({ id: 'rp_oldp', domain: 'yuwen' });
-      await insertKnowledge({ id: 'rp_newp', domain: 'yuwen' });
-      await insertProposeEvent({
-        id: 'p_seed_rp',
-        payload: { mutation: 'propose_new', name: 'movable', parent_id: 'rp_oldp' },
-      });
-      const seed = await acceptProposal(db, 'p_seed_rp'); // flag OFF — imperative create
-      if (seed.kind !== 'propose_new_applied') throw new Error('seed');
-      const nodeId = seed.new_node_id;
-      await insertProposeEvent({
-        id: 'p_rp',
-        subject_id: nodeId,
-        payload: {
-          mutation: 'reparent',
-          node_id: nodeId,
-          new_parent_id: 'rp_newp',
-          expected_version: 0,
-        },
-      });
-      if (flip) vi.stubEnv('PROJECTION_IS_WRITER', '1');
-      const r = await acceptProposal(db, 'p_rp');
-      if (r.kind !== 'reparent_applied') throw new Error('reparent');
-      vi.unstubAllEnvs();
-      const row = await liveSnapshot(nodeId);
-      return row ? stripVolatile(row) : null;
-    }
-    const off = await run(false);
-    const on = await run(true);
-    expect(off).not.toBeNull();
-    expect(on).not.toBeNull();
-    // Projection-written reparent row == imperative reparent row (parent moved, version bumped).
-    expect(on).toEqual(off);
-    expect(on?.parent_id).toBe('rp_newp');
-    expect(on?.version).toBe(1);
   });
 });

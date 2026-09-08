@@ -2,13 +2,81 @@
 
 ## 最新状态
 
-- Active983：root独占codex/yuk-983-canonical-editors；退休Notes body editor与Ingestion全部六结构/merge/figure操作的直接UPDATE回退，统一event→projection，保留rowlock/version/backlinks。
-  migrateCanonicalProjections扩到artifact/question_block；只给无事件旧行genesis，拒绝不完整历史、payload-only次要题块（包括live缺失）、漂移/幽灵；校准方案A不动。
-  68相关DB/3flag unit/typecheck/lint/build/strict fold/architecture过，依赖435→433基线收紧。
-  初审2P1已修，唯一验证PASS；禁止第三审。oracle旧三kind断言已按五kind修正，9DB复验在跑。
-  新production backup已真实恢复loom_before_983_verify；新bundle迁移7LI/8artifact通过、0新增锚点，private canonical983-clone.json。
-  初probe错网络已stop；后clone识别未接受learning-intent提案被误当artifact变更，root改共享fold action集合并补回归后PASS，不是生产历史丢失；禁第三审。
-  尚未commit/PR/部署983；上一运行仍app f707ca5c、worker8bce5f0a，原脏main未动。全局NEXT旧979/预算叙事已原位纠正。
+- 984全局flag退休完成：projectionIsWriter必须显式entity，knowledge/edge各自canonical；env schema及tracked Mac compose删除全局开关。README明确七实体历史gate/旧release rollback；calibration方案A不动。
+  删4重复ON/OFF proposal tests/stripVolatile辅助，保留真实接受字段/并发/缺历史/回放。oracle预期改七实体always-on，仅calibration gated。
+  76DB、3policy unit、typecheck/build/lint与boundary/deepening/fold strict通过；lint316 warnings/1info但exit0，未扩大清理范围。
+  gh preflight auth可用，远端main仍7cccb335，984无已有PR。准备首次整项PR/review/CI，非已交付；局部锁序核查不算整项初审，整项review预算尚未用。
+  生产983仍不动，无paid/NAS。下一clone fresh backup实际migration/browser/readiness后按授权Mac交付；整体goal active。
+
+- 984知识历史迁移已实施：migrateCanonical锁表扩knowledge/edge，先validateKnowledgeHistory，再7实体backfill+正反fold/live审计。Q2间接propose/split要求原accept/materialized IDs/index；Q3 merge全部from/into须base。
+  pending proposal不算结构历史；archive-only edge拒绝。edge真实rate subject为knowledge_edge、rating reverse/change_type等，单独验证生成effect，不能套node rate.subject=event约束。
+  接受envelope/原创建schema重用、malformed action/identity拒绝；split/merge判别从action补入，和现fold相同。孤立materialized accept即使proposal+index都丢也拒绝。
+  95DB及四套73DB复验过（含actions/backfill caller），最后9历史DB/typecheck/build全过。
+  初轮2旧report fixture只列5实体，补7实体精确断言；另两新fixture缺id/时间已修；schema初误传DB nullable envelope、未补mutation，按真实fold输入修正。无生产/付费变更。
+  下一全局PROJECTION_IS_WRITER物理退休、整项独立review/exactCI/clone+Mac交付；未完成，不把local migration gate当生产验收。
+
+- 984四创建入口已共用node-creation.ts：LearningIntent/seedKnowledge/ensureSubjectRoot/placement调用同一create lock→已存在skip/error→genesis/index→projection。
+  保留actor、placement确定性genesisID与旧身份/历史检查、ingest_at；已有节点不改/不补假历史，history有row无则拒绝。业务src知识结构DML只剩projection，两个embedding派生writer保留。
+  四套44DB、补三套26DB（跨bootstrap/root并发只诞生一次/ghost拒绝）及typecheck/build过。fold strict无violation/stale，删除8旧writer声明，proposals归derived maintenance。
+  依赖baseline如实428/0/48：Knowledge创建锁新增1，对projection引用少6；Practice新增1明确Knowledge创建命令替换原跨域raw INSERT，不用kernel转发隐藏。catalog关联984，架构/边界过。
+  audit unit首1fail仅引用已删除seed registry fixture，改现存artifact/question_block advisory样本，最终28unit/typecheck复验过。
+  下一知识部署历史Q2/Q3/全局flag退休与984整项reviewCI/Mac交付。无paid/生产变化，原脏main不动。
+
+- 984科目改名/重置root name已删raw UPDATE，保留控制面revision与节点FOR UPDATE→锁后时钟→event→projection。
+  requireKnowledgeHistory从提案私有提至现有knowledge projection模块，两真实consumer共享严格guard；缺base/结构漂移阻止改名并回滚subject/revision/journal/events/root。
+  两套79DB与补充10控制DB/typecheck/build过；旧未使用isDeepStrictEqual import删除。下一三创建入口seedKnowledge/ensureSubjectRoot/placement-starter合并创建责任，保留各自幂等/来源。
+  未984正式review/PR/付费/部署；production983仍不动，部署历史/Q2Q3/globalflag与交付仍未完成。
+
+- 984 LearningIntent创建已canonical：knowledge owner创建genesis/index再project，无raw INSERT；Agency两调用传接受rate因果ID，保持ingest_at outbox optout。
+  create-only id锁与existing guard避免projection upsert变成覆盖。3a真实接受验证root+child fold/index/因果、Notes失败全tx回滚、无需backfill即可archive。
+  两套56DB/typecheck/build过；最终重复ID护栏含14DB/typecheck复验过。下一统一seed/ensure-subject-root/placement-starter三处INSERT和subject-control-name UPDATE；已root实查都有配对event但仍raw结构写。
+  保留embedding派生writer；迁移当前5实体缺知识Q2/Q3历史校验。没有新增付费/生产变更，正式984 review/PR/交付尚未开始。
+
+- 984 merge已canonical：私有prepareKnowledgeMerge锁内校验全部from/into历史与结构漂移→9归因修复→完整immutable rate receipt→统一projection。
+  applyMerge raw导出/两处node DML/accept flag与warn-only parity分支删；仅embedding派生UPDATE保留。重复from与错误subject拒绝。
+  原raw测试改真实accept并按精确proposal读取receipt。四旧fixture缺base已显式准备；seed无历史先拒绝且不删行再准备成功。
+  trigger证明节点UPDATE前有完整merge receipt；missing/drift/target guard全回滚。4suite131DB/typecheck/build过，首无结果runner退出1后单suite重跑定位4fixture（63pass），非生产故障。
+  下一部署历史/全局flag物理退休；map_984_history_retirement只读盘点在跑，无第二writer。未984正式review/PR/paid/deploy，生产983不动。
+  盘点已返回，root实查learning-intent-knowledge.ts仍raw INSERT，Agency learning-intent.ts两真实create调用未补knowledge genesis/index；下一先收口此遗漏owner，再部署校验。
+  不直接采纳子agent“subject control raw UPDATE应保留”判断；需按唯一结构writer目标另核subject seed/root控制面。migrateCanonical目前仅5实体，Q2/Q3须专门验证。
+
+- Active984：root独占codex/yuk-984-canonical-knowledge（从983交付docs8c901df3建），原脏main不动。
+  关系新建提案已删flag-off直接INSERT；共同runEdgeTopologyGate固定projection，保留锁/retry/错误翻译，不再生产warn-only。
+  37相关DB过，新增INSERT-trigger顺序验证含所在文件11DB通过；typecheck/build过。仅实施checkpoint，未审查/PR/部署，生产仍983/5dd7e8ed，无paid。
+  edge全event→projection；node新建/tagging/reparent/archive/split已迁移，余merge结构DML及部署历史/flag退休；不保留永久旧writer作rollback。
+  最新127DB/typecheck/build全过；archive/split删节点DML，撤回真实consumer也prepare→event/rate→project，public raw archive导出删。
+  原子性case发现投影可覆盖out-of-band漂移：现在reparent/archive/split锁内严格比对结构fold/live，派生embedding排除，缺历史/漂移全回滚。
+  历史fixture时钟在genesis前设置、accept时推进，无事件UPDATE；初始SQL日期probe失败无生产写入，已删除。split测试通过真实accept并保持minted IDs/时间/边关系断言。
+  map_984_node_order只读结论已返回，root复核9归因owner不依赖from节点先归档；可准备完整repair receipt后再投影，尚未实施merge结构DML删除。
+  已修accept merge在knowledge行锁之前取learning-state全局锁；原内部applyMerge取G太晚。真实accept/pg_locks回归及两套77DB/typecheck/build过。
+  本轮仅锁序有界只读核查，不是984整项正式初审；无PR/paid/deploy，生产983不动。
+  有界锁序核查无P0/P1；临时删fix后新case精确RED（knowledge relation lock 1≠0），已恢复；helper finally释放G并drain两事务。
+  最新reparent126DB+7guard/typecheck/build过：旧结构UPDATE删，锁内CAS/base校验→accept projection→新位置embedding/hash维护，derived不再写updated_at。
+  tests/helpers/knowledge-mutation.ts显式fixture backfill再走真实提案/accept；旧raw applier测试迁移，缺历史/错误subject/并发相同version均有行为护栏。
+  两旧fixture缺base已补；race暴露insertProposeEvent伪造subject_id，改按mutation导出真实subject并在accept检查targetbinding，最终双并发只有1提交。无paid/生产变化。
+  本轮117DB/typecheck/build过，最终接受节点字段3targetedDB过。prepareProposedKnowledgeId只校验父+分配ID，无直接INSERT/writeRow模式；tagging删flag/parity分支，接受新节点固定projection。
+  旧准备函数写表断言移至真实accept，准备阶段断言无node/event；原自动批准/缓存/来源契约保留，无paid/部署。下一reparent embedding/merge/split顺序。
+  最新7suite/212DB/typecheck/build全过，gen:postman无diff。create/reactivate原始DML及API/merge/supersede配对generate删除，保留replacement event ID。
+  首192case有1旧fixture revival早于creation；改真实创建/归档历史，owner锁内推进事件时间。同clock三连操作严格顺序回归过；ingest_at optout独立保留，无paid/生产变更。
+  只读map_984_node_order已终态；其“保留imperative rollback”建议与owner目标不符，不采用。节点顺序结论须root逐项复核。
+  archive proposal已改锁行→校验base→rate/archive→projection，无直接UPDATE或flag。59DB/typecheck/build过；显式排除archive-only假基线后42actionsDB及typecheck/build复验PASS。
+  生产只读edge count0；不把空人口当复杂迁移验收。supersede需要先移除旧边再gate新边，重构owner时保持同tx；其它raw writer尚未改。
+  archiveKnowledgeEdgeFromEvents共同owner已接proposal/cascade；封装tx/lock/base/event/projection，cascade不再读edge内部/拼事件，保留cause/time/ingest_at。
+  raw archive函数现已物理删除；内部incident/merge/supersede全用共同owner，删重复archive事件helper与inline genesis。supersede先archive旧边再引入新边，同tx。
+  最新145DB+20edge-ownerDB/typecheck/build过。初10fixture缺历史失败已显式seed，旧自动backfill测试改先拒绝/回滚→准备历史→保持所有字段/回放断言。
+  61集成DB过；旧cascade空create payload补真实字段/actor/time，最终19cascadeDB/typecheck/build/changed lint过。生产未动，无paid。
+  Linear已恢复且list_comments确认上轮comment未送达，本轮统一补记59/42DB和共同owner进展；984仍In Progress。
+
+- 983 Done：PR1368 exactc97eddad098dc80ddd84491ec1218daf85b4e38f/CI34221548520所有job绿，11:46:41Z main7cccb335eb1a4f4d2026198e9e3fac39a393246e。
+  Notes及全部六题块编辑统一event→projection；历史完整性迁移/rowlock/CAS/backlinks保留。初审2P1修复，唯一验证PASS，禁止第三审。
+  68相关DB/18迁移/9oracle/61unit/27提案DB与typecheck/lint/build/audits过；首CI三fixture缺genesis，补两行准备后全27过，未删除断言。
+  实际5dd7e8ed镜像与最终生产代码相同；fresh dump已恢复，clone HTTP保存3→4/旧版本409及后续projection迁移全部PASS。
+  前两HTTP probe缺client source镜像而断言失败，已用真实client-shaped输入修正；不冒充产品修复，clone写入未删。
+  11:46:55Z Mac app18e9a5e2/worker2377d637均5dd7e8ed healthy零重启，原PG7d99236a/09:40:42Z与volume未变。
+  live迁移零新增，7LI/8artifact完整；454event/280task/21attempt/空队列不变；health200/无token401/7notes200/browser读取刷新零错误。
+  首live probe误用events表名，改event后PASS；没有生产业务写入。private notes983-production-check.json/reader.png。
+  runtime-983-image.override.yml已生效；rollback需旧release/compose与旧镜像，不能只翻已退休flag。dump与旧镜像保留，无NAS/tunnel/paid。
+  root独占codex/yuk-983-delivery-notes，原脏main不动；后继984已去重Todo，知识/edge结构双轨退休；887 actual差集与951保留项仍开放，goal active。
 
 - 982 Done：PR1367 exactf707ca5c/CI34217359805所有job绿，10:51:28Z合并main e095d28680cf8e745b071e6f564f4e9ebd29af14。
   Mac10:51:33Z只重建app3e5db502，imagef707ca5c/c122d97d healthy/0重启；worker c430a928/PG7d99236a未动，454/280/21/空队列未变。

@@ -1,9 +1,14 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-08：982 Done，PR1367/f707ca5c/CI34217359805全绿/main e095d286，Mac仅app部署健康/worker与PG未变，27unit/browser/初审通过。887 Tagging→import/Agency真实验收PASS，golden零差异；新$3预留完毕余0。整体重构尚未完成；无新增paid/NAS。
+> Linear 是权威 tracker；更新于 2026-09-08：984实现收口，全局flag/schema/Mac配置选择已删，七实体canonical；删4无效ON/OFF测试。76DB/3unit/typecheck/lint/build及架构/fold gates过，准备整项PR/review/exactCI/clone验收。生产983未动，整体未完成，无paid/NAS。
 
 ## NOW
 
+- 983 Done：Notes/QuestionBlock六编辑操作统一event→projection，退休双轨与两flag；初审2P1修复、唯一验证PASS，禁止第三审。
+  68相关DB/18迁移/9oracle/61unit/27提案DB及本地gates通过；旧fixture补genesis后新exact CI全绿，未放宽业务断言。
+  fresh dump真实恢复，实际镜像clone迁移与HTTP保存/409/回放通过；11:46:41Z main7cccb335，11:46:55Z Mac交付。
+  app18e9a5e2/worker2377d637 healthy零重启，原PG未动；7笔记读取/reload零错误，454event/280task/21attempt/空队列未变。
+  详见docs/planning/2026-09-08-canonical-editors.md；984已去重登记Todo，原脏main不动，无新增paid/NAS。
 - 979 Done：PR1364 exact32d0effb/CI34147920619全绿/main61421a4e；初审PASS，63unit/20DB/gates过；Mac93df0528健康，PG/424event/258task/4attempt不变。Memory实际SIGKILL+同job重投PASS/0重烧，887其它缺项继续；980启动停机P2已登记deferred。951部分交付：PR1361 exactab0bbb909，CI34134547233全job绿，main26e0e2d65；初审PASS。
   删7死model control/249行与重复存在性断言；31unit/41DB/typecheck/lint/build/audits过，独立8unit过。
   后续退休已交付：PR1363 exact57a7bbee/CI34144766869全绿/main3c8d5c1b，初审PASS；121DB及本地gates通过。
@@ -62,10 +67,6 @@
   ai_task_runs258/provider_attempt4未增；所谓7个历史恢复经精确谓词核实为0，额外$3授权未使用。
   887被GitHub自动Done后已恢复In Progress，完整provider/crash矩阵尚缺。
   详见docs/planning/2026-09-07-local-production-state-cutover.md；NAS不在范围。
-- YUK971 Done：PR1353 exactcffec1b5，CI34106719123 docs-only成功，独立初审PASS；main55aaac30，未部署。
-  仅修正三份Ingestion/Copilot AGENTS：自动VLM baseline、额外rescue授权、Notes artifact owner与FULL呈现控制。
-  纠正导航链接并删除易过时的模型/路由数量缓存；不改产品代码、prompt、provider或生产。
-  6个本地链接、7项文档unit及本机typecheck/lint/build通过。
 - YUK970 Done：PR1352 exact46a237c49859d8c8c17c2a81c1aeb8a7da7126ba，CI34066586538全绿，
   2026-09-06T23:24:57Z squash main07280e6b30a63ed06f927bc2f20d38615996447e，Linear Done，未部署。
   退休Agency/Ingestion整体schema迁移指纹、指纹自测及Agency/Copilot重复旧路径断言；明确effect/cost/mirror断言。
@@ -179,7 +180,7 @@
 
 ## NEXT
 
-1. Active983：artifact/question_block编辑回退退休已实施，68DB/唯一验证审过；待clone/CI/交付。knowledge/edge后继，不能用974一致性登记替代退休。
+1. 984 Active：先edge归档/重新启用/merge配对写，再node与历史迁移；保留拓扑/归因/派生列及Scheme A，不造框架。详见2026-09-08-canonical-knowledge.md。
 2. 887剩余证据按原七项矩阵收口：Tencent/GLM-OCR现役wire及完整provider/恢复范围；已有Notes/Memory/learner/Tagging/Agency通过项不重烧。
    新$3已全部保守预留/余0；旧$10不回收。免费代码/DB/回放继续，新增付费须另授权。977/980保持P2。
 3. 最终按学习意图→录入→判分→复习→提议/撤回逐责任核实，并给951名词保留明确处置；不以测试/依赖数字替代完成。
@@ -194,7 +195,6 @@
 
 ## BLOCKED-ON
 
-- 976两页费用UI已批准并交付；其它UI重绘仍须独立预检，不因整体goal扩张授权。
 - Mac本地生产已授权直接操作；NAS部署/数据操作仍未授权，不执行。
 - 两个$3专项均已保守预留完毕；新增paid未授权，不批量重跑历史failed/DLQ，历史费用unknown保留。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。
