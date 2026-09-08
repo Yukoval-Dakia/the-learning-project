@@ -16,9 +16,12 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
 import { RelationTypeSchema, type RelationTypeSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
-import { knowledge, knowledge_edge } from '@/db/schema';
+import { event, knowledge, knowledge_edge } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
+import { gatherAndFoldKnowledgeEdge } from '@/server/projections/gather';
+import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
 import { isDirectTreePair } from './topology-gate';
 
 type DbLike = Db | Tx;
@@ -438,6 +441,79 @@ export interface ArchiveKnowledgeEdgeResult {
   id: string;
   /** true if THIS call flipped archived_at NULL→now; false if it was already archived (idempotent no-op). */
   archived: boolean;
+}
+
+export interface EdgeArchiveProvenance {
+  event_id?: string;
+  caused_by_event_id?: string;
+  propose_event_id?: string;
+  reasoning?: string | null;
+  created_at?: Date;
+  /** Internal compensation records must not schedule memory ingestion. */
+  ingest_at?: Date;
+}
+
+/** Own one atomic, replayable archive. Existing caller transactions become savepoints.
+ * A concurrent loser returns archived:false without publishing a second event.
+ * Historical repair belongs to deployment, never a silent inline snapshot.
+ */
+export async function archiveKnowledgeEdgeFromEvents(
+  db: DbLike,
+  id: string,
+  provenance: EdgeArchiveProvenance = {},
+): Promise<ArchiveKnowledgeEdgeResult> {
+  return db.transaction(async (tx) => {
+    const [current] = await tx
+      .select()
+      .from(knowledge_edge)
+      .where(eq(knowledge_edge.id, id))
+      .for('update');
+    if (!current) throw new ApiError('not_found', `knowledge_edge not found: ${id}`, 404);
+    if (current.archived_at !== null) return { id, archived: false };
+    const [base] = await tx
+      .select({ id: event.id })
+      .from(event)
+      .where(
+        and(
+          eq(event.subject_kind, 'knowledge_edge'),
+          eq(event.subject_id, id),
+          sql`(${event.action} = 'experimental:genesis' OR (${event.action} = 'generate'
+        AND (${event.payload}->>'edge_op') IS DISTINCT FROM 'archive'))`,
+        ),
+      )
+      .limit(1);
+    if (!base || (await gatherAndFoldKnowledgeEdge(tx, id)) === null) {
+      throw new ApiError(
+        'conflict',
+        `knowledge_edge ${id} requires complete history before archive`,
+        409,
+      );
+    }
+    const now = provenance.created_at ?? new Date();
+    await writeEvent(tx, {
+      id: provenance.event_id ?? createId(),
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'generate',
+      subject_kind: 'knowledge_edge',
+      subject_id: id,
+      outcome: 'success',
+      payload: {
+        edge_op: 'archive',
+        archive_edge_id: id,
+        from_knowledge_id: current.from_knowledge_id,
+        to_knowledge_id: current.to_knowledge_id,
+        relation_type: current.relation_type,
+        reasoning: provenance.reasoning === undefined ? current.reasoning : provenance.reasoning,
+        ...(provenance.propose_event_id ? { propose_event_id: provenance.propose_event_id } : {}),
+      },
+      caused_by_event_id: provenance.caused_by_event_id,
+      created_at: now,
+      ingest_at: provenance.ingest_at,
+    });
+    await projectKnowledgeEdgeGuarded(tx, id);
+    return { id, archived: true };
+  });
 }
 
 /**

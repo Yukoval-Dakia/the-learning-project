@@ -37,6 +37,18 @@ Typecheck/build pass; final explicit base-action check passes the42-case actions
 Live read-only preflight finds0 edges: no live legacy edge is exposed, but that
 empty population is not evidence for complex history migration or complete rollout.
 
+The complete archive operation now belongs to Knowledge's
+`archiveKnowledgeEdgeFromEvents`: transaction/lock, base validation, provenance,
+projection and concurrent no-op handling. Proposal acceptance and cascade revert
+both consume it; cascade no longer reads edge internals or constructs archive
+events. Compensation retains its cause/time and `ingest_at` memory-outbox opt-out.
+The raw archive function is no longer exported through the capability public API;
+its remaining internal merge/supersede callers must still migrate before removal.
+Two integration suites pass61 DB cases. A legacy cascade fixture had an empty
+create payload; replacing it with the actual structural fields/actor/time restores
+replay fidelity, without weakening rollback assertions. Final cascade19DB,
+typecheck/build and changed-file lint pass. No review/PR/deployment claim yet.
+
 Remaining direct edge create/archive/reactivate callers still pair raw DML with events;
 the global flag is not yet retired. No completion/rollout claim for this step.
 Read-only node mapping confirms the current fold covers all five operations:

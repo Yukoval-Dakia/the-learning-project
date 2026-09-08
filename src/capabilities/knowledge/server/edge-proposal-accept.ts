@@ -12,8 +12,6 @@ import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from '@/kernel/proposals/signals';
-import { gatherAndFoldKnowledgeEdge } from '@/server/projections/gather';
-import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
 import { findExistingRateEvent } from '@/server/proposals/applier-helpers';
 import {
   acquireEdgeEndpointLocks,
@@ -21,6 +19,7 @@ import {
   runEdgeTopologyGate,
   withEdgeEndpointLockRetry,
 } from './edge-topology-write';
+import { archiveKnowledgeEdgeFromEvents } from './edges';
 import { applyApprovedEdgeSupersede } from './propose_edge';
 
 const SUPERSEDE_DEFAULT_REASON = 'accepted reconcile supersede';
@@ -201,40 +200,6 @@ export async function decideKnowledgeEdgeProposal(
 
     const generateEventId = createId();
     await db.transaction(async (tx) => {
-      // Lock, validate, append, project: two concurrent decisions cannot both own
-      // the live→archived transition, and no direct UPDATE precedes the event.
-      const [current] = await tx
-        .select()
-        .from(knowledge_edge)
-        .where(eq(knowledge_edge.id, archiveEdgeId))
-        .for('update');
-      if (!current) {
-        throw new ApiError('not_found', `knowledge_edge not found: ${archiveEdgeId}`, 404);
-      }
-      if (current.archived_at !== null) {
-        throw new ApiError('conflict', `knowledge_edge ${archiveEdgeId} is already archived`, 409);
-      }
-      // The legacy fold can synthesize a row from archive-only history. That is
-      // not a creation baseline and must not authorize a canonical mutation.
-      const [base] = await tx
-        .select({ id: event.id })
-        .from(event)
-        .where(
-          and(
-            eq(event.subject_kind, 'knowledge_edge'),
-            eq(event.subject_id, archiveEdgeId),
-            sql`(${event.action} = 'experimental:genesis' OR (${event.action} = 'generate'
-          AND (${event.payload}->>'edge_op') IS DISTINCT FROM 'archive'))`,
-          ),
-        )
-        .limit(1);
-      if (!base || (await gatherAndFoldKnowledgeEdge(tx, archiveEdgeId)) === null) {
-        throw new ApiError(
-          'conflict',
-          `knowledge_edge ${archiveEdgeId} requires complete history before archive`,
-          409,
-        );
-      }
       const now = new Date();
       await writeEvent(tx, {
         id: rateEventId,
@@ -253,33 +218,15 @@ export async function decideKnowledgeEdgeProposal(
         created_at: now,
       });
 
-      // Provenance + idempotency anchor: a `generate` event whose subject is the
-      // archived edge, mirroring the create path so the re-decide guard above
-      // returns a consistent { generate_event_id, edge_id }.
-      await writeEvent(tx, {
-        id: generateEventId,
-        actor_kind: 'user',
-        actor_ref: 'self',
-        action: 'generate',
-        subject_kind: 'knowledge_edge',
-        subject_id: archiveEdgeId,
-        outcome: 'success',
-        payload: {
-          edge_op: 'archive',
-          archive_edge_id: archiveEdgeId,
-          from_knowledge_id: current.from_knowledge_id,
-          to_knowledge_id: current.to_knowledge_id,
-          relation_type: current.relation_type,
-          // YUK-471 W1 PR-A2b — encode absent reasoning as null (not ''), matching the
-          // ROW's `?? null` so the edge fold is lossless (see GenerateKnowledgeEdge note).
-          reasoning: proposePayload.reasoning ?? null,
-          propose_event_id: proposeEventId,
-        },
+      const archived = await archiveKnowledgeEdgeFromEvents(tx, archiveEdgeId, {
+        event_id: generateEventId,
         caused_by_event_id: proposeEventId,
-        created_at: now,
+        propose_event_id: proposeEventId,
+        reasoning: proposePayload.reasoning ?? null,
       });
-
-      await projectKnowledgeEdgeGuarded(tx, archiveEdgeId);
+      if (!archived.archived) {
+        throw new ApiError('conflict', `knowledge_edge ${archiveEdgeId} is already archived`, 409);
+      }
     });
 
     if (proposal) {

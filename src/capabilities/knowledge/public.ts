@@ -41,7 +41,11 @@ export type {
   KnowledgeEdgeProposalDecisionResult,
 } from './server/edge-proposal-accept';
 export { decideKnowledgeEdgeProposal } from './server/edge-proposal-accept';
-export { archiveKnowledgeEdge, listKnowledgeEdges, listKnowledgeEdgesPage } from './server/edges';
+export {
+  archiveKnowledgeEdgeFromEvents,
+  listKnowledgeEdges,
+  listKnowledgeEdgesPage,
+} from './server/edges';
 export type { FailureLearningKnowledgeNode } from './server/failure-learning-context';
 export { loadFailureLearningKnowledgeContext } from './server/failure-learning-context';
 export type {

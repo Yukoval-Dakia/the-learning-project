@@ -9,7 +9,10 @@
   只读map_984_node_order已终态；其“保留imperative rollback”建议与owner目标不符，不采用。节点顺序结论须root逐项复核。
   archive proposal已改锁行→校验base→rate/archive→projection，无直接UPDATE或flag。59DB/typecheck/build过；显式排除archive-only假基线后42actionsDB及typecheck/build复验PASS。
   生产只读edge count0；不把空人口当复杂迁移验收。supersede需要先移除旧边再gate新边，重构owner时保持同tx；其它raw writer尚未改。
-  本轮Linear save_comment及随后list_comments均transport失败，未确认送达；恢复后先查重再同步本段59/42DB与归档进度，984保持In Progress，无需新issue。
+  archiveKnowledgeEdgeFromEvents共同owner已接proposal/cascade；封装tx/lock/base/event/projection，cascade不再读edge内部/拼事件，保留cause/time/ingest_at。
+  public移除raw archive导出；内部merge/supersede等仍待迁移，最终需删旧函数，不称两模式完工。
+  61集成DB过；旧cascade空create payload补真实字段/actor/time，最终19cascadeDB/typecheck/build/changed lint过。生产未动，无paid。
+  Linear已恢复且list_comments确认上轮comment未送达，本轮统一补记59/42DB和共同owner进展；984仍In Progress。
 
 - 983 Done：PR1368 exactc97eddad098dc80ddd84491ec1218daf85b4e38f/CI34221548520所有job绿，11:46:41Z main7cccb335eb1a4f4d2026198e9e3fac39a393246e。
   Notes及全部六题块编辑统一event→projection；历史完整性迁移/rowlock/CAS/backlinks保留。初审2P1修复，唯一验证PASS，禁止第三审。
