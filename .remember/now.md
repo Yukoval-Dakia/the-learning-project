@@ -2,6 +2,11 @@
 
 ## 最新状态
 
+- 951最终名词处置补入ADR0063：persistent conversation/turn/native child/tool call；保留subagent_run当前投影、live remote ToolOperations、copilot_continuation历史schema/export/readiness，不做物理名合并或Mission表面。
+  root核对manifest仅现役run/reconcile，mcp-bridge仍调用getProcessToolOperations，native同parent结算/取消及turn reader仍在；文档集成尚未完成，951不能先报Done。
+  本轮Mac app/worker e514ef94、PG三服务healthy，health200；未重启、改生产数据或付费，旧预算reserve不回收。
+  下一文档集成和887真实上传/OCR/恢复差集；原脏main始终未动。
+
 - 984 Done：PR1369 exact e514ef94a5f8032e21a8afbe9864294538b5b935 /CI34233241153终态success全job绿，初审PASS无P0/P1；13:52:31Z merge main e9b6f2516dc4595bf3cb4eae1a179c4403fed78f。
   13:53:04Z Mac app404dd2cbf5be67b63fb47bf25fde5b7b0814050793b067e708e09a063ade9d87/worker8250610adcddc02d017eed9a1eea0c1192a45d3d671b218d549bc2daa4b4a530运行e514ef94 healthy/0restart。
   原PG7d99236a/09-07T09:40:42.502Z和volume未动；live migration七实体0新增、12knowledge/7LI/8artifact通过，454event/280task/21attempt/0queue未变。
