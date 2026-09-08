@@ -2,6 +2,12 @@
 
 ## 最新状态
 
+- 984 merge已canonical：私有prepareKnowledgeMerge锁内校验全部from/into历史与结构漂移→9归因修复→完整immutable rate receipt→统一projection。
+  applyMerge raw导出/两处node DML/accept flag与warn-only parity分支删；仅embedding派生UPDATE保留。重复from与错误subject拒绝。
+  原raw测试改真实accept并按精确proposal读取receipt。四旧fixture缺base已显式准备；seed无历史先拒绝且不删行再准备成功。
+  trigger证明节点UPDATE前有完整merge receipt；missing/drift/target guard全回滚。4suite131DB/typecheck/build过，首无结果runner退出1后单suite重跑定位4fixture（63pass），非生产故障。
+  下一部署历史/全局flag物理退休；map_984_history_retirement只读盘点在跑，无第二writer。未984正式review/PR/paid/deploy，生产983不动。
+
 - Active984：root独占codex/yuk-984-canonical-knowledge（从983交付docs8c901df3建），原脏main不动。
   关系新建提案已删flag-off直接INSERT；共同runEdgeTopologyGate固定projection，保留锁/retry/错误翻译，不再生产warn-only。
   37相关DB过，新增INSERT-trigger顺序验证含所在文件11DB通过；typecheck/build过。仅实施checkpoint，未审查/PR/部署，生产仍983/5dd7e8ed，无paid。

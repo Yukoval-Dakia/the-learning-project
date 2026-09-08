@@ -7,6 +7,7 @@ import { acceptKnowledgeMutationFixture } from '../../../../tests/helpers/knowle
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KnowledgeRowSnapshot } from '@/core/schema/event/genesis';
+import type { MergeRepairEntryT } from '@/core/schema/event/known';
 import {
   event,
   goal,
@@ -29,7 +30,6 @@ import { migrateCanonicalProjections } from '../../../../scripts/migrate-canonic
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   acceptProposal,
-  applyMerge,
   dismissProposal,
   prepareProposedKnowledgeId,
   writeKnowledgeProposeEvent,
@@ -37,6 +37,21 @@ import {
 import { seedKnowledge } from './seed';
 
 const applyArchive = acceptKnowledgeMutationFixture;
+// Exercise the real accept seam; inspect the persisted forensic receipt, not an internal applier.
+async function applyMerge(...args: Parameters<typeof acceptKnowledgeMutationFixture>) {
+  await backfillKnowledgeGenesis(args[0]);
+  const proposalId = await writeKnowledgeProposeEvent(args[0], {
+    payload: args[1],
+    reasoning: 'Exercise merge acceptance with complete attribution and rollback evidence.',
+  });
+  await acceptProposal(args[0], proposalId);
+  const [rate] = await args[0]
+    .select()
+    .from(event)
+    .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)))
+    .limit(1);
+  return (rate.payload as { merge_repair: MergeRepairEntryT[] }).merge_repair;
+}
 async function applySplit(...args: Parameters<typeof acceptKnowledgeMutationFixture>) {
   const result = await acceptKnowledgeMutationFixture(...args);
   if (result.kind !== 'split_applied') throw new Error('expected accepted split');
@@ -937,6 +952,72 @@ describe('applyMerge', () => {
     await resetDb();
   });
 
+  it('writes the complete acceptance receipt before either structural node update', async () => {
+    const db = testDb();
+    await insertKnowledge({ id: 'canonical-into' });
+    await insertKnowledge({ id: 'canonical-from' });
+    await backfillKnowledgeGenesis(db);
+    await db.execute(sql`CREATE FUNCTION require_merge_receipt_984() RETURNS trigger AS $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM event r JOIN event p ON r.caused_by_event_id = p.id
+          WHERE p.subject_id = 'canonical-into' AND p.action = 'experimental:knowledge_merge'
+            AND r.action = 'rate' AND r.payload->>'rating' = 'accept'
+            AND jsonb_array_length(r.payload->'merge_repair') = 1
+        ) THEN RAISE EXCEPTION 'structural mutation before complete merge receipt'; END IF;
+        RETURN NEW;
+      END;
+    $$ LANGUAGE plpgsql`);
+    await db.execute(sql`CREATE TRIGGER require_merge_receipt_984
+      BEFORE UPDATE ON knowledge FOR EACH ROW EXECUTE FUNCTION require_merge_receipt_984()`);
+    try {
+      await applyMerge(db, {
+        mutation: 'merge',
+        into_id: 'canonical-into',
+        from_ids: ['canonical-from'],
+        expected_versions: { 'canonical-from': 0 },
+      });
+      for (const id of ['canonical-into', 'canonical-from']) {
+        expect(await gatherAndFoldKnowledgeNode(db, id)).toEqual(await liveSnapshot(id));
+      }
+    } finally {
+      await db.execute(sql`DROP TRIGGER require_merge_receipt_984 ON knowledge`);
+      await db.execute(sql`DROP FUNCTION require_merge_receipt_984()`);
+    }
+  });
+
+  it.each(['missing history', 'structural drift', 'wrong subject'])(
+    'rejects merge with %s before changing either node or writing acceptance',
+    async (failure) => {
+      const db = testDb();
+      await insertKnowledge({ id: 'guard-into' });
+      await insertKnowledge({ id: 'guard-from' });
+      if (failure !== 'missing history') await backfillKnowledgeGenesis(db);
+      if (failure === 'structural drift') {
+        await db
+          .update(knowledge)
+          .set({ name: 'out-of-band edit' })
+          .where(eq(knowledge.id, 'guard-from'));
+      }
+      await insertProposeEvent({
+        id: 'guard-merge',
+        subject_id: failure === 'wrong subject' ? 'wrong-node' : 'guard-into',
+        payload: {
+          mutation: 'merge',
+          into_id: 'guard-into',
+          from_ids: ['guard-from'],
+          expected_versions: { 'guard-from': 0 },
+        },
+      });
+      const before = await db.select().from(knowledge).orderBy(knowledge.id);
+      await expect(acceptProposal(db, 'guard-merge')).rejects.toThrow(/history|drift|destination/);
+      expect(await db.select().from(knowledge).orderBy(knowledge.id)).toEqual(before);
+      expect(
+        await db.select().from(event).where(eq(event.caused_by_event_id, 'guard-merge')),
+      ).toEqual([]);
+    },
+  );
+
   it('archives all from_ids + pushes to into.merged_from (happy path)', async () => {
     const db = testDb();
     await insertKnowledge({ id: 'k_into', domain: 'yuwen', version: 1, merged_from: [] });
@@ -1465,6 +1546,7 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     const now0 = new Date('2026-07-02T00:00:00.000Z');
     await insertKnowledge({ id: 'k_from', version: 0 });
     await insertKnowledge({ id: 'k_into', version: 0 });
+    await backfillKnowledgeGenesis(testDb());
     // learning_item seeded WITH a genesis anchor (event-sourced) so the parity assert actually runs.
     const liRow = {
       id: 'li1',
@@ -1522,6 +1604,7 @@ describe('applyMerge — YUK-543 attribution repair', () => {
   it('acceptProposal on a merge pins merge_repair on the rate=accept event', async () => {
     await insertKnowledge({ id: 'k_from', version: 0 });
     await insertKnowledge({ id: 'k_into', version: 0 });
+    await backfillKnowledgeGenesis(testDb());
     await insertQ('q1', ['k_from']);
     await insertProposeEvent({
       id: 'merge_prop',
@@ -1723,6 +1806,7 @@ describe('acceptProposal — PR-A2b projection parity', () => {
     await seedKnowledge(db);
     const rootId = 'seed:yuwen:root';
     await insertKnowledge({ id: 'k_merge_waiter', domain: 'yuwen', version: 0 });
+    await backfillKnowledgeGenesis(db);
     await insertProposeEvent({
       id: 'p_merge_waiter',
       subject_id: rootId,
@@ -2116,7 +2200,7 @@ describe('acceptProposal — PR-B full flip: keystone non-delete guard + mutatio
     vi.unstubAllEnvs();
   });
 
-  it('flag ON: merge into a SEED ROOT (no events / no anchor) leaves BOTH rows surviving — guard skips the delete', async () => {
+  it('merge refuses eventless seed rows without deleting them; explicit history preparation enables acceptance', async () => {
     const db = testDb();
     // Seed root + a from node, BOTH inserted directly with NO events (pre-event-sourced).
     await insertKnowledge({ id: 'seed_root', domain: 'yuwen', version: 0, merged_from: [] });
@@ -2133,17 +2217,19 @@ describe('acceptProposal — PR-B full flip: keystone non-delete guard + mutatio
     });
 
     vi.stubEnv('PROJECTION_IS_WRITER', '1');
+    await expect(acceptProposal(db, 'p_merge_seed')).rejects.toThrow(/complete history/);
+    expect((await liveSnapshot('seed_root'))?.merged_from).toEqual([]);
+    expect((await liveSnapshot('k_from_seed'))?.archived_at).toBeNull();
+    await backfillKnowledgeGenesis(db);
     const result = await acceptProposal(db, 'p_merge_seed');
     expect(result.kind).toBe('merge_applied');
 
-    // The seam projects [seed_root, k_from_seed] GUARDED. Both fold to null (no creating
-    // event) and have NO genesis anchor → the guard SKIPS the delete. A naive unguarded
-    // projection would DELETE both = data loss. Assert BOTH rows survive.
+    // Both nodes survive as reconstructible rows, with only the source soft-archived.
     const root = await liveSnapshot('seed_root');
     const from = await liveSnapshot('k_from_seed');
     expect(root).not.toBeNull(); // seed root NOT deleted (this is the keystone)
     expect(from).not.toBeNull(); // from node NOT deleted (only soft-archived)
-    // The imperative mutation still applied: into.merged_from gained the from; from archived.
+    // The canonical projection appends attribution and archives the source.
     expect(root?.merged_from).toContain('k_from_seed');
     expect(from?.archived_at).toBeTruthy();
   });

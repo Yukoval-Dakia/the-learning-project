@@ -18,6 +18,24 @@ Status: active, not delivered. Production remains the verified983 image.
 
 ## Progress
 
+Merge now uses private preparation: validate all locked source/destination histories
+and structural fold/live parity, repair all nine attribution surfaces, write the
+complete immutable acceptance receipt, then project every affected node. Removed
+the raw applyMerge export, both knowledge structural UPDATEs and the final accept
+writer flag/parity branch. Embedding maintenance remains a derived-only write.
+Duplicate sources and mismatched proposal destination are rejected.
+
+Tests now call real acceptance and read the receipt by exact proposal identity.
+A PostgreSQL trigger proves both structural updates occur only after the complete
+repair receipt exists. Missing history, out-of-band drift and mismatched subject
+all reject without structural changes or acceptance. Four old fixtures explicitly
+prepare node history; the seed-root case first proves refusal/no deletion, then
+accepts after preparation. Four suites pass131 DB tests, typecheck/build pass.
+An initial runner exited1 after setup without test results; the terminal handle
+was confirmed before a single-suite rerun exposed the four fixture gaps (63 passed).
+No production failure/paid call/deployment. Deployment history and global flag
+retirement remain, followed by full984 review/CI/authorized Mac delivery.
+
 Merge preparation inspection confirms the nine attribution owners operate on explicit IDs
 and do not require the absorbed knowledge rows to be archived first. Structural merge DML
 has not yet been removed. Before that change, a real lock inversion was corrected:
