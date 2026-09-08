@@ -1,6 +1,6 @@
 # YUK984 — Canonical knowledge writes
 
-Status: active, not delivered. Production remains the verified983 image.
+Status: delivered on Mac. PR1369 merged to main e9b6f251; production runs tested e514ef94. Whole-project goal remains active.
 
 ## Execution plan
 
@@ -17,6 +17,22 @@ Status: active, not delivered. Production remains the verified983 image.
    review and exact-head CI; fresh clone/backup/live Mac delivery. No paid calls.
 
 ## Progress
+
+Final delivery: CI Gate34233241153 completed successfully for exacte514ef94;
+independent initial review passed without P0/P1 and no verification round was needed.
+PR1369 merged at2026-09-08T13:52:31Z to e9b6f2516dc4595bf3cb4eae1a179c4403fed78f.
+The guarded Mac deployment started app/worker at13:53:04Z on e514ef94. Both are
+healthy with zero restarts; original Postgres ID/start time/volume are unchanged.
+Live migration checked all seven entities with zero new anchors. Production remains
+454 events/280 AI tasks/21 provider attempts/zero active-created-retry jobs.
+Health200, unauthenticated401, knowledge200, seven notes200 and actual browser
+read/reload passed with zero page errors. No paid call or NAS operation occurred.
+Retained golden replay also shows zero drift (Knowledge12, LearningItem7, Artifact8,
+ItemCalibration22; the remaining kinds have zero retained rows and are not evidence
+of complex live coverage). Backup, old image/overlays and clone evidence remain.
+Recovery requires the previous release/configuration, not an environment toggle.
+Linear984 is Done. Remaining overall work is tracked separately under887/951 and
+the final behavior-by-behavior acceptance; no whole-project completion is claimed.
 
 PR1369 is open at exact e514ef94a5f8032e21a8afbe9864294538b5b935; CI Gate
 34233241153 is running; the first full independent review passed with no P0/P1. Build/unit/audits/

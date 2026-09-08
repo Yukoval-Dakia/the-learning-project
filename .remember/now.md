@@ -2,6 +2,14 @@
 
 ## 最新状态
 
+- 984 Done：PR1369 exact e514ef94a5f8032e21a8afbe9864294538b5b935 /CI34233241153终态success全job绿，初审PASS无P0/P1；13:52:31Z merge main e9b6f2516dc4595bf3cb4eae1a179c4403fed78f。
+  13:53:04Z Mac app404dd2cbf5be67b63fb47bf25fde5b7b0814050793b067e708e09a063ade9d87/worker8250610adcddc02d017eed9a1eea0c1192a45d3d671b218d549bc2daa4b4a530运行e514ef94 healthy/0restart。
+  原PG7d99236a/09-07T09:40:42.502Z和volume未动；live migration七实体0新增、12knowledge/7LI/8artifact通过，454event/280task/21attempt/0queue未变。
+  live health200/无token401/knowledge200/7notes200、真实browser note读取/reload零pageerror。8 retained golden再fold零drift：knowledge12/LI7/artifact8/calibration22；其余4kind空，不冒充复杂内容覆盖。
+  私有knowledge984-deploy.log/live-migrate.log/live-check.log/production-check.json/production-reader.png/retained-goldens.log归档；runtime-984-image.override.yml生效。rollback须旧release/compose/983镜像，不能翻已删flag。
+  Linear984已Done，clone测试数据保留；没有新增paid/NAS。root现codex/yuk-984-delivery-notes，从新origin/main接回3交付记录commit，原脏main不动。
+  整体goal仍active：下一951保留处置/887实际上传OCR与恢复差集/逐学习行为最终验收。各旧paid池已保守预留完毕，继续免费验证，不能重烧failed任务。
+
 - 984继续等待同一CI34233241153：两DB shard仍in_progress，其他job全部success；未restart/workflow重跑，未merge。
   私有deploy984.cjs/runtime-984-image.override.yml已准备，preflight PASS（image e514ef94三service一致、精确原PG、队列0），未执行deploy。
   部署入口检查PR1369已MERGED与CI exact e514成功，之后才stop app/worker→migrate→up，保留旧983overlay和镜像作恢复。无paid/生产变化。

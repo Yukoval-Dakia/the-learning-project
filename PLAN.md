@@ -1,14 +1,14 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-08：984 PR1369/exacte514ef94初审PASS无P0/P1，CI34233241153仅DB双shard仍跑；local gates及fresh clone实际image迁移/HTTP200旧版409/再迁移PASS。待exactCI与Mac交付，生产983未动，整体未完成，无paid/NAS。
+> Linear 是权威 tracker；更新于 2026-09-08：984 Done，PR1369/exacte514ef94 CI34233241153全绿/初审PASS/main e9b6f251；13:53Z Mac交付与API/browser/历史验收过。整体goal继续887差集/951处置/逐行为最终验收，无paid/NAS。
 
 ## NOW
 
-- 983 Done：Notes/QuestionBlock六编辑操作统一event→projection，退休双轨与两flag；初审2P1修复、唯一验证PASS，禁止第三审。
-  68相关DB/18迁移/9oracle/61unit/27提案DB及本地gates通过；旧fixture补genesis后新exact CI全绿，未放宽业务断言。
-  fresh dump真实恢复，实际镜像clone迁移与HTTP保存/409/回放通过；11:46:41Z main7cccb335，11:46:55Z Mac交付。
-  app18e9a5e2/worker2377d637 healthy零重启，原PG未动；7笔记读取/reload零错误，454event/280task/21attempt/空队列未变。
-  详见docs/planning/2026-09-08-canonical-editors.md；984已去重登记Todo，原脏main不动，无新增paid/NAS。
+- 984 Done：PR1369 exacte514ef94/CI34233241153全绿，初审PASS无P0/P1；13:52:31Z main e9b6f251，13:53:04Z Mac app/worker交付。
+  知识/edge结构全event→projection，四创建入口共用owner，七实体历史gate/globalflag退休；scoped gates/76DB/3unit与全部CI通过，删4无效模式比较。
+  app404dd2cb/worker8250610a e514ef94 healthy零重启，原PG7d99236a未变；454event/280task/21attempt/0queue，API/7notes/browser刷新无错。
+  fresh dump实际恢复、clone迁移/HTTP200与409/再迁移和live迁移过；8kind retained golden零drift（空kind不冒充复杂数据覆盖），详见canonical-knowledge.md。
+- 983 Done：六编辑操作canonical；初审P1+唯一验证/精确CI/克隆与Mac交付均过，详见docs/planning/2026-09-08-canonical-editors.md；不启动第三审。
 - 979 Done：PR1364 exact32d0effb/CI34147920619全绿/main61421a4e；初审PASS，63unit/20DB/gates过；Mac93df0528健康，PG/424event/258task/4attempt不变。Memory实际SIGKILL+同job重投PASS/0重烧，887其它缺项继续；980启动停机P2已登记deferred。951部分交付：PR1361 exactab0bbb909，CI34134547233全job绿，main26e0e2d65；初审PASS。
   删7死model control/249行与重复存在性断言；31unit/41DB/typecheck/lint/build/audits过，独立8unit过。
   后续退休已交付：PR1363 exact57a7bbee/CI34144766869全绿/main3c8d5c1b，初审PASS；121DB及本地gates通过。
@@ -180,7 +180,7 @@
 
 ## NEXT
 
-1. 984实现/初审/clone验收已过：等待CI34233241153双DB终态，再合并PR1369并Mac交付；deploy984.cjs只预检通过，必须exactCI成功/PR已合并/队列空才执行。
+1. 984已交付；下一先核951历史名词/表保留的明确处置及整体剩余边界，不做无收益表名迁移或删除审计历史。
 2. 887剩余证据按原七项矩阵收口：Tencent/GLM-OCR现役wire及完整provider/恢复范围；已有Notes/Memory/learner/Tagging/Agency通过项不重烧。
    新$3已全部保守预留/余0；旧$10不回收。免费代码/DB/回放继续，新增付费须另授权。977/980保持P2。
 3. 最终按学习意图→录入→判分→复习→提议/撤回逐责任核实，并给951名词保留明确处置；不以测试/依赖数字替代完成。
