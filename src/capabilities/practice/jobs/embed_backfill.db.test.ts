@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { resetDb } from '../../../../tests/helpers/db';
+import { acceptKnowledgeMutationFixture } from '../../../../tests/helpers/knowledge-mutation';
 
 const embedMany = vi.fn(async (texts: string[]) => texts.map(() => Array(1024).fill(0.02)));
 vi.mock('@/server/ai/embed', () => ({
@@ -178,8 +179,7 @@ describe('embed_backfill', () => {
     const [before] = await db.select().from(knowledge).where(eq(knowledge.id, 'kc'));
     expect(before.embedding).toHaveLength(1024);
 
-    const { applyReparent } = await import('@/capabilities/knowledge/server/proposals');
-    await applyReparent(db, {
+    await acceptKnowledgeMutationFixture(db, {
       mutation: 'reparent',
       node_id: 'kc',
       new_parent_id: 'rootB',
@@ -347,8 +347,7 @@ describe('embed_backfill', () => {
     expect(before.embedding).toHaveLength(1024);
 
     // Move kc from rootA directly to under mid — still resolves to 物理.
-    const { applyReparent } = await import('@/capabilities/knowledge/server/proposals');
-    await applyReparent(db, {
+    await acceptKnowledgeMutationFixture(db, {
       mutation: 'reparent',
       node_id: 'kc',
       new_parent_id: 'mid',

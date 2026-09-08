@@ -35,6 +35,7 @@ import { retireLearnerAxisStateOnMerge } from '@/server/calibration/axis-writer'
 import { retireKcTypedStateOnMerge } from '@/server/conjectures/typed-state';
 import { retireFsrsStateOnMerge } from '@/server/fsrs/state';
 import { retireMasteryStateOnMerge } from '@/server/mastery/state';
+import { gatherAndFoldKnowledgeNode } from '@/server/projections/gather';
 import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 // YUK-471 W1 PR-A2b — accept-time projection parity assert (dev/test throws, prod warns) +
@@ -323,11 +324,12 @@ export async function prepareProposedKnowledgeId(
   return newId();
 }
 
-export async function applyReparent(
+type ReparentEmbeddingSnapshot = { id: string; name: string; hash: string | null };
+
+async function prepareReparent(
   db: DbLike,
   payload: ReparentPayload,
-  now: Date = new Date(),
-): Promise<void> {
+): Promise<ReparentEmbeddingSnapshot> {
   if (payload.new_parent_id === null) {
     throw new Error(
       'PR B: reparent to root (new_parent_id=null) not supported in Phase 1a single-domain',
@@ -342,32 +344,31 @@ export async function applyReparent(
   // cross-domain move makes the stored vector stale. (Read here, recomputed after
   // the parent_id commit so the walk sees the new position.)
   const beforeRows = await db
-    .select({ name: knowledge.name, hash: knowledge.embed_content_hash })
+    .select({
+      id: knowledge.id,
+      name: knowledge.name,
+      hash: knowledge.embed_content_hash,
+      version: knowledge.version,
+      archived_at: knowledge.archived_at,
+    })
     .from(knowledge)
     .where(eq(knowledge.id, payload.node_id))
     .limit(1);
   const moved = beforeRows[0];
 
-  const result = await db
-    .update(knowledge)
-    .set({
-      parent_id: payload.new_parent_id,
-      domain: null,
-      updated_at: now,
-      version: sql`${knowledge.version} + 1`,
-    })
-    .where(
-      and(
-        eq(knowledge.id, payload.node_id),
-        eq(knowledge.version, payload.expected_version),
-        isNull(knowledge.archived_at),
-      ),
-    );
-  const changes = (result as { count?: number }).count ?? 0;
-  if (changes !== 1) {
+  if (!moved || moved.version !== payload.expected_version || moved.archived_at !== null) {
     throw new Error(`stale: knowledge ${payload.node_id} version mismatch or archived`);
   }
+  if ((await gatherAndFoldKnowledgeNode(db, payload.node_id)) === null) {
+    throw new Error(`knowledge ${payload.node_id} requires complete history before reparent`);
+  }
+  return moved;
+}
 
+async function refreshReparentEmbedding(
+  db: DbLike,
+  moved: ReparentEmbeddingSnapshot,
+): Promise<void> {
   // YUK-393 — re-embed-on-reparent (KC-ONLY). Resolve the NEW effective domain
   // (the walk now reflects the committed parent_id), recompute the embed hash, and
   // if it differs from the stored one, NULL this KC's embedding so the nightly
@@ -379,7 +380,7 @@ export async function applyReparent(
   if (moved) {
     let newEffectiveDomain: string | null = null;
     try {
-      newEffectiveDomain = await getEffectiveDomain(db, payload.node_id);
+      newEffectiveDomain = await getEffectiveDomain(db, moved.id);
     } catch {
       // Broken tree (root with null domain etc.) — don't fail the reparent over an
       // embed-maintenance recompute; leave the (now possibly stale) vector for the
@@ -392,8 +393,8 @@ export async function applyReparent(
     if (newHash !== moved.hash) {
       await db
         .update(knowledge)
-        .set({ embedding: null, embed_content_hash: newHash, updated_at: now })
-        .where(eq(knowledge.id, payload.node_id));
+        .set({ embedding: null, embed_content_hash: newHash })
+        .where(eq(knowledge.id, moved.id));
     }
   }
 }
@@ -1014,6 +1015,7 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
       const flip = projectionIsWriter();
 
       let result: AcceptResult;
+      let reparentEmbedding: ReparentEmbeddingSnapshot | null = null;
       // YUK-543 — the merge-repair breadcrumb captured from applyMerge, threaded onto the accept
       // rate event's payload below and used to drive the post-rate learning_item parity assert.
       let mergeRepair: MergeRepairEntryT[] | null = null;
@@ -1025,7 +1027,10 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
             break;
           }
           case 'reparent': {
-            await applyReparent(tx, apply, now);
+            if (propose.subject_id !== apply.node_id) {
+              throw new Error(`reparent proposal ${proposalId} does not identify its target node`);
+            }
+            reparentEmbedding = await prepareReparent(tx, apply);
             if (apply.new_parent_id === null) {
               throw new Error('reparent payload must have new_parent_id');
             }
@@ -1157,7 +1162,7 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
       // blind one). This runs AFTER the rate + materialized_id_index writes, in the same tx, so
       // the fold sees them — the exact point the A2b parity assert ran. Flag OFF keeps that
       // assert (true rollback: full fold==row verification restored).
-      if (flip || result.kind === 'propose_new_applied') {
+      if (flip || result.kind === 'propose_new_applied' || result.kind === 'reparent_applied') {
         for (const id of affectedNodeIds(result)) {
           await projectKnowledgeNodeGuarded(tx, id);
         }
@@ -1165,6 +1170,7 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
         await assertAcceptParity(tx, result);
       }
 
+      if (reparentEmbedding) await refreshReparentEmbedding(tx, reparentEmbedding);
       return result;
     });
   } catch (e) {

@@ -88,3 +88,16 @@ or event is prematurely written; original node-field assertions now live on actu
 proposal acceptance. Three suites pass117 DB cases; final accepted-node contract
 passes3 targeted cases, with typecheck/build green. Existing-node reparent/archive/
 merge/split still require side-effect ordering work before removing their flag.
+
+Reparent now validates expected version, live state and reconstructible history
+under the existing accept row lock, projects from the accepted event, then resolves
+the new effective domain to refresh embedding/hash only. Removed structural UPDATE;
+the derived maintenance no longer writes the fold-owned updated_at. Public-accept
+tests replace calls to the retired raw applier through an explicit fixture helper.
+Two missing-history fixtures were corrected; a concurrency regression exposed the
+old test writer's fabricated event subject. Fixtures now derive the real mutation
+subject, and acceptance explicitly rejects a mismatched target rather than returning
+success without a projection. Final four suites pass126 DB cases, plus7 focused
+reparent guards (one winner for equal-version races, missing history, wrong subject,
+stale version, parent guards); cross-/same-domain embedding, typecheck/build pass.
+Archive/merge/split and deployment/flag retirement remain. No paid or live changes.

@@ -30,7 +30,10 @@ import {
   knowledgeLiveRowToSnapshot,
   learningItemLiveRowToSnapshot,
 } from '@/server/projections/parity';
-import { backfillKnowledgeEdgeGenesis } from '../../../scripts/backfill-genesis-events';
+import {
+  backfillKnowledgeEdgeGenesis,
+  backfillKnowledgeGenesis,
+} from '../../../scripts/backfill-genesis-events';
 import { migrateCanonicalProjections } from '../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { assertProposalLifecycleResult } from '../../../tests/helpers/proposal-lifecycle';
@@ -1365,6 +1368,7 @@ describe('proposal lifecycle owner service', () => {
   it('acceptAiProposal materializes a knowledge_mutation proposal through the knowledge owner service', async () => {
     const db = testDb();
     await seedKnowledge(['k_parent', 'k_child', 'k_new_parent']);
+    await backfillKnowledgeGenesis(db);
     const proposalId = await writeKnowledgeProposeEvent(db, {
       payload: {
         mutation: 'reparent',

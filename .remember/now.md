@@ -5,7 +5,10 @@
 - Active984：root独占codex/yuk-984-canonical-knowledge（从983交付docs8c901df3建），原脏main不动。
   关系新建提案已删flag-off直接INSERT；共同runEdgeTopologyGate固定projection，保留锁/retry/错误翻译，不再生产warn-only。
   37相关DB过，新增INSERT-trigger顺序验证含所在文件11DB通过；typecheck/build过。仅实施checkpoint，未审查/PR/部署，生产仍983/5dd7e8ed，无paid。
-  edge创建/归档/reactivate及merge/supersede已event→projection；node新建/tagging也已迁移，余node四mutation/迁移/flag退休；不保留永久旧writer作rollback。
+  edge全event→projection；node新建/tagging/reparent已迁移，余archive/merge/split及部署历史/flag退休；不保留永久旧writer作rollback。
+  最新reparent126DB+7guard/typecheck/build过：旧结构UPDATE删，锁内CAS/base校验→accept projection→新位置embedding/hash维护，derived不再写updated_at。
+  tests/helpers/knowledge-mutation.ts显式fixture backfill再走真实提案/accept；旧raw applier测试迁移，缺历史/错误subject/并发相同version均有行为护栏。
+  两旧fixture缺base已补；race暴露insertProposeEvent伪造subject_id，改按mutation导出真实subject并在accept检查targetbinding，最终双并发只有1提交。无paid/生产变化。
   本轮117DB/typecheck/build过，最终接受节点字段3targetedDB过。prepareProposedKnowledgeId只校验父+分配ID，无直接INSERT/writeRow模式；tagging删flag/parity分支，接受新节点固定projection。
   旧准备函数写表断言移至真实accept，准备阶段断言无node/event；原自动批准/缓存/来源契约保留，无paid/部署。下一reparent embedding/merge/split顺序。
   最新7suite/212DB/typecheck/build全过，gen:postman无diff。create/reactivate原始DML及API/merge/supersede配对generate删除，保留replacement event ID。

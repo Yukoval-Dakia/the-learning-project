@@ -1,3 +1,4 @@
+import { acceptKnowledgeMutationFixture } from '../../../../tests/helpers/knowledge-mutation';
 // Phase 1c.1 Step 9.D — proposals.test rewritten for event-based handlers.
 //
 // Pre-Step-9 tests INSERTed dreaming_proposal rows; post-Step-9 the legacy
@@ -23,13 +24,13 @@ import {
   gatherAndFoldKnowledgeEdge,
   gatherAndFoldKnowledgeNode,
 } from '@/server/projections/gather';
+import { backfillKnowledgeGenesis } from '../../../../scripts/backfill-genesis-events';
 import { migrateCanonicalProjections } from '../../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   acceptProposal,
   applyArchive,
   applyMerge,
-  applyReparent,
   applySplit,
   dismissProposal,
   prepareProposedKnowledgeId,
@@ -171,6 +172,13 @@ async function insertProposeEvent(opts: {
       ? 'propose'
       : `experimental:knowledge_${opts.payload.mutation}`);
   const isProposeNew = opts.payload.mutation === 'propose_new';
+  const mutationSubject = isProposeNew
+    ? opts.payload.parent_id
+    : opts.payload.mutation === 'merge'
+      ? opts.payload.into_id
+      : opts.payload.mutation === 'split'
+        ? opts.payload.from_id
+        : opts.payload.node_id;
   // Strip mutation key for event payload (it's encoded in action)
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { mutation, ...rest } = opts.payload;
@@ -184,7 +192,9 @@ async function insertProposeEvent(opts: {
     actor_ref: 'dreaming',
     action,
     subject_kind: 'knowledge',
-    subject_id: opts.subject_id ?? `subject_${opts.id}`,
+    subject_id:
+      opts.subject_id ??
+      (typeof mutationSubject === 'string' ? mutationSubject : `subject_${opts.id}`),
     outcome: 'partial',
     payload: eventPayload,
     caused_by_event_id: null,
@@ -419,9 +429,97 @@ describe('dismissProposal', () => {
   });
 });
 
-describe('applyReparent', () => {
+describe('accepted reparent', () => {
   beforeEach(async () => {
     await resetDb();
+  });
+
+  it('refuses a proposal whose event subject does not identify its target', async () => {
+    const db = testDb();
+    await insertKnowledge({ id: 'bound_parent', domain: 'yuwen' });
+    await insertKnowledge({
+      id: 'bound_node',
+      parent_id: 'bound_parent',
+      domain: null,
+      version: 3,
+    });
+    await backfillKnowledgeGenesis(db);
+    await insertProposeEvent({
+      id: 'mismatched_move',
+      subject_id: 'different_node',
+      payload: {
+        mutation: 'reparent',
+        node_id: 'bound_node',
+        new_parent_id: 'bound_parent',
+        expected_version: 3,
+      },
+    });
+    await expect(acceptProposal(db, 'mismatched_move')).rejects.toThrow(
+      'does not identify its target',
+    );
+    const [row] = await db.select().from(knowledge).where(eq(knowledge.id, 'bound_node'));
+    expect(row.version).toBe(3);
+  });
+
+  it('serializes two moves against the same expected version without a lost update', async () => {
+    const db = testDb();
+    for (const id of ['move_old', 'move_a', 'move_b'])
+      await insertKnowledge({ id, domain: 'yuwen' });
+    await insertKnowledge({ id: 'moving', domain: null, parent_id: 'move_old', version: 3 });
+    await backfillKnowledgeGenesis(db);
+    for (const side of ['a', 'b'])
+      await insertProposeEvent({
+        id: `race_move_${side}`,
+        payload: {
+          mutation: 'reparent',
+          node_id: 'moving',
+          new_parent_id: `move_${side}`,
+          expected_version: 3,
+        },
+      });
+    const results = await Promise.allSettled(
+      ['a', 'b'].map((side) => acceptProposal(db, `race_move_${side}`)),
+    );
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    const [row] = await db.select().from(knowledge).where(eq(knowledge.id, 'moving'));
+    expect(row.version).toBe(4);
+    expect(['move_a', 'move_b']).toContain(row.parent_id);
+    const decisions = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'rate'),
+          inArray(event.caused_by_event_id, ['race_move_a', 'race_move_b']),
+        ),
+      );
+    expect(
+      decisions.filter((row) => (row.payload as { rating?: string }).rating === 'accept'),
+    ).toHaveLength(1);
+  });
+
+  it('refuses missing creation history without committing a move or accepting the proposal', async () => {
+    const db = testDb();
+    await insertKnowledge({ id: 'move_parent', domain: 'yuwen' });
+    await insertKnowledge({ id: 'move_node', domain: null, parent_id: 'move_parent', version: 3 });
+    await insertProposeEvent({
+      id: 'unanchored_move',
+      payload: {
+        mutation: 'reparent',
+        node_id: 'move_node',
+        new_parent_id: 'move_parent',
+        expected_version: 3,
+      },
+    });
+    await expect(acceptProposal(db, 'unanchored_move')).rejects.toThrow(
+      'requires complete history',
+    );
+    const [row] = await db.select().from(knowledge).where(eq(knowledge.id, 'move_node'));
+    expect(row).toMatchObject({ parent_id: 'move_parent', version: 3 });
+    expect(
+      await db.select().from(event).where(eq(event.caused_by_event_id, 'unanchored_move')),
+    ).toEqual([]);
   });
 
   it('moves a child node to a new parent (happy path)', async () => {
@@ -429,7 +527,7 @@ describe('applyReparent', () => {
     await insertKnowledge({ id: 'k_oldparent', domain: 'yuwen' });
     await insertKnowledge({ id: 'k_newparent', domain: 'yuwen' });
     await insertKnowledge({ id: 'k_node', domain: null, parent_id: 'k_oldparent', version: 3 });
-    await applyReparent(db, {
+    await acceptKnowledgeMutationFixture(db, {
       mutation: 'reparent',
       node_id: 'k_node',
       new_parent_id: 'k_newparent',
@@ -446,7 +544,7 @@ describe('applyReparent', () => {
   it('rejects reparent → null (root creation, PR A guard)', async () => {
     const db = testDb();
     await expect(
-      applyReparent(db, {
+      acceptKnowledgeMutationFixture(db, {
         mutation: 'reparent',
         node_id: 'k_node',
         new_parent_id: null,
@@ -459,7 +557,7 @@ describe('applyReparent', () => {
     const db = testDb();
     await insertKnowledge({ id: 'k_archived', archived: true });
     await expect(
-      applyReparent(db, {
+      acceptKnowledgeMutationFixture(db, {
         mutation: 'reparent',
         node_id: 'k_node',
         new_parent_id: 'k_archived',
@@ -473,7 +571,7 @@ describe('applyReparent', () => {
     await insertKnowledge({ id: 'k_newparent', domain: 'yuwen' });
     await insertKnowledge({ id: 'k_node', domain: null, parent_id: 'k_newparent', version: 5 });
     await expect(
-      applyReparent(db, {
+      acceptKnowledgeMutationFixture(db, {
         mutation: 'reparent',
         node_id: 'k_node',
         new_parent_id: 'k_newparent',
@@ -1457,6 +1555,7 @@ describe('acceptProposal — high-tier mutations', () => {
     await insertKnowledge({ id: 'k_oldparent', domain: 'yuwen' });
     await insertKnowledge({ id: 'k_newparent', domain: 'yuwen' });
     await insertKnowledge({ id: 'k_node', domain: null, parent_id: 'k_oldparent', version: 3 });
+    await backfillKnowledgeGenesis(db);
     await insertProposeEvent({
       id: 'p_reparent',
       payload: {
