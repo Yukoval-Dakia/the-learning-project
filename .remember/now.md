@@ -2,12 +2,12 @@
 
 ## 最新状态
 
-- 等待owner批准：连续多轮未收到Notes七文件富编辑及额外最多$3实际验收授权，完整goal暂停于此，不是完成。
+- owner本轮明确「批准」：Notes七文件富编辑及新增最多$3实际验收获授权，981/887恢复In Progress；新预算尚未使用，旧reserve不回收。
   981 PR1365 Draft/exact95cf627ddc21ed06237681e5f532024c295541ab；引用P1修复已推，UI P1仍未修。
-  CI34151841019仍在运行：unit/type/lint/audits/build/migration/usability已过，只剩两DB分片；不取消/不重跑。
-  恢复时读同一CI句柄，不把等待超时当终止。正式初审已用，唯一验证审保留至两P1都修完。
-  root当前codex/yuk-981-awaiting-approval仅handoff，实施branch仍codex/yuk-981-note-generation-contract。
-  生产仍93df0528，未部署981、未新增paid。额外授权没到账前不能复用或重跑隔离canary任务。
+  CI34151841019 exact95cf627d已终态全绿；正式初审已用，唯一验证审保留至两P1都修完。
+  执行顺序：富编辑保结构→scoped gates/唯一验证审→新exact CI及真实Notes验收→Mac交付，再补887差集。
+  root已切回codex/yuk-981-note-generation-contract并ff纳入handoff，无用户改动覆盖。
+  生产仍93df0528，未部署981、未新增paid。新canary必须fresh DB/容器/证据名，不重烧旧失败任务。
 
 - Active981：root独占codex/yuk-981-note-generation-contract（base395d5d2d交付记录）；生产仍979/93df0528。
   PR1365初审FAIL 2P1：富编辑丢结构（既有withText，真实组件RED）；引用无目标/无校验已本地修。

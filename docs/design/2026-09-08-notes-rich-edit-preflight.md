@@ -30,7 +30,7 @@ the existing per-block editing area, preserving PM nodes/marks/anchor IDs. Deriv
 the source mirror from PM via the same pure Notes-owned projection used by generation.
 No new provider, editor dependency, standalone editor framework or UI redesign.
 
-## Exact planned files (pending owner approval)
+## Exact planned files (owner approved 2026-09-08)
 
 Modify:
 - `src/capabilities/notes/ui/NoteEditor.tsx`
@@ -43,9 +43,9 @@ Create:
 - `src/capabilities/notes/ui/RichNoteBlockEditor.unit.test.tsx`
 - `src/capabilities/notes/shared/note-block-source.ts`
 
-UI implementation waits for owner approval. The existing component reproduction
-is test-only; no UI production code has been changed. Backend cross-link context
-and validation can proceed independently in YUK981 while this approval is pending.
+Owner explicitly approved this preflight and the separate maximum $3 acceptance
+allowance on 2026-09-08. Implement in the existing surface; this approval does not
+extend to new routes or unrelated UI redesign.
 
 ## Acceptance
 

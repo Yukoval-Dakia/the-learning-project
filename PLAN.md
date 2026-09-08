@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-08：981等待Notes UI及额外$3验收批准；引用修复95cf627d已推，CI34151841019仍跑，禁止重跑。
+> Linear 是权威 tracker；更新于 2026-09-08：owner批准Notes七文件富编辑及新增最多$3验收；981恢复实施，95cf627d/CI34151841019全绿。顺序：富编辑保结构→scoped gates/唯一验证审→新exact CI/真实验收→Mac交付；不提前关闭887。
 
 ## NOW
 

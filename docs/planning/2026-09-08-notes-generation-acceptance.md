@@ -35,7 +35,9 @@ Only one generation request reached Xiaomi; no verification request occurred.
 The task cost estimate is $0.00285186, not an invoice. The full $1 conservative
 run reserve is retained. Together with Memory failed $1 and passed $1, the
 transferred $3 pool has $0 remaining. Original $10 accounting is unchanged.
-Further paid calls wait for owner authorization; local repair can continue.
+Owner approved a new maximum $3 pool on 2026-09-08 for post-fix Notes and remaining
+actual acceptance. This new pool is unused at rich-editor local validation; old
+reservations remain retained. Fresh DB/container/evidence names are mandatory.
 
 Private `notes-887-actual-v1.json` SHA256:
 `9cb3c1af92dffd99c35d619cabf56d64ff1fc2a9f94b8dabe5fa402e280d338c`.
@@ -53,7 +55,7 @@ semantic kinds, long/hub shape, cross-links, editing and undo. No generic JSON
 guess/repair and no plain-text downgrade. Interface decision is under review;
 no successful post-fix actual sample is claimed yet.
 
-## Current implementation, not yet delivered
+## Generation implementation, not yet delivered
 
 The bounded design consultation found a consequential omitted-source regression:
 current NoteBlocks, NoteEditor and KnowledgeDetail read source_markdown directly.
@@ -68,7 +70,8 @@ Provider-facing legacy sections input was retired. Downstream sections readers
 remain a compatibility projection, not another generated document format. The
 three subject skills no longer repeat editor metadata requirements; the task
 prompt owns the compact output contract and explicit-target-only link policy.
-No UI, API, DB schema, generic JSON repair or new markup parser is introduced.
+This generation slice changes no API or DB schema and adds no generic JSON repair
+or new markup parser. The subsequently approved UI correction is recorded below.
 
 Twelve scoped unit checks including the actual source-only reader helper pass.
 Final coverage is 59 scoped DB tests (58 Notes generate/verify/handoff plus one
@@ -83,10 +86,10 @@ editor issue through the real rendered NoteEditor: one character edit removes a
 nested bulletList. This predates the PR (old prompt already allowed rich PM, and
 NoteEditor is unchanged), but is incompatible with the intended final outcome.
 The reproduction patch is retained privately as `note-editor-loss-repro.patch`;
-no pending RED UI test or UI production code is left in the worktree. The seven-file
-[rich-edit preflight](../design/2026-09-08-notes-rich-edit-preflight.md) awaits
-owner approval. The single verification review is reserved until both findings
-are addressed; no second initial review.
+the initial approval handoff left no pending RED UI test or UI production changes.
+Owner subsequently approved the seven-file
+[rich-edit preflight](../design/2026-09-08-notes-rich-edit-preflight.md).
+The single verification review covers both fixes; no second initial review.
 
 The reference finding is corrected locally: Notes queries at most twelve real,
 unarchived targets in the note family or shared knowledge labels; each target has
@@ -105,4 +108,26 @@ No blind retry of the old CI run was requested.
 Clean image ed63127b built successfully (SHA256
 `f13c68503eff0b88d12c2ad0bd35812694b47e5e7d9cf7bc8c0644e590acf78f`);
 it predates the reference correction and is not deployed or accepted for release.
-Production remains93df0528. Budget and UI approvals are still pending.
+Production remains93df0528. CI34151841019 exact95cf627d subsequently completed all
+jobs green, before the now-approved rich editor changes.
+
+## Approved rich editor correction (2026-09-08)
+
+NoteEditor now delegates one anchored block to the existing TipTap stack, with
+an exact one-block document schema. Native rich structure and marks are edited
+directly; Notes owns the shared pure source projection, without browser imports
+of server crypto. Outer controls, save/version conflict and presence stay owned
+by the existing reader/editor. Unsupported persisted structures remain intact
+and visibly non-editable instead of being silently coerced. No new dependency.
+
+73 scoped unit tests, 17 generation DB tests, typecheck/lint/build and architecture
+audits pass; lint ratchet remains 316 warnings/1 info under the existing baseline.
+The temporary browser probe used the production Vite bundle with fixture API
+persistence (not real DB): edit, undo, save, reload, reference/mark/list/code/heading
+preservation and 409 draft retention passed. Desktop and settled 390px screenshots
+were inspected; the first mobile capture caught the existing sidebar transition,
+so the probe now waits for its completion. No shell layout changes were needed.
+Private evidence: `notes981-browser.json`, `notes981-rich-desktop.png`,
+`notes981-rich-mobile.png`; source/bundle archived alongside these outputs.
+The sole verification review is running. New exact-head CI and paid post-fix
+Notes generation/verification remain pending; no YUK981 deployment yet.
