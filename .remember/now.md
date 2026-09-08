@@ -2,6 +2,13 @@
 
 ## 最新状态
 
+- 981 Done：PR1365 exact8bce5f0a0a0901404cf5b395766ab29f44910abc/CI34212977772所有job绿；10:11:34Z合并main69f1b9deb3ad760ac0b457bd7d45920bdac4852c。
+  10:12:50Z Mac API6367b553/worker c430a928已8bce5f0a healthy/零重启；原PG7d99236a/09:40:42Z与pgdata未变。
+  新dump已恢复loom_before_981_verify，clone/live迁移零新增/7LI通过；live454event/280task/21attempt及空队列不变，无NAS/tunnel。
+  live health200/无token401/notes200(7条)，真实browser笔记读取/刷新无pageerror；首probe错CSS selector超时已纠正，不是产品故障。
+  runtime-981-image.override.yml生效；回滚去该overlay回93df0528。四个隔离canary容器已终止，原失败DB/证据未动。
+  root当前981-delivery-notes仅交付记录；下一887剩余learner judging/Ingestion/Agency actual证据，新$3池余$2；982/980/977 P2不混入。
+
 - 981修后8bce5f0a actual PASS：新DB loom_notes_981_actual_v2，image1316441c；accept137→generate真实成功→ready137→verify真实成功，artifact br1jomjdbpj3pq4zvj0h49p0 ready/verified。
   同generate physical job 2e81df0b-f967-50ae-ad34-38dfa8ec855e另进程重投completed，0model/task增量；显式boss.fail加速expiry，非自动完整过期窗。
   generation1066in/3505out，verify5216in/984out，estimate合计$0.00663810非账单；新$3池保守预留$1余$2，旧reserve不回收。
