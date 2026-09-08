@@ -180,7 +180,7 @@
 
 ## NEXT
 
-1. 984 Active：先edge归档/重新启用/merge配对写，再node与历史迁移；保留拓扑/归因/派生列及Scheme A，不造框架。详见2026-09-08-canonical-knowledge.md。
+1. 984实现/初审/clone验收已过：等待CI34233241153双DB终态，再合并PR1369并Mac交付；deploy984.cjs只预检通过，必须exactCI成功/PR已合并/队列空才执行。
 2. 887剩余证据按原七项矩阵收口：Tencent/GLM-OCR现役wire及完整provider/恢复范围；已有Notes/Memory/learner/Tagging/Agency通过项不重烧。
    新$3已全部保守预留/余0；旧$10不回收。免费代码/DB/回放继续，新增付费须另授权。977/980保持P2。
 3. 最终按学习意图→录入→判分→复习→提议/撤回逐责任核实，并给951名词保留明确处置；不以测试/依赖数字替代完成。

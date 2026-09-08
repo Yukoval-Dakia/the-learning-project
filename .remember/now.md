@@ -2,6 +2,10 @@
 
 ## 最新状态
 
+- 984继续等待同一CI34233241153：两DB shard仍in_progress，其他job全部success；未restart/workflow重跑，未merge。
+  私有deploy984.cjs/runtime-984-image.override.yml已准备，preflight PASS（image e514ef94三service一致、精确原PG、队列0），未执行deploy。
+  部署入口检查PR1369已MERGED与CI exact e514成功，之后才stop app/worker→migrate→up，保留旧983overlay和镜像作恢复。无paid/生产变化。
+
 - 984 PR1369 OPEN，published exact e514ef94a5f8032e21a8afbe9864294538b5b935；远端main7cccb335。CI Gate34233241153当前in_progress，仅DB双shard未终态，其余productionbuild/unit/typechecklintaudits/migration/usability成功。
   首次正式整项review agent /root/review_984_canonical_knowledge 终态PASS，无新增P0/P1；parent-lock候选按既有archived-ancestor语义撤回。初审预算已用，无P1不需验证审；旧fold头注释P2非阻塞，未另开微小issue。
   fresh dump loom-before-984.dump SHA14d0a533c49b6c2bbe6b3f8252dcda9277fd82f105755664d3d682b707a1128e实际恢复loom_before_984_verify，454event/280task/21attempt与生产相同。
