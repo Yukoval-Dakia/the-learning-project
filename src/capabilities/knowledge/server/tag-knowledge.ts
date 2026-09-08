@@ -29,12 +29,10 @@
 // (design §6), orthogonal to grading (YUK-488).
 //
 // The LLM naming call (PROPOSE path) runs OUTSIDE any DB transaction (design §3 — never a
-// model call inside a DB tx). The only DB writes are applyProposeNew + the audit event.
+// model call inside a DB tx). Node creation is event-first, projected in the same transaction.
 
-import { eq } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
-import { knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import {
@@ -45,12 +43,9 @@ import {
 import { questionEmbedText } from '@/server/ai/embed-source';
 // YUK-471 W1 PR-A2b — accept-time projection parity assert (dev/test throws, prod warns).
 import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
-import { assertKnowledgeNodeParity, knowledgeLiveRowToSnapshot } from '@/server/projections/parity';
-// YUK-471 W1 PR-B — the SoT-flip gate (default OFF; projection writes the row when ON).
-import { projectionIsWriter } from '@/server/projections/sot-flag';
 import { getKnownSubjects } from '@/subjects/profile';
 import { type KnowledgeSimilarityCandidate, matchKnowledgeBySimilarity } from './match-similarity';
-import { applyProposeNew } from './proposals';
+import { prepareProposedKnowledgeId } from './proposals';
 import { MATCH_THRESHOLD } from './tagging-flags';
 
 /** Nearest-first candidates fetched per tag. Mirrors poolFetch's modest top-K. */
@@ -153,7 +148,7 @@ function batchCacheKey(subjectRootId: string, kcName: string): string {
  *
  * Flow: embed → retrieve top-K KCs → nearest within threshold ? MATCH : PROPOSE.
  * PROPOSE consults the batch cache first (sibling reuse), else names a KC (LLM, OUTSIDE any
- * tx), auto-approves it via applyProposeNew, writes the audit event, and caches the id.
+ * tx), records its approved creation event, projects the node, and caches its id.
  */
 export async function tagKnowledge(
   deps: TagKnowledgeDeps,
@@ -282,39 +277,15 @@ export async function tagKnowledge(
     }
   }
 
-  // Auto-approve + audit, ATOMIC (OCR #562). applyProposeNew inserts an APPROVED child
-  // (domain:null → inherits the subject via the parent chain) and asserts the parent exists;
-  // the audit-only event records provenance. Both share ONE tx so a writeEvent failure rolls
-  // back the KC rather than orphaning it — safe because NO model call sits between them (the
-  // LLM naming already ran above, OUTSIDE any tx — design §3).
-  //
-  // Audit event design: a PLAIN event with a DISTINCT action so it is NEVER a pending inbox
-  // proposal (proposalWhere() folds only `propose` / `experimental:knowledge_%` /
-  // `experimental:proposal` / `experimental:propose_learning_intent` — a generic
-  // `experimental:auto_tag_kc_created` matches none) and has no acceptProposal re-apply path.
-  // Generalizes auto-enroll.ts's `experimental:cold_start_kc_created` to the unified tagger.
+  // Automatic approval remains atomic with its creation event and projection.
   const newKcId = await db.transaction(async (tx) => {
-    // YUK-471 W1 PR-A2b — single accept/create-time `now` shared by BOTH the row
-    // (applyProposeNew stamps created_at/updated_at) and the auto_tag event's
-    // created_at. The node reducer stamps an auto_tag-created row's timestamps from
-    // the EVENT's created_at (auto_tag is NOT a proposal — its create IS the write
-    // moment), so the row and the event must carry the SAME instant for fold == row.
-    // (Previously applyProposeNew's internal `new Date()` and the event's defaulted
-    // created_at diverged, so the projection's created_at would not match the row.)
+    // One event timestamp defines the new node metadata.
     const now = new Date();
-    // YUK-471 W1 PR-B — SoT flip gate. ON: skip applyProposeNew's INSERT (writeRow=false) and
-    // let the projection write the row from the auto_tag genesis event below.
-    const flip = projectionIsWriter();
-    const createdId = await applyProposeNew(
-      tx,
-      {
-        mutation: 'propose_new',
-        name: kc_name,
-        parent_id: input.subjectRootId,
-      },
-      now,
-      /* writeRow */ !flip,
-    );
+    const createdId = await prepareProposedKnowledgeId(tx, {
+      mutation: 'propose_new',
+      name: kc_name,
+      parent_id: input.subjectRootId,
+    });
     await writeEvent(tx, {
       id: newId(),
       session_id: null,
@@ -340,24 +311,8 @@ export async function tagKnowledge(
       created_at: now,
     });
 
-    // YUK-471 W1 PR-B — flip ON: the projection writes the row from the auto_tag genesis
-    // event (the imperative INSERT was skipped). Guarded for symmetry, though the fold is
-    // non-null here (the auto_tag event creates the node) so the delete branch is unreachable.
-    // Flip OFF: the A2b accept-time parity assert — re-project the just-written row and assert
-    // fold(events) == row (the reducer reconstructs from the auto_tag event; timestamps from
-    // its created_at = `now`). Dev/test THROW on divergence; prod warn+returns (see parity.ts).
-    if (flip) {
-      await projectKnowledgeNodeGuarded(tx, createdId);
-    } else {
-      const writtenRow = (
-        await tx.select().from(knowledge).where(eq(knowledge.id, createdId)).limit(1)
-      )[0];
-      await assertKnowledgeNodeParity(
-        tx,
-        createdId,
-        writtenRow ? knowledgeLiveRowToSnapshot(writtenRow) : null,
-      );
-    }
+    // The recorded event is the only source of the new node.
+    await projectKnowledgeNodeGuarded(tx, createdId);
     return createdId;
   });
 

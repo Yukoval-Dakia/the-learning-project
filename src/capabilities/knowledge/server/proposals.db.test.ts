@@ -29,10 +29,10 @@ import {
   acceptProposal,
   applyArchive,
   applyMerge,
-  applyProposeNew,
   applyReparent,
   applySplit,
   dismissProposal,
+  prepareProposedKnowledgeId,
   writeKnowledgeProposeEvent,
 } from './proposals';
 import { seedKnowledge } from './seed';
@@ -278,38 +278,40 @@ describe('writeKnowledgeProposeEvent', () => {
   });
 });
 
-describe('applyProposeNew', () => {
+describe('prepareProposedKnowledgeId', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
-  it('inserts a new knowledge row with proposed_by_ai=true', async () => {
+  it('validates the parent and allocates identity without prematurely materializing a node', async () => {
     const db = testDb();
     await insertKnowledge({ id: 'seed:yuwen:shici', domain: 'yuwen' });
-    const newId_ = await applyProposeNew(db, {
+    const newId_ = await prepareProposedKnowledgeId(db, {
       mutation: 'propose_new',
       name: '通假字',
       parent_id: 'seed:yuwen:shici',
     });
     expect(newId_).toMatch(/^[a-z0-9]+$/);
     const rows = await db.select().from(knowledge).where(eq(knowledge.id, newId_));
-    expect(rows[0]?.name).toBe('通假字');
-    expect(rows[0]?.domain).toBeNull();
-    expect(rows[0]?.parent_id).toBe('seed:yuwen:shici');
-    expect(rows[0]?.proposed_by_ai).toBe(true);
+    expect(rows).toEqual([]);
+    expect(await db.select().from(event)).toEqual([]);
   });
 
   it('rejects propose_new with parent_id=null (PR A single-domain scope)', async () => {
     const db = testDb();
     await expect(
-      applyProposeNew(db, { mutation: 'propose_new', name: 'x', parent_id: null }),
+      prepareProposedKnowledgeId(db, { mutation: 'propose_new', name: 'x', parent_id: null }),
     ).rejects.toThrow(/root creation.*not supported/i);
   });
 
   it('rejects propose_new when parent_id does not exist in knowledge', async () => {
     const db = testDb();
     await expect(
-      applyProposeNew(db, { mutation: 'propose_new', name: 'x', parent_id: 'ghost-parent' }),
+      prepareProposedKnowledgeId(db, {
+        mutation: 'propose_new',
+        name: 'x',
+        parent_id: 'ghost-parent',
+      }),
     ).rejects.toThrow(/parent knowledge node not found.*ghost-parent/i);
   });
 });
@@ -339,6 +341,14 @@ describe('acceptProposal (propose_new only)', () => {
       .from(knowledge)
       .where(eq(knowledge.id, result.new_node_id));
     expect(knowledgeRows).toHaveLength(1);
+    expect(knowledgeRows[0]).toMatchObject({
+      name: '通假字',
+      domain: null,
+      parent_id: 'seed:yuwen:shici',
+      proposed_by_ai: true,
+      approval_status: 'approved',
+      version: 0,
+    });
     // rate=accept event chained
     const rateRows = await db
       .select()

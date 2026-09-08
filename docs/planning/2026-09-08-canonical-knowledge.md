@@ -78,3 +78,13 @@ create→archive→revive regression also pins strict event ordering: under the 
 archive/revive advance beyond existing history instead of relying on random IDs.
 The requested time is a lower bound; memory ingest_at opt-out remains independent.
 No paid call or production change. Node operations and deployment history are next.
+
+Node creation now shares a read-only `prepareProposedKnowledgeId` that validates
+the parent and allocates identity. Explicit acceptance and automatic tagging
+always record their existing creation contract before projection; removed the
+optional direct INSERT and tagging's flag/parity fallback. Automatic approval,
+cache and provenance semantics remain unchanged. Preparation tests assert no node
+or event is prematurely written; original node-field assertions now live on actual
+proposal acceptance. Three suites pass117 DB cases; final accepted-node contract
+passes3 targeted cases, with typecheck/build green. Existing-node reparent/archive/
+merge/split still require side-effect ordering work before removing their flag.

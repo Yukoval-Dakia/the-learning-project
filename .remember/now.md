@@ -5,7 +5,9 @@
 - Active984：root独占codex/yuk-984-canonical-knowledge（从983交付docs8c901df3建），原脏main不动。
   关系新建提案已删flag-off直接INSERT；共同runEdgeTopologyGate固定projection，保留锁/retry/错误翻译，不再生产warn-only。
   37相关DB过，新增INSERT-trigger顺序验证含所在文件11DB通过；typecheck/build过。仅实施checkpoint，未审查/PR/部署，生产仍983/5dd7e8ed，无paid。
-  edge创建/归档/reactivate及merge/supersede已event→projection；余node五操作/迁移/flag退休，见canonical-knowledge计划；不保留永久旧writer作rollback。
+  edge创建/归档/reactivate及merge/supersede已event→projection；node新建/tagging也已迁移，余node四mutation/迁移/flag退休；不保留永久旧writer作rollback。
+  本轮117DB/typecheck/build过，最终接受节点字段3targetedDB过。prepareProposedKnowledgeId只校验父+分配ID，无直接INSERT/writeRow模式；tagging删flag/parity分支，接受新节点固定projection。
+  旧准备函数写表断言移至真实accept，准备阶段断言无node/event；原自动批准/缓存/来源契约保留，无paid/部署。下一reparent embedding/merge/split顺序。
   最新7suite/212DB/typecheck/build全过，gen:postman无diff。create/reactivate原始DML及API/merge/supersede配对generate删除，保留replacement event ID。
   首192case有1旧fixture revival早于creation；改真实创建/归档历史，owner锁内推进事件时间。同clock三连操作严格顺序回归过；ingest_at optout独立保留，无paid/生产变更。
   只读map_984_node_order已终态；其“保留imperative rollback”建议与owner目标不符，不采用。节点顺序结论须root逐项复核。

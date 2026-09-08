@@ -307,20 +307,12 @@ async function assertParentExists(db: DbLike, parentId: string): Promise<void> {
   }
 }
 
-// YUK-471 W1 PR-A2b — `now` is the SINGLE accept-time timestamp the caller stamps
-// the row with. Defaulted to `new Date()` so the other (non-accept) callers
-// (tag-knowledge.ts, tests) keep working; acceptProposal passes its tx-scoped
-// `now` so the row's created_at/updated_at === the rate=accept event's created_at
-// === what the node reducer stamps from (fold(events) == row byte-exact).
-export async function applyProposeNew(
+// Shared preparation for explicit proposal acceptance and automatic tagging.
+// This does not write a node: each owner records its existing creation contract
+// before projection. No caller-selectable imperative mode remains for new nodes.
+export async function prepareProposedKnowledgeId(
   db: DbLike,
   payload: ProposeNewPayload,
-  now: Date = new Date(),
-  // YUK-471 W1 PR-B1 — when false (SoT flip ON), validate + mint but SKIP the imperative
-  // INSERT; the projection write-through writes the row from events at the accept seam. The
-  // minted node is event-sourced THIS tx (propose + rate + index anchor), so its fold is
-  // non-null — projectKnowledgeNode never hits its delete-on-null branch (zero delete risk).
-  writeRow = true,
 ): Promise<string> {
   if (payload.parent_id === null) {
     throw new Error(
@@ -328,22 +320,7 @@ export async function applyProposeNew(
     );
   }
   await assertParentExists(db, payload.parent_id);
-  const newId_ = newId();
-  if (writeRow) {
-    await db.insert(knowledge).values({
-      id: newId_,
-      name: payload.name,
-      domain: null,
-      parent_id: payload.parent_id,
-      merged_from: [],
-      proposed_by_ai: true,
-      approval_status: 'approved',
-      created_at: now,
-      updated_at: now,
-      version: 0,
-    });
-  }
-  return newId_;
+  return newId();
 }
 
 export async function applyReparent(
@@ -1032,12 +1009,8 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
       // then threaded through (1) applyX and (2) rate=accept for byte-exact fold == row parity.
       await lockMutationRows(tx, apply);
       const now = new Date();
-      // YUK-471 W1 PR-B — read the SoT-flip gate ONCE per accept. OFF (default): imperative
-      // appliers write the row + the A2b parity assert verifies fold==row. ON: the projection
-      // is the row writer for EVERY kind the accept touches (propose_new / reparent / archive /
-      // merge / split) — propose_new skips its imperative INSERT; the mutation appliers keep
-      // their version-guarded UPDATE and the projection overwrites from events (see the seam
-      // below). Flag OFF stays the full-verification rollback.
+      // New nodes are always event-first. This remaining switch applies only to
+      // existing-node mutations until their order-dependent side effects are migrated.
       const flip = projectionIsWriter();
 
       let result: AcceptResult;
@@ -1047,7 +1020,7 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
       try {
         switch (apply.mutation) {
           case 'propose_new': {
-            const newNodeId = await applyProposeNew(tx, apply, now, /* writeRow */ !flip);
+            const newNodeId = await prepareProposedKnowledgeId(tx, apply);
             result = { kind: 'propose_new_applied', new_node_id: newNodeId };
             break;
           }
@@ -1184,7 +1157,7 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
       // blind one). This runs AFTER the rate + materialized_id_index writes, in the same tx, so
       // the fold sees them — the exact point the A2b parity assert ran. Flag OFF keeps that
       // assert (true rollback: full fold==row verification restored).
-      if (flip) {
+      if (flip || result.kind === 'propose_new_applied') {
         for (const id of affectedNodeIds(result)) {
           await projectKnowledgeNodeGuarded(tx, id);
         }
