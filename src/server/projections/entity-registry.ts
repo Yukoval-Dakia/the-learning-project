@@ -9,8 +9,8 @@
 // oracle sweep consume this registry so a new entity is wired by adding ONE adapter, not by editing
 // five call sites.
 
-import { eq } from 'drizzle-orm';
-
+import { and, eq, inArray } from 'drizzle-orm';
+import { ARTIFACT_STATE_ACTIONS } from '@/core/projections/artifact';
 import type { Db, Tx } from '@/db/client';
 import {
   artifact,
@@ -276,8 +276,29 @@ async function eventSubjectIdSet(
   const evRows = await db
     .select({ subject_id: event.subject_id })
     .from(event)
-    .where(eq(event.subject_kind, kind));
+    .where(
+      and(
+        eq(event.subject_kind, kind),
+        kind === 'artifact' ? inArray(event.action, [...ARTIFACT_STATE_ACTIONS]) : undefined,
+      ),
+    );
   for (const r of evRows) out.add(r.subject_id);
+  if (kind === 'question_block') {
+    // A merge/edit can name secondary blocks only in its payload. They still have
+    // history: do not backfill a fresh baseline over those mutations or omit them
+    // from symmetric row-set audits.
+    const edits = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(eq(event.action, 'experimental:edit_question_block_structured'));
+    for (const { payload } of edits) {
+      const affected = (payload as { affected_blocks?: unknown }).affected_blocks;
+      if (!Array.isArray(affected)) continue;
+      for (const block of affected) {
+        if (block && typeof block.block_id === 'string') out.add(block.block_id);
+      }
+    }
+  }
   if (writesIndex) {
     const idxRows = await db
       .select({ materialized_id: materialized_id_index.materialized_id })

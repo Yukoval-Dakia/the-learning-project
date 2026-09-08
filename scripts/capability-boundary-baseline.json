@@ -3,7 +3,7 @@
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "debts": {
     "capabilityToServer": {
-      "total": 435,
+      "total": 433,
       "byOwnerPair": {
         "agency -> ai": 25,
         "agency -> boss": 10,
@@ -35,7 +35,7 @@
         "ingestion -> boss": 6,
         "ingestion -> events": 5,
         "ingestion -> mastery": 2,
-        "ingestion -> projections": 10,
+        "ingestion -> projections": 9,
         "ingestion -> proposals": 3,
         "ingestion -> questions": 5,
         "ingestion -> r2": 13,
@@ -54,7 +54,7 @@
         "notes -> ai": 8,
         "notes -> artifacts": 2,
         "notes -> boss": 2,
-        "notes -> projections": 3,
+        "notes -> projections": 2,
         "notes -> proposals": 1,
         "notes -> runtime-env": 1,
         "observability -> boss": 1,

@@ -2,6 +2,14 @@
 
 ## 最新状态
 
+- Active983：root独占codex/yuk-983-canonical-editors；退休Notes body editor与Ingestion全部六结构/merge/figure操作的直接UPDATE回退，统一event→projection，保留rowlock/version/backlinks。
+  migrateCanonicalProjections扩到artifact/question_block；只给无事件旧行genesis，拒绝不完整历史、payload-only次要题块（包括live缺失）、漂移/幽灵；校准方案A不动。
+  68相关DB/3flag unit/typecheck/lint/build/strict fold/architecture过，依赖435→433基线收紧。
+  初审2P1已修，唯一验证PASS；禁止第三审。oracle旧三kind断言已按五kind修正，9DB复验在跑。
+  新production backup已真实恢复loom_before_983_verify；新bundle迁移7LI/8artifact通过、0新增锚点，private canonical983-clone.json。
+  初probe错网络已stop；后clone识别未接受learning-intent提案被误当artifact变更，root改共享fold action集合并补回归后PASS，不是生产历史丢失；禁第三审。
+  尚未commit/PR/部署983；上一运行仍app f707ca5c、worker8bce5f0a，原脏main未动。全局NEXT旧979/预算叙事已原位纠正。
+
 - 982 Done：PR1367 exactf707ca5c/CI34217359805所有job绿，10:51:28Z合并main e095d28680cf8e745b071e6f564f4e9ebd29af14。
   Mac10:51:33Z只重建app3e5db502，imagef707ca5c/c122d97d healthy/0重启；worker c430a928/PG7d99236a未动，454/280/21/空队列未变。
   health200/无token401/notes200七条、真实reader/reload零错误；built实际check正文重放与编辑/undo/save/reload/conflict/mobile过。
