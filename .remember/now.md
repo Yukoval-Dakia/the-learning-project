@@ -2,6 +2,14 @@
 
 ## 最新状态
 
+- 981修后8bce5f0a actual PASS：新DB loom_notes_981_actual_v2，image1316441c；accept137→generate真实成功→ready137→verify真实成功，artifact br1jomjdbpj3pq4zvj0h49p0 ready/verified。
+  同generate physical job 2e81df0b-f967-50ae-ad34-38dfa8ec855e另进程重投completed，0model/task增量；显式boss.fail加速expiry，非自动完整过期窗。
+  generation1066in/3505out，verify5216in/984out，estimate合计$0.00663810非账单；新$3池保守预留$1余$2，旧reserve不回收。
+  当前生产93df0528；本轮最新生产基线454event/280task/21attempt，验收前后不变，不沿用昨日424/258/4；空活动队列。
+  scoped73unit/20generateDB/gates/架构/browser过；唯一验证审结束，UI无P0/P1，三引用P1已4DB RED→GREEN修复，禁第三审。
+  PR1365 exact8bce5f0a CI34212977772仍余DB；未merge/deploy。root切delivery-notes存交付记录，不重启PR CI。
+  新982 P2 Backlog：ADR保留check自解释，但现有UI墓碑隐藏正文；不改五kind契约、不恢复embedded quiz、不冒充完整产品体验PASS。
+
 - owner本轮明确「批准」：Notes七文件富编辑及新增最多$3实际验收获授权，981/887恢复In Progress；新预算尚未使用，旧reserve不回收。
   981 PR1365 Draft/exact95cf627ddc21ed06237681e5f532024c295541ab；引用P1修复已推，UI P1仍未修。
   CI34151841019 exact95cf627d已终态全绿；正式初审已用，唯一验证审保留至两P1都修完。
