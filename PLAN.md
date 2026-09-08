@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-08：951 Done，PR1370/exact423a56e4文档CI绿/唯一验证PASS/main8ea58bd4；887当前镜像提案HTTP+fold复验通过。整体goal继续上传OCR/恢复差集，无paid/NAS。
+> Linear 是权威 tracker；更新于 2026-09-08：951 Done；887当前镜像提案HTTP+fold复验、三业务责任复核和上传fixture已完成。付费上传OCR/恢复验收待新预算，现交付证据文档；本轮无paid/NAS。
 
 ## NOW
 
@@ -183,7 +183,7 @@
 1. 951 Done：ADR0063已集成；887 canonical提案HTTP401/201/200和accept/retract零drift复验过，无paid。
 2. 887剩余证据按原七项矩阵收口：Tencent/GLM-OCR现役wire及完整provider/恢复范围；已有Notes/Memory/learner/Tagging/Agency通过项不重烧。
    新$3已全部保守预留/余0；旧$10不回收。免费代码/DB/回放继续，新增付费须另授权。977/980保持P2。
-3. 最终按学习意图→录入→判分→复习→提议/撤回逐责任核实；不以测试/依赖数字替代完成。
+3. 录入完成/判分完成/知识合并三业务责任已独立复核；完整产品实际验收仍按887差集，不以源代码/测试数字替代。
 
 ## PARKED
 
@@ -196,5 +196,5 @@
 ## BLOCKED-ON
 
 - Mac本地生产已授权直接操作；NAS部署/数据操作仍未授权，不执行。
-- 两个$3专项均已保守预留完毕；新增paid未授权，不批量重跑历史failed/DLQ，历史费用unknown保留。
+- 两个$3专项均已保守预留完毕；新最多$2默认GLM上传/OCR请求待答复，不启动paid；Tencent/recovery另列，不回收unknown预留。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。
