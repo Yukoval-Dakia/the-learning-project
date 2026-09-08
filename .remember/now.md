@@ -2,6 +2,16 @@
 
 ## 最新状态
 
+- 887免费准备：明确canonical assets→ingestion-sessions→operations(kind=extract,idempotency)→OCR worker，而非旧extract URL；offline复杂worksheet PNG已渲染目检，hash见rollout-evidence-gap.md。
+  未upload/R2/worker/paid。独立只读audit_final_business_ownership对录入完成/判分完成/知识合并三行为未找到剩余规则复制或跨owner内部写；root复核durable receipt同事务、三个settlement共用效果、merge最终故障跨域回滚断言。
+  root architecture-deepening通过49Task/42Tool/53queue/19proposal、428/0/48，5域SCC21command仍如实保留，不用数量证明责任封装。无新runtime代码缺陷/不用开新issue；887实际上传OCR与恢复gate仍未完成，$2预算请求仍待答复。
+
+- 951 Done：PR1370 exacte423a56e4/CI34236331582 success（docs-only跳过代码lane，非重跑全测）/main8ea58bd4，14:09:16Z合并。
+  初审发现canonical-knowledge当前/历史状态冲突，改显式历史非操作指引+过去时；唯一验证PASS，不第三审。build/diffcheck过，无runtime部署。
+  root转codex/yuk-887-final-evidence，从新main建；原脏main不动。887当前e514镜像proposal clone HTTP接受/驳回/撤回/幂等通过，accept/retract独立fold零drift，详见rollout-evidence-gap.md末。
+  canary tlp-887-canonical-proposal已stop，clone task280/attempt21无增；生产454/280/21/0queue不变。当前worker GLM默认且所需凭据presence齐备，非网络认证/真实OCR证据。
+  已异步询问新最多$2默认引擎上传/OCR/Structure验收授权，尚未获答复，未paid；Tencent永久可选引擎JobId恢复仍需单列，不能用GLM成功替代。
+
 - 951最终名词处置补入ADR0063：persistent conversation/turn/native child/tool call；保留subagent_run当前投影、live remote ToolOperations、copilot_continuation历史schema/export/readiness，不做物理名合并或Mission表面。
   root核对manifest仅现役run/reconcile，mcp-bridge仍调用getProcessToolOperations，native同parent结算/取消及turn reader仍在；文档集成尚未完成，951不能先报Done。
   本轮Mac app/worker e514ef94、PG三服务healthy，health200；未重启、改生产数据或付费，旧预算reserve不回收。

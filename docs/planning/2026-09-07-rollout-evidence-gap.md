@@ -1,6 +1,8 @@
 # YUK-887 — bounded rollout evidence gap
 
-Latest update 2026-09-08: Mac API/worker8bce5f0a (main69f1b9de) after YUK981.
+Latest update 2026-09-08: Mac API/worker e514ef94 after canonical Knowledge delivery;
+current proposal HTTP/replay revalidation is recorded below. The earlier8bce5f0a
+model samples remain scoped evidence, not the current deployment identity.
 The original inventory below retains its historical evidence boundaries; the
 new verified deltas at the end supersede its open Notes/Memory/judging rows.
 The purpose is to finish the original rollout requirements, not to restart a
@@ -213,3 +215,83 @@ golden `import-plan887-golden.jsonl` SHA256
 The new3 USD pool now retains all3 USD (Notes1, judging1, import/planning1),
 remaining0. Estimates are not invoices; earlier reservations are not reclaimed.
 No further paid call is authorized by the later UI-only approval.
+
+## Current canonical proposal revalidation — 2026-09-08
+
+Knowledge canonical writers changed after the original shipped proposal sample,
+so that behavior was revalidated without rerunning any model. The exact shipped
+image e514ef94 ran as API-only `tlp-887-canonical-proposal` on loopback18895 against
+the retained isolated `loom_before_984_verify` clone. No worker or provider keys
+were supplied. The controller seeded two synthetic proposals through the current
+proposal writer; decisions used real shipped Hono HTTP, not substituted handlers.
+
+- Before explicit approval, neither node existed. Anonymous accept returned401
+  without materialization; authenticated accept returned201 and one live node.
+- Repeated accept returned200 and the identical decision event. Dismiss returned201
+  and no node. Retract returned201 and retained the archived node/history;
+  repeated retract returned200 with the identical correction event.
+- Independent read-only gather/fold versus live snapshots had zero differences
+  after acceptance and after retraction.
+- Clone task/attempt counts remained280/21. Production independently remained
+ 454 events/280 tasks/21 attempts/zero pending jobs. The canary container is stopped.
+
+Accepted proposal `canonical887_0_49c03094-1a01-4f2e-a39a-0eb8a9b320bb`,
+dismissed proposal `canonical887_1_81dcd2fc-e74e-4490-9a7a-a3f68ecd95c0`;
+accept event `b8u7iwik3lm3xkevz5yfzmtv`, dismiss `b9decl5z0lu0ggaurr53fjpj`,
+retract `i13de2uht9l3plspc566xbc9`, node `b2vzrnf15uy1z4tv4yr43zyr`.
+Executed controller `.tmp/yuk887-canonical-proposal.cjs` SHA256
+`17846215c12f42f9fef76f836174cc0007e91e23a2672b744d56d56b9d15e4a9`.
+This is a representative knowledge proposal with synthetic client approval, not
+model creation, UI-click coverage, every proposal kind or full rollout completion.
+
+The missing upload scenario starts at multipart `/api/assets`, verifies R2 bytes,
+then real session dispatch/physical worker OCR and StructureTask output. Current
+worker presence-only preflight confirms required credentials are configured and
+the selected engine is `glm`; this is not authentication/network verification.
+Tencent is an intentionally retained selectable engine, not a deleted path, and
+one default GLM run cannot prove Tencent JobId resume. Existing extracted-block
+Tagging/import and Agency outputs do not prove file upload/OCR. A bounded $2 request
+for the default-engine scenario has been presented; no new paid authority or call
+is assumed until an explicit answer arrives.
+
+## Upload preparation and bounded ownership audit — 2026-09-08
+
+The future upload canary must use the canonical public resources, not merely the
+deprecated `/api/ingestion/[id]/extract` adapter:
+`POST /api/assets` (multipart file), `POST /api/ingestion-sessions` (entrypoint and
+asset_ids), then `POST /api/ingestion-sessions/[id]/operations` with
+`{"kind":"extract"}` and an Idempotency-Key. Poll the returned operation resource.
+The extract branch enqueues `tencent_ocr_extract` directly with its operationId;
+`ingestion_operation` handles the other operation kinds. Assert repeated operation
+acceptance reuses identity and does not dispatch another paid wire.
+
+Offline synthetic fixture `.tmp/ingestion887-worksheet.png` is1000x1250/121846bytes,
+SHA256 `20d9ceaedc2042fe9e2074856b1956800732bffb783aaef98d560b6ceb6bba23`.
+Its rendered image was visually checked: a2x2 table (18/12/22/48), a shared stem
+with two subquestions, conditional probability, zero-probability conditioning and
+an explicitly unknown count. Expected extraction retains the table, grouping,
+numbering and boundary wording without inventing printed answers. SVG source is
+`.tmp/ingestion887-worksheet.svg`, SHA256
+`bfc0c14aba216ca2171b65d01c5a059856bb9630d2f7fe9581a8e99845b16d39`.
+No file upload, R2 write, worker launch or provider call occurred in this preparation.
+
+An independent read-only ownership audit on main8ea58bd4 found no remaining
+duplicated business rule or cross-owner internal-table write in the three original
+report scenarios; root inspected the consequential source and rollback assertions:
+
+- Ingestion routes and worker converge on `completeIngestionImport`; the durable
+  wrapper owns operation identity/receipt in the same transaction. Receipt failure
+  rolls back imported facts, rather than reporting FAILED after committing them.
+- Practice has three behavior-specific settlement entries but one private
+  `applyLearningEffects` implementation for shared learning effects. Paper identity
+  and deferred late-arrival rules remain behavior-specific, not duplicate engines.
+- Knowledge acceptance coordinates one transaction and delegates attribution to
+  Practice/Agency owners, records repair provenance then projects structural rows.
+  Existing DB regression faults the last edge repair and asserts rollback across
+  question, learning item, goal, knowledge and learning state.
+
+This is source-level evidence for those three behaviors, not a full production
+journey or an assertion that every file/test is ideal. No new tests were run by
+the reviewer. Root reran architecture-deepening:49 TaskSpecs/42 DomainTools/53
+manifest queues/19 proposal kinds, dependencies428/0/48; the five-capability SCC
+still contains21 catalogued command files. Counts are not the ownership proof.
