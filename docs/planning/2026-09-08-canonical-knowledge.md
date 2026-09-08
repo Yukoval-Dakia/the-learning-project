@@ -35,6 +35,12 @@ An initial runner exited1 after setup without test results; the terminal handle
 was confirmed before a single-suite rerun exposed the four fixture gaps (63 passed).
 No production failure/paid call/deployment. Deployment history and global flag
 retirement remain, followed by full984 review/CI/authorized Mac delivery.
+Final consumer inspection found another real creation owner outside these five
+proposal operations: learning-intent-knowledge.ts still inserts directly, and its
+two Agency acceptance call sites do not create knowledge event/index history.
+That owner must be migrated before deployment validation/flag retirement. The
+subject-root control/seed paths also need a final structural-writer audit; having
+paired events alone is not proof that a duplicate writer should remain.
 
 Merge preparation inspection confirms the nine attribution owners operate on explicit IDs
 and do not require the absorbed knowledge rows to be archived first. Structural merge DML

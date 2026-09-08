@@ -7,6 +7,8 @@
   原raw测试改真实accept并按精确proposal读取receipt。四旧fixture缺base已显式准备；seed无历史先拒绝且不删行再准备成功。
   trigger证明节点UPDATE前有完整merge receipt；missing/drift/target guard全回滚。4suite131DB/typecheck/build过，首无结果runner退出1后单suite重跑定位4fixture（63pass），非生产故障。
   下一部署历史/全局flag物理退休；map_984_history_retirement只读盘点在跑，无第二writer。未984正式review/PR/paid/deploy，生产983不动。
+  盘点已返回，root实查learning-intent-knowledge.ts仍raw INSERT，Agency learning-intent.ts两真实create调用未补knowledge genesis/index；下一先收口此遗漏owner，再部署校验。
+  不直接采纳子agent“subject control raw UPDATE应保留”判断；需按唯一结构writer目标另核subject seed/root控制面。migrateCanonical目前仅5实体，Q2/Q3须专门验证。
 
 - Active984：root独占codex/yuk-984-canonical-knowledge（从983交付docs8c901df3建），原脏main不动。
   关系新建提案已删flag-off直接INSERT；共同runEdgeTopologyGate固定projection，保留锁/retry/错误翻译，不再生产warn-only。
