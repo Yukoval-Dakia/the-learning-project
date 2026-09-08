@@ -18,6 +18,26 @@ Status: active, not delivered. Production remains the verified983 image.
 
 ## Progress
 
+Deployment preparation now covers all seven canonical entities, adding Knowledge
+and KnowledgeEdge to the migration's table locks, backfills and symmetric audits.
+Before any backfill, validateKnowledgeHistory checks direct genesis identity,
+indirect proposal/split materialized IDs with original accept/index chains, all
+merge source/destination bases, and edge creation before archive. Pending proposals
+do not disqualify truly eventless legacy rows. Knowledge rates and edge decisions
+have different production envelopes; each is checked against its actual protocol.
+Edge accept/reverse/change-type/supersede must retain their generated effect(s).
+
+Validation reuses existing schemas, reconstructing the mutation discriminator from
+the action exactly as the fold does. A surviving materialized accept with both
+proposal and index missing is refused, not treated as permission to snapshot live
+state. Valid new-node/merge/split histories remain unchanged; lost acceptance/index/
+merge source base and archive-only edge histories reject without writing a baseline.
+Three suites pass95 DB tests; four caller/history suites pass73, including proposal
+actions and merge-attribution backfill. Final expanded nine-case history rerun and
+typecheck/build pass. Initial failures were two old five-entity
+report fixtures plus new fixture/envelope construction errors, corrected without
+relaxing provenance checks. No live migration or paid invocation occurred.
+
 All four creation entrypoints now consume Knowledge's createKnowledgeNodeFromEvents:
 LearningIntent, builtin bootstrap, custom subject roots and placement starters. The
 shared operation owns per-ID creation locking, create-only vs existing-skip semantics,

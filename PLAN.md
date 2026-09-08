@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-08：984 Active，四创建入口共用Knowledge owner，业务知识结构DML归零；44DB+26并发/创建复验与gates过。依赖428/0/48如实登记，fold旧writer删；余知识历史/全局flag及整项交付。生产983未动，整体未完成，无paid/NAS。
+> Linear 是权威 tracker；更新于 2026-09-08：984 Active，知识/edge部署历史校验已接7实体迁移，先验Q2接受/index与Q3 merge来源，再补真eventless基线；95DB+73调用方复验过。余最终历史补验/全局flag/整项reviewCI与Mac交付。生产983未动，整体未完成，无paid/NAS。
 
 ## NOW
 

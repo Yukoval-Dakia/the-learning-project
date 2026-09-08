@@ -244,6 +244,8 @@ describe('canonical projection deployment migration', () => {
       { seeded: 0, skipped: 0, checked: 0 },
       { seeded: 0, skipped: 0, checked: 0 },
       { seeded: 0, skipped: 0, checked: 0 },
+      { seeded: 0, skipped: 0, checked: 0 },
+      { seeded: 0, skipped: 0, checked: 0 },
     ]);
     expect(await testDb().select().from(event)).toEqual([]);
   });
@@ -280,6 +282,8 @@ describe('canonical projection deployment migration', () => {
       learning_item: { seeded: 2, skipped: 0, checked: 2 },
       artifact: { seeded: 1, skipped: 0, checked: 1 },
       question_block: { seeded: 1, skipped: 0, checked: 1 },
+      knowledge: { seeded: 0, skipped: 0, checked: 0 },
+      knowledge_edge: { seeded: 0, skipped: 0, checked: 0 },
     });
     expect(await snapshot()).toEqual(before);
     const anchors = await testDb().select().from(materialized_id_index);
@@ -295,6 +299,8 @@ describe('canonical projection deployment migration', () => {
       learning_item: { seeded: 0, skipped: 2, checked: 2 },
       artifact: { seeded: 0, skipped: 1, checked: 1 },
       question_block: { seeded: 0, skipped: 1, checked: 1 },
+      knowledge: { seeded: 0, skipped: 0, checked: 0 },
+      knowledge_edge: { seeded: 0, skipped: 0, checked: 0 },
     });
     expect(await testDb().select().from(event)).toEqual(events);
   });

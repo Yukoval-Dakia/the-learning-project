@@ -2,6 +2,13 @@
 
 ## 最新状态
 
+- 984知识历史迁移已实施：migrateCanonical锁表扩knowledge/edge，先validateKnowledgeHistory，再7实体backfill+正反fold/live审计。Q2间接propose/split要求原accept/materialized IDs/index；Q3 merge全部from/into须base。
+  pending proposal不算结构历史；archive-only edge拒绝。edge真实rate subject为knowledge_edge、rating reverse/change_type等，单独验证生成effect，不能套node rate.subject=event约束。
+  接受envelope/原创建schema重用、malformed action/identity拒绝；split/merge判别从action补入，和现fold相同。孤立materialized accept即使proposal+index都丢也拒绝。
+  95DB及四套73DB复验过（含actions/backfill caller），最后9历史DB/typecheck/build全过。
+  初轮2旧report fixture只列5实体，补7实体精确断言；另两新fixture缺id/时间已修；schema初误传DB nullable envelope、未补mutation，按真实fold输入修正。无生产/付费变更。
+  下一全局PROJECTION_IS_WRITER物理退休、整项独立review/exactCI/clone+Mac交付；未完成，不把local migration gate当生产验收。
+
 - 984四创建入口已共用node-creation.ts：LearningIntent/seedKnowledge/ensureSubjectRoot/placement调用同一create lock→已存在skip/error→genesis/index→projection。
   保留actor、placement确定性genesisID与旧身份/历史检查、ingest_at；已有节点不改/不补假历史，history有row无则拒绝。业务src知识结构DML只剩projection，两个embedding派生writer保留。
   四套44DB、补三套26DB（跨bootstrap/root并发只诞生一次/ghost拒绝）及typecheck/build过。fold strict无violation/stale，删除8旧writer声明，proposals归derived maintenance。
