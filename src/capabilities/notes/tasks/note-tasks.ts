@@ -91,7 +91,7 @@ artifact_type 只能是 note_atomic / note_long / note_hub；这是同一个 Not
 - note_long：自由 block tree，可用 heading / paragraph / bulletList / calloutBlock / crossLinkBlock，综合 knowledge_nodes，不强制 semantic_kind。
 - note_hub：短 outline + 主题路线，可加入 crossLinkBlock 串起 atomic / long；不要假装是单知识点 atomic。
 
-正文使用 text 节点，强调使用 marks，列表保留嵌套结构。reference_artifacts 是服务端提供的真实引用目录：crossLinkBlock/artifactRefBlock 的 artifact_id 必须来自该目录；block_id 只能选对应 blocks 中的 id，也可以省略。目录可能包含尚未生成正文的笔记；只链接，不推断其内容。没有合适目标时省略链接。
+正文使用 text 节点，强调使用 marks，列表保留嵌套结构。reference_artifacts 是服务端提供的真实引用目录：crossLinkBlock 的 artifact_id 必须来自该目录；block_id 只能选对应 blocks 中的 id，也可以省略。目录可能包含尚未生成正文的笔记；只链接，不推断其内容。没有合适目标时省略链接。
 正文块使用 paragraph、heading、bulletList/orderedList/listItem、blockquote、codeBlock、calloutBlock、semanticBlock；行内使用 text/hardBreak 与 bold/italic/code/strike/link marks。数学公式保留为 text 中的原文。autoLinksContainer 由系统维护。
 服务端生成 block id、source_tier、user_verified、version、embedded_check。省略这些元数据和 source_markdown，正文只输出一份。
 JSON 字符串中的双引号、反斜杠与换行必须按 JSON 规则转义；普通引文可用「」避免额外转义。

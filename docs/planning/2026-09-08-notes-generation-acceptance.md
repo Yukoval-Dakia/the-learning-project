@@ -129,5 +129,14 @@ were inspected; the first mobile capture caught the existing sidebar transition,
 so the probe now waits for its completion. No shell layout changes were needed.
 Private evidence: `notes981-browser.json`, `notes981-rich-desktop.png`,
 `notes981-rich-mobile.png`; source/bundle archived alongside these outputs.
-The sole verification review is running. New exact-head CI and paid post-fix
-Notes generation/verification remain pending; no YUK981 deployment yet.
+The sole verification review completed: rich editing has no P0/P1, but three
+reference-path P1 gaps remained. Root reproduced all three as four real DB REDs:
+non-note target admitted; artifactRef alias not indexed; archive and block-removal
+during provider execution still published ready. Fixes restrict the catalog to
+Notes types, materialize the model alias into the one live crossLinkBlock shape,
+and revalidate current targets under sorted source/target row locks in the short
+ready transaction (never across the model call). All four are now GREEN, with
+20 generation DB cases passing. Review budget is exhausted; no third review is
+started. Root owns final adjudication based on these regressions and exact CI.
+New exact-head CI and paid post-fix Notes generation/verification remain pending;
+no YUK981 deployment yet.

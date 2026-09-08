@@ -45,6 +45,9 @@ export function materializeGeneratedBodyBlocks(body: ArtifactBodyBlocksT): Artif
     }
     return {
       ...node,
+      // One live reference consumer: the Notes renderer and backlink index both
+      // own crossLinkBlock. Do not persist an unrenderable model alias.
+      ...(node.type === 'artifactRefBlock' ? { type: 'crossLinkBlock' } : {}),
       ...(anchored || node.attrs ? { attrs } : {}),
       ...(Array.isArray(node.content)
         ? { content: node.content.map((child) => visit(child)) }

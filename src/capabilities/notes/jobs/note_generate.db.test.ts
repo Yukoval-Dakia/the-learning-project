@@ -169,7 +169,7 @@ describe('runNoteGenerate', () => {
     };
     first.content[0].content[0].marks = [{ type: 'bold' }];
     response.body_blocks.content.push({
-      type: 'crossLinkBlock',
+      type: 'artifactRefBlock',
       attrs: { id: 'model-id', artifact_id: 'reference-note', title: '已有相关笔记' },
     });
     await expect(
@@ -201,13 +201,14 @@ describe('runNoteGenerate', () => {
       .from(artifact_block_ref)
       .where(eq(artifact_block_ref.from_artifact_id, 'rich-generated'));
     expect(refs).toHaveLength(1);
+    expect(body.content[5].type).toBe('crossLinkBlock');
     expect(refs[0]).toMatchObject({
       from_block_id: (body.content[5].attrs as Record<string, unknown>).id,
       to_artifact_id: 'reference-note',
     });
   });
 
-  it.each(['unrelated', 'archived', 'missing-block'])(
+  it.each(['unrelated', 'archived', 'missing-block', 'non-note'])(
     'rejects a %s generated reference without publishing ready content',
     async (mode) => {
       await seedAtomic({ artifactId: 'reference-owner', knowledgeId: 'reference-scope' });
@@ -218,6 +219,7 @@ describe('runNoteGenerate', () => {
           .set({
             knowledge_ids: ['reference-scope'],
             ...(mode === 'archived' ? { archived_at: new Date() } : {}),
+            ...(mode === 'non-note' ? { type: 'tool_quiz' } : {}),
           })
           .where(eq(artifact.id, 'target'));
       const response = JSON.parse(VALID_BODY_BLOCKS);
@@ -245,6 +247,66 @@ describe('runNoteGenerate', () => {
           .select()
           .from(artifact_block_ref)
           .where(eq(artifact_block_ref.from_artifact_id, 'reference-owner')),
+      ).toEqual([]);
+    },
+  );
+
+  it.each(['archive', 'remove-block'])(
+    'rejects target %s during model execution before publishing ready',
+    async (mode) => {
+      const db = testDb();
+      await seedAtomic({ artifactId: 'owner-race', knowledgeId: 'scope-race' });
+      await seedAtomic({ artifactId: 'target-race' });
+      await db
+        .update(artifact)
+        .set({
+          knowledge_ids: ['scope-race'],
+          body_blocks: {
+            type: 'doc',
+            content: [
+              {
+                type: 'paragraph',
+                attrs: { id: 'linked-block' },
+                content: [{ type: 'text', text: '原目标' }],
+              },
+            ],
+          },
+        })
+        .where(eq(artifact.id, 'target-race'));
+      const response = JSON.parse(VALID_BODY_BLOCKS);
+      response.body_blocks.content.push({
+        type: 'crossLinkBlock',
+        attrs: { artifact_id: 'target-race', block_id: 'linked-block' },
+      });
+      await expect(
+        runNoteGenerate({
+          db,
+          artifactId: 'owner-race',
+          runTaskFn: async (_kind, input) => {
+            expect(input).toMatchObject({
+              reference_artifacts: [
+                { artifact_id: 'target-race', blocks: [{ id: 'linked-block' }] },
+              ],
+            });
+            await db
+              .update(artifact)
+              .set(
+                mode === 'archive'
+                  ? { archived_at: new Date() }
+                  : { body_blocks: { type: 'doc', content: [] } },
+              )
+              .where(eq(artifact.id, 'target-race'));
+            return { text: JSON.stringify(response) };
+          },
+        }),
+      ).rejects.toThrow(/reference/);
+      const [row] = await db.select().from(artifact).where(eq(artifact.id, 'owner-race'));
+      expect(row).toMatchObject({ generation_status: 'failed', body_blocks: null, version: 0 });
+      expect(
+        await db
+          .select()
+          .from(artifact_block_ref)
+          .where(eq(artifact_block_ref.from_artifact_id, 'owner-race')),
       ).toEqual([]);
     },
   );

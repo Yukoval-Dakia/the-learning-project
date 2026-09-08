@@ -25,6 +25,7 @@ import {
 import {
   assertNoteGenerationReferences,
   loadNoteGenerationReferences,
+  lockCurrentNoteGenerationReferences,
 } from '@/capabilities/notes/server/note-generation-references';
 import {
   dispatchNoteVerification,
@@ -229,6 +230,12 @@ export async function runNoteGenerate(
     // Wrap the body_blocks UPDATE + cross_link index sync + fold events in one tx so the L2 backlink
     // index never lags the AI-authored note (YUK-95 P5) AND a malformed event rolls back the UPDATE.
     const updated = await db.transaction(async (tx) => {
+      const currentReferences = await lockCurrentNoteGenerationReferences(
+        tx,
+        artifactId,
+        referenceArtifacts,
+      );
+      assertNoteGenerationReferences(parsed.body_blocks, currentReferences);
       // Re-read INSIDE the tx (FOR UPDATE) so the event payloads are built from the REAL current
       // version/body/history the UPDATE is about to advance (rollback-safe, mirror create-event.ts).
       const beforeRows = await tx
