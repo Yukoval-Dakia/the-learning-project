@@ -1,6 +1,6 @@
 # YUK984 — Canonical knowledge writes
 
-Status: active, not delivered. Production remains the verified983 image.
+Status: delivered on Mac. PR1369 merged to main e9b6f251; production runs tested e514ef94. Whole-project goal remains active.
 
 ## Execution plan
 
@@ -16,7 +16,50 @@ Status: active, not delivered. Production remains the verified983 image.
 4. Scoped DB/concurrency/revert tests, local typecheck/lint/build, independent
    review and exact-head CI; fresh clone/backup/live Mac delivery. No paid calls.
 
-## Progress
+## Final delivery — authoritative current state
+
+Final delivery: CI Gate34233241153 completed successfully for exacte514ef94;
+independent initial review passed without P0/P1 and no verification round was needed.
+PR1369 merged at2026-09-08T13:52:31Z to e9b6f2516dc4595bf3cb4eae1a179c4403fed78f.
+The guarded Mac deployment started app/worker at13:53:04Z on e514ef94. Both are
+healthy with zero restarts; original Postgres ID/start time/volume are unchanged.
+Live migration checked all seven entities with zero new anchors. Production remains
+454 events/280 AI tasks/21 provider attempts/zero active-created-retry jobs.
+Health200, unauthenticated401, knowledge200, seven notes200 and actual browser
+read/reload passed with zero page errors. No paid call or NAS operation occurred.
+Retained golden replay also shows zero drift (Knowledge12, LearningItem7, Artifact8,
+ItemCalibration22; the remaining kinds have zero retained rows and are not evidence
+of complex live coverage). Backup, old image/overlays and clone evidence remain.
+Recovery requires the previous release/configuration, not an environment toggle.
+Linear984 is Done. Remaining overall work is tracked separately under887/951 and
+the final behavior-by-behavior acceptance; no whole-project completion is claimed.
+
+## Historical implementation checkpoints — not operational instructions
+
+The records below describe earlier states before the final delivery above. Their
+old SHA, process identities, waiting steps and undeployed observations are retained
+as evidence only; do not repeat review, CI, migration or deployment from this section.
+
+At the pre-merge checkpoint, PR1369 was open at exact
+e514ef94a5f8032e21a8afbe9864294538b5b935; CI Gate34233241153 was running.
+The first full independent review had passed with no P0/P1. Build/unit/audits/
+migration/usability jobs had passed; both DB shards were awaiting completion.
+The review's initial parent-lock candidate was withdrawn after checking the existing
+explicit support for archived ancestors with live children. Only stale fold header
+comments were noted as nonblocking P2; no extra nit issue or verification review is needed.
+
+Fresh production backup SHA25614d0a533c49b6c2bbe6b3f8252dcda9277fd82f105755664d3d682b707a1128e
+was actually restored into loom_before_984_verify, matching454 events/280 tasks/21
+attempts. The real e514ef94 image (sha256:1a68f9042daaabe160c1ee2e4aa4e8b81405de06a3c2ebbd005af50d9f6f0ad0)
+passed migration with zero new anchors and12 knowledge/7 learning items/8 artifacts
+validated. Shipped HTTP on that clone renamed math successfully (200, revision0→1),
+updated the knowledge tree name and rejected the old revision with409. A second
+actual-image migration after the HTTP edit also passed. Clone now has455 events;
+tasks/attempts remain280/21. Its temporary API is stopped; no worker/model credentials
+were supplied. At that checkpoint production stayed454/280/21 on5dd7e8ed, and all
+three original containers retained their IDs/start times and zero restart counts.
+This was clone acceptance, before the final deployment recorded above. Private evidence is under the existing
+tlp-local-prod-20260907.sjUaCU directory (knowledge984-* artifacts).
 
 The global writer switch is retired from runtime policy, environment schema and
 tracked Mac compose. Knowledge and KnowledgeEdge now have explicit canonical
@@ -27,9 +70,10 @@ helper; actual field/index/history/concurrency/replay tests remain. Oracle now a
 all seven kinds regardless of retired environment values. Final76 scoped DB tests,
 3 policy unit tests, typecheck/lint/build and boundary/deepening/strict fold audits
 pass. Lint reports316 warnings/1info, exit0; this is not a claim of warning-free code.
-Remote main remains7cccb335 and no984 PR exists at preflight. Next is the first full
-independent review, exact-head CI, fresh-clone migration and authorized Mac delivery.
-No production change or paid call; whole-project goal remains active.
+At the earlier source preflight, remote main was7cccb335 and no984 PR existed.
+The then-pending independent review, exact-head CI, fresh-clone migration and Mac
+delivery were subsequently completed as recorded above. That source checkpoint
+made no production change or paid call.
 
 Deployment preparation now covers all seven canonical entities, adding Knowledge
 and KnowledgeEdge to the migration's table locks, backfills and symmetric audits.

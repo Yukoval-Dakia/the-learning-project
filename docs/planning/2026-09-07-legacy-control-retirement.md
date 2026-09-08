@@ -1,5 +1,14 @@
 # YUK-951 — retired model controls and drain readiness
 
+## Latest disposition — 2026-09-08
+
+Runtime retirement was delivered in PR1361/PR1363; the final retained-name
+decision is recorded in ADR-0063. Keep native child projection, the live remote
+ToolOperations owner and historical continuation schema; do not build a Mission
+surface, rename physical tables or delete audit history. The earlier open B3
+notes below describe prior checkpoints. This final documentation still needs
+integration into main; it makes no new runtime, paid-call or NAS claim.
+
 ## Current cut
 
 Remove the seven unregistered DomainTool adapters from `subagent-controls.ts` and

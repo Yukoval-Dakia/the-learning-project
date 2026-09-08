@@ -2,6 +2,32 @@
 
 ## 最新状态
 
+- 951最终名词处置补入ADR0063：persistent conversation/turn/native child/tool call；保留subagent_run当前投影、live remote ToolOperations、copilot_continuation历史schema/export/readiness，不做物理名合并或Mission表面。
+  root核对manifest仅现役run/reconcile，mcp-bridge仍调用getProcessToolOperations，native同parent结算/取消及turn reader仍在；文档集成尚未完成，951不能先报Done。
+  本轮Mac app/worker e514ef94、PG三服务healthy，health200；未重启、改生产数据或付费，旧预算reserve不回收。
+  下一文档集成和887真实上传/OCR/恢复差集；原脏main始终未动。
+
+- 984 Done：PR1369 exact e514ef94a5f8032e21a8afbe9864294538b5b935 /CI34233241153终态success全job绿，初审PASS无P0/P1；13:52:31Z merge main e9b6f2516dc4595bf3cb4eae1a179c4403fed78f。
+  13:53:04Z Mac app404dd2cbf5be67b63fb47bf25fde5b7b0814050793b067e708e09a063ade9d87/worker8250610adcddc02d017eed9a1eea0c1192a45d3d671b218d549bc2daa4b4a530运行e514ef94 healthy/0restart。
+  原PG7d99236a/09-07T09:40:42.502Z和volume未动；live migration七实体0新增、12knowledge/7LI/8artifact通过，454event/280task/21attempt/0queue未变。
+  live health200/无token401/knowledge200/7notes200、真实browser note读取/reload零pageerror。8 retained golden再fold零drift：knowledge12/LI7/artifact8/calibration22；其余4kind空，不冒充复杂内容覆盖。
+  私有knowledge984-deploy.log/live-migrate.log/live-check.log/production-check.json/production-reader.png/retained-goldens.log归档；runtime-984-image.override.yml生效。rollback须旧release/compose/983镜像，不能翻已删flag。
+  Linear984已Done，clone测试数据保留；没有新增paid/NAS。root现codex/yuk-984-delivery-notes，从新origin/main接回3交付记录commit，原脏main不动。
+  整体goal仍active：下一951保留处置/887实际上传OCR与恢复差集/逐学习行为最终验收。各旧paid池已保守预留完毕，继续免费验证，不能重烧failed任务。
+
+- 984继续等待同一CI34233241153：两DB shard仍in_progress，其他job全部success；未restart/workflow重跑，未merge。
+  私有deploy984.cjs/runtime-984-image.override.yml已准备，preflight PASS（image e514ef94三service一致、精确原PG、队列0），未执行deploy。
+  部署入口检查PR1369已MERGED与CI exact e514成功，之后才stop app/worker→migrate→up，保留旧983overlay和镜像作恢复。无paid/生产变化。
+
+- 984 PR1369 OPEN，published exact e514ef94a5f8032e21a8afbe9864294538b5b935；远端main7cccb335。CI Gate34233241153当前in_progress，仅DB双shard未终态，其余productionbuild/unit/typechecklintaudits/migration/usability成功。
+  首次正式整项review agent /root/review_984_canonical_knowledge 终态PASS，无新增P0/P1；parent-lock候选按既有archived-ancestor语义撤回。初审预算已用，无P1不需验证审；旧fold头注释P2非阻塞，未另开微小issue。
+  fresh dump loom-before-984.dump SHA14d0a533c49b6c2bbe6b3f8252dcda9277fd82f105755664d3d682b707a1128e实际恢复loom_before_984_verify，454event/280task/21attempt与生产相同。
+  image e514ef94 SHA1a68f9042daaabe160c1ee2e4aa4e8b81405de06a3c2ebbd005af50d9f6f0ad0实际dist/migrate PASS，7实体0新增/12knowledge/7LI/8artifact检查过。
+  clone shipped HTTP admin math rename200，revision0→1，knowledge tree根name同步，旧revision再写409；停专用HTTP容器后再迁移PASS。clone455event/280task/21attempt；production仍454/280/21，零provider增量。
+  production app18e9a5e2/worker2377d637仍5dd7e8ed、StartedAt11:46:55Z/0restart；PG7d99236a仍09-07T09:40:42Z/0restart。无生产写/付费/NAS。
+  私有证据目录tlp-local-prod-20260907.sjUaCU：knowledge984-image.log、knowledge984-clone-result.log、knowledge984-http-result.log、knowledge984-clone-after-http.log与两cjs。HTTP容器tlp-984-http-clone已stop未删，migration容器--rm。
+  13:47Z复核同一CI run仍in_progress，DB双shard未终态，其他job成功；PR API inline comments空。下一读取同一CI，不重开review/CI。exactCI成功后可merge与Mac交付；local交付记录commit未推，避免纯docs重置CI。
+
 - 984全局flag退休完成：projectionIsWriter必须显式entity，knowledge/edge各自canonical；env schema及tracked Mac compose删除全局开关。README明确七实体历史gate/旧release rollback；calibration方案A不动。
   删4重复ON/OFF proposal tests/stripVolatile辅助，保留真实接受字段/并发/缺历史/回放。oracle预期改七实体always-on，仅calibration gated。
   76DB、3policy unit、typecheck/build/lint与boundary/deepening/fold strict通过；lint316 warnings/1info但exit0，未扩大清理范围。

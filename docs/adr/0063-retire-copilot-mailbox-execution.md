@@ -24,3 +24,29 @@ unschedule the exact retired cron and drain its housekeeping ticks before upgrad
 do not discard jobs to make the guard pass. Rollback uses the prior worker and kept
 schema/history; restarting that worker restores its old schedule, so repeat readiness
 before another upgrade. Mac authorization does not authorize a NAS deployment.
+
+## Final retained-name disposition (2026-09-08)
+
+The product vocabulary is a persistent conversation, its accepted turns, native
+children and tool calls. There is no separate foreground/background conversation
+or Mission surface (ADR-0062). Do not collapse these different responsibilities
+into a generic task table merely to reduce the number of names.
+
+- `subagent_run` is the current native-child lifecycle projection as well as a
+  historical record. Preserve same-parent settlement, explicit Stop, terminal
+  recovery and turn readers. Its retained physical name does not authorize the
+  deleted mailbox launcher or automatic paid continuation.
+- ToolOperations owns real remote tool execution and its lease, cancellation and
+  terminal audit. It is not a second agent or conversation. Preserve this owner
+  and `tool_operation`; folding it into child execution would mix tool leases
+  with SDK child lifecycle rules.
+- `copilot_continuation` is retained historical schema, export and installation
+  readiness evidence, not a current execution mechanism. No new producer or
+  worker handler is permitted by this retention decision.
+
+Physical SQL, historical event and wire names are deliberately retained, not an
+unfinished universal rename. Deletion would require an independently justified
+data-retention/migration decision across installations; the Mac drain evidence
+does not authorize deleting another installation's pending work. This closes the
+noun-disposition decision without claiming a physical schema collapse or complete
+provider/learning-workflow acceptance.
