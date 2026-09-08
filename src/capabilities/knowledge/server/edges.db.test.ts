@@ -3,9 +3,10 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { knowledge, knowledge_edge } from '@/db/schema';
+import { backfillKnowledgeEdgeGenesis } from '../../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
-  archiveKnowledgeEdge,
+  archiveKnowledgeEdgeFromEvents as archiveKnowledgeEdge,
   createKnowledgeEdge,
   getKnowledgeEdgeById,
   listKnowledgeEdges,
@@ -291,7 +292,7 @@ describe('listKnowledgeEdges', () => {
   });
 });
 
-describe('archiveKnowledgeEdge', () => {
+describe('archiveKnowledgeEdgeFromEvents', () => {
   beforeEach(async () => {
     await resetDb();
   });
@@ -304,12 +305,13 @@ describe('archiveKnowledgeEdge', () => {
       to_knowledge_id: 'k2',
       relation_type: 'related_to',
     });
-    const firstAt = new Date('2026-07-19T12:00:00.000Z');
-    const secondAt = new Date('2026-07-19T12:00:01.000Z');
+    await backfillKnowledgeEdgeGenesis(db);
+    const firstAt = new Date(Date.now() + 10);
+    const secondAt = new Date(firstAt.getTime() + 1000);
 
     const results = await Promise.all([
-      archiveKnowledgeEdge(db, id, firstAt),
-      archiveKnowledgeEdge(db, id, secondAt),
+      archiveKnowledgeEdge(db, id, { created_at: firstAt }),
+      archiveKnowledgeEdge(db, id, { created_at: secondAt }),
     ]);
 
     expect(results.map((result) => result.archived).sort()).toEqual([false, true]);
@@ -327,6 +329,7 @@ describe('archiveKnowledgeEdge', () => {
       relation_type: 'related_to',
     });
 
+    await backfillKnowledgeEdgeGenesis(db);
     expect((await archiveKnowledgeEdge(db, id)).archived).toBe(true);
     expect((await archiveKnowledgeEdge(db, id)).archived).toBe(false);
     await expect(archiveKnowledgeEdge(db, 'missing-edge')).rejects.toMatchObject({

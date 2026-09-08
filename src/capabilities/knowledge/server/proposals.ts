@@ -36,21 +36,19 @@ import { retireKcTypedStateOnMerge } from '@/server/conjectures/typed-state';
 import { retireFsrsStateOnMerge } from '@/server/fsrs/state';
 import { retireMasteryStateOnMerge } from '@/server/mastery/state';
 import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
-import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 // YUK-471 W1 PR-A2b — accept-time projection parity assert (dev/test throws, prod warns) +
 // the applicability gate (skip nodes that predate event-sourcing — no genesis anchor → fold
 // is null → not a real mismatch; the backfill establishes those anchors later).
 import {
   assertKnowledgeNodeParity,
-  knowledgeEdgesWithGenesisAnchor,
   knowledgeLiveRowToSnapshot,
   knowledgeNodesWithGenesisAnchor,
 } from '@/server/projections/parity';
 // YUK-471 W1 PR-B1 — the SoT-flip gate (default OFF; projection becomes the row writer when ON).
 import { projectionIsWriter } from '@/server/projections/sot-flag';
 import {
-  archiveKnowledgeEdge,
+  archiveKnowledgeEdgeFromEvents,
   createKnowledgeEdge,
   listAllLivePrerequisiteEdges,
   listLiveEdgesTouchingNode,
@@ -433,48 +431,8 @@ async function archiveIncidentKnowledgeEdges(
   // shared with live edge writers: endpoint knowledge row(s) → knowledge_edge advisory lock.
   await acquireSortedAdvisoryLocks(tx, 'knowledge_edge', [nodeId]);
   const touching = await listLiveEdgesTouchingNode(tx, nodeId);
-  const projectionWrites = projectionIsWriter();
-  const anchored = projectionWrites
-    ? await knowledgeEdgesWithGenesisAnchor(
-        tx,
-        touching.map((edge) => edge.id),
-      )
-    : new Set<string>();
   for (const edge of touching) {
-    const archived = await archiveKnowledgeEdge(tx, edge.id, now);
-    if (!archived.archived) continue;
-    if (projectionWrites && !anchored.has(edge.id)) {
-      await writeEvent(tx, {
-        id: newId(),
-        actor_kind: 'system',
-        actor_ref: 'genesis-backfill',
-        action: 'experimental:genesis',
-        subject_kind: 'knowledge_edge',
-        subject_id: edge.id,
-        outcome: 'success',
-        payload: {
-          row: {
-            id: edge.id,
-            from_knowledge_id: edge.from_knowledge_id,
-            to_knowledge_id: edge.to_knowledge_id,
-            relation_type: edge.relation_type,
-            weight: edge.weight,
-            created_by: edge.created_by,
-            reasoning: edge.reasoning,
-            created_at: edge.created_at,
-            archived_at: null,
-          },
-        },
-        // Keep the seed strictly before the archive even for a malformed future-dated legacy row;
-        // the canonical created_at remains preserved inside payload.row.
-        created_at:
-          edge.created_at < now ? edge.created_at : new Date(Math.max(0, now.getTime() - 1)),
-      });
-    }
-    await writeEdgeArchiveEvent(tx, edge, edge.id, now, reason);
-    if (projectionWrites) {
-      await projectKnowledgeEdgeGuarded(tx, edge.id);
-    }
+    await archiveKnowledgeEdgeFromEvents(tx, edge.id, { created_at: now, reasoning: reason });
   }
 }
 
@@ -587,33 +545,6 @@ export async function applySplit(
 // every merge-driven endpoint change (a raw UPDATE would be invisible to the fold → resurrected on
 // rebuild). Actor user/self matches the merge accept.
 
-async function writeEdgeArchiveEvent(
-  tx: Tx,
-  edge: TopologyEdge,
-  oldEdgeId: string,
-  now: Date,
-  reasoning = 'merge: KC attribution rewrite (YUK-543)',
-) {
-  await writeEvent(tx, {
-    id: newId(),
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'generate',
-    subject_kind: 'knowledge_edge',
-    subject_id: oldEdgeId,
-    outcome: 'success',
-    payload: {
-      edge_op: 'archive',
-      archive_edge_id: oldEdgeId,
-      from_knowledge_id: edge.from_knowledge_id,
-      to_knowledge_id: edge.to_knowledge_id,
-      relation_type: edge.relation_type,
-      reasoning,
-    },
-    created_at: now,
-  });
-}
-
 async function writeEdgeCreateEvent(
   tx: Tx,
   newEdgeId: string,
@@ -707,20 +638,17 @@ export async function rewireKnowledgeEdges(
     const oldTo = edge.to_knowledge_id;
     const newFrom = mapEndpoint(oldFrom);
     const newTo = mapEndpoint(oldTo);
-    const oldTopo: TopologyEdge = {
-      from_knowledge_id: oldFrom,
-      to_knowledge_id: oldTo,
-      relation_type: edge.relation_type,
-    };
 
     // Self-loop after rewrite (edge already touched intoId, or a loser→loser edge): the edge
     // collapses — archive-only, no create (a self-edge is never meaningful).
     if (newFrom === newTo) {
-      const archived = await archiveKnowledgeEdge(tx, edge.id, now);
+      const archived = await archiveKnowledgeEdgeFromEvents(tx, edge.id, {
+        created_at: now,
+        reasoning: 'merge: KC attribution rewrite (YUK-543)',
+      });
       if (!archived.archived) {
         throw new Error(`merge: knowledge_edge ${edge.id} changed before self-loop collapse`);
       }
-      await writeEdgeArchiveEvent(tx, oldTopo, edge.id, now);
       if (edge.relation_type === 'prerequisite') dropFromMesh(oldFrom, oldTo);
       result.push({ old_edge_id: edge.id, new_edge_id: null, outcome: 'collapsed_self_loop' });
       continue;
@@ -747,11 +675,13 @@ export async function rewireKnowledgeEdges(
     }
 
     // Archive the old edge (+ fold event), then create the rewritten edge (+ fold event).
-    const archived = await archiveKnowledgeEdge(tx, edge.id, now);
+    const archived = await archiveKnowledgeEdgeFromEvents(tx, edge.id, {
+      created_at: now,
+      reasoning: 'merge: KC attribution rewrite (YUK-543)',
+    });
     if (!archived.archived) {
       throw new Error(`merge: knowledge_edge ${edge.id} changed before rewire`);
     }
-    await writeEdgeArchiveEvent(tx, oldTopo, edge.id, now);
     if (edge.relation_type === 'prerequisite') dropFromMesh(oldFrom, oldTo);
 
     let newEdgeId: string | null = null;

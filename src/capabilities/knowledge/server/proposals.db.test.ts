@@ -124,7 +124,20 @@ async function insertKnowledgeEdge(opts: {
         },
         created_at: createdAt,
       });
+  } else if (opts.anchored !== false) {
+    await seedEdgeHistory();
   }
+}
+
+// Test-only pre-cutover snapshot: preserve every structural field and its history.
+async function seedEdgeHistory() {
+  await testDb().execute(sql`INSERT INTO event
+    (id, actor_kind, actor_ref, action, subject_kind, subject_id, outcome, payload, created_at)
+    SELECT 'fixture_genesis_' || k.id, 'system', 'genesis-backfill', 'experimental:genesis',
+      'knowledge_edge', k.id, 'success', jsonb_build_object('row', to_jsonb(k)), k.created_at
+    FROM knowledge_edge k WHERE NOT EXISTS
+      (SELECT 1 FROM event e WHERE e.subject_kind='knowledge_edge' AND e.subject_id=k.id
+        AND e.action IN ('generate','experimental:genesis'))`);
 }
 
 async function edgeArchiveEvents(ids: string[]) {
@@ -564,6 +577,7 @@ describe('applyArchive', () => {
       })),
     );
 
+    await seedEdgeHistory();
     await applyArchive(db, { mutation: 'archive', node_id: 'k_node', expected_version: 1 }, now);
 
     const liveIncidents = await db
@@ -607,7 +621,7 @@ describe('applyArchive', () => {
     },
   );
 
-  it('preserves every non-archive field when flag-on cascade archives an event-less legacy edge', async () => {
+  it('refuses missing history and preserves all fields after explicit legacy preparation', async () => {
     const db = testDb();
     vi.stubEnv('PROJECTION_IS_WRITER', '1');
     const now = new Date('2026-07-23T12:46:00.456Z');
@@ -621,6 +635,7 @@ describe('applyArchive', () => {
     await insertKnowledge({ id: 'k_other' });
     await insertKnowledgeEdge({
       id: 'e_legacy',
+      anchored: false,
       from: 'k_node',
       to: 'k_other',
       relation: 'related_to',
@@ -631,6 +646,13 @@ describe('applyArchive', () => {
     });
     const before = await db.select().from(knowledge_edge).where(eq(knowledge_edge.id, 'e_legacy'));
 
+    await expect(
+      applyArchive(db, { mutation: 'archive', node_id: 'k_node', expected_version: 2 }, now),
+    ).rejects.toThrow('requires complete history');
+    expect(await db.select().from(knowledge_edge).where(eq(knowledge_edge.id, 'e_legacy'))).toEqual(
+      before,
+    );
+    await seedEdgeHistory();
     await applyArchive(db, { mutation: 'archive', node_id: 'k_node', expected_version: 2 }, now);
 
     const after = await db.select().from(knowledge_edge).where(eq(knowledge_edge.id, 'e_legacy'));
@@ -937,6 +959,7 @@ describe('applyMerge — YUK-543 attribution repair', () => {
         ...(opts.created_at ? { created_at: opts.created_at } : {}),
         ...(opts.archived ? { archived_at: new Date() } : {}),
       });
+    await seedEdgeHistory();
   }
   async function insertMisc(id: string, toId: string, opts: { archived?: boolean } = {}) {
     const now = new Date();

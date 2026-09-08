@@ -423,7 +423,7 @@ describe('proposal lifecycle owner service', () => {
       to_knowledge_id: 'k1',
       relation_type: 'related_to',
       weight: 1,
-      created_by: 'user' as never,
+      created_by: { actor_kind: 'user', actor_ref: 'self' } as never,
       created_at: new Date(),
     });
     await writeAiProposal(db, {
@@ -454,6 +454,7 @@ describe('proposal lifecycle owner service', () => {
       .where(eq(knowledge_edge.id, 'edge_superseded'));
     expect(before[0].archived_at).toBeNull();
 
+    await backfillKnowledgeEdgeGenesis(db);
     const result = await acceptAiProposal(db, 'edge_supersede_p1');
     expect(result.kind).toBe('knowledge_edge');
     if (result.kind !== 'knowledge_edge') throw new Error('unexpected result');

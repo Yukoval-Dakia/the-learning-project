@@ -42,12 +42,22 @@ The complete archive operation now belongs to Knowledge's
 projection and concurrent no-op handling. Proposal acceptance and cascade revert
 both consume it; cascade no longer reads edge internals or constructs archive
 events. Compensation retains its cause/time and `ingest_at` memory-outbox opt-out.
-The raw archive function is no longer exported through the capability public API;
-its remaining internal merge/supersede callers must still migrate before removal.
+The raw archive function is now deleted: incident retirement, merge and supersede
+also consume the common operation. Duplicate archive event assembly and inline
+genesis fallback are removed. Supersede archives the old relationship before its
+replacement, atomically; its caller no longer passes redundant old-edge fields.
 Two integration suites pass61 DB cases. A legacy cascade fixture had an empty
 create payload; replacing it with the actual structural fields/actor/time restores
 replay fidelity, without weakening rollback assertions. Final cascade19DB,
 typecheck/build and changed-file lint pass. No review/PR/deployment claim yet.
+
+Internal caller migration passes145 scoped DB cases and20 edge-owner cases, plus
+typecheck/build. Initial10 failures were old fixtures without creation history.
+Fixtures explicitly seed history; the old inline-backfill expectation now proves
+rejection/full rollback first, then success after explicit preparation, retaining
+every field/replay assertion. The raw archive entrypoint and writeEdgeArchiveEvent
+have no remaining production definitions/calls. Create/reactivate/node DML and
+deployment history validation remain; this is not984 completion or a deploy point.
 
 Remaining direct edge create/archive/reactivate callers still pair raw DML with events;
 the global flag is not yet retired. No completion/rollout claim for this step.

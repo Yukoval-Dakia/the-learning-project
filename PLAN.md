@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-08：984 Active，Knowledge共同归档owner已接proposal/cascade，移除公开raw archive与撤回侧重复事件组装；61DB/最终19cascadeDB/typecheck/build过。内部merge/supersede/节点与迁移待收敛；生产983/5dd7e8ed未动，整体未完成，无paid/NAS。
+> Linear 是权威 tracker；更新于 2026-09-08：984 Active，全部归档调用已接共同owner，旧raw archive/重复事件/inline genesis已删除；145DB+20edge-ownerDB/typecheck/build过。create/reactivate/节点与迁移待收敛；生产983/5dd7e8ed未动，非部署点，整体未完成，无paid/NAS。
 
 ## NOW
 

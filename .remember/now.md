@@ -10,7 +10,9 @@
   archive proposal已改锁行→校验base→rate/archive→projection，无直接UPDATE或flag。59DB/typecheck/build过；显式排除archive-only假基线后42actionsDB及typecheck/build复验PASS。
   生产只读edge count0；不把空人口当复杂迁移验收。supersede需要先移除旧边再gate新边，重构owner时保持同tx；其它raw writer尚未改。
   archiveKnowledgeEdgeFromEvents共同owner已接proposal/cascade；封装tx/lock/base/event/projection，cascade不再读edge内部/拼事件，保留cause/time/ingest_at。
-  public移除raw archive导出；内部merge/supersede等仍待迁移，最终需删旧函数，不称两模式完工。
+  raw archive函数现已物理删除；内部incident/merge/supersede全用共同owner，删重复archive事件helper与inline genesis。supersede先archive旧边再引入新边，同tx。
+  最新145DB+20edge-ownerDB/typecheck/build过。初10fixture缺历史失败已显式seed，旧自动backfill测试改先拒绝/回滚→准备历史→保持所有字段/回放断言。
+  create/reactivate与node DML及部署迁移仍待完成，生产不动；不是可部署点。多hunk补丁生成失败均无写入，改逐文件最小连续patch后成功。
   61集成DB过；旧cascade空create payload补真实字段/actor/time，最终19cascadeDB/typecheck/build/changed lint过。生产未动，无paid。
   Linear已恢复且list_comments确认上轮comment未送达，本轮统一补记59/42DB和共同owner进展；984仍In Progress。
 

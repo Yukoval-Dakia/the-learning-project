@@ -343,11 +343,6 @@ export async function decideKnowledgeEdgeProposal(
               reasoning: proposePayload.reasoning ?? SUPERSEDE_DEFAULT_REASON,
             },
             supersededEdgeId,
-            supersededEdge: {
-              from_knowledge_id: oldEdge.from_knowledge_id,
-              to_knowledge_id: oldEdge.to_knowledge_id,
-              relation_type: oldEdge.relation_type,
-            },
             decision: {
               action: 'SUPERSEDE',
               neighbor_index: proposePayload.supersede_neighbor_index ?? null,
