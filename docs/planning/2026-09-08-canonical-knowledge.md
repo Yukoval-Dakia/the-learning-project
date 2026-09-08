@@ -19,10 +19,11 @@ Status: active, not delivered. Production remains the verified983 image.
 ## Progress
 
 PR1369 is open at exact e514ef94a5f8032e21a8afbe9864294538b5b935; CI Gate
-34233241153 and the first full independent review are running. Build/unit/audits/
+34233241153 is running; the first full independent review passed with no P0/P1. Build/unit/audits/
 migration/usability jobs have passed; both DB shards remain pending completion.
 The review's initial parent-lock candidate was withdrawn after checking the existing
-explicit support for archived ancestors with live children. Full review is not yet final.
+explicit support for archived ancestors with live children. Only stale fold header
+comments were noted as nonblocking P2; no extra nit issue or verification review is needed.
 
 Fresh production backup SHA25614d0a533c49b6c2bbe6b3f8252dcda9277fd82f105755664d3d682b707a1128e
 was actually restored into loom_before_984_verify, matching454 events/280 tasks/21

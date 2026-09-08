@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-08：984 PR1369/exacte514ef94已推，CI34233241153与初审在跑；76DB/3unit/gates过，fresh dump真恢复+实际image迁移/HTTP改名200旧版409/再迁移PASS。生产983未动，整体未完成，无paid/NAS。
+> Linear 是权威 tracker；更新于 2026-09-08：984 PR1369/exacte514ef94初审PASS无P0/P1，CI34233241153仅DB双shard仍跑；local gates及fresh clone实际image迁移/HTTP200旧版409/再迁移PASS。待exactCI与Mac交付，生产983未动，整体未完成，无paid/NAS。
 
 ## NOW
 
