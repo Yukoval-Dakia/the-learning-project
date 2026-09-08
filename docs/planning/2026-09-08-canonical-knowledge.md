@@ -27,7 +27,17 @@ An additional INSERT-time DB trigger observes event existence, distinguishing
 event-first execution from dual writes with coincidentally identical final rows.
 This test and its full11-case route suite pass; typecheck and build pass.
 
-Remaining edge create/archive/reactivate callers still pair raw DML with events;
+Archive proposal acceptance now locks the live row before emitting rate/archive
+events and projecting, removing its imperative UPDATE and final writer switch.
+It requires a creation/genesis baseline (archive-only synthesis is not a baseline)
+and a reconstructible fold; rejection commits no decision/archive. Existing two-
+proposal contention still allows exactly one archive. Three related suites pass59
+DB cases, with missing-history refusal then explicit test-only backfill coverage.
+Typecheck/build pass; final explicit base-action check passes the42-case actions suite.
+Live read-only preflight finds0 edges: no live legacy edge is exposed, but that
+empty population is not evidence for complex history migration or complete rollout.
+
+Remaining direct edge create/archive/reactivate callers still pair raw DML with events;
 the global flag is not yet retired. No completion/rollout claim for this step.
 Read-only node mapping confirms the current fold covers all five operations:
 Q1 subject, Q2 materialized proposal IDs and Q3 merge-from IDs. Root still must

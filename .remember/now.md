@@ -7,6 +7,9 @@
   37相关DB过，新增INSERT-trigger顺序验证含所在文件11DB通过；typecheck/build过。仅实施checkpoint，未审查/PR/部署，生产仍983/5dd7e8ed，无paid。
   余edge归档/create owner/reactivate/merge及node五操作/迁移/flag退休，见canonical-knowledge计划；不保留永久旧writer作rollback。
   只读map_984_node_order已终态；其“保留imperative rollback”建议与owner目标不符，不采用。节点顺序结论须root逐项复核。
+  archive proposal已改锁行→校验base→rate/archive→projection，无直接UPDATE或flag。59DB/typecheck/build过；显式排除archive-only假基线后42actionsDB及typecheck/build复验PASS。
+  生产只读edge count0；不把空人口当复杂迁移验收。supersede需要先移除旧边再gate新边，重构owner时保持同tx；其它raw writer尚未改。
+  本轮Linear save_comment及随后list_comments均transport失败，未确认送达；恢复后先查重再同步本段59/42DB与归档进度，984保持In Progress，无需新issue。
 
 - 983 Done：PR1368 exactc97eddad098dc80ddd84491ec1218daf85b4e38f/CI34221548520所有job绿，11:46:41Z main7cccb335eb1a4f4d2026198e9e3fac39a393246e。
   Notes及全部六题块编辑统一event→projection；历史完整性迁移/rowlock/CAS/backlinks保留。初审2P1修复，唯一验证PASS，禁止第三审。

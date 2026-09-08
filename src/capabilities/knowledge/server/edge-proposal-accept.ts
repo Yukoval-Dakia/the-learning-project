@@ -12,8 +12,8 @@ import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from '@/kernel/proposals/signals';
+import { gatherAndFoldKnowledgeEdge } from '@/server/projections/gather';
 import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
-import { projectionIsWriter } from '@/server/projections/sot-flag';
 import { findExistingRateEvent } from '@/server/proposals/applier-helpers';
 import {
   acquireEdgeEndpointLocks,
@@ -21,7 +21,6 @@ import {
   runEdgeTopologyGate,
   withEdgeEndpointLockRetry,
 } from './edge-topology-write';
-import { archiveKnowledgeEdge } from './edges';
 import { applyApprovedEdgeSupersede } from './propose_edge';
 
 const SUPERSEDE_DEFAULT_REASON = 'accepted reconcile supersede';
@@ -177,11 +176,11 @@ export async function decideKnowledgeEdgeProposal(
   }
 
   // ADR-0032 D4-E1 (YUK-203) — ARCHIVE accept. Soft-deletes the live edge named by
-  // archive_edge_id (set archived_at via the single-owner edges module; never a
+  // archive_edge_id (project archived_at from its accepted archive event; never a
   // hard delete — 守 propose+correction-reversible 不变量). reverse / change_type
   // are CREATE-edge semantics and meaningless for an archive proposal; reject them.
   // Idempotency mirrors create: the existingRate guard above short-circuits a
-  // re-accept, and archiveKnowledgeEdge itself is a NULL→now guarded no-op, so a
+  // re-accept, and the row lock below serializes the live→archived transition, so a
   // racing/duplicate accept that slips past the guard still cannot double-archive.
   if (edgeOp === 'archive') {
     if (decision !== 'accept') {
@@ -201,11 +200,42 @@ export async function decideKnowledgeEdgeProposal(
     }
 
     const generateEventId = createId();
-    // YUK-471 W1 PR-B — SoT flip gate (archive branch). ON: keep the imperative archive UPDATE
-    // (the soft-delete mutation) AND project the edge from its events so the row reflects
-    // archived_at.
-    const flip = projectionIsWriter();
     await db.transaction(async (tx) => {
+      // Lock, validate, append, project: two concurrent decisions cannot both own
+      // the live→archived transition, and no direct UPDATE precedes the event.
+      const [current] = await tx
+        .select()
+        .from(knowledge_edge)
+        .where(eq(knowledge_edge.id, archiveEdgeId))
+        .for('update');
+      if (!current) {
+        throw new ApiError('not_found', `knowledge_edge not found: ${archiveEdgeId}`, 404);
+      }
+      if (current.archived_at !== null) {
+        throw new ApiError('conflict', `knowledge_edge ${archiveEdgeId} is already archived`, 409);
+      }
+      // The legacy fold can synthesize a row from archive-only history. That is
+      // not a creation baseline and must not authorize a canonical mutation.
+      const [base] = await tx
+        .select({ id: event.id })
+        .from(event)
+        .where(
+          and(
+            eq(event.subject_kind, 'knowledge_edge'),
+            eq(event.subject_id, archiveEdgeId),
+            sql`(${event.action} = 'experimental:genesis' OR (${event.action} = 'generate'
+          AND (${event.payload}->>'edge_op') IS DISTINCT FROM 'archive'))`,
+          ),
+        )
+        .limit(1);
+      if (!base || (await gatherAndFoldKnowledgeEdge(tx, archiveEdgeId)) === null) {
+        throw new ApiError(
+          'conflict',
+          `knowledge_edge ${archiveEdgeId} requires complete history before archive`,
+          409,
+        );
+      }
+      const now = new Date();
       await writeEvent(tx, {
         id: rateEventId,
         actor_kind: 'user',
@@ -223,18 +253,6 @@ export async function decideKnowledgeEdgeProposal(
         created_at: now,
       });
 
-      // Single-owner soft-delete. A racing archive that won after the preflight guard is a
-      // conflict: roll this transaction back rather than appending a second fold-visible archive
-      // event whose timestamp would diverge from the row.
-      const archived = await archiveKnowledgeEdge(tx, archiveEdgeId, now);
-      if (!archived.archived) {
-        throw new ApiError(
-          'conflict',
-          `knowledge_edge ${archiveEdgeId} changed before proposal ${proposeEventId} was applied`,
-          409,
-        );
-      }
-
       // Provenance + idempotency anchor: a `generate` event whose subject is the
       // archived edge, mirroring the create path so the re-decide guard above
       // returns a consistent { generate_event_id, edge_id }.
@@ -249,9 +267,9 @@ export async function decideKnowledgeEdgeProposal(
         payload: {
           edge_op: 'archive',
           archive_edge_id: archiveEdgeId,
-          from_knowledge_id: proposePayload.from_knowledge_id,
-          to_knowledge_id: proposePayload.to_knowledge_id,
-          relation_type: proposePayload.relation_type,
+          from_knowledge_id: current.from_knowledge_id,
+          to_knowledge_id: current.to_knowledge_id,
+          relation_type: current.relation_type,
           // YUK-471 W1 PR-A2b — encode absent reasoning as null (not ''), matching the
           // ROW's `?? null` so the edge fold is lossless (see GenerateKnowledgeEdge note).
           reasoning: proposePayload.reasoning ?? null,
@@ -261,12 +279,7 @@ export async function decideKnowledgeEdgeProposal(
         created_at: now,
       });
 
-      // YUK-471 W1 PR-B — flip ON: project the archived edge from its events (its create
-      // generate + this archive generate) so the projection reflects archived_at; the
-      // imperative archiveKnowledgeEdge UPDATE above stays (the soft-delete mutation). Guarded.
-      if (flip) {
-        await projectKnowledgeEdgeGuarded(tx, archiveEdgeId);
-      }
+      await projectKnowledgeEdgeGuarded(tx, archiveEdgeId);
     });
 
     if (proposal) {

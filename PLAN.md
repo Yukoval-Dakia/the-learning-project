@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-08：984 Active，关系新建提案已删直接INSERT回退、共同拓扑门不再按环境降级，37DB通过；归档/merge/节点与迁移仍待实施。983已Mac交付/CI全绿，生产5dd7e8ed未动；整体未完成，无新增paid/NAS。
+> Linear 是权威 tracker；更新于 2026-09-08：984 Active，新建/归档提案已删直接DML回退；59DB及最终42actionsDB/typecheck/build过。归档须base并锁行，不造历史；共同edge owner/merge/节点与迁移仍待实施。生产983/5dd7e8ed未动，整体未完成，无paid/NAS。
 
 ## NOW
 

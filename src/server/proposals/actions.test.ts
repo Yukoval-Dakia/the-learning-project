@@ -30,6 +30,7 @@ import {
   knowledgeLiveRowToSnapshot,
   learningItemLiveRowToSnapshot,
 } from '@/server/projections/parity';
+import { backfillKnowledgeEdgeGenesis } from '../../../scripts/backfill-genesis-events';
 import { migrateCanonicalProjections } from '../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { assertProposalLifecycleResult } from '../../../tests/helpers/proposal-lifecycle';
@@ -309,7 +310,7 @@ describe('proposal lifecycle owner service', () => {
       to_knowledge_id: 'k2',
       relation_type: 'related_to',
       weight: 1,
-      created_by: 'user' as never,
+      created_by: { actor_kind: 'user', actor_ref: 'self' } as never,
       created_at: new Date(),
     });
 
@@ -332,6 +333,14 @@ describe('proposal lifecycle owner service', () => {
       },
     });
 
+    await expect(
+      decideKnowledgeEdgeProposal(db, 'edge_archive_p1', { decision: 'accept' }),
+    ).rejects.toThrow('requires complete history');
+    expect((await db.select().from(knowledge_edge))[0].archived_at).toBeNull();
+    expect(
+      await db.select().from(event).where(eq(event.caused_by_event_id, 'edge_archive_p1')),
+    ).toHaveLength(0);
+    await backfillKnowledgeEdgeGenesis(db);
     const result = await acceptAiProposal(db, 'edge_archive_p1');
     expect(result.kind).toBe('knowledge_edge');
     if (result.kind !== 'knowledge_edge') throw new Error('unexpected result');
@@ -493,9 +502,10 @@ describe('proposal lifecycle owner service', () => {
       to_knowledge_id: 'k2',
       relation_type: 'related_to',
       weight: 1,
-      created_by: 'user' as never,
+      created_by: { actor_kind: 'user', actor_ref: 'self' } as never,
       created_at: new Date(),
     });
+    await backfillKnowledgeEdgeGenesis(db);
     for (const suffix of ['a', 'b']) {
       await writeAiProposal(db, {
         id: `edge_archive_race_${suffix}`,
