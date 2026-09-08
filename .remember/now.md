@@ -2,6 +2,13 @@
 
 ## 最新状态
 
+- 982 Done：PR1367 exactf707ca5c/CI34217359805所有job绿，10:51:28Z合并main e095d28680cf8e745b071e6f564f4e9ebd29af14。
+  Mac10:51:33Z只重建app3e5db502，imagef707ca5c/c122d97d healthy/0重启；worker c430a928/PG7d99236a未动，454/280/21/空队列未变。
+  health200/无token401/notes200七条、真实reader/reload零错误；built实际check正文重放与编辑/undo/save/reload/conflict/mobile过。
+  独立初审无P0/P1，不需要第二审；27unit/typecheck/lint/ratchet/build/全部local audits过。
+  root当前codex/yuk-982-delivery-notes仅交付docs；runtime-982-app.override.yml为新增app-only overlay，回滚去掉此层。
+  无新增paid/schema/NAS。剩余887上传/OCR等actual边界与951保留项继续开放；本轮未新发现需独立建issue的实质项。
+
 - Owner批准982七文件FULL预检；root独占codex/yuk-982-self-explanation，原脏main未动。
   check自解释复用现有reader/rich editor，保留id/五kind/乐观锁；不恢复判分、mastery/FSRS、模型调用或新slash命令。
   27unit/typecheck/build/partition/capability通过，独立初审无P0/P1；built浏览器fixture桌面/mobile编辑/undo/save/reload/conflict过。

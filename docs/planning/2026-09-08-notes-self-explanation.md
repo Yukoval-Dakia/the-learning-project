@@ -24,5 +24,16 @@ API, model call, mastery/FSRS write or enrollment path is added.
 
 ## Delivery
 
-Exact-head CI and Mac-local deployment pending. No NAS operation, schema change,
-or new paid request. Overall YUK887/architecture outcome remains active.
+PR1367 exact `f707ca5c3fecfd351792277b788e363bf8518efc` passed every job in
+CI Gate34217359805; merged at2026-09-08T10:51:28Z as
+`e095d28680cf8e745b071e6f564f4e9ebd29af14`. YUK982 Done.
+
+Mac app-only deployment at10:51:33Z: image `the-learning-project-app:f707ca5c`,
+SHA `c122d97dd571ad71f042911406442ad47ade422ce52145d58c6d80a1140e5db0`, app
+`3e5db5026955b700da47636d8cb3d206c85ce91af44b92689c4d846f849d00a1` healthy/0 restarts.
+Worker c430a928 (8bce5f0a) and PG7d99236a retain container IDs/start times.
+454events/280tasks/21provider-attempts/empty queue unchanged. Live health200,
+unauthenticated401, notes200/7 rows, actual reader/reload no page errors.
+Private `notes982-production-check.json` and `notes982-deployment.json` retain evidence.
+Rollback: omit `runtime-982-app.override.yml` to return app to8bce5f0a; no schema change.
+No NAS operation or new paid request. Overall YUK887/architecture outcome remains active.
