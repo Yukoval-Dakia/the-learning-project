@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-08：951最终名词保留决策补入ADR0063，待文档集成；984已交付且Mac三服务健康复核过。整体goal继续887差集/逐行为最终验收，本轮无paid/NAS。
+> Linear 是权威 tracker；更新于 2026-09-08：951 Done，PR1370/exact423a56e4文档CI绿/唯一验证PASS/main8ea58bd4；887当前镜像提案HTTP+fold复验通过。整体goal继续上传OCR/恢复差集，无paid/NAS。
 
 ## NOW
 
@@ -180,7 +180,7 @@
 
 ## NEXT
 
-1. 951最终保留决策已补ADR0063，待文档集成；不改SQL/历史wire名、不建Mission、不删审计历史。
+1. 951 Done：ADR0063已集成；887 canonical提案HTTP401/201/200和accept/retract零drift复验过，无paid。
 2. 887剩余证据按原七项矩阵收口：Tencent/GLM-OCR现役wire及完整provider/恢复范围；已有Notes/Memory/learner/Tagging/Agency通过项不重烧。
    新$3已全部保守预留/余0；旧$10不回收。免费代码/DB/回放继续，新增付费须另授权。977/980保持P2。
 3. 最终按学习意图→录入→判分→复习→提议/撤回逐责任核实；不以测试/依赖数字替代完成。
