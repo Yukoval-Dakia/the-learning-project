@@ -184,5 +184,24 @@ YUK982 separately captures the existing product mismatch: check prose is require
 by ADR and verifier but hidden by D6 UI tombstones. The approved editor scope
 preserves atoms; no old graded-inline-quiz path is resurrected. Therefore this is
 backend generation/verification/recovery PASS plus scoped rich-edit PASS, not a
-claim that every Notes product surface is complete. CI34212977772 on exact8bce5f0a
-remains in progress (DB shards); no YUK981 merge/deployment yet.
+claim that every Notes product surface is complete.
+
+## Delivery
+
+CI34212977772 exact8bce5f0a completed with every job successful. PR1365 merged at
+2026-09-08T10:11:34Z as main `69f1b9deb3ad760ac0b457bd7d45920bdac4852c`.
+Production code content matches the validated candidate. A fresh dump was restored
+to `loom_before_981_verify`; clone and live migration checks inserted nothing and
+verified all seven LearningItems. API/worker stopped normally and were replaced
+at 10:12:50Z with8bce5f0a (healthy, zero restarts). App ID6367b553 and worker
+c430a928; original PostgreSQL7d99236a and its09:40:42Z start/pgdata were unchanged.
+The admission preflight initially caught a transient nonempty queue and performed
+no stop; a subsequent empty-queue check passed before deployment.
+
+Live health200, unauthorized notes401, authenticated notes200/7 rows. Real browser
+note read/reload passed without page errors (read-only); the first probe used a
+wrong CSS selector, corrected against source before recording PASS. Screenshot
+`notes981-production-reader.png` and `notes981-production-check.json` retained.
+Live454event/280task/21attempt remained unchanged. No NAS/Tunnel or historical data
+deletion. Roll back by removing private `runtime-981-image.override.yml`, restoring
+the previous93df0528 image overlay. No schema rollback is required.
