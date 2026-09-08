@@ -2,6 +2,15 @@
 
 ## 最新状态
 
+- 984 PR1369 OPEN，published exact e514ef94a5f8032e21a8afbe9864294538b5b935；远端main7cccb335。CI Gate34233241153当前in_progress，仅DB双shard未终态，其余productionbuild/unit/typechecklintaudits/migration/usability成功。
+  首次正式整项review agent /root/review_984_canonical_knowledge 仍running；其parent-lock候选经base和既有archived-ancestor语义核实已撤回，不是P1。尚无完整终态，不能merge。
+  fresh dump loom-before-984.dump SHA14d0a533c49b6c2bbe6b3f8252dcda9277fd82f105755664d3d682b707a1128e实际恢复loom_before_984_verify，454event/280task/21attempt与生产相同。
+  image e514ef94 SHA1a68f9042daaabe160c1ee2e4aa4e8b81405de06a3c2ebbd005af50d9f6f0ad0实际dist/migrate PASS，7实体0新增/12knowledge/7LI/8artifact检查过。
+  clone shipped HTTP admin math rename200，revision0→1，knowledge tree根name同步，旧revision再写409；停专用HTTP容器后再迁移PASS。clone455event/280task/21attempt；production仍454/280/21，零provider增量。
+  production app18e9a5e2/worker2377d637仍5dd7e8ed、StartedAt11:46:55Z/0restart；PG7d99236a仍09-07T09:40:42Z/0restart。无生产写/付费/NAS。
+  私有证据目录tlp-local-prod-20260907.sjUaCU：knowledge984-image.log、knowledge984-clone-result.log、knowledge984-http-result.log、knowledge984-clone-after-http.log与两cjs。HTTP容器tlp-984-http-clone已stop未删，migration容器--rm。
+  下一读取同一CI run与同一review agent，不因观察超时重开；待P0/P1裁决和exactCI后Mac交付。交付记录commit不推，以免单纯文档重置当前CI。
+
 - 984全局flag退休完成：projectionIsWriter必须显式entity，knowledge/edge各自canonical；env schema及tracked Mac compose删除全局开关。README明确七实体历史gate/旧release rollback；calibration方案A不动。
   删4重复ON/OFF proposal tests/stripVolatile辅助，保留真实接受字段/并发/缺历史/回放。oracle预期改七实体always-on，仅calibration gated。
   76DB、3policy unit、typecheck/build/lint与boundary/deepening/fold strict通过；lint316 warnings/1info但exit0，未扩大清理范围。

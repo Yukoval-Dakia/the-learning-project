@@ -18,6 +18,25 @@ Status: active, not delivered. Production remains the verified983 image.
 
 ## Progress
 
+PR1369 is open at exact e514ef94a5f8032e21a8afbe9864294538b5b935; CI Gate
+34233241153 and the first full independent review are running. Build/unit/audits/
+migration/usability jobs have passed; both DB shards remain pending completion.
+The review's initial parent-lock candidate was withdrawn after checking the existing
+explicit support for archived ancestors with live children. Full review is not yet final.
+
+Fresh production backup SHA25614d0a533c49b6c2bbe6b3f8252dcda9277fd82f105755664d3d682b707a1128e
+was actually restored into loom_before_984_verify, matching454 events/280 tasks/21
+attempts. The real e514ef94 image (sha256:1a68f9042daaabe160c1ee2e4aa4e8b81405de06a3c2ebbd005af50d9f6f0ad0)
+passed migration with zero new anchors and12 knowledge/7 learning items/8 artifacts
+validated. Shipped HTTP on that clone renamed math successfully (200, revision0→1),
+updated the knowledge tree name and rejected the old revision with409. A second
+actual-image migration after the HTTP edit also passed. Clone now has455 events;
+tasks/attempts remain280/21. Its temporary API is stopped; no worker/model credentials
+were supplied. Production stays454/280/21 on5dd7e8ed, all three original containers
+retain their IDs/start times and zero restart counts. This is clone acceptance, not
+deployment or whole-project completion. Private evidence is under the existing
+tlp-local-prod-20260907.sjUaCU directory (knowledge984-* artifacts).
+
 The global writer switch is retired from runtime policy, environment schema and
 tracked Mac compose. Knowledge and KnowledgeEdge now have explicit canonical
 registry identities alongside the other five structural entities; ItemCalibration
