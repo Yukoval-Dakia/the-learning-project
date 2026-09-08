@@ -10,6 +10,8 @@ it('canonical writers cannot be disabled by retired environment values', () => {
     ['goal', 'PROJECTION_IS_WRITER_GOAL'],
     ['learning_item', 'PROJECTION_IS_WRITER_LEARNING_ITEM'],
     ['mistake_variant', 'PROJECTION_IS_WRITER_MISTAKE_VARIANT'],
+    ['artifact', 'PROJECTION_IS_WRITER_ARTIFACT'],
+    ['question_block', 'PROJECTION_IS_WRITER_QUESTION_BLOCK'],
   ] as const) {
     vi.stubEnv(flag, '0');
     expect(projectionIsWriter(kind)).toBe(true);
@@ -28,12 +30,12 @@ it('remaining flags stay isolated from canonical writers and from the knowledge 
     'knowledge+knowledge_edge': false,
   });
 });
-it('artifact rollback warns without bricking either process; coherent policy prints only the vector', () => {
+it('retired artifact flags cannot re-enable a second writer; boot prints the canonical vector', () => {
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   const info = vi.spyOn(console, 'info').mockImplementation(() => {});
   vi.stubEnv('PROJECTION_IS_WRITER_ARTIFACT', '0');
   expect(() => warnFlipOrder()).not.toThrow();
-  expect(warn).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('previous release'));
+  expect(warn).not.toHaveBeenCalled();
   vi.stubEnv('PROJECTION_IS_WRITER_ARTIFACT', '1');
   warn.mockClear();
   warnFlipOrder();

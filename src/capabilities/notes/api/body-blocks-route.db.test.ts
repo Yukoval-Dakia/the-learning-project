@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { EditArtifactBodyBlocksResponseSchema } from '@/capabilities/notes/api/contracts';
 import { noteSectionsToBodyBlocks } from '@/capabilities/notes/server/body-blocks';
 import { artifact, artifact_block_ref, event } from '@/db/schema';
+import { backfillArtifactGenesis } from '../../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { PATCH } from './body-blocks-route';
 
@@ -46,6 +47,7 @@ async function seedArtifact() {
       updated_at: now,
       version: 0,
     });
+  await backfillArtifactGenesis(testDb(), now);
 }
 
 function patchReq(body: unknown) {

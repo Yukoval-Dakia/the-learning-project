@@ -14,6 +14,16 @@ import {
 import { NotePatchOp } from '../schema/note-patch';
 import type { FoldEvent } from './fold-event';
 
+/** Events that can establish or mutate artifact state; proposals are not state. */
+export const ARTIFACT_STATE_ACTIONS: readonly string[] = [
+  'experimental:artifact_create',
+  'experimental:genesis',
+  'experimental:body_blocks_edit',
+  'experimental:artifact_lifecycle',
+  'experimental:note_refine_apply',
+  'experimental:note_refine_undo',
+];
+
 // ====================================================================
 // foldArtifact — the W3 structural fold for a single `artifact` row (YUK-471 Wave 3, design §5.1).
 // PURE artifact reducer. The fold==row invariant core — the most correctness-critical W3 lane.
@@ -137,6 +147,7 @@ export function foldArtifact(artifactId: string, events: FoldEvent[]): ArtifactR
   let row: ArtifactRowSnapshotT | null = null;
 
   for (const fe of ordered) {
+    if (!ARTIFACT_STATE_ACTIONS.includes(fe.action)) continue;
     // Route: only artifact-subject events for THIS id (uniform envelope filter — the create event's
     // superRefine guarantees subject_id === payload.row.id, so this also filters by row identity).
     if (fe.subject_kind !== 'artifact' || fe.subject_id !== artifactId) continue;

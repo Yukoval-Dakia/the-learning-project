@@ -108,8 +108,8 @@ export const FOLD_WRITE_POLICY: Record<FoldOwnedTable, 'canonical' | 'switchable
     goal: 'canonical',
     mistake_variant: 'canonical',
     learning_item: 'canonical',
-    artifact: 'switchable',
-    question_block: 'switchable',
+    artifact: 'canonical',
+    question_block: 'canonical',
     item_calibration: 'anchor-only',
   };
 
@@ -262,13 +262,6 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'artifact',
-    file: 'src/capabilities/notes/server/body-blocks-edit.ts',
-    marker: "projectionIsWriter('artifact')",
-    role: 'gated-dual-path',
-    note: "body-blocks edit gated on projectionIsWriter('artifact') (version-guarded imperative path when OFF).",
-  },
-  {
-    table: 'artifact',
     file: 'src/capabilities/notes/server/note-refine-apply.ts',
     marker: '.update(artifact)',
     role: 'event-native-by-caller',
@@ -373,13 +366,6 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
     marker: '.insert(question_block)',
     role: 'throat',
     note: 'QuestionBlock projection write-through shell; activation is runtime-specific.',
-  },
-  {
-    table: 'question_block',
-    file: 'src/capabilities/ingestion/server/block-structured-edit.ts',
-    marker: "projectionIsWriter('question_block')",
-    role: 'gated-dual-path',
-    note: "structured-edit gated on projectionIsWriter('question_block').",
   },
   {
     table: 'question_block',

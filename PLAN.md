@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-08：887 Tagging→import与Agency规划真实验收PASS，questionBlock golden零差异；新$3保守预留完毕/余0。Owner批准982七文件自解释可读可编辑：27unit/typecheck/build/browser与独立初审通过，待exact CI/交付。981已交付，整体重构尚未完成；无新增paid/NAS。
+> Linear 是权威 tracker；更新于 2026-09-08：982 Done，PR1367/f707ca5c/CI34217359805全绿/main e095d286，Mac仅app部署健康/worker与PG未变，27unit/browser/初审通过。887 Tagging→import/Agency真实验收PASS，golden零差异；新$3预留完毕余0。整体重构尚未完成；无新增paid/NAS。
 
 ## NOW
 
@@ -179,10 +179,10 @@
 
 ## NEXT
 
-1. Active979：实际embedding200后SDK吞掉LLM失败为[]成功；固定SDK补丁/原子PG写，12unit+4DB过，review/交付待完成。
-2. 887验收暂停付费重试先修979；专项$3已保守预留$1/剩$2，原$10不回收；不称Memory恢复已通过。
-   977零金额来源是已登记P2，不阻塞主产品；无新代码缺陷不再开文件级清理支线。
-3. 最终按学习意图→录入→判分→复习→提议/撤回的业务owner/单份规则复核，不以测试或依赖数量代替完成。
+1. Active983：artifact/question_block编辑回退退休已实施，68DB/唯一验证审过；待clone/CI/交付。knowledge/edge后继，不能用974一致性登记替代退休。
+2. 887剩余证据按原七项矩阵收口：Tencent/GLM-OCR现役wire及完整provider/恢复范围；已有Notes/Memory/learner/Tagging/Agency通过项不重烧。
+   新$3已全部保守预留/余0；旧$10不回收。免费代码/DB/回放继续，新增付费须另授权。977/980保持P2。
+3. 最终按学习意图→录入→判分→复习→提议/撤回逐责任核实，并给951名词保留明确处置；不以测试/依赖数字替代完成。
 
 ## PARKED
 
@@ -196,5 +196,5 @@
 
 - 976两页费用UI已批准并交付；其它UI重绘仍须独立预检，不因整体goal扩张授权。
 - Mac本地生产已授权直接操作；NAS部署/数据操作仍未授权，不执行。
-- Notes/Memory真实恢复$3转用已批准；只做限定验收，不批量重跑历史failed/DLQ，历史费用unknown保留。
+- 两个$3专项均已保守预留完毕；新增paid未授权，不批量重跑历史failed/DLQ，历史费用unknown保留。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。

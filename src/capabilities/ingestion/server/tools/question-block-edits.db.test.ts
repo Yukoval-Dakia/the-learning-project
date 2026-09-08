@@ -20,6 +20,9 @@ import {
 import { job_events, question_block } from '@/db/schema';
 import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
 import { __resetRegistryForTests, getTool } from '@/server/ai/tools/registry';
+import { gatherAndFoldQuestionBlock } from '@/server/projections/gather';
+import { questionBlockLiveRowToSnapshot } from '@/server/projections/parity';
+import { backfillQuestionBlockGenesis } from '../../../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import {
   addOptionTool,
@@ -48,6 +51,7 @@ function ctx(): ToolContext {
 }
 
 interface SeedOpts {
+  prepareHistory?: boolean;
   status?: string;
   structured?: StructuredQuestionT | null;
   figures?: FigureRefT[];
@@ -81,6 +85,7 @@ async function seedBlock(opts: SeedOpts = {}): Promise<{ blockId: string; sessio
     updated_at: now,
     version: 0,
   });
+  if (opts.prepareHistory !== false) await backfillQuestionBlockGenesis(db, now);
   return { blockId, sessionId };
 }
 
@@ -391,6 +396,26 @@ describe('split_stem', () => {
 // ---------------------------------------------------------------------------
 
 describe('merge_questions', () => {
+  it('rejects an unprepared secondary and rolls back every block and transport event', async () => {
+    const { blockId: primary, sessionId } = await seedBlock({
+      structured: { id: 'p', role: 'standalone', prompt_text: '保留原问题' },
+    });
+    const { blockId: secondary } = await seedBlock({
+      sessionId,
+      prepareHistory: false,
+      structured: { id: 's', role: 'standalone', prompt_text: '保留次问题和条件' },
+    });
+    const before = await Promise.all([readBlock(primary), readBlock(secondary)]);
+    await expect(
+      mergeQuestionsTool.execute(ctx(), {
+        primary_block_id: primary,
+        merge_block_ids: [secondary],
+      }),
+    ).rejects.toThrow('requires complete history');
+    expect(await Promise.all([readBlock(primary), readBlock(secondary)])).toEqual(before);
+    expect(await countEditEvents(primary)).toBe(0);
+    expect(await countEditEvents(secondary)).toBe(0);
+  });
   it('absorbs sibling blocks, marks them ignored, records merged_from_block_ids', async () => {
     const sessionId = createId();
     const { blockId: primary } = await seedBlock({
@@ -422,6 +447,11 @@ describe('merge_questions', () => {
 
     expect((await readBlock(m1)).status).toBe('ignored');
     expect((await readBlock(m2)).status).toBe('ignored');
+    for (const id of [primary, m1, m2]) {
+      expect(await gatherAndFoldQuestionBlock(testDb(), id)).toEqual(
+        questionBlockLiveRowToSnapshot(await readBlock(id)),
+      );
+    }
   });
 
   it("preserves a stem primary's existing sub_questions when absorbing more", async () => {
@@ -694,6 +724,23 @@ const FIGURE: FigureRefT = {
 };
 
 describe('reassign_figure', () => {
+  it('rejects unprepared history without changing figure state or publishing transport events', async () => {
+    const { blockId } = await seedBlock({
+      prepareHistory: false,
+      figures: [FIGURE],
+      structured: { id: 's1', role: 'standalone', prompt_text: '解释图中的条件关系' },
+    });
+    const before = await readBlock(blockId);
+    await expect(
+      reassignFigureTool.execute(ctx(), {
+        block_id: blockId,
+        asset_id: 'fig-1',
+        attached_to_index: 's1',
+      }),
+    ).rejects.toThrow('requires complete history');
+    expect(await readBlock(blockId)).toEqual(before);
+    expect(await countEditEvents(blockId)).toBe(0);
+  });
   it('reassigns a figure, sets manual confidence + version bump', async () => {
     const { blockId } = await seedBlock({
       structured: {

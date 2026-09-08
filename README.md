@@ -136,7 +136,7 @@ pnpm build            # rw:web:build + 三 esbuild 产物（dist/server.cjs / di
 3. **Database migrations run automatically.** A dedicated `migrate` init container
    (YUK-65) applies the bundled drizzle migrations before `app` / `worker` start on
    every `docker compose up` — idempotent, drizzle's `__drizzle_migrations` table
-   tracks applied state. The runner also prepares Goal/LearningItem/MistakeVariant
+   tracks applied state. The runner also prepares Goal/LearningItem/MistakeVariant/Artifact/QuestionBlock
    legacy anchors and checks fold/live values and row sets. Incomplete history or drift
    fails deployment without rebuilding live rows; all newly prepared anchors roll back.
    For an upgrade from the legacy mailbox release, first complete the special drain

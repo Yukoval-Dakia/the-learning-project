@@ -22,6 +22,7 @@ import {
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
 import { acceptAiProposal, dismissAiProposal } from '@/server/proposals/actions';
+import { backfillQuestionBlockGenesis } from '../../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { assertProposalLifecycleResult } from '../../../../tests/helpers/proposal-lifecycle';
 import type {
@@ -86,6 +87,7 @@ describe('block_merge proposal lifecycle', () => {
       updated_at: now,
       version: 0,
     });
+    await backfillQuestionBlockGenesis(db, now);
     return blockId;
   }
 

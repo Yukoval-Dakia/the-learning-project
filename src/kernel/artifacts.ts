@@ -1,8 +1,8 @@
 // YUK-471 W3-C1β — the artifact CREATE cutover seam.
 //
 // Every live `artifact` INSERT site ALSO emits a self-sufficient
-// `experimental:artifact_create` event in the SAME transaction (additive double-write; the
-// per-entity projection flag projectionIsWriter('artifact') stays OFF — this lane never flips it).
+// `experimental:artifact_create` event in the SAME transaction. Creation captures real DB defaults;
+// subsequent body editing uses the canonical projection (no writer-mode flag).
 // The event carries the FULL initial ArtifactRowSnapshot so foldArtifact can reproduce the row
 // VERBATIM (full-snapshot rule, design §5.1). This module is the ONE shared writer the 8 INSERT
 // sites call so the snapshot construction + the parse-barrier-safe event shape live in one place.

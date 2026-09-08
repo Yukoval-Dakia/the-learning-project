@@ -8,10 +8,8 @@ services:
       - "127.0.0.1:8787:8787"
     # YUK-471 SoT flip: projection becomes the row writer (rollback = remove + recreate).
     #   PROJECTION_IS_WRITER          = W1 knowledge / knowledge_edge (live since W1).
-    #   PROJECTION_IS_WRITER_ARTIFACT = W3-D artifact fold (flipped 2026-06-28 after prod-clone + live audit:projection CLEAN).
-    #   PROJECTION_IS_WRITER_QUESTION_BLOCK = W3-D question_block fold (same gate; 69 rows folded clean, no bbox sweep needed).
-    # Rollback any entity = remove its line + recreate app/worker; the double-write never stopped
-    # (events keep flowing), so the imperative OFF path resumes with zero data loss.
+    # Artifact/QuestionBlock and Goal/LearningItem/MistakeVariant are canonical.
+    # Their rollback requires the previous release, not an environment-only flip.
     environment:
       # YUK-571 go-live state. Keep these non-secret flags in the tracked production
       # override: a deploy from a fresh/temp main checkout must not silently fall
@@ -23,8 +21,6 @@ services:
       PLACEMENT_PROBE_ENABLED: "true"
       WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: "true"
       PROJECTION_IS_WRITER: "1"
-      PROJECTION_IS_WRITER_ARTIFACT: "1"
-      PROJECTION_IS_WRITER_QUESTION_BLOCK: "1"
       # Goal/learning_item/mistake_variant are canonical writers without mode switches.
       # item_calibration stays Scheme A / OFF.
   worker:
@@ -34,8 +30,6 @@ services:
       PLACEMENT_PROBE_ENABLED: "true"
       WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: "true"
       PROJECTION_IS_WRITER: "1"
-      PROJECTION_IS_WRITER_ARTIFACT: "1"
-      PROJECTION_IS_WRITER_QUESTION_BLOCK: "1"
   postgres:
     ports:
       - "127.0.0.1:5433:5432"

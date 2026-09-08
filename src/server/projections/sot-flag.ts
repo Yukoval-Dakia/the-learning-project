@@ -1,18 +1,22 @@
-// Goal, learning_item and mistake_variant have one structural writer after YUK-973.
+// Goal, learning_item, mistake_variant, artifact and question_block have canonical editor policy.
 // Remaining flags select only writers whose cutover is not retired. Knowledge/edge
 // share the global flag; ItemCalibration stays Scheme A (default OFF).
 const PER_ENTITY_FLAG_ENV = {
-  artifact: 'PROJECTION_IS_WRITER_ARTIFACT',
-  question_block: 'PROJECTION_IS_WRITER_QUESTION_BLOCK',
   item_calibration: 'PROJECTION_IS_WRITER_ITEM_CALIBRATION',
 } as const;
-const CANONICAL_WRITERS = { goal: true, learning_item: true, mistake_variant: true } as const;
+const CANONICAL_WRITERS = {
+  goal: true,
+  learning_item: true,
+  mistake_variant: true,
+  artifact: true,
+  question_block: true,
+} as const;
 export type ProjectionEntity = keyof typeof PER_ENTITY_FLAG_ENV | keyof typeof CANONICAL_WRITERS;
 
 /** Read-only audit policy; business owners do not branch on retired modes. */
 export function projectionIsWriter(entity?: ProjectionEntity): boolean {
   if (entity === undefined) return process.env.PROJECTION_IS_WRITER === '1';
-  if (entity === 'goal' || entity === 'learning_item' || entity === 'mistake_variant') return true;
+  if (entity !== 'item_calibration') return true;
   return process.env[PER_ENTITY_FLAG_ENV[entity]] === '1';
 }
 
@@ -28,13 +32,7 @@ export function trackedFlagVector(): Record<string, boolean> {
   return vector;
 }
 
-/** Warning only: artifact rollback must not turn startup into a deadlock. */
+/** Existing boot entrypoint; canonical writer rollback now requires an older release. */
 export function warnFlipOrder(): void {
-  if (!projectionIsWriter('artifact')) {
-    console.warn(
-      '[sot-flag] canonical learning_item with artifact OFF: paired artifact retraction requires ' +
-        'coherent writer policy. Learning-item rollback requires the previous release, not an env flag.',
-    );
-  }
   console.info('[sot-flag] flag vector at boot:', trackedFlagVector());
 }

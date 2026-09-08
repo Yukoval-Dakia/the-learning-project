@@ -77,8 +77,14 @@ describe('runProjectionOracleSweep', () => {
 
     const report = await runProjectionOracleSweep(db, { now: NOW });
 
-    expect([...report.auditedKinds].sort()).toEqual(['goal', 'learning_item', 'mistake_variant']);
-    expect(report.skippedKinds).toContain('artifact');
+    expect([...report.auditedKinds].sort()).toEqual([
+      'artifact',
+      'goal',
+      'learning_item',
+      'mistake_variant',
+      'question_block',
+    ]);
+    expect(report.skippedKinds).toContain('knowledge');
     expect(report.anomalies).toBe(0);
     expect(report.forensicWritten).toBe(0);
   });
