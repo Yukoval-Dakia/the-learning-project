@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-08：981已交付：PR1365 exact8bce5f0a/CI34212977772全绿/main69f1b9de；Mac API/worker8bce5f0a健康，PG/454event/280task/21attempt不变。真实Notes两次SIGKILL与零重烧重投PASS；新$3预留$1余$2。982 check展示P2独立；下一线887剩余actual，不重复旧样本或第三审。
+> Linear 是权威 tracker；更新于 2026-09-08：981已交付（PR1365/8bce5f0a全CI绿/main69f1b9de/Mac健康）；Notes两SIGKILL恢复及learner真实semantic判分→review/FSRS均PASS，生产454/280/21未变。新$3已保守预留$2余$1；下一线887 Ingestion/Agency actual，982 check展示P2独立，不重复旧样本/第三审。
 
 ## NOW
 

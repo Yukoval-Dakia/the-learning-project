@@ -2,6 +2,13 @@
 
 ## 最新状态
 
+- 887 learner judging actual PASS：源码2a9638183（runtime代码与8bce5f0a相同，差异仅交付文档），image8bce5f0a，新DB loom_judging_887_actual_v2。
+  当前createAttemptResource /api/attempts真实Request→SemanticJudgeTask xhql6qtd7nybtdooy3w0c0ic→201/correct/good（原rating again），review clf6tik0bhrn7u266rjtjgke、judge yq1t2m1op421zb84e0wkt7jd因果链、knowledge FSRS reps1/due已核对。
+  实际MiMo830in/278out、estimate$0.00060291非账单；此轮预留$1，新$3总reserve$2/余$1。v1本地代理URL查询参数拒绝、0上游/0reserve，不记产品失败或模型费用。
+  v2容器exit0，v1exit1均停止；生产454/280/21不变，无生产写入。public route handler组件验收，不称shipped Hono HTTP或durable judge_run重试验收。
+  证据private judging887-actual-v2.json SHA f08c1c94f5e0b869a212ac5b899282bdeba44e6bee00ff2a711b00fd0ef41731。
+  root当前codex/yuk-887-remaining-actual从origin/main建并cherry-pick两981交付docs，原脏main未动。下一Ingestion/Agency仍缺；生产CoachTask有成功plan记录但subject_mix出现probability/calculus，尚不能据task success判全部Agency语义PASS。
+
 - 981 Done：PR1365 exact8bce5f0a0a0901404cf5b395766ab29f44910abc/CI34212977772所有job绿；10:11:34Z合并main69f1b9deb3ad760ac0b457bd7d45920bdac4852c。
   10:12:50Z Mac API6367b553/worker c430a928已8bce5f0a healthy/零重启；原PG7d99236a/09:40:42Z与pgdata未变。
   新dump已恢复loom_before_981_verify，clone/live迁移零新增/7LI通过；live454event/280task/21attempt及空队列不变，无NAS/tunnel。
