@@ -2,6 +2,12 @@
 
 ## 最新状态
 
+- 984全局flag退休完成：projectionIsWriter必须显式entity，knowledge/edge各自canonical；env schema及tracked Mac compose删除全局开关。README明确七实体历史gate/旧release rollback；calibration方案A不动。
+  删4重复ON/OFF proposal tests/stripVolatile辅助，保留真实接受字段/并发/缺历史/回放。oracle预期改七实体always-on，仅calibration gated。
+  76DB、3policy unit、typecheck/build/lint与boundary/deepening/fold strict通过；lint316 warnings/1info但exit0，未扩大清理范围。
+  gh preflight auth可用，远端main仍7cccb335，984无已有PR。准备首次整项PR/review/CI，非已交付；局部锁序核查不算整项初审，整项review预算尚未用。
+  生产983仍不动，无paid/NAS。下一clone fresh backup实际migration/browser/readiness后按授权Mac交付；整体goal active。
+
 - 984知识历史迁移已实施：migrateCanonical锁表扩knowledge/edge，先validateKnowledgeHistory，再7实体backfill+正反fold/live审计。Q2间接propose/split要求原accept/materialized IDs/index；Q3 merge全部from/into须base。
   pending proposal不算结构历史；archive-only edge拒绝。edge真实rate subject为knowledge_edge、rating reverse/change_type等，单独验证生成effect，不能套node rate.subject=event约束。
   接受envelope/原创建schema重用、malformed action/identity拒绝；split/merge判别从action补入，和现fold相同。孤立materialized accept即使proposal+index都丢也拒绝。

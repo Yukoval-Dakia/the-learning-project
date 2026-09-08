@@ -163,6 +163,14 @@ pnpm build            # rw:web:build + 三 esbuild 产物（dist/server.cjs / di
    structural projection modes, and never rebuild them with those older reducers.
    Before returning to canonical mode after rollback writes, repeat readiness checks
    and repair any mismatch. See the [cutover evidence](docs/planning/2026-09-07-canonical-state-writers.md).
+   Knowledge, KnowledgeEdge, Note and QuestionBlock editors also use canonical
+   projection writers; the global `PROJECTION_IS_WRITER` and retired per-entity
+   flags no longer select alternate writers. Deployment preparation validates all
+   seven entities, including knowledge creation indexes/acceptances and merge-source
+   history, before seeding only genuinely eventless legacy rows. A failed history
+   check requires repair; do not bypass it with a replacement genesis or live rebuild.
+   Rollback uses the previous release and its matching configuration, not toggles
+   in the new release. ItemCalibration remains Scheme A, default OFF.
    Restart worker, then app only after migration succeeds. Do not bypass a failed
    readiness check with `--no-deps` or snapshot over incomplete event history.
 

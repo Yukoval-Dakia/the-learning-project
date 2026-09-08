@@ -2075,123 +2075,7 @@ describe('acceptProposal — PR-A2b projection parity', () => {
   });
 });
 
-// =============================================================================
-// YUK-471 W1 PR-B1 — propose_new SoT flip (PROJECTION_IS_WRITER). Flag ON: the
-// imperative applier INSERT is SKIPPED (writeRow=false); the projection writes the
-// row from events at the accept seam. The row must EXIST (proving the seam fired —
-// without the projection call it would be absent) and equal its own fold, and be
-// structurally identical to the flag-OFF imperative row. Flag OFF keeps A2b behavior
-// (imperative write + parity assert) — the rollback state.
-// =============================================================================
-
-function stripVolatile(r: {
-  name: string;
-  domain: string | null;
-  parent_id: string | null;
-  merged_from: string[];
-  proposed_by_ai: boolean;
-  approval_status: string;
-  version: number;
-  archived_at: Date | null;
-}) {
-  // id + created_at/updated_at differ across runs by construction (fresh mint + fresh `now`);
-  // compare only the structural fields the imperative writer and the projection must agree on.
-  return {
-    name: r.name,
-    domain: r.domain,
-    parent_id: r.parent_id,
-    merged_from: r.merged_from,
-    proposed_by_ai: r.proposed_by_ai,
-    approval_status: r.approval_status,
-    version: r.version,
-    archived_at: r.archived_at,
-  };
-}
-
-describe('acceptProposal — PR-B1 propose_new SoT flip (PROJECTION_IS_WRITER)', () => {
-  beforeEach(async () => {
-    vi.unstubAllEnvs();
-    await resetDb();
-  });
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it('flag OFF (default): imperative INSERT writes the row; A2b fold==row holds', async () => {
-    const db = testDb();
-    await insertKnowledge({ id: 'seed:yuwen:p', domain: 'yuwen' });
-    await insertProposeEvent({
-      id: 'pb1_off',
-      payload: { mutation: 'propose_new', name: '通假字', parent_id: 'seed:yuwen:p' },
-    });
-    const result = await acceptProposal(db, 'pb1_off');
-    if (result.kind !== 'propose_new_applied') throw new Error('unexpected kind');
-    const live = await liveSnapshot(result.new_node_id);
-    expect(live).not.toBeNull();
-    const folded = await gatherAndFoldKnowledgeNode(db, result.new_node_id);
-    expect(folded).toEqual(live);
-  });
-
-  it('flag ON: the projection writes the row (imperative INSERT skipped) — row exists and equals its fold', async () => {
-    vi.stubEnv('PROJECTION_IS_WRITER', '1');
-    const db = testDb();
-    await insertKnowledge({ id: 'seed:yuwen:p', domain: 'yuwen' });
-    await insertProposeEvent({
-      id: 'pb1_on',
-      payload: { mutation: 'propose_new', name: '通假字', parent_id: 'seed:yuwen:p' },
-    });
-    const result = await acceptProposal(db, 'pb1_on');
-    if (result.kind !== 'propose_new_applied') throw new Error('unexpected kind');
-
-    // The imperative INSERT was skipped (writeRow=false). The row EXISTS only because the
-    // projection wrote it from the events — a broken seam would leave the row absent.
-    const live = await liveSnapshot(result.new_node_id);
-    expect(live).not.toBeNull();
-    const folded = await gatherAndFoldKnowledgeNode(db, result.new_node_id);
-    expect(folded).toEqual(live);
-  });
-
-  it('flag ON vs OFF: the projected row is structurally identical to the imperative row', async () => {
-    const db = testDb();
-    // OFF run
-    await insertKnowledge({ id: 'seed:yuwen:p', domain: 'yuwen' });
-    await insertProposeEvent({
-      id: 'pb1_cmp_off',
-      payload: { mutation: 'propose_new', name: '互文', parent_id: 'seed:yuwen:p' },
-    });
-    const off = await acceptProposal(db, 'pb1_cmp_off');
-    if (off.kind !== 'propose_new_applied') throw new Error('unexpected kind');
-    const offRow = await liveSnapshot(off.new_node_id);
-
-    await resetDb();
-
-    // ON run (fresh DB, same shape)
-    vi.stubEnv('PROJECTION_IS_WRITER', '1');
-    await insertKnowledge({ id: 'seed:yuwen:p', domain: 'yuwen' });
-    await insertProposeEvent({
-      id: 'pb1_cmp_on',
-      payload: { mutation: 'propose_new', name: '互文', parent_id: 'seed:yuwen:p' },
-    });
-    const on = await acceptProposal(db, 'pb1_cmp_on');
-    if (on.kind !== 'propose_new_applied') throw new Error('unexpected kind');
-    const onRow = await liveSnapshot(on.new_node_id);
-
-    expect(offRow).not.toBeNull();
-    expect(onRow).not.toBeNull();
-    if (!offRow || !onRow) throw new Error('rows missing');
-    expect(stripVolatile(onRow)).toEqual(stripVolatile(offRow));
-  });
-});
-
-// =============================================================================
-// YUK-471 W1 PR-B (full flip) — the keystone NON-DELETE guard + mutation projection.
-// The full flip generalizes the seam to project EVERY touched node (guarded). The guard
-// is what makes activation safe before backfill: a touched node that folds to null but has
-// NO genesis anchor (a seed root / any pre-event-sourced row) must be LEFT INTACT, never
-// deleted. A naive (unguarded) flip would DELETE it on a normal merge/reparent/archive.
-// =============================================================================
-
-describe('acceptProposal — PR-B full flip: keystone non-delete guard + mutation projection', () => {
+describe('acceptProposal — legacy history refusal', () => {
   beforeEach(async () => {
     vi.unstubAllEnvs();
     await resetDb();
@@ -2216,7 +2100,6 @@ describe('acceptProposal — PR-B full flip: keystone non-delete guard + mutatio
       },
     });
 
-    vi.stubEnv('PROJECTION_IS_WRITER', '1');
     await expect(acceptProposal(db, 'p_merge_seed')).rejects.toThrow(/complete history/);
     expect((await liveSnapshot('seed_root'))?.merged_from).toEqual([]);
     expect((await liveSnapshot('k_from_seed'))?.archived_at).toBeNull();
@@ -2232,47 +2115,5 @@ describe('acceptProposal — PR-B full flip: keystone non-delete guard + mutatio
     // The canonical projection appends attribution and archives the source.
     expect(root?.merged_from).toContain('k_from_seed');
     expect(from?.archived_at).toBeTruthy();
-  });
-
-  it('flag ON vs OFF: reparent of an EVENT-SOURCED node projects a structurally identical row', async () => {
-    // run() builds an event-sourced node via a propose_new accept (so it HAS a genesis anchor),
-    // then reparents it under the given flag and returns the structural row.
-    async function run(flip: boolean) {
-      await resetDb();
-      const db = testDb();
-      await insertKnowledge({ id: 'rp_oldp', domain: 'yuwen' });
-      await insertKnowledge({ id: 'rp_newp', domain: 'yuwen' });
-      await insertProposeEvent({
-        id: 'p_seed_rp',
-        payload: { mutation: 'propose_new', name: 'movable', parent_id: 'rp_oldp' },
-      });
-      const seed = await acceptProposal(db, 'p_seed_rp'); // flag OFF — imperative create
-      if (seed.kind !== 'propose_new_applied') throw new Error('seed');
-      const nodeId = seed.new_node_id;
-      await insertProposeEvent({
-        id: 'p_rp',
-        subject_id: nodeId,
-        payload: {
-          mutation: 'reparent',
-          node_id: nodeId,
-          new_parent_id: 'rp_newp',
-          expected_version: 0,
-        },
-      });
-      if (flip) vi.stubEnv('PROJECTION_IS_WRITER', '1');
-      const r = await acceptProposal(db, 'p_rp');
-      if (r.kind !== 'reparent_applied') throw new Error('reparent');
-      vi.unstubAllEnvs();
-      const row = await liveSnapshot(nodeId);
-      return row ? stripVolatile(row) : null;
-    }
-    const off = await run(false);
-    const on = await run(true);
-    expect(off).not.toBeNull();
-    expect(on).not.toBeNull();
-    // Projection-written reparent row == imperative reparent row (parent moved, version bumped).
-    expect(on).toEqual(off);
-    expect(on?.parent_id).toBe('rp_newp');
-    expect(on?.version).toBe(1);
   });
 });

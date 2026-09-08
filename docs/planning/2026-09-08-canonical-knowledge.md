@@ -18,6 +18,19 @@ Status: active, not delivered. Production remains the verified983 image.
 
 ## Progress
 
+The global writer switch is retired from runtime policy, environment schema and
+tracked Mac compose. Knowledge and KnowledgeEdge now have explicit canonical
+registry identities alongside the other five structural entities; ItemCalibration
+retains Scheme A. README documents seven-entity readiness and previous-release
+rollback. Removed four redundant ON/OFF proposal comparisons and their volatile-field
+helper; actual field/index/history/concurrency/replay tests remain. Oracle now audits
+all seven kinds regardless of retired environment values. Final76 scoped DB tests,
+3 policy unit tests, typecheck/lint/build and boundary/deepening/strict fold audits
+pass. Lint reports316 warnings/1info, exit0; this is not a claim of warning-free code.
+Remote main remains7cccb335 and no984 PR exists at preflight. Next is the first full
+independent review, exact-head CI, fresh-clone migration and authorized Mac delivery.
+No production change or paid call; whole-project goal remains active.
+
 Deployment preparation now covers all seven canonical entities, adding Knowledge
 and KnowledgeEdge to the migration's table locks, backfills and symmetric audits.
 Before any backfill, validateKnowledgeHistory checks direct genesis identity,

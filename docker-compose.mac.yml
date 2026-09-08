@@ -6,21 +6,18 @@ services:
   app:
     ports:
       - "127.0.0.1:8787:8787"
-    # YUK-471 SoT flip: projection becomes the row writer (rollback = remove + recreate).
-    #   PROJECTION_IS_WRITER          = W1 knowledge / knowledge_edge (live since W1).
-    # Artifact/QuestionBlock and Goal/LearningItem/MistakeVariant are canonical.
-    # Their rollback requires the previous release, not an environment-only flip.
+    # All seven structural entities use canonical projection writers.
+    # Rollback requires the previous release, not an environment-only flip.
     environment:
       # YUK-571 go-live state. Keep these non-secret flags in the tracked production
       # override: a deploy from a fresh/temp main checkout must not silently fall
       # back to the code defaults just because the local .env file was not copied.
       # NOTE compose `environment:` outranks env_file — .env can no longer toggle these.
       # Turn OFF = remove the line (or set "false") + recreate app/worker, same rollback
-      # pattern as the PROJECTION_* flags above. Keep values lowercase "true"
+      # applies only to these product features. Keep values lowercase "true"
       # (placement parses case-sensitively; auto-enroll doesn't — don't "prettify").
       PLACEMENT_PROBE_ENABLED: "true"
       WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: "true"
-      PROJECTION_IS_WRITER: "1"
       # Goal/learning_item/mistake_variant are canonical writers without mode switches.
       # item_calibration stays Scheme A / OFF.
   worker:
@@ -29,7 +26,6 @@ services:
       # placement entrypoint runs in app. Repeating both makes process parity explicit.
       PLACEMENT_PROBE_ENABLED: "true"
       WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: "true"
-      PROJECTION_IS_WRITER: "1"
   postgres:
     ports:
       - "127.0.0.1:5433:5432"

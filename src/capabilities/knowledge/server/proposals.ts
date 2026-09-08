@@ -452,7 +452,7 @@ async function prepareKnowledgeSplit(tx: Tx, payload: SplitPayload, now: Date): 
 // every rewrite pass, including this one (YUK-543 review L2; see the schema.ts contract comment).
 // =============================================================================
 
-// ── knowledge_edge (LIVE fold, PROJECTION_IS_WRITER=1) — event-native rewire ─────────────────────
+// ── knowledge_edge — canonical event-native rewire ─────────────────────
 // Mirrors applyEdgeSupersede (propose_edge.ts): archive-old + create-new via the imperative
 // edges.ts functions PAIRED with fold-visible `generate` events, so the LIVE edge fold reproduces
 // every merge-driven endpoint change (a raw UPDATE would be invisible to the fold → resurrected on

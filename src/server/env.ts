@@ -77,7 +77,6 @@ const server = {
   POSTGRES_PASSWORD: optionalString,
   POSTGRES_USER: optionalString,
   PROFILE_CRITIC_OK: optionalString,
-  PROJECTION_IS_WRITER: optionalString,
   PROJECTION_IS_WRITER_ITEM_CALIBRATION: optionalString,
   QUESTION_SUPPLY_REFILL_ENABLED: optionalString,
   RESEARCH_MEETING_AGENT_ENABLED: optionalString,

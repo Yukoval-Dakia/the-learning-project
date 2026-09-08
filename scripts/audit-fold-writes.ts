@@ -14,14 +14,11 @@
  * ADR-0044 event-sourcing 地基改造把 7 张 projection 表（knowledge / knowledge_edge / goal /
  * mistake_variant / learning_item / artifact / question_block）纳入「事件唯一真相，projection
  * 是缓存」：每张表的**单写者咽喉** = `src/server/projections/<table>.ts` 的 write-through shell
- * （fold(events)→row），核心 reducer 在 `src/core/projections/<table>.ts`。SoT-flip 由
- * `src/server/projections/sot-flag.ts` 的 `projectionIsWriter(entity?)` 门控：
- *   - knowledge / knowledge_edge：全局 `PROJECTION_IS_WRITER`，运行值须另查部署。
- *   - goal / mistake_variant / learning_item：canonical 单写者，已退休 env 分支。
- *   - artifact / question_block：仍保留 per-entity env 门控，部署状态以真实 runtime 为准。
+ * （fold(events)→row），核心 reducer 在 `src/core/projections/<table>.ts`。
+ * 七实体的结构writer均已canonical；sot-flag只保留item_calibration方案A选择。
+ * 已退休结构writer的rollback必须使用旧release，而不是环境开关。
  *
- * 「咽喉」= 当 flag ON 时 projection shell 写行；当 OFF 时命令式 applier 写行（**同 tx writeEvent
- * + guarded by projectionIsWriter** 的 dual-path）。红线要防的失效：一个**既不是 projection shell、
+ * 「咽喉」= projection shell唯一结构写面。红线要防的失效：一个**既不是 projection shell、
  * 又不 event-native**的 raw UPDATE/DELETE/INSERT 直接改 fold-owned 行 —— 它对 fold 不可见，rebuild
  * 时被「复活」或抹掉（kc-dedup spec §7 finding 1 的确诊病灶）。
  *

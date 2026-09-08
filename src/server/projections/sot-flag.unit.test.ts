@@ -7,6 +7,8 @@ afterEach(() => {
 });
 it('canonical writers cannot be disabled by retired environment values', () => {
   for (const [kind, flag] of [
+    ['knowledge', 'PROJECTION_IS_WRITER'],
+    ['knowledge_edge', 'PROJECTION_IS_WRITER'],
     ['goal', 'PROJECTION_IS_WRITER_GOAL'],
     ['learning_item', 'PROJECTION_IS_WRITER_LEARNING_ITEM'],
     ['mistake_variant', 'PROJECTION_IS_WRITER_MISTAKE_VARIANT'],
@@ -18,7 +20,7 @@ it('canonical writers cannot be disabled by retired environment values', () => {
     expect(trackedFlagVector()[kind]).toBe(true);
   }
 });
-it('remaining flags stay isolated from canonical writers and from the knowledge flag', () => {
+it('calibration policy stays isolated from all canonical writers', () => {
   vi.stubEnv('PROJECTION_IS_WRITER', '0');
   vi.stubEnv('PROJECTION_IS_WRITER_ARTIFACT', '1');
   vi.stubEnv('PROJECTION_IS_WRITER_ITEM_CALIBRATION', '0');
@@ -27,7 +29,8 @@ it('remaining flags stay isolated from canonical writers and from the knowledge 
     item_calibration: false,
     goal: true,
     learning_item: true,
-    'knowledge+knowledge_edge': false,
+    knowledge: true,
+    knowledge_edge: true,
   });
 });
 it('retired artifact flags cannot re-enable a second writer; boot prints the canonical vector', () => {

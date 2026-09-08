@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-08：984 Active，知识/edge部署历史校验已接7实体迁移，先验Q2接受/index与Q3 merge来源，再补真eventless基线；95DB+73调用方复验过。余最终历史补验/全局flag/整项reviewCI与Mac交付。生产983未动，整体未完成，无paid/NAS。
+> Linear 是权威 tracker；更新于 2026-09-08：984实现收口，全局flag/schema/Mac配置选择已删，七实体canonical；删4无效ON/OFF测试。76DB/3unit/typecheck/lint/build及架构/fold gates过，准备整项PR/review/exactCI/clone验收。生产983未动，整体未完成，无paid/NAS。
 
 ## NOW
 
