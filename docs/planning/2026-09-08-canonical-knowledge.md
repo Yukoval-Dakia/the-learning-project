@@ -18,6 +18,19 @@ Status: active, not delivered. Production remains the verified983 image.
 
 ## Progress
 
+Merge preparation inspection confirms the nine attribution owners operate on explicit IDs
+and do not require the absorbed knowledge rows to be archived first. Structural merge DML
+has not yet been removed. Before that change, a real lock inversion was corrected:
+accept held sorted knowledge row locks before applyMerge acquired the global learning-state
+lock. Accept now acquires G first, matching repair/revert writers. A real proposal acceptance
+regression inspects pg_locks while blocked on G and requires no knowledge RowShareLock.
+Both scoped suites pass77 DB tests; typecheck/build pass. No production failure is claimed;
+this is a local checkpoint, not the984 independent review/CI/deployment gate.
+Bounded independent lock-only inspection found no P0/P1. Removing the entry fix
+made the new regression fail with granted_knowledge_rel=1 (expected0); the fix was
+restored. The probe now releases its holder and drains both transactions even if
+an assertion fails, avoiding leaked asynchronous mutation in the RED path.
+
 Create proposal accept now emits rate/generate before the sole projection write;
 the duplicate flag-off INSERT is removed. The shared edge topology gate always
 projects and rejects cycles; it no longer relies on production parity warnings.

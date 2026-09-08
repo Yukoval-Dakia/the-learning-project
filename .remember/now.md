@@ -9,7 +9,10 @@
   最新127DB/typecheck/build全过；archive/split删节点DML，撤回真实consumer也prepare→event/rate→project，public raw archive导出删。
   原子性case发现投影可覆盖out-of-band漂移：现在reparent/archive/split锁内严格比对结构fold/live，派生embedding排除，缺历史/漂移全回滚。
   历史fixture时钟在genesis前设置、accept时推进，无事件UPDATE；初始SQL日期probe失败无生产写入，已删除。split测试通过真实accept并保持minted IDs/时间/边关系断言。
-  map_984_node_order已收到只读follow-up：核9归因owner是否要求from先archived及learning-state锁序；尚不采用未返回结论。单writer，未review/PR/paid/deploy。
+  map_984_node_order只读结论已返回，root复核9归因owner不依赖from节点先归档；可准备完整repair receipt后再投影，尚未实施merge结构DML删除。
+  已修accept merge在knowledge行锁之前取learning-state全局锁；原内部applyMerge取G太晚。真实accept/pg_locks回归及两套77DB/typecheck/build过。
+  本轮仅锁序有界只读核查，不是984整项正式初审；无PR/paid/deploy，生产983不动。
+  有界锁序核查无P0/P1；临时删fix后新case精确RED（knowledge relation lock 1≠0），已恢复；helper finally释放G并drain两事务。
   最新reparent126DB+7guard/typecheck/build过：旧结构UPDATE删，锁内CAS/base校验→accept projection→新位置embedding/hash维护，derived不再写updated_at。
   tests/helpers/knowledge-mutation.ts显式fixture backfill再走真实提案/accept；旧raw applier测试迁移，缺历史/错误subject/并发相同version均有行为护栏。
   两旧fixture缺base已补；race暴露insertProposeEvent伪造subject_id，改按mutation导出真实subject并在accept检查targetbinding，最终双并发只有1提交。无paid/生产变化。

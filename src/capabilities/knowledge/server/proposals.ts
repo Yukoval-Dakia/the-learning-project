@@ -963,6 +963,9 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
       // locked first so timestamp order matches their actual serialized write order, including
       // subject-root rename/reset transactions that share the same knowledge row. The instant is
       // then threaded through (1) applyX and (2) rate=accept for byte-exact fold == row parity.
+      // Learning-state repair and revert writers acquire G before knowledge rows.
+      // Taking it inside applyMerge is too late: these row locks are already held.
+      if (apply.mutation === 'merge') await acquireLearningStateWriteLock(tx);
       await lockMutationRows(tx, apply);
       const now = new Date();
       // New nodes are always event-first. This remaining switch applies only to
