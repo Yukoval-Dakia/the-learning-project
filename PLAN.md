@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-08：982 Done，PR1367/f707ca5c/CI34217359805全绿/main e095d286，Mac仅app部署健康/worker与PG未变，27unit/browser/初审通过。887 Tagging→import/Agency真实验收PASS，golden零差异；新$3预留完毕余0。整体重构尚未完成；无新增paid/NAS。
+> Linear 是权威 tracker；更新于 2026-09-08：Active983 PR1368 exact841a7605（tree同5dd7e8ed），68DB+最终18迁移/9oracle/61unit、唯一验证及实际backup-clone/image迁移过。CI34220204444运行中，未部署；生产仍982 appf707/worker8bce。新$3预留完毕余0；无paid/NAS，整体goal active。
 
 ## NOW
 

@@ -2,6 +2,16 @@
 
 ## 最新状态
 
+- 983 PR1368已推：exact841a7605e153fe82c978f5ff00fd328478ee8488，tree eee7f54fe4a2baf6089c55896fc46066cd0d440b与实施5dd7e8ed完全相同。
+  与main e095d286的三个文档冲突已保留最新交付事实解决；无runtime merge差异。CI34220204444真实运行，static/migration/build/usability已绿，unit/两DB尚运行；watch exec64937活跃，勿重推/重跑。
+  image the-learning-project-app:5dd7e8ed SHA210f719ac543392b483b9886a5d3e704b26ab96ebe1b74819766ca6343b73909已build。
+  新dump c955544d已恢复loom_before_983_verify；正式image再跑迁移7LI/8artifact过/0新增anchors，private canonical983-image-clone.json。
+  首probe错network(无DB访问)已终止；真实internal网络后发现proposal-only误分类，root共享artifact state-action集并补回归，再验PASS；不补伪genesis。
+  最终18migration DB/9oracle DB/61unit/typecheck/lint/build过；初审+唯一验证预算已用完，禁第三审。
+  private deploy983.cjs（仅preflight运行）含CI exact guard；runtime-983-image.override.yml已准备，未生效。CI绿后merge→停app/worker→migrate→启worker/app→live API/browser/counts验证。
+  生产仍appf707ca5c/worker8bce5f0a，PG7d99236a未动，454events/280tasks/21attempt/空队列；无paid。
+  root切codex/yuk-983-validation-handoff仅存状态，不重启PR CI。整体goal实质progress；剩余983交付、knowledge/edge双轨、887现役OCR/provider矩阵和951保留处置。
+
 - Active983：root独占codex/yuk-983-canonical-editors；退休Notes body editor与Ingestion全部六结构/merge/figure操作的直接UPDATE回退，统一event→projection，保留rowlock/version/backlinks。
   migrateCanonicalProjections扩到artifact/question_block；只给无事件旧行genesis，拒绝不完整历史、payload-only次要题块（包括live缺失）、漂移/幽灵；校准方案A不动。
   68相关DB/3flag unit/typecheck/lint/build/strict fold/architecture过，依赖435→433基线收紧。

@@ -16,6 +16,15 @@ fixed; the one verification review passes. All six structured edit operations no
 use event-first projection writes; missing bases abort before publishing any event.
 The migration checks payload-only secondary IDs, not merely event subject IDs.
 
+PR1368 implementation5dd7e8ed merged main's documentation conflicts as841a7605;
+both have exact tree `eee7f54fe4a2baf6089c55896fc46066cd0d440b`. CI34220204444
+is running (static/migration/build/usability green, unit/DB pending), not delivered.
+Final scoped follow-up:18 migration DB,9 oracle DB and61 unit pass. Image
+`the-learning-project-app:5dd7e8ed` SHA
+`210f719ac543392b483b9886a5d3e704b26ab96ebe1b74819766ca6343b73909`
+also passes migration on the restored clone,7 LearningItems/8 artifacts/zero new
+anchors. Production remains appf707ca5c/worker8bce5f0a until CI permits cutover.
+
 Five scoped DB suites pass68 cases (migration, editor parity/concurrency, Notes
 route, Ingestion edit/structure tools); verifier independently passes5 structure
 cases. Typecheck/lint/build, strict fold writers and architecture audits pass.
