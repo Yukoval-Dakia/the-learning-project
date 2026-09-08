@@ -262,12 +262,13 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     files: [
       'src/capabilities/practice/server/attempt-events.ts',
       'src/capabilities/practice/server/knowledge-runtime.ts',
+      'src/capabilities/practice/server/question-supply/placement-starter-store.ts',
     ],
-    symbols: ['loadFailureLearningKnowledgeContext'],
-    dto: 'failure-learning knowledge context reads',
+    symbols: ['loadFailureLearningKnowledgeContext', 'createKnowledgeNodeFromEvents'],
+    dto: 'failure-learning reads and placement knowledge creation command',
     justification:
-      'practice product surface consumes knowledge through the two capability-local re-publish seams; subject/profile/failure-attempt reads moved to kernel read models (YUK-892).',
-    reviewIssue: 'YUK-885',
-    commandFiles: [],
+      'Placement relinquishes its direct knowledge INSERT/event/index assembly to the Knowledge creation owner (YUK-984). This is an explicit command dependency, not a read or a kernel-hidden write. Existing failure-learning read seams remain.',
+    reviewIssue: 'YUK-984',
+    commandFiles: ['src/capabilities/practice/server/question-supply/placement-starter-store.ts'],
   },
 ];

@@ -18,6 +18,29 @@ Status: active, not delivered. Production remains the verified983 image.
 
 ## Progress
 
+All four creation entrypoints now consume Knowledge's createKnowledgeNodeFromEvents:
+LearningIntent, builtin bootstrap, custom subject roots and placement starters. The
+shared operation owns per-ID creation locking, create-only vs existing-skip semantics,
+genesis/index/projection and outbox opt-out. Existing nodes never receive replacement
+history; a missing live row with reconstructible history is refused. Provenance and
+placement's deterministic event ID remain, as do placement's existing identity checks.
+Four suites pass44 DB tests; three additional creation/concurrency suites pass26;
+typecheck/build pass. Cross-entrypoint bootstrap/root contention creates one birth.
+
+The source structural DML census now leaves only the knowledge projector and two
+derived embedding writers. Removed eight stale registry entries; proposals is now
+maintenance-only. Strict fold-write audit has no violation/stale entries. Boundary
+and deepening audits pass with explicitly reconciled totals428/0/48: Knowledge's
+shared creation lock adds one server reference while projection references drop six;
+Practice adds one real Knowledge creation command, replacing its raw cross-domain
+INSERT. It is classified as a command under984, not hidden in a kernel facade or
+mislabelled a read. This does not claim SCC removal or whole-project completion.
+An audit unit fixture referencing removed seed writers was updated to still-existing
+artifact/question-block caller-owned writers, preserving the advisory behavior test.
+
+Remaining984 work: knowledge/edge deployment history (Q2/Q3), global writer flag
+retirement, full independent review/exact-head CI and authorized Mac delivery.
+
 Subject rename/reset now lock the root, validate history, write the existing name
 event and project the structure instead of directly updating knowledge. The strict
 requireKnowledgeHistory guard moved from the private proposal implementation into

@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-08：984 Active，edge/五类node提案/LearningIntent与科目改名重置已event→projection；共享严格历史护栏，79DB+10guard复验/typecheck/build过。余三创建入口seed/root/placement、部署历史/flag及交付；生产983未动，整体未完成，无paid/NAS。
+> Linear 是权威 tracker；更新于 2026-09-08：984 Active，四创建入口共用Knowledge owner，业务知识结构DML归零；44DB+26并发/创建复验与gates过。依赖428/0/48如实登记，fold旧writer删；余知识历史/全局flag及整项交付。生产983未动，整体未完成，无paid/NAS。
 
 ## NOW
 

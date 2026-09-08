@@ -2,6 +2,13 @@
 
 ## 最新状态
 
+- 984四创建入口已共用node-creation.ts：LearningIntent/seedKnowledge/ensureSubjectRoot/placement调用同一create lock→已存在skip/error→genesis/index→projection。
+  保留actor、placement确定性genesisID与旧身份/历史检查、ingest_at；已有节点不改/不补假历史，history有row无则拒绝。业务src知识结构DML只剩projection，两个embedding派生writer保留。
+  四套44DB、补三套26DB（跨bootstrap/root并发只诞生一次/ghost拒绝）及typecheck/build过。fold strict无violation/stale，删除8旧writer声明，proposals归derived maintenance。
+  依赖baseline如实428/0/48：Knowledge创建锁新增1，对projection引用少6；Practice新增1明确Knowledge创建命令替换原跨域raw INSERT，不用kernel转发隐藏。catalog关联984，架构/边界过。
+  audit unit首1fail仅引用已删除seed registry fixture，改现存artifact/question_block advisory样本，最终28unit/typecheck复验过。
+  下一知识部署历史Q2/Q3/全局flag退休与984整项reviewCI/Mac交付。无paid/生产变化，原脏main不动。
+
 - 984科目改名/重置root name已删raw UPDATE，保留控制面revision与节点FOR UPDATE→锁后时钟→event→projection。
   requireKnowledgeHistory从提案私有提至现有knowledge projection模块，两真实consumer共享严格guard；缺base/结构漂移阻止改名并回滚subject/revision/journal/events/root。
   两套79DB与补充10控制DB/typecheck/build过；旧未使用isDeepStrictEqual import删除。下一三创建入口seedKnowledge/ensureSubjectRoot/placement-starter合并创建责任，保留各自幂等/来源。
