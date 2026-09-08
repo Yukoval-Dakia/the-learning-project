@@ -37,18 +37,19 @@ export const listNotes = (subject?: string, query?: string): Promise<{ rows: Not
 
 // ── body_blocks 块模型（ArtifactBodyBlocks passthrough doc） ────────
 // 已知块型：semanticBlock（文本块，kind ∈ definition/mechanism/example/
-// pitfall —— check 为 D6 墓碑，只读渲染占位不可插入）、crossLinkBlock
+// pitfall/check —— check 为不判分的自解释正文）、crossLinkBlock
 //（atom，ADR-0022 flat attrs { id, artifact_id, block_id?, title? }——服务端
 // block-refs 索引器按 attrs.artifact_id 写 backlink，勿嵌套 target）、
 // questionRefBlock（atom，M3 新增：note 引用题库题，纯引用无作答交互
 // ——D6 裁的是内嵌自测全链路）。
 export type SemanticKind = 'definition' | 'mechanism' | 'example' | 'pitfall' | 'check';
 
-export const SEMANTIC_KIND_LABEL: Record<Exclude<SemanticKind, 'check'>, string> = {
+export const SEMANTIC_KIND_LABEL: Record<SemanticKind, string> = {
   definition: '定义',
   mechanism: '机制',
   example: '例子',
   pitfall: '易错点',
+  check: '自解释',
 };
 
 type NotePageWire = ApiOperationJsonResponse<'getNote'>;

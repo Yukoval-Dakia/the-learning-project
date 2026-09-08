@@ -1,7 +1,7 @@
 // M3 笔记面 — 块渲染族（阅读态，YUK-317）。
 // 设计基准 docs/design/loom-refresh/project/note-editor.jsx（NoteBlock 8 块型）。
-// 真实块模型 = semanticBlock（kind 4 型）+ crossLinkBlock + questionRefBlock：
-// - check kind（D6 内嵌自测）渲染灰色墓碑占位，不提供交互；
+// 真实块模型 = semanticBlock（kind 5 型）+ crossLinkBlock + questionRefBlock：
+// - check kind 保留自解释正文，不提供内嵌作答/判分；
 // - questionRefBlock（pre-flight B 用户增量）= 题面预览 + 类型徽章的纯引用块，
 //   无作答判分；点击进入现有题目详情页。
 
@@ -15,11 +15,12 @@ import {
   questionsForKnowledge,
 } from './notes-api';
 
-const KIND_ICON: Record<Exclude<SemanticKind, 'check'>, string> = {
+const KIND_ICON: Record<SemanticKind, string> = {
   definition: 'doc',
   mechanism: 'fx',
   example: 'list',
   pitfall: 'alert',
+  check: 'doc',
 };
 
 export function questionDetailHref(questionId: string): string {
@@ -116,16 +117,6 @@ export function NoteBlockView({
     return <QuestionRefBlock block={block} onOpen={onOpenQuestion} />;
   }
   const kind = block.attrs?.semantic_kind;
-  if (kind === 'check') {
-    // D6 墓碑：内嵌自测全链路已裁，存量块只读占位。
-    return (
-      <div className="nb-tombstone">
-        <LoomIcon name="archive" size={13} />
-        <span>内嵌自测已裁撤（D6）——此块为历史存量，内容不再交互。</span>
-      </div>
-    );
-  }
-  // check 已在上方分支 return，此处 kind 已收窄为四型。
   const label = kind ? SEMANTIC_KIND_LABEL[kind] : null;
   // YUK-339：read 态的 kind 标签由 .nrb-h 小节标题（NoteDocBody，设计源
   // screen-note-reader.jsx:63）承载，块内不再重复渲染 chip——只保留 user_verified
@@ -136,10 +127,7 @@ export function NoteBlockView({
     <div className={`nb-sem nb-sem-${kind ?? 'plain'}`}>
       {showTagChip && (
         <span className="nb-sem-tag mono">
-          <LoomIcon
-            name={(KIND_ICON[kind as Exclude<SemanticKind, 'check'>] ?? 'doc') as never}
-            size={11}
-          />
+          <LoomIcon name={(KIND_ICON[kind as SemanticKind] ?? 'doc') as never} size={11} />
           {label}
           {block.attrs?.user_verified && (
             <span className="verify-badge verified">

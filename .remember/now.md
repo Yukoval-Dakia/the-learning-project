@@ -2,6 +2,38 @@
 
 ## 最新状态
 
+- Owner批准982七文件FULL预检；root独占codex/yuk-982-self-explanation，原脏main未动。
+  check自解释复用现有reader/rich editor，保留id/五kind/乐观锁；不恢复判分、mastery/FSRS、模型调用或新slash命令。
+  27unit/typecheck/build/partition/capability通过，独立初审无P0/P1；built浏览器fixture桌面/mobile编辑/undo/save/reload/conflict过。
+  当前待exact-head CI/交付，未部署982。忽略的验收TS已归档private，避免临时脚本干扰repo lint。
+- 887 Ingestion/Agency actual PASS：源码3582ab884，image8bce5f0a，新DB loom_import_plan_887_actual_v1。
+  Tagging h2p42dbhmj2gmutvvkg0nu1m→显式选择tag→completeIngestionImport question ey7rsk7flmua801g0tz0weet；golden diffs[]。
+  LearningIntent maqegljxethl9jic861g6spq→proposal fhs89tf6jz95bqxrer0wp038，未自动accept、0学习项/产物。
+  两真实wire共estimate$0.00224054（非账单），保留$1 reserve；新$3累计reserve$3/余0，旧reserve不回收。
+  post-extraction fixture，不冒充文件上传/OCR/R2；生产454/280/21未增。证据与hash见887 rollout doc。
+
+- 887 learner judging actual PASS：源码2a9638183（runtime代码与8bce5f0a相同，差异仅交付文档），image8bce5f0a，新DB loom_judging_887_actual_v2。
+  当前createAttemptResource /api/attempts真实Request→SemanticJudgeTask xhql6qtd7nybtdooy3w0c0ic→201/correct/good（原rating again），review clf6tik0bhrn7u266rjtjgke、judge yq1t2m1op421zb84e0wkt7jd因果链、knowledge FSRS reps1/due已核对。
+  实际MiMo830in/278out、estimate$0.00060291非账单；此轮预留$1，新$3总reserve$2/余$1。v1本地代理URL查询参数拒绝、0上游/0reserve，不记产品失败或模型费用。
+  v2容器exit0，v1exit1均停止；生产454/280/21不变，无生产写入。public route handler组件验收，不称shipped Hono HTTP或durable judge_run重试验收。
+  证据private judging887-actual-v2.json SHA f08c1c94f5e0b869a212ac5b899282bdeba44e6bee00ff2a711b00fd0ef41731。
+  root当前codex/yuk-887-remaining-actual从origin/main建并cherry-pick两981交付docs，原脏main未动。下一Ingestion/Agency仍缺；生产CoachTask有成功plan记录但subject_mix出现probability/calculus，尚不能据task success判全部Agency语义PASS。
+
+- 981 Done：PR1365 exact8bce5f0a0a0901404cf5b395766ab29f44910abc/CI34212977772所有job绿；10:11:34Z合并main69f1b9deb3ad760ac0b457bd7d45920bdac4852c。
+  10:12:50Z Mac API6367b553/worker c430a928已8bce5f0a healthy/零重启；原PG7d99236a/09:40:42Z与pgdata未变。
+  新dump已恢复loom_before_981_verify，clone/live迁移零新增/7LI通过；live454event/280task/21attempt及空队列不变，无NAS/tunnel。
+  live health200/无token401/notes200(7条)，真实browser笔记读取/刷新无pageerror；首probe错CSS selector超时已纠正，不是产品故障。
+  runtime-981-image.override.yml生效；回滚去该overlay回93df0528。四个隔离canary容器已终止，原失败DB/证据未动。
+  root当前981-delivery-notes仅交付记录；下一887剩余learner judging/Ingestion/Agency actual证据，新$3池余$2；982/980/977 P2不混入。
+
+- 981修后8bce5f0a actual PASS：新DB loom_notes_981_actual_v2，image1316441c；accept137→generate真实成功→ready137→verify真实成功，artifact br1jomjdbpj3pq4zvj0h49p0 ready/verified。
+  同generate physical job 2e81df0b-f967-50ae-ad34-38dfa8ec855e另进程重投completed，0model/task增量；显式boss.fail加速expiry，非自动完整过期窗。
+  generation1066in/3505out，verify5216in/984out，estimate合计$0.00663810非账单；新$3池保守预留$1余$2，旧reserve不回收。
+  当前生产93df0528；本轮最新生产基线454event/280task/21attempt，验收前后不变，不沿用昨日424/258/4；空活动队列。
+  scoped73unit/20generateDB/gates/架构/browser过；唯一验证审结束，UI无P0/P1，三引用P1已4DB RED→GREEN修复，禁第三审。
+  PR1365 exact8bce5f0a CI34212977772仍余DB；未merge/deploy。root切delivery-notes存交付记录，不重启PR CI。
+  新982 P2 Backlog：ADR保留check自解释，但现有UI墓碑隐藏正文；不改五kind契约、不恢复embedded quiz、不冒充完整产品体验PASS。
+
 - owner本轮明确「批准」：Notes七文件富编辑及新增最多$3实际验收获授权，981/887恢复In Progress；新预算尚未使用，旧reserve不回收。
   981 PR1365 Draft/exact95cf627ddc21ed06237681e5f532024c295541ab；引用P1修复已推，UI P1仍未修。
   CI34151841019 exact95cf627d已终态全绿；正式初审已用，唯一验证审保留至两P1都修完。

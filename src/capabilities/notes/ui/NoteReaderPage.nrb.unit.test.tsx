@@ -80,6 +80,30 @@ const READ_BLOCKS: BodyBlock[] = [
 // ── (a) gutter / handle rendering per .nrb-block ─────────────────────────────
 
 describe('NoteDocBody .nrb-block structure (YUK-339)', () => {
+  it('keeps self-explanation prose under a collapsible heading and stable anchor', async () => {
+    const user = userEvent.setup();
+    const { container } = renderDocBody([
+      {
+        type: 'semanticBlock',
+        attrs: {
+          id: 'reflection',
+          semantic_kind: 'check',
+          source_markdown:
+            '为什么已知第一球为红后，分母必须变成四？请用样本空间解释，而不是套公式。',
+        },
+      },
+    ]);
+    expect(screen.getByRole('heading', { name: '自解释' })).toBeTruthy();
+    const anchor = container.querySelector('#nb-reflection');
+    expect(anchor?.textContent).toContain('分母必须变成四');
+    const toggle = anchor?.querySelector<HTMLButtonElement>('.nrb-collapse');
+    if (!toggle) throw new Error('missing section toggle');
+    await user.click(toggle);
+    expect(screen.getByRole('heading', { name: '自解释' })).toBeTruthy();
+    await user.click(toggle);
+    expect(anchor?.textContent).toContain('分母必须变成四');
+    expect(container.querySelector('textarea, input, .nb-tombstone')).toBeNull();
+  });
   it('wraps every block in .nrb-block with a .nrb-gutter + .nrb-content grid', () => {
     const { container } = renderDocBody(READ_BLOCKS);
     const blocks = container.querySelectorAll('.nrb-block');

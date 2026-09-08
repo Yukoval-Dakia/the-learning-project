@@ -11,9 +11,28 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderToString } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { questionDetailHref } from './NoteBlocks';
+import { NoteBlockView, questionDetailHref } from './NoteBlocks';
 import NoteReaderPage, { NoteDocBody } from './NoteReaderPage';
 import type { BodyBlock, NotePage } from './notes-api';
+
+it('renders stored check prose without reviving embedded self-test controls', () => {
+  const html = renderToString(
+    <NoteBlockView
+      variant="read"
+      block={{
+        type: 'semanticBlock',
+        attrs: {
+          id: 'check-existing',
+          semantic_kind: 'check',
+          source_markdown: '解释 P(A|B) 与 P(B|A) 的区别；当 P(B)=0 时不能直接使用条件概率公式。',
+        },
+      }}
+    />,
+  );
+  expect(html).toContain('解释 P(A|B) 与 P(B|A)');
+  expect(html).toContain('P(B)=0');
+  expect(html).not.toMatch(/nb-tombstone|<button|<input|<textarea|<form/);
+});
 
 // Hoisted so the vi.mock factory can reference them (vi.mock is hoisted above imports).
 const mocks = vi.hoisted(() => ({

@@ -4,7 +4,7 @@
 // 设计稿扁平块 ↔ 真实 semanticBlock 文档——编辑器把 doc.content 当块列表，
 // 文本块编辑 canonical PM content 并派生 source mirror。斜杠菜单 = 4 个 semantic kind + 交叉链 + 题目
 // 引用（用户增量）——**quiz 内嵌测验已剔除（D6）**。atom 块（crossLink/
-// questionRef/check 墓碑）不可嵌套编辑，整块删除/移动。
+// questionRef）不可嵌套编辑，整块删除/移动。check 复用正文编辑，不提供判分。
 // 保存由宿主（NoteReaderPage）发 PATCH body-blocks 乐观锁。
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -205,9 +205,10 @@ export function NoteEditor({
     setOverIdx(null);
   };
 
-  const SLASH_KINDS = Object.entries(SEMANTIC_KIND_LABEL) as Array<
-    [Exclude<SemanticKind, 'check'>, string]
-  >;
+  // Existing self-explanation prose is editable; do not add a new insertion command.
+  const SLASH_KINDS = Object.entries(SEMANTIC_KIND_LABEL).filter(
+    (entry): entry is [Exclude<SemanticKind, 'check'>, string] => entry[0] !== 'check',
+  );
 
   // 斜杠菜单 + 两个 picker，按插入锚点 i 渲染（insertAt 在 i 之后插入）。
   // 空笔记走 i = -1（插到开头），由列表外的独立 .nb-wrap 宿主渲染。
@@ -280,20 +281,16 @@ export function NoteEditor({
   return (
     <div className="note-editor">
       {blocks.map((b, i) => {
-        const isAtom =
-          b.type === 'crossLinkBlock' ||
-          b.type === 'questionRefBlock' ||
-          b.attrs?.semantic_kind === 'check';
+        const isAtom = b.type === 'crossLinkBlock' || b.type === 'questionRefBlock';
         const reorderLabel =
           blocks.length < 2
             ? `第 ${i + 1} 块（共 1 块，无需重排）`
             : `重排第 ${i + 1} 块（共 ${blocks.length} 块）；用上下方向键移动`;
         const insertLabel = `在第 ${i + 1} 块后插入块`;
         const deleteLabel = `删除第 ${i + 1} 块`;
-        const textAreaType =
-          b.attrs?.semantic_kind && b.attrs.semantic_kind !== 'check'
-            ? SEMANTIC_KIND_LABEL[b.attrs.semantic_kind]
-            : '文本';
+        const textAreaType = b.attrs?.semantic_kind
+          ? SEMANTIC_KIND_LABEL[b.attrs.semantic_kind]
+          : '文本';
         return (
           <div
             key={b.attrs?.id ?? `${b.type}-${i}`}
@@ -359,7 +356,7 @@ export function NoteEditor({
                 <NoteBlockView block={b} />
               ) : (
                 <div className={`nb-sem nb-sem-${b.attrs?.semantic_kind ?? 'plain'}`}>
-                  {b.attrs?.semantic_kind && b.attrs.semantic_kind !== 'check' && (
+                  {b.attrs?.semantic_kind && (
                     <span className="nb-sem-tag mono">
                       {SEMANTIC_KIND_LABEL[b.attrs.semantic_kind]}
                     </span>

@@ -7,11 +7,7 @@ import type { BodyBlock, SemanticKind } from './notes-api';
 
 afterEach(cleanup);
 
-function block(
-  id: string,
-  text: string,
-  semanticKind: Exclude<SemanticKind, 'check'> = 'definition',
-): BodyBlock {
+function block(id: string, text: string, semanticKind: SemanticKind = 'definition'): BodyBlock {
   return {
     type: 'semanticBlock',
     attrs: {
@@ -31,32 +27,41 @@ function renderEditor(onChange = vi.fn(), value = blocks) {
 }
 
 describe('NoteEditor block controls', () => {
-  it('routes a rich text edit back to its block without flattening nested lists', async () => {
-    const rich = block('rich', '定义');
-    rich.content?.push({
-      type: 'bulletList',
-      content: [
-        {
-          type: 'listItem',
-          content: [{ type: 'paragraph', content: [{ type: 'text', text: '不可丢失的反例' }] }],
+  it.each(['definition', 'check'] as const)(
+    'routes a %s rich edit back without flattening nested lists or changing identity',
+    async (kind) => {
+      const rich = block('rich', '定义', kind);
+      rich.content?.push({
+        type: 'bulletList',
+        content: [
+          {
+            type: 'listItem',
+            content: [{ type: 'paragraph', content: [{ type: 'text', text: '不可丢失的反例' }] }],
+          },
+        ],
+      });
+      const changed = renderEditor(vi.fn(), [rich]);
+      const box = await screen.findByRole('textbox', {
+        name: `第 1 块「${kind === 'check' ? '自解释' : '定义'}」内容`,
+      });
+      const text = box.querySelector('p')?.firstChild;
+      if (!text) throw new Error('missing editor text');
+      text.textContent = '新定义';
+      fireEvent.input(box);
+      await waitFor(() => expect(changed).toHaveBeenCalled());
+      expect(changed.mock.lastCall?.[0][0]).toMatchObject({
+        attrs: {
+          id: 'rich',
+          semantic_kind: kind,
+          source_markdown: expect.stringContaining('新定义'),
         },
-      ],
-    });
-    const changed = renderEditor(vi.fn(), [rich]);
-    const box = await screen.findByRole('textbox', { name: '第 1 块「定义」内容' });
-    const text = box.querySelector('p')?.firstChild;
-    if (!text) throw new Error('missing editor text');
-    text.textContent = '新定义';
-    fireEvent.input(box);
-    await waitFor(() => expect(changed).toHaveBeenCalled());
-    expect(changed.mock.lastCall?.[0][0]).toMatchObject({
-      attrs: { id: 'rich' },
-      content: [
-        { type: 'paragraph', content: [{ type: 'text', text: '新定义' }] },
-        rich.content?.[1],
-      ],
-    });
-  });
+        content: [
+          { type: 'paragraph', content: [{ type: 'text', text: '新定义' }] },
+          rich.content?.[1],
+        ],
+      });
+    },
+  );
   it('names every editable block by its current order and semantic type', () => {
     const initialBlocks = [block('one', '第一块', 'definition'), block('two', '第二块', 'example')];
     const { rerender } = render(

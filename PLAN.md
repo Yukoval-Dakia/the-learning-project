@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-08：owner批准Notes七文件富编辑及新增最多$3验收；981恢复实施，95cf627d/CI34151841019全绿。顺序：富编辑保结构→scoped gates/唯一验证审→新exact CI/真实验收→Mac交付；不提前关闭887。
+> Linear 是权威 tracker；更新于 2026-09-08：887 Tagging→import与Agency规划真实验收PASS，questionBlock golden零差异；新$3保守预留完毕/余0。Owner批准982七文件自解释可读可编辑：27unit/typecheck/build/browser与独立初审通过，待exact CI/交付。981已交付，整体重构尚未完成；无新增paid/NAS。
 
 ## NOW
 

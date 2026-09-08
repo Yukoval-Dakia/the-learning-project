@@ -138,5 +138,70 @@ and revalidate current targets under sorted source/target row locks in the short
 ready transaction (never across the model call). All four are now GREEN, with
 20 generation DB cases passing. Review budget is exhausted; no third review is
 started. Root owns final adjudication based on these regressions and exact CI.
-New exact-head CI and paid post-fix Notes generation/verification remain pending;
-no YUK981 deployment yet.
+The exact-head CI/deployment status is recorded separately below.
+
+## Post-fix actual acceptance
+
+Source `8bce5f0a0a0901404cf5b395766ab29f44910abc`, clean image
+`sha256:1316441cb665528a5288fe595b27e073f0554574a010333b3370c6501b081be3`,
+fresh DB `loom_notes_981_actual_v2`: PASS for the two Notes handoffs.
+Accept container exited137 before generation dispatch; a new process recovered
+and fetched `2e81df0b-f967-50ae-ad34-38dfa8ec855e`. Real generation returned valid
+compact rich PM JSON with server-owned anchors/trust/mirrors and a valid backlink.
+The generation process then exited137 after ready commit but before verify dispatch.
+A new process recovered verify job `88422681-4bf5-550c-a23f-001a2f7c62b6`, completed
+actual verification and exited0. Artifact `br1jomjdbpj3pq4zvj0h49p0` is ready/verified.
+
+Tasks: generation `hccvlpka9qw6c0k1r05qx54i`, verification
+`note_verify_v1_905337cd85a8269d7c5cfec00cb84be5`. Both used real Xiaomi
+mimo-v2.5-pro HTTP200/end_turn. Generation: 1066 input/3505 output, estimate
+$0.00351306. Verify: 5216 input/984 output, estimate $0.00312504. Total estimate
+$0.00663810 is not an invoice; retain the whole $1 reserve, new allowance remaining
+$2. Proxy allowed only one request per phase/two overall with 64KB/8192 caps.
+The failed old sample had 2894 output tokens: this new sample does **not** establish
+lower total tokens, despite removing duplicate authored prose. Independent content
+inspection confirms the 1/2 ball example, 1/3 die example, nonzero denominator and
+independence/mutual-exclusion distinction. The verifier's optional Bayes-link
+suggestion is not applied to the generated note or claimed as existing content.
+
+An additional fresh process replayed the same generation job: already-ready owner
+skipped the model, task count stayed2, both physical jobs are completed. Expiry was
+explicitly accelerated with pg-boss.fail only after confirmed death; the actual
+retry delay was retained. This is component-handler recovery, not proof of full
+shipped-worker automatic expiry timing. Provider-attempt table is empty for these
+SDK tasks; wire and task evidence must not be mislabeled as provider_attempt rows.
+
+Private evidence `notes-981-actual-v2.json` SHA256
+`dfd853014e100774a0ff00233504eaec1ab1d9636d6e4e648291a6ae660f6e8c`;
+worker `488ec18dbd43957b92c240b7264c421ee5a2c0c1bf9794fc0e6f50d5386f67c3`;
+controller `afbb0a72a7cc1bc7967ea57e0f4374efa37aba90137d7eff63e7e5289c129581`;
+replay evidence `59db02c2779e52310cf491c20d80013be11f5427e0faeb91936a0097d54ec79a`.
+All four canary processes are stopped; old failed canary untouched. Production
+remained93df0528, with this turn's refreshed 454event/280task/21attempt baseline
+unchanged before/after; the prior day's lower counts are not a current baseline.
+
+YUK982 separately captures the existing product mismatch: check prose is required
+by ADR and verifier but hidden by D6 UI tombstones. The approved editor scope
+preserves atoms; no old graded-inline-quiz path is resurrected. Therefore this is
+backend generation/verification/recovery PASS plus scoped rich-edit PASS, not a
+claim that every Notes product surface is complete.
+
+## Delivery
+
+CI34212977772 exact8bce5f0a completed with every job successful. PR1365 merged at
+2026-09-08T10:11:34Z as main `69f1b9deb3ad760ac0b457bd7d45920bdac4852c`.
+Production code content matches the validated candidate. A fresh dump was restored
+to `loom_before_981_verify`; clone and live migration checks inserted nothing and
+verified all seven LearningItems. API/worker stopped normally and were replaced
+at 10:12:50Z with8bce5f0a (healthy, zero restarts). App ID6367b553 and worker
+c430a928; original PostgreSQL7d99236a and its09:40:42Z start/pgdata were unchanged.
+The admission preflight initially caught a transient nonempty queue and performed
+no stop; a subsequent empty-queue check passed before deployment.
+
+Live health200, unauthorized notes401, authenticated notes200/7 rows. Real browser
+note read/reload passed without page errors (read-only); the first probe used a
+wrong CSS selector, corrected against source before recording PASS. Screenshot
+`notes981-production-reader.png` and `notes981-production-check.json` retained.
+Live454event/280task/21attempt remained unchanged. No NAS/Tunnel or historical data
+deletion. Roll back by removing private `runtime-981-image.override.yml`, restoring
+the previous93df0528 image overlay. No schema rollback is required.

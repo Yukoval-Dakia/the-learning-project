@@ -75,12 +75,12 @@ const NRB_PLAIN_CLASS: Record<string, string> = {
 };
 
 // 小节标题：semanticBlock 的 kind 标签（五段式解剖与 bodyBlocksToNoteSections
-// 1:1）。「check」是 D6 墓碑占位（无标签文案）不构成小节；kind 缺失/未知回退普通块。
+// 1:1）。check 是不判分的自解释小节；kind 缺失/未知回退普通块。
 function sectionKindLabel(b: BodyBlock): string | null {
   if (b.type !== 'semanticBlock') return null;
   const kind = b.attrs?.semantic_kind;
-  if (typeof kind !== 'string' || kind === 'check') return null;
-  return SEMANTIC_KIND_LABEL[kind as Exclude<SemanticKind, 'check'>] ?? null;
+  if (typeof kind !== 'string') return null;
+  return SEMANTIC_KIND_LABEL[kind as SemanticKind] ?? null;
 }
 
 export default function NoteReaderPage({

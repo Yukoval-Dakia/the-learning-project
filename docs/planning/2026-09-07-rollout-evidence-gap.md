@@ -1,9 +1,10 @@
 # YUK-887 — bounded rollout evidence gap
 
-Updated 2026-09-07 15:55Z. Source runtime is main `2351d5657` / candidate
-`582b2e66`; deployed Mac API and worker both use that candidate. No production
-code changed during this inventory. The purpose is to finish the original rollout
-requirements, not to restart a general architecture cleanup.
+Latest update 2026-09-08: Mac API/worker8bce5f0a (main69f1b9de) after YUK981.
+The original inventory below retains its historical evidence boundaries; the
+new verified deltas at the end supersede its open Notes/Memory/judging rows.
+The purpose is to finish the original rollout requirements, not to restart a
+general architecture cleanup.
 
 ## Seven rollout requirements
 
@@ -145,3 +146,70 @@ allowance is now transferred to Notes/Memory acceptance by the approval above;
 no paid call has occurred under it yet.
 YUK-977 remains a deferred P2, not a new blocker. No NAS operation, historical data
 deletion, or broad source-cleanup branch is part of this lane.
+
+## Verified deltas — 2026-09-08
+
+- Memory: [YUK979 record](2026-09-08-memory-failure-truth.md) proves real paid add,
+  confirmed process death, same physical job replay/event lookup and no reburn.
+- Notes: [YUK981 record](2026-09-08-notes-generation-acceptance.md) proves both
+  actual handoffs across SIGKILL, generation/verification and zero-cost successful
+  generation replay. Backend recovery passes; check prose visibility remains
+  the separately captured YUK982 P2 product-surface difference.
+- Learner judging: fresh `loom_judging_887_actual_v2`, source
+  `2a9638183f6192b033fa5ed06b8745ae97e260a3`, runtime code equal to validated8bce5f0a,
+  image8bce5f0a. The real `createAttemptResource` handled a canonical `/api/attempts`
+  Request with a complete conditional-probability answer, `auto_rate:true` and
+  initial rating `again`. One actual SemanticJudgeTask returned correct/score1,
+  and the owner returned201 with auto-rating `good`, one review, one causally
+  linked judge event, and knowledge FSRS reps1/next due advanced. No supplied
+  fake verdict, deterministic content validator, or mocked model replaced it.
+  This is a public route-handler component scenario, not a claim of shipped Hono
+  HTTP transport or durable judge_run crash/retry coverage.
+
+Judging task `xhql6qtd7nybtdooy3w0c0ic`, review `clf6tik0bhrn7u266rjtjgke`, judge
+`yq1t2m1op421zb84e0wkt7jd`; FSRS subject `knowledge/k_judging887`, next due
+2026-09-08T10:29:41.933Z. Real Xiaomi mimo-v2.5-pro HTTP200/end_turn:830 input,
+278 output, estimated0.00060291 USD (not invoice). Private evidence
+`judging887-actual-v2.json` SHA256
+`f08c1c94f5e0b869a212ac5b899282bdeba44e6bee00ff2a711b00fd0ef41731`;
+bundle `f595fd2475e6270c31c77e07da59e55f7f8e340d3199a86605d7a9e0c892ec77`;
+controller `d5a8c29d8f3762b777e353cce863c59584b263b5ee23b2d16f3d345fa5683e95`.
+The v1 transport probe rejected the SDK URL query variant locally: zero upstream
+calls/reserve, not a product/model failure. v2 allows the canonical pathname with
+SDK query parameters and caps one wire/64KB input/4096 output. Both processes
+stopped. Production454event/280task/21attempt stayed unchanged.
+
+Owner's newly approved3 USD pool now retains1 USD for Notes and1 USD for judging;
+remaining1 USD. Earlier pools/reserves are unchanged. Ingestion and Agency actual
+acceptance remain open; a production CoachTask success/parsed plan was located,
+but its probability/calculus subject_mix needs semantic verification and cannot
+be accepted merely from its success status. No new paid Coach sample was run.
+
+## Ingestion and Agency actual — subsequent delta
+
+Source `3582ab884384ab917fb54bbf18467c8876a00976`, runtime code equal8bce5f0a,
+fresh DB `loom_import_plan_887_actual_v1`, image8bce5f0a. Two bounded real wires
+passed (one per model, 64KB input / 4096 output ceiling, 0.50 USD reserve each).
+
+- TaggingTask `h2p42dbhmj2gmutvvkg0nu1m`: mimo-v2.5,756 input/434 output,
+  estimate0.00022736 USD. Correct conditional-probability tag, excludes Bayes
+  and polynomial decoys. Explicit client tag selection then real
+  `completeIngestionImport` created question `ey7rsk7flmua801g0tz0weet` and
+  learning record `k14l5t376lmy7zqtojt2lm2x`, imported block/session. Separate
+  read-only questionBlock fold-vs-live golden: diffs[], one question.
+- LearningIntentTask `maqegljxethl9jic861g6spq`: mimo-v2.5-pro,988 input/1820
+  output, estimate0.00201318 USD. Real `planLearningIntent` persisted valid hub
+  proposal `fhs89tf6jz95bqxrer0wp038`, two existing scoped knowledge targets,
+  no invented/decoy targets. Not automatically accepted: zero learning items
+  and artifacts. This is representative planning, not blanket Coach quality.
+
+Ingestion starts at an explicitly synthetic extracted-block checkpoint; no claim
+of file upload, OCR, R2 or shipped worker transport acceptance. Production
+454event/280task/21attempt remained unchanged. Isolated process exited0.
+Private evidence `import-plan887-actual-v1.json` SHA256
+`77da4a1a202dba48fef3af23e29df58e4ce1853d2070fdfdb22ca24ff9fc68ed`;
+golden `import-plan887-golden.jsonl` SHA256
+`ade94572fc81663b02b9110b1ecb83e659fb6a1e9e9f4b88d614ec9ddfa51a48`.
+The new3 USD pool now retains all3 USD (Notes1, judging1, import/planning1),
+remaining0. Estimates are not invoices; earlier reservations are not reclaimed.
+No further paid call is authorized by the later UI-only approval.
