@@ -2,6 +2,13 @@
 
 ## Latest actual delta — 2026-09-09
 
+Closure: independent original-matrix audit7/7 and one initial evidence review PASS,
+no P0/P1. PR1372 exactb03964426774d06ebfc6866e6e6c27a3e0446bf6 passed
+CI34339886086 and merged at2026-09-09T10:24:16Z as
+96c6a041cbe48116e0b681e67c02394ecf28f0dc. YUK887 is Done. Documentation-only
+runtime steps were skipped, not a new full-test run. Runtime e514ef94 retains
+its full CI34233241153 and the actual evidence below. No docs-only redeployment.
+
 Owner explicitly authorized a new10USD allowance. Older pools/reservations are
 unchanged. Current new-pool conservative reserve is6.70USD, remaining3.30USD:
 0.10 for first storage-only attempt,2.10 for successful GLM upload,2.00 for Tencent
@@ -122,7 +129,7 @@ YUK977/980/982 P2 differences and921/572/832 HOLD are outside this rollout closu
 
 The older pending-budget/upload/matrix statements below are historical checkpoints,
 superseded by this dated map only for the exact scopes above. Final independent
-review and exact-head documentation integration are still required before closure.
+review and exact-head documentation integration passed as recorded at the top.
 
 Latest update 2026-09-08: Mac API/worker e514ef94 after canonical Knowledge delivery;
 current proposal HTTP/replay revalidation is recorded below. The earlier8bce5f0a

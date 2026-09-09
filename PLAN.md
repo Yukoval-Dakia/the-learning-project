@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-09：887真实上传/GLM/Structure/3golden、Tencent保存JobId进程恢复、Copilot付费响应后SIGKILL/Stop/同job重投无重烧通过。新池reserve6.70/余3.30；日志即时结算不冒称，待最终review/文档集成，无生产DB/NAS写。
+> Linear 是权威 tracker；更新于 2026-09-09：887原七项验收通过/Done；PR1372 exactb0396442 CI34339886086成功、独立初审PASS，10:24:16Z合并main96c6a041。新池reserve6.70/余3.30；Mac runtime e514健康，文档无重部署，异步日志结算/P2/HOLD边界保留。
 
 ## NOW
 
@@ -180,10 +180,10 @@
 
 ## NEXT
 
-1. 951 Done：ADR0063已集成；887 canonical提案HTTP401/201/200和accept/retract零drift复验过，无paid。
-2. 887命名矩阵已补Copilot真实响应后强杀/Stop/同job重投：唯一ambiguous_execution终态，1wire；原cancelled-only验收断言失败保留，另只读复核PASS。
-   新$10reserve6.70/余3.30，unknown不回收；原AI日志待既有1h/boot/nightly清理器，非立即结算。977/980/982保持P2。
-3. 录入完成/判分完成/知识合并三责任已独立复核；下一最终证据review/文档exact-head CI集成，不重烧通过样本、不以检查数量冒充业务封装。
+1. 已授权AI pipeline/业务封装/测试精简与Mac rollout本轮收口；887和951 Done，无剩余原矩阵场景，不再重烧通过样本。
+2. 后续功能从新业务需求开始；不是按SCC数字或测试数量再开清理线。三关键行为责任、实际恢复和语义/golden证据均已复核。
+   新$10reserve6.70/余3.30，unknown不回收；Copilot原AI日志待既有1h/boot/nightly清理器，非立即结算。977/980/982保持P2。
+3. PR1372 docs-only CI跳过运行时代码分区，不称新全测；运行时继续沿用exacte514 CI34233241153全绿和当前真实canary。
 
 ## PARKED
 

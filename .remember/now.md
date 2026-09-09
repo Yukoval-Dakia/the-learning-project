@@ -1,6 +1,9 @@
-# 当前 handoff — 2026-09-07，完整重构goal active
+# 当前 handoff — 2026-09-09，已授权重构与Mac rollout收口
 
 ## 最新状态
+
+- 09-09最终交付：独立原矩阵审计7/7、docs初审PASS无P0/P1；PR1372 exactb03964426774d06ebfc6866e6e6c27a3e0446bf6/CI34339886086成功，10:24:16Z合并main96c6a041cbe48116e0b681e67c02394ecf28f0dc。887 Linear Done，commentd60d0774-e821-4cde-bd75-5ac6bb8a9118。docs-only分区skip，不冒充重新全测；runtime e514/CI34233241153与当前actual证据沿用。
+  本轮已授权pipeline/三行为责任/实体收口/测试精简和Mac实际验收无剩余原矩阵项；P2 977/980/982及HOLD921/572/832保持边界。新池reserve6.70/余3.30；最后生产3服务healthy、APIhealth200、454/280/21不变，无NAS/重部署/新模型调用。交付账本在codex/yuk-887-delivery-closeout本地commit，原脏main不动。
 
 - 09-09 10:19Z Copilot当前真实样本：mimo-v2.5-pro 200/13116input/35output；未relay即物理worker SIGKILL137，public Stop后restart，同job3420e900-2857-5d04-b5c8-7985313dd07b retry1 completed。12m30真实等待后唯一ambiguous_execution失败/解释reply，无DONE/伪造echo/第二wire。
   原controller cancelled-only断言exit1原样保留，独立同DB只读verifier PASS；hash详rollout-evidence-gap.md。原CopilotTask仍running/costs[]，既有1h boot/nightly sweeper负责未知成本观察收敛，不冒充立即日志结算。临时2容器已stop/rm，DB保留，生产454/280/21不变。
