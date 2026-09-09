@@ -2,6 +2,18 @@
 
 ## 最新状态
 
+- 09-09 10:19Z Copilot当前真实样本：mimo-v2.5-pro 200/13116input/35output；未relay即物理worker SIGKILL137，public Stop后restart，同job3420e900-2857-5d04-b5c8-7985313dd07b retry1 completed。12m30真实等待后唯一ambiguous_execution失败/解释reply，无DONE/伪造echo/第二wire。
+  原controller cancelled-only断言exit1原样保留，独立同DB只读verifier PASS；hash详rollout-evidence-gap.md。原CopilotTask仍running/costs[]，既有1h boot/nightly sweeper负责未知成本观察收敛，不冒充立即日志结算。临时2容器已stop/rm，DB保留，生产454/280/21不变。
+  新$10保守reserve6.70/余3.30，旧池不回收；build/architecture通过，代码仍runtime等e514。最终矩阵独立审计和docs review/CI集成待做；以下旧预算和缺项以最新为准。
+
+- 09-09 887 actual：默认GLM上传/R2字节/物理worker/Structure/3卡结构+独立fold全PASS；sourcefea051244 runtime等e514，worker仅改两provider端点到限额proxy。firstv1先API派发无queue500、0model；v2workerfirst成功。
+  v2 fresh DB loom_upload_887_glm_v2/sessiono5rh2hz5evs9tq2plsn1jdfr/job331e2c6f-3137-4a96-b927-b5245d59038d/Structureoyx84ypkqyqdxb2y81rzzed7；GLM740/272估0.0002024CNY，mimo2865/600估0.0005691USD。3fold diffs[]；无auto_enroll。临时容器stop+rm，DB和R2合成对象保留；生产454/280/21不变。
+  Tencent executeSubmit真实SDK1次，afterJobSaved SIGKILL；新进程同operation读JobId1489202432483262464无新submit，6Describe仍RUN，之后同Job一次Describe DONE。实际provider-owner进程恢复，不冒充Tencent物理worker/结构质量；8attempt costunknown/null。
+  新$10reserve总4.70/余5.30，证据hash详rollout-evidence-gap.md新头部。map_copilot_live_crash_canary只读盘点剩余item7，不新付费；默认已通过样本不重跑。
+
+- 2026-09-09 owner明确新授权10USD，887已恢复In Progress；不是旧池回收。root预算初始0reserve，先当前默认GLM真实上传/OCR/Structure，控制出口每provider一次，fresh隔离DB/合成试卷，不动生产worker和历史任务。
+  Docker现三服务e514ef94/PG healthy但均近期重启，勿沿用09-08 StartedAt；实际验收前重新快照。目标尚未完成。
+
 - 887免费准备：明确canonical assets→ingestion-sessions→operations(kind=extract,idempotency)→OCR worker，而非旧extract URL；offline复杂worksheet PNG已渲染目检，hash见rollout-evidence-gap.md。
   未upload/R2/worker/paid。独立只读audit_final_business_ownership对录入完成/判分完成/知识合并三行为未找到剩余规则复制或跨owner内部写；root复核durable receipt同事务、三个settlement共用效果、merge最终故障跨域回滚断言。
   root architecture-deepening通过49Task/42Tool/53queue/19proposal、428/0/48，5域SCC21command仍如实保留，不用数量证明责任封装。无新runtime代码缺陷/不用开新issue；887实际上传OCR与恢复gate仍未完成，$2预算请求仍待答复。

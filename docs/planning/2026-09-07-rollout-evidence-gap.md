@@ -1,5 +1,129 @@
 # YUK-887 — bounded rollout evidence gap
 
+## Latest actual delta — 2026-09-09
+
+Owner explicitly authorized a new10USD allowance. Older pools/reservations are
+unchanged. Current new-pool conservative reserve is6.70USD, remaining3.30USD:
+0.10 for first storage-only attempt,2.10 for successful GLM upload,2.00 for Tencent
+submission/six describes,0.50 for final same-job observation and2.00 for Copilot
+paid-response/process-death acceptance. These are reserves,
+not bills; unknown Tencent costs remain null rather than zero.
+
+### Real default-engine upload and extraction: PASS
+
+Source fea0512447a1cafdfa0cfc696a8f31fa694ed7e0 has no runtime difference from
+tested e514ef94. API used unchanged e514ef94 image; physical worker used the same
+entrypoint bundled with only GLM/Xiaomi endpoint literals redirected through a
+counting proxy. No substituted model result/parser/job handler was used. The proxy
+allowed one OCR and one Structure request,512KB input and8192 model output tokens;
+real keys stayed in the controller. Auto-enroll/observe were explicitly off.
+
+The first attempt uploaded correctly but dispatched before the fresh worker had
+registered its queue:500 `Queue tencent_ocr_extract does not exist`, zero model
+wires. The corrected worker-first sequence passed on fresh `loom_upload_887_glm_v2`:
+multipart assets201 → independently downloaded R2 bytes match fixture hash →
+session201/uploaded → operation202 with repeated identical operation identity →
+physical pg-boss job331e2c6f-3137-4a96-b927-b5245d59038d completed → session extracted /
+operation succeeded. Session o5rh2hz5evs9tq2plsn1jdfr; operation
+ingop_h34ytjkbtmd7ouymq4jc2cfo. Three draft question blocks preserve the shared stem,
+two subquestions,18/12/22/48 table, zero-probability and unknown-count wording, with
+no invented answers. Independent read-only fold/live comparison: all three diffs[].
+
+GLM actual200:740 input/272 output, provider attempt
+3cce688c-2686-4474-8933-b66cb66cfdc9, wire_count1, succeeded/released admission,
+estimated0.0002024CNY. StructureTask oyx84ypkqyqdxb2y81rzzed7 succeeded, Xiaomi
+mimo-v2.5 actual200:2865 input/600 output, estimated0.0005691USD. No auto_enroll
+job. Source/parser and pricing estimates are not invoice proof.
+
+Evidence under the existing private runtime directory:
+upload887-glm-v2.json SHA e131560b0aea65380228edcfe983ac54705d008d7e7532dea9b98907a3fafd0a;
+upload887-glm-v2-verification.json SHA2b6d9171a8bd54e20eb6b438e3bbb6631346975bbe231699e02ee07dee868c3a.
+Worker bundle SHA18a4fa7aad98929451ba7985157605e1aff297dacd5d48ea634c698b61b56691.
+Temporary API/worker containers were stopped and removed after logs; clone DBs and
+the synthetic content-addressed R2 object are retained. This intentionally writes
+one test object in the project's R2 bucket, not production learner/database rows.
+Production event/task/attempt counts remained454/280/21. No NAS change.
+
+### Real Tencent saved-JobId process recovery: PASS
+
+The current executeTencentOcrSubmit owner called the real official Tencent SDK
+once for the same synthetic page. afterJobSaved killed the submitting process
+with SIGKILL, after external JobId1489202432483262464 was committed in provider
+attempt cdd6a51f-1498-8ec4-90e1-40080061c881. A new process with the same operation
+identity and next delivery index returned that saved JobId without invoking submit.
+Six real Describe calls still returned RUN; the bounded observer exited incomplete,
+not evidence of remote failure. A subsequent describe-only observer of the exact
+same job returned DONE. Total: one submit, seven describes; every wire has its
+own durable attempt and request identity. Cost basis stays unknown/null.
+
+This exercises the actual provider owner across OS process death and real Tencent
+requests, not a physical Tencent worker redelivery, UI flow or Tencent+Structure
+quality sample. Do not expand its scope to those claims. Original and final records:
+tencent887-resume-v1.json SHAd5f2916f7ff4e73a0043d95c77a73634bc10cc06c5d29680174e61f13e215294;
+tencent887-observe-v2.json SHAb8ea7a0111c9b3aac99b1458024a7a034620afe7c3ce7ca1de8f4fb9dbf6d94a.
+
+### Real Copilot paid response, Stop and physical recovery: PASS with observation boundary
+
+Source8da1d6e68 is runtime-equal to e514ef94. Fresh isolated DB
+loom_copilot_887_crash_v1 used the unchanged shipped API and the same endpoint-only
+instrumented physical worker bundle above. Proxy allowed exactly one model request,
+1MB input and2048 output-token ceiling. Actual Xiaomi mimo-v2.5-pro returned200,
+13116 input/35 output and the synthetic requested echo; the proxy deliberately did
+not relay the successful response. Worker was physically SIGKILLed (exit137) at
+2026-09-09T10:07:21.191Z before any durable reply. Public Stop returned
+cancel_requested at10:07:21.374Z, then the same worker container restarted.
+
+Run copilot_user_ask_993d1ec3e9d2d6e1d7e7dd7d2e751c69f04d417472b0584ad7fc5401616dbe88;
+physical job3420e900-2857-5d04-b5c8-7985313dd07b completed at retry_count1.
+At10:19:44.655Z,12m30 after the execution fence, the owner committed exactly one
+ambiguous_execution failure and one explanatory reply, no DONE and no fabricated
+upstream echo. There was no second paid wire. This is the contract for an execution
+whose outcome cannot be recovered: Stop does not establish whether prior external
+effects happened. Source owner: copilot_run.ts handleAmbiguousExecution.
+
+The original controller incorrectly required only reason=cancelled and exited1.
+That original record is preserved; a separate read-only verifier of the same
+DB/events/job/reply proves the actual ambiguous_execution contract. No model rerun
+or clock manipulation was used to repair an assertion. Original CopilotTask log
+remains running and cost_ledger is empty at this observation; the existing1h
+stuck-run threshold plus boot/nightly sweep owns eventual unknown-cost settlement.
+This proves durable run/log identity continuity, not immediate task-log convergence
+or a provider invoice. The2USD reserve remains held.
+
+Private copilot887-crash-v1.json SHA
+ed4b0257e93bd4a2511392c7134943b840a45a7f6bbf33ad4edb42e439240328;
+copilot887-crash-verification.json SHA
+770a7407ce1ecd94342e1c6ff21cca9f09949c96b5c985ff8ede923eb26705ed.
+Both temporary containers were stopped/removed after logs; clone DB retained.
+Production event/task/attempt counts stayed454/280/21; production worker identity
+and start time were unchanged by this campaign. No NAS or production learner write.
+
+### Final requirement map and remaining boundaries
+
+| Original rollout requirement | Named evidence and exact boundary |
+| --- | --- |
+| Provider identity/admission/terminal/cost/log | Existing named API/worker evidence plus current GLM and Tencent records above; unknown costs remain unknown, opaque Mem0 is not a fabricated per-wire meter |
+| Notes two handoff crash recovery | YUK981 actual SIGKILL at both handoffs and generation replay; record linked in verified deltas below |
+| Memory paid-add crash recovery | YUK979 actual paid add, same physical job/event lookup after process death, no reburn |
+| Valid/invalid DomainTool output | Actual MCP bridge/DB component canary below, not model-invoked output |
+| Each F3 representative operation + separate judgment | Existing Copilot/Knowledge/Practice actual records; learner judge/FSRS, Notes, Tagging/import and Agency planning below; current real upload adds missing OCR/worker/three golden judgments |
+| Human-approved proposal lifecycle | Current canonical shipped HTTP accept/dismiss/retract/idempotency plus accept/retract fold comparisons below; not every proposal kind/UI click |
+| Copilot Stop/restart/reconcile continuity | Physical current model-response/crash/retry above plus existing HTTP/replay/late-Stop coverage; immediate generic task-log settlement is not claimed |
+
+Current root build and architecture audit pass:49 TaskSpecs/42 tools/53 queues/
+19 proposal kinds, dependency totals428/0/48; catalogued five-capability SCC remains.
+The three behavior owners (ingestion completion, judging settlement, Knowledge
+merge) were independently inspected for duplicate rules and cross-owner internal
+writes; no remaining concrete violation was found. This is not a claim that every
+future change is local or every historical test/assertion was manually audited.
+Whole-project pruning evidence remains in the test-pruning census/evidence records;
+critical permissions, cost, concurrency, rollback, parser and recovery gates remain.
+YUK977/980/982 P2 differences and921/572/832 HOLD are outside this rollout closure.
+
+The older pending-budget/upload/matrix statements below are historical checkpoints,
+superseded by this dated map only for the exact scopes above. Final independent
+review and exact-head documentation integration are still required before closure.
+
 Latest update 2026-09-08: Mac API/worker e514ef94 after canonical Knowledge delivery;
 current proposal HTTP/replay revalidation is recorded below. The earlier8bce5f0a
 model samples remain scoped evidence, not the current deployment identity.
