@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-09：新$10已授权，887真实R2/GLM/Structure物理worker和3卡语义/fold通过；Tencent真实JobId/SIGKILL/新进程复用/DONE通过。新池reserve4.70/余5.30，整体未完成，无生产DB/NAS写。
+> Linear 是权威 tracker；更新于 2026-09-09：887真实上传/GLM/Structure/3golden、Tencent保存JobId进程恢复、Copilot付费响应后SIGKILL/Stop/同job重投无重烧通过。新池reserve6.70/余3.30；日志即时结算不冒称，待最终review/文档集成，无生产DB/NAS写。
 
 ## NOW
 
@@ -181,9 +181,9 @@
 ## NEXT
 
 1. 951 Done：ADR0063已集成；887 canonical提案HTTP401/201/200和accept/retract零drift复验过，无paid。
-2. 887真实默认GLM上传/结构/物理worker及Tencent保存JobId进程恢复已通过；下一只核剩余provider/Crash范围，不重烧Notes/Memory/learner/Tagging/Agency。
-   09-09新$10池reserve4.70/余5.30，unknown不回收；腾讯是实际provider-owner进程恢复，非完整worker重投/结构质量。977/980保持P2。
-3. 录入完成/判分完成/知识合并三业务责任已独立复核；完整产品实际验收仍按887差集，不以源代码/测试数字替代。
+2. 887命名矩阵已补Copilot真实响应后强杀/Stop/同job重投：唯一ambiguous_execution终态，1wire；原cancelled-only验收断言失败保留，另只读复核PASS。
+   新$10reserve6.70/余3.30，unknown不回收；原AI日志待既有1h/boot/nightly清理器，非立即结算。977/980/982保持P2。
+3. 录入完成/判分完成/知识合并三责任已独立复核；下一最终证据review/文档exact-head CI集成，不重烧通过样本、不以检查数量冒充业务封装。
 
 ## PARKED
 
