@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-08：951 Done；887当前镜像提案HTTP+fold复验、三业务责任复核和上传fixture已完成。付费上传OCR/恢复验收待新预算，现交付证据文档；本轮无paid/NAS。
+> Linear 是权威 tracker；更新于 2026-09-09：新$10已授权，887真实R2/GLM/Structure物理worker和3卡语义/fold通过；Tencent真实JobId/SIGKILL/新进程复用/DONE通过。新池reserve4.70/余5.30，整体未完成，无生产DB/NAS写。
 
 ## NOW
 
@@ -181,8 +181,8 @@
 ## NEXT
 
 1. 951 Done：ADR0063已集成；887 canonical提案HTTP401/201/200和accept/retract零drift复验过，无paid。
-2. 887剩余证据按原七项矩阵收口：Tencent/GLM-OCR现役wire及完整provider/恢复范围；已有Notes/Memory/learner/Tagging/Agency通过项不重烧。
-   新$3已全部保守预留/余0；旧$10不回收。免费代码/DB/回放继续，新增付费须另授权。977/980保持P2。
+2. 887真实默认GLM上传/结构/物理worker及Tencent保存JobId进程恢复已通过；下一只核剩余provider/Crash范围，不重烧Notes/Memory/learner/Tagging/Agency。
+   09-09新$10池reserve4.70/余5.30，unknown不回收；腾讯是实际provider-owner进程恢复，非完整worker重投/结构质量。977/980保持P2。
 3. 录入完成/判分完成/知识合并三业务责任已独立复核；完整产品实际验收仍按887差集，不以源代码/测试数字替代。
 
 ## PARKED
@@ -196,5 +196,5 @@
 ## BLOCKED-ON
 
 - Mac本地生产已授权直接操作；NAS部署/数据操作仍未授权，不执行。
-- 两个$3专项均已保守预留完毕；新最多$2默认GLM上传/OCR请求待答复，不启动paid；Tencent/recovery另列，不回收unknown预留。
+- 09-09新$10已明确授权；逐wire先预留再调用，未知费用不回收，禁止批量重烧旧failed/DLQ。
 - 原始the-learning-project脏main始终不动；实施使用独立工作树。

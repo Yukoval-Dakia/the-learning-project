@@ -1,5 +1,69 @@
 # YUK-887 — bounded rollout evidence gap
 
+## Latest actual delta — 2026-09-09
+
+Owner explicitly authorized a new10USD allowance. Older pools/reservations are
+unchanged. Current new-pool conservative reserve is4.70USD, remaining5.30USD:
+0.10 for first storage-only attempt,2.10 for successful GLM upload,2.00 for Tencent
+submission/six describes and0.50 for final same-job observation. These are reserves,
+not bills; unknown Tencent costs remain null rather than zero.
+
+### Real default-engine upload and extraction: PASS
+
+Source fea0512447a1cafdfa0cfc696a8f31fa694ed7e0 has no runtime difference from
+tested e514ef94. API used unchanged e514ef94 image; physical worker used the same
+entrypoint bundled with only GLM/Xiaomi endpoint literals redirected through a
+counting proxy. No substituted model result/parser/job handler was used. The proxy
+allowed one OCR and one Structure request,512KB input and8192 model output tokens;
+real keys stayed in the controller. Auto-enroll/observe were explicitly off.
+
+The first attempt uploaded correctly but dispatched before the fresh worker had
+registered its queue:500 `Queue tencent_ocr_extract does not exist`, zero model
+wires. The corrected worker-first sequence passed on fresh `loom_upload_887_glm_v2`:
+multipart assets201 → independently downloaded R2 bytes match fixture hash →
+session201/uploaded → operation202 with repeated identical operation identity →
+physical pg-boss job331e2c6f-3137-4a96-b927-b5245d59038d completed → session extracted /
+operation succeeded. Session o5rh2hz5evs9tq2plsn1jdfr; operation
+ingop_h34ytjkbtmd7ouymq4jc2cfo. Three draft question blocks preserve the shared stem,
+two subquestions,18/12/22/48 table, zero-probability and unknown-count wording, with
+no invented answers. Independent read-only fold/live comparison: all three diffs[].
+
+GLM actual200:740 input/272 output, provider attempt
+3cce688c-2686-4474-8933-b66cb66cfdc9, wire_count1, succeeded/released admission,
+estimated0.0002024CNY. StructureTask oyx84ypkqyqdxb2y81rzzed7 succeeded, Xiaomi
+mimo-v2.5 actual200:2865 input/600 output, estimated0.0005691USD. No auto_enroll
+job. Source/parser and pricing estimates are not invoice proof.
+
+Evidence under the existing private runtime directory:
+upload887-glm-v2.json SHA e131560b0aea65380228edcfe983ac54705d008d7e7532dea9b98907a3fafd0a;
+upload887-glm-v2-verification.json SHA2b6d9171a8bd54e20eb6b438e3bbb6631346975bbe231699e02ee07dee868c3a.
+Worker bundle SHA18a4fa7aad98929451ba7985157605e1aff297dacd5d48ea634c698b61b56691.
+Temporary API/worker containers were stopped and removed after logs; clone DBs and
+the synthetic content-addressed R2 object are retained. This intentionally writes
+one test object in the project's R2 bucket, not production learner/database rows.
+Production event/task/attempt counts remained454/280/21. No NAS change.
+
+### Real Tencent saved-JobId process recovery: PASS
+
+The current executeTencentOcrSubmit owner called the real official Tencent SDK
+once for the same synthetic page. afterJobSaved killed the submitting process
+with SIGKILL, after external JobId1489202432483262464 was committed in provider
+attempt cdd6a51f-1498-8ec4-90e1-40080061c881. A new process with the same operation
+identity and next delivery index returned that saved JobId without invoking submit.
+Six real Describe calls still returned RUN; the bounded observer exited incomplete,
+not evidence of remote failure. A subsequent describe-only observer of the exact
+same job returned DONE. Total: one submit, seven describes; every wire has its
+own durable attempt and request identity. Cost basis stays unknown/null.
+
+This exercises the actual provider owner across OS process death and real Tencent
+requests, not a physical Tencent worker redelivery, UI flow or Tencent+Structure
+quality sample. Do not expand its scope to those claims. Original and final records:
+tencent887-resume-v1.json SHAd5f2916f7ff4e73a0043d95c77a73634bc10cc06c5d29680174e61f13e215294;
+tencent887-observe-v2.json SHAb8ea7a0111c9b3aac99b1458024a7a034620afe7c3ce7ca1de8f4fb9dbf6d94a.
+
+The older pending-budget/upload statements below are historical checkpoints,
+superseded only for the exact scopes above. The full rollout is not declared done.
+
 Latest update 2026-09-08: Mac API/worker e514ef94 after canonical Knowledge delivery;
 current proposal HTTP/replay revalidation is recorded below. The earlier8bce5f0a
 model samples remain scoped evidence, not the current deployment identity.
