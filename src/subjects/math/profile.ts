@@ -169,8 +169,4 @@ export const mathProfile: SubjectProfile = {
   sourcingRoutePreference: {
     calculation: ['sourced', 'closed_book', 'variant'],
   },
-  // YUK-697 — 数学有 jyeoo-rs 确定性题源。'math2' = 菁优网站内 subject 词表 (高中数学)。
-  // 声明即 supply dispatcher 在数学 tier-2 缺口上优先 jyeoo_fetch (route-planner)，
-  // 派发受 JYEOO_FETCH_ENABLED kill switch 控 (默认 OFF → 回退 sourcing_web)。
-  jyeooSupply: { subject: 'math2' },
 };

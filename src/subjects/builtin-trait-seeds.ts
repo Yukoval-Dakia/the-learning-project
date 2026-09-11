@@ -53,12 +53,10 @@ export const BUILTIN_TRAIT_SEED_VERSIONS: Record<
     // YUK-739 — same bump rationale as general.
     judge_policy: '1.1.0',
     cause_taxonomy: '1.1.0',
-    // YUK-697 — bumped from 1.0.0: math source_policy gained jyeooSupply + the www.jyeoo.com
-    // whitelist. Without this bump, reconcileBuiltinTraits sees an unchanged seed_version on
-    // already-deployed subject_trait rows and hard-skips, so a hydrated instance would never
-    // pick up jyeooSupply (JYEOO_FETCH_ENABLED=1 would still route to sourcing_web). The bump
-    // makes reconcile upgrade the row (unless owner-edited) so the new field propagates.
-    source_policy: '1.1.0',
+    // YUK-986 — bumped from 1.1.0: math source_policy LOSES jyeooSupply（queue 形态退役，
+    // 供给改由 agent tool 链承载）。bump 让 reconcileBuiltinTraits 把已部署实例（含 1.1.0
+    // 的 jyeooSupply 字段）升级到无该字段的新 payload，旧声明不会残留成「躺着的配置」。
+    source_policy: '1.2.0',
     render_theme: '1.0.0',
     scheduling: '1.0.0',
   },

@@ -77,6 +77,7 @@ import {
   terminalizePlacementUnknownCost,
 } from '../server/question-supply/placement-starter-attempts';
 import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
+import { maxNgramOverlap } from '../server/question-supply/sourced-dedup';
 import { resolveSolveOverrideFromEnv } from '../server/quiz/solve-lane';
 import {
   type SolveCheckQuestion,
@@ -115,61 +116,12 @@ function requirePlacementProviderTaskRunId(
     `placement ${label} paid invocation missing task_run_id`,
   );
 }
-
-// §4 / §5 — deterministic normalized n-gram overlap. Word-shingle Jaccard between
-// the prompt and each source snippet; we take the MAX over snippets (worst-case
-// closeness). Returns 0 when there are no usable snippets (nothing to copy from →
-// no deterministic signal; the LLM copy_safety verdict still applies). Tunable;
-// CONSERVATIVE start. Language-agnostic: splits on whitespace + CJK characters so
-// it degrades gracefully for both English and Chinese source material.
-const COPY_SAFETY_NGRAM = 3;
+// YUK-986 (Supply-Agent/1) — shingle 机制与 maxNgramOverlap 下沉到
+// server/question-supply/sourced-dedup.ts（避免 question-supply → jobs 反向环）。
+// COPY_SAFETY_TOO_CLOSE_THRESHOLD 是本模块 copy_safety 判分的业务阈值，留在原地。
+// re-export 保 quiz_verify.test.ts 等既有 import 路径不变。
 export const COPY_SAFETY_TOO_CLOSE_THRESHOLD = 0.5;
-
-function normalizeForOverlap(text: string): string[] {
-  // Lowercase, strip punctuation to spaces, then tokenise. CJK has no spaces, so
-  // we also split runs of CJK ideographs into per-character tokens to give the
-  // shingler something to chew on.
-  const cleaned = text
-    .toLowerCase()
-    .replace(/[\p{P}\p{S}]/gu, ' ')
-    .replace(/([一-鿿])/gu, ' $1 ');
-  return cleaned.split(/\s+/u).filter((t) => t.length > 0);
-}
-
-function shingles(tokens: string[], n: number): Set<string> {
-  const out = new Set<string>();
-  if (tokens.length < n) {
-    // Too short for an n-gram — fall back to the whole token bag as a single
-    // shingle so identical short strings still register as overlapping.
-    if (tokens.length > 0) out.add(tokens.join(''));
-    return out;
-  }
-  for (let i = 0; i + n <= tokens.length; i += 1) {
-    out.add(tokens.slice(i, i + n).join(''));
-  }
-  return out;
-}
-
-function jaccard(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 || b.size === 0) return 0;
-  let inter = 0;
-  for (const s of a) if (b.has(s)) inter += 1;
-  const union = a.size + b.size - inter;
-  return union === 0 ? 0 : inter / union;
-}
-
-export function maxNgramOverlap(promptMd: string, snippets: string[]): number {
-  const promptShingles = shingles(normalizeForOverlap(promptMd), COPY_SAFETY_NGRAM);
-  if (promptShingles.size === 0) return 0;
-  let max = 0;
-  for (const snippet of snippets) {
-    if (!snippet) continue;
-    const snippetShingles = shingles(normalizeForOverlap(snippet), COPY_SAFETY_NGRAM);
-    const score = jaccard(promptShingles, snippetShingles);
-    if (score > max) max = score;
-  }
-  return max;
-}
+export { maxNgramOverlap };
 
 export type QuizVerifyPerQuestionStatus =
   | 'verified'

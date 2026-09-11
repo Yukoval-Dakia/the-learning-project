@@ -45,6 +45,8 @@ describe('DomainTool allowlist policy', () => {
       // ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit.
       'propose_question_edit',
       'write_agent_note',
+      // YUK-986 (Supply-Agent/1) — 供给候选提交入库（dedup/verify 权威 seam）。E1 无 surface grant。
+      'store_sourced_question',
     ]);
   });
 
@@ -188,6 +190,7 @@ describe('DomainTool allowlist policy', () => {
           name !== 'get_question_block_structure' &&
           name !== 'generate_goal_outline' &&
           name !== 'generate_question_candidate' &&
+          name !== 'jyeoo_fetch_candidates' &&
           name !== 'read_agent_notes',
       ),
       'propose_knowledge_edge',

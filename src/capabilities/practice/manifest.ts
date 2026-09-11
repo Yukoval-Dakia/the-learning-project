@@ -784,11 +784,6 @@ export const practiceCapability = defineCapability({
         load: () => import('./jobs/sourcing').then((m) => m.buildSourcingHandler),
       },
       {
-        name: 'jyeoo_fetch',
-        queue: 'agent',
-        load: () => import('./jobs/jyeoo-fetch').then((m) => m.buildJyeooFetchHandler),
-      },
-      {
         name: 'quiz_gen',
         queue: 'agent',
         includeMetadata: true,
@@ -877,6 +872,21 @@ export const practiceCapability = defineCapability({
         queue: 'fast',
         load: () =>
           import('./jobs/judge_pending_reconcile').then((m) => m.buildJudgePendingReconcileHandler),
+      },
+      // YUK-986 (Supply-Agent/1) — jyeoo staged 图片资产回收。jyeoo_fetch_candidates
+      // 即期持久化候选图片（origin='jyeoo_staged'），未提交候选的孤儿资产每日回收
+      // （宽限 24h）。无 LLM、无外部调用，fast 层。
+      {
+        name: 'jyeoo_staged_asset_reap',
+        schedule: {
+          cron: '40 3 * * *',
+          tz: 'Asia/Shanghai',
+          singletonKey: 'jyeoo_staged_asset_reap-sweep',
+          singletonSeconds: 60 * 60,
+        },
+        queue: 'fast',
+        load: () =>
+          import('./jobs/jyeoo_staged_asset_reap').then((m) => m.buildJyeooStagedAssetReapHandler),
       },
       // B1-W1 (ADR-0035 慢热阶段①) — ItemPriorTask 冷启先验 backfill。夜间扫
       // 无 item_calibration 硬轨 row 的题，逐题估 b 写锚（出题 + 录入两条路径产生
@@ -1193,6 +1203,20 @@ export const practiceCapability = defineCapability({
           import('./server/tools/generate-question-candidate').then(
             (m) => m.generateQuestionCandidateTool,
           ),
+      },
+      // YUK-986 (Supply-Agent/1) — 供给 agent 化的 jyeoo fetch/commit 双 tool。
+      // E1 只注册进 inventory（无任何 surface 授权）；E3（YUK-988）才把
+      // jyeoo_fetch_candidates 授给 executor surface，store_sourced_question
+      // 保持服务端/executor 专用。
+      {
+        name: 'jyeoo_fetch_candidates',
+        load: () =>
+          import('./server/tools/jyeoo-fetch-candidates').then((m) => m.jyeooFetchCandidatesTool),
+      },
+      {
+        name: 'store_sourced_question',
+        load: () =>
+          import('./server/tools/store-sourced-question').then((m) => m.storeSourcedQuestionTool),
       },
       {
         name: 'query_questions',

@@ -77,6 +77,7 @@
     "audit:tree-mesh": "tsx scripts/audit-tree-mesh-overlap.ts",
     "db:backfill:genesis": "tsx scripts/backfill-genesis-events.ts",
     "db:backfill:lost-attribution": "tsx scripts/backfill-lost-attribution.ts",
+    "jyeoo:backfill": "tsx scripts/jyeoo-backfill.ts",
     "db:recompute:bcalib": "tsx scripts/recompute-bcalib-cap.ts",
     "rebuild:projection": "tsx scripts/rebuild-projection.ts",
     "b3:gate": "tsx scripts/b3-gate.ts",

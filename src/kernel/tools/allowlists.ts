@@ -39,6 +39,10 @@ export const READ_TOOLS = [
   // nor writes a proposal; author_question remains the distinct retained path.
   'generate_goal_outline',
   'generate_question_candidate',
+  // YUK-986 (Supply-Agent/1) — jyeoo grade-route candidate fetch. E1: registry
+  // only, NO surface grant (E3/YUK-988 grants the supply-executor surface).
+  // Filtered out of Maintenance below (same containment as generate_* tools).
+  'jyeoo_fetch_candidates',
   // YUK-293 — expiring AI-to-AI hints. Granted only to copilot / dreaming /
   // coach below; evaluator and operator surfaces filter it out.
   'read_agent_notes',
@@ -90,6 +94,10 @@ export const PROPOSE_WRITE_TOOLS = [
   // YUK-293 — direct write to the expiring AI hint channel (not learner data,
   // not an inbox proposal). Surface grants remain narrow below.
   'write_agent_note',
+  // YUK-986 (Supply-Agent/1) — unified sourced-question commit seam (dedup/verify
+  // authoritative server-side). E1: NO surface grant — server-side executors
+  // (jyeoo:backfill CLI now; supply-executor agent in E3) invoke it directly.
+  'store_sourced_question',
 ] as const;
 
 // YUK-949 — model-authored presentation intent. This is neither a data read nor
@@ -277,6 +285,7 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
     | 'get_question_block_structure'
     | 'generate_goal_outline'
     | 'generate_question_candidate'
+    | 'jyeoo_fetch_candidates'
     | 'read_agent_notes'
   > =>
     name !== 'search_memory_facts' &&
@@ -284,6 +293,7 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
     name !== 'get_question_block_structure' &&
     name !== 'generate_goal_outline' &&
     name !== 'generate_question_candidate' &&
+    name !== 'jyeoo_fetch_candidates' &&
     name !== 'read_agent_notes',
 );
 

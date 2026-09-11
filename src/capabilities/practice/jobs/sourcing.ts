@@ -69,6 +69,7 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import { kindsMatch } from '@/subjects/question-kind';
 import { SupplyTraceV1, type SupplyTraceV1T } from '../server/question-supply/evidence-demand';
+import { matchesWhitelist } from '../server/question-supply/sourced-dedup';
 import {
   EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
   canonicalQuestionContentHash,
@@ -175,23 +176,9 @@ function profileSourceWhitelist(profile: SubjectProfile): string[] {
   return Array.isArray(raw) ? raw.filter((d): d is string => typeof d === 'string') : [];
 }
 
-// OF-2: does the question's source URL host match a whitelisted domain? Suffix match
-// on the hostname (so 'example.edu' matches 'www.example.edu'). An unparseable URL
-// never matches (treated as off-whitelist → demoted, not rejected).
-export function matchesWhitelist(sourceUrl: string, whitelist: string[]): boolean {
-  if (whitelist.length === 0) return false;
-  let host: string;
-  try {
-    host = new URL(sourceUrl).hostname.toLowerCase();
-  } catch {
-    return false;
-  }
-  return whitelist.some((domain) => {
-    const d = domain.trim().toLowerCase().replace(/^\*\./, '');
-    if (d.length === 0) return false;
-    return host === d || host.endsWith(`.${d}`);
-  });
-}
+// OF-2 白名单匹配已随 YUK-986 下沉到 server/question-supply/sourced-dedup.ts；
+// 此处 re-export 保 sourcing.test.ts 等既有 import 路径。
+export { matchesWhitelist };
 
 function parseOutput(text: string): SourcingTaskOutputT {
   // YUK-607 — 宽松提取（jsonrepair 修复带），与 quiz_gen parseOutput 同款；错误串格式不变。
