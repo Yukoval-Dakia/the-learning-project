@@ -1,35 +1,28 @@
-# 当前 handoff — 2026-08-16 ticket 归零 + 可用性打磨 启动
+# 当前 handoff — 2026-08-27（ModelProfile 落地后，main @ 354982ae）
 
-## NOW
+## 本日全景（累计 38 票 Done + 14 Canceled，38 PR 合并，开放 PR = 0）
 
-- main 在 `f51c206b`（YUK-892 tool failure visibility；架构深化经 F4.1 `62e34a72` 收官，
-  F3.2 组合根 #1202 与 YUK-863 #1183 均已合并）。PLAN.md 已按 8-16 现实重写。
-- owner 指令（2026-08-16）：功能定义 OK；推进 Linear ticket 归零（口径：可操作票归零，
-  战略票出砍/留清单拍板）+ 可用性实际打磨。范围：Track 0 清场 + A1 工程票 + Track B 走查。
-- 本 session 已完成：
-  - 主工作树从陈旧 YUK-812 分支（错位：HEAD 在 main 上）恢复到 main@`f51c206b` 干净态；
-    PLAN.md / .remember/now.md 的冲突标记垃圾块已用 HEAD 干净版覆盖。
-  - dependabot 6 清零：#1184 / #1179 / #1091 合并；#1180 / #1096 / #1094 关闭。
-  - #1182（YUK-457）与 #1137（YUK-813）各起 review-work 五 lane 闸（10 个后台 lane），
-    verdict 待收。
-- 陈旧 worktree 注册（4 detached + yuk-825-closeout）本 session 已不在 `git worktree list`
-  中；仅剩 yuk-822（14 个未合并 YUK-792 提交 + 脏文件，保留待 owner 处置）。
+1. **纠偏四连**：Buildkite 停止 → 工具链移出 gate（#1262）→ 产品三连（#1250/1251/1252）→ YUK-898 移除项目级声明（#1264）+ YUK-846 结案。
+2. **批准件全落**：903/596/913/911/339/340/784/496 方案A 全部落地。
+3. **工程面**：522/909/605+555/893/739/plan-then-generate(#1282)/ADR-0038 修订(#1277)/537/390residual/391 五+1 镜像收敛——kind 两轴正交化 epic（YUK-386）四步全完成。
+4. **YUK-839 全链收口**：工程(#1275) → R1 FAIL(#1283) → R2 诊断 PASS(#1286，resume 铁证) → owner ①b 裁决 → flash 预算档(#1294) → **Done**。
+5. **owner 六项裁决全部执行（#1292-#1295 + 关票×2 + 停放×1）**：
+   - ①b flash 预算放宽（#1294，模型感知 durable 预算档 20/10min）→ 839 Done；
+   - ②a 手稿语气（#1293，设计源四条规则进 chat system prompt）；
+   - ③LIGHT（#1292，ADR-0046 四项逐条豁免登记）→ 679 Done；
+   - ④⑤ 371/899 Canceled；⑥ 921 维持停放（记录在票）。
+6. **flash 耗时根因调查**（owner 提问驱动）：R1 主因 thinking 失控（480s 零 tool_use）、R2 主因多轮全上下文重发（354k input ≈12 轮）；端点健康 ~45tok/s；SDK teardown 延迟 9-10min；MAX_THINKING_TOKENS 不穿透 CLI（记忆 #466）。
+7. **派生新线全部落地**：YUK-923 SDK effort 档位透传（#1295，Done）→ **YUK-924 ModelProfile 注册表（#1297，Done）**——owner 两问裁决：P1+P2 一张票 / models.dev 远程目录 + OpenCode 式 provider 绑定。落地：models.dev committed 快照（`pnpm gen:model-catalog` 再生成，运行时零网络）+ config-over-catalog 三层 merge（provider modelDefaults + models map + 三态保守默认）+ P1 五点收编（零行为变更 + 平价测试）+ P2 capability fail-closed 闸 + run metadata 来源链。实测 catalog 对四活跃模型全覆盖；mimo text-only catalog 声明按仓库运行证据（VisionExtractTaskHeavy multimodal 救援线）用 binding 覆盖。
+8. **后续已立票**：YUK-925（R3 burn-in——effort@high thinking 降幅实测，owner 闸：真 token ~$1-2 授权即跑）；YUK-926（not-material 批量提交，轮次 12→8，归因纪律排在 925 后）。
 
-## NEXT
+## 待 owner（唯一）
 
-1. 收 #1182 / #1137 五 lane verdict → 全 PASS 则合并并关票；任一 FAIL 则修复后重审。
-2. A1-批1：YUK-845 收尾（先查 08-15 为何从 In Review 退回 Todo）+ Copilot P1
-   YUK-833/834/835/836 各起隔离 lane。
-3. Track B 本地走查（做题/Copilot/笔记/录入/图谱）+ friction 当场立案；A3 战略票清单。
-4. review worktree /tmp/review-pr1182 与 /tmp/review-pr1137 用毕清理。
+YUK-924 两问（P1+P2 一张票 vs 分期；手写本地 profile vs models.dev 远程目录）——拍后开 lane。
 
-## PARKED
+## 工程池状态：已清零（924 除外）
 
-- YUK-832 HOLD / YUK-842 observe / 生产未部署：不变。
-- yuk-822 worktree 处置待 owner。
+全部 actionable 票已落地或转入 owner 闸。可选低优先未立票：validator prompt 引导 not-material 批量提交（耗时 L2 杠杆）；flash@high 真实 burn-in 验证。新工程输入到达后按 mass-ulw 纪律（逐票拉实时→验证→隔离 worktree lane→审 diff→过闸→合并）续推。
 
 ## BLOCKED-ON
 
-- YUK-846 凭据轮换（Urgent，只能 owner 在控制台人工）+ YUK-571/856/887/859/414/320/838
-  人工闸（清单见 PLAN.md）。
-- Production 部署授权（不变）。
+- 生产部署授权不变（887/859/856，不变项）。
