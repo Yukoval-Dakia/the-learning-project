@@ -17,7 +17,7 @@ const RETIRED_QUIZ_MODULES = [
 
 const RETIRED_JOB_MODULES = [
   'sourcing',
-  'jyeoo-fetch',
+  // YUK-986 — 'jyeoo-fetch' 已从本名单移除：job 模块本体退役删除（agent tool 链接替）。
   'quiz_gen',
   'quiz_verify',
   'source_verify',

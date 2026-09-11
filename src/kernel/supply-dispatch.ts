@@ -1,4 +1,4 @@
-type SupplyDispatchQueue = 'sourcing' | 'quiz_gen' | 'jyeoo_fetch';
+type SupplyDispatchQueue = 'sourcing' | 'quiz_gen';
 
 export async function enqueueSupplyDispatchJob(
   queue: SupplyDispatchQueue,

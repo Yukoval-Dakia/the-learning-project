@@ -4,7 +4,7 @@
   "infoPolicy": "info diagnostics are counted: separate infos ratchet total and per-rule rows, decreasing only like warnings",
   "totals": {
     "errors": 0,
-    "warnings": 335,
+    "warnings": 310,
     "infos": 1
   },
   "byRule": {
@@ -24,19 +24,19 @@
       "info": 1
     },
     "lint/complexity/useOptionalChain": {
-      "warning": 40
+      "warning": 36
     },
     "lint/correctness/noUnsafeOptionalChaining": {
-      "warning": 44
+      "warning": 39
     },
     "lint/correctness/noUnusedFunctionParameters": {
       "warning": 5
     },
     "lint/correctness/noUnusedImports": {
-      "warning": 60
+      "warning": 57
     },
     "lint/correctness/noUnusedVariables": {
-      "warning": 16
+      "warning": 8
     },
     "lint/style/noDescendingSpecificity": {
       "warning": 53
@@ -48,7 +48,7 @@
       "warning": 1
     },
     "lint/suspicious/noTemplateCurlyInString": {
-      "warning": 33
+      "warning": 32
     },
     "lint/suspicious/noUnknownAtRules": {
       "warning": 1
@@ -57,7 +57,7 @@
       "warning": 4
     },
     "suppressions/unused": {
-      "warning": 45
+      "warning": 41
     }
   }
 }

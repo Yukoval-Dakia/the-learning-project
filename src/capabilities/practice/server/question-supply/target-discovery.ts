@@ -62,9 +62,10 @@ export type SupplyRoute =
   | 'ingest_existing'
   | 'image_candidate'
   | 'quiz_gen'
-  // YUK-697 — deterministic scraper route (jyeoo-rs). Ranked ABOVE sourcing_web on
-  // jyeoo-supported subjects (route-planner); auto-dispatched behind the JYEOO_FETCH_ENABLED
-  // kill switch, which falls back to sourcing_web when off (dispatcher chooseAutoRoute).
+  // YUK-697 引入的 deterministic scraper route（jyeoo-rs）。YUK-986 起机器面退役：
+  // route-planner 不再产出、dispatcher 不再派发；仅保留在词表中作为 trace /
+  // provenance 的合法值（SupplyProducerRoute 的 lock-step 双生），供给由 agent
+  // tool 链（jyeoo_fetch_candidates / store_sourced_question）承载。
   | 'jyeoo_fetch';
 
 export type DifficultyBand = 'below' | 'near' | 'above' | 'stretch';

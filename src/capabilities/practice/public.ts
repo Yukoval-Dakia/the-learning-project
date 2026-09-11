@@ -95,6 +95,24 @@ export {
   parseEvidenceDemand,
   withSupplyTraceDifficultyEvidence,
 } from './server/question-supply/evidence-demand';
+export {
+  JYEOO_FETCH_CANARY_ACTION,
+  jyeooBudgetRemaining,
+  jyeooDailyFetchBudget,
+} from './server/question-supply/jyeoo-budget';
+// YUK-986 (Supply-Agent/1) — jyeoo agent-tool 链公开面：候选抓取核心（tool 与 CLI 共用）、
+// 事件溯源日预算、hint 名匹配（CLI/executor 的确定性归属辅助）。commit seam 由
+// DomainTool inventory 承载（manifest copilotTools），不经 barrel。
+export type {
+  JyeooCandidate,
+  JyeooFetchCandidatesInput,
+  JyeooFetchCandidatesResult,
+} from './server/question-supply/jyeoo-candidates';
+export { runJyeooFetchCandidates } from './server/question-supply/jyeoo-candidates';
+export {
+  findSubjectRootKnowledgeId,
+  matchJyeooKnowledgeHints,
+} from './server/question-supply/jyeoo-hint-match';
 export type {
   JyeooExitClassification,
   JyeooFailureClass,
@@ -118,12 +136,9 @@ export type {
 } from './server/question-supply/jyeoo-spawn';
 export { spawnJyeooFetch as spawnPracticeJyeooFetch } from './server/question-supply/jyeoo-spawn';
 export {
-  JYEOO_DEFAULT_PAGES,
   JYEOO_FETCH_ROUTE,
   JYEOO_SOURCE_HOST,
   jyeooBinaryPath,
-  jyeooDgTokenForBand,
-  jyeooFetchEnabled,
   jyeooSpawnMaxStderrBytes,
   jyeooSpawnMaxStdoutBytes,
   jyeooSpawnTimeoutMs,
@@ -223,5 +238,7 @@ export {
   MEM0_PRIOR_ITEM_CHAR_CAP,
   SELECTION_ORCHESTRATOR_CANDIDATE_CAP,
 } from './server/selection-constants';
+export { jyeooFetchCandidatesTool } from './server/tools/jyeoo-fetch-candidates';
 // YUK-892 — due-review queue reader for non-LLM read paths (today summary).
 export { executeGetReviewDue } from './server/tools/question-context';
+export { storeSourcedQuestionTool } from './server/tools/store-sourced-question';
