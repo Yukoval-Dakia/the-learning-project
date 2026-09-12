@@ -4,6 +4,10 @@
 
 ## NOW
 
+- 09-12 事故+恢复：OrbStack VM 崩溃（主机盘100%→vdb写失败）清空 docker 存储含生产 pgdata；
+  从 loom-before-984.dump(09-08 21:40) 恢复+migrate重放，栈已在 75a1de01d 健康（app/worker/postgres healthy，health200，reaper cron已注册）；
+  损失窗口≈4天（984后用户事件）；防复发：日级自动dump=YUK-992，build前盘空间闸/registry mirror 已存记忆。
+
 - 986/991 Done：供题线复工第一刀——jyeoo agent-tool 化入 main 0ac945d2c（PR1373 exact5e26fb5d5/CI全绿/Oracle gate PASS含P1批）。
   jyeoo_fetch_candidates(read) + store_sourced_question(write，单 commit seam：活KC校验→hash合并→近重→draft→verify outbox) + 事件溯源日预算40/日 + staged-asset reaper cron + pnpm jyeoo:backfill 手动 caller。
   旧 jyeoo_fetch queue 路线全退（flag从未上线，零双轨）；jyeooSupply trait 声明退休（seeds v1.1→1.2 擦除升级）；行为测试全量移植 tool seam（vip行级闸/图片身份/出口分类）。
