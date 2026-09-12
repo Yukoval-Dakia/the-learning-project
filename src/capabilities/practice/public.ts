@@ -39,7 +39,6 @@ export const handleReviewDue: HandleReviewDue = async (...args) => {
   const dueList = await import('./server/due-list');
   return dueList.handleReviewDue(...args);
 };
-export { buildSupplyExecutorDeps } from './jobs/supply_execute';
 export type { CollectedSignal } from './server/candidate-signals';
 export type {
   ProposeFailureVariantInput,
@@ -212,13 +211,11 @@ export {
   resolvePlacementStarterGoalAuthority,
 } from './server/question-supply/placement-starter-store';
 export { lockPlacementSupplyScopes } from './server/question-supply/placement-supply-lock';
-// YUK-988 (Supply-Agent/3) — 确定性供给执行公开面（scripts/supply-execute.ts CLI 共用；
-// 供题执行链的单一入口间：executeSupplyPlan 纯模块 + 生产 deps 装配）。
-export {
-  type ExecuteSupplyPlanResult,
-  type SupplyDemandItem,
-  executeSupplyPlan,
-} from './server/question-supply/plan-executor';
+// YUK-988 (Supply-Agent/3) — executeSupplyPlan/buildSupplyExecutorDeps 不进本 barrel：
+// 该链（plan-executor → web-candidates → SourcingTask → @anthropic-ai/claude-agent-sdk）
+// 会把 SDK 拉进 build:migrate 的 cjs bundle，SDK 顶层 createRequire(import.meta.url)
+// 在 cjs 下启动即崩（server/worker 构建标 external 所以只 migrate 中招）。
+// scripts/supply-execute.ts 走深路径直引（E1 jyeoo-backfill 先例）。
 export { planSupplyRoutes } from './server/question-supply/route-planner';
 export type {
   DifficultyBand,
