@@ -238,7 +238,9 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     owner: 'ingestion',
     consumer: 'practice',
     files: [
-      'src/capabilities/practice/jobs/jyeoo-fetch.ts',
+      // YUK-986 (Supply-Agent/1) — jyeoo-fetch queue job 退休后，candidates 模块接手
+      // staged 资产持久化（同一 ingestion owner seam，r2/lock 经本模块单点转发）。
+      'src/capabilities/practice/server/question-supply/jyeoo-candidates.ts',
       'src/capabilities/practice/server/tools/question-context.ts',
     ],
     symbols: [
@@ -252,9 +254,9 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     ],
     dto: 'SourceAssetRow + material body-block excerpts + asset persistence commands',
     justification:
-      'the jyeoo scraper supply route persists scraped assets through the ingestion owner; the question-context tool reads ingestion-owned material context excerpts (moved from the central context-readers, YUK-892).',
+      'the jyeoo supply lane (jyeoo_fetch_candidates DomainTool, YUK-986) persists staged assets through the ingestion owner; the question-context tool reads ingestion-owned material context excerpts (moved from the central context-readers, YUK-892).',
     reviewIssue: 'YUK-885',
-    commandFiles: ['src/capabilities/practice/jobs/jyeoo-fetch.ts'],
+    commandFiles: ['src/capabilities/practice/server/question-supply/jyeoo-candidates.ts'],
   },
   {
     owner: 'knowledge',

@@ -9,9 +9,11 @@ import { practiceCapability } from './manifest';
 describe('practice manifest jobs', () => {
   it('owns sourcing and generation with exact queue and worker metadata', () => {
     const handlers = practiceCapability.jobs?.handlers ?? [];
+    // YUK-986 (Supply-Agent/1) — jyeoo_fetch queue job 退休（→ DomainTool seam）；
+    // jyeoo_staged_asset_reap 接手孤儿资产回收（fast 层 cron，无 LLM）。
     const expected = {
       sourcing: { queue: 'agent', includeMetadata: undefined },
-      jyeoo_fetch: { queue: 'agent', includeMetadata: undefined },
+      jyeoo_staged_asset_reap: { queue: 'fast', includeMetadata: undefined },
       quiz_gen: { queue: 'agent', includeMetadata: true },
     } as const;
 

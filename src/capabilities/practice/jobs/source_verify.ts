@@ -48,6 +48,7 @@ import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { initialFsrsState } from '../server/fsrs';
 import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
 import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
+import { DEDUP_OVERLAP_THRESHOLD, maxNgramOverlap } from '../server/question-supply/sourced-dedup';
 import {
   type SolveCheckImageFetchFn,
   type SolveCheckQuestion,
@@ -56,7 +57,6 @@ import {
   checksForTier,
   runSolveCheck,
 } from '../server/quiz/verify-framework';
-import { maxNgramOverlap } from './quiz_verify';
 
 export interface SourceVerifyJobData {
   question_ids: string[];
@@ -71,11 +71,10 @@ type DepsOverride = {
   runTaskFn?: RunTaskFn;
 };
 
-// Dedup threshold: a sourced question whose prompt n-gram overlap with an existing
-// ACTIVE pool question (sharing a knowledge point) is at/above this is treated as a
-// near-duplicate. Reuses quiz_verify's deterministic maxNgramOverlap (word-shingle
-// Jaccard, CJK-aware). CONSERVATIVE start, tunable.
-export const DEDUP_OVERLAP_THRESHOLD = 0.7;
+// YUK-986 — 阈值本体下沉到 server/question-supply/sourced-dedup.ts；此处 re-export
+// 保既有 import 路径。near-duplicate 判定仍用同一 maxNgramOverlap（word-shingle
+// Jaccard, CJK-aware）。
+export { DEDUP_OVERLAP_THRESHOLD };
 
 export interface CheckOutcome {
   check: VerifyCheck;

@@ -62,7 +62,7 @@ describe('copilotTools 贡献制 ↔ COPILOT_TOOLS allowlist 对账', () => {
     const fullInventory = [...READ_TOOLS, ...PROPOSE_WRITE_TOOLS, ...CONTROL_TOOLS];
     expect(new Set(declared)).toEqual(new Set(fullInventory));
     expect(declared).toHaveLength(fullInventory.length);
-    expect(fullInventory).toHaveLength(42);
+    expect(fullInventory).toHaveLength(44);
     for (const name of LEGACY_MODEL_CONTROL_NAMES) {
       expect(declared, name).not.toContain(name);
       expect(fullInventory, name).not.toContain(name);

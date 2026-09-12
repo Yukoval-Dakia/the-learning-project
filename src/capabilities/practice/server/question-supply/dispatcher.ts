@@ -30,12 +30,11 @@ import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
 import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
 import { supplyDispatchTavilyAvailable } from '@/kernel/supply-dispatch-tavily';
 import { SupplyTraceV1, type SupplyTraceV1T, buildSupplyTrace } from './evidence-demand';
-import { jyeooFetchEnabled } from './jyeoo-supply-config';
 import { planSupplyRoutes } from './route-planner';
 import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
 
 /** pg-boss queues the dispatcher can auto-enqueue into. */
-type DispatchQueue = 'sourcing' | 'quiz_gen' | 'jyeoo_fetch';
+type DispatchQueue = 'sourcing' | 'quiz_gen';
 
 /**
  * Auto-dispatchable SupplyRoute → pg-boss queue. THE single source of the auto-dispatch
@@ -45,7 +44,6 @@ type DispatchQueue = 'sourcing' | 'quiz_gen' | 'jyeoo_fetch';
  */
 const AUTO_ROUTE_TO_QUEUE: Partial<Record<SupplyRoute, DispatchQueue>> = {
   sourcing_web: 'sourcing',
-  jyeoo_fetch: 'jyeoo_fetch',
   quiz_gen: 'quiz_gen',
 };
 
@@ -77,14 +75,6 @@ function resolveDispatchQueue(route: SupplyRoute): DispatchQueue {
 // 落到 route plan 的下一条可派路由（quiz_gen 仍可，不依赖 Tavily 的闭卷生成）；plan 里再无可派
 // 路由 → manual（emit + 留给 UI/copilot），不入队注定失败的 job。
 const defaultTavilyAvailable = supplyDispatchTavilyAvailable;
-
-// ── YUK-697：jyeoo_fetch 可派性闸（kill switch）─────────────────────────────────
-//
-// jyeoo_fetch 是一等确定性路由，route-planner 在 jyeoo-supported subject 上把它排到
-// sourcing_web 之前。但它 dark-ship 在 JYEOO_FETCH_ENABLED 之后（默认 OFF）。闸关时
-// chooseAutoRoute 跳过它、落回 route plan 下一条（= sourcing_web）——这正是票面 P4
-// 「kill switch 回退 sourcing_web」的语义。与 Tavily 闸同构（可行性降级，不越硬偏好）。
-const defaultJyeooFetchAvailable = (): boolean => jyeooFetchEnabled();
 
 // ── review FINDING #1 + #2：跨扫描指纹 cooldown（防 job-spam / 无界 re-dispatch）─────
 //
@@ -187,12 +177,6 @@ export interface DispatchDeps {
    * 已配，worker 同一判据，单一真相）。测试注入 false 验证 sourcing_web 不被 auto-派、落下一条路由。
    */
   tavilyAvailable?: () => boolean;
-  /**
-   * YUK-697 — jyeoo_fetch 可派性（kill switch）注入。默认 jyeooFetchEnabled()（读
-   * JYEOO_FETCH_ENABLED，dark-ship 默认 OFF）。OFF → chooseAutoRoute 跳过 jyeoo_fetch，
-   * 落回 sourcing_web。测试注入 true 验证 jyeoo-supported 目标派到 jyeoo_fetch 队列。
-   */
-  jyeooFetchAvailable?: () => boolean;
   /** Typed quiz_gen seam for claim-owned transactional sends. */
   enqueueQuizGen?: EnqueueQuizGenFn;
   /** Test seam for validating the fully augmented trace immediately before parsing. */
@@ -244,14 +228,9 @@ function chooseAutoRoute(
   routePlan: SupplyRoute[],
   target: QuestionSupplyTarget,
   tavilyAvailable: boolean,
-  jyeooFetchAvailable: boolean,
 ): SupplyRoute | null {
   for (const route of routePlan) {
     if (!AUTO_DISPATCHABLE.has(route)) return null; // 硬偏好边界：不可派路由 → manual。
-    // YUK-697 kill switch：jyeoo_fetch 关闭时跳过它，落回 plan 下一条（sourcing_web）。
-    // 可行性降级（同 Tavily 跳过），不是越过硬偏好——jyeoo_fetch 与 sourcing_web 同为
-    // tier-2 web 既存题线，只是前者确定性、后者 agent，回退是同层替代。
-    if (route === 'jyeoo_fetch' && !jyeooFetchAvailable) continue;
     if (!tavilyAvailable && routeNeedsTavily(route, target)) continue; // FINDING #5：跳过注定失败的 Tavily 依赖路由。
     return route;
   }
@@ -272,7 +251,6 @@ export async function dispatchSupplyTarget(
   const actorRef = deps.actorRef ?? 'question_supply';
   const cooldownDays = deps.cooldownDays ?? SUPPLY_DISPATCH_COOLDOWN_DAYS;
   const tavilyAvailable = (deps.tavilyAvailable ?? defaultTavilyAvailable)();
-  const jyeooFetchAvailable = (deps.jyeooFetchAvailable ?? defaultJyeooFetchAvailable)();
   const routePlan = planSupplyRoutes(target);
   const anchorKid = target.knowledgeIds[0] ?? null;
 
@@ -306,7 +284,7 @@ export async function dispatchSupplyTarget(
       reason: target.reason,
     };
   } else {
-    const autoRoute = chooseAutoRoute(routePlan, target, tavilyAvailable, jyeooFetchAvailable);
+    const autoRoute = chooseAutoRoute(routePlan, target, tavilyAvailable);
     if (autoRoute === null) {
       // 选定路由（image/ingest/author）无法自动派，**或** 所有可派路由都依赖 Tavily 而 Tavily 缺失
       // （review FINDING #5）→ manual（emit + 留给 UI/copilot），不入队注定退化/失败的 job。
@@ -344,7 +322,7 @@ export async function dispatchSupplyTarget(
         reason: target.reason,
       };
     } else {
-      // 自动派：AUTO_ROUTE_TO_QUEUE 单源映射（sourcing_web→'sourcing'，jyeoo_fetch→'jyeoo_fetch'，quiz_gen→'quiz_gen'）。
+      // 自动派：AUTO_ROUTE_TO_QUEUE 单源映射（sourcing_web→'sourcing'，quiz_gen→'quiz_gen'）。
       const queue: DispatchQueue = resolveDispatchQueue(autoRoute);
       const dispatchTrace = traceFor(autoRoute);
       const commonData = {
@@ -387,7 +365,6 @@ export async function dispatchSupplyTarget(
           : null;
       const nonQuizData = {
         ...commonData,
-        ...(queue === 'jyeoo_fetch' ? { difficulty_band: target.difficultyBand } : {}),
         ...(dispatchTrace ? { supply_trace: dispatchTrace } : {}),
       };
       try {

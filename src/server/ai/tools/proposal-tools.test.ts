@@ -323,6 +323,8 @@ describe('Wave 3 proposal/action DomainTools', () => {
       'reassign_figure',
       'set_question_type',
       'split_stem',
+      // YUK-986 — 外部题源唯一入库缝（E1 仅注册入 registry，无 surface 授予）。
+      'store_sourced_question',
       // ADR-0033 D6 (YUK-306 lane D) — interactive artifact iterate (full-html
       // replace, version bump + history append).
       'update_artifact',

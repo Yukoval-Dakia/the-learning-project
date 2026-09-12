@@ -328,6 +328,8 @@ describe('Foundation D M2 read tools', () => {
       'get_record_context',
       'get_review_due',
       'get_subject_graph_overview',
+      // YUK-986 — jyeoo 候选抓取（E1 仅注册入 registry，无 surface 授予）。
+      'jyeoo_fetch_candidates',
       'query_events',
       'query_knowledge',
       'query_memory_brief',

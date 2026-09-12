@@ -5070,9 +5070,6 @@ export interface operations {
                                     requirement: string;
                                     uncertaintyPolicy: string;
                                 };
-                                jyeooSupply?: {
-                                    subject: string;
-                                };
                                 /** @default [] */
                                 sourceWhitelist: string[];
                                 sourcingRoutePreference?: {
@@ -5312,9 +5309,6 @@ export interface operations {
                             allowedSources: string[];
                             requirement: string;
                             uncertaintyPolicy: string;
-                        };
-                        jyeooSupply?: {
-                            subject: string;
                         };
                         /** @default [] */
                         sourceWhitelist?: string[];
@@ -6114,9 +6108,6 @@ export interface operations {
                             allowedSources: string[];
                             requirement: string;
                             uncertaintyPolicy: string;
-                        };
-                        jyeooSupply?: {
-                            subject: string;
                         };
                         /** @default [] */
                         sourceWhitelist?: string[];
