@@ -11,8 +11,10 @@ describe('practice manifest jobs', () => {
     const handlers = practiceCapability.jobs?.handlers ?? [];
     // YUK-986 (Supply-Agent/1) — jyeoo_fetch queue job 退休（→ DomainTool seam）；
     // jyeoo_staged_asset_reap 接手孤儿资产回收（fast 层 cron，无 LLM）。
+    // YUK-988 (Supply-Agent/3) — sourcing 单体退休，supply_execute（确定性供给执行
+    // job，agent 队列同档）接替。
     const expected = {
-      sourcing: { queue: 'agent', includeMetadata: undefined },
+      supply_execute: { queue: 'agent', includeMetadata: undefined },
       jyeoo_staged_asset_reap: { queue: 'fast', includeMetadata: undefined },
       quiz_gen: { queue: 'agent', includeMetadata: true },
     } as const;
@@ -59,9 +61,9 @@ describe('practice manifest jobs', () => {
   // queue 'agent' and leave polling/batch undeclared, which the registrar expands to
   // the identical 2s/1 recipe — the parity this test pins so the migration cannot
   // silently drift.
-  it('mounts the four quiz handlers with the retired central boss.work recipe (YUK-605 ③)', () => {
+  it('mounts the four agent-queue handlers with the retired central boss.work recipe (YUK-605 ③; YUK-988：sourcing → supply_execute 换代不换配方)', () => {
     const handlers = practiceCapability.jobs?.handlers ?? [];
-    for (const name of ['sourcing', 'quiz_gen', 'quiz_verify', 'source_verify']) {
+    for (const name of ['supply_execute', 'quiz_gen', 'quiz_verify', 'source_verify']) {
       const job = handlers.find((candidate) => candidate.name === name);
       expect(job, name).toBeTruthy();
       expect(job?.queue, name).toBe('agent');

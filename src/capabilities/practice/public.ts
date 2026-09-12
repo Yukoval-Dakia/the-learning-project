@@ -39,6 +39,7 @@ export const handleReviewDue: HandleReviewDue = async (...args) => {
   const dueList = await import('./server/due-list');
   return dueList.handleReviewDue(...args);
 };
+export { buildSupplyExecutorDeps } from './jobs/supply_execute';
 export type { CollectedSignal } from './server/candidate-signals';
 export type {
   ProposeFailureVariantInput,
@@ -211,6 +212,13 @@ export {
   resolvePlacementStarterGoalAuthority,
 } from './server/question-supply/placement-starter-store';
 export { lockPlacementSupplyScopes } from './server/question-supply/placement-supply-lock';
+// YUK-988 (Supply-Agent/3) — 确定性供给执行公开面（scripts/supply-execute.ts CLI 共用；
+// 供题执行链的单一入口间：executeSupplyPlan 纯模块 + 生产 deps 装配）。
+export {
+  type ExecuteSupplyPlanResult,
+  type SupplyDemandItem,
+  executeSupplyPlan,
+} from './server/question-supply/plan-executor';
 export { planSupplyRoutes } from './server/question-supply/route-planner';
 export type {
   DifficultyBand,

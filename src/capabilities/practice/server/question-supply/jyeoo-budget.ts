@@ -6,10 +6,10 @@
 // 与 DESIGN §10 谨慎档一致）——loom 侧读数允许与 producer 微小漂移（例如 loom 过滤掉的行
 // producer 也计数），不影响正确性。
 //
-// 事件溯源：jyeoo_fetch_candidates 每次成功运行写 action='experimental:jyeoo_fetch'
-// outcome='success' 事件（payload.counts.fetched = producer 实际产出题数）。预算余额 =
-// 当日（Asia/Shanghai）已 fetched 总和 vs 日预算。无独立表（避免为计数器做迁移）；并发
-// 超取窗口由 producer 硬闸兜底，文档化接受。
+// 事件溯源：fetch 核（runJyeooFetchCandidates，YUK-988 E3 起核内单写）每次成功运行写
+// action='experimental:jyeoo_fetch' outcome='success' 事件（payload.counts.fetched =
+// producer 实际产出题数）。预算余额 = 当日（Asia/Shanghai）已 fetched 总和 vs 日预算。
+// 无独立表（避免为计数器做迁移）；并发超取窗口由 producer 硬闸兜底，文档化接受。
 
 import { sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';

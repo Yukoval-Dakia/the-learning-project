@@ -778,10 +778,14 @@ export const practiceCapability = defineCapability({
     // job 已随 B3 退役。YUK-870 F3.5b：rejudge / judge_run / session_summary
     // 三条注册自 handlers.ts 渐缩簿收编，practice 域自此无留簿注册。）
     handlers: [
+      // YUK-988 E3 — sourcing 单体 job 退役（找+判+存一体）：找题核下沉
+      // web_fetch_candidates（SourcingTask 在工具内部），存由 store_sourced_question
+      // commit seam 唯一负责。本入口换为确定性供给执行 job（plan-executor 的
+      // pg-boss 面三入口共用：planner phase-2 / dispatcher 安全网 / 手动 caller）。
       {
-        name: 'sourcing',
+        name: 'supply_execute',
         queue: 'agent',
-        load: () => import('./jobs/sourcing').then((m) => m.buildSourcingHandler),
+        load: () => import('./jobs/supply_execute').then((m) => m.buildSupplyExecuteHandler),
       },
       {
         name: 'quiz_gen',
@@ -1230,6 +1234,14 @@ export const practiceCapability = defineCapability({
         name: 'store_sourced_question',
         load: () =>
           import('./server/tools/store-sourced-question').then((m) => m.storeSourcedQuestionTool),
+      },
+      // YUK-988 (Supply-Agent/3) — web 候选生产线 DomainTool（Tavily 检索 +
+      // SourcingTask 抽取，candidate-only 不写库）。E3 只注册进 inventory（无任何
+      // surface 授权，与 jyeoo_fetch_candidates 的 E1 先例同款）。
+      {
+        name: 'web_fetch_candidates',
+        load: () =>
+          import('./server/tools/web-fetch-candidates').then((m) => m.webFetchCandidatesTool),
       },
       {
         name: 'query_questions',

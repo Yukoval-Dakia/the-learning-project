@@ -379,16 +379,20 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
     });
     expect(results).toHaveLength(1);
     const r = results[0];
-    // frontier_zero → minSourceTier 2 → planSupplyRoutes → ['sourcing_web', ...] → 'sourcing'.
+    // frontier_zero → minSourceTier 2 → planSupplyRoutes → ['sourcing_web', ...] → supply_execute。
     expect(r.status).toBe('dispatched');
     expect(r.chosenRoute).toBe('sourcing_web');
     expect(enqueued).toHaveLength(1);
-    expect(enqueued[0].queue).toBe('sourcing');
+    expect(enqueued[0].queue).toBe('supply_execute');
     expect(enqueued[0].data).toMatchObject({
-      trigger: 'knowledge',
-      ref_id: kid,
-      knowledge_id: kid,
-      count: 2,
+      plan_event_id: null,
+      items: [
+        expect.objectContaining({
+          knowledge_id: kid,
+          count: 2,
+          route_preference: ['sourcing_web'],
+        }),
+      ],
       supply_trace: {
         demand_id: frontierTarget.context?.demand_id,
         demand_version: 1,
@@ -608,8 +612,10 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
 
     expect(enqueued).toHaveLength(1);
     expect(enqueued[0]).toMatchObject({
-      queue: 'sourcing',
-      data: { kind: 'choice', objective_only: true },
+      queue: 'supply_execute',
+      data: {
+        items: [expect.objectContaining({ kind: 'choice', objective_only: true })],
+      },
     });
   });
 

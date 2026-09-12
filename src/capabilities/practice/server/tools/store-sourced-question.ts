@@ -39,7 +39,7 @@ import { insertSourcedDraft } from '@/server/questions/sourced-draft-insert';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { SupplyTraceV1 } from '../question-supply/evidence-demand';
 import { cleanupStagedAssets } from '../question-supply/jyeoo-candidates';
-import { JYEOO_FETCH_ROUTE, JYEOO_SOURCE_HOST } from '../question-supply/jyeoo-supply-config';
+import { JYEOO_SOURCE_HOST } from '../question-supply/jyeoo-supply-config';
 import {
   DEDUP_OVERLAP_THRESHOLD,
   matchesWhitelist,
@@ -47,9 +47,23 @@ import {
 } from '../question-supply/sourced-dedup';
 import { mergeExactQuestionDuplicateKnowledgeIds } from '../quiz/content-fingerprint';
 
-// 与旧 handler 一致：system ref（确定性管线，无 LLM run）；task_kind 沿用 'JyeooFetch'
-// 保持 created_by 语义连续。E3 接入 web/生成候选时按来源参数化。
-const SOURCED_CREATED_BY = AgentRef.parse({ by: 'system', task_kind: 'JyeooFetch' });
+// 与旧 handler 一致：system ref（确定性管线，无 LLM run）。task_kind 按来源路由参数化
+// （YUK-988/E3）：jyeoo_fetch='JyeooFetch'（E1 语义不变）；sourcing_web='SourcingTask'
+// （web 候选由 SourcingTask 产出，沿用旧 sourcing job 的 created_by 语义）。
+const SOURCED_CREATED_BY_BY_ROUTE = {
+  jyeoo_fetch: AgentRef.parse({ by: 'system', task_kind: 'JyeooFetch' }),
+  sourcing_web: AgentRef.parse({ by: 'system', task_kind: 'SourcingTask' }),
+} as const;
+
+// YUK-988 (Supply-Agent/3) — commit seam 按来源路由参数化（E3 接入 web 候选）：
+//   - jyeoo_fetch：foreign-host 闸 = www.jyeoo.com（producer 异常/篡改防线，E1 语义）；
+//   - sourcing_web：无固定 host——web 候选来自任意白名单站点，接地靠
+//     metadata.web_sourced.whitelist_match（insertSourcedDraft 用 profile whitelist 计算，
+//     旧 sourcing job 同款语义）；verify 链同为 source_verify（tier-2）。
+const COMMIT_ROUTE_CONFIG = {
+  jyeoo_fetch: { expectedHost: JYEOO_SOURCE_HOST, mergeActorRef: 'jyeoo_fetch' },
+  sourcing_web: { expectedHost: null, mergeActorRef: 'sourcing' },
+} as const;
 
 // 旧 handler 同款 pool 上界（source_verify checkDedup 的 LIMIT 先例）。
 const NEAR_DUP_POOL_LIMIT = 100;
@@ -69,7 +83,9 @@ const candidateInputSchema = z.object({
 });
 
 const inputSchema = z.object({
-  /** jyeoo_fetch_candidates 产出的候选（原样传递；extraction_hash 是 dedup key）。 */
+  /** 来源路由（YUK-988/E3 参数化）：决定 host 防线、created_by/mergeActorRef 与元数据键。 */
+  source_route: z.enum(['jyeoo_fetch', 'sourcing_web']).default('jyeoo_fetch'),
+  /** jyeoo_fetch_candidates / web_fetch_candidates 产出的候选（原样传递；extraction_hash 是 dedup key）。 */
   candidate: candidateInputSchema,
   /** 目标知识节点（≥1，全部必须活）；服务端校验，不信任调用方。 */
   knowledge_ids: z.array(z.string().min(1)).min(1),
@@ -167,22 +183,28 @@ export async function executeStoreSourcedQuestion(
 
   // ── 2. foreign-host 防线（belt：fetch 侧已过滤；commit 不信任调用方再查一次） ──
   // source_verify 以持久化 extract 为准、从不 refetch——foreign URL 会绕过 tier-2 接地。
-  try {
-    if (new URL(candidate.question.source_url).hostname.toLowerCase() !== JYEOO_SOURCE_HOST) {
+  // 仅 jyeoo_fetch 有固定 host；sourcing_web 的接地是 whitelist_match（旧 sourcing 同款）。
+  const routeConfig = COMMIT_ROUTE_CONFIG[input.source_route];
+  if (routeConfig.expectedHost !== null) {
+    try {
+      if (
+        new URL(candidate.question.source_url).hostname.toLowerCase() !== routeConfig.expectedHost
+      ) {
+        return {
+          status: 'rejected',
+          reason: 'foreign_host',
+          detail: `source_url host 非 ${routeConfig.expectedHost}（producer 异常或调用方篡改）`,
+          existing_question_id: null,
+        };
+      }
+    } catch {
       return {
         status: 'rejected',
         reason: 'foreign_host',
-        detail: `source_url host 非 ${JYEOO_SOURCE_HOST}（producer 异常或调用方篡改）`,
+        detail: 'source_url 不可解析',
         existing_question_id: null,
       };
     }
-  } catch {
-    return {
-      status: 'rejected',
-      reason: 'foreign_host',
-      detail: 'source_url 不可解析',
-      existing_question_id: null,
-    };
   }
 
   // ── 3. exact-dup 预检（YUK-720 cross-KC merge：命中则目标 KC 并入既有行） ────
@@ -190,7 +212,7 @@ export async function executeStoreSourcedQuestion(
     mergeExactQuestionDuplicateKnowledgeIds(tx, {
       canonicalContentHash: canonicalHash,
       knowledgeIds: input.knowledge_ids,
-      actorRef: 'jyeoo_fetch',
+      actorRef: routeConfig.mergeActorRef,
       taskRunId: ctx.taskRunId,
       now,
     }),
@@ -227,11 +249,17 @@ export async function executeStoreSourcedQuestion(
   // ── 5. insert + 图片链接 + verify intent（单事务） ──────────────────────────
   const questionId = createId();
   const whitelist = (resolveSubjectProfile(input.subject_id).sourceWhitelist ?? []) as string[];
+  // 路由专属元数据键：jyeoo → jyeoo:{id,candidate_id}（E1 连续）；web → sourcing:{candidate_id}
+  // （web 的 url/title/fetched_at/whitelist_match 由 insertSourcedDraft 写入 metadata.web_sourced）。
+  const routeMetadata =
+    input.source_route === 'jyeoo_fetch'
+      ? { jyeoo: { id: candidate.source_id, candidate_id: candidate.candidate_id } }
+      : { sourcing: { candidate_id: candidate.candidate_id } };
   const metadataExtras = {
     prompt_image_refs: candidate.image_refs ?? [],
     knowledge_hints: candidate.knowledge_hints,
     attribution_state: input.attribution_state,
-    jyeoo: { id: candidate.source_id, candidate_id: candidate.candidate_id },
+    ...routeMetadata,
     ...(input.demand_id ? { demand_id: input.demand_id } : {}),
   };
 
@@ -242,13 +270,13 @@ export async function executeStoreSourcedQuestion(
         id: questionId,
         q: candidate.question,
         knowledgeIds: input.knowledge_ids,
-        sourceRoute: JYEOO_FETCH_ROUTE,
-        createdBy: SOURCED_CREATED_BY,
+        sourceRoute: input.source_route,
+        createdBy: SOURCED_CREATED_BY_BY_ROUTE[input.source_route],
         whitelistMatch: matchesWhitelist(candidate.question.source_url, whitelist),
         fetchedAt: now.toISOString(),
         canonicalContentHash: canonicalHash,
         supplyTrace: input.supply_trace,
-        mergeActorRef: 'jyeoo_fetch',
+        mergeActorRef: routeConfig.mergeActorRef,
         taskRunId: ctx.taskRunId,
         now,
       });
@@ -334,6 +362,7 @@ export async function executeStoreSourcedQuestion(
       payload: {
         candidate_id: candidate.candidate_id,
         source_id: candidate.source_id,
+        source_route: input.source_route,
         knowledge_ids: input.knowledge_ids,
         attribution_state: input.attribution_state,
         verify_enqueued: verifyEnqueued,
