@@ -1,8 +1,15 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-12：986/991 交付——jyeoo 供题 tool 化双 tool + 预算租约入 main 0ac945d2c，main CI 阻断（sharp/tiptap 2 high CVE）随 991 清零；供题线复工第一刀落地，985 epic 续 987/988。
+> Linear 是权威 tracker；更新于 2026-09-12：987 交付——供给需求层 planner agent + SupplyPlan 机器门入 main 454458ccd，Mac 生产同 SHA 健康、planner cron(05:50 CST) 已注册；985 epic 剩 988（执行面统一）。
 
 ## NOW
+
+- 987 Done：供给需求层 planner agent 入 main 454458ccd（PR1379 exact-head CI 全绿 / Oracle gate PASS 无 P0/P1）。
+  SupplyPlanV1 schema + 纯机器门（活KC/词表/去重/预算声明≤剩余/空计划合法，镜像 quiz_gen_plan 范式）+ supply_planner cron 05:50 CST（llm 队；与 supply DAG 无硬边——扫描器安全网不被拖死）。
+  accepted→run+demand(manual 留痕，E3 未落地)+shadow(planner vs scanner KC 集合同窗口对比) 三事件；拒 fail closed 零派发不烧 DLQ。
+  census/deepening/catalog/prompt-hash oracle/边界基线钉值同步（49→50 tasks；practice→ai +2=runner/mcp-bridge 同型引用）；
+  P2 幂等护栏（per-night 事件 id）已登记 YUK-988 约束。Mac 生产同 SHA：migrate 零漂移、app/worker healthy、health200、pgboss supply_planner cron 已注册。
+  985 epic 续：988 executor palette 统一（sourcing_web/生成/jyeoo 共 commit seam）。
 
 - 09-12 事故+恢复：OrbStack VM 崩溃（主机盘100%→vdb写失败）清空 docker 存储含生产 pgdata；
   从 loom-before-984.dump(09-08 21:40) 恢复+migrate重放，栈已在 75a1de01d 健康（app/worker/postgres healthy，health200，reaper cron已注册）；
