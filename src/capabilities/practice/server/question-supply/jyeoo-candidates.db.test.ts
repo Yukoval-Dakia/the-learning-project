@@ -300,6 +300,100 @@ describe('runJyeooFetchCandidates — image pipeline', () => {
     expect(result.candidates).toHaveLength(0);
     expect(result.counts.filtered_image).toBe(1);
   });
+
+  it('keeps same-batch image questions with identical wording but different pixels', async () => {
+    // 旧 handler 覆盖移植：文本近似查重对图题跳过（文字相同不代表题相同——图不同就是
+    // 不同题）；image-aware canonical hash 把像素 digest 计入身份，两题都必须存活。
+    const r2 = memR2();
+    const red = await sharp({
+      create: { width: 4, height: 4, channels: 3, background: { r: 255, g: 0, b: 0 } },
+    })
+      .jpeg()
+      .toBuffer();
+    const blue = await sharp({
+      create: { width: 4, height: 4, channels: 3, background: { r: 0, g: 0, b: 255 } },
+    })
+      .jpeg()
+      .toBuffer();
+
+    const spawn: SpawnJyeooFn = async (opts) => {
+      const imagesIdx = opts.args.indexOf('--images');
+      const dir = opts.args[imagesIdx + 1];
+      if (dir === undefined) throw new Error('--images arg missing');
+      const redPath = join(dir, 'red-0.jpg');
+      const bluePath = join(dir, 'blue-0.jpg');
+      await writeFile(redPath, red);
+      await writeFile(bluePath, blue);
+      const wording = '如图所示的几何图形，求阴影部分面积。';
+      const a = baseQuestion({
+        prompt_md: `${wording}![](${redPath})`,
+        source_url: 'https://www.jyeoo.com/math2/ques/detail/pix-a',
+      });
+      const b = baseQuestion({
+        prompt_md: `${wording}![](${bluePath})`,
+        source_url: 'https://www.jyeoo.com/math2/ques/detail/pix-b',
+      });
+      return okResult([loomLine(a), loomLine(b)]);
+    };
+
+    const result = await runJyeooFetchCandidates({
+      db,
+      input: INPUT,
+      spawnJyeooFn: spawn,
+      resolveR2: () => r2,
+      now: NOW,
+    });
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') return;
+    expect(result.candidates).toHaveLength(2);
+    expect(result.counts.near_dup_in_batch).toBe(0);
+    const [ca, cb] = result.candidates;
+    expect(ca).toBeDefined();
+    expect(cb).toBeDefined();
+    expect(ca?.extractionHash).not.toBe(cb?.extractionHash);
+    expect(r2._store.size).toBe(2);
+  });
+});
+
+describe('canonicalJyeooQuestionHash — image identity', () => {
+  // 纯函数（无 db）：图片 digest 计入题身份。同文不同像素 → 不同 hash；槽位顺序交换 →
+  // 不同 hash；同文同像素 → 稳定 hash（跨 run 去重键）。
+  const loaded = (entries: Array<[string, string]>) => ({
+    images: entries.map(([source, sha256]) => ({
+      source,
+      bytes: new Uint8Array(),
+      mime: 'image/jpeg',
+      sha256,
+    })),
+    attachedSources: new Set(entries.map(([source]) => source)),
+  });
+
+  it('same text + different image digests → different hashes', async () => {
+    const q = baseQuestion({ prompt_md: '如图 ![](fig-0.jpg) 求面积。' });
+    const hashA = await canonicalJyeooQuestionHash(q, loaded([['fig-0.jpg', 'digest-a']]));
+    const hashB = await canonicalJyeooQuestionHash(q, loaded([['fig-0.jpg', 'digest-b']]));
+    expect(hashA).not.toBe(hashB);
+  });
+
+  it('swapping figure slot order → different hash', async () => {
+    const qa = baseQuestion({ prompt_md: '左 ![](a.jpg) 右 ![](b.jpg)，求关系。' });
+    const qb = baseQuestion({ prompt_md: '左 ![](b.jpg) 右 ![](a.jpg)，求关系。' });
+    const images = loaded([
+      ['a.jpg', 'digest-a'],
+      ['b.jpg', 'digest-b'],
+    ]);
+    const hashA = await canonicalJyeooQuestionHash(qa, images);
+    const hashB = await canonicalJyeooQuestionHash(qb, images);
+    expect(hashA).not.toBe(hashB);
+  });
+
+  it('same text + same digests → stable hash across calls', async () => {
+    const q = baseQuestion({ prompt_md: '如图 ![](fig-0.jpg) 求面积。' });
+    const images = loaded([['fig-0.jpg', 'digest-a']]);
+    const hashA = await canonicalJyeooQuestionHash(q, images);
+    const hashB = await canonicalJyeooQuestionHash(q, images);
+    expect(hashA).toBe(hashB);
+  });
 });
 
 describe('runJyeooFetchCandidates — failure classification + budget', () => {
@@ -331,6 +425,25 @@ describe('runJyeooFetchCandidates — failure classification + budget', () => {
       db,
       input: INPUT,
       spawnJyeooFn: spawn,
+      now: NOW,
+    });
+    expect(result.status).toBe('failed');
+    if (result.status !== 'failed') return;
+    expect(result.failureClass).toBe('vip');
+    expect(result.retryable).toBe(false);
+  });
+
+  it('discards the whole batch when any line carries vip:false (legacy per-line belt)', async () => {
+    // 旧 handler 的 VIP 行级闸移植：producer 若吐出 vip:false 行，其 reference_md 已被打洞，
+    // 同批其他行同账号同会话亦不可信 → 整批丢弃、terminal。新 producer 不发 vip 字段，
+    // 该闸对旧二进制保持 belt。
+    const result = await runJyeooFetchCandidates({
+      db,
+      input: INPUT,
+      spawnJyeooFn: fakeSpawn([
+        loomLine(baseQuestion(), { vip: false }),
+        loomLine(baseQuestion({ source_url: 'https://www.jyeoo.com/math2/ques/detail/ok-2' })),
+      ]),
       now: NOW,
     });
     expect(result.status).toBe('failed');

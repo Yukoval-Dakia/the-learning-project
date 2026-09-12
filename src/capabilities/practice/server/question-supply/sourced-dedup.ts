@@ -35,11 +35,11 @@ function shingles(tokens: string[], n: number): Set<string> {
   if (tokens.length < n) {
     // Too short for an n-gram — fall back to the whole token bag as a single
     // shingle so identical short strings still register as overlapping.
-    if (tokens.length > 0) out.add(tokens.join(' '));
+    if (tokens.length > 0) out.add(tokens.join(''));
     return out;
   }
   for (let i = 0; i + n <= tokens.length; i += 1) {
-    out.add(tokens.slice(i, i + n).join(' '));
+    out.add(tokens.slice(i, i + n).join(''));
   }
   return out;
 }
