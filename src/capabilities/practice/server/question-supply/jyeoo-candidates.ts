@@ -23,6 +23,9 @@
 //   - dedup 身份只看内容（canonical hash + n-gram），不看 detail id / URL。
 //   - 图片题：本地字节校验（magic + sharp decode）→ R2/source_asset → 内部 URL；
 //     任何外部/临时 URL 都不进候选输出，更不进 DB。
+//   - Canary 单写在本核（YUK-988 E3 P1-3）：每次运行（含失败）写恰好一条
+//     action='experimental:jyeoo_fetch' 事件（预算账本 + 漏斗观测面）——agent 工具与
+//     executor/脚本路径都经本核，无法绕过观测；工具层不再写。
 
 import { mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -40,6 +43,7 @@ import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { question, source_asset } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { type R2Client, getR2 } from '@/server/r2';
 
 // r2 访问单主：practice 内只有本模块直接触达 '@/server/r2'（边界 audit 的
@@ -50,7 +54,11 @@ export { getR2 as resolveJyeooR2 } from '@/server/r2';
 
 import { kindsMatch } from '@/subjects/question-kind';
 import { canonicalQuestionContentHash } from '../quiz/content-fingerprint';
-import { jyeooBudgetRemaining, jyeooDailyFetchBudget } from './jyeoo-budget';
+import {
+  JYEOO_FETCH_CANARY_ACTION,
+  jyeooBudgetRemaining,
+  jyeooDailyFetchBudget,
+} from './jyeoo-budget';
 import {
   type JyeooFailureClass,
   classifyJyeooExit,
@@ -189,6 +197,11 @@ export interface RunJyeooFetchCandidatesParams {
   db: Db;
   input: JyeooFetchCandidatesInput;
   spawnJyeooFn?: SpawnJyeooFn;
+  /**
+   * 运行归因（canary 事件的 session/task/causal 字段来源）。agent 工具透传 ToolContext；
+   * executor/脚本调用方可省略（canary 照写，归因字段为 null）。
+   */
+  ctx?: { taskRunId?: string; sessionId?: string; causedByEventId?: string };
   /**
    * r2 惰性解析器：仅当存活候选带图时调用一次。测试注入 memR2；生产 caller 可省略，
    * 缺省走本模块的 getR2()（practice 内 r2 访问单主，见模块头注释）。
@@ -451,8 +464,67 @@ const emptyCounts = (requested: number): JyeooFetchCandidatesCounts => ({
  * 跑一次 grade-route 抓取，返回自包含候选（不写 question）。Budget pre-flight 把
  * sessionMax 裁到日预算余额内；余额为 0 直接 budget_exhausted 短路（不 spawn）。
  * 失败分类与旧 handler 一致（auth/network/timeout/parse/args/spawn/vip/unknown）。
+ *
+ * Canary 单写（YUK-988 E3 P1-3）：本核 owns fetch canary——每次运行（含 failed /
+ * budget_exhausted）写恰好一条 action='experimental:jyeoo_fetch' 事件（预算账本
+ * jyeoo-budget 按当日 success 事件 counts.fetched 求和 + 漏斗观测面）。旧位在
+ * jyeoo_fetch_candidates 工具层——executor 直调核时绕过观测；移入核后 agent 工具与
+ * executor/脚本路径都恰好一条。事件写失败不得翻转抓取结果（best-effort try/catch）。
  */
 export async function runJyeooFetchCandidates(
+  params: RunJyeooFetchCandidatesParams,
+): Promise<JyeooFetchCandidatesResult> {
+  const result = await runJyeooFetchCandidatesCore(params);
+
+  try {
+    await writeEvent(params.db, {
+      id: createId(),
+      session_id: params.ctx?.sessionId ?? null,
+      actor_kind: 'agent',
+      actor_ref: 'jyeoo_fetch',
+      action: JYEOO_FETCH_CANARY_ACTION,
+      subject_kind: 'query',
+      subject_id: result.status === 'ok' ? result.runId : `jyeoo_candidates_${createId()}`,
+      outcome: result.status === 'failed' ? 'failure' : 'success',
+      payload: {
+        route: 'grade',
+        grade: params.input.grade,
+        subject: params.input.subject,
+        pages: params.input.pages,
+        max_papers: params.input.maxPapers,
+        session_max: params.input.sessionMax,
+        ...(params.input.kind ? { kind: params.input.kind } : {}),
+        ...(params.input.difficultyBand ? { difficulty_band: params.input.difficultyBand } : {}),
+        tool: 'jyeoo_fetch_candidates',
+        task_run_id: params.ctx?.taskRunId ?? null,
+        ...(result.status === 'ok'
+          ? {
+              candidate_ids: result.candidates.map((candidate) => candidate.candidateId),
+              counts: result.counts,
+              budget: result.budget,
+            }
+          : result.status === 'failed'
+            ? {
+                failure_class: result.failureClass,
+                failure_detail: result.detail,
+                counts: result.counts,
+                budget: result.budget,
+              }
+            : { budget: result.budget }),
+      },
+      caused_by_event_id: params.ctx?.causedByEventId ?? null,
+      task_run_id: params.ctx?.taskRunId ?? null,
+      cost_micro_usd: null,
+      created_at: new Date(),
+    });
+  } catch (eventErr) {
+    console.error('[jyeoo_fetch_candidates] canary event write failed; result stands:', eventErr);
+  }
+
+  return result;
+}
+
+async function runJyeooFetchCandidatesCore(
   params: RunJyeooFetchCandidatesParams,
 ): Promise<JyeooFetchCandidatesResult> {
   const { db, input } = params;

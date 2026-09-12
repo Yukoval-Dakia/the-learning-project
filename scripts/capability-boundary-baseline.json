@@ -3,7 +3,7 @@
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "debts": {
     "capabilityToServer": {
-      "total": 430,
+      "total": 427,
       "byOwnerPair": {
         "agency -> ai": 25,
         "agency -> boss": 10,
@@ -64,7 +64,7 @@
         "observability -> subjects": 14,
         "practice -> advisory-locks": 6,
         "practice -> ai": 70,
-        "practice -> boss": 17,
+        "practice -> boss": 15,
         "practice -> calibration": 3,
         "practice -> coldstart": 1,
         "practice -> events": 4,
@@ -75,7 +75,7 @@
         "practice -> orchestrator": 1,
         "practice -> projections": 4,
         "practice -> proposals": 3,
-        "practice -> questions": 8,
+        "practice -> questions": 7,
         "practice -> r2": 2,
         "practice -> revert": 1,
         "practice -> runtime-env": 4,

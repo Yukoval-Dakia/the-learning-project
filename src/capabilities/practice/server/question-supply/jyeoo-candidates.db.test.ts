@@ -78,6 +78,10 @@ const INPUT: JyeooFetchCandidatesInput = {
   sessionMax: 10,
 };
 
+async function canaryRows() {
+  return db.select().from(event).where(eq(event.action, 'experimental:jyeoo_fetch'));
+}
+
 describe('runJyeooFetchCandidates — parse + filter pipeline', () => {
   it('returns self-contained candidates with loom canonical hash and passthrough hints', async () => {
     const q = baseQuestion();
@@ -85,6 +89,11 @@ describe('runJyeooFetchCandidates — parse + filter pipeline', () => {
       db,
       input: INPUT,
       spawnJyeooFn: fakeSpawn([loomLine(q, { knowledge_hints: ['集合', '运算'] })]),
+      ctx: {
+        taskRunId: 'tr-jyeoo-ok',
+        sessionId: 'session-jyeoo-ok',
+        causedByEventId: 'cause-jyeoo-ok',
+      },
       now: NOW,
     });
     expect(result.status).toBe('ok');
@@ -105,6 +114,33 @@ describe('runJyeooFetchCandidates — parse + filter pipeline', () => {
     expect(result.counts.candidates).toBe(1);
     // 预算视图：成功后 remainingAfter = remainingBefore - fetched。
     expect(result.budget.remainingAfter).toBe(result.budget.remainingBefore - 1);
+
+    const canary = await canaryRows();
+    expect(canary).toHaveLength(1);
+    expect(canary[0]).toMatchObject({
+      session_id: 'session-jyeoo-ok',
+      actor_kind: 'agent',
+      actor_ref: 'jyeoo_fetch',
+      action: 'experimental:jyeoo_fetch',
+      subject_kind: 'query',
+      subject_id: result.runId,
+      outcome: 'success',
+      task_run_id: 'tr-jyeoo-ok',
+      caused_by_event_id: 'cause-jyeoo-ok',
+    });
+    expect(canary[0]?.payload).toMatchObject({
+      route: 'grade',
+      grade: 11,
+      subject: 'math2',
+      pages: 2,
+      max_papers: 2,
+      session_max: 10,
+      tool: 'jyeoo_fetch_candidates',
+      task_run_id: 'tr-jyeoo-ok',
+      candidate_ids: [candidate.candidateId],
+      counts: result.counts,
+      budget: result.budget,
+    });
   });
 
   it('drops invalid lines without sinking the batch', async () => {
@@ -407,12 +443,26 @@ describe('runJyeooFetchCandidates — failure classification + budget', () => {
       db,
       input: INPUT,
       spawnJyeooFn: spawn,
+      ctx: { taskRunId: 'tr-jyeoo-failed' },
       now: NOW,
     });
     expect(result.status).toBe('failed');
     if (result.status !== 'failed') return;
     expect(result.failureClass).toBe('auth');
     expect(result.retryable).toBe(false);
+    const canary = await canaryRows();
+    expect(canary).toHaveLength(1);
+    expect(canary[0]).toMatchObject({
+      actor_ref: 'jyeoo_fetch',
+      subject_kind: 'query',
+      outcome: 'failure',
+      task_run_id: 'tr-jyeoo-failed',
+    });
+    expect(canary[0]?.payload).toMatchObject({
+      failure_class: 'auth',
+      counts: result.counts,
+      budget: result.budget,
+    });
   });
 
   it('maps exit 6 to terminal vip', async () => {
@@ -507,10 +557,24 @@ describe('runJyeooFetchCandidates — failure classification + budget', () => {
       db,
       input: { ...INPUT, sessionMax: 10 },
       spawnJyeooFn: spawn,
+      ctx: { taskRunId: 'tr-jyeoo-budget-exhausted' },
       now: NOW,
     });
     expect(result.status).toBe('budget_exhausted');
     expect(spawnCalled).toBe(false);
+    const canary = (await canaryRows()).filter(
+      (row) => row.task_run_id === 'tr-jyeoo-budget-exhausted',
+    );
+    expect(canary).toHaveLength(1);
+    expect(canary[0]).toMatchObject({
+      actor_ref: 'jyeoo_fetch',
+      subject_kind: 'query',
+      outcome: 'success',
+    });
+    expect(canary[0]?.payload).toMatchObject({
+      tool: 'jyeoo_fetch_candidates',
+      budget: result.budget,
+    });
   });
 
   it('clips session_max to remaining budget', async () => {

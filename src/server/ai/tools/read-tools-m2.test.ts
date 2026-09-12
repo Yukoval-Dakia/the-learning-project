@@ -339,6 +339,8 @@ describe('Foundation D M2 read tools', () => {
       'query_records',
       'read_agent_notes',
       'search_memory_facts',
+      // YUK-988 (Supply-Agent/3) — web 候选抓取（E3 仅注册入 registry，无 surface 授予）。
+      'web_fetch_candidates',
     ]);
   });
 
