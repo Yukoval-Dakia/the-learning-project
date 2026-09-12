@@ -101,8 +101,8 @@ export {
   jyeooDailyFetchBudget,
 } from './server/question-supply/jyeoo-budget';
 // YUK-986 (Supply-Agent/1) — jyeoo agent-tool 链公开面：候选抓取核心（tool 与 CLI 共用）、
-// 事件溯源日预算、hint 名匹配（CLI/executor 的确定性归属辅助）。commit seam 由
-// DomainTool inventory 承载（manifest copilotTools），不经 barrel。
+// 事件溯源日预算、hint 名匹配（CLI/executor 的确定性归属辅助）。两个 DomainTool 也从
+// barrel 透出（见文件尾）——agent surface 由 manifest copilotTools 授予，CLI 直接调 execute。
 export type {
   JyeooCandidate,
   JyeooFetchCandidatesInput,

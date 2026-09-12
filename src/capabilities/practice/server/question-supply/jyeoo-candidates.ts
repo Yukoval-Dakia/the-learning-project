@@ -190,8 +190,8 @@ export interface RunJyeooFetchCandidatesParams {
   input: JyeooFetchCandidatesInput;
   spawnJyeooFn?: SpawnJyeooFn;
   /**
-   * r2 惰性解析器：仅当存活候选带图时调用一次。caller（DomainTool / CLI）负责注入
-   * （本目录不得持 '@/server/' 运行时边，见 ownership.unit.test.ts）。
+   * r2 惰性解析器：仅当存活候选带图时调用一次。测试注入 memR2；生产 caller 可省略，
+   * 缺省走本模块的 getR2()（practice 内 r2 访问单主，见模块头注释）。
    */
   resolveR2?: () => R2Client;
   now?: Date;
