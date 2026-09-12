@@ -44,7 +44,7 @@ describe('copilot task dispatch declarations', () => {
     for (const kind of Object.keys(taskCatalog) as TaskKind[]) {
       expect(tasks[kind], kind).toBe(taskCatalog[kind]);
     }
-    expect(Object.keys(tasks)).toHaveLength(49);
+    expect(Object.keys(tasks)).toHaveLength(50);
   });
 
   it('contains no prompt builders or task business definitions', () => {
@@ -81,7 +81,7 @@ describe('task prompt definitions', () => {
   });
 
   it('defines one non-empty inline or profile prompt for every task', () => {
-    expect(Object.keys(tasks)).toHaveLength(49);
+    expect(Object.keys(tasks)).toHaveLength(50);
 
     for (const task of Object.values(tasks)) {
       switch (task.prompt.kind) {
@@ -111,8 +111,8 @@ describe('task prompt definitions', () => {
   it('matches the unchanged prompts byte-for-byte with the exact pre-refactor oracle', () => {
     expect(promptHashOracle.baseCommit).toBe('6b3233b10633c93497a8211956fddcb795ebd2da');
     expect(promptHashOracle.algorithm).toBe('sha256');
-    expect(promptHashOracle.taskCount).toBe(49);
-    expect(Object.keys(promptHashOracle.prompts)).toHaveLength(196);
+    expect(promptHashOracle.taskCount).toBe(50);
+    expect(Object.keys(promptHashOracle.prompts)).toHaveLength(200);
 
     for (const profileId of promptHashOracle.profiles) {
       const profile = resolveSubjectProfile(profileId);

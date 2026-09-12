@@ -2,7 +2,7 @@
   "baseCommit": "6b3233b10633c93497a8211956fddcb795ebd2da",
   "algorithm": "sha256",
   "profiles": ["general", "math", "physics", "yuwen"],
-  "taskCount": 49,
+  "taskCount": 50,
   "prompts": {
     "general:AttributionTask": "0f9775c6673779e7acef549cd19e8dd675cfe78663dd691e84066e12039130bc",
     "general:AttributionRerankTask": "691eaed6d741e974fe0c4d63a75c92891e9c2a9f244103220abb6abba16ace58",
@@ -199,6 +199,10 @@
     "yuwen:CoachTask": "465d170e146ac0e82895735d2de1ec96277255264642b3614e013d1efbcff797",
     "yuwen:MemoryBriefTask": "9949834d387da8a50e888ec68b5352b2fa37eb2be77d9cade8e7e6faa46007a8",
     "yuwen:CopilotTask": "dfac7561689b9067e00a26381c3d20c01e08ee7c1d2a7a4f693b68556035017d",
-    "yuwen:TeachingTurnTask": "d677d1328f02b2a4801602becff25f5e76409a807f43ed966c5cf47e3a382c61"
+    "yuwen:TeachingTurnTask": "d677d1328f02b2a4801602becff25f5e76409a807f43ed966c5cf47e3a382c61",
+    "general:SupplyPlanTask": "e42cab7386542c782dd5e1eaa0db4ad35826022fd515edb1198bd3bb1338bc89",
+    "math:SupplyPlanTask": "4031caf47308eb09d3cf1db29f31eaef8efaf878d817ced308ac1af73cb41a0d",
+    "physics:SupplyPlanTask": "1f98f09e0388997ab281fe43596036a49f6b603a2d549684e9b7bd956eadfe4f",
+    "yuwen:SupplyPlanTask": "221dd389325a854604bd299da7f16ef211e8328b425ceb6705b3b4c61082a448"
   }
 }
