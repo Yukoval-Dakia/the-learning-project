@@ -17,12 +17,12 @@ import { event } from '@/db/schema';
 
 export const JYEOO_FETCH_CANARY_ACTION = 'experimental:jyeoo_fetch';
 
-/** 日预算（Asia/Shanghai 自然日）。默认 40 = producer 谨慎档；env 可调低做更保守的 loom 侧闸。 */
+/** 日预算（Asia/Shanghai 自然日）。默认 40 = producer 谨慎档；env 可调低做更保守的 loom 侧闸（0 = 当日禁抓，operator kill-switch）。 */
 export function jyeooDailyFetchBudget(): number {
   const raw = process.env.JYEOO_DAILY_FETCH_BUDGET;
   if (!raw) return 40;
   const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : 40;
+  return Number.isFinite(n) && n >= 0 ? n : 40;
 }
 
 /** Asia/Shanghai（UTC+8，无 DST）当日 00:00 的 UTC 时刻。producer 预算文件同此自然日口径。 */
@@ -33,7 +33,7 @@ export function shanghaiDayStart(now: Date): Date {
 }
 
 /** 当日已 fetched 总量（成功 canary 事件的 counts.fetched 求和）。 */
-export async function jyeooFetchedToday(db: Db, now: Date): Promise<number> {
+export async function jyeooFetchedToday(db: Db, now: Date = new Date()): Promise<number> {
   const rows = await db.execute<{ fetched: number | null }>(sql`
     select coalesce(sum((payload->'counts'->>'fetched')::int), 0) as fetched
     from ${event}
@@ -48,7 +48,7 @@ export async function jyeooFetchedToday(db: Db, now: Date): Promise<number> {
 }
 
 /** 剩余额度；0 = 当日预算已尽（fetch tool 应以 budget_exhausted 短路）。 */
-export async function jyeooBudgetRemaining(db: Db, now: Date): Promise<number> {
+export async function jyeooBudgetRemaining(db: Db, now: Date = new Date()): Promise<number> {
   const used = await jyeooFetchedToday(db, now);
   return Math.max(0, jyeooDailyFetchBudget() - used);
 }
