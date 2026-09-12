@@ -1,8 +1,16 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-12：987 交付——供给需求层 planner agent + SupplyPlan 机器门入 main 454458ccd，Mac 生产同 SHA 健康、planner cron(05:50 CST) 已注册；985 epic 剩 988（执行面统一）。
+> Linear 是权威 tracker；更新于 2026-09-12：988 交付——供给执行面统一（确定性 plan executor + web 候选工具化 + sourcing 单体退休）入 main 07df98a84，Mac 生产同 SHA 健康；985 epic 三片全 Done，epic 关闭。
 
 ## NOW
+
+- 988 Done：供给执行面统一入 main 07df98a84（PR1381 exact CI 全绿；Oracle 初 FAIL 六 P1 → 修复批 463b1e16b → 验证审 PASS + P2 一行；migrate 热修 PR1382）。
+  web-candidates 核（SourcingTask 收敛为工具内 LLM）+ web_fetch_candidates DomainTool + plan-executor 纯确定性路由派发 + supply_execute job（agent 队）+ pnpm supply:execute 手动 caller。
+  路由：jyeoo/web 共 store_sourced_question 单 seam（source_route 参数化）；quiz_gen 派发现有 job；author/ingest/image_candidate 落 manual。dispatcher sourcing_web 重指向 supply_execute；supply_planner 门后第二阶段当晚执行；sourcing 单体 job 退休。
+  六 P1 修复：逐 item executor_item 事件 + plan_event_id 幂等 + quiz_gen singletonKey 断点续跑；placementTrace + cloneSupplyTraceForRoute 按路由覆写；canary 下移核（executor 路径照计预算）；runWebRoute try/catch 续走；rejections 逐项留痕；phase-2 enqueue 重试 + 持久 failure 事件。
+  部署热修教训：barrel 边（public.ts→plan-executor→…→Agent SDK）把 SDK 拉进 build:migrate 的 cjs bundle 崩 migrate 容器（server/worker 标 external 免疫）；修复=barrel 摘导出 + build:migrate 补 external。规矩：capability barrel 新增导出先查 SDK 链入 migrate bundle。
+  Mac 生产 07df98a84：migrate exit 0 零漂移（traits 24 up-to-date），app/worker healthy，health200，pgboss supply_planner(50 5)+jyeoo_staged_asset_reap(40 3) 注册。
+  985 epic 三片（986/987/988）全 Done，epic 关闭。未结 follow-up：989（producer extract 全文 echo）/990（图片覆盖）/992（日级自动 dump）。
 
 - 987 Done：供给需求层 planner agent 入 main 454458ccd（PR1379 exact-head CI 全绿 / Oracle gate PASS 无 P0/P1）。
   SupplyPlanV1 schema + 纯机器门（活KC/词表/去重/预算声明≤剩余/空计划合法，镜像 quiz_gen_plan 范式）+ supply_planner cron 05:50 CST（llm 队；与 supply DAG 无硬边——扫描器安全网不被拖死）。
