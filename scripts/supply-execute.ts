@@ -120,7 +120,7 @@ async function main() {
     .select({ id: event.id, payload: event.payload })
     .from(event)
     .where(eq(event.action, 'experimental:supply_planner_demand'))
-    .orderBy(event.created_at);
+    .orderBy(event.created_at, event.dispatch_seq);
   const planDemandRows = demandRows.filter(
     (row) =>
       ((row.payload as { plan_event_id?: string } | null)?.plan_event_id ?? undefined) ===
