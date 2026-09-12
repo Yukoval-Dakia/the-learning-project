@@ -15,11 +15,11 @@ import { config } from 'dotenv';
 config({ path: '.env', override: false });
 
 import { and, desc, eq } from 'drizzle-orm';
+import { buildSupplyExecutorDeps } from '@/capabilities/practice/jobs/supply_execute';
 import {
   type SupplyDemandItem,
-  buildSupplyExecutorDeps,
   executeSupplyPlan,
-} from '@/capabilities/practice/public';
+} from '@/capabilities/practice/server/question-supply/plan-executor';
 import { SupplyPlanV1 } from '@/core/schema/supply_plan';
 import { db } from '@/db/client';
 import { event } from '@/db/schema';
