@@ -180,6 +180,7 @@ async function main(): Promise<void> {
     }
 
     const stored = await storeSourcedQuestionTool.execute(ctx, {
+      source_route: 'jyeoo_fetch',
       candidate: {
         candidate_id: candidate.candidate_id,
         question: candidate.question,

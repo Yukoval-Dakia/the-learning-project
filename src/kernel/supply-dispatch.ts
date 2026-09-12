@@ -1,4 +1,4 @@
-type SupplyDispatchQueue = 'sourcing' | 'quiz_gen';
+type SupplyDispatchQueue = 'supply_execute' | 'quiz_gen';
 
 export async function enqueueSupplyDispatchJob(
   queue: SupplyDispatchQueue,

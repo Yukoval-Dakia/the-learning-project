@@ -43,6 +43,10 @@ export const READ_TOOLS = [
   // only, NO surface grant (E3/YUK-988 grants the supply-executor surface).
   // Filtered out of Maintenance below (same containment as generate_* tools).
   'jyeoo_fetch_candidates',
+  // YUK-988 (Supply-Agent/3) — web-route candidate fetch (Tavily search +
+  // SourcingTask extraction). E3: registry only, NO surface grant. Filtered out
+  // of Maintenance below (same containment as jyeoo_fetch_candidates).
+  'web_fetch_candidates',
   // YUK-293 — expiring AI-to-AI hints. Granted only to copilot / dreaming /
   // coach below; evaluator and operator surfaces filter it out.
   'read_agent_notes',
@@ -286,6 +290,7 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
     | 'generate_goal_outline'
     | 'generate_question_candidate'
     | 'jyeoo_fetch_candidates'
+    | 'web_fetch_candidates'
     | 'read_agent_notes'
   > =>
     name !== 'search_memory_facts' &&
@@ -294,6 +299,7 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
     name !== 'generate_goal_outline' &&
     name !== 'generate_question_candidate' &&
     name !== 'jyeoo_fetch_candidates' &&
+    name !== 'web_fetch_candidates' &&
     name !== 'read_agent_notes',
 );
 

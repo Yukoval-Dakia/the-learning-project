@@ -161,8 +161,13 @@ interface CapturedCall {
   input: Record<string, unknown>;
 }
 
-function fakeDeps(planTexts: string[]): { deps: SupplyPlannerDeps; calls: CapturedCall[] } {
+function fakeDeps(planTexts: string[]): {
+  deps: SupplyPlannerDeps;
+  calls: CapturedCall[];
+  enqueued: Array<Record<string, unknown>>;
+} {
   const calls: CapturedCall[] = [];
+  const enqueued: Array<Record<string, unknown>> = [];
   let i = 0;
   const deps: SupplyPlannerDeps = {
     now: () => NOW,
@@ -173,8 +178,12 @@ function fakeDeps(planTexts: string[]): { deps: SupplyPlannerDeps; calls: Captur
       i += 1;
       return Promise.resolve({ text, task_run_id: `run-${i}`, cost_usd: 0.001 * i });
     },
+    enqueueSupplyExecute: (data) => {
+      enqueued.push(data);
+      return Promise.resolve('job-exec-1');
+    },
   };
-  return { deps, calls };
+  return { deps, calls, enqueued };
 }
 
 async function eventsByAction(action: string) {
@@ -190,13 +199,14 @@ describe('runSupplyPlanner', () => {
     await seedMastery('kc-2', 3);
     await seedPendingClaim('kc-2');
     await seedOpenLearningItem(['kc-2']); // kc-2 进扫描器前缘 → frontier_zero 目标
-    const { deps, calls } = fakeDeps([validPlanJson()]);
+    const { deps, calls, enqueued } = fakeDeps([validPlanJson()]);
 
     const result = await runSupplyPlanner(db, deps);
 
     expect(result.outcome).toBe('accepted');
     expect(result.planItems).toBe(2);
     expect(result.demandEvents).toBe(2);
+    expect(result.executeJobId).toBe('job-exec-1');
     expect(result.attempts).toBe(1);
     expect(calls).toHaveLength(1);
     expect(calls[0]?.kind).toBe('SupplyPlanTask');
@@ -245,6 +255,23 @@ describe('runSupplyPlanner', () => {
     // kc-2 有掌握信号且零可用题 → 扫描器 R1 目标应含 kc-2
     expect(shadowPayload.scanner_target_count).toBeGreaterThan(0);
     expect(shadowPayload.overlap).toContain('kc-2');
+
+    // phase-2（YUK-988 E3）：accepted plan 入队 supply_execute——plan_event_id 幂等键
+    // + 逐项 demand_id（对应 demand 事件 id）+ claim 透传 + 路由偏好全量不截断。
+    expect(enqueued).toHaveLength(1);
+    const execData = enqueued[0] as {
+      plan_event_id: string;
+      items: Array<Record<string, unknown>>;
+    };
+    expect(execData.plan_event_id).toBe(runEvent.id);
+    expect(execData.items).toHaveLength(2);
+    const kc2Item = execData.items.find((it) => it.knowledge_id === 'kc-2');
+    if (!kc2Item) throw new Error('kc-2 executor item missing');
+    expect(kc2Item.placement_claim_id).toBe('claim-1');
+    expect(Array.isArray(kc2Item.route_preference)).toBe(true);
+    const demandIds = execData.items.map((it) => it.demand_id as string);
+    const demandEventIds = demandEvents.map((row) => row.id);
+    expect(demandIds.every((id) => demandEventIds.includes(id))).toBe(true);
   });
 
   it('rejected：门拒 fail closed（零 demand、rejected 事件、job 不抛），shadow 仍写', async () => {

@@ -191,6 +191,7 @@ describe('DomainTool allowlist policy', () => {
           name !== 'generate_goal_outline' &&
           name !== 'generate_question_candidate' &&
           name !== 'jyeoo_fetch_candidates' &&
+          name !== 'web_fetch_candidates' &&
           name !== 'read_agent_notes',
       ),
       'propose_knowledge_edge',

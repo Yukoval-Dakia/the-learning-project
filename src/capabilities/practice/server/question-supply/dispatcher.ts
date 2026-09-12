@@ -7,9 +7,12 @@
 // **不建新的整体获取任务、不建新 AI task**（Task 13 红线：deterministic-first，确定性缺口扫描
 // 够用就不加 AI task）。本 dispatcher 是薄 IO 层：把一个 target 选定的路由 → 既有 job/task 调用。
 //
-// 路由 → 既有面映射（架构 doc §Route Planner「Mapping to current code」）：
-//   - sourcing_web    → boss.send('sourcing', { trigger:'knowledge', ref_id, count, knowledge_id, kind })
-//                       （SourcingTask web 既存题，链 source_verify，src/capabilities/practice/jobs/sourcing.ts）
+// 路由 → 既有面映射（架构 doc §Route Planner「Mapping to current code」；YUK-988 E3 起
+// sourcing_web 重指向供给执行 job）：
+//   - sourcing_web    → boss.send('supply_execute', { plan_event_id: null, items: [{ demand_id, knowledge_id,
+//                       count, kind, route_preference: ['sourcing_web'], … }], supply_trace })
+//                       （确定性 plan executor：web SourcingTask 候选产线在工具内部，链
+//                       store_sourced_question commit seam + source_verify，question-supply/plan-executor.ts）
 //   - quiz_gen        → boss.send('quiz_gen', { trigger:'knowledge', ref_id, count, generation_method,
 //                       knowledge_id, kind })（仅当显式要 material/closed_book 生成卷题时；archive doc
 //                       Open Decision：只在 bundled quiz/paper 显式需要时走）
@@ -34,7 +37,7 @@ import { planSupplyRoutes } from './route-planner';
 import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
 
 /** pg-boss queues the dispatcher can auto-enqueue into. */
-type DispatchQueue = 'sourcing' | 'quiz_gen';
+type DispatchQueue = 'supply_execute' | 'quiz_gen';
 
 /**
  * Auto-dispatchable SupplyRoute → pg-boss queue. THE single source of the auto-dispatch
@@ -43,7 +46,7 @@ type DispatchQueue = 'sourcing' | 'quiz_gen';
  * key/value types checked while preserving the literal keys for the derived Set.
  */
 const AUTO_ROUTE_TO_QUEUE: Partial<Record<SupplyRoute, DispatchQueue>> = {
-  sourcing_web: 'sourcing',
+  sourcing_web: 'supply_execute',
   quiz_gen: 'quiz_gen',
 };
 
@@ -322,7 +325,7 @@ export async function dispatchSupplyTarget(
         reason: target.reason,
       };
     } else {
-      // 自动派：AUTO_ROUTE_TO_QUEUE 单源映射（sourcing_web→'sourcing'，quiz_gen→'quiz_gen'）。
+      // 自动派：AUTO_ROUTE_TO_QUEUE 单源映射（sourcing_web→'supply_execute'，quiz_gen→'quiz_gen'）。
       const queue: DispatchQueue = resolveDispatchQueue(autoRoute);
       const dispatchTrace = traceFor(autoRoute);
       const commonData = {
@@ -363,8 +366,26 @@ export async function dispatchSupplyTarget(
               ...(placementTrace ? { supply_trace: placementTrace } : {}),
             }
           : null;
-      const nonQuizData = {
-        ...commonData,
+      // YUK-988 E3 — sourcing_web 分支重指向确定性 executor：单路由需求项（chosen
+      // route 派发时定死，与旧 sourcing job 行为等价——web 失败不落 quiz_gen，缺口由
+      // 下次扫描复现再派）。supply_trace 顶层携带，executor 透传进每个 store commit。
+      const executorData = {
+        plan_event_id: null,
+        items: [
+          {
+            demand_id: `dispatch_${target.id}_${newId()}`,
+            knowledge_id: anchorKid,
+            kind: target.kind && target.kind !== 'any' ? target.kind : 'any',
+            difficulty_band: null,
+            count: target.desiredCount,
+            route_preference: [autoRoute],
+            ...(target.placementStarter
+              ? { placement_claim_id: target.placementStarter.claimId }
+              : {}),
+            ...(target.constraints.objectiveOnly ? { objective_only: true } : {}),
+            ...(target.constraints.kindRequired ? { kind_required: true } : {}),
+          },
+        ],
         ...(dispatchTrace ? { supply_trace: dispatchTrace } : {}),
       };
       try {
@@ -376,7 +397,8 @@ export async function dispatchSupplyTarget(
           const { trigger, ref_id, ...rest } = quizGenData;
           jobId = await enqueue(queue, { trigger, ref_id, ...rest });
         } else {
-          jobId = await enqueue(queue, nonQuizData);
+          // sourcing_web（supply_execute 队列）——executor 单路由需求项。
+          jobId = await enqueue(queue, executorData);
         }
         result = {
           targetId: target.id,
