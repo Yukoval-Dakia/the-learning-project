@@ -274,6 +274,31 @@ describe('runSupplyPlanner', () => {
     expect(demandIds.every((id) => demandEventIds.includes(id))).toBe(true);
   });
 
+  it('phase-2 enqueue 两次失败：写持久 failure 事件，planner 结果不翻转（Oracle P1-6）', async () => {
+    await seedKnowledge();
+    await seedQuestion(['kc-1']);
+    await seedQuestion(['kc-2'], 'draft');
+    await seedMastery('kc-2', 3);
+    await seedOpenLearningItem(['kc-2']);
+    const { deps } = fakeDeps([validPlanJson()]);
+    deps.enqueueSupplyExecute = () => Promise.reject(new Error('boss down（测试 fake）'));
+
+    const result = await runSupplyPlanner(db, deps);
+
+    // planner 自身仍 accepted；执行入队持久失败留痕。
+    expect(result.outcome).toBe('accepted');
+    expect(result.executeJobId).toBeNull();
+    const failEvents = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:supply_planner_execute'));
+    expect(failEvents).toHaveLength(1);
+    const failPayload = failEvents[0].payload as { plan_event_id: string; reason: string };
+    expect(failPayload.plan_event_id).toBe(result.planEventId);
+    expect(failPayload.reason).toBe('enqueue_failed');
+    expect(failEvents[0].outcome).toBe('failure');
+  });
+
   it('rejected：门拒 fail closed（零 demand、rejected 事件、job 不抛），shadow 仍写', async () => {
     await seedKnowledge();
     // 两轮都出查无此点的计划

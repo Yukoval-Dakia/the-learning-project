@@ -446,31 +446,49 @@ export async function runSupplyPlanner(
   // （plan 事件已写、扫描器安全网仍在）——日志给出手动重跑命令后继续。
   let executeEnqueued: string | null | undefined;
   if (acceptedPlan !== null && demandEventIds.length > 0) {
+    const executePayload: Record<string, unknown> = {
+      plan_event_id: planEventId,
+      items: acceptedPlan.items.map((item, index) => ({
+        demand_id: demandEventIds[index],
+        knowledge_id: item.knowledge_id,
+        kind: item.kind,
+        difficulty_band: item.difficulty_band ?? null,
+        count: item.count,
+        route_preference: item.route_preference,
+        ...(claimByKnowledgeId.has(item.knowledge_id)
+          ? {
+              placement_claim_id: claimByKnowledgeId.get(item.knowledge_id),
+            }
+          : {}),
+      })),
+    };
+    const enqueueExecute =
+      deps.enqueueSupplyExecute ??
+      ((data: Record<string, unknown>) => enqueueSupplyDispatchJob('supply_execute', data));
     try {
-      executeEnqueued = await (
-        deps.enqueueSupplyExecute ?? ((data) => enqueueSupplyDispatchJob('supply_execute', data))
-      )({
-        plan_event_id: planEventId,
-        items: acceptedPlan.items.map((item, index) => ({
-          demand_id: demandEventIds[index],
-          knowledge_id: item.knowledge_id,
-          kind: item.kind,
-          difficulty_band: item.difficulty_band ?? null,
-          count: item.count,
-          route_preference: item.route_preference,
-          ...(claimByKnowledgeId.has(item.knowledge_id)
-            ? {
-                placement_claim_id: claimByKnowledgeId.get(item.knowledge_id),
-              }
-            : {}),
-        })),
-      });
+      // 一次内联重试捱瞬时 boss 抖动；二次仍败 → 持久失败事件 + 手动重跑指令（Oracle P1-6）。
+      executeEnqueued =
+        (await enqueueExecute(executePayload)) ?? (await enqueueExecute(executePayload));
     } catch (enqueueError) {
+      executeEnqueued = null;
       console.error(
-        `[supply_planner] phase-2 enqueue failed (plan stands; scanner safety net unaffected; manual rerun: pnpm supply:execute --plan ${planEventId}):`,
+        `[supply_planner] phase-2 enqueue failed twice (plan stands; scanner safety net unaffected; manual rerun: pnpm supply:execute --plan ${planEventId}):`,
         enqueueError,
       );
-      executeEnqueued = null;
+    }
+    if (executeEnqueued === null) {
+      await writeEvent(db, {
+        id: `supply_planner_execute_${createId()}`,
+        actor_kind: 'agent',
+        actor_ref: 'supply_planner',
+        action: 'experimental:supply_planner_execute',
+        subject_kind: 'subject',
+        subject_id: PLANNER_HOST_SUBJECT,
+        outcome: 'failure',
+        payload: { version: 1, plan_event_id: planEventId, reason: 'enqueue_failed' },
+        ingest_at: now,
+        created_at: now,
+      });
     }
   }
 

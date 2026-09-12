@@ -13,9 +13,13 @@
 // 本模块只做路由决策、归属解析（jyeoo hints → 知识树精确名匹配 / web 锚点前置）与
 // 单次完成事件（experimental:supply_executor，#598 canary 单写规则）。
 //
-// 幂等：执行前查同 plan_event_id 的 executor 事件 → already_executed 短路。部分崩溃
-// 重跑由 store seam 的 duplicate_exact（canonical hash 权威判定 + ON CONFLICT 兜并发）
-// 天然去重——重跑只会把已入库候选折成 merge，不会堆重复行。
+// 幂等（YUK-988 Oracle P1-1）：执行前查同 plan_event_id 的 executor 完成事件 →
+// already_executed 全量短路；每个 item 完成即写 experimental:supply_executor_item
+// 增量事件，崩溃重跑按 demand_id 跳过已完成 item（resume 语义——重跑只补 undone
+// item，单 item 内的副作用窗口收敛到该 item）；quiz_gen 派发带 singletonKey
+// （plan_event_id + demand_id 派生）封崩溃窗口内的重复入队。store seam 的
+// duplicate_exact 仍是数据面兜底。plan_event_id null（scanner/手动）无幂等事件，
+// 沿用只靠 store seam 去重的旧语义。
 //
 // 纯模块纪律（ownership/boundary，镜像 web-candidates.ts）：不 import '@/server/'。
 // 外部效果（web LLM 相位、pg-boss enqueue、image proposal 写）全部依赖注入；
@@ -33,7 +37,7 @@ import {
   type StoreSourcedQuestionDeps,
   executeStoreSourcedQuestion,
 } from '../tools/store-sourced-question';
-import type { SupplyTraceV1T } from './evidence-demand';
+import { SupplyTraceV1, type SupplyTraceV1T } from './evidence-demand';
 import { jyeooBudgetRemaining } from './jyeoo-budget';
 import {
   type JyeooCandidate,
@@ -125,13 +129,22 @@ export interface ImageCandidateProposalArgs {
   created_at: Date;
 }
 
+/** quiz_gen 派发的可选 enqueue 选项（P1-1：崩溃窗口幂等键透传到 pg-boss）。 */
+export interface EnqueueQuizGenDispatchOptions {
+  /** pg-boss 单例键——同 (plan_event_id, demand_id) 重投不重复入队（由 runQuizGenRoute 派生）。 */
+  singletonKey?: string;
+}
+
 export interface ExecuteSupplyPlanDeps {
   /** web 候选生产线（必填注入——真身在 tools/web-fetch-candidates.ts 装配）。 */
   runWebFetchCandidates: RunWebFetchCandidatesFn;
   /** jyeoo 抓取核（缺省 = 兄弟模块真身）。 */
   runJyeooFetchCandidates?: RunJyeooFetchCandidatesFn;
   /** quiz_gen 队列 enqueue（失败抛出——pg-boss 语义保留，不让 executor 吞掉）。 */
-  enqueueQuizGen: (payload: QuizGenDispatchPayload) => Promise<string | undefined>;
+  enqueueQuizGen: (
+    payload: QuizGenDispatchPayload,
+    opts?: EnqueueQuizGenDispatchOptions,
+  ) => Promise<string | undefined>;
   /** image_candidate proposal 写入；提供时 web imageCandidates 落 proposal（旧 sourcing 行为）。 */
   writeImageCandidateProposal?: (args: ImageCandidateProposalArgs) => Promise<unknown>;
   /** store seam 的 verify enqueue 注入口（生产缺省 = seam 自身默认 pg-boss；db 测试注入 fake）。 */
@@ -171,8 +184,14 @@ export interface RouteExecutionTally {
   acquired: number;
   committed: number;
   opportunistic: number;
-  /** status='skipped' 时的确定性原因（jyeoo_budget / failureClass / route_not_executable…）。 */
+  /** status='skipped' 时的确定性原因（jyeoo_budget / failureClass / llm / spawn / route_not_executable…）。 */
   skipped?: string;
+  /** skipped 原因的补充说明（未预期异常 message / supply_trace 丢弃备注）。 */
+  detail?: string;
+  /** per-candidate store 拒绝计数（reason→count：duplicate_exact / near_dup / dead_knowledge_node / foreign_host）。 */
+  rejections: Record<string, number>;
+  /** per-candidate store commit 未预期异常计数（软失败，不中断路由）。 */
+  errors: number;
   /** jyeoo 候选因 hints 与科目根都解析不出归属而被放弃提交的数量（观测）。 */
   unattributable?: number;
   /** status='dispatched' 时的 pg-boss job id。 */
@@ -206,6 +225,9 @@ export type ExecuteSupplyPlanResult =
   | { status: 'already_executed'; priorEventId: string };
 
 export const SUPPLY_EXECUTOR_EVENT_ACTION = 'experimental:supply_executor';
+
+/** P1-1 逐 item 增量完成事件：崩溃重跑的 resume 凭证（demand_id 粒度幂等）。 */
+export const SUPPLY_EXECUTOR_ITEM_EVENT_ACTION = 'experimental:supply_executor_item';
 
 // ── 锚点解析（镜像 supply_planner.loadLiveKnowledge 的 parent 链有效 domain 求解） ──
 
@@ -259,7 +281,43 @@ async function priorExecutorEvent(db: Db, planEventId: string): Promise<string |
   return rows[0]?.id ?? null;
 }
 
+/**
+ * P1-1 resume 探针：同 plan_event_id 下已有增量完成事件的 demand_id 集合——崩溃
+ * 重跑只补 undone item（上次运行死在完成事件之前时，逐 item 事件仍在）。
+ */
+async function priorItemDemandIds(db: Db, planEventId: string): Promise<Set<string>> {
+  const rows = await db
+    .select({ demandId: sql<string | null>`${event.payload}->>'demand_id'` })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, SUPPLY_EXECUTOR_ITEM_EVENT_ACTION),
+        sql`${event.payload}->>'plan_event_id' = ${planEventId}`,
+      ),
+    );
+  return new Set(rows.map((row) => row.demandId).filter((id): id is string => id !== null));
+}
+
 // ── commit seam 适配（JyeooCandidate / WebCandidate → store Input 的 snake_case） ──
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * P1-2：supply_trace 的路由级克隆——顶层 trace 的 producer_route 覆写为实际执行的
+ * 路由（fallback 路由不得继承 planner 标注的 producer_route）。caller 侧 trace 是
+ * job payload z.unknown() 的未校验透传，覆写后必须 safeParse 复验：失败返回 null
+ * （caller 丢弃 trace 并在 tally.detail 留痕，绝不盲 cast）；无 trace 返回 undefined。
+ */
+function cloneSupplyTraceForRoute(
+  trace: SupplyTraceV1T | undefined,
+  producerRoute: 'jyeoo_fetch' | 'sourcing_web',
+): SupplyTraceV1T | null | undefined {
+  if (trace === undefined) return undefined;
+  const parsed = SupplyTraceV1.safeParse({ ...trace, producer_route: producerRoute });
+  return parsed.success ? parsed.data : null;
+}
 
 type StoreCandidateInput = Parameters<typeof executeStoreSourcedQuestion>[1]['candidate'];
 
@@ -291,17 +349,27 @@ function webCandidateToStoreInput(candidate: WebCandidate): StoreCandidateInput 
   };
 }
 
+/** commit 单候选的判别结果（P1-5：per-candidate 轨迹不再坍缩为 null）。 */
+export type CommitCandidateResult =
+  | { status: 'inserted'; questionId: string }
+  | {
+      status: 'rejected';
+      /** store seam 的拒绝 reason 原样透传（outputSchema 的四值枚举）。 */
+      reason: 'dead_knowledge_node' | 'duplicate_exact' | 'near_dup' | 'foreign_host';
+    }
+  | { status: 'threw'; detail: string };
+
 /**
- * 单候选 commit。软拒绝/未预期异常都捕获为 null（per-candidate 失败不上抛——
- * 路由失败与单候选失败都不得中断其余 item；store 抛错时 staged 资产由其自身
- * cleanup + reaper 兜底）。成功返回 question_id。
+ * 单候选 commit。软拒绝返回 rejected（store seam 的 reason 透传）；未预期异常捕获为
+ * threw（per-candidate 失败不上抛——路由失败与单候选失败都不得中断其余 item；store
+ * 抛错时 staged 资产由其自身 cleanup + reaper 兜底）。成功返回 inserted + questionId。
  */
 async function commitCandidate(
   db: Db,
   ctx: { taskRunId: string; causedByEventId: string | null },
   input: Parameters<typeof executeStoreSourcedQuestion>[1],
   storeDeps: StoreSourcedQuestionDeps = {},
-): Promise<string | null> {
+): Promise<CommitCandidateResult> {
   try {
     const output = await executeStoreSourcedQuestion(
       {
@@ -312,11 +380,18 @@ async function commitCandidate(
       input,
       storeDeps,
     );
-    return output.status === 'inserted' ? output.question_id : null;
+    return output.status === 'inserted'
+      ? { status: 'inserted', questionId: output.question_id }
+      : { status: 'rejected', reason: output.reason };
   } catch (err) {
     console.error('[supply_executor] store commit threw; candidate dropped:', err);
-    return null;
+    return { status: 'threw', detail: errorMessage(err) };
   }
+}
+
+/** P1-5：路由 tally 的 per-candidate 拒绝计数（reason→count）。 */
+function recordRejection(tally: RouteExecutionTally, reason: string): void {
+  tally.rejections[reason] = (tally.rejections[reason] ?? 0) + 1;
 }
 
 // ── 路由执行 ─────────────────────────────────────────────────────────────────
@@ -329,8 +404,10 @@ interface RouteRunContext {
   subjectProfile: SubjectProfile;
   taskRunId: string;
   causedByEventId: string | null;
+  /** planner 事件 id（P1-1：quiz_gen singletonKey 派生键；null = scanner/手动）。 */
+  planEventId: string | null;
   now: Date;
-  /** 供应链路（可选）——透传进 sourced 路由 store commit。 */
+  /** 供应链路（可选）——透传进 sourced 路由 store commit（P1-2：路由级克隆后使用）。 */
   supplyTrace?: SupplyTraceV1T;
   /** 还需获取的数量（执行中递减）。 */
   remaining: number;
@@ -353,6 +430,8 @@ async function runJyeooRoute(
     acquired: 0,
     committed: 0,
     opportunistic: 0,
+    rejections: {},
+    errors: 0,
   };
   if (!config) {
     tally.skipped = 'jyeoo_unconfigured';
@@ -371,19 +450,28 @@ async function runJyeooRoute(
       ? (run.item.difficultyBand as DifficultyBand)
       : undefined;
   const fetchFn = deps.runJyeooFetchCandidates ?? runJyeooFetchCandidates;
-  const result = await fetchFn({
-    db: run.db,
-    input: {
-      grade: config.grade,
-      subject: config.subject ?? 'math2',
-      pages: config.pages ?? 2,
-      maxPapers: config.maxPapers ?? 2,
-      sessionMax,
-      ...(run.item.kind !== 'any' ? { kind: run.item.kind } : {}),
-      ...(band ? { difficultyBand: band } : {}),
-    },
-    now: run.now,
-  });
+  let result: JyeooFetchCandidatesResult;
+  try {
+    result = await fetchFn({
+      db: run.db,
+      input: {
+        grade: config.grade,
+        subject: config.subject ?? 'math2',
+        pages: config.pages ?? 2,
+        maxPapers: config.maxPapers ?? 2,
+        sessionMax,
+        ...(run.item.kind !== 'any' ? { kind: run.item.kind } : {}),
+        ...(band ? { difficultyBand: band } : {}),
+      },
+      now: run.now,
+    });
+  } catch (err) {
+    // P1-4：抓取核未预期异常（子进程崩溃/网络栈炸等）确定性降级为 skipped:'spawn'，
+    // 路由回落继续，不把整个 job 送 retry/DLQ。预算查询等 DB 错误在 catch 之外，仍上抛。
+    tally.skipped = 'spawn';
+    tally.detail = errorMessage(err);
+    return tally;
+  }
 
   if (result.status === 'budget_exhausted') {
     tally.skipped = 'jyeoo_budget';
@@ -395,6 +483,12 @@ async function runJyeooRoute(
   }
 
   tally.status = 'ok';
+  // P1-2：trace 路由级克隆（producer_route 覆写）；复验失败丢弃并留痕 detail。
+  const routeTrace = cloneSupplyTraceForRoute(run.supplyTrace, 'jyeoo_fetch');
+  if (routeTrace === null) {
+    tally.detail =
+      'supply_trace dropped: failed SupplyTraceV1 revalidation after producer_route override';
+  }
   for (const candidate of result.candidates) {
     // 归属解析延后到 commit（fetch 核只透传 hints）——确定性精确名匹配，不做模糊匹配。
     const matched =
@@ -417,7 +511,7 @@ async function runJyeooRoute(
       attributionState = 'coarse';
     }
 
-    const questionId = await commitCandidate(
+    const commit = await commitCandidate(
       run.db,
       run,
       {
@@ -427,11 +521,18 @@ async function runJyeooRoute(
         attribution_state: attributionState,
         subject_id: run.subjectProfile.id,
         ...(run.item.demandId ? { demand_id: run.item.demandId } : {}),
-        ...(run.supplyTrace ? { supply_trace: run.supplyTrace } : {}),
+        ...(routeTrace ? { supply_trace: routeTrace } : {}),
       },
       deps.enqueueSourceVerify ? { enqueueSourceVerify: deps.enqueueSourceVerify } : {},
     );
-    if (questionId === null) continue; // rejected（含 duplicate_exact）/ 抛错：不计数，继续批内后续
+    if (commit.status === 'rejected') {
+      recordRejection(tally, commit.reason);
+      continue; // 拒绝不入 committed，继续批内后续候选
+    }
+    if (commit.status === 'threw') {
+      tally.errors += 1;
+      continue;
+    }
     tally.committed += 1;
     if (knowledgeIds.includes(run.item.knowledgeId)) {
       tally.acquired += 1;
@@ -459,24 +560,36 @@ async function runWebRoute(
     acquired: 0,
     committed: 0,
     opportunistic: 0,
+    rejections: {},
+    errors: 0,
   };
 
-  const result = await deps.runWebFetchCandidates({
-    db: run.db,
-    input: {
-      anchorKnowledgeId: run.item.knowledgeId,
-      count: run.remaining,
-      ...(run.item.kind !== 'any' ? { kind: run.item.kind } : {}),
-      ...(run.item.objectiveOnly ? { objectiveOnly: true } : {}),
-      ...(run.item.kindRequired ? { kindRequired: true } : {}),
-      subjectProfile: run.subjectProfile,
-    },
-    ctx: {
-      taskRunId: run.taskRunId,
-      ...(run.causedByEventId ? { causedByEventId: run.causedByEventId } : {}),
-    },
-    now: run.now,
-  });
+  let result: RunWebFetchCandidatesResult;
+  try {
+    result = await deps.runWebFetchCandidates({
+      db: run.db,
+      input: {
+        anchorKnowledgeId: run.item.knowledgeId,
+        count: run.remaining,
+        ...(run.item.kind !== 'any' ? { kind: run.item.kind } : {}),
+        ...(run.item.objectiveOnly ? { objectiveOnly: true } : {}),
+        ...(run.item.kindRequired ? { kindRequired: true } : {}),
+        subjectProfile: run.subjectProfile,
+      },
+      ctx: {
+        taskRunId: run.taskRunId,
+        ...(run.causedByEventId ? { causedByEventId: run.causedByEventId } : {}),
+      },
+      now: run.now,
+    });
+  } catch (err) {
+    // P1-4：注入的 web 生产线（含 LLM 相位）未预期异常确定性降级为 skipped:'llm'，
+    // 路由回落（如 quiz_gen），不把整个 job 送 retry/DLQ；生产线自身的 failed
+    // 返回仍走 failureClass 路径（下方），两类都 deterministic。
+    tally.skipped = 'llm';
+    tally.detail = errorMessage(err);
+    return tally;
+  }
 
   if (result.status === 'failed') {
     tally.skipped = result.failureClass;
@@ -484,6 +597,12 @@ async function runWebRoute(
   }
 
   tally.status = 'ok';
+  // P1-2：trace 路由级克隆（producer_route 覆写）；复验失败丢弃并留痕 detail。
+  const routeTrace = cloneSupplyTraceForRoute(run.supplyTrace, 'sourcing_web');
+  if (routeTrace === null) {
+    tally.detail =
+      'supply_trace dropped: failed SupplyTraceV1 revalidation after producer_route override';
+  }
 
   // imageCandidates → proposal（旧 sourcing 同款：pending inbox + ADR-0002；URL 同时
   // 出现在文本题里的候选跳过——文本题已入库，accept 再抽会堆重复）。
@@ -533,7 +652,7 @@ async function runWebRoute(
       run.item.knowledgeId,
       ...candidateIds.filter((id) => id !== run.item.knowledgeId),
     ];
-    const questionId = await commitCandidate(
+    const commit = await commitCandidate(
       run.db,
       run,
       {
@@ -543,11 +662,18 @@ async function runWebRoute(
         attribution_state: 'matched', // 上游 live 校验 + 锚点发起，归属诚实
         subject_id: run.subjectProfile.id,
         ...(run.item.demandId ? { demand_id: run.item.demandId } : {}),
-        ...(run.supplyTrace ? { supply_trace: run.supplyTrace } : {}),
+        ...(routeTrace ? { supply_trace: routeTrace } : {}),
       },
       deps.enqueueSourceVerify ? { enqueueSourceVerify: deps.enqueueSourceVerify } : {},
     );
-    if (questionId === null) continue; // duplicate_exact / rejected：不计数，继续下一候选
+    if (commit.status === 'rejected') {
+      recordRejection(tally, commit.reason);
+      continue; // 拒绝不入 committed，继续下一候选
+    }
+    if (commit.status === 'threw') {
+      tally.errors += 1;
+      continue;
+    }
     tally.committed += 1;
     tally.acquired += 1;
     run.remaining -= 1;
@@ -575,13 +701,22 @@ async function runQuizGenRoute(
     ...(run.item.kindRequired ? { kind_required: true } : {}),
     ...(run.item.placementClaimId ? { placement_starter_claim_id: run.item.placementClaimId } : {}),
   };
-  const jobId = await deps.enqueueQuizGen(payload);
+  // P1-1：enqueue 与逐 item 完成事件之间的崩溃窗口用 pg-boss 单例键封——同
+  // (plan_event_id, demand_id) 重投不重复入队。scanner/手动（planEventId null）
+  // 无键，沿用裸 enqueue 语义。
+  const singletonKey =
+    run.planEventId !== null && run.item.demandId
+      ? `supply_exec_${run.planEventId}_${run.item.demandId}`
+      : undefined;
+  const jobId = await deps.enqueueQuizGen(payload, singletonKey ? { singletonKey } : undefined);
   return {
     route: 'quiz_gen',
     status: 'dispatched',
     acquired: 0,
     committed: 0,
     opportunistic: 0,
+    rejections: {},
+    errors: 0,
     ...(typeof jobId === 'string' ? { job_id: jobId } : {}),
   };
 }
@@ -602,7 +737,7 @@ export async function executeSupplyPlan(
   const taskRunId = params.ctx?.taskRunId ?? `supply_executor_${createId()}`;
   const causedByEventId = params.ctx?.causedByEventId ?? null;
 
-  // ── 幂等：同 plan_event_id 已执行过 → 短路（无新写） ─────────────────────────
+  // ── 幂等：同 plan_event_id 已执行过 → 短路（无新写） ─────────────────────
   if (params.planEventId !== null) {
     const priorEventId = await priorExecutorEvent(db, params.planEventId);
     if (priorEventId !== null) {
@@ -610,9 +745,51 @@ export async function executeSupplyPlan(
     }
   }
 
+  // P1-1 resume 探针：完成事件缺失（崩溃）时，已完成 item 的增量事件仍在——按
+  // demand_id 跳过，只补 undone item。
+  const doneDemandIds =
+    params.planEventId !== null ? await priorItemDemandIds(db, params.planEventId) : null;
+
   const tree = await loadLiveKnowledgeTree(db);
   const results: ItemExecutionResult[] = [];
   let dispatchedItems = 0;
+
+  /**
+   * P1-1：item 完成（含确定性跳过）即写增量事件（resume 凭证），再进 aggregate。
+   * plan_event_id null（scanner/手动直调）无幂等事件——沿用旧语义，重投去重由
+   * store seam 的 canonical hash 承担。
+   */
+  const completeItem = async (
+    item: SupplyDemandItem,
+    result: ItemExecutionResult,
+  ): Promise<void> => {
+    results.push(result);
+    if (params.planEventId === null) return;
+    await writeEvent(db, {
+      id: `supply_executor_item_${createId()}`,
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'supply_executor',
+      action: SUPPLY_EXECUTOR_ITEM_EVENT_ACTION,
+      subject_kind: 'query',
+      subject_id: params.planEventId,
+      outcome: 'success',
+      payload: {
+        plan_event_id: params.planEventId,
+        demand_id: item.demandId,
+        knowledge_id: item.knowledgeId,
+        routes: result.routes,
+        acquired: result.acquired,
+        committed: result.committed,
+        opportunistic: result.opportunistic,
+        ...(result.skipped ? { skipped: result.skipped } : {}),
+      },
+      caused_by_event_id: params.planEventId,
+      task_run_id: taskRunId,
+      cost_micro_usd: null,
+      created_at: now,
+    });
+  };
 
   for (const item of params.items) {
     const result: ItemExecutionResult = {
@@ -624,10 +801,17 @@ export async function executeSupplyPlan(
       opportunistic: 0,
     };
 
+    // P1-1 resume：该 demand 已有增量完成事件（上次崩溃前的完成凭证）→ 跳过重执行。
+    if (doneDemandIds?.has(item.demandId)) {
+      result.skipped = 'already_executed_item';
+      results.push(result);
+      continue;
+    }
+
     const anchor = tree.get(item.knowledgeId);
     if (!anchor) {
       result.skipped = 'anchor_not_found';
-      results.push(result);
+      await completeItem(item, result);
       continue;
     }
     const { domain } = effectiveDomain(tree, item.knowledgeId);
@@ -643,13 +827,14 @@ export async function executeSupplyPlan(
       ...(params.supplyTrace ? { supplyTrace: params.supplyTrace } : {}),
       taskRunId,
       causedByEventId,
+      planEventId: params.planEventId,
       now,
       remaining: item.count,
     };
 
     if (item.routePreference.length === 0) {
       result.skipped = 'no_route_preference';
-      results.push(result);
+      await completeItem(item, result);
       continue;
     }
 
@@ -671,6 +856,8 @@ export async function executeSupplyPlan(
           acquired: 0,
           committed: 0,
           opportunistic: 0,
+          rejections: {},
+          errors: 0,
           skipped: 'route_not_executable',
         };
       }
@@ -683,7 +870,7 @@ export async function executeSupplyPlan(
         break; // 已异步派发：生成经自身 job + verify 链闭环，不再走后续路由
       }
     }
-    results.push(result);
+    await completeItem(item, result);
   }
 
   const totals = {

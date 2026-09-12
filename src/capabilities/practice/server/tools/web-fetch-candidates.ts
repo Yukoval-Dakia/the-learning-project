@@ -16,13 +16,10 @@
 // 求和的契约与 jyeoo 面一致）。subject 由锚点 KC 的 domain 服务端解析（resolveSubjectProfile），
 // 不信任调用方声明。
 
-import { createId } from '@paralleldrive/cuid2';
 import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { SourcedQuestion, SourcingImageCandidate } from '@/core/schema/sourcing';
 import { knowledge } from '@/db/schema';
-import { costUsdToMicroUsd } from '@/kernel/cost';
-import { writeEvent } from '@/kernel/events';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
   type DomainToolName,
@@ -53,9 +50,6 @@ const SOURCING_READ_TOOLS = [
   'expand_knowledge_subgraph',
   'find_knowledge_paths',
 ] as const satisfies readonly DomainToolName[];
-
-// Canary action = 漏斗观测面（单写/次，含失败）。
-const WEB_FETCH_CANARY_ACTION = 'experimental:web_fetch_candidates' as const;
 
 /**
  * RunWebSourcingAgentFn 的真身：MCP 挂载（domain read tools + Tavily remote）+
@@ -210,52 +204,15 @@ export async function executeWebFetchCandidates(
       ...(input.kind_required ? { kindRequired: true } : {}),
       subjectProfile,
     },
+    // Canary 由核单写（见模块头）——本层透传归因 ctx，保证 agent 调用与 executor 直调核
+    // 产生同一条 canary（含 session/task/causal 归因）。
     ctx: {
       taskRunId: ctx.taskRunId,
+      ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
       ...(ctx.causedByEventId ? { causedByEventId: ctx.causedByEventId } : {}),
     },
     deps: { runSourcingAgent, parseLoose },
   });
-
-  // Canary 事件 = 漏斗观测面（单写/次，含失败）。事件写失败不得翻转工具结果
-  // （jyeoo_fetch_candidates 同款 try/catch）。
-  try {
-    await writeEvent(ctx.db, {
-      id: createId(),
-      session_id: ctx.sessionId ?? null,
-      actor_kind: 'agent',
-      actor_ref: 'sourcing',
-      action: WEB_FETCH_CANARY_ACTION,
-      subject_kind: 'query',
-      subject_id:
-        result.status === 'ok'
-          ? (result.taskRunId ?? `web_fetch_${createId()}`)
-          : `web_fetch_candidates_${createId()}`,
-      outcome: result.status === 'failed' ? 'failure' : 'success',
-      payload: {
-        ...input,
-        tool: 'web_fetch_candidates',
-        task_run_id: ctx.taskRunId,
-        ...(result.status === 'ok'
-          ? {
-              candidate_ids: result.candidates.map((candidate) => candidate.candidateId),
-              image_candidate_count: result.imageCandidates.length,
-              query_plan: result.queryPlan,
-              cost_usd: result.costUsd,
-            }
-          : {
-              failure_class: result.failureClass,
-              failure_detail: result.detail,
-            }),
-      },
-      caused_by_event_id: ctx.causedByEventId ?? null,
-      task_run_id: ctx.taskRunId,
-      cost_micro_usd: costUsdToMicroUsd(result.status === 'ok' ? result.costUsd : null),
-      created_at: new Date(),
-    });
-  } catch (eventErr) {
-    console.error('[web_fetch_candidates] canary event write failed; result stands:', eventErr);
-  }
 
   return toOutput(result);
 }
@@ -270,7 +227,7 @@ export const webFetchCandidatesTool: DomainTool<Input, Output> = {
   inputSchema,
   outputSchema,
   costClass: 'expensive_llm',
-  // 无 safeHandoff：canary 事件是 db 写，registry 只允许 idempotent read 远程 handoff——
+  // 无 safeHandoff：核内 canary 事件是 db 写，registry 只允许 idempotent read 远程 handoff——
   // 本工具固定 in-process 执行（与 jyeoo_fetch_candidates 同款约束）。
   mirrorEvent: 'when_causal',
   async execute(ctx, input) {

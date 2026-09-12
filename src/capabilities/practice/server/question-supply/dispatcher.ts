@@ -386,7 +386,9 @@ export async function dispatchSupplyTarget(
             ...(target.constraints.kindRequired ? { kind_required: true } : {}),
           },
         ],
-        ...(dispatchTrace ? { supply_trace: dispatchTrace } : {}),
+        ...((placementTrace ?? dispatchTrace)
+          ? { supply_trace: placementTrace ?? dispatchTrace }
+          : {}),
       };
       try {
         let jobId: string | null;

@@ -20,6 +20,7 @@ import {
   buildSupplyExecutorDeps,
   executeSupplyPlan,
 } from '@/capabilities/practice/public';
+import { SupplyPlanV1 } from '@/core/schema/supply_plan';
 import { db } from '@/db/client';
 import { event } from '@/db/schema';
 
@@ -52,6 +53,8 @@ function parseArgs(argv: string[]): CliArgs {
 
 interface PlanEventRow {
   id: string;
+  action?: string;
+  outcome?: string | null;
   payload: unknown;
 }
 
@@ -62,12 +65,24 @@ async function main() {
   let planRow: PlanEventRow | undefined;
   if (args.plan) {
     const rows = await db
-      .select({ id: event.id, payload: event.payload })
+      .select({
+        id: event.id,
+        action: event.action,
+        outcome: event.outcome,
+        payload: event.payload,
+      })
       .from(event)
       .where(eq(event.id, args.plan));
     planRow = rows[0];
     if (!planRow) {
       console.error(`计划事件不存在: ${args.plan}`);
+      process.exit(1);
+    }
+    // Oracle P2：不盲信任意事件 id——必须是 accepted 的 supply_planner 计划事件。
+    if (planRow.action !== 'experimental:supply_planner' || planRow.outcome !== 'accepted') {
+      console.error(
+        `事件 ${args.plan} 不是 accepted 的 supply_planner 计划（action=${planRow.action}, outcome=${planRow.outcome}）`,
+      );
       process.exit(1);
     }
   } else {
@@ -84,50 +99,52 @@ async function main() {
     }
   }
 
-  const payload = planRow.payload as { plan?: { items?: unknown[] } | null };
-  const planItems = payload?.plan?.items ?? [];
+  const payload = planRow.payload as { plan?: unknown } | null;
+  const planParsed = SupplyPlanV1.safeParse(payload?.plan);
+  if (!planParsed.success) {
+    console.error(
+      `计划事件 ${planRow.id} 的 plan 载荷未过 SupplyPlanV1 校验：${planParsed.error.issues.map((i) => i.message).join('; ')}`,
+    );
+    process.exit(1);
+  }
+  const planItems = planParsed.data.items;
   if (planItems.length === 0) {
-    console.error(`计划事件 ${planRow.id} 不是 accepted（无 plan.items）`);
+    console.error(`计划事件 ${planRow.id} 无 plan.items`);
     process.exit(1);
   }
 
-  // ── 2. plan items → 需求项（planner phase-2 同映射；demand_id 用事件行回查） ──
+  // ── 2. plan items → 需求项（Oracle P2：planner 逐项按 plan 顺序写 demand 事件——
+  // 按 plan_event_id 过滤后 created_at 序与 items 索引对位，同 KC 多项不串位；
+  // placement claim 从 demand 事件载荷取（plan item 本身不带）。──
   const demandRows = await db
     .select({ id: event.id, payload: event.payload })
     .from(event)
-    .where(and(eq(event.action, 'experimental:supply_planner_demand'), eq(event.outcome, 'manual')))
+    .where(eq(event.action, 'experimental:supply_planner_demand'))
     .orderBy(event.created_at);
+  const planDemandRows = demandRows.filter(
+    (row) =>
+      ((row.payload as { plan_event_id?: string } | null)?.plan_event_id ?? undefined) ===
+      planRow.id,
+  );
   const demandIdByItemIndex = new Map<number, string>();
-  for (const row of demandRows) {
-    const p = row.payload as { plan_event_id?: string; item?: { knowledge_id?: string } };
-    if (p?.plan_event_id === planRow.id && p.item?.knowledge_id) {
-      // 以 knowledge_id 对位（planner 逐项写 demand 事件，项序与 plan.items 一致）。
-      const idx = planItems.findIndex(
-        (it) => (it as { knowledge_id?: string }).knowledge_id === p.item?.knowledge_id,
-      );
-      if (idx >= 0 && !demandIdByItemIndex.has(idx)) demandIdByItemIndex.set(idx, row.id);
-    }
-  }
-
-  const items: SupplyDemandItem[] = planItems.map((raw, index) => {
-    const item = raw as {
-      knowledge_id: string;
-      kind: string;
-      difficulty_band?: string | null;
-      count: number;
-      route_preference: string[];
-      placement_claim_id?: string;
-    };
-    return {
-      demandId: demandIdByItemIndex.get(index) ?? `manual_${planRow.id}_${index}`,
-      knowledgeId: item.knowledge_id,
-      kind: item.kind,
-      difficultyBand: item.difficulty_band ?? null,
-      count: item.count,
-      routePreference: item.route_preference as SupplyDemandItem['routePreference'],
-      ...(item.placement_claim_id ? { placementClaimId: item.placement_claim_id } : {}),
-    };
+  const claimIdByItemIndex = new Map<number, string>();
+  planItems.forEach((_, index) => {
+    const row = planDemandRows[index];
+    if (!row) return;
+    demandIdByItemIndex.set(index, row.id);
+    const claimId = (row.payload as { placement_claim_id?: string } | null)?.placement_claim_id;
+    if (claimId) claimIdByItemIndex.set(index, claimId);
   });
+
+  const items: SupplyDemandItem[] = planItems.map((item, index) => ({
+    demandId: demandIdByItemIndex.get(index) ?? `manual_${planRow.id}_${index}`,
+    knowledgeId: item.knowledge_id,
+    kind: item.kind,
+    difficultyBand: item.difficulty_band ?? null,
+    count: item.count,
+    routePreference: item.route_preference as SupplyDemandItem['routePreference'],
+    ...(claimIdByItemIndex.get(index) ? { placementClaimId: claimIdByItemIndex.get(index) } : {}),
+  }));
 
   console.log(`计划 ${planRow.id} → ${items.length} 需求项:`);
   for (const item of items) {

@@ -16,6 +16,7 @@ import type { SourcedQuestionT, SourcingImageCandidateT } from '@/core/schema/so
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import type { SupplyTraceV1T } from './evidence-demand';
 import {
   type JyeooCandidate,
   type JyeooFetchCandidatesResult,
@@ -29,6 +30,7 @@ import {
   type RouteExecutionTally,
   type RunWebFetchCandidatesFn,
   SUPPLY_EXECUTOR_EVENT_ACTION,
+  SUPPLY_EXECUTOR_ITEM_EVENT_ACTION,
   type SupplyDemandItem,
   executeSupplyPlan,
 } from './plan-executor';
@@ -225,6 +227,10 @@ async function executorEvents() {
   return db.select().from(event).where(eq(event.action, SUPPLY_EXECUTOR_EVENT_ACTION));
 }
 
+async function executorItemEvents() {
+  return db.select().from(event).where(eq(event.action, SUPPLY_EXECUTOR_ITEM_EVENT_ACTION));
+}
+
 async function storeCanaries() {
   return db.select().from(event).where(eq(event.action, 'experimental:store_sourced_question'));
 }
@@ -256,6 +262,74 @@ describe('executeSupplyPlan — idempotency', () => {
     expect(web).not.toHaveBeenCalled();
     expect(await db.select().from(question)).toHaveLength(0);
     expect(await executorEvents()).toHaveLength(1); // 只有预置那条，无新写
+  });
+
+  it('resumes a partial plan by skipping demand ids with completed item events', async () => {
+    await seedTree();
+    await writeEvent(db, {
+      id: 'prior-item-evt-1',
+      actor_kind: 'agent',
+      actor_ref: 'supply_executor',
+      action: SUPPLY_EXECUTOR_ITEM_EVENT_ACTION,
+      subject_kind: 'query',
+      subject_id: 'plan-evt-resume',
+      outcome: 'success',
+      payload: {
+        plan_event_id: 'plan-evt-resume',
+        demand_id: 'demand:v1:math:kc-sets',
+        routes: [{ route: 'sourcing_web', status: 'ok', acquired: 1, committed: 1 }],
+      },
+      created_at: NOW,
+    });
+
+    const functionCandidate = await webCandidateOf(
+      functionsDomainQuestion(),
+      'webcand-resume-functions',
+      ['kc-functions'],
+    );
+    const web = vi.fn<RunWebFetchCandidatesFn>(async (params) => {
+      expect(params.input.anchorKnowledgeId).toBe('kc-functions');
+      return webOk([functionCandidate]);
+    });
+
+    const result = await executeSupplyPlan(
+      {
+        db,
+        planEventId: 'plan-evt-resume',
+        items: [
+          itemOf({ count: 1, routePreference: ['sourcing_web'] }),
+          itemOf({
+            demandId: 'demand:v1:math:kc-functions',
+            knowledgeId: 'kc-functions',
+            count: 1,
+            routePreference: ['sourcing_web'],
+          }),
+        ],
+      },
+      baseDeps(web),
+    );
+
+    expect(web).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('executed');
+    if (result.status !== 'executed') return;
+    expect(result.results).toEqual([
+      expect.objectContaining({
+        demandId: 'demand:v1:math:kc-sets',
+        skipped: 'already_executed_item',
+        routes: [],
+      }),
+      expect.objectContaining({
+        demandId: 'demand:v1:math:kc-functions',
+        acquired: 1,
+        committed: 1,
+      }),
+    ]);
+    expect(await db.select().from(question)).toHaveLength(1);
+    const itemEvents = await executorItemEvents();
+    expect(itemEvents).toHaveLength(2);
+    expect(
+      itemEvents.map((row) => (row.payload as { demand_id?: string }).demand_id).sort(),
+    ).toEqual(['demand:v1:math:kc-functions', 'demand:v1:math:kc-sets']);
   });
 });
 
@@ -439,6 +513,46 @@ describe('executeSupplyPlan — web failure falls through to quiz_gen', () => {
     expect(result.results[0].acquired).toBe(0);
     expect(await db.select().from(question)).toHaveLength(0);
   });
+
+  it('normalizes a thrown web error and falls through with a deterministic singleton key', async () => {
+    await seedTree();
+    const enqueueQuizGen = vi.fn(async () => 'job-after-llm-throw');
+    const deps = baseDeps(
+      vi.fn<RunWebFetchCandidatesFn>(async () => {
+        throw new Error('provider connection reset');
+      }),
+    );
+    deps.enqueueQuizGen = enqueueQuizGen;
+
+    const result = await executeSupplyPlan(
+      {
+        db,
+        planEventId: 'plan-evt-web-throw',
+        items: [itemOf({ count: 1, routePreference: ['sourcing_web', 'quiz_gen'] })],
+      },
+      deps,
+    );
+
+    expect(result.status).toBe('executed');
+    if (result.status !== 'executed') return;
+    expect(result.results[0].routes).toEqual([
+      expect.objectContaining({
+        route: 'sourcing_web',
+        status: 'skipped',
+        skipped: 'llm',
+        detail: 'provider connection reset',
+      }),
+      expect.objectContaining({
+        route: 'quiz_gen',
+        status: 'dispatched',
+        job_id: 'job-after-llm-throw',
+      }),
+    ]);
+    expect(enqueueQuizGen).toHaveBeenCalledWith(
+      expect.objectContaining({ knowledge_id: 'kc-sets', count: 1, exact_count: 1 }),
+      { singletonKey: 'supply_exec_plan-evt-web-throw_demand:v1:math:kc-sets' },
+    );
+  });
 });
 
 // ── (e) count cap + 锚点首位 ─────────────────────────────────────────────────
@@ -536,6 +650,18 @@ describe('executeSupplyPlan — web duplicate_exact', () => {
       status: 'ok',
       acquired: 1,
       committed: 1,
+      rejections: { duplicate_exact: 1 },
+    });
+
+    const [itemEvent] = await executorItemEvents();
+    const itemPayload = itemEvent?.payload as { routes?: RouteExecutionTally[] };
+    expect(itemPayload.routes?.[0]?.rejections).toEqual({ duplicate_exact: 1 });
+    const [aggregateEvent] = await executorEvents();
+    const aggregatePayload = aggregateEvent?.payload as {
+      per_item?: Array<{ routes?: RouteExecutionTally[] }>;
+    };
+    expect(aggregatePayload.per_item?.[0]?.routes?.[0]?.rejections).toEqual({
+      duplicate_exact: 1,
     });
 
     // 既有行吸收目标 KC（YUK-720 cross-KC merge），新草稿恰好 1 条（freshCand）。
@@ -544,6 +670,46 @@ describe('executeSupplyPlan — web duplicate_exact', () => {
     const [existing] = await db.select().from(question).where(eq(question.id, 'q-existing'));
     expect(new Set(existing?.knowledge_ids)).toEqual(new Set(['math-root', 'kc-sets']));
     expect(rows.filter((row) => row.draft_status === 'draft')).toHaveLength(1);
+  });
+});
+
+describe('executeSupplyPlan — route-specific supply trace', () => {
+  it('overrides producer_route with the route that actually commits the candidate', async () => {
+    await seedTree();
+    const candidate = await webCandidateOf(setsQuestion(), 'webcand-trace-override', ['kc-sets']);
+    const supplyTrace: SupplyTraceV1T = {
+      schema_version: 1,
+      demand_id: 'demand:v1:math:kc-sets',
+      demand_version: 1,
+      policy_version: 'supply-v2-phase-a',
+      needed_by: '2026-09-20T00:00:00.000Z',
+      allowed_uses: ['practice', 'diagnostic'],
+      max_budget_micro_usd: 250_000,
+      max_attempts: 3,
+      trace_version: 1,
+      trace_id: 'supply:demand:v1:math:kc-sets:target-sets',
+      target_id: 'target-sets',
+      target_fingerprint: 'fp-target-sets',
+      producer_route: 'jyeoo_fetch',
+    };
+
+    const result = await executeSupplyPlan(
+      {
+        db,
+        planEventId: 'plan-evt-trace-override',
+        supplyTrace,
+        items: [itemOf({ count: 1, routePreference: ['sourcing_web'] })],
+      },
+      baseDeps(vi.fn(async () => webOk([candidate]))),
+    );
+
+    expect(result.status).toBe('executed');
+    const [stored] = await db.select().from(question);
+    const metadata = stored?.metadata as { supply_trace?: SupplyTraceV1T };
+    expect(metadata.supply_trace).toMatchObject({
+      ...supplyTrace,
+      producer_route: 'sourcing_web',
+    });
   });
 });
 

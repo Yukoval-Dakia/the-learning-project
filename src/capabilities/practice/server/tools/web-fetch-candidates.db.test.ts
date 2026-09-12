@@ -214,12 +214,27 @@ describe('web_fetch_candidates — ok path', () => {
     const proposals = await db.select().from(event).where(eq(event.action, 'propose'));
     expect(proposals).toHaveLength(0);
 
-    // canary 单写（含成功面），payload 带候选 id。
     const canary = await canaryRows();
     expect(canary).toHaveLength(1);
-    expect(canary[0]?.outcome).toBe('success');
-    const canaryPayload = canary[0]?.payload as { candidate_ids?: string[] } | undefined;
-    expect(canaryPayload?.candidate_ids).toHaveLength(2);
+    expect(canary[0]).toMatchObject({
+      actor_kind: 'agent',
+      actor_ref: 'sourcing',
+      action: 'experimental:web_fetch_candidates',
+      subject_kind: 'query',
+      subject_id: 'tr_sourcing_web_1',
+      outcome: 'success',
+      task_run_id: 'test-run',
+    });
+    expect(canary[0]?.payload).toMatchObject({
+      anchor_knowledge_id: 'kc-anchor',
+      knowledge_ids: ['kc-sets', 'kc-dead'],
+      count: 3,
+      tool: 'web_fetch_candidates',
+      task_run_id: 'test-run',
+      candidate_ids: ['webcand_kc-anchor_1', 'webcand_kc-anchor_2'],
+      image_candidate_count: 1,
+      cost_usd: 0.42,
+    });
 
     // SourcingTask 输入契约与旧 sourcing job 一致：subject 由锚点 domain 解析、
     // whitelist 为 profile 宽容读取（空 → []）、ref/knowledge_context 挂锚点。
@@ -268,8 +283,7 @@ describe('web_fetch_candidates — deterministic failures', () => {
     const output = await runTool(baseInput(), nullAgent);
     expect(output).toMatchObject({ status: 'failed', failure_class: 'tavily_unavailable' });
     const canary = await canaryRows();
-    expect(canary).toHaveLength(1);
-    expect(canary[0]?.outcome).toBe('failure');
+    expect(canary).toHaveLength(0);
   });
 
   it('fails parse when the agent text carries no JSON object (riskyRepair:reject seam intact)', async () => {
@@ -282,5 +296,17 @@ describe('web_fetch_candidates — deterministic failures', () => {
     if (output.status !== 'failed') return;
     expect(output.detail).toContain('no JSON object');
     expect(await db.select().from(question)).toHaveLength(0);
+    const canary = await canaryRows();
+    expect(canary).toHaveLength(1);
+    expect(canary[0]).toMatchObject({
+      actor_ref: 'sourcing',
+      subject_kind: 'query',
+      outcome: 'failure',
+      task_run_id: 'test-run',
+    });
+    expect(canary[0]?.payload).toMatchObject({
+      failure_class: 'parse',
+      tool: 'web_fetch_candidates',
+    });
   });
 });

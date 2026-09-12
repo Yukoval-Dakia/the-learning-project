@@ -80,9 +80,12 @@ export function buildSupplyExecutorDeps(db: Db): ExecuteSupplyPlanDeps {
         ...params,
         deps: { runSourcingAgent: runWebSourcingAgentDefault, parseLoose: parseJsonObjectLoose },
       }),
-    enqueueQuizGen: async (payload) =>
-      (await enqueueSupplyDispatchJob('quiz_gen', payload as unknown as Record<string, unknown>)) ??
-      undefined,
+    enqueueQuizGen: async (payload, opts) =>
+      (await enqueueSupplyDispatchJob(
+        'quiz_gen',
+        payload as unknown as Record<string, unknown>,
+        ...(opts?.singletonKey ? [{ singletonKey: opts.singletonKey }] : []),
+      )) ?? undefined,
     writeImageCandidateProposal: (args: ImageCandidateProposalArgs) => writeAiProposal(db, args),
   };
 }

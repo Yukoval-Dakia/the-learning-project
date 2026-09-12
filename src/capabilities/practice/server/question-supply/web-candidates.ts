@@ -1,8 +1,8 @@
 // YUK-988 (Supply-Agent/3) — web 候选生产线：从退役 jobs/sourcing.ts 提取的"找 + 判"
 // 部分，candidate-only 形态（镜像 jyeoo-candidates.ts）。LLM 判断（SourcingTask：
 // 搜索 → 抽取 → 结构化）留在本模块内部；正确性路径（持久化/dedup/verify）全部在上游
-// store_sourced_question commit seam。本模块不写 question / verify intent / proposal /
-// canary 事件——db 只读（anchor 解析 + 活 knowledge 校验）。
+// store_sourced_question commit seam。本模块不写 question / verify intent / proposal；
+// db 写面只有 canary 事件（YUK-988 E3 P1-3 起核内单写，见 runWebFetchCandidates）。
 //
 // 纯模块纪律（ownership/boundary）：不 import '@/server/'。MCP 挂载 + runAgentTask
 // 整个压进单个依赖注入函数 RunWebSourcingAgentFn；真实实现住在 DomainTool
@@ -10,6 +10,7 @@
 // prompt 契约（trigger/ref/knowledge_context/kinds/objective_only/kind_required）
 // 与旧 sourcing.ts 完全一致——SourcingTask TaskSpec 不变。
 
+import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type {
   SourcedQuestionT,
@@ -19,12 +20,17 @@ import type {
 import { SourcingTaskOutput } from '@/core/schema/sourcing';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
+import { costUsdToMicroUsd } from '@/kernel/cost';
+import { writeEvent } from '@/kernel/events';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import { kindsMatch } from '@/subjects/question-kind';
 import { canonicalQuestionContentHash } from '../quiz/content-fingerprint';
 
 // 旧 sourcing.ts:109 同款常量；source_route / difficulty_evidence 的路由身份。
 export const SOURCING_WEB_ROUTE = 'sourcing_web' as const;
+
+// Canary action = 漏斗观测面（单写/次，含失败；YUK-988 E3 起由本核 owns）。
+const WEB_FETCH_CANARY_ACTION = 'experimental:web_fetch_candidates' as const;
 
 // ── 候选形状（与 JyeooCandidate 对齐，web 无 producer 内部 id / 无 hint 通道 / 不暂存资产）──
 export interface WebCandidate {
@@ -103,7 +109,8 @@ export interface RunWebFetchCandidatesParams {
     kindRequired?: boolean;
     subjectProfile: SubjectProfile;
   };
-  ctx?: { taskRunId?: string; causedByEventId?: string };
+  /** 运行归因（canary 事件的 session/task/causal 字段来源；agent 工具透传，executor 传 task 侧）。 */
+  ctx?: { taskRunId?: string; sessionId?: string; causedByEventId?: string };
   deps: RunWebFetchCandidatesDeps;
   now?: Date;
 }
@@ -149,7 +156,71 @@ function profileSourceWhitelist(profile: SubjectProfile): string[] {
   return Array.isArray(raw) ? raw.filter((d): d is string => typeof d === 'string') : [];
 }
 
+/**
+ * 跑一次 web 候选生产线（找 + 判），返回候选（不写 question）。
+ *
+ * Canary 单写（YUK-988 E3 P1-3）：本核 owns fetch canary——每次实际运行（含 failed，
+ * 含 anchor_not_found 确定性短路）写恰好一条
+ * action='experimental:web_fetch_candidates' 事件（漏斗观测面；与 jyeoo 面的"预算
+ * 账本按 canary 求和、绝不双写"契约一致）。旧位在 web_fetch_candidates 工具层——
+ * executor job 直调核时观测被绕过；移入核后 agent 工具与 executor 路径都恰好一条。
+ * Tavily 不可用会在 LLM 前返回，不算一次运行、不写 canary。事件写失败不得翻转运行结果
+ * （best-effort try/catch）。
+ */
 export async function runWebFetchCandidates(
+  params: RunWebFetchCandidatesParams,
+): Promise<RunWebFetchCandidatesResult> {
+  const result = await runWebFetchCandidatesCore(params);
+
+  if (result.status === 'failed' && result.failureClass === 'tavily_unavailable') return result;
+
+  try {
+    await writeEvent(params.db, {
+      id: createId(),
+      session_id: params.ctx?.sessionId ?? null,
+      actor_kind: 'agent',
+      actor_ref: 'sourcing',
+      action: WEB_FETCH_CANARY_ACTION,
+      subject_kind: 'query',
+      subject_id:
+        result.status === 'ok'
+          ? (result.taskRunId ?? `web_fetch_${createId()}`)
+          : `web_fetch_candidates_${createId()}`,
+      outcome: result.status === 'failed' ? 'failure' : 'success',
+      payload: {
+        anchor_knowledge_id: params.input.anchorKnowledgeId,
+        ...(params.input.knowledgeIds ? { knowledge_ids: params.input.knowledgeIds } : {}),
+        count: params.input.count,
+        ...(params.input.kind ? { kind: params.input.kind } : {}),
+        ...(params.input.objectiveOnly ? { objective_only: true } : {}),
+        ...(params.input.kindRequired ? { kind_required: true } : {}),
+        tool: 'web_fetch_candidates',
+        task_run_id: params.ctx?.taskRunId ?? null,
+        ...(result.status === 'ok'
+          ? {
+              candidate_ids: result.candidates.map((candidate) => candidate.candidateId),
+              image_candidate_count: result.imageCandidates.length,
+              query_plan: result.queryPlan,
+              cost_usd: result.costUsd,
+            }
+          : {
+              failure_class: result.failureClass,
+              failure_detail: result.detail,
+            }),
+      },
+      caused_by_event_id: params.ctx?.causedByEventId ?? null,
+      task_run_id: params.ctx?.taskRunId ?? null,
+      cost_micro_usd: costUsdToMicroUsd(result.status === 'ok' ? result.costUsd : null),
+      created_at: new Date(),
+    });
+  } catch (eventErr) {
+    console.error('[web_fetch_candidates] canary event write failed; result stands:', eventErr);
+  }
+
+  return result;
+}
+
+async function runWebFetchCandidatesCore(
   params: RunWebFetchCandidatesParams,
 ): Promise<RunWebFetchCandidatesResult> {
   const { db, deps } = params;
