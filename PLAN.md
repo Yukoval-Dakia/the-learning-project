@@ -1,9 +1,16 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-09：887真实上传/GLM/Structure/3golden、Tencent保存JobId进程恢复、Copilot付费响应后SIGKILL/Stop/同job重投无重烧通过。新池reserve6.70/余3.30；日志即时结算不冒称，待最终review/文档集成，无生产DB/NAS写。
+> Linear 是权威 tracker；更新于 2026-09-12：986/991 交付——jyeoo 供题 tool 化双 tool + 预算租约入 main 0ac945d2c，main CI 阻断（sharp/tiptap 2 high CVE）随 991 清零；供题线复工第一刀落地，985 epic 续 987/988。
 
 ## NOW
 
+- 986/991 Done：供题线复工第一刀——jyeoo agent-tool 化入 main 0ac945d2c（PR1373 exact5e26fb5d5/CI全绿/Oracle gate PASS含P1批）。
+  jyeoo_fetch_candidates(read) + store_sourced_question(write，单 commit seam：活KC校验→hash合并→近重→draft→verify outbox) + 事件溯源日预算40/日 + staged-asset reaper cron + pnpm jyeoo:backfill 手动 caller。
+  旧 jyeoo_fetch queue 路线全退（flag从未上线，零双轨）；jyeooSupply trait 声明退休（seeds v1.1→1.2 擦除升级）；行为测试全量移植 tool seam（vip行级闸/图片身份/出口分类）。
+  实测 QA：dry-run 2候选0插入、JYEOO_DAILY_FETCH_BUDGET=0 短路、live 插入1题 coarse 归因科根+verify链事件齐；
+  source_verify 对 jyeoo 题正确 fail-closed（extract 为锚点非全文→overlap0.13<0.15 拦 draft）——producer 修复票 YUK-989，P2 图片覆盖票 YUK-990。
+  991 阻断清除：main CI 自 09-09 RED 于 audit:dependencies（sharp libheif + tiptap ReDoS 2 high），升 0.35.4/3.31.3 清零，PR1374 合并 main cb1c4b788。
+  985 epic 续：987 planner agent + typed demand gate；988 executor palette 统一（web/生成共 commit seam）。
 - 984 Done：PR1369 exacte514ef94/CI34233241153全绿，初审PASS无P0/P1；13:52:31Z main e9b6f251，13:53:04Z Mac app/worker交付。
   知识/edge结构全event→projection，四创建入口共用owner，七实体历史gate/globalflag退休；scoped gates/76DB/3unit与全部CI通过，删4无效模式比较。
   app404dd2cb/worker8250610a e514ef94 healthy零重启，原PG7d99236a未变；454event/280task/21attempt/0queue，API/7notes/browser刷新无错。
