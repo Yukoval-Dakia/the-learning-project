@@ -58,7 +58,7 @@ describe('registerHandlers + registerCapabilityJobs', () => {
 
     await registerAll(boss);
 
-    for (const name of ['sourcing', 'quiz_gen', 'quiz_verify', 'source_verify']) {
+    for (const name of ['supply_execute', 'quiz_gen', 'quiz_verify', 'source_verify']) {
       expect(boss.work).toHaveBeenCalledWith(
         name,
         {

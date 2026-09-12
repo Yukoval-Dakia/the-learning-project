@@ -16,7 +16,9 @@ const RETIRED_QUIZ_MODULES = [
 ] as const;
 
 const RETIRED_JOB_MODULES = [
-  'sourcing',
+  // YUK-988 — 'sourcing' 已从本名单移除：job 模块本体退役删除（找题核下沉
+  // web_fetch_candidates 工具，存由 store_sourced_question seam 承载，执行面
+  // 换 supply_execute 确定性 job）。
   // YUK-986 — 'jyeoo-fetch' 已从本名单移除：job 模块本体退役删除（agent tool 链接替）。
   'quiz_gen',
   'quiz_verify',

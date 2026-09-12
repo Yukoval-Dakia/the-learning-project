@@ -253,13 +253,12 @@ describe('runQuestionSupplyNightly', () => {
 
     expect(result.considered).toBeGreaterThanOrEqual(1);
     expect(result.dispatched).toBeGreaterThanOrEqual(1);
-    // The frontier_zero target routed to the sourcing queue.
-    expect(enqueued.some((e) => e.queue === 'sourcing')).toBe(true);
-    const sourcing = enqueued.find((e) => e.queue === 'sourcing');
-    expect(sourcing?.data).toMatchObject({
-      trigger: 'knowledge',
-      ref_id: kid,
-      knowledge_id: kid,
+    // The frontier_zero target routed to the supply executor queue.
+    expect(enqueued.some((e) => e.queue === 'supply_execute')).toBe(true);
+    const supplyExecute = enqueued.find((e) => e.queue === 'supply_execute');
+    expect(supplyExecute?.data).toMatchObject({
+      plan_event_id: null,
+      items: [expect.objectContaining({ knowledge_id: kid, route_preference: ['sourcing_web'] })],
     });
     const shadowEvents = await db
       .select({ payload: event.payload })

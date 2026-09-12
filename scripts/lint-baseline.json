@@ -4,7 +4,7 @@
   "infoPolicy": "info diagnostics are counted: separate infos ratchet total and per-rule rows, decreasing only like warnings",
   "totals": {
     "errors": 0,
-    "warnings": 310,
+    "warnings": 307,
     "infos": 1
   },
   "byRule": {
@@ -33,7 +33,7 @@
       "warning": 5
     },
     "lint/correctness/noUnusedImports": {
-      "warning": 57
+      "warning": 54
     },
     "lint/correctness/noUnusedVariables": {
       "warning": 8

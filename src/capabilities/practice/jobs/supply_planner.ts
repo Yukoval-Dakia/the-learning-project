@@ -25,6 +25,7 @@ import type { SupplyPlanItemV1T, SupplyPlanV1T } from '@/core/schema/supply_plan
 import type { Db } from '@/db/client';
 import { knowledge, mastery_state, placement_starter_claim, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
   type DomainToolName,
@@ -102,6 +103,8 @@ export interface SupplyPlannerDeps {
   runAgentTaskFn?: RunAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
   now?: () => Date;
+  /** phase-2 入队口（默认 enqueueSupplyDispatchJob；db 测试注入 fake 断言载荷）。 */
+  enqueueSupplyExecute?: (data: Record<string, unknown>) => Promise<string | null>;
 }
 
 export interface SupplyPlannerResult {
@@ -113,6 +116,8 @@ export interface SupplyPlannerResult {
   attempts: number;
   rejections: string[][];
   planEventId: string;
+  /** phase-2 供给执行入队结果（null = 入队失败已日志；undefined = 无 accepted plan）。 */
+  executeJobId: string | null | undefined;
   shadowEventId: string | null;
 }
 
@@ -406,17 +411,21 @@ export async function runSupplyPlanner(
   });
 
   let demandEvents = 0;
+  const demandEventIds: string[] = [];
   if (acceptedPlan !== null) {
     for (const item of acceptedPlan.items) {
       const claimId = claimByKnowledgeId.get(item.knowledge_id);
+      const demandEventId = `supply_planner_demand_${createId()}`;
+      demandEventIds.push(demandEventId);
       await writeEvent(db, {
-        id: `supply_planner_demand_${createId()}`,
+        id: demandEventId,
         actor_kind: 'agent',
         actor_ref: 'supply_planner',
         action: 'experimental:supply_planner_demand',
         subject_kind: 'knowledge',
         subject_id: item.knowledge_id,
-        // E3 executor agent 未落地前逐项 manual 留痕（spec 明文允许）。
+        // 逐项留痕；E3 起由确定性 executor 消费（supply_execute 队列），
+        // 完成链路见 experimental:supply_executor 事件。
         outcome: 'manual',
         payload: {
           version: 1,
@@ -428,6 +437,58 @@ export async function runSupplyPlanner(
         created_at: now,
       });
       demandEvents += 1;
+    }
+  }
+
+  // ── 3.5 phase-2：accepted plan → 确定性 executor（当晚计划当晚执行） ────────
+  // 入队而非内联：规划（LLM）与执行（工具链）各自独立 DLQ 重试语义；executor 幂等键
+  // = plan_event_id，重投只吃 duplicate_exact 软拒。enqueue 失败不翻转 planner 结果
+  // （plan 事件已写、扫描器安全网仍在）——日志给出手动重跑命令后继续。
+  let executeEnqueued: string | null | undefined;
+  if (acceptedPlan !== null && demandEventIds.length > 0) {
+    const executePayload: Record<string, unknown> = {
+      plan_event_id: planEventId,
+      items: acceptedPlan.items.map((item, index) => ({
+        demand_id: demandEventIds[index],
+        knowledge_id: item.knowledge_id,
+        kind: item.kind,
+        difficulty_band: item.difficulty_band ?? null,
+        count: item.count,
+        route_preference: item.route_preference,
+        ...(claimByKnowledgeId.has(item.knowledge_id)
+          ? {
+              placement_claim_id: claimByKnowledgeId.get(item.knowledge_id),
+            }
+          : {}),
+      })),
+    };
+    const enqueueExecute =
+      deps.enqueueSupplyExecute ??
+      ((data: Record<string, unknown>) => enqueueSupplyDispatchJob('supply_execute', data));
+    try {
+      // 一次内联重试捱瞬时 boss 抖动；二次仍败 → 持久失败事件 + 手动重跑指令（Oracle P1-6）。
+      executeEnqueued =
+        (await enqueueExecute(executePayload)) ?? (await enqueueExecute(executePayload));
+    } catch (enqueueError) {
+      executeEnqueued = null;
+      console.error(
+        `[supply_planner] phase-2 enqueue failed twice (plan stands; scanner safety net unaffected; manual rerun: pnpm supply:execute --plan ${planEventId}):`,
+        enqueueError,
+      );
+    }
+    if (executeEnqueued === null) {
+      await writeEvent(db, {
+        id: `supply_planner_execute_${createId()}`,
+        actor_kind: 'agent',
+        actor_ref: 'supply_planner',
+        action: 'experimental:supply_planner_execute',
+        subject_kind: 'subject',
+        subject_id: PLANNER_HOST_SUBJECT,
+        outcome: 'failure',
+        payload: { version: 1, plan_event_id: planEventId, reason: 'enqueue_failed' },
+        ingest_at: now,
+        created_at: now,
+      });
     }
   }
 
@@ -482,6 +543,7 @@ export async function runSupplyPlanner(
     attempts,
     rejections: planRejections,
     planEventId,
+    executeJobId: executeEnqueued,
     shadowEventId,
   };
 }

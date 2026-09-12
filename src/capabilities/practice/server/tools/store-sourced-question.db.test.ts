@@ -89,6 +89,7 @@ function inputOf(
   overrides: Record<string, unknown> = {},
 ) {
   return {
+    source_route: 'jyeoo_fetch' as const,
     candidate,
     knowledge_ids: ['kc-sets'],
     attribution_state: 'matched' as const,
@@ -141,6 +142,56 @@ describe('executeStoreSourcedQuestion — insert path', () => {
       .from(event)
       .where(eq(event.action, 'experimental:store_sourced_question'));
     expect(canary).toHaveLength(1);
+  });
+
+  it('sourcing_web route: skips the jyeoo host gate and stamps web-route provenance', async () => {
+    await seedTree();
+    const webCandidate = await candidateOf({
+      ...sourced(),
+      source_url: 'https://mathworld.example.com/sets-101',
+      source_title: 'Sets 101',
+    });
+    const output = await executeStoreSourcedQuestion(
+      { db, taskRunId: 'test-run' },
+      inputOf(webCandidate, { source_route: 'sourcing_web' }),
+      fakeEnqueue([]),
+    );
+    // 非 jyeoo.com host 在 sourcing_web 路由下不得被 foreign_host 拒（接地靠 whitelist_match）。
+    expect(output.status).toBe('inserted');
+    if (output.status !== 'inserted') return;
+
+    const [row] = await db.select().from(question).where(eq(question.id, output.question_id));
+    if (!row) throw new Error('web-route row missing');
+    expect(row.source).toBe('web_sourced');
+    expect((row.created_by as { task_kind?: string }).task_kind).toBe('SourcingTask');
+    const metadata = row.metadata as Record<string, unknown>;
+    expect((metadata.sourcing as { candidate_id?: string }).candidate_id).toBe('cand-test-1');
+    expect(metadata.jyeoo).toBeUndefined();
+    // insertSourcedDraft 的 tier-2 核心 provenance 不变。
+    expect(metadata.web_sourced).toBeTruthy();
+
+    const canary = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:store_sourced_question'));
+    expect(canary).toHaveLength(1);
+    const canaryRow = canary[0];
+    if (!canaryRow) throw new Error('web-route canary missing');
+    expect((canaryRow.payload as { source_route?: string }).source_route).toBe('sourcing_web');
+  });
+
+  it('jyeoo_fetch route: foreign host still rejected after route parameterization', async () => {
+    await seedTree();
+    const output = await executeStoreSourcedQuestion(
+      { db, taskRunId: 'test-run' },
+      inputOf(await candidateOf({ ...sourced(), source_url: 'https://evil.example.com/x' }), {
+        source_route: 'jyeoo_fetch',
+      }),
+      fakeEnqueue([]),
+    );
+    expect(output.status).toBe('rejected');
+    if (output.status !== 'rejected') return;
+    expect(output.reason).toBe('foreign_host');
   });
 
   it('coarse attribution is recorded verbatim', async () => {
