@@ -110,5 +110,6 @@ export const taskCatalog = composeTaskCatalog(
     { owner: 'agency', specs: agencyTaskSpecs },
     { owner: 'copilot', specs: copilotTaskSpecs },
   ] as const,
-  49,
+  // YUK-987: +SupplyPlanTask（供给需求层 planner）→ 50。
+  50,
 );

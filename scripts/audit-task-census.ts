@@ -91,8 +91,9 @@ export function auditTaskCensus(options: AuditTaskCensusOptions): AuditResult {
     (item) => item.registration === 'manifest-job',
   );
   const errors = [
-    ...(validateInfrastructure && catalogSet.size !== 49
-      ? [`Task catalog must contain exactly 49 kinds, received ${catalogSet.size}`]
+    // YUK-987: 50（+SupplyPlanTask 供给需求层 planner）。
+    ...(validateInfrastructure && catalogSet.size !== 50
+      ? [`Task catalog must contain exactly 50 kinds, received ${catalogSet.size}`]
       : []),
     ...unresolvedCallers.map(
       (caller) =>

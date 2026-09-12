@@ -1390,10 +1390,11 @@ async function runCli(): Promise<void> {
 
   const result = auditArchitectureDeepening(projectRoot, publicReadCycleCatalog, {
     ownerMaps,
-    expectedTaskCount: 49,
+    // YUK-987: 50（+SupplyPlanTask 供给需求层 planner）。
+    expectedTaskCount: 50,
     taskCensus: {
       catalogCount: census.catalogCount,
-      expectedCount: 49,
+      expectedCount: 50,
       errors: census.errors,
       profileCriticCallerPresent: census.profileCriticCaller !== null,
       forbiddenPatternViolations: scanForbiddenTaskCatalogPatterns(projectRoot).map(

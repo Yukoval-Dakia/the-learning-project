@@ -69,6 +69,7 @@ import {
 } from '@/capabilities/practice/tasks/solution-generation';
 import { sourceGroundingVerifyTaskSpec } from '@/capabilities/practice/tasks/source-grounding-verify';
 import { sourcingTaskSpec } from '@/capabilities/practice/tasks/sourcing';
+import { supplyPlanTaskSpec } from '@/capabilities/practice/tasks/supply-planning';
 import { teachingQualityTaskSpec } from '@/capabilities/practice/tasks/teaching-quality';
 import { variantGenTaskSpec } from '@/capabilities/practice/tasks/variant-gen';
 import { variantVerifyTaskSpec } from '@/capabilities/practice/tasks/variant-verify';
@@ -130,6 +131,7 @@ const EXPECTED_KINDS = [
   'ItemPriorTask',
   'SelectionOrchestratorTask',
   'SourcingTask',
+  'SupplyPlanTask',
   'BlockAssemblyTask',
 ] as const;
 
@@ -152,7 +154,7 @@ const OWNER_MAPS = {
 } as const;
 
 const EXPECTED_OWNER_COUNTS = {
-  practice: 20,
+  practice: 21,
   notes: 3,
   ingestion: 8,
   knowledge: 3,
@@ -177,6 +179,7 @@ const OWNED_SPECS: ReadonlySet<object> = new Set([
   selectionOrchestratorTaskSpec,
   sessionSummaryTaskSpec,
   sourcingTaskSpec,
+  supplyPlanTaskSpec,
   copilotTaskSpec,
   teachingTurnTaskSpec,
   noteGenerateTaskSpec,
