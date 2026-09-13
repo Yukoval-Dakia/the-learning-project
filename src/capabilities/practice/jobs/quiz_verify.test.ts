@@ -803,6 +803,9 @@ describe('runQuizVerify', () => {
     // YUK-350 (L3, RL5) — the SAME transient-error event also carries the event-layer
     // failure_class='system_error' (merged with L1's overall='error' assertion above).
     expect(errorEv?.payload?.failure_class).toBe('system_error');
+    // QoL——首次调用在 SDK 层即抛（taskResult 为 null）：raw_output_head 留 null，
+    // 与「SDK 成功但 parse 抛」（q_syserr，raw head 有值）区开。
+    expect(errorEv?.payload?.raw_output_head).toBeNull();
     // the terminal success event carries the model verdict, NOT 'error', and (promote)
     // carries NO failure_class.
     const successEv = evs.find((e) => e.outcome === 'success');
@@ -843,6 +846,9 @@ describe('runQuizVerify', () => {
     expect(evs[0].payload?.overall).toBe('error');
     // YUK-350 (L3, RL5) — event-layer system-error class.
     expect(evs[0].payload?.failure_class).toBe('system_error');
+    // QoL（2026-09-13）——error 事件带原始输出头：'not a json verdict at all' 全文
+    // （<500 字符原样），digest 之外可直读 refusal/空响应/散文输出类别。
+    expect(evs[0].payload?.raw_output_head).toBe('not a json verdict at all');
   });
 
   // YUK-350 (L3, RL5) — a model verdict that does NOT promote (real validation

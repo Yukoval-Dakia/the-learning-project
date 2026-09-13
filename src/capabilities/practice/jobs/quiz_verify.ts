@@ -1019,6 +1019,10 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             error: String((err as Error).message ?? err),
           }),
           error: String((err as Error).message ?? err),
+          // QoL（2026-09-13 判官解析失败不可诊断的教训）——parse 失败时把原始 LLM 输出头
+          // 留在事件里：digest 只能证「跑过」，raw head 才能区分 refusal / 空响应 / 散文输出。
+          // 截 500 字符防爆 payload；taskResult 为 null（SDK 层即抛）时留 null。
+          raw_output_head: failedTaskResult?.text?.slice(0, 500) ?? null,
           ...(difficultyEvidence ? { difficulty_evidence: difficultyEvidence } : {}),
           ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
         },
