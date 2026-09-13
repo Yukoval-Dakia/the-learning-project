@@ -274,6 +274,8 @@ export interface BuildMcpServerOptions {
     input: Record<string, unknown>;
     summary: string;
     errorReason?: string;
+    /** YUK-920 — 同名并行 tool call 的确定性关联 id（有 correlated id 时携带）。 */
+    toolUseId?: string;
   }) => void;
   /**
    * Optional per-call input interceptor (P5.1 / YUK-143). Runs AFTER
@@ -492,6 +494,7 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
             input: (execInput ?? {}) as Record<string, unknown>,
             summary,
             ...(errorReason ? { errorReason } : {}),
+            ...(correlatedToolUseId ? { toolUseId: correlatedToolUseId } : {}),
           });
         } catch {
           // Visibility failures must never abort paid work.

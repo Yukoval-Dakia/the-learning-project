@@ -97,3 +97,40 @@ export function installShutdownHandler(boss: PgBoss): void {
   process.on('SIGTERM', handler);
   process.on('SIGINT', handler);
 }
+
+/**
+ * YUK-980 — boot-window variant covering the FULL worker lifetime, installed BEFORE
+ * registerCapabilityTools()/startBossWorker()（此前 SIGTERM 落在注册/启动窗口时进程
+ * 按 Node 默认立即退出——可能正在装配、正在起 boss、正在消费首批 job，无 graceful）。
+ *
+ * getBoss 惰性取 boss：
+ * - 信号到达时 boss 尚为 null（注册/启动窗口）→ 无 job 可 drain（handlers 未注册），
+ *   直接 exit(1) 交给容器重启策略，不假装 graceful；
+ * - boss 就绪后 → 与 installShutdownHandler 完全同款的 graceful stop。
+ *
+ * worker.ts 用它替换原「启动后才 install」的调用；installShutdownHandler(boss) 保留给
+ * 既有测试与其他调用方，不重复注册。
+ */
+export function installBootShutdownHandler(getBoss: () => PgBoss | null): void {
+  let shuttingDown = false;
+  const handler = async (signal: NodeJS.Signals) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    const boss = getBoss();
+    if (boss === null) {
+      console.warn(
+        `[boss] ${signal} during boot window (registration/startup, no jobs drainable) — exiting for supervised restart`,
+      );
+      process.exit(1);
+      return;
+    }
+    try {
+      await stopBossGracefully(boss, signal);
+      process.exit(0);
+    } catch {
+      process.exit(1);
+    }
+  };
+  process.on('SIGTERM', handler);
+  process.on('SIGINT', handler);
+}

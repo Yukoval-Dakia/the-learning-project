@@ -173,6 +173,8 @@ function parseToolStepPayload(value: unknown): CopilotToolCallRecord | null {
     input,
     summary,
     ...(errorReason ? { errorReason } : {}),
+    // YUK-920 — tool_finished 现在可携带 tool_use_id（bridge 有 correlated id 时投影）。
+    ...(toolUseId ? { toolUseId } : {}),
     status: errorReason ? 'failed' : 'done',
   };
 }
@@ -195,12 +197,11 @@ function mergeToolFinished(
   calls: CopilotToolCallRecord[],
   result: CopilotToolCallRecord,
 ): CopilotToolCallRecord[] {
-  // tool_finished intentionally carries no SDK id. Durable execution is
-  // serialized, so the oldest running call with the same normalized name is
-  // the only safe correlation target.
-  const index = calls.findIndex(
-    (call) => call.status === 'running' && call.toolName === result.toolName,
-  );
+  // YUK-920 — 关联优先级：result 携带 tool_use_id 时按 id 精确匹配（同名并行 call
+  // 的确定性关联）；无 id 时退回旧 FIFO（最老的同名 running）——历史帧没有 id。
+  const index = result.toolUseId
+    ? calls.findIndex((call) => call.status === 'running' && call.toolUseId === result.toolUseId)
+    : calls.findIndex((call) => call.status === 'running' && call.toolName === result.toolName);
   if (index === -1) {
     const duplicateTerminal = calls.some(
       (call) =>

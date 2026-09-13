@@ -80,6 +80,7 @@ export type CopilotExecutionActivity =
       input: Record<string, unknown>;
       summary: string;
       errorReason?: string;
+      toolUseId?: string;
     }
   | { kind: 'spawn_budget'; observation: SpawnBudgetObservation };
 

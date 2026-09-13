@@ -14,6 +14,8 @@ export interface ToolResultSsePayload {
   input: Record<string, unknown>;
   summary: string;
   errorReason?: string;
+  /** YUK-920 — 同名并行 call 的确定性关联 id；有则投影进 SSE。 */
+  toolUseId?: string;
 }
 
 /**
@@ -70,6 +72,7 @@ export function projectCopilotActivity(
             input: result.input,
             summary: result.summary,
             ...(result.errorReason ? { error_reason: result.errorReason } : {}),
+            ...(result.toolUseId ? { tool_use_id: result.toolUseId } : {}),
           }
         : null;
     }

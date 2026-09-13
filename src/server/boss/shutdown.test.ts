@@ -1,7 +1,7 @@
 import type { PgBoss } from 'pg-boss';
 import { type MockInstance, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { installShutdownHandler } from './shutdown';
+import { installBootShutdownHandler, installShutdownHandler } from './shutdown';
 
 type WorkerState = 'created' | 'active' | 'stopping' | 'stopped';
 
@@ -149,5 +149,74 @@ describe('installShutdownHandler (YUK-241)', () => {
     await registered.SIGTERM('SIGTERM');
 
     expect(stop).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('installBootShutdownHandler (YUK-980)', () => {
+  let exitSpy: MockInstance;
+  let warnSpy: MockInstance;
+  let logSpy: MockInstance;
+  let errorSpy: MockInstance;
+  const registered: Record<string, (signal: NodeJS.Signals) => void> = {};
+  let onSpy: MockInstance;
+
+  beforeEach(() => {
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    onSpy = vi.spyOn(process, 'on').mockImplementation(((
+      event: string,
+      cb: (signal: NodeJS.Signals) => void,
+    ) => {
+      registered[event] = cb;
+      return process;
+    }) as never);
+  });
+
+  afterEach(() => {
+    exitSpy.mockRestore();
+    warnSpy.mockRestore();
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+    onSpy.mockRestore();
+    delete registered.SIGTERM;
+    delete registered.SIGINT;
+  });
+
+  it('registers SIGTERM + SIGINT at install time (before boss exists)', () => {
+    installBootShutdownHandler(() => null);
+    expect(registered.SIGTERM).toBeTypeOf('function');
+    expect(registered.SIGINT).toBeTypeOf('function');
+  });
+
+  it('signal during the boot window (boss null) exits 1 for supervised restart without pretending graceful', async () => {
+    const stop = vi.fn(async () => undefined);
+    installBootShutdownHandler(() => null);
+    await registered.SIGTERM('SIGTERM');
+    expect(stop).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('boot window'));
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it('signal after boss is ready takes the graceful path (same as installShutdownHandler)', async () => {
+    const stop = vi.fn(async () => undefined);
+    const boss = { stop, getWipData: vi.fn(() => []) } as unknown as PgBoss;
+    installBootShutdownHandler(() => boss);
+    await registered.SIGINT('SIGINT');
+    expect(stop).toHaveBeenCalledWith({ graceful: true, timeout: 30_000 });
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it('lazy resolution: boss assigned AFTER install is honored at signal time', async () => {
+    const stop = vi.fn(async () => undefined);
+    const boss = { stop, getWipData: vi.fn(() => []) } as unknown as PgBoss;
+    let current: PgBoss | null = null;
+    installBootShutdownHandler(() => current);
+    // boot window first: null
+    current = boss; // worker finished startBossWorker later
+    await registered.SIGTERM('SIGTERM');
+    expect(stop).toHaveBeenCalledWith({ graceful: true, timeout: 30_000 });
+    expect(exitSpy).toHaveBeenCalledWith(0);
   });
 });
