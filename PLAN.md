@@ -1,11 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-13：C1 批交付（PR #1391，main 67d43df12 生产健康）——935 node24 actions / 980 SIGTERM 全生命周期 / 187 dismiss 冷却 14 天 / 920 toolUseId 精确关联，4 票关 Done；清零 68→60（A/B 组 203/764 Done + 837/550 Canceled）。磁盘慢性压力注意：部署后须清旧镜像 tag（今日两度逼近 09-12 事故水位）。
+> Linear 是权威 tracker；更新于 2026-09-13：YUK-980 补验收完成（PR #1393 → main fbc6b26f6，exact-head CI Gate 34759069199 success、独立 review PASS、真实构建 worker SIGTERM QA 19/19）。本次未部署，生产仍为 67d43df12。清零复核指出 837/550 的取消理由不足，不再沿用 68→60 作为有效完成口径。
 
 ## NOW
 
-- 09-13 QoL C1 Done：PR #1391（67d43df12 生产健康）4 票关 Done。935 actions node24（checkout@v5×12+upload-artifact@v7×6）；980 installBootShutdownHandler 全生命周期（窗口内 exit1 交容器重启，就绪后同款 graceful）；187 dismiss 冷却 14 天（rate.rating='dismiss' 冷却集，窗过期恢复）；920 tool_finished SSE 带 tool_use_id（同名并行按 id 精确关联，历史帧退 FIFO）。
-- 09-13 清零进展 68→60：A 组 203/764 Done（repo 证据）、B 组 837/550 Canceled（moot：Tavily 被 Exa 物理移除 / KG-borrowing flags 未授权无排期）。
+- 980 Done（补验收 PR #1393，非仅 C1 原修复）：使用已发布 running boss，协调启动尾段与单一退出 owner；旧 wiring 两个中途停机场景 RED，最终 scoped 22 tests + lead 真实 SIGTERM QA 19/19。详见 docs/planning/2026-09-13-yuk980-startup-tail-verification.md；9s+30s 为预算，pool-close 卡死的硬截止不在已证明范围；未部署生产。
+- 09-13 QoL C1 历史部署：PR #1391（67d43df12）。935 actions node24；187 dismiss 冷却14天；920 tool_finished SSE 带 tool_use_id。980 的部分注册窗口遗漏由 #1393 补齐，不能用原 C1 unit 通过替代验收。
+- 清零复核待处置：837 的远程检索证据缺口在 Exa 下仍在；550 是休眠的激活前置条件。两票当前仍 Canceled，纠正证据已写原票，尚未获批恢复状态或实施。203/764 的关闭记录保留，不由本次980补验收扩大裁决。
 - 09-13 QoL C0 Done：992 日级 dump（launchd 07:15，14 日+月档保留，恢复演练 pg_restore 零错 42 题）+ verify raw head / quiz:reverify / gen:prompt-hashes / flags strict。生产 e1750de6b 健康。stranded draft jo3 重派 → pass+promoted（19 题 = 8 active + 10 人审）。
 - 09-13 Exa 换装 Done：web 检索后端 Tavily→Exa（PR #1384，main 776a687d3，Mac 生产健康）。live-probed 挂载（web_search_exa/web_fetch_exa，x-api-key header），闸/消费面/schema/prompt/oracle 全面更名，旧 tavily 值保 parse。
 - 09-13 首夜实证：planner 05:50 accepted 7 项（rationale 引用真实库存证据）→ executor（sourcing_web 跳 tavily_unavailable→quiz_gen fallback）→ quiz_gen 7/7 → 19 题 = 7 active + 12 draft（10 题数学全对仅 copy_safety=unknown 待 /drafts 人审；3 题判官输出解析失败留 draft 可重派）。
