@@ -169,6 +169,80 @@ describe('Copilot subtask event fold', () => {
     expect(JSON.stringify(result.toolCalls)).not.toContain('private_prompt');
   });
 
+  // YUK-920 — tool_finished 携带 tool_use_id 时按 id 精确关联（同名并行 call 不再 FIFO 猜）。
+  it('correlates tool_finished by tool_use_id when present (parallel same-name calls)', () => {
+    const result = foldCopilotRunFrames(createCopilotRunView(), [
+      frame(301, 'copilot_run.step', {
+        step_kind: 'tool_started',
+        tool_name: 'mcp__loom__query_mistakes',
+        tool_use_id: 'parallel-a',
+        input: { subject_id: 'math' },
+      }),
+      frame(302, 'copilot_run.step', {
+        step_kind: 'tool_started',
+        tool_name: 'mcp__loom__query_mistakes',
+        tool_use_id: 'parallel-b',
+        input: { subject_id: 'physics' },
+      }),
+      // 完成顺序与开始顺序相反——FIFO 会把 B 的结果错配给 A；id 关联必须命中 B。
+      frame(303, 'copilot_run.step', {
+        step_kind: 'tool_finished',
+        tool_name: 'mcp__loom__query_mistakes',
+        tool_use_id: 'parallel-b',
+        input: { subject_id: 'physics' },
+        summary: 'B 先完成。',
+      }),
+      frame(304, 'copilot_run.step', {
+        step_kind: 'tool_finished',
+        tool_name: 'mcp__loom__query_mistakes',
+        tool_use_id: 'parallel-a',
+        input: { subject_id: 'math' },
+        summary: 'A 后完成。',
+      }),
+    ]);
+
+    expect(result.toolCalls).toEqual([
+      {
+        toolName: 'query_mistakes',
+        toolUseId: 'parallel-a',
+        input: { subject_id: 'math' },
+        summary: 'A 后完成。',
+        status: 'done',
+      },
+      {
+        toolName: 'query_mistakes',
+        toolUseId: 'parallel-b',
+        input: { subject_id: 'physics' },
+        summary: 'B 先完成。',
+        status: 'done',
+      },
+    ]);
+  });
+
+  it('falls back to FIFO same-name completion for legacy frames without tool_use_id', () => {
+    const result = foldCopilotRunFrames(createCopilotRunView(), [
+      frame(401, 'copilot_run.step', {
+        step_kind: 'tool_started',
+        tool_name: 'mcp__loom__query_mistakes',
+        input: { subject_id: 'math' },
+      }),
+      frame(402, 'copilot_run.step', {
+        step_kind: 'tool_finished',
+        tool_name: 'mcp__loom__query_mistakes',
+        input: { subject_id: 'math' },
+        summary: 'legacy 无 id 帧。',
+      }),
+    ]);
+    expect(result.toolCalls).toEqual([
+      {
+        toolName: 'query_mistakes',
+        input: { subject_id: 'math' },
+        summary: 'legacy 无 id 帧。',
+        status: 'done',
+      },
+    ]);
+  });
+
   it('does not start a pickup clock for a FIFO-waiting QUEUED turn', () => {
     const waiting = foldCopilotRunFrames(createCopilotRunView(), [
       frame(301, 'copilot_run.queued', {
