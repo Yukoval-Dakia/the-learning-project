@@ -57,6 +57,13 @@ process.on('uncaughtException', (err) => {
 });
 
 async function main() {
+  // YUK-980：shutdown handler 先于一切装配安装——SIGTERM 落在注册/启动窗口此前按
+  // Node 默认立即退出（无 graceful）。getBoss 惰性解析：窗口内 exit(1) 交容器重启，
+  // boss 就绪后走与 installShutdownHandler 同款的 graceful stop。
+  const { installBootShutdownHandler } = await import('@/server/boss/shutdown');
+  let boss: import('pg-boss').PgBoss | null = null;
+  installBootShutdownHandler(() => boss);
+
   // YUK-328：独立 worker 不经过 server/index.ts，必须在注册 handlers 前自行装配
   // 完整 DomainTool inventory；任何 manifest/load 错误让进程 fail-fast，避免任务在
   // 消费后才因缺工具失败并进入重投。
@@ -66,13 +73,11 @@ async function main() {
   // Dynamic import AFTER loadEnv(): @/db/client reads DATABASE_URL at module top
   // (throws if unset), and start-worker pulls the client in transitively. Mirrors
   // server/index.ts's RW_WORKER=1 branch, which dynamic-imports for the same reason.
-  const [{ db }, { startBossWorker }, { installShutdownHandler }] = await Promise.all([
+  const [{ db }, { startBossWorker }] = await Promise.all([
     import('@/db/client'),
     import('@/server/boss/start-worker'),
-    import('@/server/boss/shutdown'),
   ]);
-  const boss = await startBossWorker(db);
-  installShutdownHandler(boss);
+  boss = await startBossWorker(db);
   console.log('[worker] running, handlers registered');
 }
 
