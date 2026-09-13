@@ -103,15 +103,63 @@ export function installShutdownHandler(boss: PgBoss): void {
  * registerCapabilityTools()/startBossWorker()（此前 SIGTERM 落在注册/启动窗口时进程
  * 按 Node 默认立即退出——可能正在装配、正在起 boss、正在消费首批 job，无 graceful）。
  *
- * getBoss 惰性取 boss：
- * - 信号到达时 boss 尚为 null（注册/启动窗口）→ 无 job 可 drain（handlers 未注册），
- *   直接 exit(1) 交给容器重启策略，不假装 graceful；
- * - boss 就绪后 → 与 installShutdownHandler 完全同款的 graceful stop。
+ * 三个窗口，两种行为：
+ * - 信号到达时 boss 尚未 start（装配/pre-consumption 窗口，getBoss() → null）→
+ *   无 job 可 drain（handlers 未注册），直接 exit(1) 交容器重启策略，不假装 graceful；
+ * - boss 已 start 但 startBossWorker 尚未返回（startup-tail 窗口：markBossStarted
+ *   已执行、consumers 已在消费，registerCapabilityJobs→reconcile 仍在注册）→
+ *   【有界】等待 startup promise 落定再 drain：drain 与注册并发会让后续 work()/send()
+ *   撞上 stopping/stopped boss（work() 直接 throw 'Workers are disabled'），并与
+ *   boot owner 的退出码赛跑。镜像 API 进程的先例（server/index.ts installApiShutdown
+ *   await workerStartup），但 worker 独自持有 drain 预算，必须封顶；
+ * - startup 已完成 → 与 installShutdownHandler 完全同款的 graceful stop。
+ *
+ * getStartup() 的 promise 无论是 resolve 还是 reject 都继续 drain（注册失败≠丢弃
+ * in-flight job）；超时也继续 stop（残余注册步撞上 stopped boss 会 reject，由 boot
+ * owner 吞掉——exit 只有一个 owner）。返回的 handle 让 boot owner 查询 ownsExit()，
+ * 避免它的 startup-catch 在 shutdown 进行中抢 exit(1)。
  *
  * worker.ts 用它替换原「启动后才 install」的调用；installShutdownHandler(boss) 保留给
  * 既有测试与其他调用方，不重复注册。
  */
-export function installBootShutdownHandler(getBoss: () => PgBoss | null): void {
+export type BootShutdownHandle = {
+  /** True once a signal has been received — from then on this handler alone owns process.exit. */
+  ownsExit: () => boolean;
+};
+
+// docker-compose worker stop_grace_period=40s；stopBossGracefully 已占 30s drain。
+// startup-tail 等待不能再叠加独立的 30s。9s + 30s 留约 1s 收尾余量；
+// pg-boss 连接池关闭仍可能延迟，39s 是等待预算而非整个进程的硬退出上界。
+export const STARTUP_TAIL_WAIT_MS = 9_000;
+
+type StartupTailOutcome =
+  | { kind: 'settled' }
+  | { kind: 'rejected'; err: unknown }
+  | { kind: 'timeout' };
+
+/**
+ * Race the startup promise against a timer. On timeout the REAL promise stays
+ * pending — its eventual rejection is already handled twice over (the rejection
+ * branch here subscribes, and the boot owner awaits the same promise), so a
+ * late failure can never surface as an unhandledRejection.
+ */
+function startupTailOutcome(startup: Promise<unknown>, ms: number): Promise<StartupTailOutcome> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<StartupTailOutcome>((resolve) => {
+    timer = setTimeout(() => resolve({ kind: 'timeout' }), ms);
+  });
+  const settled = startup.then(
+    () => ({ kind: 'settled' }) as StartupTailOutcome,
+    (err: unknown) => ({ kind: 'rejected', err }) as StartupTailOutcome,
+  );
+  return Promise.race([settled, timedOut]).finally(() => clearTimeout(timer));
+}
+
+export function installBootShutdownHandler(
+  getBoss: () => PgBoss | null,
+  getStartup: () => Promise<unknown> | null = () => null,
+  startupTailWaitMs: number = STARTUP_TAIL_WAIT_MS,
+): BootShutdownHandle {
   let shuttingDown = false;
   const handler = async (signal: NodeJS.Signals) => {
     if (shuttingDown) return;
@@ -124,6 +172,23 @@ export function installBootShutdownHandler(getBoss: () => PgBoss | null): void {
       process.exit(1);
       return;
     }
+    const startup = getStartup();
+    if (startup) {
+      console.log(
+        `[boss] ${signal} while registration is still finishing — waiting up to ${startupTailWaitMs}ms for the startup tail before draining`,
+      );
+      const outcome = await startupTailOutcome(startup, startupTailWaitMs);
+      if (outcome.kind === 'rejected') {
+        console.warn(
+          '[boss] startup failed while shutting down — continuing the graceful drain (restart is supervised)',
+          outcome.err,
+        );
+      } else if (outcome.kind === 'timeout') {
+        console.warn(
+          `[boss] startup tail did not settle within ${startupTailWaitMs}ms — stopping anyway; late registration errors are expected and logged by the boot owner`,
+        );
+      }
+    }
     try {
       await stopBossGracefully(boss, signal);
       process.exit(0);
@@ -133,4 +198,5 @@ export function installBootShutdownHandler(getBoss: () => PgBoss | null): void {
   };
   process.on('SIGTERM', handler);
   process.on('SIGINT', handler);
+  return { ownsExit: () => shuttingDown };
 }
