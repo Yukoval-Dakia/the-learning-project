@@ -1,9 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-13：Tavily→Exa 换装交付（PR #1384，main 776a687d3，Mac 生产同 SHA 健康、容器内 EXA_API_KEY 在位）——sourcing_web 路由恢复可执行；09-13 首夜供给链实证：planner accepted 7 项→quiz_gen 7/7→19 题（7 active/12 draft，详见 .remember）。
+> Linear 是权威 tracker；更新于 2026-09-13：QoL 研究开跑 + C0 批交付——YUK-992 日级 dump 自动化真实落地（PR #1386，launchd 07:15，恢复演练过；该票曾被假 Done）+ C0 四快赢（PR #1387，main e1750de6b 生产健康）：verify raw_output_head / pnpm quiz:reverify / pnpm gen:prompt-hashes / audit:flags --strict 进 CI；stranded draft 重派成功（19 题 = 8 active + 10 人审 + 0 滞留）。
 
 ## NOW
 
+- 09-13 QoL C0 Done：992 日级 dump（launchd 07:15，14 日+月档保留，恢复演练 pg_restore 零错 42 题）+ verify raw head / quiz:reverify / gen:prompt-hashes / flags strict。生产 e1750de6b 健康。stranded draft jo3 重派 → pass+promoted（19 题 = 8 active + 10 人审）。
 - 09-13 Exa 换装 Done：web 检索后端 Tavily→Exa（PR #1384，main 776a687d3，Mac 生产健康）。live-probed 挂载（web_search_exa/web_fetch_exa，x-api-key header），闸/消费面/schema/prompt/oracle 全面更名，旧 tavily 值保 parse。
 - 09-13 首夜实证：planner 05:50 accepted 7 项（rationale 引用真实库存证据）→ executor（sourcing_web 跳 tavily_unavailable→quiz_gen fallback）→ quiz_gen 7/7 → 19 题 = 7 active + 12 draft（10 题数学全对仅 copy_safety=unknown 待 /drafts 人审；3 题判官输出解析失败留 draft 可重派）。
 
