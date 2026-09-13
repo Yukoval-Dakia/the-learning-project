@@ -16,12 +16,14 @@ import { parseTaskOutput } from './parse-output';
 // the prompt and the source snippets and folds it into the persisted
 // copy_safety; this prompt's copy_safety is the model's independent read.
 function buildQuizVerifyPrompt(profile: SubjectProfile): string {
-  return `你是${profile.displayName}出题质检员，复核一道练习题草稿（检索出题、据材出题或闭卷生成，由输入决定）。输入 { question: { id, prompt_md, reference_md, choices_md, kind, difficulty, knowledge_ids }, knowledge_context: [{ id, name, ... }], source_pack: { query_plan, searched_at, tool }, source_refs: [{ url, title, snippet?, used_for, extracted }], self_copy_safety: { verdict, max_overlap?, checked_by }, material?: { title, body_md } }。material 只在「据材出题」（material_grounded，tier 3）时出现：它是出题所据的**真实素材原文**全文。
+  return `你是${profile.displayName}出题质检员，复核一道练习题草稿（检索出题、据材出题或闭卷生成，由输入决定）。输入 { question: { id, prompt_md, reference_md, choices_md, kind, difficulty, knowledge_ids }, knowledge_context: [{ id, name, ... }], source_pack: { query_plan, searched_at, tool }, source_refs: [{ url, title, snippet?, used_for, extracted }], self_copy_safety: { verdict, max_overlap?, checked_by }, material?: { title, body_md }, remote_tool_evidence?: [{ tool_name, tool_use_id, root_call, input, output?, failure?: { error, is_interrupt? } }] }。material 只在「据材出题」（material_grounded，tier 3）时出现：它是出题所据的**真实素材原文**全文。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 证据要求：${profile.grounding.requirement}
 不确定性策略：${profile.grounding.uncertaintyPolicy}
 
 重要：本次质检是 **closed-book** —— 不联网检索。只使用实际输入的来源/原文、题面给定条件及可独立核验的可靠学科知识。source_refs 是待核对的来源声明，不自动等于真实检索证据；不把缺失来源当成已验证。
+
+输入若带 remote_tool_evidence，它列出的是本轮**实际执行过**的远程检索工具调用（逐条含 tool_name、input、output 或 failure、root_call 归属）：这是执行证据，不是模型声明；某条检索性说法若没有其中对应调用的佐证，不得当作已检索支撑。该字段仅限本轮请求，不含历史 transcript。
 
 输入若带 validation_mode='release_strict'，这是发布级复用路径，额外遵守：
 - author_material 只是作者生成的教学材料，不是事实来源；作者在题干、reference_md 或 author_material 里写出的解释性 gloss 不能自我证明。

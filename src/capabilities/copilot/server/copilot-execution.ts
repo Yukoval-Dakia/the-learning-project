@@ -248,6 +248,7 @@ export function createCopilotExecutionOwner(
         validationTaskRunId,
         primaryView,
         observedQuestion,
+        remoteEvidence,
       ) => {
         await policy.cancellation.probe();
         validationSignal.throwIfAborted();
@@ -257,6 +258,7 @@ export function createCopilotExecutionOwner(
           additionalVisibleText: primaryViewLearningContent(primaryView),
           additionalQuestionContent: primaryViewLearningQuestions(primaryView),
           observedQuestion,
+          ...(remoteEvidence ? { remoteToolEvidence: remoteEvidence } : {}),
         });
       },
       resolveArtifactReference: (ref) => resolveLivePrimaryViewArtifact(db, ref),

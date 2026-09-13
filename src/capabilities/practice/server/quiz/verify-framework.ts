@@ -154,6 +154,8 @@ export interface QuestionContentValidationInput {
   validation_mode?: 'release_strict';
   /** Selects learner-visible axis admission without changing question-pool policy. */
   validation_purpose?: 'learning_content';
+  /** Actually executed remote-MCP calls of this request turn (executed evidence, not declarations). */
+  remote_tool_evidence?: unknown;
 }
 
 export interface QuestionContentValidationRun {

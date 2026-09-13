@@ -4,7 +4,13 @@ import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it, vi } from 'vitest';
 import { writeCopilotReply } from './conversation-writes';
 import {
+  EXA_WEB_SEARCH_POST_TOOL_USE,
+  EXA_WEB_SEARCH_POST_TOOL_USE_FAILURE,
+} from './exa-remote-mcp.actual-fixture';
+import {
   EPHEMERAL_PRESENTATION_STORAGE_NOTICE,
+  REMOTE_MCP_EVIDENCE_MAX_CALL_CHARS,
+  type RemoteMcpEvidencePacket,
   createCopilotReplyFinalizer,
   sealCommittedPresentationReply,
 } from './reply-finalization';
@@ -134,6 +140,25 @@ async function pre(
     toolUseId,
     { signal: new AbortController().signal },
   );
+}
+
+async function post(value: ReturnType<typeof finalizer>, payload: Parameters<HookCallback>[0]) {
+  const event =
+    payload.hook_event_name === 'PostToolUseFailure' ? 'PostToolUseFailure' : 'PostToolUse';
+  const hook = value.hooks[event]?.[0]?.hooks[0] as HookCallback;
+  return hook(payload, 'hook-test', { signal: new AbortController().signal });
+}
+
+function exaPost(
+  toolUseId: string,
+  overrides: { tool_input?: unknown; tool_response?: unknown; agent_id?: string } = {},
+) {
+  const base = structuredClone(EXA_WEB_SEARCH_POST_TOOL_USE);
+  return {
+    ...base,
+    tool_use_id: toolUseId,
+    ...overrides,
+  } as typeof base;
 }
 
 describe('Copilot root reply finalization', () => {
@@ -393,6 +418,7 @@ describe('Copilot root reply finalization', () => {
       '用户正在核对一条复杂学习链。',
       'root_run_1',
       nomination,
+      undefined,
       undefined,
     );
     expect(result.preparedReply).toEqual({ text: '学习内容未通过校验。' });
@@ -732,5 +758,179 @@ describe('Copilot root reply finalization', () => {
     expect(original.trace_call_count).toBe(REALISTIC_EVIDENCE_TRACE.length);
     expect(original.trace_call_count).toBeLessThanOrEqual(60);
     expect(original.trace_sha256).not.toBe(mutated.trace_sha256);
+  });
+});
+
+describe('Copilot remote-MCP evidence capture', () => {
+  function finalizerWithValidate() {
+    const validate = vi
+      .fn<Parameters<typeof createCopilotReplyFinalizer>[0]['validateLearningContent']>()
+      .mockImplementation(async (text) => ({ replyText: text, passed: true }));
+    return { value: finalizer(validate), validate };
+  }
+
+  it('captures the actual executed Exa search I/O and delivers it as the final review packet', async () => {
+    const { value, validate } = finalizerWithValidate();
+    const payload = structuredClone(EXA_WEB_SEARCH_POST_TOOL_USE);
+    await pre(value, payload.tool_name, payload.tool_use_id, payload.tool_input);
+    await post(value, payload);
+    // Later mutation of the SDK-owned payload must not reach the sealed evidence.
+    payload.tool_response[0].text = 'tampered-after-hook';
+    const result = await value.finalizeTerminal('已检索外部证据。');
+
+    expect(result.accepted).toBe(true);
+    expect(validate.mock.calls[0]?.[4]).toBeUndefined();
+    expect(validate.mock.calls[0]?.[5]).toEqual([
+      {
+        tool_name: 'mcp__exa__web_search_exa',
+        tool_use_id: 'call_9cea61a7cc314aa5a35c04a8',
+        root_call: true,
+        input: EXA_WEB_SEARCH_POST_TOOL_USE.tool_input,
+        output: EXA_WEB_SEARCH_POST_TOOL_USE.tool_response,
+      },
+    ]);
+
+    const clean = finalizer();
+    await pre(
+      clean,
+      EXA_WEB_SEARCH_POST_TOOL_USE.tool_name,
+      EXA_WEB_SEARCH_POST_TOOL_USE.tool_use_id,
+      EXA_WEB_SEARCH_POST_TOOL_USE.tool_input,
+    );
+    await post(clean, structuredClone(EXA_WEB_SEARCH_POST_TOOL_USE));
+    const cleanResult = await clean.finalizeTerminal('已检索外部证据。');
+    expect(result.receipt.trace_sha256).toBe(cleanResult.receipt.trace_sha256);
+  });
+
+  it('captures the actual failure event with error and interrupt flag instead of a success output', async () => {
+    const { value, validate } = finalizerWithValidate();
+    const payload = structuredClone(EXA_WEB_SEARCH_POST_TOOL_USE_FAILURE);
+    await pre(value, payload.tool_name, payload.tool_use_id, payload.tool_input);
+    await post(value, payload);
+
+    const result = await value.finalizeTerminal('检索失败，改为闭卷回答。');
+    expect(result.accepted).toBe(true);
+    expect(validate.mock.calls[0]?.[5]).toEqual([
+      {
+        tool_name: 'mcp__exa__web_search_exa',
+        tool_use_id: 'call_2988d2e479a64c09bb7f9c80',
+        root_call: true,
+        input: EXA_WEB_SEARCH_POST_TOOL_USE_FAILURE.tool_input,
+        failure: {
+          error: EXA_WEB_SEARCH_POST_TOOL_USE_FAILURE.error,
+          is_interrupt: false,
+        },
+      },
+    ]);
+  });
+
+  it('does not capture Loom domain-tool calls as remote evidence', async () => {
+    const { value, validate } = finalizerWithValidate();
+    await pre(value, 'mcp__loom__query_knowledge', 'loom_1', { query: '函数' });
+    await post(value, {
+      hook_event_name: 'PostToolUse',
+      session_id: 'session_1',
+      transcript_path: '/tmp/transcript',
+      cwd: '/tmp',
+      tool_name: 'mcp__loom__query_knowledge',
+      tool_use_id: 'loom_1',
+      tool_input: { query: '函数' },
+      tool_response: { nodes: [] },
+    });
+
+    const result = await value.finalizeTerminal('已核对。');
+    expect(result.accepted).toBe(true);
+    expect(validate.mock.calls[0]?.[5]).toBeUndefined();
+  });
+
+  it('captures a remote call exactly once per tool_use_id', async () => {
+    const { value, validate } = finalizerWithValidate();
+    const payload = structuredClone(EXA_WEB_SEARCH_POST_TOOL_USE);
+    await pre(value, payload.tool_name, payload.tool_use_id, payload.tool_input);
+    await post(value, payload);
+    const duplicate = await post(value, structuredClone(EXA_WEB_SEARCH_POST_TOOL_USE));
+
+    expect(duplicate).toEqual({ continue: true });
+    await value.finalizeTerminal('已检索。');
+    const packet = validate.mock.calls[0]?.[5] as RemoteMcpEvidencePacket | undefined;
+    expect(packet).toHaveLength(1);
+    expect(packet?.[0]?.tool_use_id).toBe('call_9cea61a7cc314aa5a35c04a8');
+  });
+
+  it('captures copilot-researcher subagent remote calls with root_call false', async () => {
+    const { value, validate } = finalizerWithValidate();
+    await pre(
+      value,
+      'mcp__exa__web_search_exa',
+      'call_9cea61a7cc314aa5a35c04a8',
+      EXA_WEB_SEARCH_POST_TOOL_USE.tool_input,
+      'researcher_1',
+    );
+    await post(value, exaPost('call_9cea61a7cc314aa5a35c04a8', { agent_id: 'researcher_1' }));
+
+    await value.finalizeTerminal('子任务检索已完成。');
+    expect(validate.mock.calls[0]?.[5]).toMatchObject([
+      { root_call: false, tool_use_id: 'call_9cea61a7cc314aa5a35c04a8' },
+    ]);
+  });
+
+  it('fails closed when one remote call exceeds the per-call evidence bound', async () => {
+    const value = finalizer();
+    await pre(value, 'mcp__exa__web_search_exa', 'huge_1', { query: 'x' });
+    await post(
+      value,
+      exaPost('huge_1', {
+        tool_input: { query: 'x' },
+        tool_response: { blob: 'x'.repeat(REMOTE_MCP_EVIDENCE_MAX_CALL_CHARS) },
+      }),
+    );
+
+    const result = await value.finalizeTerminal('已检索。');
+    expect(result.accepted).toBe(false);
+    expect(result.replyText).toBe('这次回复没有完成可验证的收口，暂不展示未封存的草稿。请重试。');
+    expect(result.receipt.learning_content).toBe('blocked');
+  });
+
+  it('fails closed when the summed remote evidence exceeds the turn-wide bound', async () => {
+    const value = finalizer();
+    const chunk = 'x'.repeat(60_000);
+    for (let index = 0; index < 5; index += 1) {
+      const toolUseId = `bulk_${index}`;
+      await pre(value, 'mcp__exa__web_search_exa', toolUseId, { query: 'x' });
+      await post(
+        value,
+        exaPost(toolUseId, { tool_input: { query: 'x' }, tool_response: { blob: chunk } }),
+      );
+    }
+
+    const result = await value.finalizeTerminal('已检索。');
+    expect(result.accepted).toBe(false);
+    expect(result.replyText).toBe('这次回复没有完成可验证的收口，暂不展示未封存的草稿。请重试。');
+  });
+
+  it('fails closed when evidence capture itself throws', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const value = finalizer();
+      await pre(value, 'mcp__exa__web_search_exa', 'bomb_1', { query: 'x' });
+      await post(
+        value,
+        exaPost('bomb_1', {
+          tool_input: { query: 'x' },
+          tool_response: {
+            toJSON: () => {
+              throw new Error('unserializable evidence');
+            },
+          },
+        }),
+      );
+
+      const result = await value.finalizeTerminal('已检索。');
+      expect(result.accepted).toBe(false);
+      expect(result.replyText).toBe('这次回复没有完成可验证的收口，暂不展示未封存的草稿。请重试。');
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });

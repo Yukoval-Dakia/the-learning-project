@@ -179,6 +179,8 @@ export interface CopilotLearningContentValidationDeps extends LearningContentVal
   additionalVisibleText?: string;
   /** Server-derived generated question, never a model-authored reply marker. */
   additionalQuestionContent?: CopilotLearningContent;
+  /** Actually executed remote-MCP calls of this turn, forwarded to the QuizVerify review. */
+  remoteToolEvidence?: unknown;
 }
 
 export interface CopilotLearningContentReviewResult {

@@ -1,7 +1,13 @@
 import { createHash } from 'node:crypto';
-import type { HookCallback, Options } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  HookCallback,
+  Options,
+  PostToolUseFailureHookInput,
+  PostToolUseHookInput,
+} from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
+import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/kernel/tools/allowlists';
 
 export { CopilotPrimaryViewSchema } from '../primary-view-contract';
 
@@ -28,6 +34,11 @@ import {
 import type { CopilotPrimaryView } from './turns';
 
 export const COPILOT_REPLY_TRACE_MAX_CALLS = 60;
+
+/** Per-call bound on the JSONified remote-MCP evidence payload (input + output/failure). */
+export const REMOTE_MCP_EVIDENCE_MAX_CALL_CHARS = 64_000;
+/** Turn-wide bound on the summed JSONified remote-MCP evidence payloads. */
+export const REMOTE_MCP_EVIDENCE_MAX_TOTAL_CHARS = 256_000;
 
 const MAX_REPLY_CHARS = 64_000;
 const FINALIZATION_FAILURE_REPLY = '这次回复没有完成可验证的收口，暂不展示未封存的草稿。请重试。';
@@ -136,6 +147,19 @@ export interface PreparedCopilotReply {
   primaryView?: CopilotPrimaryView;
 }
 
+/** One actually executed remote-MCP tool call of this turn, captured at its hook. */
+export interface RemoteMcpEvidenceCall {
+  tool_name: string;
+  tool_use_id: string;
+  root_call: boolean;
+  input: unknown;
+  output?: unknown;
+  failure?: { error: string; is_interrupt?: boolean };
+}
+
+/** Request-turn scoped: derived only from this turn's trace, no transcript or reasoning fields. */
+export type RemoteMcpEvidencePacket = RemoteMcpEvidenceCall[];
+
 interface TraceEntry {
   ordinal: number;
   tool_use_id: string;
@@ -150,6 +174,12 @@ interface TraceEntry {
   /** In-memory provenance only; raw source material never enters the receipt. */
   domain_input?: unknown;
   domain_executed?: boolean;
+  /** In-memory remote-MCP evidence for the final review; raw payloads never enter the digest or receipt. */
+  remote_input?: unknown;
+  remote_output?: unknown;
+  remote_failure?: { error: string; is_interrupt?: boolean };
+  remote_evidence_overflow?: boolean;
+  remote_capture_failed?: boolean;
 }
 
 /** Only newly generated content adds a learning-validation surface. Read-model
@@ -204,6 +234,7 @@ export interface CreateCopilotReplyFinalizerOptions {
     taskRunId: string,
     primaryView?: CopilotPrimaryView,
     observedQuestion?: { input: unknown; output: unknown },
+    remoteEvidence?: RemoteMcpEvidencePacket,
   ) => Promise<{ replyText: string; passed: boolean }>;
   /** Owned live-row validation plus canonical product reference. Null rejects the nomination. */
   resolveArtifactReference: (ref: {
@@ -289,8 +320,41 @@ function sha256Text(value: string): string {
 
 function digestTrace(trace: readonly TraceEntry[]): string {
   return sha256CanonicalJson(
-    trace.map(({ domain_output: _output, domain_input: _input, ...entry }) => entry),
+    trace.map(
+      ({
+        domain_output: _output,
+        domain_input: _input,
+        remote_input: _remoteInput,
+        remote_output: _remoteOutput,
+        remote_failure: _remoteFailure,
+        ...entry
+      }) => entry,
+    ),
   );
+}
+
+/** Turn's executed remote-MCP calls as a review packet; undefined when none were captured. */
+function buildRemoteMcpEvidencePacket(
+  trace: readonly TraceEntry[],
+): RemoteMcpEvidencePacket | undefined {
+  const calls: RemoteMcpEvidenceCall[] = [];
+  for (const entry of trace) {
+    if (
+      entry.remote_input === undefined &&
+      entry.remote_output === undefined &&
+      entry.remote_failure === undefined
+    )
+      continue;
+    calls.push({
+      tool_name: entry.tool_name,
+      tool_use_id: entry.tool_use_id,
+      root_call: entry.root_call,
+      input: entry.remote_input,
+      ...(entry.remote_output !== undefined ? { output: entry.remote_output } : {}),
+      ...(entry.remote_failure !== undefined ? { failure: entry.remote_failure } : {}),
+    });
+  }
+  return calls.length > 0 ? calls : undefined;
 }
 
 function domainToolName(toolName: string): string {
@@ -333,6 +397,53 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
   const trace: TraceEntry[] = [];
   const byId = new Map<string, TraceEntry>();
   let traceVersion = 0;
+  let remoteEvidenceTotalChars = 0;
+
+  /** Fail-closed evidence capture: never blocks the tool call, never stores truncated payloads. */
+  function captureRemoteMcpEvidence(
+    entry: TraceEntry,
+    input: PostToolUseHookInput | PostToolUseFailureHookInput,
+  ): void {
+    try {
+      const callChars = JSON.stringify({
+        input: input.tool_input,
+        ...(input.hook_event_name === 'PostToolUse'
+          ? { output: input.tool_response }
+          : {
+              failure: {
+                error: input.error,
+                ...(input.is_interrupt !== undefined ? { is_interrupt: input.is_interrupt } : {}),
+              },
+            }),
+      }).length;
+      if (
+        callChars > REMOTE_MCP_EVIDENCE_MAX_CALL_CHARS ||
+        remoteEvidenceTotalChars + callChars > REMOTE_MCP_EVIDENCE_MAX_TOTAL_CHARS
+      ) {
+        entry.remote_evidence_overflow = true;
+        return;
+      }
+      // Clone the observed value so a caller retaining the mutable hook payload
+      // cannot later change what the final review corroborates against.
+      entry.remote_input = structuredClone(input.tool_input);
+      if (input.hook_event_name === 'PostToolUse') {
+        entry.remote_output = structuredClone(input.tool_response);
+      } else {
+        entry.remote_failure = {
+          error: input.error,
+          ...(input.is_interrupt !== undefined ? { is_interrupt: input.is_interrupt } : {}),
+        };
+      }
+      remoteEvidenceTotalChars += callChars;
+    } catch (error) {
+      entry.remote_capture_failed = true;
+      console.error('[copilot-reply-finalization] remote MCP evidence capture failed', {
+        task_run_id: options.rootTaskRunId,
+        tool_use_id: entry.tool_use_id,
+        error,
+      });
+    }
+  }
 
   const preHook: HookCallback = async (input) => {
     if (input.hook_event_name !== 'PreToolUse') return { continue: true };
@@ -371,6 +482,11 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     entry.output_sha256 = sha256CanonicalJson(
       input.hook_event_name === 'PostToolUse' ? input.tool_response : { error: input.error },
     );
+    if (
+      input.tool_name.startsWith('mcp__') &&
+      !input.tool_name.startsWith(`mcp__${DOMAIN_TOOL_MCP_SERVER_NAME}__`)
+    )
+      captureRemoteMcpEvidence(entry, input);
     traceVersion += 1;
     return {
       hookSpecificOutput: {
@@ -403,6 +519,9 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       }
       if (trace.some((entry) => entry.status === 'in_flight' || entry.output_sha256 === null)) {
         throw new Error('cannot seal an incomplete tool trace');
+      }
+      if (trace.some((entry) => entry.remote_evidence_overflow || entry.remote_capture_failed)) {
+        throw new Error('remote MCP evidence capture overflowed or failed');
       }
       const candidateSha = sha256Text(terminalText);
       const legacyPresented = extractPrimaryView(
@@ -460,12 +579,16 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
             throw new Error('generated question input is not trace-bound');
           return structuredClone({ input: observed.domain_input, output: observed.domain_output });
         })(),
+        buildRemoteMcpEvidencePacket(trace),
       );
       let fixed = applyProposalDisclosure(
         !learning.passed && correction.kind !== 'normal' ? correction.reply : learning.replyText,
         disclosure,
       );
       if (!learning.passed) {
+        // The fixed review re-validates the sanitized replacement text on its own
+        // merits; turn evidence (primaryView, observedQuestion, remote packet) is
+        // candidate-review material and must not re-open a failed adjudication.
         const fixedReview = await options.validateLearningContent(
           fixed,
           options.userContextText,
