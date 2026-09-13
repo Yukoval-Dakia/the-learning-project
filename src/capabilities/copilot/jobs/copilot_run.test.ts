@@ -257,7 +257,7 @@ type CopilotRunTestParams = RunCopilotRunParams & {
   streamTaskCollectingFn?: unknown;
   runValidationTaskFn?: unknown;
   buildMcpServerFn?: CopilotExecutionAdapters['buildMcpServerFn'];
-  buildTavilyMcpServerFn?: CopilotExecutionAdapters['buildTavilyMcpServerFn'];
+  buildExaMcpServerFn?: CopilotExecutionAdapters['buildExaMcpServerFn'];
   resolveCopilotSkillsFn?: CopilotExecutionAdapters['resolveCopilotSkillsFn'];
 };
 
@@ -290,7 +290,7 @@ async function runCopilotRun(params: CopilotRunTestParams): ReturnType<typeof ru
     streamTaskCollectingFn,
     runValidationTaskFn,
     buildMcpServerFn,
-    buildTavilyMcpServerFn,
+    buildExaMcpServerFn,
     resolveCopilotSkillsFn,
     ...runParams
   } = params;
@@ -317,7 +317,7 @@ async function runCopilotRun(params: CopilotRunTestParams): ReturnType<typeof ru
         }
       : {}),
     ...(buildMcpServerFn ? { buildMcpServerFn } : {}),
-    ...(buildTavilyMcpServerFn ? { buildTavilyMcpServerFn } : {}),
+    ...(buildExaMcpServerFn ? { buildExaMcpServerFn } : {}),
     ...(resolveCopilotSkillsFn ? { resolveCopilotSkillsFn } : {}),
   });
   return runCopilotRunActual({
@@ -763,7 +763,7 @@ describe('runCopilotRun', () => {
     const execute = createCopilotExecutionOwner({
       streamTaskCollectingFn: stream,
       buildMcpServerFn: () => ({ type: 'sdk', name: 'loom' }) as never,
-      buildTavilyMcpServerFn: () => null,
+      buildExaMcpServerFn: () => null,
       resolveCopilotSkillsFn: async () => undefined,
     });
     try {
@@ -874,7 +874,7 @@ describe('runCopilotRun', () => {
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
       buildMcpServerFn,
-      buildTavilyMcpServerFn: () => null,
+      buildExaMcpServerFn: () => null,
       resolveCopilotSkillsFn: async () => ['copilot'],
     });
     expect(result.status).toBe('done');

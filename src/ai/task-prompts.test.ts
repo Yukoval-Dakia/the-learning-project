@@ -337,8 +337,8 @@ describe('getTaskSystemPrompt', () => {
       expect(prompt).toContain('derivation');
       expect(prompt).toContain('short_answer / reading / translation / essay');
       // Tools referenced by capability (handler resolves names at run time).
-      expect(prompt).toContain('tavily_search');
-      expect(prompt).toContain('tavily_extract');
+      expect(prompt).toContain('web_search_exa');
+      expect(prompt).toContain('web_fetch_exa');
       // canonical kinds, no subject-only leakage.
       expect(prompt).toMatch(/\bchoice\b/);
       expect(prompt).not.toMatch(/\bsingle_choice\b/);
@@ -512,9 +512,9 @@ describe('getTaskSystemPrompt exhaustiveness (M1)', () => {
       expect(prompt).toContain('summary_md');
     });
 
-    it('teaches WHEN to report an image_candidate (tavily_extract empty + search says questions)', () => {
+    it('teaches WHEN to report an image_candidate (web_fetch_exa empty + search says questions)', () => {
       const prompt = getTaskSystemPrompt('SourcingTask');
-      expect(prompt).toContain('tavily_extract');
+      expect(prompt).toContain('web_fetch_exa');
       // The trigger condition: stem lives in an image / cannot lift as text.
       expect(prompt).toMatch(/图片/);
       // 守 ADR-0002: VLM 抽图是用户 accept 后的付费动作, NOT the agent's job.

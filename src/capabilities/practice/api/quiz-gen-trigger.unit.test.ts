@@ -3,7 +3,7 @@
 // informs without blocking + hard cap), honest knowledge-read semantics (an empty
 // read is a 404, never phrased as verified), and enqueue evidence on 202.
 //
-// The knowledge read / pg-boss enqueue / Tavily gate are vi.mock'd seams — this
+// The knowledge read / pg-boss enqueue / web-search gate are vi.mock'd seams — this
 // suite pins the route contract, not drizzle SQL (the archived_at guard mirrors
 // resolveTrigger's, exercised by the quiz_gen DB suite).
 
@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   enqueueSupplyDispatchJob: vi.fn(),
-  tavilyAvailable: vi.fn((): boolean => true),
+  webSearchAvailable: vi.fn((): boolean => true),
   knowledgeRows: [] as Array<{ id: string; name: string; domain: string | null }>,
 }));
 
@@ -29,8 +29,8 @@ vi.mock('@/db/client', () => ({
 vi.mock('@/kernel/supply-dispatch', () => ({
   enqueueSupplyDispatchJob: mocks.enqueueSupplyDispatchJob,
 }));
-vi.mock('@/kernel/supply-dispatch-tavily', () => ({
-  supplyDispatchTavilyAvailable: mocks.tavilyAvailable,
+vi.mock('@/kernel/supply-dispatch-web-search', () => ({
+  supplyDispatchWebSearchAvailable: mocks.webSearchAvailable,
 }));
 
 import { POST } from './quiz-gen-trigger';
@@ -55,7 +55,7 @@ function seedKnowledge(rows = [{ id: KC, name: '链式法则', domain: 'calculus
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.tavilyAvailable.mockReturnValue(true);
+  mocks.webSearchAvailable.mockReturnValue(true);
   seedKnowledge();
   mocks.enqueueSupplyDispatchJob.mockResolvedValue('boss-job-1');
 });
@@ -114,23 +114,23 @@ describe('POST /api/questions/quiz-gen — honest knowledge-read semantics', () 
   });
 });
 
-describe('POST /api/questions/quiz-gen — Tavily availability gate (material_grounded)', () => {
-  it('returns 409 without enqueueing when TAVILY_API_KEY is unset', async () => {
-    mocks.tavilyAvailable.mockReturnValue(false);
+describe('POST /api/questions/quiz-gen — web search availability gate (material_grounded)', () => {
+  it('returns 409 without enqueueing when EXA_API_KEY is unset', async () => {
+    mocks.webSearchAvailable.mockReturnValue(false);
     const res = await POST(req({ knowledge_id: KC, generation_method: 'material_grounded' }));
     expect(res.status).toBe(409);
     const body = (await res.json()) as { error: string; message: string };
-    expect(body.message).toContain('TAVILY_API_KEY');
+    expect(body.message).toContain('EXA_API_KEY');
     expect(mocks.enqueueSupplyDispatchJob).not.toHaveBeenCalled();
   });
 
-  it('still enqueues material_grounded when Tavily is available', async () => {
+  it('still enqueues material_grounded when Exa is available', async () => {
     const res = await POST(req({ knowledge_id: KC, generation_method: 'material_grounded' }));
     expect(res.status).toBe(202);
   });
 
-  it('enqueues closed_book regardless of Tavily availability', async () => {
-    mocks.tavilyAvailable.mockReturnValue(false);
+  it('enqueues closed_book regardless of Exa availability', async () => {
+    mocks.webSearchAvailable.mockReturnValue(false);
     const res = await POST(req({ knowledge_id: KC, generation_method: 'closed_book' }));
     expect(res.status).toBe(202);
   });

@@ -1589,7 +1589,7 @@ describe('shouldEmitToolUseForCaller — live tool_use gate (YUK-457)', () => {
     // Task is dropped later by the SSE sanitizer; Tavily cards are governed by
     // the finalize force-done ruling — the gate must not touch either.
     expect(shouldEmitToolUseForCaller('Task', 'loom', copilot)).toBe(true);
-    expect(shouldEmitToolUseForCaller('mcp__tavily__tavily-search', 'loom', copilot)).toBe(true);
+    expect(shouldEmitToolUseForCaller('mcp__exa__web-search-exa', 'loom', copilot)).toBe(true);
     expect(shouldEmitToolUseForCaller('mcp__loom__not_a_registered_tool', 'loom', copilot)).toBe(
       true,
     );

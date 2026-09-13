@@ -8,11 +8,7 @@ import {
 import { resolveContextBudget } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
 import type { ValidateLearningContentFn } from '@/kernel/tools/types';
-import {
-  TAVILY_MCP_ALLOWED_TOOLS,
-  TAVILY_MCP_SERVER_NAME,
-  buildTavilyMcpServer,
-} from '@/server/ai/mcp/tavily';
+import { EXA_MCP_ALLOWED_TOOLS, EXA_MCP_SERVER_NAME, buildExaMcpServer } from '@/server/ai/mcp/exa';
 import {
   type RunTaskResult,
   type StreamCollectResult,
@@ -141,7 +137,7 @@ export interface CopilotExecutionAdapters {
     onDelta: (text: string) => void,
   ) => Promise<StreamResult>;
   buildMcpServerFn: (options: BuildMcpServerOptions) => SdkMcpServer;
-  buildTavilyMcpServerFn: () => McpHttpServerConfig | null;
+  buildExaMcpServerFn: () => McpHttpServerConfig | null;
   resolveCopilotSkillsFn: typeof resolveCopilotSkills;
 }
 
@@ -149,7 +145,7 @@ const defaultAdapters: CopilotExecutionAdapters = {
   runAgentTaskFn: runAgentTask,
   streamTaskCollectingFn: streamTaskCollecting,
   buildMcpServerFn: buildMcpServerFromRegistry,
-  buildTavilyMcpServerFn: buildTavilyMcpServer,
+  buildExaMcpServerFn: buildExaMcpServer,
   resolveCopilotSkillsFn: resolveCopilotSkills,
 };
 
@@ -308,14 +304,14 @@ export function createCopilotExecutionOwner(
         );
       },
     });
-    const tavily = adapters.buildTavilyMcpServerFn();
+    const exa = adapters.buildExaMcpServerFn();
     const mcpServers: Record<string, SdkMcpServer | McpHttpServerConfig> = {
       [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer,
-      ...(tavily ? { [TAVILY_MCP_SERVER_NAME]: tavily } : {}),
+      ...(exa ? { [EXA_MCP_SERVER_NAME]: exa } : {}),
     };
     const baseAllowedTools = [
       ...resolveMcpAllowedTools(surface),
-      ...(tavily ? TAVILY_MCP_ALLOWED_TOOLS : []),
+      ...(exa ? EXA_MCP_ALLOWED_TOOLS : []),
     ];
     const subagentsEnabled = policy.subagentsEnabled ?? isCopilotSubagentEnabled();
     const parentMaxTurns = DURABLE_COPILOT_EXECUTION_BUDGET.maxIterations;

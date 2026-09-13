@@ -47,7 +47,7 @@ export interface WebCandidate {
 
 export type WebFetchFailureClass =
   | 'anchor_not_found'
-  | 'tavily_unavailable'
+  | 'web_search_unavailable'
   | 'llm'
   | 'parse'
   | 'kind_gate'
@@ -84,9 +84,9 @@ export interface WebSourcingAgentInput {
 }
 
 /**
- * LLM 相位整体依赖注入：MCP 挂载（domain read tools + Tavily remote）+ runAgentTask
- * 由调用方装配。返回 null 表示 Tavily 不可用（调用方映射为 deterministic skip，
- * 旧 dispatcher 的 tavilyAvailable 闸同款语义——web 路由无 Tavily 即不可执行）。
+ * LLM 相位整体依赖注入：MCP 挂载（domain read tools + Exa remote）+ runAgentTask
+ * 由调用方装配。返回 null 表示检索后端不可用（调用方映射为 deterministic skip，
+ * 旧 dispatcher 的 webSearchAvailable 闸同款语义——web 路由无检索后端即不可执行）。
  */
 export type RunWebSourcingAgentFn = (params: {
   db: Db;
@@ -164,7 +164,7 @@ function profileSourceWhitelist(profile: SubjectProfile): string[] {
  * action='experimental:web_fetch_candidates' 事件（漏斗观测面；与 jyeoo 面的"预算
  * 账本按 canary 求和、绝不双写"契约一致）。旧位在 web_fetch_candidates 工具层——
  * executor job 直调核时观测被绕过；移入核后 agent 工具与 executor 路径都恰好一条。
- * Tavily 不可用会在 LLM 前返回，不算一次运行、不写 canary。事件写失败不得翻转运行结果
+ * 检索后端不可用会在 LLM 前返回，不算一次运行、不写 canary。事件写失败不得翻转运行结果
  * （best-effort try/catch）。
  */
 export async function runWebFetchCandidates(
@@ -172,7 +172,7 @@ export async function runWebFetchCandidates(
 ): Promise<RunWebFetchCandidatesResult> {
   const result = await runWebFetchCandidatesCore(params);
 
-  if (result.status === 'failed' && result.failureClass === 'tavily_unavailable') return result;
+  if (result.status === 'failed' && result.failureClass === 'web_search_unavailable') return result;
 
   try {
     await writeEvent(params.db, {
@@ -255,7 +255,7 @@ async function runWebFetchCandidatesCore(
     ...(params.input.kindRequired ? { kind_required: true } : {}),
   };
 
-  // ── 3. LLM 相位（deps；null = Tavily 不可用 → deterministic skip） ──────────────
+  // ── 3. LLM 相位（deps；null = 检索后端不可用 → deterministic skip） ──────────────
   const runCtx = {
     taskRunId: params.ctx?.taskRunId ?? `web_fetch_${anchor.id}`,
     causedByEventId: params.ctx?.causedByEventId ?? `web_fetch_trigger_${anchor.id}`,
@@ -269,8 +269,8 @@ async function runWebFetchCandidatesCore(
   if (taskResult === null) {
     return {
       status: 'failed',
-      failureClass: 'tavily_unavailable',
-      detail: 'Tavily API key 未配置——web 路由不可执行（旧 dispatcher tavilyAvailable 闸同款）',
+      failureClass: 'web_search_unavailable',
+      detail: 'EXA_API_KEY 未配置——web 路由不可执行（旧 dispatcher webSearchAvailable 闸同款）',
     };
   }
 

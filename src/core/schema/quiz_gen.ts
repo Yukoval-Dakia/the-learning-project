@@ -36,7 +36,7 @@ export const QuizGenSourceRef = z.object({
   title: z.string().min(1),
   snippet: z.string().optional(),
   used_for: QuizGenUsedFor,
-  // true when the agent pulled full content via tavily_extract (not just search snippet).
+  // true when the agent pulled full content via web_fetch_exa / tavily_extract (not just search snippet).
   extracted: z.boolean(),
 });
 export type QuizGenSourceRefT = z.infer<typeof QuizGenSourceRef>;
@@ -44,10 +44,11 @@ export type QuizGenSourceRefT = z.infer<typeof QuizGenSourceRef>;
 export const QuizGenSourcePack = z.object({
   query_plan: z.array(z.string().min(1)),
   searched_at: z.string().min(1),
-  // YUK-607 — closed_book 跑法根本不挂检索，'none' 是诚实自报；旧 z.literal('tavily')
+  // YUK-607 — closed_book 跑法根本不挂检索，'none' 是诚实自报；Tavily→Exa 换装后
+  // 'exa' 为新报告值，历史 'tavily' 行保留可 parse。
   // 会把整批输出打死（spike 2026-07-10 实测 RC 批阵亡第二因）。'.tool' 无生产消费方，
   // 纯 provenance 记录，放宽无下游影响。
-  tool: z.enum(['tavily', 'none']),
+  tool: z.enum(['tavily', 'exa', 'none']),
 });
 export type QuizGenSourcePackT = z.infer<typeof QuizGenSourcePack>;
 

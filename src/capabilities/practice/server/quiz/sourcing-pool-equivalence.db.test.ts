@@ -206,7 +206,7 @@ describe('queryExistingPool ↔ poolFetch selection equivalence (YUK-398 inc-2)'
       count: 5,
       kind: 'reading',
       enqueueSequenceJob: async () => {},
-      tavilyAvailable: TAVILY_UP,
+      webSearchAvailable: TAVILY_UP,
     });
     expect(reading.existing.map((h) => h.question_id)).toEqual([
       'r-auth', // tier 1
@@ -225,7 +225,7 @@ describe('queryExistingPool ↔ poolFetch selection equivalence (YUK-398 inc-2)'
       count: 99,
       kind: 'reading',
       enqueueSequenceJob: async () => {},
-      tavilyAvailable: TAVILY_UP,
+      webSearchAvailable: TAVILY_UP,
     });
     expect(readingAll.existing.map((h) => h.question_id)).toEqual([
       'r-auth',
@@ -246,7 +246,7 @@ describe('queryExistingPool ↔ poolFetch selection equivalence (YUK-398 inc-2)'
       kind: 'reading',
       difficultyMin: 2,
       enqueueSequenceJob: async () => {},
-      tavilyAvailable: TAVILY_UP,
+      webSearchAvailable: TAVILY_UP,
     });
     expect(readingFloor.existing.map((h) => h.question_id)).not.toContain('r-easy');
     expect(readingFloor.existing.map((h) => h.question_id)).toEqual([
@@ -265,7 +265,7 @@ describe('queryExistingPool ↔ poolFetch selection equivalence (YUK-398 inc-2)'
       count: 99,
       kind: 'computation',
       enqueueSequenceJob: async () => {},
-      tavilyAvailable: TAVILY_UP,
+      webSearchAvailable: TAVILY_UP,
     });
     expect(computation.existing.map((h) => h.question_id)).toEqual(['c-gen']);
   });
@@ -320,7 +320,7 @@ describe('queryExistingPool ↔ poolFetch selection equivalence (YUK-398 inc-2)'
       unit: '篇',
       // kind=null: composite parents are NOT kind-filtered out.
       enqueueSequenceJob: async () => {},
-      tavilyAvailable: TAVILY_UP,
+      webSearchAvailable: TAVILY_UP,
     });
     // only the two composite parents, authentic-first.
     expect(composite.existing.map((h) => h.question_id)).toEqual(['p-auth', 'p-gen']);

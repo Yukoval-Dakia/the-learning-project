@@ -30,8 +30,8 @@ describe('buildCopilotSubagents', () => {
       'mcp__loom__author_question',
       'mcp__loom__propose_knowledge_mutation',
       'mcp__loom__author_artifact',
-      'mcp__tavily__tavily_search',
-      'mcp__tavily__tavily_extract',
+      'mcp__exa__web_search_exa',
+      'mcp__exa__web_fetch_exa',
       'Task',
       'Agent',
     ];
@@ -47,8 +47,8 @@ describe('buildCopilotSubagents', () => {
       'mcp__loom__get_question_context',
       'mcp__loom__get_attempt_context',
       'mcp__loom__expand_knowledge_subgraph',
-      'mcp__tavily__tavily_search',
-      'mcp__tavily__tavily_extract',
+      'mcp__exa__web_search_exa',
+      'mcp__exa__web_fetch_exa',
     ]);
     expect(researcher.tools?.every((tool) => parentAllowedTools.includes(tool))).toBe(true);
     expect(researcher.tools).not.toContain('Task');
@@ -66,7 +66,7 @@ describe('buildCopilotSubagents', () => {
         'mcp__loom__author_artifact',
       ]),
     );
-    expect(researcher.mcpServers).toEqual(['loom', 'tavily']);
+    expect(researcher.mcpServers).toEqual(['loom', 'exa']);
     expect(researcher.maxTurns).toBe(6);
     expect(researcher.background).toBe(false);
     expect(researcher.prompt).toContain('只把结论交还给 Copilot');

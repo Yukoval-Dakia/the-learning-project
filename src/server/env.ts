@@ -93,7 +93,7 @@ const server = {
   SELECTION_POLICY: optionalString,
   SKIP_BOSS_INGEST: optionalString,
   TAGGING_MATCH_THRESHOLD: optionalString,
-  TAVILY_API_KEY: optionalString,
+  EXA_API_KEY: optionalString,
   TENCENT_OCR_REGION: optionalString,
   TENCENT_SECRET_ID: optionalString,
   TENCENT_SECRET_KEY: optionalString,

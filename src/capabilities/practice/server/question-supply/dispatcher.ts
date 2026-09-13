@@ -31,7 +31,7 @@ import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
 import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
-import { supplyDispatchTavilyAvailable } from '@/kernel/supply-dispatch-tavily';
+import { supplyDispatchWebSearchAvailable } from '@/kernel/supply-dispatch-web-search';
 import { SupplyTraceV1, type SupplyTraceV1T, buildSupplyTrace } from './evidence-demand';
 import { planSupplyRoutes } from './route-planner';
 import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
@@ -67,17 +67,17 @@ function resolveDispatchQueue(route: SupplyRoute): DispatchQueue {
   return queue;
 }
 
-// ── review FINDING #5：sourcing_web 派发前的 Tavily 可用性闸 ─────────────────────
+// ── review FINDING #5：sourcing_web 派发前的 web 检索后端可用性闸 ────────────────
 //
-// 问题：无 TAVILY_API_KEY 的安装里，SourcingTask 的 web 找题线退化（sourcing.ts 的
-// supplyDispatchTavilyAvailable() false → 不挂 Tavily MCP → 找题 agent 无 web 搜索/抽取工具）。
-// 把 sourcing_web 直接派出去 = 一个注定退化/失败的付费 job。
+// 问题：无检索后端 key（Tavily→Exa 换装后为 EXA_API_KEY）的安装里，SourcingTask 的 web
+// 找题线退化（supplyDispatchWebSearchAvailable() false → 不挂 Exa MCP → 找题 agent 无 web
+// 搜索/抽取工具）。把 sourcing_web 直接派出去 = 一个注定退化/失败的付费 job。
 //
-// 修复：auto-派 sourcing_web 前查 TAVILY_API_KEY 可用性（复用 worker 同一判据
-// supplyDispatchTavilyAvailable()——单一真相，不复制 env 读取）。不可用 → 跳过 sourcing_web，
-// 落到 route plan 的下一条可派路由（quiz_gen 仍可，不依赖 Tavily 的闭卷生成）；plan 里再无可派
-// 路由 → manual（emit + 留给 UI/copilot），不入队注定失败的 job。
-const defaultTavilyAvailable = supplyDispatchTavilyAvailable;
+// 修复：auto-派 sourcing_web 前查检索后端可用性（复用 worker 同一判据
+// supplyDispatchWebSearchAvailable()——单一真相，不复制 env 读取）。不可用 → 跳过
+// sourcing_web，落到 route plan 的下一条可派路由（quiz_gen 仍可，不依赖检索后端的闭卷生成）；
+// plan 里再无可派路由 → manual（emit + 留给 UI/copilot），不入队注定失败的 job。
+const defaultWebSearchAvailable = supplyDispatchWebSearchAvailable;
 
 // ── review FINDING #1 + #2：跨扫描指纹 cooldown（防 job-spam / 无界 re-dispatch）─────
 //
@@ -176,10 +176,11 @@ export interface DispatchDeps {
    */
   cooldownDays?: number;
   /**
-   * Tavily 可用性判据注入（review FINDING #5）。默认 supplyDispatchTavilyAvailable()（= TAVILY_API_KEY
-   * 已配，worker 同一判据，单一真相）。测试注入 false 验证 sourcing_web 不被 auto-派、落下一条路由。
+   * Web 检索后端可用性判据注入（review FINDING #5）。默认 supplyDispatchWebSearchAvailable()
+   * （= EXA_API_KEY 已配，worker 同一判据，单一真相）。测试注入 false 验证 sourcing_web 不被
+   * auto-派、落下一条路由。
    */
-  tavilyAvailable?: () => boolean;
+  webSearchAvailable?: () => boolean;
   /** Typed quiz_gen seam for claim-owned transactional sends. */
   enqueueQuizGen?: EnqueueQuizGenFn;
   /** Test seam for validating the fully augmented trace immediately before parsing. */
@@ -205,11 +206,11 @@ function generationMethodFor(target: QuestionSupplyTarget): 'material_grounded' 
 }
 
 /**
- * 一条已选定的 quiz_gen 路由是否依赖 Tavily：material_grounded 必须 tavily_extract 拉真原文
- * （sourcing-sequence.ts 验证轮 C），closed_book 闭卷生成不依赖。sourcing_web 恒依赖 Tavily
- * （web 找题线无 Tavily MCP 即退化，sourcing.ts）。
+ * 一条已选定的 quiz_gen 路由是否依赖 web 检索后端：material_grounded 必须 web_fetch_exa 拉真
+ * 原文（sourcing-sequence.ts 验证轮 C），closed_book 闭卷生成不依赖。sourcing_web 恒依赖检索
+ * 后端（web 找题线无 Exa MCP 即退化）。
  */
-function routeNeedsTavily(route: SupplyRoute, target: QuestionSupplyTarget): boolean {
+function routeNeedsWebSearch(route: SupplyRoute, target: QuestionSupplyTarget): boolean {
   if (route === 'sourcing_web') return true;
   if (route === 'quiz_gen') return generationMethodFor(target) === 'material_grounded';
   return false;
@@ -230,11 +231,11 @@ function routeNeedsTavily(route: SupplyRoute, target: QuestionSupplyTarget): boo
 function chooseAutoRoute(
   routePlan: SupplyRoute[],
   target: QuestionSupplyTarget,
-  tavilyAvailable: boolean,
+  webSearchAvailable: boolean,
 ): SupplyRoute | null {
   for (const route of routePlan) {
     if (!AUTO_DISPATCHABLE.has(route)) return null; // 硬偏好边界：不可派路由 → manual。
-    if (!tavilyAvailable && routeNeedsTavily(route, target)) continue; // FINDING #5：跳过注定失败的 Tavily 依赖路由。
+    if (!webSearchAvailable && routeNeedsWebSearch(route, target)) continue; // FINDING #5：跳过注定失败的检索依赖路由。
     return route;
   }
   return null;
@@ -253,7 +254,7 @@ export async function dispatchSupplyTarget(
   const enqueue = deps.enqueue ?? defaultEnqueue;
   const actorRef = deps.actorRef ?? 'question_supply';
   const cooldownDays = deps.cooldownDays ?? SUPPLY_DISPATCH_COOLDOWN_DAYS;
-  const tavilyAvailable = (deps.tavilyAvailable ?? defaultTavilyAvailable)();
+  const webSearchAvailable = (deps.webSearchAvailable ?? defaultWebSearchAvailable)();
   const routePlan = planSupplyRoutes(target);
   const anchorKid = target.knowledgeIds[0] ?? null;
 
@@ -287,12 +288,12 @@ export async function dispatchSupplyTarget(
       reason: target.reason,
     };
   } else {
-    const autoRoute = chooseAutoRoute(routePlan, target, tavilyAvailable);
+    const autoRoute = chooseAutoRoute(routePlan, target, webSearchAvailable);
     if (autoRoute === null) {
-      // 选定路由（image/ingest/author）无法自动派，**或** 所有可派路由都依赖 Tavily 而 Tavily 缺失
+      // 选定路由（image/ingest/author）无法自动派，**或** 所有可派路由都依赖检索后端而其缺失
       // （review FINDING #5）→ manual（emit + 留给 UI/copilot），不入队注定退化/失败的 job。
-      const headNeedsTavily =
-        !tavilyAvailable && routePlan[0] != null && routeNeedsTavily(routePlan[0], target);
+      const headNeedsWebSearch =
+        !webSearchAvailable && routePlan[0] != null && routeNeedsWebSearch(routePlan[0], target);
       result = {
         targetId: target.id,
         fingerprint: target.fingerprint,
@@ -300,8 +301,8 @@ export async function dispatchSupplyTarget(
         chosenRoute: routePlan[0] ?? null,
         status: 'manual',
         jobId: null,
-        stopCondition: headNeedsTavily
-          ? `route '${routePlan[0]}' needs Tavily but TAVILY_API_KEY is unset; no Tavily-free auto route in plan → manual (review FINDING #5)`
+        stopCondition: headNeedsWebSearch
+          ? `route '${routePlan[0]}' needs web search but EXA_API_KEY is unset; no search-free auto route in plan → manual (review FINDING #5)`
           : `route '${routePlan[0] ?? 'none'}' has no background queue; awaits user/UI (Open Decision #1/#4)`,
         reason: target.reason,
       };

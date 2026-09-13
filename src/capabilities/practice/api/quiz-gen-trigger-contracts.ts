@@ -44,8 +44,8 @@ export const QuizGenTriggerBodySchema = z.object({
     })
     .default(QUIZ_GEN_MANUAL_DEFAULT_COUNT),
   /** Optional generation-method preference (the dispatcher's subject-context
-   * analog). material_grounded requires TAVILY_API_KEY; the route rejects it
-   * with 409 when Tavily is unavailable instead of enqueuing a doomed job
+   * analog). material_grounded requires EXA_API_KEY; the route rejects it
+   * with 409 when Exa is unavailable instead of enqueuing a doomed job
    * (dispatcher review FINDING #5 gate, same single-truth predicate). */
   generation_method: z.enum(['material_grounded', 'closed_book']).optional(),
 });

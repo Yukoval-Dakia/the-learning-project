@@ -32,7 +32,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { compareBySourceTierThenWhitelist, deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
-import { buildTavilyMcpServer } from '@/server/ai/mcp/tavily';
+import { buildExaMcpServer } from '@/server/ai/mcp/exa';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile, SubjectQuestionKind } from '@/subjects/profile-schema';
 import { kindsMatch, questionKindToSkillKind } from '@/subjects/question-kind';
@@ -312,34 +312,34 @@ async function defaultEnqueueSequenceJob(
   });
 }
 
-// ── 验证轮 C: Tavily availability + route degradation ─────────────────────────
+// ── 验证轮 C: web 检索后端 availability + route degradation ─────────────────────
 
 // The web-grounded steps: external_sourcing (tier 2, SourcingTask web search) and
-// material_grounded (tier 3, must拉真原文 via tavily_extract). Both no-op without Tavily.
-const TAVILY_DEPENDENT_STEPS: ReadonlySet<SourcingSequenceStep> = new Set([
+// material_grounded (tier 3, must拉真原文 via web_fetch_exa). Both no-op without Exa.
+const WEB_SEARCH_DEPENDENT_STEPS: ReadonlySet<SourcingSequenceStep> = new Set([
   'external_sourcing',
   'material_grounded',
 ]);
 
-// Reuse the worker's availability判定 verbatim: buildTavilyMcpServer() returns a config
-// iff TAVILY_API_KEY is set (graceful no-op otherwise). Same single source the quiz_gen /
+// Reuse the worker's availability判定 verbatim: buildExaMcpServer() returns a config
+// iff EXA_API_KEY is set (graceful no-op otherwise). Same single source the quiz_gen /
 // sourcing handlers gate on — no second copy of the env logic here.
-function defaultTavilyAvailable(): boolean {
-  return buildTavilyMcpServer() !== null;
+function defaultWebSearchAvailable(): boolean {
+  return buildExaMcpServer() !== null;
 }
 
-// Does the base route include any Tavily-dependent line? (drives the need[] annotation).
-function routeUsesTavily(route: readonly SourcingSequenceStep[]): boolean {
-  return route.some((step) => TAVILY_DEPENDENT_STEPS.has(step));
+// Does the base route include any 检索后端-dependent line? (drives the need[] annotation).
+function routeUsesWebSearch(route: readonly SourcingSequenceStep[]): boolean {
+  return route.some((step) => WEB_SEARCH_DEPENDENT_STEPS.has(step));
 }
 
-// Drop the Tavily-dependent steps; if that leaves the route empty (it wanted ONLY web
+// Drop the 检索后端-dependent steps; if that leaves the route empty (it wanted ONLY web
 // lines), degrade to the tier-4 closed_book fallback (which needs no web fetch). Preserves
 // any closed_book the base route already had, deduped.
-function degradeRouteWithoutTavily(
+function degradeRouteWithoutWebSearch(
   route: readonly SourcingSequenceStep[],
 ): readonly SourcingSequenceStep[] {
-  const kept = route.filter((step) => !TAVILY_DEPENDENT_STEPS.has(step));
+  const kept = route.filter((step) => !WEB_SEARCH_DEPENDENT_STEPS.has(step));
   return kept.length > 0 ? kept : ['closed_book'];
 }
 
@@ -386,9 +386,9 @@ export interface SourcingSequenceParams {
   domain?: string | null;
   // DB-test seam.
   enqueueSequenceJob?: EnqueueSequenceJobFn;
-  // 验证轮 C — test seam for the Tavily availability判定. Defaults to the SAME
-  // buildTavilyMcpServer()-backed predicate the workers use (single judgment, no copy).
-  tavilyAvailable?: () => boolean;
+  // 验证轮 C — test seam for the web 检索后端 availability判定. Defaults to the SAME
+  // buildExaMcpServer()-backed predicate the workers use (single judgment, no copy).
+  webSearchAvailable?: () => boolean;
 }
 
 export interface SourcingSequenceResult {
@@ -428,7 +428,7 @@ export async function runSourcingSequence(
   const difficultyMin = params.difficultyMin ?? null;
   const unit = params.unit ?? null;
   const enqueue = params.enqueueSequenceJob ?? defaultEnqueueSequenceJob;
-  const isTavilyAvailable = params.tavilyAvailable ?? defaultTavilyAvailable;
+  const isWebSearchAvailable = params.webSearchAvailable ?? defaultWebSearchAvailable;
 
   // 验证轮 B — pre-enqueue guard: resolve the node ONCE (existence + archive + domain).
   // A missing/archived node must not enqueue (the produced need would never resolve —
@@ -463,16 +463,16 @@ export async function runSourcingSequence(
   const profile = resolveSubjectProfile(resolvedDomain);
   const baseRoute = resolveRoutePreference(profile, kind);
 
-  // 验证轮 C — Tavily awareness: external_sourcing (tier 2) AND material_grounded (tier 3)
+  // 验证轮 C — 检索后端 awareness: external_sourcing (tier 2) AND material_grounded (tier 3)
   // both lean on web fetch (SourcingTask searches the web; material_grounded must拉真原文).
-  // When Tavily is unconfigured the worker-side buildTavilyMcpServer() returns null and
+  // When Exa is unconfigured the worker-side buildExaMcpServer() returns null and
   // those steps degrade to closed_book ANYWAY — but enqueuing them first wastes a job and
   // produces a misleading need[]. Reuse the SAME availability判定 the worker uses (no
   // second copy) to skip them up front and degrade to a single closed_book line, recording
   // the degradation reason in the need[] for evidence留痕.
-  const tavilyDown = !isTavilyAvailable();
-  const route: readonly SourcingSequenceStep[] = tavilyDown
-    ? degradeRouteWithoutTavily(baseRoute)
+  const webSearchDown = !isWebSearchAvailable();
+  const route: readonly SourcingSequenceStep[] = webSearchDown
+    ? degradeRouteWithoutWebSearch(baseRoute)
     : baseRoute;
 
   const enqueued: SourcingSequenceStep[] = [];
@@ -499,11 +499,11 @@ export async function runSourcingSequence(
       knowledge_id: knowledgeId,
       source: step,
       // 验证轮 C — the degradation suffix records WHY external/material lines were skipped
-      // (evidence留痕). Only present when the route was actually degraded (Tavily down AND
+      // (evidence留痕). Only present when the route was actually degraded (检索后端 down AND
       // the base route wanted a web line).
       reason: `existing pool had ${existing.length}/${count} active questions; enqueued ${step}${
-        tavilyDown && routeUsesTavily(baseRoute)
-          ? ' (Tavily unavailable: external_sourcing/material_grounded degraded to closed_book)'
+        webSearchDown && routeUsesWebSearch(baseRoute)
+          ? ' (web search unavailable: external_sourcing/material_grounded degraded to closed_book)'
           : ''
       }`,
     });
