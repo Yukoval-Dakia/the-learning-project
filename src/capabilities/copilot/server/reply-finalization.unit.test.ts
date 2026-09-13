@@ -572,7 +572,7 @@ describe('Copilot root reply finalization', () => {
     });
     const sealing = value.finalizeTerminal('稳定候选。');
     await entered;
-    const late = await pre(value, 'mcp__tavily__tavily_search', 'late_1', {
+    const late = await pre(value, 'mcp__exa__web_search_exa', 'late_1', {
       query: '后续搜索',
     });
     releaseValidation();

@@ -30,7 +30,7 @@ import { db } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
-import { supplyDispatchTavilyAvailable } from '@/kernel/supply-dispatch-tavily';
+import { supplyDispatchWebSearchAvailable } from '@/kernel/supply-dispatch-web-search';
 import { QUIZ_GEN_MANUAL_COUNT_WARN, QuizGenTriggerBodySchema } from './quiz-gen-trigger-contracts';
 
 export async function POST(req: Request): Promise<Response> {
@@ -69,12 +69,12 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     // FINDING #5 gate (single-truth predicate shared with the dispatcher):
-    // material_grounded must tavily_extract real source material, so without
-    // TAVILY_API_KEY the job is structurally degraded — reject, don't enqueue.
-    if (generationMethod === 'material_grounded' && !supplyDispatchTavilyAvailable()) {
+    // material_grounded must web_fetch_exa real source material, so without
+    // EXA_API_KEY the job is structurally degraded — reject, don't enqueue.
+    if (generationMethod === 'material_grounded' && !supplyDispatchWebSearchAvailable()) {
       throw new ApiError(
         'generation_method_unavailable',
-        'generation_method=material_grounded requires TAVILY_API_KEY, which is not configured; use closed_book or configure Tavily',
+        'generation_method=material_grounded requires EXA_API_KEY, which is not configured; use closed_book or configure Exa',
         409,
       );
     }

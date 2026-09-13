@@ -457,13 +457,13 @@ describe('executeSupplyPlan — jyeoo budget exhausted falls through to web', ()
 // ── (d) web failureClass → 回落 quiz_gen ─────────────────────────────────────
 
 describe('executeSupplyPlan — web failure falls through to quiz_gen', () => {
-  it('records skipped:tavily_unavailable and enqueues a dispatcher-shaped payload', async () => {
+  it('records skipped:web_search_unavailable and enqueues a dispatcher-shaped payload', async () => {
     await seedTree();
     const enqueued: QuizGenDispatchPayload[] = [];
     const deps = baseDeps(
       vi.fn(async () => ({
         status: 'failed' as const,
-        failureClass: 'tavily_unavailable' as const,
+        failureClass: 'web_search_unavailable' as const,
         detail: 'Tavily API key 未配置——web 路由不可执行',
       })),
     );
@@ -505,7 +505,7 @@ describe('executeSupplyPlan — web failure falls through to quiz_gen', () => {
     expect(routes[0]).toMatchObject({
       route: 'sourcing_web',
       status: 'skipped',
-      skipped: 'tavily_unavailable',
+      skipped: 'web_search_unavailable',
     });
     expect(routes[1]).toMatchObject({ route: 'quiz_gen', status: 'dispatched', job_id: 'job-42' });
     expect(result.totals.dispatched).toBe(1);

@@ -215,9 +215,9 @@ describe('refillActiveLearningPools (YUK-474)', () => {
       enqueued.push({ queue });
       return `job-${enqueued.length}`;
     };
-    // 真 dispatchSupplyTarget（默认）+ 注入 enqueue + tavilyAvailable 让路由稳定可派。
+    // 真 dispatchSupplyTarget（默认）+ 注入 enqueue + webSearchAvailable 让路由稳定可派。
     const deps: RefillDeps = {
-      dispatchDeps: { enqueue, tavilyAvailable: () => true, actorRef: 'question_supply_refill' },
+      dispatchDeps: { enqueue, webSearchAvailable: () => true, actorRef: 'question_supply_refill' },
     };
 
     // 第一次：真派（enqueue 一次，写 dispatched 事件）。

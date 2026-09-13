@@ -12,7 +12,7 @@ import {
   READ_TOOLS,
   toMcpAllowedToolName,
 } from '@/kernel/tools/allowlists';
-import { TAVILY_MCP_ALLOWED_TOOLS, TAVILY_MCP_SERVER_NAME } from '@/server/ai/mcp/tavily';
+import { EXA_MCP_ALLOWED_TOOLS, EXA_MCP_SERVER_NAME } from '@/server/ai/mcp/exa';
 import {
   SPAWN_TOOL_ALIASES,
   SPAWN_TOOL_NAME,
@@ -36,7 +36,7 @@ const SAFE_LOOM_READ_TOOLS = new Set<string>(
     toMcpAllowedToolName(name),
   ),
 );
-const SAFE_TAVILY_TOOLS = new Set<string>(TAVILY_MCP_ALLOWED_TOOLS);
+const SAFE_WEB_SEARCH_TOOLS = new Set<string>(EXA_MCP_ALLOWED_TOOLS);
 
 const COPILOT_RESEARCHER_PROMPT = `你是 Copilot 在后台派出的聚焦研究员。你只处理主 Copilot 交给你的一个明确子问题：可跨 artifact 深检索、核对复杂题目预览，或综合多条学习证据解释诊断。
 
@@ -63,7 +63,7 @@ export function buildCopilotSubagents(
   opts: BuildCopilotSubagentsOptions,
 ): Record<typeof COPILOT_SUBAGENT_NAME, AgentDefinition> {
   const tools = [...new Set(opts.parentAllowedTools)].filter(
-    (name) => SAFE_LOOM_READ_TOOLS.has(name) || SAFE_TAVILY_TOOLS.has(name),
+    (name) => SAFE_LOOM_READ_TOOLS.has(name) || SAFE_WEB_SEARCH_TOOLS.has(name),
   );
   const disallowedTools = [
     ...SPAWN_TOOL_ALIASES,
@@ -74,8 +74,8 @@ export function buildCopilotSubagents(
     ...(tools.some((name) => name.startsWith(`mcp__${DOMAIN_TOOL_MCP_SERVER_NAME}__`))
       ? [DOMAIN_TOOL_MCP_SERVER_NAME]
       : []),
-    ...(tools.some((name) => name.startsWith(`mcp__${TAVILY_MCP_SERVER_NAME}__`))
-      ? [TAVILY_MCP_SERVER_NAME]
+    ...(tools.some((name) => name.startsWith(`mcp__${EXA_MCP_SERVER_NAME}__`))
+      ? [EXA_MCP_SERVER_NAME]
       : []),
   ];
 

@@ -27,7 +27,7 @@ import type { Db } from '@/db/client';
 type DispatchDeps = Parameters<typeof dispatchSupplyTargets>[2];
 
 type DepsOverride = {
-  /** dispatcher 注入（DB 测试可注入 fake enqueue / cooldown / tavilyAvailable）。 */
+  /** dispatcher 注入（DB 测试可注入 fake enqueue / cooldown / webSearchAvailable）。 */
   dispatchDeps?: DispatchDeps;
   /** 本轮最多派发多少个对比目标（防一次 cron 打爆付费队列，mirror question_supply_nightly F3）。default 25。 */
   maxPerRun?: number;

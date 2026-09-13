@@ -2,8 +2,8 @@
 //
 // 锁死 candidate-only 边界（SourcingTask 找题 + 判题；不写 question / verify intent /
 // proposal）：ok 路（含幻觉 knowledge_id 的活体校验 + 锚点回退）、anchor_not_found、
-// kind_gate、tavily_unavailable（dep 返回 null）、parse 失败。runSourcingAgent 注入
-// fake（不依赖真 Tavily/LLM）；parseLoose 走真身（parse 失败路真实可测）。
+// kind_gate、web_search_unavailable（dep 返回 null）、parse 失败。runSourcingAgent 注入
+// fake（不依赖真 Exa/LLM）；parseLoose 走真身（parse 失败路真实可测）。
 
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -138,7 +138,7 @@ function sourcingOutputText(overrides: Record<string, unknown> = {}): string {
       '集合 包含关系 参数取值 解答题',
     ],
     fetched_at: '2026-09-12T02:14:03.000Z',
-    tool: 'tavily',
+    tool: 'exa',
     ...overrides,
   });
 }
@@ -277,11 +277,11 @@ describe('web_fetch_candidates — deterministic failures', () => {
     expect(await db.select().from(question)).toHaveLength(0);
   });
 
-  it('fails tavily_unavailable when the sourcing dep returns null (no TAVILY_API_KEY)', async () => {
+  it('fails web_search_unavailable when the sourcing dep returns null (no EXA_API_KEY)', async () => {
     await seedTree();
     const nullAgent: RunWebSourcingAgentFn = async () => null;
     const output = await runTool(baseInput(), nullAgent);
-    expect(output).toMatchObject({ status: 'failed', failure_class: 'tavily_unavailable' });
+    expect(output).toMatchObject({ status: 'failed', failure_class: 'web_search_unavailable' });
     const canary = await canaryRows();
     expect(canary).toHaveLength(0);
   });

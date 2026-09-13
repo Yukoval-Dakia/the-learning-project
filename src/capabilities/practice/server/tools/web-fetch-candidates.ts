@@ -2,14 +2,14 @@
 //
 // 供给 agent 化的 web 搜寻面：runWebFetchCandidates 核（question-supply/
 // web-candidates.ts，从退役 jobs/sourcing.ts 提取的"找 + 判"部分）跑一次
-// SourcingTask（Tavily 检索 → 抽取 → 结构化），返回【候选】——不写 question、不写
+// SourcingTask（Exa 检索 → 抽取 → 结构化），返回【候选】——不写 question、不写
 // verify intent、不写 proposal（图片型候选原样返回，由调用方决定 propose）；提交入库
 // 走 `store_sourced_question`（dedup/verify 链权威判定在那侧）。
 //
 // effect 判 'read' 的理由（jyeoo_fetch_candidates 同款论证）：唯一的持久写是 canary
 // 事件（观测面，非 learner/domain 数据）；question 写入只发生在 store_sourced_question
 // （effect:'write'）。costClass 'expensive_llm'：本工具承载完整 SourcingTask agent 循环
-// （多轮 tool-call + Tavily 检索/抽取），真实 LLM + 检索开销。
+// （多轮 tool-call + Exa 检索/抽取），真实 LLM + 检索开销。
 //
 // Canary：每次运行（含失败）写 action='experimental:web_fetch_candidates' 事件一次——
 // 漏斗观测面（anchor → 候选 → 下游 commit/verify）；绝不双写（预算账本按 canary 事件
@@ -27,11 +27,7 @@ import {
 } from '@/kernel/tools/allowlists';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
-import {
-  TAVILY_MCP_ALLOWED_TOOLS,
-  TAVILY_MCP_SERVER_NAME,
-  buildTavilyMcpServer,
-} from '@/server/ai/mcp/tavily';
+import { EXA_MCP_ALLOWED_TOOLS, EXA_MCP_SERVER_NAME, buildExaMcpServer } from '@/server/ai/mcp/exa';
 import { runAgentTask } from '@/server/ai/runner';
 import { buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -52,20 +48,20 @@ const SOURCING_READ_TOOLS = [
 ] as const satisfies readonly DomainToolName[];
 
 /**
- * RunWebSourcingAgentFn 的真身：MCP 挂载（domain read tools + Tavily remote）+
- * runAgentTask('SourcingTask')。Tavily key 缺失时返回 null——核映射为
- * failureClass 'tavily_unavailable'（旧 dispatcher tavilyAvailable 闸同款语义）。
+ * RunWebSourcingAgentFn 的真身：MCP 挂载（domain read tools + Exa remote）+
+ * runAgentTask('SourcingTask')。Exa key 缺失时返回 null——核映射为
+ * failureClass 'web_search_unavailable'（旧 dispatcher webSearchAvailable 闸同款语义）。
  * executor job 层共享同一实现。
  */
 export const runWebSourcingAgentDefault: RunWebSourcingAgentFn = async (params) => {
   const { db, input, subjectProfile, ctx } = params;
 
-  // web 路由无 Tavily 即不可执行——先闸，避免无谓挂载 domain server。
-  const tavilyCfg = buildTavilyMcpServer();
-  if (tavilyCfg === null) return null;
+  // web 路由无检索后端即不可执行——先闸，避免无谓挂载 domain server。
+  const exaCfg = buildExaMcpServer();
+  if (exaCfg === null) return null;
 
-  // MCP mount 镜像 jobs/sourcing.ts:342-363：in-process domain read tools（ctx 归因到
-  // 调用方透传的 run 上下文，callerActor='sourcing' 与旧 job 一致）+ Tavily remote。
+  // MCP mount 镜像旧 sourcing job：in-process domain read tools（ctx 归因到
+  // 调用方透传的 run 上下文，callerActor='sourcing'）+ Exa remote。
   const domainMcpServer = buildMcpServerFromRegistry({
     ctx: {
       db,
@@ -80,11 +76,11 @@ export const runWebSourcingAgentDefault: RunWebSourcingAgentFn = async (params) 
 
   const mcpServers = {
     [DOMAIN_TOOL_MCP_SERVER_NAME]: domainMcpServer,
-    [TAVILY_MCP_SERVER_NAME]: tavilyCfg,
+    [EXA_MCP_SERVER_NAME]: exaCfg,
   };
   const allowedTools = [
     ...SOURCING_READ_TOOLS.map((name) => toMcpAllowedToolName(name)),
-    ...TAVILY_MCP_ALLOWED_TOOLS,
+    ...EXA_MCP_ALLOWED_TOOLS,
   ];
 
   const result = await runAgentTask('SourcingTask', input, {
@@ -132,7 +128,7 @@ const outputSchema = z.discriminatedUnion('status', [
     status: z.literal('failed'),
     failure_class: z.enum([
       'anchor_not_found',
-      'tavily_unavailable',
+      'web_search_unavailable',
       'llm',
       'parse',
       'kind_gate',
@@ -220,9 +216,9 @@ export async function executeWebFetchCandidates(
 export const webFetchCandidatesTool: DomainTool<Input, Output> = {
   name: 'web_fetch_candidates',
   description:
-    '经 Tavily web 检索 + SourcingTask 抽取，围绕锚点知识点产出真实考题候选（不写库）。' +
+    '经 Exa web 检索 + SourcingTask 抽取，围绕锚点知识点产出真实考题候选（不写库）。' +
     '返回候选（含 dedup hash）与图片型候选；提交入库须调 store_sourced_question。' +
-    'tavily_unavailable 表示 web 路由未配置检索后端；failed 按 failure_class 决定是否重试。',
+    'web_search_unavailable 表示 web 路由未配置检索后端；failed 按 failure_class 决定是否重试。',
   effect: 'read',
   inputSchema,
   outputSchema,

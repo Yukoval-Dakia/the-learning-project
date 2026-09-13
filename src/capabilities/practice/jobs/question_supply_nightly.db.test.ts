@@ -65,7 +65,7 @@ describe('runQuestionSupplyNightly', () => {
     };
 
     const result = await runQuestionSupplyNightly(db, {
-      dispatchDeps: { enqueue, tavilyAvailable: () => true },
+      dispatchDeps: { enqueue, webSearchAvailable: () => true },
     });
 
     expect(result).toEqual({
@@ -106,7 +106,7 @@ describe('runQuestionSupplyNightly', () => {
     });
 
     const result = await runQuestionSupplyNightly(db, {
-      dispatchDeps: { enqueue, tavilyAvailable: () => true },
+      dispatchDeps: { enqueue, webSearchAvailable: () => true },
       placementRecovery: explodingRecoveryDeps,
     });
 
@@ -216,7 +216,7 @@ describe('runQuestionSupplyNightly', () => {
         enumerable: true,
       });
       const handler = buildQuestionSupplyNightlyHandler(db, {
-        dispatchDeps: { enqueue: async () => 'job', tavilyAvailable: () => true },
+        dispatchDeps: { enqueue: async () => 'job', webSearchAvailable: () => true },
         placementRecovery: explodingRecoveryDeps,
       });
 
@@ -248,7 +248,7 @@ describe('runQuestionSupplyNightly', () => {
     const result = await runQuestionSupplyNightly(db, {
       // sourcing_web needs Tavily; force-available to isolate wiring from env (TAVILY_API_KEY
       // is unset in tests).
-      dispatchDeps: { enqueue, tavilyAvailable: () => true },
+      dispatchDeps: { enqueue, webSearchAvailable: () => true },
     });
 
     expect(result.considered).toBeGreaterThanOrEqual(1);
@@ -288,7 +288,7 @@ describe('runQuestionSupplyNightly', () => {
     };
 
     const first = await runQuestionSupplyNightly(db, {
-      dispatchDeps: { enqueue, tavilyAvailable: () => true },
+      dispatchDeps: { enqueue, webSearchAvailable: () => true },
     });
     expect(first.dispatched).toBeGreaterThanOrEqual(1);
     const firstEnqueueCount = enqueued.length;
@@ -297,7 +297,7 @@ describe('runQuestionSupplyNightly', () => {
     // Second nightly run: gap still unsatisfied (KC still has zero active questions) → same
     // fingerprint → cooldown SKIP. No new boss.send.
     const second = await runQuestionSupplyNightly(db, {
-      dispatchDeps: { enqueue, tavilyAvailable: () => true },
+      dispatchDeps: { enqueue, webSearchAvailable: () => true },
     });
     expect(second.dispatched).toBe(0);
     expect(second.skipped).toBeGreaterThanOrEqual(1);
@@ -325,7 +325,7 @@ describe('runQuestionSupplyNightly', () => {
 
     const result = await runQuestionSupplyNightly(db, {
       maxPerRun: 1,
-      dispatchDeps: { enqueue, tavilyAvailable: () => true },
+      dispatchDeps: { enqueue, webSearchAvailable: () => true },
     });
 
     // Discovered all gaps, but only ONE was actually dispatched (the rest deferred to next run).
@@ -362,7 +362,7 @@ describe('runQuestionSupplyNightly', () => {
     };
 
     const result = await runQuestionSupplyNightly(db, {
-      dispatchDeps: { enqueue, tavilyAvailable: () => true },
+      dispatchDeps: { enqueue, webSearchAvailable: () => true },
     });
 
     // Both targets were considered; one enqueue failed, the other(s) dispatched.

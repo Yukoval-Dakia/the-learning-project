@@ -20,7 +20,7 @@ import { parseTaskOutput } from './parse-output';
 //       grounded in the sources.
 //   §2  Output shape = QuizGenOutput (src/core/schema/quiz_gen.ts).
 //
-// The handler (Q3) mounts the Tavily remote MCP (tavily_search / tavily_extract)
+// The handler (Q3) mounts the Exa remote MCP (web_search_exa / web_fetch_exa)
 // + an in-process domain-tool MCP (read the user's mistakes + knowledge graph);
 // the tool NAMES are resolved at run time, so this prompt refers to them by
 // capability, not by exact mcp__* identifier.
@@ -34,14 +34,14 @@ function buildQuizGenPrompt(profile: SubjectProfile): string {
 不确定性策略：${profile.grounding.uncertaintyPolicy}${rubricGuidanceSection(profile)}
 
 你有工具：
-- 联网检索（tavily_search / tavily_extract）：用来搜**背景素材 / 事实 / 例子**，**不是**搜现成题目。
+- 联网检索（web_search_exa / web_fetch_exa）：用来搜**背景素材 / 事实 / 例子**，**不是**搜现成题目。web_search_exa 除 query 外还需填 objective（本次检索想拿到什么）。
 - 领域读工具：可读用户的错题与知识图谱，判断该出什么难度 / 题型 / 覆盖哪些知识点。
 
 工作流程：
 1. 读 plan：逐项理解每道题的知识点 / 题型 / 难度 /（客观题）答案锚点；检索与素材选择围绕 plan 展开，**不要另起炉灶改计划**。
-2. 检索素材：用 tavily_search 搜与知识点相关的**事实背景 / 真实例子 / 概念解释**；需要细节时用 tavily_extract 拉全文。**绝不**直接搜「XX 题目 / 练习 / 试卷答案」，更不能照抄检索到的题面。
+2. 检索素材：用 web_search_exa 搜与知识点相关的**事实背景 / 真实例子 / 概念解释**；需要细节时用 web_fetch_exa 拉全文。**绝不**直接搜「XX 题目 / 练习 / 试卷答案」，更不能照抄检索到的题面。
 3. 出题：基于素材**自己写**全新的、原创的题干与参考答案，逐项实现 plan.items。题面措辞必须是你自己的话，不得逐句复制任何来源。
-4. 自报来源（**强制**，见 §0）：你用到的每一个 URL 都要写进对应题目的 source_refs，并标 used_for（fact = 支撑了某个事实点 / inspiration = 只启发了选题或角度）、extracted（是否用 tavily_extract 拉过全文）。运行时**无法**从日志恢复你调了哪些检索——只有你写进 source_refs 的来源才被记录。漏报 = 该题不可追溯。
+4. 自报来源（**强制**，见 §0）：你用到的每一个 URL 都要写进对应题目的 source_refs，并标 used_for（fact = 支撑了某个事实点 / inspiration = 只启发了选题或角度）、extracted（是否用 web_fetch_exa 拉过全文）。运行时**无法**从日志恢复你调了哪些检索——只有你写进 source_refs 的来源才被记录。漏报 = 该题不可追溯。
 5. 自评原创性（copy_safety）：对照你的题干与来源 snippet，给一个 self_copy_safety：verdict='original'（措辞充分原创）/ 'too_close'（与某来源太接近，应重写）/ 'unknown'（没法判断）；尽量给 max_overlap（0-1 的粗略重合度估计）；checked_by 固定填 'agent_self'。下游 QuizVerify 会再独立复核。
 
 每题输出形状（QuizGenQuestion）：
@@ -58,12 +58,12 @@ function buildQuizGenPrompt(profile: SubjectProfile): string {
 }
 
 整体严格 JSON 输出（不带 markdown 代码块包裹），shape 名 QuizGenOutput：
-{"questions":[QuizGenQuestion, ...],"source_pack":{"query_plan":["你执行的检索查询", ...],"searched_at":"ISO8601 时间戳","tool":"tavily"|"none"},"generation_method":"search_grounded"|"closed_book"|"material_grounded","self_copy_safety":{"verdict":"original"|"too_close"|"unknown","max_overlap":0.0-1.0,"checked_by":"agent_self"},"material":{"body_md":"...","url":"...","title":"...","fetched_at":"ISO8601"}|null}
+{"questions":[QuizGenQuestion, ...],"source_pack":{"query_plan":["你执行的检索查询", ...],"searched_at":"ISO8601 时间戳","tool":"exa"|"none"},"generation_method":"search_grounded"|"closed_book"|"material_grounded","self_copy_safety":{"verdict":"original"|"too_close"|"unknown","max_overlap":0.0-1.0,"checked_by":"agent_self"},"material":{"body_md":"...","url":"...","title":"...","fetched_at":"ISO8601"}|null}
 
-source_pack.tool 如实自报：真的用了 tavily 检索才填 "tavily"；closed_book 免检索时填 "none"、query_plan 留空数组。
+source_pack.tool 如实自报：真的用了 exa 检索才填 "exa"；closed_book 免检索时填 "none"、query_plan 留空数组。
 
 素材生成模式（generation_method="material_grounded"，阅读理解 / 据材出题专用）：
-- 当题型需要一份**真实原文 / 真实数据**作锚（典型：阅读理解、文言翻译、据材料分析），用 tavily_extract 拉一份**真实素材原文**，全部题目都考查这份素材。
+- 当题型需要一份**真实原文 / 真实数据**作锚（典型：阅读理解、文言翻译、据材料分析），用 web_fetch_exa 拉一份**真实素材原文**，全部题目都考查这份素材。
 - 此时**必须**在顶层 material 填这份素材：body_md=素材原文全文（会被持久化、题面据它出），url/title=素材出处，fetched_at=拉取时间。漏填 material 该输出会被拒收。
 - 题面要**明确指向**这份素材（如「阅读下面短文，回答问题」），reference_md 的答案要能在素材里找到依据。
 - material_grounded 时各题 source_refs 仍如实填素材 URL；material 是被持久化的「真原文」单一来源，source_refs 是每题的引用足迹。

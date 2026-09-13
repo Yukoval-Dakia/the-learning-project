@@ -122,7 +122,7 @@ export async function dispatchPlacementStarterClaimTx(
         atomic: true,
         cooldownDays: 0,
         actorRef: 'placement_starter',
-        tavilyAvailable: () => true,
+        webSearchAvailable: () => true,
         enqueueQuizGen: (data) =>
           send('quiz_gen', data, {
             db: fromPgBossDrizzleTx(sp),

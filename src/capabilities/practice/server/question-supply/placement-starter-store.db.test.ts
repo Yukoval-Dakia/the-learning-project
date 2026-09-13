@@ -621,7 +621,7 @@ describe('placement starter store', () => {
         dispatchSupplyTarget(tx, buildPlacementStarterTarget(claim), {
           atomic: true,
           cooldownDays: 0,
-          tavilyAvailable: () => true,
+          webSearchAvailable: () => true,
           transformSupplyTrace: (trace) => ({ ...trace, claim_id: '' }),
           enqueueQuizGen: async () => {
             sends += 1;

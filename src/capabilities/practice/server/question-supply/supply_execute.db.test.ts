@@ -52,7 +52,7 @@ function fakeExecutorDeps(quizGenPayloads: QuizGenDispatchPayload[]): ExecuteSup
   const webFetch: RunWebFetchCandidatesFn = () =>
     Promise.resolve({
       status: 'failed',
-      failureClass: 'tavily_unavailable',
+      failureClass: 'web_search_unavailable',
       detail: 'TAVILY_API_KEY 未配置（测试 fake）',
     });
   return {
@@ -98,7 +98,7 @@ describe('runSupplyExecuteJobData（supply_execute 执行体）', () => {
 
     await runSupplyExecuteJobData(db, 'job-1', data, fakeExecutorDeps(quizGenPayloads));
 
-    // web tavily_unavailable → quiz_gen 回落；映射字段族逐一对齐
+    // web web_search_unavailable → quiz_gen 回落；映射字段族逐一对齐
     expect(quizGenPayloads).toHaveLength(1);
     const payload = quizGenPayloads[0];
     if (!payload) throw new Error('quiz_gen payload missing');
@@ -125,7 +125,7 @@ describe('runSupplyExecuteJobData（supply_execute 执行体）', () => {
       expect.objectContaining({
         route: 'sourcing_web',
         status: 'skipped',
-        skipped: 'tavily_unavailable',
+        skipped: 'web_search_unavailable',
       }),
       expect.objectContaining({ route: 'quiz_gen', status: 'dispatched' }),
     ]);

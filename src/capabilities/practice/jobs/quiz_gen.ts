@@ -6,14 +6,14 @@
 // kind / objective answer anchor); a deterministic gate validates it (schema +
 // real knowledge-point existence + kind/anchor sanity; bounded regeneration,
 // fail-closed). Phase 2 (QuizGenTask) is the tool-calling agent below: it
-// searches Tavily for SOURCE MATERIAL (not questions), writes ORIGINAL
+// searches Exa for SOURCE MATERIAL (not questions), writes ORIGINAL
 // questions grounded in those sources FROM THE ACCEPTED PLAN, and self-declares
 // every used URL into source_refs (§0 — provenance is NOT recoverable from
 // runner logs, so the agent MUST self-report).
 //
 // Skeleton follows the standard boss-handler shape (parse → INSERT → writeEvent →
-// catch). MCP mount copies the verbatim chat.ts:298-306 pattern (Tavily remote
-// MCP via buildTavilyMcpServer() — env-gated graceful degradation — + the
+// catch). MCP mount copies the verbatim chat.ts:298-306 pattern (Exa remote
+// MCP via buildExaMcpServer() — env-gated graceful degradation — + the
 // in-process domain-tool MCP that reads the user's mistakes + knowledge graph).
 // The chained quiz_verify enqueue mirrors attribution_followup → variant_gen.
 //
@@ -58,11 +58,7 @@ import {
   toMcpAllowedToolName,
 } from '@/kernel/tools/allowlists';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
-import {
-  TAVILY_MCP_ALLOWED_TOOLS,
-  TAVILY_MCP_SERVER_NAME,
-  buildTavilyMcpServer,
-} from '@/server/ai/mcp/tavily';
+import { EXA_MCP_ALLOWED_TOOLS, EXA_MCP_SERVER_NAME, buildExaMcpServer } from '@/server/ai/mcp/exa';
 import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { runAgentTask } from '@/server/ai/runner';
 import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
@@ -214,7 +210,7 @@ type RunAgentTaskFn = (
 ) => Promise<TaskTextResult>;
 
 type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
-type BuildTavilyMcpServerFn = () => McpHttpServerConfig | null;
+type BuildExaMcpServerFn = () => McpHttpServerConfig | null;
 // YUK-225 (S2 slice 4) — 轨 2 few-shot retrieval seam. The handler injects a few
 // already-pooled同题型 examples into the prompt; DB tests inject a vi.fn(). Keyed by
 // the trigger's knowledge ids (the run's target topics).
@@ -234,7 +230,7 @@ export type EnqueueQuizVerifyFn = (
 interface DepsOverride {
   runAgentTaskFn?: RunAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
-  buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
+  buildExaMcpServerFn?: BuildExaMcpServerFn;
   enqueueQuizVerify?: EnqueueQuizVerifyFn;
   retrieveFewShotFn?: RetrieveFewShotFn;
   now?: () => Date;
@@ -403,7 +399,7 @@ export interface RunQuizGenParams {
   placementHeartbeat?: PlacementAttemptHeartbeat;
   runAgentTaskFn?: RunAgentTaskFn;
   buildMcpServerFn?: BuildMcpServerFn;
-  buildTavilyMcpServerFn?: BuildTavilyMcpServerFn;
+  buildExaMcpServerFn?: BuildExaMcpServerFn;
   enqueueQuizVerify?: EnqueueQuizVerifyFn;
   retrieveFewShotFn?: RetrieveFewShotFn;
   /** Test seam for synchronizing concurrent producers after exact-duplicate prelookup misses. */
@@ -518,7 +514,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
   const count = params.count ?? QUIZ_GEN_DEFAULT_COUNT;
   const run = params.runAgentTaskFn ?? runAgentTask;
   const buildMcpServer = params.buildMcpServerFn ?? buildMcpServerFromRegistry;
-  const buildTavily = params.buildTavilyMcpServerFn ?? buildTavilyMcpServer;
+  const buildExa = params.buildExaMcpServerFn ?? buildExaMcpServer;
   const enqueueQuizVerify = params.enqueueQuizVerify ?? defaultEnqueueQuizVerify;
   const retrieveFewShot = params.retrieveFewShotFn ?? defaultRetrieveFewShot;
 
@@ -536,8 +532,8 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
 
   // ── MCP mount: copy chat.ts:298-306 verbatim pattern ──────────────────────
   // In-process domain-tool MCP (read user mistakes + knowledge graph) + the
-  // env-gated Tavily remote MCP. When TAVILY_API_KEY is unset, buildTavily()
-  // returns null → no tavily server, no tavily tools (graceful degradation).
+  // env-gated Exa remote MCP. When EXA_API_KEY is unset, buildExa()
+  // returns null → no exa server, no exa tools (graceful degradation).
   const domainMcpServer = buildMcpServer({
     ctx: {
       db,
@@ -550,18 +546,18 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     taskKind: 'QuizGenTask',
   });
 
-  const tavilyCfg = buildTavily();
+  const exaCfg = buildExa();
   const mcpServers: Record<string, SdkMcpServer | McpHttpServerConfig> = {
     [DOMAIN_TOOL_MCP_SERVER_NAME]: domainMcpServer,
-    ...(tavilyCfg ? { [TAVILY_MCP_SERVER_NAME]: tavilyCfg } : {}),
+    ...(exaCfg ? { [EXA_MCP_SERVER_NAME]: exaCfg } : {}),
   };
   const allowedTools = [
     ...QUIZ_GEN_READ_TOOLS.map((name) => toMcpAllowedToolName(name)),
-    ...(tavilyCfg ? TAVILY_MCP_ALLOWED_TOOLS : []),
+    ...(exaCfg ? EXA_MCP_ALLOWED_TOOLS : []),
   ];
 
   // ADR-0038 决定#2 — Phase 1 (plan) mounts the read-only domain MCP but NO
-  // Tavily: planning picks WHAT to test (knowledge point / kind / objective
+  // Exa: planning picks WHAT to test (knowledge point / kind / objective
   // answer anchor); fetching material stays in the generation phase.
   const planMcpServers: Record<string, SdkMcpServer | McpHttpServerConfig> = {
     [DOMAIN_TOOL_MCP_SERVER_NAME]: buildMcpServer({
@@ -1554,7 +1550,7 @@ export function buildQuizGenHandler(
           ...(placementHeartbeat ? { placementHeartbeat } : {}),
           runAgentTaskFn: deps.runAgentTaskFn,
           buildMcpServerFn: deps.buildMcpServerFn,
-          buildTavilyMcpServerFn: deps.buildTavilyMcpServerFn,
+          buildExaMcpServerFn: deps.buildExaMcpServerFn,
           enqueueQuizVerify: deps.enqueueQuizVerify,
           retrieveFewShotFn: deps.retrieveFewShotFn,
         });

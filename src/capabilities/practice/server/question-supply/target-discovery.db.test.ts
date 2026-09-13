@@ -373,9 +373,9 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
 
     const results: DispatchResult[] = await dispatchSupplyTargets(db, [frontierTarget], {
       enqueue,
-      // sourcing_web needs Tavily; force-available so this test isolates the dispatch wiring
-      // from env (TAVILY_API_KEY is unset in tests). FINDING #5's no-Tavily path is tested below.
-      tavilyAvailable: () => true,
+      // sourcing_web needs web search; force-available so this test isolates the dispatch wiring
+      // from env (EXA_API_KEY is unset in tests). FINDING #5's no-search path is tested below.
+      webSearchAvailable: () => true,
     });
     expect(results).toHaveLength(1);
     const r = results[0];
@@ -447,7 +447,7 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
     // First dispatch → real boss.send (enqueued once), writes a dispatched event.
     const [first] = await dispatchSupplyTargets(db, [frontierTarget], {
       enqueue,
-      tavilyAvailable: () => true,
+      webSearchAvailable: () => true,
     });
     expect(first.status).toBe('dispatched');
     expect(enqueued).toHaveLength(1);
@@ -461,7 +461,7 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
 
     const [second] = await dispatchSupplyTargets(db, [frontierTarget2], {
       enqueue,
-      tavilyAvailable: () => true,
+      webSearchAvailable: () => true,
     });
     expect(second.status).toBe('skipped');
     expect(second.stopCondition).toContain('cooldown');
@@ -496,12 +496,12 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
     await dispatchSupplyTargets(db, [frontierTarget], {
       enqueue,
       cooldownDays: 0,
-      tavilyAvailable: () => true,
+      webSearchAvailable: () => true,
     });
     await dispatchSupplyTargets(db, [frontierTarget], {
       enqueue,
       cooldownDays: 0,
-      tavilyAvailable: () => true,
+      webSearchAvailable: () => true,
     });
     expect(enqueued).toHaveLength(2);
   });
@@ -546,11 +546,11 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
     expect(events[0].outcome).toBe('partial');
   });
 
-  // review FINDING #5 — without TAVILY_API_KEY, a sourcing_web head must NOT be auto-dispatched
+  // review FINDING #5 — without EXA_API_KEY, a sourcing_web head must NOT be auto-dispatched
   // (the SourcingTask degrades without Tavily web tools → doomed job). The plan
   // ['sourcing_web', 'ingest_existing', 'author_question'] has no Tavily-free auto route after
   // sourcing_web (ingest/author are manual) → the whole target falls to manual, no enqueue.
-  it('does NOT auto-dispatch a sourcing_web target when Tavily is unavailable (falls to manual)', async () => {
+  it('does NOT auto-dispatch a sourcing_web target when Exa is unavailable (falls to manual)', async () => {
     const kid = createId();
     await seedKnowledge(kid);
     await seedOpenLearningItem([kid]);
@@ -569,11 +569,11 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
 
     const [r] = await dispatchSupplyTargets(db, [frontierTarget], {
       enqueue,
-      tavilyAvailable: () => false, // simulate TAVILY_API_KEY unset.
+      webSearchAvailable: () => false, // simulate EXA_API_KEY unset.
     });
     expect(r.status).toBe('manual');
     expect(enqueued).toHaveLength(0); // NO doomed sourcing job.
-    expect(r.stopCondition).toContain('Tavily');
+    expect(r.stopCondition).toContain('web search');
 
     const events = await db.select().from(event).where(eq(event.subject_id, frontierTarget.id));
     expect(events).toHaveLength(1);
@@ -607,7 +607,7 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
         enqueued.push({ queue, data });
         return 'job-objective';
       },
-      tavilyAvailable: () => true,
+      webSearchAvailable: () => true,
     });
 
     expect(enqueued).toHaveLength(1);
@@ -651,7 +651,7 @@ describe('dispatchSupplyTargets — wiring + observability', () => {
 
     const [r] = await dispatchSupplyTargets(db, [target], {
       enqueue,
-      tavilyAvailable: () => false,
+      webSearchAvailable: () => false,
     });
     expect(r.status).toBe('dispatched');
     expect(r.chosenRoute).toBe('quiz_gen');

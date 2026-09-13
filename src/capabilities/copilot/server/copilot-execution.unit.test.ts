@@ -63,7 +63,7 @@ function ownerWith(
       captureMcp(options);
       return { type: 'sdk', name: 'loom' } as never;
     },
-    buildTavilyMcpServerFn: () => null,
+    buildExaMcpServerFn: () => null,
     resolveCopilotSkillsFn: async () => undefined,
   });
 }
@@ -323,9 +323,9 @@ describe('Copilot execution owner', () => {
         };
       },
       buildMcpServerFn: () => ({ type: 'sdk', name: 'loom' }) as never,
-      buildTavilyMcpServerFn: () => ({
+      buildExaMcpServerFn: () => ({
         type: 'http',
-        url: 'https://mcp.tavily.com/mcp/?test',
+        url: 'https://mcp.exa.ai/mcp',
       }),
       resolveCopilotSkillsFn: async () => ['copilot'],
     });
@@ -336,9 +336,9 @@ describe('Copilot execution owner', () => {
       { cancellation: fakeCancellation(), deadlineAt: 900_000, subagentsEnabled: false },
     );
 
-    expect(runnerContext?.mcpServers).toHaveProperty('tavily');
+    expect(runnerContext?.mcpServers).toHaveProperty('exa');
     expect(runnerContext?.allowedTools).toEqual(
-      expect.arrayContaining(['mcp__tavily__tavily_search', 'mcp__tavily__tavily_extract']),
+      expect.arrayContaining(['mcp__exa__web_search_exa', 'mcp__exa__web_fetch_exa']),
     );
     expect(runnerContext?.skills).toEqual(['copilot']);
   });

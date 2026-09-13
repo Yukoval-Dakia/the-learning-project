@@ -145,7 +145,7 @@ describe('Copilot subagent mailbox', () => {
       };
       const execute = createCopilotExecutionOwner({
         buildMcpServerFn: () => ({ type: 'sdk', name: 'loom' }) as never,
-        buildTavilyMcpServerFn: () => null,
+        buildExaMcpServerFn: () => null,
         resolveCopilotSkillsFn: async () => undefined,
         streamTaskCollectingFn: async (_kind, _input, ctx) => {
           if (!ctx.onTaskEvent) throw new Error('native lifecycle not mounted');
@@ -260,7 +260,7 @@ describe('Copilot subagent mailbox', () => {
     });
     const execute = createCopilotExecutionOwner({
       buildMcpServerFn: () => ({ type: 'sdk', name: 'loom' }) as never,
-      buildTavilyMcpServerFn: () => null,
+      buildExaMcpServerFn: () => null,
       resolveCopilotSkillsFn: async () => undefined,
       streamTaskCollectingFn: async (_kind, _input, ctx) => {
         if (!ctx.onTaskEvent) throw new Error('native lifecycle not mounted');

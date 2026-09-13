@@ -131,9 +131,13 @@ describe('SourcingTaskOutput', () => {
     expect(parsed.success).toBe(false);
   });
 
-  it("pins tool to the literal 'tavily'", () => {
-    const parsed = SourcingTaskOutput.safeParse({ ...validOutput, tool: 'serpapi' });
-    expect(parsed.success).toBe(false);
+  it("pins tool to the search-backend enum ('tavily' 历史值 / 'exa' 新值，拒绝未知后端)", () => {
+    const bad = SourcingTaskOutput.safeParse({ ...validOutput, tool: 'serpapi' });
+    expect(bad.success).toBe(false);
+    const legacy = SourcingTaskOutput.safeParse({ ...validOutput, tool: 'tavily' });
+    expect(legacy.success).toBe(true);
+    const current = SourcingTaskOutput.safeParse({ ...validOutput, tool: 'exa' });
+    expect(current.success).toBe(true);
   });
 
   it('requires a non-empty fetched_at', () => {
