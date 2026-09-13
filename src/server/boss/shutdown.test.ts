@@ -220,3 +220,134 @@ describe('installBootShutdownHandler (YUK-980)', () => {
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 });
+
+describe('installBootShutdownHandler startup-tail coordination (YUK-980)', () => {
+  let exitSpy: MockInstance;
+  let warnSpy: MockInstance;
+  let logSpy: MockInstance;
+  let errorSpy: MockInstance;
+  const registered: Record<string, (signal: NodeJS.Signals) => void> = {};
+  let onSpy: MockInstance;
+
+  beforeEach(() => {
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    onSpy = vi.spyOn(process, 'on').mockImplementation(((
+      event: string,
+      cb: (signal: NodeJS.Signals) => void,
+    ) => {
+      registered[event] = cb;
+      return process;
+    }) as never);
+  });
+
+  afterEach(() => {
+    exitSpy.mockRestore();
+    warnSpy.mockRestore();
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+    onSpy.mockRestore();
+    delete registered.SIGTERM;
+    delete registered.SIGINT;
+  });
+
+  it('waits for the pending startup promise BEFORE stopping — registration cannot race the stop', async () => {
+    const order: string[] = [];
+    let settleTail!: () => void;
+    const startup = new Promise<void>((resolve) => {
+      settleTail = resolve;
+    });
+    const stop = vi.fn(async () => {
+      order.push('stop');
+    });
+    const boss = { stop, getWipData: vi.fn(() => []) } as unknown as PgBoss;
+
+    installBootShutdownHandler(
+      () => boss,
+      () => startup,
+    );
+    const handled = registered.SIGTERM('SIGTERM');
+    // Macrotask boundary: every pending microtask of the handler has run — it
+    // must be parked on the startup promise, NOT on stop.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(stop).not.toHaveBeenCalled();
+
+    order.push('tail-settled');
+    settleTail();
+    await handled;
+
+    expect(order).toEqual(['tail-settled', 'stop']);
+    expect(stop).toHaveBeenCalledWith({ graceful: true, timeout: 30_000 });
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it('still stops and exits 0 when the startup tail REJECTS during the wait (drain continues)', async () => {
+    const stop = vi.fn(async () => undefined);
+    const boss = { stop, getWipData: vi.fn(() => []) } as unknown as PgBoss;
+    const startup = Promise.reject(new Error('registration boom'));
+
+    installBootShutdownHandler(
+      () => boss,
+      () => startup,
+    );
+    await registered.SIGTERM('SIGTERM');
+
+    expect(stop).toHaveBeenCalledWith({ graceful: true, timeout: 30_000 });
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('startup failed while shutting down'),
+      expect.any(Error),
+    );
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it('stops after the bounded wait when the startup never settles (compose grace budget)', async () => {
+    const stop = vi.fn(async () => undefined);
+    const boss = { stop, getWipData: vi.fn(() => []) } as unknown as PgBoss;
+    const never = new Promise<void>(() => {});
+
+    installBootShutdownHandler(
+      () => boss,
+      () => never,
+      15,
+    );
+    await registered.SIGTERM('SIGTERM');
+
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('did not settle within 15ms'));
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it('a second signal during the tail wait is a no-op (single stop, single exit owner)', async () => {
+    let settleTail!: () => void;
+    const startup = new Promise<void>((resolve) => {
+      settleTail = resolve;
+    });
+    const stop = vi.fn(async () => undefined);
+    const boss = { stop, getWipData: vi.fn(() => []) } as unknown as PgBoss;
+
+    installBootShutdownHandler(
+      () => boss,
+      () => startup,
+    );
+    const handled = registered.SIGTERM('SIGTERM');
+    await registered.SIGTERM('SIGTERM'); // repeat signal mid-wait — ignored
+    settleTail();
+    await handled;
+
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(exitSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('ownsExit() reports false until a signal arrives, true from then on', async () => {
+    const stop = vi.fn(async () => undefined);
+    const boss = { stop, getWipData: vi.fn(() => []) } as unknown as PgBoss;
+    const handle = installBootShutdownHandler(() => boss);
+    expect(handle.ownsExit()).toBe(false);
+
+    await registered.SIGINT('SIGINT');
+
+    expect(handle.ownsExit()).toBe(true);
+  });
+});
