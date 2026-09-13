@@ -1,10 +1,13 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-12：988 交付——供给执行面统一（确定性 plan executor + web 候选工具化 + sourcing 单体退休）入 main 07df98a84，Mac 生产同 SHA 健康；985 epic 三片全 Done，epic 关闭。
+> Linear 是权威 tracker；更新于 2026-09-13：Tavily→Exa 换装交付（PR #1384，main 776a687d3，Mac 生产同 SHA 健康、容器内 EXA_API_KEY 在位）——sourcing_web 路由恢复可执行；09-13 首夜供给链实证：planner accepted 7 项→quiz_gen 7/7→19 题（7 active/12 draft，详见 .remember）。
 
 ## NOW
 
-- 988 Done：供给执行面统一入 main 07df98a84（PR1381 exact CI 全绿；Oracle 初 FAIL 六 P1 → 修复批 463b1e16b → 验证审 PASS + P2 一行；migrate 热修 PR1382）。
+- 09-13 Exa 换装 Done：web 检索后端 Tavily→Exa（PR #1384，main 776a687d3，Mac 生产健康）。live-probed 挂载（web_search_exa/web_fetch_exa，x-api-key header），闸/消费面/schema/prompt/oracle 全面更名，旧 tavily 值保 parse。
+- 09-13 首夜实证：planner 05:50 accepted 7 项（rationale 引用真实库存证据）→ executor（sourcing_web 跳 tavily_unavailable→quiz_gen fallback）→ quiz_gen 7/7 → 19 题 = 7 active + 12 draft（10 题数学全对仅 copy_safety=unknown 待 /drafts 人审；3 题判官输出解析失败留 draft 可重派）。
+
+- 988 Done：供给执行面统一入 main 07df98a84（PR1381 exact CI 全绿；Oracle 初 FAIL 六 P1 → 修复批 → 验证审 PASS；migrate 热修 PR1382）。
   web-candidates 核（SourcingTask 收敛为工具内 LLM）+ web_fetch_candidates DomainTool + plan-executor 纯确定性路由派发 + supply_execute job（agent 队）+ pnpm supply:execute 手动 caller。
   路由：jyeoo/web 共 store_sourced_question 单 seam（source_route 参数化）；quiz_gen 派发现有 job；author/ingest/image_candidate 落 manual。dispatcher sourcing_web 重指向 supply_execute；supply_planner 门后第二阶段当晚执行；sourcing 单体 job 退休。
   六 P1 修复：逐 item executor_item 事件 + plan_event_id 幂等 + quiz_gen singletonKey 断点续跑；placementTrace + cloneSupplyTraceForRoute 按路由覆写；canary 下移核（executor 路径照计预算）；runWebRoute try/catch 续走；rejections 逐项留痕；phase-2 enqueue 重试 + 持久 failure 事件。
