@@ -216,7 +216,20 @@ curl https://loom.<your-domain>/api/health
 
 ### Backup
 
-`db:dump` streams a `pg_dump` from the running `postgres` container to a timestamped SQL file on the host:
+**日级自动 dump（YUK-992，Mac 生产）**：launchd 每日 07:15（Asia/Shanghai）跑
+`scripts/mac-daily-dump.sh`，向 runtime 目录写 `loom-daily-YYYYMMDD.dump`（custom
+format，`pg_restore` 用；保留最近 14 份 + 每月 1 号归档）。一次性安装：
+
+```bash
+cp scripts/launchd/studio.yukoval.loom-daily-dump.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/studio.yukoval.loom-daily-dump.plist
+```
+
+失败发现面：成功写 `.loom-daily-dump-last-success` epoch 戳（连续 2 日未更新即异常）；
+失败写 `.loom-daily-dump-FAILED-YYYYMMDD` 标记；全量日志 `loom-daily-dump.log`（同在 runtime 目录）。
+手动补一份（幂等，同日覆盖）：`scripts/mac-daily-dump.sh`。
+
+**手动 dump/restore**：`db:dump` streams a `pg_dump` from the running `postgres` container to a timestamped SQL file on the host:
 
 ```bash
 pnpm db:dump
@@ -227,6 +240,8 @@ To restore:
 ```bash
 pnpm db:restore < /tmp/loom-20260101-000000.sql
 ```
+
+恢复完整 runbook（OrbStack VM wipe 等场景）：`docs/sub5-restore-cli.md`。
 
 ## 目录
 
