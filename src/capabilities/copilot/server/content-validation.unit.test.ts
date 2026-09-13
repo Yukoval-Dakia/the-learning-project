@@ -324,4 +324,84 @@ describe('validatePreparedLearningContent', () => {
     expect(result).toEqual({ verdict: 'fail', items: [] });
     expect(calls).toBe(0);
   });
+
+  it('forwards the turn’s executed remote tool evidence into the QuizVerify task input only when present', async () => {
+    const manifest =
+      '题目：求 1+1？\n<!--copilot_learning_content:{"subject_id":"math","questions":[{"id":"q1","kind":"computation","prompt_md":"求 1+1","reference_md":"2","choices_md":null,"rubric_json":{}}]}-->';
+    const packet = [
+      {
+        tool_name: 'mcp__exa__web_search_exa',
+        tool_use_id: 'call_9cea61a7cc314aa5a35c04a8',
+        root_call: true,
+        input: { query: 'derivative of e^x proof' },
+        output: [{ type: 'text', text: 'Title: Proof…' }],
+      },
+    ];
+    const quizInputs: Array<Record<string, unknown>> = [];
+    const runTaskFn = async (kind: string, input: unknown) => {
+      if (kind === 'QuizVerifyTask') {
+        quizInputs.push(input as Record<string, unknown>);
+        return {
+          task_run_id: 'verify-evidence',
+          text: JSON.stringify({
+            grounding: { verdict: 'pass', basis: 'closed_world_givens', note: 'self-contained' },
+            copy_safety: { verdict: 'original', max_overlap: 0 },
+            knowledge_hit: { verdict: 'pass', note: 'on topic' },
+            overall: 'pass',
+            summary_md: 'structural checks pass',
+            confidence: 0.9,
+          }),
+        };
+      }
+      if (kind === 'SolutionGenerateTask') {
+        return {
+          task_run_id: 'solve-evidence',
+          text: JSON.stringify({
+            reference_solution: {
+              final_answer: '2',
+              expected_signals: ['1+1'],
+              answer_equivalents: ['2'],
+            },
+            worked_solution_md: '1+1=2',
+            confidence: 0.99,
+          }),
+        };
+      }
+      if (kind === 'SemanticJudgeTask') {
+        return {
+          task_run_id: 'judge-evidence',
+          text: JSON.stringify({
+            score: 1,
+            coarse_outcome: 'correct',
+            confidence: 0.99,
+            feedback_md: 'matches reference',
+            evidence_json: { matched_points: [], missing_points: [] },
+          }),
+        };
+      }
+      return {
+        task_run_id: 'teaching-evidence',
+        text: JSON.stringify({
+          clarity: { verdict: 'pass', reason: 'clear' },
+          unique_answer: { verdict: 'pass', reason: 'unique' },
+          summary: 'pass',
+        }),
+      };
+    };
+
+    const forwarded = await reviewCopilotLearningContent(manifest, '', 'evidence-forward', {
+      db: {} as never,
+      runTaskFn,
+      remoteToolEvidence: packet,
+    });
+    expect(forwarded.passed).toBe(true);
+    expect(quizInputs[0]?.remote_tool_evidence).toEqual(packet);
+
+    const withoutEvidence = await reviewCopilotLearningContent(manifest, '', 'evidence-absent', {
+      db: {} as never,
+      runTaskFn,
+    });
+    expect(withoutEvidence.passed).toBe(true);
+    expect(quizInputs[1]).not.toHaveProperty('remote_tool_evidence');
+  });
 });

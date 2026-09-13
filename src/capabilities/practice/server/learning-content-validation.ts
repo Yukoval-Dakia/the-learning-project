@@ -21,6 +21,8 @@ export interface LearningContentValidationDeps {
   runTaskFn: Parameters<typeof runQuestionContentValidation>[1]['runTaskFn'];
   /** Actual successful DomainTool observation, supplied only by the execution owner. */
   observedQuestion?: { input: unknown; output: unknown };
+  /** Actually executed remote-MCP calls of this turn; forwarded only when present. */
+  remoteToolEvidence?: unknown;
 }
 
 /** Practice owns assessment policy; transports only supply the content and task runtime. */
@@ -145,6 +147,7 @@ export async function validateLearningContent(
             self_copy_safety: null,
             generation_method: source?.generation_method ?? 'unspecified',
             ...(source?.material ? { material: source.material } : {}),
+            ...(deps.remoteToolEvidence ? { remote_tool_evidence: deps.remoteToolEvidence } : {}),
             validation_mode: 'release_strict',
             validation_purpose: 'learning_content',
           },
