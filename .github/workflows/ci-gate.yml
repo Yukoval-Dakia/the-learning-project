@@ -118,6 +118,7 @@ jobs:
           pnpm audit:task-census
           pnpm audit:draft-status
           pnpm audit:draft-status-reads --strict
+          pnpm audit:flags --strict
           pnpm audit:hub-sync-writers
           pnpm audit:provider-attempt-truth
 

@@ -38,6 +38,7 @@
     "smoke:local": "tsx scripts/smoke-local.ts",
     "api:smoke": "tsx scripts/api-smoke.ts",
     "gen:postman": "tsx scripts/gen-postman.ts",
+    "gen:prompt-hashes": "tsx scripts/generate-prompt-hashes.ts",
     "gen:model-catalog": "tsx scripts/gen-model-catalog.ts",
     "gen:openapi": "tsx scripts/generate-openapi.ts",
     "gen:api-client": "mkdir -p .cache && pnpm gen:openapi > .cache/openapi.generated.json && node tools/api-codegen/generate.mjs .cache/openapi.generated.json src/ui/lib/api-schema.generated.ts",
@@ -106,7 +107,8 @@
     "rw:web": "vite --config web/vite.config.ts",
     "rw:web:build": "vite build --config web/vite.config.ts",
     "build:server": "esbuild server/index.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/server.cjs --external:pg-native --external:sharp --external:better-sqlite3 --external:bufferutil --external:utf-8-validate --external:@anthropic-ai/claude-agent-sdk --external:@hyzyla/pdfium --define:process.env.NODE_ENV=\\\"production\\\"",
-    "rw:build": "pnpm rw:web:build && pnpm build:server"
+    "rw:build": "pnpm rw:web:build && pnpm build:server",
+    "quiz:reverify": "tsx scripts/quiz-reverify.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.220",
