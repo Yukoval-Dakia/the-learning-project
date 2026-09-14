@@ -1,4 +1,58 @@
-# 当前 handoff — 2026-09-07，完整重构goal active
+# 当前 handoff — 2026-09-13，YUK-980 真实启动窗口补验收完成
+
+- 用户开启980后，修复在独立 worktree tlp-wt-yuk980-startup-tail / fix/yuk-980-startup-tail 完成。PR #1393 已合并为 fbc6b26f6987edbc75242780b4f2451d5fc9e146；exact-head a180d744 的 CI Gate 34759069199 completed/success，独立 review PASS，无阻塞 finding。
+- 根因：局部 boss 等完整 startup 返回才赋值，但消费者已运行。修复以 getRunningBoss 取已发布实例，并协调9秒启动尾段等待与单一退出 owner；30秒drain保持。连接池关闭可能额外延迟，不能声称39秒整个进程硬上界。
+- 真实验证：旧 wiring 两个中途停机场景 RED；lead 独立 scoped22/typecheck/lint/build通过；fresh node dist/worker.cjs + scratch PG + OS SIGTERM矩阵19/19，包含active任务的startup-tail settle/timeout/ready。首次QA harness发现先派发后加锁竞态，改为确认锁已持有再派发和确认active后发signal，未掩盖失败。
+- 版本化验收文档 docs/planning/2026-09-13-yuk980-startup-tail-verification.md；原始证据和修正后QA脚本保留于该worktree的 .yuk980-evidence/，不要用force清理。
+- Linear YUK-980 Done仅表示实现与隔离构建产物验收已完成。本轮未部署、未stop/restart生产，生产仍67d43df12。scratch QA容器已停止并移除。
+- PLAN closeout PR #1394 已合并为 b0d8acd5a4dcf65d9b4258b4f78c1390e987a421（docs-only exact-head gate34759790438通过，测试按文档分区跳过）；主仓已fast-forward到此，原有本地改动均保留。
+- 下一张建议837；尚未获批开启。550仍是休眠的激活前置条件，不翻flag、不用Canceled算清零。两张原票已有纠正证据评论，状态本轮未改。
+
+## 历史核查 — C1 部署与看板合并
+
+- 本轮只核实并补齐 C1 收尾：PLAN PR #1392 上次 GraphQL 失败后确实仍 OPEN；本轮合并为 9c943c41add259b8d4c849db3736b75fb3577232，本地主仓已 fast-forward。
+- exact-head CI Gate run 34749773731 已 completed/success；使用指定 run 的 watch --exit-status 等到终态，不以 advisory 或其他 workflow 代替。
+- 本轮生产实查：app/worker 均运行 the-learning-project-app:67d43df12 且 healthy；GET /api/health 返回 {"ok":true}。本轮没有再部署。
+- 清零仍未完成。D 组处置、QoL 部署链/夜间读面/draft UX 的 LIGHT/FULL 选择、strategic-park 均待 owner 裁决，不能从“继续”推导全部批准。
+- 后续清零须复核旧结论：换 Tavily 为 Exa 不足以证明 remote-MCP evidence-review 缺口消失；flag OFF 不足以证明翻转前置票已失效；之前的 19=8+10 题数也未闭合。不要沿用这些作为关闭证据。
+- 主仓存在已有本地改动和未跟踪文件，本轮未清理或覆盖这些工作。
+
+## 历史 handoff — 2026-09-13，供题线 Exa 换装 + 首夜实证
+
+## 09-13 交付与实证
+
+- **Exa 换装 Done**（PR #1384，main 776a687d3，Mac 生产同 SHA 健康，容器内 EXA_API_KEY 在位）：Tavily→Exa 全面迁移。live-probed mcp.exa.ai（streamable-HTTP，web_search_exa 需 query+objective / web_fetch_exa 需 urls[]），x-api-key header 鉴权（key 不进 URL）。闸更名 supplyDispatchWebSearchAvailable；failureClass 'tavily_unavailable'→'web_search_unavailable'；schema tool enum 加宽保历史 'tavily' 可 parse；QuizGenTask/SourcingTask prompt 更新 + prompt-hash oracle 重生。sourcing_web 路由恢复可执行。
+- **首夜供给链实证**（09-13 05:50-05:51 生产）：planner accepted 7 项（随机变量/条件概率/期望方差/概率空间，rationale 引用真实库存证据 available=0 冷启）→ executor（sourcing_web 跳 tavily_unavailable→quiz_gen fallback，机械路由行走通）→ quiz_gen 7/7 → 19 题 → quiz_verify：7 active + 12 draft。
+  - 10 题 needs_review：solve_check/grounding/knowledge_hit 全 pass、数学全对，仅 copy_safety=unknown（quiz_gen 无 source_refs 可交叉验证）——YUK-578 保守闸按设计拦下，待 owner /drafts 人审。
+  - 3 题判官输出解析失败（parseQuizVerifyOutput received undefined，mimo-v2.5-pro 空/无结构输出；1 题三连败 job failed）：fail-closed 留 draft，error 事件不挡重派——可重派 quiz_verify。观测缺口：error 事件只存 digest 不存 raw head，无法区分 refusal/empty/prose。
+  - 7 题 active 质量：方差公式/线性变换等，数学正确、LaTeX 干净、解析带推导。
+- 待办线索：(a) 3 个解析失败 draft 重派 quiz_verify；(b) 10 个 needs_review 待 owner 人审（/drafts）；(c) quiz_verify error 事件加 raw head 观测（小改进票）；(d) 今晚 05:50 是 sourcing_web 首次带 Exa 真跑。
+
+---
+
+# 历史 handoff — 2026-09-12，供题线 985 epic 三片全交付（E1/E2/E3）
+
+## E3 交付详情（YUK-988，09-12 交付，留存备查）
+
+- YUK-988 Done（PR #1381 合并 9f209e74f，Oracle 初 FAIL 六 P1 → 修复批 463b1e16b → 验证审 PASS + P2 一行 9b5ac6a76；migrate 热修 PR #1382 → 生产 07df98a84）：供给执行面统一——确定性 plan executor，无新增 agent。
+- 交付形态：web-candidates.ts（web 候选核，SourcingTask 收敛为工具内 LLM）+ web_fetch_candidates DomainTool（read/expensive_llm）+ plan-executor.ts（纯确定性路由派发）+ jobs/supply_execute.ts（agent 队）+ scripts/supply-execute.ts 手动 caller（pnpm supply:execute --plan <id>|--latest|--dry-run）。
+- 路由语义：jyeoo/web 共 store_sourced_question commit seam（source_route 参数化）；quiz_gen 派发现有 job（保自身 verify 链）；author/ingest/image_candidate 落 manual 提案。
+- 六 P1 修复：逐 item executor_item 事件 + plan_event_id 幂等 + quiz_gen singletonKey 断点续跑；placementTrace 传递 + cloneSupplyTraceForRoute 按路由覆写；canary 下移核（jyeoo/web 各单写，executor 路径照计预算）；runWebRoute try/catch→'llm' 续走；CommitCandidateResult 判别联合 + rejections 逐项留痕；phase-2 enqueue 重试 + 持久 failure 事件不翻转。
+- 生产 07df98a84：migrate exit 0 零漂移（traits 24 up-to-date），app/worker healthy，health 200，pgboss supply_planner(50 5) + jyeoo_staged_asset_reap(40 3) 注册。
+- **migrate 崩溃热修（#1382，重要教训）**：E3 把 executor 导出加进 practice/public barrel → 边 plan-executor→web-candidates→SourcingTask→Agent SDK → SDK chunk 顶层 createRequire(import.meta.url) 在 build:migrate 的 cjs bundle 下初始化即崩（server/worker 构建标 external 免疫；CI usability 只跑 server 未捕获）。修复=barrel 摘两条 executor 导出（scripts/supply-execute.ts 改深引，E1 jyeoo-backfill 先例）+ build:migrate 补 --external:@anthropic-ai/claude-agent-sdk。**规矩：capability barrel 新增导出先查“会不会把 SDK/原生依赖链拉进 migrate bundle”。**
+- 钉值：边界基线 430→427，lint 基线 310→307，工具 44→45，task 50 不变；unit 7146 / typecheck / build / 16 audits 全绿。
+
+## E1/E2 留存（986/991/987，09-12 已交付）
+
+- 986：jyeoo agent-tool 化（jyeoo_fetch_candidates + store_sourced_question 单 seam + 预算 40/日 + reaper + jyeoo:backfill），main 0ac945d2c，生产 75a1de01d。
+- 987：供给需求层 planner agent（SupplyPlanV1 机器门 + supply_planner cron 05:50 + demand/shadow 事件），main 454458ccd。
+- 991：sharp/tiptap 2 high CVE 清零，main CI 回绿。
+- 985 epic：三片全 Done，epic 可关。
+- 未结 follow-up：YUK-989（producer extract 全文 echo）、YUK-990（图片覆盖）、YUK-992（日级自动 dump）。
+
+---
+
+# 历史 handoff — 2026-09-07，完整重构goal active
 
 ## 最新状态
 
@@ -642,3 +696,6 @@
 - 依赖438/0/47与5capability SCC/20命令消费者保留；不为数字重做已封装learning-intent。
 - 不动原始脏main、不部署/改SoT/backfill/删历史；887需独立生产副本授权，
   951需完整drain窗口；921/572/832HOLD不解锁。
+
+## 21:51 | main
+按指令通过 ToolSearch 加载 web_search_exa 后执行了 exa 搜索「derivative of e^x proof」，但记录在结果前截断——未获取并汇报第一条结果的 title/url，任务未完成。
