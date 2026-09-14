@@ -26,7 +26,8 @@
  * loosely-related pairs the owner would just dismiss.
  *
  * **UNTUNED** — n=0 calibration; the value is a conservative starting point.
- * Rigorous calibration on a real KC corpus is a follow-up (Refs YUK-396).
+ * Rigorous calibration on a real KC corpus is tracked by YUK-677
+ * (`pnpm audit:threshold-calibration` — report-only replay).
  * Failure mode is non-destructive either way: too-tight → a true duplicate is
  * missed (stays as two KCs, no harm beyond minor redundancy); too-loose → a
  * related-but-distinct pair proposes (the human dismisses it).

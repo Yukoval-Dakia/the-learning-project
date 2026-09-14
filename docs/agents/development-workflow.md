@@ -80,6 +80,7 @@ pnpm audit:draft-status
 pnpm audit:draft-status-reads
 pnpm audit:relations
 pnpm audit:calibration
+pnpm audit:threshold-calibration
 pnpm audit:mastery-provenance
 pnpm audit:fold-writes
 pnpm audit:flags
