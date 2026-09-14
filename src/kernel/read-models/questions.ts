@@ -281,6 +281,15 @@ function buildSqlFilters(params: ListQuestionsParams): SQL[] {
   // Fixed-window diagnostics are learner-facing only through /api/review/due.
   // Never expose future probes or reference answers through the question bank.
   filters.push(ne(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE));
+  // YUK-308 — proposal-dismissed draft tombstones (metadata.dismissed_at,
+  // written by the question_draft dismiss applier) are dead rows, not live
+  // drafts: exclude them on EVERY path, including include_drafts=true (the
+  // copilot query_questions default — otherwise a rejected draft keeps
+  // re-surfacing as "reusable" to the orchestrator) and draftStatus='draft'
+  // /'all' queries. Same marker family as metadata.archived_at (soft-delete);
+  // kept off draft_status because the fail-open pool predicate treats any
+  // non-'draft' literal as pool-visible (write.ts header decision).
+  filters.push(sql`(${question.metadata} -> 'dismissed_at') IS NULL`);
   if (params.source !== undefined) filters.push(eq(question.source, params.source));
   if (params.kind !== undefined) {
     // Match every persisted form normalising to the requested canonical (see the

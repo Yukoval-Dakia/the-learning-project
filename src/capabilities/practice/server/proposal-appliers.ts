@@ -5,6 +5,8 @@
 // practice 声明归属的 proposal kinds（manifest.proposals.kinds）：
 //   - variant_question  → acceptVariantQuestionProposal（本文件）
 //   - question_draft    → acceptQuestionDraftProposal（本文件）
+//                       + dismissQuestionDraftProposal（本文件，YUK-308：
+//                         dismiss tombstone 草稿行 metadata.dismissed_at）
 //   - judge_retraction  → 有 producer（producers.ts 的 judge_retraction 提议）
 //     但无 accept applier：accept 走 actions.ts 的 default throw
 //     （unsupported_proposal_kind），剩余 producer 语义归 YUK-44。归属声明
@@ -14,7 +16,7 @@
 // 共享 helper 一律走 @/server/proposals/applier-helpers。
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 
 import { lockPlacementSupplyScopes } from '@/capabilities/practice/public';
 import { newId } from '@/core/ids';
@@ -47,6 +49,7 @@ import {
   findExistingRateEvent,
   recordProposalDecisionSignal,
   requiredString,
+  writeProposalRateEvent,
 } from '@/server/proposals/practice-runtime';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 
@@ -323,12 +326,16 @@ export async function acceptVariantQuestionProposal(
  * transaction. Idempotency keys on caused_by_event_id = proposalId
  * (existingAcceptRate), like every sibling accept handler.
  *
- * Dismiss flows through the generic dismiss path (writeGenericRateEvent): the
- * draft row stays inert (draft_status='draft', never pooled / FSRS'd).
- * phase-deferred: dismissed-draft cleanup/archival is NOT implemented — orphan
- * draft rows accumulate harmlessly (invisible everywhere drafts are excluded).
- * Revisit with the YUK-304 follow-up batch; context: ADR-0031 决定5 + this
- * handler.
+ * Dismiss flows through the dedicated questionDraftProposalDismissApplier
+ * (YUK-308, declared in manifest.proposals.kinds): the draft row stays inert
+ * (draft_status='draft', never pooled / FSRS'd) AND is tombstoned via
+ * metadata.dismissed_at so it stops reading as a live draft — query_questions /
+ * listQuestions / the draft-review pool exclude it and write_quiz's narrow
+ * draft gate refuses it. A new draft_status value was deliberately NOT
+ * introduced: the pool-visibility predicate is fail-open (`<> 'draft'`), so a
+ * 'dismissed' literal would leak the row back into every pool read
+ * (src/server/questions/write.ts header — same reason archive uses
+ * metadata.archived_at).
  */
 export async function acceptQuestionDraftProposal(
   db: Db,
@@ -442,6 +449,87 @@ export async function acceptQuestionDraftProposal(
   await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
 
   return { kind: 'question_draft', rate_event_id: rateEventId, question_id: questionId };
+}
+
+export interface QuestionDraftDismissResult {
+  kind: 'dismissed';
+  rate_event_id: string | null;
+  idempotent?: boolean;
+}
+
+/**
+ * YUK-308 — question_draft dismiss applier (previously the phase-deferred gap:
+ * the generic dismiss path left the draft row indistinguishable from a live
+ * pending one, so query_questions's include_drafts=true default and
+ * write_quiz's draft admission kept re-surfacing a question the user already
+ * rejected).
+ *
+ * One transaction: proposal decision lock → rate(dismiss) event → tombstone
+ * the still-draft question row via `metadata.dismissed_at` (+ reason +
+ * dismissed_proposal_id provenance) → decision signal. Mirrors the agency
+ * lifecycle's all-in-tx shape (proposal-lifecycle.ts).
+ *
+ * The tombstone is a metadata marker, NOT a new draft_status literal: every
+ * pool read filters `draft_status IS NULL OR <> 'draft'` (fail-open,
+ * 红线-4/NULL≡active), so a 'dismissed' value would be treated as pool-visible
+ * and leak the rejected question into due/stream/placement reads
+ * (src/server/questions/write.ts header — the archive path made the same
+ * call with metadata.archived_at). `draft_status='draft'` +
+ * `metadata.dismissed_at` keeps the row invisible everywhere drafts are
+ * excluded, while the marker lets draft-aware surfaces (query_questions,
+ * listQuestions, listDraftReview, write_quiz, the matcher's lazy-verify) tell
+ * "rejected" apart from "awaiting review".
+ *
+ * The UPDATE is conditioned on draft_status='draft': a row already promoted
+ * (or otherwise moved on) is left untouched — the rate event still records
+ * the dismissal.
+ */
+export async function dismissQuestionDraftProposal(
+  db: Db,
+  proposalId: string,
+  proposal: ProposalInboxRow,
+  opts: { user_note?: string },
+): Promise<QuestionDraftDismissResult> {
+  const change = asPlainRecord(proposal.payload.proposed_change);
+  const questionId = requiredString(change.question_id, 'question_id', proposalId);
+
+  const rate = await db.transaction(async (tx) => {
+    // Serialize with a racing accept/dismiss on the same proposal (the accept
+    // applier takes the same lock); writeProposalRateEvent then rejects a
+    // cross-decision conflict with 409 and replays a same-decision one
+    // idempotently.
+    await acquireProposalDecisionLock(tx, proposalId);
+    const rate = await writeProposalRateEvent(tx, proposalId, 'dismiss', opts.user_note);
+    if (rate.idempotent) return rate;
+    const now = new Date();
+    await tx
+      .update(question)
+      .set({
+        // archived_at 同款秒级 epoch 惯例 (archiveQuestion, questions/write.ts).
+        metadata: sql`COALESCE(${question.metadata}, '{}'::jsonb) || ${JSON.stringify({
+          dismissed_at: Math.floor(now.getTime() / 1000),
+          dismissed_reason: 'question_draft_dismissed',
+          dismissed_proposal_id: proposalId,
+        })}::jsonb`,
+        updated_at: now,
+      })
+      .where(and(eq(question.id, questionId), eq(question.draft_status, 'draft')));
+    return rate;
+  });
+
+  // Mirror variantQuestionProposalDismissApplier: signal bookkeeping lives
+  // OUTSIDE the tx (its own signal lock) and runs only on the non-idempotent
+  // path — the UPSERT increments dismiss_count, so an idempotent replay must
+  // not double-count.
+  if (!rate.idempotent) {
+    await recordProposalDecisionSignal(db, proposal, 'dismiss', opts.user_note);
+  }
+
+  return {
+    kind: 'dismissed',
+    rate_event_id: rate.rate_event_id,
+    ...(rate.idempotent ? { idempotent: true } : {}),
+  };
 }
 
 // ===========================================================================

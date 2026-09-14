@@ -3,7 +3,9 @@ import type {
   ProposalAcceptApplier,
   ProposalAcceptInput,
   ProposalAcceptResult,
+  ProposalDismissApplier,
   ProposalDismissInput,
+  ProposalDismissResult,
 } from '@/kernel/proposals';
 import { toProposalLifecycleResult } from '@/kernel/proposals';
 import {
@@ -19,6 +21,7 @@ import {
   acceptQuestionDraftProposal,
   acceptQuestionEditProposal,
   acceptVariantQuestionProposal,
+  dismissQuestionDraftProposal,
 } from './proposal-appliers';
 import { createPracticeProposalLifecycle } from './proposal-lifecycle';
 
@@ -44,7 +47,7 @@ export const {
   writeProposalRateEvent,
 });
 
-function inboxView(input: ProposalAcceptInput): ProposalInboxRow {
+function inboxView(input: { proposal: ProposalAcceptInput['proposal'] }): ProposalInboxRow {
   const { proposal } = input;
   return {
     ...proposal,
@@ -96,6 +99,23 @@ export const questionDraftProposalAcceptApplier: ProposalAcceptApplier = async (
       runtimeOptions(input, runtime),
     ),
   );
+
+// YUK-308 — question_draft dismiss: tombstone the still-draft question row via
+// metadata.dismissed_at (see dismissQuestionDraftProposal) so a user-rejected
+// draft stops re-surfacing through query_questions / write_quiz / the
+// draft-review pool. Replaces the generic write-only rate path for this kind.
+export const questionDraftProposalDismissApplier: ProposalDismissApplier = async (db, input) => {
+  const result = await dismissQuestionDraftProposal(
+    db as Db,
+    input.proposalId,
+    inboxView({ proposal: input.proposal }),
+    { user_note: input.user_note },
+  );
+  return {
+    kind: input.proposal.payload.kind,
+    result: toProposalLifecycleResult(result),
+  } satisfies ProposalDismissResult;
+};
 
 export const questionEditProposalAcceptApplier: ProposalAcceptApplier = async (
   db,

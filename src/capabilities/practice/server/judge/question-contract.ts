@@ -7,8 +7,14 @@ import { type Provider, tasks } from '@/ai/registry';
 // unchanged; existing importers keep working.
 import { resolveQuestionJudgeRoute } from '@/capabilities/practice/server/judge/route-resolve';
 import { SemanticJudgeOutput, type SemanticJudgeOutputT } from '@/core/capability/judges/semantic';
+import { isLlmGradedAnswerKind } from '@/core/schema/answer-class';
 import { Rubric } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
+import {
+  type JudgeRoutableQuestion,
+  defaultJudgeKindForQuestion,
+  nonEmptyStrings,
+} from '@/core/schema/judge-routing';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
@@ -34,6 +40,48 @@ export const FUTURE_JUDGE_ROUTES = {
   rubric: 'future: rubric judge needs weighted criteria runner and score semantics',
   ai_flexible: 'future: fallback LLM judge needs stronger audit and cost policy',
 } as const satisfies Record<string, string>;
+
+/**
+ * YUK-308 — shared judge-executability contract for generated/authored
+ * questions (extracted from quiz_gen.ts's module-local copy so the
+ * question_draft author flow enforces the SAME gate quiz_gen has had since
+ * §2/§5 — a draft that cannot be graded by its declared route is rejected
+ * BEFORE persist, so downstream judges never see an ungradeable question).
+ *
+ * `origin` is only an error-message label ('quiz_gen' / 'question_author');
+ * `promptLabel` is a short excerpt for the same purpose.
+ */
+export function assertGeneratedQuestionHasJudgeContract(
+  q: JudgeRoutableQuestion & { prompt_md?: string },
+  origin: string,
+): void {
+  const promptLabel = q.prompt_md ?? '(no prompt_md)';
+  const route = defaultJudgeKindForQuestion(q);
+  if (route === 'keyword' && nonEmptyStrings(q.rubric_json?.keywords).length === 0) {
+    throw new Error(`${origin} question '${promptLabel}' uses keyword judge without keywords`);
+  }
+  if (route === 'semantic' && nonEmptyStrings(q.rubric_json?.required_points).length === 0) {
+    throw new Error(
+      `${origin} question '${promptLabel}' uses semantic judge without required_points`,
+    );
+  }
+  // YUK-391: the retired hand-rolled check (PROSE_KINDS.has(kind) || kind ===
+  // 'derivation') is the LLM-graded kind family read off the answer-class axis
+  // (prose ∪ {derivation} — kinds whose class is semantic/steps under EVERY
+  // keyword shape). computation stays out (its keyword shape grades deterministic).
+  if (isLlmGradedAnswerKind(q.kind) && route === 'exact') {
+    throw new Error(`${origin} ${q.kind} question '${promptLabel}' cannot use exact judge`);
+  }
+  // Defense-in-depth: a generated question must route to a judge the invoker can
+  // actually run. The output schema already restricts judge_kind_override to
+  // exact|keyword|semantic and defaultJudgeKindForQuestion never derives a
+  // non-runnable route, so this only fires on an upstream contract change — but it
+  // guarantees we never persist a draft that would return `unsupported` at answer
+  // time.
+  if (!(RUNNABLE_ROUTES as ReadonlySet<string>).has(route)) {
+    throw new Error(`${origin} question '${promptLabel}' routes to non-runnable judge '${route}'`);
+  }
+}
 
 const semanticOutputSchema = tasks.SemanticJudgeTask.structuredOutputSchema;
 const SEMANTIC_OUTPUT_FORMAT = semanticOutputSchema

@@ -457,6 +457,106 @@ describe('question_draft accept (ADR-0031 lane B)', () => {
     expect(await getFsrsState(db, 'knowledge', 'k_draft')).toBeNull();
   });
 
+  // YUK-308 — question_draft dismiss applier: the generic write-only rate path
+  // left a rejected draft indistinguishable from a pending one, so
+  // query_questions (include_drafts=true default) and write_quiz's draft
+  // admission kept re-surfacing it. Dismiss now tombstones the still-draft row
+  // via metadata.dismissed_at (+ reason + proposal provenance) in the same tx
+  // as the rate event, and every draft-aware reader excludes the marker.
+  it('dismiss tombstones the draft row (metadata.dismissed_at) without promoting it', async () => {
+    const db = testDb();
+    const questionId = await seedDraftQuestion();
+    await seedQuestionDraftProposal('qd_d1', questionId);
+
+    const result = await dismissAiProposal(db, 'qd_d1', { user_note: '不够好' });
+    expect(result.kind).toBe('dismissed');
+
+    const [row] = await db.select().from(question).where(eq(question.id, questionId));
+    // NOT a new draft_status literal: the fail-open pool predicate treats any
+    // non-'draft' value as pool-visible, so the tombstone is a metadata marker
+    // (archived_at family) and the row stays draft_status='draft'.
+    expect(row.draft_status).toBe('draft');
+    expect(row.metadata).toMatchObject({
+      dismissed_reason: 'question_draft_dismissed',
+      dismissed_proposal_id: 'qd_d1',
+    });
+    expect(typeof (row.metadata as { dismissed_at?: unknown }).dismissed_at).toBe('number');
+
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'qd_d1')));
+    expect(rateRows).toHaveLength(1);
+    expect(rateRows[0].payload).toMatchObject({ rating: 'dismiss', user_note: '不够好' });
+  });
+
+  it('dismissed drafts disappear from listQuestions (both default and include_drafts views)', async () => {
+    const db = testDb();
+    const liveDraftId = await seedDraftQuestion({ id: 'q_draft_live' });
+    const rejectedId = await seedDraftQuestion({
+      id: 'q_draft_rejected',
+      knowledgeIds: ['k_draft_2'],
+    });
+    await seedQuestionDraftProposal('qd_d2', rejectedId);
+    const { listQuestions } = await import('@/kernel/read-models/questions');
+
+    const before = await listQuestions(db, { includeDrafts: true, limit: 50, offset: 0 });
+    expect(before.items.map((i) => i.id).sort()).toEqual([liveDraftId, rejectedId].sort());
+
+    await dismissAiProposal(db, 'qd_d2');
+
+    for (const includeDrafts of [true, false] as const) {
+      const after = await listQuestions(db, { includeDrafts, limit: 50, offset: 0 });
+      expect(after.items.map((i) => i.id)).toEqual([liveDraftId].filter(() => includeDrafts));
+    }
+    // The explicit draft view also hides it — it is dead, not pending-review.
+    const draftView = await listQuestions(db, {
+      includeDrafts: true,
+      draftStatus: 'draft',
+      limit: 50,
+      offset: 0,
+    });
+    expect(draftView.items.map((i) => i.id)).toEqual([liveDraftId]);
+  });
+
+  it('dismiss is idempotent: a replayed dismiss writes no second rate event', async () => {
+    const db = testDb();
+    const questionId = await seedDraftQuestion();
+    await seedQuestionDraftProposal('qd_d3', questionId);
+
+    const first = await dismissAiProposal(db, 'qd_d3');
+    const again = await dismissAiProposal(db, 'qd_d3');
+    expect(first.kind).toBe('dismissed');
+    expect(again.kind).toBe('dismissed');
+
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'qd_d3')));
+    expect(rateRows).toHaveLength(1);
+  });
+
+  it('dismiss on an already-accepted row still records the rate but leaves the active row alone', async () => {
+    const db = testDb();
+    const questionId = await seedDraftQuestion();
+    // Two proposals can point at the same draft (the tool dedups by cooldown,
+    // not by target) — dismiss the second AFTER the first accepted the row.
+    await seedQuestionDraftProposal('qd_d4a', questionId);
+    await seedQuestionDraftProposal('qd_d4b', questionId);
+
+    await acceptAiProposal(db, 'qd_d4a');
+    const [accepted] = await db.select().from(question).where(eq(question.id, questionId));
+    expect(accepted.draft_status).toBe('active');
+
+    const result = await dismissAiProposal(db, 'qd_d4b');
+    expect(result.kind).toBe('dismissed');
+    // The UPDATE is conditioned on draft_status='draft' — an active row is
+    // untouched (no tombstone on a live pooled question).
+    const [after] = await db.select().from(question).where(eq(question.id, questionId));
+    expect(after.draft_status).toBe('active');
+    expect((after.metadata ?? {}) as Record<string, unknown>).not.toHaveProperty('dismissed_at');
+  });
+
   it('404s on a missing question row and 409s on a non-draft row', async () => {
     const db = testDb();
     await seedKnowledge(['k_draft']);

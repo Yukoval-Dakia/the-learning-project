@@ -26,14 +26,14 @@ import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { JobWithMetadata, SendOptions } from 'pg-boss';
-import { RUNNABLE_ROUTES } from '@/capabilities/practice/server/judge/question-contract';
-import { isLlmGradedAnswerKind } from '@/core/schema/answer-class';
+import { assertGeneratedQuestionHasJudgeContract } from '@/capabilities/practice/server/judge/question-contract';
 import {
   DifficultyEvidence,
   type DifficultyEvidenceT,
   buildProducerDifficultyEvidence,
 } from '@/core/schema/difficulty-evidence';
-import { defaultJudgeKindForQuestion, nonEmptyStrings } from '@/core/schema/judge-routing';
+import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
+
 import {
   type QuizGenMetadataT,
   QuizGenOutput,
@@ -266,38 +266,10 @@ async function defaultEnqueueQuizVerify(
   );
 }
 
-// §2 / §5 — output JSON parse + judge-contract assertion (shared with
-// EmbeddedCheckGenerate via judge-routing). A generated prose / derivation
-// question that cannot be graded by its declared route is rejected so downstream
-// judges never see an ungradeable question.
-function assertGeneratedQuestionHasJudgeContract(q: QuizGenQuestionT): void {
-  const route = defaultJudgeKindForQuestion(q);
-  if (route === 'keyword' && nonEmptyStrings(q.rubric_json?.keywords).length === 0) {
-    throw new Error(`quiz_gen question '${q.prompt_md}' uses keyword judge without keywords`);
-  }
-  if (route === 'semantic' && nonEmptyStrings(q.rubric_json?.required_points).length === 0) {
-    throw new Error(
-      `quiz_gen question '${q.prompt_md}' uses semantic judge without required_points`,
-    );
-  }
-  // YUK-391: the retired hand-rolled check (PROSE_KINDS.has(kind) || kind ===
-  // 'derivation') is the LLM-graded kind family read off the answer-class axis
-  // (prose ∪ {derivation} — kinds whose class is semantic/steps under EVERY
-  // keyword shape). computation stays out (its keyword shape grades deterministic).
-  if (isLlmGradedAnswerKind(q.kind) && route === 'exact') {
-    throw new Error(`quiz_gen ${q.kind} question '${q.prompt_md}' cannot use exact judge`);
-  }
-  // Defense-in-depth: a generated question must route to a judge the invoker can
-  // actually run. The output schema already restricts judge_kind_override to
-  // exact|keyword|semantic and defaultJudgeKindForQuestion never derives a
-  // non-runnable route, so this only fires on an upstream contract change — but it
-  // guarantees we never persist a draft that would return `unsupported` at answer
-  // time.
-  if (!(RUNNABLE_ROUTES as ReadonlySet<string>).has(route)) {
-    throw new Error(`quiz_gen question '${q.prompt_md}' routes to non-runnable judge '${route}'`);
-  }
-}
-
+// §2 / §5 — output JSON parse + judge-contract assertion. The gate itself is
+// the SHARED assertGeneratedQuestionHasJudgeContract (question-contract.ts) —
+// extracted for YUK-308 so the question_draft author flow enforces the same
+// contract; error strings keep their 'quiz_gen' origin label byte-identical.
 function parseOutput(text: string): { parsed: QuizGenOutputT; parseRepaired: boolean } {
   // YUK-607 — 宽松提取（jsonrepair 修复带）：mimo 对长中文字符串题型（阅读理解材料）常产出
   // 字符串值内未转义引号的 JSON，旧硬解析在此整批阵亡。错误串格式与旧实现逐字节一致。
@@ -318,7 +290,7 @@ function parseOutput(text: string): { parsed: QuizGenOutputT; parseRepaired: boo
     );
   }
   for (const q of parsed.data.questions) {
-    assertGeneratedQuestionHasJudgeContract(q);
+    assertGeneratedQuestionHasJudgeContract(q, 'quiz_gen');
   }
   // jsonrepair 级修复 = 内容完整性无法机证 → 上抛给 metadata（quiz_verify 晋级门隔离）。
   return { parsed: parsed.data, parseRepaired: extracted.repaired === 'jsonrepair' };

@@ -102,6 +102,20 @@ const LIMITED_TOOLS: Record<string, LimitedToolSpec> = {
     courtesyDefault: 10,
     dimension: 'eventRows',
   },
+  // YUK-308 — query_questions (practice copilot 题池查询): previously the only
+  // bounded-row reader on the Copilot allowlist NOT registered here — its Zod
+  // max(50) was the sole bound, so a chatty run could pull 50 full question
+  // rows per call without budget accounting. Register it under the generic
+  // row-count dimension (eventRows is the "returned rows" budget — question
+  // list rows are not events but draw down the same per-message row ceiling;
+  // same convention query_records already uses for non-event rows). The
+  // courtesy default mirrors the tool's own limit default of 20 — no behavior
+  // change, only budget accounting + hard-row capping.
+  query_questions: {
+    limitPath: ['limit'],
+    courtesyDefault: 20,
+    dimension: 'eventRows',
+  },
 };
 
 function readLimit(args: unknown, path: readonly string[]): number | undefined {

@@ -210,13 +210,15 @@ function readWhitelistMatch(metadata: Record<string, unknown> | null): boolean |
   return typeof match === 'boolean' ? match : null;
 }
 
-// codex P2-2 — a soft-archived draft carries metadata.archived_at (any non-empty value).
-// poolFetch(activeOnly:false) recalls it, but the matcher must treat it as unusable and
-// never promote it back to active. Reads the metadata the consumer already projects
-// (PoolRow.metadata) — no extra query.
+// codex P2-2 — a soft-archived draft carries metadata.archived_at (any non-empty value);
+// YUK-308 — a proposal-dismissed draft carries metadata.dismissed_at (same tombstone
+// family). poolFetch(activeOnly:false) recalls either, but the matcher must treat both as
+// unusable and never promote them back to active. Reads the metadata the consumer already
+// projects (PoolRow.metadata) — no extra query.
 function isArchivedDraft(metadata: Record<string, unknown> | null): boolean {
   if (!metadata || typeof metadata !== 'object') return false;
-  return (metadata as Record<string, unknown>).archived_at != null;
+  const meta = metadata as Record<string, unknown>;
+  return meta.archived_at != null || meta.dismissed_at != null;
 }
 
 // codex P2-4 — mirror sourcing-sequence.ts:resolveLiveKnowledgeNode (module-private there):
@@ -615,6 +617,8 @@ export async function matcher(
     }
     // codex P2-2 — soft-archived draft (draft_status='draft' + metadata.archived_at) 不可用:
     // poolFetch(activeOnly:false) 会召回它，但 lazy verify 绝不能把已归档 draft promote 回 active。
+    // YUK-308 — 同款: proposal-dismissed draft (metadata.dismissed_at) 已被 owner 拒绝，
+    // lazy verify 也绝不能 promote。
     // 当作不可用跳过 (落下一候选 / 残余)，不 verify、不 promote。
     if (isArchivedDraft(r.metadata)) continue;
     // draft 行 → lazy verify-promote (转调现有 gate). promoted 则升用，否则跳下一候选.
