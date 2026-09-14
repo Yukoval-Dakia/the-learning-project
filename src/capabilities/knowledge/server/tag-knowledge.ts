@@ -46,10 +46,7 @@ import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
 import { getKnownSubjects } from '@/subjects/profile';
 import { type KnowledgeSimilarityCandidate, matchKnowledgeBySimilarity } from './match-similarity';
 import { prepareProposedKnowledgeId } from './proposals';
-import { MATCH_THRESHOLD } from './tagging-flags';
-
-/** Nearest-first candidates fetched per tag. Mirrors poolFetch's modest top-K. */
-const RETRIEVAL_TOP_K = 10;
+import { MATCH_THRESHOLD, RETRIEVAL_TOP_K } from './tagging-flags';
 
 export function isTagKnowledgeInvariantError(error: unknown): boolean {
   return isDirectProviderAttemptInvariantError(error);

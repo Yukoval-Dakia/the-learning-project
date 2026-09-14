@@ -18,6 +18,11 @@ const server = {
   API_PORT: optionalString,
   API_SMOKE_BASE_URL: optionalString,
   AUTO_INTERVENTION_EXPANSION_ENABLED: optionalString,
+  // YUK-677 — optional READ-ONLY connection string for report-only audit scripts
+  // (audit:threshold-calibration). Point it at a read-only role/replica when running
+  // against a corpus-bearing DB; falls back to DATABASE_URL when unset. The script
+  // additionally pins the session `default_transaction_read_only=on` either way.
+  AUDIT_READ_DATABASE_URL: z.string().url().optional(),
   BACKUP_IMPORT_MAX_BYTES: optionalString,
   B3_GATE_CONFIRM_CLONE: optionalString,
   CLAUDE_CODE_OAUTH_TOKEN: optionalString,

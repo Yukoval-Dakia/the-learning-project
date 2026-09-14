@@ -66,8 +66,10 @@ import { verifyAndPromote } from './verify-and-promote';
 // pgvector `<=>` 是 cosine *距离* (0=同向、1=正交、2=反向)：越小越近。候选 cosine_distance
 // 超此值 → 丢弃 (不入保守集 → 落残余生成)。保守=偏严=阈值偏小 (§4 owner 决策 2「宁残余不塞次品」)。
 // 初值 0.35 ≈ cosine 相似度 ≥ 0.65 才收，无生产数据支撑，靠 db 测试 seed 向量经验标定。
-// TODO 实测调参 — YUK-396 关联 follow-up (生产 embedding 分布回校；可能按科目/题型分档)。
-const MATCHER_COSINE_MAX_DISTANCE = 0.35;
+// TODO 实测调参 — YUK-677 follow-up (生产 embedding 分布回校；可能按科目/题型分档)。
+// Exported (YUK-677) so the report-only `pnpm audit:threshold-calibration` replay reads the
+// SAME constant under review — a second hard-coded copy in scripts/ would silently drift.
+export const MATCHER_COSINE_MAX_DISTANCE = 0.35;
 
 // Observe-only diagnostic broad read (candidate_count) is bounded so a large KC cannot force
 // an unbounded full-pool scan on the serving miss path. candidate_count is only consumed as a

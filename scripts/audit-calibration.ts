@@ -515,7 +515,8 @@ export async function main(): Promise<void> {
     if (err instanceof Error && err.stack) console.error(err.stack);
     process.exitCode = 2;
   } finally {
-    // audit-calibration is the ONLY DB-connecting audit: @/db/client opens a postgres-js
+    // audit-calibration is one of the only DB-connecting audits (audit-threshold-calibration
+    // is the other, on its own dedicated read-only client): @/db/client opens a postgres-js
     // pool (max:10) that holds the event loop open, so WITHOUT closing it the process HANGS
     // after the report prints — the other audits scan source files, never connect, so they
     // exit naturally. Close the singleton pool here so this script exits cleanly (graceful

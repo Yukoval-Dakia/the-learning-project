@@ -17,7 +17,7 @@ KC/题库语义检索（`knowledge.embedding`/`question.embedding` vector(1024)�
 ## 决策
 
 1. **统一 `tagKnowledge`（match-or-propose）** 替换 per-entry grid-tagging + cold-start-bridge ①。流程：embed 题面 → `matchKnowledgeBySimilarity`（KC 余弦 top-K，净新）→ effective-domain subject 过滤 → nearest `cosine_distance ≤ MATCH_THRESHOLD` ? **MATCH**（≥1 已有 KC）: **PROPOSE**（建子 KC）。判别式 union 输出，`propose` 恒产具体 KC id。
-2. **embedding 语义检索驱动** match-vs-propose（owner 决策①）。`MATCH_THRESHOLD` 单旋钮（`tagging-flags.ts`，env-overridable，UNTUNED → YUK-396 标定；探针 n=6 实测 0.55，因 query=整题文本 vs KC=`name\ndomain` 非对称抬高距离）。
+2. **embedding 语义检索驱动** match-vs-propose（owner 决策①）。`MATCH_THRESHOLD` 单旋钮（`tagging-flags.ts`，env-overridable，UNTUNED → YUK-677 标定；探针 n=6 实测 0.55，因 query=整题文本 vs KC=`name\ndomain` 非对称抬高距离）。
 3. **新 KC 自动批准 + audit-only 留痕**（owner 决策③）：`applyProposeNew`（approved）+ `experimental:auto_tag_kc_created` 事件（`proposalWhere()` 不折叠 → 可查可审、非 pending inbox 项、无 acceptProposal 重放）。无人审墙、day-one 可用。
 4. **跑全部题目创建入口**（owner 决策④）：auto-enroll ENROLL / image-candidate-accept / 手动 `/api/mistakes` / `/api/import`。auto-enroll ENROLL 合成 full-confidence `TaggingOutput` 喂现有 `runWorkflowJudge` 以保其结构不变（tagging 不再是路由不确定性来源；ADR-0026 §3 flag rollout + §4 入库 owner 不变）。OBSERVE 模式仍跑原 `TaggingTask`（零-mutation 探针）。mistakes/import 当前无 request 级 subject 信号 → 暂 ids-required（auto-tag 待 subject 信号 follow-up）。
 5. **死的 `knowledge_ids:[]` 零匹配门移除**——`propose` 恒产 KC id，「空→不可见」失效模式结构性消除。
@@ -31,4 +31,4 @@ KC/题库语义检索（`knowledge.embedding`/`question.embedding` vector(1024)�
 - **铁律**：dedup auto-**approve** 用于*创建*（便宜、加性、可经 merge 回滚）；auto-**merge** 破坏性（archive from-KC + merged_from[] + 重写 9 个下游归属面：question/learning_item/goal knowledge_ids、knowledge_edge 端点、mastery/fsrs/axis/kc_typed 每-KC state、misconception edge target——YUK-543），永远人工 accept。
 - **失败模式非破坏性**：阈值太紧→重复 KC（P5 dedup 兜）；太松→相关但不同的 KC 误提议（人工 dismiss）。
 - 实现：P1 `matchKnowledgeBySimilarity`（#561）/ P2 `tagKnowledge`（#562）/ P3 接 4 入口 + 删死门（#566）/ P4a reference 解耦（#569）/ P5 `kc_dedup_nightly`（#570）。
-- Follow-up：`MATCH_THRESHOLD`/`DEDUP_DISTANCE_MAX` 真语料标定（YUK-396）；mistakes/import 的 request 级 subject 信号以启用其 auto-tag。
+- Follow-up：`MATCH_THRESHOLD`/`DEDUP_DISTANCE_MAX`/`MATCHER_COSINE_MAX_DISTANCE` 真语料标定（YUK-677，report-only 回放 `pnpm audit:threshold-calibration` + `docs/audit/` 报告）；mistakes/import 的 request 级 subject 信号以启用其 auto-tag。
