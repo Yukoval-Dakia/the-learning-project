@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-13：YUK-837 交付完成（PR #1395 → main d9ca89e5；exact-head CI 34762817056 / main CI Gate 34764012413 双绿、Oracle gate PASS、真实 Exa 形态实证）并与 YUK-980 同批部署 Mac 生产（镜像 d9ca89e5：migrate exit 0 零漂移、app/worker healthy、health 200）。清零口径：837 已交付；550 休眠激活前置待裁决；不沿用 68→60。
+> Linear 是权威 tracker；更新于 2026-09-13：YUK-837 交付完成（PR #1395 → main d9ca89e5；exact-head CI 34762817056 / main CI Gate 34764012413 双绿、Oracle gate PASS、真实 Exa 形态实证）并与 YUK-980 同批部署 Mac 生产（镜像 d9ca89e5：migrate exit 0 零漂移、app/worker healthy、health 200）。清零口径：837 已交付；550 已恢复 Backlog（09-14 owner 裁决）；不沿用 68→60。
 
 ## NOW
 
@@ -8,7 +8,7 @@
 - 09-13 生产部署（980+837 同批）：镜像 the-learning-project-app:d9ca89e5（构建树与 commit 树 diff 空；镜像内两票标记已核）→ migrate exit 0（drizzle 无新增、legacy drain clear、traits 24 up-to-date、七实体 projection 零漂移）→ app/worker healthy、health200、未认证401、pgboss 29 条 cron 在位（supply_planner 50 5 / jyeoo reaper 40 3）。回滚：旧镜像 67d43df12 保留 + override 备份 runtime-988-image.override.yml.rollback-67d43df12。
 - 980 Done（补验收 PR #1393，非仅 C1 原修复）：使用已发布 running boss，协调启动尾段与单一退出 owner；旧 wiring 两个中途停机场景 RED，最终 scoped 22 tests + lead 真实 SIGTERM QA 19/19。详见 docs/planning/2026-09-13-yuk980-startup-tail-verification.md；9s+30s 为预算，pool-close 卡死的硬截止不在已证明范围；09-13 已随 d9ca89e5 批次部署。
 - 09-13 QoL C1 历史部署：PR #1391（67d43df12）。935 actions node24；187 dismiss 冷却14天；920 tool_finished SSE 带 tool_use_id。980 的部分注册窗口遗漏由 #1393 补齐，不能用原 C1 unit 通过替代验收。
-- 清零复核续：837 已恢复并交付（见上，Done）；550 为休眠的激活前置条件，纠正证据已写原票、状态待裁决。203/764 的关闭记录保留。
+- 清零复核续：837 已恢复并交付（见上，Done）；550 已恢复 Backlog（09-14 owner 裁决，P4 不排期；描述补 09-13 复核→09-14 恢复口径）。203/764 的关闭记录保留。
 - 09-13 QoL C0 Done：992 日级 dump（launchd 07:15，14 日+月档保留，恢复演练 pg_restore 零错 42 题）+ verify raw head / quiz:reverify / gen:prompt-hashes / flags strict。生产 e1750de6b 健康。stranded draft jo3 重派 → pass+promoted（19 题 = 8 active + 10 人审）。
 - 09-13 Exa 换装 Done：web 检索后端 Tavily→Exa（PR #1384，main 776a687d3，Mac 生产健康）。live-probed 挂载（web_search_exa/web_fetch_exa，x-api-key header），闸/消费面/schema/prompt/oracle 全面更名，旧 tavily 值保 parse。
 - 09-13 首夜实证：planner 05:50 accepted 7 项（rationale 引用真实库存证据）→ executor（sourcing_web 跳 tavily_unavailable→quiz_gen fallback）→ quiz_gen 7/7 → 19 题 = 7 active + 12 draft（10 题数学全对仅 copy_safety=unknown 待 /drafts 人审；3 题判官输出解析失败留 draft 可重派）。
