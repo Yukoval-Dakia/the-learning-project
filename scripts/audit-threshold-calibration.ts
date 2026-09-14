@@ -544,10 +544,14 @@ export function analyzeMatcherAxis(corpus: Corpus, ceiling: number): AxisResult 
     if (candidates.length > CROSS_PAIR_SAMPLE_CAP) {
       sampled = true;
       // Deterministic partial Fisher–Yates over the index space; take the first CAP picks.
+      // (No `[a,b]=[b,a]` destructuring swap — hub-sync-writer-dataflow can't model a
+      // MemberExpression inside a binding pattern; plain indexed assigns are supported.)
       const idx = candidates.slice();
       for (let k = 0; k < CROSS_PAIR_SAMPLE_CAP; k++) {
         const r = k + Math.floor(rng() * (idx.length - k));
-        [idx[k], idx[r]] = [idx[r], idx[k]];
+        const tmp = idx[k];
+        idx[k] = idx[r];
+        idx[r] = tmp;
       }
       evalSet = idx.slice(0, CROSS_PAIR_SAMPLE_CAP);
     }
