@@ -1,3 +1,10 @@
+# 当前 handoff — 2026-09-14，Linear sweep 5 lane 并行批交付
+
+- 并行 5 worktree lane 全 Done：YUK-977（#1400）零金额费用来源 reported/estimated_attempts 按粒度计数；YUK-990（#1401）store_sourced_question 图题 commit 4 db 测试（重写/override/清理/竞态）；YUK-677（#1402）阈值重锚轻量案 + report-only 标定脚本 + docs/audit/2026-09-14-threshold-calibration.md（三阈值维持，语料薄已标注）；YUK-989 jyeoo-rs extract 全文 echo（外部仓 producer 修复，同题复验 overlap 0.49→active，本仓零 diff）；YUK-308（#1403）quiz C→A 强化五项落地/限流 wontfix，review 派生 YUK-995/996。
+- main = c6f739779；生产未部署仍 d9ca89e5。Linear 60→55 非终态（本批 5 + 期间 994/837 等已收）。
+- 遗留信号：jyeoo-rs 目录非 git repo（修复只以文件+二进制存在，已立票）；JYEOO_SPAWN_TIMEOUT_MS 默认 120s 对 grade 路线偏小（已立票）；matcher 接 live caller 后 axis C 复测（已立票）；复验在共享 DB 落 4 条真实题（3 active + 1 needs_review）；OCR runner upload-artifact 连续超时 infra flake。
+- `feat/skill-fixture` 根仓分支仍保留；本批 lane worktree 已全部清理。根仓 git config user.name=fixture 污染仍在——后续 commit 继续用 per-command GIT_AUTHOR_* env 覆盖，未改 config。
+
 # 当前 handoff — 2026-09-13，YUK-980 真实启动窗口补验收完成
 
 - 用户开启980后，修复在独立 worktree tlp-wt-yuk980-startup-tail / fix/yuk-980-startup-tail 完成。PR #1393 已合并为 fbc6b26f6987edbc75242780b4f2451d5fc9e146；exact-head a180d744 的 CI Gate 34759069199 completed/success，独立 review PASS，无阻塞 finding。
