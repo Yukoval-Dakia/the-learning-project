@@ -11,38 +11,47 @@
 - **数据源**：本机 dev compose Postgres（`127.0.0.1:5433`）。生产 NAS 库只在 compose 内网
   `postgres:5432` 暴露，本机不可达——本报告如实基于可得语料，n 偏小，结论按薄证据写。
 - **语料**：`knowledge` 12 节点（全部 active+embedded：3 学科 root + 3 个 YUK-792 E2E canary +
-  6 个概率论子树，domain=general）；`question` 58 题，embedded 42，其中 tagged 39、
-  pool-visible（非 draft）16；`experimental:auto_tag_kc_created` 事件 **0** 条（统一标注轴
-  尚未在本库产过 auto-created KC，dedup 的生产扫描总体为空）。
-- **口径**：Axis A 镜像 `tagKnowledge` 决策形（先做 effective-domain subject-scope，再
-  「最近域内候选 ≤ 阈值 → MATCH」；target domain 用题目 primary KC 的 effective domain 代理）。
-  Axis B 全量 KC↔KC 无序对。Axis C 的 question↔question 用同-KC 题对为正例、跨池最近题为
-  负例；query→question 一侧用 KC→own/unassigned 题距离做 KC-中心 query 代理。
+  6 个概率论子树，domain=general）；`question` 62 题，embedded 42，其中 tagged 39、
+  非 draft 16（draft 26 也含 embedding）；`experimental:auto_tag_kc_created` 事件 **0** 条
+  （统一标注轴尚未在本库产过 auto-created KC，dedup 的生产扫描总体为空）。
+- **口径**：Axis A 逐拍镜像 `tagKnowledge`——先全局最近邻检索 `RETRIEVAL_TOP_K=10`
+  （`matchKnowledgeBySimilarity`），再在窗口内做 effective-domain subject-scope，最后
+  「最近域内候选 ≤ 阈值 → MATCH」（target domain 用题目 primary KC 的 effective domain 代理；
+  窗口外才出现的域内真 KC 记 retrieval-starved，不许计入 accept）。Axis B 全量 KC↔KC 无序对。
+  Axis C 逐拍镜像 matcher 召回：`poolFetch(knowledgeId, activeOnly:false)` 的候选集按定义只有
+  **携带该 KC 的题**（`knowledge_ids @> [knowledgeId]`，draft 含在内——draft 走 lazy
+  verify-promote，是真实候选），跨 KC「误服」在本路径结构性不可能，**不存在负例分布**；
+  阈值只交换「池内供应 vs 残余生成」。query→question 一侧用 KC 标签向量→own 题距离做
+  KC-中心 query 代理（真实 demand 是自由文本，语料里不存在）。
 - **已知口径偏差**：库存 `question.embedding` 嵌的是 `questionEmbedText` 全字段
   （prompt+reference+choices），生产 `tagKnowledge` 只嵌 prompt——偏差同向作用于正/负两侧，
-  但绝对距离不可与探针直接对齐。Axis C 的 query 代理是 KC 标签向量，不是真实 demand 文本。
+  但绝对距离不可与探针直接对齐。Axis C 的 query 代理是 KC 的 `name\ndomain` 标签向量，
+  大概率**高估**真实 demand 文本到目标题的距离（真实查询通常比 KC 标签更贴近题面措辞）。
 
 ## Axis A — `MATCH_THRESHOLD = 0.55`（tagging-flags.ts / `TAGGING_MATCH_THRESHOLD`）
 
 | 分布 | n | min | p25 | p50 | p75 | p90 | max |
 |---|---|---|---|---|---|---|---|
-| q→assigned KC（正例对） | 41 | 0.338 | 0.467 | 0.534 | 0.568 | 0.599 | 0.642 |
-| q→最近域内 assigned KC | 39 | 0.338 | 0.449 | 0.526 | 0.564 | 0.582 | 0.642 |
-| q→最近域内非 assigned KC（rival） | 39 | 0.438 | 0.507 | 0.545 | 0.579 | 0.618 | 0.639 |
-| q→最近域内 KC overall | 39 | 0.338 | 0.436 | 0.499 | 0.549 | 0.569 | 0.613 |
+| q→assigned KC（正例对，全量） | 41 | 0.338 | 0.467 | 0.534 | 0.568 | 0.599 | 0.642 |
+| q→最近域内 assigned KC（top-10 窗口内） | 39 | 0.338 | 0.449 | 0.526 | 0.564 | 0.582 | 0.642 |
+| q→最近域内非 assigned KC（rival，窗口内） | 39 | 0.438 | 0.507 | 0.545 | 0.579 | 0.618 | 0.639 |
+| q→最近域内 KC overall（窗口内） | 39 | 0.338 | 0.436 | 0.499 | 0.549 | 0.569 | 0.613 |
 
 - 正例 ≤0.55 占 61.0%，≤0.65 才 100%；rival ≤0.55 占 56.4%——正负侧在本语料上**有重叠**，
   不存在干净分界（neg p10=0.466 < pos p90=0.599）。
-- 当前阈值实测分解（n=39）：**correct-accept 22 / wrong-accept（误标）9 /
-  有真 KC 却被 propose 8 / 无可匹配正常 propose 0**；hit@1 = 27/39（69%）。
+- 当前阈值实测分解（n=39，窗口=全局 top-10 → 域内过滤）：**correct-accept 22 /
+  wrong-accept（误标）9 / 窗口内真 KC >T 被 propose（threshold-starved）8 /
+  真 KC 被挤出 top-10（retrieval-starved）0 / 无可匹配正常 propose 0**；hit@1 = 27/39（69%）。
+- 窗口截断在本语料未改变任何决策（retrieval-starved=0，12 KC 下 top-10 近乎全覆盖），但语义
+  已与生产逐拍对齐——语料长大后该偏置不再静默累积。
 - 解读：8 题真归属 KC 距离 >0.55 → 走 propose 产重复 KC（文档化非破坏失败，dedup lane 兜）。
   9 个 wrong-accept 是**排序失败**（最近 KC 本就不是归属 KC），阈值再紧只是把它们从「静默误标」
   转成「propose 新 KC」。放宽到 ≥0.62 能收回全部 hit@1（27 题），但 wrong-accept 涨到 12。
 - **结论：维持 0.55。** 在当前 n 下没有占优的移动方向：收紧把排序失败变成 propose（重复 KC
   可见可审），放宽把更多误标静默放行。0.55 落在正例 p50(0.534)–p75(0.568) 之间，方向与 n=6
   探针一致；正负侧距离带虽有重叠，真正保精度的是 nearest-first 排序（hit@1=69%）而非阈值
-  本身——移动阈值改变的是「谁被放行」，不是「谁排第一」。语料长大或换 concept-projection
-  对称 embed 后再复测（docblock 里记的同一条 refinement）。
+  本身——移动阈值改变的是「谁被放行」，不是「谁排第一」。语料长大（top-K 截断开始咬合）或
+  换 concept-projection 对称 embed 后再复测（docblock 里记的同一条 refinement）。
 
 ## Axis B — `DEDUP_DISTANCE_MAX = 0.10`（dedup-flags.ts / `KC_DEDUP_DISTANCE_MAX`）
 
@@ -63,19 +72,25 @@
 
 | 分布 | n | min | p25 | p50 | p75 | p90 | max |
 |---|---|---|---|---|---|---|---|
-| 同-KC 题↔题对 | 20 | 0.232 | 0.351 | 0.420 | 0.459 | 0.556 | 0.613 |
-| 题→最近跨池题（负例） | 16 | 0.319 | 0.348 | 0.371 | 0.442 | 0.469 | 0.498 |
-| KC→own 题（query 代理正例） | 16 | 0.338 | 0.457 | 0.520 | 0.570 | 0.609 | 0.639 |
-| KC→最近未归属题（负例） | 12 | 0.280 | 0.419 | 0.492 | 0.562 | 0.679 | 0.754 |
+| 同-KC 题↔题对（pool 内聚度） | 104 | 0.156 | 0.342 | 0.407 | 0.474 | 0.565 | 0.625 |
+| KC→own 题（query 代理，即召回池候选距离） | 41 | 0.338 | 0.467 | 0.534 | 0.568 | 0.599 | 0.642 |
 
-- 当前 0.35 下：同-KC 题对只有 25% 入阈；query 代理正例只有 6.3% 入阈。5 个有池题的 KC
-  实测：**serve-own 1 / serve-wrong 0 / starved 4**——即 80% 的需求在 0.35 下拿不到候选，
-  全部落残余生成（这正是「宁残余不塞次品」的设计兜底，不是静默错误）。
-- 但负例 floor 已到 0.28：放宽到 0.45 会开始吃进未归属题，本语料上没有安全的放宽余量。
-- **结论：维持 0.35。** 该路径当前无 live 调用方（matcher-flags.ts 自注 dormant；饥饿的
-  代价是走残余生成，是设计内保守偏置）。本回放记录下「偏紧」信号：若 matcher() 接
-  live caller 后饥饿率过高，按同-KC p75≈0.46 / KC→own p75≈0.57 考察 0.45–0.55 带，
-  同时盯负例 floor（当前 0.28）别被吃进去。
+- 召回池 = 全部 42 道 embedded 题（draft 含在内，对齐 `activeOnly:false`）；有池题的 KC 9 个。
+- 当前 0.35 下：同-KC 题对 28.8% 入阈、≤0.45 升至 62.5%；KC→own 代理距离只有 **2.4%** 入阈、
+  ≤0.45 才 24.4%、≤0.55 为 61.0%。9 个有池 KC 实测：**servable 1 / starved 8**——即约 89%
+  的需求在 0.35 下拿不到任何候选，全部落残余生成（这正是「宁残余不塞次品」的设计兜底，
+  不是静默错误）。
+- **本轴没有负例侧**：`poolFetch` 的 `knowledge_ids @> [knowledgeId]` 让跨 KC 题永远进不了
+  候选集，「放宽阈值吃进未归属题」在本路径不可能发生（此前报告里的负例 floor 口径描述的是
+  不可达结果，已更正）。放宽的真实代价是**用同 KC 内语义更弱的题顶替残余生成**——质量
+  折衷，不是错 KC。
+- **结论：维持 0.35，但理由改写。** 该路径当前无 live 调用方（matcher-flags.ts 自注
+  dormant）；饥饿的代价是走残余生成，是设计内保守偏置而非故障。serve-side 证据（KC→own
+  p50–p90 ≈ 0.53–0.60）提示若按 KC 标签代理放宽需到 ~0.55 才能让多数池候选入阈——但该代理
+  相对真实 demand 文本系统性偏松，**不应据代理数字预放宽**。正确动作是等 matcher() 接
+  live caller 后用**真实 demand query embedding** 重跑本回放，再按实测饥饿率评估
+  0.45–0.55 带；同-KC 题对内聚度（p50≈0.41）说明若 demand 措辞贴近题面，0.35–0.45 已有
+  约三成到六成池内覆盖。
 
 ## 复跑
 
@@ -89,8 +104,12 @@ pnpm audit:threshold-calibration -- --json   # 机器可读
 
 ## 遗留
 
-- 语料 n 小（KC 12 / tagged 题 39 / pool 题 16），所有结论标注为薄证据；生产 NAS 库本机
-  不可达，待能在有真语料的库上重跑后复核三条结论。
+- 语料 n 小（KC 12 / tagged 题 39 / embedded 题 42 含 draft），所有结论标注为薄证据；生产
+  NAS 库本机不可达，待能在有真语料的库上重跑后复核三条结论。
+- Axis A 已按生产逐拍口径加 retrieval-starved 计数；本语料下为 0，语料长大或 top-K 收紧后
+  该计数若抬头，说明窗口先于阈值成为瓶颈，复测时应一并报告。
+- Axis C 的 query 代理（KC 标签向量）系统性高估真实 demand 文本距离；matcher() 接 live
+  caller 后应改用真实 demand query embedding 重跑（当前语料里不存在该数据，未虚构）。
 - `docs/design/2026-06-22-unified-tagging-axis.md` 与 `docs/superpowers/plans/*` 里的
   YUK-396 引用属历史快照（记录的是当时归属），未改动；src/ 内剩余 YUK-396 均为
   poolFetch/matcher 的 Phase-1 增量归属，非标定语义。

@@ -50,3 +50,14 @@ function resolveMatchThreshold(): number {
 }
 
 export const MATCH_THRESHOLD: number = resolveMatchThreshold();
+
+/**
+ * Retrieval window for the match-or-propose axis: `tagKnowledge` fetches the
+ * GLOBALLY nearest `RETRIEVAL_TOP_K` active embedded KCs via
+ * `matchKnowledgeBySimilarity` and only THEN drops cross-domain candidates —
+ * so an in-domain KC ranked beyond this window is invisible to the match
+ * decision. Lives here (not in tag-knowledge.ts) so the YUK-677 calibration
+ * replay (`pnpm audit:threshold-calibration`) reads the SAME live value
+ * instead of duplicating a driftable constant.
+ */
+export const RETRIEVAL_TOP_K = 10;

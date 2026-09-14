@@ -6,13 +6,21 @@
 //   Axis A — MATCH_THRESHOLD            (tagging-flags.ts, env TAGGING_MATCH_THRESHOLD)
 //            question→KC match-or-propose ceiling. Positives = a question's distance to its
 //            OWN assigned KCs; negatives = its distance to the nearest NON-assigned KC.
+//            The decision replay preserves production order: GLOBAL top-RETRIEVAL_TOP_K
+//            retrieval FIRST (tag-knowledge.ts → matchKnowledgeBySimilarity topK=10), the
+//            effective-domain subject gate SECOND — an in-domain KC ranked beyond the
+//            window is invisible to production and is counted as retrieval-starved.
 //   Axis B — DEDUP_DISTANCE_MAX         (dedup-flags.ts, env KC_DEDUP_DISTANCE_MAX)
 //            KC↔KC near-duplicate ceiling for kc_dedup_nightly merge proposals.
 //   Axis C — MATCHER_COSINE_MAX_DISTANCE (matcher.ts, hard const)
-//            question↔question pool axis. Positives = pairs of pool-visible embedded
-//            questions sharing ≥1 KC; the KC→assigned-question vs nearest-unassigned
-//            split (computed over the same q×k matrix as axis A) approximates a
-//            KC-centric query→candidate distance.
+//            KC-centric query→pool axis. The checked matcher path recalls candidates via
+//            poolFetch(knowledgeId, activeOnly:false) — knowledge_ids @> [KC] INCLUDING
+//            drafts — so the candidate set is by construction same-KC only: a cross-KC
+//            "wrong" serve is structurally impossible, and the ceiling trades ONLY
+//            serve-pool vs residual-generate (宁残余不塞次品). Evidence = KC→own-questions
+//            distances (the KC embedding is the closest corpus-side proxy for the free-text
+//            demand query) + same-KC q↔q pair cohesion + the at-ceiling servable/starved
+//            split. There is NO negative distribution on this axis.
 //
 // ⚠ NEVER WRITES. NEVER FLIPS A THRESHOLD. The script only SELECTs knowledge/question
 //   embedding vectors + the auto-tag event log, replays cosine distances IN-MEMORY, and
@@ -33,8 +41,6 @@
 //
 // n=1 upper bound (same caveat as audit-calibration): this loads the full embedded corpus
 // into memory and computes pair distances in JS — tractable for the solo-owner deployment.
-// Axis C's cross-pool negative uses a deterministic seeded cap only when the corpus grows
-// past CROSS_PAIR_SAMPLE_CAP.
 
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -51,16 +57,6 @@ const env = loadEnv();
 // the report evaluates the SAME resolved value the runtime would boot with.
 import postgres from 'postgres';
 import { fromSqlVector } from '@/db/vector';
-import { mulberry32 } from '@/server/calibration/rng';
-
-// Deterministic seed for the axis-C negative sampler (same convention as audit-calibration's
-// BOOTSTRAP_SEED — the report must be reproducible across re-runs of the SAME data).
-const SAMPLE_SEED = 0x677c_a11b;
-
-// Per-question cap on cross-pool negative candidates evaluated when the question count
-// grows (each candidate is one 1024-dim dot product). Only engages on a corpus far larger
-// than today's; under it the negative set is EXHAUSTIVE.
-const CROSS_PAIR_SAMPLE_CAP = 512;
 
 // pgvector `<=>` semantics: 0 = identical direction, 1 = orthogonal, 2 = opposite.
 export function cosineDistance(a: readonly number[], b: readonly number[]): number {
@@ -276,17 +272,24 @@ export interface AxisResult {
 
 /**
  * Axis A — question→KC, mirroring production tagKnowledge's decision shape
- * (tag-knowledge.ts:185-200): the candidate pool is SUBJECT-SCOPED to the target domain
- * BEFORE the threshold read — `nearest in-domain candidate ≤ ceiling → MATCH`. The replay
- * uses each question's PRIMARY assigned KC's effective domain as the target domain (the
- * honest proxy for the caller-resolved subjectRootId). For every embedded question carrying
- * knowledge_ids: distance to each RESOLVABLE assigned KC (positives — domain-agnostic, a
- * labelled pair is evidence wherever it lives), the nearest in-domain assigned KC, the
- * nearest in-domain KC overall (hit@1 check), and the nearest in-domain NON-assigned KC
- * (rival / negative side). `ceiling` is the threshold under review — used only for the
- * at-ceiling confusion breakdown.
+ * (tag-knowledge.ts): production FIRST retrieves the GLOBALLY nearest
+ * `retrievalTopK` KCs (matchKnowledgeBySimilarity, topK=RETRIEVAL_TOP_K) and only THEN
+ * drops cross-domain candidates — `nearest in-domain candidate inside the window
+ * ≤ ceiling → MATCH`. An assigned in-domain KC ranked beyond the window is invisible
+ * to production, so it is counted separately as retrieval-starved rather than allowed
+ * to inflate accept-correct. The replay uses each question's PRIMARY assigned KC's
+ * effective domain as the target domain (the honest proxy for the caller-resolved
+ * subjectRootId). For every embedded question carrying knowledge_ids: distance to each
+ * RESOLVABLE assigned KC (positives — domain-agnostic, a labelled pair is evidence
+ * wherever it lives), plus the in-window decision distributions (nearest in-domain
+ * assigned / NON-assigned / overall). `ceiling` is the threshold under review — used
+ * only for the at-ceiling confusion breakdown.
  */
-export function analyzeTaggingAxis(corpus: Corpus, ceiling: number): AxisResult {
+export function analyzeTaggingAxis(
+  corpus: Corpus,
+  ceiling: number,
+  retrievalTopK: number,
+): AxisResult {
   const kcIndex = new Map(corpus.kcs.map((k, i) => [k.id, i]));
   const positives: number[] = [];
   const nearestAssigned: number[] = [];
@@ -296,12 +299,13 @@ export function analyzeTaggingAxis(corpus: Corpus, ceiling: number): AxisResult 
   let taggedQuestions = 0;
   let assignedMissing = 0; // assigned ids that resolve to no active+embedded KC
   let nanDistances = 0;
-  // Confusion breakdown AT the ceiling under review: what the live `nearest ≤ T → MATCH`
-  // rule would do to THIS corpus.
-  let acceptCorrect = 0; // nearest in-domain ≤ T and it IS an assigned KC
-  let acceptWrong = 0; // nearest in-domain ≤ T but NOT assigned → mis-tag
-  let proposeWithAssigned = 0; // nearest in-domain > T yet an in-domain assigned KC existed
-  let proposeNoAssigned = 0; // nearest in-domain > T, no in-domain assigned KC → legit
+  // Confusion breakdown AT the ceiling under review: what the live
+  // `nearest in-window in-domain ≤ T → MATCH` rule would do to THIS corpus.
+  let acceptCorrect = 0; // nearest in-window in-domain ≤ T and it IS an assigned KC
+  let acceptWrong = 0; // nearest in-window in-domain ≤ T but NOT assigned → mis-tag
+  let proposeThresholdStarved = 0; // in-window in-domain assigned KC existed but > T
+  let proposeRetrievalStarved = 0; // in-domain assigned KC exists only BEYOND the top-K window
+  let proposeNoAssigned = 0; // no in-domain assigned KC anywhere → legit propose
   let unscopedQuestions = 0; // primary KC's domain unresolvable → unfiltered pool
 
   for (const q of corpus.questions) {
@@ -319,32 +323,47 @@ export function analyzeTaggingAxis(corpus: Corpus, ceiling: number): AxisResult 
     const targetDomain =
       q.knowledge_ids.length > 0 ? (corpus.domainByKc.get(q.knowledge_ids[0]) ?? null) : null;
     if (targetDomain === null) unscopedQuestions++;
-    let bestAssigned = Number.POSITIVE_INFINITY;
-    let bestRival = Number.POSITIVE_INFINITY;
-    let bestOverall = Number.POSITIVE_INFINITY;
-    let nearestIsAssigned = false;
-    for (let i = 0; i < corpus.kcs.length; i++) {
-      const kc = corpus.kcs[i];
+
+    // Step 1 (production order): GLOBAL nearest-first ranking over ALL active embedded
+    // KCs, truncated to the retrieval window. Positives stay domain-agnostic — they are
+    // collected over the full ranking before the window/domain gates.
+    const ranked: Array<{ kcId: string; d: number }> = [];
+    for (const kc of corpus.kcs) {
       const d = cosineDistance(q.embedding, kc.embedding);
       if (Number.isNaN(d)) {
         nanDistances++;
         continue;
       }
-      if (assigned.has(kc.id)) {
-        positives.push(d);
+      if (assigned.has(kc.id)) positives.push(d);
+      ranked.push({ kcId: kc.id, d });
+    }
+    ranked.sort((a, b) => a.d - b.d);
+
+    // Step 2 (production order): the subject-scope gate applies INSIDE the window only.
+    const inDomain = (kcId: string) =>
+      targetDomain === null || corpus.domainByKc.get(kcId) === targetDomain;
+    let bestAssigned = Number.POSITIVE_INFINITY;
+    let bestRival = Number.POSITIVE_INFINITY;
+    let bestOverall = Number.POSITIVE_INFINITY;
+    let nearestIsAssigned = false;
+    let assignedBeyondWindow = false;
+    for (let rank = 0; rank < ranked.length; rank++) {
+      const { kcId, d } = ranked[rank];
+      if (!inDomain(kcId)) continue;
+      if (rank >= retrievalTopK) {
+        // Beyond the production window: only recorded so a ranked-out true positive is
+        // attributed as retrieval starvation, never as an accept/propose decision.
+        if (assigned.has(kcId)) assignedBeyondWindow = true;
+        continue;
       }
-      // Subject-scope gate: only in-domain KCs enter the match/propose decision. The
-      // positives list above stays domain-agnostic (a labelled pair is evidence wherever
-      // it lives); the decision distributions below are domain-scoped like production.
-      if (targetDomain !== null && corpus.domainByKc.get(kc.id) !== targetDomain) continue;
-      if (assigned.has(kc.id)) {
+      if (assigned.has(kcId)) {
         if (d < bestAssigned) bestAssigned = d;
       } else if (d < bestRival) {
         bestRival = d;
       }
       if (d < bestOverall) {
         bestOverall = d;
-        nearestIsAssigned = assigned.has(kc.id);
+        nearestIsAssigned = assigned.has(kcId);
       }
     }
     if (bestAssigned !== Number.POSITIVE_INFINITY) nearestAssigned.push(bestAssigned);
@@ -356,10 +375,17 @@ export function analyzeTaggingAxis(corpus: Corpus, ceiling: number): AxisResult 
         if (nearestIsAssigned) acceptCorrect++;
         else acceptWrong++;
       } else if (bestAssigned !== Number.POSITIVE_INFINITY) {
-        proposeWithAssigned++;
+        proposeThresholdStarved++;
+      } else if (assignedBeyondWindow) {
+        proposeRetrievalStarved++;
       } else {
         proposeNoAssigned++;
       }
+    } else if (assignedBeyondWindow) {
+      // No in-domain KC inside the window at all, but a true KC was ranked out.
+      proposeRetrievalStarved++;
+    } else {
+      proposeNoAssigned++;
     }
   }
 
@@ -369,9 +395,9 @@ export function analyzeTaggingAxis(corpus: Corpus, ceiling: number): AxisResult 
 
   const summaries: Record<string, DistSummary> = {
     'q→assigned KC (positives)': summarize(posSorted),
-    'q→nearest in-domain assigned KC': summarize(nearestAssigned),
-    'q→nearest in-domain NON-assigned KC': summarize(nearestRival),
-    'q→nearest in-domain KC overall': summarize(nearestOverall),
+    'q→nearest in-domain assigned KC (top-K window)': summarize(nearestAssigned),
+    'q→nearest in-domain NON-assigned KC (top-K window)': summarize(nearestRival),
+    'q→nearest in-domain KC overall (top-K window)': summarize(nearestOverall),
   };
   const gridFractions: Record<string, Record<string, number>> = {
     'positives under ceiling': Object.fromEntries(
@@ -383,7 +409,7 @@ export function analyzeTaggingAxis(corpus: Corpus, ceiling: number): AxisResult 
   };
 
   const p90pos = summaries['q→assigned KC (positives)'].p90;
-  const p10neg = summaries['q→nearest in-domain NON-assigned KC'].p10;
+  const p10neg = summaries['q→nearest in-domain NON-assigned KC (top-K window)'].p10;
   const band =
     Number.isFinite(p90pos) && Number.isFinite(p10neg) && p90pos < p10neg
       ? `[${fmt(p90pos)}, ${fmt(p10neg)}] — clean separation; any cutoff inside preserves ranking`
@@ -395,14 +421,16 @@ export function analyzeTaggingAxis(corpus: Corpus, ceiling: number): AxisResult 
     summaries,
     gridFractions,
     extras: {
+      'retrieval window (RETRIEVAL_TOP_K, global rank before domain gate)': retrievalTopK,
       'tagged embedded questions': taggedQuestions,
       'assigned KC refs unresolvable (archived/unembedded/unknown)': assignedMissing,
       'questions with unresolvable primary domain (unscoped pool)': unscopedQuestions,
       'NaN distances (zero-norm vector)': nanDistances,
-      'hit@1 (nearest in-domain KC is assigned)': `${hitAt1}/${nearestOverall.length}`,
+      'hit@1 (nearest in-window in-domain KC is assigned)': `${hitAt1}/${nearestOverall.length}`,
       [`at ceiling ${ceiling}: correct-accept`]: acceptCorrect,
       [`at ceiling ${ceiling}: wrong-accept (mis-tag)`]: acceptWrong,
-      [`at ceiling ${ceiling}: propose despite assigned KC`]: proposeWithAssigned,
+      [`at ceiling ${ceiling}: propose, assigned KC in window but > T`]: proposeThresholdStarved,
+      [`at ceiling ${ceiling}: propose, assigned KC ranked beyond top-K`]: proposeRetrievalStarved,
       [`at ceiling ${ceiling}: propose, nothing resolvable`]: proposeNoAssigned,
       'suggested band (pos p90 .. neg p10)': band,
     },
@@ -490,18 +518,28 @@ export function analyzeDedupAxis(corpus: Corpus): AxisResult {
 }
 
 /**
- * Axis C — question↔question (matcher pool axis). Positives: unordered pairs of
- * pool-visible embedded questions sharing ≥1 KC. Negatives: each question's distance to
- * its nearest pool-visible embedded question sharing NO KC (exhaustive under the cap,
- * deterministic-seeded otherwise). Plus the KC→question read of the axis-A matrix:
- * for each KC, distance to its own questions (positive) vs nearest unassigned question
- * — the closest available proxy for a KC-centric query→candidate distance. `ceiling` is the
- * threshold under review, used only for the at-ceiling starve/mis-serve breakdown.
+ * Axis C — KC-centric query→pool (the checked matcher axis). The production recall is
+ * poolFetch(knowledgeId, activeOnly:false): `question.knowledge_ids @> [knowledgeId]`
+ * INCLUDING drafts (drafts reach the lazy verify-promote arbitration, so they are real
+ * candidates). The cosine ceiling then drops over-distance candidates — 宁残余不塞次品,
+ * the shortfall falls to residual generation. Because the WHERE clause already restricts
+ * candidates to questions carrying the demand KC, a cross-KC "wrong" serve is
+ * STRUCTURALLY IMPOSSIBLE in this path — there is no negative distribution to bound the
+ * ceiling from above. The ceiling trades ONLY: serve an in-pool candidate vs starve the
+ * demand into residual generation.
+ *
+ * Evidence: per-KC distances to its own pool questions (the KC `name\ndomain` embedding
+ * is the closest corpus-side proxy for the free-text demand query — resolveQueryEmbedding
+ * takes a caller-supplied queryEmbedding/queryText that does not exist in the corpus),
+ * same-KC q↔q pair cohesion, and the at-ceiling per-KC servable/starved split (a KC is
+ * servable iff ≥1 of its pool questions is ≤ ceiling — demand limit≥1 satisfiable).
+ * `ceiling` is the threshold under review, used only for the at-ceiling breakdown.
  */
 export function analyzeMatcherAxis(corpus: Corpus, ceiling: number): AxisResult {
-  const pool = corpus.questions.filter((q) => q.draft_status !== 'draft');
+  // poolFetch(activeOnly:false) recalls drafts too — the pool is ALL embedded questions.
+  const pool = corpus.questions;
 
-  // Group pool questions by assigned KC.
+  // Group pool questions by assigned KC — one entry per poolFetch(knowledgeId) pool.
   const byKc = new Map<string, number[]>();
   for (let i = 0; i < pool.length; i++) {
     for (const kc of pool[i].knowledge_ids) {
@@ -527,126 +565,67 @@ export function analyzeMatcherAxis(corpus: Corpus, ceiling: number): AxisResult 
     }
   }
 
-  // Per-question nearest cross-pool negative (no shared KC).
-  const rng = mulberry32(SAMPLE_SEED);
-  const nearestCross: number[] = [];
-  let sampled = false;
-  for (let i = 0; i < pool.length; i++) {
-    const mine = new Set(pool[i].knowledge_ids);
-    const candidates: number[] = [];
-    for (let j = 0; j < pool.length; j++) {
-      if (j === i) continue;
-      if (pool[j].knowledge_ids.some((kc) => mine.has(kc))) continue;
-      candidates.push(j);
-    }
-    if (candidates.length === 0) continue;
-    let evalSet = candidates;
-    if (candidates.length > CROSS_PAIR_SAMPLE_CAP) {
-      sampled = true;
-      // Deterministic partial Fisher–Yates over the index space; take the first CAP picks.
-      // (No `[a,b]=[b,a]` destructuring swap — hub-sync-writer-dataflow can't model a
-      // MemberExpression inside a binding pattern; plain indexed assigns are supported.)
-      const idx = candidates.slice();
-      for (let k = 0; k < CROSS_PAIR_SAMPLE_CAP; k++) {
-        const r = k + Math.floor(rng() * (idx.length - k));
-        const tmp = idx[k];
-        idx[k] = idx[r];
-        idx[r] = tmp;
-      }
-      evalSet = idx.slice(0, CROSS_PAIR_SAMPLE_CAP);
-    }
-    let best = Number.POSITIVE_INFINITY;
-    for (const j of evalSet) {
-      const d = cosineDistance(pool[i].embedding, pool[j].embedding);
+  // KC-centric read of the q×k matrix: per KC, distance to each of its OWN pool
+  // questions — the recall set production thresholds on. At-ceiling breakdown over KCs
+  // that HAVE ≥1 pool question: is the demand servable from the pool or starved into
+  // residual generation?
+  const kcToOwn: number[] = [];
+  let kcWithPool = 0;
+  let servable = 0; // ≥1 own pool question ≤ ceiling → demand fillable from pool
+  let starved = 0; // every own pool question > ceiling → residual generation
+  for (const kc of corpus.kcs) {
+    const members = byKc.get(kc.id);
+    if (!members || members.length === 0) continue;
+    kcWithPool++;
+    let anyUnderCeiling = false;
+    for (const qi of members) {
+      const d = cosineDistance(kc.embedding, pool[qi].embedding);
       if (Number.isNaN(d)) {
         nanDistances++;
         continue;
       }
-      if (d < best) best = d;
+      kcToOwn.push(d);
+      if (d <= ceiling) anyUnderCeiling = true;
     }
-    if (best !== Number.POSITIVE_INFINITY) nearestCross.push(best);
-  }
-
-  // KC-centric read of the q×k matrix: per KC, distances to its OWN questions vs the
-  // nearest question NOT carrying it. At-ceiling breakdown over KCs that HAVE ≥1 own
-  // pool question: does the demand ceiling serve an in-pool candidate, a wrong candidate,
-  // or starve the pool?
-  const kcToOwn: number[] = [];
-  const kcToNearestOther: number[] = [];
-  let kcWithPool = 0;
-  let serveOwn = 0; // nearest pool question ≤ ceiling AND carries the KC
-  let serveWrong = 0; // nearest pool question ≤ ceiling but does NOT carry the KC
-  let starved = 0; // every pool question > ceiling → demand can't be filled
-  for (const kc of corpus.kcs) {
-    let bestOther = Number.POSITIVE_INFINITY;
-    let bestOverall = Number.POSITIVE_INFINITY;
-    let nearestIsOwn = false;
-    let hasOwn = false;
-    for (const q of pool) {
-      const d = cosineDistance(kc.embedding, q.embedding);
-      if (Number.isNaN(d)) continue;
-      const own = q.knowledge_ids.includes(kc.id);
-      if (own) {
-        kcToOwn.push(d);
-        hasOwn = true;
-      } else if (d < bestOther) {
-        bestOther = d;
-      }
-      if (d < bestOverall) {
-        bestOverall = d;
-        nearestIsOwn = own;
-      }
-    }
-    if (bestOther !== Number.POSITIVE_INFINITY) kcToNearestOther.push(bestOther);
-    if (!hasOwn) continue;
-    kcWithPool++;
-    if (bestOverall <= ceiling) {
-      if (nearestIsOwn) serveOwn++;
-      else serveWrong++;
-    } else {
-      starved++;
-    }
+    if (anyUnderCeiling) servable++;
+    else starved++;
   }
 
   const sameSorted = sameKcPairs.slice().sort((a, b) => a - b);
-  const crossSorted = nearestCross.slice().sort((a, b) => a - b);
   const ownSorted = kcToOwn.slice().sort((a, b) => a - b);
-  const otherSorted = kcToNearestOther.slice().sort((a, b) => a - b);
   const grid = [0.15, 0.25, 0.35, 0.45, 0.55, 0.65];
 
-  const p90pos = summarize(ownSorted).p90;
-  const p10neg = summarize(otherSorted).p10;
+  // Serve-side evidence only: no negative distribution exists on this axis (cross-KC
+  // questions can never enter the recall pool). The band frames the tradeoff that IS
+  // real — a lower ceiling starves more demands into residual generation; a higher one
+  // serves weaker same-KC candidates.
+  const own = summarize(ownSorted);
   const band =
-    Number.isFinite(p90pos) && Number.isFinite(p10neg) && p90pos < p10neg
-      ? `[${fmt(p90pos)}, ${fmt(p10neg)}] — clean separation on the KC-query proxy`
-      : Number.isFinite(p90pos) && Number.isFinite(p10neg)
-        ? `overlap [neg p10=${fmt(p10neg)} < pos p90=${fmt(p90pos)}] on the KC-query proxy`
-        : 'insufficient data';
+    Number.isFinite(own.p50) && Number.isFinite(own.p90)
+      ? `[${fmt(own.p50)}, ${fmt(own.p90)}] — ceiling ≥ p90 serves ~90% of pool candidates; ` +
+        'below p50 over half of every pool starves into residual (no cross-KC bound exists)'
+      : 'insufficient data';
 
   return {
     summaries: {
-      'q↔q same-KC pairs': summarize(sameSorted),
-      'q→nearest cross-pool question': summarize(crossSorted),
-      'KC→own questions (query proxy)': summarize(ownSorted),
-      'KC→nearest unassigned question': summarize(otherSorted),
+      'q↔q same-KC pairs (pool cohesion)': summarize(sameSorted),
+      'KC→own pool questions (query proxy)': summarize(ownSorted),
     },
     gridFractions: {
       'same-KC pairs under ceiling': Object.fromEntries(
         grid.map((g) => [`<=${g}`, fractionUnder(sameSorted, g)]),
       ),
-      'KC→own under ceiling': Object.fromEntries(
+      'KC→own pool questions under ceiling': Object.fromEntries(
         grid.map((g) => [`<=${g}`, fractionUnder(ownSorted, g)]),
       ),
     },
     extras: {
-      'pool-visible embedded questions': pool.length,
-      'cross-pool negative sampled (cap engaged)': sampled ? 'yes' : 'no',
+      'embedded questions in matcher recall pool (drafts included, activeOnly:false)': pool.length,
       'NaN distances (zero-norm vector)': nanDistances,
-      'KCs with ≥1 own pool question': kcWithPool,
-      [`at ceiling ${ceiling}: serve own question`]: serveOwn,
-      [`at ceiling ${ceiling}: serve wrong question`]: serveWrong,
-      [`at ceiling ${ceiling}: starved (no candidate ≤ ceiling)`]: starved,
-      'suggested band on KC-query proxy (pos p90 .. neg p10)': band,
+      'KCs with ≥1 pool question': kcWithPool,
+      [`at ceiling ${ceiling}: servable (≥1 pool candidate ≤ ceiling)`]: servable,
+      [`at ceiling ${ceiling}: starved (all pool candidates > ceiling → residual)`]: starved,
+      'suggested band on KC-query proxy (serve-side only, no negative bound)': band,
     },
   };
 }
@@ -689,8 +668,12 @@ function printAxis(spec: ThresholdSpec, result: AxisResult): void {
 
 export async function runCli(args: string[] = process.argv.slice(2)): Promise<number> {
   // Dynamic imports AFTER loadEnv() — these modules resolve their env overrides at module
-  // top, so they must evaluate only once process.env is fully populated.
-  const { MATCH_THRESHOLD } = await import('@/capabilities/knowledge/server/tagging-flags');
+  // top, so they must evaluate only once process.env is fully populated. RETRIEVAL_TOP_K
+  // comes from the same module (single truth: tag-knowledge.ts imports it from there too)
+  // so the axis-A replay uses the live production window, not a driftable copy.
+  const { MATCH_THRESHOLD, RETRIEVAL_TOP_K } = await import(
+    '@/capabilities/knowledge/server/tagging-flags'
+  );
   const { DEDUP_DISTANCE_MAX } = await import('@/capabilities/knowledge/server/dedup-flags');
   const { MATCHER_COSINE_MAX_DISTANCE } = await import(
     '@/capabilities/practice/server/quiz/matcher'
@@ -715,7 +698,9 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
   try {
     const corpus = await loadCorpus(sql);
     const tagged = corpus.questions.filter((q) => q.knowledge_ids.length > 0).length;
-    const poolVisible = corpus.questions.filter((q) => q.draft_status !== 'draft').length;
+    // Corpus descriptor only — the axis-C recall pool itself is ALL embedded questions
+    // (poolFetch activeOnly:false includes drafts; the axis reports its own count).
+    const nonDraft = corpus.questions.filter((q) => q.draft_status !== 'draft').length;
 
     const axes: Array<[ThresholdSpec, AxisResult]> = [
       [
@@ -725,7 +710,7 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
           current: MATCH_THRESHOLD,
           source: 'tagging-flags.ts / TAGGING_MATCH_THRESHOLD',
         },
-        analyzeTaggingAxis(corpus, MATCH_THRESHOLD),
+        analyzeTaggingAxis(corpus, MATCH_THRESHOLD, RETRIEVAL_TOP_K),
       ],
       [
         {
@@ -758,7 +743,7 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
               questionTotal: corpus.questionTotal,
               questionEmbedded: corpus.questions.length,
               questionEmbeddedTagged: tagged,
-              questionEmbeddedPoolVisible: poolVisible,
+              questionEmbeddedNonDraft: nonDraft,
               autoCreatedKcIds: corpus.autoCreatedKcIds.size,
             },
             thresholds: axes.map(([spec]) => ({
@@ -793,7 +778,7 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
     console.log(
       `corpus: knowledge total=${corpus.knowledgeTotal} embedded-active=${corpus.kcs.length}; ` +
         `question total=${corpus.questionTotal} embedded=${corpus.questions.length} ` +
-        `tagged=${tagged} pool-visible=${poolVisible}; auto-created KCs=${corpus.autoCreatedKcIds.size}`,
+        `tagged=${tagged} non-draft=${nonDraft}; auto-created KCs=${corpus.autoCreatedKcIds.size}`,
     );
     for (const [spec, result] of axes) printAxis(spec, result);
     console.log(
