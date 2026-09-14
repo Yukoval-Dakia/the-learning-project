@@ -30,6 +30,8 @@ const server = {
   COPILOT_SUBAGENT_ENABLED: optionalString,
   DASHSCOPE_API_KEY: optionalString,
   DATABASE_URL: z.string().url(),
+  DELIVERY_API_BASE: optionalString,
+  DELIVERY_API_PORT: optionalString,
   DOCKER_HOST: optionalString,
   DOCX_CONVERT_ENGINE: optionalString.transform((value) =>
     value === 'docker' ? value : undefined,

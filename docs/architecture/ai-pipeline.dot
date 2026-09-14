@@ -1,0 +1,164 @@
+digraph AIPipeline {
+  rankdir=TB;
+  bgcolor="transparent";
+  node [fontname="Helvetica", fontsize=10];
+  edge [fontname="Helvetica", fontsize=9];
+
+  // Client Layer
+  subgraph cluster_client {
+    label="Client Layer";
+    style=filled;
+    fillcolor="#e1f5fe";
+    SPA [label="Vite SPA\nReact 19 + TanStack Router", shape=box, style=filled, fillcolor="#b3e5fc"];
+  }
+
+  // API Layer
+  subgraph cluster_api {
+    label="API Layer - Hono :8787";
+    style=filled;
+    fillcolor="#f3e5f5";
+    
+    Auth [label="x-internal-token\nAuth Middleware", shape=diamond, style=filled, fillcolor="#e1bee7"];
+    Router [label="Capability Router\nmanifest.ts composition", shape=box, style=filled, fillcolor="#e1bee7"];
+    
+    subgraph cluster_capabilities {
+      label="9 Capability Packages";
+      style=filled;
+      fillcolor="#f8bbd0";
+      Practice [label="Practice\n判分/复习/变式", shape=box];
+      Copilot [label="Copilot\n对话/教学", shape=box];
+      Ingestion [label="Ingestion\nOCR/录入", shape=box];
+      Knowledge [label="Knowledge\n图谱/边", shape=box];
+      Notes [label="Notes\n笔记/Artifact", shape=box];
+      Agency [label="Agency\n编排/目标", shape=box];
+      Observability [label="Observability\n监控/成本", shape=box];
+      Onboarding [label="Onboarding\n冷启动", shape=box];
+      Shell [label="Shell\n工作台", shape=box];
+    }
+  }
+
+  // Worker Layer
+  subgraph cluster_worker {
+    label="Worker Process - pg-boss";
+    style=filled;
+    fillcolor="#fff3e0";
+    
+    Boss [label="pg-boss\nJob Queue", shape=cylinder, style=filled, fillcolor="#ffcc80"];
+    
+    subgraph cluster_jobs {
+      label="Job Handlers";
+      style=filled;
+      fillcolor="#ffe0b2";
+      OCR [label="tencent_ocr_extract", shape=box];
+      QuizGen [label="quiz_gen", shape=box];
+      VariantGen [label="variant_gen", shape=box];
+      JudgeRun [label="judge_run", shape=box];
+      NoteGen [label="note_generate", shape=box];
+      Nightly [label="Nightly Jobs\nembed/recalibration/kt", shape=box];
+    }
+  }
+
+  // AI Task Layer
+  subgraph cluster_ai {
+    label="AI Task Layer";
+    style=filled;
+    fillcolor="#e8f5e9";
+    
+    Runner [label="Claude Agent SDK Runner\nrunner.ts", shape=box, style=filled, fillcolor="#a5d6a7"];
+    Registry [label="Task Registry\ntask-catalog.ts\n51 TaskSpecs", shape=box, style=filled, fillcolor="#a5d6a7"];
+    MCP [label="MCP Bridge\nin-process tools", shape=box, style=filled, fillcolor="#a5d6a7"];
+    
+    subgraph cluster_providers {
+      label="Providers";
+      style=filled;
+      fillcolor="#c8e6c9";
+      Mimo [label="Xiaomi MiMo\nmimo-v2.5-pro", shape=ellipse];
+      Anthropic [label="Anthropic\nOpus 4.8", shape=ellipse];
+    }
+  }
+
+  // Data Layer
+  subgraph cluster_data {
+    label="Data Layer";
+    style=filled;
+    fillcolor="#fce4ec";
+    
+    PG [label="PostgreSQL\n+ pgvector", shape=cylinder, style=filled, fillcolor="#f48fb1"];
+    R2 [label="R2/S3\nBlob Storage", shape=cylinder, style=filled, fillcolor="#f48fb1"];
+  }
+
+  // External Services
+  subgraph cluster_external {
+    label="External Services";
+    style=filled;
+    fillcolor="#fff8e1";
+    
+    Tencent [label="Tencent OCR\nQuestionMarkAgent", shape=box, style=filled, fillcolor="#ffe082"];
+    Tavily [label="Tavily Search", shape=box, style=filled, fillcolor="#ffe082"];
+  }
+
+  // Connections
+  SPA -> Auth [label="HTTP/SSE"];
+  Auth -> Router;
+  Router -> Practice;
+  Router -> Copilot;
+  Router -> Ingestion;
+  Router -> Knowledge;
+  Router -> Notes;
+  Router -> Agency;
+  Router -> Observability;
+  Router -> Onboarding;
+  Router -> Shell;
+  
+  Practice -> Boss [label="enqueue"];
+  Copilot -> Boss [label="enqueue"];
+  Ingestion -> Boss [label="enqueue"];
+  
+  Boss -> OCR;
+  Boss -> QuizGen;
+  Boss -> VariantGen;
+  Boss -> JudgeRun;
+  Boss -> NoteGen;
+  Boss -> Nightly;
+  
+  Practice -> Runner [label="runTask/streamTask"];
+  Copilot -> Runner [label="runTask/streamTask"];
+  Ingestion -> Runner [label="runTask/streamTask"];
+  Knowledge -> Runner [label="runTask/streamTask"];
+  Notes -> Runner [label="runTask/streamTask"];
+  Agency -> Runner [label="runTask/streamTask"];
+  
+  OCR -> Runner;
+  QuizGen -> Runner;
+  VariantGen -> Runner;
+  JudgeRun -> Runner;
+  NoteGen -> Runner;
+  Nightly -> Runner;
+  
+  Runner -> Registry;
+  Runner -> MCP;
+  Runner -> Mimo;
+  Runner -> Anthropic;
+  
+  OCR -> Tencent [label="OCR"];
+  QuizGen -> Tavily [label="Search"];
+  
+  Practice -> PG;
+  Copilot -> PG;
+  Ingestion -> PG;
+  Knowledge -> PG;
+  Notes -> PG;
+  Agency -> PG;
+  
+  OCR -> PG;
+  QuizGen -> PG;
+  VariantGen -> PG;
+  JudgeRun -> PG;
+  NoteGen -> PG;
+  Nightly -> PG;
+  
+  Runner -> PG [label="ai_task_runs\ncost_ledger"];
+  
+  Ingestion -> R2;
+  OCR -> R2;
+}

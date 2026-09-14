@@ -1,0 +1,74 @@
+digraph OpenCodeArchitecture {
+  rankdir=TB;
+  bgcolor="transparent";
+  node [fontname="Helvetica", fontsize=10];
+  edge [fontname="Helvetica", fontsize=9];
+
+  // Client Layer
+  subgraph cluster_client {
+    label="Client Layer";
+    style=filled;
+    fillcolor="#e1f5fe";
+    TUI [label="TUI\nTerminal UI", shape=box, style=filled, fillcolor="#b3e5fc"];
+    Desktop [label="Desktop App", shape=box, style=filled, fillcolor="#b3e5fc"];
+  }
+
+  // Server Layer
+  subgraph cluster_server {
+    label="OpenCode Server";
+    style=filled;
+    fillcolor="#f3e5f5";
+    
+    OCServer [label="HTTP API Server", shape=box, style=filled, fillcolor="#e1bee7"];
+    SessionMgr [label="Session Manager\nSQLite State", shape=box, style=filled, fillcolor="#e1bee7"];
+  }
+
+  // Plugin System
+  subgraph cluster_plugins {
+    label="Plugin System";
+    style=filled;
+    fillcolor="#fff3e0";
+    
+    Worktree [label="Worktree Plugin\ngit worktree management", shape=box, style=filled, fillcolor="#ffcc80"];
+    MCP [label="MCP Servers\nexternal tools", shape=box, style=filled, fillcolor="#ffcc80"];
+    Custom [label="Custom Plugins\nnpm packages", shape=box, style=filled, fillcolor="#ffcc80"];
+  }
+
+  // AI Providers
+  subgraph cluster_providers {
+    label="AI Providers";
+    style=filled;
+    fillcolor="#e8f5e9";
+    
+    Claude [label="Claude\nAnthropic", shape=ellipse, style=filled, fillcolor="#a5d6a7"];
+    OpenAI [label="OpenAI\nGPT-4", shape=ellipse, style=filled, fillcolor="#a5d6a7"];
+    Local [label="Local Models\nOllama/LMStudio", shape=ellipse, style=filled, fillcolor="#a5d6a7"];
+  }
+
+  // Storage
+  subgraph cluster_storage {
+    label="Storage";
+    style=filled;
+    fillcolor="#fce4ec";
+    
+    SQLite [label="SQLite\nSessions/State", shape=cylinder, style=filled, fillcolor="#f48fb1"];
+    FS [label="File System\nWorkspace", shape=folder, style=filled, fillcolor="#f48fb1"];
+  }
+
+  // Connections
+  TUI -> OCServer;
+  Desktop -> OCServer;
+  
+  OCServer -> SessionMgr;
+  OCServer -> Worktree;
+  OCServer -> MCP;
+  OCServer -> Custom;
+  
+  OCServer -> Claude;
+  OCServer -> OpenAI;
+  OCServer -> Local;
+  
+  SessionMgr -> SQLite;
+  Worktree -> FS;
+  MCP -> FS;
+}
