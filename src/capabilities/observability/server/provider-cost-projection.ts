@@ -13,6 +13,11 @@ export type ProviderCostAggregateRow = {
   readonly reported_cost: number;
   readonly estimated_cost: number;
   readonly legacy_cost: number;
+  // YUK-977 — basis-specific attempt counts mirror the truth columns so a
+  // known-zero amount can still show its source (amount alone can't: a zero
+  // reported_cost is indistinguishable from "no reported rows").
+  readonly reported_attempts: number;
+  readonly estimated_attempts: number;
   readonly unknown_attempts: number;
   readonly legacy_rows: number;
   readonly tokens_in: number;
@@ -63,6 +68,8 @@ export async function readProviderCostAggregates(
         COALESCE(SUM(CASE WHEN cost_basis = 'reported' THEN COALESCE(cost, 0) ELSE 0 END), 0)::double precision AS reported_cost,
         COALESCE(SUM(CASE WHEN cost_basis = 'estimated' THEN COALESCE(cost, 0) ELSE 0 END), 0)::double precision AS estimated_cost,
         COALESCE(SUM(CASE WHEN entry_kind = 'legacy' THEN COALESCE(cost, 0) ELSE 0 END), 0)::double precision AS legacy_cost,
+        COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'reported')::int AS reported_attempts,
+        COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'estimated')::int AS estimated_attempts,
         COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'unknown')::int AS unknown_attempts,
         COUNT(*) FILTER (WHERE entry_kind = 'legacy')::int AS legacy_rows,
         COALESCE(SUM(tokens_in), 0)::double precision AS tokens_in,
@@ -75,6 +82,8 @@ export async function readProviderCostAggregates(
         SUM(CASE WHEN cost_basis = 'reported' THEN COALESCE(cost, 0) ELSE 0 END)::double precision,
         SUM(CASE WHEN cost_basis = 'estimated' THEN COALESCE(cost, 0) ELSE 0 END)::double precision,
         SUM(CASE WHEN entry_kind = 'legacy' THEN COALESCE(cost, 0) ELSE 0 END)::double precision,
+        COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'reported')::int,
+        COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'estimated')::int,
         COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'unknown')::int,
         COUNT(*) FILTER (WHERE entry_kind = 'legacy')::int,
         SUM(tokens_in)::double precision, SUM(tokens_out)::double precision, COUNT(*)::int
@@ -85,6 +94,8 @@ export async function readProviderCostAggregates(
         SUM(CASE WHEN cost_basis = 'reported' THEN COALESCE(cost, 0) ELSE 0 END)::double precision,
         SUM(CASE WHEN cost_basis = 'estimated' THEN COALESCE(cost, 0) ELSE 0 END)::double precision,
         SUM(CASE WHEN entry_kind = 'legacy' THEN COALESCE(cost, 0) ELSE 0 END)::double precision,
+        COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'reported')::int,
+        COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'estimated')::int,
         COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'unknown')::int,
         COUNT(*) FILTER (WHERE entry_kind = 'legacy')::int,
         SUM(tokens_in)::double precision, SUM(tokens_out)::double precision, COUNT(*)::int
@@ -93,6 +104,8 @@ export async function readProviderCostAggregates(
       SELECT 'truth', NULL, NULL, currency, entry_kind, cost_basis, cost_ref,
         SUM(COALESCE(cost, 0))::double precision, 0::double precision, 0::double precision,
         0::double precision,
+        COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'reported')::int,
+        COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'estimated')::int,
         COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'unknown')::int,
         0::int, SUM(tokens_in)::double precision, SUM(tokens_out)::double precision, COUNT(*)::int
       FROM projected GROUP BY currency, entry_kind, cost_basis, cost_ref
@@ -103,13 +116,16 @@ export async function readProviderCostAggregates(
         SUM(CASE WHEN cost_basis = 'reported' THEN COALESCE(cost, 0) ELSE 0 END)::double precision,
         SUM(CASE WHEN cost_basis = 'estimated' THEN COALESCE(cost, 0) ELSE 0 END)::double precision,
         SUM(CASE WHEN entry_kind = 'legacy' THEN COALESCE(cost, 0) ELSE 0 END)::double precision,
+        COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'reported')::int,
+        COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'estimated')::int,
         COUNT(*) FILTER (WHERE entry_kind = 'attempt' AND cost_basis = 'unknown')::int,
         COUNT(*) FILTER (WHERE entry_kind = 'legacy')::int,
         SUM(tokens_in)::double precision, SUM(tokens_out)::double precision, COUNT(*)::int
       FROM projected GROUP BY (occurred_at AT TIME ZONE 'UTC')::date, currency
     )
     SELECT dimension, day, task_kind, currency, entry_kind, cost_basis, cost_ref,
-      cost, reported_cost, estimated_cost, legacy_cost, unknown_attempts, legacy_rows,
+      cost, reported_cost, estimated_cost, legacy_cost,
+      reported_attempts, estimated_attempts, unknown_attempts, legacy_rows,
       tokens_in, tokens_out, calls
     FROM aggregates
   `);

@@ -3,7 +3,7 @@ import { type Page, expect, test } from '@playwright/test';
 import { costTruthFixture, installApiFixtures } from './api-fixtures';
 
 for (const path of ['/today', '/admin/cost']) {
-  for (const mode of ['unknown', 'mixed', 'zero', 'empty'] as const) {
+  for (const mode of ['unknown', 'mixed', 'zero', 'zero-unknown', 'empty'] as const) {
     test(`cost truth ${path} ${mode}`, async ({ page }) => {
       const fixture = await installApiFixtures(page, 'existing-evidence');
       const data = costTruthFixture(mode);
@@ -28,8 +28,21 @@ for (const path of ['/today', '/admin/cost']) {
           await expect(surface).toContainText('历史口径 ¥0.40');
           await expect(surface).toContainText('1 次费用未知');
         } else if (mode === 'zero') {
-          await expect(surface).toContainText('已知金额为零');
+          // YUK-977 — a genuinely reported zero keeps its source (and call
+          // count) instead of collapsing into a source-less zero label.
+          await expect(surface).toContainText(
+            path === '/today' ? '已报告 $0.00（1 次）' : '已报告 $0.0000（1 次）',
+          );
           await expect(surface).toContainText('$0.00');
+          await expect(surface).not.toContainText('已知金额为零');
+        } else if (mode === 'zero-unknown') {
+          // Known-zero reported attempts stay attributed while the unknown
+          // remainder is still shown as unknown — never as free.
+          await expect(surface).toContainText('+ 未知');
+          await expect(surface).toContainText(
+            path === '/today' ? '已报告 $0.00（2 次）' : '已报告 $0.0000（2 次）',
+          );
+          await expect(surface).toContainText('3 次费用未知');
         } else {
           await expect(surface).toContainText(
             path === '/today' ? '今日尚无 AI 花费。' : '暂无费用记录',

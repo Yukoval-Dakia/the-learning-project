@@ -2841,9 +2841,11 @@ export interface operations {
                             calls: number;
                             cost: number;
                             currency: string;
+                            estimated_attempts: number;
                             estimated_cost: number;
                             legacy_cost: number;
                             legacy_rows: number;
+                            reported_attempts: number;
                             reported_cost: number;
                             task_kind: string;
                             tokens_in: number;
@@ -2868,9 +2870,11 @@ export interface operations {
                             cost: number;
                             currency: string;
                             day: string;
+                            estimated_attempts: number;
                             estimated_cost: number;
                             legacy_cost: number;
                             legacy_rows: number;
+                            reported_attempts: number;
                             reported_cost: number;
                             tokens_in: number;
                             tokens_out: number;
@@ -10655,9 +10659,11 @@ export interface operations {
                             by_currency: {
                                 cost: number;
                                 currency: string;
+                                estimated_attempts: number;
                                 estimated_cost: number;
                                 legacy_cost: number;
                                 legacy_rows: number;
+                                reported_attempts: number;
                                 reported_cost: number;
                                 unknown_attempts: number;
                             }[];
@@ -10665,9 +10671,11 @@ export interface operations {
                                 by_currency: {
                                     cost: number;
                                     currency: string;
+                                    estimated_attempts: number;
                                     estimated_cost: number;
                                     legacy_cost: number;
                                     legacy_rows: number;
+                                    reported_attempts: number;
                                     reported_cost: number;
                                     unknown_attempts: number;
                                 }[];

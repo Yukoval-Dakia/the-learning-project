@@ -52,7 +52,7 @@
         ],
         "contentType": null,
         "bodyExample": null,
-        "notes": "days 默认 30；按币种返回 cost，并附 reported_cost、estimated_cost、legacy_cost、unknown_attempts、legacy_rows；by_truth 按 currency/entry_kind/cost_basis/cost_ref 提供可审计聚合；unknown 不进入金额 SUM"
+        "notes": "days 默认 30；按币种返回 cost，并附 reported_cost、estimated_cost、legacy_cost、reported_attempts、estimated_attempts、unknown_attempts、legacy_rows；basis-specific attempt 计数让已知零金额保留来源；by_truth 按 currency/entry_kind/cost_basis/cost_ref 提供可审计聚合；unknown 不进入金额 SUM"
       }
     ]
   },
@@ -544,7 +544,7 @@
         "query": [],
         "contentType": null,
         "bodyExample": null,
-        "notes": "按 BJT（UTC+8）午夜划窗口；按币种返回 cost、reported_cost、estimated_cost、legacy_cost、unknown_attempts、legacy_rows；by_truth 按 currency/entry_kind/cost_basis/cost_ref 提供可审计聚合；unknown 不进入金额 SUM，且不跨币种求和"
+        "notes": "按 BJT（UTC+8）午夜划窗口；按币种返回 cost、reported_cost、estimated_cost、legacy_cost、reported_attempts、estimated_attempts、unknown_attempts、legacy_rows；basis-specific attempt 计数让已知零金额保留来源；by_truth 按 currency/entry_kind/cost_basis/cost_ref 提供可审计聚合；unknown 不进入金额 SUM，且不跨币种求和"
       }
     ]
   },
