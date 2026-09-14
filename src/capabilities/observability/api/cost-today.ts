@@ -31,6 +31,8 @@ type CurrencyAggregate = {
   readonly reported_cost: number;
   readonly estimated_cost: number;
   readonly legacy_cost: number;
+  readonly reported_attempts: number;
+  readonly estimated_attempts: number;
   readonly unknown_attempts: number;
   readonly legacy_rows: number;
 };
@@ -62,6 +64,8 @@ export async function GET(_req: Request): Promise<Response> {
       reported_cost: row.reported_cost,
       estimated_cost: row.estimated_cost,
       legacy_cost: row.legacy_cost,
+      reported_attempts: row.reported_attempts,
+      estimated_attempts: row.estimated_attempts,
       unknown_attempts: row.unknown_attempts,
       legacy_rows: row.legacy_rows,
     });

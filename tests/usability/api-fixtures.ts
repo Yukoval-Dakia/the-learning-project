@@ -13,13 +13,17 @@ import type { ApiOperationJsonResponse } from '../../src/ui/lib/api';
 const TOKEN_STORAGE_KEY = 'loom_internal_token';
 const TOKEN = 'usability-fixture-token';
 
-export function costTruthFixture(mode: 'unknown' | 'mixed' | 'zero' | 'empty') {
+export function costTruthFixture(mode: 'unknown' | 'mixed' | 'zero' | 'zero-unknown' | 'empty') {
   const zero = {
     currency: 'USD',
     cost: 0,
     reported_cost: 0,
     estimated_cost: 0,
     legacy_cost: 0,
+    // YUK-977 — basis-specific attempt counts carry zero-amount provenance; the
+    // 'zero' mode is a reported attempt whose cost is genuinely 0.
+    reported_attempts: 0,
+    estimated_attempts: 0,
     unknown_attempts: 0,
     legacy_rows: 0,
     tokens_in: 8912,
@@ -30,28 +34,32 @@ export function costTruthFixture(mode: 'unknown' | 'mixed' | 'zero' | 'empty') {
     mode === 'empty'
       ? []
       : mode === 'zero'
-        ? [zero]
+        ? [{ ...zero, reported_attempts: 1 }]
         : mode === 'unknown'
           ? [{ ...zero, unknown_attempts: 1 }]
-          : [
-              {
-                ...zero,
-                cost: 0.3,
-                reported_cost: 0.1,
-                estimated_cost: 0.2,
-                unknown_attempts: 1,
-                calls: 3,
-              },
-              {
-                ...zero,
-                currency: 'CNY',
-                cost: 0.4,
-                legacy_cost: 0.4,
-                legacy_rows: 1,
-                tokens_in: 0,
-                tokens_out: 0,
-              },
-            ];
+          : mode === 'zero-unknown'
+            ? [{ ...zero, reported_attempts: 2, unknown_attempts: 3, calls: 5 }]
+            : [
+                {
+                  ...zero,
+                  cost: 0.3,
+                  reported_cost: 0.1,
+                  reported_attempts: 1,
+                  estimated_cost: 0.2,
+                  estimated_attempts: 1,
+                  unknown_attempts: 1,
+                  calls: 3,
+                },
+                {
+                  ...zero,
+                  currency: 'CNY',
+                  cost: 0.4,
+                  legacy_cost: 0.4,
+                  legacy_rows: 1,
+                  tokens_in: 0,
+                  tokens_out: 0,
+                },
+              ];
   const byTruth: ApiOperationJsonResponse<'getAdminCost'>['by_truth'] = rows.flatMap((row) => {
     const common = {
       currency: row.currency,
@@ -61,21 +69,23 @@ export function costTruthFixture(mode: 'unknown' | 'mixed' | 'zero' | 'empty') {
       unknown_attempts: 0,
     };
     const truth: ApiOperationJsonResponse<'getAdminCost'>['by_truth'] = [];
-    if (row.reported_cost > 0 || mode === 'zero')
+    if (row.reported_attempts > 0)
       truth.push({
         ...common,
         entry_kind: 'attempt',
         cost_basis: 'reported',
         cost_ref: 'fixture:reported',
         cost: row.reported_cost,
+        calls: row.reported_attempts,
       });
-    if (row.estimated_cost > 0)
+    if (row.estimated_attempts > 0)
       truth.push({
         ...common,
         entry_kind: 'attempt',
         cost_basis: 'estimated',
         cost_ref: 'pricebook:fixture',
         cost: row.estimated_cost,
+        calls: row.estimated_attempts,
       });
     if (row.legacy_rows > 0)
       truth.push({
@@ -92,6 +102,7 @@ export function costTruthFixture(mode: 'unknown' | 'mixed' | 'zero' | 'empty') {
         cost_basis: 'unknown',
         cost_ref: 'unpriced:fixture/future-model',
         cost: 0,
+        calls: row.unknown_attempts,
         unknown_attempts: row.unknown_attempts,
       });
     if (truth[0]) {
