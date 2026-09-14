@@ -1,9 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-14：YUK-994 打捞完成（PR #1398 → main 2995dacdf，exact-head CI Gate 34842120499 success；DB shard2 首跑 pgvector 镜像 404 属 flake，重跑即过）。清零口径：837 已交付；550 已恢复 Backlog 且状态漂移（PR 合并自动 Done）已修回；不沿用 68→60。
+> Linear 是权威 tracker；更新于 2026-09-14：YUK-308 quiz C→A 硬化五项全交付（PR #1403 squash → main c6f739779，exact-head CI 全绿）。清零口径：837 已交付；550 已恢复 Backlog 且状态漂移（PR 合并自动 Done）已修回；不沿用 68→60。
 
 ## NOW
 
+- 308 Done（quiz C→A 硬化）：PR #1403 → main c6f739779。write_quiz 草稿窄放行（copilot_authored/pending proposal + tombstone 拒绝 + per-run advisory 幂等）、question_draft dismiss applier（metadata.dismissed_at tombstone，不引入新 draft_status——池谓词 fail-open）、query_questions 注册 LIMITED_TOOLS、共享 assertGeneratedQuestionHasJudgeContract 同时门 quiz_gen 与 QuestionAuthorTask。review 一轮：3×P1 修复（accept 补 proposal decision lock + FOR UPDATE tombstone gate、0101 data-only backfill 回填历史 rate-only dismiss），2×P2 登 follow-up（YUK-995 write_quiz/dismiss 竞态、YUK-996 subject-profile 判官路由校验）。CI 首跑暴露 author-question fixture 无 rubric（新契约正确拒收）已修。未部署。
 - 994 Done（skill-fixture 打捞）：fixture base commit 卷入的真实工作全部落 main 2995dacdf。launch-phase 双镜像改 per-lane PR + exact-head CI Gate 编排、lane 状态机、merge-not-rebase 冲突策略；新增 delivery:evidence/delivery:note 收尾自动化（只读采集 git/CI/compose/API/DB/cron/migration/golden，本机实测 29 探针，env schema 补 DELIVERY_*）；docs/architecture AI pipeline 文档 + now.md 09-13 handoff 落盘；工具痕迹独立 commit 可摘。fixture 壳（.txt/VALIDATION）与 8-27 垃圾文件留在原分支，本地 main 仍落后——实施继续用 worktree。
 - 837 Done（remote-MCP 执行证据进最终审阅）：PR #1395 squash → main d9ca89e5（exact-head CI 34762817056、main CI Gate 34764012413、Oracle gate PASS、真实 Exa 挂载实证 693 PostToolUse + 2 失败并固化 fixture）。finalization hooks 采集 remote-MCP tool_input/tool_response/failure：tool_use_id 去重、parent+copilot-researcher、排除 Loom；单次 64K/整轮 256K 有界，超限或采集异常 final review fail-closed（不静默截断），raw 不进 digest/receipt；判官输入 remote_tool_evidence（仅本轮、无历史）。Codex P1（admission basis）→ YUK-993（Backlog，ready-for-human）；OCR 4 条低置信复核为非阻塞并 resolve。
 - 09-13 生产部署（980+837 同批）：镜像 the-learning-project-app:d9ca89e5（构建树与 commit 树 diff 空；镜像内两票标记已核）→ migrate exit 0（drizzle 无新增、legacy drain clear、traits 24 up-to-date、七实体 projection 零漂移）→ app/worker healthy、health200、未认证401、pgboss 29 条 cron 在位（supply_planner 50 5 / jyeoo reaper 40 3）。回滚：旧镜像 67d43df12 保留 + override 备份 runtime-988-image.override.yml.rollback-67d43df12。

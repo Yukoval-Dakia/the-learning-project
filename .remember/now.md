@@ -1,4 +1,14 @@
-# 当前 handoff — 2026-09-13，YUK-980 真实启动窗口补验收完成
+# 当前 handoff — 2026-09-14，YUK-308 quiz C→A 硬化已交付合并
+
+- PR #1403 已 squash 合并 main c6f739779（15:51:52Z）；exact-head CI（run 34863164380）全 job 绿，Linear YUK-308 自动 Done。worktree tlp-wt-yuk308 / branch yuk-308-quiz-ca-hardening 保留未清理。
+- 交付五项：write_quiz 草稿窄放行（copilot_authored 或 pending question_draft proposal + dismissed_at/archived_at tombstone 拒绝 + pg_advisory_xact_lock('write_quiz:<taskRunId>') per-run 幂等）、question_draft capability dismiss applier（decision lock + rate(dismiss) + metadata.dismissed_at tombstone；不新增 draft_status 值——池谓词 fail-open `<> 'draft'`）、query_questions 入 LIMITED_TOOLS（limit/eventRows/默认20）、assertGeneratedQuestionHasJudgeContract 提升为共享 helper 并同时门 quiz_gen 与 QuestionAuthorTask。
+- review 一轮（codex）：3×P1 全修——acceptQuestionDraftProposal 移入同一 decision lock（含 in-tx rate re-check + correction guard）+ 同 draft sibling-dismiss 后 accept 经 FOR UPDATE tombstone gate 409 拒绝 + drizzle/0101 data-only backfill 修历史 rate-only dismiss 的遗留 draft（无 meta snapshot，0062 先例）。2×P2 按 budget 回复 rationale 后 resolve 并建票：YUK-995（write_quiz↔dismiss 竞态，artifact tx 内重读 tombstone）、YUK-996（judge 契约校验应用 subjectProfile 实际路由）。review 预算已用完。
+- 修复中发现并记录：author-question 旧 fixture 产出 semantic 无 required_points 的不可判分题——新契约正确拒收，fixture 已补合规 rubric（判官契约 gate 在生产语义下拦的就是这种输出）。锁序注意：learning-state 全局锁必须在 question row lock 之前（quiz_verify/verify_and_promote 持 learning 锁 UPDATE question）。
+- 未部署；生产仍是旧镜像。下一可选部署批次或继续排期项。
+
+---
+
+# 历史 handoff — 2026-09-13，YUK-980 真实启动窗口补验收完成
 
 - 用户开启980后，修复在独立 worktree tlp-wt-yuk980-startup-tail / fix/yuk-980-startup-tail 完成。PR #1393 已合并为 fbc6b26f6987edbc75242780b4f2451d5fc9e146；exact-head a180d744 的 CI Gate 34759069199 completed/success，独立 review PASS，无阻塞 finding。
 - 根因：局部 boss 等完整 startup 返回才赋值，但消费者已运行。修复以 getRunningBoss 取已发布实例，并协调9秒启动尾段等待与单一退出 owner；30秒drain保持。连接池关闭可能额外延迟，不能声称39秒整个进程硬上界。
