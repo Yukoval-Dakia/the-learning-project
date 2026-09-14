@@ -25,8 +25,9 @@ const QueryQuestionsInputSchema = z.object({
   source: z.string().min(1).optional(),
   difficulty: z.number().int().min(1).max(5).optional(),
   include_drafts: z.boolean().default(true),
-  // The schema max(50) is the read bound (LIMITED_TOOLS has no entry for this
-  // tool; context-throttle falls through for unregistered tools).
+  // The schema max(50) is the per-call bound; YUK-308 also registered this
+  // tool in LIMITED_TOOLS (context-throttle.ts) so calls draw down the
+  // per-message eventRows budget with courtesy default 20 = this default.
   limit: z.number().int().min(1).max(50).default(20),
   offset: z.number().int().min(0).default(0),
 });

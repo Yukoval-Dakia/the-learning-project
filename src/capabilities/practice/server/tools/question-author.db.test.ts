@@ -280,6 +280,41 @@ describe('runQuestionAuthor (ADR-0031 lane B)', () => {
     expect(await listProposalInboxRows(db, { status: 'pending' })).toHaveLength(0);
   });
 
+  // YUK-308 — the judge-executability contract quiz_gen has enforced since
+  // §2/§5 now gates the author flow too (shared
+  // assertGeneratedQuestionHasJudgeContract): a shape-valid but ungradeable
+  // draft is rejected BEFORE the row + proposal persist.
+  it('rejects an ungradeable draft before persisting (shared judge contract)', async () => {
+    const db = testDb();
+    await seedKnowledge();
+
+    // prose kind pinned to the exact judge → ungradeable.
+    await expect(
+      runQuestionAuthor(
+        { seed_mode: 'knowledge', knowledge_ids: ['k_zhi'] },
+        deps(mockRunTask(draftFixture({ judge_kind_override: 'exact' }))),
+      ),
+    ).rejects.toThrow(/question_author short_answer question.*cannot use exact judge/);
+
+    // semantic route without required_points → ungradeable.
+    await expect(
+      runQuestionAuthor(
+        { seed_mode: 'knowledge', knowledge_ids: ['k_zhi'] },
+        deps(
+          mockRunTask(
+            draftFixture({
+              judge_kind_override: 'semantic',
+              rubric_json: { criteria: [{ name: 'c', weight: 1, descriptor: 'd' }] },
+            }),
+          ),
+        ),
+      ),
+    ).rejects.toThrow(/question_author question.*without required_points/);
+
+    expect(await db.select().from(question)).toHaveLength(0);
+    expect(await listProposalInboxRows(db, { status: 'pending' })).toHaveLength(0);
+  });
+
   it('material live writer persists anchor and plan before model generation, then exact binding', async () => {
     const db = testDb();
     await seedKnowledge();

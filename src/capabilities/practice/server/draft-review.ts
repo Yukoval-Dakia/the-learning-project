@@ -276,6 +276,9 @@ export async function listDraftReview(
     sql`${question.source} IS DISTINCT FROM ${INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE}`,
     // exclude soft-archived (deleted) drafts: metadata.archived_at IS NULL/absent.
     sql`(${question.metadata} -> 'archived_at') IS NULL`,
+    // YUK-308 — exclude proposal-dismissed drafts (metadata.dismissed_at): the
+    // owner already said no; they are not pending-review items.
+    sql`(${question.metadata} -> 'dismissed_at') IS NULL`,
   ];
   if (opts.source) conditions.push(eq(question.source, opts.source));
   if (opts.kind) conditions.push(eq(question.kind, opts.kind));
@@ -410,6 +413,8 @@ export async function getDraftReviewDetail(
         sql`${question.source} IS DISTINCT FROM ${INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE}`,
         // exclude soft-archived (deleted) drafts (mirror the list filter).
         sql`(${question.metadata} -> 'archived_at') IS NULL`,
+        // YUK-308 — dismissed drafts are not reviewable items.
+        sql`(${question.metadata} -> 'dismissed_at') IS NULL`,
       ),
     )
     .limit(1);

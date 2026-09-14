@@ -153,8 +153,10 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
     // carries metadata.archived_at (set by archiveQuestion, src/server/questions/
     // write.ts). owner force-enable must NEVER resurrect such a draft back to active;
     // reject WITHOUT promoting or writing any verify event (don't update it back to active).
-    const metaArchivedAt = (row.metadata as Record<string, unknown> | null)?.archived_at;
-    if (metaArchivedAt !== undefined && metaArchivedAt !== null) {
+    // YUK-308 — same for metadata.dismissed_at (question_draft proposal dismiss): an
+    // owner-rejected draft must NEVER be force-enabled back into the pool.
+    const meta = row.metadata as Record<string, unknown> | null;
+    if (meta?.archived_at != null || meta?.dismissed_at != null) {
       return { promoted: false, status: 'skipped:archived_draft' };
     }
     // YUK-400 B-archived-KC (inc-4a) — owner override builds FSRS cards per
@@ -270,6 +272,15 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       return { promoted: true, status: 'skipped:already_verified', verifyEventId };
     }
     return { promoted: false, status: 'skipped:not_draft' };
+  }
+  // YUK-308 — mirror the override branch's tombstone guard (metadata.archived_at
+  // check above) and extend it to metadata.dismissed_at: a proposal-dismissed or
+  // soft-archived row is dead, not pending — never dispatch a PAID verify against
+  // it and never promote it back to active. The matcher already skips these, but
+  // owner-UI retry / direct callers can land here.
+  const normalMeta = row.metadata as Record<string, unknown> | null;
+  if (normalMeta?.archived_at != null || normalMeta?.dismissed_at != null) {
+    return { promoted: false, status: 'skipped:archived_draft' };
   }
   // 按 source 字面转调现有 per-question run 函数 (整体调用)。三态 / writeAgentNote note /
   // metadata 写回 / catch / 幂等 全部由被转调的 run 函数天然产生.

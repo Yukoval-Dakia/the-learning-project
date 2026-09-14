@@ -1160,6 +1160,15 @@ export const practiceCapability = defineCapability({
               (module) => module.questionDraftProposalAcceptApplier,
             ),
         },
+        // YUK-308 — dismiss tombstones the still-draft question row
+        // (metadata.dismissed_at) so a rejected draft stops reading as a live
+        // pending draft to query_questions / write_quiz / the draft-review pool.
+        dismiss: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.questionDraftProposalDismissApplier,
+            ),
+        },
       },
       { kind: 'judge_retraction' },
       {

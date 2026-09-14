@@ -29,7 +29,6 @@ import {
   type QuestionAuthorDraftT,
   normalizeAuthorStructured,
 } from '@/core/schema/question_author';
-
 import {
   type QuestionAnswerAnchorT,
   validateSourceLocatorBytes,
@@ -50,6 +49,7 @@ import {
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 import { parseQuestionAuthorOutput } from '../../tasks/question-author';
+import { assertGeneratedQuestionHasJudgeContract } from '../judge/question-contract';
 
 const PROMPT_PREVIEW_CHARS = 120;
 
@@ -246,6 +246,19 @@ export async function runQuestionAuthor(
     // Server-side tree hardening: regenerate node ids, reject malformed shapes,
     // derive (and require non-empty) prompt_md / reference_md.
     const normalized = normalizeAuthorStructured(draft.structured);
+
+    // YUK-308 — judge-executability contract, the SAME gate quiz_gen has run
+    // since §2/§5 (shared helper in judge/question-contract.ts): shape-valid
+    // is not enough — a draft routing to keyword without keywords, semantic
+    // without required_points, or an LLM-graded kind pinned to 'exact' is
+    // ungradeable and must be rejected BEFORE the row + proposal persist.
+    // Runs after normalizeAuthorStructured so the error label carries the
+    // derived prompt_md, and inside the try so a contract failure triggers
+    // the same plan-failed cleanup as any other persist error.
+    assertGeneratedQuestionHasJudgeContract(
+      { ...draft, prompt_md: normalized.prompt_md },
+      'question_author',
+    );
 
     const now = new Date();
     const questionId = createId();

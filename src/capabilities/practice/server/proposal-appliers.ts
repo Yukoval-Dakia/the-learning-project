@@ -5,6 +5,8 @@
 // practice 声明归属的 proposal kinds（manifest.proposals.kinds）：
 //   - variant_question  → acceptVariantQuestionProposal（本文件）
 //   - question_draft    → acceptQuestionDraftProposal（本文件）
+//                       + dismissQuestionDraftProposal（本文件，YUK-308：
+//                         dismiss tombstone 草稿行 metadata.dismissed_at）
 //   - judge_retraction  → 有 producer（producers.ts 的 judge_retraction 提议）
 //     但无 accept applier：accept 走 actions.ts 的 default throw
 //     （unsupported_proposal_kind），剩余 producer 语义归 YUK-44。归属声明
@@ -14,7 +16,7 @@
 // 共享 helper 一律走 @/server/proposals/applier-helpers。
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 
 import { lockPlacementSupplyScopes } from '@/capabilities/practice/public';
 import { newId } from '@/core/ids';
@@ -24,7 +26,7 @@ import {
   type StructuredQuestionT,
   findStructuredNode,
 } from '@/core/schema/structured_question';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { event, mistake_variant, question } from '@/db/schema';
 import { getCorrectionStatus, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
@@ -47,6 +49,7 @@ import {
   findExistingRateEvent,
   recordProposalDecisionSignal,
   requiredString,
+  writeProposalRateEvent,
 } from '@/server/proposals/practice-runtime';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 
@@ -323,12 +326,16 @@ export async function acceptVariantQuestionProposal(
  * transaction. Idempotency keys on caused_by_event_id = proposalId
  * (existingAcceptRate), like every sibling accept handler.
  *
- * Dismiss flows through the generic dismiss path (writeGenericRateEvent): the
- * draft row stays inert (draft_status='draft', never pooled / FSRS'd).
- * phase-deferred: dismissed-draft cleanup/archival is NOT implemented — orphan
- * draft rows accumulate harmlessly (invisible everywhere drafts are excluded).
- * Revisit with the YUK-304 follow-up batch; context: ADR-0031 决定5 + this
- * handler.
+ * Dismiss flows through the dedicated questionDraftProposalDismissApplier
+ * (YUK-308, declared in manifest.proposals.kinds): the draft row stays inert
+ * (draft_status='draft', never pooled / FSRS'd) AND is tombstoned via
+ * metadata.dismissed_at so it stops reading as a live draft — query_questions /
+ * listQuestions / the draft-review pool exclude it and write_quiz's narrow
+ * draft gate refuses it. A new draft_status value was deliberately NOT
+ * introduced: the pool-visibility predicate is fail-open (`<> 'draft'`), so a
+ * 'dismissed' literal would leak the row back into every pool read
+ * (src/server/questions/write.ts header — same reason archive uses
+ * metadata.archived_at).
  */
 export async function acceptQuestionDraftProposal(
   db: Db,
@@ -340,13 +347,9 @@ export async function acceptQuestionDraftProposal(
   const change = asPlainRecord(proposal.payload.proposed_change);
   const questionId = requiredString(change.question_id, 'question_id', proposalId);
 
-  // Already-accepted idempotency: a rate event exists (409s on a non-accept
-  // decision inside existingAcceptRate).
-  const existingRate = await existingAcceptRate(db, proposalId);
-  if (existingRate) {
-    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+  const loadPromotedRowOrThrow = async (dbLike: Db | Tx) => {
     const existing = (
-      await db.select().from(question).where(eq(question.id, questionId)).limit(1)
+      await dbLike.select().from(question).where(eq(question.id, questionId)).limit(1)
     )[0];
     if (!existing || existing.draft_status === 'draft') {
       // Rate was written but the promotion did not complete — surface explicitly
@@ -357,6 +360,16 @@ export async function acceptQuestionDraftProposal(
         500,
       );
     }
+    return existing;
+  };
+
+  // Already-accepted idempotency fast path (a rate event exists; 409s on a
+  // non-accept decision inside existingAcceptRate). The transaction below
+  // re-checks under the decision lock — this read is only a cheap short-circuit.
+  const existingRate = await existingAcceptRate(db, proposalId);
+  if (existingRate) {
+    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+    await loadPromotedRowOrThrow(db);
     return {
       kind: 'question_draft',
       rate_event_id: existingRate.id,
@@ -365,27 +378,90 @@ export async function acceptQuestionDraftProposal(
     };
   }
 
-  const row = (await db.select().from(question).where(eq(question.id, questionId)).limit(1))[0];
-  if (!row) {
-    throw new ApiError('not_found', `question ${questionId} not found`, 404);
-  }
-  // NOT isPoolVisible — fail-closed promote guard (not-a-draft → reject/skip); do not fold into notDraftPredicate (spec §2.5).
-  if (row.draft_status !== 'draft') {
-    throw new ApiError(
-      'conflict',
-      `question ${questionId} is in draft_status ${row.draft_status ?? 'null'}, expected 'draft'`,
-      409,
-    );
-  }
-
   const now = new Date();
   const rateEventId = newId();
 
-  await db.transaction(async (tx) => {
-    // YUK-497 — global learning-state write lock FIRST (shared tx-entry order with every
-    // material_fsrs_state / mastery_state writer and the cascade revert).
+  // YUK-308 review (codex P1 ×2) — the decision check AND the promotion run
+  // under the SAME lock the dismiss applier + the generic dismiss/retract
+  // paths take (acquireProposalDecisionLock). Without it a racing dismiss or
+  // retract could commit a second terminal decision alongside this accept, and
+  // a dismiss that landed first would leave this accept promoting a row still
+  // carrying metadata.dismissed_at (active-but-filtered). Mirrors the
+  // question_edit accept shape: lock → re-read the decision → correction
+  // guard → row-locked gates → mutation → rate event.
+  const concurrentDecision = await db.transaction(async (tx) => {
+    await acquireProposalDecisionLock(tx, proposalId);
+    const decision = await findExistingRateEvent(tx, proposalId);
+    if (decision) {
+      if (decision.decision !== 'accept') {
+        throw new ApiError(
+          'conflict',
+          `proposal ${proposalId} already decided as ${decision.decision}`,
+          409,
+        );
+      }
+      // A racing accept on the same proposal already committed.
+      return decision;
+    }
+    const correction = await getCorrectionStatus(tx, proposalId);
+    if (correction.state !== 'active') {
+      throw new ApiError(
+        'conflict',
+        `proposal ${proposalId} is ${correction.state} and cannot be accepted`,
+        409,
+      );
+    }
+
+    // YUK-497 — global learning-state write lock before any row access (shared
+    // tx-entry order with every material_fsrs_state / mastery_state writer and
+    // the cascade revert). Ordered BEFORE the question row lock: the other
+    // draft→active promoters (quiz_verify / verify_and_promote) hold this lock
+    // while UPDATEing question rows, so taking the row lock first could
+    // deadlock against them.
     await acquireLearningStateWriteLock(tx);
-    await lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
+    // Placement-supply scope locks are keyed on the draft's knowledge ids. The
+    // pre-read is safe: a pending draft's knowledge_ids have no concurrent
+    // writer (promotion is the only mutation path, and it is this tx).
+    const scopeKnowledgeIds = ((
+      await tx
+        .select({ knowledge_ids: question.knowledge_ids })
+        .from(question)
+        .where(eq(question.id, questionId))
+        .limit(1)
+    )[0]?.knowledge_ids ?? []) as string[];
+    await lockPlacementSupplyScopes(tx, scopeKnowledgeIds);
+
+    // Lock the draft row FOR UPDATE: serializes against a dismiss of a SIBLING
+    // question_draft proposal targeting the same draft — per-proposal decision
+    // locks do not cover that (the tombstone UPDATE takes this row lock).
+    const row = (
+      await tx.select().from(question).where(eq(question.id, questionId)).for('update').limit(1)
+    )[0];
+    if (!row) {
+      throw new ApiError('not_found', `question ${questionId} not found`, 404);
+    }
+    // NOT isPoolVisible — fail-closed promote guard (not-a-draft → reject/skip); do not fold into notDraftPredicate (spec §2.5).
+    if (row.draft_status !== 'draft') {
+      throw new ApiError(
+        'conflict',
+        `question ${questionId} is in draft_status ${row.draft_status ?? 'null'}, expected 'draft'`,
+        409,
+      );
+    }
+    // Tombstone gate (codex P1): a sibling proposal's dismiss already retired
+    // this draft. Promoting it would produce an active, FSRS-enrolled question
+    // that the dismissed_at read filters still hide. Fail closed — there is no
+    // un-dismiss path; author a fresh draft instead of resurrecting a
+    // user-rejected one.
+    const meta = row.metadata as { dismissed_at?: unknown; archived_at?: unknown } | null;
+    if (meta?.dismissed_at != null || meta?.archived_at != null) {
+      throw new ApiError(
+        'conflict',
+        `question ${questionId} is tombstoned (${meta.dismissed_at != null ? 'dismissed' : 'archived'}); a rejected draft cannot be promoted`,
+        409,
+      );
+    }
+
     await tx
       .update(question)
       .set({ draft_status: 'active', updated_at: now })
@@ -437,11 +513,105 @@ export async function acceptQuestionDraftProposal(
       caused_by_event_id: proposalId,
       created_at: now,
     });
+    return null;
   });
+
+  if (concurrentDecision) {
+    // A racing accept on this proposal committed first — idempotent replay.
+    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+    await loadPromotedRowOrThrow(db);
+    return {
+      kind: 'question_draft',
+      rate_event_id: concurrentDecision.id,
+      question_id: questionId,
+      idempotent: true,
+    };
+  }
 
   await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
 
   return { kind: 'question_draft', rate_event_id: rateEventId, question_id: questionId };
+}
+
+export interface QuestionDraftDismissResult {
+  kind: 'dismissed';
+  rate_event_id: string | null;
+  idempotent?: boolean;
+}
+
+/**
+ * YUK-308 — question_draft dismiss applier (previously the phase-deferred gap:
+ * the generic dismiss path left the draft row indistinguishable from a live
+ * pending one, so query_questions's include_drafts=true default and
+ * write_quiz's draft admission kept re-surfacing a question the user already
+ * rejected).
+ *
+ * One transaction: proposal decision lock → rate(dismiss) event → tombstone
+ * the still-draft question row via `metadata.dismissed_at` (+ reason +
+ * dismissed_proposal_id provenance) → decision signal. Mirrors the agency
+ * lifecycle's all-in-tx shape (proposal-lifecycle.ts).
+ *
+ * The tombstone is a metadata marker, NOT a new draft_status literal: every
+ * pool read filters `draft_status IS NULL OR <> 'draft'` (fail-open,
+ * 红线-4/NULL≡active), so a 'dismissed' value would be treated as pool-visible
+ * and leak the rejected question into due/stream/placement reads
+ * (src/server/questions/write.ts header — the archive path made the same
+ * call with metadata.archived_at). `draft_status='draft'` +
+ * `metadata.dismissed_at` keeps the row invisible everywhere drafts are
+ * excluded, while the marker lets draft-aware surfaces (query_questions,
+ * listQuestions, listDraftReview, write_quiz, the matcher's lazy-verify) tell
+ * "rejected" apart from "awaiting review".
+ *
+ * The UPDATE is conditioned on draft_status='draft': a row already promoted
+ * (or otherwise moved on) is left untouched — the rate event still records
+ * the dismissal.
+ */
+export async function dismissQuestionDraftProposal(
+  db: Db,
+  proposalId: string,
+  proposal: ProposalInboxRow,
+  opts: { user_note?: string },
+): Promise<QuestionDraftDismissResult> {
+  const change = asPlainRecord(proposal.payload.proposed_change);
+  const questionId = requiredString(change.question_id, 'question_id', proposalId);
+
+  const rate = await db.transaction(async (tx) => {
+    // Serialize with a racing accept/dismiss on the same proposal (the accept
+    // applier takes the same lock); writeProposalRateEvent then rejects a
+    // cross-decision conflict with 409 and replays a same-decision one
+    // idempotently.
+    await acquireProposalDecisionLock(tx, proposalId);
+    const rate = await writeProposalRateEvent(tx, proposalId, 'dismiss', opts.user_note);
+    if (rate.idempotent) return rate;
+    const now = new Date();
+    await tx
+      .update(question)
+      .set({
+        // archived_at 同款秒级 epoch 惯例 (archiveQuestion, questions/write.ts).
+        metadata: sql`COALESCE(${question.metadata}, '{}'::jsonb) || ${JSON.stringify({
+          dismissed_at: Math.floor(now.getTime() / 1000),
+          dismissed_reason: 'question_draft_dismissed',
+          dismissed_proposal_id: proposalId,
+        })}::jsonb`,
+        updated_at: now,
+      })
+      .where(and(eq(question.id, questionId), eq(question.draft_status, 'draft')));
+    return rate;
+  });
+
+  // Mirror variantQuestionProposalDismissApplier: signal bookkeeping lives
+  // OUTSIDE the tx (its own signal lock) and runs only on the non-idempotent
+  // path — the UPSERT increments dismiss_count, so an idempotent replay must
+  // not double-count.
+  if (!rate.idempotent) {
+    await recordProposalDecisionSignal(db, proposal, 'dismiss', opts.user_note);
+  }
+
+  return {
+    kind: 'dismissed',
+    rate_event_id: rate.rate_event_id,
+    ...(rate.idempotent ? { idempotent: true } : {}),
+  };
 }
 
 // ===========================================================================
