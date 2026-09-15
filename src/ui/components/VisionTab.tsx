@@ -483,7 +483,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
     },
     // A8 (YUK-354): 进着陆态而非硬跳 /mistakes。count = question_ids.length（三数组
     // 等长=题数）。保留 mistakes 失活，着陆「去看错题本」跳过去时数据已是新的。
-    onSuccess: async (data) => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['mistakes'] });
       const count = Array.isArray(data?.question_ids) ? data.question_ids.length : 0;
       const selectedKnowledgeIds = Array.from(
@@ -496,26 +496,32 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
             }),
         ),
       );
-      // YUK-542 — 读一次已持久化的 learning_session.warnings 给落地卡用。这是
-      // advisory 露出：session GET 失败不能阻塞着陆视图，降级为空数组。
-      let warnings: string[] = [];
-      if (sessionId) {
-        try {
-          const detail = await apiJson<{ session: { warnings?: unknown } }>(
-            `/api/ingestion-sessions/${encodeURIComponent(sessionId)}`,
-          );
-          warnings = Array.isArray(detail.session.warnings)
-            ? detail.session.warnings.filter((w): w is string => typeof w === 'string')
-            : [];
-        } catch {
-          warnings = [];
-        }
-      }
       setLanding({
         count,
         knowledge: knowledgeLabelsFor(knowledgeQ.data?.rows ?? [], selectedKnowledgeIds),
-        warnings,
+        warnings: [],
       });
+      // YUK-542 — 落地渲染之后再补读持久化的 learning_session.warnings：import 已
+      // 成功，这个 advisory GET 绝不能 gate 着陆视图（apiFetch 无超时 —— 请求挂死
+      // 会把「导入中…」钉在审阅相，reviewer P2 指出）。resolve 后把 warnings 补丁
+      // 进 landing 快照（banner 随后弹出）；reject/挂死 → 落地卡无 banner，不回退。
+      // `cur ?` 守卫：用户已点「继续传」reset 掉 landing 时不复活它。
+      if (sessionId) {
+        void apiJson<{ session?: { warnings?: unknown } | null } | null>(
+          `/api/ingestion-sessions/${encodeURIComponent(sessionId)}`,
+        )
+          .then((detail) => {
+            const raw = detail?.session?.warnings;
+            const warnings = Array.isArray(raw)
+              ? raw.filter((w): w is string => typeof w === 'string')
+              : [];
+            if (warnings.length === 0) return;
+            setLanding((cur) => (cur ? { ...cur, warnings } : cur));
+          })
+          .catch(() => {
+            // advisory only — landing stays up without the banner
+          });
+      }
     },
     onError: (err) => setErrorMessage(formatError(err)),
   });
