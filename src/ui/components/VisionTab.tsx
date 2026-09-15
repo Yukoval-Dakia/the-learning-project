@@ -213,9 +213,13 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   // A8 (YUK-354): 成功着陆态。批量导入成功后不再硬跳 /mistakes，停在着陆视图
   // （收好了 N 道题 / 去向 / 下一步）。null = 仍在上传/审阅流程。
+  // YUK-542 — landing 快照额外携带 warnings（learning_session.warnings 持久化
+  // 字段，import 成功后读一次），让降级告诫活到落地卡（SSE timeline 的
+  // warning 行只在 extracting/reviewing 相可见）。
   const [landing, setLanding] = useState<{
     count: number;
     knowledge: { id: string; label: string }[];
+    warnings: string[];
   } | null>(null);
   const [blockForms, setBlockForms] = useState<Record<string, BlockFormState>>({});
   // bucketByBlockId[blockId] = primary block id of the merge bucket. Initially
@@ -479,7 +483,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
     },
     // A8 (YUK-354): 进着陆态而非硬跳 /mistakes。count = question_ids.length（三数组
     // 等长=题数）。保留 mistakes 失活，着陆「去看错题本」跳过去时数据已是新的。
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       queryClient.invalidateQueries({ queryKey: ['mistakes'] });
       const count = Array.isArray(data?.question_ids) ? data.question_ids.length : 0;
       const selectedKnowledgeIds = Array.from(
@@ -492,9 +496,25 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
             }),
         ),
       );
+      // YUK-542 — 读一次已持久化的 learning_session.warnings 给落地卡用。这是
+      // advisory 露出：session GET 失败不能阻塞着陆视图，降级为空数组。
+      let warnings: string[] = [];
+      if (sessionId) {
+        try {
+          const detail = await apiJson<{ session: { warnings?: unknown } }>(
+            `/api/ingestion-sessions/${encodeURIComponent(sessionId)}`,
+          );
+          warnings = Array.isArray(detail.session.warnings)
+            ? detail.session.warnings.filter((w): w is string => typeof w === 'string')
+            : [];
+        } catch {
+          warnings = [];
+        }
+      }
       setLanding({
         count,
         knowledge: knowledgeLabelsFor(knowledgeQ.data?.rows ?? [], selectedKnowledgeIds),
+        warnings,
       });
     },
     onError: (err) => setErrorMessage(formatError(err)),
@@ -644,6 +664,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
           count={landing.count}
           isBatch
           knowledge={landing.knowledge}
+          warnings={landing.warnings}
           navigate={routing.navigate}
           onRecordAnother={reset}
         />
