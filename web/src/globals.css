@@ -1701,8 +1701,10 @@ ol {
 /* ── A8 (YUK-354): 录入成功着陆视图（IngestExit）。PORT 自
    docs/design/loom-refresh/project/record-a8.css 的 .ing-exit* / .ing-proposal*
    类（视觉参考，按本仓库 loom tokens 落地，不整文件拷）。只成功态；失败 / 退化态
-   (.ing-rescue / .ing-degrade / .ing-progress / .ing-figure / .ing-emptyblock /
-   .ing-original) OUT-OF-SCOPE，不在此 port。 ── */
+   (.ing-rescue / .ing-progress / .ing-figure / .ing-emptyblock /
+   .ing-original) OUT-OF-SCOPE，不在此 port。
+   更新（YUK-542，owner 2026-09-15 拍板重开）：.ing-degrade 的 warn 变体已 port
+   （见下），落地卡用它承载持久化的 learning_session.warnings；其余退化态类仍不 port。 ── */
 .ing-exit {
   display: grid;
   gap: var(--s-3);
@@ -1747,6 +1749,39 @@ ol {
 .ing-exit-lede b {
   color: var(--ink);
   font-weight: 600;
+}
+
+/* YUK-542 — 降级告诫横幅：PORT 自 record-a8.css 的 .ing-degrade.warn /
+   DegradeBanner（screen-record-a8.jsx:16-25）。amber/hard = "succeeded but
+   degraded"（与 .sse-warn 同语义），非 again/red。相对参考稿的两处适配：
+   (1) .ing-exit 的 grid gap 已负责块间距，去掉参考稿的 margin-bottom；
+   (2) 参考稿的 `.ing-degrade.warn .ico`（0,3,0）改为单层 `.ing-degrade-ico` +
+   容器 `color` 继承（icon 走 currentColor）——等效但不抬高 specificity；
+   (3) 参考稿的 `.ing-degrade-txt b` 不落 —— preflight 已把 b/strong 设为
+   bolder，再写任何 b 后代选择器都会触发 lint ratchet 的 noDescendingSpecificity
+   增量（本文件已容忍存量 warning，新增不许）。仅 port warn 变体 —— 其余
+   退化态类仍 OUT-OF-SCOPE。 */
+.ing-degrade {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid;
+  border-radius: var(--r-2);
+}
+.ing-degrade.warn {
+  background: var(--hard-soft);
+  border-color: var(--hard-line);
+  color: var(--hard-ink);
+}
+.ing-degrade-ico {
+  flex: none;
+  margin-top: 1px;
+}
+.ing-degrade-txt {
+  font-family: var(--font-sans);
+  font-size: var(--fs-meta);
+  line-height: 1.5;
 }
 
 .ing-exit-grid {
