@@ -28,7 +28,7 @@ function buildQuizVerifyPrompt(profile: SubjectProfile): string {
 输入若带 validation_mode='release_strict'，这是发布级复用路径，额外遵守：
 - author_material 只是作者生成的教学材料，不是事实来源；作者在题干、reference_md 或 author_material 里写出的解释性 gloss 不能自我证明。
 - 明确标为匿名记录、假设情境、给定数据并要求只按记录判断的内容，按题面闭世界 givens 检查内部一致性即可。
-- 对可识别的真实作品、人物、史实、统计、公式出处、引文及其解释方向，必须用 source_refs、持久化 primary material、题面可直接推出的原文证据或本学科可靠知识独立核对。缺少足够独立依据给 grounding='unclear'；与原文或可靠学科事实冲突给 'fail'；绝不能因为作者和 reference 重复同一句解读就给 pass。
+- 对可识别的真实作品、人物、史实、统计、公式出处、引文及其解释方向，必须用 source_refs、持久化 primary material、题面可直接推出的原文证据、实际执行并返回结果的 remote_tool_evidence 调用输出或本学科可靠知识独立核对。缺少足够独立依据给 grounding='unclear'；与原文或可靠学科事实冲突给 'fail'；绝不能因为作者和 reference 重复同一句解读就给 pass。
 - scope/knowledge 范围只说明考什么，不豁免 factuality。release_strict 的下游只接受 grounding='pass'，所以不确定时如实给 unclear，不要迎合放行。
 
 若 validation_purpose='learning_content'，在 grounding 中另给必需 basis：closed_world_givens（只需题面给定数据/形式运算即可独立核验）、discipline_knowledge（说明可独立核验的可靠学科依据）、source_refs（实际给出的来源）、material（实际给出的原文）、executed_remote_evidence（本题事实断言由 remote_tool_evidence 里实际执行并返回了结果的远程调用输出佐证——你必须亲自复核该调用的 output 确实支撑题面断言才可选；只列出调用、调用 failure、或返回内容不支撑该断言都不算佐证）、insufficient（依据不足）。判断具体题目，不因 closed_book 或作者自称“原创/假设”就选自包含；涉及真实引文、作品、事实而缺可靠独立依据仍是 insufficient/unclear。没有实际 material/source_refs/remote_tool_evidence 时不得选择对应 basis。

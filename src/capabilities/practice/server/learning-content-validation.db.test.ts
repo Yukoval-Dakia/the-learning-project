@@ -210,6 +210,21 @@ describe('Practice learner-visible release policy', () => {
   it.each([
     ['no evidence was forwarded', undefined],
     ['the forwarded packet is empty', []],
+    // Codex PR #1407 P1 — the packet lists FAILED calls too (failure entries
+    // carry no output); a failures-only packet corroborates nothing, so the
+    // basis stays unsupported even though the array is non-empty.
+    [
+      'every forwarded call failed (failure entries only)',
+      [
+        {
+          tool_name: 'mcp__exa__web_search_exa',
+          tool_use_id: 'call_failed_lookup',
+          root_call: true,
+          input: { query: '乘法分配律 定义', numResults: 3 },
+          failure: { error: 'exa request timed out', is_interrupt: false },
+        },
+      ],
+    ],
   ] satisfies Array<[string, unknown]>)(
     'blocks executed_remote_evidence basis when %s',
     async (_name, remoteToolEvidence) => {
