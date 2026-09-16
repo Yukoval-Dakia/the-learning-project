@@ -1,3 +1,13 @@
+# 当前 handoff — 2026-09-16，Linear sweep 第二批 8 lane 全收口
+
+- 8 lane 全 Done：YUK-542（#1406 landing DegradeBanner）、YUK-831（#1408 opencode @babel/core scoped override 清零 + SECURITY.md 例外文档）、YUK-374（#1409 FUTURE→UNIMPLEMENTED_JUDGE_ROUTES 诚实化）、YUK-998（#1410 spawn 超时 caller 语义拆分 + JYEOO_BACKFILL_TIMEOUT_MS）、YUK-996（#1411 judge 契约走 subjectProfile 路由）、YUK-340（#1412 设计源/globals.css 351 处 <13px→14px）、YUK-995（#1413 write_quiz artifact tx FOR UPDATE tombstone）、YUK-993（#1407 executed_remote_evidence basis LIGHT 方案）。YUK-997 jyeoo-rs git init baseline `8d1f8d0`（外部仓，无本仓 PR）。
+- main = `0406f1605`；生产仍 `d9ca89e5`（13 个 merge 未部署，待 owner 授权）。
+- YUK-571 阶段：flag 已 live（07-06 起持久化于 .env.local + compose app/worker）；day-zero census 存档；placement/start 显式 scope 实测服务题成功。剩 owner UI 真实跑一次完整会话后关票；探测 session i3umhgjesalcsiz7dsdfsgi8 已 abandoned。
+- follow-up 已立：YUK-1000（tsx <13px 散件 ~30+ 处）、YUK-1002（write_quiz 同型竞态 archive↔/retract↔）、YUK-999（axis C 复测，条件触发）。YUK-1001 复核后 Canceled（material_fsrs_state writer 早已实现，#1409 删 allowlist 而非续期）。
+- 过程教训：connection error 可批量杀 background subagent（transcript 不可恢复，worktree 残留 diff 可审续作）；GitHub 可丢 pull_request synchronize 事件（空 commit retrigger 恢复）；advisory review 本批再抓 3 个真 P1（995 前 codex 派生票本身、998 的 zod trim 绕过、993 的 failures-only packet）。
+- 全部 lane worktree/branch 已清理（8 wt + 8 branch）。PLAN.md NOW 滚存 09-06~08 时代 173 行 → `.remember/plan-now-archive-2026-09-16.md`。
+- 环境污染未动：根仓 `git config user.name=fixture` 仍在，所有 commit 用 GIT_AUTHOR_* env 覆盖。
+
 # 当前 handoff — 2026-09-14，Linear sweep 5 lane 并行批交付
 
 - 并行 5 worktree lane 全 Done：YUK-977（#1400）零金额费用来源 reported/estimated_attempts 按粒度计数；YUK-990（#1401）store_sourced_question 图题 commit 4 db 测试（重写/override/清理/竞态）；YUK-677（#1402）阈值重锚轻量案 + report-only 标定脚本 + docs/audit/2026-09-14-threshold-calibration.md（三阈值维持，语料薄已标注）；YUK-989 jyeoo-rs extract 全文 echo（外部仓 producer 修复，同题复验 overlap 0.49→active，本仓零 diff）；YUK-308（#1403）quiz C→A 强化五项落地/限流 wontfix，review 派生 YUK-995/996。
