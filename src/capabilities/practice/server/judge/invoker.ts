@@ -30,7 +30,6 @@ import {
 } from './judge-execution-provenance';
 import { narrowQuestionToPart } from './narrow-part';
 import {
-  FUTURE_JUDGE_ROUTES,
   type JudgeAnswerParams,
   RUNNABLE_ROUTES,
   buildLocalJudgeQuestion,
@@ -363,10 +362,15 @@ export class JudgeInvoker {
   }
 
   private async dispatch(route: JudgeKind, input: JudgeAnswerParams): Promise<JudgeResultV2T> {
+    // YUK-374 — a route outside RUNNABLE_ROUTES (today: the 'rubric' /
+    // 'ai_flexible' enum members, see UNIMPLEMENTED_JUDGE_ROUTES in
+    // question-contract.ts) has NO runner, so dispatch fails loudly with
+    // `unsupported`. The evidence records only the dispatched route — no
+    // `allowed_future_routes` claim: nothing consumed that key, and it
+    // advertised a "sanctioned upcoming" capability surface that does not exist.
     if (!RUNNABLE_ROUTES.has(route)) {
       return unsupportedResult(route, `judge route '${route}' is not implemented`, {
         route,
-        allowed_future_routes: FUTURE_JUDGE_ROUTES,
       });
     }
 

@@ -40,7 +40,10 @@ export const SubjectQuestionKindSchema = z.enum([
 export type SubjectQuestionKind = z.infer<typeof SubjectQuestionKindSchema>;
 
 // Desired route families for subject policy. These are allowed to mention
-// future strategies; judgeCapabilities below lists registry-backed runners.
+// strategies that have NO runner yet (declared intent only — the allowlist is
+// UNIMPLEMENTED_JUDGE_ROUTES in capabilities/practice/server/judge/
+// question-contract.ts, enforced by tests/integration/judge-gap-audit.test.ts);
+// judgeCapabilities below lists registry-backed runners.
 export const JudgeRouteKindSchema = z.enum([
   'exact',
   'keyword',

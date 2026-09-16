@@ -46,6 +46,11 @@ import { settlePaperSlotReview } from './review-settlement';
 // judgement is immediately visible.
 export const HIDE_FEEDBACK_POLICY = 'judge_now_show_later' as const;
 
+// Routes whose dispatch attempts a paid LLM call — a resolved member claims a
+// paid judge slot + shared budget BEFORE invoke. 'rubric' / 'ai_flexible' have
+// NO runner today (YUK-374 — dispatch returns `unsupported`, no model call) but
+// stay in the set deliberately: a future runner is then automatically
+// claim-gated, whereas dropping them here would silently bypass the paid claim.
 const PAID_PAPER_JUDGE_ROUTES = new Set([
   'semantic',
   'rubric',

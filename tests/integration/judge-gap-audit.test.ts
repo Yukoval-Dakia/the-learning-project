@@ -2,8 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  FUTURE_JUDGE_ROUTES,
   RUNNABLE_ROUTES,
+  UNIMPLEMENTED_JUDGE_ROUTES,
   resolveQuestionJudgeRoute,
 } from '@/capabilities/practice/server/judge/question-contract';
 import { getDefaultRegistry } from '@/core/capability/judges';
@@ -98,7 +98,7 @@ describe('Judge v2 light gap-prevention audit', () => {
     }
   });
 
-  it('subject judgeCapabilities resolve and future preferredRoutes are explicitly allowlisted', () => {
+  it('subject judgeCapabilities resolve and non-runnable preferredRoutes are allowlisted as unimplemented', () => {
     const registry = getDefaultRegistry();
     // M2.2 (2026-05-22): use canonical RUNNABLE_ROUTES export — adding routes
     // (e.g. 'steps') no longer requires updating this audit's hardcoded set.
@@ -110,11 +110,15 @@ describe('Judge v2 light gap-prevention audit', () => {
           `${profile.id}.judgeCapabilities contains unregistered '${capability}'`,
         ).toBe(true);
       }
+      // YUK-374 — a preferredRoutes entry that is NOT runnable must be a member
+      // of UNIMPLEMENTED_JUDGE_ROUTES (a JudgeKind-space member with no runner,
+      // declared as intent only). Anything else is a typo'd route the resolver
+      // can never branch on — flag it here instead of letting it sit inert.
       for (const route of profile.judgePolicy.preferredRoutes) {
         if (runnable.has(route)) continue;
         expect(
-          Object.keys(FUTURE_JUDGE_ROUTES),
-          `${profile.id}.preferredRoutes contains future route '${route}' without status`,
+          Object.keys(UNIMPLEMENTED_JUDGE_ROUTES),
+          `${profile.id}.preferredRoutes contains non-runnable route '${route}' not allowlisted as unimplemented`,
         ).toContain(route);
       }
     }

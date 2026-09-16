@@ -206,6 +206,11 @@ export const QuestionBlockRole = z.enum(['prompt', 'answer_area', 'continuation'
 
 export const VisualComplexity = z.enum(['low', 'medium', 'high']);
 
+// YUK-374 — 'rubric' / 'ai_flexible' are JudgeKind-space members with NO runner:
+// they parse (so an explicit judge_kind_override fails loudly as `unsupported`
+// instead of silently re-routing) but are not dispatchable. Runnable set =
+// RUNNABLE_ROUTES; declared-but-unimplemented set = UNIMPLEMENTED_JUDGE_ROUTES
+// (capabilities/practice/server/judge/question-contract.ts).
 export const JudgeKind = z.enum([
   'exact',
   'keyword',
