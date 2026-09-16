@@ -191,10 +191,23 @@ export async function validateLearningContent(
       const output =
         questionContent.status === 'fulfilled' ? questionContent.value.output : undefined;
       const basis = output?.grounding.basis;
+      // YUK-993 — 'executed_remote_evidence' is supported only when the verify
+      // task input actually carried a non-empty packet of this turn's executed
+      // remote-MCP calls: the exact evidence the judge corroborated against, not
+      // a model self-declaration. Read it off task_input (what the judge saw) so
+      // an absent/empty/non-array packet keeps the basis unsupported and the
+      // question fails closed exactly as before.
+      const forwardedRemoteEvidence =
+        questionContent.status === 'fulfilled'
+          ? questionContent.value.task_input.remote_tool_evidence
+          : undefined;
       const basisSupported =
         basis === 'closed_world_givens' ||
         basis === 'discipline_knowledge' ||
-        (basis === 'material' && !!source?.material);
+        (basis === 'material' && !!source?.material) ||
+        (basis === 'executed_remote_evidence' &&
+          Array.isArray(forwardedRemoteEvidence) &&
+          forwardedRemoteEvidence.length > 0);
       const axesPass =
         !!output &&
         output.grounding.verdict === 'pass' &&
@@ -207,6 +220,10 @@ export async function validateLearningContent(
         output.overall !== 'fail';
       // Preview admission is not pool promotion or a claim of global originality.
       // Only trace-bound, source-free candidates can leave copy comparison unknown.
+      // executed_remote_evidence is deliberately absent from this basis list: when a
+      // non-empty packet was forwarded the judge had a real comparison corpus, so a
+      // still-'unknown' copy verdict means review did NOT clear originality — the
+      // item stays unadmitted instead of riding the source-free passthrough.
       const copyOnlyReview =
         source?.generation_method === 'closed_book' &&
         !source.material &&
