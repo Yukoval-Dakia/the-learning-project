@@ -128,7 +128,17 @@ function parseArgs(argv: string[]): CliArgs {
         throw new Error(`未知参数: ${arg}`);
     }
   }
-  // 原工具层 zod 边界的等价护栏（脚本直调 fetch 核后不再经过 inputSchema）。
+  // 原工具层 zod 边界的等价护栏（脚本直调 fetch 核后不再经过 inputSchema）：
+  // 数值区间 + trim().min(1) 的字符串约束——空白 --kind 会把每个已付费候选全部
+  // filtered_kind 丢弃（白烧 producer 预算），空 --subject 会带病进 producer。
+  if (args.subject.trim().length === 0) {
+    throw new Error('--subject 不能为空');
+  }
+  args.subject = args.subject.trim();
+  if (args.kind !== undefined) {
+    args.kind = args.kind.trim();
+    if (args.kind.length === 0) throw new Error('--kind 不能为空白');
+  }
   if (!Number.isInteger(args.pages) || args.pages < 1 || args.pages > 10) {
     throw new Error('--pages 仅支持 1-10');
   }
@@ -164,7 +174,7 @@ async function main(): Promise<void> {
   const estimatedMs = args.max * JYEOO_BACKFILL_PER_QUESTION_MS;
   if (spawnTimeoutMs < estimatedMs) {
     console.warn(
-      `[jyeoo:backfill] spawn 超时 ${spawnTimeoutMs}ms 低于本批估算 ${estimatedMs}ms（--max ${args.max} × 90s）；` +
+      `[jyeoo:backfill] spawn 超时 ${spawnTimeoutMs}ms 低于本批估算 ${estimatedMs}ms（--max ${args.max} × ${JYEOO_BACKFILL_PER_QUESTION_MS / 1000}s）；` +
         `中途 SIGKILL 会丢整批并白烧已产生的付费拉题——调大 JYEOO_BACKFILL_TIMEOUT_MS 或 --timeout-ms`,
     );
   }
