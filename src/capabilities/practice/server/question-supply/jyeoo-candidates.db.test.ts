@@ -12,7 +12,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import sharp from 'sharp';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import { event, question, source_asset } from '@/db/schema';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
@@ -605,5 +605,61 @@ describe('runJyeooFetchCandidates — failure classification + budget', () => {
     });
     expect(result.status).toBe('ok');
     expect(sessionMaxArg).toBe('2');
+  });
+});
+
+describe('runJyeooFetchCandidates — spawn timeout caller semantics (YUK-998)', () => {
+  const ENV_KEY = 'JYEOO_SPAWN_TIMEOUT_MS';
+  let saved: string | undefined;
+  beforeEach(() => {
+    saved = process.env[ENV_KEY];
+    delete process.env[ENV_KEY];
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env[ENV_KEY];
+    else process.env[ENV_KEY] = saved;
+  });
+
+  it('passes an explicit spawnTimeoutMs through to the spawn envelope (batch caller)', async () => {
+    // 批量 caller（scripts/jyeoo-backfill.ts）显式传解析后的批量超时；in-band caller
+    // 不传本参数。此钉住核的 per-call 覆盖语义。
+    let timeoutMsArg: number | null = null;
+    const spawn: SpawnJyeooFn = async (opts) => {
+      timeoutMsArg = opts.timeoutMs;
+      return okResult([loomLine(baseQuestion())]);
+    };
+    const result = await runJyeooFetchCandidates({
+      db,
+      input: INPUT,
+      spawnJyeooFn: spawn,
+      spawnTimeoutMs: 900_000,
+      now: NOW,
+    });
+    expect(result.status).toBe('ok');
+    expect(timeoutMsArg).toBe(900_000);
+  });
+
+  it('falls back to the JYEOO_SPAWN_TIMEOUT_MS default when no override is passed', async () => {
+    let timeoutMsArg: number | null = null;
+    const spawn: SpawnJyeooFn = async (opts) => {
+      timeoutMsArg = opts.timeoutMs;
+      return okResult([]);
+    };
+    const result = await runJyeooFetchCandidates({
+      db,
+      input: INPUT,
+      spawnJyeooFn: spawn,
+      now: NOW,
+    });
+    expect(result.status).toBe('ok');
+    expect(timeoutMsArg).toBe(120_000);
+
+    process.env[ENV_KEY] = '45000';
+    const spawn2: SpawnJyeooFn = async (opts) => {
+      timeoutMsArg = opts.timeoutMs;
+      return okResult([]);
+    };
+    await runJyeooFetchCandidates({ db, input: INPUT, spawnJyeooFn: spawn2, now: NOW });
+    expect(timeoutMsArg).toBe(45_000);
   });
 });
