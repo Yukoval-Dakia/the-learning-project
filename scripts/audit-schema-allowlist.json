@@ -574,7 +574,7 @@
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 4-5 review event → FSRS state projection implemented",
-      "expected_by": "2026-09-15"
+      "expected_by": "2026-10-15"
     }
   },
   "material_fsrs_state.subject_id": {
@@ -582,7 +582,7 @@
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 4-5 review event → FSRS state projection implemented",
-      "expected_by": "2026-09-15"
+      "expected_by": "2026-10-15"
     }
   },
   "material_fsrs_state.due_at": {
@@ -590,7 +590,7 @@
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 4-5 review event → FSRS state projection implemented",
-      "expected_by": "2026-09-15"
+      "expected_by": "2026-10-15"
     }
   },
   "material_fsrs_state.last_review_event_id": {
@@ -598,7 +598,7 @@
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1c.1 Step 4-5 review event → FSRS state projection implemented",
-      "expected_by": "2026-09-15"
+      "expected_by": "2026-10-15"
     }
   },
   "knowledge_edge.from_knowledge_id": {
