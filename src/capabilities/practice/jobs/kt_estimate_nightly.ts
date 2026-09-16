@@ -29,7 +29,8 @@
 // attempt/review 事件外，**还有一条独立 judge 事件** `action='judge' AND subject_kind='event'`，
 // `caused_by_event_id = <attempt/review event_id>`，`payload.judge_route ∈ OBJECTIVE_JUDGE_ROUTES
 // (= {'exact','keyword'})`。客观门 = 仅接受被这样一条 objective judge 事件**锚定**的
-// attempt/review 事件进 KT 序列。LLM 路由（semantic/rubric/steps/ai_flexible...）+ 手评
+// attempt/review 事件进 KT 序列。LLM 路由（semantic/steps/multimodal_direct...）+ 无-runner
+// 的 rubric/ai_flexible（YUK-374，verdict 只会是 unsupported）+ 手评
 // （无 judge 事件 / judge_route 不在白名单）一律排除。
 //
 // ─── 候选预筛 ───────────────────────────────────────────────────────────────

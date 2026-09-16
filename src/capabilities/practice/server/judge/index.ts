@@ -2,6 +2,11 @@ import { getDefaultRegistry } from '@/core/capability/judges';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { AnswerInput, JudgeResult } from './exact';
 
+// YUK-374 — 'rubric' / 'ai_flexible' are union members with NO runner: they
+// exist so a persisted judge_kind_override parses and fails loudly as
+// `unsupported` (judgeRouterV2 below + the invoker dispatch both fail closed)
+// instead of silently re-routing to a different judge. Runnable set =
+// RUNNABLE_ROUTES; see UNIMPLEMENTED_JUDGE_ROUTES in question-contract.ts.
 export type JudgeKind =
   | 'exact'
   | 'keyword'

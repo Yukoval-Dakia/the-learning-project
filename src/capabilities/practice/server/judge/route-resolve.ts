@@ -95,7 +95,8 @@ export const IMAGE_CONSUMING_JUDGE_ROUTES = new Set<JudgeRoute>(['steps', 'multi
 // (semantic → runSemanticJudge, steps → runStepsJudge, multimodal_direct →
 // runMultimodalDirectJudge, unit_dimension → runUnitDimensionJudge). `exact` /
 // `keyword` are deterministic local string comparisons that NEVER call a model;
-// `rubric` / `ai_flexible` are not yet runnable (unsupported).
+// `rubric` / `ai_flexible` have no runner — dispatch returns `unsupported`
+// (YUK-374, see UNIMPLEMENTED_JUDGE_ROUTES in question-contract.ts).
 //
 // Provenance discipline: when a route's `invoked.execution` metadata is ABSENT,
 // the meaning differs by route class. For a model-backed route it means the LLM

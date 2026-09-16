@@ -32,10 +32,23 @@ export const RUNNABLE_ROUTES = new Set<JudgeKind>([
   'multimodal_direct',
 ]);
 
-export const FUTURE_JUDGE_ROUTES = {
-  rubric: 'future: rubric judge needs weighted criteria runner and score semantics',
-  ai_flexible: 'future: fallback LLM judge needs stronger audit and cost policy',
-} as const satisfies Record<string, string>;
+// YUK-374 — JudgeKind-space members with NO runner. 'rubric' / 'ai_flexible'
+// stay in the JudgeKind / JudgeRouteKindSchema enums ONLY so an explicit
+// `judge_kind_override` parses and dispatches to a loud `unsupported` verdict
+// (invoker.ts) instead of silently re-routing to a different judge — question
+// producers can never persist them (the quiz_gen / question_author / sourcing
+// override enums are exact|keyword|semantic only). This map is NOT a capability
+// claim and NOT a commitment to implement: its sole consumer is the gap audit
+// (tests/integration/judge-gap-audit.test.ts), which uses the keys as the
+// allowlist for non-runnable `judgePolicy.preferredRoutes` entries a subject
+// profile may declare as intent. Implementing a route means registering its
+// runner in the capability registry (core/capability/judges) and adding it to
+// RUNNABLE_ROUTES — YUK-374 only honestifies the declaration; it does NOT
+// implement or schedule either route. Values state what a runner would require.
+export const UNIMPLEMENTED_JUDGE_ROUTES = {
+  rubric: 'not implemented: rubric judge needs weighted criteria runner and score semantics',
+  ai_flexible: 'not implemented: fallback LLM judge needs stronger audit and cost policy',
+} as const satisfies Partial<Record<JudgeKind, string>>;
 
 /**
  * YUK-308 — shared judge-executability contract for generated/authored

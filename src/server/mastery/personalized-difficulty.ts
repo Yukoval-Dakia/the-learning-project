@@ -59,8 +59,9 @@ export const SHRINKAGE_PRIOR_STRENGTH = 20;
 //
 // 只有**确定性、无 LLM、无主观裁量**的判分路由产出的 outcome 才喂家族校准——它们
 // 的 0/1 是「答案对/错」的客观事实，不混 LLM 主观判断的噪声。LLM-backed 路由
-// （semantic/rubric/steps/multimodal_direct/ai_flexible）的 verdict 带主观性，
-// 把它当 b 真值会把 LLM 评分偏差混进 b。
+// （semantic/steps/multimodal_direct）的 verdict 带主观性，把它当 b 真值会把
+// LLM 评分偏差混进 b；rubric/ai_flexible 无 runner（YUK-374，判分只会是
+// unsupported verdict），同样排除。
 //
 //   - exact / keyword：纯字符串/集合匹配，零 LLM，确定性 → 客观。
 //   - unit_dimension：**有意排除**——它有确定性 accelerator，但带 LLM fallback

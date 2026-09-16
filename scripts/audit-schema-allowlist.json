@@ -569,38 +569,6 @@
       "expected_by": "2026-09-30"
     }
   },
-  "material_fsrs_state.subject_kind": {
-    "reason": "FSRS projection writer in Step 4-5 review handler | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 4-5 review event → FSRS state projection implemented",
-      "expected_by": "2026-10-15"
-    }
-  },
-  "material_fsrs_state.subject_id": {
-    "reason": "Same as material_fsrs_state.subject_kind | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 4-5 review event → FSRS state projection implemented",
-      "expected_by": "2026-10-15"
-    }
-  },
-  "material_fsrs_state.due_at": {
-    "reason": "Same as material_fsrs_state.subject_kind | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 4-5 review event → FSRS state projection implemented",
-      "expected_by": "2026-10-15"
-    }
-  },
-  "material_fsrs_state.last_review_event_id": {
-    "reason": "Same as material_fsrs_state.subject_kind | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 4-5 review event → FSRS state projection implemented",
-      "expected_by": "2026-10-15"
-    }
-  },
   "knowledge_edge.from_knowledge_id": {
     "reason": "knowledge_edge CRUD in Step 6 /api/knowledge/edges and Step 7 AI propose-edge branch | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
