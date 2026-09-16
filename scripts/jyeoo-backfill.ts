@@ -96,8 +96,8 @@ function parseArgs(argv: string[]): CliArgs {
         args.max = Number.parseInt(next(), 10);
         break;
       case '--timeout-ms': {
-        // 等价于 JYEOO_BACKFILL_TIMEOUT_MS（ CLI 直给优先——写入该 env 让
-        // jyeooBackfillSpawnTimeoutMs 的单一口径解析生效 ）。
+        // 单次直给，等价 JYEOO_BACKFILL_TIMEOUT_MS 但优先于一切 env（main 里
+        // `args.timeoutMs ?? jyeooBackfillSpawnTimeoutMs(...)` 短路）。
         args.timeoutMs = Number.parseInt(next(), 10);
         break;
       }
