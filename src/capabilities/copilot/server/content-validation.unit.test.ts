@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY,
   containsLearningQuestion,
   copilotLearningContentRequiresValidation,
   extractCopilotLearningContent,
@@ -403,5 +404,99 @@ describe('validatePreparedLearningContent', () => {
     });
     expect(withoutEvidence.passed).toBe(true);
     expect(quizInputs[1]).not.toHaveProperty('remote_tool_evidence');
+  });
+
+  it('admits executed_remote_evidence content only with the executed packet, and never leaks an unreviewed candidate', async () => {
+    const manifest =
+      '题目：根据最新统计，2024 年全球可再生能源发电量占比约为多少？\n<!--copilot_learning_content:{"subject_id":"general","questions":[{"id":"q1","kind":"fill_blank","prompt_md":"根据最新统计，2024 年全球可再生能源发电量占比约为多少？","reference_md":"约 30%（IEA 2024 年报告口径）","choices_md":null,"rubric_json":{}}]}-->';
+    const packet = [
+      {
+        tool_name: 'mcp__exa__web_search_exa',
+        tool_use_id: 'call_renewables_2024',
+        root_call: true,
+        input: { query: '2024 global renewable electricity generation share IEA', numResults: 3 },
+        output: [
+          {
+            type: 'text',
+            text: 'Title: IEA Renewables 2024\nURL: https://example.org/iea-renewables-2024\nRenewable sources accounted for roughly 30% of global electricity generation in 2024.',
+          },
+        ],
+      },
+    ];
+    const runTaskFn = async (kind: string, _input: unknown) => {
+      if (kind === 'QuizVerifyTask') {
+        return {
+          task_run_id: 'verify-remote',
+          text: JSON.stringify({
+            grounding: {
+              verdict: 'pass',
+              basis: 'executed_remote_evidence',
+              note: 'exa 返回的 IEA 2024 统计独立佐证了参考答案。',
+            },
+            copy_safety: { verdict: 'original', max_overlap: 0 },
+            knowledge_hit: { verdict: 'pass', note: '考查可核验的统计事实' },
+            overall: 'pass',
+            summary_md: '远程检索佐证通过',
+            confidence: 0.9,
+          }),
+        };
+      }
+      if (kind === 'SolutionGenerateTask') {
+        return {
+          task_run_id: 'solve-remote',
+          text: JSON.stringify({
+            reference_solution: {
+              final_answer: '约 30%',
+              expected_signals: ['可再生能源占比'],
+              answer_equivalents: ['30%'],
+            },
+            worked_solution_md: '据 IEA 2024 口径约为 30%。',
+            confidence: 0.9,
+          }),
+        };
+      }
+      if (kind === 'SemanticJudgeTask') {
+        return {
+          task_run_id: 'judge-remote',
+          text: JSON.stringify({
+            score: 1,
+            coarse_outcome: 'correct',
+            confidence: 0.95,
+            feedback_md: 'solver answer matches the reference',
+            evidence_json: { matched_points: ['约 30%'], missing_points: [] },
+          }),
+        };
+      }
+      return {
+        task_run_id: 'teaching-remote',
+        text: JSON.stringify({
+          clarity: { verdict: 'pass', reason: '题干清晰' },
+          unique_answer: { verdict: 'pass', reason: '答案唯一' },
+          summary: 'pass',
+        }),
+      };
+    };
+
+    // Corroborated by the executed packet AND cleared by review → admitted,
+    // and the candidate text is released.
+    const admitted = await reviewCopilotLearningContent(manifest, '', 'evidence-admit', {
+      db: {} as never,
+      runTaskFn,
+      remoteToolEvidence: packet,
+    });
+    expect(admitted.passed).toBe(true);
+    expect(admitted.replyText).toContain('可再生能源发电量占比');
+    expect(admitted.replyText).toContain('独立内容验证：通过');
+
+    // Same judge claim but NO executed packet → basis unsupported → fail
+    // closed, and the unreviewed candidate must not leak into the reply.
+    const blocked = await reviewCopilotLearningContent(manifest, '', 'evidence-blocked', {
+      db: {} as never,
+      runTaskFn,
+    });
+    expect(blocked.passed).toBe(false);
+    expect(blocked.replyText).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
+    expect(blocked.replyText).not.toContain('可再生能源发电量占比');
+    expect(blocked.replyText).not.toContain('约 30%');
   });
 });

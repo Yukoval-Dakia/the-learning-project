@@ -391,12 +391,19 @@ export const QuizVerificationResult = z.object({
   // §5 three checks.
   grounding: QuizVerifyCheck.extend({
     // Required by learner-visible assessment, optional for existing pool consumers.
+    // YUK-993 — 'executed_remote_evidence': the grounding rests on THIS turn's
+    // actually executed remote-MCP calls (input.remote_tool_evidence) that the
+    // judge independently re-read — execution evidence, not a self-declaration.
+    // The learner-visible gate admits it only when the forwarded packet is
+    // non-empty; the pool verify path carries no such field and stays
+    // fail-closed (its gate never reads `basis` at all).
     basis: z
       .enum([
         'closed_world_givens',
         'discipline_knowledge',
         'source_refs',
         'material',
+        'executed_remote_evidence',
         'insufficient',
       ])
       .optional(),

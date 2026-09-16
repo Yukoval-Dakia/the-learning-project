@@ -109,6 +109,24 @@ function errorReason(result: PromiseRejectedResult): string {
   return result.reason instanceof Error ? result.reason.message : String(result.reason);
 }
 
+/**
+ * YUK-993 — does a forwarded remote-evidence packet contain at least one call
+ * that actually RETURNED an output? The packet also lists failed calls
+ * (`failure` entries carry no `output`), and a failure corroborates nothing:
+ * a packet of only failures must keep the basis unsupported.
+ */
+function hasReturnedRemoteOutput(packet: unknown): boolean {
+  return (
+    Array.isArray(packet) &&
+    packet.some(
+      (entry) =>
+        typeof entry === 'object' &&
+        entry !== null &&
+        (entry as { output?: unknown }).output !== undefined,
+    )
+  );
+}
+
 export async function validateLearningContent(
   content: LearningContentValidationRequest,
   deps: LearningContentValidationDeps,
@@ -191,10 +209,22 @@ export async function validateLearningContent(
       const output =
         questionContent.status === 'fulfilled' ? questionContent.value.output : undefined;
       const basis = output?.grounding.basis;
+      // YUK-993 — 'executed_remote_evidence' is supported only when the verify
+      // task input actually carried a non-empty packet of this turn's executed
+      // remote-MCP calls AND at least one call returned an output: the exact
+      // evidence the judge corroborated against, not a model self-declaration.
+      // Read it off task_input (what the judge saw) so an absent/empty/
+      // non-array/failures-only packet keeps the basis unsupported and the
+      // question fails closed exactly as before.
+      const forwardedRemoteEvidence =
+        questionContent.status === 'fulfilled'
+          ? questionContent.value.task_input.remote_tool_evidence
+          : undefined;
       const basisSupported =
         basis === 'closed_world_givens' ||
         basis === 'discipline_knowledge' ||
-        (basis === 'material' && !!source?.material);
+        (basis === 'material' && !!source?.material) ||
+        (basis === 'executed_remote_evidence' && hasReturnedRemoteOutput(forwardedRemoteEvidence));
       const axesPass =
         !!output &&
         output.grounding.verdict === 'pass' &&
@@ -207,6 +237,10 @@ export async function validateLearningContent(
         output.overall !== 'fail';
       // Preview admission is not pool promotion or a claim of global originality.
       // Only trace-bound, source-free candidates can leave copy comparison unknown.
+      // executed_remote_evidence is deliberately absent from this basis list: when a
+      // non-empty packet was forwarded the judge had a real comparison corpus, so a
+      // still-'unknown' copy verdict means review did NOT clear originality — the
+      // item stays unadmitted instead of riding the source-free passthrough.
       const copyOnlyReview =
         source?.generation_method === 'closed_book' &&
         !source.material &&

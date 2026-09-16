@@ -245,6 +245,15 @@ describe('task prompt definitions', () => {
       expect(prompt).not.toContain('卜算子·咏梅');
       expect(prompt).toContain('copy_safety 保留 unknown');
       expect(prompt).toContain('不确定轴优先按下一条 needs_review，硬伤优先 fail');
+      // YUK-993 — the learning_content basis vocabulary must offer
+      // executed_remote_evidence AND bind it to corroborating executed calls:
+      // the judge may only pick it when remote_tool_evidence carries a call whose
+      // returned output it independently re-checked against the asserted facts.
+      expect(prompt).toContain('executed_remote_evidence');
+      expect(prompt).toContain('remote_tool_evidence');
+      expect(prompt).toContain(
+        '没有实际 material/source_refs/remote_tool_evidence 时不得选择对应 basis',
+      );
     }
   });
 

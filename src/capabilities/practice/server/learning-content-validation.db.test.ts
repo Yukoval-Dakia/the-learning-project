@@ -83,6 +83,31 @@ const contentResult: QuizVerificationResultT = {
   confidence: 0.99,
 };
 
+// YUK-993 — a realistic RemoteMcpEvidencePacket entry: one actually executed
+// remote-MCP search call of this turn (reply-finalization.ts capture shape),
+// long enough and structured like a real Exa response so the corroboration the
+// gate relies on is exercised end-to-end, not on a stub.
+function remoteEvidencePacket() {
+  return [
+    {
+      tool_name: 'mcp__exa__web_search_exa',
+      tool_use_id: 'call_distributive_law_lookup',
+      root_call: true,
+      input: { query: '乘法分配律 整数 a×(b+c)=a×b+a×c 定义', numResults: 3 },
+      output: [
+        {
+          type: 'text',
+          text: 'Title: 乘法分配律 — 数学百科\nURL: https://example.edu/wiki/distributive_law\n对于任意整数 a、b、c，a×(b+c)=a×b+a×c。例：104×5=(100+4)×5=500+20=520。分配律保持每个加项被同一乘数相乘。',
+        },
+        {
+          type: 'text',
+          text: 'Title: Distributive property over integer addition\nURL: https://example.edu/ref/distributive\nThe distributive law a(b+c)=ab+ac holds in any ring, including the integers.',
+        },
+      ],
+    },
+  ];
+}
+
 function runner(result: QuizVerificationResultT) {
   return vi.fn(async (kind: string, _input: unknown) => {
     if (kind === 'QuizVerifyTask') return { text: JSON.stringify(result), task_run_id: 'verify-1' };
@@ -148,6 +173,111 @@ describe('Practice learner-visible release policy', () => {
       self_copy_safety: null,
     });
     expect(runTaskFn.mock.calls).toHaveLength(4);
+  });
+
+  it('admits executed_remote_evidence content when the forwarded calls corroborate and review passes', async () => {
+    const fixture = candidate();
+    const remoteToolEvidence = remoteEvidencePacket();
+    const runTaskFn = runner({
+      ...contentResult,
+      grounding: {
+        verdict: 'pass',
+        basis: 'executed_remote_evidence',
+        note: 'exa 返回的分配律定义与 104×5 例证独立佐证了题面解法方向。',
+      },
+      copy_safety: { verdict: 'original', max_overlap: 0.02 },
+      overall: 'pass',
+      summary_md: '远程检索返回佐证事实；措辞与检索结果不重合。',
+    });
+    const result = await validateLearningContent(fixture.content, {
+      db: testDb(),
+      runTaskFn,
+      observedQuestion: fixture.observedQuestion,
+      remoteToolEvidence,
+    });
+    expect(result).toMatchObject({
+      verdict: 'pass',
+      items: [{ question_content: { overall: 'pass', admitted: true } }],
+    });
+    const verifyInput = runTaskFn.mock.calls.find(([kind]) => kind === 'QuizVerifyTask')?.[1];
+    expect(verifyInput).toMatchObject({
+      remote_tool_evidence: remoteToolEvidence,
+      validation_purpose: 'learning_content',
+      validation_mode: 'release_strict',
+    });
+  });
+
+  it.each([
+    ['no evidence was forwarded', undefined],
+    ['the forwarded packet is empty', []],
+    // Codex PR #1407 P1 — the packet lists FAILED calls too (failure entries
+    // carry no output); a failures-only packet corroborates nothing, so the
+    // basis stays unsupported even though the array is non-empty.
+    [
+      'every forwarded call failed (failure entries only)',
+      [
+        {
+          tool_name: 'mcp__exa__web_search_exa',
+          tool_use_id: 'call_failed_lookup',
+          root_call: true,
+          input: { query: '乘法分配律 定义', numResults: 3 },
+          failure: { error: 'exa request timed out', is_interrupt: false },
+        },
+      ],
+    ],
+  ] satisfies Array<[string, unknown]>)(
+    'blocks executed_remote_evidence basis when %s',
+    async (_name, remoteToolEvidence) => {
+      const fixture = candidate();
+      const result = await validateLearningContent(fixture.content, {
+        db: testDb(),
+        runTaskFn: runner({
+          ...contentResult,
+          grounding: {
+            verdict: 'pass',
+            basis: 'executed_remote_evidence',
+            note: '声称由远程检索佐证，但本输入没有对应执行证据。',
+          },
+          copy_safety: { verdict: 'original', max_overlap: 0 },
+          overall: 'pass',
+          summary_md: 'judge claims remote grounding without a packet.',
+        }),
+        observedQuestion: fixture.observedQuestion,
+        ...(remoteToolEvidence !== undefined ? { remoteToolEvidence } : {}),
+      });
+      expect(result.verdict).toBe('fail');
+      expect(result.items[0]).toMatchObject({
+        question_content: { status: 'completed', admitted: false },
+      });
+    },
+  );
+
+  it('does not leak a remote-evidence candidate the review left unresolved', async () => {
+    // Judge corroborated the facts against the executed calls but could NOT clear
+    // originality (copy_safety 'unknown' + overall 'needs_review'). Because a
+    // non-empty packet WAS in context, this must not ride the source-free
+    // copyOnlyReview passthrough — the unreviewed candidate stays unadmitted.
+    const fixture = candidate();
+    const result = await validateLearningContent(fixture.content, {
+      db: testDb(),
+      runTaskFn: runner({
+        ...contentResult,
+        grounding: {
+          verdict: 'pass',
+          basis: 'executed_remote_evidence',
+          note: '检索输出佐证事实断言。',
+        },
+        summary_md: '事实由本轮检索佐证；与检索文本的原创性比对未裁决。',
+      }),
+      observedQuestion: fixture.observedQuestion,
+      remoteToolEvidence: remoteEvidencePacket(),
+    });
+    expect(result.verdict).toBe('fail');
+    expect(result.items[0]?.question_content).toMatchObject({
+      status: 'completed',
+      overall: 'needs_review',
+      admitted: false,
+    });
   });
 
   it.each([
