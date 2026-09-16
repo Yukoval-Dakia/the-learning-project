@@ -15,6 +15,10 @@ Run its checks with:
 pnpm test:opencode-worktree
 ```
 
+Dependency security sweeps for this subtree (`bun audit` against `plugins/bun.lock`)
+are recorded in `plugins/SECURITY.md`, including the scoped `overrides` in
+`plugins/package.json` and any residual-advisory exceptions.
+
 The delete path is intentionally fail-closed: callers must commit or discard changes explicitly
 before requesting cleanup. The plugin never stages files, creates snapshot commits, or invokes
 `git worktree remove` (forced or otherwise).
