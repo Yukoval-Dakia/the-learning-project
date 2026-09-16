@@ -15,7 +15,7 @@
   display: grid; place-items: center; width: 18px; height: 18px;
   border-radius: var(--r-pill); background: var(--coral-soft);
   color: var(--coral-ink); font-family: var(--font-mono);
-  font-size: 10px; font-weight: 600; letter-spacing: 0;
+  font-size: var(--fs-caption); font-weight: 600; letter-spacing: 0;
 }
 .layer-tag .lt-cn { font-family: var(--font-sans); letter-spacing: var(--ls-normal); text-transform: none; color: var(--ink-3); font-size: var(--fs-caption); }
 .layer-tag .lt-rule { flex: 1; height: 1px; background: var(--line); }
@@ -135,7 +135,7 @@
 }
 .mb.mb-soft .mb-point { background: var(--paper-raised); border-color: var(--ink-3); }
 .mb-scale { display: flex; margin-top: 6px; }
-.mb-tick { flex: 1; text-align: center; font: 500 10px/1 var(--font-sans); color: var(--ink-5); }
+.mb-tick { flex: 1; text-align: center; font: 500 var(--fs-caption)/1 var(--font-sans); color: var(--ink-5); }
 .mb-tick.on { color: var(--ink-2); font-weight: 600; }
 
 /* foot — next-step · 追溯 · 忽略 */

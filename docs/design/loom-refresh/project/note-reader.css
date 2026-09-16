@@ -33,7 +33,7 @@
 .note-rail-h { display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: var(--fs-meta); letter-spacing: var(--ls-wide); color: var(--ink-4); padding: 0 var(--s-2) var(--s-2); }
 .nol-item { display: flex; align-items: center; gap: var(--s-2); width: 100%; text-align: left; border: 0; background: transparent; color: var(--ink-3); border-radius: var(--r-2); padding: 6px var(--s-2); font-size: var(--fs-caption); cursor: pointer; line-height: 1.4; transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
 .nol-item:hover { background: var(--paper-sunk); color: var(--ink); }
-.nol-glyph { width: 18px; flex: none; text-align: center; font-size: 11px; color: var(--ink-4); border: 1px solid var(--line); border-radius: var(--r-1); line-height: 16px; height: 18px; }
+.nol-glyph { width: 18px; flex: none; text-align: center; font-size: var(--fs-caption); color: var(--ink-4); border: 1px solid var(--line); border-radius: var(--r-1); line-height: 16px; height: 18px; }
 .nol-h .nol-glyph { background: var(--coral-soft); color: var(--coral-ink); border-color: var(--coral-line); }
 .nol-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nol-h .nol-label { font-weight: 500; color: var(--ink-2); }
@@ -91,7 +91,7 @@
 .note-label-row:hover { background: var(--paper-sunk); }
 .note-label-row .wenyan { flex: 1; min-width: 0; font-size: var(--fs-caption); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .note-label-row.is-entry { background: var(--coral-soft); }
-.entry-tag { font-size: 10px; color: #fff; background: var(--coral); border-radius: var(--r-1); padding: 1px 6px; flex: none; }
+.entry-tag { font-size: var(--fs-caption); color: #fff; background: var(--coral); border-radius: var(--r-1); padding: 1px 6px; flex: none; }
 
 .note-versions { display: flex; flex-direction: column; }
 .note-ver { display: flex; gap: var(--s-2); padding-bottom: var(--s-3); position: relative; }
@@ -100,7 +100,7 @@
 .note-ver.is-current .note-ver-dot { background: var(--coral); }
 .note-ver-body { min-width: 0; flex: 1; }
 .note-ver-top { display: flex; align-items: center; gap: var(--s-2); }
-.note-ver-v { color: var(--ink-2); font-weight: 600; font-size: 12px; }
+.note-ver-v { color: var(--ink-2); font-weight: 600; font-size: var(--fs-caption); }
 .note-ver-note { font-size: var(--fs-meta); color: var(--ink-4); line-height: var(--lh-snug); margin-top: 1px; }
 
 /* mobile drawers (hidden on desktop) */
