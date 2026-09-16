@@ -27,6 +27,22 @@
 // REJECTED: their promotion is gated behind their own verify/owner flow, and
 // silently running them in a paper would bypass it.
 //
+// YUK-995 — residual check-then-act window closed: the draft admission reads
+// above run OUTSIDE the artifact transaction, so a question_draft dismiss
+// applier could commit its metadata.dismissed_at tombstone UPDATE in the gap
+// between the unlocked read and the paper INSERT — the paper would then carry
+// a user-rejected draft. The artifact tx re-reads every pre-check draft id
+// under SELECT ... FOR UPDATE (one row at a time in sorted id order — the
+// consistent-lock-ordering doctrine acquireSortedAdvisoryLocks /
+// lockPlacementSupplyScopes already follow — so two write_quiz calls with
+// overlapping draft sets serialize instead of deadlocking) and re-runs the
+// tombstone gate on the locked version. Under READ COMMITTED the locked read
+// waits on an in-flight tombstone UPDATE and returns the winner's committed
+// row: a dismiss that committed first (or was mid-flight) aborts the write;
+// a dismiss that arrives after our lock queues behind this tx — sequential-
+// equivalent to a dismiss landing after the paper was already written, which
+// is the designed pre-accept draft semantics.
+//
 // Artifact provenance: intent_source='quiz_gen' + tool_kind='quiz_gen' — the
 // quiz-skill precedent (§3 decision there): a first-class paper provenance
 // already on BOTH practice whitelists (practice-read.ts intent_source gate +
@@ -205,6 +221,53 @@ async function executeWriteQuiz(
         );
       }
     }
+
+    // YUK-995 — in-tx tombstone re-check under row lock (see header comment).
+    // The pre-tx admission read is unlocked; without this re-read a concurrent
+    // question_draft dismiss could commit its tombstone UPDATE in the
+    // check-then-act gap and the paper would silently carry a rejected draft.
+    // Lock order inside this tx: write_quiz advisory lock → question row locks
+    // (sorted). The dismiss path never takes the write_quiz advisory lock, and
+    // accept/promote takes proposal→learning→placement→row locks, so the row
+    // locks below never participate in a lock cycle.
+    if (draftIds.length > 0) {
+      const racedTombstoned: string[] = [];
+      for (const id of [...draftIds].sort()) {
+        const locked = (
+          await tx
+            .select({
+              draft_status: question.draft_status,
+              metadata: question.metadata,
+            })
+            .from(question)
+            .where(eq(question.id, id))
+            .for('update')
+            .limit(1)
+        )[0];
+        if (!locked) {
+          // No hard-delete path exists today — fail closed anyway if a future
+          // one removes the row between the pre-check and this lock.
+          throw new Error(
+            `write_quiz: question_id no longer exists (removed concurrently): [${id}]`,
+          );
+        }
+        // A row promoted draft→active by a racing accept is now a normal
+        // pooled question — admissible as-is. Only a STILL-draft row can
+        // carry the dismiss/archived tombstone (the dismiss UPDATE is
+        // conditioned on draft_status='draft').
+        if (locked.draft_status !== 'draft') continue;
+        const meta = locked.metadata as Record<string, unknown> | null;
+        if (meta?.dismissed_at != null || meta?.archived_at != null) racedTombstoned.push(id);
+      }
+      if (racedTombstoned.length > 0) {
+        // Same deterministic contract as the pre-tx gate: the paper is NOT
+        // written — the dismiss won the serialization.
+        throw new Error(
+          `write_quiz: draft question_id(s) are dismissed/archived (their proposal was rejected or the row was soft-deleted): [${racedTombstoned.join(',')}]`,
+        );
+      }
+    }
+
     await writeToolQuizArtifact(tx, {
       artifactId,
       title: input.title ?? '练习卷',
