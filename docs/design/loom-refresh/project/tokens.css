@@ -95,6 +95,10 @@
                  "STSong", "FangSong", serif;
 
   /* ── Type · Scale (mobile-first: nothing < 13px ever ships) */
+  /* YUK-340 (owner 2026-09-15): every former <13px declaration in this
+     bundle was written back to --fs-caption (14px). Do not reintroduce
+     sub-13px literals — if a slot genuinely needs to read smaller,
+     extend the scale with a named token instead.                  */
   --fs-meta:    13px;   /* internal-only tags, chips          */
   --fs-caption: 14px;   /* meta lines, helper copy · screen min */
   --fs-body:    15px;   /* default body                       */

@@ -27,7 +27,7 @@
 .ladder-stop.current .ladder-dot { background: var(--coral); border-color: var(--coral); box-shadow: 0 0 0 4px var(--coral-soft); }
 .ladder-stop.is-full .ladder-dot { border-radius: 3px; }
 .ladder-stop.current.is-full .ladder-dot { background: var(--hard-ink); border-color: var(--hard-ink); box-shadow: 0 0 0 4px var(--hard-soft); }
-.ladder-stop-l { font: 500 10px/1.2 var(--font-sans); color: var(--ink-4); text-align: center; white-space: nowrap; }
+.ladder-stop-l { font: 500 var(--fs-caption)/1.2 var(--font-sans); color: var(--ink-4); text-align: center; white-space: nowrap; }
 .ladder-stop.current .ladder-stop-l { color: var(--coral-ink); font-weight: 600; }
 .ladder-stop.is-full .ladder-stop-l { color: var(--ink-4); }
 .ladder-stop.current.is-full .ladder-stop-l { color: var(--hard-ink); }

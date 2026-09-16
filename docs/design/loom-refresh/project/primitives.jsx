@@ -81,7 +81,7 @@ function Ring({ pct, size = 64, stroke = 7, tone = 'coral', label, sub }) {
       <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', textAlign: 'center', lineHeight: 1 }}>
         <div>
           <div className="serif tnum" style={{ fontSize: size > 56 ? 18 : 15 }}>{Math.round(shown)}{label}</div>
-          {sub && <div className="meta" style={{ fontSize: 10, marginTop: 2 }}>{sub}</div>}
+          {sub && <div className="meta" style={{ fontSize: 14, marginTop: 2 }}>{sub}</div>}
         </div>
       </div>
     </div>

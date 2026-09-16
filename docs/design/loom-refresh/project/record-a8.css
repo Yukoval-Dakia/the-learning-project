@@ -16,7 +16,7 @@
 .ing-step.done:not(:last-child)::before { background: var(--good-line); }
 .ing-step-l { font: 500 var(--fs-caption)/1.3 var(--font-sans); color: var(--ink-2); }
 .ing-step.pending .ing-step-l { color: var(--ink-4); }
-.ing-step-meta { margin-left: auto; font: 400 11px/1 var(--font-mono); color: var(--ink-4); white-space: nowrap; }
+.ing-step-meta { margin-left: auto; font: 400 var(--fs-caption)/1 var(--font-mono); color: var(--ink-4); white-space: nowrap; }
 .ing-spin { width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--coral); border-top-color: transparent; animation: ho-spin .8s linear infinite; }
 .ing-reconnect { padding: var(--s-2) var(--s-4); border-top: 1px solid var(--line-soft); background: var(--paper); font: 400 var(--fs-meta)/1.4 var(--font-sans); color: var(--ink-4); display: flex; align-items: center; gap: 6px; }
 .ing-cancelled { padding: var(--s-4); display: flex; align-items: flex-start; gap: var(--s-2); }
@@ -48,14 +48,14 @@
 .ing-node:hover { border-color: var(--coral-line); }
 .ing-node .nm { font: 500 var(--fs-caption)/1.2 var(--font-sans); color: var(--ink); flex: 1; min-width: 0; }
 .ing-node .nm.wenyan { font-family: var(--font-wenyan, var(--font-serif)); }
-.ing-node-new { font: 600 10px/1 var(--font-sans); color: #fff; background: var(--coral); padding: 2px 6px; border-radius: var(--r-pill); }
-.ing-node-tag { font: 400 10px/1 var(--font-mono); color: var(--ink-4); }
+.ing-node-new { font: 600 var(--fs-caption)/1 var(--font-sans); color: #fff; background: var(--coral); padding: 2px 6px; border-radius: var(--r-pill); }
+.ing-node-tag { font: 400 var(--fs-caption)/1 var(--font-mono); color: var(--ink-4); }
 
 /* orchestrator proactive proposal (echoes A3) */
 .ing-proposal { display: flex; align-items: flex-start; gap: var(--s-2); padding: var(--s-4); background: var(--coral-soft); border: 1px solid var(--coral-line); border-radius: var(--r-3); }
 .ing-proposal .ico { color: var(--coral); flex: none; margin-top: 2px; }
 .ing-proposal-body { flex: 1; min-width: 0; }
-.ing-proposal-trigger { font: 600 10px/1 var(--font-mono); letter-spacing: var(--ls-wide); color: var(--coral-ink); text-transform: uppercase; }
+.ing-proposal-trigger { font: 600 var(--fs-caption)/1 var(--font-mono); letter-spacing: var(--ls-wide); color: var(--coral-ink); text-transform: uppercase; }
 .ing-proposal-text { font: 400 var(--fs-caption)/1.5 var(--font-sans); color: var(--ink-2); margin-top: 3px; text-wrap: pretty; }
 .ing-proposal-acts { display: flex; gap: var(--s-2); margin-top: var(--s-3); flex-wrap: wrap; }
 
