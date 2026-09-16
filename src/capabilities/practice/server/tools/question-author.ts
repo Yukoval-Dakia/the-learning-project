@@ -255,9 +255,15 @@ export async function runQuestionAuthor(
     // Runs after normalizeAuthorStructured so the error label carries the
     // derived prompt_md, and inside the try so a contract failure triggers
     // the same plan-failed cleanup as any other persist error.
+    // YUK-996 — pass runCtx.subjectProfile so the contract resolves the route
+    // the runtime invoker will dispatch for THIS subject (the row persists
+    // judge_kind_override = draft.judge_kind_override ?? null, so a null
+    // override goes through the profile-aware preferredRoutes ladder at judge
+    // time — the gate must resolve the same way).
     assertGeneratedQuestionHasJudgeContract(
       { ...draft, prompt_md: normalized.prompt_md },
       'question_author',
+      runCtx.subjectProfile,
     );
 
     const now = new Date();
