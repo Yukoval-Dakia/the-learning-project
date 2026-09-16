@@ -34,8 +34,8 @@
 .trend-spark.hold .dot { stroke: var(--ink-4); }
 .trend-spark.down .dot { stroke: var(--again); }
 .trend-spark .dot.last { fill: currentColor; }
-.trend-spark-cap { display: flex; justify-content: space-between; font: 500 10px/1 var(--font-sans); color: var(--ink-5); }
-.trend-spark-bands { font: 400 10px/1.3 var(--font-mono); color: var(--ink-5); text-align: center; }
+.trend-spark-cap { display: flex; justify-content: space-between; font: 500 var(--fs-caption)/1 var(--font-sans); color: var(--ink-5); }
+.trend-spark-bands { font: 400 var(--fs-caption)/1.3 var(--font-mono); color: var(--ink-5); text-align: center; }
 
 /* self-assess (open-ended) */
 .trend-self { border-color: var(--coral-line); background: color-mix(in oklch, var(--coral-soft) 45%, var(--paper-raised)); }
@@ -43,12 +43,12 @@
 .trend-self-reason { font: 400 var(--fs-meta)/1.5 var(--font-sans); color: var(--ink-3); margin: 6px 0 0; text-wrap: pretty; }
 .trend-selfseries { display: flex; align-items: flex-end; gap: 5px; margin-top: var(--s-2); }
 .trend-selftick { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; }
-.trend-selfmark { width: 100%; height: 26px; border-radius: var(--r-1); display: grid; place-items: center; font: 600 10px/1 var(--font-sans); }
+.trend-selfmark { width: 100%; height: 26px; border-radius: var(--r-1); display: grid; place-items: center; font: 600 var(--fs-caption)/1 var(--font-sans); }
 .trend-selfmark.进步 { background: var(--good-soft); color: var(--good-ink); border: 1px solid var(--good-line); }
 .trend-selfmark.持平 { background: var(--paper-sunk); color: var(--ink-3); border: 1px solid var(--line); }
 .trend-selfmark.退步 { background: var(--again-soft); color: var(--again-ink); border: 1px solid var(--again-line); }
 .trend-selfmark.none { background: transparent; border: 1px dashed var(--line); color: var(--ink-5); }
-.trend-selftick-x { font: 400 9px/1 var(--font-mono); color: var(--ink-5); }
+.trend-selftick-x { font: 400 var(--fs-caption)/1 var(--font-mono); color: var(--ink-5); }
 /* active check-in control */
 .selfcheck { display: flex; align-items: center; gap: var(--s-2); margin-top: var(--s-3); padding-top: var(--s-3); border-top: 1px dashed var(--coral-line); flex-wrap: wrap; }
 .selfcheck-l { font: 500 var(--fs-meta)/1 var(--font-sans); color: var(--ink-3); margin-right: auto; }

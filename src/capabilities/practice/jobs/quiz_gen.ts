@@ -270,7 +270,13 @@ async function defaultEnqueueQuizVerify(
 // the SHARED assertGeneratedQuestionHasJudgeContract (question-contract.ts) —
 // extracted for YUK-308 so the question_draft author flow enforces the same
 // contract; error strings keep their 'quiz_gen' origin label byte-identical.
-function parseOutput(text: string): { parsed: QuizGenOutputT; parseRepaired: boolean } {
+// YUK-996 — `subjectProfile` is the run's resolved profile (same value threaded
+// to the QuizGenTask call ctx): the judge contract resolves the route the
+// runtime invoker will dispatch for the PERSISTED row.
+function parseOutput(
+  text: string,
+  subjectProfile: SubjectProfile,
+): { parsed: QuizGenOutputT; parseRepaired: boolean } {
   // YUK-607 — 宽松提取（jsonrepair 修复带）：mimo 对长中文字符串题型（阅读理解材料）常产出
   // 字符串值内未转义引号的 JSON，旧硬解析在此整批阵亡。错误串格式与旧实现逐字节一致。
   let extracted: ReturnType<typeof parseJsonObjectLoose>;
@@ -290,7 +296,16 @@ function parseOutput(text: string): { parsed: QuizGenOutputT; parseRepaired: boo
     );
   }
   for (const q of parsed.data.questions) {
-    assertGeneratedQuestionHasJudgeContract(q, 'quiz_gen');
+    // The INSERT below persists judge_kind_override = defaultJudgeKindForQuestion(q)
+    // (never null), which short-circuits the runtime resolver to that pinned
+    // value — so the contract asserts on the persisted shape, not the raw model
+    // output (a missing model-declared override must NOT fall through to the
+    // profile ladder here; at judge time it won't).
+    assertGeneratedQuestionHasJudgeContract(
+      { ...q, judge_kind_override: defaultJudgeKindForQuestion(q) },
+      'quiz_gen',
+      subjectProfile,
+    );
   }
   // jsonrepair 级修复 = 内容完整性无法机证 → 上抛给 metadata（quiz_verify 晋级门隔离）。
   return { parsed: parsed.data, parseRepaired: extracted.repaired === 'jsonrepair' };
@@ -747,7 +762,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     if (params.placementAttempt) {
       await assertPlacementAttemptFence(db, params.placementAttempt);
     }
-    const { parsed, parseRepaired } = parseOutput(result.text);
+    const { parsed, parseRepaired } = parseOutput(result.text, subjectProfile);
     // ADR-0038 决定#2 — generation must REALIZE the accepted plan (the plan is
     // the contract; its constraints are the deterministic targets): same number
     // of questions, index-paired kind conformance. A deviating batch fails the

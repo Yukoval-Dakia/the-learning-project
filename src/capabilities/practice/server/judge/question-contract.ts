@@ -10,11 +10,7 @@ import { SemanticJudgeOutput, type SemanticJudgeOutputT } from '@/core/capabilit
 import { isLlmGradedAnswerKind } from '@/core/schema/answer-class';
 import { Rubric } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
-import {
-  type JudgeRoutableQuestion,
-  defaultJudgeKindForQuestion,
-  nonEmptyStrings,
-} from '@/core/schema/judge-routing';
+import { type JudgeRoutableQuestion, nonEmptyStrings } from '@/core/schema/judge-routing';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
@@ -61,21 +57,68 @@ export const UNIMPLEMENTED_JUDGE_ROUTES = {
  * §2/§5 — a draft that cannot be graded by its declared route is rejected
  * BEFORE persist, so downstream judges never see an ungradeable question).
  *
+ * YUK-996 — the route is resolved through the SAME profile-aware resolver the
+ * runtime invoker dispatches on (invoker.ts → resolveQuestionJudgeRoute), not
+ * the profile-free `defaultJudgeKindForQuestion` twin: under a subject profile
+ * whose preferredRoutes diverge from the default ladder the static twin
+ * misjudged — e.g. it rejected a derivation a 'steps'-preferring profile runs
+ * fine, and released a prose question the runtime falls back to a keyword
+ * judge with no keywords. `q.judge_kind_override` must carry the value the
+ * caller PERSISTS (quiz_gen pins `defaultJudgeKindForQuestion(q)` into the
+ * column; question_author stores the declared override or null), so the route
+ * resolved here is the route the invoker will actually dispatch.
+ *
  * `origin` is only an error-message label ('quiz_gen' / 'question_author');
  * `promptLabel` is a short excerpt for the same purpose.
  */
 export function assertGeneratedQuestionHasJudgeContract(
-  q: JudgeRoutableQuestion & { prompt_md?: string },
+  q: JudgeRoutableQuestion & {
+    prompt_md?: string;
+    choices_md?: string[] | null;
+    image_refs?: string[];
+    metadata?: Record<string, unknown> | null;
+  },
   origin: string,
+  subjectProfile: SubjectProfile,
 ): void {
   const promptLabel = q.prompt_md ?? '(no prompt_md)';
-  const route = defaultJudgeKindForQuestion(q);
+  const route = resolveQuestionJudgeRoute(
+    {
+      kind: q.kind,
+      rubric_json: q.rubric_json ?? null,
+      choices_md: q.choices_md ?? null,
+      judge_kind_override: q.judge_kind_override ?? null,
+      image_refs: q.image_refs,
+    },
+    subjectProfile,
+  );
   if (route === 'keyword' && nonEmptyStrings(q.rubric_json?.keywords).length === 0) {
     throw new Error(`${origin} question '${promptLabel}' uses keyword judge without keywords`);
   }
   if (route === 'semantic' && nonEmptyStrings(q.rubric_json?.required_points).length === 0) {
     throw new Error(
       `${origin} question '${promptLabel}' uses semantic judge without required_points`,
+    );
+  }
+  // The profile-resolved route can now land on the first-class routes the
+  // static twin never produced; gate on the same inputs their runners require
+  // or the persisted draft returns 'unsupported' on every attempt:
+  //   - steps@1 (runStepsJudge) short-circuits to 'unsupported' without
+  //     rubric_json.reference_solution;
+  //   - unit_dimension (runUnitDimensionJudge) returns 'unsupported' unless
+  //     metadata carries a numeric reference_value + string reference_unit.
+  if (route === 'steps' && q.rubric_json?.reference_solution == null) {
+    throw new Error(
+      `${origin} question '${promptLabel}' uses steps judge without reference_solution`,
+    );
+  }
+  if (
+    route === 'unit_dimension' &&
+    (typeof q.metadata?.reference_value !== 'number' ||
+      typeof q.metadata?.reference_unit !== 'string')
+  ) {
+    throw new Error(
+      `${origin} question '${promptLabel}' uses unit_dimension judge without metadata.reference_value/reference_unit`,
     );
   }
   // YUK-391: the retired hand-rolled check (PROSE_KINDS.has(kind) || kind ===
@@ -87,10 +130,10 @@ export function assertGeneratedQuestionHasJudgeContract(
   }
   // Defense-in-depth: a generated question must route to a judge the invoker can
   // actually run. The output schema already restricts judge_kind_override to
-  // exact|keyword|semantic and defaultJudgeKindForQuestion never derives a
-  // non-runnable route, so this only fires on an upstream contract change — but it
-  // guarantees we never persist a draft that would return `unsupported` at answer
-  // time.
+  // exact|keyword|semantic and resolveQuestionJudgeRoute never derives a
+  // non-runnable route from the preferredRoutes ladder, so this only fires on an
+  // upstream contract change — but it guarantees we never persist a draft that
+  // would return `unsupported` at answer time.
   if (!(RUNNABLE_ROUTES as ReadonlySet<string>).has(route)) {
     throw new Error(`${origin} question '${promptLabel}' routes to non-runnable judge '${route}'`);
   }
