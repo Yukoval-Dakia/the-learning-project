@@ -136,8 +136,10 @@ export type {
 } from './server/question-supply/jyeoo-spawn';
 export { spawnJyeooFetch as spawnPracticeJyeooFetch } from './server/question-supply/jyeoo-spawn';
 export {
+  JYEOO_BACKFILL_PER_QUESTION_MS,
   JYEOO_FETCH_ROUTE,
   JYEOO_SOURCE_HOST,
+  jyeooBackfillSpawnTimeoutMs,
   jyeooBinaryPath,
   jyeooSpawnMaxStderrBytes,
   jyeooSpawnMaxStdoutBytes,

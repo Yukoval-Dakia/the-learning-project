@@ -53,6 +53,13 @@ const server = {
   JUDGE_CALIBRATION_WINDOW_DAYS: optionalString,
   JUDGE_FALLBACK_PROVIDER: optionalString,
   JUDGE_PROVENANCE_SECRET: optionalString,
+  // YUK-998 — jyeoo-rs spawn 墙钟按 caller 语义区分：JYEOO_SPAWN_TIMEOUT_MS 是
+  // in-band caller（jyeoo_fetch_candidates tool / supply_execute executor 路由）的
+  // 反卡死上界（默认 120s；grade 路线 ~45s+/题串行，拉 N 题须显式抬到 ≥ N×90s）。
+  // JYEOO_BACKFILL_TIMEOUT_MS 只作用于 `pnpm jyeoo:backfill` 批量 caller（优先级高于
+  // JYEOO_SPAWN_TIMEOUT_MS；两者都未设时 backfill 默认 session_max×90s，--max 10 ⇒
+  // 900s）。解析与推荐值详见 jyeoo-supply-config.ts。
+  JYEOO_BACKFILL_TIMEOUT_MS: optionalString,
   JYEOO_DAILY_FETCH_BUDGET: optionalString,
   JYEOO_RS_BINARY: optionalString,
   JYEOO_SPAWN_MAX_STDERR_BYTES: optionalString,

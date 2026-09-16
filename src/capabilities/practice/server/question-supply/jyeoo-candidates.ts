@@ -198,6 +198,14 @@ export interface RunJyeooFetchCandidatesParams {
   input: JyeooFetchCandidatesInput;
   spawnJyeooFn?: SpawnJyeooFn;
   /**
+   * spawn 墙钟上界的 per-call 覆盖（YUK-998 caller 语义）。缺省走
+   * jyeooSpawnTimeoutMs()（JYEOO_SPAWN_TIMEOUT_MS，in-band 默认 120s——agent 工具与
+   * supply_execute executor 路由均不传本参数）。批量 caller（scripts/jyeoo-backfill.ts）
+   * 必须显式传 jyeooBackfillSpawnTimeoutMs(sessionMax) 的解析值：grade 路线内容拉取
+   * ~45s+/题串行，120s 默认会在中途 SIGKILL 丢整批，producer 侧已烧的付费拉题一并损失。
+   */
+  spawnTimeoutMs?: number;
+  /**
    * 运行归因（canary 事件的 session/task/causal 字段来源）。agent 工具透传 ToolContext；
    * executor/脚本调用方可省略（canary 照写，归因字段为 null）。
    */
@@ -575,7 +583,7 @@ async function runJyeooFetchCandidatesCore(
       spawnResult = await spawnJyeoo({
         binaryPath: jyeooBinaryPath(),
         args,
-        timeoutMs: jyeooSpawnTimeoutMs(),
+        timeoutMs: params.spawnTimeoutMs ?? jyeooSpawnTimeoutMs(),
         maxStdoutBytes: jyeooSpawnMaxStdoutBytes(),
         maxStderrBytes: jyeooSpawnMaxStderrBytes(),
       });
