@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Db } from '@/db/client';
-import { SubjectRegistry, resolveSubjectProfile } from '@/subjects/profile';
+import { type SubjectProfile, SubjectRegistry, resolveSubjectProfile } from '@/subjects/profile';
 import {
   type JudgeQuestionRow,
+  assertGeneratedQuestionHasJudgeContract,
   judgeAnswer,
   resolveQuestionJudgeRoute,
   runSemanticJudge,
@@ -780,5 +781,167 @@ describe('YUK-260: exact route forwards choices_md so letter↔text resolve', ()
     });
     expect(r.route).toBe('exact');
     expect(r.result.coarse_outcome).toBe('correct');
+  });
+});
+
+describe('YUK-996: assertGeneratedQuestionHasJudgeContract resolves the runtime route', () => {
+  // A custom subject profile whose preferredRoutes diverge from the static
+  // default ladder (core/schema/judge-routing.ts): it declares NEITHER
+  // 'semantic' nor 'steps', so prose/derivation questions the profile-free
+  // twin routed 'semantic' fall back to 'keyword' at runtime
+  // (resolveQuestionJudgeRoute's `isPreferred(semantic) ? 'semantic' :
+  // 'keyword'` tail).
+  const keywordOnlyProfile: SubjectProfile = {
+    ...resolveSubjectProfile('general'),
+    id: 'subj_keyword_first',
+    displayName: '关键词判分科',
+    judgePolicy: {
+      preferredRoutes: ['exact', 'keyword'],
+      notes: [],
+    },
+  };
+  // Builtins with non-default ladders: math prefers 'steps' (derivation → the
+  // runnable steps@1 judge, not the static twin's 'semantic'); physics prefers
+  // 'unit_dimension' (computation → runUnitDimensionJudge, which needs
+  // metadata.reference_value/reference_unit generated rows never carry).
+  const mathProfile = resolveSubjectProfile('math');
+  const physicsProfile = resolveSubjectProfile('physics');
+
+  const proseBase = {
+    kind: 'short_answer' as const,
+    prompt_md: '简述光合作用中光反应与暗反应如何衔接，并指出能量与物质的流向。',
+    choices_md: null,
+    judge_kind_override: null,
+  };
+
+  it('(a) does not mis-reject a question runnable under the profile (keyword fallback, keywords present)', () => {
+    const q = {
+      ...proseBase,
+      rubric_json: { criteria: [], keywords: ['光反应', '暗反应', 'ATP'] },
+    };
+    // The runtime route under this profile is 'keyword'…
+    expect(resolveQuestionJudgeRoute(q, keywordOnlyProfile)).toBe('keyword');
+    // …and the question carries keywords, so it IS gradeable. The static
+    // default route ('semantic') demanded required_points — a false reject.
+    expect(() =>
+      assertGeneratedQuestionHasJudgeContract(q, 'question_author', keywordOnlyProfile),
+    ).not.toThrow();
+  });
+
+  it('(b) does not mis-release a question the runtime falls back to an empty keyword judge', () => {
+    const q = {
+      ...proseBase,
+      rubric_json: { criteria: [], required_points: ['光反应产生 ATP 与 NADPH'] },
+    };
+    // required_points satisfied the static 'semantic' route — but the runtime
+    // resolves 'keyword' here and the keyword judge has nothing to match.
+    expect(resolveQuestionJudgeRoute(q, keywordOnlyProfile)).toBe('keyword');
+    expect(() =>
+      assertGeneratedQuestionHasJudgeContract(q, 'question_author', keywordOnlyProfile),
+    ).toThrow(/uses keyword judge without keywords/);
+  });
+
+  it('(b) derivation under the same keyword-only profile is rejected on the runtime route too', () => {
+    const q = {
+      kind: 'derivation' as const,
+      prompt_md: '证明：对任意实数 x，x² + 1 ≥ 2x，并说明取等条件。',
+      choices_md: null,
+      judge_kind_override: null,
+      rubric_json: { criteria: [], required_points: ['移项成平方'] },
+    };
+    // 'steps' not preferred → ladder falls to 'semantic'-preferred? No —
+    // neither steps nor semantic is declared, so runtime lands on 'keyword'.
+    expect(resolveQuestionJudgeRoute(q, keywordOnlyProfile)).toBe('keyword');
+    expect(() =>
+      assertGeneratedQuestionHasJudgeContract(q, 'question_author', keywordOnlyProfile),
+    ).toThrow(/uses keyword judge without keywords/);
+  });
+
+  it('(a) does not mis-reject a derivation carrying reference_solution under a steps-preferred profile', () => {
+    const q = {
+      kind: 'derivation' as const,
+      prompt_md: '由向心加速度定义推导 a = v²/r，写明极限过程。',
+      choices_md: null,
+      judge_kind_override: null,
+      rubric_json: {
+        criteria: [],
+        reference_solution: {
+          expected_signals: ['速度矢量差', '小角近似'],
+          final_answer: 'a = v²/r',
+          answer_equivalents: ['a = ω²r'],
+        },
+      },
+    };
+    // Runtime resolves 'steps' (math prefers it); runStepsJudge only needs
+    // reference_solution — the static twin forced required_points ('semantic').
+    expect(resolveQuestionJudgeRoute(q, mathProfile)).toBe('steps');
+    expect(() =>
+      assertGeneratedQuestionHasJudgeContract(q, 'question_author', mathProfile),
+    ).not.toThrow();
+  });
+
+  it('(b) does not mis-release a derivation missing reference_solution under a steps-preferred profile', () => {
+    const q = {
+      kind: 'derivation' as const,
+      prompt_md: '证明三角形内角和为 180°。',
+      choices_md: null,
+      judge_kind_override: null,
+      rubric_json: { criteria: [], required_points: ['作平行辅助线'] },
+    };
+    // Runtime resolves 'steps' and runStepsJudge short-circuits to
+    // 'unsupported' without rubric_json.reference_solution — the static twin
+    // ('semantic' + required_points) would have released it.
+    expect(resolveQuestionJudgeRoute(q, mathProfile)).toBe('steps');
+    expect(() =>
+      assertGeneratedQuestionHasJudgeContract(q, 'question_author', mathProfile),
+    ).toThrow(/uses steps judge without reference_solution/);
+  });
+
+  it('(b) does not mis-release a computation routed to unit_dimension without reference metadata', () => {
+    const q = {
+      kind: 'computation' as const,
+      prompt_md: '把 0.025 km/s 换算成 m/s，保留两位有效数字。',
+      choices_md: null,
+      judge_kind_override: null,
+      rubric_json: { criteria: [], keywords: ['换算', '有效数字'] },
+    };
+    // Runtime resolves 'unit_dimension'; runUnitDimensionJudge returns
+    // 'unsupported' without metadata.reference_value/reference_unit — the
+    // static twin ('keyword' + keywords present) would have released it.
+    expect(resolveQuestionJudgeRoute(q, physicsProfile)).toBe('unit_dimension');
+    expect(() =>
+      assertGeneratedQuestionHasJudgeContract(q, 'question_author', physicsProfile),
+    ).toThrow(/uses unit_dimension judge without metadata\.reference_value/);
+  });
+
+  it('keeps the legacy ladder verdicts under the default general profile (regression)', () => {
+    const general = resolveSubjectProfile('general');
+    // prose without required_points → still the 'semantic' contract failure.
+    expect(() =>
+      assertGeneratedQuestionHasJudgeContract(
+        { ...proseBase, rubric_json: { criteria: [] } },
+        'question_author',
+        general,
+      ),
+    ).toThrow(/uses semantic judge without required_points/);
+    // prose with required_points → still accepted.
+    expect(() =>
+      assertGeneratedQuestionHasJudgeContract(
+        {
+          ...proseBase,
+          rubric_json: { criteria: [], required_points: ['光反应供能'] },
+        },
+        'question_author',
+        general,
+      ),
+    ).not.toThrow();
+    // LLM-graded kind pinned to exact → still rejected.
+    expect(() =>
+      assertGeneratedQuestionHasJudgeContract(
+        { ...proseBase, judge_kind_override: 'exact', rubric_json: { criteria: [] } },
+        'question_author',
+        general,
+      ),
+    ).toThrow(/cannot use exact judge/);
   });
 });
