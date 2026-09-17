@@ -1,8 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-16：Linear sweep 第二批 8 lane 全部收口（PR #1406–#1413 → main 0406f1605，各 exact-head CI Gate 绿；YUK-997 为外部仓 jyeoo-rs git init 无本仓 PR）。09-06~09-08 时代 NOW 交付记录已滚存 `.remember/plan-now-archive-2026-09-16.md`。
+> Linear 是权威 tracker；更新于 2026-09-17：生产已部署 `c89079b68`（13 merge 上线）+ placement e2e 验收通过（YUK-571 Done）+ 顺手抓出的两个缺陷已修复合并（YUK-1003 #1415 / YUK-1004 #1416，main `09d3bc1cf`）。09-06~09-08 时代 NOW 交付记录已滚存 `.remember/plan-now-archive-2026-09-16.md`。
 
 ## NOW
+
+- 09-17 生产部署 `c89079b68`（sweep-2 全批 13 merge 上线：费用来源/图题/阈值/quiz 强化/judge 契约+路由诚实化/dismiss 竞态/spawn 超时/remote evidence basis/DegradeBanner/设计回写）。OrbStack 构建网络 flake → `--build-arg HTTP_PROXY=proxy.orb.internal:8305` 解法存档。回滚备份 `runtime-sweep2-image.override.yml.rollback-d9ca89e5`。
+- 09-17 placement e2e 真实 UI 验收全通（YUK-571 Done）：goal 创建→placement/start→8/8 题作答→θ̂/mastery 落库→/profile 起始档案非空。截图 `/tmp/placement-e2e/`。中途抓出两缺陷即修：YUK-1003 exact 判分「（C）选项+解析」reference 盲区（#1415，`extractAnswerHead` 裸答案头提取 + 全半角括号 choice 前缀 + `isExactCapableReference` 写路径 demote 守卫 + sourcing prompt 契约 + oracle 重生）；YUK-1004 `general` 兜底身份写成 knowledge.domain（#1416，根因=prompt 把 `profile.id` 注进 domain 示例；四层修复：prompt→valid_domains 契约、plan `resolveSelectableSubjectId`/`sanitizeProposedNodeDomain` 归一、accept 同谓词、写缝 alias canonicalise + 'general' 硬拒）。
+- 09-17 新立 Linear：YUK-1005（练习作答面题干裸渲染 `$...$`——PfSolo:588/PfPaper:769 没接 MathMarkdown，P2）、YUK-1006（learner-facing AI 文本未钉 locale，proposal reasoning 出英文，P3）、YUK-1007（统一配置面板：per-task 模型/系统偏好/语言，P4，owner 需求）。
 
 - 09-16 Linear sweep 第二批 8 lane 并行 Done：542 landing DegradeBanner（#1406，持久化 session warnings 落 A8 落地卡）；831 opencode advisories（#1408，bun 子树 scoped override @babel/core→7.29.7，audit 清零，SECURITY.md 可达性证据+复查 2026-10-28）；374 judge routes 诚实化（#1409，FUTURE→UNIMPLEMENTED_JUDGE_ROUTES，rubric/ai_flexible 无 runner 实证 fail-closed；顺手删除已达成 resolves_when 的 4 条 material_fsrs_state allowlist）；998 spawn 超时按 caller 拆分（#1410，in-band 120s 反卡死保留，backfill 三层回退 max×90s）；996 judge 契约走 subjectProfile 实际路由（#1411，修复双向误拒/误放）；340 设计回写（#1412，设计源+globals.css 351 处 <13px→var(--fs-caption)=14px；手稿体/info-line 已由 #1284/#1293 落地，本 PR 验证收口）；995 write_quiz↔dismiss 竞态（#1413，artifact tx 内 sorted FOR UPDATE 重读 tombstone）；993 remote evidence basis（#1407，executed_remote_evidence→判官词表+schema enum+gate 条件 remote_tool_evidence 非空且≥1 条带 output，pool 侧 fail-closed by non-consumption 审计）。
 - 09-16 过程事件：7 个 lane agent 曾被 connection error 批量杀掉，993/374 残留 diff 经审查续作成功，其余重发；GitHub 一度丢 #1407 的 pull_request 事件（空 commit retrigger 恢复）；main 上 material_fsrs_state allowlist 09-15 到期曾致全分支 CI 红——已由 #1409 删除条目（写路径 src/server/fsrs/state.ts 实证存在，非续期）。

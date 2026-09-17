@@ -1,3 +1,13 @@
+# 当前 handoff — 2026-09-17，部署 + placement e2e 验收 + 双缺陷修复收口
+
+- 生产已部署 `the-learning-project-app:c89079b68`（migrate exit 0、app/worker healthy、health200、cron 29 条在位）。main 领先生产的 13 个 sweep merge 全部上线。回滚：老镜像 d9ca89e5 保留 + override 备份 `runtime-sweep2-image.override.yml.rollback-d9ca89e5`。
+- YUK-571 Done：真实 UI placement e2e 全通（onboarding→goal→8/8 题→θ̂/mastery→/profile）。截图 `/tmp/placement-e2e/`（01-today→05-profile）。
+- e2e 抓出并已修两缺陷：YUK-1003（#1415 → `2611b1e4`）exact 判分 `（C）选项+解析` 型 reference 盲区——`extractAnswerHead`/`isExactCapableReference` helper 落 `judge-routing.ts`，两个同构 exact.ts 同步，insertSourcedDraft 对不可胜 reference 的 exact override demote 到派生路由 + metadata 留痕；YUK-1004（#1416 → `09d3bc1cf`）`general` 写成 knowledge.domain——根因是 3a prompt 把 general profile.id 注进 domain 示例被 LLM 照抄；四层防御（prompt valid_domains 契约 / plan sanitize / accept 同谓词 / 写缝硬拒 'general'）。生产 6 个污染节点已手工 retag `general→math`（before-state 已记录）。
+- 新立票：YUK-1005（PfSolo:588 / PfPaper:769 题干 `{q.prompt_md}` 裸渲染，没接现成 MathMarkdown——KaTeX 懒加载组件已有，纯接线 bug）；YUK-1006（learner-facing AI 文本未钉 locale——proposal reasoning 出英文，需统一输出语言约定）；YUK-1007（owner 需求：统一配置面板——per-task 模型/系统偏好/语言，需 design preflight，P4）。
+- OrbStack 构建网络教训：corepack pnpm/better-sqlite3 prebuild ECONNRESET → `--build-arg HTTP_PROXY/HTTPS_PROXY=http://proxy.orb.internal:8305` 走宿主代理一把过（构建日志 `/tmp/c89079b68-build4.log`）。
+- 过程教训：prompt 改动后本机 scoped 测试若没覆盖 `registry.test.ts`，oracle hash 漂移要到 CI 才爆——prompt 触碰即跑 `pnpm gen:prompt-hashes` 再开 PR。
+- Linear 状态：571/1003/1004 Done（Closes 回链自动同步）；1005/1006/1007 Backlog 待排。main=`09d3bc1cf`，本批两 lane worktree/远端分支已清，本地分支按仓惯例保留。
+
 # 当前 handoff — 2026-09-16，Linear sweep 第二批 8 lane 全收口
 
 - 8 lane 全 Done：YUK-542（#1406 landing DegradeBanner）、YUK-831（#1408 opencode @babel/core scoped override 清零 + SECURITY.md 例外文档）、YUK-374（#1409 FUTURE→UNIMPLEMENTED_JUDGE_ROUTES 诚实化）、YUK-998（#1410 spawn 超时 caller 语义拆分 + JYEOO_BACKFILL_TIMEOUT_MS）、YUK-996（#1411 judge 契约走 subjectProfile 路由）、YUK-340（#1412 设计源/globals.css 351 处 <13px→14px）、YUK-995（#1413 write_quiz artifact tx FOR UPDATE tombstone）、YUK-993（#1407 executed_remote_evidence basis LIGHT 方案）。YUK-997 jyeoo-rs git init baseline `8d1f8d0`（外部仓，无本仓 PR）。
