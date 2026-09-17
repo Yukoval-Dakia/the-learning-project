@@ -8,6 +8,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
+import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
@@ -766,7 +767,11 @@ export function PfPaper({
             {cur.question_id.slice(0, 12)} · {pos + 1}/{slots.length}
           </span>
         </div>
-        <div className="pfs-stem">{cur.question.prompt_md}</div>
+        {/* YUK-1005 — same MathMarkdown convention as PfSolo; notation is resolved
+            per-question server-side on the paper face (see paper-detail.ts). */}
+        <MathMarkdown notation={cur.question.notation} className="pfs-stem">
+          {cur.question.prompt_md}
+        </MathMarkdown>
 
         {isChoice ? (
           <div className="pfs-opts" role="radiogroup" aria-label="选项">
@@ -784,7 +789,9 @@ export function PfPaper({
                 onClick={() => setAnswer(c)}
               >
                 <span className="k mono">{String.fromCharCode(65 + i)}</span>
-                <span className="t">{c}</span>
+                <span className="t">
+                  <MathMarkdown notation={cur.question.notation}>{c}</MathMarkdown>
+                </span>
               </button>
             ))}
           </div>

@@ -7,6 +7,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { ApiError } from '@/ui/lib/api';
+import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { ErrorState } from '@/ui/primitives/ErrorState';
@@ -89,13 +90,19 @@ export function PfrQRow({
           {visible?.feedback_md && (
             <div className="pfr-q-row">
               <span className="cmp-label">AI 反馈</span>
-              {visible.feedback_md}
+              {/* YUK-1005 — markdown+KaTeX for judge feedback / reference answer;
+                  the collapsed header stem stays a raw-text preview strip. */}
+              <MathMarkdown notation={slot.question.notation}>
+                {visible.feedback_md}
+              </MathMarkdown>
             </div>
           )}
           {visible?.reference_md && (
             <div className="pfr-q-row">
               <span className="cmp-label">参考</span>
-              {visible.reference_md}
+              <MathMarkdown notation={slot.question.notation}>
+                {visible.reference_md}
+              </MathMarkdown>
             </div>
           )}
           {appealable && verdict !== null && verdict !== 'good' && (

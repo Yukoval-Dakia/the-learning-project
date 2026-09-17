@@ -23,6 +23,7 @@ import { createPortal } from 'react-dom';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { AttemptTimeline } from '@/ui/components/AttemptTimeline';
 import { ApiError } from '@/ui/lib/api';
+import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
 import { IconBtn } from '@/ui/primitives/IconBtn';
@@ -585,7 +586,12 @@ export function PfSolo({
           <span className="meta mono">{q.id.slice(0, 12)}</span>
         </div>
 
-        <div className="pfs-stem">{q.prompt_md}</div>
+        {/* YUK-1005 — stem/options render through the shared markdown+KaTeX
+            pipeline (same convention as QuestionsPage/DraftReviewPage); notation
+            comes from the server-resolved subject projection, never assumed. */}
+        <MathMarkdown notation={q.notation} className="pfs-stem">
+          {q.prompt_md}
+        </MathMarkdown>
 
         {isChoice ? (
           <div className="pfs-opts" role="radiogroup" aria-label="选项">
@@ -615,7 +621,9 @@ export function PfSolo({
                   onClick={() => setSel(i)}
                 >
                   <span className="k mono">{String.fromCharCode(65 + i)}</span>
-                  <span className="t">{c}</span>
+                  <span className="t">
+                    <MathMarkdown notation={q.notation}>{c}</MathMarkdown>
+                  </span>
                 </button>
               );
             })}
@@ -732,11 +740,13 @@ export function PfSolo({
                 judge · {displayedPreview.route} · {Math.round(displayedPreview.confidence * 100)}%
               </span>
             </div>
-            <p className="pfs-fb-text">{displayedPreview.feedback_md}</p>
+            <MathMarkdown notation={q.notation} className="pfs-fb-text">
+              {displayedPreview.feedback_md ?? ''}
+            </MathMarkdown>
             {q.reference_md && (
               <div className="pfs-fb-ref">
                 <span className="cmp-label">参考</span>
-                {q.reference_md}
+                <MathMarkdown notation={q.notation}>{q.reference_md}</MathMarkdown>
               </div>
             )}
 

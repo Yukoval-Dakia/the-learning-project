@@ -167,6 +167,72 @@ describe('executeStoreSourcedQuestion — insert path', () => {
     expect(canary).toHaveLength(1);
   });
 
+  // YUK-1005 — seam-level regression: MathJye choice markup must be normalized at
+  // insertSourcedDraft so stored rows never leak jyeoo table/sprite HTML.
+  it('sanitizes MathJye choice markup at the ingest seam and flags the row', async () => {
+    await seedTree();
+    const mathJyeRadical =
+      '<span dealflag="1" class="MathJye" mathtag="math">' +
+      '<table cellspacing="-1" cellpadding="-1"><tr>' +
+      '<td style="font-size: 0px"><div hassize="7">' +
+      '<div style="width:6px;background: url(\'http://img.jyeoo.net/images/formula/part/8730U.png\') repeat-y; height: 1px;overflow: hidden" muststretch="v"></div>' +
+      '<div style="width:6px;background: url(\'http://img.jyeoo.net/images/formula/part/8730D.png\') no-repeat; height: 7px; overflow: hidden"></div>' +
+      '</div></td>' +
+      '<td style="padding:0;padding-left: 2px; border-top: 1px solid black;line-height:normal;padding-top:1px">ab</td>' +
+      '</tr></table></span>';
+    const output = await executeStoreSourcedQuestion(
+      { db, taskRunId: 'test-run' },
+      inputOf(
+        await candidateOf(
+          sourced({
+            kind: 'choice',
+            prompt_md: '已知a&gt;0，b&gt;0，若a+b=4，则（　　）',
+            reference_md: '【答案】B',
+            choices_md: [
+              'A．a<sup>2</sup>+b<sup>2</sup>有最小值',
+              `B．${mathJyeRadical}有最小值`,
+              'C．ab有最大值',
+              'D．a+b有最大值',
+            ],
+          }),
+        ),
+      ),
+      fakeEnqueue([]),
+    );
+    expect(output.status).toBe('inserted');
+    if (output.status !== 'inserted') return;
+
+    const [row] = await db.select().from(question).where(eq(question.id, output.question_id));
+    if (!row) throw new Error('sanitized row missing');
+    expect(row.prompt_md).toBe('已知a>0，b>0，若a+b=4，则（　　）');
+    expect(row.choices_md).toEqual([
+      'A．a²+b²有最小值',
+      'B．$\\sqrt{ab}$有最小值',
+      'C．ab有最大值',
+      'D．a+b有最大值',
+    ]);
+    expect(JSON.stringify(row.choices_md)).not.toMatch(/MathJye|img\.jyeoo\.net|<table|<sup/);
+    const metadata = row.metadata as Record<string, unknown>;
+    expect(metadata.sourced_markup_sanitized).toBe(true);
+    // Raw producer markup stays recoverable in provenance, not learner fields.
+    expect(String(metadata.web_sourced)).toBeTruthy();
+  });
+
+  it('leaves clean markdown unflagged when nothing needed sanitizing', async () => {
+    await seedTree();
+    const output = await executeStoreSourcedQuestion(
+      { db, taskRunId: 'test-run' },
+      inputOf(await candidateOf(sourced())),
+      fakeEnqueue([]),
+    );
+    expect(output.status).toBe('inserted');
+    if (output.status !== 'inserted') return;
+    const [row] = await db.select().from(question).where(eq(question.id, output.question_id));
+    if (!row) throw new Error('row missing');
+    const metadata = row.metadata as Record<string, unknown>;
+    expect(metadata.sourced_markup_sanitized).toBeUndefined();
+  });
+
   it('sourcing_web route: skips the jyeoo host gate and stamps web-route provenance', async () => {
     await seedTree();
     const webCandidate = await candidateOf({

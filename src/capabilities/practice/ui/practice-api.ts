@@ -484,6 +484,8 @@ export interface PaperSlot {
     id: string;
     kind: string;
     prompt_md: string;
+    /** Server-resolved render notation for MathMarkdown (see PaperQuestionFace). */
+    notation: string | null;
     choices_md: string[] | null;
     difficulty: number;
   };

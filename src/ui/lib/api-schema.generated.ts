@@ -17702,6 +17702,7 @@ export interface operations {
                                     id: string;
                                     image_refs: string[];
                                     kind: string;
+                                    notation: string | null;
                                     parent_question_id: string | null;
                                     part_index: number | null;
                                     prompt_md: string;
@@ -19362,6 +19363,7 @@ export interface operations {
                                     id: string;
                                     image_refs: string[];
                                     kind: string;
+                                    notation: string | null;
                                     parent_question_id: string | null;
                                     part_index: number | null;
                                     prompt_md: string;

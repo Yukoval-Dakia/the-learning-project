@@ -30,6 +30,7 @@ import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import type { Tx } from '@/db/client';
 import { question } from '@/db/schema';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { sanitizeSourcedMarkup } from '@/server/questions/sourced-markup';
 
 // question.created_by column type (AgentRef jsonb, notNull) — single-sourced from the
 // schema so the two producers' created_by refs are typed identically.
@@ -133,16 +134,28 @@ export async function insertSourcedDraft(
     extract: q.extract,
   };
 
+  // YUK-1005 — normalize source markup (jyeoo MathJye tables / sprite radicals /
+  // raw <sup>) to markdown+LaTeX at the ingest seam, so stored rows render
+  // through MathMarkdown instead of leaking HTML/image-URL soup. The transform
+  // is idempotent; flag it only when it actually changed something.
+  const promptMd = sanitizeSourcedMarkup(q.prompt_md);
+  const referenceMd = sanitizeSourcedMarkup(q.reference_md);
+  const choicesMd = q.choices_md ? q.choices_md.map(sanitizeSourcedMarkup) : null;
+  const markupSanitized =
+    promptMd !== q.prompt_md ||
+    referenceMd !== q.reference_md ||
+    (q.choices_md ?? []).some((c, i) => c !== choicesMd?.[i]);
+
   // Row WITHOUT draft_status — it is added at each .values() call site below so
   // audit:draft-status can statically prove the gate on both the original + retry INSERT.
   const questionRow = withAnswerClass({
     id,
     kind: q.kind,
     source: 'web_sourced',
-    prompt_md: q.prompt_md,
-    reference_md: q.reference_md,
+    prompt_md: promptMd,
+    reference_md: referenceMd,
     rubric_json: q.rubric_json ?? null,
-    choices_md: q.choices_md ?? null,
+    choices_md: choicesMd,
     judge_kind_override: judgeKind,
     knowledge_ids: knowledgeIds,
     difficulty: q.difficulty,
@@ -156,6 +169,7 @@ export async function insertSourcedDraft(
       source_ref_kind: 'url',
       difficulty_evidence: difficultyEvidence,
       ...(judgeKindDemotion ? { judge_kind_override_demoted: judgeKindDemotion } : {}),
+      ...(markupSanitized ? { sourced_markup_sanitized: true } : {}),
       ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
     },
     created_at: now,

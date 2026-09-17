@@ -127,6 +127,7 @@ const PaperQuestionFaceSchema = z.object({
   id: z.string(),
   kind: z.string(),
   prompt_md: z.string(),
+  notation: z.string().nullable(),
   choices_md: z.array(z.string()).nullable(),
   difficulty: z.number(),
   parent_question_id: z.string().nullable(),
