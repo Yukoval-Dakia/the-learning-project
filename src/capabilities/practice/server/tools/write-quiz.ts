@@ -43,6 +43,22 @@
 // equivalent to a dismiss landing after the paper was already written, which
 // is the designed pre-accept draft semantics.
 //
+// YUK-1002 — two same-shape residuals closed on top of 995:
+//  (a) archive ↔ write_quiz: 995 locked only pre-check DRAFT ids (the dismiss
+//      UPDATE only touches drafts), but an ACTIVE row can be re-drafted +
+//      archived_at-tombstoned by archiveQuestion inside the same gap → the
+//      lock set is now ALL referenced question ids, and the locked re-check
+//      re-runs the full admission invariant (tombstone + coverage), not just
+//      the tombstone gate.
+//  (b) retract ↔ write_quiz: the pending-proposal admission branch folded the
+//      inbox UNLOCKED; a retract writes a fresh `correct` event — no row-level
+//      marker on the question — hollowing out the admission mid-flight. The
+//      relied-on proposal ids take the shared `proposal_decision:` advisory
+//      lock (the same lock accept/dismiss/retract serialize on) BEFORE the
+//      question row locks — lifecycle lock order is decision → row, so taking
+//      rows first would deadlock — then the pending set is re-folded inside
+//      the tx (READ COMMITTED sees the winner's state post-lock).
+//
 // Artifact provenance: intent_source='quiz_gen' + tool_kind='quiz_gen' — the
 // quiz-skill precedent (§3 decision there): a first-class paper provenance
 // already on BOTH practice whitelists (practice-read.ts intent_source gate +
@@ -63,9 +79,11 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
+import type { Db, Tx } from '@/db/client';
 import { artifact, question } from '@/db/schema';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
+import { acquireProposalDecisionLock } from '@/server/proposals/applier-helpers';
 import { writeToolQuizArtifact } from './tool-quiz-core';
 
 const WriteQuizInputSchema = z.object({
@@ -83,6 +101,25 @@ const WriteQuizOutputSchema = z.object({
   practice_path: z.string(),
 });
 type WriteQuizOutput = z.infer<typeof WriteQuizOutputSchema>;
+
+/** Fold the pending inbox into [covered question_id, proposal_id] pairs for
+ *  question_draft proposals. Called pre-check AND inside the artifact tx
+ *  (post-decision-lock) — the two folds must share one extraction so the
+ *  in-tx re-check observes the same coverage semantics. */
+async function pendingQuestionDraftTargets(db: Db | Tx): Promise<Array<[string, string]>> {
+  const pending = await listProposalInboxRows(db, { status: 'pending' });
+  const pairs: Array<[string, string]> = [];
+  for (const p of pending) {
+    if (p.kind !== 'question_draft') continue;
+    const change = p.payload.proposed_change;
+    const qid =
+      change && typeof change === 'object' && !Array.isArray(change)
+        ? (change as Record<string, unknown>).question_id
+        : undefined;
+    if (typeof qid === 'string') pairs.push([qid, p.id]);
+  }
+  return pairs;
+}
 
 async function executeWriteQuiz(
   ctx: ToolContext,
@@ -131,18 +168,16 @@ async function executeWriteQuiz(
   // One batched read of pending question_draft proposals (the spec's second
   // admission branch). pendingProposalWithCooldown exists but keys on
   // cooldown_key, not the target question — the inbox list + proposed_change
-  // question_id set is the equivalent-pending check.
+  // question_id set is the equivalent-pending check. The proposal ids covering
+  // OUR drafts are captured alongside: the artifact tx re-locks them on the
+  // shared proposal_decision advisory lock before re-folding (YUK-1002 (b)).
   const pendingDraftTargets = new Set<string>();
+  const reliedProposalIds = new Set<string>();
   if (draftIds.some((id) => byId.get(id)?.source !== 'copilot_authored')) {
-    const pending = await listProposalInboxRows(ctx.db, { status: 'pending' });
-    for (const p of pending) {
-      if (p.kind !== 'question_draft') continue;
-      const change = p.payload.proposed_change;
-      const qid =
-        change && typeof change === 'object' && !Array.isArray(change)
-          ? (change as Record<string, unknown>).question_id
-          : undefined;
-      if (typeof qid === 'string') pendingDraftTargets.add(qid);
+    const pending = await pendingQuestionDraftTargets(ctx.db);
+    for (const [qid, pid] of pending) {
+      pendingDraftTargets.add(qid);
+      if (byId.has(qid) && draftIds.includes(qid)) reliedProposalIds.add(pid);
     }
   }
   const nonCopilotDrafts = draftIds.filter((id) => {
@@ -222,50 +257,71 @@ async function executeWriteQuiz(
       }
     }
 
-    // YUK-995 — in-tx tombstone re-check under row lock (see header comment).
-    // The pre-tx admission read is unlocked; without this re-read a concurrent
-    // question_draft dismiss could commit its tombstone UPDATE in the
-    // check-then-act gap and the paper would silently carry a rejected draft.
-    // Lock order inside this tx: write_quiz advisory lock → question row locks
-    // (sorted). The dismiss path never takes the write_quiz advisory lock, and
-    // accept/promote takes proposal→learning→placement→row locks, so the row
-    // locks below never participate in a lock cycle.
-    if (draftIds.length > 0) {
-      const racedTombstoned: string[] = [];
-      for (const id of [...draftIds].sort()) {
-        const locked = (
-          await tx
-            .select({
-              draft_status: question.draft_status,
-              metadata: question.metadata,
-            })
-            .from(question)
-            .where(eq(question.id, id))
-            .for('update')
-            .limit(1)
-        )[0];
-        if (!locked) {
-          // No hard-delete path exists today — fail closed anyway if a future
-          // one removes the row between the pre-check and this lock.
-          throw new Error(
-            `write_quiz: question_id no longer exists (removed concurrently): [${id}]`,
-          );
-        }
-        // A row promoted draft→active by a racing accept is now a normal
-        // pooled question — admissible as-is. Only a STILL-draft row can
-        // carry the dismiss/archived tombstone (the dismiss UPDATE is
-        // conditioned on draft_status='draft').
-        if (locked.draft_status !== 'draft') continue;
-        const meta = locked.metadata as Record<string, unknown> | null;
-        if (meta?.dismissed_at != null || meta?.archived_at != null) racedTombstoned.push(id);
+    // YUK-995/1002 — in-tx admission re-check under locks (see header comment).
+    // Lock order: write_quiz advisory → proposal_decision (sorted) → question
+    // rows (sorted). Lifecycle paths (accept/dismiss/retract) take the decision
+    // lock FIRST then update question rows — matching that prefix order keeps
+    // this tx out of any lock cycle.
+    if (reliedProposalIds.size > 0) {
+      for (const pid of [...reliedProposalIds].sort()) {
+        await acquireProposalDecisionLock(tx, pid);
       }
-      if (racedTombstoned.length > 0) {
-        // Same deterministic contract as the pre-tx gate: the paper is NOT
-        // written — the dismiss won the serialization.
-        throw new Error(
-          `write_quiz: draft question_id(s) are dismissed/archived (their proposal was rejected or the row was soft-deleted): [${racedTombstoned.join(',')}]`,
-        );
+    }
+    // Re-fold pending coverage post-lock: a retract that committed (or was
+    // mid-flight) before our decision-lock grant is now visible; a retract
+    // arriving later queues behind this tx — sequential-equivalent to landing
+    // after the paper was written.
+    const lockedDraftCoverage = new Set<string>();
+    if (reliedProposalIds.size > 0) {
+      for (const [qid] of await pendingQuestionDraftTargets(tx)) {
+        lockedDraftCoverage.add(qid);
       }
+    }
+
+    // Lock ALL referenced ids — not just pre-check drafts (YUK-1002 (a)): an
+    // active row can be re-drafted + archived_at-tombstoned by archiveQuestion
+    // in the same check-then-act gap.
+    const racedTombstoned: string[] = [];
+    const racedUncovered: string[] = [];
+    for (const id of [...questionIds].sort()) {
+      const locked = (
+        await tx
+          .select({
+            draft_status: question.draft_status,
+            source: question.source,
+            metadata: question.metadata,
+          })
+          .from(question)
+          .where(eq(question.id, id))
+          .for('update')
+          .limit(1)
+      )[0];
+      if (!locked) {
+        // No hard-delete path exists today — fail closed anyway if a future
+        // one removes the row between the pre-check and this lock.
+        throw new Error(`write_quiz: question_id no longer exists (removed concurrently): [${id}]`);
+      }
+      // A row promoted draft→active by a racing accept is now a normal
+      // pooled question — admissible as-is. Only a STILL-draft row can
+      // carry the dismiss/archived tombstone or lose proposal coverage.
+      if (locked.draft_status !== 'draft') continue;
+      const meta = locked.metadata as Record<string, unknown> | null;
+      if (meta?.dismissed_at != null || meta?.archived_at != null) {
+        racedTombstoned.push(id);
+      } else if (locked.source !== 'copilot_authored' && !lockedDraftCoverage.has(id)) {
+        racedUncovered.push(id);
+      }
+    }
+    // Same deterministic contracts as the pre-tx gates, same check order.
+    if (racedTombstoned.length > 0) {
+      throw new Error(
+        `write_quiz: draft question_id(s) are dismissed/archived (their proposal was rejected or the row was soft-deleted): [${racedTombstoned.join(',')}]`,
+      );
+    }
+    if (racedUncovered.length > 0) {
+      throw new Error(
+        `write_quiz: draft question_id(s) are neither copilot-authored drafts nor covered by a pending question_draft proposal (only author_question drafts may enter a paper pre-accept): [${racedUncovered.join(',')}]`,
+      );
     }
 
     await writeToolQuizArtifact(tx, {
