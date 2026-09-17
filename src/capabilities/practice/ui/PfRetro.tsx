@@ -92,17 +92,13 @@ export function PfrQRow({
               <span className="cmp-label">AI 反馈</span>
               {/* YUK-1005 — markdown+KaTeX for judge feedback / reference answer;
                   the collapsed header stem stays a raw-text preview strip. */}
-              <MathMarkdown notation={slot.question.notation}>
-                {visible.feedback_md}
-              </MathMarkdown>
+              <MathMarkdown notation={slot.question.notation}>{visible.feedback_md}</MathMarkdown>
             </div>
           )}
           {visible?.reference_md && (
             <div className="pfr-q-row">
               <span className="cmp-label">参考</span>
-              <MathMarkdown notation={slot.question.notation}>
-                {visible.reference_md}
-              </MathMarkdown>
+              <MathMarkdown notation={slot.question.notation}>{visible.reference_md}</MathMarkdown>
             </div>
           )}
           {appealable && verdict !== null && verdict !== 'good' && (

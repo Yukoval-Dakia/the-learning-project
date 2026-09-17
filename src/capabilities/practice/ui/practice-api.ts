@@ -100,7 +100,7 @@ export const recomposeStream = (): Promise<StreamView & { added: number }> =>
 export type QuestionFullDetail = ApiOperationJsonResponse<'getQuestion'>;
 export type QuestionDetail = Pick<
   QuestionFullDetail,
-  'id' | 'kind' | 'prompt_md' | 'reference_md' | 'choices_md' | 'difficulty' | 'labels'
+  'id' | 'kind' | 'prompt_md' | 'reference_md' | 'choices_md' | 'difficulty' | 'labels' | 'notation'
 >;
 
 export const getQuestion = (id: string): Promise<QuestionDetail> =>

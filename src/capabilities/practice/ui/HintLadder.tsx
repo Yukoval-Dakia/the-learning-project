@@ -15,6 +15,7 @@
 
 import { useEffect, useState } from 'react';
 
+import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 
 import {
@@ -162,7 +163,7 @@ export function HintLadder({
       {/* 已揭示的 hint 阶卡（H0-H4，仅到 reached）。 */}
       {HINT_LADDER.map((s, i) =>
         !s.isFull && i <= reached && hints[i] ? (
-          <HintStageCard key={s.key} stage={s} body={hints[i]} />
+          <HintStageCard key={s.key} stage={s} body={hints[i]} notation={question.notation} />
         ) : null,
       )}
 
@@ -176,7 +177,11 @@ export function HintLadder({
               非独立完成
             </span>
           </div>
-          <div className="ladder-body">{question.reference_md}</div>
+          <div className="ladder-body">
+            {/* YUK-1005 — H5 full solution is stored reference_md; render through
+                markdown+KaTeX like the rest of the question faces. */}
+            <MathMarkdown notation={question.notation}>{question.reference_md ?? ''}</MathMarkdown>
+          </div>
         </div>
       )}
 
@@ -311,7 +316,15 @@ export function HintLadder({
   );
 }
 
-function HintStageCard({ stage, body }: { stage: HintStage; body: string }) {
+function HintStageCard({
+  stage,
+  body,
+  notation,
+}: {
+  stage: HintStage;
+  body: string;
+  notation: string | null;
+}) {
   return (
     <div className="ladder-card">
       <div className="ladder-card-top">
@@ -320,7 +333,10 @@ function HintStageCard({ stage, body }: { stage: HintStage; body: string }) {
         </span>
         <span className="ladder-gives">{stage.label}</span>
       </div>
-      <div className="ladder-body">{body}</div>
+      <div className="ladder-body">
+        {/* AI-generated hint text can carry the same $…$ notation as the stem. */}
+        <MathMarkdown notation={notation}>{body}</MathMarkdown>
+      </div>
     </div>
   );
 }
