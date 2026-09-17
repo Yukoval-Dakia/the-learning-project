@@ -23,7 +23,12 @@ import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeLearningItemProposal } from '@/kernel/proposals/producers';
-import { resolveSubjectProfile } from '@/subjects/profile';
+import {
+  getDefaultSubjectRegistry,
+  resolveSelectableSubjectId,
+  resolveSubjectProfile,
+  sanitizeProposedNodeDomain,
+} from '@/subjects/profile';
 // YUK-879 — the outline output contract (schema + strict parser + domain error)
 // is owned by the agency TaskSpec module; this orchestrator re-exports it so
 // existing consumers (api route, public surface) keep their import paths.
@@ -131,7 +136,12 @@ function normalizeProposedNode(
   return {
     temp_id: node.temp_id,
     name: node.name,
-    domain: node.domain ?? fallbackDomain,
+    // YUK-1004 — a proposed domain is sanitised to storage shape:
+    // selectable → canonical id, 'general' (the fallback identity, never a
+    // node domain) → null/inherit, unresolvable → verbatim (same tolerance
+    // as the write seam). A sanitised-out value degrades to the parent
+    // fallback instead of persisting into knowledge.domain.
+    domain: sanitizeProposedNodeDomain(node.domain) ?? fallbackDomain,
   };
 }
 
@@ -219,6 +229,9 @@ export async function planLearningIntent(
     knowledge_node: node ? { id: node.id, name: node.name, domain: node.domain } : null,
     child_nodes: children.map((c) => ({ id: c.id, name: c.name })),
     existing_descendants_count: children.length,
+    // YUK-1004 — the prompt contract points domain values at this list;
+    // 'general' is deliberately absent (fallback identity, never a node domain).
+    valid_domains: getDefaultSubjectRegistry().getSelectableSubjectIds(),
     output_contract:
       planCase === '3c_existing_graph'
         ? 'Return hub + atomics. Each atomic.knowledge_id must be one of child_nodes[].id.'
@@ -257,15 +270,30 @@ export async function planLearningIntent(
     }
     const root =
       planCase === '3a_topic_missing'
-        ? normalizeProposedNode(
-            knowledgeSpec.root ?? failInvalidOutline('3a outline must include knowledge.root'),
-            null,
-          )
+        ? (() => {
+            const raw =
+              knowledgeSpec.root ?? failInvalidOutline('3a outline must include knowledge.root');
+            // YUK-1004 — a NEW topic root must carry a real selectable subject:
+            // 'general' and any unresolvable string fail closed rather than
+            // materialising an invisible/orphan-domain root. (Children get the
+            // looser sanitise-then-inherit treatment via normalizeProposedNode.)
+            return {
+              temp_id: raw.temp_id,
+              name: raw.name,
+              domain: resolveSelectableSubjectId(raw.domain),
+            };
+          })()
         : undefined;
     if (planCase === '3a_topic_missing' && !root?.domain) {
-      failInvalidOutline('3a knowledge.root.domain is required to create a new root node');
+      failInvalidOutline(
+        '3a knowledge.root.domain must resolve to a selectable subject id (see input.valid_domains)',
+      );
     }
-    const rootDomain = root?.domain ?? node?.domain ?? null;
+    // root?.domain is already canonicalised by normalizeProposedNode; an
+    // existing node's stored domain goes through the same sanitiser so a
+    // corrupt 'general' can't leak into proposed children while legacy
+    // unresolvable domains keep their verbatim storage.
+    const rootDomain = root?.domain ?? sanitizeProposedNodeDomain(node?.domain) ?? null;
     const proposedChildren = (knowledgeSpec.children ?? []).map((child) =>
       normalizeProposedNode(child, rootDomain),
     );
@@ -478,8 +506,12 @@ export async function acceptLearningIntent(
       if (!root) {
         throw new LearningIntentError('llm_parse_failed', '3a proposal missing proposed root');
       }
-      if (!root.domain) {
-        throw new LearningIntentError('llm_parse_failed', '3a proposal root missing domain');
+      const rootDomain = resolveSelectableSubjectId(root.domain);
+      if (!rootDomain) {
+        throw new LearningIntentError(
+          'llm_parse_failed',
+          '3a proposal root.domain is not a registered selectable subject',
+        );
       }
       rootKnowledgeId = newId();
       tempIdToRealId.set(root.temp_id, rootKnowledgeId);
@@ -488,7 +520,7 @@ export async function acceptLearningIntent(
       await createKnowledgeNode(tx, {
         id: rootKnowledgeId,
         name: root.name,
-        domain: root.domain,
+        domain: rootDomain,
         parentId: null,
         createdAt: now,
         causedByEventId: rateEventId,
@@ -510,8 +542,14 @@ export async function acceptLearningIntent(
           `${planCase} proposal missing proposed children`,
         );
       }
+      // YUK-1004 — sanitise every persisted domain so a stale pre-fix
+      // proposal carrying 'general' cannot leak into knowledge.domain at
+      // accept time either, while legitimately unresolvable domains keep the
+      // same verbatim passthrough the write seam applies.
       const fallbackDomain =
-        proposedKnowledge?.root?.domain ?? proposal.payload.knowledge_node?.domain ?? null;
+        sanitizeProposedNodeDomain(proposedKnowledge?.root?.domain) ??
+        sanitizeProposedNodeDomain(proposal.payload.knowledge_node?.domain) ??
+        null;
       for (const child of children) {
         const childId = newId();
         tempIdToRealId.set(child.temp_id, childId);
@@ -519,7 +557,7 @@ export async function acceptLearningIntent(
         await createKnowledgeNode(tx, {
           id: childId,
           name: child.name,
-          domain: child.domain ?? fallbackDomain,
+          domain: sanitizeProposedNodeDomain(child.domain) ?? fallbackDomain,
           parentId: rootKnowledgeId,
           createdAt: now,
           causedByEventId: rateEventId,
