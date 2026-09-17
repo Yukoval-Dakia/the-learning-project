@@ -517,11 +517,25 @@ export async function acceptLearningIntent(
       tempIdToRealId.set(root.temp_id, rootKnowledgeId);
       createdKnowledgeIds.push(rootKnowledgeId);
 
+      // YUK-1008 — a domain-bearing topic root parents under its subject's seed
+      // anchor (seed:<domain>:root) so the tree backbone keeps every content node
+      // transitively inside its subject tree (same convention as placement-starter
+      // goal-kc). A domain without a seeded anchor (custom/unseeded identity) stays
+      // a standalone root — honest, not silently re-anchored.
+      const seedRootId = `seed:${rootDomain}:root`;
+      const seedRoot = (
+        await tx
+          .select({ id: knowledge.id })
+          .from(knowledge)
+          .where(and(eq(knowledge.id, seedRootId), isNull(knowledge.archived_at)))
+          .limit(1)
+      )[0];
+
       await createKnowledgeNode(tx, {
         id: rootKnowledgeId,
         name: root.name,
         domain: rootDomain,
-        parentId: null,
+        parentId: seedRoot?.id ?? null,
         createdAt: now,
         causedByEventId: rateEventId,
       });

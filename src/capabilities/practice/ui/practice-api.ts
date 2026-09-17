@@ -100,7 +100,7 @@ export const recomposeStream = (): Promise<StreamView & { added: number }> =>
 export type QuestionFullDetail = ApiOperationJsonResponse<'getQuestion'>;
 export type QuestionDetail = Pick<
   QuestionFullDetail,
-  'id' | 'kind' | 'prompt_md' | 'reference_md' | 'choices_md' | 'difficulty' | 'labels'
+  'id' | 'kind' | 'prompt_md' | 'reference_md' | 'choices_md' | 'difficulty' | 'labels' | 'notation'
 >;
 
 export const getQuestion = (id: string): Promise<QuestionDetail> =>
@@ -484,6 +484,8 @@ export interface PaperSlot {
     id: string;
     kind: string;
     prompt_md: string;
+    /** Server-resolved render notation for MathMarkdown (see PaperQuestionFace). */
+    notation: string | null;
     choices_md: string[] | null;
     difficulty: number;
   };

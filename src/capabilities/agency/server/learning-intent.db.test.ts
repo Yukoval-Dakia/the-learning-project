@@ -660,6 +660,65 @@ describe('acceptLearningIntent', () => {
     );
   });
 
+  it('YUK-1008: parents a 3a topic root under seed:<domain>:root when the anchor exists', async () => {
+    const db = testDb();
+    await seedKnowledge([{ id: 'seed:math:root', name: '数学', domain: 'math' }]);
+    const runTaskFn = vi.fn(async () => ({
+      text: JSON.stringify({
+        knowledge: {
+          root: { temp_id: 'root', name: '概率论', domain: 'math' },
+          children: [{ temp_id: 'cond', name: '条件概率', domain: 'math' }],
+        },
+        hub: { title: '概率论总览', summary_md: '概率论的基本对象与计算路径。' },
+        atomics: [
+          {
+            knowledge_id: 'cond',
+            title: '条件概率',
+            one_line_intent: '能根据条件概率公式计算简单事件概率。',
+          },
+        ],
+      }),
+    }));
+    const proposal = await planLearningIntent({ db, topic: '概率论', runTaskFn });
+    await acceptLearningIntent({ db, proposalId: proposal.proposal_id });
+
+    const root = (await db.select().from(knowledge).where(eq(knowledge.name, '概率论')))[0];
+    expect(root?.parent_id).toBe('seed:math:root');
+    expect(root?.domain).toBe('math');
+    const child = (await db.select().from(knowledge).where(eq(knowledge.name, '条件概率')))[0];
+    expect(child?.parent_id).toBe(root?.id);
+  });
+
+  it('YUK-1008: keeps a 3a root standalone when its domain has no seed anchor', async () => {
+    // Only the yuwen anchor exists here — 'seed:math:root' is absent while the
+    // proposed root still resolves to selectable 'math', so it must stay a
+    // standalone root rather than being re-anchored under the wrong subject.
+    const db = testDb();
+    await seedKnowledge([{ id: 'seed:yuwen:root', name: '语文', domain: 'yuwen' }]);
+    const runTaskFn = vi.fn(async () => ({
+      text: JSON.stringify({
+        knowledge: {
+          root: { temp_id: 'root', name: '概率论', domain: 'math' },
+          children: [{ temp_id: 'cond', name: '条件概率', domain: 'math' }],
+        },
+        hub: { title: '概率论总览', summary_md: '概率论的基本对象与计算路径。' },
+        atomics: [
+          {
+            knowledge_id: 'cond',
+            title: '条件概率',
+            one_line_intent: '能根据条件概率公式计算简单事件概率。',
+          },
+        ],
+      }),
+    }));
+    const proposal = await planLearningIntent({ db, topic: '概率论', runTaskFn });
+    await acceptLearningIntent({ db, proposalId: proposal.proposal_id });
+
+    const root = (await db.select().from(knowledge).where(eq(knowledge.name, '概率论')))[0];
+    expect(root?.parent_id).toBeNull();
+    expect(root?.domain).toBe('math');
+  });
+
   it('accepts a 3b proposal by creating children under the existing topic', async () => {
     const db = testDb();
     await seedKnowledge([{ id: 'k_quad', name: '一元二次方程', domain: 'math' }]);

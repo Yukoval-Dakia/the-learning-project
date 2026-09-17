@@ -26,6 +26,10 @@ import {
 import { Artifact } from '@/core/schema/index';
 import type { Db } from '@/db/client';
 import { answer, artifact, event, learning_session, question } from '@/db/schema';
+import {
+  batchResolveSubjectDisplayIds,
+  resolveSubjectRenderNotation,
+} from '@/kernel/read-models/subject-resolution';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Response types (contract for L-practice-ui)
@@ -36,6 +40,12 @@ export interface PaperQuestionFace {
   id: string;
   kind: string;
   prompt_md: string;
+  /**
+   * Server-resolved render notation for MathMarkdown (same bridge as the
+   * question-detail projection: first knowledge id → display subject →
+   * renderConfig.notation). Null when no subject signal resolves.
+   */
+  notation: string | null;
   /** Multiple-choice options (null for open-ended questions) */
   choices_md: string[] | null;
   /** Difficulty 1-5 */
@@ -256,15 +266,23 @@ export async function getPaperDetail(
         part_index: question.part_index,
         image_refs: question.image_refs,
         reference_md: question.reference_md,
+        // Server-side only: feeds the display-subject bridge for notation; not
+        // exposed on the learner-facing face.
+        knowledge_ids: question.knowledge_ids,
       })
       .from(question)
       .where(inArray(question.id, questionIds));
+    const notationById = await batchResolveSubjectDisplayIds(
+      db,
+      qRows.map((q) => ({ id: q.id, knowledge_ids: q.knowledge_ids ?? [] })),
+    );
     for (const q of qRows) {
       referenceMap.set(q.id, q.reference_md ?? null);
       questionMap.set(q.id, {
         id: q.id,
         kind: q.kind,
         prompt_md: q.prompt_md,
+        notation: resolveSubjectRenderNotation(notationById.get(q.id) ?? null),
         choices_md: q.choices_md ?? null,
         difficulty: q.difficulty,
         parent_question_id: q.parent_question_id ?? null,
@@ -530,6 +548,7 @@ export async function getPaperDetail(
         id: slot.question_id,
         kind: 'unknown',
         prompt_md: '',
+        notation: null,
         choices_md: null,
         difficulty: 3,
         parent_question_id: null,

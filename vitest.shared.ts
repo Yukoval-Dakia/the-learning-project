@@ -76,6 +76,9 @@ export const fastTestInclude = [
   // src/db/client.ts. `postgres` is vi.mock'd and the only @/db/client import is
   // a dynamic `await import()`, so no live Postgres is touched → unit partition.
   'src/db/client.test.ts',
+  // YUK-1005 — pure (no-DB) unit for the sourced-markup (MathJye→markdown/LaTeX)
+  // normalizer: a lenient tag tokenizer with zero imports → unit partition.
+  'src/server/questions/sourced-markup.test.ts',
   // YUK-383 Phase 0 — pure (no-DB) unit for the pgvector customType codec in
   // src/db/vector.ts (string <-> number[] only; no Postgres touched) → unit partition.
   'src/db/vector.test.ts',

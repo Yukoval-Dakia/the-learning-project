@@ -11,6 +11,7 @@ const incorrectSlot: PaperSlot = {
     id: 'q-wrong',
     kind: 'choice',
     prompt_md: '哪一项正确？',
+    notation: null,
     choices_md: ['A', 'B'],
     difficulty: 2,
   },
