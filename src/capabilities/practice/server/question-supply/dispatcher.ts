@@ -364,6 +364,14 @@ export async function dispatchSupplyTarget(
                     semantic_goal_revision_id: target.placementStarter.semanticGoalRevisionId,
                   }
                 : {}),
+              // YUK-287 — forward the target's difficulty band so generated questions
+              // aim at the band-gap the matcher detected (requested_difficulty_band
+              // reaches plan/generate inputs as a soft hint).
+              difficulty_band: target.difficultyBand,
+              // YUK-287 — 篇 (composite parent) requirement, phase-deferred: the seam
+              // is data-complete; QuizGenTask composite generation is a separate
+              // feature (mirrors the knowledge_ids phase-deferred pattern).
+              ...(target.constraints.compositeParentOnly ? { composite_parent_only: true } : {}),
               ...(placementTrace ? { supply_trace: placementTrace } : {}),
             }
           : null;
@@ -377,7 +385,11 @@ export async function dispatchSupplyTarget(
             demand_id: `dispatch_${target.id}_${newId()}`,
             knowledge_id: anchorKid,
             kind: target.kind && target.kind !== 'any' ? target.kind : 'any',
-            difficulty_band: null,
+            // YUK-287 — forward the target's difficulty band (was hardcoded null).
+            // executorData only runs on the supply_execute queue (autoRoute ===
+            // 'sourcing_web'), where plan-executor validates the band against
+            // DIFFICULTY_BANDS and feeds it to runJyeooFetchCandidates' band filter.
+            difficulty_band: target.difficultyBand,
             count: target.desiredCount,
             route_preference: [autoRoute],
             ...(target.placementStarter

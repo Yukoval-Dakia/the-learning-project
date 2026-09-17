@@ -110,6 +110,7 @@ import {
   terminalizePlacementUnknownCost,
 } from '../server/question-supply/placement-starter-attempts';
 import { markPlacementStarterClaimTerminal } from '../server/question-supply/placement-starter-store';
+import type { DifficultyBand } from '../server/question-supply/target-discovery';
 import {
   EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
   canonicalQuestionContentHash,
@@ -149,6 +150,14 @@ export interface QuizGenJobData {
   kind?: string;
   objective_only?: boolean;
   kind_required?: boolean;
+  // YUK-287 — the supply target's difficulty band (below|near|above|stretch, relative
+  // to learner θ̂). Forwarded as requested_difficulty_band into plan/generate inputs so
+  // a band-gap target produces band-aimed questions instead of generic difficulty.
+  difficulty_band?: DifficultyBand;
+  // YUK-287 — 篇 (composite parent) requirement, phase-deferred: forwarded now so the
+  // seam is data-complete; QuizGenTask composite (stem+sub_questions) generation is a
+  // separate feature (mirrors the knowledge_ids phase-deferred pattern below).
+  composite_parent_only?: boolean;
   // YUK-533 — the full KC set a multi-KC supply target carries (the confusable A↔B pair).
   // knowledge_id stays the PRIMARY attribution anchor (knowledgeIds[0]); knowledge_ids
   // carries the whole pair so a contrast/discrimination item can probe the A-vs-B boundary.
@@ -381,6 +390,10 @@ export interface RunQuizGenParams {
   kind?: string;
   objectiveOnly?: boolean;
   kindRequired?: boolean;
+  // YUK-287 — difficulty band the supply target requires; soft-aimed via
+  // requested_difficulty_band in plan/generate inputs (planner difficulty is a hint,
+  // not a checked pin — bands are approximate producer semantics).
+  difficultyBand?: DifficultyBand;
   supplyTrace?: SupplyTraceV1T;
   placementAttempt?: PlacementAttemptAuthority;
   placementHeartbeat?: PlacementAttemptHeartbeat;
@@ -645,6 +658,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         ...(params.kind ? { requested_kind: params.kind } : {}),
         ...(params.objectiveOnly ? { objective_only: true } : {}),
         ...(params.kindRequired ? { kind_required: true } : {}),
+        ...(params.difficultyBand ? { requested_difficulty_band: params.difficultyBand } : {}),
         ...(previousRejection ? { previous_rejection: previousRejection } : {}),
       };
       planRunResult = await run('QuizPlanTask', planInput, {
@@ -719,6 +733,9 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       ...(params.kind ? { requested_kind: params.kind } : {}),
       ...(params.objectiveOnly ? { objective_only: true } : {}),
       ...(params.kindRequired ? { kind_required: true } : {}),
+      // YUK-287 — the supply target's difficulty band rides alongside so the agent
+      // aims plan-item / question difficulty at it (soft hint; not a checked pin).
+      ...(params.difficultyBand ? { requested_difficulty_band: params.difficultyBand } : {}),
     };
     if (params.placementAttempt) {
       await params.placementHeartbeat?.assertHealthy();
@@ -1532,6 +1549,7 @@ export function buildQuizGenHandler(
           ...(data.kind ? { kind: data.kind } : {}),
           ...(data.objective_only ? { objectiveOnly: true } : {}),
           ...(data.kind_required ? { kindRequired: true } : {}),
+          ...(data.difficulty_band ? { difficultyBand: data.difficulty_band } : {}),
           ...(supplyTrace ? { supplyTrace } : {}),
           ...(placementAttempt ? { placementAttempt } : {}),
           ...(placementHeartbeat ? { placementHeartbeat } : {}),
