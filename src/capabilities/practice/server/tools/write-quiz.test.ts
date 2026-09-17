@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { artifact, question } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import type { ToolContext } from '@/kernel/tools/types';
-import { dismissAiProposal } from '@/server/proposals/actions';
+import { dismissAiProposal, retractAiProposal } from '@/server/proposals/actions';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { writeQuizTool } from './write-quiz';
 
@@ -377,6 +377,212 @@ describe('write_quiz DomainTool (ADR-0031 lane B)', () => {
     // dismiss still commits its tombstone behind it.
     if (writeOutcome.status === 'rejected') {
       expect(String(writeOutcome.reason)).toMatch(/dismissed\/archived.*q_live_race/);
+      expect(await db.select().from(artifact)).toHaveLength(0);
+    } else {
+      expect(writeOutcome.value.question_count).toBe(1);
+      expect(await db.select().from(artifact)).toHaveLength(1);
+    }
+  });
+
+  // YUK-1002 (a) — archive ↔ write_quiz: 995's lock set covered only pre-check
+  // DRAFT ids; an ACTIVE row could be re-drafted + archived_at-tombstoned by
+  // archiveQuestion inside the same gap. The artifact tx now locks ALL
+  // referenced ids, so the racing re-draft is observed under the row lock.
+  it('fails closed when archiveQuestion re-drafts an ACTIVE question between the admission read and the artifact write', async () => {
+    const db = testDb();
+    await seedQuestion({ id: 'q_active_race' }); // non-draft pool question
+    await seedQuestion({ id: 'q_pool' });
+
+    const url = process.env.TEST_DATABASE_URL;
+    if (!url) throw new Error('TEST_DATABASE_URL not set — db partition only');
+    const raw = postgres(url, { max: 1 });
+    let observedBlockedRead = false;
+    let earlySettled = false;
+    try {
+      await raw`BEGIN`;
+      // archiveQuestion's exact parent UPDATE (write.ts): re-draft +
+      // archived_at tombstone + hash release + version bump — held UNCOMMITTED
+      // so write_quiz's unlocked admission read still sees an active row while
+      // its in-tx FOR UPDATE blocks on this tx's row lock.
+      await raw`
+        UPDATE question
+        SET draft_status = 'draft',
+            canonical_content_hash = NULL,
+            metadata = COALESCE(metadata, '{}'::jsonb) || ${raw.json({
+              archived_at: Math.floor(BASE.getTime() / 1000),
+              archived_reason: 'user',
+              archived_previous_draft_status: null,
+            })},
+            updated_at = now(),
+            version = version + 1
+        WHERE id = 'q_active_race'
+      `;
+
+      const outcome = writeQuizTool
+        .execute(ctx(), { question_ids: ['q_active_race', 'q_pool'] })
+        .then(
+          (value) => {
+            earlySettled = true;
+            return { status: 'fulfilled' as const, value };
+          },
+          (reason: unknown) => {
+            earlySettled = true;
+            return { status: 'rejected' as const, reason };
+          },
+        );
+
+      for (let i = 0; i < 500 && !observedBlockedRead && !earlySettled; i++) {
+        const rows = await raw`SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted`;
+        if (Number(rows[0]?.n ?? 0) > 0) observedBlockedRead = true;
+        else await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      if (!earlySettled) expect(observedBlockedRead).toBe(true);
+
+      // The archive commits first → the locked re-read observes the
+      // re-drafted + tombstoned row.
+      await raw`COMMIT`;
+
+      const settled = await outcome;
+      expect(settled.status).toBe('rejected');
+      if (settled.status === 'rejected') {
+        expect(String(settled.reason)).toMatch(/dismissed\/archived.*q_active_race/);
+      }
+      expect(await db.select().from(artifact)).toHaveLength(0);
+    } finally {
+      await raw.end();
+    }
+  });
+
+  // YUK-1002 (b) — retract ↔ write_quiz: the pending-proposal admission fold
+  // ran unlocked; a retract writes a fresh `correct` event (no question-row
+  // marker), hollowing out coverage mid-flight. The artifact tx now takes the
+  // shared proposal_decision advisory lock on relied-on proposals BEFORE the
+  // row locks and re-folds coverage inside the tx.
+  it('fails closed when the relied-on pending proposal is retracted between the admission fold and the artifact write', async () => {
+    const db = testDb();
+    await seedQuestion({ id: 'q_prop_draft', draft: true, source: 'manual_rescue' });
+    await writeAiProposal(db, {
+      id: 'qd_retract_race',
+      actor_ref: 'agent:copilot',
+      payload: {
+        kind: 'question_draft',
+        target: { subject_kind: 'question', subject_id: 'q_prop_draft' },
+        reason_md: '拟题提案（race）',
+        evidence_refs: [],
+        proposed_change: {
+          question_id: 'q_prop_draft',
+          kind: 'short_answer',
+          difficulty: 3,
+          knowledge_ids: ['k_a'],
+          seed_mode: 'knowledge',
+        },
+      },
+    });
+
+    const url = process.env.TEST_DATABASE_URL;
+    if (!url) throw new Error('TEST_DATABASE_URL not set — db partition only');
+    const raw = postgres(url, { max: 1 });
+    let observedBlockedRead = false;
+    let earlySettled = false;
+    try {
+      await raw`BEGIN`;
+      // retractAiProposal's exact serialization: the shared
+      // proposal_decision advisory lock first, then the `correct` event —
+      // both held UNCOMMITTED so write_quiz's unlocked inbox fold still sees
+      // the proposal pending while its in-tx decision lock queues.
+      await raw`SELECT pg_advisory_xact_lock(hashtextextended(${'proposal_decision:qd_retract_race'}, 0))`;
+      await raw`
+        INSERT INTO event (id, actor_kind, actor_ref, action, subject_kind, subject_id, outcome, payload, caused_by_event_id, created_at)
+        VALUES ('ev_retract_race', 'user', 'self', 'correct', 'event', 'qd_retract_race', 'success',
+          ${raw.json({
+            correction_kind: 'retract',
+            reason_md: 'proposal retracted from inbox',
+            affected_refs: [{ kind: 'question', id: 'q_prop_draft' }],
+          })},
+          'qd_retract_race', now())
+      `;
+
+      const outcome = writeQuizTool.execute(ctx(), { question_ids: ['q_prop_draft'] }).then(
+        (value) => {
+          earlySettled = true;
+          return { status: 'fulfilled' as const, value };
+        },
+        (reason: unknown) => {
+          earlySettled = true;
+          return { status: 'rejected' as const, reason };
+        },
+      );
+
+      for (let i = 0; i < 500 && !observedBlockedRead && !earlySettled; i++) {
+        const rows = await raw`SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted`;
+        if (Number(rows[0]?.n ?? 0) > 0) observedBlockedRead = true;
+        else await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      if (!earlySettled) expect(observedBlockedRead).toBe(true);
+
+      // The retract commits first → the post-lock re-fold sees the proposal
+      // gone → the draft loses its coverage.
+      await raw`COMMIT`;
+
+      const settled = await outcome;
+      expect(settled.status).toBe('rejected');
+      if (settled.status === 'rejected') {
+        expect(String(settled.reason)).toMatch(/neither copilot-authored.*q_prop_draft/);
+      }
+      expect(await db.select().from(artifact)).toHaveLength(0);
+    } finally {
+      await raw.end();
+    }
+  });
+
+  // Same window exercised end-to-end through the REAL retractAiProposal:
+  // question_draft has no retract applier, so the two paths serialize on the
+  // proposal_decision lock alone — exactly one ordering is observed.
+  it('serializes against a real concurrent retractAiProposal — write_quiz either wins or fails closed', async () => {
+    const db = testDb();
+    await seedQuestion({ id: 'q_prop_live', draft: true, source: 'manual_rescue' });
+    await writeAiProposal(db, {
+      id: 'qd_retract_live',
+      actor_ref: 'agent:copilot',
+      payload: {
+        kind: 'question_draft',
+        target: { subject_kind: 'question', subject_id: 'q_prop_live' },
+        reason_md: '拟题提案（live race）',
+        evidence_refs: [],
+        proposed_change: {
+          question_id: 'q_prop_live',
+          kind: 'short_answer',
+          difficulty: 3,
+          knowledge_ids: ['k_a'],
+          seed_mode: 'knowledge',
+        },
+      },
+    });
+
+    const [writeOutcome, retractOutcome] = await Promise.all([
+      writeQuizTool
+        .execute(ctx({ taskRunId: 'tr_retract_live' }), { question_ids: ['q_prop_live'] })
+        .then(
+          (value) => ({ status: 'fulfilled' as const, value }),
+          (reason: unknown) => ({ status: 'rejected' as const, reason }),
+        ),
+      retractAiProposal(db, 'qd_retract_live').then(
+        (value) => ({ status: 'fulfilled' as const, value }),
+        (reason: unknown) => ({ status: 'rejected' as const, reason }),
+      ),
+    ]);
+
+    // The retract always completes: write_quiz's decision lock only ever
+    // delays its correct-event write, and a paper committed first does not
+    // gate it (question_draft has no retract applier → no row conflict).
+    expect(retractOutcome.status).toBe('fulfilled');
+
+    // Exactly one serialization won: retract-first → coverage hollowed out →
+    // deterministic rejection, no paper. write_quiz-first → the proposal was
+    // still pending at the locked re-fold → paper written, sequential-
+    // equivalent to a retract landing after the write.
+    if (writeOutcome.status === 'rejected') {
+      expect(String(writeOutcome.reason)).toMatch(/neither copilot-authored.*q_prop_live/);
       expect(await db.select().from(artifact)).toHaveLength(0);
     } else {
       expect(writeOutcome.value.question_count).toBe(1);

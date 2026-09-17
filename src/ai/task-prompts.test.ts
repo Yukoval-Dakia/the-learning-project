@@ -2,9 +2,21 @@ import { describe, expect, it } from 'vitest';
 import { MetaCauseFields } from '@/core/schema/business';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { tasks } from './registry';
-import { getTaskSystemPrompt } from './task-prompts';
+import { LEARNER_LOCALE_PIN, getTaskSystemPrompt } from './task-prompts';
 
 describe('getTaskSystemPrompt', () => {
+  // YUK-1006 — every registered task's system prompt carries the learner-facing
+  // locale pin (the single funnel covers both inline and profile prompt kinds).
+  it('appends the learner-facing locale pin to every registered task prompt', () => {
+    for (const kind of Object.keys(tasks) as Array<keyof typeof tasks>) {
+      for (const profile of [undefined, resolveSubjectProfile('math')]) {
+        const prompt = getTaskSystemPrompt(kind, profile);
+        expect(prompt, `${kind} missing locale pin`).toContain('【输出语言】');
+        expect(prompt.endsWith(LEARNER_LOCALE_PIN.trimStart())).toBe(true);
+      }
+    }
+  });
+
   it('keeps the strict QuestionKind enum explicit for MistakeEnroll output', () => {
     const prompt = getTaskSystemPrompt('MistakeEnrollTask', resolveSubjectProfile('math'));
     expect(prompt).toContain(
@@ -484,7 +496,13 @@ describe('getTaskSystemPrompt exhaustiveness (M1)', () => {
       const w = getTaskSystemPrompt(kind, yuwenProfile);
       const m = getTaskSystemPrompt(kind, mathProfile);
       expect(w, `${kind} profile-coupling regression`).toBe(m);
-      expect(w).toBe(tasks[kind].prompt.kind === 'inline' ? tasks[kind].prompt.text : undefined);
+      // YUK-1006 — the funnel appends LEARNER_LOCALE_PIN to every prompt; the
+      // subject-neutral body must still equal the registry inline text.
+      expect(w).toBe(
+        tasks[kind].prompt.kind === 'inline'
+          ? tasks[kind].prompt.text + LEARNER_LOCALE_PIN
+          : undefined,
+      );
     }
   });
 

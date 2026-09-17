@@ -26,13 +26,13 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 import promptHashOracle from './fixtures/task-prompt-hashes.6b3233b1.json' with { type: 'json' };
 import { type TaskDef, type TaskKind, tasks } from './registry';
 import { taskCatalog } from './task-catalog';
-import { getTaskSystemPrompt } from './task-prompts';
+import { LEARNER_LOCALE_PIN, getTaskSystemPrompt } from './task-prompts';
 
 const YUK949_PROMPT_HASHES = {
-  'general:CopilotTask': 'e7190278f0b4c44e8a3cac4f607adae54d3f73bdc474e17a8b99f5cfd6f8162b',
-  'math:CopilotTask': 'e7190278f0b4c44e8a3cac4f607adae54d3f73bdc474e17a8b99f5cfd6f8162b',
-  'physics:CopilotTask': 'e7190278f0b4c44e8a3cac4f607adae54d3f73bdc474e17a8b99f5cfd6f8162b',
-  'yuwen:CopilotTask': 'e7190278f0b4c44e8a3cac4f607adae54d3f73bdc474e17a8b99f5cfd6f8162b',
+  'general:CopilotTask': 'cbf6536bed928b79e8de15f3337fac389d2f0f8909a118e3dac6366953e20a71',
+  'math:CopilotTask': 'cbf6536bed928b79e8de15f3337fac389d2f0f8909a118e3dac6366953e20a71',
+  'physics:CopilotTask': 'cbf6536bed928b79e8de15f3337fac389d2f0f8909a118e3dac6366953e20a71',
+  'yuwen:CopilotTask': 'cbf6536bed928b79e8de15f3337fac389d2f0f8909a118e3dac6366953e20a71',
 } as const;
 
 describe('copilot task dispatch declarations', () => {
@@ -146,10 +146,10 @@ describe('task prompt definitions', () => {
 
   it('pins the live-reader-only selection orchestrator prompt for every profile', () => {
     const expected = {
-      general: '4ccfb385fdd9156c84a0345db8582a1ad7ff0b9c8ef6e124d24b022e72d97f25',
-      math: '2dcc510d7748f3f43c6cf8b209be54c8fc2a0bd1e33178310b9b3ef598aca975',
-      physics: '1d0b5f01465d9f85c6f7cdc660a7bed9f974102d4d95a2ba9cda0641d365faa4',
-      yuwen: 'd4383ab72c547dfec9da94f2b5221d5ff443261170ab892fd4ecb18491bfd0e1',
+      general: '3458eff6e1e4048536fc91bd2d414ef93224ac27d84c8055c40c09281be2dbcf',
+      math: '1ece5bb60ab538f8d0c376a34608460b10b44b8456d2834612d53f848f0cd5d5',
+      physics: '4afc2e05a63f251674b6756472bfd09dd5f067ef5c5f2a445887939cac4c847b',
+      yuwen: 'f38f2c2771985aa056380fc93c7bab84519d9e91189b52493deb3694b7e6c5c4',
     } as const;
     for (const profileId of ['general', 'math', 'physics', 'yuwen'] as const) {
       const prompt = getTaskSystemPrompt(
@@ -164,21 +164,21 @@ describe('task prompt definitions', () => {
   it('pins the response-aware conjecture probe author/reviewer prompts for every profile', () => {
     const expected = {
       'general:ConjectureProbeAuthorTask':
-        '1337f632a207767ad1408723f07d9cc9281220828074ba2dc2c6f65da6d87969',
+        'ab55f4f60ec8a235b2c5bdc4d3448b8aa904ed2eca9f095e226a09844efd7cb8',
       'general:ConjectureProbeReviewTask':
-        '887a6442092af1cc1882a21942e50a671c249b179e7f931bfac9b4e61dc0552a',
+        'a77a5eca0d39449d81a95535104cef7db916e2b03219e9b408bf2bde3cc6f1d3',
       'math:ConjectureProbeAuthorTask':
-        'bc9ad647833de7e13227a98a7776f76c78c5c3964e88b0ba128202ad555bf6b2',
+        '00bb91001e7484f6c4fd3749b316d0accdeca5f52e5e578826429010bf33c62f',
       'math:ConjectureProbeReviewTask':
-        'bb1c6d7a01ad9ef31ae5e5a5c5784436aa1eb495e3328d0840c0f31539ef8fed',
+        'f2c72009affa273fe338a7184844a598bceeaea03921f9f1bfdb8a3353d7fe5b',
       'physics:ConjectureProbeAuthorTask':
-        '44ceec14112bf53e0e197b3e9be813c57d4f056a1c909900c772061a3f9f5694',
+        '229fe5117c206ec0bf17dd00d3abfe059733e4d03e805f4e0f86665d6f5991bb',
       'physics:ConjectureProbeReviewTask':
-        '3d81bdeac649bd8331f958dc2fb429851f19e49cfffb9316b3a22e0dfe1aacd0',
+        '77a6f77a84a886db6cefa4fd2f921fa0d0ad79005946cfb9b5cd593e29c3e325',
       'yuwen:ConjectureProbeAuthorTask':
-        '5c890570f0dbca25f1661556a4dabecaa0161223643d467b9f6ce6c7931c7d5f',
+        '14dc8fcd58bf681bdf4911a5381fe3d989ba4cc572256d18d8b493353d68145f',
       'yuwen:ConjectureProbeReviewTask':
-        '0c24bae37112cdbbd90d65929f11909501ca1747027118008d6db098f34e3d86',
+        'b0f783e1c4c6a80f268d0f6cb10546d9b8d371270679b7528f2a58022a5ac335',
     } as const;
     for (const profileId of ['general', 'math', 'physics', 'yuwen'] as const) {
       const profile = resolveSubjectProfile(profileId);
@@ -195,29 +195,29 @@ describe('task prompt definitions', () => {
   it('pins the response-aware intervention preparation prompts for every profile', () => {
     const expected = {
       'general:InterventionRecommendationTask':
-        'a45614f87725a2290f5b2442a3104e761d10f5b5ec76e1ce27fd979b2ee41ecd',
+        '52b47e7cdefd5c76592fe944cecde91f08f61209ed4cdef7e94fcf97137222e5',
       'general:InterventionPackageAuthorTask':
-        '60c55bb06557f2815b7ffe7d5835dd8a5561cbe8a23849a596eb45692c73146e',
+        '2a5d7ca827bd452d70e6d74c33b18e8557f54437eda5fe8c28ede82b3b9c043f',
       'general:InterventionPackageReviewTask':
-        'df025e315f11b6952624c80597a03cc392d67ef1922771f6f561ef58ba13c9ea',
+        '3d3ef1263686702d8bb8e3d9a91987c0317badf391e2b74f53d1276df20f8bb0',
       'math:InterventionRecommendationTask':
-        'a45614f87725a2290f5b2442a3104e761d10f5b5ec76e1ce27fd979b2ee41ecd',
+        '52b47e7cdefd5c76592fe944cecde91f08f61209ed4cdef7e94fcf97137222e5',
       'math:InterventionPackageAuthorTask':
-        '5748f5259952696212c4504f5a97953ecaa3415c573245d02c499bde99806bc7',
+        'f9bc12bedcce9e7e53824c9877a279488846e6a6d9c958f2d57cc2a22a36376e',
       'math:InterventionPackageReviewTask':
-        '2204079c241e30b15445467d114ff4c737f6e4478352232bdb2ae1d0200d91e6',
+        '2393fb91b1495c57a88ef097ed97599ad1f527366ba91f0640fd3fedad594f3a',
       'physics:InterventionRecommendationTask':
-        'a45614f87725a2290f5b2442a3104e761d10f5b5ec76e1ce27fd979b2ee41ecd',
+        '52b47e7cdefd5c76592fe944cecde91f08f61209ed4cdef7e94fcf97137222e5',
       'physics:InterventionPackageAuthorTask':
-        '5f85c39d955878b0c293f07fd271ce6ff8509f9a9b8fe19045aea4696f956cdb',
+        '88dc54900c06ac6499af0e650bf1d6d6ad3bda86587455303fb3c2a019d4fd39',
       'physics:InterventionPackageReviewTask':
-        '0a2ebb885fb7110ab98d2eed155f50c98fb25b103aa0883c721dca9591824021',
+        'f04eee736261e83284a1d47275d1941305e16f9a0f6e31a004c6ea1f4341796f',
       'yuwen:InterventionRecommendationTask':
-        'a45614f87725a2290f5b2442a3104e761d10f5b5ec76e1ce27fd979b2ee41ecd',
+        '52b47e7cdefd5c76592fe944cecde91f08f61209ed4cdef7e94fcf97137222e5',
       'yuwen:InterventionPackageAuthorTask':
-        'c46426ca2c07e712a5e90d6b6962d377df7aff4955cc036c200eac62ea08ce02',
+        '8054cb686ec6a53ae1fdb417a23bf57cbe9806729a481be4f73af277792dfe0c',
       'yuwen:InterventionPackageReviewTask':
-        '37ca9213d89d4fe9dc72134fd9af3ba576c73d015ffac9432796cad5477a93c9',
+        '27351179419b97f22ade95a929212e1e960e316299dec2606e3e0542ee9c55f6',
     } as const;
     for (const profileId of ['general', 'math', 'physics', 'yuwen'] as const) {
       const profile = resolveSubjectProfile(profileId);
@@ -260,21 +260,21 @@ describe('task prompt definitions', () => {
   it('pins the shared solver complete-path contract for every profile', () => {
     const expected = {
       'general:SolutionGenerateTask':
-        '83074e876fbe1f90d5b9b1d6eeb3a42d8d5a759a44da29278769f9b285d5120d',
+        '3daf794e7c1f599532780b81343ae19ef9244c7e035905bf734f4a9afb1d4c49',
       'general:SolutionGenerateVisionTask':
-        '2a417ef4d1eb9115af87518fcfa45ac840baa0de303cf1cedfde5a4e24e9ef4d',
+        '7213f23347328521249234e8498b2f9dee87f96675d1ad2e3fe20178033e367c',
       'math:SolutionGenerateTask':
-        '63154d81985b83b6defd4bb4156f7a3ae2ed152ae14ef334d48dbcff6c89b1d4',
+        'ee3f98068c8eb6c593336841054aa197c571e90006b9b80645b30c748c778797',
       'math:SolutionGenerateVisionTask':
-        '793cc0ae94ad58ab99e8a69d53b0f013929bb5cae3dd5f4ba4108b359a2f285f',
+        'd161b7a8565df66ea1124cfd2e40a6620ab8ba0b26837811faebbcc922fd3c1b',
       'physics:SolutionGenerateTask':
-        '9b98a4dc2f12db70549e453fd68494c5e5904fb2665dcc7f16a8e7b7cd3d61ae',
+        '6f63c6cd0876078b3f5a88c4be71d58202a6b9e1d9f408993060849452499a1b',
       'physics:SolutionGenerateVisionTask':
-        '6d634be1d87e7be40bec48532e77d3ba8d98b7b3fb64b4dde1ba4d269d13eacb',
+        '9bb1cde38428a74d1bfbc76909bbe0aabfe5501147110baf07f600d782ebfba2',
       'yuwen:SolutionGenerateTask':
-        '73769b8d253da7566990bae25811b4ef10a6548baae892237841077b769f2002',
+        '448dfb97bb0a9d055990c79294903dab8a13e18c284edf93655a561880c4c96a',
       'yuwen:SolutionGenerateVisionTask':
-        '62b7caf07867ff9d9259593dcb58834558815f5a19a8cc027dcc9eb4a3aba0de',
+        '47993fdc2ab79db07716bac03fbc74ae73af41079774a05074ee579111dadfe2',
     } as const;
     for (const profileId of ['general', 'math', 'physics', 'yuwen'] as const) {
       for (const task of ['SolutionGenerateTask', 'SolutionGenerateVisionTask'] as const) {
@@ -626,7 +626,10 @@ describe('CopilotTask.systemPrompt — YUK-939 root finalization', () => {
     expect(prompt).not.toContain('relied_on_tool_use_ids');
     expect(prompt).toContain('"changed":[],"retained":[],"uncertain":[]');
     expect(prompt).toContain('后三项必须是字符串数组');
-    expect(prompt).toMatch(/【最终输出——严格执行】[\s\S]+不要自行列工具调用 ID。$/);
+    // YUK-1006 — the strict contract still closes the prompt, now followed only
+    // by the universal LEARNER_LOCALE_PIN appended at the getTaskSystemPrompt funnel.
+    expect(prompt).toMatch(/【最终输出——严格执行】[\s\S]+不要自行列工具调用 ID。/);
+    expect(prompt.endsWith(`不要自行列工具调用 ID。${LEARNER_LOCALE_PIN}`)).toBe(true);
   });
 });
 
