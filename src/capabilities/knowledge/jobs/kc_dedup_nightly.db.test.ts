@@ -88,7 +88,7 @@ async function markAutoCreated(
 async function markProposalMinted(
   db: ReturnType<typeof testDb>,
   kcId: string,
-  opts: { createdAt?: Date; action?: string } = {},
+  opts: { createdAt?: Date; mintedAt?: Date; action?: string } = {},
 ): Promise<void> {
   const anchorId = newId();
   await db.insert(event).values({
@@ -107,6 +107,8 @@ async function markProposalMinted(
     materialized_id: kcId,
     anchor_event_id: anchorId,
     subject_kind: 'knowledge',
+    // mint 时间 = index 行写入时（accept tx 内 defaultNow）；opts.mintedAt 可回拨。
+    created_at: opts.mintedAt ?? new Date(),
   });
 }
 
@@ -251,18 +253,35 @@ describe('runKcDedupNightly', () => {
     expect(proposeFn).toHaveBeenCalledTimes(1);
   });
 
-  it('excludes a near-dup pair when the proposal-mint anchor is OUTSIDE the window', async () => {
+  it('excludes a near-dup pair when the proposal-mint itself is OUTSIDE the window', async () => {
     const db = testDb();
     await seedKc(db, 'kc-established', unitVec(0));
     await seedKc(db, 'kc-dup', nearUnit0(0.1));
     const longAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    await markProposalMinted(db, 'kc-dup', { createdAt: longAgo });
+    // 窗口键在 mint 时间（index 行 created_at）——mint 30 天前 → 出窗。
+    await markProposalMinted(db, 'kc-dup', { mintedAt: longAgo });
 
     const proposeFn = vi.fn(async () => newId());
     const res = await runKcDedupNightly(db, { proposeFn });
 
     expect(res.scanned_pairs).toBe(0);
     expect(proposeFn).not.toHaveBeenCalled();
+  });
+
+  it('detects a KC minted NOW from a long-pending proposal (window keys on accept time)', async () => {
+    const db = testDb();
+    await seedKc(db, 'kc-established', unitVec(0));
+    await seedKc(db, 'kc-dup', nearUnit0(0.1));
+    // OCR review 场景：propose 事件 30 天前、accept（mint）刚刚发生 —— 新 KC
+    // 仍属「recent mint」，窗口键在 m.created_at 而非 e.created_at。
+    const longAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    await markProposalMinted(db, 'kc-dup', { createdAt: longAgo });
+
+    const proposeFn = vi.fn(async () => newId());
+    const res = await runKcDedupNightly(db, { proposeFn });
+
+    expect(res.scanned_pairs).toBe(1);
+    expect(proposeFn).toHaveBeenCalledTimes(1);
   });
 
   it('does NOT treat a genesis-anchored KC as a recent mint', async () => {

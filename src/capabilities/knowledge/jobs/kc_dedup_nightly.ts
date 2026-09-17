@@ -130,13 +130,16 @@ export async function runKcDedupNightly(
       -- split mints carry no auto_tag event; the minted id lives in
       -- materialized_id_index anchored to its propose/split event. Genesis-anchored
       -- rows are excluded (baseline backfill, not a recent mint).
+      -- The window keys on m.created_at (the ACCEPT-time mint stamp), not
+      -- e.created_at (propose time): a proposal pending longer than windowDays
+      -- still mints a fresh KC that belongs in the window (OCR review).
       SELECT m.materialized_id AS id
       FROM materialized_id_index m
       JOIN event e ON e.id = m.anchor_event_id
       WHERE m.subject_kind = 'knowledge'
         AND e.action IN ('propose', 'experimental:knowledge_split')
         AND e.subject_kind = 'knowledge'
-        AND e.created_at > now() - make_interval(days => ${windowDays})
+        AND m.created_at > now() - make_interval(days => ${windowDays})
     )
     SELECT
       a.id AS a_id,
