@@ -24,7 +24,7 @@ import {
   type DifficultyEvidenceT,
   buildProducerDifficultyEvidence,
 } from '@/core/schema/difficulty-evidence';
-import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
+import { defaultJudgeKindForQuestion, isExactCapableReference } from '@/core/schema/judge-routing';
 import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
 import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import type { Tx } from '@/db/client';
@@ -89,8 +89,27 @@ export async function insertSourcedDraft(
   const { canonicalContentHash, mergeActorRef, taskRunId } = input;
 
   // Preserve an EXPLICIT judge_kind_override; only derive the structural default when absent
-  // (never clobber e.g. 'keyword' with the default).
-  const judgeKind = q.judge_kind_override ?? defaultJudgeKindForQuestion(q);
+  // (never clobber e.g. 'keyword' with the default). YUK-1003 exception: a producer 'exact'
+  // pin on a NON-CHOICE row whose reference has no bare-answer head is structurally
+  // unwinnable (verbatim compare can never match a worked-solution blob) — demote to the
+  // derived route and record the demotion on the row for audit.
+  let judgeKind = q.judge_kind_override ?? defaultJudgeKindForQuestion(q);
+  let judgeKindDemotion: { declared: 'exact'; applied: string; reason: string } | undefined;
+  if (
+    judgeKind === 'exact' &&
+    (q.choices_md ?? []).length === 0 &&
+    !isExactCapableReference(q.reference_md)
+  ) {
+    const derived = defaultJudgeKindForQuestion({ ...q, judge_kind_override: null });
+    if (derived !== 'exact') {
+      judgeKindDemotion = {
+        declared: 'exact',
+        applied: derived,
+        reason: 'reference_not_exact_capable',
+      };
+      judgeKind = derived;
+    }
+  }
   const declaredDifficultyEvidence =
     q.difficulty_evidence ?? buildProducerDifficultyEvidence(q.difficulty, sourceRoute, now);
   const difficultyEvidence = DifficultyEvidence.parse({
@@ -136,6 +155,7 @@ export async function insertSourcedDraft(
       web_sourced: webSourced,
       source_ref_kind: 'url',
       difficulty_evidence: difficultyEvidence,
+      ...(judgeKindDemotion ? { judge_kind_override_demoted: judgeKindDemotion } : {}),
       ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
     },
     created_at: now,

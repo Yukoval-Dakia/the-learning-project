@@ -49,7 +49,7 @@ function buildSourcingPrompt(profile: SubjectProfile): string {
 {
   "kind": "${CANONICAL_QUESTION_KINDS} 之一（按答案类型与题面结构选择）",
   "prompt_md": "题面 markdown（忠实抽取，可含 LaTeX）",
-  "reference_md": "参考答案 + 简短解析",
+  "reference_md": "参考答案（选择题第一行必须是正确选项原文）+ 解析另起段落（空行分隔，以「解析：」开头）",
   "choices_md": ["选项 A", "选项 B", ...] | null,
   "judge_kind_override": "exact"|"keyword"|"semantic" | null,
   "rubric_json": { "criteria": [{"name":"correctness","weight":1,"descriptor":"..."}], "keywords": [...], "required_points": [...] } | null,
@@ -73,11 +73,11 @@ function buildSourcingPrompt(profile: SubjectProfile): string {
 
 题目要求：
 - kind 要忠实描述题面结构；先判断答案类型（受限 exact / 关键词 keyword / 开放 semantic / 分步 steps），再从 ${CANONICAL_QUESTION_KINDS} 中选择与该结构一致的值；客观选择结构统一用 "choice"。无论是否偏离上游 kinds 提示，都必须遵循输出的 kind 对应的格式规则。
-- choice / true_false：judge_kind_override="exact"，给选项，reference_md 第一行是正确选项原文。
+- choice / true_false：judge_kind_override="exact"，给选项，reference_md 第一行是正确选项原文（可写成「（C）选项原文」或「C. 选项原文」，解析另起段落）。
 - fill_blank：可 exact；多个合理表述时用 "keyword" 并在 rubric_json.keywords 写 1–5 个必中关键词。
 - short_answer / reading / translation / essay：judge_kind_override="semantic"，rubric_json.required_points 必填 1–5 个可核查要点。
 - derivation：judge_kind_override="semantic"，rubric_json.required_points 必填 1–5 个可核查推导步骤，避免缺少 steps 判分契约。
-- computation：只验最终答案可 exact；验方法要点用 semantic + required_points。
+- computation：reference_md 是裸最终答案（如「42」「x=3」）才可 judge_kind_override="exact"；reference 含解题过程/解析/方法要点时必须用 "semantic" + required_points（exact 是逐字比较，拿解题过程当 reference 的结构上不可能判对，入库时会被降级到派生路由并留痕）。
 - knowledge_ids 用 knowledge_context 里真实存在的知识点 id，不要发明。
 - whitelist 非空时**优先**抽取命中白名单域名的来源；白名单外的来源仍可抽（会在入库时被降权标记，不影响质检），但不要为了凑数抽明显低质的来源。
 约束（强约束）：

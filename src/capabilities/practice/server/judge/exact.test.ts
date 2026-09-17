@@ -140,3 +140,102 @@ describe('judgeExact — bot-review hardening parity (YUK-260)', () => {
     expect(plain.evidence_json.match_type).toBe('text');
   });
 });
+
+describe('judgeExact — parenthesized references + explanation tails (YUK-1003)', () => {
+  // Real production shape (web_sourced/jyeoo): reference_md stores
+  // "（C）<选项原文>\n\n解析：<解题过程>". Before the fix the leading-letter
+  // parser required a bare letter at position 0, so the parenthesized head
+  // never resolved to a choice index and the 解析 tail poisoned text compare —
+  // a learner picking the verbatim-correct option was judged incorrect.
+  const choices = [
+    'F_max(x)=F_X(x)+F_Y(x)',
+    'F_max(x)=F_X(x)F_Y(x)−F_X(x)F_Y(x)',
+    'F_max(x)=F_X(x)F_Y(x)',
+    'F_max(x)=1−F_X(x)F_Y(x)',
+  ];
+  const reference =
+    '（C）F_max(x)=F_X(x)F_Y(x)\n\n解析：设 Z=max{X,Y}，则 {Z≤x}={X≤x,Y≤x}，由独立性得 F_Z(x)=F_X(x)F_Y(x)。';
+
+  it('full-width "（C）选项+解析" reference vs letter answer "C" → correct', () => {
+    const r = judgeExact({ reference, choices_md: choices }, { content: 'C' });
+    expect(r.verdict).toBe('correct');
+    expect(r.score).toBe(1);
+    expect(r.evidence_json.match_type).toBe('choice_index');
+    expect(r.evidence_json.reference_choice_indices).toEqual([2]);
+    // stripped tail is recorded so the verdict is auditable (head is
+    // NFKC-normalized: full-width parens fold to ASCII)
+    expect(r.evidence_json.reference_answer_head).toBe('(C)F_max(x)=F_X(x)F_Y(x)');
+  });
+
+  it('full-width parenthesized reference vs option-text answer → correct', () => {
+    const r = judgeExact({ reference, choices_md: choices }, { content: 'F_max(x)=F_X(x)F_Y(x)' });
+    expect(r.verdict).toBe('correct');
+  });
+
+  it('ASCII "(C) option" reference resolves to the same index', () => {
+    const r = judgeExact(
+      { reference: '(C) F_max(x)=F_X(x)F_Y(x)', choices_md: choices },
+      { content: 'C' },
+    );
+    expect(r.verdict).toBe('correct');
+    expect(r.evidence_json.reference_choice_indices).toEqual([2]);
+  });
+
+  it('bare parenthesized letter reference "（B）text" resolves by index', () => {
+    expect(
+      judgeExact(
+        { reference: '（B）主谓倒装', choices_md: ['宾语前置', '主谓倒装', '定语后置'] },
+        { content: 'B' },
+      ).verdict,
+    ).toBe('correct');
+    expect(
+      judgeExact(
+        { reference: '（B）主谓倒装', choices_md: ['宾语前置', '主谓倒装', '定语后置'] },
+        { content: 'A' },
+      ).verdict,
+    ).toBe('incorrect');
+  });
+
+  it('multi-select parenthesized "（BC）" resolves both indices', () => {
+    const cs = ['甲', '乙', '丙', '丁'];
+    expect(
+      judgeExact({ reference: '（BC）乙、丙均正确', choices_md: cs }, { content: 'BC' }).verdict,
+    ).toBe('correct');
+    expect(
+      judgeExact({ reference: '（BC）乙、丙均正确', choices_md: cs }, { content: 'B' }).verdict,
+    ).toBe('incorrect');
+  });
+
+  it('non-choice: "answer\\n\\n解析：…" reference vs bare answer → correct', () => {
+    const r = judgeExact(
+      { reference: 'E(X)=2.7，Var(X)=0.81\n\n解析：由分布列逐项求和即得（推导略）。' },
+      { content: 'E(X)=2.7，Var(X)=0.81' },
+    );
+    expect(r.verdict).toBe('correct');
+    expect(r.evidence_json.match_type).toBe('text');
+    expect(r.evidence_json.reference_answer_head).toBe('E(X)=2.7,Var(X)=0.81');
+  });
+
+  it('answer-side "答：X" marker and trailing self-explanation still match', () => {
+    expect(judgeExact({ reference: '42' }, { content: '答：42' }).verdict).toBe('correct');
+    expect(
+      judgeExact({ reference: '42' }, { content: '42\n\n解析：先算期望再算方差' }).verdict,
+    ).toBe('correct');
+  });
+
+  it('pure worked-solution reference (no bare head) falls back to full-string compare', () => {
+    const ref = '解：设 Z=max{X,Y}。由独立性，F_Z(x)=F_X(x)F_Y(x)。';
+    expect(judgeExact({ reference: ref }, { content: ref }).verdict).toBe('correct');
+    expect(judgeExact({ reference: ref }, { content: 'C' }).verdict).toBe('incorrect');
+  });
+
+  it('existing prefix formats (C。… / C. …) still resolve — no regression', () => {
+    const cs = ['宾语前置', '主谓倒装', '定语后置', '状语后置'];
+    expect(
+      judgeExact({ reference: 'C。定语后置的判定依据', choices_md: cs }, { content: 'C' }).verdict,
+    ).toBe('correct');
+    expect(judgeExact({ reference: 'C. 定语后置', choices_md: cs }, { content: 'C' }).verdict).toBe(
+      'correct',
+    );
+  });
+});

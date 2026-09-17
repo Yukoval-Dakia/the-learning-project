@@ -1,3 +1,5 @@
+import { extractAnswerHead } from '@/core/schema/judge-routing';
+
 export interface JudgeInput {
   reference: string;
   // YUK-260: option texts for choice questions. When present, both answer and
@@ -55,25 +57,36 @@ export function judgeExact(question: JudgeInput, answer: AnswerInput): JudgeResu
 
     // (3) Leading-letter prefix: reference_md per the reading-comprehension skill
     // is "正确项字母 + 依据" (e.g. "C。原文依据…"), and choices_md options may carry
-    // a label prefix ("A. 修八尺有余…"). Parse the leading letter when followed by
-    // a separator so 'C' answer ↔ "C。…" reference are judged equal.
-    const prefix = t.toUpperCase().match(/^([A-Z])[\s.．。、,，:：)）]/);
+    // a label prefix ("A. 修八尺有余…"). YUK-1003: jyeoo/web-sourced references
+    // also use the parenthesised form "（C）选项原文（+解析）" — allow an optional
+    // full/half-width open paren before the letter. Parse the leading letter
+    // when followed by a separator so 'C' answer ↔ "C。…" / "（C）…" reference
+    // are judged equal.
+    const prefix = t
+      .toUpperCase()
+      .match(/^[（(]([A-Z]{1,4})(?:[\s.．。、,，:：)）]|$)|^([A-Z])(?:[\s.．。、,，:：)）]|$)/);
     if (prefix) {
-      const i = prefix[1].charCodeAt(0) - 65;
-      if (i < choices.length) return [i];
+      const indices = [...(prefix[1] ?? prefix[2])].map((ch) => ch.charCodeAt(0) - 65);
+      if (indices.every((i) => i < choices.length)) return indices;
     }
 
     return null;
   };
-  const answerIdx = resolveChoiceIndices(answer.content);
-  const referenceIdx = resolveChoiceIndices(question.reference);
+  // YUK-1003: web-sourced reference_md stores "<bare answer>\n\n解析：…" — the
+  // judgeable surface is the extracted answer head. Same for the learner's
+  // answer ("答：X" / trailing self-written explanation is still a correct
+  // answer). resolveChoiceIndices and the text compare both run on heads.
+  const answerHead = extractAnswerHead(answer.content);
+  const referenceHead = extractAnswerHead(question.reference);
+  const answerIdx = resolveChoiceIndices(answerHead);
+  const referenceIdx = resolveChoiceIndices(referenceHead);
   const choiceMatch =
     answerIdx !== null &&
     referenceIdx !== null &&
     answerIdx.length === referenceIdx.length &&
     answerIdx.every((v, i) => v === referenceIdx[i]);
 
-  const match = choiceMatch || normalize(answer.content) === normalize(question.reference);
+  const match = choiceMatch || normalize(answerHead) === normalize(referenceHead);
   // YUK-260 evidence: record HOW the match was decided plus resolved indices, so
   // a choice_index verdict (where normalized text legitimately differs) does not
   // read as self-contradictory. Kept isomorphic with the V2 capability judge.
@@ -86,6 +99,15 @@ export function judgeExact(question: JudgeInput, answer: AnswerInput): JudgeResu
     evidence_json: {
       match,
       normalized_reference: normalize(question.reference),
+      // YUK-1003: when either side embedded an explanation tail the compare ran
+      // on extracted heads — record them, otherwise a stripped verdict reads
+      // self-contradictory (normalized texts visibly differ).
+      ...(answerHead !== answer.content.normalize('NFKC').trim()
+        ? { answer_head: answerHead }
+        : {}),
+      ...(referenceHead !== question.reference.normalize('NFKC').trim()
+        ? { reference_answer_head: referenceHead }
+        : {}),
       match_type: choiceMatch ? 'choice_index' : 'text',
       answer_choice_indices: answerIdx,
       reference_choice_indices: referenceIdx,

@@ -162,3 +162,95 @@ describe('exactJudgeCapability — bot-review hardening (YUK-260)', () => {
     expect(plain.evidence_json?.answer_choice_indices).toBeNull();
   });
 });
+
+describe('exactJudgeCapability — parenthesized references + explanation tails (YUK-1003)', () => {
+  // Real production shape (web_sourced/jyeoo): reference_md stores
+  // "（C）<选项原文>\n\n解析：<解题过程>". Before the fix the leading-letter
+  // parser required a bare letter at position 0, so the parenthesized head
+  // never resolved to a choice index and the 解析 tail poisoned text compare —
+  // a learner picking the verbatim-correct option was judged incorrect.
+  const choices = [
+    'F_max(x)=F_X(x)+F_Y(x)',
+    'F_max(x)=F_X(x)F_Y(x)−F_X(x)F_Y(x)',
+    'F_max(x)=F_X(x)F_Y(x)',
+    'F_max(x)=1−F_X(x)F_Y(x)',
+  ];
+  const reference =
+    '（C）F_max(x)=F_X(x)F_Y(x)\n\n解析：设 Z=max{X,Y}，则 {Z≤x}={X≤x,Y≤x}，由独立性得 F_Z(x)=F_X(x)F_Y(x)。';
+
+  it('full-width "（C）选项+解析" reference vs letter answer "C" → correct', async () => {
+    const r = await run({ reference, choices_md: choices }, 'C');
+    expect(r.coarse_outcome).toBe('correct');
+    expect(r.score).toBe(1);
+    expect(r.evidence_json?.match_type).toBe('choice_index');
+    expect(r.evidence_json?.reference_choice_indices).toEqual([2]);
+    // stripped tail is recorded so the verdict is auditable (NFKC folds
+    // full-width parens to ASCII)
+    expect(r.evidence_json?.reference_answer_head).toBe('(C)F_max(x)=F_X(x)F_Y(x)');
+    expect(JudgeResultV2.safeParse(r).success).toBe(true);
+  });
+
+  it('full-width parenthesized reference vs option-text answer → correct', async () => {
+    const r = await run({ reference, choices_md: choices }, 'F_max(x)=F_X(x)F_Y(x)');
+    expect(r.coarse_outcome).toBe('correct');
+  });
+
+  it('ASCII "(C) option" reference resolves to the same index', async () => {
+    const r = await run({ reference: '(C) F_max(x)=F_X(x)F_Y(x)', choices_md: choices }, 'C');
+    expect(r.coarse_outcome).toBe('correct');
+    expect(r.evidence_json?.reference_choice_indices).toEqual([2]);
+  });
+
+  it('bare parenthesized letter reference "（B）text" resolves by index', async () => {
+    const cs = ['宾语前置', '主谓倒装', '定语后置'];
+    expect((await run({ reference: '（B）主谓倒装', choices_md: cs }, 'B')).coarse_outcome).toBe(
+      'correct',
+    );
+    expect((await run({ reference: '（B）主谓倒装', choices_md: cs }, 'A')).coarse_outcome).toBe(
+      'incorrect',
+    );
+  });
+
+  it('multi-select parenthesized "（BC）" resolves both indices', async () => {
+    const cs = ['甲', '乙', '丙', '丁'];
+    expect(
+      (await run({ reference: '（BC）乙、丙均正确', choices_md: cs }, 'BC')).coarse_outcome,
+    ).toBe('correct');
+    expect(
+      (await run({ reference: '（BC）乙、丙均正确', choices_md: cs }, 'B')).coarse_outcome,
+    ).toBe('incorrect');
+  });
+
+  it('non-choice: "answer\\n\\n解析：…" reference vs bare answer → correct', async () => {
+    const r = await run(
+      { reference: 'E(X)=2.7，Var(X)=0.81\n\n解析：由分布列逐项求和即得（推导略）。' },
+      'E(X)=2.7，Var(X)=0.81',
+    );
+    expect(r.coarse_outcome).toBe('correct');
+    expect(r.evidence_json?.match_type).toBe('text');
+    expect(r.evidence_json?.reference_answer_head).toBe('E(X)=2.7,Var(X)=0.81');
+  });
+
+  it('answer-side "答：X" marker and trailing self-explanation still match', async () => {
+    expect((await run({ reference: '42' }, '答：42')).coarse_outcome).toBe('correct');
+    expect((await run({ reference: '42' }, '42\n\n解析：先算期望再算方差')).coarse_outcome).toBe(
+      'correct',
+    );
+  });
+
+  it('pure worked-solution reference (no bare head) falls back to full-string compare', async () => {
+    const ref = '解：设 Z=max{X,Y}。由独立性，F_Z(x)=F_X(x)F_Y(x)。';
+    expect((await run({ reference: ref }, ref)).coarse_outcome).toBe('correct');
+    expect((await run({ reference: ref }, 'C')).coarse_outcome).toBe('incorrect');
+  });
+
+  it('existing prefix formats (C。… / C. …) still resolve — no regression', async () => {
+    const cs = ['宾语前置', '主谓倒装', '定语后置', '状语后置'];
+    expect(
+      (await run({ reference: 'C。定语后置的判定依据', choices_md: cs }, 'C')).coarse_outcome,
+    ).toBe('correct');
+    expect((await run({ reference: 'C. 定语后置', choices_md: cs }, 'C')).coarse_outcome).toBe(
+      'correct',
+    );
+  });
+});

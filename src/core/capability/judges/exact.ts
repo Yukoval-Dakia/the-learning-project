@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { CapabilityManifestT, JudgeResultV2T } from '@/core/schema/capability';
+import { extractAnswerHead } from '@/core/schema/judge-routing';
 import type { JudgeCapabilityRunner, JudgeRunInput } from '../types';
 
 const ExactJudgeQuestion = z.object({
@@ -94,25 +95,36 @@ function run(input: JudgeRunInput): JudgeResultV2T {
 
     // (3) Leading-letter prefix: reference_md per the reading-comprehension skill
     // is "正确项字母 + 依据" (e.g. "C。原文依据…"), and choices_md options may carry
-    // a label prefix ("A. 修八尺有余…"). Parse the leading letter when followed by
-    // a separator so 'C' answer ↔ "C。…" reference are judged equal.
-    const prefix = t.toUpperCase().match(/^([A-Z])[\s.．。、,，:：)）]/);
+    // a label prefix ("A. 修八尺有余…"). YUK-1003: jyeoo/web-sourced references
+    // also use the parenthesised form "（C）选项原文（+解析）" — allow an optional
+    // full/half-width open paren before the letter. Parse the leading letter
+    // when followed by a separator so 'C' answer ↔ "C。…" / "（C）…" reference
+    // are judged equal.
+    const prefix = t
+      .toUpperCase()
+      .match(/^[（(]([A-Z]{1,4})(?:[\s.．。、,，:：)）]|$)|^([A-Z])(?:[\s.．。、,，:：)）]|$)/);
     if (prefix) {
-      const i = prefix[1].charCodeAt(0) - 65;
-      if (i < choices.length) return [i];
+      const indices = [...(prefix[1] ?? prefix[2])].map((ch) => ch.charCodeAt(0) - 65);
+      if (indices.every((i) => i < choices.length)) return indices;
     }
 
     return null;
   };
-  const answerIdx = resolveChoiceIndices(input.answer.content);
-  const referenceIdx = resolveChoiceIndices(question.reference);
+  // YUK-1003: web-sourced reference_md stores "<bare answer>\n\n解析：…" — the
+  // judgeable surface is the extracted answer head. Same for the learner's
+  // answer ("答：X" / trailing self-written explanation is still a correct
+  // answer). resolveChoiceIndices and the text compare both run on heads.
+  const answerHead = extractAnswerHead(input.answer.content);
+  const referenceHead = extractAnswerHead(question.reference);
+  const answerIdx = resolveChoiceIndices(answerHead);
+  const referenceIdx = resolveChoiceIndices(referenceHead);
   const choiceMatch =
     answerIdx !== null &&
     referenceIdx !== null &&
     answerIdx.length === referenceIdx.length &&
     answerIdx.every((v, i) => v === referenceIdx[i]);
 
-  const match = choiceMatch || normalizedAnswer === normalizedReference;
+  const match = choiceMatch || normalize(answerHead) === normalize(referenceHead);
 
   // YUK-260 evidence: when choiceMatch wins, normalized_answer / _reference can
   // legitimately differ (e.g. 'a' vs '选项一'), so record HOW the match was
@@ -124,6 +136,17 @@ function run(input: JudgeRunInput): JudgeResultV2T {
     match_type: matchType,
     answer_choice_indices: answerIdx,
     reference_choice_indices: referenceIdx,
+  };
+  // YUK-1003: when either side embedded an explanation tail the compare ran on
+  // extracted heads — record them, otherwise a stripped verdict reads
+  // self-contradictory (normalized texts visibly differ).
+  const headEvidence = {
+    ...(answerHead !== input.answer.content.normalize('NFKC').trim()
+      ? { answer_head: answerHead }
+      : {}),
+    ...(referenceHead !== question.reference.normalize('NFKC').trim()
+      ? { reference_answer_head: referenceHead }
+      : {}),
   };
 
   if (match) {
@@ -139,6 +162,7 @@ function run(input: JudgeRunInput): JudgeResultV2T {
         normalized_answer: normalizedAnswer,
         normalized_reference: normalizedReference,
         ...choiceEvidence,
+        ...headEvidence,
       },
     };
   }
@@ -155,6 +179,7 @@ function run(input: JudgeRunInput): JudgeResultV2T {
       normalized_answer: normalizedAnswer,
       normalized_reference: normalizedReference,
       ...choiceEvidence,
+      ...headEvidence,
     },
   };
 }
