@@ -208,10 +208,18 @@ function renderTable(el: El, inMath: boolean): string {
 
   // Fraction stack: <tr><td style="border-bottom…">NUM</td></tr><tr><td>DEN</td></tr>.
   // MathJye renders the horizontal bar as the numerator cell's bottom border.
+  // Single-cell rows only: a multi-cell row carrying a border-bottom is a real
+  // table, not a fraction — destructuring [0] would silently drop sibling cells.
   if (rows.length === 2) {
     const [num] = cellsOf(rows[0]);
     const [den] = cellsOf(rows[1]);
-    if (num && den && /border-bottom/i.test(num.attrs)) {
+    if (
+      num &&
+      den &&
+      cellsOf(rows[0]).length === 1 &&
+      cellsOf(rows[1]).length === 1 &&
+      /border-bottom/i.test(num.attrs)
+    ) {
       return `${open}\\frac{${renderNodes(num.children, true)}}{${renderNodes(den.children, true)}}${close}`;
     }
   }
