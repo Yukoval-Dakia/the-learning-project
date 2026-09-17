@@ -287,6 +287,48 @@ describe('planLearningIntent', () => {
     expect(proposal.proposed_knowledge?.children.map((c) => c.domain)).toEqual(['math', 'math']);
   });
 
+  // A new root must be a real selectable subject — an unresolvable string
+  // fails closed too (not just 'general'); only children inherit loosely.
+  it('rejects a 3a outline whose root.domain is an unresolvable string', async () => {
+    const runTaskFn = vi.fn(async () => ({
+      text: JSON.stringify({
+        knowledge: {
+          root: { temp_id: 'root', name: '概率论', domain: 'korean101' },
+          children: [{ temp_id: 'cp', name: '条件概率', domain: 'math' }],
+        },
+        hub: { title: '概率论总览', summary_md: 's' },
+        atomics: [{ knowledge_id: 'cp', title: 'a', one_line_intent: 'i' }],
+      }),
+    }));
+    await expect(
+      planLearningIntent({ db: testDb(), topic: '概率论', runTaskFn }),
+    ).rejects.toMatchObject({ code: 'llm_parse_failed' });
+  });
+
+  // Legacy unconfigured domains (e.g. 'YINGYU') resolve by raw identity; a 3b
+  // child that omits domain must keep the parent's verbatim domain, not null —
+  // same passthrough the write seam applies.
+  it('keeps a legacy unresolvable parent domain verbatim for 3b children', async () => {
+    await seedKnowledge([{ id: 'k_eng', name: '英语语法', domain: 'YINGYU' }]);
+    const runTaskFn = vi.fn(async () => ({
+      text: JSON.stringify({
+        knowledge: {
+          children: [{ temp_id: 'tenses', name: '时态' }], // domain omitted → inherit
+        },
+        hub: { title: '语法总览', summary_md: 's' },
+        atomics: [{ knowledge_id: 'tenses', title: '时态', one_line_intent: '会判时态' }],
+      }),
+    }));
+    const proposal = await planLearningIntent({ db: testDb(), topic: '英语语法', runTaskFn });
+    expect(proposal.proposed_knowledge?.children[0]?.domain).toBe('YINGYU');
+
+    const result = await acceptLearningIntent({ db: testDb(), proposalId: proposal.proposal_id });
+    const child = (await testDb().select().from(knowledge)).find((r) => r.name === '时态');
+    expect(child?.domain).toBe('YINGYU');
+    expect(child?.parent_id).toBe('k_eng');
+    expect(result.created_knowledge_ids).toContain(child?.id);
+  });
+
   it('exposes valid_domains to the outline task input — selectable subjects only, never general', async () => {
     const runTaskFn = vi.fn(async (_k: string, input: unknown, _c: unknown) => {
       const domains = (input as { valid_domains?: string[] }).valid_domains;

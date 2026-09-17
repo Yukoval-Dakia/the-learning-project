@@ -350,6 +350,24 @@ export function resolveSelectableSubjectId(domain?: string | null): SubjectId | 
   return defaultRegistry.resolveSelectableSubjectId(domain);
 }
 
+/**
+ * YUK-1004 — what a proposed domain should be STORED as `knowledge.domain`,
+ * mirroring the createKnowledgeNodeFromEvents seam semantics exactly:
+ *   selectable subject (incl. aliases) → canonical id;
+ *   `general` in any spelling          → null (inherit; never a node domain);
+ *   anything unresolvable              → verbatim (custom subjects pre-
+ *     hydration and legacy unconfigured domains are deliberately tolerated).
+ * Use this at proposal/plan boundaries; `resolveSelectableSubjectId` stays the
+ * strict predicate for positions that MUST be a real subject (a 3a root).
+ */
+export function sanitizeProposedNodeDomain(domain?: string | null): string | null {
+  const selectable = resolveSelectableSubjectId(domain);
+  if (selectable) return selectable;
+  if (resolveKnownSubjectId(domain) === 'general') return null;
+  const raw = domain?.trim();
+  return raw || null;
+}
+
 // YUK-600（v2 §6，阻断②）— AI 分类词表：opaque id 互相零语义差 → 判别近随机；
 // display_name 是分类依据，id 是 opaque stable key 原样回传（LLM 禁自造），
 // aliases present 才序列化。**取数红线**：读活 registry（selectable × get +

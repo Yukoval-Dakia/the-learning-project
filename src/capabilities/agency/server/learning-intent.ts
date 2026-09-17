@@ -27,6 +27,7 @@ import {
   getDefaultSubjectRegistry,
   resolveSelectableSubjectId,
   resolveSubjectProfile,
+  sanitizeProposedNodeDomain,
 } from '@/subjects/profile';
 // YUK-879 — the outline output contract (schema + strict parser + domain error)
 // is owned by the agency TaskSpec module; this orchestrator re-exports it so
@@ -135,11 +136,12 @@ function normalizeProposedNode(
   return {
     temp_id: node.temp_id,
     name: node.name,
-    // YUK-1004 — a proposed domain only survives when it resolves to a real
-    // selectable subject; 'general' (the fallback identity, never a node
-    // domain) and unrecognised strings degrade to the parent fallback instead
-    // of persisting into knowledge.domain.
-    domain: resolveSelectableSubjectId(node.domain) ?? fallbackDomain,
+    // YUK-1004 — a proposed domain is sanitised to storage shape:
+    // selectable → canonical id, 'general' (the fallback identity, never a
+    // node domain) → null/inherit, unresolvable → verbatim (same tolerance
+    // as the write seam). A sanitised-out value degrades to the parent
+    // fallback instead of persisting into knowledge.domain.
+    domain: sanitizeProposedNodeDomain(node.domain) ?? fallbackDomain,
   };
 }
 
@@ -268,10 +270,19 @@ export async function planLearningIntent(
     }
     const root =
       planCase === '3a_topic_missing'
-        ? normalizeProposedNode(
-            knowledgeSpec.root ?? failInvalidOutline('3a outline must include knowledge.root'),
-            null,
-          )
+        ? (() => {
+            const raw =
+              knowledgeSpec.root ?? failInvalidOutline('3a outline must include knowledge.root');
+            // YUK-1004 — a NEW topic root must carry a real selectable subject:
+            // 'general' and any unresolvable string fail closed rather than
+            // materialising an invisible/orphan-domain root. (Children get the
+            // looser sanitise-then-inherit treatment via normalizeProposedNode.)
+            return {
+              temp_id: raw.temp_id,
+              name: raw.name,
+              domain: resolveSelectableSubjectId(raw.domain),
+            };
+          })()
         : undefined;
     if (planCase === '3a_topic_missing' && !root?.domain) {
       failInvalidOutline(
@@ -279,9 +290,10 @@ export async function planLearningIntent(
       );
     }
     // root?.domain is already canonicalised by normalizeProposedNode; an
-    // existing node's stored domain goes through the same predicate so a
-    // corrupt/legacy value can't leak into proposed children.
-    const rootDomain = root?.domain ?? resolveSelectableSubjectId(node?.domain) ?? null;
+    // existing node's stored domain goes through the same sanitiser so a
+    // corrupt 'general' can't leak into proposed children while legacy
+    // unresolvable domains keep their verbatim storage.
+    const rootDomain = root?.domain ?? sanitizeProposedNodeDomain(node?.domain) ?? null;
     const proposedChildren = (knowledgeSpec.children ?? []).map((child) =>
       normalizeProposedNode(child, rootDomain),
     );
@@ -530,12 +542,13 @@ export async function acceptLearningIntent(
           `${planCase} proposal missing proposed children`,
         );
       }
-      // YUK-1004 — canonicalise every persisted domain through the selectable
-      // predicate so a stale pre-fix proposal carrying 'general' cannot leak
-      // into knowledge.domain at accept time either.
+      // YUK-1004 — sanitise every persisted domain so a stale pre-fix
+      // proposal carrying 'general' cannot leak into knowledge.domain at
+      // accept time either, while legitimately unresolvable domains keep the
+      // same verbatim passthrough the write seam applies.
       const fallbackDomain =
-        resolveSelectableSubjectId(proposedKnowledge?.root?.domain) ??
-        resolveSelectableSubjectId(proposal.payload.knowledge_node?.domain) ??
+        sanitizeProposedNodeDomain(proposedKnowledge?.root?.domain) ??
+        sanitizeProposedNodeDomain(proposal.payload.knowledge_node?.domain) ??
         null;
       for (const child of children) {
         const childId = newId();
@@ -544,7 +557,7 @@ export async function acceptLearningIntent(
         await createKnowledgeNode(tx, {
           id: childId,
           name: child.name,
-          domain: resolveSelectableSubjectId(child.domain) ?? fallbackDomain,
+          domain: sanitizeProposedNodeDomain(child.domain) ?? fallbackDomain,
           parentId: rootKnowledgeId,
           createdAt: now,
           causedByEventId: rateEventId,

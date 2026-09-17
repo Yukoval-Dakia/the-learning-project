@@ -17,6 +17,7 @@ import {
   resolveKnownSubjectId,
   resolveSelectableSubjectId,
   resolveSubjectProfile,
+  sanitizeProposedNodeDomain,
 } from './profile';
 
 describe('resolveKnownSubjectId', () => {
@@ -92,5 +93,33 @@ describe('resolveSelectableSubjectId', () => {
     expect(resolveSelectableSubjectId('')).toBeNull();
     expect(resolveSelectableSubjectId('chemistry')).toBeNull();
     expect(resolveSelectableSubjectId('<input.valid_domains 之一>')).toBeNull();
+  });
+});
+
+// YUK-1004 — the storage-shape sanitiser used at proposal/accept boundaries.
+// Same 'general' block as the strict predicate, but deliberately keeps
+// unresolvable domains verbatim — matching the write seam's tolerance for
+// custom-subject/pre-hydration ids and legacy unconfigured domains.
+describe('sanitizeProposedNodeDomain', () => {
+  it('canonicalises selectable ids and aliases', () => {
+    expect(sanitizeProposedNodeDomain('math')).toBe('math');
+    expect(sanitizeProposedNodeDomain('wenyan')).toBe('yuwen');
+    expect(sanitizeProposedNodeDomain('Mathematics')).toBe('math');
+  });
+
+  it('nulls the general fallback identity in any spelling', () => {
+    expect(sanitizeProposedNodeDomain('general')).toBeNull();
+    expect(sanitizeProposedNodeDomain(' GENERAL ')).toBeNull();
+  });
+
+  it('passes unresolvable domains through verbatim', () => {
+    expect(sanitizeProposedNodeDomain('YINGYU')).toBe('YINGYU');
+    expect(sanitizeProposedNodeDomain('custom-subject-abc')).toBe('custom-subject-abc');
+  });
+
+  it('returns null for null/empty input', () => {
+    expect(sanitizeProposedNodeDomain(null)).toBeNull();
+    expect(sanitizeProposedNodeDomain(undefined)).toBeNull();
+    expect(sanitizeProposedNodeDomain('')).toBeNull();
   });
 });
