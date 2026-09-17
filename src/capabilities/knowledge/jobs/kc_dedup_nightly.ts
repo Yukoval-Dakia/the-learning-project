@@ -38,7 +38,6 @@ import {
 } from '@/capabilities/knowledge/server/proposals';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
-import { knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 
 export interface KcDedupNightlyResult {
@@ -85,10 +84,13 @@ interface NearDupPairRow {
  * archives or merges a KC itself. Returns {scanned_pairs, merge_proposals_created,
  * skipped} and writes one `experimental:kc_dedup_scan` audit event with the counts.
  *
- * Budget: the scan is bounded to pairs where at least one side is a KC minted by
- * auto-tagging within `windowDays` (an `experimental:auto_tag_kc_created` event),
- * AND is still live (non-archived). This keeps the nightly cost proportional to
- * recent auto-tagging churn, not the whole tree.
+ * Budget: the scan is bounded to pairs where at least one side is a KC minted
+ * within `windowDays` — either auto-tagged (`experimental:auto_tag_kc_created`)
+ * or proposal-minted (propose_new / split, resolved via materialized_id_index
+ * anchor → event). It must also still be live (non-archived). This keeps the
+ * nightly cost proportional to recent minting churn, not the whole tree.
+ * Note: proposal-minted KCs arrive with embedding=null; they enter the window
+ * immediately but only become pair-eligible after embed_backfill fills them.
  */
 export async function runKcDedupNightly(
   db: Db,
@@ -123,6 +125,18 @@ export async function runKcDedupNightly(
         AND subject_kind = 'knowledge'
         AND outcome = 'success'
         AND created_at > now() - make_interval(days => ${windowDays})
+      UNION
+      -- YUK-1010 — proposal-minted KCs were invisible to the window: propose_new /
+      -- split mints carry no auto_tag event; the minted id lives in
+      -- materialized_id_index anchored to its propose/split event. Genesis-anchored
+      -- rows are excluded (baseline backfill, not a recent mint).
+      SELECT m.materialized_id AS id
+      FROM materialized_id_index m
+      JOIN event e ON e.id = m.anchor_event_id
+      WHERE m.subject_kind = 'knowledge'
+        AND e.action IN ('propose', 'experimental:knowledge_split')
+        AND e.subject_kind = 'knowledge'
+        AND e.created_at > now() - make_interval(days => ${windowDays})
     )
     SELECT
       a.id AS a_id,

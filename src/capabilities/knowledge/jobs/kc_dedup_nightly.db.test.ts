@@ -11,7 +11,7 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
-import { event, knowledge } from '@/db/schema';
+import { event, knowledge, materialized_id_index } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import type { WriteProposalEntry } from '../server/proposals';
 import { runKcDedupNightly } from './kc_dedup_nightly';
@@ -79,6 +79,34 @@ async function markAutoCreated(
     outcome: 'success',
     payload: { source: 'tag_knowledge', auto_created_kc_id: kcId },
     created_at: opts.createdAt ?? new Date(),
+  });
+}
+
+/** Mark a KC as recently proposal-minted (propose_new / split lane — YUK-1010:
+ *  these carry no auto_tag event; the minted id lives in materialized_id_index
+ *  anchored to its propose/split event). */
+async function markProposalMinted(
+  db: ReturnType<typeof testDb>,
+  kcId: string,
+  opts: { createdAt?: Date; action?: string } = {},
+): Promise<void> {
+  const anchorId = newId();
+  await db.insert(event).values({
+    id: anchorId,
+    session_id: null,
+    actor_kind: 'agent',
+    actor_ref: 'dreaming',
+    action: opts.action ?? 'propose',
+    subject_kind: 'knowledge',
+    subject_id: 'seed:math:root',
+    outcome: 'partial',
+    payload: { name: kcId, parent_id: 'seed:math:root', reasoning: 'test' },
+    created_at: opts.createdAt ?? new Date(),
+  });
+  await db.insert(materialized_id_index).values({
+    materialized_id: kcId,
+    anchor_event_id: anchorId,
+    subject_kind: 'knowledge',
   });
 }
 
@@ -184,6 +212,83 @@ describe('runKcDedupNightly', () => {
     const longAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     await markAutoCreated(db, 'kc-old1', { createdAt: longAgo });
     await markAutoCreated(db, 'kc-old2', { createdAt: longAgo });
+
+    const proposeFn = vi.fn(async () => newId());
+    const res = await runKcDedupNightly(db, { proposeFn });
+
+    expect(res.scanned_pairs).toBe(0);
+    expect(proposeFn).not.toHaveBeenCalled();
+  });
+
+  it('detects a near-dup pair where the recent side was PROPOSAL-minted (YUK-1010 blindspot)', async () => {
+    const db = testDb();
+    // The prod incident: dreaming-minted 条件概率 (Conditional Probability) dup of
+    // established 条件概率与贝叶斯 — invisible to the auto_tag-only window.
+    await seedKc(db, 'kc-established', unitVec(0), { createdAt: new Date('2026-06-20T00:00:00Z') });
+    await seedKc(db, 'kc-dup', nearUnit0(0.1), { createdAt: new Date() });
+    await markProposalMinted(db, 'kc-dup');
+    // The established side needs no recency marker — the dup side's mint is what
+    // puts the pair in budget.
+
+    const proposeFn = vi.fn(async () => newId());
+    const res = await runKcDedupNightly(db, { proposeFn });
+
+    expect(res.scanned_pairs).toBe(1);
+    expect(res.merge_proposals_created).toBe(1);
+    expect(proposeFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('detects a near-dup pair where the recent side was SPLIT-minted', async () => {
+    const db = testDb();
+    await seedKc(db, 'kc-established', unitVec(0));
+    await seedKc(db, 'kc-split-child', nearUnit0(0.1));
+    await markProposalMinted(db, 'kc-split-child', { action: 'experimental:knowledge_split' });
+
+    const proposeFn = vi.fn(async () => newId());
+    const res = await runKcDedupNightly(db, { proposeFn });
+
+    expect(res.scanned_pairs).toBe(1);
+    expect(proposeFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('excludes a near-dup pair when the proposal-mint anchor is OUTSIDE the window', async () => {
+    const db = testDb();
+    await seedKc(db, 'kc-established', unitVec(0));
+    await seedKc(db, 'kc-dup', nearUnit0(0.1));
+    const longAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    await markProposalMinted(db, 'kc-dup', { createdAt: longAgo });
+
+    const proposeFn = vi.fn(async () => newId());
+    const res = await runKcDedupNightly(db, { proposeFn });
+
+    expect(res.scanned_pairs).toBe(0);
+    expect(proposeFn).not.toHaveBeenCalled();
+  });
+
+  it('does NOT treat a genesis-anchored KC as a recent mint', async () => {
+    const db = testDb();
+    await seedKc(db, 'kc-a', unitVec(0));
+    await seedKc(db, 'kc-b', nearUnit0(0.1));
+    // Genesis anchor (baseline backfill) — NOT a recent mint, so the pair must
+    // stay out of budget even though an index entry exists.
+    const genesisId = newId();
+    await db.insert(event).values({
+      id: genesisId,
+      session_id: null,
+      actor_kind: 'system',
+      actor_ref: 'genesis-backfill',
+      action: 'experimental:genesis',
+      subject_kind: 'knowledge',
+      subject_id: 'kc-a',
+      outcome: 'success',
+      payload: { row: { id: 'kc-a' } },
+      created_at: new Date(),
+    });
+    await db.insert(materialized_id_index).values({
+      materialized_id: 'kc-a',
+      anchor_event_id: genesisId,
+      subject_kind: 'knowledge',
+    });
 
     const proposeFn = vi.fn(async () => newId());
     const res = await runKcDedupNightly(db, { proposeFn });
