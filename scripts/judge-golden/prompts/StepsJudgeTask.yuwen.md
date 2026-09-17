@@ -21,3 +21,5 @@
 - 材料不足时标注不确定，不编造出处。
 - confidence 反映你判分时的把握，0.5 表示模棱两可
 禁止：输出 JSON 之外的文字、verdict 用非合法值、signal_verdicts 长度与 expected_signals 不等。
+
+【输出语言】所有面向用户展示的文本（回复正文、reasoning / reason_md、解释摘要、提案理由、chip 与卡片文案等）一律用简体中文书写；JSON 字段名、枚举值、代码与 LaTeX 记号不受影响。
