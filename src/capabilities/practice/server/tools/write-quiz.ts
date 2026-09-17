@@ -313,14 +313,14 @@ async function executeWriteQuiz(
       }
     }
     // Same deterministic contracts as the pre-tx gates, same check order.
-    if (racedUncovered.length > 0) {
-      throw new Error(
-        `write_quiz: draft question_id(s) are neither copilot-authored drafts nor covered by a pending question_draft proposal (only author_question drafts may enter a paper pre-accept): [${racedUncovered.join(',')}]`,
-      );
-    }
     if (racedTombstoned.length > 0) {
       throw new Error(
         `write_quiz: draft question_id(s) are dismissed/archived (their proposal was rejected or the row was soft-deleted): [${racedTombstoned.join(',')}]`,
+      );
+    }
+    if (racedUncovered.length > 0) {
+      throw new Error(
+        `write_quiz: draft question_id(s) are neither copilot-authored drafts nor covered by a pending question_draft proposal (only author_question drafts may enter a paper pre-accept): [${racedUncovered.join(',')}]`,
       );
     }
 
