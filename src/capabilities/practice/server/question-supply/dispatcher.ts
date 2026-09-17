@@ -385,8 +385,10 @@ export async function dispatchSupplyTarget(
             demand_id: `dispatch_${target.id}_${newId()}`,
             knowledge_id: anchorKid,
             kind: target.kind && target.kind !== 'any' ? target.kind : 'any',
-            // YUK-287 — forward the target's difficulty band (was hardcoded null):
-            // runJyeooFetchCandidates honours it via its band filter.
+            // YUK-287 — forward the target's difficulty band (was hardcoded null).
+            // executorData only runs on the supply_execute queue (autoRoute ===
+            // 'sourcing_web'), where plan-executor validates the band against
+            // DIFFICULTY_BANDS and feeds it to runJyeooFetchCandidates' band filter.
             difficulty_band: target.difficultyBand,
             count: target.desiredCount,
             route_preference: [autoRoute],

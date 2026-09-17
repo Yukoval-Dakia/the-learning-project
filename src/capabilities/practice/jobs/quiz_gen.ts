@@ -110,6 +110,7 @@ import {
   terminalizePlacementUnknownCost,
 } from '../server/question-supply/placement-starter-attempts';
 import { markPlacementStarterClaimTerminal } from '../server/question-supply/placement-starter-store';
+import type { DifficultyBand } from '../server/question-supply/target-discovery';
 import {
   EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
   canonicalQuestionContentHash,
@@ -152,7 +153,7 @@ export interface QuizGenJobData {
   // YUK-287 — the supply target's difficulty band (below|near|above|stretch, relative
   // to learner θ̂). Forwarded as requested_difficulty_band into plan/generate inputs so
   // a band-gap target produces band-aimed questions instead of generic difficulty.
-  difficulty_band?: string;
+  difficulty_band?: DifficultyBand;
   // YUK-287 — 篇 (composite parent) requirement, phase-deferred: forwarded now so the
   // seam is data-complete; QuizGenTask composite (stem+sub_questions) generation is a
   // separate feature (mirrors the knowledge_ids phase-deferred pattern below).
@@ -392,7 +393,7 @@ export interface RunQuizGenParams {
   // YUK-287 — difficulty band the supply target requires; soft-aimed via
   // requested_difficulty_band in plan/generate inputs (planner difficulty is a hint,
   // not a checked pin — bands are approximate producer semantics).
-  difficultyBand?: string;
+  difficultyBand?: DifficultyBand;
   supplyTrace?: SupplyTraceV1T;
   placementAttempt?: PlacementAttemptAuthority;
   placementHeartbeat?: PlacementAttemptHeartbeat;

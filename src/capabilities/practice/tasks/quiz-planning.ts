@@ -33,7 +33,7 @@ function buildQuizPlanPrompt(profile: SubjectProfile): string {
 - 非客观题不给 answer_anchor（开放 / 语义判分题的答案在生成阶段写 rubric）。
 - requested_generation_method 出现时是硬约束：计划顶层 generation_method 必须等于它；缺省时自行选择（material_grounded=需要真实原文锚的阅读类，closed_book=闭卷，search_grounded=常规检索背景素材）。
 - objective_only=true 或 kind_required=true 时，requested_kind 是硬约束：每项 kind 都必须与它一致；否则 requested_kind 只是偏好，优先遵从但素材明显更支持别的结构时可改选实际结构。
-- requested_difficulty_band（若有）是难度目标带（相对用户当前水平）：below=偏易巩固、near=贴合当前水平、above=略拔高、stretch=明显拔高挑战。把每项 difficulty 朝该带瞄准（below→1-2、near→2-3、above→3-4、stretch→4-5）；它不是机检硬约束，但与错题/掌握信号冲突时以信号为准。
+- requested_difficulty_band（若有）是难度目标带（相对用户当前水平）：below=偏易巩固、near=贴合当前水平、above=略拔高、stretch=明显拔高挑战。把每项 difficulty 朝该带瞄准（below→1-2、near→3、above→4、stretch→5，与题库 side 的 band→难度映射同义）；它不是机检硬约束，但与错题/掌握信号冲突时以信号为准。
 - previous_rejection（若有）是上一轮机检的拒绝原因列表：逐条修正后重新输出完整计划，不要输出解释。
 
 整体严格 JSON 输出（不带 markdown 代码块包裹），shape 名 QuizGenPlan：
