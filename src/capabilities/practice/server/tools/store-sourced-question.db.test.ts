@@ -233,6 +233,89 @@ describe('executeStoreSourcedQuestion — insert path', () => {
     expect((row?.metadata as Record<string, unknown>).attribution_state).toBe('coarse');
     expect(row?.knowledge_ids).toEqual(['math-root']);
   });
+
+  // YUK-1003 — 生产事故形态：7 条 web_sourced computation 行被 producer 标
+  // judge_kind_override='exact'，但 reference_md 是纯解题过程（多段落 LaTeX 推导，
+  // 无裸答案头）——exact 是逐字比较契约，这种行结构上不可能判对。写路径必须把
+  // 该 override 降级为派生路由，并在 metadata 留痕。
+  it('demotes an unwinnable exact override on a non-choice row to the derived route', async () => {
+    await seedTree();
+    const q = sourced({
+      kind: 'computation',
+      judge_kind_override: 'exact',
+      // 生产真实形态（脱敏等构）：纯多段落解题过程，无裸答案头
+      reference_md:
+        '设事件 H：患病，事件 E：检测阳性。\n\n已知：$P(H)=0.001$，$P(E|H)=0.99$，$P(E|\\bar{H})=0.02$。\n\n由全概率公式：\n$$P(E)=P(E|H)P(H)+P(E|\\bar{H})P(\\bar{H})$$',
+      rubric_json: {
+        criteria: [{ name: 'correctness', weight: 1, descriptor: '结果正确' }],
+        keywords: ['0.0209', '贝叶斯'],
+        required_points: [],
+      },
+    });
+    const output = await executeStoreSourcedQuestion(
+      { db, taskRunId: 'test-run' },
+      inputOf(await candidateOf(q)),
+      fakeEnqueue([]),
+    );
+    expect(output.status).toBe('inserted');
+    if (output.status !== 'inserted') return;
+
+    const [row] = await db.select().from(question).where(eq(question.id, output.question_id));
+    // computation + rubric keywords → 派生路由 'keyword'（而非语义不可胜的 exact）。
+    expect(row?.judge_kind_override).toBe('keyword');
+    const metadata = row?.metadata as Record<string, unknown>;
+    expect(metadata.judge_kind_override_demoted).toEqual({
+      declared: 'exact',
+      applied: 'keyword',
+      reason: 'reference_not_exact_capable',
+    });
+  });
+
+  it('keeps an exact override when the reference resolves to a bare-answer head', async () => {
+    await seedTree();
+    const q = sourced({
+      kind: 'computation',
+      judge_kind_override: 'exact',
+      // 裸最终答案 + 分段解析尾——exact 成立，judge 比对提取出的 head。
+      reference_md: 'E(X)=2.7，Var(X)=0.81\n\n解析：由分布列逐项求和即得，过程从略。',
+    });
+    const output = await executeStoreSourcedQuestion(
+      { db, taskRunId: 'test-run' },
+      inputOf(await candidateOf(q)),
+      fakeEnqueue([]),
+    );
+    expect(output.status).toBe('inserted');
+    if (output.status !== 'inserted') return;
+
+    const [row] = await db.select().from(question).where(eq(question.id, output.question_id));
+    expect(row?.judge_kind_override).toBe('exact');
+    const metadata = row?.metadata as Record<string, unknown>;
+    expect(metadata.judge_kind_override_demoted).toBeUndefined();
+  });
+
+  it('keeps exact on choice rows — choices drive the route regardless of 解析 tails', async () => {
+    await seedTree();
+    const q = sourced({
+      kind: 'choice',
+      judge_kind_override: 'exact',
+      choices_md: ['F_X+F_Y', 'F_X·F_Y−F_X·F_Y', 'F_X·F_Y', '1−F_X·F_Y'],
+      // 生产真实形态：「（C）选项原文 + 解析尾」——choice 行的 exact 由选项索引
+      // 判定（YUK-1003 parser 修复后 "（C）" 前缀可解析），不触发降级。
+      reference_md: '（C）F_X·F_Y\n\n解析：设 Z=max{X,Y}，由独立性得 F_Z=F_X·F_Y。',
+    });
+    const output = await executeStoreSourcedQuestion(
+      { db, taskRunId: 'test-run' },
+      inputOf(await candidateOf(q)),
+      fakeEnqueue([]),
+    );
+    expect(output.status).toBe('inserted');
+    if (output.status !== 'inserted') return;
+
+    const [row] = await db.select().from(question).where(eq(question.id, output.question_id));
+    expect(row?.judge_kind_override).toBe('exact');
+    const metadata = row?.metadata as Record<string, unknown>;
+    expect(metadata.judge_kind_override_demoted).toBeUndefined();
+  });
 });
 
 describe('executeStoreSourcedQuestion — deterministic rejections', () => {
