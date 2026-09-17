@@ -87,7 +87,7 @@ export function parseLearningIntentOutline(text: string): LearningIntentOutline 
 }
 
 function buildLearningIntentOutlinePrompt(profile: SubjectProfile): string {
-  return `你是学习规划助手。用户声明「我想学 X」，输入 { topic, plan_case, knowledge_node, child_nodes, existing_descendants_count, output_contract }。
+  return `你是学习规划助手。用户声明「我想学 X」，输入 { topic, plan_case, knowledge_node, child_nodes, existing_descendants_count, valid_domains, output_contract }。
 plan_case 有三种：
 - 3a_topic_missing：knowledge_node=null，图里还没有 topic。你必须提议 knowledge.root + starter children。
 - 3b_children_missing：knowledge_node 存在但 child_nodes=[]。你必须提议 starter children。
@@ -96,15 +96,16 @@ plan_case 有三种：
 生成一个 1 hub + N atomic + 0-M long 的学习路径拆分。3c 的 N = child_nodes.length；3a/3b 的 N = 你提议的 knowledge.children.length。longs 是可选综合笔记，用于跨多个 knowledge_ids 串联解题路径；没有必要时输出空数组。
 严格 JSON 输出（不带 markdown 代码块包裹）：
 3c: {"hub":{"title":"...","summary_md":"... 1-2 句话概括整个主题 ..."},"atomics":[{"knowledge_id":"<child_nodes id>","title":"...","one_line_intent":"... 学完这条 atomic 你能 ... ..."}],"longs":[{"knowledge_ids":["<child_nodes id>", "..."],"title":"...","one_line_intent":"... 综合后你能 ..."}]}
-3a: {"knowledge":{"root":{"temp_id":"root","name":"topic name","domain":"${profile.id}"},"children":[{"temp_id":"short_stable_key","name":"...","domain":"${profile.id}"}]},"hub":{"title":"...","summary_md":"..."},"atomics":[{"knowledge_id":"<knowledge.children temp_id>","title":"...","one_line_intent":"..."}],"longs":[{"knowledge_ids":["<knowledge.root temp_id 或 knowledge.children temp_id>", "..."],"title":"...","one_line_intent":"..."}]}
-3b: {"knowledge":{"children":[{"temp_id":"short_stable_key","name":"...","domain":"${profile.id}"}]},"hub":{"title":"...","summary_md":"..."},"atomics":[{"knowledge_id":"<knowledge.children temp_id>","title":"...","one_line_intent":"..."}],"longs":[{"knowledge_ids":["<knowledge_node.id 或 knowledge.children temp_id>", "..."],"title":"...","one_line_intent":"..."}]}
+3a: {"knowledge":{"root":{"temp_id":"root","name":"topic name","domain":"<input.valid_domains 之一>"},"children":[{"temp_id":"short_stable_key","name":"...","domain":"<input.valid_domains 之一>"}]},"hub":{"title":"...","summary_md":"..."},"atomics":[{"knowledge_id":"<knowledge.children temp_id>","title":"...","one_line_intent":"..."}],"longs":[{"knowledge_ids":["<knowledge.root temp_id 或 knowledge.children temp_id>", "..."],"title":"...","one_line_intent":"..."}]}
+3b: {"knowledge":{"children":[{"temp_id":"short_stable_key","name":"...","domain":"<input.valid_domains 之一>"}]},"hub":{"title":"...","summary_md":"..."},"atomics":[{"knowledge_id":"<knowledge.children temp_id>","title":"...","one_line_intent":"..."}],"longs":[{"knowledge_ids":["<knowledge_node.id 或 knowledge.children temp_id>", "..."],"title":"...","one_line_intent":"..."}]}
 要点：
 - title 短（≤15 字）
 - summary_md 1-2 句话，纯文本
 - one_line_intent 每条 1 句话，说"学完能做什么"，不抽象
+- domain 只能逐字取 input.valid_domains 中的科目 id；children 拿不准时省略 domain 字段（默认继承 root/父节点的 domain）
 - 3c: atomics 数量必须等于 child_nodes.length，knowledge_id 必须是 child_nodes 里给的 id 之一
 - 3c: longs[].knowledge_ids 只能使用 knowledge_node.id 或 child_nodes[].id
-- 3a: knowledge.root 必填，root.domain 必填；3b 不要输出 root，只输出 children
+- 3a: knowledge.root 必填，root.domain 必填且必须是 valid_domains 之一；3b 不要输出 root，只输出 children
 - 3a/3b: atomics 数量必须等于 knowledge.children.length，knowledge_id 必须是 children 的 temp_id
 - 3a: longs[].knowledge_ids 只能使用 knowledge.root.temp_id 或 knowledge.children[].temp_id
 - 3b: longs[].knowledge_ids 只能使用 knowledge_node.id 或 knowledge.children[].temp_id

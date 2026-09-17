@@ -8,6 +8,7 @@ import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { gatherAndFoldKnowledgeNode } from '@/server/projections/gather';
 import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
+import { resolveKnownSubjectId } from '@/subjects/profile';
 
 type InitialKnowledge = Pick<
   KnowledgeRowSnapshotT,
@@ -35,8 +36,19 @@ export async function createKnowledgeNodeFromEvents(
       `knowledge ${initial.id} has history without a live row; repair before creation`,
     );
   }
+  // YUK-1004 — `general` is the fallback subject identity and is NEVER a valid
+  // node domain (subjects/profile.ts contract). Fail closed on it at the sole
+  // creation seam; registered aliases canonicalise at write, unrecognised
+  // domains (e.g. a custom subject minted pre-hydration) pass through verbatim.
+  const canonicalDomain = resolveKnownSubjectId(initial.domain);
+  if (canonicalDomain === 'general') {
+    throw new Error(
+      `knowledge ${initial.id} rejected: 'general' is the fallback subject identity, not a node domain`,
+    );
+  }
   const row: KnowledgeRowSnapshotT = {
     ...initial,
+    domain: canonicalDomain ?? initial.domain,
     merged_from: [],
     archived_at: null,
     approval_status: 'approved',

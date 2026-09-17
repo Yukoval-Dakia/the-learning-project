@@ -10,6 +10,7 @@ import {
 import { createLearningIntentNote } from '@/capabilities/notes/public';
 import { NOTE_HANDOFF_ACTION } from '@/capabilities/notes/server/note-handoff';
 import { artifact, event, knowledge, learning_item, materialized_id_index } from '@/db/schema';
+import { writeLearningItemProposal } from '@/kernel/proposals/producers';
 import { gatherAndFoldKnowledgeNode } from '@/server/projections/gather';
 import { knowledgeLiveRowToSnapshot } from '@/server/projections/parity';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -234,6 +235,76 @@ describe('planLearningIntent', () => {
     }));
     const proposal = await planLearningIntent({ db: testDb(), topic: '虚词', runTaskFn });
     expect(proposal.knowledge_node.id).toBe('k_hub');
+  });
+
+  // YUK-1004 — regression for the production corruption: a null-subject topic
+  // resolved to the 'general' fallback profile and the prompt literally told the
+  // LLM to emit domain='general', which then persisted verbatim and made the
+  // nodes invisible to every real subject scope (placement read zero KCs).
+  it('rejects a 3a outline whose root.domain is the non-selectable general fallback identity', async () => {
+    const runTaskFn = vi.fn(async () => ({
+      text: JSON.stringify({
+        knowledge: {
+          root: { temp_id: 'root', name: '概率论', domain: 'general' },
+          children: [{ temp_id: 'conditional_probability', name: '条件概率', domain: 'general' }],
+        },
+        hub: { title: '概率论总览', summary_md: '概率论的基本对象与计算路径。' },
+        atomics: [
+          {
+            knowledge_id: 'conditional_probability',
+            title: '条件概率',
+            one_line_intent: '能用条件概率公式计算事件概率。',
+          },
+        ],
+      }),
+    }));
+
+    await expect(
+      planLearningIntent({ db: testDb(), topic: '概率论', runTaskFn }),
+    ).rejects.toMatchObject({ code: 'llm_parse_failed' });
+  });
+
+  it('canonicalises proposed domains and degrades non-selectable child domains to the root domain', async () => {
+    const runTaskFn = vi.fn(async () => ({
+      text: JSON.stringify({
+        knowledge: {
+          root: { temp_id: 'root', name: '概率论', domain: 'Mathematics' }, // alias → canonical
+          children: [
+            { temp_id: 'conditional_probability', name: '条件概率', domain: 'general' },
+            { temp_id: 'bayes_rule', name: '贝叶斯公式' }, // omitted → inherit
+          ],
+        },
+        hub: { title: '概率论总览', summary_md: '概率论的基本对象与计算路径。' },
+        atomics: [
+          { knowledge_id: 'conditional_probability', title: '条件概率', one_line_intent: '算概率' },
+          { knowledge_id: 'bayes_rule', title: '贝叶斯公式', one_line_intent: '算后验' },
+        ],
+      }),
+    }));
+
+    const proposal = await planLearningIntent({ db: testDb(), topic: '概率论', runTaskFn });
+    expect(proposal.proposed_knowledge?.root?.domain).toBe('math');
+    expect(proposal.proposed_knowledge?.children.map((c) => c.domain)).toEqual(['math', 'math']);
+  });
+
+  it('exposes valid_domains to the outline task input — selectable subjects only, never general', async () => {
+    const runTaskFn = vi.fn(async (_k: string, input: unknown, _c: unknown) => {
+      const domains = (input as { valid_domains?: string[] }).valid_domains;
+      expect(domains).toEqual(expect.arrayContaining(['math', 'yuwen', 'physics']));
+      expect(domains).not.toContain('general');
+      return {
+        text: JSON.stringify({
+          knowledge: {
+            root: { temp_id: 'root', name: '概率论', domain: 'math' },
+            children: [{ temp_id: 'cp', name: '条件概率', domain: 'math' }],
+          },
+          hub: { title: 't', summary_md: 's' },
+          atomics: [{ knowledge_id: 'cp', title: 'a', one_line_intent: 'i' }],
+        }),
+      };
+    });
+    await planLearningIntent({ db: testDb(), topic: '概率论', runTaskFn });
+    expect(runTaskFn).toHaveBeenCalledOnce();
   });
 });
 
@@ -582,6 +653,75 @@ describe('acceptLearningIntent', () => {
         .where(eq(learning_item.id, result.atomic_learning_item_ids[0]))
     )[0];
     expect(atomicLi.knowledge_ids).toEqual([child?.id]);
+  });
+
+  // YUK-1004 — a proposal written before the plan-time guard (e.g. persisted
+  // with domain='general') must still fail closed at accept: the write seam
+  // canonicalises/rejects, so no corrupt node ever lands.
+  it('rejects a stale 3a proposal carrying domain general before writing any node', async () => {
+    const db = testDb();
+    const stalePayload = {
+      topic: '概率论',
+      plan_case: '3a_topic_missing',
+      knowledge_node_id: null,
+      knowledge_node: { id: 'root', name: '概率论', domain: 'general' },
+      proposed_knowledge: {
+        root: { temp_id: 'root', name: '概率论', domain: 'general' },
+        children: [{ temp_id: 'kc1', name: '条件概率', domain: 'general' }],
+      },
+      hub: { title: '概率论总览', summary_md: 's' },
+      atomics: [{ knowledge_id: 'kc1', title: '条件概率', one_line_intent: '算概率' }],
+      longs: [],
+    };
+    const proposalId = await writeLearningItemProposal(db, {
+      topic: '概率论',
+      plan_case: '3a_topic_missing',
+      knowledge_node: stalePayload.knowledge_node,
+      proposed_knowledge: stalePayload.proposed_knowledge,
+      hub: stalePayload.hub,
+      atomics: stalePayload.atomics,
+      longs: [],
+      reason_md: 'stale pre-fix proposal fixture',
+      legacy_subject_id: 'stale-legacy-subject',
+      legacy_event_payload: stalePayload,
+      created_at: new Date(),
+    });
+
+    await expect(acceptLearningIntent({ db, proposalId })).rejects.toMatchObject({
+      code: 'llm_parse_failed',
+    });
+    expect(await db.select().from(knowledge)).toEqual([]);
+  });
+
+  it('the knowledge write seam rejects domain general and canonicalises aliases', async () => {
+    const db = testDb();
+    const now = new Date();
+    await expect(
+      db.transaction((tx) =>
+        createLearningIntentKnowledgeNode(tx, {
+          id: 'bad_general_node',
+          name: 'should never persist',
+          domain: 'general',
+          parentId: null,
+          createdAt: now,
+          causedByEventId: 'test-cause',
+        }),
+      ),
+    ).rejects.toThrow(/general/);
+    expect(await db.select().from(knowledge)).toEqual([]);
+
+    await db.transaction((tx) =>
+      createLearningIntentKnowledgeNode(tx, {
+        id: 'alias_node',
+        name: '文言虚词',
+        domain: 'wenyan',
+        parentId: null,
+        createdAt: now,
+        causedByEventId: 'test-cause',
+      }),
+    );
+    const [row] = await db.select().from(knowledge).where(eq(knowledge.id, 'alias_node'));
+    expect(row.domain).toBe('yuwen');
   });
 
   // suppress unused-import

@@ -289,6 +289,22 @@ export class SubjectRegistry {
     return this.profiles.has(resolvedId) ? resolvedId : null;
   }
 
+  /**
+   * YUK-1004 — resolve a domain to its canonical subject id ONLY when it is a
+   * real, currently-selectable subject. Same alias resolution as
+   * `resolveKnownSubjectId`, but additionally requires
+   * `isSelectable === true && retiredAt === null`: `general` self-resolves
+   * (self-alias) yet is the fallback identity, never a knowledge-node domain,
+   * so it — like retired subjects — returns `null` here. This is the write-side
+   * "valid node domain" predicate; read-side resolvability stays wider.
+   */
+  resolveSelectableSubjectId(domain?: string | null): SubjectId | null {
+    const resolvedId = this.resolveKnownSubjectId(domain);
+    if (!resolvedId) return null;
+    const meta = this.meta.get(resolvedId);
+    return meta?.isSelectable === true && meta.retiredAt === null ? resolvedId : null;
+  }
+
   get(id: SubjectId): SubjectProfile | undefined {
     return this.profiles.get(normalizeSubjectKey(id));
   }
@@ -322,6 +338,16 @@ export function resolveSubjectProfile(domain?: string | null): SubjectProfile {
  */
 export function resolveKnownSubjectId(domain?: string | null): SubjectId | null {
   return defaultRegistry.resolveKnownSubjectId(domain);
+}
+
+/**
+ * YUK-1004 — canonical subject id ONLY for a real, selectable subject;
+ * `general`, retired subjects and unknown strings all resolve to `null`. The
+ * write-path "valid knowledge-node domain" predicate — `general` is the
+ * fallback identity and must never be persisted as a node domain.
+ */
+export function resolveSelectableSubjectId(domain?: string | null): SubjectId | null {
+  return defaultRegistry.resolveSelectableSubjectId(domain);
 }
 
 // YUK-600（v2 §6，阻断②）— AI 分类词表：opaque id 互相零语义差 → 判别近随机；
