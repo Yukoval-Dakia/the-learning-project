@@ -38,9 +38,11 @@ import {
   writeVariantQuestionProposal,
 } from '@/server/proposals/practice-runtime';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { MISCONCEPTION_CANDIDATE_PREFIX } from '../tasks/attribute-retrieve';
 import { type VariantGenInput, parseVariantOutput } from '../tasks/variant-gen';
 import { effectiveCauseForFailureAttempt, getFailureAttemptById } from './attempt-events';
 import { hasVariantPermanent, recordVariantPermanent } from './failure-learning-ledger';
+import { getMisconceptionsByIds } from './knowledge-runtime';
 import type { PracticeTaskRunFn } from './task-runtime';
 
 // YUK-17 / ADR-0018 — per-parent in-flight variant cap. Counts
@@ -185,7 +187,22 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
   const causeCategory = subjectProfile.causeCategories.find(
     (category) => category.id === cause.primary_category,
   );
-  if (!causeCategory || causeCategory.variant_targetable === false) {
+  // YUK-1015 — a `misc_` primary is a promoted misconception node, not a vocab
+  // id. It is targetable BY DEFINITION (promotion marks a recurring, nameable
+  // cause — exactly what targeted variants exist for). Resolve the node so the
+  // variant prompt's strategy selector carries the misc TITLE (meaningful)
+  // rather than the opaque hash; an unresolvable (draft/archived/gone) node
+  // falls through to the same skip as any unknown id — a retracted cause
+  // should not drive new variants.
+  let miscCauseTitle: string | null = null;
+  if (!causeCategory && cause.primary_category.startsWith(MISCONCEPTION_CANDIDATE_PREFIX)) {
+    const [misc] = await getMisconceptionsByIds(db, [cause.primary_category]);
+    miscCauseTitle = misc?.title ?? null;
+  }
+  if (!causeCategory && miscCauseTitle === null) {
+    return { status: 'skipped:cause_not_targetable' };
+  }
+  if (causeCategory && causeCategory.variant_targetable === false) {
     return { status: 'skipped:cause_not_targetable' };
   }
   if (await hasVariantPermanent(db, attemptEventId)) {
@@ -207,7 +224,11 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
     },
     attempt: { wrong_answer_md: payload.answer_md ?? '' },
     cause: {
-      primary_category: cause.primary_category,
+      // YUK-1015 — for a misc_ primary the prompt's strategy selector carries
+      // the misc TITLE (a meaningful cause description) instead of the opaque
+      // `misc_<hash>` id. Prompt-input only: the stored mistake_variant
+      // .cause_category below still takes the real judge id.
+      primary_category: miscCauseTitle ?? cause.primary_category,
       analysis_md: cause.analysis_md ?? cause.user_notes ?? '',
     },
     depth: parent.variant_depth,

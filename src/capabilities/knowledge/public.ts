@@ -46,8 +46,15 @@ export {
   listKnowledgeEdges,
   listKnowledgeEdgesPage,
 } from './server/edges';
-export type { FailureLearningKnowledgeNode } from './server/failure-learning-context';
-export { loadFailureLearningKnowledgeContext } from './server/failure-learning-context';
+export type {
+  FailureLearningKnowledgeNode,
+  FailureLearningMisconceptionNode,
+} from './server/failure-learning-context';
+export {
+  getMisconceptionsByIds,
+  listActiveMisconceptionsForKcs,
+  loadFailureLearningKnowledgeContext,
+} from './server/failure-learning-context';
 export type {
   CuratedAtomic,
   HubMeshAtomicInput,

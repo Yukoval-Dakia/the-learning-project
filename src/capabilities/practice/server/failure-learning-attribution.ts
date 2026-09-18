@@ -17,8 +17,13 @@ import { writeEvent } from '@/kernel/events';
 // YUK-598 stale-const 收口（v2 §9①）：defaultSubjectProfile 冻结常量 → 活 registry
 // resolveSubjectProfile()（每次调用求值，owner 编辑 general 即跟随）。
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
-import { retrieveCauseCandidates } from '../tasks/attribute-retrieve';
 import {
+  type MisconceptionCauseSource,
+  misconceptionToCandidate,
+  retrieveCauseCandidates,
+} from '../tasks/attribute-retrieve';
+import {
+  type AttributionCandidate,
   type AttributionInput,
   type AttributionOutput,
   parseAttributionOutput,
@@ -29,6 +34,7 @@ import {
   recordAttributionPermanent,
   recordAttributionRetryable,
 } from './failure-learning-ledger';
+import { listActiveMisconceptionsForKcs } from './knowledge-runtime';
 import { type PracticeTaskRunFn, practiceCostUsdToMicroUsd } from './task-runtime';
 
 export interface RunAttributionAndWriteJudgeEventParams {
@@ -101,6 +107,10 @@ export async function runAttributionAndWriteJudgeEvent(
   // ledger row for the copilot `attribute_mistake` caller, which does NOT rethrow
   // and so has no other observability for a retryable failure.
   let result: Awaited<ReturnType<PracticeTaskRunFn>>;
+  // YUK-1015 — promoted misconception nodes fetched for the candidate pool are
+  // ALSO the extra allowed ids for the post-LLM validation below (hoisted so
+  // stage B sees them). Empty day-one (promote flag off / no KC match).
+  let miscCandidates: AttributionCandidate[] = [];
   try {
     // Idempotency check — mirrors old "cause already set" behaviour. The DB-level
     // PK conflict in writeEvent gives us idempotency on event id, but here we
@@ -166,7 +176,19 @@ export async function runAttributionAndWriteJudgeEvent(
     // candidate list + gives a per-candidate rationale. The candidate field is
     // added only to this internal rerank input; AttributionInput stays pure for
     // the 3 external callers. Post-LLM parse/clamp/write are unchanged below.
-    const candidates = retrieveCauseCandidates(params.input, profile);
+    //
+    // YUK-1015 — the pool also carries promoted misconception nodes edged
+    // (caused_by) to the attempt's KCs (design §L1「词表 + 已晋升误区节点」).
+    // A rerank may pick a `misc_` id as primary/secondary — that lands the
+    // fine-grained node in the stored cause, so validation below must allow it
+    // (see the extended vocab in stage B). A DB fault here classifies
+    // `retryable` like the idempotency read above — nothing reached the LLM.
+    const miscSources: MisconceptionCauseSource[] = await listActiveMisconceptionsForKcs(
+      params.db,
+      params.input.knowledge_context.map((k) => k.id),
+    );
+    miscCandidates = miscSources.map(misconceptionToCandidate);
+    const candidates = retrieveCauseCandidates(params.input, profile, miscCandidates);
     result = await params.runTaskFn(
       'AttributionRerankTask',
       { ...params.input, candidates },
@@ -186,7 +208,17 @@ export async function runAttributionAndWriteJudgeEvent(
   // result.task_run_id so it joins into run-detail observability.
   let parsed: AttributionOutput;
   try {
-    parsed = parseAttributionOutput(result.text, profile);
+    // YUK-1015 — a rerank picking a `misc_` candidate id must SURVIVE
+    // validation: validateCauseAgainstProfile clamps out-of-vocab ids to
+    // 'other', which would silently drop the misconception the LLM actually
+    // chose (analysis discusses it while the verdict reads 'other'). The
+    // validation vocab is therefore the profile ∪ the fetched misc candidates
+    // — same extension the rerank prompt offered. An id outside BOTH (a
+    // hallucination) still clamps, preserving the existing contract.
+    const validationProfile: SubjectProfile = miscCandidates.length
+      ? { ...profile, causeCategories: [...profile.causeCategories, ...miscCandidates] }
+      : profile;
+    parsed = parseAttributionOutput(result.text, validationProfile);
   } catch (err) {
     console.error(
       'runAttributionAndWriteJudgeEvent: permanent parse failure (attempt unaffected)',

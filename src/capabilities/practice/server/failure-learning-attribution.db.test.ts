@@ -1,7 +1,8 @@
+import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getTaskSystemPrompt } from '@/ai/task-prompts';
-import { cost_ledger, event, question } from '@/db/schema';
+import { cost_ledger, event, misconception, misconception_edge, question } from '@/db/schema';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { type AttributionInput, parseAttributionOutput } from '../tasks/attribution';
@@ -718,5 +719,157 @@ describe('runAttributionAndWriteJudgeEvent', () => {
     const payload = newest?.payload as { visible_to_user?: boolean };
     // visible_to_user must be absent (undefined) on the attribution judge — not false.
     expect(payload.visible_to_user).toBeUndefined();
+  });
+});
+
+// ── YUK-1015 (454-A): misconception nodes ∪ vocab in the rerank pool ─────────
+// Design §L1: retrieve candidates = vocab ∪ 已晋升误区节点 (caused_by-edged to
+// the attempt's KCs). A rerank picking a `misc_` id must land it in the stored
+// cause — the validation vocab is extended with the same candidates so the id
+// survives validateCauseAgainstProfile instead of silently clamping to 'other'.
+
+async function seedMisconceptionForKc(opts: {
+  id: string;
+  kcId: string;
+  title: string;
+  reasoning?: string;
+  seen?: number;
+}): Promise<void> {
+  const db = testDb();
+  const now = new Date();
+  await db.insert(misconception).values({
+    id: opts.id,
+    title: opts.title,
+    reasoning: opts.reasoning ?? null,
+    weight: 1,
+    status: 'active',
+    source: 'soft',
+    seen: opts.seen ?? 0,
+    evidence: [],
+    created_by: { by: 'system' },
+    proposed_by_ai: true,
+    created_at: now,
+    updated_at: now,
+    archived_at: null,
+  });
+  await db.insert(misconception_edge).values({
+    id: createId(),
+    from_kind: 'misconception',
+    from_id: opts.id,
+    to_kind: 'knowledge',
+    to_id: opts.kcId,
+    relation_type: 'caused_by',
+    weight: 1,
+    created_by: { by: 'system' },
+    proposed_by_ai: true,
+    created_at: now,
+    updated_at: now,
+    archived_at: null,
+  });
+}
+
+describe('runAttributionAndWriteJudgeEvent — misconception candidates (YUK-1015)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  const kcInput = {
+    prompt_md: '"之"在主谓之间的用法?',
+    reference_md: '取消句子独立性',
+    wrong_answer_md: '助词',
+    knowledge_context: [{ id: 'k_xuci', name: '虚词', effective_domain: 'yuwen' }],
+  };
+
+  it('misc nodes caused_by-edged to the attempt KCs join the rerank candidates', async () => {
+    const db = testDb();
+    const attemptId = 'attempt_misc_pool';
+    await insertAttemptEvent({ attemptId, questionId: 'q_misc_pool' });
+    await seedMisconceptionForKc({
+      id: 'misc_xuci_01',
+      kcId: 'k_xuci',
+      title: '「之」作助词的整体性误判',
+      reasoning: '三次把主谓间「之」按普通助词处理',
+      seen: 3,
+    });
+    const spy = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
+      text: '{"primary_category":"concept","secondary_categories":[],"analysis_md":"why","confidence":0.8}',
+    }));
+    await runAttributionAndWriteJudgeEvent({
+      db,
+      attemptEventId: attemptId,
+      input: kcInput,
+      runTaskFn: spy,
+      subjectProfile: resolveSubjectProfile('yuwen'),
+    });
+    const [, rerankInput] = spy.mock.calls[0];
+    const candidates = (rerankInput as { candidates: Array<{ id: string; label: string }> })
+      .candidates;
+    const yuwen = resolveSubjectProfile('yuwen');
+    expect(candidates.length).toBe(yuwen.causeCategories.length + 1);
+    const miscCandidate = candidates.find((c) => c.id === 'misc_xuci_01');
+    expect(miscCandidate?.label).toBe('「之」作助词的整体性误判');
+  });
+
+  it('a rerank picking the misc id lands it as primary_category (NOT clamped to other)', async () => {
+    const db = testDb();
+    const attemptId = 'attempt_misc_pick';
+    await insertAttemptEvent({ attemptId, questionId: 'q_misc_pick' });
+    await seedMisconceptionForKc({
+      id: 'misc_xuci_02',
+      kcId: 'k_xuci',
+      title: '「之」作助词的整体性误判',
+    });
+    const fakeRunTask = async () => ({
+      text: '{"primary_category":"misc_xuci_02","secondary_categories":["concept"],"analysis_md":"逐候选权衡后选误区节点","confidence":0.85}',
+    });
+    const res = await runAttributionAndWriteJudgeEvent({
+      db,
+      attemptEventId: attemptId,
+      input: kcInput,
+      runTaskFn: fakeRunTask,
+      subjectProfile: resolveSubjectProfile('yuwen'),
+    });
+    expect(res.outcome).toBe('written');
+    const judgeRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'judge'), eq(event.caused_by_event_id, attemptId)));
+    expect(judgeRows).toHaveLength(1);
+    const payload = judgeRows[0].payload as {
+      cause: {
+        primary_category: string;
+        secondary_categories: string[];
+        meta_cause: string | null;
+      };
+    };
+    expect(payload.cause.primary_category).toBe('misc_xuci_02');
+    expect(payload.cause.secondary_categories).toEqual(['concept']);
+    // Misc candidates declare no meta_cause_prior → honest null.
+    expect(payload.cause.meta_cause).toBeNull();
+  });
+
+  it('miscs on UNRELATED KCs do not leak into the candidate pool', async () => {
+    const db = testDb();
+    const attemptId = 'attempt_misc_unrelated';
+    await insertAttemptEvent({ attemptId, questionId: 'q_misc_unrelated' });
+    await seedMisconceptionForKc({
+      id: 'misc_elsewhere',
+      kcId: 'k_somewhere_else',
+      title: '别的知识点误区',
+    });
+    const spy = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
+      text: '{"primary_category":"concept","secondary_categories":[],"analysis_md":"why","confidence":0.8}',
+    }));
+    await runAttributionAndWriteJudgeEvent({
+      db,
+      attemptEventId: attemptId,
+      input: kcInput,
+      runTaskFn: spy,
+      subjectProfile: resolveSubjectProfile('yuwen'),
+    });
+    const [, rerankInput] = spy.mock.calls[0];
+    const candidates = (rerankInput as { candidates: Array<{ id: string }> }).candidates;
+    expect(candidates.some((c) => c.id === 'misc_elsewhere')).toBe(false);
+    expect(candidates).toEqual(resolveSubjectProfile('yuwen').causeCategories);
   });
 });
