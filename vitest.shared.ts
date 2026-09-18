@@ -131,6 +131,12 @@ export const fastTestInclude = [
   // YUK-750 — bound runner adapter contract. Pure no-DB: runner is mocked and
   // the Db value is an untouched structural stub.
   'src/server/ai/runner-fn.unit.test.ts',
+  // YUK-1013 — ExecutionAdapter seam (P0): resolveExecutionAdapter fail-closed
+  // pin + explicitProviderRouting precedence + modelBinding retry-pin. Pure
+  // no-DB: imports ./execution-adapter (SDK types + startup, not invoked) +
+  // ./run-lifecycle (transientRetryEnabled only). src/server/ai/** has no unit
+  // glob, so this MUST be listed (same enumeration requirement as above).
+  'src/server/ai/execution-adapter.test.ts',
   // YUK-299 — Zod→outputFormat adapter unit. Pure no-DB: imports only
   // ./output-format (→ zod-to-json-schema, pure JS) + @/core/schema/business (Zod).
   // Same enumeration requirement as above (no src/server/ai/** unit glob).

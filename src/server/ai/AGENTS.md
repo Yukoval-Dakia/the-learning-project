@@ -6,6 +6,7 @@
 | 文件 | 职责 |
 |------|------|
 | `runner.ts` | 统一把所有 task 送进 Claude Agent SDK `query()`；支持 `mcpServers` / `allowedTools` / `maxTurns`（`runTask`/`runAgentTask`/`streamTask`）|
+| `execution-adapter.ts` | YUK-921 ExecutionAdapter seam：`PreparedExecutionQuery`/`ExecutionAdapter` 接口 + Adapter A（SDK WarmQuery 包装）+ `ModelBinding` per-run 绑定 + `resolveExecutionAdapter`/`explicitProviderRouting` 决议 |
 | `sdk-terminal.ts` | 把 SDK assistant/result 消息适配为 lifecycle usage、thinking 元数据与终态证据；不持久化原始 CoT |
 | `providers.ts` | Anthropic provider（xiaomi/mimo 兼容端点）+ YUK-924 provider model binding（`models` / `modelDefaults`，config-over-catalog 的 config 层）|
 | `model-profiles.ts` + `model-catalog.snapshot.json` | YUK-924 ModelProfile 注册表：models.dev 裁剪快照（`pnpm gen:model-catalog` 重生成，运行时零网络）+ binding→catalog→保守默认三层合并 + needsToolCall/isMultimodal fail-closed 能力门 |

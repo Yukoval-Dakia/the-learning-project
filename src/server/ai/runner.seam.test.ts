@@ -1099,3 +1099,69 @@ describe('runTask — YUK-924 model-profile seams', () => {
     expect(onSessionId).toHaveBeenCalledWith('sdk-captured-123');
   });
 });
+
+describe('runTask — YUK-1013 modelBinding (per-run binding seam)', () => {
+  beforeEach(() => {
+    mockSdk.capturedOptions = undefined;
+    mockSdk.capturedPrompt = undefined;
+    mockSdk.messages = [successResult()];
+    vi.stubEnv('XIAOMI_API_KEY', 'sk-test-key');
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
+    vi.stubEnv('AI_PROVIDER_MODEL', '');
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it('routes the binding model through the unchanged explicit layer into SDK options', async () => {
+    await runTask(
+      UNMIGRATED_KIND,
+      { q: 1 },
+      {
+        db: fakeDb,
+        modelBinding: { model: 'mimo-v2.5' },
+      },
+    );
+
+    const opts = mockSdk.capturedOptions as { model?: string };
+    expect(opts.model).toBe('mimo-v2.5');
+  });
+
+  it('lets modelBinding.effort reach SDK options.effort (spec declares none here)', async () => {
+    await runTask(
+      UNMIGRATED_KIND,
+      { q: 1 },
+      {
+        db: fakeDb,
+        modelBinding: { effort: 'high' },
+      },
+    );
+
+    const opts = mockSdk.capturedOptions as { effort?: string };
+    expect(opts.effort).toBe('high');
+  });
+
+  it('lets ctx.override (escape hatch) win per-field over the binding', async () => {
+    await runTask(
+      UNMIGRATED_KIND,
+      { q: 1 },
+      {
+        db: fakeDb,
+        override: { model: 'mimo-v2.5-pro' },
+        modelBinding: { model: 'mimo-v2.5' },
+      },
+    );
+
+    const opts = mockSdk.capturedOptions as { model?: string };
+    expect(opts.model).toBe('mimo-v2.5-pro');
+  });
+
+  it('fails closed on the unimplemented pi adapter pin before any query', async () => {
+    mockSdk.queryStarted.mockClear();
+    await expect(
+      runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb, modelBinding: { adapter: 'pi' } }),
+    ).rejects.toThrow(/not implemented yet/);
+    expect(mockSdk.queryStarted).not.toHaveBeenCalled();
+  });
+});
