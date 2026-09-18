@@ -28,19 +28,17 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  type Options,
-  type OutputFormat,
-  type Query,
-  type SDKAssistantMessage,
-  type SDKMessage,
-  type SDKTaskNotificationMessage,
-  type SDKTaskProgressMessage,
-  type SDKTaskStartedMessage,
-  type SDKTaskUpdatedMessage,
-  type SDKUserMessage,
-  type WarmQuery,
-  startup as sdkStartup,
+import type {
+  Options,
+  OutputFormat,
+  Query,
+  SDKAssistantMessage,
+  SDKMessage,
+  SDKTaskNotificationMessage,
+  SDKTaskProgressMessage,
+  SDKTaskStartedMessage,
+  SDKTaskUpdatedMessage,
+  SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 import { type TaskKind, tasks } from '@/ai/registry';
@@ -56,6 +54,11 @@ import {
   bindAgentRunError,
   isApiErrorSuccessResult,
 } from './agent-run-error';
+import {
+  type ModelBinding,
+  type PreparedExecutionQuery,
+  resolveExecutionAdapter,
+} from './execution-adapter';
 import { logMissingMcpServersWarning } from './log';
 import { resolveModelProfile } from './model-profiles';
 import { populateIsolatedSkills } from './populate-skills';
@@ -150,6 +153,15 @@ export interface RunTaskCtx {
   /** Override provider/model for testing or per-call routing escapes. */
   override?: { provider?: ResolvedProvider['provider']; model?: string };
   /**
+   * YUK-921 / YUK-1013 — per-run model binding (design doc §2.4/§4). The new
+   * explicit-ctx layer for provider/model/effort/engine selection; resolved
+   * inside the unchanged `explicit > env > registry` order — `ctx.override`
+   * (escape hatch) still wins per-field over this binding. `adapter` pins the
+   * execution engine for the migration window; today only 'sdk' is available
+   * ('pi' fails closed until YUK-921 P1 lands).
+   */
+  modelBinding?: ModelBinding;
+  /**
    * YUK-576 — in-process transient-retry opt-in. Default OFF (undefined):
    * existing callers still make one loom-level attempt. ONLY call paths with NO durable
    * backstop may set this (single-transient-layer principle) — today exactly
@@ -159,7 +171,8 @@ export interface RunTaskCtx {
    * retryLimit) is their single transient layer — stacking both would multiply
    * worst-case paid calls (2×3). Enforced by src/server/ai/retry-optin.test.ts
    * (grep-level pin). Even when set, retry only fires when routing is not
-   * pinned (no ctx.override, no AI_PROVIDER_OVERRIDE), the failure is
+   * pinned (no ctx.override, no ctx.modelBinding routing, no
+   * AI_PROVIDER_OVERRIDE), the failure is
    * whitelist-transient (agent-run-error.ts §2.3 frozen table), the attempt
    * budget (tasks[kind].budget.transientRetries) has room, and the failure
    * arrived within RETRY_ELAPSED_CAP_MS of the first attempt (sync-route
@@ -674,11 +687,13 @@ function buildQueryOptions(
   // YUK-923 seam: SDK-native reasoning effort tier. Same undefined-guard as the
   // seams above — a task spec that does not declare `reasoningEffort` leaves the
   // key unwritten, so Options stays byte-identical (zero regression) and the
-  // endpoint default applies. Effort is orthogonal to thinking on/off; it is a
-  // per-task-kind declaration, so there is no ctx.override mirror (override is a
-  // provider/model routing escape consumed at provider resolution).
-  if (declaredDef.reasoningEffort !== undefined) {
-    options.effort = declaredDef.reasoningEffort;
+  // endpoint default applies. Effort is orthogonal to thinking on/off. The
+  // per-run modelBinding (YUK-1013) may override the per-task-kind declaration
+  // when set; unset → spec value, else the key stays unwritten exactly as
+  // before.
+  const reasoningEffort = ctx.modelBinding?.effort ?? declaredDef.reasoningEffort;
+  if (reasoningEffort !== undefined) {
+    options.effort = reasoningEffort;
   }
   // YUK-590 / YUK-924 site 3 — only metered pay-as-you-go lanes (anthropic
   // direct via the provider binding) get the per-run USD ceiling. Mimo has no
@@ -704,24 +719,32 @@ async function notifySdkSessionId(ctx: RunTaskCtx, msg: { session_id?: string })
 }
 
 /**
- * Start the exact task-configured CLI inside admission without sending a
+ * Start the adapter-resolved transport inside admission without sending a
  * prompt, then create the durable attempt/timer immediately before the one
  * allowed query. Cleanup remains part of the admitted session boundary.
+ * YUK-1013 — the ExecutionAdapter seam: `adapter.startup` replaces the direct
+ * `sdkStartup` call; Adapter A wraps the identical WarmQuery lifecycle, so
+ * every entry point keeps byte-identical behaviour while a second engine
+ * (pi agentLoop, P1) can plug in behind the same three hooks.
  */
-async function withPreparedSdkQuery<TResult extends RunTaskResult, TValue>(
+async function withPreparedExecutionQuery<TResult extends RunTaskResult, TValue>(
   lifecycle: AiRunLifecycle<TResult>,
+  modelBinding: ModelBinding | undefined,
   actualInput: unknown,
   prompt: string | AsyncIterable<SDKUserMessage>,
   options: Options,
   consume: (query: Query) => Promise<TValue>,
   beforeProviderQuery?: BeforeProviderQuery,
 ): Promise<TValue> {
-  let warmQuery: WarmQuery | undefined;
-  let activeQuery: Query | undefined;
+  // Resolved at the seam boundary so an unimplemented adapter pin throws the
+  // same config-error posture as resolveTaskProvider's credential checks —
+  // before admission, before any durable row.
+  const adapter = resolveExecutionAdapter(modelBinding);
+  let prepared: PreparedExecutionQuery | undefined;
 
   return lifecycle.withProviderSession(actualInput, {
     async prepare() {
-      warmQuery = await sdkStartup({
+      prepared = await adapter.startup({
         options,
         initializeTimeoutMs: lifecycle.providerPhaseTimeoutMs(
           PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS,
@@ -729,29 +752,18 @@ async function withPreparedSdkQuery<TResult extends RunTaskResult, TValue>(
       });
     },
     async run() {
-      if (!warmQuery) throw new Error('SDK startup completed without a warm query handle');
+      if (!prepared) throw new Error('adapter startup completed without a prepared query handle');
       await beforeProviderQuery?.({
         taskRunId: lifecycle.taskRunId,
         provider: lifecycle.resolved.provider,
         model: lifecycle.resolved.model,
       });
-      activeQuery = warmQuery.query(prompt);
-      return consume(activeQuery);
+      return consume(prepared.query(prompt));
     },
     async close() {
-      const query = activeQuery;
-      activeQuery = undefined;
-      const warm = warmQuery;
-      warmQuery = undefined;
-      if (query) {
-        try {
-          await query.return(undefined);
-        } catch {
-          query.close();
-        }
-        return;
-      }
-      warm?.close();
+      const p = prepared;
+      prepared = undefined;
+      await p?.close();
     },
   });
 }
@@ -936,8 +948,9 @@ async function runTaskAttempt(args: {
       abortedWithoutTerminalMessage: `[${kind}] Agent SDK run aborted (budget timeout) with no terminal result`,
     });
   };
-  await withPreparedSdkQuery(
+  await withPreparedExecutionQuery(
     lifecycle,
+    ctx.modelBinding,
     actualInput,
     sdkPrompt,
     sdkOptions,
@@ -1000,6 +1013,7 @@ export async function runTask(
       timeoutMs: ctx.budgetOverride?.timeoutMs ?? def.budget.timeout,
       abortController: ctx.lifecycleAbortController,
       override: ctx.override,
+      modelBinding: ctx.modelBinding,
       parentTaskRunId: ctx.parentTaskRunId,
       // A retry may only wait inside the unused remainder of the existing 10s
       // sync-route gate. Admission must not silently expand the 100s worst-case
@@ -1101,6 +1115,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
     timeoutMs: def.budget.timeout,
     abortController: ctx.lifecycleAbortController,
     override: ctx.override,
+    modelBinding: ctx.modelBinding,
     parentTaskRunId: ctx.parentTaskRunId,
     providerSessionDeadlineAt: resolveProviderSessionDeadlineAt(ctx.providerSessionDeadlineAt),
     taskRunId: ctx.taskRunId,
@@ -1147,8 +1162,9 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
             abortedWithoutTerminalMessage: `[${kind}] Agent SDK run aborted with no terminal result`,
           });
         };
-        await withPreparedSdkQuery(
+        await withPreparedExecutionQuery(
           lifecycle,
+          ctx.modelBinding,
           actualInput,
           sdkPrompt,
           sdkOptions,
@@ -1263,6 +1279,7 @@ export async function streamTaskCollecting(
     timeoutMs: ctx.budgetOverride?.timeoutMs ?? def.budget.timeout,
     abortController: ctx.lifecycleAbortController,
     override: ctx.override,
+    modelBinding: ctx.modelBinding,
     parentTaskRunId: ctx.parentTaskRunId,
     providerSessionDeadlineAt: resolveProviderSessionDeadlineAt(ctx.providerSessionDeadlineAt),
     taskRunId: ctx.taskRunId,
@@ -1321,8 +1338,9 @@ export async function streamTaskCollecting(
         abortedWithoutTerminalMessage: `[${kind}] Agent SDK run aborted with no terminal result`,
       });
     };
-    await withPreparedSdkQuery(
+    await withPreparedExecutionQuery(
       lifecycle,
+      ctx.modelBinding,
       actualInput,
       sdkPrompt,
       sdkOptions,

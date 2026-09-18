@@ -180,7 +180,7 @@ export const IMPORTED_FETCH_EXCEPTIONS = [
 
 export const PROVIDER_RUNTIME_SDK_IMPORTS = [
   {
-    path: 'src/server/ai/runner.ts',
+    path: 'src/server/ai/execution-adapter.ts',
     source: '@anthropic-ai/claude-agent-sdk',
     disposition: 'central',
     imported: 'startup',

@@ -12,6 +12,7 @@ import {
   resolveAttemptCostTruth,
   unknownAttemptCostTruth,
 } from './attempt-cost';
+import { type ModelBinding, explicitProviderRouting } from './execution-adapter';
 import {
   type AiTaskUsage,
   writeAiTaskAttemptFinished,
@@ -71,6 +72,13 @@ interface LifecycleConfig<TResult extends LifecycleResult> {
    */
   abortController?: AbortController;
   override?: { provider?: ResolvedProvider['provider']; model?: string };
+  /**
+   * YUK-1013 — per-run model binding, forwarded verbatim from RunTaskCtx. The
+   * constructor merges its provider/model into provider resolution (override
+   * wins per-field — explicitProviderRouting), reads `effort` for the run
+   * metadata event, and `adapter` for the recorded execution engine.
+   */
+  modelBinding?: ModelBinding;
   /** Active outer central attempt when a DomainTool starts a nested task. */
   parentTaskRunId?: string;
   /** Absolute bound for beginning a retry attempt; execution keeps its own budget. */
@@ -91,6 +99,7 @@ interface LifecycleConfig<TResult extends LifecycleResult> {
 export interface LifecycleRetryContext {
   enableTransientRetry?: boolean;
   override?: { provider?: ResolvedProvider['provider']; model?: string };
+  modelBinding?: ModelBinding;
 }
 
 export interface LifecycleAttemptDecision {
@@ -173,7 +182,10 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     this.abortController = config.abortController ?? new AbortController();
     this.taskRunId = config.taskRunId;
     this.kind = config.kind;
-    this.resolved = resolveTaskProvider(config.kind, config.override);
+    // YUK-1013 — the binding's provider/model merge in here (escape-hatch
+    // override wins per-field) so EVERY lifecycle caller gets the same
+    // explicit > env > registry layering, not just the runner's three sites.
+    this.resolved = resolveTaskProvider(config.kind, explicitProviderRouting(config));
     // YUK-924 P2 — fail-closed capability gate at task resolution: a task that
     // declares needsToolCall / isMultimodal may only run on a lane whose
     // ModelProfile CONFIRMS the capability ('unknown' rejects too; the remedy
@@ -438,7 +450,9 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         provider: this.resolved.provider,
         model: this.resolved.model,
         profile_source: this.modelProfile.source,
-        reasoning_effort: declaredDef.reasoningEffort ?? null,
+        reasoning_effort: this.config.modelBinding?.effort ?? declaredDef.reasoningEffort ?? null,
+        // YUK-921 §2.1 — adapter selection stays observable on the run record.
+        execution_adapter: this.config.modelBinding?.adapter ?? 'sdk',
         profile_effort_default: this.modelProfile.reasoning.defaultEffort ?? null,
       });
     } catch (error) {
@@ -665,6 +679,9 @@ export function createRunLifecycle<TResult extends LifecycleResult>(
 export function transientRetryEnabled(ctx: LifecycleRetryContext): boolean {
   if (ctx.enableTransientRetry !== true) return false;
   if (ctx.override?.provider || ctx.override?.model) return false;
+  // YUK-1013 — a per-run binding pins routing exactly like ctx.override does;
+  // retry stays off on pinned lanes (single-transient-layer principle).
+  if (ctx.modelBinding?.provider || ctx.modelBinding?.model) return false;
   if (hasGlobalProviderOverride()) return false;
   return true;
 }
