@@ -2,7 +2,14 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getTaskSystemPrompt } from '@/ai/task-prompts';
-import { cost_ledger, event, knowledge, misconception, misconception_edge, question } from '@/db/schema';
+import {
+  cost_ledger,
+  event,
+  knowledge,
+  misconception,
+  misconception_edge,
+  question,
+} from '@/db/schema';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { type AttributionInput, parseAttributionOutput } from '../tasks/attribution';
@@ -917,9 +924,7 @@ describe('runAttributionAndWriteJudgeEvent — misconception candidates (YUK-101
     });
     const input = {
       ...kcInput,
-      knowledge_context: [
-        { id: 'k_yuwen_root', name: '语文', effective_domain: 'yuwen' },
-      ],
+      knowledge_context: [{ id: 'k_yuwen_root', name: '语文', effective_domain: 'yuwen' }],
     };
     const spy = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
       text: '{"primary_category":"concept","secondary_categories":[],"analysis_md":"why","confidence":0.8}',

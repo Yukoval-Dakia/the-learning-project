@@ -117,9 +117,7 @@ describe('GET /api/review/weekly', () => {
       top_causes: Array<{ category: string; category_label: string | null; count: number }>;
     };
 
-    expect(body.top_causes).toEqual([
-      { category: 'memory', category_label: null, count: 1 },
-    ]);
+    expect(body.top_causes).toEqual([{ category: 'memory', category_label: null, count: 1 }]);
   });
 
   // YUK-1018 — misc_ category 的显示回填：active misconception title 进

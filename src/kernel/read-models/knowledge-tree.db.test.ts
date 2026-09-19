@@ -192,9 +192,9 @@ describe('batchResolveAncestorIds', () => {
     const db = testDb();
     // 'orphan' points at a parent that does not exist → chain is just that
     // dangling id (the walk records it, then stops at the missing row).
-    await db.insert(knowledge).values([
-      { id: 'orphan', name: 'orphan', domain: null, parent_id: 'ghost', ...base },
-    ]);
+    await db
+      .insert(knowledge)
+      .values([{ id: 'orphan', name: 'orphan', domain: null, parent_id: 'ghost', ...base }]);
     const out = await batchResolveAncestorIds(db, ['orphan', 'never_existed']);
     expect(out.get('orphan')).toEqual(['ghost']);
     expect(out.get('never_existed')).toEqual([]);

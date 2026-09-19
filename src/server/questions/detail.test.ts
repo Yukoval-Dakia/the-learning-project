@@ -5,7 +5,14 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { newId } from '@/core/ids';
-import { artifact, event, knowledge, material_fsrs_state, misconception, question } from '@/db/schema';
+import {
+  artifact,
+  event,
+  knowledge,
+  material_fsrs_state,
+  misconception,
+  question,
+} from '@/db/schema';
 import { upsertMasteryState } from '@/server/mastery/state';
 import { loadQuestionDetail } from '@/server/questions/detail';
 import { resetDb, testDb } from '../../../tests/helpers/db';
