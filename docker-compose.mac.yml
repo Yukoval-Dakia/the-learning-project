@@ -18,6 +18,11 @@ services:
       # (placement parses case-sensitively; auto-enroll doesn't — don't "prettify").
       PLACEMENT_PROBE_ENABLED: "true"
       WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: "true"
+      # YUK-1017 — conjecture-accept → misconception mint (soft track). Dark-ship code is
+      # already live; this flag only makes accept mint when recurrence_count >= K_PROMOTE.
+      # MISCONCEPTION_HARD_CONFIRM_ENABLED stays absent (ADR-0050 §(b2): no honest
+      # target_error_match fact + fresh-owner-confirm requirement — structurally OFF).
+      MISCONCEPTION_PROMOTE_ENABLED: "true"
       # Goal/learning_item/mistake_variant are canonical writers without mode switches.
       # item_calibration stays Scheme A / OFF.
   worker:
@@ -26,6 +31,7 @@ services:
       # placement entrypoint runs in app. Repeating both makes process parity explicit.
       PLACEMENT_PROBE_ENABLED: "true"
       WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: "true"
+      MISCONCEPTION_PROMOTE_ENABLED: "true"
   postgres:
     ports:
       - "127.0.0.1:5433:5432"
