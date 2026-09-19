@@ -159,6 +159,30 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
     apiKeyEnv: 'OPENAI_API_KEY',
     description: 'OpenAI direct (placeholder; not wired)',
   },
+  // YUK-921 P1 — OpenCode Go subscription lane (opencode.ai/zen/go). Served ONLY
+  // through the pi execution adapter (Adapter B): the catalog's target models
+  // speak openai-completions/openai-responses, which the Claude Agent SDK's
+  // Anthropic-protocol subprocess cannot address — so this provider is absent
+  // from IMPLEMENTED_KEY_PROVIDERS and lives in PI_LANE_PROVIDERS instead. The
+  // pi builtin provider owns baseUrl/model catalog/auth; this entry only
+  // declares the loom-side credential + capability classification. Every
+  // request additionally needs an x-opencode-session header (injected by the
+  // pi adapter from the run id — see pi-agent-adapter.ts).
+  'opencode-go': {
+    authMode: 'key',
+    baseUrl: 'https://opencode.ai/zen/go',
+    apiKeyEnv: 'OPENCODE_API_KEY',
+    description: 'OpenCode Go subscription catalog via the pi execution adapter',
+    modelDefaults: {
+      // P1 has no tool bridge or SDK structured-output protocol on this lane:
+      // declare both false explicitly (not 'unknown') so the capability gate
+      // rejects declaring tasks with an honest classification, not a gap.
+      capabilities: { structuredOutput: false, toolCalling: false },
+      // pi usage.cost is a catalog-rate estimate, not a contractual invoice
+      // (design §6 R1): never metered.
+      execution: { meteredUsd: false },
+    },
+  },
   // YUK-365 — subscription-OAuth lane. Opus 4.8 via the owner's Claude Max
   // subscription. No baseUrl (first-party endpoint only); no apiKeyEnv (it reads
   // the OAuth token, not a key). Opt-in ONLY via AI_PROVIDER_OVERRIDE.
@@ -244,6 +268,21 @@ export function isProviderLaneReady(provider: Provider): boolean {
 // throws for them below. 'anthropic-sub' is the OAuth lane (handled before the key branch), so it
 // is NOT in this key-auth set; `isProviderImplemented` folds it back in via `isOauthProvider`.
 const IMPLEMENTED_KEY_PROVIDERS: ReadonlySet<Provider> = new Set(['anthropic', 'xiaomi', 'zhipu']);
+
+/**
+ * YUK-921 P1 — providers served ONLY through the pi execution adapter
+ * (Adapter B, @earendil-works/pi-agent-core agentLoop + pi-ai Models). Their
+ * catalogs speak openai-completions/openai-responses wire shapes the Claude
+ * Agent SDK subprocess cannot address, so they are deliberately absent from
+ * IMPLEMENTED_KEY_PROVIDERS: the SDK adapter fails closed on them at
+ * `resolveExecutionAdapter`, and a pi-pinned binding is the only way through.
+ */
+export const PI_LANE_PROVIDERS: ReadonlySet<Provider> = new Set(['opencode-go']);
+
+/** Predicate form of `PI_LANE_PROVIDERS` for readability at call sites. */
+export function isPiLaneProvider(provider: Provider): boolean {
+  return PI_LANE_PROVIDERS.has(provider);
+}
 
 /**
  * YUK-608 — is `provider` actually wired to a working endpoint (vs reserved-but-not-implemented)?
@@ -448,10 +487,12 @@ export function resolveTaskProvider(
   // / gateway / openai land here as "not implemented" because their wire shapes
   // differ; revisit if a real trigger fires. ('anthropic-sub' is the oauth branch
   // above, so it never reaches here.) The wired set lives in `isProviderImplemented`
-  // (single source of truth, also read by override pre-flights).
-  if (!isProviderImplemented(providerName)) {
+  // (single source of truth, also read by override pre-flights). YUK-921 P1:
+  // pi-lane providers (opencode-go) resolve here — the execution-adapter gate
+  // is what rejects them for SDK-routed runs, not this credential check.
+  if (!isProviderImplemented(providerName) && !isPiLaneProvider(providerName)) {
     throw new Error(
-      `Provider '${providerName}' is reserved but not implemented; only 'anthropic', 'xiaomi', 'zhipu', and 'anthropic-sub' (subscription OAuth) are wired.`,
+      `Provider '${providerName}' is reserved but not implemented; only 'anthropic', 'xiaomi', 'zhipu', 'anthropic-sub' (subscription OAuth), and 'opencode-go' (pi adapter) are wired.`,
     );
   }
 

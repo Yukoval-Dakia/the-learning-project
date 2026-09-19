@@ -8,7 +8,8 @@ export type Provider =
   | 'openrouter'
   | 'gateway'
   | 'openai'
-  | 'anthropic-sub';
+  | 'anthropic-sub'
+  | 'opencode-go';
 
 export type ModelId = string;
 

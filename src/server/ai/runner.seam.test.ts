@@ -1157,11 +1157,28 @@ describe('runTask — YUK-1013 modelBinding (per-run binding seam)', () => {
     expect(opts.model).toBe('mimo-v2.5-pro');
   });
 
-  it('fails closed on the unimplemented pi adapter pin before any query', async () => {
+  it('fails closed on a pi adapter pin to a non-pi provider before any query', async () => {
     mockSdk.queryStarted.mockClear();
     await expect(
       runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb, modelBinding: { adapter: 'pi' } }),
-    ).rejects.toThrow(/not implemented yet/);
+    ).rejects.toThrow(/ExecutionAdapter 'pi' does not serve provider 'xiaomi'/);
+    expect(mockSdk.queryStarted).not.toHaveBeenCalled();
+  });
+
+  it('fails closed on the pi lane without the kind allowlist before any query', async () => {
+    vi.stubEnv('OPENCODE_API_KEY', 'sk-opencode-test');
+    vi.stubEnv('AI_ADAPTER_PI_KINDS', '');
+    mockSdk.queryStarted.mockClear();
+    await expect(
+      runTask(
+        UNMIGRATED_KIND,
+        { q: 1 },
+        {
+          db: fakeDb,
+          modelBinding: { adapter: 'pi', provider: 'opencode-go', model: 'mimo-v2.5-pro' },
+        },
+      ),
+    ).rejects.toThrow(/Task kind 'AttributionTask' is not eligible for ExecutionAdapter 'pi'/);
     expect(mockSdk.queryStarted).not.toHaveBeenCalled();
   });
 });

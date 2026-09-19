@@ -137,6 +137,12 @@ export const fastTestInclude = [
   // ./run-lifecycle (transientRetryEnabled only). src/server/ai/** has no unit
   // glob, so this MUST be listed (same enumeration requirement as above).
   'src/server/ai/execution-adapter.test.ts',
+  // YUK-921 P1 — PiAgentAdapter event→SDK-frame normalization + startup gates.
+  // Pure no-DB: imports ./pi-agent-adapter (pi-ai/pi-agent-core types + a
+  // scripted in-memory agentLoop — deps are injectable, no network, no SDK)
+  // + ./providers types. Same enumeration requirement as above (no
+  // src/server/ai/** unit glob).
+  'src/server/ai/pi-agent-adapter.test.ts',
   // YUK-299 — Zod→outputFormat adapter unit. Pure no-DB: imports only
   // ./output-format (→ zod-to-json-schema, pure JS) + @/core/schema/business (Zod).
   // Same enumeration requirement as above (no src/server/ai/** unit glob).

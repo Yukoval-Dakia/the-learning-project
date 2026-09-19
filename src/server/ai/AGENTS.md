@@ -6,7 +6,8 @@
 | 文件 | 职责 |
 |------|------|
 | `runner.ts` | 统一把所有 task 送进 Claude Agent SDK `query()`；支持 `mcpServers` / `allowedTools` / `maxTurns`（`runTask`/`runAgentTask`/`streamTask`）|
-| `execution-adapter.ts` | YUK-921 ExecutionAdapter seam：`PreparedExecutionQuery`/`ExecutionAdapter` 接口 + Adapter A（SDK WarmQuery 包装）+ `ModelBinding` per-run 绑定 + `resolveExecutionAdapter`/`explicitProviderRouting` 决议 |
+| `execution-adapter.ts` | YUK-921 ExecutionAdapter seam：`PreparedExecutionQuery`/`ExecutionAdapter` 接口 + Adapter A（SDK WarmQuery 包装）+ `ModelBinding` per-run 绑定 + `resolveExecutionAdapter`/`explicitProviderRouting` 决议 + `AI_ADAPTER_PI_KINDS` 灰度门 |
+| `pi-agent-adapter.ts` | YUK-921 P1 Adapter B：`@earendil-works/pi-agent-core` `agentLoop` 单发执行 + 事件→SDK-frame 归一（`PiRunnerMessage`，`source:'pi'`）+ `x-opencode-session` header 注入 |
 | `sdk-terminal.ts` | 把 SDK assistant/result 消息适配为 lifecycle usage、thinking 元数据与终态证据；不持久化原始 CoT |
 | `providers.ts` | Anthropic provider（xiaomi/mimo 兼容端点）+ YUK-924 provider model binding（`models` / `modelDefaults`，config-over-catalog 的 config 层）|
 | `model-profiles.ts` + `model-catalog.snapshot.json` | YUK-924 ModelProfile 注册表：models.dev 裁剪快照（`pnpm gen:model-catalog` 重生成，运行时零网络）+ binding→catalog→保守默认三层合并 + needsToolCall/isMultimodal fail-closed 能力门 |
@@ -43,3 +44,14 @@
 ## Switchable AI provider lane (YUK-365)
 
 默认走 mimo-v2.5（xiaomi key-auth）。设 `AI_PROVIDER_OVERRIDE=anthropic-sub` 全局切到 **Opus 4.8 via owner's Claude Max 订阅（OAuth）** —— token 是 `claude setup-token` 生成的长效 `CLAUDE_CODE_OAUTH_TOKEN`，**绝不入库不打印**。**Token + `AI_PROVIDER_OVERRIDE` 必须对三进程都可见**：大多数 AI 任务跑在 BACKGROUND pg-boss worker（`scripts/worker.ts`）里，所以放 `.env.local` 时三进程（Hono API / Vite / worker）各自在启动期跑 `loadEnv()`（`server/env`）读它——API 走 `server/index.ts`、worker 走 `scripts/worker.ts`（YUK-365 Finding 2 补：worker 此前不读 `.env.local`，背景 job 会回落 mimo），`dev:local` 也把 `.env.local` 透传给三 child。**生产/NAS**：token 经 docker-compose `.env` 同时注入 app + worker 两容器（`loadEnv` 只填空位，容器 env 永远赢）。订阅 token 与 mimo 互斥：oauth lane 在 SDK 子进程 env 里 SET `CLAUDE_CODE_OAUTH_TOKEN`、UNSET `ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` + 四个 cloud-provider selector（`CLAUDE_CODE_USE_BEDROCK`/`_VERTEX`/`_ANTHROPIC_AWS`/`_FOUNDRY`，它们的优先级高于 OAuth token——YUK-365 Finding 1）（first-party endpoint only）。可选 `AI_PROVIDER_MODEL` 覆盖模型 id（lane 默认 `claude-opus-4-8`）；切到非 mimo 的其它 provider（如 `anthropic` 直连）若不设 `AI_PROVIDER_MODEL` 会 throw 明确 config 错（registry 默认 model 是 mimo id，非 mimo endpoint 不收——YUK-365 Finding 4）。**生产 SDK 版本前置**：`Dockerfile` 的 `sdkdeps` stage 必须装 `@anthropic-ai/claude-agent-sdk` 与 lockfile 同版；2026-07-31 验证版本为 `0.3.220`（bundled Claude Code `2.1.220`），旧版（如 0.3.143）CLI 会拒该 model id（YUK-365 Finding 3）。Wiring 在 `providers.ts`（`authMode: 'key' | 'oauth'` 判别式 + `AI_PROVIDER_OVERRIDE` 开关）+ `runner.ts`（`buildAgentEnv` 按 authMode 分支）。
+
+## Pi execution lane (YUK-921 P1 / YUK-1014)
+
+第二条执行引擎：`PiAgentAdapter`（`@earendil-works/pi-ai` + `@earendil-works/pi-agent-core` `agentLoop`，同 process 内跑，无 SDK 子进程）。门控是**双闸门**——`modelBinding.adapter:'pi'` 显式 pin + provider 属 `PI_LANE_PROVIDERS`（当前仅 `opencode-go`）+ kind 在 `AI_ADAPTER_PI_KINDS` ∩ `needsToolCall=false`；三个条件缺一即 fail-closed config 错，无静默回落。反向同样成立：`opencode-go` binding 不 pin pi 也会在 seam 处被拒（其 catalog 是 openai-completions/responses wire，SDK 子进程够不着）。
+
+- **归一约定**：pi 事件在 adapter 边界转成 SDKMessage 形状（assistant/result frame + `source:'pi'` provenance），`consumeSdkAttempt`/`sdk-terminal`/lifecycle 零改动。P1 只产 assistant+result frame——无 tool、无 compaction、无 SDK init handshake。
+- **opencode-go 会话头**：每请求必须 `x-opencode-session`，注入 `ai_task_run.id`（attempt 级 fencing 身份）；缺了 endpoint 400 MissingSessionID。key-auth：`OPENCODE_API_KEY`。
+- **cost 诚实**：pi `usage.cost` 是 catalog 费率估值 → `resolveAttemptCostTruth` 落 `estimated` + `pi-catalog:opencode-go/<model>` ref，绝不冒名 reported/contractual。
+- **abort 语义**：caller abort / `close()` 不产 terminal frame——lifecycle 的 `aborted` 标志独占取消真相；provider 侧 abort（stopReason='aborted' 且我们没发信号）归一为 `error_during_execution`。
+- **bundle 边界**：pi 依赖链（aws-sdk/genai/openai 等）随 server/worker bundle 进 `dist/*.cjs`；`build:migrate` 标 `@earendil-works/*` external + adapter 内 dynamic import——migrate bundle 不含 pi 代码且永不会 require 它（YUK-988 教训）。
+- **已知延迟画像（actual-output 封存 `docs/planning/evidence/2026-09-19-pi-adapter-*`）**：glm-5.3-flash ~11s、grok-4.6 ~51s、mimo-v2.5-pro ~57-60s+ 贴边 60s task budget——跨 provider 选模型必须尊重 per-kind timeout，mimo 在 AttributionTask 上两过一超。
