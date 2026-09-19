@@ -9,13 +9,17 @@
 import {
   type Options,
   type Query,
+  type SDKAssistantMessage,
   type SDKMessage,
+  type SDKResultMessage,
   type SDKUserMessage,
   type WarmQuery,
   startup as sdkStartup,
 } from '@anthropic-ai/claude-agent-sdk';
+import { type TaskKind, tasks } from '@/ai/registry';
 import type { EffortLevel } from '@/ai/task-spec';
-import type { ResolvedProvider } from './providers';
+import { PiAgentAdapter } from './pi-agent-adapter';
+import { PI_LANE_PROVIDERS, type ResolvedProvider, isPiLaneProvider } from './providers';
 
 export type ExecutionAdapterId = 'sdk' | 'pi';
 
@@ -38,10 +42,24 @@ export interface ModelBinding {
 }
 
 /**
- * Message union consumed by runner entry points. P0: alias to SDKMessage so
- * every consumer compiles unchanged; P1 unions in the pi AgentMessage shape.
+ * Pi-adapter runner frames (YUK-921 P1). The pi agentLoop's events are
+ * normalized into SDKMessage-shaped frames at the adapter boundary so the
+ * consume loop (lifecycle/terminal/tool_call recording) stays a single
+ * implementation; `source: 'pi'` declares provenance instead of faking
+ * SDK-only metadata. Intersections stay structurally assignable to their SDK
+ * member, so `sdk-terminal` and `isTaskEventMessage` consume them unchanged.
+ * P1 emits assistant + result frames only (single-shot lane: no tools, no
+ * compaction, no SDK init handshake to report).
  */
-export type RunnerMessage = SDKMessage;
+export type PiRunnerMessage =
+  | (SDKAssistantMessage & { source: 'pi' })
+  | (SDKResultMessage & { source: 'pi' });
+
+/**
+ * Message union consumed by runner entry points. P0 was a bare SDKMessage
+ * alias; P1 unions in the pi-normalized frames both adapters may produce.
+ */
+export type RunnerMessage = SDKMessage | PiRunnerMessage;
 
 /**
  * A prepared query session: transport started (admission already held by the
@@ -49,14 +67,33 @@ export type RunnerMessage = SDKMessage;
  * warm transport or the active query — the adapter owns that distinction.
  */
 export interface PreparedExecutionQuery {
-  query(prompt: string | AsyncIterable<SDKUserMessage>): Query;
+  query(prompt: string | AsyncIterable<SDKUserMessage>): AsyncIterable<RunnerMessage>;
   close(): Promise<void>;
+}
+
+/** Arguments every adapter's `startup` receives. Adapters consume what they need. */
+export interface ExecutionAdapterStartupArgs {
+  /** SDK Options built by buildQueryOptions (model/systemPrompt/effort/env/…). */
+  options: Options;
+  initializeTimeoutMs: number;
+  /**
+   * The lifecycle-resolved provider binding — credential, provider id and
+   * model for this attempt. Pi adapter maps it to `models.getModel` and the
+   * per-request `apiKey`; SDK adapter ignores it (its env is already inside
+   * `options.env`).
+   */
+  resolved: ResolvedProvider;
+  /**
+   * The durable run identity (`ai_task_run.id`). Pi adapter injects it as the
+   * opencode `x-opencode-session` header — stable per attempt, auditable.
+   */
+  runId: string;
 }
 
 export interface ExecutionAdapter {
   readonly id: ExecutionAdapterId;
   /** Start the transport without submitting a prompt (SDK WarmQuery equivalent). */
-  startup(args: { options: Options; initializeTimeoutMs: number }): Promise<PreparedExecutionQuery>;
+  startup(args: ExecutionAdapterStartupArgs): Promise<PreparedExecutionQuery>;
 }
 
 /**
@@ -70,7 +107,7 @@ export class SdkPreparedQuery implements PreparedExecutionQuery {
 
   constructor(private warmQuery: WarmQuery | undefined) {}
 
-  query(prompt: string | AsyncIterable<SDKUserMessage>): Query {
+  query(prompt: string | AsyncIterable<SDKUserMessage>): AsyncIterable<RunnerMessage> {
     this.activeQuery = this.warmQuery?.query(prompt);
     if (!this.activeQuery) {
       throw new Error('SDK warm query closed before prompt submission');
@@ -98,10 +135,7 @@ export class SdkPreparedQuery implements PreparedExecutionQuery {
 class SdkExecutionAdapter implements ExecutionAdapter {
   readonly id = 'sdk' as const;
 
-  async startup(args: {
-    options: Options;
-    initializeTimeoutMs: number;
-  }): Promise<PreparedExecutionQuery> {
+  async startup(args: ExecutionAdapterStartupArgs): Promise<PreparedExecutionQuery> {
     const warmQuery = await sdkStartup({
       options: args.options,
       initializeTimeoutMs: args.initializeTimeoutMs,
@@ -111,16 +145,66 @@ class SdkExecutionAdapter implements ExecutionAdapter {
 }
 
 const SDK_ADAPTER = new SdkExecutionAdapter();
+const PI_ADAPTER = new PiAgentAdapter();
 
 /**
- * Engine selection for one attempt. Today every binding resolves to the SDK
- * adapter; an explicit `adapter:'pi'` pin fails closed (same posture as
- * providerRequiresExplicitModel) rather than silently falling back.
+ * YUK-921 P1 — per-kind gray-rollout gate for the pi adapter, driven by the
+ * `AI_ADAPTER_PI_KINDS` env flag (comma-separated task kinds; empty/unset ⇒
+ * no kind may run pi). A kind must additionally declare `needsToolCall:false`
+ * — the tool-call loop is P2 scope and an ineligible declaration rejects even
+ * when the flag names it. Parsed per call so tests can flip the env without
+ * module reloads.
  */
-export function resolveExecutionAdapter(binding?: ModelBinding): ExecutionAdapter {
-  if (binding?.adapter !== undefined && binding.adapter !== 'sdk') {
+export function piAllowlistedKinds(): ReadonlySet<string> {
+  const raw = process.env.AI_ADAPTER_PI_KINDS;
+  if (!raw?.trim()) return new Set();
+  return new Set(
+    raw
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0),
+  );
+}
+
+export function isPiEligibleKind(kind: TaskKind): boolean {
+  return !tasks[kind].needsToolCall && piAllowlistedKinds().has(kind);
+}
+
+/**
+ * Engine selection for one attempt. The default stays the SDK adapter; an
+ * explicit `adapter:'pi'` pin resolves Adapter B only when BOTH gates hold:
+ * the resolved provider is a pi lane (`isPiLaneProvider` — opencode-go today)
+ * and the task kind is allowlisted (`AI_ADAPTER_PI_KINDS` ∩
+ * needsToolCall=false). Every rejection fails closed with a config error —
+ * same posture as `providerRequiresExplicitModel` — never a silent fallback.
+ */
+export function resolveExecutionAdapter(
+  binding: ModelBinding | undefined,
+  resolved: ResolvedProvider,
+  kind: TaskKind,
+): ExecutionAdapter {
+  const requested = binding?.adapter ?? 'sdk';
+  if (requested === 'pi') {
+    if (!isPiLaneProvider(resolved.provider)) {
+      throw new Error(
+        `ExecutionAdapter 'pi' does not serve provider '${resolved.provider}' — only ${[...PI_LANE_PROVIDERS].join(' | ')} are wired through the pi lane (modelBinding.adapter:'pi' + modelBinding.provider:'${resolved.provider}' is not a runnable combination).`,
+      );
+    }
+    if (!isPiEligibleKind(kind)) {
+      throw new Error(
+        `Task kind '${kind}' is not eligible for ExecutionAdapter 'pi' — P1 serves only needsToolCall=false kinds named in AI_ADAPTER_PI_KINDS. Omit the adapter pin to route through 'sdk'.`,
+      );
+    }
+    return PI_ADAPTER;
+  }
+  if (requested !== 'sdk') {
     throw new Error(
-      `ExecutionAdapter '${binding.adapter}' is not implemented yet — only 'sdk' is available in this release (pi lands in YUK-921 P1). Omit modelBinding.adapter or pass 'sdk'.`,
+      `ExecutionAdapter '${requested}' is not implemented — expected 'sdk' | 'pi'. Omit modelBinding.adapter or pass 'sdk'.`,
+    );
+  }
+  if (isPiLaneProvider(resolved.provider)) {
+    throw new Error(
+      `Provider '${resolved.provider}' is served only by ExecutionAdapter 'pi' (its catalog is not Anthropic-protocol); set modelBinding.adapter:'pi' + an allowlisted needsToolCall=false kind.`,
     );
   }
   return SDK_ADAPTER;

@@ -31,7 +31,6 @@ import { join } from 'node:path';
 import type {
   Options,
   OutputFormat,
-  Query,
   SDKAssistantMessage,
   SDKMessage,
   SDKTaskNotificationMessage,
@@ -57,6 +56,7 @@ import {
 import {
   type ModelBinding,
   type PreparedExecutionQuery,
+  type RunnerMessage,
   resolveExecutionAdapter,
 } from './execution-adapter';
 import { logMissingMcpServersWarning } from './log';
@@ -354,7 +354,7 @@ function isKnownTask(k: string): k is TaskKind {
   return (TASK_KINDS as string[]).includes(k);
 }
 
-function isTaskEventMessage(message: SDKMessage): message is TaskEventMessage {
+function isTaskEventMessage(message: RunnerMessage): message is TaskEventMessage {
   if (message.type !== 'system') return false;
   switch (message.subtype) {
     case 'task_started':
@@ -367,7 +367,7 @@ function isTaskEventMessage(message: SDKMessage): message is TaskEventMessage {
   }
 }
 
-async function notifyTaskEvent(ctx: RunTaskCtx, message: SDKMessage): Promise<void> {
+async function notifyTaskEvent(ctx: RunTaskCtx, message: RunnerMessage): Promise<void> {
   if (ctx.onTaskEvent === undefined || !isTaskEventMessage(message)) return;
   try {
     await ctx.onTaskEvent(message);
@@ -733,13 +733,13 @@ async function withPreparedExecutionQuery<TResult extends RunTaskResult, TValue>
   actualInput: unknown,
   prompt: string | AsyncIterable<SDKUserMessage>,
   options: Options,
-  consume: (query: Query) => Promise<TValue>,
+  consume: (query: AsyncIterable<RunnerMessage>) => Promise<TValue>,
   beforeProviderQuery?: BeforeProviderQuery,
 ): Promise<TValue> {
   // Resolved at the seam boundary so an unimplemented adapter pin throws the
   // same config-error posture as resolveTaskProvider's credential checks —
   // before admission, before any durable row.
-  const adapter = resolveExecutionAdapter(modelBinding);
+  const adapter = resolveExecutionAdapter(modelBinding, lifecycle.resolved, lifecycle.kind);
   let prepared: PreparedExecutionQuery | undefined;
 
   return lifecycle.withProviderSession(actualInput, {
@@ -749,6 +749,8 @@ async function withPreparedExecutionQuery<TResult extends RunTaskResult, TValue>
         initializeTimeoutMs: lifecycle.providerPhaseTimeoutMs(
           PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS,
         ),
+        resolved: lifecycle.resolved,
+        runId: lifecycle.taskRunId,
       });
     },
     async run() {
@@ -779,7 +781,7 @@ type SDKToolUseBlock = Extract<ContentBlock, { type: 'tool_use' }>;
  * behavior remain with runTask/streamTask/streamTaskCollecting.
  */
 async function consumeSdkAttempt<TResult extends RunTaskResult>(args: {
-  query: Query;
+  query: AsyncIterable<RunnerMessage>;
   kind: TaskKind;
   ctx: RunTaskCtx;
   lifecycle: AiRunLifecycle<TResult>;
@@ -911,7 +913,7 @@ async function runTaskAttempt(args: {
   // started yet.
   const sdkPrompt = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
   const sdkOptions = buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved);
-  const consumeSdkQuery = async (q: Query) => {
+  const consumeSdkQuery = async (q: AsyncIterable<RunnerMessage>) => {
     if (args.warnMissingMcp) {
       logMissingMcpServersWarning({
         task_run_id: lifecycle.taskRunId,
@@ -1145,7 +1147,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
           lifecycle.abortController,
           lifecycle.resolved,
         );
-        const consumeSdkQuery = async (q: Query) => {
+        const consumeSdkQuery = async (q: AsyncIterable<RunnerMessage>) => {
           await consumeSdkAttempt({
             query: q,
             kind,
@@ -1299,7 +1301,7 @@ export async function streamTaskCollecting(
       : input;
     const sdkPrompt = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
     const sdkOptions = buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved);
-    const consumeSdkQuery = async (q: Query) => {
+    const consumeSdkQuery = async (q: AsyncIterable<RunnerMessage>) => {
       await consumeSdkAttempt({
         query: q,
         kind,

@@ -1,0 +1,30 @@
+{
+  "captured_at": "2026-09-19T06:35:12.854Z",
+  "code_revision": "b015f4884988433960f7f14002848186c3869de2",
+  "ticket": "YUK-1014",
+  "lane": {
+    "adapter": "pi",
+    "provider": "opencode-go",
+    "model": "mimo-v2.5-pro",
+    "task_kind": "AttributionTask",
+    "session_header": "x-opencode-session=<ai_task_run.id>"
+  },
+  "task_run_id": "lv5mz3f8eehnkk3zmm8eh6f7",
+  "status": "success",
+  "finish_reason": "end_turn",
+  "usage": {
+    "inputTokens": 894,
+    "outputTokens": 2291,
+    "thinkingBlocks": 1,
+    "thinkingCharacters": 4193
+  },
+  "cost": {
+    "basis": "estimated",
+    "amount_usd": 0.00238206,
+    "ref": "pi-catalog:opencode-go/mimo-v2.5-pro"
+  },
+  "input_digest": "sha256:643e12da2581603cbf3d455b7c05bb41e4a526abf5234613464df315153a0f12",
+  "output_digest": "sha256:4f3aafbae1139c2a521d1c3da89b2fce582c269a83b74b675743fdfcb43b3dc1",
+  "output_excerpt": "{\"primary_category\": \"concept\", \"secondary_categories\": [\"method\"], \"analysis_md\": \"用户错答为 x = 2 或 x = 4，参考答案为 x = 2 或 x = 3。方程 x^2 - 5x + 6 = 0 的正确因式分解为 (x-2)(x-3)=0，根为 x=2 和 x=3。用户正确给出 x=2，但错误给出 x=4，这可能是因式分解为 (x-2)(x-4) 所致，但 (x-2)(x-4) 展开为 x^2 - 6x + 8，与原方程不符。对于二次方程 ax^2 + bx + c = 0，根的和应为 -b/a=5，积应为 c/a=6；用户给出的根和 6、积 8 均不匹配。这表明用户对二次方程根与系数的关系理解有误，或对因式分解方法应用不当。\", \"confidence\": 0.8, \"meta_cause\": \"flawed_model\", \"meta_cause_secondary\": \"rule_misapplication\", \"metacog_flag\": null, \"bloom_level\": \"apply\", \"self_corrected_on_hint\": null, \"recurred_cross_item\": null}",
+  "provenance": "PiRunnerMessage frames carry source=pi; terminal evidence normalized from pi agentLoop agent_end + final assistant usage (catalog-estimated cost — never contractual per design §6 R1)."
+}

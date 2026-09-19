@@ -1,24 +1,100 @@
 import type { Query, SDKUserMessage, WarmQuery } from '@anthropic-ai/claude-agent-sdk';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   SdkPreparedQuery,
   explicitProviderRouting,
+  isPiEligibleKind,
+  piAllowlistedKinds,
   resolveExecutionAdapter,
 } from './execution-adapter';
+import type { ResolvedProvider } from './providers';
 import { transientRetryEnabled } from './run-lifecycle';
+
+const SDK_RESOLVED: ResolvedProvider = {
+  authMode: 'key',
+  provider: 'xiaomi',
+  model: 'mimo-v2.5-pro',
+  apiKey: 'sk-test-key',
+};
+
+const PI_RESOLVED: ResolvedProvider = {
+  authMode: 'key',
+  provider: 'opencode-go',
+  model: 'mimo-v2.5-pro',
+  apiKey: 'sk-test-key',
+};
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe('resolveExecutionAdapter — P0 seam (YUK-1013)', () => {
   it('resolves to the sdk adapter when no binding is set', () => {
-    expect(resolveExecutionAdapter().id).toBe('sdk');
-    expect(resolveExecutionAdapter({}).id).toBe('sdk');
-    expect(resolveExecutionAdapter({ model: 'mimo-v2.5-pro' }).id).toBe('sdk');
-    expect(resolveExecutionAdapter({ adapter: 'sdk' }).id).toBe('sdk');
+    expect(resolveExecutionAdapter(undefined, SDK_RESOLVED, 'SolutionGenerateTask').id).toBe('sdk');
+    expect(resolveExecutionAdapter({}, SDK_RESOLVED, 'SolutionGenerateTask').id).toBe('sdk');
+    expect(
+      resolveExecutionAdapter({ model: 'mimo-v2.5-pro' }, SDK_RESOLVED, 'SolutionGenerateTask').id,
+    ).toBe('sdk');
+    expect(
+      resolveExecutionAdapter({ adapter: 'sdk' }, SDK_RESOLVED, 'SolutionGenerateTask').id,
+    ).toBe('sdk');
   });
 
-  it('fails closed on an unimplemented adapter pin', () => {
-    expect(() => resolveExecutionAdapter({ adapter: 'pi' })).toThrow(
-      /ExecutionAdapter 'pi' is not implemented yet/,
+  it('fails closed on an unknown adapter pin', () => {
+    expect(() =>
+      resolveExecutionAdapter({ adapter: 'bogus' as never }, SDK_RESOLVED, 'SolutionGenerateTask'),
+    ).toThrow(/ExecutionAdapter 'bogus' is not implemented/);
+  });
+});
+
+describe('resolveExecutionAdapter — pi gate (YUK-921 P1)', () => {
+  it('rejects a pi pin on a non-pi-lane provider', () => {
+    vi.stubEnv('AI_ADAPTER_PI_KINDS', 'SolutionGenerateTask');
+    expect(() =>
+      resolveExecutionAdapter({ adapter: 'pi' }, SDK_RESOLVED, 'SolutionGenerateTask'),
+    ).toThrow(/ExecutionAdapter 'pi' does not serve provider 'xiaomi'/);
+  });
+
+  it('rejects a pi pin when the kind is not allowlisted', () => {
+    expect(() =>
+      resolveExecutionAdapter({ adapter: 'pi' }, PI_RESOLVED, 'SolutionGenerateTask'),
+    ).toThrow(/Task kind 'SolutionGenerateTask' is not eligible/);
+  });
+
+  it('rejects a pi pin on a needsToolCall kind even when allowlisted', () => {
+    vi.stubEnv('AI_ADAPTER_PI_KINDS', 'QuizGenTask');
+    expect(() => resolveExecutionAdapter({ adapter: 'pi' }, PI_RESOLVED, 'QuizGenTask')).toThrow(
+      /Task kind 'QuizGenTask' is not eligible/,
     );
+  });
+
+  it('resolves the pi adapter on pi provider + allowlisted single-shot kind', () => {
+    vi.stubEnv('AI_ADAPTER_PI_KINDS', 'SolutionGenerateTask');
+    expect(resolveExecutionAdapter({ adapter: 'pi' }, PI_RESOLVED, 'SolutionGenerateTask').id).toBe(
+      'pi',
+    );
+  });
+
+  it('rejects the sdk default on a pi-lane provider', () => {
+    expect(() => resolveExecutionAdapter({}, PI_RESOLVED, 'SolutionGenerateTask')).toThrow(
+      /Provider 'opencode-go' is served only by ExecutionAdapter 'pi'/,
+    );
+  });
+});
+
+describe('AI_ADAPTER_PI_KINDS parsing', () => {
+  it('is empty when unset or blank', () => {
+    vi.stubEnv('AI_ADAPTER_PI_KINDS', '');
+    expect(piAllowlistedKinds().size).toBe(0);
+    expect(isPiEligibleKind('SolutionGenerateTask')).toBe(false);
+  });
+
+  it('parses a comma-separated kind list and intersects with needsToolCall=false', () => {
+    vi.stubEnv('AI_ADAPTER_PI_KINDS', ' SolutionGenerateTask , QuizGenTask ,,');
+    expect([...piAllowlistedKinds()].sort()).toEqual(['QuizGenTask', 'SolutionGenerateTask']);
+    expect(isPiEligibleKind('SolutionGenerateTask')).toBe(true);
+    // Allowlisted but needsToolCall → still ineligible (tool loop is P2).
+    expect(isPiEligibleKind('QuizGenTask')).toBe(false);
   });
 });
 

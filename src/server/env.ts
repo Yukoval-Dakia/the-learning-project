@@ -4,6 +4,7 @@ import { z } from 'zod';
 const optionalString = z.string().optional();
 
 const server = {
+  AI_ADAPTER_PI_KINDS: optionalString,
   AI_PROVIDER_ATTEMPT_ADMISSION_MODE: optionalString,
   AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON: optionalString,
   AI_PROVIDER_MODEL: optionalString,
@@ -88,6 +89,7 @@ const server = {
   MISCONCEPTION_PROMOTE_ENABLED: optionalString,
   NODE_ENV: optionalString,
   OPENAI_API_KEY: optionalString,
+  OPENCODE_API_KEY: optionalString,
   OPENROUTER_API_KEY: optionalString,
   PLACEMENT_PROBE_ENABLED: optionalString,
   POSTGRES_DB: optionalString,
