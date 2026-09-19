@@ -10,6 +10,7 @@ import type {
   AgentEvent,
   AgentLoopConfig,
   AgentMessage,
+  AgentTool,
   StreamFn,
 } from '@earendil-works/pi-agent-core';
 import type {
@@ -23,6 +24,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ExecutionAdapterStartupArgs } from './execution-adapter';
 import { PiAgentAdapter } from './pi-agent-adapter';
 import type { ResolvedProvider } from './providers';
+import type { PiToolMount } from './tools/pi-tools';
 
 const MODEL_ID = 'mimo-v2.5-pro';
 const RUN_ID = 'task_run_test_0001';
@@ -121,6 +123,7 @@ function startupArgs(over: Partial<ExecutionAdapterStartupArgs> = {}): Execution
     initializeTimeoutMs: 5_000,
     resolved: RESOLVED_KEY,
     runId: RUN_ID,
+    kind: 'AttributionTask',
     ...rest,
     options,
   };
@@ -390,5 +393,284 @@ describe('PiPreparedQuery — abort and close semantics', () => {
     const prepared = await adapter.startup(startupArgs());
     await prepared.close();
     expect(() => prepared.query('go')).toThrow(/closed before prompt submission/);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// YUK-921 P2 (YUK-1021) — tool-loop surface: mounts, beforeToolCall parity,
+// shouldStopAfterTurn → error_max_turns, toolResult→user frames, P3 guards.
+// ────────────────────────────────────────────────────────────────────────────
+
+function fakeAgentTool(name: string): AgentTool {
+  return {
+    name,
+    label: name,
+    description: `fake ${name}`,
+    parameters: { type: 'object', properties: {} } as AgentTool['parameters'],
+    execute: async () => ({
+      content: [{ type: 'text' as const, text: 'ok' }],
+      details: null,
+    }),
+  };
+}
+
+function customMount(...names: string[]): PiToolMount {
+  return { type: 'custom', tools: names.map(fakeAgentTool) };
+}
+
+function piToolResult(over: Record<string, unknown> = {}) {
+  return {
+    role: 'toolResult' as const,
+    toolCallId: 'call_9',
+    toolName: 'mcp__loom__read_mistakes',
+    content: [{ type: 'text' as const, text: 'tool output text' }],
+    isError: false,
+    timestamp: 1_700_000_000_001,
+    ...over,
+  };
+}
+
+describe('PiAgentAdapter.startup — P2 tool mounts and P3 guards', () => {
+  it('rejects a needsToolCall kind with no pi-visible tools mounted', async () => {
+    const deps = makeDeps([]);
+    const adapter = new PiAgentAdapter(deps as never);
+    await expect(adapter.startup(startupArgs({ kind: 'DreamingTask' }))).rejects.toThrow(
+      /needsToolCall but no pi-visible tools/,
+    );
+  });
+
+  it('rejects a needsToolCall kind when allowedTools filters out every mounted tool', async () => {
+    const deps = makeDeps([]);
+    const adapter = new PiAgentAdapter(deps as never);
+    const args = startupArgs({
+      kind: 'DreamingTask',
+      piToolMounts: [customMount('mcp__loom__read_mistakes')],
+    });
+    args.options.tools = ['mcp__loom__something_else'];
+    await expect(adapter.startup(args)).rejects.toThrow(/needsToolCall but no pi-visible tools/);
+  });
+
+  it('mounts pi-visible tools filtered by options.tools (allowedTools parity)', async () => {
+    const captured: Partial<CapturedLoop> = {};
+    const deps = makeDeps([{ type: 'agent_end', messages: [piAssistant()] }], captured);
+    const adapter = new PiAgentAdapter(deps as never);
+    const args = startupArgs({
+      kind: 'DreamingTask',
+      piToolMounts: [customMount('mcp__loom__read_mistakes', 'mcp__loom__propose_knowledge')],
+    });
+    args.options.tools = ['mcp__loom__read_mistakes'];
+    const prepared = await adapter.startup(args);
+    await drain(prepared.query('go'));
+    expect(captured.context?.tools?.map((t) => t.name)).toEqual(['mcp__loom__read_mistakes']);
+    // Serial execution pinned — SDK in-process MCP tools run serially.
+    expect(captured.config?.toolExecution).toBe('sequential');
+  });
+
+  it('rejects skills / agents / hooks / nativeCompaction at startup (P3 surfaces)', async () => {
+    const deps = makeDeps([]);
+    const adapter = new PiAgentAdapter(deps as never);
+    const base = startupArgs({ piToolMounts: [customMount('mcp__loom__x')] });
+
+    const skillsArgs = startupArgs({ piToolMounts: [customMount('mcp__loom__x')] });
+    skillsArgs.options.skills = ['quiz-gen-pack'];
+    await expect(adapter.startup(skillsArgs)).rejects.toThrow(/Agent Skills/);
+
+    const agentsArgs = startupArgs({ piToolMounts: [customMount('mcp__loom__x')] });
+    agentsArgs.options.agents = { scout: { description: 'd', prompt: 'p' } } as never;
+    await expect(adapter.startup(agentsArgs)).rejects.toThrow(/agents/);
+
+    const hooksArgs = startupArgs({ piToolMounts: [customMount('mcp__loom__x')] });
+    hooksArgs.options.hooks = { PreToolUse: [] } as never;
+    await expect(adapter.startup(hooksArgs)).rejects.toThrow(/hooks/);
+
+    const compactArgs = startupArgs({ piToolMounts: [customMount('mcp__loom__x')] });
+    compactArgs.options.settings = { autoCompactEnabled: true } as never;
+    await expect(adapter.startup(compactArgs)).rejects.toThrow(/nativeCompaction/);
+
+    // Sanity: the unmodified base starts fine.
+    await adapter.startup(base);
+  });
+});
+
+describe('PiPreparedQuery — beforeToolCall (canUseTool parity)', () => {
+  async function captureBeforeToolCall(canUseTool: NonNullable<Options['canUseTool']>) {
+    const captured: Partial<CapturedLoop> = {};
+    const deps = makeDeps([{ type: 'agent_end', messages: [piAssistant()] }], captured);
+    const adapter = new PiAgentAdapter(deps as never);
+    const args = startupArgs({
+      kind: 'DreamingTask',
+      piToolMounts: [customMount('mcp__loom__read_mistakes')],
+    });
+    args.options.canUseTool = canUseTool;
+    const prepared = await adapter.startup(args);
+    await drain(prepared.query('go'));
+    return captured.config?.beforeToolCall;
+  }
+
+  const callCtx = {
+    toolCall: { id: 'call_1', name: 'mcp__loom__read_mistakes' },
+    args: { q: 'x' },
+  } as never;
+
+  it('maps deny → {block:true, reason}', async () => {
+    const beforeToolCall = await captureBeforeToolCall(async () => ({
+      behavior: 'deny' as const,
+      message: 'spawn budget exhausted',
+    }));
+    expect(await beforeToolCall?.(callCtx, undefined)).toEqual({
+      block: true,
+      reason: 'spawn budget exhausted',
+    });
+  });
+
+  it('maps deny + interrupt → {block:true, terminate:true} (pi hard-stop)', async () => {
+    const beforeToolCall = await captureBeforeToolCall(async () => ({
+      behavior: 'deny' as const,
+      message: 'hard stop',
+      interrupt: true,
+    }));
+    expect(await beforeToolCall?.(callCtx, undefined)).toEqual({
+      block: true,
+      reason: 'hard stop',
+      terminate: true,
+    });
+  });
+
+  it('maps allow → undefined (no block)', async () => {
+    const beforeToolCall = await captureBeforeToolCall(async () => ({
+      behavior: 'allow' as const,
+    }));
+    expect(await beforeToolCall?.(callCtx, undefined)).toBeUndefined();
+  });
+
+  it('maps a null decision to a closed block (no out-of-band channel on pi)', async () => {
+    const beforeToolCall = await captureBeforeToolCall(async () => null);
+    expect(await beforeToolCall?.(callCtx, undefined)).toMatchObject({ block: true });
+  });
+
+  it('throws loudly on allow+updatedInput (argument rewriting is P3)', async () => {
+    const beforeToolCall = await captureBeforeToolCall(async () => ({
+      behavior: 'allow' as const,
+      updatedInput: { q: 'rewritten' },
+    }));
+    await expect(beforeToolCall?.(callCtx, undefined)).rejects.toThrow(/updatedInput/);
+  });
+
+  it('threads toolCall name/id into the SDK-shaped callback args', async () => {
+    const seen: Array<{ toolName: string; input: unknown; toolUseID?: string }> = [];
+    const beforeToolCall = await captureBeforeToolCall(async (toolName, input, opts) => {
+      seen.push({ toolName, input, toolUseID: opts.toolUseID });
+      return { behavior: 'allow' as const };
+    });
+    await beforeToolCall?.(callCtx, undefined);
+    expect(seen).toEqual([
+      {
+        toolName: 'mcp__loom__read_mistakes',
+        input: { q: 'x' },
+        toolUseID: 'call_1',
+      },
+    ]);
+  });
+});
+
+describe('PiPreparedQuery — tool-loop frames and turn ceiling', () => {
+  it('emits an SDK user frame per toolResult message_end', async () => {
+    const assistant = piAssistant();
+    const deps = makeDeps([
+      { type: 'message_end', message: assistant },
+      { type: 'message_end', message: piToolResult() as never },
+      { type: 'agent_end', messages: [assistant, piToolResult() as never] },
+    ]);
+    const adapter = new PiAgentAdapter(deps as never);
+    const prepared = await adapter.startup(startupArgs());
+    const frames = (await drain(prepared.query('go'))) as Array<Record<string, unknown>>;
+    expect(frames.map((f) => f.type)).toEqual(['assistant', 'user', 'result']);
+    const userFrame = frames[1];
+    expect(userFrame?.source).toBe('pi');
+    const inner = userFrame?.message as { content: Array<Record<string, unknown>> };
+    expect(inner.content[0]).toMatchObject({
+      type: 'tool_result',
+      tool_use_id: 'call_9',
+      is_error: false,
+      content: [{ type: 'text', text: 'tool output text' }],
+    });
+  });
+
+  it('maps the pi turn ceiling onto SDK error_max_turns', async () => {
+    const assistant = piAssistant();
+    // The real loop calls config.shouldStopAfterTurn between turns; the fake
+    // honors the same contract so the adapter's counter actually engages.
+    const agentLoop = vi.fn(
+      (
+        _prompts: AgentMessage[],
+        _context: AgentContext,
+        config: AgentLoopConfig,
+        _signal: AbortSignal | undefined,
+        _streamFn: StreamFn,
+      ): EventStream<AgentEvent, AgentMessage[]> =>
+        (async function* () {
+          yield { type: 'message_end', message: assistant } as AgentEvent;
+          const stop = await config.shouldStopAfterTurn?.({
+            message: assistant,
+            toolResults: [],
+            context: _context,
+            newMessages: [assistant],
+          });
+          if (!stop) {
+            yield { type: 'message_end', message: assistant } as AgentEvent;
+          }
+          yield { type: 'agent_end', messages: [assistant] } as AgentEvent;
+        })() as unknown as EventStream<AgentEvent, AgentMessage[]>,
+    );
+    const deps = { ...makeDeps([]), agentLoop };
+    const adapter = new PiAgentAdapter(deps as never);
+    const args = startupArgs();
+    args.options.maxTurns = 1;
+    const prepared = await adapter.startup(args);
+    const frames = (await drain(prepared.query('go'))) as Array<Record<string, unknown>>;
+    const result = frames.at(-1);
+    expect(result?.type).toBe('result');
+    expect(result?.subtype).toBe('error_max_turns');
+    expect(result?.is_error).toBe(true);
+    // The loop stopped after turn 1 — no second assistant frame.
+    expect(frames.filter((f) => f.type === 'assistant')).toHaveLength(1);
+  });
+
+  it('does not install shouldStopAfterTurn when maxTurns is unset', async () => {
+    const captured: Partial<CapturedLoop> = {};
+    const deps = makeDeps([{ type: 'agent_end', messages: [piAssistant()] }], captured);
+    const adapter = new PiAgentAdapter(deps as never);
+    const prepared = await adapter.startup(startupArgs());
+    await drain(prepared.query('go'));
+    expect(captured.config?.shouldStopAfterTurn).toBeUndefined();
+  });
+
+  it('close() releases remote MCP mount handles', async () => {
+    const closed: string[] = [];
+    const deps = {
+      ...makeDeps([]),
+      connectRemoteMcp: vi.fn(async () => ({
+        tools: [fakeAgentTool('mcp__exa__web_search_exa')],
+        close: async () => {
+          closed.push('exa');
+        },
+      })),
+    };
+    const adapter = new PiAgentAdapter(deps as never);
+    const prepared = await adapter.startup(
+      startupArgs({
+        kind: 'SourcingTask',
+        piToolMounts: [
+          {
+            type: 'remote-mcp',
+            serverName: 'exa',
+            config: { type: 'http', url: 'https://mcp.exa.ai/mcp' },
+            toolNames: ['web_search_exa'],
+          },
+        ],
+      }),
+    );
+    await prepared.close();
+    expect(closed).toEqual(['exa']);
   });
 });

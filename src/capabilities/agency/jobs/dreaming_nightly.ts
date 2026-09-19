@@ -31,7 +31,13 @@ import {
 import { DREAMING_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
-import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
+import {
+  type BuildMcpServerOptions,
+  type SdkMcpServer,
+  type ToolExecutionGateInput,
+  buildMcpServerFromRegistry,
+} from '@/server/ai/tools/mcp-bridge';
+import { type PiToolMount, piDomainMount } from '@/server/ai/tools/pi-tools';
 
 // P5.1 / YUK-143 — re-exported alias kept so existing imports / tests don't
 // break (spec §4.2). Sourced from DREAMING_CONTEXT_BUDGET.maxProposals (= 5),
@@ -60,6 +66,7 @@ type RunAgentTaskFn = (
   ctx: {
     db: Db;
     mcpServers?: Record<string, SdkMcpServer>;
+    piToolMounts?: PiToolMount[];
     allowedTools?: string[];
   },
 ) => Promise<DreamingRunResult>;
@@ -323,7 +330,10 @@ export async function runDreamingNightly(
     const toolNames = resolveDomainToolNames('dreaming');
     let proposalWrites = 0;
     const budgetTracker = new ContextBudgetTracker(DREAMING_CONTEXT_BUDGET);
-    const mcpServer = buildMcpServer({
+    // YUK-1021 — one descriptor feeds both mounts: SDK consumes mcpServer,
+    // the pi lane consumes piDomainMount(same options) and gets the identical
+    // beforeExecute/interceptInput gates via executeDomainToolCall.
+    const domainMountOptions = {
       ctx: {
         db,
         taskRunId: toolContextTaskRunId,
@@ -335,7 +345,7 @@ export async function runDreamingNightly(
       serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
       toolNames,
       taskKind: 'DreamingTask',
-      beforeExecute: (tool) => {
+      beforeExecute: (tool: ToolExecutionGateInput) => {
         const budgetReason = budgetTracker.beforeExecute(tool);
         if (budgetReason) return budgetReason;
         if (tool.effect !== 'propose') return undefined;
@@ -345,11 +355,12 @@ export async function runDreamingNightly(
         proposalWrites += 1;
         return undefined;
       },
-      interceptInput: (tool, args) => {
+      interceptInput: (tool: ToolExecutionGateInput, args: unknown) => {
         const { args: capped, contextBudget, softStop } = budgetTracker.capInput(tool.name, args);
         return { args: capped, truncationNote: contextBudget, softStop };
       },
-    });
+    } satisfies BuildMcpServerOptions;
+    const mcpServer = buildMcpServer(domainMountOptions);
 
     const taskResult = await run(
       'DreamingTask',
@@ -360,6 +371,7 @@ export async function runDreamingNightly(
         // Keep one final turn for the agent's summary after the last allowed tool call.
         budgetOverride: { maxIterations: DREAMING_CONTEXT_BUDGET.toolCalls.hard + 1 },
         mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
+        piToolMounts: [piDomainMount(domainMountOptions)],
         allowedTools: [...resolveMcpAllowedTools('dreaming')],
       },
     );

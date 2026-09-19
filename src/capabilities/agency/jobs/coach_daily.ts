@@ -42,7 +42,13 @@ import {
 import { COACH_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
-import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
+import {
+  type BuildMcpServerOptions,
+  type SdkMcpServer,
+  type ToolExecutionGateInput,
+  buildMcpServerFromRegistry,
+} from '@/server/ai/tools/mcp-bridge';
+import { type PiToolMount, piDomainMount } from '@/server/ai/tools/pi-tools';
 // YUK-203 U4 / D11① — feed active/pinned learning items' knowledge_ids into the
 // Coach input as ATTENTION PRESSURE only (CO §7.1:723-726). Purely additive
 // (ND-5): never carries scheduling/bookkeeping, never touches the FSRS-due
@@ -128,6 +134,7 @@ type RunAgentTaskFn = (
   ctx: {
     db: Db;
     mcpServers?: Record<string, SdkMcpServer>;
+    piToolMounts?: PiToolMount[];
     allowedTools?: string[];
   },
 ) => Promise<CoachTaskRunResult>;
@@ -322,7 +329,8 @@ export async function runCoach(
     const toolNames = resolveDomainToolNames('coach');
     let proposalWrites = 0;
     const budgetTracker = new ContextBudgetTracker(COACH_CONTEXT_BUDGET);
-    const mcpServer = buildMcpServer({
+    // YUK-1021 — one descriptor feeds both mounts (see dreaming_nightly).
+    const domainMountOptions = {
       ctx: {
         db,
         taskRunId: toolContextTaskRunId,
@@ -334,7 +342,7 @@ export async function runCoach(
       serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
       toolNames,
       taskKind: 'CoachTask',
-      beforeExecute: (tool) => {
+      beforeExecute: (tool: ToolExecutionGateInput) => {
         const budgetReason = budgetTracker.beforeExecute(tool);
         if (budgetReason) return budgetReason;
         if (tool.effect !== 'propose') return undefined;
@@ -344,11 +352,12 @@ export async function runCoach(
         proposalWrites += 1;
         return undefined;
       },
-      interceptInput: (tool, args) => {
+      interceptInput: (tool: ToolExecutionGateInput, args: unknown) => {
         const { args: capped, contextBudget, softStop } = budgetTracker.capInput(tool.name, args);
         return { args: capped, truncationNote: contextBudget, softStop };
       },
-    });
+    } satisfies BuildMcpServerOptions;
+    const mcpServer = buildMcpServer(domainMountOptions);
 
     const taskResult = await run(
       'CoachTask',
@@ -368,6 +377,7 @@ export async function runCoach(
         // Keep one final turn for the TodayPlan after the last allowed tool call.
         budgetOverride: { maxIterations: COACH_CONTEXT_BUDGET.toolCalls.hard + 1 },
         mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
+        piToolMounts: [piDomainMount(domainMountOptions)],
         allowedTools: [...resolveMcpAllowedTools('coach')],
       },
     );

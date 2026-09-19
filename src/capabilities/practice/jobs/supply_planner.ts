@@ -32,7 +32,12 @@ import {
   toMcpAllowedToolName,
 } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
-import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
+import {
+  type BuildMcpServerOptions,
+  type SdkMcpServer,
+  buildMcpServerFromRegistry,
+} from '@/server/ai/tools/mcp-bridge';
+import { type PiToolMount, piDomainMount } from '@/server/ai/tools/pi-tools';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { jyeooBudgetRemaining } from '../server/question-supply/jyeoo-budget';
 import {
@@ -326,18 +331,21 @@ export async function runSupplyPlanner(
   // ── 2. LLM 规划 + 机器门（≤2 轮有界重生成） ──────────────────────────────
   const subjectProfile = resolveSubjectProfile(PLANNER_HOST_SUBJECT);
   const toolContextTaskRunId = `supply_planner_tool_${createId()}`;
+  // YUK-1021 — same descriptor feeds SDK mcpServers and piToolMounts.
+  const domainMountOptions = {
+    ctx: {
+      db,
+      taskRunId: toolContextTaskRunId,
+      callerActor: { kind: 'agent', ref: 'supply_planner' },
+    },
+    serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
+    toolNames: SUPPLY_PLANNER_READ_TOOLS,
+    taskKind: 'SupplyPlanTask',
+  } satisfies BuildMcpServerOptions;
   const mcpServers: Record<string, SdkMcpServer> = {
-    [DOMAIN_TOOL_MCP_SERVER_NAME]: buildMcpServer({
-      ctx: {
-        db,
-        taskRunId: toolContextTaskRunId,
-        callerActor: { kind: 'agent', ref: 'supply_planner' },
-      },
-      serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
-      toolNames: SUPPLY_PLANNER_READ_TOOLS,
-      taskKind: 'SupplyPlanTask',
-    }),
+    [DOMAIN_TOOL_MCP_SERVER_NAME]: buildMcpServer(domainMountOptions),
   };
+  const piToolMounts: PiToolMount[] = [piDomainMount(domainMountOptions)];
   const allowedTools = SUPPLY_PLANNER_READ_TOOLS.map((name) => toMcpAllowedToolName(name));
 
   let plan: SupplyPlanV1T | null = null;
@@ -354,6 +362,7 @@ export async function runSupplyPlanner(
     const runResult = await run('SupplyPlanTask', attemptInput, {
       db,
       mcpServers,
+      piToolMounts,
       allowedTools,
       subjectProfile,
     });

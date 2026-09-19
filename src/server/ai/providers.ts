@@ -174,13 +174,23 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
     apiKeyEnv: 'OPENCODE_API_KEY',
     description: 'OpenCode Go subscription catalog via the pi execution adapter',
     modelDefaults: {
-      // P1 has no tool bridge or SDK structured-output protocol on this lane:
-      // declare both false explicitly (not 'unknown') so the capability gate
-      // rejects declaring tasks with an honest classification, not a gap.
+      // The lane still has no SDK structured-output protocol, and tool calling
+      // stays opt-in per model below: declare both false explicitly (not
+      // 'unknown') so the capability gate rejects with an honest classification,
+      // not a gap.
       capabilities: { structuredOutput: false, toolCalling: false },
       // pi usage.cost is a catalog-rate estimate, not a contractual invoice
       // (design §6 R1): never metered.
       execution: { meteredUsd: false },
+    },
+    models: {
+      // YUK-1021 (921 P2) — evidence-gated toolCalling declarations: a model
+      // flips to true only after a sealed actual-output tool-loop run lands in
+      // docs/planning/evidence/2026-09-21-pi-tool-loop-<model>-actual.json.
+      // The pi catalog JSON carries no tool_call bit, so this binding IS the
+      // authoritative classification for opencode-go.
+      'glm-5.3-flash': { capabilities: { toolCalling: true } },
+      'deepseek-v4-pro': { capabilities: { toolCalling: true } },
     },
   },
   // YUK-365 — subscription-OAuth lane. Opus 4.8 via the owner's Claude Max

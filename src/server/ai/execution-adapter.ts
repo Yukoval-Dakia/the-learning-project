@@ -16,10 +16,11 @@ import {
   type WarmQuery,
   startup as sdkStartup,
 } from '@anthropic-ai/claude-agent-sdk';
-import { type TaskKind, tasks } from '@/ai/registry';
+import type { TaskKind } from '@/ai/registry';
 import type { EffortLevel } from '@/ai/task-spec';
 import { PiAgentAdapter } from './pi-agent-adapter';
 import { PI_LANE_PROVIDERS, type ResolvedProvider, isPiLaneProvider } from './providers';
+import type { PiToolMount } from './tools/pi-tools';
 
 export type ExecutionAdapterId = 'sdk' | 'pi';
 
@@ -53,7 +54,8 @@ export interface ModelBinding {
  */
 export type PiRunnerMessage =
   | (SDKAssistantMessage & { source: 'pi' })
-  | (SDKResultMessage & { source: 'pi' });
+  | (SDKResultMessage & { source: 'pi' })
+  | (SDKUserMessage & { source: 'pi' });
 
 /**
  * Message union consumed by runner entry points. P0 was a bare SDKMessage
@@ -88,6 +90,15 @@ export interface ExecutionAdapterStartupArgs {
    * opencode `x-opencode-session` header — stable per attempt, auditable.
    */
   runId: string;
+  /** Registry kind — the pi adapter reads `needsToolCall` for its fail-closed tool-mount rule. */
+  kind: TaskKind;
+  /**
+   * YUK-921 P2 — declarative tool mounts for the pi lane. Callers that want a
+   * needsToolCall kind to be pi-eligible declare them alongside ctx.mcpServers
+   * (the SDK lane keeps consuming mcpServers; the adapter gate picks which
+   * surface applies). Ignored by the SDK adapter.
+   */
+  piToolMounts?: PiToolMount[];
 }
 
 export interface ExecutionAdapter {
@@ -148,11 +159,12 @@ const SDK_ADAPTER = new SdkExecutionAdapter();
 const PI_ADAPTER = new PiAgentAdapter();
 
 /**
- * YUK-921 P1 — per-kind gray-rollout gate for the pi adapter, driven by the
+ * YUK-921 P1/P2 — per-kind gray-rollout gate for the pi adapter, driven by the
  * `AI_ADAPTER_PI_KINDS` env flag (comma-separated task kinds; empty/unset ⇒
- * no kind may run pi). A kind must additionally declare `needsToolCall:false`
- * — the tool-call loop is P2 scope and an ineligible declaration rejects even
- * when the flag names it. Parsed per call so tests can flip the env without
+ * no kind may run pi). P1 restricted eligibility to needsToolCall=false
+ * kinds; P2 opens tool-loop kinds — the fail-closed enforcement moved to
+ * PiAgentAdapter.startup, which rejects a needsToolCall kind carrying zero
+ * pi-visible tools. Parsed per call so tests can flip the env without
  * module reloads.
  */
 export function piAllowlistedKinds(): ReadonlySet<string> {
@@ -167,7 +179,7 @@ export function piAllowlistedKinds(): ReadonlySet<string> {
 }
 
 export function isPiEligibleKind(kind: TaskKind): boolean {
-  return !tasks[kind].needsToolCall && piAllowlistedKinds().has(kind);
+  return piAllowlistedKinds().has(kind);
 }
 
 /**
@@ -192,7 +204,7 @@ export function resolveExecutionAdapter(
     }
     if (!isPiEligibleKind(kind)) {
       throw new Error(
-        `Task kind '${kind}' is not eligible for ExecutionAdapter 'pi' — P1 serves only needsToolCall=false kinds named in AI_ADAPTER_PI_KINDS. Omit the adapter pin to route through 'sdk'.`,
+        `Task kind '${kind}' is not eligible for ExecutionAdapter 'pi' — only kinds named in AI_ADAPTER_PI_KINDS may run pi (needsToolCall=true kinds additionally require ctx.piToolMounts at startup). Omit the adapter pin to route through 'sdk'.`,
       );
     }
     return PI_ADAPTER;
@@ -208,6 +220,32 @@ export function resolveExecutionAdapter(
     );
   }
   return SDK_ADAPTER;
+}
+
+/**
+ * YUK-921 P2 — ops rollout pin. `AI_ADAPTER_PI_PROVIDER` +
+ * `AI_ADAPTER_PI_MODEL` give allowlisted kinds a default pi binding when the
+ * caller supplies no modelBinding of its own. An explicit per-run binding
+ * always wins wholesale (a caller that names any field is expressing routing
+ * intent — env defaults do not merge into it). The env pin alone is inert
+ * without the kind also appearing in AI_ADAPTER_PI_KINDS, and the provider
+ * must still be a pi lane — resolveExecutionAdapter enforces both
+ * downstream.
+ */
+export function effectiveModelBinding(
+  kind: TaskKind,
+  binding: ModelBinding | undefined,
+): ModelBinding | undefined {
+  if (binding !== undefined) return binding;
+  const provider = process.env.AI_ADAPTER_PI_PROVIDER?.trim();
+  const model = process.env.AI_ADAPTER_PI_MODEL?.trim();
+  if (!provider && !model) return binding;
+  if (!piAllowlistedKinds().has(kind)) return binding;
+  return {
+    adapter: 'pi',
+    ...(provider ? { provider: provider as ResolvedProvider['provider'] } : {}),
+    ...(model ? { model } : {}),
+  };
 }
 
 /**

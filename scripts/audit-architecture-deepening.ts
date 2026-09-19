@@ -414,6 +414,7 @@ const REGISTRY_SEMANTIC_RES = [
 const CENTRAL_TOOL_INFRASTRUCTURE = new Set([
   'src/server/ai/tools/registry.ts',
   'src/server/ai/tools/mcp-bridge.ts',
+  'src/server/ai/tools/pi-tools.ts',
   'src/server/ai/tools/register-capability-tools.ts',
   'src/server/ai/tools/fixtures-assert.ts',
 ]);

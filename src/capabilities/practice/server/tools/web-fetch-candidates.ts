@@ -27,9 +27,18 @@ import {
 } from '@/kernel/tools/allowlists';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
-import { EXA_MCP_ALLOWED_TOOLS, EXA_MCP_SERVER_NAME, buildExaMcpServer } from '@/server/ai/mcp/exa';
+import {
+  EXA_MCP_ALLOWED_TOOLS,
+  EXA_MCP_SERVER_NAME,
+  EXA_SCOPED_TOOL_NAMES,
+  buildExaMcpServer,
+} from '@/server/ai/mcp/exa';
 import { runAgentTask } from '@/server/ai/runner';
-import { buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
+import {
+  type BuildMcpServerOptions,
+  buildMcpServerFromRegistry,
+} from '@/server/ai/tools/mcp-bridge';
+import { type PiToolMount, piDomainMount, piRemoteMcpMount } from '@/server/ai/tools/pi-tools';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   type ParseLooseFn,
@@ -61,8 +70,9 @@ export const runWebSourcingAgentDefault: RunWebSourcingAgentFn = async (params) 
   if (exaCfg === null) return null;
 
   // MCP mount 镜像旧 sourcing job：in-process domain read tools（ctx 归因到
-  // 调用方透传的 run 上下文，callerActor='sourcing'）+ Exa remote。
-  const domainMcpServer = buildMcpServerFromRegistry({
+  // 调用方透传的 run 上下文，callerActor='sourcing'）+ Exa remote。YUK-1021 —
+  // 同一 descriptor 同时喂 SDK mcpServers 与 piToolMounts（pi lane 编译成 AgentTool）。
+  const domainMountOptions = {
     ctx: {
       db,
       taskRunId: ctx.taskRunId,
@@ -72,12 +82,17 @@ export const runWebSourcingAgentDefault: RunWebSourcingAgentFn = async (params) 
     serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
     toolNames: SOURCING_READ_TOOLS,
     taskKind: 'SourcingTask',
-  });
+  } satisfies BuildMcpServerOptions;
+  const domainMcpServer = buildMcpServerFromRegistry(domainMountOptions);
 
   const mcpServers = {
     [DOMAIN_TOOL_MCP_SERVER_NAME]: domainMcpServer,
     [EXA_MCP_SERVER_NAME]: exaCfg,
   };
+  const piToolMounts: PiToolMount[] = [
+    piDomainMount(domainMountOptions),
+    piRemoteMcpMount(EXA_MCP_SERVER_NAME, exaCfg, EXA_SCOPED_TOOL_NAMES),
+  ];
   const allowedTools = [
     ...SOURCING_READ_TOOLS.map((name) => toMcpAllowedToolName(name)),
     ...EXA_MCP_ALLOWED_TOOLS,
@@ -86,6 +101,7 @@ export const runWebSourcingAgentDefault: RunWebSourcingAgentFn = async (params) 
   const result = await runAgentTask('SourcingTask', input, {
     db,
     mcpServers,
+    piToolMounts,
     allowedTools,
     subjectProfile,
   });

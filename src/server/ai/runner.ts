@@ -57,6 +57,7 @@ import {
   type ModelBinding,
   type PreparedExecutionQuery,
   type RunnerMessage,
+  effectiveModelBinding,
   resolveExecutionAdapter,
 } from './execution-adapter';
 import { logMissingMcpServersWarning } from './log';
@@ -74,6 +75,7 @@ import {
 } from './run-lifecycle';
 import { createSdkTerminalEvidenceCollector } from './sdk-terminal';
 import { SPAWN_DISABLE_BACKGROUND_TASKS_ENV, isSpawnToolName } from './spawn-contract';
+import type { PiToolMount } from './tools/pi-tools';
 
 // ============================================================================
 // Public surface
@@ -317,6 +319,14 @@ export interface RunTaskCtx {
     onSessionId?: (sessionId: string) => void | Promise<void>;
   };
   compiledModelPrompt?: CompiledModelPrompt;
+  /**
+   * YUK-921 P2 (YUK-1021) — declarative tool mounts for the pi execution lane.
+   * `ctx.mcpServers` remains the SDK-lane surface; callers that want a
+   * needsToolCall kind to be pi-eligible declare the same mounts again here
+   * (domain via piDomainMount, remote MCP via piRemoteMcpMount) and the
+   * adapter gate picks which surface applies. Ignored on the sdk lane.
+   */
+  piToolMounts?: PiToolMount[];
 }
 
 function compiledPromptProvenance(prompt?: CompiledModelPrompt) {
@@ -735,6 +745,7 @@ async function withPreparedExecutionQuery<TResult extends RunTaskResult, TValue>
   options: Options,
   consume: (query: AsyncIterable<RunnerMessage>) => Promise<TValue>,
   beforeProviderQuery?: BeforeProviderQuery,
+  ctxPiToolMounts?: PiToolMount[],
 ): Promise<TValue> {
   // Resolved at the seam boundary so an unimplemented adapter pin throws the
   // same config-error posture as resolveTaskProvider's credential checks —
@@ -751,6 +762,8 @@ async function withPreparedExecutionQuery<TResult extends RunTaskResult, TValue>
         ),
         resolved: lifecycle.resolved,
         runId: lifecycle.taskRunId,
+        kind: lifecycle.kind,
+        piToolMounts: ctxPiToolMounts,
       });
     },
     async run() {
@@ -900,10 +913,12 @@ async function runTaskAttempt(args: {
   actualInput: unknown;
   ctx: RunTaskCtx;
   lifecycle: AiRunLifecycle<RunTaskResult>;
+  /** Effective binding after the env rollout pin — resolved once by the caller. */
+  modelBinding: RunTaskCtx['modelBinding'];
   onSdkQueryStarted?: () => Promise<void>;
   warnMissingMcp?: boolean;
 }): Promise<RunTaskResult> {
-  const { kind, actualInput, ctx, lifecycle } = args;
+  const { kind, actualInput, ctx, lifecycle, modelBinding } = args;
 
   let resultText = '';
   // Purely local preparation can perform cold-start filesystem work (notably
@@ -952,12 +967,13 @@ async function runTaskAttempt(args: {
   };
   await withPreparedExecutionQuery(
     lifecycle,
-    ctx.modelBinding,
+    modelBinding,
     actualInput,
     sdkPrompt,
     sdkOptions,
     consumeSdkQuery,
     ctx.beforeProviderQuery,
+    ctx.piToolMounts,
   );
 
   // The provider permit is released before attempt settlement / afterRun. A DB
@@ -992,7 +1008,16 @@ export async function runTask(
     ? await ctx.middleware.beforeRun(kind, input, ctx)
     : input;
 
-  const maxAttempts = maxLifecycleAttempts(kind, ctx);
+  // YUK-921 P2 — the ops rollout pin (AI_ADAPTER_PI_PROVIDER/MODEL) defaults a
+  // pi binding onto allowlisted kinds when the caller pins nothing itself.
+  const modelBinding = effectiveModelBinding(kind, ctx.modelBinding);
+  // Narrow pass, not {...ctx}: RunTaskCtx consumers may define lazy getters
+  // (allowedTools et al.) whose evaluation must stay single-shot and ordered.
+  const maxAttempts = maxLifecycleAttempts(kind, {
+    enableTransientRetry: ctx.enableTransientRetry,
+    override: ctx.override,
+    modelBinding,
+  });
   const firstAttemptStartedAt = Date.now();
   const retryingSyncDeadlineAt =
     maxAttempts > 1 ? firstAttemptStartedAt + RETRY_ELAPSED_CAP_MS + def.budget.timeout : undefined;
@@ -1015,7 +1040,7 @@ export async function runTask(
       timeoutMs: ctx.budgetOverride?.timeoutMs ?? def.budget.timeout,
       abortController: ctx.lifecycleAbortController,
       override: ctx.override,
-      modelBinding: ctx.modelBinding,
+      modelBinding,
       parentTaskRunId: ctx.parentTaskRunId,
       // A retry may only wait inside the unused remainder of the existing 10s
       // sync-route gate. Admission must not silently expand the 100s worst-case
@@ -1037,7 +1062,14 @@ export async function runTask(
         actualInput,
         ctx,
         lifecycle,
-        warnMissingMcp: attempt === 1 && def.needsToolCall && !ctx.mcpServers,
+        modelBinding,
+        // The mount surface differs by engine: SDK consumes ctx.mcpServers,
+        // pi consumes ctx.piToolMounts (YUK-1021). A pi-pinned run with only
+        // mcpServers mounted is still "no tools" for its engine.
+        warnMissingMcp:
+          attempt === 1 &&
+          def.needsToolCall &&
+          (modelBinding?.adapter === 'pi' ? !ctx.piToolMounts?.length : !ctx.mcpServers),
         onSdkQueryStarted: retrySource
           ? async () => {
               await retrySource?.markRetried();
@@ -1111,13 +1143,14 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
     throw new Error(`Unknown task kind: ${kind}`);
   }
   const def = tasks[kind];
+  const modelBinding = effectiveModelBinding(kind, ctx.modelBinding);
   const lifecycle = createRunLifecycle<RunTaskResult>({
     db: ctx.db,
     kind,
     timeoutMs: def.budget.timeout,
     abortController: ctx.lifecycleAbortController,
     override: ctx.override,
-    modelBinding: ctx.modelBinding,
+    modelBinding,
     parentTaskRunId: ctx.parentTaskRunId,
     providerSessionDeadlineAt: resolveProviderSessionDeadlineAt(ctx.providerSessionDeadlineAt),
     taskRunId: ctx.taskRunId,
@@ -1166,12 +1199,13 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
         };
         await withPreparedExecutionQuery(
           lifecycle,
-          ctx.modelBinding,
+          modelBinding,
           actualInput,
           sdkPrompt,
           sdkOptions,
           consumeSdkQuery,
           ctx.beforeProviderQuery,
+          ctx.piToolMounts,
         );
 
         const result: RunTaskResult = {
@@ -1275,13 +1309,14 @@ export async function streamTaskCollecting(
     throw new Error(`Unknown task kind: ${kind}`);
   }
   const def = tasks[kind];
+  const modelBinding = effectiveModelBinding(kind, ctx.modelBinding);
   const lifecycle = createRunLifecycle<StreamCollectResult>({
     db: ctx.db,
     kind,
     timeoutMs: ctx.budgetOverride?.timeoutMs ?? def.budget.timeout,
     abortController: ctx.lifecycleAbortController,
     override: ctx.override,
-    modelBinding: ctx.modelBinding,
+    modelBinding,
     parentTaskRunId: ctx.parentTaskRunId,
     providerSessionDeadlineAt: resolveProviderSessionDeadlineAt(ctx.providerSessionDeadlineAt),
     taskRunId: ctx.taskRunId,
@@ -1342,12 +1377,13 @@ export async function streamTaskCollecting(
     };
     await withPreparedExecutionQuery(
       lifecycle,
-      ctx.modelBinding,
+      modelBinding,
       actualInput,
       sdkPrompt,
       sdkOptions,
       consumeSdkQuery,
       ctx.beforeProviderQuery,
+      ctx.piToolMounts,
     );
 
     const result: StreamCollectResult = {

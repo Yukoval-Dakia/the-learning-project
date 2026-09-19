@@ -61,11 +61,9 @@ describe('resolveExecutionAdapter — pi gate (YUK-921 P1)', () => {
     ).toThrow(/Task kind 'SolutionGenerateTask' is not eligible/);
   });
 
-  it('rejects a pi pin on a needsToolCall kind even when allowlisted', () => {
+  it('accepts a pi pin on a needsToolCall kind when allowlisted (P2 — mount check moved to startup)', () => {
     vi.stubEnv('AI_ADAPTER_PI_KINDS', 'QuizGenTask');
-    expect(() => resolveExecutionAdapter({ adapter: 'pi' }, PI_RESOLVED, 'QuizGenTask')).toThrow(
-      /Task kind 'QuizGenTask' is not eligible/,
-    );
+    expect(resolveExecutionAdapter({ adapter: 'pi' }, PI_RESOLVED, 'QuizGenTask').id).toBe('pi');
   });
 
   it('resolves the pi adapter on pi provider + allowlisted single-shot kind', () => {
@@ -89,12 +87,13 @@ describe('AI_ADAPTER_PI_KINDS parsing', () => {
     expect(isPiEligibleKind('SolutionGenerateTask')).toBe(false);
   });
 
-  it('parses a comma-separated kind list and intersects with needsToolCall=false', () => {
+  it('parses a comma-separated kind list (P2 — needsToolCall kinds are eligible; startup enforces mounts)', () => {
     vi.stubEnv('AI_ADAPTER_PI_KINDS', ' SolutionGenerateTask , QuizGenTask ,,');
     expect([...piAllowlistedKinds()].sort()).toEqual(['QuizGenTask', 'SolutionGenerateTask']);
     expect(isPiEligibleKind('SolutionGenerateTask')).toBe(true);
-    // Allowlisted but needsToolCall → still ineligible (tool loop is P2).
-    expect(isPiEligibleKind('QuizGenTask')).toBe(false);
+    // Tool-loop kinds are allowlist-eligible since P2; the no-tools-mounted
+    // failure moved to PiAgentAdapter.startup.
+    expect(isPiEligibleKind('QuizGenTask')).toBe(true);
   });
 });
 
