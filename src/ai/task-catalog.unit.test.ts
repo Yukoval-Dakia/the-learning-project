@@ -49,6 +49,7 @@ import {
   attributionRerankTaskSpec,
   attributionTaskSpec,
 } from '@/capabilities/practice/tasks/attribution';
+import { causeCategoryProposeTaskSpec } from '@/capabilities/practice/tasks/cause-category-propose';
 import { practiceTaskSpecs } from '@/capabilities/practice/tasks/index';
 import { itemPriorTaskSpec } from '@/capabilities/practice/tasks/item-prior';
 import {
@@ -133,6 +134,7 @@ const EXPECTED_KINDS = [
   'SourcingTask',
   'SupplyPlanTask',
   'BlockAssemblyTask',
+  'CauseCategoryProposeTask',
 ] as const;
 
 type ExpectedTaskKind = (typeof EXPECTED_KINDS)[number];
@@ -154,7 +156,7 @@ const OWNER_MAPS = {
 } as const;
 
 const EXPECTED_OWNER_COUNTS = {
-  practice: 21,
+  practice: 22,
   notes: 3,
   ingestion: 8,
   knowledge: 3,
@@ -165,6 +167,7 @@ const EXPECTED_OWNER_COUNTS = {
 const OWNED_SPECS: ReadonlySet<object> = new Set([
   attributionTaskSpec,
   attributionRerankTaskSpec,
+  causeCategoryProposeTaskSpec,
   variantGenTaskSpec,
   semanticJudgeTaskSpec,
   unitDimensionFallbackTaskSpec,

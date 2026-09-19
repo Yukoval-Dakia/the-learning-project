@@ -29,6 +29,8 @@ import {
   parseAttributionOutput,
 } from '../tasks/attribution';
 import { getJudgeForAttempt } from './attempt-events';
+import { maybeProposeCauseCategoryFromOthers } from './cause-catalog';
+import { withActiveCauseCategoryOverlays } from './cause-overlay';
 import {
   hasAttributionPermanent,
   recordAttributionPermanent,
@@ -111,6 +113,11 @@ export async function runAttributionAndWriteJudgeEvent(
   // ALSO the extra allowed ids for the post-LLM validation below (hoisted so
   // stage B sees them). Empty day-one (promote flag off / no KC match).
   let miscCandidates: AttributionCandidate[] = [];
+  // YUK-1016 — effectiveProfile = 声明词表 ∪ overlay.active（同 subject）。
+  // 合成一次后同时喂 retrieve 候选、rerank 的 subjectProfile（prompt taxonomy /
+  // metaCauseContract 自动带 overlay 行，prior 为 null——诚实）与 stage-B 校验
+  // 词表。无 overlay 行时复用原 profile 引用——行为等价。
+  let effectiveProfile = profile;
   try {
     // Idempotency check — mirrors old "cause already set" behaviour. The DB-level
     // PK conflict in writeEvent gives us idempotency on event id, but here we
@@ -183,16 +190,20 @@ export async function runAttributionAndWriteJudgeEvent(
     // fine-grained node in the stored cause, so validation below must allow it
     // (see the extended vocab in stage B). A DB fault here classifies
     // `retryable` like the idempotency read above — nothing reached the LLM.
+    // YUK-1016 — DB overlay 词表层的读取点：active 行映射成
+    // CauseCategoryDeclaration 追加到声明词表之后（序：profile 声明 → overlay →
+    // misc 候选）。draft / archived 行在 reader 里就被滤掉。
+    effectiveProfile = await withActiveCauseCategoryOverlays(params.db, profile);
     const miscSources: MisconceptionCauseSource[] = await listActiveMisconceptionsForKcs(
       params.db,
       params.input.knowledge_context.map((k) => k.id),
     );
     miscCandidates = miscSources.map(misconceptionToCandidate);
-    const candidates = retrieveCauseCandidates(params.input, profile, miscCandidates);
+    const candidates = retrieveCauseCandidates(params.input, effectiveProfile, miscCandidates);
     result = await params.runTaskFn(
       'AttributionRerankTask',
       { ...params.input, candidates },
-      { subjectProfile: profile },
+      { subjectProfile: effectiveProfile },
     );
   } catch (err) {
     console.error('runAttributionAndWriteJudgeEvent: retryable failure (attempt unaffected)', err);
@@ -215,9 +226,13 @@ export async function runAttributionAndWriteJudgeEvent(
     // validation vocab is therefore the profile ∪ the fetched misc candidates
     // — same extension the rerank prompt offered. An id outside BOTH (a
     // hallucination) still clamps, preserving the existing contract.
+    // YUK-1016 — 校验词表 = effectiveProfile（声明 ∪ overlay.active）∪ misc。
     const validationProfile: SubjectProfile = miscCandidates.length
-      ? { ...profile, causeCategories: [...profile.causeCategories, ...miscCandidates] }
-      : profile;
+      ? {
+          ...effectiveProfile,
+          causeCategories: [...effectiveProfile.causeCategories, ...miscCandidates],
+        }
+      : effectiveProfile;
     parsed = parseAttributionOutput(result.text, validationProfile);
   } catch (err) {
     console.error(
@@ -299,6 +314,18 @@ export async function runAttributionAndWriteJudgeEvent(
     // Best-effort (swallows internally); never masks the retryable classification.
     await recordAttributionRetryable(params.db);
     return { outcome: 'retryable', error: err };
+  }
+
+  // ── Stage D: catalog 扩张旁路（YUK-1016）──────────────────────────────────
+  // 归因落 other → tally（effective cause 读侧聚合）→ ≥floor → LLM 提议新类目
+  // → propose event → owner accept 才写 overlay。全吞错旁路：提议失败绝不影响
+  // 已写完的 judge 与 outcome='written' 语义。
+  if (parsed.primary_category === 'other') {
+    await maybeProposeCauseCategoryFromOthers({
+      db: params.db,
+      profile: effectiveProfile,
+      runTaskFn: params.runTaskFn,
+    });
   }
 
   return { outcome: 'written' };

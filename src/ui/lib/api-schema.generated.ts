@@ -21360,7 +21360,7 @@ export interface operations {
                             decided_at: string | null;
                             id: string;
                             /** @enum {string} */
-                            kind: "knowledge_node" | "knowledge_edge" | "knowledge_mutation" | "learning_item" | "note_update" | "variant_question" | "completion" | "relearn" | "defer" | "record_links" | "record_promotion" | "archive" | "judge_retraction" | "goal_scope" | "block_merge" | "image_candidate" | "question_draft" | "question_edit" | "conjecture";
+                            kind: "knowledge_node" | "knowledge_edge" | "knowledge_mutation" | "learning_item" | "note_update" | "variant_question" | "completion" | "relearn" | "defer" | "record_links" | "record_promotion" | "archive" | "judge_retraction" | "goal_scope" | "block_merge" | "image_candidate" | "question_draft" | "question_edit" | "conjecture" | "cause_category";
                             payload: {
                                 cooldown_key?: string;
                                 /** @default [] */
@@ -22320,6 +22320,32 @@ export interface operations {
                                     subject_id: string | null;
                                     /** @enum {string} */
                                     subject_kind: "mind_model";
+                                };
+                            } | {
+                                cooldown_key?: string;
+                                /** @default [] */
+                                evidence_refs: {
+                                    id: string;
+                                    /** @enum {string} */
+                                    kind: "event" | "question" | "knowledge" | "artifact" | "record";
+                                }[];
+                                /** @enum {string} */
+                                kind: "cause_category";
+                                proposed_change: {
+                                    category_id: string;
+                                    description?: string;
+                                    label: string;
+                                    /** @enum {string} */
+                                    source: "owner" | "llm_propose";
+                                };
+                                reason_md: string;
+                                rollback_plan?: unknown;
+                                /** @enum {string} */
+                                suggestion_kind?: "proactive" | "corrective";
+                                target: {
+                                    subject_id: string | null;
+                                    /** @enum {string} */
+                                    subject_kind: "subject_profile";
                                 };
                             };
                             presentation: {
@@ -22371,7 +22397,7 @@ export interface operations {
                             decided_at: string | null;
                             id: string;
                             /** @enum {string} */
-                            kind: "knowledge_node" | "knowledge_edge" | "knowledge_mutation" | "learning_item" | "note_update" | "variant_question" | "completion" | "relearn" | "defer" | "record_links" | "record_promotion" | "archive" | "judge_retraction" | "goal_scope" | "block_merge" | "image_candidate" | "question_draft" | "question_edit" | "conjecture";
+                            kind: "knowledge_node" | "knowledge_edge" | "knowledge_mutation" | "learning_item" | "note_update" | "variant_question" | "completion" | "relearn" | "defer" | "record_links" | "record_promotion" | "archive" | "judge_retraction" | "goal_scope" | "block_merge" | "image_candidate" | "question_draft" | "question_edit" | "conjecture" | "cause_category";
                             payload: {
                                 cooldown_key?: string;
                                 /** @default [] */
@@ -23331,6 +23357,32 @@ export interface operations {
                                     subject_id: string | null;
                                     /** @enum {string} */
                                     subject_kind: "mind_model";
+                                };
+                            } | {
+                                cooldown_key?: string;
+                                /** @default [] */
+                                evidence_refs: {
+                                    id: string;
+                                    /** @enum {string} */
+                                    kind: "event" | "question" | "knowledge" | "artifact" | "record";
+                                }[];
+                                /** @enum {string} */
+                                kind: "cause_category";
+                                proposed_change: {
+                                    category_id: string;
+                                    description?: string;
+                                    label: string;
+                                    /** @enum {string} */
+                                    source: "owner" | "llm_propose";
+                                };
+                                reason_md: string;
+                                rollback_plan?: unknown;
+                                /** @enum {string} */
+                                suggestion_kind?: "proactive" | "corrective";
+                                target: {
+                                    subject_id: string | null;
+                                    /** @enum {string} */
+                                    subject_kind: "subject_profile";
                                 };
                             };
                             presentation: {
@@ -23650,7 +23702,7 @@ export interface operations {
                         idempotent: boolean;
                         proposal_id: string;
                         /** @enum {string} */
-                        proposal_kind: "knowledge_node" | "knowledge_edge" | "knowledge_mutation" | "learning_item" | "note_update" | "variant_question" | "completion" | "relearn" | "defer" | "record_links" | "record_promotion" | "archive" | "judge_retraction" | "goal_scope" | "block_merge" | "image_candidate" | "question_draft" | "question_edit" | "conjecture";
+                        proposal_kind: "knowledge_node" | "knowledge_edge" | "knowledge_mutation" | "learning_item" | "note_update" | "variant_question" | "completion" | "relearn" | "defer" | "record_links" | "record_promotion" | "archive" | "judge_retraction" | "goal_scope" | "block_merge" | "image_candidate" | "question_draft" | "question_edit" | "conjecture" | "cause_category";
                         /** @enum {string} */
                         proposal_status: "pending" | "accepted" | "dismissed" | "stale" | "rubric_rejected";
                         result?: unknown;
@@ -23671,7 +23723,7 @@ export interface operations {
                         idempotent: boolean;
                         proposal_id: string;
                         /** @enum {string} */
-                        proposal_kind: "knowledge_node" | "knowledge_edge" | "knowledge_mutation" | "learning_item" | "note_update" | "variant_question" | "completion" | "relearn" | "defer" | "record_links" | "record_promotion" | "archive" | "judge_retraction" | "goal_scope" | "block_merge" | "image_candidate" | "question_draft" | "question_edit" | "conjecture";
+                        proposal_kind: "knowledge_node" | "knowledge_edge" | "knowledge_mutation" | "learning_item" | "note_update" | "variant_question" | "completion" | "relearn" | "defer" | "record_links" | "record_promotion" | "archive" | "judge_retraction" | "goal_scope" | "block_merge" | "image_candidate" | "question_draft" | "question_edit" | "conjecture" | "cause_category";
                         /** @enum {string} */
                         proposal_status: "pending" | "accepted" | "dismissed" | "stale" | "rubric_rejected";
                         result?: unknown;

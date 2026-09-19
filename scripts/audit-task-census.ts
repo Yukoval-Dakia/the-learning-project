@@ -92,8 +92,9 @@ export function auditTaskCensus(options: AuditTaskCensusOptions): AuditResult {
   );
   const errors = [
     // YUK-987: 50（+SupplyPlanTask 供给需求层 planner）。
-    ...(validateInfrastructure && catalogSet.size !== 50
-      ? [`Task catalog must contain exactly 50 kinds, received ${catalogSet.size}`]
+    // YUK-1016: 51（+CauseCategoryProposeTask cause catalog 增长提议）。
+    ...(validateInfrastructure && catalogSet.size !== 51
+      ? [`Task catalog must contain exactly 51 kinds, received ${catalogSet.size}`]
       : []),
     ...unresolvedCallers.map(
       (caller) =>

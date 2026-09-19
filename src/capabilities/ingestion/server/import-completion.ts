@@ -26,6 +26,7 @@ import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { knowledge, learning_session, question, question_block } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { withActiveCauseCategoryOverlays } from '@/kernel/read-models/cause-overlay';
 import {
   assertCauseAllowedForSubjectProfile,
   resolveSubjectProfileForKnowledgeIds,
@@ -34,6 +35,7 @@ import { writeQuestionBlockCreateEvent } from '@/server/projections/question_blo
 import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { Ingestion } from '@/server/session';
+import type { SubjectProfile } from '@/subjects/profile';
 import {
   isTerminalIngestionOperation,
   readIngestionOperation,
@@ -184,8 +186,17 @@ export async function completeIngestionImport(
     const blockSubjectProfiles = await Promise.all(
       effectiveKnowledgeIds.map(async (ids) => resolveSubjectProfileForKnowledgeIds(tx, ids)),
     );
+    // YUK-1016 — 校验词表 = 声明 ∪ overlay.active（按 profile.id 缓存去重，
+    // block 共享同一 subject 时不重复查 overlay 表）。
+    const effectiveProfileCache = new Map<string, SubjectProfile>();
     for (const [index, block] of body.blocks.entries()) {
-      assertCauseAllowedForSubjectProfile(block.cause, blockSubjectProfiles[index]);
+      const declared = blockSubjectProfiles[index];
+      let effective = effectiveProfileCache.get(declared.id);
+      if (!effective) {
+        effective = await withActiveCauseCategoryOverlays(tx, declared);
+        effectiveProfileCache.set(declared.id, effective);
+      }
+      assertCauseAllowedForSubjectProfile(block.cause, effective);
     }
 
     const now = new Date();

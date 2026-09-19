@@ -41,6 +41,7 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 import { MISCONCEPTION_CANDIDATE_PREFIX } from '../tasks/attribute-retrieve';
 import { type VariantGenInput, parseVariantOutput } from '../tasks/variant-gen';
 import { effectiveCauseForFailureAttempt, getFailureAttemptById } from './attempt-events';
+import { getCauseCategoryOverlaysByIds } from './cause-overlay';
 import { hasVariantPermanent, recordVariantPermanent } from './failure-learning-ledger';
 import { getMisconceptionsByIds } from './knowledge-runtime';
 import type { PracticeTaskRunFn } from './task-runtime';
@@ -199,7 +200,17 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
     const [misc] = await getMisconceptionsByIds(db, [cause.primary_category]);
     miscCauseTitle = misc?.title ?? null;
   }
-  if (!causeCategory && miscCauseTitle === null) {
+  // YUK-1016 — `ov_` primary 是 owner 收编的 overlay 类目：按定义 targetable
+  // （收编的就是要针对的复发错因，同 misc 论证）。解析 active 行拿 label 进
+  // prompt；missing/draft/archived → 与未知 id 同路径 fail-closed。
+  let overlayCauseLabel: string | null = null;
+  if (!causeCategory && miscCauseTitle === null && cause.primary_category.startsWith('ov_')) {
+    const [overlay] = await getCauseCategoryOverlaysByIds(db, [cause.primary_category]);
+    if (overlay && overlay.status === 'active' && overlay.archived_at === null) {
+      overlayCauseLabel = overlay.label;
+    }
+  }
+  if (!causeCategory && miscCauseTitle === null && overlayCauseLabel === null) {
     return { status: 'skipped:cause_not_targetable' };
   }
   if (causeCategory && causeCategory.variant_targetable === false) {
@@ -228,7 +239,8 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
       // the misc TITLE (a meaningful cause description) instead of the opaque
       // `misc_<hash>` id. Prompt-input only: the stored mistake_variant
       // .cause_category below still takes the real judge id.
-      primary_category: miscCauseTitle ?? cause.primary_category,
+      // YUK-1016 — `ov_` primary 同法：prompt 侧拿 overlay label。
+      primary_category: miscCauseTitle ?? overlayCauseLabel ?? cause.primary_category,
       analysis_md: cause.analysis_md ?? cause.user_notes ?? '',
     },
     depth: parent.variant_depth,

@@ -358,6 +358,13 @@ export function proposalChangeSummary(payload: AiProposalPayloadT): ProposalSumm
           typeof change?.recurrence_count === 'number' ? `${change.recurrence_count} 次` : null,
         ),
       ]);
+    case 'cause_category':
+      return compact([
+        summaryItem('新类目', change?.label),
+        summaryItem('类目 id', change?.category_id),
+        summaryItem('说明', change?.description),
+        summaryItem('来源', change?.source === 'owner' ? '人工提议' : 'AI 提议（other 复发）'),
+      ]);
     default:
       return [];
   }
@@ -443,6 +450,8 @@ export function proposalDisplayTitle(payload: AiProposalPayloadT): string {
       return titled('修订一道题目', payload.proposed_change.node_preview);
     case 'conjecture':
       return titled('验证诊断推测', payload.proposed_change.claim_md);
+    case 'cause_category':
+      return titled('收编错因类目', payload.proposed_change.label);
   }
 }
 

@@ -32,6 +32,7 @@ import { db as defaultDb } from '@/db/client';
 import { answer, event, learning_session } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { withActiveCauseCategoryOverlays } from '@/kernel/read-models/cause-overlay';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { checkRateLimit } from '@/server/http/rate-limit';
 import { assertSessionMutable } from './answer-draft';
@@ -486,7 +487,13 @@ export async function submitPaperSlot(
   const slotKnowledgeIds = input.primaryKnowledgeId
     ? [input.primaryKnowledgeId, ...(input.secondaryKnowledgeIds ?? [])]
     : q.knowledge_ids;
-  const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, slotKnowledgeIds);
+  // YUK-1016 — 生效词表 = 声明 ∪ overlay.active：settlement 的 cause 校验与
+  // profile_version 戳共用这一个 resolution 点（version 戳取声明版，overlay
+  // 无独立版本）。
+  const subjectProfile = await withActiveCauseCategoryOverlays(
+    db,
+    await resolveSubjectProfileForKnowledgeIds(db, slotKnowledgeIds),
+  );
 
   // F1 (PR #309 round-3, YUK-215) — photo-only gate, mirroring the single-question
   // /api/review/submit F4 fix. A photo-only answer (empty text + image refs) is

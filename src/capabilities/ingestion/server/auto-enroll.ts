@@ -82,6 +82,7 @@ import {
   type MultimodalDirectRunTaskFn,
   runMultimodalDirectJudge,
 } from '@/kernel/judge';
+import { withActiveCauseCategoryOverlays } from '@/kernel/read-models/cause-overlay';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import {
@@ -589,9 +590,12 @@ export async function runAutoEnrollForSession(
     let mistakeDraft: MistakeEnrollOutputT | undefined;
     const studentAnswer = block.wrong_answer_md?.trim() ?? '';
     if (verdict.route === 'auto' && studentAnswer.length > 0) {
-      const profile = await resolveSubjectProfileForKnowledgeIds(
+      // YUK-1016 — enroll 词表 = 声明 ∪ overlay.active：owner accept 的 ov_
+      // 类目必须出现在 allowedCauseIds 且 clamp 不掉（否则收编类目 enroll
+      // 表达不了，全被挤回 'other'）。
+      const profile = await withActiveCauseCategoryOverlays(
         params.db,
-        verdict.prefilled.knowledge_ids,
+        await resolveSubjectProfileForKnowledgeIds(params.db, verdict.prefilled.knowledge_ids),
       );
       try {
         mistakeDraft = await runMistakeEnrollFn({

@@ -2677,6 +2677,44 @@ export const mistake_variant = pgTable(
   ],
 );
 
+// YUK-1016 / 454-B — DB-overlay 错因词表层（错因 catalog 成长路径）。
+//
+// Owner 09-18 裁决：收编落 DB overlay，与 `SubjectProfile.causeCategories` 合并
+// 读取——词表不再只靠发版扩张。行只经 `cause_category` proposal 的 accept
+// applier 写入（human-vet 边界）；`other` 归因复发 → CauseCategoryProposeTask
+// → propose event → owner accept → INSERT。
+//
+//   - `id` 用 `ov_<slug>` 命名空间防撞（NOT `ov:`——冒号过不了
+//     CauseCategoryId 的 ^[a-z][a-z0-9_]*$，同 YUK-1015 `misc:`→`misc_` 教训）。
+//   - `status` ∈ 'draft' | 'active'：`archived_at` 是唯一回退维度
+//     （misconception 惯例），retract applier 置 archived_at。
+//   - `source` ∈ 'owner' | 'llm_propose'：两条生产路径共用同一 accept 落点。
+//   - `evidence_event_ids`：支撑提议的 judge event 回链（propose event 的
+//     evidence_refs 里 kind='event' 的条目）。
+//   - created_at/updated_at 由调用方传入（identity-cluster 惯例，无 defaultNow）。
+export const cause_category_overlay = pgTable(
+  'cause_category_overlay',
+  {
+    id: text('id').primaryKey(),
+    subject_id: text('subject_id').notNull(),
+    label: text('label').notNull(),
+    description: text('description'),
+    source: text('source', { enum: ['owner', 'llm_propose'] }).notNull(),
+    status: text('status', { enum: ['draft', 'active'] })
+      .notNull()
+      .default('draft'),
+    // 归属列：行由哪张 cause_category proposal 的 accept 落地——retract applier 按
+    // 它限定行（mistake_variant.proposal_event_id 同款语义；无它则同 slug 跨
+    // proposal 可互相归档）。
+    proposal_event_id: text('proposal_event_id'),
+    evidence_event_ids: jsonb('evidence_event_ids').$type<string[]>().notNull().default([]),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+    archived_at: timestamp('archived_at', { withTimezone: true }),
+  },
+  (t) => [index('cause_category_overlay_subject_idx').on(t.subject_id, t.status)],
+);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // YUK-143 / ADR-0025 — North-Star `goal` entity (Wave-9 core).
 //

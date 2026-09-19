@@ -190,6 +190,9 @@ const ALL_TABLES = [
   // it MUST be listed now that the promotion writer gives it a write path.
   'misconception',
   'misconception_edge',
+  // YUK-1016 (454-B) — cause vocabulary DB overlay. No FK, so resetDb must list it
+  // explicitly or it leaks across tests (same footgun as misconception above).
+  'cause_category_overlay',
   'learning_session',
   'answer',
   'completion_evidence',

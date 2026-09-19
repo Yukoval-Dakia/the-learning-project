@@ -27,7 +27,7 @@ import {
   findStructuredNode,
 } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
-import { event, mistake_variant, question } from '@/db/schema';
+import { cause_category_overlay, event, mistake_variant, question } from '@/db/schema';
 import { getCorrectionStatus, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
@@ -950,5 +950,163 @@ export async function acceptQuestionEditProposal(
     question_id: questionId,
     edit_event_id: editEventId,
     version: nextVersion,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YUK-1016 / 454-B — cause_category accept：往 cause_category_overlay INSERT
+// status='active' 行。这是该表的唯一写边界（audit:schema 的 write path）；行
+// 落地后进入 attribution 合并词表（listActiveCauseCategoryOverlays）。
+export interface CauseCategoryAcceptResult {
+  kind: 'cause_category';
+  rate_event_id: string | null;
+  category_id: string;
+  idempotent?: boolean;
+}
+
+export async function acceptCauseCategoryProposal(
+  db: Db,
+  proposalId: string,
+  proposal: ProposalInboxRow,
+  opts: PracticeApplierOpts,
+): Promise<CauseCategoryAcceptResult> {
+  ensureAcceptOnly('cause_category', opts);
+  const change = asPlainRecord(proposal.payload.proposed_change);
+  const categoryId = requiredString(change.category_id, 'category_id', proposalId);
+  const label = requiredString(change.label, 'label', proposalId);
+  // 防绕过：生产者契约是 ov_ 命名空间；applier 也守住——非 ov_ id 会在合并词表
+  // 里与 profile 声明撞名。
+  if (!categoryId.startsWith('ov_')) {
+    throw new ApiError(
+      'validation_error',
+      `proposal ${proposalId} category_id ${categoryId} must use the ov_ namespace`,
+      400,
+    );
+  }
+  const description =
+    typeof change.description === 'string' && change.description.trim().length > 0
+      ? change.description.trim()
+      : null;
+  const source = change.source === 'owner' ? 'owner' : 'llm_propose';
+  const subjectId = proposal.payload.target.subject_id;
+  if (!subjectId) {
+    throw new ApiError(
+      'validation_error',
+      `proposal ${proposalId} is missing target.subject_id (subject profile id)`,
+      400,
+    );
+  }
+  const evidenceEventIds = (proposal.payload.evidence_refs ?? [])
+    .filter((ref) => ref.kind === 'event')
+    .map((ref) => ref.id);
+
+  const loadRowOrThrow = async (dbLike: Db | Tx) => {
+    const existing = (
+      await dbLike
+        .select()
+        .from(cause_category_overlay)
+        .where(eq(cause_category_overlay.id, categoryId))
+        .limit(1)
+    )[0];
+    if (!existing || existing.archived_at !== null || existing.status !== 'active') {
+      throw new ApiError(
+        'inconsistent_state',
+        `proposal ${proposalId} has an accept rate event but overlay row ${categoryId} is ${
+          existing ? 'not active' : 'missing'
+        }; retract + retry`,
+        500,
+      );
+    }
+    return existing;
+  };
+
+  // Already-accepted idempotency fast path（question_draft 同款形状）。
+  const existingRate = await existingAcceptRate(db, proposalId);
+  if (existingRate) {
+    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+    await loadRowOrThrow(db);
+    return {
+      kind: 'cause_category',
+      rate_event_id: existingRate.id,
+      category_id: categoryId,
+      idempotent: true,
+    };
+  }
+
+  const now = new Date();
+  let writtenRateEventId: string | null = null;
+  const concurrentDecision = await db.transaction(async (tx) => {
+    await acquireProposalDecisionLock(tx, proposalId);
+    const decision = await findExistingRateEvent(tx, proposalId);
+    if (decision) {
+      if (decision.decision !== 'accept') {
+        throw new ApiError(
+          'conflict',
+          `proposal ${proposalId} already decided as ${decision.decision}`,
+          409,
+        );
+      }
+      return decision;
+    }
+    const correction = await getCorrectionStatus(tx, proposalId);
+    if (correction.state !== 'active') {
+      throw new ApiError(
+        'conflict',
+        `proposal ${proposalId} is ${correction.state} and cannot be accepted`,
+        409,
+      );
+    }
+
+    // id 防撞：行已存在 = 另一个 proposal/路径已占用该 id。一律 409——归档行
+    // 复活是另一个语义决定，v1 不做（owner 可换 slug 或人工恢复）。
+    const existing = (
+      await tx
+        .select({ id: cause_category_overlay.id })
+        .from(cause_category_overlay)
+        .where(eq(cause_category_overlay.id, categoryId))
+        .limit(1)
+    )[0];
+    if (existing) {
+      throw new ApiError(
+        'conflict',
+        `cause_category_overlay ${categoryId} already exists; choose a different slug`,
+        409,
+      );
+    }
+
+    await tx.insert(cause_category_overlay).values({
+      id: categoryId,
+      subject_id: subjectId,
+      label,
+      description,
+      source,
+      status: 'active',
+      proposal_event_id: proposalId,
+      evidence_event_ids: evidenceEventIds,
+      created_at: now,
+      updated_at: now,
+    });
+
+    const rate = await writeProposalRateEvent(tx, proposalId, 'accept', opts.user_note);
+    writtenRateEventId = rate.rate_event_id;
+    return null;
+  });
+
+  if (concurrentDecision) {
+    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+    await loadRowOrThrow(db);
+    return {
+      kind: 'cause_category',
+      rate_event_id: concurrentDecision.id,
+      category_id: categoryId,
+      idempotent: true,
+    };
+  }
+
+  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+  return {
+    kind: 'cause_category',
+    rate_event_id: writtenRateEventId,
+    category_id: categoryId,
   };
 }
