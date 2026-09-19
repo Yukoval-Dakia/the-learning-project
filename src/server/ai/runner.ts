@@ -1011,7 +1011,13 @@ export async function runTask(
   // YUK-921 P2 — the ops rollout pin (AI_ADAPTER_PI_PROVIDER/MODEL) defaults a
   // pi binding onto allowlisted kinds when the caller pins nothing itself.
   const modelBinding = effectiveModelBinding(kind, ctx.modelBinding);
-  const maxAttempts = maxLifecycleAttempts(kind, { ...ctx, modelBinding });
+  // Narrow pass, not {...ctx}: RunTaskCtx consumers may define lazy getters
+  // (allowedTools et al.) whose evaluation must stay single-shot and ordered.
+  const maxAttempts = maxLifecycleAttempts(kind, {
+    enableTransientRetry: ctx.enableTransientRetry,
+    override: ctx.override,
+    modelBinding,
+  });
   const firstAttemptStartedAt = Date.now();
   const retryingSyncDeadlineAt =
     maxAttempts > 1 ? firstAttemptStartedAt + RETRY_ELAPSED_CAP_MS + def.budget.timeout : undefined;
