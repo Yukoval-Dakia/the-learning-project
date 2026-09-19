@@ -241,16 +241,17 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   // Apply final limit.
   const final = byDue.slice(0, limit);
   const finalQids = Array.from(new Set(final.map((x) => x.fa.question_id)));
-  const promptMap = await loadQuestionPrompts(ctx.db, finalQids);
-  const variantsMap = input.includeVariants
-    ? await loadVariants(ctx.db, finalQids)
-    : new Map<string, Array<{ id: string; status: string }>>();
-
-  // YUK-1018 — misc_ primary id 的 title 回填（批量一次，不进循环）。
-  const miscLabels = await resolveMiscCauseLabels(
-    ctx.db,
-    final.map((x) => x.cause?.primary_category).filter((id): id is string => !!id),
-  );
+  // 三个独立读并行（YUK-1018 misc_ primary id 的 title 回填含在内）。
+  const [promptMap, variantsMap, miscLabels] = await Promise.all([
+    loadQuestionPrompts(ctx.db, finalQids),
+    input.includeVariants
+      ? loadVariants(ctx.db, finalQids)
+      : Promise.resolve(new Map<string, Array<{ id: string; status: string }>>()),
+    resolveMiscCauseLabels(
+      ctx.db,
+      final.map((x) => x.cause?.primary_category).filter((id): id is string => !!id),
+    ),
+  ]);
 
   const now = Date.now();
   const mistakes = final.map(({ fa, cause }) => {

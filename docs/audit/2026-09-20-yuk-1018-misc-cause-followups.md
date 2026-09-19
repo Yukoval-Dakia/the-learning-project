@@ -55,6 +55,11 @@ session/weekly summary 的 `top_causes`。统一在读模型层回填 display la
 3. **union > K_SMALL 极端**：misc cap 50 下 union 可超 K_SMALL 触发 scorer，大量 misc
    可挤占 vocab 候选。当前 promote 刚启用、misc 总量近零，纯理论边界。**触发点**：
    misc 数量上量后复核 retrieve 候选构成（attribution trace 里有 candidate 计数）。
+4. **secondary_categories 的 misc 无 label**（PR #1430 review 沉淀）：misc id 可进
+   `secondary_categories`（`attribute-retrieve.unit.test.ts` pin 了该路径），本批回填
+   只覆盖 primary——CauseBadge 的 `+{s}` 副标签对 misc 仍渲染裸 id。补齐需给 wire
+   形状加 `secondary_labels` 并穿透同一批读面，超出已批准 pre-flight 范围，留作
+   follow-up（工作量 ~1h，同模式）。
 
 ## 验证
 

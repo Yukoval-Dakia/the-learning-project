@@ -1115,16 +1115,15 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   const failure =
     activity.outcome === 'failure' ? await getFailureAttemptById(ctx.db, activity.event_id) : null;
   const cause = failure ? effectiveCauseForFailureAttempt(failure) : null;
-  // YUK-1018 — misc_ primary id 的 title 回填。
-  const causeLabel = cause
-    ? ((await resolveMiscCauseLabels(ctx.db, [cause.primary_category])).get(
-        cause.primary_category,
-      ) ?? null)
-    : null;
-  const records = await listLearningRecords(ctx.db, {
-    attempt_event_id: activity.event_id,
-    limit: 25,
-  });
+  // YUK-1018 — misc_ primary id 的 title 回填；与 records 读并行。
+  const [miscLabels, records] = await Promise.all([
+    cause ? resolveMiscCauseLabels(ctx.db, [cause.primary_category]) : Promise.resolve(null),
+    listLearningRecords(ctx.db, {
+      attempt_event_id: activity.event_id,
+      limit: 25,
+    }),
+  ]);
+  const causeLabel = cause ? (miscLabels?.get(cause.primary_category) ?? null) : null;
 
   return OutputSchema.parse({
     reader_version: 2,

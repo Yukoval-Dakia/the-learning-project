@@ -101,7 +101,8 @@ export async function batchResolveEffectiveDomains(
  * inclusive — the walk passes through archived intermediates exactly like the
  * domain climb) and returns each id's ancestor chain (self excluded, nearest
  * first), capped at MAX_DEPTH so cycles exhaust the bound instead of looping.
- * Missing/dangling nodes resolve to an empty chain.
+ * A missing start node resolves to an empty chain; a dangling parent_id keeps
+ * the dangling id in the chain (the walk then terminates on the miss).
  */
 export async function batchResolveAncestorIds(
   db: Db | Tx,
