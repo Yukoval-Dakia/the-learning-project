@@ -11,7 +11,7 @@ import {
 } from './constants';
 
 describe('export constants', () => {
-  it('SCHEMA_VERSION is "4.19" when note verification claims enter backup', () => {
+  it('SCHEMA_VERSION is "4.20" when the cause-category overlay enters backup', () => {
     // 4.15 → 4.16 (YUK-350): immutable question_answer_anchor,
     // question_generation_plan, and question_generation_binding authored provenance.
     // New FK_ORDER tables require a backup schema bump.
@@ -43,14 +43,16 @@ describe('export constants', () => {
     // (异构认知关系边，peer of knowledge_edge)。新表入 FK_ORDER 必 bump (per archive.ts
     // assertEveryTableIsBackedUpOrExcluded)。misconception 加 status/source/seen/evidence
     // 列是既有表的 additive 列，随整行 dump/restore，不单独 bump (表=bump，列=不 bump)。
-    expect(SCHEMA_VERSION).toBe('4.19');
+    // 4.19 → 4.20 (YUK-1016 454-B): NEW FK_ORDER table cause_category_overlay —
+    // owner-vetted 错因词表层 (authored catalog 行，retract 只置 archived_at，不可重建)。
+    expect(SCHEMA_VERSION).toBe('4.20');
   });
 
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
     expect(MAX_INLINE_ASSETS).toBe(45);
   });
 
-  it('FK_ORDER lists all 52 tables in topological order', () => {
+  it('FK_ORDER lists all 53 tables in topological order', () => {
     // 17 → 24: ②d backup-orphan fix added 7 persistent business tables that had
     // silently dropped out of the wipe-then-restore payload (artifact_block_ref,
     // ai_task_runs, mistake_variant, goal, proposal_signals, practice_stream_item,
@@ -97,12 +99,24 @@ describe('export constants', () => {
     // 46 → 49 (YUK-350): immutable question_answer_anchor → question_generation_plan →
     // question_generation_binding (authored generation provenance, all backed up).
     // 49 → 50 (YUK-791): versioned intervention snapshot/recommendation/package lineage.
-    expect(FK_ORDER.length).toBe(52);
+    // 52 → 53 (YUK-1016 454-B): added cause_category_overlay — owner-vetted 错因
+    // 词表层 (authored catalog 行，非瞬态非派生)；placed adjacent to mistake_variant
+    // (failure-learning cluster), NOT at the end (provider_attempt stays last).
+    expect(FK_ORDER.length).toBe(53);
     expect(FK_ORDER[0]).toBe('knowledge');
     expect(FK_ORDER[FK_ORDER.length - 1]).toBe('provider_attempt');
     expect(FK_ORDER.indexOf('note_verification_claim')).toBeGreaterThan(
       FK_ORDER.indexOf('artifact'),
     );
+  });
+
+  it('FK_ORDER includes YUK-1016 cause_category_overlay (owner-vetted 词表层，承重非排除)', () => {
+    expect(FK_ORDER).toContain('cause_category_overlay');
+    expect(BACKUP_EXCLUDED_TABLES.has('cause_category_overlay')).toBe(false);
+    expect(FK_ORDER.indexOf('cause_category_overlay')).toBeGreaterThan(
+      FK_ORDER.indexOf('mistake_variant'),
+    );
+    expect(FK_ORDER.indexOf('cause_category_overlay')).toBeLessThan(FK_ORDER.indexOf('goal'));
   });
 
   it('FK_ORDER includes YUK-791 intervention lineage (authored, non-excluded)', () => {

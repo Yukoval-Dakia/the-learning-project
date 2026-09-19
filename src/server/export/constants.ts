@@ -94,7 +94,10 @@
 // YUK-857: note_verification_claim is durable paid-call fencing and staged-result recovery
 // state keyed to artifact. It must survive restore after its artifact parent; adding it to
 // FK_ORDER changes the payload shape: 51 → 52 tables, 4.18 → 4.19.
-export const SCHEMA_VERSION = '4.19';
+// YUK-1016: cause_category_overlay — owner-vetted 错因词表层（accepted proposal 落地的
+// authored catalog 行，非瞬态非派生；retract 只置 archived_at，历史不可重建）→
+// FK_ORDER 非 BACKUP_EXCLUDED。NEW FK_ORDER table 必 bump：52 → 53 tables，4.19 → 4.20。
+export const SCHEMA_VERSION = '4.20';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -192,6 +195,13 @@ export const FK_ORDER = [
   'cost_ledger',
   'ai_task_runs',
   'mistake_variant',
+  // YUK-1016 (454-B): cause_category_overlay — owner-vetted 错因类目词表层。
+  // proposal accept applier 落地的 authored catalog 行（source='owner'|'llm_propose'），
+  // retract 只置 archived_at——行历史不可从别处重建，丢了即灭失 → FK_ORDER 备份
+  // （非 BACKUP_EXCLUDED）。无 enforced FK（proposal_event_id / evidence_event_ids
+  // 是 loose text-ref），位置不受 PG FK 约束；紧邻 mistake_variant 保持
+  // failure-learning 簇相邻可读。NEW FK_ORDER table → bump SCHEMA_VERSION (4.19 → 4.20)。
+  'cause_category_overlay',
   'goal',
   'proposal_signals',
   'practice_stream_item',
