@@ -41,7 +41,7 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 import { MISCONCEPTION_CANDIDATE_PREFIX } from '../tasks/attribute-retrieve';
 import { type VariantGenInput, parseVariantOutput } from '../tasks/variant-gen';
 import { effectiveCauseForFailureAttempt, getFailureAttemptById } from './attempt-events';
-import { getCauseCategoryOverlaysByIds } from './cause-overlay';
+import { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } from './cause-overlay';
 import { hasVariantPermanent, recordVariantPermanent } from './failure-learning-ledger';
 import { getMisconceptionsByIds } from './knowledge-runtime';
 import type { PracticeTaskRunFn } from './task-runtime';
@@ -204,7 +204,11 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
   // （收编的就是要针对的复发错因，同 misc 论证）。解析 active 行拿 label 进
   // prompt；missing/draft/archived → 与未知 id 同路径 fail-closed。
   let overlayCauseLabel: string | null = null;
-  if (!causeCategory && miscCauseTitle === null && cause.primary_category.startsWith('ov_')) {
+  if (
+    !causeCategory &&
+    miscCauseTitle === null &&
+    cause.primary_category.startsWith(CAUSE_OVERLAY_ID_PREFIX)
+  ) {
     const [overlay] = await getCauseCategoryOverlaysByIds(db, [cause.primary_category]);
     if (overlay && overlay.status === 'active' && overlay.archived_at === null) {
       overlayCauseLabel = overlay.label;

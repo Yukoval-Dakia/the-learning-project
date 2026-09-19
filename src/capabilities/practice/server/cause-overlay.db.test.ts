@@ -6,6 +6,7 @@
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { cause_category_overlay, event, knowledge, question } from '@/db/schema';
+import { ApiError } from '@/kernel/http';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { acceptAiProposal, retractAiProposal } from '@/server/proposals/actions';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -292,6 +293,42 @@ describe('cause_category proposal → accept → overlay row', () => {
     await expect(acceptAiProposal(testDb(), proposalId)).rejects.toThrow(/ov_/);
     expect(await getCauseCategoryOverlaysByIds(testDb(), ['concept'])).toEqual([]);
   });
+
+  it('accept rejects the bare ov_ prefix (empty slug) with 400', async () => {
+    // 裸前缀（slug 为空）比「不在命名空间」更隐蔽——显式 400 而非依赖后续路径。
+    const proposalId = await writeCauseCategoryProposal({ categoryId: 'ov_' });
+    await expect(acceptAiProposal(testDb(), proposalId)).rejects.toThrow(/empty slug/);
+    expect(await getCauseCategoryOverlaysByIds(testDb(), ['ov_'])).toEqual([]);
+  });
+
+  it('concurrent accepts of the same category_id: exactly one wins, loser gets 409', async () => {
+    // 两张 pending proposal 指同一 categoryId、并发 accept——decision lock 按
+    // proposalId 取不互斥，onConflictDoNothing 兜底保证输家是 409 而非裸 PK 500。
+    const proposalA = await writeCauseCategoryProposal({
+      categoryId: 'ov_race',
+      subjectId: 'general',
+    });
+    const proposalB = await writeCauseCategoryProposal({
+      categoryId: 'ov_race',
+      subjectId: 'math',
+      cooldownKey: 'cause_category:math',
+    });
+    const [a, b] = await Promise.allSettled([
+      acceptAiProposal(testDb(), proposalA),
+      acceptAiProposal(testDb(), proposalB),
+    ]);
+    const outcomes = [a, b];
+    expect(outcomes.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const loser = outcomes.find((r) => r.status === 'rejected');
+    expect(loser?.status).toBe('rejected');
+    if (loser?.status === 'rejected') {
+      expect(loser.reason).toBeInstanceOf(ApiError);
+      expect((loser.reason as ApiError).status).toBe(409);
+    }
+
+    const rows = await getCauseCategoryOverlaysByIds(testDb(), ['ov_race']);
+    expect(rows).toHaveLength(1);
+  });
 });
 
 describe('attribution 合并读取（overlay ∪ 声明词表）', () => {
@@ -409,10 +446,15 @@ describe('other 复发 tally → LLM 提议 → proposal event', () => {
     await resetDb();
   });
 
-  async function seedOtherCluster(count: number) {
+  async function seedOtherCluster(count: number, kcId = 'k_other_cluster') {
+    // attempt 必须带「可解析」KC 才进科目桶（YUK-1019：零信号/悬空 KC 一律
+    // unresolved 不计数）。domain=null → resolveSubjectProfile → general。
+    await seedKnowledge(kcId, null);
     for (let i = 0; i < count; i += 1) {
       await seedQuestion(`q_other_${i}`);
-      await seedAttempt(`att_other_${i}`, `q_other_${i}`, new Date(NOW.getTime() + i * 1000));
+      await seedAttempt(`att_other_${i}`, `q_other_${i}`, new Date(NOW.getTime() + i * 1000), [
+        kcId,
+      ]);
       await seedJudge(
         `j_other_${i}`,
         `att_other_${i}`,
@@ -603,5 +645,162 @@ describe('other 复发 tally → LLM 提议 → proposal event', () => {
       expect.objectContaining({ subject_display_name: resolveSubjectProfile('math').displayName }),
       expect.anything(),
     );
+  });
+
+  it('悬空 [0] + 可解析 [1]：首个可解析 KC 定桶（YUK-1019 review P1a）', async () => {
+    const db = testDb();
+    await seedKnowledge('k_math2', 'math');
+    // 3 个 other：referenced[0]='k_ghost'（无 knowledge 行，悬空）+ [1]='k_math2'
+    // （可解析 math）。修复前 [0] 悬空 → domain null → general 桶；修复后首个
+    // 可解析 KC 决定归属 → math 桶，不再虚增 general。
+    for (let i = 0; i < 3; i += 1) {
+      await seedQuestion(`q_dg_${i}`);
+      await seedAttempt(`att_dg_${i}`, `q_dg_${i}`, new Date(NOW.getTime() + i * 1000), [
+        'k_ghost',
+        'k_math2',
+      ]);
+      await seedJudge(
+        `j_dg_${i}`,
+        `att_dg_${i}`,
+        'other',
+        new Date(NOW.getTime() + i * 1000 + 500),
+      );
+    }
+    await seedQuestion('q_trigger_dg');
+    await seedAttempt('att_trigger_dg', 'q_trigger_dg', new Date(NOW.getTime() + 10_000), [
+      'k_math2',
+    ]);
+
+    const spy = vi.fn(async (kind: string) => {
+      if (kind === 'CauseCategoryProposeTask') {
+        return {
+          text: '{"action":"propose","slug":"math_gap","label":"数学断点","rationale_md":"r"}',
+          task_run_id: 'tr_dg',
+          cost_usd: 0.001,
+        };
+      }
+      return {
+        text: '{"primary_category":"other","secondary_categories":[],"analysis_md":"x","confidence":0.4}',
+      };
+    });
+    await runAttributionAndWriteJudgeEvent({
+      db,
+      attemptEventId: 'att_trigger_dg',
+      input: validInput,
+      runTaskFn: spy,
+      subjectProfile: resolveSubjectProfile('math'),
+    });
+    // math 侧 3 个可解析 other + 触发 = 4 ≥ floor → LLM 被调。
+    expect(spy).toHaveBeenCalledWith(
+      'CauseCategoryProposeTask',
+      expect.objectContaining({ subject_display_name: resolveSubjectProfile('math').displayName }),
+      expect.anything(),
+    );
+  });
+
+  it('全不可解析 KC 的 other 不进任何科目桶（YUK-1019 review P1b unresolved）', async () => {
+    const db = testDb();
+    // 3 个 other，referenced KC 全部悬空（无 knowledge 行）——不得凑 general floor。
+    for (let i = 0; i < 3; i += 1) {
+      await seedQuestion(`q_un_${i}`);
+      await seedAttempt(`att_un_${i}`, `q_un_${i}`, new Date(NOW.getTime() + i * 1000), [
+        `k_ghost_${i}`,
+      ]);
+      await seedJudge(
+        `j_un_${i}`,
+        `att_un_${i}`,
+        'other',
+        new Date(NOW.getTime() + i * 1000 + 500),
+      );
+    }
+    await seedQuestion('q_trigger_un');
+    await seedAttempt('att_trigger_un', 'q_trigger_un', new Date(NOW.getTime() + 10_000));
+
+    const spy = vi.fn(async () => ({
+      text: '{"primary_category":"other","secondary_categories":[],"analysis_md":"x","confidence":0.4}',
+    }));
+    await runAttributionAndWriteJudgeEvent({
+      db,
+      attemptEventId: 'att_trigger_un',
+      input: validInput,
+      runTaskFn: spy,
+      subjectProfile: resolveSubjectProfile('general'),
+    });
+    // 触发 attempt 无 KC → 也不可解析；unresolved 全部不计入 → floor 不达。
+    expect(spy).toHaveBeenCalledTimes(1);
+    const proposals = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:proposal'));
+    expect(proposals).toHaveLength(0);
+  });
+
+  it('proposal reason_md 标注 unresolved 计数（bucket=unresolved 可见）', async () => {
+    const db = testDb();
+    await seedKnowledge('k_gen', null); // 存在但 domain=null → resolveSubjectProfile→general
+    // 3 个可解析 general other + 2 个全悬空 other。
+    for (let i = 0; i < 3; i += 1) {
+      await seedQuestion(`q_g_${i}`);
+      await seedAttempt(`att_g_${i}`, `q_g_${i}`, new Date(NOW.getTime() + i * 1000), ['k_gen']);
+      await seedJudge(`j_g_${i}`, `att_g_${i}`, 'other', new Date(NOW.getTime() + i * 1000 + 500));
+    }
+    for (let i = 0; i < 2; i += 1) {
+      await seedQuestion(`q_ux_${i}`);
+      await seedAttempt(`att_ux_${i}`, `q_ux_${i}`, new Date(NOW.getTime() + 5_000 + i * 1000), [
+        `k_void_${i}`,
+      ]);
+      await seedJudge(
+        `j_ux_${i}`,
+        `att_ux_${i}`,
+        'other',
+        new Date(NOW.getTime() + 5_000 + i * 1000 + 500),
+      );
+    }
+    await seedQuestion('q_trigger_an');
+    await seedAttempt('att_trigger_an', 'q_trigger_an', new Date(NOW.getTime() + 10_000), [
+      'k_gen',
+    ]);
+
+    const spy = vi.fn(async (kind: string) => {
+      if (kind === 'CauseCategoryProposeTask') {
+        return {
+          text: '{"action":"propose","slug":"gen_gap","label":"通用断点","rationale_md":"r"}',
+          task_run_id: 'tr_an',
+          cost_usd: 0.001,
+        };
+      }
+      return {
+        text: '{"primary_category":"other","secondary_categories":[],"analysis_md":"x","confidence":0.4}',
+      };
+    });
+    await runAttributionAndWriteJudgeEvent({
+      db,
+      attemptEventId: 'att_trigger_an',
+      input: validInput,
+      runTaskFn: spy,
+      subjectProfile: resolveSubjectProfile('general'),
+    });
+    expect(spy).toHaveBeenCalledWith(
+      'CauseCategoryProposeTask',
+      expect.anything(),
+      expect.anything(),
+    );
+
+    const proposals = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:proposal'));
+    expect(proposals).toHaveLength(1);
+    const payload = proposals[0].payload as {
+      ai_proposal: {
+        reason_md: string;
+        evidence_refs: Array<{ kind: string; id: string; event_role?: string }>;
+      };
+    };
+    // 2 条悬空 + 不计入——owner 能在 reason 里看到被剔除的尾巴。
+    expect(payload.ai_proposal.reason_md).toContain('bucket=unresolved');
+    expect(payload.ai_proposal.reason_md).toContain('2');
+    // evidence_refs 标 event_role：agent judge → 'judge'。
+    expect(payload.ai_proposal.evidence_refs[0]?.event_role).toBe('judge');
   });
 });

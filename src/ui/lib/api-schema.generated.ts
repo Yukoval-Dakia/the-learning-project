@@ -21365,6 +21365,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -21390,6 +21392,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -21429,6 +21433,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -21472,6 +21478,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -21493,6 +21501,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -21514,6 +21524,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -21535,6 +21547,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -21556,6 +21570,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -21577,6 +21593,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -21599,6 +21617,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -21621,6 +21641,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -21643,6 +21665,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -21664,6 +21688,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -21685,6 +21711,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -21713,6 +21741,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -21740,6 +21770,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -21768,6 +21800,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -21798,6 +21832,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -21847,6 +21883,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -22325,6 +22363,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -22402,6 +22442,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -22427,6 +22469,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -22466,6 +22510,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -22509,6 +22555,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -22530,6 +22578,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -22551,6 +22601,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -22572,6 +22624,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -22593,6 +22647,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -22614,6 +22670,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -22636,6 +22694,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -22658,6 +22718,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -22680,6 +22742,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -22701,6 +22765,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -22722,6 +22788,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -22750,6 +22818,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -22777,6 +22847,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -22805,6 +22877,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -22835,6 +22909,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -22884,6 +22960,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";
@@ -23362,6 +23440,8 @@ export interface operations {
                                 cooldown_key?: string;
                                 /** @default [] */
                                 evidence_refs: {
+                                    /** @enum {string} */
+                                    event_role?: "judge" | "user_cause";
                                     id: string;
                                     /** @enum {string} */
                                     kind: "event" | "question" | "knowledge" | "artifact" | "record";

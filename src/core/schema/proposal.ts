@@ -261,6 +261,9 @@ export function kindStrength(kind: AiProposalKindT): AiProposalStrength {
 export const ProposalEvidenceRef = z.object({
   kind: z.enum(['event', 'question', 'knowledge', 'artifact', 'record']),
   id: z.string().min(1),
+  // YUK-1019 — kind='event' 的可选 action 角色细分：tally 证据里 user_cause
+  // 与 judge event 混排，不带 role 时 reviewer 得回查 event 行才能分辨。
+  event_role: z.enum(['judge', 'user_cause']).optional(),
 });
 export type ProposalEvidenceRefT = z.infer<typeof ProposalEvidenceRef>;
 
