@@ -121,11 +121,13 @@ describe('task prompt definitions', () => {
         // Current policy/materialization tests replace migration-only identity for evolved tasks.
         // CauseCategoryProposeTask postdates the oracle entirely (YUK-1016) — no
         // pre-refactor hash exists to pin against.
+        // SessionSummaryTask evolved in YUK-1018 (category_label guidance for misc_ causes).
         if (
           task === 'CopilotTask' ||
           task === 'QuizVerifyTask' ||
           task === 'NoteGenerateTask' ||
-          task === 'CauseCategoryProposeTask'
+          task === 'CauseCategoryProposeTask' ||
+          task === 'SessionSummaryTask'
         ) {
           continue;
         }
