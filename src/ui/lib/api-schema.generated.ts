@@ -16454,6 +16454,7 @@ export interface operations {
                             cause: {
                                 confidence: number | null;
                                 primary_category: string;
+                                primary_label: string | null;
                                 secondary_categories: string[];
                                 /** @enum {string} */
                                 source: "agent" | "user";
@@ -16494,6 +16495,7 @@ export interface operations {
                             cause: {
                                 confidence: number | null;
                                 primary_category: string;
+                                primary_label: string | null;
                                 secondary_categories: string[];
                                 /** @enum {string} */
                                 source: "agent" | "user";
@@ -24679,6 +24681,7 @@ export interface operations {
                             cause?: {
                                 confidence: number | null;
                                 primary: string;
+                                primary_label: string | null;
                             } | null;
                             created_at_sec: number;
                             duration_ms: number | null;
@@ -28679,6 +28682,7 @@ export interface operations {
                         };
                         top_causes: {
                             category: string;
+                            category_label: string | null;
                             count: number;
                         }[];
                         top_knowledge: {

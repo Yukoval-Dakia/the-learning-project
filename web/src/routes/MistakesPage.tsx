@@ -43,6 +43,8 @@ import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
 interface MistakeCause {
   source: 'user' | 'agent';
   primary_category: string;
+  /** YUK-1018 — misc_ id 的显示回填（misconception title）；非 misc → null。 */
+  primary_label?: string | null;
   secondary_categories?: string[] | null;
   user_notes: string | null;
   confidence: number | null;
@@ -121,6 +123,7 @@ function attrOf(m: MistakeRow): 'ai' | 'user' {
 function toCauseBadgeInput(cause: MistakeCause | null): {
   actor_kind: 'user' | 'agent';
   primary: CausePrimary | string;
+  primary_label?: string | null;
   secondary?: string[] | null;
   confidence?: number | null;
 } | null {
@@ -128,6 +131,7 @@ function toCauseBadgeInput(cause: MistakeCause | null): {
   return {
     actor_kind: cause.source === 'agent' ? 'agent' : 'user',
     primary: cause.primary_category,
+    primary_label: cause.primary_label ?? null,
     secondary: cause.secondary_categories ?? null,
     confidence: cause.confidence,
   };

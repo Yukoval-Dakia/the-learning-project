@@ -31,6 +31,7 @@ import { event, question } from '@/db/schema';
 import { type EnvelopedEvent, getEventById, getEventChain } from '@/kernel/events';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
+import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { getQuestionTimeline } from '@/kernel/read-models/question-activity';
 import { listLearningRecords } from '@/kernel/records/queries';
 import { TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
@@ -95,6 +96,9 @@ const CauseSchema = z.object({
   source: z.enum(['user', 'agent']),
   event_id: z.string(),
   primary_category: z.string(),
+  // YUK-1018 — misc_ id 的显示回填（active misconception title）；非 misc /
+  // unresolvable → null。
+  primary_label: z.string().nullable(),
   secondary_categories: z.array(z.string()),
   analysis_md: z.string().nullable(),
   user_notes: z.string().nullable(),
@@ -113,6 +117,8 @@ const TimelineEntrySchema = z.discriminatedUnion('kind', [
       .object({
         primary: z.string(),
         confidence: z.number().nullable(),
+        // YUK-1018 — misc_ id 显示回填（与 read-model 字段同名直通）。
+        primary_label: z.string().nullable(),
       })
       .nullable(),
   }),
@@ -1109,10 +1115,15 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   const failure =
     activity.outcome === 'failure' ? await getFailureAttemptById(ctx.db, activity.event_id) : null;
   const cause = failure ? effectiveCauseForFailureAttempt(failure) : null;
-  const records = await listLearningRecords(ctx.db, {
-    attempt_event_id: activity.event_id,
-    limit: 25,
-  });
+  // YUK-1018 — misc_ primary id 的 title 回填；与 records 读并行。
+  const [miscLabels, records] = await Promise.all([
+    cause ? resolveMiscCauseLabels(ctx.db, [cause.primary_category]) : Promise.resolve(null),
+    listLearningRecords(ctx.db, {
+      attempt_event_id: activity.event_id,
+      limit: 25,
+    }),
+  ]);
+  const causeLabel = cause ? (miscLabels?.get(cause.primary_category) ?? null) : null;
 
   return OutputSchema.parse({
     reader_version: 2,
@@ -1139,6 +1150,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
           source: cause.source,
           event_id: cause.event_id,
           primary_category: cause.primary_category,
+          primary_label: causeLabel,
           secondary_categories: cause.secondary_categories,
           analysis_md: cause.analysis_md,
           user_notes: cause.user_notes,
@@ -1155,7 +1167,11 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
             outcome: entry.outcome,
             duration_ms: entry.duration_ms,
             cause: entry.cause
-              ? { primary: entry.cause.primary, confidence: entry.cause.confidence }
+              ? {
+                  primary: entry.cause.primary,
+                  confidence: entry.cause.confidence,
+                  primary_label: entry.cause.primary_label,
+                }
               : null,
           }
         : {

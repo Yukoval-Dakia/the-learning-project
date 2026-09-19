@@ -14,6 +14,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event as eventTable } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { batchResolveAncestorIds } from '@/kernel/read-models/knowledge-tree';
 // YUK-598 stale-const 收口（v2 §9①）：defaultSubjectProfile 冻结常量 → 活 registry
 // resolveSubjectProfile()（每次调用求值，owner 编辑 general 即跟随）。
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
@@ -194,9 +195,17 @@ export async function runAttributionAndWriteJudgeEvent(
     // CauseCategoryDeclaration 追加到声明词表之后（序：profile 声明 → overlay →
     // misc 候选）。draft / archived 行在 reader 里就被滤掉。
     effectiveProfile = await withActiveCauseCategoryOverlays(params.db, profile);
+    // YUK-1018 (454-A 邻近召回) — misc 召回范围 = attempt 直挂 KC ∪ 祖先链
+    // （就近先序）。祖先方向语义合法：`caused_by` 父节点的误区覆盖子题；后代
+    // 方向裁掉——child misc 是窄于 attempt 主题的次粒度信号，不是本题因。单次
+    // 全树加载（同 batchResolveEffectiveDomains 模式，单用户百级节点规模）；
+    // 候选膨胀仍被 MISCONCEPTION_FEED_CAP=50 + K_MAX=15 双闸收住。
+    const directKcIds = params.input.knowledge_context.map((k) => k.id);
+    const ancestorMap = await batchResolveAncestorIds(params.db, directKcIds);
+    const miscScopeKcIds = [...new Set([...directKcIds, ...[...ancestorMap.values()].flat()])];
     const miscSources: MisconceptionCauseSource[] = await listActiveMisconceptionsForKcs(
       params.db,
-      params.input.knowledge_context.map((k) => k.id),
+      miscScopeKcIds,
     );
     miscCandidates = miscSources.map(misconceptionToCandidate);
     const candidates = retrieveCauseCandidates(params.input, effectiveProfile, miscCandidates);

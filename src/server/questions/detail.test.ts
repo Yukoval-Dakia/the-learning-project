@@ -5,7 +5,14 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { newId } from '@/core/ids';
-import { artifact, event, knowledge, material_fsrs_state, question } from '@/db/schema';
+import {
+  artifact,
+  event,
+  knowledge,
+  material_fsrs_state,
+  misconception,
+  question,
+} from '@/db/schema';
 import { upsertMasteryState } from '@/server/mastery/state';
 import { loadQuestionDetail } from '@/server/questions/detail';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -310,6 +317,138 @@ describe('loadQuestionDetail', () => {
     const attempt = res?.timeline.find((t) => t.kind === 'attempt');
     expect(attempt?.outcome).toBe('failure');
     expect(Number.isInteger(attempt?.created_at_sec)).toBe(true);
+  });
+
+  // YUK-1018 — misc_ primary id 的显示回填：timeline cause.primary_label 带出
+  // active misconception title；unresolvable → null；原始 id 保留在 primary。
+  it('timeline cause carries primary_label for misc_ ids, raw id preserved', async () => {
+    const k1 = newId();
+    await seedKnowledge(k1);
+    const qid = await seedQuestion({ knowledge_ids: [k1] });
+    const attemptId = await seedAttempt({
+      question_id: qid,
+      knowledge_id: k1,
+      outcome: 'failure',
+    });
+    const now = new Date();
+    await testDb()
+      .insert(misconception)
+      .values({
+        id: 'misc_timeline_01',
+        title: '把「之」当普通助词',
+        reasoning: null,
+        weight: 1,
+        status: 'active',
+        source: 'soft',
+        seen: 2,
+        evidence: [],
+        created_by: { by: 'system' },
+        proposed_by_ai: true,
+        created_at: now,
+        updated_at: now,
+        archived_at: null,
+      });
+    await testDb()
+      .insert(event)
+      .values({
+        id: newId(),
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'system',
+        action: 'judge',
+        subject_kind: 'event',
+        subject_id: attemptId,
+        outcome: null,
+        payload: {
+          cause: {
+            primary_category: 'misc_timeline_01',
+            secondary_categories: [],
+            confidence: 0.8,
+            analysis_md: 'misc 命中',
+          },
+        },
+        caused_by_event_id: attemptId,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date(NOW.getTime() + 1000),
+      });
+
+    const res = await loadQuestionDetail(testDb(), qid);
+    const attempt = res?.timeline.find((t) => t.kind === 'attempt');
+    expect(attempt?.cause?.primary).toBe('misc_timeline_01');
+    expect(attempt?.cause?.primary_label).toBe('把「之」当普通助词');
+  });
+
+  it('timeline cause primary_label is null for vocab ids and unresolvable misc ids', async () => {
+    const k1 = newId();
+    await seedKnowledge(k1);
+    const qid = await seedQuestion({ knowledge_ids: [k1] });
+    const attemptA = await seedAttempt({
+      question_id: qid,
+      knowledge_id: k1,
+      outcome: 'failure',
+      created_at: NOW,
+    });
+    const attemptB = await seedAttempt({
+      question_id: qid,
+      knowledge_id: k1,
+      outcome: 'failure',
+      created_at: new Date(NOW.getTime() + 2000),
+    });
+    const judgeBase = {
+      session_id: null,
+      actor_kind: 'agent' as const,
+      actor_ref: 'system',
+      action: 'judge' as const,
+      outcome: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+    };
+    await testDb()
+      .insert(event)
+      .values([
+        {
+          ...judgeBase,
+          id: newId(),
+          subject_kind: 'event',
+          subject_id: attemptA,
+          payload: {
+            cause: {
+              primary_category: 'concept',
+              secondary_categories: [],
+              confidence: 0.9,
+              analysis_md: 'vocab cause',
+            },
+          },
+          caused_by_event_id: attemptA,
+          created_at: new Date(NOW.getTime() + 3000),
+        },
+        {
+          ...judgeBase,
+          id: newId(),
+          subject_kind: 'event',
+          subject_id: attemptB,
+          payload: {
+            cause: {
+              primary_category: 'misc_gone_01',
+              secondary_categories: [],
+              confidence: 0.7,
+              analysis_md: 'misc id with no live node',
+            },
+          },
+          caused_by_event_id: attemptB,
+          created_at: new Date(NOW.getTime() + 4000),
+        },
+      ]);
+
+    const res = await loadQuestionDetail(testDb(), qid);
+    const byEvent = new Map(res?.timeline.map((t) => [t.event_id, t]));
+    // vocab id → label null（profile 词表 label 不走 misc 回填）。
+    expect(byEvent.get(attemptA)?.cause?.primary).toBe('concept');
+    expect(byEvent.get(attemptA)?.cause?.primary_label).toBeNull();
+    // unresolvable misc → label null, id preserved。
+    expect(byEvent.get(attemptB)?.cause?.primary).toBe('misc_gone_01');
+    expect(byEvent.get(attemptB)?.cause?.primary_label).toBeNull();
   });
 
   it('shows a draft question (detail does not exclude drafts)', async () => {

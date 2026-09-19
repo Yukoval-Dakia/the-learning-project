@@ -19,6 +19,7 @@ import {
 import { db } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
+import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { buildCalendarReportWindow, localDateKey, resolveReportTimeZone } from './weekly-window';
 
 const MAX_DAYS = 90;
@@ -93,10 +94,16 @@ export async function GET(req: Request): Promise<Response> {
         if (cat) causeCounts.set(cat, (causeCounts.get(cat) ?? 0) + 1);
       }
     }
+    // YUK-1018 — misc_ category id 的显示回填（active misconception title）。
+    const topCauseLabels = await resolveMiscCauseLabels(db, [...causeCounts.keys()]);
     const topCauses = [...causeCounts.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, 6)
-      .map(([category, count]) => ({ category, count }));
+      .map(([category, count]) => ({
+        category,
+        category_label: topCauseLabels.get(category) ?? null,
+        count,
+      }));
 
     // 5) Rating distribution from review event payloads.
     const ratingCounts: Record<string, number> = { again: 0, hard: 0, good: 0, easy: 0 };

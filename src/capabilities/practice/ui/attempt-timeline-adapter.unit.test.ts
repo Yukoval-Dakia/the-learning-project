@@ -12,7 +12,7 @@ const attempt = (o: Partial<QFullTimelineEntry> = {}): QFullTimelineEntry => ({
   created_at_sec: 1000,
   outcome: 'failure',
   duration_ms: 4200,
-  cause: { primary: '虚词误判', confidence: 0.7 },
+  cause: { primary: 'misc_deadbeef', primary_label: '虚词误判', confidence: 0.7 },
   ...o,
 });
 
@@ -35,7 +35,7 @@ describe('toAttemptTimelineEvents', () => {
       created_at_sec: 1000,
       outcome: 'failure',
       duration_ms: 4200,
-      cause: { primary: '虚词误判', confidence: 0.7 },
+      cause: { primary: 'misc_deadbeef', primary_label: '虚词误判', confidence: 0.7 },
     });
   });
 

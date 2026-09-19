@@ -14,6 +14,7 @@ import { getFailureAttempts } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { event, knowledge, learning_session, question } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
+import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
@@ -126,10 +127,16 @@ export async function runSessionSummary(
       if (cat) causeCounts.set(cat, (causeCounts.get(cat) ?? 0) + 1);
     }
   }
+  // YUK-1018 — misc_ category id 的 title 回填，让 summary LLM 写可读结语文案。
+  const topCauseLabels = await resolveMiscCauseLabels(db, [...causeCounts.keys()]);
   const topCauses = [...causeCounts.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, 4)
-    .map(([category, count]) => ({ category, count }));
+    .map(([category, count]) => ({
+      category,
+      category_label: topCauseLabels.get(category) ?? null,
+      count,
+    }));
 
   // Notable attempts (the again/hard ones, up to NOTABLE_LIMIT) — join question.
   const notable = reviewEvents

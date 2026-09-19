@@ -136,6 +136,9 @@ export const MistakeProjectionSchema = z.object({
     .object({
       source: z.enum(['agent', 'user']),
       primary_category: CauseCategory,
+      // YUK-1018 — misc_ id 的显示回填（active misconception title）；非 misc /
+      // unresolvable → null，渲染层回退 primary_category 裸 id。
+      primary_label: z.string().nullable(),
       secondary_categories: z.array(CauseCategory),
       user_notes: z.string().nullable(),
       confidence: z.number().min(0).max(1).nullable(),
