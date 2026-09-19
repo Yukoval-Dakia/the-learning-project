@@ -12,6 +12,7 @@ import type { Db } from '@/db/client';
 import { material_fsrs_state, mistake_variant, question } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { type FailureAttempt, getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 // P5.1 / YUK-143 — snippet cap + courtesy default sourced from budgets.ts.
 // Both are byte-unchanged from the prior file-local literals (160 / 20).
 import { MISTAKE_PROMPT_SNIPPET_MAX, TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
@@ -36,6 +37,9 @@ const InputSchema = z.object({
 const CauseSchema = z.object({
   source: z.enum(['user', 'agent']),
   primary_category: z.string(),
+  // YUK-1018 — misc_ id 的显示回填（active misconception title）；非 misc /
+  // unresolvable → null。
+  primary_label: z.string().nullable(),
   analysis_md: z.string().nullable(),
   user_notes: z.string().nullable(),
   confidence: z.number().nullable(),
@@ -242,6 +246,12 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     ? await loadVariants(ctx.db, finalQids)
     : new Map<string, Array<{ id: string; status: string }>>();
 
+  // YUK-1018 — misc_ primary id 的 title 回填（批量一次，不进循环）。
+  const miscLabels = await resolveMiscCauseLabels(
+    ctx.db,
+    final.map((x) => x.cause?.primary_category).filter((id): id is string => !!id),
+  );
+
   const now = Date.now();
   const mistakes = final.map(({ fa, cause }) => {
     const promptMd = promptMap.get(fa.question_id) ?? '';
@@ -255,6 +265,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
         ? {
             source: cause.source,
             primary_category: cause.primary_category,
+            primary_label: miscLabels.get(cause.primary_category) ?? null,
             analysis_md: cause.analysis_md,
             user_notes: cause.user_notes,
             confidence: cause.confidence,

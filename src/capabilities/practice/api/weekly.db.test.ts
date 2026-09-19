@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { event } from '@/db/schema';
+import { event, misconception } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { ReviewWeeklyResponseSchema } from './review-planning-contracts';
 import { GET } from './weekly';
@@ -113,9 +113,49 @@ describe('GET /api/review/weekly', () => {
     const res = await GET(new Request('http://localhost/api/review/weekly'));
     const json = await res.json();
     expect(() => ReviewWeeklyResponseSchema.parse(json)).not.toThrow();
-    const body = json as { top_causes: Array<{ category: string; count: number }> };
+    const body = json as {
+      top_causes: Array<{ category: string; category_label: string | null; count: number }>;
+    };
 
-    expect(body.top_causes).toEqual([{ category: 'memory', count: 1 }]);
+    expect(body.top_causes).toEqual([
+      { category: 'memory', category_label: null, count: 1 },
+    ]);
+  });
+
+  // YUK-1018 — misc_ category 的显示回填：active misconception title 进
+  // category_label，原始 id 保留在 category。
+  it('misc_ top cause carries category_label with the misconception title', async () => {
+    const now = new Date();
+    await testDb()
+      .insert(misconception)
+      .values({
+        id: 'misc_weekly_01',
+        title: '把「之」当普通助词',
+        reasoning: null,
+        weight: 1,
+        status: 'active',
+        source: 'soft',
+        seen: 3,
+        evidence: [],
+        created_by: { by: 'system' },
+        proposed_by_ai: true,
+        created_at: now,
+        updated_at: now,
+        archived_at: null,
+      });
+    await seedFailureWithCauses({
+      attemptId: 'attempt_weekly_misc',
+      questionId: 'q_misc',
+      judgeCategory: 'misc_weekly_01',
+    });
+
+    const res = await GET(new Request('http://localhost/api/review/weekly'));
+    const body = (await res.json()) as {
+      top_causes: Array<{ category: string; category_label: string | null; count: number }>;
+    };
+    expect(body.top_causes).toEqual([
+      { category: 'misc_weekly_01', category_label: '把「之」当普通助词', count: 1 },
+    ]);
   });
 
   it('includes the learner current local date and reports the applied time zone', async () => {

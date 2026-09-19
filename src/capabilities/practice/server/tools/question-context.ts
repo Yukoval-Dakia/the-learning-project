@@ -30,6 +30,7 @@ import {
 } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { getQuestionTimeline, getRecentReviewEvents } from '@/kernel/read-models/question-activity';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 
@@ -326,6 +327,8 @@ const GetReviewDueOutputSchema = z.object({
         .object({
           attempt_event_id: z.string(),
           cause: z.string().nullable(),
+          // YUK-1018 — misc_ cause id 的显示回填；非 misc / unresolvable → null。
+          cause_label: z.string().nullable(),
           created_at: z.string(),
         })
         .optional(),
@@ -661,6 +664,14 @@ export async function executeGetReviewDue(
       : [];
   const qById = new Map(newQuestions.map((row) => [row.id, row]));
 
+  // YUK-1018 — misc_ cause id 的 title 回填（批量一次，不进循环）。
+  const latestMistakeLabels = await resolveMiscCauseLabels(
+    ctx.db,
+    [...latestNeverReviewed.values()]
+      .map((f) => effectiveCauseForFailureAttempt(f)?.primary_category)
+      .filter((id): id is string => !!id),
+  );
+
   const rows: GetReviewDueOutput['rows'] = [];
   for (const qid of newQuestionIds) {
     const q = qById.get(qid);
@@ -680,6 +691,7 @@ export async function executeGetReviewDue(
       latest_mistake: {
         attempt_event_id: failure.attempt_event_id,
         cause: cause?.primary_category ?? null,
+        cause_label: cause ? (latestMistakeLabels.get(cause.primary_category) ?? null) : null,
         created_at: failure.created_at.toISOString(),
       },
     });

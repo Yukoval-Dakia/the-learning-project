@@ -205,7 +205,12 @@ export const QuestionDetailResponseSchema = z
         outcome: z.string(),
         duration_ms: z.number().nullable(),
         cause: z
-          .object({ primary: z.string(), confidence: z.number().nullable() })
+          .object({
+            primary: z.string(),
+            confidence: z.number().nullable(),
+            // YUK-1018 — misc_ id 显示回填（active misconception title）。
+            primary_label: z.string().nullable(),
+          })
           .nullable()
           .optional(),
         fsrs_rating: z.enum(['again', 'hard', 'good']).optional(),

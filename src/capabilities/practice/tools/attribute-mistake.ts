@@ -6,6 +6,7 @@ import {
 import { createFailureLearning } from '@/capabilities/practice/server/failure-learning';
 import { makePracticeTaskRunFn } from '@/capabilities/practice/server/task-runtime';
 import type { Db } from '@/db/client';
+import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import type { DomainTool, ToolContext } from './types';
 
 const TEXT_EXCERPT_MAX = 180;
@@ -25,6 +26,9 @@ const AttributeMistakeOutputSchema = z.object({
   cause: z
     .object({
       primary_category: z.string(),
+      // YUK-1018 — misc_ id 的显示回填（active misconception title）；非 misc /
+      // unresolvable → null。
+      primary_label: z.string().nullable(),
       secondary_categories: z.array(z.string()),
       confidence: z.number().nullable(),
       analysis_excerpt: z.string(),
@@ -36,15 +40,18 @@ const AttributeMistakeOutputSchema = z.object({
 type AttributeMistakeInput = z.infer<typeof AttributeMistakeInputSchema>;
 type AttributeMistakeOutput = z.infer<typeof AttributeMistakeOutputSchema>;
 
-function judgeOutput(
+async function judgeOutput(
+  db: Db,
   status: 'written' | 'skipped:existing_judge',
   judge: NonNullable<Awaited<ReturnType<typeof getJudgeForAttempt>>>,
-): AttributeMistakeOutput {
+): Promise<AttributeMistakeOutput> {
+  const labels = await resolveMiscCauseLabels(db, [judge.cause.primary_category]);
   return {
     status,
     judge_event_id: judge.judge_event_id,
     cause: {
       primary_category: judge.cause.primary_category,
+      primary_label: labels.get(judge.cause.primary_category) ?? null,
       secondary_categories: judge.cause.secondary_categories ?? [],
       confidence: judge.cause.confidence ?? null,
       analysis_excerpt: excerpt(judge.cause.analysis_md),
@@ -94,7 +101,11 @@ async function attributeMistakeExecute(
   if (!judge) {
     return { status: 'failed', reason: 'AttributionTask completed without writing a judge event' };
   }
-  return judgeOutput(result.status === 'written' ? 'written' : 'skipped:existing_judge', judge);
+  return judgeOutput(
+    ctx.db,
+    result.status === 'written' ? 'written' : 'skipped:existing_judge',
+    judge,
+  );
 }
 
 export const attributeMistakeTool: DomainTool<AttributeMistakeInput, AttributeMistakeOutput> = {
@@ -107,7 +118,8 @@ export const attributeMistakeTool: DomainTool<AttributeMistakeInput, AttributeMi
   costClass: 'cheap_llm',
   execute: attributeMistakeExecute,
   summarize(input, output) {
-    return `attribute ${input.attempt_event_id.slice(0, 8)}: ${output.status}${output.cause ? ` (${output.cause.primary_category})` : ''}`;
+    const causeName = output.cause?.primary_label ?? output.cause?.primary_category;
+    return `attribute ${input.attempt_event_id.slice(0, 8)}: ${output.status}${causeName ? ` (${causeName})` : ''}`;
   },
   mirrorEvent: 'when_causal',
 };

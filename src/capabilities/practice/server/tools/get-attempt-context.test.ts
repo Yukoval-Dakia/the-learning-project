@@ -1928,6 +1928,7 @@ describe('getAttemptContextTool', () => {
           source: 'agent',
           event_id: 'judge_1',
           primary_category: 'memory',
+          primary_label: null,
           secondary_categories: [],
           analysis_md: null,
           user_notes: null,

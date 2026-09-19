@@ -113,6 +113,9 @@ export const ReviewWeeklyResponseSchema = z.object({
   top_causes: z.array(
     z.object({
       category: CauseCategory,
+      // YUK-1018 — misc_ category id 的显示回填（active misconception title）；
+      // 非 misc / unresolvable → null，渲染层回退 category 裸 id。
+      category_label: z.string().nullable(),
       count: z.number().int().positive(),
     }),
   ),

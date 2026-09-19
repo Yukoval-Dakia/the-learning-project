@@ -22,6 +22,7 @@
 // the vocab source is SubjectProfile.causeCategories (an in-code prior), not a
 // Postgres table.
 
+import { MISC_CAUSE_ID_PREFIX } from '@/kernel/read-models/misc-cause-labels';
 import type { SubjectProfile } from '@/subjects/profile';
 import type { AttributionCandidate, AttributionInput } from './attribution';
 
@@ -46,7 +47,7 @@ export interface MisconceptionCauseSource {
 }
 
 /** Candidate-id namespace for promoted misconception nodes. */
-export const MISCONCEPTION_CANDIDATE_PREFIX = 'misc_';
+export const MISCONCEPTION_CANDIDATE_PREFIX = MISC_CAUSE_ID_PREFIX;
 
 /**
  * Map a promoted misconception node onto the shared candidate shape. The row id

@@ -2,7 +2,14 @@
 
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { event, knowledge, learning_record, question, source_asset } from '@/db/schema';
+import {
+  event,
+  knowledge,
+  learning_record,
+  misconception,
+  question,
+  source_asset,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { CreateMistakeResponseSchema, MistakeListResponseSchema } from './contracts';
@@ -597,6 +604,7 @@ describe('GET /api/mistakes', () => {
     expect(body.rows[0].cause).toEqual({
       source: 'agent',
       primary_category: 'concept',
+      primary_label: null,
       secondary_categories: [],
       user_notes: null,
       confidence: 0.9,
@@ -740,10 +748,69 @@ describe('GET /api/mistakes', () => {
     expect(body.rows[0].cause).toEqual({
       source: 'user',
       primary_category: 'memory',
+      primary_label: null,
       secondary_categories: [],
       user_notes: '记错了',
       confidence: null,
     });
+  });
+
+  // YUK-1018 — misc_ primary id 的显示回填：active misconception title 进
+  // primary_label，原始 id 保留在 primary_category。
+  it('misc_ primary_category carries primary_label resolved from the misconception title', async () => {
+    const now = new Date();
+    await testDb()
+      .insert(misconception)
+      .values({
+        id: 'misc_mistakes_01',
+        title: '把「之」当普通助词',
+        reasoning: null,
+        weight: 1,
+        status: 'active',
+        source: 'soft',
+        seen: 2,
+        evidence: [],
+        created_by: { by: 'system' },
+        proposed_by_ai: true,
+        created_at: now,
+        updated_at: now,
+        archived_at: null,
+      });
+    await seedQuestion('q1', 'p1');
+    await seedAttempt({ id: 'a1', question_id: 'q1' });
+    await seedJudge({
+      id: 'j1',
+      attempt_event_id: 'a1',
+      primary_category: 'misc_mistakes_01',
+    });
+
+    const res = await getMistakes();
+    const body = (await res.json()) as {
+      rows: Array<{
+        cause: { primary_category: string; primary_label: string | null } | null;
+      }>;
+    };
+    expect(body.rows[0].cause?.primary_category).toBe('misc_mistakes_01');
+    expect(body.rows[0].cause?.primary_label).toBe('把「之」当普通助词');
+  });
+
+  it('an unresolvable misc_ primary_category falls back to null primary_label', async () => {
+    await seedQuestion('q1', 'p1');
+    await seedAttempt({ id: 'a1', question_id: 'q1' });
+    await seedJudge({
+      id: 'j1',
+      attempt_event_id: 'a1',
+      primary_category: 'misc_no_such_node',
+    });
+
+    const res = await getMistakes();
+    const body = (await res.json()) as {
+      rows: Array<{
+        cause: { primary_category: string; primary_label: string | null } | null;
+      }>;
+    };
+    expect(body.rows[0].cause?.primary_category).toBe('misc_no_such_node');
+    expect(body.rows[0].cause?.primary_label).toBeNull();
   });
 
   it('filters by question_id', async () => {

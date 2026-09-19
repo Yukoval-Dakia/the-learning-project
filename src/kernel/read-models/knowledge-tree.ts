@@ -96,6 +96,37 @@ export async function batchResolveEffectiveDomains(
 }
 
 /**
+ * YUK-1018 — batch ancestor-id resolver (chain-collecting twin of
+ * {@link batchResolveEffectiveDomains}). Loads the full tree ONCE (archived
+ * inclusive — the walk passes through archived intermediates exactly like the
+ * domain climb) and returns each id's ancestor chain (self excluded, nearest
+ * first), capped at MAX_DEPTH so cycles exhaust the bound instead of looping.
+ * Missing/dangling nodes resolve to an empty chain.
+ */
+export async function batchResolveAncestorIds(
+  db: Db | Tx,
+  nodeIds: string[],
+): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  const ids = Array.from(new Set(nodeIds));
+  if (ids.length === 0) return out;
+  const rows = await db
+    .select({ id: knowledge.id, parent_id: knowledge.parent_id })
+    .from(knowledge);
+  const parentById = new Map(rows.map((r) => [r.id, r.parent_id]));
+  for (const id of ids) {
+    const chain: string[] = [];
+    let curId: string | null = parentById.get(id) ?? null;
+    for (let depth = 0; curId !== null && depth < MAX_DEPTH; depth++) {
+      chain.push(curId);
+      curId = parentById.get(curId) ?? null;
+    }
+    out.set(id, chain);
+  }
+  return out;
+}
+
+/**
  * Forward map: registered subject profile id OR an observed raw domain → the set of active
  * knowledge node ids whose effective domain matches that identity. This is the derived-axis primitive
  * behind `GET /api/questions?subject=` (YUK-288): a question's subject is a

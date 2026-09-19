@@ -300,9 +300,11 @@ describe('runSessionSummary', () => {
     await runSessionSummary({ db, sessionId, runTaskFn });
 
     const input = runTaskFn.mock.calls[0][1] as {
-      top_causes: Array<{ category: string; count: number }>;
+      top_causes: Array<{ category: string; category_label: string | null; count: number }>;
     };
-    expect(input.top_causes).toEqual([{ category: 'memory', count: 1 }]);
+    expect(input.top_causes).toEqual([
+      { category: 'memory', category_label: null, count: 1 },
+    ]);
   });
 
   it('counts every failure cause for long sessions instead of truncating by question count', async () => {
@@ -329,8 +331,10 @@ describe('runSessionSummary', () => {
     await runSessionSummary({ db, sessionId, runTaskFn });
 
     const input = runTaskFn.mock.calls[0][1] as {
-      top_causes: Array<{ category: string; count: number }>;
+      top_causes: Array<{ category: string; category_label: string | null; count: number }>;
     };
-    expect(input.top_causes).toEqual([{ category: 'memory', count: 110 }]);
+    expect(input.top_causes).toEqual([
+      { category: 'memory', category_label: null, count: 110 },
+    ]);
   });
 });

@@ -11,6 +11,7 @@ import type { CauseSchemaT, FsrsStateSchemaT } from '@/core/schema/event/blocks'
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { filterActiveRows, newerEventRow, takeActiveRows } from '@/kernel/events';
+import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
@@ -113,7 +114,16 @@ export type QuestionTimelineEntry =
       created_at: Date;
       outcome: 'success' | 'failure' | 'partial';
       duration_ms: number | null;
-      cause: { primary: string; confidence: number | null } | null;
+      cause: {
+        primary: string;
+        confidence: number | null;
+        /**
+         * YUK-1018 — `misc_` cause id 的显示回填（active misconception title）。
+         * 仅 misc id 有值；非 misc 词表 id 的 label 归 profile 声明管（展示层
+         * 现状即渲染裸 id）。unresolvable misc → null，展示层回退 primary。
+         */
+        primary_label: string | null;
+      } | null;
     }
   | {
       kind: 'review';
@@ -189,6 +199,14 @@ export async function getQuestionTimeline(
     }
   }
 
+  // YUK-1018 — misc_ primary id 的 title 回填（一次批量解析，不进循环）。
+  const miscLabels = await resolveMiscCauseLabels(
+    db,
+    [...judgeByAttempt.values()].map(
+      (row) => (row.payload as { cause: CauseSchemaT }).cause.primary_category,
+    ),
+  );
+
   return activeRows.map((row): QuestionTimelineEntry => {
     if (row.action === 'attempt') {
       const payload = row.payload as {
@@ -198,12 +216,17 @@ export async function getQuestionTimeline(
         referenced_knowledge_ids: string[];
       };
       const judge = judgeByAttempt.get(row.id);
-      let cause: { primary: string; confidence: number | null } | null = null;
+      let cause: {
+        primary: string;
+        confidence: number | null;
+        primary_label: string | null;
+      } | null = null;
       if (judge) {
         const jPayload = judge.payload as { cause: CauseSchemaT };
         cause = {
           primary: jPayload.cause.primary_category,
           confidence: jPayload.cause.confidence ?? null,
+          primary_label: miscLabels.get(jPayload.cause.primary_category) ?? null,
         };
       }
       return {

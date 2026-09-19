@@ -117,7 +117,12 @@ export interface QuestionDetailTimelineEntry {
   outcome: string;
   duration_ms: number | null;
   // attempt-only
-  cause?: { primary: string; confidence: number | null } | null;
+  cause?: {
+    primary: string;
+    confidence: number | null;
+    // YUK-1018 — misc_ id 显示回填（active misconception title）；非 misc → null。
+    primary_label: string | null;
+  } | null;
   // review-only
   fsrs_rating?: 'again' | 'hard' | 'good';
 }

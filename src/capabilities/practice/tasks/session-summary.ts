@@ -37,7 +37,7 @@ export interface SessionSummaryInput {
   duration_min: number | null;
   total_reviewed: number;
   ratings: { again: number; hard: number; good: number; easy: number };
-  top_causes: { category: string; count: number }[];
+  top_causes: { category: string; category_label: string | null; count: number }[];
   top_knowledge: { id: string; count: number }[];
   notable_attempts: {
     prompt_md: string;

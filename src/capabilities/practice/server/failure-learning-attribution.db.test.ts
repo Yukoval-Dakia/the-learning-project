@@ -2,7 +2,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getTaskSystemPrompt } from '@/ai/task-prompts';
-import { cost_ledger, event, misconception, misconception_edge, question } from '@/db/schema';
+import { cost_ledger, event, knowledge, misconception, misconception_edge, question } from '@/db/schema';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { type AttributionInput, parseAttributionOutput } from '../tasks/attribution';
@@ -846,6 +846,94 @@ describe('runAttributionAndWriteJudgeEvent — misconception candidates (YUK-101
     expect(payload.cause.secondary_categories).toEqual(['concept']);
     // Misc candidates declare no meta_cause_prior → honest null.
     expect(payload.cause.meta_cause).toBeNull();
+  });
+
+  // YUK-1018 — 邻近召回：misc caused_by attempt KC 的祖先也应进候选（父概念
+  // 误区覆盖子题）；后代方向裁掉（child misc ≠ parent attempt 的因）。
+  it('a misc caused_by an ANCESTOR of the attempt KC joins the candidates', async () => {
+    const db = testDb();
+    const now = new Date();
+    const kcBase = {
+      merged_from: [] as string[],
+      proposed_by_ai: false,
+      approval_status: 'approved' as const,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    };
+    await db.insert(knowledge).values([
+      { id: 'k_yuwen_root', name: '语文', domain: 'yuwen', parent_id: null, ...kcBase },
+      { id: 'k_anci', name: '虚词', domain: null, parent_id: 'k_yuwen_root', ...kcBase },
+    ]);
+    const attemptId = 'attempt_misc_ancestor';
+    await insertAttemptEvent({ attemptId, questionId: 'q_misc_ancestor' });
+    // misc edged to the PARENT (k_yuwen_root), attempt references the CHILD (k_anci).
+    await seedMisconceptionForKc({
+      id: 'misc_ancestor',
+      kcId: 'k_yuwen_root',
+      title: '对文言句式整体误判',
+    });
+    const input = {
+      ...kcInput,
+      knowledge_context: [{ id: 'k_anci', name: '虚词', effective_domain: 'yuwen' }],
+    };
+    const spy = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
+      text: '{"primary_category":"concept","secondary_categories":[],"analysis_md":"why","confidence":0.8}',
+    }));
+    await runAttributionAndWriteJudgeEvent({
+      db,
+      attemptEventId: attemptId,
+      input,
+      runTaskFn: spy,
+      subjectProfile: resolveSubjectProfile('yuwen'),
+    });
+    const [, rerankInput] = spy.mock.calls[0];
+    const candidates = (rerankInput as { candidates: Array<{ id: string }> }).candidates;
+    expect(candidates.some((c) => c.id === 'misc_ancestor')).toBe(true);
+  });
+
+  it('a misc caused_by a DESCENDANT of the attempt KC does NOT join (child misc ≠ parent cause)', async () => {
+    const db = testDb();
+    const now = new Date();
+    const kcBase = {
+      merged_from: [] as string[],
+      proposed_by_ai: false,
+      approval_status: 'approved' as const,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    };
+    await db.insert(knowledge).values([
+      { id: 'k_yuwen_root', name: '语文', domain: 'yuwen', parent_id: null, ...kcBase },
+      { id: 'k_anci', name: '虚词', domain: null, parent_id: 'k_yuwen_root', ...kcBase },
+    ]);
+    const attemptId = 'attempt_misc_descendant';
+    await insertAttemptEvent({ attemptId, questionId: 'q_misc_descendant' });
+    // misc edged to the CHILD (k_anci), attempt references the PARENT (k_yuwen_root).
+    await seedMisconceptionForKc({
+      id: 'misc_descendant',
+      kcId: 'k_anci',
+      title: '虚词窄误区',
+    });
+    const input = {
+      ...kcInput,
+      knowledge_context: [
+        { id: 'k_yuwen_root', name: '语文', effective_domain: 'yuwen' },
+      ],
+    };
+    const spy = vi.fn(async (_kind: string, _input: unknown, _ctx: unknown) => ({
+      text: '{"primary_category":"concept","secondary_categories":[],"analysis_md":"why","confidence":0.8}',
+    }));
+    await runAttributionAndWriteJudgeEvent({
+      db,
+      attemptEventId: attemptId,
+      input,
+      runTaskFn: spy,
+      subjectProfile: resolveSubjectProfile('yuwen'),
+    });
+    const [, rerankInput] = spy.mock.calls[0];
+    const candidates = (rerankInput as { candidates: Array<{ id: string }> }).candidates;
+    expect(candidates.some((c) => c.id === 'misc_descendant')).toBe(false);
   });
 
   it('miscs on UNRELATED KCs do not leak into the candidate pool', async () => {

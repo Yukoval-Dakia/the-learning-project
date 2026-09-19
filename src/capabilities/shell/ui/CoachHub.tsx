@@ -44,7 +44,7 @@ interface WeeklyResponse {
   totals: { reviews: number; failures: number; cost_usd: number };
   ratings: { again: number; hard: number; good: number; easy: number };
   daily: Array<{ date: string; count: number; correct: number }>;
-  top_causes: Array<{ category: string; count: number }>;
+  top_causes: Array<{ category: string; category_label: string | null; count: number }>;
   top_knowledge: Array<{ id: string; name: string; failure_count: number }>;
 }
 
@@ -333,7 +333,10 @@ function CoachReport({ data, navigate }: { data: WeeklyResponse; navigate: (to: 
             <div className="cause-list">
               {top_causes.map((c) => (
                 <div key={c.category} className="cause-row">
-                  <span className="cause-name">{CAUSE_LABELS[c.category] ?? c.category}</span>
+                  <span className="cause-name">
+                    {/* YUK-1018 — misc_ id 显示 misconception title；词表 id 走 CAUSE_LABELS。 */}
+                    {c.category_label ?? CAUSE_LABELS[c.category] ?? c.category}
+                  </span>
                   <div className="cause-track">
                     <span
                       style={{ width: `${causeTotal > 0 ? (c.count / causeTotal) * 100 : 0}%` }}
