@@ -38,6 +38,7 @@ import {
   getProcessToolOperations,
 } from '@/kernel/tools/tool-operations';
 import type {
+  DomainTool,
   ProposalEffectContract,
   ToolCallerActor,
   ToolContext,
@@ -288,13 +289,376 @@ export interface BuildMcpServerOptions {
 }
 
 /**
+ * Options for {@link executeDomainToolCall} — the engine-neutral slice of
+ * {@link BuildMcpServerOptions}. The SDK wrapper supplies them from
+ * BuildMcpServerOptions; the pi AgentTool bridge (pi-tools.ts) supplies the
+ * same fields minus the SDK-only correlation hook — pi passes the loop's
+ * native toolCallId via `correlatedToolUseId` instead.
+ */
+export interface DomainToolCallOptions {
+  ctx: ToolContext;
+  /** `task_kind` recorded on each tool_call_log row (defaults to ctx.callerActor.ref). */
+  taskKind?: string;
+  /** SDK-correlation claim — see BuildMcpServerOptions.claimToolUseId. */
+  claimToolUseId?: (toolName: string, input: unknown) => string | undefined;
+  /**
+   * Explicit correlation id that wins over claimToolUseId. The pi adapter
+   * supplies the agentLoop's native toolCall.id, so the pi path needs no
+   * PreToolUse hook round-trip.
+   */
+  correlatedToolUseId?: string;
+  toolOperations?: ToolOperations;
+  cancellationSignals?: ReadonlyArray<{
+    signal: AbortSignal;
+    requestedBy: 'system' | 'user';
+  }>;
+  /** Optional per-call runtime gate. Return a reason string to block execution. */
+  beforeExecute?: (
+    tool: ToolExecutionGateInput,
+  ) => string | undefined | Promise<string | undefined>;
+  /** Begins the in-flight effect barrier immediately before DomainTool.execute. */
+  onExecuteStart?: (tool: ToolExecutionGateInput) => Promise<void> | void;
+  /** Releases the barrier only after execution, logging and event mirroring settle. */
+  onExecuteSettled?: (tool: ToolExecutionGateInput) => Promise<void> | void;
+  /** Observes the exact agent-visible result after input interception and output decoration. */
+  onResult?: (result: ToolExecutionResultObservation) => Promise<void> | void;
+  onToolComplete?: BuildMcpServerOptions['onToolComplete'];
+  interceptInput?: BuildMcpServerOptions['interceptInput'];
+}
+
+/**
+ * The engine-neutral DomainTool call pipeline — parse → beforeExecute gate →
+ * interceptInput → execute (+ safe-handoff) → output schema → summary →
+ * onResult/onToolComplete → tool_call_log → tool_use mirror → settle. Both
+ * engine bridges wrap this verbatim: the SDK path via `tool()` inside
+ * buildMcpServerFromRegistry, the pi path via `AgentTool.execute` in
+ * pi-tools.ts. Errors never throw — they encode into the returned text
+ * payload exactly as the MCP convention requires.
+ */
+export async function executeDomainToolCall(
+  dt: DomainTool<unknown, unknown>,
+  rawArgs: unknown,
+  opts: DomainToolCallOptions,
+): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  const { ctx } = opts;
+  const taskKind = opts.taskKind ?? ctx.callerActor.ref;
+  const startedAt = Date.now();
+  let output: unknown = null;
+  let errorReason: string | undefined;
+  let summary = '';
+  let parsedInput: unknown = rawArgs;
+  // P5.1 / YUK-143 — input the tool actually executes with (possibly
+  // limit-capped by the context-budget interceptor) + the truncation note
+  // to merge into the output. parsedInput stays the agent-visible request
+  // for logging / mirror payloads; execInput is what runs.
+  let execInput: unknown = rawArgs;
+  let truncationNote: object | null = null;
+  let executionStarted = false;
+  let safeOperation: ToolOperationRecord | undefined;
+  let safeToolOperations: ToolOperations | undefined;
+  let correlatedToolUseId: string | undefined;
+  const gateInput = { name: dt.name, effect: dt.effect };
+  const safeHandoffEnabled = dt.safeHandoff && dt.effect === 'read' && ctx.sessionId !== undefined;
+  let effectContract = proposalEffectContract(dt.name, dt.effect);
+
+  try {
+    parsedInput = dt.inputSchema.parse(rawArgs);
+    execInput = parsedInput;
+    correlatedToolUseId = opts.correlatedToolUseId ?? opts.claimToolUseId?.(dt.name, rawArgs);
+  } catch (err) {
+    errorReason = err instanceof Error ? err.message : String(err);
+  }
+
+  if (errorReason === undefined) {
+    try {
+      const gateReason = await opts.beforeExecute?.(gateInput);
+      if (typeof gateReason === 'string' && gateReason.length > 0) {
+        errorReason = gateReason;
+      }
+    } catch (err) {
+      errorReason = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  if (errorReason === undefined && opts.interceptInput) {
+    try {
+      const intercepted = opts.interceptInput({ name: dt.name, effect: dt.effect }, execInput);
+      // P5.1 / YUK-143 FIX 1 — budget-exhaustion soft-stop. When the
+      // interceptor signals exhaustion it returns a `softStop` reason
+      // instead of capped args; treat it exactly like a beforeExecute gate
+      // reason so the tool does NOT run (no limit:0 → no Zod throw) and the
+      // agent reads the string as the tool result. Graceful, never a throw.
+      if (typeof intercepted.softStop === 'string' && intercepted.softStop.length > 0) {
+        errorReason = intercepted.softStop;
+      } else {
+        execInput = intercepted.args;
+        truncationNote = intercepted.truncationNote ?? null;
+      }
+    } catch (err) {
+      errorReason = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  if (errorReason === undefined) {
+    try {
+      await opts.onExecuteStart?.(gateInput);
+      executionStarted = true;
+      const toolOperations = safeHandoffEnabled
+        ? (opts.toolOperations ?? getProcessToolOperations(ctx.db))
+        : undefined;
+      safeToolOperations = toolOperations;
+      const safeExecution = toolOperations
+        ? await executeSafeToolOperation({
+            toolOperations,
+            sessionId: ctx.sessionId as string,
+            taskRunId: ctx.taskRunId,
+            toolName: dt.name,
+            toolUseId: correlatedToolUseId,
+            input: execInput as Record<string, unknown>,
+            ...(ctx.providerSessionDeadlineAt !== undefined
+              ? { hardDeadlineAt: new Date(ctx.providerSessionDeadlineAt) }
+              : {}),
+            cancellationSignals: opts.cancellationSignals,
+            execute: async (signal) => {
+              const remoteOutput = await dt.execute({ ...ctx, signal }, execInput as never);
+              const parsed = dt.outputSchema.safeParse(remoteOutput);
+              if (parsed.success) return parsed.data;
+              const paths = parsed.error.issues
+                .map((issue) => issue.path.join('.') || '(root)')
+                .join(', ');
+              throw new Error(`output_schema_invalid: ${paths}`);
+            },
+          })
+        : undefined;
+      safeOperation = safeExecution?.record;
+      const rawOutput = safeOperation
+        ? safeOperation.status === 'succeeded'
+          ? safeOperation.result
+          : null
+        : await dt.execute(ctx, execInput as never);
+      if (safeOperation && safeOperation.status !== 'succeeded') {
+        errorReason = formatToolOperationFailure(safeOperation);
+      }
+      if (errorReason !== undefined) throw new Error(errorReason);
+      // YUK-862 / F3.1 — global output schema enforcement. Runs immediately
+      // after execute, before context-budget decoration, onResult, summarize,
+      // logging, mirroring, or SDK return.
+      const parseResult = dt.outputSchema.safeParse(rawOutput);
+      if (parseResult.success) {
+        output = parseResult.data;
+        effectContract = proposalEffectContract(dt.name, dt.effect, output);
+      } else {
+        // Redact actual values; only emit field paths for machine readability.
+        const paths = parseResult.error.issues
+          .map((iss) => iss.path.join('.') || '(root)')
+          .join(', ');
+        errorReason = `output_schema_invalid: ${paths}`;
+      }
+    } catch (err) {
+      errorReason = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  // P5.1 / YUK-143 + YUK-290 — surface warning/hard state inside the tool
+  // output so the agent can self-regulate before the hard cap intervenes.
+  // Object outputs gain a `context_budget` field; non-object outputs are
+  // wrapped. Only attaches on the happy path (no error).
+  if (errorReason === undefined && truncationNote) {
+    if (output !== null && typeof output === 'object' && !Array.isArray(output)) {
+      output = { ...(output as Record<string, unknown>), context_budget: truncationNote };
+    } else {
+      output = { value: output, context_budget: truncationNote };
+    }
+  }
+
+  try {
+    await opts.onResult?.({
+      ...gateInput,
+      ...(correlatedToolUseId ? { tool_use_id: correlatedToolUseId } : {}),
+      // The context interceptor may cap a typed input before execution.
+      // Review the exact input that produced this output, not the larger
+      // request the model originally attempted.
+      input: execInput,
+      output: errorReason ? { error: errorReason } : output,
+      error_reason: errorReason ?? null,
+      executed: executionStarted,
+      ...(effectContract ? { proposal_effect_contract: effectContract } : {}),
+    });
+  } catch (observationErr) {
+    // A reply-review observer is bookkeeping only. It must never turn an
+    // already-completed DomainTool effect into an SDK-visible failure.
+    console.error('[mcp-bridge] onResult failed', {
+      tool: dt.name,
+      task_run_id: ctx.taskRunId,
+      err: observationErr,
+    });
+  }
+
+  if (errorReason === undefined) {
+    try {
+      summary = dt.summarize(parsedInput as never, output as never);
+    } catch (err) {
+      const summaryError = err instanceof Error ? err.message : String(err);
+      summary = `summary unavailable: ${summaryError}`;
+      console.error('[mcp-bridge] tool summarize failed', {
+        tool: dt.name,
+        task_run_id: ctx.taskRunId,
+        err,
+      });
+    }
+  } else {
+    summary = `error: ${errorReason}`;
+  }
+
+  // YUK-457 — same resolution as the persisted mirror below: a call that
+  // will not mirror must not emit a live done-state card either.
+  if (opts.onToolComplete && __resolveMirrorPolicy(dt.mirrorEvent, ctx.callerActor, dt.effect)) {
+    try {
+      opts.onToolComplete({
+        toolName: dt.name,
+        input: (execInput ?? {}) as Record<string, unknown>,
+        summary,
+        ...(errorReason ? { errorReason } : {}),
+        ...(correlatedToolUseId ? { toolUseId: correlatedToolUseId } : {}),
+      });
+    } catch {
+      // Visibility failures must never abort paid work.
+    }
+  }
+
+  const latencyMs = Date.now() - startedAt;
+  let toolCallLogId: string | undefined;
+  try {
+    toolCallLogId = await writeToolCallLog(ctx.db, {
+      task_run_id: ctx.taskRunId,
+      task_kind: taskKind,
+      tool_name: dt.name,
+      effect: dt.effect,
+      input_json: parsedInput as Record<string, unknown>,
+      output_json: errorReason ? { error: errorReason } : (output as object | null),
+      error_reason: errorReason,
+      iteration: 0,
+      latency_ms: latencyMs,
+      cost: 0,
+    });
+  } catch (logErr) {
+    // Logging must not break the tool loop. The SDK still gets a valid
+    // result even if persistence fails.
+    console.error('[mcp-bridge] writeToolCallLog failed', {
+      tool: dt.name,
+      task_run_id: ctx.taskRunId,
+      err: logErr,
+    });
+  }
+
+  if (toolCallLogId && safeOperation && safeOperation.status !== 'running') {
+    try {
+      await safeToolOperations?.linkTerminalToolCallLog(safeOperation.id, toolCallLogId);
+    } catch (linkErr) {
+      console.error('[mcp-bridge] terminal ToolOperations log link failed', {
+        operation_id: safeOperation.id,
+        tcl_id: toolCallLogId,
+        err: linkErr,
+      });
+    }
+  }
+
+  // YUK-82 + ADR-0011 §1.1 (T-D7 / YUK-126): tool_use KnownEvent mirror
+  // per mirrorEvent policy. Schema (`ToolUseQuery`) requires
+  // actor_kind='agent', so user-fired calls never mirror regardless of
+  // the tool's policy.
+  if (__resolveMirrorPolicy(dt.mirrorEvent, ctx.callerActor, dt.effect)) {
+    const mirrorPayload: Record<string, unknown> = {
+      tool_name: dt.name,
+      args: (parsedInput ?? {}) as Record<string, unknown>,
+    };
+    if (summary) mirrorPayload.result_summary = summary;
+    if (errorReason) mirrorPayload.error_reason = errorReason;
+
+    const mirrorId = `tool_use_${createId()}`;
+    try {
+      await writeEvent(ctx.db, {
+        id: mirrorId,
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: ctx.callerActor.ref,
+        action: 'tool_use',
+        subject_kind: 'query',
+        subject_id: mirrorId,
+        outcome: errorReason ? 'failure' : 'success',
+        payload: mirrorPayload,
+        caused_by_event_id: ctx.causedByEventId ?? null,
+        task_run_id: ctx.taskRunId,
+        cost_micro_usd: 0,
+      });
+      if (toolCallLogId) {
+        try {
+          await setToolCallLogMirroredEventId(ctx.db, toolCallLogId, mirrorId);
+        } catch (linkErr) {
+          console.error('[mcp-bridge] setToolCallLogMirroredEventId failed', {
+            tool: dt.name,
+            tcl_id: toolCallLogId,
+            event_id: mirrorId,
+            err: linkErr,
+          });
+        }
+      }
+    } catch (mirrorErr) {
+      // Same principle — mirror failure must not crash the tool loop.
+      console.error('[mcp-bridge] tool_use mirror writeEvent failed', {
+        tool: dt.name,
+        task_run_id: ctx.taskRunId,
+        err: mirrorErr,
+      });
+    }
+  }
+
+  if (executionStarted) {
+    try {
+      await opts.onExecuteSettled?.(gateInput);
+    } catch (settleErr) {
+      // A bookkeeping observer must not turn a completed domain effect into
+      // an SDK-visible failure. Cancellation control still fails closed via
+      // its persisted materializing-tool probe at terminal projection.
+      console.error('[mcp-bridge] onExecuteSettled failed', {
+        tool: dt.name,
+        task_run_id: ctx.taskRunId,
+        err: settleErr,
+      });
+    }
+  }
+
+  return {
+    content: [
+      {
+        type: 'text' as const,
+        text: JSON.stringify(
+          errorReason
+            ? {
+                error: errorReason,
+                summary,
+                ...(correlatedToolUseId ? { tool_use_id: correlatedToolUseId } : {}),
+                ...(effectContract ? { proposal_effect_contract: effectContract } : {}),
+              }
+            : {
+                summary,
+                output,
+                ...(correlatedToolUseId ? { tool_use_id: correlatedToolUseId } : {}),
+                ...(effectContract ? { proposal_effect_contract: effectContract } : {}),
+              },
+        ),
+      },
+    ],
+  };
+}
+
+/**
  * Build a per-request in-process MCP server that exposes the given subset of
  * registered DomainTools. Process entrypoints must complete manifest registration before they
  * accept requests or jobs; this hot path never mutates global registry state.
  */
 export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpServer {
-  const { ctx, serverName, toolNames } = opts;
-  const taskKind = opts.taskKind ?? ctx.callerActor.ref;
+  const { serverName, toolNames } = opts;
 
   const sdkTools = toolNames.map((name) => {
     const dt = getTool(name);
@@ -312,320 +676,9 @@ export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpS
     // ZodObject. Extract the raw shape from the object schema.
     const rawShape = dt.inputSchema.shape as Record<string, z.ZodTypeAny>;
 
-    return tool(dt.name, dt.description, rawShape, async (rawArgs) => {
-      const startedAt = Date.now();
-      let output: unknown = null;
-      let errorReason: string | undefined;
-      let summary = '';
-      let parsedInput: unknown = rawArgs;
-      // P5.1 / YUK-143 — input the tool actually executes with (possibly
-      // limit-capped by the context-budget interceptor) + the truncation note
-      // to merge into the output. parsedInput stays the agent-visible request
-      // for logging / mirror payloads; execInput is what runs.
-      let execInput: unknown = rawArgs;
-      let truncationNote: object | null = null;
-      let executionStarted = false;
-      let safeOperation: ToolOperationRecord | undefined;
-      let safeToolOperations: ToolOperations | undefined;
-      let correlatedToolUseId: string | undefined;
-      const gateInput = { name: dt.name, effect: dt.effect };
-      const safeHandoffEnabled =
-        dt.safeHandoff && dt.effect === 'read' && ctx.sessionId !== undefined;
-      let effectContract = proposalEffectContract(dt.name, dt.effect);
-
-      try {
-        parsedInput = dt.inputSchema.parse(rawArgs);
-        execInput = parsedInput;
-        correlatedToolUseId = opts.claimToolUseId?.(dt.name, rawArgs);
-      } catch (err) {
-        errorReason = err instanceof Error ? err.message : String(err);
-      }
-
-      if (errorReason === undefined) {
-        try {
-          const gateReason = await opts.beforeExecute?.(gateInput);
-          if (typeof gateReason === 'string' && gateReason.length > 0) {
-            errorReason = gateReason;
-          }
-        } catch (err) {
-          errorReason = err instanceof Error ? err.message : String(err);
-        }
-      }
-
-      if (errorReason === undefined && opts.interceptInput) {
-        try {
-          const intercepted = opts.interceptInput({ name: dt.name, effect: dt.effect }, execInput);
-          // P5.1 / YUK-143 FIX 1 — budget-exhaustion soft-stop. When the
-          // interceptor signals exhaustion it returns a `softStop` reason
-          // instead of capped args; treat it exactly like a beforeExecute gate
-          // reason so the tool does NOT run (no limit:0 → no Zod throw) and the
-          // agent reads the string as the tool result. Graceful, never a throw.
-          if (typeof intercepted.softStop === 'string' && intercepted.softStop.length > 0) {
-            errorReason = intercepted.softStop;
-          } else {
-            execInput = intercepted.args;
-            truncationNote = intercepted.truncationNote ?? null;
-          }
-        } catch (err) {
-          errorReason = err instanceof Error ? err.message : String(err);
-        }
-      }
-
-      if (errorReason === undefined) {
-        try {
-          await opts.onExecuteStart?.(gateInput);
-          executionStarted = true;
-          const toolOperations = safeHandoffEnabled
-            ? (opts.toolOperations ?? getProcessToolOperations(ctx.db))
-            : undefined;
-          safeToolOperations = toolOperations;
-          const safeExecution = toolOperations
-            ? await executeSafeToolOperation({
-                toolOperations,
-                sessionId: ctx.sessionId as string,
-                taskRunId: ctx.taskRunId,
-                toolName: dt.name,
-                toolUseId: correlatedToolUseId,
-                input: execInput as Record<string, unknown>,
-                ...(ctx.providerSessionDeadlineAt !== undefined
-                  ? { hardDeadlineAt: new Date(ctx.providerSessionDeadlineAt) }
-                  : {}),
-                cancellationSignals: opts.cancellationSignals,
-                execute: async (signal) => {
-                  const remoteOutput = await dt.execute({ ...ctx, signal }, execInput as never);
-                  const parsed = dt.outputSchema.safeParse(remoteOutput);
-                  if (parsed.success) return parsed.data;
-                  const paths = parsed.error.issues
-                    .map((issue) => issue.path.join('.') || '(root)')
-                    .join(', ');
-                  throw new Error(`output_schema_invalid: ${paths}`);
-                },
-              })
-            : undefined;
-          safeOperation = safeExecution?.record;
-          const rawOutput = safeOperation
-            ? safeOperation.status === 'succeeded'
-              ? safeOperation.result
-              : null
-            : await dt.execute(ctx, execInput as never);
-          if (safeOperation && safeOperation.status !== 'succeeded') {
-            errorReason = formatToolOperationFailure(safeOperation);
-          }
-          if (errorReason !== undefined) throw new Error(errorReason);
-          // YUK-862 / F3.1 — global output schema enforcement. Runs immediately
-          // after execute, before context-budget decoration, onResult, summarize,
-          // logging, mirroring, or SDK return.
-          const parseResult = dt.outputSchema.safeParse(rawOutput);
-          if (parseResult.success) {
-            output = parseResult.data;
-            effectContract = proposalEffectContract(dt.name, dt.effect, output);
-          } else {
-            // Redact actual values; only emit field paths for machine readability.
-            const paths = parseResult.error.issues
-              .map((iss) => iss.path.join('.') || '(root)')
-              .join(', ');
-            errorReason = `output_schema_invalid: ${paths}`;
-          }
-        } catch (err) {
-          errorReason = err instanceof Error ? err.message : String(err);
-        }
-      }
-
-      // P5.1 / YUK-143 + YUK-290 — surface warning/hard state inside the tool
-      // output so the agent can self-regulate before the hard cap intervenes.
-      // Object outputs gain a `context_budget` field; non-object outputs are
-      // wrapped. Only attaches on the happy path (no error).
-      if (errorReason === undefined && truncationNote) {
-        if (output !== null && typeof output === 'object' && !Array.isArray(output)) {
-          output = { ...(output as Record<string, unknown>), context_budget: truncationNote };
-        } else {
-          output = { value: output, context_budget: truncationNote };
-        }
-      }
-
-      try {
-        await opts.onResult?.({
-          ...gateInput,
-          ...(correlatedToolUseId ? { tool_use_id: correlatedToolUseId } : {}),
-          // The context interceptor may cap a typed input before execution.
-          // Review the exact input that produced this output, not the larger
-          // request the model originally attempted.
-          input: execInput,
-          output: errorReason ? { error: errorReason } : output,
-          error_reason: errorReason ?? null,
-          executed: executionStarted,
-          ...(effectContract ? { proposal_effect_contract: effectContract } : {}),
-        });
-      } catch (observationErr) {
-        // A reply-review observer is bookkeeping only. It must never turn an
-        // already-completed DomainTool effect into an SDK-visible failure.
-        console.error('[mcp-bridge] onResult failed', {
-          tool: dt.name,
-          task_run_id: ctx.taskRunId,
-          err: observationErr,
-        });
-      }
-
-      if (errorReason === undefined) {
-        try {
-          summary = dt.summarize(parsedInput as never, output as never);
-        } catch (err) {
-          const summaryError = err instanceof Error ? err.message : String(err);
-          summary = `summary unavailable: ${summaryError}`;
-          console.error('[mcp-bridge] tool summarize failed', {
-            tool: dt.name,
-            task_run_id: ctx.taskRunId,
-            err,
-          });
-        }
-      } else {
-        summary = `error: ${errorReason}`;
-      }
-
-      // YUK-457 — same resolution as the persisted mirror below: a call that
-      // will not mirror must not emit a live done-state card either.
-      if (
-        opts.onToolComplete &&
-        __resolveMirrorPolicy(dt.mirrorEvent, ctx.callerActor, dt.effect)
-      ) {
-        try {
-          opts.onToolComplete({
-            toolName: dt.name,
-            input: (execInput ?? {}) as Record<string, unknown>,
-            summary,
-            ...(errorReason ? { errorReason } : {}),
-            ...(correlatedToolUseId ? { toolUseId: correlatedToolUseId } : {}),
-          });
-        } catch {
-          // Visibility failures must never abort paid work.
-        }
-      }
-
-      const latencyMs = Date.now() - startedAt;
-      let toolCallLogId: string | undefined;
-      try {
-        toolCallLogId = await writeToolCallLog(ctx.db, {
-          task_run_id: ctx.taskRunId,
-          task_kind: taskKind,
-          tool_name: dt.name,
-          effect: dt.effect,
-          input_json: parsedInput as Record<string, unknown>,
-          output_json: errorReason ? { error: errorReason } : (output as object | null),
-          error_reason: errorReason,
-          iteration: 0,
-          latency_ms: latencyMs,
-          cost: 0,
-        });
-      } catch (logErr) {
-        // Logging must not break the tool loop. The SDK still gets a valid
-        // result even if persistence fails.
-        console.error('[mcp-bridge] writeToolCallLog failed', {
-          tool: dt.name,
-          task_run_id: ctx.taskRunId,
-          err: logErr,
-        });
-      }
-
-      if (toolCallLogId && safeOperation && safeOperation.status !== 'running') {
-        try {
-          await safeToolOperations?.linkTerminalToolCallLog(safeOperation.id, toolCallLogId);
-        } catch (linkErr) {
-          console.error('[mcp-bridge] terminal ToolOperations log link failed', {
-            operation_id: safeOperation.id,
-            tcl_id: toolCallLogId,
-            err: linkErr,
-          });
-        }
-      }
-
-      // YUK-82 + ADR-0011 §1.1 (T-D7 / YUK-126): tool_use KnownEvent mirror
-      // per mirrorEvent policy. Schema (`ToolUseQuery`) requires
-      // actor_kind='agent', so user-fired calls never mirror regardless of
-      // the tool's policy.
-      if (__resolveMirrorPolicy(dt.mirrorEvent, ctx.callerActor, dt.effect)) {
-        const mirrorPayload: Record<string, unknown> = {
-          tool_name: dt.name,
-          args: (parsedInput ?? {}) as Record<string, unknown>,
-        };
-        if (summary) mirrorPayload.result_summary = summary;
-        if (errorReason) mirrorPayload.error_reason = errorReason;
-
-        const mirrorId = `tool_use_${createId()}`;
-        try {
-          await writeEvent(ctx.db, {
-            id: mirrorId,
-            session_id: null,
-            actor_kind: 'agent',
-            actor_ref: ctx.callerActor.ref,
-            action: 'tool_use',
-            subject_kind: 'query',
-            subject_id: mirrorId,
-            outcome: errorReason ? 'failure' : 'success',
-            payload: mirrorPayload,
-            caused_by_event_id: ctx.causedByEventId ?? null,
-            task_run_id: ctx.taskRunId,
-            cost_micro_usd: 0,
-          });
-          if (toolCallLogId) {
-            try {
-              await setToolCallLogMirroredEventId(ctx.db, toolCallLogId, mirrorId);
-            } catch (linkErr) {
-              console.error('[mcp-bridge] setToolCallLogMirroredEventId failed', {
-                tool: dt.name,
-                tcl_id: toolCallLogId,
-                event_id: mirrorId,
-                err: linkErr,
-              });
-            }
-          }
-        } catch (mirrorErr) {
-          // Same principle — mirror failure must not crash the tool loop.
-          console.error('[mcp-bridge] tool_use mirror writeEvent failed', {
-            tool: dt.name,
-            task_run_id: ctx.taskRunId,
-            err: mirrorErr,
-          });
-        }
-      }
-
-      if (executionStarted) {
-        try {
-          await opts.onExecuteSettled?.(gateInput);
-        } catch (settleErr) {
-          // A bookkeeping observer must not turn a completed domain effect into
-          // an SDK-visible failure. Cancellation control still fails closed via
-          // its persisted materializing-tool probe at terminal projection.
-          console.error('[mcp-bridge] onExecuteSettled failed', {
-            tool: dt.name,
-            task_run_id: ctx.taskRunId,
-            err: settleErr,
-          });
-        }
-      }
-
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: JSON.stringify(
-              errorReason
-                ? {
-                    error: errorReason,
-                    summary,
-                    ...(correlatedToolUseId ? { tool_use_id: correlatedToolUseId } : {}),
-                    ...(effectContract ? { proposal_effect_contract: effectContract } : {}),
-                  }
-                : {
-                    summary,
-                    output,
-                    ...(correlatedToolUseId ? { tool_use_id: correlatedToolUseId } : {}),
-                    ...(effectContract ? { proposal_effect_contract: effectContract } : {}),
-                  },
-            ),
-          },
-        ],
-      };
-    });
+    return tool(dt.name, dt.description, rawShape, (rawArgs) =>
+      executeDomainToolCall(dt, rawArgs, opts),
+    );
   });
 
   return createSdkMcpServer({ name: serverName, tools: sdkTools });

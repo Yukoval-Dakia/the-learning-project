@@ -284,6 +284,9 @@ export const fastTestInclude = [
   'src/capabilities/practice/server/question-supply/jyeoo-supply-config.test.ts',
   'src/server/ai/tools/registry.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
+  // YUK-1021 (921 P2) — pi tool-mount surface: DomainTool→AgentTool compile +
+  // remote-MCP bridge. Pure unit (registry + mocked MCP client), no DB.
+  'src/server/ai/tools/pi-tools.test.ts',
   // M5-T3 (YUK-321) — copilotTools 组合根聚合器：纯 registry 操作，无 DB。
   'src/server/ai/tools/register-capability-tools.unit.test.ts',
   // YUK-203 U4 / L-memtool — search_memory_facts DomainTool. Pure DI unit: the

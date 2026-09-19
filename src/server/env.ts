@@ -5,6 +5,8 @@ const optionalString = z.string().optional();
 
 const server = {
   AI_ADAPTER_PI_KINDS: optionalString,
+  AI_ADAPTER_PI_MODEL: optionalString,
+  AI_ADAPTER_PI_PROVIDER: optionalString,
   AI_PROVIDER_ATTEMPT_ADMISSION_MODE: optionalString,
   AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON: optionalString,
   AI_PROVIDER_MODEL: optionalString,

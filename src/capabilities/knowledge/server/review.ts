@@ -21,6 +21,7 @@
 // catalog before the model sees it.
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { readAgentNotes } from '@/capabilities/agency/public';
@@ -42,8 +43,10 @@ import { writeAiProposal } from '@/kernel/proposals/writer';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
+import { zodToJsonSchemaCompat } from '@/kernel/zod-json-schema';
 import { writeToolCallLog } from '@/server/ai/log';
 import { streamTask } from '@/server/ai/runner';
+import type { PiToolMount } from '@/server/ai/tools/pi-tools';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { type KnowledgeMutationPayload, writeKnowledgeProposeEvent } from './proposals';
 
@@ -593,68 +596,103 @@ const WriteProposalSchema = {
   evidence_event_ids: z.array(z.string().min(1)).max(20).optional(),
 } as const;
 
-function buildKnowledgeReviewMcpServer(db: Db, taskRunId: string) {
+const WRITE_PROPOSAL_DESCRIPTION =
+  'Propose one knowledge graph mutation. Call once per mutation. payload.mutation distinguishes the kind: tree-shape (propose_new / reparent / merge / split / archive) writes a ProposeKnowledge / experimental:knowledge_<mutation> event; mesh-shape (propose_knowledge_edge) writes a ProposeKnowledgeEdge event with {from_knowledge_id, to_knowledge_id, relation_type}. For a mesh edge, pass the supporting recent_mistakes[].id values in top-level evidence_event_ids. reasoning must be concrete. If the result kind starts with skipped, do not retry the same mutation in this run.';
+
+/**
+ * Engine-neutral write_proposal executor — the SDK `tool()` handler and the pi
+ * AgentTool both delegate here so the tool_call_log write, iteration counter
+ * and error shape stay byte-identical across engines (YUK-1021).
+ */
+function buildWriteProposalExecutor(db: Db, taskRunId: string) {
   let toolIteration = 0;
+  return async (rawArgs: unknown): Promise<{ content: Array<{ type: 'text'; text: string }> }> => {
+    const input = rawArgs as WriteProposalArgs;
+    const startedAt = Date.now();
+    const iteration = ++toolIteration;
+    try {
+      const result = await runWriteProposal(db, input, { taskRunId });
+      try {
+        await writeToolCallLog(db, {
+          task_run_id: taskRunId,
+          task_kind: 'KnowledgeReviewTask',
+          tool_name: 'mcp__loom__write_proposal',
+          effect: 'propose',
+          input_json: input,
+          output_json: result,
+          iteration,
+          latency_ms: Date.now() - startedAt,
+          cost: 0,
+        });
+      } catch (logErr) {
+        console.error('[KnowledgeReviewTask] write_proposal result log failed', {
+          task_run_id: taskRunId,
+          err: logErr,
+        });
+      }
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result) }],
+      };
+    } catch (err) {
+      try {
+        await writeToolCallLog(db, {
+          task_run_id: taskRunId,
+          task_kind: 'KnowledgeReviewTask',
+          tool_name: 'mcp__loom__write_proposal',
+          effect: 'propose',
+          input_json: input,
+          output_json: {},
+          error_reason: err instanceof Error ? err.message : String(err),
+          iteration,
+          latency_ms: Date.now() - startedAt,
+          cost: 0,
+        });
+      } catch (logErr) {
+        console.error('[KnowledgeReviewTask] write_proposal failure log failed', {
+          task_run_id: taskRunId,
+          err: logErr,
+        });
+      }
+      throw err;
+    }
+  };
+}
+
+function buildKnowledgeReviewMcpServer(db: Db, taskRunId: string) {
+  const executor = buildWriteProposalExecutor(db, taskRunId);
   return createSdkMcpServer({
     name: 'loom',
     tools: [
-      tool(
-        'write_proposal',
-        'Propose one knowledge graph mutation. Call once per mutation. payload.mutation distinguishes the kind: tree-shape (propose_new / reparent / merge / split / archive) writes a ProposeKnowledge / experimental:knowledge_<mutation> event; mesh-shape (propose_knowledge_edge) writes a ProposeKnowledgeEdge event with {from_knowledge_id, to_knowledge_id, relation_type}. For a mesh edge, pass the supporting recent_mistakes[].id values in top-level evidence_event_ids. reasoning must be concrete. If the result kind starts with skipped, do not retry the same mutation in this run.',
-        WriteProposalSchema,
-        async (args) => {
-          const input = args as WriteProposalArgs;
-          const startedAt = Date.now();
-          const iteration = ++toolIteration;
-          try {
-            const result = await runWriteProposal(db, input, { taskRunId });
-            try {
-              await writeToolCallLog(db, {
-                task_run_id: taskRunId,
-                task_kind: 'KnowledgeReviewTask',
-                tool_name: 'mcp__loom__write_proposal',
-                effect: 'propose',
-                input_json: input,
-                output_json: result,
-                iteration,
-                latency_ms: Date.now() - startedAt,
-                cost: 0,
-              });
-            } catch (logErr) {
-              console.error('[KnowledgeReviewTask] write_proposal result log failed', {
-                task_run_id: taskRunId,
-                err: logErr,
-              });
-            }
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result) }],
-            };
-          } catch (err) {
-            try {
-              await writeToolCallLog(db, {
-                task_run_id: taskRunId,
-                task_kind: 'KnowledgeReviewTask',
-                tool_name: 'mcp__loom__write_proposal',
-                effect: 'propose',
-                input_json: input,
-                output_json: {},
-                error_reason: err instanceof Error ? err.message : String(err),
-                iteration,
-                latency_ms: Date.now() - startedAt,
-                cost: 0,
-              });
-            } catch (logErr) {
-              console.error('[KnowledgeReviewTask] write_proposal failure log failed', {
-                task_run_id: taskRunId,
-                err: logErr,
-              });
-            }
-            throw err;
-          }
-        },
+      tool('write_proposal', WRITE_PROPOSAL_DESCRIPTION, WriteProposalSchema, async (args) =>
+        executor(args),
       ),
     ],
   });
+}
+
+/**
+ * YUK-1021 — the pi-lane mount for write_proposal: a `custom` PiToolMount
+ * carrying the same executor the SDK `tool()` wraps. Wire name is
+ * `mcp__loom__write_proposal` on both engines so allowedTools/tool_call_log
+ * stay verbatim.
+ */
+function buildKnowledgeReviewPiMount(db: Db, taskRunId: string): PiToolMount {
+  const executor = buildWriteProposalExecutor(db, taskRunId);
+  const agentTool: AgentTool = {
+    name: 'mcp__loom__write_proposal',
+    label: 'write_proposal',
+    description: WRITE_PROPOSAL_DESCRIPTION,
+    parameters: zodToJsonSchemaCompat(z.object(WriteProposalSchema), {
+      io: 'input',
+      reused: 'inline',
+      target: 'draft-07',
+    }) as AgentTool['parameters'],
+    execute: async (_toolCallId, params) => {
+      const result = await executor(params);
+      return { content: result.content, details: null } satisfies AgentToolResult<null>;
+    },
+  };
+  return { type: 'custom', tools: [agentTool] };
 }
 
 // ---------- Public entrypoint ----------
@@ -678,6 +716,7 @@ export async function streamReviewTask(ctx: StreamReviewTaskCtx): Promise<Respon
     db: ctx.db,
     subjectProfile,
     mcpServers: { loom: mcpServer },
+    piToolMounts: [buildKnowledgeReviewPiMount(ctx.db, taskRunId)],
     taskRunId,
     autoLogToolCalls: false,
   });

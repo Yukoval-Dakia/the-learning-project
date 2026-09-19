@@ -58,10 +58,20 @@ import {
   toMcpAllowedToolName,
 } from '@/kernel/tools/allowlists';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
-import { EXA_MCP_ALLOWED_TOOLS, EXA_MCP_SERVER_NAME, buildExaMcpServer } from '@/server/ai/mcp/exa';
+import {
+  EXA_MCP_ALLOWED_TOOLS,
+  EXA_MCP_SERVER_NAME,
+  EXA_SCOPED_TOOL_NAMES,
+  buildExaMcpServer,
+} from '@/server/ai/mcp/exa';
 import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { runAgentTask } from '@/server/ai/runner';
-import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
+import {
+  type BuildMcpServerOptions,
+  type SdkMcpServer,
+  buildMcpServerFromRegistry,
+} from '@/server/ai/tools/mcp-bridge';
+import { type PiToolMount, piDomainMount, piRemoteMcpMount } from '@/server/ai/tools/pi-tools';
 import {
   dispatchPendingVerifyIntents,
   writeVerifyDispatchIntent,
@@ -210,6 +220,7 @@ type RunAgentTaskFn = (
   ctx: {
     db: Db;
     mcpServers?: Record<string, SdkMcpServer | McpHttpServerConfig>;
+    piToolMounts?: PiToolMount[];
     allowedTools?: string[];
     // YUK-225 (S2 slice 4) — Agent Skill whitelist + subject context threaded to
     // the runner so the (subject, kind) 规范包 is loaded into the model's listing.
@@ -534,7 +545,10 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
   // In-process domain-tool MCP (read user mistakes + knowledge graph) + the
   // env-gated Exa remote MCP. When EXA_API_KEY is unset, buildExa()
   // returns null → no exa server, no exa tools (graceful degradation).
-  const domainMcpServer = buildMcpServer({
+  // YUK-1021 — the SAME descriptor feeds both engine mounts: SDK consumes the
+  // built in-process MCP server (mcpServers), pi consumes the declarative
+  // piToolMounts and compiles the DomainTools into AgentTools.
+  const domainMountOptions = {
     ctx: {
       db,
       taskRunId: toolContextTaskRunId,
@@ -544,13 +558,18 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
     toolNames: QUIZ_GEN_READ_TOOLS,
     taskKind: 'QuizGenTask',
-  });
+  } satisfies BuildMcpServerOptions;
+  const domainMcpServer = buildMcpServer(domainMountOptions);
 
   const exaCfg = buildExa();
   const mcpServers: Record<string, SdkMcpServer | McpHttpServerConfig> = {
     [DOMAIN_TOOL_MCP_SERVER_NAME]: domainMcpServer,
     ...(exaCfg ? { [EXA_MCP_SERVER_NAME]: exaCfg } : {}),
   };
+  const piToolMounts: PiToolMount[] = [
+    piDomainMount(domainMountOptions),
+    ...(exaCfg ? [piRemoteMcpMount(EXA_MCP_SERVER_NAME, exaCfg, EXA_SCOPED_TOOL_NAMES)] : []),
+  ];
   const allowedTools = [
     ...QUIZ_GEN_READ_TOOLS.map((name) => toMcpAllowedToolName(name)),
     ...(exaCfg ? EXA_MCP_ALLOWED_TOOLS : []),
@@ -559,19 +578,21 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
   // ADR-0038 决定#2 — Phase 1 (plan) mounts the read-only domain MCP but NO
   // Exa: planning picks WHAT to test (knowledge point / kind / objective
   // answer anchor); fetching material stays in the generation phase.
+  const planDomainMountOptions = {
+    ctx: {
+      db,
+      taskRunId: planToolContextTaskRunId,
+      callerActor: { kind: 'agent', ref: 'quiz_gen' },
+      causedByEventId: triggerEventId,
+    },
+    serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
+    toolNames: QUIZ_GEN_READ_TOOLS,
+    taskKind: 'QuizPlanTask',
+  } satisfies BuildMcpServerOptions;
   const planMcpServers: Record<string, SdkMcpServer | McpHttpServerConfig> = {
-    [DOMAIN_TOOL_MCP_SERVER_NAME]: buildMcpServer({
-      ctx: {
-        db,
-        taskRunId: planToolContextTaskRunId,
-        callerActor: { kind: 'agent', ref: 'quiz_gen' },
-        causedByEventId: triggerEventId,
-      },
-      serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
-      toolNames: QUIZ_GEN_READ_TOOLS,
-      taskKind: 'QuizPlanTask',
-    }),
+    [DOMAIN_TOOL_MCP_SERVER_NAME]: buildMcpServer(planDomainMountOptions),
   };
+  const planPiToolMounts: PiToolMount[] = [piDomainMount(planDomainMountOptions)];
   const planAllowedTools = QUIZ_GEN_READ_TOOLS.map((name) => toMcpAllowedToolName(name));
 
   // YUK-225 (S2 slice 4) — 规范双轨.
@@ -664,6 +685,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       planRunResult = await run('QuizPlanTask', planInput, {
         db,
         mcpServers: planMcpServers,
+        piToolMounts: planPiToolMounts,
         allowedTools: planAllowedTools,
         subjectProfile,
       });
@@ -744,6 +766,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     const result = await run('QuizGenTask', input, {
       db,
       mcpServers,
+      piToolMounts,
       allowedTools,
       subjectProfile,
       ...(subjectSkills ? { skills: subjectSkills } : {}),
