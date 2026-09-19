@@ -437,6 +437,18 @@ describe('AiProposalPayload', () => {
           baseline_p_at_induction: 0.55,
         },
       },
+      // YUK-1016 (454-B) — DB-overlay cause category growth proposal.
+      cause_category: {
+        ...base,
+        kind: 'cause_category',
+        target: { subject_kind: 'subject_profile', subject_id: 'general' },
+        proposed_change: {
+          category_id: 'ov_time_pressure',
+          label: '时间压力',
+          description: '限时压缩步骤',
+          source: 'llm_propose',
+        },
+      },
     } as const;
 
     expect(Object.keys(samples).sort()).toEqual([...aiProposalKinds].sort());
@@ -774,6 +786,15 @@ describe('suggestion_kind (P5.6 / YUK-178)', () => {
           baseline_p_at_induction: 0.5,
         },
       },
+      cause_category: {
+        kind: 'cause_category',
+        target: { subject_kind: 'subject_profile', subject_id: 'general' },
+        proposed_change: {
+          category_id: 'ov_x',
+          label: 'l',
+          source: 'owner',
+        },
+      },
     };
     // Audit-coverage guard (AC-2): the sample map covers every AiProposalKind, so
     // a future kind addition that forgets the optional-field check is caught.
@@ -859,6 +880,9 @@ describe('suggestion_kind (P5.6 / YUK-178)', () => {
       // hypothesis about the learner's mind (surfaced by the research-meeting job),
       // not a structurally-corrective variant of an observed-failure question.
       conjecture: false,
+      // YUK-1016 / 454-B — cause_category 收编词表（词汇成长），非修复某个
+      // 观察到的失败题面，非 corrective。
+      cause_category: false,
     };
     // Every kind classified; exactly one structurally-corrective kind.
     expect(Object.keys(correctivePossibleByKind).sort()).toEqual([...aiProposalKinds].sort());

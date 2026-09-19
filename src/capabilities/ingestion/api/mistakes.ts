@@ -8,6 +8,7 @@ import { db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError, collectionPayload, errorResponse, resourceResponse } from '@/kernel/http';
+import { withActiveCauseCategoryOverlays } from '@/kernel/read-models/cause-overlay';
 import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
 import {
   assertCauseAllowedForSubjectProfile,
@@ -67,7 +68,12 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
     const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, body.knowledge_ids);
-    assertCauseAllowedForSubjectProfile(body.cause, subjectProfile);
+    // YUK-1016 — 校验词表 = 声明 ∪ overlay.active：owner accept 的 ov_ 类目
+    // 必须能在手工错题入口被选用（否则收编类目 owner 自己用不了）。
+    assertCauseAllowedForSubjectProfile(
+      body.cause,
+      await withActiveCauseCategoryOverlays(db, subjectProfile),
+    );
 
     // Validate asset refs
     await assertAssetsExist(body.prompt_image_refs, 'prompt_image_refs');

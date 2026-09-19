@@ -1171,6 +1171,24 @@ export const practiceCapability = defineCapability({
         },
       },
       { kind: 'judge_retraction' },
+      // YUK-1016 / 454-B — 错因 catalog 扩张：accept INSERT overlay 行、retract
+      // 置 archived_at。dismiss 无定制语义（pending 期尚无行可立），走 generic
+      // rate-event 路径。
+      {
+        kind: 'cause_category',
+        accept: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.causeCategoryProposalAcceptApplier,
+            ),
+        },
+        retract: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.causeCategoryProposalRetractApplier,
+            ),
+        },
+      },
       {
         kind: 'question_edit',
         accept: {

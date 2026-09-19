@@ -111,5 +111,6 @@ export const taskCatalog = composeTaskCatalog(
     { owner: 'copilot', specs: copilotTaskSpecs },
   ] as const,
   // YUK-987: +SupplyPlanTask（供给需求层 planner）→ 50。
-  50,
+  // YUK-1016: +CauseCategoryProposeTask（cause catalog 增长提议）→ 51。
+  51,
 );

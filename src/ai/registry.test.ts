@@ -44,7 +44,7 @@ describe('copilot task dispatch declarations', () => {
     for (const kind of Object.keys(taskCatalog) as TaskKind[]) {
       expect(tasks[kind], kind).toBe(taskCatalog[kind]);
     }
-    expect(Object.keys(tasks)).toHaveLength(50);
+    expect(Object.keys(tasks)).toHaveLength(51);
   });
 
   it('contains no prompt builders or task business definitions', () => {
@@ -81,7 +81,7 @@ describe('task prompt definitions', () => {
   });
 
   it('defines one non-empty inline or profile prompt for every task', () => {
-    expect(Object.keys(tasks)).toHaveLength(50);
+    expect(Object.keys(tasks)).toHaveLength(51);
 
     for (const task of Object.values(tasks)) {
       switch (task.prompt.kind) {
@@ -119,7 +119,14 @@ describe('task prompt definitions', () => {
       for (const task of Object.keys(tasks) as Array<keyof typeof tasks>) {
         // These prompts have intentionally evolved since the migration oracle.
         // Current policy/materialization tests replace migration-only identity for evolved tasks.
-        if (task === 'CopilotTask' || task === 'QuizVerifyTask' || task === 'NoteGenerateTask') {
+        // CauseCategoryProposeTask postdates the oracle entirely (YUK-1016) — no
+        // pre-refactor hash exists to pin against.
+        if (
+          task === 'CopilotTask' ||
+          task === 'QuizVerifyTask' ||
+          task === 'NoteGenerateTask' ||
+          task === 'CauseCategoryProposeTask'
+        ) {
           continue;
         }
         const key = `${profileId}:${task}` as keyof typeof promptHashOracle.prompts;
