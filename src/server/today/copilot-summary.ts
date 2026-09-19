@@ -90,6 +90,7 @@ const LEARNER_PROPOSAL_SUMMARIES: Readonly<Record<string, string>> = {
   defer: '有一项延后安排建议待你查看。',
   archive: '有一项归档建议待你查看。',
   judge_retraction: '有一项判定撤回建议待你查看。',
+  cause_category: '有一项错因分类建议待你查看。',
   image_candidate: '有一项图题候选建议待你查看。',
   question_draft: '有一项题目草稿建议待你查看。',
   question_edit: '有一项题目修订建议待你查看。',

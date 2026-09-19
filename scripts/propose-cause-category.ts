@@ -9,7 +9,7 @@
 //   pnpm tsx scripts/propose-cause-category.ts \
 //     --slug time_pressure --label 时间压力 \
 //     --description "时间约束下压缩步骤/跳步导致的错误" \
-//     [--subject general] [--reason "近期多次 time-boxed 练习超时"]
+//     [--subject general] [--reason "近期多次 time-boxed 练习超时"] [--actor yuqi]
 //
 // slug 只收蛇形英文（语义 id）；`ov_` 前缀由脚本拼接（同 LLM 路径）。脚本只做
 // 提议写入——落地仍需收件箱里点 Accept。
@@ -38,10 +38,13 @@ async function main(): Promise<number> {
   const description = arg(argv, 'description');
   const subjectId = arg(argv, 'subject');
   const reason = arg(argv, 'reason');
+  // YUK-1019 — 可选 --actor 让 owner 身份可追（默认 'owner-script' 已能区分
+  // 脚本来源；传参用于区分具体操作人/批次）。
+  const actor = arg(argv, 'actor');
 
   if (!rawSlug || !label) {
     console.error(
-      'usage: tsx scripts/propose-cause-category.ts --slug <snake_case> --label <中文名> [--description <说明>] [--subject <profile-id>] [--reason <理由>]',
+      'usage: tsx scripts/propose-cause-category.ts --slug <snake_case> --label <中文名> [--description <说明>] [--subject <profile-id>] [--reason <理由>] [--actor <owner-ref>]',
     );
     return 1;
   }
@@ -50,15 +53,15 @@ async function main(): Promise<number> {
     console.error(`[propose-cause-category] slug "${rawSlug}" sanitizes to empty`);
     return 1;
   }
-  const categoryId = `ov_${slug}`;
 
   const { db } = await import('@/db/client');
   const { resolveKnownSubjectId, resolveSubjectProfile } = await import('@/subjects/profile');
   const { writeAiProposal } = await import('@/kernel/proposals/writer');
   const { pendingProposalWithCooldown } = await import('@/kernel/proposals/inbox');
-  const { getCauseCategoryOverlaysByIds } = await import(
+  const { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } = await import(
     '@/capabilities/practice/server/cause-overlay'
   );
+  const categoryId = `${CAUSE_OVERLAY_ID_PREFIX}${slug}`;
 
   const profile = resolveSubjectProfile(subjectId);
   if (subjectId && resolveKnownSubjectId(subjectId) === null) {
@@ -89,7 +92,7 @@ async function main(): Promise<number> {
   }
 
   const eventId = await writeAiProposal(db, {
-    actor_ref: 'owner-script',
+    actor_ref: actor ?? 'owner-script',
     payload: {
       kind: 'cause_category',
       target: { subject_kind: 'subject_profile', subject_id: profile.id },

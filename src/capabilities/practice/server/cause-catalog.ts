@@ -23,7 +23,7 @@ import {
   parseCauseCategoryProposeOutput,
 } from '../tasks/cause-category-propose';
 import { effectiveCauseForFailureAttempt, getFailureAttempts } from './attempt-events';
-import { getCauseCategoryOverlaysByIds } from './cause-overlay';
+import { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } from './cause-overlay';
 import { loadFailureLearningKnowledgeContext } from './knowledge-runtime';
 import type { PracticeTaskRunFn } from './task-runtime';
 
@@ -50,7 +50,7 @@ export function sanitizeOverlaySlug(slug: string): string {
 }
 
 export function overlayCategoryId(slug: string): string {
-  return `ov_${sanitizeOverlaySlug(slug)}`;
+  return `${CAUSE_OVERLAY_ID_PREFIX}${sanitizeOverlaySlug(slug)}`;
 }
 
 /**
@@ -144,18 +144,32 @@ export async function maybeProposeCauseCategoryFromOthers(params: {
         .where(inArray(question.id, [...new Set(needQuestionKc)]));
       for (const row of rows) questionKcById.set(row.id, row.knowledge_ids);
     }
-    const firstKcOf = (c: (typeof otherCauses)[number]): string | undefined =>
-      c.knowledgeIds[0] ?? questionKcById.get(c.questionId)?.[0];
-    const kcNodes = await loadFailureLearningKnowledgeContext(
-      db,
-      otherCauses.map(firstKcOf).filter((id): id is string => id !== undefined),
-    );
+    // YUK-1019 — 首个「存在」的 KC 决定归属（dangling [0] 不再把外科目失败劫持
+    // 进 general 桶）；全部候选都不可解析 → 不进任何科目桶，单独记账，proposal
+    // 落地时 reason_md 标注 bucket=unresolved。比归因链略严是有意的：归因给
+    // 判不出科目的失败兜底 general 是运行语义，给词表扩张计数要更保守。
+    const kcCandidatesOf = (c: (typeof otherCauses)[number]): string[] =>
+      c.knowledgeIds.length > 0
+        ? c.knowledgeIds
+        : c.needsQuestionKcFallback
+          ? (questionKcById.get(c.questionId) ?? [])
+          : [];
+    const kcNodes = await loadFailureLearningKnowledgeContext(db, [
+      ...new Set(otherCauses.flatMap(kcCandidatesOf)),
+    ]);
     const domainByKc = new Map(kcNodes.map((node) => [node.id, node.effective_domain]));
-    const scopedCauses = otherCauses.filter((c) => {
-      const kcId = firstKcOf(c);
-      const domain = kcId !== undefined ? (domainByKc.get(kcId) ?? null) : null;
-      return resolveSubjectProfile(domain).id === subjectId;
-    });
+    const scopedCauses: typeof otherCauses = [];
+    let unresolvedCount = 0;
+    for (const c of otherCauses) {
+      const kcId = kcCandidatesOf(c).find((id) => domainByKc.has(id));
+      if (kcId === undefined) {
+        unresolvedCount += 1;
+        continue;
+      }
+      if (resolveSubjectProfile(domainByKc.get(kcId) ?? null).id === subjectId) {
+        scopedCauses.push(c);
+      }
+    }
     if (scopedCauses.length < OTHER_RECURRENCE_FLOOR) return;
 
     const samples = scopedCauses
@@ -178,7 +192,7 @@ export async function maybeProposeCauseCategoryFromOthers(params: {
     if (output.action !== 'propose' || !output.slug || !output.label) return;
 
     const categoryId = overlayCategoryId(output.slug);
-    if (categoryId === 'ov_') return;
+    if (categoryId === CAUSE_OVERLAY_ID_PREFIX) return;
     // 与生效词表（含 overlay.active）撞名 → 该类目已在词表里，无需再提议。
     if (profile.causeCategories.some((category) => category.id === categoryId)) return;
     // 与既有 overlay 行撞 id（draft/archived 也算）→ 不重复落行；owner 可对旧行
@@ -192,11 +206,17 @@ export async function maybeProposeCauseCategoryFromOthers(params: {
         kind: 'cause_category',
         target: { subject_kind: 'subject_profile', subject_id: subjectId },
         reason_md:
-          output.rationale_md ??
-          `${subjectId} 的 other 归因复发 ${scopedCauses.length} 次，LLM 判定存在连贯错因模式。`,
+          (output.rationale_md ??
+            `${subjectId} 的 other 归因复发 ${scopedCauses.length} 次，LLM 判定存在连贯错因模式。`) +
+          (unresolvedCount > 0
+            ? `\n\n另有 ${unresolvedCount} 条 other 失败因 KC 不可解析未计入本桶（bucket=unresolved）。`
+            : ''),
+        // YUK-1019 — evidence_refs 标 event_role：effective event 对 user 源是
+        // user_cause event、对 agent 源是 judge event，reviewer 不回查即分辨。
         evidence_refs: samples.map((sample) => ({
           kind: 'event' as const,
           id: sample.judge_event_id,
+          event_role: sample.source === 'user' ? ('user_cause' as const) : ('judge' as const),
         })),
         cooldown_key: cooldownKey,
         proposed_change: {

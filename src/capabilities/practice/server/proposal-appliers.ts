@@ -53,6 +53,7 @@ import {
 } from '@/server/proposals/practice-runtime';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 
+import { CAUSE_OVERLAY_ID_PREFIX } from './cause-overlay';
 import { initialFsrsState } from './fsrs';
 
 // YUK-17 / ADR-0018 — swappable enqueue hook so DB tests can drive
@@ -975,11 +976,18 @@ export async function acceptCauseCategoryProposal(
   const categoryId = requiredString(change.category_id, 'category_id', proposalId);
   const label = requiredString(change.label, 'label', proposalId);
   // 防绕过：生产者契约是 ov_ 命名空间；applier 也守住——非 ov_ id 会在合并词表
-  // 里与 profile 声明撞名。
-  if (!categoryId.startsWith('ov_')) {
+  // 里与 profile 声明撞名。裸前缀（空 slug）同样显式拒绝（YUK-1019 收紧）。
+  if (!categoryId.startsWith(CAUSE_OVERLAY_ID_PREFIX)) {
     throw new ApiError(
       'validation_error',
-      `proposal ${proposalId} category_id ${categoryId} must use the ov_ namespace`,
+      `proposal ${proposalId} category_id ${categoryId} must use the ${CAUSE_OVERLAY_ID_PREFIX} namespace`,
+      400,
+    );
+  }
+  if (categoryId === CAUSE_OVERLAY_ID_PREFIX) {
+    throw new ApiError(
+      'validation_error',
+      `proposal ${proposalId} category_id is the bare '${CAUSE_OVERLAY_ID_PREFIX}' prefix — empty slug`,
       400,
     );
   }
@@ -1074,18 +1082,32 @@ export async function acceptCauseCategoryProposal(
       );
     }
 
-    await tx.insert(cause_category_overlay).values({
-      id: categoryId,
-      subject_id: subjectId,
-      label,
-      description,
-      source,
-      status: 'active',
-      proposal_event_id: proposalId,
-      evidence_event_ids: evidenceEventIds,
-      created_at: now,
-      updated_at: now,
-    });
+    // YUK-1019 — 竞态收口：decision lock 按 proposalId 取，不同 proposal 撞同一
+    // categoryId 时两个 tx 可同过上方 SELECT。onConflictDoNothing 让并发 INSERT
+    // 优雅落空（阻塞至对方提交后再判），空 returning = 撞上 → 同一个 409。
+    const inserted = await tx
+      .insert(cause_category_overlay)
+      .values({
+        id: categoryId,
+        subject_id: subjectId,
+        label,
+        description,
+        source,
+        status: 'active',
+        proposal_event_id: proposalId,
+        evidence_event_ids: evidenceEventIds,
+        created_at: now,
+        updated_at: now,
+      })
+      .onConflictDoNothing()
+      .returning({ id: cause_category_overlay.id });
+    if (inserted.length === 0) {
+      throw new ApiError(
+        'conflict',
+        `cause_category_overlay ${categoryId} already exists; choose a different slug`,
+        409,
+      );
+    }
 
     const rate = await writeProposalRateEvent(tx, proposalId, 'accept', opts.user_note);
     writtenRateEventId = rate.rate_event_id;
