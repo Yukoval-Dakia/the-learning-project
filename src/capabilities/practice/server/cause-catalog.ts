@@ -148,12 +148,11 @@ export async function maybeProposeCauseCategoryFromOthers(params: {
     // 进 general 桶）；全部候选都不可解析 → 不进任何科目桶，单独记账，proposal
     // 落地时 reason_md 标注 bucket=unresolved。比归因链略严是有意的：归因给
     // 判不出科目的失败兜底 general 是运行语义，给词表扩张计数要更保守。
-    const kcCandidatesOf = (c: (typeof otherCauses)[number]): string[] =>
-      c.knowledgeIds.length > 0
-        ? c.knowledgeIds
-        : c.needsQuestionKcFallback
-          ? (questionKcById.get(c.questionId) ?? [])
-          : [];
+    const kcCandidatesOf = (c: (typeof otherCauses)[number]): string[] => {
+      if (c.knowledgeIds.length > 0) return c.knowledgeIds;
+      if (c.needsQuestionKcFallback) return questionKcById.get(c.questionId) ?? [];
+      return [];
+    };
     const kcNodes = await loadFailureLearningKnowledgeContext(db, [
       ...new Set(otherCauses.flatMap(kcCandidatesOf)),
     ]);

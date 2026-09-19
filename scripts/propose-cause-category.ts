@@ -39,8 +39,13 @@ async function main(): Promise<number> {
   const subjectId = arg(argv, 'subject');
   const reason = arg(argv, 'reason');
   // YUK-1019 — 可选 --actor 让 owner 身份可追（默认 'owner-script' 已能区分
-  // 脚本来源；传参用于区分具体操作人/批次）。
+  // 脚本来源；传参用于区分具体操作人/批次）。显式拒绝空串/flag-like 值——
+  // `--actor=` 或 `--actor --label` 会把 ''/'--label' 写进 actor_ref。
   const actor = arg(argv, 'actor');
+  if (actor !== undefined && (actor.trim() === '' || actor.startsWith('-'))) {
+    console.error(`[propose-cause-category] invalid --actor "${actor}"`);
+    return 1;
+  }
 
   if (!rawSlug || !label) {
     console.error(

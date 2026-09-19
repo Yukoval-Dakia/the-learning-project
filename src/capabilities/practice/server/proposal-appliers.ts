@@ -1099,7 +1099,7 @@ export async function acceptCauseCategoryProposal(
         created_at: now,
         updated_at: now,
       })
-      .onConflictDoNothing()
+      .onConflictDoNothing({ target: cause_category_overlay.id })
       .returning({ id: cause_category_overlay.id });
     if (inserted.length === 0) {
       throw new ApiError(
