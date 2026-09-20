@@ -931,6 +931,31 @@ describe('PiPreparedQuery — P3 native compaction (transformContext)', () => {
     expect(transformed.at(-1)).toMatchObject({ content: 'current turn prompt' });
   });
 
+  it('counts CJK at ~1 token/char so a Chinese transcript still triggers compaction', async () => {
+    const captured: Partial<CapturedLoop> = {};
+    const deps = makeDeps([{ type: 'agent_end', messages: [piAssistant()] }], captured);
+    const adapter = new PiAgentAdapter(deps as never);
+    const prepared = await adapter.startup(compactionArgs());
+    await drain(prepared.query('go'));
+    const transform = captured.config?.transformContext;
+    // 230_000 CJK chars: chars/4 would estimate ~57k tokens (22% of the
+    // 262144 window — far under the 85% trigger) while the real tokenizer
+    // lands near ~230k (~88%). Without the CJK-aware estimate compaction
+    // never fires and the next provider request is rejected outright.
+    const transcript = [
+      { role: 'user', content: '题'.repeat(200_000), timestamp: 1 },
+      { role: 'user', content: '答'.repeat(30_000), timestamp: 2 },
+    ] as AgentMessage[];
+    const transformed = (await transform?.(transcript)) ?? [];
+    // Under chars/4 this passes through unchanged; the CJK estimate prunes
+    // the 200k head and re-injects sessionContext first.
+    expect(transformed[0]).toMatchObject({ role: 'user', content: 'BOUNDED LEARNER CTX' });
+    expect(transformed.at(-1)).toMatchObject({ content: '答'.repeat(30_000) });
+    expect(
+      transformed.some((m) => (m as { content?: string }).content === '题'.repeat(200_000)),
+    ).toBe(false);
+  });
+
   it('never throws — a transformContext failure passes the original messages through', async () => {
     const captured: Partial<CapturedLoop> = {};
     const deps = makeDeps([{ type: 'agent_end', messages: [piAssistant()] }], captured);
@@ -1307,6 +1332,59 @@ describe('PiPreparedQuery — P3 nested subagents (Task/Agent host)', () => {
     expect(updated).toMatchObject({ task_id: 'call_sub_1', patch: { status: 'killed' } });
     // Caller abort owns the terminal truth — no synthesized success result.
     expect(frames.find((f) => f.type === 'result')).toBeUndefined();
+  });
+
+  it('marks the child failed when the provider ends with no assistant message at all', async () => {
+    // Root-loop parity: agent_end without an assistant is
+    // error_during_execution at the root, so the child cannot be completed
+    // either — the parent would quote a report that was never written.
+    const { adapter, args } = nestedStartup(() => [{ type: 'agent_end', messages: [] }]);
+    const prepared = await adapter.startup(args);
+    const frames = (await drain(prepared.query('go'))) as Array<Record<string, unknown>>;
+    const updated = frames.find((f) => f.subtype === 'task_updated');
+    expect(updated).toMatchObject({
+      task_id: 'call_sub_1',
+      patch: {
+        status: 'failed',
+        error: expect.stringContaining('without an assistant message'),
+      },
+    });
+    const userFrame = frames.find((f) => f.type === 'user');
+    const toolResult = (
+      userFrame?.message as { content?: Array<Record<string, unknown>> } | undefined
+    )?.content?.[0];
+    expect(toolResult).toMatchObject({ is_error: true });
+  });
+
+  it('marks the child failed when it exhausts spec.maxTurns (ADR-0056 fail-closed)', async () => {
+    // The real loop calls shouldStopAfterTurn after each completed turn;
+    // maxTurns=3 ends the child mid-investigation. A capped child must not
+    // surface as completed with a placeholder report.
+    const { adapter, args } = nestedStartup(
+      () => [],
+      undefined,
+      ({ config }) =>
+        (async function* () {
+          const assistant = childAssistant();
+          for (let turn = 0; turn < 4; turn++) {
+            yield { type: 'message_end', message: assistant } as AgentEvent;
+            if (await config.shouldStopAfterTurn?.({} as never)) break;
+          }
+          yield { type: 'agent_end', messages: [assistant] } as AgentEvent;
+        })() as unknown as EventStream<AgentEvent, AgentMessage[]>,
+    );
+    const prepared = await adapter.startup(args);
+    const frames = (await drain(prepared.query('go'))) as Array<Record<string, unknown>>;
+    const updated = frames.find((f) => f.subtype === 'task_updated');
+    expect(updated).toMatchObject({
+      task_id: 'call_sub_1',
+      patch: { status: 'failed', error: expect.stringContaining('turn ceiling') },
+    });
+    const userFrame = frames.find((f) => f.type === 'user');
+    const toolResult = (
+      userFrame?.message as { content?: Array<Record<string, unknown>> } | undefined
+    )?.content?.[0];
+    expect(toolResult).toMatchObject({ is_error: true });
   });
 
   it('marks the child failed when the provider ends its stream with stopReason error (root-loop parity)', async () => {

@@ -126,6 +126,14 @@ export function isPiSessionId(sessionId: string): boolean {
  * compact_boundary frame's own pre/post counts, not billing usage.
  */
 const PI_COMPACT_CHARS_PER_TOKEN = 4;
+/**
+ * CJK codepoints estimate to ~1 token each — the repo's own budget note puts
+ * 400 CJK chars at ~400–1000 tokens (kernel/tools/budgets.ts), so the generic
+ * divisor would undercount a Chinese transcript 4–10× and the window would
+ * overflow before the 85% trigger ever fired. Erring toward early compaction
+ * is the safe direction.
+ */
+const PI_COMPACT_CJK_RE = /[\u2E80-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF]/gu;
 /** Compact when estimated context tokens exceed this share of the window. */
 const PI_COMPACT_TRIGGER_RATIO = 0.85;
 /** Prune back to this share of the window (headroom for the reply). */
@@ -140,25 +148,30 @@ function piSessionIdFor(optionsResume: string | undefined): string {
 /** Estimate context tokens over the LLM-visible text of a message list. */
 function estimatePiTokens(messages: readonly AgentMessage[]): number {
   let chars = 0;
+  let cjkChars = 0;
+  const addText = (text: string) => {
+    chars += text.length;
+    cjkChars += text.match(PI_COMPACT_CJK_RE)?.length ?? 0;
+  };
   for (const message of messages) {
     if (message.role === 'user' || message.role === 'toolResult') {
       const content = message.content;
       if (typeof content === 'string') {
-        chars += content.length;
+        addText(content);
       } else if (Array.isArray(content)) {
         for (const block of content) {
-          if (block.type === 'text') chars += block.text.length;
+          if (block.type === 'text') addText(block.text);
         }
       }
     } else if (message.role === 'assistant') {
       for (const block of message.content) {
-        if (block.type === 'text') chars += block.text.length;
-        else if (block.type === 'thinking') chars += block.thinking.length;
-        else if (block.type === 'toolCall') chars += JSON.stringify(block.arguments).length;
+        if (block.type === 'text') addText(block.text);
+        else if (block.type === 'thinking') addText(block.thinking);
+        else if (block.type === 'toolCall') addText(JSON.stringify(block.arguments));
       }
     }
   }
-  return Math.ceil(chars / PI_COMPACT_CHARS_PER_TOKEN);
+  return Math.ceil((chars - cjkChars) / PI_COMPACT_CHARS_PER_TOKEN + cjkChars);
 }
 
 const EMPTY_PI_USAGE: PiUsage = {
@@ -985,6 +998,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       };
       const childMaxTurns = spec.maxTurns;
       let childTurns = 0;
+      let childCapped = false;
       let toolUses = 0;
       let totalTokens = 0;
       let lastToolName: string | undefined;
@@ -996,7 +1010,11 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           ? {
               shouldStopAfterTurn: () => {
                 childTurns += 1;
-                return childTurns >= childMaxTurns;
+                if (childTurns >= childMaxTurns) {
+                  childCapped = true;
+                  return true;
+                }
+                return false;
               },
             }
           : {}),
@@ -1072,17 +1090,25 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           throw new Error('nested subagent aborted');
         }
         const final = lastAssistantMessage(finalMessages);
-        // Provider-side failure parity with the root loop's terminal
-        // normalization: a child whose last assistant reports error/aborted
-        // is a failed subagent (error tool result), never a completed one —
-        // otherwise the parent answers from a report that does not exist.
-        if (final?.stopReason === 'error' || final?.stopReason === 'aborted') {
+        // Root-loop terminal parity: no assistant at all, a capped turn
+        // ceiling, or a provider-side error/aborted stop all mean the child
+        // FAILED — a completed task_* row would let the parent answer from
+        // a report that does not exist.
+        if (!final) {
+          throw new Error(`nested subagent '${subagentType}' ended without an assistant message`);
+        }
+        if (childCapped) {
+          throw new Error(
+            `nested subagent '${subagentType}' stopped at the configured turn ceiling (${childMaxTurns})`,
+          );
+        }
+        if (final.stopReason === 'error' || final.stopReason === 'aborted') {
           throw new Error(
             final.errorMessage ??
               `nested subagent '${subagentType}' ended with stopReason='${final.stopReason}'`,
           );
         }
-        const text = final ? assistantText(final) : '';
+        const text = assistantText(final);
         this.emitFrame(
           piTaskUpdatedFrame({
             sessionId: this.sessionId,
