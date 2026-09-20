@@ -173,12 +173,14 @@ describe.skipIf(!HAS_KEY)('pi copilot-lane actual-output gate (YUK-1022)', () =>
         {
           run_id: run1Id,
           status: t1.status,
+          ...(t1.status === 'failed' ? { error: t1.error } : {}),
           conversation_history_turns: historyDepth[0] ?? null,
           input_digest: `sha256:${sha256(userMessages[0])}`,
         },
         {
           run_id: run2Id,
           status: t2.status,
+          ...(t2.status === 'failed' ? { error: t2.error } : {}),
           conversation_history_turns: historyDepth[1] ?? null,
           input_digest: `sha256:${sha256(userMessages[1])}`,
         },
@@ -197,6 +199,7 @@ describe.skipIf(!HAS_KEY)('pi copilot-lane actual-output gate (YUK-1022)', () =>
         model: row.model,
         status: row.status,
         finish_reason: row.finish_reason,
+        error_message: row.error_message,
         cost_basis: row.cost_basis,
         cost_usd: row.cost_usd,
         cost_ref: row.cost_ref,
