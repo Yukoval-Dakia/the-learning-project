@@ -11,6 +11,8 @@
 
 import { createHash } from 'node:crypto';
 import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
+import type { AgentEvent, AgentMessage } from '@earendil-works/pi-agent-core';
+import type { EventStream, Api as PiApi, Model as PiModel } from '@earendil-works/pi-ai';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { capabilities } from '@/capabilities';
@@ -40,6 +42,8 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/kernel/tools/allowlists';
+import { __setPiAdapterForTests } from '@/server/ai/execution-adapter';
+import { PiAgentAdapter } from '@/server/ai/pi-agent-adapter';
 import {
   acquireProviderSession,
   resolveProviderSessionAdmissionPlan,
@@ -47,6 +51,7 @@ import {
 import { createRunLifecycle } from '@/server/ai/run-lifecycle';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
+import { __resetRegistryForTests } from '@/server/ai/tools/registry';
 import { STUCK_RUN_THRESHOLD_MS } from '@/server/boss/handlers/ai_task_run_reconcile';
 import { computeReplay } from '@/server/events/sse_replay';
 import { writeJobEvent } from '@/server/events/writer';
@@ -3152,6 +3157,296 @@ describe('runCopilotRun', () => {
       }),
     ).resolves.toMatchObject({ status: 'failed' });
     expect(await persistedSdkSessionId(sessionId)).toBeNull();
+  });
+
+  it('YUK-1022 — a pi-owned session cursor folds to cold start unless the pi lane is pinned for the kind', async () => {
+    const sessionId = 'sess_worker_pi_fold';
+    await seedCopilotConversation(sessionId);
+    const policies: Array<{ resumeSessionId?: string }> = [];
+    const execute = vi.fn<NonNullable<RunCopilotRunParams['executeCopilotTurnFn']>>(
+      async (_db, _request, policy) => {
+        policies.push(policy);
+        return successfulWorkerExecution('tr_pi_fold', 'ok', 'pi:test_owned_session');
+      },
+    );
+    const runTurn = (runId: string) =>
+      runCopilotRun({
+        db: testDb(),
+        data: { ...baseData, run_id: runId, session_id: sessionId },
+        executeCopilotTurnFn: execute,
+        resolveCopilotRunInputFn: stubRunInput,
+      });
+
+    // Turn 1 persists + registers the pi-owned cursor in this worker.
+    await runTurn('run_pi_fold_seed');
+    expect(await persistedSdkSessionId(sessionId)).toBe('pi:test_owned_session');
+
+    // Turn 2 — cursor owned but the pi lane is not pinned for CopilotTask:
+    // a pi: id can never attach to an SDK subprocess, so it folds to cold.
+    await runTurn('run_pi_fold_sdk_lane');
+    expect(policies[1]?.resumeSessionId).toBeUndefined();
+
+    // Turn 3 — env rollout pin makes the kind pi-bound: the owned pi: id resumes.
+    vi.stubEnv('AI_ADAPTER_PI_KINDS', 'CopilotTask');
+    vi.stubEnv('AI_ADAPTER_PI_PROVIDER', 'opencode-go');
+    vi.stubEnv('AI_ADAPTER_PI_MODEL', 'mimo-v2.5-pro');
+    try {
+      await runTurn('run_pi_fold_pi_lane');
+      expect(policies[2]?.resumeSessionId).toBe('pi:test_owned_session');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('YUK-1022 — pi lane Stop matrix: durable CANCEL_REQUESTED aborts the real adapter mid-run and the redispatched turn cold-starts', async () => {
+    const sessionId = 'sess_pi_lane_stop';
+    await seedCopilotConversation(sessionId);
+    vi.stubEnv('AI_ADAPTER_PI_KINDS', 'CopilotTask');
+    vi.stubEnv('AI_ADAPTER_PI_PROVIDER', 'opencode-go');
+    // Capability-declared id (providers.ts evidence gate); the injected fake
+    // catalog resolves it regardless — the provider wire is the only fake.
+    vi.stubEnv('AI_ADAPTER_PI_MODEL', 'deepseek-v4-pro');
+    vi.stubEnv('OPENCODE_API_KEY', 'sk-pi-lane-test');
+
+    __resetRegistryForTests();
+    await registerCapabilityTools(capabilities);
+
+    const piAssistantMsg = (text: string) => ({
+      role: 'assistant' as const,
+      content: [{ type: 'text' as const, text }],
+      api: 'openai-completions',
+      provider: 'opencode-go',
+      model: 'deepseek-v4-pro',
+      responseId: 'resp_pi_test',
+      usage: {
+        input: 100,
+        output: 40,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 140,
+        cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+      },
+      stopReason: 'stop' as const,
+      timestamp: 1_700_000_000_000,
+    });
+
+    const fakeModel = {
+      id: 'deepseek-v4-pro',
+      name: 'DeepSeek V4 Pro',
+      provider: 'opencode-go',
+      api: 'openai-completions',
+      baseUrl: 'https://opencode.ai/zen/go',
+      input: ['text'],
+      contextWindow: 262_144,
+      maxTokens: 32_768,
+    } as unknown as PiModel<PiApi>;
+
+    let call = 0;
+    const agentLoop = vi.fn(
+      (
+        _prompts: AgentMessage[],
+        _context: unknown,
+        _config: unknown,
+        signal: AbortSignal | undefined,
+      ): EventStream<AgentEvent, AgentMessage[]> =>
+        (async function* () {
+          call += 1;
+          yield { type: 'message_end', message: piAssistantMsg('turn body') } as AgentEvent;
+          if (call === 1) {
+            // Execution has started — commit the durable Stop, then idle the
+            // way a real in-flight loop does until the abort lands.
+            await writeJobEvent(testDb(), {
+              business_table: COPILOT_RUN_TABLE,
+              business_id: 'run_pi_lane_stop',
+              event_type: COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
+              payload: { by: 'user' },
+            });
+            while (!signal?.aborted) await new Promise((r) => setTimeout(r, 25));
+            return; // real loop semantics: the stream ends on abort — no terminal event
+          }
+          yield {
+            type: 'agent_end',
+            messages: [piAssistantMsg('重投后的完成回复。')],
+          } as AgentEvent;
+        })() as unknown as EventStream<AgentEvent, AgentMessage[]>,
+    );
+    const piAdapter = new PiAgentAdapter({
+      models: { getModel: () => fakeModel, streamSimple: vi.fn() },
+      agentLoop,
+    } as never);
+    __setPiAdapterForTests(piAdapter);
+    try {
+      const stopped = await runCopilotRun({
+        db: testDb(),
+        data: { ...baseData, run_id: 'run_pi_lane_stop', session_id: sessionId },
+        resolveCopilotRunInputFn: stubRunInput,
+      });
+      // The adapter emitted no terminal frame for the caller-aborted attempt;
+      // the worker settles the committed cancellation.
+      expect(stopped.status).toBe('cancelled');
+      // Cancellation clears the worker cursor — a redelivery must cold-start.
+      expect(await persistedSdkSessionId(sessionId)).toBeNull();
+
+      const redelivered = await runCopilotRun({
+        db: testDb(),
+        data: { ...baseData, run_id: 'run_pi_lane_redelivered', session_id: sessionId },
+        resolveCopilotRunInputFn: stubRunInput,
+      });
+      expect(redelivered.status).toBe('done');
+      expect(agentLoop).toHaveBeenCalledTimes(2);
+      const cursor = await persistedSdkSessionId(sessionId);
+      expect(cursor?.startsWith('pi:')).toBe(true);
+
+      // Both attempts left pi-lane provider truth on ai_task_runs.
+      const runs = await testDb()
+        .select()
+        .from(ai_task_runs)
+        .where(eq(ai_task_runs.task_kind, 'CopilotTask'));
+      expect(runs.length).toBeGreaterThanOrEqual(2);
+      expect(runs.every((row) => row.provider === 'opencode-go')).toBe(true);
+    } finally {
+      __setPiAdapterForTests(undefined);
+    }
+  });
+
+  it('YUK-1022 — pi lane SIGTERM-analog: provider-lease loss aborts the real adapter mid-run, settles failed, and a retryable frame mints a fresh _retry attempt', async () => {
+    const sessionId = 'sess_pi_lane_lease';
+    await seedCopilotConversation(sessionId);
+    vi.stubEnv('AI_ADAPTER_PI_KINDS', 'CopilotTask');
+    vi.stubEnv('AI_ADAPTER_PI_PROVIDER', 'opencode-go');
+    vi.stubEnv('AI_ADAPTER_PI_MODEL', 'deepseek-v4-pro');
+    vi.stubEnv('OPENCODE_API_KEY', 'sk-pi-lane-test');
+    // enforce admission so the run holds a real heartbeat lease; flipping its
+    // claim_token is the in-process SIGTERM analog (worker fenced out → the
+    // 5s heartbeat observes fence_lost → lifecycle abort → adapter abort).
+    vi.stubEnv('AI_PROVIDER_SESSION_ADMISSION_MODE', 'enforce');
+    vi.stubEnv(
+      'AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON',
+      JSON.stringify({
+        'opencode-go': {
+          maxConcurrentSessions: 4,
+          maxSessionStartsPerMinute: 30,
+          maxQueuedSessions: 8,
+          maxWaitMs: 2_000,
+        },
+      }),
+    );
+
+    __resetRegistryForTests();
+    await registerCapabilityTools(capabilities);
+
+    const piAssistantMsg = (text: string) => ({
+      role: 'assistant' as const,
+      content: [{ type: 'text' as const, text }],
+      api: 'openai-completions',
+      provider: 'opencode-go',
+      model: 'deepseek-v4-pro',
+      responseId: 'resp_pi_lease_test',
+      usage: {
+        input: 100,
+        output: 40,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 140,
+        cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+      },
+      stopReason: 'stop' as const,
+      timestamp: 1_700_000_000_000,
+    });
+    const fakeModel = {
+      id: 'deepseek-v4-pro',
+      name: 'DeepSeek V4 Pro',
+      provider: 'opencode-go',
+      api: 'openai-completions',
+      baseUrl: 'https://opencode.ai/zen/go',
+      input: ['text'],
+      contextWindow: 262_144,
+      maxTokens: 32_768,
+    } as unknown as PiModel<PiApi>;
+
+    let call = 0;
+    const agentLoop = vi.fn(
+      (
+        _prompts: AgentMessage[],
+        _context: unknown,
+        _config: unknown,
+        signal: AbortSignal | undefined,
+      ): EventStream<AgentEvent, AgentMessage[]> =>
+        (async function* () {
+          call += 1;
+          yield { type: 'message_end', message: piAssistantMsg('turn body') } as AgentEvent;
+          if (call === 1) {
+            // Mid-execution: steal the lease fence — the next heartbeat CAS
+            // fails and the lifecycle aborts the adapter like a worker kill.
+            for (let waited = 0; waited < 5_000; waited += 50) {
+              const [lease] = await testDb()
+                .select({ task_run_id: provider_session_admission.task_run_id })
+                .from(provider_session_admission)
+                .where(eq(provider_session_admission.status, 'acquired'));
+              if (lease) {
+                await testDb()
+                  .update(provider_session_admission)
+                  .set({ claim_token: crypto.randomUUID() })
+                  .where(eq(provider_session_admission.task_run_id, lease.task_run_id));
+                break;
+              }
+              await new Promise((r) => setTimeout(r, 50));
+            }
+            while (!signal?.aborted) await new Promise((r) => setTimeout(r, 50));
+            return; // aborted loop ends without a terminal event
+          }
+          yield {
+            type: 'agent_end',
+            messages: [piAssistantMsg('重投后的完成回复。')],
+          } as AgentEvent;
+        })() as unknown as EventStream<AgentEvent, AgentMessage[]>,
+    );
+    const piAdapter = new PiAgentAdapter({
+      models: { getModel: () => fakeModel, streamSimple: vi.fn() },
+      agentLoop,
+    } as never);
+    __setPiAdapterForTests(piAdapter);
+    try {
+      const interrupted = await runCopilotRun({
+        db: testDb(),
+        data: { ...baseData, run_id: 'run_pi_lane_lease', session_id: sessionId },
+        resolveCopilotRunInputFn: stubRunInput,
+      });
+      expect(interrupted.status).toBe('failed');
+      expect(await persistedSdkSessionId(sessionId)).toBeNull();
+      // The fenced-out attempt closed its ai_task_runs row as a failure. (The
+      // admission row itself legitimately stays 'acquired' — claim_token CAS
+      // now fails — until the lease-expiry sweep quarantines it.)
+      const [lostAttempt] = await testDb()
+        .select({ status: ai_task_runs.status })
+        .from(ai_task_runs)
+        .where(eq(ai_task_runs.id, 'copilot_run_tool_run_pi_lane_lease'));
+      expect(lostAttempt?.status).toBe('failure');
+
+      // Same-run redelivery after a retryable FAILED(reason='error') frame
+      // mints a fresh `_retry_1` attempt identity on the pi lane.
+      await writeJobEvent(testDb(), {
+        business_table: COPILOT_RUN_TABLE,
+        business_id: 'run_pi_lane_retry',
+        event_type: COPILOT_RUN_EVENTS.FAILED,
+        payload: { reason: 'error', error: 'legacy transient' },
+      });
+      const redelivered = await runCopilotRun({
+        db: testDb(),
+        data: { ...baseData, run_id: 'run_pi_lane_retry', session_id: sessionId },
+        resolveCopilotRunInputFn: stubRunInput,
+      });
+      expect(redelivered.status).toBe('done');
+      if (redelivered.status !== 'done') return;
+      expect(redelivered.task_run_id).toContain('_retry_1');
+      const [retryRow] = await testDb()
+        .select({ provider: ai_task_runs.provider })
+        .from(ai_task_runs)
+        .where(eq(ai_task_runs.id, redelivered.task_run_id));
+      expect(retryRow?.provider).toBe('opencode-go');
+    } finally {
+      __setPiAdapterForTests(undefined);
+    }
   });
 
   it('YUK-948 — a cancelled follow-up clears a previously owned worker cursor', async () => {

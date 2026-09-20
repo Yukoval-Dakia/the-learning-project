@@ -8,7 +8,12 @@ import {
 import { resolveContextBudget } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
 import type { ValidateLearningContentFn } from '@/kernel/tools/types';
-import { EXA_MCP_ALLOWED_TOOLS, EXA_MCP_SERVER_NAME, buildExaMcpServer } from '@/server/ai/mcp/exa';
+import {
+  EXA_MCP_ALLOWED_TOOLS,
+  EXA_MCP_SERVER_NAME,
+  EXA_SCOPED_TOOL_NAMES,
+  buildExaMcpServer,
+} from '@/server/ai/mcp/exa';
 import {
   type RunTaskResult,
   type StreamCollectResult,
@@ -22,7 +27,8 @@ import {
   createToolUseCorrelation,
   shouldEmitToolUseForCaller,
 } from '@/server/ai/tools/mcp-bridge';
-import { resolveCopilotSkills } from '@/subjects/copilot-skills';
+import { piDomainMount, piRemoteMcpMount } from '@/server/ai/tools/pi-tools';
+import { resolveCopilotSkillDocs, resolveCopilotSkills } from '@/subjects/copilot-skills';
 import { copilotTaskSpec } from '../tasks/agent';
 import { reviewCopilotLearningContent } from './content-validation';
 import type { CopilotRunCancellationControl } from './copilot-run-cancellation';
@@ -46,6 +52,7 @@ import {
   type CopilotReplyFinalizationResult,
   createCopilotReplyFinalizer,
   prependCopilotFinalizationHooks,
+  prependCopilotPiFinalizationHooks,
   primaryViewLearningContent,
   primaryViewLearningQuestions,
 } from './reply-finalization';
@@ -140,6 +147,8 @@ export interface CopilotExecutionAdapters {
   buildMcpServerFn: (options: BuildMcpServerOptions) => SdkMcpServer;
   buildExaMcpServerFn: () => McpHttpServerConfig | null;
   resolveCopilotSkillsFn: typeof resolveCopilotSkills;
+  /** YUK-1022 — resolved SKILL.md bodies for the pi lane's system-prompt injection. */
+  resolveCopilotSkillDocsFn: typeof resolveCopilotSkillDocs;
 }
 
 const defaultAdapters: CopilotExecutionAdapters = {
@@ -148,6 +157,7 @@ const defaultAdapters: CopilotExecutionAdapters = {
   buildMcpServerFn: buildMcpServerFromRegistry,
   buildExaMcpServerFn: buildExaMcpServer,
   resolveCopilotSkillsFn: resolveCopilotSkills,
+  resolveCopilotSkillDocsFn: resolveCopilotSkillDocs,
 };
 
 async function emitActivity(
@@ -269,7 +279,12 @@ export function createCopilotExecutionOwner(
     const budgetTracker = new ContextBudgetTracker(baseContextBudget);
     const proposalFlowGate = createCopilotProposalFlowGate();
     const toolUseCorrelation = createToolUseCorrelation(DOMAIN_TOOL_MCP_SERVER_NAME);
-    const mcpServer = adapters.buildMcpServerFn({
+    // YUK-1022 — one mount-options literal feeds BOTH engine surfaces: the
+    // SDK in-process MCP server (`ctx.mcpServers`) and the pi AgentTool
+    // bridge (`ctx.piToolMounts` → piDomainMount). `claimToolUseId` is
+    // SDK-only correlation; the pi bridge substitutes the loop's native
+    // toolCall.id via `correlatedToolUseId` (see pi-tools.ts).
+    const domainMountOptions = {
       ctx: {
         db,
         sessionId: turn.sessionId,
@@ -306,19 +321,24 @@ export function createCopilotExecutionOwner(
           () => undefined,
         );
       },
-    });
+    } satisfies BuildMcpServerOptions;
+    const mcpServer = adapters.buildMcpServerFn(domainMountOptions);
     const exa = adapters.buildExaMcpServerFn();
     const mcpServers: Record<string, SdkMcpServer | McpHttpServerConfig> = {
       [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer,
       ...(exa ? { [EXA_MCP_SERVER_NAME]: exa } : {}),
     };
+    const piToolMounts = [
+      piDomainMount(domainMountOptions),
+      ...(exa ? [piRemoteMcpMount(EXA_MCP_SERVER_NAME, exa, EXA_SCOPED_TOOL_NAMES)] : []),
+    ];
     const baseAllowedTools = [
       ...resolveMcpAllowedTools(surface),
       ...(exa ? EXA_MCP_ALLOWED_TOOLS : []),
     ];
     const subagentsEnabled = policy.subagentsEnabled ?? isCopilotSubagentEnabled();
     const parentMaxTurns = DURABLE_COPILOT_EXECUTION_BUDGET.maxIterations;
-    const { allowedTools, spawnContract } = buildCopilotNativeResearchConfig({
+    const { allowedTools, spawnContract, piSpawnContract } = buildCopilotNativeResearchConfig({
       baseAllowedTools,
       enabled: subagentsEnabled,
       parentMaxTurns,
@@ -367,7 +387,19 @@ export function createCopilotExecutionOwner(
       policy.cancellation.prependSdkHook(spawnContract?.hooks),
     );
     sdkHooks = prependCopilotFinalizationHooks(finalizer.hooks, sdkHooks);
+    // YUK-1022 — the pi twin of the hook stack. Order mirrors the SDK prepend
+    // chain (finalizer → cancellation → spawn gate last): the spawn gate's
+    // `{block:false}` allow short-circuit requires it to run after every
+    // deny-capable entry. There is no toolUseCorrelation on pi — the loop's
+    // native toolCall.id reaches the pipeline verbatim.
+    const piHooks = prependCopilotPiFinalizationHooks(finalizer.piHooks, {
+      beforeToolCall: [
+        policy.cancellation.piBeforeToolCall,
+        ...(piSpawnContract ? [piSpawnContract.gate] : []),
+      ],
+    });
     const skills = await adapters.resolveCopilotSkillsFn();
+    const piSkillDocs = await adapters.resolveCopilotSkillDocsFn();
     const contextDigest = copilotSessionContextDigest(input);
     const resumeSessionId = policy.resumeSessionId;
     const mode: 'cold' | 'resume' = resumeSessionId ? 'resume' : 'cold';
@@ -405,6 +437,25 @@ export function createCopilotExecutionOwner(
           }
         : {}),
       ...(skills ? { skills } : {}),
+      // YUK-1022 — pi dual descriptors. Each mirrors the SDK surface declared
+      // above; the adapter gate picks per lane. On the pi lane a declared SDK
+      // surface without its twin fails closed at startup.
+      piToolMounts,
+      piHooks,
+      ...(piSpawnContract ? { piAgents: piSpawnContract.piAgents } : {}),
+      ...(piSkillDocs ? { piSkillDocs } : {}),
+      // Resume on pi = replay the bounded durable turns into context.messages
+      // (the provider-session-file equivalent). Only when resuming — a cold
+      // prompt already folds conversation_history into its envelope, and
+      // seeding it again would double the history.
+      ...(resumeSessionId
+        ? {
+            piSessionReplay: input.conversation_history.map((turn) => ({
+              role: turn.role === 'ai' ? ('assistant' as const) : turn.role,
+              text: turn.text,
+            })),
+          }
+        : {}),
       budgetOverride: {
         maxIterations: DURABLE_COPILOT_EXECUTION_BUDGET.maxIterations,
         timeoutMs: DURABLE_COPILOT_EXECUTION_BUDGET.timeoutMs,

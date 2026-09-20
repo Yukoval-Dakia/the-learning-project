@@ -1,0 +1,72 @@
+{
+  "captured_at": "2026-09-20T12:27:14.805Z",
+  "code_revision": "4ef86f8a15095ce6e2dd63c7e3ba9e544426a527",
+  "ticket": "YUK-1022",
+  "lane": {
+    "adapter": "pi",
+    "provider": "opencode-go",
+    "model": "deepseek-v4-pro",
+    "task_kind": "CopilotTask",
+    "pin": "env rollout (AI_ADAPTER_PI_KINDS/PROVIDER/MODEL), caller passes no modelBinding",
+    "worker_path": "runCopilotRun → executeCopilotTurn (no seam mocks)"
+  },
+  "session": {
+    "session_id": "sess_p3_actual_ok03ghrxud7q0nra160u88so",
+    "cursor_after_turn1": "pi:54763606-59ab-4f6d-b477-7caa2f0bb630",
+    "cursor_after_turn2": "pi:54763606-59ab-4f6d-b477-7caa2f0bb630",
+    "cursor_reused_verbatim": true
+  },
+  "turns": [
+    {
+      "run_id": "run_p3_t1_ktwgmuesnya3ikd24fou57iv",
+      "status": "done",
+      "conversation_history_turns": 1,
+      "input_digest": "sha256:c98dbaad4e37cf7e0940874f8ea5e1d96eea32520f2b9597aa56961d55c97e62"
+    },
+    {
+      "run_id": "run_p3_t2_s5zujyndhnp2vngn2c570s7z",
+      "status": "done",
+      "conversation_history_turns": 3,
+      "input_digest": "sha256:643fc76676c18157736b32bddd1d9f5cfb4d31a761ec33544ee230774cedef0d"
+    }
+  ],
+  "reply_digests": [
+    {
+      "event_id": "copilot_reply_i72p1lk2qrctl5zrz1tdxlzq",
+      "task_run_id": "copilot_run_tool_run_p3_t1_ktwgmuesnya3ikd24fou57iv",
+      "output_digest": "sha256:4238735750d6e87c2d1e388ba94d8ae97f610c29920e200c446c43ed9fe27a28",
+      "output_excerpt": "水的化学式是 H₂O。"
+    },
+    {
+      "event_id": "copilot_reply_cz16f1x4p297qcacmu8q3ff2",
+      "task_run_id": "copilot_run_tool_run_p3_t2_s5zujyndhnp2vngn2c570s7z",
+      "output_digest": "sha256:34dea25c0c45a74b6fa19b5c73e21378b33252f611196aa8e4e06fbff54a3936",
+      "output_excerpt": "氧气的化学式是 O₂。"
+    }
+  ],
+  "ai_task_runs": [
+    {
+      "id": "copilot_run_tool_run_p3_t2_s5zujyndhnp2vngn2c570s7z",
+      "provider": "opencode-go",
+      "model": "deepseek-v4-pro",
+      "status": "success",
+      "finish_reason": "end_turn",
+      "cost_basis": "estimated",
+      "cost_usd": 0.01202058,
+      "cost_ref": "pi-catalog:opencode-go/deepseek-v4-pro",
+      "usage_digest": "sha256:63e5e24ab731a3770d00bffd5e3a93cf223cff92be43a34a02659a8ba0f46b84"
+    },
+    {
+      "id": "copilot_run_tool_run_p3_t1_ktwgmuesnya3ikd24fou57iv",
+      "provider": "opencode-go",
+      "model": "deepseek-v4-pro",
+      "status": "success",
+      "finish_reason": "end_turn",
+      "cost_basis": "estimated",
+      "cost_usd": 0.0120351,
+      "cost_ref": "pi-catalog:opencode-go/deepseek-v4-pro",
+      "usage_digest": "sha256:c1c8fe722170377ce09ed5ae574acb8a5d7bb7eb01f15ca158242d3c15ae18ca"
+    }
+  ],
+  "provenance": "Turn 1 mints a pi:<uuid> cursor through notifySdkSessionId; copilot_run persists it and registers the worker-owned session. Turn 2 passes the piLanePinnedForKind fold (same id resumes verbatim instead of folding to cold), seeds piSessionReplay from the real assembleCopilotRunInput conversation_history projection, and the adapter replays it as user messages. piHooks/piSkillDocs/piAgents/nativeCompaction all ride the same ctx as the SDK descriptors."
+}

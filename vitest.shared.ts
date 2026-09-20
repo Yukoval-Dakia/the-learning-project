@@ -287,6 +287,12 @@ export const fastTestInclude = [
   // YUK-1021 (921 P2) — pi tool-mount surface: DomainTool→AgentTool compile +
   // remote-MCP bridge. Pure unit (registry + mocked MCP client), no DB.
   'src/server/ai/tools/pi-tools.test.ts',
+  // YUK-1022 (921 P3) — pi spawn-contract gate + Task/Agent AgentTool surface
+  // over the shared SpawnDecider. Pure unit — no engine, no DB.
+  'src/server/ai/tools/pi-subagent.test.ts',
+  // YUK-1022 (921 P3) — pi hook bridge (ordered gates/observers, fail-open
+  // observers, field-wise merge). Pure unit — no engine, no DB.
+  'src/server/ai/pi-hooks.test.ts',
   // M5-T3 (YUK-321) — copilotTools 组合根聚合器：纯 registry 操作，无 DB。
   'src/server/ai/tools/register-capability-tools.unit.test.ts',
   // YUK-203 U4 / L-memtool — search_memory_facts DomainTool. Pure DI unit: the

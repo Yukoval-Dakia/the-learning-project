@@ -5,9 +5,11 @@ import type {
   PostToolUseFailureHookInput,
   PostToolUseHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
+import type { AfterToolCallResult } from '@earendil-works/pi-agent-core';
 import { z } from 'zod';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/kernel/tools/allowlists';
+import type { PiAfterToolCall, PiBeforeToolCall, PiHookBridge } from '@/server/ai/pi-hooks';
 
 export { CopilotPrimaryViewSchema } from '../primary-view-contract';
 
@@ -247,6 +249,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+/** pi tool errors surface as content-block arrays; reduce to the text the SDK
+ *  `PostToolUseFailure.error` string would have carried. */
+function piToolErrorText(error: unknown): string {
+  if (typeof error === 'string') return error;
+  if (Array.isArray(error)) {
+    const text = error
+      .map((block) =>
+        isRecord(block) && block.type === 'text' && typeof block.text === 'string'
+          ? block.text
+          : '',
+      )
+      .filter((part) => part.length > 0)
+      .join('\n');
+    if (text.length > 0) return text;
+  }
+  try {
+    return JSON.stringify(error) ?? String(error);
+  } catch {
+    return String(error);
+  }
+}
+
 function proposalDisclosure(trace: readonly TraceEntry[]): string | undefined {
   const proposals = trace.filter((entry) => entry.proposal_effect_contract !== undefined);
   if (proposals.length === 0) return undefined;
@@ -400,21 +424,18 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
   let remoteEvidenceTotalChars = 0;
 
   /** Fail-closed evidence capture: never blocks the tool call, never stores truncated payloads. */
-  function captureRemoteMcpEvidence(
+  function captureRemoteMcpEvidenceView(
     entry: TraceEntry,
-    input: PostToolUseHookInput | PostToolUseFailureHookInput,
+    view: {
+      toolInput: unknown;
+      toolResponse?: unknown;
+      failure?: { error: string; is_interrupt?: boolean };
+    },
   ): void {
     try {
       const callChars = JSON.stringify({
-        input: input.tool_input,
-        ...(input.hook_event_name === 'PostToolUse'
-          ? { output: input.tool_response }
-          : {
-              failure: {
-                error: input.error,
-                ...(input.is_interrupt !== undefined ? { is_interrupt: input.is_interrupt } : {}),
-              },
-            }),
+        input: view.toolInput,
+        ...(view.failure === undefined ? { output: view.toolResponse } : { failure: view.failure }),
       }).length;
       if (
         callChars > REMOTE_MCP_EVIDENCE_MAX_CALL_CHARS ||
@@ -425,14 +446,11 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       }
       // Clone the observed value so a caller retaining the mutable hook payload
       // cannot later change what the final review corroborates against.
-      entry.remote_input = structuredClone(input.tool_input);
-      if (input.hook_event_name === 'PostToolUse') {
-        entry.remote_output = structuredClone(input.tool_response);
+      entry.remote_input = structuredClone(view.toolInput);
+      if (view.failure === undefined) {
+        entry.remote_output = structuredClone(view.toolResponse);
       } else {
-        entry.remote_failure = {
-          error: input.error,
-          ...(input.is_interrupt !== undefined ? { is_interrupt: input.is_interrupt } : {}),
-        };
+        entry.remote_failure = view.failure;
       }
       remoteEvidenceTotalChars += callChars;
     } catch (error) {
@@ -443,6 +461,24 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         error,
       });
     }
+  }
+
+  /** Fail-closed evidence capture: never blocks the tool call, never stores truncated payloads. */
+  function captureRemoteMcpEvidence(
+    entry: TraceEntry,
+    input: PostToolUseHookInput | PostToolUseFailureHookInput,
+  ): void {
+    captureRemoteMcpEvidenceView(entry, {
+      toolInput: input.tool_input,
+      ...(input.hook_event_name === 'PostToolUse'
+        ? { toolResponse: input.tool_response }
+        : {
+            failure: {
+              error: input.error,
+              ...(input.is_interrupt !== undefined ? { is_interrupt: input.is_interrupt } : {}),
+            },
+          }),
+    });
   }
 
   const preHook: HookCallback = async (input) => {
@@ -500,6 +536,66 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     PreToolUse: [{ hooks: [preHook] }],
     PostToolUse: [{ hooks: [postHook] }],
     PostToolUseFailure: [{ hooks: [postHook] }],
+  };
+
+  // YUK-1022 — the pi-lane twins. Same trace state, same decision order:
+  // `piBeforeToolCall` mirrors preHook (ceiling deny → {block}); `piAfterToolCall`
+  // mirrors postHook (settle status/output hash/remote evidence) and appends the
+  // `tool_use_id=` context block the SDK writes back via `additionalContext`.
+  const piBeforeToolCall: PiBeforeToolCall = (call, args) => {
+    if (trace.length >= COPILOT_REPLY_TRACE_MAX_CALLS) {
+      return { block: true, reason: 'Copilot turn tool-call ceiling reached' };
+    }
+    const entry: TraceEntry = {
+      ordinal: trace.length + 1,
+      tool_use_id: call.id,
+      tool_name: call.name,
+      input_sha256: sha256CanonicalJson(args),
+      output_sha256: null,
+      status: 'in_flight',
+      effect: null,
+      root_call: call.agentType === undefined,
+    };
+    trace.push(entry);
+    byId.set(entry.tool_use_id, entry);
+    traceVersion += 1;
+    return undefined;
+  };
+
+  const piAfterToolCall: PiAfterToolCall = (observation) => {
+    const entry = byId.get(observation.call.id);
+    // Domain tools settle through observeDomainTool inside executeDomainToolCall
+    // before afterToolCall fires — same ordering as the SDK lane.
+    if (entry?.status !== 'in_flight') return undefined;
+    entry.status = observation.isError ? 'failed' : 'succeeded';
+    entry.output_sha256 = sha256CanonicalJson(
+      observation.isError ? { error: piToolErrorText(observation.error) } : observation.output,
+    );
+    if (
+      observation.call.name.startsWith('mcp__') &&
+      !observation.call.name.startsWith(`mcp__${DOMAIN_TOOL_MCP_SERVER_NAME}__`)
+    )
+      captureRemoteMcpEvidenceView(entry, {
+        toolInput: observation.args,
+        ...(observation.isError
+          ? {
+              failure: {
+                error: piToolErrorText(observation.error),
+                ...(observation.interrupted !== undefined
+                  ? { is_interrupt: observation.interrupted }
+                  : {}),
+              },
+            }
+          : { toolResponse: observation.output }),
+      });
+    traceVersion += 1;
+    const content: NonNullable<AfterToolCallResult['content']> = [
+      ...(Array.isArray(observation.output)
+        ? (observation.output as NonNullable<AfterToolCallResult['content']>)
+        : []),
+      { type: 'text', text: `tool_use_id=${observation.call.id}` },
+    ];
+    return { content };
   };
 
   function observedCompletedToolUseIds(): string[] {
@@ -686,6 +782,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
 
   return {
     hooks,
+    piHooks: { beforeToolCall: [piBeforeToolCall], afterToolCall: [piAfterToolCall] },
     beforeDomainTool(_tool: ToolExecutionGateInput): string | undefined {
       return trace.length >= COPILOT_REPLY_TRACE_MAX_CALLS
         ? 'Copilot turn tool-call ceiling reached'
@@ -708,5 +805,17 @@ export function prependCopilotFinalizationHooks(
       ...(finalizerHooks.PostToolUseFailure ?? []),
       ...(existing?.PostToolUseFailure ?? []),
     ],
+  };
+}
+
+/** YUK-1022 — pi twin of `prependCopilotFinalizationHooks`: finalizer entries
+ *  run before the caller's bridge entries in both directions. */
+export function prependCopilotPiFinalizationHooks(
+  finalizerHooks: PiHookBridge,
+  existing?: PiHookBridge,
+): PiHookBridge {
+  return {
+    beforeToolCall: [...(finalizerHooks.beforeToolCall ?? []), ...(existing?.beforeToolCall ?? [])],
+    afterToolCall: [...(finalizerHooks.afterToolCall ?? []), ...(existing?.afterToolCall ?? [])],
   };
 }

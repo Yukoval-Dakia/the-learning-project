@@ -1,9 +1,12 @@
 {
   "schemaVersion": 1,
   "edgeUnit": "distinct-source-file-to-resolved-module",
+  "notes": {
+    "YUK-1022": "copilot -> ai raised 10 -> 16 (+6, total 435 -> 441). Spec-mandated P3 dual-descriptor wiring: copilot-execution/subagents now import the pi lane parallels (pi-hooks, pi-subagent host, execution-adapter lane pin, pi-agent-adapter types) alongside the existing SDK descriptor edges, plus the test seam in copilot_run.test.ts. Ratified per the YUK-921 migration spec; P4 retires the SDK side of these edges."
+  },
   "debts": {
     "capabilityToServer": {
-      "total": 435,
+      "total": 441,
       "byOwnerPair": {
         "agency -> ai": 27,
         "agency -> boss": 10,
@@ -17,7 +20,7 @@
         "agency -> runtime-env": 1,
         "agency -> subjects": 1,
         "copilot -> advisory-locks": 1,
-        "copilot -> ai": 10,
+        "copilot -> ai": 16,
         "copilot -> boss": 6,
         "copilot -> events": 5,
         "copilot -> http": 1,
