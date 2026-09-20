@@ -7,9 +7,12 @@ import {
   DB_FAILURE_SENTINEL_TESTS,
   affectedCliBytes,
   affectedFilesFitCli,
+  binPackDbShards,
   findDirectChangedDbTestMisses,
   findDynamicImportDbTests,
   findSourceScanningDbTests,
+  loadDbTestDurations,
+  medianDurationMs,
   mergeDbPredictedFiles,
   parseShard,
   resolveRequiredDbFiles,
@@ -237,6 +240,75 @@ describe('DB affected-test selector', () => {
         effective_mode: 'full',
         fallback_reason: 'base-empty',
       });
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('DB shard bin-packing (YUK-1023)', () => {
+  const durations = {
+    'src/a.db.test.ts': 1_000,
+    'src/b.db.test.ts': 900,
+    'src/c.db.test.ts': 100,
+    'src/d.db.test.ts': 100,
+    'src/heavy.db.test.ts': 4_000,
+  };
+
+  it('balances skewed durations that count-mod sharding would stack', () => {
+    const files = Object.keys(durations);
+    const bins = binPackDbShards({ files, shardCount: 2, durations });
+    // LPT: heavy lands alone (4000) vs the rest packed to ~2100 — a naive
+    // alphabetical index split would give 5100/1000 instead.
+    expect(Math.max(...bins.map((b) => b.estimatedMs))).toBe(4_000);
+    expect(Math.min(...bins.map((b) => b.estimatedMs))).toBe(2_100);
+    // Every file lands in exactly one bin, deterministically.
+    expect(bins.flatMap((b) => b.files).sort()).toEqual(files.sort());
+    expect(binPackDbShards({ files, shardCount: 2, durations })).toEqual(bins);
+  });
+
+  it('assigns unmeasured files the suite median instead of zero', () => {
+    const bins = binPackDbShards({
+      files: ['src/a.db.test.ts', 'src/new.db.test.ts'],
+      shardCount: 2,
+      durations: { 'src/a.db.test.ts': 100 },
+    });
+    // median({100}) = 100 → new file priced at 100, not 0.
+    expect(bins.every((b) => b.estimatedMs === 100)).toBe(true);
+  });
+
+  it('leaves trailing bins empty when fewer files than shards', () => {
+    const bins = binPackDbShards({
+      files: ['src/a.db.test.ts'],
+      shardCount: 4,
+      durations,
+    });
+    expect(bins[0]?.files).toEqual(['src/a.db.test.ts']);
+    expect(bins[1]?.files).toEqual([]);
+    expect(bins[3]?.estimatedMs).toBe(0);
+  });
+
+  it('rejects invalid shard counts and tolerates an empty baseline', () => {
+    expect(() => binPackDbShards({ files: [], shardCount: 0, durations })).toThrow();
+    const bins = binPackDbShards({
+      files: ['a.test.ts', 'b.test.ts'],
+      shardCount: 2,
+      durations: {},
+    });
+    expect(bins.flatMap((b) => b.files)).toHaveLength(2);
+    expect(bins.every((b) => b.estimatedMs === medianDurationMs({}))).toBe(true);
+  });
+
+  it('loads the committed duration baseline or degrades to empty', () => {
+    const repo = mkdtempSync(path.join(tmpdir(), 'db-durations-'));
+    try {
+      expect(loadDbTestDurations(repo)).toEqual({});
+      mkdirSync(path.join(repo, 'scripts', 'ci'), { recursive: true });
+      writeFileSync(
+        path.join(repo, 'scripts', 'ci', 'db-test-durations.json'),
+        JSON.stringify({ schema_version: 1, durations: { 'src/x.db.test.ts': 42 } }),
+      );
+      expect(loadDbTestDurations(repo)).toEqual({ 'src/x.db.test.ts': 42 });
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
