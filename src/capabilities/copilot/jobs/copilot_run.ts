@@ -57,6 +57,8 @@ import { runTeachingSkill } from '@/capabilities/copilot/server/skills/teaching-
 import { reconcileNativeSubagentsForParent } from '@/capabilities/copilot/server/subagent-mailbox';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
+import { piLanePinnedForKind } from '@/server/ai/execution-adapter';
+import { isPiSessionId } from '@/server/ai/pi-agent-adapter';
 import {
   type BossJobObservation,
   type BossJobObserver,
@@ -807,10 +809,16 @@ async function executeAcceptedCopilotRun(
   // A worker may resume only a session it observed and registered in this
   // process, and only while the conversation row still points at that id.
   // Persisted ids from another process/app are intentionally cold-started.
+  // YUK-1022 — `pi:`-prefixed ids are pi-lane owned: resumable only when this
+  // run would take the pi adapter again; on the SDK lane the id folds to a
+  // cold start (history rides the cold prompt fold, not a session file).
   const persistedSdkSessionId = await getAgentSdkSessionId(db, data.session_id);
-  const resumeSessionId = isCopilotWorkerSessionOwned(data.session_id, persistedSdkSessionId)
-    ? (persistedSdkSessionId ?? undefined)
-    : undefined;
+  const resumeSessionId =
+    isCopilotWorkerSessionOwned(data.session_id, persistedSdkSessionId) &&
+    persistedSdkSessionId &&
+    (!isPiSessionId(persistedSdkSessionId) || piLanePinnedForKind('CopilotTask'))
+      ? persistedSdkSessionId
+      : undefined;
   let progressChain: Promise<void> = Promise.resolve();
   // Load-bearing execution fence, deliberately placed after every deterministic
   // setup/read and immediately before the only paid/external-effect gateway.

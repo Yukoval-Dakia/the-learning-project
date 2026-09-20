@@ -21,7 +21,7 @@
 //
 // 见 docs/superpowers/plans/2026-06-08-yuk284-debt-wave.md §2 OPEN-Q1 (单份共享裁决).
 
-import { access } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 // YUK-611 — 白名单名从命名空间权威模块拼（与 populate 镜像键同源）。
 import { namespacedSkillName } from './skill-namespace';
@@ -61,6 +61,32 @@ export async function resolveCopilotSkills(
       await access(skillFile);
       // 白名单键 = 镜像里的命名空间名 _shared--copilot / _shared--quiz-gen（YUK-611）。
       found.push(namespacedSkillName(COPILOT_SHARED_SUBJECT_DIR, name));
+    } catch {
+      // pack absent — skip (per-pack 降级, never throws).
+    }
+  }
+  return found.length > 0 ? found : undefined;
+}
+
+/**
+ * YUK-1022 — pi-lane twin of `resolveCopilotSkills`. SDK Agent Skills are a
+ * subprocess filesystem feature (the isolated CONFIG_DIR mirror); the pi lane
+ * has no filesystem skill loader, so the adapter injects the resolved SKILL.md
+ * bodies into the system prompt. Keys are the same namespaced whitelist names
+ * (`_shared--copilot` / `_shared--quiz-gen`) `options.skills` declares — the
+ * pi startup guard matches them 1:1. Same per-pack degradation: a missing or
+ * unreadable pack is skipped, never throws.
+ */
+export async function resolveCopilotSkillDocs(
+  skillsRoot: string = join(process.cwd(), 'src', 'subjects'),
+): Promise<{ name: string; body: string }[] | undefined> {
+  const found: { name: string; body: string }[] = [];
+  for (const name of COPILOT_SHARED_SKILL_NAMES) {
+    const skillFile = join(skillsRoot, COPILOT_SHARED_SUBJECT_DIR, 'skills', name, 'SKILL.md');
+    try {
+      const body = await readFile(skillFile, 'utf8');
+      if (body.length === 0) continue;
+      found.push({ name: namespacedSkillName(COPILOT_SHARED_SUBJECT_DIR, name), body });
     } catch {
       // pack absent — skip (per-pack 降级, never throws).
     }

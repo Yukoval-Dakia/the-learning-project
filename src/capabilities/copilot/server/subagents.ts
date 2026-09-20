@@ -19,10 +19,12 @@ import {
   type SpawnBudgetObservation,
   type SpawnContract,
   createSpawnContract,
+  createSpawnDecider,
   isSpawnToolName,
 } from '@/server/ai/spawn-contract';
+import { type PiSpawnContract, createPiSpawnContract } from '@/server/ai/tools/pi-subagent';
 
-export type { SpawnBudgetObservation };
+export type { PiSpawnContract, SpawnBudgetObservation };
 
 export const COPILOT_SUBAGENT_NAME = 'copilot-researcher';
 export const COPILOT_SUBAGENT_ENABLED_ENV = 'COPILOT_SUBAGENT_ENABLED';
@@ -106,6 +108,13 @@ export interface CopilotNativeResearchConfig {
   allowedTools: string[];
   /** Undefined under the operational kill switch; callers keep their own root lifecycle. */
   spawnContract?: SpawnContract;
+  /**
+   * YUK-1022 — the pi-lane twin: depth-one `PiSubagentSpec`s plus a
+   * `beforeToolCall` gate entry. Shares `spawnContract`'s memoized decider,
+   * so the SDK hook/canUseTool surface and the pi gate record one decision
+   * per toolUseId even when both spellings exist on the shared ctx.
+   */
+  piSpawnContract?: PiSpawnContract;
 }
 
 /** Shared SDK-native depth-one research surface for live and Mission roots. */
@@ -116,17 +125,22 @@ export function buildCopilotNativeResearchConfig(
   const allowedTools = options.enabled
     ? [...rootTools.filter((tool) => !isSpawnToolName(tool)), SPAWN_TOOL_NAME]
     : rootTools.filter((tool) => !isSpawnToolName(tool));
-  const spawnContract = options.enabled
-    ? createSpawnContract({
-        enabled: true,
-        agents: buildCopilotSubagents({
-          parentAllowedTools: allowedTools.filter((tool) => !isSpawnToolName(tool)),
-          parentMaxTurns: options.parentMaxTurns,
-        }),
-        onBudgetObservation: options.onBudgetObservation,
-      })
-    : undefined;
-  return { allowedTools, ...(spawnContract ? { spawnContract } : {}) };
+  const contractOptions = {
+    enabled: true,
+    agents: buildCopilotSubagents({
+      parentAllowedTools: allowedTools.filter((tool) => !isSpawnToolName(tool)),
+      parentMaxTurns: options.parentMaxTurns,
+    }),
+    onBudgetObservation: options.onBudgetObservation,
+  };
+  const decider = options.enabled ? createSpawnDecider(contractOptions) : undefined;
+  const spawnContract = decider ? createSpawnContract(contractOptions, decider) : undefined;
+  const piSpawnContract = decider ? createPiSpawnContract(contractOptions, decider) : undefined;
+  return {
+    allowedTools,
+    ...(spawnContract ? { spawnContract } : {}),
+    ...(piSpawnContract ? { piSpawnContract } : {}),
+  };
 }
 
 /** Default-on product capability with an explicit operational kill switch. */

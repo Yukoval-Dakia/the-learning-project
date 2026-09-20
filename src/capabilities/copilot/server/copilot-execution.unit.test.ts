@@ -39,6 +39,7 @@ function fakeCancellation(controller = new AbortController()): CopilotRunCancell
     dispose: vi.fn(),
     probe: vi.fn(async () => 'clear' as const),
     beforeTool: vi.fn(async () => undefined),
+    piBeforeToolCall: vi.fn(async () => undefined),
     onToolExecutionStarted: vi.fn(),
     onToolExecutionSettled: vi.fn(),
     waitForInFlight: vi.fn(async () => true),
@@ -168,6 +169,9 @@ describe('Copilot execution owner', () => {
       expect(ctx?.nativeCompaction?.sessionContext).toContain('范围过宽');
       expect(ctx?.nativeCompaction?.sessionContext).not.toContain('旧答案');
       expect(ctx?.hooks?.PreToolUse).toBeDefined();
+      // YUK-1022 — resume on the pi lane replays the durable turns instead of
+      // reattaching a session file: 'ai' rows land as assistant messages.
+      expect(ctx?.piSessionReplay).toEqual([{ role: 'assistant', text: '旧答案不得重发' }]);
     } finally {
       clearCopilotSessionContextDelivery('compact-resume-session');
     }
@@ -206,6 +210,26 @@ describe('Copilot execution owner', () => {
     expect(ctx?.allowedTools).toContain('mcp__loom__present_primary_view');
     expect(ctx?.agents?.['copilot-researcher']).toMatchObject({ background: false });
     expect(ctx?.onTaskEvent).toEqual(expect.any(Function));
+    // YUK-1022 — pi dual descriptors ride the same runnerContext: the pi lane
+    // mounts domain tools via piToolMounts, gates spawns through piHooks'
+    // beforeToolCall chain, and hosts nested agents from piAgents specs.
+    expect(ctx?.piAgents?.['copilot-researcher']).toMatchObject({
+      description: expect.any(String),
+      prompt: expect.any(String),
+    });
+    expect(ctx?.piAgents?.['copilot-researcher']?.disallowedTools).toEqual(
+      expect.arrayContaining(['Agent', 'Task']),
+    );
+    expect(ctx?.piHooks?.beforeToolCall?.length).toBeGreaterThanOrEqual(2);
+    expect(ctx?.piToolMounts?.map((mount) => mount.type)).toEqual(['domain']);
+    const piSpawnGate = ctx?.piHooks?.beforeToolCall?.at(-1);
+    expect(
+      await piSpawnGate?.(
+        { id: 'spawn-gate-check', name: 'Task' },
+        { subagent_type: 'not-declared' },
+        requestController.signal,
+      ),
+    ).toMatchObject({ block: true });
     expect(mcp?.ctx).toMatchObject({
       sessionId: 'session_1',
       taskRunId: 'root_1',
@@ -341,6 +365,15 @@ describe('Copilot execution owner', () => {
       expect.arrayContaining(['mcp__exa__web_search_exa', 'mcp__exa__web_fetch_exa']),
     );
     expect(runnerContext?.skills).toEqual(['copilot']);
+    // YUK-1022 — pi twins: the domain mount + a remote-mcp mount for exa, and
+    // the resolved SKILL.md bodies the adapter injects into the system prompt.
+    expect(runnerContext?.piToolMounts?.map((mount) => mount.type)).toEqual([
+      'domain',
+      'remote-mcp',
+    ]);
+    expect(runnerContext?.piSkillDocs).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: '_shared--copilot' })]),
+    );
   });
 
   it('rejects unmarked learning content through the persistent root', async () => {

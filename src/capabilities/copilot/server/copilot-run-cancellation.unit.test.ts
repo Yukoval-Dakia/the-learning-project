@@ -97,6 +97,42 @@ describe('Copilot run cancellation control', () => {
     expect(control.signal.aborted).toBe(false);
   });
 
+  it('piBeforeToolCall mirrors the SDK gate: clear→pass, cancel→block, aborted signal→block', async () => {
+    const call = { id: 'tool_use_pi_gate', name: 'mcp__loom_v2__query_events' };
+
+    const clear = createCopilotRunCancellationControl({
+      db: {} as never,
+      runId: 'copilot_pi_gate_clear',
+      readCancelRequestFn: async () => false,
+    });
+    await expect(clear.piBeforeToolCall(call, {})).resolves.toBeUndefined();
+
+    const stopped = createCopilotRunCancellationControl({
+      db: {} as never,
+      runId: 'copilot_pi_gate_stopped',
+      readCancelRequestFn: async () => true,
+    });
+    await expect(stopped.piBeforeToolCall(call, {})).resolves.toMatchObject({
+      block: true,
+      reason: expect.any(String),
+    });
+    expect(stopped.hasConfirmedCancellation).toBe(true);
+
+    // An already-aborted signal short-circuits before the durable probe.
+    const aborted = new AbortController();
+    aborted.abort();
+    const read = vi.fn(async () => false);
+    const signalled = createCopilotRunCancellationControl({
+      db: {} as never,
+      runId: 'copilot_pi_gate_signal',
+      readCancelRequestFn: read,
+    });
+    await expect(signalled.piBeforeToolCall(call, {}, aborted.signal)).resolves.toMatchObject({
+      block: true,
+    });
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it('prepends cancellation ahead of the existing spawn contract without replacing it', () => {
     const cancellationHook = vi.fn(async () => ({ continue: true })) as HookCallback;
     const spawnHook = vi.fn(async () => ({ continue: true })) as HookCallback;

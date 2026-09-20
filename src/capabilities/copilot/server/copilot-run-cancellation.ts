@@ -2,6 +2,7 @@ import type { HookCallback, HookJSONOutput, Options } from '@anthropic-ai/claude
 import { and, eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { job_events } from '@/db/schema';
+import type { PiBeforeToolCall } from '@/server/ai/pi-hooks';
 import { writeCopilotReply } from './conversation-writes';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import { MATERIALIZING_TOOL_NAMES } from './materializing-tools';
@@ -84,6 +85,12 @@ export interface CopilotRunCancellationControl {
   dispose(): void;
   probe(): Promise<CopilotCancellationProbeResult>;
   beforeTool(): Promise<string | undefined>;
+  /**
+   * YUK-1022 — the pi-lane twin of the PreToolUse hook: same gate order
+   * (abort signal short-circuit → probe → deny reason), expressed as a
+   * pi `beforeToolCall` entry. `beforeTool()` remains the DomainTool gate.
+   */
+  piBeforeToolCall: PiBeforeToolCall;
   onToolExecutionStarted(tool: { name: string }): void;
   onToolExecutionSettled(): void;
   waitForInFlight(graceMs?: number): Promise<boolean>;
@@ -234,6 +241,17 @@ export function createCopilotRunCancellationControl(options: {
       const state = await probe();
       if (state === 'clear') return undefined;
       return state === 'cancel_requested' ? CANCELLED_TOOL_REASON : UNKNOWN_TOOL_REASON;
+    },
+    piBeforeToolCall: async (_call, _args, signal) => {
+      if (signal?.aborted || controller.signal.aborted) {
+        return { block: true as const, reason: 'run is stopping; tool execution denied' };
+      }
+      const state = await probe();
+      if (state === 'clear') return undefined;
+      return {
+        block: true as const,
+        reason: state === 'cancel_requested' ? CANCELLED_TOOL_REASON : UNKNOWN_TOOL_REASON,
+      };
     },
     onToolExecutionStarted(tool) {
       inFlightTools += 1;

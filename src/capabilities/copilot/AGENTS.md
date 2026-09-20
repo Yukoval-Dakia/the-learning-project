@@ -25,6 +25,9 @@
   终态提交后才能唤醒后继；合法等待消息没有 pickup 超时，DISPATCHED 才启动 pickup 计时。
 - `server/copilot-execution.ts` 拥有公共模型/工具/读取预算与发布校验；持续运行不意味着抬高默认预算。
   SDK id 只有本进程确实持有且实际提交文本匹配时才可复用；异进程从产品历史冷启，不重烧已执行消息。
+  `agent_sdk_session_id` 槽同时承载 pi lane 的 `pi:<uuid>` 标记（YUK-1022）：`pi:` cursor 只在下一次
+  attempt 仍被 pin 到 pi 时续用（`piLanePinnedForKind` fold），SDK attempt 见到 `pi:` id 一律冷启——
+  pi 的「会话文件」等价物是 durable turns 经 `piSessionReplay` 回放进 `context.messages`。
 - Stop 以 `job_events` 的 `CANCEL_REQUESTED` 为跨 app/worker 真相源。API 用固定顺序
   dispatch→settlement advisory locks 与 execution fence / outcome marker 线性化；worker 用
   500ms 非重叠 poll、SDK `PreToolUse` 与 async DomainTool gate 覆盖纯文本、SDK 工具和本地

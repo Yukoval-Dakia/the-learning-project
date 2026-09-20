@@ -415,6 +415,9 @@ const CENTRAL_TOOL_INFRASTRUCTURE = new Set([
   'src/server/ai/tools/registry.ts',
   'src/server/ai/tools/mcp-bridge.ts',
   'src/server/ai/tools/pi-tools.ts',
+  // YUK-1022 — pi-side spawn contract + Task/Agent tool shell: the nested-run
+  // host lives in the adapter; this file is spec mapping + gate wiring only.
+  'src/server/ai/tools/pi-subagent.ts',
   'src/server/ai/tools/register-capability-tools.ts',
   'src/server/ai/tools/fixtures-assert.ts',
 ]);

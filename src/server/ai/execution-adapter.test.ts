@@ -1,10 +1,11 @@
-import type { Query, SDKUserMessage, WarmQuery } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, Query, SDKUserMessage, WarmQuery } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   SdkPreparedQuery,
   explicitProviderRouting,
   isPiEligibleKind,
   piAllowlistedKinds,
+  piLanePinnedForKind,
   resolveExecutionAdapter,
 } from './execution-adapter';
 import type { ResolvedProvider } from './providers';
@@ -126,6 +127,44 @@ describe('explicitProviderRouting — explicit > env > registry layering', () =>
         modelBinding: { provider: 'xiaomi', model: 'mimo-v2.5' },
       }),
     ).toEqual({ provider: 'xiaomi', model: 'mimo-v2.5-pro' });
+  });
+});
+
+describe('P3 gray rollout — CopilotTask stays env-only (YUK-1022)', () => {
+  it('rejects a pi pin on CopilotTask unless the kind is allowlisted', () => {
+    expect(() => resolveExecutionAdapter({ adapter: 'pi' }, PI_RESOLVED, 'CopilotTask')).toThrow(
+      /Task kind 'CopilotTask' is not eligible/,
+    );
+    vi.stubEnv('AI_ADAPTER_PI_KINDS', 'CopilotTask');
+    expect(resolveExecutionAdapter({ adapter: 'pi' }, PI_RESOLVED, 'CopilotTask').id).toBe('pi');
+  });
+
+  it('piLanePinnedForKind reports only the env pin + allowlist combination', () => {
+    expect(piLanePinnedForKind('CopilotTask')).toBe(false);
+    vi.stubEnv('AI_ADAPTER_PI_PROVIDER', 'opencode-go');
+    vi.stubEnv('AI_ADAPTER_PI_MODEL', 'mimo-v2.5-pro');
+    // Env pin without the kind allowlist stays inert.
+    expect(piLanePinnedForKind('CopilotTask')).toBe(false);
+    vi.stubEnv('AI_ADAPTER_PI_KINDS', 'CopilotTask');
+    expect(piLanePinnedForKind('CopilotTask')).toBe(true);
+    // An explicit caller binding wins wholesale over the env pin.
+    expect(piLanePinnedForKind('CopilotTask', { adapter: 'sdk' })).toBe(false);
+    expect(piLanePinnedForKind('SolutionGenerateTask', { adapter: 'pi' })).toBe(true);
+  });
+});
+
+describe('SdkExecutionAdapter — pi: session fold guard (YUK-1022)', () => {
+  it('fails closed when options.resume names a pi-owned session id', async () => {
+    const adapter = resolveExecutionAdapter(undefined, SDK_RESOLVED, 'SolutionGenerateTask');
+    await expect(
+      adapter.startup({
+        options: { resume: 'pi:abc-123' } as Options,
+        initializeTimeoutMs: 1_000,
+        resolved: SDK_RESOLVED,
+        runId: 'task_run_x',
+        kind: 'SolutionGenerateTask',
+      }),
+    ).rejects.toThrow(/pi-owned session 'pi:abc-123'/);
   });
 });
 

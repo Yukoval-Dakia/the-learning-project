@@ -55,6 +55,8 @@ import {
 } from './agent-run-error';
 import {
   type ModelBinding,
+  type PiQueueSources,
+  type PiReplayTurn,
   type PreparedExecutionQuery,
   type RunnerMessage,
   effectiveModelBinding,
@@ -62,6 +64,7 @@ import {
 } from './execution-adapter';
 import { logMissingMcpServersWarning } from './log';
 import { resolveModelProfile } from './model-profiles';
+import type { PiHookBridge } from './pi-hooks';
 import { populateIsolatedSkills } from './populate-skills';
 import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission';
 import type { ResolvedProvider } from './providers';
@@ -75,6 +78,7 @@ import {
 } from './run-lifecycle';
 import { createSdkTerminalEvidenceCollector } from './sdk-terminal';
 import { SPAWN_DISABLE_BACKGROUND_TASKS_ENV, isSpawnToolName } from './spawn-contract';
+import type { PiSubagentSpec } from './tools/pi-subagent';
 import type { PiToolMount } from './tools/pi-tools';
 
 // ============================================================================
@@ -327,6 +331,27 @@ export interface RunTaskCtx {
    * adapter gate picks which surface applies. Ignored on the sdk lane.
    */
   piToolMounts?: PiToolMount[];
+  /**
+   * YUK-1022 — pi-lane dual descriptors for the P3 surfaces. Each mirrors an
+   * SDK-side contract (`hooks` / `sdkSession.resume` / `skills` / `agents`)
+   * so the adapter gate can run the equivalent behavior in-process. A
+   * pi-pinned run that declares only the SDK surface fails closed at
+   * adapter startup — declaring the pi surface is what makes the kind
+   * pi-eligible. Ignored on the sdk lane.
+   */
+  piHooks?: PiHookBridge;
+  /** Replay turns seeded into `context.messages` when `sdkSession.resume` is set. */
+  piSessionReplay?: readonly PiReplayTurn[];
+  /** Resolved skill bodies appended to the pi system prompt. */
+  piSkillDocs?: readonly { name: string; body: string }[];
+  /** Depth-one nested-agent specs; mounts the `Task`/`Agent` AgentTool. */
+  piAgents?: Record<string, PiSubagentSpec>;
+  /**
+   * YUK-1022 — steering/follow-up queue sources for the root pi loop. No
+   * caller provides one today; the ctx surface is wired so attaching queue
+   * semantics later needs no adapter surgery.
+   */
+  piQueues?: PiQueueSources;
 }
 
 function compiledPromptProvenance(prompt?: CompiledModelPrompt) {
@@ -745,7 +770,7 @@ async function withPreparedExecutionQuery<TResult extends RunTaskResult, TValue>
   options: Options,
   consume: (query: AsyncIterable<RunnerMessage>) => Promise<TValue>,
   beforeProviderQuery?: BeforeProviderQuery,
-  ctxPiToolMounts?: PiToolMount[],
+  ctx?: RunTaskCtx,
 ): Promise<TValue> {
   // Resolved at the seam boundary so an unimplemented adapter pin throws the
   // same config-error posture as resolveTaskProvider's credential checks —
@@ -763,7 +788,17 @@ async function withPreparedExecutionQuery<TResult extends RunTaskResult, TValue>
         resolved: lifecycle.resolved,
         runId: lifecycle.taskRunId,
         kind: lifecycle.kind,
-        piToolMounts: ctxPiToolMounts,
+        piToolMounts: ctx?.piToolMounts,
+        // YUK-1022 — pi-lane dual descriptors for the P3 surfaces (hooks,
+        // session replay, skill bodies, nested agents). The SDK adapter
+        // ignores them; `nativeCompaction` is forwarded verbatim because the
+        // pi lane needs the raw sessionContext for transformContext.
+        piHooks: ctx?.piHooks,
+        piSessionReplay: ctx?.piSessionReplay,
+        piSkillDocs: ctx?.piSkillDocs,
+        piAgents: ctx?.piAgents,
+        piQueues: ctx?.piQueues,
+        nativeCompaction: ctx?.nativeCompaction,
       });
     },
     async run() {
@@ -973,7 +1008,7 @@ async function runTaskAttempt(args: {
     sdkOptions,
     consumeSdkQuery,
     ctx.beforeProviderQuery,
-    ctx.piToolMounts,
+    ctx,
   );
 
   // The provider permit is released before attempt settlement / afterRun. A DB
@@ -1205,7 +1240,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
           sdkOptions,
           consumeSdkQuery,
           ctx.beforeProviderQuery,
-          ctx.piToolMounts,
+          ctx,
         );
 
         const result: RunTaskResult = {
@@ -1383,7 +1418,7 @@ export async function streamTaskCollecting(
       sdkOptions,
       consumeSdkQuery,
       ctx.beforeProviderQuery,
-      ctx.piToolMounts,
+      ctx,
     );
 
     const result: StreamCollectResult = {

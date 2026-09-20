@@ -96,15 +96,30 @@ function makeDepthOneAgents(
 }
 
 /**
- * Shared v2 nested-agent contract.
- *
- * Two SDK surfaces can inspect one Task call. Decisions are memoized by their common
- * toolUseID, so callback order and duplicate consultations cannot double-count or
- * disagree. The explicit kill switch and declared-agent/depth boundary can deny; the
- * budget path itself is intentionally report-only until production observations
- * justify a numeric policy.
+ * Depth-one reduction applied by the shared contract — strips spawn tools from
+ * `tools`, adds them to `disallowedTools`, pins `background:false`. Exported for
+ * the pi lane (YUK-1022), which reuses the same reduced definitions when it
+ * builds its Task/Agent tool instead of Options.agents.
  */
-export function createSpawnContract(options: CreateSpawnContractOptions): SpawnContract {
+export function toDepthOneAgents(
+  agents: Record<string, AgentDefinition>,
+): Record<string, AgentDefinition> {
+  return makeDepthOneAgents(agents);
+}
+
+/**
+ * The engine-neutral half of the spawn contract (YUK-1022): memoized
+ * per-toolUseId decisions plus the report-only budget ledger. Both engine
+ * surfaces — SDK hooks/canUseTool and pi's beforeToolCall gate — consult this
+ * one decider so callback order and duplicate consultations cannot
+ * double-count or disagree.
+ */
+export interface SpawnDecider {
+  decide(toolUseId: string, input: unknown): { decision: SpawnBudgetDecision; message?: string };
+  readBudgetReport(): SpawnBudgetReport;
+}
+
+export function createSpawnDecider(options: CreateSpawnContractOptions): SpawnDecider {
   const decisions = new Map<string, { decision: SpawnBudgetDecision; message?: string }>();
   const disabledReason = options.disabledReason ?? DEFAULT_DISABLED_REASON;
   const allowedAgentNames = new Set(Object.keys(options.agents));
@@ -166,6 +181,41 @@ export function createSpawnContract(options: CreateSpawnContractOptions): SpawnC
     return record;
   }
 
+  return {
+    decide,
+    readBudgetReport() {
+      const entries = [...decisions.entries()];
+      return {
+        mode: SPAWN_BUDGET_MODE,
+        observedAttempts: entries.length,
+        allowedAttempts: entries.filter(([, record]) => record.decision === 'allow').length,
+        deniedByKillSwitch: entries.filter(([, record]) => record.decision === 'deny_kill_switch')
+          .length,
+        deniedByContract: entries.filter(
+          ([, record]) =>
+            record.decision === 'deny_unknown_agent' || record.decision === 'deny_input_override',
+        ).length,
+        toolUseIds: entries.map(([toolUseId]) => toolUseId),
+      };
+    },
+  };
+}
+
+/**
+ * Shared v2 nested-agent contract.
+ *
+ * Two SDK surfaces can inspect one Task call. Decisions are memoized by their common
+ * toolUseID, so callback order and duplicate consultations cannot double-count or
+ * disagree. The explicit kill switch and declared-agent/depth boundary can deny; the
+ * budget path itself is intentionally report-only until production observations
+ * justify a numeric policy.
+ */
+export function createSpawnContract(
+  options: CreateSpawnContractOptions,
+  decider: SpawnDecider = createSpawnDecider(options),
+): SpawnContract {
+  const { decide } = decider;
+
   function forceForegroundInput(input: unknown): Record<string, unknown> {
     return {
       ...(input !== null && typeof input === 'object' ? (input as Record<string, unknown>) : {}),
@@ -209,20 +259,6 @@ export function createSpawnContract(options: CreateSpawnContractOptions): SpawnC
     agents: makeDepthOneAgents(options.agents),
     hooks: { PreToolUse: [{ hooks: [preToolUseHook] }] },
     canUseTool,
-    readBudgetReport() {
-      const entries = [...decisions.entries()];
-      return {
-        mode: SPAWN_BUDGET_MODE,
-        observedAttempts: entries.length,
-        allowedAttempts: entries.filter(([, record]) => record.decision === 'allow').length,
-        deniedByKillSwitch: entries.filter(([, record]) => record.decision === 'deny_kill_switch')
-          .length,
-        deniedByContract: entries.filter(
-          ([, record]) =>
-            record.decision === 'deny_unknown_agent' || record.decision === 'deny_input_override',
-        ).length,
-        toolUseIds: entries.map(([toolUseId]) => toolUseId),
-      };
-    },
+    readBudgetReport: decider.readBudgetReport,
   };
 }
