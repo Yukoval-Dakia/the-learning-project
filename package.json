@@ -40,6 +40,7 @@
     "gen:postman": "tsx scripts/gen-postman.ts",
     "gen:prompt-hashes": "tsx scripts/generate-prompt-hashes.ts",
     "gen:model-catalog": "tsx scripts/gen-model-catalog.ts",
+    "gen:db-test-durations": "node scripts/ci/gen-db-test-durations.mjs",
     "gen:openapi": "tsx scripts/generate-openapi.ts",
     "gen:api-client": "mkdir -p .cache && pnpm gen:openapi > .cache/openapi.generated.json && node tools/api-codegen/generate.mjs .cache/openapi.generated.json src/ui/lib/api-schema.generated.ts",
     "audit:api-client": "pnpm gen:api-client && git diff --exit-code -- src/ui/lib/api-schema.generated.ts",

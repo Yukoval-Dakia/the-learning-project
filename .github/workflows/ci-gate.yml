@@ -239,14 +239,17 @@ jobs:
           if-no-files-found: error
 
   db:
-    name: DB tests (${{ matrix.shard }}/2)
+    name: DB tests (${{ matrix.shard }}/4)
     needs: [changes, db_selection]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      # YUK-1023 — four duration-balanced shards: db-affected.mjs bin-packs
+      # files by the committed duration baseline instead of vitest's count-mod
+      # --shard (the P3 lane skewed 9min/24min under two naive shards).
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4]
     steps:
       - name: DB lane skipped
         if: needs.changes.outputs.db_changed != 'true'
@@ -276,7 +279,7 @@ jobs:
         run: |
           node scripts/ci/db-affected.mjs run \
             --selection .cache/ci/db-selection.json \
-            --shard "${{ matrix.shard }}/2" \
+            --shard "${{ matrix.shard }}/4" \
             --execution ".cache/ci/db-execution-${{ matrix.shard }}.json"
       - name: Upload DB selector report
         if: always() && needs.changes.outputs.db_changed == 'true'

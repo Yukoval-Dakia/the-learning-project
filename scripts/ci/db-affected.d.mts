@@ -41,6 +41,13 @@ export function shouldSkipAffectedShard(
   selectedFileCount: number,
   shard: { index: number; count: number; value: string },
 ): boolean;
+export function medianDurationMs(durations: Record<string, number> | undefined): number;
+export function binPackDbShards(input: {
+  files: string[];
+  shardCount: number;
+  durations: Record<string, number> | undefined;
+}): Array<{ files: string[]; estimatedMs: number }>;
+export function loadDbTestDurations(root: string): Record<string, number>;
 export function selectAffectedDbTests(input: {
   root: string;
   base: string;
