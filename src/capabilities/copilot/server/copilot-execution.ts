@@ -440,7 +440,10 @@ export function createCopilotExecutionOwner(
       // YUK-1022 — pi dual descriptors. Each mirrors the SDK surface declared
       // above; the adapter gate picks per lane. On the pi lane a declared SDK
       // surface without its twin fails closed at startup.
-      piToolMounts,
+      // An explicit empty allowlist (authoritativeReply) must not connect
+      // remote mounts — piRemoteMcpMount talks to Exa at buildTools time and
+      // an outage would fail an intentionally tool-less turn.
+      piToolMounts: authoritativeReply ? [] : piToolMounts,
       piHooks,
       ...(piSpawnContract ? { piAgents: piSpawnContract.piAgents } : {}),
       ...(piSkillDocs ? { piSkillDocs } : {}),

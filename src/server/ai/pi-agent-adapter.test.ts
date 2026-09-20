@@ -888,6 +888,49 @@ describe('PiPreparedQuery — P3 native compaction (transformContext)', () => {
     );
   });
 
+  it('trims an orphan toolResult at the kept boundary — its paired toolCall was pruned', async () => {
+    const captured: Partial<CapturedLoop> = {};
+    const deps = makeDeps([{ type: 'agent_end', messages: [piAssistant()] }], captured);
+    const adapter = new PiAgentAdapter(deps as never);
+    const prepared = await adapter.startup(compactionArgs());
+    await drain(prepared.query('go'));
+    const transform = captured.config?.transformContext;
+    // A 700k-char assistant toolCall turn exceeds the ~629k-char target, so
+    // the kept tail would open with an orphan toolResult — the transform must
+    // trim it instead of forwarding a pair-broken transcript the provider
+    // rejects.
+    const transcript = [
+      { role: 'user', content: 'x'.repeat(700_000), timestamp: 1 },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'toolCall', id: 'c1', name: 'search', arguments: { q: 'y'.repeat(700_000) } },
+        ],
+        api: 'openai-completions',
+        provider: 'opencode-go',
+        model: MODEL_ID,
+        responseId: 'r1',
+        usage: piUsage(),
+        stopReason: 'toolUse',
+        timestamp: 2,
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'c1',
+        toolName: 'search',
+        content: [{ type: 'text', text: 'ok' }],
+        isError: false,
+        timestamp: 3,
+      },
+      { role: 'user', content: 'current turn prompt', timestamp: 4 },
+    ] as AgentMessage[];
+    const transformed = (await transform?.(transcript)) ?? [];
+    expect(transformed.some((m) => m.role === 'toolResult')).toBe(false);
+    expect(transformed[0]).toMatchObject({ role: 'user', content: 'BOUNDED LEARNER CTX' });
+    // The current-turn prompt is never dropped.
+    expect(transformed.at(-1)).toMatchObject({ content: 'current turn prompt' });
+  });
+
   it('never throws — a transformContext failure passes the original messages through', async () => {
     const captured: Partial<CapturedLoop> = {};
     const deps = makeDeps([{ type: 'agent_end', messages: [piAssistant()] }], captured);
@@ -1264,6 +1307,35 @@ describe('PiPreparedQuery — P3 nested subagents (Task/Agent host)', () => {
     expect(updated).toMatchObject({ task_id: 'call_sub_1', patch: { status: 'killed' } });
     // Caller abort owns the terminal truth — no synthesized success result.
     expect(frames.find((f) => f.type === 'result')).toBeUndefined();
+  });
+
+  it('marks the child failed when the provider ends its stream with stopReason error (root-loop parity)', async () => {
+    // A child that ends error/aborted without the caller's abort must not be
+    // reported completed — the parent would answer from a nonexistent report.
+    const { adapter, args } = nestedStartup(() => [
+      {
+        type: 'agent_end',
+        messages: [
+          {
+            ...childAssistant(),
+            stopReason: 'error',
+            errorMessage: 'provider blew up mid-child',
+          },
+        ],
+      },
+    ]);
+    const prepared = await adapter.startup(args);
+    const frames = (await drain(prepared.query('go'))) as Array<Record<string, unknown>>;
+    const updated = frames.find((f) => f.subtype === 'task_updated');
+    expect(updated).toMatchObject({
+      task_id: 'call_sub_1',
+      patch: { status: 'failed', error: 'provider blew up mid-child' },
+    });
+    const userFrame = frames.find((f) => f.type === 'user');
+    const toolResult = (
+      userFrame?.message as { content?: Array<Record<string, unknown>> } | undefined
+    )?.content?.[0];
+    expect(toolResult).toMatchObject({ is_error: true });
   });
 
   it('marks the child killed exactly once when the aborted child stream throws mid-iteration', async () => {
