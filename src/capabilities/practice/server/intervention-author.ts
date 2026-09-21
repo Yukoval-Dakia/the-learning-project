@@ -1,4 +1,3 @@
-import { tasks } from '@/ai/registry';
 import {
   type InterventionAuthoringContextT,
   guardInterventionPreparationStage,
@@ -60,9 +59,6 @@ export interface InterventionAuthorDeps {
   attempt?: 1 | 2;
   preparationJobId: string;
 }
-
-const authorOutputSchema = tasks.InterventionPackageAuthorTask.structuredOutputSchema;
-const reviewOutputSchema = tasks.InterventionPackageReviewTask.structuredOutputSchema;
 
 function parseTaskOutput<T>(
   result: TaskTextResult,

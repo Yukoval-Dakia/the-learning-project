@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { type Provider, type TaskKind, tasks } from '@/ai/registry';
+import type { Provider, TaskKind } from '@/ai/registry';
 import { isAiTaskKind } from '@/ai/task-prompts';
 import { getDefaultRegistry } from '@/core/capability/judges';
 import type { CapabilityRegistry } from '@/core/capability/registry';
@@ -37,8 +37,6 @@ import {
   unsupportedResult,
 } from './question-contract';
 import { resolveQuestionJudgeRoute } from './route-resolve';
-
-const unitDimensionOutputSchema = tasks.UnitDimensionFallback.structuredOutputSchema;
 
 export const JudgeInvokerQuestionSchema = z
   .object({

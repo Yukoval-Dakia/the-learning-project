@@ -1,6 +1,6 @@
 import type { z } from 'zod';
 
-import { type Provider, tasks } from '@/ai/registry';
+import type { Provider } from '@/ai/registry';
 // F0 (PR #309 round-3) — the route resolver now lives in the dependency-light
 // leaf `@/capabilities/practice/server/judge/route-resolve` (see that file's header for the build
 // regression it fixes). Re-exported below so this module's public surface is
@@ -137,8 +137,6 @@ export function assertGeneratedQuestionHasJudgeContract(
     throw new Error(`${origin} question '${promptLabel}' routes to non-runnable judge '${route}'`);
   }
 }
-
-const semanticOutputSchema = tasks.SemanticJudgeTask.structuredOutputSchema;
 
 export interface JudgeQuestionRow {
   id: string;

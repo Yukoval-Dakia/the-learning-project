@@ -16,7 +16,6 @@
 //                               vs not_grounded axis so a flaky VLM never reads as a
 //                               confident「题面不在图里」.
 
-import { tasks } from '@/ai/registry';
 import {
   SourceGroundingVerifyOutput,
   type SourceGroundingVerifyOutputT,
@@ -32,11 +31,9 @@ import {
 // Reuse the steps@1 R2 image fetcher verbatim — no R2 logic duplicated here.
 import { defaultImageFetch } from './steps-judge';
 
-// Built ONCE from the registry-declared schema (the single, audited source), mirroring
-// the multimodal/steps judges. A structured-output-capable endpoint constrains + SDK-
-// retries the model to the schema; mimo ignores it and the dispatch falls back to the
-// char-scan text parse (zero-loss).
-const outputSchema = tasks.SourceGroundingVerifyTask.structuredOutputSchema;
+// The registry-declared structuredOutputSchema (the single, audited source) drives the
+// app-level Zod parse, mirroring the multimodal/steps judges; lanes without a transport
+// contract fall back to the char-scan text parse (zero-loss).
 
 // Concrete `{ text, images }` input (NOT `... | unknown`, which collapses the whole union
 // to `unknown` and erases the documented shape — PR #1063 review thread 8).
