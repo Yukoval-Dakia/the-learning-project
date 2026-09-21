@@ -1,9 +1,13 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-17（晚）：sweep-3 六票全部 merge 进 main（YUK-1005+1008 #1418 `d5f7c0bf4`、YUK-1010 #1419 `7812f0f09`、YUK-1002 #1420 `b89c93077`、YUK-287 #1421 `744c5b2076`、YUK-1006 #1422 `0b3ea39b3`），含生产侧知识树修复（浮空根挂树+脏题清洗+canary 清除）；**生产仍为 `c89079b68`，本批 6 merge 未部署**。09-06~09-08 时代 NOW 交付记录已滚存 `.remember/plan-now-archive-2026-09-16.md`。
+> Linear 是权威 tracker；更新于 2026-09-21：09-18~21 批次补登记——YUK-921 pi 迁移 P0–P3 全 merge（P4=YUK-1025 Backlog）、YUK-454 epic 全票清（Done）、YUK-1023 CI DB lane 提速 merge。本批未部署，生产仍为 `c89079b68`（sweep-3 后未再部署）。
 
 ## NOW
 
+- 09-18~21 **YUK-921 多 provider 执行适配器迁移 P0–P3 全交付**（epic 保 In Progress 至 P4）：设计稿 `docs/design/2026-09-18-pi-agent-execution-adapter.md`；`PiAgentAdapter`（pi-ai/pi-agent-core，opencode-go 通道 openai-completions）承接全部执行面——P0 seam #1424 `a6d0b1a8e` / P1 单发 #1428 `d8213a7c6` / P2 工具循环 #1431 `4ef86f8a1` / P3 copilot+嵌套子代理+compaction+piHooks 桥 #1432 `e2bbf80c7`（session 改 durable-turns 本地回放、`pi:` cursor 复用 `agent_sdk_session_id` 槽、nativeCompaction→transformContext、steering/follow-up ctx 面接线零消费方）。actual-output 证据封存 opencode-go/deepseek-v4-pro 双 durable turn。**P4 SDK 退役 = YUK-1025**（本 sweep 补票，Backlog，前置=pi lane 灰度观察期）。灰度门：`AI_ADAPTER_PI_KINDS` ∩ `PI_LANE_PROVIDERS` ∩ provider/model pin；SDK lane 仍默认。
+- 09-18~19 **YUK-454 错因 epic 全票清 → Done**：454-A #1425 / 454-B overlay 词表层 #1426 / 454-C flag 裁决 #1427（promote 开待 recreate、hard-confirm OFF、recurrence NO-GO 证据不足）/ 跟进 #1429 #1430。遗留 YUK-1020（secondary misc 显示）Backlog 可独立排期。
+- 09-21 **YUK-1023 CI DB lane 提速** merge #1433 `9692b5396`：LPT 时长分桶（committed baseline `scripts/ci/db-test-durations.json` + median 兜底）替代 vitest count-mod `--shard`；DB matrix 2→4；顶层 `scripts/*.json` 归 audit-tooling 不再误触全量；本 PR 自身 full lane 验收 **24min→5m13s（4.6×）**。回流刷新 follow-up = YUK-1024（Backlog）。
+- 09-21 Linear 产品票 sweep：YUK-921 标题校准+P4 补票、YUK-454→Done、YUK-346/856 grounding 更新（pi lane 落地后前提变化）；Triage/Todo/In Review 全空，Backlog 50 票 census 无其它状态漂移。
 - 09-17 sweep-3 六票全 merge（Linear 均 Done，exact-head CI Gate 全绿后 squash）：
   - **YUK-1005+1008** #1418 `d5f7c0bf4`：MathJye HTML/sprite→LaTeX 转换器 + `insertSourcedDraft` 单缝清洗（prompt/choices/reference 三面+留痕）；作答面 PfSolo/PfPaper/PfRetro/HintLadder 全接 MathMarkdown+`notation` 投影；learning-intent 3a 新根挂 `seed:<domain>:root`。生产修复走正道：`概率论基础` genesis-reanchor（修 event-less retag 造成的 fold/live drift）→reparent accept 挂 `seed:math:root`；2 条 MathJye 脏题 backfill 清洗全表 0 残留。
   - **YUK-1010** #1419 `7812f0f09`：生产处置 merge 条件概率 dup + reparent 2 混写节点 + archive 3 canary 子图（含 6 draft+2 mastery）；`kc_dedup_nightly` `recent_auto` 窗口扩至 propose_new/split 铸造路径，窗口键改 `materialized_id_index.created_at`（mint 时间，OCR 修正——pending>7d 再 accept 不再漏扫）。
