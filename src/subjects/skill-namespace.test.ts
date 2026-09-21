@@ -1,10 +1,10 @@
 // YUK-611 — skill 命名空间：helper unit + 构建期静态撞名 audit。
 //
 // audit 半边（v3 契约 §5.2 ②）：枚举真实 src/subjects/*/skills/* ——
-//   1. 跨科 basename 重复即红（镜像前缀化后互踩通道已关，此处是防线的静态半：
-//      防前缀化被绕过/回退，也防 docs/工具按裸名引用时的歧义）；
-//   2. 每个 SKILL.md 的 frontmatter name 必须 == 目录 basename——这是 populate
-//      改写锚点（rewriteSkillMdName）的成立前提，漂移 = 该包白名单静默 miss。
+//   1. 跨科 basename 重复即红（注入键前缀化后语义互踩通道已关，此处是防线：
+//      防裸名引用歧义与重名包并存）；
+//   2. 每个 SKILL.md 的 frontmatter name 必须 == 目录 basename——rewriteSkillMdName
+//      是不变量判定器，漂移 = 注入块的文档自称名与命名空间键脱钩。
 // 纯 fs 扫描零 DB —— unit 分区；MUST be listed in fastTestInclude。
 
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
@@ -104,7 +104,7 @@ describe('静态撞名 audit — 真实 src/subjects 树 (YUK-611)', () => {
     expect(findDuplicatePacks(dirs)).toEqual([]);
   });
 
-  it('每个 SKILL.md 的 frontmatter name == 目录 basename（populate 改写锚点前提）', () => {
+  it('每个 SKILL.md 的 frontmatter name == 目录 basename（命名空间锚点前提）', () => {
     const drifted: string[] = [];
     for (const { subject, pack, dir } of listSkillDirs()) {
       let content: string;

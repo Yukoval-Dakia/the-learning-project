@@ -1,10 +1,11 @@
-// YUK-572 PR-2 — director pipeline db test. Real Postgres (testcontainer); the SDK is
-// mocked so the in-process tool handlers are captured, and an injected stub runAgentTaskFn
-// DRIVES those handlers (fake LLM tool-call flow) instead of spawning a `claude`
-// subprocess. Everything below the SDK runs for real: writeAiProposal → the proposal row,
-// listProposalInboxRows → the cross-actor dedup base, the trigger/scan events, and the
-// dayKey claim gate. Asserts: proposal landing + actor + baseline snapshot + cost-bearing
-// scan, cross-actor dedup, degrade, shadow isolation, and claim idempotency.
+// YUK-572 PR-2 — director pipeline db test. Real Postgres (testcontainer); the pi
+// tool-mount layer is wrapped so the in-process tool handlers are captured, and an
+// injected stub runAgentTaskFn DRIVES those handlers (fake LLM tool-call flow).
+// Everything below the mount layer runs for real: writeAiProposal → the proposal
+// row, listProposalInboxRows → the cross-actor dedup base, the trigger/scan events,
+// and the dayKey claim gate. Asserts: proposal landing + actor + baseline snapshot
+// + cost-bearing scan, cross-actor dedup, degrade, shadow isolation, and claim
+// idempotency.
 
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,7 +21,9 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 import { RESPONSE_AWARE_PROBE_FIELDS } from '../../../../../tests/helpers/conjecture-probe-fixtures';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 
-// Capture the registered tool handlers via a mocked SDK (same shape as evidence-mcp.db.test).
+// Capture the registered tool handlers by wrapping piCustomTool — the
+// director server is built inside runResearchMeetingDirector, so the test
+// cannot reach the returned AgentTool[] directly.
 const mockSdk = vi.hoisted(() => ({
   handlers: new Map<
     string,
@@ -28,25 +31,22 @@ const mockSdk = vi.hoisted(() => ({
   >(),
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  createSdkMcpServer: vi.fn((opts: { name: string }) => ({
-    type: 'sdk',
-    name: opts.name,
-    instance: {},
-  })),
-  tool: vi.fn(
-    (
+vi.mock('@/server/ai/tools/pi-tools', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/server/ai/tools/pi-tools')>();
+  return {
+    ...actual,
+    piCustomTool: (
+      serverName: string,
       name: string,
-      _desc: string,
-      _schema: unknown,
+      description: string,
+      schema: Record<string, unknown>,
       handler: (args: unknown) => Promise<{ content: { type: string; text: string }[] }>,
     ) => {
       mockSdk.handlers.set(name, handler);
-      return { name };
+      return actual.piCustomTool(serverName, name, description, schema as never, handler as never);
     },
-  ),
-  query: vi.fn(),
-}));
+  };
+});
 
 import {
   RECOVERY_CLAIM_ACTION,
@@ -83,9 +83,11 @@ function questionSnapshot(id: string) {
   };
 }
 
+type SpawnGate = (call: unknown, args: unknown) => Promise<unknown>;
+
 async function callTool(name: string, args: unknown): Promise<Record<string, unknown>> {
   const handler = mockSdk.handlers.get(name);
-  if (!handler) throw new Error(`no registered handler for ${name}`);
+  if (!handler) throw new Error(`no registered tool for ${name}`);
   const res = await handler(args);
   return JSON.parse(res.content[0].text) as Record<string, unknown>;
 }
@@ -866,16 +868,13 @@ describe('runResearchMeetingDirector — pipeline', () => {
     const runAgentTaskFn = vi.fn(async (_kind: string, _input: unknown, ctx: never) => {
       // Exercise an evidence read tool (non-empty toolTrace → persistToolTraceFn invoked).
       await callTool('get_attempt_details', { attempt_event_id: 'nonexistent_att' });
-      // Manually drive the PreToolUse hook for a Task call (the stub never spawns a real
-      // subagent) to bump scoutSpawns → the scout_spawned event write is attempted.
-      const hooks = (ctx as { hooks?: { PreToolUse?: Array<{ hooks: unknown[] }> } }).hooks;
-      const hookFn = hooks?.PreToolUse?.[0]?.hooks[0] as (input: unknown) => Promise<unknown>;
-      await hookFn({
-        hook_event_name: 'PreToolUse',
-        tool_name: 'Task',
-        tool_input: { subagent_type: 'evidence-scout' },
-        tool_use_id: 'test-spawn-1',
-      });
+      // Manually drive the pi beforeToolCall spawn gate for a Task call (the stub
+      // never spawns a real subagent) to bump scoutSpawns → the scout_spawned
+      // event write is attempted.
+      const piHooks = (ctx as { piHooks?: { beforeToolCall?: SpawnGate[] } }).piHooks;
+      const gate = piHooks?.beforeToolCall?.[0];
+      if (!gate) throw new Error('missing pi spawn gate');
+      await gate({ id: 'test-spawn-1', name: 'Task' }, { subagent_type: 'evidence-scout' });
       await callTool('propose_conjecture', validProposeArgs);
       return {
         task_run_id: 'director_run_multi_fail',
@@ -918,56 +917,28 @@ describe('runResearchMeetingDirector — pipeline', () => {
     const runAgentTaskFn = vi.fn(async (_kind: string, input: unknown, ctx: never) => {
       capturedInput = input as Record<string, unknown>;
       const spawnCtx = ctx as {
-        hooks?: { PreToolUse?: Array<{ hooks: Array<(input: unknown) => Promise<unknown>> }> };
-        canUseTool?: (
-          toolName: string,
-          input: unknown,
-          options: { toolUseID: string },
-        ) => Promise<unknown>;
-        agents?: Record<string, { tools?: string[]; disallowedTools?: string[]; prompt?: string }>;
+        piHooks?: { beforeToolCall?: SpawnGate[] };
+        piAgents?: Record<
+          string,
+          { tools?: string[]; disallowedTools?: string[]; prompt?: string }
+        >;
       };
-      const hook = spawnCtx.hooks?.PreToolUse?.[0]?.hooks[0];
-      const canUseTool = spawnCtx.canUseTool;
-      capturedAgent = spawnCtx.agents?.['evidence-scout'];
-      if (!hook || !canUseTool) throw new Error('missing shared spawn contract');
+      const gate = spawnCtx.piHooks?.beforeToolCall?.[0];
+      capturedAgent = spawnCtx.piAgents?.['evidence-scout'];
+      if (!gate) throw new Error('missing shared spawn contract');
 
-      // Realistic consultation order: the permission callback sees one Task first,
-      // the hook sees another first, then both surfaces re-check the same ids while
-      // evidence reads interleave. Three unique spawns remain allowed: v1's count=1
-      // cap is retired and the budget is observation-only.
+      // The pi gate is the single permission surface: non-Task tools pass through
+      // (undefined), Task spawns consult the shared decider memoized per
+      // toolUseId, and re-consulting the same id replays the recorded decision.
+      // Three unique spawns remain allowed: v1's count=1 cap is retired and the
+      // budget is observation-only.
       decisions.push(
-        await canUseTool(
-          SPAWN_TOOL_NAME,
-          { subagent_type: 'evidence-scout' },
-          { toolUseID: 'spawn-logic-a' },
-        ),
-        await hook({
-          hook_event_name: 'PreToolUse',
-          tool_name: 'mcp__research_evidence__get_attempt_details',
-          tool_use_id: 'read-att-17',
-        }),
-        await hook({
-          hook_event_name: 'PreToolUse',
-          tool_name: SPAWN_TOOL_NAME,
-          tool_input: { subagent_type: 'evidence-scout' },
-          tool_use_id: 'spawn-applied-b',
-        }),
-        await canUseTool(
-          SPAWN_TOOL_NAME,
-          { subagent_type: 'evidence-scout' },
-          { toolUseID: 'spawn-applied-b' },
-        ),
-        await hook({
-          hook_event_name: 'PreToolUse',
-          tool_name: SPAWN_TOOL_NAME,
-          tool_input: { subagent_type: 'evidence-scout' },
-          tool_use_id: 'spawn-logic-a',
-        }),
-        await canUseTool(
-          SPAWN_TOOL_NAME,
-          { subagent_type: 'evidence-scout' },
-          { toolUseID: 'spawn-review-c' },
-        ),
+        await gate({ id: 'spawn-logic-a', name: 'Task' }, { subagent_type: 'evidence-scout' }),
+        await gate({ id: 'read-att-17', name: 'mcp__research_evidence__get_attempt_details' }, {}),
+        await gate({ id: 'spawn-applied-b', name: 'Task' }, { subagent_type: 'evidence-scout' }),
+        await gate({ id: 'spawn-applied-b', name: 'Task' }, { subagent_type: 'evidence-scout' }),
+        await gate({ id: 'spawn-logic-a', name: 'Task' }, { subagent_type: 'evidence-scout' }),
+        await gate({ id: 'spawn-review-c', name: 'Task' }, { subagent_type: 'evidence-scout' }),
       );
       return {
         task_run_id: 'director_run_a1',
@@ -980,13 +951,16 @@ describe('runResearchMeetingDirector — pipeline', () => {
 
     const result = await runResearchMeetingDirector(testDb(), baseDeps({ runAgentTaskFn }));
 
+    // Pi gate semantics: spawn allows return {block:false} (authoritative,
+    // memoized per toolUseId — the b/a replays must match the first answer);
+    // a non-Task tool name passes through with undefined.
     expect(decisions).toEqual([
-      expect.objectContaining({ behavior: 'allow' }),
-      expect.objectContaining({ continue: true }),
-      expect.objectContaining({ continue: true }),
-      expect.objectContaining({ behavior: 'allow' }),
-      expect.objectContaining({ continue: true }),
-      expect.objectContaining({ behavior: 'allow' }),
+      { block: false },
+      undefined,
+      { block: false },
+      { block: false },
+      { block: false },
+      { block: false },
     ]);
     expect(result.scout_spawned).toBe(3);
     expect(capturedInput?.budget).toEqual({

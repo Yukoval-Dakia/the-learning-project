@@ -23,8 +23,8 @@
 //   - abort/timeout and everything unrecognized: permanent (whitelist-only
 //     retries — never retry an uncertain failure into a double bill).
 
-import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { ProviderSessionAdmissionError } from './provider-session-admission';
+import type { SDKMessage } from './sdk-types';
 
 /** SDKResultError['subtype'] union, spelled out (sdk.d.ts:3538-3556). */
 type SdkResultErrorSubtype =
@@ -70,10 +70,10 @@ export interface AgentRunErrorFields {
 }
 
 /**
- * Structured single-attempt failure. The message keeps the legacy grep-able
- * `[kind] Agent SDK errored: subtype=…` format (existing `.rejects.toThrow`
- * assertions keep matching); the structured fields carry what the string
- * used to drop (errors[], api status, the attempt's run id).
+ * Structured single-attempt failure. The message keeps a grep-able
+ * `[kind] agent run errored: subtype=…` format; the structured fields carry
+ * what the string used to drop (errors[], api status, the attempt's run id).
+ * (YUK-1025: 'Agent SDK' renamed — the SDK subprocess is retired.)
  */
 export class AgentRunError extends Error {
   readonly kind: string;
@@ -86,7 +86,7 @@ export class AgentRunError extends Error {
     const http =
       fields.subtype === 'api_error_result' ? ` http=${fields.apiErrorStatus ?? 'null'}` : '';
     const detail = fields.errors.length > 0 ? ` errors=${fields.errors.join('; ')}` : '';
-    super(`[${fields.kind}] Agent SDK errored: subtype=${fields.subtype}${http}${detail}`);
+    super(`[${fields.kind}] agent run errored: subtype=${fields.subtype}${http}${detail}`);
     this.name = 'AgentRunError';
     this.kind = fields.kind;
     this.taskRunId = fields.taskRunId;

@@ -1,10 +1,4 @@
 import { createHash } from 'node:crypto';
-import type {
-  HookCallback,
-  Options,
-  PostToolUseFailureHookInput,
-  PostToolUseHookInput,
-} from '@anthropic-ai/claude-agent-sdk';
 import type { AfterToolCallResult } from '@earendil-works/pi-agent-core';
 import { z } from 'zod';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
@@ -463,85 +457,9 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     }
   }
 
-  /** Fail-closed evidence capture: never blocks the tool call, never stores truncated payloads. */
-  function captureRemoteMcpEvidence(
-    entry: TraceEntry,
-    input: PostToolUseHookInput | PostToolUseFailureHookInput,
-  ): void {
-    captureRemoteMcpEvidenceView(entry, {
-      toolInput: input.tool_input,
-      ...(input.hook_event_name === 'PostToolUse'
-        ? { toolResponse: input.tool_response }
-        : {
-            failure: {
-              error: input.error,
-              ...(input.is_interrupt !== undefined ? { is_interrupt: input.is_interrupt } : {}),
-            },
-          }),
-    });
-  }
-
-  const preHook: HookCallback = async (input) => {
-    if (input.hook_event_name !== 'PreToolUse') return { continue: true };
-    if (trace.length >= COPILOT_REPLY_TRACE_MAX_CALLS) {
-      return {
-        hookSpecificOutput: {
-          hookEventName: 'PreToolUse',
-          permissionDecision: 'deny',
-          permissionDecisionReason: 'Copilot turn tool-call ceiling reached',
-        },
-      };
-    }
-    const entry: TraceEntry = {
-      ordinal: trace.length + 1,
-      tool_use_id: input.tool_use_id,
-      tool_name: input.tool_name,
-      input_sha256: sha256CanonicalJson(input.tool_input),
-      output_sha256: null,
-      status: 'in_flight',
-      effect: null,
-      root_call: input.agent_id === undefined,
-    };
-    trace.push(entry);
-    byId.set(entry.tool_use_id, entry);
-    traceVersion += 1;
-    return { continue: true };
-  };
-
-  const postHook: HookCallback = async (input) => {
-    if (input.hook_event_name !== 'PostToolUse' && input.hook_event_name !== 'PostToolUseFailure') {
-      return { continue: true };
-    }
-    const entry = byId.get(input.tool_use_id);
-    if (entry?.status !== 'in_flight') return { continue: true };
-    entry.status = input.hook_event_name === 'PostToolUse' ? 'succeeded' : 'failed';
-    entry.output_sha256 = sha256CanonicalJson(
-      input.hook_event_name === 'PostToolUse' ? input.tool_response : { error: input.error },
-    );
-    if (
-      input.tool_name.startsWith('mcp__') &&
-      !input.tool_name.startsWith(`mcp__${DOMAIN_TOOL_MCP_SERVER_NAME}__`)
-    )
-      captureRemoteMcpEvidence(entry, input);
-    traceVersion += 1;
-    return {
-      hookSpecificOutput: {
-        hookEventName: input.hook_event_name,
-        additionalContext: `tool_use_id=${input.tool_use_id}`,
-      },
-    };
-  };
-
-  const hooks: NonNullable<Options['hooks']> = {
-    PreToolUse: [{ hooks: [preHook] }],
-    PostToolUse: [{ hooks: [postHook] }],
-    PostToolUseFailure: [{ hooks: [postHook] }],
-  };
-
-  // YUK-1022 — the pi-lane twins. Same trace state, same decision order:
-  // `piBeforeToolCall` mirrors preHook (ceiling deny → {block}); `piAfterToolCall`
-  // mirrors postHook (settle status/output hash/remote evidence) and appends the
-  // `tool_use_id=` context block the SDK writes back via `additionalContext`.
+  // The pi hook pair. `piBeforeToolCall` opens a trace entry (ceiling deny →
+  // {block}); `piAfterToolCall` settles status/output hash/remote evidence and
+  // appends the `tool_use_id=` context block.
   const piBeforeToolCall: PiBeforeToolCall = (call, args) => {
     if (trace.length >= COPILOT_REPLY_TRACE_MAX_CALLS) {
       return { block: true, reason: 'Copilot turn tool-call ceiling reached' };
@@ -781,7 +699,6 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
   }
 
   return {
-    hooks,
     piHooks: { beforeToolCall: [piBeforeToolCall], afterToolCall: [piAfterToolCall] },
     beforeDomainTool(_tool: ToolExecutionGateInput): string | undefined {
       return trace.length >= COPILOT_REPLY_TRACE_MAX_CALLS
@@ -793,23 +710,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
   };
 }
 
-export function prependCopilotFinalizationHooks(
-  finalizerHooks: NonNullable<Options['hooks']>,
-  existing?: Options['hooks'],
-): NonNullable<Options['hooks']> {
-  return {
-    ...(existing ?? {}),
-    PreToolUse: [...(finalizerHooks.PreToolUse ?? []), ...(existing?.PreToolUse ?? [])],
-    PostToolUse: [...(finalizerHooks.PostToolUse ?? []), ...(existing?.PostToolUse ?? [])],
-    PostToolUseFailure: [
-      ...(finalizerHooks.PostToolUseFailure ?? []),
-      ...(existing?.PostToolUseFailure ?? []),
-    ],
-  };
-}
-
-/** YUK-1022 — pi twin of `prependCopilotFinalizationHooks`: finalizer entries
- *  run before the caller's bridge entries in both directions. */
+/** Finalizer entries run before the caller's bridge entries in both directions. */
 export function prependCopilotPiFinalizationHooks(
   finalizerHooks: PiHookBridge,
   existing?: PiHookBridge,

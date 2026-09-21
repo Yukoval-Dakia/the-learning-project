@@ -92,7 +92,18 @@ export type RunWebSourcingAgentFn = (params: {
   db: Db;
   input: WebSourcingAgentInput;
   subjectProfile: SubjectProfile;
-  ctx: { taskRunId: string; causedByEventId: string };
+  /** `modelBinding` mirrors RunTaskCtx's field (provider/model/adapter/effort)
+   * without importing '@/server/ai' — this module is server-pure by ownership. */
+  ctx: {
+    taskRunId: string;
+    causedByEventId: string;
+    modelBinding?: {
+      provider?: 'xiaomi' | 'anthropic-sub' | 'anthropic' | 'zhipu' | 'opencode-go';
+      model?: string;
+      adapter?: 'pi';
+      effort?: 'low' | 'medium' | 'high';
+    };
+  };
 }) => Promise<{ text: string; task_run_id?: string | null; cost_usd?: number | null } | null>;
 
 export interface RunWebFetchCandidatesParams {

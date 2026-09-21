@@ -13,7 +13,6 @@ import type { JudgeResultV2T } from '@/core/schema/capability';
 import { type JudgeRoutableQuestion, nonEmptyStrings } from '@/core/schema/judge-routing';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
-import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import type { SubjectProfile } from '@/subjects/profile';
@@ -140,9 +139,6 @@ export function assertGeneratedQuestionHasJudgeContract(
 }
 
 const semanticOutputSchema = tasks.SemanticJudgeTask.structuredOutputSchema;
-const SEMANTIC_OUTPUT_FORMAT = semanticOutputSchema
-  ? zodToJsonSchemaOutputFormat(semanticOutputSchema)
-  : undefined;
 
 export interface JudgeQuestionRow {
   id: string;
@@ -389,7 +385,6 @@ export async function runSemanticJudge(params: JudgeAnswerParams): Promise<Judge
       },
       {
         subjectProfile: params.subjectProfile,
-        outputFormat: SEMANTIC_OUTPUT_FORMAT,
       },
     );
     const parsed = parseSemanticJudgeResult(result);

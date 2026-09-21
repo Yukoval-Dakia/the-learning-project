@@ -25,7 +25,6 @@ import { event, knowledge, mistake_variant, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
-import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import {
   type TaskTextResult,
   type TaskTextRunFn,
@@ -270,7 +269,6 @@ export async function runVariantVerify(
   // a zero-loss opt-in. The Zod second-pass still enforces business constraints.
   const result = await runTaskFn('VariantVerifyTask', input, {
     subjectProfile,
-    outputFormat: zodToJsonSchemaOutputFormat(VariantVerificationResult),
   });
   const parsed = parseVariantVerifyResult(result);
 

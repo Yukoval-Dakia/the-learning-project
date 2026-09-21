@@ -1,47 +1,52 @@
-// YUK-921 / YUK-1013 P0 — ExecutionAdapter seam. The runner talks to an
-// adapter for "produce a query handle from (options, prompt)" instead of
-// touching the Claude Agent SDK startup path directly. Adapter A (`sdk`)
-// wraps the existing WarmQuery lifecycle byte-for-byte; Adapter B (`pi`,
-// @earendil-works/pi-agent-core agentLoop) lands in P1 behind the same seam.
-// Zero behaviour change: resolveExecutionAdapter today always returns the
-// SDK adapter and an explicit non-sdk pin fails closed with a config error.
+// YUK-921 — ExecutionAdapter seam. P4 (YUK-1025) retired Adapter A: the Claude
+// Agent SDK subprocess is gone and PiAgentAdapter is the only execution path.
+// The seam stays deliberately — `PreparedExecutionQuery` (startup inside
+// admission, one prompt submission, close-order ownership) is the contract the
+// durable lifecycle supervises, regardless of engine.
+//
+// Frame vocabulary: the consume loop (lifecycle / terminal evidence /
+// tool_call recording / durable task_* projection) still reads SDKMessage-
+// shaped frames. Those are OUR protocol types now — `sdk-types.ts` holds the
+// fresh declarations the pi adapter produces; no @anthropic-ai/claude-agent-sdk
+// import remains.
 
-import {
-  type Options,
-  type Query,
-  type SDKAssistantMessage,
-  type SDKMessage,
-  type SDKResultMessage,
-  type SDKUserMessage,
-  type WarmQuery,
-  startup as sdkStartup,
-} from '@anthropic-ai/claude-agent-sdk';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { TaskKind } from '@/ai/registry';
 import type { EffortLevel } from '@/ai/task-spec';
-import { PiAgentAdapter, isPiSessionId } from './pi-agent-adapter';
+import { PiAgentAdapter } from './pi-agent-adapter';
 import type { PiHookBridge } from './pi-hooks';
-import { PI_LANE_PROVIDERS, type ResolvedProvider, isPiLaneProvider } from './providers';
+import type { ResolvedProvider } from './providers';
+import type {
+  Options,
+  SDKAssistantMessage,
+  SDKMessage,
+  SDKResultMessage,
+  SDKUserMessage,
+} from './sdk-types';
 import type { PiSubagentSpec } from './tools/pi-subagent';
 import type { PiToolMount } from './tools/pi-tools';
 
-export type ExecutionAdapterId = 'sdk' | 'pi';
+/** Post-P4 the only engine id; the field stays so a future adapter has a home. */
+export type ExecutionAdapterId = 'pi';
 
 /**
- * Per-run model binding (design doc §2.4 / §4). This is the NEW explicit-ctx
- * layer for per-run provider/model/effort/engine selection — the durable
- * surface YUK-1007's config panel will read/write in phase-2. `ctx.override`
- * stays the test/dev escape hatch and still wins per-field over modelBinding
- * when both are set (see explicitProviderRouting).
+ * Per-run model binding (design doc §2.4 / §4). This is the explicit-ctx
+ * layer for per-run provider/model/effort selection — the durable surface
+ * YUK-1007's config panel reads/writes. `ctx.override` stays the test/dev
+ * escape hatch and still wins per-field over modelBinding when both are set
+ * (see explicitProviderRouting).
  */
 export interface ModelBinding {
-  /** Provider id from the providers.ts registry ('xiaomi' today; 'opencode-go' etc. as lanes land). */
+  /** Provider id from the providers.ts registry. */
   provider?: ResolvedProvider['provider'];
   /** Model id inside the resolved provider's catalog. */
   model?: string;
   /** Reasoning effort tier — same EffortLevel the task spec declares; explicit binding wins. */
   effort?: EffortLevel;
-  /** Execution engine pin for the migration window; omit → resolved default ('sdk'). */
+  /**
+   * Execution engine pin. Post-P4 only 'pi' is legal; any other runtime value
+   * (stale config rows, stale callers) fails closed in resolveExecutionAdapter.
+   */
   adapter?: ExecutionAdapterId;
 }
 
@@ -51,11 +56,8 @@ export interface ModelBinding {
  * consume loop (lifecycle/terminal/tool_call recording) stays a single
  * implementation; `source: 'pi'` declares provenance instead of faking
  * SDK-only metadata. Intersections stay structurally assignable to their SDK
- * member, so `sdk-terminal` and `isTaskEventMessage` consume them unchanged.
- * P1 emits assistant + result frames only; P3 adds the `system` subtypes the
- * session/subagent/compaction surfaces need (init for the session-id sink,
- * task_* for durable subagent projection, compact_boundary for usage
- * evidence).
+ * member, so `runner-terminal` and `isTaskEventMessage` consume them
+ * unchanged.
  */
 export type PiRunnerMessage =
   | (SDKAssistantMessage & { source: 'pi' })
@@ -82,7 +84,7 @@ export interface PiReplayTurn {
  * before the next LLM call) and `getFollowUpMessages` when the agent would
  * otherwise stop. The surface is wired end-to-end on purpose even though no
  * caller provides one today — attaching queue semantics later must not
- * require adapter surgery. Ignored on the sdk lane.
+ * require adapter surgery.
  */
 export interface PiQueueSources {
   getSteeringMessages?: () => Promise<AgentMessage[]>;
@@ -90,77 +92,74 @@ export interface PiQueueSources {
 }
 
 /**
- * Message union consumed by runner entry points. P0 was a bare SDKMessage
- * alias; P1 unions in the pi-normalized frames both adapters may produce.
+ * Message union consumed by runner entry points: the pi-normalized frames,
+ * plus bare SDKMessage so legacy fixtures/callers that construct unmarked
+ * frames still typecheck.
  */
 export type RunnerMessage = SDKMessage | PiRunnerMessage;
 
 /**
- * A prepared query session: transport started (admission already held by the
- * caller), prompt not yet submitted. `close()` must release either the unused
- * warm transport or the active query — the adapter owns that distinction.
+ * A prepared query session: transport resolved (admission already held by the
+ * caller), prompt not yet submitted. `close()` must release any remote-MCP
+ * handles and abort the loop — the adapter owns that distinction.
  */
 export interface PreparedExecutionQuery {
   query(prompt: string | AsyncIterable<SDKUserMessage>): AsyncIterable<RunnerMessage>;
   close(): Promise<void>;
 }
 
-/** Arguments every adapter's `startup` receives. Adapters consume what they need. */
+/** Arguments the adapter's `startup` receives. */
 export interface ExecutionAdapterStartupArgs {
-  /** SDK Options built by buildQueryOptions (model/systemPrompt/effort/env/…). */
+  /** Call spec built by buildQueryOptions (model/systemPrompt/maxTurns/tools/effort/resume). */
   options: Options;
   initializeTimeoutMs: number;
   /**
    * The lifecycle-resolved provider binding — credential, provider id and
-   * model for this attempt. Pi adapter maps it to `models.getModel` and the
-   * per-request `apiKey`; SDK adapter ignores it (its env is already inside
-   * `options.env`).
+   * model for this attempt. The adapter maps it to the loom pi catalog
+   * (pi-models.ts) and passes the per-request credential to streamSimple.
    */
   resolved: ResolvedProvider;
   /**
-   * The durable run identity (`ai_task_run.id`). Pi adapter injects it as the
-   * opencode `x-opencode-session` header — stable per attempt, auditable.
+   * The durable run identity (`ai_task_run.id`). Injected as the
+   * `x-opencode-session` header — stable per attempt, auditable.
    */
   runId: string;
-  /** Registry kind — the pi adapter reads `needsToolCall` for its fail-closed tool-mount rule. */
+  /** Registry kind — the adapter reads `needsToolCall` for its fail-closed tool-mount rule. */
   kind: TaskKind;
   /**
-   * YUK-921 P2 — declarative tool mounts for the pi lane. Callers that want a
-   * needsToolCall kind to be pi-eligible declare them alongside ctx.mcpServers
-   * (the SDK lane keeps consuming mcpServers; the adapter gate picks which
-   * surface applies). Ignored by the SDK adapter.
+   * YUK-921 P2 — declarative tool mounts. needsToolCall kinds must mount at
+   * least one pi-visible tool (piDomainMount / piRemoteMcpMount / custom
+   * AgentTools) unless the caller explicitly passes an empty allowedTools
+   * (tool-less turns, e.g. Copilot authoritativeReply).
    */
   piToolMounts?: PiToolMount[];
   /**
-   * YUK-921 P3 — pi-side hook bridge. Callers that declare SDK `ctx.hooks`
-   * provide the engine-neutral equivalents here (ordered beforeToolCall gates
-   * + afterToolCall observers). On the pi lane, declaring SDK hooks without a
-   * piHooks counterpart fails closed at startup.
+   * YUK-921 P3 — pi-side hook bridge: ordered beforeToolCall gates +
+   * afterToolCall observers (spawn-contract gate, cancellation, finalization
+   * trace). This is THE tool-call interception surface post-P4.
    */
   piHooks?: PiHookBridge;
   /**
-   * YUK-921 P3 — local session replay. When `options.resume` is set, the pi
-   * lane has no SDK session file to reattach — the caller assembles durable
-   * conversation turns into this engine-neutral shape and the adapter seeds
-   * `context.messages` with them (the fold-as-messages equivalent of SDK
-   * resume). A pi-bound run with `resume` set but no replay fails closed.
+   * YUK-921 P3 — local session replay. When `options.resume` is set the caller
+   * assembles durable conversation turns into this engine-neutral shape and
+   * the adapter seeds `context.messages` with them. `resume` set but no replay
+   * fails closed.
    */
   piSessionReplay?: readonly PiReplayTurn[];
   /**
-   * YUK-921 P3 — resolved skill bodies for system-prompt injection. SDK Agent
-   * Skills are a subprocess feature; the pi lane receives the resolved
-   * SKILL.md bodies and appends them to the system prompt.
+   * YUK-921 P3 — resolved skill bodies for system-prompt injection (the pi
+   * equivalent of SDK Agent Skills): the caller resolves SKILL.md bodies and
+   * the adapter appends them to the system prompt.
    */
   piSkillDocs?: readonly { name: string; body: string }[];
   /**
    * YUK-921 P3 — depth-one nested-agent specs (mapped from the shared spawn
    * contract's `agents`). The adapter mounts the `Task`/`Agent` AgentTool and
-   * runs nested agentLoops in-process. On the pi lane, declaring
-   * `options.agents` without `piAgents` fails closed at startup.
+   * runs nested agentLoops in-process.
    */
   piAgents?: Record<string, PiSubagentSpec>;
   /**
-   * YUK-921 P3 — steering/follow-up queue sources, forwarded to the root
+   * YUK-1022 — steering/follow-up queue sources, forwarded to the root
    * agentLoop config (nested loops never see them — steering targets the
    * running turn, not a synchronous child execution). No caller provides one
    * today; the surface exists so a future consumer attaches without adapter
@@ -168,79 +167,19 @@ export interface ExecutionAdapterStartupArgs {
    */
   piQueues?: PiQueueSources;
   /**
-   * YUK-921 P3 — forwarded `ctx.nativeCompaction` verbatim. The SDK lane folds
-   * it into `options.settings.autoCompactEnabled` + a SessionStart hook; the
-   * pi lane needs the raw `sessionContext` to arm `transformContext`
-   * (budget prune + bounded-context re-injection per ADR-0060).
+   * YUK-921 P3 — forwarded `ctx.nativeCompaction` verbatim. The adapter arms
+   * `transformContext` (budget prune + bounded-context re-injection per
+   * ADR-0060) when present.
    */
   nativeCompaction?: { sessionContext: string };
 }
 
 export interface ExecutionAdapter {
   readonly id: ExecutionAdapterId;
-  /** Start the transport without submitting a prompt (SDK WarmQuery equivalent). */
+  /** Start the transport without submitting a prompt (tool mounts resolve here). */
   startup(args: ExecutionAdapterStartupArgs): Promise<PreparedExecutionQuery>;
 }
 
-/**
- * Adapter A's prepared query — owns the warm-transport/active-query cleanup
- * order byte-for-byte from the pre-seam `withPreparedSdkQuery`. Exported so
- * the close-order contract can be pinned with a fake WarmQuery (the only real
- * logic in this file); not part of the adapter's public surface otherwise.
- */
-export class SdkPreparedQuery implements PreparedExecutionQuery {
-  private activeQuery: Query | undefined;
-
-  constructor(private warmQuery: WarmQuery | undefined) {}
-
-  query(prompt: string | AsyncIterable<SDKUserMessage>): AsyncIterable<RunnerMessage> {
-    this.activeQuery = this.warmQuery?.query(prompt);
-    if (!this.activeQuery) {
-      throw new Error('SDK warm query closed before prompt submission');
-    }
-    return this.activeQuery;
-  }
-
-  async close(): Promise<void> {
-    const query = this.activeQuery;
-    this.activeQuery = undefined;
-    const warm = this.warmQuery;
-    this.warmQuery = undefined;
-    if (query) {
-      try {
-        await query.return(undefined);
-      } catch {
-        query.close();
-      }
-      return;
-    }
-    warm?.close();
-  }
-}
-
-class SdkExecutionAdapter implements ExecutionAdapter {
-  readonly id = 'sdk' as const;
-
-  async startup(args: ExecutionAdapterStartupArgs): Promise<PreparedExecutionQuery> {
-    // YUK-1022 — a `pi:`-prefixed resume id names a pi-lane session the SDK
-    // subprocess can never attach. Callers fold it to a cold start BEFORE the
-    // prompt is compiled (history rides the cold envelope); reaching the SDK
-    // lane with one means the fold was skipped — fail closed rather than
-    // silently lose the durable history a resume-mode prompt no longer carries.
-    if (typeof args.options.resume === 'string' && isPiSessionId(args.options.resume)) {
-      throw new Error(
-        `SDK adapter cannot resume pi-owned session '${args.options.resume}' — the caller must fold pi: session ids to a cold start when the pi lane is not active.`,
-      );
-    }
-    const warmQuery = await sdkStartup({
-      options: args.options,
-      initializeTimeoutMs: args.initializeTimeoutMs,
-    });
-    return new SdkPreparedQuery(warmQuery);
-  }
-}
-
-const SDK_ADAPTER = new SdkExecutionAdapter();
 const PI_ADAPTER = new PiAgentAdapter();
 
 let piAdapterForTests: ExecutionAdapter | undefined;
@@ -257,103 +196,23 @@ export function __setPiAdapterForTests(adapter: ExecutionAdapter | undefined): v
 }
 
 /**
- * YUK-921 P1/P2 — per-kind gray-rollout gate for the pi adapter, driven by the
- * `AI_ADAPTER_PI_KINDS` env flag (comma-separated task kinds; empty/unset ⇒
- * no kind may run pi). P1 restricted eligibility to needsToolCall=false
- * kinds; P2 opens tool-loop kinds — the fail-closed enforcement moved to
- * PiAgentAdapter.startup, which rejects a needsToolCall kind carrying zero
- * pi-visible tools. Parsed per call so tests can flip the env without
- * module reloads.
- */
-export function piAllowlistedKinds(): ReadonlySet<string> {
-  const raw = process.env.AI_ADAPTER_PI_KINDS;
-  if (!raw?.trim()) return new Set();
-  return new Set(
-    raw
-      .split(',')
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0),
-  );
-}
-
-export function isPiEligibleKind(kind: TaskKind): boolean {
-  return piAllowlistedKinds().has(kind);
-}
-
-/**
- * Engine selection for one attempt. The default stays the SDK adapter; an
- * explicit `adapter:'pi'` pin resolves Adapter B only when BOTH gates hold:
- * the resolved provider is a pi lane (`isPiLaneProvider` — opencode-go today)
- * and the task kind is allowlisted (`AI_ADAPTER_PI_KINDS` ∩
- * needsToolCall=false). Every rejection fails closed with a config error —
- * same posture as `providerRequiresExplicitModel` — never a silent fallback.
+ * Engine selection for one attempt. Post-P4 this is a fail-closed guard, not
+ * a router: every provider resolves to the pi adapter; a stale non-'pi'
+ * adapter pin (config rows, old callers) throws a config error instead of
+ * silently degrading.
  */
 export function resolveExecutionAdapter(
   binding: ModelBinding | undefined,
   resolved: ResolvedProvider,
   kind: TaskKind,
 ): ExecutionAdapter {
-  const requested = binding?.adapter ?? 'sdk';
-  if (requested === 'pi') {
-    if (!isPiLaneProvider(resolved.provider)) {
-      throw new Error(
-        `ExecutionAdapter 'pi' does not serve provider '${resolved.provider}' — only ${[...PI_LANE_PROVIDERS].join(' | ')} are wired through the pi lane (modelBinding.adapter:'pi' + modelBinding.provider:'${resolved.provider}' is not a runnable combination).`,
-      );
-    }
-    if (!isPiEligibleKind(kind)) {
-      throw new Error(
-        `Task kind '${kind}' is not eligible for ExecutionAdapter 'pi' — only kinds named in AI_ADAPTER_PI_KINDS may run pi (needsToolCall=true kinds additionally require ctx.piToolMounts at startup). Omit the adapter pin to route through 'sdk'.`,
-      );
-    }
-    return piAdapterForTests ?? PI_ADAPTER;
-  }
-  if (requested !== 'sdk') {
+  const requested = binding?.adapter ?? 'pi';
+  if (requested !== 'pi') {
     throw new Error(
-      `ExecutionAdapter '${requested}' is not implemented — expected 'sdk' | 'pi'. Omit modelBinding.adapter or pass 'sdk'.`,
+      `ExecutionAdapter '${requested}' was retired in YUK-1025 — the Claude Agent SDK subprocess is gone and 'pi' is the only execution path (task kind '${kind}', provider '${resolved.provider}'). Remove the adapter pin.`,
     );
   }
-  if (isPiLaneProvider(resolved.provider)) {
-    throw new Error(
-      `Provider '${resolved.provider}' is served only by ExecutionAdapter 'pi' (its catalog is not Anthropic-protocol); set modelBinding.adapter:'pi' + a kind allowlisted in AI_ADAPTER_PI_KINDS.`,
-    );
-  }
-  return SDK_ADAPTER;
-}
-
-/**
- * YUK-921 P2 — ops rollout pin. `AI_ADAPTER_PI_PROVIDER` +
- * `AI_ADAPTER_PI_MODEL` give allowlisted kinds a default pi binding when the
- * caller supplies no modelBinding of its own. An explicit per-run binding
- * always wins wholesale (a caller that names any field is expressing routing
- * intent — env defaults do not merge into it). The env pin alone is inert
- * without the kind also appearing in AI_ADAPTER_PI_KINDS, and the provider
- * must still be a pi lane — resolveExecutionAdapter enforces both
- * downstream.
- */
-export function effectiveModelBinding(
-  kind: TaskKind,
-  binding: ModelBinding | undefined,
-): ModelBinding | undefined {
-  if (binding !== undefined) return binding;
-  const provider = process.env.AI_ADAPTER_PI_PROVIDER?.trim();
-  const model = process.env.AI_ADAPTER_PI_MODEL?.trim();
-  if (!provider && !model) return binding;
-  if (!piAllowlistedKinds().has(kind)) return binding;
-  return {
-    adapter: 'pi',
-    ...(provider ? { provider: provider as ResolvedProvider['provider'] } : {}),
-    ...(model ? { model } : {}),
-  };
-}
-
-/**
- * YUK-1022 — "would the next attempt for this kind take the pi adapter?"
- * Callers use this to fold lane-specific decisions (e.g. whether a persisted
- * `pi:`-prefixed session id is resumable) without duplicating the pin logic.
- * An explicit caller binding wins wholesale, mirroring the seam.
- */
-export function piLanePinnedForKind(kind: TaskKind, binding?: ModelBinding): boolean {
-  return effectiveModelBinding(kind, binding)?.adapter === 'pi';
+  return piAdapterForTests ?? PI_ADAPTER;
 }
 
 /**

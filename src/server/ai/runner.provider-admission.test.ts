@@ -32,11 +32,10 @@ const sdkMocks = vi.hoisted(() => ({
   warmCloses: [] as Array<ReturnType<typeof vi.fn>>,
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  startup: sdkMocks.startup,
-  createSdkMcpServer: vi.fn(() => ({ type: 'sdk', name: '', instance: {} })),
-  tool: vi.fn((name: string, description: string) => ({ name, description })),
-}));
+// Fake adapter seam (YUK-1025): startup/query/close stay vi.fn'd with the
+// same contract the SDK module mock had — the runner-facing shape is
+// PreparedExecutionQuery, so assertions on call counts/order carry over.
+import { __setPiAdapterForTests } from './execution-adapter';
 
 const logMocks = vi.hoisted(() => ({
   started: vi.fn(async () => {}),
@@ -45,7 +44,7 @@ const logMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/server/ai/log', () => ({
-  logMissingMcpServersWarning: vi.fn(),
+  logMissingToolMountsWarning: vi.fn(),
   writeAiTaskRunStarted: logMocks.started,
   writeAiTaskAttemptFinished: logMocks.terminal,
   writeAiTaskRunRetried: logMocks.retried,
@@ -108,7 +107,7 @@ describe('runner central provider-session seam', () => {
     sdkMocks.queues = [];
     sdkMocks.warmCloses = [];
     sdkMocks.startup.mockReset().mockImplementation(async () => {
-      const close = vi.fn();
+      const close = vi.fn(async () => {});
       sdkMocks.warmCloses.push(close);
       return { query: sdkMocks.query, close };
     });
@@ -118,12 +117,17 @@ describe('runner central provider-session seam', () => {
         for (const message of messages) yield message;
       })();
     });
+    __setPiAdapterForTests({
+      id: 'pi',
+      startup: sdkMocks.startup,
+    });
     logMocks.started.mockClear();
     logMocks.terminal.mockClear();
     logMocks.retried.mockClear();
   });
 
   afterEach(() => {
+    __setPiAdapterForTests(undefined);
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
@@ -271,7 +275,7 @@ describe('runner central provider-session seam', () => {
     });
     sdkMocks.startup.mockImplementation(async () => {
       sequence.push('startup');
-      const close = vi.fn();
+      const close = vi.fn(async () => {});
       sdkMocks.warmCloses.push(close);
       return { query: sdkMocks.query, close };
     });
@@ -370,7 +374,7 @@ describe('runner central provider-session seam', () => {
     });
     sdkMocks.startup.mockImplementation(async () => {
       sequence.push('startup');
-      return { query: sdkMocks.query, close: vi.fn() };
+      return { query: sdkMocks.query, close: vi.fn(async () => {}) };
     });
     sdkMocks.query.mockImplementation((prompt: string | AsyncIterable<unknown>) => {
       sequence.push('sdk');

@@ -48,7 +48,7 @@ export const copilotTaskSpec = {
     // YUK-284 (C2 / AP-2) — methodology 段落 (mutation-vs-edge 决策树 / lifecycle
     // 触发判据 / suggestion_kind 判据 / proposal_feedback 的解读方法论) 已迁出到
     // src/subjects/_shared/skills/copilot/SKILL.md（cross-subject 共享包，经
-    // ctx.skills=resolveCopilotSkills() 在 free-form 路径加载）。此处只留任务描述级
+    // ctx.piSkillDocs=await resolveCopilotSkillDocs() 在 free-form 路径加载）。此处只留任务描述级
     // 契约（角色 / 写工具 surface allowlist / propose-only 红线 / runInput 字段的结构
     // 说明 — 这些与 schema 同生命周期，PC-4）+ SKILL.md 缺失时的精简方法论兜底句。
     // 注意：conversation_history / ambient_context 的「怎么用」一句话属于 runInput

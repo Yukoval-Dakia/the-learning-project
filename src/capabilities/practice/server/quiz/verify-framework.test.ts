@@ -115,7 +115,7 @@ describe('shared question-content validator seam', () => {
       runTaskFn,
       db: sentinelDb,
       subjectProfile: resolveSubjectProfile('yuwen'),
-      skills: ['yuwen-reading-evidence'],
+      piSkillDocs: [{ name: 'yuwen-reading-evidence', body: '# 阅读证据\nbody' }],
       afterTaskRun,
     });
 
@@ -125,7 +125,7 @@ describe('shared question-content validator seam', () => {
       expect.objectContaining({
         db: sentinelDb,
         subjectProfile: expect.objectContaining({ id: 'yuwen' }),
-        skills: ['yuwen-reading-evidence'],
+        piSkillDocs: [{ name: 'yuwen-reading-evidence', body: '# 阅读证据\nbody' }],
       }),
     );
     expect(afterTaskRun).toHaveBeenCalledWith(
@@ -310,9 +310,11 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
       });
       expect(runTaskFn).toHaveBeenCalledTimes(1);
       const blindInput = runTaskFn.mock.calls[0]?.[1] as Record<string, unknown>;
-      expect(runTaskFn.mock.calls[0]?.[2]).toMatchObject({
-        outputFormat: { type: 'json_schema' },
-      });
+      // Post-P4: no SDK outputFormat threading — the blind validator relies on
+      // prompt-level JSON instruction + schema parse of the text result.
+      expect(
+        (runTaskFn.mock.calls[0]?.[2] as { outputFormat?: unknown }).outputFormat,
+      ).toBeUndefined();
       expect(blindInput.prompt_md).toBe(diagnostic.probe_spec.prompt_md);
       expect(Object.keys(blindInput).sort()).toEqual([
         'choices_md',

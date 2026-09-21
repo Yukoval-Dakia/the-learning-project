@@ -1,4 +1,3 @@
-import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it, vi } from 'vitest';
 import {
   type ToolOperationRecord,
@@ -6,7 +5,6 @@ import {
   controlOwnedToolOperation,
   executeSafeToolOperation,
 } from '@/kernel/tools/tool-operations';
-import { createToolUseCorrelation } from '@/server/ai/tools/mcp-bridge';
 
 function record(overrides: Partial<ToolOperationRecord> = {}): ToolOperationRecord {
   const now = new Date('2026-08-27T12:00:00.000Z');
@@ -338,56 +336,5 @@ describe('owned ToolOperations controls', () => {
       }),
     ).rejects.toThrow('tool operation not found');
     expect(toolOperations.cancel).not.toHaveBeenCalled();
-  });
-});
-
-describe('toolUseId correlation', () => {
-  it('reuses the SDK PreToolUse identity exactly once for the matching bridge call', async () => {
-    const correlation = createToolUseCorrelation('loom');
-    const hook = correlation.hooks.PreToolUse?.[0]?.hooks[0] as HookCallback;
-    await hook(
-      {
-        hook_event_name: 'PreToolUse',
-        session_id: 'sdk_session',
-        transcript_path: '/tmp/transcript',
-        cwd: '/tmp',
-        permission_mode: 'default',
-        tool_name: 'mcp__loom__remote_reader',
-        tool_input: { query: 'same call', nested: { page: 2 } },
-        tool_use_id: 'toolu_correlated_7',
-      },
-      'toolu_correlated_7',
-      { signal: new AbortController().signal },
-    );
-
-    expect(correlation.claim('remote_reader', { nested: { page: 2 }, query: 'same call' })).toBe(
-      'toolu_correlated_7',
-    );
-    expect(
-      correlation.claim('remote_reader', { nested: { page: 2 }, query: 'same call' }),
-    ).toBeUndefined();
-  });
-
-  it('correlates every named read tool; safe-handoff policy decides whether it is used', async () => {
-    const correlation = createToolUseCorrelation('loom');
-    const hook = correlation.hooks.PreToolUse?.[0]?.hooks[0] as HookCallback;
-    await hook(
-      {
-        hook_event_name: 'PreToolUse',
-        session_id: 'sdk_session',
-        transcript_path: '/tmp/transcript',
-        cwd: '/tmp',
-        permission_mode: 'default',
-        tool_name: 'mcp__loom__generate_goal_outline',
-        tool_input: { goal_title: 'Learn vector calculus' },
-        tool_use_id: 'toolu_goal_outline_correlated',
-      },
-      'toolu_goal_outline_correlated',
-      { signal: new AbortController().signal },
-    );
-
-    expect(
-      correlation.claim('generate_goal_outline', { goal_title: 'Learn vector calculus' }),
-    ).toBe('toolu_goal_outline_correlated');
   });
 });

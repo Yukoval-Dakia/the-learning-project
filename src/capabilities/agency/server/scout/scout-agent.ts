@@ -1,26 +1,24 @@
 // YUK-572 §1/§6 — evidence-scout AgentDefinition assembler (shared scout primitive).
 //
-// Assembles the scout spec §3 three-question task book into an SDK AgentDefinition
-// that the director spawns via `agents: { 'evidence-scout': ... }`. PURE assembly —
-// no DB, no LLM, no SDK call. The prompt is injected (registry-inline SoT lives with
-// the caller); this module owns only the STRUCTURAL isolation shape:
+// Assembles the scout spec §3 three-question task book into an AgentDefinition
+// that the director spawns via `piAgents: { 'evidence-scout': ... }`. PURE
+// assembly — no DB, no LLM, no provider call. The prompt is injected
+// (registry-inline SoT lives with the caller); this module owns only the
+// STRUCTURAL isolation shape:
 //
-//   - `tools` is ALWAYS explicitly enumerated, NEVER omitted. Omitting it makes the
-//     subagent inherit ALL parent tools (sdk.d.ts:44 "If omitted, inherits all tools
-//     from parent") — which would leak `Task` (breaking the anti-swarm DEPTH cap: a
-//     scout could re-spawn) AND the director's propose/note write tools (breaking the
-//     propose-only single-proposer isolation). This is the YUK-572 A1 red line.
+//   - `tools` is ALWAYS explicitly enumerated, NEVER omitted. Omitting it makes
+//     the subagent inherit ALL parent tools — which would leak `Task` (breaking
+//     the anti-swarm DEPTH cap: a scout could re-spawn) AND the director's
+//     propose/note write tools (breaking the propose-only single-proposer
+//     isolation). This is the YUK-572 A1 red line.
 //   - `disallowedTools` re-lists Task + the two director write tools as belt-and-
 //     suspenders — even a future tools-list edit can't re-open the isolation break.
-//   - `mcpServers` references the shared top-level `research_evidence` server BY NAME
-//     (YUK-572 E-3 primary form).
 //   - `maxTurns` caps the scout sub-session.
 
-import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
+import type { AgentDefinition } from '@/server/ai/sdk-types';
 import {
   DIRECTOR_WRITE_TOOL_NAMES,
   EVIDENCE_READ_TOOL_NAMES,
-  EVIDENCE_SERVER_NAME,
   REPORT_FINDINGS_TOOL_NAME,
   SPAWN_TOOL_NAME,
 } from './tool-names';
@@ -53,9 +51,6 @@ export function buildEvidenceScoutAgentDefinition(opts: BuildEvidenceScoutOpts):
     // "继承主线程" (spec §1/§6); the SDK documents omit / 'inherit' as the main model.
     tools: [...EVIDENCE_READ_TOOL_NAMES, REPORT_FINDINGS_TOOL_NAME],
     disallowedTools: [SPAWN_TOOL_NAME, ...DIRECTOR_WRITE_TOOL_NAMES],
-    // By-name reference to the top-level in-process server (E-3: runtime resolution
-    // unverified until PR-2 dev validation; fallback form is {type:'sdk',name}).
-    mcpServers: [EVIDENCE_SERVER_NAME],
     maxTurns: EVIDENCE_SCOUT_MAX_TURNS,
   };
 }

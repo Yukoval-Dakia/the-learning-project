@@ -57,24 +57,15 @@ import { assertAgentReadable, assertCostLabel, resolvePath } from './fixtures-as
 
 // BLOCKER 2 — the LLM is ALWAYS stubbed at the module level. There is NO
 // per-call injection point on `tool.execute()`: the fixture calls the real
-// tool, which calls the real runner. We mirror proposal-tools.test.ts:34–56:
-// `vi.mock('@/server/ai/runner')` + `vi.mock('@anthropic-ai/claude-agent-sdk')`
-// (so the SDK import never spawns Claude), then set a fresh result PER STAGE
+// tool, which calls the real runner. We mirror proposal-tools.test.ts:
+// `vi.mock('@/server/ai/runner')`, then set a fresh result PER STAGE
 // with `mockRunner.runTask.mockResolvedValueOnce(...)` before each LLM-backed
 // execute(). Read-only tools touch no LLM and need no per-call mock, but the
-// module mocks must still be declared.
+// module mock must still be declared.
 const mockRunner = vi.hoisted(() => ({ runTask: vi.fn() }));
 
 vi.mock('@/server/ai/runner', () => ({
   runTask: mockRunner.runTask,
-}));
-
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  createSdkMcpServer: vi.fn((opts: unknown) => ({ type: 'sdk', instance: opts })),
-  tool: vi.fn((name: string, _desc: string, _schema: unknown, handler: unknown) => ({
-    name,
-    handler,
-  })),
 }));
 
 // `ctx()` per read-tools-m2.test.ts:38 — an agent caller (matches

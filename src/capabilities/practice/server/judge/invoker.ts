@@ -11,7 +11,6 @@ import {
   type JudgeResultV2T,
 } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
-import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { TaskTextResult } from '@/server/ai/provenance';
 import {
   crossoverModelForProvider,
@@ -40,9 +39,6 @@ import {
 import { resolveQuestionJudgeRoute } from './route-resolve';
 
 const unitDimensionOutputSchema = tasks.UnitDimensionFallback.structuredOutputSchema;
-const UNIT_DIMENSION_OUTPUT_FORMAT = unitDimensionOutputSchema
-  ? zodToJsonSchemaOutputFormat(unitDimensionOutputSchema)
-  : undefined;
 
 export const JudgeInvokerQuestionSchema = z
   .object({
@@ -426,7 +422,6 @@ export class JudgeInvoker {
           runTaskFn: runTaskFn ?? defaultRunTaskFn(input.db),
           runTaskCtx: {
             subjectProfile: input.subjectProfile,
-            outputFormat: UNIT_DIMENSION_OUTPUT_FORMAT,
           },
         },
       );

@@ -321,14 +321,9 @@ describe('YUK-759: SemanticJudgeTask structured-output migration', () => {
       },
     });
 
-    const outputFormat = (
-      capturedCtx as { outputFormat?: { type?: string; schema?: Record<string, unknown> } }
-    ).outputFormat;
-    expect(outputFormat?.type).toBe('json_schema');
-    expect(outputFormat?.schema).toMatchObject({
-      type: 'object',
-      properties: { score: expect.any(Object), coarse_outcome: expect.any(Object) },
-    });
+    // Post-P4: no SDK outputFormat on ctx — schema enforcement is the zod parse
+    // of structured_output / text at the dispatch boundary.
+    expect((capturedCtx as { outputFormat?: unknown }).outputFormat).toBeUndefined();
     expect(result).toMatchObject({
       coarse_outcome: 'partial',
       score: 0.64,
@@ -444,8 +439,8 @@ describe('YUK-36 regression: unit_dimension LLM fallback uses registered task wi
     });
     expect(captured[0].ctx).toMatchObject({
       subjectProfile: { id: 'physics' },
-      outputFormat: { type: 'json_schema', schema: expect.any(Object) },
     });
+    expect(captured[0].ctx).not.toHaveProperty('outputFormat');
     expect(captured[0].ctx).not.toHaveProperty('db');
   });
 });

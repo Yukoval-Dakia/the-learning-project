@@ -43,12 +43,8 @@ function sha256(text: string): string {
 }
 
 describe.skipIf(!HAS_KEY)('pi adapter actual-output gate (YUK-1014)', () => {
-  beforeAll(() => {
-    process.env.AI_ADAPTER_PI_KINDS = KIND;
-  });
-  afterAll(() => {
-    delete process.env.AI_ADAPTER_PI_KINDS;
-  });
+  beforeAll(() => {});
+  afterAll(() => {});
 
   for (const model of MODELS) {
     it(`runs ${model} through opencode-go end-to-end and seals evidence`, {

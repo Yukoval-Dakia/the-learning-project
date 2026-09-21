@@ -381,8 +381,8 @@ describe('runStepsJudge — error paths', () => {
   });
 });
 
-// YUK-591 — SDK structured-output migration. Symmetric with multimodal-direct-judge:
-// outputFormat threaded from the registry-declared StepsLlmOutput; three-state parse.
+// YUK-591 — structured-output dispatch. Symmetric with multimodal-direct-judge:
+// post-P4 the runner carries no outputFormat; the three-state parse stays.
 describe('runStepsJudge — structured output (YUK-591)', () => {
   const validStructured = {
     extracted_steps: [],
@@ -397,7 +397,7 @@ describe('runStepsJudge — structured output (YUK-591)', () => {
     confidence: 0.9,
   };
 
-  it('threads a json_schema outputFormat into ctx', async () => {
+  it('does not thread an SDK outputFormat into ctx (P4 regression guard)', async () => {
     let ctx: unknown;
     await runStepsJudge({
       db: mockDb,
@@ -410,10 +410,7 @@ describe('runStepsJudge — structured output (YUK-591)', () => {
       },
       imageFetchFn: async () => [],
     });
-    const outputFormat = (ctx as { outputFormat?: { type?: string; schema?: unknown } })
-      .outputFormat;
-    expect(outputFormat?.type).toBe('json_schema');
-    expect(outputFormat?.schema).toBeDefined();
+    expect((ctx as { outputFormat?: unknown }).outputFormat).toBeUndefined();
   });
 
   it('parses structured_output through the schema, ignoring raw text', async () => {

@@ -1,10 +1,10 @@
-// YUK-284 (C2) + YUK-304 (lane B) — resolveCopilotSkills resolver unit tests.
+// YUK-284 (C2) + YUK-304 (lane B) — resolveCopilotSkillDocs resolver unit tests.
 //
 // Test matrix (C2 T-C2-1/2/3, extended for the lane-B quiz-gen pack):
-//   - 双包命中：copilot + quiz-gen 都在 → ['copilot','quiz-gen'] (probe order)
+//   - 双包命中：copilot + quiz-gen 都在 → [copilot, quiz-gen] (probe order)
 //   - 单包命中：只有其一 → 只返回那一个
 //   - 降级：全缺 → undefined
-//   - 不误捞：fixture 含某 subject 的 note-*/quiz-gen-<kind> → 不会捞进共享白名单
+//   - 不误捞：fixture 含某 subject 的 note-*/quiz-gen-<kind> → 不会捞进共享 docs
 //   - live SoT：shipped 两个共享包 resolve against the real tree + frontmatter name
 //
 // All fixture assertions use an injected skillsRoot so no live filesystem writes
@@ -20,7 +20,7 @@ import {
   COPILOT_QUIZ_GEN_SKILL_NAME,
   COPILOT_SHARED_SUBJECT_DIR,
   COPILOT_SKILL_NAME,
-  resolveCopilotSkills,
+  resolveCopilotSkillDocs,
 } from './copilot-skills';
 
 // Build a fixture skills root with arbitrary <subjectDir>/skills/<skillDir>/SKILL.md.
@@ -30,35 +30,39 @@ function fixtureRoot(layout: Record<string, string[]>): string {
     for (const dir of skillDirs) {
       const skillDir = join(root, subjectDir, 'skills', dir);
       mkdirSync(skillDir, { recursive: true });
-      writeFileSync(join(skillDir, 'SKILL.md'), `---\nname: ${dir}\n---\n`);
+      writeFileSync(join(skillDir, 'SKILL.md'), `---\nname: ${dir}\n---\nbody text\n`);
     }
   }
   return root;
 }
 
-describe('resolveCopilotSkills — resolver discovery', () => {
+const names = (docs: { name: string; body: string }[] | undefined) => docs?.map((d) => d.name);
+
+describe('resolveCopilotSkillDocs — resolver discovery', () => {
   it("returns ['_shared--copilot','_shared--quiz-gen'] when BOTH shared packs exist (probe order, YUK-611 namespaced)", async () => {
     const root = fixtureRoot({
       [COPILOT_SHARED_SUBJECT_DIR]: [COPILOT_SKILL_NAME, COPILOT_QUIZ_GEN_SKILL_NAME],
     });
-    expect(await resolveCopilotSkills(root)).toEqual(['_shared--copilot', '_shared--quiz-gen']);
+    const docs = await resolveCopilotSkillDocs(root);
+    expect(names(docs)).toEqual(['_shared--copilot', '_shared--quiz-gen']);
+    expect(docs?.[0]?.body).toContain('name: copilot');
   });
 
   it("returns ['_shared--copilot'] when only the dialogue pack exists", async () => {
     const root = fixtureRoot({ [COPILOT_SHARED_SUBJECT_DIR]: [COPILOT_SKILL_NAME] });
-    expect(await resolveCopilotSkills(root)).toEqual(['_shared--copilot']);
+    expect(names(await resolveCopilotSkillDocs(root))).toEqual(['_shared--copilot']);
   });
 
   it("returns ['_shared--quiz-gen'] when only the quiz-gen pack exists", async () => {
     const root = fixtureRoot({ [COPILOT_SHARED_SUBJECT_DIR]: [COPILOT_QUIZ_GEN_SKILL_NAME] });
-    expect(await resolveCopilotSkills(root)).toEqual(['_shared--quiz-gen']);
+    expect(names(await resolveCopilotSkillDocs(root))).toEqual(['_shared--quiz-gen']);
   });
 });
 
-describe('resolveCopilotSkills — 降级链', () => {
+describe('resolveCopilotSkillDocs — 降级链', () => {
   it('returns undefined when _shared has no skills dir', async () => {
     const root = mkdtempSync(join(tmpdir(), 'copilotskills-'));
-    expect(await resolveCopilotSkills(root)).toBeUndefined();
+    expect(await resolveCopilotSkillDocs(root)).toBeUndefined();
   });
 
   it('returns undefined when the dirs exist but SKILL.md files are missing', async () => {
@@ -67,11 +71,11 @@ describe('resolveCopilotSkills — 降级链', () => {
       mkdirSync(join(root, COPILOT_SHARED_SUBJECT_DIR, 'skills', name), { recursive: true });
     }
     // no SKILL.md written
-    expect(await resolveCopilotSkills(root)).toBeUndefined();
+    expect(await resolveCopilotSkillDocs(root)).toBeUndefined();
   });
 });
 
-describe('resolveCopilotSkills — 不误捞 (缝隙防御)', () => {
+describe('resolveCopilotSkillDocs — 不误捞 (缝隙防御)', () => {
   it('returns only the shared packs, never note-* / quiz-gen-<kind> subject packs', async () => {
     const root = fixtureRoot({
       [COPILOT_SHARED_SUBJECT_DIR]: [COPILOT_SKILL_NAME, COPILOT_QUIZ_GEN_SKILL_NAME],
@@ -80,7 +84,7 @@ describe('resolveCopilotSkills — 不误捞 (缝隙防御)', () => {
       // shared pack can never collide; assert the reverse direction here.
       yuwen: ['note-yuwen', 'quiz-gen-translation'],
     });
-    const result = await resolveCopilotSkills(root);
+    const result = names(await resolveCopilotSkillDocs(root));
     expect(result).toEqual(['_shared--copilot', '_shared--quiz-gen']);
     expect(result?.some((n) => n.includes('--note-'))).toBe(false);
     expect(result).not.toContain('quiz-gen-translation');
@@ -93,7 +97,10 @@ describe('live SoT — shipped shared SKILL.md packs resolve against the real tr
   // shared packs are discoverable and carry the correct frontmatter names.
 
   it("both shared packs are live and resolve to ['_shared--copilot','_shared--quiz-gen']", async () => {
-    expect(await resolveCopilotSkills()).toEqual(['_shared--copilot', '_shared--quiz-gen']);
+    expect(names(await resolveCopilotSkillDocs())).toEqual([
+      '_shared--copilot',
+      '_shared--quiz-gen',
+    ]);
   });
 
   it.each([COPILOT_SKILL_NAME, COPILOT_QUIZ_GEN_SKILL_NAME])(

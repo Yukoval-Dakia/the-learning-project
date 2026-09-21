@@ -1,5 +1,6 @@
 // YUK-238 [STB-4] + YUK-240 [STB-6] — streamTask client-disconnect abort
-// + stuck-run observability. Pure no-DB unit: both the Claude Agent SDK and the
+// + stuck-run observability. Pure no-DB unit: the execution adapter is
+// swapped via `__setPiAdapterForTests` and the
 // ai/log writers are vi.mock'd, and `db` is a hand-rolled stub that is never
 // touched (the mocked log writers ignore it). So this file imports NO real DB /
 // pg / drizzle surface and lives in the fast (unit) partition.
@@ -24,36 +25,48 @@ const mockSdk = vi.hoisted(() => ({
   terminalMessage: undefined as undefined | Record<string, unknown>,
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  startup: vi.fn(async ({ options }: { options: unknown }) => {
-    mockSdk.capturedOptions = options;
-    if (mockSdk.startupGate) await mockSdk.startupGate;
-    return {
-      query: vi.fn(() =>
-        (async function* () {
-          // Emit one assistant delta, then optionally block on `gate` so the test
-          // can interact with the still-open stream before it closes.
-          yield {
-            type: 'assistant',
-            message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
-          };
-          if (mockSdk.gate) await mockSdk.gate;
-          yield mockSdk.terminalMessage ?? {
-            type: 'result',
-            subtype: 'success',
-            result: 'hi',
-            stop_reason: 'end_turn',
-            total_cost_usd: 0,
-            usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0 },
-          };
-        })(),
-      ),
-      close: mockSdk.warmClose,
-    };
-  }),
-  createSdkMcpServer: vi.fn(() => ({ type: 'sdk', name: '', instance: {} })),
-  tool: vi.fn((name: string, description: string) => ({ name, description })),
-}));
+import {
+  type ExecutionAdapterStartupArgs,
+  type RunnerMessage,
+  __setPiAdapterForTests,
+} from './execution-adapter';
+
+// Fake adapter (YUK-1025): same startup-gate → query-gate contract the old
+// SDK module mock had — startup captures options + honors startupGate,
+// query() yields assistant delta → optional gate → terminal message.
+function fakePiAdapter() {
+  return {
+    id: 'pi' as const,
+    startup: vi.fn(async (args: ExecutionAdapterStartupArgs) => {
+      mockSdk.capturedOptions = args.options;
+      if (mockSdk.startupGate) await mockSdk.startupGate;
+      return {
+        query: vi.fn(() =>
+          (async function* (): AsyncGenerator<RunnerMessage> {
+            yield {
+              type: 'assistant',
+              message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
+            } as RunnerMessage;
+            if (mockSdk.gate) await mockSdk.gate;
+            yield (mockSdk.terminalMessage ?? {
+              type: 'result',
+              subtype: 'success',
+              result: 'hi',
+              stop_reason: 'end_turn',
+              total_cost_usd: 0,
+              usage: {
+                input_tokens: 1,
+                output_tokens: 1,
+                cache_read_input_tokens: 0,
+              },
+            }) as unknown as RunnerMessage;
+          })(),
+        ),
+        close: mockSdk.warmClose,
+      };
+    }),
+  };
+}
 
 // ai/log writers are the only DB-touching calls inside streamTask; stub them so
 // no real client is needed. The `finished` mock can be told to throw to drive
@@ -68,7 +81,7 @@ const logMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/server/ai/log', () => ({
-  logMissingMcpServersWarning: vi.fn(),
+  logMissingToolMountsWarning: vi.fn(),
   writeAiTaskRunStarted: logMocks.started,
   writeAiTaskRunFinished: logMocks.finished,
   writeAiTaskRunRetried: vi.fn(async () => true),
@@ -149,9 +162,11 @@ describe('streamTask — YUK-238 client-disconnect abort', () => {
     logMocks.terminalStatuses = [];
     logMocks.started.mockClear();
     process.env.XIAOMI_API_KEY = 'sk-test-key';
+    __setPiAdapterForTests(fakePiAdapter());
   });
 
   afterEach(() => {
+    __setPiAdapterForTests(undefined);
     vi.clearAllMocks();
   });
 
@@ -261,9 +276,11 @@ describe('streamTask — YUK-240 stuck-run observability', () => {
     logMocks.terminalStatuses = [];
     logMocks.started.mockClear();
     process.env.XIAOMI_API_KEY = 'sk-test-key';
+    __setPiAdapterForTests(fakePiAdapter());
   });
 
   afterEach(() => {
+    __setPiAdapterForTests(undefined);
     vi.clearAllMocks();
   });
 
@@ -383,9 +400,11 @@ describe('streamTask — YUK-590 terminal failure honesty', () => {
     logMocks.finishedFailuresRemaining = 0;
     logMocks.terminalStatuses = [];
     process.env.XIAOMI_API_KEY = 'sk-test-key';
+    __setPiAdapterForTests(fakePiAdapter());
   });
 
   afterEach(() => {
+    __setPiAdapterForTests(undefined);
     vi.clearAllMocks();
   });
 

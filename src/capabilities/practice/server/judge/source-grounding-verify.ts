@@ -22,7 +22,6 @@ import {
   type SourceGroundingVerifyOutputT,
 } from '@/core/schema/source-grounding';
 import type { Db } from '@/db/client';
-import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
@@ -38,7 +37,6 @@ import { defaultImageFetch } from './steps-judge';
 // retries the model to the schema; mimo ignores it and the dispatch falls back to the
 // char-scan text parse (zero-loss).
 const outputSchema = tasks.SourceGroundingVerifyTask.structuredOutputSchema;
-const OUTPUT_FORMAT = outputSchema ? zodToJsonSchemaOutputFormat(outputSchema) : undefined;
 
 // Concrete `{ text, images }` input (NOT `... | unknown`, which collapses the whole union
 // to `unknown` and erases the documented shape — PR #1063 review thread 8).
@@ -133,7 +131,6 @@ export async function runSourceGroundingVerify(
         // redelivery is the retry layer. Opting into in-process retry here would stack a
         // second layer on top of queue redelivery (the exact anti-pattern the retry-optin pin
         // guards). See src/server/ai/retry-optin.test.ts.
-        outputFormat: OUTPUT_FORMAT,
       },
     );
   } catch (err) {

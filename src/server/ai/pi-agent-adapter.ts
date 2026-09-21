@@ -1,53 +1,40 @@
-// YUK-921 P1 — ExecutionAdapter B: the pi engine behind the same seam as the
-// Claude Agent SDK adapter. One agentLoop per query; its events are normalized
-// into SDKMessage-shaped RunnerMessage frames (see execution-adapter.ts
-// `PiRunnerMessage`) so consumeSdkAttempt keeps one lifecycle implementation.
+// YUK-921 P4 — THE execution adapter (post-SDK-retirement the only one). One
+// agentLoop per query; its events are normalized into SDKMessage-shaped
+// RunnerMessage frames (see execution-adapter.ts `PiRunnerMessage`) so the
+// consume loop keeps one lifecycle implementation.
 //
-// Scope guardrails (design §3):
-//   - allowlisted kinds only (AI_ADAPTER_PI_KINDS, enforced upstream in
-//     resolveExecutionAdapter); P1 served needsToolCall=false kinds, P2 adds
-//     tool-loop kinds via ctx.piToolMounts → context.tools;
-//   - pi-lane providers only (opencode-go today), enforced upstream;
-//   - text output only — structured output stays the existing text-JSON
-//     fallback exactly like the xiaomi lane (options.outputFormat ignored);
-//   - abort = no terminal frame: the lifecycle's `aborted` binding produces the
-//     cancellation truth, never a synthesized success.
+// Engine contract (design §6 R5, all preserved from the SDK lane):
+//   - tools surface under the SAME `mcp__<server>__<tool>` wire names, so
+//     allowedTools filtering / recordToolCall / shouldEmitToolUseForCaller
+//     see identical names;
+//   - maxTurns maps to shouldStopAfterTurn — the terminal frame reports the
+//     SDK subtype 'error_max_turns';
+//   - beforeToolCall composes the piHooks gate chain (deny →
+//     {block, reason}, interrupt → terminate); arg-rewriting allows
+//     (updatedInput) throw loudly;
+//   - toolResult messages become SDK user frames carrying tool_result blocks;
+//   - text output only — structured output stays the strict-prompt + Zod
+//     text-JSON fallback (the production path on the default mimo lane);
+//   - abort = no terminal frame: the lifecycle's `aborted` binding produces
+//     the cancellation truth, never a synthesized success.
 //
-// P2 tool-loop parity rules (design §6 R5):
-//   - tools surface under the SAME `mcp__<server>__<tool>` wire names the SDK
-//     lane uses, so allowedTools filtering / recordToolCall /
-//     shouldEmitToolUseForCaller see identical names;
-//   - maxTurns has no pi equivalent — shouldStopAfterTurn counts assistant
-//     turns and the terminal frame reports the SDK subtype 'error_max_turns';
-//   - beforeToolCall translates ctx.canUseTool (deny → {block, reason},
-//     interrupt → terminate); arg-rewriting allows (updatedInput) throw loudly;
-//   - toolResult messages become SDK user frames carrying tool_result blocks.
-//
-// P3 dual-descriptor rule (YUK-1022): the SDK surfaces the caller declares via
-// Options (skills / agents / hooks / nativeCompaction / sdkSession.resume)
-// each require their pi counterpart in the startup args — piSkillDocs,
-// piAgents, piHooks, nativeCompaction, piSessionReplay — or startup fails
-// closed. Served equivalents:
-//   skills      → SKILL.md bodies appended to systemPrompt
-//   agents      → Task/Agent AgentTools + in-process nested agentLoops
+// P3 surfaces (YUK-1022) are the direct caller contracts now:
+//   skills      → piSkillDocs: SKILL.md bodies appended to systemPrompt
+//   agents      → piAgents: Task/Agent AgentTools + in-process nested loops
 //   hooks       → piHooks bridge into beforeToolCall / afterToolCall
-//   compaction  → transformContext budget-prune + bounded sessionContext
-//   resume      → durable-turn replay seeded into context.messages
+//   compaction  → nativeCompaction → transformContext budget-prune + bounded
+//                 sessionContext re-injection
+//   resume      → options.resume (`pi:` id) + piSessionReplay durable turns
+//                 seeded into context.messages (fails closed without replay)
 // Steering/follow-up are wired as a ctx surface (`ctx.piQueues` → root-loop
-// getSteeringMessages/getFollowUpMessages) with NO live consumer today —
-// the SDK lane never exposed queue semantics, and no current caller needs
-// mid-run steering or post-stop follow-up injection.
+// getSteeringMessages/getFollowUpMessages) with NO live consumer today — the
+// surface exists so attaching queue semantics later needs no adapter surgery.
 //
 // Session/header contract (spike probe 6): every opencode request needs
 // `x-opencode-session`; we inject the durable run id (`ai_task_run.id`) — the
 // same per-attempt fencing identity the lifecycle already owns.
 
 import { randomUUID } from 'node:crypto';
-import type {
-  SDKAssistantMessage,
-  SDKResultMessage,
-  SDKUserMessage,
-} from '@anthropic-ai/claude-agent-sdk';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 import type {
   AgentContext,
@@ -76,6 +63,8 @@ import type {
   RunnerMessage,
 } from './execution-adapter';
 import { emitPiAfterToolCall, runPiBeforeToolCall } from './pi-hooks';
+import { createLoomPiModels } from './pi-models';
+import type { SDKAssistantMessage, SDKResultMessage, SDKUserMessage } from './sdk-types';
 import { isSpawnToolName } from './spawn-contract';
 import {
   type PiSubagentHost,
@@ -102,6 +91,19 @@ export interface PiAdapterDeps {
 }
 
 const OPENCODE_SESSION_HEADER = 'x-opencode-session';
+
+/**
+ * YUK-590 — provider retry cap, preserving the CLAUDE_CODE_MAX_RETRIES env
+ * contract the SDK subprocess honoured. Default 2 (three total attempts) keeps
+ * short transient absorption while returning control to loom's one deliberate
+ * retry layer. An unparseable value falls back to the default, not a throw.
+ */
+function piMaxRetries(): number | undefined {
+  const raw = process.env.CLAUDE_CODE_MAX_RETRIES;
+  if (raw === undefined) return 2;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 2;
+}
 
 /**
  * Pi session ids carry a `pi:` prefix so a persisted `agent_sdk_session_id`
@@ -763,66 +765,22 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   }
 
   /**
-   * The composed beforeToolCall gate for one loop level. Order mirrors the
-   * SDK lane: caller-declared hook gates (piHooks — spawn-contract /
-   * cancellation / finalization) run first; the SDK-shaped `canUseTool`
-   * callback runs last. `agentType` marks nested calls — the pi equivalent of
-   * the SDK hook input's `agent_id` (reply-finalization marks `root_call`).
+   * The composed beforeToolCall gate for one loop level. Caller-declared
+   * piHooks gates (spawn-contract / cancellation / finalization) run in
+   * declaration order with first-defined-result short-circuit. `agentType`
+   * marks nested calls (reply-finalization marks `root_call` off it).
    */
   private makeBeforeToolCall(agentType?: string): AgentLoopConfig['beforeToolCall'] {
-    const { options } = this.args;
     const piHooks = this.args.piHooks;
-    const canUseTool = options.canUseTool;
-    if (!piHooks?.beforeToolCall?.length && !canUseTool) return undefined;
+    if (!piHooks?.beforeToolCall?.length) return undefined;
     return async ({ toolCall, args: callArgs }: BeforeToolCallContext, signal) => {
       const effectiveSignal = signal ?? this.abort.signal;
-      const hooked = await runPiBeforeToolCall(
+      return runPiBeforeToolCall(
         piHooks,
         { id: toolCall.id, name: toolCall.name, ...(agentType ? { agentType } : {}) },
         (callArgs ?? {}) as Record<string, unknown>,
         effectiveSignal,
       );
-      if (hooked !== undefined) return hooked;
-      if (!canUseTool) return undefined;
-      const decision = await canUseTool(
-        toolCall.name,
-        (callArgs ?? {}) as Record<string, unknown>,
-        {
-          // Pi hands a loop signal when present; otherwise fall back to the
-          // adapter's own abort so close()/caller-cancel still reaches the
-          // callback.
-          signal: effectiveSignal,
-          toolUseID: toolCall.id,
-          requestId: toolCall.id,
-        },
-      );
-      // SDK `null` means "the consumer answered out-of-band" — pi has no such
-      // channel, so an indecisive hook must fail closed the same way a deny
-      // does (the tool stays blocked with a reason).
-      if (decision === null || decision === undefined) {
-        return {
-          block: true,
-          reason:
-            'canUseTool returned no decision — the SDK out-of-band response channel has no pi equivalent',
-        };
-      }
-      if (decision.behavior === 'deny') {
-        // SDK deny = error tool result (agent may retry; contracts memoize
-        // the same answer). `interrupt:true` is the SDK's hard-stop hint —
-        // pi's equivalent is terminate (design §6 R5(i): {block:true} alone
-        // does NOT hard-stop).
-        return {
-          block: true,
-          reason: decision.message,
-          ...(decision.interrupt ? { terminate: true } : {}),
-        };
-      }
-      if (decision.updatedInput !== undefined) {
-        throw new Error(
-          `pi adapter cannot apply canUseTool updatedInput for '${toolCall.name}' — argument rewriting is not supported on this lane`,
-        );
-      }
-      return undefined;
     };
   }
 
@@ -940,11 +898,16 @@ class PiPreparedQuery implements PreparedExecutionQuery {
             m.role === 'user' || m.role === 'assistant' || m.role === 'toolResult',
         ),
       headers: { [OPENCODE_SESSION_HEADER]: runId },
-      // Per-request credential from the lifecycle-resolved binding — the same
-      // env resolution the SDK lane does once in resolveTaskProvider, never a
-      // second env read inside the engine. startup() already rejected
-      // non-key lanes; keep the narrowing explicit for the type system.
-      ...(resolved.authMode === 'key' ? { apiKey: resolved.apiKey } : {}),
+      // Per-request credential from the lifecycle-resolved binding — resolved
+      // once in resolveTaskProvider for both auth modes (oauth carries the
+      // sk-ant-oat* token; the anthropic-messages driver switches to Bearer).
+      apiKey: resolved.apiKey,
+      // YUK-590 parity: the SDK lane honoured CLAUDE_CODE_MAX_RETRIES to cap
+      // provider retries at 2 (three total requests) so a persistent 5xx
+      // returns control to loom's deliberate retry layer instead of burning
+      // the task budget on client-side retries. Same knob on pi's stream
+      // options; preserve an explicit operator value including '0'.
+      ...(piMaxRetries() !== undefined ? { maxRetries: piMaxRetries() } : {}),
       ...(options.effort !== undefined ? { reasoning: options.effort } : {}),
     };
   }
@@ -1304,8 +1267,10 @@ export class PiAgentAdapter implements ExecutionAdapter {
       // Each import evaluates only when its injected dep is absent — tests
       // that inject both never load the pi tree at all.
       this.resolved = {
-        models:
-          this.init.models ?? (await import('@earendil-works/pi-ai/providers/all')).builtinModels(),
+        // Loom's catalog = pi builtins (opencode-go, anthropic) + custom
+        // providers for the anthropic-compat endpoints (xiaomi/zhipu) and the
+        // OAuth subscription lane (anthropic-sub). See pi-models.ts.
+        models: this.init.models ?? (await createLoomPiModels()),
         agentLoop: this.init.agentLoop ?? (await import('@earendil-works/pi-agent-core')).agentLoop,
         connectRemoteMcp: this.init.connectRemoteMcp ?? connectPiRemoteMcp,
       };
@@ -1355,75 +1320,23 @@ export class PiAgentAdapter implements ExecutionAdapter {
   async startup(args: ExecutionAdapterStartupArgs): Promise<PreparedExecutionQuery> {
     const deps = await this.resolveDeps();
     // Fail fast inside admission but before the durable attempt row: an
-    // unknown model or wrong auth lane is a config error, not a paid call.
-    if (args.resolved.authMode !== 'key') {
-      throw new Error(
-        `pi adapter requires a key-auth provider binding; '${args.resolved.provider}' resolved to oauth.`,
-      );
-    }
-    // P3 dual-descriptor rule (YUK-1022): every SDK surface a caller declares
-    // must carry its pi counterpart in the startup args, else the run fails
-    // closed inside admission rather than silently dropping a declared
-    // capability. The surfaces and their pi equivalents:
-    //   ctx.skills          → args.piSkillDocs (system-prompt injection)
-    //   ctx.agents          → args.piAgents (in-process nested agentLoops)
-    //   ctx.hooks           → args.piHooks (beforeToolCall/afterToolCall bridge)
-    //   ctx.nativeCompaction → args.nativeCompaction (transformContext)
-    //   ctx.sdkSession.resume → options.resume + args.piSessionReplay
-    const declaredSkills = Array.isArray(args.options.skills) ? args.options.skills : [];
-    if (declaredSkills.length > 0) {
-      const docNames = new Set((args.piSkillDocs ?? []).map((doc) => doc.name));
-      const missing = declaredSkills.filter((name) => !docNames.has(name));
-      if (missing.length > 0) {
-        throw new Error(
-          `pi adapter cannot serve skills [${missing.join(', ')}] — no resolved SKILL.md body in ctx.piSkillDocs (SDK filesystem skills are subprocess-only).`,
-        );
-      }
-    }
-    const declaredAgents = args.options.agents ? Object.keys(args.options.agents) : [];
-    if (declaredAgents.length > 0) {
-      const missing = declaredAgents.filter((name) => args.piAgents?.[name] === undefined);
-      if (missing.length > 0) {
-        throw new Error(
-          `pi adapter cannot serve Options.agents [${missing.join(', ')}] — declare ctx.piAgents specs (createPiSpawnContract) alongside the SDK surface.`,
-        );
-      }
-    }
-    // buildQueryOptions injects a SessionStart hook for the compaction
-    // context re-introduction — the pi lane serves that through
-    // args.nativeCompaction → transformContext, so SessionStart-only hooks
-    // need no piHooks. Any other declared hook event requires the bridge.
-    const callerHookEvents = Object.keys(args.options.hooks ?? {}).filter(
-      (event) => event !== 'SessionStart',
-    );
-    if (callerHookEvents.length > 0 && args.piHooks === undefined) {
-      throw new Error(
-        `pi adapter cannot serve SDK hooks [${callerHookEvents.join(', ')}] — declare ctx.piHooks (the engine-neutral beforeToolCall/afterToolCall bridge) alongside ctx.hooks.`,
-      );
-    }
-    if (
-      typeof args.options.settings === 'object' &&
-      args.options.settings !== null &&
-      args.options.settings.autoCompactEnabled === true &&
-      args.nativeCompaction === undefined
-    ) {
-      throw new Error(
-        'pi adapter cannot serve nativeCompaction — declare ctx.nativeCompaction so transformContext gets the bounded sessionContext.',
-      );
-    }
+    // unknown model or unresolved credential is a config error, not a paid
+    // call. Both auth modes carry the credential value on `resolved.apiKey`
+    // (oauth = the sk-ant-oat* subscription token the anthropic-messages
+    // driver switches to Bearer).
     if (
       typeof args.options.resume === 'string' &&
       args.options.resume.length > 0 &&
       args.piSessionReplay === undefined
     ) {
       throw new Error(
-        'pi adapter cannot serve options.resume without ctx.piSessionReplay — the SDK session file has no pi equivalent; replay the durable turns instead.',
+        'pi adapter cannot serve options.resume without ctx.piSessionReplay — there is no provider session file; replay the durable turns instead.',
       );
     }
     const model = deps.models.getModel(args.resolved.provider, args.resolved.model);
     if (!model) {
       throw new Error(
-        `pi adapter has no model '${args.resolved.model}' in provider '${args.resolved.provider}' — check the opencode-go catalog for the id.`,
+        `pi adapter has no model '${args.resolved.model}' in provider '${args.resolved.provider}' — check the loom pi catalog (pi-models.ts) for the id.`,
       );
     }
     const { tools, remoteHandles } = await this.buildTools(args, deps);

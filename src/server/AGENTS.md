@@ -5,7 +5,7 @@
 ## WHERE TO LOOK
 | 子模块 | 职责 |
 |--------|------|
-| `ai/` | Claude Agent SDK runner + domain tool registry + MCP bridge（见本目录 AGENTS.md）|
+| `ai/` | Pi agent runner（唯一执行引擎，YUK-1025 后无 SDK 子进程）+ domain tool registry + tool bridge（见本目录 AGENTS.md）|
 | `boss/` | pg-boss client + handler 注册；`handlers/` 是 job/cron 目录（见 AGENTS.md）|
 | `ingestion/` | OCR / Tencent Mark / Vision rescue / 抽取 pipeline + session 状态机（见 AGENTS.md）|
 | `knowledge/` | 知识树 + mesh edge + propose/attribute/review（见 AGENTS.md）|

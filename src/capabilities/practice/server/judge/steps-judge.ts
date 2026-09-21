@@ -5,7 +5,6 @@ import { Rubric } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
 import { source_asset } from '@/db/schema';
-import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { SubjectProfile } from '@/subjects/profile';
 import { defaultStructuredRunTaskFn, parseStructuredTaskOutput } from './judge-output-parse';
 import { type LaneDegradationEvidence, runTaskWithLaneFallback } from './provider-lane-fallback';
@@ -17,7 +16,6 @@ const CAPABILITY_REF = { id: 'steps', version: '1.0.0' };
 // schema (the §7-audited single source). See multimodal-direct-judge.ts for the
 // symmetric wiring + zero-loss-on-mimo rationale.
 const outputSchema = tasks.StepsJudgeTask.structuredOutputSchema;
-const OUTPUT_FORMAT = outputSchema ? zodToJsonSchemaOutputFormat(outputSchema) : undefined;
 const STEP_WEIGHT_DEFAULT = 0.6;
 const VERDICT_WEIGHT: Record<StepsLlmOutputT['signal_verdicts'][number]['verdict'], number> = {
   correct: 1,
@@ -282,7 +280,6 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
         db: params.db,
         subjectProfile: params.subjectProfile,
         enableTransientRetry: true,
-        outputFormat: OUTPUT_FORMAT,
       },
       runTaskFn,
     });

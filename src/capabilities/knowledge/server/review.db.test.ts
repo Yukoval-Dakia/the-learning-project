@@ -14,7 +14,7 @@
 //      streamTask wrapper is built with the right MCP server.
 
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tasks } from '@/ai/registry';
 import { getTaskSystemPrompt } from '@/ai/task-prompts';
 import { newId } from '@/core/ids';
@@ -30,52 +30,70 @@ import {
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
-// Mock the SDK so streamReviewTask doesn't spawn the `claude` binary.
+// Post-P4 seams: the adapter is swapped via `__setPiAdapterForTests` (the
+// pi loop never runs), and `piCustomTool` is wrapped to capture the
+// write_proposal definition + handler.
 const mockAgentSdk = vi.hoisted(() => ({
   capturedQueryOptions: undefined as unknown,
   capturedQueryPrompt: undefined as unknown,
-  capturedMcpServerOptions: undefined as unknown,
+  capturedMounts: undefined as unknown,
   toolDefinitions: [] as Array<{ name: string; description: string }>,
   toolHandlers: [] as Array<
     (args: Record<string, unknown>) => Promise<{ content: Array<{ type: string; text: string }> }>
   >,
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  startup: vi.fn(async ({ options }: { options: unknown }) => {
-    mockAgentSdk.capturedQueryOptions = options;
-    return {
-      query: vi.fn((prompt: unknown) => {
-        mockAgentSdk.capturedQueryPrompt = prompt;
-        // Emit a single success result so streamTask completes the stream.
-        return (async function* () {
-          yield {
-            type: 'result',
-            subtype: 'success',
-            result: '',
-            stop_reason: 'end_turn',
-            total_cost_usd: 0,
-            usage: { input_tokens: 0, output_tokens: 0 },
-          };
-        })();
-      }),
-      close: vi.fn(),
-    };
-  }),
-  createSdkMcpServer: vi.fn((opts: unknown) => {
-    mockAgentSdk.capturedMcpServerOptions = opts;
-    return { type: 'sdk', name: (opts as { name: string }).name, instance: {} };
-  }),
-  tool: vi.fn((name: string, description: string, _schema: unknown, handler: unknown) => {
-    mockAgentSdk.toolDefinitions.push({ name, description });
-    mockAgentSdk.toolHandlers.push(
-      handler as (args: Record<string, unknown>) => Promise<{
-        content: Array<{ type: string; text: string }>;
+vi.mock('@/server/ai/tools/pi-tools', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/server/ai/tools/pi-tools')>();
+  return {
+    ...actual,
+    piCustomTool: (
+      serverName: string,
+      name: string,
+      description: string,
+      schema: Record<string, unknown>,
+      handler: (args: Record<string, unknown>) => Promise<{
+        content: Array<{ type: 'text'; text: string }>;
       }>,
-    );
-    return { name, description };
-  }),
-}));
+    ) => {
+      mockAgentSdk.toolDefinitions.push({ name, description });
+      mockAgentSdk.toolHandlers.push(handler);
+      return actual.piCustomTool(serverName, name, description, schema as never, handler);
+    },
+  };
+});
+
+import {
+  type ExecutionAdapterStartupArgs,
+  type RunnerMessage,
+  __setPiAdapterForTests,
+} from '@/server/ai/execution-adapter';
+
+function fakePiAdapter() {
+  return {
+    id: 'pi' as const,
+    startup: vi.fn(async (args: ExecutionAdapterStartupArgs) => {
+      mockAgentSdk.capturedQueryOptions = args.options;
+      mockAgentSdk.capturedMounts = args.piToolMounts;
+      return {
+        query: vi.fn((prompt: unknown) => {
+          mockAgentSdk.capturedQueryPrompt = prompt;
+          return (async function* () {
+            yield {
+              type: 'result',
+              subtype: 'success',
+              result: '',
+              stop_reason: 'end_turn',
+              total_cost_usd: 0,
+              usage: { input_tokens: 0, output_tokens: 0 },
+            } as RunnerMessage;
+          })();
+        }),
+        close: vi.fn(async () => {}),
+      };
+    }),
+  };
+}
 
 import { runWriteProposal, streamReviewTask } from './review';
 
@@ -680,8 +698,13 @@ describe('streamReviewTask — SDK wiring smoke', () => {
     mockAgentSdk.toolHandlers = [];
     mockAgentSdk.capturedQueryOptions = undefined;
     mockAgentSdk.capturedQueryPrompt = undefined;
-    mockAgentSdk.capturedMcpServerOptions = undefined;
+    mockAgentSdk.capturedMounts = undefined;
     process.env.XIAOMI_API_KEY = 'sk-test-key';
+    __setPiAdapterForTests(fakePiAdapter());
+  });
+
+  afterEach(() => {
+    __setPiAdapterForTests(undefined);
   });
 
   it('builds an MCP server named "loom" with one tool "write_proposal"', async () => {
@@ -704,17 +727,19 @@ describe('streamReviewTask — SDK wiring smoke', () => {
       }
     }
 
-    const mcpOpts = mockAgentSdk.capturedMcpServerOptions as { name: string };
-    expect(mcpOpts.name).toBe('loom');
+    const mounts = mockAgentSdk.capturedMounts as
+      | { type: string; tools?: { name: string }[] }[]
+      | undefined;
+    const custom = mounts?.find((m) => m.type === 'custom');
+    expect(custom?.tools?.map((t) => t.name)).toEqual(['mcp__loom__write_proposal']);
     expect(mockAgentSdk.toolDefinitions).toHaveLength(1);
     expect(mockAgentSdk.toolDefinitions[0].name).toBe('write_proposal');
 
     const queryOpts = mockAgentSdk.capturedQueryOptions as {
-      mcpServers?: Record<string, unknown>;
       tools?: string[];
+      allowedTools?: string[];
     };
-    expect(queryOpts.mcpServers?.loom).toBeTruthy();
-    expect(queryOpts.tools).toEqual(['mcp__loom__write_proposal']);
+    expect(queryOpts.allowedTools ?? queryOpts.tools).toEqual(['mcp__loom__write_proposal']);
   });
 
   it('logs a rubric reject once with the real KnowledgeReviewTask run id and output', async () => {

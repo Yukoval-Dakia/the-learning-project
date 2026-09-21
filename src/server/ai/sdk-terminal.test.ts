@@ -1,6 +1,6 @@
-import type { SDKAssistantMessage, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it } from 'vitest';
 import { createSdkTerminalEvidenceCollector } from './sdk-terminal';
+import type { SDKAssistantMessage, SDKMessage } from './sdk-types';
 
 type ResultMessage = Extract<SDKMessage, { type: 'result' }>;
 type ResultUsage = ResultMessage['usage'];

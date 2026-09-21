@@ -10,7 +10,6 @@
 //            MF1/MF2 transient·exhausted 分诊 + 幂等守卫 / S6 static 约束。
 
 import { createHash } from 'node:crypto';
-import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
 import type { AgentEvent, AgentMessage } from '@earendil-works/pi-agent-core';
 import type { EventStream, Api as PiApi, Model as PiModel } from '@earendil-works/pi-ai';
 import { and, eq } from 'drizzle-orm';
@@ -41,7 +40,6 @@ import {
   subagent_run,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/kernel/tools/allowlists';
 import { __setPiAdapterForTests } from '@/server/ai/execution-adapter';
 import { PiAgentAdapter } from '@/server/ai/pi-agent-adapter';
 import {
@@ -50,6 +48,7 @@ import {
 } from '@/server/ai/provider-session-admission';
 import { createRunLifecycle } from '@/server/ai/run-lifecycle';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
+import type { PiToolMount } from '@/server/ai/tools/pi-tools';
 import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
 import { __resetRegistryForTests } from '@/server/ai/tools/registry';
 import { STUCK_RUN_THRESHOLD_MS } from '@/server/boss/handlers/ai_task_run_reconcile';
@@ -91,15 +90,21 @@ type AgentCtx = {
   parentTaskRunId?: string;
   signal?: AbortSignal;
   lifecycleAbortController?: AbortController;
-  mcpServers?: Record<string, unknown>;
   allowedTools?: string[];
-  skills?: string[];
   budgetOverride?: { maxIterations?: number; timeoutMs?: number };
   sdkSession?: { persist: boolean; resume?: string };
   providerSessionDeadlineAt?: number;
-  agents?: Record<string, { tools?: string[] }>;
-  hooks?: { PreToolUse?: Array<{ hooks: Array<(...args: unknown[]) => Promise<unknown>> }> };
-  canUseTool?: (...args: unknown[]) => unknown;
+  piToolMounts?: PiToolMount[];
+  piAgents?: Record<string, { tools?: string[] }>;
+  piHooks?: {
+    beforeToolCall?: Array<
+      (
+        call: { id: string; name: string },
+        args: Record<string, unknown>,
+      ) => Promise<{ block: boolean; reason?: string } | undefined>
+    >;
+    afterToolCall?: Array<(observation: unknown) => Promise<unknown>>;
+  };
   onTaskEvent?: (event: unknown) => void | Promise<void>;
 };
 
@@ -186,12 +191,6 @@ function targetedRunInput(
   });
 }
 
-// 假 MCP server seam（生产进程在 handler 注册前已完成 manifest tool 装配；测试隔离用
-// 一个无害占位，handler 只把它装进 mcpServers map 不解引用）。
-function mcpMock() {
-  return vi.fn(() => ({ type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME }) as never);
-}
-
 const baseData: CopilotRunJobData = {
   run_id: 'copilot_user_ask_test_run',
   session_id: 'sess_test_run',
@@ -261,9 +260,8 @@ function successfulWorkerExecution(taskRunId: string, replyText: string, sdkSess
 type CopilotRunTestParams = RunCopilotRunParams & {
   streamTaskCollectingFn?: unknown;
   runValidationTaskFn?: unknown;
-  buildMcpServerFn?: CopilotExecutionAdapters['buildMcpServerFn'];
   buildExaMcpServerFn?: CopilotExecutionAdapters['buildExaMcpServerFn'];
-  resolveCopilotSkillsFn?: CopilotExecutionAdapters['resolveCopilotSkillsFn'];
+  resolveCopilotSkillDocsFn?: CopilotExecutionAdapters['resolveCopilotSkillDocsFn'];
 };
 
 async function runCopilotRun(params: CopilotRunTestParams): ReturnType<typeof runCopilotRunActual> {
@@ -294,9 +292,8 @@ async function runCopilotRun(params: CopilotRunTestParams): ReturnType<typeof ru
     executeCopilotTurnFn,
     streamTaskCollectingFn,
     runValidationTaskFn,
-    buildMcpServerFn,
     buildExaMcpServerFn,
-    resolveCopilotSkillsFn,
+    resolveCopilotSkillDocsFn,
     ...runParams
   } = params;
   const stream = streamTaskCollectingFn as
@@ -321,9 +318,8 @@ async function runCopilotRun(params: CopilotRunTestParams): ReturnType<typeof ru
           runAgentTaskFn: runValidationTaskFn as CopilotExecutionAdapters['runAgentTaskFn'],
         }
       : {}),
-    ...(buildMcpServerFn ? { buildMcpServerFn } : {}),
     ...(buildExaMcpServerFn ? { buildExaMcpServerFn } : {}),
-    ...(resolveCopilotSkillsFn ? { resolveCopilotSkillsFn } : {}),
+    ...(resolveCopilotSkillDocsFn ? { resolveCopilotSkillDocsFn } : {}),
   });
   return runCopilotRunActual({
     ...runParams,
@@ -424,7 +420,6 @@ describe('runCopilotRun', () => {
       data: baseData,
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     });
 
     expect(result).toEqual({ status: 'done', reply: '这是回答', task_run_id: 'tr_x' });
@@ -473,7 +468,6 @@ describe('runCopilotRun', () => {
       },
       streamTaskCollectingFn: streamMock('解：1+1=3。') as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     });
 
     expect(result).toMatchObject({
@@ -513,7 +507,6 @@ describe('runCopilotRun', () => {
       },
       streamTaskCollectingFn: streamMock(`请在卡片里作答。\n${marker}`) as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     });
 
     expect(result).toMatchObject({
@@ -531,10 +524,6 @@ describe('runCopilotRun', () => {
   it('provides durable artifact tools a parent-bound learning validator', async () => {
     const runId = 'copilot_user_ask_durable_artifact_parent';
     let mcpOptions: BuildMcpServerOptions | undefined;
-    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
-      mcpOptions = options;
-      return { type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME } as never;
-    });
     const validationRunner = vi.fn(async (kind: string, _input: unknown, ctx: AgentCtx) => {
       expect(ctx).toMatchObject({
         parentTaskRunId: `copilot_run_tool_${runId}`,
@@ -589,6 +578,9 @@ describe('runCopilotRun', () => {
     });
     const run = vi.fn(
       async (_kind: string, _input: unknown, _ctx: AgentCtx, _onDelta: (t: string) => void) => {
+        const __mount = _ctx.piToolMounts?.[0];
+        if (__mount?.type !== 'domain') throw new Error('expected domain mount');
+        mcpOptions = __mount.options;
         if (!mcpOptions?.ctx.validateLearningContent) {
           throw new Error('durable validator port was not mounted');
         }
@@ -621,7 +613,6 @@ describe('runCopilotRun', () => {
       streamTaskCollectingFn: run as never,
       runValidationTaskFn: validationRunner as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn,
     });
 
     expect(validationRunner).toHaveBeenCalledTimes(4);
@@ -641,7 +632,6 @@ describe('runCopilotRun', () => {
       data: oldPayload,
       streamTaskCollectingFn: streamMock('旧投递已处理') as never,
       resolveCopilotRunInputFn: assembleSpy,
-      buildMcpServerFn: mcpMock() as never,
     });
 
     expect(Object.keys(oldPayload)).toEqual([
@@ -671,7 +661,6 @@ describe('runCopilotRun', () => {
       },
       streamTaskCollectingFn: streamMock('已把水箱题改正为 h*=4/9，k 不变。') as never,
       resolveCopilotRunInputFn: targetedRunInput(targetId),
-      buildMcpServerFn: mcpMock() as never,
     });
 
     expect(result.status).toBe('done');
@@ -688,17 +677,18 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId, session_id: 'sess_durable_finalized' },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     });
     expect(result).toMatchObject({
       status: 'done',
       reply: '后台回复只由 terminal Markdown 收口。',
     });
-    expect(run.mock.calls[0]?.[2]).toMatchObject({ hooks: { PreToolUse: expect.any(Array) } });
-    expect(run.mock.calls[0]?.[2].allowedTools).not.toContain(
-      'mcp__copilot_internal__finalize_reply',
-    );
-    expect(run.mock.calls[0]?.[2].mcpServers).not.toHaveProperty('copilot_internal');
+    const finCtx = run.mock.calls[0]?.[2] as AgentCtx;
+    expect(finCtx.piHooks?.beforeToolCall).toEqual(expect.any(Array));
+    expect(finCtx.allowedTools).not.toContain('mcp__copilot_internal__finalize_reply');
+    for (const mount of finCtx.piToolMounts ?? []) {
+      if (mount.type !== 'domain') continue;
+      expect(mount.options.toolNames).not.toContain('finalize_reply');
+    }
     const replies = await copilotReplyEvents('sess_durable_finalized');
     expect(replies[0]?.payload).toMatchObject({
       reply_md: '后台回复只由 terminal Markdown 收口。',
@@ -719,7 +709,6 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId, session_id: sessionId },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     } satisfies CopilotRunTestParams;
 
     expect(await runCopilotRun(params)).toMatchObject({ status: 'failed' });
@@ -767,9 +756,8 @@ describe('runCopilotRun', () => {
     );
     const execute = createCopilotExecutionOwner({
       streamTaskCollectingFn: stream,
-      buildMcpServerFn: () => ({ type: 'sdk', name: 'loom' }) as never,
       buildExaMcpServerFn: () => null,
-      resolveCopilotSkillsFn: async () => undefined,
+      resolveCopilotSkillDocsFn: async () => undefined,
     });
     try {
       const result = await runCopilotRun({
@@ -837,12 +825,11 @@ describe('runCopilotRun', () => {
       payload: { message: '核对复杂证据' },
     });
     let mcpOptions: BuildMcpServerOptions | undefined;
-    const buildMcpServerFn = vi.fn((options: BuildMcpServerOptions) => {
-      mcpOptions = options;
-      return { type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME } as never;
-    });
     const run = vi.fn(
       async (_kind: string, _input: unknown, ctx: AgentCtx, onDelta: (text: string) => void) => {
+        const __mount = ctx.piToolMounts?.[0];
+        if (__mount?.type !== 'domain') throw new Error('expected domain mount');
+        mcpOptions = __mount.options;
         await ctx.onTaskEvent?.({
           type: 'system',
           subtype: 'task_started',
@@ -878,9 +865,8 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId, session_id: 'sess_durable_subtasks' },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn,
       buildExaMcpServerFn: () => null,
-      resolveCopilotSkillsFn: async () => ['copilot'],
+      resolveCopilotSkillDocsFn: async () => [{ name: 'copilot', body: 'copilot skill body' }],
     });
     expect(result.status).toBe('done');
 
@@ -897,11 +883,10 @@ describe('runCopilotRun', () => {
     ]) {
       expect(ctx.allowedTools).not.toContain(`mcp__loom__${legacyControl}`);
     }
-    expect(ctx.agents?.['copilot-researcher']).toMatchObject({
+    expect(ctx.piAgents?.['copilot-researcher']).toMatchObject({
       maxTurns: DURABLE_BUDGET.maxIterations,
-      background: false,
     });
-    const researcherTools = ctx.agents?.['copilot-researcher']?.tools ?? [];
+    const researcherTools = ctx.piAgents?.['copilot-researcher']?.tools ?? [];
     expect(researcherTools).toContain('mcp__loom__query_events');
     expect(researcherTools).not.toContain('Task');
     expect(researcherTools).not.toContain('mcp__loom__run_task');
@@ -912,9 +897,9 @@ describe('runCopilotRun', () => {
     // persists it but deliberately supplies no resume id.
     expect(ctx.sdkSession).toMatchObject({ persist: true });
     expect(ctx.sdkSession).not.toHaveProperty('resume');
-    expect(ctx.canUseTool).toEqual(expect.any(Function));
+    expect(ctx.piAgents?.['copilot-researcher']).toBeDefined();
     expect(ctx.onTaskEvent).toEqual(expect.any(Function));
-    expect(ctx.hooks?.PreToolUse).toHaveLength(4);
+    expect(ctx.piHooks?.beforeToolCall).toHaveLength(3);
     expect(ctx.signal).toBeInstanceOf(AbortSignal);
     expect(mcpOptions?.ctx.sessionId).toBe('sess_durable_subtasks');
     for (const legacyControl of [
@@ -933,51 +918,24 @@ describe('runCopilotRun', () => {
       'system',
       'user',
     ]);
-    const correlationHook = ctx.hooks?.PreToolUse?.[1]?.hooks[0] as HookCallback;
-    await correlationHook(
-      {
-        hook_event_name: 'PreToolUse',
-        session_id: 'sdk-durable-session',
-        transcript_path: '/tmp/transcript',
-        cwd: '/tmp',
-        permission_mode: 'default',
-        tool_name: 'mcp__loom__search_memory_facts',
-        tool_input: { query: 'durable correlation', topK: 9 },
-        tool_use_id: 'toolu_durable_real_9',
-      },
-      'toolu_durable_real_9',
-      { signal: new AbortController().signal },
-    );
-    expect(
-      mcpOptions?.claimToolUseId?.('search_memory_facts', {
-        topK: 9,
-        query: 'durable correlation',
-      }),
-    ).toBe('toolu_durable_real_9');
-    const cancellationHook = ctx.hooks?.PreToolUse?.[2]?.hooks[0] as HookCallback;
+    // YUK-1025 — pi lane passes the native toolCall.id straight into the
+    // domain bridge as correlatedToolUseId; no correlation hook / claim step.
+    const cancellationHook = ctx.piHooks?.beforeToolCall?.[1];
+    if (!cancellationHook) throw new Error('expected cancellation gate at beforeToolCall[1]');
     await expect(
       cancellationHook(
-        {
-          hook_event_name: 'PreToolUse',
-          session_id: 'sdk-durable-session',
-          transcript_path: '/tmp/transcript',
-          cwd: '/tmp',
-          permission_mode: 'default',
-          tool_name: 'Task',
-          tool_input: { subagent_type: 'copilot-researcher', description: '核对证据' },
-          tool_use_id: 'toolu_cancel_guard_939',
-        },
-        'toolu_cancel_guard_939',
-        { signal: new AbortController().signal },
-      ),
-    ).resolves.toEqual({ continue: true });
-    await expect(
-      ctx.canUseTool?.(
-        'Task',
+        { id: 'toolu_cancel_guard_939', name: 'Task' },
         { subagent_type: 'copilot-researcher', description: '核对证据' },
-        { toolUseID: 'toolu_spawn_guard_939' },
       ),
-    ).resolves.toMatchObject({ behavior: 'allow' });
+    ).resolves.toBeUndefined();
+    const spawnGate = ctx.piHooks?.beforeToolCall?.[2];
+    if (!spawnGate) throw new Error('expected spawn gate at beforeToolCall[2]');
+    await expect(
+      spawnGate(
+        { id: 'toolu_spawn_guard_939', name: 'Task' },
+        { subagent_type: 'copilot-researcher', description: '核对证据' },
+      ),
+    ).resolves.toEqual({ block: false });
     const [nativeRun] = await testDb().select().from(subagent_run);
     expect(nativeRun).toMatchObject({
       session_id: 'sess_durable_subtasks',
@@ -1018,16 +976,15 @@ describe('runCopilotRun', () => {
       },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
       copilotSubagentEnabled: false,
     });
 
     const ctx = (run.mock.calls[0] as unknown as [string, unknown, AgentCtx])[2];
     expect(ctx.allowedTools).not.toContain('Task');
-    expect(ctx).not.toHaveProperty('agents');
-    expect(ctx.hooks?.PreToolUse).toHaveLength(3);
+    expect(ctx).not.toHaveProperty('piAgents');
+    // finalizer before + cancellation gates; no spawn gate without subagents
+    expect(ctx.piHooks?.beforeToolCall).toHaveLength(2);
     expect(ctx.signal).toBeInstanceOf(AbortSignal);
-    expect(ctx).not.toHaveProperty('canUseTool');
     expect(ctx).not.toHaveProperty('onTaskEvent');
   });
 
@@ -1058,7 +1015,6 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId, session_id: 'sess_mat_run' },
       streamTaskCollectingFn: streamMock('好的') as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     });
     expect(result.status).toBe('done');
 
@@ -1077,7 +1033,6 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId, session_id: 'sess_prop_run' },
       streamTaskCollectingFn: streamMock('已提议') as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     });
     expect(result.status).toBe('done');
 
@@ -1105,7 +1060,6 @@ describe('runCopilotRun', () => {
         error: 'stream drop',
       }) as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     });
     expect(result.status).toBe('failed');
 
@@ -1130,7 +1084,6 @@ describe('runCopilotRun', () => {
         error: 'stream drop',
       }) as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     });
     expect(result.status).toBe('failed');
 
@@ -1167,7 +1120,6 @@ describe('runCopilotRun', () => {
       },
       streamTaskCollectingFn: streamRun as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
       writeSuccessfulTerminalProjectionFn: projectTerminal,
     } satisfies CopilotRunTestParams;
 
@@ -1271,7 +1223,6 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId, session_id: sessionId },
       streamTaskCollectingFn: streamRun as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
       writeFailedTerminalProjectionFn: projectTerminal,
     } satisfies CopilotRunTestParams;
 
@@ -1350,7 +1301,6 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId, session_id: sessionId },
       streamTaskCollectingFn: streamRun as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
       claimExecutionFenceFn: claimFence,
     } satisfies CopilotRunTestParams;
     await writeJobEvent(testDb(), {
@@ -1411,7 +1361,6 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId, session_id: sessionId },
       streamTaskCollectingFn: streamRun as never,
       resolveCopilotRunInputFn: assembleBarrier,
-      buildMcpServerFn: mcpMock() as never,
     } satisfies CopilotRunTestParams;
     await writeJobEvent(testDb(), {
       business_table: COPILOT_RUN_TABLE,
@@ -1489,7 +1438,6 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId, session_id: sessionId },
       streamTaskCollectingFn: streamRun as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     } satisfies CopilotRunTestParams;
     await writeJobEvent(testDb(), {
       business_table: COPILOT_RUN_TABLE,
@@ -1559,7 +1507,6 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId, session_id: sessionId },
       streamTaskCollectingFn: streamRun as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
       writeCopilotReplyFn: persistReply,
       writeFailedTerminalProjectionFn: projectFailed,
     } satisfies CopilotRunTestParams;
@@ -1671,7 +1618,6 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId, session_id: sessionId },
       streamTaskCollectingFn: streamRun as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     });
 
     expect(result).toEqual({
@@ -1734,7 +1680,6 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId, session_id: sessionId },
       streamTaskCollectingFn: streamMock(marked) as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     });
     expect(result).toEqual({ status: 'done', reply: '这是正文', task_run_id: 'tr_x' });
 
@@ -1911,7 +1856,6 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId, session_id: 'sess_delta_fifo' },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     });
     expect(result.status).toBe('done');
 
@@ -1964,7 +1908,6 @@ describe('runCopilotRun', () => {
       },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: assembleSpy,
-      buildMcpServerFn: mcpMock() as never,
     });
     expect(assembleSpy).toHaveBeenCalledTimes(1);
     const params = assembleSpy.mock.calls[0][1];
@@ -2006,7 +1949,6 @@ describe('runCopilotRun', () => {
       data,
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     });
     expect(run).toHaveBeenCalledTimes(1);
     expect(await copilotReplyEvents(sessionId)).toHaveLength(1);
@@ -2017,7 +1959,6 @@ describe('runCopilotRun', () => {
       data,
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     });
     expect(result2).toMatchObject({ status: 'done', reply: '第一次回答', task_run_id: 'tr_x' });
     expect(run).toHaveBeenCalledTimes(1);
@@ -2062,23 +2003,20 @@ describe('runCopilotRun', () => {
       payload: { reason: 'error', error: 'mimo 500' },
     });
     const run = streamMock('重试成功的回答');
-    const buildMcpServer = mcpMock();
     const result = await runCopilotRun({
       db: testDb(),
       data: { ...baseData, run_id: runId, session_id: sessionId },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: buildMcpServer as never,
     });
     expect(result).toMatchObject({ status: 'done', reply: '重试成功的回答' });
     expect(run).toHaveBeenCalledTimes(1);
     const retryTaskRunId = `copilot_run_tool_${runId}_retry_1`;
-    expect(run.mock.calls[0]?.[2]).toMatchObject({ taskRunId: retryTaskRunId });
-    expect(buildMcpServer).toHaveBeenCalledWith(
-      expect.objectContaining({
-        ctx: expect.objectContaining({ taskRunId: retryTaskRunId }),
-      }),
-    );
+    const retryCtx = run.mock.calls[0]?.[2] as AgentCtx | undefined;
+    expect(retryCtx).toMatchObject({ taskRunId: retryTaskRunId });
+    const retryMount = retryCtx?.piToolMounts?.[0];
+    if (retryMount?.type !== 'domain') throw new Error('expected domain mount');
+    expect(retryMount.options.ctx).toMatchObject({ taskRunId: retryTaskRunId });
     const events = await replay(runId);
     expect(events.map((e) => e.event_type)).toEqual([
       COPILOT_RUN_EVENTS.FAILED,
@@ -2153,7 +2091,6 @@ describe('runCopilotRun', () => {
       });
     }
 
-    const buildMcpServer = mcpMock();
     const run = vi.fn(async (_kind: string, input: unknown, ctx: AgentCtx) => {
       const lifecycle = createRunLifecycle({
         db: ctx.db as Db,
@@ -2198,15 +2135,12 @@ describe('runCopilotRun', () => {
         data: { ...baseData, run_id: runId, session_id: 'sess_second_retry_fresh_attempt' },
         streamTaskCollectingFn: run as never,
         resolveCopilotRunInputFn: stubRunInput,
-        buildMcpServerFn: buildMcpServer as never,
       }),
     ).resolves.toMatchObject({ status: 'done', task_run_id: secondRetryTaskRunId });
     expect(run.mock.calls[0]?.[2]).toMatchObject({ taskRunId: secondRetryTaskRunId });
-    expect(buildMcpServer).toHaveBeenCalledWith(
-      expect.objectContaining({
-        ctx: expect.objectContaining({ taskRunId: secondRetryTaskRunId }),
-      }),
-    );
+    const secondMount = (run.mock.calls[0]?.[2] as AgentCtx | undefined)?.piToolMounts?.[0];
+    if (secondMount?.type !== 'domain') throw new Error('expected domain mount');
+    expect(secondMount.options.ctx).toMatchObject({ taskRunId: secondRetryTaskRunId });
 
     for (const taskRunId of [baseTaskRunId, firstRetryTaskRunId]) {
       const [attempt] = await testDb()
@@ -2251,7 +2185,6 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId, session_id: sessionId },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     });
 
     expect(result).toEqual({
@@ -2287,7 +2220,6 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId, session_id: 'sess_terminal_cancelled' },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     });
     expect(result).toEqual({ status: 'cancelled' });
     expect(run).not.toHaveBeenCalled();
@@ -2326,7 +2258,6 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId, session_id: sessionId },
       streamTaskCollectingFn: paidRun as never,
       resolveCopilotRunInputFn: blockedAssembly,
-      buildMcpServerFn: mcpMock() as never,
     });
     await assemblyEntered;
 
@@ -2387,7 +2318,6 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId, session_id: 'sess_late_enqueue_failed' },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     });
 
     expect(result).toEqual({ status: 'failed', error: 'enqueue_failed' });
@@ -2414,7 +2344,6 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId, session_id: 'sess_prior_exhausted' },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     });
     expect(result).toMatchObject({ status: 'failed', error: 'error_max_turns' });
     expect(run).not.toHaveBeenCalled();
@@ -2436,7 +2365,6 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: 'run_fail', session_id: 'sess_fail' },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     });
     expect(result).toMatchObject({ status: 'failed', error: 'handler bug / unknown failure' });
     const events = await replay('run_fail');
@@ -2478,7 +2406,6 @@ describe('runCopilotRun', () => {
       },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     });
     expect(result.status).toBe('failed');
     const events = await replay(runId);
@@ -2561,7 +2488,6 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId, session_id: sessionId },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: richInput as never,
-      buildMcpServerFn: mcpMock() as never,
     });
 
     expect(result).toEqual({ status: 'cancelled' });
@@ -2606,7 +2532,6 @@ describe('runCopilotRun', () => {
       onToolExecutionStarted: vi.fn(),
       onToolExecutionSettled: vi.fn(),
       waitForInFlight: vi.fn(async () => true),
-      prependSdkHook: vi.fn((hooks) => hooks ?? { PreToolUse: [] }),
     };
     const validationRunner = vi.fn(async (kind: string, _input: unknown, ctx: AgentCtx) => {
       markProviderStarted?.();
@@ -2672,7 +2597,6 @@ describe('runCopilotRun', () => {
       streamTaskCollectingFn: streamMock(candidate) as never,
       runValidationTaskFn: validationRunner as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
       createCancellationControlFn: (() => cancellationControl) as never,
     });
     await providerStarted;
@@ -2716,7 +2640,6 @@ describe('runCopilotRun', () => {
       },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: targetedRunInput(targetId),
-      buildMcpServerFn: mcpMock() as never,
     });
 
     expect(result).toEqual({ status: 'cancelled' });
@@ -2735,21 +2658,14 @@ describe('runCopilotRun', () => {
   it('Stop — a materializing tool start suppresses the checkpoint even when its mirror is unavailable', async () => {
     const runId = 'copilot_user_ask_stop_during_author_question';
     const sessionId = 'sess_stop_materializing_without_mirror';
-    let mcpOptions:
-      | {
-          beforeExecute: (tool: { name: string; effect: 'write' }) => Promise<string | undefined>;
-          onExecuteStart: (tool: { name: string; effect: 'write' }) => void;
-          onExecuteSettled: () => void;
-        }
-      | undefined;
-    const buildMcp = vi.fn((options: NonNullable<typeof mcpOptions>) => {
-      mcpOptions = options;
-      return { type: 'sdk', name: DOMAIN_TOOL_MCP_SERVER_NAME } as never;
-    });
+    let mcpOptions: BuildMcpServerOptions | undefined;
     const run = vi.fn(async (_kind: string, _input: unknown, ctx: AgentCtx) => {
+      const __mount = ctx.piToolMounts?.[0];
+      if (__mount?.type !== 'domain') throw new Error('expected domain mount');
+      mcpOptions = __mount.options;
       const tool = { name: 'author_question', effect: 'write' as const };
-      await expect(mcpOptions?.beforeExecute(tool)).resolves.toBeUndefined();
-      mcpOptions?.onExecuteStart(tool);
+      await expect(mcpOptions?.beforeExecute?.(tool)).resolves.toBeUndefined();
+      mcpOptions?.onExecuteStart?.(tool);
       await writeJobEvent(testDb(), {
         business_table: COPILOT_RUN_TABLE,
         business_id: runId,
@@ -2762,7 +2678,7 @@ describe('runCopilotRun', () => {
       });
       // Simulate the domain write/log completing while the tool_use mirror is
       // unavailable. The runtime latch must still fail closed for checkpoint safety.
-      mcpOptions?.onExecuteSettled();
+      mcpOptions?.onExecuteSettled?.(tool);
       return {
         text: '已完成题干骨架，但尚未完成 9 个迁移变式的唯一解复核。',
         task_run_id: 'tr_stop_materializing_without_mirror',
@@ -2778,7 +2694,6 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId, session_id: sessionId },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: buildMcp as never,
     });
 
     expect(result).toEqual({ status: 'cancelled' });
@@ -2814,7 +2729,6 @@ describe('runCopilotRun', () => {
       onToolExecutionStarted() {},
       onToolExecutionSettled() {},
       waitForInFlight: async () => true,
-      prependSdkHook: () => ({ PreToolUse: [] }),
     };
     const successText = '48 条历史回答、6 个探针、3 份讲义与 9 个迁移变式已经全部处理完毕。';
     const run = vi.fn(async () => {
@@ -2837,7 +2751,6 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId, session_id: sessionId },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
       createCancellationControlFn: (() => fakeControl) as never,
     });
 
@@ -2876,7 +2789,6 @@ describe('runCopilotRun', () => {
       },
       streamTaskCollectingFn: run as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     });
 
     expect(result).toEqual({ status: 'cancelled' });
@@ -2902,7 +2814,6 @@ describe('runCopilotRun', () => {
       data: { ...baseData, run_id: runId },
       streamTaskCollectingFn: streamMock('ok') as never,
       resolveCopilotRunInputFn: stubRunInput,
-      buildMcpServerFn: mcpMock() as never,
     });
     const events = await replay(runId);
     expect(events.length).toBeGreaterThan(0);
@@ -3159,7 +3070,7 @@ describe('runCopilotRun', () => {
     expect(await persistedSdkSessionId(sessionId)).toBeNull();
   });
 
-  it('YUK-1022 — a pi-owned session cursor folds to cold start unless the pi lane is pinned for the kind', async () => {
+  it('YUK-1022 — a pi-owned session cursor resumes while this worker owns it', async () => {
     const sessionId = 'sess_worker_pi_fold';
     await seedCopilotConversation(sessionId);
     const policies: Array<{ resumeSessionId?: string }> = [];
@@ -3181,31 +3092,21 @@ describe('runCopilotRun', () => {
     await runTurn('run_pi_fold_seed');
     expect(await persistedSdkSessionId(sessionId)).toBe('pi:test_owned_session');
 
-    // Turn 2 — cursor owned but the pi lane is not pinned for CopilotTask:
-    // a pi: id can never attach to an SDK subprocess, so it folds to cold.
-    await runTurn('run_pi_fold_sdk_lane');
-    expect(policies[1]?.resumeSessionId).toBeUndefined();
-
-    // Turn 3 — env rollout pin makes the kind pi-bound: the owned pi: id resumes.
-    vi.stubEnv('AI_ADAPTER_PI_KINDS', 'CopilotTask');
-    vi.stubEnv('AI_ADAPTER_PI_PROVIDER', 'opencode-go');
-    vi.stubEnv('AI_ADAPTER_PI_MODEL', 'mimo-v2.5-pro');
-    try {
-      await runTurn('run_pi_fold_pi_lane');
-      expect(policies[2]?.resumeSessionId).toBe('pi:test_owned_session');
-    } finally {
-      vi.unstubAllEnvs();
-    }
+    // Turn 2 — post-P4 pi is the only engine: an owned pi: cursor always resumes
+    // (the durable-turns replay rides piSessionReplay). Foreign-process cursors
+    // still cold-start — covered by the foreign-cursor test above.
+    await runTurn('run_pi_fold_resume');
+    expect(policies[1]?.resumeSessionId).toBe('pi:test_owned_session');
   });
 
   it('YUK-1022 — pi lane Stop matrix: durable CANCEL_REQUESTED aborts the real adapter mid-run and the redispatched turn cold-starts', async () => {
     const sessionId = 'sess_pi_lane_stop';
     await seedCopilotConversation(sessionId);
-    vi.stubEnv('AI_ADAPTER_PI_KINDS', 'CopilotTask');
-    vi.stubEnv('AI_ADAPTER_PI_PROVIDER', 'opencode-go');
-    // Capability-declared id (providers.ts evidence gate); the injected fake
-    // catalog resolves it regardless — the provider wire is the only fake.
-    vi.stubEnv('AI_ADAPTER_PI_MODEL', 'deepseek-v4-pro');
+    // Post-P4: the pi route rides the per-run modelBinding (the ops rollout env
+    // pins are retired). Capability-declared id (providers.ts evidence gate);
+    // the injected fake catalog resolves it regardless — the provider wire is
+    // the only fake.
+    const piBinding = { provider: 'opencode-go' as const, model: 'deepseek-v4-pro' };
     vi.stubEnv('OPENCODE_API_KEY', 'sk-pi-lane-test');
 
     __resetRegistryForTests();
@@ -3279,6 +3180,7 @@ describe('runCopilotRun', () => {
       const stopped = await runCopilotRun({
         db: testDb(),
         data: { ...baseData, run_id: 'run_pi_lane_stop', session_id: sessionId },
+        modelBinding: piBinding,
         resolveCopilotRunInputFn: stubRunInput,
       });
       // The adapter emitted no terminal frame for the caller-aborted attempt;
@@ -3290,6 +3192,7 @@ describe('runCopilotRun', () => {
       const redelivered = await runCopilotRun({
         db: testDb(),
         data: { ...baseData, run_id: 'run_pi_lane_redelivered', session_id: sessionId },
+        modelBinding: piBinding,
         resolveCopilotRunInputFn: stubRunInput,
       });
       expect(redelivered.status).toBe('done');
@@ -3312,9 +3215,7 @@ describe('runCopilotRun', () => {
   it('YUK-1022 — pi lane SIGTERM-analog: provider-lease loss aborts the real adapter mid-run, settles failed, and a retryable frame mints a fresh _retry attempt', async () => {
     const sessionId = 'sess_pi_lane_lease';
     await seedCopilotConversation(sessionId);
-    vi.stubEnv('AI_ADAPTER_PI_KINDS', 'CopilotTask');
-    vi.stubEnv('AI_ADAPTER_PI_PROVIDER', 'opencode-go');
-    vi.stubEnv('AI_ADAPTER_PI_MODEL', 'deepseek-v4-pro');
+    const piBinding = { provider: 'opencode-go' as const, model: 'deepseek-v4-pro' };
     vi.stubEnv('OPENCODE_API_KEY', 'sk-pi-lane-test');
     // enforce admission so the run holds a real heartbeat lease; flipping its
     // claim_token is the in-process SIGTERM analog (worker fenced out → the
@@ -3410,6 +3311,7 @@ describe('runCopilotRun', () => {
       const interrupted = await runCopilotRun({
         db: testDb(),
         data: { ...baseData, run_id: 'run_pi_lane_lease', session_id: sessionId },
+        modelBinding: piBinding,
         resolveCopilotRunInputFn: stubRunInput,
       });
       expect(interrupted.status).toBe('failed');
@@ -3434,6 +3336,7 @@ describe('runCopilotRun', () => {
       const redelivered = await runCopilotRun({
         db: testDb(),
         data: { ...baseData, run_id: 'run_pi_lane_retry', session_id: sessionId },
+        modelBinding: piBinding,
         resolveCopilotRunInputFn: stubRunInput,
       });
       expect(redelivered.status).toBe('done');

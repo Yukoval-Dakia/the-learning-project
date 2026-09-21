@@ -1,9 +1,10 @@
 // YUK-576 — runner transient-retry loop + AgentRunError classification.
 //
 // Pure no-DB unit, same justification as the sibling runner.seam.test.ts:
-// @anthropic-ai/claude-agent-sdk and @/server/ai/log are vi.mock'd and `db` is an
-// untouched stub, so no live Postgres is needed. MUST be enumerated in
-// fastTestInclude (vitest.shared.ts): src/server/ai/** has no unit glob.
+// the execution adapter is swapped via `__setPiAdapterForTests` and
+// @/server/ai/log is vi.mock'd, and `db` is an untouched stub, so no live
+// Postgres is needed. MUST be enumerated in fastTestInclude
+// (vitest.shared.ts): src/server/ai/** has no unit glob.
 //
 // ─── FIXTURE PROVENANCE (design doc §2.5, coordinator ack condition 3) ───────
 // The terminal-result fixtures below are FROZEN from real forced-failure probes
@@ -23,6 +24,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockSdk = vi.hoisted(() => ({
   capturedOptions: [] as unknown[],
+  capturedArgs: [] as import('./execution-adapter').ExecutionAdapterStartupArgs[],
   queryCalls: 0,
   // One message-array per query() invocation (per attempt), consumed in order.
   messageQueues: [] as unknown[][],
@@ -30,25 +32,35 @@ const mockSdk = vi.hoisted(() => ({
   beforeYield: undefined as undefined | ((attempt: number) => void),
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  startup: vi.fn(async ({ options }: { options: unknown }) => {
-    mockSdk.capturedOptions.push(options);
-    const attempt = mockSdk.capturedOptions.length;
-    const messages = mockSdk.messageQueues.shift() ?? [];
-    return {
-      query: vi.fn(() => {
-        mockSdk.queryCalls += 1;
-        return (async function* () {
-          mockSdk.beforeYield?.(attempt);
-          for (const m of messages) yield m;
-        })();
-      }),
-      close: vi.fn(),
-    };
-  }),
-  createSdkMcpServer: vi.fn(() => ({ type: 'sdk', name: '', instance: {} })),
-  tool: vi.fn((name: string, description: string) => ({ name, description })),
-}));
+import {
+  type ExecutionAdapterStartupArgs,
+  type RunnerMessage,
+  __setPiAdapterForTests,
+} from './execution-adapter';
+
+// Fake adapter (YUK-1025): same per-attempt queue/capture contract the old
+// module mock had — startup() captures args, query() shifts one message queue.
+function fakePiAdapter() {
+  return {
+    id: 'pi' as const,
+    startup: vi.fn(async (args: ExecutionAdapterStartupArgs) => {
+      mockSdk.capturedOptions.push(args.options);
+      mockSdk.capturedArgs.push(args);
+      const attempt = mockSdk.capturedOptions.length;
+      const messages = mockSdk.messageQueues.shift() ?? [];
+      return {
+        query: vi.fn(() => {
+          mockSdk.queryCalls += 1;
+          return (async function* () {
+            mockSdk.beforeYield?.(attempt);
+            for (const m of messages) yield m as RunnerMessage;
+          })();
+        }),
+        close: vi.fn(async () => {}),
+      };
+    }),
+  };
+}
 
 const logMock = vi.hoisted(() => ({
   settlementShouldFail: false,
@@ -62,7 +74,7 @@ const logMock = vi.hoisted(() => ({
 }));
 
 vi.mock('@/server/ai/log', () => ({
-  logMissingMcpServersWarning: vi.fn(),
+  logMissingToolMountsWarning: vi.fn(),
   writeAiTaskRunStarted: logMock.started,
   writeAiTaskRunFinished: logMock.finished,
   writeAiTaskRunRetried: vi.fn(async (db: unknown, id: string) => {
@@ -207,6 +219,7 @@ const JUDGE_KIND = 'StepsJudgeTask';
 
 function resetAll() {
   mockSdk.capturedOptions = [];
+  mockSdk.capturedArgs = [];
   mockSdk.queryCalls = 0;
   mockSdk.messageQueues = [];
   mockSdk.beforeYield = undefined;
@@ -219,6 +232,7 @@ function resetAll() {
   logMock.settlementResults = [];
   logMock.terminalStatuses = [];
   process.env.XIAOMI_API_KEY = 'sk-test-key';
+  __setPiAdapterForTests(fakePiAdapter());
 }
 
 // ─── §10 step 1 — classifier (table-driven over frozen shapes) ───────────────
@@ -307,7 +321,7 @@ describe('isTransientAgentFailure — frozen classification table (design doc §
       apiErrorStatus: 500,
       errors: [API_ERROR_500_RESULT.result],
     });
-    expect(err.message).toMatch(/\[StepsJudgeTask\] Agent SDK errored: subtype=api_error_result/);
+    expect(err.message).toMatch(/\[StepsJudgeTask\] agent run errored: subtype=api_error_result/);
     expect(err.message).toMatch(/http=500/);
     expect(err.taskRunId).toBe('run_1');
     expect(err.errors[0]).toContain('API Error: 500');
@@ -319,6 +333,7 @@ describe('isTransientAgentFailure — frozen classification table (design doc §
 describe('runTask — YUK-576 transient retry loop', () => {
   beforeEach(resetAll);
   afterEach(() => {
+    __setPiAdapterForTests(undefined);
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     vi.useRealTimers();
@@ -424,14 +439,12 @@ describe('runTask — YUK-576 transient retry loop', () => {
       expect.stringContaining('task_run_transient_retry'),
       expect.objectContaining({ kind: JUDGE_KIND }),
     );
-    // Same-target retry: attempt-2 env/model identical to attempt-1 (value-level).
-    const [o1, o2] = mockSdk.capturedOptions as Array<{
-      model: string;
-      env: Record<string, string | undefined>;
-    }>;
-    expect(o2.model).toBe(o1.model);
-    expect(o2.env.ANTHROPIC_BASE_URL).toBe(o1.env.ANTHROPIC_BASE_URL);
-    expect(o2.env.ANTHROPIC_API_KEY).toBe(o1.env.ANTHROPIC_API_KEY);
+    // Same-target retry: attempt-2 provider/model identical to attempt-1
+    // (post-P4 the credential/baseUrl ride `resolved`, not a subprocess env).
+    const [a1, a2] = mockSdk.capturedArgs;
+    expect(a2.options.model).toBe(a1.options.model);
+    expect(a2.resolved.provider).toBe(a1.resolved.provider);
+    expect(a2.resolved.model).toBe(a1.resolved.model);
   });
 
   it('keeps the first failure as error when the planned retry cannot create its durable row', async () => {

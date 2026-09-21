@@ -41,7 +41,6 @@ import type { Db, Tx } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import { type RepairLevel, parseJsonObjectLoose } from '@/server/ai/json-extract';
-import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import {
   type TaskTextResult,
   type TaskTextRunFn,
@@ -55,8 +54,6 @@ import {
   type PlacementVerificationAuthority,
   assertPlacementAuthority,
 } from '../question-supply/placement-starter-attempts';
-
-const SOLUTION_GENERATE_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(SolutionGenerateOutput);
 
 // ---------- check identifiers ----------
 //
@@ -215,14 +212,14 @@ export async function runQuestionContentValidation(
     runTaskFn: TaskTextRunFn;
     subjectProfile: SubjectProfile;
     db?: Db;
-    skills?: string[];
+    piSkillDocs?: readonly { name: string; body: string }[];
     afterTaskRun?: (result: TaskTextResult) => Promise<void>;
   },
 ): Promise<QuestionContentValidationRun> {
   const taskResult = await options.runTaskFn('QuizVerifyTask', input, {
     ...(options.db ? { db: options.db } : {}),
     subjectProfile: options.subjectProfile,
-    ...(options.skills ? { skills: options.skills } : {}),
+    ...(options.piSkillDocs ? { piSkillDocs: options.piSkillDocs } : {}),
   });
   await options.afterTaskRun?.(taskResult);
   const parsed = parseQuestionContentValidationOutput(taskResult, {
@@ -778,7 +775,6 @@ async function runIndependentSolutionInternal(
   const ctx: Record<string, unknown> = {
     db: opts.db,
     subjectProfile: opts.profile.full,
-    outputFormat: SOLUTION_GENERATE_OUTPUT_FORMAT,
   };
   if (solverOverride) ctx.override = solverOverride;
 

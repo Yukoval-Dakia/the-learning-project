@@ -612,9 +612,9 @@ describe('runMultimodalDirectJudge — provider lane hard-failure semantics (YUK
   });
 });
 
-// YUK-591 — SDK structured-output migration. The judge now threads an outputFormat
-// (built from the registry-declared MultimodalDirectLlmOutput) and does three-state
-// dispatch: structured_output present → Zod-parse it; absent → char-scan text path.
+// YUK-591 — structured-output dispatch. Post-P4 the runner no longer threads an
+// SDK outputFormat; the judge keeps the three-state dispatch on the RESULT
+// (structured_output present → Zod-parse it; absent → char-scan text path).
 describe('runMultimodalDirectJudge — structured output (YUK-591)', () => {
   const validStructured = {
     coarse_outcome: 'correct' as const,
@@ -624,7 +624,7 @@ describe('runMultimodalDirectJudge — structured output (YUK-591)', () => {
     confidence: 0.8,
   };
 
-  it('threads a json_schema outputFormat into ctx', async () => {
+  it('does not thread an SDK outputFormat into ctx (P4 regression guard)', async () => {
     let ctx: unknown;
     await runMultimodalDirectJudge({
       db: mockDb,
@@ -637,10 +637,7 @@ describe('runMultimodalDirectJudge — structured output (YUK-591)', () => {
       },
       imageFetchFn: async () => [{ data: 'AAA', mediaType: 'image/png' }],
     });
-    const outputFormat = (ctx as { outputFormat?: { type?: string; schema?: unknown } })
-      .outputFormat;
-    expect(outputFormat?.type).toBe('json_schema');
-    expect(outputFormat?.schema).toBeDefined();
+    expect((ctx as { outputFormat?: unknown }).outputFormat).toBeUndefined();
   });
 
   it('parses structured_output through the schema, ignoring raw text', async () => {

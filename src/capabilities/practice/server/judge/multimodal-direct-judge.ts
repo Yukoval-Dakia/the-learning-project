@@ -7,7 +7,6 @@ import { ConjectureProbeSpecV2 } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
-import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { SubjectProfile } from '@/subjects/profile';
 import { defaultStructuredRunTaskFn } from './judge-output-parse';
 import { type LaneDegradationEvidence, runTaskWithLaneFallback } from './provider-lane-fallback';
@@ -22,9 +21,8 @@ const CAPABILITY_REF = { id: 'multimodal_direct', version: '1.0.0' };
 // load-bearing source. The ternary keeps the un-declared case typed; in practice
 // MultimodalDirectJudgeTask always declares it (the audit enforces exactly that).
 const outputSchema = tasks.MultimodalDirectJudgeTask.structuredOutputSchema;
-const OUTPUT_FORMAT = outputSchema ? zodToJsonSchemaOutputFormat(outputSchema) : undefined;
 
-/** Widened (YUK-591) to carry the SDK `structured_output` passthrough. */
+/** Widened (YUK-591) to carry the engine-neutral `structured_output` passthrough. */
 export type MultimodalDirectRunTaskFn = (
   kind: string,
   input: { text: string; images: Array<{ data: string; mediaType: string }> } | unknown,
@@ -63,13 +61,13 @@ function unsupportedResult(reason: string, evidence: Record<string, unknown>): J
  * YUK-591 — three-state dispatch over the task result (mirrors variant_verify's
  * parseVariantVerifyResult). Exported so the unit test can feed constructed
  * results directly.
- *   (A) structured_output present (endpoint honoured outputFormat) → parse it
- *       through the SAME Zod schema. The Zod pass is NOT optional: outputFormat
+ *   (A) structured_output present (endpoint honoured structured output) → parse
+ *       it through the SAME Zod schema. The Zod pass is NOT optional: the wire
  *       only guarantees JSON shape, not the app-level enum/range constraints, so
  *       a shape-valid-but-constraint-violating payload still throws (→ the
  *       caller's `unsupported` fallback, byte-identical bucket to today).
- *   (B) structured_output absent/null (mimo ignores outputFormat, or the model
- *       fell back to text) → char-scan plus the deterministic JSON repair band.
+ *   (B) structured_output absent/null (mimo ignores structured output, or the
+ *       model fell back to text) → char-scan plus the deterministic JSON repair band.
  *       This preserves malformed-but-unambiguous content quotes/Markdown math
  *       before the same strict output schema validates the complete payload.
  * `.parse` (throwing) is kept over safeParse so the thrown message is identical
@@ -244,7 +242,6 @@ export async function runMultimodalDirectJudge(
         db: params.db,
         subjectProfile: params.subjectProfile,
         enableTransientRetry: true,
-        outputFormat: OUTPUT_FORMAT,
       },
       runTaskFn,
     });

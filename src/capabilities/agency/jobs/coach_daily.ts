@@ -42,12 +42,7 @@ import {
 import { COACH_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
-import {
-  type BuildMcpServerOptions,
-  type SdkMcpServer,
-  type ToolExecutionGateInput,
-  buildMcpServerFromRegistry,
-} from '@/server/ai/tools/mcp-bridge';
+import type { BuildMcpServerOptions, ToolExecutionGateInput } from '@/server/ai/tools/mcp-bridge';
 import { type PiToolMount, piDomainMount } from '@/server/ai/tools/pi-tools';
 // YUK-203 U4 / D11① — feed active/pinned learning items' knowledge_ids into the
 // Coach input as ATTENTION PRESSURE only (CO §7.1:723-726). Purely additive
@@ -133,13 +128,11 @@ type RunAgentTaskFn = (
   input: unknown,
   ctx: {
     db: Db;
-    mcpServers?: Record<string, SdkMcpServer>;
     piToolMounts?: PiToolMount[];
     allowedTools?: string[];
   },
 ) => Promise<CoachTaskRunResult>;
 type ListProposalInboxRowsFn = (db: Db) => Promise<ProposalSnapshotRow[]>;
-type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
 type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;
 // YUK-143 / ADR-0025 — swappable active-goals reader (DB tests inject fixtures).
 type ListActiveGoalsFn = (db: Db) => Promise<ActiveGoal[]>;
@@ -160,7 +153,6 @@ export type CoachRunKind = 'daily' | 'weekly';
 export interface CoachRunDeps {
   runAgentTaskFn?: RunAgentTaskFn;
   listProposalInboxRowsFn?: ListProposalInboxRowsFn;
-  buildMcpServerFn?: BuildMcpServerFn;
   writeEventFn?: WriteEventFn;
   // YUK-143 / ADR-0025 — defaults to listActiveGoals; goals feed the additive
   // goal strand only and never touch the review backbone (ND-5).
@@ -269,7 +261,6 @@ export async function runCoach(
   const now = deps.now?.() ?? new Date();
   const listRows = deps.listProposalInboxRowsFn ?? listProposalInboxRows;
   const run = deps.runAgentTaskFn ?? runAgentTask;
-  const buildMcpServer = deps.buildMcpServerFn ?? buildMcpServerFromRegistry;
   const write = deps.writeEventFn ?? writeEvent;
   // YUK-603 — resolved read: subject_live goals live-derive their scope (the frozen column
   // is [] and was previously read verbatim here, blinding the goal strand).
@@ -357,8 +348,6 @@ export async function runCoach(
         return { args: capped, truncationNote: contextBudget, softStop };
       },
     } satisfies BuildMcpServerOptions;
-    const mcpServer = buildMcpServer(domainMountOptions);
-
     const taskResult = await run(
       'CoachTask',
       buildCoachInput(
@@ -373,10 +362,9 @@ export async function runCoach(
       ),
       {
         db,
-        // YUK-290: SDK maxTurns must not pre-empt the runtime tool-call ceiling.
+        // YUK-290: maxTurns must not pre-empt the runtime tool-call ceiling.
         // Keep one final turn for the TodayPlan after the last allowed tool call.
         budgetOverride: { maxIterations: COACH_CONTEXT_BUDGET.toolCalls.hard + 1 },
-        mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
         piToolMounts: [piDomainMount(domainMountOptions)],
         allowedTools: [...resolveMcpAllowedTools('coach')],
       },

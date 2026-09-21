@@ -62,7 +62,7 @@ import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectQuestionKind } from '@/subjects/profile-schema';
-import { resolveQuizGenSkills } from '@/subjects/quiz-gen-skills';
+import { resolveQuizGenSkillDocs } from '@/subjects/quiz-gen-skills';
 import { initialFsrsState } from '../server/fsrs';
 import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
 import {
@@ -287,11 +287,11 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
   // YUK-225 (S2 slice 4) — 验题出题同源: when the tier's check set includes
   // kind_conformance (tier 3/4), load the SAME (subject, kind) quiz-gen规范包 the
   // generator used so the verifier judges「题型是否像真题」against the same standard
-  // it was written to. 降级链: resolveQuizGenSkills returns undefined when no pack
-  // exists for (subject, kind) → no skills option → current behaviour.
+  // it was written to. 降级链: resolveQuizGenSkillDocs returns undefined when no pack
+  // exists for (subject, kind) → no piSkillDocs → current behaviour.
   const kindConformanceChecked = tierChecks.includes('kind_conformance');
-  const verifySkills = kindConformanceChecked
-    ? await resolveQuizGenSkills(subjectProfile.id, row.kind as SubjectQuestionKind)
+  const verifySkillDocs = kindConformanceChecked
+    ? await resolveQuizGenSkillDocs(subjectProfile.id, row.kind as SubjectQuestionKind)
     : undefined;
 
   let taskResult: TaskTextResult | null = null;
@@ -314,7 +314,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       runTaskFn,
       db,
       subjectProfile,
-      ...(verifySkills ? { skills: verifySkills } : {}),
+      ...(verifySkillDocs ? { piSkillDocs: verifySkillDocs } : {}),
       afterTaskRun: async (result) => {
         taskResult = result;
         if (!placementAuthority) return;
@@ -857,7 +857,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           ...(tierChecks.includes('kind_conformance')
             ? {
                 kind_conformance: {
-                  skill_loaded: verifySkills !== undefined,
+                  skill_loaded: verifySkillDocs !== undefined,
                   verdict: parsed.kind_conformance?.verdict ?? null,
                 },
               }

@@ -32,11 +32,7 @@ import {
   toMcpAllowedToolName,
 } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
-import {
-  type BuildMcpServerOptions,
-  type SdkMcpServer,
-  buildMcpServerFromRegistry,
-} from '@/server/ai/tools/mcp-bridge';
+import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import { type PiToolMount, piDomainMount } from '@/server/ai/tools/pi-tools';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { jyeooBudgetRemaining } from '../server/question-supply/jyeoo-budget';
@@ -96,17 +92,13 @@ type RunAgentTaskFn = (
   input: unknown,
   opts: {
     db: Db;
-    mcpServers?: Record<string, SdkMcpServer>;
     allowedTools?: string[];
     subjectProfile: SubjectProfile;
   },
 ) => Promise<TaskTextResult>;
 
-type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
-
 export interface SupplyPlannerDeps {
   runAgentTaskFn?: RunAgentTaskFn;
-  buildMcpServerFn?: BuildMcpServerFn;
   now?: () => Date;
   /** phase-2 入队口（默认 enqueueSupplyDispatchJob；db 测试注入 fake 断言载荷）。 */
   enqueueSupplyExecute?: (data: Record<string, unknown>) => Promise<string | null>;
@@ -272,7 +264,6 @@ export async function runSupplyPlanner(
   deps: SupplyPlannerDeps = {},
 ): Promise<SupplyPlannerResult> {
   const run = deps.runAgentTaskFn ?? runAgentTask;
-  const buildMcpServer = deps.buildMcpServerFn ?? buildMcpServerFromRegistry;
   const now = deps.now?.() ?? new Date();
 
   // ── 1. 原始信号装配 ──────────────────────────────────────────────────────
@@ -331,7 +322,7 @@ export async function runSupplyPlanner(
   // ── 2. LLM 规划 + 机器门（≤2 轮有界重生成） ──────────────────────────────
   const subjectProfile = resolveSubjectProfile(PLANNER_HOST_SUBJECT);
   const toolContextTaskRunId = `supply_planner_tool_${createId()}`;
-  // YUK-1021 — same descriptor feeds SDK mcpServers and piToolMounts.
+  // piDomainMount compiles the DomainTools into AgentTools.
   const domainMountOptions = {
     ctx: {
       db,
@@ -342,9 +333,6 @@ export async function runSupplyPlanner(
     toolNames: SUPPLY_PLANNER_READ_TOOLS,
     taskKind: 'SupplyPlanTask',
   } satisfies BuildMcpServerOptions;
-  const mcpServers: Record<string, SdkMcpServer> = {
-    [DOMAIN_TOOL_MCP_SERVER_NAME]: buildMcpServer(domainMountOptions),
-  };
   const piToolMounts: PiToolMount[] = [piDomainMount(domainMountOptions)];
   const allowedTools = SUPPLY_PLANNER_READ_TOOLS.map((name) => toMcpAllowedToolName(name));
 
@@ -361,7 +349,6 @@ export async function runSupplyPlanner(
     attempts = attempt;
     const runResult = await run('SupplyPlanTask', attemptInput, {
       db,
-      mcpServers,
       piToolMounts,
       allowedTools,
       subjectProfile,

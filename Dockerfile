@@ -27,23 +27,14 @@ FROM node:24-bookworm-slim AS sharpdeps
 WORKDIR /sharp
 RUN npm install --omit=dev --no-audit --no-fund sharp@^0.34.5
 
-# Stage 2.6: install Claude Agent SDK into its own clean node_modules.
-# Same reasoning as sharp — the platform-specific `claude` binary that ships
-# via optionalDependencies is loaded lazily by the runner via dynamic spawn.
-# Use npm here for the same flat-layout reason sharpdeps does.
-#
-# YUK-365 (Codex review P2, Finding 3): these pins MUST stay in lockstep with the
-# versions pnpm-lock.yaml resolves (currently 0.3.220 / 0.115.0 / 1.29.0).
-# The old 0.3.143 / 0.96.0 pins predated Opus 4.8 (claude-opus-4-8) — that CLI may
-# reject the model id the subscription-OAuth lane (AI_PROVIDER_OVERRIDE=anthropic-sub)
-# requests, so prod would 4xx while dev works. A later package/lock upgrade left
-# this stage on 0.3.168 / 0.102.0; the audit-agent-sdk-runtime-version test now
-# enforces that the runner image uses the exact SDK pair validated outside Docker.
-FROM node:24-bookworm-slim AS sdkdeps
-WORKDIR /sdk
+# Stage 2.6: install the MCP client into its own clean node_modules.
+# `build:migrate` marks `@modelcontextprotocol/sdk` external, so the shipped
+# dist/migrate.cjs may resolve it at runtime; pnpm's symlinked layout does not
+# survive a plain COPY into the runner image — use npm flat layout (same
+# reasoning as sharpdeps). The pin MUST match pnpm-lock.yaml's resolution.
+FROM node:24-bookworm-slim AS mcpdeps
+WORKDIR /mcp
 RUN npm install --omit=dev --no-audit --no-fund \
-    @anthropic-ai/claude-agent-sdk@0.3.220 \
-    @anthropic-ai/sdk@0.115.0 \
     @modelcontextprotocol/sdk@1.29.0
 
 # Stage 2.7: install better-sqlite3 into its own clean flat node_modules.
@@ -75,9 +66,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/web/dist ./web/dist
 COPY --from=builder /app/drizzle ./drizzle
-# Agent Skill assets — the runner (populateIsolatedSkills) reads
-# src/subjects/<id>/skills/ at runtime via readdirSync (not imported), so a
-# missing COPY is a silent prod degradation (resolver falls back to prose).
+# Agent Skill assets — the pi skill-doc resolvers read
+# src/subjects/<id>/skills/ at runtime via readFile/readdirSync (not imported),
+# so a missing COPY is a silent prod degradation (resolver falls back to prose).
 # Coverage is asserted by src/subjects/skills-image-coverage.test.ts (YUK-610).
 COPY --from=builder /app/src/subjects/math/skills ./src/subjects/math/skills
 COPY --from=builder /app/src/subjects/yuwen/skills ./src/subjects/yuwen/skills
@@ -88,9 +79,8 @@ COPY --from=sharpdeps /sharp/node_modules/sharp ./node_modules/sharp
 COPY --from=sharpdeps /sharp/node_modules/@img ./node_modules/@img
 COPY --from=sharpdeps /sharp/node_modules/detect-libc ./node_modules/detect-libc
 COPY --from=sharpdeps /sharp/node_modules/semver ./node_modules/semver
-# Claude Agent SDK + peers 2 行（namespace 整目录 overlay，来自 sdkdeps）
-COPY --from=sdkdeps /sdk/node_modules/@anthropic-ai ./node_modules/@anthropic-ai
-COPY --from=sdkdeps /sdk/node_modules/@modelcontextprotocol ./node_modules/@modelcontextprotocol
+# MCP client（namespace 整目录 overlay，来自 mcpdeps — build:migrate 的 external）
+COPY --from=mcpdeps /mcp/node_modules/@modelcontextprotocol ./node_modules/@modelcontextprotocol
 # better-sqlite3 + 运行时依赖（bindings → file-uri-to-path），来自 sqlitedeps（YUK-341 mem0 history）
 COPY --from=sqlitedeps /sqlite/node_modules/better-sqlite3 ./node_modules/better-sqlite3
 COPY --from=sqlitedeps /sqlite/node_modules/bindings ./node_modules/bindings
@@ -98,9 +88,7 @@ COPY --from=sqlitedeps /sqlite/node_modules/file-uri-to-path ./node_modules/file
 # PDFium JS + sibling pdfium.wasm, from the flat external-package stage (YUK-636)
 COPY --from=pdfiumdeps /pdfium/node_modules/@hyzyla/pdfium ./node_modules/@hyzyla/pdfium
 RUN test -s node_modules/@hyzyla/pdfium/dist/pdfium.wasm
-# Claude Code refuses --dangerously-skip-permissions as root. Both the Hono app
-# and pg-boss worker use that mode through the Agent SDK, so the shipped runtime
-# must be non-root. Pre-create the worker's named-volume mountpoint with the
+# Pre-create the worker's named-volume mountpoint with the
 # matching owner; docker-compose's mem0-init also repairs existing root-owned
 # volumes during upgrades.
 RUN mkdir -p /var/lib/mem0 && chown node:node /var/lib/mem0

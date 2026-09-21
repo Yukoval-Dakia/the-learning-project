@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it, vi } from 'vitest';
+import type { PiToolCallObservation } from '@/server/ai/pi-hooks';
 import { writeCopilotReply } from './conversation-writes';
 import {
-  EXA_WEB_SEARCH_POST_TOOL_USE,
-  EXA_WEB_SEARCH_POST_TOOL_USE_FAILURE,
+  EXA_WEB_SEARCH_FAILURE_OBSERVATION,
+  EXA_WEB_SEARCH_OBSERVATION,
 } from './exa-remote-mcp.actual-fixture';
 import {
   EPHEMERAL_PRESENTATION_STORAGE_NOTICE,
@@ -115,10 +115,6 @@ function finalizer(
   });
 }
 
-function preHook(value: ReturnType<typeof finalizer>): HookCallback {
-  return value.hooks.PreToolUse?.[0]?.hooks[0] as HookCallback;
-}
-
 async function pre(
   value: ReturnType<typeof finalizer>,
   toolName: string,
@@ -126,39 +122,42 @@ async function pre(
   input: unknown,
   agentId?: string,
 ) {
-  return preHook(value)(
-    {
-      hook_event_name: 'PreToolUse',
-      session_id: 'session_1',
-      transcript_path: '/tmp/transcript',
-      cwd: '/tmp',
-      tool_name: toolName,
-      tool_use_id: toolUseId,
-      tool_input: input,
-      ...(agentId ? { agent_id: agentId } : {}),
-    },
-    toolUseId,
-    { signal: new AbortController().signal },
+  return value.piHooks.beforeToolCall?.[0]?.(
+    { id: toolUseId, name: toolName, ...(agentId ? { agentType: agentId } : {}) },
+    (input ?? {}) as Record<string, unknown>,
+    new AbortController().signal,
   );
 }
 
-async function post(value: ReturnType<typeof finalizer>, payload: Parameters<HookCallback>[0]) {
-  const event =
-    payload.hook_event_name === 'PostToolUseFailure' ? 'PostToolUseFailure' : 'PostToolUse';
-  const hook = value.hooks[event]?.[0]?.hooks[0] as HookCallback;
-  return hook(payload, 'hook-test', { signal: new AbortController().signal });
+async function post(value: ReturnType<typeof finalizer>, observation: PiToolCallObservation) {
+  return value.piHooks.afterToolCall?.[0]?.(observation, new AbortController().signal);
 }
 
 function exaPost(
   toolUseId: string,
-  overrides: { tool_input?: unknown; tool_response?: unknown; agent_id?: string } = {},
-) {
-  const base = structuredClone(EXA_WEB_SEARCH_POST_TOOL_USE);
+  overrides: {
+    args?: unknown;
+    output?: unknown;
+    error?: unknown;
+    isError?: boolean;
+    interrupted?: boolean;
+    agentType?: string;
+  } = {},
+): PiToolCallObservation {
+  const base = structuredClone(EXA_WEB_SEARCH_OBSERVATION);
   return {
     ...base,
-    tool_use_id: toolUseId,
-    ...overrides,
-  } as typeof base;
+    call: {
+      ...base.call,
+      id: toolUseId,
+      ...(overrides.agentType ? { agentType: overrides.agentType } : {}),
+    },
+    ...(overrides.args !== undefined ? { args: overrides.args as Record<string, unknown> } : {}),
+    ...(overrides.output !== undefined ? { output: overrides.output } : {}),
+    ...(overrides.error !== undefined ? { error: overrides.error } : {}),
+    ...(overrides.isError !== undefined ? { isError: overrides.isError } : {}),
+    ...(overrides.interrupted !== undefined ? { interrupted: overrides.interrupted } : {}),
+  };
 }
 
 describe('Copilot root reply finalization', () => {
@@ -605,7 +604,7 @@ describe('Copilot root reply finalization', () => {
     await sealing;
 
     const result = await sealing;
-    expect(late).toEqual({ continue: true });
+    expect(late).toBeUndefined();
     expect(result.accepted).toBe(false);
     expect(result.replyText).not.toBe('稳定候选。');
   });
@@ -771,11 +770,11 @@ describe('Copilot remote-MCP evidence capture', () => {
 
   it('captures the actual executed Exa search I/O and delivers it as the final review packet', async () => {
     const { value, validate } = finalizerWithValidate();
-    const payload = structuredClone(EXA_WEB_SEARCH_POST_TOOL_USE);
-    await pre(value, payload.tool_name, payload.tool_use_id, payload.tool_input);
-    await post(value, payload);
-    // Later mutation of the SDK-owned payload must not reach the sealed evidence.
-    payload.tool_response[0].text = 'tampered-after-hook';
+    const observation = structuredClone(EXA_WEB_SEARCH_OBSERVATION);
+    await pre(value, observation.call.name, observation.call.id, observation.args);
+    await post(value, observation);
+    // Later mutation of the pi-owned observation must not reach the sealed evidence.
+    (observation.output as Array<{ text: string }>)[0].text = 'tampered-after-hook';
     const result = await value.finalizeTerminal('已检索外部证据。');
 
     expect(result.accepted).toBe(true);
@@ -785,28 +784,28 @@ describe('Copilot remote-MCP evidence capture', () => {
         tool_name: 'mcp__exa__web_search_exa',
         tool_use_id: 'call_9cea61a7cc314aa5a35c04a8',
         root_call: true,
-        input: EXA_WEB_SEARCH_POST_TOOL_USE.tool_input,
-        output: EXA_WEB_SEARCH_POST_TOOL_USE.tool_response,
+        input: EXA_WEB_SEARCH_OBSERVATION.args,
+        output: EXA_WEB_SEARCH_OBSERVATION.output,
       },
     ]);
 
     const clean = finalizer();
     await pre(
       clean,
-      EXA_WEB_SEARCH_POST_TOOL_USE.tool_name,
-      EXA_WEB_SEARCH_POST_TOOL_USE.tool_use_id,
-      EXA_WEB_SEARCH_POST_TOOL_USE.tool_input,
+      EXA_WEB_SEARCH_OBSERVATION.call.name,
+      EXA_WEB_SEARCH_OBSERVATION.call.id,
+      EXA_WEB_SEARCH_OBSERVATION.args,
     );
-    await post(clean, structuredClone(EXA_WEB_SEARCH_POST_TOOL_USE));
+    await post(clean, structuredClone(EXA_WEB_SEARCH_OBSERVATION));
     const cleanResult = await clean.finalizeTerminal('已检索外部证据。');
     expect(result.receipt.trace_sha256).toBe(cleanResult.receipt.trace_sha256);
   });
 
   it('captures the actual failure event with error and interrupt flag instead of a success output', async () => {
     const { value, validate } = finalizerWithValidate();
-    const payload = structuredClone(EXA_WEB_SEARCH_POST_TOOL_USE_FAILURE);
-    await pre(value, payload.tool_name, payload.tool_use_id, payload.tool_input);
-    await post(value, payload);
+    const observation = structuredClone(EXA_WEB_SEARCH_FAILURE_OBSERVATION);
+    await pre(value, observation.call.name, observation.call.id, observation.args);
+    await post(value, observation);
 
     const result = await value.finalizeTerminal('检索失败，改为闭卷回答。');
     expect(result.accepted).toBe(true);
@@ -815,9 +814,9 @@ describe('Copilot remote-MCP evidence capture', () => {
         tool_name: 'mcp__exa__web_search_exa',
         tool_use_id: 'call_2988d2e479a64c09bb7f9c80',
         root_call: true,
-        input: EXA_WEB_SEARCH_POST_TOOL_USE_FAILURE.tool_input,
+        input: EXA_WEB_SEARCH_FAILURE_OBSERVATION.args,
         failure: {
-          error: EXA_WEB_SEARCH_POST_TOOL_USE_FAILURE.error,
+          error: EXA_WEB_SEARCH_FAILURE_OBSERVATION.error,
           is_interrupt: false,
         },
       },
@@ -828,14 +827,12 @@ describe('Copilot remote-MCP evidence capture', () => {
     const { value, validate } = finalizerWithValidate();
     await pre(value, 'mcp__loom__query_knowledge', 'loom_1', { query: '函数' });
     await post(value, {
-      hook_event_name: 'PostToolUse',
-      session_id: 'session_1',
-      transcript_path: '/tmp/transcript',
-      cwd: '/tmp',
-      tool_name: 'mcp__loom__query_knowledge',
-      tool_use_id: 'loom_1',
-      tool_input: { query: '函数' },
-      tool_response: { nodes: [] },
+      call: { id: 'loom_1', name: 'mcp__loom__query_knowledge' },
+      args: { query: '函数' },
+      isError: false,
+      output: { nodes: [] },
+      error: undefined,
+      interrupted: false,
     });
 
     const result = await value.finalizeTerminal('已核对。');
@@ -845,12 +842,12 @@ describe('Copilot remote-MCP evidence capture', () => {
 
   it('captures a remote call exactly once per tool_use_id', async () => {
     const { value, validate } = finalizerWithValidate();
-    const payload = structuredClone(EXA_WEB_SEARCH_POST_TOOL_USE);
-    await pre(value, payload.tool_name, payload.tool_use_id, payload.tool_input);
-    await post(value, payload);
-    const duplicate = await post(value, structuredClone(EXA_WEB_SEARCH_POST_TOOL_USE));
+    const observation = structuredClone(EXA_WEB_SEARCH_OBSERVATION);
+    await pre(value, observation.call.name, observation.call.id, observation.args);
+    await post(value, observation);
+    const duplicate = await post(value, structuredClone(EXA_WEB_SEARCH_OBSERVATION));
 
-    expect(duplicate).toEqual({ continue: true });
+    expect(duplicate).toBeUndefined();
     await value.finalizeTerminal('已检索。');
     const packet = validate.mock.calls[0]?.[5] as RemoteMcpEvidencePacket | undefined;
     expect(packet).toHaveLength(1);
@@ -863,10 +860,10 @@ describe('Copilot remote-MCP evidence capture', () => {
       value,
       'mcp__exa__web_search_exa',
       'call_9cea61a7cc314aa5a35c04a8',
-      EXA_WEB_SEARCH_POST_TOOL_USE.tool_input,
+      EXA_WEB_SEARCH_OBSERVATION.args,
       'researcher_1',
     );
-    await post(value, exaPost('call_9cea61a7cc314aa5a35c04a8', { agent_id: 'researcher_1' }));
+    await post(value, exaPost('call_9cea61a7cc314aa5a35c04a8', { agentType: 'researcher_1' }));
 
     await value.finalizeTerminal('子任务检索已完成。');
     expect(validate.mock.calls[0]?.[5]).toMatchObject([
@@ -880,8 +877,8 @@ describe('Copilot remote-MCP evidence capture', () => {
     await post(
       value,
       exaPost('huge_1', {
-        tool_input: { query: 'x' },
-        tool_response: { blob: 'x'.repeat(REMOTE_MCP_EVIDENCE_MAX_CALL_CHARS) },
+        args: { query: 'x' },
+        output: { blob: 'x'.repeat(REMOTE_MCP_EVIDENCE_MAX_CALL_CHARS) },
       }),
     );
 
@@ -897,10 +894,7 @@ describe('Copilot remote-MCP evidence capture', () => {
     for (let index = 0; index < 5; index += 1) {
       const toolUseId = `bulk_${index}`;
       await pre(value, 'mcp__exa__web_search_exa', toolUseId, { query: 'x' });
-      await post(
-        value,
-        exaPost(toolUseId, { tool_input: { query: 'x' }, tool_response: { blob: chunk } }),
-      );
+      await post(value, exaPost(toolUseId, { args: { query: 'x' }, output: { blob: chunk } }));
     }
 
     const result = await value.finalizeTerminal('已检索。');
@@ -916,8 +910,8 @@ describe('Copilot remote-MCP evidence capture', () => {
       await post(
         value,
         exaPost('bomb_1', {
-          tool_input: { query: 'x' },
-          tool_response: {
+          args: { query: 'x' },
+          output: {
             toJSON: () => {
               throw new Error('unserializable evidence');
             },

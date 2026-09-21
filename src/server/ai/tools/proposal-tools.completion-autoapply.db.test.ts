@@ -12,13 +12,6 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 const mockRunner = vi.hoisted(() => ({ runTask: vi.fn() }));
 vi.mock('@/server/ai/runner', () => ({ runTask: mockRunner.runTask }));
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  createSdkMcpServer: vi.fn((opts: unknown) => ({ type: 'sdk', instance: opts })),
-  tool: vi.fn((name: string, _desc: string, _schema: unknown, handler: unknown) => ({
-    name,
-    handler,
-  })),
-}));
 
 const BASE = new Date('2026-05-28T00:00:00.000Z');
 

@@ -39,17 +39,13 @@ import {
   type ConjectureProbeQualityAttemptT,
   type ConjectureProposalDraftT,
 } from '@/core/schema/business';
-import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import {
   type TaskTextResult,
   type TaskTextRunFn,
   sumAllKnownCostUsd,
 } from '@/server/ai/provenance';
 import type { SubjectProfile } from '@/subjects/profile';
-import {
-  ConjectureGroupingOutputSchema,
-  MindModelInductionOutputSchema,
-} from '../../tasks/conjecture-induction';
+import { ConjectureGroupingOutputSchema } from '../../tasks/conjecture-induction';
 import type { EnrichedEvidenceCell, LoadedConjectureEvidenceImage } from './evidence';
 import {
   ConjectureProbeQualityOperationalError,
@@ -363,11 +359,7 @@ async function deduplicateHypotheses(
 
   let result: TaskTextResult;
   try {
-    result = await runTaskFn(
-      'ConjectureGroupingTask',
-      { hypotheses },
-      { outputFormat: zodToJsonSchemaOutputFormat(ConjectureGroupingOutputSchema) },
-    );
+    result = await runTaskFn('ConjectureGroupingTask', { hypotheses }, {});
   } catch (err) {
     // Warn so nightly pipeline failures are observable (silent degradation masks persistent issues).
     console.warn(
@@ -474,10 +466,6 @@ export async function induceConjecture(
     Array.from({ length: samples }, () =>
       runTaskFn('MindModelInductionTask', taskInput, {
         override: { provider: 'anthropic-sub' as const },
-        // Agent SDK structured output is implemented as a custom tool whose
-        // input_schema must be a top-level object and rejects a top-level
-        // discriminated-union anyOf. Nest the domain union under `draft`.
-        outputFormat: zodToJsonSchemaOutputFormat(MindModelInductionOutputSchema),
         // YUK-786 — the prompt renders from the SubjectProfile; without this the
         // renderer falls back to `general` even when the cell's KC is tagged.
         ...(subjectProfile ? { subjectProfile } : {}),

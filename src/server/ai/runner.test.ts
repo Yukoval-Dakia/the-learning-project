@@ -1,10 +1,8 @@
-// Runner tests — full Claude Agent SDK path (post 2026-05-17 codex-flagged fix).
-//
-// Pre-fix the runner was a two-tier mix of raw @anthropic-ai/sdk (single turn)
-// + Claude Agent SDK (tool-call). Codex called this out as drift from "全切
-// SDK"; the runner now goes through Agent SDK `startup()` + `WarmQuery.query()`
-// uniformly. We mock the SDK at module boundary so unit tests don't spawn
-// the `claude` binary.
+// Runner tests — pi adapter path (post YUK-1025 P4: the Claude Agent SDK
+// subprocess is retired; PiAgentAdapter is the only execution engine). The
+// consume loop still reads SDKMessage-shaped frames, so the fake adapter feeds
+// the same scripted frames the old module mock produced — coverage of the
+// durable lifecycle (task_runs / cost_ledger / terminal evidence) is unchanged.
 
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,36 +10,44 @@ import { ai_task_runs, cost_ledger } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { memR2 } from '../../../tests/helpers/r2';
 
-const mockSdk = vi.hoisted(() => ({
+const mockPi = vi.hoisted(() => ({
   messages: [] as unknown[],
-  capturedOptions: undefined as unknown,
+  capturedArgs: undefined as unknown,
   capturedPrompt: undefined as unknown,
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  startup: vi.fn(async ({ options }: { options: unknown }) => {
-    mockSdk.capturedOptions = options;
-    return {
-      query: vi.fn((prompt: unknown) => {
-        mockSdk.capturedPrompt = prompt;
-        return (async function* () {
-          for (const m of mockSdk.messages) yield m;
-        })();
-      }),
-      close: vi.fn(),
-    };
-  }),
-  createSdkMcpServer: vi.fn((opts: unknown) => ({
-    type: 'sdk',
-    name: (opts as { name?: string }).name ?? '',
-    instance: {},
-  })),
-  tool: vi.fn((name: string, description: string) => ({ name, description })),
-}));
-
 import { resolveSubjectProfile } from '@/subjects/profile';
+import {
+  type ExecutionAdapterStartupArgs,
+  type PreparedExecutionQuery,
+  type RunnerMessage,
+  __setPiAdapterForTests,
+} from './execution-adapter';
 import { ATTEMPT_PRICEBOOK_VERSION } from './pricing';
 import { runAgentTask, runTask, streamTask } from './runner';
+
+function fakePiAdapter() {
+  return {
+    id: 'pi' as const,
+    startup: vi.fn(async (args: ExecutionAdapterStartupArgs) => {
+      mockPi.capturedArgs = args;
+      const prepared: PreparedExecutionQuery = {
+        query: (prompt) => {
+          mockPi.capturedPrompt = prompt;
+          return (async function* () {
+            for (const m of mockPi.messages) yield m as RunnerMessage;
+          })();
+        },
+        close: async () => {},
+      };
+      return prepared;
+    }),
+  };
+}
+
+function capturedOptions() {
+  return (mockPi.capturedArgs as ExecutionAdapterStartupArgs).options;
+}
 
 function successResult(text: string, cost_usd = 0.001) {
   return {
@@ -55,6 +61,7 @@ function successResult(text: string, cost_usd = 0.001) {
 }
 
 afterEach(() => {
+  __setPiAdapterForTests(undefined);
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
@@ -62,14 +69,15 @@ afterEach(() => {
 describe('runTask (Claude Agent SDK adapter)', () => {
   beforeEach(async () => {
     await resetDb();
-    mockSdk.messages = [];
-    mockSdk.capturedOptions = undefined;
-    mockSdk.capturedPrompt = undefined;
+    mockPi.messages = [];
+    mockPi.capturedArgs = undefined;
+    __setPiAdapterForTests(fakePiAdapter());
+    mockPi.capturedPrompt = undefined;
     process.env.XIAOMI_API_KEY = 'sk-test-key';
   });
 
   it('returns final text and the same MiMo estimate in result, run and ledger despite positive SDK USD', async () => {
-    mockSdk.messages = [successResult('归因结果：concept', 0.001)];
+    mockPi.messages = [successResult('归因结果：concept', 0.001)];
 
     const result = await runTask(
       'AttributionTask',
@@ -124,7 +132,7 @@ describe('runTask (Claude Agent SDK adapter)', () => {
   });
 
   it('projects Xiaomi zero as the same estimate in result, run, and ledger', async () => {
-    mockSdk.messages = [successResult('estimated', 0)];
+    mockPi.messages = [successResult('estimated', 0)];
 
     const result = await runTask('AttributionTask', {}, { db: testDb(), r2: memR2() });
     const [run] = await testDb()
@@ -153,7 +161,7 @@ describe('runTask (Claude Agent SDK adapter)', () => {
   });
 
   it('keeps an unpriced Xiaomi model unknown instead of projecting zero', async () => {
-    mockSdk.messages = [successResult('unknown', 0)];
+    mockPi.messages = [successResult('unknown', 0)];
 
     const result = await runTask(
       'AttributionTask',
@@ -184,7 +192,7 @@ describe('runTask (Claude Agent SDK adapter)', () => {
 
   it('preserves Anthropic direct reported zero as real evidence', async () => {
     vi.stubEnv('ANTHROPIC_API_KEY', 'sk-anthropic-test');
-    mockSdk.messages = [successResult('free-tier', 0)];
+    mockPi.messages = [successResult('free-tier', 0)];
 
     const result = await runTask(
       'AttributionTask',
@@ -203,29 +211,26 @@ describe('runTask (Claude Agent SDK adapter)', () => {
     });
   });
 
-  it('passes systemPrompt + model + env via options + tools from registry', async () => {
-    mockSdk.messages = [successResult('ok')];
+  it('passes systemPrompt + model + resolved credential via options + tools from registry', async () => {
+    mockPi.messages = [successResult('ok')];
 
     await runTask('AttributionTask', { test: 'payload' }, { db: testDb(), r2: memR2() });
 
-    const opts = mockSdk.capturedOptions as {
-      model: string;
-      systemPrompt: string;
-      env: Record<string, string>;
-      tools: string[];
-    };
+    const args = mockPi.capturedArgs as ExecutionAdapterStartupArgs;
+    const opts = args.options;
     expect(opts.model).toBe('mimo-v2.5-pro');
     expect(typeof opts.systemPrompt).toBe('string');
-    expect(opts.env.ANTHROPIC_API_KEY).toBe('sk-test-key');
-    expect(opts.env.ANTHROPIC_BASE_URL).toBe('https://api.xiaomimimo.com/anthropic');
-    expect(opts.env.CLAUDE_CONFIG_DIR).toMatch(/loom-claude-/);
+    // The credential/provider binding rides on `resolved` (per-request apiKey
+    // into streamSimple), not a subprocess env block.
+    expect(args.resolved.provider).toBe('xiaomi');
+    expect(args.resolved.apiKey).toBe('sk-test-key');
     // Registry's allowedTools picks up automatically when ctx doesn't override.
     expect(opts.tools).toEqual([]);
-    expect(mockSdk.capturedPrompt).toBe('{"test":"payload"}');
+    expect(mockPi.capturedPrompt).toBe('{"test":"payload"}');
   });
 
   it('uses ctx.subjectProfile to build the runtime system prompt', async () => {
-    mockSdk.messages = [successResult('ok')];
+    mockPi.messages = [successResult('ok')];
 
     await runTask(
       'NoteGenerateTask',
@@ -233,23 +238,23 @@ describe('runTask (Claude Agent SDK adapter)', () => {
       { db: testDb(), r2: memR2(), subjectProfile: resolveSubjectProfile('math') },
     );
 
-    const opts = mockSdk.capturedOptions as { systemPrompt: string };
+    const opts = capturedOptions();
     expect(opts.systemPrompt).toContain('你是数学学习笔记作者');
     expect(opts.systemPrompt).toContain('每一步变形依据');
     expect(opts.systemPrompt).not.toContain('古文');
   });
 
   it('honours registry-declared allowedTools (KnowledgeReviewTask → mcp__loom__write_proposal)', async () => {
-    mockSdk.messages = [successResult('ok')];
+    mockPi.messages = [successResult('ok')];
 
     await runTask('KnowledgeReviewTask', { test: 'payload' }, { db: testDb(), r2: memR2() });
 
-    const opts = mockSdk.capturedOptions as { tools: string[] };
+    const opts = capturedOptions();
     expect(opts.tools).toEqual(['mcp__loom__write_proposal']);
   });
 
-  it('warns once when an agentic task has no mcpServers', async () => {
-    mockSdk.messages = [successResult('ok')];
+  it('warns once when an agentic task has no piToolMounts', async () => {
+    mockPi.messages = [successResult('ok')];
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const result = await runTask(
@@ -258,16 +263,16 @@ describe('runTask (Claude Agent SDK adapter)', () => {
       { db: testDb(), r2: memR2() },
     );
 
-    expect(warn).toHaveBeenCalledWith('[runTask] missing_mcp_servers', {
-      event: 'missing_mcp_servers',
+    expect(warn).toHaveBeenCalledWith('[runTask] missing_tool_mounts', {
+      event: 'missing_tool_mounts',
       task_run_id: result.task_run_id,
       kind: 'KnowledgeReviewTask',
     });
     expect(warn).toHaveBeenCalledOnce();
   });
 
-  it('does not warn when a non-agentic task has no mcpServers', async () => {
-    mockSdk.messages = [successResult('ok')];
+  it('does not warn when a non-agentic task has no piToolMounts', async () => {
+    mockPi.messages = [successResult('ok')];
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     await runTask('AttributionTask', { test: 'payload' }, { db: testDb(), r2: memR2() });
@@ -275,21 +280,21 @@ describe('runTask (Claude Agent SDK adapter)', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it('does not warn when an agentic task receives an mcpServers map', async () => {
-    mockSdk.messages = [successResult('ok')];
+  it('does not warn when an agentic task receives a piToolMounts entry', async () => {
+    mockPi.messages = [successResult('ok')];
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     await runTask(
       'KnowledgeReviewTask',
       { test: 'payload' },
-      { db: testDb(), r2: memR2(), mcpServers: {} },
+      { db: testDb(), r2: memR2(), piToolMounts: [{ type: 'custom', tools: [] }] },
     );
 
     expect(warn).not.toHaveBeenCalled();
   });
 
   it('ctx.allowedTools overrides registry default', async () => {
-    mockSdk.messages = [successResult('ok')];
+    mockPi.messages = [successResult('ok')];
 
     await runTask(
       'AttributionTask',
@@ -297,12 +302,12 @@ describe('runTask (Claude Agent SDK adapter)', () => {
       { db: testDb(), r2: memR2(), allowedTools: ['mcp__custom__foo'] },
     );
 
-    const opts = mockSdk.capturedOptions as { tools: string[] };
+    const opts = capturedOptions();
     expect(opts.tools).toEqual(['mcp__custom__foo']);
   });
 
   it('honours middleware.beforeRun + afterRun', async () => {
-    mockSdk.messages = [successResult('echoed')];
+    mockPi.messages = [successResult('echoed')];
     const beforeRun = vi.fn(async (_kind: string, input: unknown) => ({
       ...(input as Record<string, unknown>),
       injected: 'memory-context',
@@ -317,11 +322,11 @@ describe('runTask (Claude Agent SDK adapter)', () => {
 
     expect(beforeRun).toHaveBeenCalledOnce();
     expect(afterRun).toHaveBeenCalledOnce();
-    expect(JSON.stringify(mockSdk.capturedPrompt)).toContain('memory-context');
+    expect(JSON.stringify(mockPi.capturedPrompt)).toContain('memory-context');
   });
 
   it('captures SDK error terminal usage/cost and writes a failure attempt ledger', async () => {
-    mockSdk.messages = [
+    mockPi.messages = [
       {
         type: 'result',
         subtype: 'error_max_budget_usd',
@@ -361,7 +366,7 @@ describe('runTask (Claude Agent SDK adapter)', () => {
   });
 
   it('writes an unknown retryable attempt ledger when the SDK has no terminal message', async () => {
-    mockSdk.messages = [];
+    mockPi.messages = [];
 
     await expect(runTask('AttributionTask', {}, { db: testDb(), r2: memR2() })).rejects.toThrow(
       /stream_no_terminal/,
@@ -385,7 +390,7 @@ describe('runTask (Claude Agent SDK adapter)', () => {
   });
 
   it('runAgentTask is an alias of runTask', async () => {
-    mockSdk.messages = [successResult('agent-text', 0.002)];
+    mockPi.messages = [successResult('agent-text', 0.002)];
 
     const result = await runAgentTask(
       'AttributionTask',
@@ -398,175 +403,74 @@ describe('runTask (Claude Agent SDK adapter)', () => {
   });
 });
 
-// YUK-225 (S2 slice 4) — spike-invariant regression guards.
-//
-// Two protected invariants surfaced by the YUK-217 spike must never silently
-// regress (independent-review blocker F1). Both are exercised through the
-// captured SDK options + the populated isolated config dir, since
-// buildQueryOptions / populateIsolatedSkills are module-private.
-//
-// Sources:
-//   - .omc/research/2026-06-05-yuk217-spike-report.md §3 (接线参数) + §5 (失败模式)
-//   - docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §5.2
-//     「SPIKE 修正注记」(2026-06-05)
-describe('runTask — YUK-217 spike invariants (slice 4 skills wiring)', () => {
+// YUK-225 (S2 slice 4) — spike-invariant regression guards, rewritten for the
+// pi-only surface (YUK-1025): the SDK's filesystem skill mirror (CLAUDE_CONFIG_DIR
+// + Options.skills + settingSources) is gone. Pi receives resolved skill bodies
+// via `ctx.piSkillDocs` and the adapter folds them into the system prompt — so
+// the surviving invariants are (a) caller-provided docs forward verbatim and
+// (b) no ctx.piSkillDocs means nothing is attached (pi never reads repo files,
+// which is the structural form of the old 'no leak' invariant).
+describe('runTask — skill docs forwarding (piSkillDocs)', () => {
   beforeEach(async () => {
     await resetDb();
-    mockSdk.messages = [];
-    mockSdk.capturedOptions = undefined;
-    mockSdk.capturedPrompt = undefined;
+    mockPi.messages = [];
+    mockPi.capturedArgs = undefined;
+    mockPi.capturedPrompt = undefined;
+    __setPiAdapterForTests(fakePiAdapter());
     process.env.XIAOMI_API_KEY = 'sk-test-key';
   });
 
-  // (a) Skill-enabled invariant: load only the isolated CONFIG_DIR's user source.
-  // SDK 0.3.220 requires the project source to load CLAUDE.md, so excluding it
-  // keeps repository instructions/hooks out while retaining mirrored skill discovery.
-  it('uses only the isolated user source for an explicitly skill-enabled run', async () => {
-    const { existsSync } = await import('node:fs');
-    const { join } = await import('node:path');
-    mockSdk.messages = [successResult('ok')];
+  it('forwards ctx.piSkillDocs verbatim to the adapter startup args', async () => {
+    mockPi.messages = [successResult('ok')];
+    const docs = [{ name: 'yuwen--quiz-gen-translation', body: '# 翻译出题\nbody' }];
 
     await runTask(
       'NoteGenerateTask',
       { test: 'payload' },
-      { db: testDb(), r2: memR2(), skills: ['yuwen--quiz-gen-translation'] },
+      { db: testDb(), r2: memR2(), piSkillDocs: docs },
     );
 
-    const opts = mockSdk.capturedOptions as {
-      env: Record<string, string>;
-      settingSources?: string[];
-      skills?: string[];
-      title?: string;
-    };
-    expect(opts.settingSources).toEqual(['user']);
-    expect(opts.skills).toEqual(['yuwen--quiz-gen-translation']);
-    expect(
-      existsSync(
-        join(opts.env.CLAUDE_CONFIG_DIR, 'skills', 'yuwen--quiz-gen-translation', 'SKILL.md'),
-      ),
-    ).toBe(true);
-    expect(opts.title).toBe('NoteGenerateTask');
+    const args = mockPi.capturedArgs as ExecutionAdapterStartupArgs;
+    expect(args.piSkillDocs).toEqual(docs);
+    // The call spec itself carries no skill knob — injection happens adapter-side.
+    expect('skills' in args.options).toBe(false);
   });
 
-  // (b) Zero-impact red line: a task with no ctx.skills must EXPLICITLY DISABLE
-  // skills via `skills: []`, NOT omit the key. Per sdk.d.ts:1699-1721 / 2768-2771,
-  // OMITTING Options.skills makes the CLI load EVERY discovered skill — and the
-  // runner has pre-populated CONFIG_DIR/skills with ALL quiz-gen skills, so omitting
-  // would leak them into Attribution / NoteGenerate (a behaviour change). `[]` is the
-  // SDK context filter's "enable zero skills", preserving pre-slice-4 behaviour.
-  it('passes skills:[] when ctx has no skills (explicit disable = zero behaviour change)', async () => {
-    mockSdk.messages = [successResult('ok')];
+  it('attaches no skill docs when ctx.piSkillDocs is absent (no implicit discovery)', async () => {
+    mockPi.messages = [successResult('ok')];
 
     await runTask('AttributionTask', { test: 'payload' }, { db: testDb(), r2: memR2() });
 
-    const opts = mockSdk.capturedOptions as {
-      skills?: string[];
-      settingSources?: string[];
-      title?: string;
-    };
-    expect('skills' in opts).toBe(true);
-    expect(opts.skills).toEqual([]);
-    expect(opts.settingSources).toEqual([]);
-    expect(opts.title).toBe('AttributionTask');
+    const args = mockPi.capturedArgs as ExecutionAdapterStartupArgs;
+    expect(args.piSkillDocs).toBeUndefined();
   });
 
-  // Also guard the empty-array degrade path: ctx.skills=[] is still "no skills"
-  // and lands as the same explicit `skills: []` disable.
-  it('passes skills:[] when ctx.skills is an empty array', async () => {
-    mockSdk.messages = [successResult('ok')];
+  it('forwards an explicitly empty piSkillDocs array (caller means zero skills)', async () => {
+    mockPi.messages = [successResult('ok')];
 
     await runTask(
       'AttributionTask',
       { test: 'payload' },
-      { db: testDb(), r2: memR2(), skills: [] },
+      { db: testDb(), r2: memR2(), piSkillDocs: [] },
     );
 
-    const opts = mockSdk.capturedOptions as { skills?: string[]; settingSources?: string[] };
-    expect(opts.skills).toEqual([]);
-    expect(opts.settingSources).toEqual([]);
-  });
-
-  // (c) Whitelist passthrough: ctx.skills threads verbatim onto Options.skills.
-  it('passes ctx.skills verbatim onto Options.skills (context filter whitelist)', async () => {
-    mockSdk.messages = [successResult('ok')];
-
-    await runTask(
-      'NoteGenerateTask',
-      { test: 'payload' },
-      { db: testDb(), r2: memR2(), skills: ['quiz-gen-translation'] },
-    );
-
-    const opts = mockSdk.capturedOptions as { skills?: string[] };
-    expect(opts.skills).toEqual(['quiz-gen-translation']);
-  });
-
-  // (d) Isolated config dir is populated: after a run, CLAUDE_CONFIG_DIR/skills/
-  // contains the subject skills mirrored from src/subjects/<id>/skills/.
-  // spike report §3(1): populate ALL subject skills once, whitelist keys which
-  // the model sees. Verified against the real on-disk subject skill names.
-  it('populates isolated CONFIG_DIR/skills with subject skills', async () => {
-    const { existsSync, readdirSync } = await import('node:fs');
-    const { join } = await import('node:path');
-
-    mockSdk.messages = [successResult('ok')];
-    await runTask('AttributionTask', { test: 'payload' }, { db: testDb(), r2: memR2() });
-
-    const opts = mockSdk.capturedOptions as { env: Record<string, string> };
-    const skillsDir = join(opts.env.CLAUDE_CONFIG_DIR, 'skills');
-    expect(existsSync(skillsDir)).toBe(true);
-
-    const populated = readdirSync(skillsDir);
-    // YUK-611: subject skills flatten 时目录名命名空间化 <subject>--<pack>（跨科
-    // 同名不互踩），镜像内 SKILL.md frontmatter name 同步改写为同一个键。
-    expect(populated).toContain('yuwen--quiz-gen-translation');
-    expect(populated).toContain('yuwen--quiz-gen-reading-comprehension');
-    expect(populated).toContain('math--quiz-gen-calculation');
-    expect(populated).toContain('_shared--copilot');
-    // 裸名不再产生。
-    expect(populated).not.toContain('quiz-gen-translation');
-    // SKILL.md is mirrored into each skill dir, with the namespaced name inside.
-    const mirroredMd = join(skillsDir, 'yuwen--quiz-gen-translation', 'SKILL.md');
-    expect(existsSync(mirroredMd)).toBe(true);
-    const { readFileSync } = await import('node:fs');
-    expect(readFileSync(mirroredMd, 'utf8')).toMatch(/^name: yuwen--quiz-gen-translation$/m);
-  });
-
-  // populateIsolatedSkills idempotency: CLAUDE_CONFIG_DIR is a process-level
-  // memoised singleton (isolatedConfigDir), so repeated runs reuse the same dir
-  // without re-populating, duplicating, or throwing. spike report §3(1) +
-  // §5(3): once-filled singleton keyed by the skills whitelist.
-  it('reuses the same populated config dir across runs (idempotent singleton)', async () => {
-    const { existsSync, readdirSync } = await import('node:fs');
-    const { join } = await import('node:path');
-
-    mockSdk.messages = [successResult('ok')];
-    await runTask('AttributionTask', { a: 1 }, { db: testDb(), r2: memR2() });
-    const dir1 = (mockSdk.capturedOptions as { env: Record<string, string> }).env.CLAUDE_CONFIG_DIR;
-    const skills1 = readdirSync(join(dir1, 'skills')).sort();
-
-    mockSdk.messages = [successResult('ok')];
-    await runTask('NoteGenerateTask', { b: 2 }, { db: testDb(), r2: memR2() });
-    const dir2 = (mockSdk.capturedOptions as { env: Record<string, string> }).env.CLAUDE_CONFIG_DIR;
-    const skills2 = readdirSync(join(dir2, 'skills')).sort();
-
-    // Same singleton dir; skills subtree unchanged (no re-populate / no dupes).
-    expect(dir2).toBe(dir1);
-    expect(skills2).toEqual(skills1);
-    expect(existsSync(join(dir2, 'skills', 'yuwen--quiz-gen-translation', 'SKILL.md'))).toBe(true);
+    const args = mockPi.capturedArgs as ExecutionAdapterStartupArgs;
+    expect(args.piSkillDocs).toEqual([]);
   });
 });
 
 describe('streamTask middleware + cost', () => {
   beforeEach(async () => {
     await resetDb();
-    mockSdk.messages = [];
-    mockSdk.capturedOptions = undefined;
-    mockSdk.capturedPrompt = undefined;
+    mockPi.messages = [];
+    mockPi.capturedArgs = undefined;
+    __setPiAdapterForTests(fakePiAdapter());
+    mockPi.capturedPrompt = undefined;
     process.env.XIAOMI_API_KEY = 'sk-test-key';
   });
 
   it('runs beforeRun before issuing the query', async () => {
-    mockSdk.messages = [successResult('streamed', 0.003)];
+    mockPi.messages = [successResult('streamed', 0.003)];
 
     const beforeRun = vi.fn(async (_kind: string, input: unknown) => ({
       ...(input as Record<string, unknown>),
@@ -588,11 +492,11 @@ describe('streamTask middleware + cost', () => {
     }
 
     expect(beforeRun).toHaveBeenCalledOnce();
-    expect(JSON.stringify(mockSdk.capturedPrompt)).toContain('pre-stream-memory');
+    expect(JSON.stringify(mockPi.capturedPrompt)).toContain('pre-stream-memory');
   });
 
   it('uses a caller-owned task run id and can suppress the input-only tool log', async () => {
-    mockSdk.messages = [
+    mockPi.messages = [
       {
         type: 'assistant',
         message: {
@@ -636,7 +540,7 @@ describe('streamTask middleware + cost', () => {
   });
 
   it('writes USD cost via cost_ledger (not micro-USD)', async () => {
-    mockSdk.messages = [successResult('hello', 0.005)];
+    mockPi.messages = [successResult('hello', 0.005)];
 
     const response = streamTask('AttributionTask', { input: 'x' }, { db: testDb(), r2: memR2() });
     const reader = response.body?.getReader();

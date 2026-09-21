@@ -1,24 +1,19 @@
-// YUK-921 P3 (YUK-1022) — the pi-side hook surface.
+// YUK-921 P3 (YUK-1022) / P4 (YUK-1025) — the hook surface.
 //
-// SDK `Options.hooks` (PreToolUse / PostToolUse / PostToolUseFailure /
-// SessionStart) carry hook callbacks whose input shapes are SDK-subprocess
-// internals — they cannot be translated verbatim. Following the P2
-// dual-descriptor convention (`ctx.mcpServers` + `ctx.piToolMounts`), callers
-// that declare SDK hooks ALSO declare the pi equivalents here; each producer
-// (spawn-contract / cancellation / reply-finalization) emits both spellings
-// from one shared decision core.
+// Post-P4 this is the ONLY tool-call interception surface (the retired SDK's
+// `Options.hooks`/`canUseTool` are gone). Producers (spawn-contract /
+// cancellation / reply-finalization) emit their entries from one shared
+// decision core:
 //
-//   SDK surface              → pi surface
-//   PreToolUse deny          → beforeToolCall { block, reason }
-//   PreToolUse interrupt     → beforeToolCall { block, reason, terminate }
-//   PostToolUse              → afterToolCall with isError=false
-//   PostToolUseFailure       → afterToolCall with isError=true
-//   SessionStart(compact)    → transformContext re-injection (adapter-owned)
+//   deny              → beforeToolCall { block, reason }
+//   interrupt         → beforeToolCall { block, reason, terminate }
+//   post-execution    → afterToolCall (isError=false / true for failures)
+//   compaction        → transformContext re-injection (adapter-owned)
 //
-// Ordering matches the SDK: all beforeToolCall entries run before
-// ctx.canUseTool; afterToolCall observers run in declaration order after the
-// tool settles. Observer failures are logged and fail open — visibility must
-// never abort paid work.
+// Ordering: all beforeToolCall entries run in declaration order (first defined
+// result short-circuits); afterToolCall observers run in declaration order
+// after the tool settles. Observer failures are logged and fail open —
+// visibility must never abort paid work.
 
 import type { AfterToolCallResult, BeforeToolCallResult } from '@earendil-works/pi-agent-core';
 

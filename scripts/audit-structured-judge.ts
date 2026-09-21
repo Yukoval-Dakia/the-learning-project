@@ -2,8 +2,8 @@
  * audit:structured-judge — YUK-591 §7 enforcement (owner-locked 2026-07-23).
  *
  * Every JUDGE TASK in the AI task registry (`src/ai/registry.ts`) MUST declare a
- * `structuredOutputSchema` — the SDK structured-output contract wired through the
- * YUK-299 `outputFormat` seam — OR be listed in
+ * `structuredOutputSchema` — the judge's declared output contract, consumed at
+ * the call site by the `structured_output`-or-text-parse dispatch — OR be listed in
  * `scripts/audit-structured-judge-allowlist.json` with a `reason` +
  * `resolves_when{kind,ref,expected_by}` (same allowlist shape as
  * audit:fold-writes / audit:schema).
@@ -12,11 +12,13 @@
  * The two vision judges (StepsJudgeTask / MultimodalDirectJudgeTask) used to fish
  * a JSON object out of free-text model output (`extractJsonObject` →
  * `Schema.parse`); malformed output became silent `unsupported` waste. YUK-591
- * migrated them to the SDK `outputFormat` seam (schema-constrained + SDK-retried
- * extraction, with a Zod second-pass; endpoints that ignore it fall back to the
- * char-scan path, so the declaration is a zero-loss opt-in). This audit is the
- * machine-checkable guard that a NEW judge task cannot regress to free-text
- * JSON-fishing without an explicit, dated waiver.
+ * gave them a declared `structuredOutputSchema` consumed by the call site's
+ * three-state dispatch (structured_output present → parse it; absent →
+ * char-scan text parse — see multimodal-direct-judge.ts). Post-YUK-1025 the
+ * wire-level `outputFormat` option is gone with the SDK; the schema remains the
+ * judge's declared contract. This audit is the machine-checkable guard that a
+ * NEW judge task cannot regress to free-text JSON-fishing without an explicit,
+ * dated waiver.
  *
  * ── JUDGE-TASK DETECTION (documented limitation) ─────────────────────────────
  * The judge-task set = registry kinds ending in `JudgeTask`. All three of today's
@@ -245,7 +247,7 @@ function main(): void {
     for (const kind of result.violations) console.log(`    - ${kind}`);
     console.log(
       '\n  Fix: declare `structuredOutputSchema: <ZodSchema>` on the task in src/ai/registry.ts and\n' +
-        '  build `outputFormat: zodToJsonSchemaOutputFormat(schema)` at the judge call site (see\n' +
+        '  dispatch on `structured_output`-or-text-parse with it at the judge call site (see\n' +
         '  steps-judge.ts / multimodal-direct-judge.ts) — OR add the kind to\n' +
         '  scripts/audit-structured-judge-allowlist.json with a reason + resolves_when.',
     );

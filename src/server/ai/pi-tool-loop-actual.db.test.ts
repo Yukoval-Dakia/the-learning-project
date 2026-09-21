@@ -17,8 +17,8 @@
 // real web_search_exa call, so a passing run is inherently a tool-loop proof.
 // The run goes through runWebSourcingAgentDefault (the production entry), which
 // mounts piDomainMount + piRemoteMcpMount and leaves modelBinding unset — the
-// pi pin comes from the ops rollout env (AI_ADAPTER_PI_PROVIDER/MODEL), exactly
-// like a staged production rollout.
+// pi route comes from the explicit modelBinding on the task run — the only
+// post-P4 routing surface (the ops rollout env pins were retired).
 
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -62,16 +62,8 @@ async function seedKnowledge(db: ReturnType<typeof testDb>, id: string, parentId
 
 describe.skipIf(!HAS_KEY)('pi tool-loop actual-output gate (YUK-1021)', () => {
   beforeAll(async () => {
-    process.env.AI_ADAPTER_PI_KINDS = KIND;
-    process.env.AI_ADAPTER_PI_PROVIDER = 'opencode-go';
-    process.env.AI_ADAPTER_PI_MODEL = MODEL;
     __resetRegistryForTests();
     await registerCapabilityTools(capabilities);
-  });
-  afterAll(() => {
-    delete process.env.AI_ADAPTER_PI_KINDS;
-    delete process.env.AI_ADAPTER_PI_PROVIDER;
-    delete process.env.AI_ADAPTER_PI_MODEL;
   });
 
   it(`runs ${KIND} through opencode-go tool loop and reconciles tool_call_log`, {
@@ -109,7 +101,11 @@ describe.skipIf(!HAS_KEY)('pi tool-loop actual-output gate (YUK-1021)', () => {
         db,
         input,
         subjectProfile: resolveSubjectProfile('math'),
-        ctx: { taskRunId: toolCtxRunId, causedByEventId: '' },
+        ctx: {
+          taskRunId: toolCtxRunId,
+          causedByEventId: '',
+          modelBinding: { provider: 'opencode-go', model: MODEL, adapter: 'pi' },
+        },
       });
     } catch (err) {
       runError = {
@@ -157,7 +153,7 @@ describe.skipIf(!HAS_KEY)('pi tool-loop actual-output gate (YUK-1021)', () => {
         needsToolCall: true,
         session_header: 'x-opencode-session=<ai_task_run.id>',
         tool_ctx_run_id: toolCtxRunId,
-        pin: 'env rollout (AI_ADAPTER_PI_PROVIDER/MODEL), caller passes no modelBinding',
+        pin: 'explicit ctx.modelBinding (post-P4: the env rollout pin is gone)',
       },
       task_run_id: taskRunId,
       status: row.status,

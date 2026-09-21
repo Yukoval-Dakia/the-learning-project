@@ -1,14 +1,14 @@
 // YUK-81 + YUK-82 / Foundation D M1 Lane C + Lane D
 //
-// Generic bridge: wrap any DomainTool from the registry into a Claude Agent
-// SDK MCP server tool. Replaces the per-task hand-written
-// `buildKnowledgeReviewMcpServer` pattern for any future task that needs
-// access to read / propose / write tools.
+// Generic bridge: wrap any DomainTool from the registry into an agent-visible
+// MCP-named tool (`mcp__<server>__<tool>`). Replaces the per-task hand-written
+// tool-builder pattern for any task that needs access to read / propose /
+// write tools. YUK-1025 — the execution engine is pi-only; mounts compile to
+// `AgentTool`s in pi-tools.ts over this shared pipeline.
 //
 // Each tool call:
-//   1. zod-parse the raw args (the SDK already parses ZodRawShape on its
-//      side but we re-parse to get the typed Input value and a stable
-//      error path).
+//   1. zod-parse the raw args (re-parse for the typed Input value and a
+//      stable error path).
 //   2. execute the tool against the captured ToolContext.
 //   3. write a tool_call_log row with effect + error_reason populated.
 //   4. resolve mirrorEvent policy and, when it fires, write a `tool_use`
@@ -21,15 +21,7 @@
 //   5. return an MCP-shaped { content: [{ type: 'text', text: <json> }] }
 //      result the LLM can read.
 
-import {
-  type HookCallback,
-  type Options,
-  createSdkMcpServer,
-  tool,
-} from '@anthropic-ai/claude-agent-sdk';
 import { createId } from '@paralleldrive/cuid2';
-import { z } from 'zod';
-import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { writeEvent } from '@/kernel/events';
 import {
   type ToolOperationRecord,
@@ -49,43 +41,6 @@ import type {
 } from '@/kernel/tools/types';
 import { setToolCallLogMirroredEventId, writeToolCallLog } from '@/server/ai/log';
 import { getTool } from './registry';
-
-export interface ToolUseCorrelation {
-  hooks: NonNullable<Options['hooks']>;
-  claim(toolName: string, input: unknown): string | undefined;
-  prepend(existing?: Options['hooks']): NonNullable<Options['hooks']>;
-}
-
-export function createToolUseCorrelation(serverName: string): ToolUseCorrelation {
-  const pending = new Map<string, string[]>();
-  const prefix = `mcp__${serverName}__`;
-  const hook: HookCallback = async (input) => {
-    if (input.hook_event_name !== 'PreToolUse' || !input.tool_name.startsWith(prefix)) {
-      return { continue: true };
-    }
-    const toolName = input.tool_name.slice(prefix.length);
-    const key = `${toolName}:${sha256CanonicalJson(input.tool_input)}`;
-    pending.set(key, [...(pending.get(key) ?? []), input.tool_use_id]);
-    return { continue: true };
-  };
-  const hooks: NonNullable<Options['hooks']> = { PreToolUse: [{ hooks: [hook] }] };
-  return {
-    hooks,
-    claim(toolName, input) {
-      const key = `${toolName}:${sha256CanonicalJson(input)}`;
-      const ids = pending.get(key);
-      const claimed = ids?.shift();
-      if (ids?.length === 0) pending.delete(key);
-      return claimed;
-    },
-    prepend(existing) {
-      return {
-        ...(existing ?? {}),
-        PreToolUse: [{ hooks: [hook] }, ...(existing?.PreToolUse ?? [])],
-      };
-    },
-  };
-}
 
 /**
  * Decide whether a tool invocation should mirror to the `event` table.
@@ -127,8 +82,10 @@ export function __resolveMirrorPolicy(
   return matchesAgentRef(callerActor.ref, 'dreaming');
 }
 
+export type { ToolExecutionGateInput, ToolExecutionResultObservation } from '@/kernel/tools/types';
+
 /**
- * YUK-457 — live tool_use SSE gate. The streaming runner observes raw SDK
+ * YUK-457 — live tool_use SSE gate. The streaming runner observes raw
  * tool_use block names (`mcp__<server>__<tool>`) BEFORE the bridge executes,
  * so the tool_use-side card gate resolves the DomainTool behind the name and
  * applies the SAME {@link __resolveMirrorPolicy} resolution that governs the
@@ -149,10 +106,6 @@ export function shouldEmitToolUseForCaller(
   if (!dt) return true;
   return __resolveMirrorPolicy(dt.mirrorEvent, callerActor, dt.effect);
 }
-
-export type SdkMcpServer = ReturnType<typeof createSdkMcpServer>;
-
-export type { ToolExecutionGateInput, ToolExecutionResultObservation } from '@/kernel/tools/types';
 
 function formatToolOperationFailure(record: ToolOperationRecord): string {
   const risk = record.sideEffectRisk ? `; side_effect_risk:${record.sideEffectRisk}` : '';
@@ -240,13 +193,12 @@ export interface ToolInputInterceptResult {
 
 export interface BuildMcpServerOptions {
   ctx: ToolContext;
-  /** Logical name for the SDK MCP server; tools surface as `mcp__<name>__<tool>`. */
+  /** Logical mount name; tools surface as `mcp__<name>__<tool>`. */
   serverName: string;
   /** Subset of registered DomainTool names to expose. */
   toolNames: readonly string[];
   /** `task_kind` recorded on each tool_call_log row (defaults to ctx.callerActor.ref). */
   taskKind?: string;
-  claimToolUseId?: (toolName: string, input: unknown) => string | undefined;
   toolOperations?: ToolOperations;
   cancellationSignals?: ReadonlyArray<{
     signal: AbortSignal;
@@ -290,22 +242,15 @@ export interface BuildMcpServerOptions {
 
 /**
  * Options for {@link executeDomainToolCall} — the engine-neutral slice of
- * {@link BuildMcpServerOptions}. The SDK wrapper supplies them from
- * BuildMcpServerOptions; the pi AgentTool bridge (pi-tools.ts) supplies the
- * same fields minus the SDK-only correlation hook — pi passes the loop's
- * native toolCallId via `correlatedToolUseId` instead.
+ * {@link BuildMcpServerOptions}. The pi AgentTool bridge (pi-tools.ts)
+ * supplies the same fields; pi passes the loop's native toolCallId via
+ * `correlatedToolUseId` (no hook round-trip needed).
  */
 export interface DomainToolCallOptions {
   ctx: ToolContext;
   /** `task_kind` recorded on each tool_call_log row (defaults to ctx.callerActor.ref). */
   taskKind?: string;
-  /** SDK-correlation claim — see BuildMcpServerOptions.claimToolUseId. */
-  claimToolUseId?: (toolName: string, input: unknown) => string | undefined;
-  /**
-   * Explicit correlation id that wins over claimToolUseId. The pi adapter
-   * supplies the agentLoop's native toolCall.id, so the pi path needs no
-   * PreToolUse hook round-trip.
-   */
+  /** The agentLoop's native toolCall.id, forwarded for call correlation. */
   correlatedToolUseId?: string;
   toolOperations?: ToolOperations;
   cancellationSignals?: ReadonlyArray<{
@@ -329,9 +274,8 @@ export interface DomainToolCallOptions {
 /**
  * The engine-neutral DomainTool call pipeline — parse → beforeExecute gate →
  * interceptInput → execute (+ safe-handoff) → output schema → summary →
- * onResult/onToolComplete → tool_call_log → tool_use mirror → settle. Both
- * engine bridges wrap this verbatim: the SDK path via `tool()` inside
- * buildMcpServerFromRegistry, the pi path via `AgentTool.execute` in
+ * onResult/onToolComplete → tool_call_log → tool_use mirror → settle. The pi
+ * AgentTool bridge wraps this verbatim via `AgentTool.execute` in
  * pi-tools.ts. Errors never throw — they encode into the returned text
  * payload exactly as the MCP convention requires.
  */
@@ -364,7 +308,7 @@ export async function executeDomainToolCall(
   try {
     parsedInput = dt.inputSchema.parse(rawArgs);
     execInput = parsedInput;
-    correlatedToolUseId = opts.correlatedToolUseId ?? opts.claimToolUseId?.(dt.name, rawArgs);
+    correlatedToolUseId = opts.correlatedToolUseId;
   } catch (err) {
     errorReason = err instanceof Error ? err.message : String(err);
   }
@@ -442,7 +386,7 @@ export async function executeDomainToolCall(
       if (errorReason !== undefined) throw new Error(errorReason);
       // YUK-862 / F3.1 — global output schema enforcement. Runs immediately
       // after execute, before context-budget decoration, onResult, summarize,
-      // logging, mirroring, or SDK return.
+      // logging, mirroring, or the tool result return.
       const parseResult = dt.outputSchema.safeParse(rawOutput);
       if (parseResult.success) {
         output = parseResult.data;
@@ -486,7 +430,7 @@ export async function executeDomainToolCall(
     });
   } catch (observationErr) {
     // A reply-review observer is bookkeeping only. It must never turn an
-    // already-completed DomainTool effect into an SDK-visible failure.
+    // already-completed DomainTool effect into an agent-visible failure.
     console.error('[mcp-bridge] onResult failed', {
       tool: dt.name,
       task_run_id: ctx.taskRunId,
@@ -542,7 +486,7 @@ export async function executeDomainToolCall(
       cost: 0,
     });
   } catch (logErr) {
-    // Logging must not break the tool loop. The SDK still gets a valid
+    // Logging must not break the tool loop. The caller still gets a valid
     // result even if persistence fails.
     console.error('[mcp-bridge] writeToolCallLog failed', {
       tool: dt.name,
@@ -618,7 +562,7 @@ export async function executeDomainToolCall(
       await opts.onExecuteSettled?.(gateInput);
     } catch (settleErr) {
       // A bookkeeping observer must not turn a completed domain effect into
-      // an SDK-visible failure. Cancellation control still fails closed via
+      // an agent-visible failure. Cancellation control still fails closed via
       // its persisted materializing-tool probe at terminal projection.
       console.error('[mcp-bridge] onExecuteSettled failed', {
         tool: dt.name,
@@ -650,36 +594,4 @@ export async function executeDomainToolCall(
       },
     ],
   };
-}
-
-/**
- * Build a per-request in-process MCP server that exposes the given subset of
- * registered DomainTools. Process entrypoints must complete manifest registration before they
- * accept requests or jobs; this hot path never mutates global registry state.
- */
-export function buildMcpServerFromRegistry(opts: BuildMcpServerOptions): SdkMcpServer {
-  const { serverName, toolNames } = opts;
-
-  const sdkTools = toolNames.map((name) => {
-    const dt = getTool(name);
-    if (!dt) {
-      throw new Error(
-        `buildMcpServerFromRegistry: tool '${name}' is not registered. Check capability manifest registration.`,
-      );
-    }
-    if (!(dt.inputSchema instanceof z.ZodObject)) {
-      throw new Error(
-        `buildMcpServerFromRegistry: tool '${name}' inputSchema must be a z.object(...). Got ${dt.inputSchema.constructor.name}.`,
-      );
-    }
-    // SDK helper expects a ZodRawShape (`{ field: zodType, ... }`), not a
-    // ZodObject. Extract the raw shape from the object schema.
-    const rawShape = dt.inputSchema.shape as Record<string, z.ZodTypeAny>;
-
-    return tool(dt.name, dt.description, rawShape, (rawArgs) =>
-      executeDomainToolCall(dt, rawArgs, opts),
-    );
-  });
-
-  return createSdkMcpServer({ name: serverName, tools: sdkTools });
 }

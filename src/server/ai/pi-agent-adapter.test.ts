@@ -4,7 +4,6 @@
 // stands in for the real agentLoop, and a one-model catalog stands in for
 // builtinModels().
 
-import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import type {
   AgentContext,
   AgentEvent,
@@ -24,6 +23,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ExecutionAdapterStartupArgs } from './execution-adapter';
 import { PiAgentAdapter } from './pi-agent-adapter';
 import type { ResolvedProvider } from './providers';
+import type { Options } from './sdk-types';
 import type { PiToolMount } from './tools/pi-tools';
 
 const MODEL_ID = 'mimo-v2.5-pro';
@@ -136,18 +136,17 @@ async function drain(iterable: AsyncIterable<unknown>): Promise<unknown[]> {
 }
 
 describe('PiAgentAdapter.startup — fail-fast gates', () => {
-  it('rejects a non-key authMode binding before any model lookup', async () => {
+  it('accepts an oauth binding — the token rides resolved.apiKey (Bearer switch lives in the pi driver)', async () => {
     const oauthResolved: ResolvedProvider = {
       authMode: 'oauth',
       provider: 'opencode-go',
       model: MODEL_ID,
+      apiKey: 'sk-ant-oat-test',
       oauthTokenEnv: 'OAUTH_TOKEN_ENV',
     };
     const deps = makeDeps([]);
     const adapter = new PiAgentAdapter(deps as never);
-    await expect(adapter.startup(startupArgs({ resolved: oauthResolved }))).rejects.toThrow(
-      /key-auth/,
-    );
+    await expect(adapter.startup(startupArgs({ resolved: oauthResolved }))).resolves.toBeDefined();
   });
 
   it('rejects a model id missing from the provider catalog', async () => {
@@ -488,112 +487,6 @@ describe('PiAgentAdapter.startup — P2 tool mounts and P3 guards', () => {
     // Serial execution pinned — SDK in-process MCP tools run serially.
     expect(captured.config?.toolExecution).toBe('sequential');
   });
-
-  it('rejects skills / agents / hooks / nativeCompaction at startup (P3 surfaces)', async () => {
-    const deps = makeDeps([]);
-    const adapter = new PiAgentAdapter(deps as never);
-    const base = startupArgs({ piToolMounts: [customMount('mcp__loom__x')] });
-
-    const skillsArgs = startupArgs({ piToolMounts: [customMount('mcp__loom__x')] });
-    skillsArgs.options.skills = ['quiz-gen-pack'];
-    await expect(adapter.startup(skillsArgs)).rejects.toThrow(/cannot serve skills/);
-
-    const agentsArgs = startupArgs({ piToolMounts: [customMount('mcp__loom__x')] });
-    agentsArgs.options.agents = { scout: { description: 'd', prompt: 'p' } } as never;
-    await expect(adapter.startup(agentsArgs)).rejects.toThrow(/agents/);
-
-    const hooksArgs = startupArgs({ piToolMounts: [customMount('mcp__loom__x')] });
-    hooksArgs.options.hooks = { PreToolUse: [] } as never;
-    await expect(adapter.startup(hooksArgs)).rejects.toThrow(/hooks/);
-
-    const compactArgs = startupArgs({ piToolMounts: [customMount('mcp__loom__x')] });
-    compactArgs.options.settings = { autoCompactEnabled: true } as never;
-    await expect(adapter.startup(compactArgs)).rejects.toThrow(/nativeCompaction/);
-
-    // Sanity: the unmodified base starts fine.
-    await adapter.startup(base);
-  });
-});
-
-describe('PiPreparedQuery — beforeToolCall (canUseTool parity)', () => {
-  async function captureBeforeToolCall(canUseTool: NonNullable<Options['canUseTool']>) {
-    const captured: Partial<CapturedLoop> = {};
-    const deps = makeDeps([{ type: 'agent_end', messages: [piAssistant()] }], captured);
-    const adapter = new PiAgentAdapter(deps as never);
-    const args = startupArgs({
-      kind: 'DreamingTask',
-      piToolMounts: [customMount('mcp__loom__read_mistakes')],
-    });
-    args.options.canUseTool = canUseTool;
-    const prepared = await adapter.startup(args);
-    await drain(prepared.query('go'));
-    return captured.config?.beforeToolCall;
-  }
-
-  const callCtx = {
-    toolCall: { id: 'call_1', name: 'mcp__loom__read_mistakes' },
-    args: { q: 'x' },
-  } as never;
-
-  it('maps deny → {block:true, reason}', async () => {
-    const beforeToolCall = await captureBeforeToolCall(async () => ({
-      behavior: 'deny' as const,
-      message: 'spawn budget exhausted',
-    }));
-    expect(await beforeToolCall?.(callCtx, undefined)).toEqual({
-      block: true,
-      reason: 'spawn budget exhausted',
-    });
-  });
-
-  it('maps deny + interrupt → {block:true, terminate:true} (pi hard-stop)', async () => {
-    const beforeToolCall = await captureBeforeToolCall(async () => ({
-      behavior: 'deny' as const,
-      message: 'hard stop',
-      interrupt: true,
-    }));
-    expect(await beforeToolCall?.(callCtx, undefined)).toEqual({
-      block: true,
-      reason: 'hard stop',
-      terminate: true,
-    });
-  });
-
-  it('maps allow → undefined (no block)', async () => {
-    const beforeToolCall = await captureBeforeToolCall(async () => ({
-      behavior: 'allow' as const,
-    }));
-    expect(await beforeToolCall?.(callCtx, undefined)).toBeUndefined();
-  });
-
-  it('maps a null decision to a closed block (no out-of-band channel on pi)', async () => {
-    const beforeToolCall = await captureBeforeToolCall(async () => null);
-    expect(await beforeToolCall?.(callCtx, undefined)).toMatchObject({ block: true });
-  });
-
-  it('throws loudly on allow+updatedInput (argument rewriting is P3)', async () => {
-    const beforeToolCall = await captureBeforeToolCall(async () => ({
-      behavior: 'allow' as const,
-      updatedInput: { q: 'rewritten' },
-    }));
-    await expect(beforeToolCall?.(callCtx, undefined)).rejects.toThrow(/updatedInput/);
-  });
-
-  it('threads toolCall name/id into the SDK-shaped callback args', async () => {
-    const seen: Array<{ toolName: string; input: unknown; toolUseID?: string }> = [];
-    const beforeToolCall = await captureBeforeToolCall(async (toolName, input, opts) => {
-      seen.push({ toolName, input, toolUseID: opts.toolUseID });
-      return { behavior: 'allow' as const };
-    });
-    await beforeToolCall?.(callCtx, undefined);
-    expect(seen).toEqual([
-      {
-        toolName: 'mcp__loom__read_mistakes',
-        input: { q: 'x' },
-        toolUseID: 'call_1',
-      },
-    ]);
-  });
 });
 
 describe('PiPreparedQuery — tool-loop frames and turn ceiling', () => {
@@ -784,7 +677,6 @@ describe('PiPreparedQuery — P3 skills injection', () => {
         { name: 'tone-pack', body: 'SECOND BODY: keep it short.' },
       ],
     });
-    args.options.skills = ['quiz-gen-pack', 'tone-pack'];
     const prepared = await adapter.startup(args);
     await drain(prepared.query('go'));
     expect(captured.context?.systemPrompt).toBe(
@@ -793,23 +685,11 @@ describe('PiPreparedQuery — P3 skills injection', () => {
         '<skill name="tone-pack">\nSECOND BODY: keep it short.\n</skill>',
     );
   });
-
-  it('fails closed when a declared skill has no resolved body', async () => {
-    const deps = makeDeps([]);
-    const adapter = new PiAgentAdapter(deps as never);
-    const args = startupArgs({
-      piToolMounts: [customMount('mcp__loom__x')],
-      piSkillDocs: [{ name: 'quiz-gen-pack', body: 'x' }],
-    });
-    args.options.skills = ['quiz-gen-pack', 'missing-pack'];
-    await expect(adapter.startup(args)).rejects.toThrow(/cannot serve skills \[missing-pack\]/);
-  });
 });
 
 describe('PiPreparedQuery — P3 native compaction (transformContext)', () => {
   const compactionArgs = () => {
     const args = startupArgs({ nativeCompaction: { sessionContext: 'BOUNDED LEARNER CTX' } });
-    args.options.settings = { autoCompactEnabled: true } as never;
     return args;
   };
 
@@ -995,7 +875,7 @@ describe('PiPreparedQuery — P3 hook bridge wiring', () => {
     return captured.config;
   }
 
-  it('runs piHooks.beforeToolCall before options.canUseTool (SDK order)', async () => {
+  it('runs piHooks.beforeToolCall entries in declaration order', async () => {
     const order: string[] = [];
     const args = startupArgs({
       kind: 'DreamingTask',
@@ -1006,20 +886,19 @@ describe('PiPreparedQuery — P3 hook bridge wiring', () => {
             order.push('piHook');
             return undefined;
           },
+          async () => {
+            order.push('second');
+            return undefined;
+          },
         ],
       },
     });
-    args.options.hooks = { PreToolUse: [] } as never;
-    args.options.canUseTool = async () => {
-      order.push('canUseTool');
-      return { behavior: 'allow' as const };
-    };
     const config = await captureConfig(args);
     await config?.beforeToolCall?.(callCtx, undefined);
-    expect(order).toEqual(['piHook', 'canUseTool']);
+    expect(order).toEqual(['piHook', 'second']);
   });
 
-  it('a blocking piHook short-circuits canUseTool entirely', async () => {
+  it('a blocking piHook result surfaces as { block, reason }', async () => {
     const order: string[] = [];
     const args = startupArgs({
       kind: 'DreamingTask',
@@ -1033,11 +912,6 @@ describe('PiPreparedQuery — P3 hook bridge wiring', () => {
         ],
       },
     });
-    args.options.hooks = { PreToolUse: [] } as never;
-    args.options.canUseTool = async () => {
-      order.push('canUseTool');
-      return { behavior: 'allow' as const };
-    };
     const config = await captureConfig(args);
     expect(await config?.beforeToolCall?.(callCtx, undefined)).toEqual({
       block: true,
@@ -1060,7 +934,6 @@ describe('PiPreparedQuery — P3 hook bridge wiring', () => {
         ],
       },
     });
-    args.options.hooks = { PreToolUse: [] } as never;
     const config = await captureConfig(args);
     await config?.beforeToolCall?.(callCtx, undefined);
     expect(seenSignal).toBeInstanceOf(AbortSignal);
@@ -1081,7 +954,6 @@ describe('PiPreparedQuery — P3 hook bridge wiring', () => {
         ],
       },
     });
-    args.options.hooks = { PostToolUse: [] } as never;
     const config = await captureConfig(args);
     const merged = await config?.afterToolCall?.(
       {
@@ -1219,9 +1091,7 @@ describe('PiPreparedQuery — P3 nested subagents (Task/Agent host)', () => {
         getFollowUpMessages: vi.fn(async () => []),
       },
     });
-    args.options.agents = {
-      scout: { description: 'read-only scout', prompt: SCOUT_PROMPT },
-    } as never;
+
     return { adapter, args, childCalls };
   }
 
