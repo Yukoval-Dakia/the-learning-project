@@ -1,15 +1,9 @@
-import type {
-  AgentDefinition,
-  CanUseTool,
-  HookCallback,
-  Options,
-} from '@anthropic-ai/claude-agent-sdk';
+import type { AgentDefinition } from './sdk-types';
 
-/** Compatibility name accepted by the SDK for starting a nested agent. */
+/** The wire name of the pi-mounted spawn tool. */
 export const SPAWN_TOOL_NAME = 'Task';
-/** The SDK emits `Agent`; `Task` remains a canonicalized compatibility alias. */
+/** `Agent` remains a canonicalized compatibility alias for `Task`. */
 export const SPAWN_TOOL_ALIASES = ['Agent', SPAWN_TOOL_NAME] as const;
-export const SPAWN_DISABLE_BACKGROUND_TASKS_ENV = 'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS';
 
 const SPAWN_TOOL_NAME_SET = new Set<string>(SPAWN_TOOL_ALIASES);
 
@@ -31,7 +25,7 @@ export type SpawnBudgetDecision =
 
 export interface SpawnBudgetObservation {
   mode: typeof SPAWN_BUDGET_MODE;
-  /** Shared correlation id exposed by both PreToolUse and canUseTool. */
+  /** Correlation id exposed by the beforeToolCall gate (the loop toolCall.id). */
   toolUseId: string;
   /** One-based position among distinct Task calls in this run. */
   ordinal: number;
@@ -55,18 +49,9 @@ export interface CreateSpawnContractOptions {
   agents: Record<string, AgentDefinition>;
   disabledReason?: string;
   /**
-   * Best-effort report-only sink. It fires once per distinct Task toolUseID, even when
-   * both SDK guard surfaces consult the same call.
+   * Best-effort report-only sink. It fires once per distinct Task toolUseID.
    */
   onBudgetObservation?: (observation: SpawnBudgetObservation) => void;
-}
-
-export interface SpawnContract {
-  /** Depth-one definitions: nested agents cannot invoke Task again. */
-  agents: Record<string, AgentDefinition>;
-  hooks: NonNullable<Options['hooks']>;
-  canUseTool: CanUseTool;
-  readBudgetReport(): SpawnBudgetReport;
 }
 
 const DEFAULT_DISABLED_REASON = 'subagent spawn kill switch is disabled';
@@ -81,8 +66,7 @@ function makeDepthOneAgent(definition: AgentDefinition): AgentDefinition {
     ...(definition.tools === undefined ? {} : { tools }),
     disallowedTools,
     // Every contract-managed spawn returns into its parent before that parent
-    // can complete. The runner uses this explicit value to scope the SDK flag
-    // without changing generic callers that intentionally define background agents.
+    // can complete.
     background: false,
   };
 }
@@ -97,9 +81,9 @@ function makeDepthOneAgents(
 
 /**
  * Depth-one reduction applied by the shared contract — strips spawn tools from
- * `tools`, adds them to `disallowedTools`, pins `background:false`. Exported for
- * the pi lane (YUK-1022), which reuses the same reduced definitions when it
- * builds its Task/Agent tool instead of Options.agents.
+ * `tools`, adds them to `disallowedTools`, pins `background:false`. The pi
+ * subagent host consumes the reduced definitions when it builds the
+ * Task/Agent AgentTool.
  */
 export function toDepthOneAgents(
   agents: Record<string, AgentDefinition>,
@@ -109,9 +93,8 @@ export function toDepthOneAgents(
 
 /**
  * The engine-neutral half of the spawn contract (YUK-1022): memoized
- * per-toolUseId decisions plus the report-only budget ledger. Both engine
- * surfaces — SDK hooks/canUseTool and pi's beforeToolCall gate — consult this
- * one decider so callback order and duplicate consultations cannot
+ * per-toolUseId decisions plus the report-only budget ledger. The pi
+ * beforeToolCall gate consults this decider so duplicate consultations cannot
  * double-count or disagree.
  */
 export interface SpawnDecider {
@@ -171,7 +154,7 @@ export function createSpawnDecider(options: CreateSpawnContractOptions): SpawnDe
         decision: record.decision,
       });
     } catch (error) {
-      // Observability must not become a third permission layer. Existing SDK tool-call
+      // Observability must not become a third permission layer. The tool-call
       // and cost logging still owns authoritative execution/cost evidence.
       console.warn('[spawn-contract] budget observer failed (report-only)', {
         tool_use_id: toolUseId,
@@ -198,67 +181,5 @@ export function createSpawnDecider(options: CreateSpawnContractOptions): SpawnDe
         toolUseIds: entries.map(([toolUseId]) => toolUseId),
       };
     },
-  };
-}
-
-/**
- * Shared v2 nested-agent contract.
- *
- * Two SDK surfaces can inspect one Task call. Decisions are memoized by their common
- * toolUseID, so callback order and duplicate consultations cannot double-count or
- * disagree. The explicit kill switch and declared-agent/depth boundary can deny; the
- * budget path itself is intentionally report-only until production observations
- * justify a numeric policy.
- */
-export function createSpawnContract(
-  options: CreateSpawnContractOptions,
-  decider: SpawnDecider = createSpawnDecider(options),
-): SpawnContract {
-  const { decide } = decider;
-
-  function forceForegroundInput(input: unknown): Record<string, unknown> {
-    return {
-      ...(input !== null && typeof input === 'object' ? (input as Record<string, unknown>) : {}),
-      run_in_background: false,
-    };
-  }
-
-  const preToolUseHook: HookCallback = async (input) => {
-    if (input.hook_event_name !== 'PreToolUse' || !isSpawnToolName(input.tool_name)) {
-      return { continue: true };
-    }
-    const decision = decide(input.tool_use_id, input.tool_input);
-    if (decision.decision === 'allow') {
-      return {
-        continue: true,
-        hookSpecificOutput: {
-          hookEventName: 'PreToolUse',
-          updatedInput: forceForegroundInput(input.tool_input),
-        },
-      };
-    }
-    return {
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision: 'deny',
-        permissionDecisionReason: decision.message,
-      },
-    };
-  };
-
-  const canUseTool: CanUseTool = async (toolName, input, permissionOptions) => {
-    if (!isSpawnToolName(toolName)) return { behavior: 'allow' };
-    const decision = decide(permissionOptions.toolUseID, input);
-    if (decision.decision === 'allow') {
-      return { behavior: 'allow', updatedInput: forceForegroundInput(input) };
-    }
-    return { behavior: 'deny', message: decision.message ?? 'spawn denied by contract' };
-  };
-
-  return {
-    agents: makeDepthOneAgents(options.agents),
-    hooks: { PreToolUse: [{ hooks: [preToolUseHook] }] },
-    canUseTool,
-    readBudgetReport: decider.readBudgetReport,
   };
 }

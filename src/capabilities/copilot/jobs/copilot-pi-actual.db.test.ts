@@ -88,20 +88,13 @@ async function persistedCursor(sessionId: string) {
 
 describe.skipIf(!HAS_KEY)('pi copilot-lane actual-output gate (YUK-1022)', () => {
   beforeAll(async () => {
-    process.env.AI_ADAPTER_PI_KINDS = KIND;
-    process.env.AI_ADAPTER_PI_PROVIDER = 'opencode-go';
-    process.env.AI_ADAPTER_PI_MODEL = MODEL;
     __resetRegistryForTests();
     await registerCapabilityTools(capabilities);
   });
   beforeEach(async () => {
     await resetDb();
   });
-  afterAll(() => {
-    delete process.env.AI_ADAPTER_PI_KINDS;
-    delete process.env.AI_ADAPTER_PI_PROVIDER;
-    delete process.env.AI_ADAPTER_PI_MODEL;
-  });
+  afterAll(() => {});
 
   it('runs two durable copilot turns on the pi lane and resumes the pi: cursor', {
     timeout: 600_000,
@@ -130,6 +123,7 @@ describe.skipIf(!HAS_KEY)('pi copilot-lane actual-output gate (YUK-1022)', () =>
           triggered_by: 'chat',
         },
         resolveCopilotRunInputFn: recordingAssembler,
+        modelBinding: { provider: 'opencode-go', model: MODEL, adapter: 'pi' },
       });
     };
 
@@ -160,7 +154,7 @@ describe.skipIf(!HAS_KEY)('pi copilot-lane actual-output gate (YUK-1022)', () =>
         provider: 'opencode-go',
         model: MODEL,
         task_kind: KIND,
-        pin: 'env rollout (AI_ADAPTER_PI_KINDS/PROVIDER/MODEL), caller passes no modelBinding',
+        pin: 'explicit modelBinding (post-P4: the env rollout pin is gone)',
         worker_path: 'runCopilotRun → executeCopilotTurn (no seam mocks)',
       },
       session: {

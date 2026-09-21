@@ -35,8 +35,9 @@ import {
   question,
   source_document,
 } from '@/db/schema';
-import { DOMAIN_TOOL_MCP_SERVER_NAME, toMcpAllowedToolName } from '@/kernel/tools/allowlists';
+import { toMcpAllowedToolName } from '@/kernel/tools/allowlists';
 import { EXA_MCP_ALLOWED_TOOLS, EXA_MCP_SERVER_NAME } from '@/server/ai/mcp/exa';
+import type { PiToolMount } from '@/server/ai/tools/pi-tools';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { canonicalQuestionContentHash } from '../server/quiz/content-fingerprint';
 import {
@@ -54,11 +55,11 @@ const FAKE_TAVILY_CONFIG = {
   url: 'https://mcp.tavily.com/mcp/?tavilyApiKey=test',
 };
 
-// The ctx shape the handler passes to its runAgentTaskFn seam (db + mcpServers +
+// The ctx shape the handler passes to its runAgentTaskFn seam (db + piToolMounts +
 // allowedTools). Declared here so `mock.calls[0]` carries it (typed tuple).
 type AgentCtx = {
   db: unknown;
-  mcpServers?: Record<string, unknown>;
+  piToolMounts?: PiToolMount[];
   allowedTools?: string[];
 };
 
@@ -429,7 +430,6 @@ describe('runQuizGen', () => {
     const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_1');
     const enqueueQuizVerify = vi.fn(async () => {});
     const buildExaMcpServerFn = vi.fn(() => FAKE_TAVILY_CONFIG);
-    const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
     const supplyTrace = buildSupplyTrace(
       {
         targetId: 'target-quiz-1',
@@ -453,7 +453,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify,
       buildExaMcpServerFn,
-      buildMcpServerFn,
       supplyTrace,
     });
 
@@ -495,7 +494,7 @@ describe('runQuizGen', () => {
     expect(meta?.copy_safety).toMatchObject({ verdict: 'original', checked_by: 'agent_self' });
     expect(meta?.source_pack).toMatchObject({ tool: 'tavily' });
     expect(Array.isArray(meta?.source_refs)).toBe(true);
-    expect((meta?.source_refs as unknown[]).length).toBe(1);
+    expect(meta?.source_refs).toHaveLength(1);
     const difficultyEvidence = (q1?.metadata as Record<string, unknown>).difficulty_evidence;
     expect(difficultyEvidence).toMatchObject({
       value: q1?.difficulty,
@@ -607,7 +606,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn: agentMock(VALID_OUTPUT, 'tr-quiz-merge'),
       enqueueQuizVerify,
       buildExaMcpServerFn: () => FAKE_TAVILY_CONFIG,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
     });
 
     expect(result.question_ids).toHaveLength(1);
@@ -725,7 +723,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn: agentMock(replacementOutput, 'tr-quiz-replacement'),
       enqueueQuizVerify,
       buildExaMcpServerFn: () => null,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
     });
 
     expect(result.question_ids).toHaveLength(1);
@@ -787,7 +784,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn: agentMock(JSON.stringify(parsed), 'tr-intra-batch-duplicate'),
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: () => null,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
     });
 
     expect(result.question_ids).toHaveLength(1);
@@ -829,7 +825,6 @@ describe('runQuizGen', () => {
       count: 1,
       enqueueQuizVerify,
       buildExaMcpServerFn: () => null,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
       afterExactDuplicateLookupMiss: barrier,
     };
 
@@ -938,7 +933,6 @@ describe('runQuizGen', () => {
         runAgentTaskFn: agentMock(CLOSED_BOOK_OUTPUT, 'tr-raced', 0),
         enqueueQuizVerify,
         buildExaMcpServerFn: () => null,
-        buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
         afterExactDuplicateLookupMiss: async () => {
           await testDb()
             .insert(question)
@@ -993,7 +987,6 @@ describe('runQuizGen', () => {
           runAgentTaskFn: agentMock(output, 'tr-invalid-placement-output'),
           enqueueQuizVerify: vi.fn(async () => {}),
           buildExaMcpServerFn: () => null,
-          buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
         }),
       ).rejects.toBeInstanceOf(PlacementStarterUnknownCostError);
 
@@ -1053,7 +1046,6 @@ describe('runQuizGen', () => {
           runAgentTaskFn: agentMock(output, 'tr-known-invalid-placement-output', 0.01),
           enqueueQuizVerify: vi.fn(async () => {}),
           buildExaMcpServerFn: () => null,
-          buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
         }),
       ).rejects.toThrow(expectedError);
 
@@ -1106,7 +1098,6 @@ describe('runQuizGen', () => {
         runAgentTaskFn,
         enqueueQuizVerify: vi.fn(async () => {}),
         buildExaMcpServerFn: () => null,
-        buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
       }),
     ).rejects.toBeInstanceOf(PlacementStarterStaleAuthorityError);
 
@@ -1160,7 +1151,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn: agentMock(VALID_OUTPUT),
       enqueueQuizVerify,
       buildExaMcpServerFn: () => FAKE_TAVILY_CONFIG,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
     });
 
     expect(result.question_ids).toHaveLength(0);
@@ -1195,7 +1185,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
     });
 
     const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
@@ -1224,7 +1213,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify,
       buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
     });
 
     expect(result.status).toBe('ready');
@@ -1299,7 +1287,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
     });
 
     expect(result.question_ids).toHaveLength(2);
@@ -1335,7 +1322,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
     });
 
     const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
@@ -1375,7 +1361,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
     });
 
     const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
@@ -1394,7 +1379,6 @@ describe('runQuizGen', () => {
     await seedKnowledge({ id: 'k1' });
     const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_2');
     const buildExaMcpServerFn = vi.fn(() => FAKE_TAVILY_CONFIG);
-    const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
 
     await runQuizGen({
       db: testDb(),
@@ -1403,7 +1387,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn,
-      buildMcpServerFn,
     });
 
     expect(runAgentTaskFn).toHaveBeenCalledTimes(2);
@@ -1412,14 +1395,18 @@ describe('runQuizGen', () => {
     const [planKind] = runAgentTaskFn.mock.calls[0];
     expect(planKind).toBe('QuizPlanTask');
     const [, , planCtx] = runAgentTaskFn.mock.calls[0];
-    expect(planCtx.mcpServers).toHaveProperty(DOMAIN_TOOL_MCP_SERVER_NAME);
-    expect(planCtx.mcpServers).not.toHaveProperty(EXA_MCP_SERVER_NAME);
+    expect(planCtx.piToolMounts?.some((m) => m.type === 'domain')).toBe(true);
+    expect(planCtx.piToolMounts?.some((m) => m.type === 'remote-mcp')).toBe(false);
     const genCall = runAgentTaskFn.mock.calls.find(([kind]) => kind === 'QuizGenTask');
     expect(genCall).toBeDefined();
     const [taskKind, , ctx] = genCall as [string, unknown, AgentCtx];
     expect(taskKind).toBe('QuizGenTask');
-    expect(ctx.mcpServers).toHaveProperty(DOMAIN_TOOL_MCP_SERVER_NAME);
-    expect(ctx.mcpServers).toHaveProperty(EXA_MCP_SERVER_NAME);
+    expect(ctx.piToolMounts?.some((m) => m.type === 'domain')).toBe(true);
+    expect(
+      ctx.piToolMounts?.some(
+        (m) => m.type === 'remote-mcp' && m.serverName === EXA_MCP_SERVER_NAME,
+      ),
+    ).toBe(true);
     // domain read tools present...
     for (const name of QUIZ_GEN_READ_TOOLS) {
       expect(ctx.allowedTools).toContain(toMcpAllowedToolName(name));
@@ -1441,12 +1428,11 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
     });
 
     const [, , ctx] = runAgentTaskFn.mock.calls[0];
-    expect(ctx.mcpServers).toHaveProperty(DOMAIN_TOOL_MCP_SERVER_NAME);
-    expect(ctx.mcpServers).not.toHaveProperty(EXA_MCP_SERVER_NAME);
+    expect(ctx.piToolMounts?.some((m) => m.type === 'domain')).toBe(true);
+    expect(ctx.piToolMounts?.some((m) => m.type === 'remote-mcp')).toBe(false);
     for (const tool of EXA_MCP_ALLOWED_TOOLS) {
       expect(ctx.allowedTools).not.toContain(tool);
     }
@@ -1466,7 +1452,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
     });
 
     expect(result.status).toBe('ready');
@@ -1521,7 +1506,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
     });
 
     expect(result.status).toBe('ready');
@@ -1566,7 +1550,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn: agentMock(JSON.stringify(parsed), 'tr-ordered-fallback'),
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
     });
 
     const [row] = await testDb()
@@ -1598,7 +1581,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
     });
 
     const [, input] = runAgentTaskFn.mock.calls[0];
@@ -1619,7 +1601,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
     });
 
     const [, input] = runAgentTaskFn.mock.calls[0];
@@ -1641,7 +1622,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
     });
 
     expect(result.status).toBe('ready');
@@ -1661,7 +1641,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: () => null,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
     });
 
     const jobs = [
@@ -1705,7 +1684,6 @@ describe('runQuizGen', () => {
         runAgentTaskFn,
         enqueueQuizVerify,
         buildExaMcpServerFn: vi.fn(() => null),
-        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
       }),
     ).rejects.toThrow(
       /pinned generation_method='material_grounded' but agent produced 'search_grounded'/,
@@ -1735,7 +1713,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
     });
 
     expect(result.status).toBe('ready');
@@ -1776,7 +1753,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
     });
 
     expect(result.status).toBe('ready');
@@ -1818,7 +1794,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
     });
 
     // The run is skipped (archived node resolves to nothing), never reaching the agent.
@@ -1842,7 +1817,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify,
       buildExaMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
     });
 
     expect(result.status).toBe('ready');
@@ -1866,7 +1840,6 @@ describe('runQuizGen', () => {
         runAgentTaskFn,
         enqueueQuizVerify,
         buildExaMcpServerFn: vi.fn(() => null),
-        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
       }),
     ).rejects.toThrow(
       /item 1 plans kind 'short_answer' which does not match required kind 'reading'/,
@@ -1892,7 +1865,6 @@ describe('runQuizGen', () => {
         runAgentTaskFn,
         enqueueQuizVerify,
         buildExaMcpServerFn: vi.fn(() => null),
-        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
       }),
     ).rejects.toThrow(
       /item 1 plans kind 'short_answer' which does not match objective-only kind 'choice'/,
@@ -1920,7 +1892,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
     });
 
     expect(result.status).toBe('ready');
@@ -1948,7 +1919,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
     });
 
     expect(result.status).toBe('ready');
@@ -1974,7 +1944,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
     });
 
     const [, input] = runAgentTaskFn.mock.calls[0];
@@ -1988,7 +1957,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: () => null,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
     });
 
     const jobs = [
@@ -2011,7 +1979,6 @@ describe('runQuizGen', () => {
       runAgentTaskFn,
       enqueueQuizVerify,
       buildExaMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
     });
 
     expect(result.status).toBe('skipped:ref_not_found');
@@ -2034,7 +2001,6 @@ describe('runQuizGen', () => {
         runAgentTaskFn,
         enqueueQuizVerify,
         buildExaMcpServerFn: vi.fn(() => null),
-        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
       }),
     ).rejects.toThrow(/parseOutput/);
 
@@ -2076,7 +2042,6 @@ describe('runQuizGen', () => {
   const planAwareDeps = () => ({
     enqueueQuizVerify: vi.fn(async () => {}),
     buildExaMcpServerFn: vi.fn(() => null),
-    buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
   });
 
   it('(a) plan gate rejects an invalid plan (missing anchor / unknown KC) WITHOUT invoking generation', async () => {
@@ -2260,7 +2225,6 @@ describe('buildQuizGenHandler', () => {
       runAgentTaskFn,
       enqueueQuizVerify,
       buildExaMcpServerFn: () => null,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
     });
 
     const jobs = [
@@ -2287,7 +2251,6 @@ describe('buildQuizGenHandler', () => {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: () => null,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
       now: () => now,
     });
 
@@ -2357,7 +2320,6 @@ describe('buildQuizGenHandler', () => {
       runAgentTaskFn: runAgentTaskFn as never,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: () => null,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
     });
 
     const job = {
@@ -2410,7 +2372,6 @@ describe('buildQuizGenHandler', () => {
       runAgentTaskFn: runAgentTaskFn as never,
       enqueueQuizVerify: vi.fn(async () => {}),
       buildExaMcpServerFn: () => null,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
     });
 
     await expect(

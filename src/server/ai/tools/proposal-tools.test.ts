@@ -38,7 +38,7 @@ import {
   rollbackTestTransaction,
   testDb,
 } from '../../../../tests/helpers/db';
-import { buildMcpServerFromRegistry } from './mcp-bridge';
+import { buildPiDomainAgentTools } from './pi-tools';
 import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, getTool, listTools } from './registry';
 
@@ -51,20 +51,8 @@ vi.mock('@/server/ai/runner', () => ({
 }));
 
 // PR #219 review fix — exercise the rubric-reject logging via the REAL bridge.
-// Mock the Agent SDK so `tool()` captures the handler instead of spawning Claude
-// (same pattern as mcp-bridge.integration.test.ts).
-const mockSdk = vi.hoisted(() => ({
-  toolDefs: [] as Array<{ name: string; handler: (args: unknown) => Promise<unknown> }>,
-}));
-
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  createSdkMcpServer: vi.fn((opts: unknown) => ({ type: 'sdk', instance: opts })),
-  tool: vi.fn((name: string, _desc: string, _schema: unknown, handler: unknown) => {
-    const def = { name, handler } as (typeof mockSdk.toolDefs)[number];
-    mockSdk.toolDefs.push(def);
-    return def;
-  }),
-}));
+// Pi lane: buildPiDomainAgentTools compiles the same registry tools into
+// AgentTools; execute(callId, args) runs the identical shared pipeline.
 
 const BASE = new Date('2026-05-28T00:00:00.000Z');
 
@@ -973,7 +961,6 @@ describe('P5.4 rubric enforcement — propose_knowledge_edge', () => {
     await beginTestTransaction();
     __resetRegistryForTests();
     mockRunner.runTask.mockReset();
-    mockSdk.toolDefs = [];
   });
 
   afterEach(rollbackTestTransaction);
@@ -1030,18 +1017,18 @@ describe('P5.4 rubric enforcement — propose_knowledge_edge', () => {
     await seedKnowledgeGraph();
 
     // Drive the tool through the REAL bridge so we exercise the same logging
-    // path Copilot/Dreaming/Coach use. The Agent SDK is mocked (see top of file)
-    // so `tool()` captures the handler; we invoke it directly.
+    // path Copilot/Dreaming/Coach use — the pi AgentTool runs the identical
+    // shared pipeline.
     await registerCapabilityTools(capabilities);
-    buildMcpServerFromRegistry({
+    const agentTools = buildPiDomainAgentTools({
       ctx: ctx(),
       serverName: 'loom_v2',
       toolNames: ['propose_knowledge_edge'],
     });
-    const def = mockSdk.toolDefs.find((d) => d.name === 'propose_knowledge_edge');
-    if (!def) throw new Error('propose_knowledge_edge not wired into the mocked SDK');
+    const def = agentTools.find((t) => t.name === 'mcp__loom_v2__propose_knowledge_edge');
+    if (!def) throw new Error('propose_knowledge_edge not wired');
 
-    const result = (await def.handler({
+    const result = (await def.execute('call_test', {
       from_knowledge_id: 'k_zhi',
       to_knowledge_id: 'k_er',
       relation_type: 'related_to',
@@ -1158,7 +1145,6 @@ describe('P5.6 suggestion_kind on propose tools (YUK-178)', () => {
     await beginTestTransaction();
     __resetRegistryForTests();
     mockRunner.runTask.mockReset();
-    mockSdk.toolDefs = [];
   });
 
   afterEach(rollbackTestTransaction);

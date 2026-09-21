@@ -1,7 +1,7 @@
 // YUK-987 (985/E2) — supply_planner handler 行为测试（db 分区）。
 //
 // hermetic 契约：每个 db 测在 beforeEach resetDb()。LLM 用 fake runAgentTaskFn
-// （罐头 plan JSON / 捕获 input 断言重试反馈）；MCP 挂载用 stub buildMcpServerFn
+// （罐头 plan JSON / 捕获 input 断言重试反馈）；MCP 挂载经 ctx.piToolMounts 捕获
 // （fake runner 不消费）。扫描器（discoverSupplyTargets）走真 db——shadow 对比
 // 的正确性依赖真确定性扫描输出。
 //
@@ -19,7 +19,6 @@ import {
   placement_starter_claim,
   question,
 } from '@/db/schema';
-import type { SdkMcpServer } from '@/server/ai/tools/mcp-bridge';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { type SupplyPlannerDeps, runSupplyPlanner } from './supply_planner';
 
@@ -171,7 +170,6 @@ function fakeDeps(planTexts: string[]): {
   let i = 0;
   const deps: SupplyPlannerDeps = {
     now: () => NOW,
-    buildMcpServerFn: (() => ({}) as SdkMcpServer) as SupplyPlannerDeps['buildMcpServerFn'],
     runAgentTaskFn: (kind, input) => {
       calls.push({ kind, input: input as Record<string, unknown> });
       const text = planTexts[Math.min(i, planTexts.length - 1)] ?? '';

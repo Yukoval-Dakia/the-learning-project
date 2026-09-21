@@ -1,26 +1,25 @@
 // Provider Manager — single source of truth for which upstream serves each
 // AI task. The registry (src/ai/registry.ts) declares `defaultProvider +
 // defaultModel` per task; `resolveTaskProvider()` looks up the provider here
-// and returns a ResolvedProvider for the Claude Agent SDK runner to forward
-// into the spawned `claude` subprocess.
+// and returns a ResolvedProvider; the pi adapter maps it to a loom catalog
+// entry (pi-models.ts PROVIDER_PI_CATALOG_SPECS) for the in-process agentLoop.
 //
 // Two auth modes (YUK-365):
 //   - authMode 'key'   — a bearer / x-api-key value (ANTHROPIC_API_KEY style),
-//     optionally with a baseUrl override (xiaomi/mimo). The runner forwards it
-//     as ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY. This is the default + the only
-//     pre-YUK-365 behaviour, preserved exactly.
+//     optionally with a baseUrl override (xiaomi/mimo). The pi catalog entry
+//     carries the baseUrl; the resolved key feeds pi's credential wiring.
+//     This is the default + the only pre-YUK-365 behaviour, preserved exactly.
 //   - authMode 'oauth' — a long-lived subscription OAuth token (the owner's
 //     Claude Max sub, generated via `claude setup-token`). It works ONLY against
 //     Anthropic's first-party endpoint and is MUTUALLY EXCLUSIVE with any
 //     ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN (precedence:
-//     ANTHROPIC_API_KEY > CLAUDE_CODE_OAUTH_TOKEN). The runner therefore SETS
-//     CLAUDE_CODE_OAUTH_TOKEN and explicitly UNSETS the three conflicting vars in
-//     the subprocess env block (see runner.ts buildAgentEnv).
+//     ANTHROPIC_API_KEY > CLAUDE_CODE_OAUTH_TOKEN). resolveTaskProvider returns
+//     the token as the resolved credential; pi's Anthropic driver sends
+//     `sk-ant-oat*` values as Bearer automatically (pi-models.ts).
 //
 // Pre-2026-05-17 this module returned a Vercel AI SDK `LanguageModel`
-// instance; the migration to @anthropic-ai/claude-agent-sdk replaces that
-// with a plain config record because the SDK accepts no model handle —
-// it reads its target from env vars when spawning the CLI.
+// instance; it now returns a plain config record — pi owns the wire protocol
+// and resolves the model from the loom catalog entry, no model handle needed.
 //
 // Adding a new key-auth provider: append an entry to PROVIDERS with
 // authMode:'key', set the env-var name + baseURL. Adding a new task: edit
@@ -93,11 +92,10 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
     baseUrl: 'https://api.xiaomimimo.com/anthropic',
     apiKeyEnv: 'XIAOMI_API_KEY',
     description: 'Xiaomi Mimo Anthropic-protocol-compat endpoint (mimo-v2.5* models)',
-    // YUK-924 site 2 — Xiaomi's Anthropic-compatible endpoint does not implement
-    // the Agent SDK's native structured-output protocol (passing outputFormat
-    // makes the CLI loop until maxTurns), so EVERY model on this lane has
-    // structuredOutput disabled. (Was the hard-coded
-    // `resolved.provider === 'xiaomi'` check in runner.ts buildQueryOptions.)
+    // YUK-924 site 2 — Xiaomi's Anthropic-compatible endpoint never honoured a
+    // transport-level structured-output contract, so EVERY model on this lane
+    // has structuredOutput disabled; structured extraction stays app-level
+    // (Zod parse of the result text, with char-scan fallbacks downstream).
     modelDefaults: { capabilities: { structuredOutput: false } },
     models: {
       // Catalog (models.dev) lists mimo-v2.5-pro as text-only, but production
@@ -159,25 +157,23 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
     apiKeyEnv: 'OPENAI_API_KEY',
     description: 'OpenAI direct (placeholder; not wired)',
   },
-  // YUK-921 P1 — OpenCode Go subscription lane (opencode.ai/zen/go). Served ONLY
-  // through the pi execution adapter (Adapter B): the catalog's target models
-  // speak openai-completions/openai-responses, which the Claude Agent SDK's
-  // Anthropic-protocol subprocess cannot address — so this provider is absent
-  // from IMPLEMENTED_KEY_PROVIDERS and lives in PI_LANE_PROVIDERS instead. The
-  // pi builtin provider owns baseUrl/model catalog/auth; this entry only
-  // declares the loom-side credential + capability classification. Every
-  // request additionally needs an x-opencode-session header (injected by the
-  // pi adapter from the run id — see pi-agent-adapter.ts).
+  // YUK-921 P1 — OpenCode Go subscription lane (opencode.ai/zen/go). The
+  // catalog's target models speak openai-completions/openai-responses; served
+  // by the pi adapter's builtin 'opencode-go' provider, which owns
+  // baseUrl/model catalog/auth. This entry only declares the loom-side
+  // credential + capability classification. Every request additionally needs
+  // an x-opencode-session header (injected by the pi adapter from the run id —
+  // see pi-agent-adapter.ts).
   'opencode-go': {
     authMode: 'key',
     baseUrl: 'https://opencode.ai/zen/go',
     apiKeyEnv: 'OPENCODE_API_KEY',
     description: 'OpenCode Go subscription catalog via the pi execution adapter',
     modelDefaults: {
-      // The lane still has no SDK structured-output protocol, and tool calling
-      // stays opt-in per model below: declare both false explicitly (not
-      // 'unknown') so the capability gate rejects with an honest classification,
-      // not a gap.
+      // The lane has no transport-level structured-output contract, and tool
+      // calling stays opt-in per model below: declare both false explicitly
+      // (not 'unknown') so the capability gate rejects with an honest
+      // classification, not a gap.
       capabilities: { structuredOutput: false, toolCalling: false },
       // pi usage.cost is a catalog-rate estimate, not a contractual invoice
       // (design §6 R1): never metered.
@@ -277,22 +273,50 @@ export function isProviderLaneReady(provider: Provider): boolean {
 // openai are reserved-but-not-implemented (their wire shapes differ) and `resolveTaskProvider`
 // throws for them below. 'anthropic-sub' is the OAuth lane (handled before the key branch), so it
 // is NOT in this key-auth set; `isProviderImplemented` folds it back in via `isOauthProvider`.
-const IMPLEMENTED_KEY_PROVIDERS: ReadonlySet<Provider> = new Set(['anthropic', 'xiaomi', 'zhipu']);
+// YUK-921 P4 (YUK-1025) — post-SDK-retirement the pi adapter serves every
+// implemented provider: 'opencode-go' joined the key-auth set when Adapter A
+// was deleted (its pi-builtin catalog + per-request apiKey already worked).
+const IMPLEMENTED_KEY_PROVIDERS: ReadonlySet<Provider> = new Set([
+  'anthropic',
+  'xiaomi',
+  'zhipu',
+  'opencode-go',
+]);
 
 /**
- * YUK-921 P1 — providers served ONLY through the pi execution adapter
- * (Adapter B, @earendil-works/pi-agent-core agentLoop + pi-ai Models). Their
- * catalogs speak openai-completions/openai-responses wire shapes the Claude
- * Agent SDK subprocess cannot address, so they are deliberately absent from
- * IMPLEMENTED_KEY_PROVIDERS: the SDK adapter fails closed on them at
- * `resolveExecutionAdapter`, and a pi-pinned binding is the only way through.
+ * YUK-921 P4 — providers whose pi model catalog is a loom-authored custom
+ * registration (pi-models.ts `createLoomPiModels`), not a pi builtin. The
+ * builtin 'opencode-go'/'anthropic' entries match our wiring byte-for-byte;
+ * these three don't:
+ *   - xiaomi / zhipu are Anthropic-protocol COMPAT endpoints (pi's own
+ *     'xiaomi'/'zai-coding-cn' builtins speak openai-completions — wrong wire);
+ *   - 'anthropic-sub' is the OAuth Bearer lane (CLAUDE_CODE_OAUTH_TOKEN →
+ *     the anthropic-messages driver detects sk-ant-oat* and switches to Bearer).
+ * `catalogProvider` names the bucket inside model-catalog.snapshot.json the
+ * model entries derive from.
  */
-export const PI_LANE_PROVIDERS: ReadonlySet<Provider> = new Set(['opencode-go']);
-
-/** Predicate form of `PI_LANE_PROVIDERS` for readability at call sites. */
-export function isPiLaneProvider(provider: Provider): boolean {
-  return PI_LANE_PROVIDERS.has(provider);
-}
+export const PROVIDER_PI_CATALOG_SPECS: Readonly<
+  Record<string, { catalogProvider: string; baseUrl: string; credentialEnv: string; name: string }>
+> = {
+  xiaomi: {
+    catalogProvider: 'xiaomi',
+    baseUrl: PROVIDERS.xiaomi.authMode === 'key' ? (PROVIDERS.xiaomi.baseUrl ?? '') : '',
+    credentialEnv: 'XIAOMI_API_KEY',
+    name: 'Xiaomi Mimo (Anthropic-compat)',
+  },
+  zhipu: {
+    catalogProvider: 'zhipuai-coding-plan',
+    baseUrl: PROVIDERS.zhipu.authMode === 'key' ? (PROVIDERS.zhipu.baseUrl ?? '') : '',
+    credentialEnv: 'ZHIPU_API_KEY',
+    name: 'Zhipu GLM coding plan (Anthropic-compat)',
+  },
+  'anthropic-sub': {
+    catalogProvider: 'anthropic',
+    baseUrl: 'https://api.anthropic.com',
+    credentialEnv: 'CLAUDE_CODE_OAUTH_TOKEN',
+    name: 'Anthropic first-party (Claude Max OAuth)',
+  },
+};
 
 /**
  * YUK-608 — is `provider` actually wired to a working endpoint (vs reserved-but-not-implemented)?
@@ -347,9 +371,11 @@ export function crossoverModelForProvider(provider: Provider, kind: TaskKind): s
 
 /**
  * Resolved provider binding handed to the runner. Discriminated on `authMode`:
- *   - 'key'   → { apiKey, baseUrl? } forwarded as ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL.
- *   - 'oauth' → { oauthTokenEnv } whose value the runner SETS as CLAUDE_CODE_OAUTH_TOKEN
- *               while UNSETTING ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN.
+ *   - 'key'   → { apiKey, baseUrl? } — the credential value, resolved once here.
+ *   - 'oauth' → { apiKey } carries the subscription token VALUE (read once from
+ *               `oauthTokenEnv`); pi's anthropic-messages driver detects the
+ *               `sk-ant-oat*` shape and switches to Bearer auth + Claude Code
+ *               identity headers against the first-party endpoint.
  */
 export type ResolvedProvider =
   | {
@@ -357,14 +383,16 @@ export type ResolvedProvider =
       provider: Provider;
       model: string;
       apiKey: string;
-      /** undefined for Anthropic direct (uses SDK default). */
+      /** undefined for Anthropic direct (uses the catalog default). */
       baseUrl?: string;
     }
   | {
       authMode: 'oauth';
       provider: Provider;
       model: string;
-      /** Env-var NAME the runner reads to populate CLAUDE_CODE_OAUTH_TOKEN. */
+      /** Resolved subscription token value — passed as the per-request apiKey. */
+      apiKey: string;
+      /** Env-var NAME the token was read from (diagnostics only). */
       oauthTokenEnv: string;
     };
 
@@ -480,6 +508,7 @@ export function resolveTaskProvider(
       authMode: 'oauth',
       provider: providerName,
       model: modelId,
+      apiKey: token,
       oauthTokenEnv: config.oauthTokenEnv,
     };
   }
@@ -500,9 +529,9 @@ export function resolveTaskProvider(
   // (single source of truth, also read by override pre-flights). YUK-921 P1:
   // pi-lane providers (opencode-go) resolve here — the execution-adapter gate
   // is what rejects them for SDK-routed runs, not this credential check.
-  if (!isProviderImplemented(providerName) && !isPiLaneProvider(providerName)) {
+  if (!isProviderImplemented(providerName)) {
     throw new Error(
-      `Provider '${providerName}' is reserved but not implemented; only 'anthropic', 'xiaomi', 'zhipu', 'anthropic-sub' (subscription OAuth), and 'opencode-go' (pi adapter) are wired.`,
+      `Provider '${providerName}' is reserved but not implemented; only 'anthropic', 'xiaomi', 'zhipu', 'anthropic-sub' (subscription OAuth), and 'opencode-go' are wired.`,
     );
   }
 

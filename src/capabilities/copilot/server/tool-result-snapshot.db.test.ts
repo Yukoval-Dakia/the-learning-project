@@ -1,4 +1,3 @@
-import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { capabilities } from '@/capabilities';
 import { knowledge } from '@/db/schema';
@@ -189,7 +188,7 @@ describe('result snapshots use real registered domain output contracts', () => {
         validateLearningContent: validate,
         resolveArtifactReference: async () => null,
       });
-      const pre = finalizer.hooks.PreToolUse?.[0].hooks[0] as HookCallback;
+      const pre = finalizer.piHooks.beforeToolCall[0];
       const nomination = { source: 'tool_result', ref: { kind: name, id: 'read-42' } };
       for (const observation of [
         { name, effect: 'read' as const, tool_use_id: 'read-42', output },
@@ -201,17 +200,9 @@ describe('result snapshots use real registered domain output contracts', () => {
         },
       ]) {
         await pre(
-          {
-            hook_event_name: 'PreToolUse',
-            session_id: 'sdk-42',
-            transcript_path: '/tmp/transcript',
-            cwd: '/tmp',
-            tool_name: `mcp__loom__${observation.name}`,
-            tool_use_id: observation.tool_use_id,
-            tool_input: observation.name === name ? intent : {},
-          },
-          observation.tool_use_id,
-          { signal: new AbortController().signal },
+          { id: observation.tool_use_id, name: `mcp__loom__${observation.name}` },
+          (observation.name === name ? intent : {}) as Record<string, unknown>,
+          new AbortController().signal,
         );
         finalizer.observeDomainTool({
           ...observation,

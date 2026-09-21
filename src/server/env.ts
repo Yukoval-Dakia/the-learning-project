@@ -4,9 +4,6 @@ import { z } from 'zod';
 const optionalString = z.string().optional();
 
 const server = {
-  AI_ADAPTER_PI_KINDS: optionalString,
-  AI_ADAPTER_PI_MODEL: optionalString,
-  AI_ADAPTER_PI_PROVIDER: optionalString,
   AI_PROVIDER_ATTEMPT_ADMISSION_MODE: optionalString,
   AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON: optionalString,
   AI_PROVIDER_MODEL: optionalString,
@@ -28,6 +25,9 @@ const server = {
   AUDIT_READ_DATABASE_URL: z.string().url().optional(),
   BACKUP_IMPORT_MAX_BYTES: optionalString,
   B3_GATE_CONFIRM_CLONE: optionalString,
+  // YUK-590 parity knob honoured by the pi adapter's retry cap (was the SDK
+  // subprocess env; now read in-process — see pi-agent-adapter.ts).
+  CLAUDE_CODE_MAX_RETRIES: optionalString,
   CLAUDE_CODE_OAUTH_TOKEN: optionalString,
   CONFUSABLE_CONTRAST_ENABLED: optionalString,
   COPILOT_NUDGE_DAILY_MAX: optionalString,

@@ -70,7 +70,7 @@ export type LaneFallbackTaskKind = 'StepsJudgeTask' | 'MultimodalDirectJudgeTask
 export async function runTaskWithLaneFallback<T>({
   kind,
   input,
-  /** ctx keys other than `override` (db / subjectProfile / enableTransientRetry / outputFormat). */
+  /** ctx keys other than `override` (db / subjectProfile / enableTransientRetry / modelBinding). */
   baseCtx,
   runTaskFn,
 }: {

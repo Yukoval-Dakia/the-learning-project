@@ -1,5 +1,5 @@
-import type { SDKAssistantMessage, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { LifecycleUsage, ObservedRunUsage, TerminalResultEvidence } from './run-lifecycle';
+import type { SDKAssistantMessage, SDKMessage } from './sdk-types';
 
 type RawSdkUsage = {
   readonly input_tokens?: number | null;

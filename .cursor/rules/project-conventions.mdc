@@ -34,7 +34,7 @@ Skip for: pure docs / pure backend / pure schema / pure test / work inside an al
 - pg-boss worker as separate process (`scripts/worker.ts`)
 - Postgres + Drizzle (postgresql dialect, postgres driver); **no Redis**
 - R2/S3 blob via `@aws-sdk/client-s3` (`src/server/r2.ts`)
-- Claude Agent SDK via mimo Anthropic-compatible endpoint; self-hosted Node, NOT Vercel
+- Pi agent engine (`@earendil-works/pi-agent-core`) via mimo Anthropic-compatible endpoint; self-hosted Node, NOT Vercel（Claude Agent SDK 已于 YUK-1025 退役）
 - Switchable AI provider lane (YUK-365): default mimo-v2.5; `AI_PROVIDER_OVERRIDE=anthropic-sub`
   → Opus 4.8 via owner's Claude Max OAuth. **Token + override must be visible to ALL THREE
   processes** (API / Vite / worker). OAuth lane: set `CLAUDE_CODE_OAUTH_TOKEN`, unset

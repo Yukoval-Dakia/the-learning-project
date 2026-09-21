@@ -18,7 +18,6 @@ import {
 describe('runDreamingNightly', () => {
   it('runs DreamingTask with the generic MCP bridge and dreaming allowlist', async () => {
     const db = {} as never;
-    const mcpServer = { name: 'fake-loom' } as never;
     const listProposalInboxRowsFn = vi
       .fn()
       .mockResolvedValueOnce([{ id: 'p_before', status: 'pending' }])
@@ -26,7 +25,6 @@ describe('runDreamingNightly', () => {
         { id: 'p_before', status: 'pending' },
         { id: 'p_new', status: 'pending' },
       ]);
-    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
     const runAgentTaskFn = vi.fn(async () => ({
       task_run_id: 'task_dreaming_1',
       text: 'done',
@@ -38,7 +36,6 @@ describe('runDreamingNightly', () => {
 
     const result = await runDreamingNightly(db, {
       listProposalInboxRowsFn,
-      buildMcpServerFn,
       runAgentTaskFn,
       writeEventFn,
       // YUK-143 — North-Star: stub the active-goals reader so these no-DB unit
@@ -60,7 +57,16 @@ describe('runDreamingNightly', () => {
       pending_after: 2,
       task_run_id: 'task_dreaming_1',
     });
-    expect(buildMcpServerFn).toHaveBeenCalledWith(
+    const __mount = (
+      (runAgentTaskFn.mock.calls[0] as unknown as unknown[] | undefined)?.[2] as
+        | { piToolMounts?: { type: string; options?: BuildMcpServerOptions }[] }
+        | undefined
+    )?.piToolMounts?.[0];
+    if (__mount?.type !== 'domain' || !__mount.options) {
+      throw new Error('expected domain mount');
+    }
+    const buildOptions = __mount.options;
+    expect(buildOptions).toMatchObject(
       expect.objectContaining({
         serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
         toolNames: resolveDomainToolNames('dreaming'),
@@ -71,7 +77,6 @@ describe('runDreamingNightly', () => {
         }),
       }),
     );
-    const buildOptions = buildMcpServerFn.mock.calls[0]?.[0];
     if (!buildOptions?.beforeExecute) throw new Error('expected beforeExecute gate');
     if (!buildOptions.interceptInput) throw new Error('expected context-budget input interceptor');
     for (let i = 0; i < DREAMING_MAX_PROPOSALS; i++) {
@@ -124,7 +129,7 @@ describe('runDreamingNightly', () => {
       }),
       expect.objectContaining({
         budgetOverride: { maxIterations: DREAMING_CONTEXT_BUDGET.toolCalls.hard + 1 },
-        mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
+        piToolMounts: [expect.objectContaining({ type: 'domain' })],
         allowedTools: [...resolveMcpAllowedTools('dreaming')],
       }),
     );
@@ -155,7 +160,6 @@ describe('runDreamingNightly', () => {
     await expect(
       runDreamingNightly(db, {
         listProposalInboxRowsFn: vi.fn(async () => []),
-        buildMcpServerFn: vi.fn(() => ({}) as never),
         runAgentTaskFn: vi.fn(async () => {
           throw new Error('model down');
         }),
@@ -185,7 +189,6 @@ describe('runDreamingNightly', () => {
   // objective includes the goal-bias guidance. Purely additive (ND-5).
   it('threads active goals into the DreamingTask input with goal-bias objective', async () => {
     const db = {} as never;
-    const mcpServer = { name: 'fake-loom' } as never;
     const goals: ActiveGoal[] = [
       {
         id: 'goal_1',
@@ -205,7 +208,6 @@ describe('runDreamingNightly', () => {
       },
     ];
     const listProposalInboxRowsFn = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
-    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
     const runAgentTaskFn = vi.fn(async () => ({
       task_run_id: 'task_dreaming_goals',
       text: 'done',
@@ -216,7 +218,6 @@ describe('runDreamingNightly', () => {
 
     await runDreamingNightly(db, {
       listProposalInboxRowsFn,
-      buildMcpServerFn,
       runAgentTaskFn,
       writeEventFn,
       listActiveGoalsFn: async () => goals,
@@ -262,9 +263,7 @@ describe('runDreamingNightly', () => {
   // array, behaves exactly as before (additive-only guarantee, ND-5).
   it('emits empty active_goals when no goals are active (back-compat)', async () => {
     const db = {} as never;
-    const mcpServer = { name: 'fake-loom' } as never;
     const listProposalInboxRowsFn = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
-    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
     const runAgentTaskFn = vi.fn(async () => ({
       task_run_id: 'task_dreaming_no_goals',
       text: 'done',
@@ -275,7 +274,6 @@ describe('runDreamingNightly', () => {
 
     await runDreamingNightly(db, {
       listProposalInboxRowsFn,
-      buildMcpServerFn,
       runAgentTaskFn,
       writeEventFn,
       listActiveGoalsFn: async () => [],
@@ -301,7 +299,6 @@ describe('runDreamingNightly', () => {
   // the objective includes the acceptance-rate bias hint. Purely additive (ND-5).
   it('threads the acceptance-rate signal into the DreamingTask input with bias objective', async () => {
     const db = {} as never;
-    const mcpServer = { name: 'fake-loom' } as never;
     // P5.4-L2 / YUK-174 — the reader now returns the per-(kind, relation) digest;
     // the all-kind RATE the existing feed surfaces is rolled up from it (strict
     // subset). DREAMING_TOOLS spreads KNOWLEDGE_REVIEW_TOOLS, so knowledge_edge /
@@ -350,7 +347,6 @@ describe('runDreamingNightly', () => {
       },
     ];
     const listProposalInboxRowsFn = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
-    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
     const runAgentTaskFn = vi.fn(async () => ({
       task_run_id: 'task_dreaming_rates',
       text: 'done',
@@ -361,7 +357,6 @@ describe('runDreamingNightly', () => {
 
     await runDreamingNightly(db, {
       listProposalInboxRowsFn,
-      buildMcpServerFn,
       runAgentTaskFn,
       writeEventFn,
       listActiveGoalsFn: async () => [],
@@ -417,7 +412,6 @@ describe('runDreamingNightly', () => {
   // bounded, preserving the already-sorted order from getProposalAcceptanceRates.
   it('caps proposal_acceptance_rates to the top N kinds', async () => {
     const db = {} as never;
-    const mcpServer = { name: 'fake-loom' } as never;
     const manyRates = Array.from({ length: 14 }, (_, i) => ({
       kind: `kind_${i}`,
       relation: null,
@@ -429,7 +423,6 @@ describe('runDreamingNightly', () => {
       top_rubric_gates: [],
     }));
     const listProposalInboxRowsFn = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
-    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
     const runAgentTaskFn = vi.fn(async () => ({
       task_run_id: 'task_dreaming_cap',
       text: 'done',
@@ -440,7 +433,6 @@ describe('runDreamingNightly', () => {
 
     await runDreamingNightly(db, {
       listProposalInboxRowsFn,
-      buildMcpServerFn,
       runAgentTaskFn,
       writeEventFn,
       listActiveGoalsFn: async () => [],
@@ -466,9 +458,7 @@ describe('runDreamingNightly', () => {
   // behaves exactly as before (additive-only / no-op guarantee, ND-5).
   it('emits empty proposal_acceptance_rates on cold start (no-op back-compat)', async () => {
     const db = {} as never;
-    const mcpServer = { name: 'fake-loom' } as never;
     const listProposalInboxRowsFn = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
-    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
     const runAgentTaskFn = vi.fn(async () => ({
       task_run_id: 'task_dreaming_cold',
       text: 'done',
@@ -479,7 +469,6 @@ describe('runDreamingNightly', () => {
 
     await runDreamingNightly(db, {
       listProposalInboxRowsFn,
-      buildMcpServerFn,
       runAgentTaskFn,
       writeEventFn,
       listActiveGoalsFn: async () => [],
@@ -501,9 +490,7 @@ describe('runDreamingNightly', () => {
   // expiry/target (notes.test.ts covers that); here we only assert the wiring.
   it('injects agent_notes into the DreamingTask input and objective', async () => {
     const db = {} as never;
-    const mcpServer = { name: 'fake-loom' } as never;
     const listProposalInboxRowsFn = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
-    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
     const runAgentTaskFn = vi.fn(async () => ({
       task_run_id: 'task_dreaming_notes',
       text: 'done',
@@ -514,7 +501,6 @@ describe('runDreamingNightly', () => {
 
     await runDreamingNightly(db, {
       listProposalInboxRowsFn,
-      buildMcpServerFn,
       runAgentTaskFn,
       writeEventFn,
       listActiveGoalsFn: async () => [],

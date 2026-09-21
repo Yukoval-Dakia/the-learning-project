@@ -178,14 +178,11 @@ export const IMPORTED_FETCH_EXCEPTIONS = [
   },
 ] as const satisfies readonly ImportedFetchException[];
 
+// YUK-1025 — the Claude Agent SDK entry was removed with Adapter A: the pi
+// engine reaches providers via in-process dynamic imports (pi-ai), so no
+// production runtime import is declared here. Any `@anthropic-ai/claude-agent-sdk`
+// import is now always an unlisted violation (the dep is gone).
 export const PROVIDER_RUNTIME_SDK_IMPORTS = [
-  {
-    path: 'src/server/ai/execution-adapter.ts',
-    source: '@anthropic-ai/claude-agent-sdk',
-    disposition: 'central',
-    imported: 'startup',
-    local: 'sdkStartup',
-  },
   {
     path: 'src/server/memory/client.ts',
     source: 'mem0ai/oss',

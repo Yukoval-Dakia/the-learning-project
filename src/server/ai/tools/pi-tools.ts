@@ -23,9 +23,7 @@
 // Correlation: the SDK path needed createToolUseCorrelation's PreToolUse
 // hook to learn the tool_use_id. Pi hands `execute()` the native
 // toolCall.id, so the pi mount simply passes it as `correlatedToolUseId` —
-// `claimToolUseId` is intentionally not consulted on this lane.
 
-import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { z } from 'zod';
 import { zodToJsonSchemaCompat } from '@/kernel/zod-json-schema';
@@ -37,27 +35,24 @@ export function piToolWireName(serverName: string, toolName: string): string {
   return `mcp__${serverName}__${toolName}`;
 }
 
-/**
- * Declarative tool mount callers hand to the runner. The SDK lane keeps
- * consuming `ctx.mcpServers`; the pi lane consumes this list instead — a
- * caller that wants a kind to be pi-eligible supplies BOTH so the engine
- * gate, not the caller, picks the surface.
- */
+/** Loom-owned remote MCP config — the `{type:'http', url, headers}` subset the bridge consumes. */
+export interface RemoteMcpHttpConfig {
+  type: 'http';
+  url: string;
+  headers?: Record<string, string>;
+}
+
+/** Declarative tool mount callers hand to the runner. */
 export type PiToolMount =
   | {
       type: 'domain';
-      /**
-       * The same options object `buildMcpServerFromRegistry` accepts —
-       * pass the identical literal to both mounts. `claimToolUseId` is
-       * ignored on pi (the loop hands execute() the real toolCall.id).
-       */
+      /** Registry DomainTools compiled via {@link buildPiDomainAgentTools}. */
       options: BuildMcpServerOptions;
     }
   | {
       type: 'remote-mcp';
       serverName: string;
-      /** Remote MCP config — same shape the SDK's `mcpServers` entry takes. */
-      config: McpHttpServerConfig;
+      config: RemoteMcpHttpConfig;
       /** Upstream tool names to expose (mirrors the caller's allowedTools scope). */
       toolNames: readonly string[];
     }
@@ -65,9 +60,9 @@ export type PiToolMount =
       type: 'custom';
       /**
        * Escape hatch for tools that are NOT registered DomainTools — e.g.
-       * KnowledgeReviewTask's bespoke `write_proposal` (raw createSdkMcpServer
-       * on the SDK lane). The caller owns the AgentTool's execute body and
-       * must keep its logging semantics identical to the SDK wrapper.
+       * KnowledgeReviewTask's bespoke `write_proposal`, the agency evidence /
+       * director servers. The caller owns the AgentTool's execute body and
+       * must keep its logging semantics identical to the domain bridge.
        */
       tools: AgentTool[];
     };
@@ -77,10 +72,41 @@ export function piDomainMount(options: BuildMcpServerOptions): PiToolMount {
   return { type: 'domain', options };
 }
 
+/**
+ * Build one bespoke `AgentTool` for a `custom` mount — used by hand-rolled
+ * tool sets (evidence/director/review). Wire name is `mcp__<server>__<name>`;
+ * the zod raw shape compiles through the same zodToJsonSchemaCompat path as
+ * the domain bridge; the handler returns the MCP-shaped `{content}` payload.
+ */
+export function piCustomTool(
+  serverName: string,
+  name: string,
+  description: string,
+  schema: Record<string, z.ZodTypeAny>,
+  handler: (
+    args: Record<string, unknown>,
+  ) => Promise<{ content: { type: 'text'; text: string }[] }>,
+): AgentTool {
+  return {
+    name: piToolWireName(serverName, name),
+    label: name,
+    description,
+    parameters: zodToJsonSchemaCompat(z.object(schema), {
+      io: 'input',
+      reused: 'inline',
+      target: 'draft-07',
+    }) as AgentTool['parameters'],
+    execute: async (_toolCallId, params) => {
+      const result = await handler((params ?? {}) as Record<string, unknown>);
+      return { content: result.content, details: null };
+    },
+  };
+}
+
 /** Convenience constructor for a remote-MCP mount descriptor. */
 export function piRemoteMcpMount(
   serverName: string,
-  config: McpHttpServerConfig,
+  config: RemoteMcpHttpConfig,
   toolNames: readonly string[],
 ): PiToolMount {
   return { type: 'remote-mcp', serverName, config, toolNames };

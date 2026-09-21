@@ -1,10 +1,10 @@
+import { describe, expect, it } from 'vitest';
 import type {
   SDKTaskNotificationMessage,
   SDKTaskProgressMessage,
   SDKTaskStartedMessage,
   SDKTaskUpdatedMessage,
-} from '@anthropic-ai/claude-agent-sdk';
-import { describe, expect, it } from 'vitest';
+} from '@/server/ai/sdk-types';
 
 import {
   COPILOT_SUBAGENT_ENABLED_ENV,
@@ -66,7 +66,11 @@ describe('buildCopilotSubagents', () => {
         'mcp__loom__author_artifact',
       ]),
     );
-    expect(researcher.mcpServers).toEqual(['loom', 'exa']);
+    // Post-P4: no mcpServers field — wire names live in `tools`, and the
+    // declared `background:false` keeps nested spawns synchronous (depth-one
+    // reduction makes real background children structurally impossible).
+    expect(researcher.tools?.some((t) => t.startsWith('mcp__exa__'))).toBe(true);
+    expect(researcher.tools?.some((t) => t.startsWith('mcp__loom__'))).toBe(true);
     expect(researcher.maxTurns).toBe(6);
     expect(researcher.background).toBe(false);
     expect(researcher.prompt).toContain('只把结论交还给 Copilot');
@@ -82,7 +86,6 @@ describe('buildCopilotSubagents', () => {
     const researcher = agents[COPILOT_SUBAGENT_NAME];
 
     expect(researcher.tools).toEqual(['mcp__loom__query_events']);
-    expect(researcher.mcpServers).toEqual(['loom']);
   });
 });
 
@@ -110,7 +113,7 @@ describe('buildCopilotNativeResearchConfig', () => {
       'mcp__private__finalize_reply',
       'Task',
     ]);
-    const researcher = config.spawnContract?.agents[COPILOT_SUBAGENT_NAME];
+    const researcher = config.piSpawnContract?.piAgents[COPILOT_SUBAGENT_NAME];
     expect(researcher?.tools).toEqual([
       'mcp__loom__query_events',
       'mcp__loom__search_memory_facts',
@@ -126,7 +129,6 @@ describe('buildCopilotNativeResearchConfig', () => {
       ]),
     );
     expect(researcher?.maxTurns).toBe(24);
-    expect(researcher?.background).toBe(false);
   });
 
   it('keeps the root read surface while the kill switch removes Task options', () => {
@@ -136,7 +138,7 @@ describe('buildCopilotNativeResearchConfig', () => {
       parentMaxTurns: 6,
     });
     expect(config.allowedTools).toEqual(['mcp__loom__query_events']);
-    expect(config.spawnContract).toBeUndefined();
+    expect(config.piSpawnContract).toBeUndefined();
   });
 });
 

@@ -1,63 +1,65 @@
 // YUK-266 (C1) — streamTaskCollecting: a collecting variant of streamTask that
 // streams text deltas to an onDelta callback then resolves the full RunTaskResult.
-// Pure no-DB unit: @anthropic-ai/claude-agent-sdk and @/server/ai/log are vi.mock'd
-// and `db` is an untouched stub, so no live Postgres is needed — mirrors the sibling
-// stream-cancel.test.ts (both live in fastTestInclude).
+// Pure no-DB unit (post YUK-1025 P4): a fake ExecutionAdapter injected via
+// __setPiAdapterForTests replays scripted frames and @/server/ai/log is vi.mock'd,
+// so no live Postgres is needed — mirrors the sibling stream-cancel.test.ts
+// (both live in fastTestInclude).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Captures the options the runner hands the SDK (chiefly the AbortController) and
-// lets a test feed an arbitrary message sequence + optionally throw mid-stream.
-const mockSdk = vi.hoisted(() => ({
-  capturedOptions: undefined as unknown,
+// Captures the startup args the runner hands the adapter (chiefly the
+// AbortController inside options) and lets a test feed an arbitrary frame
+// sequence + optionally throw mid-stream.
+const mockPi = vi.hoisted(() => ({
+  capturedArgs: undefined as unknown,
   messages: [] as unknown[],
   throwAfter: -1 as number, // when >= 0, throw after yielding this many messages
   waitForAbortAfter: -1 as number,
   waitForAbortBeforeMessages: false,
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  startup: vi.fn(async ({ options }: { options: { abortController: AbortController } }) => {
-    mockSdk.capturedOptions = options;
-    return {
-      query: vi.fn(() =>
-        (async function* () {
-          if (mockSdk.waitForAbortBeforeMessages) {
-            await new Promise<void>((resolve) => {
-              if (options.abortController.signal.aborted) resolve();
-              else
-                options.abortController.signal.addEventListener('abort', () => resolve(), {
-                  once: true,
-                });
-            });
-            throw new Error('sdk stream aborted before first message');
-          }
-          let i = 0;
-          for (const msg of mockSdk.messages) {
-            if (mockSdk.throwAfter >= 0 && i >= mockSdk.throwAfter) {
-              throw new Error('sdk blew up mid-stream');
+function fakePiAdapter() {
+  return {
+    id: 'pi' as const,
+    startup: vi.fn(async (args: ExecutionAdapterStartupArgs) => {
+      mockPi.capturedArgs = args;
+      const signal = args.options.abortController?.signal;
+      const waitAbort = () =>
+        new Promise<void>((resolve) => {
+          if (!signal || signal.aborted) resolve();
+          else signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+      const prepared: PreparedExecutionQuery = {
+        query: () =>
+          (async function* () {
+            if (mockPi.waitForAbortBeforeMessages) {
+              await waitAbort();
+              throw new Error('pi stream aborted before first message');
             }
-            yield msg;
-            i += 1;
-            if (mockSdk.waitForAbortAfter === i) {
-              await new Promise<void>((resolve) => {
-                if (options.abortController.signal.aborted) resolve();
-                else
-                  options.abortController.signal.addEventListener('abort', () => resolve(), {
-                    once: true,
-                  });
-              });
-              throw new Error('sdk stream aborted after owner Stop');
+            let i = 0;
+            for (const msg of mockPi.messages) {
+              if (mockPi.throwAfter >= 0 && i >= mockPi.throwAfter) {
+                throw new Error('pi blew up mid-stream');
+              }
+              yield msg as RunnerMessage;
+              i += 1;
+              if (mockPi.waitForAbortAfter === i) {
+                await waitAbort();
+                throw new Error('pi stream aborted after owner Stop');
+              }
             }
-          }
-        })(),
-      ),
-      close: vi.fn(),
-    };
-  }),
-  createSdkMcpServer: vi.fn(() => ({ type: 'sdk', name: '', instance: {} })),
-  tool: vi.fn((name: string, description: string) => ({ name, description })),
-}));
+          })(),
+        close: async () => {},
+      };
+      return prepared;
+    }),
+  };
+}
+
+function capturedOptions() {
+  const args = mockPi.capturedArgs as ExecutionAdapterStartupArgs | undefined;
+  return args?.options;
+}
 
 const logMocks = vi.hoisted(() => ({
   finishedShouldThrow: false,
@@ -69,7 +71,7 @@ const logMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/server/ai/log', () => ({
-  logMissingMcpServersWarning: vi.fn(),
+  logMissingToolMountsWarning: vi.fn(),
   writeAiTaskRunStarted: logMocks.started,
   writeAiTaskRunFinished: logMocks.finished,
   writeAiTaskRunRetried: vi.fn(async () => true),
@@ -119,8 +121,15 @@ vi.mock('@/server/ai/log', () => ({
   writeToolCallLog: vi.fn(async () => 'tool-log-id'),
 }));
 
+import {
+  type ExecutionAdapterStartupArgs,
+  type PreparedExecutionQuery,
+  type RunnerMessage,
+  __setPiAdapterForTests,
+} from './execution-adapter';
 import { type TaskEventMessage, runTask, streamTaskCollecting } from './runner';
-import { SPAWN_TOOL_ALIASES, SPAWN_TOOL_NAME, createSpawnContract } from './spawn-contract';
+import { SPAWN_TOOL_ALIASES, SPAWN_TOOL_NAME } from './spawn-contract';
+import { createPiSpawnContract } from './tools/pi-subagent';
 
 const fakeDb = {} as never;
 
@@ -281,11 +290,12 @@ const resultMsg = {
 
 describe('streamTaskCollecting — YUK-266 collecting stream', () => {
   beforeEach(() => {
-    mockSdk.capturedOptions = undefined;
-    mockSdk.messages = [];
-    mockSdk.throwAfter = -1;
-    mockSdk.waitForAbortAfter = -1;
-    mockSdk.waitForAbortBeforeMessages = false;
+    mockPi.capturedArgs = undefined;
+    __setPiAdapterForTests(fakePiAdapter());
+    mockPi.messages = [];
+    mockPi.throwAfter = -1;
+    mockPi.waitForAbortAfter = -1;
+    mockPi.waitForAbortBeforeMessages = false;
     logMocks.finishedShouldThrow = false;
     logMocks.finishedFailuresRemaining = 0;
     logMocks.terminalStatuses = [];
@@ -298,7 +308,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
   });
 
   it('fires onDelta once per assistant-message chunk and resolves the concatenated text', async () => {
-    mockSdk.messages = [assistant('Hello, '), assistant('world!'), resultMsg];
+    mockPi.messages = [assistant('Hello, '), assistant('world!'), resultMsg];
     const deltas: string[] = [];
 
     const result = await streamTaskCollecting('AttributionTask', { q: 'x' }, { db: fakeDb }, (t) =>
@@ -313,13 +323,11 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect(result.usage).toEqual({ inputTokens: 7, outputTokens: 7 });
     expect(result.task_run_id).toBeTruthy();
     expect(result.partial).toBeUndefined();
-    expect('forwardSubagentText' in (mockSdk.capturedOptions as Record<string, unknown>)).toBe(
-      false,
-    );
+    expect('forwardSubagentText' in (capturedOptions() as Record<string, unknown>)).toBe(false);
   });
 
   it('carries thinking-block metadata without streaming or logging raw reasoning', async () => {
-    mockSdk.messages = [assistantThinking('hidden reasoning'), assistant('answer'), resultMsg];
+    mockPi.messages = [assistantThinking('hidden reasoning'), assistant('answer'), resultMsg];
     const deltas: string[] = [];
 
     const result = await streamTaskCollecting(
@@ -348,7 +356,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     const hiddenReasoning =
       '先推测学习者可能被“只有才”措辞诱导，但这个内部推理绝不能进入 task observer 或 tool log。';
     const foregroundText = '我会在前台只用 Copilot 一个声音汇总后台调查。';
-    mockSdk.messages = [
+    mockPi.messages = [
       taskStarted('task-logic-evidence', 'tool-spawn-logic-01', '核对逻辑关系失败证据'),
       assistantThinkingWithTask(hiddenReasoning, 'tool-spawn-logic-01', {
         id: 'tool-domain-attempts-02',
@@ -378,7 +386,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
       resultMsg,
     ];
     const observed: TaskEventMessage[] = [];
-    const contract = createSpawnContract({
+    const contract = createPiSpawnContract({
       enabled: true,
       agents: {
         'diagnostic-scout': {
@@ -395,9 +403,8 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
       {
         db: fakeDb,
         allowedTools: [SPAWN_TOOL_NAME, 'mcp__copilot__get_attempt_details'],
-        agents: contract.agents,
-        hooks: contract.hooks,
-        canUseTool: contract.canUseTool,
+        piAgents: contract.piAgents,
+        piHooks: { beforeToolCall: [contract.gate], afterToolCall: [] },
         onTaskEvent: async (event) => {
           await Promise.resolve();
           observed.push(event);
@@ -416,24 +423,15 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect(serializedObserved).not.toContain(hiddenReasoning);
     expect(serializedObserved).not.toContain(foregroundText);
 
-    const captured = mockSdk.capturedOptions as {
-      agents: Record<string, { tools?: string[]; disallowedTools?: string[] }>;
-      env: Record<string, string | undefined>;
-      hooks: unknown;
-      canUseTool: unknown;
-      forwardSubagentText: boolean;
-    };
-    expect(captured.agents['diagnostic-scout']?.tools).toEqual([
-      'mcp__copilot__get_attempt_details',
-    ]);
-    expect(captured.agents['diagnostic-scout']?.disallowedTools).toContain(SPAWN_TOOL_NAME);
-    expect(captured.agents['diagnostic-scout']?.disallowedTools).toEqual(
-      expect.arrayContaining([...SPAWN_TOOL_ALIASES]),
-    );
-    expect(captured.hooks).toBe(contract.hooks);
-    expect(captured.canUseTool).toBe(contract.canUseTool);
-    expect(captured.forwardSubagentText).toBe(false);
-    expect(captured.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe('1');
+    const capturedArgs = mockPi.capturedArgs as ExecutionAdapterStartupArgs;
+    const spec = capturedArgs.piAgents?.['diagnostic-scout'];
+    expect(spec?.tools).toEqual(['mcp__copilot__get_attempt_details']);
+    expect(spec?.disallowedTools).toContain(SPAWN_TOOL_NAME);
+    expect(spec?.disallowedTools).toEqual(expect.arrayContaining([...SPAWN_TOOL_ALIASES]));
+    // The spawn gate rides piHooks.beforeToolCall; no SDK hooks/canUseTool twin.
+    expect(capturedArgs.piHooks?.beforeToolCall).toContain(contract.gate);
+    expect('forwardSubagentText' in capturedArgs.options).toBe(false);
+    expect('env' in capturedArgs.options).toBe(false);
 
     const { writeToolCallLog } = await import('@/server/ai/log');
     expect(writeToolCallLog).toHaveBeenCalledTimes(1);
@@ -454,35 +452,30 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     );
   });
 
-  it('does not disable background tasks for a generic caller that explicitly declares a background agent', async () => {
-    vi.stubEnv('CLAUDE_CODE_DISABLE_BACKGROUND_TASKS', undefined);
-    mockSdk.messages = [resultMsg];
+  it("forwards caller-declared piAgents verbatim (depth-one reduction is the contract's job)", async () => {
+    mockPi.messages = [resultMsg];
 
+    const piAgents = {
+      'background-observer': {
+        description: 'generic compatibility fixture',
+        prompt: 'observe without blocking',
+      },
+    };
     await runTask(
       'AttributionTask',
       { question_id: 'q_async_compatibility' },
-      {
-        db: fakeDb,
-        agents: {
-          'background-observer': {
-            description: 'generic compatibility fixture',
-            prompt: 'observe without blocking',
-            background: true,
-          },
-        },
-      },
+      { db: fakeDb, piAgents },
     );
 
-    const captured = mockSdk.capturedOptions as {
-      env: Record<string, string | undefined>;
-    };
-    expect(captured.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBeUndefined();
+    const args = mockPi.capturedArgs as ExecutionAdapterStartupArgs;
+    expect(args.piAgents).toEqual(piAgents);
+    expect('env' in args.options).toBe(false);
   });
 
   it('streamTaskCollecting preserves interleaved task-event order while thinking/text stay on their own channels', async () => {
     const hiddenReasoning = '内部比较两条知识轨迹的置信度，不向 UI 或 event sink 暴露。';
     const foregroundText = '两个后台核对任务正在推进，我会统一汇总。';
-    mockSdk.messages = [
+    mockPi.messages = [
       taskStarted('task-symbolic', 'spawn-symbolic-01', '核对符号题证据链'),
       taskStarted('task-applied', 'spawn-applied-02', '核对门禁情境迁移'),
       assistantThinking(hiddenReasoning),
@@ -534,7 +527,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
   });
 
   it('runTask respects autoLogToolCalls=false for an owner-written authoritative trace', async () => {
-    mockSdk.messages = [
+    mockPi.messages = [
       assistantThinkingWithTask('不应落到 input-only tool log 的内部推理。', 'tool-owned-trace-01'),
       resultMsg,
     ];
@@ -550,7 +543,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
   });
 
   it('streamTaskCollecting respects autoLogToolCalls=false for an owner-written trace', async () => {
-    mockSdk.messages = [
+    mockPi.messages = [
       assistantThinkingWithTask('流式路径也不应重复记录 owner trace。', 'tool-stream-owned-01', {
         id: 'tool-stream-domain-02',
         name: 'mcp__copilot__get_attempt_details',
@@ -573,8 +566,8 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect(writeToolCallLog).not.toHaveBeenCalled();
   });
 
-  it('rejects an already-aborted collecting request before SDK startup', async () => {
-    mockSdk.messages = [assistant('hi'), resultMsg];
+  it('rejects an already-aborted collecting request before adapter startup', async () => {
+    mockPi.messages = [assistant('hi'), resultMsg];
     const ac = new AbortController();
     ac.abort();
 
@@ -585,9 +578,9 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
         { db: fakeDb, signal: ac.signal },
         () => {},
       ),
-    ).rejects.toThrow('provider attempt aborted before SDK startup');
+    ).rejects.toThrow('provider attempt aborted before adapter startup');
 
-    expect(mockSdk.capturedOptions).toBeUndefined();
+    expect(capturedOptions()).toBeUndefined();
     expect(logMocks.started).not.toHaveBeenCalled();
     expect(logMocks.terminalStatuses).toEqual([]);
     expect(logMocks.cost).not.toHaveBeenCalled();
@@ -595,8 +588,8 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
 
   it('propagates a mid-flight owner Stop, preserves the collected delta, and records failure', async () => {
     const partial = '已核对 48 条历史回答、3 份讲义和 4/6 个薄弱点探针；9 个迁移变式尚未开始。';
-    mockSdk.messages = [assistant(partial), resultMsg];
-    mockSdk.waitForAbortAfter = 1;
+    mockPi.messages = [assistant(partial), resultMsg];
+    mockPi.waitForAbortAfter = 1;
     const owner = new AbortController();
     const deltas: string[] = [];
 
@@ -621,10 +614,9 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
       text: partial,
       partial: true,
       finishReason: 'error',
-      error: 'sdk stream aborted after owner Stop',
+      error: 'pi stream aborted after owner Stop',
     });
-    const captured = (mockSdk.capturedOptions as { abortController: AbortController })
-      .abortController;
+    const captured = (capturedOptions() as { abortController: AbortController }).abortController;
     expect(captured.signal.aborted).toBe(true);
     const { writeAiTaskRunFinished } = await import('@/server/ai/log');
     expect(writeAiTaskRunFinished).toHaveBeenLastCalledWith(
@@ -633,8 +625,8 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     );
   });
 
-  it('rejects an already-aborted non-streaming request before SDK startup', async () => {
-    mockSdk.messages = [assistant('classifier result'), resultMsg];
+  it('rejects an already-aborted non-streaming request before adapter startup', async () => {
+    mockPi.messages = [assistant('classifier result'), resultMsg];
     const owner = new AbortController();
     owner.abort();
 
@@ -647,9 +639,9 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
           signal: owner.signal,
         },
       ),
-    ).rejects.toThrow('provider attempt aborted before SDK startup');
+    ).rejects.toThrow('provider attempt aborted before adapter startup');
 
-    expect(mockSdk.capturedOptions).toBeUndefined();
+    expect(capturedOptions()).toBeUndefined();
     expect(logMocks.started).not.toHaveBeenCalled();
     expect(logMocks.terminalStatuses).toEqual([]);
     expect(logMocks.cost).not.toHaveBeenCalled();
@@ -660,7 +652,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     // WITHOUT throwing. The collecting variant must NOT record this as success
     // (which would corrupt the cost ledger + run audit); it falls into the
     // graceful-degrade path: status:'failure' / finishReason:'error' / partial:true.
-    mockSdk.messages = [assistant('orphan chunk')];
+    mockPi.messages = [assistant('orphan chunk')];
     const deltas: string[] = [];
 
     const result = await streamTaskCollecting('AttributionTask', { q: 'x' }, { db: fakeDb }, (t) =>
@@ -692,8 +684,8 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
 
   it('classifies an abort after durable start but before the first message as permanent', async () => {
     const owner = new AbortController();
-    mockSdk.messages = [];
-    mockSdk.waitForAbortBeforeMessages = true;
+    mockPi.messages = [];
+    mockPi.waitForAbortBeforeMessages = true;
 
     const running = streamTaskCollecting(
       'AttributionTask',
@@ -727,7 +719,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
   it('keeps a paid lower bound when a large multi-turn stream dies before its terminal result', async () => {
     const hiddenThinking =
       '逐项核对 21 条只读 observation、六个 request atoms 与十个 evidence points；这里只保留计数。';
-    mockSdk.messages = [
+    mockPi.messages = [
       assistantWithUsage('已整理第一批证据点。', {
         input_tokens: 40_000,
         output_tokens: 2_000,
@@ -742,7 +734,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
       }),
       resultMsg,
     ];
-    mockSdk.throwAfter = 2;
+    mockPi.throwAfter = 2;
 
     const result = await streamTaskCollecting(
       'AttributionTask',
@@ -792,7 +784,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
   });
 
   it('records success+is_error usage and cost as a graceful partial failure without success accounting', async () => {
-    mockSdk.messages = [
+    mockPi.messages = [
       assistant('partial chunk'),
       {
         type: 'result',
@@ -855,7 +847,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
   });
 
   it('does not add an empty error detail when success+is_error omits result', async () => {
-    mockSdk.messages = [
+    mockPi.messages = [
       assistantWithUsage('已完成部分核验。', {
         input_tokens: 12_000,
         output_tokens: 800,
@@ -878,7 +870,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     );
 
     expect(result.error).toBe(
-      '[AttributionTask] Agent SDK errored: subtype=api_error_result http=500',
+      '[AttributionTask] agent run errored: subtype=api_error_result http=500',
     );
     expect(result.usage).toEqual({ inputTokens: 14_000, outputTokens: 800 });
     const { writeCostLedger } = await import('@/server/ai/log');
@@ -896,8 +888,8 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
 
   it('degrades gracefully: resolves partial text when the SDK throws mid-stream', async () => {
     // Yield one delta, then throw before the result message.
-    mockSdk.messages = [assistant('partial chunk'), resultMsg];
-    mockSdk.throwAfter = 1;
+    mockPi.messages = [assistant('partial chunk'), resultMsg];
+    mockPi.throwAfter = 1;
     const deltas: string[] = [];
 
     const result = await streamTaskCollecting('AttributionTask', { q: 'x' }, { db: fakeDb }, (t) =>
@@ -909,12 +901,12 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect(deltas).toEqual(['partial chunk']);
     expect(result.text).toBe('partial chunk');
     expect(result.partial).toBe(true);
-    expect(result.error).toContain('sdk blew up');
+    expect(result.error).toContain('pi blew up');
     expect(result.finishReason).toBe('error');
   });
 
   it('rejects instead of returning partial when success settlement fails', async () => {
-    mockSdk.messages = [assistant('must not persist'), resultMsg];
+    mockPi.messages = [assistant('must not persist'), resultMsg];
     logMocks.finishedShouldThrow = true;
 
     await expect(
@@ -927,7 +919,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
   });
 
   it('still rejects provider-success text when the bounded failure fallback settles', async () => {
-    mockSdk.messages = [assistant('must not persist'), resultMsg];
+    mockPi.messages = [assistant('must not persist'), resultMsg];
     logMocks.finishedFailuresRemaining = 1;
 
     await expect(
@@ -942,13 +934,13 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
   });
 
   it('rejects instead of returning partial when failure settlement fails', async () => {
-    mockSdk.messages = [assistant('must not persist'), resultMsg];
-    mockSdk.throwAfter = 1;
+    mockPi.messages = [assistant('must not persist'), resultMsg];
+    mockPi.throwAfter = 1;
     logMocks.finishedShouldThrow = true;
 
     await expect(
       streamTaskCollecting('AttributionTask', { q: 'x' }, { db: fakeDb }, () => {}),
-    ).rejects.toThrow(/sdk blew up mid-stream/);
+    ).rejects.toThrow(/pi blew up mid-stream/);
 
     expect(logMocks.terminalStatuses).toEqual(['failure']);
     expect(logMocks.finished).not.toHaveBeenCalled();

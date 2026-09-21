@@ -4,26 +4,24 @@
 //
 // Copilot 方法论是 cross-subject（mutation-vs-edge / suggestion_kind / proposal_feedback
 // 解读等都与学科无关），所以单份共享包住 src/subjects/_shared/skills/copilot/SKILL.md
-// （_shared 是非学科伪目录；runner.populateIsolatedSkills 对 src/subjects/ 下每个目录
-// 找 skills/ 子目录镜像，不校验是否注册过 SubjectProfile，故零新基建即被镜像）。
+// （_shared 是非学科伪目录——不注册 SubjectProfile，仅作共享 skill 落位约定）。
 // quiz-gen 方法论同理 cross-subject（查重→逐题起草→组卷→诚实降级的编排纪律与学科
 // 无关；学科侧的题型规范包另有 quiz-gen-<kind> 命名空间，互不冲突）。
 //
-// 签名无 subjectId 参数（区别于 resolveNoteSkill(subjectId)）= 体现「这是共享包」。
-// 降级链：缺哪个包就不返回哪个名字；全缺 → undefined → caller 不传 skills →
-// runner skills ?? [] 显式禁用 → registry.ts 散文兜底回退，never throws。
+// 签名无 subjectId 参数（区别于 resolveNoteSkillDoc(subjectId)）= 体现「这是共享包」。
+// 降级链：缺哪个包就不返回哪个名字；全缺 → undefined → caller 不传 piSkillDocs →
+// registry.ts 散文兜底回退，never throws。
 // 缺包时与现状零差异（这是 C2 风险可控的关键）。
 //
-// 命名空间（YUK-611）：扁平镜像统一按 <subjectDir>--<pack> 前缀化（populate-skills.ts），
-// 本 resolver 输出 '_shared--copilot' / '_shared--quiz-gen'（skill-namespace.ts 拼名，
-// 与镜像键同源）；跨科/跨包 collision 通道已结构性关闭，另有静态 audit
-// （skill-namespace.test.ts）在构建期挡裸名撞车与 frontmatter 漂移。
+// 命名空间（YUK-611）：包名统一按 <subjectDir>--<pack> 前缀化（skill-namespace.ts），
+// 本 resolver 输出 '_shared--copilot' / '_shared--quiz-gen'；跨科/跨包 collision
+// 通道已结构性关闭，另有静态 audit（skill-namespace.test.ts）在构建期挡裸名撞车与
+// frontmatter 漂移。
 //
 // 见 docs/superpowers/plans/2026-06-08-yuk284-debt-wave.md §2 OPEN-Q1 (单份共享裁决).
 
-import { access, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-// YUK-611 — 白名单名从命名空间权威模块拼（与 populate 镜像键同源）。
 import { namespacedSkillName } from './skill-namespace';
 
 // _shared 是落位约定（非注册 subject — SubjectRegistry 是 profile.ts 的显式 import
@@ -38,44 +36,20 @@ export const COPILOT_QUIZ_GEN_SKILL_NAME = 'quiz-gen';
 const COPILOT_SHARED_SKILL_NAMES = [COPILOT_SKILL_NAME, COPILOT_QUIZ_GEN_SKILL_NAME] as const;
 
 /**
- * Resolve the Copilot shared Agent Skill whitelist (cross-subject). Probes BOTH
+ * Resolve the Copilot shared Agent Skill docs (cross-subject). Probes BOTH
  * `_shared/skills/copilot/SKILL.md` and `_shared/skills/quiz-gen/SKILL.md` and
- * returns the found subset (`['copilot','quiz-gen']` / `['copilot']` /
- * `['quiz-gen']`), or `undefined` when neither pack exists (降级链: caller
- * passes no skills option → SDK loads nothing extra → registry.ts systemPrompt
- * 散文 fallback, never throws).
+ * returns `{name, body}` for the found subset, or `undefined` when neither pack
+ * exists (降级链: caller passes no piSkillDocs → registry.ts systemPrompt 散文
+ * fallback, never throws). The pi adapter injects the bodies into the system
+ * prompt — pi has no filesystem skill loader.
  *
  * No subjectId param: both packs are cross-subject SHARED packs (contrast
- * resolveNoteSkill(subjectId) / resolveQuizGenSkillsForSubject, per-subject).
+ * resolveNoteSkillDoc(subjectId) / resolveQuizGenSkillDocsForSubject,
+ * per-subject). Keys are the namespaced names (`_shared--copilot` /
+ * `_shared--quiz-gen`) — the pi startup guard matches them 1:1.
  *
  * skillsRoot defaults to <cwd>/src/subjects (the live SoT). Tests inject a fixture
  * root so the resolver works without touching the real on-disk tree.
- */
-export async function resolveCopilotSkills(
-  skillsRoot: string = join(process.cwd(), 'src', 'subjects'),
-): Promise<string[] | undefined> {
-  const found: string[] = [];
-  for (const name of COPILOT_SHARED_SKILL_NAMES) {
-    const skillFile = join(skillsRoot, COPILOT_SHARED_SUBJECT_DIR, 'skills', name, 'SKILL.md');
-    try {
-      await access(skillFile);
-      // 白名单键 = 镜像里的命名空间名 _shared--copilot / _shared--quiz-gen（YUK-611）。
-      found.push(namespacedSkillName(COPILOT_SHARED_SUBJECT_DIR, name));
-    } catch {
-      // pack absent — skip (per-pack 降级, never throws).
-    }
-  }
-  return found.length > 0 ? found : undefined;
-}
-
-/**
- * YUK-1022 — pi-lane twin of `resolveCopilotSkills`. SDK Agent Skills are a
- * subprocess filesystem feature (the isolated CONFIG_DIR mirror); the pi lane
- * has no filesystem skill loader, so the adapter injects the resolved SKILL.md
- * bodies into the system prompt. Keys are the same namespaced whitelist names
- * (`_shared--copilot` / `_shared--quiz-gen`) `options.skills` declares — the
- * pi startup guard matches them 1:1. Same per-pack degradation: a missing or
- * unreadable pack is skipped, never throws.
  */
 export async function resolveCopilotSkillDocs(
   skillsRoot: string = join(process.cwd(), 'src', 'subjects'),

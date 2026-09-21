@@ -511,12 +511,13 @@ describe('runNoteGenerate', () => {
 
     const ctx = runTaskFn.mock.calls[0]?.[2] as unknown as {
       subjectProfile?: { id: string };
-      skills?: string[];
+      piSkillDocs?: { name: string; body: string }[];
     };
     expect(ctx.subjectProfile?.id).toBe('math');
-    // YUK-228 (S3 Slice B): handler must pass resolveNoteSkill(subject) as skills.
-    // YUK-611: resolver 输出命名空间名（== populate 镜像键）。
-    expect(ctx.skills).toEqual(['math--note-math']);
+    // YUK-228 (S3 Slice B): handler must pass resolveNoteSkillDoc(subject) as
+    // piSkillDocs. YUK-611: resolver 输出命名空间名（== SKILL.md 包名）。
+    expect(ctx.piSkillDocs?.map((doc) => doc.name)).toEqual(['math--note-math']);
+    expect(ctx.piSkillDocs?.[0]?.body.length).toBeGreaterThan(0);
   });
 
   it('marks generation_status=failed when LLM throws (and rethrows)', async () => {

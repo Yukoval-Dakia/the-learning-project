@@ -34,10 +34,7 @@ import {
   buildExaMcpServer,
 } from '@/server/ai/mcp/exa';
 import { runAgentTask } from '@/server/ai/runner';
-import {
-  type BuildMcpServerOptions,
-  buildMcpServerFromRegistry,
-} from '@/server/ai/tools/mcp-bridge';
+import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import { type PiToolMount, piDomainMount, piRemoteMcpMount } from '@/server/ai/tools/pi-tools';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import {
@@ -70,8 +67,7 @@ export const runWebSourcingAgentDefault: RunWebSourcingAgentFn = async (params) 
   if (exaCfg === null) return null;
 
   // MCP mount 镜像旧 sourcing job：in-process domain read tools（ctx 归因到
-  // 调用方透传的 run 上下文，callerActor='sourcing'）+ Exa remote。YUK-1021 —
-  // 同一 descriptor 同时喂 SDK mcpServers 与 piToolMounts（pi lane 编译成 AgentTool）。
+  // 调用方透传的 run 上下文，callerActor='sourcing'）+ Exa remote。
   const domainMountOptions = {
     ctx: {
       db,
@@ -83,12 +79,6 @@ export const runWebSourcingAgentDefault: RunWebSourcingAgentFn = async (params) 
     toolNames: SOURCING_READ_TOOLS,
     taskKind: 'SourcingTask',
   } satisfies BuildMcpServerOptions;
-  const domainMcpServer = buildMcpServerFromRegistry(domainMountOptions);
-
-  const mcpServers = {
-    [DOMAIN_TOOL_MCP_SERVER_NAME]: domainMcpServer,
-    [EXA_MCP_SERVER_NAME]: exaCfg,
-  };
   const piToolMounts: PiToolMount[] = [
     piDomainMount(domainMountOptions),
     piRemoteMcpMount(EXA_MCP_SERVER_NAME, exaCfg, EXA_SCOPED_TOOL_NAMES),
@@ -100,10 +90,10 @@ export const runWebSourcingAgentDefault: RunWebSourcingAgentFn = async (params) 
 
   const result = await runAgentTask('SourcingTask', input, {
     db,
-    mcpServers,
     piToolMounts,
     allowedTools,
     subjectProfile,
+    modelBinding: ctx.modelBinding,
   });
   return { text: result.text, task_run_id: result.task_run_id, cost_usd: result.cost_usd };
 };

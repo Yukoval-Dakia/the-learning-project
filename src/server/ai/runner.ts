@@ -1,22 +1,19 @@
-// AI task runner — Claude Agent SDK adapter.
+// AI task runner — pi execution lane.
 //
-// All paths go through @anthropic-ai/claude-agent-sdk's `startup()` followed
-// by one `WarmQuery.query()` (spawned `claude` CLI subprocess, talked to over
-// JSON-RPC). The SDK gives us:
-//   - native tool-call loop with mcpServers / allowedTools
-//   - PreToolUse / PostToolUse / SessionStart hook events
-//   - SDKMemoryRecallMessage events (auto-memory + auto-dream)
-//   - session persistence + resume
+// All paths go through the ExecutionAdapter seam (execution-adapter.ts), which
+// post-P4 resolves to PiAgentAdapter: an in-process `@earendil-works/
+// pi-agent-core` agentLoop per query. The adapter normalizes loop events into
+// the SDKMessage-shaped RunnerMessage vocabulary (sdk-types.ts) so the consume
+// loop keeps one implementation for:
+//   - tool-call loop with declarative piToolMounts / allowedTools
+//   - piHooks beforeToolCall / afterToolCall interception
+//   - task_* lifecycle frames (durable subagent projection)
+//   - compact_boundary evidence + native transformContext compaction
+//   - `pi:` session cursors + durable-turn replay (session resume)
 //
-// We bypass:
-//   - the Claude Code preset (we pass `systemPrompt: string` to replace it)
-//   - the user's personal `~/.claude/` config (we set CLAUDE_CONFIG_DIR to
-//     a fresh tmpdir per process so hooks/MCP/skills from dev machines
-//     never leak into a server task)
-//
-// Per ANTHROPIC_BASE_URL env var the SDK transparently routes to xiaomi/mimo
-// (Anthropic-protocol-compat). Model id ('mimo-v2.5-pro' / 'mimo-v2.5') is
-// passed via the `model` option.
+// Provider wire protocols are the adapter's business (anthropic-messages for
+// xiaomi/zhipu/anthropic/anthropic-sub, openai-* for opencode-go); the runner
+// only ever sees normalized frames.
 //
 // Memory-layer extensibility:
 //   - `RunTaskCtx.middleware: { beforeRun, afterRun }` — pre/post hooks
@@ -25,20 +22,6 @@
 //     output after.
 
 import { createHash } from 'node:crypto';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import type {
-  Options,
-  OutputFormat,
-  SDKAssistantMessage,
-  SDKMessage,
-  SDKTaskNotificationMessage,
-  SDKTaskProgressMessage,
-  SDKTaskStartedMessage,
-  SDKTaskUpdatedMessage,
-  SDKUserMessage,
-} from '@anthropic-ai/claude-agent-sdk';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 import { type TaskKind, tasks } from '@/ai/registry';
 import { getTaskSystemPrompt } from '@/ai/task-prompts';
@@ -59,13 +42,10 @@ import {
   type PiReplayTurn,
   type PreparedExecutionQuery,
   type RunnerMessage,
-  effectiveModelBinding,
   resolveExecutionAdapter,
 } from './execution-adapter';
-import { logMissingMcpServersWarning } from './log';
-import { resolveModelProfile } from './model-profiles';
+import { logMissingToolMountsWarning } from './log';
 import type { PiHookBridge } from './pi-hooks';
-import { populateIsolatedSkills } from './populate-skills';
 import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission';
 import type { ResolvedProvider } from './providers';
 import {
@@ -77,7 +57,17 @@ import {
   maxLifecycleAttempts,
 } from './run-lifecycle';
 import { createSdkTerminalEvidenceCollector } from './sdk-terminal';
-import { SPAWN_DISABLE_BACKGROUND_TASKS_ENV, isSpawnToolName } from './spawn-contract';
+import type {
+  Options,
+  SDKAssistantMessage,
+  SDKMessage,
+  SDKTaskNotificationMessage,
+  SDKTaskProgressMessage,
+  SDKTaskStartedMessage,
+  SDKTaskUpdatedMessage,
+  SDKUserMessage,
+} from './sdk-types';
+import { isSpawnToolName } from './spawn-contract';
 import type { PiSubagentSpec } from './tools/pi-subagent';
 import type { PiToolMount } from './tools/pi-tools';
 
@@ -96,10 +86,11 @@ export interface RunTaskResult {
   cost_basis: 'reported' | 'estimated' | 'unknown';
   cost_ref: string;
   /**
-   * YUK-299 seam: the structured product the SDK fills in when `ctx.outputFormat`
-   * is set AND the endpoint supports it. undefined ⇒ outputFormat not set /
-   * endpoint unsupported / model fell back to text — the caller must run the
-   * text-fallback parse. Pure passthrough; runner never interprets it.
+   * YUK-299 seam: the structured product an adapter fills in when a
+   * structured-output protocol is honoured. Post-P4 the pi lane has no
+   * outputFormat equivalent — this stays `undefined` and every caller runs
+   * its strict-prompt + Zod text-fallback parse (already the production path
+   * on the default mimo lane, YUK-792). Runner never interprets it.
    */
   structured_output?: unknown;
 }
@@ -159,12 +150,11 @@ export interface RunTaskCtx {
   /** Override provider/model for testing or per-call routing escapes. */
   override?: { provider?: ResolvedProvider['provider']; model?: string };
   /**
-   * YUK-921 / YUK-1013 — per-run model binding (design doc §2.4/§4). The new
-   * explicit-ctx layer for provider/model/effort/engine selection; resolved
+   * YUK-921 / YUK-1013 — per-run model binding (design doc §2.4/§4). The
+   * explicit-ctx layer for per-run provider/model/effort selection; resolved
    * inside the unchanged `explicit > env > registry` order — `ctx.override`
-   * (escape hatch) still wins per-field over this binding. `adapter` pins the
-   * execution engine for the migration window; today only 'sdk' is available
-   * ('pi' fails closed until YUK-921 P1 lands).
+   * (escape hatch) still wins per-field over this binding. Post-P4 the only
+   * legal `adapter` value is 'pi'.
    */
   modelBinding?: ModelBinding;
   /**
@@ -187,7 +177,7 @@ export interface RunTaskCtx {
   enableTransientRetry?: boolean;
   /**
    * Optional absolute wall-clock deadline for the whole provider session:
-   * admission wait, SDK startup and model execution share this one budget.
+   * admission wait, adapter startup and model execution share this one budget.
    * Hono requests inherit the composition-root deadline automatically; callers
    * use this explicit seam for work that may outlive the handler. Durable workers
    * omit it and retain the task's full execution budget.
@@ -196,69 +186,27 @@ export interface RunTaskCtx {
   /** Memory-layer hook surface. */
   middleware?: TaskMiddleware;
   /**
-   * In-process MCP servers. Build with `createSdkMcpServer({ tools:
-   * [tool(name, desc, schema, handler)] })`. Tools are referenced as
-   * `mcp__<serverName>__<toolName>` in the registry's `allowedTools`.
-   */
-  mcpServers?: Options['mcpServers'];
-  /**
    * Override allowedTools. When omitted, runner uses `tasks[kind].allowedTools`
    * from the registry — single source of truth for what each task can call.
+   * The adapter filters mounted AgentTools against these `mcp__<server>__<tool>`
+   * wire names.
    */
   allowedTools?: string[];
   /** Subject context for prompts that are rendered from SubjectProfile. */
   subjectProfile?: SubjectProfile;
   /**
-   * YUK-225 (S2 slice 4) — Agent Skill whitelist threaded to `Options.skills`.
-   * Names match a SKILL.md `name` / directory under src/subjects/<id>/skills/
-   * (e.g. ['quiz-gen-translation']). When set, ONLY these skills are loaded into
-   * the model's listing (SDK context filter). When omitted/empty, the runner passes
-   * `skills: []` — an EXPLICIT disable — so no quiz-gen skill leaks into tasks that
-   * never opt in (降级链 falls back to promptFragments).
-   *
-   * Why explicit-disable rather than omit: per sdk.d.ts:1699-1721 / 2768-2771,
-   * OMITTING `Options.skills` makes the CLI load EVERY discovered skill. Because the
-   * runner pre-populates CONFIG_DIR/skills with all subject skills, omitting would
-   * expose every quiz-gen skill to Attribution / NoteGenerate / etc. — a zero-impact
-   * regression. `[]` keeps the default behaviour identical to pre-slice-4.
-   *
-   * The SoT lives in src/subjects/<id>/skills/; the runner populates the isolated
-   * CLAUDE_CONFIG_DIR/skills once at process start (getIsolatedClaudeConfigDir),
-   * and this array keys WHICH of the populated skills the model actually sees.
-   * Skill-enabled runs load only the isolated config dir's `user` source; no-skill
-   * runs pass `settingSources: []`. Neither path loads project/local instructions.
+   * ADR-0060 compaction: the bounded session context the adapter's
+   * transformContext re-injects after a budget prune. Never contains raw
+   * summary/CoT. Enabled only for the Copilot live-session lane.
    */
-  skills?: string[];
-  /**
-   * YUK-299 seam: Agent SDK `outputFormat` passthrough. OMITTED (the default)
-   * ⇒ buildQueryOptions does NOT write the key ⇒ the Options object is
-   * byte-identical to pre-seam (zero regression). Only a handler migrated to
-   * structured output sets it (value produced by zodToJsonSchemaOutputFormat()
-   * in ./output-format). streamTask does NOT read it — see §2.3 of the plan;
-   * stream + one-shot json_schema output are deferred to a follow-up YUK.
-   */
-  outputFormat?: OutputFormat;
-  /**
-   * YUK-572 seam: SDK-native nested subagent definitions
-   * (Record<string, AgentDefinition>). OMITTED (the default) ⇒ buildQueryOptions does
-   * NOT write the key ⇒ the Options object is byte-identical to pre-seam (zero
-   * regression). Type is re-exported 1:1 from the SDK's `Options['agents']` so it never
-   * drifts from the SDK typings. Only explicit nested-work lanes set it.
-   */
-  agents?: Options['agents'];
-  /** YUK-572 seam: SDK hook callbacks with undefined-guard zero-regression. */
-  hooks?: Options['hooks'];
-  /** Native SDK compaction is explicitly enabled only for the Copilot live-session lane. */
   nativeCompaction?: {
-    /** Context to reintroduce after SDK compaction; never contains raw summary/CoT. */
+    /** Context to reintroduce after compaction; never contains raw summary/CoT. */
     sessionContext: string;
   };
-  /** YUK-572 seam: optional SDK permission callback, re-exported 1:1. */
-  canUseTool?: Options['canUseTool'];
   /**
-   * YUK-757 structural task-lifecycle observer. Only SDK system task_started /
-   * task_progress / task_updated / task_notification messages are exposed; raw
-   * SDKMessage, assistant text, and thinking blocks never cross this seam.
+   * YUK-757 structural task-lifecycle observer. Only system task_started /
+   * task_progress / task_updated / task_notification frames are exposed; raw
+   * messages, assistant text, and thinking blocks never cross this seam.
    * Observer failures are logged and fail open so visibility cannot abort paid work.
    */
   onTaskEvent?: TaskEventObserver;
@@ -282,7 +230,7 @@ export interface RunTaskCtx {
    * below cloudflared idle-100s. A durable pg-boss run needs a much larger
    * ceiling but MUST NOT mutate the shared registry default (YUK-458 revert lesson:
    * a raised inline budget only turned error_max_turns into an inline-request abort).
-   * NARROW: only `maxIterations` (→ SDK maxTurns) and `timeoutMs` (→ the abort timer).
+   * NARROW: only `maxIterations` (→ runner maxTurns) and `timeoutMs` (→ the abort timer).
    * The THIRD durable knob — the tool-call ceiling (maxToolCalls) — is NOT here: it
    * lives in the ContextBudgetTracker (budgets.ts, surface-keyed) and is overridden
    * at the handler when constructing the tracker (MF-A). OMITTED (the default) ⇒
@@ -313,9 +261,12 @@ export interface RunTaskCtx {
    */
   autoLogToolCalls?: boolean;
   /**
-   * YUK-936 (ADR-0054) — foreground inline Copilot only. Set explicitly by
-   * chat.ts; never inferred from task kind or budgetOverride (durable/Mission 202
-   * shares CopilotTask kind). Omitted ⇒ persistSession:false, no resume.
+   * YUK-936 (ADR-0054) — the durable agent-session slot (historical name: it
+   * held the SDK session-file id; post-P4 it carries the `pi:` cursor minted
+   * by the adapter). `persist` keeps the cursor for resume; `resume` replays
+   * `ctx.piSessionReplay` into the loop context; `onSessionId` observes the
+   * minted id. Set explicitly by chat.ts; never inferred from task kind.
+   * Omitted ⇒ no resume, no id subscription.
    */
   sdkSession?: {
     persist: boolean;
@@ -324,20 +275,16 @@ export interface RunTaskCtx {
   };
   compiledModelPrompt?: CompiledModelPrompt;
   /**
-   * YUK-921 P2 (YUK-1021) — declarative tool mounts for the pi execution lane.
-   * `ctx.mcpServers` remains the SDK-lane surface; callers that want a
-   * needsToolCall kind to be pi-eligible declare the same mounts again here
-   * (domain via piDomainMount, remote MCP via piRemoteMcpMount) and the
-   * adapter gate picks which surface applies. Ignored on the sdk lane.
+   * YUK-921 P2 (YUK-1021) — THE tool mount surface (post-P4 the only one).
+   * Domain tools via piDomainMount, remote MCP via piRemoteMcpMount, bespoke
+   * tools via a custom AgentTool mount. needsToolCall kinds must mount at
+   * least one visible tool — the adapter fails closed otherwise.
    */
   piToolMounts?: PiToolMount[];
   /**
-   * YUK-1022 — pi-lane dual descriptors for the P3 surfaces. Each mirrors an
-   * SDK-side contract (`hooks` / `sdkSession.resume` / `skills` / `agents`)
-   * so the adapter gate can run the equivalent behavior in-process. A
-   * pi-pinned run that declares only the SDK surface fails closed at
-   * adapter startup — declaring the pi surface is what makes the kind
-   * pi-eligible. Ignored on the sdk lane.
+   * YUK-1022 — THE tool-call interception surface (post-P4 the only one):
+   * ordered beforeToolCall gates + afterToolCall observers (spawn-contract
+   * gate, cancellation, finalization trace).
    */
   piHooks?: PiHookBridge;
   /** Replay turns seeded into `context.messages` when `sdkSession.resume` is set. */
@@ -373,8 +320,10 @@ export type StreamTaskCtx = RunTaskCtx & {
 export interface MultimodalTaskInput {
   text: string;
   images: Array<{
-    /** base64-encoded image data (no "data:" prefix), URL, or Buffer-like. */
-    data: string | URL | Uint8Array;
+    /** base64-encoded image data (no "data:" prefix) or Buffer-like. URLs are
+     *  not supported — the pi adapter carries base64 only; fetch and inline
+     *  upstream. */
+    data: string | Uint8Array;
     mediaType: string;
   }>;
 }
@@ -431,7 +380,6 @@ function isMultimodalTaskInput(input: unknown): input is MultimodalTaskInput {
 }
 
 function imageDataToBase64(data: MultimodalTaskInput['images'][number]['data']): string {
-  if (data instanceof URL) return data.toString();
   if (typeof data === 'string') return data;
   return Buffer.from(data).toString('base64');
 }
@@ -447,10 +395,12 @@ function materializeMultimodalUserMessage(input: MultimodalTaskInput): SDKUserMe
         ...input.images.map((img) => {
           const data = imageDataToBase64(img.data);
           if (data.startsWith('http://') || data.startsWith('https://')) {
-            return {
-              type: 'image' as const,
-              source: { type: 'url' as const, url: data },
-            };
+            // pi carries base64 image data only — fail loudly here rather than
+            // handing the adapter a block it must throw on mid-stream.
+            throw new Error(
+              'multimodal image data must be base64 — URL image sources are not ' +
+                'supported (fetch the bytes and pass them inline)',
+            );
           }
           return {
             type: 'image' as const,
@@ -483,266 +433,49 @@ function promptFromInput(input: unknown): string | AsyncIterable<SDKUserMessage>
   return JSON.stringify(input);
 }
 
-// Memoised isolated CLAUDE_CONFIG_DIR. The agent SDK reads `~/.claude/` by
-// default for hooks/MCP/skills; in a server we need a clean empty dir so
-// the subprocess can't pull in the developer's personal Claude config.
-//
-// YUK-225 (S2 slice 4) — Agent Skill 接线（YUK-217 spike「结论 B」修正形态）:
-// the SDK auto-loads skills from `$CLAUDE_CONFIG_DIR/skills/` (spike 实证：that IS
-// the discovery root, NOT additionalDirectories/settingSources). Since the config
-// dir is a PROCESS-LEVEL memoised singleton shared by every task, we populate it
-// ONCE with ALL subject skills, then let each task's `Options.skills` whitelist
-// pick which ones the model sees (context filter). SoT stays at
-// src/subjects/<id>/skills/; this just mirrors them into the isolated dir.
-let isolatedConfigDir: string | undefined;
-
-function getIsolatedClaudeConfigDir(): string {
-  if (!isolatedConfigDir) {
-    const dir = mkdtempSync(join(tmpdir(), 'loom-claude-'));
-    populateIsolatedSkills(dir);
-    isolatedConfigDir = dir;
-  }
-  return isolatedConfigDir;
-}
-
-// The SDK's `Options.env` REPLACES the subprocess env (it is NOT merged with
-// process.env — see sdk.d.ts:1390-1408), so we spread process.env first and then
-// layer the auth overrides. The value type is `string | undefined`: setting a key
-// to `undefined` is the explicit, self-documenting way to UNSET that var in the
-// subprocess (used by the YUK-365 oauth lane to guarantee no parent-process
-// ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN wins precedence
-// over the subscription token).
-function buildAgentEnv(
-  resolved: ResolvedProvider,
-  options: { disableBackgroundTasks: boolean },
-): Record<string, string | undefined> {
-  const base: Record<string, string | undefined> = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (typeof v === 'string') base[k] = v;
-  }
-
-  if (resolved.authMode === 'oauth') {
-    // YUK-365 subscription lane. The token only works against Anthropic's
-    // first-party endpoint and CANNOT coexist with a base URL or an API key
-    // (precedence: ANTHROPIC_API_KEY > CLAUDE_CODE_OAUTH_TOKEN). Explicitly
-    // UNSET the three conflicting vars so a parent-process value can't win, and
-    // SET the OAuth token from its env var by NAME (never logged / never copied
-    // anywhere else).
-    base.CLAUDE_CODE_OAUTH_TOKEN = process.env[resolved.oauthTokenEnv];
-    base.ANTHROPIC_BASE_URL = undefined;
-    base.ANTHROPIC_API_KEY = undefined;
-    base.ANTHROPIC_AUTH_TOKEN = undefined;
-    // Codex review P2 (Finding 1): the cloud-provider selectors outrank the
-    // OAuth token in Claude Code's auth precedence — if ANY of them is truthy
-    // in the parent env, the SDK routes to Bedrock / Vertex / AWS / Foundry and
-    // the subscription token is silently ignored. A NAS/docker deployment that
-    // sets one of these (or a future dev who exports it) would break the A/B
-    // toggle invisibly. Explicitly UNSET all four so the first-party
-    // subscription endpoint is the only reachable target on the oauth lane.
-    base.CLAUDE_CODE_USE_BEDROCK = undefined;
-    base.CLAUDE_CODE_USE_VERTEX = undefined;
-    base.CLAUDE_CODE_USE_ANTHROPIC_AWS = undefined;
-    base.CLAUDE_CODE_USE_FOUNDRY = undefined;
-  } else {
-    base.ANTHROPIC_API_KEY = resolved.apiKey;
-    if (resolved.baseUrl) {
-      base.ANTHROPIC_BASE_URL = resolved.baseUrl;
-    } else {
-      base.ANTHROPIC_BASE_URL = '';
-    }
-    // 互斥对称（Codex review P2）：若父进程 env 里有订阅 token（owner 把
-    // CLAUDE_CODE_OAUTH_TOKEN 放进 .env.local 后就有），key-auth lane 必须显式
-    // UNSET 它——否则 mimo 子进程 env 同时带 API key + OAuth token（违反 lane 互斥，
-    // 且会把 token 泄进 mimo lane env / 让 default-lane 测试断言到 token）。
-    base.CLAUDE_CODE_OAUTH_TOKEN = undefined;
-  }
-
-  base.CLAUDE_CONFIG_DIR = getIsolatedClaudeConfigDir();
-  base.CLAUDE_AGENT_SDK_CLIENT_APP = base.CLAUDE_AGENT_SDK_CLIENT_APP ?? 'loom/0.1';
-  // YUK-590 — Claude Code 2.1.168 defaults API retries to 10 (11 requests) and
-  // honours this integer env override. A persistent 5xx took 177.7s in the frozen
-  // probe, well beyond most task budgets and before loom could classify the terminal.
-  // Three total CLI attempts keep short transient absorption while returning control
-  // to loom's one deliberate retry layer (in-process opt-in OR pg-boss redelivery).
-  // Preserve an explicit operator value, including '0'.
-  if (base.CLAUDE_CODE_MAX_RETRIES === undefined) {
-    base.CLAUDE_CODE_MAX_RETRIES = '2';
-  }
-  // SDK 0.3.220's Agent input defaults to background and a foreground task can
-  // also auto-background. A root that declares native agents must synchronously
-  // receive the child result before it can finish its one user-facing response.
-  // This SDK-owned switch disables both paths. It is deliberately scoped to
-  // agent-enabled roots so all other task options retain their existing env.
-  if (options.disableBackgroundTasks) {
-    base[SPAWN_DISABLE_BACKGROUND_TASKS_ENV] = '1';
-  }
-  return base;
-}
-
 /**
- * Build the SDK query options for a task. Centralised so the 3 entry points
- * (runTask / runAgentTask / streamTask) stay consistent on permission mode,
- * config-dir isolation, tools-from-registry default, etc.
+ * Build the per-attempt call spec for the pi adapter. Centralised so the 3
+ * entry points (runTask / runAgentTask / streamTask) stay consistent on
+ * tools-from-registry default, turn ceiling, session resume, etc.
+ *
+ * Post-P4 surface (vendored `Options` in sdk-types.ts): model / systemPrompt /
+ * abort / tool allowlist / turn ceiling / effort / resume.
+ * The SDK-only knobs (env, cwd, permissionMode, hooks, agents, skills,
+ * settingSources, outputFormat, maxBudgetUsd, persistSession, title) died with
+ * Adapter A — their pi equivalents live on `ctx.pi*` fields the adapter reads
+ * directly, not on this call spec.
  */
 function buildQueryOptions(
   kind: TaskKind,
   ctx: RunTaskCtx,
   abortController: AbortController,
-  // YUK-576 — the caller resolves ONCE per attempt and threads the binding in;
-  // previously this function re-ran resolveTaskProvider internally, so every
-  // entry point resolved twice (runner.ts:430 + its own top). Single resolution
-  // per attempt keeps the retry loop's env/model provably per-attempt-consistent.
+  // The caller resolves ONCE per attempt and threads the binding in (YUK-576):
+  // single resolution per attempt keeps the retry loop's env/model provably
+  // per-attempt-consistent.
   resolved: ResolvedProvider,
 ): Options {
   // The registry map's value type is the union of every spec's inferred literal
   // shape. Optional fields (reasoningEffort) only exist on declaring members, so
   // they are read through this declared-interface view; the literal union stays
-  // the source for mutable-array fields like allowedTools (SDK wants string[]).
+  // the source for mutable-array fields like allowedTools.
   const def = tasks[kind];
   const declaredDef: TaskDefinition = def;
-  const allowedTools = ctx.allowedTools ?? def.allowedTools;
-  const configuredSkills = ctx.skills ?? [];
-  const configuredMaxTurns = (ctx.budgetOverride?.maxIterations ?? def.budget.maxIterations) || 1;
-  // YUK-924 — per-(provider, model) knowledge now comes from the ModelProfile
-  // registry (config-over-catalog; src/server/ai/model-profiles.ts). The two
-  // hard-coded provider-string special cases below were converged onto profile
-  // fields with byte-identical behaviour:
-  //   - structured-output disable  ← xiaomi binding modelDefaults sets
-  //     capabilities.structuredOutput false for EVERY xiaomi model (site 2);
-  //     'unknown' (no layer confirmed it) still passes the option through,
-  //     exactly like the old non-xiaomi fall-through.
-  //   - maxBudgetUsd               ← anthropic binding modelDefaults sets
-  //     execution.meteredUsd true for EVERY anthropic-lane model (site 3);
-  //     anthropic-sub / compat endpoints stay false.
-  const modelProfile = resolveModelProfile(resolved.provider, resolved.model);
-  const sdkOutputFormat =
-    modelProfile.capabilities.structuredOutput === false ? undefined : ctx.outputFormat;
-  const agents = ctx.agents === undefined ? [] : Object.values(ctx.agents);
-  const disableBackgroundTasks =
-    agents.length > 0 && agents.every((definition) => definition.background === false);
   const options: Options = {
     model: resolved.model,
     systemPrompt: getTaskSystemPrompt(kind, ctx.subjectProfile),
     abortController,
-    env: buildAgentEnv(resolved, { disableBackgroundTasks }),
-    tools: allowedTools,
-    mcpServers: ctx.mcpServers,
+    tools: ctx.allowedTools ?? def.allowedTools,
     // YUK-575 (N5) — durable copilot run overrides the turn ceiling per-call.
-    // YUK-792: supported SDK-native outputFormat calls may consume one envelope
-    // turn before their terminal result, so floor only that protocol at two.
-    // Xiaomi takes the explicit text-JSON fallback above and retains the task's
-    // configured ceiling; every higher explicit budget remains unchanged.
-    maxTurns: sdkOutputFormat === undefined ? configuredMaxTurns : Math.max(2, configuredMaxTurns),
-    permissionMode: 'bypassPermissions',
-    allowDangerouslySkipPermissions: true,
-    persistSession: false,
-    cwd: process.cwd(),
-    // Ephemeral server runs do not use the persisted session title. Supplying a
-    // stable title prevents the CLI from spending a separate model request to
-    // synthesize one from the first (often large) product payload.
-    title: kind,
-    // YUK-225 (S2 slice 4) — Agent Skill whitelist.
-    //
-    // SDK 语义实证（node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts）:
-    //   - Options.skills:1699-1721 — "omitted (default): no SDK auto-configuration.
-    //     The CLI's own defaults still apply, so this is **not** skills off."
-    //   - Query-level skills:2768-2771 — "Omit to load every discovered skill."
-    //   - `string[]` — "enable only the listed skills … unlisted skills are hidden
-    //     from the model's listing and rejected by the Skill tool" (context filter).
-    // 即：OMITTED ⇒ CLI 默认加载「全部已发现 skills」；`[]` ⇒ 一个都不启用（显式禁用）。
-    //
-    // Since getIsolatedClaudeConfigDir() pre-populates the isolated CONFIG_DIR/skills
-    // with ALL subject quiz-gen skills, OMITTING the option would leak every quiz-gen
-    // skill into the listing of tasks that never set ctx.skills (Attribution /
-    // NoteGenerate / …) — a zero-behaviour-change red-line break. So the DEFAULT must
-    // be explicit-disable: pass `skills: ctx.skills ?? []`. Only a handler that
-    // explicitly whitelists (ctx.skills = ['quiz-gen-<kind>']) sees those skills.
-    //
-    // settingSources is handled below: no-skill product runs use full SDK isolation;
-    // explicitly skill-enabled runs load only the isolated CONFIG_DIR user source.
-    skills: configuredSkills,
+    maxTurns: (ctx.budgetOverride?.maxIterations ?? def.budget.maxIterations) || 1,
   };
-  // SDK default/omitted means "load user + project + local settings", including
-  // this repository's CLAUDE.md and SessionStart hooks. Those developer-agent
-  // instructions are not product context. SDK 0.3.220 requires the `project`
-  // source to load CLAUDE.md, so skill-enabled tasks select only `user` from the
-  // generated isolated CONFIG_DIR while the explicit whitelist restricts which
-  // mirrored skills the model can invoke. No-skill tasks disable all filesystem
-  // settings.
-  options.settingSources = configuredSkills.length > 0 ? ['user'] : [];
-  // YUK-299 seam: pass outputFormat only to providers that implement the SDK
-  // protocol. Mimo callers intentionally omit the option and consume the
-  // existing strict-prompt + Zod text fallback instead.
-  if (sdkOutputFormat !== undefined) {
-    options.outputFormat = sdkOutputFormat;
-  }
-  // YUK-572 seam: SDK-native nested-agent / hooks / canUseTool passthrough. Same
-  // undefined-guard as the outputFormat seam above — when a caller does not set these
-  // (every caller that does not opt into nested work), the keys are NOT written and
-  // Options stays byte-identical to pre-seam (零回归). The research-meeting director
-  // and Copilot lanes both reuse the same depth-one/report-only contract.
-  if (ctx.agents !== undefined) {
-    options.agents = ctx.agents;
-    // Product UI has one narrative voice. Nested task lifecycle is exposed only via
-    // onTaskEvent; forwarding subagent prose would leak a second voice into the parent
-    // assistant stream. Pin false instead of relying on an SDK default that may drift.
-    options.forwardSubagentText = false;
-  }
-  if (ctx.hooks !== undefined) {
-    options.hooks = ctx.hooks;
-  }
-  if (ctx.nativeCompaction && ctx.sdkSession?.persist) {
-    const sessionContext = ctx.nativeCompaction.sessionContext;
-    options.settings = { autoCompactEnabled: true, precomputeCompactionEnabled: false };
-    options.hooks = {
-      ...options.hooks,
-      SessionStart: [
-        ...(options.hooks?.SessionStart ?? []),
-        {
-          hooks: [
-            async (input) =>
-              input.hook_event_name === 'SessionStart' &&
-              input.source === 'compact' &&
-              sessionContext
-                ? {
-                    hookSpecificOutput: {
-                      hookEventName: 'SessionStart',
-                      additionalContext: sessionContext,
-                    },
-                  }
-                : {},
-          ],
-        },
-      ],
-    };
-  }
-  if (ctx.canUseTool !== undefined) {
-    options.canUseTool = ctx.canUseTool;
-  }
-  // YUK-923 seam: SDK-native reasoning effort tier. Same undefined-guard as the
-  // seams above — a task spec that does not declare `reasoningEffort` leaves the
-  // key unwritten, so Options stays byte-identical (zero regression) and the
-  // endpoint default applies. Effort is orthogonal to thinking on/off. The
-  // per-run modelBinding (YUK-1013) may override the per-task-kind declaration
-  // when set; unset → spec value, else the key stays unwritten exactly as
-  // before.
+  // YUK-923 — reasoning effort tier: per-run modelBinding wins over the
+  // task-kind declaration; unset → the provider default applies.
   const reasoningEffort = ctx.modelBinding?.effort ?? declaredDef.reasoningEffort;
   if (reasoningEffort !== undefined) {
     options.effort = reasoningEffort;
   }
-  // YUK-590 / YUK-924 site 3 — only metered pay-as-you-go lanes (anthropic
-  // direct via the provider binding) get the per-run USD ceiling. Mimo has no
-  // SDK cost signal, zhipu is a coding plan and anthropic-sub is flat
-  // subscription quota, so writing maxBudgetUsd there would be a wired-but-inert
-  // lie.
-  if (modelProfile.execution.meteredUsd) {
-    options.maxBudgetUsd = def.budget.maxCost;
-  }
-  if (ctx.sdkSession?.persist) {
-    options.persistSession = true;
-    if (ctx.sdkSession.resume) {
-      options.resume = ctx.sdkSession.resume;
-    }
+  if (ctx.sdkSession?.persist && ctx.sdkSession.resume) {
+    options.resume = ctx.sdkSession.resume;
   }
   return options;
 }
@@ -828,7 +561,7 @@ type SDKToolUseBlock = Extract<ContentBlock, { type: 'tool_use' }>;
  * terminal core: retry, settlement, stream cancellation, and partial-result
  * behavior remain with runTask/streamTask/streamTaskCollecting.
  */
-async function consumeSdkAttempt<TResult extends RunTaskResult>(args: {
+async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   query: AsyncIterable<RunnerMessage>;
   kind: TaskKind;
   ctx: RunTaskCtx;
@@ -843,7 +576,7 @@ async function consumeSdkAttempt<TResult extends RunTaskResult>(args: {
   onResultError?: (msg: Exclude<SDKResultMessage, SDKSuccessResultMessage>) => void;
   abortedWithoutTerminalMessage: string;
 }): Promise<void> {
-  const sdkTerminal = createSdkTerminalEvidenceCollector();
+  const terminal = createSdkTerminalEvidenceCollector();
   let iteration = 0;
   let stepStartTime = Date.now();
 
@@ -854,12 +587,12 @@ async function consumeSdkAttempt<TResult extends RunTaskResult>(args: {
     await notifyTaskEvent(args.ctx, msg);
 
     if (msg.type === 'system' && msg.subtype === 'compact_boundary') {
-      args.lifecycle.recordObservedUsage(sdkTerminal.observeCompaction(msg));
+      args.lifecycle.recordObservedUsage(terminal.observeCompaction(msg));
       continue;
     }
 
     if (msg.type === 'assistant') {
-      const observedUsage = sdkTerminal.observeAssistant(msg);
+      const observedUsage = terminal.observeAssistant(msg);
       if (observedUsage) args.lifecycle.recordObservedUsage(observedUsage);
       await args.onAssistant?.(msg);
 
@@ -890,7 +623,7 @@ async function consumeSdkAttempt<TResult extends RunTaskResult>(args: {
 
     if (msg.type !== 'result') continue;
     if (args.notifySessionId) await notifySdkSessionId(args.ctx, msg);
-    args.lifecycle.recordTerminalResult(sdkTerminal.fromResult(msg));
+    args.lifecycle.recordTerminalResult(terminal.fromResult(msg));
     if (msg.subtype === 'success') {
       if (isApiErrorSuccessResult(msg)) {
         args.onApiError?.(msg);
@@ -950,7 +683,7 @@ async function runTaskAttempt(args: {
   lifecycle: AiRunLifecycle<RunTaskResult>;
   /** Effective binding after the env rollout pin — resolved once by the caller. */
   modelBinding: RunTaskCtx['modelBinding'];
-  onSdkQueryStarted?: () => Promise<void>;
+  onProviderQueryStarted?: () => Promise<void>;
   warnMissingMcp?: boolean;
 }): Promise<RunTaskResult> {
   const { kind, actualInput, ctx, lifecycle, modelBinding } = args;
@@ -961,17 +694,17 @@ async function runTaskAttempt(args: {
   // lease: blocking this event loop after acquire can delay the first
   // heartbeat beyond its DB-derived deadline even though no provider work has
   // started yet.
-  const sdkPrompt = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
-  const sdkOptions = buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved);
-  const consumeSdkQuery = async (q: AsyncIterable<RunnerMessage>) => {
+  const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
+  const callOptions = buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved);
+  const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
     if (args.warnMissingMcp) {
-      logMissingMcpServersWarning({
+      logMissingToolMountsWarning({
         task_run_id: lifecycle.taskRunId,
         task_kind: kind,
       });
     }
-    await args.onSdkQueryStarted?.();
-    await consumeSdkAttempt({
+    await args.onProviderQueryStarted?.();
+    await consumeProviderAttempt({
       query: q,
       kind,
       ctx,
@@ -1004,9 +737,9 @@ async function runTaskAttempt(args: {
     lifecycle,
     modelBinding,
     actualInput,
-    sdkPrompt,
-    sdkOptions,
-    consumeSdkQuery,
+    promptText,
+    callOptions,
+    consumePreparedQuery,
     ctx.beforeProviderQuery,
     ctx,
   );
@@ -1043,9 +776,7 @@ export async function runTask(
     ? await ctx.middleware.beforeRun(kind, input, ctx)
     : input;
 
-  // YUK-921 P2 — the ops rollout pin (AI_ADAPTER_PI_PROVIDER/MODEL) defaults a
-  // pi binding onto allowlisted kinds when the caller pins nothing itself.
-  const modelBinding = effectiveModelBinding(kind, ctx.modelBinding);
+  const modelBinding = ctx.modelBinding;
   // Narrow pass, not {...ctx}: RunTaskCtx consumers may define lazy getters
   // (allowedTools et al.) whose evaluation must stay single-shot and ordered.
   const maxAttempts = maxLifecycleAttempts(kind, {
@@ -1098,14 +829,9 @@ export async function runTask(
         ctx,
         lifecycle,
         modelBinding,
-        // The mount surface differs by engine: SDK consumes ctx.mcpServers,
-        // pi consumes ctx.piToolMounts (YUK-1021). A pi-pinned run with only
-        // mcpServers mounted is still "no tools" for its engine.
-        warnMissingMcp:
-          attempt === 1 &&
-          def.needsToolCall &&
-          (modelBinding?.adapter === 'pi' ? !ctx.piToolMounts?.length : !ctx.mcpServers),
-        onSdkQueryStarted: retrySource
+        // needsToolCall with no pi-visible mounts runs tool-less — warn once.
+        warnMissingMcp: attempt === 1 && def.needsToolCall && !ctx.piToolMounts?.length,
+        onProviderQueryStarted: retrySource
           ? async () => {
               await retrySource?.markRetried();
               retrySource = undefined;
@@ -1156,7 +882,7 @@ export async function runTask(
 // ============================================================================
 // runAgentTask — alias kept so callers that explicitly want the
 // "I'm doing a tool-call loop, here's my MCP server" form can phrase intent.
-// Behaviour is identical to runTask — pass ctx.mcpServers / ctx.allowedTools
+// Behaviour is identical to runTask — pass ctx.piToolMounts / ctx.allowedTools
 // or let the registry's `allowedTools` apply.
 // ============================================================================
 
@@ -1169,7 +895,7 @@ export async function runAgentTask(
 }
 
 // ============================================================================
-// streamTask — text-stream Response. Same SDK path; pipes assistant text
+// streamTask — text-stream Response. Same pi path; pipes assistant text
 // deltas to the body. Tool-use blocks land in tool_call_log per turn.
 // ============================================================================
 
@@ -1178,7 +904,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
     throw new Error(`Unknown task kind: ${kind}`);
   }
   const def = tasks[kind];
-  const modelBinding = effectiveModelBinding(kind, ctx.modelBinding);
+  const modelBinding = ctx.modelBinding;
   const lifecycle = createRunLifecycle<RunTaskResult>({
     db: ctx.db,
     kind,
@@ -1208,15 +934,15 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
         const actualInput = ctx.middleware?.beforeRun
           ? await ctx.middleware.beforeRun(kind, input, ctx)
           : input;
-        const sdkPrompt = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
-        const sdkOptions = buildQueryOptions(
+        const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
+        const callOptions = buildQueryOptions(
           kind,
           ctx,
           lifecycle.abortController,
           lifecycle.resolved,
         );
-        const consumeSdkQuery = async (q: AsyncIterable<RunnerMessage>) => {
-          await consumeSdkAttempt({
+        const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
+          await consumeProviderAttempt({
             query: q,
             kind,
             ctx,
@@ -1236,9 +962,9 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
           lifecycle,
           modelBinding,
           actualInput,
-          sdkPrompt,
-          sdkOptions,
-          consumeSdkQuery,
+          promptText,
+          callOptions,
+          consumePreparedQuery,
           ctx.beforeProviderQuery,
           ctx,
         );
@@ -1344,7 +1070,7 @@ export async function streamTaskCollecting(
     throw new Error(`Unknown task kind: ${kind}`);
   }
   const def = tasks[kind];
-  const modelBinding = effectiveModelBinding(kind, ctx.modelBinding);
+  const modelBinding = ctx.modelBinding;
   const lifecycle = createRunLifecycle<StreamCollectResult>({
     db: ctx.db,
     kind,
@@ -1369,10 +1095,10 @@ export async function streamTaskCollecting(
     const actualInput = ctx.middleware?.beforeRun
       ? await ctx.middleware.beforeRun(kind, input, ctx)
       : input;
-    const sdkPrompt = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
-    const sdkOptions = buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved);
-    const consumeSdkQuery = async (q: AsyncIterable<RunnerMessage>) => {
-      await consumeSdkAttempt({
+    const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
+    const callOptions = buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved);
+    const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
+      await consumeProviderAttempt({
         query: q,
         kind,
         ctx,
@@ -1414,9 +1140,9 @@ export async function streamTaskCollecting(
       lifecycle,
       modelBinding,
       actualInput,
-      sdkPrompt,
-      sdkOptions,
-      consumeSdkQuery,
+      promptText,
+      callOptions,
+      consumePreparedQuery,
       ctx.beforeProviderQuery,
       ctx,
     );

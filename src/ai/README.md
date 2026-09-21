@@ -35,17 +35,17 @@ Task 层抽象。**不是 chat()** —— 每种产物一个 Task；tool-calling
 
 当前已落地的 MCP/tool-call 状态：
 
-- `src/server/ai/runner.ts` 支持 `mcpServers`、`allowedTools`、`maxTurns`，并把所有 task 统一送进 Claude Agent SDK `query()`。
+- `src/server/ai/runner.ts` 支持 `piToolMounts`、`allowedTools`、`maxTurns`，并把所有 task 统一送进 pi in-process `agentLoop`（`pi-agent-adapter.ts`）。
 - `src/ai/registry.ts` 仍只给 legacy `KnowledgeReviewTask` 开了 `allowedTools: ['mcp__loom__write_proposal']`；新 DomainTool callers 应使用 `src/server/ai/tools/allowlists.ts` 生成 surface-specific `mcp__loom__*` allowlist。
-- `src/server/knowledge/review.ts` 在每次 `/api/knowledge/review` 请求内创建本地 `loom` MCP server，只暴露 `write_proposal` 一个 proposal tool。
-- capability manifests 经 `src/server/ai/tools/register-capability-tools.ts` 在 API/worker 启动期注册完整 DomainTools；`mcp-bridge.ts` 能把任意 allowlist 包成 in-process MCP server，并写 `tool_call_log` / `tool_use` mirror（ADR-0011 §1.1 promote 自 `experimental:tool_use`）。
+- `src/server/knowledge/review.ts` 在每次 `/api/knowledge/review` 请求内经 `piCustomTool` 暴露 `write_proposal` 一个 proposal tool。
+- capability manifests 经 `src/server/ai/tools/register-capability-tools.ts` 在 API/worker 启动期注册完整 DomainTools；`piDomainMount` 把 registry 工具编译成 pi `AgentTool`，并写 `tool_call_log` / `tool_use` mirror（ADR-0011 §1.1 promote 自 `experimental:tool_use`）。
 - Concrete DomainTools live with their owning capabilities（knowledge / agency / ingestion / practice / copilot 包内 `tools`）；`src/server/ai/tools/` 只保留共享基础设施（registry、mcp-bridge、types、allowlists、budgets、context-throttle）。YUK-885 过渡期仍居中央的 7 个工具文件（proposal-tools / context-readers / get-attempt-context / query-mistakes / query-questions / write-quiz / tool-quiz-core）由 `audit-architecture-ownership` 的 transitional allowlist 显式登记，新增中央工具会被审计拒绝。
 - generic `/api/ai/[task]` 已整体退场；不要为新 task 建通用 dispatch 入口。
 - 已实现：Copilot drawer 的 operation/subagent lifecycle projection。尚未实现：公共/standalone MCP server、外部 MCP 消费，以及 Dreaming / Coach 的具体 runtime 接入。
 
 核心原则：
 
-- Domain Tool Registry 是源头；MCP 只是 Claude Agent SDK 的 in-process 适配层。
+- Domain Tool Registry 是源头；`mcp__<server>__<tool>` wire name 只是 pi `AgentTool` 的命名契约。
 - Read tool 返回语义化上下文，例如 graph path、relation meaning、recent failure evidence。
 - Proposal tool 写 `event(action='propose')`，不直接改硬事实。
 - Action/write tool 只能包装已有 owner service（如 AttributionTask / VariantGenTask），不能让 LLM 传任意 mutation payload。

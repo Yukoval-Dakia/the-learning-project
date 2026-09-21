@@ -690,23 +690,9 @@ describe('YUK-791 intervention preparation closed loop', () => {
       'InterventionPackageReviewTask',
       'InterventionPackageReviewTask',
     ]);
-    expect(
-      contexts.map(({ kind, ctx }) => ({
-        kind,
-        outputFormatType: ctx?.outputFormat?.type,
-      })),
-    ).toEqual([
-      { kind: 'InterventionRecommendationTask', outputFormatType: 'json_schema' },
-      { kind: 'InterventionPackageAuthorTask', outputFormatType: 'json_schema' },
-      { kind: 'SolutionGenerateTask', outputFormatType: 'json_schema' },
-      { kind: 'SolutionGenerateTask', outputFormatType: 'json_schema' },
-      { kind: 'SolutionGenerateTask', outputFormatType: 'json_schema' },
-      { kind: 'QuizVerifyTask', outputFormatType: undefined },
-      { kind: 'QuizVerifyTask', outputFormatType: undefined },
-      { kind: 'QuizVerifyTask', outputFormatType: undefined },
-      { kind: 'InterventionPackageReviewTask', outputFormatType: 'json_schema' },
-      { kind: 'InterventionPackageReviewTask', outputFormatType: 'json_schema' },
-    ]);
+    // Post-P4 (YUK-1025) there is no outputFormat ctx surface — the call ORDER
+    // above is the surviving contract this test pins.
+    expect(contexts.every(({ ctx }) => ctx !== undefined)).toBe(true);
 
     const [active] = await db.select().from(intervention);
     expect(active.status).toBe('active');

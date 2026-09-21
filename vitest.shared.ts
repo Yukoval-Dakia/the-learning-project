@@ -104,16 +104,17 @@ export const fastTestInclude = [
   'src/core/**/*.test.ts',
   'src/capabilities/practice/server/judge/**/*.test.ts',
   // YUK-238 / YUK-240 — streamTask client-disconnect abort + stuck-run warn.
-  // Pure no-DB unit: @anthropic-ai/claude-agent-sdk and @/server/ai/log are
-  // vi.mock'd and `db` is an untouched stub, so no live Postgres is needed.
+  // Pure no-DB unit (post YUK-1025: the pi adapter is swapped via
+  // __setPiAdapterForTests, not a module mock) and @/server/ai/log is vi.mock'd;
+  // `db` is an untouched stub, so no live Postgres is needed.
   // (The sibling runner.test.ts stays in the db partition because it drives the
   // real ai/log writers against a container.)
   'src/server/ai/stream-cancel.test.ts',
   // YUK-266 (C1) — streamTaskCollecting collecting-stream unit. Same justification
-  // as stream-cancel: @anthropic-ai/claude-agent-sdk + @/server/ai/log are vi.mock'd
+  // as stream-cancel: fake pi adapter + @/server/ai/log are vi.mock'd
   // and `db` is an untouched stub, so no live Postgres is needed.
   'src/server/ai/runner.stream-collect.test.ts',
-  // YUK-757 — pure spawn permission/depth contract. It imports SDK types only;
+  // YUK-757 — pure spawn permission/depth contract. It imports vendored sdk-types only;
   // no DB client, network, or subprocess is touched.
   'src/server/ai/spawn-contract.unit.test.ts',
   'src/server/ai/run-lifecycle.test.ts',
@@ -121,11 +122,11 @@ export const fastTestInclude = [
   // YUK-842 — pure config/failure-policy unit. DB coordination lives in the
   // sibling *.db.test.ts and remains in the container partition.
   'src/server/ai/provider-session-admission.test.ts',
-  // YUK-299 — runner outputFormat seam: zero-regression + structured_output
-  // three-state read. Same justification as stream-cancel: @anthropic-ai/
-  // claude-agent-sdk + @/server/ai/log are vi.mock'd and `db` is an untouched stub
-  // → no live Postgres. src/server/ai/** has no unit glob, so this MUST be listed
-  // or the db config's src/**/*.test.ts glob would sweep it into the container.
+  // YUK-299 — runner structured_output consume seam + options wiring.
+  // Same justification as stream-cancel: fake pi adapter + @/server/ai/log are
+  // vi.mock'd and `db` is an untouched stub → no live Postgres. src/server/ai/**
+  // has no unit glob, so this MUST be listed or the db config's src/**/*.test.ts
+  // glob would sweep it into the container.
   'src/server/ai/runner.seam.test.ts',
   'src/server/ai/runner.provider-admission.test.ts',
   // YUK-750 — bound runner adapter contract. Pure no-DB: runner is mocked and
@@ -133,7 +134,7 @@ export const fastTestInclude = [
   'src/server/ai/runner-fn.unit.test.ts',
   // YUK-1013 — ExecutionAdapter seam (P0): resolveExecutionAdapter fail-closed
   // pin + explicitProviderRouting precedence + modelBinding retry-pin. Pure
-  // no-DB: imports ./execution-adapter (SDK types + startup, not invoked) +
+  // no-DB: imports ./execution-adapter (vendored sdk-types + startup, not invoked) +
   // ./run-lifecycle (transientRetryEnabled only). src/server/ai/** has no unit
   // glob, so this MUST be listed (same enumeration requirement as above).
   'src/server/ai/execution-adapter.test.ts',
@@ -143,10 +144,6 @@ export const fastTestInclude = [
   // + ./providers types. Same enumeration requirement as above (no
   // src/server/ai/** unit glob).
   'src/server/ai/pi-agent-adapter.test.ts',
-  // YUK-299 — Zod→outputFormat adapter unit. Pure no-DB: imports only
-  // ./output-format (→ zod-to-json-schema, pure JS) + @/core/schema/business (Zod).
-  // Same enumeration requirement as above (no src/server/ai/** unit glob).
-  'src/server/ai/output-format.test.ts',
   // YUK-607 — LLM JSON 修复带提取器。Pure no-DB: imports only ./json-extract (→ jsonrepair, pure JS).
   'src/server/ai/json-extract.test.ts',
   // YUK-359 — pure arithmetic cost fallback, no DB/SDK imports.
@@ -175,7 +172,7 @@ export const fastTestInclude = [
   // the testcontainer partition (pricing.test.ts lesson).
   'src/server/ai/item-prior.test.ts',
   // YUK-576 — runner transient-retry loop + AgentRunError classification. Same
-  // justification as runner.seam.test.ts: @anthropic-ai/claude-agent-sdk +
+  // justification as runner.seam.test.ts: fake pi adapter +
   // @/server/ai/log are vi.mock'd and `db` is an untouched stub → no live
   // Postgres. src/server/ai/** has no unit glob, so this MUST be listed.
   'src/server/ai/runner.fallback.test.ts',
@@ -300,7 +297,7 @@ export const fastTestInclude = [
   // touched (the real createMemoryClient is never constructed in tests).
   'src/server/ai/tools/search-memory-facts.test.ts',
   // YUK-198 — pure (no-DB) Tavily remote MCP builder: reads TAVILY_API_KEY via
-  // vi.stubEnv, returns a static McpHttpServerConfig. No live DB / AI / network.
+  // vi.stubEnv, returns a static RemoteMcpHttpConfig. No live DB / AI / network.
   'src/server/ai/mcp/tavily.test.ts',
   // YUK-962 — pure no-DB provider admission config and provenance arithmetic.
   // src/server/ai/** has no unit glob, so enumerate these fast tests explicitly.
@@ -426,15 +423,13 @@ export const fastTestInclude = [
   // default-profile over-match fix for the derived ?subject= axis.
   'src/subjects/resolve-known-subject-id.test.ts',
   // YUK-610 — Dockerfile 运行时 skills COPY 覆盖断言（纯 fs：读 Dockerfile +
-  // 目录扫描，零 DB）。populateIsolatedSkills 走 readdirSync 非 import，漏拷
-  // 不进 tsc/esbuild 视野，这条断言是唯一构建期防线（_shared 漏拷生产事故）。
+  // 目录扫描，零 DB）。skill-doc resolver 走 fs 非 import，漏拷不进
+  // tsc/esbuild 视野，这条断言是唯一构建期防线（_shared 漏拷生产事故）。
   'src/subjects/skills-image-coverage.test.ts',
   // YUK-611 — skill 命名空间：rewrite helper unit + 真树静态撞名 audit（纯 fs，
   // 零 DB）。audit 是构建期防线：跨科 basename 重复 / frontmatter name 漂移即红。
   'src/subjects/skill-namespace.test.ts',
-  // YUK-611 — populateIsolatedSkills 镜像命名空间化 unit（纯 fs：fixture 树 +
-  // isolatedDir 双 mkdtemp；模块自 runner.ts 摘出，零 SDK import）。
-  'src/server/ai/populate-skills.test.ts',
+
   // YUK-599 — trait 分解/装配互逆 + 种子合法性 + strict 写门（纯函数零 IO）。
   // v3 §8-13 零行为变化基线：assemble(decompose(p)) 与 4 个硬编码 profile
   // 逐字段 deep-equal。

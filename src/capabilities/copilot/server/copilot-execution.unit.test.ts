@@ -1,4 +1,3 @@
-import type { HookCallback, Options } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it, vi } from 'vitest';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import { COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY } from './content-validation';
@@ -43,7 +42,6 @@ function fakeCancellation(controller = new AbortController()): CopilotRunCancell
     onToolExecutionStarted: vi.fn(),
     onToolExecutionSettled: vi.fn(),
     waitForInFlight: vi.fn(async () => true),
-    prependSdkHook: vi.fn((existing?: Options['hooks']) => existing ?? {}),
   };
 }
 
@@ -52,32 +50,53 @@ function ownerWith(
   stream: CopilotExecutionAdapters['streamTaskCollectingFn'] | undefined,
   captureMcp: (options: BuildMcpServerOptions) => void = () => {},
 ) {
+  const captureCtx = (ctx: { piToolMounts?: readonly { type: string; options?: unknown }[] }) => {
+    const mount = ctx.piToolMounts?.[0];
+    if (mount?.type === 'domain') captureMcp(mount.options as BuildMcpServerOptions);
+  };
   return createCopilotExecutionOwner({
-    runAgentTaskFn: run,
-    streamTaskCollectingFn:
-      stream ??
-      (async (kind, value, ctx) => {
-        const result = await run(kind, value, ctx);
-        return { ...result, terminalText: result.text, partial: false };
-      }),
-    buildMcpServerFn: (options) => {
-      captureMcp(options);
-      return { type: 'sdk', name: 'loom' } as never;
+    runAgentTaskFn: async (kind, value, ctx) => {
+      captureCtx(ctx);
+      return run(kind, value, ctx);
     },
+    streamTaskCollectingFn: stream
+      ? async (kind, value, ctx, onDelta) => {
+          captureCtx(ctx);
+          return stream(kind, value, ctx, onDelta);
+        }
+      : async (kind, value, ctx) => {
+          captureCtx(ctx);
+          const result = await run(kind, value, ctx);
+          return { ...result, terminalText: result.text, partial: false };
+        },
     buildExaMcpServerFn: () => null,
-    resolveCopilotSkillsFn: async () => undefined,
+    resolveCopilotSkillDocsFn: async () => undefined,
   });
 }
 
-async function invokeHooks(
-  hooks: Options['hooks'],
-  event: 'PreToolUse' | 'PostToolUse',
-  input: Parameters<HookCallback>[0],
+async function piBefore(
+  ctx: { piHooks?: { beforeToolCall?: readonly ((...args: never[]) => unknown)[] } },
+  call: { id: string; name: string; agentType?: string },
+  args: Record<string, unknown>,
 ): Promise<void> {
-  for (const matcher of hooks?.[event] ?? []) {
-    for (const hook of matcher.hooks) {
-      await hook(input, 'hook-test', { signal: new AbortController().signal });
-    }
+  for (const entry of ctx.piHooks?.beforeToolCall ?? []) {
+    await (entry as (...a: unknown[]) => unknown)(call, args, new AbortController().signal);
+  }
+}
+
+async function piAfter(
+  ctx: { piHooks?: { afterToolCall?: readonly ((...args: never[]) => unknown)[] } },
+  observation: {
+    call: { id: string; name: string; agentType?: string };
+    args: Record<string, unknown>;
+    isError: boolean;
+    output?: unknown;
+    error?: unknown;
+    interrupted?: boolean;
+  },
+): Promise<void> {
+  for (const entry of ctx.piHooks?.afterToolCall ?? []) {
+    await (entry as (...a: unknown[]) => unknown)(observation, new AbortController().signal);
   }
 }
 
@@ -168,7 +187,7 @@ describe('Copilot execution owner', () => {
       expect(ctx?.nativeCompaction?.sessionContext).toContain('当前目标：含参方程');
       expect(ctx?.nativeCompaction?.sessionContext).toContain('范围过宽');
       expect(ctx?.nativeCompaction?.sessionContext).not.toContain('旧答案');
-      expect(ctx?.hooks?.PreToolUse).toBeDefined();
+      expect(ctx?.piHooks?.beforeToolCall?.length).toBeGreaterThanOrEqual(1);
       // YUK-1022 — resume on the pi lane replays the durable turns instead of
       // reattaching a session file: 'ai' rows land as assistant messages.
       expect(ctx?.piSessionReplay).toEqual([{ role: 'assistant', text: '旧答案不得重发' }]);
@@ -208,7 +227,7 @@ describe('Copilot execution owner', () => {
     expect(ctx?.lifecycleAbortController).toBeInstanceOf(AbortController);
     expect(ctx?.allowedTools).toContain('Task');
     expect(ctx?.allowedTools).toContain('mcp__loom__present_primary_view');
-    expect(ctx?.agents?.['copilot-researcher']).toMatchObject({ background: false });
+    expect(ctx?.piAgents?.['copilot-researcher']).toBeDefined();
     expect(ctx?.onTaskEvent).toEqual(expect.any(Function));
     // YUK-1022 — pi dual descriptors ride the same runnerContext: the pi lane
     // mounts domain tools via piToolMounts, gates spawns through piHooks'
@@ -289,8 +308,7 @@ describe('Copilot execution owner', () => {
     expect(ctx?.sdkSession).toMatchObject({ persist: true });
     expect(ctx?.nativeCompaction).toMatchObject({ sessionContext: expect.anything() });
     expect(ctx?.allowedTools).toContain('Task');
-    expect(ctx?.agents?.['copilot-researcher']).toMatchObject({
-      background: false,
+    expect(ctx?.piAgents?.['copilot-researcher']).toMatchObject({
       maxTurns: DURABLE_COPILOT_EXECUTION_BUDGET.maxIterations,
     });
     expect(ctx?.onTaskEvent).toEqual(expect.any(Function));
@@ -346,12 +364,11 @@ describe('Copilot execution owner', () => {
           terminalText: '已核对公开资料。',
         };
       },
-      buildMcpServerFn: () => ({ type: 'sdk', name: 'loom' }) as never,
       buildExaMcpServerFn: () => ({
         type: 'http',
         url: 'https://mcp.exa.ai/mcp',
       }),
-      resolveCopilotSkillsFn: async () => ['copilot'],
+      resolveCopilotSkillDocsFn: async () => [{ name: '_shared--copilot', body: 'skill body' }],
     });
 
     await execute(
@@ -360,11 +377,9 @@ describe('Copilot execution owner', () => {
       { cancellation: fakeCancellation(), deadlineAt: 900_000, subagentsEnabled: false },
     );
 
-    expect(runnerContext?.mcpServers).toHaveProperty('exa');
     expect(runnerContext?.allowedTools).toEqual(
       expect.arrayContaining(['mcp__exa__web_search_exa', 'mcp__exa__web_fetch_exa']),
     );
-    expect(runnerContext?.skills).toEqual(['copilot']);
     // YUK-1022 — pi twins: the domain mount + a remote-mcp mount for exa, and
     // the resolved SKILL.md bodies the adapter injects into the system prompt.
     expect(runnerContext?.piToolMounts?.map((mount) => mount.type)).toEqual([
@@ -440,23 +455,16 @@ describe('Copilot execution owner', () => {
     let mcp: BuildMcpServerOptions | undefined;
     const toolInput = { subjectId: 'math', nodeId: 'k1' };
     const run = vi.fn(async (_kind, _input, ctx) => {
-      const rootPre = {
-        hook_event_name: 'PreToolUse' as const,
-        session_id: 'sdk_session',
-        transcript_path: '/tmp/transcript',
-        cwd: '/tmp',
-        tool_name: 'mcp__loom__query_knowledge',
-        tool_use_id: 'root_tool_1',
-        tool_input: toolInput,
+      const rootCall = { id: 'root_tool_1', name: 'mcp__loom__query_knowledge' };
+      const childCall = {
+        id: 'child_tool_1',
+        name: 'mcp__loom__query_knowledge',
+        agentType: 'researcher_1',
       };
-      const childPre = {
-        ...rootPre,
-        tool_use_id: 'child_tool_1',
-        agent_id: 'researcher_1',
-      };
-      await invokeHooks(ctx.hooks, 'PreToolUse', rootPre);
-      await invokeHooks(ctx.hooks, 'PreToolUse', childPre);
-      expect(mcp?.claimToolUseId?.('query_knowledge', toolInput)).toBe('root_tool_1');
+      await piBefore(ctx, rootCall, toolInput);
+      await piBefore(ctx, childCall, toolInput);
+      // The pi bridge forwards the loop's native toolCall.id via
+      // `correlatedToolUseId` — onResult's tool_use_id IS the call id.
       mcp?.onResult?.({
         tool_use_id: 'root_tool_1',
         name: 'query_knowledge',
@@ -466,26 +474,17 @@ describe('Copilot execution owner', () => {
         error_reason: null,
         executed: true,
       });
-      await invokeHooks(ctx.hooks, 'PostToolUse', {
-        hook_event_name: 'PostToolUse',
-        session_id: 'sdk_session',
-        transcript_path: '/tmp/transcript',
-        cwd: '/tmp',
-        tool_name: rootPre.tool_name,
-        tool_use_id: 'root_tool_1',
-        tool_input: toolInput,
-        tool_response: { nodes: [{ id: 'k1' }] },
+      await piAfter(ctx, {
+        call: rootCall,
+        args: toolInput,
+        isError: false,
+        output: { nodes: [{ id: 'k1' }] },
       });
-      await invokeHooks(ctx.hooks, 'PostToolUse', {
-        hook_event_name: 'PostToolUse',
-        session_id: 'sdk_session',
-        transcript_path: '/tmp/transcript',
-        cwd: '/tmp',
-        tool_name: rootPre.tool_name,
-        tool_use_id: 'child_tool_1',
-        tool_input: toolInput,
-        tool_response: { nodes: [{ id: 'k1' }] },
-        agent_id: 'researcher_1',
+      await piAfter(ctx, {
+        call: childCall,
+        args: toolInput,
+        isError: false,
+        output: { nodes: [{ id: 'k1' }] },
       });
       return { task_run_id: 'trace_task', text: '已根据知识节点核对。' };
     });
@@ -513,16 +512,7 @@ describe('Copilot execution owner', () => {
       ref: { kind: 'query_knowledge', id: 'root_read_1' },
     };
     const run = vi.fn<CopilotExecutionAdapters['runAgentTaskFn']>(async (_kind, _input, ctx) => {
-      await invokeHooks(ctx.hooks, 'PreToolUse', {
-        hook_event_name: 'PreToolUse',
-        session_id: 'sdk_session',
-        transcript_path: '/tmp/transcript',
-        cwd: '/tmp',
-        tool_name: 'mcp__loom__query_knowledge',
-        tool_use_id: 'root_read_1',
-        tool_input: readInput,
-      });
-      expect(mcp?.claimToolUseId?.('query_knowledge', readInput)).toBe('root_read_1');
+      await piBefore(ctx, { id: 'root_read_1', name: 'mcp__loom__query_knowledge' }, readInput);
       mcp?.onResult?.({
         tool_use_id: 'root_read_1',
         name: 'query_knowledge',
@@ -533,16 +523,11 @@ describe('Copilot execution owner', () => {
         executed: true,
       });
 
-      await invokeHooks(ctx.hooks, 'PreToolUse', {
-        hook_event_name: 'PreToolUse',
-        session_id: 'sdk_session',
-        transcript_path: '/tmp/transcript',
-        cwd: '/tmp',
-        tool_name: 'mcp__loom__present_primary_view',
-        tool_use_id: 'root_present_1',
-        tool_input: nomination,
-      });
-      expect(mcp?.claimToolUseId?.('present_primary_view', nomination)).toBe('root_present_1');
+      await piBefore(
+        ctx,
+        { id: 'root_present_1', name: 'mcp__loom__present_primary_view' },
+        nomination,
+      );
       mcp?.onResult?.({
         tool_use_id: 'root_present_1',
         name: 'present_primary_view',

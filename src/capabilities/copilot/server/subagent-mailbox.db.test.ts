@@ -144,9 +144,8 @@ describe('Copilot subagent mailbox', () => {
         description: '核对三份长材料的相互矛盾、缺失证据和适用边界。',
       };
       const execute = createCopilotExecutionOwner({
-        buildMcpServerFn: () => ({ type: 'sdk', name: 'loom' }) as never,
         buildExaMcpServerFn: () => null,
-        resolveCopilotSkillsFn: async () => undefined,
+        resolveCopilotSkillDocsFn: async () => undefined,
         streamTaskCollectingFn: async (_kind, _input, ctx) => {
           if (!ctx.onTaskEvent) throw new Error('native lifecycle not mounted');
           await ctx.sdkSession?.onSessionId?.('sdk_missing_native_terminal');
@@ -259,9 +258,8 @@ describe('Copilot subagent mailbox', () => {
       throw new Error('disconnected activity consumer');
     });
     const execute = createCopilotExecutionOwner({
-      buildMcpServerFn: () => ({ type: 'sdk', name: 'loom' }) as never,
       buildExaMcpServerFn: () => null,
-      resolveCopilotSkillsFn: async () => undefined,
+      resolveCopilotSkillDocsFn: async () => undefined,
       streamTaskCollectingFn: async (_kind, _input, ctx) => {
         if (!ctx.onTaskEvent) throw new Error('native lifecycle not mounted');
         await ctx.onTaskEvent({

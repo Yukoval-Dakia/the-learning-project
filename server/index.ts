@@ -7,14 +7,12 @@
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { capabilities } from '@/capabilities';
-import { assertAgentSdkRuntimeUser } from '@/server/ai/runtime-preflight';
 import { warnFlipOrder } from '@/server/projections/sot-flag';
 import { buildHonoApp } from './app';
 import { loadApiEnv } from './env';
 import { installApiShutdown } from './shutdown';
 
 const env = loadApiEnv();
-assertAgentSdkRuntimeUser();
 // YUK-548: boot-time SoT-flip flag vector + flip-order WARN (never throws — see warnFlipOrder).
 warnFlipOrder();
 

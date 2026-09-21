@@ -51,13 +51,13 @@ export async function writeToolCallLog(db: DbLike, entry: ToolCallLogEntry): Pro
   return id;
 }
 
-/** Warn when a tool-calling task has no MCP servers configured in its context. */
-export function logMissingMcpServersWarning(entry: {
+/** Warn when a tool-calling task has no pi tool mounts configured in its context. */
+export function logMissingToolMountsWarning(entry: {
   task_run_id: string;
   task_kind: string;
 }): void {
-  console.warn('[runTask] missing_mcp_servers', {
-    event: 'missing_mcp_servers',
+  console.warn('[runTask] missing_tool_mounts', {
+    event: 'missing_tool_mounts',
     task_run_id: entry.task_run_id,
     kind: entry.task_kind,
   });

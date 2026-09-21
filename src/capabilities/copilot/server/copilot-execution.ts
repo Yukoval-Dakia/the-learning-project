@@ -1,4 +1,3 @@
-import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { Db } from '@/db/client';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
@@ -8,6 +7,7 @@ import {
 import { resolveContextBudget } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
 import type { ValidateLearningContentFn } from '@/kernel/tools/types';
+import type { ModelBinding } from '@/server/ai/execution-adapter';
 import {
   EXA_MCP_ALLOWED_TOOLS,
   EXA_MCP_SERVER_NAME,
@@ -22,13 +22,14 @@ import {
 } from '@/server/ai/runner';
 import {
   type BuildMcpServerOptions,
-  type SdkMcpServer,
-  buildMcpServerFromRegistry,
-  createToolUseCorrelation,
   shouldEmitToolUseForCaller,
 } from '@/server/ai/tools/mcp-bridge';
-import { piDomainMount, piRemoteMcpMount } from '@/server/ai/tools/pi-tools';
-import { resolveCopilotSkillDocs, resolveCopilotSkills } from '@/subjects/copilot-skills';
+import {
+  type RemoteMcpHttpConfig,
+  piDomainMount,
+  piRemoteMcpMount,
+} from '@/server/ai/tools/pi-tools';
+import { resolveCopilotSkillDocs } from '@/subjects/copilot-skills';
 import { copilotTaskSpec } from '../tasks/agent';
 import { reviewCopilotLearningContent } from './content-validation';
 import type { CopilotRunCancellationControl } from './copilot-run-cancellation';
@@ -51,7 +52,6 @@ import { createCopilotProposalFlowGate } from './proposal-flow-gate';
 import {
   type CopilotReplyFinalizationResult,
   createCopilotReplyFinalizer,
-  prependCopilotFinalizationHooks,
   prependCopilotPiFinalizationHooks,
   primaryViewLearningContent,
   primaryViewLearningQuestions,
@@ -103,6 +103,12 @@ export interface CopilotExecutionPolicy {
   /** The accepted run owns polling/settlement; this module owns propagation. */
   cancellation: CopilotRunCancellationControl;
   deadlineAt: number;
+  /**
+   * Per-run provider/model pin (actual-output evidence gates, ops override).
+   * Threads verbatim into the runner ctx — resolveTaskProvider ordering
+   * (explicit > env > registry) is unchanged.
+   */
+  modelBinding?: ModelBinding;
   resumeSessionId?: string;
   subagentsEnabled?: boolean;
   observe?: (activity: CopilotExecutionActivity) => Promise<void> | void;
@@ -131,7 +137,7 @@ type StreamResult = Pick<
   'task_run_id' | 'text' | 'terminalText' | 'partial' | 'error'
 > & { finishReason?: string };
 
-/** Process-level adapters. Product callers use ExecuteCopilotTurn, never this SDK-shaped seam. */
+/** Process-level adapters. Product callers use ExecuteCopilotTurn, never this seam. */
 export interface CopilotExecutionAdapters {
   runAgentTaskFn: (
     kind: string,
@@ -144,19 +150,15 @@ export interface CopilotExecutionAdapters {
     ctx: Parameters<typeof streamTaskCollecting>[2],
     onDelta: (text: string) => void,
   ) => Promise<StreamResult>;
-  buildMcpServerFn: (options: BuildMcpServerOptions) => SdkMcpServer;
-  buildExaMcpServerFn: () => McpHttpServerConfig | null;
-  resolveCopilotSkillsFn: typeof resolveCopilotSkills;
-  /** YUK-1022 — resolved SKILL.md bodies for the pi lane's system-prompt injection. */
+  buildExaMcpServerFn: () => RemoteMcpHttpConfig | null;
+  /** Resolved SKILL.md bodies for system-prompt injection. */
   resolveCopilotSkillDocsFn: typeof resolveCopilotSkillDocs;
 }
 
 const defaultAdapters: CopilotExecutionAdapters = {
   runAgentTaskFn: runAgentTask,
   streamTaskCollectingFn: streamTaskCollecting,
-  buildMcpServerFn: buildMcpServerFromRegistry,
   buildExaMcpServerFn: buildExaMcpServer,
-  resolveCopilotSkillsFn: resolveCopilotSkills,
   resolveCopilotSkillDocsFn: resolveCopilotSkillDocs,
 };
 
@@ -278,12 +280,9 @@ export function createCopilotExecutionOwner(
     const baseContextBudget = resolveContextBudget(surface);
     const budgetTracker = new ContextBudgetTracker(baseContextBudget);
     const proposalFlowGate = createCopilotProposalFlowGate();
-    const toolUseCorrelation = createToolUseCorrelation(DOMAIN_TOOL_MCP_SERVER_NAME);
-    // YUK-1022 — one mount-options literal feeds BOTH engine surfaces: the
-    // SDK in-process MCP server (`ctx.mcpServers`) and the pi AgentTool
-    // bridge (`ctx.piToolMounts` → piDomainMount). `claimToolUseId` is
-    // SDK-only correlation; the pi bridge substitutes the loop's native
-    // toolCall.id via `correlatedToolUseId` (see pi-tools.ts).
+    // One mount-options literal feeds the pi AgentTool bridge
+    // (`ctx.piToolMounts` → piDomainMount); the loop's native toolCall.id
+    // supplies correlation via `correlatedToolUseId` (see pi-tools.ts).
     const domainMountOptions = {
       ctx: {
         db,
@@ -299,7 +298,6 @@ export function createCopilotExecutionOwner(
       serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
       toolNames: resolveDomainToolNames(surface),
       taskKind: 'CopilotTask',
-      claimToolUseId: toolUseCorrelation.claim,
       cancellationSignals,
       beforeExecute: async (tool) =>
         (await policy.cancellation.beforeTool()) ??
@@ -322,12 +320,7 @@ export function createCopilotExecutionOwner(
         );
       },
     } satisfies BuildMcpServerOptions;
-    const mcpServer = adapters.buildMcpServerFn(domainMountOptions);
     const exa = adapters.buildExaMcpServerFn();
-    const mcpServers: Record<string, SdkMcpServer | McpHttpServerConfig> = {
-      [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer,
-      ...(exa ? { [EXA_MCP_SERVER_NAME]: exa } : {}),
-    };
     const piToolMounts = [
       piDomainMount(domainMountOptions),
       ...(exa ? [piRemoteMcpMount(EXA_MCP_SERVER_NAME, exa, EXA_SCOPED_TOOL_NAMES)] : []),
@@ -338,7 +331,7 @@ export function createCopilotExecutionOwner(
     ];
     const subagentsEnabled = policy.subagentsEnabled ?? isCopilotSubagentEnabled();
     const parentMaxTurns = DURABLE_COPILOT_EXECUTION_BUDGET.maxIterations;
-    const { allowedTools, spawnContract, piSpawnContract } = buildCopilotNativeResearchConfig({
+    const { allowedTools, piSpawnContract } = buildCopilotNativeResearchConfig({
       baseAllowedTools,
       enabled: subagentsEnabled,
       parentMaxTurns,
@@ -348,12 +341,12 @@ export function createCopilotExecutionOwner(
         );
       },
     });
-    const subtaskProjector = spawnContract ? createCopilotSubtaskProjector() : undefined;
+    const subtaskProjector = piSpawnContract ? createCopilotSubtaskProjector() : undefined;
     let nativeTaskEventsClosed = false;
     const openNativeTasks = new Set<string>();
     let nativeProjectionFailed = false;
     let nativeTaskEvents = Promise.resolve();
-    const onTaskEvent = spawnContract
+    const onTaskEvent = piSpawnContract
       ? (message: CopilotTaskLifecycleMessage) => {
           if (nativeTaskEventsClosed) return Promise.resolve();
           const projectedEvent = nativeTaskEvents.then(async () => {
@@ -383,22 +376,16 @@ export function createCopilotExecutionOwner(
         }
       : undefined;
 
-    let sdkHooks = toolUseCorrelation.prepend(
-      policy.cancellation.prependSdkHook(spawnContract?.hooks),
-    );
-    sdkHooks = prependCopilotFinalizationHooks(finalizer.hooks, sdkHooks);
-    // YUK-1022 — the pi twin of the hook stack. Order mirrors the SDK prepend
-    // chain (finalizer → cancellation → spawn gate last): the spawn gate's
-    // `{block:false}` allow short-circuit requires it to run after every
-    // deny-capable entry. There is no toolUseCorrelation on pi — the loop's
-    // native toolCall.id reaches the pipeline verbatim.
+    // The hook stack: finalizer entries first, then cancellation, spawn gate
+    // last — the spawn gate's `{block:false}` allow short-circuit requires it
+    // to run after every deny-capable entry. The loop's native toolCall.id
+    // reaches the pipeline verbatim (no correlation hook needed).
     const piHooks = prependCopilotPiFinalizationHooks(finalizer.piHooks, {
       beforeToolCall: [
         policy.cancellation.piBeforeToolCall,
         ...(piSpawnContract ? [piSpawnContract.gate] : []),
       ],
     });
-    const skills = await adapters.resolveCopilotSkillsFn();
     const piSkillDocs = await adapters.resolveCopilotSkillDocsFn();
     const contextDigest = copilotSessionContextDigest(input);
     const resumeSessionId = policy.resumeSessionId;
@@ -426,20 +413,8 @@ export function createCopilotExecutionOwner(
       signal: policy.cancellation.signal,
       lifecycleAbortController,
       compiledModelPrompt,
-      mcpServers,
       allowedTools: authoritativeReply ? [] : allowedTools,
-      hooks: sdkHooks,
-      ...(spawnContract
-        ? {
-            agents: spawnContract.agents,
-            canUseTool: spawnContract.canUseTool,
-            onTaskEvent,
-          }
-        : {}),
-      ...(skills ? { skills } : {}),
-      // YUK-1022 — pi dual descriptors. Each mirrors the SDK surface declared
-      // above; the adapter gate picks per lane. On the pi lane a declared SDK
-      // surface without its twin fails closed at startup.
+      ...(piSpawnContract ? { onTaskEvent } : {}),
       // An explicit empty allowlist (authoritativeReply) must not connect
       // remote mounts — piRemoteMcpMount talks to Exa at buildTools time and
       // an outage would fail an intentionally tool-less turn.
@@ -459,6 +434,7 @@ export function createCopilotExecutionOwner(
             })),
           }
         : {}),
+      ...(policy.modelBinding ? { modelBinding: policy.modelBinding } : {}),
       budgetOverride: {
         maxIterations: DURABLE_COPILOT_EXECUTION_BUDGET.maxIterations,
         timeoutMs: DURABLE_COPILOT_EXECUTION_BUDGET.timeoutMs,
@@ -487,7 +463,7 @@ export function createCopilotExecutionOwner(
         nativeTaskEventsClosed = true;
         await nativeTaskEvents;
         await disposeSubagentCancellation();
-        // SDK exit is not the product outcome: Stop can still win during
+        // Engine exit is not the product outcome: Stop can still win during
         // finalization or the worker's commit. Only the durable owner may
         // settle missing child results, after its outcome has committed.
         return openNativeTasks.size === 0 && !nativeProjectionFailed;
@@ -518,7 +494,7 @@ export function createCopilotExecutionOwner(
       const partial = result.partial === true;
       const executionError = result.error;
       if (resumeSessionId && partial) {
-        throw new Error('resumed Agent SDK session returned partial output');
+        throw new Error('resumed agent session returned partial output');
       }
       const finalization = await finalizer.finalizeTerminal(terminalText);
       retainSdkSession = !partial && finalization.accepted && nativeChildrenComplete;

@@ -810,15 +810,6 @@ function operatorProviderSdkImportEdges(root: string): SourceImportEdge[] {
     .filter((edge) => edge.kind !== 'type' && isWatchedProviderSdk(edge.source));
 }
 
-function hasAgentProviderStartBinding(edge: SourceImportEdge): boolean {
-  return (
-    edge.source.startsWith('@anthropic-ai/claude-agent-sdk') &&
-    (edge.bindings ?? []).some(
-      (binding) => binding.imported === 'startup' || binding.imported === 'query',
-    )
-  );
-}
-
 function sdkEntryMatchesEdge(
   entry: (typeof PROVIDER_RUNTIME_SDK_IMPORTS)[number],
   edge: SourceImportEdge,
@@ -877,11 +868,7 @@ function checkProviderSdkImports(
   for (const edge of operatorEdges) productionPaths.add(edge.path);
   const observed = [...edges, ...operatorEdges].filter(
     (edge) =>
-      productionPaths.has(edge.path) &&
-      edge.kind !== 'type' &&
-      isWatchedProviderSdk(edge.source) &&
-      (!edge.source.startsWith('@anthropic-ai/claude-agent-sdk') ||
-        hasAgentProviderStartBinding(edge)),
+      productionPaths.has(edge.path) && edge.kind !== 'type' && isWatchedProviderSdk(edge.source),
   );
   const violations: ProviderLaneViolation[] = [];
   for (const edge of observed) {
@@ -902,7 +889,7 @@ function checkProviderSdkImports(
       }
       continue;
     }
-    if (entry.disposition !== 'central' && !lanes.some((lane) => lane.id === entry.laneId)) {
+    if (!lanes.some((lane) => lane.id === entry.laneId)) {
       violations.push({
         path: entry.path,
         reason: `provider SDK lane reference does not exist: ${entry.laneId}`,

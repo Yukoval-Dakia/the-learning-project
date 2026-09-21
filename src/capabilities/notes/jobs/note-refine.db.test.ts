@@ -730,9 +730,9 @@ describe('runNoteRefine', () => {
       }),
       expect.objectContaining({
         subjectProfile: expect.objectContaining({ id: 'yuwen' }),
-        // YUK-228 (S3 Slice B): handler must pass resolveNoteSkill(subject) as skills.
-        // YUK-611: resolver 输出命名空间名（== populate 镜像键）。
-        skills: ['yuwen--note-yuwen'],
+        // YUK-228 (S3 Slice B): handler must pass resolveNoteSkillDoc(subject) as
+        // piSkillDocs; YUK-611 命名空间名仍是注入名。
+        piSkillDocs: [expect.objectContaining({ name: 'yuwen--note-yuwen' })],
       }),
     );
   });

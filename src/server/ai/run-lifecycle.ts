@@ -83,7 +83,7 @@ interface LifecycleConfig<TResult extends LifecycleResult> {
   parentTaskRunId?: string;
   /** Absolute bound for beginning a retry attempt; execution keeps its own budget. */
   providerStartDeadlineAt?: number;
-  /** Absolute wall-clock bound shared by admission, SDK startup and execution. */
+  /** Absolute wall-clock bound shared by admission, adapter startup and execution. */
   providerSessionDeadlineAt?: number;
   signal?: AbortSignal;
   logScope: string;
@@ -375,12 +375,12 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
 
     let outcome: { status: 'fulfilled'; value: T } | { status: 'rejected'; reason: unknown };
     try {
-      assertProviderStartAllowed('before SDK startup');
+      assertProviderStartAllowed('before adapter startup');
       await execution.prepare();
-      // SDK startup performs the task-configured CLI initialize handshake but
+      // Adapter startup performs the engine's tool-mount/connect handshake but
       // submits no prompt. Keep that uninterruptible cold-start work inside the
       // admission slot and outside model-attempt runtime/cost accounting.
-      assertProviderStartAllowed('during SDK startup');
+      assertProviderStartAllowed('during adapter startup');
       await permit?.completeStartup();
       assertProviderStartAllowed('after startup lease transition');
       await this.startWithInputHash(inputHash);
@@ -452,7 +452,8 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         profile_source: this.modelProfile.source,
         reasoning_effort: this.config.modelBinding?.effort ?? declaredDef.reasoningEffort ?? null,
         // YUK-921 §2.1 — adapter selection stays observable on the run record.
-        execution_adapter: this.config.modelBinding?.adapter ?? 'sdk',
+        // Post-P4 (YUK-1025) 'pi' is the only legal adapter id.
+        execution_adapter: this.config.modelBinding?.adapter ?? 'pi',
         profile_effort_default: this.modelProfile.reasoning.defaultEffort ?? null,
       });
     } catch (error) {

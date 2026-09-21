@@ -1,9 +1,10 @@
 // YUK-576 — runner transient-retry loop + AgentRunError classification.
 //
 // Pure no-DB unit, same justification as the sibling runner.seam.test.ts:
-// @anthropic-ai/claude-agent-sdk and @/server/ai/log are vi.mock'd and `db` is an
-// untouched stub, so no live Postgres is needed. MUST be enumerated in
-// fastTestInclude (vitest.shared.ts): src/server/ai/** has no unit glob.
+// the execution adapter is swapped via `__setPiAdapterForTests` and
+// @/server/ai/log is vi.mock'd, and `db` is an untouched stub, so no live
+// Postgres is needed. MUST be enumerated in fastTestInclude
+// (vitest.shared.ts): src/server/ai/** has no unit glob.
 //
 // ─── FIXTURE PROVENANCE (design doc §2.5, coordinator ack condition 3) ───────
 // The terminal-result fixtures below are FROZEN from real forced-failure probes
@@ -21,8 +22,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mockSdk = vi.hoisted(() => ({
+const mockPi = vi.hoisted(() => ({
   capturedOptions: [] as unknown[],
+  capturedArgs: [] as import('./execution-adapter').ExecutionAdapterStartupArgs[],
   queryCalls: 0,
   // One message-array per query() invocation (per attempt), consumed in order.
   messageQueues: [] as unknown[][],
@@ -30,25 +32,35 @@ const mockSdk = vi.hoisted(() => ({
   beforeYield: undefined as undefined | ((attempt: number) => void),
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  startup: vi.fn(async ({ options }: { options: unknown }) => {
-    mockSdk.capturedOptions.push(options);
-    const attempt = mockSdk.capturedOptions.length;
-    const messages = mockSdk.messageQueues.shift() ?? [];
-    return {
-      query: vi.fn(() => {
-        mockSdk.queryCalls += 1;
-        return (async function* () {
-          mockSdk.beforeYield?.(attempt);
-          for (const m of messages) yield m;
-        })();
-      }),
-      close: vi.fn(),
-    };
-  }),
-  createSdkMcpServer: vi.fn(() => ({ type: 'sdk', name: '', instance: {} })),
-  tool: vi.fn((name: string, description: string) => ({ name, description })),
-}));
+import {
+  type ExecutionAdapterStartupArgs,
+  type RunnerMessage,
+  __setPiAdapterForTests,
+} from './execution-adapter';
+
+// Fake adapter (YUK-1025): same per-attempt queue/capture contract the old
+// module mock had — startup() captures args, query() shifts one message queue.
+function fakePiAdapter() {
+  return {
+    id: 'pi' as const,
+    startup: vi.fn(async (args: ExecutionAdapterStartupArgs) => {
+      mockPi.capturedOptions.push(args.options);
+      mockPi.capturedArgs.push(args);
+      const attempt = mockPi.capturedOptions.length;
+      const messages = mockPi.messageQueues.shift() ?? [];
+      return {
+        query: vi.fn(() => {
+          mockPi.queryCalls += 1;
+          return (async function* () {
+            mockPi.beforeYield?.(attempt);
+            for (const m of messages) yield m as RunnerMessage;
+          })();
+        }),
+        close: vi.fn(async () => {}),
+      };
+    }),
+  };
+}
 
 const logMock = vi.hoisted(() => ({
   settlementShouldFail: false,
@@ -62,7 +74,7 @@ const logMock = vi.hoisted(() => ({
 }));
 
 vi.mock('@/server/ai/log', () => ({
-  logMissingMcpServersWarning: vi.fn(),
+  logMissingToolMountsWarning: vi.fn(),
   writeAiTaskRunStarted: logMock.started,
   writeAiTaskRunFinished: logMock.finished,
   writeAiTaskRunRetried: vi.fn(async (db: unknown, id: string) => {
@@ -206,10 +218,11 @@ const NO_RETRY_KIND = 'AttributionTask';
 const JUDGE_KIND = 'StepsJudgeTask';
 
 function resetAll() {
-  mockSdk.capturedOptions = [];
-  mockSdk.queryCalls = 0;
-  mockSdk.messageQueues = [];
-  mockSdk.beforeYield = undefined;
+  mockPi.capturedOptions = [];
+  mockPi.capturedArgs = [];
+  mockPi.queryCalls = 0;
+  mockPi.messageQueues = [];
+  mockPi.beforeYield = undefined;
   logMock.started.mockClear();
   logMock.finished.mockClear();
   logMock.retried.mockClear();
@@ -219,6 +232,7 @@ function resetAll() {
   logMock.settlementResults = [];
   logMock.terminalStatuses = [];
   process.env.XIAOMI_API_KEY = 'sk-test-key';
+  __setPiAdapterForTests(fakePiAdapter());
 }
 
 // ─── §10 step 1 — classifier (table-driven over frozen shapes) ───────────────
@@ -307,7 +321,7 @@ describe('isTransientAgentFailure — frozen classification table (design doc §
       apiErrorStatus: 500,
       errors: [API_ERROR_500_RESULT.result],
     });
-    expect(err.message).toMatch(/\[StepsJudgeTask\] Agent SDK errored: subtype=api_error_result/);
+    expect(err.message).toMatch(/\[StepsJudgeTask\] agent run errored: subtype=api_error_result/);
     expect(err.message).toMatch(/http=500/);
     expect(err.taskRunId).toBe('run_1');
     expect(err.errors[0]).toContain('API Error: 500');
@@ -319,19 +333,20 @@ describe('isTransientAgentFailure — frozen classification table (design doc §
 describe('runTask — YUK-576 transient retry loop', () => {
   beforeEach(resetAll);
   afterEach(() => {
+    __setPiAdapterForTests(undefined);
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     vi.useRealTimers();
   });
 
   it('success path: zero retries, one query call, byte-identical bookkeeping', async () => {
-    mockSdk.messageQueues = [[successResult()]];
+    mockPi.messageQueues = [[successResult()]];
 
     const result = await runTask(NO_RETRY_KIND, { q: 1 }, { db: fakeDb });
 
     expect(result.text).toBe('ok');
-    expect(mockSdk.capturedOptions).toHaveLength(1);
-    expect(mockSdk.queryCalls).toBe(1);
+    expect(mockPi.capturedOptions).toHaveLength(1);
+    expect(mockPi.queryCalls).toBe(1);
     expect(logMock.started).toHaveBeenCalledTimes(1);
     expect(logMock.finished).toHaveBeenCalledTimes(1);
     expect(logMock.cost).toHaveBeenCalledTimes(1);
@@ -340,13 +355,13 @@ describe('runTask — YUK-576 transient retry loop', () => {
   // ── YUK-590: every success+is_error terminal is an honest failed attempt ───
   it('non-opt-in + success+is_error: throws without retry and records failure', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    mockSdk.messageQueues = [[API_ERROR_500_RESULT]];
+    mockPi.messageQueues = [[API_ERROR_500_RESULT]];
 
     await expect(runTask(NO_RETRY_KIND, { q: 1 }, { db: fakeDb })).rejects.toThrow(
       /subtype=api_error_result http=500/,
     );
 
-    expect(mockSdk.capturedOptions).toHaveLength(1); // zero retries
+    expect(mockPi.capturedOptions).toHaveLength(1); // zero retries
     const finished = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
     expect(finished.status).toBe('failure');
     expect(finished.finish_reason).toBe('error');
@@ -363,7 +378,7 @@ describe('runTask — YUK-576 transient retry loop', () => {
 
   it('records paid usage and cost for a failed non-streaming validator attempt', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    mockSdk.messageQueues = [[PAID_API_ERROR_503_RESULT]];
+    mockPi.messageQueues = [[PAID_API_ERROR_503_RESULT]];
 
     await expect(runTask(NO_RETRY_KIND, { observation_count: 21 }, { db: fakeDb })).rejects.toThrow(
       /subtype=api_error_result http=503/,
@@ -393,12 +408,12 @@ describe('runTask — YUK-576 transient retry loop', () => {
 
   it('opt-in + connection-class api error (mid-drop fixture) → retries once, second attempt succeeds', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    mockSdk.messageQueues = [[API_ERROR_CONN_RESULT], [successResult('recovered')]];
+    mockPi.messageQueues = [[API_ERROR_CONN_RESULT], [successResult('recovered')]];
 
     const result = await runTask(JUDGE_KIND, { q: 1 }, { db: fakeDb, enableTransientRetry: true });
 
     expect(result.text).toBe('recovered');
-    expect(mockSdk.capturedOptions).toHaveLength(2);
+    expect(mockPi.capturedOptions).toHaveLength(2);
     // Two run rows started, same input_hash (same actualInput, hashed once per attempt).
     expect(logMock.started).toHaveBeenCalledTimes(2);
     const hash1 = (logMock.started.mock.calls[0][1] as { input_hash: string }).input_hash;
@@ -424,18 +439,16 @@ describe('runTask — YUK-576 transient retry loop', () => {
       expect.stringContaining('task_run_transient_retry'),
       expect.objectContaining({ kind: JUDGE_KIND }),
     );
-    // Same-target retry: attempt-2 env/model identical to attempt-1 (value-level).
-    const [o1, o2] = mockSdk.capturedOptions as Array<{
-      model: string;
-      env: Record<string, string | undefined>;
-    }>;
-    expect(o2.model).toBe(o1.model);
-    expect(o2.env.ANTHROPIC_BASE_URL).toBe(o1.env.ANTHROPIC_BASE_URL);
-    expect(o2.env.ANTHROPIC_API_KEY).toBe(o1.env.ANTHROPIC_API_KEY);
+    // Same-target retry: attempt-2 provider/model identical to attempt-1
+    // (post-P4 the credential/baseUrl ride `resolved`, not a subprocess env).
+    const [a1, a2] = mockPi.capturedArgs;
+    expect(a2.options.model).toBe(a1.options.model);
+    expect(a2.resolved.provider).toBe(a1.resolved.provider);
+    expect(a2.resolved.model).toBe(a1.resolved.model);
   });
 
   it('keeps the first failure as error when the planned retry cannot create its durable row', async () => {
-    mockSdk.messageQueues = [[API_ERROR_CONN_RESULT], [successResult('never-started')]];
+    mockPi.messageQueues = [[API_ERROR_CONN_RESULT], [successResult('never-started')]];
     logMock.started
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error('retry start row unavailable'));
@@ -447,8 +460,8 @@ describe('runTask — YUK-576 transient retry loop', () => {
     // The retry may prewarm its exact SDK transport before the durable start
     // write, but it must not submit a second provider prompt when that write
     // fails. `capturedOptions` counts startup(), not WarmQuery.query().
-    expect(mockSdk.capturedOptions).toHaveLength(2);
-    expect(mockSdk.queryCalls).toBe(1);
+    expect(mockPi.capturedOptions).toHaveLength(2);
+    expect(mockPi.queryCalls).toBe(1);
     const first = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
     expect(first.finish_reason).toBe('error');
     expect(logMock.retried).not.toHaveBeenCalled();
@@ -456,14 +469,14 @@ describe('runTask — YUK-576 transient retry loop', () => {
   });
 
   it('does not start another provider query when the failed attempt truth cannot settle', async () => {
-    mockSdk.messageQueues = [[API_ERROR_CONN_RESULT], [successResult('must-not-run')]];
+    mockPi.messageQueues = [[API_ERROR_CONN_RESULT], [successResult('must-not-run')]];
     logMock.settlementShouldFail = true;
 
     await expect(
       runTask(JUDGE_KIND, { q: 1 }, { db: fakeDb, enableTransientRetry: true }),
     ).rejects.toThrow(/socket connection was closed/);
 
-    expect(mockSdk.capturedOptions).toHaveLength(1);
+    expect(mockPi.capturedOptions).toHaveLength(1);
     expect(logMock.started).toHaveBeenCalledTimes(1);
     expect(logMock.terminalStatuses).toEqual(['failure']);
     expect(logMock.retried).not.toHaveBeenCalled();
@@ -471,14 +484,14 @@ describe('runTask — YUK-576 transient retry loop', () => {
 
   it('records one bounded failure fallback when success settlement rolls back', async () => {
     const afterRun = vi.fn(async () => {});
-    mockSdk.messageQueues = [[successResult('must-not-return')]];
+    mockPi.messageQueues = [[successResult('must-not-return')]];
     logMock.settlementResults = [false, true];
 
     await expect(
       runTask(NO_RETRY_KIND, { q: 1 }, { db: fakeDb, middleware: { afterRun } }),
     ).rejects.toThrow(/cannot report success before durable attempt settlement/);
 
-    expect(mockSdk.capturedOptions).toHaveLength(1);
+    expect(mockPi.capturedOptions).toHaveLength(1);
     expect(logMock.terminalStatuses).toEqual(['success', 'failure']);
     expect(logMock.finished).toHaveBeenCalledTimes(1);
     expect(logMock.finished.mock.calls[0][1]).toMatchObject({ status: 'failure' });
@@ -489,14 +502,14 @@ describe('runTask — YUK-576 transient retry loop', () => {
 
   it('does not return success or run afterRun when the attempt truth cannot settle', async () => {
     const afterRun = vi.fn(async () => {});
-    mockSdk.messageQueues = [[successResult('must-not-return')]];
+    mockPi.messageQueues = [[successResult('must-not-return')]];
     logMock.settlementShouldFail = true;
 
     await expect(
       runTask(NO_RETRY_KIND, { q: 1 }, { db: fakeDb, middleware: { afterRun } }),
     ).rejects.toThrow(/cannot report success before durable attempt settlement/);
 
-    expect(mockSdk.capturedOptions).toHaveLength(1);
+    expect(mockPi.capturedOptions).toHaveLength(1);
     expect(logMock.terminalStatuses).toEqual(['success', 'failure']);
     expect(afterRun).not.toHaveBeenCalled();
     expect(logMock.finished).not.toHaveBeenCalled();
@@ -504,13 +517,13 @@ describe('runTask — YUK-576 transient retry loop', () => {
   });
 
   it('opt-in + permanent api error (400 fixture) → throws immediately, no retry, finish_reason=error', async () => {
-    mockSdk.messageQueues = [[API_ERROR_400_RESULT]];
+    mockPi.messageQueues = [[API_ERROR_400_RESULT]];
 
     await expect(
       runTask(JUDGE_KIND, { q: 1 }, { db: fakeDb, enableTransientRetry: true }),
     ).rejects.toThrow(/subtype=api_error_result http=400/);
 
-    expect(mockSdk.capturedOptions).toHaveLength(1);
+    expect(mockPi.capturedOptions).toHaveLength(1);
     const finish = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
     expect(finish.status).toBe('failure');
     expect(finish.finish_reason).toBe('error');
@@ -519,13 +532,13 @@ describe('runTask — YUK-576 transient retry loop', () => {
 
   // R2 — non-final PERMANENT failure must NOT be mislabeled error_retried.
   it('opt-in + error_max_structured_output_retries on attempt 1 → no retry + finish_reason=error (never error_retried)', async () => {
-    mockSdk.messageQueues = [[resultError('error_max_structured_output_retries')]];
+    mockPi.messageQueues = [[resultError('error_max_structured_output_retries')]];
 
     await expect(
       runTask(JUDGE_KIND, { q: 1 }, { db: fakeDb, enableTransientRetry: true }),
     ).rejects.toThrow(/error_max_structured_output_retries/);
 
-    expect(mockSdk.capturedOptions).toHaveLength(1);
+    expect(mockPi.capturedOptions).toHaveLength(1);
     const finish = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
     expect(finish.finish_reason).toBe('error');
   });
@@ -533,30 +546,30 @@ describe('runTask — YUK-576 transient retry loop', () => {
   // R1 — slow transient (arrives past RETRY_ELAPSED_CAP_MS) must not retry.
   it('opt-in + SLOW transient failure (elapsed ≥ cap) → no retry, throws (R1 sixth gate)', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
-    mockSdk.beforeYield = (attempt) => {
+    mockPi.beforeYield = (attempt) => {
       if (attempt === 1) {
         vi.setSystemTime(Date.now() + RETRY_ELAPSED_CAP_MS + 1_000);
       }
     };
-    mockSdk.messageQueues = [[API_ERROR_CONN_RESULT], [successResult('never-reached')]];
+    mockPi.messageQueues = [[API_ERROR_CONN_RESULT], [successResult('never-reached')]];
 
     await expect(
       runTask(JUDGE_KIND, { q: 1 }, { db: fakeDb, enableTransientRetry: true }),
     ).rejects.toThrow(/api_error_result/);
 
-    expect(mockSdk.capturedOptions).toHaveLength(1);
+    expect(mockPi.capturedOptions).toHaveLength(1);
     const finish = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
     expect(finish.finish_reason).toBe('error'); // not error_retried (§3.3 truth table)
   });
 
   it('opt-in + chain exhausted (both attempts transient-fail) → throws last error; rows error_retried then error', async () => {
-    mockSdk.messageQueues = [[API_ERROR_CONN_RESULT], [API_ERROR_CONN_RESULT]];
+    mockPi.messageQueues = [[API_ERROR_CONN_RESULT], [API_ERROR_CONN_RESULT]];
 
     await expect(
       runTask(JUDGE_KIND, { q: 1 }, { db: fakeDb, enableTransientRetry: true }),
     ).rejects.toThrow(/api_error_result/);
 
-    expect(mockSdk.capturedOptions).toHaveLength(2);
+    expect(mockPi.capturedOptions).toHaveLength(2);
     const finish1 = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
     const finish2 = logMock.finished.mock.calls[1][1] as Record<string, unknown>;
     expect(finish1.finish_reason).toBe('error_retried');
@@ -567,13 +580,13 @@ describe('runTask — YUK-576 transient retry loop', () => {
   it('transient failure WITHOUT opt-in → no retry (ctx gate, mustFix#6)', async () => {
     // NO_RETRY_KIND has transientRetries 0 anyway; use JUDGE_KIND minus opt-in to
     // isolate the ctx gate specifically.
-    mockSdk.messageQueues = [[API_ERROR_CONN_RESULT]];
+    mockPi.messageQueues = [[API_ERROR_CONN_RESULT]];
 
     await expect(runTask(JUDGE_KIND, { q: 1 }, { db: fakeDb })).rejects.toThrow(
       /socket connection was closed/,
     );
 
-    expect(mockSdk.capturedOptions).toHaveLength(1);
+    expect(mockPi.capturedOptions).toHaveLength(1);
     const finish = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
     expect(finish.status).toBe('failure');
     expect(finish.finish_reason).toBe('error');
@@ -581,7 +594,7 @@ describe('runTask — YUK-576 transient retry loop', () => {
 
   it('opt-in but caller-pinned override → no retry (YUK-573 load-bearing regression)', async () => {
     vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'dummy-oauth-token-not-real');
-    mockSdk.messageQueues = [[API_ERROR_CONN_RESULT]];
+    mockPi.messageQueues = [[API_ERROR_CONN_RESULT]];
 
     await expect(
       runTask(
@@ -595,7 +608,7 @@ describe('runTask — YUK-576 transient retry loop', () => {
       ),
     ).rejects.toThrow(/socket connection was closed/);
 
-    expect(mockSdk.capturedOptions).toHaveLength(1);
+    expect(mockPi.capturedOptions).toHaveLength(1);
     const finish = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
     expect(finish.finish_reason).toBe('error');
   });
@@ -603,13 +616,13 @@ describe('runTask — YUK-576 transient retry loop', () => {
   it('opt-in but global AI_PROVIDER_OVERRIDE set → no retry (env gate)', async () => {
     vi.stubEnv('AI_PROVIDER_OVERRIDE', 'anthropic-sub');
     vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'dummy-oauth-token-not-real');
-    mockSdk.messageQueues = [[API_ERROR_CONN_RESULT]];
+    mockPi.messageQueues = [[API_ERROR_CONN_RESULT]];
 
     await expect(
       runTask(JUDGE_KIND, { q: 1 }, { db: fakeDb, enableTransientRetry: true }),
     ).rejects.toThrow(/socket connection was closed/);
 
-    expect(mockSdk.capturedOptions).toHaveLength(1);
+    expect(mockPi.capturedOptions).toHaveLength(1);
     const finish = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
     expect(finish.finish_reason).toBe('error');
   });
@@ -619,7 +632,7 @@ describe('runTask — YUK-576 transient retry loop', () => {
       wrapped: input,
     }));
     const afterRun = vi.fn(async () => {});
-    mockSdk.messageQueues = [[API_ERROR_CONN_RESULT], [successResult('done')]];
+    mockPi.messageQueues = [[API_ERROR_CONN_RESULT], [successResult('done')]];
 
     const result = await runTask(
       JUDGE_KIND,
@@ -649,7 +662,7 @@ describe('runTask — GLOBAL stream_no_terminal guard (YUK-576, deliberate behav
   });
 
   it('non-opt-in: stream ending without a terminal result throws + records failure (was: silent success)', async () => {
-    mockSdk.messageQueues = [[]]; // stream yields nothing and ends
+    mockPi.messageQueues = [[]]; // stream yields nothing and ends
 
     await expect(runTask(NO_RETRY_KIND, { q: 1 }, { db: fakeDb })).rejects.toThrow(
       /stream_no_terminal/,
@@ -668,12 +681,12 @@ describe('runTask — GLOBAL stream_no_terminal guard (YUK-576, deliberate behav
   });
 
   it('opt-in: stream_no_terminal is transient → retried once', async () => {
-    mockSdk.messageQueues = [[], [successResult('second-try')]];
+    mockPi.messageQueues = [[], [successResult('second-try')]];
 
     const result = await runTask(JUDGE_KIND, { q: 1 }, { db: fakeDb, enableTransientRetry: true });
 
     expect(result.text).toBe('second-try');
-    expect(mockSdk.capturedOptions).toHaveLength(2);
+    expect(mockPi.capturedOptions).toHaveLength(2);
     const finish1 = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
     expect(finish1.finish_reason).toBe('error_retried');
   });
@@ -685,12 +698,12 @@ describe('runTask — GLOBAL stream_no_terminal guard (YUK-576, deliberate behav
   // every registry task, but the classifier must not lean on that invariant.
   it('abort-during-empty-stream classifies as abort (permanent), NOT stream_no_terminal', async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
-    mockSdk.beforeYield = () => {
+    mockPi.beforeYield = () => {
       // Fire the budget-timeout abort while the stream is still open, then let
       // the generator end with no messages (graceful end, aborted signal set).
       vi.advanceTimersByTime(91_000); // > StepsJudgeTask budget.timeout (90s)
     };
-    mockSdk.messageQueues = [[], [successResult('never-reached')]];
+    mockPi.messageQueues = [[], [successResult('never-reached')]];
 
     const error = await runTask(JUDGE_KIND, { q: 1 }, { db: fakeDb, enableTransientRetry: true })
       .then(() => null)
@@ -703,17 +716,17 @@ describe('runTask — GLOBAL stream_no_terminal guard (YUK-576, deliberate behav
     });
     expect((error as Error).message).toContain('aborted');
 
-    expect(mockSdk.capturedOptions).toHaveLength(1); // permanent → no retry
+    expect(mockPi.capturedOptions).toHaveLength(1); // permanent → no retry
     const finish = logMock.finished.mock.calls[0][1] as Record<string, unknown>;
     expect(finish.finish_reason).toBe('error'); // not error_retried
     vi.useRealTimers();
   });
 
   it('binds an unexpected adapter exception to the lifecycle task-run id', async () => {
-    mockSdk.beforeYield = () => {
+    mockPi.beforeYield = () => {
       throw new Error('adapter exploded after lifecycle start');
     };
-    mockSdk.messageQueues = [[]];
+    mockPi.messageQueues = [[]];
 
     const error = await runTask(NO_RETRY_KIND, { q: 1 }, { db: fakeDb })
       .then(() => null)

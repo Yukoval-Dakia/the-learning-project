@@ -1,47 +1,51 @@
-// YUK-299 — runner outputFormat seam: zero-regression + structured_output
-// three-state read.
+// Runner seam tests — pi adapter path (post YUK-1025 P4). The Claude Agent
+// SDK subprocess is retired; a fake ExecutionAdapter injected via
+// __setPiAdapterForTests captures startup args + replays scripted frames, so the
+// durable consume loop keeps identical coverage.
 //
-// Pure no-DB unit, same justification as the sibling stream-cancel.test.ts /
-// runner.stream-collect.test.ts: @anthropic-ai/claude-agent-sdk and
-// @/server/ai/log are vi.mock'd and `db` is an untouched stub, so no live
-// Postgres is needed. (The sibling runner.test.ts drives the real ai/log writers
-// against a container → db partition.) MUST be enumerated in fastTestInclude
-// (vitest.shared.ts): src/server/ai/** has no unit glob, so without the entry the
-// db config's src/**/*.test.ts glob would sweep it into the testcontainer
-// partition.
+// Pure no-DB unit: @/server/ai/log is vi.mock'd and `db` is an untouched stub.
+// MUST be enumerated in fastTestInclude (vitest.shared.ts): src/server/ai/**
+// has no unit glob, so without the entry the db config's src/**/*.test.ts glob
+// would sweep it into the testcontainer partition.
 
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Capture the options the runner hands the SDK + let a test pick which result
-// message the mocked query emits (success-with/without structured_output, or an
+// Capture the args the runner hands the adapter + let a test pick which result
+// frames the scripted query emits (success-with/without structured_output, or an
 // error subtype).
-const mockSdk = vi.hoisted(() => ({
-  capturedOptions: undefined as unknown,
+const mockPi = vi.hoisted(() => ({
+  capturedArgs: undefined as unknown,
   capturedPrompt: undefined as unknown,
   messages: [] as unknown[],
   queryStarted: vi.fn(),
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  startup: vi.fn(async ({ options }: { options: unknown }) => {
-    mockSdk.capturedOptions = options;
-    return {
-      query: vi.fn((prompt: unknown) => {
-        mockSdk.capturedPrompt = prompt;
-        mockSdk.queryStarted();
-        return (async function* () {
-          for (const m of mockSdk.messages) yield m;
-        })();
-      }),
-      close: vi.fn(),
-    };
-  }),
-  createSdkMcpServer: vi.fn(() => ({ type: 'sdk', name: '', instance: {} })),
-  tool: vi.fn((name: string, description: string) => ({ name, description })),
-}));
+function fakePiAdapter() {
+  return {
+    id: 'pi' as const,
+    startup: vi.fn(async (args: ExecutionAdapterStartupArgs) => {
+      mockPi.capturedArgs = args;
+      const prepared: PreparedExecutionQuery = {
+        query: (prompt) => {
+          mockPi.capturedPrompt = prompt;
+          mockPi.queryStarted();
+          return (async function* () {
+            for (const m of mockPi.messages) yield m as RunnerMessage;
+          })();
+        },
+        close: async () => {},
+      };
+      return prepared;
+    }),
+  };
+}
+
+function capturedOptions() {
+  return (mockPi.capturedArgs as ExecutionAdapterStartupArgs).options;
+}
 
 // ai/log writers are the only DB-touching calls inside runTask; stub them so no
 // real client is needed and we can assert their call args are unchanged.
@@ -53,7 +57,7 @@ const logMock = vi.hoisted(() => ({
 }));
 
 vi.mock('@/server/ai/log', () => ({
-  logMissingMcpServersWarning: vi.fn(),
+  logMissingToolMountsWarning: vi.fn(),
   writeAiTaskRunStarted: logMock.started,
   writeAiTaskRunFinished: logMock.finished,
   writeAiTaskRunRetried: vi.fn(async () => true),
@@ -94,9 +98,15 @@ vi.mock('@/server/ai/log', () => ({
   writeToolCallLog: logMock.tool,
 }));
 
-import type { JsonSchemaOutputFormat, Options } from '@anthropic-ai/claude-agent-sdk';
 import { tasks } from '@/ai/registry';
+import {
+  type ExecutionAdapterStartupArgs,
+  type PreparedExecutionQuery,
+  type RunnerMessage,
+  __setPiAdapterForTests,
+} from './execution-adapter';
 import { runTask, streamTask, streamTaskCollecting } from './runner';
+import type { Options } from './sdk-types';
 import { taskInputHash } from './task-input-hash';
 
 // Minimal db stub — never dereferenced because every ai/log writer is mocked.
@@ -104,18 +114,17 @@ const fakeDb = {} as never;
 
 describe('native live-session compaction', () => {
   beforeEach(() => {
+    mockPi.capturedArgs = undefined;
+    __setPiAdapterForTests(fakePiAdapter());
     vi.stubEnv('XIAOMI_API_KEY', 'test-key');
   });
   afterEach(() => {
+    __setPiAdapterForTests(undefined);
     vi.unstubAllEnvs();
   });
-  it('uses SDK settings and preserves caller hooks while reinjecting after compact', async () => {
-    mockSdk.messages = [successResult()];
-    const existing = vi.fn(async () => ({}));
-    const hooks: Options['hooks'] = {
-      Stop: [{ hooks: [existing] }],
-      SessionStart: [{ hooks: [existing] }],
-    };
+  it('forwards nativeCompaction + caller piHooks while preserving the resume pointer', async () => {
+    mockPi.messages = [successResult()];
+    const piHooks = { beforeToolCall: [], afterToolCall: [] };
     const context =
       '<turn_context>{"v":1,"learner_state":"当前目标：含参方程；先核对定义域"}</turn_context>';
     await runTask(
@@ -123,50 +132,35 @@ describe('native live-session compaction', () => {
       { q: 1 },
       {
         db: fakeDb,
-        sdkSession: { persist: true, resume: 'same-session' },
-        hooks,
+        sdkSession: { persist: true, resume: 'pi:same-session' },
+        piHooks,
+        piSessionReplay: [{ role: 'user', text: 'prior turn' }],
         nativeCompaction: { sessionContext: context },
       },
     );
-    const options = mockSdk.capturedOptions as Options;
-    expect(options.settings).toEqual({
-      autoCompactEnabled: true,
-      precomputeCompactionEnabled: false,
-    });
-    expect(options).not.toHaveProperty('autoCompactEnabled');
-    expect(options.resume).toBe('same-session');
-    expect(options.hooks?.Stop).toBe(hooks.Stop);
-    expect(options.hooks?.SessionStart).toHaveLength(2);
-    const compactHook = options.hooks?.SessionStart?.[1]?.hooks[0];
-    const input = {
-      hook_event_name: 'SessionStart' as const,
-      source: 'compact' as const,
-      session_id: 'same-session',
-      cwd: '/fixture',
-      transcript_path: '/fixture/session.jsonl',
-    };
-    expect(await compactHook?.(input, undefined, { signal: new AbortController().signal })).toEqual(
-      {
-        hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: context },
-      },
-    );
-    expect(
-      await compactHook?.({ ...input, source: 'resume' }, undefined, {
-        signal: new AbortController().signal,
-      }),
-    ).toEqual({});
+    const args = mockPi.capturedArgs as ExecutionAdapterStartupArgs;
+    // Compaction re-injection is adapter-side (transformContext); the runner
+    // only forwards the descriptor + resolved session replay verbatim.
+    expect(args.nativeCompaction).toEqual({ sessionContext: context });
+    expect(args.piHooks).toBe(piHooks);
+    expect(args.piSessionReplay).toEqual([{ role: 'user', text: 'prior turn' }]);
+    expect(args.options.resume).toBe('pi:same-session');
+    expect('settings' in args.options).toBe(false);
+    expect('hooks' in args.options).toBe(false);
   });
 
   it('does not configure ordinary non-session tasks', async () => {
-    mockSdk.messages = [successResult()];
+    mockPi.messages = [successResult()];
     await runTask('AttributionTask', { q: 1 }, { db: fakeDb });
-    const options = mockSdk.capturedOptions as Options;
-    expect(options.settings).toBeUndefined();
-    expect(options.hooks).toBeUndefined();
+    const args = mockPi.capturedArgs as ExecutionAdapterStartupArgs;
+    expect(args.nativeCompaction).toBeUndefined();
+    expect(args.piHooks).toBeUndefined();
+    expect(args.piSessionReplay).toBeUndefined();
+    expect(args.options.resume).toBeUndefined();
   });
 
   it('persists only bounded compact metadata without subtracting billable usage or accepting failure', async () => {
-    mockSdk.messages = [
+    mockPi.messages = [
       {
         type: 'system',
         subtype: 'compact_boundary',
@@ -192,7 +186,7 @@ describe('native live-session compaction', () => {
     });
     expect(JSON.stringify(row)).not.toContain('PRIVATE_SUMMARY');
     expect(JSON.stringify(row)).not.toContain('private-message');
-    mockSdk.messages = [mockSdk.messages[0], errorResult('error_during_execution')];
+    mockPi.messages = [mockPi.messages[0], errorResult('error_during_execution')];
     await expect(runTask('AttributionTask', { q: 1 }, { db: fakeDb })).rejects.toThrow();
     expect(logMock.finished.mock.calls.at(-1)?.[1]).toMatchObject({
       status: 'failure',
@@ -225,13 +219,8 @@ function assistantThinking(thinking: string) {
   };
 }
 
-const SAMPLE_OUTPUT_FORMAT: JsonSchemaOutputFormat = {
-  type: 'json_schema',
-  schema: { type: 'object', properties: { ok: { type: 'boolean' } } },
-};
-
-// AttributionTask is an un-migrated, no-tool task — a representative baseline for
-// the zero-regression assertions (it never sets ctx.outputFormat).
+// AttributionTask is a no-tool task — a representative baseline for the
+// zero-regression assertions.
 const UNMIGRATED_KIND = 'AttributionTask';
 
 const REVIEW_REGRESSION_PACKET = JSON.parse(
@@ -248,9 +237,10 @@ const REVIEW_REGRESSION_PACKET = JSON.parse(
 
 describe('runTask — YUK-590 retry and cost-reporting lane budgets', () => {
   beforeEach(() => {
-    mockSdk.capturedOptions = undefined;
-    mockSdk.capturedPrompt = undefined;
-    mockSdk.messages = [successResult()];
+    mockPi.capturedArgs = undefined;
+    __setPiAdapterForTests(fakePiAdapter());
+    mockPi.capturedPrompt = undefined;
+    mockPi.messages = [successResult()];
     vi.stubEnv('XIAOMI_API_KEY', 'sk-test-key');
     vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
     vi.stubEnv('AI_PROVIDER_MODEL', '');
@@ -261,24 +251,24 @@ describe('runTask — YUK-590 retry and cost-reporting lane budgets', () => {
     vi.unstubAllEnvs();
   });
 
-  it('defaults the CLI internal retry ceiling to 2 while leaving non-cost-reporting mimo uncapped', async () => {
+  it('writes no transport env/retry/budget knobs onto the call spec (adapter owns them)', async () => {
     await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb });
 
-    const opts = mockSdk.capturedOptions as {
-      env: Record<string, string | undefined>;
-      maxBudgetUsd?: number;
-    };
-    expect(opts.env.CLAUDE_CODE_MAX_RETRIES).toBe('2');
-    expect(opts.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBeUndefined();
+    const opts = capturedOptions() as Record<string, unknown>;
+    // Post-P4: env blocks, CLI retry ceilings and SDK budget knobs are gone —
+    // the pi adapter owns retries via stream options and the durable lifecycle
+    // owns cost accounting.
+    expect('env' in opts).toBe(false);
     expect('maxBudgetUsd' in opts).toBe(false);
+    expect('maxRetries' in opts).toBe(false);
   });
 
   it('runs the typed provider callback after durable start and before query submission', async () => {
     logMock.started.mockClear();
-    mockSdk.queryStarted.mockClear();
+    mockPi.queryStarted.mockClear();
     const beforeProviderQuery = vi.fn(async () => {
       expect(logMock.started).toHaveBeenCalledTimes(1);
-      expect(mockSdk.queryStarted).not.toHaveBeenCalled();
+      expect(mockPi.queryStarted).not.toHaveBeenCalled();
     });
 
     await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb, beforeProviderQuery });
@@ -286,15 +276,15 @@ describe('runTask — YUK-590 retry and cost-reporting lane budgets', () => {
     expect(beforeProviderQuery).toHaveBeenCalledWith(
       expect.objectContaining({ taskRunId: expect.any(String) }),
     );
-    expect(mockSdk.queryStarted).toHaveBeenCalledTimes(1);
+    expect(mockPi.queryStarted).toHaveBeenCalledTimes(1);
   });
 
   it('runs the streaming provider callback after durable start and before query submission', async () => {
     logMock.started.mockClear();
-    mockSdk.queryStarted.mockClear();
+    mockPi.queryStarted.mockClear();
     const beforeProviderQuery = vi.fn(async () => {
       expect(logMock.started).toHaveBeenCalledTimes(1);
-      expect(mockSdk.queryStarted).not.toHaveBeenCalled();
+      expect(mockPi.queryStarted).not.toHaveBeenCalled();
     });
 
     await streamTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb, beforeProviderQuery }).text();
@@ -302,15 +292,15 @@ describe('runTask — YUK-590 retry and cost-reporting lane budgets', () => {
     expect(beforeProviderQuery).toHaveBeenCalledWith(
       expect.objectContaining({ taskRunId: expect.any(String) }),
     );
-    expect(mockSdk.queryStarted).toHaveBeenCalledTimes(1);
+    expect(mockPi.queryStarted).toHaveBeenCalledTimes(1);
   });
 
   it('runs the collecting provider callback after durable start and before query submission', async () => {
     logMock.started.mockClear();
-    mockSdk.queryStarted.mockClear();
+    mockPi.queryStarted.mockClear();
     const beforeProviderQuery = vi.fn(async () => {
       expect(logMock.started).toHaveBeenCalledTimes(1);
-      expect(mockSdk.queryStarted).not.toHaveBeenCalled();
+      expect(mockPi.queryStarted).not.toHaveBeenCalled();
     });
 
     await streamTaskCollecting(
@@ -323,11 +313,11 @@ describe('runTask — YUK-590 retry and cost-reporting lane budgets', () => {
     expect(beforeProviderQuery).toHaveBeenCalledWith(
       expect.objectContaining({ taskRunId: expect.any(String) }),
     );
-    expect(mockSdk.queryStarted).toHaveBeenCalledTimes(1);
+    expect(mockPi.queryStarted).toHaveBeenCalledTimes(1);
   });
 
   it('records returned thinking-block presence without persisting raw reasoning', async () => {
-    mockSdk.messages = [assistantThinking('private scratch work'), successResult()];
+    mockPi.messages = [assistantThinking('private scratch work'), successResult()];
 
     const result = await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb });
 
@@ -356,26 +346,17 @@ describe('runTask — YUK-590 retry and cost-reporting lane budgets', () => {
 
     await runTask('InterventionPackageReviewTask', input, { db: fakeDb });
 
-    const opts = mockSdk.capturedOptions as {
-      settingSources?: string[];
-      skills?: string[];
-      title?: string;
-    };
-    expect(opts.settingSources).toEqual([]);
-    expect(opts.skills).toEqual([]);
-    expect(opts.title).toBe('InterventionPackageReviewTask');
+    const args = mockPi.capturedArgs as ExecutionAdapterStartupArgs;
+    // Post-P4 structural invariant: no settingSources / skills / title knobs
+    // exist on the call spec at all — repo instructions cannot leak in because
+    // the pi lane never reads project config.
+    for (const dead of ['settingSources', 'skills', 'title', 'env']) {
+      expect(dead in args.options).toBe(false);
+    }
+    expect(args.piSkillDocs).toBeUndefined();
   });
 
-  it('preserves an explicit operator CLAUDE_CODE_MAX_RETRIES override', async () => {
-    vi.stubEnv('CLAUDE_CODE_MAX_RETRIES', '0');
-
-    await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb });
-
-    const opts = mockSdk.capturedOptions as { env: Record<string, string | undefined> };
-    expect(opts.env.CLAUDE_CODE_MAX_RETRIES).toBe('0');
-  });
-
-  it('threads the registry maxCost into SDK maxBudgetUsd only on Anthropic direct', async () => {
+  it('resolves the anthropic direct provider credential without a budget knob', async () => {
     vi.stubEnv('ANTHROPIC_API_KEY', 'sk-anthropic-test-key');
 
     await runTask(
@@ -387,15 +368,18 @@ describe('runTask — YUK-590 retry and cost-reporting lane budgets', () => {
       },
     );
 
-    const opts = mockSdk.capturedOptions as { maxBudgetUsd?: number };
-    expect(opts.maxBudgetUsd).toBe(tasks[UNMIGRATED_KIND].budget.maxCost);
+    const args = mockPi.capturedArgs as ExecutionAdapterStartupArgs;
+    expect(args.resolved.provider).toBe('anthropic');
+    expect(args.resolved.apiKey).toBe('sk-anthropic-test-key');
+    expect('maxBudgetUsd' in args.options).toBe(false);
   });
 });
 
-describe('runTask — YUK-299 outputFormat seam', () => {
+describe('runTask — YUK-299 structured_output consume seam', () => {
   beforeEach(() => {
-    mockSdk.capturedOptions = undefined;
-    mockSdk.messages = [];
+    mockPi.capturedArgs = undefined;
+    __setPiAdapterForTests(fakePiAdapter());
+    mockPi.messages = [];
     logMock.started.mockClear();
     logMock.finished.mockClear();
     logMock.cost.mockClear();
@@ -407,61 +391,18 @@ describe('runTask — YUK-299 outputFormat seam', () => {
     vi.unstubAllEnvs();
   });
 
-  it('does NOT write outputFormat onto Options when ctx.outputFormat is omitted (zero regression)', async () => {
-    mockSdk.messages = [successResult()];
-
-    await runTask(UNMIGRATED_KIND, { question: 'q', wrong_answer: 'a' }, { db: fakeDb });
-
-    const opts = mockSdk.capturedOptions as Record<string, unknown>;
-    expect('outputFormat' in opts).toBe(false);
-  });
-
-  it('threads ctx.outputFormat through on an SDK-structured-output provider', async () => {
-    mockSdk.messages = [successResult()];
-    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-anthropic-test-key');
-
-    await runTask(
-      'InterventionRecommendationTask',
-      { snapshot: 'test' },
-      {
-        db: fakeDb,
-        outputFormat: SAMPLE_OUTPUT_FORMAT,
-        override: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
-      },
-    );
-
-    const opts = mockSdk.capturedOptions as { outputFormat?: unknown; maxTurns?: number };
-    expect(opts.outputFormat).toEqual(SAMPLE_OUTPUT_FORMAT);
-    expect(opts.maxTurns).toBe(2);
-  });
-
-  it('omits unsupported Xiaomi outputFormat and preserves the text-fallback turn ceiling', async () => {
-    mockSdk.messages = [successResult()];
-
-    await runTask(
-      'InterventionRecommendationTask',
-      { snapshot: 'test' },
-      { db: fakeDb, outputFormat: SAMPLE_OUTPUT_FORMAT },
-    );
-
-    const opts = mockSdk.capturedOptions as { outputFormat?: unknown; maxTurns?: number };
-    expect(tasks.InterventionRecommendationTask.budget.maxIterations).toBe(1);
-    expect('outputFormat' in opts).toBe(false);
-    expect(opts.maxTurns).toBe(1);
-  });
-
-  it('keeps the one-turn ceiling when the same task has no outputFormat protocol', async () => {
-    mockSdk.messages = [successResult()];
+  it('keeps the registry one-turn ceiling (the SDK structured-output retry headroom is gone)', async () => {
+    mockPi.messages = [successResult()];
 
     await runTask('InterventionRecommendationTask', { snapshot: 'test' }, { db: fakeDb });
 
-    const opts = mockSdk.capturedOptions as { maxTurns?: number };
+    const opts = capturedOptions() as { maxTurns?: number };
     expect(opts.maxTurns).toBe(1);
   });
 
   it('passes through structured_output when the success result carries it (state A)', async () => {
     const payload = { verdict: 'pass', confidence: 0.9 };
-    mockSdk.messages = [successResult({ structured_output: payload })];
+    mockPi.messages = [successResult({ structured_output: payload })];
 
     const result = await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb });
 
@@ -469,7 +410,7 @@ describe('runTask — YUK-299 outputFormat seam', () => {
   });
 
   it('leaves structured_output undefined when the success result omits it (state C — endpoint fallback)', async () => {
-    mockSdk.messages = [successResult()];
+    mockPi.messages = [successResult()];
 
     const result = await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb });
 
@@ -478,7 +419,7 @@ describe('runTask — YUK-299 outputFormat seam', () => {
 
   it('throws + warns on error_max_structured_output_retries (state B)', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    mockSdk.messages = [errorResult('error_max_structured_output_retries')];
+    mockPi.messages = [errorResult('error_max_structured_output_retries')];
 
     await expect(runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb })).rejects.toThrow(
       /error_max_structured_output_retries/,
@@ -491,7 +432,7 @@ describe('runTask — YUK-299 outputFormat seam', () => {
 
   it('does NOT warn on an unrelated error subtype (warn is structured-output specific)', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    mockSdk.messages = [errorResult('error_max_turns')];
+    mockPi.messages = [errorResult('error_max_turns')];
 
     await expect(runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb })).rejects.toThrow(
       /error_max_turns/,
@@ -500,7 +441,7 @@ describe('runTask — YUK-299 outputFormat seam', () => {
   });
 
   it('keeps the 留痕 write calls unchanged on the structured-output success path (约束②)', async () => {
-    mockSdk.messages = [successResult({ structured_output: { verdict: 'pass' } })];
+    mockPi.messages = [successResult({ structured_output: { verdict: 'pass' } })];
 
     await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb });
 
@@ -517,15 +458,14 @@ describe('runTask — YUK-299 outputFormat seam', () => {
   });
 });
 
-// YUK-572 — runner agents/hooks/canUseTool passthrough seam. Same zero-regression
-// contract as the outputFormat seam: OMITTED ⇒ the key is not written onto Options
-// (byte-identical to pre-seam); SET ⇒ threaded 1:1. The EXPECTED_KEYS test above is the
-// negative anchor (none of the three keys appear when unset); these are the positive
-// passthrough assertions.
-describe('runTask — YUK-572 agents/hooks/canUseTool seam', () => {
+// YUK-572 — runner nested-agents/hooks passthrough seam, post-P4 shape:
+// ctx.piAgents / ctx.piHooks forward verbatim onto the adapter startup args;
+// the SDK Options fields (agents/hooks/canUseTool) no longer exist.
+describe('runTask — YUK-572 piAgents/piHooks seam', () => {
   beforeEach(() => {
-    mockSdk.capturedOptions = undefined;
-    mockSdk.messages = [];
+    mockPi.capturedArgs = undefined;
+    __setPiAdapterForTests(fakePiAdapter());
+    mockPi.messages = [];
     logMock.started.mockClear();
     logMock.finished.mockClear();
     logMock.cost.mockClear();
@@ -537,19 +477,21 @@ describe('runTask — YUK-572 agents/hooks/canUseTool seam', () => {
   });
 
   it('does NOT write agents/hooks/canUseTool when omitted (zero regression)', async () => {
-    mockSdk.messages = [successResult()];
+    mockPi.messages = [successResult()];
 
     await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb });
 
-    const opts = mockSdk.capturedOptions as Record<string, unknown>;
-    expect('agents' in opts).toBe(false);
-    expect('hooks' in opts).toBe(false);
-    expect('canUseTool' in opts).toBe(false);
+    const args = mockPi.capturedArgs as ExecutionAdapterStartupArgs;
+    expect(args.piAgents).toBeUndefined();
+    expect(args.piHooks).toBeUndefined();
+    expect('agents' in args.options).toBe(false);
+    expect('hooks' in args.options).toBe(false);
+    expect('canUseTool' in args.options).toBe(false);
   });
 
-  it('threads ctx.agents through to Options.agents when set', async () => {
-    mockSdk.messages = [successResult()];
-    const agents = {
+  it('threads ctx.piAgents through to the startup args when set', async () => {
+    mockPi.messages = [successResult()];
+    const piAgents = {
       'evidence-scout': {
         description: 'scout',
         prompt: 'p',
@@ -558,30 +500,23 @@ describe('runTask — YUK-572 agents/hooks/canUseTool seam', () => {
       },
     };
 
-    await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb, agents });
+    await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb, piAgents });
 
-    const opts = mockSdk.capturedOptions as { agents?: unknown };
-    expect(opts.agents).toEqual(agents);
+    const args = mockPi.capturedArgs as ExecutionAdapterStartupArgs;
+    expect(args.piAgents).toEqual(piAgents);
   });
 
-  it('threads ctx.hooks + ctx.canUseTool through when set', async () => {
-    mockSdk.messages = [successResult()];
-    const hooks = { PreToolUse: [{ hooks: [async () => ({ continue: true })] }] };
-    const canUseTool = async () => ({ behavior: 'allow' as const, updatedInput: {} });
+  it('threads ctx.piHooks through to the startup args when set', async () => {
+    mockPi.messages = [successResult()];
+    const piHooks = {
+      beforeToolCall: [async () => undefined],
+      afterToolCall: [async () => undefined],
+    };
 
-    await runTask(
-      UNMIGRATED_KIND,
-      { q: 1 },
-      {
-        db: fakeDb,
-        hooks: hooks as never,
-        canUseTool: canUseTool as never,
-      },
-    );
+    await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb, piHooks });
 
-    const opts = mockSdk.capturedOptions as { hooks?: unknown; canUseTool?: unknown };
-    expect(opts.hooks).toBe(hooks);
-    expect(opts.canUseTool).toBe(canUseTool);
+    const args = mockPi.capturedArgs as ExecutionAdapterStartupArgs;
+    expect(args.piHooks).toBe(piHooks);
   });
 });
 
@@ -594,8 +529,9 @@ describe('runTask — YUK-572 agents/hooks/canUseTool seam', () => {
 // the env var does not penetrate the CLI).
 describe('runTask — YUK-923 reasoning effort seam', () => {
   beforeEach(() => {
-    mockSdk.capturedOptions = undefined;
-    mockSdk.messages = [successResult()];
+    mockPi.capturedArgs = undefined;
+    __setPiAdapterForTests(fakePiAdapter());
+    mockPi.messages = [successResult()];
     logMock.started.mockClear();
     logMock.finished.mockClear();
     logMock.cost.mockClear();
@@ -609,20 +545,19 @@ describe('runTask — YUK-923 reasoning effort seam', () => {
   it('does NOT write effort when the task spec declares no reasoningEffort (zero regression)', async () => {
     await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb });
 
-    const opts = mockSdk.capturedOptions as Record<string, unknown>;
+    const opts = capturedOptions() as Record<string, unknown>;
     expect('effort' in opts).toBe(false);
   });
 });
 
-// YUK-365 — subscription-OAuth lane env block. Asserts that when AI_PROVIDER_OVERRIDE
-// routes a task to the 'anthropic-sub' provider, buildAgentEnv (exercised via the
-// captured SDK Options.env) SETS CLAUDE_CODE_OAUTH_TOKEN and explicitly UNSETS the
-// three conflicting Anthropic vars, so a parent-process key can't win precedence.
-// Uses a DUMMY token value set in-test (never the real one).
-describe('runTask — YUK-365 subscription-OAuth env block', () => {
+// YUK-365, post-P4 shape: there is no subprocess env block anymore — the OAuth
+// token rides `resolved.apiKey` into the pi driver (sk-ant-oat* → Bearer), and the
+// absence of an env map on the call spec IS the selector-clearing fix.
+describe('runTask — YUK-365 subscription-OAuth resolution', () => {
   beforeEach(() => {
-    mockSdk.capturedOptions = undefined;
-    mockSdk.messages = [];
+    mockPi.capturedArgs = undefined;
+    __setPiAdapterForTests(fakePiAdapter());
+    mockPi.messages = [];
     logMock.started.mockClear();
     logMock.finished.mockClear();
     logMock.cost.mockClear();
@@ -633,42 +568,38 @@ describe('runTask — YUK-365 subscription-OAuth env block', () => {
     vi.unstubAllEnvs();
   });
 
-  it('SETs CLAUDE_CODE_OAUTH_TOKEN and UNSETs ANTHROPIC_BASE_URL/API_KEY/AUTH_TOKEN', async () => {
-    // Simulate a parent process that ALSO has the conflicting vars set — the oauth
-    // lane must override them to undefined so they don't win precedence.
+  it('resolves the OAuth token into resolved.apiKey with first-party routing', async () => {
+    // Parent env carries conflicting anthropic key/baseUrl vars — under the pi
+    // lane they simply cannot leak: the call spec has no env map and auth is
+    // the resolved per-request credential.
     vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'dummy-oauth-token-not-real');
-    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-parent-key-should-be-unset');
-    vi.stubEnv('ANTHROPIC_BASE_URL', 'https://parent.example/should-be-unset');
-    vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'parent-auth-should-be-unset');
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-parent-key-cannot-leak');
+    vi.stubEnv('ANTHROPIC_BASE_URL', 'https://parent.example/cannot-leak');
+    vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'parent-auth-cannot-leak');
     vi.stubEnv('AI_PROVIDER_OVERRIDE', 'anthropic-sub');
 
-    mockSdk.messages = [successResult()];
+    mockPi.messages = [successResult()];
     await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb });
 
-    const opts = mockSdk.capturedOptions as {
-      env: Record<string, string | undefined>;
-      model: string;
-      maxBudgetUsd?: number;
-    };
-    // Token set from its env var by NAME (dummy value, asserted by NAME only).
-    expect(opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('dummy-oauth-token-not-real');
-    // The three conflicting vars are explicitly UNSET (undefined) in the subprocess
-    // env block, even though they were present in the parent process.
-    expect(opts.env.ANTHROPIC_BASE_URL).toBeUndefined();
-    expect(opts.env.ANTHROPIC_API_KEY).toBeUndefined();
-    expect(opts.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    const args = mockPi.capturedArgs as ExecutionAdapterStartupArgs;
+    expect(args.resolved).toMatchObject({
+      authMode: 'oauth',
+      provider: 'anthropic-sub',
+      apiKey: 'dummy-oauth-token-not-real',
+      oauthTokenEnv: 'CLAUDE_CODE_OAUTH_TOKEN',
+    });
+    expect('baseUrl' in args.resolved).toBe(false);
     // The lane defaults to Opus 4.8.
-    expect(opts.model).toBe('claude-opus-4-8');
-    // Flat subscription quota is not a cost-reporting lane, so the registry's
-    // per-run USD ceiling must not masquerade as an effective SDK guardrail.
-    expect('maxBudgetUsd' in opts).toBe(false);
+    expect(args.options.model).toBe('claude-opus-4-8');
+    expect('env' in args.options).toBe(false);
+    expect('maxBudgetUsd' in args.options).toBe(false);
   });
 
-  it('UNSETs the cloud-provider selectors (Bedrock/Vertex/AWS/Foundry) so they cannot outrank the OAuth token (Finding 1)', async () => {
-    // Per Claude Code auth precedence, these four selectors outrank
-    // CLAUDE_CODE_OAUTH_TOKEN. A deployment (NAS/docker) that sets ANY of them in
-    // the parent env would route the SDK to that cloud provider and silently ignore
-    // the subscription token. The oauth lane must explicitly clear all four.
+  it('cloud-provider selectors in the parent env cannot outrank the OAuth token (Finding 1)', async () => {
+    // Claude Code auth precedence let CLAUDE_CODE_USE_* selectors outrank the
+    // OAuth token in the subprocess env. Post-P4 there is no subprocess env at
+    // all — the pi driver authenticates per-request with resolved.apiKey, so a
+    // polluted parent env is structurally inert.
     vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'dummy-oauth-token-not-real');
     vi.stubEnv('CLAUDE_CODE_USE_BEDROCK', '1');
     vi.stubEnv('CLAUDE_CODE_USE_VERTEX', '1');
@@ -676,41 +607,36 @@ describe('runTask — YUK-365 subscription-OAuth env block', () => {
     vi.stubEnv('CLAUDE_CODE_USE_FOUNDRY', '1');
     vi.stubEnv('AI_PROVIDER_OVERRIDE', 'anthropic-sub');
 
-    mockSdk.messages = [successResult()];
+    mockPi.messages = [successResult()];
     await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb });
 
-    const opts = mockSdk.capturedOptions as { env: Record<string, string | undefined> };
-    // The subscription token still reaches the subprocess...
-    expect(opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('dummy-oauth-token-not-real');
-    // ...and every cloud-provider selector is explicitly cleared, even though all
-    // four were truthy in the parent process.
-    expect(opts.env.CLAUDE_CODE_USE_BEDROCK).toBeUndefined();
-    expect(opts.env.CLAUDE_CODE_USE_VERTEX).toBeUndefined();
-    expect(opts.env.CLAUDE_CODE_USE_ANTHROPIC_AWS).toBeUndefined();
-    expect(opts.env.CLAUDE_CODE_USE_FOUNDRY).toBeUndefined();
+    const args = mockPi.capturedArgs as ExecutionAdapterStartupArgs;
+    expect(args.resolved).toMatchObject({
+      authMode: 'oauth',
+      apiKey: 'dummy-oauth-token-not-real',
+    });
+    expect('env' in args.options).toBe(false);
   });
 
-  it('default (no AI_PROVIDER_OVERRIDE) keeps the mimo key-auth env block + UNSETs a parent OAuth token', async () => {
+  it('default (no AI_PROVIDER_OVERRIDE) keeps the mimo key-auth credential; a parent OAuth token cannot bleed in', async () => {
     vi.stubEnv('XIAOMI_API_KEY', 'sk-test-key');
     // Ensure the override is absent for this case.
     vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
-    // Codex review P2 regression: owner placed CLAUDE_CODE_OAUTH_TOKEN in .env.local,
-    // so the parent process env HAS it even on the default mimo lane. The key-auth
-    // branch must explicitly UNSET it (lane mutual-exclusion + no token bleed into the
-    // mimo subprocess env). Without the parent stub this assertion passed trivially.
+    // Owner placed CLAUDE_CODE_OAUTH_TOKEN in .env.local — on the mimo lane it
+    // must not become the credential (lane mutual-exclusion).
     vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'dummy-oauth-token-not-real');
 
-    mockSdk.messages = [successResult()];
+    mockPi.messages = [successResult()];
     await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb });
 
-    const opts = mockSdk.capturedOptions as {
-      env: Record<string, string | undefined>;
-      model: string;
-    };
-    expect(opts.env.ANTHROPIC_API_KEY).toBe('sk-test-key');
-    expect(opts.env.ANTHROPIC_BASE_URL).toBe('https://api.xiaomimimo.com/anthropic');
-    expect(opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
-    expect(opts.model).toBe('mimo-v2.5-pro');
+    const args = mockPi.capturedArgs as ExecutionAdapterStartupArgs;
+    expect(args.resolved).toMatchObject({
+      authMode: 'key',
+      provider: 'xiaomi',
+      apiKey: 'sk-test-key',
+      baseUrl: 'https://api.xiaomimimo.com/anthropic',
+    });
+    expect(args.options.model).toBe('mimo-v2.5-pro');
   });
 });
 
@@ -721,8 +647,9 @@ describe('runTask — YUK-365 subscription-OAuth env block', () => {
 // ContextBudgetTracker (MF-A). undefined-guard: non-durable callers keep def.budget.
 describe('runTask / streamTaskCollecting — YUK-575 budgetOverride seam', () => {
   beforeEach(() => {
-    mockSdk.capturedOptions = undefined;
-    mockSdk.messages = [successResult()];
+    mockPi.capturedArgs = undefined;
+    __setPiAdapterForTests(fakePiAdapter());
+    mockPi.messages = [successResult()];
     logMock.started.mockClear();
     logMock.finished.mockClear();
     logMock.cost.mockClear();
@@ -740,7 +667,7 @@ describe('runTask / streamTaskCollecting — YUK-575 budgetOverride seam', () =>
 
   it('omitted budgetOverride → maxTurns == registry default (byte-identical)', async () => {
     await runTask(COPILOT, { user_message: 'hi', triggered_by: 'chat' }, { db: fakeDb });
-    const opts = mockSdk.capturedOptions as Record<string, unknown>;
+    const opts = capturedOptions() as Record<string, unknown>;
     expect(opts.maxTurns).toBe(6);
     // The seam value is consumed into maxTurns — never leaked as an Options key.
     expect('budgetOverride' in opts).toBe(false);
@@ -752,7 +679,7 @@ describe('runTask / streamTaskCollecting — YUK-575 budgetOverride seam', () =>
       { user_message: 'hi', triggered_by: 'chat' },
       { db: fakeDb, budgetOverride: { maxIterations: 24 } },
     );
-    const opts = mockSdk.capturedOptions as Record<string, unknown>;
+    const opts = capturedOptions() as Record<string, unknown>;
     expect(opts.maxTurns).toBe(24);
     expect('budgetOverride' in opts).toBe(false);
   });
@@ -763,7 +690,7 @@ describe('runTask / streamTaskCollecting — YUK-575 budgetOverride seam', () =>
       { user_message: 'hi', triggered_by: 'chat' },
       { db: fakeDb, budgetOverride: {} },
     );
-    const opts = mockSdk.capturedOptions as Record<string, unknown>;
+    const opts = capturedOptions() as Record<string, unknown>;
     expect(opts.maxTurns).toBe(6);
   });
 
@@ -791,7 +718,7 @@ describe('runTask / streamTaskCollecting — YUK-575 budgetOverride seam', () =>
     expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 12 * 60_000);
     expect(setTimeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), 90_000);
     // maxTurns override still threads through buildQueryOptions on the stream path.
-    const opts = mockSdk.capturedOptions as Record<string, unknown>;
+    const opts = capturedOptions() as Record<string, unknown>;
     expect(opts.maxTurns).toBe(24);
   });
 
@@ -815,8 +742,9 @@ describe('runTask / streamTaskCollecting — YUK-575 budgetOverride seam', () =>
 // input still completes the run (input_hash degrades to a stable string hash).
 describe('runTask — YUK-589 input_hash containment', () => {
   beforeEach(() => {
-    mockSdk.capturedOptions = undefined;
-    mockSdk.messages = [successResult()];
+    mockPi.capturedArgs = undefined;
+    __setPiAdapterForTests(fakePiAdapter());
+    mockPi.messages = [successResult()];
     logMock.started.mockClear();
     logMock.finished.mockClear();
     logMock.cost.mockClear();
@@ -848,8 +776,9 @@ describe('runTask — YUK-589 input_hash containment', () => {
 
 describe('runTask / streamTaskCollecting — caller-owned task run correlation', () => {
   beforeEach(() => {
-    mockSdk.capturedOptions = undefined;
-    mockSdk.messages = [successResult()];
+    mockPi.capturedArgs = undefined;
+    __setPiAdapterForTests(fakePiAdapter());
+    mockPi.messages = [successResult()];
     logMock.started.mockClear();
     logMock.finished.mockClear();
     logMock.cost.mockClear();
@@ -915,8 +844,9 @@ describe('runTask / streamTaskCollecting — caller-owned task run correlation',
 // runTask-resolution gate rejection, and the model_profile_resolved metadata.
 describe('runTask — YUK-924 model-profile seams', () => {
   beforeEach(() => {
-    mockSdk.capturedOptions = undefined;
-    mockSdk.messages = [successResult()];
+    mockPi.capturedArgs = undefined;
+    __setPiAdapterForTests(fakePiAdapter());
+    mockPi.messages = [successResult()];
     logMock.started.mockClear();
     logMock.finished.mockClear();
     logMock.cost.mockClear();
@@ -930,42 +860,7 @@ describe('runTask — YUK-924 model-profile seams', () => {
     vi.unstubAllEnvs();
   });
 
-  it('disables structured output for an UNKNOWN xiaomi model id (provider-wide binding parity)', async () => {
-    await runTask(
-      'InterventionRecommendationTask',
-      { snapshot: 'test' },
-      {
-        db: fakeDb,
-        outputFormat: SAMPLE_OUTPUT_FORMAT,
-        override: { provider: 'xiaomi', model: 'mimo-v3-not-in-catalog' },
-      },
-    );
-
-    const opts = mockSdk.capturedOptions as { outputFormat?: unknown; maxTurns?: number };
-    // Pre-YUK-924 this was `resolved.provider === 'xiaomi'` — model-id agnostic.
-    // The binding modelDefaults keeps exactly that coverage.
-    expect('outputFormat' in opts).toBe(false);
-    expect(opts.maxTurns).toBe(1);
-  });
-
-  it('threads structured output through on the zhipu lane and keeps it unmetered', async () => {
-    await runTask(
-      'InterventionRecommendationTask',
-      { snapshot: 'test' },
-      {
-        db: fakeDb,
-        outputFormat: SAMPLE_OUTPUT_FORMAT,
-        override: { provider: 'zhipu', model: 'glm-5.2' },
-      },
-    );
-
-    const opts = mockSdk.capturedOptions as { outputFormat?: unknown; maxBudgetUsd?: number };
-    expect(opts.outputFormat).toEqual(SAMPLE_OUTPUT_FORMAT);
-    // Coding-plan lane: no per-run USD ceiling.
-    expect('maxBudgetUsd' in opts).toBe(false);
-  });
-
-  it('REJECTS a needsToolCall task on an unknown-tools model before any SDK call (P2 gate)', async () => {
+  it('REJECTS a needsToolCall task on an unknown-tools model before any adapter call (P2 gate)', async () => {
     await expect(
       runTask(
         'CopilotTask',
@@ -975,8 +870,8 @@ describe('runTask — YUK-924 model-profile seams', () => {
     ).rejects.toThrow(
       /CopilotTask requires tool calling.*mystery-no-tools-model.*has no confirmed/s,
     );
-    // Fail-closed at resolution: no SDK startup, no durable attempt row.
-    expect(mockSdk.capturedOptions).toBeUndefined();
+    // Fail-closed at resolution: no adapter startup, no durable attempt row.
+    expect(mockPi.capturedArgs).toBeUndefined();
     expect(logMock.started).not.toHaveBeenCalled();
   });
 
@@ -991,7 +886,7 @@ describe('runTask — YUK-924 model-profile seams', () => {
         },
       ),
     ).rejects.toThrow(/requires vision input.*glm-5.2.*does not support/s);
-    expect(mockSdk.capturedOptions).toBeUndefined();
+    expect(mockPi.capturedArgs).toBeUndefined();
   });
 
   it('emits model_profile_resolved run metadata with the effective profile source', async () => {
@@ -1018,8 +913,8 @@ describe('runTask — YUK-924 model-profile seams', () => {
     infoSpy.mockRestore();
   });
 
-  it('YUK-936 — sdkSession.persist/resume seam overrides persistSession for foreground inline only', async () => {
-    mockSdk.messages = [successResult()];
+  it('YUK-936 — sdkSession.persist/resume seam writes the resume pointer for foreground inline only', async () => {
+    mockPi.messages = [successResult()];
 
     await runTask(
       UNMIGRATED_KIND,
@@ -1034,9 +929,9 @@ describe('runTask — YUK-924 model-profile seams', () => {
       },
     );
 
-    const opts = mockSdk.capturedOptions as { persistSession?: boolean; resume?: string };
-    expect(opts.persistSession).toBe(true);
-    expect(opts.resume).toBe('sdk-resume-id');
+    const args = mockPi.capturedArgs as ExecutionAdapterStartupArgs;
+    expect(args.options.resume).toBe('sdk-resume-id');
+    expect('persistSession' in args.options).toBe(false);
   });
 
   it('uses a caller-compiled provider prompt while auditing the product input separately', async () => {
@@ -1056,7 +951,7 @@ describe('runTask — YUK-924 model-profile seams', () => {
       compiledModelPrompt,
     });
 
-    expect(mockSdk.capturedPrompt).toBe(compiledPromptText);
+    expect(mockPi.capturedPrompt).toBe(compiledPromptText);
     expect(logMock.started).toHaveBeenCalledWith(
       fakeDb,
       expect.objectContaining({
@@ -1070,19 +965,19 @@ describe('runTask — YUK-924 model-profile seams', () => {
     expect(taskInputHash(productInput)).not.toBe(taskInputHash(compiledPromptText));
   });
 
-  it('YUK-936 — omitted sdkSession keeps persistSession false (durable/correction zero regression)', async () => {
-    mockSdk.messages = [successResult()];
+  it('YUK-936 — omitted sdkSession writes no resume pointer (durable/correction zero regression)', async () => {
+    mockPi.messages = [successResult()];
 
     await runTask(UNMIGRATED_KIND, { question: 'q', wrong_answer: 'a' }, { db: fakeDb });
 
-    const opts = mockSdk.capturedOptions as { persistSession?: boolean; resume?: string };
-    expect(opts.persistSession).toBe(false);
-    expect(opts.resume).toBeUndefined();
+    const args = mockPi.capturedArgs as ExecutionAdapterStartupArgs;
+    expect(args.options.resume).toBeUndefined();
+    expect('persistSession' in args.options).toBe(false);
   });
 
   it('YUK-936 — captures SDK session_id from system init and invokes onSessionId', async () => {
     const onSessionId = vi.fn();
-    mockSdk.messages = [
+    mockPi.messages = [
       { type: 'system', subtype: 'init', session_id: 'sdk-captured-123' },
       successResult(),
     ];
@@ -1102,9 +997,10 @@ describe('runTask — YUK-924 model-profile seams', () => {
 
 describe('runTask — YUK-1013 modelBinding (per-run binding seam)', () => {
   beforeEach(() => {
-    mockSdk.capturedOptions = undefined;
-    mockSdk.capturedPrompt = undefined;
-    mockSdk.messages = [successResult()];
+    mockPi.capturedArgs = undefined;
+    __setPiAdapterForTests(fakePiAdapter());
+    mockPi.capturedPrompt = undefined;
+    mockPi.messages = [successResult()];
     vi.stubEnv('XIAOMI_API_KEY', 'sk-test-key');
     vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
     vi.stubEnv('AI_PROVIDER_MODEL', '');
@@ -1124,7 +1020,7 @@ describe('runTask — YUK-1013 modelBinding (per-run binding seam)', () => {
       },
     );
 
-    const opts = mockSdk.capturedOptions as { model?: string };
+    const opts = capturedOptions() as { model?: string };
     expect(opts.model).toBe('mimo-v2.5');
   });
 
@@ -1138,7 +1034,7 @@ describe('runTask — YUK-1013 modelBinding (per-run binding seam)', () => {
       },
     );
 
-    const opts = mockSdk.capturedOptions as { effort?: string };
+    const opts = capturedOptions() as { effort?: string };
     expect(opts.effort).toBe('high');
   });
 
@@ -1153,32 +1049,28 @@ describe('runTask — YUK-1013 modelBinding (per-run binding seam)', () => {
       },
     );
 
-    const opts = mockSdk.capturedOptions as { model?: string };
+    const opts = capturedOptions() as { model?: string };
     expect(opts.model).toBe('mimo-v2.5-pro');
   });
 
-  it('fails closed on a pi adapter pin to a non-pi provider before any query', async () => {
-    mockSdk.queryStarted.mockClear();
-    await expect(
-      runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb, modelBinding: { adapter: 'pi' } }),
-    ).rejects.toThrow(/ExecutionAdapter 'pi' does not serve provider 'xiaomi'/);
-    expect(mockSdk.queryStarted).not.toHaveBeenCalled();
+  it('accepts an explicit pi adapter pin on every provider (post-P4 pi is the only engine)', async () => {
+    mockPi.queryStarted.mockClear();
+    await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb, modelBinding: { adapter: 'pi' } });
+    expect(mockPi.queryStarted).toHaveBeenCalledTimes(1);
   });
 
-  it('fails closed on the pi lane without the kind allowlist before any query', async () => {
-    vi.stubEnv('OPENCODE_API_KEY', 'sk-opencode-test');
-    vi.stubEnv('AI_ADAPTER_PI_KINDS', '');
-    mockSdk.queryStarted.mockClear();
+  it('fails closed on a stale non-pi adapter pin before any query (YUK-1025 retirement)', async () => {
+    mockPi.queryStarted.mockClear();
     await expect(
       runTask(
         UNMIGRATED_KIND,
         { q: 1 },
         {
           db: fakeDb,
-          modelBinding: { adapter: 'pi', provider: 'opencode-go', model: 'mimo-v2.5-pro' },
+          modelBinding: { adapter: 'sdk' as 'pi' },
         },
       ),
-    ).rejects.toThrow(/Task kind 'AttributionTask' is not eligible for ExecutionAdapter 'pi'/);
-    expect(mockSdk.queryStarted).not.toHaveBeenCalled();
+    ).rejects.toThrow(/retired in YUK-1025/);
+    expect(mockPi.queryStarted).not.toHaveBeenCalled();
   });
 });

@@ -22,7 +22,6 @@
 // quiz_verify job (Q5) promotes draft→active + FSRS-enrolls on pass.
 
 import { randomUUID } from 'node:crypto';
-import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { JobWithMetadata, SendOptions } from 'pg-boss';
@@ -66,12 +65,13 @@ import {
 } from '@/server/ai/mcp/exa';
 import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { runAgentTask } from '@/server/ai/runner';
+import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import {
-  type BuildMcpServerOptions,
-  type SdkMcpServer,
-  buildMcpServerFromRegistry,
-} from '@/server/ai/tools/mcp-bridge';
-import { type PiToolMount, piDomainMount, piRemoteMcpMount } from '@/server/ai/tools/pi-tools';
+  type PiToolMount,
+  type RemoteMcpHttpConfig,
+  piDomainMount,
+  piRemoteMcpMount,
+} from '@/server/ai/tools/pi-tools';
 import {
   dispatchPendingVerifyIntents,
   writeVerifyDispatchIntent,
@@ -80,8 +80,8 @@ import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { kindsMatch } from '@/subjects/question-kind';
 import {
+  resolveQuizGenSkillDocsForSubject,
   resolveQuizGenSkills,
-  resolveQuizGenSkillsForSubject,
   skillKindToQuestionKind,
 } from '@/subjects/quiz-gen-skills';
 import {
@@ -219,18 +219,16 @@ type RunAgentTaskFn = (
   input: unknown,
   ctx: {
     db: Db;
-    mcpServers?: Record<string, SdkMcpServer | McpHttpServerConfig>;
     piToolMounts?: PiToolMount[];
     allowedTools?: string[];
-    // YUK-225 (S2 slice 4) — Agent Skill whitelist + subject context threaded to
-    // the runner so the (subject, kind) 规范包 is loaded into the model's listing.
-    skills?: string[];
+    // YUK-225 (S2 slice 4) — subject 规范包 bodies + subject context threaded to
+    // the runner so the (subject, kind) packs are injected into the system prompt.
+    piSkillDocs?: readonly { name: string; body: string }[];
     subjectProfile?: SubjectProfile;
   },
 ) => Promise<TaskTextResult>;
 
-type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
-type BuildExaMcpServerFn = () => McpHttpServerConfig | null;
+type BuildExaMcpServerFn = () => RemoteMcpHttpConfig | null;
 // YUK-225 (S2 slice 4) — 轨 2 few-shot retrieval seam. The handler injects a few
 // already-pooled同题型 examples into the prompt; DB tests inject a vi.fn(). Keyed by
 // the trigger's knowledge ids (the run's target topics).
@@ -249,7 +247,6 @@ export type EnqueueQuizVerifyFn = (
 
 interface DepsOverride {
   runAgentTaskFn?: RunAgentTaskFn;
-  buildMcpServerFn?: BuildMcpServerFn;
   buildExaMcpServerFn?: BuildExaMcpServerFn;
   enqueueQuizVerify?: EnqueueQuizVerifyFn;
   retrieveFewShotFn?: RetrieveFewShotFn;
@@ -409,7 +406,6 @@ export interface RunQuizGenParams {
   placementAttempt?: PlacementAttemptAuthority;
   placementHeartbeat?: PlacementAttemptHeartbeat;
   runAgentTaskFn?: RunAgentTaskFn;
-  buildMcpServerFn?: BuildMcpServerFn;
   buildExaMcpServerFn?: BuildExaMcpServerFn;
   enqueueQuizVerify?: EnqueueQuizVerifyFn;
   retrieveFewShotFn?: RetrieveFewShotFn;
@@ -524,7 +520,6 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
   const { db, trigger, refId } = params;
   const count = params.count ?? QUIZ_GEN_DEFAULT_COUNT;
   const run = params.runAgentTaskFn ?? runAgentTask;
-  const buildMcpServer = params.buildMcpServerFn ?? buildMcpServerFromRegistry;
   const buildExa = params.buildExaMcpServerFn ?? buildExaMcpServer;
   const enqueueQuizVerify = params.enqueueQuizVerify ?? defaultEnqueueQuizVerify;
   const retrieveFewShot = params.retrieveFewShotFn ?? defaultRetrieveFewShot;
@@ -541,13 +536,11 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
   // tool_call_log rows are attributed to QuizPlanTask, not QuizGenTask.
   const planToolContextTaskRunId = `quiz_gen_plan_tool_${createId()}`;
 
-  // ── MCP mount: copy chat.ts:298-306 verbatim pattern ──────────────────────
-  // In-process domain-tool MCP (read user mistakes + knowledge graph) + the
-  // env-gated Exa remote MCP. When EXA_API_KEY is unset, buildExa()
-  // returns null → no exa server, no exa tools (graceful degradation).
-  // YUK-1021 — the SAME descriptor feeds both engine mounts: SDK consumes the
-  // built in-process MCP server (mcpServers), pi consumes the declarative
-  // piToolMounts and compiles the DomainTools into AgentTools.
+  // ── tool mounts ───────────────────────────────────────────────────────────
+  // Domain tools (read user mistakes + knowledge graph) + the env-gated Exa
+  // remote MCP. When EXA_API_KEY is unset, buildExa() returns null → no exa
+  // server, no exa tools (graceful degradation). piToolMounts compiles the
+  // DomainTools into AgentTools via piDomainMount.
   const domainMountOptions = {
     ctx: {
       db,
@@ -559,13 +552,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     toolNames: QUIZ_GEN_READ_TOOLS,
     taskKind: 'QuizGenTask',
   } satisfies BuildMcpServerOptions;
-  const domainMcpServer = buildMcpServer(domainMountOptions);
-
   const exaCfg = buildExa();
-  const mcpServers: Record<string, SdkMcpServer | McpHttpServerConfig> = {
-    [DOMAIN_TOOL_MCP_SERVER_NAME]: domainMcpServer,
-    ...(exaCfg ? { [EXA_MCP_SERVER_NAME]: exaCfg } : {}),
-  };
   const piToolMounts: PiToolMount[] = [
     piDomainMount(domainMountOptions),
     ...(exaCfg ? [piRemoteMcpMount(EXA_MCP_SERVER_NAME, exaCfg, EXA_SCOPED_TOOL_NAMES)] : []),
@@ -589,22 +576,17 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     toolNames: QUIZ_GEN_READ_TOOLS,
     taskKind: 'QuizPlanTask',
   } satisfies BuildMcpServerOptions;
-  const planMcpServers: Record<string, SdkMcpServer | McpHttpServerConfig> = {
-    [DOMAIN_TOOL_MCP_SERVER_NAME]: buildMcpServer(planDomainMountOptions),
-  };
   const planPiToolMounts: PiToolMount[] = [piDomainMount(planDomainMountOptions)];
   const planAllowedTools = QUIZ_GEN_READ_TOOLS.map((name) => toMcpAllowedToolName(name));
 
   // YUK-225 (S2 slice 4) — 规范双轨.
-  // 轨 1: whitelist the subject's quiz-gen SKILL.md规范包 so the model loads them
-  //       (the runner already mirrored every subject skill into the isolated
-  //       CLAUDE_CONFIG_DIR/skills; `skills` keys which ones are visible). 降级链:
-  //       resolveQuizGenSkillsForSubject returns undefined when the subject has no
-  //       pack → no skills option → promptFragments fallback.
+  // 轨 1: inject the subject's quiz-gen SKILL.md规范包 bodies into the system
+  //       prompt (piSkillDocs). 降级链: resolveQuizGenSkillDocsForSubject returns
+  //       undefined when the subject has no pack → promptFragments fallback.
   // 轨 2: retrieve a few already-pooled同题型 examples (high-tier first) and fold a
   //       few-shot block into the prompt. Best-effort: a retrieval failure must not
   //       block generation, so we log + continue with no block (降级).
-  const subjectSkills = await resolveQuizGenSkillsForSubject(subjectProfile.id);
+  const subjectSkillDocs = await resolveQuizGenSkillDocsForSubject(subjectProfile.id);
 
   let fewShotBlock = '';
   if (resolved.knowledgeIds.length > 0) {
@@ -684,7 +666,6 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       };
       planRunResult = await run('QuizPlanTask', planInput, {
         db,
-        mcpServers: planMcpServers,
         piToolMounts: planPiToolMounts,
         allowedTools: planAllowedTools,
         subjectProfile,
@@ -765,11 +746,10 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     }
     const result = await run('QuizGenTask', input, {
       db,
-      mcpServers,
       piToolMounts,
       allowedTools,
       subjectProfile,
-      ...(subjectSkills ? { skills: subjectSkills } : {}),
+      ...(subjectSkillDocs ? { piSkillDocs: subjectSkillDocs } : {}),
     });
     taskResult = result;
     if (params.placementAttempt) {
@@ -1577,7 +1557,6 @@ export function buildQuizGenHandler(
           ...(placementAttempt ? { placementAttempt } : {}),
           ...(placementHeartbeat ? { placementHeartbeat } : {}),
           runAgentTaskFn: deps.runAgentTaskFn,
-          buildMcpServerFn: deps.buildMcpServerFn,
           buildExaMcpServerFn: deps.buildExaMcpServerFn,
           enqueueQuizVerify: deps.enqueueQuizVerify,
           retrieveFewShotFn: deps.retrieveFewShotFn,

@@ -1,6 +1,6 @@
 // YUK-572 PR-2 §5 — director write-face MCP server (research_meeting_director).
 //
-// A hand-rolled in-process `createSdkMcpServer('research_meeting_director', …)` (NOT the
+// A hand-rolled in-process AgentTool set namespaced `mcp__research_meeting_director__*` (NOT the
 // DomainTool registry — reusing it would leak copilot's full propose face to the
 // director, violating the minimal tool surface, §0.B). Registers the director-only
 // tools: get_meeting_context (read the precomputed agenda snapshot) + propose_conjecture
@@ -14,7 +14,7 @@
 // runs through buildMcpServer.beforeExecute, hosted here bespoke because the write face
 // does not go through the registry (§0.B).
 
-import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { and, eq, inArray, ne, or } from 'drizzle-orm';
 import { z } from 'zod';
 import {
@@ -52,6 +52,7 @@ import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import { piCustomTool } from '@/server/ai/tools/pi-tools';
 import { getMasteryProjection } from '@/server/mastery/state';
 import { filterPrimaryEvidenceRefs, isPrimaryEvidenceRef } from '../scout/report-findings';
 import {
@@ -278,10 +279,9 @@ export interface BuildDirectorServerOpts {
   loadConjectureHistoryFn?: LoadConjectureHistoryFn;
 }
 
-export type SdkMcpServer = ReturnType<typeof createSdkMcpServer>;
-
 export interface DirectorServer {
-  server: SdkMcpServer;
+  /** Pi AgentTools mounted via a `custom` PiToolMount (post-P4 surface). */
+  tools: AgentTool[];
   readProposalIds(): string[];
   readNoteIds(): string[];
   /**
@@ -351,6 +351,14 @@ const LeaveAgentNoteSchema = z.object(LeaveAgentNoteShape);
 function textResult(payload: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] };
 }
+
+/** Local alias keeping the tool list readable — wires the director server name. */
+const tool = (
+  name: string,
+  description: string,
+  schema: Record<string, z.ZodTypeAny>,
+  handler: (args: Record<string, unknown>) => Promise<ReturnType<typeof textResult>>,
+): AgentTool => piCustomTool(DIRECTOR_SERVER_NAME, name, description, schema, handler);
 
 // round-5 review minor 0.60 — visible marker on WRITE-side truncation (this function,
 // used only for leave_agent_note's summary_md persistence). Semantic distinction from
@@ -430,490 +438,481 @@ export function buildDirectorServer(opts: BuildDirectorServerOpts): DirectorServ
     cellByKey.set(conjectureKey(c.cause_category, c.knowledge_id), c);
   }
 
-  const server = createSdkMcpServer({
-    name: DIRECTOR_SERVER_NAME,
-    tools: [
-      tool(
-        GET_MEETING_CONTEXT_LOCAL_NAME,
-        'Read the precomputed meeting agenda: currently-pending conjectures, up to 20 salience-sorted candidate knowledge-point × cause cells (MATERIAL, not orders — pick any, none, or a KC outside the list via an agent-note hint), and a recent-failure summary. baseline_p on each cell is advisory; the value written on propose is re-snapshotted server-side.',
-        {},
-        async () => textResult(meetingContext),
-      ),
-      // propose_conjecture — server-enforced single writer (§5). Every gate lives here;
-      // the LLM only fills the draft fields. A rejected proposal returns { ok:false,
-      // reason } (soft, so the director can react) and NEVER consumes a cap slot.
-      tool(
-        PROPOSE_CONJECTURE_LOCAL_NAME,
-        'PROPOSE (not write) one conjecture about how the owner thinks plus a frozen DiagnosticSpec V2. New proposals must use schema_version=2 and set causal_direction_required=true for causal claims; V1 exists only to read historical rows. Do not author probes: the server runs the shared author + independent-review quality gate before writing. At most 3 per night; pending, lifecycle, and freshness gates still apply.',
-        ProposeConjectureShape,
-        async (args) => {
-          if (opts.parentLifecycleSignal.aborted) {
-            return textResult({ ok: false, reason: '父级 Director run 已取消，停止提案' });
-          }
-          // round-3 review CodeRabbit Major (A2) — TOCTOU fix. Claude can emit multiple
-          // tool_use blocks in one turn; if the MCP bridge dispatches them by invoking
-          // each handler back-to-back (each handler's synchronous prefix runs to
-          // completion before yielding at its OWN first `await` — JS never preempts
-          // mid-synchronous-stretch), then the cap/dedup RESERVATION must land before
-          // this handler's first `await` (getMasteryProjectionFn / writeAiProposalFn,
-          // below), or a concurrent second call for the SAME cell could race past every
-          // synchronous check seeing the SAME stale (not-yet-reserved) state. All
-          // synchronous validation (cap / Zod / evidence / cause_category / dedup /
-          // recurrence floor / hypothesis contract) runs FIRST and rejects with no
-          // reservation to unwind; the reservation itself sits at the very end of that
-          // synchronous stretch (see below), with only the one downstream (async) reject
-          // — a write failure — needing an explicit rollback (decrement / delete), so a
-          // legitimately-retryable write rejection doesn't permanently burn a cap slot or
-          // block a real later proposal for that cell.
-          if (caps.proposeCount >= DIRECTOR_MAX_PROPOSALS) {
-            return textResult({
-              ok: false,
-              reason: `本晚提案上限 ${DIRECTOR_MAX_PROPOSALS} 已达，停止提议`,
-            });
-          }
-          const parsed = ProposeConjectureSchema.safeParse(args);
-          if (!parsed.success) {
-            return textResult({ ok: false, reason: '入参校验失败', issues: parsed.error.issues });
-          }
-          const a = parsed.data;
-
-          // First-hand evidence only (§7 backstop): strip agent_note ids before the
-          // database existence gate below. The stronger materialization gate after
-          // hypothesis validation requires every surviving ref to be a text-only
-          // failed attempt/review present in this meeting's immutable snapshot.
-          const primaryRefs = filterPrimaryEvidenceRefs(a.evidence_refs);
-          if (primaryRefs.length === 0) {
-            return textResult({
-              ok: false,
-              reason: '需至少一条可物化的一手失败证据（attempt/review 事件 id）',
-            });
-          }
-
-          // §7 review MINOR #6 — a.cause_category is LLM-supplied (ProposeConjectureShape
-          // only requires a non-empty string) and MUST be validated BEFORE it is used to
-          // compute the dedup key: an unvalidated string (uppercase / spaces / stray
-          // punctuation) would hash to a DIFFERENT conjectureKey than the same logical
-          // cause the candidate_cells/pending-dedup base used, silently bypassing the
-          // pending-dedup gate below.
-          const causeCategoryCheck = CauseCategoryId.safeParse(a.cause_category);
-          if (!causeCategoryCheck.success) {
-            return textResult({
-              ok: false,
-              reason:
-                'cause_category 格式不合法（须为小写字母数字下划线，字母开头）；请改用候选单元里出现过的错因类别',
-            });
-          }
-          const causeCategory = causeCategoryCheck.data;
-
-          // Pending-dedup: ALL pending (cross-actor) + same-run. candidate_cells is
-          // already deduped against pending, but an off-menu pick could still collide.
-          const key = conjectureKey(causeCategory, a.knowledge_id);
-          if (knownConjectureKeys.has(key) || proposedThisRun.has(key)) {
-            return textResult({ ok: false, reason: '该错因×知识点已有 pending 猜想，换一个' });
-          }
-
-          // recurrence_count is server-owned: the matching cell's count, else the count
-          // of first-hand refs the director cited.
-          const matchedCell = cellByKey.get(key);
-          const recurrenceCount = matchedCell?.recurrence_count ?? primaryRefs.length;
-
-          // §7 review MINOR #7 — pre-check the hypothesis ≥2 recurrence floor
-          // explicitly, with a HUMAN-READABLE reason. Before this fix, an off-menu
-          // proposal (no matching candidate cell) with <2 first-hand refs fell straight
-          // into the hypothesis schema below and surfaced as an opaque raw Zod
-          // issues dump — a fixable "cite one more ref" case the director could not act
-          // on from the error shape alone.
-          if (recurrenceCount < 2) {
-            return textResult({
-              ok: false,
-              reason: '证据不足需≥2条一手证据，请补充或另选候选单元',
-            });
-          }
-
-          const hypothesisCheck = ConjectureHypothesisProposalDraft.safeParse({
-            kind: 'proposal',
-            claim_md: a.claim_md,
-            knowledge_id: a.knowledge_id,
-            evidence_event_ids: primaryRefs,
-            diagnostic_spec: a.diagnostic_spec,
-            cause_category: causeCategory,
-            recurrence_count: recurrenceCount,
+  const tools = [
+    tool(
+      GET_MEETING_CONTEXT_LOCAL_NAME,
+      'Read the precomputed meeting agenda: currently-pending conjectures, up to 20 salience-sorted candidate knowledge-point × cause cells (MATERIAL, not orders — pick any, none, or a KC outside the list via an agent-note hint), and a recent-failure summary. baseline_p on each cell is advisory; the value written on propose is re-snapshotted server-side.',
+      {},
+      async () => textResult(meetingContext),
+    ),
+    // propose_conjecture — server-enforced single writer (§5). Every gate lives here;
+    // the LLM only fills the draft fields. A rejected proposal returns { ok:false,
+    // reason } (soft, so the director can react) and NEVER consumes a cap slot.
+    tool(
+      PROPOSE_CONJECTURE_LOCAL_NAME,
+      'PROPOSE (not write) one conjecture about how the owner thinks plus a frozen DiagnosticSpec V2. New proposals must use schema_version=2 and set causal_direction_required=true for causal claims; V1 exists only to read historical rows. Do not author probes: the server runs the shared author + independent-review quality gate before writing. At most 3 per night; pending, lifecycle, and freshness gates still apply.',
+      ProposeConjectureShape,
+      async (args) => {
+        if (opts.parentLifecycleSignal.aborted) {
+          return textResult({ ok: false, reason: '父级 Director run 已取消，停止提案' });
+        }
+        // round-3 review CodeRabbit Major (A2) — TOCTOU fix. Claude can emit multiple
+        // tool_use blocks in one turn; if the MCP bridge dispatches them by invoking
+        // each handler back-to-back (each handler's synchronous prefix runs to
+        // completion before yielding at its OWN first `await` — JS never preempts
+        // mid-synchronous-stretch), then the cap/dedup RESERVATION must land before
+        // this handler's first `await` (getMasteryProjectionFn / writeAiProposalFn,
+        // below), or a concurrent second call for the SAME cell could race past every
+        // synchronous check seeing the SAME stale (not-yet-reserved) state. All
+        // synchronous validation (cap / Zod / evidence / cause_category / dedup /
+        // recurrence floor / hypothesis contract) runs FIRST and rejects with no
+        // reservation to unwind; the reservation itself sits at the very end of that
+        // synchronous stretch (see below), with only the one downstream (async) reject
+        // — a write failure — needing an explicit rollback (decrement / delete), so a
+        // legitimately-retryable write rejection doesn't permanently burn a cap slot or
+        // block a real later proposal for that cell.
+        if (caps.proposeCount >= DIRECTOR_MAX_PROPOSALS) {
+          return textResult({
+            ok: false,
+            reason: `本晚提案上限 ${DIRECTOR_MAX_PROPOSALS} 已达，停止提议`,
           });
-          if (!hypothesisCheck.success) {
+        }
+        const parsed = ProposeConjectureSchema.safeParse(args);
+        if (!parsed.success) {
+          return textResult({ ok: false, reason: '入参校验失败', issues: parsed.error.issues });
+        }
+        const a = parsed.data;
+
+        // First-hand evidence only (§7 backstop): strip agent_note ids before the
+        // database existence gate below. The stronger materialization gate after
+        // hypothesis validation requires every surviving ref to be a text-only
+        // failed attempt/review present in this meeting's immutable snapshot.
+        const primaryRefs = filterPrimaryEvidenceRefs(a.evidence_refs);
+        if (primaryRefs.length === 0) {
+          return textResult({
+            ok: false,
+            reason: '需至少一条可物化的一手失败证据（attempt/review 事件 id）',
+          });
+        }
+
+        // §7 review MINOR #6 — a.cause_category is LLM-supplied (ProposeConjectureShape
+        // only requires a non-empty string) and MUST be validated BEFORE it is used to
+        // compute the dedup key: an unvalidated string (uppercase / spaces / stray
+        // punctuation) would hash to a DIFFERENT conjectureKey than the same logical
+        // cause the candidate_cells/pending-dedup base used, silently bypassing the
+        // pending-dedup gate below.
+        const causeCategoryCheck = CauseCategoryId.safeParse(a.cause_category);
+        if (!causeCategoryCheck.success) {
+          return textResult({
+            ok: false,
+            reason:
+              'cause_category 格式不合法（须为小写字母数字下划线，字母开头）；请改用候选单元里出现过的错因类别',
+          });
+        }
+        const causeCategory = causeCategoryCheck.data;
+
+        // Pending-dedup: ALL pending (cross-actor) + same-run. candidate_cells is
+        // already deduped against pending, but an off-menu pick could still collide.
+        const key = conjectureKey(causeCategory, a.knowledge_id);
+        if (knownConjectureKeys.has(key) || proposedThisRun.has(key)) {
+          return textResult({ ok: false, reason: '该错因×知识点已有 pending 猜想，换一个' });
+        }
+
+        // recurrence_count is server-owned: the matching cell's count, else the count
+        // of first-hand refs the director cited.
+        const matchedCell = cellByKey.get(key);
+        const recurrenceCount = matchedCell?.recurrence_count ?? primaryRefs.length;
+
+        // §7 review MINOR #7 — pre-check the hypothesis ≥2 recurrence floor
+        // explicitly, with a HUMAN-READABLE reason. Before this fix, an off-menu
+        // proposal (no matching candidate cell) with <2 first-hand refs fell straight
+        // into the hypothesis schema below and surfaced as an opaque raw Zod
+        // issues dump — a fixable "cite one more ref" case the director could not act
+        // on from the error shape alone.
+        if (recurrenceCount < 2) {
+          return textResult({
+            ok: false,
+            reason: '证据不足需≥2条一手证据，请补充或另选候选单元',
+          });
+        }
+
+        const hypothesisCheck = ConjectureHypothesisProposalDraft.safeParse({
+          kind: 'proposal',
+          claim_md: a.claim_md,
+          knowledge_id: a.knowledge_id,
+          evidence_event_ids: primaryRefs,
+          diagnostic_spec: a.diagnostic_spec,
+          cause_category: causeCategory,
+          recurrence_count: recurrenceCount,
+        });
+        if (!hypothesisCheck.success) {
+          return textResult({
+            ok: false,
+            reason: 'Conjecture hypothesis 校验失败',
+            issues: hypothesisCheck.error.issues,
+          });
+        }
+
+        const referencedFailures = primaryRefs
+          .map((eventId) => failureByAttemptId.get(eventId))
+          .filter((failure): failure is FailureAttempt => failure !== undefined);
+        if (referencedFailures.length !== primaryRefs.length) {
+          return textResult({
+            ok: false,
+            reason:
+              'evidence_refs 含本次质量门无法物化的事件；只可引用会议快照中的失败 attempt/review',
+          });
+        }
+        for (const failure of referencedFailures) {
+          const snapshot = failure.question_snapshot;
+          if (snapshot == null) {
             return textResult({
               ok: false,
-              reason: 'Conjecture hypothesis 校验失败',
-              issues: hypothesisCheck.error.issues,
+              reason: `证据 ${failure.attempt_event_id} 缺少有效题目快照，无法送入 probe 质量门`,
             });
           }
-
-          const referencedFailures = primaryRefs
-            .map((eventId) => failureByAttemptId.get(eventId))
-            .filter((failure): failure is FailureAttempt => failure !== undefined);
-          if (referencedFailures.length !== primaryRefs.length) {
+          const hasImages =
+            failure.answer_image_refs.length > 0 ||
+            snapshot.question.image_refs.length > 0 ||
+            snapshot.question.figures.length > 0 ||
+            (snapshot.parent_question?.image_refs.length ?? 0) > 0 ||
+            (snapshot.parent_question?.figures.length ?? 0) > 0;
+          if (hasImages) {
             return textResult({
               ok: false,
-              reason:
-                'evidence_refs 含本次质量门无法物化的事件；只可引用会议快照中的失败 attempt/review',
+              reason: `证据 ${failure.attempt_event_id} 含图片/图形；当前 Director 质量门尚不能完整物化，拒绝静默丢弃`,
             });
           }
-          for (const failure of referencedFailures) {
-            const snapshot = failure.question_snapshot;
-            if (snapshot == null) {
-              return textResult({
-                ok: false,
-                reason: `证据 ${failure.attempt_event_id} 缺少有效题目快照，无法送入 probe 质量门`,
-              });
-            }
-            const hasImages =
-              failure.answer_image_refs.length > 0 ||
-              snapshot.question.image_refs.length > 0 ||
-              snapshot.question.figures.length > 0 ||
-              (snapshot.parent_question?.image_refs.length ?? 0) > 0 ||
-              (snapshot.parent_question?.figures.length ?? 0) > 0;
-            if (hasImages) {
-              return textResult({
-                ok: false,
-                reason: `证据 ${failure.attempt_event_id} 含图片/图形；当前 Director 质量门尚不能完整物化，拒绝静默丢弃`,
-              });
-            }
-          }
-          const probeEvidenceFailures = referencedFailures.map(
-            sanitizeFailureAttemptForProbeQuality,
-          );
+        }
+        const probeEvidenceFailures = referencedFailures.map(sanitizeFailureAttemptForProbeQuality);
 
-          // Keep the cap/dedup reservation immediately before this handler's first await.
-          // Validation failures above remain free; evidence lookup failures below are
-          // rolled back just like write-time failures.
-          caps.proposeCount += 1;
-          proposedThisRun.add(key);
-          let reservationReleased = false;
-          const releaseReservation = () => {
-            if (reservationReleased) return;
-            reservationReleased = true;
-            caps.proposeCount -= 1;
-            proposedThisRun.delete(key);
-          };
+        // Keep the cap/dedup reservation immediately before this handler's first await.
+        // Validation failures above remain free; evidence lookup failures below are
+        // rolled back just like write-time failures.
+        caps.proposeCount += 1;
+        proposedThisRun.add(key);
+        let reservationReleased = false;
+        const releaseReservation = () => {
+          if (reservationReleased) return;
+          reservationReleased = true;
+          caps.proposeCount -= 1;
+          proposedThisRun.delete(key);
+        };
 
-          let refsExist: boolean;
-          try {
-            refsExist = await evidenceRefsExistFn(db, primaryRefs);
-          } catch (err) {
-            releaseReservation();
-            return textResult({
-              ok: false,
-              reason: `evidence_refs 事件校验失败: ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            });
-          }
-          if (!refsExist) {
-            releaseReservation();
-            return textResult({
-              ok: false,
-              reason: 'evidence_refs 含不存在或非一手证据类型的事件 id',
-            });
-          }
+        let refsExist: boolean;
+        try {
+          refsExist = await evidenceRefsExistFn(db, primaryRefs);
+        } catch (err) {
+          releaseReservation();
+          return textResult({
+            ok: false,
+            reason: `evidence_refs 事件校验失败: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          });
+        }
+        if (!refsExist) {
+          releaseReservation();
+          return textResult({
+            ok: false,
+            reason: 'evidence_refs 含不存在或非一手证据类型的事件 id',
+          });
+        }
 
-          let historyByKey: Map<string, ConjectureHistory>;
-          try {
-            historyByKey = await loadConjectureHistoryFn(db, [
-              {
-                key,
-                knowledge_id: a.knowledge_id,
-              },
-            ]);
-          } catch (err) {
-            releaseReservation();
-            return textResult({
-              ok: false,
-              reason: `conjecture history 加载失败: ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            });
-          }
-
-          try {
-            // Fresh terminal-reopen evidence is identity-scoped, not merely meeting-scoped:
-            // only cited failures attributed to this exact cause × KC may satisfy the floor.
-            const identityFailureRefs = primaryRefs.filter((eventId) => {
-              const failure = failureByAttemptId.get(eventId);
-              if (!failure || !failure.referenced_knowledge_ids.includes(a.knowledge_id)) {
-                return false;
-              }
-              return (
-                effectiveCauseForConjectureFailure(failure)?.primary_category === causeCategory
-              );
-            });
-            const historyGate = applyConjectureHistoryGate(
-              [{ key, evidence_event_ids: identityFailureRefs }],
-              failureAttempts,
-              historyByKey,
-              now,
-            );
-            if (historyGate.cells.length === 0) {
-              releaseReservation();
-              return textResult({
-                ok: false,
-                reason: '该错因×知识点受 owner decision / conjecture lifecycle gate 阻断',
-              });
-            }
-            const requiredPriorClaimMd = historyGate.priorClaimMdByKey.get(key);
-            if (
-              requiredPriorClaimMd !== undefined &&
-              a.prior_claim_md?.trim() !== requiredPriorClaimMd
-            ) {
-              releaseReservation();
-              return textResult({
-                ok: false,
-                reason: '该 terminal 猜想重开前必须读取并原样回传 owner prior_claim_md',
-                prior_claim_md: requiredPriorClaimMd,
-              });
-            }
-          } catch (err) {
-            releaseReservation();
-            return textResult({
-              ok: false,
-              reason: `conjecture history gate 校验失败: ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            });
-          }
-
-          let probeQuality: PrepareConjectureProbePairResult;
-          try {
-            const subjectProfile = await resolveSubjectProfileForKnowledgeIdsFn(db, [
-              a.knowledge_id,
-            ]);
-            probeQuality = await prepareConjectureProbePair({
-              hypothesis: hypothesisCheck.data,
-              evidencePayload: {
-                evidence_refs: primaryRefs,
-                failure_attempts: probeEvidenceFailures,
-              },
-              // Image-bearing snapshots fail closed above. Unlike the deterministic
-              // nightly lane, Director currently has no asset loader, so [] means
-              // "verified text-only evidence", never silently dropped visual evidence.
-              evidenceImages: [],
-              runTaskFn,
-              subjectProfile,
-            });
-          } catch (err) {
-            releaseReservation();
-            if (opts.parentLifecycleSignal.aborted) {
-              return textResult({ ok: false, reason: '父级 Director run 已取消，停止提案' });
-            }
-            const taskKind =
-              err instanceof ConjectureProbeQualityOperationalError ? err.taskKind : 'unknown';
-            retryableProbeErrors.set(
+        let historyByKey: Map<string, ConjectureHistory>;
+        try {
+          historyByKey = await loadConjectureHistoryFn(db, [
+            {
               key,
-              err instanceof Error
-                ? err
-                : new Error(`probe quality gate operational failure: ${String(err)}`),
-            );
-            console.error('[director-tools] conjecture probe quality gate failed', err);
-            return textResult({
-              ok: false,
-              reason: `probe quality gate operational failure (${taskKind}); retry later`,
-            });
-          }
-          // The same identity reached a real quality conclusion, so its earlier outage
-          // (if any) is resolved. Other identities remain latched for worker recovery.
-          retryableProbeErrors.delete(key);
-          if (opts.parentLifecycleSignal.aborted) {
-            releaseReservation();
-            return textResult({ ok: false, reason: '父级 Director run 已取消，停止提案' });
-          }
-          if (probeQuality.outcome === 'rejected') {
-            releaseReservation();
-            return textResult({
-              ok: false,
-              reason: '两次完整探针包均未通过质量门；本次不创建猜想提案',
-              probe_quality_attempts: probeQuality.attempts,
-            });
-          }
+              knowledge_id: a.knowledge_id,
+            },
+          ]);
+        } catch (err) {
+          releaseReservation();
+          return textResult({
+            ok: false,
+            reason: `conjecture history 加载失败: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          });
+        }
 
-          // baseline_p auto-snapshot (§5.4): the cell's value, else the live mastery
-          // projection, else the cold-start neutral 0.5 — the LLM NEVER supplies it.
-          let baselineP = matchedCell?.baseline_p ?? null;
-          if (baselineP === null) {
-            // round-2 review MAJOR #3 — a mastery-projection read failure must NOT
-            // reject an otherwise-valid proposal: this read is advisory input to the
-            // baseline snapshot (a number the server owns), not a gate on whether the
-            // proposal itself is valid. Fall back to the same cold-start-neutral value
-            // used when no mastery row exists at all, and continue.
-            try {
-              const projection = await getMasteryProjectionFn(db, [a.knowledge_id]);
-              baselineP = projection.get(a.knowledge_id)?.mastery ?? 0.5;
-            } catch (err) {
-              console.error(
-                '[director-tools] getMasteryProjectionFn failed — falling back to baseline_p=0.5',
-                err,
-              );
-              baselineP = 0.5;
+        try {
+          // Fresh terminal-reopen evidence is identity-scoped, not merely meeting-scoped:
+          // only cited failures attributed to this exact cause × KC may satisfy the floor.
+          const identityFailureRefs = primaryRefs.filter((eventId) => {
+            const failure = failureByAttemptId.get(eventId);
+            if (!failure || !failure.referenced_knowledge_ids.includes(a.knowledge_id)) {
+              return false;
             }
-          }
-
-          // The nested quality run can finish at the same instant that the outer
-          // director times out or loses its provider lease. Recheck at the final
-          // pre-write seam so a completed child cannot START publishing after the
-          // parent has already degraded and released its admission permit. A write
-          // already in flight retains the proposal writer's own transaction semantics.
-          if (opts.parentLifecycleSignal.aborted) {
+            return effectiveCauseForConjectureFailure(failure)?.primary_category === causeCategory;
+          });
+          const historyGate = applyConjectureHistoryGate(
+            [{ key, evidence_event_ids: identityFailureRefs }],
+            failureAttempts,
+            historyByKey,
+            now,
+          );
+          if (historyGate.cells.length === 0) {
             releaseReservation();
+            return textResult({
+              ok: false,
+              reason: '该错因×知识点受 owner decision / conjecture lifecycle gate 阻断',
+            });
+          }
+          const requiredPriorClaimMd = historyGate.priorClaimMdByKey.get(key);
+          if (
+            requiredPriorClaimMd !== undefined &&
+            a.prior_claim_md?.trim() !== requiredPriorClaimMd
+          ) {
+            releaseReservation();
+            return textResult({
+              ok: false,
+              reason: '该 terminal 猜想重开前必须读取并原样回传 owner prior_claim_md',
+              prior_claim_md: requiredPriorClaimMd,
+            });
+          }
+        } catch (err) {
+          releaseReservation();
+          return textResult({
+            ok: false,
+            reason: `conjecture history gate 校验失败: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          });
+        }
+
+        let probeQuality: PrepareConjectureProbePairResult;
+        try {
+          const subjectProfile = await resolveSubjectProfileForKnowledgeIdsFn(db, [a.knowledge_id]);
+          probeQuality = await prepareConjectureProbePair({
+            hypothesis: hypothesisCheck.data,
+            evidencePayload: {
+              evidence_refs: primaryRefs,
+              failure_attempts: probeEvidenceFailures,
+            },
+            // Image-bearing snapshots fail closed above. Unlike the deterministic
+            // nightly lane, Director currently has no asset loader, so [] means
+            // "verified text-only evidence", never silently dropped visual evidence.
+            evidenceImages: [],
+            runTaskFn,
+            subjectProfile,
+          });
+        } catch (err) {
+          releaseReservation();
+          if (opts.parentLifecycleSignal.aborted) {
             return textResult({ ok: false, reason: '父级 Director run 已取消，停止提案' });
           }
+          const taskKind =
+            err instanceof ConjectureProbeQualityOperationalError ? err.taskKind : 'unknown';
+          retryableProbeErrors.set(
+            key,
+            err instanceof Error
+              ? err
+              : new Error(`probe quality gate operational failure: ${String(err)}`),
+          );
+          console.error('[director-tools] conjecture probe quality gate failed', err);
+          return textResult({
+            ok: false,
+            reason: `probe quality gate operational failure (${taskKind}); retry later`,
+          });
+        }
+        // The same identity reached a real quality conclusion, so its earlier outage
+        // (if any) is resolved. Other identities remain latched for worker recovery.
+        retryableProbeErrors.delete(key);
+        if (opts.parentLifecycleSignal.aborted) {
+          releaseReservation();
+          return textResult({ ok: false, reason: '父级 Director run 已取消，停止提案' });
+        }
+        if (probeQuality.outcome === 'rejected') {
+          releaseReservation();
+          return textResult({
+            ok: false,
+            reason: '两次完整探针包均未通过质量门；本次不创建猜想提案',
+            probe_quality_attempts: probeQuality.attempts,
+          });
+        }
 
-          const input: WriteAiProposalInput = {
-            actor_ref: RESEARCH_MEETING_AGENT_ACTOR,
-            outcome: 'partial',
+        // baseline_p auto-snapshot (§5.4): the cell's value, else the live mastery
+        // projection, else the cold-start neutral 0.5 — the LLM NEVER supplies it.
+        let baselineP = matchedCell?.baseline_p ?? null;
+        if (baselineP === null) {
+          // round-2 review MAJOR #3 — a mastery-projection read failure must NOT
+          // reject an otherwise-valid proposal: this read is advisory input to the
+          // baseline snapshot (a number the server owns), not a gate on whether the
+          // proposal itself is valid. Fall back to the same cold-start-neutral value
+          // used when no mastery row exists at all, and continue.
+          try {
+            const projection = await getMasteryProjectionFn(db, [a.knowledge_id]);
+            baselineP = projection.get(a.knowledge_id)?.mastery ?? 0.5;
+          } catch (err) {
+            console.error(
+              '[director-tools] getMasteryProjectionFn failed — falling back to baseline_p=0.5',
+              err,
+            );
+            baselineP = 0.5;
+          }
+        }
+
+        // The nested quality run can finish at the same instant that the outer
+        // director times out or loses its provider lease. Recheck at the final
+        // pre-write seam so a completed child cannot START publishing after the
+        // parent has already degraded and released its admission permit. A write
+        // already in flight retains the proposal writer's own transaction semantics.
+        if (opts.parentLifecycleSignal.aborted) {
+          releaseReservation();
+          return textResult({ ok: false, reason: '父级 Director run 已取消，停止提案' });
+        }
+
+        const input: WriteAiProposalInput = {
+          actor_ref: RESEARCH_MEETING_AGENT_ACTOR,
+          outcome: 'partial',
+          payload: {
+            kind: 'conjecture',
+            target: { subject_kind: 'mind_model', subject_id: a.knowledge_id },
+            reason_md: a.claim_md,
+            evidence_refs: primaryRefs.map((id) => ({ kind: 'event' as const, id })),
+            proposed_change: {
+              claim_md: a.claim_md,
+              knowledge_id: a.knowledge_id,
+              cause_category: causeCategory,
+              confidence: DIRECTOR_FIXED_CONFIDENCE,
+              recurrence_count: recurrenceCount,
+              probe_md: probeQuality.package.primary.prompt_md,
+              probe_reference_md: probeQuality.package.primary.reference_md,
+              followup_probe_md: probeQuality.package.followup.prompt_md,
+              followup_probe_reference_md: probeQuality.package.followup.reference_md,
+              diagnostic_spec: hypothesisCheck.data.diagnostic_spec,
+              probe_spec: probeQuality.package.primary,
+              followup_probe_spec: probeQuality.package.followup,
+              probe_quality: probeQuality.audit,
+              discriminating: true,
+              corrected_by_owner: false,
+              predicted_p: probeQuality.package.predicted_p,
+              baseline_p_at_induction: baselineP,
+            },
+            cooldown_key: `conjecture:${key}`,
+          },
+          caused_by_event_id: triggerEventId,
+          event_override: {
+            action: 'experimental:proposal',
+            subject_kind: 'mind_model',
+            subject_id: a.knowledge_id,
             payload: {
-              kind: 'conjecture',
-              target: { subject_kind: 'mind_model', subject_id: a.knowledge_id },
-              reason_md: a.claim_md,
-              evidence_refs: primaryRefs.map((id) => ({ kind: 'event' as const, id })),
-              proposed_change: {
-                claim_md: a.claim_md,
-                knowledge_id: a.knowledge_id,
-                cause_category: causeCategory,
-                confidence: DIRECTOR_FIXED_CONFIDENCE,
-                recurrence_count: recurrenceCount,
-                probe_md: probeQuality.package.primary.prompt_md,
-                probe_reference_md: probeQuality.package.primary.reference_md,
-                followup_probe_md: probeQuality.package.followup.prompt_md,
-                followup_probe_reference_md: probeQuality.package.followup.reference_md,
-                diagnostic_spec: hypothesisCheck.data.diagnostic_spec,
-                probe_spec: probeQuality.package.primary,
-                followup_probe_spec: probeQuality.package.followup,
-                probe_quality: probeQuality.audit,
-                discriminating: true,
-                corrected_by_owner: false,
-                predicted_p: probeQuality.package.predicted_p,
-                baseline_p_at_induction: baselineP,
-              },
-              cooldown_key: `conjecture:${key}`,
+              director_tool_context_task_run_id: toolContextTaskRunId,
+              probe_quality_task_run_ids: probeQuality.task_run_ids,
+              probe_quality_attempts: probeQuality.attempts,
             },
-            caused_by_event_id: triggerEventId,
-            event_override: {
-              action: 'experimental:proposal',
-              subject_kind: 'mind_model',
-              subject_id: a.knowledge_id,
-              payload: {
-                director_tool_context_task_run_id: toolContextTaskRunId,
-                probe_quality_task_run_ids: probeQuality.task_run_ids,
-                probe_quality_attempts: probeQuality.attempts,
-              },
-            },
-            task_run_id: probeQuality.primary_task_run_id ?? toolContextTaskRunId,
-            cost_usd: probeQuality.cost_usd,
-          };
+          },
+          task_run_id: probeQuality.primary_task_run_id ?? toolContextTaskRunId,
+          cost_usd: probeQuality.cost_usd,
+        };
 
-          let proposalId: string;
-          try {
-            proposalId = await writeAiProposalFn(db, input);
-          } catch (err) {
-            // A CauseCategory / payload parse failure (writeAiProposal → parseAiProposalPayload)
-            // is a validation reject, not a run-fatal error — return it so the director can
-            // fix. Roll back the reservation (A2 fix): a write-time rejection is retryable.
-            releaseReservation();
-            return textResult({
-              ok: false,
-              reason: `提案写入被拒（校验）: ${err instanceof Error ? err.message : String(err)}`,
-            });
-          }
-          proposalIds.push(proposalId);
-          return textResult({ ok: true, proposal_id: proposalId });
-        },
-      ),
-      // leave_agent_note — server-enforced cap ≤2 + target whitelist + summary truncate +
-      // primary-ref filter (§5). Writes an experimental:agent_note via writeAgentNote.
-      tool(
-        LEAVE_AGENT_NOTE_LOCAL_NAME,
-        'Leave a SOFT hint (not a fact) for dreaming / coach / the next research meeting. At most 2 per night. summary_md is truncated to 1200 chars; refs must be first-hand event ids (agent_note ids are stripped).',
-        LeaveAgentNoteShape,
-        async (args) => {
-          if (opts.parentLifecycleSignal.aborted) {
-            return textResult({ ok: false, reason: '父级 Director run 已取消，停止写入软提示' });
-          }
-          if (caps.noteCount >= DIRECTOR_MAX_NOTES) {
-            return textResult({ ok: false, reason: `本晚软提示上限 ${DIRECTOR_MAX_NOTES} 已达` });
-          }
-          const parsed = LeaveAgentNoteSchema.safeParse(args);
-          if (!parsed.success) {
-            return textResult({ ok: false, reason: '入参校验失败', issues: parsed.error.issues });
-          }
-          const a = parsed.data;
+        let proposalId: string;
+        try {
+          proposalId = await writeAiProposalFn(db, input);
+        } catch (err) {
+          // A CauseCategory / payload parse failure (writeAiProposal → parseAiProposalPayload)
+          // is a validation reject, not a run-fatal error — return it so the director can
+          // fix. Roll back the reservation (A2 fix): a write-time rejection is retryable.
+          releaseReservation();
+          return textResult({
+            ok: false,
+            reason: `提案写入被拒（校验）: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
+        proposalIds.push(proposalId);
+        return textResult({ ok: true, proposal_id: proposalId });
+      },
+    ),
+    // leave_agent_note — server-enforced cap ≤2 + target whitelist + summary truncate +
+    // primary-ref filter (§5). Writes an experimental:agent_note via writeAgentNote.
+    tool(
+      LEAVE_AGENT_NOTE_LOCAL_NAME,
+      'Leave a SOFT hint (not a fact) for dreaming / coach / the next research meeting. At most 2 per night. summary_md is truncated to 1200 chars; refs must be first-hand event ids (agent_note ids are stripped).',
+      LeaveAgentNoteShape,
+      async (args) => {
+        if (opts.parentLifecycleSignal.aborted) {
+          return textResult({ ok: false, reason: '父级 Director run 已取消，停止写入软提示' });
+        }
+        if (caps.noteCount >= DIRECTOR_MAX_NOTES) {
+          return textResult({ ok: false, reason: `本晚软提示上限 ${DIRECTOR_MAX_NOTES} 已达` });
+        }
+        const parsed = LeaveAgentNoteSchema.safeParse(args);
+        if (!parsed.success) {
+          return textResult({ ok: false, reason: '入参校验失败', issues: parsed.error.issues });
+        }
+        const a = parsed.data;
 
-          const whitelist = new Set<string>(AGENT_NOTE_TARGET_WHITELIST);
-          const invalid = a.target_agents.filter((t) => !whitelist.has(t));
-          if (invalid.length > 0) {
-            return textResult({
-              ok: false,
-              reason: `target_agents 含非白名单项: ${invalid.join(', ')}（仅 ${AGENT_NOTE_TARGET_WHITELIST.join('/')}）`,
-            });
-          }
+        const whitelist = new Set<string>(AGENT_NOTE_TARGET_WHITELIST);
+        const invalid = a.target_agents.filter((t) => !whitelist.has(t));
+        if (invalid.length > 0) {
+          return textResult({
+            ok: false,
+            reason: `target_agents 含非白名单项: ${invalid.join(', ')}（仅 ${AGENT_NOTE_TARGET_WHITELIST.join('/')}）`,
+          });
+        }
 
-          // round-2 review MINOR #6 — spec judgment (spec line 276 vs propose_conjecture's
-          // line 265): leave_agent_note's spec bullet says only "refs 经
-          // assertPrimaryEvidenceRefs" — NO explicit reject-if-empty clause, unlike
-          // propose_conjecture's ("过滤后为空 → 拒绝"). Notes are soft hints (notes.ts:
-          // "HINTS, NOT FACTS"), not accountable falsifiable claims, so a genuinely
-          // empty-from-the-start refs[] (a pure textual "watch this KC" hint with zero
-          // evidence) is LEGITIMATE per spec. Only reject the OCR-flagged case: refs WAS
-          // non-empty but every entry got filtered out as an agent_note id — that is
-          // suspicious (the director tried to cite "evidence" that was entirely soft
-          // hints masquerading as primary).
-          // round-4 review minor 0.75 — normalize kind to 'event' server-side rather than
-          // persisting whatever string the LLM supplied: propose_conjecture already
-          // hardcodes `{ kind: 'event' as const }` for its (equally filtered) primary
-          // refs, since the filter guarantees every surviving id IS a first-hand event
-          // id. Persisting an arbitrary LLM-supplied kind here would let the model
-          // inject any string into agent_note.refs[].kind, inconsistent with the
-          // propose side's single-writer discipline for the same data shape.
-          const primaryRefs = a.refs
-            .filter((r) => isPrimaryEvidenceRef(r.id))
-            .map((r) => ({ kind: 'event' as const, id: r.id }));
-          if (a.refs.length > 0 && primaryRefs.length === 0) {
-            return textResult({
-              ok: false,
-              reason: '全部 refs 都是软提示引用（非一手证据），请改用一手事件 id 或留空',
-            });
-          }
-          const note: WriteAgentNoteInput = {
-            target_agents: a.target_agents as AgentNoteTarget[],
-            source_task_kind: RESEARCH_MEETING_AGENT_ACTOR,
-            source_task_run_id: toolContextTaskRunId,
-            refs: primaryRefs,
-            summary_md: truncate(a.summary_md, DIRECTOR_NOTE_SUMMARY_MAX_CHARS),
-            signal_kind: a.signal_kind,
-            expires_at: new Date(now.getTime() + AGENT_NOTE_TTL_MS).toISOString(),
-            caused_by_event_id: triggerEventId,
-          };
-          // round-3 review CodeRabbit Major (A2) — SAME TOCTOU fix as propose_conjecture:
-          // reserve the cap slot SYNCHRONOUSLY (before the first await), so a concurrent
-          // second leave_agent_note call sees the reservation instead of racing past the
-          // cap check too. §7 review MAJOR #4's soft-reject-on-write-failure discipline
-          // is preserved: a write failure rolls the reservation back.
-          caps.noteCount += 1;
-          let noteId: string;
-          try {
-            noteId = await writeAgentNoteFn(db, note);
-          } catch (err) {
-            caps.noteCount -= 1;
-            return textResult({
-              ok: false,
-              reason: `note 写入被拒（校验/DB）: ${err instanceof Error ? err.message : String(err)}`,
-            });
-          }
-          noteIds.push(noteId);
-          return textResult({ ok: true, note_id: noteId });
-        },
-      ),
-    ],
-  });
+        // round-2 review MINOR #6 — spec judgment (spec line 276 vs propose_conjecture's
+        // line 265): leave_agent_note's spec bullet says only "refs 经
+        // assertPrimaryEvidenceRefs" — NO explicit reject-if-empty clause, unlike
+        // propose_conjecture's ("过滤后为空 → 拒绝"). Notes are soft hints (notes.ts:
+        // "HINTS, NOT FACTS"), not accountable falsifiable claims, so a genuinely
+        // empty-from-the-start refs[] (a pure textual "watch this KC" hint with zero
+        // evidence) is LEGITIMATE per spec. Only reject the OCR-flagged case: refs WAS
+        // non-empty but every entry got filtered out as an agent_note id — that is
+        // suspicious (the director tried to cite "evidence" that was entirely soft
+        // hints masquerading as primary).
+        // round-4 review minor 0.75 — normalize kind to 'event' server-side rather than
+        // persisting whatever string the LLM supplied: propose_conjecture already
+        // hardcodes `{ kind: 'event' as const }` for its (equally filtered) primary
+        // refs, since the filter guarantees every surviving id IS a first-hand event
+        // id. Persisting an arbitrary LLM-supplied kind here would let the model
+        // inject any string into agent_note.refs[].kind, inconsistent with the
+        // propose side's single-writer discipline for the same data shape.
+        const primaryRefs = a.refs
+          .filter((r) => isPrimaryEvidenceRef(r.id))
+          .map((r) => ({ kind: 'event' as const, id: r.id }));
+        if (a.refs.length > 0 && primaryRefs.length === 0) {
+          return textResult({
+            ok: false,
+            reason: '全部 refs 都是软提示引用（非一手证据），请改用一手事件 id 或留空',
+          });
+        }
+        const note: WriteAgentNoteInput = {
+          target_agents: a.target_agents as AgentNoteTarget[],
+          source_task_kind: RESEARCH_MEETING_AGENT_ACTOR,
+          source_task_run_id: toolContextTaskRunId,
+          refs: primaryRefs,
+          summary_md: truncate(a.summary_md, DIRECTOR_NOTE_SUMMARY_MAX_CHARS),
+          signal_kind: a.signal_kind,
+          expires_at: new Date(now.getTime() + AGENT_NOTE_TTL_MS).toISOString(),
+          caused_by_event_id: triggerEventId,
+        };
+        // round-3 review CodeRabbit Major (A2) — SAME TOCTOU fix as propose_conjecture:
+        // reserve the cap slot SYNCHRONOUSLY (before the first await), so a concurrent
+        // second leave_agent_note call sees the reservation instead of racing past the
+        // cap check too. §7 review MAJOR #4's soft-reject-on-write-failure discipline
+        // is preserved: a write failure rolls the reservation back.
+        caps.noteCount += 1;
+        let noteId: string;
+        try {
+          noteId = await writeAgentNoteFn(db, note);
+        } catch (err) {
+          caps.noteCount -= 1;
+          return textResult({
+            ok: false,
+            reason: `note 写入被拒（校验/DB）: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
+        noteIds.push(noteId);
+        return textResult({ ok: true, note_id: noteId });
+      },
+    ),
+  ];
 
   return {
-    server,
+    tools,
     readProposalIds: () => proposalIds,
     readNoteIds: () => noteIds,
     readRetryableProbeError: () => retryableProbeErrors.values().next().value ?? null,

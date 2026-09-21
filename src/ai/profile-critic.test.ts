@@ -21,7 +21,7 @@ const trace = vi.hoisted(() => ({
 }));
 
 vi.mock('@/server/ai/log', () => ({
-  logMissingMcpServersWarning: vi.fn(),
+  logMissingToolMountsWarning: vi.fn(),
   writeAiTaskRunStarted: trace.started,
   writeAiTaskAttemptFinished: trace.settled,
   writeAiTaskRunRetried: vi.fn(async () => true),
@@ -30,22 +30,23 @@ vi.mock('@/server/ai/log', () => ({
   writeToolCallLog: trace.toolCall,
 }));
 
-const mockSdk = vi.hoisted(() => ({ messages: [] as unknown[] }));
+const mockPi = vi.hoisted(() => ({ messages: [] as unknown[] }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  startup: vi.fn(async () => {
-    return {
+import { type RunnerMessage, __setPiAdapterForTests } from '@/server/ai/execution-adapter';
+
+function fakePiAdapter() {
+  return {
+    id: 'pi' as const,
+    startup: vi.fn(async () => ({
       query: vi.fn(() =>
         (async function* () {
-          for (const m of mockSdk.messages) yield m;
+          for (const m of mockPi.messages) yield m as RunnerMessage;
         })(),
       ),
-      close: vi.fn(),
-    };
-  }),
-  createSdkMcpServer: vi.fn(() => ({ type: 'sdk', name: '', instance: {} })),
-  tool: vi.fn((name: string, description: string) => ({ name, description })),
-}));
+      close: vi.fn(async () => {}),
+    })),
+  };
+}
 
 describe('ProfileCriticTask registry entry', () => {
   it('is a single-shot, no-tool, 60s text-only task (mirrors TeachingTurnTask)', () => {
@@ -92,7 +93,7 @@ describe('ProfileCriticTask via runner (RL6 proposal-only + trace-written)', () 
   let savedXiaomiKey: string | undefined;
 
   beforeEach(() => {
-    mockSdk.messages = [
+    mockPi.messages = [
       {
         type: 'result',
         subtype: 'success',
@@ -108,6 +109,7 @@ describe('ProfileCriticTask via runner (RL6 proposal-only + trace-written)', () 
     trace.settled.mockClear();
     trace.finished.mockClear();
     trace.cost.mockClear();
+    __setPiAdapterForTests(fakePiAdapter());
   });
 
   afterEach(() => {
@@ -116,6 +118,7 @@ describe('ProfileCriticTask via runner (RL6 proposal-only + trace-written)', () 
     // For process.env this is equivalent: env keys with value undefined are
     // treated as absent by child processes and process.env lookups.
     process.env.XIAOMI_API_KEY = savedXiaomiKey;
+    __setPiAdapterForTests(undefined);
     vi.restoreAllMocks();
   });
 

@@ -4,6 +4,7 @@
 // `tool_call_log.mirrored_event_id` linkage land on disk.
 
 import { randomUUID } from 'node:crypto';
+import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
@@ -12,28 +13,9 @@ import { event, memory_brief_note, tool_call_log, tool_operation } from '@/db/sc
 import { writeEvent } from '@/kernel/events';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { buildPiDomainAgentTools } from './pi-tools';
 import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, registerTool } from './registry';
-
-// Mock the Agent SDK so the bridge wraps tools without spawning Claude.
-const mockSdk = vi.hoisted(() => ({
-  toolDefs: [] as Array<{
-    name: string;
-    handler: (args: unknown) => Promise<unknown>;
-  }>,
-}));
-
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  createSdkMcpServer: vi.fn((opts: unknown) => ({ type: 'sdk', instance: opts })),
-  tool: vi.fn((name: string, _desc: string, _schema: unknown, handler: unknown) => {
-    const def = { name, handler } as (typeof mockSdk.toolDefs)[number];
-    mockSdk.toolDefs.push(def);
-    return def;
-  }),
-}));
-
-import { buildMcpServerFromRegistry } from './mcp-bridge';
-import { buildPiDomainAgentTools } from './pi-tools';
 
 function ctx(): ToolContext {
   return {
@@ -77,23 +59,24 @@ async function seedAttempt() {
 }
 
 describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage', () => {
+  let agentTools: AgentTool[] = [];
+
   beforeEach(async () => {
     await resetDb();
     __resetRegistryForTests();
-    mockSdk.toolDefs = [];
+    agentTools = [];
     await registerCapabilityTools(capabilities);
   });
 
   it('agent:copilot caller writes tool_use event for query_mistakes', async () => {
     await seedAttempt();
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: ctx(),
       serverName: 'loom_v2',
       toolNames: ['query_mistakes'],
     });
-    const def = mockSdk.toolDefs[0];
-    await def.handler({});
+    await agentTools[0].execute('call_test', {});
 
     const db = testDb();
     const eventRows = await db
@@ -130,13 +113,12 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
   it('user caller skips mirror but still writes tool_call_log', async () => {
     await seedAttempt();
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx(), callerActor: { kind: 'user', ref: 'debug:_/tools' } },
       serverName: 'loom_v2',
       toolNames: ['query_mistakes'],
     });
-    const def = mockSdk.toolDefs[0];
-    await def.handler({});
+    await agentTools[0].execute('call_test', {});
 
     const db = testDb();
     const eventRows = await db.select().from(event).where(eq(event.action, 'tool_use'));
@@ -170,16 +152,15 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
         mirrorEvent: 'always',
       };
     registerTool(safeTool);
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx(), sessionId: 'session_safe_bridge' },
       serverName: 'loom',
       toolNames: [safeTool.name],
-      claimToolUseId: () => 'toolu_safe_bridge_e2e',
     });
 
-    const response = (await mockSdk.toolDefs
-      .find((definition) => definition.name === safeTool.name)
-      ?.handler({ query: 'deep_nested' })) as { content: Array<{ text: string }> };
+    const response = (await agentTools
+      .find((t) => t.name === `mcp__loom__${safeTool.name}`)
+      ?.execute('call_test', { query: 'deep_nested' })) as { content: Array<{ text: string }> };
     const responseBody = JSON.parse(response.content[0]?.text ?? '') as {
       output: { hits: Array<{ id: string; score: number }> };
     };
@@ -213,7 +194,9 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
       status: 'succeeded',
       input_json: {
         args: { query: 'deep_nested' },
-        tool_use_id: 'toolu_safe_bridge_e2e',
+        // pi carries the loop's native toolCall.id as the correlation id (no
+        // synthesized `toolu_*` — that minting died with the SDK claim hook).
+        tool_use_id: 'call_test',
       },
       terminal_tool_call_log_id: logs[0]?.id,
     });
@@ -228,14 +211,15 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
   });
 
   it('does not expose retired operation controls to the model', () => {
-    expect(() =>
-      buildMcpServerFromRegistry({
-        ctx: { ...ctx(), sessionId: 'session_model_owner' },
-        serverName: 'loom',
-        toolNames: ['cancel_tool_operation'],
-      }),
+    expect(
+      () =>
+        (agentTools = buildPiDomainAgentTools({
+          ctx: { ...ctx(), sessionId: 'session_model_owner' },
+          serverName: 'loom',
+          toolNames: ['cancel_tool_operation'],
+        })),
     ).toThrow("tool 'cancel_tool_operation' is not registered");
-    expect(mockSdk.toolDefs).toEqual([]);
+    expect(agentTools).toEqual([]);
   });
 
   it.each(['system', 'user'] as const)(
@@ -269,15 +253,14 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
         mirrorEvent: 'never',
       };
       registerTool(safeTool);
-      buildMcpServerFromRegistry({
+      agentTools = buildPiDomainAgentTools({
         ctx: { ...ctx(), sessionId: `session_${requestedBy}_owner` },
         serverName: 'loom',
         toolNames: [safeTool.name],
         cancellationSignals: [{ signal: controller.signal, requestedBy }],
       });
-      const handler = mockSdk.toolDefs.find(
-        (definition) => definition.name === safeTool.name,
-      )?.handler;
+      const __tool = agentTools.find((t) => t.name === `mcp__loom__${safeTool.name}`);
+      const handler = __tool ? (a: unknown) => __tool.execute('call_test', a) : undefined;
       const execution = handler?.({ query: 'cancel from parent' });
       const operationId = await waitForToolOperationId(`session_${requestedBy}_owner`);
 
@@ -324,7 +307,7 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
       mirrorEvent: 'never',
     };
     registerTool(safeTool);
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: {
         ...ctx(),
         sessionId,
@@ -334,9 +317,8 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
       toolNames: [safeTool.name],
       cancellationSignals: [{ signal: lifecycleAbortController.signal, requestedBy: 'system' }],
     });
-    const handler = mockSdk.toolDefs.find(
-      (definition) => definition.name === safeTool.name,
-    )?.handler;
+    const __tool = agentTools.find((t) => t.name === `mcp__loom__${safeTool.name}`);
+    const handler = __tool ? (a: unknown) => __tool.execute('call_test', a) : undefined;
     const execution = handler?.({ query: 'keep blocking after root return' });
     const operationId = await waitForToolOperationId(sessionId);
 
@@ -371,12 +353,14 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
     };
     registerTool(badOutputTool);
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: ctx(),
       serverName: 'loom_v2',
       toolNames: ['bridge_test_bad_output'],
     });
-    await mockSdk.toolDefs.find((d) => d.name === 'bridge_test_bad_output')?.handler({});
+    await agentTools
+      .find((t) => t.name === 'mcp__loom_v2__bridge_test_bad_output')
+      ?.execute('call_test', {});
 
     const db = testDb();
     const tcl = await db
@@ -415,12 +399,12 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
       updated_at: staleAt,
     });
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx(), callerActor: { kind: 'agent', ref: 'dreaming' } },
       serverName: 'loom_v2',
       toolNames: ['query_memory_brief'],
     });
-    await mockSdk.toolDefs[0].handler({ scopeKey: 'global' });
+    await agentTools[0].execute('call_test', { scopeKey: 'global' });
 
     const [log] = await testDb()
       .select()
@@ -437,105 +421,64 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
 });
 
 // ────────────────────────────────────────────────────────────────────────────
-// YUK-921 P2 (YUK-1021) — pi lane parity. The pi AgentTool bridge delegates to
-// the SAME executeDomainToolCall pipeline; this proves the tool_call_log row
-// and tool_use mirror shapes are column-identical modulo ids/latency.
+// YUK-921 P4 (YUK-1025) — pi is the sole engine; the AgentTool bridge delegates
+// to executeDomainToolCall. This pins the persisted tool_call_log columns and
+// the tool_use mirror shape as absolute expectations (previously a two-lane
+// diff against the retired SDK bridge — which degenerated into self-parity
+// once both legs ran the same pi pipeline).
 // ────────────────────────────────────────────────────────────────────────────
-describe('pi AgentTool path — tool_call_log/tool_use parity with the SDK bridge', () => {
+describe('pi AgentTool path — tool_call_log + tool_use mirror persistence', () => {
   beforeEach(async () => {
     await resetDb();
     __resetRegistryForTests();
-    mockSdk.toolDefs = [];
     await registerCapabilityTools(capabilities);
   });
 
-  it('writes the same tool_call_log columns and mirror linkage as the SDK path', async () => {
+  it('writes the tool_call_log row and mirror linkage for a copilot-agent call', async () => {
     await seedAttempt();
     const db = testDb();
-    const sdkRunId = 'tr_parity_sdk';
-    const piRunId = 'tr_parity_pi';
-    const sharedCtx = {
-      db,
-      callerActor: { kind: 'agent', ref: 'agent:copilot' } as const,
-    };
+    const runId = 'tr_pi_persist';
 
-    // SDK lane: the mocked tool() captures the wrapped handler.
-    buildMcpServerFromRegistry({
-      ctx: { ...sharedCtx, taskRunId: sdkRunId },
-      serverName: 'loom',
-      toolNames: ['query_mistakes'],
-      taskKind: 'CopilotTask',
-    });
-    await mockSdk.toolDefs[0]?.handler({ limit: 5 });
-
-    // Pi lane: the compiled AgentTool runs the identical pipeline; the loop's
-    // native toolCall.id is the correlation id.
     const [agentTool] = buildPiDomainAgentTools({
-      ctx: { ...sharedCtx, taskRunId: piRunId },
+      ctx: {
+        db,
+        taskRunId: runId,
+        callerActor: { kind: 'agent', ref: 'agent:copilot' },
+      },
       serverName: 'loom',
       toolNames: ['query_mistakes'],
       taskKind: 'CopilotTask',
     });
     expect(agentTool.name).toBe('mcp__loom__query_mistakes');
-    await agentTool.execute('toolCall_pi_parity', { limit: 5 }, undefined);
+    await agentTool.execute('toolCall_pi_1', { filter: { limit: 5 } }, undefined);
 
-    const [sdkLog] = await db
-      .select()
-      .from(tool_call_log)
-      .where(eq(tool_call_log.task_run_id, sdkRunId));
-    const [piLog] = await db
-      .select()
-      .from(tool_call_log)
-      .where(eq(tool_call_log.task_run_id, piRunId));
+    const [log] = await db.select().from(tool_call_log).where(eq(tool_call_log.task_run_id, runId));
+    expect(log).toMatchObject({
+      task_run_id: runId,
+      task_kind: 'CopilotTask',
+      tool_name: 'query_mistakes',
+      effect: 'read',
+      input_json: { filter: { limit: 5 } },
+      error_reason: null,
+      cost: 0,
+      mirrored_event_id: expect.any(String),
+    });
+    expect(log.output_json).toBeTruthy();
 
-    // Column-level parity — every persisted field except the row's own
-    // identity, latency, timestamp, mirror link and the run id must be
-    // identical between engines.
-    const {
-      id: _i1,
-      latency_ms: _l1,
-      task_run_id: _t1,
-      mirrored_event_id: _m1,
-      occurred_at: _o1,
-      ...sdkCols
-    } = sdkLog;
-    const {
-      id: _i2,
-      latency_ms: _l2,
-      task_run_id: _t2,
-      mirrored_event_id: _m2,
-      occurred_at: _o2,
-      ...piCols
-    } = piLog;
-    expect(piCols).toEqual(sdkCols);
-
-    // Mirror events: same action/shape; each links back to its own log row.
-    const [sdkMirror] = await db
+    // Mirror event: action/shape pinned; it links back to its own log row.
+    const [mirror] = await db
       .select()
       .from(event)
-      .where(eq(event.id, sdkLog.mirrored_event_id ?? 'none'));
-    const [piMirror] = await db
-      .select()
-      .from(event)
-      .where(eq(event.id, piLog.mirrored_event_id ?? 'none'));
-    if (!sdkMirror || !piMirror) throw new Error('expected tool_use mirror events');
-    const {
-      id: _e1,
-      task_run_id: _et1,
-      subject_id: _s1,
-      created_at: _ec1,
-      dispatch_seq: _d1,
-      ...sdkEv
-    } = sdkMirror;
-    const {
-      id: _e2,
-      task_run_id: _et2,
-      subject_id: _s2,
-      created_at: _ec2,
-      dispatch_seq: _d2,
-      ...piEv
-    } = piMirror;
-    expect(piEv).toEqual(sdkEv);
+      .where(eq(event.id, log.mirrored_event_id ?? 'none'));
+    expect(mirror).toMatchObject({
+      action: 'tool_use',
+      actor_kind: 'agent',
+      actor_ref: 'agent:copilot',
+      outcome: 'success',
+      task_run_id: runId,
+      subject_kind: 'query',
+    });
+    expect((mirror.payload as Record<string, unknown>).tool_name).toBe('query_mistakes');
   });
 
   it('pi execute surfaces pi toolCall.id as the correlated tool_use_id in the result text', async () => {

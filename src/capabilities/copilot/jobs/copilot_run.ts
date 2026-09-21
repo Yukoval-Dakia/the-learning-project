@@ -57,8 +57,7 @@ import { runTeachingSkill } from '@/capabilities/copilot/server/skills/teaching-
 import { reconcileNativeSubagentsForParent } from '@/capabilities/copilot/server/subagent-mailbox';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
-import { piLanePinnedForKind } from '@/server/ai/execution-adapter';
-import { isPiSessionId } from '@/server/ai/pi-agent-adapter';
+import type { ModelBinding } from '@/server/ai/execution-adapter';
 import {
   type BossJobObservation,
   type BossJobObserver,
@@ -111,6 +110,8 @@ export interface RunCopilotRunParams {
   resolveCopilotRunInputFn?: typeof assembleCopilotRunInput;
   /** Test/ops seam for the default-on COPILOT_SUBAGENT_ENABLED kill switch. */
   copilotSubagentEnabled?: boolean;
+  /** Per-run provider/model pin (actual-output evidence gate; prod omits). */
+  modelBinding?: ModelBinding;
   /** Report-only observation seam; native tool-call/cost logs remain authoritative. */
   onSpawnBudgetObservation?: (observation: SpawnBudgetObservation) => void;
   /** Test seam for the transactional REPLY+DONE projection and redelivery repair. */
@@ -809,14 +810,11 @@ async function executeAcceptedCopilotRun(
   // A worker may resume only a session it observed and registered in this
   // process, and only while the conversation row still points at that id.
   // Persisted ids from another process/app are intentionally cold-started.
-  // YUK-1022 — `pi:`-prefixed ids are pi-lane owned: resumable only when this
-  // run would take the pi adapter again; on the SDK lane the id folds to a
-  // cold start (history rides the cold prompt fold, not a session file).
+  // Stored ids are `pi:<uuid>` markers — resume replays the bounded durable
+  // turns into context.messages (pi-agent-adapter piSessionReplay).
   const persistedSdkSessionId = await getAgentSdkSessionId(db, data.session_id);
   const resumeSessionId =
-    isCopilotWorkerSessionOwned(data.session_id, persistedSdkSessionId) &&
-    persistedSdkSessionId &&
-    (!isPiSessionId(persistedSdkSessionId) || piLanePinnedForKind('CopilotTask'))
+    isCopilotWorkerSessionOwned(data.session_id, persistedSdkSessionId) && persistedSdkSessionId
       ? persistedSdkSessionId
       : undefined;
   let progressChain: Promise<void> = Promise.resolve();
@@ -957,6 +955,7 @@ async function executeAcceptedCopilotRun(
       {
         cancellation: cancellationControl,
         deadlineAt: Date.now() + DURABLE_OWNER_SETTLEMENT_BUDGET_MS,
+        ...(params.modelBinding ? { modelBinding: params.modelBinding } : {}),
         ...(resumeSessionId ? { resumeSessionId } : {}),
         ...(params.copilotSubagentEnabled !== undefined
           ? { subagentsEnabled: params.copilotSubagentEnabled }

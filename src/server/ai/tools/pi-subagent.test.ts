@@ -4,14 +4,9 @@
 // network. The equivalence pin (same decider → same decision across both
 // engine surfaces) is the heart of the dual-descriptor contract.
 
-import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it, vi } from 'vitest';
-import {
-  SPAWN_BUDGET_MODE,
-  SPAWN_TOOL_ALIASES,
-  createSpawnContract,
-  createSpawnDecider,
-} from '../spawn-contract';
+import type { AgentDefinition } from '../sdk-types';
+import { SPAWN_BUDGET_MODE, SPAWN_TOOL_ALIASES, createSpawnDecider } from '../spawn-contract';
 import {
   type PiSubagentHost,
   buildPiSpawnAgentTools,
@@ -73,7 +68,7 @@ describe('createPiSpawnContract — gate over the shared decider', () => {
     expect(contract.readBudgetReport().observedAttempts).toBe(0);
   });
 
-  it('returns {block:false} on allow — authoritative defined result that shields the SDK canUseTool twin', async () => {
+  it('returns {block:false} on allow — the authoritative defined result', async () => {
     const contract = createPiSpawnContract({ enabled: true, agents: agentsFixture() });
     for (const name of SPAWN_TOOL_ALIASES) {
       expect(await contract.gate(call(name, `allow-${name}`), taskInput, signal)).toEqual({
@@ -122,30 +117,17 @@ describe('createPiSpawnContract — gate over the shared decider', () => {
     });
   });
 
-  it('shares one memoized ledger with the SDK contract — same toolUseId, one observation, same answer', async () => {
+  it('memoizes gate decisions on the shared decider — same call id, one observation', async () => {
     const observations = vi.fn();
     const options = { enabled: true, agents: agentsFixture(), onBudgetObservation: observations };
-    const decider = createSpawnDecider(options);
-    const sdk = createSpawnContract(options, decider);
-    const pi = createPiSpawnContract(options, decider);
+    const pi = createPiSpawnContract(options, createSpawnDecider(options));
 
-    // The pi gate consults first…
-    const piDenied = await pi.gate(call('Task', 'shared-01'), { subagent_type: 'ghost' }, signal);
-    // …then the SDK canUseTool twin sees the SAME call id — memoized, no
-    // double-count, identical decision text.
-    const sdkDenied = await sdk.canUseTool(
-      'Task',
-      { subagent_type: 'ghost' },
-      { signal, toolUseID: 'shared-01', requestId: 'r1' },
-    );
+    const first = await pi.gate(call('Task', 'shared-01'), { subagent_type: 'ghost' }, signal);
+    const retry = await pi.gate(call('Task', 'shared-01'), { subagent_type: 'ghost' }, signal);
 
-    expect(piDenied).toMatchObject({ block: true });
-    expect(sdkDenied).toMatchObject({ behavior: 'deny' });
-    expect((piDenied as { reason: string }).reason).toBe(
-      (sdkDenied as { message: string }).message,
-    );
+    expect(first).toMatchObject({ block: true });
+    expect(retry).toEqual(first);
     expect(observations).toHaveBeenCalledTimes(1);
-    expect(pi.readBudgetReport()).toEqual(sdk.readBudgetReport());
   });
 });
 

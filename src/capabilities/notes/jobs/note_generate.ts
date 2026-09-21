@@ -37,7 +37,7 @@ import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
 import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { resolveNoteSkill } from '@/subjects/note-skills';
+import { resolveNoteSkillDoc } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 export interface NoteGenerateJobData {
@@ -195,7 +195,7 @@ export async function runNoteGenerate(
     const subjectProfile = resolveSubjectProfile(kNode?.domain);
     const result = await runTaskFn('NoteGenerateTask', input, {
       subjectProfile,
-      skills: await resolveNoteSkill(subjectProfile.id),
+      piSkillDocs: await resolveNoteSkillDoc(subjectProfile.id),
       beforeProviderQuery: async () => {
         const activeRows = await db
           .select({ id: artifact.id })

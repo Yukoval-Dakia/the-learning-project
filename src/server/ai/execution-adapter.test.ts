@@ -1,17 +1,15 @@
-import type { Options, Query, SDKUserMessage, WarmQuery } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  SdkPreparedQuery,
+  type ExecutionAdapter,
+  __setPiAdapterForTests,
   explicitProviderRouting,
-  isPiEligibleKind,
-  piAllowlistedKinds,
-  piLanePinnedForKind,
   resolveExecutionAdapter,
 } from './execution-adapter';
 import type { ResolvedProvider } from './providers';
 import { transientRetryEnabled } from './run-lifecycle';
+import type { Options } from './sdk-types';
 
-const SDK_RESOLVED: ResolvedProvider = {
+const RESOLVED: ResolvedProvider = {
   authMode: 'key',
   provider: 'xiaomi',
   model: 'mimo-v2.5-pro',
@@ -21,80 +19,46 @@ const SDK_RESOLVED: ResolvedProvider = {
 const PI_RESOLVED: ResolvedProvider = {
   authMode: 'key',
   provider: 'opencode-go',
-  model: 'mimo-v2.5-pro',
+  model: 'deepseek-v4-pro',
   apiKey: 'sk-test-key',
 };
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  __setPiAdapterForTests(undefined);
 });
 
-describe('resolveExecutionAdapter — P0 seam (YUK-1013)', () => {
-  it('resolves to the sdk adapter when no binding is set', () => {
-    expect(resolveExecutionAdapter(undefined, SDK_RESOLVED, 'SolutionGenerateTask').id).toBe('sdk');
-    expect(resolveExecutionAdapter({}, SDK_RESOLVED, 'SolutionGenerateTask').id).toBe('sdk');
-    expect(
-      resolveExecutionAdapter({ model: 'mimo-v2.5-pro' }, SDK_RESOLVED, 'SolutionGenerateTask').id,
-    ).toBe('sdk');
-    expect(
-      resolveExecutionAdapter({ adapter: 'sdk' }, SDK_RESOLVED, 'SolutionGenerateTask').id,
-    ).toBe('sdk');
-  });
-
-  it('fails closed on an unknown adapter pin', () => {
-    expect(() =>
-      resolveExecutionAdapter({ adapter: 'bogus' as never }, SDK_RESOLVED, 'SolutionGenerateTask'),
-    ).toThrow(/ExecutionAdapter 'bogus' is not implemented/);
-  });
-});
-
-describe('resolveExecutionAdapter — pi gate (YUK-921 P1)', () => {
-  it('rejects a pi pin on a non-pi-lane provider', () => {
-    vi.stubEnv('AI_ADAPTER_PI_KINDS', 'SolutionGenerateTask');
-    expect(() =>
-      resolveExecutionAdapter({ adapter: 'pi' }, SDK_RESOLVED, 'SolutionGenerateTask'),
-    ).toThrow(/ExecutionAdapter 'pi' does not serve provider 'xiaomi'/);
-  });
-
-  it('rejects a pi pin when the kind is not allowlisted', () => {
-    expect(() =>
-      resolveExecutionAdapter({ adapter: 'pi' }, PI_RESOLVED, 'SolutionGenerateTask'),
-    ).toThrow(/Task kind 'SolutionGenerateTask' is not eligible/);
-  });
-
-  it('accepts a pi pin on a needsToolCall kind when allowlisted (P2 — mount check moved to startup)', () => {
-    vi.stubEnv('AI_ADAPTER_PI_KINDS', 'QuizGenTask');
-    expect(resolveExecutionAdapter({ adapter: 'pi' }, PI_RESOLVED, 'QuizGenTask').id).toBe('pi');
-  });
-
-  it('resolves the pi adapter on pi provider + allowlisted single-shot kind', () => {
-    vi.stubEnv('AI_ADAPTER_PI_KINDS', 'SolutionGenerateTask');
-    expect(resolveExecutionAdapter({ adapter: 'pi' }, PI_RESOLVED, 'SolutionGenerateTask').id).toBe(
+describe('resolveExecutionAdapter — pi-only guard (YUK-1025)', () => {
+  it('resolves the pi adapter for every provider/kind', () => {
+    expect(resolveExecutionAdapter(undefined, RESOLVED, 'SolutionGenerateTask').id).toBe('pi');
+    expect(resolveExecutionAdapter({}, RESOLVED, 'SolutionGenerateTask').id).toBe('pi');
+    expect(resolveExecutionAdapter({ adapter: 'pi' }, PI_RESOLVED, 'CopilotTask').id).toBe('pi');
+    expect(resolveExecutionAdapter(undefined, RESOLVED, 'ResearchMeetingDirectorTask').id).toBe(
       'pi',
     );
   });
 
-  it('rejects the sdk default on a pi-lane provider', () => {
-    expect(() => resolveExecutionAdapter({}, PI_RESOLVED, 'SolutionGenerateTask')).toThrow(
-      /Provider 'opencode-go' is served only by ExecutionAdapter 'pi'/,
-    );
-  });
-});
-
-describe('AI_ADAPTER_PI_KINDS parsing', () => {
-  it('is empty when unset or blank', () => {
-    vi.stubEnv('AI_ADAPTER_PI_KINDS', '');
-    expect(piAllowlistedKinds().size).toBe(0);
-    expect(isPiEligibleKind('SolutionGenerateTask')).toBe(false);
+  it('fails closed on a stale non-pi adapter pin', () => {
+    expect(() =>
+      resolveExecutionAdapter({ adapter: 'sdk' } as never, RESOLVED, 'SolutionGenerateTask'),
+    ).toThrow(/retired in YUK-1025/);
+    expect(() =>
+      resolveExecutionAdapter({ adapter: 'bogus' } as never, RESOLVED, 'CopilotTask'),
+    ).toThrow(/retired in YUK-1025/);
   });
 
-  it('parses a comma-separated kind list (P2 — needsToolCall kinds are eligible; startup enforces mounts)', () => {
-    vi.stubEnv('AI_ADAPTER_PI_KINDS', ' SolutionGenerateTask , QuizGenTask ,,');
-    expect([...piAllowlistedKinds()].sort()).toEqual(['QuizGenTask', 'SolutionGenerateTask']);
-    expect(isPiEligibleKind('SolutionGenerateTask')).toBe(true);
-    // Tool-loop kinds are allowlist-eligible since P2; the no-tools-mounted
-    // failure moved to PiAgentAdapter.startup.
-    expect(isPiEligibleKind('QuizGenTask')).toBe(true);
+  it('honours the test-only adapter swap and restores cleanly', () => {
+    const fake: ExecutionAdapter = {
+      id: 'pi',
+      startup: vi.fn(async () => ({
+        query: () => (async function* () {})(),
+        close: async () => {},
+      })),
+    };
+    __setPiAdapterForTests(fake);
+    expect(resolveExecutionAdapter(undefined, RESOLVED, 'SolutionGenerateTask')).toBe(fake);
+    __setPiAdapterForTests(undefined);
+    expect(resolveExecutionAdapter(undefined, RESOLVED, 'SolutionGenerateTask')).not.toBe(fake);
   });
 });
 
@@ -130,41 +94,18 @@ describe('explicitProviderRouting — explicit > env > registry layering', () =>
   });
 });
 
-describe('P3 gray rollout — CopilotTask stays env-only (YUK-1022)', () => {
-  it('rejects a pi pin on CopilotTask unless the kind is allowlisted', () => {
-    expect(() => resolveExecutionAdapter({ adapter: 'pi' }, PI_RESOLVED, 'CopilotTask')).toThrow(
-      /Task kind 'CopilotTask' is not eligible/,
-    );
-    vi.stubEnv('AI_ADAPTER_PI_KINDS', 'CopilotTask');
-    expect(resolveExecutionAdapter({ adapter: 'pi' }, PI_RESOLVED, 'CopilotTask').id).toBe('pi');
-  });
-
-  it('piLanePinnedForKind reports only the env pin + allowlist combination', () => {
-    expect(piLanePinnedForKind('CopilotTask')).toBe(false);
-    vi.stubEnv('AI_ADAPTER_PI_PROVIDER', 'opencode-go');
-    vi.stubEnv('AI_ADAPTER_PI_MODEL', 'mimo-v2.5-pro');
-    // Env pin without the kind allowlist stays inert.
-    expect(piLanePinnedForKind('CopilotTask')).toBe(false);
-    vi.stubEnv('AI_ADAPTER_PI_KINDS', 'CopilotTask');
-    expect(piLanePinnedForKind('CopilotTask')).toBe(true);
-    // An explicit caller binding wins wholesale over the env pin.
-    expect(piLanePinnedForKind('CopilotTask', { adapter: 'sdk' })).toBe(false);
-    expect(piLanePinnedForKind('SolutionGenerateTask', { adapter: 'pi' })).toBe(true);
-  });
-});
-
-describe('SdkExecutionAdapter — pi: session fold guard (YUK-1022)', () => {
-  it('fails closed when options.resume names a pi-owned session id', async () => {
-    const adapter = resolveExecutionAdapter(undefined, SDK_RESOLVED, 'SolutionGenerateTask');
+describe('PiAgentAdapter — startup guards', () => {
+  it('fails closed when options.resume names a pi-owned session id without replay', async () => {
+    const adapter = resolveExecutionAdapter(undefined, PI_RESOLVED, 'SolutionGenerateTask');
     await expect(
       adapter.startup({
         options: { resume: 'pi:abc-123' } as Options,
         initializeTimeoutMs: 1_000,
-        resolved: SDK_RESOLVED,
+        resolved: PI_RESOLVED,
         runId: 'task_run_x',
         kind: 'SolutionGenerateTask',
       }),
-    ).rejects.toThrow(/pi-owned session 'pi:abc-123'/);
+    ).rejects.toThrow();
   });
 });
 
@@ -183,51 +124,7 @@ describe('transientRetryEnabled — modelBinding pins routing like override', ()
       transientRetryEnabled({ enableTransientRetry: true, modelBinding: { effort: 'high' } }),
     ).toBe(true);
     expect(
-      transientRetryEnabled({ enableTransientRetry: true, modelBinding: { adapter: 'sdk' } }),
+      transientRetryEnabled({ enableTransientRetry: true, modelBinding: { adapter: 'pi' } }),
     ).toBe(true);
-  });
-});
-
-describe('SdkPreparedQuery — close-order contract (byte-for-byte from pre-seam runner)', () => {
-  function fakeWarmQuery() {
-    const queryObj = {
-      return: vi.fn(async (_v?: undefined) => ({}) as never),
-      close: vi.fn(),
-      [Symbol.asyncIterator]: () => (async function* () {})(),
-    };
-    const warm = {
-      query: vi.fn(
-        (_prompt: string | AsyncIterable<SDKUserMessage>) => queryObj as unknown as Query,
-      ),
-      close: vi.fn(),
-    };
-    return { warm: warm as unknown as WarmQuery, warmSpies: warm, queryObj };
-  }
-
-  it('closes the active query via return() when a prompt was submitted', async () => {
-    const { warm, warmSpies, queryObj } = fakeWarmQuery();
-    const prepared = new SdkPreparedQuery(warm);
-    prepared.query('hi');
-    await prepared.close();
-    expect(queryObj.return).toHaveBeenCalledTimes(1);
-    expect(queryObj.close).not.toHaveBeenCalled();
-    expect(warmSpies.close).not.toHaveBeenCalled();
-  });
-
-  it('falls back to query.close() when return() rejects', async () => {
-    const { warm, queryObj } = fakeWarmQuery();
-    queryObj.return.mockRejectedValueOnce(new Error('return failed'));
-    const prepared = new SdkPreparedQuery(warm);
-    prepared.query('hi');
-    await prepared.close();
-    expect(queryObj.close).toHaveBeenCalledTimes(1);
-  });
-
-  it('closes the unused warm transport when no prompt was submitted', async () => {
-    const { warm, warmSpies } = fakeWarmQuery();
-    const prepared = new SdkPreparedQuery(warm);
-    await prepared.close();
-    expect(warmSpies.query).not.toHaveBeenCalled();
-    expect(warmSpies.close).toHaveBeenCalledTimes(1);
   });
 });

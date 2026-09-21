@@ -54,17 +54,18 @@ describe('resolveTaskProvider — AI_PROVIDER_OVERRIDE=anthropic-sub (subscripti
     vi.unstubAllEnvs();
   });
 
-  it('routes to anthropic-sub: authMode "oauth", Opus 4.8, no baseUrl/apiKey', () => {
+  it('routes to anthropic-sub: authMode "oauth", Opus 4.8, token on apiKey, no baseUrl', () => {
     const resolved = resolveTaskProvider(KIND);
     expect(resolved.authMode).toBe('oauth');
     expect(resolved.provider).toBe('anthropic-sub');
     expect(resolved.model).toBe('claude-opus-4-8');
     expect(resolved.model).toBe(ANTHROPIC_SUB_DEFAULT_MODEL);
     if (resolved.authMode !== 'oauth') throw new Error('expected oauth authMode');
-    // The resolved record references the token by ENV-VAR NAME, never the value.
+    // Post-P4: the pi anthropic-messages driver turns an sk-ant-oat* apiKey into
+    // a Bearer header — the resolved record carries the token VALUE on apiKey
+    // (never logged) plus the env-var NAME for diagnostics.
+    expect(resolved.apiKey).toBe('dummy-oauth-token-not-real');
     expect(resolved.oauthTokenEnv).toBe('CLAUDE_CODE_OAUTH_TOKEN');
-    // No key-auth fields leak onto the oauth arm.
-    expect('apiKey' in resolved).toBe(false);
     expect('baseUrl' in resolved).toBe(false);
   });
 

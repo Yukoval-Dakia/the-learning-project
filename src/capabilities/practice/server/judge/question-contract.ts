@@ -1,6 +1,6 @@
 import type { z } from 'zod';
 
-import { type Provider, tasks } from '@/ai/registry';
+import type { Provider } from '@/ai/registry';
 // F0 (PR #309 round-3) — the route resolver now lives in the dependency-light
 // leaf `@/capabilities/practice/server/judge/route-resolve` (see that file's header for the build
 // regression it fixes). Re-exported below so this module's public surface is
@@ -13,7 +13,6 @@ import type { JudgeResultV2T } from '@/core/schema/capability';
 import { type JudgeRoutableQuestion, nonEmptyStrings } from '@/core/schema/judge-routing';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
-import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import type { SubjectProfile } from '@/subjects/profile';
@@ -138,11 +137,6 @@ export function assertGeneratedQuestionHasJudgeContract(
     throw new Error(`${origin} question '${promptLabel}' routes to non-runnable judge '${route}'`);
   }
 }
-
-const semanticOutputSchema = tasks.SemanticJudgeTask.structuredOutputSchema;
-const SEMANTIC_OUTPUT_FORMAT = semanticOutputSchema
-  ? zodToJsonSchemaOutputFormat(semanticOutputSchema)
-  : undefined;
 
 export interface JudgeQuestionRow {
   id: string;
@@ -389,7 +383,6 @@ export async function runSemanticJudge(params: JudgeAnswerParams): Promise<Judge
       },
       {
         subjectProfile: params.subjectProfile,
-        outputFormat: SEMANTIC_OUTPUT_FORMAT,
       },
     );
     const parsed = parseSemanticJudgeResult(result);

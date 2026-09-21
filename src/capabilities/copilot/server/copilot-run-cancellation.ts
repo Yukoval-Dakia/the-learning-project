@@ -1,4 +1,3 @@
-import type { HookCallback, HookJSONOutput, Options } from '@anthropic-ai/claude-agent-sdk';
 import { and, eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { job_events } from '@/db/schema';
@@ -86,39 +85,17 @@ export interface CopilotRunCancellationControl {
   probe(): Promise<CopilotCancellationProbeResult>;
   beforeTool(): Promise<string | undefined>;
   /**
-   * YUK-1022 — the pi-lane twin of the PreToolUse hook: same gate order
-   * (abort signal short-circuit → probe → deny reason), expressed as a
-   * pi `beforeToolCall` entry. `beforeTool()` remains the DomainTool gate.
+   * The pi `beforeToolCall` gate: abort signal short-circuit → probe → deny
+   * reason. `beforeTool()` remains the DomainTool-side gate.
    */
   piBeforeToolCall: PiBeforeToolCall;
   onToolExecutionStarted(tool: { name: string }): void;
   onToolExecutionSettled(): void;
   waitForInFlight(graceMs?: number): Promise<boolean>;
-  prependSdkHook(existing?: Options['hooks']): NonNullable<Options['hooks']>;
 }
 
 const CANCELLED_TOOL_REASON = 'cancel requested; do not start another tool';
 const UNKNOWN_TOOL_REASON = 'cancel state is temporarily unavailable; tool execution paused';
-
-function denyPreToolUse(reason: string): HookJSONOutput {
-  return {
-    hookSpecificOutput: {
-      hookEventName: 'PreToolUse',
-      permissionDecision: 'deny',
-      permissionDecisionReason: reason,
-    },
-  };
-}
-
-export function prependCopilotCancellationHook(
-  hook: HookCallback,
-  existing?: Options['hooks'],
-): NonNullable<Options['hooks']> {
-  return {
-    ...(existing ?? {}),
-    PreToolUse: [{ hooks: [hook] }, ...(existing?.PreToolUse ?? [])],
-  };
-}
 
 async function readCancelRequest(db: Db, runId: string): Promise<boolean> {
   const rows = await db
@@ -137,8 +114,8 @@ async function readCancelRequest(db: Db, runId: string): Promise<boolean> {
 
 /**
  * Bridge the cross-process job-event truth into one caller-owned AbortSignal.
- * Polling, SDK hooks and local DomainTool gates share a single non-overlapping
- * probe and a monotonic cancellation latch.
+ * Polling, the pi beforeToolCall gate and local DomainTool gates share a
+ * single non-overlapping probe and a monotonic cancellation latch.
  */
 export function createCopilotRunCancellationControl(options: {
   db: Db;
@@ -201,18 +178,6 @@ export function createCopilotRunCancellationControl(options: {
       })();
     }, pollIntervalMs);
   }
-
-  const preToolUseHook: HookCallback = async (input, _toolUseId, hookOptions) => {
-    if (input.hook_event_name !== 'PreToolUse') return { continue: true };
-    if (hookOptions.signal.aborted || controller.signal.aborted) {
-      return denyPreToolUse('run is stopping; tool execution denied');
-    }
-    const state = await probe();
-    if (state === 'clear') return { continue: true };
-    return denyPreToolUse(
-      state === 'cancel_requested' ? CANCELLED_TOOL_REASON : UNKNOWN_TOOL_REASON,
-    );
-  };
 
   return {
     signal: controller.signal,
@@ -279,9 +244,6 @@ export function createCopilotRunCancellationControl(options: {
         const timer = setTimeout(() => finish(false), graceMs);
         drainWaiters.add(onDrained);
       });
-    },
-    prependSdkHook(existing) {
-      return prependCopilotCancellationHook(preToolUseHook, existing);
     },
   };
 }

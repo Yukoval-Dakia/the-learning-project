@@ -1,4 +1,3 @@
-import { tasks } from '@/ai/registry';
 import {
   type InterventionAuthoringContextT,
   guardInterventionPreparationStage,
@@ -38,7 +37,6 @@ import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { resolveSubjectProfileForKnowledgeIdsStrict } from '@/kernel/read-models/subject-profile';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
-import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import {
   type TaskTextResult,
   type TaskTextRunFn,
@@ -61,15 +59,6 @@ export interface InterventionAuthorDeps {
   attempt?: 1 | 2;
   preparationJobId: string;
 }
-
-const authorOutputSchema = tasks.InterventionPackageAuthorTask.structuredOutputSchema;
-const AUTHOR_OUTPUT_FORMAT = authorOutputSchema
-  ? zodToJsonSchemaOutputFormat(authorOutputSchema)
-  : undefined;
-const reviewOutputSchema = tasks.InterventionPackageReviewTask.structuredOutputSchema;
-const REVIEW_OUTPUT_FORMAT = reviewOutputSchema
-  ? zodToJsonSchemaOutputFormat(reviewOutputSchema)
-  : undefined;
 
 function parseTaskOutput<T>(
   result: TaskTextResult,
@@ -677,7 +666,6 @@ async function runPackageAuthor(
     },
     {
       subjectProfile,
-      ...(AUTHOR_OUTPUT_FORMAT ? { outputFormat: AUTHOR_OUTPUT_FORMAT } : {}),
     },
   );
   if (!result.task_run_id) {
@@ -770,7 +758,6 @@ async function runPackageReview(
       try {
         result = await runTaskFn('InterventionPackageReviewTask', reviewTaskInput, {
           subjectProfile,
-          ...(REVIEW_OUTPUT_FORMAT ? { outputFormat: REVIEW_OUTPUT_FORMAT } : {}),
         });
       } catch (error) {
         const failedTaskRunIds = [...reviewAttemptTaskRunIds];

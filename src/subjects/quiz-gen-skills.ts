@@ -1,20 +1,19 @@
-// YUK-225 (S2 slice 4) — (subject, kind) → Agent Skill name resolution + 降级链.
+// YUK-225 (S2 slice 4) — (subject, kind) → Agent Skill doc resolution + 降级链.
 //
 // docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §5.1 / §5.2(c)
 //
 // 规范双轨 轨 1: a per-题型 SKILL.md规范包 lives at
-// src/subjects/<id>/skills/quiz-gen-<kind>/. The runner mirrors ALL of them into
-// the isolated CLAUDE_CONFIG_DIR/skills once at process start; a handler then sets
-// `ctx.skills = resolveQuizGenSkills(subjectId, kind)` to whitelist the ONE that
-// applies (SDK context filter). 出题 (QuizGenTask) 与验题 (QuizVerifyTask 的
-// kind_conformance 检查) 都用同一份 resolver → 出题验题同源 (task 要求 §5).
+// src/subjects/<id>/skills/quiz-gen-<kind>/. A handler sets
+// `ctx.piSkillDocs = await resolveQuizGenSkillDocs(subjectId, kind)`; the pi
+// adapter injects the SKILL.md body into the system prompt. 出题 (QuizGenTask)
+// 与验题 (QuizVerifyTask 的 kind_conformance 检查) 都用同一份 resolver →
+// 出题验题同源 (task 要求 §5).
 //
-// 降级链 (spec §5): 缺 quiz-gen-<kind> skill 目录 → 不传 skills（回退现状
+// 降级链 (spec §5): 缺 quiz-gen-<kind> skill 目录 → 不传 piSkillDocs（回退现状
 // promptFragments），never throws. We resolve against the on-disk skill dirs so a
-// missing pack degrades gracefully rather than pointing the SDK at a name with no
-// SKILL.md (which the SDK would just hide — but we keep the contract explicit).
+// missing pack degrades gracefully rather than injecting a name with no body.
 
-import { access, readdir } from 'node:fs/promises';
+import { access, readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { SubjectQuestionKind } from './profile-schema';
 // YUK-226 S2-5b (PR #320 验证轮 A) — kind 词表规范化收编进单一权威模块.
@@ -25,8 +24,7 @@ import type { SubjectQuestionKind } from './profile-schema';
 // 保持既有 import 路径稳定（skillDirName 仍按名引用），不再在本文件第二份手搓
 // computation↔calculation 特例。
 import { questionKindToSkillKind, skillKindToQuestionKind } from './question-kind';
-// YUK-611 — 白名单名从命名空间权威模块拼：populate 把镜像目录名 + 镜像内 frontmatter
-// name 统一改写成 <subjectId>--<pack>，resolver 必须产出同一个键。
+// YUK-611 — 注入键从命名空间权威模块拼：<subjectId>--<pack>。
 import { namespacedSkillName } from './skill-namespace';
 
 export { questionKindToSkillKind, skillKindToQuestionKind };
@@ -51,10 +49,11 @@ function skillDirName(kind: SubjectQuestionKind): string | null {
 }
 
 /**
- * Resolve the quiz-gen Agent Skill whitelist for a (subject, kind). Returns the
- * skill name array to pass as `ctx.skills`, or `undefined` when no skill pack
- * exists on disk for that (subject, kind) — the 降级链 (caller passes no skills
- * option → SDK loads nothing extra → promptFragments fallback).
+ * Existence probe: does a (subject, kind) quiz-gen skill pack exist on disk?
+ * Returns the pack's namespaced key (`<subjectId>--<dirName>`) when authored,
+ * or `undefined` when absent. quiz_gen.ts uses this purely as a "skill-backed
+ * kind" gate for few-shot retrieval — the piSkillDocs surface itself is served
+ * by {@link resolveQuizGenSkillDocs}.
  *
  * skillsRoot defaults to <cwd>/src/subjects (the live SoT). Tests inject a fixture
  * root. The SoT directory is the discovery anchor: a (subject, kind) whose skill
@@ -73,21 +72,21 @@ export async function resolveQuizGenSkills(
   } catch {
     return undefined;
   }
-  // The SDK matches `Options.skills` against the MIRRORED SKILL.md `name`
-  // frontmatter, which populateIsolatedSkills rewrites to the namespaced key
-  // <subjectId>--<dirName>（YUK-611）。源树 frontmatter 保持裸目录名，name == 目录名
+  // 键 = 命名空间名 <subjectId>--<dirName>（YUK-611）——与 *SkillDocs resolver
+  // 注入的 doc.name 同源。源树 frontmatter 保持裸目录名，name == 目录名
   // 由静态 audit（skill-namespace.test.ts）钉死。
   return [namespacedSkillName(subjectId, dirName)];
 }
 
 /**
  * Resolve ALL quiz-gen skill names a subject has authored (every
- * src/subjects/<id>/skills/quiz-gen-* with a SKILL.md). Used by QuizGen where a
- * single run can emit MIXED question kinds (§5.2(c)): we whitelist every quiz-gen
- * pack the subject owns so the model can pull whichever规范包 fits each item it
- * writes; unauthored kinds simply have no pack (降级链 → no skill for that kind).
- * Returns undefined when the subject has no quiz-gen skill dir (降级: no skills
- * option). skillsRoot defaults to the live SoT; tests inject a fixture root.
+ * src/subjects/<id>/skills/quiz-gen-* with a SKILL.md). Kept as the cheap
+ * existence probe backing the 缝隙防御 matrix (note-skills test asserts it
+ * never returns note-*); the piSkillDocs surface is
+ * {@link resolveQuizGenSkillDocsForSubject}.
+ *
+ * Returns undefined when the subject has no quiz-gen skill dir. skillsRoot
+ * defaults to the live SoT; tests inject a fixture root.
  */
 export async function resolveQuizGenSkillsForSubject(
   subjectId: string,
@@ -115,6 +114,58 @@ export async function resolveQuizGenSkillsForSubject(
   } catch {
     return undefined;
   }
-  // 白名单键 = 镜像里的命名空间名（YUK-611），不是源树裸目录名。
+  // 键 = 命名空间名（YUK-611），不是源树裸目录名。
   return names.length > 0 ? names.map((n) => namespacedSkillName(subjectId, n)) : undefined;
+}
+
+/**
+ * The pi skill surface: resolved SKILL.md bodies the adapter injects into the
+ * system prompt (pi has no filesystem skill loader). Keys are the same
+ * namespaced names the existence probes emit. Per-pack degradation: a
+ * missing/unreadable pack is skipped, never throws.
+ */
+async function readSkillDoc(
+  skillsRoot: string,
+  subjectId: string,
+  dirName: string,
+): Promise<{ name: string; body: string } | undefined> {
+  try {
+    const body = await readFile(join(skillsRoot, subjectId, 'skills', dirName, 'SKILL.md'), 'utf8');
+    if (body.length === 0) return undefined;
+    return { name: namespacedSkillName(subjectId, dirName), body };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Skill doc surface for one (subject, kind) pack — the injected body. */
+export async function resolveQuizGenSkillDocs(
+  subjectId: string,
+  kind: SubjectQuestionKind,
+  skillsRoot: string = join(process.cwd(), 'src', 'subjects'),
+): Promise<{ name: string; body: string }[] | undefined> {
+  const dirName = skillDirName(kind);
+  if (!dirName) return undefined;
+  const doc = await readSkillDoc(skillsRoot, subjectId, dirName);
+  return doc ? [doc] : undefined;
+}
+
+/** Skill doc surface for every authored quiz-gen pack of a subject. */
+export async function resolveQuizGenSkillDocsForSubject(
+  subjectId: string,
+  skillsRoot: string = join(process.cwd(), 'src', 'subjects'),
+): Promise<{ name: string; body: string }[] | undefined> {
+  const subjectSkillsDir = join(skillsRoot, subjectId, 'skills');
+  let dirNames: string[];
+  try {
+    dirNames = (await readdir(subjectSkillsDir, { withFileTypes: true }))
+      .filter((d) => d.isDirectory() && d.name.startsWith('quiz-gen-'))
+      .map((d) => d.name);
+  } catch {
+    return undefined;
+  }
+  const docs = (
+    await Promise.all(dirNames.map((n) => readSkillDoc(skillsRoot, subjectId, n)))
+  ).filter((d): d is { name: string; body: string } => d !== undefined);
+  return docs.length > 0 ? docs : undefined;
 }

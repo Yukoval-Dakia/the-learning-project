@@ -1,11 +1,9 @@
 import { eq } from 'drizzle-orm';
-import { tasks } from '@/ai/registry';
 import { StepsLlmOutput, type StepsLlmOutputT } from '@/core/capability/judges/steps';
 import { Rubric } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
 import { source_asset } from '@/db/schema';
-import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { SubjectProfile } from '@/subjects/profile';
 import { defaultStructuredRunTaskFn, parseStructuredTaskOutput } from './judge-output-parse';
 import { type LaneDegradationEvidence, runTaskWithLaneFallback } from './provider-lane-fallback';
@@ -13,11 +11,9 @@ import type { JudgeQuestionRow } from './question-contract';
 
 const CAPABILITY_REF = { id: 'steps', version: '1.0.0' };
 
-// YUK-591 — SDK structured-output envelope built ONCE from the registry-declared
-// schema (the §7-audited single source). See multimodal-direct-judge.ts for the
-// symmetric wiring + zero-loss-on-mimo rationale.
-const outputSchema = tasks.StepsJudgeTask.structuredOutputSchema;
-const OUTPUT_FORMAT = outputSchema ? zodToJsonSchemaOutputFormat(outputSchema) : undefined;
+// YUK-591 — the registry-declared structuredOutputSchema (the §7-audited single
+// source) drives the app-level Zod parse below. See multimodal-direct-judge.ts
+// for the symmetric wiring + zero-loss-on-mimo rationale.
 const STEP_WEIGHT_DEFAULT = 0.6;
 const VERDICT_WEIGHT: Record<StepsLlmOutputT['signal_verdicts'][number]['verdict'], number> = {
   correct: 1,
@@ -265,9 +261,10 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
     // runTaskFn call site, so ALL sync callers of runStepsJudge are covered by
     // one flag. When the operator pins routing (VISION_JUDGE_PROVIDER →
     // ctx.override set), the runner's override gate turns retry off.
-    // YUK-591 — outputFormat threaded here (built from the registry-declared
-    // StepsLlmOutput); symmetric with multimodal-direct-judge.ts. mimo ignores it
-    // → structured_output absent → char-scan fallback (zero-loss on the default lane).
+    // YUK-591 — structured extraction stays app-level: the result text is Zod-
+    // parsed against the registry-declared StepsLlmOutput; lanes without a
+    // transport contract (mimo) fall back to the char-scan text parse
+    // (zero-loss on the default lane).
     //
     // YUK-893 — the lane call goes through runTaskWithLaneFallback: a provider
     // HARD failure (HTTP 403/5xx/auth/quota) on a configured lane retries once
@@ -282,7 +279,6 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
         db: params.db,
         subjectProfile: params.subjectProfile,
         enableTransientRetry: true,
-        outputFormat: OUTPUT_FORMAT,
       },
       runTaskFn,
     });

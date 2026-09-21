@@ -1,18 +1,17 @@
-// YUK-921 P3 (YUK-1022) — pi-side nested-subagent surface.
+// YUK-921 P3 (YUK-1022) — pi nested-subagent surface.
 //
-// The SDK lane declares nested agents via `Options.agents` + the shared
-// spawn-contract (`createSpawnContract` — PreToolUse hook + canUseTool memoized
-// gate + depth-one definitions). The pi lane serves the same contract through
-// three pieces in this file:
+// Nested agents are declared via `ctx.piAgents` + the shared spawn-contract
+// (`createSpawnDecider` — memoized gate + depth-one definitions). This file
+// serves the contract through three pieces:
 //
 //   - `toPiSubagentSpecs`   — maps the contract's depth-one AgentDefinitions to
 //     an engine-neutral spec (description/prompt/tool allowlist/maxTurns).
 //   - `createPiSpawnContract` — the shared `createSpawnDecider` wrapped as a
 //     PiHookBridge `beforeToolCall` entry: deny → `{block:true, reason}`
-//     (SDK deny is an error tool result, not a hard stop — no terminate).
-//     `run_in_background`/model/isolation overrides are denied inside decide()
-//     exactly as on the SDK lane; pi has no background tasks, so the allow path
-//     needs no `updatedInput` rewriting — foreground is structural.
+//     (an error tool result, not a hard stop — no terminate).
+//     `run_in_background`/model/isolation overrides are denied inside decide();
+//     pi has no background tasks, so the allow path needs no `updatedInput`
+//     rewriting — foreground is structural.
 //   - `buildPiSpawnAgentTools` — the `Task`/`Agent` AgentTool whose execute()
 //     hands off to an adapter-provided `PiSubagentHost` (the adapter owns the
 //     nested agentLoop, the parent's abort, and the task_* frame sink).
@@ -20,9 +19,9 @@
 // Depth-one is structural here: the spawn tools are mounted only on the parent
 // loop, never in the child's tool set — nested Task calls cannot exist.
 
-import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import type { PiBeforeToolCall } from '../pi-hooks';
+import type { AgentDefinition } from '../sdk-types';
 import {
   type CreateSpawnContractOptions,
   SPAWN_TOOL_ALIASES,
@@ -82,16 +81,16 @@ export function toPiSubagentSpecs(
 /**
  * The pi spawn contract: the shared memoized decider exposed as a
  * PiHookBridge beforeToolCall entry, plus the depth-one specs the adapter
- * turns into the Task/Agent tool. `readBudgetReport` is identical to the SDK
- * contract's — both report the same ledger when both surfaces exist.
+ * turns into the Task/Agent tool. `readBudgetReport` surfaces the decider's
+ * observation ledger for the caller's spawn evidence.
  */
 export interface PiSpawnContract {
   /** Depth-one specs for the adapter's Task/Agent tool (mount via piAgents). */
   piAgents: Record<string, PiSubagentSpec>;
-  /** Gate entry for `piHooks.beforeToolCall` — the SDK hook/canUseTool twin. */
+  /** Gate entry for `piHooks.beforeToolCall` — the spawn permission surface. */
   gate: PiBeforeToolCall;
   readBudgetReport(): SpawnBudgetReport;
-  /** Exposed for callers that also drive the SDK contract off one decider. */
+  /** Direct decider access (tests drive decide() without the hook wrapper). */
   decider: SpawnDecider;
 }
 
@@ -104,16 +103,12 @@ export function createPiSpawnContract(
     const decision = decider.decide(call.id, args);
     if (decision.decision === 'allow') {
       // A defined non-blocking result, not undefined: once the shared decider
-      // answers 'allow' the pi gate is authoritative — later chain entries
-      // (notably the SDK-shaped `canUseTool` twin, whose allow carries an
-      // `updatedInput` run_in_background:false rewrite) must not run. Pi
-      // satisfies that rewrite structurally — this lane has no background
-      // tasks — so consulting it would only trip the adapter's fail-closed
-      // 'cannot apply updatedInput' guard. The pi loop itself treats
-      // `block:false` exactly like an absent result.
+      // answers 'allow' the gate is authoritative — no later chain entry may
+      // rewrite the call. The pi loop itself treats `block:false` exactly like
+      // an absent result.
       return { block: false };
     }
-    // SDK deny = error tool result (retryable, memoized) — never a hard stop.
+    // Deny = error tool result (retryable, memoized) — never a hard stop.
     return { block: true, reason: decision.message ?? 'spawn denied by contract' };
   };
   return {

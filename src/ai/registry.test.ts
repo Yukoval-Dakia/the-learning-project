@@ -425,7 +425,7 @@ describe('UnitDimensionFallback registry entry', () => {
 });
 
 describe('MultimodalDirectJudgeTask registry entry', () => {
-  it('is a single-call multimodal vision task with room for outputFormat finalization (YUK-201/YUK-792)', () => {
+  it('is a single-call multimodal vision task with room for structured-output finalization (YUK-201/YUK-792)', () => {
     expect(tasks.MultimodalDirectJudgeTask.kind).toBe('MultimodalDirectJudgeTask');
     expect(tasks.MultimodalDirectJudgeTask.defaultProvider).toBe('xiaomi');
     expect(tasks.MultimodalDirectJudgeTask.defaultModel).toBe('mimo-v2.5');
@@ -995,7 +995,7 @@ describe('ResearchMeetingDirectorTask registry entry', () => {
 // judges opt in (they are synchronous-route sensors whose catch swallows into
 // 'unsupported' — pg-boss never sees a throw, so no durable backstop exists).
 describe('budget.transientRetries (YUK-576)', () => {
-  it('both SDK outputFormat vision judges have a terminal turn after the envelope turn', () => {
+  it('both structured-output vision judges have a terminal turn after the envelope turn', () => {
     expect(tasks.StepsJudgeTask.budget.maxIterations).toBe(2);
     expect(tasks.MultimodalDirectJudgeTask.budget.maxIterations).toBe(2);
   });

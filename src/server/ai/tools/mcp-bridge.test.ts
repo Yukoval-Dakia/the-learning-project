@@ -1,3 +1,4 @@
+import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { capabilities } from '@/capabilities';
@@ -6,29 +7,6 @@ import type { ToolOperationRecord, ToolOperations } from '@/kernel/tools/tool-op
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, registerTool } from './registry';
-
-// Mock the SDK so the bridge can run without a Claude subprocess.
-const mockAgentSdk = vi.hoisted(() => ({
-  capturedServerOptions: undefined as unknown,
-  toolDefs: [] as Array<{
-    name: string;
-    description: string;
-    schema: unknown;
-    handler: (args: unknown) => Promise<unknown>;
-  }>,
-}));
-
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  createSdkMcpServer: vi.fn((opts: unknown) => {
-    mockAgentSdk.capturedServerOptions = opts;
-    return { type: 'sdk', instance: opts };
-  }),
-  tool: vi.fn((name: string, description: string, schema: unknown, handler: unknown) => {
-    const def = { name, description, schema, handler } as (typeof mockAgentSdk.toolDefs)[number];
-    mockAgentSdk.toolDefs.push(def);
-    return def;
-  }),
-}));
 
 // Mock writeToolCallLog / setToolCallLogMirroredEventId — bridge calls them
 // but unit tests just need to capture invocations.
@@ -56,11 +34,8 @@ vi.mock('@/kernel/events', () => ({
   }),
 }));
 
-import {
-  __resolveMirrorPolicy,
-  buildMcpServerFromRegistry,
-  shouldEmitToolUseForCaller,
-} from './mcp-bridge';
+import { __resolveMirrorPolicy, shouldEmitToolUseForCaller } from './mcp-bridge';
+import { buildPiDomainAgentTools } from './pi-tools';
 
 function makeReadTool<I, O>(
   name: string,
@@ -156,11 +131,12 @@ function fakeToolOperations(options: {
   };
 }
 
-describe('buildMcpServerFromRegistry', () => {
+describe('buildPiDomainAgentTools', () => {
+  let agentTools: AgentTool[] = [];
+
   beforeEach(() => {
     __resetRegistryForTests();
-    mockAgentSdk.capturedServerOptions = undefined;
-    mockAgentSdk.toolDefs = [];
+    agentTools = [];
     captured.toolCallLogs = [];
     captured.mirroredLinks = [];
     captured.events = [];
@@ -184,13 +160,22 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['demo_a', 'demo_b'] });
+    agentTools = buildPiDomainAgentTools({
+      ctx,
+      serverName: 'loom_v2',
+      toolNames: ['demo_a', 'demo_b'],
+    });
 
-    const server = mockAgentSdk.capturedServerOptions as { name: string };
-    expect(server.name).toBe('loom_v2');
-    expect(mockAgentSdk.toolDefs.map((t) => t.name)).toEqual(['demo_a', 'demo_b']);
+    expect(agentTools.map((t) => t.name)).toEqual(['mcp__loom_v2__demo_a', 'mcp__loom_v2__demo_b']);
     // Raw shape, not a ZodObject — SDK contract.
-    expect((mockAgentSdk.toolDefs[0].schema as Record<string, unknown>).q).toBeDefined();
+    expect(
+      (
+        (agentTools[0].parameters as { properties: Record<string, unknown> }).properties as Record<
+          string,
+          unknown
+        >
+      ).q,
+    ).toBeDefined();
   });
 
   it('keeps undeclared tools blocking and never creates a ToolOperations identity', async () => {
@@ -203,14 +188,14 @@ describe('buildMcpServerFromRegistry', () => {
         () => 'local reader · 3',
       ),
     );
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx, sessionId: 'session_bridge' },
       serverName: 'loom',
       toolNames: ['local_reader'],
       toolOperations,
     });
 
-    const response = (await mockAgentSdk.toolDefs[0]?.handler({ query: 'local facts' })) as {
+    const response = (await agentTools[0]?.execute('call_test', { query: 'local facts' })) as {
       content: Array<{ text: string }>;
     };
 
@@ -236,15 +221,14 @@ describe('buildMcpServerFromRegistry', () => {
       ),
       safeHandoff: { transport: 'remote', idempotent: true },
     });
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx, sessionId: 'session_bridge' },
       serverName: 'loom',
       toolNames: ['remote_reader'],
       toolOperations,
-      claimToolUseId: () => 'toolu_fast_1',
     });
 
-    const response = (await mockAgentSdk.toolDefs[0]?.handler({ query: 'fast facts' })) as {
+    const response = (await agentTools[0]?.execute('toolu_fast_1', { query: 'fast facts' })) as {
       content: Array<{ text: string }>;
     };
     const body = JSON.parse(response.content[0]?.text ?? '') as Record<string, unknown>;
@@ -274,18 +258,17 @@ describe('buildMcpServerFromRegistry', () => {
       safeHandoff: { transport: 'remote', idempotent: true },
       mirrorEvent: 'always',
     });
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx, sessionId: 'session_bridge' },
       serverName: 'loom',
       toolNames: ['remote_reader'],
       toolOperations,
-      claimToolUseId: () => 'toolu_bridge_4',
       onExecuteSettled: () => {
         order.push('execution-released');
       },
     });
 
-    const response = (await mockAgentSdk.toolDefs[0]?.handler({ query: 'nested evidence' })) as {
+    const response = (await agentTools[0]?.execute('call_test', { query: 'nested evidence' })) as {
       content: Array<{ text: string }>;
     };
     expect(JSON.parse(response.content[0]?.text ?? '')).toMatchObject({
@@ -306,7 +289,6 @@ describe('buildMcpServerFromRegistry', () => {
       input: { args: { query: 'original', limit: 3 }, tool_use_id: 'toolu_original_call' },
     });
     const toolOperations = fakeToolOperations({ waited: running, terminal: running });
-    const claimToolUseId = vi.fn(() => 'toolu_original_call');
     registerTool({
       ...makeReadTool<{ query: string; limit: number }, { facts: unknown[] }>(
         'remote_capped_reader',
@@ -316,20 +298,17 @@ describe('buildMcpServerFromRegistry', () => {
       ),
       safeHandoff: { transport: 'remote', idempotent: true },
     });
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx, sessionId: 'session_bridge' },
       serverName: 'loom',
       toolNames: ['remote_capped_reader'],
       toolOperations,
-      claimToolUseId,
       interceptInput: (_tool, args) => ({
         args: { ...(args as object), query: 'rewritten', limit: 3 },
       }),
     });
 
-    await mockAgentSdk.toolDefs[0]?.handler({ query: 'original' });
-
-    expect(claimToolUseId).toHaveBeenCalledWith('remote_capped_reader', { query: 'original' });
+    await agentTools[0]?.execute('toolu_original_call', { query: 'original' });
     expect(toolOperations.start).toHaveBeenCalledWith(
       expect.objectContaining({
         input: {
@@ -342,7 +321,6 @@ describe('buildMcpServerFromRegistry', () => {
   });
 
   it('exposes the real SDK tool-use id for an ordinary directly executed DomainTool', async () => {
-    const claimToolUseId = vi.fn(() => 'toolu_direct_reader');
     registerTool(
       makeReadTool<{ query: string }, { facts: string[] }>(
         'direct_reader',
@@ -351,21 +329,21 @@ describe('buildMcpServerFromRegistry', () => {
         () => 'direct reader',
       ),
     );
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx,
       serverName: 'loom',
       toolNames: ['direct_reader'],
-      claimToolUseId,
     });
 
-    const response = (await mockAgentSdk.toolDefs[0]?.handler({ query: 'evidence' })) as {
+    const response = (await agentTools[0]?.execute('toolu_direct_reader', {
+      query: 'evidence',
+    })) as {
       content: Array<{ text: string }>;
     };
     expect(JSON.parse(response.content[0]?.text ?? '')).toMatchObject({
       tool_use_id: 'toolu_direct_reader',
       output: { facts: ['fact_1'] },
     });
-    expect(claimToolUseId).toHaveBeenCalledWith('direct_reader', { query: 'evidence' });
   });
 
   it('rejects safe handoff for a non-read declaration', async () => {
@@ -388,25 +366,30 @@ describe('buildMcpServerFromRegistry', () => {
   it('constructs the production MCP server with both owned generation tools and query_events', async () => {
     await registerCapabilityTools(capabilities);
 
-    expect(() =>
-      buildMcpServerFromRegistry({
-        ctx,
-        serverName: 'loom_v2',
-        toolNames: ['generate_goal_outline', 'generate_question_candidate', 'query_events'],
-      }),
+    expect(
+      () =>
+        (agentTools = buildPiDomainAgentTools({
+          ctx,
+          serverName: 'loom_v2',
+          toolNames: ['generate_goal_outline', 'generate_question_candidate', 'query_events'],
+        })),
     ).not.toThrow();
-    expect(mockAgentSdk.toolDefs.map((tool) => tool.name)).toEqual([
-      'generate_goal_outline',
-      'generate_question_candidate',
-      'query_events',
+    expect(agentTools.map((tool) => tool.name)).toEqual([
+      'mcp__loom_v2__generate_goal_outline',
+      'mcp__loom_v2__generate_question_candidate',
+      'mcp__loom_v2__query_events',
     ]);
-    const goalOutlineSchema = mockAgentSdk.toolDefs[0].schema as Record<string, unknown>;
+    const goalOutlineSchema = (agentTools[0].parameters as { properties: Record<string, unknown> })
+      .properties as Record<string, unknown>;
     expect(goalOutlineSchema.goal_title).toBeDefined();
     expect(goalOutlineSchema.task_kind).toBeUndefined();
-    const questionCandidateSchema = mockAgentSdk.toolDefs[1].schema as Record<string, unknown>;
+    const questionCandidateSchema = (
+      agentTools[1].parameters as { properties: Record<string, unknown> }
+    ).properties;
     expect(questionCandidateSchema.seed_mode).toBeDefined();
     expect(questionCandidateSchema.knowledge_ids).toBeDefined();
-    const queryEventsSchema = mockAgentSdk.toolDefs[2].schema as Record<string, unknown>;
+    const queryEventsSchema = (agentTools[2].parameters as { properties: Record<string, unknown> })
+      .properties;
     expect(queryEventsSchema.filter).toBeDefined();
     expect(queryEventsSchema.cursor).toBeDefined();
   });
@@ -422,7 +405,7 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx,
       serverName: 'loom_v2',
       toolNames: ['demo_x'],
@@ -430,8 +413,8 @@ describe('buildMcpServerFromRegistry', () => {
         observedResults.push(result);
       },
     });
-    const def = mockAgentSdk.toolDefs[0];
-    const result = (await def.handler({ q: 'hello' })) as {
+    const def = agentTools[0];
+    const result = (await def.execute('call_test', { q: 'hello' })) as {
       content: Array<{ type: string; text: string }>;
     };
 
@@ -450,6 +433,7 @@ describe('buildMcpServerFromRegistry', () => {
       {
         name: 'demo_x',
         effect: 'read',
+        tool_use_id: 'call_test',
         input: { q: 'hello' },
         output: { len: 5 },
         error_reason: null,
@@ -461,11 +445,10 @@ describe('buildMcpServerFromRegistry', () => {
   it('executes and logs the presentation control without mirroring a domain event', async () => {
     const observedResults: unknown[] = [];
     registerTool(presentPrimaryViewTool as DomainTool<unknown, unknown>);
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx,
       serverName: 'loom',
       toolNames: ['present_primary_view'],
-      claimToolUseId: () => 'toolu_present_1',
       onResult: (result) => {
         observedResults.push(result);
       },
@@ -475,7 +458,7 @@ describe('buildMcpServerFromRegistry', () => {
       source: 'tool_result',
       ref: { kind: 'query_knowledge', id: 'toolu_read_1' },
     };
-    const result = (await mockAgentSdk.toolDefs[0]?.handler(nomination)) as {
+    const result = (await agentTools[0]?.execute('call_test', nomination)) as {
       content: Array<{ text: string }>;
     };
 
@@ -488,7 +471,7 @@ describe('buildMcpServerFromRegistry', () => {
       {
         name: 'present_primary_view',
         effect: 'control',
-        tool_use_id: 'toolu_present_1',
+        tool_use_id: 'call_test',
         input: nomination,
         output: {
           ...nomination,
@@ -522,9 +505,13 @@ describe('buildMcpServerFromRegistry', () => {
       mirrorEvent: 'when_causal',
     });
 
-    buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['demo_proposal'] });
+    agentTools = buildPiDomainAgentTools({
+      ctx,
+      serverName: 'loom_v2',
+      toolNames: ['demo_proposal'],
+    });
 
-    const result = (await mockAgentSdk.toolDefs[0]?.handler({ target_id: 'node_b' })) as {
+    const result = (await agentTools[0]?.execute('call_test', { target_id: 'node_b' })) as {
       content: Array<{ type: string; text: string }>;
     };
     const parsed = JSON.parse(result.content[0]?.text ?? '') as Record<string, unknown>;
@@ -561,9 +548,13 @@ describe('buildMcpServerFromRegistry', () => {
       mirrorEvent: 'when_causal',
     });
 
-    buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['author_question'] });
+    agentTools = buildPiDomainAgentTools({
+      ctx,
+      serverName: 'loom_v2',
+      toolNames: ['author_question'],
+    });
 
-    const result = (await mockAgentSdk.toolDefs[0]?.handler({
+    const result = (await agentTools[0]?.execute('call_test', {
       seed_mode: 'knowledge',
       knowledge_ids: ['kc_seed'],
     })) as { content: Array<{ type: string; text: string }> };
@@ -581,7 +572,7 @@ describe('buildMcpServerFromRegistry', () => {
       },
     });
 
-    const failedResult = (await mockAgentSdk.toolDefs[0]?.handler({
+    const failedResult = (await agentTools[0]?.execute('call_test', {
       seed_mode: 'knowledge',
       knowledge_ids: ['kc_missing'],
     })) as { content: Array<{ type: string; text: string }> };
@@ -625,8 +616,8 @@ describe('buildMcpServerFromRegistry', () => {
         mirrorEvent: 'when_causal',
       });
 
-      buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: [name] });
-      const handler = mockAgentSdk.toolDefs[0]?.handler;
+      agentTools = buildPiDomainAgentTools({ ctx, serverName: 'loom_v2', toolNames: [name] });
+      const handler = (a: unknown) => agentTools[0]?.execute('call_test', a);
       const baseInput = {
         attempt_event_id: 'evt_failure',
         ...(name === 'author_question' ? { seed_mode: 'variant' as const } : {}),
@@ -672,13 +663,13 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx,
       serverName: 'loom_v2',
       toolNames: ['demo_gate'],
       beforeExecute,
     });
-    const result = (await mockAgentSdk.toolDefs[0].handler({ q: 'hello' })) as {
+    const result = (await agentTools[0].execute('call_test', { q: 'hello' })) as {
       content: Array<{ type: string; text: string }>;
     };
 
@@ -712,7 +703,7 @@ describe('buildMcpServerFromRegistry', () => {
         (_input, output) => `validated ${output.validated_probes} probes`,
       ),
     );
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx,
       serverName: 'loom_v2',
       toolNames: ['demo_async_cancel_gate'],
@@ -722,7 +713,7 @@ describe('buildMcpServerFromRegistry', () => {
       },
     });
 
-    const execution = mockAgentSdk.toolDefs[0].handler({
+    const execution = agentTools[0].execute('call_test', {
       answer_ids: Array.from({ length: 48 }, (_, index) => `answer_${index + 1}`),
       transfer_count: 9,
     });
@@ -744,7 +735,7 @@ describe('buildMcpServerFromRegistry', () => {
         () => 'should not execute',
       ),
     );
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx,
       serverName: 'loom_v2',
       toolNames: ['demo_async_cancel_rejection'],
@@ -753,7 +744,7 @@ describe('buildMcpServerFromRegistry', () => {
       },
     });
 
-    const result = (await mockAgentSdk.toolDefs[0].handler({
+    const result = (await agentTools[0].execute('call_test', {
       prompt: 'author three linked artifacts from nine transfer variants',
     })) as { content: Array<{ text: string }> };
 
@@ -776,7 +767,7 @@ describe('buildMcpServerFromRegistry', () => {
         (_input, output) => `authored ${output.question_id}`,
       ),
     );
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx, callerActor: { kind: 'agent', ref: 'agent:copilot' } },
       serverName: 'loom_v2',
       toolNames: ['demo_barrier'],
@@ -790,7 +781,7 @@ describe('buildMcpServerFromRegistry', () => {
       },
     });
 
-    await mockAgentSdk.toolDefs[0].handler({
+    await agentTools[0].execute('call_test', {
       prompt: 'construct a unique-solution transfer item with dimensional validation',
     });
 
@@ -811,7 +802,7 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx,
       serverName: 'loom_v2',
       toolNames: ['demo_capped'],
@@ -823,7 +814,7 @@ describe('buildMcpServerFromRegistry', () => {
         observedResults.push(result);
       },
     });
-    const result = (await mockAgentSdk.toolDefs[0].handler({ limit: 10 })) as {
+    const result = (await agentTools[0].execute('call_test', { limit: 10 })) as {
       content: Array<{ type: string; text: string }>;
     };
 
@@ -848,6 +839,7 @@ describe('buildMcpServerFromRegistry', () => {
       {
         name: 'demo_capped',
         effect: 'read',
+        tool_use_id: 'call_test',
         input: { limit: 3 },
         output: {
           rows: 3,
@@ -870,7 +862,7 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx,
       serverName: 'loom_v2',
       toolNames: ['demo_observer_failure'],
@@ -879,7 +871,7 @@ describe('buildMcpServerFromRegistry', () => {
       },
     });
 
-    const result = (await mockAgentSdk.toolDefs[0].handler({
+    const result = (await agentTools[0].execute('call_test', {
       subject_id: 'diagnostic_subject_observer_failure',
     })) as { content: Array<{ text: string }> };
 
@@ -912,7 +904,7 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx,
       serverName: 'loom_v2',
       toolNames: ['demo_exhausted'],
@@ -924,7 +916,7 @@ describe('buildMcpServerFromRegistry', () => {
     });
 
     // No throw — handler resolves with a normal MCP content shape.
-    const result = (await mockAgentSdk.toolDefs[0].handler({ limit: 20 })) as {
+    const result = (await agentTools[0].execute('call_test', { limit: 20 })) as {
       content: Array<{ type: string; text: string }>;
     };
 
@@ -951,14 +943,14 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx,
       serverName: 'loom_v2',
       toolNames: ['demo_blocked_then_intercept'],
       beforeExecute: () => 'budget reached',
       interceptInput,
     });
-    await mockAgentSdk.toolDefs[0].handler({ q: 'x' });
+    await agentTools[0].execute('call_test', { q: 'x' });
 
     expect(interceptInput).not.toHaveBeenCalled();
     expect(runFn).not.toHaveBeenCalled();
@@ -978,13 +970,13 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx,
       serverName: 'loom_v2',
       toolNames: ['demo_gate_throw'],
       beforeExecute,
     });
-    const result = (await mockAgentSdk.toolDefs[0].handler({ q: 'hello' })) as {
+    const result = (await agentTools[0].execute('call_test', { q: 'hello' })) as {
       content: Array<{ type: string; text: string }>;
     };
 
@@ -1011,13 +1003,13 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx, callerActor: { kind: 'agent', ref: 'agent:copilot' } },
       serverName: 'loom_v2',
       toolNames: ['demo_summary_err'],
     });
-    const def = mockAgentSdk.toolDefs[0];
-    const result = (await def.handler({ q: 'hi' })) as {
+    const def = agentTools[0];
+    const result = (await def.execute('call_test', { q: 'hi' })) as {
       content: Array<{ type: string; text: string }>;
     };
 
@@ -1051,9 +1043,9 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['demo_err'] });
-    const def = mockAgentSdk.toolDefs[0];
-    const result = (await def.handler({ q: 'x' })) as {
+    agentTools = buildPiDomainAgentTools({ ctx, serverName: 'loom_v2', toolNames: ['demo_err'] });
+    const def = agentTools[0];
+    const result = (await def.execute('call_test', { q: 'x' })) as {
       content: Array<{ type: string; text: string }>;
     };
 
@@ -1068,8 +1060,9 @@ describe('buildMcpServerFromRegistry', () => {
   });
 
   it('throws when a requested tool is not registered', () => {
-    expect(() =>
-      buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['nope'] }),
+    expect(
+      () =>
+        (agentTools = buildPiDomainAgentTools({ ctx, serverName: 'loom_v2', toolNames: ['nope'] })),
     ).toThrow(/not registered/);
   });
 
@@ -1083,13 +1076,13 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx, callerActor: { kind: 'agent', ref: 'agent:copilot' } },
       serverName: 'loom_v2',
       toolNames: ['demo_mirror_ok'],
     });
-    const def = mockAgentSdk.toolDefs[0];
-    await def.handler({ q: 'hi' });
+    const def = agentTools[0];
+    await def.execute('call_test', { q: 'hi' });
 
     expect(captured.events).toHaveLength(1);
     const ev = captured.events[0] as Record<string, unknown>;
@@ -1120,13 +1113,13 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx, callerActor: { kind: 'agent', ref: 'agent:copilot' } },
       serverName: 'loom_v2',
       toolNames: ['demo_mirror_err'],
     });
-    const def = mockAgentSdk.toolDefs[0];
-    await def.handler({ q: 'x' });
+    const def = agentTools[0];
+    await def.execute('call_test', { q: 'x' });
 
     expect(captured.events).toHaveLength(1);
     const ev = captured.events[0] as Record<string, unknown>;
@@ -1145,12 +1138,12 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx, callerActor: { kind: 'user', ref: 'self' } },
       serverName: 'loom_v2',
       toolNames: ['demo_no_mirror_user'],
     });
-    await mockAgentSdk.toolDefs[0].handler({ q: 'x' });
+    await agentTools[0].execute('call_test', { q: 'x' });
 
     expect(captured.events).toHaveLength(0);
     expect(captured.toolCallLogs).toHaveLength(1); // tcl still written
@@ -1166,12 +1159,12 @@ describe('buildMcpServerFromRegistry', () => {
     t.mirrorEvent = 'never';
     registerTool(t);
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx, callerActor: { kind: 'agent', ref: 'agent:copilot' } },
       serverName: 'loom_v2',
       toolNames: ['demo_never'],
     });
-    await mockAgentSdk.toolDefs[0].handler({ q: 'x' });
+    await agentTools[0].execute('call_test', { q: 'x' });
 
     expect(captured.events).toHaveLength(0);
   });
@@ -1191,13 +1184,13 @@ describe('buildMcpServerFromRegistry', () => {
     registerTool(t);
     const onToolComplete = vi.fn();
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx, callerActor: { kind: 'agent', ref: 'agent:copilot' } },
       serverName: 'loom_v2',
       toolNames: ['demo_complete_never'],
       onToolComplete,
     });
-    await mockAgentSdk.toolDefs[0].handler({ q: 'x' });
+    await agentTools[0].execute('call_test', { q: 'x' });
 
     expect(onToolComplete).not.toHaveBeenCalled();
     // Same decision, same call: no persisted mirror either.
@@ -1217,19 +1210,20 @@ describe('buildMcpServerFromRegistry', () => {
     );
     const onToolComplete = vi.fn();
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx, callerActor: { kind: 'agent', ref: 'agent:copilot' } },
       serverName: 'loom_v2',
       toolNames: ['demo_complete_uv'],
       onToolComplete,
     });
-    await mockAgentSdk.toolDefs[0].handler({ q: 'hello' });
+    await agentTools[0].execute('call_test', { q: 'hello' });
 
     expect(onToolComplete).toHaveBeenCalledTimes(1);
     expect(onToolComplete).toHaveBeenCalledWith({
       toolName: 'demo_complete_uv',
       input: { q: 'hello' },
       summary: 'demo_complete_uv · hello → 5',
+      toolUseId: 'call_test',
     });
     expect(captured.events).toHaveLength(1);
   });
@@ -1254,7 +1248,7 @@ describe('buildMcpServerFromRegistry', () => {
         mirrorEvent: 'never',
       });
 
-      buildMcpServerFromRegistry({
+      agentTools = buildPiDomainAgentTools({
         ctx,
         serverName: 'loom_v2',
         toolNames: ['bad_primitive_output'],
@@ -1262,7 +1256,7 @@ describe('buildMcpServerFromRegistry', () => {
           settled.push('settled');
         },
       });
-      const result = (await mockAgentSdk.toolDefs[0].handler({ q: 'x' })) as {
+      const result = (await agentTools[0].execute('call_test', { q: 'x' })) as {
         content: Array<{ type: string; text: string }>;
       };
 
@@ -1293,8 +1287,12 @@ describe('buildMcpServerFromRegistry', () => {
         mirrorEvent: 'never',
       });
 
-      buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['strict_output'] });
-      const result = (await mockAgentSdk.toolDefs[0].handler({ q: 'x' })) as {
+      agentTools = buildPiDomainAgentTools({
+        ctx,
+        serverName: 'loom_v2',
+        toolNames: ['strict_output'],
+      });
+      const result = (await agentTools[0].execute('call_test', { q: 'x' })) as {
         content: Array<{ type: string; text: string }>;
       };
 
@@ -1320,8 +1318,12 @@ describe('buildMcpServerFromRegistry', () => {
         mirrorEvent: 'never',
       });
 
-      buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['transformed_output'] });
-      const result = (await mockAgentSdk.toolDefs[0].handler({ q: 'x' })) as {
+      agentTools = buildPiDomainAgentTools({
+        ctx,
+        serverName: 'loom_v2',
+        toolNames: ['transformed_output'],
+      });
+      const result = (await agentTools[0].execute('call_test', { q: 'x' })) as {
         content: Array<{ type: string; text: string }>;
       };
 
@@ -1352,7 +1354,7 @@ describe('buildMcpServerFromRegistry', () => {
         mirrorEvent: 'never',
       });
 
-      buildMcpServerFromRegistry({
+      agentTools = buildPiDomainAgentTools({
         ctx,
         serverName: 'loom_v2',
         toolNames: ['invalid_output_observer_fails'],
@@ -1360,7 +1362,7 @@ describe('buildMcpServerFromRegistry', () => {
           throw new Error('observer exploded');
         },
       });
-      const result = (await mockAgentSdk.toolDefs[0].handler({ q: 'x' })) as {
+      const result = (await agentTools[0].execute('call_test', { q: 'x' })) as {
         content: Array<{ type: string; text: string }>;
       };
 
@@ -1391,7 +1393,7 @@ describe('buildMcpServerFromRegistry', () => {
         mirrorEvent: 'never',
       });
 
-      buildMcpServerFromRegistry({
+      agentTools = buildPiDomainAgentTools({
         ctx,
         serverName: 'loom_v2',
         toolNames: ['schema_fail_barrier'],
@@ -1399,7 +1401,7 @@ describe('buildMcpServerFromRegistry', () => {
           settledCalls.push('released');
         },
       });
-      await mockAgentSdk.toolDefs[0].handler({ q: 'x' });
+      await agentTools[0].execute('call_test', { q: 'x' });
 
       expect(settledCalls).toHaveLength(1);
       expect(settledCalls[0]).toBe('released');
@@ -1422,12 +1424,12 @@ describe('buildMcpServerFromRegistry', () => {
         mirrorEvent: 'always',
       });
 
-      buildMcpServerFromRegistry({
+      agentTools = buildPiDomainAgentTools({
         ctx: { ...ctx, callerActor: { kind: 'agent', ref: 'agent:copilot' } },
         serverName: 'loom_v2',
         toolNames: ['schema_fail_mirror'],
       });
-      await mockAgentSdk.toolDefs[0].handler({ q: 'x' });
+      await agentTools[0].execute('call_test', { q: 'x' });
 
       const log = captured.toolCallLogs[0] as Record<string, unknown>;
       expect(log.error_reason).toMatch(/output_schema_invalid/);
@@ -1458,8 +1460,12 @@ describe('buildMcpServerFromRegistry', () => {
         mirrorEvent: 'never',
       });
 
-      buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['redact_check'] });
-      const result = (await mockAgentSdk.toolDefs[0].handler({ q: 'x' })) as {
+      agentTools = buildPiDomainAgentTools({
+        ctx,
+        serverName: 'loom_v2',
+        toolNames: ['redact_check'],
+      });
+      const result = (await agentTools[0].execute('call_test', { q: 'x' })) as {
         content: Array<{ type: string; text: string }>;
       };
 
@@ -1486,8 +1492,13 @@ describe('buildMcpServerFromRegistry', () => {
       mirrorEvent: 'never',
     };
     registerTool(badTool);
-    expect(() =>
-      buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['bad_schema'] }),
+    expect(
+      () =>
+        (agentTools = buildPiDomainAgentTools({
+          ctx,
+          serverName: 'loom_v2',
+          toolNames: ['bad_schema'],
+        })),
     ).toThrow(/must be a z\.object/);
   });
 });

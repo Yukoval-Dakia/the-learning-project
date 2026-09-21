@@ -15,12 +15,12 @@
 //        the flat OAuth lane total_cost_usd may be 0 → INCONCLUSIVE (inspect the printed
 //        aggregate usage + task-run rows, §7); NOT a pass — see computeExitCode below (review MAJOR #1: an
 //        inconclusive E-2 must NEVER exit 0 and silently authorize flipping the flag).
-//   E-3  mcpServers by-name resolution: the scout's AgentDefinition.mcpServers:['research_
-//        evidence'] resolves to the top-level in-process server. round-5 review minor
+//   E-3  tool allowlist resolution: the scout's AgentDefinition.tools wire-name
+//        allowlist resolves to the mounted research_evidence tools. round-5 review minor
 //        0.60 — PRIMARY signal is reportFindingsCaptured: report_findings is registered
 //        on research_evidence but is scout-EXCLUSIVE (absent from the director's own
-//        allowlist, tool-names.ts), so capturing it PROVES the nested scout's mcpServers
-//        reference resolved (report_findings lives on that same server) — the exact
+//        allowlist, tool-names.ts), so capturing it PROVES the nested scout's tools
+//        allowlist resolved (report_findings lives on that same server) — the exact
 //        thing E-3 exists to verify, with no ambiguity about WHO called it. The
 //        post-spawn read-tool-call count (round-3 #10's time-window filter) is now
 //        AUXILIARY informational output only, not part of the e3 decision: it cannot
@@ -36,7 +36,7 @@
 //        names/input overrides and the kill switch are covered by spawn-contract unit tests.
 //
 // This harness goes through the REAL runAgentTask (so the runner's auth env + the §2
-// agents/hooks passthrough + ctx.mcpServers are exercised exactly as production), and
+// piAgents/piHooks/piToolMounts passthrough is exercised exactly as production), and
 // observes the four properties from OUTSIDE: the shared contract's report, the shared
 // evidence toolTrace, the report_findings capture, and the two runs' cost delta.
 //
@@ -176,7 +176,7 @@ async function assembleAndRun(directive: string): Promise<CheckReport> {
     { buildDirectorServer, createDirectorCaps, DIRECTOR_ALLOWED_TOOLS },
     { EVIDENCE_SCOUT_CHARTER, RESEARCH_MEETING_AGENT_ACTOR },
     { EVIDENCE_READ_TOOL_NAMES },
-    { createSpawnContract },
+    { createPiSpawnContract },
   ] = await Promise.all([
     import('@/db/client'),
     import('@/server/ai/runner'),
@@ -186,7 +186,7 @@ async function assembleAndRun(directive: string): Promise<CheckReport> {
     import('@/capabilities/agency/server/meeting/director-tools'),
     import('@/capabilities/agency/server/meeting/director'),
     import('@/capabilities/agency/server/scout/tool-names'),
-    import('@/server/ai/spawn-contract'),
+    import('@/server/ai/tools/pi-subagent'),
   ]);
 
   const now = new Date();
@@ -206,7 +206,7 @@ async function assembleAndRun(directive: string): Promise<CheckReport> {
       pending_conjectures: [],
       // A synthetic candidate cell so the director has something concrete to hand the
       // scout. The evidence tools may return empty (no seeded rows) — an empty return
-      // still proves the mcpServers-by-name resolution (E-3): the CALL landed.
+      // still proves the scout tool-allowlist resolution (E-3): the CALL landed.
       candidate_cells: [
         {
           knowledge_id: 'kc_validation_probe',
@@ -239,7 +239,7 @@ async function assembleAndRun(directive: string): Promise<CheckReport> {
   // scout-attributable (the validation directive tells the director to spawn BEFORE
   // investigating, so anything before this point is unambiguously the director's own).
   let scoutSpawnedAt: string | undefined;
-  const spawnContract = createSpawnContract({
+  const piSpawnContract = createPiSpawnContract({
     enabled: true,
     agents: { 'evidence-scout': scout },
     onBudgetObservation(observation) {
@@ -259,14 +259,13 @@ async function assembleAndRun(directive: string): Promise<CheckReport> {
     {
       db,
       override: { provider: 'anthropic-sub' },
-      mcpServers: {
-        research_evidence: evidence.server,
-        research_meeting_director: director.server,
-      },
+      piToolMounts: [
+        { type: 'custom', tools: evidence.tools },
+        { type: 'custom', tools: director.tools },
+      ],
       allowedTools: [...DIRECTOR_ALLOWED_TOOLS],
-      agents: spawnContract.agents,
-      hooks: spawnContract.hooks,
-      canUseTool: spawnContract.canUseTool,
+      piAgents: piSpawnContract.piAgents,
+      piHooks: { beforeToolCall: [piSpawnContract.gate] },
       taskRunId: toolContextTaskRunId,
       lifecycleAbortController,
     },
@@ -285,7 +284,7 @@ async function assembleAndRun(directive: string): Promise<CheckReport> {
     ).length;
   }
 
-  const spawnBudget = spawnContract.readBudgetReport();
+  const spawnBudget = piSpawnContract.readBudgetReport();
   return {
     scoutSpawns: spawnBudget.allowedAttempts,
     observedSpawnAttempts: spawnBudget.observedAttempts,
@@ -363,7 +362,7 @@ async function main() {
   console.log(e2.reasonLine);
   console.log(
     line(
-      'E-3  mcpServers by-name resolves for the scout',
+      'E-3  tool allowlist resolves for the scout',
       e3,
       `report_findings captured=${spawnRun.reportFindingsCaptured} (primary — scout-exclusive tool); scout read-tool calls, post-spawn window (informational only)=${spawnRun.scoutReadToolCalls}`,
     ),

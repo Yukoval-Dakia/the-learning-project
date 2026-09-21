@@ -64,7 +64,8 @@ import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { type RunAgentTaskCtx, type RunTaskResult, runAgentTask } from '@/server/ai/runner';
-import { SPAWN_BUDGET_MODE, createSpawnContract } from '@/server/ai/spawn-contract';
+import { SPAWN_BUDGET_MODE } from '@/server/ai/spawn-contract';
+import { createPiSpawnContract } from '@/server/ai/tools/pi-subagent';
 import { getMasteryProjection } from '@/server/mastery/state';
 import {
   type BuildDirectorServerOpts,
@@ -378,7 +379,7 @@ export async function runResearchMeetingDirector(
   // contract still carries an explicit kill-switch input for other consumers, makes
   // every supplied AgentDefinition depth=1, and observes each unique Task id without a
   // speculative count denial. Existing SDK tool_call/cost paths remain authoritative.
-  const spawnContract = createSpawnContract({
+  const spawnContract = createPiSpawnContract({
     enabled: true,
     agents: { 'evidence-scout': scout },
     disabledReason: 'research-meeting subagent spawn is disabled',
@@ -403,14 +404,10 @@ export async function runResearchMeetingDirector(
     taskResult = await runAgentTaskFn('ResearchMeetingDirectorTask', input, {
       db,
       override: { provider: 'anthropic-sub' },
-      mcpServers: {
-        research_evidence: evidence.server,
-        research_meeting_director: director.server,
-      },
+      piToolMounts: [{ type: 'custom', tools: [...evidence.tools, ...director.tools] }],
       allowedTools: [...DIRECTOR_ALLOWED_TOOLS],
-      agents: spawnContract.agents,
-      hooks: spawnContract.hooks,
-      canUseTool: spawnContract.canUseTool,
+      piAgents: spawnContract.piAgents,
+      piHooks: { beforeToolCall: [spawnContract.gate] },
       taskRunId: toolContextTaskRunId,
       lifecycleAbortController,
     });

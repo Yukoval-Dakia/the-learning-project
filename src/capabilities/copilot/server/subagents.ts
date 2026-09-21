@@ -1,24 +1,17 @@
+import { parseFlag } from '@/core/env-flags';
+import { READ_TOOLS, toMcpAllowedToolName } from '@/kernel/tools/allowlists';
+import { EXA_MCP_ALLOWED_TOOLS } from '@/server/ai/mcp/exa';
 import type {
   AgentDefinition,
   SDKTaskNotificationMessage,
   SDKTaskProgressMessage,
   SDKTaskStartedMessage,
   SDKTaskUpdatedMessage,
-} from '@anthropic-ai/claude-agent-sdk';
-
-import { parseFlag } from '@/core/env-flags';
-import {
-  DOMAIN_TOOL_MCP_SERVER_NAME,
-  READ_TOOLS,
-  toMcpAllowedToolName,
-} from '@/kernel/tools/allowlists';
-import { EXA_MCP_ALLOWED_TOOLS, EXA_MCP_SERVER_NAME } from '@/server/ai/mcp/exa';
+} from '@/server/ai/sdk-types';
 import {
   SPAWN_TOOL_ALIASES,
   SPAWN_TOOL_NAME,
   type SpawnBudgetObservation,
-  type SpawnContract,
-  createSpawnContract,
   createSpawnDecider,
   isSpawnToolName,
 } from '@/server/ai/spawn-contract';
@@ -58,8 +51,9 @@ export interface BuildCopilotSubagentsOptions {
 /**
  * Build the single depth-1 Copilot researcher.
  *
- * `tools` is deliberately explicit. Omitting it would make the SDK inherit the
- * parent's Task/propose/write surface and would break both depth=1 and least privilege.
+ * `tools` is deliberately explicit. Omitting it would make the child inherit
+ * the parent's Task/propose/write surface and would break both depth=1 and
+ * least privilege. Wire-name filtering happens in the adapter's childToolsFor.
  */
 export function buildCopilotSubagents(
   opts: BuildCopilotSubagentsOptions,
@@ -72,14 +66,6 @@ export function buildCopilotSubagents(
     ...GENERATION_TOOL_NAMES,
     ...opts.parentAllowedTools.filter((name) => !tools.includes(name) && !isSpawnToolName(name)),
   ];
-  const mcpServers = [
-    ...(tools.some((name) => name.startsWith(`mcp__${DOMAIN_TOOL_MCP_SERVER_NAME}__`))
-      ? [DOMAIN_TOOL_MCP_SERVER_NAME]
-      : []),
-    ...(tools.some((name) => name.startsWith(`mcp__${EXA_MCP_SERVER_NAME}__`))
-      ? [EXA_MCP_SERVER_NAME]
-      : []),
-  ];
 
   return {
     [COPILOT_SUBAGENT_NAME]: {
@@ -88,7 +74,6 @@ export function buildCopilotSubagents(
       prompt: COPILOT_RESEARCHER_PROMPT,
       tools,
       disallowedTools: [...new Set(disallowedTools)],
-      mcpServers,
       maxTurns: opts.parentMaxTurns,
       // The parent needs the conclusion before it speaks in its single user-facing voice.
       background: false,
@@ -106,18 +91,15 @@ export interface BuildCopilotNativeResearchOptions {
 export interface CopilotNativeResearchConfig {
   /** Root model surface. Historical mailbox/tool-operation controls are drain-only. */
   allowedTools: string[];
-  /** Undefined under the operational kill switch; callers keep their own root lifecycle. */
-  spawnContract?: SpawnContract;
   /**
-   * YUK-1022 — the pi-lane twin: depth-one `PiSubagentSpec`s plus a
-   * `beforeToolCall` gate entry. Shares `spawnContract`'s memoized decider,
-   * so the SDK hook/canUseTool surface and the pi gate record one decision
-   * per toolUseId even when both spellings exist on the shared ctx.
+   * The pi spawn contract: depth-one `PiSubagentSpec`s plus a `beforeToolCall`
+   * gate entry backed by a memoized decider (one decision per toolUseId).
+   * Undefined under the operational kill switch.
    */
   piSpawnContract?: PiSpawnContract;
 }
 
-/** Shared SDK-native depth-one research surface for live and Mission roots. */
+/** Shared depth-one research surface for live and Mission roots. */
 export function buildCopilotNativeResearchConfig(
   options: BuildCopilotNativeResearchOptions,
 ): CopilotNativeResearchConfig {
@@ -134,11 +116,9 @@ export function buildCopilotNativeResearchConfig(
     onBudgetObservation: options.onBudgetObservation,
   };
   const decider = options.enabled ? createSpawnDecider(contractOptions) : undefined;
-  const spawnContract = decider ? createSpawnContract(contractOptions, decider) : undefined;
   const piSpawnContract = decider ? createPiSpawnContract(contractOptions, decider) : undefined;
   return {
     allowedTools,
-    ...(spawnContract ? { spawnContract } : {}),
     ...(piSpawnContract ? { piSpawnContract } : {}),
   };
 }
