@@ -8,15 +8,11 @@
 // this codebase reads. SDK-only knobs (env/cwd/permissionMode/persistSession/
 // hooks/agents/skills/settingSources/title/maxBudgetUsd) are gone.
 //
-// Anthropic Messages payload types (BetaMessage/MessageParam/BetaUsage) come
+// Anthropic Messages payload types (BetaMessage/MessageParam) come
 // from `@anthropic-ai/sdk`, which remains a dependency (pi-ai's anthropic
 // driver is built on it and runner.ts already imports ContentBlock from it).
 
-import type {
-  BetaMessage,
-  BetaRawMessageStreamEvent,
-  BetaUsage,
-} from '@anthropic-ai/sdk/resources/beta/messages/messages';
+import type { BetaMessage } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import type { MessageParam } from '@anthropic-ai/sdk/resources/messages/messages';
 import type { EffortLevel } from '@/ai/task-spec';
 
@@ -57,18 +53,6 @@ export interface Options {
 // Shared value objects
 // ---------------------------------------------------------------------------
 
-export type SDKAssistantMessageError =
-  | 'authentication_failed'
-  | 'oauth_org_not_allowed'
-  | 'billing_error'
-  | 'rate_limit'
-  | 'overloaded'
-  | 'invalid_request'
-  | 'model_not_found'
-  | 'server_error'
-  | 'unknown'
-  | 'max_output_tokens';
-
 export type TerminalReason = string;
 
 export interface ModelUsage {
@@ -84,21 +68,20 @@ export interface ModelUsage {
   provider?: string;
 }
 
-/** BetaUsage with every field non-null (SDK terminal frames normalize to this). */
-export type NonNullableUsage = {
-  [K in keyof BetaUsage]: NonNullable<BetaUsage[K]>;
+/** Terminal-frame usage the adapter emits: the four token counters every
+ *  consumer reads (sdk-terminal's accumulateUsage reads exactly these). Pi
+ *  carries no service_tier/server_tool_use breakdown — don't claim one. */
+export type ResultUsage = {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
 };
 
 export interface SDKPermissionDenial {
   tool_name: string;
   tool_use_id: string;
   tool_input: Record<string, unknown>;
-}
-
-export interface SDKDeferredToolUse {
-  id: string;
-  name: string;
-  input: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -109,49 +92,18 @@ export interface SDKAssistantMessage {
   type: 'assistant';
   message: BetaMessage;
   parent_tool_use_id: string | null;
-  error?: SDKAssistantMessageError;
   uuid: UUID;
   session_id: string;
-  request_id?: string;
-  /** Cumulative-thinking flag for replayed truncated turns — pi never emits it. */
-  resumed_from_incomplete_thinking?: true;
-  /** Wire uuids this frame replaces (refusal-fallback supersede). */
-  supersedes?: UUID[];
-  /** True when an interrupt/abort truncated the stream mid-message. */
-  aborted?: true;
   subagent_type?: string;
-  task_description?: string;
-  /** Originating-process finish timestamp; display only, never ordering. */
-  timestamp?: string;
 }
 
 export interface SDKUserMessage {
   type: 'user';
   message: MessageParam;
   parent_tool_use_id: string | null;
-  isSynthetic?: boolean;
-  /** Structured tool output for the matching tool_use block (per-tool shape). */
-  tool_use_result?: unknown;
-  priority?: 'now' | 'next' | 'later';
-  /** When false, appended to the transcript without triggering an assistant turn. */
-  shouldQuery?: boolean;
-  timestamp?: string;
   uuid?: UUID;
   session_id?: string;
   subagent_type?: string;
-  task_description?: string;
-}
-
-export interface SDKUserMessageReplay {
-  type: 'user';
-  message: MessageParam;
-  parent_tool_use_id: string | null;
-  isSynthetic?: boolean;
-  tool_use_result?: unknown;
-  timestamp?: string;
-  uuid: UUID;
-  session_id: string;
-  isReplay: true;
 }
 
 export interface SDKResultSuccess {
@@ -159,18 +111,16 @@ export interface SDKResultSuccess {
   subtype: 'success';
   duration_ms: number;
   duration_api_ms: number;
-  ttft_ms?: number;
   is_error: boolean;
   api_error_status?: number | null;
   num_turns: number;
   result: string;
   stop_reason: string | null;
   total_cost_usd: number;
-  usage: NonNullableUsage;
+  usage: ResultUsage;
   modelUsage: Record<string, ModelUsage>;
   permission_denials: SDKPermissionDenial[];
   structured_output?: unknown;
-  deferred_tool_use?: SDKDeferredToolUse;
   terminal_reason?: TerminalReason;
   uuid: UUID;
   session_id: string;
@@ -189,7 +139,7 @@ export interface SDKResultError {
   num_turns: number;
   stop_reason: string | null;
   total_cost_usd: number;
-  usage: NonNullableUsage;
+  usage: ResultUsage;
   modelUsage: Record<string, ModelUsage>;
   permission_denials: SDKPermissionDenial[];
   errors: string[];
@@ -200,7 +150,7 @@ export interface SDKResultError {
 
 export type SDKResultMessage = SDKResultSuccess | SDKResultError;
 
-export type ApiKeySource = 'user' | 'project' | 'org' | 'temporary' | 'oauth';
+export type ApiKeySource = 'user' | 'project' | 'org' | 'temporary' | 'oauth' | 'none';
 
 // ---------------------------------------------------------------------------
 // Permission callback (the pruned `canUseTool` contract)
@@ -219,7 +169,6 @@ export interface SDKSystemMessage {
   subtype: 'init';
   agents?: string[];
   apiKeySource?: ApiKeySource;
-  betas?: string[];
   claude_code_version?: string;
   cwd?: string;
   tools?: string[];
@@ -227,8 +176,6 @@ export interface SDKSystemMessage {
   model?: string;
   permissionMode?: PermissionMode;
   slash_commands?: string[];
-  output_style?: string;
-  skills?: string[];
   uuid: UUID;
   session_id: string;
 }
@@ -316,35 +263,24 @@ export interface SDKTaskNotificationMessage {
   session_id: string;
 }
 
-/** Partial assistant stream event — retained for union completeness; the pi lane never emits one. */
-export interface SDKPartialAssistantMessage {
-  type: 'stream_event';
-  event: BetaRawMessageStreamEvent;
-  parent_tool_use_id: string | null;
-  uuid: UUID;
-  session_id: string;
-}
-
 /**
  * The normalized frame union the runner consumes. Sized to what the codebase
- * produces/discriminates: assistant, user (+replay), result, system init,
+ * produces/discriminates: assistant, user, result, system init,
  * compact_boundary, and the durable task_* lifecycle frames.
  */
 export type SDKMessage =
   | SDKAssistantMessage
   | SDKUserMessage
-  | SDKUserMessageReplay
   | SDKResultMessage
   | SDKSystemMessage
   | SDKCompactBoundaryMessage
   | SDKTaskStartedMessage
   | SDKTaskProgressMessage
   | SDKTaskUpdatedMessage
-  | SDKTaskNotificationMessage
-  | SDKPartialAssistantMessage;
+  | SDKTaskNotificationMessage;
 
 // ---------------------------------------------------------------------------
-// Nested-agent + remote-MCP declarations (callers keep authoring these).
+// Nested-agent declarations (callers keep authoring these).
 // ---------------------------------------------------------------------------
 
 /** Depth-reduced nested-agent spec — the caller-declared subagent definition. */
@@ -360,19 +296,4 @@ export interface AgentDefinition {
   maxTurns?: number;
   /** Kept for declared-surface parity — pi runs children synchronously. */
   background?: boolean;
-}
-
-export interface McpServerToolPolicy {
-  name: string;
-  permission_policy?: 'always_allow' | 'always_ask' | 'always_denied' | 'always_deny';
-}
-
-/** Remote MCP over HTTP — consumed by `piRemoteMcpMount` / the remote bridge. */
-export interface McpHttpServerConfig {
-  type: 'http';
-  url: string;
-  headers?: Record<string, string>;
-  tools?: McpServerToolPolicy[];
-  timeout?: number;
-  alwaysLoad?: boolean;
 }

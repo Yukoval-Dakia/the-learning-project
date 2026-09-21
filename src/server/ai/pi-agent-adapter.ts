@@ -107,20 +107,13 @@ function piMaxRetries(): number | undefined {
 
 /**
  * Pi session ids carry a `pi:` prefix so a persisted `agent_sdk_session_id`
- * can never be mistaken for an SDK session file name. The SDK lane folds any
- * `pi:`-prefixed resume pointer to a cold start (copilot-execution computes
- * the caller-side resume), and the pi lane reuses the id verbatim on resume
+ * cursor is unambiguous. Same-process pi cursors resume verbatim; a
+ * cross-process or lane-mismatched attempt cold-starts from the caller's
+ * durable-turn replay (copilot-execution computes the caller-side resume),
  * so context-digest delivery gating (`shouldDeliverCopilotSessionContext`)
  * keeps its per-session memory.
  */
 export const PI_SESSION_ID_PREFIX = 'pi:';
-
-/** `pi:`-prefixed durable session ids are pi-lane owned — an SDK run must
- *  cold-start them (no provider session file exists), a pi run reuses the id
- *  and seeds context from the caller's durable-turn replay. */
-export function isPiSessionId(sessionId: string): boolean {
-  return sessionId.startsWith(PI_SESSION_ID_PREFIX);
-}
 
 /**
  * Rough chars-per-token divisor for the transformContext compaction trigger.
@@ -239,7 +232,7 @@ function piInitFrame(args: {
     slash_commands: [],
     uuid: randomUUID(),
     session_id: args.sessionId,
-  } as unknown as PiRunnerMessage;
+  } as PiRunnerMessage;
 }
 
 function piCompactBoundaryFrame(args: {
@@ -260,7 +253,7 @@ function piCompactBoundaryFrame(args: {
     },
     uuid: randomUUID(),
     session_id: args.sessionId,
-  } as unknown as PiRunnerMessage;
+  } as PiRunnerMessage;
 }
 
 /** task_* frame builders — the shapes subagent-mailbox/subagents.ts consume. */
@@ -283,7 +276,7 @@ function piTaskStartedFrame(args: {
     prompt: args.prompt,
     uuid: randomUUID(),
     session_id: args.sessionId,
-  } as unknown as PiRunnerMessage;
+  } as PiRunnerMessage;
 }
 
 function piTaskProgressFrame(args: {
@@ -313,7 +306,7 @@ function piTaskProgressFrame(args: {
     ...(args.lastToolName ? { last_tool_name: args.lastToolName } : {}),
     uuid: randomUUID(),
     session_id: args.sessionId,
-  } as unknown as PiRunnerMessage;
+  } as PiRunnerMessage;
 }
 
 function piTaskUpdatedFrame(args: {
@@ -334,7 +327,7 @@ function piTaskUpdatedFrame(args: {
     },
     uuid: randomUUID(),
     session_id: args.sessionId,
-  } as unknown as PiRunnerMessage;
+  } as PiRunnerMessage;
 }
 
 function piUserMessage(content: PiUserContent): AgentMessage {
@@ -343,7 +336,7 @@ function piUserMessage(content: PiUserContent): AgentMessage {
 
 /**
  * Convert one SDK user message into pi's UserMessage. Text and base64 images
- * map 1:1; url image sources and tool_result blocks are outside the P1 lane —
+ * map 1:1; url image sources are rejected upstream in runner.ts and tool_result
  * rejected loudly rather than silently dropped into a malformed request.
  */
 function sdkUserMessageToPi(msg: SDKUserMessage): AgentMessage {
@@ -365,7 +358,7 @@ function sdkUserMessageToPi(msg: SDKUserMessage): AgentMessage {
       return { type: 'image', data: block.source.data, mimeType: block.source.media_type };
     }
     throw new Error(
-      `pi adapter cannot carry SDK user block '${block.type}' — url images / tool results are outside the P1 single-shot lane`,
+      `pi adapter cannot carry SDK user block '${block.type}' — url images are rejected in runner.ts; tool_result frames are synthesized by the adapter`,
     );
   });
   return piUserMessage(blocks);
@@ -530,7 +523,7 @@ export function piToolResultToSdkFrame(
     uuid: randomUUID(),
     session_id: sessionId,
   };
-  return { ...sdkMessage, source: 'pi' } as unknown as PiRunnerMessage;
+  return { ...sdkMessage, source: 'pi' } as PiRunnerMessage;
 }
 
 function lastAssistantMessage(messages: AgentMessage[]): PiAssistantMessage | undefined {
@@ -615,7 +608,7 @@ export function piTerminalResultFrame(args: {
       total_cost_usd: costUsd,
       errors: [final?.errorMessage ?? 'pi agent aborted by provider'],
       ...usageParts,
-    } as unknown as SDKResultMessage & { source: 'pi' };
+    } as SDKResultMessage & { source: 'pi' };
   }
   if (!final) {
     return {
@@ -626,7 +619,7 @@ export function piTerminalResultFrame(args: {
       total_cost_usd: 0,
       errors: ['pi agent_loop ended without an assistant message'],
       ...usageParts,
-    } as unknown as SDKResultMessage & { source: 'pi' };
+    } as SDKResultMessage & { source: 'pi' };
   }
   if (args.cappedByMaxTurns) {
     return {
@@ -637,7 +630,7 @@ export function piTerminalResultFrame(args: {
       total_cost_usd: costUsd,
       errors: [`pi agent_loop stopped at the configured turn ceiling (${args.numTurns})`],
       ...usageParts,
-    } as unknown as SDKResultMessage & { source: 'pi' };
+    } as SDKResultMessage & { source: 'pi' };
   }
   if (final.stopReason === 'error') {
     return {
@@ -648,7 +641,7 @@ export function piTerminalResultFrame(args: {
       total_cost_usd: costUsd,
       errors: [final.errorMessage ?? 'pi stream error'],
       ...usageParts,
-    } as unknown as SDKResultMessage & { source: 'pi' };
+    } as SDKResultMessage & { source: 'pi' };
   }
   return {
     ...base,
@@ -659,7 +652,7 @@ export function piTerminalResultFrame(args: {
     total_cost_usd: costUsd,
     structured_output: undefined,
     ...usageParts,
-  } as unknown as SDKResultMessage & { source: 'pi' };
+  } as SDKResultMessage & { source: 'pi' };
 }
 
 /** Aggregated usage from nested child loops, merged into the terminal frame
@@ -1144,9 +1137,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       messages: piReplayTurnsToMessages(this.args.piSessionReplay ?? [], this.model),
       ...(this.allTools.length > 0 ? { tools: this.allTools } : {}),
     };
-    // options.maxTurns is the SDK's agentic-turn ceiling. Pi has no built-in
+    // options.maxTurns is the runner's agentic-turn ceiling. Pi has no built-in
     // equivalent — shouldStopAfterTurn counts completed turns and asks the
-    // loop to end; the terminal frame then reports the SDK subtype
+    // loop to end; the terminal frame then reports the normalized subtype
     // 'error_max_turns' so lifecycle/finish-reason handling stays identical.
     const maxTurns = typeof options.maxTurns === 'number' ? options.maxTurns : undefined;
     let completedTurns = 0;

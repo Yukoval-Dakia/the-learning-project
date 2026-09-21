@@ -30,7 +30,7 @@ vi.mock('@/server/ai/log', () => ({
   writeToolCallLog: trace.toolCall,
 }));
 
-const mockSdk = vi.hoisted(() => ({ messages: [] as unknown[] }));
+const mockPi = vi.hoisted(() => ({ messages: [] as unknown[] }));
 
 import { type RunnerMessage, __setPiAdapterForTests } from '@/server/ai/execution-adapter';
 
@@ -40,7 +40,7 @@ function fakePiAdapter() {
     startup: vi.fn(async () => ({
       query: vi.fn(() =>
         (async function* () {
-          for (const m of mockSdk.messages) yield m as RunnerMessage;
+          for (const m of mockPi.messages) yield m as RunnerMessage;
         })(),
       ),
       close: vi.fn(async () => {}),
@@ -93,7 +93,7 @@ describe('ProfileCriticTask via runner (RL6 proposal-only + trace-written)', () 
   let savedXiaomiKey: string | undefined;
 
   beforeEach(() => {
-    mockSdk.messages = [
+    mockPi.messages = [
       {
         type: 'result',
         subtype: 'success',

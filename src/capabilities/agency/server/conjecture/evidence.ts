@@ -182,7 +182,7 @@ export interface ConjectureEvidenceAssetRef {
 export interface LoadedConjectureEvidenceImage {
   asset_id: string;
   occurrences: Array<Omit<ConjectureEvidenceAssetRef, 'asset_id'>>;
-  /** base64 without a data: prefix (the runner also accepts URL/Uint8Array). */
+  /** base64 without a data: prefix (the runner also accepts Uint8Array). */
   data: string;
   mediaType: string;
 }

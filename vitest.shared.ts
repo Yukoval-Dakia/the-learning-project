@@ -114,7 +114,7 @@ export const fastTestInclude = [
   // as stream-cancel: fake pi adapter + @/server/ai/log are vi.mock'd
   // and `db` is an untouched stub, so no live Postgres is needed.
   'src/server/ai/runner.stream-collect.test.ts',
-  // YUK-757 — pure spawn permission/depth contract. It imports SDK types only;
+  // YUK-757 — pure spawn permission/depth contract. It imports vendored sdk-types only;
   // no DB client, network, or subprocess is touched.
   'src/server/ai/spawn-contract.unit.test.ts',
   'src/server/ai/run-lifecycle.test.ts',
@@ -134,7 +134,7 @@ export const fastTestInclude = [
   'src/server/ai/runner-fn.unit.test.ts',
   // YUK-1013 — ExecutionAdapter seam (P0): resolveExecutionAdapter fail-closed
   // pin + explicitProviderRouting precedence + modelBinding retry-pin. Pure
-  // no-DB: imports ./execution-adapter (SDK types + startup, not invoked) +
+  // no-DB: imports ./execution-adapter (vendored sdk-types + startup, not invoked) +
   // ./run-lifecycle (transientRetryEnabled only). src/server/ai/** has no unit
   // glob, so this MUST be listed (same enumeration requirement as above).
   'src/server/ai/execution-adapter.test.ts',
@@ -144,10 +144,6 @@ export const fastTestInclude = [
   // + ./providers types. Same enumeration requirement as above (no
   // src/server/ai/** unit glob).
   'src/server/ai/pi-agent-adapter.test.ts',
-  // YUK-299 — Zod→outputFormat adapter unit. Pure no-DB: imports only
-  // ./output-format (→ zod-to-json-schema, pure JS) + @/core/schema/business (Zod).
-  // Same enumeration requirement as above (no src/server/ai/** unit glob).
-  'src/server/ai/output-format.test.ts',
   // YUK-607 — LLM JSON 修复带提取器。Pure no-DB: imports only ./json-extract (→ jsonrepair, pure JS).
   'src/server/ai/json-extract.test.ts',
   // YUK-359 — pure arithmetic cost fallback, no DB/SDK imports.
@@ -301,7 +297,7 @@ export const fastTestInclude = [
   // touched (the real createMemoryClient is never constructed in tests).
   'src/server/ai/tools/search-memory-facts.test.ts',
   // YUK-198 — pure (no-DB) Tavily remote MCP builder: reads TAVILY_API_KEY via
-  // vi.stubEnv, returns a static McpHttpServerConfig. No live DB / AI / network.
+  // vi.stubEnv, returns a static RemoteMcpHttpConfig. No live DB / AI / network.
   'src/server/ai/mcp/tavily.test.ts',
   // YUK-962 — pure no-DB provider admission config and provenance arithmetic.
   // src/server/ai/** has no unit glob, so enumerate these fast tests explicitly.

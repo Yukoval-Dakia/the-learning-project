@@ -230,7 +230,7 @@ export interface RunTaskCtx {
    * below cloudflared idle-100s. A durable pg-boss run needs a much larger
    * ceiling but MUST NOT mutate the shared registry default (YUK-458 revert lesson:
    * a raised inline budget only turned error_max_turns into an inline-request abort).
-   * NARROW: only `maxIterations` (→ SDK maxTurns) and `timeoutMs` (→ the abort timer).
+   * NARROW: only `maxIterations` (→ runner maxTurns) and `timeoutMs` (→ the abort timer).
    * The THIRD durable knob — the tool-call ceiling (maxToolCalls) — is NOT here: it
    * lives in the ContextBudgetTracker (budgets.ts, surface-keyed) and is overridden
    * at the handler when constructing the tracker (MF-A). OMITTED (the default) ⇒
@@ -320,8 +320,10 @@ export type StreamTaskCtx = RunTaskCtx & {
 export interface MultimodalTaskInput {
   text: string;
   images: Array<{
-    /** base64-encoded image data (no "data:" prefix), URL, or Buffer-like. */
-    data: string | URL | Uint8Array;
+    /** base64-encoded image data (no "data:" prefix) or Buffer-like. URLs are
+     *  not supported — the pi adapter carries base64 only; fetch and inline
+     *  upstream. */
+    data: string | Uint8Array;
     mediaType: string;
   }>;
 }
@@ -378,7 +380,6 @@ function isMultimodalTaskInput(input: unknown): input is MultimodalTaskInput {
 }
 
 function imageDataToBase64(data: MultimodalTaskInput['images'][number]['data']): string {
-  if (data instanceof URL) return data.toString();
   if (typeof data === 'string') return data;
   return Buffer.from(data).toString('base64');
 }
@@ -394,10 +395,12 @@ function materializeMultimodalUserMessage(input: MultimodalTaskInput): SDKUserMe
         ...input.images.map((img) => {
           const data = imageDataToBase64(img.data);
           if (data.startsWith('http://') || data.startsWith('https://')) {
-            return {
-              type: 'image' as const,
-              source: { type: 'url' as const, url: data },
-            };
+            // pi carries base64 image data only — fail loudly here rather than
+            // handing the adapter a block it must throw on mid-stream.
+            throw new Error(
+              'multimodal image data must be base64 — URL image sources are not ' +
+                'supported (fetch the bytes and pass them inline)',
+            );
           }
           return {
             type: 'image' as const,

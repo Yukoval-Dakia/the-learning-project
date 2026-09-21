@@ -1,26 +1,25 @@
 // Provider Manager — single source of truth for which upstream serves each
 // AI task. The registry (src/ai/registry.ts) declares `defaultProvider +
 // defaultModel` per task; `resolveTaskProvider()` looks up the provider here
-// and returns a ResolvedProvider for the Claude Agent SDK runner to forward
-// into the spawned `claude` subprocess.
+// and returns a ResolvedProvider; the pi adapter maps it to a loom catalog
+// entry (pi-models.ts PROVIDER_PI_CATALOG_SPECS) for the in-process agentLoop.
 //
 // Two auth modes (YUK-365):
 //   - authMode 'key'   — a bearer / x-api-key value (ANTHROPIC_API_KEY style),
-//     optionally with a baseUrl override (xiaomi/mimo). The runner forwards it
-//     as ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY. This is the default + the only
-//     pre-YUK-365 behaviour, preserved exactly.
+//     optionally with a baseUrl override (xiaomi/mimo). The pi catalog entry
+//     carries the baseUrl; the resolved key feeds pi's credential wiring.
+//     This is the default + the only pre-YUK-365 behaviour, preserved exactly.
 //   - authMode 'oauth' — a long-lived subscription OAuth token (the owner's
 //     Claude Max sub, generated via `claude setup-token`). It works ONLY against
 //     Anthropic's first-party endpoint and is MUTUALLY EXCLUSIVE with any
 //     ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN (precedence:
-//     ANTHROPIC_API_KEY > CLAUDE_CODE_OAUTH_TOKEN). The runner therefore SETS
-//     CLAUDE_CODE_OAUTH_TOKEN and explicitly UNSETS the three conflicting vars in
-//     the subprocess env block (see runner.ts buildAgentEnv).
+//     ANTHROPIC_API_KEY > CLAUDE_CODE_OAUTH_TOKEN). resolveTaskProvider returns
+//     the token as the resolved credential; pi's Anthropic driver sends
+//     `sk-ant-oat*` values as Bearer automatically (pi-models.ts).
 //
 // Pre-2026-05-17 this module returned a Vercel AI SDK `LanguageModel`
-// instance; the migration to the pi agent runtime replaces that
-// with a plain config record because the SDK accepts no model handle —
-// it reads its target from env vars when spawning the CLI.
+// instance; it now returns a plain config record — pi owns the wire protocol
+// and resolves the model from the loom catalog entry, no model handle needed.
 //
 // Adding a new key-auth provider: append an entry to PROVIDERS with
 // authMode:'key', set the env-var name + baseURL. Adding a new task: edit
@@ -93,11 +92,10 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
     baseUrl: 'https://api.xiaomimimo.com/anthropic',
     apiKeyEnv: 'XIAOMI_API_KEY',
     description: 'Xiaomi Mimo Anthropic-protocol-compat endpoint (mimo-v2.5* models)',
-    // YUK-924 site 2 — Xiaomi's Anthropic-compatible endpoint does not implement
-    // the Agent SDK's native structured-output protocol (passing outputFormat
-    // makes the CLI loop until maxTurns), so EVERY model on this lane has
-    // structuredOutput disabled. (Was the hard-coded
-    // `resolved.provider === 'xiaomi'` check in runner.ts buildQueryOptions.)
+    // YUK-924 site 2 — Xiaomi's Anthropic-compatible endpoint never honoured a
+    // transport-level structured-output contract, so EVERY model on this lane
+    // has structuredOutput disabled; structured extraction stays app-level
+    // (Zod parse of the result text, with char-scan fallbacks downstream).
     modelDefaults: { capabilities: { structuredOutput: false } },
     models: {
       // Catalog (models.dev) lists mimo-v2.5-pro as text-only, but production
@@ -172,10 +170,10 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
     apiKeyEnv: 'OPENCODE_API_KEY',
     description: 'OpenCode Go subscription catalog via the pi execution adapter',
     modelDefaults: {
-      // The lane still has no SDK structured-output protocol, and tool calling
-      // stays opt-in per model below: declare both false explicitly (not
-      // 'unknown') so the capability gate rejects with an honest classification,
-      // not a gap.
+      // The lane has no transport-level structured-output contract, and tool
+      // calling stays opt-in per model below: declare both false explicitly
+      // (not 'unknown') so the capability gate rejects with an honest
+      // classification, not a gap.
       capabilities: { structuredOutput: false, toolCalling: false },
       // pi usage.cost is a catalog-rate estimate, not a contractual invoice
       // (design §6 R1): never metered.
@@ -302,13 +300,13 @@ export const PROVIDER_PI_CATALOG_SPECS: Readonly<
 > = {
   xiaomi: {
     catalogProvider: 'xiaomi',
-    baseUrl: PROVIDERS.xiaomi.authMode === 'key' ? PROVIDERS.xiaomi.baseUrl! : '',
+    baseUrl: PROVIDERS.xiaomi.authMode === 'key' ? (PROVIDERS.xiaomi.baseUrl ?? '') : '',
     credentialEnv: 'XIAOMI_API_KEY',
     name: 'Xiaomi Mimo (Anthropic-compat)',
   },
   zhipu: {
     catalogProvider: 'zhipuai-coding-plan',
-    baseUrl: PROVIDERS.zhipu.authMode === 'key' ? PROVIDERS.zhipu.baseUrl! : '',
+    baseUrl: PROVIDERS.zhipu.authMode === 'key' ? (PROVIDERS.zhipu.baseUrl ?? '') : '',
     credentialEnv: 'ZHIPU_API_KEY',
     name: 'Zhipu GLM coding plan (Anthropic-compat)',
   },

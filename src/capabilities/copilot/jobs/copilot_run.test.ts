@@ -82,7 +82,7 @@ async function copilotReplyEvents(sessionId: string) {
     .where(and(eq(event.session_id, sessionId), eq(event.action, 'experimental:copilot_reply')));
 }
 
-// streamTaskCollectingFn 的 ctx 形（db + mcpServers + allowedTools + skills +
+// streamTaskCollectingFn 的 ctx 形（db + piToolMounts + allowedTools + piSkillDocs +
 // budgetOverride），让 mock.calls[0] 携带 typed tuple。
 type AgentCtx = {
   db: unknown;

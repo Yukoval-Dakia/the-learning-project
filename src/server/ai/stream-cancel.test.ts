@@ -17,7 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // AbortController, which is the wiring point YUK-238 asserts on. `gate` lets a
 // test hold the async generator open (stream still streaming) so cancel() /
 // signal abort can fire mid-flight.
-const mockSdk = vi.hoisted(() => ({
+const mockPi = vi.hoisted(() => ({
   capturedOptions: undefined as unknown,
   startupGate: undefined as undefined | Promise<void>,
   warmClose: vi.fn(),
@@ -38,8 +38,8 @@ function fakePiAdapter() {
   return {
     id: 'pi' as const,
     startup: vi.fn(async (args: ExecutionAdapterStartupArgs) => {
-      mockSdk.capturedOptions = args.options;
-      if (mockSdk.startupGate) await mockSdk.startupGate;
+      mockPi.capturedOptions = args.options;
+      if (mockPi.startupGate) await mockPi.startupGate;
       return {
         query: vi.fn(() =>
           (async function* (): AsyncGenerator<RunnerMessage> {
@@ -47,8 +47,8 @@ function fakePiAdapter() {
               type: 'assistant',
               message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
             } as RunnerMessage;
-            if (mockSdk.gate) await mockSdk.gate;
-            yield (mockSdk.terminalMessage ?? {
+            if (mockPi.gate) await mockPi.gate;
+            yield (mockPi.terminalMessage ?? {
               type: 'result',
               subtype: 'success',
               result: 'hi',
@@ -62,7 +62,7 @@ function fakePiAdapter() {
             }) as unknown as RunnerMessage;
           })(),
         ),
-        close: mockSdk.warmClose,
+        close: mockPi.warmClose,
       };
     }),
   };
@@ -147,16 +147,16 @@ async function drain(response: Response): Promise<void> {
 }
 
 function capturedAbortController(): AbortController {
-  return (mockSdk.capturedOptions as { abortController: AbortController }).abortController;
+  return (mockPi.capturedOptions as { abortController: AbortController }).abortController;
 }
 
 describe('streamTask — YUK-238 client-disconnect abort', () => {
   beforeEach(() => {
-    mockSdk.capturedOptions = undefined;
-    mockSdk.startupGate = undefined;
-    mockSdk.warmClose.mockClear();
-    mockSdk.gate = undefined;
-    mockSdk.terminalMessage = undefined;
+    mockPi.capturedOptions = undefined;
+    mockPi.startupGate = undefined;
+    mockPi.warmClose.mockClear();
+    mockPi.gate = undefined;
+    mockPi.terminalMessage = undefined;
     logMocks.finishedShouldThrow = false;
     logMocks.finishedFailuresRemaining = 0;
     logMocks.terminalStatuses = [];
@@ -170,10 +170,10 @@ describe('streamTask — YUK-238 client-disconnect abort', () => {
     vi.clearAllMocks();
   });
 
-  it('aborts the SDK run when the response body stream is cancelled', async () => {
+  it('aborts the pi run when the response body stream is cancelled', async () => {
     // Hold the generator open so the stream is still live when we cancel.
     let release!: () => void;
-    mockSdk.gate = new Promise<void>((resolve) => {
+    mockPi.gate = new Promise<void>((resolve) => {
       release = resolve;
     });
 
@@ -187,7 +187,7 @@ describe('streamTask — YUK-238 client-disconnect abort', () => {
     const ac = capturedAbortController();
     expect(ac.signal.aborted).toBe(false);
 
-    // Consumer cancels (client disconnect). cancel() must abort the SDK run.
+    // Consumer cancels (client disconnect). cancel() must abort the pi run.
     await reader.cancel();
     expect(ac.signal.aborted).toBe(true);
 
@@ -197,25 +197,25 @@ describe('streamTask — YUK-238 client-disconnect abort', () => {
 
   it('closes an initialized warm CLI without touching a cancelled stream', async () => {
     let releaseStartup!: () => void;
-    mockSdk.startupGate = new Promise<void>((resolve) => {
+    mockPi.startupGate = new Promise<void>((resolve) => {
       releaseStartup = resolve;
     });
 
     const response = streamTask('AttributionTask', { q: 'x' }, { db: fakeDb });
     const reader = response.body?.getReader();
     if (!reader) throw new Error('expected a response body');
-    await vi.waitFor(() => expect(mockSdk.capturedOptions).toBeDefined());
+    await vi.waitFor(() => expect(mockPi.capturedOptions).toBeDefined());
 
     await reader.cancel();
     expect(capturedAbortController().signal.aborted).toBe(true);
     releaseStartup();
-    await vi.waitFor(() => expect(mockSdk.warmClose).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mockPi.warmClose).toHaveBeenCalledTimes(1));
     expect(logMocks.terminalStatuses).toEqual([]);
   });
 
-  it('aborts the SDK run when ctx.signal (req.signal) fires mid-stream', async () => {
+  it('aborts the pi run when ctx.signal (req.signal) fires mid-stream', async () => {
     let release!: () => void;
-    mockSdk.gate = new Promise<void>((resolve) => {
+    mockPi.gate = new Promise<void>((resolve) => {
       release = resolve;
     });
     const reqAbort = new AbortController();
@@ -250,7 +250,7 @@ describe('streamTask — YUK-238 client-disconnect abort', () => {
       { db: fakeDb, signal: reqAbort.signal },
     );
     await drain(response);
-    expect(mockSdk.capturedOptions).toBeUndefined();
+    expect(mockPi.capturedOptions).toBeUndefined();
     expect(logMocks.started).not.toHaveBeenCalled();
     expect(logMocks.terminalStatuses).toEqual([]);
   });
@@ -266,11 +266,11 @@ describe('streamTask — YUK-238 client-disconnect abort', () => {
 
 describe('streamTask — YUK-240 stuck-run observability', () => {
   beforeEach(() => {
-    mockSdk.capturedOptions = undefined;
-    mockSdk.startupGate = undefined;
-    mockSdk.warmClose.mockClear();
-    mockSdk.gate = undefined;
-    mockSdk.terminalMessage = undefined;
+    mockPi.capturedOptions = undefined;
+    mockPi.startupGate = undefined;
+    mockPi.warmClose.mockClear();
+    mockPi.gate = undefined;
+    mockPi.terminalMessage = undefined;
     logMocks.finishedShouldThrow = false;
     logMocks.finishedFailuresRemaining = 0;
     logMocks.terminalStatuses = [];
@@ -289,7 +289,7 @@ describe('streamTask — YUK-240 stuck-run observability', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const afterRun = vi.fn(async () => {});
     let release!: () => void;
-    mockSdk.gate = new Promise<void>((resolve) => {
+    mockPi.gate = new Promise<void>((resolve) => {
       release = resolve;
     });
 
@@ -347,7 +347,7 @@ describe('streamTask — YUK-240 stuck-run observability', () => {
 
   it('errors the stream when failure settlement also fails', async () => {
     logMocks.finishedShouldThrow = true;
-    mockSdk.terminalMessage = {
+    mockPi.terminalMessage = {
       type: 'result',
       subtype: 'error_max_budget_usd',
       duration_ms: 10,
@@ -393,9 +393,9 @@ describe('streamTask — YUK-240 stuck-run observability', () => {
 
 describe('streamTask — YUK-590 terminal failure honesty', () => {
   beforeEach(() => {
-    mockSdk.capturedOptions = undefined;
-    mockSdk.gate = undefined;
-    mockSdk.terminalMessage = undefined;
+    mockPi.capturedOptions = undefined;
+    mockPi.gate = undefined;
+    mockPi.terminalMessage = undefined;
     logMocks.finishedShouldThrow = false;
     logMocks.finishedFailuresRemaining = 0;
     logMocks.terminalStatuses = [];
@@ -409,7 +409,7 @@ describe('streamTask — YUK-590 terminal failure honesty', () => {
   });
 
   it('records error_max_budget_usd as failure and exposes the terminal reason', async () => {
-    mockSdk.terminalMessage = {
+    mockPi.terminalMessage = {
       type: 'result',
       subtype: 'error_max_budget_usd',
       duration_ms: 10,
@@ -447,7 +447,7 @@ describe('streamTask — YUK-590 terminal failure honesty', () => {
   });
 
   it('records success+is_error as failure instead of charging a successful run', async () => {
-    mockSdk.terminalMessage = {
+    mockPi.terminalMessage = {
       type: 'result',
       subtype: 'success',
       is_error: true,

@@ -200,8 +200,9 @@ FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
 
 需要"边看数据边决策"的 Task 走 multi-turn tool call；输入已固定的 Task 走单轮 structured output。
 
-> **2026-08-08 alignment**: 现行 runner 在 `src/server/ai/runner.ts`，Agent SDK task 走
-> `@anthropic-ai/claude-agent-sdk`。Tool transport 使用 SDK 的 `mcpServers + allowedTools + maxTurns`。
+> **2026-08-08 alignment / YUK-1025 P4 更新**: 现行 runner 在 `src/server/ai/runner.ts`，唯一
+> 执行引擎是 pi（`@earendil-works/pi-agent-core` in-process agentLoop，`pi-agent-adapter.ts`）。
+> Tool transport 使用 `piToolMounts + allowedTools + maxTurns`（wire name `mcp__<server>__<tool>`）。
 > DomainTool registry、capability manifest inventory 与 in-process MCP bridge 已运行；具体产品工具
 > 逐步迁回 owner capability，中央层只负责组合、预算与 transport。
 
@@ -245,22 +246,22 @@ interface DomainTool<Input, Output> {
 
 **循环控制现状**：
 
-`TaskBudget.maxIterations` 映射到 Claude Agent SDK `maxTurns`，`timeout` 由 runner 的 `AbortController` 执行（cooperative abort）。`TaskBudget.maxCost` 仅在 Anthropic direct 这条会回报 USD 的 pay-as-you-go lane 映射到 SDK `maxBudgetUsd`；mimo（不回 SDK cost）与 subscription OAuth（flat quota）明确不挂伪美元闸。`TaskBudget.transientRetries` 控制 runner 对**同一已解析目标**的进程内瞬时重试（仅两个 vision judge opt-in，六道门控：ctx opt-in / 无 override 钉死 / 无全局 env 钉死 / 白名单瞬时分类 / 次数封顶 / elapsed 墙钟门）。durable job 的 transient 层是 pg-boss 队列显式重投（`queue-config.ts` retryLimit=2 + 30s 退避），二者互斥不叠加。YUK-590 另把 Claude Code 内部 API retry 默认从 10 收窄到 2（运维可用 `CLAUDE_CODE_MAX_RETRIES` 覆盖），让 5xx 终态在任务预算内回到 loom 分类层。YUK-842 在 resolved provider 后，用 Postgres 短事务为完整 Agent SDK session 做跨 app/worker 的 active session-family/parallel-branch 与 start-reservation admission：本地 prompt/options 先物化，随后在 admission slot 内以 45s initial lease 调用 `startup()` 完成不发送 prompt 的 CLI initialize；startup 成功后先以 claim-token CAS 显式切换到 15s steady lease，才创建 `ai_task_runs`、启动剩余 model timeout 并调用一次 `WarmQuery.query()`。lease protocol v2 进入 policy fingerprint；只有 steady heartbeat 以 15s horizon 单调续租、不缩短已确认 expiry。排队和 CLI startup 不计 model timeout，也不制造未调用模型的 unknown-cost attempt；`hard_reclaim_at` 显式包含 startup budget + model timeout + abort grace。Hono 组合根为每个已鉴权 `/api/*` 请求创建同一个 90s absolute provider-session deadline，request 内所有 central runner 的串行、并行与嵌套调用都自动取该 deadline 与显式 caller deadline 的较早者；SDK initialize 与 model timer 只能消费剩余预算，SDK 返回后还会重新栅栏 lease、abort 与 absolute deadline，不能把迟到 success 记成成功。Copilot 另用同一个 kernel 常量生成显式 fallback deadline 并传给 teaching/free-form 主调用与 nested central task，以覆盖直接 handler 测试及可能脱离 handler 的工作；生产 runner 仍以更早的 request scope 为准。durable worker 没有 HTTP request scope，保留 task 的完整执行预算。同 lane tool 内嵌 task 的一条 descendant chain 借父 family 槽以避免自锁，parallel sibling 必须排队或占另一 root 槽，且每个 child 仍独立记录 start reservation；父先结束时仍运行的 child 接管该 family 槽。短 lease 丢失会 abort，外部 provider 无真实 fencing，故 active family 在 `hard_reclaim_at` 前继续隔离。
+`TaskBudget.maxIterations` 映射到 runner `maxTurns`（pi adapter 的 `shouldStopAfterTurn` 计数，超限出 `error_max_turns` 终态），`timeout` 由 runner 的 `AbortController` 执行（cooperative abort）。`TaskBudget.maxCost` 当前不落任何 per-run 美元闸——pi catalog 成本是估算值，从不作 contractual USD 使用；mimo（不回 cost）与 subscription OAuth（flat quota）同样不挂伪美元闸。`TaskBudget.transientRetries` 控制 runner 对**同一已解析目标**的进程内瞬时重试（仅两个 vision judge opt-in，六道门控：ctx opt-in / 无 override 钉死 / 无全局 env 钉死 / 白名单瞬时分类 / 次数封顶 / elapsed 墙钟门）。durable job 的 transient 层是 pg-boss 队列显式重投（`queue-config.ts` retryLimit=2 + 30s 退避），二者互斥不叠加。YUK-590 另把 provider API retry 默认收窄到 2（运维可用 `CLAUDE_CODE_MAX_RETRIES` 覆盖，pi adapter 进程内 `maxRetries`），让 5xx 终态在任务预算内回到 loom 分类层。YUK-842 在 resolved provider 后，用 Postgres 短事务为完整 pi session 做跨 app/worker 的 active session-family/parallel-branch 与 start-reservation admission：本地 prompt/options 先物化，随后在 admission slot 内以 45s initial lease 调用 adapter `startup()`（不发送 prompt 的 model/auth 预检）；startup 成功后先以 claim-token CAS 显式切换到 15s steady lease，才创建 `ai_task_runs`、启动剩余 model timeout 并调用一次 `query()`。lease protocol v2 进入 policy fingerprint；只有 steady heartbeat 以 15s horizon 单调续租、不缩短已确认 expiry。排队和 startup 不计 model timeout，也不制造未调用模型的 unknown-cost attempt；`hard_reclaim_at` 显式包含 startup budget + model timeout + abort grace。Hono 组合根为每个已鉴权 `/api/*` 请求创建同一个 90s absolute provider-session deadline，request 内所有 central runner 的串行、并行与嵌套调用都自动取该 deadline 与显式 caller deadline 的较早者；adapter startup 与 model timer 只能消费剩余预算，adapter 返回后还会重新栅栏 lease、abort 与 absolute deadline，不能把迟到 success 记成成功。Copilot 另用同一个 kernel 常量生成显式 fallback deadline 并传给 teaching/free-form 主调用与 nested central task，以覆盖直接 handler 测试及可能脱离 handler 的工作；生产 runner 仍以更早的 request scope 为准。durable worker 没有 HTTP request scope，保留 task 的完整执行预算。同 lane tool 内嵌 task 的一条 descendant chain 借父 family 槽以避免自锁，parallel sibling 必须排队或占另一 root 槽，且每个 child 仍独立记录 start reservation；父先结束时仍运行的 child 接管该 family 槽。短 lease 丢失会 abort，外部 provider 无真实 fencing，故 active family 在 `hard_reclaim_at` 前继续隔离。
 
 ### 5.3 成本控制
 
 - 同步任务（用户操作时跑）：归因、学习意图、review intent、teaching turn 等。
 - 异步任务（pg-boss）：OCR、session summary、knowledge proposal、knowledge edge proposal、note generation、variant generation、review-session pruning。
-- 模型分级：registry 用 `defaultProvider/defaultModel` 指定当前模型，Provider Manager 解析到 Claude Agent SDK 所需 env/baseUrl/model。
+- 模型分级：registry 用 `defaultProvider/defaultModel` 指定当前模型，Provider Manager 解析到 `ResolvedProvider`（credential/baseUrl/model），pi adapter 映射到 loom catalog 条目（`pi-models.ts`）。
 - 每次调用写 `ai_task_runs` / `ai_cost_ledger`；tool 调用写 `ai_tool_calls`。
-- **尚未实现**：mimo / flat OAuth 的 per-run 美元硬预算（两者无可用 SDK cost 信号）、跨 provider fallback（owner 决策项，落点是 VISION_JUDGE_* 式 env 杆而非 registry 字段）、结果缓存、prompt caching 策略，以及 YUK-845 所列 non-runner DashScope/Mem0/GLM/OCR/Tencent 出站 admission。已实现：Anthropic direct 的 `maxBudgetUsd`、同目标瞬时重试（vision judges）、队列显式 retryLimit、stuck-run reconcile sweeper、central Agent SDK query-session admission（默认 off，`off → observe → enforce` 运维见 `docs/runbooks/provider-session-admission.md`），以及 Hono request-scope 的 90s central-session wall-clock fence。后者是 deadline，不是逐 HTTP wire request 的 RPM/并发限流。
+- **尚未实现**：per-run 美元硬预算（pi catalog 成本为估算值，无 contractual USD 信号可闸）、跨 provider fallback（owner 决策项，落点是 VISION_JUDGE_* 式 env 杆而非 registry 字段）、结果缓存、prompt caching 策略，以及 YUK-845 所列 non-runner DashScope/Mem0/GLM/OCR/Tencent 出站 admission。已实现：同目标瞬时重试（vision judges）、队列显式 retryLimit、stuck-run reconcile sweeper、central pi query-session admission（默认 off，`off → observe → enforce` 运维见 `docs/runbooks/provider-session-admission.md`），以及 Hono request-scope 的 90s central-session wall-clock fence。后者是 deadline，不是逐 HTTP wire request 的 RPM/并发限流。
 
 ### 5.4 Skill / MCP Server / Plugin
 
 这些概念保留，但不要和产品内 runtime tool 混在一起：
 
 - **Skill**（提示词包，markdown + frontmatter）：Phase 2 在 prompt 重复多了之后再抽
-- **in-process MCP bridge**（当前可用）：领域 route 可手动创建 Claude Agent SDK `mcpServers`，不对外暴露
+- **in-process tool bridge**（当前可用）：领域 route 可注入 `piToolMounts`（pi `AgentTool`，wire name `mcp__<server>__<tool>`），不对外暴露
 - **Standalone MCP Server**（对外暴露 resources + tools）：等核心闭环稳了、且确实需要外部客户端时再 expose；未来复用 DomainTool registry，不重写工具定义
 - **Plugin**（学科 bundle）：Phase 3 真有第二学科再做；Phase 1 划好 `core/` vs `subjects/yuwen/` 的目录边界
 - **外部 MCP 消费**（Calendar / Search / FS）：Phase 2 按需接
@@ -278,7 +279,7 @@ interface DomainTool<Input, Output> {
   - ~~VisionExtract* manual-rescue task → 400 `requires_domain_route`~~ 走 ingestion rescue route
   - ~~`needsToolCall: true` 的 task → 400 `tool_task_requires_domain_route`~~ 走领域 route
 - 领域 route（例如 `/api/knowledge/review`）调用 `streamTask()` / `runAgentTask()`，并注入 MCP server + allowlist。
-- Claude Agent SDK 负责 multi-turn tool loop；`maxTurns` 来自 `TaskBudget.maxIterations`
+- pi in-process `agentLoop` 负责 multi-turn tool loop；`maxTurns` 来自 `TaskBudget.maxIterations`
 - assistant tool-use blocks 写 `tool_call_log`
 - 总 finish 写 `cost_ledger`（按 task / provider / model 聚合）
 - 浏览器侧不再有 `src/ai/client.ts` 通用 helper；UI 调用具体领域 route，避免绕开 profile / tool / ingestion context。
@@ -343,8 +344,8 @@ See ADR-0062 and ADR-0063.
 | Blob 存储 | R2 / S3-compatible via `@aws-sdk/client-s3` | 图片 / 来源资产 |
 | 部署 | Docker compose on NAS：`app`（`node dist/server.cjs` :8787）+ `worker`（`node dist/worker.cjs`）+ `migrate` + `postgres` + `cloudflared` | 自托管单用户，Cloudflare Tunnel 只做 ingress |
 | 后台任务 | pg-boss + `scripts/worker.ts`（独立进程，prod `dist/worker.cjs`） | schedules、queues、OCR、proposal、note generation |
-| AI 调用 | Claude Agent SDK runner + AI SDK v6 package + provider packages | 见上节任务层 |
-| Tool calling 循环 | Claude Agent SDK query loop + in-process MCP bridge | 当前由领域 route 手动注入 MCP，未来再抽 DomainTool registry |
+| AI 调用 | pi agent runtime（`@earendil-works/pi-agent-core` + `pi-ai`，in-process） | 见上节任务层 |
+| Tool calling 循环 | pi `agentLoop` + `piToolMounts`（DomainTool registry 编译为 `AgentTool`） | 领域 route / capability manifest 注入 mount 与 allowlist |
 | Note 编辑器 | TipTap / Milkdown / Lexical（基于 ProseMirror） | 详见 [`modules/notes.md`](modules/notes.md) |
 | Note 渲染 | react-markdown / markdown-it | |
 | 数学公式 | KaTeX | |
@@ -843,8 +844,8 @@ started → completed | abandoned
 
 Direct and opaque provider calls use `provider_attempt` as their durable lifecycle and cost truth.
 The closed lane set and `off -> observe -> enforce` resolver are documented in
-`docs/runbooks/provider-attempt-admission.md`. This gate is separate from the Claude Agent SDK
-session gate (`provider_session_admission`). Admission `off` bypasses limiting while provider calls
+`docs/runbooks/provider-attempt-admission.md`. This gate is separate from the pi query-session
+gate (`provider_session_admission`). Admission `off` bypasses limiting while provider calls
 remain durably traced on a best-effort basis; a persistence outage may leave an off-mode call
 untracked. When persistence is available, the admission row retains exact `mode = off` with an
 `acquired` lifecycle lease for fencing and settlement; it never emits `would_deny` and is excluded

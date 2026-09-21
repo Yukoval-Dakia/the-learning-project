@@ -41,7 +41,7 @@ RUN npm install --omit=dev --no-audit --no-fund \
 # YUK-341 — mem0 history (disableHistory:false, src/server/memory/client.ts) uses
 # SQLiteManager → loads the native better_sqlite3.node. esbuild
 # --external:better-sqlite3 (build:server + build:worker) keeps the .node out of
-# the bundle, so the runner needs it as a flat overlay (like sharp/sdk above).
+# the bundle, so the runner needs it as a flat overlay (like sharp above).
 # npm flat layout; prebuild-install fetches the node24 linux prebuild (no compile,
 # so the slim image needs no build toolchain — same path sharp relies on).
 FROM node:24-bookworm-slim AS sqlitedeps

@@ -194,7 +194,9 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
       status: 'succeeded',
       input_json: {
         args: { query: 'deep_nested' },
-        tool_use_id: 'toolu_safe_bridge_e2e',
+        // pi carries the loop's native toolCall.id as the correlation id (no
+        // synthesized `toolu_*` — that minting died with the SDK claim hook).
+        tool_use_id: 'call_test',
       },
       terminal_tool_call_log_id: logs[0]?.id,
     });
@@ -419,107 +421,64 @@ describe('mcp-bridge end-to-end: mirror lands in event + tool_call_log linkage',
 });
 
 // ────────────────────────────────────────────────────────────────────────────
-// YUK-921 P2 (YUK-1021) — pi lane parity. The pi AgentTool bridge delegates to
-// the SAME executeDomainToolCall pipeline; this proves the tool_call_log row
-// and tool_use mirror shapes are column-identical modulo ids/latency.
+// YUK-921 P4 (YUK-1025) — pi is the sole engine; the AgentTool bridge delegates
+// to executeDomainToolCall. This pins the persisted tool_call_log columns and
+// the tool_use mirror shape as absolute expectations (previously a two-lane
+// diff against the retired SDK bridge — which degenerated into self-parity
+// once both legs ran the same pi pipeline).
 // ────────────────────────────────────────────────────────────────────────────
-describe('pi AgentTool path — tool_call_log/tool_use parity with the SDK bridge', () => {
-  let agentTools: AgentTool[] = [];
-
+describe('pi AgentTool path — tool_call_log + tool_use mirror persistence', () => {
   beforeEach(async () => {
     await resetDb();
     __resetRegistryForTests();
-    agentTools = [];
     await registerCapabilityTools(capabilities);
   });
 
-  it('writes the same tool_call_log columns and mirror linkage as the SDK path', async () => {
+  it('writes the tool_call_log row and mirror linkage for a copilot-agent call', async () => {
     await seedAttempt();
     const db = testDb();
-    const sdkRunId = 'tr_parity_sdk';
-    const piRunId = 'tr_parity_pi';
-    const sharedCtx = {
-      db,
-      callerActor: { kind: 'agent', ref: 'agent:copilot' } as const,
-    };
+    const runId = 'tr_pi_persist';
 
-    // SDK lane: the mocked tool() captures the wrapped handler.
-    agentTools = buildPiDomainAgentTools({
-      ctx: { ...sharedCtx, taskRunId: sdkRunId },
-      serverName: 'loom',
-      toolNames: ['query_mistakes'],
-      taskKind: 'CopilotTask',
-    });
-    await agentTools[0]?.execute('call_test', { limit: 5 });
-
-    // Pi lane: the compiled AgentTool runs the identical pipeline; the loop's
-    // native toolCall.id is the correlation id.
     const [agentTool] = buildPiDomainAgentTools({
-      ctx: { ...sharedCtx, taskRunId: piRunId },
+      ctx: {
+        db,
+        taskRunId: runId,
+        callerActor: { kind: 'agent', ref: 'agent:copilot' },
+      },
       serverName: 'loom',
       toolNames: ['query_mistakes'],
       taskKind: 'CopilotTask',
     });
     expect(agentTool.name).toBe('mcp__loom__query_mistakes');
-    await agentTool.execute('toolCall_pi_parity', { limit: 5 }, undefined);
+    await agentTool.execute('toolCall_pi_1', { filter: { limit: 5 } }, undefined);
 
-    const [sdkLog] = await db
-      .select()
-      .from(tool_call_log)
-      .where(eq(tool_call_log.task_run_id, sdkRunId));
-    const [piLog] = await db
-      .select()
-      .from(tool_call_log)
-      .where(eq(tool_call_log.task_run_id, piRunId));
+    const [log] = await db.select().from(tool_call_log).where(eq(tool_call_log.task_run_id, runId));
+    expect(log).toMatchObject({
+      task_run_id: runId,
+      task_kind: 'CopilotTask',
+      tool_name: 'query_mistakes',
+      effect: 'read',
+      input_json: { filter: { limit: 5 } },
+      error_reason: null,
+      cost: 0,
+      mirrored_event_id: expect.any(String),
+    });
+    expect(log.output_json).toBeTruthy();
 
-    // Column-level parity — every persisted field except the row's own
-    // identity, latency, timestamp, mirror link and the run id must be
-    // identical between engines.
-    const {
-      id: _i1,
-      latency_ms: _l1,
-      task_run_id: _t1,
-      mirrored_event_id: _m1,
-      occurred_at: _o1,
-      ...sdkCols
-    } = sdkLog;
-    const {
-      id: _i2,
-      latency_ms: _l2,
-      task_run_id: _t2,
-      mirrored_event_id: _m2,
-      occurred_at: _o2,
-      ...piCols
-    } = piLog;
-    expect(piCols).toEqual(sdkCols);
-
-    // Mirror events: same action/shape; each links back to its own log row.
-    const [sdkMirror] = await db
+    // Mirror event: action/shape pinned; it links back to its own log row.
+    const [mirror] = await db
       .select()
       .from(event)
-      .where(eq(event.id, sdkLog.mirrored_event_id ?? 'none'));
-    const [piMirror] = await db
-      .select()
-      .from(event)
-      .where(eq(event.id, piLog.mirrored_event_id ?? 'none'));
-    if (!sdkMirror || !piMirror) throw new Error('expected tool_use mirror events');
-    const {
-      id: _e1,
-      task_run_id: _et1,
-      subject_id: _s1,
-      created_at: _ec1,
-      dispatch_seq: _d1,
-      ...sdkEv
-    } = sdkMirror;
-    const {
-      id: _e2,
-      task_run_id: _et2,
-      subject_id: _s2,
-      created_at: _ec2,
-      dispatch_seq: _d2,
-      ...piEv
-    } = piMirror;
-    expect(piEv).toEqual(sdkEv);
+      .where(eq(event.id, log.mirrored_event_id ?? 'none'));
+    expect(mirror).toMatchObject({
+      action: 'tool_use',
+      actor_kind: 'agent',
+      actor_ref: 'agent:copilot',
+      outcome: 'success',
+      task_run_id: runId,
+      subject_kind: 'query',
+    });
+    expect((mirror.payload as Record<string, unknown>).tool_name).toBe('query_mistakes');
   });
 
   it('pi execute surfaces pi toolCall.id as the correlated tool_use_id in the result text', async () => {

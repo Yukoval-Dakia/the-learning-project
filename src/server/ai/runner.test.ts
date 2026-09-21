@@ -66,7 +66,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe('runTask (Claude Agent SDK adapter)', () => {
+describe('runTask (pi adapter seam)', () => {
   beforeEach(async () => {
     await resetDb();
     mockPi.messages = [];

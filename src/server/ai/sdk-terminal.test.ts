@@ -4,13 +4,16 @@ import type { SDKAssistantMessage, SDKMessage } from './sdk-types';
 
 type ResultMessage = Extract<SDKMessage, { type: 'result' }>;
 type ResultUsage = ResultMessage['usage'];
+type AssistantUsage = SDKAssistantMessage['message']['usage'];
 
-function usage(values: {
+/** Full BetaUsage for assistant message.usage — pi emits Anthropic-shaped
+ *  usage objects on assistant frames. */
+function assistantUsage(values: {
   readonly input: number;
   readonly output: number;
   readonly cacheRead?: number;
   readonly cacheCreation?: number;
-}): ResultUsage {
+}): AssistantUsage {
   return {
     input_tokens: values.input,
     output_tokens: values.output,
@@ -27,9 +30,24 @@ function usage(values: {
   };
 }
 
+/** Terminal result usage — the adapter emits only the four token counters. */
+function resultUsage(values: {
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead?: number;
+  readonly cacheCreation?: number;
+}): ResultUsage {
+  return {
+    input_tokens: values.input,
+    output_tokens: values.output,
+    cache_read_input_tokens: values.cacheRead ?? 0,
+    cache_creation_input_tokens: values.cacheCreation ?? 0,
+  };
+}
+
 function assistant(
   content: SDKAssistantMessage['message']['content'],
-  observedUsage: SDKAssistantMessage['message']['usage'] = usage({ input: 0, output: 0 }),
+  observedUsage: SDKAssistantMessage['message']['usage'] = assistantUsage({ input: 0, output: 0 }),
 ): SDKAssistantMessage {
   return {
     type: 'assistant',
@@ -71,7 +89,7 @@ function successResult(
     result: 'ok',
     stop_reason: overrides.stopReason === undefined ? 'end_turn' : overrides.stopReason,
     total_cost_usd: overrides.totalCostUsd ?? 0,
-    usage: overrides.usage ?? usage({ input: 0, output: 0 }),
+    usage: overrides.usage ?? resultUsage({ input: 0, output: 0 }),
     modelUsage: {},
     permission_denials: [],
     structured_output: overrides.structuredOutput,
@@ -90,7 +108,7 @@ function errorResult(stopReason: string | null = null): ResultMessage {
     num_turns: 1,
     stop_reason: stopReason,
     total_cost_usd: 0.25,
-    usage: usage({ input: 3, output: 4 }),
+    usage: resultUsage({ input: 3, output: 4 }),
     modelUsage: {},
     permission_denials: [],
     errors: ['terminal failure'],
@@ -106,12 +124,12 @@ describe('createSdkTerminalEvidenceCollector', () => {
     collector.observeAssistant(
       assistant(
         [{ type: 'text', text: 'visible', citations: null }],
-        usage({ input: 90, output: 80 }),
+        assistantUsage({ input: 90, output: 80 }),
       ),
     );
     const evidence = collector.fromResult(
       successResult({
-        usage: usage({ input: 10, output: 7, cacheRead: 4, cacheCreation: 2 }),
+        usage: resultUsage({ input: 10, output: 7, cacheRead: 4, cacheCreation: 2 }),
         totalCostUsd: 0,
         stopReason: null,
         structuredOutput: { answer: 42 },
@@ -199,13 +217,13 @@ describe('createSdkTerminalEvidenceCollector', () => {
     const first = collector.observeAssistant(
       assistant(
         [{ type: 'thinking', thinking: 'private-alpha', signature: 'sig-a' }],
-        usage({ input: 2, output: 3, cacheRead: 5, cacheCreation: 7 }),
+        assistantUsage({ input: 2, output: 3, cacheRead: 5, cacheCreation: 7 }),
       ),
     );
     const second = collector.observeAssistant(
       assistant(
         [{ type: 'thinking', thinking: 'private-beta', signature: 'sig-b' }],
-        usage({ input: 11, output: 13, cacheRead: 17, cacheCreation: 19 }),
+        assistantUsage({ input: 11, output: 13, cacheRead: 17, cacheCreation: 19 }),
       ),
     );
 
@@ -234,7 +252,7 @@ describe('createSdkTerminalEvidenceCollector', () => {
   it('falls back to accumulated assistant usage only when result usage is absent', () => {
     const collector = createSdkTerminalEvidenceCollector();
     collector.observeAssistant(
-      assistant([], usage({ input: 5, output: 7, cacheRead: 11, cacheCreation: 13 })),
+      assistant([], assistantUsage({ input: 5, output: 7, cacheRead: 11, cacheCreation: 13 })),
     );
     const withoutUsage = successResult();
     Reflect.deleteProperty(withoutUsage, 'usage');

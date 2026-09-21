@@ -1,4 +1,3 @@
-import { tasks } from '@/ai/registry';
 import {
   MultimodalDirectLlmOutput,
   type MultimodalDirectLlmOutputT,
@@ -16,11 +15,9 @@ import { defaultImageFetch } from './steps-judge';
 
 const CAPABILITY_REF = { id: 'multimodal_direct', version: '1.0.0' };
 
-// YUK-591 — the SDK structured-output envelope, built ONCE from the registry's
-// declared schema so the registry declaration (audited by §7) is the single,
-// load-bearing source. The ternary keeps the un-declared case typed; in practice
-// MultimodalDirectJudgeTask always declares it (the audit enforces exactly that).
-const outputSchema = tasks.MultimodalDirectJudgeTask.structuredOutputSchema;
+// YUK-591 — the registry-declared structuredOutputSchema (audited by §7) is the
+// single source for the app-level Zod parse below; there is no transport-level
+// structured-output envelope post-P4.
 
 /** Widened (YUK-591) to carry the engine-neutral `structured_output` passthrough. */
 export type MultimodalDirectRunTaskFn = (
@@ -223,11 +220,10 @@ export async function runMultimodalDirectJudge(
     // steps-judge.ts (sync-route sensor, no durable backstop; single module-level
     // call site covers all callers; operator-pinned routing turns retry off).
     //
-    // YUK-591 — outputFormat: the SDK structured-output envelope (built from the
-    // registry-declared MultimodalDirectLlmOutput). Threaded in ctx here so an
-    // injected test runTaskFn can assert on it. A structured-output-capable
-    // endpoint constrains + SDK-retries the model to the schema; mimo ignores it
-    // and the dispatch falls back to the char-scan text parse (zero-loss).
+    // YUK-591 — structured extraction stays app-level: the result text is Zod-
+    // parsed against the registry-declared MultimodalDirectLlmOutput. Lanes
+    // without a transport contract (mimo) fall back to the char-scan text
+    // parse (zero-loss).
     //
     // YUK-893 — the lane call goes through runTaskWithLaneFallback: a provider
     // HARD failure (HTTP 403/5xx/auth/quota) on a configured lane retries once

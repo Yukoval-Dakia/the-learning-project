@@ -19,7 +19,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@hono/node-server', () => ({ serve: mocks.serve }));
 vi.mock('@hono/node-server/serve-static', () => ({ serveStatic: vi.fn() }));
 vi.mock('@/capabilities', () => ({ capabilities: [] }));
-vi.mock('@/server/ai/runtime-preflight', () => ({ assertAgentSdkRuntimeUser: vi.fn() }));
 vi.mock('@/server/projections/sot-flag', () => ({ warnFlipOrder: vi.fn() }));
 vi.mock('./env', () => ({ loadApiEnv: () => ({ RW_WORKER: mocks.workerEnabled ? '1' : '0' }) }));
 vi.mock('./app', () => ({ buildHonoApp: () => ({ fetch: vi.fn(), get: vi.fn(), use: vi.fn() }) }));

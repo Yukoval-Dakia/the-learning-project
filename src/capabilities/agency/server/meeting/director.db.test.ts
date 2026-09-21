@@ -24,7 +24,7 @@ import { resetDb, testDb } from '../../../../../tests/helpers/db';
 // Capture the registered tool handlers by wrapping piCustomTool — the
 // director server is built inside runResearchMeetingDirector, so the test
 // cannot reach the returned AgentTool[] directly.
-const mockSdk = vi.hoisted(() => ({
+const mockPi = vi.hoisted(() => ({
   handlers: new Map<
     string,
     (args: unknown) => Promise<{ content: { type: string; text: string }[] }>
@@ -42,7 +42,7 @@ vi.mock('@/server/ai/tools/pi-tools', async (importOriginal) => {
       schema: Record<string, unknown>,
       handler: (args: unknown) => Promise<{ content: { type: string; text: string }[] }>,
     ) => {
-      mockSdk.handlers.set(name, handler);
+      mockPi.handlers.set(name, handler);
       return actual.piCustomTool(serverName, name, description, schema as never, handler as never);
     },
   };
@@ -86,7 +86,7 @@ function questionSnapshot(id: string) {
 type SpawnGate = (call: unknown, args: unknown) => Promise<unknown>;
 
 async function callTool(name: string, args: unknown): Promise<Record<string, unknown>> {
-  const handler = mockSdk.handlers.get(name);
+  const handler = mockPi.handlers.get(name);
   if (!handler) throw new Error(`no registered tool for ${name}`);
   const res = await handler(args);
   return JSON.parse(res.content[0].text) as Record<string, unknown>;
@@ -266,7 +266,7 @@ beforeEach(async () => {
         created_at: NOW,
       })),
     );
-  mockSdk.handlers.clear();
+  mockPi.handlers.clear();
 });
 
 describe('evidence scout charter', () => {
