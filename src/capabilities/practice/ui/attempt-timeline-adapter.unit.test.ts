@@ -12,7 +12,15 @@ const attempt = (o: Partial<QFullTimelineEntry> = {}): QFullTimelineEntry => ({
   created_at_sec: 1000,
   outcome: 'failure',
   duration_ms: 4200,
-  cause: { primary: 'misc_deadbeef', primary_label: '虚词误判', confidence: 0.7 },
+  cause: {
+    primary: 'misc_deadbeef',
+    primary_label: '虚词误判',
+    confidence: 0.7,
+    // YUK-1020 — wire 形状新增字段；adapter 收窄直通（AttemptTimeline 只消费
+    // primary/primary_label/confidence，secondary* 保留在对象上供未来渲染）。
+    secondary: ['misc_sec_01', 'grammar'],
+    secondary_labels: { misc_sec_01: '虚词误判' },
+  },
   ...o,
 });
 
@@ -35,7 +43,13 @@ describe('toAttemptTimelineEvents', () => {
       created_at_sec: 1000,
       outcome: 'failure',
       duration_ms: 4200,
-      cause: { primary: 'misc_deadbeef', primary_label: '虚词误判', confidence: 0.7 },
+      cause: {
+        primary: 'misc_deadbeef',
+        primary_label: '虚词误判',
+        confidence: 0.7,
+        secondary: ['misc_sec_01', 'grammar'],
+        secondary_labels: { misc_sec_01: '虚词误判' },
+      },
     });
   });
 

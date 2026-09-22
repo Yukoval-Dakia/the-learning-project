@@ -6,7 +6,7 @@ import { question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
-import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
+import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { listLearningRecords } from '@/kernel/records/queries';
 
 export interface ListMistakeProjectionFilter {
@@ -79,9 +79,10 @@ async function projectMistakeRecords(
       : [];
   const questionById = new Map(questions.map((row) => [row.id, row]));
 
-  // YUK-1018 — misc_ primary id 的 title 回填（批量一次，不进循环）。id 保留在
-  // primary_category，展示层用 primary_label ?? primary_category。effectiveCause
-  // 在此一并预算，emit 循环不再重复调用。
+  // YUK-1018/1020 — misc_ primary + secondary id 的 title 回填（同一批查询，
+  // 批量一次，不进循环）。id 保留在 primary_category / secondary_categories，
+  // 展示层用 primary_label ?? primary_category、secondary_labels[id] ?? id。
+  // effectiveCause 在此一并预算，emit 循环不再重复调用。
   const causeByAttempt = new Map(
     [...failureByAttempt.entries()].map(([id, failure]) => [
       id,
@@ -90,9 +91,9 @@ async function projectMistakeRecords(
   );
   const miscLabels = await resolveMiscCauseLabels(
     db,
-    [...causeByAttempt.values()]
-      .map((cause) => cause?.primary_category)
-      .filter((id): id is string => typeof id === 'string'),
+    [...causeByAttempt.values()].flatMap((cause) =>
+      cause ? [cause.primary_category, ...cause.secondary_categories] : [],
+    ),
   );
 
   return records.flatMap((record) => {
@@ -107,6 +108,7 @@ async function projectMistakeRecords(
           primary_category: effectiveCause.primary_category,
           primary_label: miscLabels.get(effectiveCause.primary_category) ?? null,
           secondary_categories: effectiveCause.secondary_categories,
+          secondary_labels: miscCauseLabelMap(miscLabels, effectiveCause.secondary_categories),
           user_notes: effectiveCause.user_notes,
           confidence: effectiveCause.confidence,
         }

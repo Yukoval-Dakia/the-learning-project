@@ -11,7 +11,7 @@ import type { CauseSchemaT, FsrsStateSchemaT } from '@/core/schema/event/blocks'
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { filterActiveRows, newerEventRow, takeActiveRows } from '@/kernel/events';
-import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
+import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
@@ -123,6 +123,14 @@ export type QuestionTimelineEntry =
          * 现状即渲染裸 id）。unresolvable misc → null，展示层回退 primary。
          */
         primary_label: string | null;
+        /** Phase 1c.2 副归因 id 列表（judge payload 原样透传，id 是语义身份）。 */
+        secondary: string[];
+        /**
+         * YUK-1020 — secondary 里 misc_ id 的显示回填（id → misconception
+         * title Record map）。只含可解析的 misc id；vocab / unresolvable 缺席，
+         * 展示层回退裸 id。
+         */
+        secondary_labels: Record<string, string>;
       } | null;
     }
   | {
@@ -199,12 +207,14 @@ export async function getQuestionTimeline(
     }
   }
 
-  // YUK-1018 — misc_ primary id 的 title 回填（一次批量解析，不进循环）。
+  // YUK-1018/1020 — misc_ primary + secondary id 的 title 回填（同一批查询，
+  // 一次批量解析，不进循环）。
   const miscLabels = await resolveMiscCauseLabels(
     db,
-    [...judgeByAttempt.values()].map(
-      (row) => (row.payload as { cause: CauseSchemaT }).cause.primary_category,
-    ),
+    [...judgeByAttempt.values()].flatMap((row) => {
+      const cause = (row.payload as { cause: CauseSchemaT }).cause;
+      return [cause.primary_category, ...(cause.secondary_categories ?? [])];
+    }),
   );
 
   return activeRows.map((row): QuestionTimelineEntry => {
@@ -220,13 +230,18 @@ export async function getQuestionTimeline(
         primary: string;
         confidence: number | null;
         primary_label: string | null;
+        secondary: string[];
+        secondary_labels: Record<string, string>;
       } | null = null;
       if (judge) {
         const jPayload = judge.payload as { cause: CauseSchemaT };
+        const secondary = jPayload.cause.secondary_categories ?? [];
         cause = {
           primary: jPayload.cause.primary_category,
           confidence: jPayload.cause.confidence ?? null,
           primary_label: miscLabels.get(jPayload.cause.primary_category) ?? null,
+          secondary,
+          secondary_labels: miscCauseLabelMap(miscLabels, secondary),
         };
       }
       return {

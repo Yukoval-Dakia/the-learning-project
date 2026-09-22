@@ -451,6 +451,95 @@ describe('loadQuestionDetail', () => {
     expect(byEvent.get(attemptB)?.cause?.primary_label).toBeNull();
   });
 
+  // YUK-1020 — secondary_categories 里 misc_ id 的显示回填：与 primary 同一批
+  // 查询；secondary 保留裸 id，secondary_labels 只含可解析的 misc id。
+  it('timeline cause carries secondary + secondary_labels for misc_ ids', async () => {
+    const k1 = newId();
+    await seedKnowledge(k1);
+    const qid = await seedQuestion({ knowledge_ids: [k1] });
+    const attemptId = await seedAttempt({
+      question_id: qid,
+      knowledge_id: k1,
+      outcome: 'failure',
+    });
+    const now = new Date();
+    const misconceptionRow = {
+      reasoning: null,
+      weight: 1,
+      source: 'soft',
+      seen: 2,
+      evidence: [],
+      created_by: { by: 'system' as const },
+      proposed_by_ai: true,
+      created_at: now,
+      updated_at: now,
+    };
+    await testDb()
+      .insert(misconception)
+      .values([
+        {
+          ...misconceptionRow,
+          id: 'misc_sec_pri',
+          title: '主因误读',
+          status: 'active',
+          archived_at: null,
+        },
+        {
+          ...misconceptionRow,
+          id: 'misc_sec_live',
+          title: '虚词误判',
+          status: 'active',
+          archived_at: null,
+        },
+        {
+          ...misconceptionRow,
+          id: 'misc_sec_arch',
+          title: '已归档误区',
+          status: 'active',
+          archived_at: now,
+        },
+      ]);
+    await testDb()
+      .insert(event)
+      .values({
+        id: newId(),
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'system',
+        action: 'judge',
+        subject_kind: 'event',
+        subject_id: attemptId,
+        outcome: null,
+        payload: {
+          cause: {
+            primary_category: 'misc_sec_pri',
+            secondary_categories: ['misc_sec_live', 'grammar', 'misc_sec_arch', 'misc_sec_gone'],
+            confidence: 0.8,
+            analysis_md: 'primary + secondary misc 命中',
+          },
+        },
+        caused_by_event_id: attemptId,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date(NOW.getTime() + 1000),
+      });
+
+    const res = await loadQuestionDetail(testDb(), qid);
+    const attempt = res?.timeline.find((t) => t.kind === 'attempt');
+    // primary 同批解析（YUK-1018 语义保持）。
+    expect(attempt?.cause?.primary).toBe('misc_sec_pri');
+    expect(attempt?.cause?.primary_label).toBe('主因误读');
+    // secondary 裸 id 是语义身份，顺序保留。
+    expect(attempt?.cause?.secondary).toEqual([
+      'misc_sec_live',
+      'grammar',
+      'misc_sec_arch',
+      'misc_sec_gone',
+    ]);
+    // 只有 active misc 进入 label map；vocab / archived / unknown 缺席。
+    expect(attempt?.cause?.secondary_labels).toEqual({ misc_sec_live: '虚词误判' });
+  });
+
   it('shows a draft question (detail does not exclude drafts)', async () => {
     const qid = await seedQuestion({ knowledge_ids: [], draft_status: 'draft' });
     const res = await loadQuestionDetail(testDb(), qid);

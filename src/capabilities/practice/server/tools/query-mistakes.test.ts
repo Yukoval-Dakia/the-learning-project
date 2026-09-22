@@ -1,6 +1,13 @@
 import { createId } from '@paralleldrive/cuid2';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { event, knowledge, material_fsrs_state, mistake_variant, question } from '@/db/schema';
+import {
+  event,
+  knowledge,
+  material_fsrs_state,
+  misconception,
+  mistake_variant,
+  question,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { ToolContext } from '@/kernel/tools/types';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
@@ -65,7 +72,12 @@ async function seedFailureAttempt(
   });
 }
 
-async function seedJudge(attemptId: string, primary: string, knowledgeIds: string[]) {
+async function seedJudge(
+  attemptId: string,
+  primary: string,
+  knowledgeIds: string[],
+  secondary: string[] = [],
+) {
   await writeEvent(testDb(), {
     id: createId(),
     session_id: null,
@@ -79,7 +91,7 @@ async function seedJudge(attemptId: string, primary: string, knowledgeIds: strin
     payload: {
       cause: {
         primary_category: primary,
-        secondary_categories: [],
+        secondary_categories: secondary,
         analysis_md: `agent says ${primary}`,
         confidence: 0.9,
       },
@@ -215,6 +227,43 @@ describe('queryMistakesTool', () => {
 
     expect(output.total).toBe(2);
     expect(output.mistakes.map((m) => m.question_id)).toEqual(['q_match_1', 'q_match_2']);
+  });
+
+  // YUK-1020 — cause.secondary_categories 带 misc_ id 时，与 primary 同一批
+  // 查询解析进 secondary_labels；裸 id 保留在 secondary_categories。
+  it('resolves misc_ secondary_categories into secondary_labels', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(misconception).values({
+      id: 'misc_qm_sec',
+      title: '虚词误判',
+      reasoning: null,
+      weight: 1,
+      status: 'active',
+      source: 'soft',
+      seen: 1,
+      evidence: [],
+      created_by: { by: 'system' },
+      proposed_by_ai: true,
+      created_at: now,
+      updated_at: now,
+      archived_at: null,
+    });
+    await seedQuestion('q1', ['k_xuci']);
+    await seedFailureAttempt('att_1', 'q1', ['k_xuci']);
+    await seedJudge('att_1', 'concept', ['k_xuci'], ['misc_qm_sec', 'grammar', 'misc_qm_gone']);
+
+    const output = await queryMistakesTool.execute(ctx(), {});
+
+    expect(output.total).toBe(1);
+    expect(output.mistakes[0].cause?.secondary_categories).toEqual([
+      'misc_qm_sec',
+      'grammar',
+      'misc_qm_gone',
+    ]);
+    expect(output.mistakes[0].cause?.secondary_labels).toEqual({
+      misc_qm_sec: '虚词误判',
+    });
   });
 
   it('includes variants when includeVariants=true', async () => {

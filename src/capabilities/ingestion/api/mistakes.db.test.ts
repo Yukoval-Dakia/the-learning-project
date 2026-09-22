@@ -606,6 +606,7 @@ describe('GET /api/mistakes', () => {
       primary_category: 'concept',
       primary_label: null,
       secondary_categories: [],
+      secondary_labels: {},
       user_notes: null,
       confidence: 0.9,
     });
@@ -750,6 +751,7 @@ describe('GET /api/mistakes', () => {
       primary_category: 'memory',
       primary_label: null,
       secondary_categories: [],
+      secondary_labels: {},
       user_notes: '记错了',
       confidence: null,
     });
@@ -811,6 +813,67 @@ describe('GET /api/mistakes', () => {
     };
     expect(body.rows[0].cause?.primary_category).toBe('misc_no_such_node');
     expect(body.rows[0].cause?.primary_label).toBeNull();
+  });
+
+  // YUK-1020 — secondary_categories 里 misc_ id 的显示回填：与 primary 同一批
+  // 查询；secondary_categories 保留裸 id，secondary_labels 只含可解析的 misc id。
+  it('misc_ secondary_categories carry secondary_labels resolved from misconception titles', async () => {
+    const now = new Date();
+    const misconceptionRow = {
+      reasoning: null,
+      weight: 1,
+      source: 'soft',
+      seen: 2,
+      evidence: [],
+      created_by: { by: 'system' as const },
+      proposed_by_ai: true,
+      created_at: now,
+      updated_at: now,
+    };
+    await testDb()
+      .insert(misconception)
+      .values([
+        {
+          ...misconceptionRow,
+          id: 'misc_sec_m01',
+          title: '虚词误判',
+          status: 'active',
+          archived_at: null,
+        },
+        {
+          ...misconceptionRow,
+          id: 'misc_sec_m02',
+          title: '已归档误区',
+          status: 'active',
+          archived_at: now,
+        },
+      ]);
+    await seedQuestion('q1', 'p1');
+    await seedAttempt({ id: 'a1', question_id: 'q1' });
+    await seedJudge({
+      id: 'j1',
+      attempt_event_id: 'a1',
+      primary_category: 'concept',
+      secondary_categories: ['misc_sec_m01', 'grammar', 'misc_sec_m02', 'misc_gone_99'],
+    });
+
+    const res = await getMistakes();
+    const body = (await res.json()) as {
+      rows: Array<{
+        cause: {
+          secondary_categories: string[];
+          secondary_labels: Record<string, string>;
+        } | null;
+      }>;
+    };
+    // 裸 id 顺序保留；vocab / archived / unknown 缺席 label map。
+    expect(body.rows[0].cause?.secondary_categories).toEqual([
+      'misc_sec_m01',
+      'grammar',
+      'misc_sec_m02',
+      'misc_gone_99',
+    ]);
+    expect(body.rows[0].cause?.secondary_labels).toEqual({ misc_sec_m01: '虚词误判' });
   });
 
   it('filters by question_id', async () => {
