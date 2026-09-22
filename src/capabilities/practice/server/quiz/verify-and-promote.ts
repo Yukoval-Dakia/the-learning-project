@@ -17,7 +17,7 @@
 // **绝不** import 或复刻两 handler 的 check 逻辑 / promote 事务 / metadata 构造 / writeAgentNote
 // —— 那是「合并抽取」的滑坡，被 b1 决策否决。
 
-import { and, desc, eq, inArray, isNull, ne } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
@@ -207,29 +207,56 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       // acceptQuestionDraftProposal): never reset a node that already has a schedule;
       // question-level fallback when the row carries no knowledge ids.
       const initial = initialFsrsState(now);
+      const enrollIfAbsent = async (subjectKind: 'knowledge' | 'question', subjectId: string) => {
+        const existing = await getFsrsState(tx, subjectKind, subjectId);
+        if (existing) return;
+        await upsertFsrsState(tx, {
+          subject_kind: subjectKind,
+          subject_id: subjectId,
+          state: initial.state,
+          due_at: initial.dueAt,
+          last_review_event_id: verifyEventId,
+        });
+      };
       const fsrsSubjectIds = Array.from(new Set(row.knowledge_ids ?? []));
       if (fsrsSubjectIds.length > 0) {
         for (const knowledgeId of fsrsSubjectIds) {
-          const existing = await getFsrsState(tx, 'knowledge', knowledgeId);
-          if (existing) continue;
-          await upsertFsrsState(tx, {
-            subject_kind: 'knowledge',
-            subject_id: knowledgeId,
-            state: initial.state,
-            due_at: initial.dueAt,
-            last_review_event_id: verifyEventId,
-          });
+          await enrollIfAbsent('knowledge', knowledgeId);
         }
       } else {
-        const existing = await getFsrsState(tx, 'question', questionId);
-        if (!existing) {
-          await upsertFsrsState(tx, {
-            subject_kind: 'question',
-            subject_id: questionId,
-            state: initial.state,
-            due_at: initial.dueAt,
-            last_review_event_id: verifyEventId,
-          });
+        await enrollIfAbsent('question', questionId);
+      }
+
+      // YUK-1011 — composite cascade on owner override: a force-enabled 篇
+      // parent must take its draft children with it (the same atomic-group rule
+      // the quiz_verify cascade applies on the verified path). Otherwise the
+      // parent becomes pool-eligible (EXISTS counts the still-draft children)
+      // while the parts — excluded from moderation and owning no verify intent
+      // — stay draft forever. The draft/tombstone predicates live in the
+      // UPDATE's WHERE (returning-gated) so a concurrent archive/dismiss can't
+      // be overwritten back to 'active'; FSRS enroll mirrors the parent rule
+      // (knowledge-level when labeled — usually a no-op since the parent's loop
+      // just enrolled those ids — question-level fallback when unlabeled).
+      const promotedParts = await tx
+        .update(question)
+        .set({ draft_status: 'active', updated_at: now })
+        .where(
+          and(
+            eq(question.parent_question_id, questionId),
+            eq(question.draft_status, 'draft'),
+            sql`${question.metadata}->>'archived_at' IS NULL`,
+            sql`${question.metadata}->>'dismissed_at' IS NULL`,
+          ),
+        )
+        .returning({ id: question.id, knowledgeIds: question.knowledge_ids });
+      for (const part of promotedParts) {
+        const partKnowledgeIds = Array.from(new Set(part.knowledgeIds ?? []));
+        if (partKnowledgeIds.length > 0) {
+          for (const knowledgeId of partKnowledgeIds) {
+            await enrollIfAbsent('knowledge', knowledgeId);
+          }
+        } else {
+          await enrollIfAbsent('question', part.id);
         }
       }
 

@@ -1348,10 +1348,21 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
               ...composite.structured,
               sub_questions: [sub],
             };
+            // YUK-1011 codex P2 — when the sub's options persist separately as
+            // choices_md (below), derive the child prompt WITHOUT the inline
+            // option list: renderers (PfSolo/PfPaper) paint persisted choices as
+            // buttons, so keeping them in prompt_md too would show every choice
+            // twice. The `structured` tree keeps the options — only the derived
+            // prompt view drops them.
+            const { options: subOptions, ...subSansOptions } = sub;
+            const hasOptions = subOptions != null && subOptions.length > 0;
+            const promptTree: StructuredQuestionT = hasOptions
+              ? { ...narrowed, sub_questions: [subSansOptions] }
+              : narrowed;
             await createQuestionPart(tx, {
               parentQuestionId: id,
               partIndex,
-              promptMd: structuredToPromptMarkdown(narrowed),
+              promptMd: structuredToPromptMarkdown(promptTree),
               referenceMd: structuredToReferenceMarkdown(narrowed),
               // ADR-0028 (U0 A2, recorded on ADR-0014 §12): a generated part
               // inherits its parent's PERSISTED knowledge labels at write time —
@@ -1367,8 +1378,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
               // otherwise PfSolo renders free-text and grading degrades to
               // semantic. Bodies only — renderers own the letter labels
               // (YUK-609), the exact judge resolves letters↔indices itself.
-              choicesMd:
-                sub.options && sub.options.length > 0 ? sub.options.map((o) => o.text) : null,
+              choicesMd: hasOptions ? subOptions.map((o) => o.text) : null,
               difficulty: q.difficulty,
               source: 'quiz_gen',
               structured: narrowed,

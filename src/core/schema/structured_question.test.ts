@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { extractAnswerHead } from './judge-routing';
 import {
   BBox,
   FigureRef,
@@ -227,6 +228,35 @@ describe('structuredToReferenceMarkdown', () => {
     });
     expect(md).toContain('ans1');
     expect(md).toContain('ans2');
+  });
+
+  // YUK-1011 codex P1 (round 2) — a leaf reference must resolve to its bare
+  // answer head under extractAnswerHead (the exact judge's compare surface +
+  // the write-path exact-capability guard share it). The analysis tail is
+  // labeled 解析： so the cut is deterministic; a bare '\n'-joined analysis
+  // would make the whole blob the head and grade correct answers incorrect.
+  it('labels the analysis tail so extractAnswerHead resolves the bare answer', () => {
+    const md = structuredToReferenceMarkdown({
+      id: 'q1',
+      role: 'sub',
+      prompt_text: '「去」的意思是？',
+      answers: ['B 离开'],
+      analysis: '「去」在文言中常释为「离开」。',
+    });
+    expect(md).toBe('B 离开\n解析：「去」在文言中常释为「离开」。');
+    expect(extractAnswerHead(md)).toBe('B 离开');
+  });
+
+  it('does not double-label an analysis that already carries a marker', () => {
+    const md = structuredToReferenceMarkdown({
+      id: 'q1',
+      role: 'sub',
+      prompt_text: '题面',
+      answers: ['答案'],
+      analysis: '【解析】已带标记',
+    });
+    expect(md).toBe('答案\n【解析】已带标记');
+    expect(extractAnswerHead(md)).toBe('答案');
   });
 
   it('returns empty string for question with no answer / analysis', () => {

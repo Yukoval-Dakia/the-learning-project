@@ -2504,8 +2504,18 @@ describe('runQuizGen — composite_parent_only (YUK-1011)', () => {
       expect(childMeta.quiz_gen).toMatchObject({ generation_status: 'ready' });
     }
     expect(child0?.prompt_md).toContain('「太丘舍去」中「去」的意思是？');
-    expect(child0?.prompt_md).toContain('A. 前往');
-    expect(child0?.reference_md).toContain('B 离开');
+    // codex P2 (round 2) — the objective child's options live in choices_md
+    // (below) and render as buttons; they must NOT also be inlined into
+    // prompt_md or every choice paints twice.
+    expect(child0?.prompt_md).not.toContain('A. 前往');
+    expect(child0?.prompt_md).not.toContain('B. 离开');
+    // codex P1 (round 2) — the reference keeps a deterministic answer HEAD:
+    // bare answer + a marked 解析： tail so extractAnswerHead cuts it and the
+    // exact judge can resolve 'B 离开' → choice index against the learner's
+    // letter/option-body submission.
+    expect(child0?.reference_md).toBe(
+      'B 离开\n解析：「去」在文言中常释为「离开」，与现代汉语义相反。',
+    );
     expect(child0?.prompt_md).not.toContain('元方反驳友人的话');
     expect(child1?.prompt_md).toContain('元方反驳友人的话表现了他怎样的品格？');
     expect(child1?.reference_md).toContain('守信明礼');

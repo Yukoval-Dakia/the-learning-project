@@ -9,7 +9,7 @@
 //
 // db 测试注入 fake run seam（vi.fn()）验「派到哪个 verify」+ status 透传，不打真 AI。
 
-import { and, eq, ne } from 'drizzle-orm';
+import { and, eq, inArray, ne } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -167,6 +167,104 @@ describe('verifyAndPromote — Task 4 (薄 dispatcher)', () => {
     // Still draft, and no verify/promote event was written for the part.
     const row = (await db.select().from(question).where(eq(question.id, child)).limit(1))[0];
     expect(row.draft_status).toBe('draft');
+  });
+
+  // YUK-1011 codex P1 (round 2) — the owner-override branch must cascade to the
+  // composite group: without it a force-enabled 篇 parent goes pool-eligible
+  // (EXISTS counts its still-draft children) while the parts — excluded from
+  // moderation and owning no verify intent — stay 'draft' forever. Tombstoned
+  // and already-active children are untouched; FSRS enroll-if-absent mirrors
+  // the parent rule (knowledge-level when labeled, question-level fallback).
+  it('override (skipVerify) on a composite parent promotes its draft children in the same tx', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const parent = await seedQuestion({
+      source: 'quiz_gen',
+      kind: 'reading',
+      knowledgeIds: ['k1'],
+    });
+    const childLabeled = await seedQuestion({
+      source: 'quiz_gen',
+      kind: 'question_part',
+      parentQuestionId: parent,
+      knowledgeIds: ['k1'],
+    });
+    const childUnlabeled = await seedQuestion({
+      source: 'quiz_gen',
+      kind: 'question_part',
+      parentQuestionId: parent,
+      knowledgeIds: [],
+    });
+    const childTombstoned = await seedQuestion({
+      source: 'quiz_gen',
+      kind: 'question_part',
+      parentQuestionId: parent,
+      knowledgeIds: ['k1'],
+      metadata: { archived_at: '2026-06-10T00:00:00.000Z' },
+    });
+    const childActive = await seedQuestion({
+      source: 'quiz_gen',
+      kind: 'question_part',
+      parentQuestionId: parent,
+      knowledgeIds: ['k1'],
+      draftStatus: 'active',
+    });
+    const spyB = vi.fn(async () => quizResult('verified'));
+
+    const result = await verifyAndPromote({
+      db,
+      questionId: parent,
+      runTaskFn: noRunTask,
+      actor: { kind: 'user', ref: 'owner' },
+      skipVerify: { reason: 'owner 放行整篇' },
+      deps: { runQuizVerify: spyB },
+    });
+
+    expect(result).toMatchObject({ promoted: true, status: 'skipped:owner_override' });
+    expect(spyB).not.toHaveBeenCalled();
+
+    const rows = await db
+      .select({ id: question.id, draftStatus: question.draft_status })
+      .from(question)
+      .where(
+        inArray(question.id, [parent, childLabeled, childUnlabeled, childTombstoned, childActive]),
+      );
+    const statusById = new Map(rows.map((r) => [r.id, r.draftStatus]));
+    expect(statusById.get(parent)).toBe('active');
+    expect(statusById.get(childLabeled)).toBe('active');
+    expect(statusById.get(childUnlabeled)).toBe('active');
+    // Dead or already-live children are not rewritten by the cascade.
+    expect(statusById.get(childTombstoned)).toBe('draft');
+    expect(statusById.get(childActive)).toBe('active');
+
+    // FSRS: the labeled child's knowledge row is the SAME k1 row the parent
+    // enrolled (enroll-if-absent → still exactly one); the unlabeled legacy
+    // child keeps the question-level fallback so it is never dropped.
+    const k1Rows = await db
+      .select()
+      .from(material_fsrs_state)
+      .where(
+        and(
+          eq(material_fsrs_state.subject_kind, 'knowledge'),
+          eq(material_fsrs_state.subject_id, 'k1'),
+        ),
+      );
+    expect(k1Rows).toHaveLength(1);
+    const childFsrs = await db
+      .select()
+      .from(material_fsrs_state)
+      .where(
+        and(
+          eq(material_fsrs_state.subject_kind, 'question'),
+          inArray(material_fsrs_state.subject_id, [
+            childLabeled,
+            childUnlabeled,
+            childTombstoned,
+            childActive,
+          ]),
+        ),
+      );
+    expect(childFsrs.map((r) => r.subject_id)).toEqual([childUnlabeled]);
   });
 
   it('maps run status → promoted (verified true; failed/needs_review false), three states (Step 3)', async () => {
