@@ -129,6 +129,7 @@ export type QuizVerifyPerQuestionStatus =
   | 'failed'
   | 'skipped:not_found'
   | 'skipped:not_quiz_gen'
+  | 'skipped:question_part'
   | 'skipped:already_verified';
 
 // YUK-350 (B5 increment C) — event-layer projection of WHY a verify did not promote,
@@ -173,6 +174,13 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
   const row = rows[0];
   if (!row) return { status: 'skipped:not_found' };
   if (row.source !== 'quiz_gen') return { status: 'skipped:not_quiz_gen' };
+  // YUK-1011 — a question_part is never an independent verify subject: the
+  // composite group is verified at the parent and this handler's promote branch
+  // cascades to its draft children in the same tx. A stray dispatch (orphan
+  // recovery, owner-UI enable on a part id, matcher lazy-verify) must NOT spend
+  // a paid verify on a part or promote it standalone — an active child under a
+  // still-draft parent would break the atomic group gate.
+  if (row.parent_question_id != null) return { status: 'skipped:question_part' };
 
   // Idempotency: only a TERMINAL verify event short-circuits a re-run — i.e. the
   // QuizVerifyTask actually ran and produced a verdict (outcome success | partial |
@@ -796,14 +804,17 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         // independent verify intent) promotes its draft children in the SAME tx
         // so the group enters the pool atomically. Tombstoned children
         // (archived/dismissed) are skipped — a dead part must not resurrect.
-        // Children carry no KC attribution (the parent owns coverage), so each
-        // enrolls question-level — the enroll-if-absent guard means a re-verify
-        // or an already-active child is a no-op.
+        // Children inherit the parent's knowledge_ids at write time (ADR-0028
+        // U0 A2), so they enroll on the SAME knowledge projection as the parent
+        // (per-KC enroll-if-absent — usually a no-op since the parent's loop
+        // above just enrolled those ids); the question-level fallback stays
+        // reserved for a genuinely unlabeled legacy part.
         const childRows = await tx
           .select({
             id: question.id,
             draftStatus: question.draft_status,
             metadata: question.metadata,
+            knowledgeIds: question.knowledge_ids,
           })
           .from(question)
           .where(eq(question.parent_question_id, questionId));
@@ -839,15 +850,30 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
               updated_at: now,
             })
             .where(eq(question.id, child.id));
-          const childExisting = await getFsrsState(tx, 'question', child.id);
-          if (!childExisting) {
-            await upsertFsrsState(tx, {
-              subject_kind: 'question',
-              subject_id: child.id,
-              state: initial.state,
-              due_at: initial.dueAt,
-              last_review_event_id: verifyEventId,
-            });
+          const childKnowledgeIds = Array.from(new Set(child.knowledgeIds ?? []));
+          if (childKnowledgeIds.length > 0) {
+            for (const knowledgeId of childKnowledgeIds) {
+              const childExisting = await getFsrsState(tx, 'knowledge', knowledgeId);
+              if (childExisting) continue;
+              await upsertFsrsState(tx, {
+                subject_kind: 'knowledge',
+                subject_id: knowledgeId,
+                state: initial.state,
+                due_at: initial.dueAt,
+                last_review_event_id: verifyEventId,
+              });
+            }
+          } else {
+            const childExisting = await getFsrsState(tx, 'question', child.id);
+            if (!childExisting) {
+              await upsertFsrsState(tx, {
+                subject_kind: 'question',
+                subject_id: child.id,
+                state: initial.state,
+                due_at: initial.dueAt,
+                last_review_event_id: verifyEventId,
+              });
+            }
           }
         }
       } else {

@@ -48,6 +48,8 @@ interface SeedQuestionOpts {
   draftStatus?: string | null;
   knowledgeIds?: string[];
   metadata?: Record<string, unknown>;
+  kind?: string;
+  parentQuestionId?: string | null;
 }
 
 async function seedQuestion(opts: SeedQuestionOpts = {}): Promise<string> {
@@ -56,7 +58,7 @@ async function seedQuestion(opts: SeedQuestionOpts = {}): Promise<string> {
   const id = opts.id ?? `q-${Math.random().toString(36).slice(2)}`;
   await db.insert(question).values({
     id,
-    kind: 'short_answer',
+    kind: opts.kind ?? 'short_answer',
     prompt_md: 'P',
     reference_md: 'R',
     choices_md: null,
@@ -66,6 +68,7 @@ async function seedQuestion(opts: SeedQuestionOpts = {}): Promise<string> {
     source: opts.source ?? 'quiz_gen',
     source_ref: null,
     draft_status: opts.draftStatus === undefined ? 'draft' : opts.draftStatus,
+    parent_question_id: opts.parentQuestionId ?? null,
     created_by: { by: 'ai', task_kind: 'QuizGenTask' },
     metadata: (opts.metadata ?? {}) as never,
     created_at: now,
@@ -126,6 +129,44 @@ describe('verifyAndPromote — Task 4 (薄 dispatcher)', () => {
     expect(spyB).toHaveBeenCalledTimes(1);
     expect(spyB).toHaveBeenCalledWith({ db, questionId: qid, runTaskFn: noRunTask });
     expect(spyA).not.toHaveBeenCalled();
+  });
+
+  // YUK-1011 codex P1 — a question_part is group-internal: it must never be
+  // verified or promoted standalone. One guard BEFORE the branch split covers
+  // both paths — the normal dispatch would route a quiz_gen part into a paid
+  // runQuizVerify, and the override would force-promote it with no verify.
+  it('question_part → skipped:question_part in BOTH branches, no dispatch, no promote', async () => {
+    const db = testDb();
+    const parent = await seedQuestion({ source: 'quiz_gen', kind: 'reading' });
+    const child = await seedQuestion({
+      source: 'quiz_gen',
+      kind: 'question_part',
+      parentQuestionId: parent,
+    });
+    const spyB = vi.fn(async () => quizResult('verified'));
+
+    const normal = await verifyAndPromote({
+      db,
+      questionId: child,
+      runTaskFn: noRunTask,
+      deps: { runQuizVerify: spyB },
+    });
+    expect(normal).toMatchObject({ promoted: false, status: 'skipped:question_part' });
+    expect(spyB).not.toHaveBeenCalled();
+
+    const override = await verifyAndPromote({
+      db,
+      questionId: child,
+      runTaskFn: noRunTask,
+      skipVerify: { reason: 'owner override attempt on a part' },
+      deps: { runQuizVerify: spyB },
+    });
+    expect(override).toMatchObject({ promoted: false, status: 'skipped:question_part' });
+    expect(spyB).not.toHaveBeenCalled();
+
+    // Still draft, and no verify/promote event was written for the part.
+    const row = (await db.select().from(question).where(eq(question.id, child)).limit(1))[0];
+    expect(row.draft_status).toBe('draft');
   });
 
   it('maps run status → promoted (verified true; failed/needs_review false), three states (Step 3)', async () => {

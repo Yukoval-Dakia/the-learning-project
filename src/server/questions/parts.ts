@@ -52,6 +52,16 @@ export interface CreateQuestionPartInput {
   source: string;
   /** Optional structured tree for the part. */
   structured?: StructuredQuestionT | null;
+  /**
+   * YUK-1011 — option BODIES for an objective (choice) part (the YUK-609
+   * convention: renderers own the A/B/C labels by array index, so callers pass
+   * `sub.options.map(o => o.text)`, never "A. …" prefixed text). Persisting it
+   * keeps the runtime judge contract deterministic: route-resolve short-circuits
+   * `choices_md.length > 0` → 'exact', and `withAnswerClass` derives
+   * answer_class='exact' on write. Absent ⇒ NULL (a free-response part falls
+   * through to the semantic route via the question_part kind).
+   */
+  choicesMd?: string[] | null;
   /** Optional figures for the part. */
   figures?: FigureRefT[];
   /** Optional image refs for the part. */
@@ -97,6 +107,10 @@ export async function createQuestionPart(
       kind: QUESTION_PART_KIND,
       prompt_md: input.promptMd,
       reference_md: input.referenceMd ?? null,
+      // YUK-1011 — objective parts persist their option bodies so route-resolve
+      // short-circuits to the deterministic 'exact' judge instead of degrading a
+      // choice sub to semantic grading.
+      choices_md: input.choicesMd ?? null,
       knowledge_ids: input.knowledgeIds ?? [],
       difficulty: input.difficulty ?? 3,
       source: input.source,

@@ -23,6 +23,11 @@ import {
 } from '@/capabilities/practice/public';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import {
+  type StructuredQuestionT,
+  structuredToPromptMarkdown,
+  structuredToReferenceMarkdown,
+} from '@/core/schema/structured_question';
+import {
   artifact,
   event,
   knowledge,
@@ -2478,9 +2483,11 @@ describe('runQuizGen — composite_parent_only (YUK-1011)', () => {
       expect(child.kind).toBe('question_part');
       expect(child.draft_status).toBe('draft');
       expect(child.source).toBe('quiz_gen');
-      // KC attribution stays on the parent (the cascade enrolls parts at
-      // question level).
-      expect(child.knowledge_ids).toEqual([]);
+      // ADR-0028 (U0 A2): a generated part inherits the parent's PERSISTED
+      // knowledge labels at write time — it is a KC probe, and attempts on it
+      // attribute to the same knowledge projection (the cascade enrolls
+      // per-KC, not question-level).
+      expect(child.knowledge_ids).toEqual(['k1']);
       expect(child.created_by).toBeNull();
       expect(child.canonical_content_hash).toBeNull();
       expect(child.prompt_md).toContain('陈太丘与友期行');
@@ -2502,6 +2509,14 @@ describe('runQuizGen — composite_parent_only (YUK-1011)', () => {
     expect(child0?.prompt_md).not.toContain('元方反驳友人的话');
     expect(child1?.prompt_md).toContain('元方反驳友人的话表现了他怎样的品格？');
     expect(child1?.reference_md).toContain('守信明礼');
+
+    // Codex P1 (objective contract) — the choice sub persists its option BODIES
+    // as choices_md so route-resolve short-circuits it to the deterministic
+    // 'exact' judge; the free-response sub keeps NULL and grades semantically.
+    expect(child0?.choices_md).toEqual(['前往', '离开', '到达', '回来']);
+    expect(child0?.answer_class).toBe('exact');
+    expect(child1?.choices_md).toBeNull();
+    expect(child1?.answer_class).toBe('semantic');
 
     // Artifact + verify dispatch reference the parent only.
     const quizArtifacts = await testDb()
@@ -2676,6 +2691,76 @@ describe('runQuizGen — composite_parent_only (YUK-1011)', () => {
       .where(eq(artifact.tool_kind, 'quiz_gen'));
     expect(artifacts).toHaveLength(1); // only the first run's artifact.
     expect(enqueueQuizVerify).toHaveBeenCalledTimes(1);
+  });
+
+  it('a flat row whose text matches the composite render does NOT absorb the composite (shape discriminator)', async () => {
+    // Codex P2 — without the composite flag in the canonical hash, a flat row
+    // whose normalized prompt/reference/choices/rubric equal the composite's
+    // derived render would be adopted as an exact duplicate: the merge branch
+    // `continue`s before part materialization, no children exist, and
+    // poolFetch(compositeParentOnly) still rejects the childless row — the
+    // 篇 supply gap silently unresolved. The discriminator namespaces the two
+    // shapes so the composite inserts fresh with its full group.
+    await seedKnowledge({ id: 'k1' });
+    const flatPrompt = structuredToPromptMarkdown(COMPOSITE_STRUCTURED as StructuredQuestionT);
+    const flatReference = structuredToReferenceMarkdown(
+      COMPOSITE_STRUCTURED as StructuredQuestionT,
+    );
+    const flatRubric = JSON.parse(COMPOSITE_OUTPUT).questions[0].rubric_json;
+    const flatHash = canonicalQuestionContentHash({
+      promptMd: flatPrompt,
+      referenceMd: flatReference,
+      choicesMd: null,
+      rubricJson: flatRubric,
+    });
+    const now = new Date();
+    await testDb()
+      .insert(question)
+      .values({
+        id: 'flat-collider',
+        kind: 'reading',
+        prompt_md: flatPrompt,
+        reference_md: flatReference,
+        rubric_json: flatRubric,
+        knowledge_ids: ['k1'],
+        difficulty: 3,
+        source: 'quiz_gen',
+        source_ref: 'k1',
+        draft_status: 'active',
+        metadata: {},
+        canonical_content_hash: flatHash,
+        created_at: now,
+        updated_at: now,
+      });
+
+    const enqueueQuizVerify = vi.fn(async () => {});
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 1,
+      compositeParentOnly: true,
+      runAgentTaskFn: agentMock(COMPOSITE_OUTPUT, 'tr_shape'),
+      enqueueQuizVerify,
+      buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
+    });
+
+    // Fresh parent + children — the flat collider is untouched, not merged.
+    expect(result.question_ids).toHaveLength(1);
+    const parentId = result.question_ids?.[0];
+    if (!parentId) throw new Error('expected a composite parent id');
+    expect(parentId).not.toBe('flat-collider');
+    const children = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.parent_question_id, parentId));
+    expect(children).toHaveLength(2);
+    const colliderRows = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.id, 'flat-collider'));
+    expect(colliderRows[0]?.knowledge_ids).toEqual(['k1']); // no merge write
+    expect(enqueueQuizVerify).toHaveBeenCalledWith([parentId], expect.any(Object));
   });
 
   it('rejects at the plan gate when a pinned plan omits composite:true', async () => {

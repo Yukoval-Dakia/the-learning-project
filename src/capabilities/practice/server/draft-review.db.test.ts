@@ -47,6 +47,8 @@ async function seedQuestion(opts: {
   knowledge_ids?: string[];
   structured?: unknown;
   draft_status?: string | null;
+  parent_question_id?: string | null;
+  part_index?: number | null;
   metadata?: Record<string, unknown> | null;
   created_at?: Date;
 }): Promise<string> {
@@ -65,6 +67,8 @@ async function seedQuestion(opts: {
       structured: (opts.structured ?? null) as never,
       source: opts.source ?? 'quiz_gen',
       draft_status: opts.draft_status === undefined ? 'draft' : opts.draft_status,
+      parent_question_id: opts.parent_question_id ?? null,
+      part_index: opts.part_index ?? null,
       metadata: (opts.metadata ?? null) as never,
       created_at: now,
       updated_at: now,
@@ -135,6 +139,29 @@ describe('listDraftReview', () => {
       rows: [],
     });
     await expect(getDraftReviewDetail(testDb(), diagnostic)).resolves.toBeNull();
+  });
+
+  // YUK-1011 codex P1 — composite children (question_part drafts) are
+  // group-internal: they carry no independent verify intent and would otherwise
+  // appear as separate unverified drafts an owner could enable/force-enable
+  // standalone — breaking the atomic group gate (child active while its parent
+  // may still fail verification). The list and detail both hide them; the
+  // parent's verify cascade owns their promotion.
+  it('excludes question_part drafts from list and detail (composite children are not moderation items)', async () => {
+    const parent = await seedQuestion({ draft_status: 'draft', kind: 'reading' });
+    const standaloneDraft = await seedQuestion({ draft_status: 'draft' });
+    const child = await seedQuestion({
+      kind: 'question_part',
+      draft_status: 'draft',
+      parent_question_id: parent,
+      part_index: 0,
+      prompt_md: 'composite child — should not be independently reviewable',
+    });
+
+    const page = await listDraftReview(testDb(), {});
+    expect(page.rows.map((r) => r.id)).toEqual(expect.arrayContaining([parent, standaloneDraft]));
+    expect(page.rows.map((r) => r.id)).not.toContain(child);
+    await expect(getDraftReviewDetail(testDb(), child)).resolves.toBeNull();
   });
 
   it('derives verify status = unverified when no verify event exists', async () => {

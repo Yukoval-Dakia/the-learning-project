@@ -1157,6 +1157,12 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           referenceMd: effectiveReferenceMd,
           choicesMd: effectiveChoicesMd,
           rubricJson: q.rubric_json,
+          // YUK-1011 — shape discriminator: a composite parent's derived render
+          // can be byte-identical to a flat question's text; without this the
+          // merge branch would adopt the childless flat row and silently skip
+          // part materialization (poolFetch(compositeParentOnly) would still
+          // reject it). Flat items omit the key → byte-identical legacy hash.
+          composite: composite != null,
         });
         const duplicateKnowledgeIds = combineExactDuplicateKnowledgeIds(
           questionKnowledgeIds,
@@ -1347,10 +1353,22 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
               partIndex,
               promptMd: structuredToPromptMarkdown(narrowed),
               referenceMd: structuredToReferenceMarkdown(narrowed),
-              // KC attribution stays on the parent — a part is a fragment of the
-              // same logical item; empty ids keep parts out of the KC-keyed pool
-              // fetch and make the promote cascade enroll them question-level.
-              knowledgeIds: [],
+              // ADR-0028 (U0 A2, recorded on ADR-0014 §12): a generated part
+              // inherits its parent's PERSISTED knowledge labels at write time —
+              // an unlabeled part would be invisible to the KC-keyed pool fetch,
+              // attempts on it would update no KC theta/mastery, and the verify
+              // cascade could only enroll it under the legacy question-level
+              // fallback. duplicateKnowledgeIds is the exact set the parent row
+              // persists (target KCs first, then model attribution).
+              knowledgeIds: duplicateKnowledgeIds,
+              // YUK-1011 codex P1 — an objective sub (options) must persist its
+              // option bodies so the row keeps the deterministic 'exact' judge
+              // contract (route-resolve: choices_md.length > 0 → 'exact');
+              // otherwise PfSolo renders free-text and grading degrades to
+              // semantic. Bodies only — renderers own the letter labels
+              // (YUK-609), the exact judge resolves letters↔indices itself.
+              choicesMd:
+                sub.options && sub.options.length > 0 ? sub.options.map((o) => o.text) : null,
               difficulty: q.difficulty,
               source: 'quiz_gen',
               structured: narrowed,

@@ -119,6 +119,7 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       draft_status: question.draft_status,
       knowledge_ids: question.knowledge_ids,
       metadata: question.metadata,
+      parent_question_id: question.parent_question_id,
     })
     .from(question)
     .where(eq(question.id, questionId))
@@ -126,6 +127,17 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
   const row = rows[0];
   if (!row) {
     return { promoted: false, status: 'skipped:not_found', reason: 'question not found' };
+  }
+
+  // YUK-1011 — a question_part is group-internal: it has no independent verify
+  // intent and must never be promoted standalone (an active child under a
+  // still-draft parent breaks the composite atomic gate). Guard HERE — one
+  // choke point covers BOTH branches below: the normal dispatch would route a
+  // quiz_gen part into a paid runQuizVerify, and the override branch would
+  // force-promote it with no verify at all. Parts go active only via the
+  // parent's verify cascade (quiz_verify.ts).
+  if (row.parent_question_id != null) {
+    return { promoted: false, status: 'skipped:question_part' };
   }
 
   // ── override 分支 (skipVerify) ──────────────────────────────────────────────

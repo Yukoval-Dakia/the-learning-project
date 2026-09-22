@@ -122,6 +122,52 @@ describe('createQuestionPart (T-QP owner)', () => {
     expect(activeRows[0].draft_status).toBeNull();
   });
 
+  // YUK-1011 codex P1 — an objective (options-bearing) part persists its option
+  // bodies as choices_md so the runtime judge route stays the deterministic
+  // 'exact' path (route-resolve: choices_md.length > 0 → 'exact') and
+  // withAnswerClass derives answer_class='exact' on write. Omitting it keeps
+  // NULL → semantic fallback.
+  it('persists choicesMd so an objective part keeps the exact judge contract', async () => {
+    const db = testDb();
+    const parentId = createId();
+    await seedParent(parentId);
+    const now = new Date();
+
+    const objective = await db.transaction((tx) =>
+      createQuestionPart(tx, {
+        parentQuestionId: parentId,
+        partIndex: 0,
+        promptMd: 'choice sub',
+        referenceMd: 'B',
+        choicesMd: ['前往', '离开', '到达', '回来'],
+        source: 'quiz_gen',
+        draftStatus: 'draft',
+        now,
+      }),
+    );
+    const freeResponse = await db.transaction((tx) =>
+      createQuestionPart(tx, {
+        parentQuestionId: parentId,
+        partIndex: 1,
+        promptMd: 'short-answer sub',
+        referenceMd: '参考答案',
+        source: 'quiz_gen',
+        draftStatus: 'draft',
+        now,
+      }),
+    );
+
+    const objRows = await db.select().from(question).where(eq(question.id, objective.questionId));
+    expect(objRows[0].choices_md).toEqual(['前往', '离开', '到达', '回来']);
+    expect(objRows[0].answer_class).toBe('exact');
+    const freeRows = await db
+      .select()
+      .from(question)
+      .where(eq(question.id, freeResponse.questionId));
+    expect(freeRows[0].choices_md).toBeNull();
+    expect(freeRows[0].answer_class).toBe('semantic');
+  });
+
   it('a plain (non-part) question keeps parent_question_id / part_index NULL', async () => {
     const db = testDb();
     const plainId = createId();
