@@ -1728,7 +1728,7 @@ const followerPillStyle: React.CSSProperties = {
 
 const splitBtnStyle: React.CSSProperties = {
   fontFamily: 'var(--font-mono)',
-  fontSize: 12,
+  fontSize: 'var(--fs-caption)',
   color: 'var(--ink-3)',
   cursor: 'pointer',
 };

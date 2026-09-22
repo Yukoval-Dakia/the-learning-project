@@ -26,7 +26,7 @@ export function Badge({ tone = 'neutral', children, dot, dotStatic, className }:
     <span
       className={[
         'inline-flex items-center gap-[4px]',
-        'text-[11.5px] font-[500] leading-none',
+        'text-[14px] font-[500] leading-none',
         'px-[8px] py-[3px] rounded-[var(--r-pill)]',
         'font-[family:var(--font-mono)]',
         'tracking-[0.01em] whitespace-nowrap',

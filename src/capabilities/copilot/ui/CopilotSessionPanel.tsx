@@ -31,7 +31,7 @@ export function CopilotSessionPanel({
       className="flex max-h-[240px] flex-col gap-[8px] border-b border-[var(--line-soft)] pb-[10px]"
     >
       <div className="flex items-center justify-between gap-[8px]">
-        <div className="flex items-center gap-[6px] text-[12px] font-medium text-[var(--ink-2)]">
+        <div className="flex items-center gap-[6px] text-[14px] font-medium text-[var(--ink-2)]">
           <LoomIcon name="history" size={14} />
           对话记录
         </div>
@@ -63,8 +63,8 @@ export function CopilotSessionPanel({
                     : 'text-[var(--ink-2)] hover:bg-[var(--paper-sunk)]',
                 ].join(' ')}
               >
-                <span className="min-w-0 flex-1 truncate text-[12.5px]">{session.title}</span>
-                <time className="shrink-0 text-[11px] text-[var(--ink-4)]">
+                <span className="min-w-0 flex-1 truncate text-[14px]">{session.title}</span>
+                <time className="shrink-0 text-[14px] text-[var(--ink-4)]">
                   {new Date(session.updated_at).toLocaleDateString('zh-CN', {
                     month: 'numeric',
                     day: 'numeric',

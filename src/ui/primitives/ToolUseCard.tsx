@@ -326,8 +326,8 @@ export function ToolUseCard({
   const showCostRow = chainRowCost !== 'summary-only' && Boolean(costDetail);
   const costRowClassName =
     chainRowCost === 'always-show'
-      ? 'block text-[11px] text-[var(--ink-3)] mt-[4px]'
-      : 'hidden text-[11px] text-[var(--ink-3)] mt-[4px] group-hover:block';
+      ? 'block text-[14px] text-[var(--ink-3)] mt-[4px]'
+      : 'hidden text-[14px] text-[var(--ink-3)] mt-[4px] group-hover:block';
 
   const allowExpand = detailMode !== 'off';
   const bodyVisible = expanded && allowExpand && body !== undefined;
@@ -404,7 +404,7 @@ export function ToolUseCard({
         ) : null}
         <span className="tuc-head-end ml-auto flex items-center gap-[6px]">
           {costLabel ? (
-            <span className="text-[11px] text-[var(--ink-3)] tabular-nums">{costLabel}</span>
+            <span className="text-[14px] text-[var(--ink-3)] tabular-nums">{costLabel}</span>
           ) : null}
           {status !== undefined ? <StatusPill status={status} /> : null}
           {allowExpand && body !== undefined ? (
