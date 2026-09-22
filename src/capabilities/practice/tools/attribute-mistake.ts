@@ -6,7 +6,7 @@ import {
 import { createFailureLearning } from '@/capabilities/practice/server/failure-learning';
 import { makePracticeTaskRunFn } from '@/capabilities/practice/server/task-runtime';
 import type { Db } from '@/db/client';
-import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
+import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import type { DomainTool, ToolContext } from './types';
 
 const TEXT_EXCERPT_MAX = 180;
@@ -30,6 +30,8 @@ const AttributeMistakeOutputSchema = z.object({
       // unresolvable → null。
       primary_label: z.string().nullable(),
       secondary_categories: z.array(z.string()),
+      // YUK-1020 — secondary 里 misc_ id 的显示回填（id→title map；缺席→裸 id）。
+      secondary_labels: z.record(z.string(), z.string()),
       confidence: z.number().nullable(),
       analysis_excerpt: z.string(),
     })
@@ -45,14 +47,17 @@ async function judgeOutput(
   status: 'written' | 'skipped:existing_judge',
   judge: NonNullable<Awaited<ReturnType<typeof getJudgeForAttempt>>>,
 ): Promise<AttributeMistakeOutput> {
-  const labels = await resolveMiscCauseLabels(db, [judge.cause.primary_category]);
+  const secondary = judge.cause.secondary_categories ?? [];
+  // YUK-1020 — primary + secondary 的 misc_ id 同一批查询。
+  const labels = await resolveMiscCauseLabels(db, [judge.cause.primary_category, ...secondary]);
   return {
     status,
     judge_event_id: judge.judge_event_id,
     cause: {
       primary_category: judge.cause.primary_category,
       primary_label: labels.get(judge.cause.primary_category) ?? null,
-      secondary_categories: judge.cause.secondary_categories ?? [],
+      secondary_categories: secondary,
+      secondary_labels: miscCauseLabelMap(labels, secondary),
       confidence: judge.cause.confidence ?? null,
       analysis_excerpt: excerpt(judge.cause.analysis_md),
     },

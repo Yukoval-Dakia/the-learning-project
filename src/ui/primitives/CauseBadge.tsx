@@ -29,6 +29,13 @@ export interface Cause {
   primary_label?: string | null;
   /** Phase 1c.2: secondary categories surfaced when the agent judge attached them. */
   secondary?: string[] | null;
+  /**
+   * YUK-1020 — display backfill for `misc_` ids inside `secondary` (id → active
+   * misconception title map resolved server-side). Each chip renders
+   * `secondary_labels[id] ?? id`; `secondary` stays the stable identity for
+   * analytics/dedup.
+   */
+  secondary_labels?: Record<string, string> | null;
   confidence?: number | null;
   ai_analysis_md?: string;
 }
@@ -80,7 +87,7 @@ export function CauseBadge({ cause, pendingSinceSec, className }: CauseBadgeProp
       </Badge>
       {secondary.map((s) => (
         <Badge key={s} tone="neutral">
-          +{s}
+          +{cause.secondary_labels?.[s] ?? s}
         </Badge>
       ))}
     </span>

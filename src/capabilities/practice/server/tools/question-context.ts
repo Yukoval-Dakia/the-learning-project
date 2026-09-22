@@ -30,7 +30,7 @@ import {
 } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
-import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
+import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { getQuestionTimeline, getRecentReviewEvents } from '@/kernel/read-models/question-activity';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 
@@ -329,6 +329,9 @@ const GetReviewDueOutputSchema = z.object({
           cause: z.string().nullable(),
           // YUK-1018 — misc_ cause id 的显示回填；非 misc / unresolvable → null。
           cause_label: z.string().nullable(),
+          // YUK-1020 — 副归因 id + misc_ 显示回填（id→title map；缺席→裸 id）。
+          secondary_categories: z.array(z.string()),
+          secondary_labels: z.record(z.string(), z.string()),
           created_at: z.string(),
         })
         .optional(),
@@ -664,8 +667,9 @@ export async function executeGetReviewDue(
       : [];
   const qById = new Map(newQuestions.map((row) => [row.id, row]));
 
-  // YUK-1018 — misc_ cause id 的 title 回填（批量一次，不进循环）。只对 emit
-  // 集 newQuestionIds 预算 effectiveCause + 解析 label，200 帽的其余条目不查。
+  // YUK-1018/1020 — misc_ primary + secondary cause id 的 title 回填（同一批
+  // 查询，批量一次，不进循环）。只对 emit 集 newQuestionIds 预算 effectiveCause
+  // + 解析 label，200 帽的其余条目不查。
   const causeByQid = new Map(
     newQuestionIds.map((qid) => {
       const f = latestNeverReviewed.get(qid);
@@ -674,7 +678,9 @@ export async function executeGetReviewDue(
   );
   const latestMistakeLabels = await resolveMiscCauseLabels(
     ctx.db,
-    [...causeByQid.values()].map((c) => c?.primary_category).filter((id): id is string => !!id),
+    [...causeByQid.values()].flatMap((c) =>
+      c ? [c.primary_category, ...c.secondary_categories] : [],
+    ),
   );
 
   const rows: GetReviewDueOutput['rows'] = [];
@@ -697,6 +703,8 @@ export async function executeGetReviewDue(
         attempt_event_id: failure.attempt_event_id,
         cause: cause?.primary_category ?? null,
         cause_label: cause ? (latestMistakeLabels.get(cause.primary_category) ?? null) : null,
+        secondary_categories: cause?.secondary_categories ?? [],
+        secondary_labels: miscCauseLabelMap(latestMistakeLabels, cause?.secondary_categories ?? []),
         created_at: failure.created_at.toISOString(),
       },
     });

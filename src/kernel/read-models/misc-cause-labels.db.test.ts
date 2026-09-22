@@ -5,7 +5,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { misconception } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { isMiscCauseId, resolveMiscCauseLabels } from './misc-cause-labels';
+import { isMiscCauseId, miscCauseLabelMap, resolveMiscCauseLabels } from './misc-cause-labels';
 
 async function seedMisc(opts: {
   id: string;
@@ -76,6 +76,31 @@ describe('resolveMiscCauseLabels', () => {
     await seedMisc({ id: 'misc_dup', title: 'dup' });
     const labels = await resolveMiscCauseLabels(db, ['misc_dup', 'misc_dup', 'misc_dup']);
     expect(labels.size).toBe(1);
+  });
+});
+
+// YUK-1020 — `secondary_labels` wire map：只含可解析 id，缺席 → 渲染裸 id。
+describe('miscCauseLabelMap', () => {
+  it('narrows the resolved map to the requested ids only', () => {
+    const labels = new Map([
+      ['misc_a', '标题A'],
+      ['misc_b', '标题B'],
+    ]);
+    expect(miscCauseLabelMap(labels, ['misc_a', 'misc_c', 'vocab_id'])).toEqual({
+      misc_a: '标题A',
+    });
+  });
+
+  it('returns {} when nothing resolves', () => {
+    expect(miscCauseLabelMap(new Map(), ['misc_x'])).toEqual({});
+    expect(miscCauseLabelMap(new Map([['misc_a', 't']]), [])).toEqual({});
+  });
+
+  it('keeps the last-wins single entry for repeated ids (Record map semantics)', () => {
+    const labels = new Map([['misc_dup', 't']]);
+    expect(miscCauseLabelMap(labels, ['misc_dup', 'misc_dup'])).toEqual({
+      misc_dup: 't',
+    });
   });
 });
 

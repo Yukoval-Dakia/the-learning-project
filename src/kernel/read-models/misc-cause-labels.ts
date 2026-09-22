@@ -43,3 +43,25 @@ export async function resolveMiscCauseLabels(
     );
   return new Map(rows.map((row) => [row.id, row.title]));
 }
+
+/**
+ * YUK-1020 — `secondary_categories` 的 misc_ id 显示回填（454-A 跟进观察项 4）。
+ * 把 resolveMiscCauseLabels 的批查询结果收窄成 wire 上的 `secondary_labels`
+ * Record map：只含可解析的 misc id → title；vocab 词表 id 与 unresolvable misc
+ * 缺席，渲染层回退裸 id。
+ *
+ * 用 Record map 而非 index-并行 array：CauseBadge 先 filter（剔除 falsy 与
+ * primary 重复项）再 map，并行 array 的下标对齐会被 filter 打断；id→label 键值
+ * 对过滤/重排/重复 id 免疫。
+ */
+export function miscCauseLabelMap(
+  labels: ReadonlyMap<string, string>,
+  causeIds: readonly string[],
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const id of causeIds) {
+    const label = labels.get(id);
+    if (label !== undefined) out[id] = label;
+  }
+  return out;
+}

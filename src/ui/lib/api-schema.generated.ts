@@ -16456,6 +16456,9 @@ export interface operations {
                                 primary_category: string;
                                 primary_label: string | null;
                                 secondary_categories: string[];
+                                secondary_labels: {
+                                    [key: string]: string;
+                                };
                                 /** @enum {string} */
                                 source: "agent" | "user";
                                 user_notes: string | null;
@@ -16497,6 +16500,9 @@ export interface operations {
                                 primary_category: string;
                                 primary_label: string | null;
                                 secondary_categories: string[];
+                                secondary_labels: {
+                                    [key: string]: string;
+                                };
                                 /** @enum {string} */
                                 source: "agent" | "user";
                                 user_notes: string | null;
@@ -24682,6 +24688,10 @@ export interface operations {
                                 confidence: number | null;
                                 primary: string;
                                 primary_label: string | null;
+                                secondary: string[];
+                                secondary_labels: {
+                                    [key: string]: string;
+                                };
                             } | null;
                             created_at_sec: number;
                             duration_ms: number | null;

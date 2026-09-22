@@ -210,6 +210,9 @@ export const QuestionDetailResponseSchema = z
             confidence: z.number().nullable(),
             // YUK-1018 — misc_ id 显示回填（active misconception title）。
             primary_label: z.string().nullable(),
+            // YUK-1020 — 副归因 id + misc_ 显示回填（id→title Record map）。
+            secondary: z.array(z.string()),
+            secondary_labels: z.record(z.string(), z.string()),
           })
           .nullable()
           .optional(),

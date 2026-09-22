@@ -46,6 +46,8 @@ interface MistakeCause {
   /** YUK-1018 — misc_ id 的显示回填（misconception title）；非 misc → null。 */
   primary_label?: string | null;
   secondary_categories?: string[] | null;
+  /** YUK-1020 — secondary 里 misc_ id 的显示回填（id→title map；缺席→裸 id）。 */
+  secondary_labels?: Record<string, string> | null;
   user_notes: string | null;
   confidence: number | null;
 }
@@ -125,6 +127,7 @@ function toCauseBadgeInput(cause: MistakeCause | null): {
   primary: CausePrimary | string;
   primary_label?: string | null;
   secondary?: string[] | null;
+  secondary_labels?: Record<string, string> | null;
   confidence?: number | null;
 } | null {
   if (!cause) return null;
@@ -133,6 +136,7 @@ function toCauseBadgeInput(cause: MistakeCause | null): {
     primary: cause.primary_category,
     primary_label: cause.primary_label ?? null,
     secondary: cause.secondary_categories ?? null,
+    secondary_labels: cause.secondary_labels ?? null,
     confidence: cause.confidence,
   };
 }

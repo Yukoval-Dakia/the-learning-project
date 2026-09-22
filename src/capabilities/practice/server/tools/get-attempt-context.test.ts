@@ -1,6 +1,6 @@
 import { createId } from '@paralleldrive/cuid2';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { knowledge, learning_record, question } from '@/db/schema';
+import { knowledge, learning_record, misconception, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import type { ToolContext } from '@/kernel/tools/types';
@@ -305,6 +305,100 @@ describe('getAttemptContextTool', () => {
     expect(output.timeline_scope).toBe('same_question_context_noncausal');
     expect(output.causal_neighborhood.relation_semantics).toBe('direct_children_only');
     expect(output.causal_neighborhood.direct_children.map((row) => row.action)).toContain('judge');
+  });
+
+  // YUK-1020 — misc_ secondary id 的显示回填：与 primary 同一批查询；
+  // secondary_categories 保留裸 id，secondary_labels 只含可解析的 misc id；
+  // timeline 条目的同名字段与 read-model 直通。
+  it('resolves misc_ secondary_categories into secondary_labels on cause and timeline', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(misconception).values({
+      id: 'misc_gac_sec',
+      title: '虚词误判',
+      reasoning: null,
+      weight: 1,
+      status: 'active',
+      source: 'soft',
+      seen: 1,
+      evidence: [],
+      created_by: { by: 'system' },
+      proposed_by_ai: true,
+      created_at: now,
+      updated_at: now,
+      archived_at: null,
+    });
+    await db.insert(knowledge).values({
+      id: 'k_xuci',
+      name: '虚词',
+      domain: 'yuwen',
+      created_at: now,
+      updated_at: now,
+    });
+    await db.insert(question).values({
+      id: 'q1',
+      kind: 'short_answer',
+      prompt_md: 'prompt for q1',
+      reference_md: 'reference for q1',
+      source: 'manual',
+      knowledge_ids: ['k_xuci'],
+      created_at: now,
+      updated_at: now,
+    });
+    await writeEvent(db, {
+      id: 'att_misc_sec',
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q1',
+      outcome: 'failure',
+      payload: {
+        answer_md: 'wrong',
+        answer_image_refs: [],
+        referenced_knowledge_ids: ['k_xuci'],
+      },
+      created_at: now,
+    });
+    await writeEvent(db, {
+      id: 'judge_misc_sec',
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'AttributionTask',
+      action: 'judge',
+      subject_kind: 'event',
+      subject_id: 'att_misc_sec',
+      outcome: 'success',
+      caused_by_event_id: 'att_misc_sec',
+      payload: {
+        cause: {
+          primary_category: 'concept',
+          secondary_categories: ['misc_gac_sec', 'grammar', 'misc_gac_gone'],
+          analysis_md: 'misc secondary mix',
+          confidence: 0.82,
+        },
+        referenced_knowledge_ids: ['k_xuci'],
+      },
+      created_at: new Date(now.getTime() + 1000),
+    });
+
+    const output = await getAttemptContextTool.execute(ctx(), {
+      attemptEventId: 'att_misc_sec',
+    });
+
+    expect(output.cause?.secondary_categories).toEqual([
+      'misc_gac_sec',
+      'grammar',
+      'misc_gac_gone',
+    ]);
+    expect(output.cause?.secondary_labels).toEqual({ misc_gac_sec: '虚词误判' });
+    const attemptEntry = output.timeline.find((e) => e.event_id === 'att_misc_sec');
+    expect(attemptEntry?.kind).toBe('attempt');
+    if (attemptEntry?.kind === 'attempt') {
+      expect(attemptEntry.cause?.secondary).toEqual(['misc_gac_sec', 'grammar', 'misc_gac_gone']);
+      expect(attemptEntry.cause?.secondary_labels).toEqual({ misc_gac_sec: '虚词误判' });
+    }
   });
 
   it('separates event existence from unsupported payload and answer enrichment', async () => {
@@ -1930,6 +2024,7 @@ describe('getAttemptContextTool', () => {
           primary_category: 'memory',
           primary_label: null,
           secondary_categories: [],
+          secondary_labels: {},
           analysis_md: null,
           user_notes: null,
           confidence: null,

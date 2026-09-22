@@ -122,6 +122,9 @@ export interface QuestionDetailTimelineEntry {
     confidence: number | null;
     // YUK-1018 — misc_ id 显示回填（active misconception title）；非 misc → null。
     primary_label: string | null;
+    // YUK-1020 — 副归因 id + misc_ 显示回填（id→title map；未解析缺席→渲染裸 id）。
+    secondary: string[];
+    secondary_labels: Record<string, string>;
   } | null;
   // review-only
   fsrs_rating?: 'again' | 'hard' | 'good';
