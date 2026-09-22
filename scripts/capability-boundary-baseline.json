@@ -3,11 +3,12 @@
   "edgeUnit": "distinct-source-file-to-resolved-module",
   "notes": {
     "YUK-1022": "copilot -> ai raised 10 -> 16 (+6, total 435 -> 441). Spec-mandated P3 dual-descriptor wiring: copilot-execution/subagents now import the pi lane parallels (pi-hooks, pi-subagent host, execution-adapter lane pin, pi-agent-adapter types) alongside the existing SDK descriptor edges, plus the test seam in copilot_run.test.ts. Ratified per the YUK-921 migration spec; P4 retires the SDK side of these edges.",
-    "YUK-1025": "P4 SDK retirement: pi-only edges net agency->ai 27->28 (piCustomTool/pi-subagent/piDomainMount imports replaced the retired SdkMcpServer/buildMcpServerFromRegistry/createSpawnContract edges), copilot->ai 16->18 (execution-adapter ModelBinding + pi-subagent contract), practice->ai 73->65 (output-format.ts + SDK descriptor imports deleted). Total 441->436."
+    "YUK-1025": "P4 SDK retirement: pi-only edges net agency->ai 27->28 (piCustomTool/pi-subagent/piDomainMount imports replaced the retired SdkMcpServer/buildMcpServerFromRegistry/createSpawnContract edges), copilot->ai 16->18 (execution-adapter ModelBinding + pi-subagent contract), practice->ai 73->65 (output-format.ts + SDK descriptor imports deleted). Total 441->436.",
+    "YUK-1011": "practice -> questions raised 7 -> 8 (+1, total 436 -> 437): quiz_gen.ts now calls createQuestionPart (src/server/questions/parts.ts — the sole owner of question_part inserts) to materialize composite 篇 children inside the same persist transaction. Owner-service call per the write-path convention, same shape as ingestion -> questions (5)."
   },
   "debts": {
     "capabilityToServer": {
-      "total": 436,
+      "total": 437,
       "byOwnerPair": {
         "agency -> ai": 28,
         "agency -> boss": 10,
@@ -79,7 +80,7 @@
         "practice -> orchestrator": 1,
         "practice -> projections": 4,
         "practice -> proposals": 5,
-        "practice -> questions": 7,
+        "practice -> questions": 8,
         "practice -> r2": 2,
         "practice -> revert": 1,
         "practice -> runtime-env": 4,
