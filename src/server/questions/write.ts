@@ -168,8 +168,18 @@ export interface QuestionEditResult {
   // `noop` = patch contained no real change vs the current row (no version bump,
   // no audit event); `knowledge_invalid` = a knowledge_id was missing/archived
   // (re-validated inside the tx to close the TOCTOU window); `protected` =
-  // product-owned diagnostic content cannot be mutated through the question bank.
-  status: 'updated' | 'noop' | 'conflict' | 'not_found' | 'knowledge_invalid' | 'protected';
+  // product-owned diagnostic content cannot be mutated through the question bank;
+  // `composite_lifecycle` = the patch tried to flip draft_status on a composite
+  // member (a question_part child or a parent with children) — group lifecycle
+  // is owned by the verify cascade / owner override / archiveQuestion.
+  status:
+    | 'updated'
+    | 'noop'
+    | 'conflict'
+    | 'not_found'
+    | 'knowledge_invalid'
+    | 'protected'
+    | 'composite_lifecycle';
   event_id?: string;
   version?: number;
   missing_knowledge_ids?: string[];
@@ -203,6 +213,23 @@ export async function editQuestion(
     if (!row) return { status: 'not_found' };
     if (row.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
       return { status: 'protected' };
+    }
+
+    // YUK-1011 — composite lifecycle guard: a direct draft_status patch on a
+    // composite member bypasses the group atomicity invariant. A question_part
+    // promoted standalone would serve while its parent may still be a draft;
+    // a composite parent re-drafted here would leave active orphan children
+    // (deactivation must go through archiveQuestion, which cascades). Only a
+    // REAL status flip is blocked — a patch carrying the unchanged value keeps
+    // the noop semantics of `track` below; every other field stays editable.
+    if (patch.draft_status !== undefined && patch.draft_status !== row.draft_status) {
+      if (row.parent_question_id != null) return { status: 'composite_lifecycle' };
+      const [childRow] = await tx
+        .select({ id: question.id })
+        .from(question)
+        .where(eq(question.parent_question_id, questionId))
+        .limit(1);
+      if (childRow) return { status: 'composite_lifecycle' };
     }
 
     // Re-validate knowledge_ids inside the SAME transaction the update commits in.

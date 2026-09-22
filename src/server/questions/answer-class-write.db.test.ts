@@ -159,7 +159,12 @@ describe('editQuestion re-derives answer_class (DB)', () => {
 
   async function seedQuestion(
     id: string,
-    values: { kind: string; choices_md?: string[] | null },
+    values: {
+      kind: string;
+      choices_md?: string[] | null;
+      parent_question_id?: string | null;
+      draft_status?: string | null;
+    },
   ): Promise<void> {
     const db = testDb();
     const now = new Date();
@@ -230,5 +235,62 @@ describe('editQuestion re-derives answer_class (DB)', () => {
     expect(after.prompt_md).toBe('a brand new prompt');
     // answer_class unchanged (no structural field touched).
     expect(after.answer_class).toBe('semantic');
+  });
+
+  // YUK-1011 codex P1 (round 3) — the question-bank status toggle reaches every
+  // part via the ordinary detail page; a direct draft_status flip on a
+  // composite member bypasses the group lifecycle (active child under a draft
+  // parent; drafted parent over live children). Parts promote via the parent's
+  // verify cascade / owner override; a parent deactivates via archiveQuestion
+  // (which cascades). Other fields stay editable.
+  it('blocks a draft_status flip on a question_part (composite_lifecycle)', async () => {
+    const db = testDb();
+    const parentId = createId();
+    const childId = createId();
+    await seedQuestion(parentId, { kind: 'reading', draft_status: 'draft' });
+    await seedQuestion(childId, {
+      kind: 'question_part',
+      parent_question_id: parentId,
+      draft_status: 'draft',
+    });
+    const [before] = await db.select().from(question).where(eq(question.id, childId));
+
+    const res = await editQuestion(db, childId, before.version, { draft_status: 'active' }, 'self');
+    expect(res.status).toBe('composite_lifecycle');
+
+    const [after] = await db.select().from(question).where(eq(question.id, childId));
+    expect(after.draft_status).toBe('draft');
+    // A same-value patch keeps noop semantics (no false block).
+    const noop = await editQuestion(db, childId, before.version, { draft_status: 'draft' }, 'self');
+    expect(noop.status).toBe('noop');
+  });
+
+  it('blocks a draft_status flip on a composite parent (composite_lifecycle)', async () => {
+    const db = testDb();
+    const parentId = createId();
+    await seedQuestion(parentId, { kind: 'reading' });
+    await seedQuestion(createId(), {
+      kind: 'question_part',
+      parent_question_id: parentId,
+    });
+    const [before] = await db.select().from(question).where(eq(question.id, parentId));
+
+    const res = await editQuestion(db, parentId, before.version, { draft_status: 'draft' }, 'self');
+    expect(res.status).toBe('composite_lifecycle');
+
+    const [after] = await db.select().from(question).where(eq(question.id, parentId));
+    expect(after.draft_status).toBeNull();
+  });
+
+  it('still allows draft_status flips on ordinary (non-composite) rows', async () => {
+    const db = testDb();
+    const id = createId();
+    await seedQuestion(id, { kind: 'short_answer', draft_status: 'draft' });
+    const [before] = await db.select().from(question).where(eq(question.id, id));
+
+    const res = await editQuestion(db, id, before.version, { draft_status: 'active' }, 'self');
+    expect(res.status).toBe('updated');
+    const [after] = await db.select().from(question).where(eq(question.id, id));
+    expect(after.draft_status).toBe('active');
   });
 });

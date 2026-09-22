@@ -198,6 +198,13 @@ export async function PATCH(req: Request, params: Record<string, string>): Promi
         409,
       );
     }
+    if (result.status === 'composite_lifecycle') {
+      throw new ApiError(
+        'composite_lifecycle',
+        'draft_status on a composite parent or question_part is group-owned: parts promote via the parent verify cascade (or owner force-enable), and a parent deactivates via archive',
+        409,
+      );
+    }
     if (result.status === 'conflict') {
       throw new ApiError('conflict', `question ${id} concurrently modified`, 409);
     }
