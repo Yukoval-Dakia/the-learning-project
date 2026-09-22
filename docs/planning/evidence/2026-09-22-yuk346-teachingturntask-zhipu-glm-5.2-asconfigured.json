@@ -1,0 +1,37 @@
+{
+  "captured_at": "2026-09-22T10:52:18.007Z",
+  "code_revision": "8c14cedf41860c3598836b244c4ab21c6c27f055",
+  "ticket": "YUK-346",
+  "lane": {
+    "adapter": "pi",
+    "provider": "zhipu",
+    "model": "glm-5.2",
+    "task_kind": "TeachingTurnTask",
+    "pin": "explicit ctx.modelBinding (post-P4 routing surface)"
+  },
+  "task_run_id": "rsp23u6f7p5hjxlmb62yizpv",
+  "wall_ms": 4167,
+  "parse_ok": null,
+  "error": {
+    "name": "AgentRunError",
+    "subtype": "error_max_turns",
+    "taskRunId": "rsp23u6f7p5hjxlmb62yizpv",
+    "message": "[TeachingTurnTask] agent run errored: subtype=error_max_turns errors=pi agent_loop stopped at the configured turn ceiling (1)"
+  },
+  "input_digest": "sha256:6f46514bbc1613dbc45544d29ccf5b4a7ff332ef768101fb48d7ebde500717ca",
+  "subject": "yuwen",
+  "phase": "as-configured",
+  "budget_override": null,
+  "status": "failure",
+  "finish_reason": "error",
+  "usage": {
+    "inputTokens": 881,
+    "outputTokens": 181
+  },
+  "cost": {
+    "basis": "unknown",
+    "amount_usd": null,
+    "ref": "unpriced:zhipu/glm-5.2"
+  },
+  "provenance": "PiRunnerMessage frames carry source=pi; terminal evidence normalized from pi agentLoop agent_end + final assistant usage. Cost stays catalog-estimated (zhipu coding-plan catalog rates are 0 — flat subscription; mimo rates are the dated public per-token estimate)."
+}

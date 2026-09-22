@@ -1,0 +1,40 @@
+{
+  "captured_at": "2026-09-22T10:52:29.748Z",
+  "code_revision": "8c14cedf41860c3598836b244c4ab21c6c27f055",
+  "ticket": "YUK-346",
+  "lane": {
+    "adapter": "pi",
+    "provider": "zhipu",
+    "model": "glm-5.2",
+    "task_kind": "TeachingTurnTask",
+    "pin": "explicit ctx.modelBinding (post-P4 routing surface)"
+  },
+  "task_run_id": "ngtdu9aub0lr35vcxjyd1mpk",
+  "wall_ms": 11676,
+  "parse_ok": true,
+  "input_digest": "sha256:6f46514bbc1613dbc45544d29ccf5b4a7ff332ef768101fb48d7ebde500717ca",
+  "output_digest": "sha256:30af51928b0046b630f62db0fc178789150d40c25db8e9f76e193479797d5fbb",
+  "output_excerpt": "{\"kind\":\"explain\",\"text_md\":\"「而」是文言里出场率最高的连词，它本身没有实在意义，作用是把它前后两个部分连起来。所以辨析「而」的关键，不是死记这个词，而是看它连接的前后两部分是什么逻辑关系。常见的有四种：一是并列，前后两部分地位平等，可以调换顺序而意思不变，比如「蟹六跪而二螯」；二是承接，前后动作有时间或事理上的先后，比如「学而时习之」，先学再温习；三是转折，前后语义相反，可译成「却」，比如「而青于蓝」；四是修饰，前一项是修饰后一项动作的方式状态，比如「终日而思」的「终日」是「思」的状语。记住这条判断思路：先看前后能否互换，再看是否有先后，最后看语义是否相逆。\",\"suggested_next\":\"continue\"}",
+  "subject": "yuwen",
+  "phase": "relaxed-budget",
+  "budget_override": {
+    "maxIterations": 4
+  },
+  "as_configured": {
+    "status": "failure",
+    "error_subtype": "error_max_turns",
+    "wall_ms": 4167
+  },
+  "status": "success",
+  "finish_reason": "end_turn",
+  "usage": {
+    "inputTokens": 881,
+    "outputTokens": 201
+  },
+  "cost": {
+    "basis": "unknown",
+    "amount_usd": null,
+    "ref": "unpriced:zhipu/glm-5.2"
+  },
+  "provenance": "PiRunnerMessage frames carry source=pi; terminal evidence normalized from pi agentLoop agent_end + final assistant usage. Cost stays catalog-estimated (zhipu coding-plan catalog rates are 0 — flat subscription; mimo rates are the dated public per-token estimate)."
+}
