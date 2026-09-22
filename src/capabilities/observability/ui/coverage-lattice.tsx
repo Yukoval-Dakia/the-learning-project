@@ -435,7 +435,7 @@ const thStyle: CSSProperties = {
   padding: '0 10px 8px 0',
   color: 'var(--ink-4)',
   fontFamily: 'var(--font-mono)',
-  fontSize: 11.5,
+  fontSize: 'var(--fs-caption)',
   fontWeight: 500,
 };
 const tdStyle: CSSProperties = {
@@ -460,7 +460,7 @@ const gapRowStyle: CSSProperties = {
 const wantsStyle: CSSProperties = {
   color: 'var(--ink-2)',
   fontFamily: 'var(--font-mono)',
-  fontSize: 12,
+  fontSize: 'var(--fs-caption)',
   overflowWrap: 'anywhere',
 };
 const scaffoldWantsStyle: CSSProperties = {
@@ -472,7 +472,7 @@ const gapMetaLineStyle: CSSProperties = { marginTop: 2 };
 const mutedMetaStyle: CSSProperties = {
   color: 'var(--ink-4)',
   fontFamily: 'var(--font-mono)',
-  fontSize: 11.5,
+  fontSize: 'var(--fs-caption)',
 };
 const cooldownStyle: CSSProperties = { color: 'var(--coral)' };
 const mutedTextStyle: CSSProperties = {

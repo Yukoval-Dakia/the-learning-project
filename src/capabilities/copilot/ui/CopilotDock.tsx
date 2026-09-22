@@ -1455,7 +1455,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
             className="flex items-start gap-[8px] border-l-2 border-[var(--ink-3)] pl-[8px] py-[3px]"
           >
             <LoomIcon name="sparkle" size={14} />
-            <p className="flex-1 text-[12.5px] text-[var(--ink)] leading-[1.5]">{n.headline}</p>
+            <p className="flex-1 text-[14px] text-[var(--ink)] leading-[1.5]">{n.headline}</p>
             <button
               type="button"
               className="chip"
@@ -1494,33 +1494,33 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       {/* 在线徽标已上移到 drawer-head（copilot.jsx L107）；摘要直接从 daily_focus 起。 */}
       <p className="text-[13px] text-[var(--ink)] leading-[1.55]">{summaryQ.data.daily_focus}</p>
       {summaryQ.data.review_due_count > 0 ? (
-        <p className="text-[12.5px] text-[var(--ink-2)]" data-testid="copilot-summary-review-due">
+        <p className="text-[14px] text-[var(--ink-2)]" data-testid="copilot-summary-review-due">
           今日待复习 <strong>{summaryQ.data.review_due_count}</strong> 题
         </p>
       ) : null}
       {learnerBriefGlobal ? (
         <p
-          className="text-[12px] text-[var(--ink-3)] italic leading-[1.5]"
+          className="text-[14px] text-[var(--ink-3)] italic leading-[1.5]"
           data-testid="copilot-summary-brief-global"
         >
           {learnerBriefGlobal}
         </p>
       ) : null}
       {summaryQ.data.dreaming_preview.length > 0 ? (
-        <ul className="list-disc list-inside text-[12.5px] text-[var(--ink-2)]">
+        <ul className="list-disc list-inside text-[14px] text-[var(--ink-2)]">
           {summaryQ.data.dreaming_preview.map((row) => (
             <li key={row.proposal_id}>{row.brief}</li>
           ))}
         </ul>
       ) : null}
       {summaryQ.data.pending_proposals_total > 0 ? (
-        <p className="text-[11.5px] text-[var(--ink-3)]">更多建议已整理到收件箱。</p>
+        <p className="text-[14px] text-[var(--ink-3)]">更多建议已整理到收件箱。</p>
       ) : null}
     </div>
   ) : summaryQ.isLoading ? (
-    <p className="text-[12.5px] text-[var(--ink-3)]">加载摘要…</p>
+    <p className="text-[14px] text-[var(--ink-3)]">加载摘要…</p>
   ) : (
-    <p className="text-[12.5px] text-[var(--ink-3)]">摘要暂不可用。</p>
+    <p className="text-[14px] text-[var(--ink-3)]">摘要暂不可用。</p>
   );
 
   const listedSessions = sessionsQ.data?.sessions ?? [];
@@ -1597,7 +1597,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           data-run-id={run.runId}
           data-run-status={run.cancelRequested ? 'cancel_requested' : run.view.phase}
         >
-          <span className="text-[12px] text-[var(--ink-3)]" data-testid="copilot-run-stage-footer">
+          <span className="text-[14px] text-[var(--ink-3)]" data-testid="copilot-run-stage-footer">
             {run.cancelRequested
               ? '停止中…'
               : COPILOT_PROGRESS_LABELS[copilotProgressStage(run.view)]}

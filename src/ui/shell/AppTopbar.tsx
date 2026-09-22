@@ -94,7 +94,7 @@ export function AppTopbar({
         />
         {copilotNudgeCount > 0 ? (
           <span
-            className="pointer-events-none absolute -top-[4px] -right-[4px] flex h-[16px] min-w-[16px] items-center justify-center rounded-full bg-[var(--ink-2)] px-[4px] text-[10px] font-medium leading-none text-[var(--surface,#fff)]"
+            className="pointer-events-none absolute -top-[4px] -right-[4px] flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[var(--ink-2)] px-[4px] text-[14px] font-medium leading-none text-[var(--surface,#fff)]"
             data-testid="copilot-nudge-launcher-badge"
             aria-hidden="true"
           >

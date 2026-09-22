@@ -183,6 +183,6 @@ const barFillStyle: CSSProperties = {
 const barValueStyle: CSSProperties = {
   fontFamily: 'var(--font-mono)',
   color: 'var(--ink-3)',
-  fontSize: 12,
+  fontSize: 'var(--fs-caption)',
   textAlign: 'right',
 };

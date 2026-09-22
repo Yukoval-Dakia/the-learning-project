@@ -371,7 +371,7 @@ const thStyle: CSSProperties = {
   padding: '0 10px 8px 0',
   color: 'var(--ink-4)',
   fontFamily: 'var(--font-mono)',
-  fontSize: 11.5,
+  fontSize: 'var(--fs-caption)',
   fontWeight: 500,
 };
 const tdStyle: CSSProperties = {
@@ -404,7 +404,7 @@ const metaGridStyle: CSSProperties = {
   gap: 8,
   color: 'var(--ink-3)',
   fontFamily: 'var(--font-mono)',
-  fontSize: 12,
+  fontSize: 'var(--fs-caption)',
   marginBottom: 6,
 };
 const outcomeSummaryStyle: CSSProperties = {
@@ -450,6 +450,6 @@ const timelineLabelStyle: CSSProperties = {
 const timelineMetaStyle: CSSProperties = {
   color: 'var(--ink-4)',
   fontFamily: 'var(--font-mono)',
-  fontSize: 11.5,
+  fontSize: 'var(--fs-caption)',
   marginTop: 3,
 };
