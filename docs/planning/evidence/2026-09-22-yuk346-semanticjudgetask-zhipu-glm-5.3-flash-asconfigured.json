@@ -1,0 +1,39 @@
+{
+  "captured_at": "2026-09-22T10:51:38.242Z",
+  "code_revision": "8c14cedf41860c3598836b244c4ab21c6c27f055",
+  "ticket": "YUK-346",
+  "lane": {
+    "adapter": "pi",
+    "provider": "zhipu",
+    "model": "glm-5.3-flash",
+    "task_kind": "SemanticJudgeTask",
+    "pin": "explicit ctx.modelBinding (post-P4 routing surface)"
+  },
+  "task_run_id": "utkltaed8ioyklnndv5kgqbu",
+  "wall_ms": 4676,
+  "parse_ok": null,
+  "error": {
+    "name": "AgentRunError",
+    "subtype": "error_max_turns",
+    "taskRunId": "utkltaed8ioyklnndv5kgqbu",
+    "message": "[SemanticJudgeTask] agent run errored: subtype=error_max_turns errors=pi agent_loop stopped at the configured turn ceiling (1)"
+  },
+  "input_digest": "sha256:1134a07f1837113ab5fd33b71de5237e976c581e53c8e10f442cabcc57cdf703",
+  "subject": "yuwen",
+  "phase": "as-configured",
+  "budget_override": null,
+  "status": "failure",
+  "finish_reason": "error",
+  "usage": {
+    "inputTokens": 699,
+    "outputTokens": 212,
+    "thinkingBlocks": 1,
+    "thinkingCharacters": 100
+  },
+  "cost": {
+    "basis": "unknown",
+    "amount_usd": null,
+    "ref": "unpriced:zhipu/glm-5.3-flash"
+  },
+  "provenance": "PiRunnerMessage frames carry source=pi; terminal evidence normalized from pi agentLoop agent_end + final assistant usage. Cost stays catalog-estimated (zhipu coding-plan catalog rates are 0 — flat subscription; mimo rates are the dated public per-token estimate)."
+}

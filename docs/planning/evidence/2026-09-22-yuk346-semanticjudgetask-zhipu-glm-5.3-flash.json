@@ -1,0 +1,42 @@
+{
+  "captured_at": "2026-09-22T10:51:43.892Z",
+  "code_revision": "8c14cedf41860c3598836b244c4ab21c6c27f055",
+  "ticket": "YUK-346",
+  "lane": {
+    "adapter": "pi",
+    "provider": "zhipu",
+    "model": "glm-5.3-flash",
+    "task_kind": "SemanticJudgeTask",
+    "pin": "explicit ctx.modelBinding (post-P4 routing surface)"
+  },
+  "task_run_id": "ti8t14qutnsuqqqt92h2i7x1",
+  "wall_ms": 5599,
+  "parse_ok": true,
+  "input_digest": "sha256:1134a07f1837113ab5fd33b71de5237e976c581e53c8e10f442cabcc57cdf703",
+  "output_digest": "sha256:b82623aa6432aaddb0500ad29d18dbcc7b5ca6b95a14fb6851e44181df83e6f1",
+  "output_excerpt": "{\"score\":1.0,\"coarse_outcome\":\"correct\",\"confidence\":0.95,\"feedback_md\":\"译文准确。三个要点均已落实：\\\"尝\\\"译作\\\"曾经\\\"，\\\"须臾\\\"译作\\\"一会儿\\\"，且\\\"一天到晚地思考\\\"与\\\"学一会儿\\\"的对比关系清楚，语句通顺，符合原句\\\"思不如学\\\"的意旨。\",\"evidence_json\":{\"matched_points\":[\"「尝」译为「曾经」（\\\"我曾经一天到晚地思考\\\"）\",\"「须臾」译为「一会儿」（\\\"不如学一会儿\\\"）\",\"译出「终日而思」与「须臾所学」的对比关系，语句通顺\"],\"missing_points\":[],\"notes\":\"与参考答案\\\"我曾经整天思索，却不如片刻学习\\\"表述等价。\"}}",
+  "subject": "yuwen",
+  "phase": "relaxed-budget",
+  "budget_override": {
+    "maxIterations": 4
+  },
+  "as_configured": {
+    "status": "failure",
+    "error_subtype": "error_max_turns",
+    "wall_ms": 4676
+  },
+  "status": "success",
+  "finish_reason": "end_turn",
+  "usage": {
+    "inputTokens": 699,
+    "outputTokens": 229,
+    "thinkingBlocks": 1,
+    "thinkingCharacters": 83
+  },
+  "cost": {
+    "basis": "unknown",
+    "amount_usd": null,
+    "ref": "unpriced:zhipu/glm-5.3-flash"
+  },
+  "provenance": "PiRunnerMessage frames carry source=pi; terminal evidence normalized from pi agentLoop agent_end + final assistant usage. Cost stays catalog-estimated (zhipu coding-plan catalog rates are 0 — flat subscription; mimo rates are the dated public per-token estimate)."
+}
