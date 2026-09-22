@@ -122,12 +122,16 @@ describe('task prompt definitions', () => {
         // CauseCategoryProposeTask postdates the oracle entirely (YUK-1016) — no
         // pre-refactor hash exists to pin against.
         // SessionSummaryTask evolved in YUK-1018 (category_label guidance for misc_ causes).
+        // QuizGenTask + QuizPlanTask evolved in YUK-1011 (composite_parent_only 篇
+        // contract — stem+sub_questions output shape and plan item composite flag).
         if (
           task === 'CopilotTask' ||
           task === 'QuizVerifyTask' ||
           task === 'NoteGenerateTask' ||
           task === 'CauseCategoryProposeTask' ||
-          task === 'SessionSummaryTask'
+          task === 'SessionSummaryTask' ||
+          task === 'QuizGenTask' ||
+          task === 'QuizPlanTask'
         ) {
           continue;
         }
