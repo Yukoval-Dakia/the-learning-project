@@ -103,6 +103,56 @@ describe('checkPlanPins (kind / method sanity)', () => {
     if (!plan.ok) throw new Error('fixture must parse');
     expect(checkPlanPins(plan.plan, {})).toEqual([]);
   });
+
+  // YUK-1011 — composite_parent_only is a STRUCTURAL pin, fail-closed both ways:
+  // pinned ⇒ every item composite:true; unpinned ⇒ none may carry it.
+  it('accepts a fully-composite plan under the 篇 pin', () => {
+    const plan = parsePlanOutput(
+      JSON.stringify({
+        items: [{ knowledge_id: 'k1', kind: 'reading', difficulty: 3, composite: true }],
+        generation_method: 'search_grounded',
+      }),
+    );
+    if (!plan.ok) throw new Error('fixture must parse');
+    expect(checkPlanPins(plan.plan, { compositeParentOnly: true })).toEqual([]);
+  });
+
+  it('rejects a pinned run whose item is missing composite:true', () => {
+    const plan = parsePlanOutput(
+      JSON.stringify({
+        items: [{ knowledge_id: 'k1', kind: 'reading', difficulty: 3 }],
+        generation_method: 'search_grounded',
+      }),
+    );
+    if (!plan.ok) throw new Error('fixture must parse');
+    const reasons = checkPlanPins(plan.plan, { compositeParentOnly: true });
+    expect(reasons.join('\n')).toMatch(/item 1 is missing composite:true/);
+  });
+
+  it('rejects an unpinned run whose item smuggles composite:true', () => {
+    const plan = parsePlanOutput(
+      JSON.stringify({
+        items: [{ knowledge_id: 'k1', kind: 'reading', difficulty: 3, composite: true }],
+        generation_method: 'search_grounded',
+      }),
+    );
+    if (!plan.ok) throw new Error('fixture must parse');
+    const reasons = checkPlanPins(plan.plan, {});
+    expect(reasons.join('\n')).toMatch(/item 1 plans a composite question but the run did not pin/);
+  });
+
+  it('exempts a composite objective-kind item from answer_anchor (answers live per-sub)', () => {
+    const plan = parsePlanOutput(
+      JSON.stringify({
+        items: [{ knowledge_id: 'k1', kind: 'choice', difficulty: 2, composite: true }],
+        generation_method: 'search_grounded',
+      }),
+    );
+    // Schema-level: composite:true lifts the answer_anchor requirement — the
+    // anchor is meaningless on a stem container; per-sub answers ride
+    // structured.sub_questions at generation time.
+    expect(plan.ok).toBe(true);
+  });
 });
 
 describe('checkPlanKnowledgeIds (real knowledge-point existence)', () => {

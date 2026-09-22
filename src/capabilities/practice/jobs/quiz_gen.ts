@@ -34,12 +34,21 @@ import {
 import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
 
 import {
+  type NormalizedAuthorStructured,
+  normalizeAuthorStructured,
+} from '@/core/schema/question_author';
+import {
   type QuizGenMetadataT,
   QuizGenOutput,
   type QuizGenOutputT,
   type QuizGenPlanT,
   type QuizGenQuestionT,
 } from '@/core/schema/quiz_gen';
+import {
+  type StructuredQuestionT,
+  structuredToPromptMarkdown,
+  structuredToReferenceMarkdown,
+} from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import {
   artifact,
@@ -77,6 +86,7 @@ import {
   writeVerifyDispatchIntent,
 } from '@/server/boss/verify-dispatch-outbox';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { createQuestionPart } from '@/server/questions/parts';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { kindsMatch } from '@/subjects/question-kind';
 import {
@@ -164,9 +174,9 @@ export interface QuizGenJobData {
   // to learner θ̂). Forwarded as requested_difficulty_band into plan/generate inputs so
   // a band-gap target produces band-aimed questions instead of generic difficulty.
   difficulty_band?: DifficultyBand;
-  // YUK-287 — 篇 (composite parent) requirement, phase-deferred: forwarded now so the
-  // seam is data-complete; QuizGenTask composite (stem+sub_questions) generation is a
-  // separate feature (mirrors the knowledge_ids phase-deferred pattern below).
+  // YUK-287 forwarded this 篇 (composite parent) pin phase-deferred; YUK-1011
+  // consumes it: the run produces composite questions (stem+sub_questions
+  // structured tree persisted on the parent + question_part child rows).
   composite_parent_only?: boolean;
   // YUK-533 — the full KC set a multi-KC supply target carries (the confusable A↔B pair).
   // knowledge_id stays the PRIMARY attribution anchor (knowledgeIds[0]); knowledge_ids
@@ -318,8 +328,18 @@ function parseOutput(
     // value — so the contract asserts on the persisted shape, not the raw model
     // output (a missing model-declared override must NOT fall through to the
     // profile ladder here; at judge time it won't).
+    // YUK-1011 — a composite item (structured stem+subs) persists with a FORCED
+    // 'semantic' override and choices_md=null (the whole-composite answer is
+    // semantically graded against the merged reference; per-sub options live in
+    // the tree, not the column). Assert on THAT persisted shape so a composite
+    // without rubric_json.required_points is rejected before any insert.
+    const isComposite = q.structured != null;
     assertGeneratedQuestionHasJudgeContract(
-      { ...q, judge_kind_override: defaultJudgeKindForQuestion(q) },
+      {
+        ...q,
+        judge_kind_override: isComposite ? 'semantic' : defaultJudgeKindForQuestion(q),
+        choices_md: isComposite ? null : q.choices_md,
+      },
       'quiz_gen',
       subjectProfile,
     );
@@ -402,6 +422,13 @@ export interface RunQuizGenParams {
   // requested_difficulty_band in plan/generate inputs (planner difficulty is a hint,
   // not a checked pin — bands are approximate producer semantics).
   difficultyBand?: DifficultyBand;
+  // YUK-1011 — the supply target's 篇 pin (dispatcher forwards
+  // constraints.compositeParentOnly as job data composite_parent_only). When set,
+  // every plan item must carry composite:true and every generated question must
+  // carry a structured stem with ≥2 sub_questions; persist writes the composite
+  // parent + question_part children atomically. Fail-closed: an output that
+  // degrades to flat questions (or an unpinned run emitting structured) throws.
+  compositeParentOnly?: boolean;
   supplyTrace?: SupplyTraceV1T;
   placementAttempt?: PlacementAttemptAuthority;
   placementHeartbeat?: PlacementAttemptHeartbeat;
@@ -662,6 +689,9 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         ...(params.objectiveOnly ? { objective_only: true } : {}),
         ...(params.kindRequired ? { kind_required: true } : {}),
         ...(params.difficultyBand ? { requested_difficulty_band: params.difficultyBand } : {}),
+        // YUK-1011 — the 篇 pin reaches the planner so EVERY item comes back
+        // composite:true (gate-checked below; a violating plan regenerates).
+        ...(params.compositeParentOnly ? { composite_parent_only: true } : {}),
         ...(previousRejection ? { previous_rejection: previousRejection } : {}),
       };
       planRunResult = await run('QuizPlanTask', planInput, {
@@ -690,6 +720,7 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           kindRequired: params.kindRequired,
           objectiveOnly: params.objectiveOnly,
           generationMethod: params.generationMethod,
+          compositeParentOnly: params.compositeParentOnly,
         }),
         ...checkPlanKnowledgeIds(
           parsedPlan.plan,
@@ -739,6 +770,9 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
       // YUK-287 — the supply target's difficulty band rides alongside so the agent
       // aims plan-item / question difficulty at it (soft hint; not a checked pin).
       ...(params.difficultyBand ? { requested_difficulty_band: params.difficultyBand } : {}),
+      // YUK-1011 — the 篇 pin: every emitted question must carry a structured
+      // stem + ≥2 sub_questions (prompt contract in quiz-generation.ts).
+      ...(params.compositeParentOnly ? { composite_parent_only: true } : {}),
     };
     if (params.placementAttempt) {
       await params.placementHeartbeat?.assertHealthy();
@@ -800,6 +834,68 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         );
       }
     });
+
+    // YUK-1011 — composite (篇) structural conformance, fail-closed both ways:
+    //   - a pinned run must emit `structured` on EVERY question (a composite
+    //     demand silently downgraded to flat questions is exactly the YUK-287
+    //     gap this closes — the batch fails instead of persisting off-contract);
+    //   - an unpinned run must NOT emit it (no smuggled composite shapes).
+    // Index-paired with the plan (same ADR-0038 contract as the kind check
+    // above): plan item composite:true ⟺ output item carries structured.
+    // Accepted trees are normalized ONCE here (server-side id regeneration +
+    // stem/sub validation via normalizeAuthorStructured) so the persist loop
+    // reuses the normalized result rather than re-normalizing per row.
+    const normalizedComposites: Array<NormalizedAuthorStructured | null> = parsed.questions.map(
+      (q, index) => {
+        const plannedComposite = plan.items[index]?.composite === true;
+        const tree = q.structured ?? null;
+        const emittedComposite = tree !== null;
+        if (params.compositeParentOnly && !emittedComposite) {
+          throw new Error(
+            `quiz_gen composite_parent_only run but question ${index + 1} has no structured stem+sub_questions`,
+          );
+        }
+        if (!params.compositeParentOnly && emittedComposite) {
+          throw new Error(
+            `quiz_gen question ${index + 1} carries structured but the run did not pin composite_parent_only`,
+          );
+        }
+        if (plannedComposite !== emittedComposite) {
+          throw new Error(
+            `quiz_gen question ${index + 1} structured presence deviates from plan item composite=${plannedComposite} (ADR-0038 plan-then-generate)`,
+          );
+        }
+        if (tree === null) return null;
+        if (tree.role !== 'stem') {
+          throw new Error(
+            `quiz_gen composite question ${index + 1} structured root must be role 'stem' (got '${tree.role}')`,
+          );
+        }
+        if ((tree.sub_questions ?? []).length < 2) {
+          throw new Error(
+            `quiz_gen composite question ${index + 1} must carry at least 2 sub_questions (got ${(tree.sub_questions ?? []).length})`,
+          );
+        }
+        // material_grounded composite: the prompt contract has the model write
+        // the stem's prompt_text as the FRAMING text only (「阅读下面的短文…」);
+        // the handler embeds the persisted material body so the tree — and
+        // every narrowed part view derived from it — stays self-contained.
+        const normalizedTree =
+          parsed.generation_method === 'material_grounded' && parsed.material
+            ? {
+                ...tree,
+                prompt_text: embedMaterialInPrompt(tree.prompt_text, parsed.material.body_md),
+              }
+            : tree;
+        try {
+          return normalizeAuthorStructured(normalizedTree);
+        } catch (e) {
+          throw new Error(
+            `quiz_gen composite question ${index + 1} failed structured normalization: ${(e as Error).message}`,
+          );
+        }
+      },
+    );
     if (params.exactCount !== undefined && parsed.questions.length !== params.exactCount) {
       throw new Error(
         `quiz_gen exact_count=${params.exactCount} but agent produced ${parsed.questions.length}`,
@@ -878,6 +974,9 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     };
 
     const questionIds: string[] = [];
+    // YUK-1011 — observability counter for the run event: total question_part
+    // rows materialized under the composite parents this run inserted.
+    let compositePartCount = 0;
     // Placement-authorized questions whose verify intent must be drained THIS attempt but which are
     // NOT in questionIds — currently exact duplicates of an existing draft (they get an authority +
     // verify intent but reuse the existing row, so they never enter questionIds). Without draining
@@ -1009,9 +1108,15 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           version: 0,
         });
       }
-      for (const q of parsed.questions) {
+      for (const [index, q] of parsed.questions.entries()) {
         const id = createId();
-        const judgeKind = defaultJudgeKindForQuestion(q);
+        // YUK-1011 — composite item's normalized stem+subs tree (gated +
+        // normalized pre-tx above); null for flat questions.
+        const composite = normalizedComposites[index] ?? null;
+        // Composite parents are whole-group graded: forced 'semantic' (the
+        // merged multi-sub reference can never exact-match) — asserted on this
+        // persisted shape in parseOutput. Flat questions keep the derived route.
+        const judgeKind = composite ? 'semantic' : defaultJudgeKindForQuestion(q);
         const questionKnowledgeIds = resolveQuestionKnowledgeIds(q);
         const declaredDifficultyEvidence =
           q.difficulty_evidence ?? buildProducerDifficultyEvidence(q.difficulty, 'quiz_gen', now);
@@ -1035,15 +1140,29 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         // YUK-224 F1 — material_grounded: embed the passage into prompt_md so the
         // review / practice render (which only reads prompt_md) shows the learner
         // the material the题干 references. Non-material runs keep the prompt verbatim.
-        const effectivePromptMd =
-          parsed.generation_method === 'material_grounded' && parsed.material
+        // YUK-1011 — a composite item persists the DERIVED render instead: prompt_md /
+        // reference_md come from the normalized stem+subs tree (single source of truth —
+        // the material embed already happened inside the stem's prompt_text for
+        // material_grounded composites), and choices_md stays NULL (per-sub options live
+        // in the tree, not the flat column).
+        const effectivePromptMd = composite
+          ? composite.prompt_md
+          : parsed.generation_method === 'material_grounded' && parsed.material
             ? embedMaterialInPrompt(q.prompt_md, parsed.material.body_md)
             : q.prompt_md;
+        const effectiveReferenceMd = composite ? composite.reference_md : q.reference_md;
+        const effectiveChoicesMd = composite ? null : (q.choices_md ?? null);
         const canonicalContentHash = canonicalQuestionContentHash({
           promptMd: effectivePromptMd,
-          referenceMd: q.reference_md,
-          choicesMd: q.choices_md,
+          referenceMd: effectiveReferenceMd,
+          choicesMd: effectiveChoicesMd,
           rubricJson: q.rubric_json,
+          // YUK-1011 — shape discriminator: a composite parent's derived render
+          // can be byte-identical to a flat question's text; without this the
+          // merge branch would adopt the childless flat row and silently skip
+          // part materialization (poolFetch(compositeParentOnly) would still
+          // reject it). Flat items omit the key → byte-identical legacy hash.
+          composite: composite != null,
         });
         const duplicateKnowledgeIds = combineExactDuplicateKnowledgeIds(
           questionKnowledgeIds,
@@ -1120,10 +1239,14 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           kind: q.kind,
           source: 'quiz_gen',
           prompt_md: effectivePromptMd,
-          reference_md: q.reference_md,
+          reference_md: effectiveReferenceMd,
           rubric_json: q.rubric_json ?? null,
-          choices_md: q.choices_md ?? null,
+          choices_md: effectiveChoicesMd,
           judge_kind_override: judgeKind,
+          // YUK-1011 — composite parents carry the normalized stem+subs tree on
+          // the structured column (same column OCR/author_question use); flat
+          // questions keep NULL.
+          structured: composite?.structured ?? null,
           // The target KC union is the supply contract: a fresh INSERT and a duplicate MERGE
           // must attribute identical content the same way, including the trigger's live KCs.
           knowledge_ids: duplicateKnowledgeIds,
@@ -1208,6 +1331,70 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
             }
             continue;
           }
+        }
+        // YUK-1011 — composite persist: the fresh parent's normalized sub nodes
+        // become question_part child rows in the SAME transaction (the group is
+        // atomic — a part can never outlive a parent insert rollback). Each child
+        // carries the narrowed stem+single-sub tree (stem prompt_text keeps the
+        // passage, so the part's prompt_md is self-contained), an ordered
+        // part_index, and draft_status='draft': parts never get their own verify
+        // intent — the parent's quiz_verify promotion cascades to them (see
+        // quiz_verify.ts). Skipped on every duplicate/merge `continue` above —
+        // an existing row keeps its existing parts.
+        if (composite) {
+          const subs = composite.structured.sub_questions ?? [];
+          for (const [partIndex, sub] of subs.entries()) {
+            const narrowed: StructuredQuestionT = {
+              ...composite.structured,
+              sub_questions: [sub],
+            };
+            // YUK-1011 codex P2 — when the sub's options persist separately as
+            // choices_md (below), derive the child prompt WITHOUT the inline
+            // option list: renderers (PfSolo/PfPaper) paint persisted choices as
+            // buttons, so keeping them in prompt_md too would show every choice
+            // twice. The `structured` tree keeps the options — only the derived
+            // prompt view drops them.
+            const { options: subOptions, ...subSansOptions } = sub;
+            const hasOptions = subOptions != null && subOptions.length > 0;
+            const promptTree: StructuredQuestionT = hasOptions
+              ? { ...narrowed, sub_questions: [subSansOptions] }
+              : narrowed;
+            await createQuestionPart(tx, {
+              parentQuestionId: id,
+              partIndex,
+              promptMd: structuredToPromptMarkdown(promptTree),
+              referenceMd: structuredToReferenceMarkdown(narrowed),
+              // ADR-0028 (U0 A2, recorded on ADR-0014 §12): a generated part
+              // inherits its parent's PERSISTED knowledge labels at write time —
+              // an unlabeled part would be invisible to the KC-keyed pool fetch,
+              // attempts on it would update no KC theta/mastery, and the verify
+              // cascade could only enroll it under the legacy question-level
+              // fallback. duplicateKnowledgeIds is the exact set the parent row
+              // persists (target KCs first, then model attribution).
+              knowledgeIds: duplicateKnowledgeIds,
+              // YUK-1011 codex P1 — an objective sub (options) must persist its
+              // option bodies so the row keeps the deterministic 'exact' judge
+              // contract (route-resolve: choices_md.length > 0 → 'exact');
+              // otherwise PfSolo renders free-text and grading degrades to
+              // semantic. Bodies only — renderers own the letter labels
+              // (YUK-609), the exact judge resolves letters↔indices itself.
+              choicesMd: hasOptions ? subOptions.map((o) => o.text) : null,
+              difficulty: q.difficulty,
+              source: 'quiz_gen',
+              structured: narrowed,
+              draftStatus: 'draft',
+              metadata: {
+                quiz_gen: metaQuizGen,
+                difficulty_evidence: difficultyEvidence,
+                ...(questionSupplyTrace ? { supply_trace: questionSupplyTrace } : {}),
+                // The normalized sub-node id — the part_ref coordinate the judge
+                // narrowing / UI use to address this part inside the parent tree.
+                part_ref: sub.id,
+              },
+              now,
+            });
+          }
+          compositePartCount += subs.length;
         }
         if (params.placementAttempt) {
           const authorized = await authorizeAndDispatchPlacementQuestion(
@@ -1328,6 +1515,11 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
         // exact_duplicate_count above keeps the true total.
         exact_duplicates: exactDuplicates.slice(0, EXACT_DUPLICATE_EVENT_SAMPLE_CAP),
         exact_duplicates_truncated: exactDuplicates.length > EXACT_DUPLICATE_EVENT_SAMPLE_CAP,
+        // YUK-1011 — composite run observability: the pin echoed + how many
+        // question_part rows the group(s) materialized (0 on a flat run).
+        ...(params.compositeParentOnly
+          ? { composite_parent_only: true, composite_part_count: compositePartCount }
+          : {}),
         ...(params.supplyTrace ? { supply_trace: params.supplyTrace } : {}),
       },
       caused_by_event_id: null,
@@ -1553,6 +1745,9 @@ export function buildQuizGenHandler(
           ...(data.objective_only ? { objectiveOnly: true } : {}),
           ...(data.kind_required ? { kindRequired: true } : {}),
           ...(data.difficulty_band ? { difficultyBand: data.difficulty_band } : {}),
+          // YUK-1011 — consume the 篇 pin the dispatcher has forwarded since
+          // YUK-287 (was phase-deferred: forwarded but never read).
+          ...(data.composite_parent_only ? { compositeParentOnly: true } : {}),
           ...(supplyTrace ? { supplyTrace } : {}),
           ...(placementAttempt ? { placementAttempt } : {}),
           ...(placementHeartbeat ? { placementHeartbeat } : {}),

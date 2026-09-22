@@ -19,7 +19,7 @@ import { CANONICAL_QUESTION_KINDS } from './generation-prompt-support';
 import { parseTaskOutput } from './parse-output';
 
 function buildQuizPlanPrompt(profile: SubjectProfile): string {
-  return `你是${profile.displayName}出题规划人。输入 { trigger: 'knowledge'|'learning_item'|'manual', ref: { id, name, ... }, knowledge_context, count, requested_generation_method?: 'material_grounded'|'closed_book', requested_kind?: string, objective_only?: boolean, kind_required?: boolean, requested_difficulty_band?: 'below'|'near'|'above'|'stretch', previous_rejection?: string[] } —— ref 是触发出题的知识点 / 学习项，count 是计划题数（默认 3）。你的任务**只做规划，不写题面**：为 count 道题各定一个计划项（考哪个知识点、什么题型、多难、客观题给标准答案锚点）。下游会逐项机检本计划，通过后才据它生成题面。
+  return `你是${profile.displayName}出题规划人。输入 { trigger: 'knowledge'|'learning_item'|'manual', ref: { id, name, ... }, knowledge_context, count, requested_generation_method?: 'material_grounded'|'closed_book', requested_kind?: string, objective_only?: boolean, kind_required?: boolean, composite_parent_only?: boolean, requested_difficulty_band?: 'below'|'near'|'above'|'stretch', previous_rejection?: string[] } —— ref 是触发出题的知识点 / 学习项，count 是计划题数（默认 3）。你的任务**只做规划，不写题面**：为 count 道题各定一个计划项（考哪个知识点、什么题型、多难、客观题给标准答案锚点）。下游会逐项机检本计划，通过后才据它生成题面。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 
 你有领域读工具（可读用户错题与知识图谱），用来：
@@ -34,11 +34,12 @@ function buildQuizPlanPrompt(profile: SubjectProfile): string {
 - requested_generation_method 出现时是硬约束：计划顶层 generation_method 必须等于它；缺省时自行选择（material_grounded=需要真实原文锚的阅读类，closed_book=闭卷，search_grounded=常规检索背景素材）。
 - objective_only=true 或 kind_required=true 时，requested_kind 是硬约束：每项 kind 都必须与它一致；否则 requested_kind 只是偏好，优先遵从但素材明显更支持别的结构时可改选实际结构。
 - requested_difficulty_band（若有）是难度目标带（相对用户当前水平）：below=偏易巩固、near=贴合当前水平、above=略拔高、stretch=明显拔高挑战。把每项 difficulty 朝该带瞄准（below→1-2、near→3、above→4、stretch→5，与题库 side 的 band→难度映射同义）；它不是机检硬约束，但与错题/掌握信号冲突时以信号为准。
+- composite_parent_only=true 时是「篇」供给硬约束：**每一项**都必须标 "composite": true——该项产出的是一道组合大题（一个材料/短文题干 + 至少 2 个围绕同一材料的小题，生成阶段写成 stem+sub_questions 结构）。composite 项 kind 应选组合题面型（如 "reading"；材料/语篇类），且**免 answer_anchor**（答案属于各小题，生成阶段在 structured.sub_questions 里写）。composite_parent_only 缺省时**任何**项都不得标 composite。
 - previous_rejection（若有）是上一轮机检的拒绝原因列表：逐条修正后重新输出完整计划，不要输出解释。
 
 整体严格 JSON 输出（不带 markdown 代码块包裹），shape 名 QuizGenPlan：
-{"items":[{"knowledge_id":"知识点 id","kind":"${CANONICAL_QUESTION_KINDS} 之一","difficulty":1-5 的整数,"answer_anchor":"客观题标准答案锚点"}],"generation_method":"search_grounded"|"closed_book"|"material_grounded"}
-answer_anchor 仅客观题（choice / true_false / fill_blank）必填，其余题型省略该字段。禁止 emoji、禁止 JSON 之外的文字。`;
+{"items":[{"knowledge_id":"知识点 id","kind":"${CANONICAL_QUESTION_KINDS} 之一","difficulty":1-5 的整数,"answer_anchor":"客观题标准答案锚点","composite":true}],"generation_method":"search_grounded"|"closed_book"|"material_grounded"}
+answer_anchor 仅客观题（choice / true_false / fill_blank）且非 composite 的项必填，其余题型省略该字段；"composite" 仅 composite_parent_only=true 时填 true，否则省略。禁止 emoji、禁止 JSON 之外的文字。`;
 }
 
 export const quizPlanTaskSpec = {

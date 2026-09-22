@@ -193,6 +193,18 @@ export function structuredToPromptMarkdown(q: StructuredQuestionT): string {
   return md;
 }
 
+// YUK-1011 — analysis MUST carry a recognizable marker in the derived
+// reference: the exact judge (and the write-path exact-capability guard)
+// resolves a reference to its bare answer head via extractAnswerHead
+// (judge-routing.ts), which only cuts a tail introduced by 解析：/【详解】/….
+// A bare analysis glued on with '\n' makes the whole blob the "head" —
+// unmatchable against a learner's bare answer or option letter. Mirrors the
+// web-sourced convention "<bare answer>\n解析：…" (YUK-1003). Marker set kept
+// local (judge-routing owns the authoritative tail regex; this file stays
+// import-light and only needs the leading-marker check).
+const ANALYSIS_MARKED_RE =
+  /^(?:【\s*(?:解析|详解|解答|分析|点评|点拨|答案解析)\s*】|(?:解析|详解|解答|证明|分析|点评|点拨)\s*[:：])/;
+
 export function structuredToReferenceMarkdown(q: StructuredQuestionT): string {
   if (q.role === 'stem' && q.sub_questions && q.sub_questions.length > 0) {
     return q.sub_questions
@@ -203,7 +215,9 @@ export function structuredToReferenceMarkdown(q: StructuredQuestionT): string {
   // leaf
   const parts: string[] = [];
   if (q.answers && q.answers.length > 0) parts.push(q.answers.join('；'));
-  if (q.analysis) parts.push(q.analysis);
+  if (q.analysis) {
+    parts.push(ANALYSIS_MARKED_RE.test(q.analysis) ? q.analysis : `解析：${q.analysis}`);
+  }
   return parts.join('\n');
 }
 

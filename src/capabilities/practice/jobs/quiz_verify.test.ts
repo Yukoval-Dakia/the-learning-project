@@ -10,7 +10,7 @@
 //     verification.status='needs_review' + NO FSRS enroll.
 //   - idempotency — a second run skips (no duplicate verify event, no re-promote).
 
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { readAgentNotes } from '@/capabilities/agency/public';
@@ -435,6 +435,234 @@ describe('runQuizVerify', () => {
     // U8 / AF §4 (U3 L-note) — a promoted draft DID enter the pool, so no
     // question_pool_gap hint is left.
     expect(await poolGapNotesForKnowledge('k1')).toBe(0);
+  });
+
+  // YUK-1011 — composite (篇) cascade: quiz_gen composite children persist as
+  // 'draft' question_part rows with NO own verify intent; the parent's verified
+  // promotion cascades to them in the same tx (the group was judged as a unit —
+  // the parent's derived prompt/reference carries every sub). A tombstoned child
+  // is skipped; a failed parent leaves the whole group in draft. Per ADR-0028
+  // (U0 A2) a generated part inherits the parent's persisted knowledge_ids, so
+  // the fixture defaults to the parent's labels (override with knowledgeIds).
+  async function seedCompositePart(opts: {
+    id: string;
+    parentId: string;
+    partIndex: number;
+    promptMd: string;
+    knowledgeIds?: string[];
+    metadataExtra?: Record<string, unknown>;
+  }) {
+    const now = new Date();
+    await testDb()
+      .insert(question)
+      .values({
+        id: opts.id,
+        kind: 'question_part',
+        parent_question_id: opts.parentId,
+        part_index: opts.partIndex,
+        prompt_md: opts.promptMd,
+        reference_md: `小题 ${opts.partIndex + 1} 参考答案`,
+        knowledge_ids: opts.knowledgeIds ?? [],
+        difficulty: 3,
+        source: 'quiz_gen',
+        draft_status: 'draft',
+        metadata: {
+          quiz_gen: BASE_META,
+          part_of_question_id: opts.parentId,
+          part_index: opts.partIndex,
+          ...(opts.metadataExtra ?? {}),
+        } as never,
+        created_at: now,
+        updated_at: now,
+      });
+  }
+
+  it('composite cascade: a verified 篇 parent promotes its draft question_part children atomically', async () => {
+    await seedKnowledge('k-comp');
+    await seedDraftQuestion({
+      id: 'q-comp',
+      knowledgeId: 'k-comp',
+      kind: 'reading',
+      promptMd: '陈太丘与友期行……(1) 「去」的意思是？(2) 元方表现了怎样的品格？',
+      referenceMd: '(1) 离开。(2) 守信明礼、方正率真。',
+    });
+    await seedCompositePart({
+      id: 'q-comp-p0',
+      parentId: 'q-comp',
+      partIndex: 0,
+      promptMd: '陈太丘与友期行……(1) 「去」的意思是？',
+      knowledgeIds: ['k-comp'],
+    });
+    await seedCompositePart({
+      id: 'q-comp-p1',
+      parentId: 'q-comp',
+      partIndex: 1,
+      promptMd: '陈太丘与友期行……(2) 元方表现了怎样的品格？',
+      knowledgeIds: ['k-comp'],
+    });
+    // A tombstoned sibling must NOT resurrect through the cascade.
+    await seedCompositePart({
+      id: 'q-comp-archived',
+      parentId: 'q-comp',
+      partIndex: 2,
+      promptMd: '陈太丘与友期行……(3) 已归档小题',
+      knowledgeIds: ['k-comp'],
+      metadataExtra: { archived_at: '2026-06-10T00:00:00.000Z' },
+    });
+    // A genuinely UNLABELED legacy part keeps the question-level FSRS fallback.
+    await seedCompositePart({
+      id: 'q-comp-legacy',
+      parentId: 'q-comp',
+      partIndex: 3,
+      promptMd: '陈太丘与友期行……(4) 无标签遗留小题',
+    });
+
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_comp');
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q-comp', runTaskFn });
+
+    expect(result.status).toBe('verified');
+    const rows = await testDb()
+      .select({ id: question.id, draftStatus: question.draft_status })
+      .from(question)
+      .where(
+        inArray(question.id, [
+          'q-comp',
+          'q-comp-p0',
+          'q-comp-p1',
+          'q-comp-archived',
+          'q-comp-legacy',
+        ]),
+      );
+    const statusById = new Map(rows.map((r) => [r.id, r.draftStatus]));
+    expect(statusById.get('q-comp')).toBe('active');
+    expect(statusById.get('q-comp-p0')).toBe('active');
+    expect(statusById.get('q-comp-p1')).toBe('active');
+    expect(statusById.get('q-comp-archived')).toBe('draft');
+    expect(statusById.get('q-comp-legacy')).toBe('active');
+
+    // ADR-0028 (U0 A2): labeled children enroll on the SAME knowledge
+    // projection as the parent — enroll-if-absent makes that a no-op here (the
+    // parent's loop already created the k-comp row), and crucially NO
+    // question-level FSRS row exists for a labeled part. The unlabeled legacy
+    // part keeps the question-level fallback so it is never dropped.
+    expect(await fsrsRowCount('knowledge', 'k-comp')).toBe(1);
+    expect(await fsrsRowCount('question', 'q-comp-p0')).toBe(0);
+    expect(await fsrsRowCount('question', 'q-comp-p1')).toBe(0);
+    expect(await fsrsRowCount('question', 'q-comp-archived')).toBe(0);
+    expect(await fsrsRowCount('question', 'q-comp-legacy')).toBe(1);
+
+    // Children carry honest inherited-verification provenance — the part was
+    // not independently verified; it inherits the parent's unit verdict.
+    const p0Meta = await readMeta('q-comp-p0');
+    expect(p0Meta?.verification).toMatchObject({
+      status: 'verified',
+      verified_by: { by: 'ai', task_kind: 'QuizVerifyTask', task_run_id: 'tr_comp' },
+    });
+    expect((p0Meta?.verification as Record<string, unknown> | undefined)?.summary).toMatch(
+      /promoted with verified parent/,
+    );
+
+    // One verify event on the parent only — children never held their own intent.
+    expect(await countVerifyEvents('q-comp')).toBe(1);
+    expect(await countVerifyEvents('q-comp-p0')).toBe(0);
+  });
+
+  it('skips a question_part dispatch — parts verify only via the parent cascade', async () => {
+    // YUK-1011 codex P1 — a stray verify dispatch on a composite child (orphan
+    // recovery, owner-UI enable, matcher lazy-verify) must NOT spend a paid
+    // verify or promote the part standalone; an active child under a still-draft
+    // parent would break the atomic group gate.
+    await seedKnowledge('k-part');
+    await seedDraftQuestion({ id: 'q-part-parent', knowledgeId: 'k-part', kind: 'reading' });
+    await seedCompositePart({
+      id: 'q-part-child',
+      parentId: 'q-part-parent',
+      partIndex: 0,
+      promptMd: '……小题题面',
+      knowledgeIds: ['k-part'],
+    });
+
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_part');
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q-part-child', runTaskFn });
+
+    expect(result.status).toBe('skipped:question_part');
+    expect(runTaskFn).not.toHaveBeenCalled();
+    const rows = await testDb()
+      .select({ draftStatus: question.draft_status })
+      .from(question)
+      .where(eq(question.id, 'q-part-child'));
+    expect(rows[0]?.draftStatus).toBe('draft');
+    expect(await countVerifyEvents('q-part-child')).toBe(0);
+  });
+
+  it('composite cascade: a failed parent leaves the whole group in draft (no partial promotion)', async () => {
+    await seedKnowledge('k-comp2');
+    await seedDraftQuestion({ id: 'q-comp2', knowledgeId: 'k-comp2', kind: 'reading' });
+    await seedCompositePart({
+      id: 'q-comp2-p0',
+      parentId: 'q-comp2',
+      partIndex: 0,
+      promptMd: '……小题题面',
+    });
+
+    const runTaskFn = runTaskMock(
+      verifyOutput({ overall: 'fail', groundingVerdict: 'fail' }),
+      'tr_comp_fail',
+    );
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q-comp2', runTaskFn });
+
+    expect(result.status).toBe('failed');
+    const rows = await testDb()
+      .select({ id: question.id, draftStatus: question.draft_status })
+      .from(question)
+      .where(inArray(question.id, ['q-comp2', 'q-comp2-p0']));
+    const statusById = new Map(rows.map((r) => [r.id, r.draftStatus]));
+    expect(statusById.get('q-comp2')).toBe('draft');
+    expect(statusById.get('q-comp2-p0')).toBe('draft');
+    expect(await fsrsRowCount('question', 'q-comp2-p0')).toBe(0);
+  });
+
+  it('composite cascade: a child with unparseable metadata.quiz_gen throws (contract violation, never silently promoted)', async () => {
+    // YUK-1011 — the cascade promotes rows it did not itself verify, so it keeps
+    // the parent's own contract: a part written by the Q3 path always carries a
+    // parseable quiz_gen block; anything else is corrupt/foreign and must throw
+    // rather than promote with missing provenance. The promotion tx rolls back
+    // (parent included) and the failure-bottom stamps verification.status
+    // ='failed' on the parent and re-throws for pg-boss retry — loud-stranded,
+    // never half-promoted.
+    await seedKnowledge('k-comp3');
+    await seedDraftQuestion({ id: 'q-comp3', knowledgeId: 'k-comp3', kind: 'reading' });
+    await testDb()
+      .insert(question)
+      .values({
+        id: 'q-comp3-p0',
+        kind: 'question_part',
+        parent_question_id: 'q-comp3',
+        part_index: 0,
+        prompt_md: '……小题题面',
+        reference_md: '参考答案',
+        knowledge_ids: ['k-comp3'],
+        difficulty: 3,
+        source: 'quiz_gen',
+        draft_status: 'draft',
+        metadata: { quiz_gen: { bogus: true } } as never,
+        created_at: new Date(),
+        updated_at: new Date(),
+      });
+
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_comp3');
+    await expect(runQuizVerify({ db: testDb(), questionId: 'q-comp3', runTaskFn })).rejects.toThrow(
+      /composite child q-comp3-p0.*no valid metadata\.quiz_gen/,
+    );
+
+    const rows = await testDb()
+      .select({ id: question.id, draftStatus: question.draft_status })
+      .from(question)
+      .where(inArray(question.id, ['q-comp3', 'q-comp3-p0']));
+    const statusById = new Map(rows.map((r) => [r.id, r.draftStatus]));
+    expect(statusById.get('q-comp3')).toBe('draft');
+    expect(statusById.get('q-comp3-p0')).toBe('draft');
+    expect(await fsrsRowCount('question', 'q-comp3-p0')).toBe(0);
   });
 
   it('blocks contradictory overall pass with copy_safety unknown without extra validators', async () => {

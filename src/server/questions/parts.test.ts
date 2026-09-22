@@ -87,6 +87,87 @@ describe('createQuestionPart (T-QP owner)', () => {
     expect(byIndex.map((p) => p.prompt_md)).toEqual(['part a', 'part b', 'part c']);
   });
 
+  // YUK-1011 — quiz_gen composite children pass draftStatus:'draft' so the
+  // Option-B gate (no pool membership before the parent's quiz_verify promotion
+  // cascades) holds for generated groups; callers that omit it keep NULL≡active.
+  it('writes draft_status when the caller passes draftStatus (and keeps NULL default otherwise)', async () => {
+    const db = testDb();
+    const parentId = createId();
+    await seedParent(parentId);
+    const now = new Date();
+
+    const drafted = await db.transaction((tx) =>
+      createQuestionPart(tx, {
+        parentQuestionId: parentId,
+        partIndex: 0,
+        promptMd: 'drafted part',
+        source: 'quiz_gen',
+        draftStatus: 'draft',
+        now,
+      }),
+    );
+    const active = await db.transaction((tx) =>
+      createQuestionPart(tx, {
+        parentQuestionId: parentId,
+        partIndex: 1,
+        promptMd: 'legacy active part',
+        source: 'manual',
+        now,
+      }),
+    );
+
+    const draftedRows = await db.select().from(question).where(eq(question.id, drafted.questionId));
+    expect(draftedRows[0].draft_status).toBe('draft');
+    const activeRows = await db.select().from(question).where(eq(question.id, active.questionId));
+    expect(activeRows[0].draft_status).toBeNull();
+  });
+
+  // YUK-1011 codex P1 — an objective (options-bearing) part persists its option
+  // bodies as choices_md so the runtime judge route stays the deterministic
+  // 'exact' path (route-resolve: choices_md.length > 0 → 'exact') and
+  // withAnswerClass derives answer_class='exact' on write. Omitting it keeps
+  // NULL → semantic fallback.
+  it('persists choicesMd so an objective part keeps the exact judge contract', async () => {
+    const db = testDb();
+    const parentId = createId();
+    await seedParent(parentId);
+    const now = new Date();
+
+    const objective = await db.transaction((tx) =>
+      createQuestionPart(tx, {
+        parentQuestionId: parentId,
+        partIndex: 0,
+        promptMd: 'choice sub',
+        referenceMd: 'B',
+        choicesMd: ['前往', '离开', '到达', '回来'],
+        source: 'quiz_gen',
+        draftStatus: 'draft',
+        now,
+      }),
+    );
+    const freeResponse = await db.transaction((tx) =>
+      createQuestionPart(tx, {
+        parentQuestionId: parentId,
+        partIndex: 1,
+        promptMd: 'short-answer sub',
+        referenceMd: '参考答案',
+        source: 'quiz_gen',
+        draftStatus: 'draft',
+        now,
+      }),
+    );
+
+    const objRows = await db.select().from(question).where(eq(question.id, objective.questionId));
+    expect(objRows[0].choices_md).toEqual(['前往', '离开', '到达', '回来']);
+    expect(objRows[0].answer_class).toBe('exact');
+    const freeRows = await db
+      .select()
+      .from(question)
+      .where(eq(question.id, freeResponse.questionId));
+    expect(freeRows[0].choices_md).toBeNull();
+    expect(freeRows[0].answer_class).toBe('semantic');
+  });
+
   it('a plain (non-part) question keeps parent_question_id / part_index NULL', async () => {
     const db = testDb();
     const plainId = createId();

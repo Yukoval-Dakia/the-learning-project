@@ -16,6 +16,7 @@ import { OBJECTIVE_ANSWER_KINDS } from './answer-class';
 import { AgentRef, QuestionKind, Rubric, RubricReferenceSolution } from './business';
 import { ProducerDifficultyEvidence } from './difficulty-evidence';
 import { defaultJudgeKindForQuestion } from './judge-routing';
+import { StructuredQuestion } from './structured_question';
 
 // Local derivation (judge-routing.ts keeps its own alias for the same reason):
 // the plan artifact below needs the kind union type without a runtime import.
@@ -233,6 +234,15 @@ export const QuizGenQuestion = z
     // §0 self-declared: the URLs (subset of the run's source_pack) that grounded
     // or inspired THIS question.
     source_refs: z.array(QuizGenSourceRef),
+    // YUK-1011 — composite (篇) carrier. Present ONLY on a composite_parent_only
+    // run: a role='stem' node whose sub_questions (role='sub', ≥2 enforced by the
+    // handler gate) are the independently judgeable 小题. The handler normalizes
+    // the tree via normalizeAuthorStructured (server-side id regeneration +
+    // stem/leaf validation), persists it on the parent row's `structured`
+    // column, and materializes each sub as a question_part child row
+    // (parent_question_id + part_index). Unpinned runs must NOT emit it — the
+    // handler rejects the batch fail-closed either way.
+    structured: StructuredQuestion.optional(),
   })
   .superRefine((question, ctx) => {
     const judgeKind = defaultJudgeKindForQuestion(question);
@@ -334,9 +344,18 @@ export const QuizGenPlanItem = z
     // objective kinds (deterministic-comparable); optional elsewhere. The
     // generation phase must realize the question so this anchor grades correct.
     answer_anchor: z.string().trim().min(1).optional(),
+    // YUK-1011 — this item plans a COMPOSITE (篇) question: one stem + ≥2
+    // sub_questions in the generation output's `structured` field. Only legal
+    // when the run pins composite_parent_only (the plan gate rejects it
+    // otherwise). Composite items skip answer_anchor — answers live per-sub.
+    composite: z.boolean().optional(),
   })
   .superRefine((item, ctx) => {
-    if (QUIZ_PLAN_OBJECTIVE_KINDS.has(item.kind) && !item.answer_anchor) {
+    if (
+      QUIZ_PLAN_OBJECTIVE_KINDS.has(item.kind) &&
+      item.composite !== true &&
+      !item.answer_anchor
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['answer_anchor'],

@@ -23,6 +23,11 @@ import {
 } from '@/capabilities/practice/public';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import {
+  type StructuredQuestionT,
+  structuredToPromptMarkdown,
+  structuredToReferenceMarkdown,
+} from '@/core/schema/structured_question';
+import {
   artifact,
   event,
   knowledge,
@@ -69,6 +74,9 @@ type PlanInput = {
   count?: number;
   knowledge_context?: Array<{ id?: string }>;
   requested_generation_method?: string;
+  // YUK-1011 — when the run pins 篇 the mirrored plan must mark EVERY item
+  // composite:true or the plan gate rejects it before generation.
+  composite_parent_only?: boolean;
 };
 
 // Synthesizes a QuizPlanTask answer that MIRRORS the generation fixture: same
@@ -109,7 +117,8 @@ function planTextFor(output: string, input: PlanInput): string {
     knowledge_id: fallbackKnowledgeId,
     kind: typeof q.kind === 'string' ? q.kind : 'short_answer',
     difficulty: typeof q.difficulty === 'number' ? q.difficulty : 3,
-    ...(isObjective(q.kind)
+    ...(input.composite_parent_only ? { composite: true } : {}),
+    ...(isObjective(q.kind) && !input.composite_parent_only
       ? {
           answer_anchor:
             typeof q.reference_md === 'string' && q.reference_md.trim().length > 0
@@ -337,6 +346,184 @@ const MATERIAL_OUTPUT = JSON.stringify({
     searched_at: '2026-06-06T10:00:00.000Z',
     tool: 'tavily',
   },
+  generation_method: 'material_grounded',
+  self_copy_safety: { verdict: 'original', max_overlap: 0.1, checked_by: 'agent_self' },
+  material: {
+    body_md: MATERIAL_PASSAGE,
+    url: 'https://example.edu/han/founding',
+    title: '汉朝的建立',
+    fetched_at: '2026-06-06T10:00:00.000Z',
+  },
+});
+
+// YUK-1011 — composite_parent_only (篇) run: every output question carries a
+// structured stem+sub_questions tree. The handler normalizes it (server-side
+// ids — the model's 'model-stem-id'/'model-sub-*' placeholders are discarded),
+// persists the tree on the parent's `structured` column, derives the parent's
+// prompt_md/reference_md from it, and materializes each sub as a question_part
+// child row in the same transaction.
+const COMPOSITE_PASSAGE =
+  '陈太丘与友期行，期日中。过中不至，太丘舍去，去后乃至。元方时年七岁，门外戏。客问元方：「尊君在不？」答曰：「待君久不至，已去。」友人便怒曰：「非人哉！与人期行，相委而去。」元方曰：「君与家君期日中。日中不至，则是无信；对子骂父，则是无礼。」友人惭，下车引之。元方入门不顾。';
+const COMPOSITE_STRUCTURED = {
+  id: 'model-stem-id',
+  role: 'stem',
+  prompt_text: COMPOSITE_PASSAGE,
+  sub_questions: [
+    {
+      id: 'model-sub-1',
+      role: 'sub',
+      question_no: '(1)',
+      prompt_text: '「太丘舍去」中「去」的意思是？',
+      options: [
+        { label: 'A', text: '前往' },
+        { label: 'B', text: '离开' },
+        { label: 'C', text: '到达' },
+        { label: 'D', text: '回来' },
+      ],
+      answers: ['B 离开'],
+      analysis: '「去」在文言中常释为「离开」，与现代汉语义相反。',
+    },
+    {
+      id: 'model-sub-2',
+      role: 'sub',
+      question_no: '(2)',
+      prompt_text: '元方反驳友人的话表现了他怎样的品格？',
+      answers: ['元方以「无信」「无礼」据理反驳，表现了守信明礼、方正率真的品格。'],
+      analysis: '扣住「日中不至，则是无信；对子骂父，则是无礼」作答即可。',
+    },
+  ],
+};
+const COMPOSITE_OUTPUT = JSON.stringify({
+  questions: [
+    {
+      kind: 'reading',
+      prompt_md: `${COMPOSITE_PASSAGE}\n\n(1). 「太丘舍去」中「去」的意思是？\n(2). 元方反驳友人的话表现了他怎样的品格？`,
+      reference_md:
+        '(1) B 离开。\n(2) 元方以「无信」「无礼」据理反驳，表现了守信明礼、方正率真的品格。',
+      choices_md: null,
+      judge_kind_override: 'semantic',
+      rubric_json: {
+        criteria: [{ name: 'correctness', weight: 1, descriptor: '各小题答案正确' }],
+        required_points: ['「去」释为离开（选 B）', '答出元方守信明礼、方正率真'],
+        reference_solution: {
+          expected_signals: ['离开', '守信明礼'],
+          final_answer: '(1) B 离开 (2) 守信明礼、方正率真',
+          answer_equivalents: [],
+        },
+      },
+      difficulty: 3,
+      knowledge_ids: ['k1'],
+      source_refs: [
+        {
+          url: 'https://example.edu/wenyan/chentaiqiu',
+          title: '陈太丘与友期行',
+          snippet: '期日中。过中不至，太丘舍去。',
+          used_for: 'fact',
+          extracted: true,
+        },
+      ],
+      structured: COMPOSITE_STRUCTURED,
+    },
+  ],
+  source_pack: {
+    query_plan: ['陈太丘与友期行 原文'],
+    searched_at: '2026-06-02T10:00:00.000Z',
+    tool: 'tavily',
+  },
+  generation_method: 'search_grounded',
+  self_copy_safety: { verdict: 'original', max_overlap: 0.05, checked_by: 'agent_self' },
+});
+
+// A pinned run whose output degrades to a single-sub stem — below the ≥2
+// sub_question floor the composite gate enforces.
+const COMPOSITE_ONE_SUB_OUTPUT = JSON.stringify({
+  questions: [
+    {
+      kind: 'reading',
+      prompt_md: `${COMPOSITE_PASSAGE}\n\n(1). 「太丘舍去」中「去」的意思是？`,
+      reference_md: '(1) B 离开。',
+      choices_md: null,
+      judge_kind_override: 'semantic',
+      rubric_json: {
+        criteria: [{ name: 'correctness', weight: 1, descriptor: '小题答案正确' }],
+        required_points: ['「去」释为离开'],
+        reference_solution: {
+          expected_signals: ['离开'],
+          final_answer: '(1) B 离开',
+          answer_equivalents: [],
+        },
+      },
+      difficulty: 3,
+      knowledge_ids: ['k1'],
+      source_refs: [
+        {
+          url: 'https://example.edu/wenyan/chentaiqiu',
+          title: '陈太丘与友期行',
+          used_for: 'fact',
+          extracted: true,
+        },
+      ],
+      structured: {
+        id: 'model-stem-id',
+        role: 'stem',
+        prompt_text: COMPOSITE_PASSAGE,
+        sub_questions: [COMPOSITE_STRUCTURED.sub_questions[0]],
+      },
+    },
+  ],
+  source_pack: { query_plan: [], searched_at: '2026-06-02T10:00:00.000Z', tool: 'tavily' },
+  generation_method: 'search_grounded',
+  self_copy_safety: { verdict: 'original', checked_by: 'agent_self' },
+});
+
+// material_grounded composite: the stem's prompt_text is the FRAMING text only
+// (per the prompt contract); the handler embeds material.body_md into it before
+// normalization so the derived views — and every narrowed part view — stay
+// self-contained, and material_source_document_id lands on parent + children.
+const COMPOSITE_MATERIAL_OUTPUT = JSON.stringify({
+  questions: [
+    {
+      kind: 'reading',
+      prompt_md: '阅读下面的短文，完成小题。',
+      reference_md: '(1) 公元前 202 年。(2) 长安。',
+      choices_md: null,
+      judge_kind_override: 'semantic',
+      rubric_json: {
+        criteria: [{ name: 'correctness', weight: 1, descriptor: '各小题答案正确' }],
+        required_points: ['公元前 202 年', '长安'],
+        reference_solution: {
+          expected_signals: ['公元前 202 年', '长安'],
+          final_answer: '(1) 公元前 202 年 (2) 长安',
+          answer_equivalents: [],
+        },
+      },
+      difficulty: 2,
+      knowledge_ids: ['k1'],
+      source_refs: [],
+      structured: {
+        id: 'model-stem-id',
+        role: 'stem',
+        prompt_text: '阅读下面的短文，完成下列小题。',
+        sub_questions: [
+          {
+            id: 'm-sub-1',
+            role: 'sub',
+            question_no: '(1)',
+            prompt_text: '汉朝建立于哪一年？',
+            answers: ['公元前 202 年'],
+          },
+          {
+            id: 'm-sub-2',
+            role: 'sub',
+            question_no: '(2)',
+            prompt_text: '汉朝定都在哪里？',
+            answers: ['长安'],
+          },
+        ],
+      },
+    },
+  ],
+  source_pack: { query_plan: [], searched_at: '2026-06-06T10:00:00.000Z', tool: 'tavily' },
   generation_method: 'material_grounded',
   self_copy_safety: { verdict: 'original', max_overlap: 0.1, checked_by: 'agent_self' },
   material: {
@@ -2207,6 +2394,417 @@ describe('runQuizGen', () => {
     expect(payload.plan?.generation_method).toBe('search_grounded');
     expect(payload.plan?.items).toHaveLength(2);
     expect(payload.plan_task_run_id).toBe('tr_plan_echo');
+  });
+});
+
+// YUK-1011 — 篇 (composite_parent_only) run: the YUK-287 pin is finally
+// consumed. A pinned run must produce a composite parent (structured stem+subs
+// on the row) + ≥2 question_part children in the same tx; flat output or an
+// undersized tree fails the whole batch closed instead of silently degrading.
+describe('runQuizGen — composite_parent_only (YUK-1011)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('persists one composite parent + question_part children atomically, drafts all, verifies the parent', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const runAgentTaskFn = agentMock(COMPOSITE_OUTPUT, 'tr_c');
+    const enqueueQuizVerify = vi.fn(async () => {});
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 1,
+      compositeParentOnly: true,
+      runAgentTaskFn,
+      enqueueQuizVerify,
+      buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
+    });
+
+    expect(result.status).toBe('ready');
+    // Only the PARENT is a first-class quiz product: artifact + verify intent +
+    // result ids reference it alone; children ride the verify cascade.
+    expect(result.question_ids).toHaveLength(1);
+    const parentId = result.question_ids?.[0];
+    if (!parentId) throw new Error('expected exactly one composite parent id');
+
+    const parents = await testDb().select().from(question).where(eq(question.id, parentId));
+    expect(parents).toHaveLength(1);
+    const parent = parents[0];
+    expect(parent.kind).toBe('reading');
+    expect(parent.source).toBe('quiz_gen');
+    expect(parent.draft_status).toBe('draft');
+    expect(parent.parent_question_id).toBeNull();
+    expect(parent.judge_kind_override).toBe('semantic');
+    expect(parent.choices_md).toBeNull();
+    expect(parent.knowledge_ids).toEqual(['k1']);
+    expect(parent.canonical_content_hash).toEqual(expect.any(String));
+    expect(parent.created_by).toMatchObject({ by: 'ai', task_kind: 'QuizGenTask' });
+
+    // The normalized stem+subs tree lands on the structured column; node ids
+    // were regenerated server-side (the model's 'model-*' placeholders are gone).
+    const tree = parent.structured as {
+      id: string;
+      role: string;
+      prompt_text: string;
+      sub_questions: Array<{ id: string; role: string; prompt_text: string }>;
+    };
+    expect(tree.role).toBe('stem');
+    expect(tree.id).not.toBe('model-stem-id');
+    expect(tree.prompt_text).toContain('陈太丘与友期行');
+    expect(tree.sub_questions).toHaveLength(2);
+    expect(tree.sub_questions.map((s) => s.id)).not.toContain('model-sub-1');
+    expect(tree.sub_questions.map((s) => s.role)).toEqual(['sub', 'sub']);
+
+    // Derived flat views: prompt carries stem + both subs; reference merges
+    // per-sub answers (single source of truth = the tree).
+    expect(parent.prompt_md).toContain('陈太丘与友期行');
+    expect(parent.prompt_md).toContain('「太丘舍去」中「去」的意思是？');
+    expect(parent.prompt_md).toContain('元方反驳友人的话表现了他怎样的品格？');
+    expect(parent.reference_md).toContain('B 离开');
+    expect(parent.reference_md).toContain('守信明礼');
+    const parentMeta = parent.metadata as Record<string, unknown>;
+    expect(parentMeta.quiz_gen).toMatchObject({ generation_status: 'ready' });
+
+    // Children: question_part rows linked + ordered, drafts like the parent,
+    // narrowed stem+single-sub trees whose prompt stays self-contained.
+    const children = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.parent_question_id, parentId));
+    expect(children).toHaveLength(2);
+    const byIndex = new Map(children.map((c) => [c.part_index, c]));
+    const child0 = byIndex.get(0);
+    const child1 = byIndex.get(1);
+    expect(child0).toBeDefined();
+    expect(child1).toBeDefined();
+    for (const child of children) {
+      expect(child.kind).toBe('question_part');
+      expect(child.draft_status).toBe('draft');
+      expect(child.source).toBe('quiz_gen');
+      // ADR-0028 (U0 A2): a generated part inherits the parent's PERSISTED
+      // knowledge labels at write time — it is a KC probe, and attempts on it
+      // attribute to the same knowledge projection (the cascade enrolls
+      // per-KC, not question-level).
+      expect(child.knowledge_ids).toEqual(['k1']);
+      expect(child.created_by).toBeNull();
+      expect(child.canonical_content_hash).toBeNull();
+      expect(child.prompt_md).toContain('陈太丘与友期行');
+      const childTree = child.structured as { sub_questions: Array<{ id: string }> };
+      expect(childTree.sub_questions).toHaveLength(1);
+      const childMeta = child.metadata as Record<string, unknown>;
+      expect(childMeta.part_of_question_id).toBe(parentId);
+      expect(childMeta.part_index).toBe(child.part_index);
+      // part_ref = the normalized sub id inside the PARENT's tree (the judge
+      // narrowing coordinate), and the child's own narrowed tree carries the
+      // same node.
+      expect(childMeta.part_ref).toBe(tree.sub_questions[child.part_index ?? -1]?.id);
+      expect(childTree.sub_questions[0].id).toBe(childMeta.part_ref);
+      expect(childMeta.quiz_gen).toMatchObject({ generation_status: 'ready' });
+    }
+    expect(child0?.prompt_md).toContain('「太丘舍去」中「去」的意思是？');
+    // codex P2 (round 2) — the objective child's options live in choices_md
+    // (below) and render as buttons; they must NOT also be inlined into
+    // prompt_md or every choice paints twice.
+    expect(child0?.prompt_md).not.toContain('A. 前往');
+    expect(child0?.prompt_md).not.toContain('B. 离开');
+    // codex P1 (round 2) — the reference keeps a deterministic answer HEAD:
+    // bare answer + a marked 解析： tail so extractAnswerHead cuts it and the
+    // exact judge can resolve 'B 离开' → choice index against the learner's
+    // letter/option-body submission.
+    expect(child0?.reference_md).toBe(
+      'B 离开\n解析：「去」在文言中常释为「离开」，与现代汉语义相反。',
+    );
+    expect(child0?.prompt_md).not.toContain('元方反驳友人的话');
+    expect(child1?.prompt_md).toContain('元方反驳友人的话表现了他怎样的品格？');
+    expect(child1?.reference_md).toContain('守信明礼');
+
+    // Codex P1 (objective contract) — the choice sub persists its option BODIES
+    // as choices_md so route-resolve short-circuits it to the deterministic
+    // 'exact' judge; the free-response sub keeps NULL and grades semantically.
+    expect(child0?.choices_md).toEqual(['前往', '离开', '到达', '回来']);
+    expect(child0?.answer_class).toBe('exact');
+    expect(child1?.choices_md).toBeNull();
+    expect(child1?.answer_class).toBe('semantic');
+
+    // Artifact + verify dispatch reference the parent only.
+    const quizArtifacts = await testDb()
+      .select()
+      .from(artifact)
+      .where(eq(artifact.id, result.tool_quiz_artifact_id ?? ''));
+    expect(quizArtifacts[0]?.tool_state).toMatchObject({ question_ids: [parentId] });
+    expect(enqueueQuizVerify).toHaveBeenCalledTimes(1);
+    expect(enqueueQuizVerify).toHaveBeenCalledWith([parentId], expect.any(Object));
+
+    // Run event carries the composite observability fields.
+    const quizEvents = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:quiz_gen'));
+    const success = quizEvents.find((e) => e.outcome === 'success');
+    expect(success?.payload).toMatchObject({
+      composite_parent_only: true,
+      composite_part_count: 2,
+    });
+  });
+
+  it('fails closed when a pinned run emits flat questions (no silent downgrade)', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const enqueueQuizVerify = vi.fn(async () => {});
+
+    await expect(
+      runQuizGen({
+        db: testDb(),
+        trigger: 'knowledge',
+        refId: 'k1',
+        count: 1,
+        compositeParentOnly: true,
+        runAgentTaskFn: agentMock(VALID_OUTPUT),
+        enqueueQuizVerify,
+        buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
+      }),
+    ).rejects.toThrow(/has no structured stem\+sub_questions/);
+    expect(await testDb().select().from(question)).toHaveLength(0);
+    expect(enqueueQuizVerify).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when an unpinned run emits structured (no smuggled composite)', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const enqueueQuizVerify = vi.fn(async () => {});
+
+    await expect(
+      runQuizGen({
+        db: testDb(),
+        trigger: 'knowledge',
+        refId: 'k1',
+        count: 1,
+        runAgentTaskFn: agentMock(COMPOSITE_OUTPUT),
+        enqueueQuizVerify,
+        buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
+      }),
+    ).rejects.toThrow(/did not pin composite_parent_only/);
+    expect(await testDb().select().from(question)).toHaveLength(0);
+    expect(enqueueQuizVerify).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a composite item carries fewer than 2 sub_questions', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const enqueueQuizVerify = vi.fn(async () => {});
+
+    await expect(
+      runQuizGen({
+        db: testDb(),
+        trigger: 'knowledge',
+        refId: 'k1',
+        count: 1,
+        compositeParentOnly: true,
+        runAgentTaskFn: agentMock(COMPOSITE_ONE_SUB_OUTPUT),
+        enqueueQuizVerify,
+        buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
+      }),
+    ).rejects.toThrow(/at least 2 sub_questions/);
+    expect(await testDb().select().from(question)).toHaveLength(0);
+    expect(enqueueQuizVerify).not.toHaveBeenCalled();
+  });
+
+  it('material_grounded composite: embeds the passage into the stem and shares one source_document', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const enqueueQuizVerify = vi.fn(async () => {});
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 1,
+      compositeParentOnly: true,
+      runAgentTaskFn: agentMock(COMPOSITE_MATERIAL_OUTPUT, 'tr_cm'),
+      enqueueQuizVerify,
+      buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
+    });
+
+    const parentId = result.question_ids?.[0];
+    if (!parentId) throw new Error('expected a composite parent id');
+    const parents = await testDb().select().from(question).where(eq(question.id, parentId));
+    const parent = parents[0];
+    // The framing-only stem text got the material body embedded pre-normalize,
+    // so the derived prompt_md shows the learner the passage.
+    expect(parent.prompt_md).toContain('阅读下面的短文，完成下列小题。');
+    expect(parent.prompt_md).toContain(MATERIAL_PASSAGE);
+    const parentMeta = parent.metadata as Record<string, unknown>;
+    const materialDocId = (parentMeta.quiz_gen as Record<string, unknown>)
+      .material_source_document_id;
+    expect(materialDocId).toEqual(expect.any(String));
+    const docs = await testDb()
+      .select()
+      .from(source_document)
+      .where(eq(source_document.id, materialDocId as string));
+    expect(docs).toHaveLength(1);
+    expect(docs[0].body_md).toBe(MATERIAL_PASSAGE);
+
+    const children = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.parent_question_id, parentId));
+    expect(children).toHaveLength(2);
+    for (const child of children) {
+      // Each part view is self-contained: passage + its own sub only.
+      expect(child.prompt_md).toContain(MATERIAL_PASSAGE);
+      const childMeta = child.metadata as Record<string, unknown>;
+      expect((childMeta.quiz_gen as Record<string, unknown>).material_source_document_id).toBe(
+        materialDocId,
+      );
+    }
+    expect(children.map((c) => c.part_index).sort()).toEqual([0, 1]);
+    expect(children[0].prompt_md).not.toBe(children[1].prompt_md);
+  });
+
+  it('repeated composite generation dedupes at the parent hash — never a partial group', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const enqueueQuizVerify = vi.fn(async () => {});
+    const deps = {
+      db: testDb(),
+      trigger: 'knowledge' as const,
+      refId: 'k1',
+      count: 1,
+      compositeParentOnly: true,
+      enqueueQuizVerify,
+      buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
+    };
+
+    const first = await runQuizGen({
+      ...deps,
+      runAgentTaskFn: agentMock(COMPOSITE_OUTPUT, 'tr_c1'),
+    });
+    const parentId = first.question_ids?.[0];
+    if (!parentId) throw new Error('expected a composite parent id');
+
+    // Second identical run: the parent's canonical hash hits the dedup index →
+    // merge path `continue`s BEFORE any part insert — no second group, no
+    // orphaned children, no zero-question artifact, no re-enqueue.
+    const second = await runQuizGen({
+      ...deps,
+      runAgentTaskFn: agentMock(COMPOSITE_OUTPUT, 'tr_c2'),
+    });
+    expect(second.question_ids).toHaveLength(0);
+
+    const allQuestions = await testDb().select().from(question);
+    expect(allQuestions).toHaveLength(3); // 1 parent + 2 parts, unchanged.
+    const children = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.parent_question_id, parentId));
+    expect(children).toHaveLength(2);
+    const artifacts = await testDb()
+      .select({ id: artifact.id })
+      .from(artifact)
+      .where(eq(artifact.tool_kind, 'quiz_gen'));
+    expect(artifacts).toHaveLength(1); // only the first run's artifact.
+    expect(enqueueQuizVerify).toHaveBeenCalledTimes(1);
+  });
+
+  it('a flat row whose text matches the composite render does NOT absorb the composite (shape discriminator)', async () => {
+    // Codex P2 — without the composite flag in the canonical hash, a flat row
+    // whose normalized prompt/reference/choices/rubric equal the composite's
+    // derived render would be adopted as an exact duplicate: the merge branch
+    // `continue`s before part materialization, no children exist, and
+    // poolFetch(compositeParentOnly) still rejects the childless row — the
+    // 篇 supply gap silently unresolved. The discriminator namespaces the two
+    // shapes so the composite inserts fresh with its full group.
+    await seedKnowledge({ id: 'k1' });
+    const flatPrompt = structuredToPromptMarkdown(COMPOSITE_STRUCTURED as StructuredQuestionT);
+    const flatReference = structuredToReferenceMarkdown(
+      COMPOSITE_STRUCTURED as StructuredQuestionT,
+    );
+    const flatRubric = JSON.parse(COMPOSITE_OUTPUT).questions[0].rubric_json;
+    const flatHash = canonicalQuestionContentHash({
+      promptMd: flatPrompt,
+      referenceMd: flatReference,
+      choicesMd: null,
+      rubricJson: flatRubric,
+    });
+    const now = new Date();
+    await testDb()
+      .insert(question)
+      .values({
+        id: 'flat-collider',
+        kind: 'reading',
+        prompt_md: flatPrompt,
+        reference_md: flatReference,
+        rubric_json: flatRubric,
+        knowledge_ids: ['k1'],
+        difficulty: 3,
+        source: 'quiz_gen',
+        source_ref: 'k1',
+        draft_status: 'active',
+        metadata: {},
+        canonical_content_hash: flatHash,
+        created_at: now,
+        updated_at: now,
+      });
+
+    const enqueueQuizVerify = vi.fn(async () => {});
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 1,
+      compositeParentOnly: true,
+      runAgentTaskFn: agentMock(COMPOSITE_OUTPUT, 'tr_shape'),
+      enqueueQuizVerify,
+      buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
+    });
+
+    // Fresh parent + children — the flat collider is untouched, not merged.
+    expect(result.question_ids).toHaveLength(1);
+    const parentId = result.question_ids?.[0];
+    if (!parentId) throw new Error('expected a composite parent id');
+    expect(parentId).not.toBe('flat-collider');
+    const children = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.parent_question_id, parentId));
+    expect(children).toHaveLength(2);
+    const colliderRows = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.id, 'flat-collider'));
+    expect(colliderRows[0]?.knowledge_ids).toEqual(['k1']); // no merge write
+    expect(enqueueQuizVerify).toHaveBeenCalledWith([parentId], expect.any(Object));
+  });
+
+  it('rejects at the plan gate when a pinned plan omits composite:true', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const enqueueQuizVerify = vi.fn(async () => {});
+    // A plan mock that ignores the composite_parent_only input pin — every
+    // attempt comes back unmarked, so the gate rejects all QUIZ_PLAN_MAX_ATTEMPTS.
+    const runAgentTaskFn = vi.fn(async (kind: string, _input: unknown, _ctx: AgentCtx) => ({
+      text:
+        kind === 'QuizPlanTask'
+          ? JSON.stringify({
+              items: [{ knowledge_id: 'k1', kind: 'reading', difficulty: 3 }],
+              generation_method: 'search_grounded',
+            })
+          : COMPOSITE_OUTPUT,
+    }));
+
+    await expect(
+      runQuizGen({
+        db: testDb(),
+        trigger: 'knowledge',
+        refId: 'k1',
+        count: 1,
+        compositeParentOnly: true,
+        runAgentTaskFn,
+        enqueueQuizVerify,
+        buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
+      }),
+    ).rejects.toThrow(/missing composite:true/);
+    expect(runAgentTaskFn.mock.calls.filter((c) => c[0] === 'QuizPlanTask')).toHaveLength(
+      QUIZ_PLAN_MAX_ATTEMPTS,
+    );
+    expect(await testDb().select().from(question)).toHaveLength(0);
+    expect(enqueueQuizVerify).not.toHaveBeenCalled();
   });
 });
 

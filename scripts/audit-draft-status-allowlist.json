@@ -17,10 +17,10 @@
     }
   },
   "src/server/questions/parts.ts": {
-    "reason": "Paper/quiz part questions are active pool items written as part of an assembled paper — NULL≡active is correct.",
+    "reason": "question_part owner. YUK-1011: createQuestionPart now writes draft_status when a caller passes draftStatus (quiz_gen composite children insert draft); callers that omit it still get NULL≡active — the paper/import convention this entry originally covered. Allowlist stays as harmless-redundant cover for the NULL default.",
     "resolves_when": {
       "kind": "manual",
-      "ref": "permanent: paper part questions are intentionally active (NULL≡active)",
+      "ref": "permanent: NULL≡active remains the default for part callers that omit draftStatus",
       "expected_by": "2027-06-30"
     }
   },

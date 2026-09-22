@@ -52,6 +52,16 @@ export interface CreateQuestionPartInput {
   source: string;
   /** Optional structured tree for the part. */
   structured?: StructuredQuestionT | null;
+  /**
+   * YUK-1011 — option BODIES for an objective (choice) part (the YUK-609
+   * convention: renderers own the A/B/C labels by array index, so callers pass
+   * `sub.options.map(o => o.text)`, never "A. …" prefixed text). Persisting it
+   * keeps the runtime judge contract deterministic: route-resolve short-circuits
+   * `choices_md.length > 0` → 'exact', and `withAnswerClass` derives
+   * answer_class='exact' on write. Absent ⇒ NULL (a free-response part falls
+   * through to the semantic route via the question_part kind).
+   */
+  choicesMd?: string[] | null;
   /** Optional figures for the part. */
   figures?: FigureRefT[];
   /** Optional image refs for the part. */
@@ -62,6 +72,14 @@ export interface CreateQuestionPartInput {
    * `part_of_question_id` so the part is traceable to its parent in metadata too.
    */
   metadata?: JsonObject;
+  /**
+   * YUK-1011 — explicit draft_status for generated parts. Absent ⇒ the column
+   * keeps its default (NULL ≡ active, the paper/import convention this owner was
+   * allowlisted for). quiz_gen composite children pass 'draft' so the Option-B
+   * gate (no pool membership before quiz_verify promotes the parent — which
+   * cascades to its parts) holds for generated groups too.
+   */
+  draftStatus?: 'draft';
   /** Wall-clock timestamp shared with the caller's batch. */
   now: Date;
   /** Optional explicit id (defaults to a fresh cuid2). */
@@ -89,6 +107,10 @@ export async function createQuestionPart(
       kind: QUESTION_PART_KIND,
       prompt_md: input.promptMd,
       reference_md: input.referenceMd ?? null,
+      // YUK-1011 — objective parts persist their option bodies so route-resolve
+      // short-circuits to the deterministic 'exact' judge instead of degrading a
+      // choice sub to semantic grading.
+      choices_md: input.choicesMd ?? null,
       knowledge_ids: input.knowledgeIds ?? [],
       difficulty: input.difficulty ?? 3,
       source: input.source,
@@ -96,6 +118,9 @@ export async function createQuestionPart(
       // T-QP: the composition link + ordering — the columns this owner exists to write.
       parent_question_id: input.parentQuestionId,
       part_index: input.partIndex,
+      // YUK-1011 — explicit when a caller drafts a part (quiz_gen composite
+      // children); omitted ⇒ NULL ≡ active (legacy paper/import convention).
+      draft_status: input.draftStatus,
       figures: input.figures ?? [],
       image_refs: input.imageRefs ?? [],
       structured: input.structured ?? null,

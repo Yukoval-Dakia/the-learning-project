@@ -9,13 +9,18 @@
 // 把一个 QuestionSupplyTarget 翻成一个**有序的获取路由优先级列表**（SupplyRoute[]）。
 //
 // 纯函数：同输入同输出，无 IO、无 LLM、无写。dispatcher（同目录）才做 IO 派发。
-// 约束优先级（Task 13 Step 3 字面给定的判据，权威）：
-//   1. needsImage 约束 → 图源优先（图候选 → 既有录入 → web 兜底）。
-//   2. minSourceTier ≤ 2（要中高可信源）→ web 既存题优先（web → 录入 → 拟题兜底）。
-//   2.5. confusable_contrast 且有 routePreference → 保留显式 quiz_gen 路由；该缺口虽是
+// 约束优先级（Task 13 Step 3 字面给定的判据为权威；YUK-1011 插入的 composite
+// 判据排在 needsImage 之前——它是池侧硬谓词 EXISTS(children)，needsImage 只是
+// 路由偏好、无对应池谓词：两者同时置位时只有 quiz_gen 能产出可入池的行，先判
+// composite 才不会把组合需求静默派给永远满足不了它的生产者）：
+//   1. compositeParentOnly（篇，YUK-1011）→ 只走 quiz_gen：唯一会落
+//      parent+question_part 子题行的生产者；其它路由结构上无法满足。
+//   2. needsImage 约束 → 图源优先（图候选 → 既有录入 → web 兜底）。
+//   3. minSourceTier ≤ 2（要中高可信源）→ web 既存题优先（web → 录入 → 拟题兜底）。
+//   3.5. confusable_contrast 且有 routePreference → 保留显式 quiz_gen 路由；该缺口虽是
 //        objectiveOnly，但必须生成 A↔B 辨析题，不能被通用客观题路由改写。
-//   3. objectiveOnly 约束（要客观题，校准用）→ web 既存题或拟题（不走录入/图）。
-//   4. 否则用 target.routePreference（若非空），再兜底 [author_question, sourcing_web]。
+//   4. objectiveOnly 约束（要客观题，校准用）→ web 既存题或拟题（不走录入/图）。
+//   5. 否则用 target.routePreference（若非空），再兜底 [author_question, sourcing_web]。
 //
 // 注意 minSourceTier 分支在 objectiveOnly 之前：一个既要高可信又只要客观题的目标，
 // 高可信源约束更硬（校准级证据要 grounded），故先满足 minSourceTier ≤ 2 的 web-first 顺序。
@@ -38,6 +43,16 @@ import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
  * provenance 的合法值），本 planner 不再产出它。
  */
 export function planSupplyRoutes(target: QuestionSupplyTarget): SupplyRoute[] {
+  // YUK-1011 — 篇 (composite parent) is a STRUCTURAL hard constraint: the pool
+  // filter requires a parent row with ≥1 question_part child, and quiz_gen is
+  // the only producer that materializes parent+part groups (sourcing_web /
+  // ingest_existing store flat rows; author_question writes a structured tree
+  // but no part rows). Checked BEFORE needsImage: that flag only biases routing
+  // (no pool predicate), so a combined needsImage+composite demand can only
+  // ever be fulfilled on the composite axis.
+  if (target.constraints.compositeParentOnly) {
+    return ['quiz_gen'];
+  }
   if (target.constraints.needsImage) {
     return ['image_candidate', 'ingest_existing', 'sourcing_web'];
   }

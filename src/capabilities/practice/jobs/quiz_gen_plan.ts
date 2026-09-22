@@ -29,6 +29,12 @@ export interface PlanGatePins {
   kindRequired?: boolean;
   objectiveOnly?: boolean;
   generationMethod?: 'material_grounded' | 'closed_book';
+  // YUK-1011 — the run's 篇 pin (QuizGenJobData.composite_parent_only →
+  // RunQuizGenParams.compositeParentOnly). Pinned ⇒ EVERY item must carry
+  // composite:true; unpinned ⇒ NO item may (a composite demand can never be
+  // silently downgraded to flat questions, and an unconstrained run must not
+  // smuggle in a composite shape the persist gate would reject post-generation).
+  compositeParentOnly?: boolean;
 }
 
 export type PlanParseResult = { ok: true; plan: QuizGenPlanT } | { ok: false; reasons: string[] };
@@ -73,6 +79,17 @@ export function checkPlanPins(plan: QuizGenPlanT, pins: PlanGatePins): string[] 
       const constraint = pins.objectiveOnly ? 'objective-only' : 'required';
       reasons.push(
         `quiz_plan item ${index + 1} plans kind '${item.kind}' which does not match ${constraint} kind '${pins.kind}'`,
+      );
+    }
+    // YUK-1011 — structural pin conformance, both directions (fail-closed).
+    if (pins.compositeParentOnly && item.composite !== true) {
+      reasons.push(
+        `quiz_plan item ${index + 1} is missing composite:true but the run pins composite_parent_only`,
+      );
+    }
+    if (!pins.compositeParentOnly && item.composite === true) {
+      reasons.push(
+        `quiz_plan item ${index + 1} plans a composite question but the run did not pin composite_parent_only`,
       );
     }
   });

@@ -32,7 +32,7 @@ import { randomUUID } from 'node:crypto';
 // single-txn persist → writeEvent → catch).
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, ne } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import { recordQuestionPoolGap } from '@/capabilities/agency/public';
@@ -129,6 +129,7 @@ export type QuizVerifyPerQuestionStatus =
   | 'failed'
   | 'skipped:not_found'
   | 'skipped:not_quiz_gen'
+  | 'skipped:question_part'
   | 'skipped:already_verified';
 
 // YUK-350 (B5 increment C) — event-layer projection of WHY a verify did not promote,
@@ -173,6 +174,13 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
   const row = rows[0];
   if (!row) return { status: 'skipped:not_found' };
   if (row.source !== 'quiz_gen') return { status: 'skipped:not_quiz_gen' };
+  // YUK-1011 — a question_part is never an independent verify subject: the
+  // composite group is verified at the parent and this handler's promote branch
+  // cascades to its draft children in the same tx. A stray dispatch (orphan
+  // recovery, owner-UI enable on a part id, matcher lazy-verify) must NOT spend
+  // a paid verify on a part or promote it standalone — an active child under a
+  // still-draft parent would break the atomic group gate.
+  if (row.parent_question_id != null) return { status: 'skipped:question_part' };
 
   // Idempotency: only a TERMINAL verify event short-circuits a re-run — i.e. the
   // QuizVerifyTask actually ran and produced a verdict (outcome success | partial |
@@ -788,6 +796,109 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
               due_at: initial.dueAt,
               last_review_event_id: verifyEventId,
             });
+          }
+        }
+
+        // YUK-1011 — composite cascade: a verified composite parent (quiz_gen
+        // 篇 output carries question_part children persisted as 'draft' with NO
+        // independent verify intent) promotes its draft children in the SAME tx
+        // so the group enters the pool atomically. Tombstoned children
+        // (archived/dismissed) are skipped — a dead part must not resurrect.
+        // Children inherit the parent's knowledge_ids at write time (ADR-0028
+        // U0 A2), so they enroll on the SAME knowledge projection as the parent
+        // (per-KC enroll-if-absent — usually a no-op since the parent's loop
+        // above just enrolled those ids); the question-level fallback stays
+        // reserved for a genuinely unlabeled legacy part.
+        const childRows = await tx
+          .select({
+            id: question.id,
+            draftStatus: question.draft_status,
+            metadata: question.metadata,
+            knowledgeIds: question.knowledge_ids,
+          })
+          .from(question)
+          .where(eq(question.parent_question_id, questionId));
+        for (const child of childRows) {
+          if (child.draftStatus !== 'draft') continue;
+          const childMeta =
+            child.metadata && typeof child.metadata === 'object'
+              ? (child.metadata as Record<string, unknown>)
+              : {};
+          // Read-side tombstone skip (fast path for rows already dead when read;
+          // the write-side WHERE below enforces the same check atomically).
+          if (childMeta.archived_at != null || childMeta.dismissed_at != null) continue;
+          // Stamp the child's own verification block — honest provenance: the
+          // part was not independently verified; it inherits the parent's
+          // verdict (the group was judged as a unit). Same contract as the
+          // parent above: every child this cascade promotes was written by the
+          // Q3 path and always carries a parseable metadata.quiz_gen — anything
+          // else is a contract violation → throw rather than silently promote
+          // an unverifiable draft.
+          const childQuizGen = QuizGenMetadata.safeParse(childMeta.quiz_gen);
+          if (!childQuizGen.success) {
+            throw new Error(
+              `runQuizVerify: composite child ${child.id} of ${questionId} has no valid metadata.quiz_gen: ${childQuizGen.error.issues
+                .map((i) => i.message)
+                .join('; ')}`,
+            );
+          }
+          const childMetadata = {
+            ...childMeta,
+            quiz_gen: {
+              ...childQuizGen.data,
+              verification: {
+                status: 'verified' as const,
+                summary: 'composite child promoted with verified parent',
+                verified_by: verifiedBy,
+              },
+            },
+          };
+          // The draft/tombstone predicates are enforced in the UPDATE's WHERE
+          // (not only the SELECT above) so a concurrent archive/dismiss landing
+          // between read and write cannot be overwritten back to 'active' — the
+          // "a dead part must not resurrect" invariant holds at write time, and
+          // a zero-row result also skips the FSRS enroll below.
+          const promotedChildren = await tx
+            .update(question)
+            .set({
+              draft_status: 'active',
+              metadata: childMetadata as never,
+              updated_at: now,
+            })
+            .where(
+              and(
+                eq(question.id, child.id),
+                eq(question.draft_status, 'draft'),
+                sql`${question.metadata}->>'archived_at' IS NULL`,
+                sql`${question.metadata}->>'dismissed_at' IS NULL`,
+              ),
+            )
+            .returning({ id: question.id });
+          if (promotedChildren.length === 0) continue;
+          const childKnowledgeIds = Array.from(new Set(child.knowledgeIds ?? []));
+          if (childKnowledgeIds.length > 0) {
+            for (const knowledgeId of childKnowledgeIds) {
+              const childExisting = await getFsrsState(tx, 'knowledge', knowledgeId);
+              if (childExisting) continue;
+              await upsertFsrsState(tx, {
+                subject_kind: 'knowledge',
+                subject_id: knowledgeId,
+                state: initial.state,
+                due_at: initial.dueAt,
+                last_review_event_id: verifyEventId,
+              });
+            }
+          } else {
+            const childExisting = await getFsrsState(tx, 'question', child.id);
+            if (!childExisting) {
+              await upsertFsrsState(tx, {
+                subject_kind: 'question',
+                subject_id: child.id,
+                state: initial.state,
+                due_at: initial.dueAt,
+                last_review_event_id: verifyEventId,
+              });
+            }
           }
         }
       } else {
