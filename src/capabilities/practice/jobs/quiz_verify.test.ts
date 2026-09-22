@@ -622,6 +622,49 @@ describe('runQuizVerify', () => {
     expect(await fsrsRowCount('question', 'q-comp2-p0')).toBe(0);
   });
 
+  it('composite cascade: a child with unparseable metadata.quiz_gen throws (contract violation, never silently promoted)', async () => {
+    // YUK-1011 — the cascade promotes rows it did not itself verify, so it keeps
+    // the parent's own contract: a part written by the Q3 path always carries a
+    // parseable quiz_gen block; anything else is corrupt/foreign and must throw
+    // rather than promote with missing provenance. The promotion tx rolls back
+    // (parent included) and the failure-bottom stamps verification.status
+    // ='failed' on the parent and re-throws for pg-boss retry — loud-stranded,
+    // never half-promoted.
+    await seedKnowledge('k-comp3');
+    await seedDraftQuestion({ id: 'q-comp3', knowledgeId: 'k-comp3', kind: 'reading' });
+    await testDb()
+      .insert(question)
+      .values({
+        id: 'q-comp3-p0',
+        kind: 'question_part',
+        parent_question_id: 'q-comp3',
+        part_index: 0,
+        prompt_md: '……小题题面',
+        reference_md: '参考答案',
+        knowledge_ids: ['k-comp3'],
+        difficulty: 3,
+        source: 'quiz_gen',
+        draft_status: 'draft',
+        metadata: { quiz_gen: { bogus: true } } as never,
+        created_at: new Date(),
+        updated_at: new Date(),
+      });
+
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_comp3');
+    await expect(runQuizVerify({ db: testDb(), questionId: 'q-comp3', runTaskFn })).rejects.toThrow(
+      /composite child q-comp3-p0.*no valid metadata\.quiz_gen/,
+    );
+
+    const rows = await testDb()
+      .select({ id: question.id, draftStatus: question.draft_status })
+      .from(question)
+      .where(inArray(question.id, ['q-comp3', 'q-comp3-p0']));
+    const statusById = new Map(rows.map((r) => [r.id, r.draftStatus]));
+    expect(statusById.get('q-comp3')).toBe('draft');
+    expect(statusById.get('q-comp3-p0')).toBe('draft');
+    expect(await fsrsRowCount('question', 'q-comp3-p0')).toBe(0);
+  });
+
   it('blocks contradictory overall pass with copy_safety unknown without extra validators', async () => {
     await seedKnowledge('k-copy-unknown');
     await seedDraftQuestion({ id: 'q-copy-unknown', knowledgeId: 'k-copy-unknown' });

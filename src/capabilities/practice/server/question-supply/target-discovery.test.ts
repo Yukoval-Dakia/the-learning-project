@@ -563,7 +563,10 @@ describe('planSupplyRoutes', () => {
   // YUK-1011 — 篇 (compositeParentOnly) is a STRUCTURAL hard constraint: only
   // quiz_gen materializes parent + question_part rows, so the route is pinned to
   // it alone (no fallback that could never satisfy the EXISTS(children) pool
-  // predicate). Needs-image still wins (an image need outranks everything).
+  // predicate). It also outranks needsImage: an image need is routing-only
+  // (no pool predicate), so a combined demand can only be fulfilled on the
+  // composite axis — routing it to image producers would strand the gap
+  // forever.
   it('compositeParentOnly → quiz_gen only', () => {
     expect(planSupplyRoutes(target({ constraints: { compositeParentOnly: true } }))).toEqual([
       'quiz_gen',
@@ -579,6 +582,12 @@ describe('planSupplyRoutes', () => {
           constraints: { compositeParentOnly: true },
         }),
       ),
+    ).toEqual(['quiz_gen']);
+  });
+
+  it('compositeParentOnly outranks needsImage (hard pool predicate beats routing preference)', () => {
+    expect(
+      planSupplyRoutes(target({ constraints: { needsImage: true, compositeParentOnly: true } })),
     ).toEqual(['quiz_gen']);
   });
 });

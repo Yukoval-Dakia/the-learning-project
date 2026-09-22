@@ -32,7 +32,7 @@ import { randomUUID } from 'node:crypto';
 // single-txn persist → writeEvent → catch).
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, ne } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import { recordQuestionPoolGap } from '@/capabilities/agency/public';
@@ -824,32 +824,57 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             child.metadata && typeof child.metadata === 'object'
               ? (child.metadata as Record<string, unknown>)
               : {};
+          // Read-side tombstone skip (fast path for rows already dead when read;
+          // the write-side WHERE below enforces the same check atomically).
           if (childMeta.archived_at != null || childMeta.dismissed_at != null) continue;
           // Stamp the child's own verification block — honest provenance: the
           // part was not independently verified; it inherits the parent's
-          // verdict (the group was judged as a unit).
+          // verdict (the group was judged as a unit). Same contract as the
+          // parent above: every child this cascade promotes was written by the
+          // Q3 path and always carries a parseable metadata.quiz_gen — anything
+          // else is a contract violation → throw rather than silently promote
+          // an unverifiable draft.
           const childQuizGen = QuizGenMetadata.safeParse(childMeta.quiz_gen);
-          const childMetadata = childQuizGen.success
-            ? {
-                ...childMeta,
-                quiz_gen: {
-                  ...childQuizGen.data,
-                  verification: {
-                    status: 'verified' as const,
-                    summary: 'composite child promoted with verified parent',
-                    verified_by: verifiedBy,
-                  },
-                },
-              }
-            : childMeta;
-          await tx
+          if (!childQuizGen.success) {
+            throw new Error(
+              `runQuizVerify: composite child ${child.id} of ${questionId} has no valid metadata.quiz_gen: ${childQuizGen.error.issues
+                .map((i) => i.message)
+                .join('; ')}`,
+            );
+          }
+          const childMetadata = {
+            ...childMeta,
+            quiz_gen: {
+              ...childQuizGen.data,
+              verification: {
+                status: 'verified' as const,
+                summary: 'composite child promoted with verified parent',
+                verified_by: verifiedBy,
+              },
+            },
+          };
+          // The draft/tombstone predicates are enforced in the UPDATE's WHERE
+          // (not only the SELECT above) so a concurrent archive/dismiss landing
+          // between read and write cannot be overwritten back to 'active' — the
+          // "a dead part must not resurrect" invariant holds at write time, and
+          // a zero-row result also skips the FSRS enroll below.
+          const promotedChildren = await tx
             .update(question)
             .set({
               draft_status: 'active',
               metadata: childMetadata as never,
               updated_at: now,
             })
-            .where(eq(question.id, child.id));
+            .where(
+              and(
+                eq(question.id, child.id),
+                eq(question.draft_status, 'draft'),
+                sql`${question.metadata}->>'archived_at' IS NULL`,
+                sql`${question.metadata}->>'dismissed_at' IS NULL`,
+              ),
+            )
+            .returning({ id: question.id });
+          if (promotedChildren.length === 0) continue;
           const childKnowledgeIds = Array.from(new Set(child.knowledgeIds ?? []));
           if (childKnowledgeIds.length > 0) {
             for (const knowledgeId of childKnowledgeIds) {
