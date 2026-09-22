@@ -790,6 +790,66 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             });
           }
         }
+
+        // YUK-1011 — composite cascade: a verified composite parent (quiz_gen
+        // 篇 output carries question_part children persisted as 'draft' with NO
+        // independent verify intent) promotes its draft children in the SAME tx
+        // so the group enters the pool atomically. Tombstoned children
+        // (archived/dismissed) are skipped — a dead part must not resurrect.
+        // Children carry no KC attribution (the parent owns coverage), so each
+        // enrolls question-level — the enroll-if-absent guard means a re-verify
+        // or an already-active child is a no-op.
+        const childRows = await tx
+          .select({
+            id: question.id,
+            draftStatus: question.draft_status,
+            metadata: question.metadata,
+          })
+          .from(question)
+          .where(eq(question.parent_question_id, questionId));
+        for (const child of childRows) {
+          if (child.draftStatus !== 'draft') continue;
+          const childMeta =
+            child.metadata && typeof child.metadata === 'object'
+              ? (child.metadata as Record<string, unknown>)
+              : {};
+          if (childMeta.archived_at != null || childMeta.dismissed_at != null) continue;
+          // Stamp the child's own verification block — honest provenance: the
+          // part was not independently verified; it inherits the parent's
+          // verdict (the group was judged as a unit).
+          const childQuizGen = QuizGenMetadata.safeParse(childMeta.quiz_gen);
+          const childMetadata = childQuizGen.success
+            ? {
+                ...childMeta,
+                quiz_gen: {
+                  ...childQuizGen.data,
+                  verification: {
+                    status: 'verified' as const,
+                    summary: 'composite child promoted with verified parent',
+                    verified_by: verifiedBy,
+                  },
+                },
+              }
+            : childMeta;
+          await tx
+            .update(question)
+            .set({
+              draft_status: 'active',
+              metadata: childMetadata as never,
+              updated_at: now,
+            })
+            .where(eq(question.id, child.id));
+          const childExisting = await getFsrsState(tx, 'question', child.id);
+          if (!childExisting) {
+            await upsertFsrsState(tx, {
+              subject_kind: 'question',
+              subject_id: child.id,
+              state: initial.state,
+              due_at: initial.dueAt,
+              last_review_event_id: verifyEventId,
+            });
+          }
+        }
       } else {
         // needs_review / fail / too_close / solve_check veto — stay draft, never reaches
         // the pool.

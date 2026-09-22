@@ -87,6 +87,41 @@ describe('createQuestionPart (T-QP owner)', () => {
     expect(byIndex.map((p) => p.prompt_md)).toEqual(['part a', 'part b', 'part c']);
   });
 
+  // YUK-1011 — quiz_gen composite children pass draftStatus:'draft' so the
+  // Option-B gate (no pool membership before the parent's quiz_verify promotion
+  // cascades) holds for generated groups; callers that omit it keep NULL≡active.
+  it('writes draft_status when the caller passes draftStatus (and keeps NULL default otherwise)', async () => {
+    const db = testDb();
+    const parentId = createId();
+    await seedParent(parentId);
+    const now = new Date();
+
+    const drafted = await db.transaction((tx) =>
+      createQuestionPart(tx, {
+        parentQuestionId: parentId,
+        partIndex: 0,
+        promptMd: 'drafted part',
+        source: 'quiz_gen',
+        draftStatus: 'draft',
+        now,
+      }),
+    );
+    const active = await db.transaction((tx) =>
+      createQuestionPart(tx, {
+        parentQuestionId: parentId,
+        partIndex: 1,
+        promptMd: 'legacy active part',
+        source: 'manual',
+        now,
+      }),
+    );
+
+    const draftedRows = await db.select().from(question).where(eq(question.id, drafted.questionId));
+    expect(draftedRows[0].draft_status).toBe('draft');
+    const activeRows = await db.select().from(question).where(eq(question.id, active.questionId));
+    expect(activeRows[0].draft_status).toBeNull();
+  });
+
   it('a plain (non-part) question keeps parent_question_id / part_index NULL', async () => {
     const db = testDb();
     const plainId = createId();

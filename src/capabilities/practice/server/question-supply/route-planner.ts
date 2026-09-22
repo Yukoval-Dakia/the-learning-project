@@ -11,6 +11,8 @@
 // 纯函数：同输入同输出，无 IO、无 LLM、无写。dispatcher（同目录）才做 IO 派发。
 // 约束优先级（Task 13 Step 3 字面给定的判据，权威）：
 //   1. needsImage 约束 → 图源优先（图候选 → 既有录入 → web 兜底）。
+//   1.5. compositeParentOnly（篇，YUK-1011）→ 只走 quiz_gen：唯一会落
+//        parent+question_part 子题行的生产者；其它路由结构上无法满足。
 //   2. minSourceTier ≤ 2（要中高可信源）→ web 既存题优先（web → 录入 → 拟题兜底）。
 //   2.5. confusable_contrast 且有 routePreference → 保留显式 quiz_gen 路由；该缺口虽是
 //        objectiveOnly，但必须生成 A↔B 辨析题，不能被通用客观题路由改写。
@@ -40,6 +42,15 @@ import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
 export function planSupplyRoutes(target: QuestionSupplyTarget): SupplyRoute[] {
   if (target.constraints.needsImage) {
     return ['image_candidate', 'ingest_existing', 'sourcing_web'];
+  }
+  // YUK-1011 — 篇 (composite parent) is a STRUCTURAL hard constraint: the pool
+  // filter requires a parent row with ≥1 question_part child, and quiz_gen is
+  // the only producer that materializes parent+part groups (sourcing_web /
+  // ingest_existing store flat rows; author_question writes a structured tree
+  // but no part rows). Route pinned to quiz_gen alone — a composite demand
+  // routed anywhere else could never satisfy the EXISTS(children) predicate.
+  if (target.constraints.compositeParentOnly) {
+    return ['quiz_gen'];
   }
   if (target.minSourceTier <= 2) {
     return ['sourcing_web', 'ingest_existing', 'author_question'];

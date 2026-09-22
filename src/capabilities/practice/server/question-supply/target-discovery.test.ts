@@ -559,4 +559,26 @@ describe('planSupplyRoutes', () => {
       'sourcing_web',
     ]);
   });
+
+  // YUK-1011 — 篇 (compositeParentOnly) is a STRUCTURAL hard constraint: only
+  // quiz_gen materializes parent + question_part rows, so the route is pinned to
+  // it alone (no fallback that could never satisfy the EXISTS(children) pool
+  // predicate). Needs-image still wins (an image need outranks everything).
+  it('compositeParentOnly → quiz_gen only', () => {
+    expect(planSupplyRoutes(target({ constraints: { compositeParentOnly: true } }))).toEqual([
+      'quiz_gen',
+    ]);
+  });
+
+  it('compositeParentOnly outranks minSourceTier<=2 and routePreference', () => {
+    expect(
+      planSupplyRoutes(
+        target({
+          minSourceTier: 1,
+          routePreference: ['sourcing_web'],
+          constraints: { compositeParentOnly: true },
+        }),
+      ),
+    ).toEqual(['quiz_gen']);
+  });
 });

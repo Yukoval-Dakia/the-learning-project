@@ -368,9 +368,9 @@ export async function dispatchSupplyTarget(
               // aim at the band-gap the matcher detected (requested_difficulty_band
               // reaches plan/generate inputs as a soft hint).
               difficulty_band: target.difficultyBand,
-              // YUK-287 — 篇 (composite parent) requirement, phase-deferred: the seam
-              // is data-complete; QuizGenTask composite generation is a separate
-              // feature (mirrors the knowledge_ids phase-deferred pattern).
+              // YUK-287 forwarded the 篇 (composite parent) requirement
+              // phase-deferred; YUK-1011 makes quiz_gen consume it — the run
+              // persists a composite parent + question_part children.
               ...(target.constraints.compositeParentOnly ? { composite_parent_only: true } : {}),
               ...(placementTrace ? { supply_trace: placementTrace } : {}),
             }

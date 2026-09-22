@@ -10,7 +10,7 @@
 //     verification.status='needs_review' + NO FSRS enroll.
 //   - idempotency — a second run skips (no duplicate verify event, no re-promote).
 
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { readAgentNotes } from '@/capabilities/agency/public';
@@ -435,6 +435,137 @@ describe('runQuizVerify', () => {
     // U8 / AF §4 (U3 L-note) — a promoted draft DID enter the pool, so no
     // question_pool_gap hint is left.
     expect(await poolGapNotesForKnowledge('k1')).toBe(0);
+  });
+
+  // YUK-1011 — composite (篇) cascade: quiz_gen composite children persist as
+  // 'draft' question_part rows with NO own verify intent; the parent's verified
+  // promotion cascades to them in the same tx (the group was judged as a unit —
+  // the parent's derived prompt/reference carries every sub). A tombstoned child
+  // is skipped; a failed parent leaves the whole group in draft.
+  async function seedCompositePart(opts: {
+    id: string;
+    parentId: string;
+    partIndex: number;
+    promptMd: string;
+    metadataExtra?: Record<string, unknown>;
+  }) {
+    const now = new Date();
+    await testDb()
+      .insert(question)
+      .values({
+        id: opts.id,
+        kind: 'question_part',
+        parent_question_id: opts.parentId,
+        part_index: opts.partIndex,
+        prompt_md: opts.promptMd,
+        reference_md: `小题 ${opts.partIndex + 1} 参考答案`,
+        knowledge_ids: [],
+        difficulty: 3,
+        source: 'quiz_gen',
+        draft_status: 'draft',
+        metadata: {
+          quiz_gen: BASE_META,
+          part_of_question_id: opts.parentId,
+          part_index: opts.partIndex,
+          ...(opts.metadataExtra ?? {}),
+        } as never,
+        created_at: now,
+        updated_at: now,
+      });
+  }
+
+  it('composite cascade: a verified 篇 parent promotes its draft question_part children atomically', async () => {
+    await seedKnowledge('k-comp');
+    await seedDraftQuestion({
+      id: 'q-comp',
+      knowledgeId: 'k-comp',
+      kind: 'reading',
+      promptMd: '陈太丘与友期行……(1) 「去」的意思是？(2) 元方表现了怎样的品格？',
+      referenceMd: '(1) 离开。(2) 守信明礼、方正率真。',
+    });
+    await seedCompositePart({
+      id: 'q-comp-p0',
+      parentId: 'q-comp',
+      partIndex: 0,
+      promptMd: '陈太丘与友期行……(1) 「去」的意思是？',
+    });
+    await seedCompositePart({
+      id: 'q-comp-p1',
+      parentId: 'q-comp',
+      partIndex: 1,
+      promptMd: '陈太丘与友期行……(2) 元方表现了怎样的品格？',
+    });
+    // A tombstoned sibling must NOT resurrect through the cascade.
+    await seedCompositePart({
+      id: 'q-comp-archived',
+      parentId: 'q-comp',
+      partIndex: 2,
+      promptMd: '陈太丘与友期行……(3) 已归档小题',
+      metadataExtra: { archived_at: '2026-06-10T00:00:00.000Z' },
+    });
+
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_comp');
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q-comp', runTaskFn });
+
+    expect(result.status).toBe('verified');
+    const rows = await testDb()
+      .select({ id: question.id, draftStatus: question.draft_status })
+      .from(question)
+      .where(inArray(question.id, ['q-comp', 'q-comp-p0', 'q-comp-p1', 'q-comp-archived']));
+    const statusById = new Map(rows.map((r) => [r.id, r.draftStatus]));
+    expect(statusById.get('q-comp')).toBe('active');
+    expect(statusById.get('q-comp-p0')).toBe('active');
+    expect(statusById.get('q-comp-p1')).toBe('active');
+    expect(statusById.get('q-comp-archived')).toBe('draft');
+
+    // Parent enrolls at knowledge level (k-comp); KC-less children enroll at
+    // question level — each part is independently schedulable (T-QP).
+    expect(await fsrsRowCount('knowledge', 'k-comp')).toBe(1);
+    expect(await fsrsRowCount('question', 'q-comp-p0')).toBe(1);
+    expect(await fsrsRowCount('question', 'q-comp-p1')).toBe(1);
+    expect(await fsrsRowCount('question', 'q-comp-archived')).toBe(0);
+
+    // Children carry honest inherited-verification provenance — the part was
+    // not independently verified; it inherits the parent's unit verdict.
+    const p0Meta = await readMeta('q-comp-p0');
+    expect(p0Meta?.verification).toMatchObject({
+      status: 'verified',
+      verified_by: { by: 'ai', task_kind: 'QuizVerifyTask', task_run_id: 'tr_comp' },
+    });
+    expect((p0Meta?.verification as Record<string, unknown> | undefined)?.summary).toMatch(
+      /promoted with verified parent/,
+    );
+
+    // One verify event on the parent only — children never held their own intent.
+    expect(await countVerifyEvents('q-comp')).toBe(1);
+    expect(await countVerifyEvents('q-comp-p0')).toBe(0);
+  });
+
+  it('composite cascade: a failed parent leaves the whole group in draft (no partial promotion)', async () => {
+    await seedKnowledge('k-comp2');
+    await seedDraftQuestion({ id: 'q-comp2', knowledgeId: 'k-comp2', kind: 'reading' });
+    await seedCompositePart({
+      id: 'q-comp2-p0',
+      parentId: 'q-comp2',
+      partIndex: 0,
+      promptMd: '……小题题面',
+    });
+
+    const runTaskFn = runTaskMock(
+      verifyOutput({ overall: 'fail', groundingVerdict: 'fail' }),
+      'tr_comp_fail',
+    );
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q-comp2', runTaskFn });
+
+    expect(result.status).toBe('failed');
+    const rows = await testDb()
+      .select({ id: question.id, draftStatus: question.draft_status })
+      .from(question)
+      .where(inArray(question.id, ['q-comp2', 'q-comp2-p0']));
+    const statusById = new Map(rows.map((r) => [r.id, r.draftStatus]));
+    expect(statusById.get('q-comp2')).toBe('draft');
+    expect(statusById.get('q-comp2-p0')).toBe('draft');
+    expect(await fsrsRowCount('question', 'q-comp2-p0')).toBe(0);
   });
 
   it('blocks contradictory overall pass with copy_safety unknown without extra validators', async () => {

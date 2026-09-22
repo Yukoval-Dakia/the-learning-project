@@ -62,6 +62,14 @@ export interface CreateQuestionPartInput {
    * `part_of_question_id` so the part is traceable to its parent in metadata too.
    */
   metadata?: JsonObject;
+  /**
+   * YUK-1011 — explicit draft_status for generated parts. Absent ⇒ the column
+   * keeps its default (NULL ≡ active, the paper/import convention this owner was
+   * allowlisted for). quiz_gen composite children pass 'draft' so the Option-B
+   * gate (no pool membership before quiz_verify promotes the parent — which
+   * cascades to its parts) holds for generated groups too.
+   */
+  draftStatus?: 'draft';
   /** Wall-clock timestamp shared with the caller's batch. */
   now: Date;
   /** Optional explicit id (defaults to a fresh cuid2). */
@@ -96,6 +104,9 @@ export async function createQuestionPart(
       // T-QP: the composition link + ordering — the columns this owner exists to write.
       parent_question_id: input.parentQuestionId,
       part_index: input.partIndex,
+      // YUK-1011 — explicit when a caller drafts a part (quiz_gen composite
+      // children); omitted ⇒ NULL ≡ active (legacy paper/import convention).
+      draft_status: input.draftStatus,
       figures: input.figures ?? [],
       image_refs: input.imageRefs ?? [],
       structured: input.structured ?? null,
