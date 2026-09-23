@@ -74,6 +74,11 @@ const server = {
   LOCAL_NEXT_PORT: optionalString,
   LOCAL_POSTGRES_HOST: optionalString,
   LOCAL_POSTGRES_PORT: optionalString,
+  // YUK-376 — scripts/llasa-prior-eval.ts 离线评测 knobs（script-only，不进运行时）：
+  // LIMIT=题数上限（默认 30）、REPS=每法重复次数（默认 3）、CONCURRENCY=并发（默认 4）。
+  LLASA_EVAL_CONCURRENCY: optionalString,
+  LLASA_EVAL_LIMIT: optionalString,
+  LLASA_EVAL_REPS: optionalString,
   MEMORY_RECONCILE_HANDOFF_MODE: optionalString,
   MEM0_EMBEDDING_BASE_URL: optionalString,
   MEM0_EMBEDDING_DIMS: optionalString,
