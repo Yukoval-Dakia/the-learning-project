@@ -13,7 +13,7 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SourcedQuestionT, SourcingImageCandidateT } from '@/core/schema/sourcing';
-import { event, knowledge, question } from '@/db/schema';
+import { event, goal, knowledge, placement_starter_claim, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import type { SupplyTraceV1T } from './evidence-demand';
@@ -33,6 +33,7 @@ import {
   SUPPLY_EXECUTOR_ITEM_EVENT_ACTION,
   type SupplyDemandItem,
   executeSupplyPlan,
+  jyeooGradeForDeclaredStage,
 } from './plan-executor';
 import type { WebCandidate } from './web-candidates';
 
@@ -780,5 +781,264 @@ describe('executeSupplyPlan — web image candidates', () => {
       acquired: 0,
     });
     expect(await db.select().from(question)).toHaveLength(0);
+  });
+});
+
+// ── (h) YUK-1009 — 学习者自述学段 → jyeoo grade 约束 ─────────────────────────
+//
+// 贯通的消费点：goal.declared_stage（onboarding 落库的课程范围约束）经
+// placement_starter_claim.goal_id 解析进 jyeoo_fetch 路由的 grade 决策——
+// 带内学段锚定年级、带外学段（jyeoo 语料只有高中 10-12）跳过路由不烧付费抓取。
+// 永远不是能力/θ̂ 信号。
+
+async function seedGoalStage(
+  id: string,
+  declaredStage: 'middle_school' | 'high_school' | 'university' | 'custom' | null,
+): Promise<void> {
+  await db.insert(goal).values({
+    id,
+    title: `目标 ${id}`,
+    declared_stage: declaredStage,
+    source: 'manual',
+    created_at: NOW,
+    updated_at: NOW,
+  });
+}
+
+async function seedClaimForGoal(claimId: string, goalId: string): Promise<void> {
+  // 'pending_dispatch' keeps the row outside the paid single-flight unique index —
+  // the executor only reads claim → goal_id → declared_stage, never status.
+  await db.insert(placement_starter_claim).values({
+    id: claimId,
+    fingerprint: `placement-starter|${claimId}`,
+    goal_id: goalId,
+    semantic_goal_revision_id: `rev-${claimId}`,
+    subject_id: 'math',
+    knowledge_id: 'kc-sets',
+    demand_id: `demand-${claimId}`,
+    target_id: `target-${claimId}`,
+    status: 'pending_dispatch',
+    created_at: NOW,
+    updated_at: NOW,
+  });
+}
+
+describe('jyeooGradeForDeclaredStage — pure mapping', () => {
+  it.each([
+    ['high_school', 11],
+    ['middle_school', 'out_of_band'],
+    ['university', 'out_of_band'],
+    ['custom', null],
+    [null, null],
+    [undefined, null],
+    // 未知/未来学段值：不臆断为带外（防误伤），回落无约束保持现状。
+    ['kindergarten', null],
+    ['', null],
+  ])('maps %s → %s', (stage, expected) => {
+    expect(jyeooGradeForDeclaredStage(stage as string | null | undefined)).toBe(expected);
+  });
+});
+
+describe('executeSupplyPlan — declared_stage → jyeoo grade', () => {
+  it('pins the fetch grade to the declared stage band (high_school → 11), overriding the job config grade', async () => {
+    await seedTree();
+    await seedGoalStage('goal-hs', 'high_school');
+    await seedClaimForGoal('claim-hs', 'goal-hs');
+
+    const fetchInputs: Array<{ grade?: number }> = [];
+    const deps = baseDeps(vi.fn<RunWebFetchCandidatesFn>());
+    deps.runJyeooFetchCandidates = vi.fn(async (params) => {
+      fetchInputs.push(params.input);
+      return jyeooOk([await jyeooCandidateOf(setsQuestion(), ['集合'], 'cand-hs-1')]);
+    });
+
+    const result = await executeSupplyPlan(
+      {
+        db,
+        planEventId: 'plan-evt-hs',
+        // Job config deliberately differs (10) so a pass proves the declared-stage
+        // resolution won, not the default.
+        jyeooFetch: { grade: 10 },
+        items: [
+          itemOf({
+            count: 1,
+            routePreference: ['jyeoo_fetch'],
+            placementClaimId: 'claim-hs',
+          }),
+        ],
+      },
+      deps,
+    );
+
+    expect(fetchInputs).toHaveLength(1);
+    expect(fetchInputs[0].grade).toBe(11);
+    expect(result.status).toBe('executed');
+    if (result.status !== 'executed') return;
+    expect(result.results[0].routes[0]).toMatchObject({ route: 'jyeoo_fetch', status: 'ok' });
+  });
+
+  it.each(['middle_school', 'university'] as const)(
+    'skips the jyeoo route for out-of-band stage %s and falls through to sourcing_web',
+    async (stage) => {
+      await seedTree();
+      await seedGoalStage(`goal-${stage}`, stage);
+      await seedClaimForGoal(`claim-${stage}`, `goal-${stage}`);
+
+      const jyeoo = vi.fn();
+      const webQ = await webCandidateOf(setsQuestion(), `webcand-${stage}`, ['kc-sets']);
+      const deps = baseDeps(vi.fn(async () => webOk([webQ])));
+      deps.runJyeooFetchCandidates = jyeoo;
+
+      const result = await executeSupplyPlan(
+        {
+          db,
+          planEventId: `plan-evt-${stage}`,
+          jyeooFetch: { grade: 11 },
+          items: [
+            itemOf({
+              count: 1,
+              routePreference: ['jyeoo_fetch', 'sourcing_web'],
+              placementClaimId: `claim-${stage}`,
+            }),
+          ],
+        },
+        deps,
+      );
+
+      // 初中/大学不在 jyeoo 高中语料内——整路由跳过，不为错配课程烧付费抓取。
+      expect(jyeoo).not.toHaveBeenCalled();
+      expect(result.status).toBe('executed');
+      if (result.status !== 'executed') return;
+      const routes = result.results[0].routes;
+      expect(routes[0]).toMatchObject({
+        route: 'jyeoo_fetch',
+        status: 'skipped',
+        skipped: 'jyeoo_declared_stage_out_of_band',
+      });
+      expect(routes[1]).toMatchObject({ route: 'sourcing_web', status: 'ok', acquired: 1 });
+      expect(await db.select().from(question)).toHaveLength(1);
+    },
+  );
+
+  it('declared stage correction flips the next supply run (acceptance: 纠正学段 → 材料选择改变)', async () => {
+    // 端到端验收语义：同一个 claim/goal，第一次供给按 middle_school 跳过 jyeoo；
+    // 纠正为 high_school 后，下一次 plan 的 jyeoo 抓取落到 grade 11。
+    await seedTree();
+    await seedGoalStage('goal-corrected', 'middle_school');
+    await seedClaimForGoal('claim-corrected', 'goal-corrected');
+
+    const fetchInputs: Array<{ grade?: number }> = [];
+    const jyeoo = vi.fn(async (params: { input: { grade?: number } }) => {
+      fetchInputs.push(params.input);
+      return jyeooOk([await jyeooCandidateOf(setsQuestion(), ['集合'], 'cand-corrected')]);
+    });
+
+    const deps = baseDeps(
+      vi.fn(async () => webOk([await webCandidateOf(setsQuestion(), 'webcand-corr', ['kc-sets'])])),
+    );
+    deps.runJyeooFetchCandidates = jyeoo;
+
+    const before = await executeSupplyPlan(
+      {
+        db,
+        planEventId: 'plan-evt-corr-1',
+        jyeooFetch: { grade: 11 },
+        items: [
+          itemOf({
+            count: 1,
+            routePreference: ['jyeoo_fetch', 'sourcing_web'],
+            placementClaimId: 'claim-corrected',
+          }),
+        ],
+      },
+      deps,
+    );
+    expect(before.status).toBe('executed');
+    if (before.status !== 'executed') return;
+    expect(before.results[0].routes[0]).toMatchObject({
+      route: 'jyeoo_fetch',
+      status: 'skipped',
+      skipped: 'jyeoo_declared_stage_out_of_band',
+    });
+    expect(jyeoo).not.toHaveBeenCalled();
+
+    // 纠正学段（命令层写路的落库结果——此处直接 update 模拟 updateGoalScope 的提交态）。
+    await db
+      .update(goal)
+      .set({ declared_stage: 'high_school', updated_at: new Date() })
+      .where(eq(goal.id, 'goal-corrected'));
+
+    const after = await executeSupplyPlan(
+      {
+        db,
+        planEventId: 'plan-evt-corr-2',
+        jyeooFetch: { grade: 11 },
+        items: [
+          itemOf({
+            demandId: 'demand:v1:math:kc-sets:round2',
+            count: 1,
+            routePreference: ['jyeoo_fetch'],
+            placementClaimId: 'claim-corrected',
+          }),
+        ],
+      },
+      deps,
+    );
+    expect(after.status).toBe('executed');
+    if (after.status !== 'executed') return;
+    expect(after.results[0].routes[0]).toMatchObject({ route: 'jyeoo_fetch', status: 'ok' });
+    expect(jyeoo).toHaveBeenCalledTimes(1);
+    expect(fetchInputs[0]?.grade).toBe(11);
+  });
+
+  it('unconstrained items keep the job config grade (custom stage / undeclared / no claim)', async () => {
+    await seedTree();
+    await seedGoalStage('goal-custom', 'custom');
+    await seedClaimForGoal('claim-custom', 'goal-custom');
+    await seedGoalStage('goal-undeclared', null);
+    await seedClaimForGoal('claim-undeclared', 'goal-undeclared');
+
+    const fetchInputs: Array<{ grade?: number }> = [];
+    const deps = baseDeps(vi.fn<RunWebFetchCandidatesFn>());
+    deps.runJyeooFetchCandidates = vi.fn(async (params) => {
+      fetchInputs.push(params.input);
+      return jyeooOk([
+        await jyeooCandidateOf(setsQuestion(), ['集合'], `cand-${fetchInputs.length}`),
+      ]);
+    });
+
+    const result = await executeSupplyPlan(
+      {
+        db,
+        planEventId: 'plan-evt-unconstrained',
+        jyeooFetch: { grade: 10 },
+        items: [
+          itemOf({
+            demandId: 'demand:custom',
+            count: 1,
+            routePreference: ['jyeoo_fetch'],
+            placementClaimId: 'claim-custom',
+          }),
+          itemOf({
+            demandId: 'demand:undeclared',
+            count: 1,
+            routePreference: ['jyeoo_fetch'],
+            placementClaimId: 'claim-undeclared',
+          }),
+          itemOf({
+            demandId: 'demand:missing-claim',
+            count: 1,
+            routePreference: ['jyeoo_fetch'],
+            placementClaimId: 'claim-does-not-exist',
+          }),
+          itemOf({ demandId: 'demand:no-claim', count: 1, routePreference: ['jyeoo_fetch'] }),
+        ],
+      },
+      deps,
+    );
+
+    expect(result.status).toBe('executed');
+    // 四个无约束/不可解析约束的项全部回落 job grade 10——现状逐字节保持。
+    expect(fetchInputs.map((input) => input.grade)).toEqual([10, 10, 10, 10]);
   });
 });

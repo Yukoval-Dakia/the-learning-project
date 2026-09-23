@@ -28,7 +28,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
-import { event, knowledge } from '@/db/schema';
+import { event, goal, knowledge, placement_starter_claim } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -66,6 +66,53 @@ const DIFFICULTY_BANDS: ReadonlySet<string> = new Set(['below', 'near', 'above',
 
 /** jyeoo 单次抓取的 sessionMax 上界（spec：min(count*2, 预算余额, 8)）。 */
 const JYEOO_SESSION_MAX_CAP = 8;
+
+// ── YUK-1009 — 学习者自述学段 → jyeoo grade 映射（durable 约束的消费点） ──────────
+//
+// goal.declared_stage（Welcome 自述经 POST /api/goals 落库）是课程范围约束：jyeoo-rs 的
+// grade 路线语料只覆盖高中（JYEOO_GRADES = 10/11/12 = 高一/高二/高三），因此自述学段
+// 映射为「带内锚定年级」或「out_of_band」（该学段语料根本服务不了——跳过路由，不为
+// 不匹配的课程烧付费抓取）。
+//
+//   high_school                → 11（带内锚点；10-12 内按学年的细分是记录在案的 follow-up）
+//   middle_school / university → 'out_of_band'（初中学段与大学都在 10-12 语料覆盖外）
+//   custom / null / 未知值     → null（不携带可解析约束 → 调用方回落 config.grade，
+//                              保持现状——约束只在「明确声明且可判定」时生效）
+//
+// 红线：这是课程范围过滤，永远不作能力/θ̂ 输入（学段 ≠ 能力判定）。
+export function jyeooGradeForDeclaredStage(
+  stage: string | null | undefined,
+): JyeooGrade | 'out_of_band' | null {
+  switch (stage) {
+    case 'high_school':
+      return 11;
+    case 'middle_school':
+    case 'university':
+      return 'out_of_band';
+    default:
+      return null;
+  }
+}
+
+/**
+ * 解析需求项的 declared-stage 约束：只有绑定 goal 的需求（placement_claim_id →
+ * placement_starter_claim.goal_id → goal.declared_stage）携带学习者自述学段；未绑定
+ * goal 的项（scanner/planner 裸 KC 需求）返回 null（无约束 → 用 job/config grade）。
+ * claim 缺失或 goal 未声明学段同样返回 null——约束不存在时不改变任何既有行为。
+ */
+async function resolveDeclaredStageGrade(
+  db: Db,
+  placementClaimId: string | undefined,
+): Promise<JyeooGrade | 'out_of_band' | null> {
+  if (!placementClaimId) return null;
+  const rows = await db
+    .select({ declaredStage: goal.declared_stage })
+    .from(placement_starter_claim)
+    .innerJoin(goal, eq(placement_starter_claim.goal_id, goal.id))
+    .where(eq(placement_starter_claim.id, placementClaimId))
+    .limit(1);
+  return jyeooGradeForDeclaredStage(rows[0]?.declaredStage ?? null);
+}
 
 /** planner → executor 的需求项（SupplyPlanItemV1 的执行投影；kind 'any' = 无题型约束）。 */
 export interface SupplyDemandItem {
@@ -438,6 +485,18 @@ async function runJyeooRoute(
     return tally;
   }
 
+  // YUK-1009 — learner-declared stage constraint: goal-bound demand (placement claim →
+  // goal.declared_stage) whose declared stage is outside the jyeoo 高中 corpus skips the
+  // route outright (reported before the transient budget check so the constraint is
+  // visible in the tally regardless of budget state); in-band stages pin the fetch
+  // grade; unconstrained items keep the job/config grade.
+  const declaredGrade = await resolveDeclaredStageGrade(run.db, run.item.placementClaimId);
+  if (declaredGrade === 'out_of_band') {
+    tally.skipped = 'jyeoo_declared_stage_out_of_band';
+    return tally;
+  }
+  const grade = declaredGrade ?? config.grade;
+
   const budgetRemaining = await jyeooBudgetRemaining(run.db, run.now);
   if (budgetRemaining <= 0) {
     tally.skipped = 'jyeoo_budget';
@@ -455,7 +514,7 @@ async function runJyeooRoute(
     result = await fetchFn({
       db: run.db,
       input: {
-        grade: config.grade,
+        grade,
         subject: config.subject ?? 'math2',
         pages: config.pages ?? 2,
         maxPapers: config.maxPapers ?? 2,

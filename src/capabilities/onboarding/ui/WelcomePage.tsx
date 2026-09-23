@@ -21,7 +21,17 @@ import './onboarding.css';
 // 后不更新——v2 §9① WelcomePage:23-24 点名的冻结 bug）。现移入组件体、行驱动
 // （useSubjects：DB selectable 视图，custom 科目即时进 chips；断网退化三 builtin）。
 // `leanings` 值仍是 canonical id——YUK-480 透传合同不变。
-const STAGES = ['初中', '高中', '大学', '自定义'] as const;
+// YUK-1009 — stage ids are the canonical DeclaredStage vocabulary (POST /api/goals
+// declaredStage); labels stay the learner-facing Chinese copy. The chosen id now
+// persists on the created goal (goal.declared_stage) as a curriculum constraint
+// consumed by question supply — still never an ability/θ̂ input.
+const STAGES = [
+  { id: 'middle_school', label: '初中' },
+  { id: 'high_school', label: '高中' },
+  { id: 'university', label: '大学' },
+  { id: 'custom', label: '自定义' },
+] as const;
+type StageId = (typeof STAGES)[number]['id'];
 const PACES = [
   { id: 'light', label: '轻', sub: '≈10 分钟 / 天' },
   { id: 'medium', label: '适中', sub: '≈20 分钟 / 天' },
@@ -49,10 +59,11 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
     [subjectRows],
   );
   // 自述（轻 · 仅引导排序）。YUK-480：`leanings` + `pace` 现经 query 透传给 placement
-  // 探针（leanings → 起始题排序偏好、pace → 探针题量），不入 goal/不落库（仅 placement
-  // session 持有）；二者只影响排序/题量，绝不喂 θ̂/p(L)。`stage` 仍是显示态——stage→θ 先验
-  // 是另案（AutoElicit），本轮不接。
-  const [stage, setStage] = useState<string | null>(null);
+  // 探针（leanings → 起始题排序偏好、pace → 探针题量），仅 placement session 持有；
+  // 二者只影响排序/题量，绝不喂 θ̂/p(L)。YUK-1009：`stage` 不再是纯显示态——它随
+  // createGoal 落库为 goal.declared_stage（学段/课程范围约束，供供给侧消费，
+  // 例如 jyeoo grade 过滤）；仍绝不喂 θ̂（stage→θ 先验仍是另案 AutoElicit）。
+  const [stage, setStage] = useState<StageId | null>(null);
   const [leanings, setLeanings] = useState<string[]>([]);
   const [pace, setPace] = useState<string>('medium');
   // 目标 · 核心（驱动 POST /api/goals）。
@@ -80,7 +91,14 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
     try {
       // Thread the new goal id through the flow as `?goal=<id>`: the upload screen
       // forwards it and the placement probe (Slice 3) reads it to scope the probe.
-      const created = await createGoal({ title: goal.trim(), subjectId: subject });
+      // YUK-1009 — the self-reported stage is no longer display-only: it rides the
+      // SAME create-goal mutation (declaredStage) and persists on goal.declared_stage,
+      // where supply-side consumers (jyeoo grade filter) read it. Optional → nullable.
+      const created = await createGoal({
+        title: goal.trim(),
+        subjectId: subject,
+        declaredStage: stage,
+      });
       // YUK-480 — also thread the self-report (leanings + pace) as query params. The placement
       // probe reads them to ORDER starter questions toward leaning subjects + size the probe by
       // pace (ordering/amount only — never θ̂). leanings appended only when non-empty; pace is
@@ -131,13 +149,13 @@ export default function WelcomePage({ navigate }: WelcomePageProps) {
           >
             {STAGES.map((s) => (
               <button
-                key={s}
+                key={s.id}
                 type="button"
-                className={`ob-pick-btn${stage === s ? ' is-on' : ''}`}
-                aria-pressed={stage === s}
-                onClick={() => setStage(s)}
+                className={`ob-pick-btn${stage === s.id ? ' is-on' : ''}`}
+                aria-pressed={stage === s.id}
+                onClick={() => setStage(s.id)}
               >
-                <div className="ob-pick-l">{s}</div>
+                <div className="ob-pick-l">{s.label}</div>
               </button>
             ))}
           </fieldset>

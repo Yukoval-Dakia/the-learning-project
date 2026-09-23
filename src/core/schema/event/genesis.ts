@@ -3,6 +3,7 @@ import {
   AgentRef,
   ArtifactBodyBlocks,
   ArtifactHistoryEntry,
+  DeclaredStage,
   NoteVerificationResult,
 } from '../business';
 import { FigureRef, StructuredQuestion } from '../structured_question';
@@ -121,6 +122,10 @@ export const GoalRowSnapshot = z
     // drop those goals. Absent ⇒ the fold defaults 'explicit' (mirrors the DB column default).
     scope_mode: z.enum(['explicit', 'subject_live']).optional(),
     sequence_hint: z.number().int(), // AI-internal ordering, NOT progress (ND-4)
+    // YUK-1009 — OPTIONAL+nullable for the same legacy-payload reason as scope_mode:
+    // genesis payloads written before the column existed carry no key; absent ⇒ the
+    // fold materializes NULL (undeclared). Curriculum constraint only, never θ̂ input.
+    declared_stage: DeclaredStage.nullable().optional(),
     status: z.enum(['active', 'dormant', 'done']),
     source: z.string(), // provenance, set-once
     source_ref: z.string().nullable(), // nullable column (the propose event id)

@@ -282,6 +282,9 @@ function goalRowToSnapshot(row: GoalRow): GoalRowSnapshotT {
     // to subject_live (omitting it would fold to the 'explicit' default → parity drift).
     scope_mode: row.scope_mode,
     sequence_hint: row.sequence_hint,
+    // YUK-1009 — snapshot the current declared_stage so a backfilled goal re-folds
+    // to the same persisted stage (omitting it would fold to null → parity drift).
+    declared_stage: row.declared_stage,
     status: row.status,
     source: row.source,
     source_ref: row.source_ref,

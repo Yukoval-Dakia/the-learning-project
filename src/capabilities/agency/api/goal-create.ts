@@ -59,7 +59,7 @@ export async function POST(req: Request): Promise<Response> {
         400,
       );
     }
-    const { title, subjectId: rawSubjectId, knowledgeIds: explicit } = parsed.data;
+    const { title, subjectId: rawSubjectId, knowledgeIds: explicit, declaredStage } = parsed.data;
 
     // YUK-600（阻断④防线步 1）—— alias→canonical 归一（tx 外、scope 派生前）：
     // goal 只能引用已存在科目（thin-create 是创建唯一入口），unknown → 422；
@@ -93,6 +93,9 @@ export async function POST(req: Request): Promise<Response> {
       scope_knowledge_ids: scopeKnowledgeIds,
       scope_mode: scopeMode,
       sequence_hint: 0,
+      // YUK-1009 — persist the learner-declared stage on the goal (NULL when the
+      // onboarding question was skipped / not sent). Curriculum constraint only.
+      declared_stage: declaredStage ?? null,
     });
 
     return resourceResponse(
@@ -101,6 +104,7 @@ export async function POST(req: Request): Promise<Response> {
         title,
         subjectId: subjectId ?? null,
         scopeKnowledgeIds,
+        declaredStage: declaredStage ?? null,
         status: 'active',
       },
       { outcome: 'created', location: `/api/goals/${encodeURIComponent(id)}` },

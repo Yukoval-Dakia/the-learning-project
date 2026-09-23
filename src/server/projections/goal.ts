@@ -78,6 +78,8 @@ async function upsertProjectedGoal(db: DbLike, projected: GoalRowSnapshotT): Pro
       // the ?? is a type-level belt for the optional snapshot field, never hit at runtime.
       scope_mode: projected.scope_mode ?? 'explicit',
       sequence_hint: projected.sequence_hint,
+      // YUK-1009 — legacy snapshots carry no declared_stage; fold materializes NULL.
+      declared_stage: projected.declared_stage ?? null,
       status: projected.status,
       source: projected.source,
       source_ref: projected.source_ref,
@@ -93,6 +95,7 @@ async function upsertProjectedGoal(db: DbLike, projected: GoalRowSnapshotT): Pro
         scope_knowledge_ids: projected.scope_knowledge_ids,
         scope_mode: projected.scope_mode ?? 'explicit',
         sequence_hint: projected.sequence_hint,
+        declared_stage: projected.declared_stage ?? null,
         status: projected.status,
         source: projected.source,
         source_ref: projected.source_ref,

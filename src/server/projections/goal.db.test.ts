@@ -125,6 +125,9 @@ async function liveGoal(id: string): Promise<GoalRowSnapshotT | null> {
     scope_knowledge_ids: r.scope_knowledge_ids ?? [],
     scope_mode: r.scope_mode, // YUK-603 — NOT NULL column; fold materializes it too
     sequence_hint: r.sequence_hint,
+    // YUK-1009 — nullable column; fold materializes NULL for legacy payloads, so the
+    // live side must surface it verbatim (omitting → false drift).
+    declared_stage: r.declared_stage,
     status: r.status,
     source: r.source,
     source_ref: r.source_ref,

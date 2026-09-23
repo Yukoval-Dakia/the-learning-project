@@ -116,6 +116,15 @@ export const LearningItemStatus = z.enum([
 // (YUK-604: three readers used the non-existent `active` literal and skipped every genesis row).
 export const LearningItemOpenStatus = z.enum(['pending', 'in_progress']);
 
+// YUK-1009 — learner-declared curriculum stage (学段), the canonical vocabulary persisted on
+// `goal.declared_stage`. Declared at onboarding (WelcomePage Q1) as a CURRICULUM/scope
+// constraint only — it is NEVER an ability/θ̂ input (placement probes measure ability; the
+// stage only constrains which material sources are relevant, e.g. the jyeoo grade-route
+// corpus covering 高中 grades 10-12). `custom` = learner's stage is none of the standard
+// bands — consumers that cannot map it must treat the item as UNCONSTRAINED, not guess.
+export const DeclaredStage = z.enum(['middle_school', 'high_school', 'university', 'custom']);
+export type DeclaredStageT = z.infer<typeof DeclaredStage>;
+
 export const LearningRecordKind = z.enum([
   'mistake',
   'worked_example',
