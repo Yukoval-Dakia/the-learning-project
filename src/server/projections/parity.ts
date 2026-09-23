@@ -469,6 +469,7 @@ export function goalLiveRowToSnapshot(row: {
   scope_knowledge_ids: string[] | null;
   scope_mode: 'explicit' | 'subject_live';
   sequence_hint: number;
+  declared_stage: 'middle_school' | 'high_school' | 'university' | 'custom' | null;
   status: 'active' | 'dormant' | 'done';
   source: string;
   source_ref: string | null;
@@ -485,6 +486,9 @@ export function goalLiveRowToSnapshot(row: {
     // (the fold side materializes it too, defaulting legacy genesis payloads to 'explicit').
     scope_mode: row.scope_mode,
     sequence_hint: row.sequence_hint,
+    // YUK-1009 — nullable column; the fold materializes NULL for legacy payloads too, so
+    // the live side must surface the column verbatim (undefined → false drift).
+    declared_stage: row.declared_stage,
     status: row.status,
     source: row.source,
     source_ref: row.source_ref,

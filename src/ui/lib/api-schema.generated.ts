@@ -11681,6 +11681,8 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @enum {string|null} */
+                    declaredStage?: "middle_school" | "high_school" | "university" | "custom" | null;
                     knowledgeIds?: string[];
                     subjectId?: string | null;
                     title: string;

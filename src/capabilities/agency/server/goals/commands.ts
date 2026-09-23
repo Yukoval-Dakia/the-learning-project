@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 
 import { newId } from '@/core/ids';
+import type { DeclaredStageT } from '@/core/schema/business';
 import type { GoalRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { goal } from '@/db/schema';
@@ -24,6 +25,10 @@ export interface InsertGoalInput {
   scope_knowledge_ids: string[];
   scope_mode?: GoalScopeMode;
   sequence_hint: number;
+  // YUK-1009 — learner-declared curriculum stage (学段). Captured at goal create
+  // (POST /api/goals) and correctable via the 'scope' mutation. NULL/absent =
+  // undeclared. Curriculum constraint only — never an ability/θ̂ input.
+  declared_stage?: DeclaredStageT | null;
   status?: GoalStatus;
   source: string;
   source_ref?: string | null;
@@ -34,6 +39,8 @@ type GoalScopePatch = {
   title?: string;
   scope_knowledge_ids?: string[];
   sequence_hint?: number;
+  /** YUK-1009 — declared_stage correction; explicit null clears the declaration. */
+  declared_stage?: DeclaredStageT | null;
 };
 type GoalMutation =
   | { kind: 'retract'; now: Date }
@@ -54,6 +61,7 @@ function goalSnapshot(input: InsertGoalInput): GoalRowSnapshotT {
     scope_knowledge_ids: input.scope_knowledge_ids,
     scope_mode: input.scope_mode ?? 'explicit',
     sequence_hint: input.sequence_hint,
+    declared_stage: input.declared_stage ?? null,
     status: input.status ?? 'active',
     source: input.source,
     source_ref: input.source_ref ?? null,
@@ -167,6 +175,7 @@ export async function mutateGoal(db: GoalDb, goalId: string, input: GoalMutation
               ? { scope_knowledge_ids: input.scope_knowledge_ids }
               : {}),
             ...(input.sequence_hint !== undefined ? { sequence_hint: input.sequence_hint } : {}),
+            ...(input.declared_stage !== undefined ? { declared_stage: input.declared_stage } : {}),
           };
     if (input.kind !== 'retract')
       await writeEvent(tx, {

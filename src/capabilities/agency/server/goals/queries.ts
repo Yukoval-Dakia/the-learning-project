@@ -1,6 +1,7 @@
 // Goal reads and semantic command entrypoints. Creation and mutation rules live in commands.ts.
 
 import { asc, eq } from 'drizzle-orm';
+import type { DeclaredStageT } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
 import { goal } from '@/db/schema';
 import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
@@ -33,10 +34,12 @@ export async function updateGoalStatus(
 }
 
 /**
- * Re-scope a goal (title / scope_knowledge_ids / sequence_hint). Used when the
- * AI re-proposes scope after the user progresses (ND-2 — still routed through a
- * confirmed proposal, never a silent change). `source` / `subject_id` are
- * set-once provenance and intentionally not mutated here.
+ * Re-scope a goal (title / scope_knowledge_ids / sequence_hint / declared_stage). Used
+ * when the AI re-proposes scope after the user progresses (ND-2 — still routed through
+ * a confirmed proposal, never a silent change). `source` / `subject_id` are set-once
+ * provenance and intentionally not mutated here. `declared_stage` (YUK-1009) is the
+ * learner-declared curriculum stage — the command-level correction path; explicit
+ * null clears the declaration. It is a curriculum constraint, never a θ̂ input.
  */
 export async function updateGoalScope(
   db: DbLike,
@@ -45,6 +48,7 @@ export async function updateGoalScope(
     title?: string;
     scope_knowledge_ids?: string[];
     sequence_hint?: number;
+    declared_stage?: DeclaredStageT | null;
     placement_starter_augmentation?: boolean;
   },
   now: Date = new Date(),

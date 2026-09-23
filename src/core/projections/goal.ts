@@ -162,6 +162,9 @@ export function foldGoal(goalId: string, events: FoldEvent[]): GoalRowSnapshotT 
         // default so fold == row holds for pre-column goals. ALWAYS materialized (never left
         // undefined) so the parity deep-diff compares a value on both sides.
         scope_mode: seed.data.scope_mode ?? 'explicit',
+        // YUK-1009 — same legacy-payload handling: pre-column genesis payloads carry no
+        // declared_stage; absent ⇒ NULL (undeclared). Always materialized for parity.
+        declared_stage: seed.data.declared_stage ?? null,
       };
       continue;
     }
@@ -207,6 +210,9 @@ export function foldGoal(goalId: string, events: FoldEvent[]): GoalRowSnapshotT 
             ? pc.data.sequence_hint
             : 0,
         status: 'active',
+        // YUK-1009 — proposal-materialized goals declare no stage (the proposal payload has
+        // no learner-declared field); NULL = undeclared, never guessed from evidence.
+        declared_stage: null,
         source: 'goal_scope_proposal',
         source_ref: fe.id,
         created_at: acceptedAt,
@@ -279,6 +285,9 @@ export function foldGoal(goalId: string, events: FoldEvent[]): GoalRowSnapshotT 
           ? { scope_knowledge_ids: [...patch.scope_knowledge_ids] }
           : {}),
         ...(patch.sequence_hint !== undefined ? { sequence_hint: patch.sequence_hint } : {}),
+        // YUK-1009 — learner-declared stage correction (the command-level write path for
+        // 「用户纠正学段」); explicit NULL clears the declaration. Not mutated by retract.
+        ...(patch.declared_stage !== undefined ? { declared_stage: patch.declared_stage } : {}),
         updated_at: fe.created_at,
         version: row.version + 1,
       };

@@ -8,8 +8,9 @@
 
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { goal, knowledge } from '@/db/schema';
+import { event, goal, knowledge } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { updateGoalScope } from '../server/goals/queries';
 
 import { POST as createGoal, GET as getGoal } from './goal-create';
 
@@ -139,6 +140,64 @@ describe('POST /api/goals (at-entry goal-create)', () => {
     const rows = await db.select().from(goal).where(eq(goal.id, body.id));
     expect(rows[0].subject_id).toBe('yuwen');
     expect(rows[0].scope_mode).toBe('subject_live');
+  });
+
+  it('persists declaredStage onto goal.declared_stage and echoes it in the 201 body (YUK-1009)', async () => {
+    // The durable home for the onboarding 学段 answer is the goal row — the same goal
+    // that already keys placement/supply scoping. Genesis-snapshot → fold → live row.
+    const res = await createGoal(
+      jsonReq({ title: '高中数学一轮复习', subjectId: 'yuwen', declaredStage: 'high_school' }),
+    );
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.declaredStage).toBe('high_school');
+
+    const rows = await db.select().from(goal).where(eq(goal.id, body.id));
+    expect(rows[0].declared_stage).toBe('high_school');
+
+    const detail = await getGoal(new Request(`http://localhost/api/goals/${body.id}`), {
+      id: body.id,
+    });
+    expect(await detail.json()).toMatchObject({ id: body.id, declared_stage: 'high_school' });
+  });
+
+  it('leaves declared_stage NULL when the onboarding stage question was skipped', async () => {
+    const res = await createGoal(jsonReq({ title: 'G' }));
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.declaredStage).toBeNull();
+    const rows = await db.select().from(goal).where(eq(goal.id, body.id));
+    expect(rows[0].declared_stage).toBeNull();
+  });
+
+  it('400s on a declaredStage outside the canonical vocabulary (never free-text)', async () => {
+    const res = await createGoal(jsonReq({ title: 'G', declaredStage: 'kindergarten' }));
+    expect(res.status).toBe(400);
+    expect((await db.select().from(goal)).length).toBe(0);
+  });
+
+  it('declared_stage correction flows through updateGoalScope (experimental:goal_scope_update)', async () => {
+    // 验收锚点：「用户纠正课程范围后，下一次材料选择随之改变」——纠正写路是既有的
+    // scope mutation 命令面（event-sourced），不是另开的旁路 UPDATE。
+    const res = await createGoal(jsonReq({ title: 'G', declaredStage: 'middle_school' }));
+    const body = await res.json();
+    expect(body.declaredStage).toBe('middle_school');
+
+    await updateGoalScope(db, body.id, { declared_stage: 'high_school' });
+    let rows = await db.select().from(goal).where(eq(goal.id, body.id));
+    expect(rows[0].declared_stage).toBe('high_school');
+
+    // Explicit NULL clears the declaration (correction back to undeclared).
+    await updateGoalScope(db, body.id, { declared_stage: null });
+    rows = await db.select().from(goal).where(eq(goal.id, body.id));
+    expect(rows[0].declared_stage).toBeNull();
+
+    // Both corrections are event-logged (fold-visible), not bare UPDATEs.
+    const scopeEvents = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:goal_scope_update'));
+    expect(scopeEvents).toHaveLength(2);
   });
 
   it('400s on a missing title', async () => {

@@ -2750,6 +2750,16 @@ export const goal = pgTable(
       .default('explicit'),
     // AI-internal sequencing hint; NOT a progress metric (ND-4).
     sequence_hint: integer('sequence_hint').notNull().default(0),
+    // YUK-1009 — learner-declared curriculum stage (学段), captured at onboarding via
+    // POST /api/goals and mutable via the goal_scope_update command path (the goal is the
+    // durable home because goals already key placement/supply scoping). CURRICULUM
+    // constraint only — NEVER an ability/θ̂ input. NULL = undeclared (older goals,
+    // proposal-materialized goals, learners who skipped the question). Canonical
+    // vocabulary: DeclaredStage in src/core/schema/business.ts (literal tuple kept
+    // inline because this file only type-imports core schema).
+    declared_stage: text('declared_stage', {
+      enum: ['middle_school', 'high_school', 'university', 'custom'],
+    }),
     // 'active' | 'dormant' | 'done'
     status: text('status', { enum: ['active', 'dormant', 'done'] })
       .notNull()
