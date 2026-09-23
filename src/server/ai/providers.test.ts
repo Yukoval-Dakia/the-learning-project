@@ -6,7 +6,13 @@
 // CLAUDE_CODE_OAUTH_TOKEN (in .env.local) is never read, printed, or relied upon.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ANTHROPIC_SUB_DEFAULT_MODEL, resolveTaskProvider } from './providers';
+import { tasks } from '@/ai/registry';
+import {
+  ANTHROPIC_SUB_DEFAULT_MODEL,
+  OPENAI_ASTRA_MODEL_ID,
+  crossoverModelForProvider,
+  resolveTaskProvider,
+} from './providers';
 
 // AttributionTask defaults to xiaomi/mimo-v2.5-pro in the registry — a stable
 // baseline for the "default behaviour unchanged" assertions.
@@ -168,5 +174,68 @@ describe('resolveTaskProvider — non-sub override model guard (Finding 4)', () 
     const resolved = resolveTaskProvider(KIND, { provider: 'anthropic', model: 'claude-opus-4-8' });
     expect(resolved.provider).toBe('anthropic');
     expect(resolved.model).toBe('claude-opus-4-8');
+  });
+});
+
+// YUK-1027 — the openai key lane (gpt-6-astra on the pi openai-responses
+// driver). Key-auth only: no loom baseUrl (pi's builtin provider owns
+// api.openai.com/v1), no runnable default model (the registry default is a
+// mimo id the endpoint would reject — the Finding-4 guard applies).
+describe('resolveTaskProvider — openai Responses lane (YUK-1027)', () => {
+  beforeEach(() => {
+    vi.stubEnv('OPENAI_API_KEY', 'sk-openai-test');
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
+    vi.stubEnv('AI_PROVIDER_MODEL', '');
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('resolves an explicit openai/gpt-6-astra override to key auth with no loom baseUrl', () => {
+    const resolved = resolveTaskProvider(KIND, {
+      provider: 'openai',
+      model: 'gpt-6-astra',
+    });
+    expect(resolved.authMode).toBe('key');
+    expect(resolved.provider).toBe('openai');
+    expect(resolved.model).toBe('gpt-6-astra');
+    if (resolved.authMode !== 'key') throw new Error('expected key authMode');
+    expect(resolved.apiKey).toBe('sk-openai-test');
+    // pi's builtin 'openai' provider owns https://api.openai.com/v1 — the
+    // resolved record must not carry a loom-side baseUrl that would imply a
+    // custom catalog registration.
+    expect(resolved.baseUrl).toBeUndefined();
+  });
+
+  it('throws clearly when OPENAI_API_KEY is missing', () => {
+    vi.stubEnv('OPENAI_API_KEY', '');
+    expect(() => resolveTaskProvider(KIND, { provider: 'openai', model: 'gpt-6-astra' })).toThrow(
+      /OPENAI_API_KEY is required/,
+    );
+  });
+
+  it('trips the Finding-4 guard: AI_PROVIDER_OVERRIDE=openai without AI_PROVIDER_MODEL throws', () => {
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'openai');
+    expect(() => resolveTaskProvider(KIND)).toThrow(
+      /selects a non-mimo provider, but no AI_PROVIDER_MODEL is set/,
+    );
+  });
+
+  it('env switch resolves once AI_PROVIDER_MODEL names the astra id', () => {
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'openai');
+    vi.stubEnv('AI_PROVIDER_MODEL', 'gpt-6-astra');
+    const resolved = resolveTaskProvider(KIND);
+    expect(resolved.provider).toBe('openai');
+    expect(resolved.model).toBe('gpt-6-astra');
+  });
+
+  // Codex P2 on #1451 — a provider-only durable override crosses lanes through
+  // crossoverModelForProvider; without an openai mapping it would resolve
+  // 'openai'/mimo-id and fail closed at adapter startup.
+  it('crossoverModelForProvider maps openai to its only bound model', () => {
+    expect(crossoverModelForProvider('openai', KIND)).toBe(OPENAI_ASTRA_MODEL_ID);
+    // Registry-default lanes unchanged.
+    expect(crossoverModelForProvider('xiaomi', KIND)).toBe(tasks[KIND].defaultModel);
+    expect(crossoverModelForProvider('anthropic-sub', KIND)).toBe(ANTHROPIC_SUB_DEFAULT_MODEL);
   });
 });

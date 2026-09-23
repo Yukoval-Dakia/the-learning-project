@@ -125,7 +125,7 @@ describe('JudgeInvokerInputSchema.durable.providerOverride (#14)', () => {
     subjectProfile: mathProfile,
   };
 
-  it.each(['anthropic', 'xiaomi', 'zhipu', 'anthropic-sub'])(
+  it.each(['anthropic', 'xiaomi', 'zhipu', 'anthropic-sub', 'openai'])(
     'accepts the known, IMPLEMENTED provider %s',
     (provider) => {
       expect(
@@ -138,8 +138,9 @@ describe('JudgeInvokerInputSchema.durable.providerOverride (#14)', () => {
   // W5 #TuwGv — reserved-but-unwired names pass `isKnownProvider` (it is Object.hasOwn over
   // PROVIDERS) and used to slip through, only to throw later at resolveTaskProvider's
   // "reserved but not implemented" guard — the downstream failure this boundary exists to
-  // stop. They must be rejected HERE.
-  it.each(['openrouter', 'gateway', 'openai'])(
+  // stop. They must be rejected HERE. ('openai' left this list in YUK-1027: it is
+  // wired for gpt-6-astra on the pi Responses lane.)
+  it.each(['openrouter', 'gateway'])(
     'rejects the reserved-but-unimplemented provider %s',
     (provider) => {
       expect(

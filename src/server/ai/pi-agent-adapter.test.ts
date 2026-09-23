@@ -183,6 +183,57 @@ describe('PiPreparedQuery.query — agentLoop wiring', () => {
     expect(captured.prompts?.[0]).toMatchObject({ role: 'user', content: 'solve this' });
   });
 
+  it('YUK-1027 — does NOT send x-opencode-session on the openai lane', async () => {
+    const captured: Partial<CapturedLoop> = {};
+    const events: AgentEvent[] = [{ type: 'agent_end', messages: [piAssistant()] }];
+    const astraModel = {
+      ...FAKE_MODEL,
+      id: 'gpt-6-astra',
+      provider: 'openai',
+      api: 'openai-responses',
+      baseUrl: 'https://api.openai.com/v1',
+    } as unknown as PiModel<PiApi>;
+    const agentLoop = vi.fn(
+      (
+        prompts: AgentMessage[],
+        context: AgentContext,
+        config: AgentLoopConfig,
+        signal: AbortSignal | undefined,
+      ): EventStream<AgentEvent, AgentMessage[]> => {
+        captured.prompts = prompts;
+        captured.context = context;
+        captured.config = config;
+        captured.signal = signal;
+        return fakeStream(events);
+      },
+    );
+    const deps = {
+      models: {
+        getModel: (provider: string, id: string) =>
+          provider === 'openai' && id === 'gpt-6-astra' ? astraModel : undefined,
+        streamSimple: vi.fn(),
+      },
+      agentLoop,
+    };
+    const adapter = new PiAgentAdapter(deps as never);
+    const prepared = await adapter.startup(
+      startupArgs({
+        resolved: {
+          authMode: 'key',
+          provider: 'openai',
+          model: 'gpt-6-astra',
+          apiKey: 'sk-openai-test',
+        },
+      }),
+    );
+    await drain(prepared.query('solve this'));
+    // The opencode-go session header is a wire requirement of that lane only —
+    // it must not leak onto api.openai.com requests (YUK-1027).
+    expect(captured.config?.headers).toBeUndefined();
+    expect(captured.config?.apiKey).toBe('sk-openai-test');
+    expect(captured.config?.model).toBe(astraModel);
+  });
+
   it('forwards ctx.piQueues into the root loop config (wired surface, no consumer today)', async () => {
     const captured: Partial<CapturedLoop> = {};
     const deps = makeDeps([{ type: 'agent_end', messages: [piAssistant()] }], captured);

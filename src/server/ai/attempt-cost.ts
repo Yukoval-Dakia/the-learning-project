@@ -41,19 +41,20 @@ export function resolveAttemptCostTruth(input: {
     };
   }
 
-  // YUK-921 P1 — pi lanes (opencode-go): `usage.cost` is the pi catalog's
-  // rate-card estimate surfaced through the same reported channel. It is NOT
-  // a contractual invoice (subscription lane; design §6 R1) — classify
-  // 'estimated' and point the ref at the catalog/model pair the number came
-  // from. Without a pi usage record the lane has no honest price → unknown
-  // rather than a fabricated zero.
-  if (input.provider === 'opencode-go') {
+  // YUK-921 P1 + YUK-1027 — pi-catalog lanes (opencode-go, openai):
+  // `usage.cost` is the pi catalog's rate-card estimate surfaced through the
+  // same reported channel. It is NOT a contractual invoice (subscription lane;
+  // OpenAI's real price/tier math is P2 scope) — classify 'estimated' and
+  // point the ref at the catalog/model pair the number came from. Without a
+  // pi usage record the lane has no honest price → unknown rather than a
+  // fabricated zero.
+  if (input.provider === 'opencode-go' || input.provider === 'openai') {
     const reported = input.reportedCostUsd;
     if (reported !== undefined && Number.isFinite(reported) && reported >= 0) {
       return {
         basis: 'estimated',
         amountUsd: reported,
-        ref: `pi-catalog:opencode-go/${input.model}`,
+        ref: `pi-catalog:${input.provider}/${input.model}`,
       };
     }
     return unknownAttemptCostTruth(input.provider, input.model);

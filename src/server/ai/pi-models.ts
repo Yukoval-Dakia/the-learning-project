@@ -1,9 +1,12 @@
 // YUK-921 P4 (YUK-1025) — loom's pi model catalog.
 //
-// `builtinModels()` covers the two lanes whose pi-builtin entries match our
+// `builtinModels()` covers the three lanes whose pi-builtin entries match our
 // wiring byte-for-byte: 'opencode-go' (the P1 lane — pi's catalog carries the
-// correct baseUrl/model ids/api mix) and 'anthropic' (api.anthropic.com,
-// claude-* ids, anthropic-messages). The remaining live lanes get custom
+// correct baseUrl/model ids/api mix), 'anthropic' (api.anthropic.com,
+// claude-* ids, anthropic-messages), and 'openai' (api.openai.com/v1,
+// gpt-6-astra on the openai-responses wire — YUK-1027; do NOT add a custom
+// PROVIDER_PI_CATALOG_SPECS entry for it, the builtin owns the Responses
+// driver selection). The remaining live lanes get custom
 // providers registered under OUR internal provider ids so
 // `getModel(resolved.provider, resolved.model)` resolves without a mapping
 // table:

@@ -3352,6 +3352,199 @@ describe('runCopilotRun', () => {
     }
   });
 
+  it('YUK-1027 — MiMo→Astra→MiMo model switch on one durable session replays history intact', async () => {
+    const sessionId = 'sess_mimo_astra_switch';
+    await seedCopilotConversation(sessionId);
+    // Both lanes resolve through the real resolveTaskProvider (key-auth) — the
+    // only fake is the provider wire (models catalog + agentLoop).
+    vi.stubEnv('XIAOMI_API_KEY', 'sk-mimo-switch-test');
+    vi.stubEnv('OPENAI_API_KEY', 'sk-openai-switch-test');
+
+    __resetRegistryForTests();
+    await registerCapabilityTools(capabilities);
+
+    const mimoBinding = { provider: 'xiaomi' as const, model: 'mimo-v2.5-pro' };
+    const astraBinding = { provider: 'openai' as const, model: 'gpt-6-astra' };
+
+    const assistantMsg = (provider: string, api: string, model: string, text: string) => ({
+      role: 'assistant' as const,
+      content: [{ type: 'text' as const, text }],
+      api,
+      provider,
+      model,
+      responseId: `resp_${provider}_switch`,
+      usage: {
+        input: 100,
+        output: 40,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 140,
+        cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+      },
+      stopReason: 'stop' as const,
+      timestamp: 1_700_000_000_000,
+    });
+    const fakeModels: Record<string, PiModel<PiApi>> = {
+      xiaomi: {
+        id: 'mimo-v2.5-pro',
+        name: 'MiMo v2.5 Pro',
+        provider: 'xiaomi',
+        api: 'anthropic-messages',
+        baseUrl: 'https://mimo.test/anthropic',
+        input: ['text'],
+        contextWindow: 262_144,
+        maxTokens: 32_768,
+      } as unknown as PiModel<PiApi>,
+      openai: {
+        id: 'gpt-6-astra',
+        name: 'GPT-6 Astra',
+        provider: 'openai',
+        api: 'openai-responses',
+        baseUrl: 'https://api.openai.com/v1',
+        input: ['text', 'image'],
+        contextWindow: 272_000,
+        maxTokens: 128_000,
+      } as unknown as PiModel<PiApi>,
+    };
+
+    const calls: Array<{ provider: string; model: string; messages: AgentMessage[] }> = [];
+    const agentLoop = vi.fn(
+      (
+        _prompts: AgentMessage[],
+        context: unknown,
+        config: { model: { provider: string; id: string } },
+        _signal: AbortSignal | undefined,
+      ): EventStream<AgentEvent, AgentMessage[]> =>
+        (async function* () {
+          const provider = config.model.provider;
+          calls.push({
+            provider,
+            model: config.model.id,
+            messages: (context as { messages: AgentMessage[] }).messages,
+          });
+          const reply =
+            provider === 'openai'
+              ? `Astra 回复：第 ${calls.length} 轮`
+              : `MiMo 回复：第 ${calls.length} 轮`;
+          const msg = assistantMsg(provider, fakeModels[provider].api, config.model.id, reply);
+          yield { type: 'message_end', message: msg } as AgentEvent;
+          yield { type: 'agent_end', messages: [msg] } as AgentEvent;
+        })() as unknown as EventStream<AgentEvent, AgentMessage[]>,
+    );
+    const piAdapter = new PiAgentAdapter({
+      models: { getModel: (provider: string) => fakeModels[provider], streamSimple: vi.fn() },
+      agentLoop,
+    } as never);
+    __setPiAdapterForTests(piAdapter);
+    try {
+      // Turn 1 — MiMo cold-starts the durable session and mints the pi: cursor.
+      const t1 = await runCopilotRun({
+        db: testDb(),
+        data: {
+          ...baseData,
+          run_id: 'run_switch_mimo_1',
+          session_id: sessionId,
+          user_message: '第一题：x²=4',
+        },
+        modelBinding: mimoBinding,
+      });
+      expect(t1.status).toBe('done');
+      const cursor1 = await persistedSdkSessionId(sessionId);
+      expect(cursor1?.startsWith('pi:')).toBe(true);
+      // Cold start: no resume → the model context carries no replayed turns.
+      expect(calls).toHaveLength(1);
+      expect(calls[0].provider).toBe('xiaomi');
+      expect(calls[0].messages).toEqual([]);
+
+      // Turn 2 — same session switches to openai/gpt-6-astra: the pi: cursor
+      // resumes verbatim and the durable turn-1 pair replays into the Astra
+      // context (the Responses lane never sees a session file).
+      const t2 = await runCopilotRun({
+        db: testDb(),
+        data: {
+          ...baseData,
+          run_id: 'run_switch_astra_2',
+          session_id: sessionId,
+          user_message: '第二题：y³=8',
+        },
+        modelBinding: astraBinding,
+      });
+      expect(t2.status).toBe('done');
+      expect(await persistedSdkSessionId(sessionId)).toBe(cursor1);
+      expect(calls).toHaveLength(2);
+      expect(calls[1].provider).toBe('openai');
+      expect(calls[1].model).toBe('gpt-6-astra');
+      const replay2 = calls[1].messages;
+      // The real assembler prepends the pinned learner-state header as a
+      // 'context' turn (piReplayTurnsToMessages lands it as a user message),
+      // then the durable turn-1 pair follows.
+      expect(replay2.map((m) => m.role)).toEqual(['user', 'user', 'assistant']);
+      expect(JSON.stringify(replay2[0])).not.toContain('第一题');
+      expect(JSON.stringify(replay2[1])).toContain('第一题：x²=4');
+      expect(JSON.stringify(replay2[2])).toContain('MiMo 回复：第 1 轮');
+      // Replay envelopes are stamped with the CURRENT model (openai-responses)
+      // — honest bookkeeping so foreign xiaomi signatures never reach the wire.
+      const replayAssistant = replay2[2] as { provider?: string; api?: string; model?: string };
+      expect(replayAssistant.provider).toBe('openai');
+      expect(replayAssistant.api).toBe('openai-responses');
+
+      // Turn 3 — switching back to MiMo replays BOTH durable turns exactly
+      // once each (no duplication on the second cold replay).
+      const t3 = await runCopilotRun({
+        db: testDb(),
+        data: {
+          ...baseData,
+          run_id: 'run_switch_mimo_3',
+          session_id: sessionId,
+          user_message: '第三题：z=?',
+        },
+        modelBinding: mimoBinding,
+      });
+      expect(t3.status).toBe('done');
+      expect(await persistedSdkSessionId(sessionId)).toBe(cursor1);
+      expect(calls).toHaveLength(3);
+      expect(calls[2].provider).toBe('xiaomi');
+      const replay3 = calls[2].messages;
+      // Pinned context header + both durable turn pairs, oldest→newest.
+      expect(replay3.map((m) => m.role)).toEqual([
+        'user',
+        'user',
+        'assistant',
+        'user',
+        'assistant',
+      ]);
+      const serialized = JSON.stringify(replay3);
+      expect(serialized).toContain('第一题：x²=4');
+      expect(serialized).toContain('MiMo 回复：第 1 轮');
+      expect(serialized).toContain('第二题：y³=8');
+      expect(serialized).toContain('Astra 回复：第 2 轮');
+      // No turn duplicated: each durable text appears exactly once.
+      for (const needle of [
+        '第一题：x²=4',
+        'MiMo 回复：第 1 轮',
+        '第二题：y³=8',
+        'Astra 回复：第 2 轮',
+      ]) {
+        expect(serialized.split(needle).length - 1, `duplicate replay of ${needle}`).toBe(1);
+      }
+
+      // Per-attempt provider truth follows the binding, not the session's
+      // first model.
+      const attemptProvider = async (runId: string) => {
+        const [row] = await testDb()
+          .select({ provider: ai_task_runs.provider, model: ai_task_runs.model })
+          .from(ai_task_runs)
+          .where(eq(ai_task_runs.id, `copilot_run_tool_${runId}`));
+        return row ? `${row.provider}/${row.model}` : null;
+      };
+      expect(await attemptProvider('run_switch_mimo_1')).toBe('xiaomi/mimo-v2.5-pro');
+      expect(await attemptProvider('run_switch_astra_2')).toBe('openai/gpt-6-astra');
+      expect(await attemptProvider('run_switch_mimo_3')).toBe('xiaomi/mimo-v2.5-pro');
+    } finally {
+      __setPiAdapterForTests(undefined);
+    }
+  });
+
   it('YUK-948 — a cancelled follow-up clears a previously owned worker cursor', async () => {
     const sessionId = 'sess_worker_cancel_cleanup';
     await seedCopilotConversation(sessionId);

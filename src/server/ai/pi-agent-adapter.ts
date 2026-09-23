@@ -891,7 +891,13 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           (m): m is PiMessage =>
             m.role === 'user' || m.role === 'assistant' || m.role === 'toolResult',
         ),
-      headers: { [OPENCODE_SESSION_HEADER]: runId },
+      // The x-opencode-session header is an opencode-go wire requirement
+      // (400 MissingSessionID without it). Scope it to that lane: forwarding a
+      // stray opencode-namespaced header to api.openai.com / the anthropic
+      // compat endpoints serves no purpose (YUK-1027).
+      ...(resolved.provider === 'opencode-go'
+        ? { headers: { [OPENCODE_SESSION_HEADER]: runId } }
+        : {}),
       // Per-request credential from the lifecycle-resolved binding — resolved
       // once in resolveTaskProvider for both auth modes (oauth carries the
       // sk-ant-oat* token; the anthropic-messages driver switches to Bearer).

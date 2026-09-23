@@ -80,7 +80,7 @@ export const JudgeInvokerInputSchema = z.object({
   //
   // W5 #TuwGv — `isKnownProvider` ALONE does not deliver that promise: it is
   // `Object.hasOwn(PROVIDERS, name)`, which is true for the reserved-but-unwired names
-  // (`openrouter` / `gateway` / `openai`), so those passed the boundary and threw later at
+  // (`openrouter` / `gateway`), so those passed the boundary and threw later at
   // `resolveTaskProvider`'s "reserved but not implemented" guard — exactly the downstream
   // failure this validation exists to prevent. Both predicates are needed, and together they
   // match the discipline `judgeFallbackProvider` already applies on the config side. Still

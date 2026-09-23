@@ -15,7 +15,7 @@
 | Schema / 校验 | Zod |
 | 数据库 | Postgres（`pgvector/pgvector:pg16`）+ Drizzle ORM（`postgresql` dialect, `postgres` driver） |
 | Blob 存储 | R2 / S3-compatible storage via `@aws-sdk/client-s3` |
-| AI runtime | Pi agent runtime（`@earendil-works/pi-agent-core` in-process agentLoop，`src/server/ai/pi-agent-adapter.ts`）；默认 provider 走 Mimo / 小米（`XIAOMI_API_KEY`，Anthropic-protocol-compat），另有 anthropic-sub OAuth / opencode-go / zhipu lane（`src/server/ai/providers.ts`） |
+| AI runtime | Pi agent runtime（`@earendil-works/pi-agent-core` in-process agentLoop，`src/server/ai/pi-agent-adapter.ts`）；默认 provider 走 Mimo / 小米（`XIAOMI_API_KEY`，Anthropic-protocol-compat），另有 anthropic-sub OAuth / opencode-go / zhipu lane（`src/server/ai/providers.ts`）。opt-in `openai` lane（`OPENAI_API_KEY`）经 pi builtin provider 走 OpenAI Responses API 服务 gpt-6-astra（YUK-1027，仅显式 binding 可用，生产默认不变） |
 | 记忆 / 事实层 | Mem0 (`mem0ai`) + pgvector store；embedder 默认 OpenAI `text-embedding-3-small`（ADR-0017） |
 | 富文本编辑 | Tiptap（block-tree note 编辑器，slash / cross-link suggestion） |
 | 数学渲染 | KaTeX + mathjs + `react-markdown` / `remark-math` / `rehype-katex` |
@@ -116,22 +116,23 @@ pnpm build            # rw:web:build + 三 esbuild 产物（dist/server.cjs / di
    INTERNAL_TOKEN=...
    XIAOMI_API_KEY=...
    ANTHROPIC_API_KEY=...
-   OPENAI_API_KEY=...            # Mem0 fact-layer embedder (ADR-0017)
+   # OPENAI_API_KEY=...          # 可选：opt-in openai/gpt-6-astra Responses lane（YUK-1027），默认路径不需要
    TUNNEL_TOKEN=<paste-token-here>
    TUNNEL_PROTOCOL=auto          # use http2 if outbound UDP/7844 is blocked
    # + R2 / Tencent OCR keys
    # MEM0_* keys are optional — see .env.example for defaults
    ```
 
-   `OPENAI_API_KEY` is required as soon as the worker processes its first
-   `memory_event_ingest` job (every `writeEvent` enqueues one, per ADR-0017
-   §"Write triggers" #1). The fact layer defaults to Mem0's `openai` embedder
-   per ADR-0017 errata 2026-05-27 and the spike findings in
-   [docs/superpowers/plans/2026-05-27-t37-mem0-spike-findings.md](docs/superpowers/plans/2026-05-27-t37-mem0-spike-findings.md).
-   The `MEM0_*` overrides (embedding model / dims, LLM model, pgvector
-   collection + index toggles, Anthropic base URL) all have sensible defaults
-   baked into `src/server/memory/client.ts` and only need to be set if you are
-   diverging from those.
+   `DASHSCOPE_API_KEY`（+ `ZHIPU_API_KEY`）is required as soon as the worker
+   processes its first `memory_event_ingest` job (every `writeEvent` enqueues
+   one, per ADR-0017 §"Write triggers" #1). The fact layer runs on Mem0 with
+   the 阿里百炼 `text-embedding-v4` embedder + 智谱 GLM LLM per ADR-0017 and the
+   current `src/server/memory/client.ts` defaults — `OPENAI_API_KEY` is NOT on
+   that path anymore; it only gates the opt-in `openai`/`gpt-6-astra` Responses
+   lane (YUK-1027). The `MEM0_*` overrides (embedding model / dims, LLM model,
+   pgvector collection + index toggles, Anthropic base URL) all have sensible
+   defaults baked into `src/server/memory/client.ts` and only need to be set if
+   you are diverging from those.
 
 3. **Database migrations run automatically.** A dedicated `migrate` init container
    (YUK-65) applies the bundled drizzle migrations before `app` / `worker` start on
