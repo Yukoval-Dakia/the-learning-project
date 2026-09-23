@@ -269,6 +269,10 @@ export const PROVIDER_MODEL_BINDINGS: Readonly<Record<Provider, ProviderModelBin
  * model override is given. Claude Max defaults to Opus 4.8.
  */
 export const ANTHROPIC_SUB_DEFAULT_MODEL = 'claude-opus-4-8';
+// YUK-1027 — the openai lane's only bound model (PROVIDERS.openai.models key);
+// referenced by crossoverModelForProvider so a provider-only judge override
+// resolves a pair the builtin catalog can actually serve.
+export const OPENAI_ASTRA_MODEL_ID = 'gpt-6-astra';
 
 /**
  * Single source of truth for which providers authenticate via the OAuth lane
@@ -415,7 +419,12 @@ export function providerRequiresExplicitModel(provider: Provider): boolean {
  * pass this as `override.model` so nothing is inherited across the lane boundary.
  */
 export function crossoverModelForProvider(provider: Provider, kind: TaskKind): string {
-  return provider === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : tasks[kind].defaultModel;
+  // Lanes whose builtin catalog cannot serve the task's registry-default
+  // (mimo) model id need their own crossover target — otherwise a provider-
+  // only override resolves a pair that fails closed at adapter startup.
+  if (provider === 'anthropic-sub') return ANTHROPIC_SUB_DEFAULT_MODEL;
+  if (provider === 'openai') return OPENAI_ASTRA_MODEL_ID; // the lane's only bound model
+  return tasks[kind].defaultModel;
 }
 
 /**
@@ -580,8 +589,12 @@ export function resolveTaskProvider(
   // pi-lane providers resolve here — the execution-adapter gate
   // is what rejects them for SDK-routed runs, not this credential check.
   if (!isProviderImplemented(providerName)) {
+    // Derive the wired list from the same predicate that gates this throw —
+    // a hand-maintained copy drifts on every new lane (opencode-go, then
+    // openai; flagged by review on YUK-1027).
+    const wired = (Object.keys(PROVIDERS) as Provider[]).filter((p) => isProviderImplemented(p));
     throw new Error(
-      `Provider '${providerName}' is reserved but not implemented; only 'anthropic', 'xiaomi', 'zhipu', 'anthropic-sub' (subscription OAuth), 'opencode-go', and 'openai' are wired.`,
+      `Provider '${providerName}' is reserved but not implemented; wired lanes: ${wired.join(', ')}.`,
     );
   }
 

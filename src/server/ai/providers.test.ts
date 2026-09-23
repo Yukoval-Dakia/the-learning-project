@@ -6,7 +6,13 @@
 // CLAUDE_CODE_OAUTH_TOKEN (in .env.local) is never read, printed, or relied upon.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ANTHROPIC_SUB_DEFAULT_MODEL, resolveTaskProvider } from './providers';
+import { tasks } from '@/ai/registry';
+import {
+  ANTHROPIC_SUB_DEFAULT_MODEL,
+  OPENAI_ASTRA_MODEL_ID,
+  crossoverModelForProvider,
+  resolveTaskProvider,
+} from './providers';
 
 // AttributionTask defaults to xiaomi/mimo-v2.5-pro in the registry — a stable
 // baseline for the "default behaviour unchanged" assertions.
@@ -221,5 +227,15 @@ describe('resolveTaskProvider — openai Responses lane (YUK-1027)', () => {
     const resolved = resolveTaskProvider(KIND);
     expect(resolved.provider).toBe('openai');
     expect(resolved.model).toBe('gpt-6-astra');
+  });
+
+  // Codex P2 on #1451 — a provider-only durable override crosses lanes through
+  // crossoverModelForProvider; without an openai mapping it would resolve
+  // 'openai'/mimo-id and fail closed at adapter startup.
+  it('crossoverModelForProvider maps openai to its only bound model', () => {
+    expect(crossoverModelForProvider('openai', KIND)).toBe(OPENAI_ASTRA_MODEL_ID);
+    // Registry-default lanes unchanged.
+    expect(crossoverModelForProvider('xiaomi', KIND)).toBe(tasks[KIND].defaultModel);
+    expect(crossoverModelForProvider('anthropic-sub', KIND)).toBe(ANTHROPIC_SUB_DEFAULT_MODEL);
   });
 });
