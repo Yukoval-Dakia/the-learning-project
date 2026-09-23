@@ -52,13 +52,25 @@ describe('parseSupplyPlanOutput', () => {
   });
 
   it('rejects schema violations with readable reasons', () => {
+    // YUK-386 — kind is a free-form label: 'not_a_kind' is now VALID. The
+    // violation fixture uses an empty string (still fails min(1)) so the
+    // readable-reason path is exercised on the same field.
     const bad = {
       ...VALID_PLAN,
-      items: [{ ...VALID_PLAN.items[0], kind: 'not_a_kind' }],
+      items: [{ ...VALID_PLAN.items[0], kind: '' }],
     };
     const result = parseSupplyPlanOutput(JSON.stringify(bad));
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reasons[0]).toContain('items.0.kind');
+  });
+
+  it('accepts a free-form kind label (YUK-386 — not a closed enum)', () => {
+    const plan = {
+      ...VALID_PLAN,
+      items: [{ ...VALID_PLAN.items[0], kind: 'not_a_kind' }],
+    };
+    const result = parseSupplyPlanOutput(JSON.stringify(plan));
+    expect(result.ok).toBe(true);
   });
 
   it('rejects unknown routes via schema enum', () => {
