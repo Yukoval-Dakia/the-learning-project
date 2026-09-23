@@ -73,7 +73,7 @@ export function resolveSolveOverrideFromEnv(
       return {};
     }
     if (!isProviderImplemented(provider)) {
-      // Reserved-but-not-implemented (openrouter / gateway / openai). resolveTaskProvider would
+      // Reserved-but-not-implemented (openrouter / gateway). resolveTaskProvider would
       // throw at dispatch; reject HERE so verify degrades to the default lane, not to a runtime
       // 'unsupported' after the closed-book checks already passed.
       warn(

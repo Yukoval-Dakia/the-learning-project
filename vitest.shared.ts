@@ -144,6 +144,11 @@ export const fastTestInclude = [
   // + ./providers types. Same enumeration requirement as above (no
   // src/server/ai/** unit glob).
   'src/server/ai/pi-agent-adapter.test.ts',
+  // YUK-1027 — openai/gpt-6-astra Responses wire contract: real pi-ai driver +
+  // injected fake fetch (no network, no key, no DB). Imports ./pi-models whose
+  // pi-ai imports are all dynamic — enumerate like every other
+  // src/server/ai/** file (no unit glob).
+  'src/server/ai/astra-responses-contract.test.ts',
   // YUK-607 — LLM JSON 修复带提取器。Pure no-DB: imports only ./json-extract (→ jsonrepair, pure JS).
   'src/server/ai/json-extract.test.ts',
   // YUK-359 — pure arithmetic cost fallback, no DB/SDK imports.

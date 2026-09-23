@@ -55,7 +55,7 @@ export function judgeFallbackProvider(): Provider | undefined {
   // #10 — real validation with NO `as Provider` cast: `isKnownProvider` is the exported
   // narrowing guard (providers.ts) built for untrusted env strings, so `raw` is a Provider
   // for the remaining predicates. `isProviderImplemented` then rejects reserved-but-unwired
-  // names (openrouter / gateway / openai). On a misconfigured name: DEGRADE (warn + no
+  // names (openrouter / gateway). On a misconfigured name: DEGRADE (warn + no
   // fallback), never throw — a throw here would land in the handler's catch on the FINAL
   // delivery and be mis-classified retryable.
   if (!isKnownProvider(raw) || !isProviderImplemented(raw)) {

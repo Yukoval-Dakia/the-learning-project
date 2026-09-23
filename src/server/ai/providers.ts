@@ -1,8 +1,10 @@
 // Provider Manager — single source of truth for which upstream serves each
 // AI task. The registry (src/ai/registry.ts) declares `defaultProvider +
 // defaultModel` per task; `resolveTaskProvider()` looks up the provider here
-// and returns a ResolvedProvider; the pi adapter maps it to a loom catalog
-// entry (pi-models.ts PROVIDER_PI_CATALOG_SPECS) for the in-process agentLoop.
+// and returns a ResolvedProvider; the pi adapter maps it to a pi model —
+// either a builtin catalog entry (opencode-go / anthropic / openai) or a loom
+// custom registration (pi-models.ts PROVIDER_PI_CATALOG_SPECS) for the
+// in-process agentLoop.
 //
 // Two auth modes (YUK-365):
 //   - authMode 'key'   — a bearer / x-api-key value (ANTHROPIC_API_KEY style),
@@ -154,8 +156,49 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
   },
   openai: {
     authMode: 'key',
+    // No baseUrl — pi's builtin 'openai' provider already points at
+    // https://api.openai.com/v1 and serves gpt-6-astra on the
+    // openai-responses wire (the ONLY wire this lane uses; Astra tool calls
+    // must go through Responses, not Chat Completions).
     apiKeyEnv: 'OPENAI_API_KEY',
-    description: 'OpenAI direct (placeholder; not wired)',
+    description: 'OpenAI direct first-party (gpt-6-astra via the Responses API, YUK-1027)',
+    modelDefaults: {
+      // The lane never wires response_format/json-schema passthrough today —
+      // structured extraction stays app-level (Zod parse of result text).
+      // Declaring false (not 'unknown') is the honest classification; a model
+      // may only flip true after the app actually threads the schema and
+      // handles refusal/incomplete.
+      capabilities: { structuredOutput: false },
+      // pi usage.cost is the catalog rate-card estimate, not a contractual
+      // invoice (attempt-cost.ts classifies it 'estimated'); meteredUsd stays
+      // false until the P2 budget work proves real accounting on this lane.
+      execution: { meteredUsd: false },
+    },
+    models: {
+      // YUK-1027 — the pi builtin catalog already carries the full entry
+      // (openai-responses api, text+image input, reasoning, 272k/128k limits,
+      // tiered cache pricing); this binding is the authoritative APP-LEVEL
+      // capability declaration the fail-closed gate reads. toolCalling/vision
+      // are declared on the strength of the offline contract test
+      // (astra-responses-contract.test.ts: function_call ⇄ toolCall ⇄
+      // function_call_output round-trip, input_image payloads) — paid
+      // actual-output evidence remains a P3 gate.
+      'gpt-6-astra': {
+        capabilities: {
+          toolCalling: true,
+          vision: true,
+          reasoning: true,
+          structuredOutput: false,
+        },
+        limits: { contextWindowTokens: 272_000, maxOutputTokens: 128_000 },
+        reasoning: {
+          mode: 'effort',
+          // thinkingLevelMap maps all five tiers verbatim; 'minimal'/'off'
+          // are intentionally absent from EffortLevel.
+          supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+        },
+      },
+    },
   },
   // YUK-921 P1 — OpenCode Go subscription lane (opencode.ai/zen/go). The
   // catalog's target models speak openai-completions/openai-responses; served
@@ -269,25 +312,31 @@ export function isProviderLaneReady(provider: Provider): boolean {
   return Boolean(process.env[envName]);
 }
 
-// YUK-608 — the KEY-auth providers actually wired to a working endpoint. openrouter / gateway /
-// openai are reserved-but-not-implemented (their wire shapes differ) and `resolveTaskProvider`
+// YUK-608 — the KEY-auth providers actually wired to a working endpoint. openrouter / gateway
+// are reserved-but-not-implemented (their wire shapes differ) and `resolveTaskProvider`
 // throws for them below. 'anthropic-sub' is the OAuth lane (handled before the key branch), so it
 // is NOT in this key-auth set; `isProviderImplemented` folds it back in via `isOauthProvider`.
 // YUK-921 P4 (YUK-1025) — post-SDK-retirement the pi adapter serves every
 // implemented provider: 'opencode-go' joined the key-auth set when Adapter A
 // was deleted (its pi-builtin catalog + per-request apiKey already worked).
+// YUK-1027 — 'openai' joins the same builtin reuse: pi's own 'openai' provider
+// entry serves gpt-6-astra over the openai-responses API, so no loom custom
+// catalog spec is needed (it is intentionally ABSENT from
+// PROVIDER_PI_CATALOG_SPECS — do not add an anthropic-messages lane for it).
 const IMPLEMENTED_KEY_PROVIDERS: ReadonlySet<Provider> = new Set([
   'anthropic',
   'xiaomi',
   'zhipu',
   'opencode-go',
+  'openai',
 ]);
 
 /**
  * YUK-921 P4 — providers whose pi model catalog is a loom-authored custom
  * registration (pi-models.ts `createLoomPiModels`), not a pi builtin. The
- * builtin 'opencode-go'/'anthropic' entries match our wiring byte-for-byte;
- * these three don't:
+ * builtin 'opencode-go'/'anthropic'/'openai' entries match our wiring
+ * byte-for-byte (openai's builtin serves gpt-6-astra on openai-responses —
+ * YUK-1027); these three don't:
  *   - xiaomi / zhipu are Anthropic-protocol COMPAT endpoints (pi's own
  *     'xiaomi'/'zai-coding-cn' builtins speak openai-completions — wrong wire);
  *   - 'anthropic-sub' is the OAuth Bearer lane (CLAUDE_CODE_OAUTH_TOKEN →
@@ -520,18 +569,19 @@ export function resolveTaskProvider(
     );
   }
 
-  // anthropic + xiaomi + zhipu are wired for key-auth; all speak the Anthropic
-  // Messages protocol and so are transparently routable via ANTHROPIC_BASE_URL
-  // (zhipu = GLM coding plan on /api/anthropic, smoke-tested HTTP 200). openrouter
-  // / gateway / openai land here as "not implemented" because their wire shapes
-  // differ; revisit if a real trigger fires. ('anthropic-sub' is the oauth branch
-  // above, so it never reaches here.) The wired set lives in `isProviderImplemented`
+  // anthropic + xiaomi + zhipu + opencode-go + openai are wired for key-auth.
+  // anthropic/xiaomi/zhipu speak Anthropic Messages (compat baseUrls); pi's
+  // builtin entries own the wire for opencode-go (openai-completions) and
+  // openai (openai-responses — YUK-1027, gpt-6-astra). openrouter / gateway
+  // land here as "not implemented" because their wire shapes differ; revisit
+  // if a real trigger fires. ('anthropic-sub' is the oauth branch above, so
+  // it never reaches here.) The wired set lives in `isProviderImplemented`
   // (single source of truth, also read by override pre-flights). YUK-921 P1:
-  // pi-lane providers (opencode-go) resolve here — the execution-adapter gate
+  // pi-lane providers resolve here — the execution-adapter gate
   // is what rejects them for SDK-routed runs, not this credential check.
   if (!isProviderImplemented(providerName)) {
     throw new Error(
-      `Provider '${providerName}' is reserved but not implemented; only 'anthropic', 'xiaomi', 'zhipu', 'anthropic-sub' (subscription OAuth), and 'opencode-go' are wired.`,
+      `Provider '${providerName}' is reserved but not implemented; only 'anthropic', 'xiaomi', 'zhipu', 'anthropic-sub' (subscription OAuth), 'opencode-go', and 'openai' are wired.`,
     );
   }
 

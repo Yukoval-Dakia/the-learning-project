@@ -122,4 +122,50 @@ describe('resolveAttemptCostTruth', () => {
       }),
     ).toEqual({ basis: 'reported', amountUsd: 0.1, ref: 'sdk:total_cost_usd' });
   });
+
+  // YUK-1027 — openai is a pi-catalog lane too: the astra entry's rate card
+  // (10/50 input/output + cache buckets + >272k tier) is a catalog estimate
+  // surfaced through usage.cost, NOT an OpenAI invoice. 'reported' would be a
+  // lie — the P2 pricing work owns the real tiered math.
+  it('classifies openai catalog cost as estimated with a pi-catalog ref (never reported)', () => {
+    expect(
+      resolveAttemptCostTruth({
+        provider: 'openai',
+        model: 'gpt-6-astra',
+        tokens,
+        reportedCostUsd: 0.034,
+      }),
+    ).toEqual({
+      basis: 'estimated',
+      amountUsd: 0.034,
+      ref: 'pi-catalog:openai/gpt-6-astra',
+    });
+    // Even a reported zero stays estimated (the catalog rate card exists) —
+    // the anthropic-direct 'reported zero' contract does not apply here.
+    expect(
+      resolveAttemptCostTruth({
+        provider: 'openai',
+        model: 'gpt-6-astra',
+        tokens,
+        reportedCostUsd: 0,
+      }),
+    ).toEqual({
+      basis: 'estimated',
+      amountUsd: 0,
+      ref: 'pi-catalog:openai/gpt-6-astra',
+    });
+  });
+
+  it('keeps openai attempts with no usage record unknown (no fabricated zero)', () => {
+    for (const reportedCostUsd of [undefined, -1, Number.NaN]) {
+      expect(
+        resolveAttemptCostTruth({
+          provider: 'openai',
+          model: 'gpt-6-astra',
+          tokens,
+          reportedCostUsd,
+        }),
+      ).toEqual({ basis: 'unknown', amountUsd: null, ref: 'unpriced:openai/gpt-6-astra' });
+    }
+  });
 });

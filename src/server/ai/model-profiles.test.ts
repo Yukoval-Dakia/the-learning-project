@@ -150,6 +150,51 @@ describe('resolveModelProfile — the four active models (acceptance)', () => {
     expect(sub.capabilities).toEqual(direct.capabilities);
     expect(sub.limits).toEqual(direct.limits);
   });
+
+  // YUK-1027 — the catalog snapshot carries no openai bucket, so the astra
+  // profile must come ENTIRELY from the provider binding (source 'binding'),
+  // matching the pi builtin entry's facts exactly (272k context / 128k output /
+  // effort ladder / text+image input).
+  it('openai/gpt-6-astra: complete binding-authored profile', () => {
+    const profile = resolveModelProfile('openai', 'gpt-6-astra');
+    expect(profile.source).toBe('binding');
+    expect(profile.capabilities).toEqual({
+      toolCalling: true,
+      vision: true,
+      reasoning: true,
+      // App-level structured output stays Zod-on-text: the API's schema
+      // passthrough is deliberately NOT claimed until the app threads it and
+      // handles refusal/incomplete (spec §P1).
+      structuredOutput: false,
+    });
+    expect(profile.limits).toEqual({ contextWindowTokens: 272_000, maxOutputTokens: 128_000 });
+    expect(profile.reasoning).toEqual({
+      mode: 'effort',
+      supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+    });
+    expect(profile.execution).toEqual({
+      timeoutClass: 'standard',
+      budgetClass: 'standard',
+      // pi usage.cost is a catalog estimate, not an invoice — never metered.
+      meteredUsd: false,
+      localPricebook: false,
+    });
+  });
+
+  it('other openai model ids stay fail-closed (no binding, no catalog)', () => {
+    const profile = resolveModelProfile('openai', 'gpt-5.5-codex');
+    // The lane-wide modelDefaults (structuredOutput:false, meteredUsd:false)
+    // apply to every id; per-model facts stay 'unknown' so the gate rejects.
+    expect(profile.source).toBe('binding');
+    expect(profile.capabilities).toEqual({
+      toolCalling: 'unknown',
+      vision: 'unknown',
+      reasoning: 'unknown',
+      structuredOutput: false,
+    });
+    expect(profile.limits).toEqual({});
+    expect(profile.execution.meteredUsd).toBe(false);
+  });
 });
 
 describe('parseCatalogModelEntry — narrow fail-closed parse', () => {
@@ -257,6 +302,20 @@ describe('assertModelProfileCapabilityFit — P2 fail-closed gate', () => {
       assertModelProfileCapabilityFit(toolTask, 'xiaomi', 'mimo-v2.5-pro'),
     ).not.toThrow();
     expect(() => assertModelProfileCapabilityFit(toolTask, 'zhipu', 'glm-5.3-flash')).not.toThrow();
+    // YUK-1027 — the astra binding declares toolCalling:true (offline contract
+    // test verifies the wire shape), so CopilotTask admits openai/gpt-6-astra.
+    expect(() => assertModelProfileCapabilityFit(toolTask, 'openai', 'gpt-6-astra')).not.toThrow();
+    expect(() =>
+      assertModelProfileCapabilityFit(multimodalTask, 'openai', 'gpt-6-astra'),
+    ).not.toThrow();
+  });
+
+  it('rejects a needsToolCall task on an undeclared openai model (binding-miss)', () => {
+    // gpt-5.5-codex has no models[] entry and no catalog row — toolCalling is
+    // 'unknown', which fails closed exactly like a confirmed false.
+    expect(() => assertModelProfileCapabilityFit(toolTask, 'openai', 'gpt-5.5-codex')).toThrow(
+      /requires tool calling.*has no confirmed/i,
+    );
   });
 
   it('rejects a multimodal task on a confirmed text-only lane (glm-5.2)', () => {

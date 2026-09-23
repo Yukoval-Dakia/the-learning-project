@@ -150,8 +150,12 @@ export interface ModelProfile {
  * Internal provider → catalog provider id. anthropic-sub serves the same claude
  * model ids against Anthropic's first-party endpoint, so it maps to the same
  * catalog entries and the binding layer re-classifies the lane-specific fields
- * (meteredUsd). Reserved-but-not-implemented providers (openrouter / gateway /
- * openai) intentionally have NO mapping: they resolve to conservative defaults.
+ * (meteredUsd). Reserved-but-not-implemented providers (openrouter / gateway)
+ * intentionally have NO mapping: they resolve to conservative defaults.
+ * 'openai' is implemented (YUK-1027) but also unmapped: the committed snapshot
+ * has no openai bucket — the pi builtin catalog owns the wire facts, so the
+ * openai provider binding carries the complete app-level profile for
+ * gpt-6-astra (every field declared explicitly, source:'binding').
  */
 const CATALOG_PROVIDER_BY_INTERNAL: Partial<Record<Provider, string>> = {
   anthropic: 'anthropic',
