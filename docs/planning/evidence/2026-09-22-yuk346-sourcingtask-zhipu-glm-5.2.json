@@ -1,6 +1,6 @@
 {
-  "captured_at": "2026-09-22T11:04:24.502Z",
-  "code_revision": "8c14cedf41860c3598836b244c4ab21c6c27f055",
+  "captured_at": "2026-09-23T09:53:20.665Z",
+  "code_revision": "70b6ff76a6e32bb724c0441b10fae0746a917c87",
   "ticket": "YUK-346",
   "lane": {
     "adapter": "pi",
@@ -9,28 +9,27 @@
     "task_kind": "SourcingTask",
     "pin": "explicit ctx.modelBinding (post-P4 routing surface)"
   },
-  "task_run_id": "l0nrx10r5e9gb6f469tlia18",
-  "wall_ms": 16618,
-  "parse_ok": false,
-  "parse_error": "[\n  {\n    \"expected\": \"string\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"questions\",\n      0,\n      \"extraction_hash\"\n    ],\n    \"message\": \"Invalid input: expected string, received null\"\n  }\n]",
+  "task_run_id": "rgr9eu89vpnkvoxig5d50bly",
+  "wall_ms": 20790,
+  "parse_ok": true,
   "input_digest": "sha256:e39b6c0039d59198fd1280433793b1748d189a46ee84504ab6d89d28b4189ebe",
-  "output_digest": "sha256:b6d3ed7a242fada1be204b7c2450d73ecd18e657b4302320f56edc0f70cf6938",
-  "output_excerpt": "{\"questions\":[{\"kind\":\"choice\",\"prompt_md\":\"方程 x（x﹣1）＝5（x﹣1）的解是（ ）\\n\\nA. 1\\nB. 5\\nC. 1 或 5\\nD. 无解\",\"reference_md\":\"（C）1 或 5\\n\\n解析：原方程可化为 x（x﹣1）﹣5（x﹣1）＝0，即（x﹣1）（x﹣5）＝0。依据：若两因式之积为 0，则至少一个因式为 0，故 x﹣1＝0 或 x﹣5＝0，解得 x₁＝1，x₂＝5。\",\"choices_md\":[\"1\",\"5\",\"1或5\",\"无解\"],\"judge_kind_override\":\"exact\",\"rubric_json\":null,\"difficulty\":2,\"knowledge_ids\":[\"k_yuk346_a\"],\"source_url\":\"https://www.zxxk.com/soft/25211418.html\",\"source_title\":\"2.4 用因式分解法求解一元二次方程-2020-2021学年九年级数学上册通关训练（北师大版）-学科网\",\"extract\":\"2．方程x（x﹣1）＝5（x﹣1）的解是（　　）A．1 B．5 C．1或5 D．无解 【答案】C 【解析】 解：原方程可化为x（x﹣1）﹣5（x﹣1）＝0， 即（x﹣1）（x﹣5）＝0， 解得x1＝1，x2＝5． 故选：C．\",\"extraction_hash\":null}],\"image_candidates\":[],\"query_plan\":[\"因式分解法解一元二次方程 练习题 含答案\"],\"fetched_at\":\"2026-08-20T10:00:00Z\",\"tool\":\"exa\"}",
+  "output_digest": "sha256:38b8fa9d99946c032b1d8d494932471ab9731ac5d2a99fedd48ecb415afb5d8e",
+  "output_excerpt": "{\"questions\":[{\"kind\":\"choice\",\"prompt_md\":\"一元二次方程 $(x+2)(x-4)=x-4$ 的解是（ ）\\n\\nA. $-2$\\nB. $-1$\\nC. $-1$ 和 $4$\\nD. $-2$ 和 $4$\",\"reference_md\":\"（C）-1和4\\n\\n解析：移项，得 $(x+2)(x-4)-(x-4)=0$，因式分解，得 $(x-4)(x+1)=0$，所以 $x-4=0$ 或 $x+1=0$，解得 $x_1=4$，$x_2=-1$。\",\"choices_md\":[\"A. -2\",\"B. -1\",\"C. -1和4\",\"D. -2和4\"],\"judge_kind_override\":\"exact\",\"rubric_json\":{\"criteria\":[{\"name\":\"correctness\",\"weight\":1,\"descriptor\":\"选出正确选项 C（-1和4），依据移项后提公因式 (x-4) 得 (x-4)(x+1)=0\"}],\"keywords\":[\"x-4\",\"x+1\"],\"required_points\":[\"移项化为 (x+2)(x-4)-(x-4)=0\",\"提公因式得 (x-4)(x+1)=0\",\"由 x-4=0 或 x+1=0 得 x₁=4，x₂=-1\"]},\"difficulty\":2,\"knowledge_ids\":[\"k_yuk346_a\"],\"source_url\":\"https://www.51jiaoxi.com/doc-16252894.html\",\"source_title\":\"初中数学人教版（2024）九年级上册21.2.3 因式分解法达标测试\",\"extract\":\"12.()一元二次方程(x+2)(x-4)=x-4的解是( ) A.-2 B.-1 C.-1和4 D.-2和4\",\"",
   "subject": "math",
   "status": "success",
   "finish_reason": "end_turn",
   "usage": {
-    "inputTokens": 22281,
-    "outputTokens": 466,
+    "inputTokens": 17807,
+    "outputTokens": 556,
     "thinkingBlocks": 1,
-    "thinkingCharacters": 136
+    "thinkingCharacters": 251
   },
   "cost": {
     "basis": "unknown",
     "amount_usd": null,
     "ref": "unpriced:zhipu/glm-5.2"
   },
-  "tool_ctx_run_id": "yuk346_tool_qqeog6keiaejjgjglxcoezfm",
+  "tool_ctx_run_id": "yuk346_tool_zq8q9bqlh2zzcphq838tr0vr",
   "domain_tool_calls": [],
   "remote_exa_evidence": true,
   "provenance": "PiRunnerMessage frames carry source=pi; terminal evidence normalized from pi agentLoop agent_end + final assistant usage. Cost stays catalog-estimated (zhipu coding-plan catalog rates are 0 — flat subscription; mimo rates are the dated public per-token estimate)."

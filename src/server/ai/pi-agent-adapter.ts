@@ -42,6 +42,7 @@ import type {
   AgentMessage,
   AgentTool,
   BeforeToolCallContext,
+  ShouldStopAfterTurnContext,
   StreamFn,
   agentLoop as piAgentLoop,
 } from '@earendil-works/pi-agent-core';
@@ -1141,6 +1142,11 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     // equivalent — shouldStopAfterTurn counts completed turns and asks the
     // loop to end; the terminal frame then reports the normalized subtype
     // 'error_max_turns' so lifecycle/finish-reason handling stays identical.
+    // YUK-1026 — SDK parity: the ceiling only bites when the agent wants
+    // ANOTHER turn. A turn whose assistant message carries no tool calls ends
+    // the loop on its own (pending steering/follow-up aside) and must report
+    // success, not error_max_turns — under the unconditional counter every
+    // maxTurns=1 task deterministically failed after its first clean turn.
     const maxTurns = typeof options.maxTurns === 'number' ? options.maxTurns : undefined;
     let completedTurns = 0;
     let cappedByMaxTurns = false;
@@ -1152,13 +1158,18 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       ...(this.allTools.length > 0 ? { toolExecution: 'sequential' as const } : {}),
       ...(maxTurns !== undefined
         ? {
-            shouldStopAfterTurn: () => {
+            shouldStopAfterTurn: (turn: ShouldStopAfterTurnContext) => {
               completedTurns += 1;
-              if (completedTurns >= maxTurns) {
-                cappedByMaxTurns = true;
-                return true;
-              }
-              return false;
+              if (completedTurns < maxTurns) return false;
+              // The callback cannot observe batch termination (`terminate`
+              // never reaches ToolResultMessage) — toolCall presence is the
+              // faithful "loop intends another turn" signal available here.
+              const wantsAnotherTurn = turn.message.content.some(
+                (block) => block.type === 'toolCall',
+              );
+              if (!wantsAnotherTurn) return false;
+              cappedByMaxTurns = true;
+              return true;
             },
           }
         : {}),

@@ -512,8 +512,48 @@ describe('PiPreparedQuery — tool-loop frames and turn ceiling', () => {
     });
   });
 
-  it('maps the pi turn ceiling onto SDK error_max_turns', async () => {
+  it('lets a clean first turn succeed under maxTurns=1 (YUK-1026 SDK parity)', async () => {
     const assistant = piAssistant();
+    // The real loop calls config.shouldStopAfterTurn between turns; a turn
+    // with no tool calls exits naturally — the ceiling must not engage.
+    const agentLoop = vi.fn(
+      (
+        _prompts: AgentMessage[],
+        _context: AgentContext,
+        config: AgentLoopConfig,
+        _signal: AbortSignal | undefined,
+        _streamFn: StreamFn,
+      ): EventStream<AgentEvent, AgentMessage[]> =>
+        (async function* () {
+          yield { type: 'message_end', message: assistant } as AgentEvent;
+          await config.shouldStopAfterTurn?.({
+            message: assistant,
+            toolResults: [],
+            context: _context,
+            newMessages: [assistant],
+          });
+          yield { type: 'agent_end', messages: [assistant] } as AgentEvent;
+        })() as unknown as EventStream<AgentEvent, AgentMessage[]>,
+    );
+    const deps = { ...makeDeps([]), agentLoop };
+    const adapter = new PiAgentAdapter(deps as never);
+    const args = startupArgs();
+    args.options.maxTurns = 1;
+    const prepared = await adapter.startup(args);
+    const frames = (await drain(prepared.query('go'))) as Array<Record<string, unknown>>;
+    const result = frames.at(-1);
+    expect(result?.type).toBe('result');
+    expect(result?.subtype).toBe('success');
+    expect(result?.is_error).toBe(false);
+  });
+
+  it('caps a tool-call turn at the pi turn ceiling onto SDK error_max_turns', async () => {
+    const toolCallTurn = piAssistant({
+      content: [
+        { type: 'text', text: 'calling a tool' },
+        { type: 'toolCall', id: 'call_1', name: 'mcp__loom__read_mistakes', arguments: {} },
+      ],
+    } as Partial<PiAssistantMessage>);
     // The real loop calls config.shouldStopAfterTurn between turns; the fake
     // honors the same contract so the adapter's counter actually engages.
     const agentLoop = vi.fn(
@@ -525,17 +565,17 @@ describe('PiPreparedQuery — tool-loop frames and turn ceiling', () => {
         _streamFn: StreamFn,
       ): EventStream<AgentEvent, AgentMessage[]> =>
         (async function* () {
-          yield { type: 'message_end', message: assistant } as AgentEvent;
+          yield { type: 'message_end', message: toolCallTurn } as AgentEvent;
           const stop = await config.shouldStopAfterTurn?.({
-            message: assistant,
+            message: toolCallTurn,
             toolResults: [],
             context: _context,
-            newMessages: [assistant],
+            newMessages: [toolCallTurn],
           });
           if (!stop) {
-            yield { type: 'message_end', message: assistant } as AgentEvent;
+            yield { type: 'message_end', message: toolCallTurn } as AgentEvent;
           }
-          yield { type: 'agent_end', messages: [assistant] } as AgentEvent;
+          yield { type: 'agent_end', messages: [toolCallTurn] } as AgentEvent;
         })() as unknown as EventStream<AgentEvent, AgentMessage[]>,
     );
     const deps = { ...makeDeps([]), agentLoop };

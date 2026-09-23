@@ -1,6 +1,6 @@
 {
-  "captured_at": "2026-09-22T10:52:05.619Z",
-  "code_revision": "8c14cedf41860c3598836b244c4ab21c6c27f055",
+  "captured_at": "2026-09-23T09:50:15.905Z",
+  "code_revision": "70b6ff76a6e32bb724c0441b10fae0746a917c87",
   "ticket": "YUK-346",
   "lane": {
     "adapter": "pi",
@@ -9,28 +9,24 @@
     "task_kind": "TeachingTurnTask",
     "pin": "explicit ctx.modelBinding (post-P4 routing surface)"
   },
-  "task_run_id": "qq4y8uwrc4gwi4llnk1r3u8v",
-  "wall_ms": 5718,
+  "task_run_id": "e42kwhl0gezt34xnjjcydmh4",
+  "wall_ms": 7381,
   "parse_ok": null,
-  "error": {
-    "name": "AgentRunError",
-    "subtype": "error_max_turns",
-    "taskRunId": "qq4y8uwrc4gwi4llnk1r3u8v",
-    "message": "[TeachingTurnTask] agent run errored: subtype=error_max_turns errors=pi agent_loop stopped at the configured turn ceiling (1)"
-  },
   "input_digest": "sha256:6f46514bbc1613dbc45544d29ccf5b4a7ff332ef768101fb48d7ebde500717ca",
+  "output_digest": "sha256:29377996d3afa26e6c0e0d5843ab4911f73a902387079b9e6a3f27af189f976d",
+  "output_excerpt": "{\n  \"kind\": \"explain\",\n  \"text_md\": \"我们来学习文言虚词「而」的用法。「而」是连词，主要连接前后两个成分，它们的逻辑关系决定了「而」的含义。核心判断方法是看前后两部分的关系：如果是对等并列的，可译为「和」「又」；如果有时间先后，就是「就」「然后」；如果语义相反，就是「却」「但是」；如果前面的部分是修饰后面动作的状态，就是「地」或不译。例如，「学而时习之」中，「学」和「时习」有先后顺序，是承接关系。\",\n  \"suggested_next\": \"continue\"\n}",
   "subject": "yuwen",
   "phase": "as-configured",
   "budget_override": null,
-  "status": "failure",
-  "finish_reason": "error",
+  "status": "success",
+  "finish_reason": "end_turn",
   "usage": {
     "inputTokens": 926,
-    "outputTokens": 121
+    "outputTokens": 155
   },
   "cost": {
     "basis": "estimated",
-    "amount_usd": 0.00050808,
+    "amount_usd": 0.00053766,
     "ref": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro"
   },
   "provenance": "PiRunnerMessage frames carry source=pi; terminal evidence normalized from pi agentLoop agent_end + final assistant usage. Cost stays catalog-estimated (zhipu coding-plan catalog rates are 0 — flat subscription; mimo rates are the dated public per-token estimate)."

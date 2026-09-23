@@ -1,6 +1,6 @@
 {
-  "captured_at": "2026-09-22T10:51:23.938Z",
-  "code_revision": "8c14cedf41860c3598836b244c4ab21c6c27f055",
+  "captured_at": "2026-09-23T09:49:31.113Z",
+  "code_revision": "70b6ff76a6e32bb724c0441b10fae0746a917c87",
   "ticket": "YUK-346",
   "lane": {
     "adapter": "pi",
@@ -9,31 +9,31 @@
     "task_kind": "SemanticJudgeTask",
     "pin": "explicit ctx.modelBinding (post-P4 routing surface)"
   },
-  "task_run_id": "hve6dvj9cj6eibggkdyncbkk",
-  "wall_ms": 4597,
+  "task_run_id": "xknrthz54dxx176vrldhn04b",
+  "wall_ms": 3726,
   "parse_ok": true,
   "input_digest": "sha256:1134a07f1837113ab5fd33b71de5237e976c581e53c8e10f442cabcc57cdf703",
-  "output_digest": "sha256:97ccee453d2b3933867f2cfa20f4f9fb3bb4da36ca5264820fa8edbbcf5b43b3",
-  "output_excerpt": "{\"score\":1.0,\"coarse_outcome\":\"correct\",\"confidence\":1.0,\"feedback_md\":\"翻译准确，核心要点「曾经」「片刻」和对比关系均已体现，语句通顺。\",\"evidence_json\":{\"matched_points\":[\"「尝」译为「曾经」\",\"「须臾」译为「一会儿」\",\"译出「终日而思」与「须臾所学」的对比关系，语句通顺\"],\"missing_points\":[],\"notes\":\"\"}}",
+  "output_digest": "sha256:4ace83e77357d7d7e57e5e5da5a7cf485513a3ecf8e7992569c09803f0c0d199",
+  "output_excerpt": "{\"score\":1.0,\"coarse_outcome\":\"correct\",\"confidence\":1.0,\"feedback_md\":\"翻译准确，完整传达了原文意思。\",\"evidence_json\":{\"matched_points\":[\"「尝」译为「曾经」\",\"「须臾」译为「一会儿」\",\"译出「终日而思」与「须臾所学」的对比关系，语句通顺\"],\"missing_points\":[],\"notes\":\"\"}}",
   "subject": "yuwen",
   "phase": "relaxed-budget",
   "budget_override": {
     "maxIterations": 4
   },
   "as_configured": {
-    "status": "failure",
-    "error_subtype": "error_max_turns",
-    "wall_ms": 8622
+    "status": "success",
+    "error_subtype": null,
+    "wall_ms": 8572
   },
   "status": "success",
   "finish_reason": "end_turn",
   "usage": {
     "inputTokens": 718,
-    "outputTokens": 103
+    "outputTokens": 91
   },
   "cost": {
     "basis": "estimated",
-    "amount_usd": 0.00040194,
+    "amount_usd": 0.0003915,
     "ref": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro"
   },
   "provenance": "PiRunnerMessage frames carry source=pi; terminal evidence normalized from pi agentLoop agent_end + final assistant usage. Cost stays catalog-estimated (zhipu coding-plan catalog rates are 0 — flat subscription; mimo rates are the dated public per-token estimate)."
