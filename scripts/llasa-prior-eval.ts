@@ -29,7 +29,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { and, eq, inArray } from 'drizzle-orm';
 import { difficultyToLogitB } from '@/core/theta';
-import { item_calibration, knowledge, question } from '@/db/schema';
+import { ai_task_runs, item_calibration, knowledge, question } from '@/db/schema';
 import { buildLocalDatabaseUrl } from './local-db-env';
 
 // .env 的 DATABASE_URL 是 compose 内网地址（postgres:5432）；脚本跑在宿主机，
@@ -111,7 +111,9 @@ function mean(xs: number[]): number {
   return xs.length === 0 ? Number.NaN : xs.reduce((a, b) => a + b, 0) / xs.length;
 }
 function sd(xs: number[]): number {
-  if (xs.length < 2) return 0;
+  // n<2 时 within-question 方差未定义——返回 NaN 让下游 filter 丢弃，
+  // 不能把「只有 0/1 次成功」当成 SD=0 的完美稳定。
+  if (xs.length < 2) return Number.NaN;
   const m = mean(xs);
   return Math.sqrt(xs.reduce((a, x) => a + (x - m) ** 2, 0) / (xs.length - 1));
 }
@@ -151,6 +153,16 @@ function ranks(xs: number[]): number[] {
   return r;
 }
 const spearman = (xs: number[], ys: number[]) => pearson(ranks(xs), ranks(ys));
+/** 相关分析前先丢 NaN 配对——NaN 参与 ranks 会得到任意名次而非被剔除。 */
+const spearmanFinite = (xs: number[], ys: number[]) => {
+  const pairs = xs
+    .map((x, i) => [x, ys[i] ?? Number.NaN] as const)
+    .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
+  return spearman(
+    pairs.map(([x]) => x),
+    pairs.map(([, y]) => y),
+  );
+};
 
 async function runOne(
   runTaskFn: ReturnType<typeof makePracticeTaskRunFn>,
@@ -209,6 +221,9 @@ async function runOne(
 
 async function main() {
   const commit = execSync('git rev-parse HEAD').toString().trim();
+  // 封存 revision 必须能解析到实际跑过的代码：dirty worktree 下 HEAD 只是
+  // base——显式记录 dirty 标志，防止把未提交改动误封成已存在的 commit。
+  const workingTreeDirty = execSync('git status --porcelain').toString().trim().length > 0;
 
   // 候选池：全部题 + 已有硬轨标定行（若有）+ owner difficulty。
   // item_calibration_question_unique 保证每题至多一条 → leftJoin 不膨胀行数。
@@ -227,7 +242,13 @@ async function main() {
     .from(question)
     .leftJoin(
       item_calibration,
-      and(eq(item_calibration.question_id, question.id), eq(item_calibration.track, 'hard')),
+      and(
+        eq(item_calibration.question_id, question.id),
+        eq(item_calibration.track, 'hard'),
+        // 只对照 feature→b 同款 provenance；fixed_anchor/manual 等其它来源不是
+        // 「现行方法的库存输出」，混入会把跨方法差异误记进 vs_stored 指标。
+        eq(item_calibration.source, 'llm_prior'),
+      ),
     )
     .orderBy(question.id)) as SampleRow[];
 
@@ -277,6 +298,30 @@ async function main() {
   });
   await Promise.all(workers);
 
+  // Lane provenance 从实际 task_run 行回查，而非硬编码——provider override /
+  // binding 生效时证据必须反映真实 lane。ai_task_runs.provider/model 是
+  // runner 落库的运行时绑定，是本证据可拿到的最接近真相的来源。
+  const runIds = records.flatMap((r) => (r.task_run_id ? [r.task_run_id] : []));
+  const observedLanes =
+    runIds.length > 0
+      ? await db
+          .selectDistinct({ provider: ai_task_runs.provider, model: ai_task_runs.model })
+          .from(ai_task_runs)
+          .where(inArray(ai_task_runs.id, runIds))
+      : [];
+  const provider =
+    observedLanes.length === 1
+      ? (observedLanes[0]?.provider ?? 'unknown')
+      : observedLanes.length > 1
+        ? `mixed:${observedLanes.map((l) => l.provider).join('+')}`
+        : 'unknown';
+  const model =
+    observedLanes.length === 1
+      ? (observedLanes[0]?.model ?? 'unknown')
+      : observedLanes.length > 1
+        ? `mixed:${observedLanes.map((l) => l.model).join('+')}`
+        : 'unknown';
+
   // ── 汇总指标 ──────────────────────────────────────────────────────────
   const okBy = (m: Method) => records.filter((r) => r.method === m && r.status === 'ok');
   const perQuestion = sample.map((s) => {
@@ -312,8 +357,9 @@ async function main() {
 
   const summary = {
     commit,
-    provider: 'xiaomi',
-    model: 'mimo-v2.5-pro',
+    working_tree_dirty: workingTreeDirty,
+    provider,
+    model,
     sample_size: sample.length,
     reps: REPS,
     total_calls: records.length,
@@ -326,13 +372,13 @@ async function main() {
       mean_within_question_sd: mean(featureSds),
       median_within_question_sd: quantile(featureSds, 0.5),
       p90_within_question_sd: quantile(featureSds, 0.9),
-      max_within_question_sd: Math.max(...featureSds),
+      max_within_question_sd: featureSds.length > 0 ? Math.max(...featureSds) : Number.NaN,
       vs_stored_llm_prior_mean_abs_delta: mean(
         proxyAligned
           .map((q) => Math.abs(q.feature_mean - (q.stored_b as number)))
           .filter((x) => Number.isFinite(x)),
       ),
-      spearman_vs_owner_difficulty: spearman(
+      spearman_vs_owner_difficulty: spearmanFinite(
         perQuestion.map((q) => q.feature_mean),
         perQuestion.map((q) => q.difficulty),
       ),
@@ -342,8 +388,8 @@ async function main() {
       mean_within_question_sd: mean(llasaSds),
       median_within_question_sd: quantile(llasaSds, 0.5),
       p90_within_question_sd: quantile(llasaSds, 0.9),
-      max_within_question_sd: Math.max(...llasaSds),
-      spearman_vs_owner_difficulty: spearman(
+      max_within_question_sd: llasaSds.length > 0 ? Math.max(...llasaSds) : Number.NaN,
+      spearman_vs_owner_difficulty: spearmanFinite(
         perQuestion.map((q) => q.llasa_mean),
         perQuestion.map((q) => q.difficulty),
       ),
@@ -358,7 +404,7 @@ async function main() {
       mean_abs_gap: mean(gaps),
       median_abs_gap: quantile(gaps, 0.5),
       p90_abs_gap: quantile(gaps, 0.9),
-      spearman_feature_vs_llasa: spearman(
+      spearman_feature_vs_llasa: spearmanFinite(
         perQuestion.map((q) => q.feature_mean),
         perQuestion.map((q) => q.llasa_mean),
       ),
@@ -368,10 +414,11 @@ async function main() {
   const evidence = {
     captured_at: new Date().toISOString(),
     code_revision: commit,
+    working_tree_dirty: workingTreeDirty,
     ticket: 'YUK-376',
     lane: {
-      provider: 'xiaomi',
-      model: 'mimo-v2.5-pro',
+      provider,
+      model,
       adapter: 'pi',
       tasks: ['ItemPriorTask', 'ItemPriorLlasaTask'],
     },

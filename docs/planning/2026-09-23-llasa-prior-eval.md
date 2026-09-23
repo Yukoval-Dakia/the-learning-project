@@ -9,7 +9,7 @@ Spike/ADR: `docs/design/2026-06-15-b-anchor-feasibility-spike.md`、`docs/adr/00
 
 **闸门回答：feature→b 的重复采样噪声真实存在但属中等（median within-question SD ≈ 0.28 logit，p90 ≈ 0.51），且候选替代方案 LLaSA 在所有测量维度上全面更差——采纳门槛未满足，默认 feature→b 保持不变。**
 
-具体：LLaSA 的 within-question SD 是 feature 的约 **2.1×**（mean 0.62 vs 0.30），与 owner difficulty 的 Spearman 排序相关 **0.28 vs 0.58**（更弱），90 次调用中 **7 次失败（7.8%）**（5× budget timeout + 2× JSON parse），单次成本约为 feature 的 **5.8×**。两法 Spearman 仅 0.28，说明 LLaSA 并没有在测量同一个潜变量上做得更好。
+具体：LLaSA 的 within-question SD 是 feature 的约 **2.2×**（mean 0.67 vs 0.30），与 owner difficulty 的 Spearman 排序相关 **0.23 vs 0.58**（更弱），90 次调用中 **7 次失败（7.8%）**（5× budget timeout + 2× JSON parse），单次成本约为 feature 的 **5.8×**。两法 Spearman 仅 0.26，说明 LLaSA 并没有在测量同一个潜变量上做得更好。
 
 本票交付物为 **opt-in** 变体（`ItemPriorLlasaTask` + backfill `method: 'llasa'`），默认路径逐字节未动；是否启用由 owner 决定，本报告建议 **不启用**（保留代码路径供未来 revisiting）。
 
@@ -33,20 +33,20 @@ Spike/ADR: `docs/design/2026-06-15-b-anchor-feasibility-spike.md`、`docs/adr/00
 | 指标 | feature→b（默认） | llasa（opt-in） |
 | --- | --- | --- |
 | 调用成功率 | **90/90 (100%)** | 83/90 (92.2%) — 5× budget_timeout + 2× JSON parse |
-| within-question SD · mean | **0.298** | 0.623 |
-| within-question SD · median | **0.276** | 0.638 |
-| within-question SD · p90 | **0.513** | 1.023 |
+| within-question SD · mean | **0.298** | 0.668 |
+| within-question SD · median | **0.276** | 0.671 |
+| within-question SD · p90 | **0.513** | 1.092 |
 | within-question SD · max | **0.681** | 2.167 |
-| Spearman vs owner difficulty (1–4) | **0.58** | 0.28 |
+| Spearman vs owner difficulty (1–4) | **0.58** | 0.23 |
 | vs stored `llm_prior` b · mean \|Δ\| | 0.37 | — |
 | 单次成本 mean | **$0.00022** | $0.00127（≈5.8×） |
-| 内部质量信号 | — | censored 3.6% / nonmonotone 1.2% |
-| 跨方法 \|gap\| | mean 0.77 / median 0.67 / p90 1.66 | Spearman(feature, llasa) = 0.28 |
+| 内部质量信号 | — | censored 3.6% / nonmonotone 1.2%；28/30 题可估 SD（2 题成功样本 <2） |
+| 跨方法 \|gap\|（29 题可比） | mean 0.77 / median 0.67 / p90 1.66 | Spearman(feature, llasa) = 0.26 |
 
 ### 噪声形态观察
 
 - **feature**：噪声呈连续分布，3 reps 的 b 通常在 ±0.5 内收敛（例：choice/diff4 `[-1.5,-0.8,-1.0]`）。0.3 logit 的 SD 约等于在 a=1 中点把 P(correct) 移动 ~0.07——对冷启动锚点而言是可测但不致误的扰动（下游有真实作答数据再校准兜底）。
-- **llasa**：噪声呈**双峰形态**——6/30 题 3 reps 完全相同（SD=0，模拟概率网格粗→反推落到同一 knot，输出聚集在 -1.21 / -0.59 / 0 / 3 等量化值），而另一部分题 reps 间剧烈摆动（fill_blank/diff3 一题给出 `[-1.21, 3.0, 0]`，摆幅 4.2 logit）。低方差样本是「网格量化」而非「稳定收敛」，高方差样本则是模拟概率本身不一致。
+- **llasa**：噪声呈**双峰形态**——6/30 题 3 reps 完全相同（SD=0，模拟概率网格粗→反推落到同一 knot，输出聚集在 -1.21 / -0.59 / 0 / 3 等量化值），而另一部分题 reps 间剧烈摆动（fill_blank/diff3 一题给出 `[-1.21, 3.0, 0]`，摆幅 4.2 logit）；另有 2 题成功样本 <2（SD 不可估，已从 SD 统计剔除）。低方差样本是「网格量化」而非「稳定收敛」，高方差样本则是模拟概率本身不一致。
 - **失败模式**：5 次 `budget_timeout`（60s cap 内多档模拟推理跑不完）+ 2 次 `JSON.parse` bad-escape（模型在 JSON 字符串内输出非法转义，疑似 LaTeX 风格 `\x`）；feature 侧 0 失败。
 
 ## 闸门判定
@@ -55,7 +55,7 @@ Spike/ADR: `docs/design/2026-06-15-b-anchor-feasibility-spike.md`、`docs/adr/00
 
 - 噪声**存在且不可忽略**：median SD 0.28 / p90 0.51 logit，p90 以上样本的锚点偏移已足以影响冷启动选题。
 - 但相对信号尺度不算失控：库存 b 的跨题 SD ≈ 0.74，noise/signal ≈ 0.4；且 fresh-run 与 stored b 的 mean \|Δ\| = 0.37，与自身噪声同量级——**已落库的 `llm_prior` 行仍具代表性，无陈旧漂移**。
-- **采纳门槛未满足**：替代方案 LLaSA 噪声 2.1×、排序效度减半、失败率 7.8%、成本 5.8×。即便认为 feature 噪声偏大，LLaSA 也不是更优解。
+- **采纳门槛未满足**：替代方案 LLaSA 噪声 2.2×、排序效度不到一半、失败率 7.8%、成本 5.8×。即便认为 feature 噪声偏大，LLaSA 也不是更优解。
 
 ## 建议
 

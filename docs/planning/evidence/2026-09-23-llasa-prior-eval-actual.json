@@ -1,6 +1,6 @@
 {
   "captured_at": "2026-09-23T14:35:19.052Z",
-  "code_revision": "de83dce59a351d26ffeecb9abd0d3531c3131439",
+  "code_revision": "bc37aa11b6b219a28e54ebf758ba3d9c78e847b2",
   "ticket": "YUK-376",
   "lane": {
     "provider": "xiaomi",
@@ -9,7 +9,7 @@
     "tasks": ["ItemPriorTask", "ItemPriorLlasaTask"]
   },
   "summary": {
-    "commit": "de83dce59a351d26ffeecb9abd0d3531c3131439",
+    "commit": "bc37aa11b6b219a28e54ebf758ba3d9c78e847b2",
     "provider": "xiaomi",
     "model": "mimo-v2.5-pro",
     "sample_size": 30,
@@ -30,20 +30,21 @@
     },
     "llasa": {
       "ok": 83,
-      "mean_within_question_sd": 0.6232383672637347,
-      "median_within_question_sd": 0.6378417912466401,
-      "p90_within_question_sd": 1.0234583570253493,
-      "max_within_question_sd": 2.1674947135652567,
-      "spearman_vs_owner_difficulty": 0.27807604399826247,
+      "mean_within_question_sd": 0.6677553934968585,
+      "median_within_question_sd": 0.6706216021970463,
+      "p90_within_question_sd": 1.0923963047592793,
+      "max_within_question_sd": 2.1674947135652562,
+      "spearman_vs_owner_difficulty": 0.23158827481357144,
       "censored_rate": 0.03614457831325301,
       "nonmonotone_rate": 0.012048192771084338
     },
     "cross_method": {
-      "mean_abs_gap": 0.768850574712644,
+      "mean_abs_gap": 0.7688505747126437,
       "median_abs_gap": 0.6666666666666667,
       "p90_abs_gap": 1.6553333333333333,
-      "spearman_feature_vs_llasa": 0.276569783555764
-    }
+      "spearman_feature_vs_llasa": 0.2586144613501049
+    },
+    "working_tree_dirty": true
   },
   "per_question": [
     {
@@ -55,7 +56,7 @@
       "feature_bs": [-1.2, -0.8, -0.8],
       "llasa_bs": [-1.21, -1.21, -1.21],
       "feature_sd": 0.23094010767585024,
-      "llasa_sd": 0,
+      "llasa_sd": 0.0,
       "feature_mean": -0.9333333333333332,
       "llasa_mean": -1.21,
       "abs_gap": 0.2766666666666667,
@@ -86,7 +87,7 @@
       "stored_b": -1,
       "feature_bs": [-0.5, -1.5, -0.8],
       "llasa_bs": [-0.59, -0.59, 0.59],
-      "feature_sd": 0.5131601439446885,
+      "feature_sd": 0.5131601439446883,
       "llasa_sd": 0.6812733176437583,
       "feature_mean": -0.9333333333333332,
       "llasa_mean": -0.19666666666666666,
@@ -119,7 +120,7 @@
       "feature_bs": [-1.5, -1.2, -1.5],
       "llasa_bs": [-1.21, -1.21, -1.21],
       "feature_sd": 0.17320508075688776,
-      "llasa_sd": 0,
+      "llasa_sd": 0.0,
       "feature_mean": -1.4000000000000001,
       "llasa_mean": -1.21,
       "abs_gap": 0.19000000000000017,
@@ -214,7 +215,7 @@
       "stored_b": null,
       "feature_bs": [-1.5, -0.8, -1],
       "llasa_bs": [0, 3, 3],
-      "feature_sd": 0.3605551275463989,
+      "feature_sd": 0.36055512754639896,
       "llasa_sd": 1.7320508075688772,
       "feature_mean": -1.0999999999999999,
       "llasa_mean": 2,
@@ -263,7 +264,7 @@
       "feature_bs": [-0.8, -0.5, -0.3],
       "llasa_bs": [-0.59],
       "feature_sd": 0.2516611478423584,
-      "llasa_sd": 0,
+      "llasa_sd": null,
       "feature_mean": -0.5333333333333333,
       "llasa_mean": -0.59,
       "abs_gap": 0.05666666666666664,
@@ -278,8 +279,8 @@
       "stored_b": -0.3,
       "feature_bs": [-1.2, -1.2, -1.2],
       "llasa_bs": [-1.93, -1.93, -1.93],
-      "feature_sd": 0,
-      "llasa_sd": 0,
+      "feature_sd": 0.0,
+      "llasa_sd": 0.0,
       "feature_mean": -1.2,
       "llasa_mean": -1.93,
       "abs_gap": 0.73,
@@ -311,7 +312,7 @@
       "feature_bs": [-0.5, -0.8, 0],
       "llasa_bs": [-0.59, 0, -0.59],
       "feature_sd": 0.40414518843273806,
-      "llasa_sd": 0.3406366588218792,
+      "llasa_sd": 0.34063665882187916,
       "feature_mean": -0.43333333333333335,
       "llasa_mean": -0.3933333333333333,
       "abs_gap": 0.040000000000000036,
@@ -439,7 +440,7 @@
       "feature_bs": [-0.5, -0.8, -0.5],
       "llasa_bs": [],
       "feature_sd": 0.17320508075688776,
-      "llasa_sd": 0,
+      "llasa_sd": null,
       "feature_mean": -0.6,
       "llasa_mean": null,
       "abs_gap": null,
@@ -455,7 +456,7 @@
       "feature_bs": [-1.8, -1.5, -2],
       "llasa_bs": [-1.93, -1.93],
       "feature_sd": 0.2516611478423583,
-      "llasa_sd": 0,
+      "llasa_sd": 0.0,
       "feature_mean": -1.7666666666666666,
       "llasa_mean": -1.93,
       "abs_gap": 0.16333333333333333,
@@ -487,7 +488,7 @@
       "feature_bs": [-0.2, -0.5, -1.2],
       "llasa_bs": [-1.21, 3, 0],
       "feature_sd": 0.5131601439446883,
-      "llasa_sd": 2.1674947135652567,
+      "llasa_sd": 2.1674947135652562,
       "feature_mean": -0.6333333333333333,
       "llasa_mean": 0.5966666666666667,
       "abs_gap": 1.23,
@@ -3008,5 +3009,7 @@
       "monotone": true
     }
   ],
-  "provenance": "all calls through runTask → PiAgentAdapter (production path); input/output sealed by sha256 digest + ai_task_run.id"
+  "provenance": "all calls through runTask → PiAgentAdapter (production path); input/output sealed by sha256 digest + ai_task_run.id",
+  "working_tree_dirty": true,
+  "code_revision_note": "eval ran on uncommitted working tree whose content was committed verbatim as bc37aa11b (post-run deltas: formatting-only on this script + env-key declarations in src/server/env.ts); aggregation fields recomputed under corrected sd/spearman logic (Codex review findings) — call records unchanged"
 }
