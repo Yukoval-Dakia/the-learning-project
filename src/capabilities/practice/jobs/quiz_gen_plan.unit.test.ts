@@ -62,10 +62,13 @@ describe('checkPlanPins (kind / method sanity)', () => {
     const plan = parsePlanOutput(VALID_PLAN_JSON);
     expect(plan.ok).toBe(true);
     if (!plan.ok) return;
+    // YUK-386 — conformance is by implied answer class, not label identity:
+    // 'short_answer' ≡ 'reading' (both semantic) passes; only the 'choice'
+    // (exact) item violates the 'reading' pin.
     const reasons = checkPlanPins(plan.plan, { kind: 'reading', kindRequired: true });
-    expect(reasons).toHaveLength(2);
+    expect(reasons).toHaveLength(1);
     expect(reasons[0]).toMatch(
-      /item 1 plans kind 'short_answer' which does not match required kind 'reading'/,
+      /item 2 plans kind 'choice' whose answer class does not match required kind 'reading'/,
     );
   });
 
@@ -76,7 +79,7 @@ describe('checkPlanPins (kind / method sanity)', () => {
     expect(reasons.join('\n')).toMatch(/does not match objective-only kind 'choice'/);
   });
 
-  it('accepts a cross-vocabulary pin via kindsMatch normalization (reading_comprehension ↔ reading)', () => {
+  it('accepts a cross-vocabulary pin via answerClassCompatible (reading_comprehension ↔ reading)', () => {
     const plan = parsePlanOutput(
       JSON.stringify({
         items: [{ knowledge_id: 'k1', kind: 'reading', difficulty: 3 }],

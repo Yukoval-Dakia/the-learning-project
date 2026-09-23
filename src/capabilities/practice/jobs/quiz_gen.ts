@@ -88,7 +88,7 @@ import {
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { createQuestionPart } from '@/server/questions/parts';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
-import { kindsMatch } from '@/subjects/question-kind';
+import { answerClassCompatible } from '@/subjects/question-kind';
 import {
   resolveQuizGenSkillDocsForSubject,
   resolveQuizGenSkills,
@@ -819,7 +819,11 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     const { parsed, parseRepaired } = parseOutput(result.text, subjectProfile);
     // ADR-0038 决定#2 — generation must REALIZE the accepted plan (the plan is
     // the contract; its constraints are the deterministic targets): same number
-    // of questions, index-paired kind conformance. A deviating batch fails the
+    // of questions, index-paired answer-class conformance. YUK-386: kind labels
+    // are free-form display text, so conformance compares the class each label
+    // implies (answerClassCompatible — a 'computation' plan still accepts a
+    // 'calculation' output, and any objective label satisfies an objective plan).
+    // A deviating batch fails the
     // run (failure event + pg-boss retry) instead of persisting off-plan drafts.
     if (parsed.questions.length !== plan.items.length) {
       throw new Error(
@@ -828,9 +832,9 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
     }
     parsed.questions.forEach((q, index) => {
       const planned = plan.items[index];
-      if (!kindsMatch(q.kind, planned.kind)) {
+      if (!answerClassCompatible(q.kind, planned.kind)) {
         throw new Error(
-          `quiz_gen question ${index + 1} kind '${q.kind}' deviates from planned kind '${planned.kind}' (ADR-0038 plan-then-generate)`,
+          `quiz_gen question ${index + 1} kind '${q.kind}' deviates from planned kind '${planned.kind}' (answer-class mismatch; ADR-0038 plan-then-generate)`,
         );
       }
     });
@@ -917,10 +921,13 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
 
     if ((params.objectiveOnly || params.kindRequired) && params.kind) {
       for (const q of parsed.questions) {
-        if (!kindsMatch(q.kind, params.kind)) {
+        // YUK-386 — pin conformance is answer-class level: a pinned 'choice'
+        // accepts every objective label (choice/true_false/fill_blank + folded
+        // profile vocab), and rejects any label implying a different class.
+        if (!answerClassCompatible(q.kind, params.kind)) {
           const constraint = params.objectiveOnly ? 'objective-only' : 'required';
           throw new Error(
-            `quiz_gen ${constraint} kind='${params.kind}' but agent produced question of kind '${q.kind}'`,
+            `quiz_gen ${constraint} kind='${params.kind}' but agent produced question of kind '${q.kind}' (answer-class mismatch)`,
           );
         }
       }

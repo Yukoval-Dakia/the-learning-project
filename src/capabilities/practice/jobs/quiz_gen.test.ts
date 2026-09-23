@@ -2017,22 +2017,24 @@ describe('runQuizGen', () => {
     await seedKnowledge({ id: 'k1' });
     const enqueueQuizVerify = vi.fn(async () => {});
     const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_required_kind_mismatch');
+    // YUK-386: conformance is answer-class level — 'choice' (exact) vs the
+    // fixture's 'short_answer' (semantic) is a class mismatch → reject.
     await expect(
       runQuizGen({
         db: testDb(),
         trigger: 'knowledge',
         refId: 'k1',
-        kind: 'reading',
+        kind: 'choice',
         kindRequired: true,
         runAgentTaskFn,
         enqueueQuizVerify,
         buildExaMcpServerFn: vi.fn(() => null),
       }),
     ).rejects.toThrow(
-      /item 1 plans kind 'short_answer' which does not match required kind 'reading'/,
+      /item 1 plans kind 'short_answer' whose answer class does not match required kind 'choice'/,
     );
     expect(runAgentTaskFn.mock.calls[0][1]).toMatchObject({
-      requested_kind: 'reading',
+      requested_kind: 'choice',
       kind_required: true,
     });
     expect(enqueueQuizVerify).not.toHaveBeenCalled();
@@ -2054,7 +2056,7 @@ describe('runQuizGen', () => {
         buildExaMcpServerFn: vi.fn(() => null),
       }),
     ).rejects.toThrow(
-      /item 1 plans kind 'short_answer' which does not match objective-only kind 'choice'/,
+      /item 1 plans kind 'short_answer' whose answer class does not match objective-only kind 'choice'/,
     );
     expect(runAgentTaskFn.mock.calls[0][1]).toMatchObject({
       requested_kind: 'choice',
@@ -2087,7 +2089,7 @@ describe('runQuizGen', () => {
   });
 
   // YUK-226 S2-5b (PR #320 验证轮 A3) — cross-vocabulary pin: a profile-vocabulary pin
-  // ('reading_comprehension') MATCHES a canonical 'reading' output via kindsMatch. The old
+  // ('reading_comprehension') MATCHES a canonical 'reading' output via answerClassCompatible. The old
   // skill-space compare (questionKindToSkillKind(q.kind) !== params.kind) would have FAILED
   // this (reading → reading_comprehension !== reading_comprehension? no — it compared
   // 'reading' to 'reading_comprehension' and threw). This proves the canonical compare.

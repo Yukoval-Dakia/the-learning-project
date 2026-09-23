@@ -52,7 +52,7 @@ export { lockImageStorageKey } from '@/capabilities/ingestion/public';
 export type { R2Client as JyeooR2Client } from '@/server/r2';
 export { getR2 as resolveJyeooR2 } from '@/server/r2';
 
-import { kindsMatch } from '@/subjects/question-kind';
+import { answerClassCompatible } from '@/subjects/question-kind';
 import { canonicalQuestionContentHash } from '../quiz/content-fingerprint';
 import {
   JYEOO_FETCH_CANARY_ACTION,
@@ -661,7 +661,7 @@ async function runJyeooFetchCandidatesCore(
         });
         continue;
       }
-      if (input.kind && !kindsMatch(item.q.kind, input.kind)) {
+      if (input.kind && !answerClassCompatible(item.q.kind, input.kind)) {
         counts.filtered_kind += 1;
         dropped.push({
           sourceUrl: item.q.source_url,

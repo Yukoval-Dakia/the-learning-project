@@ -597,7 +597,7 @@ describe('AiProposalPayload', () => {
     }
   });
 
-  it('rejects a question_draft proposal missing question_id / with a bogus kind or seed_mode', () => {
+  it('rejects a question_draft proposal missing question_id / with a bogus seed_mode (kind is free-form since YUK-386)', () => {
     const change = {
       question_id: 'q_draft_1',
       kind: 'short_answer',
@@ -614,12 +614,23 @@ describe('AiProposalPayload', () => {
         proposed_change: { ...change, question_id: undefined },
       }),
     ).toThrow();
-    expect(() =>
+    // YUK-386 — question.kind is a free-form display label (z.string().min(1)),
+    // not a closed enum: an unrecognized label is a VALID draft snapshot kind.
+    // Only a blank string still fails.
+    expect(
       parseAiProposalPayload({
         ...base,
         kind: 'question_draft',
         target,
         proposed_change: { ...change, kind: 'made_up_kind' },
+      }),
+    ).toMatchObject({ kind: 'question_draft' });
+    expect(() =>
+      parseAiProposalPayload({
+        ...base,
+        kind: 'question_draft',
+        target,
+        proposed_change: { ...change, kind: '' },
       }),
     ).toThrow();
     expect(() =>

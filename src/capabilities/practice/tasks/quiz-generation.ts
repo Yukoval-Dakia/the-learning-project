@@ -46,7 +46,7 @@ function buildQuizGenPrompt(profile: SubjectProfile): string {
 
 每题输出形状（QuizGenQuestion）：
 {
-  "kind": "${CANONICAL_QUESTION_KINDS} 之一（与 plan.items 对应项一致）",
+  "kind": "题面展示标签——优先取惯用标签 ${CANONICAL_QUESTION_KINDS}；其判分类（exact/keyword/semantic/steps）须与 plan.items 对应项一致",
   "prompt_md": "原创题面 markdown，可含 LaTeX",
   "reference_md": "参考答案 + 简短解析",
   "choices_md": ["选项 A 的正文（不含 A. 序号）", "选项 B 的正文（不含 B. 序号）", ...] | null,

@@ -18,8 +18,11 @@
 // src/core/schema/answer-class-route-parity.test.ts.
 import type { z } from 'zod';
 import { deriveAnswerClass } from './answer-class';
-import { type JudgeKind, QuestionKind, type Rubric } from './business';
+import type { JudgeKind, QuestionKind, Rubric } from './business';
 
+// YUK-386 — question.kind is a free-form display label; QuestionKindT is
+// `string` (kept as an alias for source-compatible imports). No reader below
+// treats the label as a closed-set authority.
 export type QuestionKindT = z.infer<typeof QuestionKind>;
 export type JudgeKindT = z.infer<typeof JudgeKind>;
 
@@ -120,10 +123,11 @@ export function defaultJudgeKindForQuestion(q: JudgeRoutableQuestion): JudgeKind
     case 'steps':
       return 'semantic';
     case 'semantic':
-      // Canonical semantic kinds (prose + keyword-less computation) → semantic.
-      // A NON-enum kind string derives class 'semantic' but the hand-rolled chain
-      // this replaced fell it through to 'exact' (PROSE fallthrough); keep that
-      // legacy cell byte-identical rather than silently rerouting dirty data.
-      return QuestionKind.safeParse(q.kind).success ? 'semantic' : 'exact';
+      // Prose + keyword-less computation + every free-form label (YUK-386) →
+      // semantic. The retired closed-enum fallback sent non-enum kinds to
+      // 'exact'; under free-form labels that cell is removed — 'semantic' is
+      // the conservative model-backed default for any label the classifier
+      // does not recognise.
+      return 'semantic';
   }
 }

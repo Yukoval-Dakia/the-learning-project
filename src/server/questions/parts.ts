@@ -1,9 +1,13 @@
 /**
  * T-QP (YUK-165, ADR-0014 §1) — owner service for `question_part`.
  *
- * A part is NOT a separate table — it is a `question` row tagged
- * `kind='question_part'` and linked to its parent via `parent_question_id`
- * (ordered by `part_index`). Because a part IS a question, it gets FSRS state and
+ * A part is NOT a separate table — it is a `question` row linked to its parent
+ * via `parent_question_id` (ordered by `part_index`). YUK-388/YUK-386:
+ * `parent_question_id IS NOT NULL` is the SOLE authority for part-ness — every
+ * read/cascade path derives it from the FK alone. The `kind='question_part'`
+ * label is still stamped on insert as a display hint but is never consulted for
+ * behavior (kind is a free-form label, not a behavioral enum). Because a part IS
+ * a question, it gets FSRS state and
  * flows through the existing `fsrs_question` review/due path UNCHANGED, with its
  * own question id and `subject_kind='question'`. Independent scheduling falls out
  * of parts being independent question rows; no new scheduling algorithm exists.
@@ -29,7 +33,11 @@ import { withAnswerClass } from '@/server/questions/answer-class-write';
 /** Matches the `question.metadata` jsonb column shape (Record<string, unknown>). */
 type JsonObject = Record<string, unknown>;
 
-/** The `kind` tag that marks a question row as a part. */
+/**
+ * The display label stamped on part rows at insert time. NOT the part-ness
+ * authority — readers/cascades detect parts via `parent_question_id` (YUK-388);
+ * this label exists so a part row renders sensibly in kind-label surfaces.
+ */
 export const QUESTION_PART_KIND = 'question_part' as const;
 
 export interface CreateQuestionPartInput {
@@ -59,7 +67,8 @@ export interface CreateQuestionPartInput {
    * keeps the runtime judge contract deterministic: route-resolve short-circuits
    * `choices_md.length > 0` → 'exact', and `withAnswerClass` derives
    * answer_class='exact' on write. Absent ⇒ NULL (a free-response part falls
-   * through to the semantic route via the question_part kind).
+   * through to the semantic route via its label's answer class — the
+   * 'question_part' label itself classifies as semantic).
    */
   choicesMd?: string[] | null;
   /** Optional figures for the part. */

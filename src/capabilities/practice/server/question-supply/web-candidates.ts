@@ -23,7 +23,7 @@ import { knowledge } from '@/db/schema';
 import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
 import type { SubjectProfile } from '@/subjects/profile-schema';
-import { kindsMatch } from '@/subjects/question-kind';
+import { answerClassCompatible } from '@/subjects/question-kind';
 import { canonicalQuestionContentHash } from '../quiz/content-fingerprint';
 
 // 旧 sourcing.ts:109 同款常量；source_route / difficulty_evidence 的路由身份。
@@ -114,7 +114,7 @@ export interface RunWebFetchCandidatesParams {
     /** 参与判题上下文的附加 KC（默认仅锚点）。 */
     knowledgeIds?: string[];
     count: number;
-    /** canonical QuestionKind；'any' 由调用方展开为 undefined（自由找题）。 */
+    /** 自由文本 kind 标签（YUK-386）；'any' 由调用方展开为 undefined（自由找题）。 */
     kind?: string;
     objectiveOnly?: boolean;
     kindRequired?: boolean;
@@ -285,7 +285,8 @@ async function runWebFetchCandidatesCore(
     };
   }
 
-  // ── 4. parse + kind 门（旧 sourcing.ts:394-405 同款语义） ───────────────────────
+  // ── 4. parse + kind 门（旧 sourcing.ts:394-405 同款语义；YUK-386 起按
+  //      answer-class 相容判，kind 标签本身是自由文本不进闭集比较） ──────────
   let parsed: SourcingTaskOutputT;
   try {
     parsed = parseSourcingOutput(taskResult.text, deps.parseLoose);
@@ -294,11 +295,11 @@ async function runWebFetchCandidatesCore(
   }
   if ((params.input.objectiveOnly || params.input.kindRequired) && params.input.kind) {
     for (const q of parsed.questions) {
-      if (!kindsMatch(q.kind, params.input.kind)) {
+      if (!answerClassCompatible(q.kind, params.input.kind)) {
         return {
           status: 'failed',
           failureClass: 'kind_gate',
-          detail: `kind 约束 '${params.input.kind}' 但产出 '${q.kind}'`,
+          detail: `kind 约束 '${params.input.kind}' 但产出 '${q.kind}'（answer-class 不一致）`,
         };
       }
     }

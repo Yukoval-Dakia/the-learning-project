@@ -1053,22 +1053,10 @@ export const practiceCapability = defineCapability({
         load: () =>
           import('./jobs/answer_class_backfill').then((m) => m.buildAnswerClassBackfillHandler),
       },
-      // YUK-390 kind Step 3 residual（PR B）— 持久化 kind 脏值清洗。历史 seed/fixture
-      // 写路径把 profile 词表（single_choice / calculation / reading_comprehension …）
-      // 漏进 question.kind；本 job 经 normalizeToCanonicalKind（question-kind.ts，与
-      // answer_class backfill 同一权威归一器）把脏值重写为 canonical。fail-closed：
-      // 两套词表都不认的值只计数+日志，绝不静默改写。幂等：SELECT 只命中 canonical 词表
-      // 之外的行（无脏行 = no-op）。answer_class 无需重导：deriveAnswerClass 先归一，
-      // 输出对 kind 改写不变。同批收紧了 fixture 插入缝（subject fixture schema），
-      // fixture 路径不再产新脏行。DAG 根（无 cron，锚点触发，镜像 answer_class_backfill）；
-      // queue=llm：与其余 backfill 同一 DLQ/retry 档（纯 SQL，无 LLM 调用）。
-      {
-        name: 'kind_cleanup_backfill',
-        dependsOn: [],
-        queue: 'llm',
-        load: () =>
-          import('./jobs/kind_cleanup_backfill').then((m) => m.buildKindCleanupBackfillHandler),
-      },
+      // YUK-386 — `kind_cleanup_backfill` 已删除：question.kind 现在是自由文本展示
+      // 标签，不再有「必须收敛到 canonical 词表」的不变量要维护；读侧词表折叠
+      // （canonicalKindToPersistedForms / answerClassCompatible）继续覆盖历史
+      // profile-vocab 标签行。
       // YUK-348 (B1 four-engine soft-track inc-1, ADR-0035 决定 #3 + 决定 #4 红线) — 软轨 KT
       // 估计夜扫。每夜扫「有硬轨 item_calibration 行 + 有非空二元作答序列」的非 draft 题，逐题
       // estimateBkt (纯 BKT forward) → applyKtEstimate 落 item_calibration.kt_json。kt_json 是

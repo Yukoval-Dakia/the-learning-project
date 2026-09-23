@@ -39,7 +39,7 @@ function buildSupplyPlanPrompt(profile: SubjectProfile): string {
 
 硬约束（违反任一即整份被拒）：
 - items 至多 25 项；每项 count 1-10；同一 (knowledge_id, kind, difficulty_band) 格子只能出现一次（要更多就合并 count）。
-- kind 只能取 ${CANONICAL_QUESTION_KINDS} 之一，或 'any'（该格子任意题型可填）。
+- kind 是展示标签：优先取惯用标签 ${CANONICAL_QUESTION_KINDS}（按答案类型与题面结构选择），或 'any'（该格子任意题型可填）。
 - difficulty_band 只能取 below | near | above | stretch。
 - route_preference 每项至少一路，值只能取 sourcing_web | quiz_gen | author_question | ingest_existing | image_candidate | jyeoo_fetch。
 - 每项必须给 rationale（≤500 字，说清为什么这个格子值得补——留痕与 shadow 分析用）。

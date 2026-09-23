@@ -329,6 +329,9 @@ export type QuizGenOutputT = z.infer<typeof QuizGenOutput>;
 // YUK-391 (kind Step 4)：不再手维护集合——由 answer-class 单一真相派生
 // （OBJECTIVE_ANSWER_KINDS = class 在任何 keyword 形态下都落 exact|keyword 的
 // canonical kinds，core/schema/answer-class.ts；PROSE_KINDS 时代的注释语义不变）。
+// YUK-386: membership is over the KNOWN label ids only — a free-form custom
+// label is never a member (it classifies semantic by default), so the
+// answer_anchor requirement fires exactly for the recognised objective labels.
 export const QUIZ_PLAN_OBJECTIVE_KINDS: ReadonlySet<QuestionKindT> =
   OBJECTIVE_ANSWER_KINDS as ReadonlySet<QuestionKindT>;
 
@@ -337,7 +340,8 @@ export const QuizGenPlanItem = z
     // which knowledge point the planned question tests — must be a REAL,
     // unarchived node (the handler's gate reads the knowledge table).
     knowledge_id: z.string().min(1),
-    // what kind of question face will be generated (canonical QuestionKind).
+    // what kind of question face will be generated — free-form display label
+    // (YUK-386); the KNOWN vocabulary is the conventional suggestion set.
     kind: QuestionKind,
     difficulty: z.number().int().min(1).max(5),
     // 客观题标准答案锚点 — the exact intended correct answer. REQUIRED for

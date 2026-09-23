@@ -12,7 +12,7 @@
 //     材料即 prompt_md → 母题 stem 区直接编辑 prompt_md，不单设 passage 编辑器。
 //   • difficulty ←→ difficulty（1-5）；knowledge ←→ knowledge_ids + labels（中文名）。
 //   • status（active/draft）←→ draft_status（NULL≡active / 'draft'≡草稿）。
-//   • kind ←→ kind（真 QuestionKind enum 9 值）；source ←→ source（真 13 值，只读展示）。
+//   • kind ←→ kind（自由文本展示标签，YUK-386；KNOWN 9 标签给中文名）；source ←→ source（真 13 值，只读展示）。
 //   • 变体家族 ←→ family.members（root + variants，is_self 标当前）。
 //   • composite 小题 ←→ parts（part_index 序）；parent 面包屑 ←→ parent_question_id +
 //     part_index。

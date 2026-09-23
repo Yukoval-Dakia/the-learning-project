@@ -425,7 +425,7 @@ export const ImageCandidateProposalChange = z.object({
   // an empty attribution exactly as before — no behaviour regression.
   knowledge_ids: z.array(z.string().min(1)).default([]),
   // YUK-227 S3 Slice C (FIX-R2-5) — the 题型约束 the sourcing run was pinned to (if
-  // any). The text path enforces kindsMatch per question; image candidates carry no
+  // any). The text path enforces answerClassCompatible per question; image candidates carry no
   // per-question kind at propose time (the stem is unread until accept's VLM), so the
   // run-level requested kind is stamped here and the accept handler normalizes it
   // through the single-authority question-kind vocabulary (src/subjects/question-kind.ts)

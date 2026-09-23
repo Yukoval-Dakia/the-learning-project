@@ -3,8 +3,9 @@
 // lineage + composite 大题小题 + prompt 预览）。questions.css 直接 port（同目录 import）。
 //
 // 与设计 demo 的真数据取舍（demo 用 data-questions.jsx 内存模型，这里全接真投影）：
-//   • QKIND — 用真 QuestionKind enum（choice/reading/computation/...，9 值）而非 demo 的
-//     mcq/short/trans/cloze/reading 5 值；canonical 词表见 core/schema/business.ts。
+//   • QKIND — 用 KNOWN 题面标签词表（choice/reading/computation/...，9 标签）而非 demo 的
+//     mcq/short/trans/cloze/reading 5 值；词表见 core/schema/business.ts KNOWN_QUESTION_KIND_IDS
+//     （kind 是自由文本，词表外标签走 fallback，YUK-386）。
 //   • QSOURCE — 用真 QuestionSource enum（13 值）而非 demo 的 seed/quiz/exam/variant 4 值；
 //     AI 生成类→coral/sparkle，采集/拍照类→info/camera|download，人工/教学类→neutral。
 //   • subject — 真后端派生（list enrich：knowledge_ids[0] → effectiveDomain → subject
@@ -44,7 +45,8 @@ import { type QBankQuestion, getQuestionsList } from './practice-api';
 
 type Tone = 'neutral' | 'info' | 'coral' | 'good' | 'hard' | 'again';
 
-// 真 QuestionKind enum（core/schema/business.ts，9 值）→ label/icon。
+// KNOWN 题面标签（core/schema/business.ts KNOWN_QUESTION_KIND_IDS，9 标签；kind 为自由文本，
+// 词表外走 fallback）→ label/icon。
 const QKIND: Record<string, { label: string; icon: LoomIconName }> = {
   choice: { label: '选择', icon: 'list' },
   true_false: { label: '判断', icon: 'check' },

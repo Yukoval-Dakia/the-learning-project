@@ -406,7 +406,7 @@ export interface QBankListFilters {
   // API 支持的 server-side 轴（择优 server-side 传参；search 走 client-side，同 DraftReviewPage）。
   subject?: string;
   source?: string;
-  kind?: string; // canonical QuestionKind（choice/reading/computation...）。
+  kind?: string; // 自由文本题面标签（YUK-386；惯用标签 choice/reading/computation...）。
   difficulties?: number[]; // repeated 1-5, OR semantics.
   knowledgeIds?: string[];
   includeDrafts?: boolean; // 题库面默认 true（状态 tab 需草稿全集 → client 按 draft_status 分）。

@@ -17,10 +17,12 @@ describe('getTaskSystemPrompt', () => {
     }
   });
 
-  it('keeps the strict QuestionKind enum explicit for MistakeEnroll output', () => {
+  it('presents the kind label vocabulary as suggestions (not a closed enum) for MistakeEnroll output', () => {
     const prompt = getTaskSystemPrompt('MistakeEnrollTask', resolveSubjectProfile('math'));
+    // YUK-386 — kind is a free-form display label; the prompt names the KNOWN
+    // labels as the conventional vocabulary plus answer-class guidance.
     expect(prompt).toContain(
-      'question_type —— 从题面判题型：choice | true_false | fill_blank | short_answer | essay | computation | reading | translation | derivation 之一。',
+      'question_type —— 从题面判题型的展示标签：优先取惯用标签 choice | true_false | fill_blank | short_answer | essay | computation | reading | translation | derivation',
     );
   });
 
@@ -60,6 +62,23 @@ describe('getTaskSystemPrompt', () => {
     expect(authorPrompt).toContain('requested_kind 若出现，输出的 kind **必须**等于它');
     expect(authorPrompt).toContain('requested_kind 一旦出现就**是硬约束**');
     expect(authorPrompt).not.toContain('将它作为答案类型与题面结构指导，不作字符串闭集目标');
+  });
+
+  // YUK-386 — SupplyPlanTask / TeachingTurnTask carry the same label-vocabulary
+  // wording (they are oracle-skipped in registry.test.ts, so this pins the new
+  // text here instead).
+  it('presents the kind label vocabulary as suggestions in SupplyPlanTask and TeachingTurnTask', () => {
+    const supplyPrompt = getTaskSystemPrompt('SupplyPlanTask', resolveSubjectProfile('math'));
+    expect(supplyPrompt).toContain(
+      "- kind 是展示标签：优先取惯用标签 choice | true_false | fill_blank | short_answer | essay | computation | reading | translation | derivation（按答案类型与题面结构选择），或 'any'",
+    );
+    expect(supplyPrompt).not.toContain('kind 只能取');
+
+    const teachingPrompt = getTaskSystemPrompt('TeachingTurnTask', resolveSubjectProfile('math'));
+    expect(teachingPrompt).toContain(
+      'kind 是题面展示标签——优先取惯用标签 choice/true_false/fill_blank/short_answer/essay/computation/reading/translation/derivation',
+    );
+    expect(teachingPrompt).not.toContain('kind 取 choice/true_false');
   });
 
   // YUK (wenyan deprotagonist): the DEFAULT profile is now the neutral `general`

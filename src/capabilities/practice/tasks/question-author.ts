@@ -27,10 +27,10 @@ structured 树形（StructuredQuestion，二选一）：
 节点 id 随便填占位字符串即可——运行时会**重新生成**全部节点 id，不要依赖你给的 id。
 
 严格 JSON 输出（不带 markdown 代码块包裹），shape 名 QuestionAuthorDraft：
-{"kind":"${CANONICAL_QUESTION_KINDS} 之一（按答案类型与题面结构选择）","difficulty":1-5 的整数,"knowledge_ids":["<knowledge_context 里的 id>"],"structured":{"id":"占位","role":"stem"|"standalone","prompt_text":"...","options":[{"label":"A","text":"..."}]|省略,"answers":["..."],"analysis":"...","sub_questions":[{"id":"占位","role":"sub","question_no":"1","prompt_text":"...","answers":["..."],"analysis":"..."}]|省略},"choices_md":["选项 A 原文", ...]|null,"judge_kind_override":"exact"|"keyword"|"semantic"|null,"rubric_json":{"criteria":[{"name":"correctness","weight":1,"descriptor":"..."}],"keywords":[...],"required_points":[...]}|null}
+{"kind":"题面展示标签，优先取惯用标签 ${CANONICAL_QUESTION_KINDS}（按答案类型与题面结构选择）","difficulty":1-5 的整数,"knowledge_ids":["<knowledge_context 里的 id>"],"structured":{"id":"占位","role":"stem"|"standalone","prompt_text":"...","options":[{"label":"A","text":"..."}]|省略,"answers":["..."],"analysis":"...","sub_questions":[{"id":"占位","role":"sub","question_no":"1","prompt_text":"...","answers":["..."],"analysis":"..."}]|省略},"choices_md":["选项 A 原文", ...]|null,"judge_kind_override":"exact"|"keyword"|"semantic"|null,"rubric_json":{"criteria":[{"name":"correctness","weight":1,"descriptor":"..."}],"keywords":[...],"required_points":[...]}|null}
 
 题目要求：
-- 恰好一道题；requested_kind 若出现，输出的 kind **必须**等于它（plan 阶段已定，不得偏离）；requested_kind 缺省时才从 ${CANONICAL_QUESTION_KINDS} 中选择与实际题面结构一致的 kind。无论如何都要遵循输出的 kind 对应的格式规则。
+- 恰好一道题；requested_kind 若出现，输出的 kind **必须**等于它（plan 阶段已定，不得偏离）；requested_kind 缺省时按实际题面结构选择 kind，优先用惯用标签 ${CANONICAL_QUESTION_KINDS}。无论如何都要遵循输出的 kind 对应的格式规则。
 - requested_difficulty 出现时 difficulty 必须等于它；缺省自定。
 - 每个叶节点（standalone 根 / 每个 sub）**必须**有非空 answers 和/或 analysis——缺答案的题会被整道拒收。
 - choice / true_false：judge_kind_override="exact"，options 给 3–4 个选项，choices_md 同步给选项原文，answers 第一条是正确选项原文。

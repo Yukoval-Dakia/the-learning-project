@@ -432,7 +432,9 @@ export const question = pgTable(
     root_question_id: text('root_question_id'),
     parent_variant_id: text('parent_variant_id'),
     // T-QP (YUK-165, ADR-0014 §1) — `question_part` composition axis. A part is a
-    // `question` row tagged `kind='question_part'` and linked to its parent here
+    // `question` row linked to its parent here; this FK is the SOLE part-ness
+    // authority (YUK-388/YUK-386) — the stamped `kind='question_part'` label is
+    // display-only and never consulted for behavior
     // (mirrors the variant parent-ref precedent above; new axis = composition, not
     // variant lineage). Nullable: NULL on a plain/root question, set only on parts.
     // `part_index` orders parts within a parent. Written by the part-creation owner

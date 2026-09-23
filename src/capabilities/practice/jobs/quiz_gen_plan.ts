@@ -14,7 +14,7 @@
 
 import { QUIZ_PLAN_OBJECTIVE_KINDS, QuizGenPlan, type QuizGenPlanT } from '@/core/schema/quiz_gen';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
-import { kindsMatch } from '@/subjects/question-kind';
+import { answerClassCompatible } from '@/subjects/question-kind';
 
 // Bounded regeneration budget for the plan phase (initial attempt + 1 retry).
 // Keep small: every attempt is a paid LLM call, and a persistently invalid plan
@@ -68,17 +68,20 @@ export function parsePlanOutput(text: string): PlanParseResult {
   return { ok: true, plan: parsed.data };
 }
 
-// Deterministic pin conformance. Same vocabulary normalization as the persist-time
-// checks (kindsMatch: 'calculation' pin ↔ 'computation' plan, etc.), so the plan
-// gate and the persist gate can never disagree on what matches.
+// Deterministic pin conformance. Same answer-class comparison as the
+// persist-time checks (answerClassCompatible: 'calculation' pin ↔ 'computation'
+// plan, 'choice' pin ↔ 'fill_blank' plan, etc.), so the plan gate and the
+// persist gate can never disagree on what matches. YUK-386: conformance is by
+// implied answer class, not label identity — the labels themselves are
+// free-form display text.
 export function checkPlanPins(plan: QuizGenPlanT, pins: PlanGatePins): string[] {
   const reasons: string[] = [];
   const kindPinned = (pins.kindRequired || pins.objectiveOnly) && pins.kind;
   plan.items.forEach((item, index) => {
-    if (kindPinned && !kindsMatch(item.kind, pins.kind as string)) {
+    if (kindPinned && !answerClassCompatible(item.kind, pins.kind as string)) {
       const constraint = pins.objectiveOnly ? 'objective-only' : 'required';
       reasons.push(
-        `quiz_plan item ${index + 1} plans kind '${item.kind}' which does not match ${constraint} kind '${pins.kind}'`,
+        `quiz_plan item ${index + 1} plans kind '${item.kind}' whose answer class does not match ${constraint} kind '${pins.kind}'`,
       );
     }
     // YUK-1011 — structural pin conformance, both directions (fail-closed).

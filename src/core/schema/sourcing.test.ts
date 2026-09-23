@@ -66,9 +66,12 @@ describe('SourcedQuestion', () => {
     expect(parsed.success).toBe(false);
   });
 
-  it('rejects an unknown question kind', () => {
+  it('accepts a free-form question kind label but still rejects an empty one (YUK-386)', () => {
+    // kind is a display label, not a closed enum — an unrecognized label parses;
+    // only a blank string fails min(1).
     const parsed = SourcedQuestion.safeParse({ ...validQuestion, kind: 'mystery' });
-    expect(parsed.success).toBe(false);
+    expect(parsed.success).toBe(true);
+    expect(SourcedQuestion.safeParse({ ...validQuestion, kind: '' }).success).toBe(false);
   });
 });
 

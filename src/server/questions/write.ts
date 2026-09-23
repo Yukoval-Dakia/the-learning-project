@@ -22,8 +22,10 @@
 // `metadata.archived_at` / `metadata.archived_reason` (no schema migration).
 //
 // ── Cascade decision (map §YUK-281) ──────────────────────────────────────────
-// A composite "part" is a `question` row tagged `kind='question_part'` linked by
-// `parent_question_id` (src/server/questions/parts.ts). Parts are independent
+// A composite "part" is a `question` row linked to its parent by
+// `parent_question_id` (src/server/questions/parts.ts; the stamped
+// `kind='question_part'` label is display-only — part-ness is read from the
+// FK, YUK-388). Parts are independent
 // rows with their own FSRS state — there is NO FK ON DELETE CASCADE anywhere
 // (no FK references question.id at all). So archiving a parent must explicitly
 // cascade-archive its parts in the SAME transaction, otherwise orphaned parts
@@ -46,6 +48,8 @@ import { writeEvent } from '@/kernel/events';
 import { embedHash, questionEmbedText } from '@/server/ai/embed-source';
 import { deriveAnswerClassForValues } from '@/server/questions/answer-class-write';
 
+/** Display label stamped on part rows; NOT the part-ness authority (the
+ * `parent_question_id` FK is — YUK-388). */
 export const QUESTION_PART_KIND = 'question_part' as const;
 
 // Fields a question carries that describe variant / composite BLOODLINE. These
@@ -170,7 +174,7 @@ export interface QuestionEditResult {
   // (re-validated inside the tx to close the TOCTOU window); `protected` =
   // product-owned diagnostic content cannot be mutated through the question bank;
   // `composite_lifecycle` = the patch tried to flip draft_status on a composite
-  // member (a question_part child or a parent with children) — group lifecycle
+  // member (a part child or a parent with children) — group lifecycle
   // is owned by the verify cascade / owner override / archiveQuestion.
   status:
     | 'updated'
@@ -216,7 +220,7 @@ export async function editQuestion(
     }
 
     // YUK-1011 — composite lifecycle guard: a direct draft_status patch on a
-    // composite member bypasses the group atomicity invariant. A question_part
+    // composite member bypasses the group atomicity invariant. A part
     // promoted standalone would serve while its parent may still be a draft;
     // a composite parent re-drafted here would leave active orphan children
     // (deactivation must go through archiveQuestion, which cascades). Only a
@@ -440,13 +444,12 @@ export async function archiveQuestion(
     // Cascade: re-draft live composite parts so they don't outlive the parent in
     // the pool. Only parts NOT already drafted are touched (idempotent-ish).
     // YUK-388 Step 1: part-ness is derived from the `parent_question_id` FK, not
-    // the `kind='question_part'` sentinel. `parent_question_id = questionId`
+    // the `kind='question_part'` label. `parent_question_id = questionId`
     // already selects exactly the parts of THIS parent (strictly implies the FK
     // IS NOT NULL), so the redundant kind predicate is dropped. See
     // sourcing-sequence.ts:130-139 / detail.ts loadParts — both already detect
-    // parts via the FK alone. Legacy rows still carrying kind='question_part'
-    // are harmless dead data (no read consults `kind` for part-ness anymore);
-    // the vocabulary cleanup lands in Step 3.
+    // parts via the FK alone. Rows stamped kind='question_part' carry a
+    // display-only label (YUK-386: kind is free-form, never behavioral).
     const cascaded = await tx
       .update(question)
       .set({

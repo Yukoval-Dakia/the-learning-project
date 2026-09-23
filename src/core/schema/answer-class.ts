@@ -24,8 +24,12 @@
 // here is the verification CLASS (the generation dispatch collapses derivation
 // to semantic in judge-routing.ts; that is a separate concern, not this column).
 import type { z } from 'zod';
-import { QuestionKind, type Rubric } from './business';
+import { KNOWN_QUESTION_KIND_IDS, type QuestionKind, type Rubric } from './business';
 
+// YUK-386 — question.kind is now a free-form display label (z.string().min(1)),
+// so QuestionKindT is just `string`. The alias is kept so existing imports stay
+// source-compatible; the label is NEVER a behavioural authority — the kind
+// string below is only a coarse hint deriveAnswerClass reads AFTER structure.
 export type QuestionKindT = z.infer<typeof QuestionKind>;
 
 export const ANSWER_CLASSES = ['exact', 'keyword', 'semantic', 'steps'] as const;
@@ -54,15 +58,17 @@ export function nonEmptyStrings(values: string[] | undefined): string[] {
 
 /** Minimum structural shape needed to classify a question's answer-class. */
 export interface AnswerClassInput {
-  kind: QuestionKindT;
+  // Free-form kind label (YUK-386). Only the KNOWN labels steer the class; an
+  // unknown label falls through to 'semantic' (the conservative default).
+  kind: string;
   rubric_json?: z.infer<typeof Rubric> | null;
   choices_md?: string[] | null;
 }
 
 /**
  * Derive the 4-value answer-class from question structure. Choices-first; then
- * kind-based with keyword-sensitivity for fill_blank / computation. All 9
- * QuestionKind values are covered (prose + any fallthrough → semantic).
+ * kind-label hints with keyword-sensitivity for fill_blank / computation. The
+ * known labels are covered explicitly; any other (free-form) label → semantic.
  */
 export function deriveAnswerClass(q: AnswerClassInput): AnswerClass {
   if ((q.choices_md ?? []).length > 0) return 'exact';
@@ -94,7 +100,31 @@ export function deriveAnswerClass(q: AnswerClassInput): AnswerClass {
 const RUBRIC_WITH_KEYWORD: z.infer<typeof Rubric> = { criteria: [], keywords: ['anchor'] };
 
 function classifyKind(kind: string, rubric: z.infer<typeof Rubric> | null): AnswerClass {
-  return deriveAnswerClass({ kind: kind as QuestionKindT, rubric_json: rubric, choices_md: null });
+  return deriveAnswerClass({ kind, rubric_json: rubric, choices_md: null });
+}
+
+/**
+ * The answer class a bare kind LABEL implies — kind-only, no row structure
+ * (choices/rubric deliberately excluded). This is the right level for
+ * comparing a requested kind label against a produced one: both sides are
+ * labels, so both must be classified without row structure (a 'fill_blank'
+ * label implies 'exact' even though a fill_blank ROW with rubric keywords
+ * classifies 'keyword').
+ */
+export function answerClassForKindLabel(kind: string): AnswerClass {
+  return classifyKind(kind, null);
+}
+
+/**
+ * True iff two kind labels imply the same answer class — the YUK-386 pin /
+ * conformance comparator. Kind names never enter a branch directly; two labels
+ * conform exactly when they imply the same verification class ('choice' ≡
+ * 'fill_blank' ≡ 'true_false' → exact; prose labels → semantic; 'derivation' →
+ * steps). For profile-vocabulary folding on top of this, see
+ * subjects/question-kind.ts answerClassCompatible.
+ */
+export function kindLabelsShareAnswerClass(a: string, b: string): boolean {
+  return answerClassForKindLabel(a) === answerClassForKindLabel(b);
 }
 
 /**
@@ -138,8 +168,10 @@ export function isKeywordConditionalAnswerKind(kind: string): boolean {
 /**
  * The objective kind family as a Set (derived, not hand-maintained):
  * {choice, true_false, fill_blank}. Single source for the converged
- * OBJECTIVE_KINDS / QUIZ_PLAN_OBJECTIVE_KINDS exports.
+ * OBJECTIVE_KINDS / QUIZ_PLAN_OBJECTIVE_KINDS exports. YUK-386: derived from
+ * the KNOWN label vocabulary (business.ts KNOWN_QUESTION_KIND_IDS) — a lookup
+ * over familiar labels, not a closed-set gate on persisted kind.
  */
 export const OBJECTIVE_ANSWER_KINDS: ReadonlySet<string> = new Set(
-  QuestionKind.options.filter((kind) => isObjectiveAnswerKind(kind)),
+  KNOWN_QUESTION_KIND_IDS.filter((kind) => isObjectiveAnswerKind(kind)),
 );

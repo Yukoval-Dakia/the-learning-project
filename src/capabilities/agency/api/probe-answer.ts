@@ -45,12 +45,7 @@
 // `probe_result_corrupt` 500 (never papered over).
 
 import { eq } from 'drizzle-orm';
-import {
-  ConjectureProbeSpec,
-  ConjectureProbeSpecV2,
-  JudgeKind,
-  QuestionKind,
-} from '@/core/schema/business';
+import { ConjectureProbeSpec, ConjectureProbeSpecV2, JudgeKind } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import { PROBE_QUESTION_INITIAL_VERSION } from '@/core/schema/conjecture';
 import {
@@ -170,18 +165,10 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       });
     }
 
-    // Early fail-closed on a corrupt / unknown question kind BEFORE spending an
-    // LLM call. The DB `kind` column is free-form text; safeParse guards against
-    // garbage. (The invoker's own route resolution would also catch this, but
-    // later — this guard saves the LLM cost on a corrupt row.)
-    const kindParsed = QuestionKind.safeParse(probe.kind);
-    if (!kindParsed.success) {
-      throw new ApiError(
-        'unsupported_judge_route',
-        `probe ${probeQuestionId} has unknown question kind '${probe.kind}'`,
-        422,
-      );
-    }
+    // YUK-386 — question.kind is a free-form display label, so there is no
+    // "unknown kind" to reject here: an unrecognized label simply routes to the
+    // answer-class default (semantic) inside the judge resolver. The remaining
+    // guard below covers judge_kind_override, which IS still a closed enum.
     const overrideParsed = probe.judge_kind_override
       ? JudgeKind.safeParse(probe.judge_kind_override)
       : null;
