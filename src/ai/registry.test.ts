@@ -44,7 +44,7 @@ describe('copilot task dispatch declarations', () => {
     for (const kind of Object.keys(taskCatalog) as TaskKind[]) {
       expect(tasks[kind], kind).toBe(taskCatalog[kind]);
     }
-    expect(Object.keys(tasks)).toHaveLength(51);
+    expect(Object.keys(tasks)).toHaveLength(52);
   });
 
   it('contains no prompt builders or task business definitions', () => {
@@ -81,7 +81,7 @@ describe('task prompt definitions', () => {
   });
 
   it('defines one non-empty inline or profile prompt for every task', () => {
-    expect(Object.keys(tasks)).toHaveLength(51);
+    expect(Object.keys(tasks)).toHaveLength(52);
 
     for (const task of Object.values(tasks)) {
       switch (task.prompt.kind) {
@@ -121,6 +121,8 @@ describe('task prompt definitions', () => {
         // Current policy/materialization tests replace migration-only identity for evolved tasks.
         // CauseCategoryProposeTask postdates the oracle entirely (YUK-1016) — no
         // pre-refactor hash exists to pin against.
+        // ItemPriorLlasaTask postdates the oracle entirely (YUK-376) — the LLaSA
+        // student-simulation prompt variant is new, nothing to pin it against.
         // SessionSummaryTask evolved in YUK-1018 (category_label guidance for misc_ causes).
         // QuizGenTask + QuizPlanTask evolved in YUK-1011 (composite_parent_only 篇
         // contract — stem+sub_questions output shape and plan item composite flag).
@@ -129,6 +131,7 @@ describe('task prompt definitions', () => {
           task === 'QuizVerifyTask' ||
           task === 'NoteGenerateTask' ||
           task === 'CauseCategoryProposeTask' ||
+          task === 'ItemPriorLlasaTask' ||
           task === 'SessionSummaryTask' ||
           task === 'QuizGenTask' ||
           task === 'QuizPlanTask'

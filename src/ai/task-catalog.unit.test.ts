@@ -51,7 +51,10 @@ import {
 } from '@/capabilities/practice/tasks/attribution';
 import { causeCategoryProposeTaskSpec } from '@/capabilities/practice/tasks/cause-category-propose';
 import { practiceTaskSpecs } from '@/capabilities/practice/tasks/index';
-import { itemPriorTaskSpec } from '@/capabilities/practice/tasks/item-prior';
+import {
+  itemPriorLlasaTaskSpec,
+  itemPriorTaskSpec,
+} from '@/capabilities/practice/tasks/item-prior';
 import {
   multimodalDirectJudgeTaskSpec,
   semanticJudgeTaskSpec,
@@ -130,6 +133,7 @@ const EXPECTED_KINDS = [
   'TeachingQualityTask',
   'QuestionAuthorTask',
   'ItemPriorTask',
+  'ItemPriorLlasaTask',
   'SelectionOrchestratorTask',
   'SourcingTask',
   'SupplyPlanTask',
@@ -156,7 +160,7 @@ const OWNER_MAPS = {
 } as const;
 
 const EXPECTED_OWNER_COUNTS = {
-  practice: 22,
+  practice: 23,
   notes: 3,
   ingestion: 8,
   knowledge: 3,
@@ -179,6 +183,7 @@ const OWNED_SPECS: ReadonlySet<object> = new Set([
   quizPlanTaskSpec,
   questionAuthorTaskSpec,
   itemPriorTaskSpec,
+  itemPriorLlasaTaskSpec,
   selectionOrchestratorTaskSpec,
   sessionSummaryTaskSpec,
   sourcingTaskSpec,

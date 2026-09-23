@@ -15,16 +15,26 @@ import { inArray, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
-import { parseItemPriorOutput } from '@/server/ai/item-prior';
+import { parseItemPriorLlasaOutput, parseItemPriorOutput } from '@/server/ai/item-prior';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { applyItemPrior } from '@/server/mastery/item-calibration';
 import { resolveSubjectProfileForKnowledgeIds } from '../server/knowledge-runtime';
 import { type PracticeTaskRunFn, makePracticeTaskRunFn } from '../server/task-runtime';
 
+// YUK-376 — 冷启锚方法开关：'feature'（默认，ItemPriorTask feature→b，source=
+// 'llm_prior'）| 'llasa'（ItemPriorLlasaTask 学生模拟反推 b，source=
+// 'llm_prior_llasa'）。opt-in——默认路径（含输入形状）零变更。
+export type ItemPriorMethod = 'feature' | 'llasa';
+
 type DepsOverride = {
   runTaskFn?: PracticeTaskRunFn;
   /** 每轮最多标定多少题（防一次 job 打爆 LLM 预算）。default 25。 */
   maxPerRun?: number;
+  /**
+   * 先验方法选择。默认 'feature'；'llasa' 走 LLaSA 学生模拟反推 b。
+   * 运行时也可经 job data { method: 'llasa' } 触发（pg-boss send 携带）。
+   */
+  method?: ItemPriorMethod;
 };
 
 export interface ItemPriorBackfillResult {
@@ -47,16 +57,21 @@ export async function runItemPriorBackfill(
   deps: DepsOverride = {},
 ): Promise<ItemPriorBackfillResult> {
   const maxPerRun = deps.maxPerRun ?? DEFAULT_MAX_PER_RUN;
+  const method: ItemPriorMethod = deps.method ?? 'feature';
   const result: ItemPriorBackfillResult = { considered: 0, calibrated: 0, skipped_failed: 0 };
 
   // PRE-LLM read OUTSIDE any per-task swallow: a throw here is a legit retryable
   // DB fault (pg-boss retries). Anti-join: questions with no hard-track
   // item_calibration row. NOT EXISTS keeps it index-friendly + idempotent.
+  // reference_md/choices_md 只在 llasa 方法下进 LLM 输入（feature 输入保持原状）；
+  // 一并 SELECT 避免按方法分两条查询（两列读取成本可忽略）。
   const candidates = await db
     .select({
       id: question.id,
       kind: question.kind,
       prompt_md: question.prompt_md,
+      reference_md: question.reference_md,
+      choices_md: question.choices_md,
       knowledge_ids: question.knowledge_ids,
     })
     .from(question)
@@ -92,14 +107,36 @@ export async function runItemPriorBackfill(
       // Resolve the subject profile for the prompt rendering (cause taxonomy /
       // language style). Falls back to default profile when unlabeled.
       const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, c.knowledge_ids ?? []);
-      const input = {
-        prompt_md: c.prompt_md,
-        kind: c.kind,
-        knowledge_context: knowledgeContext,
-      };
-      const runResult = await runTaskFn('ItemPriorTask', input, { subjectProfile });
-      const draft = parseItemPriorOutput(runResult.text);
-      await applyItemPrior(db, { questionId: c.id, draft });
+      // YUK-376 — llasa 输入带 reference_md/choices_md（模拟学生作答需要选项、
+      // 判对错需要参考答案）；feature 输入保持原有三个字段，输入 hash 不变。
+      const input =
+        method === 'llasa'
+          ? {
+              prompt_md: c.prompt_md,
+              kind: c.kind,
+              knowledge_context: knowledgeContext,
+              reference_md: c.reference_md,
+              choices_md: c.choices_md,
+            }
+          : {
+              prompt_md: c.prompt_md,
+              kind: c.kind,
+              knowledge_context: knowledgeContext,
+            };
+      const runResult = await runTaskFn(
+        method === 'llasa' ? 'ItemPriorLlasaTask' : 'ItemPriorTask',
+        input,
+        { subjectProfile },
+      );
+      const draft =
+        method === 'llasa'
+          ? parseItemPriorLlasaOutput(runResult.text).prior
+          : parseItemPriorOutput(runResult.text);
+      await applyItemPrior(db, {
+        questionId: c.id,
+        draft,
+        source: method === 'llasa' ? 'llm_prior_llasa' : 'llm_prior',
+      });
       result.calibrated++;
     } catch (err) {
       // One bad question must not block the rest. Logged + counted; the next run
@@ -114,10 +151,15 @@ export async function runItemPriorBackfill(
 
 export function buildItemPriorBackfillHandler(
   db: Db,
-): (jobs: Job<Record<string, never>>[]) => Promise<JobYieldOutput> {
-  return async () => {
+): (jobs: Job<{ method?: ItemPriorMethod }>[]) => Promise<JobYieldOutput> {
+  return async (jobs) => {
     try {
-      const result = await runItemPriorBackfill(db);
+      // YUK-376 — opt-in：pg-boss send('item_prior_backfill', { method: 'llasa' })
+      // 触发 LLaSA 学生模拟路径（写 source='llm_prior_llasa'）；缺省/未知值恒回
+      // 'feature'，cron 与既有 send 调用零变更。
+      const requested = jobs[0]?.data?.method;
+      const method: ItemPriorMethod = requested === 'llasa' ? 'llasa' : 'feature';
+      const result = await runItemPriorBackfill(db, { method });
       console.log('[item_prior_backfill] result', result);
       // YUK-779 — the counters already existed; nothing acted on them. An empty
       // candidate set early-returns with considered:0 → level `idle`; a 限流风暴

@@ -112,5 +112,6 @@ export const taskCatalog = composeTaskCatalog(
   ] as const,
   // YUK-987: +SupplyPlanTask（供给需求层 planner）→ 50。
   // YUK-1016: +CauseCategoryProposeTask（cause catalog 增长提议）→ 51。
-  51,
+  // YUK-376: +ItemPriorLlasaTask（LLaSA 学生模拟冷启锚 opt-in 变体）→ 52。
+  52,
 );

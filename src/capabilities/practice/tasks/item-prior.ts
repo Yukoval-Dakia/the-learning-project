@@ -1,5 +1,12 @@
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
-import { ItemPriorDraft, type ItemPriorDraftT } from '@/core/schema/item_prior';
+import {
+  ItemPriorDraft,
+  type ItemPriorDraftT,
+  ItemPriorLlasaDraft,
+  type ItemPriorLlasaDraftT,
+  LLASA_ABILITY_TIERS,
+  LLASA_STUDENTS_PER_TIER,
+} from '@/core/schema/item_prior';
 import type { SubjectProfile } from '@/subjects/profile';
 import { parseTaskOutput } from './parse-output';
 
@@ -38,6 +45,58 @@ function kindDifficultyHint(_profile: SubjectProfile): string {
 export function parseItemPriorOutput(text: string): ItemPriorDraftT {
   return parseTaskOutput(text, 'parseItemPriorOutput', ItemPriorDraft);
 }
+
+// ─── YUK-376 — LLaSA 学生模拟变体（opt-in，默认路径仍是上面的 feature→b）───
+//
+// LLaSA「LLMs are Students at Various Levels」（EMNLP 2024）：不直接估难度，
+// 让模型扮演 5 档能力学习者**实际作答**，由逐档答对率经 1PL MLE 反推 b
+// （src/core/item-prior-llasa.ts）。写路径与 ItemPriorTask 共用 applyItemPrior，
+// provenance 用 source='llm_prior_llasa' 区分（eval 可比性）。
+//
+// 输入比 feature→b 版多 reference_md / choices_md：模拟学生作答需要选项
+// （choice 题的 prompt_md 不含选项），判对错需要参考答案。
+function buildItemPriorLlasaPrompt(profile: SubjectProfile): string {
+  return `你是${profile.displayName}学习者模拟器。给一道题，你要扮演 ${LLASA_ABILITY_TIERS.length} 个能力档的学生**实际作答**，每档各 ${LLASA_STUDENTS_PER_TIER} 名（学生之间是不同个体，作答独立、可有差异）。输入 { prompt_md, kind, knowledge_context: [{ name, anchored_b? }], reference_md?, choices_md? } —— prompt_md 是题面，kind 是题型，choices_md 是选择题的选项列表（若有），reference_md 是参考答案（若有），knowledge_context 是考查知识点。
+
+科目上下文：${profile.displayName}。${profile.languageStyle}
+
+能力档 θ（logit 尺度）：θ=-2 是很弱的初学者（前置知识残缺、常犯典型错误）；θ=-1 偏弱；θ=0 是该科中等典型学习者（基础扎实但会踩隐蔽的坑）；θ=+1 较强；θ=+2 是优等生（也可能因粗心或题目陷阱答错，不必永远答对）。
+
+**扮演规则（强制）**：
+- 每名学生的 student_answer_md 必须是**这名学生真实会写出的作答**：弱档学生可以写错误答案、半截过程或典型误解；不许人人都写出标准答案再假装判错。
+- 学生**看不到** reference_md——先以该档学生的知识和习惯产出作答，再拿 reference_md 判定 correct。若输入没有 reference_md，按题目本身的正确性判定。
+- 同一档两名学生的作答要独立（可以一对一错）；不同档之间正确率应大致随 θ 上升——但允许真实波动（强档翻车、弱档蒙对都合法）。
+- note 一句话写清该生对/错在哪（漏了什么、踩了什么坑）。
+
+严格 JSON 输出（不带 markdown 代码块包裹），shape 名 ItemPriorLlasaDraft：
+{"simulated_responses": [{"theta_level": <-2|-1|0|1|2>, "student_answer_md": "<该学生的作答>", "correct": <true|false>, "note": "<一句话>"}], "reasoning": "<对作答分布的观察：哪些档普遍对、哪些档开始错、分水岭大致在哪>"}
+
+约束：
+- simulated_responses 必须恰好 ${LLASA_ABILITY_TIERS.length * LLASA_STUDENTS_PER_TIER} 条：每个 θ 档各 ${LLASA_STUDENTS_PER_TIER} 条，theta_level 用上面给定档位值。
+- 禁止：emoji、套话、JSON 之外的任何文字、用 markdown 代码块包裹整段 JSON、让 correct 与 student_answer_md 明显矛盾（写出正确答案却标 false 是脏数据）。`;
+}
+
+export function parseItemPriorLlasaSimulation(text: string): ItemPriorLlasaDraftT {
+  return parseTaskOutput(text, 'parseItemPriorLlasaSimulation', ItemPriorLlasaDraft);
+}
+
+export const itemPriorLlasaTaskSpec = {
+  ownership: 'owned',
+  definition: {
+    kind: 'ItemPriorLlasaTask',
+    description:
+      'YUK-376 — LLaSA 学生模拟冷启先验（opt-in 变体，默认仍是 ItemPriorTask feature→b）。模拟 5 档 θ × 2 名学生实际作答（学生不见 reference_md，作答后对照判分），输出 simulated_responses；确定性 1PL MLE 反推 b（src/core/item-prior-llasa.ts），写 item_calibration（source=llm_prior_llasa, track=hard）。间接模拟路线——直接 zero-shot 估难度已证伪（ADR-0043 b_anchor 来源节）。',
+    defaultProvider: 'xiaomi',
+    defaultModel: 'mimo-v2.5-pro',
+    budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 60_000 },
+    needsToolCall: false,
+    isMultimodal: false,
+    allowedTools: [],
+    prompt: { kind: 'profile', build: buildItemPriorLlasaPrompt },
+  },
+  outputSchema: ItemPriorLlasaDraft,
+  parseText: (text: string) => parseItemPriorLlasaSimulation(text),
+} satisfies TaskSpec<unknown, ItemPriorLlasaDraftT>;
 
 export const itemPriorTaskSpec = {
   ownership: 'owned',
