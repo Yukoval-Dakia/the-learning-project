@@ -1,6 +1,6 @@
 {
-  "captured_at": "2026-09-22T10:52:29.748Z",
-  "code_revision": "8c14cedf41860c3598836b244c4ab21c6c27f055",
+  "captured_at": "2026-09-23T09:50:35.946Z",
+  "code_revision": "70b6ff76a6e32bb724c0441b10fae0746a917c87",
   "ticket": "YUK-346",
   "lane": {
     "adapter": "pi",
@@ -9,21 +9,21 @@
     "task_kind": "TeachingTurnTask",
     "pin": "explicit ctx.modelBinding (post-P4 routing surface)"
   },
-  "task_run_id": "ngtdu9aub0lr35vcxjyd1mpk",
-  "wall_ms": 11676,
+  "task_run_id": "g9tyvvtnrgrlytsiunw3r01m",
+  "wall_ms": 6118,
   "parse_ok": true,
   "input_digest": "sha256:6f46514bbc1613dbc45544d29ccf5b4a7ff332ef768101fb48d7ebde500717ca",
-  "output_digest": "sha256:30af51928b0046b630f62db0fc178789150d40c25db8e9f76e193479797d5fbb",
-  "output_excerpt": "{\"kind\":\"explain\",\"text_md\":\"「而」是文言里出场率最高的连词，它本身没有实在意义，作用是把它前后两个部分连起来。所以辨析「而」的关键，不是死记这个词，而是看它连接的前后两部分是什么逻辑关系。常见的有四种：一是并列，前后两部分地位平等，可以调换顺序而意思不变，比如「蟹六跪而二螯」；二是承接，前后动作有时间或事理上的先后，比如「学而时习之」，先学再温习；三是转折，前后语义相反，可译成「却」，比如「而青于蓝」；四是修饰，前一项是修饰后一项动作的方式状态，比如「终日而思」的「终日」是「思」的状语。记住这条判断思路：先看前后能否互换，再看是否有先后，最后看语义是否相逆。\",\"suggested_next\":\"continue\"}",
+  "output_digest": "sha256:408ef21bd185d3e359cbb2b9e2d4b48560a04d2144f1c07cabeb914d1484a32e",
+  "output_excerpt": "{\"kind\":\"explain\",\"text_md\":\"我们先建立一个整体认识：「而」在文言里几乎是出场率最高的连词，它本身没有固定词义，关键看它连接的前后两部分是什么逻辑关系。最常见有四种：一是并列，前后两项地位对等，比如「蟹六跪而二螯」，六跪和二螯只是并排放着，调换顺序意思也不变；二是承接，前后有先后顺序，如「学而时习之」，先学再温习；三是转折，前后语义相反，可译成「却」，如「而青于蓝」；四是修饰，前项是修饰后项动作的状语，如「吾尝终日而思矣」，「终日」说明「思」的状态，不是两个独立动作。判断口诀：先问能不能互换，再问有没有先后，再问意思是否相反，都不是就考虑修饰。\",\"suggested_next\":\"continue\"}",
   "subject": "yuwen",
   "phase": "relaxed-budget",
   "budget_override": {
     "maxIterations": 4
   },
   "as_configured": {
-    "status": "failure",
-    "error_subtype": "error_max_turns",
-    "wall_ms": 4167
+    "status": "success",
+    "error_subtype": null,
+    "wall_ms": 3691
   },
   "status": "success",
   "finish_reason": "end_turn",

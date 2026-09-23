@@ -297,13 +297,12 @@ async function seedKnowledge(
  * Two-phase runner for maxIterations:1 kinds (SemanticJudgeTask /
  * TeachingTurnTask).
  *
- * Phase A — as-configured budget. On the pi lane `shouldStopAfterTurn` is
- * consulted after EVERY completed turn (pi-agent-core agent-loop.js:154),
- * and the adapter counts it unconditionally (pi-agent-adapter.ts:1155), so a
- * maxTurns=1 ceiling caps turn 1 → error_max_turns even when the model's
- * first response is a clean end_turn answer. That diverges from SDK maxTurns
- * semantics (1 turn was enough for a single-shot reply). Phase A seals this
- * as-configured regression record — its outcome is DATA, never asserted.
+ * Phase A — as-configured budget. Pre-YUK-1026 the pi lane counted every
+ * completed turn against the ceiling unconditionally, so maxTurns=1 capped
+ * turn 1 → error_max_turns even on a clean end_turn answer. Post-fix the
+ * ceiling only engages when the completed turn carries tool calls, so Phase A
+ * is also the live regression check for that fix — its outcome is DATA,
+ * never asserted.
  *
  * Phase B — relaxed `budgetOverride.maxIterations:4`. Isolates the model's
  * actual text quality / parse conformance from the turn-ceiling interaction;

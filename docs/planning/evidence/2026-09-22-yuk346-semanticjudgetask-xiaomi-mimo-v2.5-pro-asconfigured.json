@@ -1,6 +1,6 @@
 {
-  "captured_at": "2026-09-22T10:51:19.301Z",
-  "code_revision": "8c14cedf41860c3598836b244c4ab21c6c27f055",
+  "captured_at": "2026-09-23T09:49:27.253Z",
+  "code_revision": "70b6ff76a6e32bb724c0441b10fae0746a917c87",
   "ticket": "YUK-346",
   "lane": {
     "adapter": "pi",
@@ -9,28 +9,24 @@
     "task_kind": "SemanticJudgeTask",
     "pin": "explicit ctx.modelBinding (post-P4 routing surface)"
   },
-  "task_run_id": "magcungjckx0jq3isqmvj5cs",
-  "wall_ms": 8622,
+  "task_run_id": "ob7v3nval3hvmwj2szjvvj46",
+  "wall_ms": 8572,
   "parse_ok": null,
-  "error": {
-    "name": "AgentRunError",
-    "subtype": "error_max_turns",
-    "taskRunId": "magcungjckx0jq3isqmvj5cs",
-    "message": "[SemanticJudgeTask] agent run errored: subtype=error_max_turns errors=pi agent_loop stopped at the configured turn ceiling (1)"
-  },
   "input_digest": "sha256:1134a07f1837113ab5fd33b71de5237e976c581e53c8e10f442cabcc57cdf703",
+  "output_digest": "sha256:c59ec92992021b4725e917cea00505566f8c3eeb435bb95e450fbadc4310d780",
+  "output_excerpt": "{\"score\":1.0,\"coarse_outcome\":\"correct\",\"confidence\":1.0,\"feedback_md\":\"翻译准确，核心要点全部命中，语句通顺。\",\"evidence_json\":{\"matched_points\":[\"「尝」译为「曾经」\",\"「须臾」译为「一会儿」\",\"译出「终日而思」与「须臾所学」的对比关系，语句通顺\"],\"missing_points\":[],\"notes\":\"「一天到晚」与「终日」对应，「学一会儿得到的东西多」准确表达了对比关系，符合参考答案和评分要求。\"}}",
   "subject": "yuwen",
   "phase": "as-configured",
   "budget_override": null,
-  "status": "failure",
-  "finish_reason": "error",
+  "status": "success",
+  "finish_reason": "end_turn",
   "usage": {
     "inputTokens": 718,
-    "outputTokens": 100
+    "outputTokens": 126
   },
   "cost": {
     "basis": "estimated",
-    "amount_usd": 0.00039933,
+    "amount_usd": 0.00042195,
     "ref": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro"
   },
   "provenance": "PiRunnerMessage frames carry source=pi; terminal evidence normalized from pi agentLoop agent_end + final assistant usage. Cost stays catalog-estimated (zhipu coding-plan catalog rates are 0 — flat subscription; mimo rates are the dated public per-token estimate)."

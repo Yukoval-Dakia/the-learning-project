@@ -1,6 +1,6 @@
 {
-  "captured_at": "2026-09-22T10:51:59.813Z",
-  "code_revision": "8c14cedf41860c3598836b244c4ab21c6c27f055",
+  "captured_at": "2026-09-23T09:50:08.497Z",
+  "code_revision": "70b6ff76a6e32bb724c0441b10fae0746a917c87",
   "ticket": "YUK-346",
   "lane": {
     "adapter": "pi",
@@ -9,18 +9,20 @@
     "task_kind": "AttributionTask",
     "pin": "explicit ctx.modelBinding (post-P4 routing surface)"
   },
-  "task_run_id": "qhuy5rk2ekjjirhv3653m09b",
-  "wall_ms": 5564,
+  "task_run_id": "r4hl3r5ttla9vhei05710zzs",
+  "wall_ms": 6602,
   "parse_ok": true,
   "input_digest": "sha256:b4b923128301d177c965a1b988ea6672ffdff3b717b169c411004f00bb050ed6",
-  "output_digest": "sha256:6eab2a4f59ee2818a1724539555d7e90748a52ae528bd79cb5e14b80afa19970",
-  "output_excerpt": "{\"primary_category\": \"calculation\", \"secondary_categories\": [\"memory\", \"carelessness\"], \"analysis_md\": \"用户解 x^2 - 5x + 6 = 0 时给出 x = 2 或 x = 4。分解因式应为 (x-2)(x-3) = 0，即 x = 2 或 x = 3。用户的一个根正确，说明掌握了因式分解法（或求根公式）的思路；错误出在第二个根：若按两根之和 x1 + x2 = 5 验算，2 + 4 = 6 ≠ 5，且 2 × 4 = 8 ≠ 6，与常数项和一次项系数矛盾。可能原因：找因子对时把 6 拆成 2 × 4 而非 2 × 3（需满足和为 5），属于因子选取的运算/记忆性失误。主要归为运算错误（因子对选取与验根缺失），次要涉及韦达定理条件核对不足与粗心。\", \"confidence\": 0.75, \"meta_cause\": \"execution_slip\", \"meta_cause_secondary\": \"retrieval_failure\", \"metacog_flag\": null, \"bloom_level\": \"apply\", \"self_corrected_on_hint\": null, \"recurred_cross_item\": null}",
+  "output_digest": "sha256:ae93c080c25cfc31fe91080b074aa6434f10cf1b5f5dc9dc2ca3517b10c6235a",
+  "output_excerpt": "{\"primary_category\": \"calculation\", \"secondary_categories\": [\"concept\"], \"analysis_md\": \"错答为 x=2 或 x=4，参考答案为 x=2 或 x=3。用因式分解法：需要找两数 p、q 满足 p+q=-5 且 pq=+6，即 (x-2)(x-3)=0，故 x=2 或 x=3。用户得到 x=2 或 x=4，对应分解 (x-2)(x-4)=x²-6x+8，其常数项为 +8 而非 +6，说明在寻找因数对（2 与 3 vs 2 与 4）时运算/配对失误，最可能是求两数之积为 6、之和为 -5 时的粗心计算错误；同时也反映对'分解出的因数必须同时验证和与积两个条件'的理解不够扎实（x=2 恰好正确属巧合，未验算代回原方程也是失分原因）。\", \"confidence\": 0.75, \"meta_cause\": \"execution_slip\", \"meta_cause_secondary\": \"flawed_model\", \"metacog_flag\": null, \"bloom_level\": \"apply\", \"self_corrected_on_hint\": null, \"recurred_cross_item\": null}",
   "subject": "math",
   "status": "success",
   "finish_reason": "end_turn",
   "usage": {
     "inputTokens": 963,
-    "outputTokens": 293
+    "outputTokens": 329,
+    "thinkingBlocks": 1,
+    "thinkingCharacters": 64
   },
   "cost": {
     "basis": "unknown",

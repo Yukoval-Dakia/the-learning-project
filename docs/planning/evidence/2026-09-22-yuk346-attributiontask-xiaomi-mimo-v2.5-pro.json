@@ -1,6 +1,6 @@
 {
-  "captured_at": "2026-09-22T10:51:54.202Z",
-  "code_revision": "8c14cedf41860c3598836b244c4ab21c6c27f055",
+  "captured_at": "2026-09-23T09:50:01.871Z",
+  "code_revision": "70b6ff76a6e32bb724c0441b10fae0746a917c87",
   "ticket": "YUK-346",
   "lane": {
     "adapter": "pi",
@@ -9,22 +9,22 @@
     "task_kind": "AttributionTask",
     "pin": "explicit ctx.modelBinding (post-P4 routing surface)"
   },
-  "task_run_id": "hcdiq43sgpi2q5ryksicr0xz",
-  "wall_ms": 10256,
+  "task_run_id": "gf7yehx4yhtl6o9dyv6pj4wf",
+  "wall_ms": 9297,
   "parse_ok": true,
   "input_digest": "sha256:b4b923128301d177c965a1b988ea6672ffdff3b717b169c411004f00bb050ed6",
-  "output_digest": "sha256:908cc0ce1788a61b614c112b64c1d03cce0607a853bba19b1591e5c2f2e8328b",
-  "output_excerpt": "{\"primary_category\": \"calculation\", \"secondary_categories\": [], \"analysis_md\": \"用户求解一元二次方程 x² - 5x + 6 = 0。参考答案为 x = 2 或 x = 3。用户答案为 x = 2 或 x = 4。\\n\\n差异分析：\\n1. 正确的解是方程 (x-2)(x-3)=0 的根，即 x=2 和 x=3。\\n2. 用户的答案 x=4 不满足原方程：代入得 4² - 5×4 + 6 = 16 - 20 + 6 = 2 ≠ 0。\\n3. 用户可能使用了求根公式或因式分解。若使用求根公式 x = [5 ± √(25-24)]/2 = (5 ± 1)/2，则 x₁=3，x₂=2。若使用因式分解，正确应为 (x-2)(x-3)=0。\\n4. 用户得出 x=4，可能是在计算求根公式时出错（例如将 √1 算错，或符号处理失误），或在因式分解时误将常数项6的分解（如写成 (x-2)(x-4)=0，但展开后为 x²-6x+8，不符合）。\\n\\n结论：这是一个运算错误，属于计算过程中的失误。\", \"confidence\": 0.9, \"meta_cause\": \"execution_slip\", \"meta_cause_secondary\": null, \"metacog_flag\": null, \"bloom_level\": \"apply\", \"self_corrected_on_hint\": null, \"recurred_cross_item\": null}",
+  "output_digest": "sha256:4d3c0e548edc1e0125056b7976ed5fd909d8a7681eafde6bff0d3fbecc414f33",
+  "output_excerpt": "{\"primary_category\": \"calculation\", \"secondary_categories\": [], \"analysis_md\": \"用户解方程 x² - 5x + 6 = 0，得到 x = 2 或 x = 4，而参考答案为 x = 2 或 x = 3。差异在于一个根不正确。\\n\\n用户可能使用了因式分解法，正确分解应为 (x - 2)(x - 3) = 0，从而得到根 x = 2 和 x = 3。用户错误地得到 x = 4，可能是在因式分解时，将常数项 6 的因数组合错误，例如误认为 6 = 2 × 4，从而得到 (x - 2)(x - 4) = 0，展开后得到 x² - 6x + 8，这与原方程 x² - 5x + 6 不符。或者，在使用求根公式时，可能在计算判别式或后续代入时出现数值计算错误。这属于代数运算过程中的具体数值计算失误，而非对一元二次方程解的概念、解法策略或审题理解错误。\", \"confidence\": 0.9, \"meta_cause\": \"execution_slip\", \"meta_cause_secondary\": null, \"metacog_flag\": null, \"bloom_level\": \"apply\", \"self_corrected_on_hint\": null, \"recurred_cross_item\": null}",
   "subject": "math",
   "status": "success",
   "finish_reason": "end_turn",
   "usage": {
     "inputTokens": 1006,
-    "outputTokens": 378
+    "outputTokens": 313
   },
   "cost": {
     "basis": "estimated",
-    "amount_usd": 0.00076647,
+    "amount_usd": 0.00070992,
     "ref": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro"
   },
   "provenance": "PiRunnerMessage frames carry source=pi; terminal evidence normalized from pi agentLoop agent_end + final assistant usage. Cost stays catalog-estimated (zhipu coding-plan catalog rates are 0 — flat subscription; mimo rates are the dated public per-token estimate)."

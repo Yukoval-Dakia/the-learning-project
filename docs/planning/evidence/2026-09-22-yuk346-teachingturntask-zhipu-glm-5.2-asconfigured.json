@@ -1,6 +1,6 @@
 {
-  "captured_at": "2026-09-22T10:52:18.007Z",
-  "code_revision": "8c14cedf41860c3598836b244c4ab21c6c27f055",
+  "captured_at": "2026-09-23T09:50:29.795Z",
+  "code_revision": "70b6ff76a6e32bb724c0441b10fae0746a917c87",
   "ticket": "YUK-346",
   "lane": {
     "adapter": "pi",
@@ -9,24 +9,20 @@
     "task_kind": "TeachingTurnTask",
     "pin": "explicit ctx.modelBinding (post-P4 routing surface)"
   },
-  "task_run_id": "rsp23u6f7p5hjxlmb62yizpv",
-  "wall_ms": 4167,
+  "task_run_id": "c3ehvw1f7wheo2gpojlih6fh",
+  "wall_ms": 3691,
   "parse_ok": null,
-  "error": {
-    "name": "AgentRunError",
-    "subtype": "error_max_turns",
-    "taskRunId": "rsp23u6f7p5hjxlmb62yizpv",
-    "message": "[TeachingTurnTask] agent run errored: subtype=error_max_turns errors=pi agent_loop stopped at the configured turn ceiling (1)"
-  },
   "input_digest": "sha256:6f46514bbc1613dbc45544d29ccf5b4a7ff332ef768101fb48d7ebde500717ca",
+  "output_digest": "sha256:1f122334f0bc064b4f2a29b85c43b17fb1a8852a0faa214d4eafb41e44e344b2",
+  "output_excerpt": "{\"kind\":\"explain\",\"text_md\":\"我们开始学文言虚词「而」。「而」是文言中最常见的连词，它像一座桥，把词、短语或分句连接起来。判断它的用法，关键不在「而」本身，而在这座桥两头的关系：前后两部分对等、互换位置意思不变，是并列；有先后顺序，是承接；意思相反，可译成「却」，是转折；前项只是在描述后项动作的方式状态，是修饰。例如「蟹六跪而二螯」中，六跪和二螯地位平等，属并列；「学而时习之」先学后习，属承接。\",\"suggested_next\":\"continue\"}",
   "subject": "yuwen",
   "phase": "as-configured",
   "budget_override": null,
-  "status": "failure",
-  "finish_reason": "error",
+  "status": "success",
+  "finish_reason": "end_turn",
   "usage": {
     "inputTokens": 881,
-    "outputTokens": 181
+    "outputTokens": 153
   },
   "cost": {
     "basis": "unknown",
