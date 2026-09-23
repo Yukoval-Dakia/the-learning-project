@@ -1,9 +1,18 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-21：YUK-921 多 provider 迁移 epic 全批交付并关单——P4 SDK 退役 #1435 `26b7545d9` merge，`PiAgentAdapter` 成为唯一执行引擎、`@anthropic-ai/claude-agent-sdk` 依赖退场。本批未部署，生产仍为 `c89079b68`。
+> Linear 是权威 tracker；更新于 2026-09-23：sweep-4/5 七 merge 六票 Done（Astra P1 接线 + AI pipeline 文档对齐 + declared_stage 持久化 + TS7 评估 + LLaSA 负结论 eval + kind 闭集退役），YUK-1028 Astra P2 owner 叫停回 Backlog。本批未部署，生产仍为 `c89079b68`。
 
 ## NOW
 
+- 09-23 **sweep-4/5 七 merge**（Linear 均 Done，exact-head CI Gate 全绿后 squash）：
+  - **Astra 链**：spec 落盘 #1447 `47dd353f9` → **YUK-1027 P1** #1451 `de83dce59`（`openai/gpt-6-astra` 经 pi builtin catalog + `openai-responses` driver 接通 `/v1/responses`；15 个契约测试钉 wire 行为——effort 五档/272k 费率边界/call_id 往返/abort；MiMo→Astra→MiMo durable session 切换 DB 测试；`x-opencode-session` 收窄至 opencode-go 防泄漏）。**YUK-1028 P2 owner 叫停回 Backlog**（零产出，重启基线=main）；YUK-1029 仍 `needs-info`。
+  - **YUK-1030** #1449 `6c339ac9d`：`docs/architecture/ai-pipeline.md`/`.dot`/README 对齐 pi 现实（TaskSpec 分布修正、provider lane 清单、Tavily→Exa、`cost_ledger` 表名）；从 42e9a5a3d 恢复缺失设计稿 `docs/design/2026-09-18-pi-agent-execution-adapter.md` + 调研底稿（994 fixture 打捞时漏合）。
+  - **YUK-1009** #1450 `d9f1d3530`：`goal.declared_stage` nullable enum 持久化（migration 0103，event-sourced 三面同步）+ Jyeoo 供给消费（高中→grade 11；非高中 `skipped:'jyeoo_declared_stage_out_of_band'` fail-closed；不进 θ̂）；「纠正学段→下一次供给翻转」DB 测试钉住；派生 YUK-1032（历史绑定只读审计）/ YUK-1033（学段纠正用户入口，挂 1007 面板）。
+  - **YUK-910** #1448 `ecb86479a`：TS7 评估——main 已跑 `@typescript/native` tsc@7.0.2（`typescript` 包走 typescript6 线保 JS API），决策=已上无变更，dependabot #1232 为 stale-base 噪声；派生 YUK-1031（typescript 家族 ignore/cooldown）。
+  - **YUK-376** #1452 `05f3841c0`：LLaSA opt-in 变体（`ItemPriorLlasaTask`，catalog 51→52）+ 180-call actual-output 评测——**负结论**：噪声 2.2×、排序效度 0.23 vs 0.58、失败率 7.8%、单次成本 5.8×，采纳门槛未满足，默认 feature→b 不变；证据封存 `docs/planning/2026-09-23-llasa-prior-eval.md` + evidence JSON；派生 YUK-1034（feature→b rep-median 降噪）。
+  - **YUK-386** #1453 `15e2ed89a`：kind 轴收尾刀——`question.kind` 闭集退役为展示自由字符串（schema 层 z.enum 拆除），行为分支全走 answer_class/结构信号/`parent_question_id`；Step1 sentinel 残留清零（`kind='question_part'` 不再有 branch-authority 读）；`question-kind.ts` 映射层、`SubjectQuestionKind` 词表、`CANONICAL_QUESTION_KINDS` prompt 闭集全部收编；派生 YUK-1035（detail 页 family 投影回退）/ YUK-1036（unit_dimension kind 字面量判定，owner 决策）。
+  - 顺手修复：`runner.ts` runTask 注释「Claude Agent SDK」→ExecutionAdapter（YUK-1025 后 stale）；agency `AGENTS.md` copilot tools 计数 5→8。
+  - 部署状态：生产仍 `c89079b68`；本批 7 merge + sweep-3 未部署批待下次部署。
 - 09-18~21 **YUK-921 多 provider 执行适配器迁移 P0–P4 全交付 → epic Done**：设计稿 `docs/design/2026-09-18-pi-agent-execution-adapter.md`；`PiAgentAdapter`（pi-ai/pi-agent-core，opencode-go 通道 openai-completions）承接全部执行面——P0 seam #1424 `a6d0b1a8e` / P1 单发 #1428 `d8213a7c6` / P2 工具循环 #1431 `4ef86f8a1` / P3 copilot+嵌套子代理+compaction+piHooks 桥 #1432 `e2bbf80c7`（session 改 durable-turns 本地回放、`pi:` cursor 复用 `agent_sdk_session_id` 槽、nativeCompaction→transformContext、steering/follow-up ctx 面接线零消费方）/ **P4 SDK 退役 #1435 `26b7545d9`（YUK-1025）**：`@anthropic-ai/claude-agent-sdk` 依赖+Dockerfile `sdkdeps`+runtime-preflight+SDK Options 字段面（mcpServers/canUseTool/outputFormat/maxBudgetUsd/env 灰度 pin）全退，`sdk-types.ts` 剪为 pi 归一化帧词表，测试基建迁 `__setPiAdapterForTests`+piCustomTool 面，lint baseline 锁 306。actual-output 证据封存 opencode-go/deepseek-v4-pro 双 durable turn。灰度 env pin 面已随 P4 删除——provider/model pin 走 `modelBinding` 参数。
 - 09-18~19 **YUK-454 错因 epic 全票清 → Done**：454-A #1425 / 454-B overlay 词表层 #1426 / 454-C flag 裁决 #1427（promote 开待 recreate、hard-confirm OFF、recurrence NO-GO 证据不足）/ 跟进 #1429 #1430。遗留 YUK-1020（secondary misc 显示）Backlog 可独立排期。
 - 09-21 **YUK-1023 CI DB lane 提速** merge #1433 `9692b5396`：LPT 时长分桶（committed baseline `scripts/ci/db-test-durations.json` + median 兜底）替代 vitest count-mod `--shard`；DB matrix 2→4；顶层 `scripts/*.json` 归 audit-tooling 不再误触全量；本 PR 自身 full lane 验收 **24min→5m13s（4.6×）**。回流刷新 follow-up = YUK-1024（Backlog）。
@@ -74,6 +83,7 @@
 - 全历史ADR审计仍未完成，不冒充全量通过；971仅覆盖三份已确认冲突的现役指引。
 - 951按ADR0063明确保留历史表/native投影及live remote ToolOperations；不是待做通用表名合并。
 - 921多provider、572夜间教研、832HOLD不解锁。
+- Astra P2/P3 叫停：YUK-1028 回 Backlog（重启基线=main，`attempt-cost.ts` 已有 openai→estimated 归因初版）、YUK-1029 needs-info 等 owner 拍 LIGHT/FULL scope + actual-output 预算。
 - 计费、重试、prompt/skill、复杂parser、并发/回滚/恢复、UI安全测试仍保留，不按数量硬删。
 
 ## BLOCKED-ON
