@@ -662,9 +662,9 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
 }
 
 // ============================================================================
-// runTask — default path. Goes through the Claude Agent SDK like the other
-// entry points; tasks without `allowedTools` declared in registry just get
-// an empty tool list and behave like a single-turn query.
+// runTask — default path. Goes through the ExecutionAdapter (PiAgentAdapter)
+// like the other entry points; tasks without `allowedTools` declared in
+// registry just get an empty tool list and behave like a single-turn query.
 // ============================================================================
 
 /**
