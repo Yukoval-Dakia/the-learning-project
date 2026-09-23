@@ -152,4 +152,78 @@ describe('runItemPriorBackfill (DB integration)', () => {
     expect(result.considered).toBe(2);
     expect(result.calibrated).toBe(2);
   });
+
+  // YUK-376 — method:'llasa' opt-in：走 ItemPriorLlasaTask + 反推 + 'llm_prior_llasa' 写源。
+  it('llasa method invokes ItemPriorLlasaTask, inverts the simulation, and stamps llm_prior_llasa', async () => {
+    const k = createId();
+    const q = createId();
+    await seedKnowledge(k);
+    await seedQuestion(q, [k]);
+
+    // 模拟输出：θ=-2/-1 全错、θ=0 一对一错、θ=1/2 全对 → b̂≈0（交叉点在 0）。
+    const llasaText = JSON.stringify({
+      simulated_responses: [
+        { theta_level: -2, student_answer_md: '猜了一个选项', correct: false, note: '完全不会' },
+        { theta_level: -2, student_answer_md: '写了无关公式', correct: false, note: '概念错位' },
+        { theta_level: -1, student_answer_md: '半截推导', correct: false, note: '卡在第二步' },
+        { theta_level: -1, student_answer_md: '方向对终值错', correct: false, note: '计算失误' },
+        { theta_level: 0, student_answer_md: '完整过程答对', correct: true, note: '常规解法' },
+        { theta_level: 0, student_answer_md: '漏检查条件答错', correct: false, note: '踩隐蔽坑' },
+        { theta_level: 1, student_answer_md: '正确', correct: true, note: '稳定答对' },
+        { theta_level: 1, student_answer_md: '正确', correct: true, note: '稳定答对' },
+        { theta_level: 2, student_answer_md: '正确并给推广', correct: true, note: '超出要求' },
+        { theta_level: 2, student_answer_md: '正确', correct: true, note: '简洁正确' },
+      ],
+      reasoning: '分水岭在 θ=0 附近',
+    });
+    const stub = vi.fn(async (kind: string, input: unknown) => {
+      expect(kind).toBe('ItemPriorLlasaTask');
+      // llasa 输入带 reference_md/choices_md 字段位（可为 null）。
+      expect(input).toHaveProperty('prompt_md');
+      expect(input).toHaveProperty('reference_md');
+      expect(input).toHaveProperty('choices_md');
+      return { text: llasaText };
+    });
+
+    const result = await runItemPriorBackfill(db, { runTaskFn: stub, method: 'llasa' });
+    expect(result.calibrated).toBe(1);
+
+    const rows = await db
+      .select()
+      .from(item_calibration)
+      .where(eq(item_calibration.question_id, q));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].source).toBe('llm_prior_llasa');
+    expect(rows[0].track).toBe('hard');
+    // 交叉点在 θ=0 → b̂≈0；confidence 是反推启发式而非 LLM 自报。
+    expect(rows[0].b).toBeGreaterThan(-0.5);
+    expect(rows[0].b).toBeLessThan(0.5);
+    expect(rows[0].b_anchor).toBeCloseTo(rows[0].b as number, 5);
+  });
+
+  it('feature method stays the default and keeps the original input shape', async () => {
+    const k = createId();
+    const q = createId();
+    await seedKnowledge(k);
+    await seedQuestion(q, [k]);
+
+    const stub = vi.fn(async (kind: string, input: unknown) => {
+      expect(kind).toBe('ItemPriorTask');
+      // feature 输入不得带 llasa 新增字段（输入 hash 稳定 = 默认路径零变更）。
+      expect(input).not.toHaveProperty('reference_md');
+      expect(input).not.toHaveProperty('choices_md');
+      return {
+        text: JSON.stringify({ b_logit: 0.9, confidence: 0.4, reasoning: '特征分解' }),
+      };
+    });
+
+    const result = await runItemPriorBackfill(db, { runTaskFn: stub });
+    expect(result.calibrated).toBe(1);
+    const rows = await db
+      .select()
+      .from(item_calibration)
+      .where(eq(item_calibration.question_id, q));
+    expect(rows[0].source).toBe('llm_prior');
+    expect(rows[0].b).toBeCloseTo(0.9, 5);
+  });
 });

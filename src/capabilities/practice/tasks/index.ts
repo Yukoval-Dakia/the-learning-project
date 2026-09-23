@@ -1,7 +1,7 @@
 import { defineOwnedTaskSpecs } from '@/ai/owned-task-specs';
 import { attributionRerankTaskSpec, attributionTaskSpec } from './attribution';
 import { causeCategoryProposeTaskSpec } from './cause-category-propose';
-import { itemPriorTaskSpec } from './item-prior';
+import { itemPriorLlasaTaskSpec, itemPriorTaskSpec } from './item-prior';
 import {
   multimodalDirectJudgeTaskSpec,
   semanticJudgeTaskSpec,
@@ -41,6 +41,7 @@ export const practiceTaskSpecs = defineOwnedTaskSpecs('practice', {
   TeachingQualityTask: teachingQualityTaskSpec,
   QuestionAuthorTask: questionAuthorTaskSpec,
   ItemPriorTask: itemPriorTaskSpec,
+  ItemPriorLlasaTask: itemPriorLlasaTaskSpec,
   SelectionOrchestratorTask: selectionOrchestratorTaskSpec,
   SessionSummaryTask: sessionSummaryTaskSpec,
   SourcingTask: sourcingTaskSpec,

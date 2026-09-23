@@ -2454,7 +2454,9 @@ export const item_calibration = pgTable(
     confidence: real('confidence'),
     // 'hard' | 'soft'——硬轨进 p(L)/调度，软轨永不进（ADR-0035）。
     track: text('track').notNull().default('hard'),
-    // 'llm_prior' | 'fixed_anchor' | ... ——provenance（evidence-first 红线）。
+    // 'llm_prior' | 'llm_prior_llasa' | 'fixed_anchor' | ... ——provenance
+    // （evidence-first 红线）。'llm_prior_llasa' = YUK-376 LLaSA 学生模拟反推
+    // 的冷启锚（ItemPriorLlasaTask，opt-in），与 feature→b 的 'llm_prior' 区分。
     source: text('source').notNull(),
     // ── YUK-361 Phase 6 (Task 11, ADR-0043 §4 半数据驱动 b + §7 active-PPI)：
     //    b_anchor / b_calib 分离 + 重标定元数据 ──────────────────────────────
