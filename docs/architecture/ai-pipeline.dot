@@ -64,16 +64,19 @@ digraph AIPipeline {
     style=filled;
     fillcolor="#e8f5e9";
     
-    Runner [label="Claude Agent SDK Runner\nrunner.ts", shape=box, style=filled, fillcolor="#a5d6a7"];
+    Runner [label="Pi Agent Runner\nrunner.ts → pi-agent-adapter.ts\n(in-process agentLoop)", shape=box, style=filled, fillcolor="#a5d6a7"];
     Registry [label="Task Registry\ntask-catalog.ts\n51 TaskSpecs", shape=box, style=filled, fillcolor="#a5d6a7"];
-    MCP [label="MCP Bridge\nin-process tools", shape=box, style=filled, fillcolor="#a5d6a7"];
+    ToolBridge [label="Tool Bridge\npiToolMounts: DomainTool→AgentTool\n+ remote MCP client", shape=box, style=filled, fillcolor="#a5d6a7"];
     
     subgraph cluster_providers {
-      label="Providers";
+      label="Provider Lanes (implemented)";
       style=filled;
       fillcolor="#c8e6c9";
-      Mimo [label="Xiaomi MiMo\nmimo-v2.5-pro", shape=ellipse];
-      Anthropic [label="Anthropic\nOpus 4.8", shape=ellipse];
+      Mimo [label="Xiaomi MiMo\nmimo-v2.5* (default)", shape=ellipse];
+      AnthropicSub [label="Anthropic-sub\nOpus 4.8 OAuth", shape=ellipse];
+      Zhipu [label="Zhipu GLM", shape=ellipse];
+      OpenCodeGo [label="OpenCode Go", shape=ellipse];
+      Anthropic [label="Anthropic direct\nmetered API", shape=ellipse];
     }
   }
 
@@ -94,7 +97,7 @@ digraph AIPipeline {
     fillcolor="#fff8e1";
     
     Tencent [label="Tencent OCR\nQuestionMarkAgent", shape=box, style=filled, fillcolor="#ffe082"];
-    Tavily [label="Tavily Search", shape=box, style=filled, fillcolor="#ffe082"];
+    Exa [label="Exa remote MCP\nweb_search_exa / web_fetch_exa", shape=box, style=filled, fillcolor="#ffe082"];
   }
 
   // Connections
@@ -136,12 +139,16 @@ digraph AIPipeline {
   Nightly -> Runner;
   
   Runner -> Registry;
-  Runner -> MCP;
+  Runner -> ToolBridge;
   Runner -> Mimo;
+  Runner -> AnthropicSub;
+  Runner -> Zhipu;
+  Runner -> OpenCodeGo;
   Runner -> Anthropic;
   
   OCR -> Tencent [label="OCR"];
-  QuizGen -> Tavily [label="Search"];
+  QuizGen -> Exa [label="Search/Fetch"];
+  Copilot -> Exa [label="Search/Fetch"];
   
   Practice -> PG;
   Copilot -> PG;

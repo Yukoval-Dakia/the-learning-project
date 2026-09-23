@@ -26,18 +26,18 @@
 
 3. **Tool System**
    - DomainTool Registry with typed contracts
-   - In-process MCP Bridge for Claude Agent SDK
+   - piToolMounts compile DomainTools into pi `AgentTool`s (in-process; remote MCP bridged for Exa)
    - Effect-based permissions: read / propose / write
 
 4. **Provider Abstraction**
-   - Primary: Xiaomi MiMo (mimo-v2.5-pro)
-   - Secondary: Anthropic Opus 4.8 (subscription)
-   - Per-call provider override support
+   - Pi agent runtime (`@earendil-works/pi-agent-core` in-process agentLoop; Claude Agent SDK retired in YUK-1025)
+   - Primary: Xiaomi MiMo (mimo-v2.5*); additional wired lanes: anthropic-sub (Opus 4.8 OAuth), anthropic direct, zhipu, opencode-go
+   - Per-call provider override + `AI_PROVIDER_OVERRIDE` env switch
 
 5. **Data & Observability**
    - PostgreSQL + pgvector for embeddings
    - Event sourcing (event table as action log)
-   - ai_task_runs + ai_cost_ledger for cost tracking
+   - ai_task_runs + cost_ledger for cost tracking
    - R2/S3 for blob storage
 
 ### Key Flows
@@ -54,7 +54,7 @@ Trigger → pg-boss Job → Task Runner → Provider → Event/DB Write
 
 **Tool Calling**:
 ```
-Task Runner → MCP Bridge → DomainTool → Database/Service
+Task Runner → piToolMounts (DomainTool→AgentTool) → DomainTool → Database/Service
 ```
 
 ## OpenCode Architecture
@@ -96,7 +96,7 @@ Task Runner → MCP Bridge → DomainTool → Database/Service
 ## Evidence Sources
 
 - `src/ai/task-catalog.ts` - Task composition
-- `src/server/ai/runner.ts` - Claude Agent SDK adapter
+- `src/server/ai/runner.ts` - Runner entry points → `pi-agent-adapter.ts` (sole execution engine)
 - `src/capabilities/*/manifest.ts` - Capability declarations
 - `.opencode/plugins/worktree.ts` - OpenCode plugin example
 - `docs/architecture.md` - §5 AI Task Layer
