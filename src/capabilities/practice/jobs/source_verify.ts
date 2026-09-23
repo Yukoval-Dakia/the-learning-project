@@ -45,6 +45,7 @@ import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
+import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 import { initialFsrsState } from '../server/fsrs';
 import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
 import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
@@ -124,7 +125,14 @@ function checkStructureCompleteness(row: QuestionRow): CheckOutcome {
   if (!row.reference_md || row.reference_md.trim().length === 0) {
     problems.push('empty reference_md');
   }
-  if (row.kind === 'choice' && (row.choices_md ?? []).length < 2) {
+  // YUK-386 — kind is a free-form label; fold through the vocab (single_choice /
+  // multiple_choice → choice) so legacy profile-vocab rows keep the same check,
+  // then read the STRUCTURE: a choice-shaped row must carry ≥2 options.
+  const choices = row.choices_md ?? [];
+  if (
+    (normalizeToCanonicalKind(row.kind) === 'choice' || choices.length === 1) &&
+    choices.length < 2
+  ) {
     problems.push('choice question has <2 choices');
   }
   return problems.length === 0

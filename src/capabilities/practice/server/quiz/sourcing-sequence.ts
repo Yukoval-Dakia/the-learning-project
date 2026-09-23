@@ -35,7 +35,7 @@ import { knowledge } from '@/db/schema';
 import { buildExaMcpServer } from '@/server/ai/mcp/exa';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile, SubjectQuestionKind } from '@/subjects/profile-schema';
-import { kindsMatch, questionKindToSkillKind } from '@/subjects/question-kind';
+import { answerClassCompatible, questionKindToSkillKind } from '@/subjects/question-kind';
 import { poolFetch } from './pool-fetch';
 
 // The downstream production steps, in default order. Step 1 (existing pool) is the
@@ -86,11 +86,14 @@ async function queryExistingPool(
   knowledgeId: string,
   limit: number,
   // YUK-226 S2-5b (验证轮 A2) — when the sequence targets a specific 题型, the
-  // existing pool must be filtered by that kind so a node full of `reading`
-  // questions does NOT short-circuit a `computation` request. The compare runs in
-  // canonical space (kindsMatch), so a `reading_comprehension` request matches
-  // `reading` rows and `calculation` matches `computation` — no vocabulary
-  // mismatch silently dropping hits. null kind → no filter (whole active pool).
+  // existing pool must be filtered so a node full of off-class questions does
+  // NOT short-circuit the request (e.g. `reading` rows cannot satisfy a
+  // `choice`/exact request). YUK-386: the compare runs in answer-class space
+  // (answerClassCompatible) — a `computation` request and `reading` rows share
+  // the semantic class so they DO satisfy it; `reading_comprehension` matches
+  // `reading` and `calculation` matches `computation` via the profile-vocab
+  // fold; any free-form label conforms via its implied answer class. null kind
+  // → no filter (whole active pool).
   kind: string | null,
   // YUK-275 — free-text 求卷扩两个维度过滤:
   //   difficultyMin: only count questions whose difficulty >= n (null → no filter).
@@ -127,10 +130,11 @@ async function queryExistingPool(
   });
 
   const hits = rows
-    // A2 — kind filter in canonical space (no-op when kind is null). A row whose
-    // persisted kind doesn't normalize-match the requested kind is excluded so the
-    // pool count reflects only on-target questions.
-    .filter((r) => kind === null || kindsMatch(r.kind, kind))
+    // A2 — kind filter in answer-class space (no-op when kind is null). A row
+    // whose persisted kind label implies a different answer class than the
+    // requested label is excluded so the pool count reflects only on-target
+    // questions.
+    .filter((r) => kind === null || answerClassCompatible(r.kind, kind))
     .map((r) => ({
       question_id: r.id,
       source: r.source,

@@ -6,7 +6,8 @@
 //
 // 与 demo 的真数据取舍：
 //   • DR_SOURCE 用真 question.source enum（13 值，非 demo 的 web/gen/manual 三值）。
-//   • QKIND 用真 QuestionKind enum（choice/fill_blank/... 非 demo 的 mcq/cloze/...）。
+//   • QKIND 覆盖 KNOWN 题面标签（choice/fill_blank/... 非 demo 的 mcq/cloze/...；
+//     kind 是自由文本——词表外标签走 fallback 展示，YUK-386）。
 //   • options 后端给 string[]（markdown 串，非 demo 的 {key,text}）——按 A/B/C/D
 //     行号渲染，正确项无从得知（后端 detail 不含 answer key 对照），故不高亮 correct。
 //   • 省略 AI origin/置信度/成本（后端无此投影，且 demo 本就 Tweak-gated）——不渲 DrOrigin。
@@ -66,7 +67,7 @@ const DR_SOURCE_FALLBACK = {
 };
 const srcMeta = makeLookup(DR_SOURCE, DR_SOURCE_FALLBACK);
 
-// question.kind（QuestionKind enum + QUESTION_KIND_OPTIONS 标签）→ label/icon。
+// question.kind（自由文本展示标签，YUK-386；KNOWN 标签 + QUESTION_KIND_OPTIONS 中文名）→ label/icon。
 const QKIND: Record<string, { label: string; icon: LoomIconName }> = {
   choice: { label: '选择', icon: 'list' },
   true_false: { label: '判断', icon: 'check' },

@@ -8,7 +8,7 @@ import {
 } from '@/capabilities/practice/server/judge/question-contract';
 import { getDefaultRegistry } from '@/core/capability/judges';
 import { ANSWER_CLASSES, deriveAnswerClass } from '@/core/schema/answer-class';
-import { QuestionKind } from '@/core/schema/business';
+import { KNOWN_QUESTION_KIND_IDS } from '@/core/schema/business';
 import { subjectProfiles } from '@/subjects/profile';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
@@ -60,7 +60,7 @@ describe('Judge v2 light gap-prevention audit', () => {
     };
 
     for (const profile of Object.values(subjectProfiles)) {
-      for (const kind of QuestionKind.options) {
+      for (const kind of KNOWN_QUESTION_KIND_IDS) {
         for (const withChoices of [false, true]) {
           for (const withKw of [false, true]) {
             const rubric = withKw ? { criteria: [], keywords: ['x'] } : null;

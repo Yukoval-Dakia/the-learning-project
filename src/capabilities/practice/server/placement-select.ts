@@ -22,13 +22,13 @@
 // (start handler, PR-2b) dispatches quiz_gen to source starter questions (§6 Q3).
 
 import { and, notInArray, sql } from 'drizzle-orm';
-import { QuestionKind } from '@/core/schema/business';
 import type { SelectionCandidateSignal } from '@/core/selection-signals';
 import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import { question } from '@/db/schema';
 import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
 import { type CandidateInput, collectCandidateSignals } from './candidate-signals';
+import { rotationClassForKind } from './variant-rotation';
 
 type DbLike = Db | Tx;
 
@@ -60,13 +60,14 @@ export async function resolveLeaningPreferenceKcs(
   return Array.from(new Set(sets.flat()));
 }
 
-/** DB question.kind (text, possibly dirty) → enum QuestionKindT or undefined. Same safe-parse
- * idiom as stream-store.ts:resolveEnumKind / the softmax side — kind only affects family-key
- * + recall routing in the signal layer, so an unrecognized value degrades to undefined, never
- * throws. */
+/** DB question.kind (free-form label, possibly outside the KNOWN vocabulary) → a
+ * rotation-classifiable label or undefined. Same fail-closed idiom as
+ * stream-store.ts:resolveRotatableKind / the softmax side — kind only affects family-key
+ * + recall routing in the signal layer, so an unrecognized label degrades to undefined,
+ * never throws. YUK-386: the boundary moved from enum membership to
+ * rotationClassForKind classifiability — same KNOWN-label table, same behaviour. */
 function toEnumKind(kind: string | null | undefined): CandidateInput['kind'] {
-  const parsed = QuestionKind.safeParse(kind);
-  return parsed.success ? (parsed.data as CandidateInput['kind']) : undefined;
+  return kind != null && rotationClassForKind(kind) !== undefined ? kind : undefined;
 }
 
 /**

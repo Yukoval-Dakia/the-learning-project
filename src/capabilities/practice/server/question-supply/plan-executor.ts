@@ -118,7 +118,7 @@ async function resolveDeclaredStageGrade(
 export interface SupplyDemandItem {
   demandId: string;
   knowledgeId: string;
-  /** canonical QuestionKind 或 'any'（透传为无约束）。 */
+  /** 自由文本 kind 标签（YUK-386）或 'any'（透传为无约束）。 */
   kind: string;
   /** 'below' | 'near' | 'above' | 'stretch'（仅 jyeoo post-filter 消费；null = 不过滤）。 */
   difficultyBand: string | null;

@@ -32,6 +32,7 @@ import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
+import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
 
 type DbLike = Db | Tx;
 
@@ -287,7 +288,13 @@ export async function listDraftReview(
     sql`(${question.metadata} -> 'dismissed_at') IS NULL`,
   ];
   if (opts.source) conditions.push(eq(question.source, opts.source));
-  if (opts.kind) conditions.push(eq(question.kind, opts.kind));
+  // YUK-386 — kind is a free-form label; expand the requested label through the
+  // vocab fold (canonicalKindToPersistedForms) so a canonical filter still hits
+  // legacy profile-vocab rows (single_choice…), YUK-288-style. Unknown labels
+  // pass through as an exact match on themselves.
+  if (opts.kind) {
+    conditions.push(inArray(question.kind, canonicalKindToPersistedForms(opts.kind)));
+  }
   const countWhere = and(...conditions);
   if (cursor) {
     const cursorFilter = or(

@@ -26,7 +26,7 @@ beforeEach(() => {
 // REAL default is false (dark-ship). We mock just that one export via a getter (EARLY_KLP
 // pattern) so both flag directions stay covered regardless of the default:
 //   - flag OFF (default; restored to false in beforeEach) → demand.answerClass is NOT pushed
-//     into the pool WHERE → byte-identical to the legacy kindsMatch pool query.
+//     into the pool WHERE → byte-identical to the legacy label-fold pool query.
 //   - flag ON (set per-test) → demand.answerClass is forwarded to poolFetch.answerClass (the
 //     NULL-lenient hard filter). Validates the dark-ship gate without flipping the real const.
 const answerClassFilterFlag = { value: false };

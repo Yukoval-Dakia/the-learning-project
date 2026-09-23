@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { kindLabelsShareAnswerClass } from './answer-class';
 
 const VersionedHashRef = z.object({
   id: z.string().min(1),
@@ -187,7 +188,9 @@ export function structurallyVerifyGeneratedQuestion(input: {
   binding: QuestionGenerationBindingT;
   plan: QuestionGenerationPlanT;
   anchor: QuestionAnswerAnchorT | null;
-  // Only the generated `kind` participates in the structural veto. The reference
+  // Only the generated `kind`'s implied answer class participates in the
+  // structural veto (YUK-386: kind is a free-form display label — the veto
+  // compares the class each label implies, not label identity). The reference
   // answer is deliberately NOT compared here: that is objective correctness,
   // which stays `unverified` until a proven comparator policy exists (see
   // NO_COMPARATOR_POLICY). Carrying reference_md would falsely imply it is checked.
@@ -205,7 +208,9 @@ export function structurallyVerifyGeneratedQuestion(input: {
       vetoes.push('plan_answer_anchor_binding_mismatch');
     }
   }
-  if (input.generated.kind !== input.plan.requested_kind) vetoes.push('requested_kind_mismatch');
+  if (!kindLabelsShareAnswerClass(input.generated.kind, input.plan.requested_kind)) {
+    vetoes.push('requested_kind_mismatch');
+  }
 
   if (vetoes.length > 0) {
     return {

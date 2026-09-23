@@ -14,9 +14,8 @@
 
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
-import { LearningItemOpenStatus, QuestionKind } from '@/core/schema/business';
+import { LearningItemOpenStatus } from '@/core/schema/business';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
-import type { QuestionKindT } from '@/core/schema/judge-routing';
 import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import {
@@ -71,6 +70,7 @@ import {
 } from './stream-budget';
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
 import { streamLocalDate } from './stream-date';
+import { rotationClassForKind } from './variant-rotation';
 
 export { streamLocalDate } from './stream-date';
 
@@ -1564,7 +1564,7 @@ export async function recomposeStream(
 //      故其 presence + L1 相对序原样保全（本函数从不碰到期行；它们也被排出候选池）。
 //   ③ recall 同题重背：snapshot recall-locked 待做行（signals.recallLocked===true）**冻结**；
 //      且**EDGE 2**——某行 snapshot 不是 recall 但**新鲜 compute** 重判为 recall（question.kind
-//      变脏 → resolveEnumKind undefined → fail-closed recallLocked=true）时，该行**冻结保留**
+//      词表外标签 → resolveRotatableKind undefined → fail-closed recallLocked=true）时，该行**冻结保留**
 //      （不删进空位、不重抽样），presence 守住（never drop-into-a-gap）。
 //   ④ 容量 + draft 排除 + dedup：targetCount = 可替换待做非到期 slot 数（不胀容量）；broad pool
 //      抽样经 in-memory seen（排除冻结 ref）+ date+ref 唯一索引兜重复。
@@ -1614,10 +1614,11 @@ function rowIsRecallLocked(signals: unknown): boolean {
   return (signals as { recallLocked?: unknown } | null)?.recallLocked === true;
 }
 
-/** 把 DB question.kind（text，可能脏）收敛成枚举内 QuestionKindT 或 undefined（同 softmax 侧 FINDING 4）。 */
-function resolveEnumKind(kind: string | null | undefined): QuestionKindT | undefined {
-  const parsed = QuestionKind.safeParse(kind);
-  return parsed.success ? (parsed.data as QuestionKindT) : undefined;
+/** 把 DB question.kind（自由文本标签，可能不在 KNOWN 词表内）收敛成可旋转分类的标签或
+ * undefined（同 softmax 侧 FINDING 4）。YUK-386：边界从「enum 成员」改为
+ * 「rotationClassForKind 可分类」——同一张 KNOWN 标签表，行为不变。 */
+function resolveRotatableKind(kind: string | null | undefined): string | undefined {
+  return kind != null && rotationClassForKind(kind) !== undefined ? kind : undefined;
 }
 
 /**
@@ -1767,7 +1768,7 @@ export async function reRankAfterAnswer(
         refKind: 'question' as const,
         refId: r.questionId,
         role: r.source === 'new_check' ? ('new_check' as const) : ('diagnostic' as const),
-        kind: resolveEnumKind(q?.kind),
+        kind: resolveRotatableKind(q?.kind),
         knowledgeIds: q?.knowledge_ids,
         difficulty: q?.difficulty,
         // YUK-372 L3 — question.source (not the slot source) for family_key resolution.
@@ -1778,7 +1779,7 @@ export async function reRankAfterAnswer(
     const signalByRef = new Map(signals.map((s) => [s.refId, s]));
 
     // ── EDGE 2（铁律③ + presence）：某 pendingNonDue 行 snapshot 不是 recall，但**新鲜 compute**
-    //    重判为 recall（question.kind 变脏 → resolveEnumKind undefined → fail-closed
+    //    重判为 recall（question.kind 不在 KNOWN 词表 → resolveRotatableKind undefined → fail-closed
     //    recallLocked=true）。这种行**不删进空位、不重抽样**——freeze 保留（position/status 不动），
     //    presence 守住（never drop-into-a-gap）。
     const freshRecallRefs = new Set(

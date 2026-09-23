@@ -147,16 +147,12 @@ describe('practice manifest jobs', () => {
     }
   });
 
-  // YUK-390 residual — kind canonicalization backfill is a pure-SQL DAG root
-  // (mirror answer_class_backfill): anchor-triggered, no cron, no downstream.
-  it('registers kind_cleanup_backfill as a DAG root with no downstream edge', () => {
+  // YUK-386 — kind_cleanup_backfill was deleted with the enum collapse (kind is
+  // a free-form label; nothing left to canonicalize). Pin the absence so the
+  // job cannot silently come back.
+  it('does NOT register kind_cleanup_backfill (retired under YUK-386)', () => {
     const handlers = practiceCapability.jobs?.handlers ?? [];
-    const job = handlers.find((j) => j.name === 'kind_cleanup_backfill');
-    expect(job).toBeTruthy();
-    expect(job?.schedule).toBeUndefined();
-    expect(job?.dependsOn).toEqual([]);
-    expect(job?.queue).toBe('llm');
-    expect(typeof job?.load).toBe('function');
+    expect(handlers.find((j) => j.name === 'kind_cleanup_backfill')).toBeUndefined();
     for (const other of handlers) {
       expect(
         (other.dependsOn ?? []).map((d) => (typeof d === 'string' ? d : d.job)),

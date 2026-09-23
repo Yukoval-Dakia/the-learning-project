@@ -36,7 +36,8 @@ import {
 } from './answer-class';
 import { defaultJudgeKindForQuestion } from './judge-routing';
 
-// All 9 canonical QuestionKind values (core/schema/business.ts enum order).
+// All 9 KNOWN kind labels (business.ts KNOWN_QUESTION_KIND_IDS order; kind is a
+// free-form label since YUK-386 — these are the recognised ids, not an enum).
 const KINDS = [
   'choice',
   'true_false',

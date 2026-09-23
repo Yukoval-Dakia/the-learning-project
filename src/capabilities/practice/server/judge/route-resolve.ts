@@ -32,7 +32,7 @@
 import type { z } from 'zod';
 
 import { deriveAnswerClass, isKeywordConditionalAnswerKind } from '@/core/schema/answer-class';
-import { JudgeKind as JudgeKindSchema, QuestionKind, Rubric } from '@/core/schema/business';
+import { JudgeKind as JudgeKindSchema, Rubric } from '@/core/schema/business';
 import type { SubjectProfile } from '@/subjects/profile';
 
 // `JudgeKind` is the bare union declared in the judges barrel
@@ -152,15 +152,21 @@ export function resolveQuestionJudgeRoute(
   if (override) return override;
 
   // A question with persisted choices is structurally a multiple/single-choice
-  // item regardless of the kind string the subject profile uses
-  // (e.g. yuwen exposes 'single_choice' / 'multiple_choice' while the
-  // QuestionKind enum still calls the canonical kind 'choice'). The structure
-  // is the source of truth: if there are choices, the only safe default is
-  // exact match against reference_md — never spend LLM budget on a semantic
-  // judge for what is fundamentally a string compare.
+  // item regardless of the kind label the subject profile uses
+  // (e.g. yuwen rows may be labelled 'single_choice' / 'multiple_choice' while
+  // the canonical label vocabulary calls the same shape 'choice'). The
+  // structure is the source of truth: if there are choices, the only safe
+  // default is exact match against reference_md — never spend LLM budget on a
+  // semantic judge for what is fundamentally a string compare.
   const choices = q.choices_md ?? [];
   if (choices.length > 0) return 'exact';
 
+  // Profile-keyed preference: 'unit_dimension' is a subject-declared route
+  // preference for the calculation label family ('calculation' is the legacy
+  // profile-vocab label, 'computation' the canonical one). This reads the label
+  // as a PREFERENCE KEY — like sourcingRoutePreference's per-kind map — not as
+  // a closed-set authority: any other label simply falls through to the
+  // answer-class chain below (YUK-386).
   if (
     isPreferred(subjectProfile, 'unit_dimension') &&
     (q.kind === 'calculation' || q.kind === 'computation')
@@ -168,10 +174,17 @@ export function resolveQuestionJudgeRoute(
     return 'unit_dimension';
   }
 
-  const parsedKind = QuestionKind.safeParse(q.kind);
-  const kind = parsedKind.success ? parsedKind.data : 'short_answer';
+  // YUK-386 — kind is a free-form display label; classify the RAW label.
+  // The retired enum fallback rewrote unknown labels to 'short_answer' first;
+  // both paths land on 'semantic' inside deriveAnswerClass, so dropping the
+  // enum gate is byte-identical for every label (unknown → semantic either
+  // way).
   const rubric = parseRubric(q.rubric_json);
-  const answerClass = deriveAnswerClass({ kind, rubric_json: rubric, choices_md: choices });
+  const answerClass = deriveAnswerClass({
+    kind: q.kind,
+    rubric_json: rubric,
+    choices_md: choices,
+  });
 
   switch (answerClass) {
     case 'exact':
@@ -193,7 +206,7 @@ export function resolveQuestionJudgeRoute(
       // semantic route is unconditional and, in the legacy chain, returned
       // BEFORE the multimodal_direct gate; and prose, which keeps both the gate
       // and the profile ladder below.
-      if (isKeywordConditionalAnswerKind(kind)) {
+      if (isKeywordConditionalAnswerKind(q.kind)) {
         return 'semantic';
       }
       // YUK-201 — gated auto-route to multimodal_direct (holistic vision judging).

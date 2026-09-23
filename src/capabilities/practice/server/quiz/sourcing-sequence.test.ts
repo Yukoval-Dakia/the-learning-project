@@ -564,10 +564,12 @@ describe('runSourcingSequence', () => {
     expect(calls).toHaveLength(0);
   });
 
-  // 验证轮 A2 — step 1 pool is kind-filtered in canonical space. A node full of `reading`
-  // questions does NOT satisfy a `computation` request; and a `reading_comprehension`
-  // request matches `reading` rows.
-  it('filters the existing pool by canonical kind (reading rows do not satisfy a computation request)', async () => {
+  // 验证轮 A2 — step 1 pool is kind-filtered in ANSWER-CLASS space (YUK-386:
+  // a kind label's only behavioural content is its implied answer class). A
+  // `choice` (exact) request does NOT match `reading` (semantic) rows; a
+  // `computation` (semantic) request DOES — label identity no longer separates
+  // same-class kinds. Cross-vocabulary fold still applies.
+  it('filters the existing pool by implied answer class (exact request misses semantic rows)', async () => {
     await resetDb();
     await seedKnowledge('k1');
     await seedQuestion({ id: 'r1', knowledgeId: 'k1', kind: 'reading' });
@@ -579,14 +581,37 @@ describe('runSourcingSequence', () => {
       db,
       knowledgeId: 'k1',
       count: 3,
+      kind: 'choice',
+      enqueueSequenceJob: fn,
+      webSearchAvailable: WEB_SEARCH_UP,
+    });
+
+    // none of the semantic-class reading rows count toward an exact request.
+    expect(res.satisfiedFromPool).toBe(false);
+    expect(res.existing).toHaveLength(0);
+  });
+
+  it('satisfies a computation request from same-class (semantic) rows — kind label is display-only', async () => {
+    await resetDb();
+    await seedKnowledge('k1');
+    await seedQuestion({ id: 'r1', knowledgeId: 'k1', kind: 'reading' });
+    await seedQuestion({ id: 'r2', knowledgeId: 'k1', kind: 'reading' });
+    await seedQuestion({ id: 'r3', knowledgeId: 'k1', kind: 'reading' });
+
+    const { fn, calls } = collectingEnqueue();
+    const res = await runSourcingSequence({
+      db,
+      knowledgeId: 'k1',
+      count: 3,
       kind: 'computation',
       enqueueSequenceJob: fn,
       webSearchAvailable: WEB_SEARCH_UP,
     });
 
-    // none of the reading rows count toward a computation request → not satisfied.
-    expect(res.satisfiedFromPool).toBe(false);
-    expect(res.existing).toHaveLength(0);
+    // 'computation' implies the semantic answer class; 'reading' rows share it.
+    expect(res.satisfiedFromPool).toBe(true);
+    expect(res.existing).toHaveLength(3);
+    expect(calls).toHaveLength(0);
   });
 
   it('matches reading rows for a reading_comprehension request (cross-vocabulary)', async () => {
@@ -704,7 +729,7 @@ describe('runSourcingSequence', () => {
         count: 5, // force insufficient so all matching hits come back
         unit: '篇',
         // kind=null: the parent's own kind ('reading') must NOT be filtered out by the
-        // in-memory kindsMatch step (CRITIC FIX P1 — 篇 + null kind no-op interaction).
+        // in-memory answerClassCompatible step (CRITIC FIX P1 — 篇 + null kind no-op interaction).
         enqueueSequenceJob: fn,
         webSearchAvailable: WEB_SEARCH_UP,
       });

@@ -65,9 +65,10 @@ export interface QuestionDetailFamily {
   variant_count: number;
 }
 
-// YUK-288 gap A — composite小题. A part is a `question` row tagged
-// `kind='question_part'` linked via `parent_question_id` and ordered by
-// `part_index` (parts.ts write path). The detail of a composite PARENT carries
+// YUK-288 gap A — composite小题. A part is a `question` row linked to its
+// parent via `parent_question_id` and ordered by `part_index` (parts.ts write
+// path; the stamped `kind='question_part'` label is display-only — part-ness is
+// read from the FK, YUK-388/YUK-386). The detail of a composite PARENT carries
 // its ordered parts; a part's own detail carries `parent_question_id` so the UI
 // can render the 面包屑 back to the parent. phase-1 data currently has zero
 // composite questions, so `parts` is `[]` for every existing question — the field
@@ -371,8 +372,9 @@ async function loadScheduling(
 }
 
 // ── YUK-288 gap A: composite小题 — ordered parts under a parent ────────────────
-// Parts are `question` rows tagged kind='question_part' (parts.ts write path),
-// linked by parent_question_id and ordered by part_index. Mirrors the
+// Parts are `question` rows linked by parent_question_id and ordered by
+// part_index (parts.ts write path stamps the display-only 'question_part'
+// label; the FK is the part-ness authority, YUK-388/YUK-386). Mirrors the
 // loadFamilyMembers / paper-detail.ts:247-263 select-and-order precedent. Drafts
 // are NOT excluded (the detail view shows drafts — same as the parent row).
 async function loadParts(db: Db, parentId: string): Promise<QuestionDetailPart[]> {

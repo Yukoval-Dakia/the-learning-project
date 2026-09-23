@@ -105,7 +105,7 @@ const inputSchema = z.object({
   knowledge_ids: z.array(z.string().trim().min(1)).optional(),
   /** 本次候选数量（SourcingTask count 同界 1..10）。 */
   count: z.number().int().min(1).max(10),
-  /** 可选 kind pin（canonical QuestionKind；作为 kinds 单元素列表下传，同旧 sourcing job）。 */
+  /** 可选 kind pin（自由文本题面标签，YUK-386；作为 kinds 单元素列表下传，同旧 sourcing job）。 */
   kind: z.string().trim().min(1).optional(),
   objective_only: z.boolean().optional(),
   kind_required: z.boolean().optional(),

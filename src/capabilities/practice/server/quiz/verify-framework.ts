@@ -466,11 +466,11 @@ function isExactQuestion(q: SolveCheckQuestion): boolean {
   if (q.judge_kind_override === 'keyword' || q.judge_kind_override === 'semantic') return false;
   // Structure is the source of truth for the exact/semantic split, mirroring the
   // formal judge dispatch (route-resolve.ts: `choices.length > 0 → 'exact'`). A row
-  // with persisted choices is a single/multiple-choice item regardless of the kind
-  // string a subject profile uses (history/学科 题型 expose 'single_choice' etc.
-  // while the canonical QuestionKind enum only knows 'choice'). Without this, those
-  // rows fell through to the conservative semantic path and a wrong reference answer
-  // went undetected by solve-check.
+  // with persisted choices is a single/multiple-choice item regardless of the
+  // free-form kind label a subject profile uses (history/学科 题型 expose
+  // 'single_choice' etc.; YUK-386 made kind a free-form display label). Without
+  // this, those rows fell through to the conservative semantic path and a wrong
+  // reference answer went undetected by solve-check.
   if ((q.choices_md ?? []).length > 0) return true;
   return isObjectiveAnswerKind(q.kind);
 }

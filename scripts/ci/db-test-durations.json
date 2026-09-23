@@ -201,7 +201,6 @@
     "src/capabilities/practice/jobs/judge_run-terminal.db.test.ts": 4921,
     "src/capabilities/practice/jobs/judge_run.db.test.ts": 11013,
     "src/capabilities/practice/jobs/jyeoo_staged_asset_reap.db.test.ts": 2091,
-    "src/capabilities/practice/jobs/kind_cleanup_backfill.db.test.ts": 1687,
     "src/capabilities/practice/jobs/kt_estimate_nightly.db.test.ts": 5242,
     "src/capabilities/practice/jobs/practice_stream_compose_nightly.db.test.ts": 1055,
     "src/capabilities/practice/jobs/question_supply_nightly.db.test.ts": 3988,

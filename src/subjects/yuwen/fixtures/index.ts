@@ -15,16 +15,16 @@ import fixtureData from './data.json' with { type: 'json' };
 export const YuwenFixtureItemSchema = z
   .object({
     ref: z.string().min(1),
-    // Canonical QuestionKind only (YUK-390 residual): the fixture schema is the
-    // insertion seam into question.kind — seed-synthetic persists item.kind
-    // verbatim, so profile-vocab strings (single_choice / reading_comprehension)
-    // are rejected here to keep the column canonical. Routing per kind (the
-    // contract bridging profile-vs-canonical kinds, F-1/F-2):
-    //   choice               → exact   (structural choices short-circuit, :130-131)
-    //   translation          → semantic (in QuestionKind enum, :155-156)
-    //   reading              → semantic (direct enum hit — the F-2 naming-drift
-    //                           follow-up is resolved by canonicalizing here)
-    //   fill_blank+keywords  → keyword  (:146)
+    // KNOWN kind labels only (fixture authoring contract, NOT a persisted-kind
+    // gate — YUK-386 made question.kind free-form): seed-synthetic persists
+    // item.kind verbatim, so fixtures deliberately stick to the conventional
+    // label vocabulary; profile-vocab strings (single_choice /
+    // reading_comprehension) are rejected here to keep fixture data on KNOWN
+    // labels. Routing per label (the profile-vs-canonical contract, F-1/F-2):
+    //   choice               → exact   (structural choices short-circuit)
+    //   translation          → semantic (KNOWN label → deriveAnswerClass)
+    //   reading              → semantic (KNOWN label)
+    //   fill_blank+keywords  → keyword
     kind: z.enum(['choice', 'translation', 'reading', 'short_answer', 'fill_blank']),
     prompt_md: z.string().min(1),
     choices_md: z.array(z.string().min(1)).optional(), // F-1: present for choice

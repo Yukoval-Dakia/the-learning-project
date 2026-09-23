@@ -797,8 +797,8 @@ describe('runSolveCheck — exact path (normalize compare)', () => {
   });
 
   it('routes a subject choice kind (single_choice) with choices_md through the exact path (F1 structural)', async () => {
-    // History/学科 题型 expose kinds like 'single_choice' that the canonical
-    // QuestionKind enum does not, but a persisted choices_md makes the item
+    // History/学科 题型 expose kinds like 'single_choice' that the KNOWN label
+    // vocabulary does not include, but a persisted choices_md makes the item
     // structurally exact (mirrors route-resolve.ts). No judge_kind_override here.
     const singleChoice: SolveCheckQuestion = {
       ...exactQuestion,

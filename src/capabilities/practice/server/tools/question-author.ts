@@ -127,14 +127,18 @@ async function buildQuestionAuthorPreparation(db: Db, seed: QuestionAuthorSeed) 
   } catch {
     effectiveDomain = null;
   }
-  // ONE canonical effective kind, computed at plan-creation time and threaded to
+  // ONE effective kind label, computed at plan-creation time and threaded to
   // BOTH the generation prompt and (on the material path) the persisted plan, so
-  // the verifier compares like-for-like (Finding 1). The material path persists
-  // a plan whose requested_kind is veto-compared, so an omitted/unrecognized kind
-  // defaults to a canonical value AND constrains the prompt to it. Knowledge
-  // seeds persist no plan, so an omitted kind stays an open prompt hint.
-  const normalizedRequestedKind = seed.requested_kind
-    ? normalizeToCanonicalKind(seed.requested_kind)
+  // the verifier compares like-for-like (Finding 1). YUK-386: kind is a
+  // free-form display label — a KNOWN/profile-vocab value folds to canonical;
+  // any other non-empty label passes through verbatim (it is the caller's
+  // declared face; the verifier compares answer classes, not label identity).
+  // The material path persists a plan whose requested_kind is veto-compared, so
+  // an omitted kind still defaults to the canonical material default.
+  // Knowledge seeds persist no plan, so an omitted kind stays an open prompt hint.
+  const requestedLabel = seed.requested_kind?.trim() ?? '';
+  const normalizedRequestedKind = requestedLabel
+    ? (normalizeToCanonicalKind(requestedLabel) ?? requestedLabel)
     : null;
   const effectiveKind =
     seed.seed_mode === 'material'
@@ -217,8 +221,9 @@ export async function runQuestionAuthor(
       anchorProvenance: { kind: 'human_curated', task_run_id: deps.taskRunId },
       demand: { kind: 'knowledge', ref_id: validIds[0] },
       knowledgeIds: validIds,
-      // Same canonical kind used for the prompt (Finding 1): the verifier
-      // compares the generated kind against this persisted value.
+      // Same kind label used for the prompt (Finding 1): the verifier compares
+      // the generated label's implied answer class against this persisted value
+      // (YUK-386 — label identity is no longer vetoed).
       requestedKind: effectiveKind ?? DEFAULT_MATERIAL_QUESTION_KIND,
       requestedAnswerClass: 'exact',
       constraints: { seed_mode: 'material' },

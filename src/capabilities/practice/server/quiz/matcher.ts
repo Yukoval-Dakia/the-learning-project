@@ -31,7 +31,7 @@ import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { type EmbedProviderAttemptOptions, embedText } from '@/server/ai/embed';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { kindsMatch } from '@/subjects/question-kind';
+import { answerClassCompatible } from '@/subjects/question-kind';
 import { type DispatchResult, dispatchSupplyTarget } from '../question-supply/dispatcher';
 import {
   type EvidenceDemandV1T,
@@ -103,7 +103,8 @@ export interface Demand {
   queryEmbedding?: number[];
   /** 源档底线 (R2)，喂残余 target + 排序参考. */
   minSourceTier?: 1 | 2 | 3;
-  /** legacy 垫片 (kindsMatch)；随 YUK-386 收口删. */
+  /** YUK-386 — 请求侧的 kind 标签（自由文本）。过滤语义是 answer-class 相容
+   *  (answerClassCompatible)：kind 名不进分支，同名与否只看判分类是否一致。 */
   kind?: string;
   // ③ 信封 (不进检索)
   /** 错因：embed→召回 + 喂残余 generate prompt (经 target.reason 透传，Task 3). */
@@ -269,8 +270,8 @@ async function observeSelectionMissBestEffort(
 }
 
 /**
- * Pure ranking of a fetched candidate pool: ① A2 kind filter (canonical space, no-op
- * when demand.kind is undefined) ② 合约五 tier/whitelist sort (authentic-first,
+ * Pure ranking of a fetched candidate pool: ① A2 kind filter (answer-class
+ * compatible space, no-op when demand.kind is undefined) ② 合约五 tier/whitelist sort (authentic-first,
  * off-whitelist demoted) ③ slice to limit (optional). Mirrors queryExistingPool's app-layer
  * chain (sourcing-sequence.ts:121-145) verbatim so selection stays single-truth. poolFetch
  * must NOT receive limit — slicing happens here, AFTER the in-memory tier sort (F2 防线).
@@ -282,9 +283,10 @@ async function observeSelectionMissBestEffort(
  */
 export function rankPool(rows: PoolRow[], demand: Demand, sliceToLimit = true): PoolRow[] {
   const ranked = rows
-    // A2 — kind filter in canonical space (no-op when demand.kind is undefined). A row
-    // whose persisted kind doesn't normalize-match the requested kind is excluded.
-    .filter((r) => demand.kind === undefined || kindsMatch(r.kind, demand.kind))
+    // A2 — kind filter in answer-class space (no-op when demand.kind is undefined).
+    // A row whose persisted kind label implies a different answer class than the
+    // requested label is excluded (legacy/profile vocab folds first).
+    .filter((r) => demand.kind === undefined || answerClassCompatible(r.kind, demand.kind))
     .map((r) => ({
       row: r,
       tier: deriveSourceTier({ source: r.source, metadata: r.metadata ?? null }).tier,
@@ -549,7 +551,7 @@ export async function matcher(
   // B4 (YUK-386) — answer_class hard filter is forwarded ONLY when MATCHER_ANSWER_CLASS_FILTER
   // is on (dark-ship, default false) AND the demand declares answerClass. Flag off OR no
   // answerClass → undefined → poolFetch adds no answer_class predicate → WHERE byte-identical
-  // to pre-B4 (the legacy kindsMatch shim in rankPool is untouched in both directions). The
+  // to pre-B4 (the answerClassCompatible label filter in rankPool is untouched in both directions). The
   // NULL-lenient `(= $X OR IS NULL)` lives in pool-fetch so the un-backfilled tail is never
   // hard-excluded. The flag is read through the imported binding (./matcher-flags) so db tests
   // can mock it via getter (mirror candidate-signals.db.test.ts's EARLY_KLP_ENABLED getter mock).
@@ -706,7 +708,7 @@ export async function matcher(
             })
           : rows;
       const requiredKindRows = thresholded.filter(
-        (row) => demand.kind === undefined || kindsMatch(row.kind, demand.kind),
+        (row) => demand.kind === undefined || answerClassCompatible(row.kind, demand.kind),
       );
       const trustedRows = requiredKindRows.filter((row) => {
         if (demand.minSourceTier == null) return true;

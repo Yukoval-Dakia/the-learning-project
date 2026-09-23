@@ -126,6 +126,10 @@ describe('task prompt definitions', () => {
         // SessionSummaryTask evolved in YUK-1018 (category_label guidance for misc_ causes).
         // QuizGenTask + QuizPlanTask evolved in YUK-1011 (composite_parent_only 篇
         // contract — stem+sub_questions output shape and plan item composite flag).
+        // YUK-386 — kind is a free-form display label: the five prompts that
+        // embed the kind vocabulary now present KNOWN labels as suggestions
+        // (with answer-class guidance) instead of a closed-set contract.
+        // task-prompts.test.ts pins the new wording for each of them.
         if (
           task === 'CopilotTask' ||
           task === 'QuizVerifyTask' ||
@@ -134,7 +138,12 @@ describe('task prompt definitions', () => {
           task === 'ItemPriorLlasaTask' ||
           task === 'SessionSummaryTask' ||
           task === 'QuizGenTask' ||
-          task === 'QuizPlanTask'
+          task === 'QuizPlanTask' ||
+          task === 'QuestionAuthorTask' ||
+          task === 'SourcingTask' ||
+          task === 'SupplyPlanTask' ||
+          task === 'MistakeEnrollTask' ||
+          task === 'TeachingTurnTask'
         ) {
           continue;
         }

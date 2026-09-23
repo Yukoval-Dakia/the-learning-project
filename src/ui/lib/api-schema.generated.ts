@@ -12929,8 +12929,7 @@ export interface operations {
                                 /** @enum {string} */
                                 role?: "prompt" | "answer_area" | "continuation";
                             }[];
-                            /** @enum {string} */
-                            question_kind: "choice" | "true_false" | "fill_blank" | "short_answer" | "essay" | "computation" | "reading" | "translation" | "derivation";
+                            question_kind: string;
                             source_block_ids: string[];
                         }[];
                     };
@@ -13197,8 +13196,7 @@ export interface operations {
                                     };
                                 };
                                 id: string;
-                                /** @enum {string} */
-                                kind?: "choice" | "true_false" | "fill_blank" | "short_answer" | "essay" | "computation" | "reading" | "translation" | "derivation";
+                                kind?: string;
                                 last_modified_by?: string;
                                 options?: {
                                     label: string;
@@ -13523,8 +13521,7 @@ export interface operations {
                             /** @enum {string} */
                             role?: "prompt" | "answer_area" | "continuation";
                         }[];
-                        /** @enum {string} */
-                        question_kind: "choice" | "true_false" | "fill_blank" | "short_answer" | "essay" | "computation" | "reading" | "translation" | "derivation";
+                        question_kind: string;
                         source_block_ids: string[];
                     }[];
                 };
@@ -13827,8 +13824,7 @@ export interface operations {
                                 };
                             };
                             id: string;
-                            /** @enum {string} */
-                            kind?: "choice" | "true_false" | "fill_blank" | "short_answer" | "essay" | "computation" | "reading" | "translation" | "derivation";
+                            kind?: string;
                             last_modified_by?: string;
                             options?: {
                                 label: string;
@@ -16657,8 +16653,7 @@ export interface operations {
                     /** @default [] */
                     prompt_image_refs?: string[];
                     prompt_md: string;
-                    /** @enum {string} */
-                    question_kind: "choice" | "true_false" | "fill_blank" | "short_answer" | "essay" | "computation" | "reading" | "translation" | "derivation";
+                    question_kind: string;
                     reference_md: string | null;
                     /** @default [] */
                     wrong_answer_image_refs?: string[];
@@ -21820,8 +21815,7 @@ export interface operations {
                                 kind: "question_draft";
                                 proposed_change: {
                                     difficulty: number;
-                                    /** @enum {string} */
-                                    kind: "choice" | "true_false" | "fill_blank" | "short_answer" | "essay" | "computation" | "reading" | "translation" | "derivation";
+                                    kind: string;
                                     knowledge_ids: string[];
                                     material_url?: string;
                                     prompt_preview?: string;
@@ -21871,8 +21865,7 @@ export interface operations {
                                             text: string;
                                         }[];
                                     } | {
-                                        /** @enum {string} */
-                                        kind: "choice" | "true_false" | "fill_blank" | "short_answer" | "essay" | "computation" | "reading" | "translation" | "derivation";
+                                        kind: string;
                                         node_id: string;
                                         /** @enum {string} */
                                         op: "set_node_kind";
@@ -22897,8 +22890,7 @@ export interface operations {
                                 kind: "question_draft";
                                 proposed_change: {
                                     difficulty: number;
-                                    /** @enum {string} */
-                                    kind: "choice" | "true_false" | "fill_blank" | "short_answer" | "essay" | "computation" | "reading" | "translation" | "derivation";
+                                    kind: string;
                                     knowledge_ids: string[];
                                     material_url?: string;
                                     prompt_preview?: string;
@@ -22948,8 +22940,7 @@ export interface operations {
                                             text: string;
                                         }[];
                                     } | {
-                                        /** @enum {string} */
-                                        kind: "choice" | "true_false" | "fill_blank" | "short_answer" | "essay" | "computation" | "reading" | "translation" | "derivation";
+                                        kind: string;
                                         node_id: string;
                                         /** @enum {string} */
                                         op: "set_node_kind";
@@ -24962,8 +24953,7 @@ export interface operations {
                     difficulty?: number;
                     /** @enum {string|null} */
                     draft_status?: "draft" | "active" | null;
-                    /** @enum {string} */
-                    kind?: "choice" | "true_false" | "fill_blank" | "short_answer" | "essay" | "computation" | "reading" | "translation" | "derivation";
+                    kind?: string;
                     knowledge_ids?: string[];
                     prompt_md?: string;
                     reference_md?: string | null;
