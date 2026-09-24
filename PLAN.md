@@ -1,9 +1,16 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-23：sweep-4/5 七 merge 六票 Done（Astra P1 接线 + AI pipeline 文档对齐 + declared_stage 持久化 + TS7 评估 + LLaSA 负结论 eval + kind 闭集退役），YUK-1028 Astra P2 owner 叫停回 Backlog。本批未部署，生产仍为 `c89079b68`。
+> Linear 是权威 tracker；更新于 2026-09-24：sweep-4/5 派生 follow-up 批清完——1031/1032/1034/1035/1036 五 merge，1033 owner 裁决暂缓（等 1007 面板）；审计与评审派生 YUK-1037（verify-enroll 合成根 FSRS 卡 bug）/1038（生成链 reference pair 缺口）。本批未部署，生产仍为 `c89079b68`。
 
 ## NOW
 
+- 09-24 **follow-up 清批 5 merge + 1 暂缓**（sweep-4/5 派生票清零）：
+  - **YUK-1031** #1455 `b6ef28643`：dependabot `typescript`+`@typescript/native` semver-major ignore——alias 结构保证的 stale-base major PR 噪声根除，minor/patch 轨不动。
+  - **YUK-1032** #1456 `a31ce98a0`：历史题绑定只读审计（Mac 生产库，BEGIN READ ONLY）→ `docs/audit/2026-09-24-question-binding-audit.md`。结论：4 道 seed-root 绑题（jyeoo 09-14 批）+ 3 道空绑（intervention_diagnostic 设计内契约）；**抓到活 bug**：verify-enroll 对 `seed:*:root` 建 FSRS 卡（`material_fsrs_state('knowledge','seed:math:root')` 到期卡已在产），题可经 due/stream 服务但 `?subject=math` 不可见 → 派生 **YUK-1037**；处置建议 4 条待 owner 批。
+  - **YUK-1034** #1459 `08c1f9135`：`item_prior_backfill` feature 路径 opt-in `reps` median 聚合（默认 1 不变，`MAX_REPS=9`）；270-call 复测 median SD 0.361→0.173、Spearman 无损；证据 `docs/planning/2026-09-24-item-prior-reps-eval.md`。生产启用 `reps:3`（+$0.0004/题）待 owner 拍。
+  - **YUK-1035** #1457 `20d5e7791`：detail family/parts 投影补 `parent_question_id`，UI 层 `kind === 'question_part'` 判定清零。
+  - **YUK-1036** #1460 `84f67271a`：unit_dimension 路由改判 judge 输入契约（`metadata` 携带 `reference_value:number + reference_unit:string` pair）+ 老标签祖父化兜底——owner 拍的派生信号方案；写路径 parity 钉死；Codex P1（生成链产不出 pair，既有 producer 缺口）派生 **YUK-1038**。
+  - **YUK-1033** 暂缓（owner 裁决）：学段纠正入口等 YUK-1007 配置面板一并做，届时裁决粗档 vs 年级细分。
 - 09-23 **sweep-4/5 七 merge**（Linear 均 Done，exact-head CI Gate 全绿后 squash）：
   - **Astra 链**：spec 落盘 #1447 `47dd353f9` → **YUK-1027 P1** #1451 `de83dce59`（`openai/gpt-6-astra` 经 pi builtin catalog + `openai-responses` driver 接通 `/v1/responses`；15 个契约测试钉 wire 行为——effort 五档/272k 费率边界/call_id 往返/abort；MiMo→Astra→MiMo durable session 切换 DB 测试；`x-opencode-session` 收窄至 opencode-go 防泄漏）。**YUK-1028 P2 owner 叫停回 Backlog**（零产出，重启基线=main）；YUK-1029 仍 `needs-info`。
   - **YUK-1030** #1449 `6c339ac9d`：`docs/architecture/ai-pipeline.md`/`.dot`/README 对齐 pi 现实（TaskSpec 分布修正、provider lane 清单、Tavily→Exa、`cost_ledger` 表名）；从 42e9a5a3d 恢复缺失设计稿 `docs/design/2026-09-18-pi-agent-execution-adapter.md` + 调研底稿（994 fixture 打捞时漏合）。
