@@ -55,10 +55,10 @@ export type JudgeRoute =
  * cannot reappear through any import edge (value OR type-only re-export cycle).
  *
  * The resolver only reads `kind` / `rubric_json` / `choices_md` /
- * `judge_kind_override` / `image_refs`. The remaining fields below mirror
- * `JudgeQuestionRow` (question-contract.ts) and the optional index-friendly
- * extras so callers holding a full `JudgeQuestionRow` — and the test literals
- * carrying `id` / `prompt_md` / `reference_md` / `metadata` / `knowledge_ids` —
+ * `judge_kind_override` / `image_refs` / `metadata`. The remaining fields below
+ * mirror `JudgeQuestionRow` (question-contract.ts) and the optional
+ * index-friendly extras so callers holding a full `JudgeQuestionRow` — and the
+ * test literals carrying `id` / `prompt_md` / `reference_md` / `knowledge_ids` —
  * pass their existing row as-is without TS excess-property errors. Kept
  * structurally compatible with `JudgeQuestionRow`.
  */
@@ -68,13 +68,15 @@ export interface JudgeRouteQuestionRow {
   choices_md: string[] | null;
   judge_kind_override: string | null;
   image_refs?: string[];
+  // Read by the unit_dimension branch (YUK-1036): the runner's input contract
+  // lives here — see hasUnitDimensionReference.
+  metadata?: Record<string, unknown> | null;
   // Mirror the rest of JudgeQuestionRow so a full row passes without TS
   // excess-property errors (these fields are not read by the resolver).
   id?: string;
   prompt_md?: string;
   reference_md?: string | null;
   knowledge_ids?: string[] | null;
-  metadata?: Record<string, unknown> | null;
   figures?: unknown[];
   structured?: unknown;
 }
@@ -132,6 +134,39 @@ function isPreferred(profile: SubjectProfile, route: JudgeRoute): boolean {
   return profile.judgePolicy.preferredRoutes.includes(route);
 }
 
+// YUK-1036 — the two kind labels that triggered the unit_dimension preference
+// before this ticket ('calculation' is the legacy profile-vocab label,
+// 'computation' the canonical one). They stay ONLY as a grandfathered
+// preference key so rows persisted before/without the metadata contract keep
+// their current route byte-for-byte; the structural contract below is what
+// actually detects a calculation-type row.
+const LEGACY_UNIT_DIMENSION_KIND_LABELS: ReadonlySet<string> = new Set([
+  'calculation',
+  'computation',
+]);
+
+/**
+ * YUK-1036 — the unit_dimension judge's input contract, mirrored from the
+ * runner (core/capability/judges/unit_dimension.ts returns 'unsupported'
+ * without it) and enforced by the write-path gate
+ * (assertGeneratedQuestionHasJudgeContract in question-contract.ts): the
+ * question's metadata must carry a numeric `reference_value` and a string
+ * `reference_unit`. The pair has no other producer or consumer, so its
+ * presence is the producer's structural declaration that the expected answer
+ * is "a number + unit/量纲" — the reliable derived signal for the
+ * calculation-type trigger that the kind label used to approximate. YUK-386
+ * made kind a free-form display label, so equivalent labels (计算题 / 应用题 /
+ * word_problem / custom vocab) silently missed the literal label check while
+ * carrying exactly this contract.
+ */
+export function hasUnitDimensionReference(
+  metadata: Record<string, unknown> | null | undefined,
+): boolean {
+  return (
+    typeof metadata?.reference_value === 'number' && typeof metadata?.reference_unit === 'string'
+  );
+}
+
 /**
  * Resolve the judge route the invoker WOULD dispatch for a question. Pure +
  * dependency-light (no judge runners, no capability registry, no DB). Behaviour
@@ -162,14 +197,21 @@ export function resolveQuestionJudgeRoute(
   if (choices.length > 0) return 'exact';
 
   // Profile-keyed preference: 'unit_dimension' is a subject-declared route
-  // preference for the calculation label family ('calculation' is the legacy
-  // profile-vocab label, 'computation' the canonical one). This reads the label
-  // as a PREFERENCE KEY — like sourcingRoutePreference's per-kind map — not as
-  // a closed-set authority: any other label simply falls through to the
-  // answer-class chain below (YUK-386).
+  // preference for calculation-type questions. YUK-1036 — the primary trigger
+  // is now the unit judge's own input contract (metadata.reference_value:number
+  // + reference_unit:string, hasUnitDimensionReference): a structural signal
+  // independent of the free-form kind label (YUK-386), so equivalent semantic
+  // labels (计算题 / 应用题 / word_problem / custom vocab) carrying the contract
+  // no longer miss the route. The two legacy labels stay as a grandfathered
+  // preference key — like sourcingRoutePreference's per-kind map, a PREFERENCE
+  // KEY, not a closed-set authority — preserving byte-identical routing for
+  // rows persisted before/without the contract. Cost direction: a row WITH the
+  // pair was authored for exactly this judge (no other producer/consumer), and
+  // a misroute WITHOUT it can only yield 'unsupported' — never a false grade —
+  // while a missed trigger degrades to the answer-class chain below.
   if (
     isPreferred(subjectProfile, 'unit_dimension') &&
-    (q.kind === 'calculation' || q.kind === 'computation')
+    (LEGACY_UNIT_DIMENSION_KIND_LABELS.has(q.kind) || hasUnitDimensionReference(q.metadata))
   ) {
     return 'unit_dimension';
   }

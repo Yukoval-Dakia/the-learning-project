@@ -5,7 +5,10 @@ import type { Provider } from '@/ai/registry';
 // leaf `@/capabilities/practice/server/judge/route-resolve` (see that file's header for the build
 // regression it fixes). Re-exported below so this module's public surface is
 // unchanged; existing importers keep working.
-import { resolveQuestionJudgeRoute } from '@/capabilities/practice/server/judge/route-resolve';
+import {
+  hasUnitDimensionReference,
+  resolveQuestionJudgeRoute,
+} from '@/capabilities/practice/server/judge/route-resolve';
 import { SemanticJudgeOutput, type SemanticJudgeOutputT } from '@/core/capability/judges/semantic';
 import { isLlmGradedAnswerKind } from '@/core/schema/answer-class';
 import { Rubric } from '@/core/schema/business';
@@ -88,6 +91,12 @@ export function assertGeneratedQuestionHasJudgeContract(
       choices_md: q.choices_md ?? null,
       judge_kind_override: q.judge_kind_override ?? null,
       image_refs: q.image_refs,
+      // YUK-1036 — the unit_dimension trigger reads metadata
+      // (reference_value/reference_unit). Forward it so the gate resolves the
+      // SAME route the runtime invoker dispatches (the YUK-996 invariant);
+      // otherwise a contract-carrying draft with a non-legacy kind label
+      // resolves 'semantic' here but 'unit_dimension' at judge time.
+      metadata: q.metadata ?? null,
     },
     subjectProfile,
   );
@@ -111,11 +120,7 @@ export function assertGeneratedQuestionHasJudgeContract(
       `${origin} question '${promptLabel}' uses steps judge without reference_solution`,
     );
   }
-  if (
-    route === 'unit_dimension' &&
-    (typeof q.metadata?.reference_value !== 'number' ||
-      typeof q.metadata?.reference_unit !== 'string')
-  ) {
+  if (route === 'unit_dimension' && !hasUnitDimensionReference(q.metadata)) {
     throw new Error(
       `${origin} question '${promptLabel}' uses unit_dimension judge without metadata.reference_value/reference_unit`,
     );
