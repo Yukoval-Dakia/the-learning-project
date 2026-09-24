@@ -43,6 +43,24 @@ updates:
       # optional import bundle-safe (YUK-671).
       - dependency-name: "mem0ai"
         versions: [">=3.1.0"]
+      # typescript: the manifest name is an alias to @typescript/typescript6
+      # (the JS-API compat shim, pinned on the 6.x line); the real TS7 native
+      # tsc lives behind @typescript/native below. Dependabot resolves the
+      # `typescript` registry package against those stale bases (6.x shim;
+      # tools/api-codegen still pins real 5.9.x), so every new major stable
+      # surfaces as a stale-base major PR (e.g. #1232 tried 5.9.3 -> 7.0.2
+      # after TS7 was already rolled out). Majors on this name can never be
+      # drive-by bumps — adopting one requires restructuring the alias — so
+      # ignore semver-major and keep minor/patch on the normal track.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      # @typescript/native tracks the real `typescript` registry package via
+      # npm:typescript@7.0.2, so a future typescript@8.x would surface here as
+      # a major PR. Native-toolchain majors go through the manual evaluation
+      # cadence (same lane as the YUK-823 TS7 rollout), not dependabot
+      # drive-bys — same major-ignore applies.
+      - dependency-name: "@typescript/native"
+        update-types: ["version-update:semver-major"]
     labels:
       - "dependencies"
     commit-message:
