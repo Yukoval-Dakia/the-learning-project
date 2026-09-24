@@ -1,3 +1,10 @@
+# 当前指针 — 2026-09-24，YUK-1038 全量题目契约迁移 grounding（source-only）
+
+- owner 认可五层模型方向，裁决**全量迁移/任意题目/一次切换**，拒绝 LIGHT 分批；**方向认可 ≠ 已实施**。
+- source-only grounding 已落盘 `docs/planning/2026-09-24-question-assessment-implementation-grounding.md`（§1–§19，lane A/B/C/D 归并）；模型提案 `docs/planning/2026-09-24-question-assessment-redesign.md`（§8 已标 owner 拒绝分批）。
+- 无实施/迁移/部署/付费调用；产品决策（grounding §19）与证据缺口（census/restore 演练/actual-output/浏览器）仍开放。PLAN 头部+NOW、CONTEXT PROPOSED、`.remember/2026-09-24-assessment-redesign.md` 已对齐。
+- YUK-310 独立 worktree commit `0db6703a0` 未 push/未 review，不混入本线。
+
 # 当前 handoff — 2026-09-17，部署 + placement e2e 验收 + 双缺陷修复收口
 
 - 生产已部署 `the-learning-project-app:c89079b68`（migrate exit 0、app/worker healthy、health200、cron 29 条在位）。main 领先生产的 13 个 sweep merge 全部上线。回滚：老镜像 d9ca89e5 保留 + override 备份 `runtime-sweep2-image.override.yml.rollback-d9ca89e5`。

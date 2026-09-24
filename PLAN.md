@@ -1,9 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-24：sweep-4/5 派生 follow-up 批清完——1031/1032/1034/1035/1036 五 merge，1033 owner 裁决暂缓（等 1007 面板）；审计与评审派生 YUK-1037（verify-enroll 合成根 FSRS 卡 bug）/1038（生成链 reference pair 缺口）。本批未部署，生产仍为 `c89079b68`。
+> Linear 是权威 tracker；更新于 2026-09-24：sweep-4/5 派生 follow-up 批清完——1031/1032/1034/1035/1036 五 merge，1033 owner 裁决暂缓（等 1007 面板）；审计与评审派生 YUK-1037（verify-enroll 合成根 FSRS 卡 bug）/1038（生成链 reference pair 缺口）。本批未部署，生产仍为 `c89079b68`。另：YUK-1038 owner 认可五层模型方向、裁决全量迁移/任意题目/一次切换（拒绝 LIGHT 分批）；source-only implementation grounding 已落盘 `docs/planning/2026-09-24-question-assessment-implementation-grounding.md`（未执行实施/迁移/部署，产品决策与证据缺口仍开放）。
 
 ## NOW
 
+- 09-24 **YUK-1038 题目存储/判分重设计 grounding（source-only 完成）**：realworld 调研 + 独立复核已归并；owner 认可模型方向，明确**全量迁移、任意题目、统一切换，不分批上线**（旧 LIGHT/LIGHT-1 推荐已被取代，保留为决策历史）。四条只读 lane（存储/录入、判分执行、历史迁移/学习状态、作答UI/API）已归并到 `docs/planning/2026-09-24-question-assessment-implementation-grounding.md`（§1–§19）。**未执行任何业务实施、schema/数据迁移、付费模型调用或部署**；产品决策（§19）与证据缺口（census/restore 演练/actual-output/浏览器）仍开放；YUK-310 独立交付仍待 review，不混入本线。
 - 09-24 **follow-up 清批 5 merge + 1 暂缓**（sweep-4/5 派生票清零）：
   - **YUK-1031** #1455 `b6ef28643`：dependabot `typescript`+`@typescript/native` semver-major ignore——alias 结构保证的 stale-base major PR 噪声根除，minor/patch 轨不动。
   - **YUK-1032** #1456 `a31ce98a0`：历史题绑定只读审计（Mac 生产库，BEGIN READ ONLY）→ `docs/audit/2026-09-24-question-binding-audit.md`。结论：4 道 seed-root 绑题（jyeoo 09-14 批）+ 3 道空绑（intervention_diagnostic 设计内契约）；**抓到活 bug**：verify-enroll 对 `seed:*:root` 建 FSRS 卡（`material_fsrs_state('knowledge','seed:math:root')` 到期卡已在产），题可经 due/stream 服务但 `?subject=math` 不可见 → 派生 **YUK-1037**；处置建议 4 条待 owner 批。
