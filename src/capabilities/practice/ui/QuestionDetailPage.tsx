@@ -403,7 +403,8 @@ function VariantFamily({
     <Card pad="default">
       {family.members.map((m, index) => {
         const variant = m.id !== family.root_question_id;
-        const km = kindMeta(m.kind === 'question_part' ? selfKind : m.kind);
+        // part-ness reads the FK (YUK-386/1035), not the display-only kind label.
+        const km = kindMeta(m.parent_question_id !== null ? selfKind : m.kind);
         return (
           <div
             key={m.id}
@@ -892,7 +893,8 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
               </div>
               <div className="qd-subs">
                 {data.parts.map((c) => {
-                  const ck = kindMeta(c.kind === 'question_part' ? data.kind : c.kind);
+                  // part-ness reads the FK (YUK-386/1035), not the display-only kind label.
+                  const ck = kindMeta(c.parent_question_id !== null ? data.kind : c.kind);
                   const cs = statusMeta(c.draft_status);
                   return (
                     <button

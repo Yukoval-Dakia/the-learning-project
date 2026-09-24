@@ -135,6 +135,8 @@ export const QuestionDetailResponseSchema = z
       z.object({
         id: z.string(),
         kind: z.string(),
+        // YUK-1035 — part-ness authority (FK), never the display-only kind label.
+        parent_question_id: z.string().nullable(),
         part_index: z.number().int(),
         prompt_md: z.string(),
         difficulty: z.number().int(),
@@ -152,6 +154,9 @@ export const QuestionDetailResponseSchema = z
           id: z.string(),
           variant_depth: z.number().int().nonnegative(),
           kind: z.string(),
+          // YUK-1035 — part-ness authority (FK) for members that are themselves
+          // composite parts; the UI must not string-match kind.
+          parent_question_id: z.string().nullable(),
           is_self: z.boolean(),
         }),
       ),
