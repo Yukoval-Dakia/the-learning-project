@@ -200,6 +200,39 @@ describe('findExactQuestionDuplicate', () => {
     });
   });
 
+  // YUK-1037 — a raced duplicate bound to a synthetic subject root still merges
+  // its binding faithfully (the root stays in knowledge_ids — the coarse-fallback
+  // attribution is in-design), but the enroll arm mirrors the verify-time loops:
+  // 'seed:<subj>:root' is a structural anchor, never a content KC, so it must not
+  // mint a knowledge-level FSRS card (the subject read axis already excludes it —
+  // resolveSubjectKnowledgeIds).
+  it('merges a synthetic subject root into the binding but never enrolls it', async () => {
+    await seedKnowledge('k-a', 'k-b', 'seed:math:root');
+    const hash = await seed('q-merge-root', 'active', ['k-a']);
+    const now = new Date('2026-07-19T11:00:00.000Z');
+
+    const result = await db.transaction((tx) =>
+      mergeExactQuestionDuplicateKnowledgeIds(tx, {
+        canonicalContentHash: hash,
+        knowledgeIds: ['k-a', 'seed:math:root', 'k-b'],
+        actorRef: 'jyeoo_fetch',
+        taskRunId: 'task-run-root-merge',
+        now,
+      }),
+    );
+
+    // Binding append is faithful (the anchor is a live knowledge row, so it
+    // survives the live-KC filter and joins knowledge_ids like any other id)…
+    expect(result).toMatchObject({
+      knowledgeIds: ['k-a', 'seed:math:root', 'k-b'],
+      addedKnowledgeIds: ['seed:math:root', 'k-b'],
+      // …but only the real KC enrolls.
+      enrolledKnowledgeIds: ['k-b'],
+    });
+    const fsrsRows = await db.select().from(material_fsrs_state);
+    expect(fsrsRows.map((r) => r.subject_id)).toEqual(['k-b']);
+  });
+
   it.each([
     ['quiz_gen', 'experimental:quiz_verify', 'failure'],
     ['web_sourced', 'experimental:source_verify', 'failure'],

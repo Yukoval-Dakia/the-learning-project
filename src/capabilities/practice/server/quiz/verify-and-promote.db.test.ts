@@ -367,6 +367,99 @@ describe('verifyAndPromote — Task 4 (薄 dispatcher)', () => {
     expect(runSpy).not.toHaveBeenCalled();
   });
 
+  // ── YUK-1037 — the override branch enrolls through the same anchor-not-content
+  // rule: 'seed:<subj>:root' is a structural anchor (the subject read axis already
+  // excludes it via resolveSubjectKnowledgeIds), so an owner force-enable must not
+  // mint a knowledge-level card for it. The seed-root row is seeded as a live
+  // knowledge node — production has it (ensureSubjectRoot) and the override's
+  // archived-KC gate requires every bound id to be live.
+  it('override on a seed-root-only draft promotes it but enrolls ZERO FSRS cards', async () => {
+    const db = testDb();
+    await seedKnowledge('seed:math:root', 'math');
+    const qid = await seedQuestion({ source: 'web_sourced', knowledgeIds: ['seed:math:root'] });
+
+    const result = await verifyAndPromote({
+      db,
+      questionId: qid,
+      runTaskFn: noRunTask,
+      actor: { kind: 'user', ref: 'owner' },
+      skipVerify: { reason: 'owner 放行' },
+    });
+
+    expect(result).toMatchObject({ promoted: true, status: 'skipped:owner_override' });
+    const row = (await db.select().from(question).where(eq(question.id, qid)).limit(1))[0];
+    expect(row.draft_status).toBe('active');
+    // No knowledge card for the anchor — and no question-level fallback either
+    // (roots-only is labeled-but-anchor-only, not unlabeled).
+    expect(
+      await db
+        .select()
+        .from(material_fsrs_state)
+        .where(eq(material_fsrs_state.subject_id, 'seed:math:root')),
+    ).toHaveLength(0);
+    expect(
+      await db.select().from(material_fsrs_state).where(eq(material_fsrs_state.subject_id, qid)),
+    ).toHaveLength(0);
+  });
+
+  it('override on a mixed-binding draft enrolls only the real KC', async () => {
+    const db = testDb();
+    await seedKnowledge('seed:math:root', 'math');
+    await seedKnowledge('k_math_real', 'math');
+    const qid = await seedQuestion({
+      source: 'quiz_gen',
+      knowledgeIds: ['seed:math:root', 'k_math_real'],
+    });
+
+    const result = await verifyAndPromote({
+      db,
+      questionId: qid,
+      runTaskFn: noRunTask,
+      actor: { kind: 'user', ref: 'owner' },
+      skipVerify: { reason: 'owner 放行' },
+    });
+
+    expect(result.promoted).toBe(true);
+    const fsrsRows = await db
+      .select({ subject_id: material_fsrs_state.subject_id })
+      .from(material_fsrs_state);
+    expect(fsrsRows.map((r) => r.subject_id)).toEqual(['k_math_real']);
+  });
+
+  it('override composite cascade: an inherited seed-root binding mints no card for a promoted part', async () => {
+    const db = testDb();
+    await seedKnowledge('seed:math:root', 'math');
+    const parent = await seedQuestion({
+      source: 'quiz_gen',
+      kind: 'reading',
+      knowledgeIds: ['seed:math:root'],
+    });
+    const child = await seedQuestion({
+      source: 'quiz_gen',
+      kind: 'question_part',
+      parentQuestionId: parent,
+      knowledgeIds: ['seed:math:root'],
+    });
+
+    const result = await verifyAndPromote({
+      db,
+      questionId: parent,
+      runTaskFn: noRunTask,
+      actor: { kind: 'user', ref: 'owner' },
+      skipVerify: { reason: 'owner 放行整篇' },
+    });
+
+    expect(result.promoted).toBe(true);
+    const rows = await db
+      .select({ id: question.id, draftStatus: question.draft_status })
+      .from(question)
+      .where(inArray(question.id, [parent, child]));
+    for (const row of rows) expect(row.draftStatus).toBe('active');
+    // Neither the parent loop nor the parts cascade enrolls the anchor; no
+    // question-level fallback fires for a labeled-but-anchor-only binding.
+    expect(await db.select().from(material_fsrs_state)).toHaveLength(0);
+  });
+
   it('verifyEventId resolves to the verify event written by the run fn (回查, Step 5)', async () => {
     const db = testDb();
     const qid = await seedQuestion({ source: 'web_sourced' });

@@ -133,6 +133,8 @@ const BASE_META: QuizGenMetadataT = {
 async function seedDraftQuestion(opts: {
   id: string;
   knowledgeId: string;
+  /** YUK-1037 — multi-binding override; defaults to [knowledgeId]. */
+  knowledgeIds?: string[];
   promptMd?: string;
   meta?: QuizGenMetadataT;
   source?: string;
@@ -158,7 +160,7 @@ async function seedDraftQuestion(opts: {
     }) as never,
     choices_md: opts.choicesMd === undefined ? null : opts.choicesMd,
     judge_kind_override: opts.judge === undefined ? 'semantic' : opts.judge,
-    knowledge_ids: [opts.knowledgeId],
+    knowledge_ids: opts.knowledgeIds ?? [opts.knowledgeId],
     difficulty: 3,
     source: opts.source ?? 'quiz_gen',
     source_ref: opts.knowledgeId,
@@ -435,6 +437,100 @@ describe('runQuizVerify', () => {
     // U8 / AF §4 (U3 L-note) — a promoted draft DID enter the pool, so no
     // question_pool_gap hint is left.
     expect(await poolGapNotesForKnowledge('k1')).toBe(0);
+  });
+
+  // ── YUK-1037 — synthetic subject roots are structural anchors, not content KCs ──
+  // The subject read axis already excludes 'seed:<subj>:root' (resolveSubjectKnowledgeIds);
+  // the FSRS enrollment axis must match, or an invisible-in-subject question becomes a due
+  // probe through a fake KC card (YUK-1032 audit: 'seed:math:root' acquired exactly such a
+  // row in production).
+  it('YUK-1037: a seed-root-only label set promotes but enrolls ZERO FSRS cards', async () => {
+    await seedKnowledge('seed:math:root');
+    await seedDraftQuestion({ id: 'q-seed-root-only', knowledgeId: 'seed:math:root' });
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_seedroot');
+
+    const result = await runQuizVerify({
+      db: testDb(),
+      questionId: 'q-seed-root-only',
+      runTaskFn,
+    });
+
+    expect(result.status).toBe('verified');
+    const rows = await testDb().select().from(question).where(eq(question.id, 'q-seed-root-only'));
+    expect(rows[0].draft_status).toBe('active');
+    // No knowledge-level card for the anchor — and NO question-level fallback
+    // either: a roots-only label set is labeled-but-anchor-only, not unlabeled.
+    expect(await fsrsRowCount('knowledge', 'seed:math:root')).toBe(0);
+    expect(await fsrsRowCount('question', 'q-seed-root-only')).toBe(0);
+    expect(await countVerifyEvents('q-seed-root-only')).toBe(1);
+  });
+
+  it('YUK-1037: mixed bindings enroll only the real KC, never the synthetic root', async () => {
+    await seedKnowledge('seed:math:root');
+    await seedKnowledge('k_real');
+    await seedDraftQuestion({
+      id: 'q-seed-root-mixed',
+      knowledgeId: 'k_real',
+      knowledgeIds: ['seed:math:root', 'k_real'],
+    });
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_seedmix');
+
+    const result = await runQuizVerify({
+      db: testDb(),
+      questionId: 'q-seed-root-mixed',
+      runTaskFn,
+    });
+
+    expect(result.status).toBe('verified');
+    expect(await fsrsRowCount('knowledge', 'seed:math:root')).toBe(0);
+    expect(await fsrsRowCount('knowledge', 'k_real')).toBe(1);
+    expect(await fsrsRowCount('question', 'q-seed-root-mixed')).toBe(0);
+  });
+
+  it('YUK-1037: the composite cascade never mints a card for an inherited seed-root binding', async () => {
+    await seedKnowledge('seed:math:root');
+    await seedDraftQuestion({
+      id: 'q-root-parent',
+      knowledgeId: 'seed:math:root',
+      kind: 'reading',
+      promptMd: '陈太丘与友期行……(1) 「去」的意思是？(2) 元方表现了怎样的品格？',
+    });
+    await seedCompositePart({
+      id: 'q-root-p0',
+      parentId: 'q-root-parent',
+      partIndex: 0,
+      promptMd: '陈太丘与友期行……(1) 「去」的意思是？',
+      knowledgeIds: ['seed:math:root'],
+    });
+    // The genuinely unlabeled sibling still takes the question-level fallback.
+    await seedCompositePart({
+      id: 'q-root-legacy',
+      parentId: 'q-root-parent',
+      partIndex: 1,
+      promptMd: '陈太丘与友期行……(2) 无标签小题',
+    });
+
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_rootcomp');
+    const result = await runQuizVerify({
+      db: testDb(),
+      questionId: 'q-root-parent',
+      runTaskFn,
+    });
+
+    expect(result.status).toBe('verified');
+    const rows = await testDb()
+      .select({ id: question.id, draftStatus: question.draft_status })
+      .from(question)
+      .where(inArray(question.id, ['q-root-parent', 'q-root-p0', 'q-root-legacy']));
+    const statusById = new Map(rows.map((r) => [r.id, r.draftStatus]));
+    expect(statusById.get('q-root-parent')).toBe('active');
+    expect(statusById.get('q-root-p0')).toBe('active');
+    expect(statusById.get('q-root-legacy')).toBe('active');
+
+    expect(await fsrsRowCount('knowledge', 'seed:math:root')).toBe(0);
+    expect(await fsrsRowCount('question', 'q-root-parent')).toBe(0);
+    expect(await fsrsRowCount('question', 'q-root-p0')).toBe(0);
+    expect(await fsrsRowCount('question', 'q-root-legacy')).toBe(1);
   });
 
   // YUK-1011 — composite (篇) cascade: quiz_gen composite children persist as

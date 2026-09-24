@@ -34,6 +34,7 @@ import { type JudgeInvokerOutput, deterministicExecutionProvenance } from './jud
 import { ratingFromCoarseOutcome } from './judge-rating';
 import { hasNewerAttemptEvidence } from './judge-run-dispatch';
 import { emitMasteryProgressSignal } from './mastery-progress-signal';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from './placement-scope';
 import { judgeResultToRatingAdvice } from './rating-advisor';
 
 type SoloSettlementPolicy =
@@ -430,12 +431,21 @@ async function settleSoloReview(
   const requestedIntersection = requestedKnowledgeIds.filter((id) =>
     questionKnowledgeIds.includes(id),
   );
-  const fsrsKnowledgeIds =
+  // YUK-1037 — a synthetic subject root ('seed:<subj>:root', the plan-executor
+  // coarse-fallback binding) is a structural anchor, never a content KC: strip
+  // it BEFORE the FSRS subject pick so a roots-only label set settles on the
+  // question-level card — the same unlabeled fallback a knowledgeless row uses —
+  // instead of writing/refreshing a card for an id the subject read axis already
+  // excludes (resolveSubjectKnowledgeIds). (Enrollment stays zero-card for the
+  // same label set; settlement differs because the protocol needs one primary
+  // subject to record the attempt against.)
+  const fsrsKnowledgeIds = (
     requestedKnowledgeIds.length === 0
       ? questionKnowledgeIds
       : requestedIntersection.length > 0
         ? requestedIntersection
-        : questionKnowledgeIds;
+        : questionKnowledgeIds
+  ).filter((id) => !SYNTHETIC_SUBJECT_ROOT_RE.test(id));
   const fsrsSubjectKind: FsrsSubjectKind = fsrsKnowledgeIds.length > 0 ? 'knowledge' : 'question';
   const fsrsSubjectIds = fsrsSubjectKind === 'knowledge' ? fsrsKnowledgeIds : [questionId];
   const outcome: 'success' | 'failure' = judged.finalRating === 'again' ? 'failure' : 'success';
@@ -858,8 +868,19 @@ export async function settlePaperSlotReview(
   const rating = ratingFromCoarseOutcome(coarseOutcome) ?? 'again';
   const attemptOutcome: PaperAttemptOutcome =
     coarseOutcome === 'correct' ? 'success' : coarseOutcome === 'partial' ? 'partial' : 'failure';
-  const fsrsSubjectKind: FsrsSubjectKind = command.knowledge.primaryId ? 'knowledge' : 'question';
-  const fsrsSubjectId = command.knowledge.primaryId ?? q.id;
+  // YUK-1037 — synthetic subject roots ('seed:<subj>:root', e.g. from a
+  // coarse-fallback-bound question) are structural anchors, never content KCs,
+  // so they must not acquire an FSRS subject. Pick the first non-synthetic id
+  // across the slot's primary + secondary assignments (write_quiz stores
+  // knowledge_ids[0] as primary — a mixed binding like ['seed:math:root',
+  // 'k_real'] still settles on the real KC), falling back to the question-level
+  // card only when the whole assignment is roots/empty.
+  const fsrsPrimaryId =
+    [command.knowledge.primaryId, ...command.knowledge.secondaryIds]
+      .filter((id): id is string => id !== null)
+      .find((id) => !SYNTHETIC_SUBJECT_ROOT_RE.test(id)) ?? null;
+  const fsrsSubjectKind: FsrsSubjectKind = fsrsPrimaryId ? 'knowledge' : 'question';
+  const fsrsSubjectId = fsrsPrimaryId ?? q.id;
   const referencedKnowledgeIds = command.knowledge.primaryId
     ? [command.knowledge.primaryId, ...command.knowledge.secondaryIds]
     : q.knowledge_ids;

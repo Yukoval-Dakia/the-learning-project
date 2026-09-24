@@ -27,6 +27,7 @@ import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { type RunTaskFn, runQuizVerify } from '../../jobs/quiz_verify';
 import { runSourceVerify } from '../../jobs/source_verify';
 import { initialFsrsState } from '../fsrs';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from '../placement-scope';
 import { lockPlacementSupplyScopes } from '../question-supply/placement-supply-lock';
 
 export interface VerifyAndPromoteParams {
@@ -208,6 +209,14 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       // question-level fallback when the row carries no knowledge ids.
       const initial = initialFsrsState(now);
       const enrollIfAbsent = async (subjectKind: 'knowledge' | 'question', subjectId: string) => {
+        // YUK-1037 — a synthetic subject root ('seed:<subj>:root') is a structural
+        // anchor, never a content KC: skip knowledge-level enrollment so an owner
+        // override can't mint a due card for an id the subject read axis already
+        // excludes (resolveSubjectKnowledgeIds). One choke covers the parent loop
+        // AND the composite-parts cascade below; a roots-only label set enrolls
+        // ZERO cards (it is labeled-but-anchor-only, not unlabeled — the
+        // question-level fallback stays reserved for a truly empty binding).
+        if (subjectKind === 'knowledge' && SYNTHETIC_SUBJECT_ROOT_RE.test(subjectId)) return;
         const existing = await getFsrsState(tx, subjectKind, subjectId);
         if (existing) return;
         await upsertFsrsState(tx, {

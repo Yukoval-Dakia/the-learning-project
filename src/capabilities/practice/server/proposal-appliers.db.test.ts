@@ -423,6 +423,44 @@ describe('question_draft accept (ADR-0031 lane B)', () => {
     expect(await getFsrsState(db, 'question', questionId)).toBeTruthy();
   });
 
+  // YUK-1037 — a draft bound only to a synthetic subject root ('seed:<subj>:root',
+  // the structural anchor the subject read axis already excludes via
+  // resolveSubjectKnowledgeIds) is labeled-but-anchor-only: accept still promotes
+  // it, but it must NOT mint a knowledge-level FSRS card for the root, and the
+  // question-level fallback stays reserved for a truly unlabeled row (above).
+  it('accepting a seed-root-only draft promotes it but enrolls ZERO FSRS cards', async () => {
+    const db = testDb();
+    const questionId = await seedDraftQuestion({
+      knowledgeIds: ['seed:math:root'],
+      id: 'q_draft_seedroot',
+    });
+    await seedQuestionDraftProposal('qd_p_seedroot', questionId);
+
+    const result = await acceptAiProposal(db, 'qd_p_seedroot');
+    expect(result.kind).toBe('question_draft');
+    const [row] = await db.select().from(question).where(eq(question.id, questionId));
+    expect(row.draft_status).toBe('active');
+
+    const { getFsrsState } = await import('@/server/fsrs/state');
+    expect(await getFsrsState(db, 'knowledge', 'seed:math:root')).toBeNull();
+    expect(await getFsrsState(db, 'question', questionId)).toBeNull();
+  });
+
+  it('accepting a mixed-binding draft enrolls only the real KC', async () => {
+    const db = testDb();
+    const questionId = await seedDraftQuestion({
+      knowledgeIds: ['seed:math:root', 'k_draft'],
+      id: 'q_draft_mixed',
+    });
+    await seedQuestionDraftProposal('qd_p_mixed', questionId);
+
+    await acceptAiProposal(db, 'qd_p_mixed');
+    const { getFsrsState } = await import('@/server/fsrs/state');
+    expect(await getFsrsState(db, 'knowledge', 'seed:math:root')).toBeNull();
+    expect(await getFsrsState(db, 'knowledge', 'k_draft')).toBeTruthy();
+    expect(await getFsrsState(db, 'question', questionId)).toBeNull();
+  });
+
   it('double-accept is idempotent (no second rate event, no FSRS churn)', async () => {
     const db = testDb();
     const questionId = await seedDraftQuestion();
