@@ -102,6 +102,13 @@ const server = {
   POSTGRES_DB: optionalString,
   POSTGRES_PASSWORD: optionalString,
   POSTGRES_USER: optionalString,
+  // YUK-1034 — scripts/item-prior-reps-eval.ts 离线评测 knobs（script-only，不进
+  // 运行时）：LIMIT=题数上限（默认 30）、GROUPS=独立 median 组数（默认 3）、
+  // REPS=组内采样数（默认 3，= job 的 reps 参数）、CONCURRENCY=并发（默认 4）。
+  PRIOR_REPS_EVAL_CONCURRENCY: optionalString,
+  PRIOR_REPS_EVAL_GROUPS: optionalString,
+  PRIOR_REPS_EVAL_LIMIT: optionalString,
+  PRIOR_REPS_EVAL_REPS: optionalString,
   PROFILE_CRITIC_OK: optionalString,
   PROJECTION_IS_WRITER_ITEM_CALIBRATION: optionalString,
   QUESTION_SUPPLY_REFILL_ENABLED: optionalString,

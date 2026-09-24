@@ -11,7 +11,7 @@
 
 | Queue | 上游边 | 注册点 | 说明 |
 |-------|--------|--------|------|
-| `item_prior_backfill` | 根 | practice/manifest | 无硬轨行新题 → ItemPriorTask 写 b 锚（cap 25/夜）；`item_calibration.b` 锚**种子**写者 |
+| `item_prior_backfill` | 根 | practice/manifest | 无硬轨行新题 → ItemPriorTask 写 b 锚（cap 25/夜）；`item_calibration.b` 锚**种子**写者。YUK-1034 opt-in job data `{reps:N}` → feature 路径同题 N 次采样 median 聚合（默认 1 = 单次，行为不变；llasa 路径不挂）|
 | `recalibration_nightly` | ← `item_prior_backfill` **硬** | practice/manifest | 攒够 label → `b_calib` firm-up。真读后写（同表 b 锚：种子先、firm 后）|
 | `practice_stream_compose_nightly` | ← `recalibration_nightly` **硬** | practice/manifest | 预产今日练习流；选题实读 `item_calibration.b_calib`（单飞锁幂等；lazy 首读即恢复路径）|
 | `question_supply_nightly` | ← `recalibration_nightly` **硬** | practice/manifest | 缺口扫描 → sourcing/quiz_gen；R3 近-θ̂ 判定实读 `b_calib`→`effectiveB`（7d 指纹 cooldown 是唯一成本闸）|

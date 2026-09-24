@@ -13,13 +13,19 @@
 
 import { inArray, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
+import { aggregateItemPriorRepDrafts } from '@/core/item-prior-reps';
+import type { ItemPriorDraftT } from '@/core/schema/item_prior';
 import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { parseItemPriorLlasaOutput, parseItemPriorOutput } from '@/server/ai/item-prior';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { applyItemPrior } from '@/server/mastery/item-calibration';
 import { resolveSubjectProfileForKnowledgeIds } from '../server/knowledge-runtime';
-import { type PracticeTaskRunFn, makePracticeTaskRunFn } from '../server/task-runtime';
+import {
+  type PracticeTaskCallCtx,
+  type PracticeTaskRunFn,
+  makePracticeTaskRunFn,
+} from '../server/task-runtime';
 
 // YUK-376 — 冷启锚方法开关：'feature'（默认，ItemPriorTask feature→b，source=
 // 'llm_prior'）| 'llasa'（ItemPriorLlasaTask 学生模拟反推 b，source=
@@ -35,6 +41,15 @@ type DepsOverride = {
    * 运行时也可经 job data { method: 'llasa' } 触发（pg-boss send 携带）。
    */
   method?: ItemPriorMethod;
+  /**
+   * YUK-1034 — feature 路径每题重复采样次数。默认 1（单次调用，行为不变）；
+   * >1 时同题连跑 N 次 ItemPriorTask，b_logit/confidence 取 median 聚合
+   * （src/core/item-prior-reps.ts），单个失败 rep 丢弃、全败才跳过该题
+   * （沿用单题失败语义）。仅对 method='feature' 生效——llasa 忽略并 warn。
+   * 运行时也可经 job data { reps: 3 } 触发。normalize：非正整数回退 1，
+   * 上限 MAX_REPS（付费路径乘数，防 job data 手滑）。
+   */
+  reps?: number;
 };
 
 export interface ItemPriorBackfillResult {
@@ -48,6 +63,47 @@ export interface ItemPriorBackfillResult {
 
 const DEFAULT_MAX_PER_RUN = 25;
 
+// YUK-1034 — reps 默认 1（行为不变）；上限防 opt-in job data 把付费乘数打爆
+// （reps 把每题 LLM 成本 ×N，9 已远超实用值 3）。
+const MAX_REPS = 9;
+
+function normalizeReps(raw: unknown): number {
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 1) return 1;
+  if (raw > MAX_REPS) {
+    console.warn('[item_prior_backfill] reps clamped', { requested: raw, max: MAX_REPS });
+    return MAX_REPS;
+  }
+  return raw;
+}
+
+/**
+ * YUK-1034 — feature→b 采样器：reps=1 退化为单次调用（与原路径逐字节等价，
+ * 输入形状/hash 不变）；reps>1 连跑 N 次，逐 rep catch 丢弃失败（LLM/parse
+ * 错只记 warn 不炸题），成功 drafts 走 median 聚合。全部失败 →
+ * aggregateItemPriorRepDrafts throw → 外层按单题失败跳过（不写 row）。
+ */
+async function sampleFeaturePriorDraft(
+  runTaskFn: PracticeTaskRunFn,
+  input: unknown,
+  ctx: PracticeTaskCallCtx,
+  reps: number,
+): Promise<ItemPriorDraftT> {
+  if (reps <= 1) {
+    const runResult = await runTaskFn('ItemPriorTask', input, ctx);
+    return parseItemPriorOutput(runResult.text);
+  }
+  const drafts: ItemPriorDraftT[] = [];
+  for (let r = 0; r < reps; r++) {
+    try {
+      const runResult = await runTaskFn('ItemPriorTask', input, ctx);
+      drafts.push(parseItemPriorOutput(runResult.text));
+    } catch (repErr) {
+      console.warn('[item_prior_backfill] rep dropped from median', { rep: r, err: repErr });
+    }
+  }
+  return aggregateItemPriorRepDrafts(drafts, reps).draft;
+}
+
 /**
  * Backfill cold-start difficulty anchors for questions that have no hard-track
  * `item_calibration` row yet. Picks at most `maxPerRun` candidates per run.
@@ -58,6 +114,11 @@ export async function runItemPriorBackfill(
 ): Promise<ItemPriorBackfillResult> {
   const maxPerRun = deps.maxPerRun ?? DEFAULT_MAX_PER_RUN;
   const method: ItemPriorMethod = deps.method ?? 'feature';
+  const reps = normalizeReps(deps.reps);
+  if (method === 'llasa' && reps > 1) {
+    // YUK-1034 — reps 只挂在 feature 路径；llasa+reps 不静默吞掉，warn 留痕。
+    console.warn('[item_prior_backfill] reps>1 ignored for method=llasa', { reps });
+  }
   const result: ItemPriorBackfillResult = { considered: 0, calibrated: 0, skipped_failed: 0 };
 
   // PRE-LLM read OUTSIDE any per-task swallow: a throw here is a legit retryable
@@ -123,15 +184,14 @@ export async function runItemPriorBackfill(
               kind: c.kind,
               knowledge_context: knowledgeContext,
             };
-      const runResult = await runTaskFn(
-        method === 'llasa' ? 'ItemPriorLlasaTask' : 'ItemPriorTask',
-        input,
-        { subjectProfile },
-      );
+      // YUK-1034 — feature 路径经 sampleFeaturePriorDraft：reps=1 单次调用
+      // （原语义），reps>1 N 次采样 median 聚合；llasa 保持单次调用不动。
       const draft =
         method === 'llasa'
-          ? parseItemPriorLlasaOutput(runResult.text).prior
-          : parseItemPriorOutput(runResult.text);
+          ? parseItemPriorLlasaOutput(
+              (await runTaskFn('ItemPriorLlasaTask', input, { subjectProfile })).text,
+            ).prior
+          : await sampleFeaturePriorDraft(runTaskFn, input, { subjectProfile }, reps);
       await applyItemPrior(db, {
         questionId: c.id,
         draft,
@@ -151,7 +211,7 @@ export async function runItemPriorBackfill(
 
 export function buildItemPriorBackfillHandler(
   db: Db,
-): (jobs: Job<{ method?: ItemPriorMethod }>[]) => Promise<JobYieldOutput> {
+): (jobs: Job<{ method?: ItemPriorMethod; reps?: number }>[]) => Promise<JobYieldOutput> {
   return async (jobs) => {
     try {
       // YUK-376 — opt-in：pg-boss send('item_prior_backfill', { method: 'llasa' })
@@ -159,7 +219,10 @@ export function buildItemPriorBackfillHandler(
       // 'feature'，cron 与既有 send 调用零变更。
       const requested = jobs[0]?.data?.method;
       const method: ItemPriorMethod = requested === 'llasa' ? 'llasa' : 'feature';
-      const result = await runItemPriorBackfill(db, { method });
+      // YUK-1034 — opt-in { reps: 3 }：feature 路径同题 N 次采样 median 聚合；
+      // 缺省/非法值恒回 1（单次调用，行为不变）。
+      const reps = normalizeReps(jobs[0]?.data?.reps);
+      const result = await runItemPriorBackfill(db, { method, reps });
       console.log('[item_prior_backfill] result', result);
       // YUK-779 — the counters already existed; nothing acted on them. An empty
       // candidate set early-returns with considered:0 → level `idle`; a 限流风暴
