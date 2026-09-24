@@ -223,6 +223,30 @@ describe('loadQuestionDetail', () => {
     const self = res?.family.members.find((m) => m.is_self);
     expect(self?.id).toBe(v1);
     expect(new Set(res?.family.members.map((m) => m.id))).toEqual(new Set([root, v1, v2]));
+    // YUK-1035 — members carry the part-ness FK so the UI never string-matches
+    // kind; plain variant members are not parts (null).
+    expect(res?.family.members.map((m) => m.parent_question_id)).toEqual([null, null, null]);
+  });
+
+  it('projects parent_question_id on a family member that is itself a part', async () => {
+    const root = await seedQuestion({ variant_depth: 0, root_question_id: null });
+    const composite = await seedQuestion({ knowledge_ids: [] });
+    // A variant member that is also a composite part (root_question_id puts it
+    // in the family; parent_question_id makes it a part — the FK is the
+    // authority even when the stamped kind label is not 'question_part').
+    const partVariant = await seedQuestion({
+      variant_depth: 1,
+      root_question_id: root,
+      parent_question_id: composite,
+      part_index: 0,
+      kind: 'short',
+    });
+
+    const res = await loadQuestionDetail(testDb(), root);
+    const member = res?.family.members.find((m) => m.id === partVariant);
+    expect(member?.parent_question_id).toBe(composite);
+    expect(member?.is_self).toBe(false);
+    expect(member?.kind).toBe('short');
   });
 
   it('aggregates per-knowledge scheduling + worst-of decay bucket', async () => {
@@ -568,6 +592,9 @@ describe('loadQuestionDetail', () => {
     expect(res?.parts.map((p) => p.part_index)).toEqual([0, 1]);
     expect(res?.parts.map((p) => p.prompt_md)).toEqual(['part one', 'part two']);
     expect(res?.parts[0].kind).toBe('mcq');
+    // YUK-1035 — parts carry the part-ness FK (=== the parent id) so the UI
+    // never string-matches the display-only kind label.
+    expect(res?.parts.map((p) => p.parent_question_id)).toEqual([parent, parent]);
     // drafts are NOT excluded from the parts list (detail shows drafts).
     expect(res?.parts[1].draft_status).toBe('draft');
     // the parent itself is top-level (no parent linkage).

@@ -24621,6 +24621,7 @@ export interface operations {
                                 id: string;
                                 is_self: boolean;
                                 kind: string;
+                                parent_question_id: string | null;
                                 variant_depth: number;
                             }[];
                             root_question_id: string;
@@ -24647,6 +24648,7 @@ export interface operations {
                             draft_status: string | null;
                             id: string;
                             kind: string;
+                            parent_question_id: string | null;
                             part_index: number;
                             prompt_md: string;
                         }[];
