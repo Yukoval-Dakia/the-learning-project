@@ -55,6 +55,7 @@ import { withAnswerClass } from '@/server/questions/answer-class-write';
 
 import { CAUSE_OVERLAY_ID_PREFIX } from './cause-overlay';
 import { initialFsrsState } from './fsrs';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from './placement-scope';
 
 // YUK-17 / ADR-0018 — swappable enqueue hook so DB tests can drive
 // variant_question accept without spinning up pg-boss.
@@ -475,6 +476,12 @@ export async function acceptQuestionDraftProposal(
     const fsrsSubjectIds = Array.from(new Set(row.knowledge_ids ?? []));
     if (fsrsSubjectIds.length > 0) {
       for (const knowledgeId of fsrsSubjectIds) {
+        // YUK-1037 — a synthetic subject root ('seed:<subj>:root') is a
+        // structural anchor, never a content KC: skip enrollment (the subject
+        // read axis already excludes it — resolveSubjectKnowledgeIds). A
+        // roots-only label set enrolls ZERO cards; the question-level fallback
+        // stays reserved for a genuinely unlabeled draft.
+        if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
         const existing = await getFsrsState(tx, 'knowledge', knowledgeId);
         if (existing) continue;
         await upsertFsrsState(tx, {

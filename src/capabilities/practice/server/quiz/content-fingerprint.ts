@@ -3,6 +3,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, ne, or } from 'drizzle-orm';
 
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/capabilities/practice/server/placement-scope';
 import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
@@ -346,6 +347,12 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
   if (row.draftStatus !== 'draft') {
     const initial = initialFsrsState(params.now);
     for (const knowledgeId of addedKnowledgeIds) {
+      // YUK-1037 — same anchor-not-content exclusion as the verify-time enroll
+      // loops: a merged-in synthetic subject root ('seed:<subj>:root') still
+      // updates the binding (addedKnowledgeIds / knowledge_ids stay faithful to
+      // the duplicate's attribution) but must never mint a knowledge-level FSRS
+      // card — the subject read axis already excludes it.
+      if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
       const enrolled = await enrollFsrsStateIfAbsent(tx, {
         subject_kind: 'knowledge',
         subject_id: knowledgeId,

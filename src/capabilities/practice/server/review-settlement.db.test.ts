@@ -3,10 +3,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { newId } from '@/core/ids';
 import { artifact, event, mastery_state, material_fsrs_state, question } from '@/db/schema';
 import { Review } from '@/server/session';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { CreateAttemptBodySchema } from '../api/contracts';
 import type { JudgedSubmit, ValidatedSubmit } from '../api/submit';
 import { normalizeReviewSubmitActivityRef } from './activity-ref';
+import { deterministicExecutionProvenance } from './judge';
 import { loadQuestionWithAttemptSnapshot } from './question-evidence-snapshot';
 import { settleInlineSoloReview, settlePaperSlotReview } from './review-settlement';
 
@@ -196,5 +198,113 @@ describe('sealed review settlement commands', () => {
       .from(event)
       .where(eq(event.caused_by_event_id, first.attemptEventId));
     expect(derived).toHaveLength(0);
+  });
+
+  // ── YUK-1037 — a synthetic subject root ('seed:<subj>:root', the plan-executor
+  // coarse-fallback binding) is a structural anchor, never a content KC. An attempt
+  // on a seed-root-bound question still settles — on the question-level card, the
+  // same unlabeled fallback a knowledgeless row uses — instead of writing or
+  // refreshing a card for an id the subject read axis already excludes
+  // (resolveSubjectKnowledgeIds).
+  it('a seed-root-only question settles FSRS on the question-level card, never the anchor', async () => {
+    const db = testDb();
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId, ['seed:math:root']);
+
+    const receipt = await settleInlineSoloReview(db, {
+      validated: await validated(questionId),
+      judged: manualJudged(),
+    });
+
+    expect(receipt.effect).toBe('applied');
+    const fsrsRows = await db.select().from(material_fsrs_state);
+    expect(fsrsRows).toHaveLength(1);
+    expect(fsrsRows[0]).toMatchObject({ subject_kind: 'question', subject_id: questionId });
+    const reviewRows = await db
+      .select({ payload: event.payload })
+      .from(event)
+      .where(and(eq(event.action, 'review'), eq(event.subject_id, questionId)));
+    expect(reviewRows[0].payload).toMatchObject({
+      fsrs_subject_kind: 'question',
+      fsrs_subject_ids: [questionId],
+    });
+  });
+
+  it('mixed bindings settle FSRS on the real KC only, never the synthetic root', async () => {
+    const db = testDb();
+    const questionId = `q_${newId()}`;
+    await seedQuestion(questionId, ['seed:math:root', 'kc_contract']);
+
+    const receipt = await settleInlineSoloReview(db, {
+      validated: await validated(questionId),
+      judged: manualJudged(),
+    });
+
+    expect(receipt.effect).toBe('applied');
+    const fsrsRows = await db.select().from(material_fsrs_state);
+    expect(fsrsRows.map((r) => r.subject_id)).toEqual(['kc_contract']);
+    expect(fsrsRows[0].subject_kind).toBe('knowledge');
+  });
+
+  it('a paper slot whose primary KC is a synthetic root settles on the question card', async () => {
+    const db = testDb();
+    const questionId = `q_${newId()}`;
+    const paperId = `paper_${newId()}`;
+    await seedQuestion(questionId, ['seed:math:root']);
+    await seedPaper(paperId, questionId);
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: paperId });
+    const loaded = await loadQuestionWithAttemptSnapshot(db, questionId);
+    const subjectProfile = resolveSubjectProfile('math');
+    const capabilityRef = { id: 'judge:exact', version: '1' };
+
+    const receipt = await settlePaperSlotReview(db, {
+      paper: {
+        sessionId,
+        artifactId: paperId,
+        partRef: null,
+        feedbackPolicy: 'immediate',
+      },
+      answerSnapshot: {
+        markdown: 'true',
+        imageRefs: [],
+        question: loaded.question_snapshot,
+      },
+      question: loaded.question,
+      knowledge: { primaryId: 'seed:math:root', secondaryIds: [] },
+      judgement: {
+        kind: 'graded',
+        invocation: {
+          route: 'exact',
+          result: {
+            coarse_outcome: 'correct',
+            score: 1,
+            score_meaning: 'correctness',
+            confidence: 0.9,
+            capability_ref: capabilityRef,
+            feedback_md: 'ok',
+            evidence_json: {},
+          },
+          telemetry: {
+            route: 'exact',
+            capability_ref: capabilityRef,
+            coarse_outcome: 'correct',
+            confidence: 0.9,
+            elapsed_ms: 1,
+            question_id: questionId,
+            subject_id: questionId,
+            profile_version: subjectProfile.version,
+          },
+          modelAttempted: false,
+        },
+        executionProvenance: deterministicExecutionProvenance('exact'),
+        subjectProfile,
+      },
+      submittedAt: new Date(),
+    });
+
+    expect(receipt.effect).toBe('applied');
+    const fsrsRows = await db.select().from(material_fsrs_state);
+    expect(fsrsRows).toHaveLength(1);
+    expect(fsrsRows[0]).toMatchObject({ subject_kind: 'question', subject_id: questionId });
   });
 });

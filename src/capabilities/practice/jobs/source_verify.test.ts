@@ -235,6 +235,48 @@ describe('runSourceVerify', () => {
     });
   });
 
+  // ── YUK-1037 — synthetic subject roots are structural anchors, not content KCs ──
+  // The subject read axis already excludes 'seed:<subj>:root' (resolveSubjectKnowledgeIds);
+  // the FSRS enrollment axis must match, or an invisible-in-subject question becomes a due
+  // probe through a fake KC card (YUK-1032 audit: 'seed:math:root' acquired exactly such a
+  // row in production). The seed-root KNOWLEDGE row is seeded here because production has it
+  // (ensureSubjectRoot plants it) and the F3 knowledge-survival gate requires every bound id
+  // to be a live node.
+  it('promotes a seed-root-only question but enrolls ZERO FSRS cards (production seed:math:root shape)', async () => {
+    const db = testDb();
+    await seedKnowledge('seed:math:root', 'math');
+    const qid = await seedQuestion({ knowledgeIds: ['seed:math:root'] });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn });
+    expect(result.status).toBe('verified');
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('active');
+
+    // No knowledge-level card for the anchor — and NO question-level fallback:
+    // a roots-only label set is labeled-but-anchor-only, not unlabeled.
+    expect(await getFsrsState(db, 'knowledge', 'seed:math:root')).toBeNull();
+    expect(await getFsrsState(db, 'question', qid)).toBeNull();
+  });
+
+  it('mixed bindings enroll only the real KC, never the synthetic root', async () => {
+    const db = testDb();
+    await seedKnowledge('seed:math:root', 'math');
+    await seedKnowledge('k_math_real', 'math');
+    const qid = await seedQuestion({ knowledgeIds: ['seed:math:root', 'k_math_real'] });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn });
+    expect(result.status).toBe('verified');
+    expect((await db.select().from(question).where(eq(question.id, qid)))[0].draft_status).toBe(
+      'active',
+    );
+
+    expect(await getFsrsState(db, 'knowledge', 'seed:math:root')).toBeNull();
+    expect(await getFsrsState(db, 'knowledge', 'k_math_real')).not.toBeNull();
+    expect(await getFsrsState(db, 'question', qid)).toBeNull();
+  });
+
   it('rejects a stale verdict when KC attribution changes mid-verify, then retries current version', async () => {
     const db = testDb();
     await seedKnowledge('k1');

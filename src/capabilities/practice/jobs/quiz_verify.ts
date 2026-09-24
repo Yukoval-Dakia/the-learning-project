@@ -64,6 +64,7 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectQuestionKind } from '@/subjects/profile-schema';
 import { resolveQuizGenSkillDocs } from '@/subjects/quiz-gen-skills';
 import { initialFsrsState } from '../server/fsrs';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from '../server/placement-scope';
 import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
 import {
   PlacementStarterAdmissionError,
@@ -767,6 +768,13 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         const fsrsSubjectIds = Array.from(new Set(current.knowledgeIds ?? []));
         if (fsrsSubjectIds.length > 0) {
           for (const knowledgeId of fsrsSubjectIds) {
+            // YUK-1037 — a synthetic subject root ('seed:<subj>:root') is a
+            // structural anchor, never a content KC: skip FSRS enrollment (the
+            // subject read axis already excludes it — resolveSubjectKnowledgeIds).
+            // Branching on the RAW ids is deliberate: a roots-only label set is
+            // not "unlabeled", so it enrolls ZERO cards — the question-level
+            // fallback stays reserved for a genuinely unlabeled legacy row.
+            if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
             // Codex (PR #295) — enroll-if-absent. A verified quiz binding to a
             // knowledge point that ALREADY has an FSRS projection (e.g. a
             // supplementary question for an already-studied node) must NOT reset
@@ -878,6 +886,9 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           const childKnowledgeIds = Array.from(new Set(child.knowledgeIds ?? []));
           if (childKnowledgeIds.length > 0) {
             for (const knowledgeId of childKnowledgeIds) {
+              // YUK-1037 — same anchor-not-content exclusion as the parent loop:
+              // an inherited 'seed:<subj>:root' binding must not mint a card.
+              if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
               const childExisting = await getFsrsState(tx, 'knowledge', knowledgeId);
               if (childExisting) continue;
               await upsertFsrsState(tx, {

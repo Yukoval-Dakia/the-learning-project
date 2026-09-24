@@ -47,6 +47,7 @@ import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/ca
 // so the brief-refresh layer shares the SAME canonical bridge.
 import { batchResolveSubjectIds } from '@/kernel/read-models/subject-resolution';
 import { type FailureAttempt, getFailureAttempts } from './attempt-events';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from './placement-scope';
 
 // YUK-167 / ADR-0025 — swappable active-goals reader so DB tests inject goal
 // fixtures (mirrors coach_daily.ts / dreaming_nightly.ts CoachRunDeps pattern).
@@ -249,22 +250,31 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
 
     const candidateWindow = Math.min(Math.max(limit * 4, 100), 400);
     const usedDueQuestionIds = new Set<string>();
-    const knowledgeStateRows = await activeDb
-      .select({
-        knowledge_id: material_fsrs_state.subject_id,
-        state: material_fsrs_state.state,
-        due_at: material_fsrs_state.due_at,
-        last_review_event_id: material_fsrs_state.last_review_event_id,
-      })
-      .from(material_fsrs_state)
-      .where(
-        and(
-          eq(material_fsrs_state.subject_kind, 'knowledge'),
-          lte(material_fsrs_state.due_at, now),
-        ),
-      )
-      .orderBy(material_fsrs_state.due_at, material_fsrs_state.subject_id)
-      .limit(candidateWindow);
+    const knowledgeStateRows = (
+      await activeDb
+        .select({
+          knowledge_id: material_fsrs_state.subject_id,
+          state: material_fsrs_state.state,
+          due_at: material_fsrs_state.due_at,
+          last_review_event_id: material_fsrs_state.last_review_event_id,
+        })
+        .from(material_fsrs_state)
+        .where(
+          and(
+            eq(material_fsrs_state.subject_kind, 'knowledge'),
+            lte(material_fsrs_state.due_at, now),
+          ),
+        )
+        .orderBy(material_fsrs_state.due_at, material_fsrs_state.subject_id)
+        .limit(candidateWindow)
+    ).filter(
+      // YUK-1037 — defense in depth: a 'seed:<subj>:root' FSRS subject is a
+      // structural anchor, never probeable content. Enroll sites no longer mint
+      // it, but a pre-fix row may still exist until ops remediation retires it —
+      // skipping it here keeps a stale anchor card from serving as a due probe
+      // (its questions stay reachable via other paths, never via this KC axis).
+      (stateRow) => !SYNTHETIC_SUBJECT_ROOT_RE.test(stateRow.knowledge_id),
+    );
 
     // YUK-716 — bulk-prefetch every probe-selection DB input for the whole due page in THREE
     // reads (was up to ~3 serial round-trips PER due KC — the /api/review/due N+1). The per-KC

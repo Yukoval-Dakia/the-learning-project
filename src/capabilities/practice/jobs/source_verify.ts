@@ -47,6 +47,7 @@ import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 import { initialFsrsState } from '../server/fsrs';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from '../server/placement-scope';
 import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
 import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
 import { DEDUP_OVERLAP_THRESHOLD, maxNgramOverlap } from '../server/question-supply/sourced-dedup';
@@ -668,6 +669,15 @@ export async function runSourceVerify(
         const fsrsSubjectIds = Array.from(new Set(current.knowledgeIds ?? []));
         if (fsrsSubjectIds.length > 0) {
           for (const knowledgeId of fsrsSubjectIds) {
+            // YUK-1037 — a synthetic subject root ('seed:<subj>:root', the
+            // plan-executor coarse-fallback binding) is a structural anchor,
+            // never a content KC: skip FSRS enrollment so the question can't
+            // mint a due card for an id the subject read axis already excludes
+            // (resolveSubjectKnowledgeIds). The raw-ids branch condition is
+            // deliberate: a roots-only label set is NOT "unlabeled", so it
+            // enrolls ZERO cards — the question-level fallback below stays
+            // reserved for a genuinely unlabeled legacy row.
+            if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
             const existing = await getFsrsState(tx, 'knowledge', knowledgeId);
             if (existing) continue;
             await upsertFsrsState(tx, {

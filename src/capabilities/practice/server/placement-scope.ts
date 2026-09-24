@@ -61,4 +61,8 @@ export async function resolveGoalPlacementScope(
 // The seed-root id family ('seed:<subjectId>:root', seed.ts / ensureSubjectRoot). Pattern form
 // because tier-3 is subject-agnostic; domain.ts's tier-2 exclusion stays exact-id (it knows its
 // canonical subject). 3a runtime topic roots (newId + parent_id null) never match.
-const SYNTHETIC_SUBJECT_ROOT_RE = /^seed:[^:]+:root$/;
+// YUK-1037 — exported as the single pattern for the anchor-not-content id family: every
+// material_fsrs_state enrollment fed by question.knowledge_ids skips these ids (the subject
+// read axis already excludes them — resolveSubjectKnowledgeIds), so a coarse-fallback
+// 'seed:<subj>:root' binding can never mint a knowledge-level due card.
+export const SYNTHETIC_SUBJECT_ROOT_RE = /^seed:[^:]+:root$/;
