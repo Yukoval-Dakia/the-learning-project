@@ -24,8 +24,12 @@ nested `AGENTS.md` / `.claude/rules`，机械约束放在 hooks。
   `.remember/` 为准，不靠会话记忆。
 - 中途发现的 bug/follow-up 当场写入 Linear 或 `PLAN.md` PARKED。
 - 并行实施必须每 lane 独立 branch + worktree；不要让多个对等会话写同一工作树。
-- 创建 subagent 时默认 Opus；fable 只用于终裁/最难验证，Sonnet 仅机械轻活，
-  Haiku 基本不用。
+- 创建 subagent 时按当前工具**已注册**角色与任务性质分流：实施路径和验收已定的
+  机械修改给 Fixer；目标明确但需本地调查、局部方案或调试的非 UI 实施给
+  Implementer；UI 交互与视觉给 Designer；高风险架构决策和独立复核给 Oracle。
+  角色不可用时由编排者先收敛任务，再交给可用执行者；同一 diff 不派两个写入者。
+- 具体模型、variant 和请求故障回退由当前工具配置决定；代码质量不达标须重新
+  判断任务与角色，不把模型 fallback 当作质量升级。
 - 收尾时对齐 `PLAN.md` 四栏、Linear 状态、`.remember` handoff、开放
   PR/workflow/worktree；需要落盘的看板更新必须 commit。
 
