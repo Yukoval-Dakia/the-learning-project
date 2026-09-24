@@ -61,6 +61,17 @@ describe('custom profile judge routing', () => {
     metadata: { calibration: { uncertainty: null, conditions: ['恒定流量', '同一截面'] } },
   };
 
+  // YUK-1036 — the unit judge's input contract: a numeric reference_value +
+  // string reference_unit in question.metadata (mirrors runUnitDimensionJudge's
+  // 'unsupported' precondition and the write-path gate). Its presence is the
+  // structural "calculation-type" signal; the free-form kind label no longer
+  // decides.
+  const unitReference = {
+    reference_value: 25,
+    reference_unit: 'm/s',
+    reference_tolerance: 0.02,
+  };
+
   it.each(['calculation', 'computation'])(
     '%s uses declared unit preference with or without a figure',
     (kind) => {
@@ -72,6 +83,106 @@ describe('custom profile judge routing', () => {
       }
     },
   );
+
+  // Backward equivalence (YUK-1036): the two legacy labels still trigger the
+  // route for rows persisted before/without the metadata contract — including
+  // rows carrying unrelated metadata or no metadata at all.
+  it.each(['calculation', 'computation'])(
+    'legacy label %s still triggers without the reference pair (byte-parity)',
+    (kind) => {
+      const profile = customProfile();
+      for (const metadata of [null, { calibration: { uncertainty: null } }]) {
+        expect(resolveQuestionJudgeRoute({ ...measurementQuestion, kind, metadata }, profile)).toBe(
+          'unit_dimension',
+        );
+      }
+    },
+  );
+
+  // The reported bug (YUK-1036): kind is a free-form display label since
+  // YUK-386, so equivalent semantic labels silently missed the literal check.
+  // Any label carrying the unit-judge contract now triggers — 中文 vocab,
+  // English vocab, and custom profile vocab alike.
+  it.each(['计算题', '应用题', 'word_problem', '计量换算'])(
+    'non-legacy label %s carrying reference_value/reference_unit → unit_dimension',
+    (kind) => {
+      const profile = customProfile();
+      expect(
+        resolveQuestionJudgeRoute(
+          {
+            ...measurementQuestion,
+            kind,
+            metadata: { ...measurementQuestion.metadata, ...unitReference },
+          },
+          profile,
+        ),
+      ).toBe('unit_dimension');
+    },
+  );
+
+  it('unit contract does not override the earlier structural priorities (override > choices)', () => {
+    const profile = customProfile();
+    const row = { ...measurementQuestion, kind: '计算题', metadata: unitReference };
+    // judge_kind_override still wins first.
+    expect(resolveQuestionJudgeRoute({ ...row, judge_kind_override: 'keyword' }, profile)).toBe(
+      'keyword',
+    );
+    // Persisted choices still short-circuit to exact before the unit branch.
+    expect(
+      resolveQuestionJudgeRoute(
+        { ...row, choices_md: ['25 m/s', '0.025 m/s', '250 m/s'] },
+        profile,
+      ),
+    ).toBe('exact');
+  });
+
+  it('unit contract does not fire without the declared profile preference', () => {
+    const profile = customProfile(false);
+    const row = { ...measurementQuestion, kind: '计算题', metadata: unitReference };
+    // No unit_dimension preference → falls through to the answer-class chain;
+    // '计算题' is an unrecognised free-form label → semantic (same as any
+    // unknown label under this profile).
+    expect(resolveQuestionJudgeRoute(row, profile)).toBe('semantic');
+    // The legacy label only wins the route when the preference is declared:
+    // without it, computation + keywords stays on the keyword ladder.
+    expect(resolveQuestionJudgeRoute({ ...row, kind: 'computation' }, profile)).toBe('keyword');
+  });
+
+  // Conservative direction: a partial/malformed pair is NOT the contract — the
+  // runner would return 'unsupported' on it, so the route must not fire. A
+  // missed trigger degrades to the answer-class chain; a false trigger would
+  // dispatch a judge that cannot produce a verdict.
+  it.each([
+    ['missing reference_unit', { reference_value: 25 }],
+    ['missing reference_value', { reference_unit: 'm/s' }],
+    ['non-number reference_value', { reference_value: '25', reference_unit: 'm/s' }],
+    ['non-string reference_unit', { reference_value: 25, reference_unit: 42 }],
+    ['null metadata', null],
+    ['metadata without the pair', { calibration: { uncertainty: null } }],
+  ])(
+    'non-legacy label with %s does NOT trigger unit_dimension (falls to answer-class)',
+    (_case, metadata) => {
+      const profile = customProfile();
+      expect(
+        resolveQuestionJudgeRoute({ ...measurementQuestion, kind: '计算题', metadata }, profile),
+      ).toBe('semantic');
+    },
+  );
+
+  it('derivation carrying the unit contract routes unit_dimension (contract wins over kind class)', () => {
+    // The reference pair is the producer's explicit declaration that the
+    // expected answer is a number+unit — it fires for ANY kind label, including
+    // one whose answer class would otherwise climb the steps/semantic ladder
+    // (customProfile derives from physics, which prefers unit_dimension and not
+    // steps). Pinned so the precedence is deliberate, not accidental.
+    const profile = customProfile();
+    expect(
+      resolveQuestionJudgeRoute(
+        { ...measurementQuestion, kind: 'derivation', metadata: unitReference },
+        profile,
+      ),
+    ).toBe('unit_dimension');
+  });
 
   it('keeps choices deterministic and explicit override first for custom profiles', () => {
     const profile = customProfile();
@@ -907,6 +1018,46 @@ describe('YUK-996: assertGeneratedQuestionHasJudgeContract resolves the runtime 
     expect(() =>
       assertGeneratedQuestionHasJudgeContract(q, 'question_author', physicsProfile),
     ).toThrow(/uses unit_dimension judge without metadata\.reference_value/);
+  });
+
+  it('(a) does not mis-reject a non-legacy-label question carrying the unit contract', () => {
+    // YUK-1036 — kind is a free-form label (YUK-386), so a '计算题' draft never
+    // matched the literal 'calculation'/'computation' check. Its
+    // metadata.reference_value/reference_unit pair IS the unit judge's input
+    // contract: the gate must resolve the same 'unit_dimension' route the
+    // runtime invoker dispatches and accept the pair it requires — resolving
+    // 'semantic' here (the pre-fix behaviour) would false-reject on missing
+    // required_points.
+    const q = {
+      kind: '计算题',
+      prompt_md: '把 0.025 km/s 换算成 m/s，保留两位有效数字。',
+      choices_md: null,
+      judge_kind_override: null,
+      rubric_json: { criteria: [] },
+      metadata: { reference_value: 25, reference_unit: 'm/s', reference_tolerance: 0.02 },
+    };
+    expect(resolveQuestionJudgeRoute(q, physicsProfile)).toBe('unit_dimension');
+    expect(() =>
+      assertGeneratedQuestionHasJudgeContract(q, 'question_author', physicsProfile),
+    ).not.toThrow();
+  });
+
+  it('(b) a non-legacy-label question WITHOUT the unit contract stays off the route', () => {
+    // Same label, no reference pair: the unit judge could only return
+    // 'unsupported', so the preference does not fire (conservative direction).
+    // '计算题' is an unrecognised free-form label → semantic; required_points
+    // satisfies that contract.
+    const q = {
+      kind: '计算题',
+      prompt_md: '把 0.025 km/s 换算成 m/s，保留两位有效数字。',
+      choices_md: null,
+      judge_kind_override: null,
+      rubric_json: { criteria: [], required_points: ['换算到同一单位再求比值'] },
+    };
+    expect(resolveQuestionJudgeRoute(q, physicsProfile)).toBe('semantic');
+    expect(() =>
+      assertGeneratedQuestionHasJudgeContract(q, 'question_author', physicsProfile),
+    ).not.toThrow();
   });
 
   it('keeps the legacy ladder verdicts under the default general profile (regression)', () => {

@@ -66,9 +66,11 @@ function findNodeWithParent(
  * leaks every sibling sub to the semantic judge.
  *
  * Out of scope (left WHOLE-ROW): choices_md / rubric_json / image_refs / kind /
- * figures. route-resolve reads only kind / rubric_json / choices_md / image_refs /
- * judge_kind_override, so narrowing them is unnecessary to close the leak and
- * figure narrowing is deferred to a later cut.
+ * figures / metadata. route-resolve reads only kind / rubric_json / choices_md /
+ * image_refs / judge_kind_override / metadata (the latter is the unit_dimension
+ * contract, YUK-1036 — a whole-row authored field, not per-sub), so narrowing
+ * them is unnecessary to close the leak and figure narrowing is deferred to a
+ * later cut.
  */
 export function narrowQuestionToPart(
   question: JudgeQuestionRow,

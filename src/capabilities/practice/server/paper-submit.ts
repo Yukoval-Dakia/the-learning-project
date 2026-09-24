@@ -510,7 +510,8 @@ export async function submitPaperSlot(
   // YUK-212 — the route gate pre-resolves on the WHOLE row (q), not the narrowed
   // sub: narrowing only swaps the LLM-facing text (prompt_md / reference_md /
   // structured), never the route-deciding fields (kind / rubric_json / choices_md
-  // / image_refs / judge_kind_override), so the gate's route choice is unaffected.
+  // / image_refs / judge_kind_override / metadata — the unit_dimension contract,
+  // YUK-1036), so the gate's route choice is unaffected.
   const resolvedRoute = resolveQuestionJudgeRoute(q, subjectProfile);
   const photoOnlyUnsupported = photoOnly && !IMAGE_CONSUMING_JUDGE_ROUTES.has(resolvedRoute);
 
