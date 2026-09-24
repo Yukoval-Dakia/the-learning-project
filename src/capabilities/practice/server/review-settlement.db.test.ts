@@ -307,4 +307,68 @@ describe('sealed review settlement commands', () => {
     expect(fsrsRows).toHaveLength(1);
     expect(fsrsRows[0]).toMatchObject({ subject_kind: 'question', subject_id: questionId });
   });
+
+  it('a paper slot with a root primary and a real secondary settles on the real KC', async () => {
+    const db = testDb();
+    const questionId = `q_${newId()}`;
+    const paperId = `paper_${newId()}`;
+    // write_quiz stores knowledge_ids[0] as primary_knowledge_id, so a mixed
+    // binding surfaces exactly this shape: root primary + real secondary.
+    await seedQuestion(questionId, ['seed:math:root', 'kc_contract']);
+    await seedPaper(paperId, questionId);
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: paperId });
+    const loaded = await loadQuestionWithAttemptSnapshot(db, questionId);
+    const subjectProfile = resolveSubjectProfile('math');
+    const capabilityRef = { id: 'judge:exact', version: '1' };
+
+    const receipt = await settlePaperSlotReview(db, {
+      paper: {
+        sessionId,
+        artifactId: paperId,
+        partRef: null,
+        feedbackPolicy: 'immediate',
+      },
+      answerSnapshot: {
+        markdown: 'true',
+        imageRefs: [],
+        question: loaded.question_snapshot,
+      },
+      question: loaded.question,
+      knowledge: { primaryId: 'seed:math:root', secondaryIds: ['kc_contract'] },
+      judgement: {
+        kind: 'graded',
+        invocation: {
+          route: 'exact',
+          result: {
+            coarse_outcome: 'correct',
+            score: 1,
+            score_meaning: 'correctness',
+            confidence: 0.9,
+            capability_ref: capabilityRef,
+            feedback_md: 'ok',
+            evidence_json: {},
+          },
+          telemetry: {
+            route: 'exact',
+            capability_ref: capabilityRef,
+            coarse_outcome: 'correct',
+            confidence: 0.9,
+            elapsed_ms: 1,
+            question_id: questionId,
+            subject_id: questionId,
+            profile_version: subjectProfile.version,
+          },
+          modelAttempted: false,
+        },
+        executionProvenance: deterministicExecutionProvenance('exact'),
+        subjectProfile,
+      },
+      submittedAt: new Date(),
+    });
+
+    expect(receipt.effect).toBe('applied');
+    const fsrsRows = await db.select().from(material_fsrs_state);
+    expect(fsrsRows.map((r) => r.subject_id)).toEqual(['kc_contract']);
+    expect(fsrsRows[0].subject_kind).toBe('knowledge');
+  });
 });
