@@ -61,7 +61,8 @@ describe('runItemPriorBackfill (DB integration)', () => {
     expect(result.considered).toBe(1);
     expect(result.calibrated).toBe(1);
     expect(result.skipped_failed).toBe(0);
-    expect(stub).toHaveBeenCalledTimes(1);
+    // YUK-1034 — 缺省 reps → DEFAULT_REPS=3（生产默认 median-of-3）。
+    expect(stub).toHaveBeenCalledTimes(3);
 
     const rows = await db
       .select()
@@ -95,10 +96,10 @@ describe('runItemPriorBackfill (DB integration)', () => {
     const stub = stubItemPriorRunTask();
     const result = await runItemPriorBackfill(db, { runTaskFn: stub });
 
-    // Only qNew is a candidate.
+    // Only qNew is a candidate; default reps=3 → 3 samples for it.
     expect(result.considered).toBe(1);
     expect(result.calibrated).toBe(1);
-    expect(stub).toHaveBeenCalledTimes(1);
+    expect(stub).toHaveBeenCalledTimes(3);
 
     // qDone unchanged.
     const doneRows = await db
@@ -123,23 +124,27 @@ describe('runItemPriorBackfill (DB integration)', () => {
     await seedQuestion(qBad, [k]);
     await seedQuestion(qGood, [k]);
 
-    // First call (whichever question) returns garbage; the rest return valid.
-    let n = 0;
-    const stub = vi.fn(async () => {
-      n++;
-      if (n === 1) return { text: 'not json at all' };
+    // The bad question fails every rep (default reps=3 → all 3 dropped → skip);
+    // the good question's reps all succeed. Order-independent: discriminate on
+    // the prompt the job feeds each rep.
+    const stub = vi.fn(async (_kind: string, input: { prompt_md?: string }) => {
+      if (input.prompt_md === `Prompt ${qBad}`) return { text: 'not json at all' };
       return { text: JSON.stringify({ b_logit: 0.3, confidence: 0.4, reasoning: 'x' }) };
     });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const result = await runItemPriorBackfill(db, { runTaskFn: stub });
     expect(result.considered).toBe(2);
     expect(result.calibrated).toBe(1);
     expect(result.skipped_failed).toBe(1);
+    expect(stub).toHaveBeenCalledTimes(6); // 3 reps × 2 questions
 
     // The failed question's row was NOT written → it stays a candidate for the
     // next run (no partial write).
     const rows = await db.select().from(item_calibration);
     expect(rows).toHaveLength(1);
+    vi.restoreAllMocks();
   });
 
   it('respects maxPerRun cap', async () => {
@@ -326,18 +331,70 @@ describe('runItemPriorBackfill (DB integration)', () => {
     vi.restoreAllMocks();
   });
 
-  it('reps defaults to 1 — invalid/missing values keep single-call behavior', async () => {
+  it('reps defaults to 3 — invalid/missing values fall back to the production default', async () => {
     const k = createId();
     const q = createId();
     await seedKnowledge(k);
     await seedQuestion(q, [k]);
 
+    // 缺省/非法 reps 一律回退 DEFAULT_REPS=3——nightly cron 不带 job data 的落点
+    // （owner 2026-09-24 拍板启用 median-of-3）。
     for (const reps of [undefined, 0, -2, 2.5, Number.NaN]) {
       const stub = stubItemPriorRunTask(0.9, 0.4);
       const result = await runItemPriorBackfill(db, { runTaskFn: stub, reps });
       expect(result.calibrated).toBe(1);
-      expect(stub).toHaveBeenCalledTimes(1); // 非法/缺省 reps 恒回单次调用
+      expect(stub).toHaveBeenCalledTimes(3); // 非法/缺省 reps 恒回默认 3 次采样
       await db.delete(item_calibration); // 清掉写入，下一轮该题仍是候选
     }
+  });
+
+  it('reps=1 is a valid opt-out — single call on the original byte-identical path', async () => {
+    const k = createId();
+    const q = createId();
+    await seedKnowledge(k);
+    await seedQuestion(q, [k]);
+
+    const stub = vi.fn(async (kind: string, input: unknown) => {
+      expect(kind).toBe('ItemPriorTask');
+      // opt-out 路径输入形状逐字节不变（无 llasa 字段、无 rep 标记）。
+      expect(input).not.toHaveProperty('reference_md');
+      expect(input).not.toHaveProperty('choices_md');
+      expect(input).toHaveProperty('knowledge_context');
+      return {
+        text: JSON.stringify({ b_logit: 0.9, confidence: 0.4, reasoning: '单次调用的 reasoning' }),
+      };
+    });
+
+    const result = await runItemPriorBackfill(db, { runTaskFn: stub, reps: 1 });
+    expect(result.calibrated).toBe(1);
+    expect(stub).toHaveBeenCalledTimes(1); // 显式 opt-out → 单次调用，不过聚合器
+
+    const rows = await db
+      .select()
+      .from(item_calibration)
+      .where(eq(item_calibration.question_id, q));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].b).toBeCloseTo(0.9, 5);
+    expect(rows[0].confidence).toBeCloseTo(0.4, 5);
+    expect(rows[0].source).toBe('llm_prior');
+  });
+
+  it('reps above MAX_REPS clamps to 9 calls and warns', async () => {
+    const k = createId();
+    const q = createId();
+    await seedKnowledge(k);
+    await seedQuestion(q, [k]);
+
+    const stub = stubItemPriorRunTask(0.5, 0.4);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await runItemPriorBackfill(db, { runTaskFn: stub, reps: 99 });
+    expect(result.calibrated).toBe(1);
+    expect(stub).toHaveBeenCalledTimes(9); // clamped to MAX_REPS
+    expect(warnSpy).toHaveBeenCalledWith('[item_prior_backfill] reps clamped', {
+      requested: 99,
+      max: 9,
+    });
+    warnSpy.mockRestore();
   });
 });

@@ -42,12 +42,15 @@ type DepsOverride = {
    */
   method?: ItemPriorMethod;
   /**
-   * YUK-1034 — feature 路径每题重复采样次数。默认 1（单次调用，行为不变）；
-   * >1 时同题连跑 N 次 ItemPriorTask，b_logit/confidence 取 median 聚合
+   * YUK-1034 — feature 路径每题重复采样次数。默认 DEFAULT_REPS=3（owner
+   * 2026-09-24 拍板启用，eval 封存见 docs/planning/2026-09-24-item-prior-reps-eval.md：
+   * median-of-3 把 within-question SD 0.361→0.173，≈+$0.0004/题）：同题连跑
+   * N 次 ItemPriorTask，b_logit/confidence 取 median 聚合
    * （src/core/item-prior-reps.ts），单个失败 rep 丢弃、全败才跳过该题
-   * （沿用单题失败语义）。仅对 method='feature' 生效——llasa 忽略并 warn。
-   * 运行时也可经 job data { reps: 3 } 触发。normalize：非正整数回退 1，
-   * 上限 MAX_REPS（付费路径乘数，防 job data 手滑）。
+   * （沿用单题失败语义）。显式 reps:1 是单次调用 opt-out（逐字节等价旧路径）。
+   * 仅对 method='feature' 生效——llasa 忽略并 warn。运行时也可经 job data
+   * { reps: N } 覆盖。normalize：缺失/非正整数回退 DEFAULT_REPS，上限
+   * MAX_REPS（付费路径乘数，防 job data 手滑）。
    */
   reps?: number;
 };
@@ -63,12 +66,16 @@ export interface ItemPriorBackfillResult {
 
 const DEFAULT_MAX_PER_RUN = 25;
 
-// YUK-1034 — reps 默认 1（行为不变）；上限防 opt-in job data 把付费乘数打爆
-// （reps 把每题 LLM 成本 ×N，9 已远超实用值 3）。
+// YUK-1034 — reps 生产默认 3（owner 2026-09-24 拍板启用；median SD 0.361→
+// 0.173，≈+$0.0004/题）。上限防 job data 把付费乘数打爆（reps 把每题 LLM
+// 成本 ×N，9 已远超实用值 3）。
+const DEFAULT_REPS = 3;
 const MAX_REPS = 9;
 
 function normalizeReps(raw: unknown): number {
-  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 1) return 1;
+  // 缺失/非正整数 → 生产默认（nightly cron 不带 job data → 3 reps）；
+  // 显式 1 是合法 opt-out（落在下方范围分支返回）。
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 1) return DEFAULT_REPS;
   if (raw > MAX_REPS) {
     console.warn('[item_prior_backfill] reps clamped', { requested: raw, max: MAX_REPS });
     return MAX_REPS;
@@ -219,8 +226,9 @@ export function buildItemPriorBackfillHandler(
       // 'feature'，cron 与既有 send 调用零变更。
       const requested = jobs[0]?.data?.method;
       const method: ItemPriorMethod = requested === 'llasa' ? 'llasa' : 'feature';
-      // YUK-1034 — opt-in { reps: 3 }：feature 路径同题 N 次采样 median 聚合；
-      // 缺省/非法值恒回 1（单次调用，行为不变）。
+      // YUK-1034 — { reps: N } 覆盖默认：feature 路径同题 N 次采样 median
+      // 聚合；缺省/非法值回退 DEFAULT_REPS=3（nightly cron 不带 job data →
+      // 生产默认 median-of-3），显式 { reps: 1 } 为单次调用 opt-out。
       const reps = normalizeReps(jobs[0]?.data?.reps);
       const result = await runItemPriorBackfill(db, { method, reps });
       console.log('[item_prior_backfill] result', result);

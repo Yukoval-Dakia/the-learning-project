@@ -13,6 +13,8 @@ reps=1 单次采样本轮基线 SD（mean 0.397 / median 0.361，n=9/题）略�
 
 建议：**生产 backfill 可启用 `reps: 3`**（`boss.send('item_prior_backfill', { reps: 3 })` 或后续把 cron/触发 data 带上），成本 ≈ +$0.0004/题（本轮实测 $0.00024/call × 3）；默认仍 1，是否翻默认由 owner 决定。
 
+**后续（2026-09-24）：owner 已拍板翻默认——`item_prior_backfill` feature 路径默认 `DEFAULT_REPS=3`**，nightly cron（不带 job data）即跑 median-of-3；`{reps:1}` 保留单次调用 opt-out，`{reps:N}` 仍可覆盖（上限 MAX_REPS=9）。
+
 ## 实验设置
 
 | 项 | 值 |
