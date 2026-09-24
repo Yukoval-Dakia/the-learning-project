@@ -226,4 +226,118 @@ describe('runItemPriorBackfill (DB integration)', () => {
     expect(rows[0].source).toBe('llm_prior');
     expect(rows[0].b).toBeCloseTo(0.9, 5);
   });
+
+  // ─── YUK-1034 — reps opt-in：feature 路径同题 N 次采样取 median ─────────
+
+  it('reps=3 samples ItemPriorTask 3x per question and writes the median b', async () => {
+    const k = createId();
+    const q = createId();
+    await seedKnowledge(k);
+    await seedQuestion(q, [k]);
+
+    // 三个 rep 给出发散的 b：median=0.7（非均值 ≈0.77，区分 median vs mean）。
+    const bs = [1.4, 0.7, 0.2];
+    let n = 0;
+    const stub = vi.fn(async (kind: string, input: unknown) => {
+      expect(kind).toBe('ItemPriorTask');
+      // reps>1 不改变 feature 输入形状（同题同输入重复采样）。
+      expect(input).not.toHaveProperty('reference_md');
+      expect(input).toHaveProperty('knowledge_context');
+      const b = bs[n++ % bs.length];
+      return {
+        text: JSON.stringify({
+          b_logit: b,
+          confidence: 0.3 + n * 0.1,
+          reasoning: `rep ${n}：认知步骤数 2，前置链 1`,
+        }),
+      };
+    });
+
+    const result = await runItemPriorBackfill(db, { runTaskFn: stub, reps: 3 });
+    expect(result.considered).toBe(1);
+    expect(result.calibrated).toBe(1);
+    expect(result.skipped_failed).toBe(0);
+    expect(stub).toHaveBeenCalledTimes(3);
+
+    const rows = await db
+      .select()
+      .from(item_calibration)
+      .where(eq(item_calibration.question_id, q));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].b).toBeCloseTo(0.7, 5);
+    expect(rows[0].b_anchor).toBeCloseTo(0.7, 5);
+    // confidences 0.4/0.5/0.6 → median 0.5。
+    expect(rows[0].confidence).toBeCloseTo(0.5, 5);
+    // provenance 不改写 source——仍是 feature 路径的 llm_prior。
+    expect(rows[0].source).toBe('llm_prior');
+  });
+
+  it('reps>1 drops a failed rep and aggregates over the survivors', async () => {
+    const k = createId();
+    const q = createId();
+    await seedKnowledge(k);
+    await seedQuestion(q, [k]);
+
+    // rep 2 parse 失败被丢弃；幸存 [0.2, 0.6] → 偶数 median = 0.4。
+    let n = 0;
+    const stub = vi.fn(async () => {
+      n++;
+      if (n === 2) return { text: '{"b_logit": broken' };
+      const b = n === 1 ? 0.2 : 0.6;
+      return {
+        text: JSON.stringify({ b_logit: b, confidence: 0.4, reasoning: `rep ${n}` }),
+      };
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = await runItemPriorBackfill(db, { runTaskFn: stub, reps: 3 });
+    expect(result.calibrated).toBe(1);
+    expect(result.skipped_failed).toBe(0);
+    expect(stub).toHaveBeenCalledTimes(3);
+    expect(warnSpy).toHaveBeenCalled();
+
+    const rows = await db
+      .select()
+      .from(item_calibration)
+      .where(eq(item_calibration.question_id, q));
+    expect(rows[0].b).toBeCloseTo(0.4, 5);
+    warnSpy.mockRestore();
+  });
+
+  it('reps>1 skips the question when every rep fails (same failure semantics)', async () => {
+    const k = createId();
+    const q = createId();
+    await seedKnowledge(k);
+    await seedQuestion(q, [k]);
+
+    const stub = vi.fn(async () => ({ text: 'not json at all' }));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await runItemPriorBackfill(db, { runTaskFn: stub, reps: 3 });
+    expect(result.considered).toBe(1);
+    expect(result.calibrated).toBe(0);
+    expect(result.skipped_failed).toBe(1);
+    expect(stub).toHaveBeenCalledTimes(3);
+
+    // 全败不写 row → 该题仍是下轮候选。
+    const rows = await db.select().from(item_calibration);
+    expect(rows).toHaveLength(0);
+    vi.restoreAllMocks();
+  });
+
+  it('reps defaults to 1 — invalid/missing values keep single-call behavior', async () => {
+    const k = createId();
+    const q = createId();
+    await seedKnowledge(k);
+    await seedQuestion(q, [k]);
+
+    for (const reps of [undefined, 0, -2, 2.5, Number.NaN]) {
+      const stub = stubItemPriorRunTask(0.9, 0.4);
+      const result = await runItemPriorBackfill(db, { runTaskFn: stub, reps });
+      expect(result.calibrated).toBe(1);
+      expect(stub).toHaveBeenCalledTimes(1); // 非法/缺省 reps 恒回单次调用
+      await db.delete(item_calibration); // 清掉写入，下一轮该题仍是候选
+    }
+  });
 });
