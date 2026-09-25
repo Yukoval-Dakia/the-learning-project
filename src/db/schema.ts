@@ -686,9 +686,11 @@ export const question_admission_verification = pgTable(
  * 发题（serve-time binding，§3.1）：发题时冻结 revision、目标 part、实际
  * 材料 digest 与选项呈现映射 —— 提交时不得再取 latest。claim 状态在此行
  * （one_time 用于诊断/probe/教学一次性占用；§3.3）。
- * P1-1：绑定列（revision/parts/materials/order/container_ref/issued_at）由
- * BEFORE UPDATE trigger 冻结 —— 只有 claim 列可变；DELETE 一律拒绝
- * （发题事实是永久 serve 记录，见 0105 迁移）。
+ * P1-1：绑定列（revision/parts/materials/order/container_ref/issued_at +
+ * claim_policy —— policy 是发题时选定的 serve 契约一部分，事后改会变更
+ * claim 语义，同样冻结）由 BEFORE UPDATE trigger 冻结 —— 只有 claim 生命周期
+ * 列（claim_status/claimed_by_ref）可变；DELETE 一律拒绝（发题事实是
+ * 永久 serve 记录，见 0105/0106 迁移）。
  */
 export const assessment_issuance = pgTable(
   'assessment_issuance',
@@ -822,8 +824,13 @@ export const evaluation = pgTable(
       ],
       name: 'evaluation_submission_group_fk',
     }),
-    // P1-2：作为 head 复合 FK 目标 —— head 的 effective 必须属于本组。
-    uniqueIndex('evaluation_id_group_uq').on(t.evaluation_id, t.evaluation_group_id),
+    // P1（终验）：head 复合 FK 目标 —— (evaluation, submission, group) 三坐标
+    // 全一致；取代旧 (evaluation, group) 两坐标版（唯一能力等价，不叠加冗余约束）。
+    uniqueIndex('evaluation_id_submission_group_uq').on(
+      t.evaluation_id,
+      t.submission_id,
+      t.evaluation_group_id,
+    ),
     check('evaluation_status_ck', sql`${t.status} IN ('pending','completed')`),
     check('evaluation_attempt_positive_ck', sql`${t.attempt} >= 1`),
   ],
@@ -852,11 +859,28 @@ export const evaluation_effective_head = pgTable(
   },
   (t) => [
     index('evaluation_effective_head_submission_idx').on(t.submission_id),
-    // P1-2：head 的 effective 必须属于本组（复合 FK；effective 为 NULL 时
-    // MATCH SIMPLE 跳过校验 —— 初始态合法）。
+    // P1（终验）：head 的 (submission, group) 必须是真实同组 submission ——
+    // submission_id NOT NULL ⇒ 此 FK 恒生效，NULL-effective 初始 head 也无法
+    // 携带孤儿身份坐标。
     foreignKey({
-      columns: [t.effective_evaluation_id, t.evaluation_group_id],
-      foreignColumns: [evaluation.evaluation_id, evaluation.evaluation_group_id],
+      columns: [t.submission_id, t.evaluation_group_id],
+      foreignColumns: [
+        assessment_submission.submission_id,
+        assessment_submission.evaluation_group_id,
+      ],
+      name: 'evaluation_effective_head_submission_fk',
+    }),
+    // P1（终验）：effective 非 NULL 时三坐标 (evaluation, submission, group)
+    // 必须与 evaluation 行全一致 —— head 不得指向他组/他 submission 的 evaluation，
+    // 也不得把 effective 挂到同组另一 submission 上。effective 为 NULL 时
+    // MATCH SIMPLE 跳过（初始态合法）。
+    foreignKey({
+      columns: [t.effective_evaluation_id, t.submission_id, t.evaluation_group_id],
+      foreignColumns: [
+        evaluation.evaluation_id,
+        evaluation.submission_id,
+        evaluation.evaluation_group_id,
+      ],
       name: 'evaluation_effective_head_evaluation_fk',
     }),
     check('evaluation_effective_head_generation_ck', sql`${t.generation} >= 0`),
@@ -923,7 +947,8 @@ export const assessment_identity_mapping = pgTable(
       sql`${t.status} IN ('pending','mapped','conflicted','historical_unresolved')`,
     ),
     // P2-B：locator 非空白；status 依赖的目标坐标约束。
-    check('assessment_identity_mapping_locator_nonempty_ck', sql`${t.source_locator} <> ''`),
+    // P2（终验）：非空白判定收紧到 btrim —— 纯空格 locator 同样拒绝。
+    check('assessment_identity_mapping_locator_nonempty_ck', sql`btrim(${t.source_locator}) <> ''`),
     check(
       'assessment_identity_mapping_mapped_target_ck',
       sql`(${t.status} <> 'mapped' OR ${t.target_revision_id} IS NOT NULL)`,

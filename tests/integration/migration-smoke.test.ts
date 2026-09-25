@@ -2796,8 +2796,8 @@ describe('migration smoke — YUK-857 note verification claim', () => {
 
 describe('migration smoke — YUK-1044 assessment contract truth source', () => {
   const BASELINE_TAG = '0103_lush_marvel_zombies';
-  // 0104 建表；0105（复审修复）加 FK/复合约束/不可变 trigger/映射选择位。
-  const FINAL_TAG = '0105_yuk1044_contract_integrity_fks';
+  // 0104 建表；0105（复审）FK/trigger/选择位；0106（终验）head 所有权三坐标 FK。
+  const FINAL_TAG = '0106_yuk1044_head_ownership_fks';
   let container: StartedPostgreSqlContainer;
   let client: ReturnType<typeof postgres>;
 
@@ -2976,6 +2976,10 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     await expect(client`
       UPDATE assessment_issuance SET revision_id = 'rev_a' WHERE issuance_id = 'iss_head'
     `).resolves.toBeDefined(); // 同值 UPDATE（IS NOT DISTINCT）不受影响
+    // 终验收紧：claim_policy 是发题契约一部分，同样冻结（0106 替换函数体生效）。
+    await expect(client`
+      UPDATE assessment_issuance SET claim_policy = 'one_time' WHERE issuance_id = 'iss_head'
+    `).rejects.toMatchObject({ code: 'P0001' });
     await expect(
       client`DELETE FROM assessment_issuance WHERE issuance_id = 'iss_head'`,
     ).rejects.toMatchObject({
@@ -3089,6 +3093,76 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     expect(stale).toHaveLength(0);
   });
 
+  it('final P1: head submission coordinates are validated in all three reviewer repro shapes; NULL head + CAS stay legal', async () => {
+    // 独立 fixture：gA/sA、gB/sB、gC/sC1+sC1b（同组两 submission）。
+    const mkGroup = async (g: string, s: string) => {
+      await client`
+        INSERT INTO evaluation_group (evaluation_group_id, submission_ids, created_at)
+        VALUES (${g}, jsonb_build_array(${s}::text), now())
+      `;
+    };
+    const mkSub = async (g: string, s: string, key: string) => {
+      await client`
+        INSERT INTO assessment_submission (
+          submission_id, issuance_id, revision_id, evaluation_group_id,
+          response_set, idempotency_key, submitted_at
+        ) VALUES (${s}, 'iss_head', 'rev_a', ${g}, '{}'::jsonb, ${key}, now())
+      `;
+    };
+    await mkGroup('eg_p1a', 'sub_p1a');
+    await mkSub('eg_p1a', 'sub_p1a', 'idem-p1a');
+    await mkGroup('eg_p1b', 'sub_p1b');
+    await mkSub('eg_p1b', 'sub_p1b', 'idem-p1b');
+    await mkGroup('eg_p1c', 'sub_p1c1');
+    await mkSub('eg_p1c', 'sub_p1c1', 'idem-p1c1');
+    await mkSub('eg_p1c', 'sub_p1c1b', 'idem-p1c1b'); // 同组第二 submission
+    await client`
+      INSERT INTO evaluation (evaluation_id, evaluation_group_id, submission_id, attempt, status, created_at)
+      VALUES ('ev_p1c1', 'eg_p1c', 'sub_p1c1', 1, 'completed', now())
+    `;
+
+    // repro 1：NULL-effective head 携带不存在的 (submission, group) —— 旧 schema
+    // 唯一 FK 被 MATCH SIMPLE 跳过而放行；现在 (submission, group) FK 恒生效。
+    await expect(client`
+      INSERT INTO evaluation_effective_head (evaluation_group_id, submission_id, updated_at)
+      VALUES ('eg_ghost', 'sub_ghost', now())
+    `).rejects.toMatchObject({ constraint_name: 'evaluation_effective_head_submission_fk' });
+
+    // repro 2：head 属 gB 但 submission_id 是他组（gA）的 —— 矛盾坐标拒绝。
+    await expect(client`
+      INSERT INTO evaluation_effective_head (evaluation_group_id, submission_id, updated_at)
+      VALUES ('eg_p1b', 'sub_p1a', now())
+    `).rejects.toMatchObject({ constraint_name: 'evaluation_effective_head_submission_fk' });
+
+    // repro 3：head 换到同组另一 submission（sC1b）后挂 effective（属 sC1）——
+    // 三坐标 (evaluation, submission, group) 不全一致，拒绝。
+    await client`
+      INSERT INTO evaluation_effective_head (evaluation_group_id, submission_id, updated_at)
+      VALUES ('eg_p1c', 'sub_p1c1b', now())
+    `; // (sC1b, gC) 是真实同组 pair —— FK1 通过（NULL effective 合法初始态）
+    await expect(client`
+      UPDATE evaluation_effective_head SET effective_evaluation_id = 'ev_p1c1', updated_at = now()
+      WHERE evaluation_group_id = 'eg_p1c' AND submission_id = 'sub_p1c1b'
+    `).rejects.toMatchObject({ constraint_name: 'evaluation_effective_head_evaluation_fk' });
+
+    // 合法路径：NULL-effective 初始 head（真实 pair）+ 正确三坐标 CAS activation。
+    await client`
+      INSERT INTO evaluation_effective_head (evaluation_group_id, submission_id, updated_at)
+      VALUES ('eg_p1a', 'sub_p1a', now())
+    `;
+    await client`
+      INSERT INTO evaluation (evaluation_id, evaluation_group_id, submission_id, attempt, status, created_at)
+      VALUES ('ev_p1a1', 'eg_p1a', 'sub_p1a', 1, 'completed', now())
+    `;
+    const activated = await client`
+      UPDATE evaluation_effective_head
+      SET effective_evaluation_id = 'ev_p1a1', generation = generation + 1, updated_at = now()
+      WHERE evaluation_group_id = 'eg_p1a' AND effective_evaluation_id IS NULL AND generation = 0
+      RETURNING 1
+    `;
+    expect(activated).toHaveLength(1);
+  });
+
   it('evaluation attempts are unique per (submission, attempt); idempotency key scoped per group', async () => {
     await client`
       INSERT INTO evaluation (evaluation_id, evaluation_group_id, submission_id, attempt, status, created_at)
@@ -3132,9 +3206,14 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
   }
 
   it('P1-3/P2-B: mapping status is adjudication-only; current selection is is_current; corrections preserve history', async () => {
-    // locator 非空 + 非空白。
+    // locator 非空 + 非空白（终验收紧：纯空格同样拒绝，btrim）。
     await expect(
       insertMapping('map_nolocator', '10', 'pending', { locator: '' }),
+    ).rejects.toMatchObject({
+      constraint_name: 'assessment_identity_mapping_locator_nonempty_ck',
+    });
+    await expect(
+      insertMapping('map_space', '13', 'pending', { locator: '   ' }),
     ).rejects.toMatchObject({
       constraint_name: 'assessment_identity_mapping_locator_nonempty_ck',
     });
