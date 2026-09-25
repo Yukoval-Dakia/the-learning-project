@@ -255,6 +255,10 @@ const ALL_TABLES = [
   'question_group_lifecycle',
   'assessment_identity_mapping',
   'question_revision',
+  // YUK-1050 — apply 执行器运维账本（无 immutable trigger，TRUNCATE 即可；
+  // 不列入会跨测泄漏 run/phase 状态，破坏幂等/续跑测试的隔离）。
+  'migration_apply_phase',
+  'migration_apply_run',
 ] as const;
 
 export async function resetDb() {

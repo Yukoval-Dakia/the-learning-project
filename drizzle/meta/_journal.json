@@ -757,6 +757,13 @@
       "when": 1790307065121,
       "tag": "0107_yuk1044_backup_restore_channel",
       "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "7",
+      "when": 1790360400000,
+      "tag": "0108_yuk1050_migration_apply_ledger",
+      "breakpoints": true
     }
   ]
 }
