@@ -7,10 +7,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import {
-  type JudgeInvokerOutput,
-  evaluateAttempt,
-} from '@/capabilities/practice/server/judge';
+import { type JudgeInvokerOutput, evaluateAttempt } from '@/capabilities/practice/server/judge';
 import type { JudgeAnswerParams } from '@/capabilities/practice/server/judge/question-contract';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';

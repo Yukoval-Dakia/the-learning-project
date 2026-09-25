@@ -1,15 +1,11 @@
 import { z } from 'zod';
-
-import {
-  type ExecutorDescriptorT,
-  type ModelExecutorT,
-  validateExecutionPlan,
-} from './execution';
+import { extractAnswerHead } from '../judge-routing';
+import { type ExecutorDescriptorT, type ModelExecutorT, validateExecutionPlan } from './execution';
 import {
   type AggregateOutcomeT,
-  type EvidenceCitationT,
   EvaluationRecord,
   type EvaluationRecordT,
+  type EvidenceCitationT,
   type GroupEvidenceT,
   ScoringUnitResult,
   type ScoringUnitResultT,
@@ -22,7 +18,6 @@ import type { ResponseSlotT, ResponseSpecT, SlotResponseT } from './response';
 import { isBlankSlotResponse, validateResponseSet } from './response';
 import type { PublishedQuestionRevisionT } from './revision';
 import { type ScoringBasisT, type ScoringUnitT, validateScoringBasis } from './scoring';
-import { extractAnswerHead } from '../judge-routing';
 
 // ====================================================================
 // YUK-1047 — 判分执行器统一 · 确定性评估引擎（grounding §4.2–§4.4、D4/D13–D17）
@@ -134,9 +129,7 @@ export interface ModelExecutorRequest {
  * 本模块【不】提供实现 —— typed transport（OpenRouter/Jev 或既有 runner）
  * 归 AI 层 lane 接线；本内核只定义契约、校验输出并执行 escalation。
  */
-export type ModelUnitExecutorPort = (
-  request: ModelExecutorRequest,
-) => Promise<ModelUnitOutcomeT>;
+export type ModelUnitExecutorPort = (request: ModelExecutorRequest) => Promise<ModelUnitOutcomeT>;
 
 // ---------- 评估输入 ----------
 
@@ -226,7 +219,10 @@ function unitInScope(unit: ScoringUnitT, slotById: Map<string, ResponseSlotT>): 
 }
 
 /** 归一化文本（text_key.normalization 四档）。 */
-function normalizeText(value: string, mode: 'exact' | 'trim' | 'trim_casefold_nfc' | 'answer_head'): string {
+function normalizeText(
+  value: string,
+  mode: 'exact' | 'trim' | 'trim_casefold_nfc' | 'answer_head',
+): string {
   switch (mode) {
     case 'exact':
       return value;
@@ -280,14 +276,17 @@ function runDeterministicComparator(
     }
     case 'exact_text': {
       // text_key 可落在 text 或 open_response 槽（后者文本在 entry.text_md）。
-      const textValue =
-        entry.kind === 'text' || entry.kind === 'open' ? entry.text_md : null;
+      const textValue = entry.kind === 'text' || entry.kind === 'open' ? entry.text_md : null;
       if (textValue == null || unit.criterion.kind !== 'text_key') {
         return unjudgeableMismatch(unit, 'slot/entry kind mismatch for text_key');
       }
       const given = normalizeText(textValue, unit.criterion.normalization);
       const hit = unit.criterion.accepted_texts.some(
-        (accepted) => normalizeText(accepted, unit.criterion.kind === 'text_key' ? unit.criterion.normalization : 'trim') === given,
+        (accepted) =>
+          normalizeText(
+            accepted,
+            unit.criterion.kind === 'text_key' ? unit.criterion.normalization : 'trim',
+          ) === given,
       );
       return {
         status: 'scored',
@@ -569,10 +568,7 @@ export async function evaluateSubmissionCore(
     const missingSlotIds = slotIds.filter((slotId) => !entryBySlot.has(slotId));
     if (missingSlotIds.length > 0) {
       unitResults.push(
-        withUnit(
-          pending({ reason: 'missing_response', slot_ids: missingSlotIds }),
-          unitId,
-        ),
+        withUnit(pending({ reason: 'missing_response', slot_ids: missingSlotIds }), unitId),
       );
       continue;
     }
@@ -758,8 +754,7 @@ export async function evaluateSubmissionCore(
 
     const unitGroupEvidence = submission.group_evidence.filter(
       (evidence) =>
-        evidence.target.scope === 'all_units' ||
-        evidence.target.scoring_unit_ids.includes(unitId),
+        evidence.target.scope === 'all_units' || evidence.target.scoring_unit_ids.includes(unitId),
     );
     modelUnitsInvoked += 1;
     let outcome: ModelUnitOutcomeT;
@@ -855,7 +850,9 @@ export async function evaluateSubmissionCore(
     }
 
     if (outcome.kind === 'pending') {
-      unitResults.push(withUnit({ status: 'pending', scoring_unit_id: '', pending: outcome.pending }, unitId));
+      unitResults.push(
+        withUnit({ status: 'pending', scoring_unit_id: '', pending: outcome.pending }, unitId),
+      );
       continue;
     }
     unitResults.push(

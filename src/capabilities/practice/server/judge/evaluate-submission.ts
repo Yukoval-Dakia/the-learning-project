@@ -22,7 +22,7 @@
 // 调用 —— typed transport 归 src/server/ai/ 后续 lane（YUK-1049）。
 
 import { and, desc, eq } from 'drizzle-orm';
-
+import { canonicalHash } from '@/core/migration/canonical';
 import {
   EvaluationContractError,
   type EvaluationExecutionPolicyT,
@@ -33,7 +33,6 @@ import {
   SubmissionRecord,
   evaluateSubmissionCore,
 } from '@/core/schema/assessment';
-import { canonicalHash } from '@/core/migration/canonical';
 import type { Db, Tx } from '@/db/client';
 import {
   assessment_issuance,
@@ -103,10 +102,7 @@ function evaluationIdFor(record: EvaluationRecordT): string {
 }
 
 /** plan digest = canonical hash of {execution_plan, scoring_basis}（评分语义权威对）。 */
-function planDigestOf(revision: {
-  execution_plan: unknown;
-  scoring_basis: unknown;
-}): string {
+function planDigestOf(revision: { execution_plan: unknown; scoring_basis: unknown }): string {
   return `sha256:${canonicalHash({
     execution_plan: revision.execution_plan,
     scoring_basis: revision.scoring_basis,
@@ -260,10 +256,7 @@ export async function evaluateSubmission(
         .select()
         .from(evaluation)
         .where(
-          and(
-            eq(evaluation.submission_id, request.submission_id),
-            eq(evaluation.attempt, attempt),
-          ),
+          and(eq(evaluation.submission_id, request.submission_id), eq(evaluation.attempt, attempt)),
         )
         .limit(1);
       if (existing == null) {

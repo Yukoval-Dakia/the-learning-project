@@ -37,7 +37,7 @@ import type { Provider } from '@/ai/registry';
 import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
 import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
-  createDefaultJudgeInvoker,
+  type createDefaultJudgeInvoker,
   deterministicExecutionProvenance,
   evaluateAttempt,
   isModelBackedJudgeRoute,

@@ -11,9 +11,9 @@
 
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-
-import { evaluateAttempt } from '@/capabilities/practice/server/judge/evaluation-authority';
 import { evaluateSubmission } from '@/capabilities/practice/server/judge/evaluate-submission';
+import { evaluateAttempt } from '@/capabilities/practice/server/judge/evaluation-authority';
+import { canonicalHash } from '@/core/migration/canonical';
 import type {
   ExecutionPlanT,
   ResponseSetT,
@@ -21,7 +21,6 @@ import type {
   ScoringBasisT,
   ScoringUnitResultT,
 } from '@/core/schema/assessment';
-import { canonicalHash } from '@/core/migration/canonical';
 import type { Db } from '@/db/client';
 import {
   assessment_issuance,
@@ -72,107 +71,107 @@ interface SeedSpec {
 
 async function seedContractChain(spec: SeedSpec): Promise<void> {
   const partId = 'p1';
-  const slots =
-    spec.slots ??
-    [
-      {
-        slot_id: `${partId}::r`,
-        part_id: partId,
-        kind: 'single_choice',
-        options: [
-          { option_id: 'opt-a', label: 'A', text: 'alpha' },
-          { option_id: 'opt-b', label: 'B', text: 'beta' },
-        ],
-      },
-    ];
-  const units =
-    spec.units ??
-    [
-      {
-        scoring_unit_id: `${partId}::u`,
-        slot_refs: [`${partId}::r`],
-        material_refs: [],
-        evidence_slot_refs: [],
-        requires_group_evidence: false,
-        criterion: {
-          kind: 'option_set_key',
-          accepted_option_ids: ['opt-a'],
-        },
-        points: 4,
-      },
-    ];
-  const assignments =
-    spec.assignments ??
-    [
-      {
-        scoring_unit_ids: [`${partId}::u`],
-        executor: { kind: 'deterministic', comparator: 'exact_option_set' },
-      },
-    ];
-  const partIds = spec.partIds ?? [partId];
-
-  await testDb().insert(question_revision).values({
-    revision_id: spec.revisionId,
-    group_id: spec.groupId,
-    revision_ordinal: 1,
-    integrity_digest: canonicalHash({ revision: spec.revisionId }),
-    structure: {
-      group_id: spec.groupId,
-      materials: [],
-      parts: partIds.map((pid) => ({ part_id: pid, prompt_md: 'pick one', material_ids: [] })),
-    },
-    response_spec: { slots },
-    scoring_basis: {
-      units,
-      aggregation: { kind: 'sum' },
-      blank_scores_zero: spec.blankScoresZero ?? true,
-    },
-    execution_plan: {
-      plan_version: 1,
-      assignments,
-      escalation: { on_unadmitted_model: 'withhold', on_low_confidence: 'human_review' },
-    },
-    supersedes_revision_id: null,
-    availability: 'general_pool',
-    published_by: null,
-    published_at: NOW,
-  });
-
-  await testDb().insert(assessment_issuance).values({
-    issuance_id: spec.issuanceId,
-    revision_id: spec.revisionId,
-    part_ids: partIds,
-    material_bindings: [],
-    option_order: [
-      { slot_id: `${partIds[0]}::r`, option_ids: ['opt-a', 'opt-b'] },
-    ],
-    container_occurrence_ref: null,
-    claim_policy: 'one_time',
-    claim_status: 'unclaimed',
-    claimed_by_ref: null,
-    issued_at: NOW,
-  });
-
-  await testDb().insert(evaluation_group).values({
-    evaluation_group_id: spec.evalGroupId,
-    submission_ids: [spec.submissionId],
-    created_at: NOW,
-  });
-
-  await testDb().insert(assessment_submission).values({
-    submission_id: spec.submissionId,
-    issuance_id: spec.issuanceId,
-    revision_id: spec.revisionId,
-    evaluation_group_id: spec.evalGroupId,
-    response_set: {
-      entries: spec.entries ?? [
-        { slot_id: `${partIds[0]}::r`, kind: 'choice', option_ids: ['opt-a'] },
+  const slots = spec.slots ?? [
+    {
+      slot_id: `${partId}::r`,
+      part_id: partId,
+      kind: 'single_choice',
+      options: [
+        { option_id: 'opt-a', label: 'A', text: 'alpha' },
+        { option_id: 'opt-b', label: 'B', text: 'beta' },
       ],
     },
-    group_evidence: [],
-    idempotency_key: `idem-${spec.submissionId}`,
-    submitted_at: NOW,
-  });
+  ];
+  const units = spec.units ?? [
+    {
+      scoring_unit_id: `${partId}::u`,
+      slot_refs: [`${partId}::r`],
+      material_refs: [],
+      evidence_slot_refs: [],
+      requires_group_evidence: false,
+      criterion: {
+        kind: 'option_set_key',
+        accepted_option_ids: ['opt-a'],
+      },
+      points: 4,
+    },
+  ];
+  const assignments = spec.assignments ?? [
+    {
+      scoring_unit_ids: [`${partId}::u`],
+      executor: { kind: 'deterministic', comparator: 'exact_option_set' },
+    },
+  ];
+  const partIds = spec.partIds ?? [partId];
+
+  await testDb()
+    .insert(question_revision)
+    .values({
+      revision_id: spec.revisionId,
+      group_id: spec.groupId,
+      revision_ordinal: 1,
+      integrity_digest: canonicalHash({ revision: spec.revisionId }),
+      structure: {
+        group_id: spec.groupId,
+        materials: [],
+        parts: partIds.map((pid) => ({ part_id: pid, prompt_md: 'pick one', material_ids: [] })),
+      },
+      response_spec: { slots },
+      scoring_basis: {
+        units,
+        aggregation: { kind: 'sum' },
+        blank_scores_zero: spec.blankScoresZero ?? true,
+      },
+      execution_plan: {
+        plan_version: 1,
+        assignments,
+        escalation: { on_unadmitted_model: 'withhold', on_low_confidence: 'human_review' },
+      },
+      supersedes_revision_id: null,
+      availability: 'general_pool',
+      published_by: null,
+      published_at: NOW,
+    });
+
+  await testDb()
+    .insert(assessment_issuance)
+    .values({
+      issuance_id: spec.issuanceId,
+      revision_id: spec.revisionId,
+      part_ids: partIds,
+      material_bindings: [],
+      option_order: [{ slot_id: `${partIds[0]}::r`, option_ids: ['opt-a', 'opt-b'] }],
+      container_occurrence_ref: null,
+      claim_policy: 'one_time',
+      claim_status: 'unclaimed',
+      claimed_by_ref: null,
+      issued_at: NOW,
+    });
+
+  await testDb()
+    .insert(evaluation_group)
+    .values({
+      evaluation_group_id: spec.evalGroupId,
+      submission_ids: [spec.submissionId],
+      created_at: NOW,
+    });
+
+  await testDb()
+    .insert(assessment_submission)
+    .values({
+      submission_id: spec.submissionId,
+      issuance_id: spec.issuanceId,
+      revision_id: spec.revisionId,
+      evaluation_group_id: spec.evalGroupId,
+      response_set: {
+        entries: spec.entries ?? [
+          { slot_id: `${partIds[0]}::r`, kind: 'choice', option_ids: ['opt-a'] },
+        ],
+      },
+      group_evidence: [],
+      idempotency_key: `idem-${spec.submissionId}`,
+      submitted_at: NOW,
+    });
 }
 
 // ---------- tests ----------
@@ -238,9 +237,7 @@ describe('evaluateSubmission (persisted §4.3 path)', () => {
       issuanceId: 'iss-3',
       submissionId: 'sub-3',
       evalGroupId: 'eg-3',
-      slots: [
-        { slot_id: 'p1::r', part_id: 'p1', kind: 'text', math_preview: false },
-      ],
+      slots: [{ slot_id: 'p1::r', part_id: 'p1', kind: 'text', math_preview: false }],
       units: [
         {
           scoring_unit_id: 'p1::u',
@@ -292,9 +289,7 @@ describe('evaluateSubmission (persisted §4.3 path)', () => {
       issuanceId: 'iss-4',
       submissionId: 'sub-4',
       evalGroupId: 'eg-4',
-      slots: [
-        { slot_id: 'p1::r', part_id: 'p1', kind: 'text', math_preview: false },
-      ],
+      slots: [{ slot_id: 'p1::r', part_id: 'p1', kind: 'text', math_preview: false }],
       units: [
         {
           scoring_unit_id: 'p1::u',

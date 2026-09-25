@@ -21,12 +21,12 @@
 // solve_check / teaching_quality 是教师侧 QA，不是学生评分 —— grounding
 // §4.2 末段明确保留其异源/否决语义，不得机械并入。
 
-import type { JudgeResultV2T } from '@/core/schema/capability';
 import type {
   EvaluationRecordT,
   ModelUnitExecutorPort,
   ScoringBasisT,
 } from '@/core/schema/assessment';
+import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
 import {
   type EvaluateSubmissionRequest,
@@ -244,9 +244,7 @@ export function projectEvaluationToJudgeResult(
   }
   const maxPoints = aggregateMaxPoints(basis);
   const normalized =
-    maxPoints != null && maxPoints > 0
-      ? Math.min(1, Math.max(0, points / maxPoints))
-      : null;
+    maxPoints != null && maxPoints > 0 ? Math.min(1, Math.max(0, points / maxPoints)) : null;
   const scoredUnitFeedback = record.unit_results
     .map((unit) => (unit.status === 'scored' ? unit.feedback_md : undefined))
     .find((feedback): feedback is string => typeof feedback === 'string' && feedback.length > 0);
@@ -308,7 +306,10 @@ function aggregateMaxPoints(basis: ScoringBasisT): number | null {
       return additive.reduce((sum, unit) => sum + (unit.points ?? 0), 0);
     case 'weighted_sum': {
       const weights = basis.aggregation.weights;
-      const totalWeight = basis.units.reduce((sum, unit) => sum + (weights[unit.scoring_unit_id] ?? 0), 0);
+      const totalWeight = basis.units.reduce(
+        (sum, unit) => sum + (weights[unit.scoring_unit_id] ?? 0),
+        0,
+      );
       if (totalWeight <= 0) return null;
       const weighted = additive.reduce(
         (sum, unit) => sum + (unit.points ?? 0) * (weights[unit.scoring_unit_id] ?? 0),
@@ -323,9 +324,7 @@ function aggregateMaxPoints(basis: ScoringBasisT): number | null {
       );
     case 'threshold_levels': {
       const thresholds = basis.aggregation.thresholds;
-      return thresholds.length > 0
-        ? Math.max(...thresholds.map((t) => t.min_points))
-        : null;
+      return thresholds.length > 0 ? Math.max(...thresholds.map((t) => t.min_points)) : null;
     }
   }
 }
@@ -343,12 +342,8 @@ function aggregateMaxPoints(basis: ScoringBasisT): number | null {
  *
  * 两者互斥；同传 ⇒ 契约优先但立即 fail-loud（调用方 bug 不静默吞）。
  */
-export async function evaluateAttempt(
-  input: ContractAttemptInput,
-): Promise<ContractAttemptOutcome>;
-export async function evaluateAttempt(
-  input: LegacyAttemptInput,
-): Promise<LegacyAttemptOutcome>;
+export async function evaluateAttempt(input: ContractAttemptInput): Promise<ContractAttemptOutcome>;
+export async function evaluateAttempt(input: LegacyAttemptInput): Promise<LegacyAttemptOutcome>;
 export async function evaluateAttempt(
   input: EvaluateAttemptInput,
 ): Promise<EvaluateAttemptOutcome> {

@@ -5,11 +5,10 @@
 
 export type { AnswerInput, JudgeResult } from '@/capabilities/practice/server/judge';
 export {
-  EVALUATION_ENTRY_POINTS,
-  IMAGE_CONSUMING_JUDGE_ROUTES,
   type ContractAttemptInput,
   type ContractAttemptOutcome,
   type ContractGradingRef,
+  EVALUATION_ENTRY_POINTS,
   type EntryPointDisposition,
   type EvaluateAttemptInput,
   type EvaluateAttemptOutcome,
@@ -17,6 +16,7 @@ export {
   type EvaluateSubmissionRequest,
   type EvaluateSubmissionResult,
   type GradingEntryPoint,
+  IMAGE_CONSUMING_JUDGE_ROUTES,
   type JudgeAnswerParams,
   type JudgeAnswerResult,
   type JudgeInvokerOutput,

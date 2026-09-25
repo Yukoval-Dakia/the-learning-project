@@ -557,11 +557,10 @@ export async function submitPaperSlot(
           // (whole-row). The invoker narrows text + structured before routing.
           part_ref: partRef,
         },
-      })
-        .catch(async (err) => {
-          if (paidJudgeClaimed) await bestEffortReleasePaidPaperJudge(db, input, err);
-          throw err;
-        });
+      }).catch(async (err) => {
+        if (paidJudgeClaimed) await bestEffortReleasePaidPaperJudge(db, input, err);
+        throw err;
+      });
   // YUK-589 (K1) — stamp off the honest model-attempt signal, NOT route membership.
   // execution present → `invoked`; model attempted but no execution (LLM call /
   // metadata / persist failed) → `historical_unknown`; no model attempted

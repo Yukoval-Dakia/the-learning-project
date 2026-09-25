@@ -102,8 +102,7 @@ export async function handleRejudge(
   // 透传 JudgeInvoker 结果，shape 兼容 JudgeAnswerResult）。契约侧就绪后
   // 改读冻结 submission（D8），不再用 current row —— 见 EVALUATION_ENTRY_POINTS。
   const judgeFn =
-    deps.judgeFn ??
-    ((params) => evaluateAttempt({ entry: 'appeal_rejudge', legacy: params }));
+    deps.judgeFn ?? ((params) => evaluateAttempt({ entry: 'appeal_rejudge', legacy: params }));
   const orchestrateRevert = deps.orchestrateRevert ?? orchestrateCascadeRevert;
 
   const [appeal] = await db.select().from(event).where(eq(event.id, input.appeal_event_id));

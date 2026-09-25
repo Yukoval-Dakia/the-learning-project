@@ -14,8 +14,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  EvaluationContractError,
   type EvaluateSubmissionCoreInput,
+  EvaluationContractError,
   type ModelUnitOutcomeT,
   evaluateSubmissionCore,
 } from './evaluation';
@@ -45,9 +45,7 @@ function revisionFor(overrides: {
   escalation?: ExecutionPlanT['escalation'];
   materials?: PublishedQuestionRevisionT['structure']['materials'];
 }): PublishedQuestionRevisionT {
-  const parts = overrides.parts ?? [
-    { part_id: 'p1', prompt_md: '1+1=?', material_ids: [] },
-  ];
+  const parts = overrides.parts ?? [{ part_id: 'p1', prompt_md: '1+1=?', material_ids: [] }];
   const slots = overrides.slots ?? [
     { slot_id: 'p1::r', part_id: 'p1', kind: 'text' as const, math_preview: false },
   ];
@@ -172,20 +170,14 @@ describe('evaluateSubmissionCore — deterministic comparators', () => {
       ],
     });
     const out = await evaluateSubmissionCore(
-      inputFor(
-        submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '答：B' }]),
-        revision,
-      ),
+      inputFor(submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '答：B' }]), revision),
     );
     expect(out.record.aggregate).toMatchObject({ kind: 'points_total', points: 3 });
   });
 
   it('exact_text miss scores 0 (binary comparator — no partial credit)', async () => {
     const out = await evaluateSubmissionCore(
-      inputFor(
-        submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '3' }]),
-        revisionFor({}),
-      ),
+      inputFor(submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '3' }]), revisionFor({})),
     );
     expect(out.record.unit_results[0]).toMatchObject({
       status: 'scored',
@@ -234,9 +226,7 @@ describe('evaluateSubmissionCore — deterministic comparators', () => {
     });
     const hit = await evaluateSubmissionCore(
       inputFor(
-        submissionFor([
-          { slot_id: 'p1::r', kind: 'choice', option_ids: ['opt-c', 'opt-a'] },
-        ]),
+        submissionFor([{ slot_id: 'p1::r', kind: 'choice', option_ids: ['opt-c', 'opt-a'] }]),
         revision,
       ),
     );
@@ -244,9 +234,7 @@ describe('evaluateSubmissionCore — deterministic comparators', () => {
 
     const miss = await evaluateSubmissionCore(
       inputFor(
-        submissionFor([
-          { slot_id: 'p1::r', kind: 'choice', option_ids: ['opt-a', 'opt-b'] },
-        ]),
+        submissionFor([{ slot_id: 'p1::r', kind: 'choice', option_ids: ['opt-a', 'opt-b'] }]),
         revision,
       ),
     );
@@ -255,9 +243,7 @@ describe('evaluateSubmissionCore — deterministic comparators', () => {
 
   it('numeric_tolerance: absolute tolerance + unit suffix check', async () => {
     const revision = revisionFor({
-      slots: [
-        { slot_id: 'p1::r', part_id: 'p1', kind: 'numeric' as const },
-      ],
+      slots: [{ slot_id: 'p1::r', part_id: 'p1', kind: 'numeric' as const }],
       units: [
         {
           scoring_unit_id: 'p1::u',
@@ -283,9 +269,7 @@ describe('evaluateSubmissionCore — deterministic comparators', () => {
     });
     const hit = await evaluateSubmissionCore(
       inputFor(
-        submissionFor([
-          { slot_id: 'p1::r', kind: 'numeric', value: 9.82, raw_input: '9.82 m/s²' },
-        ]),
+        submissionFor([{ slot_id: 'p1::r', kind: 'numeric', value: 9.82, raw_input: '9.82 m/s²' }]),
         revision,
       ),
     );
@@ -293,9 +277,7 @@ describe('evaluateSubmissionCore — deterministic comparators', () => {
 
     const wrongUnit = await evaluateSubmissionCore(
       inputFor(
-        submissionFor([
-          { slot_id: 'p1::r', kind: 'numeric', value: 9.8, raw_input: '9.8 cm/s²' },
-        ]),
+        submissionFor([{ slot_id: 'p1::r', kind: 'numeric', value: 9.8, raw_input: '9.8 cm/s²' }]),
         revision,
       ),
     );
@@ -407,9 +389,7 @@ describe('evaluateSubmissionCore — pending taxonomy (no fake zeros)', () => {
     });
     const out = await evaluateSubmissionCore(
       inputFor(
-        submissionFor([
-          { slot_id: 'p1::r', kind: 'numeric', value: 42, raw_input: '42' },
-        ]),
+        submissionFor([{ slot_id: 'p1::r', kind: 'numeric', value: 42, raw_input: '42' }]),
         ruleRevision,
       ),
     );
@@ -425,9 +405,7 @@ describe('evaluateSubmissionCore — pending taxonomy (no fake zeros)', () => {
   });
 
   it('missing response entry ⇒ missing_response pending (distinct from blank)', async () => {
-    const out = await evaluateSubmissionCore(
-      inputFor(submissionFor([]), revisionFor({})),
-    );
+    const out = await evaluateSubmissionCore(inputFor(submissionFor([]), revisionFor({})));
     expect(out.record.unit_results[0]).toMatchObject({
       status: 'pending',
       pending: { reason: 'missing_response', slot_ids: ['p1::r'] },
@@ -494,9 +472,7 @@ describe('evaluateSubmissionCore — pending taxonomy (no fake zeros)', () => {
     });
     const out = await evaluateSubmissionCore(
       inputFor(
-        submissionFor([
-          { slot_id: 'p1::r', kind: 'numeric', value: null, raw_input: 'two' },
-        ]),
+        submissionFor([{ slot_id: 'p1::r', kind: 'numeric', value: null, raw_input: 'two' }]),
         revision,
       ),
     );
@@ -529,10 +505,7 @@ describe('evaluateSubmissionCore — pending taxonomy (no fake zeros)', () => {
     });
     await expect(
       evaluateSubmissionCore(
-        inputFor(
-          submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '2' }]),
-          revision,
-        ),
+        inputFor(submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '2' }]), revision),
       ),
     ).rejects.toMatchObject({ code: 'invalid_scoring_basis' });
   });
@@ -564,15 +537,11 @@ describe('evaluateSubmissionCore — pending taxonomy (no fake zeros)', () => {
           points: 5,
         },
       ],
-      assignments: [
-        { scoring_unit_ids: ['p1::u'], executor: { kind: 'human_review' } },
-      ],
+      assignments: [{ scoring_unit_ids: ['p1::u'], executor: { kind: 'human_review' } }],
     });
     const out = await evaluateSubmissionCore(
       inputFor(
-        submissionFor([
-          { slot_id: 'p1::r', kind: 'open', text_md: 'work shown', evidence: [] },
-        ]),
+        submissionFor([{ slot_id: 'p1::r', kind: 'open', text_md: 'work shown', evidence: [] }]),
         revision,
       ),
     );
@@ -625,11 +594,9 @@ describe('evaluateSubmissionCore — issuance scope projection', () => {
   it('issued subset evaluates only in-scope units (sum projects)', async () => {
     const revision = twoPartRevision();
     const out = await evaluateSubmissionCore(
-      inputFor(
-        submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '1' }]),
-        revision,
-        { issued_part_ids: ['p1'] },
-      ),
+      inputFor(submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '1' }]), revision, {
+        issued_part_ids: ['p1'],
+      }),
     );
     // p2::u is out of this issuance scope — no result row at all (not pending).
     expect(out.record.unit_results.map((r) => r.scoring_unit_id)).toEqual(['p1::u']);
@@ -641,11 +608,9 @@ describe('evaluateSubmissionCore — issuance scope projection', () => {
     revision.scoring_basis.aggregation = { kind: 'capped_sum', cap: 3 };
     await expect(
       evaluateSubmissionCore(
-        inputFor(
-          submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '1' }]),
-          revision,
-          { issued_part_ids: ['p1'] },
-        ),
+        inputFor(submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '1' }]), revision, {
+          issued_part_ids: ['p1'],
+        }),
       ),
     ).rejects.toMatchObject({
       name: 'EvaluationContractError',
@@ -660,11 +625,9 @@ describe('evaluateSubmissionCore — issuance scope projection', () => {
       weights: { 'p1::u': 2, 'p2::u': 5 },
     };
     const out = await evaluateSubmissionCore(
-      inputFor(
-        submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '1' }]),
-        revision,
-        { issued_part_ids: ['p1'] },
-      ),
+      inputFor(submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '1' }]), revision, {
+        issued_part_ids: ['p1'],
+      }),
     );
     expect(out.record.aggregate).toMatchObject({ kind: 'points_total', points: 2 });
   });
@@ -702,8 +665,7 @@ describe('evaluateSubmissionCore — model_executor lane (D17 gate, injected por
       ],
     });
   }
-  const answered = () =>
-    submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: 'my work' }]);
+  const answered = () => submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: 'my work' }]);
 
   it('admitted executor + injected port ⇒ scored via reported rule outcome', async () => {
     const outcome: ModelUnitOutcomeT = {
@@ -866,9 +828,7 @@ describe('evaluateSubmissionCore — model_executor lane (D17 gate, injected por
 
 describe('evaluateSubmissionCore — contract enforcement', () => {
   it('submission.revision_id mismatch ⇒ submission_revision_mismatch', async () => {
-    const submission = submissionFor([
-      { slot_id: 'p1::r', kind: 'text', text_md: '2' },
-    ]);
+    const submission = submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '2' }]);
     submission.revision_id = 'rev-other';
     await expect(
       evaluateSubmissionCore(inputFor(submission, revisionFor({}))),
@@ -876,9 +836,7 @@ describe('evaluateSubmissionCore — contract enforcement', () => {
   });
 
   it('invalid response set (unknown slot) ⇒ invalid_response_set', async () => {
-    const submission = submissionFor([
-      { slot_id: 'nope', kind: 'text', text_md: '2' },
-    ]);
+    const submission = submissionFor([{ slot_id: 'nope', kind: 'text', text_md: '2' }]);
     await expect(
       evaluateSubmissionCore(inputFor(submission, revisionFor({}))),
     ).rejects.toMatchObject({ code: 'invalid_response_set' });
@@ -902,23 +860,19 @@ describe('evaluateSubmissionCore — contract enforcement', () => {
 
   it('manual_assert with complete asserted set ⇒ completed candidate', async () => {
     const out = await evaluateSubmissionCore(
-      inputFor(
-        submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '2' }]),
-        revisionFor({}),
-        {
-          mode: 'manual_assert',
-          provenance: { source: 'manual', assisted: false },
-          asserted_unit_results: [
-            {
-              status: 'scored',
-              scoring_unit_id: 'p1::u',
-              points_awarded: 2,
-              scored_because: 'response',
-              evidence_citations: [],
-            },
-          ],
-        },
-      ),
+      inputFor(submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '2' }]), revisionFor({}), {
+        mode: 'manual_assert',
+        provenance: { source: 'manual', assisted: false },
+        asserted_unit_results: [
+          {
+            status: 'scored',
+            scoring_unit_id: 'p1::u',
+            points_awarded: 2,
+            scored_because: 'response',
+            evidence_citations: [],
+          },
+        ],
+      }),
     );
     expect(out.record.status).toBe('completed');
     expect(out.record.aggregate).toMatchObject({ kind: 'points_total', points: 2 });

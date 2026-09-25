@@ -54,6 +54,26 @@ export async function judgeRouter(input: JudgeRouterInput): Promise<JudgeResult>
   return downgradeToV1(await judgeRouterV2(input));
 }
 
+export {
+  EvaluateSubmissionError,
+  type EvaluateSubmissionRequest,
+  type EvaluateSubmissionResult,
+  evaluateSubmission,
+} from './evaluate-submission';
+export {
+  type ContractAttemptInput,
+  type ContractAttemptOutcome,
+  type ContractGradingRef,
+  EVALUATION_ENTRY_POINTS,
+  type EntryPointDisposition,
+  type EvaluateAttemptInput,
+  type EvaluateAttemptOutcome,
+  type GradingEntryPoint,
+  type LegacyAttemptInput,
+  type LegacyAttemptOutcome,
+  evaluateAttempt,
+  projectEvaluationToJudgeResult,
+} from './evaluation-authority';
 export { judgeExact } from './exact';
 export {
   type JudgeExecutionIdentity,
@@ -64,26 +84,6 @@ export {
   suppliedUnverifiedExecutionProvenance,
 } from './execution-provenance-resolve';
 export { type JudgeInvokerOutput, createDefaultJudgeInvoker } from './invoker';
-export {
-  EvaluateSubmissionError,
-  type EvaluateSubmissionRequest,
-  type EvaluateSubmissionResult,
-  evaluateSubmission,
-} from './evaluate-submission';
-export {
-  EVALUATION_ENTRY_POINTS,
-  type ContractAttemptInput,
-  type ContractAttemptOutcome,
-  type ContractGradingRef,
-  type EntryPointDisposition,
-  type EvaluateAttemptInput,
-  type EvaluateAttemptOutcome,
-  type GradingEntryPoint,
-  type LegacyAttemptInput,
-  type LegacyAttemptOutcome,
-  evaluateAttempt,
-  projectEvaluationToJudgeResult,
-} from './evaluation-authority';
 export {
   JUDGE_PROMPT_TEMPLATE_REVISION,
   sha256Canonical,

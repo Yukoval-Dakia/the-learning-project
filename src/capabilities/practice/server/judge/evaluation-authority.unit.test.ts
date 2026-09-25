@@ -8,7 +8,7 @@
 //   5. 投影纪律：pending/unresolved/未映射档位绝不造伪分（全部 unsupported），
 //      points_total 只在有分母时归一化。
 
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ScoringBasisT } from '@/core/schema/assessment';
 
@@ -65,9 +65,7 @@ const SUM_BASIS: ScoringBasisT = {
 
 describe('EVALUATION_ENTRY_POINTS registry', () => {
   it('registers exactly the eight §4.2 authoritative grading entries', () => {
-    expect(EVALUATION_ENTRY_POINTS.map((e) => e.entry).sort()).toEqual(
-      [...ENTRY_POINTS].sort(),
-    );
+    expect(EVALUATION_ENTRY_POINTS.map((e) => e.entry).sort()).toEqual([...ENTRY_POINTS].sort());
     // Every entry honestly records its current lane + blocking tickets — no
     // entry claims 'wired' while contract writers (YUK-1052) have not landed.
     for (const disposition of EVALUATION_ENTRY_POINTS) {
