@@ -481,7 +481,7 @@ function computeFunctionSpans(structSrc: string): FunctionSpan[] {
     }
     if (ch === '}') {
       const frame = stack.pop();
-      if (frame != null && frame.isFunction) spans.push({ start: frame.pos, end: i });
+      if (frame?.isFunction) spans.push({ start: frame.pos, end: i });
     }
   }
   return spans;
