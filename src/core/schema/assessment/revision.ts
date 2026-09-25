@@ -90,6 +90,7 @@ export interface IssuanceBindingIssue {
     | 'unknown_option_order_slot'
     | 'option_order_not_permutation'
     | 'option_order_slot_out_of_scope'
+    | 'table_cell_out_of_scope'
     | 'missing_option_order';
   detail: string;
 }
@@ -165,6 +166,24 @@ export function validateIssuanceBinding(
   }
 
   // P1-6：只校验【发出范围内】的选择槽（slot.part_id ∈ binding.part_ids）。
+  // P1-B：发出范围内的表格，其全部单元格槽也必须在发出范围内
+  // （scope closure）—— 不静默吞掉缺失单元格，也不把未发出的 part 混进来。
+  const slotPartById = new Map(
+    revision.response_spec.slots.map((slot) => [slot.slot_id, slot.part_id] as const),
+  );
+  for (const slot of revision.response_spec.slots) {
+    if (slot.kind !== 'table' || !boundParts.has(slot.part_id)) continue;
+    for (const cell of slot.cells) {
+      const cellPart = slotPartById.get(cell.slot_id);
+      if (cellPart == null || !boundParts.has(cellPart)) {
+        issues.push({
+          code: 'table_cell_out_of_scope',
+          detail: `issued table '${slot.slot_id}' references cell slot '${cell.slot_id}' outside the issued part scope`,
+        });
+      }
+    }
+  }
+
   const choiceSlots = revision.response_spec.slots
     .filter(
       (slot) =>

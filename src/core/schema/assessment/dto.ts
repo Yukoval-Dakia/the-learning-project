@@ -96,6 +96,31 @@ export function projectPracticeIssuance(
     const byId = new Map(options.map((option) => [option.option_id, option] as const));
     return served.map((optionId) => byId.get(optionId)).filter((o): o is T => o != null);
   };
+  const projectedSlots = revision.response_spec.slots
+    // P1-6：只投影发出 part 范围内的槽位；选项按冻结顺序呈现。
+    .filter((slot) => boundParts.has(slot.part_id))
+    .map((slot) => {
+      if (slot.kind === 'single_choice' || slot.kind === 'multi_choice') {
+        return { ...slot, options: applyServedOrder(slot.options, slot.slot_id) };
+      }
+      if (slot.kind === 'matching') {
+        return { ...slot, right_options: applyServedOrder(slot.right_options, slot.slot_id) };
+      }
+      return slot;
+    });
+  // P1-B 防御：发出集合内不得出现悬空表格（单元格不在发出集内）——
+  // 宁可抛错也不产出不可作答/不可校验的 DTO。
+  const emittedSlotIds = new Set(projectedSlots.map((slot) => slot.slot_id));
+  for (const slot of projectedSlots) {
+    if (slot.kind !== 'table') continue;
+    for (const cell of slot.cells) {
+      if (!emittedSlotIds.has(cell.slot_id)) {
+        throw new Error(
+          `projectPracticeIssuance: table '${slot.slot_id}' cell slot '${cell.slot_id}' is not in the issued scope for issuance '${issuance.issuance_id}'`,
+        );
+      }
+    }
+  }
   return PracticeIssuanceDto.parse({
     issuance_id: issuance.issuance_id,
     revision_id: revision.revision_id,
@@ -119,18 +144,7 @@ export function projectPracticeIssuance(
         alt_text: material.alt_text,
       })),
     response_spec: {
-      slots: revision.response_spec.slots
-        // P1-6：只投影发出 part 范围内的槽位；选项按冻结顺序呈现。
-        .filter((slot) => boundParts.has(slot.part_id))
-        .map((slot) => {
-          if (slot.kind === 'single_choice' || slot.kind === 'multi_choice') {
-            return { ...slot, options: applyServedOrder(slot.options, slot.slot_id) };
-          }
-          if (slot.kind === 'matching') {
-            return { ...slot, right_options: applyServedOrder(slot.right_options, slot.slot_id) };
-          }
-          return slot;
-        }),
+      slots: projectedSlots,
     },
   });
 }

@@ -254,6 +254,7 @@ export interface ResponseSpecIssue {
     | 'duplicate_item_id'
     | 'invalid_select_bounds'
     | 'unresolved_cell_slot'
+    | 'cell_part_scope_violation'
     | 'cell_references_table'
     | 'duplicate_cell_coord'
     | 'table_bounds'
@@ -358,6 +359,9 @@ export function validateResponseSpec(
   }
 
   // 第二遍：表格单元格引用（需要完整 slot 集合）。
+  // P1-B：单元格与表格必须同 part（scope closure）—— 否则 part 子集发题会
+  // 产生悬空表格；跨 part 表格如未来需要，须另立显式依赖契约，不在此默许。
+  const partBySlotId = new Map(spec.slots.map((slot) => [slot.slot_id, slot.part_id] as const));
   for (const slot of spec.slots) {
     if (slot.kind !== 'table') continue;
     const coords = new Set<string>();
@@ -366,6 +370,13 @@ export function validateResponseSpec(
         issues.push({
           code: 'unresolved_cell_slot',
           detail: `table '${slot.slot_id}' cell (${cell.row},${cell.col}) references unknown slot '${cell.slot_id}'`,
+        });
+        continue;
+      }
+      if (partBySlotId.get(cell.slot_id) !== slot.part_id) {
+        issues.push({
+          code: 'cell_part_scope_violation',
+          detail: `table '${slot.slot_id}' (part '${slot.part_id}') cell references slot '${cell.slot_id}' of another part '${partBySlotId.get(cell.slot_id) ?? '?'}' — cells must share the table's part`,
         });
         continue;
       }

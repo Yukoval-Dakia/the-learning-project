@@ -17,6 +17,7 @@ import {
   SubmissionRecord,
   type SubmissionRecordT,
 } from './judgment';
+import { validateResponseSpec } from './response';
 import {
   AssessmentIssuance,
   type AssessmentIssuanceT,
@@ -233,6 +234,57 @@ describe('PracticeIssuanceDto — 公开面是 strict schema，不是渲染约�
       'unknown_material_binding',
     );
     expect(() => projectPracticeIssuance(revision(), stale)).toThrow(/unknown_material_binding/);
+  });
+
+  it('P1-B repro: cross-part table cell + part-subset issuance is rejected, never silently broken', () => {
+    // 表格 t 在 p1，其单元格引用的 text 槽 s 在 p2；issuance 只选 p1。
+    const crossPart = PublishedQuestionRevision.parse({
+      ...revision(),
+      structure: {
+        group_id: 'grp_1',
+        materials: [],
+        parts: [
+          { part_id: 'p1', prompt_md: '填表', material_ids: [] },
+          { part_id: 'p2', prompt_md: '另一部分', material_ids: [] },
+        ],
+      },
+      response_spec: {
+        slots: [
+          { slot_id: 's', part_id: 'p2', kind: 'text' },
+          {
+            slot_id: 't',
+            part_id: 'p1',
+            kind: 'table',
+            column_headers: ['答案'],
+            row_labels: ['行 1'],
+            cells: [{ row: 0, col: 0, slot_id: 's' }], // 跨 part 单元格
+          },
+        ],
+      },
+    });
+    const subset = AssessmentIssuance.parse({
+      issuance_id: 'iss_subset',
+      issued_at: '2026-09-25T10:00:00.000Z',
+      binding: {
+        revision_id: crossPart.revision_id,
+        part_ids: ['p1'],
+        material_bindings: [],
+        option_order: [],
+      },
+      claim: { policy: 'unbounded', status: 'unclaimed', claimed_by_ref: null },
+    });
+
+    // 1) spec 校验：单元格必须与表格同 part。
+    expect(
+      validateResponseSpec(crossPart.response_spec, crossPart.structure).map((i) => i.code),
+    ).toContain('cell_part_scope_violation');
+    // 2) binding 校验：发出表格的单元格不在发出范围。
+    expect(validateIssuanceBinding(subset.binding, crossPart).map((i) => i.code)).toContain(
+      'table_cell_out_of_scope',
+    );
+    // 3) 投影 fail-closed：绑定校验先行拦截（table_cell_out_of_scope），
+    //    绝不产出引用不存在槽位的悬空表格；自检层作为深度防御保留。
+    expect(() => projectPracticeIssuance(crossPart, subset)).toThrow(/table_cell_out_of_scope/);
   });
 });
 

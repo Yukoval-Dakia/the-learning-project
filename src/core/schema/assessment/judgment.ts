@@ -280,7 +280,8 @@ export function aggregateUnitResults(
     | { kind: 'invalid'; detail: string };
 
   // 每单元解析恰好一次贡献：加法用结果分（受发布上限约束）；
-  // holistic 用发布侧 level_points 映射；空白计零受 basis 政策约束。
+  // holistic 用发布侧 level_points 映射；空白计零受 basis 政策约束，
+  // 且【绝不允许解析为正分】（P1-A：加法正分与 holistic 正映射都算矛盾结果）。
   const contributionOf = (unitId: string): Contribution => {
     const unit = unitById.get(unitId) as ScoringUnitT;
     const result = scored(unitId);
@@ -303,6 +304,13 @@ export function aggregateUnitResults(
           detail: `unit '${unitId}' hit unmapped level '${levelId}'`,
         };
       }
+      if (result.scored_because === 'blank_marked_zero' && mapped > 0) {
+        // P1-A：空白判零的结果不得经 holistic 映射获得正分。
+        return {
+          kind: 'invalid',
+          detail: `unit '${unitId}' is blank_marked_zero but its mapped level '${levelId}' yields positive credit ${mapped}`,
+        };
+      }
       return { kind: 'points', points: mapped };
     }
     if (result.points_awarded === null) {
@@ -315,6 +323,13 @@ export function aggregateUnitResults(
       return {
         kind: 'invalid',
         detail: `unit '${unitId}' awarded ${result.points_awarded} above published max ${unit.points}`,
+      };
+    }
+    if (result.scored_because === 'blank_marked_zero' && result.points_awarded > 0) {
+      // P1-A：空白判零却携带正分是矛盾结果 —— 拒绝，不静默改写为 0。
+      return {
+        kind: 'invalid',
+        detail: `unit '${unitId}' is blank_marked_zero but carries positive credit ${result.points_awarded}`,
       };
     }
     return { kind: 'points', points: result.points_awarded };

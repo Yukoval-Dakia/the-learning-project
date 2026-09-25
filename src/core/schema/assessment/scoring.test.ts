@@ -548,6 +548,72 @@ describe('aggregateUnitResults — 总分只聚合一次', () => {
     });
   });
 
+  it('P1-A repro: blank_marked_zero with POSITIVE additive credit is rejected even when blank_scores_zero=true', () => {
+    const { basis } = fixture(); // fixture.blank_scores_zero === true
+    expect(basis.blank_scores_zero).toBe(true);
+    const outcome = aggregateUnitResults(basis, [
+      scored('u_choice', 2, { scored_because: 'blank_marked_zero' }), // 发布上限 4，但空白只能得 0
+      scored('u_speed', 3),
+      scored('u_reasoning', 3),
+    ]);
+    expect(outcome).toMatchObject({
+      kind: 'unresolved',
+      reason: 'invalid_result',
+      detail: "unit 'u_choice' is blank_marked_zero but carries positive credit 2",
+    });
+    // 空白 + 0 分仍是合法路径（政策允许时）。
+    const legit = aggregateUnitResults(basis, [
+      scored('u_choice', 0, { scored_because: 'blank_marked_zero' }),
+      scored('u_speed', 3),
+      scored('u_reasoning', 3),
+    ]);
+    expect(legit).toMatchObject({ kind: 'points_total', points: 6 });
+  });
+
+  it('P1-A repro: blank_marked_zero cannot harvest positive credit through the holistic level mapping either', () => {
+    const basis: ScoringBasisT = ScoringBasis.parse({
+      units: [
+        {
+          scoring_unit_id: 'u_essay',
+          slot_refs: ['essay'],
+          criterion: {
+            kind: 'holistic_level',
+            levels: [
+              { level_id: 'full', descriptor_md: '一等', rank: 2 },
+              { level_id: 'zero', descriptor_md: '空白档', rank: 0 },
+            ],
+          },
+          points: null,
+          level_points: { full: 5, zero: 0 },
+        },
+      ],
+      aggregation: { kind: 'sum' },
+      blank_scores_zero: true,
+    });
+    const harvest = aggregateUnitResults(basis, [
+      scored('u_essay', 0, {
+        points_awarded: null,
+        scored_because: 'blank_marked_zero',
+        matched: { level_id: 'full', option_ids: [] },
+      }),
+    ]);
+    expect(harvest).toMatchObject({
+      kind: 'unresolved',
+      reason: 'invalid_result',
+      detail:
+        "unit 'u_essay' is blank_marked_zero but its mapped level 'full' yields positive credit 5",
+    });
+    // 空白命中 0 分映射档位仍合法。
+    const legit = aggregateUnitResults(basis, [
+      scored('u_essay', 0, {
+        points_awarded: null,
+        scored_because: 'blank_marked_zero',
+        matched: { level_id: 'zero', option_ids: [] },
+      }),
+    ]);
+    expect(legit).toEqual({ kind: 'points_total', points: 0, policy: { kind: 'sum' } });
+  });
+
   it('holistic level mapping: mapped level contributes exactly once; unmapped level yields no total (never fabricated)', () => {
     const basis: ScoringBasisT = ScoringBasis.parse({
       units: [
