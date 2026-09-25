@@ -1,6 +1,6 @@
 # YUK-1038 题目契约迁移 — owner 决策记录
 
-日期：2026-09-24 · 关联 YUK-1038 · **状态：D1–D19 已批准；无业务实施/UI 代码；Jev smoke + 只读 census 已完成；仅剩 Q20 UI preflight 正式批准与 Q21 ticket 拆分待 owner**
+日期：2026-09-24 · 关联 YUK-1038 · **状态：D1–D19 已批准；无业务实施/UI 代码；Jev smoke + 只读 census 已完成；Q20 UI preflight 与 Q21 ticket 拆分 2026-09-25 已批准（YUK-1043–1059）；仅剩 final implementation-ready confirmation 待 owner**
 
 相关：[implementation grounding](2026-09-24-question-assessment-implementation-grounding.md) · [模型提案](2026-09-24-question-assessment-redesign.md)。
 
@@ -215,9 +215,9 @@ Owner 原句（verbatim）：
 
 ## 待 owner 决策（PENDING — 未批准，即使有合理默认）
 
-- **Q20 UI 正式 design preflight 批准**（草案已出 `docs/design/2026-09-24-assessment-ui-preflight.md`，待 owner）。
-- **Q21 ticket 拆分批准**。
-- 之后：**final implementation-ready confirmation**（实施前最终确认）。
+- ~~**Q20 UI 正式 design preflight 批准**~~ — **2026-09-25 owner 已批准**（`docs/design/2026-09-24-assessment-ui-preflight.md` §2–§9 一组：文件清单/组件类型/交互规格）。
+- ~~**Q21 ticket 拆分批准**~~ — **2026-09-25 owner 已批准**；已按 §17 work DAG 建 Linear 依赖票 **YUK-1043–YUK-1059**（17 票，parent=YUK-1038，label `ready-for-agent`，blockedBy 已落）。
+- 之后：**final implementation-ready confirmation**（实施前最终确认）— **仍待 owner**。
 
 此前另列的 learner-visible rubric/披露、omission/finality/assistance policy、cutover measured window、手动→θ̂ 精确映射，纳入 **Q21 ticket 拆分**一并定案，不再单列 owner 决策项。
 
