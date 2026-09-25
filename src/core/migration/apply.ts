@@ -790,7 +790,9 @@ export function verifySnapshotTransformation(
     });
     return issues;
   }
-  const part = boundParts[0]!;
+  const [boundPart] = boundParts;
+  if (boundPart === undefined) return issues; // length===1 已保证；TS 收窄用
+  const part = boundPart;
   if (view.prompt_md === null || normalizeText(part.prompt_md) !== normalizeText(view.prompt_md)) {
     issues.push({
       detail: `题干不一致：snapshot='${normalizeText(view.prompt_md ?? '<null>').slice(0, 40)}…' vs revision part='${normalizeText(part.prompt_md).slice(0, 40)}…'（归一后逐字比对）`,

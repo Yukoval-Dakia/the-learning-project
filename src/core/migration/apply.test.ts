@@ -424,7 +424,7 @@ describe('buildMigrationApplyPlan — per-category write mapping', () => {
           const c = contractOf('rev-q-1-v2');
           c.structure = {
             ...c.structure,
-            parts: [{ ...c.structure.parts[0]!, prompt_md: '2+2=?' }],
+            parts: c.structure.parts.map((p, i) => (i === 0 ? { ...p, prompt_md: '2+2=?' } : p)),
           };
           return c;
         })(),
@@ -929,7 +929,9 @@ describe('closeout 自验（终轮 oracle repro）', () => {
     const wrongPrompt = contractOf('rev-q-1');
     wrongPrompt.structure = {
       ...wrongPrompt.structure,
-      parts: [{ ...wrongPrompt.structure.parts[0]!, prompt_md: 'completely different stem' }],
+      parts: wrongPrompt.structure.parts.map((p, i) =>
+        i === 0 ? { ...p, prompt_md: 'completely different stem' } : p,
+      ),
     };
     const plan = buildMigrationApplyPlan(
       planInput(capture, registry, new Map([['rev-q-1', wrongPrompt]])),
@@ -1042,12 +1044,9 @@ describe('closeout 自验（终轮 oracle repro）', () => {
     const wrongUnit = contractOf('rev-badunit');
     wrongUnit.scoring_basis = {
       ...wrongUnit.scoring_basis,
-      units: [
-        {
-          ...wrongUnit.scoring_basis.units[0]!,
-          slot_refs: ['s-other'], // 不覆盖 s1
-        },
-      ],
+      units: wrongUnit.scoring_basis.units.map((u, i) =>
+        i === 0 ? { ...u, slot_refs: ['s-other'] /* 不覆盖 s1 */ } : u,
+      ),
     };
     wrongUnit.response_spec = {
       slots: [
