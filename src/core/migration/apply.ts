@@ -335,12 +335,12 @@ export interface EffectiveHeadRowPlan {
   evaluation_group_id: string;
   submission_id: string;
   /**
-   * 迁移导入的 evaluation 一律不激活 head（§11/D4：activation 需 settlement
-   * 同事务；§13：non-effective pending）—— head 行随 submission 建立，保持
-   * effective=NULL、generation=0，由 settlement lane 在获准规则下激活。
+   * 终裁 P1-5：head 保留 legacy effective 语义 —— 分类器 has_effective_head
+   * ⇒ 指向被导入的 head evaluation（generation=1，保存历史生效事实，非激活：
+   * 无 settlement/FSRS/重算）。无 effective head ⇒ 初态 (null, 0)。
    */
-  effective_evaluation_id: null;
-  generation: 0;
+  effective_evaluation_id: string | null;
+  generation: number;
   updated_at: Date;
 }
 
@@ -674,30 +674,216 @@ function legacyResponseOf(
   };
 }
 
-/** pending 的显式恢复信封（§13：保留 run/request/pending 身份 + 送达处置）。 */
+/** pending 的显式恢复信封（§13：保留 run/request/pending 身份 + 送达处置）。
+ * frozen_request = pending 事件自身的 submit 块【逐字】（JudgePendingSubmitInput
+ * 契约：body/question_id/subject_profile/question_snapshot?/ability_global_by_
+ * knowledge_id?/submitted_at —— D5 冻结面全量），外加 payload 级 ability_global_ids；
+ * 恢复方（reconcile sweeper / 重派）按原契约消费，不在此重述。
+ */
 function pendingRecoveryEnvelopeOf(
   response: ReturnType<typeof legacyResponseOf>,
-  runId: string | null,
+  runId: string,
   queues: MigrationCapture['queues'],
+  pendingPayload: EventPayload,
 ): Record<string, unknown> {
+  const submit = pendingPayload.submit;
   const judgeRunQueues = queues
     .filter((q) => q.name === 'judge_run')
     .map((q) => ({ state: q.state, count: q.count }));
   return {
     run_id: runId,
     caller: response.caller,
-    knowledge_ids: response.knowledge_ids,
-    frozen_request: {
-      question_id: response.question_id,
-      submitted_at: response.submitted_at,
-      response_md: response.response_md,
-      answer_image_refs: response.image_refs,
+    knowledge_ids: response.knowledge_ids, // payload 级写域（late-arrival watermark 依赖），随信封保留
+    frozen_request: submit ?? null, // 逐字 submit 契约对象（含 subject_profile/question_snapshot/ability 上下文）
+    ability_global_ids: Array.isArray(pendingPayload.ability_global_ids)
+      ? (pendingPayload.ability_global_ids as unknown[]).filter(
+          (v): v is string => typeof v === 'string',
+        )
+      : null,
+    eval_generation: null, // unbackfilled run —— 尚无 evaluation generation（显式未知，不猜 0）
+    eval_generation_note:
+      'durable judge run 未回填：不存在任何 evaluation generation；首次评估由恢复/重派路径产生',
+    delivery_disposition: {
+      run_status: 'unbackfilled', // 本 run 的处置：无 event.id=run_id 的回填 review（契约判定键）
+      backfill_event_id: null,
     },
-    eval_generation: 0,
-    delivery_disposition: { judge_run_queues: judgeRunQueues },
-    backfill_event_id: runId !== null ? runId : null,
-    note: 'durable judge run 未回填 —— 保留 run/request/pending 身份与冻结输入，恢复走正道回填/重派，不在此处判分',
+    queue_observation_at_capture: judgeRunQueues, // 全局队列观测（非本 run 处置），审计参考
+    note: '冻结输入逐字保留；恢复走正道回填/重派（reconcile sweeper 按 submit 契约重入队），迁移绝不在此判分',
   };
+}
+
+// ───────────── P1-2：snapshot → revision 内容可推导性验证 ─────────────
+
+/** 冻结 snapshot 的【可机械比对】内容面（题干/选项/参考 —— 学习者所见）。 */
+interface SnapshotContentView {
+  prompt_md: string | null;
+  choices_md: string[] | null;
+  reference_md: string | null;
+}
+
+function normalizeText(value: string): string {
+  return value.trim().replace(/\s+/g, ' ');
+}
+
+/** 从记录自身的冻结 snapshot 提取可机械比对内容（attempt/durable/pending 三形态）。 */
+function snapshotContentViewOf(
+  record: RecordClassification,
+  eventById: Map<string, RawEventRow>,
+  pendingByRunId: Map<string, RawEventRow>,
+): SnapshotContentView | null {
+  const snapshotOf = (raw: unknown): SnapshotContentView | null => {
+    if (raw === null || typeof raw !== 'object') return null;
+    const obj = raw as Record<string, unknown>;
+    // AttemptQuestionSnapshot：question.{prompt_md,choices_md,reference_md}
+    // FrozenQuestionSnapshot：顶层 {prompt_md,choices_md,reference_md}。
+    const q =
+      obj.question !== null && typeof obj.question === 'object'
+        ? (obj.question as Record<string, unknown>)
+        : obj;
+    const prompt = typeof q.prompt_md === 'string' ? q.prompt_md : null;
+    const choices = Array.isArray(q.choices_md)
+      ? (q.choices_md as unknown[]).filter((v): v is string => typeof v === 'string')
+      : null;
+    const reference = typeof q.reference_md === 'string' ? q.reference_md : null;
+    if (prompt === null && choices === null && reference === null) return null;
+    return { prompt_md: prompt, choices_md: choices, reference_md: reference };
+  };
+  if (record.source_kind !== 'event') return null;
+  const event = eventById.get(record.source_id);
+  if (event === undefined) return null;
+  const payload = payloadOf(event.payload);
+  if (event.action === 'attempt') return snapshotOf(payload.question_snapshot);
+  if (event.action === 'review') {
+    const pending = pendingByRunId.get(event.id);
+    if (pending === undefined) return null;
+    return snapshotOf(payloadOf(payloadOf(pending.payload).submit).question_snapshot);
+  }
+  if (event.action === 'experimental:judge_pending_attempt') {
+    return snapshotOf(payloadOf(payload.submit).question_snapshot);
+  }
+  return null;
+}
+
+export interface SnapshotTransformationIssue {
+  detail: string;
+}
+
+/**
+ * digest_verified 的内容可推导性（review P1-2）：registry 只证明「拿到过同一份
+ * snapshot」；本函数再证明【目标 revision 的学习者所见内容可由该 snapshot 机械
+ * 推导】—— solo 单 part：题干 trim/空白归一后逐字一致；选择题面：slot 选项
+ * 文本与 snapshot.choices_md 序列一致（归一）；非选择题面不得出现选择题槽。
+ * 评分依据/材料 digest 无法机械证明（§3.1 版本化 integrity 不等于 snapshot 字段），
+ * 超出机械比对面的必须走 question_asserted 显式断言 —— 不冒充 digest_verified。
+ */
+export function verifySnapshotTransformation(
+  view: SnapshotContentView,
+  contract: PublishedQuestionRevisionT,
+  partIds: readonly string[],
+  slotId: string,
+): SnapshotTransformationIssue[] {
+  const issues: SnapshotTransformationIssue[] = [];
+  const boundParts = contract.structure.parts.filter((part) => partIds.includes(part.part_id));
+  if (boundParts.length !== 1) {
+    issues.push({
+      detail: `snapshot 是 solo 单题形态，但绑定 ${boundParts.length} 个 part —— 无法机械推导多 part 组合`,
+    });
+    return issues;
+  }
+  const part = boundParts[0]!;
+  if (view.prompt_md === null || normalizeText(part.prompt_md) !== normalizeText(view.prompt_md)) {
+    issues.push({
+      detail: `题干不一致：snapshot='${normalizeText(view.prompt_md ?? '<null>').slice(0, 40)}…' vs revision part='${normalizeText(part.prompt_md).slice(0, 40)}…'（归一后逐字比对）`,
+    });
+  }
+  const slot = contract.response_spec.slots.find((candidate) => candidate.slot_id === slotId);
+  if (slot === undefined) {
+    issues.push({ detail: `slot '${slotId}' 不在 revision 契约内` });
+    return issues;
+  }
+  const isChoiceSlot = slot.kind === 'single_choice' || slot.kind === 'multi_choice';
+  if (view.choices_md !== null) {
+    if (!isChoiceSlot) {
+      issues.push({
+        detail: `snapshot 携带 ${view.choices_md.length} 个选项但槽位 '${slotId}' 是 ${slot.kind} —— 题型形态不一致`,
+      });
+    } else {
+      const optionTexts =
+        slot.kind === 'single_choice' || slot.kind === 'multi_choice'
+          ? slot.options.map((option) => option.text)
+          : [];
+      const normalizedSnapshot = view.choices_md.map(normalizeText);
+      const normalizedOptions = optionTexts.map(normalizeText);
+      if (normalizedSnapshot.join('\u0001') !== normalizedOptions.join('\u0001')) {
+        issues.push({
+          detail: `选项文本序列不一致：snapshot ${normalizedSnapshot.length} 项 vs 槽位 ${normalizedOptions.length} 项（归一后逐项比对）`,
+        });
+      }
+    }
+  } else if (isChoiceSlot) {
+    issues.push({
+      detail: `revision 槽位 '${slotId}' 是选择题但 snapshot 无 choices_md —— 无法机械推导选项身份`,
+    });
+  }
+  return issues;
+}
+
+// ───────────── P1-2b/c：registry 坐标对 revision 契约的普适校验 ─────────────
+
+export interface EntryCoordinateIssue {
+  detail: string;
+}
+
+/**
+ * 每一条 mapped 绑定（不限 submission 锚）都必须对上目标库 revision 契约：
+ * part_ids ⊆ structure.parts；slot 存在且属于绑定 part 集；scoring_unit 存在
+ * 且【关联】绑定槽位（unit.slot_refs 覆盖 slot —— 不允许拿他槽的 unit 判本题）；
+ * 契约自身过发布 barrier 的确定性子集校验。
+ */
+export function validateEntryCoordinates(
+  entry: RevisionRegistryEntry,
+  contract: PublishedQuestionRevisionT,
+): EntryCoordinateIssue[] {
+  const issues: EntryCoordinateIssue[] = [];
+  const contractIssues = [
+    ...validateStructure(contract.structure),
+    ...validateResponseSpec(contract.response_spec, contract.structure),
+    ...validateScoringBasis(contract.scoring_basis, contract.response_spec, contract.structure),
+    ...validateExecutionPlan(contract.execution_plan, contract.scoring_basis),
+  ];
+  if (contractIssues.length > 0) {
+    issues.push({
+      detail: `revision 契约校验失败：${contractIssues.map((i) => `${i.code}(${'detail' in i ? i.detail : ''})`).join('; ')}`,
+    });
+    return issues;
+  }
+  const partIds = new Set(contract.structure.parts.map((part) => part.part_id));
+  if (!entry.part_ids.every((partId) => partIds.has(partId))) {
+    issues.push({
+      detail: `part_ids [${entry.part_ids.join(',')}] 不在契约 parts [${[...partIds].join(',')}] 内`,
+    });
+  }
+  const slot = contract.response_spec.slots.find(
+    (candidate) => candidate.slot_id === entry.slot_id,
+  );
+  if (slot === undefined) {
+    issues.push({ detail: `slot '${entry.slot_id}' 不在 revision 契约内` });
+  } else if (!entry.part_ids.includes(slot.part_id)) {
+    issues.push({
+      detail: `slot '${entry.slot_id}' 属于 part '${slot.part_id}'，不在绑定 part 集 [${entry.part_ids.join(',')}] 内`,
+    });
+  }
+  const unit = contract.scoring_basis.units.find(
+    (candidate) => candidate.scoring_unit_id === entry.scoring_unit_id,
+  );
+  if (unit === undefined) {
+    issues.push({ detail: `scoring_unit '${entry.scoring_unit_id}' 不在契约计分单元集内` });
+  } else if (!unit.slot_refs.includes(entry.slot_id)) {
+    issues.push({
+      detail: `scoring_unit '${entry.scoring_unit_id}' 不消费绑定槽位 '${entry.slot_id}'（其 slot_refs=[${unit.slot_refs.join(',')}]）—— 不允许拿他槽单元判本题`,
+    });
+  }
+  return issues;
 }
 
 /** source_asset 行 → 契约原生 EvidenceAttachment（digest/mime/bytes 齐备才忠实）。 */
@@ -928,6 +1114,65 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
         });
       }
     }
+    // P1-2（终轮）：mapped 绑定的【普适】验证 —— 坐标对契约（part/slot/unit 关联）、
+    // digest_verified 的内容可推导性（题干/选项机械比对）、part_ref 兼容性。
+    // 任一不通过 ⇒ conflicted（registry 缺陷可见可修），镜像随后继承降级裁决。
+    if (resolution.status === 'mapped' && resolution.entry !== null) {
+      const downgradeReasons: string[] = [];
+      // 内容可推导性只在【裁决归属记录】上执行：镜像记录的冻结 snapshot 属于锚
+      // occurrence（answer 镜像自身没有 snapshot —— view 必为 null），锚已验过；
+      // 在此重查只会把合法继承误判为「缺内容面」。坐标/part_ref 校验仍普适。
+      if (anchorResolution === undefined) {
+        const contract = input.revisionContracts.get(resolution.entry.revision_id);
+        if (contract === undefined) {
+          downgradeReasons.push(
+            `revision ${resolution.entry.revision_id} 的五层契约未随 plan 提供（语料导入/装载不完整）`,
+          );
+        } else {
+          for (const issue of validateEntryCoordinates(resolution.entry, contract)) {
+            downgradeReasons.push(issue.detail);
+          }
+          if (resolution.binding === 'digest_verified') {
+            const view = snapshotContentViewOf(record, eventById, pendingByRunId);
+            if (view === null) {
+              downgradeReasons.push('digest_verified 绑定缺少可机械比对的 snapshot 内容面');
+            } else {
+              for (const issue of verifySnapshotTransformation(
+                view,
+                contract,
+                resolution.entry.part_ids,
+                resolution.entry.slot_id,
+              )) {
+                downgradeReasons.push(issue.detail);
+              }
+            }
+          }
+        }
+      }
+      const recordPartRef = answerRow?.part_ref ?? null;
+      if (
+        recordPartRef !== null &&
+        recordPartRef.length > 0 &&
+        !resolution.entry.part_ids.includes(recordPartRef)
+      ) {
+        downgradeReasons.push(
+          `answer.part_ref '${recordPartRef}' 不在绑定 part 集 [${resolution.entry.part_ids.join(',')}] 内 —— occurrence 的 part 不在绑定范围`,
+        );
+      }
+      if (downgradeReasons.length > 0) {
+        resolution = {
+          status: 'conflicted',
+          entry: null,
+          reason: `registry 绑定未过内容/坐标验证：${downgradeReasons.join('; ')}`,
+          binding: null,
+        };
+        conflicted.push({
+          source_locator: record.source_locator,
+          original_question_id: originalQuestionId,
+          reason: resolution.reason,
+        });
+      }
+    }
     resolutionByLocator.set(record.source_locator, resolution);
     mappingStatusCount[resolution.status] += 1;
 
@@ -966,6 +1211,7 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
           response,
           runIdStr,
           input.capture.queues,
+          payloadOf(event.payload),
         );
       }
     }
@@ -1100,43 +1346,16 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
     };
 
     const entry = resolution.entry;
+    // 契约存在性/五层有效性/坐标关联已在【解析阶段普适验证】（validateEntry
+    // Coordinates + verifySnapshotTransformation）—— mapped 能走到这里即已通过。
     const contract = input.revisionContracts.get(entry.revision_id);
     if (contract === undefined) {
-      degrade(
-        `revision ${entry.revision_id} 的五层契约未随 plan 提供（语料导入/装载不完整）—— 无法忠实重建 issuance/response`,
-      );
-      continue;
-    }
-    // 契约自身有效性（发布 barrier 的确定性子集 —— 语料导入坏了在这里显形）。
-    const contractIssues = [
-      ...validateStructure(contract.structure),
-      ...validateResponseSpec(contract.response_spec, contract.structure),
-      ...validateScoringBasis(contract.scoring_basis, contract.response_spec, contract.structure),
-      ...validateExecutionPlan(contract.execution_plan, contract.scoring_basis),
-    ];
-    if (contractIssues.length > 0) {
-      degrade(
-        `revision 契约校验失败：${contractIssues.map((i) => `${i.code}(${'detail' in i ? i.detail : ''})`).join('; ')}`,
-      );
-      continue;
-    }
-    // registry 坐标与契约一致（P1-4）。
-    const contractParts = new Set(contract.structure.parts.map((p) => p.part_id));
-    if (!entry.part_ids.every((p) => contractParts.has(p))) {
-      degrade(
-        `registry part_ids 与 revision 契约不符（${entry.part_ids.join(',')} vs 契约 parts ${[...contractParts].join(',')}）`,
-      );
+      degrade(`revision ${entry.revision_id} 契约在重建阶段缺失（内部不一致，fail-visible 兜底）`);
       continue;
     }
     const slot = contract.response_spec.slots.find((s) => s.slot_id === entry.slot_id);
-    if (slot === undefined || !entry.part_ids.includes(slot.part_id)) {
-      degrade(`registry slot_id '${entry.slot_id}' 不在 revision 契约的发出 part 范围内`);
-      continue;
-    }
-    if (!contract.scoring_basis.units.some((u) => u.scoring_unit_id === entry.scoring_unit_id)) {
-      degrade(
-        `registry scoring_unit_id '${entry.scoring_unit_id}' 不在 revision 契约的计分单元集内`,
-      );
+    if (slot === undefined) {
+      degrade(`slot '${entry.slot_id}' 在重建阶段缺失（内部不一致，fail-visible 兜底）`);
       continue;
     }
 
@@ -1146,9 +1365,9 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
     );
     const response = legacyResponseOf(record, eventById, pendingByRunId);
     const soleSlot = slotsInScope[0];
-    if (soleSlot === undefined || soleSlot.slot_id !== entry.slot_id) {
+    if (slotsInScope.length !== 1 || soleSlot === undefined || soleSlot.slot_id !== entry.slot_id) {
       degrade(
-        `发出范围内有 ${slotsInScope.length} 个槽位 —— legacy 整题自由文本作答无法归属（需唯一槽位绑定，不猜）`,
+        `发出范围内有 ${slotsInScope.length} 个槽位 —— legacy 整题自由文本作答无法归属（需唯一槽位绑定；capture 无 per-part 作答证据，绝不首槽暗赋）`,
       );
       continue;
     }
@@ -1337,9 +1556,11 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
       aggregate: { kind: 'unresolved', reason: 'pending_units', detail: pendingUnitDetail },
       plan_digest: null,
       run_refs: candidate.run_refs,
+      // assisted 顶层【省略】：契约字段是 boolean-only（无 unknown/null 形态），
+      // 写 false 会冒充「确认无辅助」—— 迁移不可知。省略 = 存储层不做断言；
+      // 消费方 parse 时按 schema 默认得到 false，真相在 migrated.assisted='unknown'。
       provenance: {
         source: 'automatic',
-        assisted: false,
         migrated: {
           tool: 'yuk1050-apply',
           algorithm_version: algorithmVersion,
@@ -1354,9 +1575,30 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
       e.attempt = index + 1;
     });
 
-    // head：随 submission 建立，effective=NULL/generation=0 —— imported 判词
-    // 不激活（§11/D4：activation 需 settlement 同事务生效；§13 non-effective
-    // pending）。legacy effective truth 已入 mapping evidence。
+    // legacy effective head（终裁 P1-5）：imported 目标声明 has_effective_head 时，
+    // 被生效的 evaluation = head judge（judge_event_id）或 embedded 判词。
+    let legacyHeadEvaluationId: string | null = null;
+    let legacyHeadAt: Date = submittedAt;
+    if (
+      (record.native_target.kind === 'submission_with_imported_eval' &&
+        record.native_target.has_effective_head) ||
+      record.native_target.kind === 'submission_with_embedded_eval'
+    ) {
+      const headJudgeId =
+        record.native_target.kind === 'submission_with_imported_eval'
+          ? record.native_target.judge_event_id
+          : null;
+      legacyHeadEvaluationId =
+        headJudgeId !== null
+          ? idOf('aev', `evaluation|${anchorId}|${headJudgeId}`)
+          : idOf('aev', `evaluation|${anchorId}|embedded`);
+      legacyHeadAt =
+        evaluations.find((e) => e.evaluation_id === legacyHeadEvaluationId)?.created_at ??
+        submittedAt;
+    }
+
+    // head：随 submission 建立 —— legacy effective 语义见下方 head 字段注释
+    // （P1-5 终裁：保存历史生效事实，非激活；无 head ⇒ (null, 0)）。
     const chain: SubmissionChainPlan = {
       anchor_locator: record.source_locator,
       issuance: {
@@ -1387,12 +1629,17 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
         submitted_at: submittedAt,
       },
       evaluations,
+      // P1-5（终裁）：head 保留 legacy effective 语义 —— 分类器判定
+      // has_effective_head 时指向被导入的 head evaluation（generation=1：本
+      // 导入即该 head 的第一次生效）。这是【保存历史生效事实】，不是激活：
+      // 无 settlement、无 FSRS、无重算 —— learning 侧零触碰。分类器判定无
+      // effective head（并列 held / 非选中）才保持初态 (null, 0)。
       head: {
         evaluation_group_id: groupId,
         submission_id: submissionId,
-        effective_evaluation_id: null,
-        generation: 0,
-        updated_at: submittedAt,
+        effective_evaluation_id: legacyHeadEvaluationId,
+        generation: legacyHeadEvaluationId !== null ? 1 : 0,
+        updated_at: legacyHeadEvaluationId !== null ? legacyHeadAt : submittedAt,
       },
     };
     intent.submission = chain;
@@ -1404,6 +1651,16 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
         kind: a.kind,
         digest: a.asset.digest,
       }));
+      // P1-3（终轮）：重建【默认值】显式披露 —— 这些列不是观测到的历史事实，
+      // 是迁移在无证据时的诚实缺省，审计者不得读作 observed history。
+      intent.mapping.evidence.reconstruction_defaults = {
+        container_occurrence_ref: 'null（历史容器观测缺失 —— 缺省，非事实）',
+        claim_policy: 'unbounded（不虚构历史一次性占用语义 —— 缺省）',
+        claim_status: 'unclaimed（缺省）',
+        issued_at: '= submitted_at（serve 时刻不可知，提交时刻为下界 —— 缺省）',
+        option_order: '契约声明序（历史 shuffle 不可知 —— 缺省）',
+        material_bindings: '契约同版材料声明（历史 material 呈现不可知 —— 缺省）',
+      };
     }
   }
 

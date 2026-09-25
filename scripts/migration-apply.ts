@@ -37,6 +37,7 @@ import {
   parseRevisionRegistry,
   planDigestOf,
   registryDigestOf,
+  validateEntryCoordinates,
 } from '@/core/migration/apply';
 import { canonicalHash } from '@/core/migration/canonical';
 import { checkpointHashOf } from '@/core/migration/checkpoint';
@@ -382,6 +383,21 @@ export async function loadRevisionContracts(
   if (issues.length > 0) {
     throw new ApplyCliError(
       `question_revision 行不符合五层契约（语料导入产物损坏）：\n  - ${issues.join('\n  - ')}`,
+    );
+  }
+  // P1-2（终轮）：每一条 registry 绑定（不限 submission 锚）都对契约做普适坐标
+  // 校验 —— part/slot/unit 关联在装载即 fail-visible，坏条目在写库前被拒。
+  const coordinateIssues: string[] = [];
+  for (const entry of registry.entries) {
+    const contract = contracts.get(entry.revision_id);
+    if (contract === undefined) continue; // 缺失行已在上方整体拒绝
+    for (const issue of validateEntryCoordinates(entry, contract)) {
+      coordinateIssues.push(`${entry.question_id} → ${entry.revision_id}: ${issue.detail}`);
+    }
+  }
+  if (coordinateIssues.length > 0) {
+    throw new ApplyCliError(
+      `registry 绑定坐标未过 revision 契约校验：\n  - ${coordinateIssues.join('\n  - ')}`,
     );
   }
   return contracts;

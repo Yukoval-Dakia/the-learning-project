@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PublishedQuestionRevisionT } from '../schema/assessment';
+import { AttemptQuestionSnapshot } from '../schema/question-evidence-snapshot';
 import {
   APPLY_ALGORITHM_VERSION,
   type BuildApplyPlanInput,
@@ -314,9 +315,10 @@ describe('buildMigrationApplyPlan — per-category write mapping', () => {
       source: 'automatic',
       migrated: { assisted: 'unknown' },
     });
-    // head 随 submission 建立但不激活（§11/D4/§13 non-effective pending）。
-    expect(chain.head.effective_evaluation_id).toBeNull();
-    expect(chain.head.generation).toBe(0);
+    // P1-5（终裁）：legacy effective head 被保存 —— head 指向被导入的 head
+    // evaluation（generation=1，历史生效事实，非激活：无 settlement/FSRS）。
+    expect(chain.head.effective_evaluation_id).toBe(chain.evaluations[0]?.evaluation_id);
+    expect(chain.head.generation).toBe(1);
     expect(anchor.mapping?.evidence.legacy_effective_truth).toMatchObject({
       head_selection: 'sole_verdict',
       judge_event_id: 'jud-1',
@@ -414,7 +416,19 @@ describe('buildMigrationApplyPlan — per-category write mapping', () => {
     ]);
     const contracts = new Map([
       ['rev-q-1', contractOf('rev-q-1')],
-      ['rev-q-1-v2', contractOf('rev-q-1-v2')],
+      // v2 契约的题干必须与 v2 冻结 snapshot 一致（P1-2：digest_verified
+      // 需目标 revision 内容可由 snapshot 机械推导，否则降级 conflicted）。
+      [
+        'rev-q-1-v2',
+        (() => {
+          const c = contractOf('rev-q-1-v2');
+          c.structure = {
+            ...c.structure,
+            parts: [{ ...c.structure.parts[0]!, prompt_md: '2+2=?' }],
+          };
+          return c;
+        })(),
+      ],
     ]);
     const plan = buildMigrationApplyPlan(planInput(capture, registry, contracts));
     expect(recordOf(plan, 'event:attempt:att-1').mapping?.target_revision_id).toBe('rev-q-1');
@@ -463,7 +477,9 @@ describe('buildMigrationApplyPlan — per-category write mapping', () => {
     if (chain === null || chain === undefined) return;
     expect(chain.evaluations).toHaveLength(1);
     expect(chain.evaluations[0]?.provenance).toMatchObject({ migrated: { embedded: true } });
-    expect(chain.head.effective_evaluation_id).toBeNull();
+    // embedded 判词 = legacy effective truth：head 指向导入的 embedded evaluation。
+    expect(chain.head.effective_evaluation_id).toBe(chain.evaluations[0]?.evaluation_id);
+    expect(chain.head.generation).toBe(1);
   });
 
   it('durable 回填 review（embedded judge 块）→ complete_attempt + 冻结 submit 输入', () => {
@@ -491,8 +507,33 @@ describe('buildMigrationApplyPlan — per-category write mapping', () => {
   });
 
   it('choice 槽契约：legacy 自由文本不能伪造选项身份 → 显式 reconstruction_blocked，不产冻结 submission', () => {
-    const capture = withEvents(emptyCapture(), [COMPLETE_ATTEMPT, HEAD_JUDGE]);
-    const registry = registryOf([REGISTRY_ENTRY('q-1')]);
+    // snapshot 携带与契约一致的选项（否则在绑定验证阶段就被 conflicted 拦下，
+    // 到不了 reconstruction 判定）：断言 response 文本不能映射到选项身份。
+    const choiceSnapshot = AttemptQuestionSnapshot.parse({
+      schema_version: 1,
+      question: {
+        ...SNAPSHOT.question,
+        choices_md: ['A', 'B'],
+      },
+      parent_question: null,
+    });
+    const attempt = ev({
+      id: 'att-1',
+      action: 'attempt',
+      subject_id: 'q-1',
+      outcome: 'failure',
+      created_at: '2026-09-20T10:00:00.000Z',
+      payload: {
+        answer_md: '3',
+        answer_image_refs: [],
+        referenced_knowledge_ids: ['kc-1'],
+        question_snapshot: choiceSnapshot,
+      },
+    });
+    const capture = withEvents(emptyCapture(), [attempt, HEAD_JUDGE]);
+    const registry = registryOf([
+      REGISTRY_ENTRY('q-1', { snapshot_digest: canonicalHash(choiceSnapshot) }),
+    ]);
     const contracts = new Map([['rev-q-1', contractOf('rev-q-1', { slotKind: 'single_choice' })]]);
     const plan = buildMigrationApplyPlan(planInput(capture, registry, contracts));
     const anchor = recordOf(plan, 'event:attempt:att-1');
@@ -507,13 +548,16 @@ describe('buildMigrationApplyPlan — per-category write mapping', () => {
     expect(judge.mapping?.status).toBe('historical_unresolved');
   });
 
-  it('契约缺失（registry 指向未装载的 revision）→ 显式降级，不产看似正常的 submission', () => {
+  it('契约缺失（registry 指向未装载的 revision）→ conflicted 降级，不产看似正常的 submission', () => {
     const capture = withEvents(emptyCapture(), [COMPLETE_ATTEMPT, HEAD_JUDGE]);
     const registry = registryOf([REGISTRY_ENTRY('q-1')]);
     const plan = buildMigrationApplyPlan(planInput(capture, registry, new Map()));
     const anchor = recordOf(plan, 'event:attempt:att-1');
-    expect(anchor.mapping?.status).toBe('historical_unresolved');
+    // P1-2（终轮）：registry 绑定了 revision 但契约未装载 = 语料/绑定缺陷，
+    // 显式 conflicted（可见可修），不是「无上下文」的 historical_unresolved。
+    expect(anchor.mapping?.status).toBe('conflicted');
     expect(anchor.submission).toBeNull();
+    expect(plan.worklists.conflicted.map((w) => w.source_locator)).toContain('event:attempt:att-1');
   });
 
   it('图片作答：source_asset 元数据齐备 → 原生 EvidenceAttachment 保留；元数据缺失 → D5 拒绝降级', () => {
@@ -582,6 +626,7 @@ describe('buildMigrationApplyPlan — per-category write mapping', () => {
     const plan = buildMigrationApplyPlan(planInput(capture, registry, contracts));
     const attr = recordOf(plan, 'event:judge:jud-attr');
     expect(attr.classification.category).toBe('attribution_only');
+    // digest_verified 继承镜像：锚内容已验过，镜像无自身 snapshot，不重复验证。
     expect(attr.mapping?.status).toBe('mapped');
     expect(attr.mapping?.evidence.attribution_only).toBe(true);
     expect(attr.submission).toBeNull();
@@ -635,14 +680,24 @@ describe('buildMigrationApplyPlan — per-category write mapping', () => {
     const envelope = rec.mapping?.evidence.pending_recovery as Record<string, unknown> | undefined;
     expect(envelope).toBeDefined();
     expect(envelope?.run_id).toBe('run-unbackfilled');
-    expect(envelope?.eval_generation).toBe(0);
+    expect(envelope?.eval_generation).toBeNull(); // unbackfilled run：显式未知，不猜 0
     expect(envelope?.delivery_disposition).toMatchObject({
-      judge_run_queues: [{ state: 'active', count: 2 }],
+      run_status: 'unbackfilled',
     });
-    expect(envelope?.frozen_request).toMatchObject({
+    expect(envelope?.queue_observation_at_capture).toEqual([{ state: 'active', count: 2 }]);
+    // frozen_request = pending 事件的 submit 块【逐字】（body/question_id/
+    // subject_profile/question_snapshot/ability/submitted_at 全量契约面），
+    // payload 级 knowledge_ids/ability_global_ids 随信封保留（终轮 P1-4）。
+    expect(envelope?.frozen_request).toEqual({
+      body: { response_md: 'my answer' },
       question_id: 'q-1',
-      response_md: 'my answer',
+      subject_profile: { learner_id: 'learner-1', locale: 'zh' },
+      ability_global_by_knowledge_id: { 'kc-1': 'ag-1' },
+      submitted_at: '2026-09-20T00:00:00.000Z',
+      question_snapshot: { ...FROZEN_DURABLE_SNAPSHOT },
     });
+    expect(envelope?.knowledge_ids).toEqual(['kc-1']);
+    expect(envelope?.ability_global_ids).toEqual(['ag-1']);
     expect(rec.mapping?.evidence.response_digest).toBe(
       responseDigestOf({
         question_id: 'q-1',
@@ -668,9 +723,9 @@ describe('buildMigrationApplyPlan — per-category write mapping', () => {
     const plan = buildMigrationApplyPlan(planInput(capture, null));
     const rec = recordOf(plan, 'event:experimental:judge_pending_attempt:pend-img');
     const envelope = rec.mapping?.evidence.pending_recovery as
-      | { frozen_request?: { answer_image_refs?: string[] } }
+      | { frozen_request?: { body?: { answer_image_refs?: string[] } } }
       | undefined;
-    expect(envelope?.frozen_request?.answer_image_refs).toEqual(['asset-9']);
+    expect(envelope?.frozen_request?.body?.answer_image_refs).toEqual(['asset-9']);
     expect(rec.mapping?.evidence.response_digest).toBe(
       responseDigestOf({
         question_id: 'q-1',
@@ -863,5 +918,205 @@ describe('determinism / idempotency 基座', () => {
     const sum = Object.values(plan.rollup.per_category).reduce((acc, b) => acc + b.records, 0);
     expect(sum).toBe(plan.records.length);
     expect(plan.algorithm_version).toBe(APPLY_ALGORITHM_VERSION);
+  });
+});
+
+describe('closeout 自验（终轮 oracle repro）', () => {
+  it('P1-2：snapshot digest 命中但题干/选项内容推不出目标 revision → conflicted，不产 submission', () => {
+    const capture = withEvents(emptyCapture(), [COMPLETE_ATTEMPT, HEAD_JUDGE]);
+    const registry = registryOf([REGISTRY_ENTRY('q-1')]);
+    // 契约题干与冻结 snapshot 不一致（digest 只证『见过同一快照』，不证可推导）。
+    const wrongPrompt = contractOf('rev-q-1');
+    wrongPrompt.structure = {
+      ...wrongPrompt.structure,
+      parts: [{ ...wrongPrompt.structure.parts[0]!, prompt_md: 'completely different stem' }],
+    };
+    const plan = buildMigrationApplyPlan(
+      planInput(capture, registry, new Map([['rev-q-1', wrongPrompt]])),
+    );
+    const anchor = recordOf(plan, 'event:attempt:att-1');
+    expect(anchor.mapping?.status).toBe('conflicted');
+    expect(anchor.submission).toBeNull();
+    // reason 在 mapping.evidence.resolution.reason（mapping 行无顶层 reason；evidence 为 Record<string, unknown>）。
+    const anchorResolution = anchor.mapping?.evidence.resolution as { reason?: string } | undefined;
+    expect(String(anchorResolution?.reason)).toMatch(/题干不一致|内容/);
+    expect(plan.worklists.conflicted.map((w) => w.source_locator)).toContain('event:attempt:att-1');
+  });
+
+  it('P1-2b：part_ref 不在绑定 part 集内 → conflicted（incompatible part_ref 不得 mapped）', () => {
+    const capture = withEvents(emptyCapture(), [COMPLETE_ATTEMPT, HEAD_JUDGE]);
+    capture.rawFacts.answers.push({
+      id: 'ans-badref',
+      question_id: 'q-1',
+      learning_item_id: null,
+      input_kind: 'text',
+      content_md: '3',
+      image_refs: [],
+      vision_extracted: null,
+      tags: [],
+      submitted_at: '2026-09-20T10:00:00.000Z',
+      session_id: null,
+      paper_artifact_id: null,
+      part_ref: 'p-elsewhere', // 不在 entry.part_ids=['p1'] 内
+      event_id: 'att-1',
+    });
+    const registry = registryOf([REGISTRY_ENTRY('q-1')]);
+    const contracts = new Map([['rev-q-1', contractOf('rev-q-1')]]);
+    const plan = buildMigrationApplyPlan(planInput(capture, registry, contracts));
+    const mirror = recordOf(plan, 'answer:ans-badref');
+    expect(mirror.mapping?.status).toBe('conflicted');
+    const mirrorResolution = mirror.mapping?.evidence.resolution as { reason?: string } | undefined;
+    expect(String(mirrorResolution?.reason)).toContain('p-elsewhere');
+  });
+
+  it('P1-3：多 part/多槽位 + 整题自由文本 → reconstruction_blocked，不产看似正常的 submission', () => {
+    const multiPart = contractOf('rev-multi');
+    multiPart.structure = {
+      ...multiPart.structure,
+      parts: [
+        { part_id: 'p1', prompt_md: '1+1=?', material_ids: [] },
+        { part_id: 'p2', prompt_md: '3+3=?', material_ids: [] },
+      ],
+    };
+    multiPart.response_spec = {
+      slots: [
+        {
+          slot_id: 's1',
+          part_id: 'p1',
+          kind: 'open_response',
+          accepted_evidence: [],
+          evidence_required: false,
+        },
+        {
+          slot_id: 's2',
+          part_id: 'p2',
+          kind: 'open_response',
+          accepted_evidence: [],
+          evidence_required: false,
+        },
+      ],
+    };
+    multiPart.scoring_basis = {
+      units: [
+        {
+          scoring_unit_id: 'u1',
+          slot_refs: ['s1', 's2'],
+          material_refs: [],
+          evidence_slot_refs: [],
+          requires_group_evidence: false,
+          criterion: {
+            kind: 'rule_reference',
+            rule_id: 'legacy-import',
+            statement_md: 'historical import',
+            source: 'manual',
+          },
+          points: 2,
+        },
+      ],
+      aggregation: { kind: 'sum' },
+      blank_scores_zero: false,
+    };
+    const capture = withEvents(emptyCapture(), [COMPLETE_ATTEMPT, HEAD_JUDGE]);
+    // asserted 绑定（跳过 snapshot 内容比对）以直达重建阶段验证长度守卫。
+    const registry = registryOf([
+      REGISTRY_ENTRY('q-1', {
+        revision_id: 'rev-multi',
+        part_ids: ['p1', 'p2'],
+        binding_kind: 'question_asserted',
+        snapshot_digest: null,
+        assertion_reason: '语料导入方显式断言绑定多 part 契约',
+      }),
+    ]);
+    const contracts = new Map([['rev-multi', multiPart]]);
+    const plan = buildMigrationApplyPlan(planInput(capture, registry, contracts));
+    const anchor = recordOf(plan, 'event:attempt:att-1');
+    expect(anchor.mapping?.status).toBe('historical_unresolved');
+    expect(String(anchor.mapping?.evidence.reconstruction_blocked)).toMatch(/2 个槽位/);
+    expect(anchor.submission).toBeNull();
+    expect(plan.worklists.reconstruction_blocked.map((w) => w.source_locator)).toContain(
+      'event:attempt:att-1',
+    );
+  });
+
+  it('P1-2c：registry 坐标与契约不符（scoring_unit 不消费绑定槽位）→ conflicted，不写', () => {
+    const wrongUnit = contractOf('rev-badunit');
+    wrongUnit.scoring_basis = {
+      ...wrongUnit.scoring_basis,
+      units: [
+        {
+          ...wrongUnit.scoring_basis.units[0]!,
+          slot_refs: ['s-other'], // 不覆盖 s1
+        },
+      ],
+    };
+    wrongUnit.response_spec = {
+      slots: [
+        {
+          slot_id: 's1',
+          part_id: 'p1',
+          kind: 'open_response',
+          accepted_evidence: [],
+          evidence_required: false,
+        },
+        {
+          slot_id: 's-other',
+          part_id: 'p1',
+          kind: 'open_response',
+          accepted_evidence: [],
+          evidence_required: false,
+        },
+      ],
+    };
+    const capture = withEvents(emptyCapture(), [COMPLETE_ATTEMPT, HEAD_JUDGE]);
+    const registry = registryOf([REGISTRY_ENTRY('q-1', { revision_id: 'rev-badunit' })]);
+    const contracts = new Map([['rev-badunit', wrongUnit]]);
+    const plan = buildMigrationApplyPlan(planInput(capture, registry, contracts));
+    const anchor = recordOf(plan, 'event:attempt:att-1');
+    expect(anchor.mapping?.status).toBe('conflicted');
+    const badUnitResolution = anchor.mapping?.evidence.resolution as
+      | { reason?: string }
+      | undefined;
+    expect(String(badUnitResolution?.reason)).toContain('不消费绑定槽位');
+    expect(anchor.submission).toBeNull();
+  });
+
+  it('P1-3b：重建缺省值在 evidence 显式披露（reconstruction_defaults），不冒充历史事实', () => {
+    const capture = withEvents(emptyCapture(), [COMPLETE_ATTEMPT, HEAD_JUDGE]);
+    const registry = registryOf([REGISTRY_ENTRY('q-1')]);
+    const contracts = new Map([['rev-q-1', contractOf('rev-q-1')]]);
+    const plan = buildMigrationApplyPlan(planInput(capture, registry, contracts));
+    const evidence = recordOf(plan, 'event:attempt:att-1').mapping?.evidence;
+    expect(evidence?.reconstruction_defaults).toMatchObject({
+      claim_policy: expect.stringContaining('unbounded'),
+      container_occurrence_ref: expect.stringContaining('null'),
+    });
+  });
+
+  it('P1-5b：分类器未声明 effective head → head 保持 (null, 0)，不虚构生效事实', () => {
+    // 当前分类器仅在锚已判有 head 时产出 submission 目标；这里直接改分类输出
+    // （has_effective_head=false）验证 executor 不授权降级 —— 头不存在就空着。
+    const capture = withEvents(emptyCapture(), [COMPLETE_ATTEMPT, HEAD_JUDGE]);
+    const registry = registryOf([REGISTRY_ENTRY('q-1')]);
+    const contracts = new Map([['rev-q-1', contractOf('rev-q-1')]]);
+    const base = planInput(capture, registry, contracts);
+    const anchorRecord = base.classification.records.find(
+      (r) => r.source_locator === 'event:attempt:att-1',
+    );
+    expect(anchorRecord?.native_target.kind).toBe('submission_with_imported_eval');
+    if (anchorRecord?.native_target.kind === 'submission_with_imported_eval') {
+      anchorRecord.native_target = {
+        ...anchorRecord.native_target,
+        has_effective_head: false,
+        head_selection: 'not_selected',
+      };
+    }
+    const plan = buildMigrationApplyPlan(base);
+    const anchor = recordOf(plan, 'event:attempt:att-1');
+    expect(anchor.submission?.head).toMatchObject({
+      effective_evaluation_id: null,
+      generation: 0,
+    });
+    // 对侧：被导入的 judge evaluation 仍存在（是 imported eval 证据），只是不是 head。
+    expect(anchor.submission?.evaluations.length).toBeGreaterThan(0);
   });
 });

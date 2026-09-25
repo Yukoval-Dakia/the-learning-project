@@ -1,4 +1,4 @@
-import { eq, inArray } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   type BuildApplyPlanInput,
@@ -415,11 +415,18 @@ describe('runMigrationApply — 全链路', () => {
       heads: 2,
     });
 
-    // head：随 submission 建立、不激活（§11/D4/§13 non-effective pending）。
+    // head（终裁 P1-5）：legacy effective 语义保存 —— 指向本组导入的 head
+    // evaluation、generation=1（历史生效事实，非激活：无 settlement/FSRS）。
     const heads = await testDb().select().from(evaluation_effective_head);
+    const evalsById = new Map(
+      (await testDb().select().from(evaluation)).map((r) => [r.evaluation_id, r] as const),
+    );
     for (const head of heads) {
-      expect(head.effective_evaluation_id).toBeNull();
-      expect(head.generation).toBe(0);
+      expect(head.effective_evaluation_id).not.toBeNull();
+      expect(head.generation).toBe(1);
+      expect(evalsById.get(head.effective_evaluation_id ?? '')?.evaluation_group_id).toBe(
+        head.evaluation_group_id,
+      );
     }
 
     // evaluation：判词只作 legacy 证据 —— unit pending + aggregate pending_units。
@@ -458,10 +465,13 @@ describe('runMigrationApply — 全链路', () => {
       pending: { reason: 'infra_failure', retryable: true },
     });
     const envelope = pendingMapping?.evidence as {
-      pending_recovery?: { run_id?: string; frozen_request?: { response_md?: string } };
+      pending_recovery?: {
+        run_id?: string;
+        frozen_request?: { body?: { response_md?: string } };
+      };
     };
     expect(envelope?.pending_recovery?.run_id).toBe('run-missing');
-    expect(envelope?.pending_recovery?.frozen_request?.response_md).toBe('my frozen answer');
+    expect(envelope?.pending_recovery?.frozen_request?.body?.response_md).toBe('my frozen answer');
     expect(mappings.find((m) => m.source_id === 'rev-rating')).toBeUndefined();
 
     // 账本：run + 5 阶段全 completed，run 行带 WAL 起点（audit:schema 写路径）。
@@ -498,13 +508,13 @@ describe('runMigrationApply — 全链路', () => {
     const fixture = await buildFixture();
     const plan = buildMigrationApplyPlan(await planInput(fixture, fixture.registry));
     await runApply(plan);
-    // settlement/runtime 激活 head（head 表无 immutable trigger —— 合法写路径）。
+    // settlement/runtime 推进 head 到 plan 之后（gen 2：迁移导入态是 gen 1）。
     const evalRow = (await testDb().select().from(evaluation))[0];
     const groupRow = (await testDb().select().from(evaluation_group))[0];
     if (evalRow === undefined || groupRow === undefined) return;
     await testDb()
       .update(evaluation_effective_head)
-      .set({ effective_evaluation_id: evalRow.evaluation_id, generation: 1 })
+      .set({ effective_evaluation_id: evalRow.evaluation_id, generation: 2 })
       .where(eq(evaluation_effective_head.evaluation_group_id, groupRow.evaluation_group_id));
 
     const second = await runApply(plan);
@@ -512,7 +522,7 @@ describe('runMigrationApply — 全链路', () => {
     const activated = second.report.reconciliation.heads_current.find(
       (h) => h.evaluation_group_id === groupRow.evaluation_group_id,
     );
-    expect(activated).toMatchObject({ generation: 1, post_migration_activation: true });
+    expect(activated).toMatchObject({ generation: 2, post_migration_activation: true });
   });
 
   it('pending→resolved 续跑（P1-5）：先无 registry 落 pending，registry 后到同 checkpoint 重跑走显式接替', async () => {
@@ -774,5 +784,170 @@ describe('registry/contract 装载（DB 侧接线）', () => {
       entries: [registryEntry('q-main', 'rev-broken', canonicalHash(ATTEMPT_SNAPSHOT))],
     };
     await expect(loadRevisionContracts(testDb(), registry)).rejects.toThrow(/契约/);
+  });
+
+  it('registry 坐标与契约不符（scoring_unit 不消费绑定槽位）→ 装载即拒', async () => {
+    // 坐标校验在装载层 fail-visible（P1-2 终轮），坏绑定走不到规划器。
+    const bad = revisionRow('rev-badcoord', 'grp-badcoord');
+    bad.response_spec = {
+      slots: [
+        {
+          slot_id: 's1',
+          part_id: 'p1',
+          kind: 'open_response',
+          accepted_evidence: [],
+          evidence_required: false,
+        },
+        {
+          slot_id: 's-other',
+          part_id: 'p1',
+          kind: 'open_response',
+          accepted_evidence: [],
+          evidence_required: false,
+        },
+      ],
+    };
+    const firstUnit = bad.scoring_basis.units[0];
+    if (firstUnit === undefined) throw new Error('fixture revision 应有至少一个 scoring unit');
+    bad.scoring_basis = {
+      ...bad.scoring_basis,
+      units: [{ ...firstUnit, slot_refs: ['s-other'] }],
+    };
+    await testDb().insert(question_revision).values(bad);
+    const registry: RevisionRegistry = {
+      registry_version: 2,
+      generated_by: 'bad-coord-corpus',
+      entries: [registryEntry('q-main', 'rev-badcoord', canonicalHash(ATTEMPT_SNAPSHOT))],
+    };
+    await expect(loadRevisionContracts(testDb(), registry)).rejects.toThrow(/不消费绑定槽位/);
+  });
+});
+
+describe('closeout 自验（终轮 oracle repro）', () => {
+  it('P1-1：存储载荷被篡改 → 批事务断言与已完成-run 重放都报 divergence（不只比 ID）', async () => {
+    const fixture = await buildFixture();
+    const plan = buildMigrationApplyPlan(await planInput(fixture, fixture.registry));
+    const first = await runApply(plan);
+    assertReconciliationClean(first.report);
+
+    const evalRow = (await testDb().select().from(evaluation))[0];
+    const groupRow = (await testDb().select().from(evaluation_group))[0];
+    const headRow = (await testDb().select().from(evaluation_effective_head))[0];
+    const submissionRow = (await testDb().select().from(assessment_submission))[0];
+    if (
+      evalRow === undefined ||
+      groupRow === undefined ||
+      headRow === undefined ||
+      submissionRow === undefined
+    ) {
+      throw new Error('fixture 未产出 submission 链');
+    }
+
+    // ① 批事务断言路径：新 run 重走 apply_submissions，篡改行先被读回比对。
+    //    evaluation.group_membership / unit_results / aggregate 无 trigger，直接 UPDATE。
+    //    （group.submission_ids 有非空 CHECK —— 篡改为另一个存在的 submission id。）
+    await testDb()
+      .update(evaluation)
+      .set({
+        aggregate: { kind: 'points_total', points: 99, policy: { kind: 'sum' } },
+      })
+      .where(eq(evaluation.evaluation_id, evalRow.evaluation_id));
+    const otherGroup = (await testDb().select().from(evaluation_group))[1];
+    if (otherGroup === undefined) throw new Error('fixture 应产出 2 个 evaluation_group');
+    await testDb()
+      .update(evaluation_group)
+      .set({ submission_ids: [otherGroup.submission_ids[0] ?? 'asb-ghost'] })
+      .where(eq(evaluation_group.evaluation_group_id, groupRow.evaluation_group_id));
+    // head：把 effective 指回 null（库内非法回退 —— plan 是 gen=1）。
+    await testDb()
+      .update(evaluation_effective_head)
+      .set({ effective_evaluation_id: null })
+      .where(eq(evaluation_effective_head.evaluation_group_id, headRow.evaluation_group_id));
+    // assessment_submission 有不可变 trigger —— 篡改走唯一内部写路径（restore 通道，0107），
+    // 模拟操作者/缺陷写入而非普通应用写。
+    await testDb().transaction(async (tx) => {
+      await tx.execute(sql`set local app.assessment_restore_mode = 'on'`);
+      await tx
+        .update(assessment_submission)
+        .set({ response_set: { entries: [] } })
+        .where(eq(assessment_submission.submission_id, submissionRow.submission_id));
+    });
+
+    const before2 = await truthCounts();
+    await expect(runApply(plan, { runId: 'run-tamperbatch0000000' })).rejects.toThrow(
+      /批内容对账失败/,
+    );
+    expect(await truthCounts()).toEqual(before2); // 批断言先于提交 —— 本 run 零新增
+
+    // ② 已完成-run 重放路径：run 已 completed → 不写行但仍全内容对账，divergence 显形。
+    await expect(runApply(plan, { runId: RUN_ID })).rejects.toThrow(/reconciliation 不洁/);
+    try {
+      await runApply(plan, { runId: RUN_ID });
+      expect.unreachable('tampered replay 不得 clean');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      expect(message).toContain('evaluation @'); // aggregate 篡改被内容比对捕获
+      expect(message).toContain('submission @'); // response_set 篡改被捕获
+      expect(message).toContain('evaluation group @'); // submission_ids 篡改被捕获
+      expect(message).toContain('effective head @'); // head 回退被捕获
+    }
+  });
+
+  it('P1-7：pending 映射行裁决字段被外部改动 → 拒绝原地覆盖；纯 evidence 改动 → 刷新回原样', async () => {
+    const fixture = await buildFixture();
+    // 无 registry → 全 pending（含锚记录 locator）。
+    const planNoRegistry = buildMigrationApplyPlan(await planInput(fixture, null));
+    await runApply(planNoRegistry);
+    const locator = 'event:attempt:att-1';
+    const rows = (await testDb()
+      .select()
+      .from(assessment_identity_mapping)
+      .where(eq(assessment_identity_mapping.source_locator, locator))) as unknown as Array<{
+      mapping_id: string;
+      status: string;
+      is_current: boolean;
+      evidence: unknown;
+      snapshot_digest: string | null;
+    }>;
+    const pending = rows[0];
+    expect(pending?.status).toBe('pending');
+    if (pending === undefined) return;
+    const originalEvidence = pending.evidence;
+
+    // 操作性注释漂移（evidence 被外部改）—— 重跑原地刷新为 plan 值，mapping_id 稳定、无接替。
+    await testDb()
+      .update(assessment_identity_mapping)
+      .set({ evidence: { note: 'operator annotation drift' } })
+      .where(eq(assessment_identity_mapping.mapping_id, pending.mapping_id));
+    const refresh = await runApply(planNoRegistry, { runId: 'run-refresh00000000000' });
+    assertReconciliationClean(refresh.report);
+    const after = (await testDb()
+      .select()
+      .from(assessment_identity_mapping)
+      .where(eq(assessment_identity_mapping.source_locator, locator))) as unknown as Array<{
+      mapping_id: string;
+      is_current: boolean;
+      evidence: unknown;
+      snapshot_digest: string | null;
+    }>;
+    expect(after).toHaveLength(1);
+    expect(after[0]?.mapping_id).toBe(pending.mapping_id);
+    expect(after[0]?.evidence).toEqual(originalEvidence);
+
+    // 裁决字段漂移（snapshot_digest 被外部改）—— 重跑 fail-visible 拒绝，不原地覆盖。
+    await testDb()
+      .update(assessment_identity_mapping)
+      .set({ snapshot_digest: 'tampered-not-plan' })
+      .where(eq(assessment_identity_mapping.mapping_id, pending.mapping_id));
+    await expect(runApply(planNoRegistry, { runId: 'run-adjudge000000000000' })).rejects.toThrow(
+      /mapping divergence/,
+    );
+    const post = (await testDb()
+      .select({ snapshot_digest: assessment_identity_mapping.snapshot_digest })
+      .from(assessment_identity_mapping)
+      .where(eq(assessment_identity_mapping.source_locator, locator))) as unknown as Array<{
+      snapshot_digest: string | null;
+    }>;
+    expect(post[0]?.snapshot_digest).toBe('tampered-not-plan'); // 未被静默覆盖回 plan 值
   });
 });

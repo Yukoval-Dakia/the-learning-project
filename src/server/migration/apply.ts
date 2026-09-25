@@ -449,13 +449,26 @@ async function applyMappings(
           existing.status === 'pending' && authoredByThisTool && existingAuthoredByThisTool;
         if (supersedeOk) {
           if (planned.status === 'pending') {
-            // pending→pending：同裁决的 reason/证据刷新 —— 原地 UPDATE 保持
-            // mapping_id 稳定（pending 是未裁决占位，非裁决事实；历史在账本 run 行）。
+            // pending→pending：仅允许【操作性注释】刷新（reason/evidence 文案）。
+            // 裁决字段（status/targets/snapshot_digest）必须逐字一致 —— 否则不是
+            // 注释刷新而是裁决变化，必须走 supersede/divergence，绝不原地覆盖。
+            const adjudicationIdentical =
+              existing.status === planned.status &&
+              existing.target_revision_id === planned.target_revision_id &&
+              existing.target_part_id === planned.target_part_id &&
+              existing.target_slot_id === planned.target_slot_id &&
+              existing.snapshot_digest === planned.snapshot_digest &&
+              existing.legacy_part_ref === planned.legacy_part_ref &&
+              existing.original_question_id === planned.original_question_id;
+            if (!adjudicationIdentical) {
+              throw new MigrationApplyError(
+                `mapping divergence @ ${planned.source_locator}：pending 行的裁决字段与 plan 不一致（原地刷新只允许操作性注释变化；裁决变化走显式接替）`,
+              );
+            }
             await tx
               .update(assessment_identity_mapping)
               .set({
                 evidence: planned.evidence,
-                snapshot_digest: planned.snapshot_digest,
                 algorithm_version: planned.algorithm_version,
               })
               .where(eq(assessment_identity_mapping.mapping_id, existing.mapping_id));
@@ -641,178 +654,276 @@ async function applySubmissions(
   return stats;
 }
 
-/** 事务内读回冲突行，比对【完整不可变载荷】；head 是可变行，走显式推进规则。 */
-async function assertSubmissionBatchContent(
-  tx: Parameters<Parameters<Db['transaction']>[0]>[0],
-  batch: SubmissionChainPlan[],
-): Promise<void> {
-  const issuances = await tx
-    .select()
-    .from(assessment_issuance)
-    .where(
-      inArray(
-        assessment_issuance.issuance_id,
-        batch.map((c) => c.issuance.issuance_id),
-      ),
-    );
-  const plannedIssuances = new Map(batch.map((c) => [c.issuance.issuance_id, c.issuance] as const));
-  for (const stored of issuances) {
-    const planned = plannedIssuances.get(stored.issuance_id);
-    if (planned === undefined) continue;
-    // claim 生命周期列可变（0105）—— 只比对冻结绑定列。
-    const storedBinding = canonicalHash({
-      revision_id: stored.revision_id,
-      part_ids: stored.part_ids,
-      material_bindings: stored.material_bindings,
-      option_order: stored.option_order,
-      container_occurrence_ref: stored.container_occurrence_ref,
-      claim_policy: stored.claim_policy,
-      issued_at: stored.issued_at.toISOString(),
-    });
-    const plannedBinding = canonicalHash({
-      revision_id: planned.revision_id,
-      part_ids: planned.part_ids,
-      material_bindings: planned.material_bindings,
-      option_order: planned.option_order,
-      container_occurrence_ref: planned.container_occurrence_ref,
-      claim_policy: planned.claim_policy,
-      issued_at: planned.issued_at.toISOString(),
-    });
-    if (storedBinding !== plannedBinding) {
-      throw new MigrationApplyError(
-        `issuance divergence @ ${stored.issuance_id}：冻结绑定列与 plan 不符 —— 拒绝覆盖`,
-      );
+/** 事务内读回冲突行，比对【完整不可变载荷】；head 是可变行，走显式推进规则。
+ * ──── P1-1（终轮）：共享的全内容比较器 ────
+ * 批事务断言与最终/已完成-run 对账复用同一套【完整载荷】比较 —— 任何一处存储
+ * 内容与 plan 不符都产生 divergence 描述（批内立即抛，reconcile 汇入报告）。 */
+
+type ChainTx = Parameters<Parameters<Db['transaction']>[0]>[0];
+
+interface StoredIssuance {
+  issuance_id: string;
+  revision_id: string;
+  part_ids: unknown;
+  material_bindings: unknown;
+  option_order: unknown;
+  container_occurrence_ref: string | null;
+  claim_policy: string;
+  issued_at: Date;
+}
+interface StoredGroup {
+  evaluation_group_id: string;
+  submission_ids: unknown;
+  created_at: Date;
+}
+interface StoredSubmission {
+  submission_id: string;
+  issuance_id: string;
+  revision_id: string;
+  evaluation_group_id: string;
+  response_set: unknown;
+  group_evidence: unknown;
+  idempotency_key: string;
+  submitted_at: Date;
+}
+interface StoredEvaluation {
+  evaluation_id: string;
+  evaluation_group_id: string;
+  submission_id: string;
+  attempt: number;
+  status: string;
+  unit_results: unknown;
+  aggregate: unknown;
+  plan_digest: string | null;
+  run_refs: unknown;
+  provenance: unknown;
+  created_at: Date;
+}
+interface StoredHead {
+  evaluation_group_id: string;
+  submission_id: string;
+  effective_evaluation_id: string | null;
+  generation: number;
+}
+
+interface ChainRowSnapshot {
+  issuances: Map<string, StoredIssuance>;
+  groups: Map<string, StoredGroup>;
+  submissions: Map<string, StoredSubmission>;
+  evaluations: Map<string, StoredEvaluation>;
+  heads: Map<string, StoredHead>;
+}
+
+async function readChainRows(
+  dbOrTx: Db | ChainTx,
+  chains: readonly SubmissionChainPlan[],
+): Promise<ChainRowSnapshot> {
+  const db = dbOrTx as Db;
+  const issuanceRows = chains.length
+    ? ((await db
+        .select()
+        .from(assessment_issuance)
+        .where(
+          inArray(
+            assessment_issuance.issuance_id,
+            chains.map((c) => c.issuance.issuance_id),
+          ),
+        )) as unknown as StoredIssuance[])
+    : [];
+  const groupRows = chains.length
+    ? ((await db
+        .select()
+        .from(evaluation_group)
+        .where(
+          inArray(
+            evaluation_group.evaluation_group_id,
+            chains.map((c) => c.group.evaluation_group_id),
+          ),
+        )) as unknown as StoredGroup[])
+    : [];
+  const submissionRows = chains.length
+    ? ((await db
+        .select()
+        .from(assessment_submission)
+        .where(
+          inArray(
+            assessment_submission.submission_id,
+            chains.map((c) => c.submission.submission_id),
+          ),
+        )) as unknown as StoredSubmission[])
+    : [];
+  const evalRows = chains.length
+    ? ((await db
+        .select()
+        .from(evaluation)
+        .where(
+          inArray(
+            evaluation.evaluation_id,
+            chains.flatMap((c) => c.evaluations.map((e) => e.evaluation_id)),
+          ),
+        )) as unknown as StoredEvaluation[])
+    : [];
+  const headRows = chains.length
+    ? ((await db
+        .select()
+        .from(evaluation_effective_head)
+        .where(
+          inArray(
+            evaluation_effective_head.evaluation_group_id,
+            chains.map((c) => c.head.evaluation_group_id),
+          ),
+        )) as unknown as StoredHead[])
+    : [];
+  return {
+    issuances: new Map(issuanceRows.map((r) => [r.issuance_id, r] as const)),
+    groups: new Map(groupRows.map((r) => [r.evaluation_group_id, r] as const)),
+    submissions: new Map(submissionRows.map((r) => [r.submission_id, r] as const)),
+    evaluations: new Map(evalRows.map((r) => [r.evaluation_id, r] as const)),
+    heads: new Map(headRows.map((r) => [r.evaluation_group_id, r] as const)),
+  };
+}
+
+/**
+ * 全内容比较（不可变载荷逐字段 digest；issuance 只比冻结绑定列 —— claim 生命
+ * 周期列 0105 允许 runtime 变更；head 是可变行，走显式推进规则）。返回
+ * divergence 描述列表（空 = 一致）。
+ */
+function compareChains(chains: readonly SubmissionChainPlan[], stored: ChainRowSnapshot): string[] {
+  const divergences: string[] = [];
+  for (const chain of chains) {
+    const issuance = stored.issuances.get(chain.issuance.issuance_id);
+    if (issuance !== undefined) {
+      const storedBinding = canonicalHash({
+        revision_id: issuance.revision_id,
+        part_ids: issuance.part_ids,
+        material_bindings: issuance.material_bindings,
+        option_order: issuance.option_order,
+        container_occurrence_ref: issuance.container_occurrence_ref,
+        claim_policy: issuance.claim_policy,
+        issued_at:
+          issuance.issued_at instanceof Date
+            ? issuance.issued_at.toISOString()
+            : issuance.issued_at,
+      });
+      const plannedBinding = canonicalHash({
+        revision_id: chain.issuance.revision_id,
+        part_ids: chain.issuance.part_ids,
+        material_bindings: chain.issuance.material_bindings,
+        option_order: chain.issuance.option_order,
+        container_occurrence_ref: chain.issuance.container_occurrence_ref,
+        claim_policy: chain.issuance.claim_policy,
+        issued_at: chain.issuance.issued_at.toISOString(),
+      });
+      if (storedBinding !== plannedBinding) {
+        divergences.push(`issuance @ ${chain.issuance.issuance_id}：冻结绑定列与 plan 不符`);
+      }
     }
-  }
-  const groups = await tx
-    .select()
-    .from(evaluation_group)
-    .where(
-      inArray(
-        evaluation_group.evaluation_group_id,
-        batch.map((c) => c.group.evaluation_group_id),
-      ),
-    );
-  const plannedGroups = new Map(batch.map((c) => [c.group.evaluation_group_id, c.group] as const));
-  for (const stored of groups) {
-    const planned = plannedGroups.get(stored.evaluation_group_id);
-    if (planned === undefined) continue;
-    if (
-      canonicalHash(stored.submission_ids) !== canonicalHash(planned.submission_ids) ||
-      stored.created_at.toISOString() !== planned.created_at.toISOString()
-    ) {
-      throw new MigrationApplyError(
-        `evaluation group divergence @ ${stored.evaluation_group_id} —— 拒绝覆盖`,
-      );
-    }
-  }
-  const submissions = await tx
-    .select()
-    .from(assessment_submission)
-    .where(
-      inArray(
-        assessment_submission.submission_id,
-        batch.map((c) => c.submission.submission_id),
-      ),
-    );
-  const plannedSubmissions = new Map(
-    batch.map((c) => [c.submission.submission_id, c.submission] as const),
-  );
-  for (const stored of submissions) {
-    const planned = plannedSubmissions.get(stored.submission_id);
-    if (planned === undefined) continue;
-    const storedContent = canonicalHash({
-      issuance_id: stored.issuance_id,
-      revision_id: stored.revision_id,
-      evaluation_group_id: stored.evaluation_group_id,
-      response_set: stored.response_set,
-      group_evidence: stored.group_evidence,
-      idempotency_key: stored.idempotency_key,
-      submitted_at: stored.submitted_at.toISOString(),
-    });
-    const plannedContent = canonicalHash({
-      issuance_id: planned.issuance_id,
-      revision_id: planned.revision_id,
-      evaluation_group_id: planned.evaluation_group_id,
-      response_set: planned.response_set,
-      group_evidence: planned.group_evidence,
-      idempotency_key: planned.idempotency_key,
-      submitted_at: planned.submitted_at.toISOString(),
-    });
-    if (storedContent !== plannedContent) {
-      throw new MigrationApplyError(
-        `submission divergence @ ${stored.submission_id}：冻结作答内容与 plan 不符 —— 拒绝覆盖`,
-      );
-    }
-  }
-  const evalIds = batch.flatMap((c) => c.evaluations.map((e) => e.evaluation_id));
-  if (evalIds.length > 0) {
-    const evals = await tx
-      .select()
-      .from(evaluation)
-      .where(inArray(evaluation.evaluation_id, evalIds));
-    const plannedEvals = new Map(
-      batch.flatMap((c) => c.evaluations.map((e) => [e.evaluation_id, e] as const)),
-    );
-    for (const stored of evals) {
-      const planned = plannedEvals.get(stored.evaluation_id);
-      if (planned === undefined) continue;
+    const group = stored.groups.get(chain.group.evaluation_group_id);
+    if (group !== undefined) {
       const storedContent = canonicalHash({
-        evaluation_group_id: stored.evaluation_group_id,
-        submission_id: stored.submission_id,
-        attempt: stored.attempt,
-        status: stored.status,
-        unit_results: stored.unit_results,
-        aggregate: stored.aggregate,
-        plan_digest: stored.plan_digest,
-        run_refs: stored.run_refs,
-        provenance: stored.provenance,
-        created_at: stored.created_at.toISOString(),
+        submission_ids: group.submission_ids,
+        created_at:
+          group.created_at instanceof Date ? group.created_at.toISOString() : group.created_at,
       });
       const plannedContent = canonicalHash({
-        evaluation_group_id: planned.evaluation_group_id,
-        submission_id: planned.submission_id,
-        attempt: planned.attempt,
-        status: planned.status,
-        unit_results: planned.unit_results,
-        aggregate: planned.aggregate,
-        plan_digest: planned.plan_digest,
-        run_refs: planned.run_refs,
-        provenance: planned.provenance,
-        created_at: planned.created_at.toISOString(),
+        submission_ids: chain.group.submission_ids,
+        created_at: chain.group.created_at.toISOString(),
       });
       if (storedContent !== plannedContent) {
-        throw new MigrationApplyError(
-          `evaluation divergence @ ${stored.evaluation_id}：判分记录内容与 plan 不符 —— 拒绝覆盖`,
+        divergences.push(
+          `evaluation group @ ${chain.group.evaluation_group_id}：成员/时间与 plan 不符`,
         );
       }
     }
-  }
-  const heads = await tx
-    .select()
-    .from(evaluation_effective_head)
-    .where(
-      inArray(
-        evaluation_effective_head.evaluation_group_id,
-        batch.map((c) => c.head.evaluation_group_id),
-      ),
-    );
-  const plannedHeads = new Map(batch.map((c) => [c.head.evaluation_group_id, c.head] as const));
-  for (const stored of heads) {
-    const planned = plannedHeads.get(stored.evaluation_group_id);
-    if (planned === undefined) continue;
-    if (!headStateAccepted(stored, planned)) {
-      throw new MigrationApplyError(
-        `effective head divergence @ ${stored.evaluation_group_id}：库内 (effective=${String(stored.effective_evaluation_id)}, gen=${String(stored.generation)}, submission=${stored.submission_id}) 与 plan (effective=null, gen=0) 不符且非合法推进 —— 拒绝覆盖`,
+    const submission = stored.submissions.get(chain.submission.submission_id);
+    if (submission !== undefined) {
+      const storedContent = canonicalHash({
+        issuance_id: submission.issuance_id,
+        revision_id: submission.revision_id,
+        evaluation_group_id: submission.evaluation_group_id,
+        response_set: submission.response_set,
+        group_evidence: submission.group_evidence,
+        idempotency_key: submission.idempotency_key,
+        submitted_at:
+          submission.submitted_at instanceof Date
+            ? submission.submitted_at.toISOString()
+            : submission.submitted_at,
+      });
+      const plannedContent = canonicalHash({
+        issuance_id: chain.submission.issuance_id,
+        revision_id: chain.submission.revision_id,
+        evaluation_group_id: chain.submission.evaluation_group_id,
+        response_set: chain.submission.response_set,
+        group_evidence: chain.submission.group_evidence,
+        idempotency_key: chain.submission.idempotency_key,
+        submitted_at: chain.submission.submitted_at.toISOString(),
+      });
+      if (storedContent !== plannedContent) {
+        divergences.push(
+          `submission @ ${chain.submission.submission_id}：冻结作答内容与 plan 不符`,
+        );
+      }
+    }
+    for (const plannedEval of chain.evaluations) {
+      const evaluationRow = stored.evaluations.get(plannedEval.evaluation_id);
+      if (evaluationRow === undefined) continue;
+      const storedContent = canonicalHash({
+        evaluation_group_id: evaluationRow.evaluation_group_id,
+        submission_id: evaluationRow.submission_id,
+        attempt: evaluationRow.attempt,
+        status: evaluationRow.status,
+        unit_results: evaluationRow.unit_results,
+        aggregate: evaluationRow.aggregate,
+        plan_digest: evaluationRow.plan_digest,
+        run_refs: evaluationRow.run_refs,
+        provenance: evaluationRow.provenance,
+        created_at:
+          evaluationRow.created_at instanceof Date
+            ? evaluationRow.created_at.toISOString()
+            : evaluationRow.created_at,
+      });
+      const plannedContent = canonicalHash({
+        evaluation_group_id: plannedEval.evaluation_group_id,
+        submission_id: plannedEval.submission_id,
+        attempt: plannedEval.attempt,
+        status: plannedEval.status,
+        unit_results: plannedEval.unit_results,
+        aggregate: plannedEval.aggregate,
+        plan_digest: plannedEval.plan_digest,
+        run_refs: plannedEval.run_refs,
+        provenance: plannedEval.provenance,
+        created_at: plannedEval.created_at.toISOString(),
+      });
+      if (storedContent !== plannedContent) {
+        divergences.push(`evaluation @ ${plannedEval.evaluation_id}：判分记录内容与 plan 不符`);
+      }
+    }
+    const head = stored.heads.get(chain.head.evaluation_group_id);
+    if (head !== undefined && !headStateAccepted(head, chain.head)) {
+      divergences.push(
+        `effective head @ ${chain.head.evaluation_group_id}：库内 (effective=${String(head.effective_evaluation_id)}, gen=${String(head.generation)}) 与 plan (effective=${String(chain.head.effective_evaluation_id)}, gen=${String(chain.head.generation)}) 不符且非合法推进`,
       );
     }
+  }
+  return divergences;
+}
+
+/** 批事务内断言：先读后比，任何 divergence 在提交前抛出。 */
+async function assertSubmissionBatchContent(
+  tx: ChainTx,
+  batch: readonly SubmissionChainPlan[],
+): Promise<void> {
+  const divergences = compareChains(batch, await readChainRows(tx, batch));
+  if (divergences.length > 0) {
+    throw new MigrationApplyError(`批内容对账失败（提交前拒绝）：${divergences.join('; ')}`);
   }
 }
 
 /**
- * head 是【可变行】（runtime activation 推进 generation）：迁移写入的是初始态
- * (null, 0)。库内状态合法当且仅当：submission 坐标一致，且 (a) 与 plan 相同，
- * 或 (b) generation > 0 —— 迁移后被 settlement/runtime 激活/替换（合法演进）。
+ * head 是【可变行】（runtime activation 推进 generation）：迁移写入的是导入
+ * 终态（legacy effective ⇒ effective 指向导入 evaluation、gen=1；否则 null/0）。
+ * 库内状态合法当且仅当：submission 坐标一致，且 (a) 与 plan 相同，或
+ * (b) generation 更高 —— 迁移后被 settlement/runtime 激活/替换（合法演进）。
  */
 function headStateAccepted(
   stored: { submission_id: string; effective_evaluation_id: string | null; generation: number },
@@ -858,6 +969,7 @@ async function reconcile(
   };
   if (dryRun) return out;
 
+  // 映射行：存在性 + 【全内容】对账（P1-1 终轮：不是只数 ID）。
   if (mappingRows.length > 0) {
     const stored = (await db
       .select()
@@ -881,110 +993,46 @@ async function reconcile(
         );
       }
     }
-    const supersededCount = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(assessment_identity_mapping)
-      .where(
-        and(
-          eq(assessment_identity_mapping.is_current, false),
-          sql`${assessment_identity_mapping.algorithm_version} like 'yuk1050-apply/%'`,
-        ),
-      );
-    out.mapping_rows_superseded_in_run = supersededCount[0]?.count ?? 0;
   }
-  const idsPresent = async (
-    table: 'issuance' | 'group' | 'submission' | 'head',
-    ids: string[],
-  ): Promise<number> => {
-    if (ids.length === 0) return 0;
-    switch (table) {
-      case 'issuance': {
-        const rows = await db
-          .select({ id: assessment_issuance.issuance_id })
-          .from(assessment_issuance)
-          .where(inArray(assessment_issuance.issuance_id, ids));
-        return rows.length;
-      }
-      case 'group': {
-        const rows = await db
-          .select({ id: evaluation_group.evaluation_group_id })
-          .from(evaluation_group)
-          .where(inArray(evaluation_group.evaluation_group_id, ids));
-        return rows.length;
-      }
-      case 'submission': {
-        const rows = await db
-          .select({ id: assessment_submission.submission_id })
-          .from(assessment_submission)
-          .where(inArray(assessment_submission.submission_id, ids));
-        return rows.length;
-      }
-      case 'head': {
-        const rows = await db
-          .select({
-            id: evaluation_effective_head.evaluation_group_id,
-            submission_id: evaluation_effective_head.submission_id,
-            effective_evaluation_id: evaluation_effective_head.effective_evaluation_id,
-            generation: evaluation_effective_head.generation,
-          })
-          .from(evaluation_effective_head)
-          .where(inArray(evaluation_effective_head.evaluation_group_id, ids));
-        const plannedHeads = new Map(
-          chains.map((c) => [c.head.evaluation_group_id, c.head] as const),
-        );
-        for (const row of rows) {
-          const planned = plannedHeads.get(row.id);
-          out.heads_current.push({
-            evaluation_group_id: row.id,
-            effective_evaluation_id: row.effective_evaluation_id,
-            generation: row.generation,
-            post_migration_activation: planned !== undefined && row.generation > planned.generation,
-          });
-          if (planned !== undefined && !headStateAccepted(row, planned)) {
-            out.divergences.push(
-              `effective head @ ${row.id}：库内状态与 plan 不符且非合法推进（effective=${String(row.effective_evaluation_id)}, gen=${String(row.generation)}）`,
-            );
-          }
-        }
-        return rows.length;
-      }
-    }
-  };
-  out.issuances_present = await idsPresent(
-    'issuance',
-    chains.map((c) => c.issuance.issuance_id),
-  );
-  out.groups_present = await idsPresent(
-    'group',
-    chains.map((c) => c.group.evaluation_group_id),
-  );
-  out.submissions_present = await idsPresent(
-    'submission',
-    chains.map((c) => c.submission.submission_id),
-  );
-  out.heads_present = await idsPresent(
-    'head',
-    chains.map((c) => c.head.evaluation_group_id),
-  );
-  const evalIds = chains.flatMap((c) => c.evaluations.map((e) => e.evaluation_id));
-  if (evalIds.length > 0) {
-    const rows = await db
-      .select({ id: evaluation.evaluation_id, provenance: evaluation.provenance })
-      .from(evaluation)
-      .where(inArray(evaluation.evaluation_id, evalIds));
-    out.evaluations_present = rows.length;
-    const plannedEvals = new Map(
-      chains.flatMap((c) => c.evaluations.map((e) => [e.evaluation_id, e] as const)),
+  const supersededCount = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(assessment_identity_mapping)
+    .where(
+      and(
+        eq(assessment_identity_mapping.is_current, false),
+        sql`${assessment_identity_mapping.algorithm_version} like 'yuk1050-apply/%'`,
+      ),
     );
-    for (const row of rows) {
-      const planned = plannedEvals.get(row.id);
-      if (
-        planned !== undefined &&
-        canonicalHash(row.provenance) !== canonicalHash(planned.provenance)
-      ) {
-        out.divergences.push(`evaluation @ ${row.id}：provenance 内容与 plan 不符`);
-      }
-    }
+  out.mapping_rows_superseded_in_run = supersededCount[0]?.count ?? 0;
+
+  // submission 链：读回全部存储行，走与批事务断言【同一套】全内容比较器
+  // （P1-1 终轮：最终对账与已完成-run 重放都覆盖完整载荷，绝非只比 ID）。
+  const storedChains = await readChainRows(db, chains);
+  out.divergences.push(...compareChains(chains, storedChains));
+  out.issuances_present = chains.filter((c) =>
+    storedChains.issuances.has(c.issuance.issuance_id),
+  ).length;
+  out.groups_present = chains.filter((c) =>
+    storedChains.groups.has(c.group.evaluation_group_id),
+  ).length;
+  out.submissions_present = chains.filter((c) =>
+    storedChains.submissions.has(c.submission.submission_id),
+  ).length;
+  out.evaluations_present = chains.reduce(
+    (acc, c) =>
+      acc + c.evaluations.filter((e) => storedChains.evaluations.has(e.evaluation_id)).length,
+    0,
+  );
+  for (const chain of chains) {
+    const head = storedChains.heads.get(chain.head.evaluation_group_id);
+    if (head === undefined) continue;
+    out.heads_present += 1;
+    out.heads_current.push({
+      evaluation_group_id: head.evaluation_group_id,
+      effective_evaluation_id: head.effective_evaluation_id,
+      generation: head.generation,
+      post_migration_activation: head.generation > chain.head.generation,
+    });
   }
   return out;
 }
