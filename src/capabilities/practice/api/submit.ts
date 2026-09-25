@@ -39,6 +39,7 @@ import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
   createDefaultJudgeInvoker,
   deterministicExecutionProvenance,
+  evaluateAttempt,
   isModelBackedJudgeRoute,
   judgeProvenanceSigningSecret,
   modelExecutionProvenance,
@@ -370,8 +371,9 @@ export async function judgeSubmit(
   //   2. Reject 422 when auto_rate=true but judge returned 'unsupported'.
   //   3. Embed result in review event's payload.judge.
   //
-  // CC-3 invariant: route through `createDefaultJudgeInvoker()`; never call
-  // `judgeExact` / `judgeKeyword` / `judgeRouter` directly.
+  // CC-3 invariant (YUK-1047): route through `evaluateAttempt` — the single
+  // funnel seam — never call `judgeExact` / `judgeKeyword` / `judgeRouter`
+  // or the invoker directly.
   const answerMd = body.response_md?.trim() ?? '';
   // YUK-215 (PR #309 round-1, F1) — a photo-only answer (no typed text but
   // handwriting-photo refs present) is a real, judgeable answer. The judge
@@ -479,22 +481,30 @@ export async function judgeSubmit(
     // YUK-594 — the durable worker path skips this gate (it is not bound by the
     // sync HTTP request budget; the durable cap is the pg-boss retry budget).
     if (!opts.skipRateLimit) checkRateLimit();
-    const invoked = await createDefaultJudgeInvoker().invoke({
-      db,
-      question: q,
-      answer_md: answerMd,
-      // YUK-215 — pass handwriting-photo refs to the judge (invoker accepts
-      // student_image_refs; invoker.ts:46). Optional → no-image submits and
-      // client-supplied-judge submits are byte-for-byte unchanged.
-      student_image_refs: body.answer_image_refs,
-      subjectProfile,
-      // YUK-212 + YUK-484(B) — narrow the judge to the submitted sub. null for
-      // atomic single-question submits → no-op (whole-row). Narrows text +
-      // structured before routing.
-      part_ref: body.part_ref ?? null,
-      // YUK-594 (D7/D9) — durable-run scoped runner overrides (worker only; the sync
-      // path passes no opts → `durable` absent → invoker byte-identical).
-      ...(opts.durable ? { durable: opts.durable } : {}),
+    // YUK-1047 — all authoritative grading flows through evaluateAttempt (the
+    // single funnel seam). Sync submits pass entry='solo_submit'; the durable
+    // judge_run worker (which reaches this function via judgeSubmitFn) passes
+    // entry='durable_judge_run'. The legacy lane (no contract submission yet,
+    // YUK-1052 pending) returns the JudgeInvoker result verbatim.
+    const invoked = await evaluateAttempt({
+      entry: opts.durable ? 'durable_judge_run' : 'solo_submit',
+      legacy: {
+        db,
+        question: q,
+        answer_md: answerMd,
+        // YUK-215 — pass handwriting-photo refs to the judge (invoker accepts
+        // student_image_refs; invoker.ts:46). Optional → no-image submits and
+        // client-supplied-judge submits are byte-for-byte unchanged.
+        student_image_refs: body.answer_image_refs,
+        subjectProfile,
+        // YUK-212 + YUK-484(B) — narrow the judge to the submitted sub. null for
+        // atomic single-question submits → no-op (whole-row). Narrows text +
+        // structured before routing.
+        part_ref: body.part_ref ?? null,
+        // YUK-594 (D7/D9) — durable-run scoped runner overrides (worker only; the sync
+        // path passes no opts → `durable` absent → invoker byte-identical).
+        ...(opts.durable ? { durable: opts.durable } : {}),
+      },
     });
     judgeResult = invoked.result;
     judgeRoute = invoked.route;

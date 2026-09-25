@@ -22,7 +22,7 @@
 import { and, desc, eq, gte, isNull, not, sql } from 'drizzle-orm';
 import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
-  createDefaultJudgeInvoker,
+  evaluateAttempt,
   resolveInvokedExecutionProvenance,
   resolveQuestionJudgeRoute,
 } from '@/capabilities/practice/server/judge';
@@ -529,14 +529,18 @@ export async function submitPaperSlot(
     }
   }
 
-  // Route through the existing judge invoker (Q13: no new capability). Paper
-  // judging IS routed, so capability_ref / judge_route are populated (contrast
-  // attribution, which leaves them undefined). Skipped entirely for the
-  // photo-only unsupported case above (no judge event is written for it).
+  // Route through the unified evaluation funnel (YUK-1047: all authoritative
+  // grading enters via evaluateAttempt — paper slots use entry='paper_submit';
+  // legacy lane returns the JudgeInvoker result verbatim until contract
+  // submissions land, YUK-1052). Paper judging IS routed, so capability_ref /
+  // judge_route are populated (contrast attribution, which leaves them
+  // undefined). Skipped entirely for the photo-only unsupported case above
+  // (no judge event is written for it).
   const invoked = photoOnlyUnsupported
     ? null
-    : await createDefaultJudgeInvoker()
-        .invoke({
+    : await evaluateAttempt({
+        entry: 'paper_submit',
+        legacy: {
           db,
           question: q,
           answer_md: input.answerMd,
@@ -552,7 +556,8 @@ export async function submitPaperSlot(
           // structured node addressed by partRef). null for atomic slots → no-op
           // (whole-row). The invoker narrows text + structured before routing.
           part_ref: partRef,
-        })
+        },
+      })
         .catch(async (err) => {
           if (paidJudgeClaimed) await bestEffortReleasePaidPaperJudge(db, input, err);
           throw err;

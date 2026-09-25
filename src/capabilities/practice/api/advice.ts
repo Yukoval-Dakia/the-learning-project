@@ -16,7 +16,7 @@ import { normalizeReviewSubmitActivityRef } from '@/capabilities/practice/server
 import { resolveAdviceCauseForQuestion } from '@/capabilities/practice/server/cause-context';
 import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
 import {
-  createDefaultJudgeInvoker,
+  evaluateAttempt,
   issueJudgePreviewProvenanceToken,
   judgeProvenanceSigningSecret,
   sha256Canonical,
@@ -70,11 +70,14 @@ export async function POST(req: Request): Promise<Response> {
       db,
       questionKnowledgeIdsForJudge(q),
     );
-    const invoked = await createDefaultJudgeInvoker().invoke({
-      db,
-      question: q,
-      answer_md: answerMd,
-      subjectProfile,
+    const invoked = await evaluateAttempt({
+      entry: 'advice_preview',
+      legacy: {
+        db,
+        question: q,
+        answer_md: answerMd,
+        subjectProfile,
+      },
     });
     const suggestedRating = ratingFromCoarseOutcome(invoked.result.coarse_outcome);
 

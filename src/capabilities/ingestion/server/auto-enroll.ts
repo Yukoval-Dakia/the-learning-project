@@ -80,7 +80,7 @@ import type { JudgeQuestionRow } from '@/kernel/judge';
 import {
   type MultimodalDirectImageFetchFn,
   type MultimodalDirectRunTaskFn,
-  runMultimodalDirectJudge,
+  evaluateAttempt,
 } from '@/kernel/judge';
 import { withActiveCauseCategoryOverlays } from '@/kernel/read-models/cause-overlay';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
@@ -1263,17 +1263,18 @@ function gradeOutcomeFromVerdict(coarse: CoarseOutcomeT): 'success' | 'partial' 
 /**
  * YUK-482 cut ④ — production student-answer grader.
  *
- * CRITICAL (independent review) — calls `runMultimodalDirectJudge` DIRECTLY,
- * bypassing the JudgeInvoker / `resolveQuestionJudgeRoute`. The resolver only
- * picks `multimodal_direct` when the question carries prompt figures AND the
- * subject profile lists `multimodal_direct` in `preferredRoutes` (today only
- * `physics`); a yuwen/math/short_answer block would resolve to `semantic`, which
- * ignores `student_image_refs` and judges an empty `answer_md` → the handwriting
- * pixels are never looked at. Cut ④ grades PER-QUESTION (no part-narrowing — that
- * is YUK-485, out of scope), so the invoker's `part_ref` narrowing is not needed
- * and the direct call is both correct and simpler. The call still honors the
- * global / per-judge provider selection via `runMultimodalDirectJudge`'s own
- * `runTask` (cut ③ model routing untouched).
+ * YUK-1047 — now routed through `evaluateAttempt` (the single authoritative-
+ * grading funnel, entry='ingestion_grading'). The grade path deliberately
+ * forces `judge_kind_override='multimodal_direct'`: the resolver only picks
+ * `multimodal_direct` when the question carries prompt figures AND the subject
+ * profile lists `multimodal_direct` in `preferredRoutes` (today only
+ * `physics`); a yuwen/math/short_answer block would resolve to `semantic`,
+ * which ignores `student_image_refs` and judges an empty `answer_md` → the
+ * handwriting pixels are never looked at. The override preserves the original
+ * direct-call dispatch verbatim (the invoker's `multimodal_direct` dispatch
+ * invokes the same `runMultimodalDirectJudge` runner) while adding the
+ * funnel's telemetry + provenance capture. Cut ④ grades PER-QUESTION (no
+ * part-narrowing — that is YUK-485, out of scope), so no `part_ref` is passed.
  *
  * `answer_md:''` + whole-page `student_image_refs` (= block.source_asset_ids) runs
  * the photo-only image path (handwriting stays pixels — never OCR-transcribed).
@@ -1295,17 +1296,22 @@ async function defaultGradeStudentAnswer(params: {
   const subjectProfile = params.subjectId
     ? resolveSubjectProfile(params.subjectId)
     : await resolveSubjectProfileForKnowledgeIds(params.db, params.question.knowledge_ids ?? []);
-  const result = await runMultimodalDirectJudge({
-    db: params.db,
-    question: params.question,
-    answer_md: '',
-    student_image_refs: params.studentImageRefs,
-    subjectProfile,
-    runTaskFn: params.runTaskFn,
-    imageFetchFn: params.imageFetchFn,
+  const invoked = await evaluateAttempt({
+    entry: 'ingestion_grading',
+    legacy: {
+      db: params.db,
+      // Forced vision route — see the doc comment above for why the resolver
+      // must not choose for this path (the pixels are the entire answer).
+      question: { ...params.question, judge_kind_override: 'multimodal_direct' },
+      answer_md: '',
+      student_image_refs: params.studentImageRefs,
+      subjectProfile,
+      runTaskFn: params.runTaskFn,
+      imageFetchFn: params.imageFetchFn,
+    },
   });
   return {
-    coarse_outcome: result.coarse_outcome,
-    confidence: result.confidence,
+    coarse_outcome: invoked.result.coarse_outcome,
+    confidence: invoked.result.confidence,
   };
 }

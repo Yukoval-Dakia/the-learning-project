@@ -23,11 +23,12 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
-import { resolveInvokedExecutionProvenance } from '@/capabilities/practice/server/judge';
 import {
+  type JudgeAnswerParams,
   type JudgeAnswerResult,
-  judgeAnswer,
-} from '@/capabilities/practice/server/judge/question-contract';
+  evaluateAttempt,
+  resolveInvokedExecutionProvenance,
+} from '@/capabilities/practice/server/judge';
 import { newId } from '@/core/ids';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
@@ -42,7 +43,7 @@ export interface RejudgeJobInput {
 
 export interface RejudgeDeps {
   /** 测试注入：替换真 LLM 判分。 */
-  judgeFn?: typeof judgeAnswer;
+  judgeFn?: (params: JudgeAnswerParams) => Promise<JudgeAnswerResult>;
   /** 测试注入：替换 θ̂ revert（YUK-561 S4 原子性/瞬时失败注入测试用）。 */
   orchestrateRevert?: typeof orchestrateCascadeRevert;
 }
@@ -97,7 +98,12 @@ export async function handleRejudge(
   input: RejudgeJobInput,
   deps: RejudgeDeps = {},
 ): Promise<RejudgeOutcome> {
-  const judgeFn = deps.judgeFn ?? judgeAnswer;
+  // YUK-1047 — 默认判分头走统一漏斗（entry='appeal_rejudge'；legacy lane
+  // 透传 JudgeInvoker 结果，shape 兼容 JudgeAnswerResult）。契约侧就绪后
+  // 改读冻结 submission（D8），不再用 current row —— 见 EVALUATION_ENTRY_POINTS。
+  const judgeFn =
+    deps.judgeFn ??
+    ((params) => evaluateAttempt({ entry: 'appeal_rejudge', legacy: params }));
   const orchestrateRevert = deps.orchestrateRevert ?? orchestrateCascadeRevert;
 
   const [appeal] = await db.select().from(event).where(eq(event.id, input.appeal_event_id));

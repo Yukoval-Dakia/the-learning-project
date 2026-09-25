@@ -11,6 +11,7 @@
 // 既有 capability manifest 贡献。subject-agnostic：科目专属逻辑不进本目录。
 
 export * from './dto';
+export * from './evaluation';
 export * from './execution';
 export * from './ids';
 export * from './judgment';

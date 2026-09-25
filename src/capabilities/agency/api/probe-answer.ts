@@ -4,13 +4,15 @@
 // route closes the lifecycle.
 //
 // ND-5 RED LINE — the boundary is `answerProbe`, NOT the judge dispatch:
-//   - the judge is invoked via `createDefaultJudgeInvoker().invoke()` — the SAME
-//     pure-evaluation chokepoint submit.ts uses. `JudgeInvoker.invoke()` resolves
-//     the route, runs the judge (incl. the real `runSemanticJudge` async LLM path
-//     for free-text probes), and emits telemetry. It does NOT write FSRS /
-//     attempt / θ̂ — the FSRS write in submit.ts happens AFTER the judge call, in
-//     submit's own code, not inside the invoker (verified: `invoker.ts` has zero
-//     fsrs/attempt/event writes). The invoker is judge-only.
+//   - the judge runs via `evaluateAttempt({entry:'conjecture_probe'})` — the
+//     single authoritative-grading funnel (YUK-1047); on the legacy lane it
+//     delegates to `JudgeInvoker.invoke()`, the SAME pure-evaluation
+//     chokepoint submit.ts uses. `JudgeInvoker.invoke()` resolves the route,
+//     runs the judge (incl. the real `runSemanticJudge` async LLM path for
+//     free-text probes), and emits telemetry. It does NOT write FSRS /
+//     attempt / θ̂ — the FSRS write in submit.ts happens AFTER the judge call,
+//     in submit's own code, not inside the invoker (verified: `invoker.ts`
+//     has zero fsrs/attempt/event writes). The invoker is judge-only.
 //   - this route writes a paid-judge claim marker before invoking the model, then
 //     `answerProbe` writes exactly ONE `experimental:probe_result` outcome event
 //     and may serve the pre-authored follow-up question. Neither path writes
@@ -57,7 +59,7 @@ import { question } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
-  createDefaultJudgeInvoker,
+  evaluateAttempt,
   resolveQuestionJudgeRoute,
 } from '@/kernel/judge';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
@@ -264,12 +266,15 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     try {
       // Charge the shared budget only after this request owns the paid slot.
       checkRateLimit();
-      const invoked = await createDefaultJudgeInvoker().invoke({
-        db,
-        question: probe,
-        answer_md: answerMd,
-        student_image_refs: answerImageRefs,
-        subjectProfile,
+      const invoked = await evaluateAttempt({
+        entry: 'conjecture_probe',
+        legacy: {
+          db,
+          question: probe,
+          answer_md: answerMd,
+          student_image_refs: answerImageRefs,
+          subjectProfile,
+        },
       });
       const judgeResult = invoked.result;
 

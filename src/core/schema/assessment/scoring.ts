@@ -28,11 +28,13 @@ export const OptionSetKeyCriterion = z.object({
 });
 export type OptionSetKeyCriterionT = z.infer<typeof OptionSetKeyCriterion>;
 
-/** 文本答案键：接受文本 + 归一化档位；更细语义走 rule_reference。 */
+/** 文本答案键：接受文本 + 归一化档位；更细语义走 rule_reference。
+ * `answer_head`（YUK-1047）：先抽答案头（“答：B”→“B”、答案+解析→答案）再
+ * NFKC+trim+lowercase —— 与 legacy exact 判分同语义（judge-routing.ts）。 */
 export const TextKeyCriterion = z.object({
   kind: z.literal('text_key'),
   accepted_texts: z.array(z.string().min(1)).min(1),
-  normalization: z.enum(['exact', 'trim', 'trim_casefold_nfc']).default('trim'),
+  normalization: z.enum(['exact', 'trim', 'trim_casefold_nfc', 'answer_head']).default('trim'),
 });
 export type TextKeyCriterionT = z.infer<typeof TextKeyCriterion>;
 
