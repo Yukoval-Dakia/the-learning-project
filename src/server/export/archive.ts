@@ -648,6 +648,17 @@ export async function restoreFromArchive({
     // transactional DDL, so the create-extension/create-table for an absent mem0
     // collection roll back cleanly too. All mutations use `tx`, never the outer `db`.
     await db.transaction(async (tx) => {
+      // YUK-1044（PR #1466 Failure B）—— 可信 restore 通道（窄）：
+      // `SET LOCAL app.assessment_restore_mode = 'on'` 只在本事务内生效（结束自动
+      // 失效），让上面的不可变 guard（question_revision / question_admission_
+      // verification / assessment_submission / assessment_issuance 的 BEFORE
+      // UPDATE/DELETE trigger，drizzle/0105/0107）放行 wipe+重插；普通 writer 不发
+      // SET LOCAL，生产行为不变。
+      // `SET CONSTRAINTS ALL DEFERRED` 只影响 DEFERRABLE 约束（当前仅
+      // assessment_identity_mapping 的 supersedes 自 FK，0107）：backup dump 的同表
+      // 行序不保证父行在前，推迟到 commit 检查；其余 FK 仍即时按 FK_ORDER 拓扑校验。
+      await tx.execute(sql`set local app.assessment_restore_mode = 'on'`);
+      await tx.execute(sql`set constraints all deferred`);
       if (archivedInterventionPreparationJobIds.length > 0) {
         if (retireInterventionPreparationJobs) {
           await retireInterventionPreparationJobs(tx, archivedInterventionPreparationJobIds);

@@ -97,7 +97,7 @@
 // YUK-1016: cause_category_overlay — owner-vetted 错因词表层（accepted proposal 落地的
 // authored catalog 行，非瞬态非派生；retract 只置 archived_at，历史不可重建）→
 // FK_ORDER 非 BACKUP_EXCLUDED。NEW FK_ORDER table 必 bump：52 → 53 tables，4.19 → 4.20。
-export const SCHEMA_VERSION = '4.20';
+export const SCHEMA_VERSION = '4.21';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -167,6 +167,25 @@ export const FK_ORDER = [
   'learning_session',
   'question_block',
   'question',
+  // YUK-1044 — 统一评估契约真相源九表（grounding §3/§11）。authoried 数据非瞬态/
+  // 派生：丢 revision/submission/mapping = 不可重建的学习/判分真相灭失（§15 cutover
+  // checkpoint 必须捕获）→ FK_ORDER 备份（非 BACKUP_EXCLUDED）。插入序严格满足
+  // 0105/0106 非 DEFERRABLE 复合 FK 拓扑（wipe 反序）：question_revision 是父表
+  // （lifecycle/verification/issuance/mapping 的复合 FK 目标），紧随 question 题簇；
+  // submission 依赖 issuance+group，evaluation 依赖 submission，head 依赖
+  // submission+evaluation。assessment_identity_mapping 的 supersedes 自 FK 在 0107
+  // 设为 DEFERRABLE INITIALLY IMMEDIATE（restore 序不保证同表父子序，archive.ts
+  // 恢复事务 SET CONSTRAINTS ALL DEFERRED）。9 张 NEW FK_ORDER table 必 bump：
+  // 53 → 62 tables，4.20 → 4.21。
+  'question_revision',
+  'question_group_lifecycle',
+  'question_admission_verification',
+  'assessment_issuance',
+  'evaluation_group',
+  'assessment_submission',
+  'evaluation',
+  'evaluation_effective_head',
+  'assessment_identity_mapping',
   'item_calibration',
   // YUK-361 Phase 5 (家族级 b_personalized): item_family_calibration — 家族级 b_delta
   // 慢热校准资产。软引用语义键 (subject:knowledge:kind:source，no enforced FK)，位置

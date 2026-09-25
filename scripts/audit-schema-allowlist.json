@@ -1370,5 +1370,709 @@
       "ref": "F4.1 quantitative architecture audit decides historical misconception reconciliation table retention",
       "expected_by": "2026-11-30"
     }
+  },
+  "question_revision.revision_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_revision.group_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_revision.revision_ordinal": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_revision.integrity_digest": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_revision.structure": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_revision.response_spec": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_revision.scoring_basis": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_revision.execution_plan": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_revision.supersedes_revision_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_revision.availability": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_revision.published_by": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_revision.published_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.group_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.current_revision_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.availability": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.scoring_admission_state": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.scoring_admission_evidence": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.scoring_admission_generation": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.claim_policy": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.suspended": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.suspension_reason": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.withdrawn": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.withdrawn_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.created_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.updated_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_admission_verification.id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_admission_verification ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_admission_verification",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_admission_verification.revision_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_admission_verification ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_admission_verification",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_admission_verification.revision_digest": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_admission_verification ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_admission_verification",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_admission_verification.policy_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_admission_verification ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_admission_verification",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_admission_verification.generation": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_admission_verification ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_admission_verification",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_admission_verification.outcome": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_admission_verification ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_admission_verification",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_admission_verification.evidence": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_admission_verification ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_admission_verification",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_admission_verification.recorded_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_admission_verification ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_admission_verification",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_issuance.issuance_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_issuance ships before its writer. Write paths land with YUK-1043 (publisher/serve lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher/serve lane) lands INSERT/UPDATE write paths for assessment_issuance",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_issuance.revision_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_issuance ships before its writer. Write paths land with YUK-1043 (publisher/serve lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher/serve lane) lands INSERT/UPDATE write paths for assessment_issuance",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_issuance.part_ids": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_issuance ships before its writer. Write paths land with YUK-1043 (publisher/serve lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher/serve lane) lands INSERT/UPDATE write paths for assessment_issuance",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_issuance.material_bindings": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_issuance ships before its writer. Write paths land with YUK-1043 (publisher/serve lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher/serve lane) lands INSERT/UPDATE write paths for assessment_issuance",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_issuance.option_order": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_issuance ships before its writer. Write paths land with YUK-1043 (publisher/serve lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher/serve lane) lands INSERT/UPDATE write paths for assessment_issuance",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_issuance.container_occurrence_ref": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_issuance ships before its writer. Write paths land with YUK-1043 (publisher/serve lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher/serve lane) lands INSERT/UPDATE write paths for assessment_issuance",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_issuance.claim_policy": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_issuance ships before its writer. Write paths land with YUK-1043 (publisher/serve lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher/serve lane) lands INSERT/UPDATE write paths for assessment_issuance",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_issuance.claim_status": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_issuance ships before its writer. Write paths land with YUK-1043 (publisher/serve lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher/serve lane) lands INSERT/UPDATE write paths for assessment_issuance",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_issuance.claimed_by_ref": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_issuance ships before its writer. Write paths land with YUK-1043 (publisher/serve lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher/serve lane) lands INSERT/UPDATE write paths for assessment_issuance",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_issuance.issued_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_issuance ships before its writer. Write paths land with YUK-1043 (publisher/serve lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher/serve lane) lands INSERT/UPDATE write paths for assessment_issuance",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "evaluation_group.evaluation_group_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: evaluation_group ships before its writer. Write paths land with YUK-1052 (submission lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1052 (submission lane) lands INSERT/UPDATE write paths for evaluation_group",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "evaluation_group.submission_ids": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: evaluation_group ships before its writer. Write paths land with YUK-1052 (submission lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1052 (submission lane) lands INSERT/UPDATE write paths for evaluation_group",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "evaluation_group.created_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: evaluation_group ships before its writer. Write paths land with YUK-1052 (submission lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1052 (submission lane) lands INSERT/UPDATE write paths for evaluation_group",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_submission.submission_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_submission ships before its writer. Write paths land with YUK-1052 (submission lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1052 (submission lane) lands INSERT/UPDATE write paths for assessment_submission",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_submission.issuance_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_submission ships before its writer. Write paths land with YUK-1052 (submission lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1052 (submission lane) lands INSERT/UPDATE write paths for assessment_submission",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_submission.revision_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_submission ships before its writer. Write paths land with YUK-1052 (submission lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1052 (submission lane) lands INSERT/UPDATE write paths for assessment_submission",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_submission.evaluation_group_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_submission ships before its writer. Write paths land with YUK-1052 (submission lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1052 (submission lane) lands INSERT/UPDATE write paths for assessment_submission",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_submission.response_set": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_submission ships before its writer. Write paths land with YUK-1052 (submission lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1052 (submission lane) lands INSERT/UPDATE write paths for assessment_submission",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_submission.group_evidence": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_submission ships before its writer. Write paths land with YUK-1052 (submission lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1052 (submission lane) lands INSERT/UPDATE write paths for assessment_submission",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_submission.idempotency_key": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_submission ships before its writer. Write paths land with YUK-1052 (submission lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1052 (submission lane) lands INSERT/UPDATE write paths for assessment_submission",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_submission.submitted_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_submission ships before its writer. Write paths land with YUK-1052 (submission lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1052 (submission lane) lands INSERT/UPDATE write paths for assessment_submission",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "evaluation.evaluation_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: evaluation ships before its writer. Write paths land with YUK-1047 (evaluator lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047 (evaluator lane) lands INSERT/UPDATE write paths for evaluation",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "evaluation.evaluation_group_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: evaluation ships before its writer. Write paths land with YUK-1047 (evaluator lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047 (evaluator lane) lands INSERT/UPDATE write paths for evaluation",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "evaluation.submission_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: evaluation ships before its writer. Write paths land with YUK-1047 (evaluator lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047 (evaluator lane) lands INSERT/UPDATE write paths for evaluation",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "evaluation.attempt": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: evaluation ships before its writer. Write paths land with YUK-1047 (evaluator lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047 (evaluator lane) lands INSERT/UPDATE write paths for evaluation",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "evaluation.status": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: evaluation ships before its writer. Write paths land with YUK-1047 (evaluator lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047 (evaluator lane) lands INSERT/UPDATE write paths for evaluation",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "evaluation.unit_results": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: evaluation ships before its writer. Write paths land with YUK-1047 (evaluator lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047 (evaluator lane) lands INSERT/UPDATE write paths for evaluation",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "evaluation.aggregate": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: evaluation ships before its writer. Write paths land with YUK-1047 (evaluator lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047 (evaluator lane) lands INSERT/UPDATE write paths for evaluation",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "evaluation.plan_digest": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: evaluation ships before its writer. Write paths land with YUK-1047 (evaluator lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047 (evaluator lane) lands INSERT/UPDATE write paths for evaluation",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "evaluation.run_refs": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: evaluation ships before its writer. Write paths land with YUK-1047 (evaluator lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047 (evaluator lane) lands INSERT/UPDATE write paths for evaluation",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "evaluation.provenance": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: evaluation ships before its writer. Write paths land with YUK-1047 (evaluator lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047 (evaluator lane) lands INSERT/UPDATE write paths for evaluation",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "evaluation.created_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: evaluation ships before its writer. Write paths land with YUK-1047 (evaluator lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047 (evaluator lane) lands INSERT/UPDATE write paths for evaluation",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "evaluation_effective_head.evaluation_group_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: evaluation_effective_head ships before its writer. Write paths land with YUK-1052 (submission/settlement lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1052 (submission/settlement lane) lands INSERT/UPDATE write paths for evaluation_effective_head",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "evaluation_effective_head.submission_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: evaluation_effective_head ships before its writer. Write paths land with YUK-1052 (submission/settlement lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1052 (submission/settlement lane) lands INSERT/UPDATE write paths for evaluation_effective_head",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "evaluation_effective_head.effective_evaluation_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: evaluation_effective_head ships before its writer. Write paths land with YUK-1052 (submission/settlement lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1052 (submission/settlement lane) lands INSERT/UPDATE write paths for evaluation_effective_head",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "evaluation_effective_head.generation": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: evaluation_effective_head ships before its writer. Write paths land with YUK-1052 (submission/settlement lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1052 (submission/settlement lane) lands INSERT/UPDATE write paths for evaluation_effective_head",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "evaluation_effective_head.updated_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: evaluation_effective_head ships before its writer. Write paths land with YUK-1052 (submission/settlement lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1052 (submission/settlement lane) lands INSERT/UPDATE write paths for evaluation_effective_head",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_identity_mapping.mapping_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_identity_mapping ships before its writer. Write paths land with YUK-1050 (migration-apply lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1050 (migration-apply lane) lands INSERT/UPDATE write paths for assessment_identity_mapping",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_identity_mapping.source_kind": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_identity_mapping ships before its writer. Write paths land with YUK-1050 (migration-apply lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1050 (migration-apply lane) lands INSERT/UPDATE write paths for assessment_identity_mapping",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_identity_mapping.source_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_identity_mapping ships before its writer. Write paths land with YUK-1050 (migration-apply lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1050 (migration-apply lane) lands INSERT/UPDATE write paths for assessment_identity_mapping",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_identity_mapping.source_locator": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_identity_mapping ships before its writer. Write paths land with YUK-1050 (migration-apply lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1050 (migration-apply lane) lands INSERT/UPDATE write paths for assessment_identity_mapping",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_identity_mapping.original_question_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_identity_mapping ships before its writer. Write paths land with YUK-1050 (migration-apply lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1050 (migration-apply lane) lands INSERT/UPDATE write paths for assessment_identity_mapping",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_identity_mapping.legacy_part_ref": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_identity_mapping ships before its writer. Write paths land with YUK-1050 (migration-apply lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1050 (migration-apply lane) lands INSERT/UPDATE write paths for assessment_identity_mapping",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_identity_mapping.snapshot_digest": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_identity_mapping ships before its writer. Write paths land with YUK-1050 (migration-apply lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1050 (migration-apply lane) lands INSERT/UPDATE write paths for assessment_identity_mapping",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_identity_mapping.target_revision_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_identity_mapping ships before its writer. Write paths land with YUK-1050 (migration-apply lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1050 (migration-apply lane) lands INSERT/UPDATE write paths for assessment_identity_mapping",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_identity_mapping.target_part_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_identity_mapping ships before its writer. Write paths land with YUK-1050 (migration-apply lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1050 (migration-apply lane) lands INSERT/UPDATE write paths for assessment_identity_mapping",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_identity_mapping.target_slot_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_identity_mapping ships before its writer. Write paths land with YUK-1050 (migration-apply lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1050 (migration-apply lane) lands INSERT/UPDATE write paths for assessment_identity_mapping",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_identity_mapping.evidence": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_identity_mapping ships before its writer. Write paths land with YUK-1050 (migration-apply lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1050 (migration-apply lane) lands INSERT/UPDATE write paths for assessment_identity_mapping",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_identity_mapping.algorithm_version": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_identity_mapping ships before its writer. Write paths land with YUK-1050 (migration-apply lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1050 (migration-apply lane) lands INSERT/UPDATE write paths for assessment_identity_mapping",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_identity_mapping.status": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_identity_mapping ships before its writer. Write paths land with YUK-1050 (migration-apply lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1050 (migration-apply lane) lands INSERT/UPDATE write paths for assessment_identity_mapping",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_identity_mapping.supersedes_mapping_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_identity_mapping ships before its writer. Write paths land with YUK-1050 (migration-apply lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1050 (migration-apply lane) lands INSERT/UPDATE write paths for assessment_identity_mapping",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_identity_mapping.created_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_identity_mapping ships before its writer. Write paths land with YUK-1050 (migration-apply lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1050 (migration-apply lane) lands INSERT/UPDATE write paths for assessment_identity_mapping",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "assessment_identity_mapping.is_current": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: assessment_identity_mapping ships before its writer. Write paths land with YUK-1050 (migration-apply lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1050 (migration-apply lane) lands INSERT/UPDATE write paths for assessment_identity_mapping",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.scoring_admission_withheld_reason": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.scoring_admission_decided_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
   }
 }

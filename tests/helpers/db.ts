@@ -243,6 +243,18 @@ const ALL_TABLES = [
   // footgun：orchestrator DB 测试跨用例复用 RUN_DATE，漏清会让上一用例的 run 被下一用例采纳）。
   'dag_orchestration_run',
   'dag_orchestration_node',
+  // YUK-1044 — 统一评估契约真相源九表。有 enforced FK（0105/0106），但 TRUNCATE
+  // CASCADE 不触发 BEFORE DELETE trigger（guard 只拦 DELETE），且必须显式列入
+  // 否则备份回测 fixture 漏清 → 跨测泄漏。子表在前（与 CASCADE 无关，纯可读性）。
+  'evaluation_effective_head',
+  'evaluation',
+  'assessment_submission',
+  'evaluation_group',
+  'assessment_issuance',
+  'question_admission_verification',
+  'question_group_lifecycle',
+  'assessment_identity_mapping',
+  'question_revision',
 ] as const;
 
 export async function resetDb() {

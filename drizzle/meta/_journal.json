@@ -729,6 +729,34 @@
       "when": 1790165289110,
       "tag": "0103_lush_marvel_zombies",
       "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1790307065120,
+      "tag": "0104_yuk1044_assessment_contract_truth",
+      "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1790309435283,
+      "tag": "0105_yuk1044_contract_integrity_fks",
+      "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1790310163626,
+      "tag": "0106_yuk1044_head_ownership_fks",
+      "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "7",
+      "when": 1790307065121,
+      "tag": "0107_yuk1044_backup_restore_channel",
+      "breakpoints": true
     }
   ]
 }
