@@ -190,6 +190,45 @@ describe('writeCaptureArtifacts — checkpoint 内容寻址幂等（P1-1/P1-2/P2
     expect(stored.classification.records[0].reason).toBe('改进后的分类解释');
   });
 
+  it('P2-A：篡改 records 但保留哈希字段的 manifest ⇒ 重算拒绝（repaired），不盲接受', () => {
+    const outDir = tmpOut();
+    const { capture, manifest } = artifacts();
+    const first = writeCaptureArtifacts(outDir, capture, manifest, PROVENANCE);
+    expect(first.manifestStatus).toBe('written');
+
+    // 篡改：修改 records 内容但保留 classification_hash / checkpoint_hash 字段。
+    const stored = JSON.parse(
+      readFileSync(join(outDir, first.manifestFile), 'utf8'),
+    ) as typeof manifest;
+    stored.classification.records[0].reason = 'TAMPERED';
+    writeFileSync(join(outDir, first.manifestFile), `${JSON.stringify(stored)}\n`);
+
+    const second = writeCaptureArtifacts(outDir, capture, manifest, PROVENANCE);
+    expect(second.checkpointHash).toBe(first.checkpointHash);
+    expect(second.captureStatus).toBe('already-present');
+    expect(second.manifestStatus).toBe('repaired'); // 重算分类哈希与自述不符 ⇒ 重写
+    const restored = JSON.parse(readFileSync(join(outDir, second.manifestFile), 'utf8')) as {
+      classification: { records: Array<{ reason: string }> };
+    };
+    expect(restored.classification.records[0].reason).not.toBe('TAMPERED');
+  });
+
+  it('P2-A：latest 指针文件名被篡改 ⇒ 重写为派生名', () => {
+    const outDir = tmpOut();
+    const { capture, manifest } = artifacts();
+    const first = writeCaptureArtifacts(outDir, capture, manifest, PROVENANCE);
+    writeFileSync(
+      join(outDir, 'latest.json'),
+      `${JSON.stringify({ checkpoint_hash: first.checkpointHash, capture_file: 'evil.json', manifest_file: 'evil.json' })}\n`,
+    );
+    const second = writeCaptureArtifacts(outDir, capture, manifest, PROVENANCE);
+    expect(second.latestStatus).toBe('written');
+    const pointer = JSON.parse(readFileSync(join(outDir, 'latest.json'), 'utf8')) as {
+      capture_file: string;
+    };
+    expect(pointer.capture_file).toBe(first.captureFile);
+  });
+
   it('不可变事实变化 → 新 checkpoint 工件并存，latest 前移，旧工件保留', () => {
     const outDir = tmpOut();
     const base = artifacts();

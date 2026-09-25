@@ -138,6 +138,8 @@ export function durablePendingEvent(fixture: {
   questionId?: string;
   responseMd?: string;
   withSnapshot?: boolean;
+  /** 覆盖冻结 snapshot（终轮 P1-1 repro：4 字段残缺快照）。 */
+  snapshotOverride?: unknown;
 }): RawEventRow {
   return ev({
     id: fixture.id,
@@ -153,9 +155,11 @@ export function durablePendingEvent(fixture: {
         body: { response_md: fixture.responseMd ?? 'x' },
         question_id: fixture.questionId ?? 'q-1',
         submitted_at: '2026-09-20T00:00:00.000Z',
-        ...(fixture.withSnapshot === false
-          ? {}
-          : { question_snapshot: { ...FROZEN_DURABLE_SNAPSHOT } }),
+        ...(fixture.snapshotOverride !== undefined
+          ? { question_snapshot: fixture.snapshotOverride }
+          : fixture.withSnapshot === false
+            ? {}
+            : { question_snapshot: { ...FROZEN_DURABLE_SNAPSHOT } }),
       },
     },
   });

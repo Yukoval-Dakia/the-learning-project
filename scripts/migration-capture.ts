@@ -35,11 +35,11 @@ import { fileURLToPath } from 'node:url';
 
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import { shortHash, stableStringify } from '@/core/migration/canonical';
+import { canonicalHash, shortHash, stableStringify } from '@/core/migration/canonical';
 import { type CheckpointProvenance, checkpointHashOf } from '@/core/migration/checkpoint';
 import { classifyMigrationCapture } from '@/core/migration/classify';
 import { buildMigrationManifest } from '@/core/migration/manifest';
-import { redactMigrationCapture, redactedFieldList } from '@/core/migration/redact';
+import { redactMigrationCapture, redactedFieldPolicy } from '@/core/migration/redact';
 import type { MigrationCapture, MigrationManifest } from '@/core/migration/types';
 import * as schema from '@/db/schema';
 import { captureMigrationCheckpoint } from '@/server/migration/capture';
@@ -163,13 +163,26 @@ export function writeCaptureArtifacts(
   if (existsSync(manifestPath)) {
     try {
       const stored = JSON.parse(readFileSync(manifestPath, 'utf8')) as MigrationManifest;
+      // P2-A（终轮）：不信任存储的哈希字符串 —— 从存储内容【重算】。
+      // (a) 身份：stored.checkpoint_hash 必须与本次一致；
+      // (b) 分类内容：从 stored.classification 的 version/records/unresolved/
+      //     deferred_replay 重算哈希，与 stored.classification.classification_hash
+      //     比对 —— 篡改 records 而保留哈希字段的工件在此被拒（repaired）；
+      // (c) 新鲜度：重算哈希与本次分类哈希比对 —— 不一致则 refreshed。
+      const storedRecomputedHash = canonicalHash({
+        classification_version: stored.classification?.classification_version,
+        records: stored.classification?.records,
+        unresolved: stored.classification?.unresolved,
+        deferred_replay: stored.classification?.deferred_replay,
+      });
+      const storedSelfConsistent =
+        typeof stored.classification?.classification_hash === 'string' &&
+        storedRecomputedHash === stored.classification.classification_hash;
       const identityOk = stored.checkpoint_hash === manifest.checkpoint_hash;
-      const classificationCurrent =
-        stored.classification?.classification_hash === manifest.classification.classification_hash;
-      if (!identityOk) {
+      if (!identityOk || !storedSelfConsistent) {
         atomicWrite(manifestPath, expectedManifest);
         manifestStatus = 'repaired';
-      } else if (!classificationCurrent) {
+      } else if (storedRecomputedHash !== manifest.classification.classification_hash) {
         // P1-2：分类器改进/分类版本变化 —— 同一观测的最新分类必须持久化。
         atomicWrite(manifestPath, expectedManifest);
         manifestStatus = 'refreshed';
@@ -194,8 +207,18 @@ export function writeCaptureArtifacts(
   let latestStatus: ArtifactWriteResult['latestStatus'] = 'written';
   if (existsSync(latestPath)) {
     try {
-      const existing = JSON.parse(readFileSync(latestPath, 'utf8')) as { checkpoint_hash?: string };
-      if (existing.checkpoint_hash === pointer.checkpoint_hash) {
+      const existing = JSON.parse(readFileSync(latestPath, 'utf8')) as {
+        checkpoint_hash?: string;
+        capture_file?: string;
+        manifest_file?: string;
+      };
+      // P2-A（终轮）：指针同时校验哈希与【文件名】—— 与 checkpoint 派生名
+      // 不符（被篡改/漂移）的指针不复用。
+      const pointerOk =
+        existing.checkpoint_hash === pointer.checkpoint_hash &&
+        existing.capture_file === captureFile &&
+        existing.manifest_file === manifestFile;
+      if (pointerOk) {
         latestStatus = 'unchanged';
       }
     } catch {
@@ -261,7 +284,9 @@ export async function runMigrationCapture(args: CaptureCliArgs): Promise<Artifac
       app_image: args.appImage,
       worker_image: args.workerImage,
       migration_files: migrationFileCount(),
-      redaction: { applied: args.redact, fields: args.redact ? redactedFieldList() : [] },
+      redaction: args.redact
+        ? { applied: true, fields: [redactedFieldPolicy().policy] }
+        : { applied: false, fields: [] },
     };
     const classification = classifyMigrationCapture(capture);
     const manifest = buildMigrationManifest(capture, classification, provenance);

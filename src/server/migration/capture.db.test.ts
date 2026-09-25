@@ -693,6 +693,109 @@ describe('幂等与可变运维字段纪律（真库观测）', () => {
     expect(second.environment.snapshot_at).not.toBe(first.environment.snapshot_at);
     expect(checkpointHashOf(second, PROVENANCE)).toBe(checkpointHashOf(first, PROVENANCE));
   });
+  it('终轮 P1-1 repro（真库）：4 字段残缺 durable snapshot + 作答 + verdict ⇒ NOT complete', async () => {
+    const fourFieldSnapshot = {
+      kind: 'short_answer',
+      prompt_md: '1+1=?',
+      version: 0,
+      updated_at: '2026-09-01T00:00:00Z',
+    };
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'pen-r1',
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'experimental:judge_pending_attempt',
+        subject_kind: 'question',
+        subject_id: 'q-main',
+        outcome: null,
+        payload: {
+          run_id: 'run-r1',
+          caller: 'submit',
+          knowledge_ids: ['kc-1'],
+          submit: {
+            body: { response_md: '残缺快照作答' },
+            question_id: 'q-main',
+            submitted_at: NOW.toISOString(),
+            question_snapshot: fourFieldSnapshot,
+          },
+        },
+        created_at: NOW,
+      });
+    await seedBackfilledReview({
+      runId: 'run-r1',
+      responseMd: '残缺快照作答',
+      withVerdict: true,
+      withPending: false,
+    });
+    const capture = await captureMigrationCheckpoint(testDb());
+    const classification = classifyMigrationCapture(capture);
+    expect(categoryOf(classification, 'run-r1')).toBe('historical_unresolved');
+  });
+
+  it('终轮 P1-1 repro（真库）：跨题快照身份不绑定 ⇒ unresolved', async () => {
+    const wrongQuestionSnapshot = JSON.parse(JSON.stringify(SNAPSHOT)) as {
+      question: { question_id: string };
+    };
+    wrongQuestionSnapshot.question.question_id = 'q-other';
+    await seedAttempt({
+      id: 'att-mismatch',
+      questionId: 'q-main',
+      payload: { answer_md: '2', question_snapshot: wrongQuestionSnapshot },
+      outcome: 'success',
+    });
+    await seedJudge('jud-mismatch', 'att-mismatch', { coarse_outcome: 'correct', score: 1 });
+    const capture = await captureMigrationCheckpoint(testDb());
+    const classification = classifyMigrationCapture(capture);
+    expect(categoryOf(classification, 'att-mismatch')).toBe('historical_unresolved');
+    expect(categoryOf(classification, 'jud-mismatch')).toBe('historical_unresolved');
+  });
+
+  it('终轮 P1-1 repro（真库）：值域非法判词 ⇒ judge 不可 effective，attempt blocked', async () => {
+    await seedAttempt({
+      id: 'att-bogus',
+      questionId: 'q-main',
+      payload: { answer_md: '2', question_snapshot: { ...SNAPSHOT } },
+      outcome: 'success',
+    });
+    await seedJudge('jud-bogus', 'att-bogus', { coarse_outcome: 'bogus', score: false });
+    const capture = await captureMigrationCheckpoint(testDb());
+    const classification = classifyMigrationCapture(capture);
+    expect(categoryOf(classification, 'jud-bogus')).toBe('historical_unresolved');
+    expect(categoryOf(classification, 'att-bogus')).toBe('pending_blocked');
+    const headRecords = classification.records.filter(
+      (r) =>
+        r.native_target.kind === 'submission_with_imported_eval' &&
+        r.native_target.has_effective_head,
+    );
+    expect(headRecords.map((r) => r.source_id)).not.toContain('jud-bogus');
+  });
+
+  it('终轮 P1-3 repro（真库）：unsupported_judge + 后到有效 verdict ⇒ 一致提升为 complete', async () => {
+    await seedAttempt({
+      id: 'att-unsupported',
+      questionId: 'q-main',
+      payload: {
+        answer_md: null,
+        answer_image_refs: ['asset-9'],
+        question_snapshot: { ...SNAPSHOT },
+        unsupported_judge: true,
+      },
+      outcome: 'failure',
+    });
+    await seedJudge(
+      'jud-late',
+      'att-unsupported',
+      { coarse_outcome: 'correct', score: 1 },
+      undefined,
+    );
+    const capture = await captureMigrationCheckpoint(testDb());
+    const classification = classifyMigrationCapture(capture);
+    expect(categoryOf(classification, 'att-unsupported')).toBe('complete_attempt');
+    const judgeRow = classification.records.find((r) => r.source_id === 'jud-late');
+    expect(judgeRow).toMatchObject({ native_target: { has_effective_head: true } });
+  });
 });
 
 describe('空库形状（D19 类比）', () => {

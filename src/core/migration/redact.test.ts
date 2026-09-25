@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { canonicalHash } from './canonical';
 import { classifyMigrationCapture } from './classify';
-import { redactMigrationCapture, redactedFieldList } from './redact';
+import { redactMigrationCapture, redactedFieldPolicy } from './redact';
 import {
   SNAPSHOT,
   answeredReviewEvent,
@@ -12,7 +12,7 @@ import {
   withEvents,
 } from './test-fixtures';
 
-// YUK-1048 — 脱敏单测（review P1-6：按实际捕获事件变体做深.walk）。
+// YUK-1048 — 脱敏单测（终轮 P1-4：默认拒绝 + 完整分区事件家族哨兵）。
 // 内容哈希化但结构/标记保留 → 分类结果不变（§14 redacted flags 的诚实支撑）。
 
 const SENTINEL = 'PRIVATE-LEARNER-TEXT-私密的作答';
@@ -38,8 +38,6 @@ function learnerCapture() {
       referenced_knowledge_ids: [],
     },
   });
-  // P1-6：durable pending 的嵌套 submit.body.response_md + review 的
-  // user_response_md / embedded judge.feedback_md / reasoning_trace。
   const pending = durablePendingEvent({ id: 'p1', runId: 'run-1', responseMd: SENTINEL });
   const review = answeredReviewEvent({ id: 'run-1', responseMd: SENTINEL });
   const correct = ev({
@@ -59,8 +57,47 @@ function learnerCapture() {
   const replacement = judgeEvent({
     id: 'j1b',
     subject_id: 'a1',
-    payload: { coarse_outcome: 'incorrect', feedback_md: `${SENTINEL}-feedback` },
+    payload: { coarse_outcome: 'incorrect', score: 0, feedback_md: `${SENTINEL}-feedback` },
   });
+  // P1-4（终轮）：完整分区带进的非评估家族 —— 真实生产 payload 形状。
+  const copilotUserAsk = ev({
+    id: 'cop-1',
+    action: 'copilot_user_ask',
+    subject_kind: 'query',
+    subject_id: 'cop-1',
+    actor_kind: 'user',
+    actor_ref: 'user:self',
+    outcome: null,
+    payload: { surface: 'copilot', user_message: `${SENTINEL}-copilot`, session_id: 'sess-x' },
+  });
+  const recordCapture = ev({
+    id: 'rc-1',
+    action: 'experimental:record_capture',
+    subject_kind: 'record',
+    subject_id: 'rec-1',
+    actor_kind: 'user',
+    actor_ref: 'self',
+    outcome: 'success',
+    payload: {
+      record_kind: 'mistake',
+      activity_kind: 'import',
+      capture_mode: 'image',
+      summary_md: `${SENTINEL}-summary`,
+      generated_by: 'auto_capture',
+      enroll_outcome: 'unanswered',
+    },
+  });
+  const knowledgePropose = ev({
+    id: 'prop-1',
+    action: 'propose',
+    subject_kind: 'knowledge',
+    subject_id: 'kc-9',
+    actor_kind: 'cron',
+    actor_ref: 'nightly',
+    outcome: 'success',
+    payload: { title: `${SENTINEL}-title`, rationale_md: `${SENTINEL}-rationale` },
+  });
+
   const capture = withEvents(emptyCapture(), [
     attempt,
     attribution,
@@ -68,6 +105,9 @@ function learnerCapture() {
     review,
     correct,
     replacement,
+    copilotUserAsk,
+    recordCapture,
+    knowledgePropose,
   ]);
   capture.rawFacts.answers = [
     {
@@ -89,60 +129,74 @@ function learnerCapture() {
   return capture;
 }
 
-describe('redactMigrationCapture（P1-6 深按实际事件变体）', () => {
-  it('全事件变体的 learner/模型自由文本都被替换为 {__redacted, sha256, length}', () => {
+describe('redactMigrationCapture（终轮：默认拒绝 + 完整分区家族）', () => {
+  it('全家族私有文本被替换 —— copilot user_message / record summary_md / propose 标题也不漏', () => {
     const redacted = redactMigrationCapture(learnerCapture());
     const serialized = JSON.stringify(redacted.rawFacts.events);
-
-    // 哨兵文本在捕获中不复存在。
     expect(serialized).not.toContain(SENTINEL);
     expect(JSON.stringify(redacted.rawFacts.answers)).not.toContain(SENTINEL);
 
     const byId = new Map(redacted.rawFacts.events.map((e) => [e.id, e]));
-    const attemptPayload = byId.get('a1')?.payload as Record<string, unknown>;
-    expect(attemptPayload.answer_md).toMatchObject({ __redacted: true, length: SENTINEL.length });
-    expect(attemptPayload.reasoning_trace).toMatchObject({ __redacted: true });
+    const payloadOf = (id: string) => byId.get(id)?.payload as Record<string, unknown>;
 
-    const attributionPayload = byId.get('j1')?.payload as Record<string, unknown>;
-    expect((attributionPayload.cause as Record<string, unknown>).analysis_md).toMatchObject({
+    // 原有变体（review P1-6）继续覆盖。
+    expect(payloadOf('a1').answer_md).toMatchObject({ __redacted: true, length: SENTINEL.length });
+    expect(payloadOf('a1').reasoning_trace).toMatchObject({ __redacted: true });
+    expect((payloadOf('j1').cause as Record<string, unknown>).analysis_md).toMatchObject({
       __redacted: true,
     });
-
-    const pendingPayload = byId.get('p1');
-    expect(pendingPayload).toBeDefined();
-    const pendingSubmit = (pendingPayload as { payload: Record<string, unknown> }).payload
-      .submit as Record<string, unknown>;
-    const pendingBody = pendingSubmit.body as Record<string, unknown>;
-    expect(pendingBody.response_md).toMatchObject({ __redacted: true, length: SENTINEL.length });
-
-    const reviewPayload = byId.get('run-1')?.payload as Record<string, unknown>;
-    expect(reviewPayload.user_response_md).toMatchObject({ __redacted: true });
-    const judgeBlock = reviewPayload.judge as Record<string, unknown>;
+    const pendingBody = (payloadOf('p1').submit as Record<string, unknown>).body as Record<
+      string,
+      unknown
+    >;
+    expect(pendingBody.response_md).toMatchObject({ __redacted: true });
+    expect(payloadOf('run-1').user_response_md).toMatchObject({ __redacted: true });
+    const judgeBlock = payloadOf('run-1').judge as Record<string, unknown>;
     expect(judgeBlock.feedback_md).toMatchObject({ __redacted: true });
-    // 非文本判分字段保留（score/coarse_outcome 是判词不是内容）。
     expect(judgeBlock.score).toBe(1);
     expect(judgeBlock.coarse_outcome).toBe('correct');
+    expect(payloadOf('c1').reason_md).toMatchObject({ __redacted: true });
+    expect(payloadOf('j1b').feedback_md).toMatchObject({ __redacted: true });
 
-    const correctPayload = byId.get('c1')?.payload as Record<string, unknown>;
-    expect(correctPayload.reason_md).toMatchObject({ __redacted: true });
-
-    const replacementPayload = byId.get('j1b')?.payload as Record<string, unknown>;
-    expect(replacementPayload.feedback_md).toMatchObject({ __redacted: true });
+    // P1-4（终轮）：copilot 输入、record capture 摘要、知识 propose 标题。
+    expect(payloadOf('cop-1').user_message).toMatchObject({ __redacted: true });
+    expect(payloadOf('cop-1').surface).toBe('copilot'); // 标记保留
+    expect(payloadOf('rc-1').summary_md).toMatchObject({ __redacted: true });
+    expect(payloadOf('rc-1').record_kind).toBe('mistake');
+    expect(payloadOf('rc-1').generated_by).toBe('auto_capture');
+    expect(payloadOf('prop-1').title).toMatchObject({ __redacted: true });
+    expect(payloadOf('prop-1').rationale_md).toMatchObject({ __redacted: true });
 
     const answer = redacted.rawFacts.answers[0];
     expect(answer.content_md).toMatchObject({ __redacted: true });
     expect(answer.vision_extracted).toMatchObject({ __redacted: true });
   });
 
-  it('结构与分类 marker 保留 → 脱敏后分类逐类不变（P1-6：分类读 marker 不读内容）', () => {
+  it('未知家族的未知文本键默认被脱敏（默认拒绝），标记/结构保留 → 分类逐类不变', () => {
     const capture = learnerCapture();
+    // 模拟未来新增家族的未知文本键（+ 一个已登记的安全枚举键）。
+    capture.rawFacts.events.push(
+      ev({
+        id: 'future-1',
+        action: 'experimental:some_future_event',
+        subject_kind: 'chip',
+        subject_id: 'future-1',
+        payload: { note_md: SENTINEL, status: 'value-a' },
+      }),
+    );
+    const redacted = redactMigrationCapture(capture);
+    expect(JSON.stringify(redacted.rawFacts.events)).not.toContain(SENTINEL);
+    const future = redacted.rawFacts.events.find((e) => e.id === 'future-1');
+    expect(future).toBeDefined();
+    const futurePayload = (future as { payload: Record<string, unknown> }).payload;
+    expect(futurePayload.note_md).toMatchObject({ __redacted: true });
+    expect(futurePayload.status).toBe('value-a');
+
     const before = classifyMigrationCapture(capture);
-    const after = classifyMigrationCapture(redactMigrationCapture(capture));
+    const after = classifyMigrationCapture(redacted);
     expect(after.rollup).toEqual(before.rollup);
-    expect(
-      after.records.map((r) => [r.source_id, r.category, JSON.stringify(r.native_target)]),
-    ).toEqual(
-      before.records.map((r) => [r.source_id, r.category, JSON.stringify(r.native_target)]),
+    expect(after.records.map((r) => [r.source_id, r.category])).toEqual(
+      before.records.map((r) => [r.source_id, r.category]),
     );
   });
 
@@ -156,19 +210,13 @@ describe('redactMigrationCapture（P1-6 深按实际事件变体）', () => {
     expect(canonicalHash(redacted1.rawFacts)).toBe(canonicalHash(redacted2.rawFacts));
   });
 
-  it('redactedFieldList 与实现一一对应', () => {
-    expect(redactedFieldList()).toEqual([
-      'event.payload..answer_md',
-      'event.payload..user_response_md',
-      'event.payload..response_md',
-      'event.payload..wrong_answer_md',
-      'event.payload..reasoning_trace',
-      'event.payload..analysis_md',
-      'event.payload..feedback_md',
-      'event.payload..rejudge_raw_output',
-      'event.payload..reason_md',
-      'answer.content_md',
-      'answer.vision_extracted',
-    ]);
+  it('redactedFieldPolicy 描述默认拒绝策略与两张安全清单', () => {
+    const policy = redactedFieldPolicy();
+    expect(policy.policy).toContain('default-deny');
+    expect(policy.safe_string_keys).toContain('coarse_outcome');
+    // 私有文本键绝不在安全清单（默认拒绝）。
+    expect(policy.safe_string_keys).not.toContain('user_message');
+    expect(policy.safe_string_keys).not.toContain('summary_md');
+    expect(policy.safe_subtree_keys).toContain('question_snapshot');
   });
 });

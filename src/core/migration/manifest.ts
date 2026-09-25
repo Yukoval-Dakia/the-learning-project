@@ -192,7 +192,10 @@ export function buildMigrationManifest(
         ? 'in_sync'
         : 'drift';
 
+  // P2-B（终轮）：classification_version 进哈希 —— 分类语义版本 bump 时，
+  // 同 checkpoint 的 manifest 必须被识别为过期（refreshed）而不是同内容跳过。
   const classificationHash = canonicalHash({
+    classification_version: CLASSIFICATION_VERSION,
     records: classification.records,
     unresolved: classification.unresolved,
     deferred_replay: classification.deferred_replay,

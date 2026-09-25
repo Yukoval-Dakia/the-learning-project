@@ -1,11 +1,17 @@
 import type { HistoricalUnknownSubmissionT, PendingStateT } from '../schema/assessment';
-import { AttemptQuestionSnapshot } from '../schema/question-evidence-snapshot';
 import type {
   DeferredReplayEntry,
   MigrationCapture,
   MigrationClassification,
   RecordClassification,
 } from './types';
+import {
+  type VerdictStatus,
+  embeddedVerdictStatus,
+  validateAttemptSnapshot,
+  validateDurableSnapshot,
+  verdictStatus,
+} from './validation';
 
 // ====================================================================
 // YUK-1048 — native 分类器（grounding §13；review P1-3/4/5/7 修订）
@@ -76,61 +82,13 @@ function payloadOf(payload: unknown): EventPayload {
     : {};
 }
 
-/** verdict = 判词（coarse_outcome/score）。judge_route 不是 verdict（P1-5）。 */
-function hasRealVerdict(payload: EventPayload): boolean {
-  return payload.coarse_outcome != null || payload.score != null;
+/** 判词状态（真实值域校验，validation.ts / JudgeResultV2 分支）。 */
+function verdictOf(payload: EventPayload): VerdictStatus {
+  return verdictStatus(payload as { coarse_outcome?: unknown; score?: unknown });
 }
 
 function isAttributionPlaceholder(payload: EventPayload): boolean {
   return payload.attribution_pending === true;
-}
-
-/** attempt/solve_tutor 事件的冻结 issued snapshot（AttemptQuestionSnapshot 形状）。 */
-function attemptSnapshotIssue(payload: EventPayload): { ok: boolean; reason: string } {
-  const snapshot = payload.question_snapshot;
-  if (snapshot == null) {
-    return { ok: false, reason: 'attempt payload 无 question_snapshot —— 缺 issued snapshot' };
-  }
-  const parsed = AttemptQuestionSnapshot.safeParse(snapshot);
-  if (!parsed.success) {
-    return {
-      ok: false,
-      reason:
-        'question_snapshot 不符合 AttemptQuestionSnapshot 冻结契约（question-evidence-snapshot.ts）—— 形状不识别，不能用当前 revision 补造当时所见',
-    };
-  }
-  return { ok: true, reason: '' };
-}
-
-/**
- * durable pending 输入的冻结 snapshot 结构校验（接缝声明：生产 schema 是
- * practice 侧 FrozenQuestionSnapshotSchema —— kind/prompt_md/.../version/
- * updated_at；core 不得 import capability，这里做结构等价校验：非空对象 +
- * string kind + string prompt_md + number version + string updated_at）。
- */
-function durableSnapshotIssue(payload: EventPayload): { ok: boolean; reason: string } {
-  const snapshot = payloadOf(payload.submit).question_snapshot;
-  if (snapshot == null) {
-    return {
-      ok: false,
-      reason:
-        'durable pending 输入无冻结 question_snapshot（pre-snapshot payload —— worker 曾按【当前】题行判分，judge-run-payload legacy 读活行路径）—— 无法重构当时 issuance',
-    };
-  }
-  const s = payloadOf(snapshot);
-  if (
-    typeof s.kind !== 'string' ||
-    s.kind.length === 0 ||
-    typeof s.prompt_md !== 'string' ||
-    typeof s.version !== 'number' ||
-    typeof s.updated_at !== 'string'
-  ) {
-    return {
-      ok: false,
-      reason: 'durable 冻结 snapshot 不符合 FrozenQuestionSnapshot 结构（接缝校验失败）',
-    };
-  }
-  return { ok: true, reason: '' };
 }
 
 function locatorOf(sourceKind: 'event' | 'answer', action: string | null, id: string): string {
@@ -147,16 +105,24 @@ function reviewIsAnswerBearing(payload: EventPayload): boolean {
   );
 }
 
-/** review 的 embedded judge 块是否携带 verdict。 */
-function reviewEmbeddedVerdict(payload: EventPayload): boolean {
-  const judge = payloadOf(payload.judge);
-  return judge.coarse_outcome != null || judge.score != null;
+/** review 的 embedded judge 块判词状态（真实值域）。 */
+function reviewEmbeddedVerdictStatus(payload: EventPayload): VerdictStatus {
+  return embeddedVerdictStatus(payloadOf(payload.judge));
 }
 
-/** solve_tutor attempt 的嵌入判分是否携带 verdict（judge_score/judge.coarse_outcome）。 */
-function solveTutorEmbeddedVerdict(payload: EventPayload): boolean {
+/** review 是否声明了机器判分介入（embedded judge 块或配对 judge 事件）。 */
+function reviewClaimsMachineJudging(
+  payload: EventPayload,
+  pairedJudges: ReadonlyArray<{ payload: unknown }>,
+): boolean {
+  if (payload.judge !== undefined && payload.judge !== null) return true;
+  return pairedJudges.length > 0;
+}
+
+/** solve_tutor attempt 的嵌入判词状态（judge_score 与 judge.coarse_outcome 配对过值域）。 */
+function solveTutorVerdictStatus(payload: EventPayload): VerdictStatus {
   const judge = payloadOf(payload.judge);
-  return payload.judge_score != null || judge.coarse_outcome != null;
+  return embeddedVerdictStatus(judge, payload.judge_score);
 }
 
 interface HeadDecision {
@@ -340,7 +306,7 @@ export function classifyMigrationCapture(capture: MigrationCapture): MigrationCl
     if (cached) return cached;
     const judges = judgesByAnchor.get(anchor.id) ?? [];
     const eligible = judges
-      .filter((j) => !members.has(j.id) && hasRealVerdict(payloadOf(j.payload)))
+      .filter((j) => !members.has(j.id) && verdictOf(payloadOf(j.payload)) === 'valid')
       .map((j) => ({ id: j.id, created_at: j.created_at }));
     const decision = selectHead(eligible);
     headDecisions.set(anchor.id, decision);
@@ -362,7 +328,7 @@ export function classifyMigrationCapture(capture: MigrationCapture): MigrationCl
       ]);
     }
 
-    const snapshotIssue = attemptSnapshotIssue(payload);
+    const snapshotIssue = validateAttemptSnapshot(payload.question_snapshot, attempt.subject_id);
     if (!snapshotIssue.ok) {
       return historicalUnknownClassification(
         attempt.id,
@@ -374,25 +340,8 @@ export function classifyMigrationCapture(capture: MigrationCapture): MigrationCl
       );
     }
 
-    if (payload.unsupported_judge === true) {
-      const pending: PendingStateT = {
-        reason: 'unjudgeable',
-        detail:
-          '答案已冻结但该槽位未判（unsupported_judge；照片作答落入纯文本判分路线）—— 不是错答，不得伪零分',
-      };
-      return {
-        category: 'pending_blocked',
-        source_kind: 'event',
-        source_id: attempt.id,
-        source_locator: locator,
-        reason: 'unsupported_judge=true：已接收未判分',
-        evidence_event_ids: [attempt.id, ...linkedAnswerIds],
-        native_target: { kind: 'pending_carried', pending },
-      };
-    }
-
     if (payload.source === 'solve_tutor') {
-      if (solveTutorEmbeddedVerdict(payload)) {
+      if (solveTutorVerdictStatus(payload) === 'valid') {
         return {
           category: 'embedded_tutor_grade',
           source_kind: 'event',
@@ -421,6 +370,9 @@ export function classifyMigrationCapture(capture: MigrationCapture): MigrationCl
       };
     }
 
+    // P1-3（终轮）：有效 verdict 先于 unsupported_judge —— 后到的合法判分
+    // 把「提交时未判」的作答升级为完整 attempt（anchor 与 judge 一致提升）；
+    // 无有效判分时 unsupported 才落 pending（已接收未判，不是错答）。
     const decision = headDecisionFor(attempt);
     if (decision.ambiguous) {
       const pending: PendingStateT = {
@@ -445,7 +397,7 @@ export function classifyMigrationCapture(capture: MigrationCapture): MigrationCl
         source_kind: 'event',
         source_id: attempt.id,
         source_locator: locator,
-        reason: `attempt 带已识别 issued snapshot，且 judge 事件 ${decision.headJudgeId} 携带真实 verdict（${decision.rule}）—— 迁移为 submission + imported eval/head`,
+        reason: `attempt 带已识别且身份绑定的 issued snapshot，且 judge 事件 ${decision.headJudgeId} 携带真实值域 verdict（${decision.rule}${payload.unsupported_judge === true ? '；后到判分解除了提交时的 unsupported 标记' : ''}）—— 迁移为 submission + imported eval/head`,
         evidence_event_ids: [attempt.id, decision.headJudgeId, ...linkedAnswerIds],
         native_target: {
           kind: 'submission_with_imported_eval',
@@ -453,6 +405,23 @@ export function classifyMigrationCapture(capture: MigrationCapture): MigrationCl
           has_effective_head: true,
           head_selection: decision.rule,
         },
+      };
+    }
+
+    if (payload.unsupported_judge === true) {
+      const pending: PendingStateT = {
+        reason: 'unjudgeable',
+        detail:
+          '答案已冻结但该槽位未判（unsupported_judge；照片作答落入纯文本判分路线）—— 不是错答，不得伪零分',
+      };
+      return {
+        category: 'pending_blocked',
+        source_kind: 'event',
+        source_id: attempt.id,
+        source_locator: locator,
+        reason: 'unsupported_judge=true：已接收未判分',
+        evidence_event_ids: [attempt.id, ...linkedAnswerIds],
+        native_target: { kind: 'pending_carried', pending },
       };
     }
 
@@ -543,7 +512,7 @@ export function classifyMigrationCapture(capture: MigrationCapture): MigrationCl
         'event',
       );
     }
-    const snapshotIssue = durableSnapshotIssue(payloadOf(pending.payload));
+    const snapshotIssue = validateDurableSnapshot(payloadOf(pending.payload), review.subject_id);
     if (!snapshotIssue.ok) {
       return historicalUnknownClassification(
         review.id,
@@ -557,16 +526,49 @@ export function classifyMigrationCapture(capture: MigrationCapture): MigrationCl
 
     // durable 完整链：verdict 来自 embedded judge 块和/或配对 judge 事件。
     const decision = headDecisionFor(review);
-    const embeddedVerdict = reviewEmbeddedVerdict(payload);
-    if (!embeddedVerdict && decision.headJudgeId === null && !decision.ambiguous) {
-      // 作答已接收、自评（无判词）—— D9/D15：manual provenance only。
+    const embeddedStatus = reviewEmbeddedVerdictStatus(payload);
+    const pairedJudges = judgesByAnchor.get(review.id) ?? [];
+    const machineClaimed = reviewClaimsMachineJudging(payload, pairedJudges);
+    if (embeddedStatus !== 'valid' && decision.headJudgeId === null && !decision.ambiguous) {
+      if (embeddedStatus === 'invalid') {
+        // 声明了判词但值域非法 —— 损坏记录，不可导入也不可当自评。
+        return historicalUnknownClassification(
+          review.id,
+          locator,
+          'embedded judge 块声明判词但 coarse_outcome×score 不在 JudgeResultV2 真实值域 —— 判分记录损坏',
+          [review.id, pending.id],
+          'event',
+          'event',
+        );
+      }
+      // P1-2（终轮）：manual/self-rated 需要【肯定证据】—— 无任何机器判分
+      // 声明（无 embedded judge 块、无配对 judge 事件）的用户自评作答才可
+      // 迁移为 manual provenance；机器判分已声明（auto_rate/embedded 块/
+      // judge 事件）而无 verdict ⇒ 判分缺件 blocked，不冒充人工断言。
+      if (machineClaimed) {
+        const pendingState: PendingStateT = {
+          reason: 'needs_review',
+          trigger: 'flagged',
+          detail:
+            '声明了机器判分（embedded judge 块/配对 judge）但无有效 verdict —— provenance 未知，缺件 blocked',
+        };
+        return {
+          category: 'pending_blocked',
+          source_kind: 'event',
+          source_id: review.id,
+          source_locator: locator,
+          reason: '机器判分已声明但判词缺失',
+          evidence_event_ids: [review.id, pending.id],
+          native_target: { kind: 'pending_carried', pending: pendingState },
+        };
+      }
       return {
         category: 'human_import_assertion',
         source_kind: 'event',
         source_id: review.id,
         source_locator: locator,
         reason:
-          'durable 回填 review 携带作答但无判词（embedded judge 块与配对 judge 均无 verdict）—— 自评作答，仅手动学习效应（D9/D15）',
+          'durable 回填 review 携带作答、无任何机器判分声明（无 embedded judge 块/配对 judge）—— 肯定的用户自评，仅手动学习效应（D9/D15）',
         evidence_event_ids: [review.id, pending.id],
         native_target: { kind: 'manual_provenance_only', assertion: 'human' },
       };
@@ -595,8 +597,8 @@ export function classifyMigrationCapture(capture: MigrationCapture): MigrationCl
       source_locator: locator,
       reason:
         headJudgeId !== null
-          ? `durable 回填 review：冻结输入（pending ${pending.id} 的 submit.question_snapshot）+ 作答 + verdict（配对 judge ${headJudgeId}${embeddedVerdict ? ' 与 embedded judge 块' : ''}）—— submission + imported eval/head`
-          : `durable 回填 review：冻结输入（pending ${pending.id}）+ 作答 + embedded judge 块 verdict —— submission + imported eval/head`,
+          ? `durable 回填 review：身份绑定的冻结输入（pending ${pending.id} 的 submit.question_snapshot）+ 作答 + verdict（配对 judge ${headJudgeId}${embeddedStatus === 'valid' ? ' 与 embedded judge 块' : ''}）—— submission + imported eval/head`
+          : `durable 回填 review：身份绑定的冻结输入（pending ${pending.id}）+ 作答 + embedded judge 块 verdict —— submission + imported eval/head`,
       evidence_event_ids: [review.id, pending.id, ...(headJudgeId !== null ? [headJudgeId] : [])],
       native_target: {
         kind: 'submission_with_imported_eval',
@@ -686,21 +688,38 @@ export function classifyMigrationCapture(capture: MigrationCapture): MigrationCl
         continue;
       }
       const payload = payloadOf(e.payload);
-      if (hasRealVerdict(payload)) {
-        // verdict judge：是否 effective head 取决于锚的 head 决策（P1-4 一致性）。
-        // verdict 优先于 attribution_pending 标记（review-settlement 的配对
-        // review_judge 事件带真实 coarse_outcome/score + attribution_pending——
-        // 分数是真实的，只是失败归因延后）。
+      const verdict = verdictOf(payload);
+      if (verdict === 'invalid') {
+        // P1-1（终轮）：声明了判词但值域非法 —— 损坏记录，fail-visible。
+        records.push(
+          historicalUnknownClassification(
+            e.id,
+            locator,
+            `judge 事件声明判词但 coarse_outcome×score 不在 JudgeResultV2 真实值域（coarse=${String(payload.coarse_outcome)} score=${String(payload.score)}）—— 判分记录损坏`,
+            [e.id, target.id],
+            'event',
+            'event',
+          ),
+        );
+        continue;
+      }
+      if (verdict === 'valid') {
+        // P1-3（终轮）：head 资格以【锚的最终可导入性】为门 —— 只有锚分类为
+        // complete_attempt 的 occurrence 才存在 effective head；锚处于
+        // pending/human/historical/纠正 等任何不可导入态时，judge 保留为评估
+        // 证据但绝不声明 has_effective_head（迁移指令不再自相矛盾）。
         const decision = headDecisionFor(target);
-        const isHead = decision.headJudgeId === e.id;
+        const anchorCategory = anchorClassifications.get(target.id)?.category;
+        const anchorImportable = anchorCategory === 'complete_attempt';
+        const isHead = anchorImportable && decision.headJudgeId === e.id;
         records.push({
           category: 'complete_attempt',
           source_kind: 'event',
           source_id: e.id,
           source_locator: locator,
           reason: isHead
-            ? `真实 verdict judge —— ${target.id} 的 effective imported evaluation（${decision.rule}${isAttributionPlaceholder(payload) ? '；attribution_pending：归因未完成，分数真实' : ''}）`
-            : `真实 verdict judge —— ${target.id} 的 imported evaluation 证据（非 head：${decision.ambiguous ? '并列 held' : 'legacy newest-judge-wins 未选中'}）`,
+            ? `真实值域 verdict judge —— ${target.id} 的 effective imported evaluation（${decision.rule}${isAttributionPlaceholder(payload) ? '；attribution_pending：归因未完成，分数真实' : ''}）`
+            : `真实值域 verdict judge —— ${target.id} 的 imported evaluation 证据（非 head：${anchorImportable ? (decision.ambiguous ? '并列 held' : 'legacy newest-judge-wins 未选中') : `锚不可导入（${String(anchorCategory)}）`})`,
           evidence_event_ids: [e.id, target.id],
           native_target: {
             kind: 'submission_with_imported_eval',
@@ -732,7 +751,7 @@ export function classifyMigrationCapture(capture: MigrationCapture): MigrationCl
         source_kind: 'event',
         source_id: e.id,
         source_locator: locator,
-        reason: 'judge 事件仅含 cause（无 coarse_outcome/score）—— 归因不是分数（§9）',
+        reason: 'judge 事件仅含 cause（无有效 coarse_outcome×score 判词）—— 归因不是分数（§9）',
         evidence_event_ids: [e.id, target.id],
         native_target: { kind: 'attribution_evidence_only' },
       });

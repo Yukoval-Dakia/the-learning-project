@@ -2,23 +2,21 @@ import { sha256Hex } from './canonical';
 import type { MigrationCapture, RawEventRow } from './types';
 
 // ====================================================================
-// YUK-1048 — 捕获脱敏（grounding §14 manifest 的 redacted flags 支撑）
+// YUK-1048 — 捕获脱敏（grounding §14；review 终轮 P1-4：默认拒绝）
 // ====================================================================
 //
-// D19 census 纪律是「无原始 learner 内容」；cutover 捕获默认需要原文保真
-// （迁移对账要 body），但工具必须支持 --redact 产出可外发的脱敏工件。
+// 完整 event 分区捕获带进了全部事件家族（copilot 对话、record capture、
+// 知识 propose……），一张 denylist 不可能穷举私有文本键。策略反转：
 //
-// 按【实际捕获的事件变体】的文本字段做深.walk 键名匹配（review P1-6）：
-//   - 作答文本：answer_md / user_response_md / response_md（durable pending
-//     的 submit.body 内）/ wrong_answer_md / reasoning_trace
-//   - 模型输出自由文本：cause.analysis_md / judge.feedback_md /
-//     rejudge_raw_output
-//   - 纠正理由：reason_md（correct 事件，可能含 learner 上下文）
-// 深.walk 覆盖嵌套对象/数组（submit.body、embedded judge 块等），只替换
-//【字符串值】，结构与分类 marker（source/unsupported_judge/judge_route/
-// question_snapshot 等）原样保留 —— 脱敏后分类结果不变（单测钉死）。
-// 题面（prompt_md/question_snapshot）是题面内容不是 learner 内容，按 census
-// 策略保留。
+//   【默认拒绝】event.payload 内所有未列入 SAFE_STRING_KEYS 的字符串值
+//   一律脱敏（深.walk：嵌套对象/数组；数组元素视为无键 —— id/枚举数组
+//   整体保留）；数字/布尔/对象结构原样。已知结构性子树
+//   （question_snapshot —— 题面内容非 learner 内容，且分类器要验形状）
+//   整棵保留。
+//
+//   SAFE_STRING_KEYS 只收：id/引用、枚举/标记（分类 marker）、时间戳、
+//   受控词汇键。新增事件家族缺省安全（新文本键自动被脱敏），新增 marker
+//   需显式登记（分类器只读 marker —— 测试钉死脱敏后分类不变）。
 
 /** 被替换文本的占位形状（types.ts RedactedTextPlaceholder）。 */
 export interface RedactedText {
@@ -27,26 +25,107 @@ export interface RedactedText {
   length: number;
 }
 
-/** 深.walk 命中即脱敏的字符串字段名（跨事件变体共用）。 */
-export const REDACTED_STRING_KEYS = [
-  'answer_md',
-  'user_response_md',
-  'response_md',
-  'wrong_answer_md',
-  'reasoning_trace',
-  'analysis_md',
-  'feedback_md',
-  'rejudge_raw_output',
-  'reason_md',
+/** 永不脱敏的字符串键（id/枚举/标记/时间戳/受控词汇）。 */
+export const SAFE_STRING_KEYS = [
+  // id / 引用
+  'id',
+  'run_id',
+  'question_id',
+  'subject_id',
+  'session_id',
+  'event_id',
+  'attempt_event_id',
+  'origin_event_id',
+  'source_event_id',
+  'task_run_id',
+  'caused_by_event_id',
+  'replacement_event_id',
+  'stream_item_id',
+  'paper_artifact_id',
+  'artifact_id',
+  'learning_item_id',
+  'anchor_event_id',
+  'materialized_id',
+  'ref_kind',
+  'ref_id',
+  'parent_question_id',
+  'root_question_id',
+  'parent_variant_id',
+  'knowledge_id',
+  'kc_id',
+  'cooldown_key',
+  // 枚举 / 标记（分类 marker —— 登记即受测试保护）
+  'action',
+  'actor_kind',
+  'actor_ref',
+  'subject_kind',
+  'outcome',
+  'status',
+  'kind',
+  'type',
+  'source',
+  'caller',
+  'route',
+  'judge_route',
+  'coarse_outcome',
+  'score_meaning',
+  'correction_kind',
+  'lifecycle',
+  'provenance',
+  'track',
+  'capture_mode',
+  'activity_kind',
+  'processing_status',
+  'fsrs_rating',
+  'fsrs_subject_kind',
+  'typed_state',
+  'schema_version',
+  'reconstruction_signal',
+  'surface',
+  'generated_by',
+  'enroll_outcome',
+  'record_kind',
+  'state',
+  'role',
+  'trigger',
+  'policy',
+  'chip_kind',
+  // 时间戳 / 版本
+  'submitted_at',
+  'updated_at',
+  'created_at',
+  'due_at',
+  'started_at',
+  'ended_at',
+  'last_review',
+  'decided_at',
+  'date',
+  'version',
+  'question_version',
+  'generation',
 ] as const;
 
-/** manifest.redaction.fields 的规范清单（与实现一一对应）。 */
-export function redactedFieldList(): string[] {
-  return [
-    ...REDACTED_STRING_KEYS.map((f) => `event.payload..${f}`),
-    'answer.content_md',
-    'answer.vision_extracted',
-  ];
+/** 整棵保留的结构性子树键（不深入、不脱敏）。 */
+export const SAFE_SUBTREE_KEYS = [
+  // 题面冻结快照：题面内容非 learner 内容，分类器需原形状做契约校验。
+  'question_snapshot',
+  // FSRS 状态对象（纯调度状态，无自由文本）。
+  'fsrs_state_after',
+  'fsrs_state_after_by_subject',
+] as const;
+
+/** manifest.redaction.fields 的规范描述（与实现一一对应）。 */
+export function redactedFieldPolicy(): {
+  policy: string;
+  safe_string_keys: string[];
+  safe_subtree_keys: string[];
+} {
+  return {
+    policy:
+      'default-deny: event.payload 内所有未列入 safe_string_keys 的字符串值（含嵌套对象）一律脱敏；safe_subtree_keys 子树整棵保留；数字/布尔/数组元素结构原样',
+    safe_string_keys: [...SAFE_STRING_KEYS],
+    safe_subtree_keys: [...SAFE_SUBTREE_KEYS],
+  };
 }
 
 function redactText(value: string): RedactedText {
@@ -58,9 +137,9 @@ function redactText(value: string): RedactedText {
 }
 
 /**
- * 深度键名匹配脱敏：递归遍历对象/数组，凡 own key ∈ REDACTED_STRING_KEYS 且
- * 值为 string ⇒ 替换为占位。返回新结构（输入不可变）；非字符串值（数字/
- * 对象/数组）原样保留。
+ * 深度默认拒绝脱敏：递归遍历对象；safe subtree 键整棵保留；字符串值仅当
+ * 键 ∈ SAFE_STRING_KEYS 时保留，否则替换为占位。数组逐元素递归（元素无键
+ * —— id/枚举数组整体保留）。返回新结构，输入不可变。
  */
 export function redactDeepByKey(value: unknown): unknown {
   if (Array.isArray(value)) {
@@ -71,8 +150,12 @@ export function redactDeepByKey(value: unknown): unknown {
     const record = value as Record<string, unknown>;
     for (const key of Object.keys(record)) {
       const entry = record[key];
+      if ((SAFE_SUBTREE_KEYS as readonly string[]).includes(key)) {
+        out[key] = entry;
+        continue;
+      }
       out[key] =
-        typeof entry === 'string' && (REDACTED_STRING_KEYS as readonly string[]).includes(key)
+        typeof entry === 'string' && !(SAFE_STRING_KEYS as readonly string[]).includes(key)
           ? redactText(entry)
           : redactDeepByKey(entry);
     }
