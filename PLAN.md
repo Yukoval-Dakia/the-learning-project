@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-25：sweep-4/5 派生 follow-up 批清完——1031/1032/1034/1035/1036 五 merge，1033 owner 裁决暂缓（等 1007 面板）；审计与评审派生 YUK-1037（verify-enroll 合成根 FSRS 卡 bug）/1038（生成链 reference pair 缺口）。本批未部署，生产仍为 `c89079b68`。另：YUK-1038 owner 认可五层模型方向、裁决全量迁移/任意题目/一次切换（拒绝 LIGHT 分批）；source-only implementation grounding 已落盘 `docs/planning/2026-09-24-question-assessment-implementation-grounding.md`；**D1–D19 已全部批准**，D12 Jev smoke 与 D19 只读 census 已完成；**Q20 UI preflight 与 Q21 ticket 拆分 2026-09-25 已批准**——已建 17 张依赖票 **YUK-1043–1059**（parent=YUK-1038，`ready-for-agent`，blockedBy 已落）；仅剩 ~~final implementation-ready confirmation~~ **已批准（2026-09-25）**，实施 lane 已启动（final implementation-ready confirmation 2026-09-25）：**YUK-1046 契约基座 merged** `c663147c5`（#1465）；**YUK-1044 schema merged** `93e787df6`（#1466，9 表+migrations 0104–0107+备份锁步+restore GUC 通道）；**YUK-1048 捕获/分类 merged** `76e50121b`（#1467）。**进行中**：YUK-1045 激活契约（imp-17，`tlp-wt-yuk1045-activation`）、YUK-1047 判分执行器收敛（imp-19，`tlp-wt-yuk1047-evaluator`）、YUK-1055 启动 fences/pending 翻译（imp-18，`tlp-wt-yuk1055-fences`）——三 lane 并行无写域重叠。下一批解锁：1052/1053/1054（等 1045）、1049（等 1047）、1056（等 1055）。
+> Linear 是权威 tracker；更新于 2026-09-25：sweep-4/5 派生 follow-up 批清完——1031/1032/1034/1035/1036 五 merge，1033 owner 裁决暂缓（等 1007 面板）；审计与评审派生 YUK-1037（verify-enroll 合成根 FSRS 卡 bug）/1038（生成链 reference pair 缺口）。本批未部署，生产仍为 `c89079b68`。另：YUK-1038 owner 认可五层模型方向、裁决全量迁移/任意题目/一次切换（拒绝 LIGHT 分批）；source-only implementation grounding 已落盘 `docs/planning/2026-09-24-question-assessment-implementation-grounding.md`；**D1–D19 已全部批准**，D12 Jev smoke 与 D19 只读 census 已完成；**Q20 UI preflight 与 Q21 ticket 拆分 2026-09-25 已批准**——已建 17 张依赖票 **YUK-1043–1059**（parent=YUK-1038，`ready-for-agent`，blockedBy 已落）；仅剩 ~~final implementation-ready confirmation~~ **已批准（2026-09-25）**，实施 lane 已启动（final implementation-ready confirmation 2026-09-25）：**YUK-1046 契约基座 merged** `c663147c5`（#1465）；**YUK-1044 schema merged** `93e787df6`（#1466，9 表+migrations 0104–0107+备份锁步+restore GUC 通道）；**YUK-1048 捕获/分类 merged** `76e50121b`（#1467）。**进行中**：YUK-1045 激活契约 impl `c85b01d49` → oracle 初审 **FAIL 6 P1**（verify 未绑已核态/retraction_hold 被吞/recall 绕 gate/restore 三缺陷）+ **scope 漏项**（票 AC 含 `activateEvaluation`+CAS/ABA+原子 receipt/结算/head/outbox，非仅 suspension）→ imp-22 修复+补 scope 中；YUK-1047 判分收敛（imp-21，`tlp-wt-yuk1047-evaluator`）、YUK-1055 启动 fences（imp-20，`tlp-wt-yuk1055-fences`）实施中。下一批解锁：1052/1053/1054（等 1045）、1049（等 1047）、1056（等 1055）。
 
 ## NOW
 
@@ -87,6 +87,7 @@
 
 ## PARKED
 
+- YUK-1045 初审遗留（非阻塞待归票）：claim 冲突路由未翻译 409 `claim_conflict`（question-restore.ts:49–55，当前 500/泛 conflict）；source_verify 对 part 走 child→root 锁序，与 publisher root→child 反向可能死锁（source_verify.ts:699–717）；1043 lane 已知缺口 `publishQuestionGroup` 不调 `validateStructure`（material_id 重复不被拦）。
 - 两处judge直调已核实为照片作答/独立解答一致性，不为调用形式统一机械删除，无新缺陷证据。
 - 全历史ADR审计仍未完成，不冒充全量通过；971仅覆盖三份已确认冲突的现役指引。
 - 951按ADR0063明确保留历史表/native投影及live remote ToolOperations；不是待做通用表名合并。
