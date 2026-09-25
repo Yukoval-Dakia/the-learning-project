@@ -2793,3 +2793,252 @@ describe('migration smoke — YUK-857 note verification claim', () => {
     `).rejects.toMatchObject({ code: '23503' });
   });
 });
+
+describe('migration smoke — YUK-1044 assessment contract truth source', () => {
+  const BASELINE_TAG = '0103_lush_marvel_zombies';
+  const MIGRATION_TAG = '0104_yuk1044_assessment_contract_truth';
+  let container: StartedPostgreSqlContainer;
+  let client: ReturnType<typeof postgres>;
+
+  beforeAll(async () => {
+    ensureDockerHost();
+    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    client = postgres(container.getConnectionUri(), { max: 1 });
+    for (const migration of orderedMigrations()) {
+      await applyMigrationFile(client, migration.sql);
+      if (migration.tag === BASELINE_TAG) break;
+    }
+    const migration = orderedMigrations().find((entry) => entry.tag === MIGRATION_TAG);
+    if (!migration) throw new Error(`migration ${MIGRATION_TAG} not found`);
+    await applyMigrationFile(client, migration.sql);
+  }, 120_000);
+
+  afterAll(async () => {
+    await client?.end();
+    await container?.stop();
+  });
+
+  it('creates the 9 contract truth-source tables coexisting with legacy question flat columns', async () => {
+    const rows = await client<{ table_name: string }[]>`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+        AND table_name IN (
+          'question_revision','question_group_lifecycle','question_admission_verification',
+          'assessment_issuance','evaluation_group','assessment_submission',
+          'evaluation','evaluation_effective_head','assessment_identity_mapping'
+        )
+    `;
+    expect(new Set(rows.map((row) => row.table_name))).toEqual(
+      new Set([
+        'question_revision',
+        'question_group_lifecycle',
+        'question_admission_verification',
+        'assessment_issuance',
+        'evaluation_group',
+        'assessment_submission',
+        'evaluation',
+        'evaluation_effective_head',
+        'assessment_identity_mapping',
+      ]),
+    );
+    // 旧 question 平面列保留（只读投影/回滚资产，无原始内容双写 —— §3.1）。
+    const legacyColumns = await client<{ column_name: string }[]>`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'question'
+        AND column_name IN ('prompt_md','reference_md','rubric_json','choices_md','structured')
+    `;
+    expect(new Set(legacyColumns.map((row) => row.column_name))).toEqual(
+      new Set(['prompt_md', 'reference_md', 'rubric_json', 'choices_md', 'structured']),
+    );
+  });
+
+  it('question_revision identity is (group_id, revision_ordinal), never a global content hash key', async () => {
+    const insert = (revisionId: string, ordinal: number, digest: string) => client`
+      INSERT INTO question_revision (
+        revision_id, group_id, revision_ordinal, integrity_digest,
+        structure, response_spec, scoring_basis, execution_plan,
+        availability, published_at
+      ) VALUES (
+        ${revisionId}, 'grp_smoke', ${ordinal}, ${digest},
+        '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb,
+        'general_pool', now()
+      )
+    `;
+    await insert('rev_a', 1, 'sha256:a');
+    // 同组同序数 ⇒ 唯一键拒绝（即使内容 digest 不同）。
+    await expect(insert('rev_b', 1, 'sha256:other')).rejects.toMatchObject({
+      constraint_name: 'question_revision_group_ordinal_uq',
+    });
+    // 同 digest 不同组/序数 ⇒ 允许（identity 不是全局内容 hash）。
+    await insert('rev_c', 2, 'sha256:a');
+    // ordinal >= 1 CHECK。
+    await expect(insert('rev_d', 0, 'sha256:d')).rejects.toMatchObject({
+      constraint_name: 'question_revision_ordinal_positive_ck',
+    });
+  });
+
+  it('effective head is created with initial effective=NULL / generation=0 and CAS-guarded updates', async () => {
+    await client`
+      INSERT INTO evaluation_group (evaluation_group_id, submission_ids, created_at)
+      VALUES ('eg_head', '["sub_head"]'::jsonb, now())
+    `;
+    await client`
+      INSERT INTO assessment_submission (
+        submission_id, issuance_id, revision_id, evaluation_group_id,
+        response_set, idempotency_key, submitted_at
+      ) VALUES (
+        'sub_head', 'iss_head', 'rev_a', 'eg_head',
+        '{}'::jsonb, 'idem-head', now()
+      )
+    `;
+    // §11：head 行与 submission/group 同时建立；初始 effective=NULL、generation=0。
+    await client`
+      INSERT INTO evaluation_effective_head (evaluation_group_id, submission_id, updated_at)
+      VALUES ('eg_head', 'sub_head', now())
+    `;
+    const initial = await client<{ effective_evaluation_id: string | null; generation: number }[]>`
+      SELECT effective_evaluation_id, generation FROM evaluation_effective_head
+      WHERE evaluation_group_id = 'eg_head'
+    `;
+    expect(initial[0].effective_evaluation_id).toBeNull();
+    expect(initial[0].generation).toBe(0);
+
+    await client`
+      INSERT INTO evaluation (evaluation_id, evaluation_group_id, submission_id, attempt, status, created_at)
+      VALUES ('ev_head_1', 'eg_head', 'sub_head', 1, 'completed', now())
+    `;
+    // 首次 activation：期望 (NULL, 0) —— CAS 命中。
+    const activated = await client<{ count: string }[]>`
+      UPDATE evaluation_effective_head
+      SET effective_evaluation_id = 'ev_head_1', generation = generation + 1, updated_at = now()
+      WHERE evaluation_group_id = 'eg_head'
+        AND effective_evaluation_id IS NULL AND generation = 0
+      RETURNING 1
+    `;
+    expect(activated).toHaveLength(1);
+    // 重复用旧期望 (NULL, 0) activation ⇒ 0 行（ABA/无条件覆盖防线；请求侧
+    // expected_effective_id REQUIRED null-or-id 由契约层保证）。
+    const stale = await client`
+      UPDATE evaluation_effective_head
+      SET effective_evaluation_id = 'ev_head_1', generation = generation + 1, updated_at = now()
+      WHERE evaluation_group_id = 'eg_head'
+        AND effective_evaluation_id IS NULL AND generation = 0
+      RETURNING 1
+    `;
+    expect(stale).toHaveLength(0);
+  });
+
+  it('evaluation attempts are unique per (submission, attempt); idempotency key scoped per group', async () => {
+    // attempt 1 已由上一测试的 ev_head_1 占用；attempt 2 合法。
+    await client`
+      INSERT INTO evaluation (evaluation_id, evaluation_group_id, submission_id, attempt, status, created_at)
+      VALUES ('ev_dup', 'eg_head', 'sub_head', 2, 'completed', now())
+    `;
+    await expect(client`
+      INSERT INTO evaluation (evaluation_id, evaluation_group_id, submission_id, attempt, status, created_at)
+      VALUES ('ev_dup2', 'eg_head', 'sub_head', 2, 'pending', now())
+    `).rejects.toMatchObject({ constraint_name: 'evaluation_submission_attempt_uq' });
+
+    await expect(client`
+      INSERT INTO assessment_submission (
+        submission_id, issuance_id, revision_id, evaluation_group_id,
+        response_set, idempotency_key, submitted_at
+      ) VALUES (
+        'sub_head_2', 'iss_head', 'rev_a', 'eg_head',
+        '{}'::jsonb, 'idem-head', now()
+      )
+    `).rejects.toMatchObject({ constraint_name: 'assessment_submission_group_idem_uq' });
+  });
+
+  it('identity mapping: locator NOT NULL, one ACTIVE mapping per source record, corrections preserve history', async () => {
+    const insert = (mappingId: string, status: string) => client`
+      INSERT INTO assessment_identity_mapping (
+        mapping_id, source_kind, source_id, source_locator,
+        original_question_id, algorithm_version, status, created_at
+      ) VALUES (
+        ${mappingId}, 'paper_answer', 'pa_1', 'paper.pt-slots[3]',
+        'q_legacy_1', 'map-v1', ${status}, now()
+      )
+    `;
+    // locator 非空（§3.2）。
+    await expect(client`
+      INSERT INTO assessment_identity_mapping (
+        mapping_id, source_kind, source_id, original_question_id, algorithm_version, status, created_at
+      ) VALUES ('map_nolocator', 'paper_answer', 'pa_1', 'q_legacy_1', 'map-v1', 'pending', now())
+    `).rejects.toMatchObject({ code: '23502' });
+
+    await insert('map_1', 'mapped');
+    // 同 locator 第二条活跃映射 ⇒ 拒绝。
+    await expect(insert('map_2', 'mapped')).rejects.toMatchObject({
+      constraint_name: 'assessment_identity_mapping_active_uq',
+    });
+    // 修正：旧行置 superseded（保留），新行接管 —— 历史不被覆盖。
+    await client`UPDATE assessment_identity_mapping SET status = 'superseded' WHERE mapping_id = 'map_1'`;
+    await insert('map_2', 'mapped');
+    // superseded 历史行仍在。
+    const rows = await client<{ mapping_id: string; status: string }[]>`
+      SELECT mapping_id, status FROM assessment_identity_mapping
+      WHERE source_kind = 'paper_answer' AND source_id = 'pa_1'
+      ORDER BY mapping_id
+    `;
+    expect(rows.map((row) => [row.mapping_id, row.status])).toEqual([
+      ['map_1', 'superseded'],
+      ['map_2', 'mapped'],
+    ]);
+    // historical_unresolved 是原生状态（未恢复的旧记录不冒充任何映射结论）。
+    await expect(
+      client`
+        INSERT INTO assessment_identity_mapping (
+          mapping_id, source_kind, source_id, source_locator,
+          original_question_id, algorithm_version, status, created_at
+        ) VALUES (
+          'map_hist', 'paper_answer', 'pa_2', 'paper.pt-slots[9]',
+          'q_legacy_2', 'map-v1', 'historical_unresolved', now()
+        )
+      `,
+    ).resolves.toBeDefined();
+  });
+
+  it('admission verification records (revision_id, digest, policy, generation); group lifecycle carries the split dimensions', async () => {
+    await client`
+      INSERT INTO question_admission_verification (
+        id, revision_id, revision_digest, policy_id, generation, outcome, recorded_at
+      ) VALUES ('v1', 'rev_a', 'sha256:a', 'admission-policy@2026-09-24', 1, 'passed', now())
+    `;
+    const rows = await client<{ revision_id: string; outcome: string; generation: number }[]>`
+      SELECT revision_id, outcome, generation FROM question_admission_verification WHERE id = 'v1'
+    `;
+    expect(rows[0]).toMatchObject({ revision_id: 'rev_a', outcome: 'passed', generation: 1 });
+
+    await client`
+      INSERT INTO question_group_lifecycle (
+        group_id, current_revision_id, availability,
+        scoring_admission_state, scoring_admission_generation, claim_policy, created_at, updated_at
+      ) VALUES ('grp_smoke', 'rev_a', 'general_pool', 'admitted', 1, 'unbounded', now(), now())
+    `;
+    // draft_status 语义拆分维度落位：挂起 ≠ 撤回，独立列。
+    const lifecycle = await client<
+      {
+        suspended: boolean;
+        suspension_reason: string | null;
+        withdrawn: boolean;
+        withdrawn_at: Date | null;
+      }[]
+    >`
+      SELECT suspended, suspension_reason, withdrawn, withdrawn_at
+      FROM question_group_lifecycle WHERE group_id = 'grp_smoke'
+    `;
+    expect(lifecycle[0]).toMatchObject({
+      suspended: false,
+      suspension_reason: null,
+      withdrawn: false,
+      withdrawn_at: null,
+    });
+    await expect(client`
+      UPDATE question_group_lifecycle SET suspension_reason = 'verify_hold' WHERE group_id = 'grp_smoke'
+    `).resolves.toBeDefined();
+    await expect(client`
+      UPDATE question_group_lifecycle SET suspension_reason = 'mood' WHERE group_id = 'grp_smoke'
+    `).rejects.toMatchObject({ constraint_name: 'question_group_lifecycle_suspension_reason_ck' });
+  });
+});

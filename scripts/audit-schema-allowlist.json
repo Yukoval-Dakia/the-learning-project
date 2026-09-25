@@ -1370,5 +1370,685 @@
       "ref": "F4.1 quantitative architecture audit decides historical misconception reconciliation table retention",
       "expected_by": "2026-11-30"
     }
+  },
+  "question_revision.revision_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_revision.group_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_revision.revision_ordinal": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_revision.integrity_digest": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_revision.structure": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_revision.response_spec": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_revision.scoring_basis": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_revision.execution_plan": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_revision.supersedes_revision_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_revision.availability": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_revision.published_by": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_revision.published_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_group_lifecycle.group_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_group_lifecycle.current_revision_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_group_lifecycle.availability": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_group_lifecycle.scoring_admission_state": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_group_lifecycle.scoring_admission_evidence": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_group_lifecycle.scoring_admission_generation": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_group_lifecycle.claim_policy": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_group_lifecycle.suspended": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_group_lifecycle.suspension_reason": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_group_lifecycle.withdrawn": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_group_lifecycle.withdrawn_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_group_lifecycle.created_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_group_lifecycle.updated_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_admission_verification.id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_admission_verification.revision_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_admission_verification.revision_digest": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_admission_verification.policy_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_admission_verification.generation": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_admission_verification.outcome": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_admission_verification.evidence": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "question_admission_verification.recorded_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_issuance.issuance_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_issuance.revision_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_issuance.part_ids": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_issuance.material_bindings": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_issuance.option_order": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_issuance.container_occurrence_ref": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_issuance.claim_policy": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_issuance.claim_status": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_issuance.claimed_by_ref": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_issuance.issued_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "evaluation_group.evaluation_group_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "evaluation_group.submission_ids": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "evaluation_group.created_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_submission.submission_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_submission.issuance_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_submission.revision_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_submission.evaluation_group_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_submission.response_set": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_submission.group_evidence": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_submission.idempotency_key": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_submission.submitted_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "evaluation.evaluation_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "evaluation.evaluation_group_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "evaluation.submission_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "evaluation.attempt": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "evaluation.status": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "evaluation.unit_results": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "evaluation.aggregate": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "evaluation.plan_digest": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "evaluation.run_refs": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "evaluation.provenance": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "evaluation.created_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "evaluation_effective_head.evaluation_group_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "evaluation_effective_head.submission_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "evaluation_effective_head.effective_evaluation_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "evaluation_effective_head.generation": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "evaluation_effective_head.updated_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_identity_mapping.mapping_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_identity_mapping.source_kind": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_identity_mapping.source_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_identity_mapping.source_locator": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_identity_mapping.original_question_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_identity_mapping.legacy_part_ref": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_identity_mapping.snapshot_digest": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_identity_mapping.target_revision_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_identity_mapping.target_part_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_identity_mapping.target_slot_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_identity_mapping.evidence": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_identity_mapping.algorithm_version": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_identity_mapping.status": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_identity_mapping.supersedes_mapping_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
+  },
+  "assessment_identity_mapping.created_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: the assessment contract truth-source tables ship before their writers. INSERT/UPDATE write paths land with the producer/evaluator/issuance/settlement lanes per the YUK-1038 §17 work DAG; until then these columns have no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1047+ assessment producer/evaluator/issuance lanes land the contract write paths",
+      "expected_by": "2027-06-30"
+    }
   }
 }

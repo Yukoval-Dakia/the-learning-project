@@ -18,6 +18,22 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import type { z } from 'zod';
+// YUK-1044 — 统一评估契约真相源表的 jsonb 列形状（type-only，运行时零依赖：
+// schema.ts 保持 zod-free）。真相源：docs/planning/2026-09-24-question-assessment-
+// implementation-grounding.md §3/§11 + src/core/schema/assessment（YUK-1046 契约基座）。
+import type {
+  AdmissionEvidenceT,
+  AggregateOutcomeT,
+  ExecutionPlanT,
+  GroupEvidenceT,
+  IssuedMaterialBindingT,
+  IssuedOptionOrderT,
+  QuestionGroupStructureT,
+  ResponseSetT,
+  ResponseSpecT,
+  ScoringBasisT,
+  ScoringUnitResultT,
+} from '../core/schema/assessment';
 import type {
   AgentRef,
   ArtifactBodyBlocks,
@@ -499,6 +515,314 @@ export const question = pgTable(
     uniqueIndex('question_canonical_content_hash_unique')
       .on(t.canonical_content_hash)
       .where(sql`${t.canonical_content_hash} IS NOT NULL`),
+  ],
+);
+
+// ====================================================================
+// YUK-1044 — 统一评估契约真相源（grounding §3、§11；契约类型见
+// src/core/schema/assessment（YUK-1046））。DDL-only：本票只建真相源表，
+// 不新增任何写路径（写者归 producer/evaluator lanes）；旧 question 平面列
+// 保留为只读投影与回滚资产 —— 无原始内容双写设计（§3.1）。
+// ====================================================================
+
+/**
+ * 不可变发布版本：属于 group root（单题 = 1-part 组）。唯一键
+ * (group_id, revision_ordinal) —— 不是全局内容 hash（§3.1）。
+ * integrity_digest 覆盖材料/资产 digest、内容、作答契约、评分依据与执行
+ * 计划引用，永不因 archive 改变（§3.2）。无 updated_at：行一旦写入不可变；
+ * 修正 = 新 revision + supersedes 链，历史提交仍绑定原版（§3.3 表）。
+ * availability 在发布时选定副本（scope 快照）；可变生命周期在
+ * question_group_lifecycle。
+ */
+export const question_revision = pgTable(
+  'question_revision',
+  {
+    revision_id: text('revision_id').primaryKey(),
+    group_id: text('group_id').notNull(),
+    revision_ordinal: integer('revision_ordinal').notNull(),
+    integrity_digest: text('integrity_digest').notNull(),
+    structure: jsonb('structure').$type<QuestionGroupStructureT>().notNull(),
+    response_spec: jsonb('response_spec').$type<ResponseSpecT>().notNull(),
+    scoring_basis: jsonb('scoring_basis').$type<ScoringBasisT>().notNull(),
+    execution_plan: jsonb('execution_plan').$type<ExecutionPlanT>().notNull(),
+    supersedes_revision_id: text('supersedes_revision_id'),
+    availability: text('availability', {
+      enum: ['general_pool', 'container_only'],
+    }).notNull(),
+    published_by: jsonb('published_by').$type<AgentRefT>(),
+    published_at: timestamp('published_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    uniqueIndex('question_revision_group_ordinal_uq').on(t.group_id, t.revision_ordinal),
+    index('question_revision_integrity_digest_idx').on(t.integrity_digest),
+    check(
+      'question_revision_availability_ck',
+      sql`${t.availability} IN ('general_pool','container_only')`,
+    ),
+    check('question_revision_ordinal_positive_ck', sql`${t.revision_ordinal} >= 1`),
+  ],
+);
+
+/**
+ * group root 的可变生命周期权威（§3.2/§3.3）—— draft_status 语义拆分后的
+ * 独立维度落位：current pointer / pool-vs-container / 评分准入（含 generation）/
+ * claim 政策 / 挂起 / 撤回。新 revision、current pointer 与发布事件同事务
+ * 提交（§3.1）；archive 释放 live 去重 claim，不清除历史摘要/绑定。
+ */
+export const question_group_lifecycle = pgTable(
+  'question_group_lifecycle',
+  {
+    group_id: text('group_id').primaryKey(),
+    current_revision_id: text('current_revision_id'),
+    availability: text('availability', {
+      enum: ['general_pool', 'container_only'],
+    }).notNull(),
+    scoring_admission_state: text('scoring_admission_state', {
+      enum: ['admitted', 'withheld'],
+    }).notNull(),
+    scoring_admission_evidence: jsonb('scoring_admission_evidence').$type<AdmissionEvidenceT>(),
+    scoring_admission_generation: integer('scoring_admission_generation').notNull().default(0),
+    claim_policy: text('claim_policy', {
+      enum: ['one_time', 'unbounded'],
+    }).notNull(),
+    suspended: boolean('suspended').notNull().default(false),
+    suspension_reason: text('suspension_reason', {
+      enum: ['verify_hold', 'retraction_hold'],
+    }),
+    withdrawn: boolean('withdrawn').notNull().default(false),
+    withdrawn_at: timestamp('withdrawn_at', { withTimezone: true }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index('question_group_lifecycle_current_revision_idx').on(t.current_revision_id),
+    check(
+      'question_group_lifecycle_availability_ck',
+      sql`${t.availability} IN ('general_pool','container_only')`,
+    ),
+    check(
+      'question_group_lifecycle_admission_state_ck',
+      sql`${t.scoring_admission_state} IN ('admitted','withheld')`,
+    ),
+    check(
+      'question_group_lifecycle_claim_policy_ck',
+      sql`${t.claim_policy} IN ('one_time','unbounded')`,
+    ),
+    check(
+      'question_group_lifecycle_suspension_reason_ck',
+      sql`${t.suspension_reason} IN ('verify_hold','retraction_hold')`,
+    ),
+    check(
+      'question_group_lifecycle_admission_generation_ck',
+      sql`${t.scoring_admission_generation} >= 0`,
+    ),
+  ],
+);
+
+/**
+ * 新式 verify 记录（§3.3）：保存 (revision_id, digest, policy, generation)。
+ * append-only —— 旧验证可留证据，但不能改变新 revision 或较新 admission
+ * 决定；复核/解除通过追加新记录表达，绝不 UPDATE 旧行。
+ */
+export const question_admission_verification = pgTable(
+  'question_admission_verification',
+  {
+    id: text('id').primaryKey(),
+    revision_id: text('revision_id').notNull(),
+    revision_digest: text('revision_digest').notNull(),
+    policy_id: text('policy_id').notNull(),
+    generation: integer('generation').notNull(),
+    outcome: text('outcome', {
+      enum: ['passed', 'suspended', 'failed'],
+    }).notNull(),
+    evidence: jsonb('evidence').$type<JsonObject>().notNull().default({}),
+    recorded_at: timestamp('recorded_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index('question_admission_verification_revision_idx').on(t.revision_id, t.generation),
+    check(
+      'question_admission_verification_outcome_ck',
+      sql`${t.outcome} IN ('passed','suspended','failed')`,
+    ),
+    check('question_admission_verification_generation_ck', sql`${t.generation} >= 0`),
+  ],
+);
+
+/**
+ * 发题（serve-time binding，§3.1）：发题时冻结 revision、目标 part、实际
+ * 材料 digest 与选项呈现映射 —— 提交时不得再取 latest。claim 状态在此行
+ * （one_time 用于诊断/probe/教学一次性占用；§3.3）。
+ */
+export const assessment_issuance = pgTable(
+  'assessment_issuance',
+  {
+    issuance_id: text('issuance_id').primaryKey(),
+    revision_id: text('revision_id').notNull(),
+    part_ids: jsonb('part_ids').$type<string[]>().notNull(),
+    material_bindings: jsonb('material_bindings')
+      .$type<IssuedMaterialBindingT[]>()
+      .notNull()
+      .default([]),
+    option_order: jsonb('option_order').$type<IssuedOptionOrderT[]>().notNull().default([]),
+    container_occurrence_ref: text('container_occurrence_ref'),
+    claim_policy: text('claim_policy', {
+      enum: ['one_time', 'unbounded'],
+    }).notNull(),
+    claim_status: text('claim_status', {
+      enum: ['unclaimed', 'claimed', 'released'],
+    }).notNull(),
+    claimed_by_ref: text('claimed_by_ref'),
+    issued_at: timestamp('issued_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index('assessment_issuance_revision_idx').on(t.revision_id),
+    index('assessment_issuance_container_ref_idx').on(t.container_occurrence_ref),
+    check(
+      'assessment_issuance_claim_policy_ck',
+      sql`${t.claim_policy} IN ('one_time','unbounded')`,
+    ),
+    check(
+      'assessment_issuance_claim_status_ck',
+      sql`${t.claim_status} IN ('unclaimed','claimed','released')`,
+    ),
+  ],
+);
+
+/** 联合判分组：一次 settle 的单位（solo 单题 = 单 submission 组）。 */
+export const evaluation_group = pgTable(
+  'evaluation_group',
+  {
+    evaluation_group_id: text('evaluation_group_id').primaryKey(),
+    submission_ids: jsonb('submission_ids').$type<string[]>().notNull(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    // 空组无意义：至少一个 submission 才能结算（DB 层兑底，app 层仍先校验）。
+    check(
+      'evaluation_group_submission_ids_nonempty_ck',
+      sql`jsonb_array_length(${t.submission_ids}) >= 1`,
+    ),
+  ],
+);
+
+/**
+ * 已接收作答（D5 守恒/零丢失）：ResponseSet + group 证据原样冻结；
+ * rejudge/appeal 只重解读原证据（D8），不改写本行。幂等键按 occurrence
+ * （evaluation_group）作用域唯一：同 key 不同载荷 ⇒ 冲突而非覆盖。
+ */
+export const assessment_submission = pgTable(
+  'assessment_submission',
+  {
+    submission_id: text('submission_id').primaryKey(),
+    issuance_id: text('issuance_id').notNull(),
+    revision_id: text('revision_id').notNull(),
+    evaluation_group_id: text('evaluation_group_id').notNull(),
+    response_set: jsonb('response_set').$type<ResponseSetT>().notNull(),
+    group_evidence: jsonb('group_evidence').$type<GroupEvidenceT[]>().notNull().default([]),
+    idempotency_key: text('idempotency_key').notNull(),
+    submitted_at: timestamp('submitted_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    uniqueIndex('assessment_submission_group_idem_uq').on(t.evaluation_group_id, t.idempotency_key),
+    index('assessment_submission_issuance_idx').on(t.issuance_id),
+    index('assessment_submission_revision_idx').on(t.revision_id),
+  ],
+);
+
+/**
+ * 评估尝试（candidate 记录）：一份 submission 可有多个 attempt（重试身份 ≠
+ * 学习事实身份）；candidate/shadow 永不进 latest-judge 显示通道 —— 生效与
+ * 否只由 evaluation_effective_head 表达。provenance 承载 D9/D15/D16 来源
+ * （automatic/manual/self_report + assisted）。
+ */
+export const evaluation = pgTable(
+  'evaluation',
+  {
+    evaluation_id: text('evaluation_id').primaryKey(),
+    evaluation_group_id: text('evaluation_group_id').notNull(),
+    submission_id: text('submission_id').notNull(),
+    attempt: integer('attempt').notNull(),
+    status: text('status', {
+      enum: ['pending', 'completed'],
+    }).notNull(),
+    unit_results: jsonb('unit_results').$type<ScoringUnitResultT[]>().notNull().default([]),
+    aggregate: jsonb('aggregate').$type<AggregateOutcomeT>(),
+    plan_digest: text('plan_digest'),
+    run_refs: jsonb('run_refs').$type<string[]>().notNull().default([]),
+    provenance: jsonb('provenance').$type<JsonObject>(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    uniqueIndex('evaluation_submission_attempt_uq').on(t.submission_id, t.attempt),
+    index('evaluation_group_idx').on(t.evaluation_group_id),
+    check('evaluation_status_ck', sql`${t.status} IN ('pending','completed')`),
+    check('evaluation_attempt_positive_ck', sql`${t.attempt} >= 1`),
+  ],
+);
+
+/**
+ * 有效判定 head（§11）：创建 submission/group 时同事务建立对应 head 行；
+ * 初始 effective_evaluation_id = NULL、generation = 0；每次有效 activation
+ * 原子 +1。activation 请求必带 expected_effective_id（null-or-id）与
+ * expected_generation（请求契约见 core/schema/assessment/ids.ts ——
+ * REQUIRED，禁止省略当无条件覆盖，防 ABA）。
+ */
+export const evaluation_effective_head = pgTable(
+  'evaluation_effective_head',
+  {
+    evaluation_group_id: text('evaluation_group_id').primaryKey(),
+    submission_id: text('submission_id').notNull(),
+    effective_evaluation_id: text('effective_evaluation_id'),
+    generation: integer('generation').notNull().default(0),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index('evaluation_effective_head_submission_idx').on(t.submission_id),
+    check('evaluation_effective_head_generation_ck', sql`${t.generation} >= 0`),
+  ],
+);
+
+/**
+ * 历史身份映射（§3.2）：按【原始记录发生上下文】识别 ——
+ * UNIQUE(source_kind, source_id, source_locator)，locator 非空；不用
+ * (question_id, nullable part_ref) 当 PK（PK 不能含 NULL，且无法区分同题
+ * 不同历史版本）。修正追加新行并链 supersedes_mapping_id，旧行保留（证据
+ * 不覆盖）；未能恢复的旧记录进入原生 historical_unresolved 状态，仍可查看
+ * 原始证据，不得拿当前题面补造当时所见。
+ *
+ * 活跃映射唯一性（同 locator 只允许一条非 superseded 行）由部分唯一索引
+ * assessment_identity_mapping_active_uq 保证 —— drizzle-kit 不 emitted
+ * partial index，该索引声明在迁移 SQL（同 0028 answer_draft_slot_uk 先例），
+ * 不入表定义以免 db:generate 不完整重发。
+ */
+export const assessment_identity_mapping = pgTable(
+  'assessment_identity_mapping',
+  {
+    mapping_id: text('mapping_id').primaryKey(),
+    source_kind: text('source_kind').notNull(),
+    source_id: text('source_id').notNull(),
+    source_locator: text('source_locator').notNull(),
+    original_question_id: text('original_question_id').notNull(),
+    legacy_part_ref: text('legacy_part_ref'),
+    snapshot_digest: text('snapshot_digest'),
+    target_revision_id: text('target_revision_id'),
+    target_part_id: text('target_part_id'),
+    target_slot_id: text('target_slot_id'),
+    evidence: jsonb('evidence').$type<JsonObject>().notNull().default({}),
+    algorithm_version: text('algorithm_version').notNull(),
+    status: text('status', {
+      enum: ['pending', 'mapped', 'conflicted', 'historical_unresolved', 'superseded'],
+    }).notNull(),
+    supersedes_mapping_id: text('supersedes_mapping_id'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index('assessment_identity_mapping_question_idx').on(t.original_question_id),
+    index('assessment_identity_mapping_target_revision_idx').on(t.target_revision_id),
+    check(
+      'assessment_identity_mapping_status_ck',
+      sql`${t.status} IN ('pending','mapped','conflicted','historical_unresolved','superseded')`,
+    ),
   ],
 );
 
