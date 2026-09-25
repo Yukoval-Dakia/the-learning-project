@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { EvidenceAcceptanceRule, EvidenceAttachment } from './materials';
+import type { QuestionGroupStructureT } from './structure';
 
 // ====================================================================
 // YUK-1046 — 五层模型 · 第二层：作答要求 ResponseSpec（grounding §4.4、§7.2）
@@ -44,11 +45,16 @@ export const SlotPlacement = z.object({
 export type SlotPlacementT = z.infer<typeof SlotPlacement>;
 
 const SlotId = z.string().min(1);
+const PartId = z.string().min(1);
 
 // ---------- 槽位原语（discriminated on `kind`） ----------
 
+// P1-6（YUK-1046 复审）：每个槽位显式声明所属 part —— issuance 选择 part 子集时，
+// 投影只包含该范围内的槽位；不得从数组顺序或题面文本推断归属。
 const slotBase = {
   slot_id: SlotId,
+  /** 所属题目部分（part_id 引用 structure.parts；validateResponseSpec 校验解析）。 */
+  part_id: PartId,
   placement: SlotPlacement.optional(),
 } as const;
 
@@ -182,8 +188,9 @@ export const TextResponse = z.object({
 export const NumericResponse = z.object({
   slot_id: SlotId,
   kind: z.literal('numeric'),
-  /** null = 主动空白。 */
+  /** null = 未解析出数值。是否算【主动空白】取决于 raw_input：见 isBlankSlotResponse。 */
   value: z.number().nullable(),
+  /** 学习者原始输入；非空且 value=null ⇒ 未解析（不可当空白计零，P1-4）。 */
   raw_input: z.string().optional(),
 });
 
@@ -249,12 +256,19 @@ export interface ResponseSpecIssue {
     | 'unresolved_cell_slot'
     | 'cell_references_table'
     | 'duplicate_cell_coord'
-    | 'table_bounds';
+    | 'table_bounds'
+    | 'unresolved_part_ref';
   detail: string;
 }
 
-/** 纯校验：ResponseSpec 自身一致性（身份唯一、引用可解析、约束自洽）。 */
-export function validateResponseSpec(spec: ResponseSpecT): ResponseSpecIssue[] {
+/**
+ * 纯校验：ResponseSpec 自身一致性（身份唯一、引用可解析、约束自洽）。
+ * 传入 structure 时同时校验 slot.part_id 可解析（P1-6 part 作用域）。
+ */
+export function validateResponseSpec(
+  spec: ResponseSpecT,
+  structure?: QuestionGroupStructureT,
+): ResponseSpecIssue[] {
   const issues: ResponseSpecIssue[] = [];
   const slotIds = new Set<string>();
   const choiceOptionIds = new Map<string, Set<string>>();
@@ -307,10 +321,18 @@ export function validateResponseSpec(spec: ResponseSpecT): ResponseSpecIssue[] {
         itemIds.add(item.item_id);
       }
       if (slot.kind === 'matching') {
-        choiceOptionIds.set(
-          slot.slot_id,
-          new Set(slot.right_options.map((option) => option.option_id)),
-        );
+        // P2：右选项 option_id 重复也必须拦截（与 choice 同纪律）。
+        const rightOptionIds = new Set<string>();
+        for (const option of slot.right_options) {
+          if (rightOptionIds.has(option.option_id)) {
+            issues.push({
+              code: 'duplicate_option_id',
+              detail: `slot '${slot.slot_id}' repeats right option_id '${option.option_id}'`,
+            });
+          }
+          rightOptionIds.add(option.option_id);
+        }
+        choiceOptionIds.set(slot.slot_id, rightOptionIds);
         for (const option of slot.right_options) {
           if (itemIds.has(option.option_id)) {
             issues.push({
@@ -319,6 +341,15 @@ export function validateResponseSpec(spec: ResponseSpecT): ResponseSpecIssue[] {
             });
           }
         }
+      }
+    }
+    if (structure != null) {
+      const partIds = new Set(structure.parts.map((part) => part.part_id));
+      if (!partIds.has(slot.part_id)) {
+        issues.push({
+          code: 'unresolved_part_ref',
+          detail: `slot '${slot.slot_id}' references unknown part '${slot.part_id}'`,
+        });
       }
     }
     if (slot.kind === 'table') {
@@ -364,13 +395,24 @@ export function validateResponseSpec(spec: ResponseSpecT): ResponseSpecIssue[] {
   return issues;
 }
 
-/** spec 中存在、但 ResponseSet 中【没有条目】的槽位 = missing（非空白）。 */
+/**
+ * spec 中存在、但 ResponseSet 中【没有条目】的【可作答】槽位 = missing（非空白）。
+ * 表格是布局容器（P1-5）：不直接作答，不参与完整性判定 —— 每格子槽各自计。
+ */
 export function missingSlotIds(spec: ResponseSpecT, responseSet: ResponseSetT): string[] {
   const answered = new Set(responseSet.entries.map((entry) => entry.slot_id));
-  return spec.slots.map((slot) => slot.slot_id).filter((id) => !answered.has(id));
+  return spec.slots
+    .filter((slot) => slot.kind !== 'table')
+    .map((slot) => slot.slot_id)
+    .filter((id) => !answered.has(id));
 }
 
-/** 主动空白判定（显式空值；与 missing —— 缺条目 —— 严格区分）。 */
+/**
+ * 主动空白判定（显式空值；与 missing —— 缺条目 —— 严格区分）。
+ * 数值槽（P1-4）：value=null 且 raw_input 为空才算空白；
+ * value=null 但 raw_input 非空 = 【未解析】，不是空白 —— 不得进计零路径，
+ * 应由执行器给出 unparseable_response 未决态。既不造数也不丢原文。
+ */
 export function isBlankSlotResponse(entry: SlotResponseT): boolean {
   switch (entry.kind) {
     case 'choice':
@@ -378,7 +420,7 @@ export function isBlankSlotResponse(entry: SlotResponseT): boolean {
     case 'text':
       return entry.text_md.trim().length === 0;
     case 'numeric':
-      return entry.value === null;
+      return entry.value === null && (entry.raw_input ?? '').trim().length === 0;
     case 'formula':
       return entry.latex.trim().length === 0;
     case 'matching':
@@ -398,7 +440,8 @@ export interface ResponseSetIssue {
     | 'unknown_option_id'
     | 'unknown_item_id'
     | 'duplicate_pair_item'
-    | 'ordering_not_permutation';
+    | 'ordering_not_permutation'
+    | 'single_choice_multiple_selection';
   detail: string;
 }
 
@@ -468,6 +511,13 @@ export function validateResponseSet(
             detail: `slot '${entry.slot_id}' response references unknown option '${optionId}'`,
           });
         }
+      }
+      // P2：单选槽收到多个选择是结构性错误（空白 = 0 个；多选 = 换 multi 原语）。
+      if (slot.kind === 'single_choice' && entry.option_ids.length > 1) {
+        issues.push({
+          code: 'single_choice_multiple_selection',
+          detail: `slot '${entry.slot_id}' is single_choice but received ${entry.option_ids.length} selections`,
+        });
       }
     }
     if (entry.kind === 'matching' && slot.kind === 'matching') {

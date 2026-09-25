@@ -82,12 +82,14 @@ export type AssessmentIssuanceT = z.infer<typeof AssessmentIssuance>;
 
 export interface IssuanceBindingIssue {
   code:
+    | 'revision_mismatch'
     | 'unknown_part'
     | 'duplicate_part_binding'
     | 'unknown_material_binding'
     | 'unbound_part_material'
     | 'unknown_option_order_slot'
     | 'option_order_not_permutation'
+    | 'option_order_slot_out_of_scope'
     | 'missing_option_order';
   detail: string;
 }
@@ -102,6 +104,16 @@ export function validateIssuanceBinding(
   revision: PublishedQuestionRevisionT,
 ): IssuanceBindingIssue[] {
   const issues: IssuanceBindingIssue[] = [];
+  // P1-2：issuance 绑定的 revision 必须就是被校验的 revision ——
+  // 拿 r1 的绑定去校验 r2 必须当场报错，不得静默放行（否则 DTO 会把 r2
+  // 冒充学生所见）。
+  if (binding.revision_id !== revision.revision_id) {
+    issues.push({
+      code: 'revision_mismatch',
+      detail: `binding targets revision '${binding.revision_id}' but was validated against '${revision.revision_id}'`,
+    });
+    return issues; // 身份都不对，后续校验无意义 —— fail fast。
+  }
   const structure: QuestionGroupStructureT = revision.structure;
 
   const partIds = new Set(structure.parts.map((part) => part.part_id));
@@ -152,10 +164,13 @@ export function validateIssuanceBinding(
     }
   }
 
-  const choiceSlots = revision.response_spec.slots.filter(
-    (slot) =>
-      slot.kind === 'single_choice' || slot.kind === 'multi_choice' || slot.kind === 'matching',
-  );
+  // P1-6：只校验【发出范围内】的选择槽（slot.part_id ∈ binding.part_ids）。
+  const choiceSlots = revision.response_spec.slots
+    .filter(
+      (slot) =>
+        slot.kind === 'single_choice' || slot.kind === 'multi_choice' || slot.kind === 'matching',
+    )
+    .filter((slot) => boundParts.has(slot.part_id));
   const orderBySlot = new Map(binding.option_order.map((entry) => [entry.slot_id, entry] as const));
 
   for (const slot of choiceSlots) {
@@ -186,11 +201,20 @@ export function validateIssuanceBinding(
     }
     orderBySlot.delete(slot.slot_id);
   }
-  for (const staleSlotId of orderBySlot.keys()) {
-    issues.push({
-      code: 'unknown_option_order_slot',
-      detail: `option_order references non-choice or unknown slot '${staleSlotId}'`,
-    });
+  for (const [staleSlotId, entry] of orderBySlot) {
+    // 在 spec 中但不在发出范围内：跨 scope 的呈现映射，拒绝。
+    const knownSlot = revision.response_spec.slots.find((slot) => slot.slot_id === staleSlotId);
+    if (knownSlot != null && !boundParts.has(knownSlot.part_id)) {
+      issues.push({
+        code: 'option_order_slot_out_of_scope',
+        detail: `option_order references slot '${staleSlotId}' outside the issued part scope`,
+      });
+    } else {
+      issues.push({
+        code: 'unknown_option_order_slot',
+        detail: `option_order references non-choice or unknown slot '${staleSlotId}' (order=${entry.option_ids.join(',')})`,
+      });
+    }
   }
   return issues;
 }

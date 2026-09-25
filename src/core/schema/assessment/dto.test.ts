@@ -53,6 +53,7 @@ function revision(): PublishedQuestionRevisionT {
       slots: [
         {
           slot_id: 'mc',
+          part_id: 'p1',
           kind: 'single_choice',
           options: [
             { option_id: 'o1', label: 'A', text: '0.5 A' },
@@ -183,6 +184,56 @@ describe('PracticeIssuanceDto — 公开面是 strict schema，不是渲染约�
       validateIssuanceBinding(shuffledSubset.binding, revision()).map((issue) => issue.code),
     ).toContain('option_order_not_permutation');
   });
+
+  it('P1-2: an r1 binding validated against r2 is rejected — no silent revision drift', () => {
+    const r1Binding = AssessmentIssuance.parse({
+      ...issuance(),
+      binding: { ...issuance().binding, revision_id: 'rev_6' },
+    });
+    const issues = validateIssuanceBinding(r1Binding.binding, revision());
+    expect(issues.map((issue) => issue.code)).toEqual(['revision_mismatch']);
+    // fail-closed：投影层直接抛错，绝不把 r2 冒充学生所见。
+    expect(() => projectPracticeIssuance(revision(), r1Binding)).toThrow(/revision_mismatch/);
+  });
+
+  it('P1-2: projection reflects the FROZEN served option order, not the declared order', () => {
+    const reversed = AssessmentIssuance.parse({
+      ...issuance(),
+      binding: {
+        revision_id: 'rev_7',
+        part_ids: ['p1'],
+        material_bindings: [{ material_id: 'mat_fig', asset_digest: 'sha256:fig' }],
+        option_order: [{ slot_id: 'mc', option_ids: ['o3', 'o2', 'o1'] }],
+      },
+    });
+    expect(validateIssuanceBinding(reversed.binding, revision())).toEqual([]);
+    const dto = projectPracticeIssuance(revision(), reversed);
+    const slot = dto.response_spec.slots[0];
+    if (slot.kind !== 'single_choice') throw new Error('fixture corrupted');
+    expect(slot.options.map((option) => option.option_id)).toEqual(['o3', 'o2', 'o1']);
+
+    // 默认（声明顺序）绑定：呈现与声明一致，不 shuffle。
+    const dtoDefault = projectPracticeIssuance(revision(), issuance());
+    const slotDefault = dtoDefault.response_spec.slots[0];
+    if (slotDefault.kind !== 'single_choice') throw new Error('fixture corrupted');
+    expect(slotDefault.options.map((option) => option.option_id)).toEqual(['o1', 'o2', 'o3']);
+  });
+
+  it('P1-2: any binding issue makes the projection fail closed', () => {
+    const stale = AssessmentIssuance.parse({
+      ...issuance(),
+      binding: {
+        revision_id: 'rev_7',
+        part_ids: ['p1'],
+        material_bindings: [{ material_id: 'mat_fig', asset_digest: 'sha256:stale' }],
+        option_order: [{ slot_id: 'mc', option_ids: ['o1', 'o2', 'o3'] }],
+      },
+    });
+    expect(validateIssuanceBinding(stale.binding, revision()).map((i) => i.code)).toContain(
+      'unknown_material_binding',
+    );
+    expect(() => projectPracticeIssuance(revision(), stale)).toThrow(/unknown_material_binding/);
+  });
 });
 
 describe('AssessmentFeedbackDto — 按可见性 policy 揭示', () => {
@@ -275,6 +326,86 @@ describe('AssessmentFeedbackDto — 按可见性 policy 揭示', () => {
     });
     // option_set_key 无规则文本 —— 规则类 criterion 才有 rubric 揭示
     expect(rubricOnly.rubric_explanations).toEqual([]);
+  });
+
+  it('P1-3: answer keys expose rule/level IDENTITIES only — rubric text stays behind the rubric flag', () => {
+    const { submission, evaluation } = records();
+    const rev = revision();
+    // 给 fixture 追加一个 rule_reference 单元和一个 holistic 单元（含私有描述符）。
+    const withRubricUnits: typeof rev = {
+      ...rev,
+      scoring_basis: {
+        ...rev.scoring_basis,
+        units: [
+          ...rev.scoring_basis.units,
+          {
+            scoring_unit_id: 'u_rule',
+            slot_refs: ['mc'],
+            material_refs: [],
+            evidence_slot_refs: [],
+            requires_group_evidence: false,
+            criterion: {
+              kind: 'rule_reference',
+              rule_id: 'rule_secret_1',
+              statement_md: '私有规则原文：答 B 且过程含欧姆定律推导给全分……',
+              source: 'official',
+            },
+            points: 5,
+          },
+          {
+            scoring_unit_id: 'u_level',
+            slot_refs: ['mc'],
+            material_refs: [],
+            evidence_slot_refs: [],
+            requires_group_evidence: false,
+            criterion: {
+              kind: 'holistic_level',
+              levels: [
+                { level_id: 'lvl_a', descriptor_md: '私有档位描述：论证完整', rank: 1 },
+                { level_id: 'lvl_b', descriptor_md: '私有档位描述：论证不足', rank: 0 },
+              ],
+            },
+            points: null,
+          },
+        ],
+      },
+    };
+
+    const keysOnly = projectFeedback(submission, evaluation, withRubricUnits, {
+      ...allOff,
+      reveal_answer_keys: true,
+    });
+    const serializedKeys = JSON.stringify(keysOnly);
+    expect(serializedKeys).not.toContain('statement_md');
+    expect(serializedKeys).not.toContain('私有规则原文');
+    expect(serializedKeys).not.toContain('descriptor_md');
+    expect(serializedKeys).not.toContain('私有档位描述');
+    const ruleKey = keysOnly.answer_keys.find((key) => key.criterion_kind === 'rule_reference');
+    expect(ruleKey).toEqual({
+      scoring_unit_id: 'u_rule',
+      criterion_kind: 'rule_reference',
+      rule_id: 'rule_secret_1',
+    });
+    const levelKey = keysOnly.answer_keys.find((key) => key.criterion_kind === 'holistic_level');
+    expect(levelKey).toEqual({
+      scoring_unit_id: 'u_level',
+      criterion_kind: 'holistic_level',
+      levels: [
+        { level_id: 'lvl_a', rank: 1 },
+        { level_id: 'lvl_b', rank: 0 },
+      ],
+    });
+    expect(keysOnly.rubric_explanations).toEqual([]);
+
+    const rubricOn = projectFeedback(submission, evaluation, withRubricUnits, {
+      ...allOff,
+      reveal_rubric_explanations: true,
+    });
+    const rubricText = rubricOn.rubric_explanations.map((item) => item.explanation_md).join('\n');
+    expect(rubricText).toContain('私有规则原文');
+    expect(rubricText).toContain('私有档位描述');
+    // rubric 开、keys 关：键身份也不泄漏。
+    expect(rubricOn.answer_keys).toEqual([]);
   });
 
   it('pending evaluation yields a status-only DTO regardless of flags', () => {

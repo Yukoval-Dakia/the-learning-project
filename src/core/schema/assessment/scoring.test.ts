@@ -17,6 +17,7 @@ function fixture(): {
     slots: [
       {
         slot_id: 'mc',
+        part_id: 'p1',
         kind: 'multi_choice',
         options: [
           { option_id: 'o1', label: 'A', text: '甲' },
@@ -28,8 +29,8 @@ function fixture(): {
         min_select: 1,
         max_select: 3,
       },
-      { slot_id: 'ans', kind: 'numeric', unit_hint: 'm/s' },
-      { slot_id: 'essay', kind: 'open_response' },
+      { slot_id: 'ans', part_id: 'p1', kind: 'numeric', unit_hint: 'm/s' },
+      { slot_id: 'essay', part_id: 'p1', kind: 'open_response' },
     ],
   });
   const structure: QuestionGroupStructureT = QuestionGroupStructure.parse({
@@ -199,8 +200,8 @@ describe('validateScoringBasis — 引用与身份纪律', () => {
       (issue) => issue.code,
     );
     expect(holisticIssues).toContain('points_must_be_null_for_holistic_unit');
-    // points 之外还缺显式 level_points 映射
-    expect(holisticIssues).toContain('level_points_required_for_holistic_unit');
+    // P2：level_points 完全省略 = 纯档位 rubric，合法（不产生总分）——不再要求非空映射。
+    expect(holisticIssues).not.toContain('level_points_required_for_holistic_unit');
 
     const undeclaredLevel: ScoringBasisT = ScoringBasis.parse({
       units: [
@@ -266,6 +267,119 @@ describe('validateScoringBasis — 引用与身份纪律', () => {
     });
     expect(validateScoringBasis(basis, spec, structure).map((issue) => issue.code)).toContain(
       'no_unit_references_any_slot',
+    );
+  });
+
+  it('P1-8: criterion must match the slot kind it reads; keys must resolve in declared options/items', () => {
+    const { spec, structure } = fixture();
+    // option_set_key 读 numeric 槽 —— 种类不相容。
+    const wrongKind: ScoringBasisT = ScoringBasis.parse({
+      units: [
+        {
+          scoring_unit_id: 'u_bad',
+          slot_refs: ['ans'],
+          criterion: { kind: 'option_set_key', accepted_option_ids: ['o1'] },
+          points: 2,
+        },
+      ],
+      aggregation: { kind: 'sum' },
+      blank_scores_zero: false,
+    });
+    const wrongKindCodes = validateScoringBasis(wrongKind, spec, structure).map((i) => i.code);
+    expect(wrongKindCodes).toContain('criterion_slot_kind_mismatch');
+    expect(wrongKindCodes).toContain('key_option_not_declared');
+
+    // 键引用未声明选项。
+    const danglingKey: ScoringBasisT = ScoringBasis.parse({
+      units: [
+        {
+          scoring_unit_id: 'u_key',
+          slot_refs: ['mc'],
+          criterion: { kind: 'option_set_key', accepted_option_ids: ['o1', 'o99'] },
+          points: 2,
+        },
+      ],
+      aggregation: { kind: 'sum' },
+      blank_scores_zero: false,
+    });
+    expect(validateScoringBasis(danglingKey, spec, structure).map((i) => i.code)).toContain(
+      'key_option_not_declared',
+    );
+
+    // text_key 只能读 text/open 槽 —— numeric 槽不相容。
+    const textOnNumeric: ScoringBasisT = ScoringBasis.parse({
+      units: [
+        {
+          scoring_unit_id: 'u_tn',
+          slot_refs: ['ans'],
+          criterion: { kind: 'text_key', accepted_texts: ['9.8'] },
+          points: 2,
+        },
+      ],
+      aggregation: { kind: 'sum' },
+      blank_scores_zero: false,
+    });
+    expect(validateScoringBasis(textOnNumeric, spec, structure).map((i) => i.code)).toContain(
+      'criterion_slot_kind_mismatch',
+    );
+  });
+
+  it('P1-8: matching keys encode the pairing explicitly and must resolve in the matching slot', () => {
+    const { structure } = fixture();
+    const spec: ResponseSpecT = ResponseSpec.parse({
+      slots: [
+        {
+          slot_id: 'pair',
+          part_id: 'p1',
+          kind: 'matching',
+          left_items: [
+            { item_id: 'lhs_1', label: '甲', text: '万有引力定律' },
+            { item_id: 'lhs_2', label: '乙', text: '动能定理' },
+          ],
+          right_options: [
+            { option_id: 'rhs_1', label: '1', text: 'F = GMm/r²' },
+            { option_id: 'rhs_2', label: '2', text: 'W = ΔEk' },
+          ],
+        },
+      ],
+    });
+    const good: ScoringBasisT = ScoringBasis.parse({
+      units: [
+        {
+          scoring_unit_id: 'u_pair',
+          slot_refs: ['pair'],
+          criterion: {
+            kind: 'matching_pairs_key',
+            accepted_pairs: [
+              { item_id: 'lhs_1', option_id: 'rhs_1' },
+              { item_id: 'lhs_2', option_id: 'rhs_2' },
+            ],
+          },
+          points: 2,
+        },
+      ],
+      aggregation: { kind: 'sum' },
+      blank_scores_zero: false,
+    });
+    expect(validateScoringBasis(good, spec, structure)).toEqual([]);
+
+    const dangling: ScoringBasisT = ScoringBasis.parse({
+      units: [
+        {
+          scoring_unit_id: 'u_pair',
+          slot_refs: ['pair'],
+          criterion: {
+            kind: 'matching_pairs_key',
+            accepted_pairs: [{ item_id: 'lhs_1', option_id: 'rhs_99' }],
+          },
+          points: 2,
+        },
+      ],
+      aggregation: { kind: 'sum' },
+      blank_scores_zero: false,
+    });
+    expect(validateScoringBasis(dangling, spec, structure).map((i) => i.code)).toContain(
+      'key_item_not_declared',
     );
   });
 });
@@ -352,6 +466,86 @@ describe('aggregateUnitResults — 总分只聚合一次', () => {
       scored('u_reasoning', 0),
     ]);
     expect(outcome.kind).toBe('unresolved');
+  });
+
+  it('P1-1: extra results are rejected, never silently ignored (even pending ones)', () => {
+    const { basis } = fixture();
+    const extra = aggregateUnitResults(basis, [
+      scored('u_choice', 4),
+      scored('u_speed', 3),
+      scored('u_reasoning', 3),
+      {
+        status: 'pending',
+        scoring_unit_id: 'u_ghost',
+        pending: { reason: 'needs_review', trigger: 'flagged', detail: '' },
+      },
+    ]);
+    expect(extra).toMatchObject({
+      kind: 'unresolved',
+      reason: 'result_set_mismatch',
+      detail: "result for undeclared unit 'u_ghost'",
+    });
+  });
+
+  it('P1-1: scores above the published unit max are invalid, not clamped', () => {
+    const { basis } = fixture();
+    const outcome = aggregateUnitResults(basis, [
+      scored('u_choice', 99),
+      scored('u_speed', 3),
+      scored('u_reasoning', 3),
+    ]);
+    expect(outcome).toMatchObject({
+      kind: 'unresolved',
+      reason: 'invalid_result',
+      detail: "unit 'u_choice' awarded 99 above published max 4",
+    });
+  });
+
+  it('P1-1: blank_marked_zero is invalid when basis.blank_scores_zero=false', () => {
+    const { basis } = fixture();
+    const strict: ScoringBasisT = ScoringBasis.parse({ ...basis, blank_scores_zero: false });
+    const outcome = aggregateUnitResults(strict, [
+      scored('u_choice', 0, { scored_because: 'blank_marked_zero' }),
+      scored('u_speed', 3),
+      scored('u_reasoning', 3),
+    ]);
+    expect(outcome).toMatchObject({
+      kind: 'unresolved',
+      reason: 'invalid_result',
+      detail: "unit 'u_choice' scored blank as zero but basis.blank_scores_zero=false",
+    });
+  });
+
+  it('P1-1: a missing weight fails closed instead of defaulting to 0', () => {
+    const { basis } = fixture();
+    const holey: ScoringBasisT = ScoringBasis.parse({
+      ...basis,
+      aggregation: { kind: 'weighted_sum', weights: { u_choice: 1, u_speed: 0.5 } }, // 缺 u_reasoning
+    });
+    const outcome = aggregateUnitResults(holey, [
+      scored('u_choice', 4),
+      scored('u_speed', 3),
+      scored('u_reasoning', 3),
+    ]);
+    expect(outcome).toMatchObject({
+      kind: 'unresolved',
+      reason: 'invalid_result',
+      detail: "weighted_sum is missing a weight for unit 'u_reasoning'",
+    });
+  });
+
+  it('P1-1: a basis with duplicate unit ids is invalid at the aggregation boundary too', () => {
+    const { basis } = fixture();
+    const dup: ScoringBasisT = {
+      ...basis,
+      units: [...basis.units, basis.units[0]],
+    };
+    const outcome = aggregateUnitResults(dup, [scored('u_choice', 4)]);
+    expect(outcome).toMatchObject({
+      kind: 'unresolved',
+      reason: 'invalid_result',
+      detail: "basis declares duplicate scoring_unit_id 'u_choice'",
+    });
   });
 
   it('holistic level mapping: mapped level contributes exactly once; unmapped level yields no total (never fabricated)', () => {

@@ -75,6 +75,7 @@ function compositeRevision() {
       slots: [
         {
           slot_id: 'mc',
+          part_id: 'p_choice',
           kind: 'multi_choice',
           options: [
             { option_id: 'opt_a', label: 'A', text: '感应电流阻碍磁通量变化' },
@@ -87,10 +88,11 @@ function compositeRevision() {
           min_select: 1,
           max_select: 4,
         },
-        { slot_id: 'blank_period', kind: 'numeric', unit_hint: 'ms' },
-        { slot_id: 'blank_reason', kind: 'text', math_preview: true },
+        { slot_id: 'blank_period', part_id: 'p_blanks', kind: 'numeric', unit_hint: 'ms' },
+        { slot_id: 'blank_reason', part_id: 'p_blanks', kind: 'text', math_preview: true },
         {
           slot_id: 'grid',
+          part_id: 'p_blanks',
           kind: 'table',
           column_headers: ['物理量', '数值/结论'],
           row_labels: ['周期', '理由'],
@@ -101,6 +103,7 @@ function compositeRevision() {
         },
         {
           slot_id: 'pair',
+          part_id: 'p_blanks',
           kind: 'matching',
           left_items: [
             { item_id: 'case_1', label: '甲', text: '磁铁插入' },
@@ -113,6 +116,7 @@ function compositeRevision() {
         },
         {
           slot_id: 'essay',
+          part_id: 'p_proof',
           kind: 'open_response',
           accepted_evidence: [
             {
@@ -166,7 +170,14 @@ function compositeRevision() {
         {
           scoring_unit_id: 'su_pair',
           slot_refs: ['pair'],
-          criterion: { kind: 'option_set_key', accepted_option_ids: ['dir_in', 'dir_out'] },
+          criterion: {
+            // P1-8：配对题键显式编码左右映射，不能用 option 集合冒充。
+            kind: 'matching_pairs_key',
+            accepted_pairs: [
+              { item_id: 'case_1', option_id: 'dir_in' },
+              { item_id: 'case_2', option_id: 'dir_out' },
+            ],
+          },
           points: 2,
         },
         {
@@ -198,8 +209,12 @@ function compositeRevision() {
       plan_version: 4,
       assignments: [
         {
-          scoring_unit_ids: ['su_choice', 'su_pair'],
+          scoring_unit_ids: ['su_choice'],
           executor: { kind: 'deterministic', comparator: 'exact_option_set' },
+        },
+        {
+          scoring_unit_ids: ['su_pair'],
+          executor: { kind: 'deterministic', comparator: 'exact_matching_pairs' },
         },
         {
           scoring_unit_ids: ['su_period'],
@@ -270,6 +285,46 @@ describe('复合题全链路（五层模型 + DTO）', () => {
     expect(serialized).not.toContain('admitted_slice_id');
   });
 
+  it('P1-6: part-subset issuance restricts the projected slots to the issued scope', () => {
+    const subset = AssessmentIssuance.parse({
+      issuance_id: 'iss_comp_2',
+      issued_at: '2026-09-25T09:06:00.000Z',
+      binding: {
+        revision_id: 'rev_42',
+        part_ids: ['p_read', 'p_choice'], // 只发阅读 + 多选
+        material_bindings: [{ material_id: 'mat_reading', asset_digest: 'sha256:reading' }],
+        option_order: [
+          { slot_id: 'mc', option_ids: ['opt_a', 'opt_b', 'opt_c', 'opt_d', 'opt_e', 'opt_f'] },
+        ],
+      },
+      claim: { policy: 'unbounded', status: 'unclaimed', claimed_by_ref: null },
+    });
+    expect(validateIssuanceBinding(subset.binding, revision)).toEqual([]);
+    const dto = projectPracticeIssuance(revision, subset);
+    expect(dto.faces.map((face) => face.part_id)).toEqual(['p_read', 'p_choice']);
+    // 只有发出范围内的槽位进入公开 DTO；表格/配对/开放槽不泄漏。
+    expect(dto.response_spec.slots.map((slot) => slot.slot_id)).toEqual(['mc']);
+    expect(dto.materials.map((material) => material.material_id)).toEqual(['mat_reading']);
+
+    // 跨 scope 的 option_order（引用未发出的配对槽）被拒绝。
+    const crossScope = AssessmentIssuance.parse({
+      ...subset,
+      binding: {
+        ...subset.binding,
+        option_order: [
+          ...subset.binding.option_order,
+          { slot_id: 'pair', option_ids: ['dir_in', 'dir_out'] },
+        ],
+      },
+    });
+    expect(
+      validateIssuanceBinding(crossScope.binding, revision).map((issue) => issue.code),
+    ).toContain('option_order_slot_out_of_scope');
+    expect(() => projectPracticeIssuance(revision, crossScope)).toThrow(
+      /option_order_slot_out_of_scope/,
+    );
+  });
+
   it('submission → evaluation → single aggregation → visibility-gated feedback', () => {
     const submission = SubmissionRecord.parse({
       submission_id: 'sub_comp_1',
@@ -308,6 +363,20 @@ describe('复合题全链路（五层模型 + DTO）', () => {
       },
       idempotency_key: 'idem-comp-1',
       submitted_at: '2026-09-25T09:22:00.000Z',
+      // P1-6：整页照等 group 级证据的显式载体（声明式目标，不复制进槽位）。
+      group_evidence: [
+        {
+          evidence: {
+            evidence_id: 'ev_page',
+            kind: 'image',
+            asset: { asset_id: 'ast_page', digest: 'sha256:page' },
+            mime_type: 'image/jpeg',
+            bytes: 1_800_000,
+            uploaded_at: '2026-09-25T09:21:00.000Z',
+          },
+          target: { scope: 'all_units' },
+        },
+      ],
     });
     expect(validateResponseSet(revision.response_spec, submission.response_set)).toEqual([]);
 
@@ -369,6 +438,8 @@ describe('复合题全链路（五层模型 + DTO）', () => {
       aggregate,
       plan_digest: 'sha256:plan4',
       run_refs: ['task_run_301'],
+      // D9/D16：模型执行器产出的自动判分（assisted=false）。
+      provenance: { source: 'automatic', assisted: false },
     });
 
     const feedback = projectFeedback(submission, evaluation, revision, {
@@ -386,6 +457,7 @@ describe('复合题全链路（五层模型 + DTO）', () => {
       points_awarded: null,
     });
     expect(feedback.answer_keys.map((key) => key.criterion_kind)).toContain('holistic_level');
+    expect(feedback.answer_keys.map((key) => key.criterion_kind)).toContain('matching_pairs_key');
     expect(feedback.rubric_explanations.map((item) => item.scoring_unit_id)).toEqual([
       'su_argument',
     ]);

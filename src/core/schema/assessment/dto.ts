@@ -4,7 +4,7 @@ import { SharedMaterialKind } from './materials';
 import { LifecycleQualification, PublishDecision } from './publish';
 import { ResponseSpec } from './response';
 import type { AssessmentIssuanceT, PublishedQuestionRevisionT } from './revision';
-import { PublishedQuestionRevision } from './revision';
+import { PublishedQuestionRevision, validateIssuanceBinding } from './revision';
 
 // ====================================================================
 // YUK-1046 — 统一评估契约 · 公私 DTO 边界（grounding §7.1）
@@ -62,17 +62,40 @@ export type PracticeIssuanceDtoT = z.infer<typeof PracticeIssuanceDto>;
 /**
  * 纯投影：published revision + issuance → 公开作答 DTO。只从公开字段构造；
  * scoring_basis / execution_plan / 私有 metadata 无从进入。
+ *
+ * P1-2/P1-6：fail-closed —— 绑定必须先过 validateIssuanceBinding（revision
+ * 一致、材料同 digest、选择槽顺序为声明选项的排列），否则抛错，绝不
+ * 静默回退到 revision 原状。投影反映【冻结的呈现】：选项按 binding 的
+ * option_order 重排（默认 = 声明顺序，不 shuffle）；slots 只包含发出
+ * part 范围内的槽位。
  */
 export function projectPracticeIssuance(
   revision: PublishedQuestionRevisionT,
   issuance: AssessmentIssuanceT,
 ): PracticeIssuanceDtoT {
+  const bindingIssues = validateIssuanceBinding(issuance.binding, revision);
+  if (bindingIssues.length > 0) {
+    throw new Error(
+      `projectPracticeIssuance: invalid issuance binding for issuance '${issuance.issuance_id}': ${bindingIssues
+        .map((issue) => `${issue.code}(${issue.detail})`)
+        .join('; ')}`,
+    );
+  }
   const boundParts = new Set(issuance.binding.part_ids);
   const digestByMaterial = new Map(
     issuance.binding.material_bindings.map(
       (binding) => [binding.material_id, binding.asset_digest] as const,
     ),
   );
+  const orderById = new Map(
+    issuance.binding.option_order.map((entry) => [entry.slot_id, entry.option_ids] as const),
+  );
+  const applyServedOrder = <T extends { option_id: string }>(options: T[], slotId: string): T[] => {
+    const served = orderById.get(slotId);
+    if (served == null) return options;
+    const byId = new Map(options.map((option) => [option.option_id, option] as const));
+    return served.map((optionId) => byId.get(optionId)).filter((o): o is T => o != null);
+  };
   return PracticeIssuanceDto.parse({
     issuance_id: issuance.issuance_id,
     revision_id: revision.revision_id,
@@ -95,7 +118,20 @@ export function projectPracticeIssuance(
         caption: material.caption,
         alt_text: material.alt_text,
       })),
-    response_spec: revision.response_spec,
+    response_spec: {
+      slots: revision.response_spec.slots
+        // P1-6：只投影发出 part 范围内的槽位；选项按冻结顺序呈现。
+        .filter((slot) => boundParts.has(slot.part_id))
+        .map((slot) => {
+          if (slot.kind === 'single_choice' || slot.kind === 'multi_choice') {
+            return { ...slot, options: applyServedOrder(slot.options, slot.slot_id) };
+          }
+          if (slot.kind === 'matching') {
+            return { ...slot, right_options: applyServedOrder(slot.right_options, slot.slot_id) };
+          }
+          return slot;
+        }),
+    },
   });
 }
 
@@ -110,12 +146,22 @@ export const FeedbackVisibilityPolicy = z.object({
 });
 export type FeedbackVisibilityPolicyT = z.infer<typeof FeedbackVisibilityPolicy>;
 
-/** 答案键的公开呈现（揭示时才存在；形态镜像 criterion 的键材料）。 */
+/**
+ * 答案键的公开呈现（揭示时才存在；形态镜像 criterion 的键材料）。
+ * P1-3：答案键只揭示【键身份/键值】—— rule_id 与档位 id+rank；
+ * 规则原文与档位描述符是私有 rubric，只在 reveal_rubric_explanations
+ * 下出现（answer-key 开、rubric 关时不得泄漏 statement/descriptor）。
+ */
 export const RevealedAnswerKey = z.discriminatedUnion('criterion_kind', [
   z.object({
     scoring_unit_id: z.string().min(1),
     criterion_kind: z.literal('option_set_key'),
     accepted_option_ids: z.array(z.string().min(1)),
+  }),
+  z.object({
+    scoring_unit_id: z.string().min(1),
+    criterion_kind: z.literal('matching_pairs_key'),
+    accepted_pairs: z.array(z.object({ item_id: z.string().min(1), option_id: z.string().min(1) })),
   }),
   z.object({
     scoring_unit_id: z.string().min(1),
@@ -132,12 +178,11 @@ export const RevealedAnswerKey = z.discriminatedUnion('criterion_kind', [
     scoring_unit_id: z.string().min(1),
     criterion_kind: z.literal('rule_reference'),
     rule_id: z.string().min(1),
-    statement_md: z.string().min(1),
   }),
   z.object({
     scoring_unit_id: z.string().min(1),
     criterion_kind: z.literal('holistic_level'),
-    levels: z.array(z.object({ level_id: z.string().min(1), descriptor_md: z.string().min(1) })),
+    levels: z.array(z.object({ level_id: z.string().min(1), rank: z.number().int().min(0) })),
   }),
 ]);
 export type RevealedAnswerKeyT = z.infer<typeof RevealedAnswerKey>;
@@ -193,6 +238,12 @@ function revealAnswerKey(
         criterion_kind: 'option_set_key',
         accepted_option_ids: criterion.accepted_option_ids,
       };
+    case 'matching_pairs_key':
+      return {
+        scoring_unit_id: unit.scoring_unit_id,
+        criterion_kind: 'matching_pairs_key',
+        accepted_pairs: criterion.accepted_pairs,
+      };
     case 'text_key':
       return {
         scoring_unit_id: unit.scoring_unit_id,
@@ -207,19 +258,20 @@ function revealAnswerKey(
         expected_unit: criterion.expected_unit,
       };
     case 'rule_reference':
+      // P1-3：答案键只给 rule_id（身份）；statement_md 是 rubric，另门揭示。
       return {
         scoring_unit_id: unit.scoring_unit_id,
         criterion_kind: 'rule_reference',
         rule_id: criterion.rule_id,
-        statement_md: criterion.statement_md,
       };
     case 'holistic_level':
+      // P1-3：只给档位身份与次序；descriptor_md 是 rubric，另门揭示。
       return {
         scoring_unit_id: unit.scoring_unit_id,
         criterion_kind: 'holistic_level',
         levels: criterion.levels.map((level) => ({
           level_id: level.level_id,
-          descriptor_md: level.descriptor_md,
+          rank: level.rank,
         })),
       };
   }
@@ -247,9 +299,11 @@ function revealRubricExplanation(
 }
 
 /**
- * 纯投影：评分记录 + 可见性 policy → 反馈 DTO。未揭示的字段【不出现】，
- * 而不是出现为 null/空 —— 空数组与“未揭示”语义不同（避免下游误读）。
- * pending 评估只回身份与状态。
+ * 纯投影：评分记录 + 可见性 policy → 反馈 DTO。
+ * P2-3 语义说明：未揭示的维度以【显式无内容】呈现 —— aggregate:null、
+ * 数组为空 —— 字段本身始终存在（strict schema 固定形状）；“未揭示”与
+ * “揭示后确实为空”的区分由 status + 对应 flag 消费方判定，不靠缺键。
+ * pending 评估只回身份与状态，任何 flag 都不产生内容。
  */
 export function projectFeedback(
   submission: SubmissionRecordT,

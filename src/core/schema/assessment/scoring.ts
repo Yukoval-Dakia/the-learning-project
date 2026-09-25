@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ResponseSpecT } from './response';
+import type { ResponseSlotT, ResponseSpecT } from './response';
 import type { QuestionGroupStructureT } from './structure';
 
 // ====================================================================
@@ -49,6 +49,23 @@ export const NumericKeyCriterion = z.object({
 export type NumericKeyCriterionT = z.infer<typeof NumericKeyCriterion>;
 
 /**
+ * 配对题答案键（P1-8）：显式编码【哪个左项配哪个右项】—— 不能用 option
+ * 集合冒充（集合无法表达映射关系）。与 exact_matching_pairs 比较器配套。
+ */
+export const MatchingPairsKeyCriterion = z.object({
+  kind: z.literal('matching_pairs_key'),
+  accepted_pairs: z
+    .array(
+      z.object({
+        item_id: z.string().min(1),
+        option_id: z.string().min(1),
+      }),
+    )
+    .min(1),
+});
+export type MatchingPairsKeyCriterionT = z.infer<typeof MatchingPairsKeyCriterion>;
+
+/**
  * 规则引用：复杂/过程性评分依据以受版本化规则原文表达，由获准执行器
  * （model_executor / human_review）判定并给出符合哪条规则的证据。
  */
@@ -77,6 +94,7 @@ export type HolisticLevelCriterionT = z.infer<typeof HolisticLevelCriterion>;
 
 export const ScoringUnitCriterion = z.discriminatedUnion('kind', [
   OptionSetKeyCriterion,
+  MatchingPairsKeyCriterion,
   TextKeyCriterion,
   NumericKeyCriterion,
   RuleReferenceCriterion,
@@ -104,8 +122,9 @@ export const ScoringUnit = z.object({
   points: z.number().min(0).nullable(),
   /**
    * holistic 单元的【显式等级→分数映射】（非加法整体等级，§4.4）：
-   * key = level_id，只允许声明过的档位；映射可以不含某些档位 ——
-   * 命中未映射档位时聚合进入 unresolved(no_mapping)，【不凭空制造总分】。
+   * key = level_id，只允许声明过的档位。可以【完全省略】—— 纯档位评分
+   * （ordinal-only rubric）合法：命中任何档位都不产生总分（no_mapping），
+   * 不凭空造分；映射也可不含某些档位 —— 命中未映射档位同样 no_mapping。
    * 加法单元禁止携带（validateScoringBasis 强制）。
    */
   level_points: z.record(z.string(), z.number().min(0)).optional(),
@@ -170,12 +189,33 @@ export interface ScoringBasisIssue {
     | 'evidence_slot_not_open'
     | 'points_required_for_additive_unit'
     | 'points_must_be_null_for_holistic_unit'
-    | 'level_points_required_for_holistic_unit'
     | 'level_points_forbidden_for_additive_unit'
     | 'level_points_level_not_declared'
+    | 'criterion_slot_kind_mismatch'
+    | 'key_option_not_declared'
+    | 'key_item_not_declared'
     | 'weights_must_cover_units_exactly'
     | 'no_unit_references_any_slot';
   detail: string;
+}
+
+// P1-8：判据↔槽位种类相容表 —— 答案键必须落在能承载它的槽位上。
+function expectsSlotKinds(
+  criterion: ScoringUnitT['criterion'],
+): readonly ResponseSlotT['kind'][] | null {
+  switch (criterion.kind) {
+    case 'option_set_key':
+      return ['single_choice', 'multi_choice'];
+    case 'matching_pairs_key':
+      return ['matching'];
+    case 'text_key':
+      return ['text', 'open_response'];
+    case 'numeric_key':
+      return ['numeric'];
+    case 'rule_reference':
+    case 'holistic_level':
+      return null; // 不限槻位种类（规则/等级可判任意响应）
+  }
 }
 
 /**
@@ -232,6 +272,57 @@ export function validateScoringBasis(
         });
       }
     }
+    // P1-8：判据↔槽位种类相容 + 键内 id 可解析（防止“集合冒充映射”之类的错配）。
+    const expectedKinds = expectsSlotKinds(unit.criterion);
+    const referencedSlots = unit.slot_refs
+      .map((slotId) => slotById.get(slotId))
+      .filter((slot): slot is ResponseSlotT => slot != null);
+    if (expectedKinds != null) {
+      for (const slot of referencedSlots) {
+        if (!expectedKinds.includes(slot.kind)) {
+          issues.push({
+            code: 'criterion_slot_kind_mismatch',
+            detail: `unit '${unit.scoring_unit_id}' criterion '${unit.criterion.kind}' cannot read slot '${slot.slot_id}' of kind '${slot.kind}'`,
+          });
+        }
+      }
+    }
+    if (unit.criterion.kind === 'option_set_key') {
+      const declaredOptions = new Set(
+        referencedSlots
+          .filter((slot) => slot.kind === 'single_choice' || slot.kind === 'multi_choice')
+          .flatMap((slot) =>
+            slot.kind === 'single_choice' || slot.kind === 'multi_choice' ? slot.options : [],
+          )
+          .map((option) => option.option_id),
+      );
+      for (const optionId of unit.criterion.accepted_option_ids) {
+        if (!declaredOptions.has(optionId)) {
+          issues.push({
+            code: 'key_option_not_declared',
+            detail: `unit '${unit.scoring_unit_id}' key references undeclared option '${optionId}'`,
+          });
+        }
+      }
+    }
+    if (unit.criterion.kind === 'matching_pairs_key') {
+      const matchingSlots = referencedSlots.filter(
+        (slot): slot is Extract<ResponseSlotT, { kind: 'matching' }> => slot.kind === 'matching',
+      );
+      for (const pair of unit.criterion.accepted_pairs) {
+        const resolvesInSomeSlot = matchingSlots.some(
+          (slot) =>
+            slot.left_items.some((item) => item.item_id === pair.item_id) &&
+            slot.right_options.some((option) => option.option_id === pair.option_id),
+        );
+        if (!resolvesInSomeSlot) {
+          issues.push({
+            code: 'key_item_not_declared',
+            detail: `unit '${unit.scoring_unit_id}' pair '${pair.item_id}'→'${pair.option_id}' does not resolve in any referenced matching slot`,
+          });
+        }
+      }
+    }
     if (unit.criterion.kind === 'holistic_level') {
       if (unit.points !== null) {
         issues.push({
@@ -240,12 +331,7 @@ export function validateScoringBasis(
         });
       }
       const levelPoints = unit.level_points ?? {};
-      if (Object.keys(levelPoints).length === 0) {
-        issues.push({
-          code: 'level_points_required_for_holistic_unit',
-          detail: `holistic unit '${unit.scoring_unit_id}' requires an explicit level_points mapping`,
-        });
-      } else {
+      if (Object.keys(levelPoints).length > 0) {
         const declaredLevels = new Set(unit.criterion.levels.map((level) => level.level_id));
         for (const levelId of Object.keys(levelPoints)) {
           if (!declaredLevels.has(levelId)) {

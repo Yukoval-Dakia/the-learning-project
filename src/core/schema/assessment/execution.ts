@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import type { ScoringBasisT } from './scoring';
+import type { ScoringBasisT, ScoringUnitCriterionT } from './scoring';
 
 // ====================================================================
 // YUK-1046 — 五层模型 · 第四层：执行计划（grounding §4.3、§5.3）
@@ -18,13 +18,28 @@ import type { ScoringBasisT } from './scoring';
 //     引用准入证据）；“声明了但实际没有 runner”的假能力不保留（fail-closed）；
 //   - human_review：显式人工 / D9 手动路径（带 provenance，仅手动学习效应）。
 
-/** 确定性比较器 id（保留的确定性能力子集；新历史政策不当默认）。 */
+/**
+ * 确定性比较器 id（保留的确定性能力子集；新历史政策不当默认）。
+ * P1-8：每个比较器只与一种判据相容（见 COMPARATOR_CRITERION），
+ * 不相容组合在 validateExecutionPlan 拦截。
+ */
 export const DeterministicComparatorId = z.enum([
   'exact_option_set',
   'exact_text',
   'numeric_tolerance',
+  'exact_matching_pairs',
 ]);
 export type DeterministicComparatorIdT = z.infer<typeof DeterministicComparatorId>;
+
+/** 比较器↔判据相容表：确定性执行器只能判对应种类的判据。 */
+export const COMPARATOR_CRITERION: Readonly<
+  Record<DeterministicComparatorIdT, ScoringUnitCriterionT['kind']>
+> = {
+  exact_option_set: 'option_set_key',
+  exact_text: 'text_key',
+  numeric_tolerance: 'numeric_key',
+  exact_matching_pairs: 'matching_pairs_key',
+};
 
 export const DeterministicExecutor = z.object({
   kind: z.literal('deterministic'),
@@ -79,25 +94,49 @@ export const ExecutionPlan = z.object({
 export type ExecutionPlanT = z.infer<typeof ExecutionPlan>;
 
 export interface ExecutionPlanIssue {
-  code: 'unit_not_covered' | 'unit_covered_twice' | 'unadmitted_model_executor';
+  code:
+    | 'unit_not_covered'
+    | 'unit_covered_twice'
+    | 'unknown_unit_assignment'
+    | 'comparator_criterion_mismatch'
+    | 'unadmitted_model_executor';
   detail: string;
 }
 
 /**
  * 纯校验：每个 scoring unit 恰好被一个 assignment 覆盖（不漏不重 —— 与
- * scoring unit“贡献恰好一次”配套）；model_executor 未携带准入切片时给出
- * 显式问题（发布侧据此 withhold，而不是悄悄执行）。
+ * scoring unit“贡献恰好一次”配套）；assignment 只能引用声明过的 unit
+ * （P1-8）；确定性比较器只能判相容判据（P1-8，见 COMPARATOR_CRITERION）；
+ * model_executor 未携带准入切片时给出显式问题（发布侧据此 withhold，
+ * 而不是悄悄执行）。
  */
 export function validateExecutionPlan(
   plan: ExecutionPlanT,
   basis: ScoringBasisT,
 ): ExecutionPlanIssue[] {
   const issues: ExecutionPlanIssue[] = [];
-  const declared = new Set(basis.units.map((unit) => unit.scoring_unit_id));
+  const declared = new Map(basis.units.map((unit) => [unit.scoring_unit_id, unit] as const));
   const covered = new Map<string, number>();
   for (const assignment of plan.assignments) {
     for (const unitId of assignment.scoring_unit_ids) {
       covered.set(unitId, (covered.get(unitId) ?? 0) + 1);
+      const unit = declared.get(unitId);
+      if (unit == null) {
+        issues.push({
+          code: 'unknown_unit_assignment',
+          detail: `assignment references scoring unit '${unitId}' not declared in the basis`,
+        });
+        continue;
+      }
+      if (
+        assignment.executor.kind === 'deterministic' &&
+        unit.criterion.kind !== COMPARATOR_CRITERION[assignment.executor.comparator]
+      ) {
+        issues.push({
+          code: 'comparator_criterion_mismatch',
+          detail: `comparator '${assignment.executor.comparator}' cannot judge unit '${unitId}' of criterion '${unit.criterion.kind}'`,
+        });
+      }
     }
     if (
       assignment.executor.kind === 'model_executor' &&
@@ -109,7 +148,7 @@ export function validateExecutionPlan(
       });
     }
   }
-  for (const unitId of declared) {
+  for (const unitId of declared.keys()) {
     const count = covered.get(unitId) ?? 0;
     if (count === 0) {
       issues.push({ code: 'unit_not_covered', detail: `scoring unit '${unitId}' has no executor` });

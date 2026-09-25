@@ -55,8 +55,12 @@ describe('validateExecutionPlan — 恰好覆盖一次', () => {
     const result = validateExecutionPlan(
       plan([
         {
-          scoring_unit_ids: ['u_choice', 'u_num'],
+          scoring_unit_ids: ['u_choice'],
           executor: { kind: 'deterministic', comparator: 'exact_option_set' },
+        },
+        {
+          scoring_unit_ids: ['u_num'],
+          executor: { kind: 'deterministic', comparator: 'numeric_tolerance' },
         },
         {
           scoring_unit_ids: ['u_essay'],
@@ -126,5 +130,68 @@ describe('validateExecutionPlan — 恰好覆盖一次', () => {
     });
     expect(JSON.stringify(parsed)).not.toContain('points');
     expect(JSON.stringify(parsed)).not.toContain('accepted_option_ids');
+  });
+
+  it('P1-8: incompatible comparator/criterion pairs are rejected (numeric unit on exact_option_set)', () => {
+    const issues = validateExecutionPlan(
+      plan([
+        {
+          scoring_unit_ids: ['u_choice'],
+          executor: { kind: 'deterministic', comparator: 'exact_option_set' },
+        },
+        {
+          scoring_unit_ids: ['u_num'],
+          executor: { kind: 'deterministic', comparator: 'exact_option_set' }, // 判不了 numeric_key
+        },
+        {
+          scoring_unit_ids: ['u_essay'],
+          executor: {
+            kind: 'model_executor',
+            task_kind: 'judge/rubric_v1',
+            admitted_slice_id: 'slice_essay_zh_v3',
+          },
+        },
+      ]),
+      basis(),
+    );
+    const codes = issues.map((issue) => issue.code);
+    expect(codes).toContain('comparator_criterion_mismatch');
+    expect(codes).not.toContain('unit_not_covered');
+  });
+
+  it('P1-8: rule_reference units cannot go to any deterministic comparator', () => {
+    const issues = validateExecutionPlan(
+      plan([
+        {
+          scoring_unit_ids: ['u_choice'],
+          executor: { kind: 'deterministic', comparator: 'exact_option_set' },
+        },
+        {
+          scoring_unit_ids: ['u_num'],
+          executor: { kind: 'deterministic', comparator: 'numeric_tolerance' },
+        },
+        {
+          scoring_unit_ids: ['u_essay'],
+          executor: { kind: 'deterministic', comparator: 'exact_text' }, // 规则引用判不了
+        },
+      ]),
+      basis(),
+    );
+    expect(issues.map((issue) => issue.code)).toContain('comparator_criterion_mismatch');
+  });
+
+  it('P1-8: assignments referencing unknown units are rejected (previously silent)', () => {
+    const issues = validateExecutionPlan(
+      plan([
+        {
+          scoring_unit_ids: ['u_choice', 'u_num', 'u_essay', 'u_ghost'],
+          executor: { kind: 'human_review' },
+        },
+      ]),
+      basis(),
+    );
+    expect(issues.map((issue) => issue.code)).toContain('unknown_unit_assignment');
+    // 覆盖检查仍以声明集为准 —— 全部声明 unit 已被覆盖，不误报 not_covered。
+    expect(issues.map((issue) => issue.code)).not.toContain('unit_not_covered');
   });
 });

@@ -23,6 +23,7 @@ function submission(overrides: Partial<SubmissionRecordT> = {}): SubmissionRecor
         { slot_id: 'essay', kind: 'open', text_md: '我的证明……', evidence: [] },
       ],
     },
+    group_evidence: [],
     idempotency_key: 'idem-1',
     submitted_at: '2026-09-25T08:00:00.000Z',
     ...overrides,
@@ -89,6 +90,43 @@ describe('resolveSubmissionIdempotency — 同 key 不同载荷 ⇒ 冲突', () 
     expect(() =>
       resolveSubmissionIdempotency(submission(), submission({ idempotency_key: 'idem-2' })),
     ).toThrow();
+  });
+
+  it('P1-7: same key + same answers under a DIFFERENT issuance is a conflict, not a replay', () => {
+    expect(
+      resolveSubmissionIdempotency(submission(), submission({ issuance_id: 'iss_other' })),
+    ).toEqual({ outcome: 'conflict', reason: 'issuance_mismatch' });
+  });
+
+  it('P1-7: same key + same answers under a DIFFERENT evaluation group is a conflict', () => {
+    expect(
+      resolveSubmissionIdempotency(submission(), submission({ evaluation_group_id: 'eg_other' })),
+    ).toEqual({ outcome: 'conflict', reason: 'evaluation_group_mismatch' });
+  });
+
+  it('P1-6: same key + same slots but different group evidence is a conflict (payload changed)', () => {
+    const withEvidence = submission({
+      group_evidence: [
+        {
+          evidence: {
+            evidence_id: 'ev_page',
+            kind: 'image',
+            asset: { asset_id: 'ast_page', digest: 'sha256:page' },
+            mime_type: 'image/jpeg',
+            bytes: 900_000,
+            uploaded_at: '2026-09-25T08:00:00.000Z',
+          },
+          target: { scope: 'all_units' },
+        },
+      ],
+    });
+    expect(resolveSubmissionIdempotency(withEvidence, submission())).toEqual({
+      outcome: 'conflict',
+      reason: 'response_changed',
+    });
+    expect(resolveSubmissionIdempotency(withEvidence, withEvidence)).toEqual({
+      outcome: 'same_payload',
+    });
   });
 });
 
