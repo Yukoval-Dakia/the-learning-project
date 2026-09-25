@@ -19,6 +19,7 @@ import { SolutionGenerateOutput } from '@/core/schema/solution';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 
 // `RubricT` is not exported from business.ts (it's a private alias inside
 // db/schema.ts). Derive the type locally from the single-source-of-truth Rubric
@@ -134,15 +135,29 @@ export async function generateReferenceSolution(
   const updateWhere = params.regenerate
     ? eq(question.id, questionId)
     : and(eq(question.id, questionId), isNull(question.reference_md));
-  const written = await db
-    .update(question)
-    .set({
-      rubric_json: mergedRubric as RubricT,
-      reference_md: parsed.worked_solution_md,
-      updated_at: new Date(),
-    })
-    .where(updateWhere)
-    .returning({ id: question.id });
+  // YUK-1043（复审 P1-6，§2 矩阵 reference backfill 行）—— 生成参考答案改变
+  // 评分依据：UPDATE 与统一发布同事务，不能直接改已发布列后不铸新版。新
+  // scoring basis ⇒ 旧 admission evidence 不再适用（P1-5），preserve 折叠
+  // withheld/unverified_rules —— 待重新核验后再准入（来源标识已在 rubric
+  // reference_solution_source='ai_generated' 留痕）。
+  const written = await db.transaction(async (tx) => {
+    const updated = await tx
+      .update(question)
+      .set({
+        rubric_json: mergedRubric as RubricT,
+        reference_md: parsed.worked_solution_md,
+        updated_at: new Date(),
+      })
+      .where(updateWhere)
+      .returning({ id: question.id });
+    if (updated.length === 0) return updated;
+    await publishQuestionGroupFromRow(tx, {
+      rootId: questionId,
+      actorRef: 'solution-generate:reference_backfill',
+      now: new Date(),
+    });
+    return updated;
+  });
 
   if (written.length === 0) return { status: 'skipped_exists' };
 

@@ -1,9 +1,11 @@
 // YUK-1043 — publisher DB 测试（db 分区；testcontainer + resetDb）。
-// 被测不变量：同事务原子发布（revision + lifecycle + event）、CAS、digest 幂等、
-// supersedes 链、admission 分支、archive/restore 的 claim 语义、回滚不留痕。
+// 被测不变量：同事务原子发布（revision + lifecycle + event + identity diff）、
+// 双 CAS（revision + admission generation）、digest 幂等、supersedes 链、
+// admission 分支与 evidence 形状、archive/restore 的 claim 语义、mid-step 故障
+// 全量回滚（trigger 注入）、并发兄弟编辑的组根锁序（复审 P1/P2 全覆盖）。
 
 import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { AdmissionEvidenceT } from '@/core/schema/assessment';
@@ -37,7 +39,7 @@ async function seedQuestion(id: string, overrides: Partial<typeof question.$infe
     reference_md: 'B',
     knowledge_ids: [],
     difficulty: 3,
-    source: 'manual',
+    source: 'web_sourced',
     variant_depth: 0,
     choices_md: ['甲', '乙', '丙'],
     created_at: now,
@@ -63,6 +65,7 @@ function publishInput(
       integrity_digest: n.integrity_digest,
     },
     expectedCurrentRevision: null,
+    expectedAdmissionGeneration: null,
     availability: 'general_pool',
     admission: { state: 'withheld', reason: 'unverified_rules' },
     actorRef: 'test:publisher',
@@ -115,23 +118,38 @@ describe('publishQuestionGroup（YUK-1043 统一发布 seam）', () => {
     const [publishEvent] = await db.select().from(event).where(eq(event.id, first.event_id));
     expect(publishEvent.action).toBe(ASSESSMENT_PUBLISH_ACTION);
     expect(publishEvent.subject_id).toBe(qid);
+    // P1-4 — identity diff 随事件持久化（首版 = 全部新增）。
+    expect(publishEvent.payload).toMatchObject({
+      identity_changes: {
+        retained_part_ids: [],
+        added_part_ids: [qid],
+        removed_part_ids: [],
+      },
+    });
 
-    // 同内容再发布（期望已更新为当前版）→ digest 幂等 noop。
+    // 同内容再发布（双 CAS 令牌均更新为当前值）→ digest 幂等 noop。
     const again = await publishQuestionGroup(
       db,
-      publishInput(row, { expectedCurrentRevision: first.revision_id }),
+      publishInput(row, {
+        expectedCurrentRevision: first.revision_id,
+        expectedAdmissionGeneration: 1,
+      }),
     );
     expect(again).toMatchObject({ status: 'noop', current_revision_id: first.revision_id });
 
-    // CAS：期望错版 → conflict。
+    // CAS：期望错版 → conflict（revision_cas）。
     const stale = await publishQuestionGroup(
       db,
-      publishInput(row, { expectedCurrentRevision: null }),
+      publishInput(row, { expectedCurrentRevision: null, expectedAdmissionGeneration: null }),
     );
-    expect(stale).toMatchObject({ status: 'conflict', current_revision_id: first.revision_id });
+    expect(stale).toMatchObject({
+      status: 'conflict',
+      current_revision_id: first.revision_id,
+      reason: 'revision_cas',
+    });
   });
 
-  it('content edit publishes a new revision with supersedes chain + identity preservation', async () => {
+  it('content edit publishes a new revision with supersedes chain + identity diff', async () => {
     const db = testDb();
     const qid = 'pub_q2';
     await seedQuestion(qid);
@@ -139,15 +157,18 @@ describe('publishQuestionGroup（YUK-1043 统一发布 seam）', () => {
     const first = await publishQuestionGroup(db, publishInput(rowBefore));
     if (first.status !== 'published') throw new Error('first publish failed');
 
-    // 编辑：只改第三个选项文本（语义替换），slot/part 身份保留。
+    // 编辑：只改第二个选项文本（语义替换），slot/part 身份保留。
     await db
       .update(question)
-      .set({ choices_md: ['甲', '乙', '丙（修订）'], version: 1 })
+      .set({ choices_md: ['甲', '乙（修订）', '丙'], version: 1 })
       .where(eq(question.id, qid));
     const rowAfter = await readRow(qid);
     const second = await publishQuestionGroup(
       db,
-      publishInput(rowAfter, { expectedCurrentRevision: first.revision_id }),
+      publishInput(rowAfter, {
+        expectedCurrentRevision: first.revision_id,
+        expectedAdmissionGeneration: 1,
+      }),
     );
     expect(second.status).toBe('published');
     if (second.status !== 'published') return;
@@ -178,26 +199,62 @@ describe('publishQuestionGroup（YUK-1043 统一发布 seam）', () => {
     expect(spec2.slots[0].slot_id).toBe(spec1.slots[0].slot_id);
     if (spec1.slots[0].kind === 'single_choice' && spec2.slots[0].kind === 'single_choice') {
       expect(spec2.slots[0].options[0].option_id).toBe(spec1.slots[0].options[0].option_id);
-      expect(spec2.slots[0].options[2].option_id).not.toBe(spec1.slots[0].options[2].option_id);
+      expect(spec2.slots[0].options[2].option_id).toBe(spec1.slots[0].options[2].option_id);
+      expect(spec2.slots[0].options[1].option_id).not.toBe(spec1.slots[0].options[1].option_id);
     }
+
+    // P1-4 —— identity diff：编辑版与被替换版比对，option 1 是替换（增+删）。
+    const [ev2] = await db.select().from(event).where(eq(event.id, second.event_id));
+    expect(ev2.payload).toMatchObject({
+      identity_changes: {
+        retained_part_ids: [qid],
+        added_part_ids: [],
+        removed_part_ids: [],
+        option_changes: [
+          {
+            slot_id: `${qid}::r`,
+            added_option_ids: [
+              spec2.slots[0].kind === 'single_choice' ? spec2.slots[0].options[1].option_id : '',
+            ].filter(Boolean),
+            removed_option_ids: [
+              spec1.slots[0].kind === 'single_choice' ? spec1.slots[0].options[1].option_id : '',
+            ].filter(Boolean),
+          },
+        ],
+      },
+    });
   });
 
-  it('mid-publish failure rolls back EVERYTHING (no revision, no lifecycle, no event)', async () => {
+  it('P2: mid-step failure rolls back EVERYTHING — fault injected by a trigger AFTER the revision insert', async () => {
     const db = testDb();
     const qid = 'pub_q3';
     await seedQuestion(qid);
     const row = await readRow(qid);
-    const input = publishInput(row);
+
+    // 故障注入：lifecycle INSERT 时触发 RAISE —— revision 已写、事件未写。
+    await db.execute(sql`
+      CREATE OR REPLACE FUNCTION fail_lifecycle_insert() RETURNS trigger AS $$
+      BEGIN
+        IF current_setting('app.fail_lifecycle', true) = 'on' THEN
+          RAISE EXCEPTION 'injected mid-step failure';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql`);
+    await db.execute(sql`
+      CREATE TRIGGER fail_lifecycle_insert_trg BEFORE INSERT ON question_group_lifecycle
+      FOR EACH ROW EXECUTE FUNCTION fail_lifecycle_insert()`);
 
     await expect(
       db.transaction(async (tx) => {
-        const result = await publishQuestionGroup(tx, input);
-        expect(result.status).toBe('published');
-        // 模拟发布后的同事务失败（例如后续 projection 写挂了）。
-        throw new Error('post-publish step failed');
+        await tx.execute(sql`SET LOCAL app.fail_lifecycle = 'on'`);
+        await publishQuestionGroup(tx, publishInput(row));
       }),
-    ).rejects.toThrow('post-publish step failed');
+    ).rejects.toThrow(
+      /injected mid-step failure|Failed query: insert into "question_group_lifecycle"/,
+    );
 
+    // revision 已插但 lifecycle 失败 ⇒ 整个 tx（含 revision）回滚，事件未写。
     const revisions = await db
       .select()
       .from(question_revision)
@@ -210,9 +267,13 @@ describe('publishQuestionGroup（YUK-1043 统一发布 seam）', () => {
     expect(lifecycles).toHaveLength(0);
     const events = await db.select().from(event).where(eq(event.subject_id, qid));
     expect(events.filter((e) => e.action === ASSESSMENT_PUBLISH_ACTION)).toHaveLength(0);
+
+    // 同一触发器关闭后正常发布（清掉注入，恢复路径可用）。
+    const ok = await publishQuestionGroup(db, publishInput(row));
+    expect(ok.status).toBe('published');
   });
 
-  it('admitted requires evidence (fail-closed) and lands the admission branch CHECK shape', async () => {
+  it('admitted requires PASSING evidence (fail-closed) — P1-5 shape validation', async () => {
     const db = testDb();
     const qid = 'pub_q4';
     await seedQuestion(qid);
@@ -224,6 +285,48 @@ describe('publishQuestionGroup（YUK-1043 统一发布 seam）', () => {
         publishInput(row, { admission: { state: 'admitted' } }), // 缺 evidence
       ),
     ).rejects.toThrow(/admitted requires evidence/);
+
+    // P1-5 —— structural_check_passed=false 不是准入证据。
+    await expect(
+      publishQuestionGroup(
+        db,
+        publishInput(row, {
+          admission: {
+            state: 'admitted',
+            evidence: {
+              ...ADMITTED_EVIDENCE,
+              verification: {
+                structural_check_passed: false,
+                independent_verification: null,
+              },
+            },
+          },
+        }),
+      ),
+    ).rejects.toThrow(/structural_check_passed=true/);
+
+    // P1-5 —— independent verification 未通过同样拒绝。
+    await expect(
+      publishQuestionGroup(
+        db,
+        publishInput(row, {
+          admission: {
+            state: 'admitted',
+            evidence: {
+              ...ADMITTED_EVIDENCE,
+              verification: {
+                structural_check_passed: true,
+                independent_verification: {
+                  passed: false,
+                  verifier: 'independent_model',
+                  verified_at: new Date().toISOString(),
+                },
+              },
+            },
+          },
+        }),
+      ),
+    ).rejects.toThrow(/PASSED independent verification/);
 
     const ok = await publishQuestionGroup(
       db,
@@ -239,6 +342,106 @@ describe('publishQuestionGroup（YUK-1043 统一发布 seam）', () => {
     expect(lifecycle.scoring_admission_evidence).not.toBeNull();
   });
 
+  it('P2: seam recomputes the digest and rejects supplied/derived mismatch + foreign group_id', async () => {
+    const db = testDb();
+    const qid = 'pub_digest';
+    await seedQuestion(qid);
+    const row = await readRow(qid);
+    const input = publishInput(row);
+
+    await expect(
+      publishQuestionGroup(
+        db,
+        publishInput(row, {
+          contract: { ...input.contract, integrity_digest: 'sha256:deadbeef' },
+        }),
+      ),
+    ).rejects.toThrow(/integrity_digest mismatch/);
+
+    // structure.group_id 指向别的组 ⇒ fail-closed。
+    const foreign = normalizeQuestionRowToContract({ ...row, id: 'other' });
+    await expect(
+      publishQuestionGroup(
+        db,
+        publishInput(row, {
+          contract: {
+            structure: foreign.structure,
+            response_spec: foreign.response_spec,
+            scoring_basis: foreign.scoring_basis,
+            execution_plan: foreign.execution_plan,
+            integrity_digest: foreign.integrity_digest,
+          },
+        }),
+      ),
+    ).rejects.toThrow(/structure.group_id .* != target group/);
+  });
+
+  it('same digest + changed admission ⇒ admission_updated with generation CAS; stale generation conflicts (P1-5)', async () => {
+    const db = testDb();
+    const qid = 'pub_q6';
+    await seedQuestion(qid);
+    const row = await readRow(qid);
+    // 模拟 sourced-draft-insert 首版：withheld/unverified_rules。
+    const first = await publishQuestionGroup(db, publishInput(row));
+    if (first.status !== 'published') throw new Error('first publish failed');
+
+    // 模拟 source_verify promote：内容未变，admission → admitted。
+    const promote = await publishQuestionGroup(
+      db,
+      publishInput(row, {
+        expectedCurrentRevision: first.revision_id,
+        expectedAdmissionGeneration: 1,
+        admission: { state: 'admitted', evidence: ADMITTED_EVIDENCE },
+      }),
+    );
+    expect(promote.status).toBe('admission_updated');
+    if (promote.status !== 'admission_updated') return;
+    expect(promote.current_revision_id).toBe(first.revision_id);
+    expect(promote.admission_generation).toBe(2);
+
+    // 不铸新 revision —— 内容维度与资格维度各自独立版本化（§3.3）。
+    const revisions = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.group_id, qid));
+    expect(revisions).toHaveLength(1);
+
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(lifecycle.scoring_admission_state).toBe('admitted');
+    expect(lifecycle.scoring_admission_generation).toBe(2);
+
+    // P1-5 —— 过期 generation 的维度请求不能覆盖新决定（conflict）。
+    const staleRequest = await publishQuestionGroup(
+      db,
+      publishInput(row, {
+        expectedCurrentRevision: first.revision_id,
+        expectedAdmissionGeneration: 1, // 期望 gen1，实际 gen2
+        admission: { state: 'withheld', reason: 'owner_hold' },
+      }),
+    );
+    expect(staleRequest).toMatchObject({ status: 'conflict', reason: 'admission_generation_cas' });
+    const [stillAdmitted] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(stillAdmitted.scoring_admission_state).toBe('admitted');
+    expect(stillAdmitted.scoring_admission_generation).toBe(2);
+
+    // 同请求幂等重发（gen 已更新为 2）⇒ 真 noop。
+    const again = await publishQuestionGroup(
+      db,
+      publishInput(row, {
+        expectedCurrentRevision: first.revision_id,
+        expectedAdmissionGeneration: 2,
+        admission: { state: 'admitted', evidence: ADMITTED_EVIDENCE },
+      }),
+    );
+    expect(again).toMatchObject({ status: 'noop', current_revision_id: first.revision_id });
+  });
+
   it('archive releases nothing silently; restore reacquires the claim atomically and conflicts when held', async () => {
     const db = testDb();
     const qid = 'pub_q5';
@@ -246,10 +449,9 @@ describe('publishQuestionGroup（YUK-1043 统一发布 seam）', () => {
     const row = await readRow(qid);
     await publishQuestionGroup(db, publishInput(row));
 
-    // archive：legacy claim 释放（hash 置 NULL）+ lifecycle withdrawn。
+    // archive：legacy claim 释放（hash 置 NULL）+ lifecycle withdrawn —— 全部同事务（P2）。
     await db.transaction(async (tx) => {
-      await db.update(question).set({ canonical_content_hash: null }).where(eq(question.id, qid));
-      // 上面独立 update 在 tx 外效果等同 —— 保持简单：此处直接测 lifecycle 维度。
+      await tx.update(question).set({ canonical_content_hash: null }).where(eq(question.id, qid));
       await archiveGroupLifecycle(tx, qid, new Date());
     });
     const [archived] = await db
@@ -308,77 +510,96 @@ describe('publishQuestionGroup（YUK-1043 统一发布 seam）', () => {
       /root question row 'ghost' not found/,
     );
   });
+});
 
-  it('same digest + changed admission ⇒ admission_updated: generation bumps, NO new revision, dimension event written', async () => {
+describe('publishQuestionGroupFromRow — 锁序/组语义/未决转换（复审 P1）', () => {
+  beforeEach(resetDb);
+  afterEach(resetDb);
+
+  it('P1-5: preserve on CHANGED content folds to withheld (existing reason kept) — old evidence never crosses generations', async () => {
     const db = testDb();
-    const qid = 'pub_q6';
-    await seedQuestion(qid);
-    const row = await readRow(qid);
-    // 模拟 sourced-draft-insert 首版：withheld/unverified_rules。
-    const first = await publishQuestionGroup(db, publishInput(row));
-    if (first.status !== 'published') throw new Error('first publish failed');
+    const parentId = 'pf_root';
+    const now = new Date();
+    await seedQuestion(parentId, { kind: 'composite', source: 'quiz_gen' });
+    await db.insert(question).values({
+      id: 'pf_part',
+      parent_question_id: parentId,
+      part_index: 0,
+      kind: 'question_part',
+      prompt_md: '(1)',
+      reference_md: 'B',
+      knowledge_ids: [],
+      difficulty: 3,
+      source: 'quiz_gen',
+      variant_depth: 0,
+      draft_status: 'active',
+      choices_md: ['甲', '乙'],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
 
-    // 模拟 source_verify promote：内容未变，admission → admitted（官方来源 + 确定性核验）。
-    const promote = await publishQuestionGroup(
-      db,
-      publishInput(row, {
-        expectedCurrentRevision: first.revision_id,
-        admission: { state: 'admitted', evidence: ADMITTED_EVIDENCE },
-      }),
-    );
-    expect(promote.status).toBe('admission_updated');
-    if (promote.status !== 'admission_updated') return;
-    expect(promote.current_revision_id).toBe(first.revision_id);
-    expect(promote.admission_generation).toBe(2);
+    // 首版 admitted（模拟 verify promote）。
+    const first = await publishQuestionGroupFromRow(db, {
+      rootId: parentId,
+      admission: { state: 'admitted', evidence: ADMITTED_EVIDENCE },
+      actorRef: 'test',
+      now,
+    });
+    expect(first.status).toBe('published');
 
-    // 不铸新 revision —— 内容维度与资格维度各自独立版本化（§3.3）。
-    const revisions = await db
+    // 内容编辑（part 答案 B→A）后 preserve 发布：P1-5 ⇒ withheld/unverified_rules。
+    await db
+      .update(question)
+      .set({ reference_md: 'A', updated_at: now })
+      .where(eq(question.id, 'pf_part'));
+    const after = await publishQuestionGroupFromRow(db, {
+      rootId: parentId,
+      actorRef: 'test:edit',
+      now,
+    });
+    expect(after.status).toBe('published');
+    const [lifecycle] = await db
       .select()
-      .from(question_revision)
-      .where(eq(question_revision.group_id, qid));
-    expect(revisions).toHaveLength(1);
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, parentId));
+    expect(lifecycle.scoring_admission_state).toBe('withheld');
+    expect(lifecycle.scoring_admission_withheld_reason).toBe('unverified_rules');
+    expect(lifecycle.scoring_admission_evidence).toBeNull();
+  });
 
+  it('P1-5: unresolved conversion (missing reference) forces withheld even when caller asks admitted', async () => {
+    const db = testDb();
+    const qid = 'pf_unresolved';
+    await seedQuestion(qid, {
+      kind: 'short_answer',
+      reference_md: null,
+      choices_md: null,
+      source: 'quiz_gen',
+    });
+    const result = await publishQuestionGroupFromRow(db, {
+      rootId: qid,
+      admission: { state: 'admitted', evidence: ADMITTED_EVIDENCE },
+      actorRef: 'test',
+      now: new Date(),
+    });
+    expect(result.status).toBe('published');
     const [lifecycle] = await db
       .select()
       .from(question_group_lifecycle)
       .where(eq(question_group_lifecycle.group_id, qid));
-    expect(lifecycle.scoring_admission_state).toBe('admitted');
-    expect(lifecycle.scoring_admission_generation).toBe(2);
-    expect(lifecycle.scoring_admission_decided_at).not.toBeNull();
-
-    // 维度事件：同 action，payload 标记 dimension_update 且 revision 不变。
-    const [dimensionEvent] = await db.select().from(event).where(eq(event.id, promote.event_id));
-    expect(dimensionEvent.action).toBe(ASSESSMENT_PUBLISH_ACTION);
-    expect(dimensionEvent.payload).toMatchObject({
-      dimension_update: true,
-      revision_id: first.revision_id,
-      admission: 'admitted',
-    });
-
-    // 同请求重发（同 digest + 同维度）⇒ 真 noop。
-    const again = await publishQuestionGroup(
-      db,
-      publishInput(row, {
-        expectedCurrentRevision: first.revision_id,
-        admission: { state: 'admitted', evidence: ADMITTED_EVIDENCE },
-      }),
-    );
-    expect(again).toMatchObject({ status: 'noop', current_revision_id: first.revision_id });
-    const [unchanged] = await db
-      .select()
-      .from(question_group_lifecycle)
-      .where(eq(question_group_lifecycle.group_id, qid));
-    expect(unchanged.scoring_admission_generation).toBe(2);
+    expect(lifecycle.scoring_admission_state).toBe('withheld');
+    expect(lifecycle.scoring_admission_withheld_reason).toBe('unverified_rules');
   });
 
-  it('publishQuestionGroupFromRow: first publish mints multi-part group contract; preserve keeps admission across content edits', async () => {
+  it('multi-part group: first publish mints group contract; part resolution from a child rootId; tombstoned parts excluded', async () => {
     const db = testDb();
-    const parentId = 'pub_grp_root';
+    const parentId = 'pf_grp_root';
     const now = new Date();
     await seedQuestion(parentId, { kind: 'composite', source: 'quiz_gen' });
     await db.insert(question).values([
       {
-        id: 'part_a',
+        id: 'pf_p1',
         parent_question_id: parentId,
         part_index: 0,
         kind: 'question_part',
@@ -388,14 +609,14 @@ describe('publishQuestionGroup（YUK-1043 统一发布 seam）', () => {
         difficulty: 3,
         source: 'quiz_gen',
         variant_depth: 0,
-        draft_status: 'draft',
+        draft_status: 'active',
         choices_md: null,
         created_at: now,
         updated_at: now,
         version: 0,
       },
       {
-        id: 'part_b',
+        id: 'pf_p2',
         parent_question_id: parentId,
         part_index: 1,
         kind: 'question_part',
@@ -405,7 +626,7 @@ describe('publishQuestionGroup（YUK-1043 统一发布 seam）', () => {
         difficulty: 3,
         source: 'quiz_gen',
         variant_depth: 0,
-        draft_status: 'draft',
+        draft_status: 'active',
         choices_md: ['选项一', '选项二'],
         created_at: now,
         updated_at: now,
@@ -413,64 +634,136 @@ describe('publishQuestionGroup（YUK-1043 统一发布 seam）', () => {
       },
     ]);
 
-    // 无 lifecycle ⇒ 首版 preserve 落 withheld/unverified_rules（未核验不自动准入）。
+    // 从子行 rootId 发布 ⇒ 解析到父组（P1-1 组根解析）。
     const first = await publishQuestionGroupFromRow(db, {
-      rootId: parentId,
-      actorRef: 'test:from-row',
+      rootId: 'pf_p1',
+      actorRef: 'test:from-child',
       now,
     });
     expect(first.status).toBe('published');
     if (first.status !== 'published') return;
+    expect(first.group_id).toBe(parentId);
     const [rev1] = await db
       .select()
       .from(question_revision)
       .where(eq(question_revision.revision_id, first.revision_id));
-    // 组契约含两个子 part：part 身份 = 子行 id（§3.1）。
-    expect(rev1.structure.parts.map((p) => p.part_id)).toEqual(['part_a', 'part_b']);
-    expect(rev1.response_spec.slots).toHaveLength(2);
+    expect(rev1.group_id).toBe(parentId);
+    expect(rev1.structure.parts.map((p) => p.part_id)).toEqual(['pf_p1', 'pf_p2']);
+    // 组根题干作为共享材料（P1-2）。
+    expect(rev1.structure.materials.length).toBeGreaterThanOrEqual(1);
 
-    // quiz_verify 式 promote（admitted）⇒ admission 维度翻转，revision 不变。
-    const promoted = await publishQuestionGroupFromRow(db, {
-      rootId: parentId,
-      admission: {
-        state: 'admitted',
-        evidence: {
-          marking_provenance: 'system_verified',
-          verification: {
-            structural_check_passed: true,
-            independent_verification: {
-              passed: true,
-              verifier: 'independent_model',
-              verified_at: now.toISOString(),
-            },
-          },
-          model_slice: null,
-        },
-      },
-      availability: 'general_pool',
-      actorRef: 'test:promote',
-      now,
-    });
-    expect(promoted.status).toBe('admission_updated');
-
-    // 内容编辑（part_b 答案改 A→甲）⇒ 新 revision；preserve 沿用 admitted。
+    // tombstone 一个 part ⇒ 组契约排除它，重发为少 part 的新版（P2 组语义）。
     await db
       .update(question)
-      .set({ reference_md: 'A', updated_at: now })
-      .where(eq(question.id, 'part_b'));
-    const edited = await publishQuestionGroupFromRow(db, {
+      .set({
+        metadata: { archived_at: Math.floor(now.getTime() / 1000) },
+        updated_at: now,
+      })
+      .where(eq(question.id, 'pf_p2'));
+    const second = await publishQuestionGroupFromRow(db, {
       rootId: parentId,
-      actorRef: 'test:edit',
+      actorRef: 'test:after-tombstone',
       now,
     });
-    expect(edited.status).toBe('published');
-    if (edited.status !== 'published') return;
-    expect(edited.revision_ordinal).toBe(2);
-    const [lifecycle] = await db
+    expect(second.status).toBe('published');
+    if (second.status !== 'published') return;
+    const [rev2] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, second.revision_id));
+    expect(rev2.structure.parts.map((p) => p.part_id)).toEqual(['pf_p1']);
+    // P1-4 —— identity diff 记录 pf_p2 移除。
+    const [ev2] = await db.select().from(event).where(eq(event.id, second.event_id));
+    expect(ev2.payload).toMatchObject({
+      identity_changes: { removed_part_ids: ['pf_p2'], retained_part_ids: ['pf_p1'] },
+    });
+
+    // 全部 part tombstone ⇒ withdrawn，不铸空组。
+    await db
+      .update(question)
+      .set({
+        metadata: { archived_at: Math.floor(now.getTime() / 1000) },
+        updated_at: now,
+      })
+      .where(eq(question.id, 'pf_p1'));
+    const third = await publishQuestionGroupFromRow(db, {
+      rootId: parentId,
+      actorRef: 'test:all-tombstoned',
+      now,
+    });
+    expect(third).toMatchObject({ status: 'withdrawn', group_id: parentId });
+    const [withdrawn] = await db
       .select()
       .from(question_group_lifecycle)
       .where(eq(question_group_lifecycle.group_id, parentId));
-    expect(lifecycle.current_revision_id).toBe(edited.revision_id);
-    expect(lifecycle.scoring_admission_state).toBe('admitted'); // preserve 生效
+    expect(withdrawn.withdrawn).toBe(true);
+  });
+
+  it('P1-1: sibling edit under the group-root lock is never lost — snapshot is taken AFTER the root lock', async () => {
+    const db = testDb();
+    const parentId = 'pf_race_root';
+    const now = new Date();
+    await seedQuestion(parentId, { kind: 'composite', source: 'quiz_gen' });
+    await db.insert(question).values({
+      id: 'pf_race_part',
+      parent_question_id: parentId,
+      part_index: 0,
+      kind: 'question_part',
+      prompt_md: 'original prompt',
+      reference_md: 'B',
+      knowledge_ids: [],
+      difficulty: 3,
+      source: 'quiz_gen',
+      variant_depth: 0,
+      draft_status: 'active',
+      choices_md: null,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+
+    let releaseT1!: () => void;
+    const t1Gate = new Promise<void>((resolve) => {
+      releaseT1 = resolve;
+    });
+
+    // T1：持有组根锁，随后提交一个 sibling 内容编辑（模拟并发兄弟编辑）。
+    const t1 = db.transaction(async (tx) => {
+      await tx
+        .select({ id: question.id })
+        .from(question)
+        .where(eq(question.id, parentId))
+        .for('update');
+      await t1Gate;
+      await tx
+        .update(question)
+        .set({ prompt_md: 'sibling edited prompt', updated_at: now, version: 1 })
+        .where(eq(question.id, 'pf_race_part'));
+    });
+
+    // T2：FromRow 发布 —— 必须先拿组根锁（阻塞在 T1 之后），快照因此包含 T1 的编辑。
+    const t2 = (async () => {
+      // 给 T1 足够时间先拿到锁。
+      await new Promise((r) => setTimeout(r, 250));
+      return publishQuestionGroupFromRow(db, {
+        rootId: parentId,
+        actorRef: 'test:race-t2',
+        now,
+      });
+    })();
+
+    await new Promise((r) => setTimeout(r, 250));
+    releaseT1();
+    const [, t2Result] = await Promise.all([t1, t2]);
+
+    expect(t2Result.status).toBe('published');
+    if (t2Result.status !== 'published') return;
+    const [rev] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, t2Result.revision_id));
+    // 锁后快照：发布的 part prompt 是 T1 提交的【新】文本，不是旧文本。
+    const part = rev.structure.parts.find((p) => p.part_id === 'pf_race_part');
+    expect(part?.prompt_md).toBe('sibling edited prompt');
   });
 });
