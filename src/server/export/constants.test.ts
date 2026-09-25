@@ -329,6 +329,10 @@ describe('export constants', () => {
       'event_subscription_effect',
       'hub_sync_reconciliation',
       'job_events',
+      // YUK-1050: migration apply 运行台账（operational state；restore 时按 wipe 顺序清
+      // phase 再 run，避免陈旧 apply 进度与恢复后的旧真相源数据并存）。
+      'migration_apply_phase',
+      'migration_apply_run',
       'provider_attempt_admission',
       'provider_session_admission',
       'subagent_run',
