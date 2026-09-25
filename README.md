@@ -217,18 +217,37 @@ curl https://loom.<your-domain>/api/health
 
 ### Backup
 
-**日级自动 dump（YUK-992，Mac 生产）**：launchd 每日 07:15（Asia/Shanghai）跑
-`scripts/mac-daily-dump.sh`，向 runtime 目录写 `loom-daily-YYYYMMDD.dump`（custom
-format，`pg_restore` 用；保留最近 14 份 + 每月 1 号归档）。一次性安装：
+**日级自动 dump（YUK-992 安装，YUK-1041 修复，Mac 生产）**：launchd 每日 07:15
+（Asia/Shanghai）跑 `mac-daily-dump.sh`，向 runtime 目录写
+`loom-daily-YYYYMMDD.dump`（custom format，`pg_restore` 用；保留最近 14 份 +
+每月 1 号归档）。
+
+⚠️ **launchd 子进程被 macOS TCC 拒绝对 `/Volumes/*`（外置盘）的任何 I/O**
+（exec / read / write / 建 stdout 文件全部 EPERM，表现为 `last exit code = 78`
+EX_CONFIG "spawn failed"，脚本根本跑不起来）。所以脚本与 launchd log 必须装在
+内置盘 `~/Library/Application Support/loom-daily-dump/`，对 runtime 目录的读写
+全部经 `docker run -v` 在容器内完成（OrbStack virtiofs 不走 TCC）。一次性安装：
 
 ```bash
+mkdir -p ~/Library/Application\ Support/loom-daily-dump
+cp scripts/mac-daily-dump.sh ~/Library/Application\ Support/loom-daily-dump/
+chmod +x ~/Library/Application\ Support/loom-daily-dump/mac-daily-dump.sh
 cp scripts/launchd/studio.yukoval.loom-daily-dump.plist ~/Library/LaunchAgents/
+launchctl bootout gui/$(id -u)/studio.yukoval.loom-daily-dump  # 若已装载
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/studio.yukoval.loom-daily-dump.plist
 ```
 
-失败发现面：成功写 `.loom-daily-dump-last-success` epoch 戳（连续 2 日未更新即异常）；
-失败写 `.loom-daily-dump-FAILED-YYYYMMDD` 标记；全量日志 `loom-daily-dump.log`（同在 runtime 目录）。
-手动补一份（幂等，同日覆盖）：`scripts/mac-daily-dump.sh`。
+失败发现面与巡检：成功写 `.loom-daily-dump-last-success` epoch 戳（连续 2 日未更新
+即异常）；脚本可到达的失败写 `.loom-daily-dump-FAILED-YYYYMMDD` 标记（daemon/容器
+死时写不进，此时停滞的戳是唯一信号）；脚本日志 `loom-daily-dump.log`（runtime 目录），
+launchd stdout/stderr 在 `~/Library/Application Support/loom-daily-dump/launchd.log`。
+巡检命令：
+
+```bash
+cat …/tlp-local-prod-*/.loom-daily-dump-last-success   # epoch 戳，>2 日即 stale
+launchctl print gui/$(id -u)/studio.yukoval.loom-daily-dump | grep -E 'last exit|runs'
+~/Library/Application\ Support/loom-daily-dump/mac-daily-dump.sh  # 手动补一份（幂等，同日覆盖）
+```
 
 **手动 dump/restore**：`db:dump` streams a `pg_dump` from the running `postgres` container to a timestamped SQL file on the host:
 
