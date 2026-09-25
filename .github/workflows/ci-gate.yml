@@ -106,6 +106,7 @@ jobs:
           pnpm audit:schema
           pnpm audit:dependencies
           pnpm audit:partition
+          pnpm audit:question-writers
           pnpm audit:api-contracts
           pnpm audit:api-client
           pnpm audit:api-client-usage

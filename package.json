@@ -54,6 +54,7 @@
     "acceptance:ai-pipeline": "tsx tests/acceptance/ai-pipeline.ts",
     "audit:agent-control-plane": "tsx scripts/audit-agent-control-plane.ts",
     "audit:schema": "tsx scripts/audit-schema-writes.ts",
+    "audit:question-writers": "tsx scripts/audit-question-content-writers.ts",
     "audit:dependencies": "pnpm audit --prod --audit-level=high",
     "audit:api-contracts": "tsx scripts/audit-api-contracts.ts",
     "audit:capability-boundaries": "tsx scripts/audit-capability-boundaries.ts",

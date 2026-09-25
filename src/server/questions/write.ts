@@ -47,6 +47,7 @@ import { artifact, event, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { embedHash, questionEmbedText } from '@/server/ai/embed-source';
 import { deriveAnswerClassForValues } from '@/server/questions/answer-class-write';
+import { archiveGroupLifecycle, publishQuestionGroupFromRow } from '@/server/questions/publisher';
 
 /** Display label stamped on part rows; NOT the part-ness authority (the
  * `parent_question_id` FK is — YUK-388). */
@@ -200,9 +201,16 @@ function patchValueEqual(a: unknown, b: unknown): boolean {
   return false;
 }
 
+// YUK-1043 — 触发统一发布的编辑面字段（判分输入改变 ⇒ 新 revision；
+// difficulty/knowledge_ids/draft_status 是检索投影或生命周期，不触发）。
+const PUBLISH_TRIGGERING_FIELDS = new Set(['prompt_md', 'reference_md', 'choices_md', 'kind']);
+
 /**
  * Apply an edit patch with optimistic locking + an `experimental:question_edit`
  * audit event (before/after of every changed field) in one transaction.
+ * YUK-1043：判分输入字段（题面/答案/选项/题型）变更时，同一事务内经统一
+ * publisher 铸新 question_revision + lifecycle pointer + 发布事件 ——
+ * revision/投影/事件原子（§3.1）。
  */
 export async function editQuestion(
   db: Db,
@@ -345,6 +353,21 @@ export async function editQuestion(
       return { status: 'noop', version: row.version };
     }
 
+    // P1-1（复审）— 组锁序 question 根 → lifecycle/子行：part 的判分输入编辑
+    // 会重发父组 revision，必须在改子行【之前】先锁组根，与 publisher/
+    // archive/verify 各写口同序（否则与「先锁根再碰子行」的事务互为死锁对，
+    // 且并发兄弟编辑可把自己变更提交进一个不含它的组快照）。
+    const willPublish = Object.keys(after).some((field) => PUBLISH_TRIGGERING_FIELDS.has(field));
+    const groupRoot = row.parent_question_id ?? questionId;
+    if (willPublish && row.parent_question_id != null) {
+      await tx
+        .select({ id: question.id })
+        .from(question)
+        .where(eq(question.id, row.parent_question_id))
+        .for('update')
+        .limit(1);
+    }
+
     const updated = await tx
       .update(question)
       .set({ ...setValues, updated_at: now, version: row.version + 1 })
@@ -371,6 +394,17 @@ export async function editQuestion(
       },
       created_at: now,
     });
+
+    // YUK-1043 — 判分输入变更 ⇒ 同事务统一发布（part 编辑时发布其父组；
+    // 单题发布自身）。noop/受保护/复合生命周期分支已在上方提前返回。
+    // 冲突在此 seam 内 fail-closed（锁后读取不该错版；错版即回滚）。
+    if (willPublish) {
+      await publishQuestionGroupFromRow(tx, {
+        rootId: groupRoot,
+        actorRef: `question-edit:${actorRef}`,
+        now,
+      });
+    }
 
     return { status: 'updated', event_id: eventId, version: row.version + 1 };
   });
@@ -415,6 +449,20 @@ export async function archiveQuestion(
       .limit(1);
     if (protectedChild) {
       return { status: 'protected' };
+    }
+
+    // P1-1（第二轮复审）—— 组锁序统一 root→child：archive 的目标是子 part 时，
+    // 先锁组根再改子行（旧序 child→root 与 editQuestion 的 root→child 互为
+    // 死锁序）。根 archive 时被更新行自身即根，UPDATE 取锁天然根优先。
+    const archiveRootId = row.parent_question_id ?? questionId;
+    if (row.parent_question_id != null) {
+      const [rootLock] = await tx
+        .select({ id: question.id })
+        .from(question)
+        .where(eq(question.id, archiveRootId))
+        .for('update')
+        .limit(1);
+      if (!rootLock) return { status: 'not_found' };
     }
 
     const now = new Date();
@@ -492,6 +540,23 @@ export async function archiveQuestion(
       },
       created_at: now,
     });
+
+    // YUK-1043 — archive 的 lifecycle 维度（§3.2/§3.3；复审 P2 组语义）：
+    //  - 组根 archive ⇒ 整组 withdrawn（claim 释放已由上方 hash 置 NULL
+    //    承担，分离语义；revision/digest 永不因 archive 改变）。
+    //  - 单个 part archive ⇒ 组【内容】变化（tombstone part 退出组契约），
+    //    不是整组撤回：重发组 revision（组根锁已在事务前段取得 —— 锁序
+    //    root→child；FromRow 的 part 查询已排除 tombstone 子行；全部子行
+    //    tombstone 时 FromRow 落 withdrawn，不铸空组）。
+    if (row.parent_question_id != null) {
+      await publishQuestionGroupFromRow(tx, {
+        rootId: archiveRootId,
+        actorRef: `question-archive:${actorRef}`,
+        now,
+      });
+    } else {
+      await archiveGroupLifecycle(tx, archiveRootId, now);
+    }
 
     return { status: 'archived', event_id: eventId, cascaded_part_ids: cascadedPartIds };
   });

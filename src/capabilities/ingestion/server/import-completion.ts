@@ -34,6 +34,7 @@ import {
 import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
 import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { Ingestion } from '@/server/session';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
@@ -388,6 +389,14 @@ export async function completeIngestionImport(
           version: 0,
         }),
       );
+
+      // YUK-1043（复审裁决：可行写口即刻收敛）—— 导入题 INSERT 同事务铸首版
+      // revision（withheld —— 未核验；导入块的判分输入可契约化，无需等 cutover）。
+      await publishQuestionGroupFromRow(tx, {
+        rootId: questionId,
+        actorRef: 'import-completion:question',
+        now,
+      });
 
       // T-OC slice 1 (YUK-145, OC-3): generalized capture. The capture's
       // `outcome` is a SIGNAL routed by enrollCapturedBlock — failure → attempt

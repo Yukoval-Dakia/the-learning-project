@@ -87,6 +87,7 @@ import {
 } from '@/server/boss/verify-dispatch-outbox';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { createQuestionPart } from '@/server/questions/parts';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { answerClassCompatible } from '@/subjects/question-kind';
 import {
@@ -1403,6 +1404,15 @@ export async function runQuizGen(params: RunQuizGenParams): Promise<RunQuizGenRe
           }
           compositePartCount += subs.length;
         }
+        // YUK-1043（复审裁决：可行写口即刻收敛）—— quiz_gen 新题同事务铸首版
+        // revision：composite 组已由 createQuestionPart 的逐 part 发布落版（此处
+        // 幂等 noop）；单题在此铸 v1。草稿未核验 ⇒ withheld/unverified_rules
+        //（quiz_verify 通过后 promote 翻 admitted —— 行 6 已接）。
+        await publishQuestionGroupFromRow(tx, {
+          rootId: id,
+          actorRef: 'quiz_gen:persist',
+          now,
+        });
         if (params.placementAttempt) {
           const authorized = await authorizeAndDispatchPlacementQuestion(
             id,

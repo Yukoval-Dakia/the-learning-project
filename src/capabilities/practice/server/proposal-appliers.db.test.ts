@@ -11,7 +11,15 @@ import { and, eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QuestionEditOpT } from '@/core/schema/proposal';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
-import { event, knowledge, mistake_variant, proposal_signals, question } from '@/db/schema';
+import {
+  event,
+  knowledge,
+  mistake_variant,
+  proposal_signals,
+  question,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeVariantQuestionProposal } from '@/kernel/proposals/producers';
 import { writeAiProposal } from '@/kernel/proposals/writer';
@@ -152,6 +160,27 @@ describe('variant_question proposal lifecycle', () => {
 
     expect(enqueue).toHaveBeenCalledTimes(1);
     expect(enqueue).toHaveBeenCalledWith(mistakeVariantId);
+
+    // YUK-1043 — 接受即统一发布（§2 矩阵 mistake_variant 行：不能绕发布直接
+    // active）：首版 revision + admitted（manual + human —— D9 手动带 provenance）。
+    const revisions1043 = await testDb()
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.group_id, result.question_id));
+    expect(revisions1043).toHaveLength(1);
+    const lifecycles1043 = await testDb()
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, result.question_id));
+    expect(lifecycles1043[0].current_revision_id).toBe(revisions1043[0].revision_id);
+    expect(lifecycles1043[0].scoring_admission_state).toBe('admitted');
+    expect(lifecycles1043[0].scoring_admission_evidence).toMatchObject({
+      marking_provenance: 'manual',
+      verification: {
+        structural_check_passed: true,
+        independent_verification: { passed: true, verifier: 'human' },
+      },
+    });
   });
 
   // P5.6 / YUK-178 (AC-1 + AC-6) — variant_question is hard-corrective. Accepting
@@ -389,6 +418,25 @@ describe('question_draft accept (ADR-0031 lane B)', () => {
     expect(
       (rateRows[0].payload as { materialized_question_id?: string }).materialized_question_id,
     ).toBe(questionId);
+
+    // YUK-1043 — 接受进入统一发布（§2 矩阵 question_draft 行）：首版 revision +
+    // admitted（manual + human）。拒绝路径（dismiss ⇒ tombstone）不发布。
+    const revisions1043 = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.group_id, questionId));
+    expect(revisions1043).toHaveLength(1);
+    const lifecycles1043 = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, questionId));
+    expect(lifecycles1043[0].scoring_admission_state).toBe('admitted');
+    expect(lifecycles1043[0].scoring_admission_evidence).toMatchObject({
+      marking_provenance: 'manual',
+      verification: {
+        independent_verification: { passed: true, verifier: 'human' },
+      },
+    });
   });
 
   it('does NOT reset FSRS for an already-enrolled knowledge node', async () => {

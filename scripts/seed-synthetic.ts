@@ -63,6 +63,7 @@ import { writeAiProposal } from '@/kernel/proposals/writer';
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
 import { upsertFsrsState } from '@/server/fsrs/state';
 import { listActiveSubjectsSinceRefresh } from '@/server/memory/active-subjects';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { loadYuwenFixtures } from '@/subjects/yuwen/fixtures';
 
 type DbLike = Db | Tx;
@@ -306,6 +307,16 @@ async function seedQuestions(dbh: DbLike, now: Date): Promise<SeededQuestion[]> 
       created_at: now,
       updated_at: now,
       version: 0,
+    });
+    // YUK-1043（复审 P1-6，§2 矩阵 seeds 行）—— seed 也铸完整 revision，不靠
+    // 审计豁免漏迁。synthetic 答案非官方 ⇒ admission withheld/unverified_rules
+    //（provenance system_proposed 已在契约内如实标注）；synthetic 标识保留在
+    // row metadata。幂等：重复 seed 时 digest 不变 ⇒ noop。
+    await publishQuestionGroupFromRow(dbh, {
+      rootId: id,
+      admission: { state: 'withheld', reason: 'unverified_rules' },
+      actorRef: 'seed-synthetic:question',
+      now,
     });
   }
   return out;

@@ -12,7 +12,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
-import { event, knowledge, question, source_asset } from '@/db/schema';
+import {
+  event,
+  knowledge,
+  question,
+  question_group_lifecycle,
+  question_revision,
+  source_asset,
+} from '@/db/schema';
 import { VERIFY_DISPATCH_INTENT_ACTION } from '@/server/boss/verify-dispatch-outbox';
 import type { R2Client } from '@/server/r2';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
@@ -673,6 +680,25 @@ describe('executeStoreSourcedQuestion — image candidate commit', () => {
     const assets = await db.select().from(source_asset).where(eq(source_asset.id, IMG_ASSET_ID));
     expect(assets).toHaveLength(1);
     expect(r2._store.size).toBe(1);
+
+    // YUK-1043（复审 P1-6）—— 图题事后富集改变判分输入 ⇒ 同事务重发组
+    // revision：首版（insert 时）与富集后版 digest 不同 ⇒ 两版；第二版契约
+    // 含 figures 材料 + multimodal 判分意图（judge 标记行），admission 仍
+    // withheld/unverified_rules（草稿未核验）。
+    const revisions = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.group_id, output.question_id))
+      .orderBy(question_revision.revision_ordinal);
+    expect(revisions).toHaveLength(2);
+    const enriched = revisions[1];
+    expect(enriched.structure.materials.some((m) => m.kind === 'figure')).toBe(true);
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, output.question_id));
+    expect(lifecycle.current_revision_id).toBe(enriched.revision_id);
+    expect(lifecycle.scoring_admission_state).toBe('withheld');
   });
 
   it('degrades to metadata-only link when the image candidate lacks structured/figures', async () => {

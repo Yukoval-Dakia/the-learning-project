@@ -44,6 +44,7 @@ import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 import { initialFsrsState } from '../server/fsrs';
@@ -700,6 +701,30 @@ export async function runSourceVerify(
             });
           }
         }
+
+        // YUK-1043 — 统一发布链：verified promote 即 §3.3 的 admission 时刻（同事务）。
+        // web_sourced 参考答案源自原始页面（非 model-proposed）且 tier-2 checks 已对
+        // extract 确定性核验 ⇒ official + 结构校验（publisher 契约校验）+ 无独立模型
+        // 门（independent=null，checks 摘要记入 note —— D1 双门不适用于非模型规则）。
+        // 已发布过同内容的组在此只更新 admission 维度（generation+1）。
+        await publishQuestionGroupFromRow(tx, {
+          rootId: row.parent_question_id ?? questionId,
+          admission: {
+            state: 'admitted',
+            evidence: {
+              marking_provenance: 'official',
+              verification: {
+                structural_check_passed: true,
+                independent_verification: null,
+                note: `source_verify tier-2 checks passed (${checks.length})`,
+              },
+              model_slice: null,
+            },
+          },
+          availability: 'general_pool',
+          actorRef: 'source_verify:promote',
+          now,
+        });
       } else {
         // ---- YUK-479 — auto-promote one-way gate fix: demote a pre-promoted draft on FAIL. ----
         // The cold-start image-upload path (image-candidate-accept.ts) PRE-PROMOTES a

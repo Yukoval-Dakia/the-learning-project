@@ -20,7 +20,14 @@ import type {
   RunSourceVerifyResult,
   SourceVerifyPerQuestionStatus,
 } from '@/capabilities/practice/jobs/source_verify';
-import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
+import {
+  event,
+  knowledge,
+  material_fsrs_state,
+  question,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { verifyAndPromote } from './verify-and-promote';
 
@@ -365,6 +372,26 @@ describe('verifyAndPromote — Task 4 (薄 dispatcher)', () => {
     // Neither runTaskFn nor the injected run spy was consulted (no AI on override).
     expect(noRunTask).not.toHaveBeenCalled();
     expect(runSpy).not.toHaveBeenCalled();
+
+    // YUK-1043 — owner-override promote 同事务落 §3.3 admission：首版 revision +
+    // admitted（manual —— D1：manual ≠ official，跳过独立核验是 owner 决定，
+    // evidence 如实记录 structural 过 / independent null）。
+    const revisions1043 = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.group_id, qid));
+    expect(revisions1043).toHaveLength(1);
+    const lifecycles1043 = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(lifecycles1043).toHaveLength(1);
+    expect(lifecycles1043[0].current_revision_id).toBe(revisions1043[0].revision_id);
+    expect(lifecycles1043[0].scoring_admission_state).toBe('admitted');
+    expect(lifecycles1043[0].scoring_admission_evidence).toMatchObject({
+      marking_provenance: 'manual',
+      verification: { structural_check_passed: true, independent_verification: null },
+    });
   });
 
   // ── YUK-1037 — the override branch enrolls through the same anchor-not-content

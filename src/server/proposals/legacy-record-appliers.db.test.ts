@@ -18,7 +18,13 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { RecordPromotionAcceptResult } from '@/capabilities/ingestion/public';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
-import { artifact, learning_record } from '@/db/schema';
+import {
+  artifact,
+  learning_record,
+  question,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
 
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -69,6 +75,66 @@ async function proposePromotion(
     },
   });
 }
+
+describe('acceptRecordPromotionProposal — question target 统一发布（YUK-1043）', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('legacy dreaming 接受路径生成新契约：question 行 + 首版 revision + admitted（manual+human），不再是漏网写口', async () => {
+    const db = testDb();
+    await seedRecord(db, 'rec_q');
+    await writeAiProposal(db, {
+      id: 'prop_q',
+      payload: {
+        kind: 'record_promotion',
+        target: { subject_kind: 'record', subject_id: 'rec_q' },
+        reason_md: 'promote into a question',
+        evidence_refs: [],
+        proposed_change: {
+          record_id: 'rec_q',
+          target: 'question',
+          draft: {
+            title: 'Q',
+            content: 'q body',
+            prompt_md: '指出下列句中加点词的词性',
+            reference_md: '代词',
+          },
+        },
+      },
+    });
+
+    const result = await acceptAiProposal(db, 'prop_q');
+    assertProposalLifecycleResult<RecordPromotionAcceptResult>(result, 'record_promotion');
+    expect(result.materialized_kind).toBe('question');
+
+    const [q] = await db.select().from(question).where(eq(question.id, result.materialized_id));
+    expect(q).toBeDefined();
+    expect(q.source).toBe('dreaming');
+    expect(q.draft_status).toBe('active');
+
+    // YUK-1043 — 可达接受路径必须生成新契约（§2 矩阵行 13）：首版 revision +
+    // admitted（manual + human，D9）。
+    const revisions = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.group_id, result.materialized_id));
+    expect(revisions).toHaveLength(1);
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, result.materialized_id));
+    expect(lifecycle.current_revision_id).toBe(revisions[0].revision_id);
+    expect(lifecycle.scoring_admission_state).toBe('admitted');
+    expect(lifecycle.scoring_admission_evidence).toMatchObject({
+      marking_provenance: 'manual',
+      verification: {
+        structural_check_passed: true,
+        independent_verification: { passed: true, verifier: 'human' },
+      },
+    });
+  });
+});
 
 describe('acceptRecordPromotionProposal — artifact target body_blocks validation (YUK-503)', () => {
   beforeEach(async () => {

@@ -35,6 +35,7 @@ import {
   dispatchPendingVerifyIntents,
   writeVerifyDispatchIntent,
 } from '@/server/boss/verify-dispatch-outbox';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { insertSourcedDraft } from '@/server/questions/sourced-draft-insert';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { SupplyTraceV1 } from '../question-supply/evidence-demand';
@@ -306,6 +307,15 @@ export async function executeStoreSourcedQuestion(
           })
           .where(eq(question.id, questionId));
       }
+      // YUK-1043（复审 P1-6）— 图题事后富集（structured/figures/judge_override）
+      // 改变判分输入：同事务重发组 revision（首版由 insertSourcedDraft 铸，
+      // 富集后的契约与首版 digest 不同 ⇒ 新版；纯 metadata 富集 digest 不变
+      // ⇒ 幂等 noop）。草稿未核验 ⇒ admission 维持 withheld（preserve 语义）。
+      await publishQuestionGroupFromRow(tx, {
+        rootId: questionId,
+        actorRef: `store-sourced:${input.source_route}:enrich`,
+        now,
+      });
       await writeVerifyDispatchIntent(tx, {
         questionId,
         verifier: 'source_verify',

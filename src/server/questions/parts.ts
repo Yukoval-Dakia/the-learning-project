@@ -24,11 +24,13 @@
  * (`representMultiPartQuestion`). See the lane plan §DEFERRED.
  */
 import { createId } from '@paralleldrive/cuid2';
+import { eq } from 'drizzle-orm';
 
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Tx } from '@/db/client';
 import { question } from '@/db/schema';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 
 /** Matches the `question.metadata` jsonb column shape (Record<string, unknown>). */
 type JsonObject = Record<string, unknown>;
@@ -110,6 +112,18 @@ export async function createQuestionPart(
   input: CreateQuestionPartInput,
 ): Promise<CreatedQuestionPart> {
   const questionId = input.id ?? createId();
+  // P1-1（第二轮复审）—— 锁序统一 root→child：先锁父组根再 INSERT 子行。
+  //（INSERT 的外键检查会对父行取 KEY SHARE 锁，与根 FOR UPDATE 互斥 ——
+  // 不预先显式锁根会与「先锁根再改子行」的事务形成锁序倒置。）
+  const [rootLock] = await tx
+    .select({ id: question.id })
+    .from(question)
+    .where(eq(question.id, input.parentQuestionId))
+    .for('update')
+    .limit(1);
+  if (!rootLock) {
+    throw new Error(`createQuestionPart: parent question '${input.parentQuestionId}' not found`);
+  }
   await tx.insert(question).values(
     withAnswerClass({
       id: questionId,
@@ -145,6 +159,13 @@ export async function createQuestionPart(
       version: 0,
     }),
   );
+  // YUK-1043 — 统一发布链：新 part 进入组 ⇒ 同事务重发父组 revision
+  //（part 身份 = 子行 id；组契约含全部子 part，见 contract-normalizer）。
+  await publishQuestionGroupFromRow(tx, {
+    rootId: input.parentQuestionId,
+    actorRef: `question-part:${input.source}`,
+    now: input.now,
+  });
   return { questionId, partIndex: input.partIndex };
 }
 

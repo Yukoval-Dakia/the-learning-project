@@ -4,11 +4,14 @@
   "notes": {
     "YUK-1022": "copilot -> ai raised 10 -> 16 (+6, total 435 -> 441). Spec-mandated P3 dual-descriptor wiring: copilot-execution/subagents now import the pi lane parallels (pi-hooks, pi-subagent host, execution-adapter lane pin, pi-agent-adapter types) alongside the existing SDK descriptor edges, plus the test seam in copilot_run.test.ts. Ratified per the YUK-921 migration spec; P4 retires the SDK side of these edges.",
     "YUK-1025": "P4 SDK retirement: pi-only edges net agency->ai 27->28 (piCustomTool/pi-subagent/piDomainMount imports replaced the retired SdkMcpServer/buildMcpServerFromRegistry/createSpawnContract edges), copilot->ai 16->18 (execution-adapter ModelBinding + pi-subagent contract), practice->ai 73->65 (output-format.ts + SDK descriptor imports deleted). Total 441->436.",
-    "YUK-1011": "practice -> questions raised 7 -> 8 (+1, total 436 -> 437): quiz_gen.ts now calls createQuestionPart (src/server/questions/parts.ts — the sole owner of question_part inserts) to materialize composite 篇 children inside the same persist transaction. Owner-service call per the write-path convention, same shape as ingestion -> questions (5)."
+    "YUK-1011": "practice -> questions raised 7 -> 8 (+1, total 436 -> 437): quiz_gen.ts now calls createQuestionPart (src/server/questions/parts.ts — the sole owner of question_part inserts) to materialize composite 篇 children inside the same persist transaction. Owner-service call per the write-path convention, same shape as ingestion -> questions (5).",
+    "YUK-1043": "统一发布链落地：practice -> questions 8 -> 12 (+4: quiz_verify / source_verify / verify-and-promote / proposal-appliers 经 publishQuestionGroupFromRow 同事务发布), ingestion -> questions 5 -> 6 (+1: legacy-record-appliers 接受路径)。total 437 -> 442。这是 grounding §2 的收敛方向 —— publisher seam (src/server/questions/publisher.ts) 是全部 producer/edit/publish 写口的唯一入口，capability -> questions 属 owner-service 调用，非架构回归。",
+    "YUK-1043-p1": "复审 P1-6 补收敛：practice -> questions 12 -> 13 (+1: store-sourced-question 图题事后富集 UPDATE 后同事务重发 revision)。total 442 -> 443。",
+    "YUK-1043-p2": "复审第二轮裁决 —— 可行写口即刻收敛：ingestion -> questions 6 -> 10 (+4: auto-enroll / mistakes / import-completion / image-candidate-accept INSERT 后同事务铸首版 revision), practice -> questions 13 -> 14 (+1: quiz_gen 新题铸首版)。total 443 -> 448。均为 publishQuestionGroupFromRow owner-service 边（§2 矩阵收敛方向），非架构回归。"
   },
   "debts": {
     "capabilityToServer": {
-      "total": 437,
+      "total": 448,
       "byOwnerPair": {
         "agency -> ai": 28,
         "agency -> boss": 10,
@@ -42,7 +45,7 @@
         "ingestion -> mastery": 2,
         "ingestion -> projections": 9,
         "ingestion -> proposals": 3,
-        "ingestion -> questions": 5,
+        "ingestion -> questions": 10,
         "ingestion -> r2": 13,
         "ingestion -> records": 1,
         "ingestion -> session": 8,
@@ -80,7 +83,7 @@
         "practice -> orchestrator": 1,
         "practice -> projections": 4,
         "practice -> proposals": 5,
-        "practice -> questions": 8,
+        "practice -> questions": 14,
         "practice -> r2": 2,
         "practice -> revert": 1,
         "practice -> runtime-env": 4,
