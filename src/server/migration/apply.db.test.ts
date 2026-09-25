@@ -11,6 +11,7 @@ import { canonicalHash } from '@/core/migration/canonical';
 import { classifyMigrationCapture } from '@/core/migration/classify';
 import type { MigrationCapture } from '@/core/migration/types';
 import type { Db } from '@/db/client';
+
 import {
   assessment_identity_mapping,
   assessment_issuance,
@@ -23,7 +24,9 @@ import {
   migration_apply_phase,
   migration_apply_run,
   question_revision,
+  source_asset,
 } from '@/db/schema';
+import { loadRevisionContracts } from '../../../scripts/migration-apply';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   MigrationApplyError,
@@ -33,11 +36,12 @@ import {
 } from './apply';
 import { captureMigrationCheckpoint } from './capture';
 
-// YUK-1050 — apply 执行器 DB 测试：真表 seed（含 corpus question_revision +
-// legacy attempt/judge/review/pending/draft）→ 真实 capture reader → 分类 →
-// 规划 → 分阶段执行。钉住：幂等重跑零重复、crash 中断后续跑收敛、
-// divergence fail-visible、fence 纪律、guarded 表 INSERT-only（DB trigger）、
-// 学习状态表零触碰（无学习重放）。
+// YUK-1050（review 修订版）— apply 执行器 DB 测试：真表 seed（corpus
+// question_revision + legacy attempt/judge/review/pending/draft/asset）→
+// 真实 capture reader → 分类 → 规划 → 分阶段执行。钉住：幂等重跑零重复、
+// crash 中断后续跑收敛、pending→resolved supersession 续跑、divergence
+// fail-visible、fence 纪律、guarded 表 INSERT-only（DB trigger）、head 为
+// non-effective 初态且迁移后激活被识别为合法演进、学习状态表零触碰。
 
 const NOW = new Date('2026-09-20T00:00:00.000Z');
 
@@ -116,7 +120,7 @@ function revisionRow(revisionId: string, groupId: string): typeof question_revis
             statement_md: 'historical import',
             source: 'manual',
           },
-          points: null,
+          points: 1,
         },
       ],
       aggregation: { kind: 'sum' },
@@ -137,7 +141,7 @@ function revisionRow(revisionId: string, groupId: string): typeof question_revis
 function registryEntry(
   questionId: string,
   revisionId: string,
-  snapshotDigest: string | null,
+  snapshotDigest: string,
 ): RevisionRegistryEntry {
   return {
     question_id: questionId,
@@ -145,7 +149,9 @@ function registryEntry(
     part_ids: ['p1'],
     slot_id: 's1',
     scoring_unit_id: 'u1',
+    binding_kind: 'snapshot_verified',
     snapshot_digest: snapshotDigest,
+    assertion_reason: null,
     published_at: NOW.toISOString(),
   };
 }
@@ -169,7 +175,7 @@ async function seedEvent(
     });
 }
 
-/** 代表性历史语料：complete attempt 链 + durable 回填 review + pending/draft/lineage。 */
+/** 代表性历史语料：complete attempt 链 + durable 回填 review + pending/draft/lineage + 图片资产。 */
 async function seedLegacyHistory(): Promise<void> {
   // corpus 导入产物（YUK-1043 lane 的接缝工件在 apply 侧以 registry 表达）。
   await testDb()
@@ -179,7 +185,7 @@ async function seedLegacyHistory(): Promise<void> {
       revisionRow('rev-q-durable', 'grp-q-durable'),
     ]);
 
-  // 1) complete attempt 链：attempt（带冻结 snapshot）+ head judge verdict。
+  // 1) complete attempt 链：attempt（带冻结 snapshot + 图片证据）+ head judge verdict。
   await seedEvent({
     id: 'att-1',
     action: 'attempt',
@@ -188,12 +194,22 @@ async function seedLegacyHistory(): Promise<void> {
     outcome: 'failure',
     payload: {
       answer_md: '3',
-      answer_image_refs: [],
+      answer_image_refs: ['asset-1'],
       referenced_knowledge_ids: ['kc-1'],
       question_snapshot: ATTEMPT_SNAPSHOT,
     },
-    created_at: NOW,
   });
+  await testDb()
+    .insert(source_asset)
+    .values({
+      id: 'asset-1',
+      kind: 'image',
+      storage_key: 'answers/asset-1.png',
+      mime_type: 'image/png',
+      byte_size: 2048,
+      sha256: 'b'.repeat(64),
+      created_at: NOW,
+    });
   await seedEvent({
     id: 'jud-1',
     actor_kind: 'agent',
@@ -223,7 +239,6 @@ async function seedLegacyHistory(): Promise<void> {
         question_snapshot: { ...FROZEN_DURABLE },
       },
     },
-    created_at: NOW,
   });
   await seedEvent({
     id: 'rev-d1',
@@ -241,9 +256,7 @@ async function seedLegacyHistory(): Promise<void> {
     created_at: new Date('2026-09-20T00:00:08.000Z'),
   });
 
-  // 3) 未回填 durable pending（blocked，保留 run/request 身份；pre-snapshot
-  //    legacy 形态：judge-run-payload 旧路径无冻结 snapshot，identity 只能靠
-  //    registry 断言绑定）。
+  // 3) 未回填 durable pending（blocked；pre-snapshot legacy 形态，无冻结 snapshot）。
   await seedEvent({
     id: 'pend-unbackfilled',
     action: 'experimental:judge_pending_attempt',
@@ -259,7 +272,6 @@ async function seedLegacyHistory(): Promise<void> {
         submitted_at: NOW.toISOString(),
       },
     },
-    created_at: NOW,
   });
 
   // 4) rating-only review（FSRS 评级 → lineage，无映射行）。
@@ -270,7 +282,6 @@ async function seedLegacyHistory(): Promise<void> {
     subject_id: 'q-main',
     outcome: 'success',
     payload: { fsrs_rating: 'good', referenced_knowledge_ids: ['kc-1'] },
-    created_at: NOW,
   });
 
   // 学习状态基线：apply 后必须逐字节不变（无学习重放）。
@@ -304,7 +315,7 @@ interface Fixture {
 async function buildFixture(): Promise<Fixture> {
   const capture = await captureMigrationCheckpoint(testDb());
   const registry: RevisionRegistry = {
-    registry_version: 1,
+    registry_version: 2,
     generated_by: 'db-test-corpus-import',
     entries: [
       registryEntry('q-main', 'rev-q-main', canonicalHash(ATTEMPT_SNAPSHOT)),
@@ -314,8 +325,12 @@ async function buildFixture(): Promise<Fixture> {
   return { capture, registry };
 }
 
-function planInput(fixture: Fixture): BuildApplyPlanInput {
+async function planInput(
+  fixture: Fixture,
+  registry: RevisionRegistry | null,
+): Promise<BuildApplyPlanInput> {
   const classification = classifyMigrationCapture(fixture.capture);
+  const contracts = await loadRevisionContracts(testDb(), registry);
   return {
     capture: fixture.capture,
     classification: {
@@ -331,20 +346,23 @@ function planInput(fixture: Fixture): BuildApplyPlanInput {
       deferred_replay: classification.deferred_replay,
     },
     checkpoint_hash: 'chk-db-test',
-    registry: fixture.registry,
+    registry,
+    revisionContracts: contracts,
   };
 }
 
 const RUN_ID = 'run-dbtest0000000000000000';
 
+type ApplyPlan = ReturnType<typeof buildMigrationApplyPlan>;
+
 async function runApply(
-  plan: ReturnType<typeof buildMigrationApplyPlan>,
-  options: { db?: Db; dryRun?: boolean } = {},
+  plan: ApplyPlan,
+  options: { db?: Db; dryRun?: boolean; runId?: string } = {},
 ) {
   return runMigrationApply({
     db: options.db ?? testDb(),
     plan,
-    runId: RUN_ID,
+    runId: options.runId ?? RUN_ID,
     fence: FENCE,
     dryRun: options.dryRun,
     batchSize: 1, // 单链一批：放大事务边界，钉住 crash 粒度
@@ -379,9 +397,9 @@ beforeEach(async () => {
 });
 
 describe('runMigrationApply — 全链路', () => {
-  it('complete attempt 与 durable 回填 review 落 6 张真相表，reconciliation 全对账', async () => {
+  it('complete attempt 与 durable 回填 review 落 6 张真相表；head 为 non-effective 初态；图片证据原生保留', async () => {
     const fixture = await buildFixture();
-    const plan = buildMigrationApplyPlan(planInput(fixture));
+    const plan = buildMigrationApplyPlan(await planInput(fixture, fixture.registry));
     const result = await runApply(plan);
     assertReconciliationClean(result.report);
 
@@ -390,7 +408,6 @@ describe('runMigrationApply — 全链路', () => {
     expect(result.report.reconciliation.evaluations_present).toBe(2);
     const counts = await truthCounts();
     expect(counts).toMatchObject({
-      mappings: expect.any(Number),
       issuances: 2,
       groups: 2,
       submissions: 2,
@@ -398,45 +415,56 @@ describe('runMigrationApply — 全链路', () => {
       heads: 2,
     });
 
-    // head 语义：att-1 → jud-1 eval 生效；rev-d1 → embedded eval 生效。
+    // head：随 submission 建立、不激活（§11/D4/§13 non-effective pending）。
     const heads = await testDb().select().from(evaluation_effective_head);
     for (const head of heads) {
-      expect(head.effective_evaluation_id).not.toBeNull();
-      expect(head.generation).toBe(1);
-      const evalRow = await testDb()
-        .select()
-        .from(evaluation)
-        .where(eq(evaluation.evaluation_id, head.effective_evaluation_id ?? ''));
-      expect(evalRow[0]?.status).toBe('completed');
-      expect(evalRow[0]?.provenance).toMatchObject({ source: 'automatic' });
+      expect(head.effective_evaluation_id).toBeNull();
+      expect(head.generation).toBe(0);
     }
 
-    // submission 冻结作答 + 幂等键。
+    // evaluation：判词只作 legacy 证据 —— unit pending + aggregate pending_units。
+    const evals = await testDb().select().from(evaluation);
+    for (const row of evals) {
+      expect(row.unit_results[0]).toMatchObject({ status: 'pending', scoring_unit_id: 'u1' });
+      expect(row.aggregate).toMatchObject({ kind: 'unresolved', reason: 'pending_units' });
+      expect(row.provenance).toMatchObject({ source: 'automatic' });
+    }
+
+    // submission：冻结作答 + 幂等键 + 图片证据原生保留（D5）。
     const submissions = await testDb().select().from(assessment_submission);
     expect(submissions.map((s) => s.idempotency_key).sort()).toEqual([
       'legacy-att-1',
       'legacy-rev-d1',
     ]);
-    const texts = submissions
-      .map((s) => (s.response_set as { entries: Array<{ text_md: string }> }).entries[0]?.text_md)
-      .sort();
-    expect(texts).toEqual(['2', '3']);
+    const withImage = submissions.find((s) => s.idempotency_key === 'legacy-att-1');
+    expect(withImage).toBeDefined();
+    const entry = withImage
+      ? (withImage.response_set as { entries: Array<{ kind: string; evidence?: unknown[] }> })
+          .entries[0]
+      : undefined;
+    expect(entry?.kind).toBe('open');
+    expect(entry?.evidence?.[0]).toMatchObject({
+      evidence_id: 'legacy-asset-1',
+      kind: 'image',
+      mime_type: 'image/png',
+      bytes: 2048,
+    });
 
-    // 映射行：identity 可由 registry 断言绑定的缺件 pending 仍落 mapped（身份
-    // 已知），PendingState/run 身份在 evidence；lineage 类别无行。
+    // 映射行：缺件 pending 带 PendingState + 恢复信封；lineage 类别无行。
     const mappings = await testDb().select().from(assessment_identity_mapping);
     const pendingMapping = mappings.find((m) => m.source_id === 'pend-unbackfilled');
-    expect(pendingMapping?.status).toBe('mapped');
+    expect(pendingMapping?.status).toBe('pending');
     expect(pendingMapping?.evidence).toMatchObject({
       pending: { reason: 'infra_failure', retryable: true },
-      run_id: 'run-missing',
     });
-    expect(pendingMapping?.evidence).toMatchObject({
-      resolution: { registry_snapshot_binding: 'registry_assertion' },
-    });
+    const envelope = pendingMapping?.evidence as {
+      pending_recovery?: { run_id?: string; frozen_request?: { response_md?: string } };
+    };
+    expect(envelope?.pending_recovery?.run_id).toBe('run-missing');
+    expect(envelope?.pending_recovery?.frozen_request?.response_md).toBe('my frozen answer');
     expect(mappings.find((m) => m.source_id === 'rev-rating')).toBeUndefined();
 
-    // 账本：run + 5 阶段全 completed，有 WAL/时长观测字段位。
+    // 账本：run + 5 阶段全 completed，run 行带 WAL 起点（audit:schema 写路径）。
     const phases = await testDb()
       .select()
       .from(migration_apply_phase)
@@ -447,29 +475,96 @@ describe('runMigrationApply — 全链路', () => {
       .from(migration_apply_run)
       .where(eq(migration_apply_run.run_id, RUN_ID));
     expect(run[0]?.status).toBe('completed');
+    expect(run[0]?.wal_lsn_start).not.toBeNull();
   });
 
-  it('幂等重跑：零新行、全部 already_present、reconciliation 仍全对账', async () => {
+  it('幂等重跑：零新行、阶段短路、reconciliation 仍全对账', async () => {
     const fixture = await buildFixture();
-    const plan = buildMigrationApplyPlan(planInput(fixture));
+    const plan = buildMigrationApplyPlan(await planInput(fixture, fixture.registry));
     const first = await runApply(plan);
     assertReconciliationClean(first.report);
     const before = await truthCounts();
 
     const second = await runApply(plan);
     assertReconciliationClean(second.report);
-    const after = await truthCounts();
-    expect(after).toEqual(before);
-    const mappingPhase = second.report.phases.find((p) => p.phase === 'apply_mappings');
-    const submissionPhase = second.report.phases.find((p) => p.phase === 'apply_submissions');
-    // 重跑：阶段被 completed 状态短路（resume 语义），无重复写。
-    expect(mappingPhase?.status).toBe('skipped');
-    expect(submissionPhase?.status).toBe('skipped');
+    expect(await truthCounts()).toEqual(before);
+    expect(second.report.phases.find((p) => p.phase === 'apply_mappings')?.status).toBe('skipped');
+    expect(second.report.phases.find((p) => p.phase === 'apply_submissions')?.status).toBe(
+      'skipped',
+    );
+  });
+
+  it('迁移后 head 激活（generation 1）被识别为合法演进：重跑仍 CLEAN 且显式上报', async () => {
+    const fixture = await buildFixture();
+    const plan = buildMigrationApplyPlan(await planInput(fixture, fixture.registry));
+    await runApply(plan);
+    // settlement/runtime 激活 head（head 表无 immutable trigger —— 合法写路径）。
+    const evalRow = (await testDb().select().from(evaluation))[0];
+    const groupRow = (await testDb().select().from(evaluation_group))[0];
+    if (evalRow === undefined || groupRow === undefined) return;
+    await testDb()
+      .update(evaluation_effective_head)
+      .set({ effective_evaluation_id: evalRow.evaluation_id, generation: 1 })
+      .where(eq(evaluation_effective_head.evaluation_group_id, groupRow.evaluation_group_id));
+
+    const second = await runApply(plan);
+    assertReconciliationClean(second.report); // 合法推进不判 divergence
+    const activated = second.report.reconciliation.heads_current.find(
+      (h) => h.evaluation_group_id === groupRow.evaluation_group_id,
+    );
+    expect(activated).toMatchObject({ generation: 1, post_migration_activation: true });
+  });
+
+  it('pending→resolved 续跑（P1-5）：先无 registry 落 pending，registry 后到同 checkpoint 重跑走显式接替', async () => {
+    const fixture = await buildFixture();
+    // 第一遍：无 registry —— 全部 pending，无 submission。
+    const planNoRegistry = buildMigrationApplyPlan(await planInput(fixture, null));
+    const first = await runApply(planNoRegistry);
+    assertReconciliationClean(first.report);
+    expect(first.report.reconciliation.submissions_present).toBe(0);
+    const anchorLocator = 'event:attempt:att-1';
+    const pendingRow = (await testDb()
+      .select()
+      .from(assessment_identity_mapping)
+      .where(eq(assessment_identity_mapping.source_locator, anchorLocator))) as unknown as Array<{
+      mapping_id: string;
+      status: string;
+      is_current: boolean;
+    }>;
+    expect(pendingRow[0]?.status).toBe('pending');
+
+    // 第二遍：registry 后到（同 checkpoint/分类）—— mapped 新裁决接替旧 pending 行。
+    const planWithRegistry = buildMigrationApplyPlan(await planInput(fixture, fixture.registry));
+    const second = await runApply(planWithRegistry, { runId: 'run-withregistry000000000' });
+    assertReconciliationClean(second.report);
+    expect(second.report.reconciliation.submissions_present).toBe(2);
+    const rows = (await testDb()
+      .select()
+      .from(assessment_identity_mapping)
+      .where(eq(assessment_identity_mapping.source_locator, anchorLocator))) as unknown as Array<{
+      mapping_id: string;
+      status: string;
+      is_current: boolean;
+      supersedes_mapping_id: string | null;
+      target_revision_id: string | null;
+    }>;
+    const currentRow = rows.find((r) => r.is_current);
+    const supersededRow = rows.find((r) => !r.is_current);
+    expect(currentRow?.status).toBe('mapped');
+    expect(currentRow?.target_revision_id).toBe('rev-q-main');
+    expect(supersededRow?.status).toBe('pending'); // 旧裁决原样保留
+    expect(currentRow?.supersedes_mapping_id).toBe(supersededRow?.mapping_id);
+    expect(second.report.reconciliation.mapping_rows_superseded_in_run).toBeGreaterThan(0);
+    // 第三遍：mapped plan 幂等重跑 —— 无新接替、无重复。
+    const before = await truthCounts();
+    const third = await runApply(planWithRegistry, { runId: 'run-withregistry000000000' });
+    assertReconciliationClean(third.report);
+    expect(await truthCounts()).toEqual(before);
   });
 
   it('crash 中断（apply_submissions 批事务失败）→ 续跑收敛，无重复行', async () => {
     const fixture = await buildFixture();
-    const plan = buildMigrationApplyPlan(planInput(fixture));
+    const plan = buildMigrationApplyPlan(await planInput(fixture, fixture.registry));
     const realDb = testDb();
     let txCalls = 0;
     const proxy = new Proxy(realDb, {
@@ -477,7 +572,7 @@ describe('runMigrationApply — 全链路', () => {
         if (prop === 'transaction') {
           return async (fn: (tx: unknown) => Promise<unknown>) => {
             txCalls += 1;
-            if (txCalls === 2) throw new Error('simulated crash mid-batch');
+            if (txCalls === 6) throw new Error('simulated crash mid-batch'); // 4 mapping 批 + 第 1 条 submission 链后
             return (
               target.transaction as (fn: (tx: unknown) => Promise<unknown>) => Promise<unknown>
             )(fn);
@@ -511,16 +606,15 @@ describe('runMigrationApply — 全链路', () => {
     expect(submissionPhase?.rows_already_present).toBeGreaterThan(0);
   });
 
-  it('divergence fail-visible：库内同 locator 不同判的映射行 → 拒绝并保持零写入', async () => {
+  it('divergence fail-visible：库内同 locator 不同判的当前映射行 → 拒绝并保持零 submission 写入', async () => {
     const fixture = await buildFixture();
-    const plan = buildMigrationApplyPlan(planInput(fixture));
-    // 预插一条与 plan 冲突的当前映射（mapping 表不受 immutable trigger 保护，
-    // 可由修正工作流写入 —— 这里模拟被外部篡改/旧版本写入的场景）。
+    const plan = buildMigrationApplyPlan(await planInput(fixture, fixture.registry));
+    // 预插一条【非本工具】裁决的当前映射（模拟外部写入/篡改 —— 不可接替）。
     const conflictingRecord = plan.records.find(
       (r) => r.mapping !== null && r.mapping.source_id === 'att-1',
     );
     expect(conflictingRecord).toBeDefined();
-    const conflicting = conflictingRecord?.mapping ?? undefined;
+    const conflicting = conflictingRecord?.mapping ?? null;
     expect(conflicting).toBeDefined();
     if (conflicting === null || conflicting === undefined) return;
     await testDb()
@@ -542,7 +636,6 @@ describe('runMigrationApply — 全链路', () => {
     const counts = await truthCounts();
     expect(counts.issuances).toBe(0);
     expect(counts.submissions).toBe(0);
-    // 失败可见：run 记 failed。
     const runRow = await testDb()
       .select()
       .from(migration_apply_run)
@@ -559,12 +652,12 @@ describe('runMigrationApply — 全链路', () => {
   it('preflight：registry 指向不存在的 revision → 拒绝，真相表零写入', async () => {
     const fixture = await buildFixture();
     const staleRegistry: RevisionRegistry = {
-      registry_version: 1,
+      registry_version: 2,
       generated_by: 'stale',
       entries: [registryEntry('q-main', 'rev-does-not-exist', canonicalHash(ATTEMPT_SNAPSHOT))],
     };
-    const plan = buildMigrationApplyPlan({ ...planInput(fixture), registry: staleRegistry });
-    await expect(runApply(plan)).rejects.toThrow(/revision 在目标库不存在/);
+    // 装载即拒（registry 与目标库不一致在任何写入之前显形）。
+    await expect(planInput(fixture, staleRegistry)).rejects.toThrow(/revision 在目标库不存在/);
     const counts = await truthCounts();
     expect(counts.submissions).toBe(0);
     expect(counts.issuances).toBe(0);
@@ -572,7 +665,7 @@ describe('runMigrationApply — 全链路', () => {
 
   it('无 fence 拒绝写库；fence 被占同样拒绝', async () => {
     const fixture = await buildFixture();
-    const plan = buildMigrationApplyPlan(planInput(fixture));
+    const plan = buildMigrationApplyPlan(await planInput(fixture, fixture.registry));
     await expect(
       runMigrationApply({ db: testDb(), plan, runId: RUN_ID, fence: null }),
     ).rejects.toThrow(/fence/);
@@ -585,7 +678,7 @@ describe('runMigrationApply — 全链路', () => {
 
   it('dry-run：零写入（含账本），report 仍产出 plan 对账面', async () => {
     const fixture = await buildFixture();
-    const plan = buildMigrationApplyPlan(planInput(fixture));
+    const plan = buildMigrationApplyPlan(await planInput(fixture, fixture.registry));
     const result = await runApply(plan, { dryRun: true });
     expect(result.report.dry_run).toBe(true);
     expect(result.report.reconciliation.submissions_present).toBe(0);
@@ -597,13 +690,12 @@ describe('runMigrationApply — 全链路', () => {
 
   it('guarded 表 INSERT-only：UPDATE 被 DB trigger 拒绝（0105 不可变防线）', async () => {
     const fixture = await buildFixture();
-    const plan = buildMigrationApplyPlan(planInput(fixture));
+    const plan = buildMigrationApplyPlan(await planInput(fixture, fixture.registry));
     await runApply(plan);
     const submissions = await testDb().select().from(assessment_submission);
     expect(submissions.length).toBeGreaterThan(0);
     const victim = submissions[0];
     if (victim === undefined) return;
-    // drizzle 会把 DB 错误包进 "Failed query" 外层 —— 沿 cause 链找 trigger 消息。
     let caught: unknown;
     try {
       await testDb()
@@ -625,7 +717,7 @@ describe('runMigrationApply — 全链路', () => {
   it('无学习重放：material_fsrs_state 逐字节不变', async () => {
     const before = await testDb().select().from(material_fsrs_state);
     const fixture = await buildFixture();
-    const plan = buildMigrationApplyPlan(planInput(fixture));
+    const plan = buildMigrationApplyPlan(await planInput(fixture, fixture.registry));
     await runApply(plan);
     const after = await testDb().select().from(material_fsrs_state);
     expect(after).toEqual(before);
@@ -633,17 +725,17 @@ describe('runMigrationApply — 全链路', () => {
 
   it('同 checkpoint 不同 classification 的第二 run → 拒绝静默叠加', async () => {
     const fixture = await buildFixture();
-    const plan = buildMigrationApplyPlan(planInput(fixture));
+    const plan = buildMigrationApplyPlan(await planInput(fixture, fixture.registry));
     await runApply(plan);
-    const otherClassification = {
-      ...planInput(fixture),
+    const base = await planInput(fixture, fixture.registry);
+    const plan2 = buildMigrationApplyPlan({
+      ...base,
       classification: {
-        ...planInput(fixture).classification,
+        ...base.classification,
         classification_version: 'db-test-v2',
         classification_hash: 'different-hash',
       },
-    };
-    const plan2 = buildMigrationApplyPlan(otherClassification);
+    });
     await expect(
       runMigrationApply({
         db: testDb(),
@@ -655,10 +747,11 @@ describe('runMigrationApply — 全链路', () => {
   });
 });
 
-describe('parseRevisionRegistry — DB 侧接线', () => {
-  it('registry 工件 digest 进 plan（语料导入变化不被吞掉）', async () => {
+describe('registry/contract 装载（DB 侧接线）', () => {
+  it('registry 工件 digest 进 plan；契约从真表装载并保持五层形状', async () => {
     const fixture = await buildFixture();
-    const plan = buildMigrationApplyPlan(planInput(fixture));
+    const base = await planInput(fixture, fixture.registry);
+    const plan = buildMigrationApplyPlan(base);
     const parsed = parseRevisionRegistry(fixture.registry);
     expect(parsed.ok).toBe(true);
     expect(plan.registry_digest).toBe(canonicalHash(parsed.ok ? parsed.registry : null));
@@ -667,5 +760,19 @@ describe('parseRevisionRegistry — DB 侧接线', () => {
       .from(question_revision)
       .where(inArray(question_revision.revision_id, ['rev-q-main', 'rev-q-durable']));
     expect(stored).toHaveLength(2);
+    // 契约装载（loadRevisionContracts）已在本文件所有 planInput 中实际执行。
+  });
+
+  it('question_revision 行损坏（非契约形状）→ 装载 fail-visible', async () => {
+    // 直接种一行损坏的 revision（guard 表不可 UPDATE，从种子就是坏的）。
+    const broken = revisionRow('rev-broken', 'grp-broken');
+    broken.response_spec = { slots: [] } as unknown as typeof broken.response_spec;
+    await testDb().insert(question_revision).values(broken);
+    const registry: RevisionRegistry = {
+      registry_version: 2,
+      generated_by: 'broken-corpus',
+      entries: [registryEntry('q-main', 'rev-broken', canonicalHash(ATTEMPT_SNAPSHOT))],
+    };
+    await expect(loadRevisionContracts(testDb(), registry)).rejects.toThrow(/契约/);
   });
 });

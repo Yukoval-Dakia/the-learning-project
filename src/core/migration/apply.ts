@@ -1,10 +1,21 @@
 import type {
   AggregateOutcomeT,
+  EvidenceAttachmentT,
   GroupEvidenceT,
   IssuedMaterialBindingT,
   IssuedOptionOrderT,
+  PublishedQuestionRevisionT,
   ResponseSetT,
+  ResponseSlotT,
   ScoringUnitResultT,
+} from '../schema/assessment';
+import {
+  validateExecutionPlan,
+  validateIssuanceBinding,
+  validateResponseSet,
+  validateResponseSpec,
+  validateScoringBasis,
+  validateStructure,
 } from '../schema/assessment';
 import { canonicalHash, shortHash } from './canonical';
 import type {
@@ -13,39 +24,42 @@ import type {
   NativeCategory,
   RawAnswerRow,
   RawEventRow,
+  RawSourceAssetRow,
   RecordClassification,
 } from './types';
-import { verdictStatus } from './validation';
 
 // ====================================================================
-// YUK-1050 — 历史迁移 apply · 纯规划器（grounding §13、§15）
+// YUK-1050 — 历史迁移 apply · 纯规划器（grounding §13、§15；review P1-3..P1-7）
 // ====================================================================
 //
-// 输入：YUK-1048 capture + classification（manifest 内持久化的完整分类输出）
-//       + revision registry（语料导入 lane 的内容寻址工件，声明 legacy
-//       question → 新 question_revision 的绑定）。
+// 输入：YUK-1048 capture + classification（manifest 持久化的完整分类输出）
+//       + revision registry v2（语料导入 lane 的接缝工件：occurrence/snapshot
+//         感知绑定）+ 目标库的 revision contracts（question_revision 行的五层
+//         内容，由执行器装载后传入 —— 规划器保持纯函数）。
 // 输出：MigrationApplyPlan —— 逐分类记录的确定性写意图（mapping /
 //       issuance / group / submission / evaluation / effective head）。
 //
-// 本文件是【纯函数】：无 IO、无 DB、无 LLM。DB 执行器
-// （src/server/migration/apply.ts）按 plan 幂等落库。
-//
-// 纪律（grounding §13，不可弱化）：
-//   - 全量迁移 ≠ 批量历史重判：判词只从分类输出携带的 legacy verdict 迁移，
-//     绝不重算、绝不补造（Completed 缺 DONE → reconstruct 不 regrade）。
-//   - 无冻结上下文 ⇒ historical_unresolved；无 registry 绑定 ⇒ pending；
-//     快照 digest 与 registry 声明不符 ⇒ conflicted。任何情况下都不拿
-//     当前题面补造当时所见。
-//   - 归因不是分数：attribution-only 记录只留证据，不产生 evaluation。
+// 纪律（grounding §13，不可弱化；review 后收紧）：
+//   - 全量迁移 ≠ 批量历史重判：判词只作为 legacy 证据迁移（provenance），绝不
+//     重算、绝不换算成发布侧 points（无获准映射 ⇒ unit 结果显式 pending，
+//     aggregate unresolved/pending_units —— 不冒充 no_mapping 也不造假分）。
+//   - 无冻结上下文 / 无法忠实重建 ⇒ historical_unresolved：revision 契约的
+//     槽位形态无法承载 legacy 自由文本作答（choice/numeric/… 需要身份，legacy
+//     无 stable option id / 数值解析即解释）、已接收图片证据缺资产元数据
+//     （D5 零丢失）、registry 坐标与 revision 契约不符 —— 一律显式降级，绝不
+//     产出一个「看似正常」的冻结 submission。
+//   - imported evaluation 不激活 head（§11/D4：activation 需 settlement 同事务
+//     生效；§13：切换前 replay 不足 ⇒ non-effective pending，不静默 applied）。
+//     legacy 的 effective truth（newest-wince-wins head 选择）保留在 mapping
+//     evidence.legacy_effective_truth。
 //   - 无学习重放：plan 不含任何 FSRS/θ̂/calibration 写意图。
 //
-// 与 YUK-1048 的接缝：分类记录是唯一语义真相 —— 规划器不重新分类、不重算
-// 纠正闭包/head 选择；judge 记录的 has_effective_head / head_selection 直接
-// 取自分类输出（anchor 记录与 judge 记录由分类器保证一致）。
+// 幂等基座：一切主键内容寻址派生（mapping_id 含裁决内容 —— pending→resolved
+// 的 supersession 换行不换 id 冲突），同输入 ⇒ 同 plan 同 id 同 digest。
 
-export const APPLY_ALGORITHM_VERSION = 'yuk1050-apply/1.0.0';
+export const APPLY_ALGORITHM_VERSION = 'yuk1050-apply/1.1.0';
 
-/** 获得身份映射行的分类类别（lineage-only 类别不产生映射行）。 */
+/** 获得身份映射行的分类类别（lineage 类别不产生映射行）。 */
 const MAPPING_BEARING_CATEGORIES: ReadonlySet<NativeCategory> = new Set([
   'complete_attempt',
   'embedded_tutor_grade',
@@ -57,33 +71,45 @@ const MAPPING_BEARING_CATEGORIES: ReadonlySet<NativeCategory> = new Set([
   'correction_cycle_unresolved',
 ]);
 
-/** 产生 submission 链的分类类别（且仅当 revision 绑定已解析）。 */
+/** 产生 submission 链的分类类别（且仅当 revision 绑定已解析 + 契约可忠实重建）。 */
 const SUBMISSION_BEARING_CATEGORIES: ReadonlySet<NativeCategory> = new Set([
   'complete_attempt',
   'embedded_tutor_grade',
 ]);
 
-// ───────────────────────── revision registry（接缝工件） ─────────────────────────
+// ───────────────────────── revision registry v2（接缝工件） ─────────────────────────
+
+export type RegistryBindingKind = 'snapshot_verified' | 'question_asserted';
 
 /**
- * 语料导入（publisher/normalizer lane 或隔离演练产物）声明的
- * legacy question → 新 revision 绑定。`snapshot_digest` 缺省 = 导入方断言
- * （无 digest 证明）；给出时必须与历史记录的冻结 snapshot digest 一致，
- * 否则该记录的映射落 conflicted（内容漂移，不得绑定）。
+ * 语料导入（publisher/normalizer lane 或隔离演练产物）声明的 legacy → 新契约
+ * 绑定。v2（review P1-4）：
+ *   - occurrence/snapshot 感知：同一 legacy question 的多个历史版本可各绑不同
+ *     revision/快照；多个 legacy question 也可绑同一 group revision 的不同 parts。
+ *   - `snapshot_verified`：携带冻结 snapshot digest，解析时与历史记录自身的
+ *     冻结 snapshot digest【逐一比对】—— 这是绑定为已验证的唯一途径。
+ *   - `question_asserted`：显式、可审计的断言（缺历史证明时的唯一合法路径）；
+ *     必须给出 assertion_reason，进 mapping evidence，绝不冒充已验证。
+ *   - `scoring_unit_id` 必填：整题 legacy 判词必须可归属到唯一计分单元，
+ *     否则 registry 拒绝（归属不明 ⇒ 不列绑定，不是规划器猜）。
  */
 export interface RevisionRegistryEntry {
   question_id: string;
   revision_id: string;
   /** issuance 绑定的 part 子集（导入方声明；solo 题 = 单 part）。 */
   part_ids: string[];
-  slot_id: string | null;
-  scoring_unit_id: string | null;
+  slot_id: string;
+  scoring_unit_id: string;
+  binding_kind: RegistryBindingKind;
+  /** binding_kind=snapshot_verified 必填：冻结 snapshot 的 canonical digest。 */
   snapshot_digest: string | null;
+  /** binding_kind=question_asserted 必填：断言理由（可审计）。 */
+  assertion_reason: string | null;
   published_at: string | null;
 }
 
 export interface RevisionRegistry {
-  registry_version: 1;
+  registry_version: 2;
   generated_by: string;
   entries: RevisionRegistryEntry[];
 }
@@ -92,7 +118,7 @@ export interface RegistryParseIssue {
   detail: string;
 }
 
-/** 解析 + 校验 registry 工件（fail-visible：任何形状问题都拒绝，不猜）。 */
+/** 解析 + 校验 registry v2 工件（fail-visible：任何形状问题都拒绝，不猜）。 */
 export function parseRevisionRegistry(
   input: unknown,
 ): { ok: true; registry: RevisionRegistry } | { ok: false; issues: RegistryParseIssue[] } {
@@ -101,8 +127,15 @@ export function parseRevisionRegistry(
     return { ok: false, issues: [{ detail: 'registry 根必须是对象' }] };
   }
   const root = input as Record<string, unknown>;
-  if (root.registry_version !== 1) {
-    issues.push({ detail: `registry_version 必须为 1（得到 ${String(root.registry_version)}）` });
+  if (root.registry_version !== 2) {
+    return {
+      ok: false,
+      issues: [
+        {
+          detail: `registry_version 必须为 2（得到 ${String(root.registry_version)}）—— v1（可空 snapshot_digest 的单题绑定）已被 review P1-4 废弃`,
+        },
+      ],
+    };
   }
   if (typeof root.generated_by !== 'string' || root.generated_by.length === 0) {
     issues.push({ detail: 'generated_by 必须为非空字符串（工件来源可审计）' });
@@ -111,8 +144,9 @@ export function parseRevisionRegistry(
     issues.push({ detail: 'entries 必须为数组' });
     return { ok: false, issues };
   }
-  const seenQuestion = new Set<string>();
-  const seenRevision = new Set<string>();
+  const seenVerified = new Set<string>(); // question_id|snapshot_digest 唯一
+  const seenAsserted = new Set<string>(); // question_id 唯一（一题一断言）
+  const seenExact = new Set<string>(); // 完全重复拒绝
   const entries: RevisionRegistryEntry[] = [];
   for (const [idx, raw] of root.entries.entries()) {
     if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -123,22 +157,15 @@ export function parseRevisionRegistry(
     const questionId = entry.question_id;
     const revisionId = entry.revision_id;
     const partIds = entry.part_ids;
+    const slotId = entry.slot_id;
+    const scoringUnitId = entry.scoring_unit_id;
+    const bindingKind = entry.binding_kind;
     if (typeof questionId !== 'string' || questionId.length === 0) {
       issues.push({ detail: `entries[${idx}].question_id 必须为非空字符串` });
       continue;
     }
-    if (seenQuestion.has(questionId)) {
-      issues.push({ detail: `entries[${idx}].question_id='${questionId}' 重复 —— 一题一绑定` });
-      continue;
-    }
     if (typeof revisionId !== 'string' || revisionId.length === 0) {
       issues.push({ detail: `entries[${idx}].revision_id 必须为非空字符串` });
-      continue;
-    }
-    if (seenRevision.has(revisionId)) {
-      issues.push({
-        detail: `entries[${idx}].revision_id='${revisionId}' 重复 —— 一 revision 一绑定`,
-      });
       continue;
     }
     if (
@@ -151,21 +178,74 @@ export function parseRevisionRegistry(
       });
       continue;
     }
-    seenQuestion.add(questionId);
-    seenRevision.add(revisionId);
+    if (typeof slotId !== 'string' || slotId.length === 0) {
+      issues.push({ detail: `entries[${idx}].slot_id 必填（legacy 作答的槽位归属必须显式声明）` });
+      continue;
+    }
+    if (typeof scoringUnitId !== 'string' || scoringUnitId.length === 0) {
+      issues.push({
+        detail: `entries[${idx}].scoring_unit_id 必填（整题 legacy 判词必须可归属到唯一计分单元）`,
+      });
+      continue;
+    }
+    if (bindingKind !== 'snapshot_verified' && bindingKind !== 'question_asserted') {
+      issues.push({
+        detail: `entries[${idx}].binding_kind 必须为 'snapshot_verified' 或 'question_asserted'`,
+      });
+      continue;
+    }
+    const snapshotDigest =
+      typeof entry.snapshot_digest === 'string' && entry.snapshot_digest.length > 0
+        ? entry.snapshot_digest
+        : null;
+    const assertionReason =
+      typeof entry.assertion_reason === 'string' && entry.assertion_reason.length > 0
+        ? entry.assertion_reason
+        : null;
+    if (bindingKind === 'snapshot_verified' && snapshotDigest === null) {
+      issues.push({
+        detail: `entries[${idx}] binding_kind=snapshot_verified 必须携带 snapshot_digest —— 缺历史证明只能走显式 question_asserted 断言`,
+      });
+      continue;
+    }
+    if (bindingKind === 'question_asserted' && assertionReason === null) {
+      issues.push({
+        detail: `entries[${idx}] binding_kind=question_asserted 必须携带 assertion_reason`,
+      });
+      continue;
+    }
+    const exactKey = `${questionId}|${revisionId}|${slotId}|${bindingKind}|${snapshotDigest ?? ''}`;
+    if (seenExact.has(exactKey)) {
+      issues.push({ detail: `entries[${idx}] 与既有条目完全重复（${exactKey}）` });
+      continue;
+    }
+    seenExact.add(exactKey);
+    if (bindingKind === 'snapshot_verified') {
+      const verifiedKey = `${questionId}|${snapshotDigest}`;
+      if (seenVerified.has(verifiedKey)) {
+        issues.push({
+          detail: `entries[${idx}] 同一 question 的同一 snapshot digest 有多条 snapshot_verified 绑定 —— 解析歧义，拒绝`,
+        });
+        continue;
+      }
+      seenVerified.add(verifiedKey);
+    } else if (seenAsserted.has(questionId)) {
+      issues.push({
+        detail: `entries[${idx}] 同一 question 已有一条 question_asserted 断言 —— 一题一断言`,
+      });
+      continue;
+    } else {
+      seenAsserted.add(questionId);
+    }
     entries.push({
       question_id: questionId,
       revision_id: revisionId,
       part_ids: partIds as string[],
-      slot_id: typeof entry.slot_id === 'string' && entry.slot_id.length > 0 ? entry.slot_id : null,
-      scoring_unit_id:
-        typeof entry.scoring_unit_id === 'string' && entry.scoring_unit_id.length > 0
-          ? entry.scoring_unit_id
-          : null,
-      snapshot_digest:
-        typeof entry.snapshot_digest === 'string' && entry.snapshot_digest.length > 0
-          ? entry.snapshot_digest
-          : null,
+      slot_id: slotId,
+      scoring_unit_id: scoringUnitId,
+      binding_kind: bindingKind,
+      snapshot_digest: snapshotDigest,
+      assertion_reason: assertionReason,
       published_at:
         typeof entry.published_at === 'string' && entry.published_at.length > 0
           ? entry.published_at
@@ -175,7 +255,7 @@ export function parseRevisionRegistry(
   if (issues.length > 0) return { ok: false, issues };
   return {
     ok: true,
-    registry: { registry_version: 1, generated_by: root.generated_by as string, entries },
+    registry: { registry_version: 2, generated_by: root.generated_by as string, entries },
   };
 }
 
@@ -203,6 +283,8 @@ export interface MappingRowPlan {
   algorithm_version: string;
   status: MappingStatus;
   created_at: Date;
+  /** pending→resolved supersession（P1-5）：指向被本行接替的旧当前映射。 */
+  supersedes_mapping_id: string | null;
 }
 
 export interface IssuanceRowPlan {
@@ -252,8 +334,13 @@ export interface EvaluationRowPlan {
 export interface EffectiveHeadRowPlan {
   evaluation_group_id: string;
   submission_id: string;
-  effective_evaluation_id: string | null;
-  generation: number;
+  /**
+   * 迁移导入的 evaluation 一律不激活 head（§11/D4：activation 需 settlement
+   * 同事务；§13：non-effective pending）—— head 行随 submission 建立，保持
+   * effective=NULL、generation=0，由 settlement lane 在获准规则下激活。
+   */
+  effective_evaluation_id: null;
+  generation: 0;
   updated_at: Date;
 }
 
@@ -270,7 +357,7 @@ export interface ApplyRecordIntent {
   classification: RecordClassification;
   /** lineage-only 类别无映射行。 */
   mapping: MappingRowPlan | null;
-  /** anchor 记录且 revision 已解析时携带 submission 链。 */
+  /** anchor 记录且 revision 已解析 + 契约可忠实重建时携带 submission 链。 */
   submission: SubmissionChainPlan | null;
 }
 
@@ -278,6 +365,7 @@ export interface AwaitingRegistryEntry {
   source_locator: string;
   original_question_id: string;
   category: NativeCategory;
+  reason: string;
 }
 
 export interface ConflictedEntry {
@@ -286,15 +374,39 @@ export interface ConflictedEntry {
   reason: string;
 }
 
+/** live draft（submitted_at IS NULL 的 answer 行）的显式处置清单（P1-7）。 */
+export interface LiveDraftEntry {
+  source_locator: string;
+  question_id: string;
+  answer_id: string;
+  disposition: 'preserved-in-legacy-awaiting-autosave-migration';
+}
+
+/** 忠实重建被阻断的 anchor（P1-6）：显式降级清单，绝不产看似正常的冻结 submission。 */
+export interface ReconstructionBlockedEntry {
+  source_locator: string;
+  original_question_id: string;
+  reason: string;
+}
+
+export interface MigrationApplyPlanWorklists {
+  unresolved: MigrationClassification['unresolved'];
+  deferred_replay: MigrationClassification['deferred_replay'];
+  awaiting_revision_registry: AwaitingRegistryEntry[];
+  conflicted: ConflictedEntry[];
+  live_drafts: LiveDraftEntry[];
+  reconstruction_blocked: ReconstructionBlockedEntry[];
+}
+
 export interface MigrationApplyPlan {
-  plan_version: 1;
+  plan_version: 2;
   checkpoint_hash: string;
   classification_version: string;
   classification_hash: string;
   registry_digest: string | null;
   algorithm_version: string;
   records: ApplyRecordIntent[];
-  /** 每 category：记录数 / 映射行 / submission 链 / evaluation / head。 */
+  /** 每 category：记录数 / 映射行 / submission 链 / evaluation。 */
   rollup: {
     per_category: Record<
       string,
@@ -303,14 +415,13 @@ export interface MigrationApplyPlan {
     mapping_status: Record<MappingStatus, number>;
     totals: { records: number; mappings: number; submissions: number; evaluations: number };
   };
-  worklists: {
-    unresolved: MigrationClassification['unresolved'];
-    deferred_replay: MigrationClassification['deferred_replay'];
-    awaiting_revision_registry: AwaitingRegistryEntry[];
-    conflicted: ConflictedEntry[];
-  };
+  worklists: MigrationApplyPlanWorklists;
 }
 
+/**
+ * plan digest 覆盖【完整行内容】（review P1-3）：改任何 planned 响应/证据/
+ * 判词映射都改变 digest —— 同 run 混入不同 plan 的写入被账本当场拒绝。
+ */
 export function planDigestOf(plan: MigrationApplyPlan): string {
   return canonicalHash({
     plan_version: plan.plan_version,
@@ -320,22 +431,43 @@ export function planDigestOf(plan: MigrationApplyPlan): string {
     algorithm_version: plan.algorithm_version,
     records: plan.records.map((r) => ({
       locator: r.classification.source_locator,
-      mapping:
-        r.mapping === null
-          ? null
-          : {
-              id: r.mapping.mapping_id,
-              status: r.mapping.status,
-              target: r.mapping.target_revision_id,
-            },
-      submission:
-        r.submission === null
-          ? null
-          : {
-              submission_id: r.submission.submission.submission_id,
-              evaluations: r.submission.evaluations.map((e) => e.evaluation_id),
-            },
+      mapping: r.mapping,
+      submission: r.submission,
     })),
+  });
+}
+
+/** 单条 mapping 行内容 digest（对账用：库内行 vs plan 行逐字节比对；
+ * supersedes_mapping_id 是 pending→resolved 过渡簿记，不参与内容对账）。 */
+export function mappingRowDigest(row: {
+  source_kind: unknown;
+  source_id: unknown;
+  source_locator: unknown;
+  original_question_id: unknown;
+  legacy_part_ref: unknown;
+  snapshot_digest: unknown;
+  target_revision_id: unknown;
+  target_part_id: unknown;
+  target_slot_id: unknown;
+  evidence: unknown;
+  algorithm_version: unknown;
+  status: unknown;
+  created_at?: unknown;
+}): string {
+  return canonicalHash({
+    source_kind: row.source_kind,
+    source_id: row.source_id,
+    source_locator: row.source_locator,
+    original_question_id: row.original_question_id,
+    legacy_part_ref: row.legacy_part_ref,
+    snapshot_digest: row.snapshot_digest,
+    target_revision_id: row.target_revision_id,
+    target_part_id: row.target_part_id,
+    target_slot_id: row.target_slot_id,
+    evidence: row.evidence,
+    algorithm_version: row.algorithm_version,
+    status: row.status,
+    created_at: row.created_at,
   });
 }
 
@@ -369,12 +501,20 @@ function toDate(iso: string | null | undefined, fallback: Date): Date {
   return Number.isNaN(parsed.getTime()) ? fallback : parsed;
 }
 
-/** 冻结作答响应的 digest（pending 保留 response digest，§13）。 */
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+}
+
+/** 冻结作答输入的 digest（P1-7：覆盖真实 pending 输入面 —— 题身/时间/正文/图片）。 */
 export function responseDigestOf(input: {
+  question_id: string | null;
+  submitted_at: string | null;
   response_md: string | null;
   image_refs: string[];
 }): string {
   return canonicalHash({
+    question_id: input.question_id,
+    submitted_at: input.submitted_at,
     response_md: input.response_md,
     image_refs: [...input.image_refs].sort(),
   });
@@ -446,25 +586,53 @@ function originalQuestionIdOf(
   return `unresolved-ref:${event.subject_kind}:${event.subject_id}`;
 }
 
-/** legacy 作答文本 + 图片 refs（attempt / review / durable pending submit）。 */
+/**
+ * legacy 作答输入（P1-7 修正）：attempt/review 事件读顶层 answer_image_refs；
+ * durable pending 读 submit.body.*（CreateAttemptBody 冻结面 —— 图片在
+ * body.answer_image_refs，不在 payload 顶层）。
+ */
 function legacyResponseOf(
   record: RecordClassification,
   eventById: Map<string, RawEventRow>,
   pendingByRunId: Map<string, RawEventRow>,
-): { response_md: string | null; image_refs: string[]; submitted_at: string | null } {
-  if (record.source_kind !== 'event')
-    return { response_md: null, image_refs: [], submitted_at: null };
+): {
+  question_id: string | null;
+  response_md: string | null;
+  image_refs: string[];
+  submitted_at: string | null;
+  caller: string | null;
+  knowledge_ids: string[];
+} {
+  if (record.source_kind !== 'event') {
+    return {
+      question_id: null,
+      response_md: null,
+      image_refs: [],
+      submitted_at: null,
+      caller: null,
+      knowledge_ids: [],
+    };
+  }
   const event = eventById.get(record.source_id);
-  if (event === undefined) return { response_md: null, image_refs: [], submitted_at: null };
+  if (event === undefined) {
+    return {
+      question_id: null,
+      response_md: null,
+      image_refs: [],
+      submitted_at: null,
+      caller: null,
+      knowledge_ids: [],
+    };
+  }
   const payload = payloadOf(event.payload);
-  const imageRefs = Array.isArray(payload.answer_image_refs)
-    ? (payload.answer_image_refs as unknown[]).filter((v): v is string => typeof v === 'string')
-    : [];
   if (event.action === 'attempt') {
     return {
+      question_id: event.subject_kind === 'question' ? event.subject_id : null,
       response_md: typeof payload.answer_md === 'string' ? payload.answer_md : null,
-      image_refs: imageRefs,
+      image_refs: stringArray(payload.answer_image_refs),
       submitted_at: event.created_at,
+      caller: null,
+      knowledge_ids: stringArray(payload.referenced_knowledge_ids),
     };
   }
   if (event.action === 'review') {
@@ -473,23 +641,82 @@ function legacyResponseOf(
     const submit = pending === undefined ? {} : payloadOf(payloadOf(pending.payload).submit);
     const submitAt = typeof submit.submitted_at === 'string' ? submit.submitted_at : null;
     return {
+      question_id: event.subject_kind === 'question' ? event.subject_id : null,
       response_md: typeof payload.user_response_md === 'string' ? payload.user_response_md : null,
-      image_refs: imageRefs,
+      image_refs: stringArray(payload.answer_image_refs),
       submitted_at: submitAt ?? event.created_at,
+      caller: null,
+      knowledge_ids: stringArray(payload.referenced_knowledge_ids),
     };
   }
   if (event.action === 'experimental:judge_pending_attempt') {
-    // 冻结输入本体（run/request/pending 身份的响应零丢失，§13）。
+    // 冻结输入本体：submit.body 是 CreateAttemptBody（response_md +
+    // answer_image_refs 在 body 层），question_id/submitted_at 在 submit 层。
     const submit = payloadOf(payload.submit);
     const body = payloadOf(submit.body);
     return {
+      question_id: typeof submit.question_id === 'string' ? submit.question_id : null,
       response_md: typeof body.response_md === 'string' ? body.response_md : null,
-      image_refs: imageRefs,
+      image_refs: stringArray(body.answer_image_refs),
       submitted_at:
         typeof submit.submitted_at === 'string' ? submit.submitted_at : event.created_at,
+      caller: typeof payload.caller === 'string' ? payload.caller : null,
+      knowledge_ids: stringArray(payload.knowledge_ids),
     };
   }
-  return { response_md: null, image_refs: [], submitted_at: null };
+  return {
+    question_id: null,
+    response_md: null,
+    image_refs: [],
+    submitted_at: null,
+    caller: null,
+    knowledge_ids: [],
+  };
+}
+
+/** pending 的显式恢复信封（§13：保留 run/request/pending 身份 + 送达处置）。 */
+function pendingRecoveryEnvelopeOf(
+  response: ReturnType<typeof legacyResponseOf>,
+  runId: string | null,
+  queues: MigrationCapture['queues'],
+): Record<string, unknown> {
+  const judgeRunQueues = queues
+    .filter((q) => q.name === 'judge_run')
+    .map((q) => ({ state: q.state, count: q.count }));
+  return {
+    run_id: runId,
+    caller: response.caller,
+    knowledge_ids: response.knowledge_ids,
+    frozen_request: {
+      question_id: response.question_id,
+      submitted_at: response.submitted_at,
+      response_md: response.response_md,
+      answer_image_refs: response.image_refs,
+    },
+    eval_generation: 0,
+    delivery_disposition: { judge_run_queues: judgeRunQueues },
+    backfill_event_id: runId !== null ? runId : null,
+    note: 'durable judge run 未回填 —— 保留 run/request/pending 身份与冻结输入，恢复走正道回填/重派，不在此处判分',
+  };
+}
+
+/** source_asset 行 → 契约原生 EvidenceAttachment（digest/mime/bytes 齐备才忠实）。 */
+function evidenceAttachmentOf(asset: RawSourceAssetRow): EvidenceAttachmentT {
+  const kindByMime: (mime: string) => EvidenceAttachmentT['kind'] = (mime) => {
+    if (mime.startsWith('image/')) return 'image';
+    if (mime.startsWith('audio/')) return 'audio';
+    if (mime.startsWith('video/')) return 'video';
+    if (mime === 'application/pdf') return 'pdf';
+    return 'plaintext';
+  };
+  return {
+    evidence_id: `legacy-${asset.id}`,
+    kind: kindByMime(asset.mime_type),
+    asset: { asset_id: asset.id, digest: asset.sha256 },
+    mime_type: asset.mime_type,
+    bytes: asset.byte_size,
+    uploaded_at: asset.created_at,
+  };
 }
 
 // ───────────────────────── 规划器主体 ─────────────────────────
@@ -505,22 +732,33 @@ export interface BuildApplyPlanInput {
   };
   checkpoint_hash: string;
   registry: RevisionRegistry | null;
+  /** 目标库 question_revision 行的五层契约（执行器装载；规划器保持纯函数）。 */
+  revisionContracts: ReadonlyMap<string, PublishedQuestionRevisionT>;
   algorithm_version?: string;
+}
+
+interface Resolution {
+  status: MappingStatus;
+  entry: RevisionRegistryEntry | null;
+  reason: string;
+  binding: 'digest_verified' | 'question_asserted' | null;
 }
 
 /**
  * 分类输出 → 确定性写意图。同输入 ⇒ 同 plan（同 id、同 digest、同行内容）
  * —— 这是 apply 幂等与 crash 续跑的基础：一切主键都是内容寻址派生，
- * 重放不产生新行。
+ * 重放不产生新行。mapping_id 含裁决内容（status+target），pending→resolved
+ * 的 supersession 新裁决产生新行（旧行 is_current=false 保留历史）。
  */
 export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationApplyPlan {
   const algorithmVersion = input.algorithm_version ?? APPLY_ALGORITHM_VERSION;
   const eventById = new Map(input.capture.rawFacts.events.map((e) => [e.id, e] as const));
-  const answerById = new Map(input.capture.rawFacts.answers.map((a) => [a.id, a]));
+  const answerById = new Map(input.capture.rawFacts.answers.map((a) => [a.id, a] as const));
+  const assetsById = new Map(input.capture.rawFacts.source_assets.map((a) => [a.id, a] as const));
   const registryByQuestion =
     input.registry === null
-      ? new Map<string, RevisionRegistryEntry>()
-      : new Map(input.registry.entries.map((e) => [e.question_id, e] as const));
+      ? new Map<string, RevisionRegistryEntry[]>()
+      : groupEntriesByQuestion(input.registry.entries);
   const fallbackTime = new Date(input.capture.environment.snapshot_at);
   // durable pending 索引：payload.run_id → pending 事件（与分类器同构的绑定键）。
   const pendingByRunId = new Map<string, RawEventRow>();
@@ -545,24 +783,87 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
   const intents: ApplyRecordIntent[] = [];
   const awaitingRegistry: AwaitingRegistryEntry[] = [];
   const conflicted: ConflictedEntry[] = [];
+  const reconstructionBlocked: ReconstructionBlockedEntry[] = [];
+  const liveDrafts: LiveDraftEntry[] = [];
   const mappingStatusCount: Record<MappingStatus, number> = {
     pending: 0,
     mapped: 0,
     conflicted: 0,
     historical_unresolved: 0,
   };
+  const resolutionByLocator = new Map<string, Resolution>();
 
-  // 阶段 1：逐记录解析身份 → 映射行意图。
-  // anchorSubmissionByLocator 由阶段 2 填充（anchor 先于 judge 聚合处理）。
-  const resolutionByLocator = new Map<
-    string,
-    { status: MappingStatus; entry: RevisionRegistryEntry | null; reason: string }
-  >();
+  /** registry v2 解析（P1-4）：snapshot 逐一对照 + 显式断言 + 漂移/缺证明分支。 */
+  const resolveAgainstRegistry = (
+    originalQuestionId: string,
+    snapshotDigest: string | null,
+  ): Resolution => {
+    const candidates = registryByQuestion.get(originalQuestionId) ?? [];
+    if (candidates.length === 0) {
+      return {
+        status: 'pending',
+        entry: null,
+        reason: 'revision registry 无该题绑定 —— 身份待语料导入后解析',
+        binding: null,
+      };
+    }
+    if (snapshotDigest !== null) {
+      const exact = candidates.find(
+        (c) => c.binding_kind === 'snapshot_verified' && c.snapshot_digest === snapshotDigest,
+      );
+      if (exact !== undefined) {
+        return {
+          status: 'mapped',
+          entry: exact,
+          reason: '冻结 snapshot digest 与 registry snapshot_verified 绑定逐一一致 —— 绑定已验证',
+          binding: 'digest_verified',
+        };
+      }
+    }
+    const asserted = candidates.find((c) => c.binding_kind === 'question_asserted');
+    if (asserted !== undefined) {
+      return {
+        status: 'mapped',
+        entry: asserted,
+        reason: `registry question_asserted 显式断言：${asserted.assertion_reason ?? ''}（可审计，非 digest 验证）`,
+        binding: 'question_asserted',
+      };
+    }
+    if (snapshotDigest === null) {
+      return {
+        status: 'pending',
+        entry: null,
+        reason:
+          '该记录无冻结 snapshot digest 可与 registry 的 snapshot_verified 绑定对照，且无显式断言 —— 不猜',
+        binding: null,
+      };
+    }
+    return {
+      status: 'conflicted',
+      entry: null,
+      reason: `冻结 snapshot digest 与该题全部 snapshot_verified 绑定不符（记录 ${snapshotDigest.slice(0, 12)}）—— 内容漂移，不得绑定`,
+      binding: null,
+    };
+  };
 
-  for (const record of input.classification.records) {
+  // 阶段 1（分两遍，P1-6/P1-4 一致性）：先解析【非镜像】记录（attempt/review
+  // 锚、pending 事件等），随后做锚的忠实重建（降级会改写锚的裁决），最后才
+  // 解析 judge/answer 镜像 —— 镜像继承的是锚【最终】裁决（含降级），不会出现
+  // 锚 historical 而镜像 mapped 的分叉。
+  const mirrorRecords: RecordClassification[] = [];
+  const buildRecordIntent = (record: RecordClassification): void => {
     if (!MAPPING_BEARING_CATEGORIES.has(record.category)) {
+      if (record.category === 'live_draft' && record.source_kind === 'answer') {
+        const answerRow = answerById.get(record.source_id);
+        liveDrafts.push({
+          source_locator: record.source_locator,
+          question_id: answerRow?.question_id ?? `unknown:${record.source_id}`,
+          answer_id: record.source_id,
+          disposition: 'preserved-in-legacy-awaiting-autosave-migration',
+        });
+      }
       intents.push({ classification: record, mapping: null, submission: null });
-      continue;
+      return;
     }
     const originalQuestionId = originalQuestionIdOf(record, eventById, answerById);
     const anchorEvent = anchorEventOf(record, eventById);
@@ -576,12 +877,9 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
       null;
     const createdAt = toDate(anchorCreatedIso, fallbackTime);
 
-    let status: MappingStatus;
-    let entry: RevisionRegistryEntry | null = null;
-    let resolutionReason: string;
+    let resolution: Resolution;
     // judge / answer 镜像记录继承其锚 occurrence 的裁决（分类器已保证锚与
-    // 镜像判定一致）：锚因快照漂移 conflicted / 缺件 pending 时，镜像不得
-    // 独立绕过锚而拿到 target —— 一次 occurrence 一个身份裁决。
+    // 镜像判定一致）：锚 conflicted/pending/降级 时，镜像不得独立绕过锚。
     let resolutionAnchor: RawEventRow | null = anchorEvent;
     if (resolutionAnchor === null && answerRow?.event_id != null) {
       const linked = eventById.get(answerRow.event_id);
@@ -593,50 +891,45 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
       resolutionAnchor !== null
         ? resolutionByLocator.get(`event:${resolutionAnchor.action}:${resolutionAnchor.id}`)
         : undefined;
-    if (anchorResolution !== undefined) {
-      status = anchorResolution.status;
-      entry = anchorResolution.entry;
-      resolutionReason = `继承锚 occurrence（${resolutionAnchor !== null ? resolutionAnchor.id : ''}）的裁决：${anchorResolution.reason}`;
-      // worklist（awaiting/conflicted）以锚记录为代表 —— 镜像行不重复登记。
-    } else if (record.category === 'historical_unresolved') {
-      status = 'historical_unresolved';
-      resolutionReason = '缺冻结上下文 —— 身份不可解析（§13：不得用当前题面补造当时所见）';
+    if (record.category === 'historical_unresolved') {
+      resolution = {
+        status: 'historical_unresolved',
+        entry: null,
+        reason: '缺冻结上下文 —— 身份不可解析（§13：不得用当前题面补造当时所见）',
+        binding: null,
+      };
     } else if (record.category === 'correction_cycle_unresolved') {
-      status = 'conflicted';
-      resolutionReason = '纠正链闭包成员 —— 多个竞争 effective-truth，保持 conflicted/unresolved';
+      resolution = {
+        status: 'conflicted',
+        entry: null,
+        reason: '纠正链闭包成员 —— 多个竞争 effective-truth，保持 conflicted/unresolved',
+        binding: null,
+      };
+    } else if (anchorResolution !== undefined) {
+      resolution = {
+        ...anchorResolution,
+        reason: `继承锚 occurrence（${resolutionAnchor !== null ? resolutionAnchor.id : ''}）的裁决：${anchorResolution.reason}`,
+      };
+      // worklist（awaiting/conflicted/reconstruction_blocked）以锚记录为代表。
     } else {
-      const candidate = registryByQuestion.get(originalQuestionId) ?? null;
-      if (candidate === null) {
-        status = 'pending';
-        resolutionReason = 'revision registry 无该题绑定 —— 身份待语料导入后解析';
+      resolution = resolveAgainstRegistry(originalQuestionId, snapshotDigest);
+      if (resolution.status === 'pending') {
         awaitingRegistry.push({
           source_locator: record.source_locator,
           original_question_id: originalQuestionId,
           category: record.category,
+          reason: resolution.reason,
         });
-      } else if (
-        snapshotDigest !== null &&
-        candidate.snapshot_digest !== null &&
-        candidate.snapshot_digest !== snapshotDigest
-      ) {
-        status = 'conflicted';
-        resolutionReason = `冻结 snapshot digest 与 registry 声明不符（记录 ${snapshotDigest.slice(0, 12)} vs registry ${candidate.snapshot_digest.slice(0, 12)}）—— 内容漂移，不得绑定`;
+      } else if (resolution.status === 'conflicted') {
         conflicted.push({
           source_locator: record.source_locator,
           original_question_id: originalQuestionId,
-          reason: resolutionReason,
+          reason: resolution.reason,
         });
-      } else {
-        status = 'mapped';
-        entry = candidate;
-        resolutionReason =
-          snapshotDigest !== null && candidate.snapshot_digest !== null
-            ? '冻结 snapshot digest 与 registry 声明一致 —— 绑定已验证'
-            : 'registry 断言绑定（无 digest 对照可用）';
       }
     }
-    resolutionByLocator.set(record.source_locator, { status, entry, reason: resolutionReason });
-    mappingStatusCount[status] += 1;
+    resolutionByLocator.set(record.source_locator, resolution);
+    mappingStatusCount[resolution.status] += 1;
 
     const evidence: Record<string, unknown> = {
       category: record.category,
@@ -644,14 +937,9 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
       evidence_event_ids: record.evidence_event_ids,
       native_target: record.native_target,
       resolution: {
-        status,
-        reason: resolutionReason,
-        registry_snapshot_binding:
-          snapshotDigest !== null && entry?.snapshot_digest === snapshotDigest
-            ? 'digest_verified'
-            : entry != null
-              ? 'registry_assertion'
-              : null,
+        status: resolution.status,
+        reason: resolution.reason,
+        binding: resolution.binding,
       },
       migration: {
         tool: 'yuk1050-apply',
@@ -659,15 +947,27 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
         classification_version: input.classification.classification_version,
       },
     };
+    if (resolution.entry?.binding_kind === 'question_asserted') {
+      evidence.registry_assertion = {
+        asserted_by: input.registry?.generated_by ?? null,
+        reason: resolution.entry.assertion_reason,
+      };
+    }
     if (snapshotDigest !== null) evidence.snapshot_digest = snapshotDigest;
     if (record.category === 'pending_blocked' && record.native_target.kind === 'pending_carried') {
       evidence.pending = record.native_target.pending;
       const response = legacyResponseOf(record, eventById, pendingByRunId);
       evidence.response_digest = responseDigestOf(response);
-      evidence.image_asset_refs = response.image_refs;
       const event = record.source_kind === 'event' ? eventById.get(record.source_id) : undefined;
-      const runId = event !== undefined ? payloadOf(event.payload).run_id : undefined;
-      if (typeof runId === 'string') evidence.run_id = runId;
+      const runId = event !== undefined ? (payloadOf(event.payload).run_id as unknown) : undefined;
+      const runIdStr = typeof runId === 'string' ? runId : null;
+      if (runIdStr !== null && event !== undefined) {
+        evidence.pending_recovery = pendingRecoveryEnvelopeOf(
+          response,
+          runIdStr,
+          input.capture.queues,
+        );
+      }
     }
     if (
       record.category === 'historical_unresolved' &&
@@ -681,40 +981,68 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
     ) {
       evidence.manual_assertion = record.native_target.assertion;
     }
-    if (record.category.startsWith('attribution')) {
+    if (
+      record.category === 'attribution_only' ||
+      record.category === 'attribution_pending_placeholder'
+    ) {
       evidence.attribution_only = true;
     }
     if (record.native_target.kind === 'submission_with_imported_eval') {
-      evidence.head_selection = record.native_target.head_selection;
-      evidence.judge_event_id = record.native_target.judge_event_id;
-      evidence.has_effective_head = record.native_target.has_effective_head;
+      evidence.legacy_effective_truth = {
+        head_selection: record.native_target.head_selection,
+        judge_event_id: record.native_target.judge_event_id,
+        has_effective_head: record.native_target.has_effective_head,
+      };
     }
 
     intents.push({
       classification: record,
       mapping: {
-        mapping_id: idOf('amp', record.source_kind, record.source_id, record.source_locator),
+        mapping_id: idOf(
+          'amp',
+          record.source_kind,
+          record.source_id,
+          record.source_locator,
+          resolution.status,
+          resolution.entry?.revision_id ?? '',
+        ),
         source_kind: record.source_kind,
         source_id: record.source_id,
         source_locator: record.source_locator,
         original_question_id: originalQuestionId,
         legacy_part_ref: answerRow?.part_ref ?? null,
         snapshot_digest: snapshotDigest,
-        target_revision_id: status === 'mapped' ? (entry?.revision_id ?? null) : null,
-        target_part_id: status === 'mapped' ? (entry?.part_ids[0] ?? null) : null,
-        target_slot_id: status === 'mapped' ? (entry?.slot_id ?? null) : null,
+        target_revision_id:
+          resolution.status === 'mapped' ? (resolution.entry?.revision_id ?? null) : null,
+        target_part_id:
+          resolution.status === 'mapped'
+            ? selectTargetPart(resolution.entry, answerRow?.part_ref ?? null)
+            : null,
+        target_slot_id: resolution.status === 'mapped' ? (resolution.entry?.slot_id ?? null) : null,
         evidence,
         algorithm_version: algorithmVersion,
-        status,
+        status: resolution.status,
         created_at: createdAt,
+        supersedes_mapping_id: null, // 由执行器在 pending→resolved 接替时回填
       },
       submission: null,
     });
+  };
+
+  // pass 1：非镜像记录。
+  for (const record of input.classification.records) {
+    const isJudgeMirror =
+      record.source_kind === 'event' && anchorEventOf(record, eventById) !== null;
+    const isAnswerMirror = record.source_kind === 'answer';
+    if (isJudgeMirror || isAnswerMirror) {
+      mirrorRecords.push(record);
+      continue;
+    }
+    buildRecordIntent(record);
   }
 
   // 阶段 2：anchor 记录（complete_attempt / embedded_tutor_grade 且映射 mapped）
-  // → submission 链；judge 记录的 evaluation 挂到锚的 submission。
-  const submissionByAnchorLocator = new Map<string, SubmissionChainPlan>();
+  // → 忠实重建 submission 链；无法忠实重建 ⇒ 显式降级 historical_unresolved。
   for (const intent of intents) {
     const record = intent.classification;
     if (record.source_kind !== 'event') continue;
@@ -727,16 +1055,188 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
     const resolution = resolutionByLocator.get(record.source_locator);
     if (resolution == null || resolution.status !== 'mapped' || resolution.entry == null) continue;
 
-    const anchorId = record.source_id;
+    /** 忠实重建被阻断：锚降级 historical_unresolved（镜像经 inheritance 同步）。 */
+    const degrade = (reason: string): void => {
+      const blocked: ReconstructionBlockedEntry = {
+        source_locator: record.source_locator,
+        original_question_id:
+          event.subject_kind === 'question' ? event.subject_id : `unknown:${record.source_id}`,
+        reason,
+      };
+      reconstructionBlocked.push(blocked);
+      resolutionByLocator.set(record.source_locator, {
+        status: 'historical_unresolved',
+        entry: null,
+        reason: `忠实重建被阻断：${reason}`,
+        binding: null,
+      });
+      mappingStatusCount.mapped -= 1;
+      mappingStatusCount.historical_unresolved += 1;
+      if (intent.mapping !== null) {
+        intent.mapping.status = 'historical_unresolved';
+        intent.mapping.target_revision_id = null;
+        intent.mapping.target_part_id = null;
+        intent.mapping.target_slot_id = null;
+        // mapping_id 含裁决内容 —— 降级后是新裁决（同输入确定性不变）。
+        intent.mapping.mapping_id = idOf(
+          'amp',
+          record.source_kind,
+          record.source_id,
+          record.source_locator,
+          'historical_unresolved',
+          '',
+        );
+        intent.mapping.evidence.resolution = {
+          status: 'historical_unresolved',
+          reason: blocked.reason,
+          binding: null,
+        };
+        intent.mapping.evidence.reconstruction_blocked = reason;
+        intent.mapping.evidence.verified_binding_attempt = {
+          revision_id: resolution.entry?.revision_id ?? null,
+          binding: resolution.binding,
+        };
+      }
+    };
+
     const entry = resolution.entry;
+    const contract = input.revisionContracts.get(entry.revision_id);
+    if (contract === undefined) {
+      degrade(
+        `revision ${entry.revision_id} 的五层契约未随 plan 提供（语料导入/装载不完整）—— 无法忠实重建 issuance/response`,
+      );
+      continue;
+    }
+    // 契约自身有效性（发布 barrier 的确定性子集 —— 语料导入坏了在这里显形）。
+    const contractIssues = [
+      ...validateStructure(contract.structure),
+      ...validateResponseSpec(contract.response_spec, contract.structure),
+      ...validateScoringBasis(contract.scoring_basis, contract.response_spec, contract.structure),
+      ...validateExecutionPlan(contract.execution_plan, contract.scoring_basis),
+    ];
+    if (contractIssues.length > 0) {
+      degrade(
+        `revision 契约校验失败：${contractIssues.map((i) => `${i.code}(${'detail' in i ? i.detail : ''})`).join('; ')}`,
+      );
+      continue;
+    }
+    // registry 坐标与契约一致（P1-4）。
+    const contractParts = new Set(contract.structure.parts.map((p) => p.part_id));
+    if (!entry.part_ids.every((p) => contractParts.has(p))) {
+      degrade(
+        `registry part_ids 与 revision 契约不符（${entry.part_ids.join(',')} vs 契约 parts ${[...contractParts].join(',')}）`,
+      );
+      continue;
+    }
+    const slot = contract.response_spec.slots.find((s) => s.slot_id === entry.slot_id);
+    if (slot === undefined || !entry.part_ids.includes(slot.part_id)) {
+      degrade(`registry slot_id '${entry.slot_id}' 不在 revision 契约的发出 part 范围内`);
+      continue;
+    }
+    if (!contract.scoring_basis.units.some((u) => u.scoring_unit_id === entry.scoring_unit_id)) {
+      degrade(
+        `registry scoring_unit_id '${entry.scoring_unit_id}' 不在 revision 契约的计分单元集内`,
+      );
+      continue;
+    }
+
+    // 忠实 response 绑定：legacy 整题自由文本（+图片）只能落【单一 text/open 槽】。
+    const slotsInScope = contract.response_spec.slots.filter((s) =>
+      entry.part_ids.includes(s.part_id),
+    );
+    const response = legacyResponseOf(record, eventById, pendingByRunId);
+    const soleSlot = slotsInScope[0];
+    if (soleSlot === undefined || soleSlot.slot_id !== entry.slot_id) {
+      degrade(
+        `发出范围内有 ${slotsInScope.length} 个槽位 —— legacy 整题自由文本作答无法归属（需唯一槽位绑定，不猜）`,
+      );
+      continue;
+    }
+    if (slot.kind !== 'text' && slot.kind !== 'open_response') {
+      degrade(
+        `槽位 kind='${slot.kind}' 需要选项/数值/配对身份，legacy 自由文本无法忠实重建（不得伪造 option/numeric identity）`,
+      );
+      continue;
+    }
+    const attachments: EvidenceAttachmentT[] = [];
+    const missingAssets: string[] = [];
+    for (const ref of response.image_refs) {
+      const asset = assetsById.get(ref);
+      if (asset === undefined) missingAssets.push(ref);
+      else attachments.push(evidenceAttachmentOf(asset));
+    }
+    if (missingAssets.length > 0) {
+      degrade(
+        `已接收图片证据缺 source_asset 元数据（${missingAssets.join(',')}）—— D5 零丢失：不得静默丢附件`,
+      );
+      continue;
+    }
+    if (slot.kind === 'text' && attachments.length > 0) {
+      degrade('text 槽不能承载证据附件，且已接收图片不得丢弃（D5）—— 需要 open_response 槽位契约');
+      continue;
+    }
+    const responseSet: ResponseSetT = {
+      entries: [
+        slot.kind === 'open_response'
+          ? {
+              slot_id: slot.slot_id,
+              kind: 'open',
+              text_md: response.response_md ?? '',
+              evidence: attachments,
+            }
+          : { slot_id: slot.slot_id, kind: 'text', text_md: response.response_md ?? '' },
+      ],
+    };
+    const responseIssues = validateResponseSet(contract.response_spec, responseSet);
+    if (responseIssues.length > 0) {
+      degrade(
+        `重建 response_set 未过契约校验：${responseIssues.map((i) => `${i.code}(${i.detail})`).join('; ')}`,
+      );
+      continue;
+    }
+
+    // issuance 绑定（P1-6）：materials 来自契约（同版资产 digest）；发出范围内
+    // 的选择槽给声明序 option_order（此路径下 scope 无选择槽 —— 由校验兜底）。
+    const boundPartIds = new Set(entry.part_ids);
+    const boundMaterials = contract.structure.materials
+      .filter((m) =>
+        contract.structure.parts.some(
+          (p) => boundPartIds.has(p.part_id) && p.material_ids.includes(m.material_id),
+        ),
+      )
+      .map((m) => ({ material_id: m.material_id, asset_digest: m.asset.digest }));
+    const optionOrder: IssuedOptionOrderT[] = contract.response_spec.slots
+      .filter(
+        (s): s is Extract<ResponseSlotT, { kind: 'single_choice' | 'multi_choice' | 'matching' }> =>
+          (s.kind === 'single_choice' || s.kind === 'multi_choice' || s.kind === 'matching') &&
+          boundPartIds.has(s.part_id),
+      )
+      .map((s) => ({
+        slot_id: s.slot_id,
+        option_ids: (s.kind === 'matching' ? s.right_options : s.options).map((o) => o.option_id),
+      }));
+    const issuance = {
+      revision_id: entry.revision_id,
+      part_ids: [...entry.part_ids],
+      material_bindings: boundMaterials,
+      option_order: optionOrder,
+    };
+    const issuanceIssues = validateIssuanceBinding(issuance, contract);
+    if (issuanceIssues.length > 0) {
+      degrade(
+        `重建 issuance 绑定未过契约校验：${issuanceIssues.map((i) => `${i.code}(${i.detail})`).join('; ')}`,
+      );
+      continue;
+    }
+
+    const anchorId = record.source_id;
     const groupId = idOf('aeg', `group|${anchorId}`);
     const submissionId = idOf('asb', `submission|${anchorId}`);
     const issuanceId = idOf('ais', `issuance|${anchorId}|${entry.revision_id}`);
-
-    const response = legacyResponseOf(record, eventById, pendingByRunId);
     const submittedAt = toDate(response.submitted_at, fallbackTime);
 
-    // evaluation 候选：配对 verdict judge（分类输出，含 head 与非 head）+ 嵌入判词。
+    // evaluation 候选：配对 verdict judge（分类输出）+ 嵌入判词。判词只作
+    // legacy 证据迁移 —— unit 结果显式 pending（无获准 points 映射，P2）。
     interface EvalCandidate {
       evaluation_id: string;
       run_refs: string[];
@@ -751,29 +1251,30 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
       if (judgeRecord.native_target.kind !== 'submission_with_imported_eval') continue;
       const judgeEvent = eventById.get(judgeRecord.source_id);
       if (judgeEvent === undefined) continue;
-      const payload = payloadOf(judgeEvent.payload);
-      if (verdictStatus(payload) !== 'valid') continue;
+      const judgePayload = payloadOf(judgeEvent.payload);
       candidates.push({
         evaluation_id: idOf('aev', `evaluation|${anchorId}|${judgeRecord.source_id}`),
         run_refs: [judgeRecord.source_id],
         created_at: toDate(judgeEvent.created_at, submittedAt),
-        coarse_outcome: payload.coarse_outcome,
-        score: payload.score,
-        feedback_md: typeof payload.feedback_md === 'string' ? payload.feedback_md : null,
+        coarse_outcome: judgePayload.coarse_outcome,
+        score: judgePayload.score,
+        feedback_md: typeof judgePayload.feedback_md === 'string' ? judgePayload.feedback_md : null,
         provenance_note: {
           judge_event_id: judgeRecord.source_id,
           head_selection: judgeRecord.native_target.head_selection,
-          is_effective_head: judgeRecord.native_target.has_effective_head,
+          is_legacy_effective_head: judgeRecord.native_target.has_effective_head,
         },
       });
     }
-    // 嵌入判词：solve_tutor attempt 或 durable review 的 embedded judge 块。
     const payload = payloadOf(event.payload);
     let embedded: { coarse: unknown; score: unknown; feedback: string | null } | null = null;
     if (event.action === 'attempt' && payload.source === 'solve_tutor') {
       const judgeBlock = payloadOf(payload.judge);
-      const score = judgeBlock.score ?? payload.judge_score;
-      if (verdictStatus({ coarse_outcome: judgeBlock.coarse_outcome, score }) === 'valid') {
+      const score =
+        judgeBlock.score !== undefined && judgeBlock.score !== null
+          ? judgeBlock.score
+          : payload.judge_score;
+      if (verdictValid({ coarse_outcome: judgeBlock.coarse_outcome, score })) {
         embedded = {
           coarse: judgeBlock.coarse_outcome,
           score,
@@ -787,7 +1288,7 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
       record.native_target.head_selection === 'sole_verdict'
     ) {
       const judgeBlock = payloadOf(payload.judge);
-      if (verdictStatus(judgeBlock) === 'valid') {
+      if (verdictValid(judgeBlock)) {
         embedded = {
           coarse: judgeBlock.coarse_outcome,
           score: judgeBlock.score,
@@ -810,7 +1311,6 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
         },
       });
     }
-    // 确定性 attempt 序：created_at，并列时 id（分类器已保证 head 唯一，这里只定序）。
     candidates.sort((a, b) =>
       a.created_at.getTime() !== b.created_at.getTime()
         ? a.created_at.getTime() - b.created_at.getTime()
@@ -819,30 +1319,22 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
           : 1,
     );
 
-    const evaluations: EvaluationRowPlan[] = candidates.map((candidate, index) => ({
+    const pendingUnitDetail =
+      'legacy 判词已导入为 provenance 证据；发布侧不存在获准的 legacy-verdict→points 映射，单元保持未决 —— 生效/换算属 settlement lane 在获准规则下的显式动作（重判是新判断，不是迁移）';
+    const evaluations: EvaluationRowPlan[] = candidates.map((candidate) => ({
       evaluation_id: candidate.evaluation_id,
       evaluation_group_id: groupId,
       submission_id: submissionId,
-      attempt: index + 1,
+      attempt: 0, // 占位 —— 下方按序赋值
       status: 'completed',
-      unit_results:
-        entry.scoring_unit_id !== null
-          ? [
-              {
-                status: 'scored',
-                scoring_unit_id: entry.scoring_unit_id,
-                points_awarded: null,
-                scored_because: 'response',
-                ...(candidate.feedback_md !== null ? { feedback_md: candidate.feedback_md } : {}),
-                evidence_citations: [],
-              },
-            ]
-          : [],
-      aggregate: {
-        kind: 'unresolved',
-        reason: 'no_mapping',
-        detail: 'imported legacy verdict — 迁移导入判词，无发布侧 unit points 映射，不制造总分',
-      },
+      unit_results: [
+        {
+          status: 'pending',
+          scoring_unit_id: entry.scoring_unit_id,
+          pending: { reason: 'needs_review', trigger: 'flagged', detail: pendingUnitDetail },
+        },
+      ],
+      aggregate: { kind: 'unresolved', reason: 'pending_units', detail: pendingUnitDetail },
       plan_digest: null,
       run_refs: candidate.run_refs,
       provenance: {
@@ -851,39 +1343,28 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
         migrated: {
           tool: 'yuk1050-apply',
           algorithm_version: algorithmVersion,
+          assisted: 'unknown' as const,
           legacy: { coarse_outcome: candidate.coarse_outcome, score: candidate.score },
           ...candidate.provenance_note,
         },
       },
       created_at: candidate.created_at,
     }));
+    evaluations.forEach((e, index) => {
+      e.attempt = index + 1;
+    });
 
-    // effective head：分类器的 anchor 判定 —— imported 锚看 has_effective_head，
-    // embedded 锦标（solve_tutor）本身即唯一 verdict，直接生效。
-    let headEvaluationId: string | null = null;
-    if (
-      record.native_target.kind === 'submission_with_imported_eval' &&
-      record.native_target.has_effective_head
-    ) {
-      const headJudgeId = record.native_target.judge_event_id;
-      headEvaluationId =
-        headJudgeId !== null
-          ? idOf('aev', `evaluation|${anchorId}|${headJudgeId}`)
-          : idOf('aev', `evaluation|${anchorId}|embedded`);
-    } else if (record.native_target.kind === 'submission_with_embedded_eval') {
-      headEvaluationId = idOf('aev', `evaluation|${anchorId}|embedded`);
-    }
-    const headTime =
-      evaluations.find((e) => e.evaluation_id === headEvaluationId)?.created_at ?? submittedAt;
-
+    // head：随 submission 建立，effective=NULL/generation=0 —— imported 判词
+    // 不激活（§11/D4：activation 需 settlement 同事务生效；§13 non-effective
+    // pending）。legacy effective truth 已入 mapping evidence。
     const chain: SubmissionChainPlan = {
       anchor_locator: record.source_locator,
       issuance: {
         issuance_id: issuanceId,
         revision_id: entry.revision_id,
-        part_ids: [...entry.part_ids],
-        material_bindings: [],
-        option_order: [],
+        part_ids: issuance.part_ids,
+        material_bindings: issuance.material_bindings,
+        option_order: issuance.option_order,
         container_occurrence_ref: null,
         claim_policy: 'unbounded',
         claim_status: 'unclaimed',
@@ -900,16 +1381,7 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
         issuance_id: issuanceId,
         revision_id: entry.revision_id,
         evaluation_group_id: groupId,
-        response_set: {
-          entries: [
-            {
-              slot_id: entry.slot_id ?? 'legacy-open-response',
-              kind: 'open',
-              text_md: response.response_md ?? '',
-              evidence: [],
-            },
-          ],
-        },
+        response_set: responseSet,
         group_evidence: [],
         idempotency_key: `legacy-${anchorId}`,
         submitted_at: submittedAt,
@@ -918,19 +1390,27 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
       head: {
         evaluation_group_id: groupId,
         submission_id: submissionId,
-        effective_evaluation_id: headEvaluationId,
-        generation: headEvaluationId !== null ? 1 : 0,
-        updated_at: headTime,
+        effective_evaluation_id: null,
+        generation: 0,
+        updated_at: submittedAt,
       },
     };
-    submissionByAnchorLocator.set(record.source_locator, chain);
     intent.submission = chain;
 
-    // 响应 digest 进映射证据（D5 零丢失对账锚）。
     if (intent.mapping !== null) {
       intent.mapping.evidence.response_digest = responseDigestOf(response);
-      intent.mapping.evidence.image_asset_refs = response.image_refs;
+      intent.mapping.evidence.preserved_attachments = attachments.map((a) => ({
+        evidence_id: a.evidence_id,
+        kind: a.kind,
+        digest: a.asset.digest,
+      }));
     }
+  }
+
+  // pass 3：judge/answer 镜像 —— 继承锚【最终】裁决（含忠实重建降级），锚
+  // historical/conflicted/pending 时镜像不得独立拿到 target。
+  for (const record of mirrorRecords) {
+    buildRecordIntent(record);
   }
 
   // rollup（确定性顺序）。
@@ -967,7 +1447,7 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
   }
 
   return {
-    plan_version: 1,
+    plan_version: 2,
     checkpoint_hash: input.checkpoint_hash,
     classification_version: input.classification.classification_version,
     classification_hash: input.classification.classification_hash,
@@ -980,6 +1460,52 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
       deferred_replay: input.classification.deferred_replay,
       awaiting_revision_registry: awaitingRegistry,
       conflicted,
+      live_drafts: liveDrafts,
+      reconstruction_blocked: reconstructionBlocked,
     },
   };
+}
+
+/** verdict 判别（迁移侧镜像：只做值域分支判定，不重新分类）。 */
+function verdictValid(payload: { coarse_outcome?: unknown; score?: unknown }): boolean {
+  const coarse = payload.coarse_outcome;
+  const score = payload.score;
+  const coarsePresent = coarse !== undefined && coarse !== null;
+  const scorePresent = score !== undefined && score !== null;
+  if (!coarsePresent && !scorePresent) return false;
+  const branchOk = (expected: string, scoreCheck: (s: unknown) => boolean): boolean =>
+    coarse === expected &&
+    (score === undefined || score === null ? expected === 'unsupported' : scoreCheck(score));
+  return (
+    typeof coarse === 'string' &&
+    (branchOk('correct', (s) => typeof s === 'number' && s >= 0.85 && s <= 1) ||
+      branchOk('partial', (s) => typeof s === 'number' && s > 0 && s < 0.85) ||
+      branchOk('incorrect', (s) => typeof s === 'number' && s === 0) ||
+      branchOk('unsupported', () => false))
+  );
+}
+
+function groupEntriesByQuestion(
+  entries: RevisionRegistryEntry[],
+): Map<string, RevisionRegistryEntry[]> {
+  const map = new Map<string, RevisionRegistryEntry[]>();
+  for (const entry of entries) {
+    const list = map.get(entry.question_id) ?? [];
+    list.push(entry);
+    map.set(entry.question_id, list);
+  }
+  return map;
+}
+
+/** 目标 part 选择（P1-4）：answer.part_ref 优先且必须在该绑定的 part 集内；否则唯一 part；否则不猜。 */
+function selectTargetPart(
+  entry: RevisionRegistryEntry | null,
+  partRef: string | null,
+): string | null {
+  if (entry === null) return null;
+  if (partRef !== null && partRef.length > 0) {
+    return entry.part_ids.includes(partRef) ? partRef : null;
+  }
+  const solePart = entry.part_ids.length === 1 ? entry.part_ids[0] : undefined;
+  return solePart ?? null;
 }

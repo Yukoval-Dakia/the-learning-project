@@ -1,10 +1,12 @@
-import { inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 
 import {
   type MigrationApplyPlan,
   type SubmissionChainPlan,
+  mappingRowDigest,
   planDigestOf,
 } from '@/core/migration/apply';
+import { canonicalHash } from '@/core/migration/canonical';
 import type { Db } from '@/db/client';
 import {
   assessment_identity_mapping,
@@ -19,7 +21,7 @@ import {
 } from '@/db/schema';
 
 // ====================================================================
-// YUK-1050 — 历史迁移 apply · DB 执行器（grounding §15）
+// YUK-1050 — 历史迁移 apply · DB 执行器（grounding §15；review P1-1..P1-5 修订）
 // ====================================================================
 //
 // 消费纯规划器（core/migration/apply.ts）的 MigrationApplyPlan，分阶段幂等
@@ -29,12 +31,19 @@ import {
 //   - 单写者 fence：advisory lock（跨阶段持有；由调用方提供专用连接实现，
 //     池化连接上的 session lock 会在连接归还时释放，不能作 fence）。
 //   - 幂等：一切主键内容寻址派生 + INSERT ... ON CONFLICT DO NOTHING；
-//     已存在的行做内容对账（divergence fail-visible，绝不覆盖 —— guarded
-//     表的 UPDATE/DELETE 由 0105/0106/0107 trigger 拒绝，这里也不尝试）。
+//     已存在的行做【完整内容】对账（P1-3：digest 覆盖全部不可变载荷，
+//     divergence fail-visible，绝不覆盖 —— guarded 表的 UPDATE/DELETE 由
+//     0105/0106/0107 trigger 拒绝，这里也不尝试）。
+//   - pending→resolved 续跑（P1-5）：registry 后到的 mapped 裁决对【本工具
+//     早前写入的 pending 当前映射】走显式 supersession —— 旧行 is_current=false
+//     （status/evidence 原样保留），新行 is_current=true 并链
+//     supersedes_mapping_id。其余任何状态迁移（mapped↔conflicted、改判目标）
+//     一律 divergence fail-visible，属显式修正工作流。
 //   - crash 续跑：阶段进度入账本（migration_apply_run/phase）；重跑跳过
-//     completed 阶段，未完成阶段靠幂等收敛。
+//     completed 阶段，未完成阶段靠幂等收敛。reconcile 在标记 completed【之前】
+//     做全内容对账（P1-3：断言失败 ⇒ run=failed，绝不先记账后失败）。
 //   - 观测：每阶段 duration、rows_written/already_present、WAL LSN 位移
-//     （权限不足时为 null —— 不冒充）。
+//     （权限不足时为 null —— 不冒装）。
 //   - 无学习重放：写面仅限 6 张评估真相表 + 2 张账本表；FSRS/θ̂/calibration
 //     等学习状态表零触碰（reconciliation 报告显式声明）。
 //
@@ -83,6 +92,13 @@ export interface PhaseOutcome {
   error: string | null;
 }
 
+export interface HeadCurrentState {
+  evaluation_group_id: string;
+  effective_evaluation_id: string | null;
+  generation: number;
+  post_migration_activation: boolean;
+}
+
 export interface ApplyReconciliationReport {
   run_id: string;
   checkpoint_hash: string;
@@ -101,6 +117,7 @@ export interface ApplyReconciliationReport {
     mapping_rows_planned: number;
     mapping_rows_present: number;
     mapping_rows_present_by_status: Record<string, number>;
+    mapping_rows_superseded_in_run: number;
     issuances_planned: number;
     issuances_present: number;
     groups_planned: number;
@@ -111,6 +128,7 @@ export interface ApplyReconciliationReport {
     evaluations_present: number;
     heads_planned: number;
     heads_present: number;
+    heads_current: HeadCurrentState[];
     divergences: string[];
     learning_tables_touched: 'none (by construction)';
   };
@@ -119,6 +137,8 @@ export interface ApplyReconciliationReport {
     deferred_replay: number;
     awaiting_revision_registry: number;
     conflicted: number;
+    live_drafts: number;
+    reconstruction_blocked: number;
   };
 }
 
@@ -131,15 +151,16 @@ export class MigrationApplyError extends Error {
 
 // ───────────────────────── 观测原语 ─────────────────────────
 
-async function currentWalLsn(db: Db): Promise<string | null> {
+async function currentWalLsn(db: Db | { execute: Db['execute'] }): Promise<string | null> {
   try {
-    const result = await db.execute<{ lsn: string | null }>(
-      sql`select pg_current_wal_lsn()::text as lsn`,
-    );
-    const rows = (result as unknown as { rows?: Array<{ lsn: string | null }> }).rows ?? [];
+    const result = (await db.execute(sql`select pg_current_wal_lsn()::text as lsn`)) as unknown;
+    // postgres-js drizzle：execute 直接返回行数组（非 {rows} 信封）—— 两种形态
+    // 都容错，权限不足抛错时降级 null（不冒装观测）。
+    const rows = Array.isArray(result)
+      ? (result as Array<{ lsn: string | null }>)
+      : ((result as { rows?: Array<{ lsn: string | null }> }).rows ?? []);
     return rows[0]?.lsn ?? null;
   } catch {
-    // 权限不足（如受限角色）—— 观测降级为 null，不冒充。
     return null;
   }
 }
@@ -177,6 +198,7 @@ async function ensureRunRow(
   dryRun: boolean,
 ): Promise<LedgerRunRow | null> {
   if (dryRun) return null;
+  const walStart = await currentWalLsn(db);
   await db
     .insert(migration_apply_run)
     .values({
@@ -188,6 +210,7 @@ async function ensureRunRow(
       plan_digest: planDigestOf(plan),
       status: 'running',
       started_at: now,
+      wal_lsn_start: walStart,
     })
     .onConflictDoNothing()
     .returning({ run_id: migration_apply_run.run_id });
@@ -314,107 +337,210 @@ async function preflight(db: Db, plan: MigrationApplyPlan): Promise<void> {
   }
 }
 
+// ───────────────────────── 存储行内容对账（P1-3） ─────────────────────────
+
+type MappingStoredRow = {
+  mapping_id: string;
+  source_kind: string;
+  source_id: string;
+  source_locator: string;
+  original_question_id: string;
+  legacy_part_ref: string | null;
+  snapshot_digest: string | null;
+  target_revision_id: string | null;
+  target_part_id: string | null;
+  target_slot_id: string | null;
+  evidence: unknown;
+  algorithm_version: string;
+  status: string;
+  is_current: boolean;
+  created_at: Date;
+};
+
+function mappingContentDigest(
+  row: Omit<MappingStoredRow, 'mapping_id' | 'is_current' | 'created_at'> & {
+    created_at?: unknown;
+  },
+): string {
+  return canonicalHash({
+    source_kind: row.source_kind,
+    source_id: row.source_id,
+    source_locator: row.source_locator,
+    original_question_id: row.original_question_id,
+    legacy_part_ref: row.legacy_part_ref,
+    snapshot_digest: row.snapshot_digest,
+    target_revision_id: row.target_revision_id,
+    target_part_id: row.target_part_id,
+    target_slot_id: row.target_slot_id,
+    evidence: row.evidence,
+    algorithm_version: row.algorithm_version,
+    status: row.status,
+    created_at: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  });
+}
+
+function plannedMappingContentDigest(
+  planned: NonNullable<MigrationApplyPlan['records'][number]['mapping']>,
+): string {
+  // mappingRowDigest 覆盖同一字段面（supersedes_mapping_id 是过渡簿记，不参与
+  // 内容对账）。
+  return mappingRowDigest(planned);
+}
+
 // ───────────────────────── apply_mappings ─────────────────────────
+
+interface MappingWriteStats {
+  written: number;
+  alreadyPresent: number;
+  superseded: number;
+}
 
 async function applyMappings(
   db: Db,
   plan: MigrationApplyPlan,
   batchSize: number,
   dryRun: boolean,
-): Promise<{ written: number; alreadyPresent: number }> {
-  const rows = plan.records.flatMap((r) => (r.mapping !== null ? [r.mapping] : []));
-  if (rows.length === 0 || dryRun) return { written: 0, alreadyPresent: rows.length };
-  let written = 0;
-  let alreadyPresent = 0;
+): Promise<MappingWriteStats> {
+  const rows = plan.records.flatMap((r) =>
+    r.mapping !== null ? [{ record: r.classification, mapping: r.mapping }] : [],
+  );
+  const stats: MappingWriteStats = { written: 0, alreadyPresent: 0, superseded: 0 };
+  if (rows.length === 0 || dryRun) return stats;
   for (let i = 0; i < rows.length; i += batchSize) {
     const batch = rows.slice(i, i + batchSize);
-    const inserted = await db
-      .insert(assessment_identity_mapping)
-      .values(
-        batch.map((m) => ({
-          mapping_id: m.mapping_id,
-          source_kind: m.source_kind,
-          source_id: m.source_id,
-          source_locator: m.source_locator,
-          original_question_id: m.original_question_id,
-          legacy_part_ref: m.legacy_part_ref,
-          snapshot_digest: m.snapshot_digest,
-          target_revision_id: m.target_revision_id,
-          target_part_id: m.target_part_id,
-          target_slot_id: m.target_slot_id,
-          evidence: m.evidence,
-          algorithm_version: m.algorithm_version,
-          status: m.status,
-          is_current: true,
-          created_at: m.created_at,
-        })),
-      )
-      // 冲突裁决交给任意 unique violation（arbiter-less）：本表在 (source_kind,
-      // source_id, source_locator) 上的唯一索引是【部分索引】（WHERE
-      // is_current），当前 drizzle 版本不支持 conflict target 的 index
-      // predicate（targetWhere）—— 而内容寻址 mapping_id 与 locator 三元组
-      // 一一对应（同派生函数），PK 冲突与当前映射唯一索引语义重合，故
-      // arbiter-less DO NOTHING 语义等价且不依赖部分索引推断。
-      .onConflictDoNothing()
-      .returning({ mapping_id: assessment_identity_mapping.mapping_id });
-    written += inserted.length;
-    alreadyPresent += batch.length - inserted.length;
-
-    // divergence 对账：已存在的行必须与 plan 同判（fail-visible，绝不覆盖）。
-    if (alreadyPresent > 0) {
-      const insertedIds = new Set(inserted.map((r) => r.mapping_id));
-      const batchLocators = new Map(
-        batch
-          .filter((m) => !insertedIds.has(m.mapping_id))
-          .map((m) => [m.source_locator, m] as const),
-      );
-      if (batchLocators.size > 0) {
-        const stored = await db
-          .select({
-            source_locator: assessment_identity_mapping.source_locator,
-            status: assessment_identity_mapping.status,
-            target_revision_id: assessment_identity_mapping.target_revision_id,
-            snapshot_digest: assessment_identity_mapping.snapshot_digest,
-            is_current: assessment_identity_mapping.is_current,
-          })
-          .from(assessment_identity_mapping)
-          .where(inArray(assessment_identity_mapping.source_locator, [...batchLocators.keys()]));
-        for (const row of stored) {
-          const planned = batchLocators.get(row.source_locator);
-          if (planned === undefined) continue;
-          if (
-            !row.is_current ||
-            row.status !== planned.status ||
-            row.target_revision_id !== planned.target_revision_id ||
-            row.snapshot_digest !== planned.snapshot_digest
-          ) {
-            throw new MigrationApplyError(
-              `mapping divergence @ ${row.source_locator}：库内 (status=${row.status}, target=${String(row.target_revision_id)}, digest=${String(row.snapshot_digest)}, is_current=${String(row.is_current)}) 与 plan (status=${planned.status}, target=${String(planned.target_revision_id)}, digest=${String(planned.snapshot_digest)}) 不符 —— 拒绝覆盖，需显式修正工作流`,
-            );
+    const locatorToPlanned = new Map(
+      batch.map((b) => [b.mapping.source_locator, b.mapping] as const),
+    );
+    const result = await db.transaction(async (tx) => {
+      // 同 locator 的当前行（含 pending→resolved 接替判断）+ 非当前行（历史链）。
+      const stored = (await tx
+        .select()
+        .from(assessment_identity_mapping)
+        .where(
+          inArray(assessment_identity_mapping.source_locator, [...locatorToPlanned.keys()]),
+        )) as unknown as MappingStoredRow[];
+      const currentByLocator = new Map<string, MappingStoredRow>();
+      for (const row of stored) {
+        if (row.is_current) currentByLocator.set(row.source_locator, row);
+      }
+      // 插入对象就地构造（不走 helper）—— audit:schema 的词法写路径检测需要
+      // 字段键出现在 insert 语句载荷内。
+      const toInsert: Array<{
+        planned: (typeof batch)[number]['mapping'];
+        supersedes: string | null;
+      }> = [];
+      for (const planned of batch.map((b) => b.mapping)) {
+        const existing = currentByLocator.get(planned.source_locator);
+        if (existing === undefined) {
+          toInsert.push({ planned, supersedes: null });
+          continue;
+        }
+        if (mappingContentDigest(existing) === plannedMappingContentDigest(planned)) {
+          stats.alreadyPresent += 1; // 逐字节同判 —— 幂等跳过
+          continue;
+        }
+        // P1-5：pending 是【未裁决】的操作性占位 —— 本工具可对自写的 pending 行
+        // 显式接替（registry 后到的 mapped/conflicted 裁决，或同裁决的 reason
+        // 刷新）；已裁决行（mapped/conflicted/historical）的任何内容迁移一律
+        // fail-visible，属显式修正工作流。
+        const authoredByThisTool = planned.algorithm_version.startsWith('yuk1050-apply');
+        const existingAuthoredByThisTool = existing.algorithm_version.startsWith('yuk1050-apply');
+        const supersedeOk =
+          existing.status === 'pending' && authoredByThisTool && existingAuthoredByThisTool;
+        if (supersedeOk) {
+          if (planned.status === 'pending') {
+            // pending→pending：同裁决的 reason/证据刷新 —— 原地 UPDATE 保持
+            // mapping_id 稳定（pending 是未裁决占位，非裁决事实；历史在账本 run 行）。
+            await tx
+              .update(assessment_identity_mapping)
+              .set({
+                evidence: planned.evidence,
+                snapshot_digest: planned.snapshot_digest,
+                algorithm_version: planned.algorithm_version,
+              })
+              .where(eq(assessment_identity_mapping.mapping_id, existing.mapping_id));
+            stats.alreadyPresent += 1;
+          } else {
+            // pending→mapped/conflicted：新裁决新行（mapping_id 含裁决内容），
+            // 旧行 is_current=false + supersedes 链（裁决历史原样保留）。
+            await tx
+              .update(assessment_identity_mapping)
+              .set({ is_current: false })
+              .where(eq(assessment_identity_mapping.mapping_id, existing.mapping_id));
+            toInsert.push({ planned, supersedes: existing.mapping_id });
+            stats.superseded += 1;
           }
+          continue;
+        }
+        throw new MigrationApplyError(
+          `mapping divergence @ ${planned.source_locator}：库内当前行 (status=${existing.status}, target=${String(existing.target_revision_id)}, digest=${String(existing.snapshot_digest)}) 与 plan (status=${planned.status}, target=${String(planned.target_revision_id)}) 内容不符 —— 拒绝覆盖；除本工具 pending→resolved 接替外，改判属显式修正工作流`,
+        );
+      }
+      if (toInsert.length > 0) {
+        const inserted = await tx
+          .insert(assessment_identity_mapping)
+          .values(
+            toInsert.map((entry) => ({
+              mapping_id: entry.planned.mapping_id,
+              source_kind: entry.planned.source_kind,
+              source_id: entry.planned.source_id,
+              source_locator: entry.planned.source_locator,
+              original_question_id: entry.planned.original_question_id,
+              legacy_part_ref: entry.planned.legacy_part_ref,
+              snapshot_digest: entry.planned.snapshot_digest,
+              target_revision_id: entry.planned.target_revision_id,
+              target_part_id: entry.planned.target_part_id,
+              target_slot_id: entry.planned.target_slot_id,
+              evidence: entry.planned.evidence,
+              algorithm_version: entry.planned.algorithm_version,
+              status: entry.planned.status,
+              is_current: true,
+              supersedes_mapping_id: entry.supersedes,
+              created_at: entry.planned.created_at,
+            })),
+          )
+          // 冲突裁决交给任意 unique violation（arbiter-less）：本表在 (source_kind,
+          // source_id, source_locator) 上的唯一索引是【部分索引】（WHERE
+          // is_current），当前 drizzle 版本不支持 conflict target 的 index
+          // predicate —— 而内容寻址 mapping_id 与 locator 裁决一一对应，PK 冲突
+          // 与当前映射唯一索引语义重合。
+          .onConflictDoNothing()
+          .returning({ mapping_id: assessment_identity_mapping.mapping_id });
+        stats.written += inserted.length;
+        if (inserted.length !== toInsert.length) {
+          throw new MigrationApplyError(
+            'mapping insert 冲突但当前行对账未命中 —— 账本/表状态不一致，fail-visible',
+          );
         }
       }
-    }
+      return true;
+    });
+    void result;
   }
-  return { written, alreadyPresent };
+  return stats;
 }
 
 // ───────────────────────── apply_submissions ─────────────────────────
+
+interface SubmissionWriteStats {
+  written: number;
+  alreadyPresent: number;
+}
 
 async function applySubmissions(
   db: Db,
   plan: MigrationApplyPlan,
   batchSize: number,
   dryRun: boolean,
-): Promise<{ written: number; alreadyPresent: number }> {
+): Promise<SubmissionWriteStats> {
   const chains = plan.records.flatMap((r) => (r.submission !== null ? [r.submission] : []));
-  if (chains.length === 0 || dryRun) return { written: 0, alreadyPresent: chains.length };
-  let written = 0;
-  let alreadyPresent = 0;
+  const stats: SubmissionWriteStats = { written: 0, alreadyPresent: 0 };
+  if (chains.length === 0 || dryRun) return stats;
   for (let i = 0; i < chains.length; i += batchSize) {
     const batch = chains.slice(i, i + batchSize);
     // FK 拓扑序（0105/0106 非 DEFERRABLE）：issuance/group → submission →
     // evaluation → head；单批单事务，崩即整批回滚（幂等重放收敛）。
+    // 冲突行的【完整内容】对账在同一事务内完成（P1-3：先验证后提交）。
     await db.transaction(async (tx) => {
       const issuanceInserted = await tx
         .insert(assessment_issuance)
@@ -498,73 +624,211 @@ async function applySubmissions(
         .onConflictDoNothing()
         .returning({ id: evaluation_effective_head.evaluation_group_id });
 
-      const plannedRows = batch.length * 2 + batch.length + flatEvals.length + batch.length; // issuance+group+submission+eval+head
+      const plannedRows = batch.length * 4 + flatEvals.length; // issuance+group+submission+head+eval
       const actualInserted =
         issuanceInserted.length +
         groupInserted.length +
         submissionInserted.length +
         evalInserted.length +
         headInserted.length;
-      written += actualInserted;
-      alreadyPresent += plannedRows - actualInserted;
-    });
+      stats.written += actualInserted;
+      stats.alreadyPresent += plannedRows - actualInserted;
 
-    // divergence 对账（批事务外读回）：submission 幂等键 + head 生效位必须同判。
-    await assertSubmissionDivergence(db, batch);
+      // 全内容对账（同事务内，先验证后提交）。
+      await assertSubmissionBatchContent(tx, batch);
+    });
   }
-  return { written, alreadyPresent };
+  return stats;
 }
 
-async function assertSubmissionDivergence(db: Db, batch: SubmissionChainPlan[]): Promise<void> {
-  const submissionIds = batch.map((c) => c.submission.submission_id);
-  const storedSubmissions = await db
-    .select({
-      submission_id: assessment_submission.submission_id,
-      idempotency_key: assessment_submission.idempotency_key,
-      evaluation_group_id: assessment_submission.evaluation_group_id,
-    })
+/** 事务内读回冲突行，比对【完整不可变载荷】；head 是可变行，走显式推进规则。 */
+async function assertSubmissionBatchContent(
+  tx: Parameters<Parameters<Db['transaction']>[0]>[0],
+  batch: SubmissionChainPlan[],
+): Promise<void> {
+  const issuances = await tx
+    .select()
+    .from(assessment_issuance)
+    .where(
+      inArray(
+        assessment_issuance.issuance_id,
+        batch.map((c) => c.issuance.issuance_id),
+      ),
+    );
+  const plannedIssuances = new Map(batch.map((c) => [c.issuance.issuance_id, c.issuance] as const));
+  for (const stored of issuances) {
+    const planned = plannedIssuances.get(stored.issuance_id);
+    if (planned === undefined) continue;
+    // claim 生命周期列可变（0105）—— 只比对冻结绑定列。
+    const storedBinding = canonicalHash({
+      revision_id: stored.revision_id,
+      part_ids: stored.part_ids,
+      material_bindings: stored.material_bindings,
+      option_order: stored.option_order,
+      container_occurrence_ref: stored.container_occurrence_ref,
+      claim_policy: stored.claim_policy,
+      issued_at: stored.issued_at.toISOString(),
+    });
+    const plannedBinding = canonicalHash({
+      revision_id: planned.revision_id,
+      part_ids: planned.part_ids,
+      material_bindings: planned.material_bindings,
+      option_order: planned.option_order,
+      container_occurrence_ref: planned.container_occurrence_ref,
+      claim_policy: planned.claim_policy,
+      issued_at: planned.issued_at.toISOString(),
+    });
+    if (storedBinding !== plannedBinding) {
+      throw new MigrationApplyError(
+        `issuance divergence @ ${stored.issuance_id}：冻结绑定列与 plan 不符 —— 拒绝覆盖`,
+      );
+    }
+  }
+  const groups = await tx
+    .select()
+    .from(evaluation_group)
+    .where(
+      inArray(
+        evaluation_group.evaluation_group_id,
+        batch.map((c) => c.group.evaluation_group_id),
+      ),
+    );
+  const plannedGroups = new Map(batch.map((c) => [c.group.evaluation_group_id, c.group] as const));
+  for (const stored of groups) {
+    const planned = plannedGroups.get(stored.evaluation_group_id);
+    if (planned === undefined) continue;
+    if (
+      canonicalHash(stored.submission_ids) !== canonicalHash(planned.submission_ids) ||
+      stored.created_at.toISOString() !== planned.created_at.toISOString()
+    ) {
+      throw new MigrationApplyError(
+        `evaluation group divergence @ ${stored.evaluation_group_id} —— 拒绝覆盖`,
+      );
+    }
+  }
+  const submissions = await tx
+    .select()
     .from(assessment_submission)
-    .where(inArray(assessment_submission.submission_id, submissionIds));
-  const plannedSubmissions = new Map(batch.map((c) => [c.submission.submission_id, c] as const));
-  for (const stored of storedSubmissions) {
+    .where(
+      inArray(
+        assessment_submission.submission_id,
+        batch.map((c) => c.submission.submission_id),
+      ),
+    );
+  const plannedSubmissions = new Map(
+    batch.map((c) => [c.submission.submission_id, c.submission] as const),
+  );
+  for (const stored of submissions) {
     const planned = plannedSubmissions.get(stored.submission_id);
     if (planned === undefined) continue;
-    if (
-      stored.idempotency_key !== planned.submission.idempotency_key ||
-      stored.evaluation_group_id !== planned.submission.evaluation_group_id
-    ) {
+    const storedContent = canonicalHash({
+      issuance_id: stored.issuance_id,
+      revision_id: stored.revision_id,
+      evaluation_group_id: stored.evaluation_group_id,
+      response_set: stored.response_set,
+      group_evidence: stored.group_evidence,
+      idempotency_key: stored.idempotency_key,
+      submitted_at: stored.submitted_at.toISOString(),
+    });
+    const plannedContent = canonicalHash({
+      issuance_id: planned.issuance_id,
+      revision_id: planned.revision_id,
+      evaluation_group_id: planned.evaluation_group_id,
+      response_set: planned.response_set,
+      group_evidence: planned.group_evidence,
+      idempotency_key: planned.idempotency_key,
+      submitted_at: planned.submitted_at.toISOString(),
+    });
+    if (storedContent !== plannedContent) {
       throw new MigrationApplyError(
-        `submission divergence @ ${stored.submission_id}：库内 idem=${stored.idempotency_key} group=${stored.evaluation_group_id} 与 plan 不符 —— 拒绝覆盖`,
+        `submission divergence @ ${stored.submission_id}：冻结作答内容与 plan 不符 —— 拒绝覆盖`,
       );
     }
   }
-  const groupIds = batch.map((c) => c.head.evaluation_group_id);
-  const storedHeads = await db
-    .select({
-      evaluation_group_id: evaluation_effective_head.evaluation_group_id,
-      effective_evaluation_id: evaluation_effective_head.effective_evaluation_id,
-      generation: evaluation_effective_head.generation,
-      submission_id: evaluation_effective_head.submission_id,
-    })
+  const evalIds = batch.flatMap((c) => c.evaluations.map((e) => e.evaluation_id));
+  if (evalIds.length > 0) {
+    const evals = await tx
+      .select()
+      .from(evaluation)
+      .where(inArray(evaluation.evaluation_id, evalIds));
+    const plannedEvals = new Map(
+      batch.flatMap((c) => c.evaluations.map((e) => [e.evaluation_id, e] as const)),
+    );
+    for (const stored of evals) {
+      const planned = plannedEvals.get(stored.evaluation_id);
+      if (planned === undefined) continue;
+      const storedContent = canonicalHash({
+        evaluation_group_id: stored.evaluation_group_id,
+        submission_id: stored.submission_id,
+        attempt: stored.attempt,
+        status: stored.status,
+        unit_results: stored.unit_results,
+        aggregate: stored.aggregate,
+        plan_digest: stored.plan_digest,
+        run_refs: stored.run_refs,
+        provenance: stored.provenance,
+        created_at: stored.created_at.toISOString(),
+      });
+      const plannedContent = canonicalHash({
+        evaluation_group_id: planned.evaluation_group_id,
+        submission_id: planned.submission_id,
+        attempt: planned.attempt,
+        status: planned.status,
+        unit_results: planned.unit_results,
+        aggregate: planned.aggregate,
+        plan_digest: planned.plan_digest,
+        run_refs: planned.run_refs,
+        provenance: planned.provenance,
+        created_at: planned.created_at.toISOString(),
+      });
+      if (storedContent !== plannedContent) {
+        throw new MigrationApplyError(
+          `evaluation divergence @ ${stored.evaluation_id}：判分记录内容与 plan 不符 —— 拒绝覆盖`,
+        );
+      }
+    }
+  }
+  const heads = await tx
+    .select()
     .from(evaluation_effective_head)
-    .where(inArray(evaluation_effective_head.evaluation_group_id, groupIds));
+    .where(
+      inArray(
+        evaluation_effective_head.evaluation_group_id,
+        batch.map((c) => c.head.evaluation_group_id),
+      ),
+    );
   const plannedHeads = new Map(batch.map((c) => [c.head.evaluation_group_id, c.head] as const));
-  for (const stored of storedHeads) {
+  for (const stored of heads) {
     const planned = plannedHeads.get(stored.evaluation_group_id);
     if (planned === undefined) continue;
-    if (
-      stored.effective_evaluation_id !== planned.effective_evaluation_id ||
-      stored.generation !== planned.generation ||
-      stored.submission_id !== planned.submission_id
-    ) {
+    if (!headStateAccepted(stored, planned)) {
       throw new MigrationApplyError(
-        `effective head divergence @ ${stored.evaluation_group_id}：库内 (effective=${String(stored.effective_evaluation_id)}, gen=${String(stored.generation)}) 与 plan (effective=${String(planned.effective_evaluation_id)}, gen=${String(planned.generation)}) 不符 —— 拒绝覆盖`,
+        `effective head divergence @ ${stored.evaluation_group_id}：库内 (effective=${String(stored.effective_evaluation_id)}, gen=${String(stored.generation)}, submission=${stored.submission_id}) 与 plan (effective=null, gen=0) 不符且非合法推进 —— 拒绝覆盖`,
       );
     }
   }
 }
 
-// ───────────────────────── reconcile ─────────────────────────
+/**
+ * head 是【可变行】（runtime activation 推进 generation）：迁移写入的是初始态
+ * (null, 0)。库内状态合法当且仅当：submission 坐标一致，且 (a) 与 plan 相同，
+ * 或 (b) generation > 0 —— 迁移后被 settlement/runtime 激活/替换（合法演进）。
+ */
+function headStateAccepted(
+  stored: { submission_id: string; effective_evaluation_id: string | null; generation: number },
+  planned: { submission_id: string; effective_evaluation_id: string | null; generation: number },
+): boolean {
+  if (stored.submission_id !== planned.submission_id) return false;
+  if (
+    stored.generation === planned.generation &&
+    stored.effective_evaluation_id === planned.effective_evaluation_id
+  ) {
+    return true;
+  }
+  return stored.generation > planned.generation;
+}
+
+// ───────────────────────── reconcile（P1-3：全内容对账） ─────────────────────────
 
 async function reconcile(
   db: Db,
@@ -573,10 +837,11 @@ async function reconcile(
 ): Promise<ApplyReconciliationReport['reconciliation']> {
   const mappingRows = plan.records.flatMap((r) => (r.mapping !== null ? [r.mapping] : []));
   const chains = plan.records.flatMap((r) => (r.submission !== null ? [r.submission] : []));
-  const empty = {
+  const out: ApplyReconciliationReport['reconciliation'] = {
     mapping_rows_planned: mappingRows.length,
     mapping_rows_present: 0,
-    mapping_rows_present_by_status: {} as Record<string, number>,
+    mapping_rows_present_by_status: {},
+    mapping_rows_superseded_in_run: 0,
     issuances_planned: chains.length,
     issuances_present: 0,
     groups_planned: chains.length,
@@ -587,22 +852,45 @@ async function reconcile(
     evaluations_present: 0,
     heads_planned: chains.length,
     heads_present: 0,
-    divergences: [] as string[],
-    learning_tables_touched: 'none (by construction)' as const,
+    heads_current: [],
+    divergences: [],
+    learning_tables_touched: 'none (by construction)',
   };
-  if (dryRun) return empty;
+  if (dryRun) return out;
 
-  const mappingIds = mappingRows.map((m) => m.mapping_id);
-  if (mappingIds.length > 0) {
-    const present = await db
-      .select({ status: assessment_identity_mapping.status })
+  if (mappingRows.length > 0) {
+    const stored = (await db
+      .select()
       .from(assessment_identity_mapping)
-      .where(inArray(assessment_identity_mapping.mapping_id, mappingIds));
-    empty.mapping_rows_present = present.length;
-    for (const row of present) {
-      empty.mapping_rows_present_by_status[row.status] =
-        (empty.mapping_rows_present_by_status[row.status] ?? 0) + 1;
+      .where(
+        inArray(
+          assessment_identity_mapping.mapping_id,
+          mappingRows.map((m) => m.mapping_id),
+        ),
+      )) as unknown as MappingStoredRow[];
+    const plannedById = new Map(mappingRows.map((m) => [m.mapping_id, m] as const));
+    for (const row of stored) {
+      out.mapping_rows_present += 1;
+      out.mapping_rows_present_by_status[row.status] =
+        (out.mapping_rows_present_by_status[row.status] ?? 0) + 1;
+      const planned = plannedById.get(row.mapping_id);
+      if (planned === undefined) continue;
+      if (!row.is_current || mappingContentDigest(row) !== plannedMappingContentDigest(planned)) {
+        out.divergences.push(
+          `mapping @ ${row.source_locator}：库内当前行内容与 plan 不符（is_current=${String(row.is_current)}）`,
+        );
+      }
     }
+    const supersededCount = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(assessment_identity_mapping)
+      .where(
+        and(
+          eq(assessment_identity_mapping.is_current, false),
+          sql`${assessment_identity_mapping.algorithm_version} like 'yuk1050-apply/%'`,
+        ),
+      );
+    out.mapping_rows_superseded_in_run = supersededCount[0]?.count ?? 0;
   }
   const idsPresent = async (
     table: 'issuance' | 'group' | 'submission' | 'head',
@@ -633,38 +921,72 @@ async function reconcile(
       }
       case 'head': {
         const rows = await db
-          .select({ id: evaluation_effective_head.evaluation_group_id })
+          .select({
+            id: evaluation_effective_head.evaluation_group_id,
+            submission_id: evaluation_effective_head.submission_id,
+            effective_evaluation_id: evaluation_effective_head.effective_evaluation_id,
+            generation: evaluation_effective_head.generation,
+          })
           .from(evaluation_effective_head)
           .where(inArray(evaluation_effective_head.evaluation_group_id, ids));
+        const plannedHeads = new Map(
+          chains.map((c) => [c.head.evaluation_group_id, c.head] as const),
+        );
+        for (const row of rows) {
+          const planned = plannedHeads.get(row.id);
+          out.heads_current.push({
+            evaluation_group_id: row.id,
+            effective_evaluation_id: row.effective_evaluation_id,
+            generation: row.generation,
+            post_migration_activation: planned !== undefined && row.generation > planned.generation,
+          });
+          if (planned !== undefined && !headStateAccepted(row, planned)) {
+            out.divergences.push(
+              `effective head @ ${row.id}：库内状态与 plan 不符且非合法推进（effective=${String(row.effective_evaluation_id)}, gen=${String(row.generation)}）`,
+            );
+          }
+        }
         return rows.length;
       }
     }
   };
-  empty.issuances_present = await idsPresent(
+  out.issuances_present = await idsPresent(
     'issuance',
     chains.map((c) => c.issuance.issuance_id),
   );
-  empty.groups_present = await idsPresent(
+  out.groups_present = await idsPresent(
     'group',
     chains.map((c) => c.group.evaluation_group_id),
   );
-  empty.submissions_present = await idsPresent(
+  out.submissions_present = await idsPresent(
     'submission',
     chains.map((c) => c.submission.submission_id),
   );
-  empty.heads_present = await idsPresent(
+  out.heads_present = await idsPresent(
     'head',
     chains.map((c) => c.head.evaluation_group_id),
   );
   const evalIds = chains.flatMap((c) => c.evaluations.map((e) => e.evaluation_id));
   if (evalIds.length > 0) {
     const rows = await db
-      .select({ id: evaluation.evaluation_id })
+      .select({ id: evaluation.evaluation_id, provenance: evaluation.provenance })
       .from(evaluation)
       .where(inArray(evaluation.evaluation_id, evalIds));
-    empty.evaluations_present = rows.length;
+    out.evaluations_present = rows.length;
+    const plannedEvals = new Map(
+      chains.flatMap((c) => c.evaluations.map((e) => [e.evaluation_id, e] as const)),
+    );
+    for (const row of rows) {
+      const planned = plannedEvals.get(row.id);
+      if (
+        planned !== undefined &&
+        canonicalHash(row.provenance) !== canonicalHash(planned.provenance)
+      ) {
+        out.divergences.push(`evaluation @ ${row.id}：provenance 内容与 plan 不符`);
+      }
+    }
   }
-  return empty;
+  return out;
 }
 
 // ───────────────────────── 主入口 ─────────────────────────
@@ -677,7 +999,8 @@ export interface MigrationApplyResult {
 /**
  * 分阶段执行 plan。幂等 + 可续跑：同 runId 重跑跳过 completed 阶段；
  * 未完成阶段靠内容寻址 id + ON CONFLICT DO NOTHING 收敛；任何 divergence
- * fail-visible（MigrationApplyError），绝不覆盖既有行。
+ * fail-visible（MigrationApplyError），绝不覆盖既有行。run 标记 completed
+ * 【之前】必须通过全内容 reconciliation 断言（P1-3）。
  */
 export async function runMigrationApply(args: MigrationApplyArgs): Promise<MigrationApplyResult> {
   const dryRun = args.dryRun ?? false;
@@ -700,13 +1023,16 @@ export async function runMigrationApply(args: MigrationApplyArgs): Promise<Migra
     walEnd: string | null,
   ): Promise<void> => {
     if (dryRun || runRow === null) return;
-    await dbUpdateRun(args.db, runRow.run_id, status, now(), walEnd, error);
+    await args.db
+      .update(migration_apply_run)
+      .set({ status, finished_at: now(), wal_lsn_end: walEnd, error })
+      .where(inArray(migration_apply_run.run_id, [runRow.run_id]));
   };
 
   try {
     if (!dryRun) {
       const acquired = await args.fence?.acquire();
-      if (!acquired) {
+      if (acquired !== true) {
         throw new MigrationApplyError(
           'advisory fence 获取失败 —— 另一迁移执行器正在运行（单写者纪律）',
         );
@@ -717,7 +1043,8 @@ export async function runMigrationApply(args: MigrationApplyArgs): Promise<Migra
     runRow = await ensureRunRow(args.db, args.plan, args.runId, startedAt, dryRun);
     const priorPhases = dryRun ? new Map() : await phaseStatusOf(args.db, args.runId);
     if (runRow !== null && runRow.status === 'completed') {
-      // 整 run 已完成 —— 幂等重放：不再写任何行，全部阶段报告为 skipped。
+      // 整 run 已完成 —— 幂等重放：不再写任何行；仍做全内容对账（head 推进等
+      // 迁移后合法演进在此显形），断言失败则报 divergence（不静默）。
       const skippedOutcomes: PhaseOutcome[] = PHASE_ORDER.map((phase) => ({
         phase,
         status: 'skipped' as const,
@@ -728,6 +1055,7 @@ export async function runMigrationApply(args: MigrationApplyArgs): Promise<Migra
         error: null,
       }));
       const report = await assembleReport(args, startedAt, skippedOutcomes);
+      assertReconciliationClean(report); // 已完成 run 的重放仍做全内容对账
       return { runId: args.runId, report };
     }
 
@@ -829,7 +1157,10 @@ export async function runMigrationApply(args: MigrationApplyArgs): Promise<Migra
       }
     }
 
+    // P1-3：先全内容对账断言，后标记 completed —— 断言失败 ⇒ run=failed。
+    // dry-run 零写入，presence 恒为 0 —— 跳过断言（report 仍产出对账面）。
     const report = await assembleReport(args, startedAt, outcomes);
+    if (!dryRun) assertReconciliationClean(report);
     await finishRun(
       'completed',
       null,
@@ -847,20 +1178,6 @@ export async function runMigrationApply(args: MigrationApplyArgs): Promise<Migra
   }
 }
 
-async function dbUpdateRun(
-  db: Db,
-  runId: string,
-  status: 'completed' | 'failed',
-  finishedAt: Date,
-  walEnd: string | null,
-  error: string | null,
-): Promise<void> {
-  await db
-    .update(migration_apply_run)
-    .set({ status, finished_at: finishedAt, wal_lsn_end: walEnd, error })
-    .where(inArray(migration_apply_run.run_id, [runId]));
-}
-
 async function assembleReport(
   args: MigrationApplyArgs,
   startedAt: Date,
@@ -868,6 +1185,7 @@ async function assembleReport(
 ): Promise<ApplyReconciliationReport> {
   const finishedAt = args.now?.() ?? new Date();
   const reconciliation = await reconcile(args.db, args.plan, args.dryRun ?? false);
+  const work = args.plan.worklists;
   return {
     run_id: args.runId,
     checkpoint_hash: args.plan.checkpoint_hash,
@@ -884,10 +1202,12 @@ async function assembleReport(
     mapping_status_plan: args.plan.rollup.mapping_status,
     reconciliation,
     worklists: {
-      unresolved: args.plan.worklists.unresolved.length,
-      deferred_replay: args.plan.worklists.deferred_replay.length,
-      awaiting_revision_registry: args.plan.worklists.awaiting_revision_registry.length,
-      conflicted: args.plan.worklists.conflicted.length,
+      unresolved: work.unresolved.length,
+      deferred_replay: work.deferred_replay.length,
+      awaiting_revision_registry: work.awaiting_revision_registry.length,
+      conflicted: work.conflicted.length,
+      live_drafts: work.live_drafts.length,
+      reconstruction_blocked: work.reconstruction_blocked.length,
     },
   };
 }
@@ -897,7 +1217,7 @@ export function applyReportFileName(runId: string): string {
   return `apply-report-${runId}.json`;
 }
 
-/** reconciliation 断言：plan 与库内完全一致（缺失/多余都 fail-visible）。 */
+/** reconciliation 断言：plan 与库内逐表一致（数量 + 内容 divergences 为空）。 */
 export function assertReconciliationClean(report: ApplyReconciliationReport): void {
   const r = report.reconciliation;
   const problems: string[] = [];

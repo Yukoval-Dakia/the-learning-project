@@ -361,6 +361,13 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   // Excluded 非 FK_ORDER → 无 SCHEMA_VERSION bump。
   'dag_orchestration_run',
   'dag_orchestration_node',
+  // YUK-1050 — 迁移 apply 运行账本（run 头 + 逐阶段进度/WAL 观测）。纯运维态：
+  // 描述「某次 apply 跑到了哪」，不是 authored/慢累积数据；restore 到旧快照后
+  // 残留旧进度会假装迁移已完成/未完成 —— 必须擦除后由下一次 apply 重建。
+  // 也登记进 RESTORE_WIPE_ONLY_TABLES（phase 有 FK → run，子先于父）。Excluded
+  // 非 FK_ORDER → 无 SCHEMA_VERSION bump。
+  'migration_apply_run',
+  'migration_apply_phase',
 ]);
 
 // Operational tables that are EXCLUDED from the archive (above) but must still be DELETED during
@@ -397,6 +404,12 @@ export const RESTORE_WIPE_ONLY_TABLES: readonly string[] = [
   'event_subscription_checkpoint',
   'dag_orchestration_node',
   'dag_orchestration_run',
+  // YUK-1050 — 迁移 apply 运行账本（run 头 + 逐阶段进度/WAL 观测）。纯运维态：
+  // 描述「某次 apply 跑到了哪」，不是 authored/慢累积数据；restore 到旧快照后
+  // 残留旧进度会假装迁移已完成/未完成 —— 必须擦除后由下一次 apply 重建。
+  // 子 phase 先于父 run（phase 有 FK → run，反序 wipe 不被阻）。
+  'migration_apply_phase',
+  'migration_apply_run',
 ];
 
 // ─── mem0 collection table (YUK-355) ─────────────────────────────────────────
