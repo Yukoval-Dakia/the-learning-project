@@ -69,6 +69,8 @@ import {
   QuestionListResponseSchema,
   QuestionParamsSchema,
   QuestionSolveParamsSchema,
+  RestoreQuestionBodySchema,
+  RestoreQuestionResponseSchema,
   SolveSessionCreatedSchema,
   SolveSessionParamsSchema,
   SolveSessionResponseSchema,
@@ -737,6 +739,17 @@ export const practiceCapability = defineCapability({
         responses: { 200: DeleteQuestionResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/question-detail').then((m) => m.DELETE),
+      },
+      {
+        // YUK-1045 — archive 的对偶：恢复 = withdrawn 复位 + 原子重取 claim。
+        // UI slice 是 YUK-1051 lane；本端点先落地契约（幂等/冲突语义确定）。
+        method: 'POST',
+        path: '/api/questions/[id]/restore',
+        operationId: 'restoreQuestion',
+        request: { params: QuestionParamsSchema, body: RestoreQuestionBodySchema },
+        responses: { 200: RestoreQuestionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/question-restore').then((m) => m.POST),
       },
       // YUK-605 ① + YUK-555 — owner manual quiz_gen trigger. The consumption entry
       // three code comments + ADR-0038 referenced but that never existed (the only

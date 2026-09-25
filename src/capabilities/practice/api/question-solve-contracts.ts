@@ -298,6 +298,20 @@ export const DeleteQuestionResponseSchema = z
   })
   .passthrough();
 
+export const RestoreQuestionBodySchema = z
+  .object({
+    version: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const RestoreQuestionResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    restored: z.literal(true),
+    event_id: z.string(),
+  })
+  .passthrough();
+
 export const StartSolveBodySchema = z.object({ regenerate: z.boolean().optional() }).nullable();
 export const CreateSolveSessionBodySchema = z.object({
   question_id: z.string().trim().min(1),

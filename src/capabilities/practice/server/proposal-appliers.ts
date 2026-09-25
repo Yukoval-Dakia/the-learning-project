@@ -294,6 +294,14 @@ export async function acceptVariantQuestionProposal(
           model_slice: null,
         },
       },
+      // YUK-1045 — 人工接受 ⇒ 同版复核通过：清 verify_hold 恢复准入（§3.3）。
+      suspension: { suspended: false },
+      verification: {
+        // 人工接受即核验（verifier: human —— 与上方 admission evidence 同源）。
+        policy_id: 'proposal_accept@1',
+        outcome: 'passed',
+        evidence: { verifier: 'human', proposal_kind: 'mistake_variant' },
+      },
       availability: 'general_pool',
       actorRef: 'proposal-accept:mistake_variant',
       now,
@@ -515,6 +523,13 @@ export async function acceptQuestionDraftProposal(
           },
           model_slice: null,
         },
+      },
+      // YUK-1045 — 人工接受 ⇒ 同版复核通过：清 verify_hold 恢复准入（§3.3）。
+      suspension: { suspended: false },
+      verification: {
+        policy_id: 'proposal_accept@1',
+        outcome: 'passed',
+        evidence: { verifier: 'human', proposal_kind: 'question_draft' },
       },
       availability: 'general_pool',
       actorRef: 'proposal-accept:question_draft',

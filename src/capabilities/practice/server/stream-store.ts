@@ -17,7 +17,7 @@ import { newId } from '@/core/ids';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
-import { notDraftPredicate } from '@/db/predicates';
+import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import {
   artifact,
   event,
@@ -282,6 +282,8 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
             and(
               sql`${question.knowledge_ids} @> ${JSON.stringify([kid])}::jsonb`,
               notDraftPredicate(question.draft_status),
+              // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不作新检选第题。
+              questionSuspendedPredicate(question),
             ),
           )
           .limit(1);
@@ -320,6 +322,8 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
         and(
           sql`${question.knowledge_ids} @> ${JSON.stringify([kc])}::jsonb`,
           notDraftPredicate(question.draft_status),
+          // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不进 frontier 选题。
+          questionSuspendedPredicate(question),
         ),
       )
       // Deterministic pick (reproducible composition) — the new_check sibling omits this;
@@ -1065,6 +1069,8 @@ async function materializeKnowledgeScopedSession(
           and(
             sql`${question.knowledge_ids} @> ${JSON.stringify([knowledgeId])}::jsonb`,
             notDraftPredicate(question.draft_status),
+            // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不作 scoped 填空。
+            questionSuspendedPredicate(question),
           ),
         )
         .orderBy(asc(question.difficulty), desc(question.updated_at), asc(question.id))

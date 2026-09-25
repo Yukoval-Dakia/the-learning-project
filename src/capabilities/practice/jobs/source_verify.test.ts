@@ -28,6 +28,7 @@ import {
   event,
   knowledge,
   question,
+  question_admission_verification,
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
@@ -606,6 +607,30 @@ describe('runSourceVerify', () => {
       .from(event)
       .where(eq(event.action, 'experimental:source_verify'));
     expect((events[0].payload as Record<string, unknown>).demoted).toBe(false);
+
+    // YUK-1045 — 非 promote 的 verify（内容失败）翻 contract 维度：suspended
+    // (verify_hold) + admission withheld(verification_failed) + append-only
+    // 核验记录（outcome 'failed'；demoted:false 如实记入 evidence）。
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(lifecycle.suspended).toBe(true);
+    expect(lifecycle.suspension_reason).toBe('verify_hold');
+    expect(lifecycle.scoring_admission_state).toBe('withheld');
+    expect(lifecycle.scoring_admission_withheld_reason).toBe('verification_failed');
+    const verRows = await db
+      .select()
+      .from(question_admission_verification)
+      .where(
+        eq(
+          question_admission_verification.revision_id,
+          lifecycle.current_revision_id ?? 'missing-revision',
+        ),
+      );
+    expect(verRows).toHaveLength(1);
+    expect(verRows[0].outcome).toBe('failed');
+    expect(verRows[0].evidence).toMatchObject({ demoted: false });
   });
 
   it('YUK-479 leaves a pre-promoted (active) cold-start draft active when verify passes (demoted:false)', async () => {
@@ -789,6 +814,13 @@ describe('runSourceVerify', () => {
     // The row stays 'active' — the concurrent success event blocked the demote.
     const rows = await db.select().from(question).where(eq(question.id, qid));
     expect(rows[0].draft_status).toBe('active');
+    // YUK-1045 — §3.3「旧验证不能改变较新 admission 决定」：同一守卫也拦住
+    // contract 挂起写 —— 并发成功已提交 ⇒ 本投递 stale，不得 mint suspended 首版。
+    const lifecycles = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(lifecycles).toHaveLength(0);
   });
 
   it('YUK-230 version race: a transient run does NOT demote a row EDITED (version bumped) during the VLM call', async () => {
@@ -842,6 +874,29 @@ describe('runSourceVerify', () => {
     // FAIL-CLOSED: the row is demoted out of the pool (was 'active') before the throw.
     const rows = await db.select().from(question).where(eq(question.id, qid));
     expect(rows[0].draft_status).toBe('draft');
+
+    // YUK-1045 — transient demote 同事务等效地翻 contract 维度：suspended
+    // (verify_hold) + admission withheld + append-only 核验记录（outcome
+    // 'suspended' —— transient 不是内容判定）。
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(lifecycle.suspended).toBe(true);
+    expect(lifecycle.suspension_reason).toBe('verify_hold');
+    expect(lifecycle.scoring_admission_state).toBe('withheld');
+    const verRows = await db
+      .select()
+      .from(question_admission_verification)
+      .where(
+        eq(
+          question_admission_verification.revision_id,
+          lifecycle.current_revision_id ?? 'missing-revision',
+        ),
+      );
+    expect(verRows).toHaveLength(1);
+    expect(verRows[0].policy_id).toBe('source_verify@1');
+    expect(verRows[0].outcome).toBe('suspended');
 
     // The error event is retriable (outcome='error'); the idempotency guard re-runs it, and a
     // later 'grounded' re-check re-promotes the row to 'active'.

@@ -33,7 +33,7 @@ import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { type Db, type Tx, db } from '@/db/client';
-import { notDraftPredicate } from '@/db/predicates';
+import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { material_fsrs_state, question } from '@/db/schema';
 import type { EffectiveTruth } from '@/kernel/events';
 import { errorResponse } from '@/kernel/http';
@@ -328,6 +328,9 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
           eq(material_fsrs_state.subject_kind, 'question'),
           lte(material_fsrs_state.due_at, now),
           notDraftPredicate(question.draft_status),
+          // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不出 due 页
+          // （挂起=暂停交付；复核通过翻转维度后自然恢复，学习状态不重建）。
+          questionSuspendedPredicate(question),
         ),
       )
       .orderBy(material_fsrs_state.due_at, question.created_at)
@@ -468,7 +471,14 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
           .from(question)
           // Gate-B invariant: never surface an unverified quiz draft, even if it
           // somehow carries a failure attempt (notDraftPredicate — see the Gate-B note above).
-          .where(and(inArray(question.id, trulyNew), notDraftPredicate(question.draft_status)));
+          .where(
+            and(
+              inArray(question.id, trulyNew),
+              notDraftPredicate(question.draft_status),
+              // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不回炉选入。
+              questionSuspendedPredicate(question),
+            ),
+          );
         const qById = new Map(qRows.map((q) => [q.id, q]));
         // Preserve attempt order (newest-first from getFailureAttempts).
         for (const qid of trulyNew) {

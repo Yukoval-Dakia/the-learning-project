@@ -38,7 +38,7 @@ import {
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
-import { notDraftPredicate } from '@/db/predicates';
+import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { item_calibration, learning_item, question } from '@/db/schema';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { effectiveB } from '@/server/mastery/recalibration';
@@ -684,7 +684,14 @@ async function loadQuestionPool(db: Db, frontierKids: string[]): Promise<PoolQue
       knowledge_ids: question.knowledge_ids,
     })
     .from(question)
-    .where(and(sql`(${sql.join(orConds, sql` OR `)})`, notDraftPredicate(question.draft_status)));
+    .where(
+      and(
+        sql`(${sql.join(orConds, sql` OR `)})`,
+        notDraftPredicate(question.draft_status),
+        // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不进供给发现池。
+        questionSuspendedPredicate(question),
+      ),
+    );
   if (rows.length === 0) return [];
 
   // item_calibration（track='hard'）批量读：b / b_anchor / b_calib → effectiveB（FINDING #4）。

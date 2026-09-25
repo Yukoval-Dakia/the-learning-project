@@ -9,7 +9,13 @@ import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { AdmissionEvidenceT } from '@/core/schema/assessment';
-import { event, question, question_group_lifecycle, question_revision } from '@/db/schema';
+import {
+  event,
+  question,
+  question_admission_verification,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   type NormalizableQuestionRow,
@@ -881,5 +887,214 @@ describe('publishQuestionGroupFromRow — 锁序/组语义/未决转换（复审
       now,
     });
     expect(second).toMatchObject({ status: 'noop' });
+  });
+});
+
+describe('YUK-1045 — suspension 维度 + verify 记录（§3.3 verify 挂起串行化）', () => {
+  beforeEach(resetDb);
+  afterEach(resetDb);
+
+  it('digest-unchanged suspend ⇒ admission_updated + suspended=true, generation+1, event carries suspension', async () => {
+    const db = testDb();
+    const qid = 'susp_q1';
+    await seedQuestion(qid);
+    const row = await readRow(qid);
+    const first = await publishQuestionGroup(db, publishInput(row));
+    if (first.status !== 'published') throw new Error('seed publish failed');
+
+    const suspended = await publishQuestionGroup(
+      db,
+      publishInput(row, {
+        expectedCurrentRevision: first.revision_id,
+        expectedAdmissionGeneration: 1,
+        suspension: { suspended: true, reason: 'verify_hold' },
+      }),
+    );
+    expect(suspended.status).toBe('admission_updated');
+    if (suspended.status !== 'admission_updated') return;
+    expect(suspended.admission_generation).toBe(2);
+
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(lifecycle.suspended).toBe(true);
+    expect(lifecycle.suspension_reason).toBe('verify_hold');
+    // admission 维度同事务翻转（caller 传 withheld/verification_failed）。
+    expect(lifecycle.scoring_admission_state).toBe('withheld');
+
+    const [ev] = await db.select().from(event).where(eq(event.id, suspended.event_id));
+    const payload = ev.payload as Record<string, unknown>;
+    expect(payload.dimension_update).toBe(true);
+    expect(payload.suspended).toBe(true);
+    expect(payload.suspension_reason).toBe('verify_hold');
+  });
+
+  it('suspend → promote clears verify_hold; retraction_hold is never cleared by verify unsuspend', async () => {
+    const db = testDb();
+    const qid = 'susp_q2';
+    await seedQuestion(qid);
+    const row = await readRow(qid);
+    const first = await publishQuestionGroup(db, publishInput(row));
+    if (first.status !== 'published') throw new Error('seed publish failed');
+
+    const suspended = await publishQuestionGroup(
+      db,
+      publishInput(row, {
+        expectedCurrentRevision: first.revision_id,
+        expectedAdmissionGeneration: 1,
+        suspension: { suspended: true, reason: 'verify_hold' },
+      }),
+    );
+    expect(suspended.status).toBe('admission_updated');
+
+    // 同版复核通过（admitted + suspended:false）⇒ 解除挂起，generation+1。
+    const cleared = await publishQuestionGroup(
+      db,
+      publishInput(row, {
+        expectedCurrentRevision: first.revision_id,
+        expectedAdmissionGeneration: 2,
+        admission: { state: 'admitted', evidence: ADMITTED_EVIDENCE },
+        suspension: { suspended: false },
+      }),
+    );
+    expect(cleared.status).toBe('admission_updated');
+    const [clearedLifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(clearedLifecycle.suspended).toBe(false);
+    expect(clearedLifecycle.suspension_reason).toBeNull();
+    expect(clearedLifecycle.scoring_admission_state).toBe('admitted');
+
+    // retraction_hold：verify 解除权不涵盖——suspended:false 必须是维度 no-op。
+    await db
+      .update(question_group_lifecycle)
+      .set({ suspended: true, suspension_reason: 'retraction_hold', updated_at: new Date() })
+      .where(eq(question_group_lifecycle.group_id, qid));
+    const [pre] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    const noop = await publishQuestionGroup(
+      db,
+      publishInput(row, {
+        expectedCurrentRevision: first.revision_id,
+        expectedAdmissionGeneration: pre.scoring_admission_generation,
+        admission: { state: 'admitted', evidence: ADMITTED_EVIDENCE },
+        suspension: { suspended: false },
+      }),
+    );
+    // retraction_hold 保留 ⇒ 唯一不一致维度是（无）——维度一致 ⇒ noop。
+    expect(noop.status).toBe('noop');
+    const [kept] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(kept.suspended).toBe(true);
+    expect(kept.suspension_reason).toBe('retraction_hold');
+  });
+
+  it('verification input ⇒ append-only question_admission_verification row (revision_id, digest, policy, generation)', async () => {
+    const db = testDb();
+    const qid = 'susp_q3';
+    await seedQuestion(qid);
+    const row = await readRow(qid);
+    const first = await publishQuestionGroup(
+      db,
+      publishInput(row, {
+        verification: {
+          policy_id: 'test_policy@1',
+          outcome: 'suspended',
+          evidence: { check: 'solve_check', verdict: 'fail' },
+        },
+      }),
+    );
+    if (first.status !== 'published') throw new Error('publish failed');
+
+    const records = await db
+      .select()
+      .from(question_admission_verification)
+      .where(eq(question_admission_verification.revision_id, first.revision_id));
+    expect(records).toHaveLength(1);
+    expect(records[0].revision_digest).toBe(first.revision_digest);
+    expect(records[0].policy_id).toBe('test_policy@1');
+    expect(records[0].generation).toBe(1);
+    expect(records[0].outcome).toBe('suspended');
+    expect(records[0].evidence).toMatchObject({ check: 'solve_check' });
+
+    // admission_updated 路径同样记录（generation=2）。
+    const second = await publishQuestionGroup(
+      db,
+      publishInput(row, {
+        expectedCurrentRevision: first.revision_id,
+        expectedAdmissionGeneration: 1,
+        suspension: { suspended: true, reason: 'verify_hold' },
+        verification: { policy_id: 'test_policy@1', outcome: 'suspended' },
+      }),
+    );
+    if (second.status !== 'admission_updated') throw new Error('dimension update failed');
+    const records2 = await db
+      .select()
+      .from(question_admission_verification)
+      .where(
+        eq(
+          question_admission_verification.revision_id,
+          (first as { revision_id: string }).revision_id,
+        ),
+      );
+    expect(records2).toHaveLength(2);
+    expect(records2.map((r) => r.generation).sort()).toEqual([1, 2]);
+
+    // 维度事件 payload 投影 verification 指针（policy/outcome —— 证据本体在行内）。
+    const dimEvents = await db.select().from(event).where(eq(event.id, second.event_id));
+    const dimPayload = dimEvents[0].payload as Record<string, unknown>;
+    expect(dimPayload.verification).toMatchObject({
+      policy_id: 'test_policy@1',
+      outcome: 'suspended',
+    });
+  });
+
+  it('suspended state survives content changes (independent versioning) and a suspended group mints a first revision fail-closed', async () => {
+    const db = testDb();
+    const qid = 'susp_q4';
+    await seedQuestion(qid);
+    const row = await readRow(qid);
+    // 未发布即挂起（verify-suspend 落在从未发布的组）⇒ 铸 suspended 首版。
+    const first = await publishQuestionGroup(
+      db,
+      publishInput(row, {
+        suspension: { suspended: true, reason: 'verify_hold' },
+      }),
+    );
+    expect(first.status).toBe('published');
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(lifecycle.suspended).toBe(true);
+    expect(lifecycle.suspension_reason).toBe('verify_hold');
+
+    // 内容变更 ⇒ 新 revision；suspension 缺省输入 ⇒ 维度保留（verify 挂起不被
+    // 编辑顺手清掉，历史 revision 绑定不变）。
+    await db
+      .update(question)
+      .set({ prompt_md: '改后的题面', updated_at: new Date() })
+      .where(eq(question.id, qid));
+    const edited = await readRow(qid);
+    const second = await publishQuestionGroup(
+      db,
+      publishInput(edited, {
+        expectedCurrentRevision: first.status === 'published' ? first.revision_id : '',
+        expectedAdmissionGeneration: 1,
+      }),
+    );
+    expect(second.status).toBe('published');
+    const [afterEdit] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(afterEdit.suspended).toBe(true);
+    expect(afterEdit.suspension_reason).toBe('verify_hold');
   });
 });

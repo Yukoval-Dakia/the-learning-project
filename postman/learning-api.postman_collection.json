@@ -1834,6 +1834,40 @@
           "response": []
         },
         {
+          "name": "POST /api/questions/:id/restore",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/questions/:id/restore",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "questions", ":id", "restore"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "恢复软归档题目（archive 的对偶）：contract withdrawn 复位 + 原子重取 live 去重 claim（YUK-1045）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** body={version(必填, 乐观锁)}；恢复为 draft（不直接回 active，重进 owner/verify 门）；级联恢复 archived_via_parent=本题的 parts；任一成员 claim 被占 → 409 claim_conflict 全组回滚；verify 挂起不解除（同版复核通过才恢复准入）；题不存在 404、非归档题 409、intervention 诊断题 409；需 x-internal-token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
           "name": "POST /api/questions/quiz-gen",
           "request": {
             "method": "POST",

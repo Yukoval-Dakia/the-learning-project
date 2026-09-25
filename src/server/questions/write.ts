@@ -47,7 +47,11 @@ import { artifact, event, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { embedHash, questionEmbedText } from '@/server/ai/embed-source';
 import { deriveAnswerClassForValues } from '@/server/questions/answer-class-write';
-import { archiveGroupLifecycle, publishQuestionGroupFromRow } from '@/server/questions/publisher';
+import {
+  archiveGroupLifecycle,
+  publishQuestionGroupFromRow,
+  restoreGroupLifecycle,
+} from '@/server/questions/publisher';
 
 /** Display label stamped on part rows; NOT the part-ness authority (the
  * `parent_question_id` FK is — YUK-388). */
@@ -475,12 +479,16 @@ export async function archiveQuestion(
         // YUK-704 — archived rows release their exact-identity hash: the partial
         // unique index only covers non-NULL, so deleted content can be produced
         // again instead of duplicate-matching a soft-archived row forever.
+        // YUK-1045 — retain the released hash on metadata so restoreQuestion can
+        // re-acquire the SAME claim atomically (restoreGroupLifecycle re-stamp),
+        // never recomputing it (recompute could drift from insert-time value).
         canonical_content_hash: null,
         metadata: {
           ...(row.metadata ?? {}),
           archived_at: archivedAtSec,
           archived_reason: reason,
           archived_previous_draft_status: row.draft_status ?? null,
+          archived_content_hash: row.canonical_content_hash ?? null,
         },
         updated_at: now,
         version: row.version + 1,
@@ -504,12 +512,15 @@ export async function archiveQuestion(
         draft_status: 'draft',
         // Same hash release as the parent — archived parts must not keep blocking
         // re-production of identical content via the partial unique index.
+        // archived_content_hash retains the released claim for restore (YUK-1045;
+        // jsonb_build_object reads the PRE-UPDATE column value per row).
         canonical_content_hash: null,
-        metadata: sql`COALESCE(${question.metadata}, '{}'::jsonb) || ${JSON.stringify({
-          archived_at: archivedAtSec,
-          archived_reason: `cascade:${reason}`,
-          archived_via_parent: questionId,
-        })}::jsonb`,
+        metadata: sql`COALESCE(${question.metadata}, '{}'::jsonb) || jsonb_build_object(
+          'archived_at', ${archivedAtSec}::numeric,
+          'archived_reason', ${`cascade:${reason}`}::text,
+          'archived_via_parent', ${questionId}::text,
+          'archived_content_hash', ${question.canonical_content_hash}
+        )`,
         updated_at: now,
         version: sql`${question.version} + 1`,
       })
@@ -559,5 +570,203 @@ export async function archiveQuestion(
     }
 
     return { status: 'archived', event_id: eventId, cascaded_part_ids: cascadedPartIds };
+  });
+}
+
+export interface QuestionRestoreResult {
+  status: 'restored' | 'conflict' | 'not_found' | 'protected' | 'not_archived' | 'claim_conflict';
+  event_id?: string;
+  /** claim_conflict 时：占用同 content hash 的在库 question id。 */
+  conflicting_question_id?: string;
+  /** 冲突的 part id（根 claim 冲突时为空）。 */
+  conflicting_part_id?: string;
+}
+
+const ARCHIVED_METADATA_KEYS = [
+  'archived_at',
+  'archived_reason',
+  'archived_previous_draft_status',
+  'archived_via_parent',
+  'archived_content_hash',
+] as const;
+
+/** 从 metadata 移除 archive tombstone keys（恢复工作副本语义）。 */
+function stripArchiveMetadata(meta: Record<string, unknown> | null): Record<string, unknown> {
+  const next = { ...(meta ?? {}) };
+  for (const k of ARCHIVED_METADATA_KEYS) delete next[k];
+  return next;
+}
+
+/**
+ * YUK-1045 — restore：archive 的逆向（§3.2「恢复要原子重新取得claim并处理
+ * 冲突」）。一次事务内：
+ *   1. 组根锁（与 archive/edit 同锁序 root→child/lifecycle）；
+ *   2. restoreGroupLifecycle 清 withdrawn + 原子重取 live 去重 claim
+ *      （重盖 archive 保存于 metadata.archived_content_hash 的原 hash ——
+ *      绝不重算，防指纹漂移）；占用者存在 ⇒ claim_conflict，整体回滚；
+ *   3. cascade 恢复被本次 archive 带走的 parts（archived_via_parent=root ——
+ *      独立 archive 的 part tombstone 不动，它们有自己的 archived_at）；
+ *   4. 恢复为 draft（archive 即 re-draft；恢复不直接回 active —— 重新进入
+ *      owner/verify 闸门，与 §3.3「同版复核通过」的显式恢复一致）。
+ *
+ * suspension 维度【保留】——verify 挂起不因 restore 解除（§3.3 表：同版复核
+ * 通过才恢复准入）。目标为已发布组的 part 恢复 ⇒ 重发组 revision（同 archive
+ * 的 part 语义）；根恢复 ⇒ lifecycle withdrawn 复位 + claim 重取。
+ */
+export async function restoreQuestion(
+  db: Db,
+  questionId: string,
+  expectedVersion: number,
+  actorRef: string,
+): Promise<QuestionRestoreResult> {
+  return db.transaction(async (tx) => {
+    const rows = await tx.select().from(question).where(eq(question.id, questionId)).limit(1);
+    const row = rows[0];
+    if (!row) return { status: 'not_found' };
+    if (row.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
+      return { status: 'protected' };
+    }
+    const rowMeta = (row.metadata ?? {}) as Record<string, unknown>;
+    if (rowMeta.archived_at == null) return { status: 'not_archived' };
+
+    // 组根锁序（archive 同款）：目标为 part ⇒ 先锁组根再改子行。
+    const groupRootId = row.parent_question_id ?? questionId;
+    if (row.parent_question_id != null) {
+      const [rootLock] = await tx
+        .select({ id: question.id })
+        .from(question)
+        .where(eq(question.id, groupRootId))
+        .for('update')
+        .limit(1);
+      if (!rootLock) return { status: 'not_found' };
+    }
+
+    const now = new Date();
+    const cascadedParts =
+      row.parent_question_id == null
+        ? await tx
+            .select({
+              id: question.id,
+              metadata: question.metadata,
+              version: question.version,
+            })
+            .from(question)
+            .where(eq(question.parent_question_id, questionId))
+        : [];
+    const restorableParts = cascadedParts.filter((p) => {
+      const meta = (p.metadata ?? {}) as Record<string, unknown>;
+      return meta.archived_via_parent === questionId && meta.archived_at != null;
+    });
+
+    // ── claim 重取（原子语义的关键）：先全量探测占用者，再写任何 hash ——
+    // 任一行冲突即整体回滚，绝不恢复半个组。hash 源 = archive 时保存的
+    // archived_content_hash；缺失（旧 archive / 编辑已清）⇒ 该成员无 claim 可
+    // 重取，如实跳过（dedup claim 保持 NULL，与编辑后行为一致）。
+    const claims: { id: string; hash: string }[] = [];
+    if (typeof rowMeta.archived_content_hash === 'string' && rowMeta.archived_content_hash) {
+      claims.push({ id: questionId, hash: rowMeta.archived_content_hash });
+    }
+    for (const part of restorableParts) {
+      const meta = (part.metadata ?? {}) as Record<string, unknown>;
+      if (typeof meta.archived_content_hash === 'string' && meta.archived_content_hash) {
+        claims.push({ id: part.id, hash: meta.archived_content_hash });
+      }
+    }
+    const claimsById = new Map(claims.map((c) => [c.id, c.hash]));
+    for (const claim of claims) {
+      const [holder] = await tx
+        .select({ id: question.id })
+        .from(question)
+        .where(eq(question.canonical_content_hash, claim.hash))
+        .limit(1);
+      if (holder && holder.id !== claim.id) {
+        return {
+          status: 'claim_conflict',
+          conflicting_question_id: holder.id,
+          conflicting_part_id: claim.id === questionId ? undefined : claim.id,
+        };
+      }
+    }
+
+    // ── 工作副本复位（统一 draft + tombstone keys 清除 + claim 重盖）——
+    // expectedVersion CAS 防并发编辑被静默覆盖。part 复位【先于】组重发：
+    // FromRow 排除 tombstone part，先复位才能让恢复 part 进入新组契约。
+    const restored = await tx
+      .update(question)
+      .set({
+        draft_status: 'draft',
+        ...(claimsById.has(questionId)
+          ? { canonical_content_hash: claimsById.get(questionId) }
+          : {}),
+        metadata: stripArchiveMetadata(rowMeta),
+        updated_at: now,
+        version: row.version + 1,
+      })
+      .where(and(eq(question.id, questionId), eq(question.version, expectedVersion)))
+      .returning({ id: question.id });
+    if (restored.length === 0) return { status: 'conflict' };
+
+    for (const part of restorableParts) {
+      const partMeta = (part.metadata ?? {}) as Record<string, unknown>;
+      await tx
+        .update(question)
+        .set({
+          draft_status: 'draft',
+          ...(claimsById.has(part.id) ? { canonical_content_hash: claimsById.get(part.id) } : {}),
+          metadata: stripArchiveMetadata(partMeta),
+          updated_at: now,
+          version: part.version + 1,
+        })
+        .where(eq(question.id, part.id));
+    }
+
+    // 根恢复 ⇒ lifecycle withdrawn 复位 + 根 claim 重取（同 seam，探测已做
+    // —— restoreGroupLifecycle 内部对根行再探测一次，无害幂等）。
+    // part 恢复 ⇒ 组【内容】变化：重发组 revision（archive 对称语义）。
+    if (row.parent_question_id == null) {
+      const lifecycleResult = await restoreGroupLifecycle(
+        tx,
+        groupRootId,
+        claimsById.get(questionId) ?? null,
+        now,
+      );
+      if (lifecycleResult.status === 'claim_conflict') {
+        return {
+          status: 'claim_conflict',
+          conflicting_question_id: lifecycleResult.conflicting_question_id,
+        };
+      }
+      // not_found ⇒ lifecycle 行不存在（从未发布过的归档 draft）—— 如实跳过
+      // lifecycle 复位；发布链在该题再发布时自建 lifecycle。
+    } else {
+      await publishQuestionGroupFromRow(tx, {
+        rootId: groupRootId,
+        actorRef: `question-restore:${actorRef}`,
+        now,
+      });
+    }
+
+    const eventId = createId();
+    await writeEvent(tx, {
+      id: eventId,
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: actorRef,
+      action: 'experimental:question_restore',
+      subject_kind: 'question',
+      subject_id: questionId,
+      outcome: 'success',
+      payload: {
+        question_id: questionId,
+        restored: true,
+        previous_version: row.version,
+        next_version: row.version + 1,
+        restored_part_ids: restorableParts.map((p) => p.id),
+        reclaimed_claim: claimsById.has(questionId),
+      },
+      created_at: now,
+    });
+
+    return { status: 'restored', event_id: eventId };
   });
 }

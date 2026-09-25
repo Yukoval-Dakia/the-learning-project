@@ -20,7 +20,7 @@
 
 import { and, inArray, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
-import { isPoolVisible, notDraftPredicate } from '@/db/predicates';
+import { isPoolVisible, notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { event, question } from '@/db/schema';
 
 // ADR-0030 §1 — by-kind routing class.
@@ -209,7 +209,14 @@ export async function prefetchProbeSelection(
     const rows = (await dbHandle
       .select(QUESTION_PROJECTION)
       .from(question)
-      .where(and(notDraftPredicate(question.draft_status), containment))
+      .where(
+        and(
+          notDraftPredicate(question.draft_status),
+          containment,
+          // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不进变式轮换池。
+          questionSuspendedPredicate(question),
+        ),
+      )
       .orderBy(question.created_at, question.id)) as QuestionRow[];
     const dueKcSet = new Set(knowledgeIds);
     for (const r of rows) {

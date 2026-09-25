@@ -11,7 +11,9 @@
 // one definition; the read-side audit keeps new SELECTs routing through it. See
 // docs/design/2026-07-05-draft-status-pool-predicate-dedup-spec.md.
 
-import { type Column, type SQL, isNull, ne, or } from 'drizzle-orm';
+import { type Column, type SQL, isNull, ne, or, sql } from 'drizzle-orm';
+
+import { type question, question_group_lifecycle } from '@/db/schema';
 
 /**
  * Family-1 fail-open pool-visibility predicate (红线-4): NULL≡active.
@@ -37,4 +39,28 @@ export function notDraftPredicate(col: Column): SQL {
  */
 export function isPoolVisible(row: { draft_status: string | null }): boolean {
   return row.draft_status !== 'draft';
+}
+
+/**
+ * YUK-1045 — contract admission gate (§3.3): a pool-candidate question must not
+ * belong to a lifecycle group that is verify-suspended or withdrawn. Reads
+ * consult `question_group_lifecycle` (joined on the question's GROUP ROOT id —
+ * `COALESCE(parent_question_id, id)` so composite parts gate on their parent
+ * group, matching publishQuestionGroupFromRow's root resolution).
+ *
+ * Bridge semantics pre-cutover (YUK-1059): absent lifecycle row ⇒ legacy row ⇒
+ * `draft_status` remains the sole gate (NOT EXISTS passes — never hard-exclude
+ * un-migrated rows). suspend/withdraw always pairs with draft_status='draft'
+ * today, so this predicate is belt-and-braces inside notDraftPredicate sites —
+ * it becomes load-bearing only if a non-draft suspended state ever lands.
+ *
+ * NOT for review-surface reads (draft-review, inventory quarantine display)
+ * that must still SHOW suspended rows.
+ */
+export function questionSuspendedPredicate(questionTable: typeof question): SQL {
+  return sql`NOT EXISTS (
+    SELECT 1 FROM ${question_group_lifecycle} AS l
+    WHERE l.group_id = COALESCE(${questionTable.parent_question_id}, ${questionTable.id})
+      AND (l.suspended = true OR l.withdrawn = true)
+  )` as SQL;
 }
