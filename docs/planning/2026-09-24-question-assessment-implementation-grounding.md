@@ -1,6 +1,6 @@
 # 全量题目契约迁移 — implementation grounding
 
-2026-09-24 · YUK-1038 · 状态：source-only grounding 完成（lane A/B/C/D 已归并）；产品决策与证据缺口仍开放，不能作为已完成实施 spec，未执行实施/迁移。
+2026-09-24 · YUK-1038 · 状态：source-only grounding + D19 只读 census 完成（lane A/B/C/D 已归并）；D1–D19 已批准；仅剩 Q20 UI preflight 正式批准与 Q21 ticket 拆分待 owner；不能作为已完成实施 spec，未执行实施/迁移。
 
 ## Owner 裁决与本轮范围
 
@@ -25,6 +25,13 @@
 8. [x] 主会话整合：归并 source-of-truth、身份映射、模块 Interface、文件清单、依赖图与未决裁决（§3–§5、§17）。
 9. [x] 形成可执行验证矩阵与全量切换/回滚 runbook（§6、§15–§18）；证据缺口已显式列出（§19/状态与证据缺口），不宣称通过。
 10. [x] Linear capture 与本地规划提交收口（PLAN/术语/handoff 已对齐）；不自动启动实施或推送。
+11. [x] Owner 裁决轮一（已完成）：D1–D5 已批准并落盘 `docs/planning/2026-09-24-question-assessment-decisions.md`；未批准项见该文件 pending tree。
+12. [x] 裁决轮二：D6–D12 已批准并落盘 decisions 文件。
+13. [ ] 固化最终spec/必要ADR/术语与验收矩阵，去重拆分实施票并建立阻塞关系（**公式未定，暂无新 ADR**）。
+14. [ ] 收敛独立worktree实施所有权、集成顺序与release gates，复核未决项，提交owner确认准备完成；未获实施确认不启动业务修改。
+15. [ ] 详细学习/UI/admission 计划仍待（UI 正式 preflight 草案已出 `docs/design/2026-09-24-assessment-ui-preflight.md`，**待 owner 正式批准 Q20**；评测 corpus/额度 **D18 已批准 ≤$5**；ticket 拆分 **Q21 待批**）；由 parent 后续整合。
+16. [x] **D19 只读生产 census 已完成**（categorical counts、referential integrity、snapshot/image missing、in-flight state；无原始 learner content）＋ scriptable restore 预备（pg_dump/pg_restore 16.14 in-container、disk 491Gi）；**restore 演练仍待 migration code 存在**（owner-gated）。
+17. [ ] 固化 UI preflight 待 owner 正式批准（Q20）；不创建 ADR/ticket，待 parent reconcile。
 
 ## 调查输出契约
 
@@ -42,7 +49,7 @@
 | 全产品统一切换且可回滚 | C，主会话归并 | app/worker/cron/在途会话切换方案 | exact-head发布演练，切换前后写入回滚证据 |
 | 不泄露评分私有信息，交互状态诚实 | D + B | DTO路径、候选/生效结果读取清单 | 浏览器、鉴权、未决态与多模态验收 |
 
-基线：源码 `f804554e6`，文档 branch `docs/yuk-1038-assessment-redesign`。尚无本轮生产库存 census、迁移演练、模型 actual-output 或全产品浏览器证据。不得拿旧日期的库存数字或旧 CI 当本轮证据。
+基线：源码 `f804554e6`，文档 branch `docs/yuk-1038-assessment-redesign`。**D19 只读生产 census 已完成（只读，无写入；见 decisions 文件 census 段）**；迁移演练、restore 演练、模型 actual-output、全产品浏览器证据仍无。不得拿旧日期的库存数字或旧 CI 当本轮证据。
 
 ## 1. 已核实的存储与身份基线
 
@@ -196,6 +203,8 @@ activateEvaluation(evaluationId, expectedEffectiveId: null | id)
 
 ## 5. Jev 的真实技术落点
 
+**状态（2026-09-24）**：provider 偏好已由 owner 定为 **OpenRouter**，**取代“仅直连 TypeSafe”**；保留 typed sibling `AiRunLifecycle` seam（非 chat），精确集成包/接缝以后定。OpenRouter 公开文档核验见 decisions 文件；**D12 受限 smoke 已 FINAL**：**2/2 paid calls、无 retries、总计 $0.00003024**（Noul 344in/21out $0.000014448，无 confidence/probabilities；Choice 376in/38out $0.000015792，probabilities sum 1.0、confidence 0.63；latency 309/401ms；`/api/v1/systemone`，request `typesafe/jev-1.13` → response `typesafe/jev-1.13-20260917`，provider TypeSafe），**仅 wire/auth/cost，无 accuracy 结论**。首次误用 default text catalog 在 inference 前停止（0 paid），保留为 attempt0 artifacts。区分：**初始 grounding 阶段零调用** vs **后续 smoke 为受限许可**；**D18 ≤$5 独立评测预算已批准但未运行**。
+
 ### 5.1 为什么不能只加一个模型名
 
 源码：`src/server/ai/runner.ts:425–552,697,763–880` 从输入生成prompt→prepared query→pi adapter；`execution-adapter.ts:204–216` 当前pi-only；`src/ai/task-spec.ts:44` prompt必需，`task-catalog.ts:9–10`校验非空。Jev `/v1/systemone` 的`state+questions`类型化评估不是这个chat协议。
@@ -214,7 +223,7 @@ activateEvaluation(evaluationId, expectedEffectiveId: null | id)
 | input/output provenance | lifecycle input_hash；`persistJudgeRunDigests` | canonical typed body/model/criteria的fingerprint；不调用生成式system-prompt hash假装它是chat |
 | schema/census/audits | task-spec/catalog、`audit-structured-judge.ts:48–59` | typed TaskDefinition判别式；输入/输出直接schema解析，不走自由文本JSON extraction |
 
-推荐pin官方核实的direct API版本`jev-1.13.0`，不采用别名或截短未经核实的`jev-1.13`。原方案供应商文档来源见research文档S9/S10；本轮不读取密钥、不作付费调用。
+推荐 pin 官方核实的 typed 请求类型 `typesafe/jev-1.13`（实际 canonical reported `typesafe/jev-1.13-20260917`），不采用别名或截短未经核实的版本。provider 约束：only TypeSafe provider、`allow_fallbacks=false`、`max_price` prompt 0.042 / completion 0（USD/M）；原生 typed 端点 `POST https://openrouter.ai/api/v1/systemone`（或 `/api/alpha/decisions`），**不是 chat 门面**。原方案供应商文档来源见 research 文档 S9/S10；**初始 grounding 不读取密钥、不作付费调用**（后续 D12 smoke 另计）。
 
 **不是宣称现有生命周期已经证明满足所有付费预算门**：实施前核对typed路径是否实际执行budget reserve/maxCost、usage、取消未知费用与fallback累计上限，补scoped测试；API rate limit/provider concurrency不是美元预算的替代。
 
@@ -240,6 +249,8 @@ activateEvaluation(evaluationId, expectedEffectiveId: null | id)
 ## 7. 所有用户/客户端消费面
 
 lane D核查了render→state→persist/resume→wire→API；以下不把wire enum当作已具备交互能力，也不把题库编辑权限误称为多租户安全漏洞。新实践投影避免作答前泄露评分依据，是本设计的明确要求。
+
+**已批准消费面约束（2026-09-24）**：**D9** 任意题目可走显式手动/自评（带 provenance，仅手动学习效应，绝不推断 AI 正确性；手动→θ̂ 映射仍待定）；**D10** 扩展常见原始证据（audio/video/PDF/plaintext 上传+安全播放/下载，format/size/security 校验；无录音工作站/代码执行/媒体编辑器；full release 不做 image-only fallback）；**D11** 统一服务端自动保存（全部正式练习面含 solo+placement 在 pinned issuance 上自动保存，saving/saved/error，仅服务端 ack 恢复 promise；旧未保存浏览器草稿切换时 warn/save/export 不补造）。详见 decisions 文件 D9–D11。
 
 | 消费面 | 当前实证 | 全量切换必须完成 |
 |---|---|---|
@@ -315,6 +326,8 @@ lane D核查了render→state→persist/resume→wire→API；以下不把wire e
 
 ## 8. 学习状态与结算矩阵（lane C，source-only）
 
+**已批准学习证据语义（D13–D16，详见 decisions 文件）**：D13 按 per-KC/group occurrence 采用有依据的局部证据（success 1 / failure 0 / abstain；ambiguous/partial 未局部化⇒abstain；每 KC 最多 1 obs；空白默认不当作全部 KC failure；Score unit ≠ group/slot，总分只聚合一次；需 bounded evidence adapter，共享 global update 一次；无 fractional θ/新 IRT）。D14 三等级 correct/good、partial/hard、incorrect/again，可手动覆盖，invalid/unmapped⇒none，group scheduler 显式版本化 scope、不合 card/不重复 auto ops。D15 自行评级仅影响 FSRS（仅新 runtime，无 self-report θ̂/calibration；有效判分证据独立可更新 θ̂；历史基线不变）。D16 被答案帮助污染的证据：得分保留标 assisted、affected hard mastery/calibration 排除、允许显式手动 FSRS、无害澄清不自动惩罚、不确定⇒abstain。
+
 本节为独立来源审阅（oracle lane C），**不是测试结论**；路径为仓库相对完整路径。
 
 - **FSRS（顺序相关状态）**：`src/core/fsrs.ts:35–46` `scheduleReview(prevState, rating, now)` 单卡顺序推进；`:62–68` `initialFsrsState` 新建卡。持久化与版本/评级/时间由 `src/server/fsrs/state.ts` 单拥有者写入。
@@ -388,13 +401,14 @@ lane D核查了render→state→persist/resume→wire→API；以下不把wire e
 - **全量迁移 ≠ 批量历史重判**。
 - 切换前 replay 支持不足时，由 owner 在「display-only correction」与「non-effective pending」间选择，**不得静默 applied learning**。
 
-## 14. census 提案（`scripts/assessment-census.ts`，proposed，尚未存在）
+## 14. census（D19 只读部分已执行）与提案细节
 
+- **已执行（2026-09-24，FINAL）**：只读、显式 target、`REPEATABLE READ READ ONLY`、仅 SELECT/WITH whitelist、46/46 queries、0 gaps、91ms、最后 ROLLBACK；结果见 decisions 文件 census 段（114 questions / 0 physical parts / 0 answers rows / 9 judge events；pgboss outstanding 27 全为 DLQ recovery）。
 - 与 apply 分离，显式 target，`REPEATABLE READ READ ONLY`，仅 SELECT。
 - SQL/parser 清点：question source/status；event action/subject 计数；answer drafts/part refs/orphans；sessions；多 judge 分类（**不是全 corrupt**）；pending/appeal/reproject markers；先探 pgboss 版本/schema 再清点队列。
 - parser：physical cycles/node ID/snapshot 完整性/grade-vs-attribution/correction 链/run 完成度/paper slot 边/stream π/learning effect 覆盖/assets/session claims。
 - Manifest：images/source/migration/db 版本/redacted flags、语义 row 计数+PK、canonical hash、edge hash、projection baseline、queues/subscription disposition、blobs/digests、mapping unresolved 列表。
-- **未测任何 counts/timing**。`MAX(dispatch_seq)` **不是**完整性（`src/db/schema.ts:1787–1794` 存在晚提交）；不可变事件事实单独取hash，`event.ingest_at` 等可变运维字段另行记录，不混入原始事实hash。
+- **counts/timing 已采集**（46/46 queries、91ms、0 gaps）；`MAX(dispatch_seq)` **不是**完整性（`src/db/schema.ts:1787–1794` 存在晚提交）；不可变事件事实单独取hash，`event.ingest_at` 等可变运维字段另行记录，不混入原始事实hash。
 
 ## 15. 统一切换 runbook（grounded，proposed）
 
@@ -429,20 +443,53 @@ contracts/policies → schema+snapshot → effective owner + 并行 census → e
 
 ## 19. owner 决策（仅实质）
 
-1. partial-credit/group → 学习证据的语义解释。
-2. model-proposed marking rule 的准入。
-3. 历史不可 replay 纠正的处置策略。
-4. appeal auto-accept vs explicit。
-5. Jev 评测授权/预算。
-6. maintenance/RPO（建议：零 accepted-answer 丢失）。
+**状态（2026-09-24）**：轮一 D1–D5 + 轮二 D6–D12 + 轮三 D13–D16 + 轮四 D17–D19 **已批准**，逐项落盘 `docs/planning/2026-09-24-question-assessment-decisions.md`；仅剩 Q20 UI preflight 正式批准与 Q21 ticket 拆分待 owner（同文件 PENDING 段）。
 
-建议供裁决：完整保存逐点得分，但不默认把相关得分点放大为独立练习；模型拟定规则必须保留来源并经明确准入政策，不等同官方核验；历史证据不足时允许清楚标注的展示纠正、保留原学习基线；申诉沿用现有自动复核意图，只有输入完整、规则准入和重算全部通过才自动生效，否则待确认。以上均为建议，不视为owner已批准。付费评测额度与维护窗口另行授权。
+已批准（轮一）：
+
+1. **D1** 核验后自动准入：model-proposed marking rules 在结构+独立核验通过后自动准入，显式标 system authored（非 official），未解决 withheld；第二模型同意不构成证明，准入验收标准待 finalize。
+2. **D2** 联合组内同知识点聚合：每个已定稿依赖 evaluation group occurrence 每 KC 最多一条 judge-derived mastery observation；真实独立小题仍分开；不去重整张 paper/session/day，不合并/删除 FSRS physical child targets；分数→学习/rating 公式待定。
+3. **D3** 分开纠正展示与学习：不可 replay 的历史纠正可清楚标注展示、学习状态不变、保留 original/baseline；缺失原始上下文不得补造。
+4. **D4** 满足条件自动生效：appeal 仅当输入完整不可变+规则准入+结果有效+CAS+所需学习 replay 全通过才自动生效，否则 held；用户手工评级不得被静默覆盖；人工确认不绕过缺失证据/replay，可按 D3 授权标注 display-only。
+5. **D5** 已接收答案零丢失：含 202 的已接收答案守恒；可接受更长维护窗口、不做有损旧镜像回滚；不批准任何生产运维/维护窗口，限时安全中止另议；未保存浏览器草稿需显式处理。
+
+已批准（轮二）：
+
+6. **D6** 真实错误可双向纠正：同一原始任务上经证明的答案键/评分依据缺陷可双向调整历史分（降/升），保留精确原始/纠正依据 + replay；新的更严格政策/权重/有效方法变更不追溯；题面/要求变更 = 新 issuance。
+7. **D7** 定位全部，按授权批次修复：自动定位全部受影响历史记录，估算规模/成本后按预算授权批次纠正，不无差别重判全部历史。
+8. **D8** 仅重解读原证据：appeal 理由不是新答案；允许重 OCR/查看被遗漏的原始图片；提交后新增步骤/页面/上传默认 = 新 attempt，无 evidence-amend 工作流。
+9. **D9** 允许显式非自动模式：任意题目可显式手动/自评带 provenance，仅手动学习效应，绝不推断 AI 正确性；现有手动保留；手动→θ̂ 精确映射待定。
+10. **D10** 扩展常见原始证据：audio/video/PDF/plaintext 原始附件上传+安全播放/下载，format/size/security 校验；无录音工作站/代码执行/媒体编辑器；full release 不做 image-only fallback。
+11. **D11** 统一服务端自动保存：全部正式练习面（含 solo+placement）在 pinned issuance 自动保存，saving/saved/error，仅服务端 ack 恢复 promise；旧未保存浏览器草稿切换 warn/save/export 不补造。
+12. **D12** 批准两次调用合计 ≤$0.01：synthetic 非敏感 Noul 一次、Choice 一次；不自动重试、不走 advanced；仅首次 smoke 不是 accuracy；**执行已 FINAL（2/2 calls、$0.00003024，仅 wire/auth/cost，无 accuracy 结论）**；不从前预算池挪额度。
+
+已批准（轮三）：
+
+13. **D13** 有依据的局部证据：per-KC/group occurrence 有支持且映射 scoring unit + MATCHED measurement/difficulty ⇒ success 1/failure 0/abstain；ambiguous/partial 未局部化⇒abstain；每 KC 最多 1 obs；空白可按声明 marking 计零但默认不当作全部 KC failure；Score unit ≠ group/slot，总分只聚合一次；当前 one-bit conjunctive updater 无法表达 mixed KCs/按点重复调用，需 bounded evidence adapter（共享 global update 一次）；无 fractional θ/新 IRT。
+14. **D14** 三等级：correct→good、partial→hard、incorrect→again；手动覆盖；invalid/unmapped⇒none；group scheduler 显式版本化 scope，不合 card/不重复 auto ops。
+15. **D15** 自行评级仅影响 FSRS（仅新 runtime），无 self-report θ̂/calibration；有效判分证据独立可更新 θ̂；历史基线不变。
+16. **D16** 排除被答案帮助污染的证据：得分保留标 assisted；affected hard mastery/calibration 排除；允许显式手动 FSRS；无害澄清不自动惩罚；不确定⇒abstain。
+
+已批准（轮四）：
+
+17. **D17** 严格准入合同：deterministic comparators/aggregation/idempotency/safety invariants zero-failure；每启用模型能力切片 ≥30 holdout cases（family×source 隔离）；zero observed severe errors（clearly-wrong 判 fully correct、fully-correct 判 zero、fabricated evidence、dependency/score-cap 违规、missing/unreadable evidence 计非零）；per-criterion agreement ≥95%（有可靠 per-point gold）；auto-admitted 切片 pipeline coverage ≥95%；Jev 直接覆盖 ≥80% 否则只用 advanced executor；阈值 dev set 调、holdout 不再调；失败切片不自动准入。非统计普适性声明；官方 rubric descriptors 本身不等于 essay gold。
+18. **D18** 独立评测预算 ≤$5：与已完成 $0.01 smoke 分开；仅 Jev（OpenRouter）+ MiMo text/vision lane（价格已知）；覆盖 dev/holdout 样本、Jev escalation、最多 200 次独立核验调用，**所有 retries 计入**；最多 800 次 model requests，per-call input/output caps，首次触顶即停；未知成本保守预留；不用价格未知模型；语料 = public officially-scored/synthetic/authorized desensitized，证据经 app `ai_task_runs` 封存；仅 harness+budget gate 就绪后运行；**不授权实施启动**。
+19. **D19** 只读盘点与隔离准备：explicit-target preflight 后只读生产 census（categorical counts、referential integrity、snapshot/image missing、in-flight state；无原始 learner content）+ 本地隔离 restore 预备；**明确不做**生产写入/暂停/清队列/flip flag/migration/deploy。
+
+学习真值表（D13–D16 覆盖）：fully correct / wrong-localized / mixed partial / partial KC / holistic level / blank / unreadable / manual / assisted / regrade。
+
+明确被拒旧提案（仅历史可读）：partial→1；worst-wins；rejudge FSRS immune target。
+
+仍待 owner 决策（PENDING，未批准）：**Q20 UI 正式 design preflight 批准**（草案已出待正式批准）、**Q21 ticket 拆分批准**，之后 final implementation-ready confirmation。此前另列的 learner-visible rubric/披露、omission/finality/assistance policy、cutover measured window、手动→θ̂ 精确映射纳入 Q21 一并定案。
+
+Provider：owner 偏好 OpenRouter（**取代“仅直连 TypeSafe”**），保留 typed sibling `AiRunLifecycle` seam（非 chat），精确集成包以后定；OpenRouter 公开文档核验见 decisions 文件（native `POST /api/v1/systemone` 或 `/api/alpha/decisions`，pinned `typesafe/jev-1.13` → canonical `typesafe/jev-1.13-20260917`，无 chat 门面，text-only 32k，only TypeSafe provider，`allow_fallbacks=false`，`max_price` prompt 0.042/completion 0，probabilities/confidence/usage.cost optional 缺失不补造，confidence 非 accuracy、Score 非 student points，Jev→advanced 独立 invocation）；**key presence 已检查但非 auth 成功**；**D12 受限 smoke 已 FINAL（2/2 calls、$0.00003024，仅 wire/auth/cost）**；除此之外**当前不调用**（**D18 ≤$5 预算已批准但未运行**）。
 
 SQL/CAS 等工程细节不需 owner 决策。新增笔记内嵌 quiz 不在本次题目契约迁移范围内。实施时按改动基线更新受影响路径与证据，不把本次源码调查当作永久有效的运行证明。
 
 ## 状态与证据缺口
 
-- 本文为 **source-only grounding**：lane A/B/C/D 调查已归并，源码路径与行为结论有文件/符号/行号；**未**执行 schema/data migration、生产访问、付费模型评测或部署。
-- **产品决策与证据缺口仍开放**：§19 owner 决策未拍；无本轮库存 census、隔离 restore 演练、actual-output 或全产品浏览器证据。
+- 本文为 **source-only grounding**：lane A/B/C/D 调查已归并，源码路径与行为结论有文件/符号/行号；**未**执行 schema/data migration 或部署。初始 grounding 阶段**零模型调用**；其后 **D12 受限 smoke 已 FINAL（2/2 calls、$0.00003024，仅 wire/auth/cost，无 accuracy 结论）**；**D19 只读生产 census 已完成**（REPEATABLE READ READ ONLY，无写入）。
+- **产品决策**：轮一 D1–D5 + 轮二 D6–D12 + 轮三 D13–D16 + 轮四 D17–D19 **已批准**（见 `docs/planning/2026-09-24-question-assessment-decisions.md`），仅剩 **Q20 UI preflight 正式批准**与 **Q21 ticket 拆分**。
+- **证据缺口**：census 已完成；smoke 已完成；**隔离 restore 演练仍待**（owner-gated，待 migration code 存在）；**accuracy actual-output 评测仍待**（**D18 ≤$5 预算已批准**，harness/budget gate 就绪后运行）；无全产品浏览器证据。
 - 因此本文是实施规划基线，**不是**可直接交付实施的最终 spec，也不代表任何能力已上线或已验收。
 - Linear capture：已搜索复判/pending/评分并更新YUK-1038（comment `f88785c9-97e7-446c-96fa-294978b36d43`）。订阅灾备语义复用YUK-766，得分点→学习证据政策复用YUK-438；已分别留言，不重复建票、不冒称完成。其余实施内缺口纳入YUK-1038，实施拆票待产品裁决。
