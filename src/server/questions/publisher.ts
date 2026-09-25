@@ -220,14 +220,28 @@ function assertSuspensionShape(suspension: SuspensionUpdate): void {
 /** 解析 suspension 维度更新 → lifecycle 列值。
  * 返回 null = 该输入对【当前】lifecycle 无效果（缺省输入；或
  * suspended=false 面对非 verify_hold 的既有挂起 —— verify promote 不许顺手
- * 清 retraction_hold，下同）。suspended=true 总是有效（覆盖既有原因）。 */
+ * 清 retraction_hold，下同）。suspended=true 总是有效（覆盖既有原因），但
+ * 【verify_hold 不得遮蔽并存 retraction_hold】：suspension_reason 单列只能
+ * 留一个原因，且 clear 只会解除 verify_hold（置 suspended=false）——若先让
+ * verify_hold 覆写 retraction_hold，之后的复核通过会把整个挂起（含尚有效
+ * 的撤回保持）一并清掉。verify_hold 落在已有 retraction_hold 上是 no-op
+ * （仍是 suspended=true, reason=retraction_hold），核验证据只进
+ * verification 行，维度意图如实表达为『verify 无权改判 retraction』。 */
 function suspensionValuesFor(
   lifecycle: typeof question_group_lifecycle.$inferSelect | undefined,
   suspension: SuspensionUpdate | undefined,
 ): { suspended: boolean; suspension_reason: SuspensionReason | null } | null {
   if (suspension == null) return null;
   if (suspension.suspended) {
-    return { suspended: true, suspension_reason: suspension.reason ?? 'verify_hold' };
+    const reason = suspension.reason ?? 'verify_hold';
+    if (
+      reason === 'verify_hold' &&
+      lifecycle?.suspended === true &&
+      lifecycle.suspension_reason === 'retraction_hold'
+    ) {
+      return { suspended: true, suspension_reason: 'retraction_hold' };
+    }
+    return { suspended: true, suspension_reason: reason };
   }
   // suspended=false：只清 verify_hold；retraction_hold 及其它持有原因恒保留
   //（verify 复核无权解除非 verify 挂起）。

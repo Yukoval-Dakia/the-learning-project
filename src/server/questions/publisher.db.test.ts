@@ -995,6 +995,65 @@ describe('YUK-1045 — suspension 维度 + verify 记录（§3.3 verify 挂起�
     expect(kept.suspension_reason).toBe('retraction_hold');
   });
 
+  it('复审 P1 — verify_hold must NOT mask an existing retraction_hold (set no-op, clear preserves it)', async () => {
+    const db = testDb();
+    const qid = 'susp_q5';
+    await seedQuestion(qid);
+    const row = await readRow(qid);
+    const first = await publishQuestionGroup(db, publishInput(row));
+    if (first.status !== 'published') throw new Error('seed publish failed');
+
+    // 事实：组已带 retraction_hold（异源维度——本票不接线的生命周期信号）。
+    await db
+      .update(question_group_lifecycle)
+      .set({ suspended: true, suspension_reason: 'retraction_hold', updated_at: new Date() })
+      .where(eq(question_group_lifecycle.group_id, qid));
+
+    // verify 挂起落在已有 retraction_hold 上：dimension 不能先被 verify_hold
+    // 覆写（否则随后 suspended:false 会连带抹掉仍有效的撤回保持）。
+    const [lc1] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    const suspend = await publishQuestionGroup(
+      db,
+      publishInput(row, {
+        expectedCurrentRevision: first.revision_id,
+        expectedAdmissionGeneration: lc1.scoring_admission_generation,
+        admission: { state: 'withheld', reason: 'verification_failed' },
+        suspension: { suspended: true, reason: 'verify_hold' },
+      }),
+    );
+    // admission 维度变了（withheld）⇒ admission_updated，但 suspension_reason
+    // 保持 retraction_hold（verify_hold 不占位）。
+    expect(suspend.status).toBe('admission_updated');
+    const [lc2] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(lc2.suspended).toBe(true);
+    expect(lc2.suspension_reason).toBe('retraction_hold');
+
+    // 复核通过（suspended:false）只解除 verify_hold —— retraction_hold 全链保留。
+    const cleared = await publishQuestionGroup(
+      db,
+      publishInput(row, {
+        expectedCurrentRevision: first.revision_id,
+        expectedAdmissionGeneration: lc2.scoring_admission_generation,
+        admission: { state: 'admitted', evidence: ADMITTED_EVIDENCE },
+        suspension: { suspended: false },
+      }),
+    );
+    const [lc3] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(lc3.suspended).toBe(true); // retraction_hold 不被 verify 通道解除
+    expect(lc3.suspension_reason).toBe('retraction_hold');
+    expect(cleared.status).toBe('admission_updated'); // admission 仍翻 admitted
+    expect(lc3.scoring_admission_state).toBe('admitted');
+  });
+
   it('verification input ⇒ append-only question_admission_verification row (revision_id, digest, policy, generation)', async () => {
     const db = testDb();
     const qid = 'susp_q3';

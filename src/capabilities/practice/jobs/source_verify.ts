@@ -560,37 +560,49 @@ export async function runSourceVerify(
           );
         // YUK-1045 — verify 挂起串行化（§3.3）：transient demote 必须同时把
         // contract 维度翻 suspended（verify_hold）+ admission 折叠 withheld，
-        // 否则「未发出的题」在 contract 读面仍可见为可用。与 demote 相同语义 ——
-        // 独立小事务提交（本分支随即 throw，主 verify tx 回滚，不能依赖它）。
-        // 挂起写失败不阻断原 throw（demote 已落地，重跑会再尝试挂起）；
-        // 记日志不静默。
-        // §3.3「旧验证不能改变较新 admission 决定」：suspend 与 demote 同守卫 ——
-        // demote 因并发终验成功（NOT EXISTS success）或版本漂移跳过 ⇒ 本投递已
-        // stale，不翻 contract 维度；demote 未触发但行仍 'active' 同理放过。
+        // 否则「未发出的题」在 contract 读面仍可见为可用。复审 P1：demote 与
+        // suspend 在【同一事务】原子提交（不再先交 demote 再交 suspend ——
+        // 中间窗口会让挂起丢失），且在【组根行锁下重读】版本/终验状态：
+        // 并发 promote 在 publishQuestionGroup 里先取同一锁，锁内读就是
+        // 线性化点（committed success / 版本漂移 ⇒ 本投递 stale，demote 与
+        // suspend 双双跳过，且不写核验记录 —— §3.3「旧验证不能改变较新
+        // admission 决定」）。
         try {
-          const [post] = await db
-            .select({
-              version: question.version,
-              draftStatus: question.draft_status,
-              promotedElsewhere: sql<boolean>`EXISTS (
-                SELECT 1 FROM ${event}
-                WHERE ${event.action} = 'experimental:source_verify'
-                  AND ${event.subject_kind} = 'question'
-                  AND ${event.subject_id} = ${questionId}
-                  AND ${event.outcome} = 'success'
-              )`,
-            })
-            .from(question)
-            .where(eq(question.id, questionId))
-            .limit(1);
-          const maySuspendContract =
-            post != null &&
-            post.version === row.version &&
-            !post.promotedElsewhere &&
-            post.draftStatus !== 'active';
-          if (maySuspendContract) {
-            await publishQuestionGroupFromRow(db, {
-              rootId: row.parent_question_id ?? questionId,
+          await db.transaction(async (suspendTx) => {
+            const groupRootId = row.parent_question_id ?? questionId;
+            await suspendTx
+              .select({ id: question.id })
+              .from(question)
+              .where(eq(question.id, groupRootId))
+              .for('update')
+              .limit(1);
+            const [post] = await suspendTx
+              .select({
+                version: question.version,
+                draftStatus: question.draft_status,
+                promotedElsewhere: sql<boolean>`EXISTS (
+                  SELECT 1 FROM ${event}
+                  WHERE ${event.action} = 'experimental:source_verify'
+                    AND ${event.subject_kind} = 'question'
+                    AND ${event.subject_id} = ${questionId}
+                    AND ${event.outcome} = 'success'
+                )`,
+              })
+              .from(question)
+              .where(eq(question.id, questionId))
+              .limit(1);
+            const maySuspendContract =
+              post != null &&
+              post.version === row.version &&
+              !post.promotedElsewhere &&
+              post.draftStatus !== 'active';
+            if (!maySuspendContract) return;
+            await suspendTx
+              .update(question)
+              .set({ draft_status: 'draft', updated_at: new Date() })
+              .where(eq(question.id, questionId));
+            await publishQuestionGroupFromRow(suspendTx, {
+              rootId: groupRootId,
               admission: { state: 'withheld', reason: 'unverified_rules' },
               suspension: { suspended: true, reason: 'verify_hold' },
               verification: {
@@ -605,7 +617,7 @@ export async function runSourceVerify(
               actorRef: 'source_verify:suspend',
               now: new Date(),
             });
-          }
+          });
         } catch (suspendErr) {
           console.error('[source_verify] verify-hold write failed for', questionId, suspendErr);
         }

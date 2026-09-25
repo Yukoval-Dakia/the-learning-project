@@ -15,7 +15,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { event, question, question_group_lifecycle } from '@/db/schema';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { archiveQuestion, restoreQuestion } from './write';
+import { archiveQuestion, editQuestion, restoreQuestion } from './write';
 
 const ADMITTED = {
   state: 'admitted' as const,
@@ -247,6 +247,70 @@ describe('restoreQuestion（YUK-1045 archive 对偶）', () => {
     const archivedV = (await readQuestion(qid)).version;
     const stale = await restoreQuestion(db, qid, archivedV + 5, 'self');
     expect(stale.status).toBe('conflict');
+  });
+
+  it('复审 P1 — restoring a part of an auto-withdrawn group un-withdraws it (root not archived)', async () => {
+    const db = testDb();
+    const rootId = 'rst_root2';
+    await seedQuestion(rootId, {
+      kind: 'composite',
+      canonical_content_hash: 'sha256:rst-root2',
+    });
+    await seedPart('rst2_p1', rootId, 0);
+    await seedPart('rst2_p2', rootId, 1);
+    await publishQuestionGroupFromRow(db, {
+      rootId,
+      admission: ADMITTED,
+      actorRef: 'test',
+      now: new Date(),
+    });
+
+    // 单独归档 p1（root 仍活）→ 组重发 revision，liveParts 剩 p2。
+    const p1 = await readQuestion('rst2_p1');
+    expect((await archiveQuestion(db, 'rst2_p1', p1.version, 'self')).status).toBe('archived');
+    expect((await readLifecycle(rootId))?.withdrawn).toBe(false);
+
+    // 单独归档最后一块 live part ⇒ publish 链落 withdrawn（无可发布成员）。
+    const p2 = await readQuestion('rst2_p2');
+    expect((await archiveQuestion(db, 'rst2_p2', p2.version, 'self')).status).toBe('archived');
+    expect((await readLifecycle(rootId))?.withdrawn).toBe(true);
+
+    // 恢复 p2：组重获 live 成员 —— 自撤回必须复位（撤回源于 tombstone 全量，
+    // 非显式根归档：根行无 archived_at 墓碑）。
+    const p2v = (await readQuestion('rst2_p2')).version;
+    const restored = await restoreQuestion(db, 'rst2_p2', p2v, 'self');
+    expect(restored.status).toBe('restored');
+    const lifecycle = await readLifecycle(rootId);
+    expect(lifecycle?.withdrawn).toBe(false);
+    expect((await readQuestion('rst2_p2')).draft_status).toBe('draft');
+    // 独立归档的 p1 不被顺带恢复（自己的 tombstone 未清）。
+    const p1Row = await readQuestion('rst2_p1');
+    expect((p1Row.metadata as Record<string, unknown>).archived_at).not.toBeUndefined();
+  });
+
+  it('复审 P1 — editing an archived row invalidates the retained claim (stale hash not resurrected)', async () => {
+    const db = testDb();
+    const qid = 'rst_q7';
+    await seedQuestion(qid, { canonical_content_hash: 'sha256:rst-7' });
+    const v = (await readQuestion(qid)).version;
+    await archiveQuestion(db, qid, v, 'self');
+    expect(
+      ((await readQuestion(qid)).metadata as Record<string, unknown>).archived_content_hash,
+    ).toBe('sha256:rst-7');
+
+    // 编辑归档行内容 ⇒ 留痕的 claim 快照与内容脱钩 —— 必须作废。
+    const ev = (await readQuestion(qid)).version;
+    const edited = await editQuestion(db, qid, ev, { prompt_md: '编辑后的新题面' }, 'self');
+    expect(edited.status).toBe('updated');
+    const editedRow = await readQuestion(qid);
+    expect((editedRow.metadata as Record<string, unknown>).archived_content_hash).toBeUndefined();
+
+    const restored = await restoreQuestion(db, qid, editedRow.version, 'self');
+    expect(restored.status).toBe('restored');
+    const after = await readQuestion(qid);
+    expect(after.draft_status).toBe('draft');
+    // stale claim 不复活（canonical_content_hash 保持 NULL）。
+    expect(after.canonical_content_hash).toBeNull();
   });
 
   it('archived row never published (no lifecycle) restores without lifecycle write — honest no-op', async () => {

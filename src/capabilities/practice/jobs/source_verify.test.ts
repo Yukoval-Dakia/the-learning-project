@@ -33,6 +33,7 @@ import {
   question_revision,
 } from '@/db/schema';
 import { getFsrsState } from '@/server/fsrs/state';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { semanticJudgeOutput } from '../../../../tests/helpers/solve-check-fixtures';
 import { type SourceGroundingParams, runSourceVerify } from './source_verify';
@@ -821,6 +822,68 @@ describe('runSourceVerify', () => {
       .from(question_group_lifecycle)
       .where(eq(question_group_lifecycle.group_id, qid));
     expect(lifecycles).toHaveLength(0);
+  });
+
+  it('YUK-1045 P1 repro: a stale transient run cannot suspend a group a concurrent verify already ADMITTED', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      draftStatus: 'active',
+      metadataOverride: groundingMetadata('asset-src-race2'),
+    });
+    // 并发投递已终验 + 已发布 admitted（带 admitted 分支完整性所需 evidence）。
+    await publishQuestionGroupFromRow(db, {
+      rootId: qid,
+      admission: {
+        state: 'admitted',
+        evidence: {
+          marking_provenance: 'official',
+          verification: {
+            structural_check_passed: true,
+            independent_verification: null,
+          },
+          model_slice: null,
+        },
+      },
+      actorRef: 'test:publish',
+      now: new Date(),
+    });
+
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+    const sourceGroundingFn = vi.fn(async () => {
+      // 并发成功事件在 grounding 调用窗口内提交（与本投递探测交错）。
+      await db.insert(event).values({
+        id: createId(),
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'source_verify',
+        action: 'experimental:source_verify',
+        subject_kind: 'question',
+        subject_id: qid,
+        outcome: 'success',
+        payload: { question_id: qid, promoted: true },
+        caused_by_event_id: null,
+        created_at: new Date(),
+      });
+      return groundingResult('transient');
+    });
+
+    await expect(
+      runSourceVerify({ db, questionId: qid, runTaskFn, sourceGroundingFn }),
+    ).rejects.toThrow('source grounding failed (transient)');
+
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('active');
+    // 守卫未修前这里被 stale suspend 改写为 suspended+withheld —— 现在必须
+    // 原样保留 admitted 维度（含 generation 不回涨）。
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(lifecycle.scoring_admission_state).toBe('admitted');
+    expect(lifecycle.suspended).toBe(false);
+    expect(lifecycle.scoring_admission_generation).toBe(1);
   });
 
   it('YUK-230 version race: a transient run does NOT demote a row EDITED (version bumped) during the VLM call', async () => {

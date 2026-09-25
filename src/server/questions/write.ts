@@ -43,7 +43,13 @@ import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
-import { artifact, event, material_fsrs_state, question } from '@/db/schema';
+import {
+  artifact,
+  event,
+  material_fsrs_state,
+  question,
+  question_group_lifecycle,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { embedHash, questionEmbedText } from '@/server/ai/embed-source';
 import { deriveAnswerClassForValues } from '@/server/questions/answer-class-write';
@@ -337,6 +343,15 @@ export async function editQuestion(
       // This slice intentionally has no global/backfill writer, so edits clear the
       // shadow rather than risking a false duplicate match from a stale hash.
       if (row.canonical_content_hash != null) setValues.canonical_content_hash = null;
+      // YUK-1045（复审 P1）— 同理失效 archive 保留的 claim 快照：归档行被编辑后，
+      // metadata.archived_content_hash 已不代表当前内容，restore 若仍重盖旧 hash
+      // 会复活一个与内容不符的去重占用（stale claim）。编辑即丢快照 ——
+      // archived tombstone 本身保留，restore 依旧可走（无 claim 重取）。
+      const rowMeta = row.metadata as Record<string, unknown> | null;
+      if (rowMeta?.archived_content_hash != null) {
+        const { archived_content_hash: _dropped, ...rest } = rowMeta;
+        setValues.metadata = rest;
+      }
       const nextEmbedText = questionEmbedText({
         prompt_md: patch.prompt_md !== undefined ? patch.prompt_md : row.prompt_md,
         reference_md: patch.reference_md !== undefined ? patch.reference_md : row.reference_md,
@@ -621,25 +636,31 @@ export async function restoreQuestion(
 ): Promise<QuestionRestoreResult> {
   return db.transaction(async (tx) => {
     const rows = await tx.select().from(question).where(eq(question.id, questionId)).limit(1);
-    const row = rows[0];
-    if (!row) return { status: 'not_found' };
-    if (row.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
+    const initialRow = rows[0];
+    if (!initialRow) return { status: 'not_found' };
+    if (initialRow.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
       return { status: 'protected' };
     }
+    const initialMeta = (initialRow.metadata ?? {}) as Record<string, unknown>;
+    if (initialMeta.archived_at == null) return { status: 'not_archived' };
+
+    // 组根锁序（复审 P1 —— root 与 part 同序）：恢复 root 时目标行本身即锁点；
+    // 恢复 part 时先锁组根。锁取得【之后】才重读目标行与子行快照 —— 此前的不加
+    // 锁快照会让并发子行编辑（同样走根锁序）穿进级联恢复的判定窗口。
+    const groupRootId = initialRow.parent_question_id ?? questionId;
+    const [rootLock] = await tx
+      .select({ id: question.id })
+      .from(question)
+      .where(eq(question.id, groupRootId))
+      .for('update')
+      .limit(1);
+    if (!rootLock) return { status: 'not_found' };
+
+    // 锁内重读目标行（authoritative）：归档墓碑/版本/claim 快照全部以此为准。
+    const [row] = await tx.select().from(question).where(eq(question.id, questionId)).limit(1);
+    if (!row) return { status: 'not_found' };
     const rowMeta = (row.metadata ?? {}) as Record<string, unknown>;
     if (rowMeta.archived_at == null) return { status: 'not_archived' };
-
-    // 组根锁序（archive 同款）：目标为 part ⇒ 先锁组根再改子行。
-    const groupRootId = row.parent_question_id ?? questionId;
-    if (row.parent_question_id != null) {
-      const [rootLock] = await tx
-        .select({ id: question.id })
-        .from(question)
-        .where(eq(question.id, groupRootId))
-        .for('update')
-        .limit(1);
-      if (!rootLock) return { status: 'not_found' };
-    }
 
     const now = new Date();
     const cascadedParts =
@@ -744,6 +765,30 @@ export async function restoreQuestion(
         actorRef: `question-restore:${actorRef}`,
         now,
       });
+      // 复审 P1 —— 自撤回复位：组当初因「全部子行 tombstone」被 publish 链自动
+      // 撤回（归档 part 的最后一块也触发），恢复 part 已让组重获 live 成员 ⇒
+      // withdrawn 必须复位。显式根归档不动 —— 判定信号 = 根行自身的
+      // archived_at 墓碑（archiveQuestion 对根的写）；无墓碑 ⇒ 撤回出自
+      // 「无可发布成员」分支而非显式 archive，属恢复义务。claim=null：本路径
+      // 的 hash 重盖已在上方逐成员完成，不需经 lifecycle seam 再写。
+      const [rootRow] = await tx
+        .select({ metadata: question.metadata })
+        .from(question)
+        .where(eq(question.id, groupRootId))
+        .limit(1);
+      const rootMeta = (rootRow?.metadata ?? {}) as Record<string, unknown>;
+      if (rootRow && rootMeta.archived_at == null) {
+        const [lifecycle] = await tx
+          .select({
+            withdrawn: question_group_lifecycle.withdrawn,
+          })
+          .from(question_group_lifecycle)
+          .where(eq(question_group_lifecycle.group_id, groupRootId))
+          .limit(1);
+        if (lifecycle?.withdrawn) {
+          await restoreGroupLifecycle(tx, groupRootId, null, now);
+        }
+      }
     }
 
     const eventId = createId();

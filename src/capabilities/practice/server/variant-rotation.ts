@@ -192,7 +192,12 @@ export async function prefetchProbeSelection(
     const rows = (await dbHandle
       .select(QUESTION_PROJECTION)
       .from(question)
-      .where(inArray(question.id, lastQuestionIds))) as QuestionRow[];
+      // YUK-1045 — §3.3 契约准入门：recall 回放也要过 suspended/withdrawn 门 ——
+      // 挂起的上一题不返 recall，回落到 K 内首个可用题（复审 P1：此前无门，
+      // 挂起题仍被 recall 路径直送）。
+      .where(
+        and(inArray(question.id, lastQuestionIds), questionSuspendedPredicate(question)),
+      )) as QuestionRow[];
     for (const r of rows) questionRowById.set(r.id, r);
   }
 
