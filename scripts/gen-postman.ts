@@ -68,6 +68,7 @@ const manifestRoutes = new Set(
   capabilities.flatMap((c) => (c.api?.routes ?? []).map((r) => `${r.method} ${normalize(r.path)}`)),
 );
 manifestRoutes.add('GET /api/health'); // 组合根直挂（server/app.ts，token 豁免），不在任何 manifest——缺此行对账层会误杀健康探针条目
+manifestRoutes.add('GET /api/ready'); // YUK-1055 — 同上：readiness 探针直挂在 server/app.ts，token 豁免（health ≠ readiness）
 for (const ep of endpoints) {
   for (const m of ep.methods) {
     const key = `${m.method} ${ep.path}`;
@@ -203,7 +204,8 @@ const folders = new Map<string, Array<ReturnType<typeof buildRequest>>>();
 for (const ep of endpoints) {
   const key = folderKey(ep.path);
   if (!folders.has(key)) folders.set(key, []);
-  const isHealth = ep.path === '/api/health';
+  // /api/health 与 /api/ready 在 server/app.ts 均为 token 豁免（探针不持密钥）。
+  const isHealth = ep.path === '/api/health' || ep.path === '/api/ready';
   for (const m of ep.methods) folders.get(key)?.push(buildRequest(ep.path, m, isHealth));
 }
 
@@ -218,7 +220,7 @@ const collection = {
     name: 'learning-api',
     description:
       'The Learning Project — Hono backend (server/app.ts).\n\n' +
-      'Auth: every /api/* request needs header `x-internal-token` (collection-level API-key auth → `{{internalToken}}`), except `/api/health`.\n\n' +
+      'Auth: every /api/* request needs header `x-internal-token` (collection-level API-key auth → `{{internalToken}}`), except `/api/health` and `/api/ready`.\n\n' +
       'Base URL: `{{baseUrl}}` (default http://localhost:8787 — the Hono dev port).\n\n' +
       'Path vars and request bodies use placeholder example values — replace `REPLACE_*` and example IDs with real ones before sending mutating requests.\n\n' +
       'Generated from postman/api-endpoints.json by `pnpm gen:postman` — do not hand-edit. Run headlessly: `pnpm api:smoke [folder]`.',

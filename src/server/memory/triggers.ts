@@ -17,6 +17,7 @@ import {
   createJobQueue,
   createOrUpdateQueue,
 } from '@/server/boss/queue-config';
+import { fenceAwareJobHandler } from '@/server/contract-epoch';
 import {
   QUALIFYING_ACTIONS,
   listActiveSubjectsSinceRefresh,
@@ -1134,30 +1135,53 @@ export async function registerMemoryHandlers(
   await boss.work(
     MEMORY_EVENT_INGEST_QUEUE,
     { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildMemoryEventIngestHandler(db, boss, { memoryClient: deps.memoryClient }),
+    // YUK-1055 — per-delivery epoch fence（disposition 'drain'：epoch-agnostic）。
+    fenceAwareJobHandler(
+      db,
+      MEMORY_EVENT_INGEST_QUEUE,
+      buildMemoryEventIngestHandler(db, boss, { memoryClient: deps.memoryClient }),
+    ),
   );
 
   await createJobQueue(boss, MEMORY_BRIEF_REGEN_QUEUE, EXPIRE_LLM);
   await boss.work(
     MEMORY_BRIEF_REGEN_QUEUE,
     { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildMemoryBriefRegenHandler(db, { memoryClient: deps.memoryClient, generateBrief }),
+    fenceAwareJobHandler(
+      db,
+      MEMORY_BRIEF_REGEN_QUEUE,
+      buildMemoryBriefRegenHandler(db, { memoryClient: deps.memoryClient, generateBrief }),
+    ),
   );
 
   await createOrUpdateQueue(boss, MEMORY_BRIEF_SWEEP_QUEUE, FAST_QUEUE_OPTS);
-  await boss.work(MEMORY_BRIEF_SWEEP_QUEUE, buildMemoryBriefSweepHandler(db, boss));
+  await boss.work(
+    MEMORY_BRIEF_SWEEP_QUEUE,
+    fenceAwareJobHandler(db, MEMORY_BRIEF_SWEEP_QUEUE, buildMemoryBriefSweepHandler(db, boss)),
+  );
   await boss.schedule(MEMORY_BRIEF_SWEEP_QUEUE, '0 3 * * *', {}, { tz: 'Asia/Shanghai' });
 
   // ADR-0021 outbox: per-minute poller drains pending ingest rows; hourly
   // recovery sweep catches anything missed (worker outage, batch overflow).
   await createOrUpdateQueue(boss, MEMORY_INGEST_OUTBOX_POLL_QUEUE, FAST_QUEUE_OPTS);
-  await boss.work(MEMORY_INGEST_OUTBOX_POLL_QUEUE, buildMemoryIngestOutboxPollHandler(db, boss));
+  await boss.work(
+    MEMORY_INGEST_OUTBOX_POLL_QUEUE,
+    fenceAwareJobHandler(
+      db,
+      MEMORY_INGEST_OUTBOX_POLL_QUEUE,
+      buildMemoryIngestOutboxPollHandler(db, boss),
+    ),
+  );
   await boss.schedule(MEMORY_INGEST_OUTBOX_POLL_QUEUE, '* * * * *', {}, { tz: 'UTC' });
 
   await createOrUpdateQueue(boss, MEMORY_INGEST_OUTBOX_RECOVER_QUEUE, FAST_QUEUE_OPTS);
   await boss.work(
     MEMORY_INGEST_OUTBOX_RECOVER_QUEUE,
-    buildMemoryIngestOutboxRecoverHandler(db, boss),
+    fenceAwareJobHandler(
+      db,
+      MEMORY_INGEST_OUTBOX_RECOVER_QUEUE,
+      buildMemoryIngestOutboxRecoverHandler(db, boss),
+    ),
   );
   await boss.schedule(MEMORY_INGEST_OUTBOX_RECOVER_QUEUE, '0 * * * *', {}, { tz: 'UTC' });
 
@@ -1169,6 +1193,10 @@ export async function registerMemoryHandlers(
   await boss.work(
     MEMORY_RECONCILE_QUEUE,
     { pollingIntervalSeconds: 2, batchSize: 1 },
-    buildMemoryReconcileHandler(db, { memoryClient: deps.memoryClient }),
+    fenceAwareJobHandler(
+      db,
+      MEMORY_RECONCILE_QUEUE,
+      buildMemoryReconcileHandler(db, { memoryClient: deps.memoryClient }),
+    ),
   );
 }

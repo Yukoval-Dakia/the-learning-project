@@ -2,6 +2,7 @@ import type { PgBoss } from 'pg-boss';
 import type { PlacementVerificationAuthority } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import { FAST_QUEUE_OPTS, createOrUpdateQueue } from '@/server/boss/queue-config';
+import { fenceAwareJobHandler } from '@/server/contract-epoch';
 import { buildBriefGenerator } from '@/server/memory/brief-writer';
 import { registerMemoryHandlers } from '@/server/memory/triggers';
 import { buildEchoHandler } from './handlers/echo';
@@ -36,27 +37,44 @@ import {
  * registerCapabilityJobs 挂载各包声明的 job。
  */
 export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
+  // YUK-1055 — 全部消费者套 per-delivery epoch fence：错过停机的活 worker 在
+  // epoch 翻转后仍会被每个 delivery 拒跑（ContractEpochFenceError → 重投/DLQ）。
   // Step 4: echo golden E2E queue (FAST — trivial round-trip)
   await createOrUpdateQueue(boss, 'echo', FAST_QUEUE_OPTS);
-  await boss.work('echo', { pollingIntervalSeconds: 0.5, batchSize: 1 }, buildEchoHandler(db));
+  await boss.work(
+    'echo',
+    { pollingIntervalSeconds: 0.5, batchSize: 1 },
+    fenceAwareJobHandler(db, 'echo', buildEchoHandler(db)),
+  );
 
   // Step 5: nightly housekeeping cron（同区段的 knowledge_propose_nightly 已迁
   // knowledge manifest jobs 声明，由注册器挂载）
   await createOrUpdateQueue(boss, 'prune_job_events', FAST_QUEUE_OPTS); // FAST — bulk DELETE housekeeping, re-runs next cron
-  await boss.work('prune_job_events', buildPruneJobEventsHandler(db));
+  await boss.work(
+    'prune_job_events',
+    fenceAwareJobHandler(db, 'prune_job_events', buildPruneJobEventsHandler(db)),
+  );
   await boss.schedule('prune_job_events', '0 4 * * *', {}, { tz: 'Asia/Shanghai' });
 
   // T-37 / YUK-185: Mem0 fact ingest + per-scope brief regen queues. Station 2A
   // injects the real brief writer (buildBriefGenerator) so the regen pipeline
   // produces memory_brief_note rows instead of falling back to the throwing
   // defaultGenerateBrief (triggers.ts). I-1: was a stale `YUK-37` comment — this
-  // wiring is YUK-185 / T-37.
+  // wiring is YUK-185 / T-37. 队列内的 per-delivery epoch fence 在
+  // registerMemoryHandlers 内部挂（triggers.ts，与本簿同约定）。
   await registerMemoryHandlers(boss, db, { generateBrief: buildBriefGenerator({ db }) });
 
   // ADR-0013: abandon review sessions stuck in 'started' >6h (sendBeacon
   // fallback when normal close didn't fire). BJT 04:15 after prune_job_events.
   await createOrUpdateQueue(boss, 'prune_orphan_review_sessions', FAST_QUEUE_OPTS); // FAST — cheap SELECT + per-row transition
-  await boss.work('prune_orphan_review_sessions', buildPruneOrphanReviewSessionsHandler(db));
+  await boss.work(
+    'prune_orphan_review_sessions',
+    fenceAwareJobHandler(
+      db,
+      'prune_orphan_review_sessions',
+      buildPruneOrphanReviewSessionsHandler(db),
+    ),
+  );
   await boss.schedule('prune_orphan_review_sessions', '15 4 * * *', {}, { tz: 'Asia/Shanghai' });
 
   // YUK-470 (orphan-sweep leg): abandon placement probes stuck in 'started' >6h
@@ -65,14 +83,24 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   // 04:35 (placement) so they never hit the table on the same minute. Dark-ship
   // today (no probe created while PLACEMENT_PROBE_ENABLED=false) — lands ahead of go-live.
   await createOrUpdateQueue(boss, 'prune_orphan_placement_sessions', FAST_QUEUE_OPTS); // FAST — cheap SELECT + per-row transition
-  await boss.work('prune_orphan_placement_sessions', buildPruneOrphanPlacementSessionsHandler(db));
+  await boss.work(
+    'prune_orphan_placement_sessions',
+    fenceAwareJobHandler(
+      db,
+      'prune_orphan_placement_sessions',
+      buildPruneOrphanPlacementSessionsHandler(db),
+    ),
+  );
   await boss.schedule('prune_orphan_placement_sessions', '35 4 * * *', {}, { tz: 'Asia/Shanghai' });
 
   // YUK-14 (docs/design/2026-05-24-teaching-idle-state-machine.md): promote
   // active conversation sessions to 'idle' after 5min of no user input.
   // Runs every minute; cheap SELECT + per-row single-owner transition.
   await createOrUpdateQueue(boss, 'promote_conversation_idle', FAST_QUEUE_OPTS); // FAST — every-minute cheap SELECT
-  await boss.work('promote_conversation_idle', buildPromoteConversationIdleHandler(db));
+  await boss.work(
+    'promote_conversation_idle',
+    fenceAwareJobHandler(db, 'promote_conversation_idle', buildPromoteConversationIdleHandler(db)),
+  );
   await boss.schedule('promote_conversation_idle', '* * * * *', {}, { tz: 'Asia/Shanghai' });
 
   // YUK-14: abandon conversation sessions stuck in 'active'|'idle' >6h
@@ -81,7 +109,11 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   await createOrUpdateQueue(boss, 'prune_orphan_conversation_sessions', FAST_QUEUE_OPTS); // FAST — cheap SELECT + per-row transition
   await boss.work(
     'prune_orphan_conversation_sessions',
-    buildPruneOrphanConversationSessionsHandler(db),
+    fenceAwareJobHandler(
+      db,
+      'prune_orphan_conversation_sessions',
+      buildPruneOrphanConversationSessionsHandler(db),
+    ),
   );
   await boss.schedule(
     'prune_orphan_conversation_sessions',
@@ -121,7 +153,11 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   await createOrUpdateQueue(boss, VERIFY_DISPATCH_RECOVERY_QUEUE, FAST_QUEUE_OPTS);
   await boss.work(
     VERIFY_DISPATCH_RECOVERY_QUEUE,
-    buildVerifyDispatchRecoveryHandler(db, enqueueRecoveredVerify),
+    fenceAwareJobHandler(
+      db,
+      VERIFY_DISPATCH_RECOVERY_QUEUE,
+      buildVerifyDispatchRecoveryHandler(db, enqueueRecoveredVerify),
+    ),
   );
   await boss.schedule(
     VERIFY_DISPATCH_RECOVERY_QUEUE,

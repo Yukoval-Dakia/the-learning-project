@@ -58,6 +58,48 @@ export function toHonoPath(path: string): string {
   return path.replace(/\[([^\]]+)\]/g, ':$1');
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// YUK-1055 — DB contract epoch gate（grounding §15：stale client 请求拒绝）。
+//
+// 裁决逻辑在 src/server/contract-epoch（本文件保持零 DB import —— db client 在
+// 模块顶层读 DATABASE_URL，测试进程未设时必须惰性）。`/api/health` 与
+// `/api/ready` 豁免（health ≠ readiness）；其余 /api/* 在 token 验证之后再过
+// epoch 门：fenced → 503 contract_epoch_fenced，读面也拒（迁移中读旧数据误导）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface EpochGateResult {
+  runnable: boolean;
+  epoch?: string;
+  state?: string;
+  codeEpoch?: string;
+  reason?: 'maintenance' | 'epoch_mismatch' | 'unavailable';
+}
+
+/** 每个请求一次的 epoch 裁决（可注入；默认实现惰性绑 db client）。 */
+export type EpochGate = () => Promise<EpochGateResult>;
+
+const DEFAULT_EPOCH_GATE: EpochGate = async () => {
+  // 无 DATABASE_URL（纯静态/单测面）→ gate inert：没有 DB 可护。
+  if (!process.env.DATABASE_URL) return { runnable: true };
+  try {
+    const [{ db }, { CODE_CONTRACT_EPOCH, checkContractEpoch }] = await Promise.all([
+      import('@/db/client'),
+      import('@/server/contract-epoch'),
+    ]);
+    const status = await checkContractEpoch(db);
+    return {
+      runnable: status.runnable,
+      epoch: status.marker?.epoch,
+      state: status.marker?.state,
+      codeEpoch: CODE_CONTRACT_EPOCH,
+      reason: status.reason,
+    };
+  } catch {
+    // DB 读不出 marker → fail-visible 503（诚实拒绝，不猜成可运行）。
+    return { runnable: false, codeEpoch: undefined, reason: 'unavailable' };
+  }
+};
+
 // Fail-closed token 比较（M5 全分支 review H1）：INTERNAL_TOKEN 未设 ⇒ 拒绝一切
 // /api/* 请求（直接 `!==` 比较在「未设 + 缺 header」时 undefined !== undefined
 // 为 false 会放行）。SHA-256 摘要定长后 timingSafeEqual——常时比较且不泄露长度，
@@ -69,7 +111,11 @@ function tokenMatches(header: string | undefined, secret: string | undefined): b
   return timingSafeEqual(a, b);
 }
 
-export function buildHonoApp(capabilities: CapabilityManifest[]): Hono {
+export function buildHonoApp(
+  capabilities: CapabilityManifest[],
+  options: { epochGate?: EpochGate } = {},
+): Hono {
+  const epochGate = options.epochGate ?? DEFAULT_EPOCH_GATE;
   // Manifest is both the mount inventory and the API contract source. Validate at
   // boot as well as in CI so a bad operationId/path/status declaration fails closed.
   validateComposition(capabilities);
@@ -91,9 +137,32 @@ export function buildHonoApp(capabilities: CapabilityManifest[]): Hono {
   app.use('*', SECURITY_HEADERS);
 
   app.use('/api/*', async (c, next) => {
-    if (c.req.path === '/api/health') return next();
+    if (c.req.path === '/api/health' || c.req.path === '/api/ready') return next();
     if (!tokenMatches(c.req.header('x-internal-token'), process.env.INTERNAL_TOKEN)) {
       return c.json({ error: 'unauthorized' }, 401);
+    }
+    // YUK-1055 — stale client / fenced runtime 拒绝：token 合法但 DB epoch 不
+    // 允许本代码执行 runtime 路径（preparing/ready 维护窗或 epoch 不匹配）→ 503。
+    const gate = await epochGate();
+    if (!gate.runnable) {
+      console.warn('[contract-epoch]', {
+        event: 'fenced',
+        surface: 'api',
+        path: c.req.path,
+        epoch: gate.epoch,
+        state: gate.state,
+        reason: gate.reason,
+      });
+      return c.json(
+        {
+          error: 'contract_epoch_fenced',
+          reason: gate.reason,
+          epoch: gate.epoch,
+          state: gate.state,
+          code_epoch: gate.codeEpoch,
+        },
+        503,
+      );
     }
     return next();
   });
@@ -107,6 +176,24 @@ export function buildHonoApp(capabilities: CapabilityManifest[]): Hono {
   );
 
   app.get('/api/health', (c) => c.json({ ok: true }));
+  // YUK-1055 — readiness ≠ health：health 是进程活性（永远 200），ready 报告
+  // 本进程能否合法执行 runtime 路径（DB epoch marker vs CODE_CONTRACT_EPOCH）。
+  // 运维/发布链路用 ready 做 matched app/worker 启动判据（grounding §15）。
+  // 与 health 同豁免 token（探测面；泄露的只是 epoch 态，同 health 的 ok:true
+  // 级别信息）。fenced → 503（ready 语义本身就是「不可服务」）。
+  app.get('/api/ready', async (c) => {
+    const gate = await epochGate();
+    return c.json(
+      {
+        ok: gate.runnable,
+        epoch: gate.epoch ?? null,
+        state: gate.state ?? null,
+        code_epoch: gate.codeEpoch ?? null,
+        reason: gate.reason ?? null,
+      },
+      gate.runnable ? 200 : 503,
+    );
+  });
   // YUK-624：TokenGate 的轻量验证端点。它位于 /api/* middleware 之后，
   // 因而 200 本身就是「当前 x-internal-token 已通过服务端比较」的证据；
   // 不借业务读接口验 token，避免认证门与 workbench/subjects 可用性耦合。

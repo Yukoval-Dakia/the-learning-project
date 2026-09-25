@@ -1032,6 +1032,36 @@ export const migration_apply_phase = pgTable(
   ],
 );
 
+// YUK-1055 — DB contract epoch marker（grounding §15：DB epoch
+// `preparing/ready/active` 在 recovery/handlers/cron 之前建立，app/worker 契约
+// guard 读它决定本进程能否执行 runtime 路径）。
+//
+// 设计：append-only history —— 一行 = 一次 epoch 状态迁移（全序 seq），「当前
+// epoch」= seq 最大行。不用单行 UPDATE：迁移窗口的历史本身就是审计证据。
+// 真相语义（src/server/contract-epoch/rules.ts 是唯一裁决者，本表只是存储）：
+//   - 缺表/空表 = 隐式 ('legacy','active') —— pre-cutover DB 天然 runnable。
+//   - 'preparing'：维护窗口，全部 runtime 路径 fenced（含旧 epoch）。
+//   - 'ready'：迁移已验证待激活，仍 fenced（安静窗口）。
+//   - 'active'：仅当 marker.epoch 等于运行代码的 contract epoch 才 runnable。
+// 备份语义：durable（非运维态）→ FK_ORDER，见 src/server/export/constants.ts。
+export const contract_epoch = pgTable(
+  'contract_epoch',
+  {
+    seq: integer('seq').primaryKey(),
+    epoch: text('epoch').notNull(),
+    state: text('state', { enum: ['preparing', 'ready', 'active'] }).notNull(),
+    entered_at: timestamp('entered_at', { withTimezone: true }).notNull().defaultNow(),
+    /** 迁移操作者/工具标识（CLI --actor / 'migrate'）。 */
+    entered_by: text('entered_by').notNull(),
+    note: text('note'),
+  },
+  (t) => [
+    check('contract_epoch_state_ck', sql`${t.state} IN ('preparing','ready','active')`),
+    check('contract_epoch_epoch_nonempty_ck', sql`length(${t.epoch}) > 0`),
+    check('contract_epoch_entered_by_nonempty_ck', sql`length(${t.entered_by}) > 0`),
+  ],
+);
+
 // Phase 1c.1 Step 9.J — `mistake` and `review_event` tables DROPped per
 // ADR-0006 v2: failure attempts are events (action='attempt', outcome='failure'),
 // reviews are events (action='review'). FSRS state projection lives in

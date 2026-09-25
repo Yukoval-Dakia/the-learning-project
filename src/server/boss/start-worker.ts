@@ -14,12 +14,27 @@ import { registerHandlers } from '@/server/boss/handlers';
 import { reconcileStuckAiTaskRuns } from '@/server/boss/handlers/ai_task_run_reconcile';
 import { registerCapabilityJobs } from '@/server/boss/register-capability-jobs';
 import { sendVerifyDispatchStartupRecovery } from '@/server/boss/verify-dispatch-outbox';
+import { waitForRunnableEpoch } from '@/server/contract-epoch';
 import { getServerEnv } from '@/server/env';
 import { mountSubscriptionDispatch } from '@/server/event-subscriptions/dispatch-mount';
 import { registerOrchestrator } from '@/server/orchestration/register';
 import { hydrateSubjectRegistryFromDb, startSubjectRefresh } from '@/server/subjects/hydrate';
 
-export async function startBossWorker(db: Db): Promise<PgBoss> {
+export type StartBossWorkerOptions = {
+  /** YUK-1055 epoch 闸门轮询间隔（测试注小值）。 */
+  epochPollIntervalMs?: number;
+};
+
+export async function startBossWorker(
+  db: Db,
+  options: StartBossWorkerOptions = {},
+): Promise<PgBoss> {
+  // YUK-1055 — DB epoch guard 必须排在 recovery/handlers/cron 之前（grounding §15）。
+  // marker 'preparing'/'ready'（维护窗）或 epoch 不匹配时本 worker 停在闸门内
+  // 轮询，不启动 boss、不挂消费者 —— fenced 不 crash-loop，operator 推到
+  // runnable（本代码 epoch 的 'active'）后自动继续。DB 读失败原样上抛
+  // （boot 失败 = supervised restart，与既有 start 失败同语义）。
+  await waitForRunnableEpoch(db, { pollIntervalMs: options.epochPollIntervalMs });
   await recoverToolOperationsOnBoot(db);
   const env = getServerEnv();
   // YUK-599（v2 §4）— worker 首个 job 落地前水合 SubjectRegistry（never-throws：
