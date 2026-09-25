@@ -46,6 +46,11 @@ export const SharedMaterial = z.object({
   caption: z.string().optional(),
   /** 可读替代说明（§7.2 —— 独立材料渲染、缩放、可读替代）。 */
   alt_text: z.string().optional(),
+  /** YUK-1043（复审 P1-2a）：文本类材料的【字节】随 revision 内联持久化 ——
+   * 不可变 revision 必须能自恢复共享段落，不能只留 txt_<hash> 引用而内容
+   * 无处可寻。figure 等二进制资产走 asset store（asset_id + 实内容 digest）；
+   * 纯文本材料的 content 即资产本身。进入 structure ⇒ 自动入 integrity digest。 */
+  content_md: z.string().optional(),
 });
 export type SharedMaterialT = z.infer<typeof SharedMaterial>;
 

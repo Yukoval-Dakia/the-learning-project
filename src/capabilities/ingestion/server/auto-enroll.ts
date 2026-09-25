@@ -92,6 +92,7 @@ import {
 import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
 import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { getKnownSubjects, resolveSubjectProfile } from '@/subjects/profile';
 
 export type AutoEnrollSkipReason = 'flag_off' | 'session_not_found' | 'wrong_status';
@@ -863,6 +864,16 @@ export async function runAutoEnrollForSession(
           version: 0,
         }),
       );
+
+      // YUK-1043（复审裁决：可行写口即刻收敛）—— OCR/VLM 收录 INSERT 同事务
+      // 铸首版 revision。原始提取/学生作答分离：reference 仅在 OCR 提取到答案
+      // 时存在（缺 ⇒ conversion_issue ⇒ withheld）；学生作答走 attempt 事件，
+      // 绝不进答案键。
+      await publishQuestionGroupFromRow(tx, {
+        rootId: questionId,
+        actorRef: 'auto-enroll:question',
+        now,
+      });
 
       // SAME enrollment owner as the human path — only generatedBy + the (drafted)
       // outcome/answer differ. enrollCapturedBlock routes all 4 outcomes.

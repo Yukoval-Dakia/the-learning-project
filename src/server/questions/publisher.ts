@@ -36,8 +36,10 @@
 //   - 维度更新（admission_updated）受 expectedAdmissionGeneration CAS 保护
 //     —— 过期的准入/挂起请求不能覆盖更新的决定。
 
+import { createHash } from 'node:crypto';
+
 import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 
 import type {
   AdmissionEvidenceT,
@@ -52,7 +54,7 @@ import {
   validateScoringBasis,
 } from '@/core/schema/assessment';
 import type { Db, Tx } from '@/db/client';
-import { question, question_group_lifecycle, question_revision } from '@/db/schema';
+import { question, question_group_lifecycle, question_revision, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { contractIntegrityDigest, normalizeQuestionGroupToContract } from './contract-normalizer';
 
@@ -132,15 +134,6 @@ export type PublishQuestionGroupResult =
       reason: 'revision_cas' | 'admission_generation_cas';
     };
 
-/** 跨版本 identity diff（P1-4 —— 映射轨迹随发布事件原子持久化）。 */
-export interface IdentityDiff {
-  retained_part_ids: string[];
-  added_part_ids: string[];
-  removed_part_ids: string[];
-  /** slot 级 option 增删（option 语义替换 ⇒ 新身份；未变 ⇒ 保留）。 */
-  option_changes: { slot_id: string; added_option_ids: string[]; removed_option_ids: string[] }[];
-}
-
 function assertAdmissionShape(admission: PublishAdmission): void {
   if (admission.state === 'admitted') {
     const evidence = admission.evidence;
@@ -214,58 +207,141 @@ function admissionValuesFor(admission: PublishAdmission, now: Date) {
       };
 }
 
-/** 与被替换版本比对，产出 identity diff（P1-4 映射轨迹）。 */
+/** 跨版本 identity diff（P1-3/P1-4 —— 映射轨迹随发布事件原子持久化）。
+ * 语义裁决（复审第二轮）：part id 相同 ≠ 语义连续 —— 判分相关内容
+ *（题面/选项文本集/答案键/规则文本）实质变化 ⇒ 【replaced】+ 显式
+ * old→new fingerprint 映射；内容等价才 retained。保守规则：无法判定
+ *（旧版形状缺失等）⇒ replaced，绝不静默记 retained。 */
+export interface PartChange {
+  part_id: string;
+  status: 'retained' | 'replaced' | 'added' | 'removed';
+}
+
+export interface ReplacementMapping {
+  part_id: string;
+  previous_fingerprint: string;
+  next_fingerprint: string;
+}
+
+export interface IdentityDiff {
+  part_changes: PartChange[];
+  /** slot 级 option 增删（option 文本变 ⇒ 新身份 = 语义替换；label 不参与身份）。 */
+  option_changes: { slot_id: string; added_option_ids: string[]; removed_option_ids: string[] }[];
+  /** replaced part 的 old→new 判分内容 fingerprint 映射（§3.1 身份映射 seam）。 */
+  replacement_mappings: ReplacementMapping[];
+}
+
+/** part 的判分相关内容 fingerprint：题面 + 材料 + 选项文本集 + criterion。
+ * 变化 ⇒ 语义替换（无论行/node id 是否保留）。stable 序列化（jsonb 读回
+ * key 顺序无关）。 */
+function partFingerprint(
+  partId: string,
+  structure: QuestionGroupStructureT,
+  spec: ResponseSpecT,
+  basis: ScoringBasisT,
+): string | null {
+  const part = structure.parts.find((p) => p.part_id === partId);
+  if (part == null) return null;
+  const slot = spec.slots.find((s) => s.part_id === partId);
+  const unit = basis.units.find((u) => u.scoring_unit_id === `${partId}::u`);
+  if (slot == null || unit == null) return null; // 形状异常 ⇒ 无法判定
+  const options =
+    slot.kind === 'single_choice' || slot.kind === 'multi_choice'
+      ? slot.options.map((o) => `${o.option_id}:${o.text}`).sort()
+      : [];
+  const canonical = stableStringify({
+    prompt: part.prompt_md,
+    material_ids: [...part.material_ids].sort(),
+    options,
+    criterion: unit.criterion,
+  });
+  return `fp_${createHash('sha256').update(canonical).digest('hex').slice(0, 24)}`;
+}
+
+/** 与被替换版本比对，产出【语义】identity diff（P1-3 裁决）。 */
 function computeIdentityDiff(
-  previous: { structure: QuestionGroupStructureT; response_spec: ResponseSpecT } | null,
-  next: { structure: QuestionGroupStructureT; response_spec: ResponseSpecT },
+  previous: {
+    structure: QuestionGroupStructureT;
+    response_spec: ResponseSpecT;
+    scoring_basis: ScoringBasisT;
+  } | null,
+  next: {
+    structure: QuestionGroupStructureT;
+    response_spec: ResponseSpecT;
+    scoring_basis: ScoringBasisT;
+  },
 ): IdentityDiff {
-  if (previous == null) {
-    return {
-      retained_part_ids: [],
-      added_part_ids: next.structure.parts.map((p) => p.part_id),
-      removed_part_ids: [],
-      option_changes: next.response_spec.slots.flatMap((slot) =>
+  const optionChangesFor = (prev: ResponseSpecT | null): IdentityDiff['option_changes'] => {
+    const prevOptionsBySlot = new Map(
+      (prev?.slots ?? []).flatMap((slot) =>
         slot.kind === 'single_choice' || slot.kind === 'multi_choice'
-          ? [
-              {
-                slot_id: slot.slot_id,
-                added_option_ids: slot.options.map((o) => o.option_id),
-                removed_option_ids: [],
-              },
-            ]
+          ? [[slot.slot_id, new Set(slot.options.map((o) => o.option_id))] as const]
           : [],
       ),
+    );
+    const changes: IdentityDiff['option_changes'] = [];
+    for (const slot of next.response_spec.slots) {
+      if (slot.kind !== 'single_choice' && slot.kind !== 'multi_choice') continue;
+      const prevOpts = prevOptionsBySlot.get(slot.slot_id) ?? new Set<string>();
+      const current = slot.options.map((o) => o.option_id);
+      const added = current.filter((id) => !prevOpts.has(id));
+      const removed = [...prevOpts].filter((id) => !current.includes(id));
+      if (added.length > 0 || removed.length > 0) {
+        changes.push({
+          slot_id: slot.slot_id,
+          added_option_ids: added,
+          removed_option_ids: removed,
+        });
+      }
+    }
+    return changes;
+  };
+
+  if (previous == null) {
+    return {
+      part_changes: next.structure.parts.map((p) => ({
+        part_id: p.part_id,
+        status: 'added' as const,
+      })),
+      option_changes: optionChangesFor(null),
+      replacement_mappings: [],
     };
   }
   const prevParts = new Set(previous.structure.parts.map((p) => p.part_id));
   const nextParts = new Set(next.structure.parts.map((p) => p.part_id));
-  const prevOptionsBySlot = new Map(
-    previous.response_spec.slots.flatMap((slot) =>
-      slot.kind === 'single_choice' || slot.kind === 'multi_choice'
-        ? [[slot.slot_id, new Set(slot.options.map((o) => o.option_id))] as const]
-        : [],
-    ),
-  );
-  const optionChanges: IdentityDiff['option_changes'] = [];
-  for (const slot of next.response_spec.slots) {
-    if (slot.kind !== 'single_choice' && slot.kind !== 'multi_choice') continue;
-    const prev = prevOptionsBySlot.get(slot.slot_id) ?? new Set<string>();
-    const current = slot.options.map((o) => o.option_id);
-    const added = current.filter((id) => !prev.has(id));
-    const removed = [...prev].filter((id) => !current.includes(id));
-    if (added.length > 0 || removed.length > 0) {
-      optionChanges.push({
-        slot_id: slot.slot_id,
-        added_option_ids: added,
-        removed_option_ids: removed,
+  const partChanges: PartChange[] = [];
+  const replacementMappings: ReplacementMapping[] = [];
+  for (const partId of nextParts) {
+    if (!prevParts.has(partId)) {
+      partChanges.push({ part_id: partId, status: 'added' });
+      continue;
+    }
+    const prevFp = partFingerprint(
+      partId,
+      previous.structure,
+      previous.response_spec,
+      previous.scoring_basis,
+    );
+    const nextFp = partFingerprint(partId, next.structure, next.response_spec, next.scoring_basis);
+    // 保守裁决：fingerprint 不可得（形状异常）或内容实质变化 ⇒ replaced。
+    if (prevFp != null && nextFp != null && prevFp === nextFp) {
+      partChanges.push({ part_id: partId, status: 'retained' });
+    } else {
+      partChanges.push({ part_id: partId, status: 'replaced' });
+      replacementMappings.push({
+        part_id: partId,
+        previous_fingerprint: prevFp ?? 'unrecoverable',
+        next_fingerprint: nextFp ?? 'unrecoverable',
       });
     }
   }
+  for (const partId of prevParts) {
+    if (!nextParts.has(partId)) partChanges.push({ part_id: partId, status: 'removed' });
+  }
   return {
-    retained_part_ids: [...nextParts].filter((id) => prevParts.has(id)),
-    added_part_ids: [...nextParts].filter((id) => !prevParts.has(id)),
-    removed_part_ids: [...prevParts].filter((id) => !nextParts.has(id)),
-    option_changes: optionChanges,
+    part_changes: partChanges,
+    option_changes: optionChangesFor(previous.response_spec),
+    replacement_mappings: replacementMappings,
   };
 }
 
@@ -368,6 +444,7 @@ export async function publishQuestionGroup(
     let previousContract: {
       structure: QuestionGroupStructureT;
       response_spec: ResponseSpecT;
+      scoring_basis: ScoringBasisT;
       ordinal: number;
       digest: string;
     } | null = null;
@@ -384,6 +461,7 @@ export async function publishQuestionGroup(
           digest: question_revision.integrity_digest,
           structure: question_revision.structure,
           response_spec: question_revision.response_spec,
+          scoring_basis: question_revision.scoring_basis,
         })
         .from(question_revision)
         .where(eq(question_revision.revision_id, currentRevisionId))
@@ -557,29 +635,32 @@ export async function publishQuestionGroupFromRow(
   input: PublishFromRowInput,
 ): Promise<PublishQuestionGroupResult> {
   return db.transaction(async (tx) => {
-    // P1-1 —— 组根锁先于一切组读取。传入行若是子 part（parent_question_id
-    // 非空），先解析到真实组根再锁（调用方允许传子行 id）。
-    let root = (
-      await tx.select().from(question).where(eq(question.id, input.rootId)).for('update').limit(1)
+    // P1-1（第二轮复审）—— 锁序修复：先用【非锁定】读解析真实组根（传入行
+    // 可能是子 part），然后只对组根取 FOR UPDATE —— 绝不先锁子行再找父
+    //（旧实现 lock(child)→lock(parent) 与已修正的 root→child 写口互为死锁序）。
+    const supplied = (
+      await tx
+        .select({ id: question.id, parentId: question.parent_question_id })
+        .from(question)
+        .where(eq(question.id, input.rootId))
+        .limit(1)
     )[0];
-    if (!root) {
+    if (!supplied) {
       throw new Error(`publishQuestionGroupFromRow: root question '${input.rootId}' not found`);
     }
-    if (root.parent_question_id != null) {
-      const parent = (
-        await tx
-          .select()
-          .from(question)
-          .where(eq(question.id, root.parent_question_id))
-          .for('update')
-          .limit(1)
-      )[0];
-      if (!parent) {
-        throw new Error(
-          `publishQuestionGroupFromRow: parent question '${root.parent_question_id}' not found`,
-        );
-      }
-      root = parent;
+    const effectiveRootId = supplied.parentId ?? supplied.id;
+    const root = (
+      await tx
+        .select()
+        .from(question)
+        .where(eq(question.id, effectiveRootId))
+        .for('update')
+        .limit(1)
+    )[0];
+    if (!root) {
+      throw new Error(
+        `publishQuestionGroupFromRow: group root question '${effectiveRootId}' not found`,
+      );
     }
     const rootId = root.id;
     // tombstoned part（archived/dismissed）不是可服务组员 —— 组契约排除之
@@ -590,6 +671,8 @@ export async function publishQuestionGroupFromRow(
         prompt_md: question.prompt_md,
         reference_md: question.reference_md,
         choices_md: question.choices_md,
+        structured: question.structured,
+        figures: question.figures,
         metadata: question.metadata,
       })
       .from(question)
@@ -608,13 +691,30 @@ export async function publishQuestionGroupFromRow(
       return { status: 'withdrawn', group_id: rootId } satisfies PublishQuestionGroupResult;
     }
 
+    // figure 实内容 digest 核验（root + parts 全部 figure 资产）：来自 asset
+    // store 元数据（source_asset.sha256，裸 hex）。无核验值 ⇒ normalizer 如实
+    // 标 unverified + conversion issue（不伪造 digest）。
+    const figureAssetIds = new Set<string>();
+    for (const f of root.figures ?? []) figureAssetIds.add(f.asset_id);
+    for (const p of liveParts) for (const f of p.figures ?? []) figureAssetIds.add(f.asset_id);
+    const figureDigests: Record<string, string> = {};
+    if (figureAssetIds.size > 0) {
+      const assetRows = await tx
+        .select({ assetId: source_asset.id, sha256: source_asset.sha256 })
+        .from(source_asset)
+        .where(inArray(source_asset.id, [...figureAssetIds]));
+      for (const assetRow of assetRows) figureDigests[assetRow.assetId] = assetRow.sha256;
+    }
+
     const contract = normalizeQuestionGroupToContract(
-      root as Parameters<typeof normalizeQuestionGroupToContract>[0],
+      { ...(root as Parameters<typeof normalizeQuestionGroupToContract>[0]), figureDigests },
       liveParts.map((p) => ({
         id: p.id,
         prompt_md: p.prompt_md,
         reference_md: p.reference_md,
         choices_md: p.choices_md,
+        structured: p.structured,
+        figures: p.figures,
       })),
     );
 

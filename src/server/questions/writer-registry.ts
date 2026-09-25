@@ -29,8 +29,9 @@ export interface QuestionContentWriterEntry {
   /** 收敛/跟踪 ticket。 */
   tickets: string[];
   note: string;
-  /** pending 条目必填（P1-6）：'cutover'（YUK-1059 统一切换）或
-   * 'blocked-by:YUK-NNNN'（等前置票）。 */
+  /** pending 条目必填（P1-6；复审裁决补 'deferred'）：'blocked-by:YUK-NNNN'
+   *（真前置 —— 需要别的 lane 的契约）| 'deferred'（可做但选择不做，注明理由）
+   * | 'cutover'（YUK-1059 统一切换时收敛）。 */
   pendingClass?: string;
 }
 
@@ -82,40 +83,35 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
   // 写者（只写 draft_status/metadata），但作为 §2 矩阵的 admission 时刻已在
   // YUK-1043 同事务接 publisher（见各文件 YUK-1043 注释），无需内容列登记。
   'src/capabilities/ingestion/server/auto-enroll.ts': {
-    status: 'working-copy-pending',
-    tickets: ['YUK-1059'],
-    pendingClass: 'blocked-by:YUK-1051',
-    note: '§2 矩阵 OCR/VLM 自动收录行：原始提取/学生作答/参考答案分离需要作答面契约（YUK-1051 通用 response 组件 + open_response 原语）先落 —— 分离后才能归一，避免把学生作答误入答案键。',
+    status: 'publisher-converged',
+    tickets: ['YUK-1043'],
+    note: 'OCR/VLM 收录 INSERT ⇒ 同事务首版 revision（reference 缺失 ⇒ conversion_issue ⇒ withheld；学生作答走 attempt 事件，不进答案键 —— 复审裁决的先行落位）。',
   },
   'src/capabilities/ingestion/server/import-completion.ts': {
-    status: 'working-copy-pending',
-    tickets: ['YUK-1059'],
-    pendingClass: 'cutover',
-    note: '§2 矩阵上传确认导入行：块级编辑工作流（question_block 树）与题库契约的归并走 cutover 统一（无法结构化时使用通用开放作答契约，不丢内容）。',
+    status: 'publisher-converged',
+    tickets: ['YUK-1043'],
+    note: '上传确认导入 INSERT ⇒ 同事务首版 revision（withheld —— 判分输入可契约化，无需等 cutover；复审裁决即刻收敛）。',
   },
   'src/capabilities/ingestion/server/image-candidate-accept.ts': {
-    status: 'working-copy-pending',
-    tickets: ['YUK-1059'],
-    pendingClass: 'blocked-by:YUK-1047',
-    note: '§2 矩阵 image_candidate 行：multimodal 判分执行器未按 D17 准入（YUK-1047 evaluator lane）—— 准入前 multimodal_direct 语义不能进 execution_plan；保留 terminal-rate 锁/来源图证据。',
+    status: 'publisher-converged',
+    tickets: ['YUK-1043'],
+    note: 'image_candidate 接受 INSERT ⇒ 同事务首版 revision withheld —— withheld admission 正是为「结构可判分、深度 grounding 未过」准备；source_verify（含 YUK-230 多模态复查）过后再 promote。',
   },
   'src/capabilities/ingestion/api/mistakes.ts': {
-    status: 'working-copy-pending',
-    tickets: ['YUK-1059'],
-    pendingClass: 'blocked-by:YUK-1051',
-    note: '§2 矩阵手动错题行：原错误作答证据与答案键的分离需要 open_response/证据附件契约（YUK-1051）—— 作答证据不能进答案键。',
+    status: 'publisher-converged',
+    tickets: ['YUK-1043'],
+    note: '人工错题 INSERT ⇒ 同事务首版 revision（原错误作答不能成为答案键：在 attempt 事件保留；契约只承载题面/参考 —— 复审裁决即刻收敛）。',
   },
   'src/capabilities/practice/jobs/quiz_gen.ts': {
-    status: 'working-copy-pending',
-    tickets: ['YUK-1059'],
-    pendingClass: 'blocked-by:YUK-1052',
-    note: '§2 矩阵批量 quiz_gen 行：parent 行直写待收敛（composite 子 part 已经 parts.ts 收敛）；serve 侧 pinned issuance 绑定（YUK-1052 提交持久化）落位后才能把 artifact 引用与 revision 稳定绑定。',
+    status: 'publisher-converged',
+    tickets: ['YUK-1043'],
+    note: 'quiz_gen 新题同事务铸首版 revision：composite 由 createQuestionPart 逐 part 发布（此处幂等 noop）；单题铸 v1。均 withheld/unverified_rules，quiz_verify promote 翻 admitted。',
   },
   'src/capabilities/practice/server/tools/question-author.ts': {
     status: 'working-copy-pending',
     tickets: ['YUK-1059'],
-    pendingClass: 'cutover',
-    note: '§2 矩阵 author_question 行：draft 持久化是草稿层工作副本（candidate 不冒充已发布题）；其接受路径已 converged（proposal-appliers）。draft 层直写随 cutover 统一收敛。',
+    pendingClass: 'deferred',
+    note: '§2 矩阵 author_question 行【deferred，非 blocked】：接受路径已 converged（proposal-appliers）；未接受草稿不铸 revision 是产品选择（candidate 不冒充已发布题，草稿层无判分消费者），技术上现在就能做。cutover（YUK-1059）统一处置。',
   },
   'src/capabilities/agency/server/conjecture/probe-lifecycle.ts': {
     status: 'working-copy-pending',

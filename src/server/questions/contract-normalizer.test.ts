@@ -3,6 +3,7 @@
 // 保真（stem/rubric/per-part 答案/provenance/digest 覆盖）、多答案键
 // （multi_choice）、未决转换（conversion_issues）。
 
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -343,6 +344,174 @@ describe('物理多 part 组归一（P1-2 保真）', () => {
       { id: 'p1', prompt_md: '(1)', reference_md: '42', choices_md: null },
     ]);
     expect(a.integrity_digest).not.toBe(b.integrity_digest);
+  });
+});
+
+describe('第二轮复审 P1-2/P1-3 — 保真与身份（先红后绿）', () => {
+  it('P1-2a: shared stem material carries its BYTES (content_md) — the immutable revision can recover the passage', () => {
+    const tree = {
+      id: 'stem_x',
+      role: 'stem',
+      prompt_text: '阅读下面的文言文，完成后面小题。（共享长文本……）',
+      sub_questions: [
+        { id: 'leaf_x', role: 'sub', prompt_text: '(1) 解释加点词', answers: ['趁机'] },
+      ],
+    } as unknown as StructuredQuestionT;
+    const n = normalizeQuestionRowToContract(
+      baseRow({ structured: tree, choices_md: null, reference_md: '趁机' }),
+    );
+    const stem = n.structure.materials.find((m) => m.caption === 'stem/shared context');
+    if (!stem) throw new Error('stem material missing');
+    // 字节随 revision 内联持久化（content_md），不是只有 txt_<hash> 引用 ——
+    // 共享段落可从不可变 revision 自恢复（含 stem 文本；row prompt 若与 stem
+    // 不同文则一并内联）。
+    expect((stem as { content_md?: string }).content_md).toContain(
+      '阅读下面的文言文，完成后面小题。（共享长文本……）',
+    );
+    expect(stem.asset.digest).toBe(
+      `sha256:${createHash('sha256')
+        .update((stem as { content_md: string }).content_md)
+        .digest('hex')}`,
+    );
+  });
+
+  it('P1-2a: rubric material carries its bytes too', () => {
+    const n = normalizeQuestionRowToContract(
+      baseRow({ rubric_json: { criteria: [{ id: 'c1', points: 2, desc: '论点' }] } }),
+    );
+    const rubricMat = n.structure.materials.find((m) => m.caption?.startsWith('rubric'));
+    if (!rubricMat) throw new Error('rubric material missing');
+    expect((rubricMat as { content_md?: string }).content_md).toContain('论点');
+  });
+
+  it('P1-2b: structured leaf WITHOUT its own answer is unresolved — root reference must NOT become its key', () => {
+    const tree = {
+      id: 'stem_y',
+      role: 'stem',
+      prompt_text: 'stem',
+      sub_questions: [
+        { id: 'leaf_y', role: 'sub', prompt_text: '(1) 求值' }, // 无 answers
+      ],
+    } as unknown as StructuredQuestionT;
+    const n = normalizeQuestionRowToContract(
+      baseRow({ structured: tree, choices_md: null, reference_md: 'B' }),
+    );
+    expect(n.conversion_issues).toHaveLength(1);
+    expect(n.conversion_issues[0]).toMatchObject({ code: 'missing_reference', partId: 'leaf_y' });
+    const unit = n.scoring_basis.units[0];
+    if (unit.criterion.kind !== 'rule_reference') throw new Error('expected rule_reference');
+    // 未决：placeholder 文本，不是 root 的答案键。
+    expect(unit.criterion.statement_md).toContain('待补规则');
+    expect(unit.criterion.statement_md).not.toContain('（判分意图');
+  });
+
+  it('P1-2c: AI-backfilled answer (rubric.reference_solution_source=ai_generated) is system_proposed even on a web_sourced row', () => {
+    const n = normalizeQuestionRowToContract(
+      baseRow({
+        kind: 'short_answer',
+        choices_md: null,
+        reference_md: 'AI 生成的 worked solution',
+        rubric_json: {
+          criteria: [],
+          reference_solution: { final_answer: '42' },
+          reference_solution_source: 'ai_generated',
+        },
+        source: 'web_sourced',
+      }),
+    );
+    const unit = n.scoring_basis.units[0];
+    if (unit.criterion.kind !== 'rule_reference') throw new Error('expected rule_reference');
+    expect(unit.criterion.source).toBe('system_proposed'); // D1 —— 答案证据来源，不是题目获取来源
+  });
+
+  it('P1-2c: physical part carries its OWN structured options and figures through the publisher projection', () => {
+    const root = baseRow({
+      id: 'grp_c',
+      kind: 'composite',
+      prompt_md: 'stem',
+      choices_md: null,
+      figures: [
+        {
+          asset_id: 'ast_root',
+          role: 'diagram',
+          source_page_index: 0,
+          source_bbox: { x: 0, y: 0, w: 1, h: 1 },
+          attached_to_index: 'grp_c',
+          attach_confidence: 'high',
+        } as unknown as FigureRefT,
+      ],
+    });
+    const n = normalizeQuestionGroupToContract(root, [
+      {
+        id: 'p1',
+        prompt_md: '(1)',
+        reference_md: 'A',
+        choices_md: ['错误', '正确'],
+        structured: {
+          id: 'p1',
+          role: 'standalone',
+          prompt_text: '(1)',
+          answers: ['B'],
+          options: [
+            { label: 'A', text: '选项甲' },
+            { label: 'B', text: '选项乙' },
+          ],
+        } as unknown as StructuredQuestionT,
+        figures: [
+          {
+            asset_id: 'ast_part',
+            role: 'diagram',
+            source_page_index: 0,
+            source_bbox: { x: 0, y: 0, w: 1, h: 1 },
+            attached_to_index: 'p1',
+            attach_confidence: 'high',
+          } as unknown as FigureRefT,
+        ],
+      },
+    ]);
+    // 选项来自 part 自己的 structured（叶 options），不是行级 choices。
+    const slot = n.response_spec.slots[0];
+    if (slot.kind !== 'single_choice') throw new Error('expected single_choice');
+    expect(slot.options.map((o) => o.text)).toEqual(['选项甲', '选项乙']);
+    // part 图与 root 图都进材料（各自内容寻址身份，part 引用两者）。
+    const assetIds = n.structure.materials.map((m) => m.asset.asset_id);
+    expect(assetIds).toContain('ast_part');
+    expect(assetIds).toContain('ast_root');
+    expect(n.structure.parts[0].material_ids).toHaveLength(3); // stem + root figure + part figure
+  });
+
+  it('P1-3: option identity is TEXT-only — label-only change keeps the option id and the digest', () => {
+    // mintOptionId 无 label 入参：label 是显示元数据，不是身份输入。
+    //（同文本 ⇒ 同 id；异文本 ⇒ 新身份；disambiguator 仅用于同槽重复文本消歧。）
+    expect(mintOptionId('text')).toBe(mintOptionId('text'));
+    expect(mintOptionId('text')).not.toBe(mintOptionId('text2'));
+    expect(mintOptionId('text')).not.toBe(mintOptionId('text', '#2'));
+
+    // structured 选项 relabel（A/B → 甲/乙，文本不变）⇒ 同 option id、同 digest。
+    const relabel = (labelA: string, labelB: string) =>
+      ({
+        id: 'solo_z',
+        role: 'standalone',
+        prompt_text: '选词填空',
+        answers: ['B'],
+        options: [
+          { label: labelA, text: '选项甲' },
+          { label: labelB, text: '选项乙' },
+        ],
+      }) as unknown as StructuredQuestionT;
+    const a = normalizeQuestionRowToContract(
+      baseRow({ structured: relabel('A', 'B'), choices_md: null }),
+    );
+    const b = normalizeQuestionRowToContract(
+      baseRow({ structured: relabel('甲', '乙'), choices_md: null }),
+    );
+    const slotA = a.response_spec.slots[0];
+    const slotB = b.response_spec.slots[0];
+    if (slotA.kind !== 'single_choice' || slotB.kind !== 'single_choice') {
+      throw new Error('expected single_choice');
+    }
+    expect(slotB.options.map((o) => o.option_id)).toEqual(slotA.options.map((o) => o.option_id));
+    expect(b.integrity_digest).toBe(a.integrity_digest);
   });
 });
 

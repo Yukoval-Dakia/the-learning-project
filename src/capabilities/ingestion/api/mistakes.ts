@@ -16,6 +16,7 @@ import {
 } from '@/kernel/read-models/subject-profile';
 import { createLearningRecord } from '@/kernel/records/queries';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { listMistakeProjectionPage } from '@/server/records/mistakes';
 import { CreateMistakeBodySchema, MistakeListQuerySchema } from './contracts';
 
@@ -115,6 +116,15 @@ export async function POST(req: Request): Promise<Response> {
           version: 0,
         }),
       );
+      // YUK-1043（复审裁决：可行写口即刻收敛）—— 人工错题 INSERT 同事务铸首版
+      // revision。错题原答不能成为答案键：reference 缺失 ⇒ normalizer 记
+      // conversion_issue ⇒ withheld/unverified_rules（P1-2 分离语义的先行落位：
+      // 题目契约与作答证据分别保留，作答证据在 attempt 事件，不在契约）。
+      await publishQuestionGroupFromRow(tx, {
+        rootId: questionId,
+        actorRef: 'mistakes:manual',
+        now,
+      });
       const questionSnapshot = await loadAttemptQuestionSnapshot(tx, questionId);
       await writeEvent(tx, {
         id: attemptEventId,

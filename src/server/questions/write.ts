@@ -451,6 +451,20 @@ export async function archiveQuestion(
       return { status: 'protected' };
     }
 
+    // P1-1（第二轮复审）—— 组锁序统一 root→child：archive 的目标是子 part 时，
+    // 先锁组根再改子行（旧序 child→root 与 editQuestion 的 root→child 互为
+    // 死锁序）。根 archive 时被更新行自身即根，UPDATE 取锁天然根优先。
+    const archiveRootId = row.parent_question_id ?? questionId;
+    if (row.parent_question_id != null) {
+      const [rootLock] = await tx
+        .select({ id: question.id })
+        .from(question)
+        .where(eq(question.id, archiveRootId))
+        .for('update')
+        .limit(1);
+      if (!rootLock) return { status: 'not_found' };
+    }
+
     const now = new Date();
     const archivedAtSec = Math.floor(now.getTime() / 1000);
 
@@ -531,16 +545,10 @@ export async function archiveQuestion(
     //  - 组根 archive ⇒ 整组 withdrawn（claim 释放已由上方 hash 置 NULL
     //    承担，分离语义；revision/digest 永不因 archive 改变）。
     //  - 单个 part archive ⇒ 组【内容】变化（tombstone part 退出组契约），
-    //    不是整组撤回：先锁组根再重发组 revision（FromRow 的 part 查询已排除
-    //    tombstone 子行；全部子行 tombstone 时 FromRow 落 withdrawn，不铸空组）。
-    const archiveRootId = row.parent_question_id ?? questionId;
+    //    不是整组撤回：重发组 revision（组根锁已在事务前段取得 —— 锁序
+    //    root→child；FromRow 的 part 查询已排除 tombstone 子行；全部子行
+    //    tombstone 时 FromRow 落 withdrawn，不铸空组）。
     if (row.parent_question_id != null) {
-      await tx
-        .select({ id: question.id })
-        .from(question)
-        .where(eq(question.id, archiveRootId))
-        .for('update')
-        .limit(1);
       await publishQuestionGroupFromRow(tx, {
         rootId: archiveRootId,
         actorRef: `question-archive:${actorRef}`,

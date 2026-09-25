@@ -5,17 +5,19 @@
 // 在同一事务内铸成不可变 question_revision。
 //
 // 保真纪律（P1-2 —— 归一不得丢失或发明权威内容）：
-//   - 题干/共享上下文（复合 root prompt、structured stem、figures 资产）进
-//     structure.materials（内容寻址 material 身份），parts 引用之 —— 改 root
-//     题干/图 ⇒ digest 变 ⇒ 新 revision；
+//   - 题干/共享上下文（复合 root prompt、structured stem、rubric）以
+//     【带字节】的 material 内联进 structure（content_md；复审 P1-2a：不可变
+//     revision 必须自恢复共享段落，不能只留 hash 引用）；figures 引用 asset
+//     store 的真实资产 + 由调用方核验的实内容 digest（无核验值 ⇒ 如实标注
+//     unverified，不伪造）；
 //   - 每个 part 的判分依据来自【它自己的】答案来源（part 行 reference /
-//     structured 叶 answers），root 的 reference 不再摊派到每个叶（复审
-//     「Structured leaf answer B + root reference A → 发布 A 的键」即此 bug）；
-//   - rubric_json 参与 rule 文本（reference 缺失但有 rubric ⇒ 以 rubric 为
-//     规则原文，provenance 如实标注，不标 official）；
-//   - rule_reference.source 按【答案实际来源】映射（web_sourced→official、
-//     manual→manual、其余模型链→system_proposed）—— D1：placeholder /
-//     AI 生成规则绝不冒充 official；
+//     structured 叶 answers）；root 的 reference 与无答案叶【绝不】互相兜底
+//     （复审 P1-2b：缺叶答案 ⇒ conversion_issue + withheld，不继承 root 键）；
+//   - rule_reference.source 按【答案证据】的实际来源映射（复审 P1-2c：
+//     rubric.reference_solution_source='ai_generated' ⇒ system_proposed，
+//     即使题目本身来自 web_sourced —— 题目获取来源 ≠ 答案权威来源，D1）；
+//     web_sourced 页面参考 → official、manual 录入 → manual、其余模型链 →
+//     system_proposed；rubric/placeholder 来源一律不冒充 official；
 //   - judge_kind_override 进入 rule 文本标记行 ⇒ 改判分意图 ⇒ digest 变。
 //
 // 多答案键（P1-3）：reference 头解析出 ≥2 个字母 ⇒ multi_choice 槽
@@ -26,16 +28,16 @@
 // 未决转换（fail-honest）：无可用品格依据的 part 记入 conversion_issues；
 // publisher 据此强制 withheld —— 显式 unresolved，绝不发明 one-point 规则。
 //
-// 身份纪律（§3.1 —— part/slot/option/criterion 身份语义不变时保留；语义替换
-// 生成新身份；禁止按 label/数组 index/相同文本【自动认定跨内容连续身份】）：
-//   - part_id：structured 叶 node id（编辑路径保留 node id）；物理多 part 组
-//     用子行 id；单题用行 id。行/node 保留 = 实体保留（工作副本编辑语义）；
-//     语义替换（树节点重建/新 part 行）天然产生新 id。
+// 身份纪律（§3.1；复审 P1-3 裁决）：
+//   - part_id：structured 叶 node id / 物理子行 id / 单题行 id。行/node 保留
+//     只是【实体】保留；语义是否连续由 publisher 的 SEMANTIC diff 裁决
+//     （判分相关内容实质变化 ⇒ replaced + 显式映射，绝不静默记 retained）。
 //   - slot_id：`{part_id}::r` 派生 —— part 保留 ⇒ slot 保留。
-//   - option_id / material_id：内容寻址铸造（sha256(label\0text) /
-//     sha256(kind\0text)）—— 内容不变 ⇒ 跨发布同 id；内容变 ⇒ 新 id（语义
-//     替换）。这是【铸造】而非「把已变内容映射回旧身份」；跨版本的身份
-//     增删由 publisher 计算 identity diff 并随发布事件持久化（映射轨迹）。
+//   - option_id：`opt_<sha256(text)>` —— 【仅文本】参与身份（label 是显示
+//     元数据，不是身份输入；复审裁决：relabel 不铸造新身份）。同槽内文本
+//     重复时以序号后缀消歧（病态形状，确定性处理）。
+//   - material_id：内容寻址（sha256(kind\0text)）—— 内容不变 ⇒ 稳定；
+//     内容替换 ⇒ 新身份。
 
 import { createHash } from 'node:crypto';
 import type {
@@ -62,7 +64,7 @@ export type RuleProvenance = 'official' | 'system_proposed' | 'manual';
 
 /** 转换未决项 —— 有 issue 的组 publisher 强制 withheld（不发明品格依据）。 */
 export interface ConversionIssue {
-  code: 'missing_reference' | 'unrepresentable_answer';
+  code: 'missing_reference' | 'unrepresentable_answer' | 'unverified_figure_digest';
   partId: string;
   detail: string;
 }
@@ -79,10 +81,13 @@ export interface NormalizableQuestionRow {
   structured: StructuredQuestionT | null;
   /** 语义不变的编辑会保留这些身份来源。 */
   parent_question_id?: string | null;
-  /** 答案权威来源（provenance 映射用；缺省按 system_proposed 保守处理）。 */
+  /** 题目获取来源（provenance 映射用；缺省按 system_proposed 保守处理）。 */
   source?: string | null;
   /** 附图资产（→ structure.materials；内容寻址身份）。 */
   figures?: FigureRefT[] | null;
+  /** 调用方核验过的 figure 实内容 digest（asset_id → sha256 hex，来自 asset
+   * store 元数据）；缺失的 figure ⇒ 如实标 unverified digest + conversion issue。 */
+  figureDigests?: Record<string, string> | null;
 }
 
 export interface NormalizedContract {
@@ -102,9 +107,17 @@ function shortHash(input: string): string {
   return createHash('sha256').update(input).digest('hex').slice(0, 12);
 }
 
-/** 内容寻址 option id：不变 ⇒ 稳定；改文本 ⇒ 新身份（见文件头身份纪律）。 */
-export function mintOptionId(label: string, text: string): string {
-  return `opt_${shortHash(`${label}\0${text}`)}`;
+function sha256Hex(input: string): string {
+  return `sha256:${createHash('sha256').update(input).digest('hex')}`;
+}
+
+/**
+ * 内容寻址 option id —— 仅【文本】参与身份（P1-3 裁决：label 是显示元数据，
+ * relabel 不铸造新身份；文本变 ⇒ 新身份 = 语义替换）。disambiguator 仅用于
+ * 同槽内文本重复的病态形状（确定性消歧）。
+ */
+export function mintOptionId(text: string, disambiguator?: string): string {
+  return `opt_${shortHash(disambiguator != null ? `${disambiguator}\0${text}` : text)}`;
 }
 
 /** 内容寻址 material id：素材内容替换 ⇒ 新身份（§3.1）。 */
@@ -112,10 +125,18 @@ export function mintMaterialId(kind: string, text: string): string {
   return `mat_${shortHash(`${kind}\0${text}`)}`;
 }
 
-/** 答案规则来源映射：web_sourced 参考答案抽取自来源页 ⇒ official；人工录入
- * ⇒ manual；其余模型链（quiz_gen / dreaming / mistake_variant / …）⇒
- * system_proposed（D1：system authored ≠ official）。未知来源保守 system_proposed。 */
-export function ruleProvenanceFor(source?: string | null): RuleProvenance {
+/**
+ * 答案权威 provenance 映射（P1-2c：看【答案证据】来源，不是题目获取来源）：
+ *   - rubric.reference_solution_source === 'ai_generated' ⇒ system_proposed
+ *     （solution-generate backfill 的显式留痕 —— AI 补写的答案绝不 official）；
+ *   - web_sourced 页面参考 ⇒ official；manual 人工录入 ⇒ manual；
+ *   - 其余模型链（quiz_gen / dreaming / mistake_variant / …）⇒ system_proposed。
+ */
+export function ruleProvenanceFor(
+  source?: string | null,
+  rubric?: JsonObject | null,
+): RuleProvenance {
+  if (rubric?.reference_solution_source === 'ai_generated') return 'system_proposed';
   if (source === 'web_sourced') return 'official';
   if (source === 'manual') return 'manual';
   return 'system_proposed';
@@ -161,50 +182,72 @@ function rubricToStatementMd(rubric: JsonObject): string {
   return JSON.stringify(rubric, null, 0);
 }
 
-interface SharedContext {
-  /** stem/root 共享文本材料（内容寻址 material）。 */
-  stemText: string | null;
-  /** 附图（row 级 figures）。 */
-  figures: FigureRefT[];
-  /** rubric（若有）：权威评分输入 ⇒ 以 material 形式随 revision 版本化 ——
-   * reference 存在与否都进 digest（P1-2：改 rubric 必须产生新版本）。 */
-  rubric: JsonObject | null;
+interface MaterialBuild {
+  materials: QuestionGroupStructureT['materials'];
+  issues: ConversionIssue[];
 }
 
-function buildMaterials(ctx: SharedContext): QuestionGroupStructureT['materials'] {
+/** 构建组级共享材料（stem 文本 / root figures / root rubric）。文本材料带
+ * content_md 字节；figure 用调用方核验的实 digest（缺失 ⇒ unverified + issue）。 */
+function buildSharedMaterials(ctx: {
+  stemText: string | null;
+  figures: FigureRefT[];
+  figureDigests: Record<string, string> | null;
+  rubric: JsonObject | null;
+  partIdForIssues: string;
+}): MaterialBuild {
   const materials: QuestionGroupStructureT['materials'] = [];
+  const issues: ConversionIssue[] = [];
   if (ctx.stemText != null && ctx.stemText.trim().length > 0) {
     materials.push({
       material_id: mintMaterialId('plaintext', ctx.stemText),
       kind: 'plaintext',
-      asset: {
-        asset_id: `txt_${shortHash(ctx.stemText)}`,
-        digest: `sha256:${createHash('sha256').update(ctx.stemText).digest('hex')}`,
-      },
+      asset: { asset_id: `txt_${shortHash(ctx.stemText)}`, digest: sha256Hex(ctx.stemText) },
       caption: 'stem/shared context',
+      content_md: ctx.stemText,
     });
   }
   for (const figure of ctx.figures) {
-    materials.push({
-      material_id: mintMaterialId('figure', figure.asset_id),
-      kind: 'figure',
-      asset: { asset_id: figure.asset_id, digest: `asset:${figure.asset_id}` },
-      alt_text: `figure (${figure.role})`,
-    });
+    const verified = ctx.figureDigests?.[figure.asset_id];
+    if (verified == null) {
+      // 不伪造内容 digest：如实标注未核验（publisher 会 withheld 该组）。
+      issues.push({
+        code: 'unverified_figure_digest',
+        partId: ctx.partIdForIssues,
+        detail: `figure asset '${figure.asset_id}' has no verified content digest from the asset store`,
+      });
+      const unverifiedId = mintMaterialId('figure', `unverified:${figure.asset_id}`);
+      if (!materials.some((m) => m.material_id === unverifiedId)) {
+        materials.push({
+          material_id: unverifiedId,
+          kind: 'figure',
+          asset: { asset_id: figure.asset_id, digest: `unverified:${figure.asset_id}` },
+          alt_text: `figure (${figure.role}; digest unverified)`,
+        });
+      }
+      continue;
+    }
+    const verifiedId = mintMaterialId('figure', verified);
+    if (!materials.some((m) => m.material_id === verifiedId)) {
+      materials.push({
+        material_id: verifiedId,
+        kind: 'figure',
+        asset: { asset_id: figure.asset_id, digest: `sha256:${verified}` },
+        alt_text: `figure (${figure.role})`,
+      });
+    }
   }
   if (ctx.rubric != null) {
     const rubricText = rubricToStatementMd(ctx.rubric);
     materials.push({
       material_id: mintMaterialId('rubric', rubricText),
       kind: 'plaintext',
-      asset: {
-        asset_id: `rub_${shortHash(rubricText)}`,
-        digest: `sha256:${createHash('sha256').update(rubricText).digest('hex')}`,
-      },
+      asset: { asset_id: `rub_${shortHash(rubricText)}`, digest: sha256Hex(rubricText) },
       caption: 'rubric (authoritative scoring input)',
+      content_md: rubricText,
     });
   }
-  return materials;
+  return { materials, issues };
 }
 
 /** 一个可作答 part 的全部归一输入。 */
@@ -212,7 +255,7 @@ interface LeafInput {
   partId: string;
   prompt: string;
   choices: string[] | null;
-  /** 该 part 自己的答案文本候选（叶 answers / part 行 reference），按序优先。 */
+  /** 该 part 自己的答案文本候选（叶 answers / part 行 reference）。 */
   answerTexts: string[];
   judgeKindOverride: string | null;
   provenance: RuleProvenance;
@@ -230,17 +273,27 @@ interface LeafScoring {
   issue?: ConversionIssue;
 }
 
+/** 同槽内选项铸造：文本寻址；重复文本以序号消歧（确定性）。 */
+function mintSlotOptions(texts: string[]): ResponseOptionT[] {
+  const seen = new Map<string, number>();
+  return texts.map((text, idx) => {
+    const dup = seen.get(text) ?? 0;
+    seen.set(text, dup + 1);
+    return {
+      option_id: mintOptionId(text, dup > 0 ? `#${dup}` : undefined),
+      label: String.fromCharCode(65 + idx),
+      text,
+    };
+  });
+}
+
 function normalizeLeafScoring(leaf: LeafInput): LeafScoring {
   const slotId = `${leaf.partId}::r`;
   const answerText = leaf.answerTexts.find((t) => t != null && t.trim().length > 0) ?? null;
 
   // ---- 选择槽：先解析答案头（字母数决定 single/multi，P1-3）。----
   if (leaf.choices != null && leaf.choices.length >= 2) {
-    const options: ResponseOptionT[] = leaf.choices.map((text, idx) => ({
-      option_id: mintOptionId(String.fromCharCode(65 + idx), text),
-      label: String.fromCharCode(65 + idx),
-      text,
-    }));
+    const options = mintSlotOptions(leaf.choices);
     const head = answerText != null ? extractAnswerHead(answerText).trim() : '';
     const accepted = answerText != null ? parseChoiceAnswerHead(head, options.length) : null;
     if (accepted != null && accepted.length > 0) {
@@ -390,15 +443,18 @@ function executorFor(criterionKind: LeafScoring['criterionKind']) {
 function assemble(
   groupId: string,
   materials: QuestionGroupStructureT['materials'],
+  /** 每 part 引用的 material（共享材料全引用；part 私有材料只挂该 part）。 */
+  materialIdsByPart: string[][],
   leaves: LeafInput[],
+  extraIssues: ConversionIssue[],
 ): NormalizedContract {
   const structure = QuestionGroupStructure.parse({
     group_id: groupId,
     materials,
-    parts: leaves.map((leaf) => ({
+    parts: leaves.map((leaf, i) => ({
       part_id: leaf.partId,
       prompt_md: leaf.prompt,
-      material_ids: materials.map((m) => m.material_id),
+      material_ids: materialIdsByPart[i] ?? [],
     })),
   });
   const scorings = leaves.map((leaf) => normalizeLeafScoring(leaf));
@@ -429,7 +485,10 @@ function assemble(
       execution_plan,
     }),
     group_id: groupId,
-    conversion_issues: scorings.flatMap((s) => (s.issue != null ? [s.issue] : [])),
+    conversion_issues: [
+      ...extraIssues,
+      ...scorings.flatMap((s) => (s.issue != null ? [s.issue] : [])),
+    ],
   };
 }
 
@@ -438,49 +497,72 @@ function assemble(
  */
 export function normalizeQuestionRowToContract(row: NormalizableQuestionRow): NormalizedContract {
   const group_id = row.parent_question_id ?? row.id;
-  const provenance = ruleProvenanceFor(row.source);
+  // P1-2c —— provenance 看【答案证据】来源：ai_generated backfill 留痕优先。
+  const provenance = ruleProvenanceFor(row.source, row.rubric_json);
   const figures = row.figures ?? [];
 
   const structuredRoot = row.structured;
   if (structuredRoot != null) {
     // structured 树：stem（根节点）文本 + row prompt（若与 stem 不同文）都是
-    // 共享上下文材料；叶 node id 即 part 身份；叶 answers 优先于 row reference。
+    // 共享上下文材料；叶 node id 即 part 身份；叶 answers 是唯一答案来源
+    //（P1-2b：无答案叶不继承 root reference —— 未决转换）。
     const stemText = structuredRoot.prompt_text ?? '';
     const rowPrompt = row.prompt_md.trim();
     const stemMaterialText =
       rowPrompt.length > 0 && rowPrompt !== stemText.trim()
         ? `${stemText}\n\n${row.prompt_md}`
         : stemText;
-    const materials = buildMaterials({
+    const shared = buildSharedMaterials({
       stemText: stemMaterialText,
       figures,
+      figureDigests: row.figureDigests ?? null,
       rubric: row.rubric_json,
+      partIdForIssues: structuredRoot.id,
     });
     const leaves = collectLeaves(structuredRoot).map((leaf) => ({
       partId: leaf.id,
       prompt: leaf.prompt_text,
       choices: leaf.options?.map((o) => o.text) ?? null,
-      answerTexts:
-        leaf.answers.length > 0 ? leaf.answers : row.reference_md ? [row.reference_md] : [],
+      answerTexts: leaf.answers,
       judgeKindOverride: row.judge_kind_override,
       provenance,
       rubric: row.rubric_json,
     }));
-    return assemble(group_id, materials, leaves);
+    const sharedIds = shared.materials.map((m) => m.material_id);
+    return assemble(
+      group_id,
+      shared.materials,
+      leaves.map(() => sharedIds),
+      leaves,
+      shared.issues,
+    );
   }
 
-  const materials = buildMaterials({ stemText: null, figures, rubric: row.rubric_json });
-  return assemble(group_id, materials, [
-    {
-      partId: row.id,
-      prompt: row.prompt_md,
-      choices: row.choices_md,
-      answerTexts: row.reference_md != null ? [row.reference_md] : [],
-      judgeKindOverride: row.judge_kind_override,
-      provenance,
-      rubric: row.rubric_json,
-    },
-  ]);
+  const shared = buildSharedMaterials({
+    stemText: null,
+    figures,
+    figureDigests: row.figureDigests ?? null,
+    rubric: row.rubric_json,
+    partIdForIssues: row.id,
+  });
+  const sharedIds = shared.materials.map((m) => m.material_id);
+  return assemble(
+    group_id,
+    shared.materials,
+    [sharedIds],
+    [
+      {
+        partId: row.id,
+        prompt: row.prompt_md,
+        choices: row.choices_md,
+        answerTexts: row.reference_md != null ? [row.reference_md] : [],
+        judgeKindOverride: row.judge_kind_override,
+        provenance,
+        rubric: row.rubric_json,
+      },
+    ],
+    shared.issues,
+  );
 }
 
 // ---- structured 树的叶收集（stem→subs；standalone→自身） ----
@@ -514,13 +596,17 @@ export interface PartRow {
   prompt_md: string;
   reference_md: string | null;
   choices_md: string[] | null;
+  /** P1-2c —— part 自己的 structured（单叶时其 options/answers 优先于行级列）。 */
+  structured?: StructuredQuestionT | null;
+  /** P1-2c —— part 自己的附图（part 私有材料，只挂该 part）。 */
+  figures?: FigureRefT[] | null;
 }
 
 /**
  * 物理多 part 组归一：root（题干/共享上下文 → 材料；root reference 不摊派给
  * part —— 每 part 用自己的答案，P1-2）+ parts（按 part_index 调用方排序）。
- * part 身份 = 子 question 行 id（编辑保留行 id ⇒ 身份保留，§3.1）；root 自身
- * 不再作为一个 part（单题组才用 root id 当 part）。
+ * part 身份 = 子 question 行 id（编辑保留行 id ⇒ 实体保留；语义连续性由
+ * publisher 的 semantic diff 裁决，§3.1/P1-3）。
  */
 export function normalizeQuestionGroupToContract(
   root: NormalizableQuestionRow,
@@ -528,24 +614,81 @@ export function normalizeQuestionGroupToContract(
 ): NormalizedContract {
   if (parts.length === 0) return normalizeQuestionRowToContract(root);
 
-  const provenance = ruleProvenanceFor(root.source);
-  // 复合 root 的 prompt 是共享题干材料；figures（若有）为共享资产；root 级
+  // P1-2c —— 答案证据 provenance（root rubric 的 ai_generated 留痕对全组生效）。
+  const provenance = ruleProvenanceFor(root.source, root.rubric_json);
+  // 复合 root 的 prompt 是共享题干材料；root figures（若有）为共享资产；root 级
   // rubric 同样是权威评分输入（material 版本化，进 digest）。
-  const materials = buildMaterials({
+  const shared = buildSharedMaterials({
     stemText: root.prompt_md,
     figures: root.figures ?? [],
+    figureDigests: root.figureDigests ?? null,
     rubric: root.rubric_json,
+    partIdForIssues: root.id,
   });
-  const leaves: LeafInput[] = parts.map((p) => ({
-    partId: p.id,
-    prompt: p.prompt_md,
-    choices: p.choices_md,
-    answerTexts: p.reference_md != null ? [p.reference_md] : [],
-    judgeKindOverride: root.judge_kind_override,
-    provenance,
-    rubric: null, // rubric 是 root 级的；part 无自己的 rubric 列
-  }));
-  return assemble(root.id, materials, leaves);
+  const sharedIds = shared.materials.map((m) => m.material_id);
+  const issues = [...shared.issues];
+
+  const materialIdsByPart: string[][] = [];
+  const leaves: LeafInput[] = parts.map((p) => {
+    const partMaterials = [...sharedIds];
+    // part 私有 figures（内容寻址；无核验 digest ⇒ 如实 unverified + issue）。
+    // 同一资产跨 part 复用时去重 —— material_id 即内容身份，重复引用同一
+    // 资产不新增 material 行（duplicate_material_id 形状不修入契约）。
+    const knownMaterialIds = new Set(shared.materials.map((m) => m.material_id));
+    for (const figure of p.figures ?? []) {
+      const verified = root.figureDigests?.[figure.asset_id];
+      if (verified == null) {
+        issues.push({
+          code: 'unverified_figure_digest',
+          partId: p.id,
+          detail: `figure asset '${figure.asset_id}' has no verified content digest from the asset store`,
+        });
+        const unverifiedId = mintMaterialId('figure', `unverified:${figure.asset_id}`);
+        if (!partMaterials.includes(unverifiedId)) partMaterials.push(unverifiedId);
+        if (!knownMaterialIds.has(unverifiedId)) {
+          knownMaterialIds.add(unverifiedId);
+          shared.materials.push({
+            material_id: unverifiedId,
+            kind: 'figure',
+            asset: { asset_id: figure.asset_id, digest: `unverified:${figure.asset_id}` },
+            alt_text: `figure (${figure.role}; digest unverified)`,
+          });
+        }
+        continue;
+      }
+      const materialId = mintMaterialId('figure', verified);
+      if (!partMaterials.includes(materialId)) partMaterials.push(materialId);
+      if (!knownMaterialIds.has(materialId)) {
+        knownMaterialIds.add(materialId);
+        shared.materials.push({
+          material_id: materialId,
+          kind: 'figure',
+          asset: { asset_id: figure.asset_id, digest: `sha256:${verified}` },
+          alt_text: `figure (${figure.role})`,
+        });
+      }
+    }
+    materialIdsByPart.push(partMaterials);
+
+    // part 自己的 structured：单叶树的 options/answers 优先于行级列（P1-2c）。
+    const structuredLeaf = p.structured != null ? collectLeaves(p.structured)[0] : undefined;
+    const choices = structuredLeaf?.options?.map((o) => o.text) ?? p.choices_md ?? null;
+    const answerTexts = structuredLeaf?.answers?.length
+      ? structuredLeaf.answers
+      : p.reference_md != null
+        ? [p.reference_md]
+        : [];
+    return {
+      partId: p.id,
+      prompt: p.prompt_md,
+      choices,
+      answerTexts,
+      judgeKindOverride: root.judge_kind_override,
+      provenance,
+      rubric: null, // rubric 是 root 级的；part 无自己的 rubric 列
+    };
+  });
+  return assemble(root.id, shared.materials, materialIdsByPart, leaves, issues);
 }
 
 /** §3.1 完整性 digest：四层 canonical JSON 的 sha256（顺序固定）。 */

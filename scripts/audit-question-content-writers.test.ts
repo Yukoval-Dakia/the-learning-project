@@ -12,7 +12,7 @@ import {
   CONTENT_COLUMNS,
   blankComments,
   scanSource,
-  siteHasPublishInScope,
+  siteEnclosingFunctionHasSeam,
 } from './audit-question-content-writers';
 
 describe('scanSource — 判别力', () => {
@@ -97,6 +97,82 @@ describe('scanSource — 判别力', () => {
 
   // ── 复审 P1-7 — 曾绕过扫描器的写形 ──
 
+  // ── 第二轮复审 P1-4 — 仍绕过扫描器的写形（先红后绿的回归钉） ──
+
+  it('P1-4r2: call-expression payload (.set(buildPatch())) is UNRESOLVED_PAYLOAD', () => {
+    const { findings, violations } = scanSource(`
+      await db.update(question).set(buildPatch()).where(eq(question.id, id));
+    `);
+    expect(findings).toHaveLength(0);
+    expect(violations).toHaveLength(1);
+    expect(violations[0].code).toBe('UNRESOLVED_PAYLOAD');
+  });
+
+  it('P1-4r2: member-access payload (.set(input.patch)) is UNRESOLVED_PAYLOAD', () => {
+    const { findings, violations } = scanSource(`
+      await db.update(question).set(input.patch).where(eq(question.id, id));
+    `);
+    expect(findings).toHaveLength(0);
+    expect(violations).toHaveLength(1);
+    expect(violations[0].code).toBe('UNRESOLVED_PAYLOAD');
+  });
+
+  it('P1-4r2: as-cast payload (.set(patch as Partial<typeof ...>)) is UNRESOLVED_PAYLOAD', () => {
+    const { findings, violations } = scanSource(
+      'await db.update(question).set(patch as Partial<typeof question.$inferInsert>);',
+    );
+    expect(findings).toHaveLength(0);
+    expect(violations).toHaveLength(1);
+    expect(violations[0].code).toBe('UNRESOLVED_PAYLOAD');
+  });
+
+  it('P1-4r2: wrapper around an identifier-spread object (withAnswerClass({ ...row })) is a FULL-SURFACE content write', () => {
+    const { findings, violations } = scanSource(`
+      await tx.insert(question).values(
+        withAnswerClass({ ...row }),
+      );
+    `);
+    expect(violations).toHaveLength(0);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].contentColumns).toEqual([...CONTENT_COLUMNS]);
+  });
+
+  it('P1-4r2: schema-qualified raw SQL (UPDATE public.question) is flagged', () => {
+    const { violations } = scanSource(
+      "await db.execute(sql`UPDATE public.question SET prompt_md = 'x'`);",
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0].code).toBe('RAW_SQL');
+  });
+
+  it('P1-4r2: per-site coverage does NOT cross function boundaries (bypass() vs unrelated())', () => {
+    const src = [
+      'async function bypass(tx) {',
+      '  await tx.update(question).set({ prompt_md: "p" });',
+      '}',
+      'async function unrelated(tx) {',
+      '  await publishQuestionGroupFromRow(tx, { rootId: 1, actorRef: "x", now: new Date() });',
+      '}',
+    ].join('\n');
+    const { findings } = scanSource(src);
+    expect(findings).toHaveLength(1);
+    const bypassSite = findings[0].offset;
+    // bypass() 自己的函数体内没有 seam 调用 ⇒ 未覆盖（unrelated() 不算）。
+    expect(siteEnclosingFunctionHasSeam(src, bypassSite)).toBe(false);
+  });
+
+  it('P1-4r2: per-site coverage passes when the SAME function dominates a seam call', () => {
+    const src = [
+      'async function writer(tx) {',
+      '  await tx.update(question).set({ prompt_md: "p" });',
+      '  await publishQuestionGroupFromRow(tx, { rootId: 1, actorRef: "x", now: new Date() });',
+      '}',
+    ].join('\n');
+    const { findings } = scanSource(src);
+    expect(findings).toHaveLength(1);
+    expect(siteEnclosingFunctionHasSeam(src, findings[0].offset)).toBe(true);
+  });
+
   it('P1-7: shorthand object payload ({ prompt_md }) is flagged', () => {
     const { findings, violations } = scanSource(`
       const prompt_md = 'p';
@@ -142,8 +218,11 @@ describe('scanSource — 判别力', () => {
   });
 
   it('P1-7: aliased schema import (question as q) resolves and flags content writes', () => {
+    // P1-5 —— fixture 的 import 说明符动态拼接（不以字面 `@/db/schema` 出现在
+    // 本文件源内），否则 partition 审计会把 fixture 文本当真实 DB import 读。、
+    const SCHEMA_SPEC = `@${'/db'}/schema`;
     const src = `
-      import { question as q, event } from '@/db/schema';
+      import { question as q, event } from '${SCHEMA_SPEC}';
       await tx.insert(q).values({ id, prompt_md: 'p' });
       await tx.update(event).set({ outcome: 'success' });
     `;
@@ -183,26 +262,6 @@ describe('scanSource — 判别力', () => {
   });
 });
 
-describe('siteHasPublishInScope — converged per-site 校验（P1-7）', () => {
-  it('passes when the publish call follows the write in the same/outer block', () => {
-    const src = `
-      await tx.insert(question).values({ id, prompt_md: 'p' });
-      await publishQuestionGroupFromRow(tx, { rootId: id, actorRef: 'x', now });
-    `;
-    const offset = src.indexOf('.insert(question)');
-    expect(siteHasPublishInScope(src, offset)).toBe(true);
-  });
-
-  it('fails when no publish call exists in the enclosing scope (registered-file bypass)', () => {
-    const src = `
-      await tx.insert(question).values({ id, prompt_md: 'p' });
-      await somethingElseEntirely(tx);
-    `;
-    const offset = src.indexOf('.insert(question)');
-    expect(siteHasPublishInScope(src, offset)).toBe(false);
-  });
-});
-
 describe('writer registry — 机械不变量', () => {
   it('every converged entry references the publisher seam in its real source (per-site validated by the audit)', () => {
     for (const [file, entry] of Object.entries(QUESTION_CONTENT_WRITER_REGISTRY)) {
@@ -220,8 +279,8 @@ describe('writer registry — 机械不变量', () => {
         expect(entry.tickets.join(','), `${file} pending needs a YUK ticket`).toMatch(/YUK-\d+/);
         expect(
           entry.pendingClass,
-          `${file} pending needs pendingClass ('cutover' | 'blocked-by:YUK-NNNN')`,
-        ).toMatch(/^(cutover|blocked-by:YUK-\d+)$/);
+          `${file} pending needs pendingClass ('blocked-by' | 'deferred' | 'cutover')`,
+        ).toMatch(/^(cutover|deferred|blocked-by:YUK-\d+)$/);
       }
     }
   });

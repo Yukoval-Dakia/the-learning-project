@@ -77,6 +77,7 @@ export async function generateReferenceSolution(
       rubric_json: question.rubric_json,
       knowledge_ids: question.knowledge_ids,
       metadata: question.metadata,
+      parent_question_id: question.parent_question_id,
     })
     .from(question)
     .where(eq(question.id, questionId))
@@ -141,6 +142,17 @@ export async function generateReferenceSolution(
   // withheld/unverified_rules —— 待重新核验后再准入（来源标识已在 rubric
   // reference_solution_source='ai_generated' 留痕）。
   const written = await db.transaction(async (tx) => {
+    // P1-1（第二轮复审）—— 锁序 root→child：目标是子 part 时先锁组根再改子行
+    //（backfill 更新的可能是组内子行；FromRow 的根解析不做子行锁定，所以这
+    // 里显式先锁）。单题时被更新行自身即根，UPDATE 取锁天然根优先。
+    if (row.parent_question_id != null) {
+      await tx
+        .select({ id: question.id })
+        .from(question)
+        .where(eq(question.id, row.parent_question_id))
+        .for('update')
+        .limit(1);
+    }
     const updated = await tx
       .update(question)
       .set({

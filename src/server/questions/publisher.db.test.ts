@@ -121,9 +121,8 @@ describe('publishQuestionGroup（YUK-1043 统一发布 seam）', () => {
     // P1-4 — identity diff 随事件持久化（首版 = 全部新增）。
     expect(publishEvent.payload).toMatchObject({
       identity_changes: {
-        retained_part_ids: [],
-        added_part_ids: [qid],
-        removed_part_ids: [],
+        part_changes: [{ part_id: qid, status: 'added' }],
+        replacement_mappings: [],
       },
     });
 
@@ -207,9 +206,7 @@ describe('publishQuestionGroup（YUK-1043 统一发布 seam）', () => {
     const [ev2] = await db.select().from(event).where(eq(event.id, second.event_id));
     expect(ev2.payload).toMatchObject({
       identity_changes: {
-        retained_part_ids: [qid],
-        added_part_ids: [],
-        removed_part_ids: [],
+        part_changes: [{ part_id: qid, status: 'replaced' }], // 判分内容变 ⇒ replaced（P1-3）
         option_changes: [
           {
             slot_id: `${qid}::r`,
@@ -675,7 +672,12 @@ describe('publishQuestionGroupFromRow — 锁序/组语义/未决转换（复审
     // P1-4 —— identity diff 记录 pf_p2 移除。
     const [ev2] = await db.select().from(event).where(eq(event.id, second.event_id));
     expect(ev2.payload).toMatchObject({
-      identity_changes: { removed_part_ids: ['pf_p2'], retained_part_ids: ['pf_p1'] },
+      identity_changes: {
+        part_changes: [
+          { part_id: 'pf_p1', status: 'retained' },
+          { part_id: 'pf_p2', status: 'removed' },
+        ],
+      },
     });
 
     // 全部 part tombstone ⇒ withdrawn，不铸空组。
@@ -699,7 +701,7 @@ describe('publishQuestionGroupFromRow — 锁序/组语义/未决转换（复审
     expect(withdrawn.withdrawn).toBe(true);
   });
 
-  it('P1-1: sibling edit under the group-root lock is never lost — snapshot is taken AFTER the root lock', async () => {
+  it('P1-1: sibling edit under the group-root lock is never lost — barrier handshake, no sleeps (old read-before-lock impl fails this)', async () => {
     const db = testDb();
     const parentId = 'pf_race_root';
     const now = new Date();
@@ -722,39 +724,60 @@ describe('publishQuestionGroupFromRow — 锁序/组语义/未决转换（复审
       version: 0,
     });
 
+    // T1：持有组根锁，等待 T2 确认阻塞后才提交 sibling 内容编辑。
     let releaseT1!: () => void;
     const t1Gate = new Promise<void>((resolve) => {
       releaseT1 = resolve;
     });
-
-    // T1：持有组根锁，随后提交一个 sibling 内容编辑（模拟并发兄弟编辑）。
     const t1 = db.transaction(async (tx) => {
       await tx
         .select({ id: question.id })
         .from(question)
         .where(eq(question.id, parentId))
         .for('update');
-      await t1Gate;
+      await t1Gate; // 阻塞确认后（见下方 barrier）才放行提交
       await tx
         .update(question)
         .set({ prompt_md: 'sibling edited prompt', updated_at: now, version: 1 })
         .where(eq(question.id, 'pf_race_part'));
     });
 
-    // T2：FromRow 发布 —— 必须先拿组根锁（阻塞在 T1 之后），快照因此包含 T1 的编辑。
-    const t2 = (async () => {
-      // 给 T1 足够时间先拿到锁。
-      await new Promise((r) => setTimeout(r, 250));
-      return publishQuestionGroupFromRow(db, {
-        rootId: parentId,
+    // T2：FromRow 发布。先取后端 pid（事务已活跃信号），再进 seam。
+    let t2Pid = 0;
+    let resolvePid!: (pid: number) => void;
+    const pidReady = new Promise<number>((resolve) => {
+      resolvePid = resolve;
+    });
+    const t2Promise = db.transaction(async (tx) => {
+      const pidRows = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
+      t2Pid = Number(pidRows[0]?.pid ?? 0);
+      resolvePid(t2Pid);
+      // 子行 rootId：新实现非锁定解析→只锁组根；旧实现先锁子行再锁父 ——
+      // 与 T1（持根锁、待改子行）互为死锁环，旧实现在此被 PG deadlock 检测杀死。
+      return publishQuestionGroupFromRow(tx, {
+        rootId: 'pf_race_part',
         actorRef: 'test:race-t2',
         now,
       });
-    })();
+    });
 
-    await new Promise((r) => setTimeout(r, 250));
+    // Barrier：轮询直到 T2 后端持有【未授权】锁请求（= 已在组根锁上排队）——
+    // 此时 T1 尚未提交（gate 未放行），T2 的快照读必然发生在获得锁之后。
+    await pidReady;
+    const deadline = Date.now() + 15_000;
+    for (;;) {
+      const waiting = await db.execute<{ n: number }>(
+        sql`select count(*)::int as n from pg_locks where pid = ${t2Pid} and granted = false`,
+      );
+      if (Number(waiting[0]?.n ?? 0) > 0) break;
+      if (Date.now() > deadline)
+        throw new Error('barrier timeout: T2 never blocked on the root lock');
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    // T2 确认在锁上排队 ⇒ 放行 T1 提交。
     releaseT1();
-    const [, t2Result] = await Promise.all([t1, t2]);
+    const t2Result = await t2Promise;
+    await t1;
 
     expect(t2Result.status).toBe('published');
     if (t2Result.status !== 'published') return;
@@ -765,5 +788,98 @@ describe('publishQuestionGroupFromRow — 锁序/组语义/未决转换（复审
     // 锁后快照：发布的 part prompt 是 T1 提交的【新】文本，不是旧文本。
     const part = rev.structure.parts.find((p) => p.part_id === 'pf_race_part');
     expect(part?.prompt_md).toBe('sibling edited prompt');
+  });
+
+  it('P1-3: same part id + materially changed scoring content ⇒ classified REPLACED (never silently retained)', async () => {
+    const db = testDb();
+    const parentId = 'pf_repl_root';
+    const now = new Date();
+    await seedQuestion(parentId, { kind: 'composite', source: 'quiz_gen' });
+    await db.insert(question).values({
+      id: 'pf_repl_part',
+      parent_question_id: parentId,
+      part_index: 0,
+      kind: 'question_part',
+      prompt_md: '原任务：求抛物线与 x 轴交点',
+      reference_md: 'B',
+      knowledge_ids: [],
+      difficulty: 3,
+      source: 'quiz_gen',
+      variant_depth: 0,
+      draft_status: 'active',
+      choices_md: ['交点(1,0)', '交点(2,0)'],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+
+    const first = await publishQuestionGroupFromRow(db, {
+      rootId: parentId,
+      actorRef: 'test',
+      now,
+    });
+    expect(first.status).toBe('published');
+
+    // 整个任务被替换：同 part 行 id，但题面 + 选项 + 答案全换。
+    await db
+      .update(question)
+      .set({
+        prompt_md: '新任务：求椭圆的离心率',
+        choices_md: ['e=1/2', 'e=√3/2'],
+        reference_md: 'A',
+        updated_at: now,
+        version: 1,
+      })
+      .where(eq(question.id, 'pf_repl_part'));
+    const second = await publishQuestionGroupFromRow(db, {
+      rootId: parentId,
+      actorRef: 'test:replace',
+      now,
+    });
+    expect(second.status).toBe('published');
+    if (second.status !== 'published') return;
+
+    const [ev] = await db.select().from(event).where(eq(event.id, second.event_id));
+    const changes = (
+      ev.payload as { identity_changes: { part_changes: { part_id: string; status: string }[] } }
+    ).identity_changes.part_changes;
+    // 行 id 未变，但判分相关内容【实质替换】⇒ replaced + 显式 old→new 映射，不冒充 retained。
+    expect(changes).toEqual([{ part_id: 'pf_repl_part', status: 'replaced' }]);
+    const mapping = (ev.payload as { identity_changes: { replacement_mappings: unknown[] } })
+      .identity_changes.replacement_mappings;
+    expect(Array.isArray(mapping)).toBe(true);
+    expect(mapping.length).toBe(1);
+  });
+
+  it('P1-3: semantically unchanged part (cosmetic whitespace) ⇒ retained', async () => {
+    const db = testDb();
+    const parentId = 'pf_ret_root';
+    const now = new Date();
+    await seedQuestion(parentId, { kind: 'composite', source: 'quiz_gen' });
+    await db.insert(question).values({
+      id: 'pf_ret_part',
+      parent_question_id: parentId,
+      part_index: 0,
+      kind: 'question_part',
+      prompt_md: '原任务：求值',
+      reference_md: 'B',
+      knowledge_ids: [],
+      difficulty: 3,
+      source: 'quiz_gen',
+      variant_depth: 0,
+      draft_status: 'active',
+      choices_md: ['甲', '乙'],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await publishQuestionGroupFromRow(db, { rootId: parentId, actorRef: 'test', now });
+    // 语义不变重发（不改内容行）⇒ digest 相同 ⇒ noop（天然 retained 路径）。
+    const second = await publishQuestionGroupFromRow(db, {
+      rootId: parentId,
+      actorRef: 'test:again',
+      now,
+    });
+    expect(second).toMatchObject({ status: 'noop' });
   });
 });
