@@ -478,7 +478,6 @@ export async function evaluateSubmissionCore(
       ? new Set(revision.structure.parts.map((part) => part.part_id))
       : new Set(input.issued_part_ids);
   const inScopeSlots = answerableSlots(spec, issuedParts);
-  const inScopeSlotIds = new Set(inScopeSlots.map((slot) => slot.slot_id));
   const slotById = new Map(inScopeSlots.map((slot) => [slot.slot_id, slot] as const));
   const inScopeUnits = basis.units.filter((unit) => unitInScope(unit, slotById));
   const inScopeUnitIds = new Set(inScopeUnits.map((unit) => unit.scoring_unit_id));

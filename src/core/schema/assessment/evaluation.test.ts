@@ -352,9 +352,6 @@ describe('evaluateSubmissionCore — deterministic comparators', () => {
 describe('evaluateSubmissionCore — pending taxonomy (no fake zeros)', () => {
   it('criterion/slot mismatch ⇒ pending unjudgeable, aggregate unresolved — never a fake 0', async () => {
     // text_key criterion on a numeric slot response.
-    const revision = revisionFor({
-      slots: [{ slot_id: 'p1::r', part_id: 'p1', kind: 'numeric' as const }],
-    });
     // Force validateScoringBasis-passing shape: numeric_key criterion + numeric
     // slot, but dispatch a MISMATCHED comparator pairing by overriding the
     // assignment to text comparator... Instead simplest honest mismatch: keep
