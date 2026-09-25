@@ -11,7 +11,13 @@ import {
 } from './constants';
 
 describe('export constants', () => {
-  it('SCHEMA_VERSION is "4.20" when the cause-category overlay enters backup', () => {
+  it('SCHEMA_VERSION is "4.21" when the assessment contract truth-source tables enter backup', () => {
+    // 4.20 → 4.21 (YUK-1044): NEW FK_ORDER tables ×9 — 统一评估契约真相源
+    // （question_revision / question_group_lifecycle / question_admission_verification /
+    // assessment_issuance / evaluation_group / assessment_submission / evaluation /
+    // evaluation_effective_head / assessment_identity_mapping）。Truth source 非瞬态/
+    // 派生（丢 = 判分/学习真相灭失，grounding §15 cutover checkpoint 必捕获）。
+    // NEW FK_ORDER tables 必 bump。
     // 4.15 → 4.16 (YUK-350): immutable question_answer_anchor,
     // question_generation_plan, and question_generation_binding authored provenance.
     // New FK_ORDER tables require a backup schema bump.
@@ -45,7 +51,7 @@ describe('export constants', () => {
     // 列是既有表的 additive 列，随整行 dump/restore，不单独 bump (表=bump，列=不 bump)。
     // 4.19 → 4.20 (YUK-1016 454-B): NEW FK_ORDER table cause_category_overlay —
     // owner-vetted 错因词表层 (authored catalog 行，retract 只置 archived_at，不可重建)。
-    expect(SCHEMA_VERSION).toBe('4.20');
+    expect(SCHEMA_VERSION).toBe('4.21');
   });
 
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
@@ -102,7 +108,12 @@ describe('export constants', () => {
     // 52 → 53 (YUK-1016 454-B): added cause_category_overlay — owner-vetted 错因
     // 词表层 (authored catalog 行，非瞬态非派生)；placed adjacent to mistake_variant
     // (failure-learning cluster), NOT at the end (provider_attempt stays last).
-    expect(FK_ORDER.length).toBe(53);
+    // 53 → 62 (YUK-1044): added 统一评估契约真相源九表（question_revision →
+    // question_group_lifecycle → question_admission_verification →
+    // assessment_issuance → evaluation_group → assessment_submission → evaluation
+    // → evaluation_effective_head → assessment_identity_mapping，硬 FK 父先子后），
+    // placed right after the question cluster (question), NOT at the end.
+    expect(FK_ORDER.length).toBe(62);
     expect(FK_ORDER[0]).toBe('knowledge');
     expect(FK_ORDER[FK_ORDER.length - 1]).toBe('provider_attempt');
     expect(FK_ORDER.indexOf('note_verification_claim')).toBeGreaterThan(
@@ -149,6 +160,38 @@ describe('export constants', () => {
   it('FK_ORDER includes YUK-361 Phase 1 selection_observation telemetry (承重，非排除)', () => {
     expect(FK_ORDER).toContain('selection_observation');
     expect(BACKUP_EXCLUDED_TABLES.has('selection_observation')).toBe(false);
+  });
+
+  it('FK_ORDER includes YUK-1044 assessment contract truth-source nine tables (承重非排除，父先子后)', () => {
+    const nine = [
+      'question_revision',
+      'question_group_lifecycle',
+      'question_admission_verification',
+      'assessment_issuance',
+      'evaluation_group',
+      'assessment_submission',
+      'evaluation',
+      'evaluation_effective_head',
+      'assessment_identity_mapping',
+    ] as const;
+    for (const t of nine) {
+      expect(FK_ORDER).toContain(t);
+      expect(BACKUP_EXCLUDED_TABLES.has(t)).toBe(false);
+    }
+    const idx = (t: string) => FK_ORDER.indexOf(t as never);
+    // 紧随 question 题簇；九表内部严格满足 0105/0106 非 DEFERRABLE FK 拓扑
+    //（mapping 自 FK 除外 —— 0107 DEFERRABLE，restore 事务 SET CONSTRAINTS 推迟）。
+    expect(idx('question')).toBeLessThan(idx('question_revision'));
+    expect(idx('question_revision')).toBeLessThan(idx('question_group_lifecycle'));
+    expect(idx('question_revision')).toBeLessThan(idx('question_admission_verification'));
+    expect(idx('question_revision')).toBeLessThan(idx('assessment_issuance'));
+    expect(idx('question_revision')).toBeLessThan(idx('assessment_identity_mapping'));
+    expect(idx('assessment_issuance')).toBeLessThan(idx('assessment_submission'));
+    expect(idx('evaluation_group')).toBeLessThan(idx('assessment_submission'));
+    expect(idx('assessment_submission')).toBeLessThan(idx('evaluation'));
+    expect(idx('assessment_submission')).toBeLessThan(idx('evaluation_effective_head'));
+    expect(idx('evaluation')).toBeLessThan(idx('evaluation_effective_head'));
+    expect(idx('question_revision')).toBeLessThan(idx('item_calibration'));
   });
 
   it('FK_ORDER respects dependencies (parent before child)', () => {

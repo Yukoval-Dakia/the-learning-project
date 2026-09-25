@@ -524,6 +524,11 @@ export const question = pgTable(
 // src/core/schema/assessment（YUK-1046））。DDL-only：本票只建真相源表，
 // 不新增任何写路径（写者归 producer/evaluator lanes）；旧 question 平面列
 // 保留为只读投影与回滚资产 —— 无原始内容双写设计（§3.1）。
+//
+// Restore 通道（0105/0107，见 archive.ts）：不可变 guard（本块四表的 BEFORE
+// UPDATE/DELETE trigger）在 `SET LOCAL app.assessment_restore_mode = 'on'` 的
+// 恢复事务内放行 wipe+重插；GUC 随事务结束自动失效，普通 writer 的拒结名单
+// 逐字节不变。九表全部入 backup FK_ORDER（SCHEMA_VERSION 4.21）。
 // ====================================================================
 
 /**

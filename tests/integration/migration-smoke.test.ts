@@ -2795,9 +2795,9 @@ describe('migration smoke — YUK-857 note verification claim', () => {
 });
 
 describe('migration smoke — YUK-1044 assessment contract truth source', () => {
-  const BASELINE_TAG = '0103_lush_marvel_zombies';
-  // 0104 建表；0105（复审）FK/trigger/选择位；0106（终验）head 所有权三坐标 FK。
-  const FINAL_TAG = '0106_yuk1044_head_ownership_fks';
+  // 0104 建表；0105（复审）FK/trigger/选择位；0106（终验）head 三坐标 FK；
+  // 0107（CI 修复）restore 通道 GUC + 自 FK deferrable。
+  const FINAL_TAG = '0107_yuk1044_backup_restore_channel';
   let container: StartedPostgreSqlContainer;
   let client: ReturnType<typeof postgres>;
 
@@ -2833,7 +2833,7 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
         structure, response_spec, scoring_basis, execution_plan,
         availability, published_at
       ) VALUES (
-        ${revisionId}, ${groupId}, ${ordinal}, ${'sha256:' + revisionId},
+        ${revisionId}, ${groupId}, ${ordinal}, ${`sha256:${revisionId}`},
         '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb,
         'general_pool', now()
       )
