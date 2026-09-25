@@ -47,6 +47,7 @@ import { artifact, event, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { embedHash, questionEmbedText } from '@/server/ai/embed-source';
 import { deriveAnswerClassForValues } from '@/server/questions/answer-class-write';
+import { archiveGroupLifecycle, publishQuestionGroupFromRow } from '@/server/questions/publisher';
 
 /** Display label stamped on part rows; NOT the part-ness authority (the
  * `parent_question_id` FK is — YUK-388). */
@@ -200,9 +201,16 @@ function patchValueEqual(a: unknown, b: unknown): boolean {
   return false;
 }
 
+// YUK-1043 — 触发统一发布的编辑面字段（判分输入改变 ⇒ 新 revision；
+// difficulty/knowledge_ids/draft_status 是检索投影或生命周期，不触发）。
+const PUBLISH_TRIGGERING_FIELDS = new Set(['prompt_md', 'reference_md', 'choices_md', 'kind']);
+
 /**
  * Apply an edit patch with optimistic locking + an `experimental:question_edit`
  * audit event (before/after of every changed field) in one transaction.
+ * YUK-1043：判分输入字段（题面/答案/选项/题型）变更时，同一事务内经统一
+ * publisher 铸新 question_revision + lifecycle pointer + 发布事件 ——
+ * revision/投影/事件原子（§3.1）。
  */
 export async function editQuestion(
   db: Db,
@@ -372,6 +380,17 @@ export async function editQuestion(
       created_at: now,
     });
 
+    // YUK-1043 — 判分输入变更 ⇒ 同事务统一发布（part 编辑时发布其父组；
+    // 单题发布自身）。noop/受保护/复合生命周期分支已在上方提前返回。
+    if (Object.keys(after).some((field) => PUBLISH_TRIGGERING_FIELDS.has(field))) {
+      const groupRoot = row.parent_question_id ?? questionId;
+      await publishQuestionGroupFromRow(tx, {
+        rootId: groupRoot,
+        actorRef: `question-edit:${actorRef}`,
+        now,
+      });
+    }
+
     return { status: 'updated', event_id: eventId, version: row.version + 1 };
   });
 }
@@ -492,6 +511,11 @@ export async function archiveQuestion(
       },
       created_at: now,
     });
+
+    // YUK-1043 — archive 的 lifecycle 维度（§3.2/§3.3）：withdrawn=true。
+    // claim 释放已由上方 canonical_content_hash 置 NULL 承担（分离语义）。
+    // revision/digest 永不因 archive 改变 —— lifecycle 行保留历史摘要。
+    await archiveGroupLifecycle(tx, row.parent_question_id ?? questionId, now);
 
     return { status: 'archived', event_id: eventId, cascaded_part_ids: cascadedPartIds };
   });

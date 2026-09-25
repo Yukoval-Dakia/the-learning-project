@@ -30,6 +30,7 @@ import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import type { Tx } from '@/db/client';
 import { question } from '@/db/schema';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { sanitizeSourcedMarkup } from '@/server/questions/sourced-markup';
 
 // question.created_by column type (AgentRef jsonb, notNull) — single-sourced from the
@@ -197,6 +198,16 @@ export async function insertSourcedDraft(
 
   const inserted = await insertOnce();
   if (inserted.length > 0) {
+    // YUK-1043 — 统一发布链：新 web_sourced 草稿同事务铸首版 revision。
+    // 草稿未核验 ⇒ admission withheld/unverified_rules（D1：未解决不自动准入；
+    // source_verify 通过后由 verify/promote 路径重新发布为准入态）。
+    await publishQuestionGroupFromRow(tx, {
+      rootId: id,
+      admission: { state: 'withheld', reason: 'unverified_rules' },
+      availability: 'general_pool',
+      actorRef: `sourced-draft:${sourceRoute}`,
+      now,
+    });
     return { status: 'inserted', difficultyEvidence, supplyTrace };
   }
 
@@ -217,6 +228,13 @@ export async function insertSourcedDraft(
     if (retry.length === 0) {
       throw new Error(`insertSourcedDraft: canonical hash retry still conflicted for ${id}`);
     }
+    await publishQuestionGroupFromRow(tx, {
+      rootId: id,
+      admission: { state: 'withheld', reason: 'unverified_rules' },
+      availability: 'general_pool',
+      actorRef: `sourced-draft:${sourceRoute}`,
+      now,
+    });
     return { status: 'inserted', difficultyEvidence, supplyTrace };
   }
   return {

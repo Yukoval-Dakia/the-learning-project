@@ -29,6 +29,7 @@ import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_q
 import type { Tx } from '@/db/client';
 import { question } from '@/db/schema';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 
 /** Matches the `question.metadata` jsonb column shape (Record<string, unknown>). */
 type JsonObject = Record<string, unknown>;
@@ -145,6 +146,13 @@ export async function createQuestionPart(
       version: 0,
     }),
   );
+  // YUK-1043 — 统一发布链：新 part 进入组 ⇒ 同事务重发父组 revision
+  //（part 身份 = 子行 id；组契约含全部子 part，见 contract-normalizer）。
+  await publishQuestionGroupFromRow(tx, {
+    rootId: input.parentQuestionId,
+    actorRef: `question-part:${input.source}`,
+    now: input.now,
+  });
   return { questionId, partIndex: input.partIndex };
 }
 

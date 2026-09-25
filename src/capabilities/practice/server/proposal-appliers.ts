@@ -52,6 +52,7 @@ import {
   writeProposalRateEvent,
 } from '@/server/proposals/practice-runtime';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 
 import { CAUSE_OVERLAY_ID_PREFIX } from './cause-overlay';
 import { initialFsrsState } from './fsrs';
@@ -273,6 +274,31 @@ export async function acceptVariantQuestionProposal(
       }),
     );
 
+    // YUK-1043 — 统一发布链（§2 矩阵 mistake_variant 行）：接受即发布 —— 不能绕
+    // 发布直接 active。variant 参考答案为 AI 提案、用户接受 ⇒ D9 手动带 provenance
+    //（manual ≠ official，D1）；接受人即人工核验门（verifier: human）。
+    await publishQuestionGroupFromRow(tx, {
+      rootId: newQuestionId,
+      admission: {
+        state: 'admitted',
+        evidence: {
+          marking_provenance: 'manual',
+          verification: {
+            structural_check_passed: true,
+            independent_verification: {
+              passed: true,
+              verifier: 'human',
+              verified_at: now.toISOString(),
+            },
+          },
+          model_slice: null,
+        },
+      },
+      availability: 'general_pool',
+      actorRef: 'proposal-accept:mistake_variant',
+      now,
+    });
+
     // The accept `rate` event — written BEFORE the row write-through so the fold (when the flag is
     // ON) sees the chained accept in the same tx and projects status='active' +
     // variant_question_id=materialized_question_id (E2). caused_by = the proposal (the chain key).
@@ -468,6 +494,32 @@ export async function acceptQuestionDraftProposal(
       .update(question)
       .set({ draft_status: 'active', updated_at: now })
       .where(eq(question.id, questionId));
+
+    // YUK-1043 — 统一发布链（§2 矩阵 question_draft 行）：接受进入统一发布。
+    // draft 内容为 author/quiz 链生成，用户接受 ⇒ D9 手动带 provenance（manual ≠
+    // official，D1）；接受人即人工核验门。同内容已发布过（如 sourced 草稿首版
+    // withheld）时只翻 admission 维度，不铸新 revision。
+    await publishQuestionGroupFromRow(tx, {
+      rootId: row.parent_question_id ?? questionId,
+      admission: {
+        state: 'admitted',
+        evidence: {
+          marking_provenance: 'manual',
+          verification: {
+            structural_check_passed: true,
+            independent_verification: {
+              passed: true,
+              verifier: 'human',
+              verified_at: now.toISOString(),
+            },
+          },
+          model_slice: null,
+        },
+      },
+      availability: 'general_pool',
+      actorRef: 'proposal-accept:question_draft',
+      now,
+    });
 
     // FSRS enroll — copied from quiz_verify.ts (YUK-203 P3): per-knowledge
     // enroll-if-absent so a node with an existing review schedule is never
@@ -891,6 +943,16 @@ export async function acceptQuestionEditProposal(
         409,
       );
     }
+
+    // YUK-1043 — 统一发布链（§2 矩阵结构化编辑行）：structured 树是判分输入
+    //（part/slot/option 身份来源），接受 ⇒ 同事务铸新 revision；node id 语义
+    // 不变则身份保留（applyQuestionEdit 保留 node id），替换则新身份（§3.1）。
+    // admission 缺省 preserve —— 内容编辑不改变准入资格。
+    await publishQuestionGroupFromRow(tx, {
+      rootId: row.parent_question_id ?? questionId,
+      actorRef: `proposal-accept:question_edit:${actorRef}`,
+      now,
+    });
 
     // Reversible audit trail (before/after node snapshot) — the structured edit
     // is correctable from this event without trusting the proposal payload.

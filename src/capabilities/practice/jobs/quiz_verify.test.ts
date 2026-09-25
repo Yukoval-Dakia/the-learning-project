@@ -32,6 +32,8 @@ import {
   placement_starter_claim,
   placement_starter_cost_component,
   question,
+  question_group_lifecycle,
+  question_revision,
   source_document,
 } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -437,6 +439,29 @@ describe('runQuizVerify', () => {
     // U8 / AF §4 (U3 L-note) — a promoted draft DID enter the pool, so no
     // question_pool_gap hint is left.
     expect(await poolGapNotesForKnowledge('k1')).toBe(0);
+
+    // YUK-1043 — verified promote 经统一发布链落 §3.3 admission：首版 revision +
+    // admitted（system_verified —— D1：model-proposed 规则，结构校验 + 独立模型
+    // 核验双门均过；显式非 official）+ lifecycle current pointer 指向该版。
+    const revisions1043 = await testDb()
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.group_id, 'q1'));
+    expect(revisions1043).toHaveLength(1);
+    const lifecycles1043 = await testDb()
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, 'q1'));
+    expect(lifecycles1043).toHaveLength(1);
+    expect(lifecycles1043[0].current_revision_id).toBe(revisions1043[0].revision_id);
+    expect(lifecycles1043[0].scoring_admission_state).toBe('admitted');
+    expect(lifecycles1043[0].scoring_admission_evidence).toMatchObject({
+      marking_provenance: 'system_verified',
+      verification: {
+        structural_check_passed: true,
+        independent_verification: { passed: true, verifier: 'independent_model' },
+      },
+    });
   });
 
   // ── YUK-1037 — synthetic subject roots are structural anchors, not content KCs ──

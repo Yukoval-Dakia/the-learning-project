@@ -30,6 +30,7 @@ import {
   requiredString,
 } from '@/server/proposals/applier-helpers';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 
 // 结构最小化（与 practice / agency / ingestion 包同模式）：只声明本文件 applier
 // 实际读取的字段；壳层 AcceptAiProposalOpts 结构可赋值，调用点无需收窄。
@@ -380,6 +381,31 @@ export async function acceptRecordPromotionProposal(
           updated_at: now,
         }),
       );
+
+      // YUK-1043 — 统一发布链（§2 矩阵 legacy dreaming 行）：可达接受路径必须
+      // 生成新契约，不能成为漏网写口。dreaming 内容为 AI 提案、用户接受 ⇒ D9
+      // 手动带 provenance（manual ≠ official，D1）；接受人即人工核验门。
+      await publishQuestionGroupFromRow(tx, {
+        rootId: materializedId,
+        admission: {
+          state: 'admitted',
+          evidence: {
+            marking_provenance: 'manual',
+            verification: {
+              structural_check_passed: true,
+              independent_verification: {
+                passed: true,
+                verifier: 'human',
+                verified_at: now.toISOString(),
+              },
+            },
+            model_slice: null,
+          },
+        },
+        availability: 'general_pool',
+        actorRef: 'legacy-record-accept:question',
+        now,
+      });
     } else if (target === 'learning_item') {
       // YUK-471 W2 — the full initial row snapshot is the genesis BASE state (learning_item has no
       // fold-blind field; per-id genesis fully seeds the row — design §3②/§3⑥). version defaults to

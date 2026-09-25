@@ -24,6 +24,7 @@ import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { type RunTaskFn, runQuizVerify } from '../../jobs/quiz_verify';
 import { runSourceVerify } from '../../jobs/source_verify';
 import { initialFsrsState } from '../fsrs';
@@ -290,6 +291,27 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
         task_run_id: null,
         cost_micro_usd: null,
         created_at: now,
+      });
+
+      // YUK-1043 — 统一发布链：owner-override promote 即 §3.3 的 admission 时刻。
+      // 同事务重发组 revision 为 admitted（结构校验通过；跳过独立核验是 owner
+      // 决定，evidence 如实记录 —— D1：manual ≠ official）。
+      await publishQuestionGroupFromRow(tx, {
+        rootId: row.parent_question_id ?? questionId,
+        admission: {
+          state: 'admitted',
+          evidence: {
+            marking_provenance: 'manual',
+            verification: {
+              structural_check_passed: true,
+              independent_verification: null,
+            },
+            model_slice: null,
+          },
+        },
+        availability: 'general_pool',
+        actorRef: 'verify-and-promote:owner_override',
+        now,
       });
     });
 

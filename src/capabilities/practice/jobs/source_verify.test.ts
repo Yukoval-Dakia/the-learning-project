@@ -24,7 +24,13 @@ import {
 import type { SourceGroundingVerifyResult } from '@/capabilities/practice/server/judge/source-grounding-verify';
 import { buildProducerDifficultyEvidence } from '@/core/schema/difficulty-evidence';
 import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
-import { event, knowledge, question } from '@/db/schema';
+import {
+  event,
+  knowledge,
+  question,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
 import { getFsrsState } from '@/server/fsrs/state';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { semanticJudgeOutput } from '../../../../tests/helpers/solve-check-fixtures';
@@ -232,6 +238,27 @@ describe('runSourceVerify', () => {
     expect(events[0].payload).toMatchObject({
       supply_trace: supplyTrace,
       difficulty_evidence: difficultyEvidence,
+    });
+
+    // YUK-1043 — verified promote 经统一发布链落 §3.3 admission：该行由测试
+    // 直接 seed（无 sourced-draft-insert 首版）⇒ promote 铸首版 revision 并直接
+    // admitted（official —— 参考答案源自原始页面非 model-proposed；结构校验过，
+    // 无独立模型门，note 记 tier-2 摘要）。
+    const revisions1043 = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.group_id, qid));
+    expect(revisions1043).toHaveLength(1);
+    expect(revisions1043[0].revision_ordinal).toBe(1);
+    const lifecycles1043 = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(lifecycles1043[0].current_revision_id).toBe(revisions1043[0].revision_id);
+    expect(lifecycles1043[0].scoring_admission_state).toBe('admitted');
+    expect(lifecycles1043[0].scoring_admission_evidence).toMatchObject({
+      marking_provenance: 'official',
+      verification: { structural_check_passed: true, independent_verification: null },
     });
   });
 

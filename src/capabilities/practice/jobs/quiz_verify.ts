@@ -60,6 +60,7 @@ import {
 } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectQuestionKind } from '@/subjects/profile-schema';
 import { resolveQuizGenSkillDocs } from '@/subjects/quiz-gen-skills';
@@ -912,6 +913,33 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             }
           }
         }
+
+        // YUK-1043 — 统一发布链：verified promote 即 §3.3 的 admission 时刻
+        //（同事务，位于级联之后 ⇒ 组契约含最终子 part 状态）。quiz_gen 内容为
+        // model-proposed ⇒ D1 双门：结构校验（publisher 契约校验）+ 本 job 的独立
+        // 模型核验均过 ⇒ system_verified 准入（显式非 official）。composite 的
+        // 组根 = 父行；已发布过同内容的组在此只更新 admission 维度（generation+1）。
+        await publishQuestionGroupFromRow(tx, {
+          rootId: row.parent_question_id ?? questionId,
+          admission: {
+            state: 'admitted',
+            evidence: {
+              marking_provenance: 'system_verified',
+              verification: {
+                structural_check_passed: true,
+                independent_verification: {
+                  passed: true,
+                  verifier: 'independent_model',
+                  verified_at: now.toISOString(),
+                },
+              },
+              model_slice: null,
+            },
+          },
+          availability: 'general_pool',
+          actorRef: 'quiz_verify:promote',
+          now,
+        });
       } else {
         // needs_review / fail / too_close / solve_check veto — stay draft, never reaches
         // the pool.

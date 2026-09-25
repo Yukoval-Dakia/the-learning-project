@@ -79,6 +79,9 @@ export const fastTestInclude = [
   // YUK-1005 — pure (no-DB) unit for the sourced-markup (MathJye→markdown/LaTeX)
   // normalizer: a lenient tag tokenizer with zero imports → unit partition.
   'src/server/questions/sourced-markup.test.ts',
+  // YUK-1043 — 纯（无 IO）contract-normalizer 单测：legacy 行 → 评估契约四层
+  // 的身份纪律与可发布性。不走 DB，进 unit 分区（sourced-markup 同先例）。
+  'src/server/questions/contract-normalizer.test.ts',
   // YUK-383 Phase 0 — pure (no-DB) unit for the pgvector customType codec in
   // src/db/vector.ts (string <-> number[] only; no Postgres touched) → unit partition.
   'src/db/vector.test.ts',
