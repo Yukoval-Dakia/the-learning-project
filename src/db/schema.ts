@@ -965,6 +965,73 @@ export const assessment_identity_mapping = pgTable(
   ],
 );
 
+// YUK-1050 — 历史迁移 apply 执行器的运行账本（grounding §15：分阶段离线可续跑
+// + locks/WAL/duration 观测）。运维工具表，非判分/作答真相：允许 UPDATE（阶段
+// 状态迁移）；真相源表自身的不可变性由 0105/0106/0107 trigger 保证，与本表无关。
+// 备份语义（review P1-1）：运维态不进备份（BACKUP_EXCLUDED_TABLES）且 restore 时
+// 先擦除（RESTORE_WIPE_ONLY_TABLES，子 phase 先于父 run）—— 残留旧 apply 进度
+// 坐在恢复后的旧真相数据旁是错误的（会假装迁移已完成/未完成）。
+export const migration_apply_run = pgTable(
+  'migration_apply_run',
+  {
+    run_id: text('run_id').primaryKey(),
+    checkpoint_hash: text('checkpoint_hash').notNull(),
+    classification_hash: text('classification_hash').notNull(),
+    classification_version: text('classification_version').notNull(),
+    /** revision registry 工件 digest（无 registry 时 NULL）。 */
+    registry_digest: text('registry_digest'),
+    plan_digest: text('plan_digest').notNull(),
+    status: text('status', { enum: ['running', 'completed', 'failed'] }).notNull(),
+    started_at: timestamp('started_at', { withTimezone: true }).notNull(),
+    finished_at: timestamp('finished_at', { withTimezone: true }),
+    wal_lsn_start: text('wal_lsn_start'),
+    wal_lsn_end: text('wal_lsn_end'),
+    error: text('error'),
+  },
+  (t) => [
+    check('migration_apply_run_status_ck', sql`${t.status} IN ('running','completed','failed')`),
+  ],
+);
+
+export const migration_apply_phase = pgTable(
+  'migration_apply_phase',
+  {
+    id: text('id').primaryKey(),
+    run_id: text('run_id')
+      .notNull()
+      .references(() => migration_apply_run.run_id),
+    phase: text('phase', {
+      enum: ['preflight', 'plan', 'apply_mappings', 'apply_submissions', 'reconcile'],
+    }).notNull(),
+    status: text('status', {
+      enum: ['running', 'completed', 'failed', 'skipped'],
+    }).notNull(),
+    started_at: timestamp('started_at', { withTimezone: true }).notNull(),
+    finished_at: timestamp('finished_at', { withTimezone: true }),
+    duration_ms: integer('duration_ms'),
+    wal_lsn_start: text('wal_lsn_start'),
+    wal_lsn_end: text('wal_lsn_end'),
+    rows_written: integer('rows_written').notNull().default(0),
+    rows_already_present: integer('rows_already_present').notNull().default(0),
+    error: text('error'),
+  },
+  (t) => [
+    uniqueIndex('migration_apply_phase_run_phase_uq').on(t.run_id, t.phase),
+    check(
+      'migration_apply_phase_status_ck',
+      sql`${t.status} IN ('running','completed','failed','skipped')`,
+    ),
+    check(
+      'migration_apply_phase_name_ck',
+      sql`${t.phase} IN ('preflight','plan','apply_mappings','apply_submissions','reconcile')`,
+    ),
+    check(
+      'migration_apply_phase_rows_ck',
+      sql`${t.rows_written} >= 0 AND ${t.rows_already_present} >= 0`,
+    ),
+  ],
+);
+
 // Phase 1c.1 Step 9.J — `mistake` and `review_event` tables DROPped per
 // ADR-0006 v2: failure attempts are events (action='attempt', outcome='failure'),
 // reviews are events (action='review'). FSRS state projection lives in

@@ -88,6 +88,7 @@
     "b3:gate": "tsx scripts/b3-gate.ts",
     "capture:golden": "tsx scripts/capture-golden.ts",
     "migration:capture": "tsx scripts/migration-capture.ts",
+    "migration:apply": "tsx scripts/migration-apply.ts",
     "audit:golden": "tsx scripts/golden-reaudit.ts",
     "capture:judge-golden": "tsx scripts/capture-judge-golden.ts",
     "audit:judge-golden": "tsx scripts/judge-golden-reaudit.ts",

@@ -151,9 +151,13 @@ export function durablePendingEvent(fixture: {
       run_id: fixture.runId,
       caller: 'submit',
       knowledge_ids: ['kc-1'],
+      ability_global_ids: ['ag-1'],
       submit: {
         body: { response_md: fixture.responseMd ?? 'x' },
         question_id: fixture.questionId ?? 'q-1',
+        // JudgePendingSubmitInput 必填字段（契约面）：subject_profile + ability 上下文。
+        subject_profile: { learner_id: 'learner-1', locale: 'zh' },
+        ability_global_by_knowledge_id: { 'kc-1': 'ag-1' },
         submitted_at: '2026-09-20T00:00:00.000Z',
         ...(fixture.snapshotOverride !== undefined
           ? { question_snapshot: fixture.snapshotOverride }
