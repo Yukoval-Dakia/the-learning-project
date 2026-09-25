@@ -1,7 +1,10 @@
+import { AttemptQuestionSnapshot } from '../schema/question-evidence-snapshot';
 import type { MigrationCapture, RawEventRow } from './types';
 
 // YUK-1048 — shared capture fixtures for the pure migration unit tests.
 // 纯对象构造器：不 import DB；db 侧的 capture.db.test.ts 自行 seed 真表。
+// 快照 fixture 用【真实冻结契约】AttemptQuestionSnapshot.parse 产出（review
+// P1-5：不能用 {prompt_md, kind} 这种自造形状掩盖校验缺口）。
 
 export function emptyCapture(): MigrationCapture {
   return {
@@ -90,7 +93,112 @@ export function judgeEvent(fixture: EventFixture): RawEventRow {
   });
 }
 
-export const SNAPSHOT = { prompt_md: '1+1=?', kind: 'short_answer' } as const;
+/** 真实冻结契约形状的 attempt issued snapshot（AttemptQuestionSnapshot.parse 产出）。 */
+export const SNAPSHOT = AttemptQuestionSnapshot.parse({
+  schema_version: 1,
+  question: {
+    question_id: 'q-1',
+    question_version: 0,
+    parent_question_id: null,
+    prompt_md: '1+1=?',
+    reference_md: '2',
+    choices_md: null,
+    image_refs: [],
+    figures: [],
+    updated_at: '2026-09-01T00:00:00.000Z',
+  },
+  parent_question: null,
+});
+
+/**
+ * 真实 durable pending 输入的冻结 snapshot（FrozenQuestionSnapshot 结构，
+ * judge-run-payload.ts）：kind/prompt_md/.../version/updated_at。
+ */
+export const FROZEN_DURABLE_SNAPSHOT = {
+  kind: 'short_answer',
+  prompt_md: '1+1=?',
+  reference_md: '2',
+  rubric_json: null,
+  choices_md: null,
+  judge_kind_override: null,
+  knowledge_ids: ['kc-1'],
+  difficulty: 3,
+  metadata: null,
+  figures: [],
+  image_refs: [],
+  structured: null,
+  version: 0,
+  updated_at: '2026-09-01T00:00:00.000Z',
+} as const;
+
+/** durable pending 事件（JudgePendingAttemptPayload 形状，含真实 submit 冻结输入）。 */
+export function durablePendingEvent(fixture: {
+  id: string;
+  runId: string;
+  questionId?: string;
+  responseMd?: string;
+  withSnapshot?: boolean;
+}): RawEventRow {
+  return ev({
+    id: fixture.id,
+    action: 'experimental:judge_pending_attempt',
+    subject_kind: 'question',
+    subject_id: fixture.questionId ?? 'q-1',
+    outcome: null,
+    payload: {
+      run_id: fixture.runId,
+      caller: 'submit',
+      knowledge_ids: ['kc-1'],
+      submit: {
+        body: { response_md: fixture.responseMd ?? 'x' },
+        question_id: fixture.questionId ?? 'q-1',
+        submitted_at: '2026-09-20T00:00:00.000Z',
+        ...(fixture.withSnapshot === false
+          ? {}
+          : { question_snapshot: { ...FROZEN_DURABLE_SNAPSHOT } }),
+      },
+    },
+  });
+}
+
+/** review-settlement 形状的 answer-bearing review（user_response_md + embedded judge）。 */
+export function answeredReviewEvent(fixture: {
+  id: string;
+  questionId?: string;
+  responseMd?: string;
+  withVerdict?: boolean;
+  judgeRoute?: string;
+}): RawEventRow {
+  return ev({
+    id: fixture.id,
+    action: 'review',
+    subject_kind: 'question',
+    subject_id: fixture.questionId ?? 'q-1',
+    outcome: 'success',
+    payload: {
+      fsrs_rating: 'good',
+      user_response_md: fixture.responseMd ?? '2',
+      answer_image_refs: [],
+      referenced_knowledge_ids: ['kc-1'],
+      ...(fixture.withVerdict === false
+        ? {}
+        : {
+            judge: {
+              route: fixture.judgeRoute ?? 'exact',
+              score: 1,
+              score_meaning: 'correctness',
+              coarse_outcome: 'correct',
+              confidence: 0.9,
+              feedback_md: '答对了',
+              evidence_json: {},
+              capability_ref: { id: 'exact', version: '1.0.0' },
+              suggested_rating: 'good',
+              auto_rated: true,
+            },
+          }),
+    },
+  });
+}
 
 export function withEvents(capture: MigrationCapture, events: RawEventRow[]): MigrationCapture {
   return {

@@ -1,4 +1,5 @@
 import { canonicalHash, digestOfIds } from './canonical';
+import { type CheckpointProvenance, checkpointHashOf } from './checkpoint';
 import type {
   ManifestTableCount,
   MigrationCapture,
@@ -23,15 +24,11 @@ import type {
 
 export const MAX_PK_LIST = 5_000;
 
-export interface ManifestOptions {
-  tool_version: string;
-  git_sha: string | null;
-  app_image: string | null;
-  worker_image: string | null;
-  /** 本地 drizzle/ 迁移文件数（CLI 侧统计；null = 未提供）。 */
-  migration_files: number | null;
-  redaction: { applied: boolean; fields: string[] };
-}
+/** 分类输出版本（分类语义变化时 bump —— manifest 刷新判据之一）。 */
+export const CLASSIFICATION_VERSION = '1';
+
+/** manifest 构建选项 = checkpoint provenance（P1-1：provenance 进 checkpoint 身份）。 */
+export interface ManifestOptions extends CheckpointProvenance {}
 
 /** 引用边（from → to），用于 edge hash。 */
 export interface CaptureEdge {
@@ -195,9 +192,16 @@ export function buildMigrationManifest(
         ? 'in_sync'
         : 'drift';
 
+  const classificationHash = canonicalHash({
+    records: classification.records,
+    unresolved: classification.unresolved,
+    deferred_replay: classification.deferred_replay,
+  });
+
   return {
     manifest_version: 1,
     tool: { name: 'migration-capture', version: options.tool_version },
+    checkpoint_hash: checkpointHashOf(capture, options),
     source: {
       git_sha: options.git_sha,
       app_image: options.app_image,
@@ -309,6 +313,13 @@ export function buildMigrationManifest(
       source_documents: facts.aggregate_counts.source_documents,
       question_image_refs_total: facts.aggregate_counts.question_image_refs_total,
       answer_image_refs_total: facts.answers.reduce((sum, a) => sum + a.image_refs.length, 0),
+    },
+    classification: {
+      classification_version: CLASSIFICATION_VERSION,
+      classification_hash: classificationHash,
+      records: classification.records,
+      unresolved: classification.unresolved,
+      deferred_replay: classification.deferred_replay,
     },
     classification_rollup: classification.rollup,
     unresolved_count: classification.unresolved.length,

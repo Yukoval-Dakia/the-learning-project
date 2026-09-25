@@ -314,7 +314,9 @@ export type NativeCategory =
   | 'historical_unresolved'
   | 'correction_cycle_unresolved'
   | 'fsrs_review_lineage'
-  | 'state_snapshot_lineage';
+  | 'state_snapshot_lineage'
+  /** 因 evidence/causal 闭包被捕获的非评估事件（P1-7）—— 只作引用世系。 */
+  | 'causal_closure_lineage';
 
 /**
  * 迁移目标接缝（平行 lane YUK-1044 拥有目标表；本 lane 只产出语义描述符）。
@@ -324,9 +326,18 @@ export type NativeCategory =
 export type MigrationTargetRef =
   | {
       kind: 'submission_with_imported_eval';
-      /** 判分证据来自独立 judge 事件（imported evaluation + effective head）。 */
-      judge_event_id: string;
-      has_effective_head: true;
+      /**
+       * 判分证据：独立 judge 事件 id（null = 评估嵌入在 submission 事件本身的
+       * judge 块内，如 review-settlement 的 embedded judge / durable 回填）。
+       */
+      judge_event_id: string | null;
+      /**
+       * 一次 occurrence 至多一个 effective head（P1-4）：多 verdict 按 legacy
+       * newest-judge-wins（practice-read.ts 读语义）选头；并列/被纠正 → 不选。
+       */
+      has_effective_head: boolean;
+      /** 选头依据（审计可读）。ambiguous_held 时 anchor 侧为 pending。 */
+      head_selection: 'sole_verdict' | 'legacy_newest_judge' | 'not_selected' | 'ambiguous_held';
     }
   | {
       kind: 'submission_with_embedded_eval';
@@ -388,6 +399,13 @@ export interface ManifestTableCount {
 export interface MigrationManifest {
   manifest_version: 1;
   tool: { name: 'migration-capture'; version: string };
+  /**
+   * 整个观测 checkpoint 的内容身份（P1-1）：覆盖 rawFacts + ops + queues +
+   * subscriptions + ai_task_runs + environment（不含随运行变化的
+   * snapshot_at/captured_at）+ provenance。工件文件名按它寻址 —— 运维态
+   * （队列/订阅/ingest_at）变化会产生新 checkpoint，不会被旧工件吞掉。
+   */
+  checkpoint_hash: string;
   /** 观测来源/版本/redacted flags。 */
   source: {
     git_sha: string | null;
@@ -435,6 +453,15 @@ export interface MigrationManifest {
     source_documents: number;
     question_image_refs_total: number;
     answer_image_refs_total: number;
+  };
+  /** 完整分类输出随清单持久化（P1-2）：records + unresolved + deferred_replay。 */
+  classification: {
+    classification_version: string;
+    /** canonical hash of {records, unresolved, deferred_replay} —— 刷新判据。 */
+    classification_hash: string;
+    records: RecordClassification[];
+    unresolved: MigrationClassification['unresolved'];
+    deferred_replay: DeferredReplayEntry[];
   };
   classification_rollup: Record<string, number>;
   unresolved_count: number;

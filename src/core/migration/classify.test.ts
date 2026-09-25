@@ -1,17 +1,26 @@
 import { describe, expect, it } from 'vitest';
 
 import { classifyMigrationCapture } from './classify';
-import { SNAPSHOT, emptyCapture, ev, judgeEvent, withEvents } from './test-fixtures';
+import {
+  SNAPSHOT,
+  answeredReviewEvent,
+  durablePendingEvent,
+  emptyCapture,
+  ev,
+  judgeEvent,
+  withEvents,
+} from './test-fixtures';
 import type { MigrationCapture } from './types';
 
-// YUK-1048 — native 分类器单测（grounding §13）。纯函数、确定性、无 LLM。
+// YUK-1048 — native 分类器单测（grounding §13；review P1-3/4/5/7 修订）。
+// 纯函数、确定性、无 LLM。
 
 function attemptOf(id: string, payload: Record<string, unknown>, questionId = 'q-1') {
   return ev({ id, action: 'attempt', subject_kind: 'question', subject_id: questionId, payload });
 }
 
 describe('classifyMigrationCapture — 五类代表性历史形状', () => {
-  it('完整 attempt（snapshot + 真实 verdict judge）→ complete_attempt + imported eval/head', () => {
+  it('完整 attempt（真实契约 snapshot + verdict judge）→ complete_attempt + sole head', () => {
     const attempt = attemptOf('a1', { answer_md: '2', question_snapshot: SNAPSHOT });
     const judge = judgeEvent({
       id: 'j1',
@@ -21,19 +30,22 @@ describe('classifyMigrationCapture — 五类代表性历史形状', () => {
     });
     const out = classifyMigrationCapture(withEvents(emptyCapture(), [attempt, judge]));
 
-    const attemptRow = out.records.find((r) => r.source_id === 'a1');
-    expect(attemptRow?.category).toBe('complete_attempt');
-    expect(attemptRow?.native_target).toEqual({
-      kind: 'submission_with_imported_eval',
-      judge_event_id: 'j1',
-      has_effective_head: true,
+    expect(out.records.find((r) => r.source_id === 'a1')).toMatchObject({
+      category: 'complete_attempt',
+      native_target: {
+        kind: 'submission_with_imported_eval',
+        judge_event_id: 'j1',
+        has_effective_head: true,
+        head_selection: 'sole_verdict',
+      },
     });
-    // verdict judge 事件本身也是 complete_attempt 分组（imported eval 证据）。
-    const judgeRow = out.records.find((r) => r.source_id === 'j1');
-    expect(judgeRow?.category).toBe('complete_attempt');
+    expect(out.records.find((r) => r.source_id === 'j1')).toMatchObject({
+      category: 'complete_attempt',
+      native_target: { has_effective_head: true, head_selection: 'sole_verdict' },
+    });
   });
 
-  it('embedded tutor grade（solve_tutor 嵌入判分）→ embedded_tutor_grade', () => {
+  it('embedded tutor grade（solve_tutor 嵌入 verdict）→ embedded_tutor_grade', () => {
     const attempt = attemptOf('a2', {
       question_snapshot: SNAPSHOT,
       source: 'solve_tutor',
@@ -42,73 +54,30 @@ describe('classifyMigrationCapture — 五类代表性历史形状', () => {
       judge: { coarse_outcome: 'partial' },
     });
     const out = classifyMigrationCapture(withEvents(emptyCapture(), [attempt]));
-    const row = out.records.find((r) => r.source_id === 'a2');
-    expect(row?.category).toBe('embedded_tutor_grade');
-    expect(row?.native_target).toEqual({
-      kind: 'submission_with_embedded_eval',
-      provenance: 'embedded_tutor',
+    expect(out.records.find((r) => r.source_id === 'a2')).toMatchObject({
+      category: 'embedded_tutor_grade',
+      native_target: { kind: 'submission_with_embedded_eval', provenance: 'embedded_tutor' },
     });
   });
 
-  it('pending（durable run 未 backfill）→ pending_blocked，保留 run/request 身份与 infra 语义', () => {
-    const pending = ev({
-      id: 'p1',
-      action: 'experimental:judge_pending_attempt',
-      outcome: null,
-      payload: {
-        run_id: 'run_missing',
-        caller: 'submit',
-        knowledge_ids: ['kc-1'],
-        submit: {
-          body: { answer_md: 'x' },
-          question_id: 'q-1',
-          submitted_at: '2026-09-20T00:00:00.000Z',
-        },
-      },
-    });
+  it('pending（durable run 未 backfill，真实 submit 冻结输入）→ pending_blocked(infra_failure)', () => {
+    const pending = durablePendingEvent({ id: 'p1', runId: 'run_missing', responseMd: '我的作答' });
     const out = classifyMigrationCapture(withEvents(emptyCapture(), [pending]));
     const row = out.records.find((r) => r.source_id === 'p1');
     expect(row?.category).toBe('pending_blocked');
     expect(row?.native_target.kind).toBe('pending_carried');
     if (row?.native_target.kind === 'pending_carried') {
-      const pending = row.native_target.pending;
-      expect(pending.reason).toBe('infra_failure');
-      if (pending.reason === 'infra_failure') {
-        expect(pending.retryable).toBe(true);
+      const pendingState = row.native_target.pending;
+      expect(pendingState.reason).toBe('infra_failure');
+      if (pendingState.reason === 'infra_failure') {
+        expect(pendingState.retryable).toBe(true);
       }
-      expect(JSON.stringify(pending)).toContain('run_missing');
+      expect(JSON.stringify(pendingState)).toContain('run_missing');
     }
   });
 
-  it('已 backfill 的 judge_pending_attempt → pending_resolved_lineage', () => {
-    const review = ev({
-      id: 'run_present',
-      action: 'review',
-      outcome: 'success',
-      payload: { rating: 2 },
-    });
-    const pending = ev({
-      id: 'p2',
-      action: 'experimental:judge_pending_attempt',
-      outcome: null,
-      payload: {
-        run_id: 'run_present',
-        caller: 'submit',
-        knowledge_ids: [],
-        submit: { question_id: 'q-1', submitted_at: '2026-09-20T00:00:00.000Z' },
-      },
-    });
-    const out = classifyMigrationCapture(withEvents(emptyCapture(), [review, pending]));
-    expect(out.records.find((r) => r.source_id === 'p2')?.category).toBe(
-      'pending_resolved_lineage',
-    );
-    expect(out.records.find((r) => r.source_id === 'run_present')?.category).toBe(
-      'fsrs_review_lineage',
-    );
-  });
-
-  it('缺 issued snapshot → historical_unresolved（不用当前 revision 补造）', () => {
-    const attempt = attemptOf('a3', { answer_md: '旧答案' }); // 无 question_snapshot
+  it('缺 issued snapshot → historical_unresolved（连带 judge 不可导入）', () => {
+    const attempt = attemptOf('a3', { answer_md: '旧答案' });
     const judge = judgeEvent({
       id: 'j3',
       subject_id: 'a3',
@@ -116,7 +85,6 @@ describe('classifyMigrationCapture — 五类代表性历史形状', () => {
     });
     const out = classifyMigrationCapture(withEvents(emptyCapture(), [attempt, judge]));
     expect(out.records.find((r) => r.source_id === 'a3')?.category).toBe('historical_unresolved');
-    // 连带 judge 也无 submission 可挂 —— historical_unresolved。
     expect(out.records.find((r) => r.source_id === 'j3')?.category).toBe('historical_unresolved');
     const unresolvedEntry = out.unresolved.find((u) => u.source_id === 'a3');
     expect(unresolvedEntry?.source_locator).toBe('event:attempt:a3');
@@ -152,26 +120,23 @@ describe('classifyMigrationCapture — 五类代表性历史形状', () => {
       withEvents(emptyCapture(), [attempt, judge, correct, replacement]),
     );
 
-    expect(out.records.find((r) => r.source_id === 'a4')?.category).toBe(
-      'correction_cycle_unresolved',
-    );
-    expect(out.records.find((r) => r.source_id === 'j4')?.category).toBe(
-      'correction_cycle_unresolved',
-    );
-    expect(out.records.find((r) => r.source_id === 'j4b')?.category).toBe(
-      'correction_cycle_unresolved',
-    );
-    expect(out.records.find((r) => r.source_id === 'c4')?.category).toBe(
-      'correction_cycle_unresolved',
-    );
-
+    for (const id of ['a4', 'j4', 'j4b', 'c4']) {
+      expect(out.records.find((r) => r.source_id === id)?.category).toBe(
+        'correction_cycle_unresolved',
+      );
+    }
     const replay = out.deferred_replay.find((d) => d.source_id === 'a4');
     expect(replay?.source_kind).toBe('correction_cycle');
     expect(replay?.affected_subject_ids).toContain('q-1');
   });
 
-  it('correction 直接触及 attempt（无 judge）→ attempt 亦保持 unresolved', () => {
+  it('P1-4 传播：correct 触及 attempt 本身 ⇒ 同锚的其余 judge 也不可声明 head', () => {
     const attempt = attemptOf('a5', { question_snapshot: SNAPSHOT });
+    const judge1 = judgeEvent({
+      id: 'j5a',
+      subject_id: 'a5',
+      payload: { coarse_outcome: 'correct', score: 1 },
+    });
     const correct = ev({
       id: 'c5',
       action: 'correct',
@@ -184,50 +149,300 @@ describe('classifyMigrationCapture — 五类代表性历史形状', () => {
         affected_refs: [{ kind: 'question', id: 'q-1' }],
       },
     });
-    const out = classifyMigrationCapture(withEvents(emptyCapture(), [attempt, correct]));
+    const out = classifyMigrationCapture(withEvents(emptyCapture(), [attempt, judge1, correct]));
     expect(out.records.find((r) => r.source_id === 'a5')?.category).toBe(
+      'correction_cycle_unresolved',
+    );
+    // 传播：attempt 入闭包 ⇒ 其 judge 也入闭包（不可声称 head）。
+    expect(out.records.find((r) => r.source_id === 'j5a')?.category).toBe(
+      'correction_cycle_unresolved',
+    );
+    expect(out.records.find((r) => r.source_id === 'j5a')?.native_target).toEqual({
+      kind: 'unresolved_correction_cycle',
+    });
+  });
+});
+
+describe('P1-4 — 多 verdict 的 effective head 选择', () => {
+  const snapshot = SNAPSHOT;
+
+  it('多个不同时刻的 verdict ⇒ legacy newest-judge-wins 恰选一头，其余 not_selected', () => {
+    const attempt = attemptOf('a6', { question_snapshot: snapshot });
+    const older = judgeEvent({
+      id: 'j6-old',
+      subject_id: 'a6',
+      payload: { coarse_outcome: 'incorrect' },
+      created_at: '2026-09-20T00:00:00.000Z',
+    });
+    const newer = judgeEvent({
+      id: 'j6-new',
+      subject_id: 'a6',
+      payload: { coarse_outcome: 'correct' },
+      created_at: '2026-09-21T00:00:00.000Z',
+    });
+    const out = classifyMigrationCapture(withEvents(emptyCapture(), [attempt, older, newer]));
+
+    expect(out.records.find((r) => r.source_id === 'a6')).toMatchObject({
+      category: 'complete_attempt',
+      native_target: {
+        judge_event_id: 'j6-new',
+        has_effective_head: true,
+        head_selection: 'legacy_newest_judge',
+      },
+    });
+    expect(out.records.find((r) => r.source_id === 'j6-new')).toMatchObject({
+      native_target: { has_effective_head: true, head_selection: 'legacy_newest_judge' },
+    });
+    expect(out.records.find((r) => r.source_id === 'j6-old')).toMatchObject({
+      category: 'complete_attempt',
+      native_target: { has_effective_head: false, head_selection: 'not_selected' },
+    });
+  });
+
+  it('created_at 并列 ⇒ ambiguous_held：anchor pending、两头都不选', () => {
+    const attempt = attemptOf('a7', { question_snapshot: snapshot });
+    const j1 = judgeEvent({
+      id: 'j7-a',
+      subject_id: 'a7',
+      payload: { coarse_outcome: 'correct' },
+      created_at: '2026-09-20T00:00:00.000Z',
+    });
+    const j2 = judgeEvent({
+      id: 'j7-b',
+      subject_id: 'a7',
+      payload: { coarse_outcome: 'incorrect' },
+      created_at: '2026-09-20T00:00:00.000Z',
+    });
+    const out = classifyMigrationCapture(withEvents(emptyCapture(), [attempt, j1, j2]));
+
+    expect(out.records.find((r) => r.source_id === 'a7')?.category).toBe('pending_blocked');
+    for (const id of ['j7-a', 'j7-b']) {
+      expect(out.records.find((r) => r.source_id === id)).toMatchObject({
+        native_target: { has_effective_head: false, head_selection: 'ambiguous_held' },
+      });
+    }
+  });
+
+  it('被纠正的旧 judge 不参与选头：新 judge（未被纠正）独占 head', () => {
+    const attempt = attemptOf('a8', { question_snapshot: snapshot });
+    const oldJudge = judgeEvent({
+      id: 'j8-old',
+      subject_id: 'a8',
+      payload: { coarse_outcome: 'correct' },
+    });
+    const correct = ev({
+      id: 'c8',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'j8-old',
+      actor_kind: 'agent',
+      actor_ref: 'rejudge',
+      payload: {
+        correction_kind: 'retract',
+        reason_md: '误判',
+        affected_refs: [{ kind: 'question', id: 'q-1' }],
+      },
+    });
+    const out = classifyMigrationCapture(withEvents(emptyCapture(), [attempt, oldJudge, correct]));
+    // retract 无 replacement ⇒ 无 eligible verdict ⇒ attempt 回到无判词分支（pending/断言），
+    // 且旧 judge + attempt 都在纠正闭包内。
+    expect(out.records.find((r) => r.source_id === 'j8-old')?.category).toBe(
+      'correction_cycle_unresolved',
+    );
+    expect(out.records.find((r) => r.source_id === 'a8')?.category).toBe(
       'correction_cycle_unresolved',
     );
   });
 });
 
+describe('P1-3 — review 双形态', () => {
+  it('rating-only review → fsrs_review_lineage（D15 评级 provenance，不是 submission）', () => {
+    const review = ev({
+      id: 'r13',
+      action: 'review',
+      outcome: 'success',
+      payload: { fsrs_rating: 3, user_response_md: null, answer_image_refs: [] },
+    });
+    const out = classifyMigrationCapture(withEvents(emptyCapture(), [review]));
+    expect(out.records.find((r) => r.source_id === 'r13')).toMatchObject({
+      category: 'fsrs_review_lineage',
+      native_target: { kind: 'lineage_only' },
+    });
+  });
+
+  it('durable 完整链：pending（冻结输入）+ answer-bearing review（embedded verdict）→ complete_attempt', () => {
+    const pending = durablePendingEvent({ id: 'p14', runId: 'run-14', responseMd: '我的手写作答' });
+    const review = answeredReviewEvent({ id: 'run-14', responseMd: '我的手写作答' });
+    const out = classifyMigrationCapture(withEvents(emptyCapture(), [pending, review]));
+
+    const reviewRow = out.records.find((r) => r.source_id === 'run-14');
+    expect(reviewRow?.category).toBe('complete_attempt');
+    expect(reviewRow?.native_target).toEqual({
+      kind: 'submission_with_imported_eval',
+      judge_event_id: null,
+      has_effective_head: true,
+      head_selection: 'sole_verdict',
+    });
+    expect(reviewRow?.evidence_event_ids).toContain('p14');
+    // pending 行本身只作世系（冻结输入由 review 分类承接）。
+    expect(out.records.find((r) => r.source_id === 'p14')?.category).toBe(
+      'pending_resolved_lineage',
+    );
+  });
+
+  it('durable 完整链 + 配对 judge 事件（review_judge）→ judge 是 head 证据', () => {
+    const pending = durablePendingEvent({ id: 'p15', runId: 'run-15' });
+    const review = answeredReviewEvent({ id: 'run-15' });
+    const judge = judgeEvent({
+      id: 'j15',
+      subject_id: 'run-15',
+      actor_ref: 'review_judge',
+      caused_by_event_id: 'run-15',
+      payload: {
+        judge_route: 'exact',
+        coarse_outcome: 'correct',
+        score: 1,
+        attribution_pending: true,
+      },
+    });
+    const out = classifyMigrationCapture(withEvents(emptyCapture(), [pending, review, judge]));
+
+    expect(out.records.find((r) => r.source_id === 'run-15')).toMatchObject({
+      category: 'complete_attempt',
+      native_target: { judge_event_id: 'j15', has_effective_head: true },
+    });
+    // 配对 judge 带 verdict（占位标记只表示归因 pending）→ 评估证据。
+    expect(out.records.find((r) => r.source_id === 'j15')?.category).toBe('complete_attempt');
+  });
+
+  it('durable pre-snapshot（pending 无冻结 snapshot）→ historical_unresolved', () => {
+    const pending = durablePendingEvent({ id: 'p16', runId: 'run-16', withSnapshot: false });
+    const review = answeredReviewEvent({ id: 'run-16' });
+    const out = classifyMigrationCapture(withEvents(emptyCapture(), [pending, review]));
+    const row = out.records.find((r) => r.source_id === 'run-16');
+    expect(row?.category).toBe('historical_unresolved');
+    expect(row?.reason).toContain('无冻结 question_snapshot');
+  });
+
+  it('solo answer-bearing review（无 durable 锚，判的是 live 行）→ historical_unresolved', () => {
+    const review = answeredReviewEvent({ id: 'r17', responseMd: '2' });
+    const out = classifyMigrationCapture(withEvents(emptyCapture(), [review]));
+    const row = out.records.find((r) => r.source_id === 'r17');
+    expect(row?.category).toBe('historical_unresolved');
+    expect(row?.reason).toContain('无冻结 issuance');
+  });
+
+  it('durable 自评作答（无判词）→ human_import_assertion（manual provenance only，D9/D15）', () => {
+    const pending = durablePendingEvent({ id: 'p18', runId: 'run-18' });
+    const review = answeredReviewEvent({ id: 'run-18', withVerdict: false });
+    const out = classifyMigrationCapture(withEvents(emptyCapture(), [pending, review]));
+    expect(out.records.find((r) => r.source_id === 'run-18')).toMatchObject({
+      category: 'human_import_assertion',
+      native_target: { kind: 'manual_provenance_only', assertion: 'human' },
+    });
+  });
+});
+
+describe('P1-5 — snapshot/verdict 完整性', () => {
+  it('snapshot 形状不识别（自造 {prompt_md,kind}）→ historical_unresolved，绝不用当前 revision 补造', () => {
+    const attempt = attemptOf('a20', {
+      question_snapshot: { prompt_md: '1+1=?', kind: 'short_answer' },
+    });
+    const judge = judgeEvent({
+      id: 'j20',
+      subject_id: 'a20',
+      payload: { coarse_outcome: 'correct' },
+    });
+    const out = classifyMigrationCapture(withEvents(emptyCapture(), [attempt, judge]));
+    const row = out.records.find((r) => r.source_id === 'a20');
+    expect(row?.category).toBe('historical_unresolved');
+    expect(row?.reason).toContain('AttemptQuestionSnapshot');
+  });
+
+  it('snapshot 为空对象/字符串 → historical_unresolved', () => {
+    const attempt1 = attemptOf('a21a', { question_snapshot: {} });
+    const attempt2 = attemptOf('a21b', { question_snapshot: 'q-1 v0' });
+    const out = classifyMigrationCapture(withEvents(emptyCapture(), [attempt1, attempt2]));
+    expect(out.records.find((r) => r.source_id === 'a21a')?.category).toBe('historical_unresolved');
+    expect(out.records.find((r) => r.source_id === 'a21b')?.category).toBe('historical_unresolved');
+  });
+
+  it('judge_route 单独不构成 verdict → attribution-only，attempt 缺件 blocked', () => {
+    const attempt = attemptOf('a22', { question_snapshot: SNAPSHOT });
+    const routeOnlyJudge = judgeEvent({
+      id: 'j22',
+      subject_id: 'a22',
+      payload: {
+        judge_route: 'exact',
+        cause: { primary_category: 'x', analysis_md: '...', confidence: 0.5 },
+      },
+    });
+    const out = classifyMigrationCapture(withEvents(emptyCapture(), [attempt, routeOnlyJudge]));
+    expect(out.records.find((r) => r.source_id === 'j22')?.category).toBe('attribution_only');
+    expect(out.records.find((r) => r.source_id === 'a22')?.category).toBe('pending_blocked');
+  });
+
+  it('solve_tutor 声明嵌入判分但无 verdict（judge_score/coarse_outcome 均缺）→ pending_blocked', () => {
+    const attempt = attemptOf('a23', {
+      question_snapshot: SNAPSHOT,
+      source: 'solve_tutor',
+      judge_route: 'semantic',
+    });
+    const out = classifyMigrationCapture(withEvents(emptyCapture(), [attempt]));
+    expect(out.records.find((r) => r.source_id === 'a23')?.category).toBe('pending_blocked');
+  });
+});
+
+describe('P1-7 — 因果/证据闭包', () => {
+  it('非评估事件（闭包引用，如被 caused_by/evidence_event_ids 指向的 propose）→ causal_closure_lineage', () => {
+    const attempt = attemptOf('a24', { question_snapshot: SNAPSHOT });
+    const judge = judgeEvent({
+      id: 'j24',
+      subject_id: 'a24',
+      caused_by_event_id: 'prop-1',
+      payload: { coarse_outcome: 'correct' },
+    });
+    const propose = ev({
+      id: 'prop-1',
+      action: 'propose',
+      subject_kind: 'knowledge',
+      subject_id: 'kc-9',
+      actor_kind: 'cron',
+      actor_ref: 'nightly',
+      payload: { title: '候选 KC' },
+    });
+    const out = classifyMigrationCapture(withEvents(emptyCapture(), [attempt, judge, propose]));
+    expect(out.records.find((r) => r.source_id === 'prop-1')).toMatchObject({
+      category: 'causal_closure_lineage',
+      native_target: { kind: 'lineage_only' },
+    });
+    // 闭包事件的存在不影响锚分类。
+    expect(out.records.find((r) => r.source_id === 'a24')?.category).toBe('complete_attempt');
+  });
+});
+
 describe('classifyMigrationCapture — 其余 native 语义位', () => {
   it('attribution-only judge（仅 cause 无 verdict）→ attribution_only，永不冒充分数', () => {
-    const attempt = attemptOf('a6', { question_snapshot: SNAPSHOT });
+    const attempt = attemptOf('a30', { question_snapshot: SNAPSHOT });
     const attributionJudge = judgeEvent({
-      id: 'j6',
-      subject_id: 'a6',
+      id: 'j30',
+      subject_id: 'a30',
       payload: { cause: { primary_category: '概念不清', analysis_md: '...', confidence: 0.8 } },
     });
     const out = classifyMigrationCapture(withEvents(emptyCapture(), [attempt, attributionJudge]));
-    expect(out.records.find((r) => r.source_id === 'j6')?.category).toBe('attribution_only');
-    // attempt 只有归因、没有 verdict —— 缺件 blocked，不猜。
-    expect(out.records.find((r) => r.source_id === 'a6')?.category).toBe('pending_blocked');
-  });
-
-  it('attribution 占位（attribution_pending + verdict）→ judge=placeholder，attempt=complete', () => {
-    const attempt = attemptOf('a7', { question_snapshot: SNAPSHOT });
-    const placeholder = judgeEvent({
-      id: 'j7',
-      subject_id: 'a7',
-      payload: { attribution_pending: true, coarse_outcome: 'incorrect', score: 0 },
-    });
-    const out = classifyMigrationCapture(withEvents(emptyCapture(), [attempt, placeholder]));
-    expect(out.records.find((r) => r.source_id === 'j7')?.category).toBe(
-      'attribution_pending_placeholder',
-    );
-    expect(out.records.find((r) => r.source_id === 'a7')?.category).toBe('complete_attempt');
+    expect(out.records.find((r) => r.source_id === 'j30')?.category).toBe('attribution_only');
+    expect(out.records.find((r) => r.source_id === 'a30')?.category).toBe('pending_blocked');
   });
 
   it('无 verdict 的占位 judge → attempt pending_blocked(needs_review)', () => {
-    const attempt = attemptOf('a8', { question_snapshot: SNAPSHOT });
+    const attempt = attemptOf('a31', { question_snapshot: SNAPSHOT });
     const placeholder = judgeEvent({
-      id: 'j8',
-      subject_id: 'a8',
+      id: 'j31',
+      subject_id: 'a31',
       payload: { attribution_pending: true },
     });
     const out = classifyMigrationCapture(withEvents(emptyCapture(), [attempt, placeholder]));
-    const row = out.records.find((r) => r.source_id === 'a8');
+    const row = out.records.find((r) => r.source_id === 'a31');
     expect(row?.category).toBe('pending_blocked');
     if (row?.native_target.kind === 'pending_carried') {
       expect(row.native_target.pending.reason).toBe('needs_review');
@@ -235,83 +450,83 @@ describe('classifyMigrationCapture — 其余 native 语义位', () => {
   });
 
   it('人工错题断言（learning_record mirror source=manual）→ human_import_assertion(human)', () => {
-    const attempt = attemptOf('a9', { question_snapshot: SNAPSHOT, wrong_answer_md: '我写的' });
-    const capture = emptyCapture();
-    capture.rawFacts.learning_record_mirrors = [
-      { id: 'lr9', kind: 'mistake', source: 'manual', attempt_event_id: 'a9', question_id: 'q-1' },
-    ];
-    const out = classifyMigrationCapture(withEvents(capture, [attempt]));
-    const row = out.records.find((r) => r.source_id === 'a9');
-    expect(row?.category).toBe('human_import_assertion');
-    expect(row?.native_target).toEqual({ kind: 'manual_provenance_only', assertion: 'human' });
-  });
-
-  it('导入断言（enroll mirror source=import / generated_by）→ human_import_assertion(import)', () => {
-    const attempt = attemptOf('a10', { question_snapshot: SNAPSHOT, generated_by: 'auto_capture' });
+    const attempt = attemptOf('a32', { question_snapshot: SNAPSHOT, wrong_answer_md: '我写的' });
     const capture = emptyCapture();
     capture.rawFacts.learning_record_mirrors = [
       {
-        id: 'lr10',
+        id: 'lr32',
         kind: 'mistake',
-        source: 'import',
-        attempt_event_id: 'a10',
+        source: 'manual',
+        attempt_event_id: 'a32',
         question_id: 'q-1',
       },
     ];
     const out = classifyMigrationCapture(withEvents(capture, [attempt]));
-    const row = out.records.find((r) => r.source_id === 'a10');
-    expect(row?.category).toBe('human_import_assertion');
-    expect(row?.native_target).toEqual({ kind: 'manual_provenance_only', assertion: 'import' });
+    expect(out.records.find((r) => r.source_id === 'a32')).toMatchObject({
+      category: 'human_import_assertion',
+      native_target: { kind: 'manual_provenance_only', assertion: 'human' },
+    });
+  });
+
+  it('导入断言（enroll mirror source=import / generated_by）→ human_import_assertion(import)', () => {
+    const attempt = attemptOf('a33', { question_snapshot: SNAPSHOT, generated_by: 'auto_capture' });
+    const capture = emptyCapture();
+    capture.rawFacts.learning_record_mirrors = [
+      {
+        id: 'lr33',
+        kind: 'mistake',
+        source: 'import',
+        attempt_event_id: 'a33',
+        question_id: 'q-1',
+      },
+    ];
+    const out = classifyMigrationCapture(withEvents(capture, [attempt]));
+    expect(out.records.find((r) => r.source_id === 'a33')).toMatchObject({
+      category: 'human_import_assertion',
+      native_target: { kind: 'manual_provenance_only', assertion: 'import' },
+    });
   });
 
   it('unsupported_judge（已接收未判）→ pending_blocked(unjudgeable)，不是错答', () => {
-    const attempt = attemptOf('a11', {
+    const attempt = attemptOf('a34', {
       question_snapshot: SNAPSHOT,
       unsupported_judge: true,
       answer_image_refs: ['asset-1'],
     });
     const out = classifyMigrationCapture(withEvents(emptyCapture(), [attempt]));
-    const row = out.records.find((r) => r.source_id === 'a11');
+    const row = out.records.find((r) => r.source_id === 'a34');
     expect(row?.category).toBe('pending_blocked');
     if (row?.native_target.kind === 'pending_carried') {
       expect(row.native_target.pending.reason).toBe('unjudgeable');
     }
   });
 
-  it('孤儿 judge（目标 attempt 不存在）→ historical_unresolved', () => {
+  it('孤儿 judge（目标事件不存在）→ historical_unresolved', () => {
     const judge = judgeEvent({
-      id: 'j12',
+      id: 'j35',
       subject_id: 'missing-attempt',
-      payload: { judge_route: 'exact', coarse_outcome: 'correct' },
+      payload: { coarse_outcome: 'correct', score: 1 },
     });
     const out = classifyMigrationCapture(withEvents(emptyCapture(), [judge]));
-    expect(out.records.find((r) => r.source_id === 'j12')?.category).toBe('historical_unresolved');
-  });
-
-  it('FSRS review 事件 → fsrs_review_lineage（D15 用户评级 provenance，不是 submission）', () => {
-    const review = ev({ id: 'r13', action: 'review', outcome: 'success', payload: { rating: 3 } });
-    const out = classifyMigrationCapture(withEvents(emptyCapture(), [review]));
-    const row = out.records.find((r) => r.source_id === 'r13');
-    expect(row?.category).toBe('fsrs_review_lineage');
-    expect(row?.native_target).toEqual({ kind: 'lineage_only' });
+    expect(out.records.find((r) => r.source_id === 'j35')?.category).toBe('historical_unresolved');
   });
 
   it('reproject_deferred 标记 → state_snapshot_lineage + deferred replay 工作清单', () => {
     const marker = ev({
-      id: 'rp14',
+      id: 'rp36',
       action: 'experimental:reproject_deferred',
       subject_kind: 'event',
       subject_id: 'some-judge',
       payload: {},
     });
     const out = classifyMigrationCapture(withEvents(emptyCapture(), [marker]));
-    expect(out.records.find((r) => r.source_id === 'rp14')?.category).toBe(
+    expect(out.records.find((r) => r.source_id === 'rp36')?.category).toBe(
       'state_snapshot_lineage',
     );
     expect(out.deferred_replay).toEqual([
       {
         source_kind: 'reproject_deferred_marker',
-        source_id: 'rp14',
+        source_id: 'rp36',
         affected_subject_ids: ['some-judge'],
         reason: expect.stringContaining('reproject'),
       },
@@ -349,23 +564,24 @@ describe('classifyMigrationCapture — answer 行', () => {
         },
       ]),
     );
-    const row = out.records.find((r) => r.source_id === 'ans1');
-    expect(row?.category).toBe('live_draft');
-    expect(row?.native_target).toEqual({ kind: 'draft_preserved' });
+    expect(out.records.find((r) => r.source_id === 'ans1')).toMatchObject({
+      category: 'live_draft',
+      native_target: { kind: 'draft_preserved' },
+    });
   });
 
   it('frozen answer 镜像其 attempt 分类', () => {
-    const attempt = attemptOf('a15', { answer_md: '2', question_snapshot: SNAPSHOT });
+    const attempt = attemptOf('a40', { answer_md: '2', question_snapshot: SNAPSHOT });
     const judge = judgeEvent({
-      id: 'j15',
-      subject_id: 'a15',
+      id: 'j40',
+      subject_id: 'a40',
       payload: { coarse_outcome: 'correct', score: 1 },
     });
     const out = classifyMigrationCapture(
       captureWithAnswers(
         [
           {
-            id: 'ans15',
+            id: 'ans40',
             question_id: 'q-1',
             learning_item_id: null,
             input_kind: 'text',
@@ -377,20 +593,48 @@ describe('classifyMigrationCapture — answer 行', () => {
             session_id: 's-1',
             paper_artifact_id: null,
             part_ref: null,
-            event_id: 'a15',
+            event_id: 'a40',
           },
         ],
         [attempt, judge],
       ),
     );
-    expect(out.records.find((r) => r.source_id === 'ans15')?.category).toBe('complete_attempt');
+    expect(out.records.find((r) => r.source_id === 'ans40')?.category).toBe('complete_attempt');
+  });
+
+  it('frozen answer 锚定到 answer-bearing review → 镜像 review 分类', () => {
+    const pending = durablePendingEvent({ id: 'p41', runId: 'run-41' });
+    const review = answeredReviewEvent({ id: 'run-41' });
+    const out = classifyMigrationCapture(
+      captureWithAnswers(
+        [
+          {
+            id: 'ans41',
+            question_id: 'q-1',
+            learning_item_id: null,
+            input_kind: 'text',
+            content_md: '2',
+            image_refs: [],
+            vision_extracted: null,
+            tags: [],
+            submitted_at: '2026-09-20T00:00:00.000Z',
+            session_id: null,
+            paper_artifact_id: null,
+            part_ref: null,
+            event_id: 'run-41',
+          },
+        ],
+        [pending, review],
+      ),
+    );
+    expect(out.records.find((r) => r.source_id === 'ans41')?.category).toBe('complete_attempt');
   });
 
   it('frozen 孤儿 answer（event_id 悬空）→ historical_unresolved', () => {
     const out = classifyMigrationCapture(
       captureWithAnswers([
         {
-          id: 'ans16',
+          id: 'ans42',
           question_id: 'q-1',
           learning_item_id: null,
           input_kind: 'text',
@@ -406,33 +650,14 @@ describe('classifyMigrationCapture — answer 行', () => {
         },
       ]),
     );
-    expect(out.records.find((r) => r.source_id === 'ans16')?.category).toBe(
+    expect(out.records.find((r) => r.source_id === 'ans42')?.category).toBe(
       'historical_unresolved',
     );
   });
 });
 
 describe('classifyMigrationCapture — 确定性与空形状', () => {
-  it('空 capture（D19 形状：无 answers、少量 judge）→ 多为 historical_unresolved 或干净类别', () => {
-    // D19 观测：114 questions / 0 answers / 9 judge events（其目标 attempt 可能缺）。
-    const orphanJudges = [
-      judgeEvent({
-        id: 'cj-1',
-        subject_id: 'old-1',
-        payload: { coarse_outcome: 'correct', score: 1 },
-      }),
-      judgeEvent({
-        id: 'cj-2',
-        subject_id: 'old-2',
-        payload: { judge_route: 'semantic', coarse_outcome: 'partial', score: 0.5 },
-      }),
-    ];
-    const out = classifyMigrationCapture(withEvents(emptyCapture(), orphanJudges));
-    expect(out.rollup.historical_unresolved).toBe(2);
-    expect(out.records).toHaveLength(2);
-  });
-
-  it('完全空 capture → 空输出，无异常', () => {
+  it('空 capture（D19 形状）→ 空输出，无异常', () => {
     const out = classifyMigrationCapture(emptyCapture());
     expect(out.records).toEqual([]);
     expect(out.unresolved).toEqual([]);

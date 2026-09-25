@@ -28,7 +28,10 @@ function sortValue(value: unknown): unknown {
     return value.toISOString();
   }
   const record = value as Record<string, unknown>;
-  const out: Record<string, unknown> = {};
+  // null 原型累加器（P2-A）：普通对象上 `out['__proto__'] = v` 会触发原型 setter
+  // ——既丢失该键文造成哈希碰撞，又可能污染原型。null 原型对象没有该 accessor，
+  // 赋值即创建普通自有属性；JSON.stringify 对其照常序列化自有键。
+  const out = Object.create(null) as Record<string, unknown>;
   for (const key of Object.keys(record).sort()) {
     const entry = record[key];
     // undefined 键直接丢弃（与 JSON.stringify 语义一致）：{a:1,b:undefined} 与

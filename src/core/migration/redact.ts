@@ -6,70 +6,79 @@ import type { MigrationCapture, RawEventRow } from './types';
 // ====================================================================
 //
 // D19 census 纪律是「无原始 learner 内容」；cutover 捕获默认需要原文保真
-// （迁移对账要 body），但工具必须支持 --redact 产出可外发的脱敏工件：
-// 学习者自由文本与模型分析文本替换为 {__redacted, sha256, length}。
+// （迁移对账要 body），但工具必须支持 --redact 产出可外发的脱敏工件。
 //
-// 只脱敏【内容】，不动结构/标记 —— 分类器读的是 marker（source/
-// unsupported_judge/judge_route/question_snapshot 存在性等），脱敏后分类
-// 结果不变（unit test 钉住这一点）。题目快照（question_snapshot）是题面
-// 内容不是 learner 内容，保留。
+// 按【实际捕获的事件变体】的文本字段做深.walk 键名匹配（review P1-6）：
+//   - 作答文本：answer_md / user_response_md / response_md（durable pending
+//     的 submit.body 内）/ wrong_answer_md / reasoning_trace
+//   - 模型输出自由文本：cause.analysis_md / judge.feedback_md /
+//     rejudge_raw_output
+//   - 纠正理由：reason_md（correct 事件，可能含 learner 上下文）
+// 深.walk 覆盖嵌套对象/数组（submit.body、embedded judge 块等），只替换
+//【字符串值】，结构与分类 marker（source/unsupported_judge/judge_route/
+// question_snapshot 等）原样保留 —— 脱敏后分类结果不变（单测钉死）。
+// 题面（prompt_md/question_snapshot）是题面内容不是 learner 内容，按 census
+// 策略保留。
 
-export const REDACTED_EVENT_PAYLOAD_FIELDS = [
+/** 被替换文本的占位形状（types.ts RedactedTextPlaceholder）。 */
+export interface RedactedText {
+  __redacted: true;
+  sha256: string;
+  length: number;
+}
+
+/** 深.walk 命中即脱敏的字符串字段名（跨事件变体共用）。 */
+export const REDACTED_STRING_KEYS = [
   'answer_md',
-  'reasoning_trace',
+  'user_response_md',
+  'response_md',
   'wrong_answer_md',
+  'reasoning_trace',
+  'analysis_md',
+  'feedback_md',
+  'rejudge_raw_output',
+  'reason_md',
 ] as const;
 
-export const REDACTED_NESTED_CAUSE_FIELDS = ['analysis_md'] as const;
+/** manifest.redaction.fields 的规范清单（与实现一一对应）。 */
+export function redactedFieldList(): string[] {
+  return [
+    ...REDACTED_STRING_KEYS.map((f) => `event.payload..${f}`),
+    'answer.content_md',
+    'answer.vision_extracted',
+  ];
+}
 
-export const REDACTED_ANSWER_FIELDS = ['content_md', 'vision_extracted'] as const;
-
-function redactText(value: unknown): unknown {
-  if (typeof value !== 'string') return value;
+function redactText(value: string): RedactedText {
   return {
-    __redacted: true as const,
+    __redacted: true,
     sha256: sha256Hex(value),
     length: value.length,
   };
 }
 
-function redactEventPayload(payload: unknown): unknown {
-  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
-    return payload;
+/**
+ * 深度键名匹配脱敏：递归遍历对象/数组，凡 own key ∈ REDACTED_STRING_KEYS 且
+ * 值为 string ⇒ 替换为占位。返回新结构（输入不可变）；非字符串值（数字/
+ * 对象/数组）原样保留。
+ */
+export function redactDeepByKey(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(redactDeepByKey);
   }
-  const out: Record<string, unknown> = { ...(payload as Record<string, unknown>) };
-  for (const field of REDACTED_EVENT_PAYLOAD_FIELDS) {
-    if (typeof out[field] === 'string') {
-      out[field] = redactText(out[field]);
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+    const record = value as Record<string, unknown>;
+    for (const key of Object.keys(record)) {
+      const entry = record[key];
+      out[key] =
+        typeof entry === 'string' && (REDACTED_STRING_KEYS as readonly string[]).includes(key)
+          ? redactText(entry)
+          : redactDeepByKey(entry);
     }
+    return out;
   }
-  const cause = out.cause;
-  if (cause !== null && typeof cause === 'object' && !Array.isArray(cause)) {
-    const causeOut: Record<string, unknown> = { ...(cause as Record<string, unknown>) };
-    for (const field of REDACTED_NESTED_CAUSE_FIELDS) {
-      if (typeof causeOut[field] === 'string') {
-        causeOut[field] = redactText(causeOut[field]);
-      }
-    }
-    out.cause = causeOut;
-  }
-  return out;
-}
-
-function redactAnswer(
-  answer: MigrationCapture['rawFacts']['answers'][number],
-): MigrationCapture['rawFacts']['answers'][number] {
-  return {
-    ...answer,
-    content_md:
-      typeof answer.content_md === 'string'
-        ? (redactText(answer.content_md) as unknown as string)
-        : answer.content_md,
-    vision_extracted:
-      typeof answer.vision_extracted === 'string'
-        ? (redactText(answer.vision_extracted) as unknown as string)
-        : answer.vision_extracted,
-  };
+  return value;
 }
 
 /**
@@ -79,23 +88,22 @@ function redactAnswer(
 export function redactMigrationCapture(capture: MigrationCapture): MigrationCapture {
   const events: RawEventRow[] = capture.rawFacts.events.map((e) => ({
     ...e,
-    payload: redactEventPayload(e.payload),
+    payload: redactDeepByKey(e.payload),
   }));
   return {
     ...capture,
     rawFacts: {
       ...capture.rawFacts,
       events,
-      answers: capture.rawFacts.answers.map(redactAnswer),
+      answers: capture.rawFacts.answers.map((answer) => ({
+        ...answer,
+        content_md:
+          typeof answer.content_md === 'string' ? redactText(answer.content_md) : answer.content_md,
+        vision_extracted:
+          typeof answer.vision_extracted === 'string'
+            ? redactText(answer.vision_extracted)
+            : answer.vision_extracted,
+      })),
     },
   };
-}
-
-/** manifest.redaction.fields 的规范清单（与上述实现一一对应）。 */
-export function redactedFieldList(): string[] {
-  return [
-    ...REDACTED_EVENT_PAYLOAD_FIELDS.map((f) => `event.payload.${f}`),
-    ...REDACTED_NESTED_CAUSE_FIELDS.map((f) => `event.payload.cause.${f}`),
-    ...REDACTED_ANSWER_FIELDS.map((f) => `answer.${f}`),
-  ];
 }

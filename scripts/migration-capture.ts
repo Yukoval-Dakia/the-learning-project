@@ -21,13 +21,22 @@
 import './load-env';
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { shortHash, stableStringify } from '@/core/migration/canonical';
+import { type CheckpointProvenance, checkpointHashOf } from '@/core/migration/checkpoint';
 import { classifyMigrationCapture } from '@/core/migration/classify';
 import { buildMigrationManifest } from '@/core/migration/manifest';
 import { redactMigrationCapture, redactedFieldList } from '@/core/migration/redact';
@@ -88,49 +97,96 @@ function buildDb(targetUrl: string) {
   return { db: drizzle(client, { schema }), close: () => client.end() };
 }
 
-// ───────────────────────── 幂等工件写入（内容寻址） ─────────────────────────
+// ──────────────────── 幂等工件写入（checkpoint 内容寻址，review P1-1/P1-2/P2-B） ────────────────────
 
 export interface ArtifactWriteResult {
   outDir: string;
-  rawFactHash: string;
+  /** 整个观测 checkpoint 的内容身份（rawFacts+ops+queues+subscriptions+provenance；不含运行时钟）。 */
+  checkpointHash: string;
   captureFile: string;
   manifestFile: string;
-  captureStatus: 'written' | 'already-present';
-  manifestStatus: 'written' | 'already-present';
+  captureStatus: 'written' | 'already-present' | 'repaired';
+  manifestStatus: 'written' | 'already-present' | 'repaired' | 'refreshed';
   latestStatus: 'written' | 'unchanged';
 }
 
+/** 原子发布：写临时文件 + rename（同目录，原子替换；P2-B —— 并发写者不互踩半文件）。 */
+function atomicWrite(path: string, content: string): void {
+  const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`;
+  writeFileSync(tmp, content);
+  renameSync(tmp, path);
+}
+
 /**
- * 内容寻址写入：文件名派生自 raw-fact canonical hash（与运行时刻无关）。
- * 已存在的同 hash 工件不重写（首见观测胜出 —— 快照时刻以首个 manifest 为准）；
- * 不同 hash 的新工件并存，latest.json 指针前移。绝不删除旧工件。
+ * checkpoint 内容寻址写入（P1-1）：文件名派生自 manifest.checkpoint_hash ——
+ * 覆盖 rawFacts + ops（ingest_at 等）+ queues/subscription/ai_task_runs + provenance；
+ * 唯独排除随运行变化的 snapshot_at/captured_at（重跑不产生重复捕获的前提）。
+ * 运维态变化 ⇒ 新 checkpoint hash ⇒ 新工件；不会被旧文件名吞掉。
+ *
+ * 验证而非盲跳过（P1-1）：已存在的工件读回并复算身份 —— 损坏/身份不符 ⇒ 重写
+ * （repaired）。manifest 额外按 classification_hash 刷新（P1-2：分类器改进 ⇒
+ * 同 checkpoint 的 manifest 被重写为最新分类，capture 观测保持首见胜出）。
+ * latest.json 在两个工件都落盘后最后发布。
  */
 export function writeCaptureArtifacts(
   outDir: string,
   capture: MigrationCapture,
   manifest: MigrationManifest,
+  provenance: CheckpointProvenance,
 ): ArtifactWriteResult {
   mkdirSync(outDir, { recursive: true });
-  const hash12 = shortHash(manifest.raw_fact_hash.canonical);
+  const hash12 = shortHash(manifest.checkpoint_hash);
   const captureFile = `capture-${hash12}.json`;
   const manifestFile = `manifest-${hash12}.json`;
   const capturePath = join(outDir, captureFile);
   const manifestPath = join(outDir, manifestFile);
 
   let captureStatus: ArtifactWriteResult['captureStatus'] = 'already-present';
-  if (!existsSync(capturePath)) {
-    writeFileSync(capturePath, `${stableStringify(capture)}\n`);
+  if (existsSync(capturePath)) {
+    try {
+      const stored = JSON.parse(readFileSync(capturePath, 'utf8')) as MigrationCapture;
+      if (checkpointHashOf(stored, provenance) !== manifest.checkpoint_hash) {
+        atomicWrite(capturePath, `${stableStringify(capture)}\n`);
+        captureStatus = 'repaired';
+      }
+    } catch {
+      atomicWrite(capturePath, `${stableStringify(capture)}\n`);
+      captureStatus = 'repaired';
+    }
+  } else {
+    atomicWrite(capturePath, `${stableStringify(capture)}\n`);
     captureStatus = 'written';
   }
+
+  const expectedManifest = `${stableStringify(manifest)}\n`;
   let manifestStatus: ArtifactWriteResult['manifestStatus'] = 'already-present';
-  if (!existsSync(manifestPath)) {
-    writeFileSync(manifestPath, `${stableStringify(manifest)}\n`);
+  if (existsSync(manifestPath)) {
+    try {
+      const stored = JSON.parse(readFileSync(manifestPath, 'utf8')) as MigrationManifest;
+      const identityOk = stored.checkpoint_hash === manifest.checkpoint_hash;
+      const classificationCurrent =
+        stored.classification?.classification_hash === manifest.classification.classification_hash;
+      if (!identityOk) {
+        atomicWrite(manifestPath, expectedManifest);
+        manifestStatus = 'repaired';
+      } else if (!classificationCurrent) {
+        // P1-2：分类器改进/分类版本变化 —— 同一观测的最新分类必须持久化。
+        atomicWrite(manifestPath, expectedManifest);
+        manifestStatus = 'refreshed';
+      }
+    } catch {
+      atomicWrite(manifestPath, expectedManifest);
+      manifestStatus = 'repaired';
+    }
+  } else {
+    atomicWrite(manifestPath, expectedManifest);
     manifestStatus = 'written';
   }
 
+  // latest 指针最后发布（两个工件已原子落盘）。
   const latestPath = join(outDir, 'latest.json');
   const pointer = {
-    raw_fact_hash: manifest.raw_fact_hash.canonical,
+    checkpoint_hash: manifest.checkpoint_hash,
     capture_file: captureFile,
     manifest_file: manifestFile,
     captured_at: manifest.source.captured_at,
@@ -138,8 +194,8 @@ export function writeCaptureArtifacts(
   let latestStatus: ArtifactWriteResult['latestStatus'] = 'written';
   if (existsSync(latestPath)) {
     try {
-      const existing = JSON.parse(readFileSync(latestPath, 'utf8')) as { raw_fact_hash?: string };
-      if (existing.raw_fact_hash === pointer.raw_fact_hash) {
+      const existing = JSON.parse(readFileSync(latestPath, 'utf8')) as { checkpoint_hash?: string };
+      if (existing.checkpoint_hash === pointer.checkpoint_hash) {
         latestStatus = 'unchanged';
       }
     } catch {
@@ -147,12 +203,12 @@ export function writeCaptureArtifacts(
     }
   }
   if (latestStatus === 'written') {
-    writeFileSync(latestPath, `${JSON.stringify(pointer, null, 2)}\n`);
+    atomicWrite(latestPath, `${JSON.stringify(pointer, null, 2)}\n`);
   }
 
   return {
     outDir,
-    rawFactHash: manifest.raw_fact_hash.canonical,
+    checkpointHash: manifest.checkpoint_hash,
     captureFile,
     manifestFile,
     captureStatus,
@@ -199,18 +255,20 @@ export async function runMigrationCapture(args: CaptureCliArgs): Promise<Artifac
     if (args.redact) {
       capture = redactMigrationCapture(capture);
     }
-    const classification = classifyMigrationCapture(capture);
-    const manifest = buildMigrationManifest(capture, classification, {
+    const provenance: CheckpointProvenance = {
       tool_version: TOOL_VERSION,
       git_sha: args.gitSha ?? currentGitSha(),
       app_image: args.appImage,
       worker_image: args.workerImage,
       migration_files: migrationFileCount(),
       redaction: { applied: args.redact, fields: args.redact ? redactedFieldList() : [] },
-    });
-    const result = writeCaptureArtifacts(outDir, capture, manifest);
+    };
+    const classification = classifyMigrationCapture(capture);
+    const manifest = buildMigrationManifest(capture, classification, provenance);
+    const result = writeCaptureArtifacts(outDir, capture, manifest, provenance);
 
-    console.log(`[migration-capture] raw-fact hash: ${result.rawFactHash}`);
+    console.log(`[migration-capture] checkpoint hash: ${result.checkpointHash}`);
+    console.log(`[migration-capture] raw-fact hash: ${manifest.raw_fact_hash.canonical}`);
     console.log(
       `[migration-capture] artifacts: ${result.captureFile} (${result.captureStatus}), ` +
         `${result.manifestFile} (${result.manifestStatus}), latest.json (${result.latestStatus})`,

@@ -1,12 +1,26 @@
 import { describe, expect, it } from 'vitest';
 
 import { classifyMigrationCapture } from './classify';
-import { type ManifestOptions, buildCaptureEdges, buildMigrationManifest } from './manifest';
-import { SNAPSHOT, emptyCapture, ev, judgeEvent, withEvents } from './test-fixtures';
+import {
+  CLASSIFICATION_VERSION,
+  type ManifestOptions,
+  buildCaptureEdges,
+  buildMigrationManifest,
+} from './manifest';
+import {
+  SNAPSHOT,
+  answeredReviewEvent,
+  durablePendingEvent,
+  emptyCapture,
+  ev,
+  judgeEvent,
+  withEvents,
+} from './test-fixtures';
 
-// YUK-1048 — manifest 构建器单测（grounding §14）。
-// 核心断言：可变运维字段绝不进 raw-fact hash；MAX(dispatch_seq) 非完整性
-// 证明的显式声明；语义计数/PK digest/edge hash 齐备。
+// YUK-1048 — manifest 构建器单测（grounding §14；review P1-1/P1-2 修订）。
+// 核心断言：可变运维字段绝不进 raw-fact hash；checkpoint 身份覆盖完整观测
+// （ops/queues/subscriptions/provenance）；分类输出随清单持久化；
+// MAX(dispatch_seq) 非完整性证明的显式声明。
 
 const OPTIONS: ManifestOptions = {
   tool_version: 'test',
@@ -75,7 +89,7 @@ describe('buildMigrationManifest — raw-fact hash 纪律', () => {
     expect(changedManifest.raw_fact_hash.canonical).not.toBe(base.raw_fact_hash.canonical);
   });
 
-  it('快照时刻（environment.snapshot_at）变化不影响 raw-fact hash', () => {
+  it('快照时刻（environment.snapshot_at）变化不影响 raw-fact hash 与 checkpoint hash', () => {
     const capture = seededCapture();
     const classification = classifyMigrationCapture(capture);
     const base = buildMigrationManifest(capture, classification, OPTIONS);
@@ -83,6 +97,112 @@ describe('buildMigrationManifest — raw-fact hash 纪律', () => {
     later.environment.snapshot_at = '2027-01-01T00:00:00.000Z';
     const laterManifest = buildMigrationManifest(later, classification, OPTIONS);
     expect(laterManifest.raw_fact_hash.canonical).toBe(base.raw_fact_hash.canonical);
+    // 重跑不产生重复捕获的前提：运行时钟不在 checkpoint 身份里。
+    expect(laterManifest.checkpoint_hash).toBe(base.checkpoint_hash);
+  });
+});
+
+describe('P1-1 — checkpoint 身份覆盖完整观测（不只 raw facts）', () => {
+  it('运维态（ops.ingest_at）变化 → raw-fact hash 不变但 checkpoint hash 变化', () => {
+    const capture = seededCapture();
+    const classification = classifyMigrationCapture(capture);
+    const base = buildMigrationManifest(capture, classification, OPTIONS);
+
+    const mutated = structuredClone(capture);
+    mutated.ops.event_ingest_at = [{ event_id: 'a1', ingest_at: '2026-09-26T00:00:00.000Z' }];
+    const mutatedManifest = buildMigrationManifest(mutated, classification, OPTIONS);
+
+    expect(mutatedManifest.raw_fact_hash.canonical).toBe(base.raw_fact_hash.canonical);
+    expect(mutatedManifest.checkpoint_hash).not.toBe(base.checkpoint_hash);
+  });
+
+  it('队列/订阅/任务计数变化 → checkpoint hash 变化', () => {
+    const capture = seededCapture();
+    const classification = classifyMigrationCapture(capture);
+    const base = buildMigrationManifest(capture, classification, OPTIONS);
+
+    for (const mutate of [
+      (c: typeof capture) => void c.queues.push({ name: 'judge_run', state: 'failed', count: 3 }),
+      (c: typeof capture) =>
+        void c.subscription_checkpoints.push({
+          subscriber_id: 's1',
+          subscriber_version: 1,
+          status: 'active',
+          next_delivery_seq: 5,
+        }),
+      (c: typeof capture) =>
+        void c.subscription_deliveries.push({ subscriber_id: 's1', status: 'pending', count: 2 }),
+      (c: typeof capture) =>
+        void c.ai_task_runs.push({ task_kind: 'semantic_judge', status: 'running', count: 1 }),
+      (c: typeof capture) => {
+        c.environment.migrations_applied = 105;
+      },
+    ]) {
+      const mutated = structuredClone(capture);
+      mutate(mutated);
+      const mutatedManifest = buildMigrationManifest(mutated, classification, OPTIONS);
+      expect(mutatedManifest.checkpoint_hash).not.toBe(base.checkpoint_hash);
+    }
+  });
+
+  it('provenance（git sha / 镜像 / 迁移文件数 / 脱敏模式）变化 → checkpoint hash 变化', () => {
+    const capture = seededCapture();
+    const classification = classifyMigrationCapture(capture);
+    const base = buildMigrationManifest(capture, classification, OPTIONS);
+    for (const override of [
+      { git_sha: 'deadbeef' },
+      { app_image: 'app:v2' },
+      { worker_image: 'worker:v2' },
+      { migration_files: 43 },
+      { redaction: { applied: true, fields: ['x'] } },
+    ]) {
+      const manifest = buildMigrationManifest(capture, classification, { ...OPTIONS, ...override });
+      expect(manifest.checkpoint_hash).not.toBe(base.checkpoint_hash);
+    }
+  });
+});
+
+describe('P1-2 — 分类输出随清单持久化', () => {
+  it('manifest.classification 携带完整 records/unresolved/deferred_replay + 版本与哈希', () => {
+    const pending = durablePendingEvent({ id: 'p1', runId: 'run-x' });
+    const review = answeredReviewEvent({ id: 'run-1' });
+    const correct = ev({
+      id: 'c1',
+      action: 'correct',
+      subject_kind: 'event',
+      subject_id: 'a1',
+      actor_kind: 'agent',
+      actor_ref: 'rejudge',
+      payload: {
+        correction_kind: 'mark_wrong',
+        reason_md: 'x',
+        affected_refs: [{ kind: 'question', id: 'q-1' }],
+      },
+    });
+    const attempt = ev({
+      id: 'a1',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: 'q-1',
+      payload: { question_snapshot: SNAPSHOT },
+    });
+    const base = seededCapture();
+    const capture = withEvents(base, [...base.rawFacts.events, pending, review, correct, attempt]);
+    const classification = classifyMigrationCapture(capture);
+    const manifest = buildMigrationManifest(capture, classification, OPTIONS);
+
+    expect(manifest.classification.classification_version).toBe(CLASSIFICATION_VERSION);
+    expect(manifest.classification.records).toHaveLength(classification.records.length);
+    expect(manifest.classification.records).toEqual(classification.records);
+    expect(manifest.classification.unresolved).toEqual(classification.unresolved);
+    expect(manifest.classification.deferred_replay).toEqual(classification.deferred_replay);
+    expect(manifest.classification.classification_hash).toHaveLength(64);
+    // 计数字段与持久化列表一致。
+    expect(manifest.unresolved_count).toBe(manifest.classification.unresolved.length);
+    expect(manifest.deferred_replay_count).toBe(manifest.classification.deferred_replay.length);
+    // rollup 与 records 自洽。
+    const total = Object.values(manifest.classification_rollup).reduce((a, b) => a + b, 0);
+    expect(total).toBe(manifest.classification.records.length);
   });
 });
 
@@ -117,7 +237,7 @@ describe('buildMigrationManifest — §14 清单条目', () => {
     expect(eventCount?.pk_digest).toHaveLength(64);
   });
 
-  it('event_action_counts 含未捕获 body 的 action（只计数）', () => {
+  it('event_action_counts 按 action 汇总（完整分区捕获下仍成立）', () => {
     expect(manifest.event_action_counts).toContainEqual({
       action: 'other_action_not_captured',
       count: 7,
@@ -145,12 +265,6 @@ describe('buildMigrationManifest — §14 清单条目', () => {
     expect(manifest.source.db.migration_drift).toBe('in_sync');
     expect(manifest.source.isolation).toBe('repeatable read read only');
     expect(manifest.source.db.host_fingerprint).toHaveLength(12);
-  });
-
-  it('classification rollup 与 unresolved 计数入清单', () => {
-    expect(manifest.classification_rollup.complete_attempt).toBeGreaterThanOrEqual(1);
-    expect(manifest.unresolved_count).toBe(classification.unresolved.length);
-    expect(manifest.deferred_replay_count).toBe(classification.deferred_replay.length);
   });
 });
 

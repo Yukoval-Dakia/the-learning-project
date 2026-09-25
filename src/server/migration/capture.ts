@@ -1,4 +1,4 @@
-import { inArray, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 
 import { sha256Hex } from '@/core/migration/canonical';
 import type {
@@ -55,17 +55,12 @@ import {
 // worktree 不存在；分类目标以 src/core/migration/types.ts 的
 // MigrationTargetRef 接缝表达）。
 
-/** 捕获的事件动作集合（封闭集合；classifier 对每个成员都有规则）。 */
-export const ASSESSMENT_EVENT_ACTIONS = [
-  'attempt',
-  'judge',
-  'review',
-  'correct',
-  'experimental:judge_pending_attempt',
-  'experimental:grading_checkpoint',
-  'experimental:state_snapshot',
-  'experimental:reproject_deferred',
-] as const;
+// P1-7（review）：捕获【完整】event 分区，不做动作白名单 —— 评估事件的
+// caused_by_event_id、kc_typed_state.evidence_event_ids（conjecture/probe 等
+// 事件在白名单外）等引用必须闭包完整（被引事件的 body/time/actor/cost 同样
+// 保留），不能只留悬空指针。本产品规模下完整分区有界（D19 census：事件总量
+// 为单用户规模）；event_action_counts 仍按 action 汇总进 manifest。分类器对
+// 非评估动作给出 causal_closure_lineage（只作引用世系）。
 
 function iso(value: Date | string | null): string | null {
   if (value === null) return null;
@@ -182,7 +177,6 @@ async function readRawFacts(tx: Tx): Promise<MigrationCapture['rawFacts']> {
       created_at: event.created_at,
     })
     .from(event)
-    .where(inArray(event.action, [...ASSESSMENT_EVENT_ACTIONS]))
     // 确定性顺序：UPDATE 会移动堆内元组物理位置，无 ORDER BY 的 SELECT
     // 顺序随物理顺序漂移 → 同一事实集哈希不稳（幂等被破坏）。按 id 排序。
     .orderBy(event.id);
@@ -495,8 +489,8 @@ async function readRawFacts(tx: Tx): Promise<MigrationCapture['rawFacts']> {
 async function readOpsFields(tx: Tx): Promise<MigrationCapture['ops']> {
   const ingestRows = await tx.execute<{ id: string; ingest_at: Date | string | null }>(sql`
     select id, ingest_at from event
-    where action in ${sql.raw(`(${ASSESSMENT_EVENT_ACTIONS.map((a) => `'${a}'`).join(', ')})`)}
-      and ingest_at is not null
+    where ingest_at is not null
+    order by id
   `);
   const stateUpdatedRows = await tx.execute<{
     table_name: string;
