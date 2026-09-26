@@ -43,7 +43,7 @@ describe('registerHandlers + registerCapabilityJobs', () => {
     expect(boss.work).toHaveBeenCalledWith(
       'quiz_gen',
       { pollingIntervalSeconds: 2, batchSize: 1, includeMetadata: true },
-      worker,
+      expect.any(Function), // YUK-1055: fenceAwareJobHandler wrapper, not raw worker
     );
   });
 
