@@ -4,7 +4,7 @@
 // in the submit; and a failed submit → retry surfaced, probe kept (fail-closed).
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TOKEN_STORAGE_KEY } from '@/ui/lib/api';
@@ -178,6 +178,59 @@ describe('ProbeAnswers — answer interaction (jsdom)', () => {
     expect(screen.getByRole('button', { name: '提交作答' })).toBeTruthy();
     expect(screen.getByText('求 d/dx sin(x^2)。')).toBeTruthy(); // probe not lost
     expect((screen.getByPlaceholderText(/写下你的解答/) as HTMLTextAreaElement).value).toBe('试答');
+  });
+
+  // YUK-1094 — 图片上传在途时提交入口必须 disable（否则提交带的是旧 image refs）。
+  it('disables 提交作答 while the image upload is in flight, then sends the fresh ref (YUK-1094)', async () => {
+    let resolveUpload!: (res: Response) => void;
+    const uploadGate = new Promise<Response>((resolve) => {
+      resolveUpload = resolve;
+    });
+    const captured: CapturedAnswer[] = [];
+    const base = mockFetch({ captured });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? 'GET';
+        if (url.includes('/api/assets') && method === 'POST') return uploadGate;
+        return base(input, init);
+      }),
+    );
+    const user = userEvent.setup();
+    const { container } = renderPanel();
+    await screen.findByText('求 d/dx sin(x^2)。');
+    // 先填文字，隔离出 upload-pending 这一个 disable 因素。
+    await user.type(screen.getByPlaceholderText(/写下你的解答/), '2x·cos(x^2)');
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(fileInput, new File(['bytes'], 'handwriting.png', { type: 'image/png' }));
+
+    expect((screen.getByRole('button', { name: '提交作答' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+
+    await act(async () => {
+      resolveUpload(
+        Response.json({
+          asset: {
+            id: 'asset_1',
+            storage_key: 'k',
+            mime_type: 'image/png',
+            byte_size: 3,
+            sha256: 'x',
+          },
+        }),
+      );
+    });
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: '提交作答' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    );
+
+    await user.click(screen.getByRole('button', { name: '提交作答' }));
+    await waitFor(() => expect(captured).toHaveLength(1));
+    expect(captured[0].answer_image_refs).toEqual(['asset_1']);
   });
 });
 

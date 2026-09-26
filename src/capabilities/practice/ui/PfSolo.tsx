@@ -285,6 +285,9 @@ export function PfSolo({
   // YUK-1051 (D10) — 开放作答的证据附件（通用文字+附件）；asset ids 随提交走
   // answer_image_refs（CreateAttempt 契约早就有，UI 此前丢弃）。
   const [evidence, setEvidence] = useState<EvidenceAttachment[]>([]);
+  // YUK-1094 — 附件上传中：上传批次未 settle 前禁止提交，否则判分/提交跑的是旧 evidence
+  // （刚选的附件丢掉）。由 EvidenceComposer 的 onUploadingChange 上报。
+  const [uploading, setUploading] = useState(false);
   // YUK-1051 — 202-pending：提交被分到 durable lane 时的 run 锚点；轮询直到终态，
   // 绝不重交同一答案。null = 非 pending（同步回执 / 未提交）。
   const [pendingRun, setPendingRun] = useState<{ runId: string; pollUrl: string } | null>(null);
@@ -343,6 +346,7 @@ export function PfSolo({
   const canSubmit =
     !judging &&
     !pendingRun &&
+    !uploading &&
     (isChoice ? (selIds?.length ?? 0) > 0 : text.trim().length > 0 || imageRefs.length > 0);
   // YUK-444 — 三相：answering（作答）→ confidence（judge 结果暂存、信心自评插拍、判定未揭晓）→
   // feedback（判定卡）。confidence 只在非客观流出现；客观题 answering 直接跳到 feedback（auto-commit）。
@@ -553,7 +557,7 @@ export function PfSolo({
         setAutoCommitJudgeEventId(res.judge?.judge_event_id ?? null);
         return;
       }
-      const r = await getAdvice(q.id, answerMd);
+      const r = await getAdvice(q.id, answerMd, imageRefs);
       // YUK-444 (PR #1069 thread 修复) — 分流判据是 shouldOfferConfidenceGate(route) 本体，不再在这里
       // 重新拼一遍 isObjectiveQuestion(route)。两者语义严格互补（gate = !isObjectiveQuestion，见上方定义
       // 与 capture 单测的互补断言），但**判据必须只有一处**：单测断言的正是这个生产分支所调的谓词，
@@ -722,6 +726,7 @@ export function PfSolo({
             notation={q.notation}
             placeholder="写下你的解答…"
             ariaLabel="作答"
+            onUploadingChange={setUploading}
           />
         )}
 
