@@ -11,7 +11,9 @@ import {
 } from './constants';
 
 describe('export constants', () => {
-  it('SCHEMA_VERSION is "4.22" when the contract epoch marker enters backup', () => {
+  it('SCHEMA_VERSION is "4.23" when the response-draft table enters backup', () => {
+    // 4.22 → 4.23 (YUK-1052): NEW FK_ORDER table assessment_response_draft —
+    // ResponseSet autosave 活草稿（用户可感知的学习中态，非瞬态 → 备份）。
     // 4.21 → 4.22 (YUK-1055): NEW FK_ORDER table contract_epoch — DB 合同 epoch
     // marker（append-only 迁移历史）。durable cutover 真相而非瞬态/运维态：
     // restore 必须携回 epoch 状态，否则恢复出的库丢失「是否已切换」的事实。
@@ -120,7 +122,7 @@ describe('export constants', () => {
     // 62 → 63 (YUK-1055): added contract_epoch — durable epoch marker 历史
     // （restore 必须携回「是否已切换」事实），placed just before provider_attempt
     // (provider_attempt stays last)。
-    expect(FK_ORDER.length).toBe(63);
+    expect(FK_ORDER.length).toBe(64);
     expect(FK_ORDER[0]).toBe('knowledge');
     expect(FK_ORDER[FK_ORDER.length - 1]).toBe('provider_attempt');
     expect(FK_ORDER.indexOf('note_verification_claim')).toBeGreaterThan(
