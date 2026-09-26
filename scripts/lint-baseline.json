@@ -4,8 +4,8 @@
   "infoPolicy": "info diagnostics are counted: separate infos ratchet total and per-rule rows, decreasing only like warnings",
   "totals": {
     "errors": 0,
-    "warnings": 306,
-    "infos": 1
+    "warnings": 305,
+    "infos": 0
   },
   "byRule": {
     "lint/a11y/noStaticElementInteractions": {
@@ -19,9 +19,6 @@
     },
     "lint/complexity/noImportantStyles": {
       "warning": 7
-    },
-    "lint/complexity/noUselessStringRaw": {
-      "info": 1
     },
     "lint/complexity/useOptionalChain": {
       "warning": 36
@@ -57,7 +54,7 @@
       "warning": 4
     },
     "suppressions/unused": {
-      "warning": 41
+      "warning": 40
     }
   }
 }
