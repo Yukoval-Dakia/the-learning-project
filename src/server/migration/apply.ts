@@ -198,49 +198,29 @@ async function ensureRunRow(
   dryRun: boolean,
 ): Promise<LedgerRunRow | null> {
   if (dryRun) return null;
-  const walStart = await currentWalLsn(db);
-  await db
-    .insert(migration_apply_run)
-    .values({
-      run_id: runId,
-      checkpoint_hash: plan.checkpoint_hash,
-      classification_hash: plan.classification_hash,
-      classification_version: plan.classification_version,
-      registry_digest: plan.registry_digest,
-      plan_digest: planDigestOf(plan),
-      status: 'running',
-      started_at: now,
-      wal_lsn_start: walStart,
-    })
-    .onConflictDoNothing()
-    .returning({ run_id: migration_apply_run.run_id });
-  const existing = await db
+  // YUK-1100（review P1）：先查同 checkpoint 的既有账本行做【全部】校验，验证
+  // 通过后才 insert —— 被拒的 run 不落行（账本 CHECK 无 'rejected' 态，
+  // 不落行即终态处置）。旧次序（先 insert 'running' 再校验）会把被拒 run
+  // 的 running 行留在 checkpoint 上，毒化 checkpoint：后续合法 run 的 sibling
+  // 校验反复命中毒行。
+  const checkpointRows = await db
     .select({
       run_id: migration_apply_run.run_id,
+      classification_hash: migration_apply_run.classification_hash,
       plan_digest: migration_apply_run.plan_digest,
       status: migration_apply_run.status,
     })
     .from(migration_apply_run)
-    .where(inArray(migration_apply_run.run_id, [runId]));
-  const row = existing[0];
-  if (row === undefined) {
-    throw new MigrationApplyError(`run row ${runId} 既未插入也读不到 —— 账本不一致`);
-  }
-  if (row.plan_digest !== planDigestOf(plan)) {
+    .where(inArray(migration_apply_run.checkpoint_hash, [plan.checkpoint_hash]));
+  const ownRow = checkpointRows.find((r) => r.run_id === runId);
+  if (ownRow !== undefined && ownRow.plan_digest !== planDigestOf(plan)) {
     throw new MigrationApplyError(
-      `run ${runId} 已按不同 plan_digest 执行过（账本 ${row.plan_digest} vs 本次 ${planDigestOf(plan)}）—— 同 run 的分类/registry 变化必须走显式新 run，不得混写`,
+      `run ${runId} 已按不同 plan_digest 执行过（账本 ${ownRow.plan_digest} vs 本次 ${planDigestOf(plan)}）—— 同 run 的分类/registry 变化必须走显式新 run，不得混写`,
     );
   }
   // 同 checkpoint 的其它 run 若已介入，拒绝并行第二套输入（分类刷新/registry
   // 更替属显式 supersede 工作流；新 run 与既有 run 的分类必须一致）。
-  const siblings = await db
-    .select({
-      run_id: migration_apply_run.run_id,
-      classification_hash: migration_apply_run.classification_hash,
-    })
-    .from(migration_apply_run)
-    .where(inArray(migration_apply_run.checkpoint_hash, [plan.checkpoint_hash]));
-  for (const sibling of siblings) {
+  for (const sibling of checkpointRows) {
     if (sibling.run_id === runId) continue;
     if (sibling.classification_hash !== plan.classification_hash) {
       throw new MigrationApplyError(
@@ -248,7 +228,44 @@ async function ensureRunRow(
       );
     }
   }
-  return row;
+  if (ownRow === undefined) {
+    const walStart = await currentWalLsn(db);
+    await db
+      .insert(migration_apply_run)
+      .values({
+        run_id: runId,
+        checkpoint_hash: plan.checkpoint_hash,
+        classification_hash: plan.classification_hash,
+        classification_version: plan.classification_version,
+        registry_digest: plan.registry_digest,
+        plan_digest: planDigestOf(plan),
+        status: 'running',
+        started_at: now,
+        wal_lsn_start: walStart,
+      })
+      .onConflictDoNothing();
+    // 重新读取（fence 外/并发旁路下可能已有他行抢先写入；读到的行仍须过
+    // digest 校验 —— 二次校验同样零写入路径，不毒化 checkpoint）。
+    const existing = await db
+      .select({
+        run_id: migration_apply_run.run_id,
+        plan_digest: migration_apply_run.plan_digest,
+        status: migration_apply_run.status,
+      })
+      .from(migration_apply_run)
+      .where(inArray(migration_apply_run.run_id, [runId]));
+    const row = existing[0];
+    if (row === undefined) {
+      throw new MigrationApplyError(`run row ${runId} 既未插入也读不到 —— 账本不一致`);
+    }
+    if (row.plan_digest !== planDigestOf(plan)) {
+      throw new MigrationApplyError(
+        `run ${runId} 已按不同 plan_digest 执行过（账本 ${row.plan_digest} vs 本次 ${planDigestOf(plan)}）—— 同 run 的分类/registry 变化必须走显式新 run，不得混写`,
+      );
+    }
+    return row;
+  }
+  return ownRow;
 }
 
 async function phaseStatusOf(

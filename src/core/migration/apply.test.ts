@@ -1118,4 +1118,166 @@ describe('closeout 自验（终轮 oracle repro）', () => {
     // 对侧：被导入的 judge evaluation 仍存在（是 imported eval 证据），只是不是 head。
     expect(anchor.submission?.evaluations.length).toBeGreaterThan(0);
   });
+
+  it('YUK-1100：同题面异答案 —— snapshot reference_md 与计分判据不符 → conflicted，不产 submission', () => {
+    // P1：digest 命中 + 题干/选项一致仍不能证明答案一致 —— reference_md 必须
+    // 一并纳入比对；异答案绑定错 revision 时降级 conflicted（可见可修）。
+    const wrongAnswer = AttemptQuestionSnapshot.parse({
+      schema_version: 1,
+      question: { ...SNAPSHOT.question, reference_md: '3' }, // 契约答案是 '2'
+      parent_question: null,
+    });
+    const attempt = ev({
+      id: 'att-wrong',
+      action: 'attempt',
+      subject_id: 'q-1',
+      outcome: 'failure',
+      payload: {
+        answer_md: '3',
+        answer_image_refs: [],
+        referenced_knowledge_ids: [],
+        question_snapshot: wrongAnswer,
+      },
+    });
+    const judge = judgeEvent({
+      id: 'jud-wrong',
+      subject_id: 'att-wrong',
+      outcome: 'success',
+      payload: { coarse_outcome: 'correct', score: 1 },
+    });
+    const capture = withEvents(emptyCapture(), [attempt, judge]);
+    const registry = registryOf([
+      REGISTRY_ENTRY('q-1', { snapshot_digest: canonicalHash(wrongAnswer) }),
+    ]);
+    const textKey = contractOf('rev-q-1');
+    textKey.scoring_basis = {
+      ...textKey.scoring_basis,
+      units: textKey.scoring_basis.units.map((u) => ({
+        ...u,
+        criterion: {
+          kind: 'text_key' as const,
+          accepted_texts: ['2'],
+          normalization: 'trim' as const,
+        },
+      })),
+    };
+    const plan = buildMigrationApplyPlan(
+      planInput(capture, registry, new Map([['rev-q-1', textKey]])),
+    );
+    const anchor = recordOf(plan, 'event:attempt:att-wrong');
+    expect(anchor.mapping?.status).toBe('conflicted');
+    expect(anchor.submission).toBeNull();
+    const res = anchor.mapping?.evidence.resolution as { reason?: string } | undefined;
+    expect(String(res?.reason)).toMatch(/参考答案不一致/);
+    expect(plan.worklists.conflicted.map((w) => w.source_locator)).toContain(
+      'event:attempt:att-wrong',
+    );
+  });
+
+  it('YUK-1100：同题面同答案 —— reference_md 与 accepted_texts 一致仍 mapped（不误伤）', () => {
+    const capture = withEvents(emptyCapture(), [COMPLETE_ATTEMPT, HEAD_JUDGE]);
+    const registry = registryOf([REGISTRY_ENTRY('q-1')]);
+    const textKey = contractOf('rev-q-1');
+    textKey.scoring_basis = {
+      ...textKey.scoring_basis,
+      units: textKey.scoring_basis.units.map((u) => ({
+        ...u,
+        criterion: {
+          kind: 'text_key' as const,
+          accepted_texts: ['2'],
+          normalization: 'trim' as const,
+        },
+      })),
+    };
+    const plan = buildMigrationApplyPlan(
+      planInput(capture, registry, new Map([['rev-q-1', textKey]])),
+    );
+    const anchor = recordOf(plan, 'event:attempt:att-1');
+    expect(anchor.mapping?.status).toBe('mapped');
+    expect(anchor.submission).not.toBeNull();
+  });
+
+  it('YUK-1100：选择题同题面异选项答案 —— snapshot reference 字母与 accepted_option_ids 不符 → conflicted', () => {
+    const choiceSnapshot = AttemptQuestionSnapshot.parse({
+      schema_version: 1,
+      question: { ...SNAPSHOT.question, choices_md: ['A', 'B'], reference_md: 'B' },
+      parent_question: null,
+    });
+    const attempt = ev({
+      id: 'att-choice-wrong',
+      action: 'attempt',
+      subject_id: 'q-1',
+      outcome: 'failure',
+      payload: {
+        answer_md: 'B',
+        answer_image_refs: [],
+        referenced_knowledge_ids: [],
+        question_snapshot: choiceSnapshot,
+      },
+    });
+    const wrongJudge = judgeEvent({
+      id: 'jud-choice-wrong',
+      subject_id: 'att-choice-wrong',
+      outcome: 'success',
+      payload: { coarse_outcome: 'incorrect', score: 0 },
+    });
+    const capture = withEvents(emptyCapture(), [attempt, wrongJudge]);
+    const registry = registryOf([
+      REGISTRY_ENTRY('q-1', { snapshot_digest: canonicalHash(choiceSnapshot) }),
+    ]);
+    const choiceContract = contractOf('rev-q-1', { slotKind: 'single_choice' });
+    choiceContract.scoring_basis = {
+      ...choiceContract.scoring_basis,
+      units: choiceContract.scoring_basis.units.map((u) => ({
+        ...u,
+        criterion: {
+          kind: 'option_set_key' as const,
+          accepted_option_ids: ['opt-1'], // 契约答案 = A；snapshot 答案 = B
+        },
+      })),
+    };
+    const plan = buildMigrationApplyPlan(
+      planInput(capture, registry, new Map([['rev-q-1', choiceContract]])),
+    );
+    const anchor = recordOf(plan, 'event:attempt:att-choice-wrong');
+    expect(anchor.mapping?.status).toBe('conflicted');
+    const res = anchor.mapping?.evidence.resolution as { reason?: string } | undefined;
+    expect(String(res?.reason)).toMatch(/参考答案不一致/);
+    // 对侧：参考答案 = 'A' 的同题面绑定不被拦（走到 legacy 作答重建规则）。
+    const okSnapshot = AttemptQuestionSnapshot.parse({
+      schema_version: 1,
+      question: { ...SNAPSHOT.question, choices_md: ['A', 'B'], reference_md: 'A' },
+      parent_question: null,
+    });
+    const okAttempt = ev({
+      id: 'att-choice-ok',
+      action: 'attempt',
+      subject_id: 'q-1',
+      outcome: 'failure',
+      payload: {
+        answer_md: 'A',
+        answer_image_refs: [],
+        referenced_knowledge_ids: [],
+        question_snapshot: okSnapshot,
+      },
+    });
+    const okJudge = judgeEvent({
+      id: 'jud-choice-ok',
+      subject_id: 'att-choice-ok',
+      outcome: 'success',
+      payload: { coarse_outcome: 'correct', score: 1 },
+    });
+    const okCapture = withEvents(emptyCapture(), [okAttempt, okJudge]);
+    const okRegistry = registryOf([
+      REGISTRY_ENTRY('q-1', { snapshot_digest: canonicalHash(okSnapshot) }),
+    ]);
+    const okPlan = buildMigrationApplyPlan(
+      planInput(okCapture, okRegistry, new Map([['rev-q-1', choiceContract]])),
+    );
+    const okAnchor = recordOf(okPlan, 'event:attempt:att-choice-ok');
+    // 不因 reference 比对被 conflicted（legacy 自由文本不能伪造选项身份 →
+    // reconstruction 规则接管为 historical_unresolved，与既有用例同路径）。
+    expect(okAnchor.mapping?.status).not.toBe('conflicted');
+    expect(okAnchor.mapping?.status).toBe('historical_unresolved');
+  });
 });
