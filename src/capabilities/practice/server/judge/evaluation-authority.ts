@@ -26,6 +26,10 @@ import type {
   ModelUnitExecutorPort,
   ScoringBasisT,
 } from '@/core/schema/assessment';
+import {
+  VERDICT_CORRECT_THRESHOLD,
+  deriveCoarseVerdict,
+} from '@/core/schema/assessment/settlement';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
 import {
@@ -196,6 +200,9 @@ export function projectEvaluationToJudgeResult(
   record: EvaluationRecordT,
   basis: ScoringBasisT,
 ): JudgeResultV2T {
+  // YUK-1053 — verdict 派生单源到 core/schema/assessment/settlement.ts
+  // （学习结算读同一函数；阈值/未映射/分母纪律不再双写）。
+  const verdict = deriveCoarseVerdict(record, basis);
   const pendingEvidence = {
     evaluation_id: record.evaluation_id,
     pending_units: record.unit_results
@@ -229,8 +236,7 @@ export function projectEvaluationToJudgeResult(
       },
     };
   }
-  const points = aggregate.points;
-  if (points == null) {
+  if (verdict.points == null) {
     // 命中未映射档位 —— 不凭空造总分（§4.4 / judgment.ts no_mapping 同纪律）。
     return {
       score: null,
@@ -242,9 +248,7 @@ export function projectEvaluationToJudgeResult(
       evidence_json: pendingEvidence,
     };
   }
-  const maxPoints = aggregateMaxPoints(basis);
-  const normalized =
-    maxPoints != null && maxPoints > 0 ? Math.min(1, Math.max(0, points / maxPoints)) : null;
+  const { points, maxPoints, normalized } = verdict;
   const scoredUnitFeedback = record.unit_results
     .map((unit) => (unit.status === 'scored' ? unit.feedback_md : undefined))
     .find((feedback): feedback is string => typeof feedback === 'string' && feedback.length > 0);
@@ -269,9 +273,9 @@ export function projectEvaluationToJudgeResult(
       evidence_json,
     };
   }
-  if (normalized >= 0.85) {
+  if (normalized >= VERDICT_CORRECT_THRESHOLD) {
     return {
-      score: Math.max(0.85, normalized),
+      score: Math.max(VERDICT_CORRECT_THRESHOLD, normalized),
       score_meaning: 'correctness',
       coarse_outcome: 'correct',
       confidence: 1,
@@ -289,44 +293,6 @@ export function projectEvaluationToJudgeResult(
     feedback_md: scoredUnitFeedback ?? 'partial credit across scoring units',
     evidence_json,
   };
-}
-
-/**
- * 归一化分母：发布侧声明的可得满分（sum/capped_sum/weighted_sum 加法域；
- * threshold_levels 取最高档阈值）。加权单元按「自身权重在全权重中的占比 ×
- * 满分」折算， capped 取 cap 封顶；算不出全局上限的聚合（level 聚合无
- * 阈值表）返回 null —— 归一化不可得，不硬造 1 分母。
- */
-function aggregateMaxPoints(basis: ScoringBasisT): number | null {
-  const additive = basis.units.filter(
-    (unit) => unit.criterion.kind !== 'holistic_level' && unit.points != null,
-  );
-  switch (basis.aggregation.kind) {
-    case 'sum':
-      return additive.reduce((sum, unit) => sum + (unit.points ?? 0), 0);
-    case 'weighted_sum': {
-      const weights = basis.aggregation.weights;
-      const totalWeight = basis.units.reduce(
-        (sum, unit) => sum + (weights[unit.scoring_unit_id] ?? 0),
-        0,
-      );
-      if (totalWeight <= 0) return null;
-      const weighted = additive.reduce(
-        (sum, unit) => sum + (unit.points ?? 0) * (weights[unit.scoring_unit_id] ?? 0),
-        0,
-      );
-      return weighted;
-    }
-    case 'capped_sum':
-      return Math.min(
-        basis.aggregation.cap,
-        additive.reduce((sum, unit) => sum + (unit.points ?? 0), 0),
-      );
-    case 'threshold_levels': {
-      const thresholds = basis.aggregation.thresholds;
-      return thresholds.length > 0 ? Math.max(...thresholds.map((t) => t.min_points)) : null;
-    }
-  }
 }
 
 // ---------- 统一漏斗 ----------

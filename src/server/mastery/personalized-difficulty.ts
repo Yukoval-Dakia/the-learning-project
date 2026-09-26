@@ -280,13 +280,25 @@ export interface UpdateFamilyCalibrationInput {
   now: Date;
 }
 
+/**
+ * 一次家族观测写入的回执（YUK-1053：revert/re-apply 需要精确逆运算输入）。
+ * - folded：本观测是否**实际折进** running mean（两门都过才有 residual 留在 mean 里；
+ *   未过时只累 evidence_count，mean 里无此项）。
+ * - residual：本次（已加权、已 clamp）的隐含难度残差——un-fold 的精确逆输入。
+ */
+export interface FamilyFoldRecord {
+  familyKey: string;
+  folded: boolean;
+  residual: number;
+}
+
 export async function updateFamilyCalibration(
   tx: Tx,
   input: UpdateFamilyCalibrationInput,
-): Promise<void> {
+): Promise<FamilyFoldRecord | null> {
   // 门 (a)：非客观判分（soft/subjective judge）直接不更新——一条都不累。
   // 软判分的 outcome 带 LLM 主观噪声，不该进 b 真值通道（ADR-0043 §6）。
-  if (!input.isObjective) return;
+  if (!input.isObjective) return null;
 
   // 串行化该家族的 read-modify-write（同 mastery_state 的 per-KC 锁模式）。家族 key
   // 命名空间独立，攒够后并发作答不丢增量。tx commit 时释放。
@@ -330,6 +342,8 @@ export async function updateFamilyCalibration(
   const anchorWeight = input.anchorWeight ?? 1;
   const residual =
     anchorWeight * impliedDifficultyResidual(input.theta, input.bAnchor, input.outcome);
+  // 回执：本观测是否真的留在 mean 里（两门都过才折）。
+  const foldedThisObs = gatesPassedNow;
 
   let storedDelta = 0;
   let storedConfidence = 0;
@@ -369,6 +383,61 @@ export async function updateFamilyCalibration(
         updated_at: input.now,
       },
     });
+
+  return { familyKey: input.familyKey, folded: foldedThisObs, residual };
+}
+
+/**
+ * YUK-1053 — fold 的精确算术逆（revert/replay 机械基础）。
+ *
+ * running mean 的均值对成员次序**不敏感**（可交换聚合），故逆运算无条件精确：
+ *   rawMean_{n} = (rawMean_{n−1}·(n−1) + r) / n  ⟹  rawMean_{n−1} = (rawMean_n·n − r)/(n−1)
+ * evidence_count / calibrated_n 同减；本观测若未折进 mean（门未过）只回退 evidence_count。
+ *
+ * 前提：record 里的 residual 必须就是当时写入的（self-contained）——调用方（结算
+ * revert）从 replay_inputs.effects.family_fold 取，live 重算不可作逆运算输入（彼时
+ * θ̂ 已位移，残差会错）。
+ *
+ * 返回值：
+ *   'reverted'   — 正常逆运算完成（含 row 已消失 / evidence_count 已 ≤0 的幂等空操作）。
+ *   'drift'      — 结构性不一致：record 声称已折进但当前 calibrated_n=0（mean 已无本项
+ *                  可减）——说明有非结算路径动过该行，fail-closed 交给 replay_required。
+ */
+export async function unfoldFamilyCalibration(
+  tx: Tx,
+  input: { record: FamilyFoldRecord; now: Date },
+): Promise<'reverted' | 'drift'> {
+  const existing = await getFamilyCalibration(tx, input.record.familyKey);
+  if (existing === null) return 'reverted'; // row 不在 ⇒ 效果已不在，幂等。
+  const newN = Math.max(0, existing.evidence_count - 1);
+  let newCalibratedN = existing.calibrated_n;
+  let storedDelta = existing.b_delta;
+  let storedConfidence = existing.confidence;
+  if (input.record.folded) {
+    if (existing.calibrated_n <= 0) return 'drift';
+    newCalibratedN = existing.calibrated_n - 1;
+    if (newCalibratedN === 0) {
+      storedDelta = 0;
+      storedConfidence = 0;
+    } else {
+      const rawMean = existing.b_delta / shrinkageFactor(existing.calibrated_n);
+      const prevRawMean =
+        (rawMean * existing.calibrated_n - input.record.residual) / newCalibratedN;
+      storedConfidence = shrinkageFactor(newCalibratedN);
+      storedDelta = shrinkFamilyDelta(prevRawMean, newCalibratedN);
+    }
+  }
+  await tx
+    .update(item_family_calibration)
+    .set({
+      b_delta: storedDelta,
+      evidence_count: newN,
+      confidence: storedConfidence,
+      calibrated_n: newCalibratedN,
+      updated_at: input.now,
+    })
+    .where(eq(item_family_calibration.family_key, input.record.familyKey));
+  return 'reverted';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -496,18 +565,18 @@ export async function countDistinctQuestionsInFamily(
 export async function recordFamilyObservationForAttempt(
   tx: Tx,
   input: RecordFamilyObservationInput,
-): Promise<void> {
+): Promise<FamilyFoldRecord | null> {
   const primaryKnowledgeId = input.primaryKnowledgeId?.trim();
-  if (!primaryKnowledgeId) return; // 无 primary knowledge → 家族无法成键，跳过。
+  if (!primaryKnowledgeId) return null; // 无 primary knowledge → 家族无法成键，跳过。
 
   // 门 (a) 早返：非客观判分不触任何 DB。
-  if (!isObjectiveJudgeRoute(input.judgeRoute)) return;
+  if (!isObjectiveJudgeRoute(input.judgeRoute)) return null;
 
   // finding #4 早返：partial outcome **不折进**家族校准。部分对对难度估计语义歧义——
   // 把半对当全对（outcome=1）会让 residual 偏负，重复 partial 制造 spurious「家族更易」
   // 偏置。难度估计只用干净二分 correct(1)/wrong(0)；partial 一条都不累（连 evidence_count
   // 也不动——它不是「干净客观观测」）。散题/review 路径无 partial（attemptOutcome 不传）。
-  if (input.attemptOutcome === 'partial') return;
+  if (input.attemptOutcome === 'partial') return null;
 
   // subject 派生 + family_key 组装（DERIVED 轴）。YUK-372 L3：经 resolveFamilyKeyForQuestion
   // 单一真相源（读写两侧共用同一 subject 派生 + orphan→'unknown' 容错，不再各自内联）。kind/
@@ -517,7 +586,7 @@ export async function recordFamilyObservationForAttempt(
     kind: input.kind,
     source: input.source,
   });
-  if (key === null) return; // 防御：理论上不达（primaryKnowledgeId 已校验非空）。
+  if (key === null) return null; // 防御：理论上不达（primaryKnowledgeId 已校验非空）。
 
   // b 锚：与 state.ts θ̂ 更新同一来源链（item_calibration.b track='hard' → 弱锚兜底）。
   const calRows = await tx
@@ -563,7 +632,7 @@ export async function recordFamilyObservationForAttempt(
     input.source,
   );
 
-  await updateFamilyCalibration(tx, {
+  return updateFamilyCalibration(tx, {
     familyKey: key,
     theta,
     bAnchor,
