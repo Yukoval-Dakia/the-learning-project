@@ -42,6 +42,12 @@ export interface EvidenceComposerProps {
   accept?: string;
   /** 宿主可保留既有单文件失败文案；默认通用的部分成功/失败说明。 */
   uploadErrorMessage?: string;
+  /**
+   * YUK-1094 — 上传中状态上报宿主。宿主据此把提交入口并入 upload-pending（disable），
+   * 避免分片上传尚未落定就提交、丢掉刚选的附件。true 在 onFiles 开始、false 在批次 settle
+   * （含失败/异常）时各报一次。
+   */
+  onUploadingChange?: (uploading: boolean) => void;
 }
 
 export function EvidenceComposer({
@@ -58,6 +64,7 @@ export function EvidenceComposer({
   slotLabels,
   accept = EVIDENCE_ACCEPT,
   uploadErrorMessage = '部分附件上传失败，请重试',
+  onUploadingChange,
 }: EvidenceComposerProps) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -66,28 +73,35 @@ export function EvidenceComposer({
   const onFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     setUploading(true);
+    // YUK-1094 — 上报宿主：无论成功/失败/宿主回调抛错，finally 里必落 false，否则一个卡住
+    // 的 uploading=true 会永久 disable 提交入口。
+    onUploadingChange?.(true);
     setUploadError(null);
-    // allSettled（非 all）：一个失败不丢同批已成功的附件（ProbeAnswers review-784 先例）。
-    const results = await Promise.allSettled(Array.from(files).map((f) => upload(f)));
-    const uploaded = results.flatMap((r, i) => {
-      if (r.status !== 'fulfilled') return [];
-      const file = Array.from(files)[i];
-      const asset = r.value;
-      return [
-        {
-          asset_id: asset.id,
-          kind: evidenceKindFromMime(asset.mime_type || file.type || null),
-          label: file.name || undefined,
-          // 默认绑定整个 evaluation group（§3「整页证据附件」）；子集在组面板里改。
-          slot_ids: null,
-        } satisfies EvidenceAttachment,
-      ];
-    });
-    if (uploaded.length > 0) onAttachmentsChange([...attachments, ...uploaded]);
-    if (uploaded.length < results.length) setUploadError(uploadErrorMessage);
-    setUploading(false);
-    // 清空 input：重选同一文件仍能触发 onChange（ProbeAnswers 先例）。
-    if (fileRef.current) fileRef.current.value = '';
+    try {
+      // allSettled（非 all）：一个失败不丢同批已成功的附件（ProbeAnswers review-784 先例）。
+      const results = await Promise.allSettled(Array.from(files).map((f) => upload(f)));
+      const uploaded = results.flatMap((r, i) => {
+        if (r.status !== 'fulfilled') return [];
+        const file = Array.from(files)[i];
+        const asset = r.value;
+        return [
+          {
+            asset_id: asset.id,
+            kind: evidenceKindFromMime(asset.mime_type || file.type || null),
+            label: file.name || undefined,
+            // 默认绑定整个 evaluation group（§3「整页证据附件」）；子集在组面板里改。
+            slot_ids: null,
+          } satisfies EvidenceAttachment,
+        ];
+      });
+      if (uploaded.length > 0) onAttachmentsChange([...attachments, ...uploaded]);
+      if (uploaded.length < results.length) setUploadError(uploadErrorMessage);
+    } finally {
+      setUploading(false);
+      onUploadingChange?.(false);
+      // 清空 input：重选同一文件仍能触发 onChange（ProbeAnswers 先例）。
+      if (fileRef.current) fileRef.current.value = '';
+    }
   };
 
   return (

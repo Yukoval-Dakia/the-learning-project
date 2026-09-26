@@ -894,6 +894,12 @@ export async function runAutoEnrollForSession(
       });
 
       // ---- YUK-482 cut ④ — mastery (θ̂) for the student-graded attempt. ----
+      // YUK-1054 (§9 历史分歧 · 显式保留) —「auto-enroll 独立 θ̂ 写」面：本路径
+      // 直接写 mastery_state（updateThetaForAttempt / recordFamilyObservationForAttempt），
+      // 不经 contract-lane settle.ts 的 family_fold effect —— 它不产生 evaluation /
+      // settlement / priorEffectiveId 链。YUK-1054 为读侧 ticket（不改写路径），
+      // 该分歧按 §9 显式保留于此注释锚点；读侧经 attempt 事件照常 dual-track 解析
+      // （attempt.payload.judge 是 embedded-grade 轨，与 solve-session 同）。
       // enrollCapturedBlock writes the attempt + record but does NOT touch θ̂ (the
       // live paper path does it separately at paper-submit.ts:640). Add it here ONLY
       // for the student-graded path, keyed on the question's primary KC (the

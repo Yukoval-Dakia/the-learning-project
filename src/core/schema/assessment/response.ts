@@ -469,7 +469,9 @@ export interface ResponseSetIssue {
     | 'unknown_item_id'
     | 'duplicate_pair_item'
     | 'ordering_not_permutation'
-    | 'single_choice_multiple_selection';
+    | 'single_choice_multiple_selection'
+    | 'duplicate_selected_option'
+    | 'select_count_out_of_bounds';
   detail: string;
 }
 
@@ -532,6 +534,9 @@ export function validateResponseSet(
           : slot.kind === 'matching'
             ? new Set(slot.right_options.map((option) => option.option_id))
             : new Set<string>();
+      // YUK-1096 P1-4：同一 option 被重复选择是结构违背 —— 不是
+      // “多选了一个”的量变，重复本身就意味着上游提交面出 bug。
+      const selected = new Set<string>();
       for (const optionId of entry.option_ids) {
         if (!optionIds.has(optionId)) {
           issues.push({
@@ -539,12 +544,33 @@ export function validateResponseSet(
             detail: `slot '${entry.slot_id}' response references unknown option '${optionId}'`,
           });
         }
+        if (selected.has(optionId)) {
+          issues.push({
+            code: 'duplicate_selected_option',
+            detail: `slot '${entry.slot_id}' response selects option '${optionId}' more than once`,
+          });
+        }
+        selected.add(optionId);
       }
       // P2：单选槽收到多个选择是结构性错误（空白 = 0 个；多选 = 换 multi 原语）。
       if (slot.kind === 'single_choice' && entry.option_ids.length > 1) {
         issues.push({
           code: 'single_choice_multiple_selection',
           detail: `slot '${entry.slot_id}' is single_choice but received ${entry.option_ids.length} selections`,
+        });
+      }
+      // YUK-1096 P1-4：multi_choice 的非空选择必须落在声明的
+      // [min_select, max_select] 内 —— 少于 min / 超出 max 是违例。
+      // 空数组 = 主动空白（§7.2），不是“选了 0 个”，不走 count 校验；
+      // 空白是否计零由 basis.blank_scores_zero 另行裁决。
+      if (
+        slot.kind === 'multi_choice' &&
+        entry.option_ids.length > 0 &&
+        (entry.option_ids.length < slot.min_select || entry.option_ids.length > slot.max_select)
+      ) {
+        issues.push({
+          code: 'select_count_out_of_bounds',
+          detail: `slot '${entry.slot_id}' received ${entry.option_ids.length} selections, outside declared [${slot.min_select}, ${slot.max_select}]`,
         });
       }
     }

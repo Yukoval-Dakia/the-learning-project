@@ -8,10 +8,11 @@
 // AttemptOnQuestion.payload.self_confidence），未自评的 slot 不带键（byte-identical）。
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
+import { TOKEN_STORAGE_KEY } from '@/ui/lib/api';
 import { PfPaper } from './PfPaper';
 
 const mocks = vi.hoisted(() => ({
@@ -98,6 +99,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('PfPaper 过程框 — 挂载判据与零强制形态 (YUK-784)', () => {
@@ -261,6 +263,73 @@ describe('PfPaper 交卷 wire — 空值不发字段（byte-identical 缺省）(
     )?.[1];
     expect(first).toMatchObject({ self_confidence: 5 });
     expect(Object.hasOwn(second ?? {}, 'self_confidence')).toBe(false);
+  });
+});
+
+// YUK-1094 — 交卷入口必须并入附件上传 pending：上传未落定时交卷会用旧 evidence 展开
+// image_refs，刚上传的图会从该 slot 的提交里丢掉。
+describe('PfPaper 附件上传中交卷 gating (YUK-1094)', () => {
+  it('disables 交卷 while an attachment upload is in flight, then submits the fresh ref', async () => {
+    // apiFetch 需要 internal token 才会真发请求；否则 uploadAsset 同步抛 ApiAuthError，
+    // 上传瞬间失败，上传中窗口无从观察。jsdom 不提供 localStorage，按本仓先例补内存实现。
+    const store = new Map<string, string>([[TOKEN_STORAGE_KEY, 'test-token']]);
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => void store.set(k, v),
+        removeItem: (k: string) => void store.delete(k),
+        clear: () => store.clear(),
+      },
+    });
+    let resolveUpload!: (res: Response) => void;
+    const uploadGate = new Promise<Response>((resolve) => {
+      resolveUpload = resolve;
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? 'GET';
+        if (url.includes('/api/assets') && method === 'POST') return uploadGate;
+        return Response.json({});
+      }),
+    );
+    const user = userEvent.setup();
+    renderPaper();
+    await screen.findByText('第一题');
+    await user.type(screen.getByLabelText('作答'), '答案一');
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(fileInput, new File(['bytes'], 'work.png', { type: 'image/png' }));
+
+    // In-flight → 交卷按钮 disable（作答已填，否则会是「还有 N 题空着」确认流）。
+    expect(
+      (screen.getByRole('button', { name: '交卷 · 统一判分' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    await act(async () => {
+      resolveUpload(
+        Response.json({
+          asset: {
+            id: 'asset_1',
+            storage_key: 'k',
+            mime_type: 'image/png',
+            byte_size: 3,
+            sha256: 'x',
+          },
+        }),
+      );
+    });
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: '交卷 · 统一判分' }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
+
+    await user.click(screen.getByRole('button', { name: '交卷 · 统一判分' }));
+    await waitFor(() => expect(mocks.submitPaperSlot).toHaveBeenCalledTimes(1));
+    expect(mocks.submitPaperSlot.mock.calls[0][1]).toMatchObject({ image_refs: ['asset_1'] });
   });
 });
 

@@ -120,7 +120,15 @@ export interface TypedPrimitiveOutcome<Output = unknown> {
   readonly output: Output;
   readonly attempts: number;
   readonly usage: LifecycleUsage;
-  readonly cost_usd?: number;
+  /**
+   * Cumulative settled/reserved cost of THIS invocation — every prior
+   * wire-attempted failure plus the terminal success attempt (unknown cost
+   * counts as the per-call reserve, never zero — YUK-1092). Consumers
+   * (cost_usd_micros reporting, plan-level spend gates) must use this
+   * cumulative figure, not the last attempt alone.
+   */
+  readonly cost_usd: number;
+  /** Cost basis of the SUCCEEDING attempt (cumulative unknown-ness rides on `unknown_cost`). */
   readonly cost_basis: AttemptCostBasis;
   readonly cost_ref: string;
   readonly model: string;
@@ -357,12 +365,19 @@ export async function runTypedPrimitiveTask<Output = unknown>(
         structured_output: output,
       };
       await lifecycle.finishSuccess(result);
+      // YUK-1092 — the reported cost is the CUMULATIVE invocation spend:
+      // settled earlier attempts (failure branch charged them) + this
+      // success attempt's truth (unknown ⇒ the reserve, never zero).
+      // Reporting only the last attempt undercounts and lets callers blow
+      // plan-level max_total_cost bounds after retries.
+      const successSettledUsd = result.cost_usd ?? reserveUsd;
+      spentUsd += successSettledUsd;
       return {
         task_run_id: lifecycle.taskRunId,
         output: output as Output,
         attempts: attempt,
         usage: result.usage,
-        cost_usd: result.cost_usd,
+        cost_usd: spentUsd,
         cost_basis: result.cost_basis,
         cost_ref: result.cost_ref,
         model: def.defaultModel,

@@ -25,6 +25,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, inArray, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
 import type { QuestionAuthorIntentSchema } from '@/ai/task-intents';
+import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
 import {
   type QuestionAuthorDraftT,
   normalizeAuthorStructured,
@@ -297,7 +298,7 @@ export async function runQuestionAuthor(
           source_ref: null,
           // Option-B gate (quiz_gen precedent): invisible to pool / review / FSRS
           // until the question_draft proposal is accepted.
-          draft_status: 'draft',
+          draft_status: LEGACY_DRAFT_STATUS.DRAFT,
           created_by: aiAgentRef('QuestionAuthorTask', result),
           metadata: {
             author_question: {

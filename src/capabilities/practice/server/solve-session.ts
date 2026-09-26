@@ -431,6 +431,11 @@ export async function submitSolveAttempt(
         source: 'solve_tutor',
         judge_route: judged.route,
         judge_score: judgeResult.score,
+        // YUK-1054 (§9 历史分歧 · 显式保留) —「embedded grade」面：solve-session 把
+        // 判分嵌在 attempt.payload.judge，不另写 judge event。读模型 side 经
+        // resolveVerdictsForAttempts 的 `embedded` 轨原样保留——它是该 attempt 唯一
+        // 的执行期判收据。schema 是执行期快照（route/score/reason_md），勿收敛为
+        // judge-event 形状。
         judge: responseJudge,
       },
       caused_by_event_id: null,

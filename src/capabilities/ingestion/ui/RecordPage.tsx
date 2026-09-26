@@ -104,6 +104,10 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
   const [wrongEvidence, setWrongEvidence] = useState<EvidenceAttachment[]>([]);
   const [attachTarget, setAttachTarget] = useState<'prompt' | 'wrong' | null>(null);
   const [attachError, setAttachError] = useState<string | null>(null);
+  // YUK-1094 — 在途附件上传计数（两个字段共用一个 input，可能连续触发）。>0 时「提交错题」
+  // disable，保证 POST /api/mistakes 带的是含刚上传附件的**最新** evidence；否则提交跑在
+  // 上传落定前，新附件静默丢掉。
+  const [uploadingCount, setUploadingCount] = useState(0);
   const attachInputRef = useRef<HTMLInputElement>(null);
 
   const allNodes = knowledgeQ.data?.rows ?? [];
@@ -166,6 +170,7 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
     setPromptEvidence([]);
     setWrongEvidence([]);
     setAttachError(null);
+    setUploadingCount(0);
     setSelectedKnowledge([]);
     setKnowledgeFilter('');
     setCausePrimary('');
@@ -178,6 +183,7 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
     promptMd.trim().length > 0 &&
     wrongAnswerMd.trim().length > 0 &&
     selectedKnowledge.length > 0 &&
+    uploadingCount === 0 &&
     !submitM.isPending;
 
   const toggleKnowledge = (id: string) => {
@@ -191,25 +197,31 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
   const pickAttachment = async (files: FileList | null) => {
     if (!files || files.length === 0 || !attachTarget) return;
     setAttachError(null);
-    const results = await Promise.allSettled(Array.from(files).map((f) => uploadAsset(f)));
-    const uploaded = results.flatMap((r, i) => {
-      if (r.status !== 'fulfilled') return [];
-      const file = Array.from(files)[i];
-      return [
-        {
-          asset_id: r.value.id,
-          kind: evidenceKindFromMime(r.value.mime_type || file.type || null),
-          label: file.name || undefined,
-          slot_ids: null,
-        } satisfies EvidenceAttachment,
-      ];
-    });
-    if (uploaded.length > 0) {
-      if (attachTarget === 'prompt') setPromptEvidence((cur) => [...cur, ...uploaded]);
-      else setWrongEvidence((cur) => [...cur, ...uploaded]);
+    setUploadingCount((c) => c + 1);
+    try {
+      const results = await Promise.allSettled(Array.from(files).map((f) => uploadAsset(f)));
+      const uploaded = results.flatMap((r, i) => {
+        if (r.status !== 'fulfilled') return [];
+        const file = Array.from(files)[i];
+        return [
+          {
+            asset_id: r.value.id,
+            kind: evidenceKindFromMime(r.value.mime_type || file.type || null),
+            label: file.name || undefined,
+            slot_ids: null,
+          } satisfies EvidenceAttachment,
+        ];
+      });
+      if (uploaded.length > 0) {
+        if (attachTarget === 'prompt') setPromptEvidence((cur) => [...cur, ...uploaded]);
+        else setWrongEvidence((cur) => [...cur, ...uploaded]);
+      }
+      if (uploaded.length < results.length) setAttachError('部分附件上传失败，请重试');
+    } finally {
+      // 计数必落回（含上传抛错）；否则一次卡住的上传会永久 disable 提交入口。
+      setUploadingCount((c) => Math.max(0, c - 1));
+      if (attachInputRef.current) attachInputRef.current.value = '';
     }
-    if (uploaded.length < results.length) setAttachError('部分附件上传失败，请重试');
-    if (attachInputRef.current) attachInputRef.current.value = '';
   };
 
   const openAttachPicker = (target: 'prompt' | 'wrong') => {

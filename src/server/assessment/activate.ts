@@ -311,7 +311,7 @@ export async function activateEvaluation(
   });
 
   const nextGeneration = head.generation + 1;
-  await tx
+  const advanced = await tx
     .update(evaluation_effective_head)
     .set({
       effective_evaluation_id: cand.evaluation_id,
@@ -327,7 +327,22 @@ export async function activateEvaluation(
           : eq(evaluation_effective_head.effective_evaluation_id, input.expected_effective_id),
         eq(evaluation_effective_head.generation, input.expected_generation),
       ),
-    );
+    )
+    .returning({ evaluation_group_id: evaluation_effective_head.evaluation_group_id });
+
+  // YUK-1095 — CAS 谓词实际命中 0 行时绝不能继续写 receipt / 返回 activated：
+  // 锁外写者（或谓词漂移）已使本次前移不成立。按谓词分支如实上报，不产 receipt。
+  if (advanced.length === 0) {
+    const [post] = await tx
+      .select({ submission_id: evaluation_effective_head.submission_id })
+      .from(evaluation_effective_head)
+      .where(eq(evaluation_effective_head.evaluation_group_id, head.evaluation_group_id))
+      .limit(1);
+    if (!post || post.submission_id !== sub.submission_id) {
+      return { status: 'coordinate_mismatch' };
+    }
+    return { status: 'cas_conflict', conflict: 'stale_head' };
+  }
 
   await writeEvent(tx, {
     id: `evt_act_${createId()}`,

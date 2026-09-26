@@ -53,6 +53,11 @@ import {
   validateResponseSpec,
   validateScoringBasis,
 } from '@/core/schema/assessment';
+import {
+  QUESTION_AVAILABILITY,
+  SCORING_ADMISSION_STATE,
+  SCORING_ADMISSION_WITHHELD_REASON,
+} from '@/core/schema/assessment/lifecycle';
 import type { Db, Tx } from '@/db/client';
 import {
   question,
@@ -280,13 +285,13 @@ function lifecycleDimensionsMatch(
   }
   if (input.admission.state === 'admitted') {
     return (
-      lifecycle.scoring_admission_state === 'admitted' &&
+      lifecycle.scoring_admission_state === SCORING_ADMISSION_STATE.ADMITTED &&
       stableStringify(input.admission.evidence ?? null) ===
         stableStringify(lifecycle.scoring_admission_evidence ?? null)
     );
   }
   return (
-    lifecycle.scoring_admission_state === 'withheld' &&
+    lifecycle.scoring_admission_state === SCORING_ADMISSION_STATE.WITHHELD &&
     lifecycle.scoring_admission_withheld_reason === input.admission.reason
   );
 }
@@ -926,22 +931,25 @@ export async function publishQuestionGroupFromRow(
       admission = {
         state: 'withheld',
         reason:
-          lifecycle?.scoring_admission_state === 'withheld'
+          lifecycle?.scoring_admission_state === SCORING_ADMISSION_STATE.WITHHELD
             ? ((lifecycle.scoring_admission_withheld_reason ??
-                'unverified_rules') as WithheldReason)
-            : 'unverified_rules',
+                SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES) as WithheldReason)
+            : SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
       };
-    } else if (lifecycle?.scoring_admission_state === 'admitted') {
+    } else if (lifecycle?.scoring_admission_state === SCORING_ADMISSION_STATE.ADMITTED) {
       admission = { state: 'admitted', evidence: lifecycle.scoring_admission_evidence ?? null };
     } else {
       admission = {
         state: 'withheld',
         reason: (lifecycle?.scoring_admission_withheld_reason ??
-          'unverified_rules') as WithheldReason,
+          SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES) as WithheldReason,
       };
     }
     if (contract.conversion_issues.length > 0 && admission.state === 'admitted') {
-      admission = { state: 'withheld', reason: 'unverified_rules' };
+      admission = {
+        state: 'withheld',
+        reason: SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
+      };
     }
 
     const result = await publishQuestionGroup(tx, {
@@ -953,8 +961,8 @@ export async function publishQuestionGroupFromRow(
         input.availability ??
         lifecycle?.availability ??
         (root.source === 'web_sourced' || root.source === 'quiz_gen'
-          ? 'general_pool'
-          : 'container_only'),
+          ? QUESTION_AVAILABILITY.GENERAL_POOL
+          : QUESTION_AVAILABILITY.CONTAINER_ONLY),
       admission,
       suspension: input.suspension,
       verification: input.verification,

@@ -33,6 +33,14 @@ import {
   type SourceGroundingVerifyResult,
   runSourceGroundingVerify,
 } from '@/capabilities/practice/server/judge/source-grounding-verify';
+import {
+  LEGACY_DRAFT_STATUS,
+  MARKING_RULE_PROVENANCE,
+  QUESTION_AVAILABILITY,
+  SCORING_ADMISSION_STATE,
+  SCORING_ADMISSION_WITHHELD_REASON,
+  SUSPENSION_REASON,
+} from '@/core/schema/assessment/lifecycle';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { WebSourcedProvenance, deriveSourceTier } from '@/core/schema/provenance';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
@@ -549,11 +557,11 @@ export async function runSourceVerify(
         // re-verified newer version out of the pool.
         await db
           .update(question)
-          .set({ draft_status: 'draft', updated_at: new Date() })
+          .set({ draft_status: LEGACY_DRAFT_STATUS.DRAFT, updated_at: new Date() })
           .where(
             and(
               eq(question.id, questionId),
-              eq(question.draft_status, 'active'),
+              eq(question.draft_status, LEGACY_DRAFT_STATUS.ACTIVE),
               eq(question.version, row.version),
               sql`NOT EXISTS (SELECT 1 FROM ${event} WHERE ${event.action} = 'experimental:source_verify' AND ${event.subject_kind} = 'question' AND ${event.subject_id} = ${questionId} AND ${event.outcome} = 'success')`,
             ),
@@ -595,16 +603,19 @@ export async function runSourceVerify(
               post != null &&
               post.version === row.version &&
               !post.promotedElsewhere &&
-              post.draftStatus !== 'active';
+              post.draftStatus !== LEGACY_DRAFT_STATUS.ACTIVE;
             if (!maySuspendContract) return;
             await suspendTx
               .update(question)
-              .set({ draft_status: 'draft', updated_at: new Date() })
+              .set({ draft_status: LEGACY_DRAFT_STATUS.DRAFT, updated_at: new Date() })
               .where(eq(question.id, questionId));
             await publishQuestionGroupFromRow(suspendTx, {
               rootId: groupRootId,
-              admission: { state: 'withheld', reason: 'unverified_rules' },
-              suspension: { suspended: true, reason: 'verify_hold' },
+              admission: {
+                state: SCORING_ADMISSION_STATE.WITHHELD,
+                reason: SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
+              },
+              suspension: { suspended: true, reason: SUSPENSION_REASON.VERIFY_HOLD },
               verification: {
                 policy_id: 'source_verify@1',
                 outcome: 'suspended',
@@ -736,7 +747,7 @@ export async function runSourceVerify(
         // Supply scope already locked at the top of this tx (G→row order above).
         await tx
           .update(question)
-          .set({ draft_status: 'active', updated_at: now })
+          .set({ draft_status: LEGACY_DRAFT_STATUS.ACTIVE, updated_at: now })
           .where(eq(question.id, questionId));
 
         // FSRS enroll-if-absent per knowledge point (identical convention to
@@ -788,9 +799,9 @@ export async function runSourceVerify(
         await publishQuestionGroupFromRow(tx, {
           rootId: row.parent_question_id ?? questionId,
           admission: {
-            state: 'admitted',
+            state: SCORING_ADMISSION_STATE.ADMITTED,
             evidence: {
-              marking_provenance: 'official',
+              marking_provenance: MARKING_RULE_PROVENANCE.OFFICIAL,
               verification: {
                 structural_check_passed: true,
                 independent_verification: null,
@@ -808,7 +819,7 @@ export async function runSourceVerify(
               demoted: false,
             },
           },
-          availability: 'general_pool',
+          availability: QUESTION_AVAILABILITY.GENERAL_POOL,
           actorRef: 'source_verify:promote',
           now,
         });
@@ -843,11 +854,11 @@ export async function runSourceVerify(
           ? []
           : await tx
               .update(question)
-              .set({ draft_status: 'draft', updated_at: now })
+              .set({ draft_status: LEGACY_DRAFT_STATUS.DRAFT, updated_at: now })
               .where(
                 and(
                   eq(question.id, questionId),
-                  eq(question.draft_status, 'active'),
+                  eq(question.draft_status, LEGACY_DRAFT_STATUS.ACTIVE),
                   sql`NOT EXISTS (SELECT 1 FROM ${event} WHERE ${event.action} = 'experimental:source_verify' AND ${event.subject_kind} = 'question' AND ${event.subject_id} = ${questionId} AND ${event.outcome} = 'success')`,
                 ),
               )
@@ -865,10 +876,13 @@ export async function runSourceVerify(
           await publishQuestionGroupFromRow(tx, {
             rootId: row.parent_question_id ?? questionId,
             admission: {
-              state: 'withheld',
-              reason: failingCheck != null ? 'verification_failed' : 'unverified_rules',
+              state: SCORING_ADMISSION_STATE.WITHHELD,
+              reason:
+                failingCheck != null
+                  ? SCORING_ADMISSION_WITHHELD_REASON.VERIFICATION_FAILED
+                  : SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
             },
-            suspension: { suspended: true, reason: 'verify_hold' },
+            suspension: { suspended: true, reason: SUSPENSION_REASON.VERIFY_HOLD },
             verification: {
               policy_id: 'source_verify@1',
               outcome: failingCheck != null ? 'failed' : 'suspended',

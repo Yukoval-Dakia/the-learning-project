@@ -40,6 +40,28 @@ import {
   evaluation,
   question_revision,
 } from '@/db/schema';
+import { createJevModelExecutor } from '@/server/assessment/jev-model-executor';
+
+/**
+ * YUK-1092 — 装配描述符：在本模块组合点按 descriptor 铸
+ * ModelUnitExecutorPort（当前唯一 lane：Jev typed executor）。
+ *
+ * `deadline_at` 是【必填】caller 输入 —— Jev 重试 + advanced fallback 共享
+ * 同一面墙钟上限（release 条件），装配点不虚构全局默认值；
+ * `rule_threshold` 是按切片的 policy 输入（rule_reference 单元缺阈值 ⇒
+ * 端口 fail-closed unjudgeable，绝不发明阈值）。
+ */
+export interface JevModelExecutorSpec {
+  readonly kind: 'jev';
+  /** 单次端口调用（含 Jev 重试与 advanced fallback）的绝对墙钟上界（ms epoch）。 */
+  readonly deadline_at: number;
+  /** rule_reference 的 noul 满足阈值（per-slice policy；缺省 ⇒ rule_reference 单元 pending）。 */
+  readonly rule_threshold?: number;
+  /** Jev 不可服务时调用的已批准高级执行器（同 ModelExecutorRequest，共享 deadline）。 */
+  readonly advanced_executor?: ModelUnitExecutorPort;
+  /** 调用方取消信号（转发进 typed runner 与 advanced executor）。 */
+  readonly signal?: AbortSignal;
+}
 
 /** evaluateSubmission 请求（§4.3 Interface）。 */
 export interface EvaluateSubmissionRequest {
@@ -54,8 +76,13 @@ export interface EvaluateSubmissionRequest {
   mode?: 'execute' | 'manual_assert';
   asserted_unit_results?: import('@/core/schema/assessment').ScoringUnitResultT[];
   provenance?: EvaluationProvenanceT;
-  /** admitted model_executor 单元的执行端口；缺失 ⇒ 该单元 retryable infra_failure。 */
-  model_executor?: ModelUnitExecutorPort;
+  /**
+   * admitted model_executor 单元的执行端口，或在本模块装配的描述符
+   * （{kind:'jev'} ⇒ createJevModelExecutor）；缺失 ⇒ 该单元 retryable
+   * infra_failure。描述符形态要求 db 为池化 Db 句柄（非 Tx）—— 模型
+   * run/cost 台账行是独立证据，不能随评估事务回滚而丢失。
+   */
+  model_executor?: ModelUnitExecutorPort | JevModelExecutorSpec;
 }
 
 export interface EvaluateSubmissionResult {
@@ -79,11 +106,45 @@ export class EvaluateSubmissionError extends Error {
       | 'issuance_not_found'
       | 'revision_not_found'
       | 'group_scope_mismatch'
-      | 'attempt_conflict',
+      | 'attempt_conflict'
+      | 'invalid_executor_spec',
     detail: string,
   ) {
     super(`evaluateSubmission: ${code} — ${detail}`);
   }
+}
+
+/**
+ * YUK-1092 — 组合点接线：descriptor ⇒ 实名 ModelUnitExecutorPort。
+ *
+ * 在事务之外解析：模型 run/cost 台账行的 db 必须是池化 Db（tx 句柄会让
+ * 付费调用证据随评估事务回滚消失，且 ai_task_runs 的并发重试依赖独立
+ * 连接）——传 Tx + descriptor 直接 fail-loud，绝不悄悄借事务句柄。
+ */
+export function resolveModelExecutor(
+  db: Db | Tx,
+  executor: ModelUnitExecutorPort | JevModelExecutorSpec | undefined,
+): ModelUnitExecutorPort | undefined {
+  if (executor === undefined || typeof executor === 'function') return executor;
+  if (executor.kind !== 'jev') {
+    throw new EvaluateSubmissionError(
+      'invalid_executor_spec',
+      `model_executor spec kind '${String((executor as { kind: unknown }).kind)}' has no registered lane`,
+    );
+  }
+  if (!('$client' in db)) {
+    throw new EvaluateSubmissionError(
+      'invalid_executor_spec',
+      'model_executor spec requires the pool Db handle (not Tx): model run/cost ledger rows are independent evidence and must not roll back with the evaluation transaction',
+    );
+  }
+  return createJevModelExecutor({
+    db,
+    deadlineAt: executor.deadline_at,
+    ruleThreshold: executor.rule_threshold,
+    advancedExecutor: executor.advanced_executor,
+    signal: executor.signal,
+  });
 }
 
 /** 内容寻址 evaluation 身份（≤48 hex，与迁移 `aev_*` 前缀族一致的可读前缀）。 */
@@ -139,6 +200,10 @@ export async function evaluateSubmission(
   db: Db | Tx,
   request: EvaluateSubmissionRequest,
 ): Promise<EvaluateSubmissionResult> {
+  // 模型执行器解析在事务之外（descriptor ⇒ Jev 端口装配；见
+  // resolveModelExecutor 的 db 句柄纪律）。
+  const modelExecutor = resolveModelExecutor(db, request.model_executor);
+
   const run = async (tx: Tx): Promise<EvaluateSubmissionResult> => {
     // ---- 冻结输入装载（锁序：submission → 派生维度；发题事实不可变） ----
     const [submissionRow] = await tx
@@ -227,7 +292,7 @@ export async function evaluateSubmission(
       policy: request.policy,
       mode: request.mode,
       asserted_unit_results: request.asserted_unit_results,
-      model_executor: request.model_executor,
+      model_executor: modelExecutor,
     });
 
     const record = { ...core.record, evaluation_id: evaluationIdFor(core.record) };

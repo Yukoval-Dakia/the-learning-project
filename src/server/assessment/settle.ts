@@ -175,6 +175,8 @@ interface AppliedSettlementEvent {
   createdMs: number;
   /** 该结算实际触碰的主体（'kind:id'）—— replay 冲突域。 */
   subjects: Set<string>;
+  /** 该结算实际写下的 FSRS 主体（'kind:id'）—— re-apply 保真（原事件跳过 FSRS ⇒ 重放也跳过）。 */
+  fsrsApplied: string[];
   familyObservationRecorded: boolean;
   /** 该结算留下的 family fold（null = 未触）—— revert 的逆输入。 */
   familyFold: FamilyFoldRecord | null;
@@ -438,6 +440,8 @@ interface SettlementEventRow {
   effect: string | null;
   occurrenceMs: number | null;
   subjects: Set<string>;
+  /** 该结算实际写下的 FSRS 主体（'kind:id'）—— user-rating provenance 回溯 + replay 保真。 */
+  fsrsApplied: string[];
   familyObservationRecorded: boolean;
   familyFold: FamilyFoldRecord | null;
   inputs: SettlementPlan | null;
@@ -468,6 +472,9 @@ async function loadSettlementEvents(tx: Tx): Promise<SettlementEventRow[]> {
       effect: typeof p.effect === 'string' ? p.effect : null,
       occurrenceMs: coerceMs(p.occurrence_at as string | undefined),
       subjects,
+      fsrsApplied: Array.isArray(effects.fsrs_applied)
+        ? (effects.fsrs_applied as unknown[]).filter((v): v is string => typeof v === 'string')
+        : [],
       familyObservationRecorded: effects.family_observation_recorded === true,
       familyFold: parseFamilyFold(effects.family_fold),
       inputs: planFromPayload(p.replay_inputs),
@@ -505,6 +512,7 @@ function liveAppliedSettlements(rows: SettlementEventRow[]): AppliedSettlementEv
       occurrenceMs: row.occurrenceMs,
       createdMs: row.createdMs,
       subjects: row.subjects,
+      fsrsApplied: row.fsrsApplied,
       familyObservationRecorded: row.familyObservationRecorded,
       familyFold: row.familyFold,
       inputs: row.inputs,
@@ -880,17 +888,42 @@ export async function learningSettlement(input: ActivationSettleInput): Promise<
     return 'failed_pending';
   }
   const replacedMember = replaced[0] ?? null;
-  // user-rating 守卫（D4 对偶）：被替换结算的评级来自用户（manual/self_report
-  // provenance）⇒ 其 FSRS 段不被本层静默覆盖；本次 FSRS 也不再写（保持用户
-  // 评级）。θ̂ 段照常 revert/更正（判分证据独立）。
-  const preserveUserRating =
-    replacedMember !== null && replacedMember.inputs.ratingSource === 'user';
+  // user-rating 守卫（D4 对偶，YUK-1093 P1-2）：被覆写侧的 live FSRS 状态若
+  // 最后一次由 user rating（manual/self_report）结算写入 ⇒ 其 FSRS 段不被本
+  // 层静默覆盖；本次 FSRS 也不再写（保持用户评级）。θ̂ 段照常 revert/更正
+  // （判分证据独立）。
+  //
+  // 「直接前驱」不足以判明：manual→auto→auto 链上中间那环经守卫只写了 θ̂，
+  // 卡面仍是 manual 那环的；只看直接前驱会让第二次纠正静默覆盖用户调度。
+  // 检查面 = 我【将写】的 FSRS 主体 ∪ 被替换结算【写过】的 FSRS 主体（事件
+  // 已死/非结算写者 ⇒ 不算用户来源，照旧让位 / 由 unattributed 检测接管）。
+  const fsrsAtRisk = new Set<string>();
+  if (plan.rating !== null) {
+    for (const s of plan.fsrsSubjects) fsrsAtRisk.add(subjectKey(s.kind, s.id));
+  }
+  if (replacedMember !== null) {
+    for (const s of replacedMember.fsrsApplied) fsrsAtRisk.add(s);
+  }
+  const lastWriterIsUser = await preservedUserRatingExists(tx, rows, [...fsrsAtRisk]);
+  // 评级 provenance 随链携带「直到显式被另一个用户评级替换」：本次评级同样
+  // 来自用户 ⇒ 不保留（新评级正常落位）；verdict 评级 ⇒ 保留用户排程。
+  const preserveUserRating = plan.ratingSource !== 'user' && lastWriterIsUser;
 
   // ---- replay 闭包：occurrence ≥ mine 且与我的写入主体相交的 live 结算 ----
+  // YUK-1093 P1-3 — 种子 = 本结算主体 ∪ 被替换结算主体。全量 regrade（如
+  // correct→unsupported）下 mySubjects 可为空，但 S_old 的写入仍要 revert：
+  // 不播被替换主体，碰到其主体的更晚异组结算就不入闭包 —— revert S_old 撞上
+  // 对方的 snapshot 链 ⇒ revert_failed ⇒ failed_pending（§12 许诺的有序
+  // replay 变成 false negative）。异组主体的更晚写入天然就在 S_old 的恢复
+  // 面上，必须把对方 revert+重放。
+  const seedSubjects = new Set<string>(mySubjects);
+  if (replacedMember !== null) {
+    for (const s of replacedMember.subjects) seedSubjects.add(s);
+  }
   const conflictSet = replayClosure(live, {
     minOccurrenceMs: occurrenceMs,
     excludeGroupId: plan.groupId,
-    seedSubjects: mySubjects,
+    seedSubjects,
   });
 
   // ---- 无冲突快路径（首次顺序结算；regrade 也走这里做 revert+apply）----
@@ -962,11 +995,17 @@ export async function learningSettlement(input: ActivationSettleInput): Promise<
       });
       for (const member of reapplySet) {
         const newIdFor = `stl_${createId()}`;
+        // YUK-1093 P1-2 — re-apply 保真：原结算经守卫【跳过】了 FSRS（plan 有
+        // rating 但 effects.fsrs_applied 为空 = 该事件从未写卡）；按原判输入
+        // 重放时也必须跳过，否则重放会把用户保留的评级悄悄改写成 verdict
+        // 评级 —— 同一守卫语义的 replay 面对偶。
+        const memberSkippedFsrs = member.inputs.rating !== null && member.fsrsApplied.length === 0;
         const reOutcome = await executePlan(
           sp,
           member.inputs,
           newIdFor,
           new Date(member.occurrenceMs),
+          { skipFsrs: memberSkippedFsrs },
         );
         replayAppliedIds.set(member.id, newIdFor);
         await writeSettlementEvent(sp, {
@@ -1054,6 +1093,53 @@ async function writeReplayRequired(
     appliedOutcome: null,
     reasonDetail: { replay_required: input.detail },
   });
+}
+
+/**
+ * D4 对偶 — user-rating provenance 回溯（YUK-1093 P1-2）。
+ *
+ * live FSRS 卡的【最后结算写入者】是 `material_fsrs_state.last_review_event_id`：
+ * skip-FSRS 事件（前次守卫触发）从不写卡，自然不会出现在该字段上 —— 所以
+ * 「沿 settlement 链回溯到最近真正落 FSRS 的事件」恰好落在这枚指针上，
+ * supersedes/replay 链都已经由它浓缩（写者是 live 或 dead 均可，只看
+ * rating_source）。本次结算若覆写这些主体中的任意一行，且该行的最后结算
+ * 写入是 user rating（manual/self_report）⇒ 守卫成立。
+ */
+async function preservedUserRatingExists(
+  tx: Tx,
+  rows: SettlementEventRow[],
+  subjectKeys: readonly string[],
+): Promise<boolean> {
+  if (subjectKeys.length === 0) return false;
+  const ratingSourceById = new Map<string, SettlementPlan['ratingSource']>();
+  for (const row of rows) {
+    if (row.inputs !== null) ratingSourceById.set(row.id, row.inputs.ratingSource);
+  }
+  const wanted = new Map<string, string>();
+  for (const key of subjectKeys) {
+    const i = key.indexOf(':');
+    if (i > 0) wanted.set(key.slice(i + 1), key.slice(0, i));
+  }
+  if (wanted.size === 0) return false;
+  const fsrsRows = await tx
+    .select({
+      subject_kind: material_fsrs_state.subject_kind,
+      subject_id: material_fsrs_state.subject_id,
+      last_review_event_id: material_fsrs_state.last_review_event_id,
+    })
+    .from(material_fsrs_state)
+    .where(
+      and(
+        inArray(material_fsrs_state.subject_kind, ['knowledge', 'question']),
+        inArray(material_fsrs_state.subject_id, [...wanted.keys()]),
+      ),
+    );
+  for (const row of fsrsRows) {
+    if (wanted.get(row.subject_id) !== row.subject_kind) continue;
+    const writer = row.last_review_event_id;
+    if (writer !== null && ratingSourceById.get(writer) === 'user') return true;
+  }
+  return false;
 }
 
 /**

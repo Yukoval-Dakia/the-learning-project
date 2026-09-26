@@ -46,6 +46,11 @@ export const ReviewAdviceBodySchema = z.object({
   question_id: z.string().min(1).optional(),
   mistake_id: z.string().min(1).optional(),
   response_md: z.string(),
+  // YUK-1094 — 附件证据（手写/拍照）随 advice 预览一并交给 judge，与提交提交契约
+  // CreateAttemptBodySchema.answer_image_refs 同口径。OPTIONAL（default []）：省略即字段
+  // 存在但为空，纯文本 advice 的判分路径 / wire 逐字不变；有值时 preview 与 committed
+  // submit 看到同一份附件（否则预览判词与实际提交判词分叉）。
+  answer_image_refs: z.array(z.string()).default([]),
 });
 
 const ReviewAdviceJudgeSchema = z.object({

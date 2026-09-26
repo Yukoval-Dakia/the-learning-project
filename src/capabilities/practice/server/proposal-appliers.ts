@@ -20,6 +20,11 @@ import { and, eq, sql } from 'drizzle-orm';
 
 import { lockPlacementSupplyScopes } from '@/capabilities/practice/public';
 import { newId } from '@/core/ids';
+import {
+  LEGACY_DRAFT_STATUS,
+  MARKING_RULE_PROVENANCE,
+  QUESTION_AVAILABILITY,
+} from '@/core/schema/assessment/lifecycle';
 import type { QuestionEditOpT } from '@/core/schema/proposal';
 import {
   StructuredQuestion,
@@ -260,7 +265,7 @@ export async function acceptVariantQuestionProposal(
         knowledge_ids: proposedChange.knowledge_ids ?? [],
         difficulty: proposedChange.difficulty as number,
         source: 'mistake_variant',
-        draft_status: 'active',
+        draft_status: LEGACY_DRAFT_STATUS.ACTIVE,
         variant_depth: proposedChange.variant_depth ?? 1,
         root_question_id: proposedChange.root_question_id ?? null,
         parent_variant_id: proposedChange.parent_variant_id ?? null,
@@ -282,7 +287,7 @@ export async function acceptVariantQuestionProposal(
       admission: {
         state: 'admitted',
         evidence: {
-          marking_provenance: 'manual',
+          marking_provenance: MARKING_RULE_PROVENANCE.MANUAL,
           verification: {
             structural_check_passed: true,
             independent_verification: {
@@ -302,7 +307,7 @@ export async function acceptVariantQuestionProposal(
         outcome: 'passed',
         evidence: { verifier: 'human', proposal_kind: 'mistake_variant' },
       },
-      availability: 'general_pool',
+      availability: QUESTION_AVAILABILITY.GENERAL_POOL,
       actorRef: 'proposal-accept:mistake_variant',
       now,
     });
@@ -387,7 +392,7 @@ export async function acceptQuestionDraftProposal(
     const existing = (
       await dbLike.select().from(question).where(eq(question.id, questionId)).limit(1)
     )[0];
-    if (!existing || existing.draft_status === 'draft') {
+    if (!existing || existing.draft_status === LEGACY_DRAFT_STATUS.DRAFT) {
       // Rate was written but the promotion did not complete — surface explicitly
       // rather than silently fixing up (variant_question precedent).
       throw new ApiError(
@@ -477,7 +482,7 @@ export async function acceptQuestionDraftProposal(
       throw new ApiError('not_found', `question ${questionId} not found`, 404);
     }
     // NOT isPoolVisible — fail-closed promote guard (not-a-draft → reject/skip); do not fold into notDraftPredicate (spec §2.5).
-    if (row.draft_status !== 'draft') {
+    if (row.draft_status !== LEGACY_DRAFT_STATUS.DRAFT) {
       throw new ApiError(
         'conflict',
         `question ${questionId} is in draft_status ${row.draft_status ?? 'null'}, expected 'draft'`,
@@ -500,7 +505,7 @@ export async function acceptQuestionDraftProposal(
 
     await tx
       .update(question)
-      .set({ draft_status: 'active', updated_at: now })
+      .set({ draft_status: LEGACY_DRAFT_STATUS.ACTIVE, updated_at: now })
       .where(eq(question.id, questionId));
 
     // YUK-1043 — 统一发布链（§2 矩阵 question_draft 行）：接受进入统一发布。
@@ -512,7 +517,7 @@ export async function acceptQuestionDraftProposal(
       admission: {
         state: 'admitted',
         evidence: {
-          marking_provenance: 'manual',
+          marking_provenance: MARKING_RULE_PROVENANCE.MANUAL,
           verification: {
             structural_check_passed: true,
             independent_verification: {
@@ -531,7 +536,7 @@ export async function acceptQuestionDraftProposal(
         outcome: 'passed',
         evidence: { verifier: 'human', proposal_kind: 'question_draft' },
       },
-      availability: 'general_pool',
+      availability: QUESTION_AVAILABILITY.GENERAL_POOL,
       actorRef: 'proposal-accept:question_draft',
       now,
     });
@@ -670,7 +675,9 @@ export async function dismissQuestionDraftProposal(
         })}::jsonb`,
         updated_at: now,
       })
-      .where(and(eq(question.id, questionId), eq(question.draft_status, 'draft')));
+      .where(
+        and(eq(question.id, questionId), eq(question.draft_status, LEGACY_DRAFT_STATUS.DRAFT)),
+      );
     return rate;
   });
 
@@ -890,7 +897,7 @@ export async function acceptQuestionEditProposal(
   if (!row) {
     throw new ApiError('not_found', `question ${questionId} not found`, 404);
   }
-  if (row.draft_status !== 'active') {
+  if (row.draft_status !== LEGACY_DRAFT_STATUS.ACTIVE) {
     // Editing the structured tree of a pooled question only. A draft question's
     // structure is the ingestion block-edit path (draft layer); a re-drafted /
     // archived row is not an edit target.

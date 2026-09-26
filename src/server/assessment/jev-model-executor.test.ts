@@ -250,7 +250,9 @@ describe('createJevModelExecutor — Jev lane', () => {
       points_awarded: 5,
       matched: { rule_id: 'r1' },
     });
-    expect(out.kind === 'scored' && out.confidence).toBeCloseTo(0.08, 5);
+    // noul=0.96 ⇒ certainty |2·0.96−1| = 0.92 (YUK-1092: distribution-shape
+    // certainty, 1 at the extremes / 0 at 0.5 — never its inverse).
+    expect(out.kind === 'scored' && out.confidence).toBeCloseTo(0.92, 5);
     expect(out.run_refs[0]).toBeTruthy();
     expect(out.cost_usd_micros).toBe(Math.round(4.2e-6 * 1_000_000));
     const body = JSON.parse(
@@ -268,6 +270,21 @@ describe('createJevModelExecutor — Jev lane', () => {
     expect(out).toMatchObject({ kind: 'scored', points_awarded: 0 });
     expect(out.kind === 'scored' && out.matched).toBeUndefined();
   });
+
+  it.each([
+    { noul: 0, expected: 1 },
+    { noul: 0.5, expected: 0 },
+    { noul: 1, expected: 1 },
+  ])(
+    'fallback certainty is distribution shape |2·noul−1| — noul=$noul ⇒ $expected (YUK-1092)',
+    async ({ noul, expected }) => {
+      const fetchImpl = vi.fn(async () => responseJson(jevOk(noul))) as unknown as typeof fetch;
+      const port = createJevModelExecutor(executorOptions({ fetchImpl }));
+      const out = await port(request());
+      expect(out.kind).toBe('scored');
+      expect(out.kind === 'scored' && out.confidence).toBeCloseTo(expected, 10);
+    },
+  );
 
   it('holistic_level ⇒ score argmax picks matched.level_id, points stay null', async () => {
     const unit = ruleUnit({
@@ -393,6 +410,52 @@ describe('createJevModelExecutor — Jev lane', () => {
       kind: 'pending',
       pending: { reason: 'infra_failure', retryable: false },
     });
+  });
+
+  it('shared deadline ABORTS the advanced executor (signal passed, timer cancels — no silent overspend)', async () => {
+    vi.unstubAllEnvs();
+    delete process.env.OPENROUTER_API_KEY;
+    let capturedSignal: AbortSignal | undefined;
+    const advanced = vi.fn(
+      (_request: ModelExecutorRequest, signal?: AbortSignal) =>
+        new Promise<ModelUnitOutcomeT>((_resolve, reject) => {
+          capturedSignal = signal;
+          signal?.addEventListener('abort', () => reject(new Error('advanced aborted by signal')));
+        }),
+    );
+    const port = createJevModelExecutor(
+      executorOptions({ deadlineAt: Date.now() + 40, advancedExecutor: advanced }),
+    );
+    const out = await port(request());
+    expect(advanced).toHaveBeenCalledTimes(1);
+    expect(capturedSignal?.aborted).toBe(true);
+    expect(out).toMatchObject({
+      kind: 'pending',
+      pending: { reason: 'infra_failure', retryable: true },
+    });
+  });
+
+  it("caller's signal merges into the advanced executor's abort signal (pre-aborted ⇒ already aborted)", async () => {
+    vi.unstubAllEnvs();
+    delete process.env.OPENROUTER_API_KEY;
+    const ac = new AbortController();
+    ac.abort();
+    let capturedSignal: AbortSignal | undefined;
+    const advanced = vi.fn(async (_request: ModelExecutorRequest, signal?: AbortSignal) => {
+      capturedSignal = signal;
+      return {
+        kind: 'scored',
+        points_awarded: 5,
+        matched: { rule_id: 'r1', option_ids: [] },
+        evidence_citations: [],
+        run_refs: ['adv'],
+      } satisfies ModelUnitOutcomeT;
+    });
+    const port = createJevModelExecutor(
+      executorOptions({ advancedExecutor: advanced, signal: ac.signal }),
+    );
+    await port(request());
+    expect(capturedSignal?.aborted).toBe(true);
   });
 
   it('shared deadline elapsed before advanced start ⇒ non-retryable pending', async () => {

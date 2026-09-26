@@ -151,6 +151,26 @@ export function projectPracticeIssuance(
 
 // ---------- 2. 评分后 feedback DTO（按可见性 policy 揭示） ----------
 
+/**
+ * YUK-1096 P1-1：feedback 投影的显式身份违背码 —— stale/mis-keyed 的
+ * evaluation/submission/revision 组合在投影边界 fail-closed，绝不把别人的
+ * 判分结果拼进这份作答的反馈。
+ */
+export type FeedbackProjectionViolationCode =
+  | 'evaluation_submission_mismatch'
+  | 'evaluation_group_mismatch'
+  | 'submission_revision_mismatch';
+
+export class FeedbackProjectionContractError extends Error {
+  override name = 'FeedbackProjectionContractError';
+  constructor(
+    public readonly code: FeedbackProjectionViolationCode,
+    detail: string,
+  ) {
+    super(`projectFeedback: ${code} — ${detail}`);
+  }
+}
+
 /** 发布时定夺、评分后执行的四档可见性。 */
 export const FeedbackVisibilityPolicy = z.object({
   reveal_total_score: z.boolean(),
@@ -325,6 +345,27 @@ export function projectFeedback(
   revision: PublishedQuestionRevisionT,
   policy: FeedbackVisibilityPolicyT,
 ): AssessmentFeedbackDtoT {
+  // YUK-1096 P1-1：身份交叉校验先行 —— stale/mis-keyed 的 lookup 结果
+  // （别的 submission 的 evaluation、别的 group 的 attempt、别的 revision
+  // 的题面）绝不投影成这份作答的反馈。fail-closed：抛错，不静默回退。
+  if (evaluation.submission_id !== submission.submission_id) {
+    throw new FeedbackProjectionContractError(
+      'evaluation_submission_mismatch',
+      `evaluation '${evaluation.evaluation_id}' belongs to submission '${evaluation.submission_id}', not '${submission.submission_id}'`,
+    );
+  }
+  if (evaluation.evaluation_group_id !== submission.evaluation_group_id) {
+    throw new FeedbackProjectionContractError(
+      'evaluation_group_mismatch',
+      `evaluation '${evaluation.evaluation_id}' is in group '${evaluation.evaluation_group_id}', not '${submission.evaluation_group_id}'`,
+    );
+  }
+  if (submission.revision_id !== revision.revision_id) {
+    throw new FeedbackProjectionContractError(
+      'submission_revision_mismatch',
+      `submission '${submission.submission_id}' pins revision '${submission.revision_id}', not '${revision.revision_id}'`,
+    );
+  }
   const pending = evaluation.status !== 'completed';
   const aggregate =
     !pending && policy.reveal_total_score && evaluation.aggregate != null

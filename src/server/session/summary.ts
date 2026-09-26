@@ -13,6 +13,7 @@ import { and, asc, eq, inArray } from 'drizzle-orm';
 import { getFailureAttempts } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { event, knowledge, learning_session, question } from '@/db/schema';
+import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
@@ -117,11 +118,10 @@ export async function runSessionSummary(
   // Effective cause policy keeps user-authored cause ahead of agent attribution.
   const questionIds = Array.from(new Set(reviewEvents.map((r) => r.subject_id)));
   const causeCounts = new Map<string, number>();
+  const failures = questionIds.length
+    ? await getFailureAttempts(db, { questionIds, limit: null })
+    : [];
   if (questionIds.length > 0) {
-    const failures = await getFailureAttempts(db, {
-      questionIds,
-      limit: null,
-    });
     for (const failure of failures) {
       const cat = effectiveCauseForFailureAttempt(failure)?.primary_category;
       if (cat) causeCounts.set(cat, (causeCounts.get(cat) ?? 0) + 1);
@@ -137,6 +137,42 @@ export async function runSessionSummary(
       category_label: topCauseLabels.get(category) ?? null,
       count,
     }));
+
+  // YUK-1054 (§9 dual-track) — 与本 surface 已读 effective cause 并列，把「原始
+  // 判轨」也供 summary LLM 用：top_original_causes = 该题【第一判】的 cause 分布
+  // （不受改判改写），与 effective 并列供 LLM 描述「原始因 vs 当前因」。failures
+  // 仍在楼上已取（failures 块只取过一次，复用同一批）。
+  const originalCauseCounts = new Map<string, number>();
+  // 只在有 judge 的 failure 上统计原始因；effective cause 已在上方统计。
+  for (const failure of failures) {
+    const cat = failure.original_judge?.cause?.primary_category;
+    if (cat) originalCauseCounts.set(cat, (originalCauseCounts.get(cat) ?? 0) + 1);
+  }
+  const topOriginalCauseLabels = await resolveMiscCauseLabels(db, [...originalCauseCounts.keys()]);
+  const topOriginalCauses = [...originalCauseCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([category, count]) => ({
+      category,
+      category_label: topOriginalCauseLabels.get(category) ?? null,
+      count,
+    }));
+
+  // YUK-1054 — verdict 双轨摘要：effective 判 coarse_outcome 分布 + original 判
+  // 分布，供 summary LLM 生成“本周判定 vs 原始判”对比。verdicts 只取有 judge 的
+  // attempt（resolve 的 effective/original 同时存在才是双轨）。
+  const verdictMap = await resolveVerdictsForAttempts(
+    db,
+    reviewEvents.map((r) => r.id),
+  );
+  const effectiveOutcomeCounts = new Map<string, number>();
+  const originalOutcomeCounts = new Map<string, number>();
+  for (const v of verdictMap.values()) {
+    const eo = v.effective?.verdict.coarse_outcome;
+    if (eo) effectiveOutcomeCounts.set(eo, (effectiveOutcomeCounts.get(eo) ?? 0) + 1);
+    const oo = v.original?.verdict.coarse_outcome;
+    if (oo) originalOutcomeCounts.set(oo, (originalOutcomeCounts.get(oo) ?? 0) + 1);
+  }
 
   // Notable attempts (the again/hard ones, up to NOTABLE_LIMIT) — join question.
   const notable = reviewEvents
@@ -174,6 +210,12 @@ export async function runSessionSummary(
     total_reviewed: reviewEvents.length,
     ratings,
     top_causes: topCauses,
+    // YUK-1054 — 双轨：effective 判的 top_causes 之外，附原始判轨道分布。
+    top_original_causes: topOriginalCauses,
+    verdicts: {
+      effective_outcomes: Object.fromEntries(effectiveOutcomeCounts),
+      original_outcomes: Object.fromEntries(originalOutcomeCounts),
+    },
     top_knowledge: topKnowledge,
     notable_attempts: notableAttempts,
   };

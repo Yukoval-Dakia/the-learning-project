@@ -154,6 +154,12 @@ export async function saveDraft(req: Request, params: Record<string, string>): P
           `draft epoch ${out.current_save_epoch} is newer than expected_save_epoch — refresh before overwriting`,
           409,
         );
+      case 'already_submitted':
+        throw new ApiError(
+          'already_submitted',
+          out.conflict_reason ?? 'draft for an already-submitted attempt cannot be recreated',
+          409,
+        );
       default:
         throw new ApiError('internal_error', 'unexpected saveResponseDraft status', 500);
     }
@@ -203,6 +209,12 @@ export async function createSubmission(req: Request): Promise<Response> {
         throw new ApiError(
           'idempotency_conflict',
           out.conflict_reason ?? 'same idempotency key, different payload',
+          409,
+        );
+      case 'coordinate_conflict':
+        throw new ApiError(
+          'coordinate_conflict',
+          out.conflict_reason ?? 'concurrent submission coordinate conflict — safe to retry',
           409,
         );
       default:

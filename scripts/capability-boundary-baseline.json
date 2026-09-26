@@ -8,11 +8,12 @@
     "YUK-1043": "统一发布链落地：practice -> questions 8 -> 12 (+4: quiz_verify / source_verify / verify-and-promote / proposal-appliers 经 publishQuestionGroupFromRow 同事务发布), ingestion -> questions 5 -> 6 (+1: legacy-record-appliers 接受路径)。total 437 -> 442。这是 grounding §2 的收敛方向 —— publisher seam (src/server/questions/publisher.ts) 是全部 producer/edit/publish 写口的唯一入口，capability -> questions 属 owner-service 调用，非架构回归。",
     "YUK-1043-p1": "复审 P1-6 补收敛：practice -> questions 12 -> 13 (+1: store-sourced-question 图题事后富集 UPDATE 后同事务重发 revision)。total 442 -> 443。",
     "YUK-1043-p2": "复审第二轮裁决 —— 可行写口即刻收敛：ingestion -> questions 6 -> 10 (+4: auto-enroll / mistakes / import-completion / image-candidate-accept INSERT 后同事务铸首版 revision), practice -> questions 13 -> 14 (+1: quiz_gen 新题铸首版)。total 443 -> 448。均为 publishQuestionGroupFromRow owner-service 边（§2 矩阵收敛方向），非架构回归。",
-    "YUK-1045": "activation 接线：practice -> questions 14 -> 15 (+1: api/question-restore.ts → restoreQuestion owner-service 调用，archive 的对偶 REST 端点)。total 448 -> 449。同属 owner-service 边，非架构回归。"
+    "YUK-1045": "activation 接线：practice -> questions 14 -> 15 (+1: api/question-restore.ts → restoreQuestion owner-service 调用，archive 的对偶 REST 端点)。total 448 -> 449。同属 owner-service 边，非架构回归。",
+    "YUK-1092": "practice -> assessment +1 (evaluate-submission.ts → server/assessment/jev-model-executor.ts): Jev ModelUnitExecutorPort 在 §4.3 组合点按 descriptor 装配 —— executor 实现归 server/assessment lane，capability 侧只传 spec。total 449 -> 450。"
   },
   "debts": {
     "capabilityToServer": {
-      "total": 449,
+      "total": 450,
       "byOwnerPair": {
         "agency -> ai": 28,
         "agency -> boss": 10,
@@ -73,6 +74,7 @@
         "observability -> subjects": 14,
         "practice -> advisory-locks": 6,
         "practice -> ai": 65,
+        "practice -> assessment": 1,
         "practice -> boss": 15,
         "practice -> calibration": 3,
         "practice -> coldstart": 1,

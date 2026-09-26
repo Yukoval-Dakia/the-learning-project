@@ -36,6 +36,14 @@ import { and, eq, ne, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import { recordQuestionPoolGap } from '@/capabilities/agency/public';
+import {
+  LEGACY_DRAFT_STATUS,
+  MARKING_RULE_PROVENANCE,
+  QUESTION_AVAILABILITY,
+  SCORING_ADMISSION_STATE,
+  SCORING_ADMISSION_WITHHELD_REASON,
+  SUSPENSION_REASON,
+} from '@/core/schema/assessment/lifecycle';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import {
@@ -49,7 +57,7 @@ import {
   toUnifiedVerifyResult,
 } from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
-import { event, knowledge, question, source_document } from '@/db/schema';
+import { event, knowledge, question, question_group_lifecycle, source_document } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import {
@@ -743,12 +751,21 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           knowledgeIds: question.knowledge_ids,
           // YUK-1045 — 并发终验成功（重叠投递）：它已提交 ⇒ 本投递 stale，挂起
           // 写须跳过（§3.3：旧验证不能改变较新 admission 决定）。
+          // YUK-1095 — 判据绑定【当前 admission generation】：成功事件在 promote
+          // 时盖上写入后的 generation，只有 generation == 当前值的 success 才算
+          // 并发副本。历史上任意 success（无 generation 限定）会让一次真正失败的
+          // 重验被旧记录跳过 —— 旧验证不得冒充较新 admission 决定的并发副本。
           promotedElsewhere: sql<boolean>`EXISTS (
             SELECT 1 FROM ${event}
             WHERE ${event.action} = 'experimental:quiz_verify'
               AND ${event.subject_kind} = 'question'
               AND ${event.subject_id} = ${questionId}
               AND ${event.outcome} = 'success'
+              AND (${event.payload}->>'admission_generation')::text = (
+                SELECT ${question_group_lifecycle.scoring_admission_generation}::text
+                FROM ${question_group_lifecycle}
+                WHERE ${question_group_lifecycle.group_id} = ${questionId}
+              )
           )`,
         })
         .from(question)
@@ -760,13 +777,16 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           `quiz_verify question ${questionId} changed during verification (expected version ${row.version}, got ${current?.version ?? 'missing'})`,
         );
       }
+      // YUK-1095 — 本次 promote 写入后的 admission generation（成功事件盖上，供
+      // 并发 promotedElsewhere 判据绑定）；非 promote 路径恒为 null，不落该字段。
+      let promotedAdmissionGeneration: number | null = null;
       if (promote) {
         // Supply scope already locked at the top of this tx (G→row order above).
         // Promote draft→active.
         await tx
           .update(question)
           .set({
-            draft_status: 'active',
+            draft_status: LEGACY_DRAFT_STATUS.ACTIVE,
             metadata: newMetadata as never,
             updated_at: now,
           })
@@ -882,14 +902,14 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           const promotedChildren = await tx
             .update(question)
             .set({
-              draft_status: 'active',
+              draft_status: LEGACY_DRAFT_STATUS.ACTIVE,
               metadata: childMetadata as never,
               updated_at: now,
             })
             .where(
               and(
                 eq(question.id, child.id),
-                eq(question.draft_status, 'draft'),
+                eq(question.draft_status, LEGACY_DRAFT_STATUS.DRAFT),
                 sql`${question.metadata}->>'archived_at' IS NULL`,
                 sql`${question.metadata}->>'dismissed_at' IS NULL`,
               ),
@@ -932,12 +952,12 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         // 模型核验均过 ⇒ system_verified 准入（显式非 official）。composite 的
         // 组根 = 父行；已发布过同内容的组在此只更新 admission 维度（generation+1）。
         // YUK-1045 — suspension:false 清 verify_hold（同版复核通过 ⇒ 幂等恢复）。
-        await publishQuestionGroupFromRow(tx, {
+        const promotePublish = await publishQuestionGroupFromRow(tx, {
           rootId: row.parent_question_id ?? questionId,
           admission: {
-            state: 'admitted',
+            state: SCORING_ADMISSION_STATE.ADMITTED,
             evidence: {
-              marking_provenance: 'system_verified',
+              marking_provenance: MARKING_RULE_PROVENANCE.SYSTEM_VERIFIED,
               verification: {
                 structural_check_passed: true,
                 independent_verification: {
@@ -958,10 +978,12 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
               copy_safety: copySafetyVerdict,
             },
           },
-          availability: 'general_pool',
+          availability: QUESTION_AVAILABILITY.GENERAL_POOL,
           actorRef: 'quiz_verify:promote',
           now,
         });
+        promotedAdmissionGeneration =
+          'admission_generation' in promotePublish ? promotePublish.admission_generation : null;
       } else {
         // needs_review / fail / too_close / solve_check veto — stay draft, never reaches
         // the pool.
@@ -997,10 +1019,12 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           await publishQuestionGroupFromRow(tx, {
             rootId: row.parent_question_id ?? questionId,
             admission: {
-              state: 'withheld',
-              reason: verifyFailed ? 'verification_failed' : 'unverified_rules',
+              state: SCORING_ADMISSION_STATE.WITHHELD,
+              reason: verifyFailed
+                ? SCORING_ADMISSION_WITHHELD_REASON.VERIFICATION_FAILED
+                : SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
             },
-            suspension: { suspended: true, reason: 'verify_hold' },
+            suspension: { suspended: true, reason: SUSPENSION_REASON.VERIFY_HOLD },
             verification: {
               policy_id: 'quiz_verify@1',
               outcome: verifyFailed ? 'failed' : 'suspended',
@@ -1110,6 +1134,9 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             : {}),
           promoted: promote,
           verification_status: verificationStatus,
+          ...(promotedAdmissionGeneration != null
+            ? { admission_generation: promotedAdmissionGeneration }
+            : {}),
           // YUK-350 — overall / failure_class / summary_md / confidence now come from
           // `...unified` above (the unified verify contract shape). failure_class is keyed
           // there only when !promote (validation_failure), identical to the prior inline.

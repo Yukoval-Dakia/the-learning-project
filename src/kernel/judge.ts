@@ -17,6 +17,7 @@ export {
   type EvaluateSubmissionResult,
   type GradingEntryPoint,
   IMAGE_CONSUMING_JUDGE_ROUTES,
+  type JevModelExecutorSpec,
   type JudgeAnswerParams,
   type JudgeAnswerResult,
   type JudgeInvokerOutput,

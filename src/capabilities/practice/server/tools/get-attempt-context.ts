@@ -107,6 +107,17 @@ const CauseSchema = z.object({
   confidence: z.number().nullable(),
 });
 
+// YUK-1054 — 双轨裁决（§9）。attempt 的原始执行收据判轨 + 当前 effective 判轨
+// 在 evidence surface 上显式拆开，供 caller 区分「首判因」与「当前判因」。
+const VerdictTrackSchema = z.object({
+  judge_event_id: z.string().nullable(),
+  primary_category: z.string().nullable(),
+});
+const AttemptVerdictsSchema = z.object({
+  effective: VerdictTrackSchema.nullable(),
+  original: VerdictTrackSchema.nullable(),
+});
+
 const TimelineEntrySchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('attempt'),
@@ -267,6 +278,9 @@ const EventEvidenceSchema = z.discriminatedUnion('kind', [
     theta_snapshots: z.array(
       z.object({
         knowledge_id: z.string(),
+        // YUK-1093 — mastery_state partition: 'ability_global' entries carry a
+        // domain id in knowledge_id (snapshot subject_kind passthrough).
+        subject_kind: z.enum(['knowledge', 'ability_global']),
         before_present: z.boolean(),
         before_theta_hat: z.number().nullable(),
         after_theta_hat: z.number(),
@@ -342,6 +356,8 @@ const OutputSchema = z.object({
     'not_resolved',
   ]),
   cause: CauseSchema.nullable(),
+  // YUK-1054 — 原始/effective 判轨指针（attempt 证据拆分）。
+  verdicts: AttemptVerdictsSchema.nullable().optional(),
   timeline: z.array(TimelineEntrySchema),
   timeline_scope: z.literal('same_question_context_noncausal'),
   timeline_coverage: z.object({
@@ -818,6 +834,7 @@ function projectEventPayload(value: EnvelopedEvent, rawPayload: unknown): Payloa
         attempt_event_id: payload.attempt_event_id,
         theta_snapshots: payload.theta_snapshots.map((snapshot) => ({
           knowledge_id: snapshot.kc_id,
+          subject_kind: snapshot.subject_kind ?? 'knowledge',
           before_present: snapshot.before !== null,
           before_theta_hat:
             typeof snapshot.before === 'number'
@@ -965,6 +982,7 @@ function emptyOutput(
     question: null,
     question_availability: 'not_resolved',
     cause: null,
+    verdicts: null,
     timeline: [],
     timeline_scope: 'same_question_context_noncausal',
     timeline_coverage: {
@@ -1167,6 +1185,25 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
           analysis_md: cause.analysis_md,
           user_notes: cause.user_notes,
           confidence: cause.confidence,
+        }
+      : null,
+    // YUK-1054 — 原始/effective 判轨。effective=当前判因（user_cause 优先于
+    // judge），original=首判（earliest judge，未链解析）。无 failure 判 → null。
+    verdicts: failure
+      ? {
+          effective:
+            failure.judge || failure.user_cause
+              ? {
+                  judge_event_id: failure.judge?.judge_event_id ?? null,
+                  primary_category: cause?.primary_category ?? null,
+                }
+              : null,
+          original: failure.original_judge
+            ? {
+                judge_event_id: failure.original_judge.judge_event_id,
+                primary_category: failure.original_judge.cause.primary_category,
+              }
+            : null,
         }
       : null,
     timeline: timeline.map((entry) =>

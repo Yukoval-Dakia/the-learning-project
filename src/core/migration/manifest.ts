@@ -267,6 +267,7 @@ export function buildMigrationManifest(
       ],
       event_ingest_at_present: ingestAtPresent,
       state_updated_at_max: capture.ops.state_updated_at_max,
+      state_version_max: capture.ops.state_version_max,
     },
     projection_baseline: facts.projection_baseline,
     queues: {

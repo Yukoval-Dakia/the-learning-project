@@ -1,11 +1,12 @@
 import { z } from 'zod';
 import {
+  type FailureAttemptJudge,
   getFailureAttemptWithReasoningTraceById,
-  getJudgeForAttempt,
 } from '@/capabilities/practice/server/attempt-events';
 import { createFailureLearning } from '@/capabilities/practice/server/failure-learning';
 import { makePracticeTaskRunFn } from '@/capabilities/practice/server/task-runtime';
 import type { Db } from '@/db/client';
+import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import type { DomainTool, ToolContext } from './types';
 
@@ -45,7 +46,7 @@ type AttributeMistakeOutput = z.infer<typeof AttributeMistakeOutputSchema>;
 async function judgeOutput(
   db: Db,
   status: 'written' | 'skipped:existing_judge',
-  judge: NonNullable<Awaited<ReturnType<typeof getJudgeForAttempt>>>,
+  judge: FailureAttemptJudge,
 ): Promise<AttributeMistakeOutput> {
   const secondary = judge.cause.secondary_categories ?? [];
   // YUK-1020 — primary + secondary 的 misc_ id 同一批查询。
@@ -102,10 +103,20 @@ async function attributeMistakeExecute(
     return { status: 'failed' };
   }
 
-  const judge = await getJudgeForAttempt(ctx.db, input.attempt_event_id);
-  if (!judge) {
+  // YUK-1054 (§9 dual-track) — 链解析后的 effective 判（subject∪caused_by
+  // 双锚）；caused_by-only 读面会漏申诉重判行的同时拿错回读指针。
+  const verdicts = await resolveVerdictForAttempt(ctx.db, input.attempt_event_id);
+  const effectiveJudge = verdicts.effective;
+  if (!effectiveJudge || effectiveJudge.verdict.cause === null) {
     return { status: 'failed', reason: 'AttributionTask completed without writing a judge event' };
   }
+  const judge: FailureAttemptJudge = {
+    judge_event_id: effectiveJudge.judge_event_id,
+    cause: effectiveJudge.verdict.cause,
+    referenced_knowledge_ids: effectiveJudge.verdict.referenced_knowledge_ids,
+    created_at: effectiveJudge.created_at,
+    correction_state: effectiveJudge.correction_state,
+  };
   return judgeOutput(
     ctx.db,
     result.status === 'written' ? 'written' : 'skipped:existing_judge',

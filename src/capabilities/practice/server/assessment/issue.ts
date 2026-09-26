@@ -45,6 +45,7 @@ import { stableStringify } from '@/core/migration/canonical';
 import type { PracticeIssuanceDtoT, PublishedQuestionRevisionT } from '@/core/schema/assessment';
 import {
   type AssessmentIssuanceT,
+  type IssuanceBindingT,
   deriveIssuanceBinding,
   projectPracticeIssuance,
   validateIssuanceBinding,
@@ -56,11 +57,92 @@ import {
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
+import { getEvents, writeEvent } from '@/kernel/events';
 
 /** 发题事件 action 名（receipt 即事件载荷；traceable 发题事实）。 */
 export const ASSESSMENT_ISSUANCE_ACTION = 'experimental:assessment_issuance';
 export const ASSESSMENT_ISSUANCE_VERSION = 1 as const;
+
+type IssuanceRow = typeof assessment_issuance.$inferSelect;
+type RevisionRow = typeof question_revision.$inferSelect;
+
+/** 行 → 公开契约（嵌套 binding；coordinate 列与事件复用同一映射 ——
+ *  wire/handlers 永不平铺坐标）。submit.ts 的恢复读面共用。 */
+export function issuanceRowToContract(row: IssuanceRow): AssessmentIssuanceT {
+  return {
+    issuance_id: row.issuance_id,
+    binding: {
+      revision_id: row.revision_id,
+      part_ids: row.part_ids,
+      material_bindings: row.material_bindings,
+      option_order: row.option_order,
+    },
+    issued_at: row.issued_at.toISOString(),
+    claim: {
+      policy: row.claim_policy,
+      status: row.claim_status,
+      claimed_by_ref: row.claimed_by_ref,
+    },
+  };
+}
+
+/** question_revision 行 → PublishedQuestionRevisionT（只映射契约列）。 */
+export function revisionRowToContract(row: RevisionRow): PublishedQuestionRevisionT {
+  return {
+    revision_id: row.revision_id,
+    group_id: row.group_id,
+    revision_ordinal: row.revision_ordinal,
+    integrity_digest: row.integrity_digest,
+    structure: row.structure,
+    response_spec: row.response_spec,
+    scoring_basis: row.scoring_basis,
+    execution_plan: row.execution_plan,
+    published_at: row.published_at.toISOString(),
+    supersedes_revision_id: row.supersedes_revision_id,
+  };
+}
+
+/** jsonb 键序无关的绑定相等判定（幂等重放的唯一判据 —— claim 不参与）。 */
+function issuanceBindingEquals(row: IssuanceRow, binding: IssuanceBindingT): boolean {
+  return (
+    row.revision_id === binding.revision_id &&
+    stableStringify(row.part_ids) === stableStringify(binding.part_ids) &&
+    stableStringify(row.material_bindings) === stableStringify(binding.material_bindings) &&
+    stableStringify(row.option_order) === stableStringify(binding.option_order)
+  );
+}
+
+async function loadIssuanceById(tx: Tx, issuanceId: string): Promise<IssuanceRow | null> {
+  const [row] = await tx
+    .select()
+    .from(assessment_issuance)
+    .where(eq(assessment_issuance.issuance_id, issuanceId))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * 发题时观测到的 admission generation 的真相源是发题事件载荷（issuance 行不
+ * 存该列；lifecycle 的当前值可能已推进，绝不能冒充“发题时所见”——否则激活
+ * CAS 会被绕过）。事件缺失/形态异常时回退到调用方给的候选值（如实标注，
+ * 不静默编数）。
+ */
+export async function readObservedAdmissionGeneration(
+  db: Db | Tx,
+  issuanceId: string,
+  fallback: number | null,
+): Promise<number | null> {
+  const events = await getEvents(db, {
+    action: ASSESSMENT_ISSUANCE_ACTION,
+    subject_kind: 'issuance',
+    subject_id: issuanceId,
+    limit: 1,
+  });
+  const observed = (events[0]?.payload as { admission_generation_observed?: unknown } | undefined)
+    ?.admission_generation_observed;
+  if (typeof observed === 'number' && Number.isInteger(observed)) return observed;
+  return fallback;
+}
 
 // ---------- 输入契约 ----------
 
@@ -198,18 +280,7 @@ export async function issueAssessment(
     }
 
     // 4) 绑定推导 + 校验（revision 快照 → 发出范围/材料/呈现顺序）。
-    const revision: PublishedQuestionRevisionT = {
-      revision_id: revRow.revision_id,
-      group_id: revRow.group_id,
-      revision_ordinal: revRow.revision_ordinal,
-      integrity_digest: revRow.integrity_digest,
-      structure: revRow.structure,
-      response_spec: revRow.response_spec,
-      scoring_basis: revRow.scoring_basis,
-      execution_plan: revRow.execution_plan,
-      published_at: revRow.published_at.toISOString(),
-      supersedes_revision_id: revRow.supersedes_revision_id,
-    };
+    const revision = revisionRowToContract(revRow);
     const binding = deriveIssuanceBinding(revision, {
       part_ids: request.part_ids,
       option_order_overrides: request.option_order_overrides,
@@ -222,8 +293,38 @@ export async function issueAssessment(
       };
     }
 
-    // 5) 一次性 claim（one_time 组请求占用时）：同组存在未释放 claimed
+    // 5) 幂等锚点先行解析（P1-2：issuance_id 重试必须先于 claim 互斥判——
+    //    否则 one_time 组的重试会命中自己持有的 claim 被误报
+    //    claim_unavailable）。同 id 同绑定（含容器 ref）⇒ 如实返回既有行
+    //    （claim 状态/issued_at 全取存储值，不从本次请求重建）；同 id 不同
+    //    绑定 ⇒ issuance_id_conflict。
+    const containerRef = request.container_occurrence_ref ?? null;
+    if (request.issuance_id != null) {
+      const existing = await loadIssuanceById(tx, request.issuance_id);
+      if (existing != null) {
+        if (
+          !issuanceBindingEquals(existing, binding) ||
+          (existing.container_occurrence_ref ?? null) !== containerRef
+        ) {
+          return { status: 'issuance_id_conflict' };
+        }
+        const issuance = issuanceRowToContract(existing);
+        return {
+          status: 'replayed',
+          issuance,
+          practice_dto: projectPracticeIssuance(revision, issuance),
+          admission_generation_observed: await readObservedAdmissionGeneration(
+            tx,
+            existing.issuance_id,
+            lifecycle?.scoring_admission_generation ?? null,
+          ),
+        };
+      }
+    }
+
+    // 6) 一次性 claim（one_time 组请求占用时）：同组存在未释放 claimed
     //    issuance ⇒ claim_unavailable。unbounded 组始终可发（claim 只是记录）。
+    //    同 id 重试已在上面收敛——这里查到的 holder 必属另一 issuance。
     const claimPolicy = lifecycle?.claim_policy ?? 'unbounded';
     const claimRequested = request.claim != null;
     if (claimRequested && claimPolicy === 'one_time') {
@@ -244,7 +345,7 @@ export async function issueAssessment(
       if (holder != null) return { status: 'claim_unavailable' };
     }
 
-    // 6) issuance 行（不可变绑定；claim 列随后可改）。
+    // 7) issuance 行（不可变绑定；claim 列随后可改）。
     const issuanceId = request.issuance_id ?? `iss_${createId()}`;
     const claimStatus: 'claimed' | 'unclaimed' = claimRequested ? 'claimed' : 'unclaimed';
     const claimedByRef = claimRequested ? (request.claim?.claimed_by_ref ?? null) : null;
@@ -255,7 +356,7 @@ export async function issueAssessment(
       part_ids: binding.part_ids,
       material_bindings: binding.material_bindings,
       option_order: binding.option_order,
-      container_occurrence_ref: request.container_occurrence_ref ?? null,
+      container_occurrence_ref: containerRef,
       claim_policy: claimPolicy,
       claim_status: claimStatus,
       claimed_by_ref: claimedByRef,
@@ -268,61 +369,66 @@ export async function issueAssessment(
       .onConflictDoNothing({ target: assessment_issuance.issuance_id })
       .returning({ issuance_id: assessment_issuance.issuance_id });
 
-    let status: 'issued' | 'replayed' = 'issued';
     if (inserted.length === 0) {
       // 同 id 已存在：比对完整绑定载荷 —— 一致 = 幂等重放；不同 = 显式冲突。
-      const [existing] = await tx
-        .select()
-        .from(assessment_issuance)
-        .where(eq(assessment_issuance.issuance_id, issuanceId))
-        .limit(1);
+      // （步骤 5 的预检覆盖常规重试；本分支兜底并发窗口内刚落库的碰撞。）
+      // 重放必须用既有行的持久状态（claim 可能已被释放、issued_at 必须回传
+      // 原始值）——绝不能用请求侧值冒充存储事实。
+      const existing = await loadIssuanceById(tx, issuanceId);
       if (existing == null) {
         // 不可能形状（冲突但行不可见）—— fail-loud。
         throw new Error(
           `issueAssessment: issuance '${issuanceId}' conflicted but no row is visible`,
         );
       }
-      const sameBinding =
-        existing.revision_id === insertPayload.revision_id &&
-        stableStringify(existing.part_ids) === stableStringify(insertPayload.part_ids) &&
-        stableStringify(existing.material_bindings) ===
-          stableStringify(insertPayload.material_bindings) &&
-        stableStringify(existing.option_order) === stableStringify(insertPayload.option_order) &&
-        (existing.container_occurrence_ref ?? null) === insertPayload.container_occurrence_ref &&
-        existing.claim_policy === insertPayload.claim_policy;
-      if (!sameBinding) return { status: 'issuance_id_conflict' };
-      status = 'replayed';
-      // 重放绝不改变 claim —— 若本次请求带 claim 而已有行是 unclaimed，如实返回
-      // 现有状态（调用方决定是否再 claim；claim 请求只对 first-serve 有效）。
-    } else {
-      // 7) 发题事件（同事务 receipt；payload 如实记录冻结坐标与 claim 处置）。
-      await writeEvent(tx, {
-        id: `evt_iss_${createId()}`,
-        session_id: null,
-        actor_kind: 'agent',
-        actor_ref: actorRef,
-        action: ASSESSMENT_ISSUANCE_ACTION,
-        subject_kind: 'issuance',
-        subject_id: issuanceId,
-        outcome: 'success',
-        payload: {
-          version: ASSESSMENT_ISSUANCE_VERSION,
-          issuance_id: issuanceId,
-          group_id: request.group_id,
-          revision_id: revision.revision_id,
-          part_ids: binding.part_ids,
-          material_bindings: binding.material_bindings,
-          option_order: binding.option_order,
-          container_occurrence_ref: insertPayload.container_occurrence_ref,
-          claim_policy: claimPolicy,
-          claim_status: claimStatus,
-          claimed_by_ref: claimedByRef,
-          admission_generation_observed: lifecycle?.scoring_admission_generation ?? null,
-          mode,
-        } satisfies Record<string, unknown>,
-        created_at: now,
-      });
+      if (
+        !issuanceBindingEquals(existing, binding) ||
+        (existing.container_occurrence_ref ?? null) !== insertPayload.container_occurrence_ref
+      ) {
+        return { status: 'issuance_id_conflict' };
+      }
+      const issuance = issuanceRowToContract(existing);
+      return {
+        status: 'replayed',
+        issuance,
+        practice_dto: projectPracticeIssuance(revision, issuance),
+        admission_generation_observed: await readObservedAdmissionGeneration(
+          tx,
+          existing.issuance_id,
+          lifecycle?.scoring_admission_generation ?? null,
+        ),
+      };
     }
+
+    // 8) 发题事件（同事务 receipt；payload 如实记录冻结坐标与 claim 处置）。
+    //    重放绝不改变 claim —— 若本次请求带 claim 而已有行是 unclaimed，如实返回
+    //    现有状态（调用方决定是否再 claim；claim 请求只对 first-serve 有效）。
+    await writeEvent(tx, {
+      id: `evt_iss_${createId()}`,
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: actorRef,
+      action: ASSESSMENT_ISSUANCE_ACTION,
+      subject_kind: 'issuance',
+      subject_id: issuanceId,
+      outcome: 'success',
+      payload: {
+        version: ASSESSMENT_ISSUANCE_VERSION,
+        issuance_id: issuanceId,
+        group_id: request.group_id,
+        revision_id: revision.revision_id,
+        part_ids: binding.part_ids,
+        material_bindings: binding.material_bindings,
+        option_order: binding.option_order,
+        container_occurrence_ref: insertPayload.container_occurrence_ref,
+        claim_policy: claimPolicy,
+        claim_status: claimStatus,
+        claimed_by_ref: claimedByRef,
+        admission_generation_observed: lifecycle?.scoring_admission_generation ?? null,
+        mode,
+      } satisfies Record<string, unknown>,
+      created_at: now,
+    });
 
     const issuance: AssessmentIssuanceT = {
       issuance_id: issuanceId,
@@ -335,7 +441,7 @@ export async function issueAssessment(
       },
     };
     return {
-      status,
+      status: 'issued',
       issuance,
       practice_dto: projectPracticeIssuance(revision, issuance),
       admission_generation_observed: lifecycle?.scoring_admission_generation ?? null,

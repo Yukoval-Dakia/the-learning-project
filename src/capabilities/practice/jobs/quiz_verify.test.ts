@@ -1043,6 +1043,104 @@ describe('runQuizVerify', () => {
     });
   });
 
+  // YUK-1095 — promotedElsewhere 必须绑定【当前 admission generation】：一条历史
+  // success（旧 generation）不得把一次真正失败的重验当成“并发成功”跳过 —— 旧验证
+  // 不得冒充较新 admission 决定的并发副本。本投递已过幂等门后，在模型调用窗口内
+  // 落一条旧 generation 的 success 模拟该历史/并发副本。
+  it('YUK-1095: 旧 generation 的 success 不跳过重验失败（挂起照旧落地）', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    await seedDraftQuestion({ id: 'q_stale_succ', knowledgeId: 'k1' });
+    const staleSuccess = vi.fn(async (kind: string) => {
+      if (kind === 'QuizVerifyTask') {
+        await db.insert(event).values({
+          id: 'evt_stale_succ',
+          actor_kind: 'agent',
+          actor_ref: 'quiz_verify',
+          action: 'experimental:quiz_verify',
+          subject_kind: 'question',
+          subject_id: 'q_stale_succ',
+          outcome: 'success',
+          // 旧 generation（当前尚未发布 ⇒ 无 lifecycle，绝不应匹配）。
+          payload: { question_id: 'q_stale_succ', promoted: true, admission_generation: 7 },
+          created_at: new Date(),
+        });
+      }
+      return {
+        text: verifyOutput({ overall: 'fail', groundingVerdict: 'fail' }),
+        task_run_id: 'tr_stale_succ',
+      };
+    });
+
+    const result = await runQuizVerify({
+      db,
+      questionId: 'q_stale_succ',
+      runTaskFn: staleSuccess,
+    });
+
+    expect(result.status).toBe('failed');
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, 'q_stale_succ'));
+    expect(lifecycle.suspended).toBe(true);
+    expect(lifecycle.suspension_reason).toBe('verify_hold');
+  });
+
+  // YUK-1095 — 反向回归：generation 与当前值一致的 success（真正的并发副本）仍
+  // 必须跳过挂起写，并发保护不被收窄误伤。
+  it('YUK-1095: 当前 generation 的 success 仍跳过挂起（并发保护不误伤）', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    await seedDraftQuestion({ id: 'q_curr_succ', knowledgeId: 'k1' });
+    await db.insert(question_group_lifecycle).values({
+      group_id: 'q_curr_succ',
+      current_revision_id: null,
+      availability: 'container_only',
+      scoring_admission_state: 'withheld',
+      scoring_admission_withheld_reason: 'unverified_rules',
+      scoring_admission_generation: 5,
+      claim_policy: 'one_time',
+      suspended: false,
+      withdrawn: false,
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+    const concurrentSuccess = vi.fn(async (kind: string) => {
+      if (kind === 'QuizVerifyTask') {
+        await db.insert(event).values({
+          id: 'evt_curr_succ',
+          actor_kind: 'agent',
+          actor_ref: 'quiz_verify',
+          action: 'experimental:quiz_verify',
+          subject_kind: 'question',
+          subject_id: 'q_curr_succ',
+          outcome: 'success',
+          payload: { question_id: 'q_curr_succ', promoted: true, admission_generation: 5 },
+          created_at: new Date(),
+        });
+      }
+      return {
+        text: verifyOutput({ overall: 'fail', groundingVerdict: 'fail' }),
+        task_run_id: 'tr_curr_succ',
+      };
+    });
+
+    const result = await runQuizVerify({
+      db,
+      questionId: 'q_curr_succ',
+      runTaskFn: concurrentSuccess,
+    });
+
+    expect(result.status).toBe('failed');
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, 'q_curr_succ'));
+    expect(lifecycle.suspended).toBe(false);
+    expect(lifecycle.scoring_admission_generation).toBe(5);
+  });
+
   it('too_close (LLM verdict): leaves draft + needs_review + NO FSRS enroll', async () => {
     await seedKnowledge('k1');
     await seedDraftQuestion({ id: 'q3', knowledgeId: 'k1' });

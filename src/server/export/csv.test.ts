@@ -178,10 +178,13 @@ describe('buildMistakesCsv', () => {
 
   it('counts review events per question as last_reviewed_at / review_count', () => {
     const csv = buildMistakesCsv(fixture());
-    const dataLine = csv.split('\n')[1];
-    const cols = dataLine.split(',');
-    expect(cols[cols.length - 2]).toBe('1700200000');
-    expect(cols[cols.length - 1]).toBe('1');
+    const header = csv.split('\n')[0].split(',');
+    const cols = csv.split('\n')[1].split(',');
+    // YUK-1054 — judge_* 双轨列追加在 review_count 之后，按表头索引断言。
+    expect(cols[header.indexOf('last_reviewed_at')]).toBe('1700200000');
+    expect(cols[header.indexOf('review_count')]).toBe('1');
+    expect(cols[header.indexOf('judge_effective_outcome')]).toBe('');
+    expect(cols[header.indexOf('judge_original_outcome')]).toBe('');
   });
 
   // Codex (PR #295) — ADR-0028 deletes the question-level FSRS row for labeled
@@ -258,9 +261,10 @@ describe('buildMistakesCsv', () => {
     const tables = fixture();
     tables.event = tables.event.filter((e) => e.action !== 'review');
     const csv = buildMistakesCsv(tables);
+    const header = csv.split('\n')[0].split(',');
     const cols = csv.split('\n')[1].split(',');
-    expect(cols[cols.length - 2]).toBe('');
-    expect(cols[cols.length - 1]).toBe('0');
+    expect(cols[header.indexOf('last_reviewed_at')]).toBe('');
+    expect(cols[header.indexOf('review_count')]).toBe('0');
   });
 });
 
