@@ -10,6 +10,11 @@
   "scripts": {
     "dev": "tsx scripts/dev-local.ts",
     "dev:local": "tsx scripts/dev-local.ts",
+    "ship:tick": "scripts/ship-loop.sh tick",
+    "ship:tick:dry": "scripts/ship-loop.sh tick --dry-run",
+    "ship:start": "scripts/ship-loop.sh start",
+    "ship:stop": "scripts/ship-loop.sh stop",
+    "ship:status": "scripts/ship-loop.sh status",
     "build": "pnpm rw:web:build && pnpm build:server && pnpm build:worker && pnpm build:migrate",
     "build:worker": "esbuild scripts/worker.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/worker.cjs --external:pg-native --external:sharp --external:better-sqlite3 --external:bufferutil --external:utf-8-validate --define:process.env.NODE_ENV=\\\"production\\\"",
     "build:migrate": "esbuild scripts/migrate.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/migrate.cjs --external:pg-native --external:bufferutil --external:utf-8-validate --external:@earendil-works/* --external:@modelcontextprotocol/sdk --define:process.env.NODE_ENV=\\\"production\\\"",
