@@ -152,6 +152,7 @@ Cloudflare Tunnel。无 Vercel、无 Redis。部署细节与验证命令以 `REA
 ## Review, merge, and delivery
 
 - authoring 与独立 review 分离；review agent 必须能读取真实 diff。
+- **Merge 等待窗（owner 2026-09-26 拍板）**：合并前等待至少 ~17 分钟（从最后一次 push 起算），给 advisory review（Codex/PR-Agent/OCR/CodeRabbit）发出时间。等待窗内已发出的 P0/P1 必须裁决（回复 + 修或 rationale-skip）才可 merge；等待窗结束后再出现的新 review 不重置，但不得无视既有 P0/P1。
 - **Review budget（owner 2026-07-30 拍板）**：自动 review 是 advisory，不是 CI correctness
   gate。每个 PR 最多一轮初审 + 一轮 P0/P1 修复后的验证审；push 后出现的新 bot review
   不重置预算，除非 owner 明确要求，不得启动第三轮。
