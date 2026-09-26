@@ -172,31 +172,88 @@ export type AggregateOutcomeT = z.infer<typeof AggregateOutcome>;
 
 // ---------- evaluation record ----------
 
-export const EvaluationRecord = z.object({
-  evaluation_id: EvaluationId,
-  evaluation_group_id: EvaluationGroupId,
-  submission_id: SubmissionId,
-  /** 第几次评估尝试（≥1）；重试身份 ≠ 学习事实身份。 */
-  attempt: z.number().int().min(1),
-  status: z.enum(['pending', 'completed']),
-  unit_results: z.array(ScoringUnitResult).default([]),
-  /** pending 期间为 null；completed 时为聚合结果（可为 unresolved 分支）。 */
-  aggregate: AggregateOutcome.nullable(),
-  /** 执行溯源：plan digest 与 run 引用（费用/重试真相在 task_run 侧）。 */
-  plan_digest: z.string().min(1).nullable().optional(),
-  run_refs: z.array(z.string().min(1)).default([]),
-  /**
-   * D9/D15/D16 判分来源 provenance：显式手动/自评必须标注（仅手动学习效应，
-   * 绝不推断 AI 正确性）；assisted 保留分数但排除 hard mastery/calibration。
-   * 缺省 = automatic。
-   */
-  provenance: z
-    .object({
-      source: z.enum(['automatic', 'manual', 'self_report']),
-      assisted: z.boolean().default(false),
-    })
-    .optional(),
-});
+/**
+ * YUK-1096 P1-2：status / unit_results / aggregate 的一致性 superRefine ——
+ * 矛盾态在【schema 层】拒收，不只是消费侧约定：
+ *   - pending ⇒ aggregate 必须为 null（未决评估绝不携带聚合快照）；
+ *   - completed ⇒ aggregate 必须非 null（完成态无聚合是矛盾）；
+ *   - completed + 存在 pending 单元 ⇒ aggregate 必须是
+ *     unresolved(pending_units)（terminal-pending：显式承认未决 ——
+ *     points_total/level/no_mapping 声称已解但在判单元是矛盾，
+ *     evaluation.test.ts「terminal pending」钉住这一合法形态）；
+ *   - completed + 全 scored ⇒ aggregate 不得声称 pending_units
+ *     （虚报 pending 同样是信息矛盾）。
+ */
+export const EvaluationRecord = z
+  .object({
+    evaluation_id: EvaluationId,
+    evaluation_group_id: EvaluationGroupId,
+    submission_id: SubmissionId,
+    /** 第几次评估尝试（≥1）；重试身份 ≠ 学习事实身份。 */
+    attempt: z.number().int().min(1),
+    status: z.enum(['pending', 'completed']),
+    unit_results: z.array(ScoringUnitResult).default([]),
+    /** pending 期间为 null；completed 时为聚合结果（可为 unresolved 分支）。 */
+    aggregate: AggregateOutcome.nullable(),
+    /** 执行溯源：plan digest 与 run 引用（费用/重试真相在 task_run 侧）。 */
+    plan_digest: z.string().min(1).nullable().optional(),
+    run_refs: z.array(z.string().min(1)).default([]),
+    /**
+     * D9/D15/D16 判分来源 provenance：显式手动/自评必须标注（仅手动学习效应，
+     * 绝不推断 AI 正确性）；assisted 保留分数但排除 hard mastery/calibration。
+     * 缺省 = automatic。
+     */
+    provenance: z
+      .object({
+        source: z.enum(['automatic', 'manual', 'self_report']),
+        assisted: z.boolean().default(false),
+      })
+      .optional(),
+  })
+  .superRefine((record, ctx) => {
+    const pendingUnits = record.unit_results.filter((unit) => unit.status === 'pending');
+    if (record.status === 'pending' && record.aggregate != null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['aggregate'],
+        message: `evaluation_status_contradiction: status 'pending' must not carry an aggregate`,
+      });
+    }
+    if (record.status === 'completed' && record.aggregate == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['aggregate'],
+        message: `evaluation_status_contradiction: status 'completed' requires a non-null aggregate`,
+      });
+    }
+    if (record.status === 'completed' && pendingUnits.length > 0) {
+      const aggregate = record.aggregate;
+      if (
+        aggregate != null &&
+        (aggregate.kind !== 'unresolved' || aggregate.reason !== 'pending_units')
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['aggregate'],
+          message: `evaluation_status_contradiction: completed evaluation with pending units (${pendingUnits
+            .map((unit) => unit.scoring_unit_id)
+            .join(',')}) must carry unresolved(pending_units), not '${aggregate.kind}'`,
+        });
+      }
+    }
+    if (
+      record.status === 'completed' &&
+      pendingUnits.length === 0 &&
+      record.aggregate?.kind === 'unresolved' &&
+      record.aggregate.reason === 'pending_units'
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['aggregate'],
+        message: `evaluation_status_contradiction: aggregate claims pending_units but every unit result is scored`,
+      });
+    }
+  });
 export type EvaluationRecordT = z.infer<typeof EvaluationRecord>;
 
 // ---------- 确定性聚合原语 ----------
@@ -296,6 +353,15 @@ export function aggregateUnitResults(
       };
     }
     if (unit.criterion.kind === 'holistic_level') {
+      // YUK-1096 P1-3：holistic 单元的分数只经发布侧 level_points 映射
+      // 解析 —— 执行器自报 points_awarded 是矛盾输入（999 分不得泄入
+      // breakdown/总分），fail-closed，不静默归一化。
+      if (result.points_awarded !== null) {
+        return {
+          kind: 'invalid',
+          detail: `holistic unit '${unitId}' carries points_awarded=${result.points_awarded} — level mapping is the only scoring authority`,
+        };
+      }
       const levelId = result.matched?.level_id;
       if (levelId == null) {
         return { kind: 'no_mapping', detail: `unit '${unitId}' reports no matched level` };

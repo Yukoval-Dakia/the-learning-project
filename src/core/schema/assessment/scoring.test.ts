@@ -686,4 +686,44 @@ describe('aggregateUnitResults — 总分只聚合一次', () => {
       ]),
     ).toEqual({ kind: 'points_total', points: 14, policy: { kind: 'sum' } });
   });
+
+  it('YUK-1096 P1-3: holistic unit reporting its own points_awarded is invalid_result — even 0 or a lucky value', () => {
+    const basis: ScoringBasisT = ScoringBasis.parse({
+      units: [
+        {
+          scoring_unit_id: 'u_essay',
+          slot_refs: ['essay'],
+          criterion: {
+            kind: 'holistic_level',
+            levels: [
+              { level_id: 'full', descriptor_md: '一等', rank: 2 },
+              { level_id: 'zero', descriptor_md: '空白档', rank: 0 },
+            ],
+          },
+          points: null,
+          level_points: { full: 5, zero: 0 },
+        },
+      ],
+      aggregation: { kind: 'sum' },
+      blank_scores_zero: true,
+    });
+    // 999：执行器自造分数 —— level 映射是唯一权威，绝不泄入总分。
+    const rogue = aggregateUnitResults(basis, [
+      scored('u_essay', 999, { matched: { level_id: 'full', option_ids: [] } }),
+    ]);
+    expect(rogue.kind).toBe('unresolved');
+    if (rogue.kind === 'unresolved') {
+      expect(rogue.reason).toBe('invalid_result');
+      expect(rogue.detail).toContain("holistic unit 'u_essay' carries points_awarded=999");
+    }
+    // 即使报 0 / 恰好等于映射分也是矛盾输入：holistic 纪律是 points_awarded 恒 null。
+    const zero = aggregateUnitResults(basis, [
+      scored('u_essay', 0, { matched: { level_id: 'zero', option_ids: [] } }),
+    ]);
+    expect(zero).toMatchObject({ kind: 'unresolved', reason: 'invalid_result' });
+    const coincidental = aggregateUnitResults(basis, [
+      scored('u_essay', 5, { matched: { level_id: 'full', option_ids: [] } }),
+    ]);
+    expect(coincidental).toMatchObject({ kind: 'unresolved', reason: 'invalid_result' });
+  });
 });

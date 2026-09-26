@@ -370,6 +370,84 @@ describe('ResponseSet — 空白 ≠ missing，引用一致性', () => {
     ).toEqual([]);
   });
 
+  it('YUK-1096 P1-4: multi_choice enforces declared min/max select bounds on non-empty selections', () => {
+    // choiceSpec().slots[0]：multi_choice，7 选项，min_select=2，max_select=5。
+    const spec = choiceSpec();
+    // 少于 min：声明至少选 2 个却只选了 1 个。
+    const underMin = validateResponseSet(spec, {
+      entries: [{ slot_id: 'q1', kind: 'choice', option_ids: ['opt_1'] }],
+    });
+    expect(underMin.map((issue) => issue.code)).toContain('select_count_out_of_bounds');
+    expect(underMin[0].detail).toContain('[2, 5]');
+    // 超出 max：声明至多 5 个却选了 6 个。
+    const overMax = validateResponseSet(spec, {
+      entries: [
+        {
+          slot_id: 'q1',
+          kind: 'choice',
+          option_ids: ['opt_1', 'opt_2', 'opt_3', 'opt_4', 'opt_5', 'opt_6'],
+        },
+      ],
+    });
+    expect(overMax.map((issue) => issue.code)).toContain('select_count_out_of_bounds');
+    // 界内合法：恰好 min / 恰好 max / 中间值全部通过。
+    for (const optionIds of [
+      ['opt_1', 'opt_2'],
+      ['opt_1', 'opt_2', 'opt_3', 'opt_4', 'opt_5'],
+      ['opt_2', 'opt_5'],
+    ]) {
+      expect(
+        validateResponseSet(spec, {
+          entries: [{ slot_id: 'q1', kind: 'choice', option_ids: optionIds }],
+        }),
+      ).toEqual([]);
+    }
+    // 空数组 = 主动空白（§7.2），不是 “选了 0 个”—— 不受 min_select 约束。
+    expect(
+      validateResponseSet(spec, {
+        entries: [{ slot_id: 'q1', kind: 'choice', option_ids: [] }],
+      }),
+    ).toEqual([]);
+  });
+
+  it('YUK-1096 P1-4: duplicate option ids in one response are rejected (even within bounds)', () => {
+    const spec = choiceSpec();
+    // 重复 id 使“数量在界内”仍是结构违背：3 个条目里只有两个不同选项。
+    const duped = validateResponseSet(spec, {
+      entries: [{ slot_id: 'q1', kind: 'choice', option_ids: ['opt_1', 'opt_1', 'opt_2'] }],
+    });
+    const codes = duped.map((issue) => issue.code);
+    expect(codes).toContain('duplicate_selected_option');
+    expect(duped.find((issue) => issue.code === 'duplicate_selected_option')?.detail).toContain(
+      "'opt_1'",
+    );
+    // 重复 + 未知选项同时报告（不合并为一个码）。
+    const mixed = validateResponseSet(spec, {
+      entries: [{ slot_id: 'q1', kind: 'choice', option_ids: ['opt_1', 'opt_1', 'opt_99'] }],
+    });
+    const mixedCodes = mixed.map((issue) => issue.code);
+    expect(mixedCodes).toContain('duplicate_selected_option');
+    expect(mixedCodes).toContain('unknown_option_id');
+    // single_choice 上的重复同样报 duplicate（同时触发 single_choice_multiple_selection）。
+    const singleSpec = ResponseSpec.parse({
+      slots: [
+        {
+          slot_id: 'sc',
+          part_id: 'p1',
+          kind: 'single_choice',
+          options: [
+            { option_id: 'o1', label: 'A', text: '甲' },
+            { option_id: 'o2', label: 'B', text: '乙' },
+          ],
+        },
+      ],
+    });
+    const singleDup = validateResponseSet(singleSpec, {
+      entries: [{ slot_id: 'sc', kind: 'choice', option_ids: ['o1', 'o1'] }],
+    });
+    expect(singleDup.map((issue) => issue.code)).toContain('duplicate_selected_option');
+  });
+
   it('rejects unknown evidence kinds at parse time (D10 set is closed)', () => {
     expect(() =>
       ResponseSpec.parse({
