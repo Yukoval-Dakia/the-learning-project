@@ -151,6 +151,10 @@ drizzle/.snapshots/
 # One-off local preflight output
 docs/preflight/*-vision-rejudge.json
 
+# BEGIN oh-my-opencode-slim clonedeps
+.slim/clonedeps/repos/
+# END oh-my-opencode-slim clonedeps
+
 # Stale session handoff and root-level visual QA captures. Durable design
 # evidence belongs under docs/design/ instead.
 /RESUME.md

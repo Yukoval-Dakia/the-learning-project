@@ -16,6 +16,9 @@ nested `AGENTS.md` / `.claude/rules`，机械约束放在 hooks。
 ## Session and collaboration discipline
 
 - 涉及至少 3 个独立步骤或多轮工具调用时维护 task plan。
+- 无 spec 的目标（bug 闭环 / feature / perf / overnight）用 `ship-mode` skill 选
+  playbook 再拆 lane；issue→draft PR 外环用 `issue-to-pr`；多 slice 并行用
+  `swarm`；长 run 留痕用 `worklog`。
 - 外部 SaaS、本机权限或第三方 CLI 先做 30 秒 pre-flight：
   executable、version、required env/auth、target resolution；全通过再执行。
 - Session start 先读 `PLAN.md`、`.remember/now.md`，需要时读
@@ -28,6 +31,10 @@ nested `AGENTS.md` / `.claude/rules`，机械约束放在 hooks。
   机械修改给 Fixer；目标明确但需本地调查、局部方案或调试的非 UI 实施给
   Implementer；UI 交互与视觉给 Designer；高风险架构决策和独立复核给 Oracle。
   角色不可用时由编排者先收敛任务，再交给可用执行者；同一 diff 不派两个写入者。
+- **证据契约（pstack prove-it-works 移植）**：委派 writer lane 的 prompt 必须声明
+  必交 artifact；任何完成声明同句带可重跑证据（命令输出 / `file:line` / SHA /
+  artifact 路径），不接受自报、编译过、时间戳；验证必须打在任务实际影响的面
+  上（`verify-app` skill），wrong-surface / INCONCLUSIVE 不算过。
 - 具体模型、variant 和请求故障回退由当前工具配置决定；代码质量不达标须重新
   判断任务与角色，不把模型 fallback 当作质量升级。
 - 收尾时对齐 `PLAN.md` 四栏、Linear 状态、`.remember` handoff、开放
@@ -168,3 +175,10 @@ Cloudflare Tunnel。无 Vercel、无 Redis。部署细节与验证命令以 `REA
   人工合并。
 - 危险 git guard 被触发时停下查原因，不绕过；不要 force push、force-delete branch、
   或 `git worktree remove --force`。
+
+## Cloned Dependency Source
+
+Read-only dependency/source reference clones live under
+`.slim/clonedeps/repos/`. Do not edit these clones.
+
+- `.slim/clonedeps/repos/cursor__plugins/pstack/` - `cursor/plugins` at `ecc249f`; Lauren Tan's MIT pstack plugin (poteto-mode router, 23 playbooks, 23 principle-* skills, swarm, agents) — reference for verification-first multi-agent workflow porting.
