@@ -97,7 +97,7 @@
 // YUK-1016: cause_category_overlay — owner-vetted 错因词表层（accepted proposal 落地的
 // authored catalog 行，非瞬态非派生；retract 只置 archived_at，历史不可重建）→
 // FK_ORDER 非 BACKUP_EXCLUDED。NEW FK_ORDER table 必 bump：52 → 53 tables，4.19 → 4.20。
-export const SCHEMA_VERSION = '4.22';
+export const SCHEMA_VERSION = '4.23';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -183,6 +183,13 @@ export const FK_ORDER = [
   'assessment_issuance',
   'evaluation_group',
   'assessment_submission',
+  // YUK-1052 — assessment_response_draft: ResponseSet autosave 活草稿（服务端 ack 的
+  // in-progress 答案，evaluation_group_ref 软引）。用户可感知的学习中态而非瞬态：
+  // restore 丢它 = 用户作答中草稿静默灭失（「刷新不重交」契约反向），非派生不可重建 →
+  // FK_ORDER 备份（非 BACKUP_EXCLUDED）。FK → assessment_issuance 已保证父先插；
+  // evaluation_group_ref 无 hard FK，位置不受 PG 约束，紧跟 submission 保持作答簇相邻。
+  // NEW FK_ORDER table → bump 62 → 63，4.22 → 4.23。
+  'assessment_response_draft',
   'evaluation',
   'evaluation_effective_head',
   'assessment_identity_mapping',
