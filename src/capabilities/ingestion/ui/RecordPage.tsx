@@ -5,7 +5,7 @@
 //（壳层规则，见 web/src/router.tsx）。
 
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { QUESTION_KIND_OPTIONS, type QuestionKindOptionId } from '@/core/schema/business';
 import { AutoEnrolledPanel } from '@/ui/components/AutoEnrolledPanel';
 import {
@@ -13,9 +13,15 @@ import {
   type RecordLandingKnowledge,
   knowledgeLabelsFor,
 } from '@/ui/components/RecordLanding';
+import { AttachmentStrip } from '@/ui/components/response/AttachmentStrip';
+import {
+  type EvidenceAttachment,
+  evidenceKindFromMime,
+} from '@/ui/components/response/response-types';
 import { VisionTab, type VisionTabRouting } from '@/ui/components/VisionTab';
 import { useSubjects } from '@/ui/hooks/useSubjects';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
+import { uploadAsset } from '@/ui/lib/assets';
 import { causeOptionsForSelectedKnowledge } from '@/ui/lib/cause-options';
 import { Btn } from '@/ui/primitives/Btn';
 import { Button } from '@/ui/primitives/Button';
@@ -92,6 +98,13 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
   // （收好了什么 / 去向 / 下一步）。null = 仍在表单态。knowledge 在 onSuccess 当时
   // 从 selectedKnowledge → label 快照下来（之后 reset 表单不影响着陆显示）。
   const [landing, setLanding] = useState<{ knowledge: RecordLandingKnowledge[] } | null>(null);
+  // YUK-1051 — 错答/题面图证据不再写死 []：真附件经 uploadAsset 上传，随 POST
+  // /api/mistakes 的 wrong_answer_image_refs / prompt_image_refs 落库（服务端契约早已收）。
+  const [promptEvidence, setPromptEvidence] = useState<EvidenceAttachment[]>([]);
+  const [wrongEvidence, setWrongEvidence] = useState<EvidenceAttachment[]>([]);
+  const [attachTarget, setAttachTarget] = useState<'prompt' | 'wrong' | null>(null);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const attachInputRef = useRef<HTMLInputElement>(null);
 
   const allNodes = knowledgeQ.data?.rows ?? [];
   const filteredNodes = useMemo(() => {
@@ -135,8 +148,8 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
             : null,
           difficulty,
           question_kind: questionKind,
-          prompt_image_refs: [],
-          wrong_answer_image_refs: [],
+          prompt_image_refs: promptEvidence.map((a) => a.asset_id),
+          wrong_answer_image_refs: wrongEvidence.map((a) => a.asset_id),
         }),
       }),
     // A8 (YUK-354): 进着陆态而非硬跳。把当时选的知识点 id → label 快照下来（手填
@@ -150,6 +163,9 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
     setPromptMd('');
     setReferenceMd('');
     setWrongAnswerMd('');
+    setPromptEvidence([]);
+    setWrongEvidence([]);
+    setAttachError(null);
     setSelectedKnowledge([]);
     setKnowledgeFilter('');
     setCausePrimary('');
@@ -168,6 +184,37 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
     setSelectedKnowledge((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
+  };
+
+  // YUK-1051 — 附件上传：一个隐藏 input 服务两个字段（attachTarget 区分落到题面/错答）。
+  // 失败不丢已成功同批（EvidenceComposer/ProbeAnswers 同纪律）。
+  const pickAttachment = async (files: FileList | null) => {
+    if (!files || files.length === 0 || !attachTarget) return;
+    setAttachError(null);
+    const results = await Promise.allSettled(Array.from(files).map((f) => uploadAsset(f)));
+    const uploaded = results.flatMap((r, i) => {
+      if (r.status !== 'fulfilled') return [];
+      const file = Array.from(files)[i];
+      return [
+        {
+          asset_id: r.value.id,
+          kind: evidenceKindFromMime(r.value.mime_type || file.type || null),
+          label: file.name || undefined,
+          slot_ids: null,
+        } satisfies EvidenceAttachment,
+      ];
+    });
+    if (uploaded.length > 0) {
+      if (attachTarget === 'prompt') setPromptEvidence((cur) => [...cur, ...uploaded]);
+      else setWrongEvidence((cur) => [...cur, ...uploaded]);
+    }
+    if (uploaded.length < results.length) setAttachError('部分附件上传失败，请重试');
+    if (attachInputRef.current) attachInputRef.current.value = '';
+  };
+
+  const openAttachPicker = (target: 'prompt' | 'wrong') => {
+    setAttachTarget(target);
+    attachInputRef.current?.click();
   };
 
   if (landing) {
@@ -224,6 +271,15 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
             placeholder="完整题目内容…"
           />
         </div>
+        <AttachmentStrip
+          attachments={promptEvidence}
+          onRemove={(id) => setPromptEvidence((cur) => cur.filter((a) => a.asset_id !== id))}
+        />
+        <div style={{ marginTop: 'var(--s-2)' }}>
+          <Btn variant="ghost" size="sm" icon="camera" onClick={() => openAttachPicker('prompt')}>
+            给题面附图
+          </Btn>
+        </div>
       </div>
 
       <div className="form-2col">
@@ -253,8 +309,31 @@ function ManualForm({ navigate }: { navigate: (to: string) => void }) {
             onChange={(e) => setWrongAnswerMd(e.target.value)}
             placeholder="自己写错的答案 — AI 据此归因"
           />
+          <AttachmentStrip
+            attachments={wrongEvidence}
+            onRemove={(id) => setWrongEvidence((cur) => cur.filter((a) => a.asset_id !== id))}
+          />
+          <div style={{ marginTop: 'var(--s-2)' }}>
+            <Btn variant="ghost" size="sm" icon="camera" onClick={() => openAttachPicker('wrong')}>
+              给错答附图
+            </Btn>
+          </div>
         </div>
       </div>
+      <input
+        ref={attachInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,application/pdf"
+        multiple
+        className="visually-hidden"
+        aria-label="添加附件"
+        onChange={(e) => void pickAttachment(e.target.files)}
+      />
+      {attachError && (
+        <p className="record-note record-error" role="alert">
+          {attachError}
+        </p>
+      )}
 
       <div className="form-row">
         <span className="field-label">

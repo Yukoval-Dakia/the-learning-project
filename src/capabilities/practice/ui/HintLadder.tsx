@@ -34,10 +34,24 @@ export function HintLadder({
   open,
   question,
   onReturnToAnswer,
+  issuanceId,
+  onStageReached,
+  onFullSolutionRevealed,
+  requestFullSolution,
 }: {
   open: boolean;
   question: QuestionDetail;
   onReturnToAnswer?: () => void;
+  // YUK-1051 (D16) — 提示/揭示证据必须绑定 issuance 并在服务端留痕；服务端契约是
+  // YUK-1052 lane。接缝：宿主传入 issuanceId + 回调后，每阶提示的抵达与完整解的揭示
+  // 都会经回调上报（关闭/刷新不再恢复成「独立完成」）；缺席时保持现有本地态行为，
+  // 不伪造持久化。
+  issuanceId?: string | null;
+  onStageReached?: (stageIndex: number, ctx: { issuanceId: string | null }) => void;
+  onFullSolutionRevealed?: (ctx: { issuanceId: string | null }) => void;
+  // 完整解按需取得（显式揭示授权后才拉取，不随初始题面 DTO 下载）；缺席时退回
+  // question.reference_md（现状行为，题面 DTO 仍带参考的现状由服务端 lane 收口）。
+  requestFullSolution?: () => Promise<string | null>;
 }) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   // 已揭示的最高 hint 阶索引（-1 = 尚未要任何提示）。H0-H4 走 hint，H5 由 revealedFull 单独管。
@@ -51,6 +65,9 @@ export function HintLadder({
   const [confirmFull, setConfirmFull] = useState(false);
   // 完整解（H5）已 reveal。
   const [revealedFull, setRevealedFull] = useState(false);
+  // YUK-1051 — 按需拉取的完整解正文（requestFullSolution 注入时）；null=未取。
+  const [fetchedFull, setFetchedFull] = useState<string | null>(null);
+  const [fetchingFull, setFetchingFull] = useState(false);
   // owner 点了「我自己来 · 交还控制」—— 控制权回到作答。
   const [returned, setReturned] = useState(false);
 
@@ -64,11 +81,16 @@ export function HintLadder({
       setFailAt(-1);
       setConfirmFull(false);
       setRevealedFull(false);
+      setFetchedFull(null);
+      setFetchingFull(false);
       setReturned(false);
     }
   }, [open]);
 
-  const fullAvailable = isFullSolutionAvailable(question.reference_md);
+  // YUK-1051 — 注入 requestFullSolution 时完整解按需取：可用性由 seam 决定（null=不可用），
+  // 确认门照常；未注入退回 question.reference_md（现状）。
+  const fullAvailable = requestFullSolution ? true : isFullSolutionAvailable(question.reference_md);
+  const fullBody = requestFullSolution ? fetchedFull : (question.reference_md ?? null);
   const next = nextHintStage(reached);
 
   // 取某一 hint 阶（H0-H4）。session 懒建；空 text_md 视作该阶生成缺失（可重试，非静默 exhaust）。
@@ -86,6 +108,12 @@ export function HintLadder({
       if (h.text_md) {
         setHints((m) => ({ ...m, [targetIdx]: h.text_md }));
         setReached(targetIdx);
+        // YUK-1051 (D16) — 提示抵达上报（接 seam 时服务端留痕；回调失败不阻梯）。
+        try {
+          onStageReached?.(targetIdx, { issuanceId: issuanceId ?? null });
+        } catch {
+          // 留痕失败不阻作答流。
+        }
       } else {
         setFailAt(targetIdx);
       }
@@ -97,10 +125,30 @@ export function HintLadder({
   };
 
   // 逃生口：reveal 完整解（已过非独立确认门）。一步到 H5，跳过中间阶。
-  const revealFull = () => {
+  // YUK-1051 — 注入 requestFullSolution 时按需拉取（显式揭示授权后才取），
+  // 拉取失败不假装揭示（停确认门，可重试）；未注入则退回 question.reference_md。
+  const revealFull = async () => {
+    if (requestFullSolution && fetchedFull === null) {
+      if (fetchingFull) return;
+      setFetchingFull(true);
+      try {
+        const full = await requestFullSolution();
+        if (full === null) return; // 未取到 → 不揭示，留在确认门
+        setFetchedFull(full);
+      } catch {
+        return; // 拉取失败 → 不揭示（failAt 不适用：这不是 hint 阶生成失败）
+      } finally {
+        setFetchingFull(false);
+      }
+    }
     setConfirmFull(false);
     setRevealedFull(true);
     setReached(FULL_STAGE_INDEX);
+    try {
+      onFullSolutionRevealed?.({ issuanceId: issuanceId ?? null });
+    } catch {
+      // 留痕失败不阻揭示（用户已看过内容）。
+    }
   };
 
   const returnToAnswer = () => {
@@ -167,8 +215,8 @@ export function HintLadder({
         ) : null,
       )}
 
-      {/* 完整解卡（H5，reveal 后）—— 非独立完成 badge + reference_md 正文。 */}
-      {revealedFull && fullAvailable && (
+      {/* 完整解卡（H5，reveal 后）—— 非独立完成 badge + 参考正文。 */}
+      {revealedFull && fullAvailable && fullBody !== null && (
         <div className="ladder-card full">
           <div className="ladder-card-top">
             <span className="ladder-badge">{HINT_LADDER[FULL_STAGE_INDEX].label}</span>
@@ -178,9 +226,9 @@ export function HintLadder({
             </span>
           </div>
           <div className="ladder-body">
-            {/* YUK-1005 — H5 full solution is stored reference_md; render through
-                markdown+KaTeX like the rest of the question faces. */}
-            <MathMarkdown notation={question.notation}>{question.reference_md ?? ''}</MathMarkdown>
+            {/* YUK-1005 — H5 full solution render through markdown+KaTeX like the rest
+                of the question faces；YUK-1051 起正文可来自按需拉取（fetchedFull）。 */}
+            <MathMarkdown notation={question.notation}>{fullBody}</MathMarkdown>
           </div>
         </div>
       )}
@@ -234,9 +282,14 @@ export function HintLadder({
             看完整解 = 这题记为<b>非独立完成</b>。中间阶可以跳过 —— 确认要直接看吗？
           </div>
           <div className="ladder-confirm-acts">
-            <button type="button" className="ladder-jump" onClick={() => revealFull()}>
+            <button
+              type="button"
+              className="ladder-jump"
+              disabled={fetchingFull}
+              onClick={() => void revealFull()}
+            >
               <LoomIcon name="eye" size={14} />
-              确认 · 看完整解
+              {fetchingFull ? '取完整解…' : '确认 · 看完整解'}
             </button>
             <button
               type="button"

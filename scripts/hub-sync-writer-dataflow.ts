@@ -553,29 +553,38 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
 
   type Substitution = { type: AstNode | undefined; scope: Scope };
   type Substitutions = Map<string, Substitution>;
+  // YUK-1051 — hard depth cap. `seen` only guards alias-expansion cycles (keyed by
+  // `${alias.id}<${actualArgs}>`); substitution and union/intersection hops can still
+  // grow the stack without bound on a deeply nested generic type graph (the autosave
+  // hook's option/result chain is the first live trigger). Bail `false` — the same
+  // "not trusted" semantic as the `seen.has(key)` cycle fallback — so trustedType
+  // stays total on any input.
+  const TRUSTED_TYPE_MAX_DEPTH = 50;
   const trustedType = (
     typeValue: unknown,
     scope: Scope,
     substitutions: Substitutions = new Map(),
     seen = new Set<string>(),
+    depth = 0,
   ): boolean => {
     const candidate = node(typeValue);
     if (!candidate) return false;
+    if (depth > TRUSTED_TYPE_MAX_DEPTH) return false;
     if (candidate.type === 'TSTypeAnnotation')
-      return trustedType(candidate.typeAnnotation, scope, substitutions, seen);
+      return trustedType(candidate.typeAnnotation, scope, substitutions, seen, depth + 1);
     if (candidate.type === 'TSParenthesizedType' || candidate.type === 'TSOptionalType')
-      return trustedType(candidate.typeAnnotation, scope, substitutions, seen);
+      return trustedType(candidate.typeAnnotation, scope, substitutions, seen, depth + 1);
     if (candidate.type === 'TSUnionType') {
       return childNodes(candidate.types).every((part) =>
         ['TSNullKeyword', 'TSUndefinedKeyword', 'TSNeverKeyword'].includes(part.type) ||
         (part.type === 'TSLiteralType' && node(part.literal)?.type === 'NullLiteral')
           ? true
-          : trustedType(part, scope, substitutions, new Set(seen)),
+          : trustedType(part, scope, substitutions, new Set(seen), depth + 1),
       );
     }
     if (candidate.type === 'TSIntersectionType') {
       return childNodes(candidate.types).some((part) =>
-        trustedType(part, scope, substitutions, new Set(seen)),
+        trustedType(part, scope, substitutions, new Set(seen), depth + 1),
       );
     }
     if (candidate.type === 'TSTypeQuery') {
@@ -611,7 +620,7 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
     if (substitutions.has(name)) {
       const replacement = substitutions.get(name);
       return replacement?.type
-        ? trustedType(replacement.type, replacement.scope, substitutions, seen)
+        ? trustedType(replacement.type, replacement.scope, substitutions, seen, depth + 1)
         : false;
     }
     for (let current: Scope | undefined = scope; current; current = current.parent) {
@@ -636,7 +645,9 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       if (seen.has(key)) return false;
       const nextSeen = new Set(seen);
       nextSeen.add(key);
-      return alias.bodies.every((body) => trustedType(body, alias.scope, local, nextSeen));
+      return alias.bodies.every((body) =>
+        trustedType(body, alias.scope, local, nextSeen, depth + 1),
+      );
     }
     return false;
   };
