@@ -57,7 +57,7 @@ describe('export constants', () => {
     // 列是既有表的 additive 列，随整行 dump/restore，不单独 bump (表=bump，列=不 bump)。
     // 4.19 → 4.20 (YUK-1016 454-B): NEW FK_ORDER table cause_category_overlay —
     // owner-vetted 错因词表层 (authored catalog 行，retract 只置 archived_at，不可重建)。
-    expect(SCHEMA_VERSION).toBe('4.22');
+    expect(SCHEMA_VERSION).toBe('4.23');
   });
 
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
