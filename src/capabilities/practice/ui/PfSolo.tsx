@@ -26,11 +26,11 @@ import { AttemptTimeline } from '@/ui/components/AttemptTimeline';
 // 202-pending 成为返回 union + UI 状态（同一次 submission 继续查询，不重交）。
 import { ChoiceSetResponse } from '@/ui/components/response/ChoiceSetResponse';
 import { EvidenceComposer } from '@/ui/components/response/EvidenceComposer';
-import { SlotResultBadge } from '@/ui/components/response/SlotResultBadge';
 import {
   type EvidenceAttachment,
   optionsFromChoicesMd,
 } from '@/ui/components/response/response-types';
+import { SlotResultBadge } from '@/ui/components/response/SlotResultBadge';
 import { useJudgeRunPolling } from '@/ui/hooks/useJudgeRunPolling';
 import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';

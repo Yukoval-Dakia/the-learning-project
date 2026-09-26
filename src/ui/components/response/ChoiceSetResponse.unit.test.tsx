@@ -13,7 +13,9 @@ describe('ChoiceSetResponse', () => {
     render(<ChoiceSetResponse options={options} mode="single" value={null} onChange={vi.fn()} />);
     const buttons = screen.getAllByRole('radio');
     expect(buttons.map((button) => button.textContent)).toEqual([
-      'A先列条件', 'B求出结果', 'C检验边界',
+      'A先列条件',
+      'B求出结果',
+      'C检验边界',
     ]);
     expect(buttons.map((button) => button.getAttribute('data-option-id'))).toEqual(
       options.map((option) => option.id),
@@ -31,7 +33,12 @@ describe('ChoiceSetResponse', () => {
 
     onChange.mockClear();
     rerender(
-      <ChoiceSetResponse options={options} mode="multi" value={[options[0].id]} onChange={onChange} />,
+      <ChoiceSetResponse
+        options={options}
+        mode="multi"
+        value={[options[0].id]}
+        onChange={onChange}
+      />,
     );
     fireEvent.click(screen.getByRole('button', { name: /甲/ }));
     expect(onChange).toHaveBeenLastCalledWith([]);

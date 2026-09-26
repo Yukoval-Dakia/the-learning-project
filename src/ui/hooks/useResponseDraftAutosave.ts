@@ -12,9 +12,8 @@
 // 首个观测值视为服务端恢复基线（不算脏）。
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-
-import { ApiError } from '@/ui/lib/api';
 import type { SaveState } from '@/ui/components/response/SaveStateChip';
+import { ApiError } from '@/ui/lib/api';
 
 function defaultSerialize<T>(value: T): string {
   return JSON.stringify(value) ?? '';

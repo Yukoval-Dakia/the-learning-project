@@ -49,7 +49,7 @@ export function SelfConfidenceField({
     if (!keys.includes(e.key)) return;
     const buttons = scaleRef.current?.querySelectorAll<HTMLButtonElement>('.rs-confidence-btn');
     if (!buttons || buttons.length === 0) return;
-    const activeIdx = Array.from(buttons).findIndex((b) => b === document.activeElement);
+    const activeIdx = Array.from(buttons).indexOf(document.activeElement as HTMLButtonElement);
     if (activeIdx < 0) return;
     e.preventDefault();
     let nextIdx = activeIdx;

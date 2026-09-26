@@ -10,12 +10,12 @@ import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePrev
 import { AttachmentStrip } from '@/ui/components/response/AttachmentStrip';
 import { ChoiceSetResponse } from '@/ui/components/response/ChoiceSetResponse';
 import { EvidenceLightbox } from '@/ui/components/response/EvidenceLightbox';
-import { SlotResultBadge } from '@/ui/components/response/SlotResultBadge';
 import {
   COARSE_OUTCOME_META,
   type CoarseOutcome,
   optionsFromChoicesMd,
 } from '@/ui/components/response/response-types';
+import { SlotResultBadge } from '@/ui/components/response/SlotResultBadge';
 import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
@@ -163,8 +163,7 @@ export function PfrQRow({
             </div>
           )}
           {appealable && verdict !== null && verdict !== 'good' && (
-            <div className="quiet-empty" style={{ padding: 0, alignSelf: 'flex-start' }}
-            >
+            <div className="quiet-empty" style={{ padding: 0, alignSelf: 'flex-start' }}>
               此处暂不能直接重判；需要申诉时，请从散题反馈卡提交理由。
             </div>
           )}

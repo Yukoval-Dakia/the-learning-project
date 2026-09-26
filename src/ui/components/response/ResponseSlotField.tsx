@@ -5,15 +5,15 @@
 import './response.css';
 import { ChoiceSetResponse } from './ChoiceSetResponse';
 import { MatchingResponse, type MatchingSide } from './MatchingResponse';
-import { OrderingResponse, type OrderingItem } from './OrderingResponse';
-import { SlotResultBadge } from './SlotResultBadge';
-import { TextResponse } from './TextResponse';
+import { type OrderingItem, OrderingResponse } from './OrderingResponse';
 import type {
   ChoiceOption,
   CoarseOutcome,
   SlotResponseValue,
   SubmissionLifecycle,
 } from './response-types';
+import { SlotResultBadge } from './SlotResultBadge';
+import { TextResponse } from './TextResponse';
 
 /** 槽位规格：题目这一槽要什么形态的作答。 */
 export type ResponseSlotSpec =

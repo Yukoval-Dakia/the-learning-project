@@ -4,7 +4,7 @@
 // 只在 feedback release 后由 outcome 出现。paper 作答全程只渲 lifecycle，不传
 // releasedOutcome —— 「缓冲反馈」由类型层守住。
 
-import { type LoomIconName, LoomIcon } from '@/ui/primitives/LoomIcon';
+import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 
 import {
   COARSE_OUTCOME_META,

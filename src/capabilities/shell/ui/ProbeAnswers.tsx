@@ -21,7 +21,6 @@ import { useState } from 'react';
 // 上传失败不丢同批已成功的纪律在组件内）。conjecture 裁决语义不变。
 import { EvidenceComposer } from '@/ui/components/response/EvidenceComposer';
 import type { EvidenceAttachment } from '@/ui/components/response/response-types';
-import { uploadAsset } from '@/ui/lib/assets';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
@@ -186,7 +185,7 @@ export function ProbeAnswerCard({
             disabled={submitting}
             placeholder="写下你的解答（也可以只拍照 / 传图）"
             ariaLabel="作答"
-            accept="image/png,image/jpeg,image/webp"
+            accept="image/*"
           />
           <div className="pa-actions">
             <Btn

@@ -42,9 +42,7 @@ export interface ChoiceSetResponseProps {
 function isTextEntryTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   return (
-    target.tagName === 'TEXTAREA' ||
-    target.tagName === 'INPUT' ||
-    target.isContentEditable === true
+    target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable === true
   );
 }
 
@@ -83,12 +81,11 @@ export function ChoiceSetResponse({
     if (!keys.includes(e.key)) return;
     const buttons = groupRef.current?.querySelectorAll<HTMLButtonElement>('.rs-opt');
     if (!buttons || buttons.length === 0) return;
-    const activeIdx = Array.from(buttons).findIndex((b) => b === document.activeElement);
+    const activeIdx = Array.from(buttons).indexOf(document.activeElement as HTMLButtonElement);
     if (activeIdx < 0) return;
     e.preventDefault();
     let nextIdx = activeIdx;
-    if (e.key === 'ArrowDown' || e.key === 'ArrowRight')
-      nextIdx = (activeIdx + 1) % buttons.length;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') nextIdx = (activeIdx + 1) % buttons.length;
     else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft')
       nextIdx = (activeIdx - 1 + buttons.length) % buttons.length;
     else if (e.key === 'Home') nextIdx = 0;
@@ -119,9 +116,9 @@ export function ChoiceSetResponse({
 
   return (
     <>
-      {/* biome-ignore lint/a11y/useSemanticElements: 设计稿卡片式选项（rs-opt 布局）；
-          native <input type=radio> 无法承载该布局，真 <button> + radiogroup/group ARIA
-          模式语义完整（同 PfSolo / PracticeChoiceOptions / screen-onboarding 先例）。 */}
+      {/* biome-ignore lint/a11y/useSemanticElements lint/a11y/noStaticElementInteractions lint/a11y/useAriaPropsSupportedByRole: 设计稿卡片式选项（rs-opt 布局）；role 随 mode 在 radiogroup/group 间动态取值（biome 静态判据识别不到）；
+          native <input type=radio> 无法承载该布局，真 <button> + ARIA 模式语义完整（同 PfSolo /
+          PracticeChoiceOptions / screen-onboarding 先例）。 */}
       <div
         ref={groupRef}
         className="rs-opts"
@@ -129,7 +126,7 @@ export function ChoiceSetResponse({
         aria-label={ariaLabel}
         onKeyDown={onGroupKeyDown}
       >
-        {options.map((opt, i) => {
+        {options.map((opt) => {
           const isSel = selected.has(opt.id);
           const cls = [
             'rs-opt',
@@ -142,27 +139,30 @@ export function ChoiceSetResponse({
             .filter(Boolean)
             .join(' ');
           return (
-            <button
-              type="button"
-              key={opt.id}
-              data-option-id={opt.id}
-              className={cls}
-              disabled={disabled}
-              role={mode === 'single' ? 'radio' : undefined}
-              aria-checked={mode === 'single' ? isSel : undefined}
-              aria-pressed={mode === 'multi' ? isSel : undefined}
-              onClick={() => (mode === 'single' ? selectSingle(opt.id) : toggleMulti(opt.id))}
-            >
-              {mode === 'multi' && (
-                <span className="rs-opt-box" aria-hidden="true">
-                  {isSel && <LoomIcon name="check" size={10} />}
+            <>
+              {/* biome-ignore lint/a11y/useAriaPropsSupportedByRole: role 随 mode 动态（single→radio 带 aria-checked，multi→原生 button 带 aria-pressed），biome 静态判据识别不到条件 role。 */}
+              <button
+                type="button"
+                key={opt.id}
+                data-option-id={opt.id}
+                className={cls}
+                disabled={disabled}
+                role={mode === 'single' ? 'radio' : undefined}
+                aria-checked={mode === 'single' ? isSel : undefined}
+                aria-pressed={mode === 'multi' ? isSel : undefined}
+                onClick={() => (mode === 'single' ? selectSingle(opt.id) : toggleMulti(opt.id))}
+              >
+                {mode === 'multi' && (
+                  <span className="rs-opt-box" aria-hidden="true">
+                    {isSel && <LoomIcon name="check" size={10} />}
+                  </span>
+                )}
+                <span className="rs-opt-k">{opt.label}</span>
+                <span className="rs-opt-t">
+                  <MathMarkdown notation={notation}>{opt.text_md}</MathMarkdown>
                 </span>
-              )}
-              <span className="rs-opt-k">{opt.label}</span>
-              <span className="rs-opt-t">
-                <MathMarkdown notation={notation}>{opt.text_md}</MathMarkdown>
-              </span>
-            </button>
+              </button>
+            </>
           );
         })}
       </div>

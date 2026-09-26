@@ -16,8 +16,8 @@ import { type UploadedAsset, uploadAsset } from '@/ui/lib/assets';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 
 import { AttachmentStrip } from './AttachmentStrip';
-import { TextResponse } from './TextResponse';
 import { type EvidenceAttachment, evidenceKindFromMime } from './response-types';
+import { TextResponse } from './TextResponse';
 
 /** D10 accept 提示：服务端白名单才是真闸（§10）。 */
 export const EVIDENCE_ACCEPT =

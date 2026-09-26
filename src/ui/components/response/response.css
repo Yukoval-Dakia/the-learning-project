@@ -535,8 +535,10 @@
   color: var(--ink-2);
   font: inherit;
   cursor: pointer;
-  transition: border-color var(--dur-fast) var(--ease-out),
-    background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 .rs-confidence-btn:hover,
 .rs-confidence-skip:hover {
@@ -630,7 +632,7 @@ button.rs-save.is-error:focus-visible {
   padding: 3px 10px;
   cursor: pointer;
 }
-.rs-group-slot[aria-pressed='true'] {
+.rs-group-slot[aria-pressed="true"] {
   border-color: var(--coral);
   background: var(--coral-soft);
   color: var(--coral-ink);

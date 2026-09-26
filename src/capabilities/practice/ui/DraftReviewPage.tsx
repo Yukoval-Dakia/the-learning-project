@@ -18,8 +18,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { makeLookup } from '@/ui/lib/makeLookup';
 import { deriveOptionIds, optionLabel } from '@/ui/components/response/response-types';
+import { makeLookup } from '@/ui/lib/makeLookup';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';

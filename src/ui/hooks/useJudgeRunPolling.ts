@@ -75,6 +75,7 @@ export function useJudgeRunPolling({
 
   // runId 变化（换了一次 submission）→ 归零重查；旧 run 的迟到响应绝不可写新 run 的态。
   const generationRef = useRef(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runId change must re-run the reset effect even though it's only read via closure
   useEffect(() => {
     generationRef.current += 1;
     setState({ status: null, result: null, error: null, polls: 0, settled: false });

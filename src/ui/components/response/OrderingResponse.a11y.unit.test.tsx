@@ -28,7 +28,9 @@ describe('OrderingResponse keyboard access', () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<OrderingResponse items={items} value={['a', 'b', 'c']} onChange={onChange} />);
-    expect((screen.getByRole('button', { name: '上移「先观察」' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (screen.getByRole('button', { name: '上移「先观察」' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
     const position = screen.getByRole('textbox', { name: '「先观察」的目标序号（1 到 3）' });
     await user.clear(position);
     await user.type(position, '3');

@@ -21,7 +21,12 @@ describe('AssetEvidencePreview', () => {
     assets.fetchAssetObject.mockResolvedValue({ url: 'blob:image', mimeType: 'image/png' });
     const onExpand = vi.fn();
     render(
-      <AssetEvidencePreview assetId="asset-1" label="手写解答" variant="thumb" onExpand={onExpand} />,
+      <AssetEvidencePreview
+        assetId="asset-1"
+        label="手写解答"
+        variant="thumb"
+        onExpand={onExpand}
+      />,
     );
     screen.getByText('加载附件…');
     const zoom = await screen.findByRole('button', { name: '放大查看手写解答' });

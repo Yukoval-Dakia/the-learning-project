@@ -29,8 +29,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ApiError } from '@/ui/lib/api';
 import { deriveOptionIds } from '@/ui/components/response/response-types';
+import { ApiError } from '@/ui/lib/api';
 import { makeLookup } from '@/ui/lib/makeLookup';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { subjectContentPropsForDomain } from '@/ui/lib/subject';

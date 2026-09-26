@@ -35,7 +35,13 @@ describe('ChoiceSetResponse keyboard and accessible semantics', () => {
     const onChange = vi.fn();
     render(
       <>
-        <ChoiceSetResponse options={options} mode="single" value={null} onChange={onChange} hotkeys />
+        <ChoiceSetResponse
+          options={options}
+          mode="single"
+          value={null}
+          onChange={onChange}
+          hotkeys
+        />
         <input aria-label="文本输入" />
       </>,
     );

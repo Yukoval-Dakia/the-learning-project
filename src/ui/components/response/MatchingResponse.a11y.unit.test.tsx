@@ -13,8 +13,14 @@ describe('MatchingResponse keyboard access', () => {
     const onChange = vi.fn();
     render(
       <MatchingResponse
-        left={[{ id: 'l1', text_md: '原因' }, { id: 'l2', text_md: '结果' }]}
-        right={[{ id: 'r1', text_md: '蒸发' }, { id: 'r2', text_md: '凝结' }]}
+        left={[
+          { id: 'l1', text_md: '原因' },
+          { id: 'l2', text_md: '结果' },
+        ]}
+        right={[
+          { id: 'r1', text_md: '蒸发' },
+          { id: 'r2', text_md: '凝结' },
+        ]}
         value={{ l1: null, l2: null }}
         onChange={onChange}
       />,

@@ -62,7 +62,10 @@ describe('optionLabel — 展示序号不硬编码 4', () => {
   });
 
   it('optionsFromChoicesMd 支持任意选项数', () => {
-    const opts = optionsFromChoicesMd(Array.from({ length: 7 }, (_, i) => `选项${i}`), 'q1');
+    const opts = optionsFromChoicesMd(
+      Array.from({ length: 7 }, (_, i) => `选项${i}`),
+      'q1',
+    );
     expect(opts).toHaveLength(7);
     expect(opts[4].label).toBe('E');
     expect(new Set(opts.map((o) => o.id)).size).toBe(7);

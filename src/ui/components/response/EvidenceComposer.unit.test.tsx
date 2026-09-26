@@ -20,14 +20,19 @@ describe('EvidenceComposer', () => {
         upload={upload}
       />,
     );
-    expect((screen.getByRole('textbox', { name: '作答' }) as HTMLTextAreaElement).value).toBe('原始回答');
+    expect((screen.getByRole('textbox', { name: '作答' }) as HTMLTextAreaElement).value).toBe(
+      '原始回答',
+    );
     fireEvent.change(screen.getByLabelText('添加附件'), {
       target: { files: [new File(['image bytes'], 'worksheet.png', { type: 'image/png' })] },
     });
     await waitFor(() => expect(onAttachmentsChange).toHaveBeenCalledTimes(1));
     expect(onAttachmentsChange).toHaveBeenCalledWith([
       expect.objectContaining({
-        asset_id: 'asset-image', kind: 'image', label: 'worksheet.png', slot_ids: null,
+        asset_id: 'asset-image',
+        kind: 'image',
+        label: 'worksheet.png',
+        slot_ids: null,
       }),
     ]);
   });
@@ -55,7 +60,9 @@ describe('EvidenceComposer', () => {
         ],
       },
     });
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('部分附件上传失败'));
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain('部分附件上传失败'),
+    );
     expect(onAttachmentsChange).toHaveBeenCalledWith([
       expect.objectContaining({ asset_id: 'good', kind: 'image' }),
     ]);

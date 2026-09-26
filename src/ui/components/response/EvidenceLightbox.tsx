@@ -26,25 +26,35 @@ export function EvidenceLightbox({ open, onClose, assetId, kind, label }: Eviden
 
   if (!open || !assetId) return null;
   return createPortal(
-    <div
-      className="rs-lightbox-scrim"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      {/* biome-ignore lint/a11y/useSemanticElements: native <dialog> 需要 imperative
-          showModal()/close()，与 CSS 驱动 + portal + useFocusTrap 模式不兼容（同
-          PfCoach/CopilotDrawer 先例）。 */}
-      <div className="rs-lightbox" role="dialog" aria-modal="true" aria-label={label ?? '证据查看'} ref={panelRef}>
-        <div className="rs-lightbox-head">
-          <span className="rs-lightbox-title">{label ?? '证据'}</span>
-          <IconBtn icon="close" size={16} title="关闭" onClick={onClose} />
-        </div>
-        <div className="rs-lightbox-body">
-          <AssetEvidencePreview assetId={assetId} kind={kind} label={label} variant="inline" />
+    <>
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: 点击遮罩关闭只是鼠标便利；键盘关闭由
+          useFocusTrap 的 Escape 处理（同族 modal 先例），不把遮罩当可聚焦控件。 */}
+      <div
+        className="rs-lightbox-scrim"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
+      >
+        {/* biome-ignore lint/a11y/useSemanticElements: native <dialog> 需要 imperative
+            showModal()/close()，与 CSS 驱动 + portal + useFocusTrap 模式不兼容（同
+            PfCoach/CopilotDrawer 先例）。 */}
+        <div
+          className="rs-lightbox"
+          role="dialog"
+          aria-modal="true"
+          aria-label={label ?? '证据查看'}
+          ref={panelRef}
+        >
+          <div className="rs-lightbox-head">
+            <span className="rs-lightbox-title">{label ?? '证据'}</span>
+            <IconBtn icon="close" size={16} title="关闭" onClick={onClose} />
+          </div>
+          <div className="rs-lightbox-body">
+            <AssetEvidencePreview assetId={assetId} kind={kind} label={label} variant="inline" />
+          </div>
         </div>
       </div>
-    </div>,
+    </>,
     document.body,
   );
 }

@@ -69,10 +69,7 @@ export function optionLabel(index: number): string {
 }
 
 /** 从 wire 的 choices_md 位置数组构造带稳定 id 的选项列表。 */
-export function optionsFromChoicesMd(
-  choicesMd: readonly string[],
-  scope = '',
-): ChoiceOption[] {
+export function optionsFromChoicesMd(choicesMd: readonly string[], scope = ''): ChoiceOption[] {
   const ids = deriveOptionIds(choicesMd, scope);
   return choicesMd.map((text, i) => ({ id: ids[i], label: optionLabel(i), text_md: text }));
 }
@@ -112,30 +109,29 @@ export function choiceSelectionsEqual(a: readonly string[], b: readonly string[]
   return a.every((id) => setB.has(id));
 }
 
+function serializeSlotEntry(k: string, v: SlotResponseValue): unknown[] {
+  switch (v.kind) {
+    case 'choice':
+      return [k, v.kind, [...v.option_ids].sort()];
+    case 'text':
+      return [k, v.kind, v.text];
+    case 'matching':
+      return [
+        k,
+        v.kind,
+        Object.keys(v.pairs)
+          .sort()
+          .map((leftId) => [leftId, v.pairs[leftId]]),
+      ];
+    case 'ordering':
+      return [k, v.kind, v.ordered_ids];
+  }
+}
+
 /** 把 slots 的作答集压成可比较的字符串（autosave 脏检查 / 测试断言用）。 */
 export function serializeResponseSet(set: ResponseSet): string {
   const keys = Object.keys(set).sort();
-  return JSON.stringify(
-    keys.map((k) => {
-      const v = set[k];
-      switch (v.kind) {
-        case 'choice':
-          return [k, v.kind, [...v.option_ids].sort()];
-        case 'text':
-          return [k, v.kind, v.text];
-        case 'matching':
-          return [
-            k,
-            v.kind,
-            Object.keys(v.pairs)
-              .sort()
-              .map((leftId) => [leftId, v.pairs[leftId]]),
-          ];
-        case 'ordering':
-          return [k, v.kind, v.ordered_ids];
-      }
-    }),
-  );
+  return JSON.stringify(keys.map((k) => serializeSlotEntry(k, set[k])));
 }
 
 // ── matching / ordering 纯操作（键盘可操作的排序在 OrderingResponse 里复用） ──
@@ -175,7 +171,11 @@ export function moveOrderedItem(
 }
 
 /** 序号编辑：把 id 移到 1-based 目标位置（clamp 到 [1, len]）；id 不在表里原样返回。 */
-export function moveOrderedItemTo(orderedIds: readonly string[], id: string, position: number): string[] {
+export function moveOrderedItemTo(
+  orderedIds: readonly string[],
+  id: string,
+  position: number,
+): string[] {
   const from = orderedIds.indexOf(id);
   if (from < 0) return [...orderedIds];
   const clamped = Math.min(Math.max(Math.trunc(position), 1), orderedIds.length);

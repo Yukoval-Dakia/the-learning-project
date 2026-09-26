@@ -6,7 +6,6 @@
 // （assignMatch 纯函数，response-types.ts）。
 
 import './response.css';
-import { useId } from 'react';
 
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 
@@ -43,7 +42,6 @@ export function MatchingResponse({
   exclusive = true,
   placeholder = '选择匹配项…',
 }: MatchingResponseProps) {
-  const baseId = useId();
   return (
     <div className="rs-match" role="group" aria-label={ariaLabel}>
       {left.map((l) => {

@@ -32,12 +32,7 @@ export function SaveStateChip({ state, generation = null, onRetry, retrying }: S
 
   if (state === 'error' && onRetry) {
     return (
-      <button
-        type="button"
-        className="rs-save is-error"
-        onClick={onRetry}
-        disabled={retrying}
-      >
+      <button type="button" className="rs-save is-error" onClick={onRetry} disabled={retrying}>
         <LoomIcon name="alert" size={12} />
         {retrying ? '重试中…' : STATE_COPY.error}
         {genTag}
@@ -45,9 +40,13 @@ export function SaveStateChip({ state, generation = null, onRetry, retrying }: S
     );
   }
   return (
-    <span className={`rs-save${state === 'saving' ? ' is-saving' : ''}${state === 'conflict' ? ' is-conflict' : ''}${state === 'error' ? ' is-error' : ''}`}>
+    <span
+      className={`rs-save${state === 'saving' ? ' is-saving' : ''}${state === 'conflict' ? ' is-conflict' : ''}${state === 'error' ? ' is-error' : ''}`}
+    >
       <LoomIcon
-        name={state === 'saved' || state === 'idle' ? 'check' : state === 'saving' ? 'clock' : 'alert'}
+        name={
+          state === 'saved' || state === 'idle' ? 'check' : state === 'saving' ? 'clock' : 'alert'
+        }
         size={12}
       />
       {STATE_COPY[state]}

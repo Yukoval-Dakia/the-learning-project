@@ -17,15 +17,22 @@ describe('useJudgeRunPolling', () => {
     api.apiJson
       .mockResolvedValueOnce({ run_id: 'run-1', status: 'queued', result: null })
       .mockResolvedValueOnce({
-        run_id: 'run-1', status: 'done',
+        run_id: 'run-1',
+        status: 'done',
         result: { attempt_event_id: 'attempt-1', coarse_outcome: 'correct' },
       });
     const { result } = renderHook(() =>
-      useJudgeRunPolling({ runId: 'run-1', pollUrl: '/api/test/run-1', intervalMs: 5, maxIntervalMs: 5 }),
+      useJudgeRunPolling({
+        runId: 'run-1',
+        pollUrl: '/api/test/run-1',
+        intervalMs: 5,
+        maxIntervalMs: 5,
+      }),
     );
     await waitFor(() => expect(result.current.status).toBe('done'));
     expect(api.apiJson.mock.calls.map(([url]) => url)).toEqual([
-      '/api/test/run-1', '/api/test/run-1',
+      '/api/test/run-1',
+      '/api/test/run-1',
     ]);
     expect(result.current.result?.attempt_event_id).toBe('attempt-1');
     expect(result.current.settled).toBe(true);

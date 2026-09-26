@@ -20,10 +20,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { QUESTION_KIND_OPTIONS, type QuestionKindOptionId } from '@/core/schema/business';
 import { RecordLanding, knowledgeLabelsFor } from '@/ui/components/RecordLanding';
+import { deriveOptionIds } from '@/ui/components/response/response-types';
 import { type ApiSubject, useSubjects } from '@/ui/hooks/useSubjects';
 import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset, useAssetUrl } from '@/ui/lib/assets';
-import { deriveOptionIds } from '@/ui/components/response/response-types';
 import { type AutoEnrollObservation, seedBlockForm } from '@/ui/lib/auto-enroll';
 import { causeOptionsForSelectedKnowledge } from '@/ui/lib/cause-options';
 import { runIngestionOperation, startIngestionOperation } from '@/ui/lib/ingestion-operations';
@@ -1285,7 +1285,10 @@ function StructuredOutline({ node, depth = 0 }: { node: StructuredNode; depth?: 
                 label 只是展示序号，不作 key（重复 label 不再撞 key）。 */}
             {(() => {
               const opts = node.options ?? [];
-              return deriveOptionIds(opts.map((x) => x.text), node.id).map((oid, i) => (
+              return deriveOptionIds(
+                opts.map((x) => x.text),
+                node.id,
+              ).map((oid, i) => (
                 <li key={oid} style={structuredOptionStyle}>
                   <code style={timelineCodeStyle}>{opts[i].label}.</code> {opts[i].text}
                 </li>

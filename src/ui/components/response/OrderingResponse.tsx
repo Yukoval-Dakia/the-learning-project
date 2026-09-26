@@ -28,7 +28,10 @@ export interface OrderingResponseProps {
 }
 
 /** 显示序：value 里的已知 id（按 value 序）+ value 缺漏的 items（按 spec 序补尾）。 */
-export function resolveOrderedIds(items: readonly OrderingItem[], value: readonly string[]): string[] {
+export function resolveOrderedIds(
+  items: readonly OrderingItem[],
+  value: readonly string[],
+): string[] {
   const known = new Set(items.map((i) => i.id));
   const seen = new Set<string>();
   const out: string[] = [];
