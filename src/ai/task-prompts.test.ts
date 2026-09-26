@@ -9,6 +9,7 @@ describe('getTaskSystemPrompt', () => {
   // locale pin (the single funnel covers both inline and profile prompt kinds).
   it('appends the learner-facing locale pin to every registered task prompt', () => {
     for (const kind of Object.keys(tasks) as Array<keyof typeof tasks>) {
+      if ((tasks[kind] as { execution?: string }).execution === 'typed') continue; // YUK-1049
       for (const profile of [undefined, resolveSubjectProfile('math')]) {
         const prompt = getTaskSystemPrompt(kind, profile);
         expect(prompt, `${kind} missing locale pin`).toContain('【输出语言】');
@@ -492,6 +493,12 @@ describe('getTaskSystemPrompt exhaustiveness (M1)', () => {
 
   it('renders a non-empty prompt for every registered TaskKind (default profile)', () => {
     for (const kind of allTaskKinds) {
+      if ((tasks[kind] as { execution?: string }).execution === 'typed') {
+        // YUK-1049 — typed tasks carry no system prompt; reaching here is a
+        // routing bug, so the accessor refuses loudly rather than render ''.
+        expect(() => getTaskSystemPrompt(kind)).toThrow(/typed task/);
+        continue;
+      }
       const prompt = getTaskSystemPrompt(kind);
       expect(prompt, `TaskKind '${kind}' returned empty prompt`).toBeTruthy();
       expect(prompt.length, `TaskKind '${kind}' returned too-short prompt`).toBeGreaterThan(20);
@@ -501,6 +508,7 @@ describe('getTaskSystemPrompt exhaustiveness (M1)', () => {
   it('renders a non-empty prompt for every registered TaskKind (math profile)', () => {
     const mathProfile = resolveSubjectProfile('math');
     for (const kind of allTaskKinds) {
+      if ((tasks[kind] as { execution?: string }).execution === 'typed') continue;
       const prompt = getTaskSystemPrompt(kind, mathProfile);
       expect(prompt, `TaskKind '${kind}' returned empty prompt (math)`).toBeTruthy();
     }

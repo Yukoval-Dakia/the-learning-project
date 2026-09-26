@@ -122,6 +122,15 @@ export const fastTestInclude = [
   'src/server/ai/spawn-contract.unit.test.ts',
   'src/server/ai/run-lifecycle.test.ts',
   'src/server/ai/run-lifecycle.admission.test.ts',
+  // YUK-1049 — typed primitive runner (OpenRouter systemone): failure-fixture
+  // unit tests. fetchImpl stub replaces ONLY the wire; @/server/ai/log is
+  // vi.mock'd and `db` is an untouched stub → no live Postgres. Enumerate like
+  // every other src/server/ai/** file (no unit glob). The sibling
+  // typed-primitive-runner.db.test.ts exercises the real log writers.
+  'src/server/ai/typed-primitive-runner.test.ts',
+  // YUK-1049 — Jev ModelUnitExecutorPort adapter (escalation/admission/
+  // criterion mapping). Same no-DB justification as the runner test above.
+  'src/server/assessment/jev-model-executor.test.ts',
   // YUK-842 — pure config/failure-policy unit. DB coordination lives in the
   // sibling *.db.test.ts and remains in the container partition.
   'src/server/ai/provider-session-admission.test.ts',

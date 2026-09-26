@@ -40,6 +40,11 @@ export function getTaskSystemPrompt(
       return prompt.text + LEARNER_LOCALE_PIN;
     case 'profile':
       return prompt.build(profile) + LEARNER_LOCALE_PIN;
+    case 'none':
+      // YUK-1049 — typed tasks have no system prompt; runTask/streamTask
+      // reject execution:'typed' before reaching this seam, so reaching here
+      // is a routing bug, not a legitimate prompt.
+      throw new Error(`task ${task} is a typed task with no system prompt`);
     default:
       return assertNever(prompt);
   }

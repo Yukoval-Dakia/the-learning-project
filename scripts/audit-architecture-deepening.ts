@@ -524,9 +524,12 @@ export function scanCentralRoots(sources: readonly SourceFile[]): OwnershipViola
 /** Structural shape of one owned TaskSpec (fixture-friendly; the real specs match). */
 export interface OwnedTaskSpecShape {
   readonly ownership?: string;
-  readonly definition?: { readonly kind?: string } | null;
+  readonly definition?: { readonly kind?: string; readonly execution?: string } | null;
   readonly parseText?: unknown;
   readonly outputSchema?: { safeParse?: unknown } | null;
+  // YUK-1049 — typed-execution specs parse provider output via typed.inputSchema,
+  // not a chat-text parseText. Presence of this field exempts the parseText check.
+  readonly typed?: { readonly inputSchema?: unknown } | null;
 }
 
 export interface TaskOwnerMapShape {
@@ -585,11 +588,18 @@ export function scanTaskSpecOwnership(
           reason: 'owner map key does not match spec.definition.kind',
         });
       }
-      if (typeof spec.parseText !== 'function') {
+      if (typeof spec.parseText !== 'function' && spec.typed === undefined) {
         violations.push({
           path: `${owner}/${key}`,
           source: '',
           reason: 'owned TaskSpec is missing parseText',
+        });
+      }
+      if (spec.typed !== undefined && definition.execution !== 'typed') {
+        violations.push({
+          path: `${owner}/${key}`,
+          source: '',
+          reason: 'typed spec declares typed.inputSchema but definition.execution is not "typed"',
         });
       }
       if (
@@ -1397,10 +1407,11 @@ async function runCli(): Promise<void> {
     // YUK-987: 50（+SupplyPlanTask 供给需求层 planner）。
     // YUK-1016: 51（+CauseCategoryProposeTask cause catalog 增长提议）。
     // YUK-376: 52（+ItemPriorLlasaTask LLaSA 学生模拟冷启锚 opt-in 变体）。
-    expectedTaskCount: 52,
+    // YUK-1049: 53（+JevScoringDecisionTask 首个 typed execution spec）。
+    expectedTaskCount: 53,
     taskCensus: {
       catalogCount: census.catalogCount,
-      expectedCount: 52,
+      expectedCount: 53,
       errors: census.errors,
       profileCriticCallerPresent: census.profileCriticCaller !== null,
       forbiddenPatternViolations: scanForbiddenTaskCatalogPatterns(projectRoot).map(

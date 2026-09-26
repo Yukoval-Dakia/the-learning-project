@@ -114,6 +114,14 @@ export interface ModelExecutorRequest {
   attempt: number;
   scoring_unit_id: string;
   executor: ModelExecutorT;
+  /**
+   * YUK-1049 — the frozen scoring unit (criterion + declared points). The
+   * executor port needs the published criterion to build its judgment
+   * contract (e.g. rule_reference → boolean-satisfaction, holistic_level →
+   * level descriptors); without it a model executor could only guess how to
+   * score.
+   */
+  unit: ScoringUnitT;
   /** 该 unit 声明读取的槽位响应（已按 spec 校验过）。 */
   slot_responses: SlotResponseT[];
   /** 该 unit 命中的 group 级证据（all_units 或显式子集）。 */
@@ -765,6 +773,7 @@ export async function evaluateSubmissionCore(
         attempt: input.attempt,
         scoring_unit_id: unitId,
         executor,
+        unit,
         slot_responses: entries,
         group_evidence: unitGroupEvidence,
         materials: unit.material_refs

@@ -171,11 +171,22 @@ export type ResponseSpecT = z.infer<typeof ResponseSpec>;
 // （空 option_ids / 空 text / null value）是主动空白（blank）。二者在
 // pending/计零语义上严格区分（§4.4：只有完整提交且评分政策明确时空白可计 0）。
 
+// YUK-1052 / Q-922 — 答题置信度自评 self_confidence（1-5 整数，observe-only）。
+// 学生作答当时对本次作答的主观把握；mirror ReviewOnQuestion.self_confidence
+// （YUK-444）语义：仅随 ResponseSet 条目持久化供后续分析，绝不进判分/θ̂/FSRS ——
+// 命名刻意用 self_confidence 而非 confidence（后者是 judge 置信度）。
+// OPTIONAL（engagement 红线零强制）：缺省 = 未采集，历史行解析逐字不变
+// （byte-identical 读路径，同 YUK-444）。UI 采集面（PfPaper 每题）属
+// YUK-1051 lane；本侧只有契约+存储位+提交/草稿接收。
+export const SelfConfidence = z.number().int().min(1).max(5).optional();
+export type SelfConfidenceT = z.infer<typeof SelfConfidence>;
+
 export const ChoiceResponse = z.object({
   slot_id: SlotId,
   kind: z.literal('choice'),
   /** 空数组 = 主动空白（非 missing）。 */
   option_ids: z.array(z.string().min(1)).default([]),
+  self_confidence: SelfConfidence,
 });
 
 export const TextResponse = z.object({
@@ -183,6 +194,7 @@ export const TextResponse = z.object({
   kind: z.literal('text'),
   /** '' = 主动空白。 */
   text_md: z.string(),
+  self_confidence: SelfConfidence,
 });
 
 export const NumericResponse = z.object({
@@ -192,6 +204,7 @@ export const NumericResponse = z.object({
   value: z.number().nullable(),
   /** 学习者原始输入；非空且 value=null ⇒ 未解析（不可当空白计零，P1-4）。 */
   raw_input: z.string().optional(),
+  self_confidence: SelfConfidence,
 });
 
 export const FormulaResponse = z.object({
@@ -199,6 +212,7 @@ export const FormulaResponse = z.object({
   kind: z.literal('formula'),
   /** '' = 主动空白。 */
   latex: z.string(),
+  self_confidence: SelfConfidence,
 });
 
 export const MatchingResponse = z.object({
@@ -213,6 +227,7 @@ export const MatchingResponse = z.object({
       }),
     )
     .default([]),
+  self_confidence: SelfConfidence,
 });
 
 export const OrderingResponse = z.object({
@@ -220,6 +235,7 @@ export const OrderingResponse = z.object({
   kind: z.literal('ordering'),
   /** 空 = 主动空白；否则应为 items 的排列（validateResponseSet 校验）。 */
   item_order: z.array(z.string().min(1)).default([]),
+  self_confidence: SelfConfidence,
 });
 
 export const OpenResponse = z.object({
@@ -227,6 +243,7 @@ export const OpenResponse = z.object({
   kind: z.literal('open'),
   text_md: z.string().default(''),
   evidence: z.array(EvidenceAttachment).default([]),
+  self_confidence: SelfConfidence,
 });
 
 export const SlotResponse = z.discriminatedUnion('kind', [
@@ -581,4 +598,23 @@ export function validateResponseSet(
     }
   }
   return issues;
+}
+
+// ---------- 发出范围投影（YUK-1052：autosave/submission 校验口径） ----------
+
+/**
+ * 纯投影：完整 ResponseSpec → 只含发出 part 范围内槽位的 spec。
+ * 用途：draft/submission 的结构校验只能在【本次 issuance 实际发出】的槽位集
+ * 上进行 —— 发题绑定的 part 子集（issuance.part_ids）决定可作答面，不允许
+ * 引用未发出槽位的作答/草稿被接受（学生从未见到它们）。
+ *
+ * 输出保持 slot 对象原样（不重建），仅过滤 part_id 范围；表格布局容器随其
+ * part 同去 —— validateIssuanceBinding 已保证发出范围内的表格其单元格全部
+ * 在范围内，所以这里投影不会制造悬空表格引用。
+ */
+export function scopeResponseSpec(spec: ResponseSpecT, partIds: readonly string[]): ResponseSpecT {
+  const scope = new Set(partIds);
+  return {
+    slots: spec.slots.filter((slot) => scope.has(slot.part_id)),
+  };
 }

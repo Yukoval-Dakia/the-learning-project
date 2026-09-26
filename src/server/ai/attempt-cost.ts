@@ -2,8 +2,10 @@ import type { Provider } from '@/ai/registry';
 import {
   ANTHROPIC_SUB_CONTRACT_REF,
   ATTEMPT_PRICEBOOK_VERSION,
+  JEV_PRICEBOOK_VERSION,
   type TokenCounts,
   hasLocalPricing,
+  jevLocalCostUsd,
   localCostUsd,
 } from './pricing';
 
@@ -55,6 +57,26 @@ export function resolveAttemptCostTruth(input: {
         basis: 'estimated',
         amountUsd: reported,
         ref: `pi-catalog:${input.provider}/${input.model}`,
+      };
+    }
+    return unknownAttemptCostTruth(input.provider, input.model);
+  }
+
+  // YUK-1049 — OpenRouter typed lane (Jev decisions endpoint). usage.cost is
+  // OPTIONAL on this wire: present ⇒ provider-reported evidence ('reported');
+  // absent ⇒ the versioned local input-token estimate (output is free);
+  // missing usage entirely (zero token evidence) ⇒ unknown, never zero.
+  if (input.provider === 'openrouter') {
+    const reported = input.reportedCostUsd;
+    if (reported !== undefined && Number.isFinite(reported) && reported >= 0) {
+      return { basis: 'reported', amountUsd: reported, ref: 'openrouter:usage.cost' };
+    }
+    const estimated = jevLocalCostUsd(input.model, input.tokens);
+    if (estimated !== null && Number.isFinite(estimated) && estimated >= 0) {
+      return {
+        basis: 'estimated',
+        amountUsd: estimated,
+        ref: `pricebook:${JEV_PRICEBOOK_VERSION}/${input.provider}/${input.model}`,
       };
     }
     return unknownAttemptCostTruth(input.provider, input.model);

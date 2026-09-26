@@ -762,3 +762,51 @@ export const forceEnableDraft = (id: string, reason: string) =>
     method: 'POST',
     body: { reason },
   });
+
+// ── YUK-1052 — 统一发题/提交/自动保存（issueAssessment + saveSubmission + D11） ──
+// 客户端见的是公开 DTO + 服务端 ack：practice_dto 无答案键/私有 rubric；
+// saving/saved/error 只由服务端 ack 决定 —— saved 状态只能来自 POST 返回。
+
+/** 发题：绑定不可变 revision/目标 part/实际材料/选项展示映射（preselected≠issued）。 */
+export const issueAssessment = (
+  body: import('@/ui/lib/api').ApiOperationRequestBody<'createIssuance'>,
+) =>
+  apiOperationJson('createIssuance', {
+    url: '/api/issuances',
+    method: 'POST',
+    body,
+  });
+
+/** pending 恢复读面：issuance + live draft + 已接收提交（draft=null 即服务端无草稿）。 */
+export const getIssuanceState = (issuanceId: string) =>
+  apiOperationJson('getIssuance', {
+    url: `/api/issuances/${encodeURIComponent(issuanceId)}`,
+    method: 'GET',
+  });
+
+/**
+ * D11 服务端自动保存：每 issuance 一行 live draft，ack 只在落库后产生。
+ * expected_save_epoch 带上次 ack 的纪元做 stale 防线（409 → 先拉 getIssuanceState）。
+ */
+export const saveResponseDraft = (
+  issuanceId: string,
+  body: import('@/ui/lib/api').ApiOperationRequestBody<'saveResponseDraft'>,
+) =>
+  apiOperationJson('saveResponseDraft', {
+    url: `/api/issuances/${encodeURIComponent(issuanceId)}/responses`,
+    method: 'POST',
+    body,
+  });
+
+/**
+ * 正式提交：同 (evaluation_group_id, idempotency_key) 幂等 —— 一致 replay(200) /
+ * 不同 conflict(409)；submission 绑定不可变 revision（不回取 latest）。
+ */
+export const saveSubmission = (
+  body: import('@/ui/lib/api').ApiOperationRequestBody<'createSubmission'>,
+) =>
+  apiOperationJson('createSubmission', {
+    url: '/api/submissions',
+    method: 'POST',
+    body,
+  });
