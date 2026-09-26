@@ -78,6 +78,9 @@ export async function simulatePostCutoverWrites(db: Db): Promise<PostWriteHandle
     variant_depth: 0,
     image_refs: [],
     figures: [],
+    // draft_status 显式声明：三态字段 NULL≡active，本写入即「发布 active 题」语义。
+    // audit 要求 key 必须显式出现；显式 null 保留 NULL≡active 契约不交字符串。
+    draft_status: null,
     created_at: PW_NOW,
     updated_at: PW_NOW,
     version: 0,
