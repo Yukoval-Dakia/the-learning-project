@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "c1d2e3f4-a5b6-47c8-9d0e-1f2a3b4c5d6e",
     "name": "learning-api",
-    "description": "The Learning Project — Hono backend (server/app.ts).\n\nAuth: every /api/* request needs header `x-internal-token` (collection-level API-key auth → `{{internalToken}}`), except `/api/health`.\n\nBase URL: `{{baseUrl}}` (default http://localhost:8787 — the Hono dev port).\n\nPath vars and request bodies use placeholder example values — replace `REPLACE_*` and example IDs with real ones before sending mutating requests.\n\nGenerated from postman/api-endpoints.json by `pnpm gen:postman` — do not hand-edit. Run headlessly: `pnpm api:smoke [folder]`.",
+    "description": "The Learning Project — Hono backend (server/app.ts).\n\nAuth: every /api/* request needs header `x-internal-token` (collection-level API-key auth → `{{internalToken}}`), except `/api/health` and `/api/ready`.\n\nBase URL: `{{baseUrl}}` (default http://localhost:8787 — the Hono dev port).\n\nPath vars and request bodies use placeholder example values — replace `REPLACE_*` and example IDs with real ones before sending mutating requests.\n\nGenerated from postman/api-endpoints.json by `pnpm gen:postman` — do not hand-edit. Run headlessly: `pnpm api:smoke [folder]`.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -1891,6 +1891,28 @@
                   "language": "json"
                 }
               }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "ready",
+      "item": [
+        {
+          "name": "GET /api/ready",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ready",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ready"]
+            },
+            "description": "DB contract epoch readiness（YUK-1055：health ≠ readiness）\n\n**Notes:** 无需 x-internal-token（中间件豁免）；返回 {ok, epoch, state, code_epoch, reason}；维护窗或 epoch 不匹配时 503",
+            "auth": {
+              "type": "noauth"
             }
           },
           "response": []

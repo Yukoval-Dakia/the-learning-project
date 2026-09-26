@@ -477,11 +477,14 @@ export function validateComposition(capabilities: CapabilityManifest[]): void {
   }
   const routeOwner = new Map<string, string>([
     ['GET /api/health', 'builtin'],
+    // YUK-1055 — readiness probe（health ≠ readiness；见 server/app.ts）。
+    ['GET /api/ready', 'builtin'],
     ['GET /api/auth/check', 'builtin'],
     ['GET /api/openapi.json', 'builtin'],
   ]);
   const operationOwner = new Map<string, string>([
     ['getHealth', 'GET /api/health'],
+    ['getReady', 'GET /api/ready'],
     ['checkAuth', 'GET /api/auth/check'],
     ['getOpenApiDocument', 'GET /api/openapi.json'],
   ]);

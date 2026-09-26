@@ -732,6 +732,19 @@
     ]
   },
   {
+    "path": "/api/ready",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "DB contract epoch readiness（YUK-1055：health ≠ readiness）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "无需 x-internal-token（中间件豁免）；返回 {ok, epoch, state, code_epoch, reason}；维护窗或 epoch 不匹配时 503"
+      }
+    ]
+  },
+  {
     "path": "/api/hubs/:id/dismiss-link",
     "methods": [
       {
