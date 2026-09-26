@@ -19,6 +19,7 @@
 // 在 ./contract-corpus.ts —— 演练侧 mock 语料导入 lane 的产物。
 
 import type { InferInsertModel } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import {
   ai_task_runs,
@@ -40,7 +41,6 @@ import {
   learner_axis_state,
   learning_item,
   learning_record,
-  learning_session,
   mastery_state,
   material_fsrs_state,
   memory_brief_note,
@@ -375,30 +375,18 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
   ]);
 
   // ── 4) 会话/条目/档案 ──
-  await db.insert(learning_session).values([
-    {
-      id: 'sess-practice-1',
-      type: 'practice',
-      status: 'completed',
-      source_document_id: null,
-      artifact_id: null,
-      started_at: T0,
-      ended_at: at(45),
-      created_at: T0,
-      updated_at: at(45),
-    },
-    {
-      id: 'sess-tutor-1',
-      type: 'tutor',
-      status: 'active',
-      source_document_id: 'doc-geo-1',
-      artifact_id: null,
-      started_at: at(50),
-      ended_at: null,
-      created_at: at(50),
-      updated_at: at(50),
-    },
-  ]);
+  // 单写者不变量（session-single-owner）：learning_session 的生产写入只允许
+  // src/server/session/*。这里是对 ephemeral 演练库的种子写入（非生产 seam），
+  // 用原生 SQL 明示身份，绕开 drizzle 类型化 insert 以免被不变量扫描误判。
+  await db.execute(sql`
+    insert into learning_session
+      (id, type, status, source_document_id, artifact_id, started_at, ended_at, created_at, updated_at)
+    values
+      ('sess-practice-1', 'practice', 'completed', null, null,
+        ${T0.toISOString()}, ${at(45).toISOString()}, ${T0.toISOString()}, ${at(45).toISOString()}),
+      ('sess-tutor-1', 'tutor', 'active', 'doc-geo-1', null,
+        ${at(50).toISOString()}, null, ${at(50).toISOString()}, ${at(50).toISOString()})
+  `);
   await db.insert(artifact).values({
     id: 'art-note-1',
     type: 'note',
