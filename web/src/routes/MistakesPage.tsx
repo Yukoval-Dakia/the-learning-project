@@ -28,6 +28,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getTree } from '@/capabilities/knowledge/ui-public';
 import { resolveKnownSubjectId } from '@/subjects/profile';
+import { AttachmentStrip } from '@/ui/components/response/AttachmentStrip';
+import { EvidenceLightbox } from '@/ui/components/response/EvidenceLightbox';
 import { SubjectFilterTabs } from '@/ui/components/SubjectFilterTabs';
 import { useSubjects } from '@/ui/hooks/useSubjects';
 import { apiJson } from '@/ui/lib/api';
@@ -69,6 +71,9 @@ export interface MistakeRow {
   cause: MistakeCause | null;
   correction_state: MistakeCorrectionState;
   created_at: number;
+  // YUK-1051 — 真实错答图证据。投影字段待服务端补上（见 YUK-1052 缝）；UI 先支持：
+  // 缺席/空数组 → 纯文本对照（现状不变），有了就展示原图。
+  wrong_answer_image_refs?: string[];
 }
 
 // 投影 limit-based（后端 listMistakeProjectionRows 只有 limit，无 total/cursor）。limit 取
@@ -217,6 +222,9 @@ export function MistakeCard({
 }) {
   const s = uiState(m);
   const subj = subjMeta(subject, subjectRows);
+  // YUK-1051 — 真实错答图证据（投影有就展示；无则纯文本对照，不造假）。
+  const wrongImages = m.wrong_answer_image_refs ?? [];
+  const [zoomAsset, setZoomAsset] = useState<string | null>(null);
   return (
     <LoomCard pad className="mistake-card">
       <div className="mistake-top">
@@ -240,6 +248,19 @@ export function MistakeCard({
           </div>
         )}
       </div>
+
+      {wrongImages.length > 0 && (
+        <AttachmentStrip
+          attachments={wrongImages.map((id) => ({ asset_id: id, slot_ids: null }))}
+          onPreview={setZoomAsset}
+        />
+      )}
+      <EvidenceLightbox
+        open={zoomAsset !== null}
+        onClose={() => setZoomAsset(null)}
+        assetId={zoomAsset}
+        label="错答图片"
+      />
 
       <div className="mistake-meta-row">
         <div className="kp-badges">

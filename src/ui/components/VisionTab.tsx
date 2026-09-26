@@ -23,6 +23,7 @@ import { RecordLanding, knowledgeLabelsFor } from '@/ui/components/RecordLanding
 import { type ApiSubject, useSubjects } from '@/ui/hooks/useSubjects';
 import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset, useAssetUrl } from '@/ui/lib/assets';
+import { deriveOptionIds } from '@/ui/components/response/response-types';
 import { type AutoEnrollObservation, seedBlockForm } from '@/ui/lib/auto-enroll';
 import { causeOptionsForSelectedKnowledge } from '@/ui/lib/cause-options';
 import { runIngestionOperation, startIngestionOperation } from '@/ui/lib/ingestion-operations';
@@ -1280,11 +1281,16 @@ function StructuredOutline({ node, depth = 0 }: { node: StructuredNode; depth?: 
         <span style={structuredPromptStyle}>{node.prompt_text}</span>
         {node.options && node.options.length > 0 && (
           <ul style={{ ...structuredListStyle, marginTop: 2 }}>
-            {node.options.map((o) => (
-              <li key={o.label} style={structuredOptionStyle}>
-                <code style={timelineCodeStyle}>{o.label}.</code> {o.text}
-              </li>
-            ))}
+            {/* YUK-1051 — 选项身份与作答面同源（内容派生 stable id，response-types）；
+                label 只是展示序号，不作 key（重复 label 不再撞 key）。 */}
+            {(() => {
+              const opts = node.options ?? [];
+              return deriveOptionIds(opts.map((x) => x.text), node.id).map((oid, i) => (
+                <li key={oid} style={structuredOptionStyle}>
+                  <code style={timelineCodeStyle}>{opts[i].label}.</code> {opts[i].text}
+                </li>
+              ));
+            })()}
           </ul>
         )}
         {node.answers && node.answers.length > 0 && (

@@ -30,6 +30,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ApiError } from '@/ui/lib/api';
+import { deriveOptionIds } from '@/ui/components/response/response-types';
 import { makeLookup } from '@/ui/lib/makeLookup';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { subjectContentPropsForDomain } from '@/ui/lib/subject';
@@ -652,6 +653,10 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
   const isRoot = data.root_question_id === null && !isPart;
   const variantCount = Math.max(0, data.family.variant_count - 1);
   const answerKey = isMcq ? answerKeyFrom(draft.reference_md) : null;
+  // YUK-1051 — 选项的 React 身份换成内容派生 stable id（response-types），不再用数组下标；
+  // 字母（letterFor）仍只是 reference_md 前导键的展示/存储约定——结构化 answer-key 存储是
+  // 服务端契约问题（YUK-1052 lane 缝），本 lane 只移掉「首字母猜 key」之外的 UI 下标身份。
+  const choiceOptionIds = deriveOptionIds(draft.choices_md, data.id);
   const notation = data.notation;
 
   // 关联状态计数（side rail）——读 detail 聚合（timeline/backlinks/scheduling）。
@@ -803,11 +808,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                   const key = letterFor(i);
                   const correct = answerKey === key;
                   return (
-                    <div
-                      // biome-ignore lint/suspicious/noArrayIndexKey: choices 是定序文本串、无稳定 id，A/B/C/D 行号即语义（同 stub 先例）
-                      key={i}
-                      className={`qd-opt${correct ? ' correct' : ''}`}
-                    >
+                    <div key={choiceOptionIds[i]} className={`qd-opt${correct ? ' correct' : ''}`}>
                       <button
                         type="button"
                         className="qd-opt-key"

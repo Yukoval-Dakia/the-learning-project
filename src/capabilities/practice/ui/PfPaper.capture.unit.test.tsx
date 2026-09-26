@@ -3,9 +3,8 @@
 // shouldOfferProcessBox，装配复用 buildCaptureFields，本文件只钉 PfPaper 专属的挂载 /
 // per-slot 持久 / 交卷 wire 行为）。
 //
-// 信心自评（self_confidence）不在本文件：卷路径落 AttemptOnQuestion 事件，而该 payload
-// 没有 self_confidence 槽位（只在 ReviewOnQuestion 上）——补槽位是事件 schema 变更，
-// YUK-784 非目标（「不改后端契约」），见 PR 描述与 Linear follow-up。
+// Q-922 — 每题可选 1–5 信心自评，观测元数据；不影响判分/评级/FSRS。状态由 UI 按 slot
+// 保存；落入 ResponseSet 的 wire mapping 由并行 YUK-1052 contract lane 提供。
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
@@ -219,6 +218,23 @@ describe('PfPaper 交卷 wire — 空值不发字段（byte-identical 缺省）(
     await user.click(screen.getByRole('button', { name: '交卷 · 统一判分' }));
     await waitFor(() => expect(onSubmitted).toHaveBeenCalled());
   });
+
+  it('信心自评按题独立、切题后保留；不评可清空该题选择', async () => {
+    const user = userEvent.setup();
+    renderPaper(paperDetail([textSlot('question_1', '第一题'), textSlot('question_2', '第二题')]));
+    await screen.findByText('第一题');
+    await user.type(screen.getByLabelText('作答'), '答案一');
+    await user.click(screen.getByRole('button', { name: '把握 4 分（共 5 分）' }));
+    await user.click(screen.getByRole('tab', { name: '2' }));
+    await screen.findByText('第二题');
+    await user.click(screen.getByRole('button', { name: '把握 2 分（共 5 分）' }));
+    await user.click(screen.getByRole('tab', { name: '1' }));
+    await screen.findByText('第一题');
+    expect(screen.getByRole('button', { name: '把握 4 分（共 5 分）' }).getAttribute('aria-pressed')).toBe('true');
+    await user.click(screen.getByRole('button', { name: '不评' }));
+    expect(screen.getByRole('button', { name: '把握 4 分（共 5 分）' }).getAttribute('aria-pressed')).toBe('false');
+    expect(mocks.submitPaperSlot).not.toHaveBeenCalled();
+  });
 });
 
 describe('buildPaperSubmissionBody — reasoning_trace wire 装配 (YUK-784)', () => {
@@ -243,5 +259,13 @@ describe('buildPaperSubmissionBody — reasoning_trace wire 装配 (YUK-784)', (
       reasoning_trace: '先列方程',
     });
     expect(body.reasoning_trace).toBe('先列方程');
+  });
+
+  it('现有 paper submission schema 不伪造 ResponseSet confidence 字段', async () => {
+    const { buildPaperSubmissionBody } = await import('./practice-api');
+    const body = buildPaperSubmissionBody('paper_1', {
+      session_id: 'review_1', question_id: 'q1', part_ref: null, answer_md: '答',
+    });
+    expect(Object.hasOwn(body, 'self_confidence')).toBe(false);
   });
 });

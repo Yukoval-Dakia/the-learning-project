@@ -6,6 +6,16 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
+import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
+import { AttachmentStrip } from '@/ui/components/response/AttachmentStrip';
+import { ChoiceSetResponse } from '@/ui/components/response/ChoiceSetResponse';
+import { EvidenceLightbox } from '@/ui/components/response/EvidenceLightbox';
+import { SlotResultBadge } from '@/ui/components/response/SlotResultBadge';
+import {
+  COARSE_OUTCOME_META,
+  type CoarseOutcome,
+  optionsFromChoicesMd,
+} from '@/ui/components/response/response-types';
 import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
@@ -17,16 +27,16 @@ import { type PaperSlot, getPaperDetail } from './practice-api';
 
 type Verdict = 'good' | 'hard' | 'again';
 
-const V_META: Record<Verdict, { label: string; tone: string }> = {
-  good: { label: '对', tone: 'good' },
-  hard: { label: '部分对', tone: 'hard' },
-  again: { label: '错', tone: 'again' },
-};
-
 function verdictOf(outcome: string): Verdict {
   if (outcome === 'correct') return 'good';
   if (outcome === 'partial') return 'hard';
   return 'again';
+}
+
+// YUK-1051 — wire outcome → 组件族 CoarseOutcome（未认识的值归 null → 只渲生命周期徽标，
+// 不把未知判定硬塞进对错色）。
+function coarseOutcomeOf(outcome: string): CoarseOutcome | null {
+  return outcome in COARSE_OUTCOME_META ? (outcome as CoarseOutcome) : null;
 }
 
 function summaryByWrong(wrongish: number, total: number): string {
@@ -49,7 +59,18 @@ export function PfrQRow({
   const visible = sub && 'visible_to_user' in sub && sub.visible_to_user === true ? sub : null;
   const verdict: Verdict | null = visible ? verdictOf(visible.outcome) : null;
   const [open, setOpen] = useState(verdict !== 'good');
-  const v = verdict ? V_META[verdict] : null;
+  // YUK-1051 — 附件放大查看（复盘是 release 后的读面，可放大原图）。
+  const [zoomAsset, setZoomAsset] = useState<string | null>(null);
+
+  // YUK-1051 — 真实选项/原图/状态锚点：选择题渲真实选项列表（选中项按 release 后的判定
+  // 着色——§6.4 的颜色=判定只出现在复盘/交卷后）；附件证据随作答一同展示；状态徽标换
+  // 组件族六态（effective + 对错 / group_tentative=缓冲未解锁 / 未作答）。
+  const choiceOptions = optionsFromChoicesMd(slot.question.choices_md ?? [], slot.question.id);
+  const answeredText = sub?.answer_md ?? '';
+  const selectedIds = choiceOptions.filter((o) => o.text_md === answeredText).map((o) => o.id);
+  const isChoice = choiceOptions.length > 0;
+  const releasedOutcome = visible ? coarseOutcomeOf(visible.outcome) : null;
+  const answerImages = sub?.answer_image_refs ?? [];
 
   return (
     <div className="pfr-q">
@@ -61,10 +82,15 @@ export function PfrQRow({
       >
         <span className="pfr-q-n">{String(n).padStart(2, '0')}</span>
         <span className="pfr-q-stem">{slot.question.prompt_md}</span>
-        {v ? (
-          <span className={`badge tone-${v.tone}`}>{v.label}</span>
+        {sub ? (
+          sub.visible_to_user ? (
+            <SlotResultBadge lifecycle="effective" releasedOutcome={releasedOutcome} />
+          ) : (
+            // 交卷缓冲（visible_to_user=false）= 联合组暂定：已提交待全组解锁，无对错色。
+            <SlotResultBadge lifecycle="group_tentative" />
+          )
         ) : (
-          <span className="badge tone-neutral">{sub ? '已答 · 未判' : '未作答'}</span>
+          <span className="badge tone-neutral">未作答</span>
         )}
         <LoomIcon
           name={open ? 'chevronDown' : 'arrow'}
@@ -74,9 +100,35 @@ export function PfrQRow({
       </button>
       {open && (
         <div className="pfr-q-body">
+          {(slot.question.image_refs ?? []).map((assetId) => (
+            <AssetEvidencePreview
+              key={assetId}
+              assetId={assetId}
+              label="题目配图"
+              variant="inline"
+            />
+          ))}
           <div className="pfr-q-row">
             <span className="cmp-label">你的作答</span>
-            {sub?.answer_md ? (
+            {isChoice && sub ? (
+              <ChoiceSetResponse
+                options={choiceOptions}
+                mode="single"
+                value={answeredText ? selectedIds : null}
+                onChange={() => {}}
+                disabled
+                notation={slot.question.notation}
+                feedback="graded"
+                selectionOutcome={
+                  releasedOutcome === null
+                    ? null
+                    : releasedOutcome === 'correct'
+                      ? 'correct'
+                      : 'not_correct'
+                }
+                ariaLabel={`第 ${n} 题选项`}
+              />
+            ) : sub?.answer_md ? (
               // de-wenyan: PaperSlot carries no subject profile and this is the
               // student's own typed answer (not a classical-Chinese passage), so
               // it renders in the neutral default font.
@@ -87,6 +139,15 @@ export function PfrQRow({
               </span>
             )}
           </div>
+          {answerImages.length > 0 && (
+            <div className="pfr-q-row">
+              <span className="cmp-label">作答附件</span>
+              <AttachmentStrip
+                attachments={answerImages.map((id) => ({ asset_id: id, slot_ids: null }))}
+                onPreview={setZoomAsset}
+              />
+            </div>
+          )}
           {visible?.feedback_md && (
             <div className="pfr-q-row">
               <span className="cmp-label">AI 反馈</span>
@@ -102,12 +163,19 @@ export function PfrQRow({
             </div>
           )}
           {appealable && verdict !== null && verdict !== 'good' && (
-            <div className="quiet-empty" style={{ padding: 0, alignSelf: 'flex-start' }}>
+            <div className="quiet-empty" style={{ padding: 0, alignSelf: 'flex-start' }}
+            >
               此处暂不能直接重判；需要申诉时，请从散题反馈卡提交理由。
             </div>
           )}
         </div>
       )}
+      <EvidenceLightbox
+        open={zoomAsset !== null}
+        onClose={() => setZoomAsset(null)}
+        assetId={zoomAsset}
+        label="作答附件"
+      />
     </div>
   );
 }
