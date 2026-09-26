@@ -279,8 +279,8 @@ describe('writer registry — 机械不变量', () => {
         expect(entry.tickets.join(','), `${file} pending needs a YUK ticket`).toMatch(/YUK-\d+/);
         expect(
           entry.pendingClass,
-          `${file} pending needs pendingClass ('blocked-by' | 'deferred' | 'cutover')`,
-        ).toMatch(/^(cutover|deferred|blocked-by:YUK-\d+)$/);
+          `${file} pending needs pendingClass ('blocked-by' | 'deferred' | 'cutover' | 'rehearsal-only')`,
+        ).toMatch(/^(cutover|deferred|blocked-by:YUK-\d+|rehearsal-only)$/);
       }
     }
   });
