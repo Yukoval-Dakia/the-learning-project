@@ -326,21 +326,23 @@ export type SubmitReviewInput = Extract<
   { question_id: string }
 >;
 
-export async function submitReview(input: SubmitReviewInput): Promise<SubmitResult> {
-  const response = await apiOperationJson('createAttempt', {
+// YUK-1051 — 202-pending 是**返回 union**，不是错误（grounding §7「solo 202」：pending
+// 成为返回 union 与 UI 状态，不提示重交相同答案；同一次 submission 继续查询）。
+// 回执即 durablePendingResponse 契约：{ run_id, verdict:'pending', backfill:{ poll_url } }。
+export type SubmitPending = PendingAttemptWire;
+export type SubmitOutcome = SubmitResult | SubmitPending;
+
+export function isSubmitPending(outcome: SubmitOutcome): outcome is SubmitPending {
+  return 'verdict' in outcome && outcome.verdict === 'pending';
+}
+
+export async function submitReview(input: SubmitReviewInput): Promise<SubmitOutcome> {
+  // 202 是 res.ok（apiFetch 只在 !ok 抛），pending body 原样成为返回值的一部分。
+  return apiOperationJson('createAttempt', {
     url: '/api/attempts',
     method: 'POST',
     body: input,
   });
-  if ('verdict' in response) {
-    throw new ApiError(
-      '判分正在后台处理中，请稍后重试或刷新查看结果。',
-      202,
-      'judge_pending',
-      response,
-    );
-  }
-  return response;
 }
 
 export const fileAppeal = (
@@ -488,9 +490,23 @@ export interface PaperSlot {
     notation: string | null;
     choices_md: string[] | null;
     difficulty: number;
+    /** For composite questions: the parent question_id; null for root/atomic. */
+    parent_question_id: string | null;
+    /** The part index within the parent, for ordering (null for atomic). */
+    part_index: number | null;
+    /**
+     * YUK-1051 — 结构化配图/共享材料 asset ids。wire 一直有（PaperQuestionFace.image_refs），
+     * 旧 UI 类型把它丢了；现在恢复，供 StimulusFigure 与学生同版渲染（判分引用同版资产）。
+     */
+    image_refs: string[];
   };
   slot_state: {
-    draft: { content_md: string } | null;
+    draft: {
+      content_md: string;
+      input_kind: string;
+      /** 草稿期已上传的作答附件（YUK-1051 恢复 wire 字段）。 */
+      image_refs: string[];
+    } | null;
     submission:
       | null
       | {
@@ -500,9 +516,17 @@ export interface PaperSlot {
           score: number | null;
           feedback_md: string | null;
           answer_md: string;
+          /** 随提交冻结的作答附件（YUK-1051 恢复 wire 字段）。 */
+          answer_image_refs: string[];
           reference_md: string | null;
         }
-      | { submitted: true; visible_to_user: false; feedback_buffered: true; answer_md: string };
+      | {
+          submitted: true;
+          visible_to_user: false;
+          feedback_buffered: true;
+          answer_md: string;
+          answer_image_refs: string[];
+        };
   };
 }
 
@@ -530,6 +554,13 @@ type PaperWriteInput = {
   // YUK-784 — 卷提交的过程文本（可选，observe-only）。装配与「空值不发」语义复用 PfSolo 的
   // buildCaptureFields（截断 / trim 判空在那侧），这里只在 body 装配点条件带出。
   reasoning_trace?: string;
+  // YUK-1051 — 作答证据附件 asset ids。服务端 draft/submission 两个 body schema 早已接受
+  // image_refs（paper-contracts.ts），UI 只是不再丢弃。空值/缺席 → 不带键，既有 wire 逐字不变。
+  image_refs?: string[];
+  // YUK-1051 / Q-922 — 卷面 per-question 信心自评（1–5，observe-only）。只在**提交**装配；
+  // 缺省/未自评 → 不带键（既有卷提交 wire 逐字不变）。正整数由调用方（buildCaptureFields）
+  // 归一为 number | null，本装配点只负责「非 null 才带」。
+  self_confidence?: number | null;
 };
 
 export function buildPaperAnswerDraftBody(artifactId: string, input: PaperWriteInput) {
@@ -538,6 +569,7 @@ export function buildPaperAnswerDraftBody(artifactId: string, input: PaperWriteI
     question_id: input.question_id,
     part_ref: input.part_ref,
     content_md: input.answer_md,
+    ...(input.image_refs && input.image_refs.length > 0 ? { image_refs: input.image_refs } : {}),
   };
 }
 
@@ -547,9 +579,14 @@ export function buildPaperSubmissionBody(artifactId: string, input: PaperWriteIn
     question_id: input.question_id,
     part_ref: input.part_ref,
     answer_md: input.answer_md,
+    ...(input.image_refs && input.image_refs.length > 0 ? { image_refs: input.image_refs } : {}),
     ...(input.latency_ms === undefined ? {} : { latency_ms: input.latency_ms }),
     // YUK-784 — 过程框采集字段：缺省不带键 → 既有卷提交 wire 逐字不变（byte-identical）。
     ...(input.reasoning_trace === undefined ? {} : { reasoning_trace: input.reasoning_trace }),
+    // YUK-1051 — 信心自评（observe-only）：只在用户实际选了 1–5 时带键；null/缺省 → 不发。
+    ...(typeof input.self_confidence === 'number'
+      ? { self_confidence: input.self_confidence }
+      : {}),
   };
 }
 

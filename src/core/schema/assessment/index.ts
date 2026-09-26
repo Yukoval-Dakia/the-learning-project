@@ -21,4 +21,5 @@ export * from './publish';
 export * from './response';
 export * from './revision';
 export * from './scoring';
+export * from './settlement';
 export * from './structure';

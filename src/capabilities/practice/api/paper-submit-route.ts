@@ -65,6 +65,9 @@ export async function createPaperSubmission(
         // YUK-784 — 过程框采集文本（observe-only）：conditional-spread 落 attempt payload，
         // 不进任何判分链。空值/缺省 → payload 无该键（byte-identical）。
         reasoningTrace: body.reasoning_trace ?? undefined,
+        // YUK-1051 / Q-922 — 信心自评（1–5，observe-only）：同上，conditional-spread 落
+        // attempt payload；null/缺省 → payload 无该键。
+        selfConfidence: body.self_confidence ?? undefined,
       },
       db,
     );

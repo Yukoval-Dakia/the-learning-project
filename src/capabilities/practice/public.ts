@@ -12,6 +12,8 @@ export type { QuizGenJobData } from './jobs/quiz_gen';
 // barrel 透出（import 链为 @kernel + @db 纯链，无 SDK —— migrate bundle 安全）。
 export { issueAssessment } from './server/assessment/issue';
 export { saveResponseDraft, saveSubmission } from './server/assessment/submit';
+export type { AttemptSnapshotBracketsInput } from './server/attempt-snapshot';
+export { writeAttemptSnapshotBrackets } from './server/attempt-snapshot';
 export { retrievabilityForKc } from './server/fsrs';
 export type { FrontierResolution } from './server/learnable-frontier';
 export {
@@ -24,6 +26,10 @@ export {
   validateLearningContent,
 } from './server/learning-content-validation';
 export { isLiveQuestionReference } from './server/live-question-reference';
+// YUK-1037/1053 — the seed-root anchor regex is a single pattern owned by
+// placement-scope but consumed from server/*; re-exported through the public
+// seam so server→capability stays public (not deep).
+export { SYNTHETIC_SUBJECT_ROOT_RE } from './server/placement-scope';
 export { loadAttemptQuestionSnapshot } from './server/question-evidence-snapshot';
 export { mergeExactQuestionDuplicateKnowledgeIds } from './server/quiz/content-fingerprint';
 export { resolveSolveOverrideFromEnv } from './server/quiz/solve-lane';

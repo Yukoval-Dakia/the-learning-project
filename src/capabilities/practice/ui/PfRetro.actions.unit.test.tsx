@@ -14,6 +14,9 @@ const incorrectSlot: PaperSlot = {
     notation: null,
     choices_md: ['A', 'B'],
     difficulty: 2,
+    parent_question_id: null,
+    part_index: null,
+    image_refs: [],
   },
   slot_state: {
     draft: null,
@@ -24,6 +27,7 @@ const incorrectSlot: PaperSlot = {
       score: 0,
       feedback_md: '再想想。',
       answer_md: 'A',
+      answer_image_refs: [],
       reference_md: 'B',
     },
   },
