@@ -12,9 +12,8 @@
 //     update；mixed ⇒ abstain；manual/self_report/assisted ⇒ 排除 θ̂。
 
 import { describe, expect, it } from 'vitest';
-
-import type { ScoringBasisT, ScoringUnitT } from './scoring';
 import type { ScoringUnitResultT } from './judgment';
+import type { ScoringBasisT, ScoringUnitT } from './scoring';
 import {
   aggregateMaxPoints,
   classifyScoredUnit,
@@ -66,7 +65,11 @@ function basis(units: ScoringUnitT[], aggregation?: ScoringBasisT['aggregation']
   };
 }
 
-function scored(id: string, points: number | null, opts: Partial<ScoringUnitResultT> = {}): ScoringUnitResultT {
+function scored(
+  id: string,
+  points: number | null,
+  opts: Partial<ScoringUnitResultT> = {},
+): ScoringUnitResultT {
   return {
     status: 'scored',
     scoring_unit_id: id,
@@ -108,7 +111,10 @@ describe('deriveCoarseVerdict（与 1047 投影同一阈值语义）', () => {
   it('满分 ⇒ correct；零分 ⇒ incorrect；中间 ⇒ partial（0.85 阈值）', () => {
     const mk = (points: number) =>
       deriveCoarseVerdict(
-        { status: 'completed', aggregate: { kind: 'points_total', points, policy: { kind: 'sum' } } },
+        {
+          status: 'completed',
+          aggregate: { kind: 'points_total', points, policy: { kind: 'sum' } },
+        },
         b,
       );
     expect(mk(4).verdict).toBe('correct');
@@ -119,13 +125,20 @@ describe('deriveCoarseVerdict（与 1047 投影同一阈值语义）', () => {
   });
 
   it('weighted_sum：权重折进分母', () => {
-    const wb = basis(
-      [additiveUnit('a', 10), additiveUnit('b', 10)],
-      { kind: 'weighted_sum', weights: { a: 2, b: 1 } },
-    );
+    const wb = basis([additiveUnit('a', 10), additiveUnit('b', 10)], {
+      kind: 'weighted_sum',
+      weights: { a: 2, b: 1 },
+    });
     // 分母 = 10*2 + 10*1 = 30；a 满分 20 ⇒ 20/30 ≈ .67 ⇒ partial
     const v = deriveCoarseVerdict(
-      { status: 'completed', aggregate: { kind: 'points_total', points: 20, policy: { kind: 'weighted_sum', weights: { a: 2, b: 1 } } } },
+      {
+        status: 'completed',
+        aggregate: {
+          kind: 'points_total',
+          points: 20,
+          policy: { kind: 'weighted_sum', weights: { a: 2, b: 1 } },
+        },
+      },
       wb,
     );
     expect(v.maxPoints).toBe(30);
@@ -133,9 +146,15 @@ describe('deriveCoarseVerdict（与 1047 投影同一阈值语义）', () => {
   });
 
   it('capped_sum：cap 封顶作分母', () => {
-    const cb = basis([additiveUnit('a', 10), additiveUnit('b', 10)], { kind: 'capped_sum', cap: 15 });
+    const cb = basis([additiveUnit('a', 10), additiveUnit('b', 10)], {
+      kind: 'capped_sum',
+      cap: 15,
+    });
     const v = deriveCoarseVerdict(
-      { status: 'completed', aggregate: { kind: 'points_total', points: 15, policy: { kind: 'capped_sum', cap: 15 } } },
+      {
+        status: 'completed',
+        aggregate: { kind: 'points_total', points: 15, policy: { kind: 'capped_sum', cap: 15 } },
+      },
       cb,
     );
     expect(v.maxPoints).toBe(15);
@@ -184,27 +203,15 @@ describe('classifyScoredUnit（D13 证据分类）', () => {
 
   it('holistic：level_points 映射分档；纯档位按 rank', () => {
     const mapped = holisticUnit('h', { L0: 0, L1: 1, L2: 2 });
-    expect(
-      classifyScoredUnit(mapped, scored('h', null, matched('L2'))).kind,
-    ).toBe('full');
-    expect(
-      classifyScoredUnit(mapped, scored('h', null, matched('L0'))).kind,
-    ).toBe('zero');
-    expect(
-      classifyScoredUnit(mapped, scored('h', null, matched('L1'))).kind,
-    ).toBe('partial');
+    expect(classifyScoredUnit(mapped, scored('h', null, matched('L2'))).kind).toBe('full');
+    expect(classifyScoredUnit(mapped, scored('h', null, matched('L0'))).kind).toBe('zero');
+    expect(classifyScoredUnit(mapped, scored('h', null, matched('L1'))).kind).toBe('partial');
     // 未映射档 ⇒ unmapped（不造证据）
-    expect(
-      classifyScoredUnit(mapped, scored('h', null, matched('LX'))).kind,
-    ).toBe('unmapped');
+    expect(classifyScoredUnit(mapped, scored('h', null, matched('LX'))).kind).toBe('unmapped');
     // 纯档位（无映射）按 rank
     const ordinal = holisticUnit('o');
-    expect(
-      classifyScoredUnit(ordinal, scored('o', null, matched('L2'))).kind,
-    ).toBe('full');
-    expect(
-      classifyScoredUnit(ordinal, scored('o', null, matched('L1'))).kind,
-    ).toBe('partial');
+    expect(classifyScoredUnit(ordinal, scored('o', null, matched('L2'))).kind).toBe('full');
+    expect(classifyScoredUnit(ordinal, scored('o', null, matched('L1'))).kind).toBe('partial');
   });
 });
 
@@ -232,11 +239,7 @@ describe('localizeKcObservations（D13 per-KC 局部证据）', () => {
 
   it('两 KC 各自独立判定；跨单元混合 ⇒ 各自 abstain', () => {
     const b = basis([additiveUnit('u1', 4), additiveUnit('u2', 4)]);
-    const loc = locOf(
-      { u1: ['p1'], u2: ['p2'] },
-      { p1: ['kc_a'], p2: ['kc_b'] },
-      ['kc_a', 'kc_b'],
-    );
+    const loc = locOf({ u1: ['p1'], u2: ['p2'] }, { p1: ['kc_a'], p2: ['kc_b'] }, ['kc_a', 'kc_b']);
     const obs = localizeKcObservations(b, [scored('u1', 4), scored('u2', 0)], loc);
     expect(obs).toEqual([
       { kc_id: 'kc_a', bit: 1, basis: 'all_full' },
@@ -270,11 +273,7 @@ describe('localizeKcObservations（D13 per-KC 局部证据）', () => {
 
   it('每 KC ≤1 obs：同一 KC 的多单元证据聚合成一条', () => {
     const b = basis([additiveUnit('u1', 4), additiveUnit('u2', 4)]);
-    const loc = locOf(
-      { u1: ['p1'], u2: ['p1'] },
-      { p1: ['kc_a'] },
-      ['kc_a'],
-    );
+    const loc = locOf({ u1: ['p1'], u2: ['p1'] }, { p1: ['kc_a'] }, ['kc_a']);
     const obs = localizeKcObservations(b, [scored('u1', 4), scored('u2', 4)], loc);
     expect(obs).toHaveLength(1);
     expect(obs[0].bit).toBe(1);
@@ -322,17 +321,20 @@ describe('resolveThetaDecision（bounded evidence adapter）', () => {
       { source: 'automatic' as const, assisted: true },
       { source: 'manual' as const, assisted: true },
     ]) {
-      expect(resolveThetaDecision(obs, p)).toEqual({ kind: 'abstain', reason: 'provenance_excluded' });
+      expect(resolveThetaDecision(obs, p)).toEqual({
+        kind: 'abstain',
+        reason: 'provenance_excluded',
+      });
     }
   });
 });
 
 describe('aggregateMaxPoints', () => {
   it('threshold_levels 分母 = 最高档阈值', () => {
-    const b = basis(
-      [additiveUnit('a', 10)],
-      { kind: 'threshold_levels', thresholds: [{ level_id: 'L', min_points: 7 }] },
-    );
+    const b = basis([additiveUnit('a', 10)], {
+      kind: 'threshold_levels',
+      thresholds: [{ level_id: 'L', min_points: 7 }],
+    });
     expect(aggregateMaxPoints(b)).toBe(7);
   });
 });

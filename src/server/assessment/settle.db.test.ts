@@ -15,8 +15,7 @@
 //   - advisory lock：per-KC `fsrs:knowledge:<id>` 与 `mastery:ability_global:
 //     <domain>` xact 锁在同事务内可观测。
 
-import { eq } from 'drizzle-orm';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -185,7 +184,11 @@ async function seedEvaluation(seed: SeedIds, evalId: string, opts: EvalOpts = {}
     attempt: opts.attempt ?? 1,
     status: 'completed',
     unit_results: (opts.unitResults as never) ?? [],
-    aggregate: (opts.aggregate as never) ?? { kind: 'points_total', points: 1, policy: { kind: 'sum' } },
+    aggregate: (opts.aggregate as never) ?? {
+      kind: 'points_total',
+      points: 1,
+      policy: { kind: 'sum' },
+    },
     plan_digest: null,
     run_refs: [],
     provenance: opts.provenance ?? { source: 'automatic', assisted: false },
@@ -202,12 +205,20 @@ function unitResult(unitId: string, points: number, scoredBecause = 'response') 
   };
 }
 
-async function activate(evalId: string, expected: { effectiveId: string | null; generation: number }, now?: Date) {
+async function activate(
+  evalId: string,
+  expected: { effectiveId: string | null; generation: number },
+  now?: Date,
+) {
   const db = testDb();
   return db.transaction((tx) =>
     activateEvaluation(
       tx,
-      { evaluation_id: evalId, expected_effective_id: expected.effectiveId, expected_generation: expected.generation },
+      {
+        evaluation_id: evalId,
+        expected_effective_id: expected.effectiveId,
+        expected_generation: expected.generation,
+      },
       { settle: learningSettlement, actorRef: 'test', now: now ?? NOW },
     ),
   );
@@ -224,17 +235,18 @@ async function fsrsRow(kind: 'knowledge' | 'question', id: string) {
 
 async function masteryRow(id: string, kind = 'knowledge') {
   const db = testDb();
-  const [row] = await db
-    .select()
-    .from(mastery_state)
-    .where(eq(mastery_state.subject_id, id));
+  const [row] = await db.select().from(mastery_state).where(eq(mastery_state.subject_id, id));
   return row;
 }
 
 async function settlementEvents(groupId?: string) {
   const db = testDb();
   const rows = await db.select().from(event).where(eq(event.action, ASSESSMENT_SETTLEMENT_ACTION));
-  return groupId ? rows.filter((r) => (r.payload as { evaluation_group_id?: string }).evaluation_group_id === groupId) : rows;
+  return groupId
+    ? rows.filter(
+        (r) => (r.payload as { evaluation_group_id?: string }).evaluation_group_id === groupId,
+      )
+    : rows;
 }
 
 describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
@@ -278,7 +290,9 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
 
     // snapshot brackets 存在（replay/纠错机械基础）。
     const bracketEvents = (await db.select().from(event)).filter(
-      (e) => e.id === `${settleEvent?.id}:checkpoint:theta` || e.id === `${settleEvent?.id}:checkpoint:fsrs`,
+      (e) =>
+        e.id === `${settleEvent?.id}:checkpoint:theta` ||
+        e.id === `${settleEvent?.id}:checkpoint:fsrs`,
     );
     expect(bracketEvents).toHaveLength(2);
   });
@@ -302,7 +316,9 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     // θ̂ abstain：该 KC 不产生 mastery obs。
     expect(await masteryRow('kc_a')).toBeUndefined();
     const se = (await settlementEvents(seed.groupId))[0];
-    const theta = (se?.payload as { theta_decision?: { applied?: boolean; abstainReason?: string } }).theta_decision;
+    const theta = (
+      se!.payload as { theta_decision?: { applied?: boolean; abstainReason?: string } }
+    ).theta_decision;
     expect(theta?.applied).toBe(false);
     expect(theta?.abstainReason).toBe('no_kc_evidence');
   });
@@ -320,7 +336,11 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect((result as { effect: string }).effect).toBe('applied');
     expect((await fsrsRow('knowledge', 'kc_a'))?.state?.reps).toBe(1);
     expect(await masteryRow('kc_a')).toBeUndefined();
-    const obs = (((await settlementEvents(seed.groupId))[0]?.payload as { kc_observations?: { bit?: unknown }[] }).kc_observations ?? [])[0];
+    const obs = ((
+      (await settlementEvents(seed.groupId))[0]!.payload as {
+        kc_observations?: { bit?: unknown }[];
+      }
+    ).kc_observations ?? [])[0];
     expect(obs?.bit).toBe('abstain');
   });
 
@@ -337,7 +357,11 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect((result as { effect: string }).effect).toBe('applied');
     expect((await fsrsRow('knowledge', 'kc_a'))?.state?.reps).toBe(1);
     expect(await masteryRow('kc_a')).toBeUndefined();
-    const theta = (((await settlementEvents(seed.groupId))[0]?.payload as { theta_decision?: { abstainReason?: string } }).theta_decision);
+    const theta = (
+      (await settlementEvents(seed.groupId))[0]!.payload as {
+        theta_decision?: { abstainReason?: string };
+      }
+    ).theta_decision;
     expect(theta?.abstainReason).toBe('provenance_excluded');
   });
 
@@ -353,7 +377,9 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     await activate('s5_ev1', { effectiveId: null, generation: 0 });
     expect((await fsrsRow('knowledge', 'kc_a'))?.state?.reps).toBe(1);
     expect(await masteryRow('kc_a')).toBeUndefined();
-    const payload = (await settlementEvents(seed.groupId))[0]?.payload as { rating_source?: string };
+    const payload = (await settlementEvents(seed.groupId))[0]?.payload as {
+      rating_source?: string;
+    };
     expect(payload.rating_source).toBe('user');
   });
 
@@ -404,7 +430,9 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
 
     // 原结算事件被 supersedes 标记（dead）；新事件的 supersedes 面显式。
     const events = await settlementEvents(seed.groupId);
-    const appliedEvents = events.filter((e) => (e.payload as { effect?: string }).effect === 'applied');
+    const appliedEvents = events.filter(
+      (e) => (e.payload as { effect?: string }).effect === 'applied',
+    );
     expect(appliedEvents).toHaveLength(2);
     const newEv = appliedEvents.find(
       (e) => (e.payload as { evaluation_id?: string }).evaluation_id === 's7_ev2',
@@ -412,7 +440,10 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     const oldEv = appliedEvents.find(
       (e) => (e.payload as { evaluation_id?: string }).evaluation_id === 's7_ev1',
     );
-    const newPayload = newEv?.payload as { supersedes_settlement_event_id?: string; reverted_settlement_event_ids?: string[] };
+    const newPayload = newEv?.payload as {
+      supersedes_settlement_event_id?: string;
+      reverted_settlement_event_ids?: string[];
+    };
     expect(newPayload.supersedes_settlement_event_id).toBe(oldEv?.id);
     expect(newPayload.reverted_settlement_event_ids).toContain(oldEv?.id);
   });
@@ -435,7 +466,11 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
       unitResults: [unitResult(unitB, 1)],
     });
 
-    const result = await activate('evB', { effectiveId: null, generation: 0 }, new Date('2026-09-22T00:00:00Z'));
+    const result = await activate(
+      'evB',
+      { effectiveId: null, generation: 0 },
+      new Date('2026-09-22T00:00:00Z'),
+    );
     expect(result.status).toBe('activated');
     expect((result as { effect: string }).effect).toBe('applied');
 
@@ -635,10 +670,7 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
       submission_id: submissionId,
       attempt: 1,
       status: 'completed',
-      unit_results: [
-        unitResult('mp_p1::u', 1),
-        unitResult('mp_p2::u', 0),
-      ] as never,
+      unit_results: [unitResult('mp_p1::u', 1), unitResult('mp_p2::u', 0)] as never,
       aggregate: { kind: 'points_total', points: 1, policy: { kind: 'sum' } } as never,
       plan_digest: null,
       run_refs: [],
@@ -651,11 +683,15 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
 
     // per-KC obs：kc_a=1、kc_b=0（局部证据各自成立）……
     const se = (await settlementEvents(groupId))[0];
-    const obs = (se?.payload as { kc_observations?: { kc_id: string; bit: unknown }[] }).kc_observations ?? [];
+    const obs =
+      (se!.payload as { kc_observations?: { kc_id: string; bit: unknown }[] }).kc_observations ??
+      [];
     expect(obs.find((o) => o.kc_id === 'kc_a')?.bit).toBe(1);
     expect(obs.find((o) => o.kc_id === 'kc_b')?.bit).toBe(0);
     // ……但 bounded adapter 不能把 mixed 位塞进 one-bit update ⇒ θ̂ 全 abstain。
-    const theta = (se?.payload as { theta_decision?: { applied?: boolean; abstainReason?: string } }).theta_decision;
+    const theta = (
+      se!.payload as { theta_decision?: { applied?: boolean; abstainReason?: string } }
+    ).theta_decision;
     expect(theta?.applied).toBe(false);
     expect(theta?.abstainReason).toBe('mixed_kc_bits');
     expect(await masteryRow('kc_a')).toBeUndefined();

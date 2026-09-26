@@ -135,15 +135,33 @@ export function deriveCoarseVerdict(
   basis: ScoringBasisT,
 ): CoarseVerdict {
   if (record.status === 'pending' || record.aggregate == null) {
-    return { verdict: 'unsupported', reason: 'evaluation_pending', points: null, maxPoints: null, normalized: null };
+    return {
+      verdict: 'unsupported',
+      reason: 'evaluation_pending',
+      points: null,
+      maxPoints: null,
+      normalized: null,
+    };
   }
   const aggregate = record.aggregate;
   if (aggregate.kind === 'unresolved') {
-    return { verdict: 'unsupported', reason: 'aggregate_unresolved', points: null, maxPoints: null, normalized: null };
+    return {
+      verdict: 'unsupported',
+      reason: 'aggregate_unresolved',
+      points: null,
+      maxPoints: null,
+      normalized: null,
+    };
   }
   const points = aggregate.points;
   if (points == null) {
-    return { verdict: 'unsupported', reason: 'level_unmapped', points: null, maxPoints: null, normalized: null };
+    return {
+      verdict: 'unsupported',
+      reason: 'level_unmapped',
+      points: null,
+      maxPoints: null,
+      normalized: null,
+    };
   }
   const maxPoints = aggregateMaxPoints(basis);
   const normalized =
@@ -206,10 +224,7 @@ export type UnitEvidence =
  *   （maxRank ⇒ full；rank=0 ⇒ zero；中间 ⇒ partial）；缺 matched.level_id
  *   ⇒ unmapped。
  */
-export function classifyScoredUnit(
-  unit: ScoringUnitT,
-  result: ScoringUnitResultT,
-): UnitEvidence {
+export function classifyScoredUnit(unit: ScoringUnitT, result: ScoringUnitResultT): UnitEvidence {
   if (result.status === 'pending') return { kind: 'uninformative' };
   if (result.scored_because === 'blank_marked_zero') return { kind: 'uninformative' };
   if (unit.criterion.kind === 'holistic_level') {
@@ -259,10 +274,7 @@ export interface UnitLocalizationInput {
  * 归组级 KC；否则并集其槽位所在 part 的 KC（part 未映射 ⇒ 回落组级）。
  * KC 集为空 ⇒ null（不可归因，不计任何 KC 的票）。
  */
-function unitKcs(
-  unit: ScoringUnitT,
-  loc: UnitLocalizationInput,
-): Set<string> | null {
+function unitKcs(unit: ScoringUnitT, loc: UnitLocalizationInput): Set<string> | null {
   const partIds =
     unit.slot_refs.length === 0
       ? null // group-scoped unit
