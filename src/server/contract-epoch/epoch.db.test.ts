@@ -311,7 +311,10 @@ describe('reportOutstandingBossJobs', () => {
       ]);
     } finally {
       await db.execute(sql`drop table if exists pgboss.job`);
-      await db.execute(sql`drop schema if exists pgboss`);
+      // CASCADE: post-1055 forks carry real pg-boss objects (job_state type,
+      // version/queue/subscription tables, helper functions) inside the same
+      // schema — a bare DROP fails 2BP01 and wedges every boss test after us.
+      await db.execute(sql`drop schema if exists pgboss cascade`);
     }
   });
 });
