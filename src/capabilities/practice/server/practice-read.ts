@@ -9,7 +9,7 @@
 
 import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
 import { PAPER_INTENT_SOURCES } from '@/capabilities/practice/server/paper-intent-sources';
-import { countPaperSlots, readPaperSections } from '@/capabilities/practice/server/paper-sections';
+import { readPaperSections } from '@/capabilities/practice/server/paper-sections';
 import { Artifact } from '@/core/schema/index';
 import type { Db, Tx } from '@/db/client';
 import { artifact, knowledge, learning_session } from '@/db/schema';
