@@ -1,12 +1,12 @@
 // YUK-1052 — issueAssessment / saveSubmission / 自动保存的 route handler。
 // 薄层：只做 HTTP 整形 + zod 解析 + 域状态 → ApiError 映射；业务全在
-// src/server/assessment/{issue,submit}.ts。
+// capabilities/practice/server/assessment/{issue,submit}.ts（YUK-1052: capability→server 边界，模块归 practice 自有）。
 
 import type { ZodType } from 'zod';
 import { db } from '@/db/client';
 import { ApiError, errorResponse, resourceResponse } from '@/kernel/http';
-import { issueAssessment } from '@/server/assessment/issue';
-import { getIssuanceState, saveResponseDraft, saveSubmission } from '@/server/assessment/submit';
+import { issueAssessment } from '../server/assessment/issue';
+import { getIssuanceState, saveResponseDraft, saveSubmission } from '../server/assessment/submit';
 import {
   CreateSubmissionBodySchema,
   IssueAssessmentBodySchema,

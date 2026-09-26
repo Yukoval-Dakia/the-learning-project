@@ -27,7 +27,7 @@ import {
   normalizeQuestionRowToContract,
 } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
-import { resetDb, testDb } from '../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { issueAssessment } from './issue';
 import {
   getIssuanceState,

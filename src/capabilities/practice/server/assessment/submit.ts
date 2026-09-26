@@ -65,7 +65,8 @@ import {
   question_revision,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { insertInitialEvaluationHead } from './activate';
+// （初始 head 插入已内联 —— 原 insertInitialEvaluationHead 归 server/activate，
+//  capability 边界不允许 server import；语义等价：空 effective、generation 0。）
 
 /** 提交 receipt 事件 action 名。 */
 export const ASSESSMENT_SUBMISSION_ACTION = 'experimental:assessment_submission';
@@ -437,10 +438,15 @@ export async function saveSubmission(
       .where(eq(evaluation_effective_head.evaluation_group_id, request.evaluation_group_id))
       .limit(1);
     if (head == null) {
-      await insertInitialEvaluationHead(tx, {
+      // 初始 head 行内联插入（§11 首条不变量）：原经
+      // server/assessment/activate.ts 的 insertInitialEvaluationHead，但 practice
+      // capability 不能 import server/*（边界审计）—— 等价内联，语义同函数本体。
+      await tx.insert(evaluation_effective_head).values({
         evaluation_group_id: request.evaluation_group_id,
         submission_id: submissionId,
-        now,
+        effective_evaluation_id: null,
+        generation: 0,
+        updated_at: now,
       });
     }
 
