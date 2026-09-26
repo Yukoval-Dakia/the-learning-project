@@ -27,13 +27,13 @@ import { Artifact } from '@/core/schema/index';
 import type { Db } from '@/db/client';
 import { answer, artifact, learning_session, question } from '@/db/schema';
 import {
-  batchResolveSubjectDisplayIds,
-  resolveSubjectRenderNotation,
-} from '@/kernel/read-models/subject-resolution';
-import {
   type JudgeVerdictProjection,
   resolveVerdictsForAttempts,
 } from '@/kernel/read-models/assessment-verdict';
+import {
+  batchResolveSubjectDisplayIds,
+  resolveSubjectRenderNotation,
+} from '@/kernel/read-models/subject-resolution';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Response types (contract for L-practice-ui)
