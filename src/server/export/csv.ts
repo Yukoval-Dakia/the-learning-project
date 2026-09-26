@@ -40,6 +40,12 @@ const MISTAKES_HEADERS = [
   'status',
   'last_reviewed_at',
   'review_count',
+  // YUK-1054 (§9 dual-track) — 判分双轨导出。judge_effective_outcome = 链解析
+  // 后仍 live 的最新 judge 的 coarse_outcome；judge_original_outcome = 该 attempt
+  // 第一条 judge 行（原始执行收据）的 coarse_outcome。两者可并存且可不同（改判
+  // 时）。无 judge → 空串。
+  'judge_effective_outcome',
+  'judge_original_outcome',
 ];
 
 const REVIEW_HEADERS = [
@@ -203,6 +209,9 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
   // Index active/effective cause events by caused_by_event_id for chained lookup.
   const judgesByAttempt = new Map<string, Row>();
   const userCausesByAttempt = new Map<string, Row>();
+  // YUK-1054 — original 判（每 attempt 最早 raw judge 行）。在 judge 索引循环里
+  // 同步收集；先于使用它的循环声明。
+  const originalJudgeByAttempt = new Map<string, Row>();
   for (const e of events) {
     if (
       (e.action === 'judge' || e.action === 'experimental:user_cause') &&
@@ -224,6 +233,14 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
       const existing = bucket.get(attemptId);
       if (!existing || newerRow(effective, existing)) {
         bucket.set(attemptId, effective);
+      }
+      // YUK-1054 — original 轨：该 attempt 第一条（最早）judge 行的原始行，
+      // 不走链解析（原始收据不因改判改写）。与 effective 判并存于导出。
+      if (e.action === 'judge') {
+        const prev = originalJudgeByAttempt.get(attemptId);
+        if (!prev || newerRow(prev, e)) {
+          originalJudgeByAttempt.set(attemptId, e);
+        }
       }
     }
   }
@@ -317,10 +334,17 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
     const judgePayload = judge
       ? parseJsonCell<{
           cause: { primary_category: string; analysis_md: string; confidence: number };
+          coarse_outcome?: string | null;
         }>(judge.payload)
       : null;
+    // YUK-1054 — 原始判（该 attempt 最早 raw judge 行）。与 effective 判并存，
+    // 供导出双轨；原始行不改写，改判后仍反映第一判。
+    const originalJudge = originalJudgeByAttempt.get(rowId(a));
+    const originalJudgePayload = originalJudge
+      ? parseJsonCell<{ coarse_outcome?: string | null }>(originalJudge.payload)
+      : null;
     const causePrimary =
-      userCausePayload?.primary_category ?? judgePayload?.cause.primary_category ?? '';
+      userCausePayload?.primary_category ?? judgePayload?.cause?.primary_category ?? '';
     const causeUserNotes = userCausePayload?.user_notes ?? '';
 
     const reviews = reviewsByQuestion.get(qid) ?? [];
@@ -358,6 +382,8 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
         csvEscape('active'),
         csvEscape(lastReview ?? ''),
         csvEscape(reviews.length),
+        csvEscape(judgePayload?.coarse_outcome ?? ''),
+        csvEscape(originalJudgePayload?.coarse_outcome ?? ''),
       ].join(','),
     );
   }

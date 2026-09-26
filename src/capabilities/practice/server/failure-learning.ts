@@ -7,6 +7,7 @@ import {
   getFailureAttemptWithReasoningTraceById,
   getJudgeForAttempt,
 } from './attempt-events';
+import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
 import {
   type AttributionOutcome,
   runAttributionAndWriteJudgeEvent,
@@ -21,7 +22,8 @@ export type FailureLearningSkipReason =
   | 'attempt_not_active'
   | 'unsupported_judge'
   | 'user_cause_present'
-  | 'question_not_found';
+  | 'question_not_found'
+  | 'verdict_overturned';
 
 export type AttributionResult =
   | {
@@ -49,7 +51,8 @@ export type FailureLearningRequestResult =
         | 'not_failure_attempt'
         | 'attempt_not_active'
         | 'unsupported_judge'
-        | 'user_cause_present';
+        | 'user_cause_present'
+        | 'verdict_overturned';
     };
 
 export interface FailureLearningRequestDeps {
@@ -120,6 +123,14 @@ export async function requestFailureLearning(
     return { status: 'ignored', reason: 'unsupported_judge' };
   }
 
+  // YUK-1054 (§9 paid fanout 抑制)— attempt.outcome 是 immutable 执行事实，
+  // attempt 判被申诉改判翻转为 correct 后仍是 outcome='failure'。在 enqueue 归因
+  // 前读 effective 判复核：已翻转的 attempt 不再驱动付费归因（No-Paid-Fanout）。
+  const verdict = await resolveVerdictForAttempt(deps.db, input.attemptEventId);
+  if (verdict.effective?.verdict.coarse_outcome === 'correct') {
+    return { status: 'ignored', reason: 'verdict_overturned' };
+  }
+
   const failure = await getFailureAttemptById(deps.db, input.attemptEventId);
   if (!failure) return { status: 'ignored', reason: 'attempt_not_active' };
   if (failure.user_cause) return { status: 'ignored', reason: 'user_cause_present' };
@@ -141,6 +152,16 @@ async function attributeFailure(
   }
   if (options.automatic && classified.payload.unsupported_judge === true) {
     return { status: 'skipped', reason: 'unsupported_judge', modelInvoked: false };
+  }
+
+  // YUK-1054 (§9 paid fanout 抑制)— 自动归因同 requestFailureLearning：attempt
+  // 判已翻转为 correct 的不该再付归因费。手动调用（automatic:false）不闸，保留
+  // owner/copilot 显式触发的兜底。
+  if (options.automatic) {
+    const verdict = await resolveVerdictForAttempt(deps.db, attemptEventId);
+    if (verdict.effective?.verdict.coarse_outcome === 'correct') {
+      return { status: 'skipped', reason: 'verdict_overturned', modelInvoked: false };
+    }
   }
 
   const loaded = await getFailureAttemptWithReasoningTraceById(deps.db, attemptEventId);

@@ -63,6 +63,12 @@ export interface EvidenceCell {
   probe_here: boolean;
   /** true iff any contributing attempt has an owner-supplied (source:'user') cause. */
   has_owner_cause: boolean;
+  /**
+   * YUK-1054 — 至少一条贡献 attempt 的【原始判】≠【effective 判】（contested
+   * verdict / 改判）。供 induction 区分「稳定的错误归因证据」与「争议判改判后
+   * 的证据」；缺原始判不视为 contested。
+   */
+  has_contested_verdict: boolean;
 }
 
 // ── YUK-786 grounding packet ────────────────────────────────────────────────
@@ -251,6 +257,15 @@ export interface ConjectureFailureAttempt {
     cause: CauseSchemaT;
     created_at: Date;
   };
+  /**
+   * YUK-1054 — 双轨裁决（§9）。`judge` 是 effective 判；本字段是原始执行收据
+   * 侧 earliest judge（首判，未链解析）。供 contested-verdict 信号用：原始判与
+   * effective 判走不同轨时，该 attempt 的归因证据是可争的。
+   */
+  original_judge?: {
+    cause: CauseSchemaT;
+    created_at: Date;
+  } | null;
   user_cause?: {
     primary_category: CauseCategoryT;
     user_notes: string | null;
@@ -280,6 +295,8 @@ interface CellAccumulator {
   /** distinct attempt ids, insertion-ordered (Map preserves first-seen order). */
   attemptIds: Map<string, true>;
   hasOwnerCause: boolean;
+  /** YUK-1054 — 至少一条贡献 attempt 的原始判 ≠ effective 判（改判 contested）。 */
+  hasContestedVerdict: boolean;
 }
 
 export interface EffectiveConjectureCause {
@@ -334,9 +351,19 @@ export function gatherConjectureEvidence(input: GatherConjectureEvidenceInput): 
           knowledge_id: knowledgeId,
           attemptIds: new Map<string, true>(),
           hasOwnerCause: false,
+          hasContestedVerdict: false,
         } satisfies CellAccumulator);
       cell.attemptIds.set(failure.attempt_event_id, true); // Map ⇒ distinct, ordered
       if (isOwnerCause) cell.hasOwnerCause = true;
+      // YUK-1054 — 双轨：原始判存在且其 cause 分类 ≠ effective 判分类，或原始判
+      // 存在但 effective 判的 cause 被改判覆盖（本 cell 的 cause 来自不同判），
+      // 视为 contested。
+      if (
+        failure.original_judge &&
+        failure.original_judge.cause.primary_category !== cause.primary_category
+      ) {
+        cell.hasContestedVerdict = true;
+      }
       acc.set(key, cell);
     }
   }
@@ -364,6 +391,7 @@ export function gatherConjectureEvidence(input: GatherConjectureEvidenceInput): 
       baseline_p: baselineP,
       probe_here: probeHere,
       has_owner_cause: cell.hasOwnerCause,
+      has_contested_verdict: cell.hasContestedVerdict,
     });
   }
 

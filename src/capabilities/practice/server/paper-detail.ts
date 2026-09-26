@@ -25,11 +25,15 @@ import {
 } from '@/capabilities/practice/server/practice-read';
 import { Artifact } from '@/core/schema/index';
 import type { Db } from '@/db/client';
-import { answer, artifact, event, learning_session, question } from '@/db/schema';
+import { answer, artifact, learning_session, question } from '@/db/schema';
 import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
+import {
+  type JudgeVerdictProjection,
+  resolveVerdictsForAttempts,
+} from '@/kernel/read-models/assessment-verdict';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Response types (contract for L-practice-ui)
@@ -325,16 +329,15 @@ export async function getPaperDetail(
     // visible outcome='unsupported' surface in slot assembly. NULL for every normal
     // graded attempt.
     unsupported_judge: string | null;
-  };
-  type JudgeRow = {
-    event_id: string;
-    outcome: string;
-    payload: unknown;
+    // attempt event outcome — right/wrong fallback when the attempt carries no
+    // effective judge (historical rows pre paper-judge).
+    attempt_outcome: string | null;
   };
 
   const draftMap = new Map<string, DraftRow>(); // slotKey → draft
   const submittedMap = new Map<string, SubmittedRow>(); // slotKey → newest frozen
-  const judgeMap = new Map<string, JudgeRow>(); // event_id → judge event
+  // YUK-1054 — event_id → effective（链解析后仍 live 的最新）judge 投影。
+  const verdictMap = new Map<string, JudgeVerdictProjection>();
 
   if (sessionInfo) {
     const sid = sessionInfo.id;
@@ -363,6 +366,8 @@ export async function getPaperDetail(
 
     // Newest frozen row per slot: subquery on MAX(submitted_at).
     // content_md + image_refs: user's own answer, echoed back unconditionally.
+    // att.outcome + unsupported_judge 同行带出 —— YUK-1054 起 right/wrong 复用
+    // 本行集（与旧 rwRows 子查询同一 slot 集合语义），不再发第二条 SQL。
     const frozenRows = await db.execute<{
       question_id: string;
       part_ref: string | null;
@@ -371,6 +376,7 @@ export async function getPaperDetail(
       content_md: string;
       image_refs: string[];
       unsupported_judge: string | null;
+      attempt_outcome: string | null;
     }>(sql`
       SELECT
         answer.question_id,
@@ -381,7 +387,8 @@ export async function getPaperDetail(
         answer.image_refs,
         -- F1 (PR #309 round-4): the attempt event's un-judged marker, so slot
         -- assembly can surface outcome='unsupported' without an extra round-trip.
-        att.payload->>'unsupported_judge' AS unsupported_judge
+        att.payload->>'unsupported_judge' AS unsupported_judge,
+        att.outcome AS attempt_outcome
       FROM answer
       LEFT JOIN event att ON att.id = answer.event_id
       WHERE answer.session_id = ${sid}
@@ -403,34 +410,13 @@ export async function getPaperDetail(
       if (f.event_id) eventIds.push(f.event_id);
     }
 
-    // Judge events for the frozen attempt events (one IN query).
+    // YUK-1054 — 一次性批量解析全部 frozen attempt 的 effective 裁决
+    // （链解析后仍 live 的最新 judge；被 supersede/retract 的旧判不再回魂），
+    // 固定 3 个 round-trip 取代原 per-row 相关子查询。
     if (eventIds.length > 0) {
-      const judgeRows = await db
-        .select({
-          subject_id: event.subject_id,
-          outcome: event.outcome,
-          payload: event.payload,
-        })
-        .from(event)
-        .where(
-          and(
-            eq(event.action, 'judge'),
-            eq(event.subject_kind, 'event'),
-            inArray(event.subject_id, eventIds),
-          ),
-        )
-        // newest judge first (D6: rejudge = new event; take newest per attempt)
-        .orderBy(desc(event.created_at));
-
-      const seenSubject = new Set<string>();
-      for (const j of judgeRows) {
-        if (!j.subject_id || seenSubject.has(j.subject_id)) continue;
-        seenSubject.add(j.subject_id);
-        judgeMap.set(j.subject_id, {
-          event_id: j.subject_id,
-          outcome: j.outcome ?? 'unknown',
-          payload: j.payload,
-        });
+      const verdicts = await resolveVerdictsForAttempts(db, eventIds);
+      for (const [attemptId, v] of verdicts) {
+        if (v.effective) verdictMap.set(attemptId, v.effective);
       }
     }
 
@@ -443,64 +429,22 @@ export async function getPaperDetail(
     `);
     const pos = (posRows as unknown as Array<{ pos: number }>)[0]?.pos ?? 0;
 
-    // Round-4 fix #2 + Round-6 fix #2 (CR 3359820526): use the newest JUDGE
-    // event's coarse_outcome; also fetch visible_to_user so buffered slots are
-    // excluded from the summary when the session is not yet 'completed'.
-    // Slots with visible_to_user:false and session not completed are skipped —
-    // the summary must not let the caller infer the buffered verdict.
+    // Round-4 fix #2 + Round-6 fix #2 (CR 3359820526)：verdict 走 effective 轨
+    // （YUK-1054）；visible_to_user 读 effective 判的载荷，buffered 槽位在
+    // 未完成 session 的 summary 里不外漏。
     const sessionStatus = sessionInfo.status;
-    const rwRows = await db.execute<{
-      coarse_outcome: string | null;
-      judge_visible_to_user: string | null;
-      attempt_outcome: string | null;
-      unsupported_judge: string | null;
-    }>(sql`
-      SELECT
-        (SELECT j.payload->>'coarse_outcome'
-         FROM event j
-         WHERE j.action = 'judge'
-           AND j.subject_kind = 'event'
-           AND j.subject_id = a.event_id
-         ORDER BY j.created_at DESC
-         LIMIT 1) AS coarse_outcome,
-        (SELECT j.payload->>'visible_to_user'
-         FROM event j
-         WHERE j.action = 'judge'
-           AND j.subject_kind = 'event'
-           AND j.subject_id = a.event_id
-         ORDER BY j.created_at DESC
-         LIMIT 1) AS judge_visible_to_user,
-        e.outcome AS attempt_outcome,
-        e.payload->>'unsupported_judge' AS unsupported_judge
-      FROM answer a
-      JOIN event e ON e.id = a.event_id
-      WHERE a.session_id = ${sid}
-        AND a.submitted_at IS NOT NULL
-        AND a.submitted_at = (
-          SELECT MAX(a2.submitted_at)
-          FROM answer a2
-          WHERE a2.session_id = ${sid}
-            AND a2.question_id = a.question_id
-            AND COALESCE(a2.part_ref, '') = COALESCE(a.part_ref, '')
-            AND a2.submitted_at IS NOT NULL
-        )
-    `);
     let right = 0;
     let wrong = 0;
-    for (const r of rwRows as unknown as Array<{
-      coarse_outcome: string | null;
-      judge_visible_to_user: string | null;
-      attempt_outcome: string | null;
-      unsupported_judge: string | null;
-    }>) {
+    for (const r of frozenArr) {
       // F1 (PR #309 round-4, YUK-215): un-judged attempts (photo-only on a
       // text-only route) are "未判分" — neither right nor wrong. Skip so the
       // summary here stays in lock-step with getPracticeList (practice-read.ts).
       if (r.unsupported_judge === 'true') continue;
+      const effective = r.event_id ? verdictMap.get(r.event_id) : undefined;
       // Visibility gate: skip buffered slots when session is not yet completed.
-      if (r.judge_visible_to_user === 'false' && sessionStatus !== 'completed') continue;
+      if (effective?.verdict.visible_to_user === false && sessionStatus !== 'completed') continue;
       const verdict =
-        r.coarse_outcome ??
+        effective?.verdict.coarse_outcome ??
         (r.attempt_outcome === 'success' ? 'correct' : (r.attempt_outcome ?? 'incorrect'));
       if (verdict === 'correct' || verdict === 'partial') {
         right += 1; // partial counts as right (§4.10 Q9 deliberate)
@@ -570,17 +514,11 @@ export async function getPaperDetail(
       const frozenRow = submittedMap.get(slotKey) ?? null;
       let submission: PaperSlotState['submission'] = null;
       if (frozenRow) {
-        const judgeRow = frozenRow.event_id ? judgeMap.get(frozenRow.event_id) : null;
-        const judgePayload = judgeRow?.payload as
-          | {
-              visible_to_user?: boolean;
-              coarse_outcome?: string;
-              score?: number;
-              feedback_md?: string;
-            }
-          | null
-          | undefined;
-        const visibleToUser = judgePayload?.visible_to_user;
+        // YUK-1054 — effective 轨判词：改判后展示新判，被全量 supersede/retract
+        // 的老判不再回填为 'unknown' 之外的死判（回落 'unknown' 同旧语义）。
+        const effectiveJudge = frozenRow.event_id ? verdictMap.get(frozenRow.event_id) : null;
+        const judgePayload = effectiveJudge?.verdict;
+        const visibleToUser = judgePayload?.visible_to_user ?? undefined;
         const visible = isJudgementVisibleToUser({ visibleToUser, sessionStatus });
         // User's own answer is always safe to echo back (both variants).
         const answerMd = frozenRow.content_md;

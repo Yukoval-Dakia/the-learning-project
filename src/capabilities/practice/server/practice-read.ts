@@ -14,6 +14,7 @@ import { Artifact } from '@/core/schema/index';
 import type { Db, Tx } from '@/db/client';
 import { artifact, knowledge, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Shared knowledge name resolver (used by practice-read + paper-detail)
@@ -266,46 +267,28 @@ export async function getPracticeList(
   //    answer table's part_ref column is the canonical per-slot identifier).
   //    Take the NEWEST frozen row per slot (MAX(submitted_at)).
   //
-  //    Round-4 fix #2: use the newest JUDGE event's coarse_outcome instead of
-  //    the attempt event's outcome. A later rejudge supersedes the original verdict
-  //    by writing a new judge event (action='judge', subject_kind='event',
-  //    subject_id=attempt_event_id) — the detail view already uses newest-per-slot,
-  //    this keeps the list summary in sync. The correlated subquery fetches the
-  //    latest judge payload for the attempt; falls back to e.outcome (which maps
-  //    'success'→correct-equivalent bucket) when no judge event exists (historical
-  //    rows written before the paper judge path).
+  //    Round-4 fix #2: use the JUDGE event's coarse_outcome instead of the
+  //    attempt event's outcome. YUK-1054：verdict 走 effective 轨（链解析后仍
+  //    live 的最新 judge）——rejudge/attritube 新判 + supersede 后旧判不再回魂，
+  //    被 retract/mark_wrong 的判不计入右错桶（回落 attempt outcome 语义）。
   //    §4.10 Q9: correct/partial → right, anything else → wrong (deliberate —
   //    partial counts as right, see comment in previous rounds).
   const rightWrongBySession = new Map<string, { right: number; wrong: number }>();
   if (sessionIds.length > 0) {
-    // Round-6 fix #2 (CR 3359820526): also fetch visible_to_user from the newest
-    // judge event. For sessions not yet 'completed', slots with visible_to_user:false
-    // are excluded from the right/wrong count — the summary must not let the caller
-    // infer the buffered verdict. For completed sessions all slots are counted
-    // (the visibility gate opens on completion per §4.9).
+    // Round-6 fix #2 (CR 3359820526): also fetch visible_to_user from the
+    // effective judge. For sessions not yet 'completed', slots with
+    // visible_to_user:false are excluded from the right/wrong count — the summary
+    // must not let the caller infer the buffered verdict. For completed sessions
+    // all slots are counted (the visibility gate opens on completion per §4.9).
     const rwRows = await db.execute<{
       session_id: string;
-      coarse_outcome: string | null;
-      judge_visible_to_user: string | null;
+      attempt_event_id: string;
       attempt_outcome: string | null;
       unsupported_judge: string | null;
     }>(sql`
       SELECT
         a.session_id,
-        (SELECT j.payload->>'coarse_outcome'
-         FROM event j
-         WHERE j.action = 'judge'
-           AND j.subject_kind = 'event'
-           AND j.subject_id = a.event_id
-         ORDER BY j.created_at DESC
-         LIMIT 1) AS coarse_outcome,
-        (SELECT j.payload->>'visible_to_user'
-         FROM event j
-         WHERE j.action = 'judge'
-           AND j.subject_kind = 'event'
-           AND j.subject_id = a.event_id
-         ORDER BY j.created_at DESC
-         LIMIT 1) AS judge_visible_to_user,
+        a.event_id AS attempt_event_id,
         e.outcome AS attempt_outcome,
         e.payload->>'unsupported_judge' AS unsupported_judge
       FROM answer a
@@ -321,13 +304,18 @@ export async function getPracticeList(
             AND a2.submitted_at IS NOT NULL
         )
     `);
-    for (const r of rwRows as unknown as Array<{
+    const slotRows = rwRows as unknown as Array<{
       session_id: string;
-      coarse_outcome: string | null;
-      judge_visible_to_user: string | null;
+      attempt_event_id: string;
       attempt_outcome: string | null;
       unsupported_judge: string | null;
-    }>) {
+    }>;
+    // 一次性批量解析本页全部 slot 的 effective 裁决（固定 3 个 round-trip）。
+    const verdicts = await resolveVerdictsForAttempts(
+      db,
+      slotRows.map((r) => r.attempt_event_id).filter((id): id is string => typeof id === 'string'),
+    );
+    for (const r of slotRows) {
       if (!r.session_id) continue;
       // F1 (PR #309 round-4, YUK-215): an UN-JUDGED attempt (photo-only on a
       // text-only route — `unsupported_judge='true'`, no judge event) is neither
@@ -335,17 +323,18 @@ export async function getPracticeList(
       // right/wrong summary. Round-3 wrote this attempt with outcome='failure' and
       // no judge event, so the coarse_outcome fallback below counted it as wrong.
       if (r.unsupported_judge === 'true') continue;
-      // Visibility gate: if the newest judge is buffered (visible_to_user='false')
+      const effective = r.attempt_event_id ? verdicts.get(r.attempt_event_id)?.effective : undefined;
+      // Visibility gate: if the effective judge is buffered (visible_to_user=false)
       // and the session is not yet completed, skip this slot entirely — do not
       // count it as right or wrong. The summary must not leak the verdict.
       const sessionStatus = sessionStatusById.get(r.session_id);
-      const judgeBuffered = r.judge_visible_to_user === 'false';
+      const judgeBuffered = effective?.verdict.visible_to_user === false;
       if (judgeBuffered && sessionStatus !== 'completed') continue;
       const bucket = rightWrongBySession.get(r.session_id) ?? { right: 0, wrong: 0 };
-      // Prefer judge coarse_outcome; fall back to attempt outcome mapping.
+      // Prefer effective judge coarse_outcome; fall back to attempt outcome mapping.
       // attempt 'success' → treated as 'correct'; 'partial' → right; else wrong.
       const verdict =
-        r.coarse_outcome ??
+        effective?.verdict.coarse_outcome ??
         (r.attempt_outcome === 'success' ? 'correct' : (r.attempt_outcome ?? 'incorrect'));
       if (verdict === 'correct' || verdict === 'partial') {
         // partial counts as right (§4.10 Q9 deliberate — meaningful progress)

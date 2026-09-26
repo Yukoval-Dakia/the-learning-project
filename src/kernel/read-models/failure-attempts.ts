@@ -60,6 +60,13 @@ export type FailureAttempt = {
   created_at: Date;
   correction_state: EffectiveTruth;
   judge?: FailureAttemptJudge;
+  /**
+   * YUK-1054 — 双轨裁决（§9）。`judge` 是 effective 判（链解析后仍 live 的
+   * 最新判）；本字段是原始执行收据侧 earliest judge 事件（首个写给该 attempt
+   * 的 judge 行，未做链解析）。无 judge 时 null。与 `judge` 共存，不改旧
+   * `judge` 语义。
+   */
+  original_judge?: FailureAttemptJudge | null;
   user_cause?: FailureAttemptUserCause;
 };
 
@@ -378,24 +385,40 @@ async function loadFailureAttempts(
         inArray(event.action, ['judge', 'experimental:user_cause']),
       ),
     );
-  const effectiveChainedRows = await resolveEffectiveActiveRows(db, chainedRows);
-  const attemptTruths = await getEffectiveTruths(db, attemptIds);
+    const effectiveChainedRows = await resolveEffectiveActiveRows(db, chainedRows);
+    const attemptTruths = await getEffectiveTruths(db, attemptIds);
 
-  // Group by (action, caused_by_event_id); keep newest within each group.
-  const judgeByAttempt = new Map<string, { row: EventRow; truth: EffectiveTruth }>();
-  const userCauseByAttempt = new Map<string, { row: EventRow; truth: EffectiveTruth }>();
-  for (const originalRow of chainedRows) {
-    const effective = effectiveChainedRows.get(originalRow.id);
-    if (!effective) continue;
-    const key = originalRow.caused_by_event_id as string;
-    const bucket = effective.row.action === 'judge' ? judgeByAttempt : userCauseByAttempt;
-    const existing = bucket.get(key);
-    if (!existing || newerEventRow(effective.row, existing.row)) {
-      bucket.set(key, effective);
+    // Group by (action, caused_by_event_id); keep newest within each group.
+    const judgeByAttempt = new Map<string, { row: EventRow; truth: EffectiveTruth }>();
+    const userCauseByAttempt = new Map<string, { row: EventRow; truth: EffectiveTruth }>();
+    // YUK-1054 — 原始判（earliest raw judge 行，未做链解析）按 attempt 各留一份，
+    // 供双轨读取；独立于 effective 判（后者取链解析后仍 live 的最新行）。
+    const originalJudgeRowByAttempt = new Map<string, EventRow>();
+    for (const originalRow of chainedRows) {
+      const key = originalRow.caused_by_event_id as string;
+      if (originalRow.action === 'judge') {
+        const prev = originalJudgeRowByAttempt.get(key);
+        // keep earliest: replace when the stored row is newer than the current one
+        if (!prev || newerEventRow(prev, originalRow)) {
+          originalJudgeRowByAttempt.set(key, originalRow);
+        }
+      }
+      const effective = effectiveChainedRows.get(originalRow.id);
+      if (!effective) continue;
+      const bucket = effective.row.action === 'judge' ? judgeByAttempt : userCauseByAttempt;
+      const existing = bucket.get(key);
+      if (!existing || newerEventRow(effective.row, existing.row)) {
+        bucket.set(key, effective);
+      }
     }
-  }
+    // YUK-1054 — resolve each原始 judge 行自身的 chain truth，供其
+    // correction_state 反映“该收据行是否已被改判/撤回”。
+    const originalJudgeTruths = await getEffectiveTruths(
+      db,
+      [...originalJudgeRowByAttempt.values()].map((r) => r.id),
+    );
 
-  return activeAttemptRows.map((a) => {
+    return activeAttemptRows.map((a) => {
     const evidence = failureEvidenceFromRow(a);
     const result: FailureAttempt = {
       attempt_event_id: a.id,
@@ -407,20 +430,35 @@ async function loadFailureAttempts(
       created_at: a.created_at,
       correction_state: attemptTruths.get(a.id) ?? activeEffectiveTruth(a.id),
     };
-    const j = judgeByAttempt.get(a.id);
-    if (j) {
-      const jPayload = j.row.payload as {
-        cause: CauseSchemaT;
-        referenced_knowledge_ids: string[];
-      };
-      result.judge = {
-        judge_event_id: j.row.id,
-        cause: jPayload.cause,
-        referenced_knowledge_ids: jPayload.referenced_knowledge_ids ?? [],
-        created_at: j.row.created_at,
-        correction_state: j.truth,
-      };
-    }
+      const j = judgeByAttempt.get(a.id);
+      if (j) {
+        const jPayload = j.row.payload as {
+          cause: CauseSchemaT;
+          referenced_knowledge_ids: string[];
+        };
+        result.judge = {
+          judge_event_id: j.row.id,
+          cause: jPayload.cause,
+          referenced_knowledge_ids: jPayload.referenced_knowledge_ids ?? [],
+          created_at: j.row.created_at,
+          correction_state: j.truth,
+        };
+      }
+      const oj = originalJudgeRowByAttempt.get(a.id);
+      if (oj) {
+        const ojPayload = oj.payload as {
+          cause: CauseSchemaT;
+          referenced_knowledge_ids: string[];
+        };
+        result.original_judge = {
+          judge_event_id: oj.id,
+          cause: ojPayload.cause,
+          referenced_knowledge_ids: ojPayload.referenced_knowledge_ids ?? [],
+          created_at: oj.created_at,
+          correction_state:
+            originalJudgeTruths.get(oj.id) ?? activeEffectiveTruth(oj.id),
+        };
+      }
     const uc = userCauseByAttempt.get(a.id);
     if (uc) {
       const ucPayload = uc.row.payload as {
