@@ -19,6 +19,7 @@ import {
 import { db } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
+import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
 import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { buildCalendarReportWindow, localDateKey, resolveReportTimeZone } from './weekly-window';
 
@@ -94,6 +95,15 @@ export async function GET(req: Request): Promise<Response> {
         if (cat) causeCounts.set(cat, (causeCounts.get(cat) ?? 0) + 1);
       }
     }
+    // YUK-1054 (§9)— struggle 统计只看【当前仍判错】的 attempt：attempt.outcome
+    // 是 immutable 执行事实（永远 'failure'），改判翻转为 correct 的行不应再算
+    // 「这周错得多」。deterministic 评分分布（ratings/daily）仍用 immutable 原始
+    // 事实（rating / outcome），不走本过滤。
+    const verdicts = await resolveVerdictsForAttempts(db, failureIds);
+    const stillFailingIds = failureIds.filter(
+      (id) => verdicts.get(id)?.effective?.verdict.coarse_outcome !== 'correct',
+    );
+    const stillFailing = failures.filter((f) => stillFailingIds.includes(f.id));
     // YUK-1018 — misc_ category id 的显示回填（active misconception title）。
     const topCauseLabels = await resolveMiscCauseLabels(db, [...causeCounts.keys()]);
     const topCauses = [...causeCounts.entries()]
@@ -131,7 +141,7 @@ export async function GET(req: Request): Promise<Response> {
     // 7) Top struggling knowledge_ids — referenced_knowledge_ids on failure
     //    attempts; resolve names via knowledge table.
     const knowledgeCounts = new Map<string, number>();
-    for (const f of failures) {
+    for (const f of stillFailing) {
       const ids = (f.payload as { referenced_knowledge_ids?: string[] }).referenced_knowledge_ids;
       if (!Array.isArray(ids)) continue;
       for (const kid of ids) {
@@ -165,7 +175,9 @@ export async function GET(req: Request): Promise<Response> {
       },
       totals: {
         reviews: reviews.length,
-        failures: failures.length,
+        // YUK-1054 — failures 计【当前仍 effective 判错】的 attempt；已翻转的
+        // 原始执行收据不计入（双轨：原始 raw attempts 仍在流里，不改写历史）。
+        failures: stillFailingIds.length,
         cost_usd: totalCostMicroUsd / 1e6,
       },
       ratings: ratingCounts,

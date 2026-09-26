@@ -185,6 +185,7 @@ function cell(overrides: Partial<EnrichedEvidenceCell> = {}): EnrichedEvidenceCe
     baseline_p: 0.35,
     probe_here: true,
     has_owner_cause: true,
+    has_contested_verdict: false,
     // YUK-786 grounding packet — the induction contract now REQUIRES it.
     knowledge_name: '链式法则',
     subject_id: 'math',

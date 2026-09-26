@@ -13,6 +13,7 @@
 
 import { type Column, type SQL, isNull, ne, or, sql } from 'drizzle-orm';
 
+import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
 import { type question, question_group_lifecycle } from '@/db/schema';
 
 /**
@@ -26,7 +27,7 @@ import { type question, question_group_lifecycle } from '@/db/schema';
  * docs/design/2026-07-05-draft-status-pool-predicate-dedup-spec.md §2.2/§2.5).
  */
 export function notDraftPredicate(col: Column): SQL {
-  return or(isNull(col), ne(col, 'draft')) as SQL;
+  return or(isNull(col), ne(col, LEGACY_DRAFT_STATUS.DRAFT)) as SQL;
 }
 
 /**
@@ -38,7 +39,7 @@ export function notDraftPredicate(col: Column): SQL {
  * pool filters (spec §2.5).
  */
 export function isPoolVisible(row: { draft_status: string | null }): boolean {
-  return row.draft_status !== 'draft';
+  return row.draft_status !== LEGACY_DRAFT_STATUS.DRAFT;
 }
 
 /**

@@ -19,6 +19,7 @@ function candidate(key: string): GroundingGateCandidate {
       recurrence_count: 2,
       evidence_event_ids: [`${key}:attempt:1`, `${key}:attempt:2`],
       has_owner_cause: true,
+      has_contested_verdict: false,
       theta_hat: null,
       theta_precision: null,
       baseline_p: null,

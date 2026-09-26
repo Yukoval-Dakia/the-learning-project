@@ -760,6 +760,47 @@ describe('runMigrationApply — 全链路', () => {
       }),
     ).rejects.toThrow(/另一 classification 的 run/);
   });
+
+  it('YUK-1100：被拒 run 不落账本行 —— 错误调用的 sibling 冲突不再毒化 checkpoint 阻塞后续合法 run', async () => {
+    const fixture = await buildFixture();
+    const base = await planInput(fixture, fixture.registry);
+    // ① 先落一个【合法】run（completed）。
+    const legit = buildMigrationApplyPlan(base);
+    const legitRunId = 'run-legit00000000000000000';
+    await runApply(legit, { runId: legitRunId });
+
+    // ② 一次错误调用：同 checkpoint、异 classification 的 run 必须被拒 ——
+    //    且【不得】在 migration_apply_run 留下 'running' 毒行（账本无 rejected
+    //    态；不落行即终态处置）。
+    const badPlan = buildMigrationApplyPlan({
+      ...base,
+      classification: {
+        ...base.classification,
+        classification_version: 'db-test-wrong',
+        classification_hash: 'poison-hash',
+      },
+    });
+    const badRunId = 'run-bad0000000000000000000';
+    await expect(
+      runMigrationApply({ db: testDb(), plan: badPlan, runId: badRunId, fence: FENCE }),
+    ).rejects.toThrow(/另一 classification 的 run/);
+    const badRows = await testDb()
+      .select()
+      .from(migration_apply_run)
+      .where(eq(migration_apply_run.run_id, badRunId));
+    expect(badRows).toHaveLength(0); // 被拒 run 零账本痕迹 —— 旧次序会留下 running 行
+
+    // ③ 后续合法 run（同 checkpoint/同 classification/同 registry，仅 run_id
+    //    不同 —— 并行顶替语义）不被毒行挡住，幂等收敛。
+    const resumed = await runApply(legit, { runId: 'run-resume0000000000000' });
+    assertReconciliationClean(resumed.report);
+    // 账本上只有合法 run；checkpoint 上的 sibling 校验只见到同分类行。
+    const runs = await testDb().select().from(migration_apply_run);
+    expect(runs.map((r) => r.run_id).sort()).toEqual(
+      [legitRunId, 'run-resume0000000000000'].sort(),
+    );
+    expect(runs.every((r) => r.classification_hash === legit.classification_hash)).toBe(true);
+  });
 });
 
 describe('registry/contract 装载（DB 侧接线）', () => {

@@ -40,6 +40,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import type { ResolvedProvider } from '@/server/ai/providers';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
@@ -294,25 +295,27 @@ export async function runJudgeCalibrationSample(
       ),
     );
 
-  // Newest judge per answer event (MF4② — appeal overturns supersede).
-  const newestByAnswer = new Map<string, JudgeCandidate>();
-  for (const row of judgeRows) {
-    const candidate: JudgeCandidate = {
+  // Effective judge per answer event (YUK-1054 §9 dual-track — was "newest by
+  // created_at"). A rejudge anchors caused_by=appeal.id, so newest-by-created_at
+  // alone could pick a superseded/retracted row. resolveVerdictsForAttempts walks
+  // the correct-chain and returns the chain-resolved effective judge — the standing
+  // verdict the calibration should disagree-check.
+  const attemptIds = [...new Set(judgeRows.map((row) => row.subject_id))];
+  const rowById = new Map(judgeRows.map((row) => [row.id, row]));
+  const verdicts = await resolveVerdictsForAttempts(db, attemptIds);
+  let candidates: JudgeCandidate[] = [];
+  for (const v of verdicts.values()) {
+    const effectiveId = v.effective?.judge_event_id;
+    if (!effectiveId) continue;
+    const row = rowById.get(effectiveId);
+    if (!row) continue;
+    candidates.push({
       id: row.id,
       subject_id: row.subject_id,
       created_at: row.created_at,
       payload: row.payload as Record<string, unknown>,
-    };
-    const prev = newestByAnswer.get(row.subject_id);
-    if (
-      !prev ||
-      candidate.created_at.getTime() > prev.created_at.getTime() ||
-      (candidate.created_at.getTime() === prev.created_at.getTime() && candidate.id > prev.id)
-    ) {
-      newestByAnswer.set(row.subject_id, candidate);
-    }
+    });
   }
-  let candidates = [...newestByAnswer.values()];
 
   // Already-sampled pre-filter (performance layer; MF8 index is the guarantee).
   // ACTION-FILTERED — appeal events share the caused_by key space (§3.2).

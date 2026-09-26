@@ -21262,6 +21262,8 @@ export interface operations {
                             total_slots: number | null;
                             /** @enum {string|null} */
                             verdict: "again" | "hard" | "good" | null;
+                            verdict_effective: string | null;
+                            verdict_effective_state: string | null;
                         }[];
                         opening_line: string;
                         progress: {
@@ -21435,6 +21437,8 @@ export interface operations {
                             updated_at: string;
                             /** @enum {string|null} */
                             verdict: "again" | "hard" | "good" | null;
+                            verdict_effective: string | null;
+                            verdict_effective_state: string | null;
                         };
                     };
                 };
@@ -21587,6 +21591,8 @@ export interface operations {
                             total_slots: number | null;
                             /** @enum {string|null} */
                             verdict: "again" | "hard" | "good" | null;
+                            verdict_effective: string | null;
+                            verdict_effective_state: string | null;
                         }[];
                         opening_line: string;
                         progress: {

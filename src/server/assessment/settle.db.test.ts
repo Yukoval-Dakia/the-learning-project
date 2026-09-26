@@ -15,7 +15,7 @@
 //   - advisory lock：per-KC `fsrs:knowledge:<id>` 与 `mastery:ability_global:
 //     <domain>` xact 锁在同事务内可观测。
 
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -699,6 +699,51 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     // FSRS 不受 mixed 位影响：组级 partial ⇒ hard 评级落两张 KC 卡。
     expect((await fsrsRow('knowledge', 'kc_a'))?.state?.reps).toBe(1);
     expect((await fsrsRow('knowledge', 'kc_b'))?.state?.reps).toBe(1);
+  });
+
+  // YUK-1054 — replay 付费 fanout 抑制（ticket: 「replay 不重发 models/nudges/
+  // memory」）。读侧结构性保证由本测试钉住：
+  //   1) replay 路径只写 `experimental:assessment_settlement` 事件——不写任何
+  //      attempt/review/judge 事件 ⇒ 订阅链无 refire 入点；
+  //   2) 结算事件 ingest_at 预填（writer 传入 activatedAt）⇒ memory outbox 的
+  //      `ingest_at IS NULL` 拾取口天然跳过它；
+  //   3) actor_kind='system' ⇒ shouldExtractToMemory 的 user 门也过不了。
+  it('replay 结算只写 settlement 事件（无 judge/attempt refire）+ ingest_at 预填跳过 memory outbox', async () => {
+    await seedKnowledge('kc_a', { domain: 'dom_x' });
+    const t1 = new Date('2026-09-20T00:00:00Z');
+    const t2 = new Date('2026-09-21T00:00:00Z');
+    const seedA = await seedChain('nfA', { kcs: ['kc_a'], submittedAt: t2 });
+    const unitA = `${seedA.qid}::u`;
+    await seedEvaluation(seedA, 'evA', { unitResults: [unitResult(unitA, 1)] });
+    await activate('evA', { effectiveId: null, generation: 0 }, t2);
+    const seedB = await seedChain('nfB', { kcs: ['kc_a'], submittedAt: t1 });
+    const unitB = `${seedB.qid}::u`;
+    await seedEvaluation(seedB, 'evB', { unitResults: [unitResult(unitB, 1)] });
+
+    await activate('evB', { effectiveId: null, generation: 0 }, new Date('2026-09-22T00:00:00Z'));
+
+    // replay 已发生：A 被 revert 后按原 occurrence 重放出一个 replay 结算。
+    const all = await settlementEvents();
+    expect(
+      all.some(
+        (e) =>
+          (e.payload as { replay_of?: string }).replay_of !== undefined &&
+          (e.payload as { replay_of?: string }).replay_of !== null,
+      ),
+    ).toBe(true);
+
+    // 全链零 attempt/review/judge 事件——replay 不产生任何可订阅的判分/作答行。
+    const domainRows = await testDb()
+      .select({ id: event.id })
+      .from(event)
+      .where(and(inArray(event.action, ['attempt', 'review', 'judge'])));
+    expect(domainRows).toHaveLength(0);
+
+    // ingest_at 预填 + actor_kind='system'：memory outbox 两道门都关死。
+    for (const row of all) {
+      expect(row.ingest_at).not.toBeNull();
+      expect(row.actor_kind).toBe('system');
+    }
   });
 
   it('YUK-1093 P1-1：θ̂ bracket 含 ability_global 行 —— regrade 后 domain 证据/θ̂ 不双计', async () => {

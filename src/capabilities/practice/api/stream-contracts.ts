@@ -44,6 +44,10 @@ const PracticeStreamViewItemSchema = z.object({
   knowledge_name: z.string().nullable(),
   paper_title: z.string().nullable(),
   verdict: z.enum(['again', 'hard', 'good']).nullable(),
+  // YUK-1054 — 双轨裁决（§9）。verdict 仍是原始 FSRS rating；effective judge 判
+  // （链解析后仍 live 的最新判 coarse_outcome）在此透出。
+  verdict_effective: z.string().nullable(),
+  verdict_effective_state: z.string().nullable(),
   completed_at: z.string().datetime().nullable(),
   total_slots: z.number().int().nonnegative().nullable(),
 });
@@ -94,6 +98,8 @@ const PersistedPracticeStreamItemSchema = z.object({
   knowledge_name: z.string().nullable(),
   paper_title: z.string().nullable(),
   verdict: z.enum(['again', 'hard', 'good']).nullable(),
+  verdict_effective: z.string().nullable(),
+  verdict_effective_state: z.string().nullable(),
   completed_at: z.string().datetime().nullable(),
   total_slots: z.number().int().nonnegative().nullable(),
 });
