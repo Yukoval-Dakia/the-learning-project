@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -106,5 +107,87 @@ describe('resolveManifestPath + buildManifest', () => {
     // 观测缺 DLQ 队列 ⇒ 每行 mismatch=false（truthful，不静默标 true）。
     expect(manifest.queues.dlq_reconciliation.every((r) => r.matches === false)).toBe(true);
     expect(warnings.some((w) => w.startsWith('missing_restore_evidence'))).toBe(true);
+  });
+});
+
+describe('P1-1 restore evidence 绑定当前 dump', () => {
+  const CAP = join(TMP, 'p1cap');
+  const DUMP = join(TMP, 'p1.dump');
+  const DLQ = join(TMP, 'p1-dlq.json');
+  const minimalManifest = {
+    checkpoint_hash: 'h1',
+    raw_fact_hash: { canonical: 'rf', per_partition: {} },
+    queues: { by_name_state: [] },
+    subscriptions: {},
+    blobs: {},
+    classification: { unresolved: [] },
+    unresolved_count: 0,
+    mutable_ops_fields: { excluded_from_fact_hash: ['event.ingest_at'] },
+    completeness: { note: 'dispatch_seq 非完整性证明', snapshot_at: 'x' },
+    projection_baseline: {},
+  };
+  mkdirSync(CAP, { recursive: true });
+  writeFileSync(join(CAP, 'manifest-h1.json'), JSON.stringify(minimalManifest));
+  writeFileSync(join(CAP, 'latest.json'), JSON.stringify({ manifest_file: 'manifest-h1.json' }));
+  writeFileSync(DUMP, 'dumpbytes');
+  writeFileSync(DLQ, JSON.stringify([{ name: 'x_dlq' }]));
+  const dumpSha = createHash('sha256').update('dumpbytes').digest('hex');
+
+  const writeEvidence = (name: string, body: Record<string, unknown>): string => {
+    const p = join(TMP, name);
+    writeFileSync(p, JSON.stringify(body));
+    return p;
+  };
+
+  const build = (evi: string) =>
+    buildManifest(
+      parseCutoverBackupArgs([
+        `--capture-dir=${CAP}`,
+        `--dump=${DUMP}`,
+        `--dlq=${DLQ}`,
+        `--restore-evidence=${evi}`,
+      ]),
+    );
+
+  it('matched: nested dump.sha256 等于所选 dump ⇒ 接受并读 nested toc_entries', () => {
+    const evi = writeEvidence('evi-match.json', {
+      verified: true,
+      container: 'loom-restore-drill-x',
+      dump: { file: DUMP, sha256: dumpSha, bytes: 9, toc_entries: 42 },
+      table_counts: { 'public.event': 3 },
+    });
+    const { manifest, warnings } = build(evi);
+    expect(manifest.backup.dump?.sha256).toBe(dumpSha);
+    expect(manifest.backup.restore_evidence?.verified).toBe(true);
+    expect(manifest.backup.restore_evidence?.toc_entries).toBe(42);
+    expect(warnings.some((w) => w.startsWith('restore_evidence_unverified'))).toBe(false);
+  });
+
+  it('mismatched: nested dump.sha256 ≠ 所选 dump ⇒ 硬错误并点名两个 hash', () => {
+    const other = 'a'.repeat(64);
+    const evi = writeEvidence('evi-mismatch.json', {
+      verified: true,
+      container: 'loom-restore-drill-y',
+      dump: { file: '/elsewhere/other.dump', sha256: other },
+      table_counts: {},
+    });
+    let err: Error | null = null;
+    try {
+      build(evi);
+    } catch (e) {
+      err = e as Error;
+    }
+    expect(err).not.toBeNull();
+    expect(err?.message).toContain(other);
+    expect(err?.message).toContain(dumpSha);
+  });
+
+  it('missing nested dump.sha256 ⇒ 硬错误（无法绑定，不得凭顶层 verified 冒充）', () => {
+    const evi = writeEvidence('evi-nosha.json', {
+      verified: true,
+      container: 'loom-restore-drill-z',
+      table_counts: {},
+    });
+    expect(() => build(evi)).toThrow(/dump\.sha256/);
   });
 });

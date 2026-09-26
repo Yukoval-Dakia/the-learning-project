@@ -144,6 +144,13 @@ export interface RestoreEvidenceShape {
   container?: string;
   toc_entries?: number | null;
   table_counts?: Record<string, number>;
+  /** restore-drill.sh 记录的【被恢复工件】身份（绑定证据与当前 dump 的关键）。 */
+  dump?: {
+    file?: string;
+    sha256?: string;
+    bytes?: number;
+    toc_entries?: number | null;
+  };
   [k: string]: unknown;
 }
 
@@ -203,13 +210,35 @@ export function buildManifest(args: CutoverBackupArgs): {
       throw new Error(`restore evidence 不存在: ${args.restoreEvidence}`);
     }
     const raw = JSON.parse(readFileSync(args.restoreEvidence, 'utf8')) as RestoreEvidenceShape;
+    // P1-1：证据必须绑定【所选 dump】——restore-drill.sh 把被恢复工件写在 nested
+    // dump.sha256；只凭顶层 verified=true 会允许「别的 dump 的演练」冒充当前备份。
+    const evidenceDumpSha =
+      typeof raw.dump?.sha256 === 'string' && raw.dump.sha256.length > 0 ? raw.dump.sha256 : null;
+    if (dump !== null) {
+      if (evidenceDumpSha === null) {
+        throw new Error(
+          `restore evidence ${args.restoreEvidence} 缺 nested dump.sha256，无法绑定所选 dump（dump.sha256=${dump.sha256}）`,
+        );
+      }
+      if (evidenceDumpSha !== dump.sha256) {
+        throw new Error(
+          `restore evidence dump.sha256=${evidenceDumpSha} 与所选 dump 不符（dump.sha256=${dump.sha256}）—— 证据不属于当前备份`,
+        );
+      }
+    }
     restoreEvidence = {
       file: resolve(args.restoreEvidence),
       sha256: sha256File(args.restoreEvidence),
       bytes: statSync(args.restoreEvidence).size,
       verified: raw.verified === true,
       container: typeof raw.container === 'string' ? raw.container : 'unknown',
-      toc_entries: typeof raw.toc_entries === 'number' ? raw.toc_entries : null,
+      // toc_entries 优先取 nested dump.toc_entries（drill 的实际记录位置）。
+      toc_entries:
+        typeof raw.dump?.toc_entries === 'number'
+          ? raw.dump.toc_entries
+          : typeof raw.toc_entries === 'number'
+            ? raw.toc_entries
+            : null,
       table_counts:
         typeof raw.table_counts === 'object' && raw.table_counts !== null ? raw.table_counts : {},
     };

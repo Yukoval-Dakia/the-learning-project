@@ -142,22 +142,45 @@ END_EPOCH="$(date +%s)"
 ERR_TAIL="$(tail -c 4000 "$RESTORE_ERR" 2>/dev/null | sed 's/"/\\"/g' | tr '\n' '|' || true)"
 
 # ── 证据 JSON（printf 拼装；table_counts 已是合法 JSON 文本） ──
-mkdir -p "$EVIDENCE_DIR" 2>/dev/null || true
-printf '{\n' >"$OUT"
-printf '  "drill": "loom-restore-drill",\n' >>"$OUT"
-printf '  "at": "%s",\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >>"$OUT"
-printf '  "dump": {"file": "%s", "sha256": "%s", "bytes": %s, "toc_entries": %s},\n' \
-  "$DUMP" "$DUMP_SHA" "$DUMP_BYTES" "${TOC:-null}" >>"$OUT"
-printf '  "image": "%s",\n' "$IMG" >>"$OUT"
-printf '  "container": "%s",\n' "$CONTAINER" >>"$OUT"
-printf '  "duration_seconds": %s,\n' "$((END_EPOCH - START_EPOCH))" >>"$OUT"
-printf '  "migrations_applied": %s,\n' "${MIGRATIONS:-null}" >>"$OUT"
-printf '  "event_rows": %s,\n' "${EVENT_COUNT:-null}" >>"$OUT"
-printf '  "table_counts": %s,\n' "${TABLE_COUNTS:-\{\}}" >>"$OUT"
-printf '  "verified": %s,\n' "${VERIFIED:-false}" >>"$OUT"
-printf '  "errors": "%s",\n' "$ERR_TAIL" >>"$OUT"
-printf '  "note": "scratch-only; production untouched; dump read via stdin (terminal context required)"\n' >>"$OUT"
-printf '}\n' >>"$OUT"
+# P1-2：必须写进 --out 的实际目录（而非 dump 所在目录），并核验落盘成功，
+# 否则「恢复成功但证据没写成」会让切换证明无声失效。
+OUT_DIR="$(dirname "$OUT")"
+if ! mkdir -p "$OUT_DIR"; then
+  log "FAIL: evidence dir cannot be created: $OUT_DIR"
+  exit 1
+fi
+EVIDENCE_TMP="${OUT}.tmp-$$"
+if ! (
+  set -e
+  printf '{\n'
+  printf '  "drill": "loom-restore-drill",\n'
+  printf '  "at": "%s",\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  printf '  "dump": {"file": "%s", "sha256": "%s", "bytes": %s, "toc_entries": %s},\n' \
+    "$DUMP" "$DUMP_SHA" "$DUMP_BYTES" "${TOC:-null}"
+  printf '  "image": "%s",\n' "$IMG"
+  printf '  "container": "%s",\n' "$CONTAINER"
+  printf '  "duration_seconds": %s,\n' "$((END_EPOCH - START_EPOCH))"
+  printf '  "migrations_applied": %s,\n' "${MIGRATIONS:-null}"
+  printf '  "event_rows": %s,\n' "${EVENT_COUNT:-null}"
+  printf '  "table_counts": %s,\n' "${TABLE_COUNTS:-\{\}}"
+  printf '  "verified": %s,\n' "${VERIFIED:-false}"
+  printf '  "errors": "%s",\n' "$ERR_TAIL"
+  printf '  "note": "scratch-only; production untouched; dump read via stdin (terminal context required)"\n'
+  printf '}\n'
+) >"$EVIDENCE_TMP"; then
+  log "FAIL: evidence write failed: $OUT"
+  rm -f "$EVIDENCE_TMP"
+  exit 1
+fi
+if ! mv -f "$EVIDENCE_TMP" "$OUT"; then
+  log "FAIL: evidence move failed: $OUT"
+  rm -f "$EVIDENCE_TMP"
+  exit 1
+fi
+if [ ! -s "$OUT" ]; then
+  log "FAIL: evidence file empty/missing after write: $OUT"
+  exit 1
+fi
 
 log "evidence: $OUT (verified=${VERIFIED:-false})"
 if [ "${VERIFIED:-false}" != true ]; then
