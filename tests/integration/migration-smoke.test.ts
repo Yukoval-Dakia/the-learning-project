@@ -3339,3 +3339,334 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
     `).rejects.toMatchObject({ constraint_name: 'question_group_lifecycle_suspension_reason_ck' });
   });
 });
+
+describe('migration smoke — YUK-1097 assessment truth guards', () => {
+  // 0111 在 0105/0107 guard 先例上补三条 P1：
+  //  (1) evaluation_group.submission_ids 成为成员关系的 DB 层派生缓存
+  //      （submission INSERT trigger 追加 + 组行只许严格追加真实成员 +
+  //      DELETE 拒绝）；
+  //  (2) assessment_identity_mapping 身份坐标/裁决字段冻结（可变：
+  //      is_current/supersedes_mapping_id 与 pending 行的注释刷新）；
+  //  (3) evaluation 终态冻结（pending→completed 是唯一载荷写入迁移）。
+  const FINAL_TAG = '0111_yuk1097_assessment_truth_guards';
+  let container: StartedPostgreSqlContainer;
+  let client: ReturnType<typeof postgres>;
+
+  beforeAll(async () => {
+    ensureDockerHost();
+    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    client = postgres(container.getConnectionUri(), { max: 1 });
+    for (const migration of orderedMigrations()) {
+      await applyMigrationFile(client, migration.sql);
+      if (migration.tag === FINAL_TAG) break;
+    }
+    // 共享 fixture：revision → issuance → group+submission+head 链（FK 拓扑序）。
+    await insertRevision('rev_97', 971);
+    await insertIssuance('iss_97', 'rev_97');
+  }, 120_000);
+
+  afterAll(async () => {
+    await client?.end();
+    await container?.stop();
+  });
+
+  async function insertRevision(
+    revisionId: string,
+    ordinal: number,
+    groupId = 'grp_97',
+  ): Promise<void> {
+    await client`
+      INSERT INTO question_revision (
+        revision_id, group_id, revision_ordinal, integrity_digest,
+        structure, response_spec, scoring_basis, execution_plan,
+        availability, published_at
+      ) VALUES (
+        ${revisionId}, ${groupId}, ${ordinal}, ${`sha256:${revisionId}`},
+        '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb,
+        'general_pool', now()
+      )
+    `;
+  }
+
+  async function insertIssuance(issuanceId: string, revisionId: string): Promise<void> {
+    await client`
+      INSERT INTO assessment_issuance (
+        issuance_id, revision_id, part_ids, material_bindings, option_order,
+        container_occurrence_ref, claim_policy, claim_status, issued_at
+      ) VALUES (
+        ${issuanceId}, ${revisionId}, '["p1"]'::jsonb, '[]'::jsonb, '[]'::jsonb,
+        null, 'unbounded', 'unclaimed', now()
+      )
+    `;
+  }
+
+  async function insertGroup(groupId: string, declared: string[]): Promise<void> {
+    await client`
+      INSERT INTO evaluation_group (evaluation_group_id, submission_ids, created_at)
+      VALUES (${groupId}, ${client.json(declared)}::jsonb, now())
+    `;
+  }
+
+  async function insertSubmission(
+    submissionId: string,
+    groupId: string,
+    idempotencyKey: string,
+  ): Promise<void> {
+    await client`
+      INSERT INTO assessment_submission (
+        submission_id, issuance_id, revision_id, evaluation_group_id,
+        response_set, idempotency_key, submitted_at
+      ) VALUES (
+        ${submissionId}, 'iss_97', 'rev_97', ${groupId},
+        '{}'::jsonb, ${idempotencyKey}, now()
+      )
+    `;
+  }
+
+  async function readGroupIds(groupId: string): Promise<string[]> {
+    const [row] = await client<{ submission_ids: string[] }[]>`
+      SELECT submission_ids FROM evaluation_group WHERE evaluation_group_id = ${groupId}
+    `;
+    if (row === undefined) throw new Error(`fixture group ${groupId} not found`);
+    return row.submission_ids;
+  }
+
+  async function insertMapping(
+    mappingId: string,
+    status: string,
+    opts: { locator?: string; targetRevision?: string } = {},
+  ): Promise<void> {
+    await client`
+      INSERT INTO assessment_identity_mapping (
+        mapping_id, source_kind, source_id, source_locator,
+        original_question_id, target_revision_id, algorithm_version, status,
+        is_current, created_at
+      ) VALUES (
+        ${mappingId}, 'paper_answer', '97', ${opts.locator ?? `paper.slots[${mappingId}]`},
+        'q97', ${opts.targetRevision ?? null}, 'map-v1', ${status}, true, now()
+      )
+    `;
+  }
+
+  // ── (1) evaluation_group.submission_ids 派生缓存 ──
+
+  it('submission INSERT appends to the group array; declare-first is allowed, divergence is impossible on UPDATE', async () => {
+    await insertGroup('eg_97a', ['sub_97a']);
+    await insertSubmission('sub_97a', 'eg_97a', 'idem-97a');
+    // INSERT 时已声明自身 ⇒ trigger 追加是 no-op，不重复。
+    expect(await readGroupIds('eg_97a')).toEqual(['sub_97a']);
+
+    // declare-first：组行可声明尚不存在的成员（计划模式），兑现由 trigger 补齐。
+    await insertGroup('eg_97b', ['sub_97b1', 'sub_97b2']);
+    await insertSubmission('sub_97b1', 'eg_97b', 'idem-97b1');
+    expect(await readGroupIds('eg_97b')).toEqual(['sub_97b1', 'sub_97b2']);
+    // 未声明成员的 submission 落库 ⇒ trigger 追加到数组尾。
+    await insertGroup('eg_97c', ['sub_97c1']);
+    await insertSubmission('sub_97c1', 'eg_97c', 'idem-97c1');
+    await insertSubmission('sub_97c2', 'eg_97c', 'idem-97c2');
+    expect(await readGroupIds('eg_97c')).toEqual(['sub_97c1', 'sub_97c2']);
+  });
+
+  it('group UPDATE is append-only real members: removal, reorder, phantom, dup tail all rejected', async () => {
+    await insertGroup('eg_97d', ['sub_97d1', 'sub_97d2']);
+    await insertSubmission('sub_97d1', 'eg_97d', 'idem-97d1');
+    await insertSubmission('sub_97d2', 'eg_97d', 'idem-97d2');
+
+    // 移除成员 ⇒ P0001。
+    await expect(client`
+      UPDATE evaluation_group SET submission_ids = '["sub_97d1"]'::jsonb
+      WHERE evaluation_group_id = 'eg_97d'
+    `).rejects.toMatchObject({ code: 'P0001' });
+    // 保元素但重排 ⇒ P0001（严格前缀追加）。
+    await expect(client`
+      UPDATE evaluation_group SET submission_ids = '["sub_97d2","sub_97d1","sub_97d3"]'::jsonb
+      WHERE evaluation_group_id = 'eg_97d'
+    `).rejects.toMatchObject({ code: 'P0001' });
+    // 追加不存在的成员 ⇒ P0001（幻影 id）。
+    await expect(client`
+      UPDATE evaluation_group SET submission_ids = '["sub_97d1","sub_97d2","sub_ghost"]'::jsonb
+      WHERE evaluation_group_id = 'eg_97d'
+    `).rejects.toMatchObject({ code: 'P0001' });
+    // 追加他组真实成员 ⇒ P0001（成员资格按 evaluation_group_id 判定）。
+    await insertGroup('eg_97e', ['sub_97e']);
+    await insertSubmission('sub_97e', 'eg_97e', 'idem-97e');
+    await expect(client`
+      UPDATE evaluation_group SET submission_ids = '["sub_97d1","sub_97d2","sub_97e"]'::jsonb
+      WHERE evaluation_group_id = 'eg_97d'
+    `).rejects.toMatchObject({ code: 'P0001' });
+    // 追加段重复自身 ⇒ P0001。
+    await expect(client`
+      UPDATE evaluation_group SET submission_ids = '["sub_97d1","sub_97d2","sub_97d1"]'::jsonb
+      WHERE evaluation_group_id = 'eg_97d'
+    `).rejects.toMatchObject({ code: 'P0001' });
+    // 追加本组真实成员 ⇒ 放行（合规手动补齐路径）。
+    await client`
+      INSERT INTO assessment_submission (
+        submission_id, issuance_id, revision_id, evaluation_group_id,
+        response_set, idempotency_key, submitted_at
+      ) VALUES ('sub_97d3', 'iss_97', 'rev_97', 'eg_97d', '{}'::jsonb, 'idem-97d3', now())
+    `;
+    // trigger 已把 sub_97d3 追加 ⇒ 手动同值/重复追加是合法 no-op。
+    expect(await readGroupIds('eg_97d')).toEqual(['sub_97d1', 'sub_97d2', 'sub_97d3']);
+    // 身份坐标冻结：created_at 改写拒绝（悬空组无 FK 兜底，同态 PK 改写同理）。
+    await expect(client`
+      UPDATE evaluation_group SET created_at = now() + interval '1 day'
+      WHERE evaluation_group_id = 'eg_97d'
+    `).rejects.toMatchObject({ code: 'P0001' });
+    // 同值 UPDATE（IS NOT DISTINCT 语义）不受影响。
+    await client`
+      UPDATE evaluation_group SET submission_ids = submission_ids
+      WHERE evaluation_group_id = 'eg_97d'
+    `;
+    // DELETE 一律拒绝（组行不可抹除）。
+    await expect(client`
+      DELETE FROM evaluation_group WHERE evaluation_group_id = 'eg_97d'
+    `).rejects.toMatchObject({ code: 'P0001' });
+    // restore 通道：GUC 事务内可 wipe —— 先子后父（archive.ts 反序），
+    // FK 本身不受 guard GUC 影响。
+    await client.begin(async (tx) => {
+      await tx`SET LOCAL app.assessment_restore_mode = 'on'`;
+      await tx`DELETE FROM assessment_submission WHERE submission_id = 'sub_97e'`;
+      await tx`DELETE FROM evaluation_group WHERE evaluation_group_id = 'eg_97e'`;
+    });
+    const gone = await client`
+      SELECT 1 FROM evaluation_group WHERE evaluation_group_id = 'eg_97e'
+    `;
+    expect(gone).toHaveLength(0);
+  });
+
+  // ── (2) assessment_identity_mapping 冻结 ──
+
+  it('identity mapping: adjudication fields frozen; only is_current/supersedes mutable + pending annotation refresh', async () => {
+    await insertMapping('map_97_pending', 'pending');
+    // pending 占位行：evidence/algorithm_version 操作性注释刷新放行（P1-5）。
+    await client`
+      UPDATE assessment_identity_mapping
+      SET evidence = '{"note":"retry"}'::jsonb, algorithm_version = 'yuk1050-apply/r2'
+      WHERE mapping_id = 'map_97_pending'
+    `;
+    // pending 行的裁决字段仍冻结（status 改写只能走 supersedes 新行）。
+    await expect(client`
+      UPDATE assessment_identity_mapping SET status = 'mapped'
+      WHERE mapping_id = 'map_97_pending'
+    `).rejects.toMatchObject({ code: 'P0001' });
+
+    await insertMapping('map_97_mapped', 'mapped', {
+      locator: 'paper.slots[m97m]',
+      targetRevision: 'rev_97',
+    });
+    // 已裁决行：注释也冻结。
+    await expect(client`
+      UPDATE assessment_identity_mapping SET evidence = '{"tamper":true}'::jsonb
+      WHERE mapping_id = 'map_97_mapped'
+    `).rejects.toMatchObject({ code: 'P0001' });
+    // 身份坐标逐列冻结（抽样三类：定位/目标坐标/时点）。
+    await expect(client`
+      UPDATE assessment_identity_mapping SET source_locator = 'paper.slots[other]'
+      WHERE mapping_id = 'map_97_mapped'
+    `).rejects.toMatchObject({ code: 'P0001' });
+    await expect(client`
+      UPDATE assessment_identity_mapping SET target_revision_id = NULL
+      WHERE mapping_id = 'map_97_mapped'
+    `).rejects.toMatchObject({ code: 'P0001' });
+    await expect(client`
+      UPDATE assessment_identity_mapping SET created_at = now() + interval '1 day'
+      WHERE mapping_id = 'map_97_mapped'
+    `).rejects.toMatchObject({ code: 'P0001' });
+    // 修正链可变列放行：is_current 翻转 + supersedes 链写入。
+    await client`
+      UPDATE assessment_identity_mapping
+      SET is_current = false, supersedes_mapping_id = 'map_97_pending'
+      WHERE mapping_id = 'map_97_mapped'
+    `;
+    const [flipped] = await client<{ is_current: boolean; supersedes_mapping_id: string | null }[]>`
+      SELECT is_current, supersedes_mapping_id FROM assessment_identity_mapping
+      WHERE mapping_id = 'map_97_mapped'
+    `;
+    expect(flipped).toMatchObject({ is_current: false, supersedes_mapping_id: 'map_97_pending' });
+    // DELETE 一律拒绝 —— 历史裁决不可抹除。
+    await expect(client`
+      DELETE FROM assessment_identity_mapping WHERE mapping_id = 'map_97_mapped'
+    `).rejects.toMatchObject({ code: 'P0001' });
+    // restore 通道放行（模拟 archive.ts 恢复事务的修正擦写）。
+    await client.begin(async (tx) => {
+      await tx`SET LOCAL app.assessment_restore_mode = 'on'`;
+      await tx`
+        UPDATE assessment_identity_mapping SET evidence = '{"restored":true}'::jsonb
+        WHERE mapping_id = 'map_97_mapped'
+      `;
+    });
+  });
+
+  // ── (3) evaluation 终态冻结 ──
+
+  it('evaluation: payload writable only via pending→completed; terminal row is frozen; DELETE rejected', async () => {
+    await insertGroup('eg_97f', ['sub_97f']);
+    await insertSubmission('sub_97f', 'eg_97f', 'idem-97f');
+
+    // pending 行插入（最小载荷）。
+    await client`
+      INSERT INTO evaluation (
+        evaluation_id, evaluation_group_id, submission_id, attempt, status, created_at
+      ) VALUES ('ev_97p', 'eg_97f', 'sub_97f', 1, 'pending', now())
+    `;
+    // pending→pending：run_refs 操作性补充放行。
+    await client`
+      UPDATE evaluation SET run_refs = '["run_1"]'::jsonb
+      WHERE evaluation_id = 'ev_97p'
+    `;
+    // pending→pending 的载荷改写拒绝（unit_results/aggregate/plan_digest/provenance）。
+    await expect(client`
+      UPDATE evaluation SET aggregate = '{"verdict":"x"}'::jsonb
+      WHERE evaluation_id = 'ev_97p'
+    `).rejects.toMatchObject({ code: 'P0001' });
+    await expect(client`
+      UPDATE evaluation SET plan_digest = 'dg_tampered'
+      WHERE evaluation_id = 'ev_97p'
+    `).rejects.toMatchObject({ code: 'P0001' });
+    // pending 行身份坐标也冻结。
+    await expect(client`
+      UPDATE evaluation SET attempt = 2 WHERE evaluation_id = 'ev_97p'
+    `).rejects.toMatchObject({ code: 'P0001' });
+    // pending→completed 是唯一携带终态载荷的合法迁移。
+    await client`
+      UPDATE evaluation
+      SET status = 'completed',
+          unit_results = '[{"u":1,"score":1}]'::jsonb,
+          aggregate = '{"score":1}'::jsonb,
+          plan_digest = 'dg_final',
+          provenance = '{"source":"automatic"}'::jsonb
+      WHERE evaluation_id = 'ev_97p'
+    `;
+    // 终态后：status/载荷/run_refs 任何改写拒绝。
+    await expect(client`
+      UPDATE evaluation SET unit_results = '[]'::jsonb WHERE evaluation_id = 'ev_97p'
+    `).rejects.toMatchObject({ code: 'P0001' });
+    await expect(client`
+      UPDATE evaluation SET run_refs = '["run_2"]'::jsonb WHERE evaluation_id = 'ev_97p'
+    `).rejects.toMatchObject({ code: 'P0001' });
+    await expect(client`
+      UPDATE evaluation SET status = 'pending' WHERE evaluation_id = 'ev_97p'
+    `).rejects.toMatchObject({ code: 'P0001' });
+    // 终态行同值 UPDATE（IS NOT DISTINCT）不受影响。
+    await client`
+      UPDATE evaluation SET aggregate = '{"score":1}'::jsonb WHERE evaluation_id = 'ev_97p'
+    `;
+    // DELETE 一律拒绝 —— 判分尝试记录不可抹除。
+    await expect(client`
+      DELETE FROM evaluation WHERE evaluation_id = 'ev_97p'
+    `).rejects.toMatchObject({ code: 'P0001' });
+    // restore 通道放行。
+    await client.begin(async (tx) => {
+      await tx`SET LOCAL app.assessment_restore_mode = 'on'`;
+      await tx`
+        UPDATE evaluation SET run_refs = '["run_restored"]'::jsonb
+        WHERE evaluation_id = 'ev_97p'
+      `;
+    });
+    const [restored] = await client<{ run_refs: string[] }[]>`
+      SELECT run_refs FROM evaluation WHERE evaluation_id = 'ev_97p'
+    `;
+    expect(restored?.run_refs).toEqual(['run_restored']);
+  });
+});
