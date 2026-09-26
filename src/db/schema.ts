@@ -739,7 +739,15 @@ export const assessment_issuance = pgTable(
   ],
 );
 
-/** 联合判分组：一次 settle 的单位（solo 单题 = 单 submission 组）。 */
+/**
+ * 联合判分组：一次 settle 的单位（solo 单题 = 单 submission 组）。
+ *
+ * P1（YUK-1097）：submission_ids 是成员关系的 DB 层派生缓存 ——
+ * submission INSERT trigger 追加成员；组行 UPDATE 只允许严格前缀追加
+ * 真实成员（移除/重排/幻影/尾重复拒绝），DELETE 一律拒绝（0111
+ * trigger）。INSERT 侧 declare-first：可声明尚不存在的成员（计划模式），
+ * 兑现一致性由迁移批内容对账覆盖。
+ */
 export const evaluation_group = pgTable(
   'evaluation_group',
   {
@@ -836,6 +844,11 @@ export const assessment_response_draft = pgTable(
  * 学习事实身份）；candidate/shadow 永不进 latest-judge 显示通道 —— 生效与
  * 否只由 evaluation_effective_head 表达。provenance 承载 D9/D15/D16 来源
  * （automatic/manual/self_report + assisted）。
+ *
+ * P1（YUK-1097）：终态冻结 —— 身份坐标全列冻结；status='completed' 后
+ * 整行冻结（unit_results/aggregate/plan_digest/provenance/run_refs）；
+ * pending 行的载荷只随 pending→completed 迁移写一次。DELETE 一律拒绝
+ * （0111 trigger）。
  */
 export const evaluation = pgTable(
   'evaluation',
@@ -941,6 +954,11 @@ export const evaluation_effective_head = pgTable(
  * 并链 supersedes_mapping_id（自 FK 保证链目标存在）。不得用覆盖 status 的
  * 方式丢失历史裁决。未能恢复的旧记录进入原生 historical_unresolved 状态，
  * 仍可查看原始证据，不得拿当前题面补造当时所见。
+ *
+ * P1（YUK-1097）：DB 层冻结（0111 trigger）—— 身份坐标/裁决字段/
+ * created_at 一旦写入即冻结；可变列只有 is_current / supersedes_mapping_id
+ * （修正链）与 pending 占位行的 evidence/algorithm_version 操作性注释刷新
+ * （P1-5 契约）。DELETE 一律拒绝 —— 历史裁决不可抹除。
  */
 export const assessment_identity_mapping = pgTable(
   'assessment_identity_mapping',

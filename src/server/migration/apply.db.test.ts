@@ -652,9 +652,14 @@ describe('runMigrationApply — 全链路', () => {
       .where(eq(migration_apply_run.run_id, RUN_ID));
     expect(runRow[0]?.status).toBe('failed');
     // 清掉冲突行后续跑收敛（修正工作流的职责在此测试内模拟）。
-    await testDb()
-      .delete(assessment_identity_mapping)
-      .where(eq(assessment_identity_mapping.mapping_id, 'amp-externalpreexisting00'));
+    //    YUK-1097：mapping 表有不可变 trigger —— 操作者清理走唯一内部穿越口
+    //    （restore 通道，0107）。
+    await testDb().transaction(async (tx) => {
+      await tx.execute(sql`set local app.assessment_restore_mode = 'on'`);
+      await tx
+        .delete(assessment_identity_mapping)
+        .where(eq(assessment_identity_mapping.mapping_id, 'amp-externalpreexisting00'));
+    });
     const resumed = await runApply(plan);
     assertReconciliationClean(resumed.report);
   });
@@ -885,34 +890,34 @@ describe('closeout 自验（终轮 oracle repro）', () => {
     }
 
     // ① 批事务断言路径：新 run 重走 apply_submissions，篡改行先被读回比对。
-    //    evaluation.group_membership / unit_results / aggregate 无 trigger，直接 UPDATE。
-    //    （group.submission_ids 有非空 CHECK —— 篡改为另一个存在的 submission id。）
-    await testDb()
-      .update(evaluation)
-      .set({
-        aggregate: { kind: 'points_total', points: 99, policy: { kind: 'sum' } },
-      })
-      .where(eq(evaluation.evaluation_id, evalRow.evaluation_id));
+    //    YUK-1097：evaluation/group/submission 全在 DB trigger 防线内 —— 模拟
+    //    操作者/缺陷写入统一走唯一内部穿越口（restore 通道，0107）。
+    //    （group.submission_ids 篡改仍有非空 CHECK 兑底，走另一个真实成员 id。）
     const otherGroup = (await testDb().select().from(evaluation_group))[1];
     if (otherGroup === undefined) throw new Error('fixture 应产出 2 个 evaluation_group');
-    await testDb()
-      .update(evaluation_group)
-      .set({ submission_ids: [otherGroup.submission_ids[0] ?? 'asb-ghost'] })
-      .where(eq(evaluation_group.evaluation_group_id, groupRow.evaluation_group_id));
-    // head：把 effective 指回 null（库内非法回退 —— plan 是 gen=1）。
-    await testDb()
-      .update(evaluation_effective_head)
-      .set({ effective_evaluation_id: null })
-      .where(eq(evaluation_effective_head.evaluation_group_id, headRow.evaluation_group_id));
-    // assessment_submission 有不可变 trigger —— 篡改走唯一内部写路径（restore 通道，0107），
-    // 模拟操作者/缺陷写入而非普通应用写。
     await testDb().transaction(async (tx) => {
       await tx.execute(sql`set local app.assessment_restore_mode = 'on'`);
+      await tx
+        .update(evaluation)
+        .set({
+          aggregate: { kind: 'points_total', points: 99, policy: { kind: 'sum' } },
+        })
+        .where(eq(evaluation.evaluation_id, evalRow.evaluation_id));
+      await tx
+        .update(evaluation_group)
+        .set({ submission_ids: [otherGroup.submission_ids[0] ?? 'asb-ghost'] })
+        .where(eq(evaluation_group.evaluation_group_id, groupRow.evaluation_group_id));
       await tx
         .update(assessment_submission)
         .set({ response_set: { entries: [] } })
         .where(eq(assessment_submission.submission_id, submissionRow.submission_id));
     });
+    // head：把 effective 指回 null（库内非法回退 —— plan 是 gen=1）。
+    //    head 是【可变行】，不在 trigger 防线内，直接 UPDATE 即可。
+    await testDb()
+      .update(evaluation_effective_head)
+      .set({ effective_evaluation_id: null })
+      .where(eq(evaluation_effective_head.evaluation_group_id, headRow.evaluation_group_id));
 
     const before2 = await truthCounts();
     await expect(runApply(plan, { runId: 'run-tamperbatch0000000' })).rejects.toThrow(
@@ -975,11 +980,15 @@ describe('closeout 自验（终轮 oracle repro）', () => {
     expect(after[0]?.mapping_id).toBe(pending.mapping_id);
     expect(after[0]?.evidence).toEqual(originalEvidence);
 
-    // 裁决字段漂移（snapshot_digest 被外部改）—— 重跑 fail-visible 拒绝，不原地覆盖。
-    await testDb()
-      .update(assessment_identity_mapping)
-      .set({ snapshot_digest: 'tampered-not-plan' })
-      .where(eq(assessment_identity_mapping.mapping_id, pending.mapping_id));
+    // 裁决字段漂移（snapshot_digest 被外部改）—— 0111 冻结 guard 下外部写入
+    //    只能经 restore 通道显形；重跑 fail-visible 拒绝，不原地覆盖。
+    await testDb().transaction(async (tx) => {
+      await tx.execute(sql`set local app.assessment_restore_mode = 'on'`);
+      await tx
+        .update(assessment_identity_mapping)
+        .set({ snapshot_digest: 'tampered-not-plan' })
+        .where(eq(assessment_identity_mapping.mapping_id, pending.mapping_id));
+    });
     await expect(runApply(planNoRegistry, { runId: 'run-adjudge000000000000' })).rejects.toThrow(
       /mapping divergence/,
     );
