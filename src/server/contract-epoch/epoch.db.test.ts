@@ -284,6 +284,10 @@ describe('reportOutstandingBossJobs', () => {
   it('classifies outstanding rows by queue disposition', async () => {
     const db = testDb();
     // 最小 pgboss.job 替身（同测试建同测试删——不污染共享 fork 的 capture 探针）。
+    // 幂等前置清理：同 shard 的其他 db 测试文件可能留下 pgboss.job（真实 boss 实例
+    // 或未清理的替身），裸 create table 会 42P07。先 drop 再建，自愈任意残留。
+    await db.execute(sql`drop table if exists pgboss.job`);
+    await db.execute(sql`drop schema if exists pgboss cascade`);
     await db.execute(sql`create schema if not exists pgboss`);
     try {
       await db.execute(sql`
