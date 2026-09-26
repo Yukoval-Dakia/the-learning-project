@@ -41,6 +41,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/public';
 import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
+import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import {
@@ -177,6 +178,15 @@ export interface QuestionEditPatch {
   knowledge_ids?: string[];
   kind?: string;
   draft_status?: 'draft' | 'active' | null;
+  /**
+   * YUK-1099 — structured 树也是判分输入（structured prompt/answers/options 是
+   * revision 的 part/slot/option 身份来源）。编辑它必须触发统一发布 ——
+   * PUBLISH_TRIGGERING_FIELDS 含它才有实际效果。当前 REST PATCH 面（
+   * UpdateQuestionBodySchema）不放开该字段 —— structured 编辑的线上通路仍是
+   * question_edit 提案（acceptQuestionEditProposal）；本字段服务内部/未来
+   * 工作副本写口，保证「编辑 structured ⇒ 不静默漂移」的属性在 seam 层成立。
+   */
+  structured?: StructuredQuestionT | null;
 }
 
 export interface QuestionEditResult {
@@ -201,19 +211,49 @@ export interface QuestionEditResult {
 }
 
 // Deep-equality for the edit diff — primitives via Object.is, arrays element-wise
-// (knowledge_ids / choices_md). Keeps unchanged fields out of before/after so a
-// full-form save doesn't fabricate audit entries or bump the version.
+// (knowledge_ids / choices_md), and structured trees recursively (YUK-1099:
+// `structured` is jsonb — PG round-trips reorder keys, so a semantically
+// identical tree still differs by Object.is reference; recursive key-insensitive
+// object compare keeps a no-op structured save from fabricating an audit entry,
+// bumping the version, and minting a spurious revision).
 function patchValueEqual(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true;
   if (Array.isArray(a) && Array.isArray(b)) {
-    return a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
+    return a.length === b.length && a.every((v, i) => patchValueEqual(v, b[i]));
+  }
+  if (
+    a != null &&
+    b != null &&
+    typeof a === 'object' &&
+    typeof b === 'object' &&
+    !Array.isArray(a) &&
+    !Array.isArray(b)
+  ) {
+    const ao = a as Record<string, unknown>;
+    const bo = b as Record<string, unknown>;
+    // jsonb drops undefined-valued keys — compare on defined keys only so a
+    // `{k: undefined}` patch vs the stored `{}` is a no-op, not a fake change.
+    const aKeys = Object.keys(ao).filter((k) => ao[k] !== undefined);
+    const bKeys = Object.keys(bo).filter((k) => bo[k] !== undefined);
+    return (
+      aKeys.length === bKeys.length &&
+      aKeys.every((k) => Object.hasOwn(bo, k) && patchValueEqual(ao[k], bo[k]))
+    );
   }
   return false;
 }
 
 // YUK-1043 — 触发统一发布的编辑面字段（判分输入改变 ⇒ 新 revision；
 // difficulty/knowledge_ids/draft_status 是检索投影或生命周期，不触发）。
-const PUBLISH_TRIGGERING_FIELDS = new Set(['prompt_md', 'reference_md', 'choices_md', 'kind']);
+// YUK-1099：structured 是判分输入（part/slot/option 身份来源），编辑必须重发；
+// 缺它 ⇒ 工作副本与已发布 revision 静默漂移（PR-Agent P1）。
+const PUBLISH_TRIGGERING_FIELDS = new Set([
+  'prompt_md',
+  'reference_md',
+  'choices_md',
+  'kind',
+  'structured',
+]);
 
 /**
  * Apply an edit patch with optimistic locking + an `experimental:question_edit`
@@ -297,6 +337,8 @@ export async function editQuestion(
     track('knowledge_ids', 'knowledge_ids', row.knowledge_ids);
     track('kind', 'kind', row.kind);
     track('draft_status', 'draft_status', row.draft_status);
+    // YUK-1099 — structured 编辑同属判分输入变更（见 QuestionEditPatch 注）。
+    track('structured', 'structured', row.structured);
 
     // YUK-395 — answer_class freshness on EDIT. answer_class is structurally
     // derived from kind/choices_md/rubric_json; if this edit changes either of the
@@ -337,7 +379,11 @@ export async function editQuestion(
     if (
       Object.hasOwn(after, 'prompt_md') ||
       Object.hasOwn(after, 'reference_md') ||
-      Object.hasOwn(after, 'choices_md')
+      Object.hasOwn(after, 'choices_md') ||
+      // YUK-1099 — structured 同样是题面/答案的真实载体（判分输入）；编辑它
+      // 需同等失效 exact-identity claim 与 archive 保留的 claim 快照，否则
+      // canonical_content_hash 会指向已偏离内容的工作副本。
+      Object.hasOwn(after, 'structured')
     ) {
       // YUK-704 — never leave an exact-identity hash pointing at pre-edit content.
       // This slice intentionally has no global/backfill writer, so edits clear the

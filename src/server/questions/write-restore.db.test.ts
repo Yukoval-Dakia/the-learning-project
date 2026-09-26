@@ -11,8 +11,8 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-
-import { event, question, question_group_lifecycle } from '@/db/schema';
+import type { StructuredQuestionT } from '@/core/schema/structured_question';
+import { event, question, question_group_lifecycle, question_revision } from '@/db/schema';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { archiveQuestion, editQuestion, restoreQuestion } from './write';
@@ -327,5 +327,102 @@ describe('restoreQuestion（YUK-1045 archive 对偶）', () => {
     expect(after.draft_status).toBe('draft');
     expect(after.canonical_content_hash).toBe('sha256:rst-6');
     expect(await readLifecycle(qid)).toBeNull(); // 无 lifecycle 可复位，如实跳过
+  });
+});
+
+// YUK-1099 — PUBLISH_TRIGGERING_FIELDS 补齐 structured（PR-Agent P1）：
+// structured 树是判分输入（part/slot/option 身份来源），编辑它 ⇒ 同一事务内
+// 铸新 revision；jsonb 语义相等（键序无关）⇒ 真 noop，不造伪版本。
+describe('editQuestion — structured 判分输入触发发布（YUK-1099）', () => {
+  beforeEach(resetDb);
+
+  function leafStructured(id: string, promptText: string): StructuredQuestionT {
+    return {
+      id,
+      role: 'standalone',
+      prompt_text: promptText,
+      answers: ['42'],
+    } as unknown as StructuredQuestionT;
+  }
+
+  it('structured edit republishes in the same transaction — revision carries the edited leaf prompt', async () => {
+    const db = testDb();
+    const qid = 'se_q1';
+    await seedQuestion(qid, {
+      kind: 'short_answer',
+      choices_md: null,
+      structured: leafStructured('n1', '(1) 旧题面'),
+    });
+    // 先铸首版，确认后续编辑产生的是【新】revision。
+    const first = await publishQuestionGroupFromRow(db, {
+      rootId: qid,
+      actorRef: 'test:seed-publish',
+      now: new Date(),
+    });
+    expect(first.status).toBe('published');
+    if (first.status !== 'published') return;
+
+    const before = await readQuestion(qid);
+    const edited = await editQuestion(
+      db,
+      qid,
+      before.version,
+      { structured: leafStructured('n1', '(1) 已修订的题面') },
+      'self',
+    );
+    expect(edited.status).toBe('updated');
+
+    const lifecycle = await readLifecycle(qid);
+    const currentRevisionId = lifecycle?.current_revision_id;
+    if (currentRevisionId == null) throw new Error('structured edit did not publish a revision');
+    expect(currentRevisionId).not.toBe(first.revision_id);
+    const [rev] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, currentRevisionId))
+      .limit(1);
+    expect(rev.structure.parts[0]?.prompt_md).toBe('(1) 已修订的题面');
+    expect(rev.revision_ordinal).toBe(2);
+  });
+
+  it('identical structured tree (jsonb key order irrelevant) is a real noop — no version bump, no revision churn', async () => {
+    const db = testDb();
+    const qid = 'se_q2';
+    await seedQuestion(qid, {
+      kind: 'short_answer',
+      choices_md: null,
+      structured: leafStructured('n1', '(1) 题面'),
+    });
+    await publishQuestionGroupFromRow(db, {
+      rootId: qid,
+      actorRef: 'test:seed-publish',
+      now: new Date(),
+    });
+    const lifecycleBefore = await readLifecycle(qid);
+
+    const before = await readQuestion(qid);
+    // jsonb 读回不保键序：构造同一树的键序变体提交 —— 必须识别为无实际变化。
+    const sameTreeDifferentOrder = {
+      answers: ['42'],
+      prompt_text: '(1) 题面',
+      role: 'standalone',
+      id: 'n1',
+    } as unknown as StructuredQuestionT;
+    const edited = await editQuestion(
+      db,
+      qid,
+      before.version,
+      { structured: sameTreeDifferentOrder },
+      'self',
+    );
+    expect(edited.status).toBe('noop');
+    expect(edited.version).toBe(before.version);
+
+    const lifecycleAfter = await readLifecycle(qid);
+    expect(lifecycleAfter?.current_revision_id).toBe(lifecycleBefore?.current_revision_id);
+    // noop 必须连 audit event 也不写（patchValueEqual 判同 ⇒ after 为空）。
+    const editEvents = await db.select().from(event).where(eq(event.subject_id, qid));
+    const editAudit = editEvents.filter((e) => e.action === 'experimental:question_edit');
+    expect(editAudit).toHaveLength(0);
   });
 });

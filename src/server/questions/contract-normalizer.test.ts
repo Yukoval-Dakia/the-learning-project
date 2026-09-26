@@ -424,6 +424,136 @@ describe('第二轮复审 P1-2/P1-3 — 保真与身份（先红后绿）', () =
     expect(unit.criterion.source).toBe('system_proposed'); // D1 —— 答案证据来源，不是题目获取来源
   });
 
+  it('YUK-1099 #3 (owner ruling B): standalone leaf WITHOUT answers falls back to row reference_md — numeric head mints text_key', () => {
+    // import/auto-enroll 形状：structured 是 standalone 单叶（无 answers），
+    // 行级 reference_md 是真实答案 —— 不得 missing_reference 丢弃。
+    const tree = {
+      id: 'solo_num',
+      role: 'standalone',
+      prompt_text: '1 + 2 = ?',
+      // answers 缺省
+    } as unknown as StructuredQuestionT;
+    const n = normalizeQuestionRowToContract(
+      baseRow({ kind: 'short_answer', structured: tree, choices_md: null, reference_md: '3' }),
+    );
+    expect(n.conversion_issues).toEqual([]); // 答案有 ⇒ 不 withheld
+    const unit = n.scoring_basis.units[0];
+    if (unit.criterion.kind !== 'text_key') {
+      throw new Error(`expected text_key, got ${unit.criterion.kind}`);
+    }
+    expect(unit.criterion.accepted_texts).toEqual(['3']);
+    expect(n.execution_plan.assignments[0].executor).toEqual({
+      kind: 'deterministic',
+      comparator: 'exact_text',
+    });
+  });
+
+  it('YUK-1099 #3: standalone leaf WITHOUT answers + letter reference_md on a choice slot mints option_set_key', () => {
+    const tree = {
+      id: 'solo_choice',
+      role: 'standalone',
+      prompt_text: '选出正确项',
+      options: [
+        { label: 'A', text: '选项一' },
+        { label: 'B', text: '选项二' },
+        { label: 'C', text: '选项三' },
+      ],
+      // answers 缺省 —— 行 reference 兜底
+    } as unknown as StructuredQuestionT;
+    const n = normalizeQuestionRowToContract(
+      baseRow({ kind: 'choice', structured: tree, choices_md: null, reference_md: 'B' }),
+    );
+    expect(n.conversion_issues).toEqual([]);
+    const slot = n.response_spec.slots[0];
+    if (slot.kind !== 'single_choice') throw new Error('expected single_choice');
+    const unit = n.scoring_basis.units[0];
+    if (unit.criterion.kind !== 'option_set_key') {
+      throw new Error(`expected option_set_key, got ${unit.criterion.kind}`);
+    }
+    expect(unit.criterion.accepted_option_ids).toEqual([slot.options[1].option_id]); // B
+    expect(n.execution_plan.assignments[0].executor).toEqual({
+      kind: 'deterministic',
+      comparator: 'exact_option_set',
+    });
+  });
+
+  it('YUK-1099 #3: standalone leaf WITHOUT answers and NO/unparseable reference_md stays withheld — never silently fake', () => {
+    const tree = {
+      id: 'solo_none',
+      role: 'standalone',
+      prompt_text: '简答',
+    } as unknown as StructuredQuestionT;
+    // 无 reference_md
+    const missing = normalizeQuestionRowToContract(
+      baseRow({ kind: 'short_answer', structured: tree, choices_md: null, reference_md: null }),
+    );
+    expect(missing.conversion_issues).toHaveLength(1);
+    expect(missing.conversion_issues[0]).toMatchObject({
+      code: 'missing_reference',
+      partId: 'solo_none',
+    });
+
+    // 选择槽 + 不在选项内的字母 ⇒ 未决转换（unrepresentable_answer），不伪造键。
+    const choiceTree = {
+      id: 'solo_bad',
+      role: 'standalone',
+      prompt_text: '选出正确项',
+      options: [
+        { label: 'A', text: '一' },
+        { label: 'B', text: '二' },
+      ],
+    } as unknown as StructuredQuestionT;
+    const unparseable = normalizeQuestionRowToContract(
+      baseRow({ kind: 'choice', structured: choiceTree, choices_md: null, reference_md: 'Z' }),
+    );
+    expect(unparseable.conversion_issues).toHaveLength(1);
+    expect(unparseable.conversion_issues[0].code).toBe('unrepresentable_answer');
+    expect(unparseable.conversion_issues[0].partId).toBe('solo_bad');
+    const unit = unparseable.scoring_basis.units[0];
+    if (unit.criterion.kind !== 'rule_reference') {
+      throw new Error('unparseable reference must not mint an option key');
+    }
+  });
+
+  it('YUK-1099 #3: standalone leaf with only BLANK answers counts as "no answers" — row reference_md still drives the key (gate/mapping parity)', () => {
+    // [`]` 与 `[]` 同为「无答案」：standalone 门与答案映射用同一判据，
+    // 不得门放行兜底而映射仍发空白答案。
+    const tree = {
+      id: 'solo_blank',
+      role: 'standalone',
+      prompt_text: '1 + 2 = ?',
+      answers: [''], // 显式空白 —— 等价于缺省
+    } as unknown as StructuredQuestionT;
+    const n = normalizeQuestionRowToContract(
+      baseRow({ kind: 'short_answer', structured: tree, choices_md: null, reference_md: '3' }),
+    );
+    expect(n.conversion_issues).toEqual([]);
+    const unit = n.scoring_basis.units[0];
+    if (unit.criterion.kind !== 'text_key') {
+      throw new Error(`expected text_key, got ${unit.criterion.kind}`);
+    }
+    expect(unit.criterion.accepted_texts).toEqual(['3']);
+  });
+
+  it('YUK-1099 #3 scope: non-standalone (stem+subs) leaf without answers does NOT inherit root reference — P1-2b unchanged', () => {
+    const tree = {
+      id: 'stem_nr',
+      role: 'stem',
+      prompt_text: 'stem',
+      sub_questions: [
+        { id: 'leaf_nr', role: 'sub', prompt_text: '(1)' }, // 无 answers
+      ],
+    } as unknown as StructuredQuestionT;
+    const n = normalizeQuestionRowToContract(
+      baseRow({ structured: tree, choices_md: null, reference_md: 'B' }),
+    );
+    expect(n.conversion_issues).toHaveLength(1);
+    expect(n.conversion_issues[0]).toMatchObject({ code: 'missing_reference', partId: 'leaf_nr' });
+    const unit = n.scoring_basis.units[0];
+    if (unit.criterion.kind !== 'rule_reference') throw new Error('expected rule_reference');
+    expect(unit.criterion.statement_md).not.toBe('B');
+  });
+
   it('P1-2c: physical part carries its OWN structured options and figures through the publisher projection', () => {
     const root = baseRow({
       id: 'grp_c',
@@ -478,6 +608,40 @@ describe('第二轮复审 P1-2/P1-3 — 保真与身份（先红后绿）', () =
     expect(assetIds).toContain('ast_part');
     expect(assetIds).toContain('ast_root');
     expect(n.structure.parts[0].material_ids).toHaveLength(3); // stem + root figure + part figure
+  });
+
+  it('YUK-1099 #2: physical part prompt derives from its edited structured leaf, not the stale prompt_md column', () => {
+    const root = baseRow({ id: 'grp_p', kind: 'composite', prompt_md: 'stem', choices_md: null });
+    const partStructured = (text: string) =>
+      ({
+        id: 'p1',
+        role: 'standalone',
+        prompt_text: text,
+        answers: ['42'],
+      }) as unknown as StructuredQuestionT;
+    const parts = (text: string) => [
+      {
+        id: 'p1',
+        prompt_md: '(1) 旧题面', // 编辑走 structured；flat 列不追更
+        reference_md: '42',
+        choices_md: null,
+        structured: partStructured(text),
+      },
+    ];
+    const before = normalizeQuestionGroupToContract(root, parts('(1) 旧题面'));
+    const after = normalizeQuestionGroupToContract(root, parts('(1) 已修订的题面'));
+    // prompt 以 structured 叶文本为准（edit_node_text 的落点）。
+    expect(after.structure.parts[0].prompt_md).toBe('(1) 已修订的题面');
+    // 且实质变化必须反映进 digest —— 否则 publisher digest-noop 漏铸新 revision。
+    expect(after.integrity_digest).not.toBe(before.integrity_digest);
+  });
+
+  it('YUK-1099 #2 fallback: part WITHOUT structured keeps the row prompt_md', () => {
+    const root = baseRow({ id: 'grp_q', kind: 'composite', prompt_md: 'stem', choices_md: null });
+    const n = normalizeQuestionGroupToContract(root, [
+      { id: 'p1', prompt_md: '(1) flat prompt', reference_md: '42', choices_md: null },
+    ]);
+    expect(n.structure.parts[0].prompt_md).toBe('(1) flat prompt');
   });
 
   it('P1-3: option identity is TEXT-only — label-only change keeps the option id and the digest', () => {
