@@ -185,7 +185,7 @@
     "@typescript/native": "npm:typescript@7.0.2",
     "@vitejs/plugin-react": "^6.0.5",
     "@vitest/coverage-v8": "^4.1.10",
-    "dotenv": "^17.4.2",
+    "dotenv": "^18.0.0",
     "drizzle-kit": "^0.31.10",
     "esbuild": "^0.28.2",
     "jsdom": "^29.1.1",
