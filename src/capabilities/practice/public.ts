@@ -9,6 +9,12 @@ export {
 } from '@/kernel/events';
 export type { QuizGenJobData } from './jobs/quiz_gen';
 export { retrievabilityForKc } from './server/fsrs';
+// YUK-1037/1053 — the seed-root anchor regex is a single pattern owned by
+// placement-scope but consumed from server/*; re-exported through the public
+// seam so server→capability stays public (not deep).
+export { SYNTHETIC_SUBJECT_ROOT_RE } from './server/placement-scope';
+export type { AttemptSnapshotBracketsInput } from './server/attempt-snapshot';
+export { writeAttemptSnapshotBrackets } from './server/attempt-snapshot';
 export type { FrontierResolution } from './server/learnable-frontier';
 export {
   isMasteredForFrontier,

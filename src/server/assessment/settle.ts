@@ -64,8 +64,10 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 
-import { writeAttemptSnapshotBrackets } from '@/capabilities/practice/server/attempt-snapshot';
-import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/capabilities/practice/server/placement-scope';
+import {
+  SYNTHETIC_SUBJECT_ROOT_RE,
+  writeAttemptSnapshotBrackets,
+} from '@/capabilities/practice/public';
 import { scheduleReview } from '@/core/fsrs';
 import type {
   ExecutionPlanT,
