@@ -13,8 +13,8 @@ import { and, asc, eq, inArray } from 'drizzle-orm';
 import { getFailureAttempts } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { event, knowledge, learning_session, question } from '@/db/schema';
-import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
+import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { resolveSubjectProfile } from '@/subjects/profile';
@@ -143,17 +143,12 @@ export async function runSessionSummary(
   // （不受改判改写），与 effective 并列供 LLM 描述「原始因 vs 当前因」。failures
   // 仍在楼上已取（failures 块只取过一次，复用同一批）。
   const originalCauseCounts = new Map<string, number>();
-  {
-    // 只在有 judge 的 failure 上统计原始因；effective cause 已在上方统计。
-    for (const failure of failures) {
-      const cat = failure.original_judge?.cause?.primary_category;
-      if (cat) originalCauseCounts.set(cat, (originalCauseCounts.get(cat) ?? 0) + 1);
-    }
+  // 只在有 judge 的 failure 上统计原始因；effective cause 已在上方统计。
+  for (const failure of failures) {
+    const cat = failure.original_judge?.cause?.primary_category;
+    if (cat) originalCauseCounts.set(cat, (originalCauseCounts.get(cat) ?? 0) + 1);
   }
-  const topOriginalCauseLabels = await resolveMiscCauseLabels(
-    db,
-    [...originalCauseCounts.keys()],
-  );
+  const topOriginalCauseLabels = await resolveMiscCauseLabels(db, [...originalCauseCounts.keys()]);
   const topOriginalCauses = [...originalCauseCounts.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, 4)

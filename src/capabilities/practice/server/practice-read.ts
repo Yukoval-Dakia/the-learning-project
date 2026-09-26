@@ -323,7 +323,9 @@ export async function getPracticeList(
       // right/wrong summary. Round-3 wrote this attempt with outcome='failure' and
       // no judge event, so the coarse_outcome fallback below counted it as wrong.
       if (r.unsupported_judge === 'true') continue;
-      const effective = r.attempt_event_id ? verdicts.get(r.attempt_event_id)?.effective : undefined;
+      const effective = r.attempt_event_id
+        ? verdicts.get(r.attempt_event_id)?.effective
+        : undefined;
       // Visibility gate: if the effective judge is buffered (visible_to_user=false)
       // and the session is not yet completed, skip this slot entirely — do not
       // count it as right or wrong. The summary must not leak the verdict.
