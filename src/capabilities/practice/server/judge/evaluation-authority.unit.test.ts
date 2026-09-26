@@ -161,6 +161,40 @@ describe('evaluateAttempt — lane dispatch', () => {
     expect(invokeSpy).not.toHaveBeenCalled();
   });
 
+  it('contract lane forwards a {kind:"jev"} executor descriptor to evaluateSubmission (YUK-1092)', async () => {
+    evaluateSubmissionSpy.mockResolvedValue({
+      record: {
+        evaluation_id: 'eva-1',
+        evaluation_group_id: 'grp-1',
+        submission_id: 'sub-1',
+        attempt: 1,
+        status: 'completed',
+        unit_results: [],
+        aggregate: { kind: 'points_total', points: 0, policy: { kind: 'sum' } },
+        plan_digest: null,
+        run_refs: [],
+        provenance: { source: 'automatic' as const, assisted: false },
+      },
+      created_at: new Date(),
+      replayed: false,
+      scoring_basis: SUM_BASIS,
+      model_units_invoked: 1,
+      spent_cost_usd_micros: 0,
+    });
+    const spec = { kind: 'jev' as const, deadline_at: Date.now() + 60_000, rule_threshold: 0.8 };
+    const out = await evaluateAttempt({
+      entry: 'solo_submit',
+      db: {} as never,
+      contract: { submission_id: 'sub-1', evaluation_group_id: 'grp-1', model_executor: spec },
+    });
+    expect(out.lane).toBe('contract');
+    // 漏斗不做 descriptor 解析 —— 原样传给 evaluateSubmission 的组合点。
+    expect(evaluateSubmissionSpy).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ model_executor: spec }),
+    );
+  });
+
   it('rejects inputs carrying both lanes', async () => {
     await expect(
       evaluateAttempt({

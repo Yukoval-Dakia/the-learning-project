@@ -136,8 +136,15 @@ export interface ModelExecutorRequest {
  * 模型执行器端口：把 admitted model_executor 的判定委托给注入实现。
  * 本模块【不】提供实现 —— typed transport（OpenRouter/Jev 或既有 runner）
  * 归 AI 层 lane 接线；本内核只定义契约、校验输出并执行 escalation。
+ *
+ * 第二参数（YUK-1092）是可选取消信号：上层（Jev 端口的共享 deadline /
+ * 调用方 abort）把它转发给委托实现，超时必须真正取消付费调用，而不是
+ * 只让外层 Promise.race reject。
  */
-export type ModelUnitExecutorPort = (request: ModelExecutorRequest) => Promise<ModelUnitOutcomeT>;
+export type ModelUnitExecutorPort = (
+  request: ModelExecutorRequest,
+  signal?: AbortSignal,
+) => Promise<ModelUnitOutcomeT>;
 
 // ---------- 评估输入 ----------
 

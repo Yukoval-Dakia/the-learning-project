@@ -197,9 +197,9 @@ function interpretAnswer(
       matched: satisfied ? { rule_id: criterion.rule_id, option_ids: [] } : undefined,
       // Jev emits no evidence citations — never fabricate them (§3.2).
       evidence_citations: [],
-      // Distribution-shape confidence: 1 at the extremes, 0 at 0.5 — the
+      // Distribution-shape certainty: 1 at the extremes, 0 at 0.5 — the
       // escalation gate reads shape, not accuracy (spec: never fabricate).
-      confidence: answer.confidence ?? 1 - Math.abs(2 * answer.noul - 1),
+      confidence: answer.confidence ?? Math.abs(2 * answer.noul - 1),
       run_refs: runRefs,
       ...(costMicros !== undefined ? { cost_usd_micros: costMicros } : {}),
     };
@@ -269,15 +269,26 @@ export function createJevModelExecutor(options: JevModelExecutorOptions): ModelU
         detail: 'shared wall-clock deadline elapsed before advanced executor could start',
       });
     }
+    // The advanced invocation is app-layer (OR has no models fallback);
+    // it shares the SAME deadline. The bound is an ABORT signal, not a
+    // detached race loser: the timer cancels the paid executor call itself
+    // (a wrapped executor that honours `signal` stops billing; one that
+    // ignores it still loses the race) — never a silent overspend past the
+    // promised shared wall clock.
+    const deadlineSignal = AbortSignal.timeout(remaining);
+    const signal = options.signal
+      ? AbortSignal.any([options.signal, deadlineSignal])
+      : deadlineSignal;
     try {
-      // The advanced invocation is app-layer (OR has no models fallback);
-      // it shares the SAME deadline — a timeout loses to the race and the
-      // outcome stays an honest pending rather than a silent overspend.
       return await Promise.race([
-        options.advancedExecutor(request),
-        new Promise<ModelUnitOutcomeT>((_, reject) =>
-          setTimeout(() => reject(new Error('advanced executor deadline exceeded')), remaining),
-        ),
+        options.advancedExecutor(request, signal),
+        new Promise<ModelUnitOutcomeT>((_, reject) => {
+          deadlineSignal.addEventListener(
+            'abort',
+            () => reject(new Error('advanced executor deadline exceeded')),
+            { once: true },
+          );
+        }),
       ]);
     } catch (error) {
       return pendingOutcome({

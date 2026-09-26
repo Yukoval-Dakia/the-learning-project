@@ -352,6 +352,72 @@ describe('evaluateSubmission (persisted §4.3 path)', () => {
     expect(rows.map((r) => r.attempt).sort()).toEqual([1, 2]);
   });
 
+  it('model_executor {kind:"jev"} descriptor ⇒ Jev port assembled at the composition point (YUK-1092)', async () => {
+    await seedContractChain({
+      groupId: 'g4b',
+      revisionId: 'rev-4b',
+      issuanceId: 'iss-4b',
+      submissionId: 'sub-4b',
+      evalGroupId: 'eg-4b',
+      slots: [{ slot_id: 'p1::r', part_id: 'p1', kind: 'text', math_preview: false }],
+      units: [
+        {
+          scoring_unit_id: 'p1::u',
+          slot_refs: ['p1::r'],
+          material_refs: [],
+          evidence_slot_refs: [],
+          requires_group_evidence: false,
+          criterion: {
+            kind: 'rule_reference',
+            rule_id: 'r1',
+            statement_md: 'grade it',
+            source: 'manual',
+          },
+          points: 10,
+        },
+      ],
+      assignments: [
+        {
+          scoring_unit_ids: ['p1::u'],
+          executor: {
+            kind: 'model_executor',
+            task_kind: 'JevScoringDecisionTask',
+            admitted_slice_id: 'slice-zh-text-v1',
+          },
+        },
+      ],
+      entries: [{ slot_id: 'p1::r', kind: 'text', text_md: 'answer' }],
+    });
+
+    const savedKey = process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    try {
+      const out = await evaluateSubmission(db, {
+        submission_id: 'sub-4b',
+        evaluation_group_id: 'eg-4b',
+        model_executor: {
+          kind: 'jev',
+          deadline_at: Date.now() + 60_000,
+          rule_threshold: 0.8,
+        },
+      });
+      // 装配生效的证据：单元走到了 Jev 端口的凭证闸门（Jev 专属文案），
+      // 而不是『no model executor port registered』的 retryable 未决。
+      expect(out.model_units_invoked).toBe(1);
+      expect(out.record.status).toBe('completed');
+      expect(out.record.unit_results[0]).toMatchObject({
+        status: 'pending',
+        pending: {
+          reason: 'infra_failure',
+          retryable: false,
+          detail: expect.stringContaining('no credentialed Jev lane'),
+        },
+      });
+    } finally {
+      if (savedKey !== undefined) process.env.OPENROUTER_API_KEY = savedKey;
+    }
+  });
+
   it('submission/group coordinate mismatch ⇒ group_scope_mismatch (fail-closed)', async () => {
     await seedContractChain({
       groupId: 'g5',

@@ -21,11 +21,7 @@
 // solve_check / teaching_quality 是教师侧 QA，不是学生评分 —— grounding
 // §4.2 末段明确保留其异源/否决语义，不得机械并入。
 
-import type {
-  EvaluationRecordT,
-  ModelUnitExecutorPort,
-  ScoringBasisT,
-} from '@/core/schema/assessment';
+import type { EvaluationRecordT, ScoringBasisT } from '@/core/schema/assessment';
 import {
   VERDICT_CORRECT_THRESHOLD,
   deriveCoarseVerdict,
@@ -142,7 +138,7 @@ export interface ContractGradingRef {
   mode?: EvaluateSubmissionRequest['mode'];
   asserted_unit_results?: EvaluateSubmissionRequest['asserted_unit_results'];
   provenance?: EvaluateSubmissionRequest['provenance'];
-  model_executor?: ModelUnitExecutorPort;
+  model_executor?: EvaluateSubmissionRequest['model_executor'];
 }
 
 export interface LegacyAttemptInput {

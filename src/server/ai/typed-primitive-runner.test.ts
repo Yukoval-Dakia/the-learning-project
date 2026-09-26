@@ -281,13 +281,15 @@ describe('runTypedPrimitiveTask — contract violations', () => {
 });
 
 describe('runTypedPrimitiveTask — usage/cost truth', () => {
-  it('missing usage block still succeeds with unknown cost (never zero)', async () => {
+  it('missing usage block still succeeds with unknown cost (reserve, never zero)', async () => {
     const body = okBody();
     delete (body as Record<string, unknown>).usage;
     const fetchImpl = vi.fn(async () => responseJson(body)) as unknown as typeof fetch;
     const out = await runTypedPrimitiveTask(KIND, BASE_INPUT, ctx(fetchImpl));
     expect(out.cost_basis).toBe('unknown');
-    expect(out.cost_usd).toBeUndefined();
+    // YUK-1092 — cost_usd is the CUMULATIVE invocation figure; an
+    // unknown-cost attempt reports its per-call reserve, never undefined.
+    expect(out.cost_usd).toBe(0.005);
     expect(out.unknown_cost).toBe(true);
     const term = logMocks.terminal.mock.calls[0][1] as {
       cost_truth: { basis: string; amountUsd: number | null };
