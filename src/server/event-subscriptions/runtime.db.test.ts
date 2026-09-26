@@ -567,4 +567,238 @@ describe('YUK-751 durable event subscription runtime', () => {
       expect.objectContaining({ sourceEventId: 'source', status: 'skipped' }),
     ]);
   });
+
+  // ── YUK-1055 — version-bump translation（grounding §15 + YUK-766）──
+  // 旧版本 outstanding delivery 不许盲标 bootstrap_skipped：stable source_event_id
+  // 下把 pending/claimed/retry_wait 翻译进新版本（保序、保重试预算），其余终态化。
+
+  it('translates outstanding deliveries into the bumped version instead of blindly skipping them (YUK-1055)', async () => {
+    const V1 = SUBSCRIBER; // actions ['test:handled']
+    const V2: LoadedEventSubscription = {
+      ...SUBSCRIBER,
+      version: 2,
+      actions: ['test:handled'],
+      declarationHash: 'subscriber-declaration-hash-v2',
+      handler: async () => ({ status: 'succeeded' }),
+    };
+
+    // v1 已在跑：bootstrap（空历史）→ 事件到达 → discover 出 pending。
+    await bootstrapSubscription(testDb(), registry(V1), V1);
+    await insertEvent('m1'); // v1 已终态化（succeeded）
+    await insertEvent('m2'); // v1 已终态化（dead_letter）
+    await insertEvent('t1'); // v1 retry_wait —— 被翻译
+    await insertEvent('t2'); // v1 claimed（in-flight）—— 被翻译、清 claim
+    await insertEvent('p1'); // v1 pending —— 被翻译
+    const v1Lease = await claimSubscriptionLease(testDb(), registry(V1), V1, 'worker-a');
+    if (!v1Lease) throw new Error('expected v1 lease');
+    await discoverSubscriptionDeliveries(testDb(), registry(V1), V1, v1Lease);
+
+    // 精确塑造五种 v1 存量：terminal×2 + outstanding×3。
+    await testDb().execute(sql`
+      update event_subscription_delivery
+      set status = 'succeeded', completed_at = clock_timestamp(), outcome = '{"status":"succeeded"}',
+          updated_at = clock_timestamp()
+      where source_event_id = 'm1'
+    `);
+    await testDb().execute(sql`
+      update event_subscription_delivery
+      set status = 'dead_letter', completed_at = clock_timestamp(),
+          last_error = 'handler threw', attempt_count = 3,
+          updated_at = clock_timestamp()
+      where source_event_id = 'm2'
+    `);
+    await testDb().execute(sql`
+      update event_subscription_delivery
+      set status = 'retry_wait', attempt_count = 2,
+          next_attempt_at = clock_timestamp() + interval '30 minutes',
+          last_error = 'flaky handler', updated_at = clock_timestamp()
+      where source_event_id = 't1'
+    `);
+    await testDb().execute(sql`
+      update event_subscription_delivery
+      set status = 'claimed', claim_owner = 'worker-a',
+          claim_token = '22222222-2222-4222-8222-222222222222'::uuid,
+          claim_lease_until = clock_timestamp() + interval '5 minutes',
+          claimed_at = clock_timestamp(), updated_at = clock_timestamp()
+      where source_event_id = 't2'
+    `);
+
+    // 版本 bump：v2 bootstrap 必须先翻译 outstanding，再标记历史。
+    const result = await bootstrapSubscription(testDb(), registry(V2), V2);
+    expect(result).toEqual({ translated: 3, superseded: 3 });
+
+    // 旧版本 outstanding 终态化（'skipped' + 显式 last_error），terminal 行不动。
+    const v1Rows = await testDb()
+      .select({
+        sourceEventId: event_subscription_delivery.source_event_id,
+        status: event_subscription_delivery.status,
+        lastError: event_subscription_delivery.last_error,
+        attemptCount: event_subscription_delivery.attempt_count,
+      })
+      .from(event_subscription_delivery)
+      .where(sql`${event_subscription_delivery.subscriber_version} = 1`)
+      .orderBy(event_subscription_delivery.delivery_seq);
+    expect(v1Rows).toEqual([
+      { sourceEventId: 'm1', status: 'succeeded', lastError: null, attemptCount: 0 },
+      { sourceEventId: 'm2', status: 'dead_letter', lastError: 'handler threw', attemptCount: 3 },
+      { sourceEventId: 't1', status: 'skipped', lastError: 'translated_to_v2', attemptCount: 2 },
+      { sourceEventId: 't2', status: 'skipped', lastError: 'translated_to_v2', attemptCount: 0 },
+      { sourceEventId: 'p1', status: 'skipped', lastError: 'translated_to_v2', attemptCount: 0 },
+    ]);
+
+    // 新版本行：翻译行按 source_dispatch_seq 占 delivery_seq 1..3（老工作先交付），
+    // 历史行（m1/m2）bootstrap_skipped 排其后。claimed→pending 清 claim；retry_wait
+    // 保 next_attempt_at/attempt_count（重试预算连续）。
+    const v2Rows = await testDb()
+      .select({
+        sourceEventId: event_subscription_delivery.source_event_id,
+        deliverySeq: event_subscription_delivery.delivery_seq,
+        status: event_subscription_delivery.status,
+        attemptCount: event_subscription_delivery.attempt_count,
+        lastError: event_subscription_delivery.last_error,
+        nextAttemptAt: event_subscription_delivery.next_attempt_at,
+        claimOwner: event_subscription_delivery.claim_owner,
+      })
+      .from(event_subscription_delivery)
+      .where(sql`${event_subscription_delivery.subscriber_version} = 2`)
+      .orderBy(event_subscription_delivery.delivery_seq);
+    expect(v2Rows.map((r) => [r.sourceEventId, r.deliverySeq, r.status])).toEqual([
+      ['t1', 1, 'retry_wait'],
+      ['t2', 2, 'pending'],
+      ['p1', 3, 'pending'],
+      ['m1', 4, 'bootstrap_skipped'],
+      ['m2', 5, 'bootstrap_skipped'],
+    ]);
+    expect(v2Rows[0]).toEqual(
+      expect.objectContaining({ attemptCount: 2, lastError: 'flaky handler' }),
+    );
+    const t1NextAttempt = v2Rows[0]?.nextAttemptAt;
+    expect(t1NextAttempt).not.toBeNull();
+    if (!t1NextAttempt) throw new Error('expected t1 next_attempt_at preserved');
+    expect(t1NextAttempt.getTime()).toBeGreaterThan(Date.now());
+    expect(v2Rows[1]).toEqual(expect.objectContaining({ claimOwner: null, attemptCount: 0 }));
+
+    // next_delivery_seq = max(delivery_seq)+1 = 6（冲突丢弃历史行留洞时必须用 max，
+    // 不能 count+1——本用例 count=5 恰好等于 max，但含 supersede 的用例会散开）。
+    const [cp] = await testDb()
+      .select({ nextDeliverySeq: event_subscription_checkpoint.next_delivery_seq })
+      .from(event_subscription_checkpoint)
+      .where(
+        sql`${event_subscription_checkpoint.subscriber_id} = ${V2.id}
+          and ${event_subscription_checkpoint.subscriber_version} = 2`,
+      );
+    expect(cp?.nextDeliverySeq).toBe(6);
+
+    // 旧版本再无 outstanding：v1 lease 下 claim 返回 null（不再交付旧版本工作）。
+    await expect(
+      claimNextSubscriptionDelivery(testDb(), registry(V1), V1, v1Lease),
+    ).resolves.toBeNull();
+
+    // 新版本依序交付：t1 retry_wait 未到期 → 挡住后续 claim（per-subscriber 顺序语义）。
+    const v2Lease = await claimSubscriptionLease(testDb(), registry(V2), V2, 'worker-b');
+    if (!v2Lease) throw new Error('expected v2 lease');
+    await expect(
+      claimNextSubscriptionDelivery(testDb(), registry(V2), V2, v2Lease),
+    ).resolves.toBeNull();
+
+    await testDb().execute(sql`
+      update event_subscription_delivery
+      set next_attempt_at = clock_timestamp() - interval '1 second'
+      where source_event_id = 't1' and subscriber_version = 2
+    `);
+    const claimedT1 = await claimNextSubscriptionDelivery(testDb(), registry(V2), V2, v2Lease);
+    expect(claimedT1?.sourceEventId).toBe('t1');
+    if (!claimedT1) throw new Error('expected t1 claim');
+    await completeSubscriptionDelivery(testDb(), claimedT1, { status: 'succeeded' });
+    const claimedT2 = await claimNextSubscriptionDelivery(testDb(), registry(V2), V2, v2Lease);
+    expect(claimedT2?.sourceEventId).toBe('t2');
+
+    // 幂等：再 bootstrap 一次 v2（同 hash）不重复翻译、不增行。
+    const again = await bootstrapSubscription(testDb(), registry(V2), V2);
+    expect(again).toEqual({ translated: 0, superseded: 0 });
+    const [count] = await testDb()
+      .select({ n: sql<number>`count(*)::int` })
+      .from(event_subscription_delivery)
+      .where(sql`${event_subscription_delivery.subscriber_version} = 2`);
+    expect(count?.n).toBe(5);
+  });
+
+  it('supersedes old-version deliveries for events the bumped version no longer subscribes to', async () => {
+    const V1: LoadedEventSubscription = {
+      ...SUBSCRIBER,
+      actions: ['test:handled', 'test:extra'],
+    };
+    const V2: LoadedEventSubscription = {
+      ...SUBSCRIBER,
+      version: 2,
+      actions: ['test:handled'], // 'test:extra' 不再订阅
+      declarationHash: 'subscriber-declaration-hash-v2',
+      handler: async () => ({ status: 'succeeded' }),
+    };
+
+    await bootstrapSubscription(testDb(), registry(V1), V1);
+    await insertEvent('e1'); // handled —— 翻译
+    await insertEvent('x1', 'test:extra'); // 不再订阅 —— superseded
+    await insertEvent('x2', 'test:extra');
+    await insertEvent('m1'); // handled、v1 已终态（succeeded）—— 落历史行
+    const lease = await claimSubscriptionLease(testDb(), registry(V1), V1, 'worker');
+    if (!lease) throw new Error('expected lease');
+    await discoverSubscriptionDeliveries(testDb(), registry(V1), V1, lease);
+    await testDb().execute(sql`
+      update event_subscription_delivery
+      set status = 'succeeded', completed_at = clock_timestamp(), outcome = '{"status":"succeeded"}',
+          updated_at = clock_timestamp()
+      where source_event_id = 'm1'
+    `);
+
+    const result = await bootstrapSubscription(testDb(), registry(V2), V2);
+    expect(result).toEqual({ translated: 1, superseded: 3 });
+
+    const v1Rows = await testDb()
+      .select({
+        sourceEventId: event_subscription_delivery.source_event_id,
+        status: event_subscription_delivery.status,
+        lastError: event_subscription_delivery.last_error,
+      })
+      .from(event_subscription_delivery)
+      .where(sql`${event_subscription_delivery.subscriber_version} = 1`)
+      .orderBy(event_subscription_delivery.delivery_seq);
+    expect(v1Rows).toEqual([
+      { sourceEventId: 'e1', status: 'skipped', lastError: 'translated_to_v2' },
+      { sourceEventId: 'x1', status: 'skipped', lastError: 'superseded_by_version_bootstrap' },
+      { sourceEventId: 'x2', status: 'skipped', lastError: 'superseded_by_version_bootstrap' },
+      { sourceEventId: 'm1', status: 'succeeded', lastError: null },
+    ]);
+
+    // v2 只认 'test:handled'：e1 翻译占 seq1；历史候选 {e1,m1}（x1/x2 非 handled）
+    // 的 rownum 1,2 → e1 的历史位 seq2 与翻译行 PK 冲突丢弃 → delivery_seq 留洞
+    // （1 与 3）。next_delivery_seq 必须取 max+1 = 4：count+1 = 3 会在下一次
+    // discovery 撞上 event_subscription_delivery_local_seq_uq —— 这就是断言目标。
+    const v2Rows = await testDb()
+      .select({
+        sourceEventId: event_subscription_delivery.source_event_id,
+        deliverySeq: event_subscription_delivery.delivery_seq,
+        status: event_subscription_delivery.status,
+      })
+      .from(event_subscription_delivery)
+      .where(sql`${event_subscription_delivery.subscriber_version} = 2`)
+      .orderBy(event_subscription_delivery.delivery_seq);
+    expect(v2Rows.map((r) => [r.sourceEventId, r.deliverySeq, r.status])).toEqual([
+      ['e1', 1, 'pending'],
+      ['m1', 3, 'bootstrap_skipped'],
+    ]);
+
+    await insertEvent('n1'); // bump 后的新事件
+    const v2Lease = await claimSubscriptionLease(testDb(), registry(V2), V2, 'worker');
+    if (!v2Lease) throw new Error('expected v2 lease');
+    await discoverSubscriptionDeliveries(testDb(), registry(V2), V2, v2Lease);
+    const [n1Row] = await testDb()
+      .select({ deliverySeq: event_subscription_delivery.delivery_seq })
+      .from(event_subscription_delivery)
+      .where(
+        sql`${event_subscription_delivery.subscriber_version} = 2
+          and ${event_subscription_delivery.source_event_id} = 'n1'`,
+      );
+    expect(n1Row?.deliverySeq).toBe(4); // 无碰撞、无重投：紧接 max(3) 之后
+  });
 });

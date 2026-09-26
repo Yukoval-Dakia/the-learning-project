@@ -68,6 +68,22 @@ async function main(): Promise<void> {
     const { migrateCanonicalProjections } = await import('./migrate-canonical-projections');
     const projections = await migrateCanonicalProjections(db);
     console.log('[migrate] canonical projection readiness:', JSON.stringify(projections));
+
+    // YUK-1055 — DB contract epoch observability（启动准备宽于 SQL）：0109 已在
+    // SQL 侧 seed 隐式 ('legacy','active') marker；这里读回并日志化，让 migrate
+    // init container 的输出本身成为 epoch 就绪证据。读不出 = 未迁移到位 → fatal
+    //（init container 红，app/worker 不会在没有 marker 语义的库上跑）。
+    const { readContractEpoch, CODE_CONTRACT_EPOCH } = await import('@/server/contract-epoch');
+    const epochMarker = await readContractEpoch(db);
+    if (!epochMarker) {
+      throw new Error(
+        '[migrate] contract_epoch marker absent after migrations — epoch guard has no semantics',
+      );
+    }
+    console.log(
+      `[migrate] contract epoch: ${epochMarker.epoch}/${epochMarker.state} ` +
+        `(seq ${epochMarker.seq}; code epoch ${CODE_CONTRACT_EPOCH})`,
+    );
   } finally {
     await sql.end({ timeout: 5 });
   }

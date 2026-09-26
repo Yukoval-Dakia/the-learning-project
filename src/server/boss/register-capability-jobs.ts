@@ -39,6 +39,7 @@ import {
   createJobQueue,
   createOrUpdateQueue,
 } from '@/server/boss/queue-config';
+import { fenceAwareJobHandler } from '@/server/contract-epoch';
 
 const EXPIRE_BY_QUEUE = {
   llm: EXPIRE_LLM,
@@ -62,6 +63,9 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
   }
 
   const factory = await decl.load();
+  // YUK-1055 — per-delivery epoch fence：错过停机的活 worker 在 epoch 翻转后
+  // 被每个 delivery 拒跑；disposition（drain/translate/fenced）见
+  // src/server/contract-epoch/jobs.ts。
   // Declared worker metadata wins; absent fields keep the uniform 2s/1 recipe
   // (equivalence red line with the retired central registrations).
   await boss.work(
@@ -71,7 +75,7 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
       batchSize: decl.batchSize ?? 1,
       ...(decl.includeMetadata !== undefined ? { includeMetadata: decl.includeMetadata } : {}),
     },
-    factory(db),
+    fenceAwareJobHandler(db, decl.name, factory(db)),
   );
 
   if (decl.schedule) {

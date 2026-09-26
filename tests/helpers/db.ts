@@ -259,6 +259,10 @@ const ALL_TABLES = [
   // 不列入会跨测泄漏 run/phase 状态，破坏幂等/续跑测试的隔离）。
   'migration_apply_phase',
   'migration_apply_run',
+  // YUK-1055 — DB contract epoch marker 历史。不列入会跨测泄漏 epoch 状态，
+  // 破坏 fence/transition 测试的隔离（「缺表/空表 = 隐式 legacy」语义要求
+  // 每个用例从空表开始）。
+  'contract_epoch',
 ] as const;
 
 export async function resetDb() {
