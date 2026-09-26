@@ -44,7 +44,14 @@ export type AgentFailureSubtype =
   /** Cross-process session lease/control-plane failure after durable start. */
   | 'provider_admission'
   /** Non-SDK exception after the attempt acquired a durable task-run id. */
-  | 'runner_error';
+  | 'runner_error'
+  /**
+   * YUK-1049 — typed-endpoint contract violation after a transport-level
+   * success: non-JSON body, response schema mismatch, or model/provider drift
+   * from the pinned canonical. PERMANENT by classification (retrying a
+   * deterministic violation only double-bills).
+   */
+  | 'typed_contract_violation';
 
 /**
  * R1 (YUK-576 review) — the sixth retry gate: a transient failure is only

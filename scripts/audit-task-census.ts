@@ -39,6 +39,12 @@ export type AuditTaskCensusOptions = {
 export const LIVE_NON_CALLER_CLASSIFICATIONS = {
   AttributionTask:
     'Retained as a registered compatibility task while production failure attribution invokes AttributionRerankTask after deterministic candidate retrieval.',
+  // YUK-1049 — typed lane: the kind arrives per frozen scoring unit via
+  // ModelExecutorRequest.executor.task_kind (dynamic expression, not a
+  // static runTask call site). The single typed runner entry is
+  // src/server/assessment/jev-model-executor.ts → runTypedPrimitiveTask.
+  JevScoringDecisionTask:
+    'Typed-execution task served by runTypedPrimitiveTask (OpenRouter decisions endpoint); its kind is selected per frozen scoring unit via executor.task_kind in jev-model-executor.ts — a dynamic arg the runner-scan cannot resolve statically.',
 } as const;
 
 export function auditTaskCensus(options: AuditTaskCensusOptions): AuditResult {
@@ -94,8 +100,9 @@ export function auditTaskCensus(options: AuditTaskCensusOptions): AuditResult {
     // YUK-987: 50（+SupplyPlanTask 供给需求层 planner）。
     // YUK-1016: 51（+CauseCategoryProposeTask cause catalog 增长提议）。
     // YUK-376: 52（+ItemPriorLlasaTask LLaSA 学生模拟冷启锚 opt-in 变体）。
-    ...(validateInfrastructure && catalogSet.size !== 52
-      ? [`Task catalog must contain exactly 52 kinds, received ${catalogSet.size}`]
+    // YUK-1049: 53（+JevScoringDecisionTask 首个 typed execution task）。
+    ...(validateInfrastructure && catalogSet.size !== 53
+      ? [`Task catalog must contain exactly 53 kinds, received ${catalogSet.size}`]
       : []),
     ...unresolvedCallers.map(
       (caller) =>

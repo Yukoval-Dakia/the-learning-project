@@ -29,12 +29,28 @@ export interface TaskBudget {
 
 export type TaskPrompt =
   | { readonly kind: 'inline'; readonly text: string }
-  | { readonly kind: 'profile'; readonly build: (profile: SubjectProfile) => string };
+  | { readonly kind: 'profile'; readonly build: (profile: SubjectProfile) => string }
+  /**
+   * YUK-1049 — typed-execution tasks have NO chat prompt: the typed runner
+   * (src/server/ai/typed-primitive-runner.ts) derives the canonical request
+   * body from the schema-parsed typed input. `kind:'none'` is legal ONLY on
+   * definitions with execution='typed' (owned-task-specs enforces); chat entry
+   * points reject such tasks before reaching getTaskSystemPrompt.
+   */
+  | { readonly kind: 'none' };
 
 /** Runtime-neutral task definition projected into the central registry. */
 export interface TaskDefinition {
   readonly kind: string;
   readonly description: string;
+  /**
+   * YUK-1049 — execution transport discriminant. Absent/'chat' = the pi
+   * chat-façade path (prompt required, runTask/streamTask). 'typed' = the
+   * restricted typed-primitive runner (prompt must be {kind:'none'}; input /
+   * output are schema-parsed, never free-text JSON extraction). The catalog
+   * validator and the runner both reject mismatched combinations.
+   */
+  readonly execution?: 'chat' | 'typed';
   readonly defaultProvider: Provider;
   readonly defaultModel: ModelId;
   readonly budget: TaskBudget;
@@ -71,3 +87,21 @@ export interface TaskSpec<Input, Output> {
   readonly outputSchema: ZodTypeAny;
   readonly parseText: (text: string, context: TaskParseContext<Input>) => Output;
 }
+
+/**
+ * YUK-1049 — capability-owned TYPED task semantics (typed execution kind).
+ * No parseText: outputs are parsed directly from the provider's typed
+ * response by `outputSchema` — free-text JSON extraction is the forbidden
+ * pattern on this lane. `typed.inputSchema` parses the caller-supplied typed
+ * input BEFORE the runner builds the canonical request body (its hash is the
+ * lifecycle input provenance).
+ */
+export interface TypedTaskSpec {
+  readonly ownership: 'owned';
+  readonly definition: TaskDefinition;
+  readonly outputSchema: ZodTypeAny;
+  readonly typed: { readonly inputSchema: ZodTypeAny };
+}
+
+/** An owned spec entry: chat TaskSpec or typed TypedTaskSpec. */
+export type OwnedTaskSpecEntry = TaskSpec<never, unknown> | TypedTaskSpec;

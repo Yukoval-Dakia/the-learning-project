@@ -28,6 +28,7 @@
 // registry.ts only.
 
 import { type Provider, type TaskKind, tasks } from '@/ai/registry';
+import type { TaskDefinition } from '@/ai/task-spec';
 import type { ProviderModelBinding } from './model-profiles';
 
 // YUK-608 — re-export the provider union so override consumers (solve-lane, verify-framework)
@@ -146,7 +147,27 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
     authMode: 'key',
     baseUrl: 'https://openrouter.ai/api/v1',
     apiKeyEnv: 'OPENROUTER_API_KEY',
-    description: 'OpenRouter unified multi-provider gateway (not currently in use)',
+    description:
+      'OpenRouter gateway — TYPED decisions lane only (native /api/v1/systemone, YUK-1049); no chat façade',
+    models: {
+      // YUK-1049 — TypeSafe Jev on the native typed endpoint. Text-only,
+      // 32k context (OpenRouter catalog probe 2026-09-24, D12 smoke); the
+      // typed schema IS the structured-output contract, so the lane carries
+      // the structuredOutput confirmation. meteredUsd stays false: usage.cost
+      // is provider-reported evidence (basis 'reported'), while the USD cap
+      // enforcement lives in the typed runner's reserve math, not in a
+      // transport maxBudgetUsd hook that no longer exists.
+      'typesafe/jev-1.13': {
+        capabilities: {
+          structuredOutput: true,
+          toolCalling: false,
+          vision: false,
+          reasoning: false,
+        },
+        limits: { contextWindowTokens: 32_000 },
+        execution: { budgetClass: 'cheap', meteredUsd: false },
+      },
+    },
   },
   gateway: {
     authMode: 'key',
@@ -383,6 +404,26 @@ export function isProviderImplemented(provider: Provider): boolean {
   return IMPLEMENTED_KEY_PROVIDERS.has(provider) || isOauthProvider(provider);
 }
 
+// YUK-1049 — the openrouter lane is implemented ONLY for typed-execution
+// tasks (execution:'typed'): its wired surface is the native decisions
+// endpoint, not the chat façade pi drives. The lane is deliberately absent
+// from IMPLEMENTED_KEY_PROVIDERS/isProviderImplemented so generic routing and
+// override pre-flights still classify it as not-wired; resolveTaskProvider
+// consults this predicate instead, keyed on the resolved task's own
+// execution kind — a chat task can never resolve onto the typed lane, and a
+// typed task resolves here even though the generic predicate says unimplemented.
+export function isProviderImplementedForTask(provider: Provider, kind: TaskKind): boolean {
+  // The catalog map's value is the union of every spec's literal shape;
+  // `execution` is an optional declared field — read through the interface
+  // view (same pattern as TaskDefinition reads in run-lifecycle.ts).
+  if (
+    ((tasks[kind] as TaskDefinition).execution ?? 'chat') === 'typed' &&
+    provider === 'openrouter'
+  )
+    return true;
+  return isProviderImplemented(provider);
+}
+
 // YUK-365 / YUK-608 — providers whose registry-default model path yields a RUNNABLE model without
 // an explicit override.model: xiaomi (the mimo endpoint IS the registry default) and anthropic-sub
 // (built-in Opus 4.8 default). Every OTHER provider's registry default is a mimo id its endpoint
@@ -588,11 +629,13 @@ export function resolveTaskProvider(
   // (single source of truth, also read by override pre-flights). YUK-921 P1:
   // pi-lane providers resolve here — the execution-adapter gate
   // is what rejects them for SDK-routed runs, not this credential check.
-  if (!isProviderImplemented(providerName)) {
+  if (!isProviderImplementedForTask(providerName, kind)) {
     // Derive the wired list from the same predicate that gates this throw —
     // a hand-maintained copy drifts on every new lane (opencode-go, then
     // openai; flagged by review on YUK-1027).
-    const wired = (Object.keys(PROVIDERS) as Provider[]).filter((p) => isProviderImplemented(p));
+    const wired = (Object.keys(PROVIDERS) as Provider[]).filter((p) =>
+      isProviderImplementedForTask(p, kind),
+    );
     throw new Error(
       `Provider '${providerName}' is reserved but not implemented; wired lanes: ${wired.join(', ')}.`,
     );

@@ -44,7 +44,7 @@ describe('copilot task dispatch declarations', () => {
     for (const kind of Object.keys(taskCatalog) as TaskKind[]) {
       expect(tasks[kind], kind).toBe(taskCatalog[kind]);
     }
-    expect(Object.keys(tasks)).toHaveLength(52);
+    expect(Object.keys(tasks)).toHaveLength(53);
   });
 
   it('contains no prompt builders or task business definitions', () => {
@@ -81,7 +81,7 @@ describe('task prompt definitions', () => {
   });
 
   it('defines one non-empty inline or profile prompt for every task', () => {
-    expect(Object.keys(tasks)).toHaveLength(52);
+    expect(Object.keys(tasks)).toHaveLength(53);
 
     for (const task of Object.values(tasks)) {
       switch (task.prompt.kind) {
@@ -91,6 +91,12 @@ describe('task prompt definitions', () => {
         case 'profile':
           expect(task.prompt.build, task.kind).toBeTypeOf('function');
           break;
+        case 'none':
+          // YUK-1049 — typed tasks carry no chat prompt; legal only with
+          // execution:'typed' (validator-enforced). `execution` is optional
+          // on the declared interface — read through the interface view.
+          expect((task as { execution?: string }).execution ?? 'chat', task.kind).toBe('typed');
+          break;
         default: {
           const unhandled: never = task.prompt;
           throw new Error(`Unhandled prompt kind: ${JSON.stringify(unhandled)}`);
@@ -99,8 +105,9 @@ describe('task prompt definitions', () => {
     }
   });
 
-  it('resolves every task without sentinel or duplicate fallback storage', () => {
+  it('resolves every chat task without sentinel or duplicate fallback storage', () => {
     for (const [kind, task] of Object.entries(tasks)) {
+      if ((task as { execution?: string }).execution === 'typed') continue; // YUK-1049
       const resolved = getTaskSystemPrompt(kind as keyof typeof tasks);
       expect(resolved.trim(), kind).not.toBe('');
       expect(resolved, kind).not.toContain('see getTaskSystemPrompt');
@@ -143,7 +150,8 @@ describe('task prompt definitions', () => {
           task === 'SourcingTask' ||
           task === 'SupplyPlanTask' ||
           task === 'MistakeEnrollTask' ||
-          task === 'TeachingTurnTask'
+          task === 'TeachingTurnTask' ||
+          task === 'JevScoringDecisionTask' // YUK-1049 — typed task, no prompt to hash
         ) {
           continue;
         }
@@ -1027,7 +1035,14 @@ describe('budget.transientRetries (YUK-576)', () => {
   });
 
   it('every other task inherits the DEFAULT_BUDGET 0 (no in-process retry)', () => {
-    const optedIn = new Set(['StepsJudgeTask', 'MultimodalDirectJudgeTask']);
+    // YUK-1049 — JevScoringDecisionTask is a TYPED task: its transientRetries
+    // budget is consumed by the typed runner's HTTP status map (429/5xx/
+    // transport within the shared wall clock), never by this chat loop.
+    const optedIn = new Set([
+      'StepsJudgeTask',
+      'MultimodalDirectJudgeTask',
+      'JevScoringDecisionTask',
+    ]);
     for (const [kind, def] of Object.entries(tasks)) {
       if (optedIn.has(kind)) continue;
       expect(def.budget.transientRetries, `${kind} must not opt into in-process retry`).toBe(0);

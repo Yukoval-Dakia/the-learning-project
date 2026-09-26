@@ -29,6 +29,11 @@ const prompts: Record<string, string> = {};
 for (const profileId of oracle.profiles) {
   const profile = resolveSubjectProfile(profileId);
   for (const task of Object.keys(tasks)) {
+    // YUK-1049 — typed tasks have no system prompt to hash; the oracle's
+    // prompts map stays restricted to chat-prompt tasks (taskCount still
+    // counts the whole catalog).
+    if ((tasks[task as keyof typeof tasks] as { execution?: string }).execution === 'typed')
+      continue;
     prompts[`${profileId}:${task}`] = createHash('sha256')
       .update(getTaskSystemPrompt(task as keyof typeof tasks, profile), 'utf8')
       .digest('hex');
