@@ -1260,5 +1260,93 @@
         "notes": "返回 { subjects:[{ id, displayName, renderConfig{font_family,notation,code_highlight}, causeCategories:[{id,label}], isGeneralFallback }] }。selectable 视图：general 结构性排除、retired 状态性排除；custom 科目经 YUK-599 水合自动进列。isGeneralFallback = 派生布尔（六绑定全指向 general 种子 trait，v3 §2.3；badge 数据源）。server-only AI 合同字段（promptFragments/noteTemplate/grounding/judgePolicy/sourceWhitelist）绝不下发（unit 负测钉死）。需 x-internal-token"
       }
     ]
+  },
+  {
+    "path": "/api/issuances",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "issueAssessment：发题时绑定不可变 revision/目标 part/实际材料/选项展示映射（preselected≠issued；§3.1/§7.1）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "group_id": "REPLACE_group_root",
+          "part_ids": ["p1"],
+          "mode": "auto_score",
+          "container_occurrence_ref": null,
+          "claim": {
+            "claimed_by_ref": "REPLACE_occurrence"
+          },
+          "revision_id": "REPLACE_revision_optional"
+        },
+        "notes": "mode:auto_score(默认,要求 admitted) | manual(D9)；container_only 组必填 container_occurrence_ref。返回 {status,issuance,practice_dto(公开面无答案键),admission_generation_observed}。错误：not_found(404)/unpublished|suspended|withdrawn|not_admitted|container_ref_required|binding_invalid(422)/claim_unavailable|issuance_id_conflict(409)；replayed→200"
+      }
+    ]
+  },
+  {
+    "path": "/api/issuances/:id",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "pending 恢复读面：issuance + live draft + 已接收提交（draft=null 即服务端无未保存草稿）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "返回 {issuance,draft,submissions}；issuance 不存在 → 404"
+      }
+    ]
+  },
+  {
+    "path": "/api/issuances/:id/responses",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "saveResponseDraft：D11 服务端自动保存（全练习面 solo/paper/placement 在 pinned issuance 上自动保存；ack 只在落库后产生）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "evaluation_group_ref": "REPLACE_group_or_null",
+          "response_set": {
+            "entries": [
+              {
+                "slot_id": "p1::r",
+                "kind": "choice",
+                "option_ids": ["opt-a"]
+              }
+            ]
+          },
+          "group_evidence": [],
+          "expected_save_epoch": 1
+        },
+        "notes": "body={evaluation_group_ref?,response_set,group_evidence?,expected_save_epoch?}；response_set 只校验发出范围内槽位。返回 {status:'saved',issuance_id,save_epoch,updated_at}。错误：not_found(404)/invalid_response(422)/stale_draft(409)"
+      }
+    ]
+  },
+  {
+    "path": "/api/submissions",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "saveSubmission：ResponseSet 幂等保存（同 (group,idempotency_key) 一致→replayed 200 / 不同→409；绑定不可变 revision，不回取 latest）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "issuance_id": "REPLACE_issuance",
+          "evaluation_group_id": "REPLACE_group",
+          "idempotency_key": "REPLACE_key",
+          "response_set": {
+            "entries": [
+              {
+                "slot_id": "p1::r",
+                "kind": "choice",
+                "option_ids": ["opt-a"]
+              }
+            ]
+          },
+          "group_evidence": []
+        },
+        "notes": "单事务：evaluation_group upsert→assessment_submission 不可变行→初始 head→清对应 draft→事件。返回 {status,submission,revision_id,issuance_id}。错误：issuance_not_found(404)/invalid_response(422)/revision_not_found|group_conflict|idempotency_conflict(409)"
+      }
+    ]
   }
 ]

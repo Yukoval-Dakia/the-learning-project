@@ -115,6 +115,15 @@ export function validateIssuanceBinding(
     });
     return issues; // 身份都不对，后续校验无意义 —— fail fast。
   }
+  // 发出 part 必须非空（IssuanceBinding.part_ids min(1) 已由 schema 保证，
+  // 这里仍是防御性断言：空集发题意味着没有作答面，无意义）。
+  if (binding.part_ids.length === 0) {
+    issues.push({
+      code: 'unknown_part',
+      detail: 'binding issues an empty part set',
+    });
+    return issues;
+  }
   const structure: QuestionGroupStructureT = revision.structure;
 
   const partIds = new Set(structure.parts.map((part) => part.part_id));
@@ -236,4 +245,77 @@ export function validateIssuanceBinding(
     }
   }
   return issues;
+}
+
+// ---------- 发题绑定推导（YUK-1052 serve-time derivation） ----------
+
+/**
+ * 纯推导：revision + 请求覆盖 → 完整 IssuanceBinding。确定性、无 IO：
+ *   - part_ids：缺省 = 全部 structure.parts（单题天然 1-part 组）；
+ *   - material_bindings：被发出 part 实际引用的全部材料，asset_digest 取
+ *     revision 冻结值（判分与学生所见同版资产）；
+ *   - option_order：缺省 = 声明顺序（§7.3 新 serve 不 shuffle —— “以上都对”/
+ *     引用字母选项保持原序）；调用方可给覆盖顺序（如明确允许的 shuffle），
+ *     但覆盖值必须是【该槽声明选项的排列】，由 validateIssuanceBinding 裁决。
+ *
+ * 本函数不校验引用合法性 —— 非法 part/material/slot 引用原样保留，由
+ * validateIssuanceBinding 统一报错（fail-closed 单入口，不产生第二套校验）。
+ */
+export function deriveIssuanceBinding(
+  revision: PublishedQuestionRevisionT,
+  request?: {
+    part_ids?: readonly string[];
+    /** 选择槽呈现顺序覆盖（slot_id → option_ids 排列）。缺省 = 声明顺序。 */
+    option_order_overrides?: Readonly<Record<string, readonly string[]>>;
+  },
+): IssuanceBindingT {
+  const partIds = request?.part_ids ?? revision.structure.parts.map((part) => part.part_id);
+  const partIdSet = new Set(partIds);
+
+  // 只绑定发出 part 实际引用的材料（同 digest）。part_id 非法时此处自然为空 ——
+  // validateIssuanceBinding 会以 unknown_part/unbound_part_material 拒。
+  const requiredMaterialIds = new Set<string>();
+  for (const part of revision.structure.parts) {
+    if (!partIdSet.has(part.part_id)) continue;
+    for (const materialId of part.material_ids) requiredMaterialIds.add(materialId);
+  }
+  const materialBindings = revision.structure.materials
+    .filter((material) => requiredMaterialIds.has(material.material_id))
+    .map((material) => ({
+      material_id: material.material_id,
+      asset_digest: material.asset.digest,
+    }));
+
+  const overrides = request?.option_order_overrides ?? {};
+  const optionOrder: IssuedOptionOrderT[] = [];
+  for (const slot of revision.response_spec.slots) {
+    if (!partIdSet.has(slot.part_id)) continue;
+    if (slot.kind !== 'single_choice' && slot.kind !== 'multi_choice' && slot.kind !== 'matching') {
+      continue;
+    }
+    const override = overrides[slot.slot_id];
+    if (override != null) {
+      optionOrder.push({ slot_id: slot.slot_id, option_ids: [...override] });
+      continue;
+    }
+    const declared =
+      slot.kind === 'matching'
+        ? slot.right_options.map((option) => option.option_id)
+        : slot.options.map((option) => option.option_id);
+    optionOrder.push({ slot_id: slot.slot_id, option_ids: [...declared] });
+  }
+  // 覆盖里引用发出范围外/未知槽位的键原样透出 —— validate 统一拒绝。
+  const covered = new Set(optionOrder.map((entry) => entry.slot_id));
+  for (const slotId of Object.keys(overrides)) {
+    if (!covered.has(slotId)) {
+      optionOrder.push({ slot_id: slotId, option_ids: [...overrides[slotId]] });
+    }
+  }
+
+  return {
+    revision_id: revision.revision_id,
+    part_ids: [...partIds],
+    material_bindings: materialBindings,
+    option_order: optionOrder,
+  };
 }

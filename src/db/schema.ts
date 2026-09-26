@@ -795,6 +795,43 @@ export const assessment_submission = pgTable(
 );
 
 /**
+ * YUK-1052 — 服务端自动保存草稿（D11）：全部正式练习面（含 solo+placement）
+ * 在 pinned issuance 上自动保存。saving/saved/error 只由服务端 ack 表达 ——
+ * 本行即 ack 真相源：落库成功才回 ack，客户端 restore 只读本行。
+ *
+ * 与 assessment_submission 的关系：草稿是【可变】作答层（upsert 覆盖），
+ * 正式提交时由 saveSubmission 冻结成不可变 submission 行并同事务清除对应
+ * 草稿 —— 冻结事实（revision/issuance/group）不变，草稿永远不代表已接收
+ * 作答（D5 守恒只发生在 submission 落库那一下 ack）。
+ *
+ * 每 issuance 一行 live draft（唯一键）；evaluation_group_ref 是草稿侧声明的
+ * 联合判分组锚点（paper 联判组内多 slot 草稿共享同一 ref；null = 未定组，提交
+ * 时按请求组判定，不做跨组清理）。
+ */
+export const assessment_response_draft = pgTable(
+  'assessment_response_draft',
+  {
+    issuance_id: text('issuance_id').primaryKey(),
+    /** 草稿声明的联合组；null = 未绑定（由提交时的 evaluation_group_id 决定）。 */
+    evaluation_group_ref: text('evaluation_group_ref'),
+    response_set: jsonb('response_set').$type<ResponseSetT>().notNull(),
+    group_evidence: jsonb('group_evidence').$type<GroupEvidenceT[]>().notNull().default([]),
+    /** 单调保存纪元：服务端 ack 序号；客户端可带 expected_save_epoch 做 stale 防线。 */
+    save_epoch: integer('save_epoch').notNull().default(0),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index('assessment_response_draft_group_ref_idx').on(t.evaluation_group_ref),
+    foreignKey({
+      columns: [t.issuance_id],
+      foreignColumns: [assessment_issuance.issuance_id],
+      name: 'assessment_response_draft_issuance_fk',
+    }),
+    check('assessment_response_draft_save_epoch_ck', sql`${t.save_epoch} >= 0`),
+  ],
+);
+
+/**
  * 评估尝试（candidate 记录）：一份 submission 可有多个 attempt（重试身份 ≠
  * 学习事实身份）；candidate/shadow 永不进 latest-judge 显示通道 —— 生效与
  * 否只由 evaluation_effective_head 表达。provenance 承载 D9/D15/D16 来源
