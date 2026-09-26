@@ -90,6 +90,8 @@
     "migration:capture": "tsx scripts/migration-capture.ts",
     "migration:apply": "tsx scripts/migration-apply.ts",
     "migration:epoch": "tsx scripts/contract-epoch.ts",
+    "rehearsal:cutover": "tsx scripts/rehearsal.ts",
+    "eval:d18": "tsx scripts/eval-d18.ts",
     "audit:golden": "tsx scripts/golden-reaudit.ts",
     "capture:judge-golden": "tsx scripts/capture-judge-golden.ts",
     "audit:judge-golden": "tsx scripts/judge-golden-reaudit.ts",
