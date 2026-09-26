@@ -74,7 +74,7 @@ async function gateJobDelivery(
         jobId: job.id,
         disposition,
         birthEpoch,
-        createdOn: createdOn.toISOString(),
+        createdOn, // ISO string from pgboss.job.created_on
       });
       return new ContractEpochFenceError(surface, fencedVerdict);
     }
@@ -82,9 +82,10 @@ async function gateJobDelivery(
   return null;
 }
 
-async function readJobCreatedOn(db: Db, jobId: string): Promise<Date | null> {
+async function readJobCreatedOn(db: Db, jobId: string): Promise<string | null> {
   try {
-    const rows = await db.execute<{ created_on: Date }>(sql`
+    // postgres-js 对 timestamptz 列返回 ISO string，不是 Date 对象。
+    const rows = await db.execute<{ created_on: string }>(sql`
       select created_on from pgboss.job where id = ${jobId}
     `);
     return rows[0]?.created_on ?? null;

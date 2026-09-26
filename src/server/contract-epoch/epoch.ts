@@ -226,15 +226,17 @@ export async function transitionContractEpoch(
  * 的最新 marker 的 epoch；早于全部 marker（或表缺）→ 'legacy'。
  * 「出生在旧 epoch 的 translate payload 绝不按新合同执行」的判别式。
  */
-export async function readJobBirthEpoch(db: Db, createdOn: Date): Promise<string> {
+export async function readJobBirthEpoch(db: Db, createdOn: Date | string): Promise<string> {
   let rows: { epoch: string }[];
   try {
-    // postgres-js 不序列化 Date 参数 → 传 ISO 串 + 显式 timestamptz cast。
+    // postgres-js 不序列化 Date 参数 → 统一转 ISO 串 + 显式 timestamptz cast。
+    // created_on 读出来也可能是 string（postgres-js 对 timestamptz 不构造 Date）。
+    const iso = createdOn instanceof Date ? createdOn.toISOString() : String(createdOn);
     rows = await db.execute<{ epoch: string }>(sql`
       select epoch
       from contract_epoch
       where state = 'active'
-        and entered_at <= ${createdOn.toISOString()}::timestamptz
+        and entered_at <= ${iso}::timestamptz
       order by seq desc
       limit 1
     `);
