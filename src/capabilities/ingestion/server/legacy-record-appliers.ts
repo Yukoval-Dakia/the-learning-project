@@ -6,6 +6,12 @@
 
 import { and, eq, isNull } from 'drizzle-orm';
 import { newId } from '@/core/ids';
+import {
+  LEGACY_DRAFT_STATUS,
+  MARKING_RULE_PROVENANCE,
+  QUESTION_AVAILABILITY,
+  SCORING_ADMISSION_STATE,
+} from '@/core/schema/assessment/lifecycle';
 import { ArtifactBodyBlocks, type ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item, learning_record, question } from '@/db/schema';
@@ -371,7 +377,7 @@ export async function acceptRecordPromotionProposal(
           difficulty: typeof draft.difficulty === 'number' ? draft.difficulty : 3,
           source: 'dreaming',
           source_ref: proposalId,
-          draft_status: 'active',
+          draft_status: LEGACY_DRAFT_STATUS.ACTIVE,
           created_by: {
             by: 'ai',
             task_kind: 'record_promotion',
@@ -388,9 +394,9 @@ export async function acceptRecordPromotionProposal(
       await publishQuestionGroupFromRow(tx, {
         rootId: materializedId,
         admission: {
-          state: 'admitted',
+          state: SCORING_ADMISSION_STATE.ADMITTED,
           evidence: {
-            marking_provenance: 'manual',
+            marking_provenance: MARKING_RULE_PROVENANCE.MANUAL,
             verification: {
               structural_check_passed: true,
               independent_verification: {
@@ -402,7 +408,7 @@ export async function acceptRecordPromotionProposal(
             model_slice: null,
           },
         },
-        availability: 'general_pool',
+        availability: QUESTION_AVAILABILITY.GENERAL_POOL,
         actorRef: 'legacy-record-accept:question',
         now,
       });

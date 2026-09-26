@@ -237,17 +237,27 @@ launchctl bootout gui/$(id -u)/studio.yukoval.loom-daily-dump  # 若已装载
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/studio.yukoval.loom-daily-dump.plist
 ```
 
-失败发现面与巡检：成功写 `.loom-daily-dump-last-success` epoch 戳（连续 2 日未更新
-即异常）；脚本可到达的失败写 `.loom-daily-dump-FAILED-YYYYMMDD` 标记（daemon/容器
-死时写不进，此时停滞的戳是唯一信号）；脚本日志 `loom-daily-dump.log`（runtime 目录），
-launchd stdout/stderr 在 `~/Library/Application Support/loom-daily-dump/launchd.log`。
-巡检命令：
+失败发现面与巡检（YUK-1056 加固）：成功写 `.loom-daily-dump-last-success` epoch 戳
+（连续 2 日未更新即异常）；失败写 `.loom-daily-dump-FAILED-YYYYMMDD` 标记 **且
+`exit 1`** —— 容器可达时写进 runtime 目录，容器/daemon 不可达时改写
+`~/Library/Application Support/loom-daily-dump/`（本地兜底，launchd `last exit code` 可见）。
+脚本日志 `loom-daily-dump.log`（runtime 目录），launchd stdout/stderr 在
+`~/Library/Application Support/loom-daily-dump/launchd.log`。环境覆盖
+`LOOM_RUNTIME_DIR`/`LOOM_PG_CONTAINER`/`LOOM_DB_USER`/`LOOM_DB_NAME`/`LOOM_KEEP_DAILY`/
+`LOOM_MIN_BYTES`（默认值=当前 Mac 生产）。巡检命令：
 
 ```bash
 cat …/tlp-local-prod-*/.loom-daily-dump-last-success   # epoch 戳，>2 日即 stale
 launchctl print gui/$(id -u)/studio.yukoval.loom-daily-dump | grep -E 'last exit|runs'
 ~/Library/Application\ Support/loom-daily-dump/mac-daily-dump.sh  # 手动补一份（幂等，同日覆盖）
+~/Library/Application\ Support/loom-daily-dump/mac-daily-dump.sh --check  # fresh/stale 巡检
 ```
+
+**恢复演练（restore 证明，YUK-1056）**：`scripts/restore-drill.sh` 在隔离
+scratch 容器内 `pg_restore` + 行数核验，产出 `verified` JSON 证据；
+**统一切换最终备份**：`scripts/cutover-final-backup.sh` 停 writer 后
+DLQ tombstone 导出 + pg_dump + TOC + migration:capture + cutover manifest。
+详见 `docs/runbooks/cutover-final-backup-and-restore.md`。
 
 **手动 dump/restore**：`db:dump` streams a `pg_dump` from the running `postgres` container to a timestamped SQL file on the host:
 

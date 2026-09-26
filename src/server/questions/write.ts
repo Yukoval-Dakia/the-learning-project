@@ -39,6 +39,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, sql } from 'drizzle-orm';
 
 import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/public';
+import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
 import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
@@ -490,7 +491,7 @@ export async function archiveQuestion(
     const parentUpdate = await tx
       .update(question)
       .set({
-        draft_status: 'draft',
+        draft_status: LEGACY_DRAFT_STATUS.DRAFT,
         // YUK-704 — archived rows release their exact-identity hash: the partial
         // unique index only covers non-NULL, so deleted content can be produced
         // again instead of duplicate-matching a soft-archived row forever.
@@ -524,7 +525,7 @@ export async function archiveQuestion(
     const cascaded = await tx
       .update(question)
       .set({
-        draft_status: 'draft',
+        draft_status: LEGACY_DRAFT_STATUS.DRAFT,
         // Same hash release as the parent — archived parts must not keep blocking
         // re-production of identical content via the partial unique index.
         // archived_content_hash retains the released claim for restore (YUK-1045;
@@ -715,7 +716,7 @@ export async function restoreQuestion(
     const restored = await tx
       .update(question)
       .set({
-        draft_status: 'draft',
+        draft_status: LEGACY_DRAFT_STATUS.DRAFT,
         ...(claimsById.has(questionId)
           ? { canonical_content_hash: claimsById.get(questionId) }
           : {}),
@@ -732,7 +733,7 @@ export async function restoreQuestion(
       await tx
         .update(question)
         .set({
-          draft_status: 'draft',
+          draft_status: LEGACY_DRAFT_STATUS.DRAFT,
           ...(claimsById.has(part.id) ? { canonical_content_hash: claimsById.get(part.id) } : {}),
           metadata: stripArchiveMetadata(partMeta),
           updated_at: now,

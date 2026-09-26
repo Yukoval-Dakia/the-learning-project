@@ -19,6 +19,11 @@
 
 import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
+import {
+  LEGACY_DRAFT_STATUS,
+  MARKING_RULE_PROVENANCE,
+  QUESTION_AVAILABILITY,
+} from '@/core/schema/assessment/lifecycle';
 import type { Db } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -160,7 +165,7 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       return { promoted: false, status: 'skipped:unsupported_source' };
     }
     // NOT isPoolVisible — fail-closed promote guard (not-a-draft → reject/skip); do not fold into notDraftPredicate (spec §2.5).
-    if (row.draft_status !== 'draft') {
+    if (row.draft_status !== LEGACY_DRAFT_STATUS.DRAFT) {
       return { promoted: false, status: 'skipped:not_draft' };
     }
     // YUK-400 B-archived-draft (inc-4a) — a soft-archived (re-drafted) question
@@ -202,7 +207,7 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       await lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
       await tx
         .update(question)
-        .set({ draft_status: 'active', updated_at: now })
+        .set({ draft_status: LEGACY_DRAFT_STATUS.ACTIVE, updated_at: now })
         .where(eq(question.id, questionId));
 
       // FSRS enroll — per-knowledge enroll-if-absent (mirror quiz_verify / source_verify /
@@ -249,11 +254,11 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       // just enrolled those ids — question-level fallback when unlabeled).
       const promotedParts = await tx
         .update(question)
-        .set({ draft_status: 'active', updated_at: now })
+        .set({ draft_status: LEGACY_DRAFT_STATUS.ACTIVE, updated_at: now })
         .where(
           and(
             eq(question.parent_question_id, questionId),
-            eq(question.draft_status, 'draft'),
+            eq(question.draft_status, LEGACY_DRAFT_STATUS.DRAFT),
             sql`${question.metadata}->>'archived_at' IS NULL`,
             sql`${question.metadata}->>'dismissed_at' IS NULL`,
           ),
@@ -303,7 +308,7 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
         admission: {
           state: 'admitted',
           evidence: {
-            marking_provenance: 'manual',
+            marking_provenance: MARKING_RULE_PROVENANCE.MANUAL,
             verification: {
               structural_check_passed: true,
               independent_verification: null,
@@ -318,7 +323,7 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
           outcome: 'passed',
           evidence: { override_reason: skipVerify.reason ?? null },
         },
-        availability: 'general_pool',
+        availability: QUESTION_AVAILABILITY.GENERAL_POOL,
         actorRef: 'verify-and-promote:owner_override',
         now,
       });
@@ -341,7 +346,7 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
   //     active row, never legitimately promoted via this path) → skipped:not_draft.
   // Either way the PAID run fn is NOT dispatched against a non-draft.
   // NOT isPoolVisible — fail-closed promote guard (not-a-draft → reject/skip); do not fold into notDraftPredicate (spec §2.5).
-  if (row.draft_status !== 'draft') {
+  if (row.draft_status !== LEGACY_DRAFT_STATUS.DRAFT) {
     const verifyEventId = await lookupVerifyEventId(
       db,
       questionId,
@@ -398,7 +403,8 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       .where(eq(question.id, questionId))
       .limit(1);
     // NOT isPoolVisible — fail-closed promote guard (not-a-draft → reject/skip); do not fold into notDraftPredicate (spec §2.5).
-    const alreadyActive = post[0] !== undefined && post[0].draft_status !== 'draft';
+    const alreadyActive =
+      post[0] !== undefined && post[0].draft_status !== LEGACY_DRAFT_STATUS.DRAFT;
     if (alreadyActive) {
       const verifyEventId = await lookupVerifyEventId(
         db,

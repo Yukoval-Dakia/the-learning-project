@@ -36,6 +36,14 @@ import { and, eq, ne, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import { recordQuestionPoolGap } from '@/capabilities/agency/public';
+import {
+  LEGACY_DRAFT_STATUS,
+  MARKING_RULE_PROVENANCE,
+  QUESTION_AVAILABILITY,
+  SCORING_ADMISSION_STATE,
+  SCORING_ADMISSION_WITHHELD_REASON,
+  SUSPENSION_REASON,
+} from '@/core/schema/assessment/lifecycle';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import {
@@ -766,7 +774,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         await tx
           .update(question)
           .set({
-            draft_status: 'active',
+            draft_status: LEGACY_DRAFT_STATUS.ACTIVE,
             metadata: newMetadata as never,
             updated_at: now,
           })
@@ -882,14 +890,14 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           const promotedChildren = await tx
             .update(question)
             .set({
-              draft_status: 'active',
+              draft_status: LEGACY_DRAFT_STATUS.ACTIVE,
               metadata: childMetadata as never,
               updated_at: now,
             })
             .where(
               and(
                 eq(question.id, child.id),
-                eq(question.draft_status, 'draft'),
+                eq(question.draft_status, LEGACY_DRAFT_STATUS.DRAFT),
                 sql`${question.metadata}->>'archived_at' IS NULL`,
                 sql`${question.metadata}->>'dismissed_at' IS NULL`,
               ),
@@ -935,9 +943,9 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         await publishQuestionGroupFromRow(tx, {
           rootId: row.parent_question_id ?? questionId,
           admission: {
-            state: 'admitted',
+            state: SCORING_ADMISSION_STATE.ADMITTED,
             evidence: {
-              marking_provenance: 'system_verified',
+              marking_provenance: MARKING_RULE_PROVENANCE.SYSTEM_VERIFIED,
               verification: {
                 structural_check_passed: true,
                 independent_verification: {
@@ -958,7 +966,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
               copy_safety: copySafetyVerdict,
             },
           },
-          availability: 'general_pool',
+          availability: QUESTION_AVAILABILITY.GENERAL_POOL,
           actorRef: 'quiz_verify:promote',
           now,
         });
@@ -997,10 +1005,12 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           await publishQuestionGroupFromRow(tx, {
             rootId: row.parent_question_id ?? questionId,
             admission: {
-              state: 'withheld',
-              reason: verifyFailed ? 'verification_failed' : 'unverified_rules',
+              state: SCORING_ADMISSION_STATE.WITHHELD,
+              reason: verifyFailed
+                ? SCORING_ADMISSION_WITHHELD_REASON.VERIFICATION_FAILED
+                : SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
             },
-            suspension: { suspended: true, reason: 'verify_hold' },
+            suspension: { suspended: true, reason: SUSPENSION_REASON.VERIFY_HOLD },
             verification: {
               policy_id: 'quiz_verify@1',
               outcome: verifyFailed ? 'failed' : 'suspended',
