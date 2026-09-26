@@ -62,12 +62,11 @@
 // 下游消费者据此区分「已结算事实」与「待 replay 义务」。
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, inArray } from 'drizzle-orm';
-import { sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 
 import { writeAttemptSnapshotBrackets } from '@/capabilities/practice/server/attempt-snapshot';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/capabilities/practice/server/placement-scope';
-import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
+import { scheduleReview } from '@/core/fsrs';
 import type {
   ExecutionPlanT,
   KcObservation,
@@ -83,7 +82,7 @@ import {
   ratingForVerdict,
   resolveThetaDecision,
 } from '@/core/schema/assessment';
-import { scheduleReview } from '@/core/fsrs';
+import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { Tx } from '@/db/client';
 import {
   difficulty_calibration_label,
@@ -94,20 +93,20 @@ import {
   question_revision,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import type { ActivationEffect, ActivationSettleInput } from './activate';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
+import {
+  type FamilyFoldRecord,
+  recordFamilyObservationForAttempt,
+  unfoldFamilyCalibration,
+} from '@/server/mastery/personalized-difficulty';
 import {
   type AbilityGlobalByKnowledgeId,
   getMasteryState,
   resolveAbilityGlobalByKnowledgeId,
   updateThetaForAttempt,
 } from '@/server/mastery/state';
-import {
-  type FamilyFoldRecord,
-  recordFamilyObservationForAttempt,
-  unfoldFamilyCalibration,
-} from '@/server/mastery/personalized-difficulty';
 import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
+import type { ActivationEffect, ActivationSettleInput } from './activate';
 
 export const ASSESSMENT_SETTLEMENT_ACTION = 'experimental:assessment_settlement';
 export const ASSESSMENT_SETTLEMENT_VERSION = 1 as const;
@@ -210,10 +209,7 @@ function subjectKey(kind: string, id: string): string {
 }
 
 /** unit → 其作答面 part 集：槽位引用的 part 并集；无槽引用 ⇒ 组级（空集标记）。 */
-function unitPartIdsOf(
-  basis: ScoringBasisT,
-  spec: ResponseSpecT,
-): Map<string, Set<string>> {
+function unitPartIdsOf(basis: ScoringBasisT, spec: ResponseSpecT): Map<string, Set<string>> {
   const partBySlot = new Map(spec.slots.map((s) => [s.slot_id, s.part_id] as const));
   const map = new Map<string, Set<string>>();
   for (const unit of basis.units) {
@@ -347,7 +343,9 @@ function derivePlan(input: ActivationSettleInput, scope: SettlementScope): Settl
 
   const executorKinds = unitExecutorKinds(scope.plan);
   const scoredUnitIds = new Set(
-    input.evaluation.unit_results.filter((r) => r.status === 'scored').map((r) => r.scoring_unit_id),
+    input.evaluation.unit_results
+      .filter((r) => r.status === 'scored')
+      .map((r) => r.scoring_unit_id),
   );
   const judgeRoute =
     scoredUnitIds.size > 0 &&
@@ -613,7 +611,11 @@ async function executePlan(
       const source = await getFsrsState(tx, subject.kind, subject.id);
       const before = source?.state ?? null;
       const scheduled = source
-        ? scheduleReview({ ...source.state, last_review: source.state.last_review ?? null }, plan.rating, occurrenceAt)
+        ? scheduleReview(
+            { ...source.state, last_review: source.state.last_review ?? null },
+            plan.rating,
+            occurrenceAt,
+          )
         : scheduleReview(null, plan.rating, occurrenceAt);
       const after: FsrsStateSchemaT = {
         ...scheduled.nextState,
@@ -693,7 +695,10 @@ async function executePlan(
       // 如实封存，revert 按 record.folded 决定是否逆均值）。
       outcome.familyObservationRecorded = outcome.familyFold !== null;
     } catch (err) {
-      console.warn('[assessment-settle] recordFamilyObservationForAttempt failed (non-fatal):', err);
+      console.warn(
+        '[assessment-settle] recordFamilyObservationForAttempt failed (non-fatal):',
+        err,
+      );
     }
   }
   return outcome;
@@ -855,9 +860,7 @@ export async function learningSettlement(input: ActivationSettleInput): Promise<
   const live = liveAppliedSettlements(rows);
   const priorEffectiveId = input.head.effective_evaluation_id;
   const replaced: AppliedSettlementEvent[] = priorEffectiveId
-    ? live.filter(
-        (m) => m.groupId === plan.groupId && m.evaluationId === priorEffectiveId,
-      )
+    ? live.filter((m) => m.groupId === plan.groupId && m.evaluationId === priorEffectiveId)
     : [];
   if (replaced.length > 1) {
     // 同一 effective evaluation 有 >1 live applied 结算 = 数据不一致（CAS 应
@@ -919,9 +922,7 @@ export async function learningSettlement(input: ActivationSettleInput): Promise<
   if (revertSet.length === 0 && !preserveUserRating) {
     const applied = await executePlan(tx, plan, settlementEventId, occurrenceAt);
     const effect: ActivationEffect =
-      applied.fsrsApplied.length > 0 || applied.thetaApplied.length > 0
-        ? 'applied'
-        : 'ineligible';
+      applied.fsrsApplied.length > 0 || applied.thetaApplied.length > 0 ? 'applied' : 'ineligible';
     await writeSettlementEvent(tx, {
       id: settlementEventId,
       plan,
@@ -959,7 +960,12 @@ export async function learningSettlement(input: ActivationSettleInput): Promise<
       });
       for (const member of reapplySet) {
         const newIdFor = `stl_${createId()}`;
-        const reOutcome = await executePlan(sp, member.inputs, newIdFor, new Date(member.occurrenceMs));
+        const reOutcome = await executePlan(
+          sp,
+          member.inputs,
+          newIdFor,
+          new Date(member.occurrenceMs),
+        );
         replayAppliedIds.set(member.id, newIdFor);
         await writeSettlementEvent(sp, {
           id: newIdFor,
@@ -1112,7 +1118,10 @@ async function findUnattributedNewerWrites(
 
   if (input.thetaKcIds.length > 0) {
     const rows = await tx
-      .select({ subject_id: mastery_state.subject_id, lastOutcomeAt: mastery_state.last_outcome_at })
+      .select({
+        subject_id: mastery_state.subject_id,
+        lastOutcomeAt: mastery_state.last_outcome_at,
+      })
       .from(mastery_state)
       .where(
         and(
@@ -1133,7 +1142,10 @@ async function findUnattributedNewerWrites(
   }
   if (input.abilityIds.length > 0) {
     const rows = await tx
-      .select({ subject_id: mastery_state.subject_id, lastOutcomeAt: mastery_state.last_outcome_at })
+      .select({
+        subject_id: mastery_state.subject_id,
+        lastOutcomeAt: mastery_state.last_outcome_at,
+      })
       .from(mastery_state)
       .where(
         and(
