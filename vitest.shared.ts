@@ -128,6 +128,9 @@ export const fastTestInclude = [
   // every other src/server/ai/** file (no unit glob). The sibling
   // typed-primitive-runner.db.test.ts exercises the real log writers.
   'src/server/ai/typed-primitive-runner.test.ts',
+  // YUK-1092 — cumulative retry-cost unit tests. Same no-DB justification;
+  // split file because they mock @/ai/registry with a retry-2 budget clone.
+  'src/server/ai/typed-primitive-runner.cumulative-cost.test.ts',
   // YUK-1049 — Jev ModelUnitExecutorPort adapter (escalation/admission/
   // criterion mapping). Same no-DB justification as the runner test above.
   'src/server/assessment/jev-model-executor.test.ts',
