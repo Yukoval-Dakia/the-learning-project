@@ -200,6 +200,57 @@ describe('redactMigrationCapture（终轮：默认拒绝 + 完整分区家族）
     );
   });
 
+  it('YUK-1098：数组标量继承父键策略 —— 非安全键 string[] 逐元素脱敏，安全键数组保留', () => {
+    const capture = withEvents(emptyCapture(), [
+      ev({
+        id: 'doc-1',
+        action: 'experimental:extract_source_document',
+        subject_kind: 'record',
+        subject_id: 'doc-1',
+        payload: {
+          warnings: [`${SENTINEL}-w1`, `${SENTINEL}-w2`],
+          failure_reasons: [`${SENTINEL}-f1`],
+          question_id: ['q-1', 'q-2'],
+          knowledge_ids: ['kc-1', 'kc-2'],
+          image_refs: [`${SENTINEL}-asset`],
+          status: 'done',
+          nested: { warnings: [`${SENTINEL}-deep`] },
+          matrix: [[`${SENTINEL}-m1`]],
+          rows: [{ note_md: `${SENTINEL}-row`, status: 'active' }],
+        },
+      }),
+    ]);
+    const redacted = redactMigrationCapture(capture);
+    expect(JSON.stringify(redacted.rawFacts.events)).not.toContain(SENTINEL);
+
+    const payload = redacted.rawFacts.events[0]?.payload as Record<string, unknown>;
+    expect(payload.warnings).toHaveLength(2);
+    for (const w of payload.warnings as unknown[]) {
+      expect(w).toMatchObject({ __redacted: true });
+    }
+    expect((payload.warnings as Array<{ sha256: string }>)[0]?.sha256).toHaveLength(64);
+    expect(payload.failure_reasons).toEqual([expect.objectContaining({ __redacted: true })]);
+    // 安全键数组整体保留（登记键的 id 数组）。
+    expect(payload.question_id).toEqual(['q-1', 'q-2']);
+    // 未登记的 _ids/_refs 数组键同属默认拒绝 —— 元素是标量，父键不安全即脱敏
+    // （比旧「数组元素无键」更严；分类器只读 Array.isArray/length，不受影响）。
+    expect(payload.knowledge_ids).toEqual([
+      expect.objectContaining({ __redacted: true }),
+      expect.objectContaining({ __redacted: true }),
+    ]);
+    expect(payload.image_refs).toEqual([expect.objectContaining({ __redacted: true })]);
+    expect(payload.status).toBe('done');
+    // 嵌套对象内的非安全 string[] 同样按其父键脱敏。
+    const nested = payload.nested as Record<string, unknown>;
+    expect(nested.warnings).toEqual([expect.objectContaining({ __redacted: true })]);
+    // 嵌套数组标量逐层继承外层键。
+    expect(payload.matrix).toEqual([[expect.objectContaining({ __redacted: true })]]);
+    // 数组内对象元素按自身键判定。
+    const row = (payload.rows as Array<Record<string, unknown>>)[0];
+    expect(row?.note_md).toMatchObject({ __redacted: true });
+    expect(row?.status).toBe('active');
+  });
+
   it('原 capture 不被修改；脱敏后事实哈希变化且脱敏模式内稳定', () => {
     const capture = learnerCapture();
     const before = canonicalHash(capture.rawFacts);

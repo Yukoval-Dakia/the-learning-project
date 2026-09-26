@@ -11,6 +11,7 @@ import {
   answer,
   difficulty_calibration_label,
   event,
+  item_calibration,
   learning_record,
   learning_session,
   mastery_state,
@@ -672,6 +673,46 @@ describe('幂等与可变运维字段纪律（真库观测）', () => {
     ]);
     // 但 checkpoint 身份覆盖运维态 —— 运维变了就是另一个 checkpoint。
     expect(checkpointHashOf(after, PROVENANCE)).not.toBe(checkpointHashOf(before, PROVENANCE));
+  });
+
+  it('YUK-1098：learning_session.version/updated_at 与 item_calibration.updated_at 变化 → ops 反映 + checkpoint 身份变化', async () => {
+    const base = await captureMigrationCheckpoint(testDb());
+    expect(base.ops.state_version_max.learning_session).toBe(0);
+    expect(base.ops.state_updated_at_max.learning_session).toBe('2026-09-20T00:00:00.000Z');
+    expect(base.ops.state_updated_at_max.item_calibration).toBeNull();
+
+    // 仅可变运维字段变化（seed 之后 version 自増/updated_at 刷新）。
+    await testDb()
+      .update(learning_session)
+      .set({ version: 7, updated_at: new Date('2026-09-22T00:00:00.000Z') })
+      .where(eq(learning_session.id, 'sess-solve'));
+    const bumped = await captureMigrationCheckpoint(testDb());
+    expect(bumped.ops.state_version_max.learning_session).toBe(7);
+    expect(bumped.ops.state_updated_at_max.learning_session).toBe('2026-09-22T00:00:00.000Z');
+    // 事实哈希不变（这些列不在原始 SELECT），但 checkpoint 身份必变 ——
+    // 修复前该观测会被工件寻址当 already-present 静默丢掉。
+    expect(canonicalHash(bumped.rawFacts)).toBe(canonicalHash(base.rawFacts));
+    expect(checkpointHashOf(bumped, PROVENANCE)).not.toBe(checkpointHashOf(base, PROVENANCE));
+
+    // item_calibration.updated_at 同样在观测窗内可变 → 采集覆盖。
+    await testDb().insert(item_calibration).values({
+      id: 'ical-1',
+      question_id: 'q-main',
+      b: 0.3,
+      confidence: 0.8,
+      track: 'hard',
+      source: 'llm_prior',
+      calibration_n: 0,
+      created_at: NOW,
+      updated_at: NOW,
+    });
+    await testDb()
+      .update(item_calibration)
+      .set({ updated_at: new Date('2026-09-23T00:00:00.000Z') })
+      .where(eq(item_calibration.id, 'ical-1'));
+    const calib = await captureMigrationCheckpoint(testDb());
+    expect(calib.ops.state_updated_at_max.item_calibration).toBe('2026-09-23T00:00:00.000Z');
+    expect(checkpointHashOf(calib, PROVENANCE)).not.toBe(checkpointHashOf(bumped, PROVENANCE));
   });
 
   it('新事实写入 → 事实哈希与 checkpoint 身份都变化（捕获能察觉增量）', async () => {
