@@ -262,7 +262,21 @@ export function projectEvaluationToJudgeResult(
     max_points: maxPoints,
     unit_results: record.unit_results,
   };
-  if (normalized == null || normalized <= 0) {
+  if (normalized == null) {
+    // YUK-1095 — 分母不可得（deriveCoarseVerdict reason='no_denominator'）⇒
+    // 绝不伪造 0 分 / incorrect / confidence=1：points>0 但没有已发布分母时
+    // 归一化不了，按 §4.4「不凭空造总分」纪律回落 unsupported，如实带原因。
+    return {
+      score: null,
+      score_meaning: 'correctness',
+      coarse_outcome: 'unsupported',
+      confidence: 0,
+      capability_ref: CONTRACT_CAPABILITY_REF,
+      feedback_md: `evaluation has no published denominator (${verdict.reason}) — points cannot be normalized into a grade`,
+      evidence_json: { ...evidence_json, verdict_reason: verdict.reason },
+    };
+  }
+  if (normalized <= 0) {
     return {
       score: 0,
       score_meaning: 'correctness',

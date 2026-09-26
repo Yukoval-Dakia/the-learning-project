@@ -491,6 +491,43 @@ describe('activateEvaluation（YUK-1045 §11 activation 编排骨架）', () => 
     const effects = receipts.map((e) => (e.payload as Record<string, unknown>).effect).sort();
     expect(effects).toEqual(['failed_pending', 'ineligible']);
   });
+
+  // YUK-1095 — DB 层 CAS 兜底必须实际校验行数：哪怕锁内快照判定通过，
+  // 一旦谓词在写入时命中 0 行（锁外写者/谓词漂移）也绝不写 receipt、
+  // 绝不返回 activated。这里用结算端口模拟一个忽略锁序、在同一事务内
+  // 推进 head generation 的写者。
+  it('CAS 兜底：head UPDATE 命中 0 行 ⇒ cas_conflict stale_head，不写 receipt 不返回 activated', async () => {
+    const db = testDb();
+    const seed = await seedChain('act10');
+    await seedEvaluation(seed, 'act10_ev1', { points: 80 });
+    const settle = vi.fn(async (input: ActivationSettleInput) => {
+      // 模拟锁外写者：把 head generation 推到 999（effective 不动）。
+      await input.tx
+        .update(evaluation_effective_head)
+        .set({ generation: 999, updated_at: NOW })
+        .where(eq(evaluation_effective_head.evaluation_group_id, seed.groupId));
+      return 'applied' as const;
+    });
+
+    const result = await db.transaction((tx) =>
+      activateEvaluation(
+        tx,
+        { evaluation_id: 'act10_ev1', expected_effective_id: null, expected_generation: 0 },
+        { settle, actorRef: 'test', now: NOW },
+      ),
+    );
+
+    expect(result).toEqual({ status: 'cas_conflict', conflict: 'stale_head' });
+    // head 绝不被本次激活当成成功前移（effective 仍为 null），
+    // 且不得写入 activation receipt（未执行的尝试不产 receipt）。
+    const head = await readHead(db, seed.groupId);
+    expect(head.effective_evaluation_id).toBeNull();
+    const receipts = (await receiptEvents(db, seed.groupId)).filter(
+      (e) => e.action === ASSESSMENT_ACTIVATION_ACTION,
+    );
+    expect(receipts).toHaveLength(0);
+    expect(settle).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('releaseIssuanceClaim（YUK-1045 §3.3 claim 到期语义）', () => {
