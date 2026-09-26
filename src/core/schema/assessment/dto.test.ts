@@ -492,4 +492,39 @@ describe('AssessmentFeedbackDto — 按可见性 policy 揭示', () => {
       AssessmentFeedbackDto.parse({ ...dto, execution_plan: { assignments: [] } }),
     ).toThrow();
   });
+
+  it("YUK-1096 P1-1: stale/mis-keyed lookups throw coded errors — never another record's feedback", () => {
+    const { submission, evaluation } = records();
+
+    // evaluation 属于另一份 submission（stale cache / 错键 lookup）。
+    const foreignEvaluation = EvaluationRecord.parse({
+      ...evaluation,
+      submission_id: 'sub_other',
+    });
+    expect(() => projectFeedback(submission, foreignEvaluation, revision(), allOff)).toThrow(
+      /evaluation_submission_mismatch/,
+    );
+
+    // evaluation 属于另一个判分组（同 submission_id 但组身份不一致）。
+    const foreignGroup = EvaluationRecord.parse({
+      ...evaluation,
+      evaluation_group_id: 'eg_other',
+    });
+    expect(() => projectFeedback(submission, foreignGroup, revision(), allOff)).toThrow(
+      /evaluation_group_mismatch/,
+    );
+
+    // submission 冻结的 revision 与传入题面不一致（陈旧题面）。
+    const staleRevision = PublishedQuestionRevision.parse({
+      ...revision(),
+      revision_id: 'rev_8',
+    });
+    expect(() => projectFeedback(submission, evaluation, staleRevision, allOff)).toThrow(
+      /submission_revision_mismatch/,
+    );
+
+    // 连贯输入仍然投影成功（防御不破坏主路径）。
+    const ok = projectFeedback(submission, evaluation, revision(), allOff);
+    expect(ok.submission_id).toBe('sub_9');
+  });
 });
