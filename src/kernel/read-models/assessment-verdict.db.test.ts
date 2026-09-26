@@ -254,6 +254,7 @@ describe('resolveVerdictsForAttempts（legacy lane 双轨）', () => {
     const map = await resolveVerdictsForAttempts(testDb(), ['att_none']);
     expect(map.get('att_none')).toEqual({
       attempt_event_id: 'att_none',
+      embedded: null,
       original: null,
       effective: null,
       newest_raw: null,
@@ -262,7 +263,13 @@ describe('resolveVerdictsForAttempts（legacy lane 双轨）', () => {
 
   it('单判 ⇒ 三轨同一行，payload 字段原样投影', async () => {
     await seedAttempt('att_1');
-    await seedJudge({ id: 'j_1', attemptEventId: 'att_1', coarseOutcome: 'incorrect', score: 0.2, createdAt: T1 });
+    await seedJudge({
+      id: 'j_1',
+      attemptEventId: 'att_1',
+      coarseOutcome: 'incorrect',
+      score: 0.2,
+      createdAt: T1,
+    });
     const v = (await resolveVerdictsForAttempts(testDb(), ['att_1'])).get('att_1');
     expect(v?.original?.judge_event_id).toBe('j_1');
     expect(v?.effective?.judge_event_id).toBe('j_1');
@@ -275,7 +282,13 @@ describe('resolveVerdictsForAttempts（legacy lane 双轨）', () => {
 
   it('申诉重判（subject_id=attempt / caused_by=appeal）+ supersede ⇒ original 最早判，effective/newest_raw 新判', async () => {
     await seedAttempt('att_2');
-    await seedJudge({ id: 'j_old', attemptEventId: 'att_2', coarseOutcome: 'incorrect', score: 0.1, createdAt: T1 });
+    await seedJudge({
+      id: 'j_old',
+      attemptEventId: 'att_2',
+      coarseOutcome: 'incorrect',
+      score: 0.1,
+      createdAt: T1,
+    });
     // 申诉事件（锚只作 caused_by 引用）。
     await writeEvent(testDb(), {
       id: 'appeal_1',
@@ -323,7 +336,12 @@ describe('resolveVerdictsForAttempts（legacy lane 双轨）', () => {
 
   it('mark_wrong 旧判 + 无替代 ⇒ effective=null，original/newest_raw 仍留行', async () => {
     await seedAttempt('att_3');
-    await seedJudge({ id: 'j_mw', attemptEventId: 'att_3', coarseOutcome: 'incorrect', createdAt: T1 });
+    await seedJudge({
+      id: 'j_mw',
+      attemptEventId: 'att_3',
+      coarseOutcome: 'incorrect',
+      createdAt: T1,
+    });
     await seedCorrection({
       id: 'corr_mw',
       targetEventId: 'j_mw',
@@ -338,7 +356,12 @@ describe('resolveVerdictsForAttempts（legacy lane 双轨）', () => {
 
   it('retract 全部判 ⇒ effective=null', async () => {
     await seedAttempt('att_4');
-    await seedJudge({ id: 'j_r', attemptEventId: 'att_4', coarseOutcome: 'partial', createdAt: T1 });
+    await seedJudge({
+      id: 'j_r',
+      attemptEventId: 'att_4',
+      coarseOutcome: 'partial',
+      createdAt: T1,
+    });
     await seedCorrection({
       id: 'corr_r',
       targetEventId: 'j_r',
@@ -353,9 +376,24 @@ describe('resolveVerdictsForAttempts（legacy lane 双轨）', () => {
   it('批量：多 attempt 各自分轨，互不串', async () => {
     await seedAttempt('att_a');
     await seedAttempt('att_b');
-    await seedJudge({ id: 'j_a', attemptEventId: 'att_a', coarseOutcome: 'incorrect', createdAt: T1 });
-    await seedJudge({ id: 'j_b1', attemptEventId: 'att_b', coarseOutcome: 'incorrect', createdAt: T1 });
-    await seedJudge({ id: 'j_b2', attemptEventId: 'att_b', coarseOutcome: 'correct', createdAt: T2 });
+    await seedJudge({
+      id: 'j_a',
+      attemptEventId: 'att_a',
+      coarseOutcome: 'incorrect',
+      createdAt: T1,
+    });
+    await seedJudge({
+      id: 'j_b1',
+      attemptEventId: 'att_b',
+      coarseOutcome: 'incorrect',
+      createdAt: T1,
+    });
+    await seedJudge({
+      id: 'j_b2',
+      attemptEventId: 'att_b',
+      coarseOutcome: 'correct',
+      createdAt: T2,
+    });
     await seedCorrection({
       id: 'corr_b',
       targetEventId: 'j_b1',
@@ -369,10 +407,116 @@ describe('resolveVerdictsForAttempts（legacy lane 双轨）', () => {
     expect(map.get('att_b')?.effective?.judge_event_id).toBe('j_b2');
     expect(map.get('att_missing')).toEqual({
       attempt_event_id: 'att_missing',
+      embedded: null,
       original: null,
       effective: null,
       newest_raw: null,
     });
+  });
+
+  it('embedded 判（payload.judge，无 judge event）⇒ embedded 轨填、其余轨 null', async () => {
+    // solve-session（YUK-193）把判分嵌在 attempt payload.judge，不另写 judge
+    // event —— resolver 必须把它当「执行时写下的那一判」显式保留。
+    // solve-session 的 embedded 形状（route/reason_md）不是 JudgeResultV2，写不进
+    // writeEvent/parseEvent；raw-insert 以镜像生产行。
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'att_emb',
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: 'q_att_emb',
+        outcome: 'failure',
+        payload: {
+          answer_md: 'wrong',
+          judge: {
+            coarse_outcome: 'incorrect',
+            score: 0,
+            route: 'solve_session_judge',
+            reason_md: 'embedded feedback',
+          },
+        },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+        ingest_at: null,
+        created_at: T0,
+      });
+    const v = (await resolveVerdictsForAttempts(testDb(), ['att_emb'])).get('att_emb');
+    expect(v?.embedded).not.toBeNull();
+    expect(v?.embedded?.coarse_outcome).toBe('incorrect');
+    expect(v?.embedded?.score).toBe(0);
+    // embedded 形状用 route/reason_md → 映射到 judge_route/feedback_md。
+    expect(v?.embedded?.judge_route).toBe('solve_session_judge');
+    expect(v?.embedded?.feedback_md).toBe('embedded feedback');
+    // embedded 不是 judge event：original/effective/newest_raw 全部 null。
+    expect(v?.original).toBeNull();
+    expect(v?.effective).toBeNull();
+    expect(v?.newest_raw).toBeNull();
+  });
+
+  it('embedded 判 + 另有 judge event ⇒ embedded 保留执行收据，judge 轨照常解析', async () => {
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'att_emb2',
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: 'q_att_emb2',
+        outcome: 'failure',
+        payload: {
+          answer_md: 'wrong',
+          judge: { coarse_outcome: 'incorrect', route: 'solve_session_judge' },
+        },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+        ingest_at: null,
+        created_at: T0,
+      });
+    await seedJudge({
+      id: 'j_emb2',
+      attemptEventId: 'att_emb2',
+      coarseOutcome: 'partial',
+      createdAt: T1,
+    });
+    const v = (await resolveVerdictsForAttempts(testDb(), ['att_emb2'])).get('att_emb2');
+    // 两轨并存：embedded 仍反映执行时嵌入判，effective 反映后续正式 judge。
+    expect(v?.embedded?.coarse_outcome).toBe('incorrect');
+    expect(v?.original?.judge_event_id).toBe('j_emb2');
+    expect(v?.effective?.verdict.coarse_outcome).toBe('partial');
+  });
+
+  it('payload.judge 非对象 ⇒ embedded=null', async () => {
+    // writeEvent 走 parseEvent 校验，会在写入前拒掉畸形 payload.judge —— 本用例
+    // 断言的是「历史脏行 → embedded 轨安全退化 null」，需绕过 parseEvent 直接
+    // insert 一行非对象 judge。
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'att_emb3',
+        session_id: null,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'attempt',
+        subject_kind: 'question',
+        subject_id: 'q_att_emb3',
+        outcome: 'failure',
+        payload: { answer_md: 'wrong', judge: 'not-an-object' },
+        caused_by_event_id: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+        ingest_at: null,
+        created_at: T0,
+      });
+    const v = (await resolveVerdictsForAttempts(testDb(), ['att_emb3'])).get('att_emb3');
+    expect(v?.embedded).toBeNull();
   });
 });
 

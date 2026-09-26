@@ -15,6 +15,7 @@ import type { NudgePayloadT } from '@/core/schema/event/nudge-events';
 import type { Db, Tx } from '@/db/client';
 import { event, learning_session, question_block, source_document } from '@/db/schema';
 import { type CorrectionStatus, getCorrectionStatuses } from '@/kernel/events';
+import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
 import type { NudgeConfig } from './nudge-config';
 
 export const NUDGE_ACTION = 'experimental:copilot_nudge';
@@ -189,14 +190,25 @@ async function evaluateWrongStreakInSnapshot(
       if (rows.length === 0) break;
 
       const attemptIds = rows.map((row) => row.id);
+      // YUK-1054 §9 — subject_id ∪ caused_by 双锚（mirror resolver）：申诉重判的
+      // judge 仍 subject_id=attempt，但历史 caused_by-only 锚也存在，单查
+      // subject_id 会把它们的 contested 状态漏掉。
       const judges = await db
-        .select({ id: event.id, subjectId: event.subject_id, payload: event.payload })
+        .select({
+          id: event.id,
+          subjectId: event.subject_id,
+          causedById: event.caused_by_event_id,
+          payload: event.payload,
+        })
         .from(event)
         .where(
           and(
             eq(event.action, 'judge'),
             eq(event.subject_kind, 'event'),
-            inArray(event.subject_id, attemptIds),
+            or(
+              inArray(event.subject_id, attemptIds),
+              inArray(event.caused_by_event_id, attemptIds),
+            ),
           ),
         );
       const judgeIds = judges.map((judge) => judge.id);
@@ -218,18 +230,15 @@ async function evaluateWrongStreakInSnapshot(
           );
         for (const row of appealRows) appealedJudgeIds.add(row.subjectId);
       }
+      // YUK-1054 §9 — 'unsupported' 判定须取 effective 判（链解析），不是任意
+      // judge 行：一条已 supersede 的 unsupported judge 不能继续冻结该 attempt。
+      const verdictMap = await resolveVerdictsForAttempts(db, attemptIds);
       const unsupportedAttemptIds = new Set(
-        judges
-          .filter((judge) => {
-            const payload = judge.payload;
-            return (
-              payload !== null &&
-              typeof payload === 'object' &&
-              payload.coarse_outcome === 'unsupported'
-            );
-          })
-          .map((judge) => judge.subjectId),
+        [...verdictMap.values()]
+          .filter((v) => v.effective?.verdict.coarse_outcome === 'unsupported')
+          .map((v) => v.attempt_event_id),
       );
+      const attemptIdSet = new Set(attemptIds);
       const contestedAttemptIds = new Set(
         judges
           .filter((judge) => {
@@ -239,7 +248,10 @@ async function evaluateWrongStreakInSnapshot(
               (correction !== undefined && correction.state !== 'active')
             );
           })
-          .map((judge) => judge.subjectId),
+          // subject_id 命中优先，否则 caused_by 命中（resolver attemptAnchorKey 同规则）。
+          .map((judge) =>
+            attemptIdSet.has(judge.subjectId) ? judge.subjectId : (judge.causedById as string),
+          ),
       );
 
       if (

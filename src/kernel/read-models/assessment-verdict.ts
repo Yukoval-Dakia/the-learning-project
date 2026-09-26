@@ -40,8 +40,7 @@
 //   actor_kind='system' 过不了 shouldExtractToMemory 的 user 门。本模块不依赖
 //   replay 产生的新行做判定。
 
-import { and, asc, eq, inArray, or } from 'drizzle-orm';
-import type { CauseSchemaT } from '@/core/schema/event/blocks';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { EvaluationRecordT } from '@/core/schema/assessment/judgment';
 import type { ScoringBasisT } from '@/core/schema/assessment/scoring';
 import {
@@ -49,6 +48,7 @@ import {
   type CoarseVerdict,
   deriveCoarseVerdict,
 } from '@/core/schema/assessment/settlement';
+import type { CauseSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import {
   assessment_submission,
@@ -68,6 +68,13 @@ import {
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
 type EvaluationRow = typeof evaluation.$inferSelect;
+
+// 任何 IN 列表的每查询参数上限。copilot nudge-triggers 把评估快照读封装为「每
+// 查询 ≤104 参数」回归锚（nudge-streak.db.test.ts:caps parameters）；本 resolver
+// 是共享读模型，必须在自己的 inArray 处做 chunk（getEffectiveTruths 的
+// subject_id 拉取是最大爆点：单 attempt 可有数百 judge 行）。64 留出
+// action/subject_kind 等字面量参数 headroom。
+const QUERY_ID_CHUNK = 64;
 
 // Wire action 常量 —— 与 writer 模块保持一致（src/server/assessment/activate.ts
 // ASSESSMENT_ACTIVATION_ACTION / settle.ts ASSESSMENT_SETTLEMENT_ACTION）。本地
@@ -108,6 +115,13 @@ export interface JudgeVerdictProjection {
 
 export interface AttemptVerdict {
   attempt_event_id: string;
+  /**
+   * 执行期嵌入收据（attempt/review event 的 payload.judge）。solve-session
+   * （YUK-193）等 lane 把判分嵌在 attempt payload 里、并不另写 judge event —
+   * 「embedded grade」历史分歧（grounding §9 行），本轨显式保留它：无 judge
+   * 行时它是唯一的判收据；有 judge 行时它仍代表「执行时写下的那一判」。
+   */
+  embedded: JudgeVerdictPayload | null;
   /** 历史第一判（最早 judge event 行）；无 judge 时 null。 */
   original: JudgeVerdictProjection | null;
   /** 当前生效判（链解析后最新 live judge）；全被 supersede/retract 时 null。 */
@@ -133,6 +147,33 @@ function judgePayloadFromRow(row: EventRow): JudgeVerdictPayload {
   };
 }
 
+/**
+ * embedded 判（attempt payload.judge）→ JudgeVerdictPayload。嵌入形状用
+ * route/reason_md（solve-session responseJudge），不是 judge event 的
+ * judge_route/feedback_md —— 字段映射，其余字段缺省为 null。
+ */
+function judgePayloadFromEmbedded(raw: unknown): JudgeVerdictPayload {
+  const p = (raw ?? {}) as Record<string, unknown>;
+  return {
+    coarse_outcome: typeof p.coarse_outcome === 'string' ? p.coarse_outcome : null,
+    score: typeof p.score === 'number' ? p.score : null,
+    feedback_md: typeof p.reason_md === 'string' ? p.reason_md : null,
+    visible_to_user: typeof p.visible_to_user === 'boolean' ? p.visible_to_user : null,
+    cause: (p.cause as CauseSchemaT | undefined) ?? null,
+    referenced_knowledge_ids: Array.isArray(p.referenced_knowledge_ids)
+      ? (p.referenced_knowledge_ids as string[])
+      : [],
+    judge_route:
+      typeof p.judge_route === 'string'
+        ? p.judge_route
+        : typeof p.route === 'string'
+          ? p.route
+          : null,
+    appeal_event_id: null,
+    attribution_pending: null,
+  };
+}
+
 /** 行 → attempt 锚分组键：subject_id 命中优先，否则 caused_by_event_id 命中。 */
 function attemptAnchorKey(row: EventRow, attemptIds: Set<string>): string | null {
   if (row.subject_id !== null && attemptIds.has(row.subject_id)) return row.subject_id;
@@ -145,8 +186,64 @@ function attemptAnchorKey(row: EventRow, attemptIds: Set<string>): string | null
 async function rowsById(db: DbLike, ids: string[]): Promise<Map<string, EventRow>> {
   const uniqueIds = [...new Set(ids)];
   if (uniqueIds.length === 0) return new Map();
-  const rows = await db.select().from(event).where(inArray(event.id, uniqueIds));
-  return new Map(rows.map((row) => [row.id, row]));
+  const out = new Map<string, EventRow>();
+  for (let offset = 0; offset < uniqueIds.length; offset += QUERY_ID_CHUNK) {
+    const chunk = uniqueIds.slice(offset, offset + QUERY_ID_CHUNK);
+    const rows = await db.select().from(event).where(inArray(event.id, chunk));
+    for (const row of rows) out.set(row.id, row);
+  }
+  return out;
+}
+
+// 并发安全批链解析：candidate id 列表分块喂 getEffectiveTruths。单调用方
+// 一次调 4 个 inArray(事件 id) —— 分块后每查询 ≤64 ids（cap 104，含字面量）。
+async function effectiveTruthsChunked(
+  db: DbLike,
+  eventIds: string[],
+): Promise<Map<string, EffectiveTruth>> {
+  const uniqueIds = [...new Set(eventIds)];
+  const out = new Map<string, EffectiveTruth>();
+  for (let offset = 0; offset < uniqueIds.length; offset += QUERY_ID_CHUNK) {
+    const chunk = uniqueIds.slice(offset, offset + QUERY_ID_CHUNK);
+    for (const [id, truth] of await getEffectiveTruths(db, chunk)) out.set(id, truth);
+  }
+  return out;
+}
+
+// judge 候选行双通道拉取（subject_id ∪ caused_by）。分两查询各自 chunk——
+// or(inArray,inArray) 单语句把两通道的 id 都塞进同一次参数计数，是 104-cap
+// 违规最快路径；拆分后每查询只带一条 ≤64 的 IN 列表。
+async function judgeCandidatesForAttempts(db: DbLike, attemptIds: string[]): Promise<EventRow[]> {
+  const uniqueIds = [...new Set(attemptIds)];
+  const byId = new Map<string, EventRow>();
+  for (let offset = 0; offset < uniqueIds.length; offset += QUERY_ID_CHUNK) {
+    const chunk = uniqueIds.slice(offset, offset + QUERY_ID_CHUNK);
+    const [bySubject, byCausedBy] = await Promise.all([
+      db
+        .select()
+        .from(event)
+        .where(
+          and(
+            eq(event.action, 'judge'),
+            eq(event.subject_kind, 'event'),
+            inArray(event.subject_id, chunk),
+          ),
+        ),
+      db
+        .select()
+        .from(event)
+        .where(
+          and(
+            eq(event.action, 'judge'),
+            eq(event.subject_kind, 'event'),
+            inArray(event.caused_by_event_id, chunk),
+          ),
+        ),
+    ]);
+    for (const row of bySubject) byId.set(row.id, row);
+    for (const row of byCausedBy) byId.set(row.id, row);
+  }
+  return [...byId.values()];
 }
 
 /**
@@ -160,28 +257,35 @@ export async function resolveVerdictsForAttempts(
   const uniqueIds = [...new Set(attemptIds)];
   const out = new Map<string, AttemptVerdict>();
   for (const id of uniqueIds) {
-    out.set(id, { attempt_event_id: id, original: null, effective: null, newest_raw: null });
+    out.set(id, {
+      attempt_event_id: id,
+      embedded: null,
+      original: null,
+      effective: null,
+      newest_raw: null,
+    });
   }
   if (uniqueIds.length === 0) return out;
 
+  // embedded 轨：attempt 行自身 payload.judge（solve-session 等 embedded-grade
+  // 分歧面）。只在 attempt 行确实存在、且 payload.judge 是非空对象时填。
+  const attemptRows = await rowsById(db, uniqueIds);
+  for (const [id, row] of attemptRows) {
+    const entry = out.get(id);
+    if (!entry) continue;
+    const judge = (row.payload ?? {}) as Record<string, unknown>;
+    const embedded = judge.judge;
+    if (embedded !== null && typeof embedded === 'object') {
+      entry.embedded = judgePayloadFromEmbedded(embedded);
+    }
+  }
+
   const anchorSet = new Set(uniqueIds);
-  const candidates = await db
-    .select()
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'judge'),
-        eq(event.subject_kind, 'event'),
-        or(
-          inArray(event.subject_id, uniqueIds),
-          inArray(event.caused_by_event_id, uniqueIds),
-        ),
-      ),
-    );
+  const candidates = await judgeCandidatesForAttempts(db, uniqueIds);
   if (candidates.length === 0) return out;
 
   // 链解析：每条候选 original 行 → effective 行。
-  const truthByOriginal = await getEffectiveTruths(
+  const truthByOriginal = await effectiveTruthsChunked(
     db,
     candidates.map((row) => row.id),
   );
@@ -239,6 +343,7 @@ export async function resolveVerdictsForAttempts(
   for (const [key, acc] of byAttempt) {
     out.set(key, {
       attempt_event_id: key,
+      embedded: out.get(key)?.embedded ?? null,
       original:
         acc.original === null
           ? null
@@ -287,6 +392,7 @@ export async function resolveVerdictForAttempt(
   return (
     map.get(attemptEventId) ?? {
       attempt_event_id: attemptEventId,
+      embedded: null,
       original: null,
       effective: null,
       newest_raw: null,
@@ -335,32 +441,46 @@ export async function resolveVerdictsForGroups(
   }
   if (uniqueIds.length === 0) return out;
 
-  const [heads, evalRows, submissions, activationRows, settlementRows] = await Promise.all([
-    db
-      .select()
-      .from(evaluation_effective_head)
-      .where(inArray(evaluation_effective_head.evaluation_group_id, uniqueIds)),
-    db.select().from(evaluation).where(inArray(evaluation.evaluation_group_id, uniqueIds)),
-    db
-      .select()
-      .from(assessment_submission)
-      .where(inArray(assessment_submission.evaluation_group_id, uniqueIds)),
-    db
-      .select()
-      .from(event)
-      .where(
-        and(
-          eq(event.action, ASSESSMENT_ACTIVATION_ACTION),
-          eq(event.subject_kind, 'evaluation_group'),
-          inArray(event.subject_id, uniqueIds),
-        ),
-      )
-      .orderBy(asc(event.created_at), asc(event.id)),
-    db
-      .select({ id: event.id, created_at: event.created_at, payload: event.payload })
-      .from(event)
-      .where(eq(event.action, ASSESSMENT_SETTLEMENT_ACTION)),
-  ]);
+  // 每 inArray 分组 id 都走 chunk（同 QUERY_ID_CHUNK）；五路独立 round-trip。
+  const heads: (typeof evaluation_effective_head.$inferSelect)[] = [];
+  const evalRows: EvaluationRow[] = [];
+  const submissions: (typeof assessment_submission.$inferSelect)[] = [];
+  const activationRows: EventRow[] = [];
+  for (let offset = 0; offset < uniqueIds.length; offset += QUERY_ID_CHUNK) {
+    const chunk = uniqueIds.slice(offset, offset + QUERY_ID_CHUNK);
+    const [h, ev, sub, act] = await Promise.all([
+      db
+        .select()
+        .from(evaluation_effective_head)
+        .where(inArray(evaluation_effective_head.evaluation_group_id, chunk)),
+      db.select().from(evaluation).where(inArray(evaluation.evaluation_group_id, chunk)),
+      db
+        .select()
+        .from(assessment_submission)
+        .where(inArray(assessment_submission.evaluation_group_id, chunk)),
+      db
+        .select()
+        .from(event)
+        .where(
+          and(
+            eq(event.action, ASSESSMENT_ACTIVATION_ACTION),
+            eq(event.subject_kind, 'evaluation_group'),
+            inArray(event.subject_id, chunk),
+          ),
+        )
+        .orderBy(asc(event.created_at), asc(event.id)),
+    ]);
+    heads.push(...h);
+    evalRows.push(...ev);
+    submissions.push(...sub);
+    activationRows.push(...act);
+  }
+  // settlement 拉取不分组（action 扫描，非 inArray）——块外单跑，避免每 chunk
+  // 重复拉同一全集。original 轨只需「组内最早 applied」，行数小，接受 action-scan。
+  const settlementRows = await db
+    .select({ id: event.id, created_at: event.created_at, payload: event.payload })
+    .from(event)
+    .where(eq(event.action, ASSESSMENT_SETTLEMENT_ACTION));
 
   const headByGroup = new Map(heads.map((h) => [h.evaluation_group_id, h]));
   const evalById = new Map(evalRows.map((r) => [r.evaluation_id, r]));
@@ -374,16 +494,18 @@ export async function resolveVerdictsForGroups(
 
   // revision basis：submission.revision_id → question_revision.scoring_basis。
   const revisionIds = [...new Set(submissions.map((s) => s.revision_id))];
-  const revisionRows =
-    revisionIds.length === 0
-      ? []
-      : await db
-          .select({
-            revision_id: question_revision.revision_id,
-            scoring_basis: question_revision.scoring_basis,
-          })
-          .from(question_revision)
-          .where(inArray(question_revision.revision_id, revisionIds));
+  const revisionRows: { revision_id: string; scoring_basis: unknown }[] = [];
+  for (let offset = 0; offset < revisionIds.length; offset += QUERY_ID_CHUNK) {
+    const chunk = revisionIds.slice(offset, offset + QUERY_ID_CHUNK);
+    const rows = await db
+      .select({
+        revision_id: question_revision.revision_id,
+        scoring_basis: question_revision.scoring_basis,
+      })
+      .from(question_revision)
+      .where(inArray(question_revision.revision_id, chunk));
+    revisionRows.push(...rows);
+  }
   const basisByRevision = new Map(revisionRows.map((r) => [r.revision_id, r.scoring_basis]));
 
   // original 轨：第一条 active activation 事件的 evaluation_id（retract 的
@@ -420,7 +542,9 @@ export async function resolveVerdictsForGroups(
 
   const project = (row: EvaluationRow): EvaluationVerdict | null => {
     const sub = subById.get(row.submission_id);
-    const basis = sub ? (basisByRevision.get(sub.revision_id) as ScoringBasisT | undefined) : undefined;
+    const basis = sub
+      ? (basisByRevision.get(sub.revision_id) as ScoringBasisT | undefined)
+      : undefined;
     return {
       evaluation_id: row.evaluation_id,
       attempt: row.attempt,
@@ -471,10 +595,7 @@ export async function resolveVerdictsForGroups(
 }
 
 /** 单 group 便捷封装。 */
-export async function resolveVerdictForGroup(
-  db: DbLike,
-  groupId: string,
-): Promise<GroupVerdict> {
+export async function resolveVerdictForGroup(db: DbLike, groupId: string): Promise<GroupVerdict> {
   const map = await resolveVerdictsForGroups(db, [groupId]);
   return (
     map.get(groupId) ?? {

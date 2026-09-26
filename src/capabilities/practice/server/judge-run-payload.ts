@@ -215,9 +215,26 @@ export async function reconstructDoneFromDomainEvents(
           feedback_md: verdicts.effective.verdict.feedback_md,
           correction_state: verdicts.effective.correction_state.state,
         };
-  const verdictOverturned =
-    originalBlock !== null && originalBlock.judge_event_id !== effectiveBlock?.judge_event_id;
   const attemptPayload = (attempt.payload ?? {}) as Record<string, unknown>;
+  // YUK-1054 — original 轨 = 执行收据。优先最早 judge event；无 judge event
+  // （solve-session 等 embedded-grade 分歧面）回退到 resolver embedded 轨
+  // （attempt.payload.judge，judge_event_id=null，correction_state='embedded'）。
+  // 下方 `embedded` 块独立再解析一次同一份 payload 做字段回填（既有 merge 语义）。
+  const attemptEmbedded = verdicts.embedded;
+  const embeddedHasVerdict = typeof attemptEmbedded?.coarse_outcome === 'string';
+  const embeddedOriginalBlock =
+    originalBlock === null && embeddedHasVerdict && attemptEmbedded !== null
+      ? {
+          judge_event_id: null as string | null,
+          coarse_outcome: attemptEmbedded.coarse_outcome,
+          score: attemptEmbedded.score,
+          feedback_md: attemptEmbedded.feedback_md,
+          correction_state: 'embedded' as const,
+        }
+      : null;
+  const originalReceipt = originalBlock ?? embeddedOriginalBlock;
+  const verdictOverturned =
+    originalReceipt !== null && originalReceipt.judge_event_id !== effectiveBlock?.judge_event_id;
   // W5 #TuxJL — read from where deferred settlement ACTUALLY writes each field, not from a
   // shape that looked plausible. The judge event's payload carries `coarse_outcome` /
   // `score` / `feedback_md` / `capability_ref` / `judge_route`, but NOT `evidence_json`
@@ -257,7 +274,7 @@ export async function reconstructDoneFromDomainEvents(
     judge_event_id: judgeEvent?.id ?? null,
     already_persisted: true,
     // YUK-1054 — 双轨裁决透传块（passthrough 契约，加性安全）。
-    original_judge: originalBlock,
+    original_judge: originalReceipt,
     effective_judge: effectiveBlock,
     verdict_overturned: verdictOverturned,
     ...(attempt.outcome ? { outcome: attempt.outcome } : {}),

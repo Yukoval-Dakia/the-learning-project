@@ -1,13 +1,9 @@
 import { eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
-import { resolveSubjectProfile } from '@/subjects/profile';
-import {
-  getFailureAttemptById,
-  getFailureAttemptWithReasoningTraceById,
-  getJudgeForAttempt,
-} from './attempt-events';
 import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
+import { resolveSubjectProfile } from '@/subjects/profile';
+import { getFailureAttemptById, getFailureAttemptWithReasoningTraceById } from './attempt-events';
 import {
   type AttributionOutcome,
   runAttributionAndWriteJudgeEvent,
@@ -244,8 +240,12 @@ async function attributeFailure(
     return { status: 'failed_permanent', error: outcome.error, modelInvoked };
   }
 
-  const judge = await getJudgeForAttempt(deps.db, attemptEventId);
-  if (!judge) {
+  // YUK-1054 (§9 dual-track) — 链解析后的 effective 判，不是 caused_by 直读：
+  // 同 attempt 历史重判（subject=attempt / caused_by=appeal）时 caused_by-only
+  // 读面会拿到死判，resolver 返回当前生效判。
+  const verdicts = await resolveVerdictForAttempt(deps.db, attemptEventId);
+  const judgeEventId = verdicts.effective?.judge_event_id ?? null;
+  if (!judgeEventId) {
     return {
       status: 'failed_retryable',
       error: new Error('AttributionTask completed without writing a judge event'),
@@ -254,7 +254,7 @@ async function attributeFailure(
   }
   return {
     status: outcome.outcome === 'written' && modelInvoked ? 'written' : 'existing',
-    judgeEventId: judge.judge_event_id,
+    judgeEventId,
     modelInvoked,
   };
 }

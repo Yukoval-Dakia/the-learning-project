@@ -14,6 +14,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event as eventTable } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
 import { batchResolveAncestorIds } from '@/kernel/read-models/knowledge-tree';
 // YUK-598 stale-const 收口（v2 §9①）：defaultSubjectProfile 冻结常量 → 活 registry
 // resolveSubjectProfile()（每次调用求值，owner 编辑 general 即跟随）。
@@ -29,7 +30,6 @@ import {
   type AttributionOutput,
   parseAttributionOutput,
 } from '../tasks/attribution';
-import { getJudgeForAttempt } from './attempt-events';
 import { maybeProposeCauseCategoryFromOthers } from './cause-catalog';
 import { withActiveCauseCategoryOverlays } from './cause-overlay';
 import {
@@ -130,15 +130,17 @@ export async function runAttributionAndWriteJudgeEvent(
     // pending placeholder — otherwise paper mistakes never get a real cause and
     // the D4 mistake-flywheel stays silent. Skip only when a real attribution
     // judge (no attribution_pending flag, or explicitly false) is present.
-    const existing = await getJudgeForAttempt(params.db, params.attemptEventId);
-    if (existing) {
+    // YUK-1054 (§9 dual-track) — 链解析后的 effective 判（不是 caused_by 直读）。
+    // getJudgeForAttempt 只匹配 caused_by=attempt；改判 rejudge 锚 caused_by=appeal
+    // 会漏。effective 判承载 placeholder 的 attribution_pending + visibility 继承。
+    const verdicts = await resolveVerdictForAttempt(params.db, params.attemptEventId);
+    const effectiveJudgeEventId = verdicts.effective?.judge_event_id ?? null;
+    if (effectiveJudgeEventId) {
       // Peek at the raw payload to check attribution_pending.
-      // getJudgeForAttempt returns the processed shape; we need the raw flag.
-      // Re-query is acceptable here (non-hot path, attribution is async).
       const rawRows = await params.db
         .select({ payload: eventTable.payload })
         .from(eventTable)
-        .where(and(eq(eventTable.id, existing.judge_event_id)))
+        .where(and(eq(eventTable.id, effectiveJudgeEventId)))
         .limit(1);
       const rawPayload = rawRows[0]?.payload as {
         attribution_pending?: boolean;
