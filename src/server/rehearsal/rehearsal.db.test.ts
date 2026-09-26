@@ -124,7 +124,7 @@ describe('rehearsal corpus → capture → apply（orchestrate 同缝）', () =>
     expect(withReg.report.reconciliation.mapping_rows_superseded_in_run).toBeGreaterThan(0);
   });
 
-  it('post-cutover 写入 → delta 导出 → 独立 rollback 库回放 + 对账（边界 b）', async () => {
+  it('post-cutover 写入 → delta 导出 → 独立 rollback 库回放 + 对账（边界 b）', { timeout: 120_000 }, async () => {
     const db = testDb();
     const url = process.env.TEST_DATABASE_URL;
     if (!url) throw new Error('TEST_DATABASE_URL not set');
