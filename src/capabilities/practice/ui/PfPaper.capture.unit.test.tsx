@@ -4,7 +4,8 @@
 // per-slot 持久 / 交卷 wire 行为）。
 //
 // Q-922 — 每题可选 1–5 信心自评，观测元数据；不影响判分/评级/FSRS。状态由 UI 按 slot
-// 保存；落入 ResponseSet 的 wire mapping 由并行 YUK-1052 contract lane 提供。
+// 保存；交卷时随该 slot 的提交发出（buildPaperSubmissionBody self_confidence →
+// AttemptOnQuestion.payload.self_confidence），未自评的 slot 不带键（byte-identical）。
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
@@ -230,10 +231,36 @@ describe('PfPaper 交卷 wire — 空值不发字段（byte-identical 缺省）(
     await user.click(screen.getByRole('button', { name: '把握 2 分（共 5 分）' }));
     await user.click(screen.getByRole('tab', { name: '1' }));
     await screen.findByText('第一题');
-    expect(screen.getByRole('button', { name: '把握 4 分（共 5 分）' }).getAttribute('aria-pressed')).toBe('true');
+    expect(
+      screen.getByRole('button', { name: '把握 4 分（共 5 分）' }).getAttribute('aria-pressed'),
+    ).toBe('true');
     await user.click(screen.getByRole('button', { name: '不评' }));
-    expect(screen.getByRole('button', { name: '把握 4 分（共 5 分）' }).getAttribute('aria-pressed')).toBe('false');
+    expect(
+      screen.getByRole('button', { name: '把握 4 分（共 5 分）' }).getAttribute('aria-pressed'),
+    ).toBe('false');
     expect(mocks.submitPaperSlot).not.toHaveBeenCalled();
+  });
+
+  it('交卷 wire：自评的 slot 带 self_confidence，未自评的 slot 不带键', async () => {
+    const user = userEvent.setup();
+    renderPaper(paperDetail([textSlot('question_1', '第一题'), textSlot('question_2', '第二题')]));
+    await screen.findByText('第一题');
+    await user.type(screen.getByLabelText('作答'), '答案一');
+    await user.click(screen.getByRole('button', { name: '把握 5 分（共 5 分）' }));
+    await user.click(screen.getByRole('tab', { name: '2' }));
+    await screen.findByText('第二题');
+    await user.type(screen.getByLabelText('作答'), '答案二');
+    await user.click(screen.getByRole('button', { name: '交卷 · 统一判分' }));
+
+    await waitFor(() => expect(mocks.submitPaperSlot).toHaveBeenCalledTimes(2));
+    const first = mocks.submitPaperSlot.mock.calls.find(
+      (c) => c[1].question_id === 'question_1',
+    )?.[1];
+    const second = mocks.submitPaperSlot.mock.calls.find(
+      (c) => c[1].question_id === 'question_2',
+    )?.[1];
+    expect(first).toMatchObject({ self_confidence: 5 });
+    expect(Object.hasOwn(second ?? {}, 'self_confidence')).toBe(false);
   });
 });
 
@@ -261,11 +288,26 @@ describe('buildPaperSubmissionBody — reasoning_trace wire 装配 (YUK-784)', (
     expect(body.reasoning_trace).toBe('先列方程');
   });
 
-  it('现有 paper submission schema 不伪造 ResponseSet confidence 字段', async () => {
+  it('未自评 → body 无 self_confidence 键（既有提交逐字不变）', async () => {
     const { buildPaperSubmissionBody } = await import('./practice-api');
     const body = buildPaperSubmissionBody('paper_1', {
-      session_id: 'review_1', question_id: 'q1', part_ref: null, answer_md: '答',
+      session_id: 'review_1',
+      question_id: 'q1',
+      part_ref: null,
+      answer_md: '答',
     });
     expect(Object.hasOwn(body, 'self_confidence')).toBe(false);
+  });
+
+  it('选了档（1–5）→ body 带出自评值（装配处只「非 null 才带」）', async () => {
+    const { buildPaperSubmissionBody } = await import('./practice-api');
+    const body = buildPaperSubmissionBody('paper_1', {
+      session_id: 'review_1',
+      question_id: 'q1',
+      part_ref: null,
+      answer_md: '答',
+      self_confidence: 4,
+    });
+    expect(body.self_confidence).toBe(4);
   });
 });

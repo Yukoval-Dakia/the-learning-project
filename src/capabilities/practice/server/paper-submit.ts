@@ -113,6 +113,12 @@ export interface PaperSubmitSlotInput {
    * 不进 θ̂ / FSRS / 判分（同散题路径 submit.ts 的 YUK-562 条件写入）。
    */
   reasoningTrace?: string | null;
+  /**
+   * YUK-1051 / Q-922 — 卷面 per-question 信心自评（1–5，observe-only）。Optional；absent 时
+   * attempt payload 不带 self_confidence 键（byte-identical）。落到 AttemptOnQuestion.payload
+   * .self_confidence，不进 θ̂ / FSRS / 判分（mirror reasoningTrace 的 conditional 口径）。
+   */
+  selfConfidence?: number | null;
 }
 
 export interface PaperSubmitSlotResult {
@@ -606,6 +612,9 @@ export async function submitPaperSlot(
         question: questionSnapshot,
         ...(typeof input.latencyMs === 'number' ? { latencyMs: input.latencyMs } : {}),
         ...(input.reasoningTrace?.trim() ? { reasoningTrace: input.reasoningTrace } : {}),
+        ...(typeof input.selfConfidence === 'number'
+          ? { selfConfidence: input.selfConfidence }
+          : {}),
       },
       question: q,
       knowledge: {

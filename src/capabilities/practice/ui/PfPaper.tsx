@@ -13,13 +13,13 @@ import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { ChoiceSetResponse } from '@/ui/components/response/ChoiceSetResponse';
 import { EvaluationGroupPanel } from '@/ui/components/response/EvaluationGroupPanel';
 import { EvidenceComposer } from '@/ui/components/response/EvidenceComposer';
-import { SaveStateChip } from '@/ui/components/response/SaveStateChip';
-import { SelfConfidenceField } from '@/ui/components/response/SelfConfidenceField';
-import { StimulusFigure } from '@/ui/components/response/StimulusFigure';
 import {
   type EvidenceAttachment,
   optionsFromChoicesMd,
 } from '@/ui/components/response/response-types';
+import { SaveStateChip } from '@/ui/components/response/SaveStateChip';
+import { SelfConfidenceField } from '@/ui/components/response/SelfConfidenceField';
+import { StimulusFigure } from '@/ui/components/response/StimulusFigure';
 import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
@@ -64,8 +64,7 @@ export function restoreEvidenceFromSlots(slots: readonly PaperSlot[]): EvidenceA
   const seen = new Map<string, string[]>();
   for (const s of slots) {
     const key = slotKey(s);
-    const refs =
-      s.slot_state.submission?.answer_image_refs ?? s.slot_state.draft?.image_refs ?? [];
+    const refs = s.slot_state.submission?.answer_image_refs ?? s.slot_state.draft?.image_refs ?? [];
     for (const id of refs) {
       const list = seen.get(id);
       if (list) list.push(key);
@@ -190,9 +189,10 @@ export function PfPaper({
   const [trace, setTrace] = useState<Record<string, string>>({});
   const [traceOpen, setTraceOpen] = useState<Record<string, boolean>>({});
   // Owner decision Q-922: optional 1–5 self-confidence is per question (not per paper).
-  // Observe-only metadata: it never affects judging, rating, or FSRS. Keep values in
-  // per-slot state for the YUK-1052 ResponseSet slot; the current paper submission schema
-  // has no such field, so do not send an unsupported top-level key that the server drops.
+  // Observe-only metadata: it never affects judging, rating, or FSRS. The value is carried
+  // through the paper submission wire (submitPaperSlot → buildPaperSubmissionBody
+  // self_confidence) and lands on AttemptOnQuestion.payload.self_confidence at submit time.
+  // Absent when untouched → byte-identical for slots the learner did not self-rate.
   const [selfConfidence, setSelfConfidence] = useState<Record<string, number>>({});
   const [confirm, setConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -649,9 +649,7 @@ export function PfPaper({
   // YUK-1051 — stable option ids（内容派生）；作答 pip 的「已答」包含绑定到该 slot 的证据。
   const curOptions = optionsFromChoicesMd(cur.question.choices_md ?? [], cur.question_id);
   const curAnswerText = answers[curKey] ?? '';
-  const curSelectedIds = curOptions
-    .filter((o) => o.text_md === curAnswerText)
-    .map((o) => o.id);
+  const curSelectedIds = curOptions.filter((o) => o.text_md === curAnswerText).map((o) => o.id);
   const answeredCount = slots.filter(
     (s) =>
       (answers[slotKey(s)] ?? '').trim().length > 0 ||
@@ -786,6 +784,8 @@ export function PfPaper({
         if (submittedKeys.has(key) || submittedDuringAttemptsRef.current.has(key)) continue;
         // YUK-784 — 该 slot 的过程文本随提交发出（空值/纯空白不发字段，截断在
         // buildCaptureFields；server 侧 conditional-spread 落 AttemptOnQuestion.payload）。
+        // YUK-1051 / Q-922 — 同步自评：capture.self_confidence 非空时随该 slot 提交发出，
+        // 落同一 attempt payload（observe-only，不进判分）。
         const capture = buildCaptureFields({
           reasoningTrace: trace[key] ?? '',
           selfConfidence: selfConfidence[key] ?? null,
@@ -799,6 +799,9 @@ export function PfPaper({
           image_refs: evidenceIdsForSlot(evidenceRef.current, key),
           latency_ms: timingMsRef.current[key] ?? 0,
           ...(capture.reasoning_trace ? { reasoning_trace: capture.reasoning_trace } : {}),
+          ...(capture.self_confidence === undefined
+            ? {}
+            : { self_confidence: capture.self_confidence }),
         });
         submittedDuringAttemptsRef.current.add(key);
       }

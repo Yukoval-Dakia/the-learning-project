@@ -557,6 +557,10 @@ type PaperWriteInput = {
   // YUK-1051 — 作答证据附件 asset ids。服务端 draft/submission 两个 body schema 早已接受
   // image_refs（paper-contracts.ts），UI 只是不再丢弃。空值/缺席 → 不带键，既有 wire 逐字不变。
   image_refs?: string[];
+  // YUK-1051 / Q-922 — 卷面 per-question 信心自评（1–5，observe-only）。只在**提交**装配；
+  // 缺省/未自评 → 不带键（既有卷提交 wire 逐字不变）。正整数由调用方（buildCaptureFields）
+  // 归一为 number | null，本装配点只负责「非 null 才带」。
+  self_confidence?: number | null;
 };
 
 export function buildPaperAnswerDraftBody(artifactId: string, input: PaperWriteInput) {
@@ -579,6 +583,10 @@ export function buildPaperSubmissionBody(artifactId: string, input: PaperWriteIn
     ...(input.latency_ms === undefined ? {} : { latency_ms: input.latency_ms }),
     // YUK-784 — 过程框采集字段：缺省不带键 → 既有卷提交 wire 逐字不变（byte-identical）。
     ...(input.reasoning_trace === undefined ? {} : { reasoning_trace: input.reasoning_trace }),
+    // YUK-1051 — 信心自评（observe-only）：只在用户实际选了 1–5 时带键；null/缺省 → 不发。
+    ...(typeof input.self_confidence === 'number'
+      ? { self_confidence: input.self_confidence }
+      : {}),
   };
 }
 

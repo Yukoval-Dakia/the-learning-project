@@ -93,6 +93,10 @@ const PaperSubmissionBodyFields = {
   // 提交 wire 逐字不变；server 侧 conditional-spread 落 AttemptOnQuestion.payload.reasoning_trace
   // （槽位 YUK-562 先行铺好）。
   reasoning_trace: z.string().max(REASONING_TRACE_MAX_LEN).nullable().optional(),
+  // YUK-1051 / Q-922 — 卷面 per-question 信心自评（1–5，observe-only）。nullable().optional()
+  // 镜像 reasoning_trace：缺省 absent → 既有卷提交 wire 逐字不变；server 侧 conditional-spread
+  // 落 AttemptOnQuestion.payload.self_confidence，绝不进 θ̂ / FSRS / 判分。
+  self_confidence: z.number().int().min(1).max(5).nullable().optional(),
 };
 
 export const LegacyPaperSubmissionBodySchema = z.object({

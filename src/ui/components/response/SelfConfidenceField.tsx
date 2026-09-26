@@ -62,39 +62,38 @@ export function SelfConfidenceField({
   };
 
   return (
-    <div className="rs-confidence" aria-label={ariaLabel}>
-      <span className="rs-confidence-q">{question}</span>
-      <div
-        ref={scaleRef}
-        className="rs-confidence-scale"
-        role="group"
-        aria-label="信心自评，1 到 5"
-        onKeyDown={onScaleKeyDown}
-      >
-        {SCALE.map((score) => (
+    <>
+      {/* biome-ignore lint/a11y/useSemanticElements: 设计稿卡片式刻度（rs-confidence 布局）；
+          native <fieldset> 无法承载该单行布局，真 <button> + role=group ARIA 模式语义完整
+          （同 ChoiceSetResponse 先例）。 */}
+      <div className="rs-confidence" role="group" aria-label={ariaLabel} onKeyDown={onScaleKeyDown}>
+        <span className="rs-confidence-q">{question}</span>
+        <div ref={scaleRef} className="rs-confidence-scale">
+          {SCALE.map((score) => (
+            <button
+              type="button"
+              key={score}
+              className={`rs-confidence-btn${selected === score ? ' is-selected' : ''}`}
+              aria-label={`把握 ${score} 分（共 5 分）`}
+              aria-pressed={selected === score}
+              disabled={disabled}
+              onClick={() => onChange(score)}
+            >
+              {score}
+            </button>
+          ))}
           <button
             type="button"
-            key={score}
-            className={`rs-confidence-btn${selected === score ? ' is-selected' : ''}`}
-            aria-label={`把握 ${score} 分（共 5 分）`}
-            aria-pressed={selected === score}
+            className="rs-confidence-skip"
+            aria-pressed={selected === null}
             disabled={disabled}
-            onClick={() => onChange(score)}
+            onClick={() => onChange(null)}
           >
-            {score}
+            不评
           </button>
-        ))}
-        <button
-          type="button"
-          className="rs-confidence-skip"
-          aria-pressed={selected === null}
-          disabled={disabled}
-          onClick={() => onChange(null)}
-        >
-          不评
-        </button>
+        </div>
+        <span className="rs-confidence-hint">{hint}</span>
       </div>
-      <span className="rs-confidence-hint">{hint}</span>
-    </div>
+    </>
   );
 }

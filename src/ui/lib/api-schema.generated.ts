@@ -20774,6 +20774,7 @@ export interface operations {
                     part_ref?: string | null;
                     question_id: string;
                     reasoning_trace?: string | null;
+                    self_confidence?: number | null;
                     session_id: string;
                 };
             };
@@ -27613,6 +27614,7 @@ export interface operations {
                     part_ref?: string | null;
                     question_id: string;
                     reasoning_trace?: string | null;
+                    self_confidence?: number | null;
                 };
             };
         };

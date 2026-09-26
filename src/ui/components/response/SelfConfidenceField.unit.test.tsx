@@ -13,7 +13,9 @@ describe('SelfConfidenceField — capture / optional / keyboard', () => {
     expect(screen.getAllByRole('button')).toHaveLength(6);
     for (const score of [1, 2, 3, 4, 5]) {
       expect(
-        screen.getByRole('button', { name: `把握 ${score} 分（共 5 分）` }).getAttribute('aria-pressed'),
+        screen
+          .getByRole('button', { name: `把握 ${score} 分（共 5 分）` })
+          .getAttribute('aria-pressed'),
       ).toBe('false');
     }
     expect(screen.getByRole('button', { name: '不评' }).getAttribute('aria-pressed')).toBe('true');
@@ -43,7 +45,7 @@ describe('SelfConfidenceField — capture / optional / keyboard', () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<SelfConfidenceField value={null} onChange={onChange} ariaLabel="第 1 题信心自评" />);
-    expect(screen.getByRole('group', { name: '信心自评，1 到 5' })).toBeTruthy();
+    expect(screen.getByRole('group', { name: '第 1 题信心自评' })).toBeTruthy();
 
     const three = screen.getByRole('button', { name: '把握 3 分（共 5 分）' });
     three.focus();
