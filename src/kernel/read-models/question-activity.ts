@@ -7,7 +7,7 @@
 // Generic envelope storage lives in @/kernel/events.
 
 import { and, desc, eq, gte, inArray } from 'drizzle-orm';
-import type { CauseSchemaT, FsrsStateSchemaT } from '@/core/schema/event/blocks';
+import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { filterActiveRows, takeActiveRows } from '@/kernel/events';

@@ -113,6 +113,18 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     pendingClass: 'deferred',
     note: '§2 矩阵 author_question 行【deferred，非 blocked】：接受路径已 converged（proposal-appliers）；未接受草稿不铸 revision 是产品选择（candidate 不冒充已发布题，草稿层无判分消费者），技术上现在就能做。cutover（YUK-1059）统一处置。',
   },
+  'src/server/rehearsal/corpus.ts': {
+    status: 'working-copy-pending',
+    tickets: ['YUK-1057', 'YUK-1059'],
+    pendingClass: 'rehearsal-only',
+    note: 'YUK-1057 隔离演练的 corpus seeder：故意用 legacy 工作副本形态写入 ephemeral 容器库（预切换快照），不触生产；cutover 后统一收敛（YUK-1059），演练库随容器销毁。',
+  },
+  'src/server/rehearsal/post-write.ts': {
+    status: 'working-copy-pending',
+    tickets: ['YUK-1057', 'YUK-1059'],
+    pendingClass: 'rehearsal-only',
+    note: 'YUK-1057 演练的 post-cutover writer-seam 证明：对 ephemeral 库的受控写入，验证切换后写入路径；非生产路径，YUK-1059 收敛后演练改走 publisher。',
+  },
   'src/capabilities/agency/server/conjecture/probe-lifecycle.ts': {
     status: 'working-copy-pending',
     tickets: ['YUK-1059'],

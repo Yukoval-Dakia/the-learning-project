@@ -75,6 +75,11 @@
       "path": "src/server/subjects/subject-control-write.ts",
       "tables": ["knowledge"],
       "reason": "Subject control-plane knowledge edits; trigger fan-out covers the update."
+    },
+    {
+      "path": "src/server/rehearsal/corpus.ts",
+      "tables": ["knowledge", "knowledge_edge"],
+      "reason": "YUK-1057 isolated-rehearsal corpus seeder: seeds fixture topology into an ephemeral container DB (unreachable DATABASE_URL stub, no .env, no production writes); trigger fan-out never sees this path."
     }
   ]
 }
