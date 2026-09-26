@@ -4,7 +4,12 @@
 
 import { z } from 'zod';
 
-import { GroupEvidence, PracticeIssuanceDto, ResponseSet } from '@/core/schema/assessment';
+import {
+  AssessmentIssuance,
+  GroupEvidence,
+  PracticeIssuanceDto,
+  ResponseSet,
+} from '@/core/schema/assessment';
 
 // ---------- 发题（issueAssessment） ----------
 
@@ -27,26 +32,10 @@ export const IssueAssessmentBodySchema = z.object({
   claim: z.object({ claimed_by_ref: z.string().min(1) }).optional(),
 });
 
-export const IssuanceClaimSchema = z.object({
-  policy: z.enum(['one_time', 'unbounded']),
-  status: z.enum(['unclaimed', 'claimed', 'released']),
-  claimed_by_ref: z.string().nullable(),
-});
-
-export const AssessmentIssuanceSchema = z.object({
-  issuance_id: z.string().min(1),
-  revision_id: z.string().min(1),
-  part_ids: z.array(z.string().min(1)),
-  material_bindings: z.array(
-    z.object({ material_id: z.string().min(1), asset_digest: z.string().min(1) }),
-  ),
-  option_order: z.array(
-    z.object({ slot_id: z.string().min(1), option_ids: z.array(z.string().min(1)) }),
-  ),
-  container_occurrence_ref: z.string().nullable(),
-  claim: IssuanceClaimSchema,
-  issued_at: z.string(),
-});
+// YUK-1091：wire schema 直接复用 core AssessmentIssuance —— handler 返回的
+// AssessmentIssuanceT 把冻结坐标嵌套在 `issuance.binding` 下（且不含
+// container_occurrence_ref）；另造平铺 schema 会让生成客户端读不到真字段。
+export const AssessmentIssuanceSchema = AssessmentIssuance;
 
 export const IssuanceCreatedSchema = z.object({
   status: z.enum(['issued', 'replayed']),
@@ -119,6 +108,10 @@ export const SubmissionCreatedSchema = z.object({
 
 export const IssuanceStateSchema = z.object({
   issuance: AssessmentIssuanceSchema.nullable(),
+  /** 恢复快照补回作答期公开 DTO（由 issuance 冻结绑定 + pinned revision 重建）。 */
+  practice_dto: PracticeIssuanceDto.nullable(),
+  /** 发题时观测到的 admission generation（恢复后激活 CAS 的锚点；未知 = null）。 */
+  admission_generation_observed: z.number().int().nullable(),
   /** 最新 live draft；null = 服务端无未保存草稿（恢复 promise 的真相源）。 */
   draft: ResponseDraftSchema.nullable(),
   /** 本 issuance 已接收的提交。 */
