@@ -87,6 +87,9 @@ export async function restoreStateSnapshot(
 
   // ---------- θ̂ segment (mastery_state) ----------
   for (const snap of payload.theta_snapshots) {
+    // YUK-1093 — 'knowledge' (per-KC) vs 'ability_global' (per-domain A2 rows);
+    // absent subject_kind = pre-YUK-1093 payload ⇒ 'knowledge'.
+    const subjectKind = snap.subject_kind ?? 'knowledge';
     const before = snap.before;
     if (before === null) {
       // Cold-start revert: the attempt had created this row; restore = remove it.
@@ -94,7 +97,7 @@ export async function restoreStateSnapshot(
         .delete(mastery_state)
         .where(
           and(
-            eq(mastery_state.subject_kind, 'knowledge'),
+            eq(mastery_state.subject_kind, subjectKind),
             eq(mastery_state.subject_id, snap.kc_id),
           ),
         );
@@ -117,6 +120,7 @@ export async function restoreStateSnapshot(
     // theta_grid_json passed as null force the column to NULL (upsert writes when the
     // key is present, even if null); last_theta_delta null likewise.
     await upsertMasteryState(tx, {
+      subject_kind: subjectKind,
       subject_id: snap.kc_id,
       theta_hat: before.theta_hat,
       evidence_count: before.evidence_count,

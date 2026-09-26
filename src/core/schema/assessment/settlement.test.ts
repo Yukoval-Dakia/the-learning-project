@@ -271,6 +271,38 @@ describe('localizeKcObservations（D13 per-KC 局部证据）', () => {
     expect(obs).toEqual([{ kc_id: 'kc_a', bit: 'abstain', basis: 'no_supported_evidence' }]);
   });
 
+  it('YUK-1093 P1-4：evidence_slot_refs-only 单元按证据槽所属 part 的 KC 计，不落组级', () => {
+    // 单元无 slot_refs（判据不直对作答槽），只有 evidence_slot_refs → part p1
+    // （kc_a）。buggy：slot_refs 空 ⇒ 组级 ⇒ 票打到 kc_b 上。
+    const unit: ScoringUnitT = {
+      ...additiveUnit('u_ev', 4),
+      slot_refs: [],
+      evidence_slot_refs: ['ev_slot_1'],
+    };
+    const b = basis([unit]);
+    const loc = locOf({ u_ev: ['p1'] }, { p1: ['kc_a'] }, ['kc_a', 'kc_b']);
+    const obs = localizeKcObservations(b, [scored('u_ev', 4)], loc);
+    expect(obs).toEqual([
+      { kc_id: 'kc_a', bit: 1, basis: 'all_full' },
+      { kc_id: 'kc_b', bit: 'abstain', basis: 'no_supported_evidence' },
+    ]);
+  });
+
+  it('YUK-1093 P1-4 对偶：slot_refs + evidence_slot_refs 双空仍归组级', () => {
+    const unit: ScoringUnitT = {
+      ...additiveUnit('u_grp', 4),
+      slot_refs: [],
+      evidence_slot_refs: [],
+    };
+    const b = basis([unit]);
+    const loc = locOf({ u_grp: [] }, {}, ['kc_a', 'kc_b']);
+    const obs = localizeKcObservations(b, [scored('u_grp', 4)], loc);
+    expect(obs).toEqual([
+      { kc_id: 'kc_a', bit: 1, basis: 'all_full' },
+      { kc_id: 'kc_b', bit: 1, basis: 'all_full' },
+    ]);
+  });
+
   it('每 KC ≤1 obs：同一 KC 的多单元证据聚合成一条', () => {
     const b = basis([additiveUnit('u1', 4), additiveUnit('u2', 4)]);
     const loc = locOf({ u1: ['p1'], u2: ['p1'] }, { p1: ['kc_a'] }, ['kc_a']);

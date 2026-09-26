@@ -1025,17 +1025,21 @@ export interface UpdateThetaForAttemptInput {
  * null → revert deletes the row instead of writing θ̂=0). `after` is the `newTheta`
  * written via upsertMasteryState.
  *
- * SCOPE (§6.6): this returns ONLY the per-KC 'knowledge' rows. The A2 hierarchical-Elo
- * 'ability_global' rows (HIERARCHICAL_ELO_ENABLED, default OFF → no global rows written)
- * are NOT bracketed here. When A2 ships, theta_snapshots MUST extend to the
- * 'ability_global' subjects (the per-domain global drift block below) so cascade-revert
- * restores the global layer too — otherwise a revert would leave θ_global stale.
+ * SCOPE (§6.6 → YUK-1093): `theta_snapshots` carries BOTH the per-KC 'knowledge'
+ * rows AND the A2 hierarchical-Elo 'ability_global' rows (flag ON — the
+ * per-domain global drift block below). Each entry is subject_kind-tagged so the
+ * parse barrier / cascade-revert / restore primitive can restore the global layer
+ * too — settlement replay (YUK-1053) depends on every row this fn wrote being
+ * verbatim-bracketed, otherwise a regrade leaves θ_global double-counted.
  */
 // YUK-561 S1 — `before` is now the FULL pre-attempt row (verbatim restore), not just
 // θ̂. null = cold-start (no pre-attempt row → revert DELETEs the row). Shape mirrors
 // ThetaRowSnapshot (core/schema/event/state-snapshot.ts), the parse-barrier schema.
 export interface ThetaSnapshotEntry {
+  /** Row id: knowledge id, or DOMAIN id when subject_kind='ability_global'. */
   kc_id: string;
+  /** mastery_state partition — absent means 'knowledge' (payload-compatible). */
+  subject_kind?: 'knowledge' | 'ability_global';
   before: ThetaRowSnapshotT | null;
   after: number;
 }
@@ -1369,7 +1373,20 @@ export async function updateThetaForAttempt(
       );
       // Re-read under the lock so a concurrent same-domain attempt's increment is not
       // lost (the pre-lock read used for effective theta may be stale). NULL → 0.
-      const lockedRow = await getMasteryState(tx, domain, ABILITY_GLOBAL_KIND);
+      // YUK-1093 — read the RAW row (incl. rt_correct_ms/theta_grid_json) so the
+      // snapshot `before` is a VERBATIM whole-row restore point, identical to the
+      // per-KC capture discipline (projected MasteryStateRow drops rt_correct_ms).
+      const lockedRows = await tx
+        .select()
+        .from(mastery_state)
+        .where(
+          and(
+            eq(mastery_state.subject_kind, ABILITY_GLOBAL_KIND),
+            eq(mastery_state.subject_id, domain),
+          ),
+        )
+        .limit(1);
+      const lockedRow = lockedRows[0] ?? null;
       const lockedGlobal = lockedRow?.theta_hat ?? 0;
       const lockedNewGlobal = lockedGlobal + ELO_K_GLOBAL * bWeight * aggregateCredit;
       // θ_global rows REUSE mastery_state with subject_kind=ABILITY_GLOBAL_KIND and
@@ -1391,6 +1408,30 @@ export async function updateThetaForAttempt(
         fail_count: (lockedRow?.fail_count ?? 0) + (input.outcome === 0 ? 1 : 0),
         last_outcome_at: input.now,
         last_theta_delta: lockedNewGlobal - lockedGlobal,
+      });
+      // YUK-1093 — bracket the global transition VERBATIM (same discipline as the
+      // per-KC captures): before = raw locked row (null = cold-start → revert
+      // DELETEs), after = lockedNewGlobal. Without this a settle/rejudge revert
+      // restores the KC layer but leaves θ_global + evidence_count double-counted.
+      const globalBefore: ThetaRowSnapshotT | null =
+        lockedRow === null
+          ? null
+          : {
+              theta_hat: lockedRow.theta_hat,
+              evidence_count: lockedRow.evidence_count,
+              success_count: lockedRow.success_count,
+              fail_count: lockedRow.fail_count,
+              theta_precision: lockedRow.theta_precision,
+              last_theta_delta: lockedRow.last_theta_delta ?? null,
+              last_outcome_at: lockedRow.last_outcome_at ?? null,
+              rt_correct_ms: (lockedRow.rt_correct_ms as RtCorrectBuffer | null) ?? null,
+              theta_grid_json: (lockedRow.theta_grid_json as ThetaGridPosterior | null) ?? null,
+            };
+      thetaSnapshots.push({
+        kc_id: domain,
+        subject_kind: 'ability_global',
+        before: globalBefore,
+        after: lockedNewGlobal,
       });
     }
   }
@@ -1448,8 +1489,9 @@ export async function updateThetaForAttempt(
       .where(and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, s.id)));
   }
 
-  // YUK-471 Wave 0 (ADR-0044 §3) — return the per-KC θ̂ before/after snapshot for the
-  // attempt-tx snapshot append. Only 'knowledge' rows (A2 'ability_global' is OUT — see
-  // the fn doc / §6.6: extend here when HIERARCHICAL_ELO_ENABLED ships).
+  // YUK-471 Wave 0 (ADR-0044 §3) + YUK-1093 — return the θ̂ before/after snapshot
+  // for the attempt-tx snapshot append: per-KC 'knowledge' rows AND the A2
+  // 'ability_global' rows (subject_kind-tagged), so every row this fn wrote is
+  // verbatim-bracketed for cascade-revert / settlement replay.
   return { theta_snapshots: thetaSnapshots };
 }

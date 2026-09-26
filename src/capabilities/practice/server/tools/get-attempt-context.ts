@@ -267,6 +267,9 @@ const EventEvidenceSchema = z.discriminatedUnion('kind', [
     theta_snapshots: z.array(
       z.object({
         knowledge_id: z.string(),
+        // YUK-1093 — mastery_state partition: 'ability_global' entries carry a
+        // domain id in knowledge_id (snapshot subject_kind passthrough).
+        subject_kind: z.enum(['knowledge', 'ability_global']),
         before_present: z.boolean(),
         before_theta_hat: z.number().nullable(),
         after_theta_hat: z.number(),
@@ -818,6 +821,7 @@ function projectEventPayload(value: EnvelopedEvent, rawPayload: unknown): Payloa
         attempt_event_id: payload.attempt_event_id,
         theta_snapshots: payload.theta_snapshots.map((snapshot) => ({
           knowledge_id: snapshot.kc_id,
+          subject_kind: snapshot.subject_kind ?? 'knowledge',
           before_present: snapshot.before !== null,
           before_theta_hat:
             typeof snapshot.before === 'number'

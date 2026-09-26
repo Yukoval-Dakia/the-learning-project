@@ -270,13 +270,16 @@ export interface UnitLocalizationInput {
 }
 
 /**
- * unit 作答面 → KC 集。slot_refs 为空 ⇒ 组级单元（material/group evidence），
- * 归组级 KC；否则并集其槽位所在 part 的 KC（part 未映射 ⇒ 回落组级）。
+ * unit 作答面 → KC 集。slot_refs 与 evidence_slot_refs 均为空 ⇒ 组级单元
+ * （material/group evidence），归组级 KC；否则并集其引用槽位所在 part 的
+ * KC（part 未映射 ⇒ 回落组级）。YUK-1093 P1-4：evidence-only 单元（判据
+ * 不直对作答槽、只挂 evidence_slot_refs）同样 part-局部 —— unitPartIdsOf
+ * 已把证据槽解析到所属 part，判据投票不得越过该 part 落到全组 KC 上。
  * KC 集为空 ⇒ null（不可归因，不计任何 KC 的票）。
  */
 function unitKcs(unit: ScoringUnitT, loc: UnitLocalizationInput): Set<string> | null {
   const partIds =
-    unit.slot_refs.length === 0
+    unit.slot_refs.length === 0 && unit.evidence_slot_refs.length === 0
       ? null // group-scoped unit
       : (loc.unitPartIds.get(unit.scoring_unit_id) ?? new Set<string>());
   const kcs = new Set<string>();
