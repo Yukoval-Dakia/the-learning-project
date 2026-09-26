@@ -700,6 +700,8 @@ export interface PaperSlotReviewCommand {
     question: AttemptQuestionSnapshotT;
     latencyMs?: number;
     reasoningTrace?: string;
+    /** YUK-1051 / Q-922 — 信心自评（1–5，observe-only）；落到 attempt payload，不进判分。 */
+    selfConfidence?: number;
   };
   question: QuestionRow;
   knowledge: {
@@ -983,6 +985,9 @@ export async function settlePaperSlotReview(
               : {}),
             ...(command.answerSnapshot.reasoningTrace?.trim()
               ? { reasoning_trace: command.answerSnapshot.reasoningTrace }
+              : {}),
+            ...(typeof command.answerSnapshot.selfConfidence === 'number'
+              ? { self_confidence: command.answerSnapshot.selfConfidence }
               : {}),
             ...(!graded ? { unsupported_judge: true } : {}),
           },

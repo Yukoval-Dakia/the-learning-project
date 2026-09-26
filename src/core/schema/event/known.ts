@@ -147,6 +147,13 @@ const AttemptOnQuestionSchema = z.object({
     // 下游：attribution_followup 从此字段读入 AttributionInput.reasoning_trace_md（通电，
     // 见 attribute.ts）。REASONING_TRACE_MAX_LEN 与 hints_used 同风格封上界，挡失真大文本。
     reasoning_trace: z.string().max(REASONING_TRACE_MAX_LEN).optional(),
+    // YUK-1051 / Q-922 (A10) — self_confidence: 学生在看到判定之前对本作答的主观把握
+    // （1–5 整数，1=完全没底 … 5=十拿九稳）。**observe-only**：仅作分析采集，绝不进
+    // θ̂ / FSRS / 判分（mirror ReviewOnQuestion.payload.self_confidence 的语义与命名）。
+    // 来源是卷面 per-question 信心自评插拍（PfPaper → buildPaperSubmissionBody）。
+    // OPTIONAL：无自评 / 历史 attempt / 非卷作答恒缺省 → 既有 attempt 读路径逐字不变
+    // （byte-identical）；engagement 红线（零强制）= 字段 optional。
+    self_confidence: z.number().int().min(1).max(5).optional(),
     // YUK-804 — immutable question evidence at answer time. Optional only for
     // historical events; every live attempt writer must stamp it. The snapshot
     // includes a shared parent stem for question parts, so later edits/deletes

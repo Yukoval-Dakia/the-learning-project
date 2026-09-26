@@ -98,7 +98,9 @@ describe('ScreenPlacement handwriting upload failure (YUK-713)', () => {
 
     // Re-pick the same file — the cleared input value lets the retry go through.
     await user.upload(fileInput, file);
-    expect(await screen.findByText(/已附 1 张手写稿/)).toBeTruthy();
+    // YUK-1051 replaces the placement-only attach label with the shared evidence strip;
+    // the retry is successful when the uploaded asset appears with its removable name.
+    expect(await screen.findByRole('button', { name: '移除handwriting.png' })).toBeTruthy();
     expect(mocks.uploadAsset).toHaveBeenCalledTimes(2);
   });
 });
