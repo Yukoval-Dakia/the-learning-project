@@ -12,6 +12,7 @@ Ported from pstack `poteto-mode`（`.slim/clonedeps/repos/cursor__plugins/pstack
 - ❌ 重复 launch-phase / diagnosing-bugs / tdd / pr / worktrees 已有的机制 —— playbook 步骤调用它们，不复制。
 - ❌ "它编译过了"/"我改完了" 当证据。每条声明同句带证据：命令输出、`file:line`、commit SHA 或 artifact 路径。
 - ❌ wrong-surface / INCONCLUSIVE 当通过。验证必须打在任务实际影响的面上，见 `verify-app` skill。
+- ❌ CI 绿 / bot approve 当 verdict。行为改动的 landable verdict 必须来自没写这段代码的独立 verifier（`live-ui-verified`/`unit-test-verified`）；`type-check-only`/`verifier-blocked` 不可 land。verdict 按 `PR+headSHA` 记 ledger（`.omc/ship-engine/ledger.tsv`），head 变了 verdict 作废；同 patch-id 的 head 移动可复用 verdict。
 - ❌ 不可逆操作无人值守执行：force-push、生产数据写、对外发消息、merge/deploy 之外的目标外操作一律停下问 owner。merge/deploy 按 AGENTS.md 已授权政策执行。
 
 ## 步骤
