@@ -722,16 +722,26 @@ async function acquireSnapshotStateLocks(
   // G (acquired above) is the primary guard against concurrent writers; the regular grading path
   // (updateThetaForAttempt / upsertMasteryState) only holds G, not these per-KC locks. These
   // per-row advisory locks are defense-in-depth for the conflict guard's FOR-UPDATE reads.
-  const ids = new Set<string>();
+  // YUK-1093 — 'ability_global' theta entries lock under their own
+  // `mastery:ability_global:<domain>` namespace (same key shape updateThetaForAttempt's
+  // per-domain block takes), ordered AFTER the fsrs keys to match the writer's
+  // per-KC → per-domain acquire order (deadlock-safe).
+  const fsrsIds = new Set<string>();
+  const globalIds = new Set<string>();
   for (const payload of payloads) {
     for (const snap of payload.theta_snapshots) {
-      ids.add(`knowledge:${snap.kc_id}`);
+      if (snap.subject_kind === 'ability_global') {
+        globalIds.add(snap.kc_id);
+      } else {
+        fsrsIds.add(`knowledge:${snap.kc_id}`);
+      }
     }
     for (const snap of payload.fsrs_snapshots) {
-      ids.add(`${snap.subject_kind}:${snap.subject_id}`);
+      fsrsIds.add(`${snap.subject_kind}:${snap.subject_id}`);
     }
   }
-  await acquireSortedAdvisoryLocks(tx, 'fsrs', [...ids]);
+  await acquireSortedAdvisoryLocks(tx, 'fsrs', [...fsrsIds]);
+  await acquireSortedAdvisoryLocks(tx, 'mastery:ability_global', [...globalIds]);
 }
 
 /**
@@ -751,11 +761,14 @@ async function assertSnapshotMatchesCurrent(
   lockRows = false,
 ): Promise<{ kind: 'theta' | 'fsrs'; subjectKind: string; subjectId: string } | null> {
   for (const snap of payload.theta_snapshots) {
+    // YUK-1093 — theta snapshots are subject_kind-tagged ('knowledge' | 'ability_global');
+    // absent = pre-YUK-1093 payload ⇒ 'knowledge'.
+    const subjectKind = snap.subject_kind ?? 'knowledge';
     const rows = await db
       .select({ theta_hat: mastery_state.theta_hat })
       .from(mastery_state)
       .where(
-        and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, snap.kc_id)),
+        and(eq(mastery_state.subject_kind, subjectKind), eq(mastery_state.subject_id, snap.kc_id)),
       )
       .limit(1)
       .for(lockRows ? 'update' : 'no key update');
@@ -763,7 +776,7 @@ async function assertSnapshotMatchesCurrent(
     // The current θ̂ must equal the snapshot's after. A missing row means the
     // after-state is gone → conflict.
     if (current === undefined || !thetaExactEq(current, snap.after)) {
-      return { kind: 'theta', subjectKind: 'knowledge', subjectId: snap.kc_id };
+      return { kind: 'theta', subjectKind, subjectId: snap.kc_id };
     }
   }
 

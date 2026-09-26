@@ -90,6 +90,14 @@ export type ThetaRowSnapshotT = z.infer<typeof ThetaRowSnapshot>;
 
 export const ThetaSnapshot = z.object({
   kc_id: z.string().min(1),
+  // YUK-1093 — A2 (HIERARCHICAL_ELO_ENABLED, live) writes per-domain
+  // 'ability_global' rows in the SAME attempt tx; their before/after MUST be
+  // bracketed alongside the KC rows or a revert leaves θ_global double-counted.
+  // subject_kind: which mastery_state partition this entry restores.
+  //   absent ⇒ 'knowledge' (pre-YUK-1093 on-disk payloads never carried it —
+  //   rollback-compat: old snapshots keep parsing, old readers ignore the key).
+  //   kc_id holds the DOMAIN id when subject_kind='ability_global'.
+  subject_kind: z.enum(['knowledge', 'ability_global']).optional(),
   // YUK-561 S1 union (rollback-compat, Lens B F9): the rich ThetaRowSnapshot (new
   // writers) | a bare number (pre-S1 on-disk snapshots) | null (cold-start). Both
   // legacy shapes parse through the barrier so a code rollback never breaks the read
