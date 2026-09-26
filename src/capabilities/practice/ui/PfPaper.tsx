@@ -180,6 +180,9 @@ export function PfPaper({
   // YUK-1051 — 卷级证据附件（整页解题照默认绑定整个 evaluation group=本卷；可在
   // EvaluationGroupPanel 改绑子集）。slot 草稿/提交的 image_refs 从这里按绑定范围展开。
   const [evidence, setEvidence] = useState<EvidenceAttachment[]>([]);
+  // YUK-1094 — 附件上传中：交卷入口并入 upload-pending（disable），否则交卷会以旧 evidence
+  // 展开 image_refs（刚上传的附件丢掉）。由 EvidenceComposer 的 onUploadingChange 上报。
+  const [uploading, setUploading] = useState(false);
   // answersRef 同款的同步镜像：pagehide/退出 flush 读 ref（渲染闭包可能滞后一拍）。
   const evidenceRef = useRef<EvidenceAttachment[]>([]);
   evidenceRef.current = evidence;
@@ -274,6 +277,7 @@ export function PfPaper({
     setSelfConfidence({});
     setEvidence([]);
     evidenceRef.current = [];
+    setUploading(false);
     setSaveFailed({});
     setRetrying(false);
     setExiting(false);
@@ -770,7 +774,7 @@ export function PfPaper({
     const sid = sessionRef.current;
     // Mutual exclusion with exitPaper (submittingRef/exitingRef are synchronous): a submit and
     // an exit must not both fire a terminal transition.
-    if (!sid || submittingRef.current || exitingRef.current) return;
+    if (!sid || submittingRef.current || exitingRef.current || uploading) return;
     submittingRef.current = true;
     setSubmitting(true);
     stopTimingSegment();
@@ -933,6 +937,7 @@ export function PfPaper({
             placeholder="写下你的解答。交卷前都可以改。"
             ariaLabel="作答"
             slotLabels={Object.fromEntries(slots.map((s, i) => [slotKey(s), `第 ${i + 1} 题`]))}
+            onUploadingChange={setUploading}
           />
         )}
         {!isChoice && evidence.length > 0 && !submittedKeys.has(curKey) && !exiting && (
@@ -1021,7 +1026,7 @@ export function PfPaper({
               size="sm"
               variant="primary"
               icon="send"
-              disabled={submitting || exiting}
+              disabled={submitting || exiting || uploading}
               onClick={() => void submitAll()}
             >
               {submitting ? '判分中…' : '交卷'}
@@ -1035,7 +1040,7 @@ export function PfPaper({
             size="sm"
             variant="primary"
             icon="send"
-            disabled={submitting || exiting}
+            disabled={submitting || exiting || uploading}
             onClick={() => (unanswered > 0 ? setConfirm(true) : void submitAll())}
           >
             {submitting ? '判分中…' : '交卷 · 统一判分'}

@@ -280,6 +280,8 @@ export interface MigrationOpsFields {
   event_ingest_at: EventOpsRow[];
   /** 快照时刻各状态表 updated_at 的 max 值（对账用）。 */
   state_updated_at_max: Record<string, string | null>;
+  /** 快照时刻各状态表乐观锁 version 的 max 值（YUK-1098：learning_session.version）。 */
+  state_version_max: Record<string, number | null>;
 }
 
 export interface MigrationCapture {
@@ -435,11 +437,12 @@ export interface MigrationManifest {
   };
   /** 引用边哈希（caused_by / subject / answer→event / label→attempt 等）。 */
   edge_hash: { digest: string; edge_count: number };
-  /** 可变运维字段的独立对账记录（不进 raw_fact_hash）。 */
+  /** 可变运维字段的独立对账记录（不进 raw_fact_hash，但进 checkpoint 身份）。 */
   mutable_ops_fields: {
     excluded_from_fact_hash: string[];
     event_ingest_at_present: number;
     state_updated_at_max: Record<string, string | null>;
+    state_version_max: Record<string, number | null>;
   };
   /** 8 类 canonical fold owner 的投影基线（§10 entity-registry）。 */
   projection_baseline: Record<string, number>;

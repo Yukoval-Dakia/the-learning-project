@@ -73,7 +73,10 @@ interface Published {
 }
 
 /** 种子 + 发布 admitted 单题组，返回发题/作答所需的真实坐标。 */
-async function publishAdmitted(qid: string): Promise<Published> {
+async function publishAdmitted(
+  qid: string,
+  opts?: { claimPolicy?: 'one_time' | 'unbounded' },
+): Promise<Published> {
   const db = testDb();
   await seedQuestion(qid);
   const [row] = await db.select().from(question).where(eq(question.id, qid)).limit(1);
@@ -90,6 +93,7 @@ async function publishAdmitted(qid: string): Promise<Published> {
     expectedCurrentRevision: null,
     expectedAdmissionGeneration: null,
     availability: 'general_pool',
+    claimPolicy: opts?.claimPolicy,
     admission: { state: 'admitted', evidence: ADMITTED_EVIDENCE },
     actorRef: 'test:publish',
     now: NOW,
@@ -253,6 +257,64 @@ describe('issueAssessment', () => {
     });
     expect(invalid.status).toBe('binding_invalid');
   });
+
+  // P1-2（YUK-1091）：one_time claim 的重试命中自己持有的 issuance —— 幂等
+  // 解析必须先于 claim 互斥判，否则正常重试被误报 claim_unavailable。
+  it('one_time claim retry with same issuance_id replays instead of claim_unavailable', async () => {
+    const pub = await publishAdmitted('issClaim', { claimPolicy: 'one_time' });
+    const first = await issueAssessment(testDb(), {
+      group_id: pub.groupId,
+      issuance_id: 'iss_claim_1',
+      claim: { claimed_by_ref: 'holder-a' },
+    });
+    expect(first.status).toBe('issued');
+    if (first.status !== 'issued') return;
+
+    // 逐字重试：同 id 同绑定同 claim —— replay，并如实返回已存 claim 状态。
+    const retry = await issueAssessment(testDb(), {
+      group_id: pub.groupId,
+      issuance_id: 'iss_claim_1',
+      claim: { claimed_by_ref: 'holder-a' },
+    });
+    expect(retry.status).toBe('replayed');
+    if (retry.status !== 'replayed') return;
+    expect(retry.issuance.claim).toEqual({
+      policy: 'one_time',
+      status: 'claimed',
+      claimed_by_ref: 'holder-a',
+    });
+    expect(retry.issuance.issued_at).toBe(first.issuance.issued_at);
+    expect(retry.issuance.binding.revision_id).toBe(pub.revisionId);
+
+    // 另一个 claimer 抢同组 —— 互斥语义不变。
+    const rival = await issueAssessment(testDb(), {
+      group_id: pub.groupId,
+      issuance_id: 'iss_claim_2',
+      claim: { claimed_by_ref: 'holder-b' },
+    });
+    expect(rival.status).toBe('claim_unavailable');
+
+    // claim 释放后：rival 可占；同 id 重试如实报告 released（持久状态非请求）。
+    await testDb()
+      .update(assessment_issuance)
+      .set({ claim_status: 'released', claimed_by_ref: null })
+      .where(eq(assessment_issuance.issuance_id, 'iss_claim_1'));
+    const afterRelease = await issueAssessment(testDb(), {
+      group_id: pub.groupId,
+      issuance_id: 'iss_claim_1',
+      claim: { claimed_by_ref: 'holder-a' },
+    });
+    expect(afterRelease.status).toBe('replayed');
+    if (afterRelease.status === 'replayed') {
+      expect(afterRelease.issuance.claim.status).toBe('released');
+    }
+    const rivalAfterRelease = await issueAssessment(testDb(), {
+      group_id: pub.groupId,
+      issuance_id: 'iss_claim_3',
+      claim: { claimed_by_ref: 'holder-b' },
+    });
+    expect(rivalAfterRelease.status).toBe('issued');
+  });
 });
 
 // ---------- saveResponseDraft + getIssuanceState ----------
@@ -347,12 +409,114 @@ describe('saveResponseDraft / pending restore', () => {
     });
     expect(out.status).toBe('issuance_not_found');
   });
+
+  // P1-3（YUK-1091）：提交删草稿后，迟到的 autosave 不得把已提交作答重建为
+  // live draft —— submission 行即 tombstone（按草稿声明的组锚点判定）。
+  it('rejects a late autosave after the submission cleared the draft', async () => {
+    const pub = await publishAdmitted('drSub');
+    const issued = await issueAssessment(testDb(), { group_id: pub.groupId });
+    if (issued.status !== 'issued' && issued.status !== 'replayed') throw new Error('seed');
+    const iid = issued.issuance.issuance_id;
+
+    await saveResponseDraft(testDb(), {
+      issuance_id: iid,
+      evaluation_group_ref: 'g-late',
+      response_set: rs(pub),
+    });
+    const submitted = await saveSubmission(testDb(), {
+      issuance_id: iid,
+      evaluation_group_id: 'g-late',
+      idempotency_key: 'k-late',
+      response_set: rs(pub),
+    });
+    expect(submitted.status).toBe('saved');
+
+    // 带 ref 的迟到 autosave → 拒收（返回已接收提交的锚点）。
+    const lateScoped = await saveResponseDraft(testDb(), {
+      issuance_id: iid,
+      evaluation_group_ref: 'g-late',
+      response_set: rs(pub),
+      expected_save_epoch: 1,
+    });
+    expect(lateScoped.status).toBe('already_submitted');
+    if (lateScoped.status === 'already_submitted' && submitted.status === 'saved') {
+      expect(lateScoped.existing_submission_id).toBe(submitted.submission.submission_id);
+    }
+
+    // 未定组的迟到 autosave：本 issuance 已有提交 ⇒ 该草稿所属尝试已被归档。
+    const lateUnset = await saveResponseDraft(testDb(), {
+      issuance_id: iid,
+      response_set: rs(pub),
+    });
+    expect(lateUnset.status).toBe('already_submitted');
+
+    // 断言没有被重建 live draft；state 视图也不报待办草稿。
+    const rows = await testDb()
+      .select()
+      .from(assessment_response_draft)
+      .where(eq(assessment_response_draft.issuance_id, iid));
+    expect(rows).toHaveLength(0);
+    const state = await getIssuanceState(testDb(), iid);
+    expect(state.draft).toBeNull();
+    expect(state.submissions).toHaveLength(1);
+
+    // 另一次尝试（新组锚点）仍允许新草稿 —— tombstone 不误伤下一题面。
+    const next = await saveResponseDraft(testDb(), {
+      issuance_id: iid,
+      evaluation_group_ref: 'g-next',
+      response_set: rs(pub),
+    });
+    expect(next.status).toBe('saved');
+    const stateAfter = await getIssuanceState(testDb(), iid);
+    expect(stateAfter.draft?.evaluation_group_ref).toBe('g-next');
+  });
 });
 
 // ---------- saveSubmission ----------
 
 describe('saveSubmission', () => {
   beforeEach(resetDb);
+
+  // P1-5（YUK-1091）：恢复读面补回 practice_dto + admission_generation_observed
+  // —— 只有 issuance_id 也能恢复题面并带上激活 CAS 锚点。
+  it('returns practice_dto and issuance-time admission_generation in the recovery snapshot', async () => {
+    const pub = await publishAdmitted('snap1');
+    const issued = await issueAssessment(testDb(), { group_id: pub.groupId });
+    if (issued.status !== 'issued' && issued.status !== 'replayed') throw new Error('seed');
+    const iid = issued.issuance.issuance_id;
+
+    const state = await getIssuanceState(testDb(), iid);
+    expect(state.issuance?.issuance_id).toBe(iid);
+    // practice_dto 由冻结绑定 + pinned revision 重建，与发题时返回的一致。
+    expect(state.practice_dto?.issuance_id).toBe(iid);
+    expect(state.practice_dto?.revision_id).toBe(pub.revisionId);
+    expect(state.practice_dto?.faces).toHaveLength(1);
+    expect(state.practice_dto?.response_spec.slots).toHaveLength(1);
+    // 观测到的发题时 admission generation（发题事件载荷）。
+    expect(state.admission_generation_observed).toBe(pub.admissionGeneration);
+
+    // 修复前遗留的脏行兜底：草稿指向已提交组也不报 pending。
+    const submitted = await saveSubmission(testDb(), {
+      issuance_id: iid,
+      evaluation_group_id: 'g-snap',
+      idempotency_key: 'k-snap',
+      response_set: rs(pub),
+    });
+    expect(submitted.status).toBe('saved');
+    await testDb()
+      .insert(assessment_response_draft)
+      .values({
+        issuance_id: iid,
+        evaluation_group_ref: 'g-snap',
+        response_set: rs(pub),
+        group_evidence: [],
+        save_epoch: 1,
+        updated_at: NOW,
+      });
+    const after = await getIssuanceState(testDb(), iid);
+    expect(after.draft).toBeNull();
+    expect(after.submissions).toHaveLength(1);
+  });
 
   it('persists immutable submission pinned to issued revision; clears draft; anchors head', async () => {
     const pub = await publishAdmitted('sub1');
@@ -460,6 +624,55 @@ describe('saveSubmission', () => {
     if (conflict.status === 'idempotency_conflict') {
       expect(conflict.existing_submission_id).toBe(first.submission.submission_id);
     }
+  });
+
+  // P1-4（YUK-1091）：两个不同 issuance 并发首提同一新 evaluation_group ——
+  // FOR UPDATE 锁不住不存在的行，组创建必须经 advisory 锁串行化；双方提交
+  // 都应接收（不丢作答），组锚点包含两份 submission。
+  it('serializes concurrent first submissions into one shared evaluation group', async () => {
+    const pubA = await publishAdmitted('grpA');
+    const pubB = await publishAdmitted('grpB');
+    const issA = await issueAssessment(testDb(), { group_id: pubA.groupId });
+    const issB = await issueAssessment(testDb(), { group_id: pubB.groupId });
+    if (
+      (issA.status !== 'issued' && issA.status !== 'replayed') ||
+      (issB.status !== 'issued' && issB.status !== 'replayed')
+    ) {
+      throw new Error('seed');
+    }
+
+    const [outA, outB] = await Promise.all([
+      saveSubmission(testDb(), {
+        issuance_id: issA.issuance.issuance_id,
+        evaluation_group_id: 'g_shared',
+        idempotency_key: 'k-a',
+        response_set: rs(pubA),
+      }),
+      saveSubmission(testDb(), {
+        issuance_id: issB.issuance.issuance_id,
+        evaluation_group_id: 'g_shared',
+        idempotency_key: 'k-b',
+        response_set: rs(pubB),
+      }),
+    ]);
+    // 两笔都接收（advisory 锁 + 锁内重读，无 PK 撞车 500）。
+    expect(outA.status).toBe('saved');
+    expect(outB.status).toBe('saved');
+    if (outA.status !== 'saved' || outB.status !== 'saved') return;
+
+    const [grp] = await testDb()
+      .select()
+      .from(evaluation_group)
+      .where(eq(evaluation_group.evaluation_group_id, 'g_shared'));
+    expect(grp.submission_ids.sort()).toEqual(
+      [outA.submission.submission_id, outB.submission.submission_id].sort(),
+    );
+    // 组内 head 只锚定一份提交（先落者）。
+    const [head] = await testDb()
+      .select()
+      .from(evaluation_effective_head)
+      .where(eq(evaluation_effective_head.evaluation_group_id, 'g_shared'));
+    expect(head.generation).toBe(0);
   });
 
   it('multiple evaluation attempts keep separate submission identities', async () => {

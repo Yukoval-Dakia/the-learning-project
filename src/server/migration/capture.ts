@@ -492,6 +492,10 @@ async function readOpsFields(tx: Tx): Promise<MigrationCapture['ops']> {
     where ingest_at is not null
     order by id
   `);
+  // P1-1（YUK-1098）：excluded_from_fact_hash 声明的可变字段必须在 ops 里
+  // 可观测 —— 否则仅这些字段变化时 checkpoint 身份不变，新观测被工件寻址
+  // 静默吞掉。补 item_calibration.updated_at 与 learning_session.updated_at；
+  // learning_session.version（int 乐观锁）不是时间戳，进 state_version_max。
   const stateUpdatedRows = await tx.execute<{
     table_name: string;
     max_updated: Date | string | null;
@@ -500,12 +504,21 @@ async function readOpsFields(tx: Tx): Promise<MigrationCapture['ops']> {
     union all select 'mastery_state', max(updated_at) from mastery_state
     union all select 'kc_typed_state', max(updated_at) from kc_typed_state
     union all select 'learner_axis_state', max(updated_at) from learner_axis_state
+    union all select 'item_calibration', max(updated_at) from item_calibration
     union all select 'item_family_calibration', max(updated_at) from item_family_calibration
+    union all select 'learning_session', max(updated_at) from learning_session
     union all select 'answer', max(autosaved_at) as max_updated from answer
   `);
   const state_updated_at_max: Record<string, string | null> = {};
   for (const r of stateUpdatedRows) {
     state_updated_at_max[r.table_name] = r.max_updated === null ? null : isoRequired(r.max_updated);
+  }
+  const stateVersionRows = await tx.execute<{ table_name: string; max_version: number | null }>(sql`
+    select 'learning_session' as table_name, max(version) as max_version from learning_session
+  `);
+  const state_version_max: Record<string, number | null> = {};
+  for (const r of stateVersionRows) {
+    state_version_max[r.table_name] = r.max_version;
   }
   return {
     event_ingest_at: ingestRows.map((r) => ({
@@ -513,6 +526,7 @@ async function readOpsFields(tx: Tx): Promise<MigrationCapture['ops']> {
       ingest_at: r.ingest_at === null ? null : isoRequired(r.ingest_at),
     })),
     state_updated_at_max,
+    state_version_max,
   };
 }
 

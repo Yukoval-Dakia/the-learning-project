@@ -195,3 +195,131 @@ describe('未决态 —— 显式类型，不是伪零分', () => {
     expect(record.aggregate).toMatchObject({ kind: 'unresolved', reason: 'pending_units' });
   });
 });
+
+describe('EvaluationRecord — YUK-1096 P1-2 status/aggregate 一致性（矛盾态全拒）', () => {
+  const base = {
+    evaluation_id: 'ev_x',
+    evaluation_group_id: 'eg_1',
+    submission_id: 'sub_1',
+    attempt: 1,
+  };
+  const scoredUnit = {
+    status: 'scored' as const,
+    scoring_unit_id: 'u_1',
+    points_awarded: 3,
+    scored_because: 'response' as const,
+  };
+  const pendingUnit = {
+    status: 'pending' as const,
+    scoring_unit_id: 'u_1',
+    pending: { reason: 'needs_review' as const, trigger: 'flagged' as const },
+  };
+
+  it('accepts the three coherent states: pending+null, completed+resolved, completed+pending_units', () => {
+    // pending：无任何聚合快照。
+    const pendingRecord = EvaluationRecord.parse({
+      ...base,
+      status: 'pending',
+      unit_results: [pendingUnit],
+      aggregate: null,
+    });
+    expect(pendingRecord.status).toBe('pending');
+    // completed + 全 scored + 总分。
+    const done = EvaluationRecord.parse({
+      ...base,
+      status: 'completed',
+      unit_results: [scoredUnit],
+      aggregate: { kind: 'points_total', points: 3, policy: { kind: 'sum' } },
+    });
+    expect(done.status).toBe('completed');
+    // completed + 存在 pending 单元 + 如实 unresolved(pending_units) —— terminal-pending
+    // 是合法终态（evaluation.ts hasRetryable 语义），不得被判为矛盾。
+    const terminalPending = EvaluationRecord.parse({
+      ...base,
+      status: 'completed',
+      unit_results: [pendingUnit],
+      aggregate: { kind: 'unresolved', reason: 'pending_units', detail: 'pending units: u_1' },
+    });
+    expect(terminalPending.aggregate).toMatchObject({ reason: 'pending_units' });
+  });
+
+  it('rejects pending carrying an aggregate — the evaluation is still open, no snapshot exists', () => {
+    expect(() =>
+      EvaluationRecord.parse({
+        ...base,
+        status: 'pending',
+        unit_results: [scoredUnit],
+        aggregate: { kind: 'points_total', points: 3, policy: { kind: 'sum' } },
+      }),
+    ).toThrow(/pending' must not carry an aggregate/);
+    expect(() =>
+      EvaluationRecord.parse({
+        ...base,
+        status: 'pending',
+        unit_results: [pendingUnit],
+        aggregate: { kind: 'unresolved', reason: 'pending_units', detail: 'x' },
+      }),
+    ).toThrow(/evaluation_status_contradiction/);
+  });
+
+  it('rejects completed with aggregate:null — a finished attempt always has a verdict shape', () => {
+    expect(() =>
+      EvaluationRecord.parse({
+        ...base,
+        status: 'completed',
+        unit_results: [scoredUnit],
+        aggregate: null,
+      }),
+    ).toThrow(/requires a non-null aggregate/);
+  });
+
+  it('rejects completed + pending units + aggregate:null — the original P1 contradiction', () => {
+    expect(() =>
+      EvaluationRecord.parse({
+        ...base,
+        status: 'completed',
+        unit_results: [pendingUnit],
+        aggregate: null,
+      }),
+    ).toThrow(/evaluation_status_contradiction/);
+  });
+
+  it('rejects completed + pending units masked by a resolved aggregate (points_total/level/no_mapping)', () => {
+    for (const aggregate of [
+      { kind: 'points_total', points: 3, policy: { kind: 'sum' } },
+      { kind: 'level', level_id: 'l1', points: 5 },
+      { kind: 'unresolved', reason: 'no_mapping', detail: 'claims mapping instead of pending' },
+      { kind: 'unresolved', reason: 'invalid_result', detail: 'claims invalid instead of pending' },
+    ]) {
+      expect(() =>
+        EvaluationRecord.parse({
+          ...base,
+          status: 'completed',
+          unit_results: [pendingUnit],
+          aggregate,
+        }),
+      ).toThrow(/must carry unresolved\(pending_units\)/);
+    }
+  });
+
+  it('rejects completed + all-scored units claiming pending_units (stale aggregate lies the other way)', () => {
+    expect(() =>
+      EvaluationRecord.parse({
+        ...base,
+        status: 'completed',
+        unit_results: [scoredUnit],
+        aggregate: { kind: 'unresolved', reason: 'pending_units', detail: 'phantom pending' },
+      }),
+    ).toThrow(/claims pending_units but every unit result is scored/);
+  });
+
+  it('allows completed + all-scored + unresolved(no_mapping/invalid_result) — honest non-pending unresolved', () => {
+    const record = EvaluationRecord.parse({
+      ...base,
+      status: 'completed',
+      unit_results: [scoredUnit],
+      aggregate: { kind: 'unresolved', reason: 'no_mapping', detail: 'unmapped level' },
+    });
+    expect(record.aggregate).toMatchObject({ kind: 'unresolved', reason: 'no_mapping' });
+  });
+});

@@ -745,4 +745,197 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
       expect(row.actor_kind).toBe('system');
     }
   });
+
+  it('YUK-1093 P1-1：θ̂ bracket 含 ability_global 行 —— regrade 后 domain 证据/θ̂ 不双计', async () => {
+    const db = testDb();
+    await seedKnowledge('kc_a', { domain: 'dom_x' });
+    const seed = await seedChain('y1093', { kcs: ['kc_a'] });
+    const unitId = `${seed.qid}::u`;
+    await seedEvaluation(seed, 'y1093_ev1', {
+      unitResults: [unitResult(unitId, 1)],
+    });
+    await activate('y1093_ev1', { effectiveId: null, generation: 0 });
+
+    // θ̂ segment bracket 必须封存 ability_global 行（revert 才能恢复 domain 层）。
+    const s1 = (await settlementEvents(seed.groupId)).find(
+      (e) => (e.payload as { effect?: string }).effect === 'applied',
+    );
+    expect(s1).toBeTruthy();
+    const snapRows = await db
+      .select()
+      .from(event)
+      .where(eq(event.id, `${s1?.id}:snapshot:theta`));
+    const thetaSnaps =
+      (
+        snapRows[0]?.payload as {
+          theta_snapshots?: { kc_id: string; subject_kind?: string }[];
+        }
+      )?.theta_snapshots ?? [];
+    const kcSnap = thetaSnaps.find((t) => t.kc_id === 'kc_a');
+    expect(kcSnap).toBeTruthy();
+    const globalSnap = thetaSnaps.find(
+      (t) => t.subject_kind === 'ability_global' && t.kc_id === 'dom_x',
+    );
+    expect(globalSnap).toBeTruthy();
+
+    // regrade：correct → incorrect（同 occurrence 替换，不算额外练习）。
+    await seedEvaluation(seed, 'y1093_ev2', {
+      attempt: 2,
+      unitResults: [unitResult(unitId, 0)],
+      aggregate: { kind: 'points_total', points: 0, policy: { kind: 'sum' } },
+    });
+    const regrade = await activate('y1093_ev2', { effectiveId: 'y1093_ev1', generation: 1 });
+    expect(regrade.status).toBe('activated');
+
+    // domain 行：原 success drift 被 revert，failure drift 落位 —— 计数恰好 1，
+    // 不凭空 +1（buggy：evidence=2 / success=1 / fail=1）。
+    const g = await masteryRow('dom_x', 'ability_global');
+    expect(g?.evidence_count).toBe(1);
+    expect(g?.success_count).toBe(0);
+    expect(g?.fail_count).toBe(1);
+
+    // oracle：另一个 domain 上恰好一次全新 failure settlement —— regrade 后的
+    // domain θ̂ 必须等于「一次 failure」而不是「+success 再 +failure」的和。
+    await seedKnowledge('kc_oracle', { domain: 'dom_oracle' });
+    const oracle = await seedChain('y1093o', { kcs: ['kc_oracle'] });
+    const oracleUnit = `${oracle.qid}::u`;
+    await seedEvaluation(oracle, 'y1093o_ev1', {
+      unitResults: [unitResult(oracleUnit, 0)],
+      aggregate: { kind: 'points_total', points: 0, policy: { kind: 'sum' } },
+    });
+    await activate('y1093o_ev1', { effectiveId: null, generation: 0 });
+    const gOracle = await masteryRow('dom_oracle', 'ability_global');
+    expect(gOracle).toBeTruthy();
+    expect(g?.theta_hat).toBeCloseTo(gOracle?.theta_hat ?? Number.NaN, 12);
+  });
+
+  it('YUK-1093 P1-2：manual→auto→auto —— 第二次 judge 纠正仍保持用户评级（沿链回溯 provenance）', async () => {
+    await seedKnowledge('kc_a', { domain: 'dom_x' });
+    const seed = await seedChain('y1093c', { kcs: ['kc_a'] });
+    const unitId = `${seed.qid}::u`;
+
+    // ev1：manual 评级落卡（用户确认的调度）。
+    await seedEvaluation(seed, 'y1093c_ev1', {
+      attempt: 1,
+      unitResults: [unitResult(unitId, 1)],
+      provenance: { source: 'manual', assisted: false },
+    });
+    await activate('y1093c_ev1', { effectiveId: null, generation: 0 });
+    const s1 = (await settlementEvents(seed.groupId)).find(
+      (e) => (e.payload as { effect?: string }).effect === 'applied',
+    );
+    const fsrs1 = await fsrsRow('knowledge', 'kc_a');
+    expect(fsrs1?.state?.reps).toBe(1);
+    expect(fsrs1?.last_review_event_id).toBe(s1?.id);
+
+    // ev2：第一次自动纠正（incorrect）—— 守卫已生效，用户评级不动。
+    await seedEvaluation(seed, 'y1093c_ev2', {
+      attempt: 2,
+      unitResults: [unitResult(unitId, 0)],
+      aggregate: { kind: 'points_total', points: 0, policy: { kind: 'sum' } },
+    });
+    await activate('y1093c_ev2', { effectiveId: 'y1093c_ev1', generation: 1 });
+    const fsrs2 = await fsrsRow('knowledge', 'kc_a');
+    expect(fsrs2?.state?.reps).toBe(1);
+    expect(fsrs2?.last_review_event_id).toBe(s1?.id);
+
+    // ev3：第二次自动纠正 —— 直接前驱是 auto（ratingSource='verdict'），但 live
+    // FSRS 卡仍来自 ev1 的用户评级；守卫必须沿链保留（buggy：只看直接前驱 ⇒
+    // ev3 静默重排用户的卡：reps=2 + last_review 指向 ev3 结算事件）。
+    await seedEvaluation(seed, 'y1093c_ev3', {
+      attempt: 3,
+      unitResults: [unitResult(unitId, 1)],
+      aggregate: { kind: 'points_total', points: 1, policy: { kind: 'sum' } },
+    });
+    const r3 = await activate('y1093c_ev3', { effectiveId: 'y1093c_ev2', generation: 2 });
+    expect(r3.status).toBe('activated');
+    expect((r3 as { effect: string }).effect).toBe('applied');
+    const fsrs3 = await fsrsRow('knowledge', 'kc_a');
+    expect(fsrs3?.state?.reps).toBe(1);
+    expect(fsrs3?.last_review_event_id).toBe(s1?.id);
+
+    // ev4：再次 manual —— 用户评级【显式替换】旧用户评级：守卫不吞用户评级，
+    // 新评级在保留的卡上正常落位（reps=2）。
+    await seedEvaluation(seed, 'y1093c_ev4', {
+      attempt: 4,
+      unitResults: [unitResult(unitId, 1)],
+      provenance: { source: 'manual', assisted: false },
+    });
+    const r4 = await activate('y1093c_ev4', { effectiveId: 'y1093c_ev3', generation: 3 });
+    expect(r4.status).toBe('activated');
+    const s4 = (await settlementEvents(seed.groupId)).find(
+      (e) => (e.payload as { evaluation_id?: string }).evaluation_id === 'y1093c_ev4',
+    );
+    const fsrs4 = await fsrsRow('knowledge', 'kc_a');
+    expect(fsrs4?.state?.reps).toBe(2);
+    expect(fsrs4?.last_review_event_id).toBe(s4?.id);
+  });
+
+  it('YUK-1093 P1-3：全量 regrade（→unsupported）以被替换主体播种闭包 —— 不误报 failed_pending', async () => {
+    const t1 = new Date('2026-09-20T00:00:00Z');
+    const t2 = new Date('2026-09-21T00:00:00Z');
+    await seedKnowledge('kc_a', { domain: 'dom_x' });
+    // G1（t1）先结算 correct：kc_a + dom_x 上留 success obs 与用户无关 FSRS 卡。
+    const seedA = await seedChain('y1093s', { kcs: ['kc_a'], submittedAt: t1 });
+    const unitA = `${seedA.qid}::u`;
+    await seedEvaluation(seedA, 'y1093s_ev1', {
+      unitResults: [unitResult(unitA, 1)],
+    });
+    await activate('y1093s_ev1', { effectiveId: null, generation: 0 }, t1);
+    const sOld = (await settlementEvents(seedA.groupId)).find(
+      (e) => (e.payload as { effect?: string }).effect === 'applied',
+    );
+
+    // G2（t2 > t1，异组同 KC）随后结算 —— live 结算在 G1 被替换主体的证据之后。
+    const seedB = await seedChain('y1093t', { kcs: ['kc_a'], submittedAt: t2 });
+    const unitB = `${seedB.qid}::u`;
+    await seedEvaluation(seedB, 'y1093t_ev1', {
+      unitResults: [unitResult(unitB, 1)],
+    });
+    await activate('y1093t_ev1', { effectiveId: null, generation: 0 }, t2);
+    const g2 = await settlementEvents(seedB.groupId);
+    const g2Live = g2.find((e) => (e.payload as { effect?: string }).effect === 'applied');
+    const mMid = await masteryRow('kc_a');
+    expect(mMid?.evidence_count).toBe(2);
+
+    // G1 regrade → unsupported：本次结算不写任何主体（subjects 为空）。闭包
+    // 必须以【被替换结算的主体】播种，否则 G2 不入闭包 —— revert S_old 时撞
+    // 上 G2 的 snapshot 链 ⇒ revert_failed ⇒ failed_pending（buggy 行为）。
+    await seedEvaluation(seedA, 'y1093s_ev2', {
+      attempt: 2,
+      aggregate: { kind: 'unresolved', reason: 'pending_units', detail: 'u pending' },
+    });
+    const result = await activate('y1093s_ev2', {
+      effectiveId: 'y1093s_ev1',
+      generation: 1,
+    });
+    expect(result.status).toBe('activated');
+    expect((result as { effect: string }).effect).not.toBe('failed_pending');
+
+    // S_old 的写入被 revert；G2 按其原 occurrence 重放：kc_a 只剩 G2 一条 obs。
+    const m = await masteryRow('kc_a');
+    expect(m?.evidence_count).toBe(1);
+    expect(m?.success_count).toBe(1);
+    expect(new Date(m?.last_outcome_at ?? 0).toISOString()).toBe(t2.toISOString());
+    const g = await masteryRow('dom_x', 'ability_global');
+    expect(g?.evidence_count).toBe(1);
+
+    // FSRS：G2 按原 occurrence 重排（re-apply 事件成为卡的写入者）。
+    const fsrs = await fsrsRow('knowledge', 'kc_a');
+    const replayed = (await settlementEvents()).filter(
+      (e) => (e.payload as { replay_of?: string }).replay_of === g2Live?.id,
+    );
+    expect(replayed).toHaveLength(1);
+    expect(fsrs?.last_review_event_id).toBe(replayed[0]?.id);
+
+    // regrade 事件的 reverted 面显式（S_old + G2 原事件）。
+    const newEv = (await settlementEvents(seedA.groupId)).find(
+      (e) => (e.payload as { evaluation_id?: string }).evaluation_id === 'y1093s_ev2',
+    );
+    const revertedIds =
+      ((newEv?.payload ?? {}) as { reverted_settlement_event_ids?: string[] })
+        .reverted_settlement_event_ids ?? [];
+    expect(revertedIds).toContain(sOld?.id);
+    expect(revertedIds).toContain(g2Live?.id);
+  });
 });

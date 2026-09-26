@@ -34,23 +34,26 @@
 //   - 草稿只属于 mutable 层：绝不代表已接收作答，D5 守恒只发生在
 //     assessment_submission 落库那一下 ack。
 //
-// 锁序（固定，无环）：issuance 行 → evaluation_group 行 → draft 行。
+// 锁序（固定，无环）：issuance 行 → advisory(group) → evaluation_group 行 →
+// draft 行。
 // ====================================================================
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, isNull, or } from 'drizzle-orm';
+import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
 
 import {
   type AssessmentIssuanceT,
   type EvaluationGroupIdT,
   type GroupEvidenceT,
   type IssuanceIdT,
+  type PracticeIssuanceDtoT,
   ResponseSet,
   type ResponseSetT,
   type ResponseSpecT,
   type RevisionIdT,
   type SubmissionIdT,
   type SubmissionRecordT,
+  projectPracticeIssuance,
   resolveSubmissionIdempotency,
   scopeResponseSpec,
   validateResponseSet,
@@ -62,11 +65,17 @@ import {
   assessment_submission,
   evaluation_effective_head,
   evaluation_group,
+  question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 // （初始 head 插入已内联 —— 原 insertInitialEvaluationHead 归 server/activate，
 //  capability 边界不允许 server import；语义等价：空 effective、generation 0。）
+import {
+  issuanceRowToContract,
+  readObservedAdmissionGeneration,
+  revisionRowToContract,
+} from './issue';
 
 /** 提交 receipt 事件 action 名。 */
 export const ASSESSMENT_SUBMISSION_ACTION = 'experimental:assessment_submission';
@@ -99,9 +108,13 @@ export type SaveResponseDraftResult =
       status:
         | 'issuance_not_found'
         | 'invalid_response' // response_set 对发出 spec 结构非法
-        | 'stale_draft'; // expected_save_epoch 落后于服务端
+        | 'stale_draft' // expected_save_epoch 落后于服务端
+        | 'already_submitted'; // 草稿所属的提交已落库 —— 提交后的迟到 autosave
       issues?: string[];
       current_save_epoch?: number;
+      /** already_submitted：已接收该草稿所属组的提交 id（供调用方定位）。 */
+      existing_submission_id?: SubmissionIdT;
+      conflict_reason?: string;
     };
 
 export interface SaveSubmissionRequest {
@@ -132,7 +145,8 @@ export type SaveSubmissionResult =
         | 'revision_not_found'
         | 'invalid_response'
         | 'group_conflict' // 同 submission_id 已属于另一个 group
-        | 'idempotency_conflict'; // 同 key 不同 payload / 同 id 不同 key
+        | 'idempotency_conflict' // 同 key 不同 payload / 同 id 不同 key
+        | 'coordinate_conflict'; // 并发写缝余留冲突（预检后插入仍撞唯一约束）
       issues?: string[];
       /** conflict 时如实给出已存在行的关键坐标（供调用方定位）。 */
       existing_submission_id?: SubmissionIdT;
@@ -141,6 +155,10 @@ export type SaveSubmissionResult =
 
 export interface IssuanceState {
   issuance: AssessmentIssuanceT | null;
+  /** 恢复快照所需的作答期公开 DTO（由冻结绑定 + pinned revision 重建）。 */
+  practice_dto: PracticeIssuanceDtoT | null;
+  /** 发题时观测到的 admission generation（恢复后激活 CAS 锚点；未知 = null）。 */
+  admission_generation_observed: number | null;
   /** 最新 live draft；无 = null（客户端据此恢复 pending 作答 promise）。 */
   draft: {
     response_set: ResponseSetT;
@@ -210,6 +228,31 @@ export async function saveResponseDraft(
       .limit(1);
     if (issuance == null) return { status: 'issuance_not_found' };
 
+    const groupRef = request.evaluation_group_ref ?? null;
+
+    // 提交 tombstone（P1-3）：submission 行是【该次作答已接收】的持久事实 ——
+    // saveSubmission 清草稿后，迟到的 debounced autosave 绝不允许把已提交的
+    // 作答重建为 live draft。判定按草稿声明的联合组锚点：
+    //   - 带 ref：同 issuance 同组的提交存在 ⇒ 该次作答已提交，拒收；
+    //   - 无 ref（未定组）：本 issuance 已有任何提交 ⇒ 该草稿所属尝试已被
+    //     清并归档，同样拒收（提交清除谓词本就含未定组草稿）。
+    const tombstoneConds = [eq(assessment_submission.issuance_id, request.issuance_id)];
+    if (groupRef != null) {
+      tombstoneConds.push(eq(assessment_submission.evaluation_group_id, groupRef));
+    }
+    const [tombstone] = await tx
+      .select({ submission_id: assessment_submission.submission_id })
+      .from(assessment_submission)
+      .where(and(...tombstoneConds))
+      .limit(1);
+    if (tombstone != null) {
+      return {
+        status: 'already_submitted',
+        existing_submission_id: tombstone.submission_id,
+        conflict_reason: `issuance '${request.issuance_id}' already has an accepted submission for group '${groupRef ?? '(unset)'}' — stale autosave rejected`,
+      };
+    }
+
     // response_set 校验：只允许发出范围内的槽位（非法 ⇒ 拒收，不静默截断）。
     const [revRow] = await tx
       .select({ response_spec: question_revision.response_spec })
@@ -239,7 +282,6 @@ export async function saveResponseDraft(
     }
 
     const nextEpoch = (existing?.save_epoch ?? 0) + 1;
-    const groupRef = request.evaluation_group_ref ?? null;
     await tx
       .insert(assessment_response_draft)
       .values({
@@ -278,10 +320,12 @@ export async function saveResponseDraft(
  * 次序（replay 不污染组内锚点 —— 先判幂等再改组）：
  *   1. 锁 issuance（发题事实不可变读）+ revision 快照；
  *   2. 校验 response_set 对发出 spec；
- *   3. 幂等预检：(group,key) / submission_id —— replay/conflict 直接返回，
+ *   3. advisory 锁 evaluation_group（并发同组提交的线性化点 ——
+ *      FOR UPDATE 锁不住不存在的组行）；
+ *   4. 幂等预检：(group,key) / submission_id —— replay/conflict 直接返回，
  *      不触碰 evaluation_group.submission_ids；
- *   4. 锁 evaluation_group（同组提交串行化点）→ upsert 追加 submission_id；
- *   5. assessment_submission 不可变行；
+ *   5. 锁组行/冲突安全建组（onConflictDoNothing + 锁内重读）→
+ *      assessment_submission 不可变行 → 组行追加 submission_id；
  *   6. 初始 head（仅当组内尚无 head —— 多 submission 组锚定第一份提交，
  *      activation 的 head.submission_id 断言以该锚为准，见 activate.ts）；
  *   7. 清对应 live draft + 提交事件。
@@ -319,6 +363,17 @@ export async function saveSubmission(
 
     const submissionId = request.submission_id ?? `sub_${createId()}`;
     const groupEvidence = request.group_evidence ?? [];
+
+    // ---- 组串行化点（P1-4）：同一 evaluation_group 的提交先做 advisory 锁。
+    //    FOR UPDATE 锁不住不存在的组行 —— 两个 issuance 并发首提同组会各自
+    //    看到 existingGroup==null 后 PK 撞车 500。advisory 锁把本缝的全部
+    //    组内写入（幂等预检 → 组锚点 → submission → head）串行化：并发同组
+    //    写按锁序观察彼此已提交的结果（幂等重试确定性地走 replay 分支）。
+    //    锁序：issuance 行 → advisory(group) → 组行 → draft 行 —— 与既有
+    //    声明顺序一致，不引入环。
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${request.evaluation_group_id}))`,
+    );
 
     // ---- 幂等预检（先于任何组内变更：replay 不得污染 submission_ids） ----
     const [byKey] = await tx
@@ -387,24 +442,41 @@ export async function saveSubmission(
       };
     }
 
-    // ---- 组锚点（同组提交串行化点；先锁再追加） ----
-    const [existingGroup] = await tx
+    // ---- 组锚点（先锁再追加；锁由上面的 advisory 锁提供） ----
+    // 冲突收敛：advisory 锁内不应撞 PK，但缝外写者（迁移/修复脚本）不受锁管，
+    // 因此创建用 onConflictDoNothing + 锁内重读，绝不裸插。
+    let [group] = await tx
       .select()
       .from(evaluation_group)
       .where(eq(evaluation_group.evaluation_group_id, request.evaluation_group_id))
       .for('update')
       .limit(1);
-    if (existingGroup == null) {
-      await tx.insert(evaluation_group).values({
-        evaluation_group_id: request.evaluation_group_id,
-        submission_ids: [submissionId],
-        created_at: now,
-      });
-    } else if (!existingGroup.submission_ids.includes(submissionId)) {
+    let groupCreatedHere = false;
+    if (group == null) {
       await tx
-        .update(evaluation_group)
-        .set({ submission_ids: [...existingGroup.submission_ids, submissionId] })
-        .where(eq(evaluation_group.evaluation_group_id, request.evaluation_group_id));
+        .insert(evaluation_group)
+        .values({
+          evaluation_group_id: request.evaluation_group_id,
+          submission_ids: [submissionId],
+          created_at: now,
+        })
+        .onConflictDoNothing();
+      // 重读：命中 speculative 插入阻塞等对方 commit/abort 后 —— 读到的是
+      // 本行或胜出行；读到即锁（FOR UPDATE）保证后续 append 串行。
+      [group] = await tx
+        .select()
+        .from(evaluation_group)
+        .where(eq(evaluation_group.evaluation_group_id, request.evaluation_group_id))
+        .for('update')
+        .limit(1);
+      if (group == null) {
+        // 插入被 doNothing 吞掉且行仍不可见 = 缝外写者异常形状；显式 409。
+        return {
+          status: 'coordinate_conflict',
+          conflict_reason: `evaluation_group '${request.evaluation_group_id}' insert conflicted but row is not visible`,
+        };
+      }
+      groupCreatedHere = group.submission_ids.includes(submissionId);
     }
 
     // submission 不可变行（复合 FK 兜底：issuance+revision 坐标必须一致）。
@@ -423,11 +495,39 @@ export async function saveSubmission(
       .onConflictDoNothing()
       .returning({ submission_id: assessment_submission.submission_id });
     if (inserted.length === 0) {
-      // 预检后仍冲突 = 并发窗口内的真并发写入 —— 事务内可见性已保序，属
-      // 不可能形状；fail-loud 绝不静默当 replay。
-      throw new Error(
-        `saveSubmission: '${submissionId}' conflicted after idempotency pre-check — concurrent writer outside the seam`,
-      );
+      // 预检后仍冲突 = 并发窗口内的真并发写入（同 id 不同组、或 (group,key)
+      // 唯一索引被缝外写者命中）—— 收敛为显式 409，绝不 500。
+      const [conflicting] = await tx
+        .select({
+          submission_id: assessment_submission.submission_id,
+          evaluation_group_id: assessment_submission.evaluation_group_id,
+          idempotency_key: assessment_submission.idempotency_key,
+        })
+        .from(assessment_submission)
+        .where(
+          or(
+            eq(assessment_submission.submission_id, submissionId),
+            and(
+              eq(assessment_submission.evaluation_group_id, request.evaluation_group_id),
+              eq(assessment_submission.idempotency_key, request.idempotency_key),
+            ),
+          ),
+        )
+        .limit(1);
+      return {
+        status: 'coordinate_conflict',
+        existing_submission_id: conflicting?.submission_id,
+        conflict_reason: `submission '${submissionId}' insert conflicted after idempotency pre-check — concurrent writer (existing group='${conflicting?.evaluation_group_id ?? 'unknown'}' key='${conflicting?.idempotency_key ?? 'unknown'}')`,
+      };
+    }
+
+    // 组行追加 submission_id：只在 submission 落库成功后 —— 预检已保证不在
+    // 列表里；本分支刚建的组行已含本 id（submission_ids 初始值）故跳过。
+    if (!groupCreatedHere && !group.submission_ids.includes(submissionId)) {
+      await tx
+        .update(evaluation_group)
+        .set({ submission_ids: [...group.submission_ids, submissionId] })
+        .where(eq(evaluation_group.evaluation_group_id, request.evaluation_group_id));
     }
 
     // 初始 head（§11 同事务原子）：组内尚无 head 才插 —— 多 submission 组锚定
@@ -508,7 +608,8 @@ export async function saveSubmission(
 // ---------- 3. pending 恢复读面 ----------
 
 /**
- * 单发题状态快照：issuance（冻结坐标）+ live draft + 已接收提交列表。
+ * 单发题状态快照：issuance（冻结坐标）+ practice_dto（冻结题面重建）+
+ * admission_generation_observed（发题事件读取）+ live draft + 已接收提交列表。
  * 恢复 promise 的真相源 —— draft=null 即“服务器没有未保存草稿”。
  */
 export async function getIssuanceState(
@@ -537,25 +638,54 @@ export async function getIssuanceState(
     .where(eq(assessment_submission.issuance_id, issuanceId))
     .orderBy(desc(assessment_submission.submitted_at));
 
+  const issuance = issuanceRow ? issuanceRowToContract(issuanceRow) : null;
+
+  // practice_dto：从 issuance 冻结绑定 + pinned revision 重建（非持久化 ——
+  // 冻结坐标的纯投影）。revision 行缺失只可能是跨库破坏（FK 保证同存）。
+  const [revRow] = issuanceRow
+    ? await db
+        .select()
+        .from(question_revision)
+        .where(eq(question_revision.revision_id, issuanceRow.revision_id))
+        .limit(1)
+    : [null];
+  const practice_dto =
+    issuance != null && revRow != null
+      ? projectPracticeIssuance(revisionRowToContract(revRow), issuance)
+      : null;
+
+  // admission_generation_observed：真相源是发题事件载荷；缺失时如实回
+  // lifecycle 当前值（保守兜底，不代表发题时刻 —— 事件缺失本身属异常）。
+  let admissionGenerationFallback: number | null = null;
+  if (revRow != null) {
+    const [lifecycle] = await db
+      .select({
+        scoring_admission_generation: question_group_lifecycle.scoring_admission_generation,
+      })
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, revRow.group_id))
+      .limit(1);
+    admissionGenerationFallback = lifecycle?.scoring_admission_generation ?? null;
+  }
+  const admission_generation_observed = issuanceRow
+    ? await readObservedAdmissionGeneration(db, issuanceId, admissionGenerationFallback)
+    : null;
+
+  // tombstone 读侧（P1-3）：草稿声明的联合组已有提交 —— 或未定组草稿撞上本
+  // issuance 的已接收提交 —— 都不能再报作 pending（修复前遗留的脏草稿行也
+  // 被同一谓词压住）。
+  const submissionGroups = new Set(submissions.map((s) => s.evaluation_group_id));
+  const draftIsLive =
+    draftRow != null &&
+    (draftRow.evaluation_group_ref == null
+      ? submissions.length === 0
+      : !submissionGroups.has(draftRow.evaluation_group_ref));
+
   return {
-    issuance: issuanceRow
-      ? {
-          issuance_id: issuanceRow.issuance_id,
-          binding: {
-            revision_id: issuanceRow.revision_id,
-            part_ids: issuanceRow.part_ids,
-            material_bindings: issuanceRow.material_bindings,
-            option_order: issuanceRow.option_order,
-          },
-          issued_at: issuanceRow.issued_at.toISOString(),
-          claim: {
-            policy: issuanceRow.claim_policy,
-            status: issuanceRow.claim_status,
-            claimed_by_ref: issuanceRow.claimed_by_ref ?? null,
-          },
-        }
-      : null,
-    draft: draftRow
+    issuance,
+    practice_dto,
+    admission_generation_observed,
+    draft: draftIsLive
       ? {
           response_set: draftRow.response_set,
           group_evidence: draftRow.group_evidence,

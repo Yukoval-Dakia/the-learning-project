@@ -116,6 +116,8 @@ export function ProbeAnswerCard({
   const [answerMd, setAnswerMd] = useState('');
   const [evidence, setEvidence] = useState<EvidenceAttachment[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  // YUK-1094 — 图片上传中：提交入口并入 upload-pending，避免提交旧 image refs。
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [verdict, setVerdict] = useState<ProbeAnswerVerdict['resolution'] | null>(null);
 
@@ -124,7 +126,7 @@ export function ProbeAnswerCard({
   const hasAnswer = answerMd.trim().length > 0 || imageRefs.length > 0;
 
   async function onSubmit() {
-    if (!hasAnswer || submitting) return;
+    if (!hasAnswer || submitting || uploading) return;
     setSubmitting(true);
     setError(null);
     let resolution: ProbeAnswerVerdict['resolution'] | null = null;
@@ -186,12 +188,13 @@ export function ProbeAnswerCard({
             placeholder="写下你的解答（也可以只拍照 / 传图）"
             ariaLabel="作答"
             accept="image/*"
+            onUploadingChange={setUploading}
           />
           <div className="pa-actions">
             <Btn
               size="sm"
               variant="primary"
-              disabled={!hasAnswer || submitting}
+              disabled={!hasAnswer || submitting || uploading}
               onClick={() => void onSubmit()}
             >
               {submitting ? '判分中…' : '提交作答'}

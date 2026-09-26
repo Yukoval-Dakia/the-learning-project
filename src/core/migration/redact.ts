@@ -9,8 +9,10 @@ import type { MigrationCapture, RawEventRow } from './types';
 // 知识 propose……），一张 denylist 不可能穷举私有文本键。策略反转：
 //
 //   【默认拒绝】event.payload 内所有未列入 SAFE_STRING_KEYS 的字符串值
-//   一律脱敏（深.walk：嵌套对象/数组；数组元素视为无键 —— id/枚举数组
-//   整体保留）；数字/布尔/对象结构原样。已知结构性子树
+//   一律脱敏（深.walk：嵌套对象/数组；数组内的【标量】元素继承父属性键
+//   策略 —— 安全键数组（id/枚举）整体保留，非安全键数组（warnings /
+//   failure_reasons 等自由文本 string[]）逐元素脱敏；对象元素按自身键
+//   判定）；数字/布尔/对象结构原样。已知结构性子树
 //   （question_snapshot —— 题面内容非 learner 内容，且分类器要验形状）
 //   整棵保留。
 //
@@ -122,7 +124,7 @@ export function redactedFieldPolicy(): {
 } {
   return {
     policy:
-      'default-deny: event.payload 内所有未列入 safe_string_keys 的字符串值（含嵌套对象）一律脱敏；safe_subtree_keys 子树整棵保留；数字/布尔/数组元素结构原样',
+      'default-deny: event.payload 内所有未列入 safe_string_keys 的字符串值（含嵌套对象）一律脱敏；数组标量元素继承父键策略（safe_string_keys 数组保留、其余 string[] 逐元素脱敏）；safe_subtree_keys 子树整棵保留；数字/布尔/对象结构原样',
     safe_string_keys: [...SAFE_STRING_KEYS],
     safe_subtree_keys: [...SAFE_SUBTREE_KEYS],
   };
@@ -138,28 +140,34 @@ function redactText(value: string): RedactedText {
 
 /**
  * 深度默认拒绝脱敏：递归遍历对象；safe subtree 键整棵保留；字符串值仅当
- * 键 ∈ SAFE_STRING_KEYS 时保留，否则替换为占位。数组逐元素递归（元素无键
- * —— id/枚举数组整体保留）。返回新结构，输入不可变。
+ * 键 ∈ SAFE_STRING_KEYS 时保留，否则替换为占位。数组逐元素递归并把父属性键
+ * 下传 —— 标量元素按父键策略判定（YUK-1098：warnings/failure_reasons 这类
+ * 自由文本 string[] 必须被脱敏，safe 键的 id/枚举 string[] 仍整体保留）；
+ * 对象元素按自身键判定。返回新结构，输入不可变。
  */
-export function redactDeepByKey(value: unknown): unknown {
+export function redactDeepByKey(value: unknown, key?: string): unknown {
   if (Array.isArray(value)) {
-    return value.map(redactDeepByKey);
+    return value.map((element) => redactDeepByKey(element, key));
   }
   if (value !== null && typeof value === 'object') {
     const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
     const record = value as Record<string, unknown>;
-    for (const key of Object.keys(record)) {
-      const entry = record[key];
-      if ((SAFE_SUBTREE_KEYS as readonly string[]).includes(key)) {
-        out[key] = entry;
+    for (const childKey of Object.keys(record)) {
+      const entry = record[childKey];
+      if ((SAFE_SUBTREE_KEYS as readonly string[]).includes(childKey)) {
+        out[childKey] = entry;
         continue;
       }
-      out[key] =
-        typeof entry === 'string' && !(SAFE_STRING_KEYS as readonly string[]).includes(key)
-          ? redactText(entry)
-          : redactDeepByKey(entry);
+      out[childKey] = redactDeepByKey(entry, childKey);
     }
     return out;
+  }
+  if (
+    typeof value === 'string' &&
+    key !== undefined &&
+    !(SAFE_STRING_KEYS as readonly string[]).includes(key)
+  ) {
+    return redactText(value);
   }
   return value;
 }

@@ -40,6 +40,7 @@ export function emptyCapture(): MigrationCapture {
     ops: {
       event_ingest_at: [],
       state_updated_at_max: {},
+      state_version_max: {},
     },
     queues: [],
     subscription_checkpoints: [],

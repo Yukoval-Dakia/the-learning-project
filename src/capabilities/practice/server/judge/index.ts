@@ -58,7 +58,9 @@ export {
   EvaluateSubmissionError,
   type EvaluateSubmissionRequest,
   type EvaluateSubmissionResult,
+  type JevModelExecutorSpec,
   evaluateSubmission,
+  resolveModelExecutor,
 } from './evaluate-submission';
 export {
   type ContractAttemptInput,
