@@ -19,7 +19,7 @@ import { deriveSourceTier } from '@/core/schema/provenance';
 // coordinate fix). Pure tree-clip; shared by get_question_context(include:
 // ['structure']) and the get_question_block_structure draft reader.
 import { projectAddressableStructure } from '@/core/schema/structured_question';
-import { notDraftPredicate } from '@/db/predicates';
+import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import {
   event,
   intervention,
@@ -547,6 +547,8 @@ export async function executeGetReviewDue(
         and(
           sql`${question.knowledge_ids} @> ${JSON.stringify([due.knowledge_id])}::jsonb`,
           notDraftPredicate(question.draft_status),
+          // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不进候选池。
+          questionSuspendedPredicate(question),
         ),
       )
       .orderBy(asc(question.created_at), asc(question.id))
@@ -579,6 +581,8 @@ export async function executeGetReviewDue(
     // is excluded (`draft_status <> 'draft'` alone would drop NULL rows under
     // SQL three-valued logic).
     notDraftPredicate(question.draft_status),
+    // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不进入复习候选。
+    questionSuspendedPredicate(question),
   ];
   if (input.knowledgeIds?.length) {
     legacyQuestionConditions.push(questionKnowledgeContainsAny(input.knowledgeIds));
@@ -662,6 +666,8 @@ export async function executeGetReviewDue(
               // exclusion the due-list.ts public path applies to its never-
               // reviewed slice. NULL handling explicit: only 'draft' excluded.
               notDraftPredicate(question.draft_status),
+              // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不进候选。
+              questionSuspendedPredicate(question),
             ),
           )
       : [];

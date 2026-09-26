@@ -24,7 +24,7 @@
 import { and, notInArray, sql } from 'drizzle-orm';
 import type { SelectionCandidateSignal } from '@/core/selection-signals';
 import type { Db, Tx } from '@/db/client';
-import { notDraftPredicate } from '@/db/predicates';
+import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { question } from '@/db/schema';
 import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
 import { type CandidateInput, collectCandidateSignals } from './candidate-signals';
@@ -151,9 +151,15 @@ export async function selectNextPlacementItem(
       ? and(
           sql`(${kcContainment})`,
           notDraftPredicate(question.draft_status),
+          // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不进 probe 池。
+          questionSuspendedPredicate(question),
           notInArray(question.id, exclude),
         )
-      : and(sql`(${kcContainment})`, notDraftPredicate(question.draft_status));
+      : and(
+          sql`(${kcContainment})`,
+          notDraftPredicate(question.draft_status),
+          questionSuspendedPredicate(question),
+        );
 
   const rows = await db
     .select({

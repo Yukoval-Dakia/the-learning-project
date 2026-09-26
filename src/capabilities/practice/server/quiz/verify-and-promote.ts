@@ -296,6 +296,8 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       // YUK-1043 — 统一发布链：owner-override promote 即 §3.3 的 admission 时刻。
       // 同事务重发组 revision 为 admitted（结构校验通过；跳过独立核验是 owner
       // 决定，evidence 如实记录 —— D1：manual ≠ official）。
+      // YUK-1045 — suspension:false 清 verify_hold：owner 复核通过即「同版复核
+      // 通过」恢复路径（§3.3 表）；retraction_hold 恒保留。
       await publishQuestionGroupFromRow(tx, {
         rootId: row.parent_question_id ?? questionId,
         admission: {
@@ -308,6 +310,13 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
             },
             model_slice: null,
           },
+        },
+        suspension: { suspended: false },
+        verification: {
+          // owner 跳过独立核验的决定如实记账（policy=manual override，非模型判定）。
+          policy_id: 'owner_override@1',
+          outcome: 'passed',
+          evidence: { override_reason: skipVerify.reason ?? null },
         },
         availability: 'general_pool',
         actorRef: 'verify-and-promote:owner_override',

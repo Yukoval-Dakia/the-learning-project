@@ -32,6 +32,7 @@ import {
   placement_starter_claim,
   placement_starter_cost_component,
   question,
+  question_admission_verification,
   question_group_lifecycle,
   question_revision,
   source_document,
@@ -986,6 +987,60 @@ describe('runQuizVerify', () => {
     const meta = await readMeta('q2');
     expect((meta?.verification as Record<string, unknown>)?.status).toBe('failed');
     expect(await countVerifyEvents('q2')).toBe(1);
+  });
+
+  it('YUK-1045: fail suspends the contract group (verify_hold + withheld) with an append-only verification record', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({ id: 'q1045', knowledgeId: 'k1' });
+    const runTaskFn = runTaskMock(
+      verifyOutput({ overall: 'fail', groundingVerdict: 'fail' }),
+      'tr_fail_1045',
+    );
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q1045', runTaskFn });
+
+    expect(result.status).toBe('failed');
+    // 组未发布 ⇒ suspend 铸 suspended 首版（fail-closed），不动 legacy claim。
+    const [lifecycle] = await testDb()
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, 'q1045'));
+    expect(lifecycle.suspended).toBe(true);
+    expect(lifecycle.suspension_reason).toBe('verify_hold');
+    expect(lifecycle.scoring_admission_state).toBe('withheld');
+    expect(lifecycle.scoring_admission_withheld_reason).toBe('verification_failed');
+    expect(lifecycle.withdrawn).toBe(false); // 挂起 ≠ 撤回
+
+    // 新式核验记录（revision_id,digest,policy,generation）append-only 落一行。
+    const verRows = await testDb()
+      .select()
+      .from(question_admission_verification)
+      .where(
+        eq(
+          question_admission_verification.revision_id,
+          lifecycle.current_revision_id ?? 'missing-revision',
+        ),
+      );
+    expect(verRows).toHaveLength(1);
+    expect(verRows[0].policy_id).toBe('quiz_verify@1');
+    expect(verRows[0].outcome).toBe('failed');
+    expect(verRows[0].generation).toBe(1);
+
+    // 挂起维度事件（admission_updated 投影 suspended 目标值 + verification 指针）。
+    const publishEvents = await testDb()
+      .select()
+      .from(event)
+      .where(
+        and(eq(event.action, 'experimental:assessment_publish'), eq(event.subject_id, 'q1045')),
+      );
+    expect(publishEvents).toHaveLength(1);
+    const payload = publishEvents[0].payload as Record<string, unknown>;
+    expect(payload.suspended).toBe(true);
+    expect(payload.suspension_reason).toBe('verify_hold');
+    expect(payload.verification).toMatchObject({
+      policy_id: 'quiz_verify@1',
+      outcome: 'failed',
+    });
   });
 
   it('too_close (LLM verdict): leaves draft + needs_review + NO FSRS enroll', async () => {

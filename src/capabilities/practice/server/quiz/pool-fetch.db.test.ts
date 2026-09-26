@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from '@/db/client';
-import { question } from '@/db/schema';
+import { question, question_group_lifecycle } from '@/db/schema';
 import { resetDb } from '../../../../../tests/helpers/db';
 import { poolFetch } from './pool-fetch';
 
@@ -168,5 +168,69 @@ describe('poolFetch', () => {
     // scalar mode: distance column is null for every row.
     const srows = await poolFetch(db, { knowledgeId: kc });
     expect(srows.every((r) => r.cosine_distance === null)).toBe(true);
+  });
+
+  // YUK-1045 — §3.3 契约准入门：question_group_lifecycle suspended/withdrawn 的组
+  // 不出候选池（group-root = COALESCE(parent,id)）。无 lifecycle 行 ⇒ 旧行桥接放行。
+  describe('contract admission gate (questionSuspendedPredicate)', () => {
+    const LIFECYCLE_BASE = {
+      availability: 'general_pool',
+      scoring_admission_state: 'withheld',
+      scoring_admission_withheld_reason: 'unverified_rules',
+      claim_policy: 'unbounded',
+      suspended: false,
+      withdrawn: false,
+    } as const;
+
+    async function seedLifecycle(
+      groupId: string,
+      over: Partial<typeof question_group_lifecycle.$inferInsert> = {},
+    ) {
+      const now = new Date();
+      await db.insert(question_group_lifecycle).values({
+        group_id: groupId,
+        ...LIFECYCLE_BASE,
+        created_at: now,
+        updated_at: now,
+        ...over,
+      });
+    }
+
+    it('suspended and withdrawn groups are excluded even with activeOnly:false', async () => {
+      const kc = 'kc-cg';
+      await seed({ id: 'q-ok', knowledge_ids: [kc], draft_status: 'draft' });
+      await seed({ id: 'q-susp', knowledge_ids: [kc], draft_status: 'draft' });
+      await seed({ id: 'q-wd', knowledge_ids: [kc], draft_status: 'draft' });
+      await seedLifecycle('q-susp', { suspended: true, suspension_reason: 'verify_hold' });
+      await seedLifecycle('q-wd', { withdrawn: true, withdrawn_at: new Date() });
+
+      const rows = await poolFetch(db, { knowledgeId: kc, activeOnly: false });
+      // 挂起/撤回的组即便 draft 行可见也绝不回池；无 lifecycle 的旧行照旧。
+      expect(rows.map((r) => r.id)).toEqual(['q-ok']);
+    });
+
+    it('a composite part gates on its PARENT group (COALESCE parent id)', async () => {
+      const kc = 'kc-cg-part';
+      await seed({ id: 'g-root', knowledge_ids: [kc] });
+      await seed({
+        id: 'g-part',
+        knowledge_ids: [kc],
+        parent_question_id: 'g-root',
+        kind: 'question_part',
+      });
+      await seed({ id: 'sibling', knowledge_ids: [kc] });
+      await seedLifecycle('g-root', { suspended: true, suspension_reason: 'verify_hold' });
+
+      const rows = await poolFetch(db, { knowledgeId: kc, activeOnly: false });
+      // 组根挂起 ⇒ 根与组员（part）一同排除；无关行不受影响。
+      expect(rows.map((r) => r.id)).toEqual(['sibling']);
+    });
+
+    it('absent lifecycle row (legacy / pre-cutover) is NOT excluded', async () => {
+      const kc = 'kc-cg-legacy';
+      await seed({ id: 'q-legacy', knowledge_ids: [kc] });
+      const rows = await poolFetch(db, { knowledgeId: kc });
+      expect(rows.map((r) => r.id)).toEqual(['q-legacy']);
+    });
   });
 });

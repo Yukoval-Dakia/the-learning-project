@@ -987,6 +987,21 @@
     ]
   },
   {
+    "path": "/api/questions/:id/restore",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "恢复软归档题目（archive 的对偶）：contract withdrawn 复位 + 原子重取 live 去重 claim（YUK-1045）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "version": 1
+        },
+        "notes": "body={version(必填, 乐观锁)}；恢复为 draft（不直接回 active，重进 owner/verify 门）；级联恢复 archived_via_parent=本题的 parts；任一成员 claim 被占 → 409 claim_conflict 全组回滚；verify 挂起不解除（同版复核通过才恢复准入）；题不存在 404、非归档题 409、intervention 诊断题 409；需 x-internal-token"
+      }
+    ]
+  },
+  {
     "path": "/api/questions/quiz-gen",
     "methods": [
       {

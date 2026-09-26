@@ -738,7 +738,19 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       // opposite race a safe result: once this lock wins and promotes, reconciliation observes an
       // active row and enrolls any newly-added KC itself.
       const [current] = await tx
-        .select({ version: question.version, knowledgeIds: question.knowledge_ids })
+        .select({
+          version: question.version,
+          knowledgeIds: question.knowledge_ids,
+          // YUK-1045 — 并发终验成功（重叠投递）：它已提交 ⇒ 本投递 stale，挂起
+          // 写须跳过（§3.3：旧验证不能改变较新 admission 决定）。
+          promotedElsewhere: sql<boolean>`EXISTS (
+            SELECT 1 FROM ${event}
+            WHERE ${event.action} = 'experimental:quiz_verify'
+              AND ${event.subject_kind} = 'question'
+              AND ${event.subject_id} = ${questionId}
+              AND ${event.outcome} = 'success'
+          )`,
+        })
         .from(question)
         .where(eq(question.id, questionId))
         .limit(1)
@@ -919,6 +931,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         // model-proposed ⇒ D1 双门：结构校验（publisher 契约校验）+ 本 job 的独立
         // 模型核验均过 ⇒ system_verified 准入（显式非 official）。composite 的
         // 组根 = 父行；已发布过同内容的组在此只更新 admission 维度（generation+1）。
+        // YUK-1045 — suspension:false 清 verify_hold（同版复核通过 ⇒ 幂等恢复）。
         await publishQuestionGroupFromRow(tx, {
           rootId: row.parent_question_id ?? questionId,
           admission: {
@@ -934,6 +947,15 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                 },
               },
               model_slice: null,
+            },
+          },
+          suspension: { suspended: false },
+          verification: {
+            policy_id: 'quiz_verify@1',
+            outcome: 'passed',
+            evidence: {
+              overall: parsed.overall,
+              copy_safety: copySafetyVerdict,
             },
           },
           availability: 'general_pool',
@@ -958,6 +980,39 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             updated_at: now,
           })
           .where(eq(question.id, questionId));
+
+        // YUK-1045 — verify 挂起串行化（§3.3）：needs_review/fail/too_close 同事务
+        // 把 contract 维度翻 suspended（verify_hold）+ admission 折叠 withheld；
+        // claim 不释放（挂起 ≠ 撤回）。draft 行从池读面消失由 draft_status 既覆盖；
+        // 本写保证 contract 读面 + admission generation 串行化语义存在。组未发布
+        // 时铸 suspended 首版；同版复核通过后 promote 分支（上方）解除挂起。
+        // promotedElsewhere ⇒ 并发终验成功已提交 ⇒ 本投递 stale，不翻维度也不写
+        // 核验记录（记录诚实归属本轮核验的 generation）。
+        const verifyFailed =
+          parsed.overall === 'fail' ||
+          copySafetyVerdict === 'too_close' ||
+          solveCheckOk === false ||
+          teachingQualityOk === false;
+        if (!current.promotedElsewhere) {
+          await publishQuestionGroupFromRow(tx, {
+            rootId: row.parent_question_id ?? questionId,
+            admission: {
+              state: 'withheld',
+              reason: verifyFailed ? 'verification_failed' : 'unverified_rules',
+            },
+            suspension: { suspended: true, reason: 'verify_hold' },
+            verification: {
+              policy_id: 'quiz_verify@1',
+              outcome: verifyFailed ? 'failed' : 'suspended',
+              evidence: {
+                overall: parsed.overall,
+                copy_safety: copySafetyVerdict,
+              },
+            },
+            actorRef: 'quiz_verify:suspend',
+            now,
+          });
+        }
       }
 
       if (placementAuthority) {

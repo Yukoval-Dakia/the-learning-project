@@ -558,6 +558,69 @@ export async function runSourceVerify(
               sql`NOT EXISTS (SELECT 1 FROM ${event} WHERE ${event.action} = 'experimental:source_verify' AND ${event.subject_kind} = 'question' AND ${event.subject_id} = ${questionId} AND ${event.outcome} = 'success')`,
             ),
           );
+        // YUK-1045 — verify 挂起串行化（§3.3）：transient demote 必须同时把
+        // contract 维度翻 suspended（verify_hold）+ admission 折叠 withheld，
+        // 否则「未发出的题」在 contract 读面仍可见为可用。复审 P1：demote 与
+        // suspend 在【同一事务】原子提交（不再先交 demote 再交 suspend ——
+        // 中间窗口会让挂起丢失），且在【组根行锁下重读】版本/终验状态：
+        // 并发 promote 在 publishQuestionGroup 里先取同一锁，锁内读就是
+        // 线性化点（committed success / 版本漂移 ⇒ 本投递 stale，demote 与
+        // suspend 双双跳过，且不写核验记录 —— §3.3「旧验证不能改变较新
+        // admission 决定」）。
+        try {
+          await db.transaction(async (suspendTx) => {
+            const groupRootId = row.parent_question_id ?? questionId;
+            await suspendTx
+              .select({ id: question.id })
+              .from(question)
+              .where(eq(question.id, groupRootId))
+              .for('update')
+              .limit(1);
+            const [post] = await suspendTx
+              .select({
+                version: question.version,
+                draftStatus: question.draft_status,
+                promotedElsewhere: sql<boolean>`EXISTS (
+                  SELECT 1 FROM ${event}
+                  WHERE ${event.action} = 'experimental:source_verify'
+                    AND ${event.subject_kind} = 'question'
+                    AND ${event.subject_id} = ${questionId}
+                    AND ${event.outcome} = 'success'
+                )`,
+              })
+              .from(question)
+              .where(eq(question.id, questionId))
+              .limit(1);
+            const maySuspendContract =
+              post != null &&
+              post.version === row.version &&
+              !post.promotedElsewhere &&
+              post.draftStatus !== 'active';
+            if (!maySuspendContract) return;
+            await suspendTx
+              .update(question)
+              .set({ draft_status: 'draft', updated_at: new Date() })
+              .where(eq(question.id, questionId));
+            await publishQuestionGroupFromRow(suspendTx, {
+              rootId: groupRootId,
+              admission: { state: 'withheld', reason: 'unverified_rules' },
+              suspension: { suspended: true, reason: 'verify_hold' },
+              verification: {
+                policy_id: 'source_verify@1',
+                outcome: 'suspended',
+                evidence: {
+                  check: 'source_grounding',
+                  transient: true,
+                  message: outcome.message,
+                },
+              },
+              actorRef: 'source_verify:suspend',
+              now: new Date(),
+            });
+          });
+        } catch (suspendErr) {
+          console.error('[source_verify] verify-hold write failed for', questionId, suspendErr);
+        }
         throw new Error(
           `source_verify source grounding failed (transient) for ${questionId}: ${outcome.message}`,
         );
@@ -646,7 +709,20 @@ export async function runSourceVerify(
       // against the current KC set. If this lock wins first, the later reconciler observes active
       // lifecycle and enrolls its added KC atomically.
       const [current] = await tx
-        .select({ version: question.version, knowledgeIds: question.knowledge_ids })
+        .select({
+          version: question.version,
+          knowledgeIds: question.knowledge_ids,
+          draftStatus: question.draft_status,
+          // YUK-1045 — 并发终验成功（transient 分支 demote 的 NOT EXISTS guard
+          // 同款）归锁内读：它已提交 ⇒ 本投递 stale，demote 与 suspend 都跳过。
+          promotedElsewhere: sql<boolean>`EXISTS (
+            SELECT 1 FROM ${event}
+            WHERE ${event.action} = 'experimental:source_verify'
+              AND ${event.subject_kind} = 'question'
+              AND ${event.subject_id} = ${questionId}
+              AND ${event.outcome} = 'success'
+          )`,
+        })
         .from(question)
         .where(eq(question.id, questionId))
         .limit(1)
@@ -707,6 +783,8 @@ export async function runSourceVerify(
         // extract 确定性核验 ⇒ official + 结构校验（publisher 契约校验）+ 无独立模型
         // 门（independent=null，checks 摘要记入 note —— D1 双门不适用于非模型规则）。
         // 已发布过同内容的组在此只更新 admission 维度（generation+1）。
+        // YUK-1045 — suspension:false 清 verify_hold（同版复核通过 ⇒ 幂等恢复，
+        // §3.3 表「同版复核通过」行）；retraction_hold 不属本票接线，publisher 恒保留。
         await publishQuestionGroupFromRow(tx, {
           rootId: row.parent_question_id ?? questionId,
           admission: {
@@ -719,6 +797,15 @@ export async function runSourceVerify(
                 note: `source_verify tier-2 checks passed (${checks.length})`,
               },
               model_slice: null,
+            },
+          },
+          suspension: { suspended: false },
+          verification: {
+            policy_id: 'source_verify@1',
+            outcome: 'passed',
+            evidence: {
+              checks: checks.map((c) => ({ check: c.check, verdict: c.verdict })),
+              demoted: false,
             },
           },
           availability: 'general_pool',
@@ -748,12 +835,52 @@ export async function runSourceVerify(
         // it stops FUTURE selection; any existing history is untouched. A later re-enqueue is
         // short-circuited by the failure verify event (idempotency), so the question stays out of
         // the pool until a human (verify-and-promote owner override) intervenes.
-        const demotedRows = await tx
-          .update(question)
-          .set({ draft_status: 'draft', updated_at: now })
-          .where(and(eq(question.id, questionId), eq(question.draft_status, 'active')))
-          .returning({ id: question.id });
+        // 并发终验成功（§3.3「旧验证不能改变较新 admission 决定」）⇒ 行已归
+        // 那笔成功投递：demote 与 suspend 双双跳过（与 transient 分支同一
+        // OVERLAPPING-DELIVERY 守卫，锁内读原子）。
+        const promotedElsewhere = current.promotedElsewhere === true;
+        const demotedRows = promotedElsewhere
+          ? []
+          : await tx
+              .update(question)
+              .set({ draft_status: 'draft', updated_at: now })
+              .where(
+                and(
+                  eq(question.id, questionId),
+                  eq(question.draft_status, 'active'),
+                  sql`NOT EXISTS (SELECT 1 FROM ${event} WHERE ${event.action} = 'experimental:source_verify' AND ${event.subject_kind} = 'question' AND ${event.subject_id} = ${questionId} AND ${event.outcome} = 'success')`,
+                ),
+              )
+              .returning({ id: question.id });
         wasDemoted = demotedRows.length > 0;
+
+        // YUK-1045 — verify 挂起串行化（§3.3）：非 promote 的 verify（失败或
+        // needs_review）必须同事务把 contract 维度翻 suspended（verify_hold）+
+        // admission 折叠 withheld ——「未发出的题」在 contract 读面不可用，且
+        // 只挂 suspension，不动 live 去重 claim（挂起不释放 claim）。组未发布
+        // 时 FromRow 直接铸 suspended 首版（同样 fail-closed）。
+        // promotedElsewhere ⇒ 本投递 stale：不翻 contract 维度（honest：stale
+        // 投递也不写核验记录 —— 记录的是「本版核验结果」，不该落在较新决定上）。
+        if (!promotedElsewhere) {
+          await publishQuestionGroupFromRow(tx, {
+            rootId: row.parent_question_id ?? questionId,
+            admission: {
+              state: 'withheld',
+              reason: failingCheck != null ? 'verification_failed' : 'unverified_rules',
+            },
+            suspension: { suspended: true, reason: 'verify_hold' },
+            verification: {
+              policy_id: 'source_verify@1',
+              outcome: failingCheck != null ? 'failed' : 'suspended',
+              evidence: {
+                checks: checks.map((c) => ({ check: c.check, verdict: c.verdict })),
+                demoted: wasDemoted,
+              },
+            },
+            actorRef: 'source_verify:suspend',
+            now,
+          });
+        }
       }
 
       await writeEvent(tx, {

@@ -28,10 +28,12 @@ import {
   event,
   knowledge,
   question,
+  question_admission_verification,
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
 import { getFsrsState } from '@/server/fsrs/state';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { semanticJudgeOutput } from '../../../../tests/helpers/solve-check-fixtures';
 import { type SourceGroundingParams, runSourceVerify } from './source_verify';
@@ -606,6 +608,30 @@ describe('runSourceVerify', () => {
       .from(event)
       .where(eq(event.action, 'experimental:source_verify'));
     expect((events[0].payload as Record<string, unknown>).demoted).toBe(false);
+
+    // YUK-1045 — 非 promote 的 verify（内容失败）翻 contract 维度：suspended
+    // (verify_hold) + admission withheld(verification_failed) + append-only
+    // 核验记录（outcome 'failed'；demoted:false 如实记入 evidence）。
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(lifecycle.suspended).toBe(true);
+    expect(lifecycle.suspension_reason).toBe('verify_hold');
+    expect(lifecycle.scoring_admission_state).toBe('withheld');
+    expect(lifecycle.scoring_admission_withheld_reason).toBe('verification_failed');
+    const verRows = await db
+      .select()
+      .from(question_admission_verification)
+      .where(
+        eq(
+          question_admission_verification.revision_id,
+          lifecycle.current_revision_id ?? 'missing-revision',
+        ),
+      );
+    expect(verRows).toHaveLength(1);
+    expect(verRows[0].outcome).toBe('failed');
+    expect(verRows[0].evidence).toMatchObject({ demoted: false });
   });
 
   it('YUK-479 leaves a pre-promoted (active) cold-start draft active when verify passes (demoted:false)', async () => {
@@ -789,6 +815,75 @@ describe('runSourceVerify', () => {
     // The row stays 'active' — the concurrent success event blocked the demote.
     const rows = await db.select().from(question).where(eq(question.id, qid));
     expect(rows[0].draft_status).toBe('active');
+    // YUK-1045 — §3.3「旧验证不能改变较新 admission 决定」：同一守卫也拦住
+    // contract 挂起写 —— 并发成功已提交 ⇒ 本投递 stale，不得 mint suspended 首版。
+    const lifecycles = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(lifecycles).toHaveLength(0);
+  });
+
+  it('YUK-1045 P1 repro: a stale transient run cannot suspend a group a concurrent verify already ADMITTED', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      draftStatus: 'active',
+      metadataOverride: groundingMetadata('asset-src-race2'),
+    });
+    // 并发投递已终验 + 已发布 admitted（带 admitted 分支完整性所需 evidence）。
+    await publishQuestionGroupFromRow(db, {
+      rootId: qid,
+      admission: {
+        state: 'admitted',
+        evidence: {
+          marking_provenance: 'official',
+          verification: {
+            structural_check_passed: true,
+            independent_verification: null,
+          },
+          model_slice: null,
+        },
+      },
+      actorRef: 'test:publish',
+      now: new Date(),
+    });
+
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+    const sourceGroundingFn = vi.fn(async () => {
+      // 并发成功事件在 grounding 调用窗口内提交（与本投递探测交错）。
+      await db.insert(event).values({
+        id: createId(),
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'source_verify',
+        action: 'experimental:source_verify',
+        subject_kind: 'question',
+        subject_id: qid,
+        outcome: 'success',
+        payload: { question_id: qid, promoted: true },
+        caused_by_event_id: null,
+        created_at: new Date(),
+      });
+      return groundingResult('transient');
+    });
+
+    await expect(
+      runSourceVerify({ db, questionId: qid, runTaskFn, sourceGroundingFn }),
+    ).rejects.toThrow('source grounding failed (transient)');
+
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('active');
+    // 守卫未修前这里被 stale suspend 改写为 suspended+withheld —— 现在必须
+    // 原样保留 admitted 维度（含 generation 不回涨）。
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(lifecycle.scoring_admission_state).toBe('admitted');
+    expect(lifecycle.suspended).toBe(false);
+    expect(lifecycle.scoring_admission_generation).toBe(1);
   });
 
   it('YUK-230 version race: a transient run does NOT demote a row EDITED (version bumped) during the VLM call', async () => {
@@ -842,6 +937,29 @@ describe('runSourceVerify', () => {
     // FAIL-CLOSED: the row is demoted out of the pool (was 'active') before the throw.
     const rows = await db.select().from(question).where(eq(question.id, qid));
     expect(rows[0].draft_status).toBe('draft');
+
+    // YUK-1045 — transient demote 同事务等效地翻 contract 维度：suspended
+    // (verify_hold) + admission withheld + append-only 核验记录（outcome
+    // 'suspended' —— transient 不是内容判定）。
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(lifecycle.suspended).toBe(true);
+    expect(lifecycle.suspension_reason).toBe('verify_hold');
+    expect(lifecycle.scoring_admission_state).toBe('withheld');
+    const verRows = await db
+      .select()
+      .from(question_admission_verification)
+      .where(
+        eq(
+          question_admission_verification.revision_id,
+          lifecycle.current_revision_id ?? 'missing-revision',
+        ),
+      );
+    expect(verRows).toHaveLength(1);
+    expect(verRows[0].policy_id).toBe('source_verify@1');
+    expect(verRows[0].outcome).toBe('suspended');
 
     // The error event is retriable (outcome='error'); the idempotency guard re-runs it, and a
     // later 'grounded' re-check re-promotes the row to 'active'.

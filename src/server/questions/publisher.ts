@@ -54,7 +54,13 @@ import {
   validateScoringBasis,
 } from '@/core/schema/assessment';
 import type { Db, Tx } from '@/db/client';
-import { question, question_group_lifecycle, question_revision, source_asset } from '@/db/schema';
+import {
+  question,
+  question_admission_verification,
+  question_group_lifecycle,
+  question_revision,
+  source_asset,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { contractIntegrityDigest, normalizeQuestionGroupToContract } from './contract-normalizer';
 
@@ -73,6 +79,29 @@ export interface PublishAdmission {
   evidence?: AdmissionEvidenceT | null;
   /** withheld 必填。 */
   reason?: WithheldReason;
+}
+
+/** §3.3 suspension 维度（与 lifecycle CHECK 枚举一致）。verify 挂起
+ * 'verify_hold'；retraction_hold 预留（生命周期层不参与本票接线）。 */
+export type SuspensionReason = 'verify_hold' | 'retraction_hold';
+
+export interface SuspensionUpdate {
+  suspended: boolean;
+  /** suspended=true 必填。 */
+  reason?: SuspensionReason;
+}
+
+/** 新式 verify 记录（§3.3「新verify保存 (revision_id,digest,policy,
+ * generation)」）—— publisher 在同一发布事务内追加
+ * question_admission_verification（append-only）。 */
+export interface AdmissionVerificationWrite {
+  /** 核验 policy 标识（调用方命名空间，如 'quiz_verify@1'）。 */
+  policy_id: string;
+  /** passed=核验通过；suspended=挂起（含 needs_review / transient hold）；
+   * failed=失败复核（记录证据，不改变 admission 决定）。 */
+  outcome: 'passed' | 'suspended' | 'failed';
+  /** 核验摘要证据（verdict/checks 投影），如实记录。 */
+  evidence?: Record<string, unknown>;
 }
 
 /** 发布输入：契约四层由 contract-normalizer 产出（此处只收成品）。 */
@@ -97,6 +126,17 @@ export interface PublishQuestionGroupInput {
   admission: PublishAdmission;
   actorRef: string;
   claimPolicy?: 'one_time' | 'unbounded';
+  /** YUK-1045 — suspension 维度更新（§3.3 verify 挂起）。缺省 = 不改变当前
+   *  suspension；{suspended:true, reason} 挂起；{suspended:false} 解除 —— 仅
+   *  清除 verify_hold（retraction_hold 不属本票接线，恒被保留，不由 verify
+   *  promote 顺手清空）。suspension 是独立版本化维度：只在维度变化时
+   *  翻 generation+1（与 admission 同事件）。 */
+  suspension?: SuspensionUpdate;
+  /** YUK-1045 — 本发布随附的新式 verify 记录（§3.3）。publish/admission_update/
+   *  noop 路径只要有 verify 输入即追加一行（revision_id 取结果 current/新
+   *  revision；digest 取该 revision 的 integrity_digest；generation 取写入后
+   *  admission generation）。conflict/withdrawn 不写（无 revision 提交语义）。 */
+  verification?: AdmissionVerificationWrite;
   /** 发布者 provenance（jsonb published_by；缺省 NULL）。 */
   publishedBy?: unknown;
   now: Date;
@@ -110,6 +150,8 @@ export type PublishQuestionGroupResult =
       group_id: string;
       event_id: string;
       admission_generation: number;
+      /** 新 revision 的 integrity_digest（verify 记录用）。 */
+      revision_digest: string;
     }
   | {
       /** 内容未变但 §3.3 维度变了（promote/挂起等）：只更新 lifecycle 维度
@@ -118,6 +160,8 @@ export type PublishQuestionGroupResult =
       group_id: string;
       current_revision_id: string;
       admission_generation: number;
+      /** 当前 revision 的 integrity_digest（verify 记录用）。 */
+      revision_digest: string;
       event_id: string;
     }
   | {
@@ -126,7 +170,15 @@ export type PublishQuestionGroupResult =
       status: 'withdrawn';
       group_id: string;
     }
-  | { status: 'noop'; group_id: string; current_revision_id: string; reason: 'digest_unchanged' }
+  | {
+      status: 'noop';
+      group_id: string;
+      current_revision_id: string;
+      reason: 'digest_unchanged';
+      /** 当前 revision digest + 当前 admission generation（verify 记录用）。 */
+      revision_digest: string;
+      admission_generation: number;
+    }
   | {
       status: 'conflict';
       group_id: string;
@@ -159,6 +211,44 @@ function assertAdmissionShape(admission: PublishAdmission): void {
   }
 }
 
+function assertSuspensionShape(suspension: SuspensionUpdate): void {
+  if (suspension.suspended && suspension.reason == null) {
+    throw new Error('publishQuestionGroup: suspended=true requires a reason (lifecycle CHECK)');
+  }
+}
+
+/** 解析 suspension 维度更新 → lifecycle 列值。
+ * 返回 null = 该输入对【当前】lifecycle 无效果（缺省输入；或
+ * suspended=false 面对非 verify_hold 的既有挂起 —— verify promote 不许顺手
+ * 清 retraction_hold，下同）。suspended=true 总是有效（覆盖既有原因），但
+ * 【verify_hold 不得遮蔽并存 retraction_hold】：suspension_reason 单列只能
+ * 留一个原因，且 clear 只会解除 verify_hold（置 suspended=false）——若先让
+ * verify_hold 覆写 retraction_hold，之后的复核通过会把整个挂起（含尚有效
+ * 的撤回保持）一并清掉。verify_hold 落在已有 retraction_hold 上是 no-op
+ * （仍是 suspended=true, reason=retraction_hold），核验证据只进
+ * verification 行，维度意图如实表达为『verify 无权改判 retraction』。 */
+function suspensionValuesFor(
+  lifecycle: typeof question_group_lifecycle.$inferSelect | undefined,
+  suspension: SuspensionUpdate | undefined,
+): { suspended: boolean; suspension_reason: SuspensionReason | null } | null {
+  if (suspension == null) return null;
+  if (suspension.suspended) {
+    const reason = suspension.reason ?? 'verify_hold';
+    if (
+      reason === 'verify_hold' &&
+      lifecycle?.suspended === true &&
+      lifecycle.suspension_reason === 'retraction_hold'
+    ) {
+      return { suspended: true, suspension_reason: 'retraction_hold' };
+    }
+    return { suspended: true, suspension_reason: reason };
+  }
+  // suspended=false：只清 verify_hold；retraction_hold 及其它持有原因恒保留
+  //（verify 复核无权解除非 verify 挂起）。
+  if (lifecycle?.suspension_reason !== 'verify_hold') return null;
+  return { suspended: false, suspension_reason: null };
+}
+
 /** 递归按 key 排序的确定性序列化 —— jsonb 读回不保留 key 顺序，维度比对
  *（evidence 深比较）必须与顺序无关，否则幂等重发会被误判为维度变化。 */
 function stableStringify(value: unknown): string {
@@ -178,6 +268,16 @@ function lifecycleDimensionsMatch(
   if (!lifecycle) return false;
   if (input.availability !== lifecycle.availability) return false;
   if (input.claimPolicy != null && input.claimPolicy !== lifecycle.claim_policy) return false;
+  // suspension 维度：解析后的目标值必须与现状一致才算 noop。
+  const nextSuspension = suspensionValuesFor(lifecycle, input.suspension);
+  if (nextSuspension != null) {
+    if (
+      nextSuspension.suspended !== lifecycle.suspended ||
+      nextSuspension.suspension_reason !== (lifecycle.suspension_reason ?? null)
+    ) {
+      return false;
+    }
+  }
   if (input.admission.state === 'admitted') {
     return (
       lifecycle.scoring_admission_state === 'admitted' &&
@@ -360,6 +460,7 @@ export async function publishQuestionGroup(
   input: PublishQuestionGroupInput,
 ): Promise<PublishQuestionGroupResult> {
   assertAdmissionShape(input.admission);
+  if (input.suspension != null) assertSuspensionShape(input.suspension);
 
   // Db → 顶层事务；Tx → SAVEPOINT（drizzle 嵌套事务）。两种情况下任一步
   // 失败都整体回滚本次发布的全部写入。
@@ -471,20 +572,32 @@ export async function publishQuestionGroup(
       }
       if (current?.digest === contract.integrity_digest) {
         if (lifecycleDimensionsMatch(lifecycle, input)) {
-          return {
-            status: 'noop',
+          const noopResult = {
+            status: 'noop' as const,
             group_id: groupId,
             current_revision_id: currentRevisionId,
-            reason: 'digest_unchanged',
+            reason: 'digest_unchanged' as const,
+            revision_digest: contract.integrity_digest,
+            admission_generation: currentGeneration ?? 0,
           };
+          await insertAdmissionVerification(
+            tx,
+            input,
+            currentRevisionId,
+            contract.integrity_digest,
+            currentGeneration ?? 0,
+          );
+          return noopResult;
         }
         const admissionGeneration = lifecycle.scoring_admission_generation + 1;
+        const suspensionValues = suspensionValuesFor(lifecycle, input.suspension);
         await tx
           .update(question_group_lifecycle)
           .set({
             availability: input.availability,
             ...admissionValuesFor(input.admission, input.now),
             scoring_admission_generation: admissionGeneration,
+            ...(suspensionValues ?? {}),
             ...(input.claimPolicy ? { claim_policy: input.claimPolicy } : {}),
             updated_at: input.now,
           })
@@ -506,14 +619,43 @@ export async function publishQuestionGroup(
             availability: input.availability,
             admission: input.admission.state,
             admission_generation: admissionGeneration,
+            // suspension 是本路径可变的第二维度（verify 挂起/解除）；
+            // 如实记录目标值（输入缺省 ⇒ 未变，不投影）。
+            ...(input.suspension != null
+              ? {
+                  suspended: suspensionValues?.suspended ?? lifecycle.suspended,
+                  suspension_reason:
+                    suspensionValues !== null
+                      ? suspensionValues.suspension_reason
+                      : (lifecycle.suspension_reason ?? null),
+                }
+              : {}),
+            // 同 tx 内 append-only 核验记录的指针投影（policy/outcome；证据本体在
+            // question_admission_verification 行 —— 事件 payload 不重复携带）。
+            ...(input.verification != null
+              ? {
+                  verification: {
+                    policy_id: input.verification.policy_id,
+                    outcome: input.verification.outcome,
+                  },
+                }
+              : {}),
           },
           created_at: input.now,
         });
+        await insertAdmissionVerification(
+          tx,
+          input,
+          currentRevisionId,
+          current.digest,
+          admissionGeneration,
+        );
         return {
           status: 'admission_updated',
           group_id: groupId,
           current_revision_id: currentRevisionId,
           admission_generation: admissionGeneration,
+          revision_digest: current.digest,
           event_id: dimensionEventId,
         };
       }
@@ -538,6 +680,7 @@ export async function publishQuestionGroup(
 
     const admissionGeneration = (lifecycle?.scoring_admission_generation ?? 0) + 1;
     const admissionValues = admissionValuesFor(input.admission, input.now);
+    const suspensionValues = suspensionValuesFor(lifecycle, input.suspension);
 
     if (lifecycle) {
       await tx
@@ -547,6 +690,7 @@ export async function publishQuestionGroup(
           availability: input.availability,
           ...admissionValues,
           scoring_admission_generation: admissionGeneration,
+          ...(suspensionValues ?? {}),
           ...(input.claimPolicy ? { claim_policy: input.claimPolicy } : {}),
           updated_at: input.now,
         })
@@ -559,8 +703,8 @@ export async function publishQuestionGroup(
         ...admissionValues,
         scoring_admission_generation: admissionGeneration,
         claim_policy: input.claimPolicy ?? 'unbounded',
-        suspended: false,
-        suspension_reason: null,
+        // 首版发布可携带 verify 挂起（未发布即挂起的题 —— suspend 输入透传）。
+        ...(suspensionValues ?? { suspended: false, suspension_reason: null }),
         withdrawn: false,
         withdrawn_at: null,
         created_at: input.now,
@@ -589,10 +733,36 @@ export async function publishQuestionGroup(
         availability: input.availability,
         admission: input.admission.state,
         admission_generation: admissionGeneration,
+        ...(input.suspension != null
+          ? {
+              suspended: suspensionValues?.suspended ?? lifecycle?.suspended ?? false,
+              suspension_reason:
+                suspensionValues != null
+                  ? suspensionValues.suspension_reason
+                  : (lifecycle?.suspension_reason ?? null),
+            }
+          : {}),
+        // 同 tx 内 append-only 核验记录的指针投影（policy/outcome）。
+        ...(input.verification != null
+          ? {
+              verification: {
+                policy_id: input.verification.policy_id,
+                outcome: input.verification.outcome,
+              },
+            }
+          : {}),
         identity_changes: identityDiff,
       },
       created_at: input.now,
     });
+
+    await insertAdmissionVerification(
+      tx,
+      input,
+      revisionId,
+      contract.integrity_digest,
+      admissionGeneration,
+    );
 
     return {
       status: 'published',
@@ -601,6 +771,7 @@ export async function publishQuestionGroup(
       group_id: groupId,
       event_id: eventId,
       admission_generation: admissionGeneration,
+      revision_digest: contract.integrity_digest,
     };
   });
 }
@@ -614,6 +785,12 @@ export interface PublishFromRowInput {
    *（P1-5 —— 新 scoring basis 使旧 evidence 不再适用）。 */
   admission?: PublishAdmission | { state: 'preserve' };
   availability?: 'general_pool' | 'container_only';
+  /** YUK-1045 — suspension 维度（§3.3 verify 挂起/同版复核解除）；缺省不改变。 */
+  suspension?: SuspensionUpdate;
+  /** YUK-1045 — 随发布事务追加的新式 verify 记录（§3.3）。 */
+  verification?: AdmissionVerificationWrite;
+  /** 缺省不改；首次发布时 'unbounded'。 */
+  claimPolicy?: 'one_time' | 'unbounded';
   actorRef: string;
   now: Date;
 }
@@ -779,6 +956,9 @@ export async function publishQuestionGroupFromRow(
           ? 'general_pool'
           : 'container_only'),
       admission,
+      suspension: input.suspension,
+      verification: input.verification,
+      claimPolicy: input.claimPolicy,
       actorRef: input.actorRef,
       now: input.now,
     });
@@ -795,6 +975,30 @@ export async function publishQuestionGroupFromRow(
 }
 
 // ─── lifecycle 维度操作（archive/restore 的 claim 分离语义，§3.2/§3.3） ─────
+
+/** §3.3「新verify保存 (revision_id,digest,policy,generation)」—— 发布事务内
+ * 追加 question_admission_verification（append-only，0105 trigger）。仅当调用方
+ * 带 verification 输入时写入；generation = 本次写入后的 admission generation。 */
+async function insertAdmissionVerification(
+  tx: Tx,
+  input: PublishQuestionGroupInput,
+  revisionId: string,
+  revisionDigest: string,
+  generation: number,
+): Promise<void> {
+  const verification = input.verification;
+  if (verification == null) return;
+  await tx.insert(question_admission_verification).values({
+    id: createId(),
+    revision_id: revisionId,
+    revision_digest: revisionDigest,
+    policy_id: verification.policy_id,
+    generation,
+    outcome: verification.outcome,
+    evidence: verification.evidence ?? {},
+    recorded_at: input.now,
+  });
+}
 
 export interface ArchiveGroupLifecycleResult {
   status: 'archived' | 'not_found';

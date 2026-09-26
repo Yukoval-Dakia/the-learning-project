@@ -24,7 +24,7 @@
 
 import { type SQL, and, asc, isNull, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
-import { notDraftPredicate } from '@/db/predicates';
+import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { question } from '@/db/schema';
 import { toSqlVector } from '@/db/vector';
 
@@ -79,6 +79,10 @@ export interface PoolRow {
 export async function poolFetch(db: Db, c: PoolFetchCriteria): Promise<PoolRow[]> {
   const preds: SQL[] = [
     sql`${question.knowledge_ids} @> ${JSON.stringify([c.knowledgeId])}::jsonb`,
+    // YUK-1045 — contract admission gate (§3.3): suspended/withdrawn groups are
+    // never pool candidates (group-root resolved via COALESCE(parent,id)).
+    // Absent lifecycle row ⇒ legacy ⇒ passes (bridge pre-cutover).
+    questionSuspendedPredicate(question),
   ];
   if (c.activeOnly !== false) {
     preds.push(notDraftPredicate(question.draft_status));
