@@ -32,6 +32,7 @@ import { db as defaultDb } from '@/db/client';
 import { answer, event, learning_session } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
 import { withActiveCauseCategoryOverlays } from '@/kernel/read-models/cause-overlay';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { checkRateLimit } from '@/server/http/rate-limit';
@@ -214,29 +215,18 @@ async function claimPaidPaperJudge(
           409,
         );
       }
-      const [judge] = await tx
-        .select({ id: event.id, payload: event.payload })
-        .from(event)
-        .where(
-          and(
-            eq(event.action, 'judge'),
-            eq(event.subject_kind, 'event'),
-            eq(event.subject_id, frozen.event_id),
-          ),
-        )
-        .limit(1);
-      const payload = judge?.payload as {
-        coarse_outcome?: string;
-        score?: number;
-        visible_to_user?: boolean;
-      } | null;
+      // YUK-1054 — replay 回执走 effective 轨：改判（rejudge + supersede）后
+      // 同内容重放返回的是生效判而非旧判；全量 retract 的回执如实退到
+      // 'unsupported'（无生效判，与无 judge 语义一致）。
+      const verdicts = await resolveVerdictForAttempt(tx, frozen.event_id);
+      const effective = verdicts.effective;
       return {
         attemptEventId: frozen.event_id,
-        judgeEventId: judge?.id ?? frozen.event_id,
+        judgeEventId: effective?.judge_event_id ?? frozen.event_id,
         answerId: frozen.id,
-        visibleToUser: payload?.visible_to_user !== false,
-        coarseOutcome: payload?.coarse_outcome ?? 'unsupported',
-        score: payload?.score ?? null,
+        visibleToUser: effective?.verdict.visible_to_user !== false,
+        coarseOutcome: effective?.verdict.coarse_outcome ?? 'unsupported',
+        score: effective?.verdict.score ?? null,
       };
     }
 
@@ -427,36 +417,19 @@ export async function submitPaperSlot(
     // F3: same text but different photo → not idempotent, re-judge.
     sameImageRefs(preCheckLatest.image_refs, inputImageRefs)
   ) {
-    // Same content frozen in the current attempt — look up the existing judge
-    // event and return without invoking the judge or entering the write transaction.
-    const judgeRows = await db
-      .select({
-        id: event.id,
-        payload: event.payload,
-      })
-      .from(event)
-      .where(
-        and(
-          eq(event.action, 'judge'),
-          eq(event.subject_kind, 'event'),
-          eq(event.subject_id, preCheckLatest.event_id),
-        ),
-      )
-      .limit(1);
-
-    const existingJudge = judgeRows[0];
-    const payload = existingJudge?.payload as {
-      coarse_outcome?: string;
-      score?: number;
-      visible_to_user?: boolean;
-    } | null;
+    // Same content frozen in the current attempt — look up the effective judge
+    // verdict (YUK-1054: post-rejudge the receipt reflects the live verdict, not
+    // the superseded original) and return without invoking the judge or entering
+    // the write transaction.
+    const verdicts = await resolveVerdictForAttempt(db, preCheckLatest.event_id);
+    const effective = verdicts.effective;
     return {
       attemptEventId: preCheckLatest.event_id,
-      judgeEventId: existingJudge?.id ?? preCheckLatest.event_id,
+      judgeEventId: effective?.judge_event_id ?? preCheckLatest.event_id,
       answerId: preCheckLatest.id,
-      visibleToUser: payload?.visible_to_user !== false,
-      coarseOutcome: payload?.coarse_outcome ?? 'unsupported',
-      score: payload?.score ?? null,
+      visibleToUser: effective?.verdict.visible_to_user !== false,
+      coarseOutcome: effective?.verdict.coarse_outcome ?? 'unsupported',
+      score: effective?.verdict.score ?? null,
     };
   }
   if (preCheckIsSameAttempt) {

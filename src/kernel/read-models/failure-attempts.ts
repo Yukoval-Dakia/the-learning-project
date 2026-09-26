@@ -60,6 +60,13 @@ export type FailureAttempt = {
   created_at: Date;
   correction_state: EffectiveTruth;
   judge?: FailureAttemptJudge;
+  /**
+   * YUK-1054 — 双轨裁决（§9）。`judge` 是 effective 判（链解析后仍 live 的
+   * 最新判）；本字段是原始执行收据侧 earliest judge 事件（首个写给该 attempt
+   * 的 judge 行，未做链解析）。无 judge 时 null。与 `judge` 共存，不改旧
+   * `judge` 语义。
+   */
+  original_judge?: FailureAttemptJudge | null;
   user_cause?: FailureAttemptUserCause;
 };
 
@@ -368,32 +375,64 @@ async function loadFailureAttempts(
   // One round-trip fetches BOTH judge events (action='judge') and user_cause
   // events (action='experimental:user_cause'). Both chain via caused_by_event_id
   // and have subject_kind='event'.
+  // YUK-1054 — subject_id ∪ caused_by 双锚。只查 caused_by 会漏掉申诉重判
+  // （它的 caused_by=appeal.id, subject_id=attempt）；双锚与
+  // resolveVerdictsForAttempts 的候选谓词同轨。reject: 不能省 caused_by —
+  // 归因 judge 的 caused_by=attempt 是历史锚。
   const chainedRows = await db
     .select()
     .from(event)
     .where(
       and(
         eq(event.subject_kind, 'event'),
-        inArray(event.caused_by_event_id, attemptIds),
+        or(inArray(event.subject_id, attemptIds), inArray(event.caused_by_event_id, attemptIds)),
         inArray(event.action, ['judge', 'experimental:user_cause']),
       ),
     );
   const effectiveChainedRows = await resolveEffectiveActiveRows(db, chainedRows);
   const attemptTruths = await getEffectiveTruths(db, attemptIds);
+  const attemptIdSet = new Set(attemptIds);
 
   // Group by (action, caused_by_event_id); keep newest within each group.
   const judgeByAttempt = new Map<string, { row: EventRow; truth: EffectiveTruth }>();
   const userCauseByAttempt = new Map<string, { row: EventRow; truth: EffectiveTruth }>();
+  // YUK-1054 — 原始判（earliest raw judge 行，未做链解析）按 attempt 各留一份，
+  // 供双轨读取；独立于 effective 判（后者取链解析后仍 live 的最新行）。
+  const originalJudgeRowByAttempt = new Map<string, EventRow>();
+  // 分组键：subject_id 命中 attemptIds 优先（改判 rejudge 的
+  // subject=attempt / caused_by=appeal 也必须分回该 attempt），否则
+  // caused_by_event_id 命中项（归因 judge 的历史锚）。
+  const anchorKeyFor = (row: EventRow): string | null => {
+    if (row.subject_id !== null && attemptIdSet.has(row.subject_id)) return row.subject_id;
+    if (row.caused_by_event_id !== null && attemptIdSet.has(row.caused_by_event_id)) {
+      return row.caused_by_event_id;
+    }
+    return null;
+  };
   for (const originalRow of chainedRows) {
+    const key = anchorKeyFor(originalRow);
+    if (key === null) continue;
+    if (originalRow.action === 'judge') {
+      const prev = originalJudgeRowByAttempt.get(key);
+      // keep earliest: replace when the stored row is newer than the current one
+      if (!prev || newerEventRow(prev, originalRow)) {
+        originalJudgeRowByAttempt.set(key, originalRow);
+      }
+    }
     const effective = effectiveChainedRows.get(originalRow.id);
     if (!effective) continue;
-    const key = originalRow.caused_by_event_id as string;
     const bucket = effective.row.action === 'judge' ? judgeByAttempt : userCauseByAttempt;
     const existing = bucket.get(key);
     if (!existing || newerEventRow(effective.row, existing.row)) {
       bucket.set(key, effective);
     }
   }
+  // YUK-1054 — resolve each原始 judge 行自身的 chain truth，供其
+  // correction_state 反映“该收据行是否已被改判/撤回”。
+  const originalJudgeTruths = await getEffectiveTruths(
+    db,
+    [...originalJudgeRowByAttempt.values()].map((r) => r.id),
+  );
 
   return activeAttemptRows.map((a) => {
     const evidence = failureEvidenceFromRow(a);
@@ -419,6 +458,20 @@ async function loadFailureAttempts(
         referenced_knowledge_ids: jPayload.referenced_knowledge_ids ?? [],
         created_at: j.row.created_at,
         correction_state: j.truth,
+      };
+    }
+    const oj = originalJudgeRowByAttempt.get(a.id);
+    if (oj) {
+      const ojPayload = oj.payload as {
+        cause: CauseSchemaT;
+        referenced_knowledge_ids: string[];
+      };
+      result.original_judge = {
+        judge_event_id: oj.id,
+        cause: ojPayload.cause,
+        referenced_knowledge_ids: ojPayload.referenced_knowledge_ids ?? [],
+        created_at: oj.created_at,
+        correction_state: originalJudgeTruths.get(oj.id) ?? activeEffectiveTruth(oj.id),
       };
     }
     const uc = userCauseByAttempt.get(a.id);
@@ -584,10 +637,62 @@ async function loadFailureAttemptById(
   }
 
   const evidence = failureEvidenceFromRow(attempt);
-  const [judge, userCause] = await Promise.all([
-    getJudgeForAttempt(db, attempt.id),
+  // YUK-1054 — 一次拉全 judge 行（subject_id ∪ caused_by 双锚、最老排序），
+  // 同批做链解析分出 original（earliest 原始收据）+ effective（最新 live 判）。
+  // 单一拉取覆盖两轨：避免 earliest-only + getJudgeForAttempt(caused_by) 两次往返，
+  // 也修掉申诉重判（subject=attempt / caused_by=appeal）在 caused_by-only 读的丢失。
+  const judgeRows = await db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'judge'),
+        eq(event.subject_kind, 'event'),
+        or(eq(event.subject_id, attempt.id), eq(event.caused_by_event_id, attempt.id)),
+      ),
+    )
+    .orderBy(asc(event.created_at), asc(event.dispatch_seq), asc(event.id));
+  const [effectiveJudgeRows, originalJudgeTruths, userCause] = await Promise.all([
+    resolveEffectiveActiveRows(db, judgeRows),
+    judgeRows.length > 0
+      ? getEffectiveTruths(
+          db,
+          judgeRows.map((r) => r.id),
+        )
+      : Promise.resolve(new Map<string, EffectiveTruth>()),
     getUserCauseForAttempt(db, attempt.id),
   ]);
+  // original = 全判里最早一行（已按 created_at 升序，首行即最早收据）。
+  const earliestJudge = judgeRows[0];
+  // effective = 链解析仍 live 的最新一行（resolveEffectiveActiveRows 端点，
+  // newest-wins）。the judge row 自身锚(subject_id)与该 attempt 一致 —— rejudge
+  // 也分回本 attempt。
+  let judge: FailureAttemptJudge | null = null;
+  let judgeRow: EventRow | null = null;
+  for (const originalRow of judgeRows) {
+    const effective = effectiveJudgeRows.get(originalRow.id);
+    if (!effective) continue;
+    if (
+      effective.row.subject_id !== attempt.id &&
+      effective.row.caused_by_event_id !== attempt.id
+    ) {
+      continue;
+    }
+    if (!judgeRow || newerEventRow(effective.row, judgeRow)) {
+      judgeRow = effective.row;
+      const p = effective.row.payload as {
+        cause: CauseSchemaT;
+        referenced_knowledge_ids: string[];
+      };
+      judge = {
+        judge_event_id: effective.row.id,
+        cause: p.cause,
+        referenced_knowledge_ids: p.referenced_knowledge_ids ?? [],
+        created_at: effective.row.created_at,
+        correction_state: effective.truth,
+      };
+    }
+  }
   const failure: FailureAttempt = {
     attempt_event_id: attempt.id,
     question_id: attempt.subject_id,
@@ -600,6 +705,20 @@ async function loadFailureAttemptById(
   };
   if (judge) failure.judge = judge;
   if (userCause) failure.user_cause = userCause;
+  if (earliestJudge) {
+    const ojPayload = earliestJudge.payload as {
+      cause: CauseSchemaT;
+      referenced_knowledge_ids: string[];
+    };
+    failure.original_judge = {
+      judge_event_id: earliestJudge.id,
+      cause: ojPayload.cause,
+      referenced_knowledge_ids: ojPayload.referenced_knowledge_ids ?? [],
+      created_at: earliestJudge.created_at,
+      correction_state:
+        originalJudgeTruths.get(earliestJudge.id) ?? activeEffectiveTruth(earliestJudge.id),
+    };
+  }
   // YUK-562 — derive reasoning_trace from the SAME row (no extra query). Null when
   // the attempt has no process text; the copilot caller trims/omits empty values.
   return { failure, reasoning_trace: reasoningTraceFromRow(attempt) };

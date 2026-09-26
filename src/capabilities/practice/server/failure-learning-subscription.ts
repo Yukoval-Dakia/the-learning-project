@@ -47,6 +47,7 @@ export async function handleFailureLearningAttemptDelivery(
         attempt_not_active: 'attempt is not effective active',
         unsupported_judge: 'unsupported judge',
         user_cause_present: 'active user cause is authoritative',
+        verdict_overturned: 'verdict overturned to correct',
       } satisfies Record<typeof result.reason, string>;
       return { status: 'skipped', reason: reasons[result.reason] };
     }

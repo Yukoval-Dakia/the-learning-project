@@ -9,6 +9,7 @@ import type { Db, Tx } from '@/db/client';
 import { answer, event, mastery_state, material_fsrs_state, type question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type FsrsSubjectKind, getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { recordFamilyObservationForAttempt } from '@/server/mastery/personalized-difficulty';
@@ -800,24 +801,25 @@ async function lockPaperSessionAndReadAnswer(
   return { sessionStartedAt: new Date(session.started_at), latestFrozen };
 }
 
-function paperReplayReceipt(
+async function paperReplayReceipt(
+  tx: Tx,
   frozen: NonNullable<Awaited<ReturnType<typeof lockPaperSessionAndReadAnswer>>['latestFrozen']>,
-  judge: { id: string; payload: unknown } | undefined,
-): PaperSlotReviewReceipt {
-  const payload = judge?.payload as {
-    coarse_outcome?: string;
-    score?: number;
-    visible_to_user?: boolean;
-  } | null;
-  const coarseOutcome = payload?.coarse_outcome ?? 'unsupported';
+): Promise<PaperSlotReviewReceipt> {
+  // YUK-1054 — replay 回执读 effective 轨：改判后同内容重放返回生效判而非被
+  // supersede 的旧判；全部判被 retract/mark_wrong 时如实退到 'unsupported'
+  // （无生效判 ≡ 未判分语义，与无 judge 行一致）。
+  const attemptId = frozen.event_id ?? frozen.id;
+  const verdicts = await resolveVerdictForAttempt(tx, attemptId);
+  const effective = verdicts.effective;
+  const coarseOutcome = effective?.verdict.coarse_outcome ?? 'unsupported';
   return {
-    attemptEventId: frozen.event_id ?? frozen.id,
-    judgeEventId: judge?.id ?? frozen.event_id ?? frozen.id,
-    effect: judge ? 'applied' : 'ungraded',
+    attemptEventId: attemptId,
+    judgeEventId: effective?.judge_event_id ?? attemptId,
+    effect: effective ? 'applied' : 'ungraded',
     answerId: frozen.id,
-    visibleToUser: payload?.visible_to_user !== false,
+    visibleToUser: effective?.verdict.visible_to_user !== false,
     coarseOutcome,
-    score: payload?.score ?? null,
+    score: effective?.verdict.score ?? null,
     replayed: true,
   };
 }
@@ -915,18 +917,7 @@ export async function settlePaperSlotReview(
         latestFrozen.content_md === command.answerSnapshot.markdown &&
         sameImageRefs(latestFrozen.image_refs, command.answerSnapshot.imageRefs)
       ) {
-        const [judge] = await tx
-          .select({ id: event.id, payload: event.payload })
-          .from(event)
-          .where(
-            and(
-              eq(event.action, 'judge'),
-              eq(event.subject_kind, 'event'),
-              eq(event.subject_id, latestFrozen.event_id),
-            ),
-          )
-          .limit(1);
-        return paperReplayReceipt(latestFrozen, judge);
+        return paperReplayReceipt(tx, latestFrozen);
       }
       if (currentAttempt) {
         throw new ApiError(

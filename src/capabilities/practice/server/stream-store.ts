@@ -30,6 +30,7 @@ import {
   question,
 } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
 import { Review } from '@/server/session';
 import {
   type CandidateInput,
@@ -777,7 +778,20 @@ export interface StreamView {
     estimated_minutes: number;
     knowledge_name: string | null;
     paper_title: string | null;
+    /**
+     * YUK-1054 — 原始 FSRS rating（immutable 用户自评 rating，写入时即固定，不为
+     * 改判/track 变化）。§9 要求的「原始判轨」对本 surface 就是 review 事件的
+     * 原始 rating；effective judge 判单独经 `verdict_effective` 透出。
+     */
     verdict: 'again' | 'hard' | 'good' | null;
+    /**
+     * YUK-1054 — 双轨裁决（§9）effective 侧。matched review 的 judge 链解析后
+     * 仍 live 的最新 judge 的 coarse_outcome（'correct'|'partial'|'incorrect'|
+     * 'unsupported'）。无 judge 判或无匹配 review → null。
+     */
+    verdict_effective: string | null;
+    /** effective 判的 chain truth（'active'|'superseded'|…）；与 verdict_effective 同生。 */
+    verdict_effective_state: string | null;
     completed_at: string | null;
     total_slots: number | null;
   }>;
@@ -796,6 +810,10 @@ interface StreamItemMetadata {
   knowledgeName: string | null;
   paperTitle: string | null;
   verdict: StreamViewItem['verdict'];
+  verdictEffective: string | null;
+  verdictEffectiveState: string | null;
+  /** Internal: matched review event id (for judge-verdict batch resolution). */
+  matchedReviewId: string | null;
   completedAt: string | null;
   totalSlots: number | null;
 }
@@ -804,6 +822,9 @@ const EMPTY_STREAM_ITEM_METADATA: StreamItemMetadata = {
   knowledgeName: null,
   paperTitle: null,
   verdict: null,
+  verdictEffective: null,
+  verdictEffectiveState: null,
+  matchedReviewId: null,
   completedAt: null,
   totalSlots: null,
 };
@@ -924,7 +945,27 @@ async function resolveStreamItemMetadata(
       const current = metadata.get(row.id) ?? { ...EMPTY_STREAM_ITEM_METADATA };
       current.verdict = eventRating(matched.payload);
       current.completedAt = matched.created_at.toISOString();
+      current.matchedReviewId = matched.id;
       metadata.set(row.id, current);
+    }
+    // YUK-1054 (§9 dual-track) — matched review 的 judge 链解析（effective 判）。
+    // judge 事件锚 subject_id=<review_event_id>；把 matched review ids 收集成
+    // batch 统一解析，再把每条行的 effective 判写回 metadata。
+    const matchedReviewIds = [
+      ...new Set(
+        [...metadata.values()]
+          .map((m) => m.matchedReviewId)
+          .filter((id): id is string => id !== null),
+      ),
+    ];
+    if (matchedReviewIds.length > 0) {
+      const verdicts = await resolveVerdictsForAttempts(db, matchedReviewIds);
+      for (const current of metadata.values()) {
+        if (current.matchedReviewId === null) continue;
+        const effective = verdicts.get(current.matchedReviewId)?.effective ?? null;
+        current.verdictEffective = effective?.verdict.coarse_outcome ?? null;
+        current.verdictEffectiveState = effective?.correction_state.state ?? null;
+      }
     }
   }
 
@@ -944,6 +985,8 @@ function toStreamViewItem(row: StreamItemRow, metadata: StreamItemMetadata): Str
     knowledge_name: metadata.knowledgeName,
     paper_title: metadata.paperTitle,
     verdict: metadata.verdict,
+    verdict_effective: metadata.verdictEffective,
+    verdict_effective_state: metadata.verdictEffectiveState,
     completed_at: metadata.completedAt,
     total_slots: metadata.totalSlots,
   };
