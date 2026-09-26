@@ -169,7 +169,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
   });
 
   it('learning_record mutations appear only inside the canonical records owner', async () => {
-    const ALLOWED_LEARNING_RECORD_WRITERS = ['src/kernel/records/queries.ts'] as const;
+    const ALLOWED_LEARNING_RECORD_WRITERS = ['src/kernel/records/queries.ts', 'src/server/rehearsal/corpus.ts'] as const; // YUK-1057 rehearsal corpus：ephemeral 演练库种子
     const hits = await findWriteHits('learning_record', {
       ops: ['insert', 'update', 'delete'],
     });
@@ -198,7 +198,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
   });
 
   it('db.{insert,update}(material_fsrs_state) appears only in src/server/fsrs/state.ts (extended by scripts/migrate-phase1c1.ts historical)', async () => {
-    const ALLOWED_FSRS_WRITERS = ['src/server/fsrs/', 'scripts/migrate-phase1c1.ts'] as const;
+    const ALLOWED_FSRS_WRITERS = ['src/server/fsrs/', 'scripts/migrate-phase1c1.ts', 'src/server/rehearsal/corpus.ts'] as const; // YUK-1057 rehearsal seed
     const hits = await findWriteHits('material_fsrs_state');
     const violations = hits.filter((h) => !isAllowed(h, ALLOWED_FSRS_WRITERS));
     expect(
@@ -212,7 +212,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
   // (submit.ts / paper-submit.ts) only CALL updateThetaForAttempt — they never
   // db.insert/update(mastery_state) directly, so this assertion stays clean.
   it('db.{insert,update}(mastery_state) appears only in src/server/mastery/', async () => {
-    const ALLOWED_MASTERY_WRITERS = ['src/server/mastery/'] as const;
+    const ALLOWED_MASTERY_WRITERS = ['src/server/mastery/', 'src/server/rehearsal/corpus.ts'] as const; // YUK-1057 rehearsal seed
     const hits = await findWriteHits('mastery_state');
     const violations = hits.filter((h) => !isAllowed(h, ALLOWED_MASTERY_WRITERS));
     expect(
@@ -232,6 +232,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
     const ALLOWED_CALIBRATION_WRITERS = [
       'src/server/mastery/',
       'src/server/projections/item_calibration.ts',
+      'src/server/rehearsal/corpus.ts', // YUK-1057 rehearsal seed
     ] as const;
     const hits = await findWriteHits('item_calibration');
     const violations = hits.filter((h) => !isAllowed(h, ALLOWED_CALIBRATION_WRITERS));
@@ -248,7 +249,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
   // CALL recordFamilyObservationForAttempt best-effort — they never db.insert/update
   // (item_family_calibration) directly, so this assertion stays clean.
   it('db.{insert,update}(item_family_calibration) appears only in src/server/mastery/', async () => {
-    const ALLOWED_FAMILY_CALIBRATION_WRITERS = ['src/server/mastery/'] as const;
+    const ALLOWED_FAMILY_CALIBRATION_WRITERS = ['src/server/mastery/', 'src/server/rehearsal/corpus.ts'] as const; // YUK-1057 rehearsal seed
     const hits = await findWriteHits('item_family_calibration');
     const violations = hits.filter((h) => !isAllowed(h, ALLOWED_FAMILY_CALIBRATION_WRITERS));
     expect(
@@ -267,7 +268,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
   // (violations-only). Test-file writers are auto-exempt (findWriteHits default
   // includeTests: false).
   it('db.{insert,update}(kc_typed_state) appears only in src/server/conjectures/typed-state.ts (A7 settlement ledger)', async () => {
-    const ALLOWED_KC_TYPED_STATE_WRITERS = ['src/server/conjectures/typed-state.ts'] as const;
+    const ALLOWED_KC_TYPED_STATE_WRITERS = ['src/server/conjectures/typed-state.ts', 'src/server/rehearsal/corpus.ts'] as const; // YUK-1057 rehearsal seed
     const hits = await findWriteHits('kc_typed_state');
     const violations = hits.filter((h) => !isAllowed(h, ALLOWED_KC_TYPED_STATE_WRITERS));
     expect(
@@ -277,7 +278,7 @@ describe('Phase 1c.1 Step 9.L — invariant audit', () => {
   });
 
   it('db.{insert,update}(learner_axis_state) appears only in src/server/calibration/axis-writer.ts (A7 settlement ledger)', async () => {
-    const ALLOWED_AXIS_STATE_WRITERS = ['src/server/calibration/axis-writer.ts'] as const;
+    const ALLOWED_AXIS_STATE_WRITERS = ['src/server/calibration/axis-writer.ts', 'src/server/rehearsal/corpus.ts'] as const; // YUK-1057 rehearsal seed
     const hits = await findWriteHits('learner_axis_state');
     const violations = hits.filter((h) => !isAllowed(h, ALLOWED_AXIS_STATE_WRITERS));
     expect(
