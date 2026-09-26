@@ -29,6 +29,15 @@ vi.mock('@/capabilities', () => ({ capabilities: [] }));
 vi.mock('@/kernel/tools/tool-operations', () => ({
   recoverToolOperationsOnBoot: vi.fn(async () => []),
 }));
+// YUK-1055 — the barrel is mocked so worker boot never touches a live Postgres for the
+// epoch gate; the fence wrapper is a passthrough so downstream modules keep their handler
+// shape. Tests assert the gate is CALLED and ordered first — the gate's own semantics are
+// covered by src/server/contract-epoch/{rules.unit,epoch.db}.test.ts.
+vi.mock('@/server/contract-epoch', () => ({
+  waitForRunnableEpoch: vi.fn(async () => undefined),
+  fenceAwareJobHandler: vi.fn((_db: unknown, _queue: string, handler: unknown) => handler),
+  reportOutstandingBossJobs: vi.fn(async () => []),
+}));
 vi.mock('@/server/boss/handlers', () => ({ registerHandlers: vi.fn(async () => undefined) }));
 vi.mock('@/server/boss/handlers/ai_task_run_reconcile', () => ({
   reconcileStuckAiTaskRuns: vi.fn(async () => undefined),
@@ -47,9 +56,13 @@ describe('startBossWorker marks the running boss (YUK-384 wake activation)', () 
     vi.stubEnv('DATABASE_URL', 'postgres://localhost:5432/loom_test');
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     onBossStart = undefined;
     vi.unstubAllEnvs();
+    // 防御：任何遗留的 mockReturnValue（例如永不 resolve 的 gate）不能带进下一个测试 ——
+    // vi.mock 工厂实例在 resetModules 之后仍共享同一个 vi.fn。
+    const { waitForRunnableEpoch } = await import('@/server/contract-epoch');
+    vi.mocked(waitForRunnableEpoch).mockReset();
     vi.resetModules();
   });
 
@@ -102,6 +115,64 @@ describe('startBossWorker marks the running boss (YUK-384 wake activation)', () 
     const viaGetter = await getStartedBoss();
     expect(viaGetter).toBe(boss);
     expect(boss.start).toHaveBeenCalledTimes(1); // NOT re-started
+  });
+
+  it('YUK-1055: the contract-epoch gate runs BEFORE tool-operations recovery and boss start', async () => {
+    // 闸门语义：'preparing'/'ready'/epoch-mismatch → waitForRunnableEpoch 轮询等待，
+    // 不返回则不启动 boss（fenced 不 crash-loop）。这里 stub 它 resolve，验证调用次序。
+    const order: string[] = [];
+    const { waitForRunnableEpoch } = await import('@/server/contract-epoch');
+    vi.mocked(waitForRunnableEpoch).mockImplementation(async () => {
+      order.push('epoch-gate');
+    });
+    const { recoverToolOperationsOnBoot } = await import('@/kernel/tools/tool-operations');
+    vi.mocked(recoverToolOperationsOnBoot).mockImplementation(async () => {
+      order.push('tool-operations-recovered');
+      return [];
+    });
+    onBossStart = () => {
+      order.push('boss-started');
+    };
+    const { startBossWorker } = await import('./start-worker');
+    const { _resetBossForTests } = await import('./client');
+    _resetBossForTests();
+
+    await startBossWorker({} as never, { epochPollIntervalMs: 1 });
+
+    expect(order).toEqual(['epoch-gate', 'tool-operations-recovered', 'boss-started']);
+  });
+
+  it('YUK-1055: a fenced epoch gate never lets boss.start() run (idle wait, no crash loop)', async () => {
+    // waitForRunnableEpoch 未 resolve 时 startBossWorker 停在闸门内：boss 未 start、
+    // recovery 未跑。fenced worker 是停等（轮询重读），不是崩溃重启。
+    const { waitForRunnableEpoch } = await import('@/server/contract-epoch');
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.mocked(waitForRunnableEpoch).mockReturnValue(gate);
+    const { recoverToolOperationsOnBoot } = await import('@/kernel/tools/tool-operations');
+    const { startBossWorker } = await import('./start-worker');
+    const { _resetBossForTests } = await import('./client');
+    _resetBossForTests();
+
+    // 给事件循环几次调度，确认 boot 卡在闸门内（未越过）。mock 跨测试累积调用数，
+    // 用 delta 断言；release 必须先于任何 expect —— 失败的断言若中断在 release 前，
+    // 会留下一个永不 resolve 的 gate mock，连锁拖垮后续测试（本文件 vi.mock 实例
+    // 在 resetModules 后仍共享）。
+    const recoveryCallsBefore = vi.mocked(recoverToolOperationsOnBoot).mock.calls.length;
+    const pending = startBossWorker({} as never, { epochPollIntervalMs: 1 });
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    const recoveryCallsWhileGated =
+      vi.mocked(recoverToolOperationsOnBoot).mock.calls.length - recoveryCallsBefore;
+
+    release();
+    const boss = (await pending) as unknown as MockPgBoss;
+
+    // gate 阻塞期间 recovery 零次新增调用；放行后 worker 走完整个 boot。
+    expect(recoveryCallsWhileGated).toBe(0);
+    expect(boss.start).toHaveBeenCalledTimes(1);
+    vi.mocked(waitForRunnableEpoch).mockReset();
   });
 
   // YUK-891 — the verify-dispatch startup trigger must fire only AFTER capability

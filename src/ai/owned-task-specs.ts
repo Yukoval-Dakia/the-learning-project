@@ -1,11 +1,14 @@
-import type { TaskDefinition, TaskSpec } from './task-spec';
+import type { OwnedTaskSpecEntry, TaskDefinition } from './task-spec';
 
 export type TaskOwner = 'practice' | 'ingestion' | 'knowledge' | 'notes' | 'agency' | 'copilot';
 
-type OwnedTaskSpec = TaskSpec<never, unknown>;
+type OwnedTaskSpec = OwnedTaskSpecEntry;
 
 // YUK-885 — the transitional entry kind and the central quarry are deleted:
-// every owner entry is a full TaskSpec (definition + parseText + outputSchema).
+// every owner entry is a full spec. YUK-1049 — the entry is either a chat
+// TaskSpec (definition + parseText + outputSchema) or a typed TypedTaskSpec
+// (definition execution:'typed' + typed.inputSchema + outputSchema); the
+// discriminant is definition.execution.
 export type TaskOwnerEntry = OwnedTaskSpec;
 
 const EFFORT_LEVELS = new Set<string>(['low', 'medium', 'high', 'xhigh', 'max']);
@@ -105,7 +108,37 @@ function validateDefinition(owner: TaskOwner, key: string, definition: TaskDefin
   if (typeof prompt !== 'object' || prompt === null || !('kind' in prompt)) {
     throw new Error(`defineOwnedTaskSpecs(${owner}): "${key}" missing prompt`);
   }
+  const execution = definition.execution ?? 'chat';
+  if (execution !== 'chat' && execution !== 'typed') {
+    throw new Error(`defineOwnedTaskSpecs(${owner}): "${key}" invalid execution discriminant`);
+  }
+  if (execution === 'typed') {
+    // YUK-1049 — typed tasks transport a schema-parsed body, not a chat
+    // prompt; the chat-only fields must all be absent/false so a typed def
+    // can never look like a runnable chat def.
+    if (prompt.kind !== 'none' || !hasExactKeys(prompt, ['kind'])) {
+      throw new Error(
+        `defineOwnedTaskSpecs(${owner}): "${key}" typed execution requires prompt {kind:'none'}`,
+      );
+    }
+    if (
+      definition.needsToolCall ||
+      definition.isMultimodal ||
+      definition.allowedTools.length > 0 ||
+      definition.structuredOutputSchema !== undefined
+    ) {
+      throw new Error(
+        `defineOwnedTaskSpecs(${owner}): "${key}" typed execution forbids tools/multimodal/chat output schema`,
+      );
+    }
+  } else if (prompt.kind === 'none') {
+    throw new Error(
+      `defineOwnedTaskSpecs(${owner}): "${key}" prompt {kind:'none'} is only legal with execution:'typed'`,
+    );
+  }
   switch (prompt.kind) {
+    case 'none':
+      break;
     case 'inline':
       if (
         !hasExactKeys(prompt, ['kind', 'text']) ||
@@ -146,7 +179,26 @@ export function defineOwnedTaskSpecs<
   for (const [key, value] of Object.entries(specs)) {
     const entry = value as TaskOwnerEntry;
     validateDefinition(owner, key, entry.definition);
-    if (typeof entry.parseText !== 'function') {
+    const isTypedEntry = (entry.definition as TaskDefinition).execution === 'typed';
+    if (isTypedEntry) {
+      // Typed spec: input/output parse directly via schemas — parseText is
+      // forbidden on this lane (no free-text extraction seam exists).
+      if ('parseText' in entry) {
+        throw new Error(
+          `defineOwnedTaskSpecs(${owner}): typed "${key}" must not carry parseText (schema-parsed only)`,
+        );
+      }
+      const typed = (entry as { typed?: { inputSchema?: unknown } }).typed;
+      if (
+        typeof typed !== 'object' ||
+        typed === null ||
+        typeof typed.inputSchema !== 'object' ||
+        typed.inputSchema === null ||
+        typeof (typed.inputSchema as { safeParse?: unknown }).safeParse !== 'function'
+      ) {
+        throw new Error(`defineOwnedTaskSpecs(${owner}): typed "${key}" missing typed.inputSchema`);
+      }
+    } else if (typeof (entry as { parseText?: unknown }).parseText !== 'function') {
       throw new Error(`defineOwnedTaskSpecs(${owner}): owned "${key}" missing parseText`);
     }
     if (

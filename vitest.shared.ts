@@ -122,6 +122,15 @@ export const fastTestInclude = [
   'src/server/ai/spawn-contract.unit.test.ts',
   'src/server/ai/run-lifecycle.test.ts',
   'src/server/ai/run-lifecycle.admission.test.ts',
+  // YUK-1049 — typed primitive runner (OpenRouter systemone): failure-fixture
+  // unit tests. fetchImpl stub replaces ONLY the wire; @/server/ai/log is
+  // vi.mock'd and `db` is an untouched stub → no live Postgres. Enumerate like
+  // every other src/server/ai/** file (no unit glob). The sibling
+  // typed-primitive-runner.db.test.ts exercises the real log writers.
+  'src/server/ai/typed-primitive-runner.test.ts',
+  // YUK-1049 — Jev ModelUnitExecutorPort adapter (escalation/admission/
+  // criterion mapping). Same no-DB justification as the runner test above.
+  'src/server/assessment/jev-model-executor.test.ts',
   // YUK-842 — pure config/failure-policy unit. DB coordination lives in the
   // sibling *.db.test.ts and remains in the container partition.
   'src/server/ai/provider-session-admission.test.ts',
@@ -324,6 +333,9 @@ export const fastTestInclude = [
   // YUK-751 (review TcWGF) — subscription-dispatch mount wiring; queue-config (its only DB-tainted
   // import) is vi.mock'd, so no live DB is touched — fast unit.
   'src/server/event-subscriptions/dispatch-mount.unit.test.ts',
+  // YUK-1055 — contract-epoch 纯规则/分类表（rules.ts / jobs.ts 零 import），
+  // *.unit.test.ts 约定进 unit 分区；DB 面在 epoch.db.test.ts（db 分区）。
+  'src/server/contract-epoch/**/*.unit.test.ts',
   // YUK-406 Phase 0 (关系脑 conjecture engine) — the pure evidence aggregator moved to
   // src/capabilities/agency/server/conjecture/evidence.unit.test.ts and is covered by
   // the capability *.unit.test.ts convention above. Keep only the remaining legacy

@@ -11,7 +11,13 @@ import {
 } from './constants';
 
 describe('export constants', () => {
-  it('SCHEMA_VERSION is "4.21" when the assessment contract truth-source tables enter backup', () => {
+  it('SCHEMA_VERSION is "4.23" when the response-draft table enters backup', () => {
+    // 4.22 → 4.23 (YUK-1052): NEW FK_ORDER table assessment_response_draft —
+    // ResponseSet autosave 活草稿（用户可感知的学习中态，非瞬态 → 备份）。
+    // 4.21 → 4.22 (YUK-1055): NEW FK_ORDER table contract_epoch — DB 合同 epoch
+    // marker（append-only 迁移历史）。durable cutover 真相而非瞬态/运维态：
+    // restore 必须携回 epoch 状态，否则恢复出的库丢失「是否已切换」的事实。
+    // NEW FK_ORDER tables 必 bump。
     // 4.20 → 4.21 (YUK-1044): NEW FK_ORDER tables ×9 — 统一评估契约真相源
     // （question_revision / question_group_lifecycle / question_admission_verification /
     // assessment_issuance / evaluation_group / assessment_submission / evaluation /
@@ -51,7 +57,7 @@ describe('export constants', () => {
     // 列是既有表的 additive 列，随整行 dump/restore，不单独 bump (表=bump，列=不 bump)。
     // 4.19 → 4.20 (YUK-1016 454-B): NEW FK_ORDER table cause_category_overlay —
     // owner-vetted 错因词表层 (authored catalog 行，retract 只置 archived_at，不可重建)。
-    expect(SCHEMA_VERSION).toBe('4.21');
+    expect(SCHEMA_VERSION).toBe('4.23');
   });
 
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
@@ -113,7 +119,10 @@ describe('export constants', () => {
     // assessment_issuance → evaluation_group → assessment_submission → evaluation
     // → evaluation_effective_head → assessment_identity_mapping，硬 FK 父先子后），
     // placed right after the question cluster (question), NOT at the end.
-    expect(FK_ORDER.length).toBe(62);
+    // 62 → 63 (YUK-1055): added contract_epoch — durable epoch marker 历史
+    // （restore 必须携回「是否已切换」事实），placed just before provider_attempt
+    // (provider_attempt stays last)。
+    expect(FK_ORDER.length).toBe(64);
     expect(FK_ORDER[0]).toBe('knowledge');
     expect(FK_ORDER[FK_ORDER.length - 1]).toBe('provider_attempt');
     expect(FK_ORDER.indexOf('note_verification_claim')).toBeGreaterThan(

@@ -7,6 +7,16 @@ import {
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import {
+  CreateSubmissionBodySchema,
+  IssuanceCreatedSchema,
+  IssuanceParamsSchema,
+  IssuanceStateSchema,
+  IssueAssessmentBodySchema,
+  SaveResponseDraftBodySchema,
+  SaveResponseDraftResponseSchema,
+  SubmissionCreatedSchema,
+} from './api/assessment-contracts';
+import {
   AppealResponseSchema,
   AttemptResponseSchema,
   CreateAppealBodySchema,
@@ -783,6 +793,58 @@ export const practiceCapability = defineCapability({
         responses: { 200: FixedAnchorResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/calibration-anchors').then((m) => m.POST),
+      },
+      // YUK-1052 — 统一发题/提交/自动保存（issueAssessment + saveSubmission +
+      // D11 pinned-issuance 自动保存）。preselected ≠ issued：只有本路由实际
+      // 落 assessment_issuance 行才算发题（不可变 revision/材料/呈现顺序绑定）。
+      {
+        method: 'POST',
+        path: '/api/issuances',
+        operationId: 'createIssuance',
+        request: { body: IssueAssessmentBodySchema },
+        responses: {
+          200: IssuanceCreatedSchema,
+          201: IssuanceCreatedSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: [200, 201],
+        load: () => import('./api/assessment-route').then((m) => m.createIssuance),
+      },
+      {
+        // pending 恢复读面：issuance + live draft + 已接收提交。
+        method: 'GET',
+        path: '/api/issuances/[id]',
+        operationId: 'getIssuance',
+        request: { params: IssuanceParamsSchema },
+        responses: { 200: IssuanceStateSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/assessment-route').then((m) => m.getIssuance),
+      },
+      {
+        // D11 服务端自动保存：全练习面（solo/paper/placement）在 pinned
+        // issuance 上自动保存；ack 只在落库后产生（saved 200）。
+        method: 'POST',
+        path: '/api/issuances/[id]/responses',
+        operationId: 'saveResponseDraft',
+        request: { params: IssuanceParamsSchema, body: SaveResponseDraftBodySchema },
+        responses: { 200: SaveResponseDraftResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/assessment-route').then((m) => m.saveDraft),
+      },
+      {
+        // 正式提交：同 (group,idempotency_key) 幂等 —— 一致 replay(200) /
+        // 不同 conflict(409)；submission 绑定不可变 revision（不回取 latest）。
+        method: 'POST',
+        path: '/api/submissions',
+        operationId: 'createSubmission',
+        request: { body: CreateSubmissionBodySchema },
+        responses: {
+          200: SubmissionCreatedSchema,
+          201: SubmissionCreatedSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: [200, 201],
+        load: () => import('./api/assessment-route').then((m) => m.createSubmission),
       },
     ],
   },

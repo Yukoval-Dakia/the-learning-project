@@ -338,6 +338,22 @@ function isKnownTask(k: string): k is TaskKind {
   return (TASK_KINDS as string[]).includes(k);
 }
 
+/**
+ * YUK-1049 — typed-execution tasks (execution:'typed') are served ONLY by the
+ * typed primitive runner; the chat façade cannot build a prompt for them
+ * ({kind:'none'}). Fail closed at every chat entry instead of letting a
+ * typed kind reach adapter startup / getTaskSystemPrompt.
+ */
+function assertChatExecutionKind(kind: TaskKind): void {
+  // Literal-union read through the declared interface view (see
+  // buildQueryOptions): `execution` is optional on TaskDefinition.
+  if (((tasks[kind] as TaskDefinition).execution ?? 'chat') !== 'chat') {
+    throw new Error(
+      `task '${kind}' is a typed-execution task — use runTypedPrimitiveTask (src/server/ai/typed-primitive-runner.ts), not the chat entry points`,
+    );
+  }
+}
+
 function isTaskEventMessage(message: RunnerMessage): message is TaskEventMessage {
   if (message.type !== 'system') return false;
   switch (message.subtype) {
@@ -768,6 +784,7 @@ export async function runTask(
   if (!isKnownTask(kind)) {
     throw new Error(`Unknown task kind: ${kind}`);
   }
+  assertChatExecutionKind(kind);
   const def = tasks[kind];
 
   // beforeRun runs exactly once, OUTSIDE the attempt loop — every attempt sees
@@ -903,6 +920,7 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
   if (!isKnownTask(kind)) {
     throw new Error(`Unknown task kind: ${kind}`);
   }
+  assertChatExecutionKind(kind);
   const def = tasks[kind];
   const modelBinding = ctx.modelBinding;
   const lifecycle = createRunLifecycle<RunTaskResult>({
@@ -1069,6 +1087,7 @@ export async function streamTaskCollecting(
   if (!isKnownTask(kind)) {
     throw new Error(`Unknown task kind: ${kind}`);
   }
+  assertChatExecutionKind(kind);
   const def = tasks[kind];
   const modelBinding = ctx.modelBinding;
   const lifecycle = createRunLifecycle<StreamCollectResult>({

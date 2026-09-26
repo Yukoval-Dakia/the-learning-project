@@ -97,7 +97,7 @@
 // YUK-1016: cause_category_overlay — owner-vetted 错因词表层（accepted proposal 落地的
 // authored catalog 行，非瞬态非派生；retract 只置 archived_at，历史不可重建）→
 // FK_ORDER 非 BACKUP_EXCLUDED。NEW FK_ORDER table 必 bump：52 → 53 tables，4.19 → 4.20。
-export const SCHEMA_VERSION = '4.21';
+export const SCHEMA_VERSION = '4.23';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -183,6 +183,13 @@ export const FK_ORDER = [
   'assessment_issuance',
   'evaluation_group',
   'assessment_submission',
+  // YUK-1052 — assessment_response_draft: ResponseSet autosave 活草稿（服务端 ack 的
+  // in-progress 答案，evaluation_group_ref 软引）。用户可感知的学习中态而非瞬态：
+  // restore 丢它 = 用户作答中草稿静默灭失（「刷新不重交」契约反向），非派生不可重建 →
+  // FK_ORDER 备份（非 BACKUP_EXCLUDED）。FK → assessment_issuance 已保证父先插；
+  // evaluation_group_ref 无 hard FK，位置不受 PG 约束，紧跟 submission 保持作答簇相邻。
+  // NEW FK_ORDER table → bump 62 → 63，4.22 → 4.23。
+  'assessment_response_draft',
   'evaluation',
   'evaluation_effective_head',
   'assessment_identity_mapping',
@@ -288,6 +295,12 @@ export const FK_ORDER = [
   'placement_starter_attempt',
   'placement_starter_attempt_question',
   'placement_starter_cost_component',
+  // YUK-1055 — DB contract epoch marker（append-only 迁移历史）。durable
+  // cutover 真相而非运维态：restore 必须携回 epoch 状态（否则恢复出的库丢失
+  // 「是否已切换」的事实，fence 语义靠它）。无 enforced FK，置于末尾附近；
+  // provider_attempt 保持最后（其注释承诺 remains last）。
+  // NEW FK_ORDER table → bump SCHEMA_VERSION (4.21 → 4.22)。
+  'contract_epoch',
   // YUK-851 has no enforced FK, but remains last so durable provider-attempt truth is
   // restored after the current authored/cost parents and rides whole-row schema changes.
   'provider_attempt',

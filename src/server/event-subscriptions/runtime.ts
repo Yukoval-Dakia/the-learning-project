@@ -159,11 +159,41 @@ async function withLockedCheckpoint<T>(
  * crash-safe with no partial state; the whole set streams inside PG (no app-side row loading — the
  * MAJ-2 concern), and a single-user small event table makes the one-shot lock a non-issue.
  */
+/**
+ * Bootstrap a subscriber in ONE transaction (YUK-751 review Tcx98). The creation tx's OWN MVCC
+ * snapshot defines "history": a single set-based `INSERT ... SELECT` marks every event visible to that
+ * snapshot bootstrap_skipped, then the checkpoint is inserted 'active'. No seq / xmin / snapshot fence
+ * and no resumable 'bootstrapping' phase — snapshot visibility is the exactly-right, mutation-proof
+ * definition of history. (Event rows are NOT immutable: the memory outbox UPDATEs `ingest_at`, so any
+ * xmin-based fence mis-classified an outbox-touched historical event as in-flight → over-delivery.)
+ * An event that commits after — or is in-flight during — this tx is simply absent from the snapshot →
+ * not skipped → later delivered as pending by discovery (the safe direction). Atomicity makes it
+ * crash-safe with no partial state; the whole set streams inside PG (no app-side row loading — the
+ * MAJ-2 concern), and a single-user small event table makes the one-shot lock a non-issue.
+ *
+ * YUK-1055（grounding §15 + YUK-766）：版本 bump 不得把旧版本 outstanding
+ * delivery 盲标 skipped —— 先「翻译」再标记历史：
+ *   - 旧版本 non-terminal（pending/claimed/retry_wait）且 source event 仍在新版本
+ *     actions 内 → 新版本下落 'pending'/'retry_wait' 行（保留 delivery_seq 序、
+ *     attempt_count/redrive_count/last_error；claimed 清 claim 重排队）。
+ *   - 其余旧版本 non-terminal（事件不再被订阅）→ 终态 'skipped'，
+ *     last_error='superseded_by_version_bootstrap'——显式处置，绝不静默丢。
+ *   - 旧版本已翻译的交付行 → 同样 'skipped' + 'translated_to_v<N>'（新版本行承继）。
+ * 旧版本 terminal（succeeded/skipped/dead_letter/bootstrap_skipped）一律不动。
+ * 返回值：本次 bootstrap 的翻译统计（观测用）。
+ */
+export interface BootstrapTranslation {
+  /** 旧版本 outstanding → 新版本 pending/retry_wait 的行数。 */
+  translated: number;
+  /** 旧版本 outstanding 被终态化的行数（翻译走的 + 不再订阅的）。 */
+  superseded: number;
+}
+
 export async function bootstrapSubscription(
   db: Db,
   registry: LoadedEventSubscriptionRegistry,
   subscription: LoadedEventSubscription,
-): Promise<void> {
+): Promise<BootstrapTranslation> {
   const declared = getDeclaredSubscription(registry, subscription);
   const declarationHash = declared.declarationHash;
   const actionList = sql.join(
@@ -171,7 +201,7 @@ export async function bootstrapSubscription(
     sql`, `,
   );
 
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     // Insert the checkpoint directly 'active'. RETURNING distinguishes a FRESH bootstrap (we own the
     // skip-marking) from an already-bootstrapped subscriber (nothing to do). A concurrent bootstrap of
     // the same subscriber serializes on the ON CONFLICT row lock, so only one run marks history.
@@ -199,11 +229,41 @@ export async function bootstrapSubscription(
           `event subscription '${subscription.id}@v${subscription.version}' declaration hash mismatch`,
         );
       }
-      return;
+      return { translated: 0, superseded: 0 };
     }
 
-    // Mark ALL of this snapshot's history bootstrap_skipped, set-based. delivery_seq is allocated 1..N
-    // by dispatch order via row_number(); a fresh subscriber has no prior deliveries (the checkpoint FK
+    // ── YUK-1055 翻译先行 ──
+    // 在标记历史之前，把旧版本 outstanding delivery 按 stable source_event_id
+    // 翻译成本版本的 pending/retry_wait 行（OFFSET 0 → delivery_seq 从 1 起；
+    // 后续历史行接在其后）。claimed 清 claim 字段变 pending；retry_wait 保留
+    // next_attempt_at 与 attempt_count（重试预算连续性）。事件不再订阅的旧
+    // outstanding 不落新行，由下方 UPDATE 终态化。重复执行幂等（ON CONFLICT）。
+    const translated = await tx.execute<{ delivery_seq: string }>(sql`
+      insert into event_subscription_delivery
+        (subscriber_id, subscriber_version, source_event_id, source_dispatch_seq, delivery_seq,
+         status, attempt_count, redrive_count, next_attempt_at, last_error)
+      select ${subscription.id}, ${subscription.version}, od.source_event_id, od.source_dispatch_seq,
+        row_number() over (order by od.source_dispatch_seq, od.source_event_id),
+        case when od.status = 'retry_wait' then 'retry_wait' else 'pending' end,
+        od.attempt_count, od.redrive_count,
+        case when od.status = 'retry_wait' then od.next_attempt_at else null end,
+        od.last_error
+      from event_subscription_delivery od
+      join event e on e.id = od.source_event_id
+      where od.subscriber_id = ${subscription.id}
+        and od.subscriber_version < ${subscription.version}
+        and od.status in ('pending', 'claimed', 'retry_wait')
+        and e.action in (${actionList})
+      on conflict (subscriber_id, subscriber_version, source_event_id) do nothing
+      returning delivery_seq
+    `);
+    const translatedCount = translated.length;
+
+    // Mark ALL of this snapshot's history bootstrap_skipped, set-based. delivery_seq is allocated
+    // (translatedCount + 1..) —— 翻译行已占 1..translatedCount，历史行排在其后，
+    // delivery 序 = 事件序（翻译行的 source_dispatch_seq 全部 < 快照内未投事件……
+    // 严格说翻译行按自身 source_dispatch_seq 排在前缀，维持「老工作先交付」语义）。
+    // a fresh subscriber has no prior deliveries (the checkpoint FK
     // gates them) and no discovery can run against a not-yet-committed checkpoint, so ON CONFLICT never
     // fires here — it's belt-and-braces against a concurrent writer.
     await tx.execute(sql`
@@ -211,18 +271,22 @@ export async function bootstrapSubscription(
         (subscriber_id, subscriber_version, source_event_id, source_dispatch_seq, delivery_seq,
          status, completed_at)
       select ${subscription.id}, ${subscription.version}, e.id, e.dispatch_seq,
-        row_number() over (order by e.dispatch_seq, e.id),
+        ${translatedCount}::bigint + row_number() over (order by e.dispatch_seq, e.id),
         'bootstrap_skipped', clock_timestamp()
       from event e
       where e.action in (${actionList})
       on conflict (subscriber_id, subscriber_version, source_event_id) do nothing
     `);
 
-    // Advance next_delivery_seq past the skipped block (= count + 1) so discovery allocates after it.
+    // Advance next_delivery_seq past the translated + skipped block so discovery allocates after
+    // it. Must be max(delivery_seq)+1, NOT count(*)+1: history rows whose row_number() slot was
+    // consumed by a conflict-dropped (already translated) event leave a gap in delivery_seq, so
+    // count(*) < max(delivery_seq) whenever translated > 0 — count+1 would collide on
+    // event_subscription_delivery_local_seq_uq at the next discovery batch.
     await tx.execute(sql`
       update event_subscription_checkpoint
       set next_delivery_seq = 1 + (
-            select count(*) from event_subscription_delivery
+            select coalesce(max(delivery_seq), 0) from event_subscription_delivery
             where subscriber_id = ${subscription.id}
               and subscriber_version = ${subscription.version}
           ),
@@ -230,6 +294,37 @@ export async function bootstrapSubscription(
       where subscriber_id = ${subscription.id}
         and subscriber_version = ${subscription.version}
     `);
+
+    // 旧版本 outstanding 终态化：翻译走的标 'translated_to_v<N>'，其余（事件不再
+    // 被本版本订阅）标 'superseded_by_version_bootstrap'。终态行的 claim/lease/
+    // next_attempt_at 清空以满足 *_shape CHECK（'skipped' 要求 completed_at
+    // 非空、claim_owner 空、next_attempt_at 空）。terminal 行不动——历史保留。
+    const superseded = await tx.execute<{ source_event_id: string }>(sql`
+      update event_subscription_delivery od
+      set status = 'skipped',
+          claim_owner = null,
+          claim_token = null,
+          claim_lease_until = null,
+          claimed_at = null,
+          next_attempt_at = null,
+          completed_at = clock_timestamp(),
+          updated_at = clock_timestamp(),
+          last_error = case
+            when exists (
+              select 1 from event_subscription_delivery nv
+              where nv.subscriber_id = od.subscriber_id
+                and nv.subscriber_version = ${subscription.version}
+                and nv.source_event_id = od.source_event_id
+            ) then 'translated_to_v' || ${subscription.version}::text
+            else 'superseded_by_version_bootstrap'
+          end
+      where od.subscriber_id = ${subscription.id}
+        and od.subscriber_version < ${subscription.version}
+        and od.status in ('pending', 'claimed', 'retry_wait')
+      returning od.source_event_id
+    `);
+
+    return { translated: translatedCount, superseded: superseded.length };
   });
 }
 
@@ -748,7 +843,15 @@ export async function runSubscriptionDispatchCycle(
     // rest still run. The delivery HANDLER keeps its own inner catch (failSubscriptionDelivery
     // retry/dead-letter semantics); this boundary is for the infra steps around it.
     try {
-      await bootstrapSubscription(db, registry, subscription);
+      const bootstrap = await bootstrapSubscription(db, registry, subscription);
+      // YUK-1055 — 版本 bump 翻译了旧 outstanding：日志留痕（观测面）。
+      if (bootstrap.translated > 0 || bootstrap.superseded > 0) {
+        console.info('[event-subscriptions] bootstrap translated outstanding deliveries', {
+          subscriber: `${subscription.id}@v${subscription.version}`,
+          translated: bootstrap.translated,
+          superseded: bootstrap.superseded,
+        });
+      }
       const lease = await claimSubscriptionLease(db, registry, subscription, options.owner);
       if (!lease) continue;
       try {
