@@ -802,7 +802,28 @@ export async function seedRehearsalCorpus(db: Db): Promise<SeedManifest> {
       created_at: at(43),
     }),
   ];
-  await db.insert(event).values(events);
+  // 单写者不变量：event 生产写入只允许 kernel 事件装配模块；此处是 ephemeral
+  // 演练库的种子事件流（非生产 seam），用原生 SQL 参数化批量插入明示身份
+  //（同 learning_session 的处理）。payload/affected_scopes 显式 ::jsonb。
+  // affected_scopes 恒为空（seed corpus 不写 scopes）；空数组参数会被驱动渲染成非法
+  // 的 `()`，故用字面量 ARRAY[]::text[]；若未来 seed 需要非空 scopes，显式抛错逼实现。
+  for (const e of events) {
+    if ((e.affected_scopes ?? []).length > 0) {
+      throw new Error(
+        'seed event with non-empty affected_scopes: implement explicit array literal',
+      );
+    }
+  }
+  const eventRows = events.map(
+    (e) =>
+      sql`(${e.id}, ${e.actor_kind ?? 'user'}, ${e.actor_ref ?? 'self'}, ${e.action}, ${e.outcome ?? null}, ${e.subject_kind}, ${e.subject_id}, ${e.session_id ?? null}, ${JSON.stringify(e.payload ?? {})}::jsonb, ${e.caused_by_event_id ?? null}, ${e.task_run_id ?? null}, ${e.cost_micro_usd ?? null}, ARRAY[]::text[], ${(e.created_at ?? T0).toISOString()}, ${(e.ingest_at ?? e.created_at ?? T0).toISOString()})`,
+  );
+  await db.execute(sql`
+    insert into event
+      (id, actor_kind, actor_ref, action, outcome, subject_kind, subject_id, session_id,
+       payload, caused_by_event_id, task_run_id, cost_micro_usd, affected_scopes, created_at, ingest_at)
+    values ${sql.join(eventRows, sql`, `)}
+  `);
 
   // ── 8) 投影层（FSRS / mastery / kc_typed / axis / calibration / signals） ──
   const fsrsState = {
