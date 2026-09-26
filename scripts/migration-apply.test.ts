@@ -12,6 +12,8 @@ import { applyReportFileName } from '@/server/migration/apply';
 
 import {
   type ApplyCliArgs,
+  applyTargetSsl,
+  isLoopbackHost,
   loadMigrationArtifacts,
   parseApplyArgs,
   validateTargetUrl,
@@ -241,5 +243,47 @@ describe('CLI 安全纪律（参数面）', () => {
     const args: ApplyCliArgs = parseApplyArgs(['--artifacts=/tmp/a', '--dry-run']);
     expect(() => validateTargetUrl(args.target)).toThrow(/--target/);
     expect(args.confirmWrite).toBe(false);
+  });
+});
+
+describe('applyTargetSsl（YUK-1100 review P1：hostname 精确判定，不做全串 includes）', () => {
+  it('loopback 主机（localhost/127.x/::1/.localhost 后缀）走明文', () => {
+    expect(isLoopbackHost('localhost')).toBe(true);
+    expect(isLoopbackHost('LOCALHOST')).toBe(true);
+    expect(isLoopbackHost('db.localhost')).toBe(true);
+    expect(isLoopbackHost('127.0.0.1')).toBe(true);
+    expect(isLoopbackHost('127.9.9.9')).toBe(true);
+    expect(isLoopbackHost('::1')).toBe(true);
+    expect(applyTargetSsl('postgres://loom:loom@localhost:5432/loom')).toBe(false);
+    expect(applyTargetSsl('postgres://loom:loom@127.0.0.1:5433/loom')).toBe(false);
+    expect(applyTargetSsl('postgres://loom:loom@[::1]:5432/loom')).toBe(false);
+    expect(applyTargetSsl('postgres://loom:loom@nas.local:5432/loom')).toBe('require');
+  });
+
+  it('URL 非 hostname 位置出现 localhost 不触发裸连（password/dbname/application_name）', () => {
+    // 密码含 'localhost'：对远端主机仍 require —— 旧 includes 实现会误判裸连。
+    expect(applyTargetSsl('postgres://loom:localhost@db.example.com:5432/loom')).toBe('require');
+    // 库名含 'localhost'：同理不降级。
+    expect(applyTargetSsl('postgres://loom:x@db.example.com:5432/localhost-mirror')).toBe(
+      'require',
+    );
+    // 查询参数值含 'localhost'（非 sslmode）：不降级。
+    expect(
+      applyTargetSsl('postgres://loom:x@db.example.com:5432/loom?application_name=localhost-drill'),
+    ).toBe('require');
+    // 密码含 '127.0.0.1'：同理不降级。
+    expect(applyTargetSsl('postgres://loom:127.0.0.1@db.example.com/loom')).toBe('require');
+  });
+
+  it('显式 sslmode=disable 查询参数仍走明文；sslmode 只在参数位生效', () => {
+    expect(applyTargetSsl('postgres://u:p@db.example.com/loom?sslmode=disable')).toBe(false);
+    expect(applyTargetSsl('postgres://u:p@db.example.com/loom?foo=1&sslmode=disable')).toBe(false);
+    // 'sslmode=disable' 出现在密码里不算参数 —— 不降级。
+    expect(applyTargetSsl('postgres://u:sslmode=disable@db.example.com/loom')).toBe('require');
+    expect(applyTargetSsl('postgres://u:p@localhost/loom?sslmode=disable')).toBe(false);
+  });
+
+  it('无法解析的 URL 保守取 require（validateTargetUrl 在前拒绝，此为双保险）', () => {
+    expect(applyTargetSsl('not a url')).toBe('require');
   });
 });

@@ -17,6 +17,7 @@ import {
   validateScoringBasis,
   validateStructure,
 } from '../schema/assessment';
+import { extractAnswerHead } from '../schema/judge-routing';
 import { canonicalHash, shortHash } from './canonical';
 import type {
   MigrationCapture,
@@ -775,12 +776,20 @@ export interface SnapshotTransformationIssue {
  * 文本与 snapshot.choices_md 序列一致（归一）；非选择题面不得出现选择题槽。
  * 评分依据/材料 digest 无法机械证明（§3.1 版本化 integrity 不等于 snapshot 字段），
  * 超出机械比对面的必须走 question_asserted 显式断言 —— 不冒充 digest_verified。
+ *
+ * YUK-1100（review P1）：snapshot.reference_md 一并纳入比对 —— 题干/选项相同
+ * 而答案不同的同题面 snapshot 不得绑定到答案不同的 revision。只在【答案可机械
+ * 推导】的计分单元判据上比对（text_key/option_set_key/numeric_key，镜像
+ * evaluation.ts 确定性比较器的归一化语义）；rule_reference/holistic_level/
+ * matching_pairs_key 的答案不能从参考答案文本机械推出 —— 按既有纪律跳过
+ * （不冒充已验证；需要此类比对的绑定走 question_asserted）。
  */
 export function verifySnapshotTransformation(
   view: SnapshotContentView,
   contract: PublishedQuestionRevisionT,
   partIds: readonly string[],
   slotId: string,
+  scoringUnitId: string,
 ): SnapshotTransformationIssue[] {
   const issues: SnapshotTransformationIssue[] = [];
   const boundParts = contract.structure.parts.filter((part) => partIds.includes(part.part_id));
@@ -827,7 +836,167 @@ export function verifySnapshotTransformation(
       detail: `revision 槽位 '${slotId}' 是选择题但 snapshot 无 choices_md —— 无法机械推导选项身份`,
     });
   }
+  for (const issue of verifySnapshotReference(view, contract, slotId, scoringUnitId)) {
+    issues.push(issue);
+  }
   return issues;
+}
+
+/** text_key.normalization 四档的本地镜像（与 evaluation.ts 归一化同语义）。 */
+function normalizeReferenceText(
+  value: string,
+  mode: 'exact' | 'trim' | 'trim_casefold_nfc' | 'answer_head',
+): string {
+  switch (mode) {
+    case 'exact':
+      return value;
+    case 'trim':
+      return value.trim();
+    case 'trim_casefold_nfc':
+      return value.normalize('NFKC').trim().toLowerCase();
+    case 'answer_head':
+      return extractAnswerHead(value).normalize('NFKC').trim().toLowerCase();
+  }
+}
+
+/** 参考答案首部形态：选项字母/label 前缀（含 （C） / C. / C． 标注）。 */
+const OPTION_MARKER_RE = /^[（(]?\s*([A-Za-z]{1,6})\s*[)）.．、:：]?\s*/;
+const NUMERIC_HEAD_RE = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?/;
+
+/**
+ * snapshot.reference_md ↔ 计分单元判据的机械比对（YUK-1100）：只处理答案可由
+ * 参考文本确定性推导的判据；其余判据（rule_reference 等）无答案可机械比对，
+ * 保持既有纪律 —— 不在此判定。
+ */
+function verifySnapshotReference(
+  view: SnapshotContentView,
+  contract: PublishedQuestionRevisionT,
+  slotId: string,
+  scoringUnitId: string,
+): SnapshotTransformationIssue[] {
+  const issues: SnapshotTransformationIssue[] = [];
+  if (view.reference_md === null) return issues;
+  const unit = contract.scoring_basis.units.find(
+    (candidate) => candidate.scoring_unit_id === scoringUnitId,
+  );
+  // 坐标完整性（unit 存在/消费绑定槽位）由 validateEntryCoordinates 判定；
+  // 这里只补充答案内容的机械比对，不重复坐标结论。
+  if (unit === undefined || !unit.slot_refs.includes(slotId)) return issues;
+  const criterion = unit.criterion;
+  const head = extractAnswerHead(view.reference_md);
+  if (head.length === 0) return issues;
+  const slot = contract.response_spec.slots.find((candidate) => candidate.slot_id === slotId);
+
+  if (criterion.kind === 'text_key') {
+    const given = normalizeReferenceText(view.reference_md, criterion.normalization);
+    const accepted = criterion.accepted_texts.map((t) =>
+      normalizeReferenceText(t, criterion.normalization),
+    );
+    if (!accepted.includes(given)) {
+      issues.push({
+        detail: `参考答案不一致：snapshot reference 归一化后为 '${given.slice(0, 40)}'，不在 scoring unit '${scoringUnitId}' 的 accepted_texts 内 —— 同题面异答案快照不得绑定`,
+      });
+    }
+    return issues;
+  }
+
+  if (criterion.kind === 'option_set_key') {
+    if (slot === undefined || (slot.kind !== 'single_choice' && slot.kind !== 'multi_choice')) {
+      return issues; // 选项键落在非选择槽是契约违背（坐标校验已报），不加二次结论
+    }
+    const options = slot.options;
+    const marker = OPTION_MARKER_RE.exec(head);
+    if (marker !== null && marker[1] !== undefined) {
+      const letters = marker[1].toUpperCase().split('');
+      const rest = normalizeText(head.slice(marker[0].length));
+      const resolved = new Set<string>();
+      let allResolved = true;
+      for (const letter of letters) {
+        const option = options.find(
+          (o) => o.label.toUpperCase() === letter || o.option_id.toUpperCase() === letter,
+        );
+        if (option === undefined) {
+          allResolved = false;
+          break;
+        }
+        resolved.add(option.option_id);
+      }
+      if (allResolved) {
+        // 字母路径命中且 marker 尾部非空 —— 尾部必须是所选选项的原文
+        // （如 '（C）选项原文'），否则不采信字母解释，退到文本比对。
+        if (rest.length > 0) {
+          const tailMatches = [...resolved].some((id) => {
+            const text = options.find((o) => o.option_id === id)?.text;
+            return text !== undefined && normalizeText(text) === rest;
+          });
+          if (tailMatches) {
+            if (!sameOptionSet(resolved, criterion.accepted_option_ids)) {
+              issues.push({
+                detail: `参考答案不一致：snapshot 选项 '${marker[1].toUpperCase()}' 解出的集合与 scoring unit '${scoringUnitId}' 的 accepted_option_ids [${criterion.accepted_option_ids.join(',')}] 不符 —— 同题面异答案快照不得绑定`,
+              });
+            }
+            return issues;
+          }
+        } else {
+          if (!sameOptionSet(resolved, criterion.accepted_option_ids)) {
+            issues.push({
+              detail: `参考答案不一致：snapshot 选项 '${marker[1].toUpperCase()}' vs scoring unit '${scoringUnitId}' 的 accepted_option_ids [${criterion.accepted_option_ids.join(',')}] —— 同题面异答案快照不得绑定`,
+            });
+          }
+          return issues;
+        }
+      }
+    }
+    // 文本路径：参考答案首部直接是选项文本（或与 accepted 选项文本序列一致）。
+    const normalizedHead = normalizeText(head);
+    const acceptedOptions = options.filter((o) =>
+      criterion.accepted_option_ids.includes(o.option_id),
+    );
+    const acceptedTexts = acceptedOptions.map((o) => normalizeText(o.text));
+    const headMatchesAccepted =
+      acceptedTexts.includes(normalizedHead) || acceptedTexts.join('\u0001') === normalizedHead;
+    if (acceptedTexts.length > 0 && !headMatchesAccepted) {
+      issues.push({
+        detail: `参考答案不一致：snapshot reference '${normalizedHead.slice(0, 40)}' 与 scoring unit '${scoringUnitId}' 所接受选项的文本不符 —— 同题面异答案快照不得绑定`,
+      });
+    }
+    return issues;
+  }
+
+  if (criterion.kind === 'numeric_key') {
+    const match = NUMERIC_HEAD_RE.exec(head);
+    if (match === null) return issues; // 非数值首部无法机械比对 —— 不判
+    const value = Number.parseFloat(match[0]);
+    if (!Number.isFinite(value)) return issues;
+    const diff = Math.abs(value - criterion.expected);
+    const inTolerance =
+      criterion.tolerance.kind === 'absolute'
+        ? diff <= criterion.tolerance.value
+        : criterion.expected === 0
+          ? diff === 0
+          : diff / Math.abs(criterion.expected) <= criterion.tolerance.ratio;
+    if (!inTolerance) {
+      issues.push({
+        detail: `参考答案不一致：snapshot 数值 ${value} 超出 scoring unit '${scoringUnitId}' 期望 ${criterion.expected}±容差 —— 同题面异答案快照不得绑定`,
+      });
+    }
+    if (criterion.expected_unit !== undefined && criterion.expected_unit.trim().length > 0) {
+      const unitSuffix = head.slice(match[0].length).trim();
+      if (unitSuffix.length > 0 && unitSuffix !== criterion.expected_unit.trim()) {
+        issues.push({
+          detail: `参考答案单位不一致：snapshot '${unitSuffix}' vs 契约 '${criterion.expected_unit}'`,
+        });
+      }
+    }
+    return issues;
+  }
+  // rule_reference / holistic_level / matching_pairs_key：答案不能从参考文本
+  // 机械推出（既有纪律：超机械比对面走 question_asserted）—— 不在此判定。
+  return issues;
+}
+
+function sameOptionSet(resolved: ReadonlySet<string>, accepted: readonly string[]): boolean {
+  return resolved.size === accepted.length && accepted.every((id) => resolved.has(id));
 }
 
 // ───────────── P1-2b/c：registry 坐标对 revision 契约的普适校验 ─────────────
@@ -1144,6 +1313,7 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
                 contract,
                 resolution.entry.part_ids,
                 resolution.entry.slot_id,
+                resolution.entry.scoring_unit_id,
               )) {
                 downgradeReasons.push(issue.detail);
               }
