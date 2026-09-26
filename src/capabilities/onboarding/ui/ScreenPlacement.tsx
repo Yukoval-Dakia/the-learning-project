@@ -403,6 +403,8 @@ function PlacementQuestionCard({
   const [text, setText] = useState('');
   const [evidence, setEvidence] = useState<EvidenceAttachment[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  // YUK-1094 — 附件上传中：作答未落定前禁止推进（onAnswered 带的是旧 image refs）。
+  const [uploading, setUploading] = useState(false);
   const shownAtRef = useRef<number | null>(null);
 
   // Stamp the question-shown time once the row is loaded (per question — the card is
@@ -438,7 +440,7 @@ function PlacementQuestionCard({
   const last = answeredCount + 1 >= CAP;
 
   const commit = async () => {
-    if (!answered || submitting) return;
+    if (!answered || submitting || uploading) return;
     setSubmitting(true);
     const responseMd =
       isChoice && selIds && selIds.length > 0
@@ -491,6 +493,7 @@ function PlacementQuestionCard({
             ariaLabel="作答"
             upload={uploadAsset}
             uploadErrorMessage="图片上传失败，请重试"
+            onUploadingChange={setUploading}
           />
         </div>
       )}
@@ -499,7 +502,7 @@ function PlacementQuestionCard({
         <Btn
           variant="primary"
           iconEnd={last ? 'check' : 'arrow'}
-          disabled={!answered || submitting}
+          disabled={!answered || submitting || uploading}
           onClick={() => void commit()}
         >
           {submitting ? '记录中…' : last ? '完成定位 · 看档案' : '下一题'}

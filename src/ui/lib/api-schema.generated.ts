@@ -27759,6 +27759,8 @@ export interface operations {
                         /** @enum {string} */
                         kind: "question" | "question_part" | "record" | "recall_prompt" | "practice_log" | "project_milestone" | "open_inquiry";
                     };
+                    /** @default [] */
+                    answer_image_refs?: string[];
                     mistake_id?: string;
                     question_id?: string;
                     response_md: string;

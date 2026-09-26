@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import type { UploadedAsset } from '@/ui/lib/assets';
 
 import { EvidenceComposer } from './EvidenceComposer';
 
@@ -66,5 +68,43 @@ describe('EvidenceComposer', () => {
     expect(onAttachmentsChange).toHaveBeenCalledWith([
       expect.objectContaining({ asset_id: 'good', kind: 'image' }),
     ]);
+  });
+
+  // YUK-1094 — 上传中状态必须上报宿主：宿主拿它把提交入口并入 upload-pending，
+  // 否则分片上传还没落定就能提交，刚选的附件会被静默丢掉。true 与 false 各一次，
+  // 且时点在批次 settle 前后。
+  it('reports upload-pending to the host around the upload batch (YUK-1094)', async () => {
+    const onUploadingChange = vi.fn();
+    let settle!: (asset: UploadedAsset) => void;
+    const upload = vi.fn(
+      () =>
+        new Promise<UploadedAsset>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    render(
+      <EvidenceComposer
+        text=""
+        onTextChange={vi.fn()}
+        attachments={[]}
+        onAttachmentsChange={vi.fn()}
+        upload={upload}
+        onUploadingChange={onUploadingChange}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText('添加附件'), {
+      target: { files: [new File(['bytes'], 'work.png', { type: 'image/png' })] },
+    });
+
+    expect(onUploadingChange).toHaveBeenNthCalledWith(1, true);
+    // The in-flight state is also visible on the add button.
+    expect((screen.getByRole('button', { name: '上传中…' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+
+    await act(async () => {
+      settle({ id: 'asset_1', mime_type: 'image/png' } as UploadedAsset);
+    });
+    await waitFor(() => expect(onUploadingChange).toHaveBeenLastCalledWith(false));
   });
 });
