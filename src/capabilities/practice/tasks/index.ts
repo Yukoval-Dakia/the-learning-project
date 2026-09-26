@@ -2,6 +2,7 @@ import { defineOwnedTaskSpecs } from '@/ai/owned-task-specs';
 import { attributionRerankTaskSpec, attributionTaskSpec } from './attribution';
 import { causeCategoryProposeTaskSpec } from './cause-category-propose';
 import { itemPriorLlasaTaskSpec, itemPriorTaskSpec } from './item-prior';
+import { jevScoringDecisionTaskSpec } from './jev-typed';
 import {
   multimodalDirectJudgeTaskSpec,
   semanticJudgeTaskSpec,
@@ -46,4 +47,5 @@ export const practiceTaskSpecs = defineOwnedTaskSpecs('practice', {
   SessionSummaryTask: sessionSummaryTaskSpec,
   SourcingTask: sourcingTaskSpec,
   SupplyPlanTask: supplyPlanTaskSpec,
+  JevScoringDecisionTask: jevScoringDecisionTaskSpec,
 });

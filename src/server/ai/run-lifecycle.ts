@@ -452,8 +452,12 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         profile_source: this.modelProfile.source,
         reasoning_effort: this.config.modelBinding?.effort ?? declaredDef.reasoningEffort ?? null,
         // YUK-921 §2.1 — adapter selection stays observable on the run record.
-        // Post-P4 (YUK-1025) 'pi' is the only legal adapter id.
-        execution_adapter: this.config.modelBinding?.adapter ?? 'pi',
+        // Post-P4 (YUK-1025) 'pi' is the only legal adapter id; YUK-1049 typed
+        // tasks report 'typed' — their transport is the decisions endpoint,
+        // not a pi adapter.
+        execution_adapter:
+          this.config.modelBinding?.adapter ??
+          ((declaredDef as { execution?: string }).execution === 'typed' ? 'typed' : 'pi'),
         profile_effort_default: this.modelProfile.reasoning.defaultEffort ?? null,
       });
     } catch (error) {

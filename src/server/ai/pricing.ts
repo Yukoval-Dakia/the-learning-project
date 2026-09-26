@@ -81,6 +81,43 @@ export function localCostUsd(model: string, tokens: TokenCounts): number | null 
   );
 }
 
+// ---------------------------------------------------------------------------
+// YUK-1049 — TypeSafe Jev (OpenRouter native decisions endpoint) local
+// pricebook. Versioned input-token rate; output tokens are FREE on the
+// verified card (D12 smoke: cost == input_tokens × 4.2e-8 exactly).
+// Source: OpenRouter model catalog + TypeSafe provider endpoint pricing,
+// probed 2026-09-24 (prompt "0.000000042", completion "0" USD/token).
+// This is a dated public-price estimate, not an invoice — when the endpoint
+// reports usage.cost the reported value wins (attempt-cost.ts).
+// ---------------------------------------------------------------------------
+
+/** USD per token (NOT per-million): prompt 4.2e-8, completion 0. */
+export const JEV_INPUT_USD_PER_TOKEN = 0.000000042;
+export const JEV_OUTPUT_USD_PER_TOKEN = 0;
+/** Provider-bound max_price the typed runner sends (USD per MILLION tokens). */
+export const JEV_MAX_PRICE_USD_PER_MILLION = { prompt: '0.042', completion: '0' } as const;
+export const JEV_PRICEBOOK_VERSION = '2026-09-24-openrouter-typesafe-jev-v1';
+/** Request model id; canonical reported id is asserted at runtime. */
+export const JEV_REQUEST_MODEL = 'typesafe/jev-1.13';
+export const JEV_CANONICAL_MODEL = 'typesafe/jev-1.13-20260917';
+
+/**
+ * Local USD estimate for a Jev systemone call: input tokens × 4.2e-8,
+ * output free. Unknown model ⇒ null (unknown, never zero). Non-finite or
+ * negative token counts ⇒ null.
+ */
+export function jevLocalCostUsd(model: string, tokens: TokenCounts): number | null {
+  if (!model.startsWith('typesafe/jev')) return null;
+  // A real paid call consumes input tokens; usage evidence with inputTokens<=0
+  // (or a wholly absent usage block recorded as zeros) is no token evidence —
+  // unknown cost, never a fabricated $0.
+  if (!Number.isFinite(tokens.inputTokens) || tokens.inputTokens <= 0) return null;
+  if (!Number.isFinite(tokens.outputTokens) || tokens.outputTokens < 0) return null;
+  return (
+    tokens.inputTokens * JEV_INPUT_USD_PER_TOKEN + tokens.outputTokens * JEV_OUTPUT_USD_PER_TOKEN
+  );
+}
+
 // YUK-359 — GLM chat (memory reconcile) cost in RMB (CNY). GLM-5.2 prices in
 // 元/M tokens. This separate GLM PLACEHOLDER remains pending owner confirmation;
 // the MiMo public-card update does not establish a GLM coding-plan contract.
