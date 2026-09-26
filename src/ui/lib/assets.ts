@@ -1,4 +1,8 @@
 // Phase 1c.2 Vision MVP — asset upload + cached thumbnail helpers.
+// YUK-1051 (D10) — read path generalized beyond images: the same apiFetch + blob +
+// objectURL flow now also carries the response Content-Type so callers can pick the
+// right renderer (image inline / audio+video native controls / PDF download-only /
+// text escaped). No signed URLs are invented; auth stays header-based (preflight §10).
 //
 // /api/assets needs the x-internal-token header, so plain `<img src="/api/assets/.../content">`
 // won't work — the browser can't attach custom headers to <img> requests.
@@ -67,6 +71,10 @@ export async function expandDocx(file: File): Promise<DocxIngested> {
 // In-memory cache so the same asset id rendered in multiple BlockEditors
 // shares one fetch + one object URL.
 const urlCache = new Map<string, string>();
+// YUK-1051 — parallel cache for the Content-Type seen on the same response.
+// Populated by fetchAssetObject; image-only legacy callers of fetchAssetObjectUrl
+// simply ignore it.
+const mimeCache = new Map<string, string>();
 const pendingFetches = new Map<string, Promise<string>>();
 
 export async function fetchAssetObjectUrl(id: string): Promise<string> {
@@ -76,9 +84,11 @@ export async function fetchAssetObjectUrl(id: string): Promise<string> {
   if (inflight) return inflight;
   const p = (async () => {
     const res = await apiFetch(`/api/assets/${id}/content`);
+    const mimeType = res.headers.get('content-type')?.split(';')[0]?.trim() ?? null;
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     urlCache.set(id, url);
+    if (mimeType) mimeCache.set(id, mimeType);
     return url;
   })();
   pendingFetches.set(id, p);
@@ -87,6 +97,36 @@ export async function fetchAssetObjectUrl(id: string): Promise<string> {
   } finally {
     pendingFetches.delete(id);
   }
+}
+
+export interface AssetObject {
+  url: string;
+  /** Content-Type as served (normalized, no parameters); null when the server omits it. */
+  mimeType: string | null;
+}
+
+/**
+ * YUK-1051 — mime-aware variant of fetchAssetObjectUrl. Shares the same caches, so an
+ * asset already fetched as a bare URL is not refetched; the mime is recovered from the
+ * parallel cache when available (a legacy first fetch may have missed it → mimeType null,
+ * callers degrade conservatively to a download chip).
+ */
+export async function fetchAssetObject(id: string): Promise<AssetObject> {
+  const cached = urlCache.get(id);
+  if (cached) return { url: cached, mimeType: mimeCache.get(id) ?? null };
+  const res = await apiFetch(`/api/assets/${id}/content`);
+  const mimeType = res.headers.get('content-type')?.split(';')[0]?.trim() ?? null;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  urlCache.set(id, url);
+  if (mimeType) mimeCache.set(id, mimeType);
+  return { url, mimeType };
+}
+
+/** Synchronous cache peek — lets a renderer avoid a loading flash for known assets. */
+export function peekAssetObject(id: string): AssetObject | null {
+  const url = urlCache.get(id);
+  return url ? { url, mimeType: mimeCache.get(id) ?? null } : null;
 }
 
 /**

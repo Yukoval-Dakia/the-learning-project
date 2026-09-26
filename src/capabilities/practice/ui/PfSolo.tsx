@@ -12,7 +12,7 @@
 // → 流继续（设计稿「重判中 · 不阻塞，先继续」；改判回执经 M4 工作台/通知回流）。
 
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 // 边界（PR #1069 review 修复）：capability 包只依赖 @/kernel/* + 自身 + 共享 UI 件
 // （src/capabilities/AGENTS.md）。此前这里直 import @/core/schema/event/known 取长度常量，
@@ -22,6 +22,16 @@ import { createPortal } from 'react-dom';
 // 见 src/kernel/limits.ts 头注释的实测表。
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { AttemptTimeline } from '@/ui/components/AttemptTimeline';
+// YUK-1051 — 作答面换成通用 response 组件族（stable option IDs / 原文保留 / 证据附件）；
+// 202-pending 成为返回 union + UI 状态（同一次 submission 继续查询，不重交）。
+import { ChoiceSetResponse } from '@/ui/components/response/ChoiceSetResponse';
+import { EvidenceComposer } from '@/ui/components/response/EvidenceComposer';
+import {
+  type EvidenceAttachment,
+  optionsFromChoicesMd,
+} from '@/ui/components/response/response-types';
+import { SlotResultBadge } from '@/ui/components/response/SlotResultBadge';
+import { useJudgeRunPolling } from '@/ui/hooks/useJudgeRunPolling';
 import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
@@ -44,6 +54,7 @@ import {
   fileAppeal,
   getAdvice,
   getQuestionFull,
+  isSubmitPending,
   submitReview,
 } from './practice-api';
 
@@ -267,8 +278,19 @@ export function PfSolo({
     // learner-safe prompt/options while the question-bank surface remains 404.
     queryFn: () => getQuestionFull(item.ref_id, { surface: 'practice' }),
   });
-  const [sel, setSel] = useState<number | null>(null);
+  // YUK-1051 — 选项身份从数组下标换成内容派生的 stable option id（response-types）：
+  // 重渲染 / 草稿恢复 / 复盘里同一选项文本恒同 id；选项数不硬编码（1–9 数字键随选项数）。
+  const [selIds, setSelIds] = useState<string[] | null>(null);
   const [text, setText] = useState('');
+  // YUK-1051 (D10) — 开放作答的证据附件（通用文字+附件）；asset ids 随提交走
+  // answer_image_refs（CreateAttempt 契约早就有，UI 此前丢弃）。
+  const [evidence, setEvidence] = useState<EvidenceAttachment[]>([]);
+  // YUK-1094 — 附件上传中：上传批次未 settle 前禁止提交，否则判分/提交跑的是旧 evidence
+  // （刚选的附件丢掉）。由 EvidenceComposer 的 onUploadingChange 上报。
+  const [uploading, setUploading] = useState(false);
+  // YUK-1051 — 202-pending：提交被分到 durable lane 时的 run 锚点；轮询直到终态，
+  // 绝不重交同一答案。null = 非 pending（同步回执 / 未提交）。
+  const [pendingRun, setPendingRun] = useState<{ runId: string; pollUrl: string } | null>(null);
   const [judging, setJudging] = useState(false);
   const [preview, setPreview] = useState<JudgePreview | null>(null);
   // intervention_diagnostic skips the repeatable advice preview and is committed
@@ -312,8 +334,20 @@ export function PfSolo({
   // 正合「卡在同一误区」信号意图。反馈卡里 length>0 才渲染。
   const timelineEvents = q ? toAttemptTimelineEvents(q.timeline) : [];
   const isChoice = (q?.choices_md?.length ?? 0) > 0;
-  const answerMd = isChoice && sel !== null ? (q?.choices_md?.[sel] ?? '') : text;
-  const canSubmit = !judging && (isChoice ? sel !== null : text.trim().length > 0);
+  const choiceOptions = useMemo(
+    () => optionsFromChoicesMd(q?.choices_md ?? [], q?.id ?? ''),
+    [q?.choices_md, q?.id],
+  );
+  const imageRefs = useMemo(() => evidence.map((a) => a.asset_id), [evidence]);
+  const answerMd =
+    isChoice && selIds && selIds.length > 0
+      ? (choiceOptions.find((o) => o.id === selIds[0])?.text_md ?? '')
+      : text;
+  const canSubmit =
+    !judging &&
+    !pendingRun &&
+    !uploading &&
+    (isChoice ? (selIds?.length ?? 0) > 0 : text.trim().length > 0 || imageRefs.length > 0);
   // YUK-444 — 三相：answering（作答）→ confidence（judge 结果暂存、信心自评插拍、判定未揭晓）→
   // feedback（判定卡）。confidence 只在非客观流出现；客观题 answering 直接跳到 feedback（auto-commit）。
   const phase = committedPreview ? 'feedback' : derivePhase(preview, pendingPreview);
@@ -350,6 +384,40 @@ export function PfSolo({
     setAutoCommitted(true);
     setAutoCommitJudgeEventId(committed.judge.judge_event_id);
   }, [committedDiagnosticQuestionId, isInterventionDiagnostic, q?.committed_attempt]);
+
+  // YUK-1051 — 202-pending 轮询：同一次 submission 的 run 继续查询（poll_url 纯读 GET），
+  // 终态 done → 用回传的终态判词揭晓反馈卡（与同步回执同一渲染路径）；failed → 诚实
+  // 告知「作答已存住，会自动补判」，可先行推进（solo 202 可继续，不阻塞流）。
+  const pendingPoll = useJudgeRunPolling({
+    runId: pendingRun?.runId ?? null,
+    pollUrl: pendingRun?.pollUrl ?? null,
+  });
+  useEffect(() => {
+    if (!pendingRun) return;
+    if (pendingPoll.status !== 'done') return;
+    const r = pendingPoll.result;
+    const outcome =
+      r && typeof r.coarse_outcome === 'string' && r.coarse_outcome in VERDICT_OF
+        ? (r.coarse_outcome as keyof typeof VERDICT_OF)
+        : null;
+    const fr =
+      r && typeof r.final_rating === 'string' && ['again', 'hard', 'good'].includes(r.final_rating)
+        ? (r.final_rating as Rating)
+        : 'hard';
+    if (outcome) {
+      setCommittedPreview({
+        route: typeof r?.route === 'string' && r.route ? r.route : 'durable',
+        coarse_outcome: outcome,
+        confidence: typeof r?.confidence === 'number' ? r.confidence : 0,
+        feedback_md: typeof r?.feedback_md === 'string' ? r.feedback_md : '',
+        suggested_rating: fr,
+      });
+      setRating(fr);
+      setAutoCommitted(true);
+      setAutoCommitJudgeEventId(typeof r?.judge_event_id === 'string' ? r.judge_event_id : null);
+    }
+    setPendingRun(null);
+  }, [pendingRun, pendingPoll.status, pendingPoll.result]);
 
   // commit 接受显式 rating + autoRate：客观题自动流不依赖手动 `rating` state（直接用 judge 的
   // suggested_rating + auto_rate:true）；手动流（开放题/申诉）走 body.rating + auto_rate 缺省 false。
@@ -389,11 +457,21 @@ export function PfSolo({
         // commit 都经此。computeLatencyMs clamp 到 [0, 3_600_000]（对齐 server zod）；shownAt 为 null →
         // 略过（不发噪声）。server 映射成事件 payload 的 duration_ms（无后端改动）。墙钟含 idle，已知噪声源。
         latency_ms: computeLatencyMs(questionShownAtRef.current, Date.now()),
+        // YUK-1051 (D10) — 开放作答的证据附件随提交冻结；空值不发（既有 wire 逐字不变）。
+        ...(imageRefs.length > 0 ? { answer_image_refs: imageRefs } : {}),
         judge_task_run_id: pv.task_run_id,
         judge_provenance_token: pv.provenance_token,
         // YUK-589 — echo the digested result VERBATIM (see toSubmittedJudgeResult).
         judge_result_v2: toSubmittedJudgeResult(pv),
       });
+      // YUK-1051 — 202-pending 是返回 union（不是错误）：答案已随提交持久化，判分走
+      // durable lane。记下 run 锚点进 pending 卡；轮询到终态再揭晓反馈（见 pendingPoll effect）。
+      // 带申诉的提交在 pending 下先把提交落定——申诉锚点要等终态判词回来才有，故 pending
+      // 分支暂不发 appeal（反馈卡出现后「不服判」入口照常可用）。
+      if (isSubmitPending(res)) {
+        setPendingRun({ runId: res.run_id, pollUrl: res.backfill.poll_url });
+        return;
+      }
       if (opts.withAppeal) {
         const anchor = res.judge?.judge_event_id;
         if (anchor) {
@@ -463,7 +541,15 @@ export function PfSolo({
           ...buildCaptureFields({ reasoningTrace, selfConfidence }),
           auto_rate: true,
           latency_ms: computeLatencyMs(questionShownAtRef.current, Date.now()),
+          // YUK-1051 (D10) — 证据附件随一次性提交冻结（同 commit 路径纪律）。
+          ...(imageRefs.length > 0 ? { answer_image_refs: imageRefs } : {}),
         });
+        // YUK-1051 — 202-pending union：作答已被原子认领并持久化，判分在 durable lane；
+        // 进 pending 卡轮询，终态回揭反馈。绝不提示重交同一答案。
+        if (isSubmitPending(res)) {
+          setPendingRun({ runId: res.run_id, pollUrl: res.backfill.poll_url });
+          return;
+        }
         const feedback = feedbackFromCommittedAttempt(res);
         setCommittedPreview(feedback);
         setRating(feedback.suggested_rating);
@@ -471,7 +557,7 @@ export function PfSolo({
         setAutoCommitJudgeEventId(res.judge?.judge_event_id ?? null);
         return;
       }
-      const r = await getAdvice(q.id, answerMd);
+      const r = await getAdvice(q.id, answerMd, imageRefs);
       // YUK-444 (PR #1069 thread 修复) — 分流判据是 shouldOfferConfidenceGate(route) 本体，不再在这里
       // 重新拼一遍 isObjectiveQuestion(route)。两者语义严格互补（gate = !isObjectiveQuestion，见上方定义
       // 与 capture 单测的互补断言），但**判据必须只有一处**：单测断言的正是这个生产分支所调的谓词，
@@ -526,17 +612,14 @@ export function PfSolo({
     setPendingPreview(null);
   };
 
-  // 键盘：1-4 选项 · ⌘/Ctrl+Enter 提交
+  // 键盘：⌘/Ctrl+Enter 提交。选项数字键（1–9，随选项数）已移进 ChoiceSetResponse 的
+  // hotkeys（YUK-1051 组件族一般化，不再硬编码 1–4）；这里不再重复监听。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (phase !== 'answering' || coach) return;
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
         void runJudge();
-        return;
-      }
-      if (isChoice && /^[1-4]$/.test(e.key) && (e.target as HTMLElement).tagName !== 'TEXTAREA') {
-        setSel(Number(e.key) - 1);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -593,54 +676,58 @@ export function PfSolo({
           {q.prompt_md}
         </MathMarkdown>
 
-        {isChoice ? (
-          <div className="pfs-opts" role="radiogroup" aria-label="选项">
-            {(q.choices_md ?? []).map((c, i) => {
-              const graded = phase === 'feedback';
-              const isRight = graded && displayedPreview?.coarse_outcome === 'correct' && sel === i;
-              const isWrong = graded && displayedPreview?.coarse_outcome !== 'correct' && sel === i;
-              const cls = [
-                'pfs-opt',
-                !graded && sel === i ? 'is-sel' : '',
-                isRight ? 'is-right' : '',
-                isWrong ? 'is-wrong' : '',
-              ].join(' ');
-              return (
-                <button
-                  type="button"
-                  key={c}
-                  className={cls}
-                  // YUK-444 — 作答面在 confidence（自评插拍）与 feedback 相位都冻结（非 answering
-                  // 即禁选），避免揭晓前改答；着色仍只在 feedback（graded）依 preview 生效。
-                  disabled={phase !== 'answering'}
-                  // biome-ignore lint/a11y/useSemanticElements: 设计稿卡片式选项
-                  // （pfs-opt 布局）；native <input type="radio"> 无法承载该布局，
-                  // 真 <button> + radiogroup ARIA 模式语义完整（同 PracticeChoiceOptions）。
-                  role="radio"
-                  aria-checked={sel === i}
-                  onClick={() => setSel(i)}
-                >
-                  <span className="k mono">{String.fromCharCode(65 + i)}</span>
-                  <span className="t">
-                    <MathMarkdown notation={q.notation}>{c}</MathMarkdown>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        ) : (
-          <div style={{ marginTop: 'var(--s-5)' }}>
-            <div className="composer answer-composer">
-              <textarea
-                rows={3}
-                value={text}
-                disabled={phase !== 'answering'}
-                placeholder="写下你的解答…"
-                onChange={(e) => setText(e.target.value)}
-                aria-label="作答"
-              />
+        {/* YUK-1051 — 作答面 = 通用 response 组件族。选择题：stable option IDs +
+            radiogroup 语义不变；对错色仍只在 feedback 相位（§6.4 即时着色即判定），
+            作答中（含 confidence 插拍）只有中性选中态。 */}
+        {pendingRun ? (
+          // 202-pending（durable lane）：作答已持久化，判分在后台。同一 run 轮询中；
+          // 可先行推进（solo 202 可继续），结果回来由 pendingPoll effect 揭晓反馈卡。
+          <div className="rs-pending" aria-live="polite">
+            <SlotResultBadge lifecycle="submitted_pending" anchorTitle={pendingRun.runId} />
+            {pendingPoll.status === 'failed' || pendingPoll.error ? (
+              <p className="rs-pending-text">
+                判分暂时没跑成——你的作答已经存住，系统会自动补判，不需要重交。
+              </p>
+            ) : (
+              <p className="rs-pending-text">
+                判分在后台进行——同一份作答在排队，不需要重交；可以先继续，结果稍后到。
+              </p>
+            )}
+            <div className="pfs-actions">
+              <Btn variant="secondary" icon="arrow" onClick={() => onDone()}>
+                先继续
+              </Btn>
             </div>
           </div>
+        ) : isChoice ? (
+          <ChoiceSetResponse
+            options={choiceOptions}
+            mode="single"
+            value={selIds}
+            onChange={setSelIds}
+            disabled={phase !== 'answering'}
+            notation={q.notation}
+            feedback={phase === 'feedback' ? 'graded' : 'none'}
+            selectionOutcome={
+              displayedPreview?.coarse_outcome === 'correct' ? 'correct' : 'not_correct'
+            }
+            hotkeys={phase === 'answering' && !coach}
+            ariaLabel="选项"
+          />
+        ) : (
+          // 开放作答：通用文字 + 附件（EvidenceComposer）。文本原文进 response_md；
+          // 附件 asset ids 进 answer_image_refs（D10 口径）。
+          <EvidenceComposer
+            text={text}
+            onTextChange={setText}
+            attachments={evidence}
+            onAttachmentsChange={setEvidence}
+            disabled={phase !== 'answering'}
+            notation={q.notation}
+            placeholder="写下你的解答…"
+            ariaLabel="作答"
+            onUploadingChange={setUploading}
+          />
         )}
 
         {/* YUK-562 — 过程框「记下你的思路」：作答面与提交 CTA 之间，仅开放/文本作答题（!isChoice）显示，
@@ -669,7 +756,7 @@ export function PfSolo({
           </div>
         )}
 
-        {phase === 'answering' && (
+        {phase === 'answering' && !pendingRun && (
           <div className="pfs-actions">
             <Btn
               variant="primary"
@@ -680,7 +767,7 @@ export function PfSolo({
               {judging ? '判分中…' : '提交 · 即时判分'}
             </Btn>
             <span className="key-hints mono" style={{ marginLeft: 'auto' }}>
-              {isChoice ? '1-4 选 · ⌘Enter 提交' : '⌘Enter 提交'}
+              {isChoice ? '数字键直选 · ⌘Enter 提交' : '⌘Enter 提交'}
             </span>
           </div>
         )}

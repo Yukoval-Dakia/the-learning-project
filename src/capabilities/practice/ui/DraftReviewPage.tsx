@@ -18,6 +18,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { deriveOptionIds, optionLabel } from '@/ui/components/response/response-types';
 import { makeLookup } from '@/ui/lib/makeLookup';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
@@ -210,17 +211,20 @@ function DrPreviewBody({ d }: { d: DraftReviewDetail }) {
         </MathMarkdown>
         {d.options && d.options.length > 0 && (
           <div className="dr-opts">
-            {d.options.map((opt, i) => (
-              // 后端 detail 投影只给 choices_md 文本串、不给正确项 key（answer 是
-              // reference_md 自由文本，无 enum 对照）——故不渲染 .correct 高亮。
-              // biome-ignore lint/suspicious/noArrayIndexKey: choices 是定序文本串、无稳定 id，A/B/C/D 行号即语义
-              <div key={i} className="dr-opt">
-                <span className="dr-opt-key">{String.fromCharCode(65 + i)}</span>
-                <span className="dr-opt-txt">
-                  <MathMarkdown notation={notation}>{opt}</MathMarkdown>
-                </span>
-              </div>
-            ))}
+            {/* YUK-1051 — 选项 key 换成内容派生 stable id（response-types），不再用数组下标；
+                行号字母仍是展示序号。后端 detail 投影只给 choices_md 文本串、不给正确项
+                key（answer 是 reference_md 自由文本，无 enum 对照）——故不渲染 .correct 高亮。 */}
+            {(() => {
+              const opts = d.options ?? [];
+              return deriveOptionIds(opts, d.id).map((oid, i) => (
+                <div key={oid} className="dr-opt">
+                  <span className="dr-opt-key">{optionLabel(i)}</span>
+                  <span className="dr-opt-txt">
+                    <MathMarkdown notation={notation}>{opts[i]}</MathMarkdown>
+                  </span>
+                </div>
+              ));
+            })()}
           </div>
         )}
       </div>

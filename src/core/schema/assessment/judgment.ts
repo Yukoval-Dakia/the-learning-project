@@ -1,5 +1,9 @@
 import { z } from 'zod';
 
+// YUK-1052 — 幂等载荷比对必须规范化：持久层存 jsonb，PostgreSQL 重排对象键序
+// （按长度+字典序），原样 JSON.stringify(existing) 永远 ≠ 同内容 incoming →
+// 每次重试都被误判成 conflict。canonical 排序键序后再比对才是“逐字相同”。
+import { stableStringify } from '../../migration/canonical';
 import { EvaluationGroupId, EvaluationId, IssuanceId, RevisionId, SubmissionId } from './ids';
 import { EvidenceAttachment } from './materials';
 import { PendingState } from './pending';
@@ -427,8 +431,8 @@ export function resolveSubmissionIdempotency(
     return { outcome: 'conflict', reason: 'evaluation_group_mismatch' };
   }
   const samePayload =
-    JSON.stringify(existing.response_set) === JSON.stringify(incoming.response_set) &&
-    JSON.stringify(existing.group_evidence) === JSON.stringify(incoming.group_evidence);
+    stableStringify(existing.response_set) === stableStringify(incoming.response_set) &&
+    stableStringify(existing.group_evidence) === stableStringify(incoming.group_evidence);
   return samePayload
     ? { outcome: 'same_payload' }
     : { outcome: 'conflict', reason: 'response_changed' };

@@ -7,6 +7,19 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
+// YUK-1051 — 卷面作答换成通用 response 组件族。§6.4 缓冲反馈：作答全程零语义色
+// （ChoiceSetResponse 恒 feedback='none'，对错色只在交卷后的复盘出现）；草稿附件
+// 走既有 image_refs wire（服务端早已接受，UI 此前丢弃）。
+import { ChoiceSetResponse } from '@/ui/components/response/ChoiceSetResponse';
+import { EvaluationGroupPanel } from '@/ui/components/response/EvaluationGroupPanel';
+import { EvidenceComposer } from '@/ui/components/response/EvidenceComposer';
+import {
+  type EvidenceAttachment,
+  optionsFromChoicesMd,
+} from '@/ui/components/response/response-types';
+import { SaveStateChip } from '@/ui/components/response/SaveStateChip';
+import { SelfConfidenceField } from '@/ui/components/response/SelfConfidenceField';
+import { StimulusFigure } from '@/ui/components/response/StimulusFigure';
 import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
@@ -33,6 +46,36 @@ import {
 
 function slotKey(s: PaperSlot): string {
   return `${s.question_id}::${s.part_ref ?? ''}`;
+}
+
+// YUK-1051 — 证据绑定范围展开：slot_ids null = 整组（每个 slot 都带）；子集 = 仅列出的
+// slot 带。草稿与提交共用同一展开（作答证据与判分引用同版资产，不多不少）。
+export function evidenceIdsForSlot(evidence: readonly EvidenceAttachment[], key: string): string[] {
+  return evidence
+    .filter((a) => a.slot_ids === null || a.slot_ids.includes(key))
+    .map((a) => a.asset_id);
+}
+
+// YUK-1051 — 草稿恢复：wire 只存各 slot 的 image_refs（绑定范围不持久化在旧契约里），
+// 重建规则：出现在**每个** slot 的 id → 整组（null）；否则绑定到它出现的那些 slot。
+// 恢复结果保守（宁可整组不丢证据），且绝不新造 wire 上没有的 asset id。
+export function restoreEvidenceFromSlots(slots: readonly PaperSlot[]): EvidenceAttachment[] {
+  const allKeys = slots.map(slotKey);
+  const seen = new Map<string, string[]>();
+  for (const s of slots) {
+    const key = slotKey(s);
+    const refs = s.slot_state.submission?.answer_image_refs ?? s.slot_state.draft?.image_refs ?? [];
+    for (const id of refs) {
+      const list = seen.get(id);
+      if (list) list.push(key);
+      else seen.set(id, [key]);
+    }
+  }
+  return [...seen.entries()].map(([asset_id, keys]) => ({
+    asset_id,
+    // kind 留给 AssetEvidencePreview 按 content-type 解析（不猜）。
+    slot_ids: allKeys.length > 0 && keys.length === allKeys.length ? null : keys,
+  }));
 }
 
 const PAPER_TIMING_STORAGE_VERSION = 1;
@@ -134,11 +177,26 @@ export function PfPaper({
 
   const [pos, setPos] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  // YUK-1051 — 卷级证据附件（整页解题照默认绑定整个 evaluation group=本卷；可在
+  // EvaluationGroupPanel 改绑子集）。slot 草稿/提交的 image_refs 从这里按绑定范围展开。
+  const [evidence, setEvidence] = useState<EvidenceAttachment[]>([]);
+  // YUK-1094 — 附件上传中：交卷入口并入 upload-pending（disable），否则交卷会以旧 evidence
+  // 展开 image_refs（刚上传的附件丢掉）。由 EvidenceComposer 的 onUploadingChange 上报。
+  const [uploading, setUploading] = useState(false);
+  // answersRef 同款的同步镜像：pagehide/退出 flush 读 ref（渲染闭包可能滞后一拍）。
+  const evidenceRef = useRef<EvidenceAttachment[]>([]);
+  evidenceRef.current = evidence;
   // YUK-784 — 过程框采集：per-slot 过程文本与展开态（组卷面多题连续作答，切换不丢；
   // 交卷时随该 slot 的提交一并发出）。不进草稿自动保存——answer-draft wire 无此字段，
   // 中途退出会丢过程文本，这是已知且诚实的取舍（采集是可选 meta，不值得为此扩草稿契约）。
   const [trace, setTrace] = useState<Record<string, string>>({});
   const [traceOpen, setTraceOpen] = useState<Record<string, boolean>>({});
+  // Owner decision Q-922: optional 1–5 self-confidence is per question (not per paper).
+  // Observe-only metadata: it never affects judging, rating, or FSRS. The value is carried
+  // through the paper submission wire (submitPaperSlot → buildPaperSubmissionBody
+  // self_confidence) and lands on AttemptOnQuestion.payload.self_confidence at submit time.
+  // Absent when untouched → byte-identical for slots the learner did not self-rate.
+  const [selfConfidence, setSelfConfidence] = useState<Record<string, number>>({});
   const [confirm, setConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   // Per-slot autosave-failed flags. While any is set the top chip stops claiming
@@ -216,6 +274,10 @@ export function PfPaper({
     setAnswers({});
     setTrace({});
     setTraceOpen({});
+    setSelfConfidence({});
+    setEvidence([]);
+    evidenceRef.current = [];
+    setUploading(false);
     setSaveFailed({});
     setRetrying(false);
     setExiting(false);
@@ -300,6 +362,17 @@ export function PfPaper({
           s.slot_state.submission?.answer_md ?? s.slot_state.draft?.content_md ?? '';
       }
     }
+    // YUK-1051 — 证据附件回填（草稿 image_refs / 已提交 answer_image_refs）。本地已有
+    // 附件（用户刚传的）与服务端恢复的并集，asset_id 去重；绑定范围以本地为准。
+    const restored = restoreEvidenceFromSlots(slots);
+    if (restored.length > 0) {
+      setEvidence((cur) => {
+        const known = new Set(cur.map((a) => a.asset_id));
+        const merged = [...cur, ...restored.filter((a) => !known.has(a.asset_id))];
+        evidenceRef.current = merged;
+        return merged;
+      });
+    }
   }, [slots]);
 
   // sessionReadyVersion intentionally retriggers this effect when a fresh paper's async session
@@ -351,7 +424,10 @@ export function PfPaper({
     partRef: PaperSlot['part_ref'],
     v: string,
     keepalive = false,
+    // YUK-1051 — 该 slot 绑定范围内的证据附件 ids（缺席 = 按当前 evidenceRef 现算）。
+    imageRefs?: string[],
   ): Promise<boolean> => {
+    const refs = imageRefs ?? evidenceIdsForSlot(evidenceRef.current, key);
     const gen = saveGen.current;
     const seq = (saveSeq.current[key] ?? 0) + 1;
     saveSeq.current[key] = seq;
@@ -383,6 +459,7 @@ export function PfPaper({
             question_id: questionId,
             part_ref: partRef,
             answer_md: v,
+            image_refs: refs,
           },
           { keepalive },
         )
@@ -573,7 +650,15 @@ export function PfPaper({
   const submittedKeys = new Set(
     slots.filter((s) => s.slot_state.submission?.submitted).map(slotKey),
   );
-  const answeredCount = slots.filter((s) => (answers[slotKey(s)] ?? '').trim().length > 0).length;
+  // YUK-1051 — stable option ids（内容派生）；作答 pip 的「已答」包含绑定到该 slot 的证据。
+  const curOptions = optionsFromChoicesMd(cur.question.choices_md ?? [], cur.question_id);
+  const curAnswerText = answers[curKey] ?? '';
+  const curSelectedIds = curOptions.filter((o) => o.text_md === curAnswerText).map((o) => o.id);
+  const answeredCount = slots.filter(
+    (s) =>
+      (answers[slotKey(s)] ?? '').trim().length > 0 ||
+      evidenceIdsForSlot(evidence, slotKey(s)).length > 0,
+  ).length;
   const unanswered = slots.length - answeredCount;
 
   // A submitted slot's draft no longer needs saving, so a lingering failure flag on it
@@ -636,6 +721,50 @@ export function PfPaper({
     }, 800);
   };
 
+  // YUK-1051 — 证据附件的增/删/改绑也要触发草稿自动保存（附件变更不经 setAnswer 的
+  // 击键 debounce）。只重存绑定范围实际变化的未提交 slot。
+  const scheduleEvidenceSave = (changedKeys: Iterable<string>) => {
+    for (const key of changedKeys) {
+      const slot = slots.find((s) => slotKey(s) === key);
+      if (!slot || slot.slot_state.submission?.submitted) continue;
+      if (saveTimers.current[key]) clearTimeout(saveTimers.current[key]);
+      saveTimers.current[key] = setTimeout(() => {
+        delete saveTimers.current[key];
+        void runSave(key, slot.question_id, slot.part_ref, answersRef.current[key] ?? '');
+      }, 800);
+    }
+  };
+
+  // EvidenceComposer 的附件列表回调：diff 出增/删，各自按绑定范围调度保存。
+  const onEvidenceChange = (next: EvidenceAttachment[]) => {
+    const prev = evidenceRef.current;
+    const prevById = new Map(prev.map((a) => [a.asset_id, a]));
+    const nextIds = new Set(next.map((a) => a.asset_id));
+    const added = next.filter((a) => !prevById.has(a.asset_id));
+    const removed = prev.filter((a) => !nextIds.has(a.asset_id));
+    evidenceRef.current = next;
+    setEvidence(next);
+    const allOpen = slots.filter((s) => !s.slot_state.submission?.submitted).map(slotKey);
+    const affected = new Set<string>();
+    for (const a of added) for (const k of a.slot_ids ?? allOpen) affected.add(k);
+    for (const a of removed) for (const k of a.slot_ids ?? allOpen) affected.add(k);
+    scheduleEvidenceSave(affected);
+  };
+
+  // EvaluationGroupPanel 的改绑回调：新旧绑定范围的对称差集内 slot 各重存一轮。
+  const onEvidenceRebind = (assetId: string, nextAtt: EvidenceAttachment) => {
+    const prevAtt = evidenceRef.current.find((a) => a.asset_id === assetId);
+    const next = evidenceRef.current.map((a) => (a.asset_id === assetId ? nextAtt : a));
+    evidenceRef.current = next;
+    setEvidence(next);
+    if (!prevAtt) return;
+    const allKeys = slots.map(slotKey);
+    const prevScope = prevAtt.slot_ids ?? allKeys;
+    const nextScope = nextAtt.slot_ids ?? allKeys;
+    const changed = new Set([...prevScope, ...nextScope]);
+    scheduleEvidenceSave(changed);
+  };
+
   const goPos = (n: number) => {
     setConfirm(false);
     setPos(Math.max(0, Math.min(slots.length - 1, n)));
@@ -645,7 +774,7 @@ export function PfPaper({
     const sid = sessionRef.current;
     // Mutual exclusion with exitPaper (submittingRef/exitingRef are synchronous): a submit and
     // an exit must not both fire a terminal transition.
-    if (!sid || submittingRef.current || exitingRef.current) return;
+    if (!sid || submittingRef.current || exitingRef.current || uploading) return;
     submittingRef.current = true;
     setSubmitting(true);
     stopTimingSegment();
@@ -659,17 +788,24 @@ export function PfPaper({
         if (submittedKeys.has(key) || submittedDuringAttemptsRef.current.has(key)) continue;
         // YUK-784 — 该 slot 的过程文本随提交发出（空值/纯空白不发字段，截断在
         // buildCaptureFields；server 侧 conditional-spread 落 AttemptOnQuestion.payload）。
+        // YUK-1051 / Q-922 — 同步自评：capture.self_confidence 非空时随该 slot 提交发出，
+        // 落同一 attempt payload（observe-only，不进判分）。
         const capture = buildCaptureFields({
           reasoningTrace: trace[key] ?? '',
-          selfConfidence: null,
+          selfConfidence: selfConfidence[key] ?? null,
         });
         await submitPaperSlot(artifactId, {
           session_id: sid,
           question_id: s.question_id,
           part_ref: s.part_ref,
           answer_md: answers[key] ?? '',
+          // YUK-1051 — 该 slot 绑定范围内的证据附件随提交冻结（与草稿同源展开）。
+          image_refs: evidenceIdsForSlot(evidenceRef.current, key),
           latency_ms: timingMsRef.current[key] ?? 0,
           ...(capture.reasoning_trace ? { reasoning_trace: capture.reasoning_trace } : {}),
+          ...(capture.self_confidence === undefined
+            ? {}
+            : { self_confidence: capture.self_confidence }),
         });
         submittedDuringAttemptsRef.current.add(key);
       }
@@ -720,22 +856,13 @@ export function PfPaper({
           {exiting ? '保存中…' : anySaveFailed ? '退出' : '退出 · 进度保留'}
         </Btn>
         <span className="pfp-title">{detail.title}</span>
-        {anySaveFailed ? (
-          <button
-            type="button"
-            className="pfp-saved is-failed"
-            onClick={retryFailedSaves}
-            disabled={retrying}
-          >
-            <LoomIcon name="alert" size={12} />
-            {retrying ? '重试中…' : '保存失败 · 重试'}
-          </button>
-        ) : (
-          <span className="pfp-saved">
-            <LoomIcon name="check" size={12} />
-            草稿自动保存
-          </span>
-        )}
+        {/* YUK-1051 — 保存状态 chip 换成组件族 SaveStateChip（同文案/同重试交互）；
+            saved 仅在 server ack 后出现的纪律由组件族承载。 */}
+        <SaveStateChip
+          state={anySaveFailed ? 'error' : 'idle'}
+          onRetry={anySaveFailed ? retryFailedSaves : undefined}
+          retrying={retrying}
+        />
       </div>
 
       <div className="pfp-buffer">
@@ -745,7 +872,10 @@ export function PfPaper({
 
       <div className="pfp-pips" role="tablist" aria-label="题目导航">
         {slots.map((s, i) => {
-          const has = (answers[slotKey(s)] ?? '').trim().length > 0;
+          // YUK-1051 — pip 的「已答」中性墨点也把绑定到该 slot 的证据算上（仍零语义色）。
+          const has =
+            (answers[slotKey(s)] ?? '').trim().length > 0 ||
+            evidenceIdsForSlot(evidence, slotKey(s)).length > 0;
           return (
             <button
               type="button"
@@ -767,47 +897,55 @@ export function PfPaper({
             {cur.question_id.slice(0, 12)} · {pos + 1}/{slots.length}
           </span>
         </div>
+        {/* YUK-1051 — 结构化配图/共享材料与题面同版渲染（wire image_refs 恢复后）。 */}
+        {(cur.question.image_refs ?? []).map((assetId) => (
+          <StimulusFigure key={assetId} assetId={assetId} />
+        ))}
         {/* YUK-1005 — same MathMarkdown convention as PfSolo; notation is resolved
             per-question server-side on the paper face (see paper-detail.ts). */}
         <MathMarkdown notation={cur.question.notation} className="pfs-stem">
           {cur.question.prompt_md}
         </MathMarkdown>
 
+        {/* YUK-1051 — 作答控件换组件族。§6.4 缓冲反馈：恒 feedback='none'，作答全程
+            零对错色（导航 pip 只有「已答」中性墨点）；对错色只属于交卷后的 PfRetro。 */}
         {isChoice ? (
-          <div className="pfs-opts" role="radiogroup" aria-label="选项">
-            {(cur.question.choices_md ?? []).map((c, i) => (
-              <button
-                type="button"
-                key={c}
-                // biome-ignore lint/a11y/useSemanticElements: 设计稿卡片式选项
-                // （pfs-opt 布局）；native <input type="radio"> 无法承载该布局，
-                // 真 <button> + radiogroup ARIA 模式语义完整（同 PracticeChoiceOptions）。
-                role="radio"
-                aria-checked={answers[curKey] === c}
-                className={`pfs-opt${answers[curKey] === c ? ' is-sel' : ''}`}
-                disabled={submittedKeys.has(curKey) || exiting}
-                onClick={() => setAnswer(c)}
-              >
-                <span className="k mono">{String.fromCharCode(65 + i)}</span>
-                <span className="t">
-                  <MathMarkdown notation={cur.question.notation}>{c}</MathMarkdown>
-                </span>
-              </button>
-            ))}
-          </div>
+          <ChoiceSetResponse
+            options={curOptions}
+            mode="single"
+            // null = 未作答；草稿文本与选项对不上（遗留数据）→ [] 显式空集合，不假装选中。
+            value={curAnswerText ? curSelectedIds : null}
+            onChange={(ids) => {
+              const opt = curOptions.find((o) => o.id === ids[0]);
+              setAnswer(opt?.text_md ?? '');
+            }}
+            disabled={submittedKeys.has(curKey) || exiting}
+            notation={cur.question.notation}
+            feedback="none"
+            ariaLabel="选项"
+          />
         ) : (
-          <div style={{ marginTop: 'var(--s-5)' }}>
-            <div className="composer answer-composer">
-              <textarea
-                rows={3}
-                value={answers[curKey] ?? ''}
-                disabled={submittedKeys.has(curKey) || exiting}
-                placeholder="写下你的解答。交卷前都可以改。"
-                onChange={(e) => setAnswer(e.target.value)}
-                aria-label="作答"
-              />
-            </div>
-          </div>
+          // 开放作答：通用文字 + 卷级证据附件（默认绑定整组=本卷 evaluation group，
+          // 子集在下方 EvaluationGroupPanel 可改）。
+          <EvidenceComposer
+            text={answers[curKey] ?? ''}
+            onTextChange={setAnswer}
+            attachments={evidence}
+            onAttachmentsChange={onEvidenceChange}
+            disabled={submittedKeys.has(curKey) || exiting}
+            notation={cur.question.notation}
+            placeholder="写下你的解答。交卷前都可以改。"
+            ariaLabel="作答"
+            slotLabels={Object.fromEntries(slots.map((s, i) => [slotKey(s), `第 ${i + 1} 题`]))}
+            onUploadingChange={setUploading}
+          />
+        )}
+        {!isChoice && evidence.length > 0 && !submittedKeys.has(curKey) && !exiting && (
+          <EvaluationGroupPanel
+            slots={slots.map((s, i) => ({ id: slotKey(s), label: `第 ${i + 1} 题` }))}
+            attachments={evidence}
+            onAttachmentChange={onEvidenceRebind}
+          />
         )}
 
         {/* YUK-784 — 过程框「记下你的思路」扩到组卷面（镜像 PfSolo #1069 先例）：仅开放/文本
@@ -841,6 +979,22 @@ export function PfPaper({
             )}
           </div>
         )}
+        {!submittedKeys.has(curKey) && !exiting && (
+          <SelfConfidenceField
+            value={selfConfidence[curKey]}
+            onChange={(next) =>
+              setSelfConfidence((values) => {
+                if (next === null) {
+                  const copy = { ...values };
+                  delete copy[curKey];
+                  return copy;
+                }
+                return { ...values, [curKey]: next };
+              })
+            }
+            ariaLabel={`第 ${pos + 1} 题信心自评`}
+          />
+        )}
       </Card>
 
       <div className="pfp-foot">
@@ -872,7 +1026,7 @@ export function PfPaper({
               size="sm"
               variant="primary"
               icon="send"
-              disabled={submitting || exiting}
+              disabled={submitting || exiting || uploading}
               onClick={() => void submitAll()}
             >
               {submitting ? '判分中…' : '交卷'}
@@ -886,7 +1040,7 @@ export function PfPaper({
             size="sm"
             variant="primary"
             icon="send"
-            disabled={submitting || exiting}
+            disabled={submitting || exiting || uploading}
             onClick={() => (unanswered > 0 ? setConfirm(true) : void submitAll())}
           >
             {submitting ? '判分中…' : '交卷 · 统一判分'}

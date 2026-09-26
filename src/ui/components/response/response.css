@@ -1,0 +1,672 @@
+/* YUK-1051 — 通用 response 组件族样式（.rs- 前缀）。
+ *
+ * 规则（preflight §2）：
+ *   - 只用现有 tokens/primitives；.rs- 前缀，不覆盖既有类名。
+ *   - question-bank 红线：不做 opacity-gated 入场（只过渡 hover/focus，
+ *     绝不拿 opacity 0→1 门控可见性）。
+ *   - §6.4 视觉语言：对错色只在 feedback release 后由宿主挂 .is-right/.is-wrong；
+ *     paper 作答全程只有中性的 .is-sel 选中态（缓冲反馈）。
+ */
+
+/* ── 单/多选 ─────────────────────────────────────────────── */
+.rs-opts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin-top: var(--s-5);
+}
+.rs-opt {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-3);
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  border-radius: var(--r-2);
+  padding: var(--s-3) var(--s-4);
+  cursor: pointer;
+  font: inherit;
+  color: var(--ink-2);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+.rs-opt:hover:not(:disabled) {
+  border-color: var(--ink-5);
+}
+.rs-opt:disabled {
+  cursor: default;
+}
+.rs-opt:focus-visible {
+  outline: none;
+  border-color: var(--coral);
+  box-shadow: var(--shadow-focus);
+}
+.rs-opt-k {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--ink-4);
+  flex: none;
+  min-width: 18px;
+}
+.rs-opt-t {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-body-lg);
+  line-height: var(--lh-prose);
+  color: var(--ink);
+}
+/* 多选选中记号：勾选框式 chip（区别于单选纯描边），仍无对错语义。 */
+.rs-opt-box {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 4px;
+  align-self: center;
+  display: inline-grid;
+  place-items: center;
+  color: transparent;
+}
+.rs-opt.is-sel {
+  border-color: var(--coral);
+  background: var(--coral-soft);
+  box-shadow: var(--shadow-focus);
+}
+.rs-opt.is-sel .rs-opt-k {
+  color: var(--coral-ink);
+}
+.rs-opt.is-sel .rs-opt-box {
+  border-color: var(--coral);
+  background: var(--coral);
+  color: var(--paper-raised);
+}
+/* graded —— color IS judgment，只在 release 后出现（§6.4）。 */
+.rs-opt.is-right {
+  border-color: var(--good-line);
+  background: var(--good-soft);
+  box-shadow: none;
+}
+.rs-opt.is-right .rs-opt-k {
+  color: var(--good-ink);
+}
+.rs-opt.is-wrong {
+  border-color: var(--again-line);
+  background: var(--again-soft);
+  box-shadow: none;
+}
+.rs-opt.is-wrong .rs-opt-k {
+  color: var(--again-ink);
+}
+.rs-opts-foot {
+  margin-top: var(--s-2);
+  display: flex;
+  justify-content: flex-end;
+}
+.rs-clear {
+  border: 0;
+  background: transparent;
+  color: var(--ink-4);
+  font-size: var(--fs-meta);
+  font-family: var(--font-mono);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: var(--r-1);
+}
+.rs-clear:hover {
+  color: var(--ink-2);
+  background: var(--paper-sunk);
+}
+
+/* ── 文本 / 数值 / 公式（原文保留 + 派生预览） ───────────────── */
+.rs-textwrap {
+  margin-top: var(--s-5);
+}
+.rs-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  border-radius: var(--r-2);
+  padding: var(--s-3) var(--s-4);
+  font: inherit;
+  font-size: var(--fs-body);
+  line-height: var(--lh-prose);
+  color: var(--ink);
+}
+.rs-textarea:focus-visible {
+  outline: none;
+  border-color: var(--coral);
+  box-shadow: var(--shadow-focus);
+}
+.rs-textarea:disabled {
+  background: var(--paper-sunk);
+  color: var(--ink-3);
+}
+.rs-preview {
+  margin-top: var(--s-2);
+  border: 1px dashed var(--line-strong);
+  background: var(--paper-sunk);
+  border-radius: var(--r-2);
+  padding: var(--s-3) var(--s-4);
+}
+.rs-preview-label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  margin-bottom: 4px;
+}
+
+/* ── 配对（选择 + 键盘；select 原生全键盘可达） ───────────────── */
+.rs-match {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin-top: var(--s-5);
+}
+.rs-match-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--s-3);
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper-raised);
+  padding: var(--s-2) var(--s-3);
+}
+.rs-match-left {
+  font-size: var(--fs-body);
+  line-height: var(--lh-prose);
+  color: var(--ink);
+  min-width: 0;
+}
+.rs-match-select {
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-2);
+  background: var(--paper);
+  padding: 6px 8px;
+  font: inherit;
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+}
+.rs-match-select:focus-visible {
+  outline: none;
+  border-color: var(--coral);
+  box-shadow: var(--shadow-focus);
+}
+
+/* ── 排序（键盘上下移动 / 序号编辑） ────────────────────────── */
+.rs-order {
+  list-style: none;
+  margin: var(--s-5) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.rs-order-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  border-radius: var(--r-2);
+  padding: var(--s-2) var(--s-3);
+}
+.rs-order-idx {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--ink-4);
+  width: 20px;
+  flex: none;
+  text-align: right;
+}
+.rs-order-t {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-body);
+  line-height: var(--lh-prose);
+  color: var(--ink);
+}
+.rs-order-ctrls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+.rs-order-move {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  border-radius: var(--r-1);
+  color: var(--ink-3);
+  width: 26px;
+  height: 26px;
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 0;
+}
+.rs-order-move:hover:not(:disabled) {
+  border-color: var(--ink-5);
+  color: var(--ink);
+}
+.rs-order-move:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.rs-order-move:focus-visible {
+  outline: none;
+  border-color: var(--coral);
+  box-shadow: var(--shadow-focus);
+}
+.rs-order-pos {
+  width: 44px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-1);
+  background: var(--paper);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-2);
+  text-align: center;
+  padding: 3px 4px;
+}
+.rs-order-pos:focus-visible {
+  outline: none;
+  border-color: var(--coral);
+  box-shadow: var(--shadow-focus);
+}
+
+/* ── 附件条（整页证据 / 作答附件） ──────────────────────────── */
+.rs-attach {
+  display: flex;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  margin-top: var(--s-3);
+}
+.rs-attach-item {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper-sunk);
+  padding: 4px;
+  gap: 6px;
+}
+.rs-attach-thumb {
+  width: 64px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: var(--r-1);
+  border: 1px solid var(--line);
+  display: block;
+}
+.rs-attach-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  padding: 4px 6px;
+}
+.rs-attach-x {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: var(--paper-raised);
+  color: var(--ink-3);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 0;
+}
+.rs-attach-x:hover {
+  color: var(--again-ink);
+  border-color: var(--again-line);
+}
+.rs-attach-x:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+.rs-attach-bind {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+
+/* ── 媒体证据预览（D10：image inline / audio-video 控件 / PDF 下载-only） ── */
+.rs-ev {
+  display: block;
+}
+.rs-ev-img {
+  max-width: 100%;
+  border-radius: var(--r-2);
+  border: 1px solid var(--line);
+  display: block;
+}
+.rs-ev-audio,
+.rs-ev-video {
+  width: 100%;
+  max-width: 420px;
+  display: block;
+}
+.rs-ev-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px dashed var(--line-strong);
+  background: var(--paper-sunk);
+  border-radius: var(--r-2);
+  padding: 6px 10px;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  text-decoration: none;
+}
+.rs-ev-download:hover {
+  border-color: var(--ink-5);
+  color: var(--ink);
+}
+.rs-ev-text {
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: var(--fs-caption);
+  line-height: var(--lh-prose);
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper-sunk);
+  padding: var(--s-2) var(--s-3);
+}
+.rs-ev-pending {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+
+/* ── 题目图表 / 共享材料（判分与学生所见同版资产） ────────────── */
+.rs-fig {
+  margin: var(--s-4) 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  background: var(--paper-sunk);
+  padding: var(--s-3);
+}
+.rs-fig-body {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: zoom-in;
+}
+.rs-fig-body:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+  border-radius: var(--r-2);
+}
+.rs-fig-img {
+  display: block;
+  max-width: 100%;
+  margin: 0 auto;
+  border-radius: var(--r-2);
+}
+.rs-fig-cap {
+  margin-top: var(--s-2);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-prose);
+  color: var(--ink-3);
+  text-align: center;
+}
+.rs-fig-zoom {
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  text-align: center;
+}
+
+/* ── 整页证据查看 modal（唯一新增 modal；focus-trap / Esc / restore） ── */
+.rs-lightbox-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(31, 30, 29, 0.5);
+  display: grid;
+  place-items: center;
+  padding: var(--s-6);
+}
+.rs-lightbox {
+  max-width: min(960px, 92vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  box-shadow: var(--shadow-3);
+}
+.rs-lightbox-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--line);
+}
+.rs-lightbox-title {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rs-lightbox-body {
+  overflow: auto;
+  padding: var(--s-4);
+  display: grid;
+  place-items: center;
+}
+.rs-lightbox-body img {
+  max-width: 100%;
+  max-height: 72vh;
+  border-radius: var(--r-2);
+}
+
+/* ── 202-pending 卡（作答已存、判分在后台） ─────────────────────
+   刻意中性（info，非对错色）——pending 不是判定结果，只是「在排队」。 */
+.rs-pending {
+  margin-top: var(--s-5);
+  border: 1px solid color-mix(in oklab, var(--info) 30%, transparent);
+  background: var(--info-soft);
+  border-radius: var(--r-3);
+  padding: var(--s-4) var(--s-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.rs-pending-text {
+  font-size: var(--fs-body);
+  line-height: var(--lh-prose);
+  color: var(--ink-2);
+  margin: 0;
+}
+
+/* ── optional self-confidence (per question; observe-only) ───────── */
+.rs-confidence {
+  margin-top: var(--s-4);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-3);
+  color: var(--ink-3);
+  font-size: var(--fs-caption);
+}
+.rs-confidence-q {
+  color: var(--ink-2);
+}
+.rs-confidence-scale {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+.rs-confidence-btn,
+.rs-confidence-skip {
+  min-width: 34px;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--paper);
+  color: var(--ink-2);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.rs-confidence-btn:hover,
+.rs-confidence-skip:hover {
+  border-color: var(--coral-line);
+  color: var(--ink);
+}
+.rs-confidence-btn.is-selected {
+  border-color: var(--coral-line);
+  background: var(--coral-soft);
+  color: var(--ink);
+  font-weight: 650;
+}
+.rs-confidence-skip {
+  width: auto;
+  padding-inline: var(--s-2);
+  font-size: var(--fs-micro);
+}
+.rs-confidence-hint {
+  color: var(--ink-4);
+  font-size: var(--fs-micro);
+}
+
+/* ── 保存状态 chip（D11：saved 仅在 server ack 之后；generation 可见） ── */
+.rs-save {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.rs-save-gen {
+  color: var(--ink-5);
+}
+.rs-save.is-saving {
+  color: var(--info-ink);
+}
+.rs-save.is-error {
+  color: var(--again-ink);
+}
+button.rs-save.is-error {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: var(--s-1) 0;
+  min-height: 24px;
+}
+button.rs-save.is-error:not(:disabled):hover {
+  color: var(--ink-2);
+  text-decoration: underline;
+}
+button.rs-save.is-error:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+  border-radius: var(--r-1);
+}
+.rs-save.is-conflict {
+  color: var(--hard-ink);
+}
+
+/* ── 联合判分组面板（整页证据绑定子集编辑） ────────────────────── */
+.rs-group {
+  margin-top: var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--paper-sunk);
+  padding: var(--s-3) var(--s-4);
+}
+.rs-group-h {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+}
+.rs-group-slots {
+  display: flex;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  margin-top: var(--s-2);
+}
+.rs-group-slot {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  background: var(--paper-raised);
+  color: var(--ink-3);
+  font-size: var(--fs-meta);
+  font-family: inherit;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.rs-group-slot[aria-pressed="true"] {
+  border-color: var(--coral);
+  background: var(--coral-soft);
+  color: var(--coral-ink);
+}
+.rs-group-slot:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+.rs-group-note {
+  margin-top: var(--s-2);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  line-height: var(--lh-prose);
+}
+
+/* ── slot field 包装（题面下的单个作答槽） ────────────────────── */
+.rs-slotfield {
+  margin-top: var(--s-4);
+}
+.rs-slotfield-label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+  letter-spacing: var(--ls-wide);
+  margin-bottom: 4px;
+}
+
+@media (max-width: 720px) {
+  .rs-match-row {
+    grid-template-columns: 1fr;
+  }
+  .rs-attach-thumb {
+    width: 52px;
+    height: 40px;
+  }
+}

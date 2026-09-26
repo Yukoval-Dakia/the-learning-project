@@ -55,6 +55,7 @@ import {
   itemPriorLlasaTaskSpec,
   itemPriorTaskSpec,
 } from '@/capabilities/practice/tasks/item-prior';
+import { jevScoringDecisionTaskSpec } from '@/capabilities/practice/tasks/jev-typed';
 import {
   multimodalDirectJudgeTaskSpec,
   semanticJudgeTaskSpec,
@@ -138,6 +139,7 @@ const EXPECTED_KINDS = [
   'SourcingTask',
   'SupplyPlanTask',
   'BlockAssemblyTask',
+  'JevScoringDecisionTask',
   'CauseCategoryProposeTask',
 ] as const;
 
@@ -160,7 +162,7 @@ const OWNER_MAPS = {
 } as const;
 
 const EXPECTED_OWNER_COUNTS = {
-  practice: 23,
+  practice: 24,
   notes: 3,
   ingestion: 8,
   knowledge: 3,
@@ -221,6 +223,7 @@ const OWNED_SPECS: ReadonlySet<object> = new Set([
   dreamingTaskSpec,
   coachTaskSpec,
   memoryBriefTaskSpec,
+  jevScoringDecisionTaskSpec,
 ]);
 
 const makeDefinition = <const Kind extends string>(kind: Kind) =>
@@ -256,7 +259,7 @@ function invokeEntryValidation(entry: object): void {
 }
 
 describe('taskCatalog', () => {
-  it('has the exact closed 52-kind compile-time and runtime census', () => {
+  it('has the exact closed 53-kind compile-time and runtime census', () => {
     expect(TASK_KIND_IS_CLOSED).toBe(true);
     expect(Object.keys(taskCatalog).sort()).toEqual([...EXPECTED_KINDS].sort());
   });
@@ -552,7 +555,18 @@ describe('taskCatalog', () => {
       for (const [kind, entry] of Object.entries(specs)) {
         expect(entry.ownership, kind).toBe('owned');
         expect(OWNED_SPECS.has(entry), kind).toBe(true);
-        expect(entry.parseText, kind).toBeTypeOf('function');
+        // YUK-1049 — typed specs replace parseText with typed.inputSchema +
+        // outputSchema (schema-parsed IO; no free-text extraction seam).
+        if ((entry.definition as { execution?: string }).execution === 'typed') {
+          expect('parseText' in entry, kind).toBe(false);
+          expect(
+            (entry as { typed?: { inputSchema?: { safeParse?: unknown } } }).typed?.inputSchema
+              ?.safeParse,
+            kind,
+          ).toBeTypeOf('function');
+        } else {
+          expect((entry as { parseText?: unknown }).parseText, kind).toBeTypeOf('function');
+        }
         expect(entry.outputSchema.safeParse, kind).toBeTypeOf('function');
       }
     }

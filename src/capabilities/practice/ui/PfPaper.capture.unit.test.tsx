@@ -3,15 +3,16 @@
 // shouldOfferProcessBox，装配复用 buildCaptureFields，本文件只钉 PfPaper 专属的挂载 /
 // per-slot 持久 / 交卷 wire 行为）。
 //
-// 信心自评（self_confidence）不在本文件：卷路径落 AttemptOnQuestion 事件，而该 payload
-// 没有 self_confidence 槽位（只在 ReviewOnQuestion 上）——补槽位是事件 schema 变更，
-// YUK-784 非目标（「不改后端契约」），见 PR 描述与 Linear follow-up。
+// Q-922 — 每题可选 1–5 信心自评，观测元数据；不影响判分/评级/FSRS。状态由 UI 按 slot
+// 保存；交卷时随该 slot 的提交发出（buildPaperSubmissionBody self_confidence →
+// AttemptOnQuestion.payload.self_confidence），未自评的 slot 不带键（byte-identical）。
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
+import { TOKEN_STORAGE_KEY } from '@/ui/lib/api';
 import { PfPaper } from './PfPaper';
 
 const mocks = vi.hoisted(() => ({
@@ -98,6 +99,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('PfPaper 过程框 — 挂载判据与零强制形态 (YUK-784)', () => {
@@ -219,6 +221,116 @@ describe('PfPaper 交卷 wire — 空值不发字段（byte-identical 缺省）(
     await user.click(screen.getByRole('button', { name: '交卷 · 统一判分' }));
     await waitFor(() => expect(onSubmitted).toHaveBeenCalled());
   });
+
+  it('信心自评按题独立、切题后保留；不评可清空该题选择', async () => {
+    const user = userEvent.setup();
+    renderPaper(paperDetail([textSlot('question_1', '第一题'), textSlot('question_2', '第二题')]));
+    await screen.findByText('第一题');
+    await user.type(screen.getByLabelText('作答'), '答案一');
+    await user.click(screen.getByRole('button', { name: '把握 4 分（共 5 分）' }));
+    await user.click(screen.getByRole('tab', { name: '2' }));
+    await screen.findByText('第二题');
+    await user.click(screen.getByRole('button', { name: '把握 2 分（共 5 分）' }));
+    await user.click(screen.getByRole('tab', { name: '1' }));
+    await screen.findByText('第一题');
+    expect(
+      screen.getByRole('button', { name: '把握 4 分（共 5 分）' }).getAttribute('aria-pressed'),
+    ).toBe('true');
+    await user.click(screen.getByRole('button', { name: '不评' }));
+    expect(
+      screen.getByRole('button', { name: '把握 4 分（共 5 分）' }).getAttribute('aria-pressed'),
+    ).toBe('false');
+    expect(mocks.submitPaperSlot).not.toHaveBeenCalled();
+  });
+
+  it('交卷 wire：自评的 slot 带 self_confidence，未自评的 slot 不带键', async () => {
+    const user = userEvent.setup();
+    renderPaper(paperDetail([textSlot('question_1', '第一题'), textSlot('question_2', '第二题')]));
+    await screen.findByText('第一题');
+    await user.type(screen.getByLabelText('作答'), '答案一');
+    await user.click(screen.getByRole('button', { name: '把握 5 分（共 5 分）' }));
+    await user.click(screen.getByRole('tab', { name: '2' }));
+    await screen.findByText('第二题');
+    await user.type(screen.getByLabelText('作答'), '答案二');
+    await user.click(screen.getByRole('button', { name: '交卷 · 统一判分' }));
+
+    await waitFor(() => expect(mocks.submitPaperSlot).toHaveBeenCalledTimes(2));
+    const first = mocks.submitPaperSlot.mock.calls.find(
+      (c) => c[1].question_id === 'question_1',
+    )?.[1];
+    const second = mocks.submitPaperSlot.mock.calls.find(
+      (c) => c[1].question_id === 'question_2',
+    )?.[1];
+    expect(first).toMatchObject({ self_confidence: 5 });
+    expect(Object.hasOwn(second ?? {}, 'self_confidence')).toBe(false);
+  });
+});
+
+// YUK-1094 — 交卷入口必须并入附件上传 pending：上传未落定时交卷会用旧 evidence 展开
+// image_refs，刚上传的图会从该 slot 的提交里丢掉。
+describe('PfPaper 附件上传中交卷 gating (YUK-1094)', () => {
+  it('disables 交卷 while an attachment upload is in flight, then submits the fresh ref', async () => {
+    // apiFetch 需要 internal token 才会真发请求；否则 uploadAsset 同步抛 ApiAuthError，
+    // 上传瞬间失败，上传中窗口无从观察。jsdom 不提供 localStorage，按本仓先例补内存实现。
+    const store = new Map<string, string>([[TOKEN_STORAGE_KEY, 'test-token']]);
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => void store.set(k, v),
+        removeItem: (k: string) => void store.delete(k),
+        clear: () => store.clear(),
+      },
+    });
+    let resolveUpload!: (res: Response) => void;
+    const uploadGate = new Promise<Response>((resolve) => {
+      resolveUpload = resolve;
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? 'GET';
+        if (url.includes('/api/assets') && method === 'POST') return uploadGate;
+        return Response.json({});
+      }),
+    );
+    const user = userEvent.setup();
+    renderPaper();
+    await screen.findByText('第一题');
+    await user.type(screen.getByLabelText('作答'), '答案一');
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(fileInput, new File(['bytes'], 'work.png', { type: 'image/png' }));
+
+    // In-flight → 交卷按钮 disable（作答已填，否则会是「还有 N 题空着」确认流）。
+    expect(
+      (screen.getByRole('button', { name: '交卷 · 统一判分' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    await act(async () => {
+      resolveUpload(
+        Response.json({
+          asset: {
+            id: 'asset_1',
+            storage_key: 'k',
+            mime_type: 'image/png',
+            byte_size: 3,
+            sha256: 'x',
+          },
+        }),
+      );
+    });
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: '交卷 · 统一判分' }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
+
+    await user.click(screen.getByRole('button', { name: '交卷 · 统一判分' }));
+    await waitFor(() => expect(mocks.submitPaperSlot).toHaveBeenCalledTimes(1));
+    expect(mocks.submitPaperSlot.mock.calls[0][1]).toMatchObject({ image_refs: ['asset_1'] });
+  });
 });
 
 describe('buildPaperSubmissionBody — reasoning_trace wire 装配 (YUK-784)', () => {
@@ -243,5 +355,28 @@ describe('buildPaperSubmissionBody — reasoning_trace wire 装配 (YUK-784)', (
       reasoning_trace: '先列方程',
     });
     expect(body.reasoning_trace).toBe('先列方程');
+  });
+
+  it('未自评 → body 无 self_confidence 键（既有提交逐字不变）', async () => {
+    const { buildPaperSubmissionBody } = await import('./practice-api');
+    const body = buildPaperSubmissionBody('paper_1', {
+      session_id: 'review_1',
+      question_id: 'q1',
+      part_ref: null,
+      answer_md: '答',
+    });
+    expect(Object.hasOwn(body, 'self_confidence')).toBe(false);
+  });
+
+  it('选了档（1–5）→ body 带出自评值（装配处只「非 null 才带」）', async () => {
+    const { buildPaperSubmissionBody } = await import('./practice-api');
+    const body = buildPaperSubmissionBody('paper_1', {
+      session_id: 'review_1',
+      question_id: 'q1',
+      part_ref: null,
+      answer_md: '答',
+      self_confidence: 4,
+    });
+    expect(body.self_confidence).toBe(4);
   });
 });
