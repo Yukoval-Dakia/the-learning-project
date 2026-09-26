@@ -54,6 +54,26 @@ export async function judgeRouter(input: JudgeRouterInput): Promise<JudgeResult>
   return downgradeToV1(await judgeRouterV2(input));
 }
 
+export {
+  EvaluateSubmissionError,
+  type EvaluateSubmissionRequest,
+  type EvaluateSubmissionResult,
+  evaluateSubmission,
+} from './evaluate-submission';
+export {
+  type ContractAttemptInput,
+  type ContractAttemptOutcome,
+  type ContractGradingRef,
+  EVALUATION_ENTRY_POINTS,
+  type EntryPointDisposition,
+  type EvaluateAttemptInput,
+  type EvaluateAttemptOutcome,
+  type GradingEntryPoint,
+  type LegacyAttemptInput,
+  type LegacyAttemptOutcome,
+  evaluateAttempt,
+  projectEvaluationToJudgeResult,
+} from './evaluation-authority';
 export { judgeExact } from './exact';
 export {
   type JudgeExecutionIdentity,

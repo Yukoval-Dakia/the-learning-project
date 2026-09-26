@@ -7,10 +7,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import {
-  type JudgeInvokerOutput,
-  createDefaultJudgeInvoker,
-} from '@/capabilities/practice/server/judge';
+import { type JudgeInvokerOutput, evaluateAttempt } from '@/capabilities/practice/server/judge';
 import type { JudgeAnswerParams } from '@/capabilities/practice/server/judge/question-contract';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
@@ -359,7 +356,12 @@ export async function submitSolveAttempt(
   // 无步骤（纯手写图 / 只填最终答案）时为空串 → 下面条件写入使字段 ABSENT，payload 逐字不变。
   const reasoningTrace = trimmedSteps.join('\n').slice(0, REASONING_TRACE_MAX_LEN);
 
-  const judgeFn = params.judgeFn ?? ((input) => createDefaultJudgeInvoker().invoke(input));
+  const judgeFn =
+    params.judgeFn ??
+    // YUK-1047 — default seam is the unified funnel (entry='solve_tutor'); the
+    // legacy lane returns JudgeInvokerOutput verbatim, so injected judgeFn
+    // fakes remain assignable to JudgeFn.
+    ((input) => evaluateAttempt({ entry: 'solve_tutor', legacy: input }));
   const judged = await judgeFn({
     db,
     question: q,
