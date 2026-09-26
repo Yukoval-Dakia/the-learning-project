@@ -11,8 +11,12 @@
 //     store 的真实资产 + 由调用方核验的实内容 digest（无核验值 ⇒ 如实标注
 //     unverified，不伪造）；
 //   - 每个 part 的判分依据来自【它自己的】答案来源（part 行 reference /
-//     structured 叶 answers）；root 的 reference 与无答案叶【绝不】互相兜底
-//     （复审 P1-2b：缺叶答案 ⇒ conversion_issue + withheld，不继承 root 键）；
+//     structured 叶 answers）。例外（YUK-1099 owner 裁决 B）：【standalone
+//     单叶】（structured root 无 sub_questions）且叶无 answers 时，行级
+//     reference_md 是该题自己的真实答案（import/auto-enroll 形状）——
+//     解析进品格而非 missing_reference 丢弃。stem+subs 的无答案叶仍不
+//     继承 root reference（复审 P1-2b 裁决不变）；兜底 reference 存在但
+//     槽位不可解析 ⇒ unrepresentable_answer（未决，不伪造键）。
 //   - rule_reference.source 按【答案证据】的实际来源映射（复审 P1-2c：
 //     rubric.reference_solution_source='ai_generated' ⇒ system_proposed，
 //     即使题目本身来自 web_sourced —— 题目获取来源 ≠ 答案权威来源，D1）；
@@ -257,6 +261,14 @@ interface LeafInput {
   choices: string[] | null;
   /** 该 part 自己的答案文本候选（叶 answers / part 行 reference）。 */
   answerTexts: string[];
+  /**
+   * YUK-1099（owner 裁决 B）—— answerTexts 来自行级 reference_md 的
+   * standalone 叶兜底（import/auto-enroll 形状：叶无 answers，但 reference_md
+   * 就是真实答案）。此时 reference 是该题自己的已写定答案键 ——
+   * text 槽 exact-capable 时直接铸 text_key（不需 judge_kind_override='exact'），
+   * 选择槽解析不出字母 ⇒ unrepresentable_answer（未决，绝不伪造键）。
+   */
+  answerFromRowReference?: boolean;
   judgeKindOverride: string | null;
   provenance: RuleProvenance;
   rubric: JsonObject | null;
@@ -317,13 +329,25 @@ function normalizeLeafScoring(leaf: LeafInput): LeafScoring {
     }
     // 选择题但答案头不可解析 → 以 rule 文本承载（不发明键）。rubric/placeholder
     // 来源 ⇒ provenance 降为 system_proposed（不冒充 official，D1）。
+    // YUK-1099 #3（owner 裁决 B）—— 兜底 reference 存在但解析不出 ⇒ 该槽
+    // 对答案而言是【存在但不可表示】：记 unrepresentable_answer（publisher 强制
+    // withheld），不是 missing_reference，也不伪装成无 issue 的可发布规则。
     const fallback = buildRuleStatement(answerText, leaf);
     return {
       slot: { slot_id: slotId, part_id: leaf.partId, kind: 'single_choice', options },
       criterionKind: 'rule_reference',
       ruleStatement: fallback.statement,
       ruleProvenance: fallback.origin === 'reference' ? leaf.provenance : 'system_proposed',
-      issue: answerText == null ? missingReferenceIssue(leaf) : undefined,
+      issue:
+        answerText == null
+          ? missingReferenceIssue(leaf)
+          : leaf.answerFromRowReference
+            ? {
+                code: 'unrepresentable_answer',
+                partId: leaf.partId,
+                detail: `row reference_md head does not parse as an option letter for slot '${slotId}' — withheld rather than minting a fabricated key`,
+              }
+            : undefined,
     };
   }
 
@@ -344,7 +368,14 @@ function normalizeLeafScoring(leaf: LeafInput): LeafScoring {
       issue: missingReferenceIssue(leaf),
     };
   }
-  if (leaf.judgeKindOverride === 'exact' && isExactCapableReference(answerText)) {
+  // YUK-1099 #3 —— answerFromRowReference（standalone 叶兜底）= reference_md
+  // 是已写定答案键：exact-capable 时直接铸 text_key，不要求显式 'exact' override
+  // （该行从未标过 exact 判分意图 —— 要求它会把可判分的 import/auto-enroll 题
+  // 误降为 human_review 规则）。非兜底路径仍需 override —— 与未改行为一致。
+  if (
+    (leaf.judgeKindOverride === 'exact' || leaf.answerFromRowReference === true) &&
+    isExactCapableReference(answerText)
+  ) {
     return {
       slot,
       criterionKind: 'text_key',
@@ -519,11 +550,33 @@ export function normalizeQuestionRowToContract(row: NormalizableQuestionRow): No
       rubric: row.rubric_json,
       partIdForIssues: structuredRoot.id,
     });
+    // YUK-1099 #3（owner 裁决 B）—— structured 是【standalone 单叶】（root 无
+    // sub_questions，叶即根）且叶无 answers 时，行级 reference_md 是该题自己的
+    // 真实答案（import/auto-enroll 形状），喂入答案槽而不是 missing_reference
+    // 丢弃。仅限 standalone：stem+subs 的某个无答案 sub 不继承 root reference
+    //（P1-2b 裁决不变 —— 多叶树下摊派 root 答案会错配）。
+    // 「叶有无自己的答案」= 至少一个非空白答案；`['']` 与 `[]` 同为「无答案」
+    //（standalone 门与下面的答案映射必须用同一判据，否则门放行兜底而映射
+    // 仍发空白答案 —— 内部自相矛盾）。
+    const hasNonBlankAnswer = (answers: readonly string[] | null | undefined): boolean =>
+      (answers ?? []).some((t) => t != null && t.trim().length > 0);
+    const isStandaloneLeaf =
+      (structuredRoot.sub_questions ?? []).length === 0 &&
+      !hasNonBlankAnswer(structuredRoot.answers);
+    const rowReference =
+      isStandaloneLeaf && row.reference_md != null && row.reference_md.trim().length > 0
+        ? row.reference_md
+        : null;
     const leaves = collectLeaves(structuredRoot).map((leaf) => ({
       partId: leaf.id,
       prompt: leaf.prompt_text,
       choices: leaf.options?.map((o) => o.text) ?? null,
-      answerTexts: leaf.answers,
+      answerTexts: hasNonBlankAnswer(leaf.answers)
+        ? leaf.answers
+        : rowReference != null
+          ? [rowReference]
+          : [],
+      answerFromRowReference: rowReference != null && !hasNonBlankAnswer(leaf.answers),
       judgeKindOverride: row.judge_kind_override,
       provenance,
       rubric: row.rubric_json,
@@ -680,7 +733,10 @@ export function normalizeQuestionGroupToContract(
         : [];
     return {
       partId: p.id,
-      prompt: p.prompt_md,
+      // YUK-1099 #2 —— prompt 以编辑后的 structured 叶文本为准（edit_node_text
+      // 只写 question.structured，不追更 flat prompt_md —— 发 flat 列会让已
+      // 接受的题面编辑永远进不了 revision，digest 不变即 noop）。
+      prompt: structuredLeaf?.prompt_text ?? p.prompt_md,
       choices,
       answerTexts,
       judgeKindOverride: root.judge_kind_override,
