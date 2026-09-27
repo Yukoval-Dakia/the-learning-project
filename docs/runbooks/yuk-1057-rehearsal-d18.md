@@ -51,14 +51,24 @@ halt on first ceiling), evidence double-sealed to `<out>/evidence.ndjson` and
 `ai_task_runs` (`task_kind='D18EvalHarness'`, input/result digests, usage and
 cost basis recorded verbatim).
 
+YUK-1058 扩展：每次调用镜像 `latency_ms`/`score`/`escalated`（NDJSON 证据行
++ ai_task_runs `usage_json.d18_*` 可选字段）；runner 汇总写 `<out>/d18-metrics.json`
+（dev/holdout/all split 的 error_rate、point_error、severe_error_rate、
+upgrade_coverage、cost、latency p50/p95/mean —— 定义见
+`src/core/eval/d18-metrics.ts`）。`--lane` 显式校验：只允许已实现 lane
+（当前只有 `stub`），其他值直接拒绝——防止误启 live egress。合成 corpus
+不带 `expect` gold → 判分指标为 null，指标层正确性由 `d18-metrics.test.ts`
+证明；actual-output run 提供 gold 后自动填充。
+
 ### Live actual-output run (owner-triggered)
 
 The shipped invoker is a deterministic **stub** with zero egress — it proves
-harness, gate, and sealing are ready. A real provider invoker lane
+harness, gate, metrics, and sealing are ready. A real provider invoker lane
 (`--lane=jev-openrouter|mimo-text|mimo-vision`) is implemented by the eval ticket
 that plugs a provider-bound `EvalInvoker` into `runEvalHarness`; the budget gate,
-retry accounting, and evidence seams are identical. Do not run real provider keys
-through this runner as shipped — there is no live lane wired yet.
+retry accounting, metrics layer, and evidence seams are identical. Do not run
+real provider keys through this runner as shipped — there is no live lane wired
+yet (the `--lane` flag actively rejects non-stub values).
 
 When the live lane lands, the owner-triggered command is:
 

@@ -12,6 +12,12 @@
 // 而 D18 评测的运行体是 harness 不是 TaskRunner —— 不注册 catalog，
 // 直接用字符串写库（task_kind 列是 text，无 DB enum）。catalog 侧
 // EXPECTED_KINDS 契约不受影响。
+//
+// YUK-1058 metrics 扩展：latency_ms → started_at/finished_at 反推
+// （ai_task_runs 无 duration 列，用 finished−started 表达耗时）；score 与
+// escalated 镜像进 usage_json 的 d18_* 可选字段（判分证据的权威仓是
+// NDJSON/harness entry，DB 行镜像之以便 SQL 聚合）。error_message 只装真
+// 错误（不入元数据）。
 
 import { createWriteStream, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -56,6 +62,10 @@ export function aiTaskRunEvidenceSink(db: Db, opts: { provider: string }): EvalE
       const status = entry.outcome === 'settled' ? 'success' : 'failure';
       const finishReason = entry.outcome === 'settled' ? 'settled' : entry.outcome;
       const recordedAt = new Date(entry.recorded_at);
+      // latency → 时间区间表达：finished_at=recorded_at，started_at=recorded−latency
+      // （ai_task_runs 无 duration 列；gate_rejected 无调用 → 两端同刻）。
+      const startedAt =
+        entry.latency_ms === null ? recordedAt : new Date(recordedAt.getTime() - entry.latency_ms);
       // 先查后写：证据行不可变 —— 已有同 id 行（同 run 重放）即跳过，
       // 绝不让第二次运行悄悄覆盖已封存证据。
       const existing = await db
@@ -76,12 +86,17 @@ export function aiTaskRunEvidenceSink(db: Db, opts: { provider: string }): EvalE
         usage_json: {
           inputTokens: entry.usage.inputTokens,
           outputTokens: entry.usage.outputTokens,
+          // YUK-1058：判分/升级镜像（可选字段，ai_task_runs.usage_json $type
+          // 的 d18_* 扩展 —— 不影响既有消费方）。
+          ...(entry.score === null ? {} : { d18_score: entry.score }),
+          ...(entry.escalated === null ? {} : { d18_escalated: entry.escalated }),
+          ...(entry.latency_ms === null ? {} : { d18_latency_ms: entry.latency_ms }),
         },
         cost_usd: entry.cost_usd,
         cost_basis: entry.cost_basis,
         cost_ref: entry.cost_ref,
         error_message: entry.error === null ? null : entry.error.slice(0, 500),
-        started_at: recordedAt,
+        started_at: startedAt,
         finished_at: recordedAt,
       });
     },

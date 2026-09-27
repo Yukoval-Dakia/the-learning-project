@@ -27,6 +27,11 @@ export interface EvalCorpusItem {
   split: 'dev' | 'holdout';
   /** 请求体（由 invoker lane 自行解释；harness 不透传形状）。 */
   request: unknown;
+  /**
+   * 金标期望（YUK-1058 D18 metrics）：带 gold_points 的 item 参与判分指标
+   * （error_rate / point_error / severe_error_rate）；不带则只进 coverage/cost/latency。
+   */
+  expect?: { max_points: number; gold_points: number };
 }
 
 export interface EvalInvocationRequest {
@@ -41,6 +46,13 @@ export interface EvalInvocationResult {
   usage: { inputTokens: number; outputTokens: number };
   /** provider 报告的成本（USD）；未知 → null 走保守记账。 */
   reportedCostUsd: number | null;
+  /**
+   * 判分结果（YUK-1058 metrics）：本次调用的最终判分。判分类 lane 必填以
+   * 计算 error_rate/point_error；探测类调用可省略（不进判分指标）。
+   */
+  score?: { points_awarded: number; max_points: number };
+  /** 本次调用是否走了升级路径（Jev escalate / advanced executor）。 */
+  escalated?: boolean;
 }
 
 /**
@@ -80,6 +92,12 @@ export interface EvalEvidenceEntry {
   /** 本次调用是否被 gate 拒绝（触顶调用没有 output）。 */
   outcome: 'settled' | 'gate_rejected' | 'invoke_failed';
   error: string | null;
+  /** 调用耗时（harness 实测 invoke 往返；gate_rejected 无调用 → null）。 */
+  latency_ms: number | null;
+  /** 判分结果镜像（settled 且 invoker 上报时；metrics 的判分偏离输入）。 */
+  score: { points_awarded: number; max_points: number } | null;
+  /** 升级路径标记（settled 且 invoker 上报时；未知 → null）。 */
+  escalated: boolean | null;
   recorded_at: string;
 }
 
@@ -140,6 +158,7 @@ export async function runEvalHarness(opts: EvalHarnessOptions): Promise<EvalRunR
     result: EvalInvocationResult | null,
     error: string | null,
     estimate: EvalCallEstimate | null,
+    latencyMs: number | null,
   ): Promise<void> => {
     const d = digests(req, result?.output ?? null);
     await opts.sink.record({
@@ -167,6 +186,9 @@ export async function runEvalHarness(opts: EvalHarnessOptions): Promise<EvalRunR
             : `unpriced:${opts.invoker.lane}`,
       outcome,
       error,
+      latency_ms: latencyMs,
+      score: outcome === 'settled' ? (result?.score ?? null) : null,
+      escalated: outcome === 'settled' ? (result?.escalated ?? null) : null,
       recorded_at: now().toISOString(),
     });
   };
@@ -185,15 +207,17 @@ export async function runEvalHarness(opts: EvalHarnessOptions): Promise<EvalRunR
           gate.admit({ ...estimate, kind });
         } catch (err) {
           if (err instanceof BudgetHaltError) {
-            await record(req, 'gate_rejected', null, err.message, estimate);
+            await record(req, 'gate_rejected', null, err.message, estimate, null);
           }
           throw err;
         }
         invocations += 1;
         if (attempt > 1) retries += 1;
         if (attempt === 1) attempted += 1;
+        const invokeStart = Date.now();
         try {
           const result = await opts.invoker.invoke(req);
+          const latencyMs = Date.now() - invokeStart;
           gate.settle({
             kind,
             inputTokens: result.usage.inputTokens,
@@ -201,11 +225,12 @@ export async function runEvalHarness(opts: EvalHarnessOptions): Promise<EvalRunR
             actualCostUsd: result.reportedCostUsd,
             estimatedCostUsd: estimate.estimatedCostUsd,
           });
-          await record(req, 'settled', result, null, estimate);
+          await record(req, 'settled', result, null, estimate, latencyMs);
           settled = true;
         } catch (err) {
+          const latencyMs = Date.now() - invokeStart;
           const message = err instanceof Error ? err.message : String(err);
-          await record(req, 'invoke_failed', null, message, estimate);
+          await record(req, 'invoke_failed', null, message, estimate, latencyMs);
           failures.push({ item_id: item.id, attempt, error: message });
           // invoke 失败不收 cost（无 reported usage 可入账）；attempt 已计入
           // requests —— retries 计入上限的语义保持（下一次 attempt 走新 admit）。
