@@ -12,4 +12,4 @@ export {
   resolvePlacementStarterGoalAuthority,
   terminalizeLostPlacementDelivery,
 } from '@/capabilities/practice/public';
-export { PLACEMENT_PROBE_ENABLED } from '@/server/session/placement';
+export { placementProbeEnabled } from '@/server/session/placement';

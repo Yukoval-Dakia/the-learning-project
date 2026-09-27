@@ -27,7 +27,7 @@
 import type { Job } from 'pg-boss';
 
 import type { Provider } from '@/ai/registry';
-import { parseFlag } from '@/core/env-flags';
+import { getConfigFlag } from '@/core/config/store';
 import type { Db } from '@/db/client';
 import { resolveTaskProvider } from '@/server/ai/providers';
 import type {
@@ -67,7 +67,7 @@ export function buildJudgeCalibrationSampleHandler(
 ): (jobs: Job<Record<string, never>>[]) => Promise<void> {
   return async () => {
     // Dark-ship gate: default OFF. Zero spend / zero events when disabled.
-    if (!parseFlag(process.env[JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV])) {
+    if (!getConfigFlag(JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV)) {
       const rawEnabled = process.env[JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV];
       console.log(
         `[judge_calibration_sample] disabled (${JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV}=${JSON.stringify(rawEnabled)})`,

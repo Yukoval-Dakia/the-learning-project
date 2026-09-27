@@ -12,7 +12,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EnqueueFn } from '@/capabilities/practice/public';
 import { db } from '@/db/client';
 import { event, knowledge, learning_item } from '@/db/schema';
-import { PLACEMENT_PROBE_ENABLED } from '@/kernel/placement';
+import { placementProbeEnabled } from '@/kernel/placement';
 import { resetDb } from '../../../../tests/helpers/db';
 import { emptyPlacementStarterRecoveryResult } from '../server/placement-starter-recovery';
 import {
@@ -79,7 +79,7 @@ describe('runQuestionSupplyNightly', () => {
       // YUK-761 tail step: no claims in the DB → the recovery sweep is a pure no-op, but it
       // still RUNS (the supply leg's zero-target early return must not skip it).
       placementStarterRecovery: emptyPlacementStarterRecoveryResult({
-        redispatchSuppressed: !PLACEMENT_PROBE_ENABLED,
+        redispatchSuppressed: !placementProbeEnabled(),
       }),
     });
     expect(enqueued).toHaveLength(0);

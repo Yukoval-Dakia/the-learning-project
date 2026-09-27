@@ -2,6 +2,7 @@
 // keep 行；HTTP 路径沿旧 /api/_/import 不变；旧壳 Task 9 拆）。
 
 import { retireInterventionPreparationJobs } from '@/capabilities/agency/public';
+import { getConfig } from '@/core/config/store';
 import { db } from '@/db/client';
 import { restoreFromArchive } from '@/server/export/archive';
 import { getR2 } from '@/server/r2';
@@ -28,19 +29,24 @@ const DEFAULT_BACKUP_IMPORT_MAX_BYTES = 1_000_000_000;
 // 413 every restore. Below the floor we warn and fall back to the default rather
 // than honoring a self-defeating value.
 const MIN_BACKUP_IMPORT_MAX_BYTES = 1_000_000;
-function resolveBackupImportMaxBytes(): number {
-  const raw = process.env.BACKUP_IMPORT_MAX_BYTES;
-  if (raw === undefined || raw === '') return DEFAULT_BACKUP_IMPORT_MAX_BYTES;
-  const parsed = Number(raw);
+// YUK-1007：模块级常量改为 per-call getter——热加载生效（request handler 每次
+// 调用时才解析；不是启动常量）。DB > env > code-default；非法值 warn + 默认
+// （同原 floor 语义，只是现在 warn 在请求路径上——config 值合法时零 warn）。
+export function maxBackupUploadBytes(): number {
+  const resolved = getConfig('BACKUP_IMPORT_MAX_BYTES');
+  if (resolved === undefined) return DEFAULT_BACKUP_IMPORT_MAX_BYTES;
+  const parsed = typeof resolved === 'number' ? resolved : Number(resolved);
   if (!Number.isFinite(parsed) || parsed < MIN_BACKUP_IMPORT_MAX_BYTES) {
     console.warn(
-      `[backup_import] ignoring BACKUP_IMPORT_MAX_BYTES=${raw}: must be a number >= ${MIN_BACKUP_IMPORT_MAX_BYTES} bytes; falling back to the ${DEFAULT_BACKUP_IMPORT_MAX_BYTES}-byte default (a too-low cap would silently 413 every restore)`,
+      `[backup_import] ignoring BACKUP_IMPORT_MAX_BYTES=${resolved}: must be a number >= ${MIN_BACKUP_IMPORT_MAX_BYTES} bytes; falling back to the ${DEFAULT_BACKUP_IMPORT_MAX_BYTES}-byte default (a too-low cap would silently 413 every restore)`,
     );
     return DEFAULT_BACKUP_IMPORT_MAX_BYTES;
   }
   return parsed;
 }
-export const MAX_BACKUP_UPLOAD_BYTES = resolveBackupImportMaxBytes();
+// 保留常量名字供既有调用点零改动——但实际变成 getter；下行是 call site 兼容注释：
+// 原 `MAX_BACKUP_UPLOAD_BYTES` const 已改为 maxBackupUploadBytes() 函数（hot reload）。
+// 原 MAX_BACKUP_UPLOAD_BYTES const 已改为 maxBackupUploadBytes()（hot reload，§YUK-1007）。
 
 // Shared 413 for both the pre-read (Content-Length) and post-read (buffered length)
 // tripwire checks, so the payload and the operator hint stay identical (#965
@@ -49,7 +55,7 @@ function payloadTooLargeResponse(): Response {
   return Response.json(
     {
       error: 'payload_too_large',
-      message: `backup upload exceeds the ${Math.round(MAX_BACKUP_UPLOAD_BYTES / 1_000_000)} MB safety limit; raise BACKUP_IMPORT_MAX_BYTES to allow a larger restore`,
+      message: `backup upload exceeds the ${Math.round(maxBackupUploadBytes() / 1_000_000)} MB safety limit; raise BACKUP_IMPORT_MAX_BYTES to allow a larger restore`,
     },
     { status: 413 },
   );
@@ -77,7 +83,7 @@ export async function POST(req: Request): Promise<Response> {
   // the Number(null) === 0 quirk, which a future refactor could silently break.
   const rawContentLength = req.headers.get('content-length');
   const declaredBytes = rawContentLength ? Number(rawContentLength) : Number.NaN;
-  if (Number.isFinite(declaredBytes) && declaredBytes > MAX_BACKUP_UPLOAD_BYTES) {
+  if (Number.isFinite(declaredBytes) && declaredBytes > maxBackupUploadBytes()) {
     return payloadTooLargeResponse();
   }
 
@@ -91,7 +97,7 @@ export async function POST(req: Request): Promise<Response> {
   // job is to refuse to feed an over-limit body into the DESTRUCTIVE wipe-and-reload:
   // if we got here with too many bytes, fail closed rather than restore. Same
   // env-tunable ceiling as the pre-read gate.
-  if (bytes.byteLength > MAX_BACKUP_UPLOAD_BYTES) {
+  if (bytes.byteLength > maxBackupUploadBytes()) {
     return payloadTooLargeResponse();
   }
 

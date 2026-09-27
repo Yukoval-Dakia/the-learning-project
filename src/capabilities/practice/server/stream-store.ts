@@ -13,6 +13,7 @@
 // opening/closing line：M2 为模板（M4 夜链 AI 化后由 composer_nightly 写入）。
 
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql } from 'drizzle-orm';
+import { getConfig } from '@/core/config/store';
 import { newId } from '@/core/ids';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
@@ -70,7 +71,6 @@ import {
   normalizeDailyPracticePace,
 } from './stream-budget';
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
-import { streamLocalDate } from './stream-date';
 import { rotationClassForKind } from './variant-rotation';
 
 export { streamLocalDate } from './stream-date';
@@ -520,7 +520,9 @@ export async function materializeStream(
  * 选题不能因配置 typo 挂）。
  */
 export function resolveSelectionPolicy(): SelectionPolicyConfig {
-  const raw = process.env.SELECTION_POLICY;
+  // YUK-1007：DB > env > code-default('softmax_mfi')；未识别 env 值落默认（不
+  // fail-fast——选题不能因配置 typo 挂）。
+  const raw = getConfig('SELECTION_POLICY');
   if (raw === 'legacy') return { policy: 'legacy' };
   if (raw === 'softmax_mfi') return { policy: 'softmax_mfi' };
   return { policy: DEFAULT_SELECTION_POLICY };

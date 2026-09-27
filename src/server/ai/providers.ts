@@ -29,6 +29,7 @@
 
 import { type Provider, type TaskKind, tasks } from '@/ai/registry';
 import type { TaskDefinition } from '@/ai/task-spec';
+import { getLaneOverride, getTaskOverride } from '@/core/config/store';
 import type { ProviderModelBinding } from './model-profiles';
 
 // YUK-608 — re-export the provider union so override consumers (solve-lane, verify-framework)
@@ -448,8 +449,9 @@ export function providerRequiresExplicitModel(provider: Provider): boolean {
  * YUK-594 (W5 #TurRP) — the model a per-call provider CROSS-OVER must pin.
  *
  * `resolveTaskProvider` layers provider and model INDEPENDENTLY
- * (`override?.model ?? envOverride?.model ?? subDefaultModel`). So a caller that hands it only
- * `override.provider` — which is exactly what the durable judge's fallback lane does — still
+ * (`override?.model ?? globalSwitch?.model ?? dbTaskOverride?.model ?? subDefaultModel`).
+ * So a caller that hands it only `override.provider` — which is exactly what the durable judge's
+ * fallback lane does — still
  * inherits a global `AI_PROVIDER_MODEL` from whatever lane it is crossing AWAY from. With
  * `AI_PROVIDER_OVERRIDE=xiaomi` + `AI_PROVIDER_MODEL=<mimo id>` and a fallback to
  * `anthropic-sub`, the last-chance retry would post a mimo model id to the subscription
@@ -524,25 +526,48 @@ function readEnvOverride(): { provider: Provider; model?: string } | undefined {
 }
 
 /**
+ * YUK-1007 — 全局 provider pin 的合并层：env（AI_PROVIDER_OVERRIDE，operator
+ * 钉死进程，最高优先）> DB `lane.global.provider`/`lane.global.model`（面板
+ * 写的 DB 位）。env 缺席时 DB pin 生效；两者都缺席 → undefined。
+ * DB 值经 hydrate schema + 写端 isKnownProvider 校验，但手工注入行可能在写端
+ * 之外落地——这里仍走同一 unknown-name throw（与 env 侧一致的 config-error
+ * 语义，让错配立刻可观测而不是静默降级）。
+ */
+function readGlobalProviderSwitch(): { provider: Provider; model?: string } | undefined {
+  const env = readEnvOverride();
+  if (env) return env;
+  const db = getLaneOverride('global');
+  if (!db?.provider) return undefined;
+  if (!isKnownProvider(db.provider)) {
+    throw new Error(
+      `lane.global.provider='${db.provider}' (DB config) is not a known provider; expected one of ${Object.keys(PROVIDERS).join(' | ')}`,
+    );
+  }
+  return { provider: db.provider, model: db.model };
+}
+
+/**
  * YUK-576 — predicate form of the env switch for the runner's transient-retry
  * gate: when the operator pins the WHOLE process to one provider
- * (AI_PROVIDER_OVERRIDE), in-process retry stays off (pinned routing is an
- * explicit operator decision; see runner.ts transientRetryEnabled). Delegates
- * to `readEnvOverride()` so the truthiness/validation logic is never written
- * twice — an invalid override value throws the same clear config error here as
- * it would at resolution time.
+ * (AI_PROVIDER_OVERRIDE env 或 lane.global.* DB 行), in-process retry stays off
+ * (pinned routing is an explicit operator decision; see runner.ts
+ * transientRetryEnabled). Delegates to `readGlobalProviderSwitch()` so the
+ * truthiness/validation logic is never written twice — an invalid override
+ * value throws the same clear config error here as it would at resolution time.
  */
 export function hasGlobalProviderOverride(): boolean {
-  return readEnvOverride() !== undefined;
+  return readGlobalProviderSwitch() !== undefined;
 }
 
 /**
  * Resolve a task to its concrete provider binding.
  *
- * Lookup order:
+ * Lookup order（YUK-1007 DB override 层落地后）：
  *   1. `override.provider` / `override.model` if supplied (test/dev escape hatch)
- *   2. `AI_PROVIDER_OVERRIDE` / `AI_PROVIDER_MODEL` env switch (YUK-365 global override)
- *   3. Task registry's `defaultProvider` + `defaultModel`
+ *   2. 全局 switch：`AI_PROVIDER_OVERRIDE`/`AI_PROVIDER_MODEL` env → DB
+ *      `lane.global.*`（owner 裁决：env pin 恒压 DB——它是 incident kill-switch）
+ *   3. DB `task.<kind>.provider` / `.model` per-task override（面板写点）
+ *   4. Task registry's `defaultProvider` + `defaultModel`
  *
  * Throws if the resolved provider's required env var isn't set.
  */
@@ -551,41 +576,50 @@ export function resolveTaskProvider(
   override?: { provider?: Provider; model?: string },
 ): ResolvedProvider {
   const def = tasks[kind];
-  const envOverride = readEnvOverride();
+  const globalSwitch = readGlobalProviderSwitch();
+  const dbTaskOverride = getTaskOverride(kind);
 
-  // Explicit arg > env switch > registry default. The arg may set only `model`,
-  // so fall back through each layer per-field.
-  const providerName: Provider = override?.provider ?? envOverride?.provider ?? def.defaultProvider;
+  // Explicit arg > global switch (env pin > DB global) > DB per-task > registry.
+  // The arg may set only `model`, so fall back through each layer per-field.
+  const dbTaskProvider =
+    dbTaskOverride?.provider && isKnownProvider(dbTaskOverride.provider)
+      ? (dbTaskOverride.provider as Provider)
+      : undefined;
+  const providerName: Provider =
+    override?.provider ?? globalSwitch?.provider ?? dbTaskProvider ?? def.defaultProvider;
 
-  // Codex review P2 (Finding 4): when AI_PROVIDER_OVERRIDE switches the GLOBAL
-  // provider to one whose endpoint won't accept the registry's mimo default model
-  // (e.g. `anthropic` direct, or any future wired non-mimo provider) and no
-  // AI_PROVIDER_MODEL is named, the layered model fallback below would carry the
-  // task's registry `mimo-v2.5*` id onto a non-mimo endpoint → a first-party
-  // request that 404s on an unknown model. The env switch is global, so this would
-  // silently break EVERY task. Fail fast with a clear config error instead.
+  // Codex review P2 (Finding 4) — the global-switch model guard, now covering
+  // BOTH the env pin and DB lane.global pin (identical semantics: the switch is
+  // global, so a provider whose endpoint won't accept the registry's mimo
+  // default would silently break EVERY task). A per-call `override.model`, the
+  // switch's own model, or the DB task-level model satisfies the guard.
   //   - `anthropic-sub` is exempt: it has a built-in Opus 4.8 default (below).
   //   - `xiaomi` is exempt: it IS the mimo endpoint, so the registry default fits.
-  //   - A per-call `override.model` (or AI_PROVIDER_MODEL) satisfies the guard.
-  // The exempt set lives in `providerRequiresExplicitModel` (single source of truth, also read by
-  // override pre-flights) so it can't drift from a second hard-coded copy.
-  const cameFromEnvSwitch = !override?.provider && envOverride?.provider !== undefined;
+  // The exempt set lives in `providerRequiresExplicitModel` (single source of
+  // truth, also read by override pre-flights + config write validation) so it
+  // can't drift from a second hard-coded copy.
+  const cameFromGlobalSwitch = !override?.provider && globalSwitch?.provider !== undefined;
   if (
-    cameFromEnvSwitch &&
+    cameFromGlobalSwitch &&
     providerRequiresExplicitModel(providerName) &&
     !override?.model &&
-    !envOverride?.model
+    !globalSwitch?.model &&
+    !dbTaskOverride?.model
   ) {
+    const source = process.env.AI_PROVIDER_OVERRIDE
+      ? 'AI_PROVIDER_OVERRIDE'
+      : 'DB lane.global.provider';
     throw new Error(
-      `AI_PROVIDER_OVERRIDE='${providerName}' selects a non-mimo provider, but no AI_PROVIDER_MODEL is set; the task registry default model ('${def.defaultModel}') is a mimo id that '${providerName}' won't accept. Set AI_PROVIDER_MODEL to a model the '${providerName}' endpoint serves, or use 'anthropic-sub' (defaults to ${ANTHROPIC_SUB_DEFAULT_MODEL}).`,
+      `${source}='${providerName}' selects a non-mimo provider, but no model is set; the task registry default model ('${def.defaultModel}') is a mimo id that '${providerName}' won't accept. Set AI_PROVIDER_MODEL or DB lane.global.model to a model the '${providerName}' endpoint serves, or use 'anthropic-sub' (defaults to ${ANTHROPIC_SUB_DEFAULT_MODEL}).`,
     );
   }
 
   // When the subscription lane is selected and no model is named anywhere, use
-  // its Opus 4.8 default. Otherwise the layered model wins (arg > env > registry).
+  // its Opus 4.8 default. Otherwise the layered model wins (arg > global > db task > registry).
   const subDefaultModel =
     providerName === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : def.defaultModel;
-  const modelId = override?.model ?? envOverride?.model ?? subDefaultModel;
+  const modelId =
+    override?.model ?? globalSwitch?.model ?? dbTaskOverride?.model ?? subDefaultModel;
 
   const config = PROVIDERS[providerName];
   if (!config) {

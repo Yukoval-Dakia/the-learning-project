@@ -4,6 +4,10 @@
 // cannot be getter-mocked), AND env-overridable so the thresholds can be
 // dark-shipped / tuned per environment without a code change.
 //
+// YUK-1007：const → 函数读者（dedupDistanceMax/dedupWindowDays/dedupMaxPairs）。
+// 「≤0 = 静默禁用」规则已由 registry zod schema 承担（写端拦下），reader 侧叠加
+// 本地防御。
+//
 // These govern the nightly `kc_dedup_nightly` job: it detects near-duplicate
 // auto-created KC pairs by pgvector cosine distance and emits MERGE PROPOSALS
 // (pending inbox items) — PROPOSE-ONLY, never auto-merge. Accepting a merge runs
@@ -58,40 +62,23 @@ const DEFAULT_DEDUP_WINDOW_DAYS = 7;
  */
 const DEFAULT_DEDUP_MAX_PAIRS = 50;
 
-function resolveFinite(raw: string | undefined, fallback: number): number {
-  if (raw == null || raw.trim() === '') return fallback;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) ? parsed : fallback;
+import { getConfig } from '@/core/config/store';
+
+export function dedupDistanceMax(): number {
+  // YUK-1007：DB > env > code-default(0.1)。env/DB 层各保证正有限值——
+  // reader 侧叠加非正/非有限防御保留原 fail-safe（手动注入行仍不过层）。
+  const v = getConfig('KC_DEDUP_DISTANCE_MAX');
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : DEFAULT_DEDUP_DISTANCE_MAX;
 }
 
-function resolvePositive(raw: string | undefined, fallback: number): number {
-  const n = resolveFinite(raw, fallback);
-  // A non-positive override (0 / negative) would silently DISABLE the scan: cosine
-  // distance is always > 0, so a `distance <= 0` ceiling never matches → no dedup.
-  // Fall back to the default instead (OCR #4).
-  if (!Number.isFinite(n) || n <= 0) return fallback;
-  return n;
+export function dedupWindowDays(): number {
+  const v = getConfig('KC_DEDUP_WINDOW_DAYS');
+  const n = typeof v === 'number' ? Math.trunc(v) : Number.NaN;
+  return Number.isFinite(n) && n >= 1 ? n : DEFAULT_DEDUP_WINDOW_DAYS;
 }
 
-function resolvePositiveInt(raw: string | undefined, fallback: number): number {
-  // resolvePositive guarantees > 0, but a FRACTIONAL override (e.g. 0.5) truncates to 0 →
-  // would disable the scan / set LIMIT 0. Require the truncated value to be ≥ 1 (a true
-  // positive integer); else fall back to the default (augment #570).
-  const n = Math.trunc(resolvePositive(raw, fallback));
-  return n >= 1 ? n : fallback;
+export function dedupMaxPairs(): number {
+  const v = getConfig('KC_DEDUP_MAX_PAIRS');
+  const n = typeof v === 'number' ? Math.trunc(v) : Number.NaN;
+  return Number.isFinite(n) && n >= 1 ? n : DEFAULT_DEDUP_MAX_PAIRS;
 }
-
-export const DEDUP_DISTANCE_MAX: number = resolvePositive(
-  process.env.KC_DEDUP_DISTANCE_MAX,
-  DEFAULT_DEDUP_DISTANCE_MAX,
-);
-
-export const DEDUP_WINDOW_DAYS: number = resolvePositiveInt(
-  process.env.KC_DEDUP_WINDOW_DAYS,
-  DEFAULT_DEDUP_WINDOW_DAYS,
-);
-
-export const DEDUP_MAX_PAIRS: number = resolvePositiveInt(
-  process.env.KC_DEDUP_MAX_PAIRS,
-  DEFAULT_DEDUP_MAX_PAIRS,
-);

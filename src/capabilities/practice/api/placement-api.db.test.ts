@@ -5,7 +5,8 @@
 // shared /api/review/submit path writes). PLACEMENT_PROBE_ENABLED is mocked true so the
 // dark-ship start gate is exercised in both directions.
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { newId } from '@/core/ids';
 import { event, goal, knowledge, learning_session, question } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -14,14 +15,10 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 // completePlacementSession / abandonPlacementSession real. The default is dark-ship false; we
 // flip it per-test to cover both the gated-off 404 and the live flow.
 const placementFlag = { value: true };
-vi.mock('@/server/session/placement', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/server/session/placement')>();
-  return {
-    ...actual,
-    get PLACEMENT_PROBE_ENABLED() {
-      return placementFlag.value;
-    },
-  };
+// YUK-1007：getter-mock 换成 config overlay——setTestConfig 注入的生效值压过
+// env/code-default（pinned 键直读 env 层，overlay 恒最上层）。
+beforeEach(() => {
+  setTestConfig({ PLACEMENT_PROBE_ENABLED: placementFlag.value });
 });
 
 import {
@@ -38,6 +35,9 @@ const db = testDb();
 beforeEach(() => {
   placementFlag.value = true;
   return resetDb();
+});
+afterEach(() => {
+  resetTestConfig();
 });
 
 function jsonReq(body: unknown): Request {

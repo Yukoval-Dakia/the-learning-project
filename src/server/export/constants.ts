@@ -97,7 +97,10 @@
 // YUK-1016: cause_category_overlay — owner-vetted 错因词表层（accepted proposal 落地的
 // authored catalog 行，非瞬态非派生；retract 只置 archived_at，历史不可重建）→
 // FK_ORDER 非 BACKUP_EXCLUDED。NEW FK_ORDER table 必 bump：52 → 53 tables，4.19 → 4.20。
-export const SCHEMA_VERSION = '4.23';
+// YUK-1007: system_config / system_config_journal / system_config_epoch — owner 可调
+// 运行时配置 + 审计 + 失效轴（authored 运营真相，非瞬态）→ FK_ORDER 非 EXCLUDED。
+// NEW FK_ORDER tables 必 bump：63 → 66 tables，4.23 → 4.24。
+export const SCHEMA_VERSION = '4.24';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
 // + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
@@ -301,6 +304,16 @@ export const FK_ORDER = [
   // provider_attempt 保持最后（其注释承诺 remains last）。
   // NEW FK_ORDER table → bump SCHEMA_VERSION (4.21 → 4.22)。
   'contract_epoch',
+  // YUK-1007 — 热加载配置面三表（system_config / system_config_journal /
+  // system_config_epoch）：owner 写的运行时配置行 + append-only 审计 + 失效轴，
+  // 非瞬态非派生（丢了即灭失 owner 调过的旋钮 + journal 溯源）→ FK_ORDER 备份。
+  // 无 enforced FK（loose text-ref 惯例）；journal 紧随主表（subject_trait →
+  // subject_trait_journal 先例）。change_seq/epoch 两列随行 dump/restore；
+  // config_change_seq 序列另行 setval（archive.ts restore 尾，subject_change_seq
+  // 同先例）。NEW FK_ORDER tables 必 bump：63 → 66，4.23 → 4.24。
+  'system_config',
+  'system_config_journal',
+  'system_config_epoch',
   // YUK-851 has no enforced FK, but remains last so durable provider-attempt truth is
   // restored after the current authored/cost parents and rides whole-row schema changes.
   'provider_attempt',

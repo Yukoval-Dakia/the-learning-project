@@ -720,6 +720,16 @@ export async function restoreFromArchive({
         ),
       );
 
+      // YUK-1007 (§1.2): config_change_seq 序列同样不随行备份，restore 只回插了
+      // system_config_journal.change_seq——不补 setval，下一次 config 写会从旧序列位
+      // 取号撞已有 journal 坐标；system_config_epoch.epoch 也吃同一序列，必须与
+      // journal 共用推进位。同 tx 原子回滚。
+      await tx.execute(
+        sql.raw(
+          `select setval('config_change_seq', (select greatest(coalesce((select max(change_seq) from "system_config_journal"), 0), coalesce((select max(epoch) from "system_config_epoch"), 0)) + 1), false)`,
+        ),
+      );
+
       // YUK-751 (codex P1): event.dispatch_seq is re-inserted verbatim from the archive (a FORWARD
       // FK_ORDER table), but event_dispatch_seq is a manual sequence outside pg-dump row semantics.
       // Without this setval the next event INSERT draws a stale nextval and collides with

@@ -48,6 +48,7 @@ import {
   AUTO_ENROLL_SINGLETON_SECONDS,
   autoEnrollJobEnabled,
 } from '@/capabilities/ingestion/server/workflow-judge-config';
+import { getConfig } from '@/core/config/store';
 import type { FigureRefT } from '@/core/schema/structured_question';
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
@@ -245,7 +246,7 @@ async function processOneOcrJob(
   // enables same-page A/B comparison + per-scenario switching). A `deps.engine`
   // override lets handler tests pin the path without touching process.env.
   const engine: 'glm' | 'tencent' =
-    deps.engine ?? (process.env.EXTRACT_OCR_ENGINE === 'tencent' ? 'tencent' : 'glm');
+    deps.engine ?? (getConfig('EXTRACT_OCR_ENGINE') === 'tencent' ? 'tencent' : 'glm');
 
   // 1. Load session + ALL assets. T-OC slice 2 (OC-2): the VLM sees every page
   //    so it can assemble 跨页大题 — no longer single-page (`[0]`). Read from

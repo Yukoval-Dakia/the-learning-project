@@ -2,6 +2,7 @@
 // helper remains the only cross-lane retry layer.
 
 import { type Provider, tasks } from '@/ai/registry';
+import { getLaneOverride } from '@/core/config/store';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import type { RunTaskCtx } from '@/server/ai/runner';
 import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
@@ -56,7 +57,9 @@ type LaneFallbackRunResult<T> =
   | { ok: false; hardFailure: ProviderHardFailure };
 
 function effectiveUnconfiguredLane(kind: LaneFallbackTaskKind): string {
-  return process.env.AI_PROVIDER_OVERRIDE || tasks[kind].defaultProvider;
+  // YUK-1007：与 resolveTaskProvider 一致——env pin (AI_PROVIDER_OVERRIDE) >
+  // DB lane.global.provider > registry default。
+  return getLaneOverride('global')?.provider || tasks[kind].defaultProvider;
 }
 
 /**

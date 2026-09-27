@@ -26,7 +26,7 @@
 //     through to routePreference=['quiz_gen'] (the higher-tier/objective branches would
 //     divert to sourcing_web/author_question).
 
-import { parseFlag } from '@/core/env-flags';
+import { getConfigFlag } from '@/core/config/store';
 import type { Db } from '@/db/client';
 import { loadConfusablePairs } from '@/kernel/read-models/confusables';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
@@ -48,7 +48,8 @@ import {
  * runtime-mockable). OFF ⇒ discoverConfusableContrastTargets is a NO-OP.
  */
 export function confusableContrastEnabled(): boolean {
-  return parseFlag(process.env.CONFUSABLE_CONTRAST_ENABLED);
+  // YUK-1007：DB > env > code-default(false)。
+  return getConfigFlag('CONFUSABLE_CONTRAST_ENABLED');
 }
 
 // A contrast/discrimination item is naturally OBJECTIVE (present A and B, ask to

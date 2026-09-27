@@ -23,7 +23,7 @@ import { createHash } from 'node:crypto';
 import { and, eq, isNull, or, sql } from 'drizzle-orm';
 
 import { archiveMisconceptionEdge, createMisconceptionEdge } from '@/capabilities/knowledge/public';
-import { parseFlag } from '@/core/env-flags';
+import { getConfigFlag } from '@/core/config/store';
 import { MisconceptionInsert } from '@/core/schema/misconception';
 import type { Tx } from '@/db/client';
 import { misconception, misconception_edge } from '@/db/schema';
@@ -74,7 +74,9 @@ function normalizeConfidenceWeight(raw: number): number {
  * MISCONCEPTION_RECURRENCE_ENABLED, which cannot be runtime-mocked).
  */
 export function misconceptionPromoteEnabled(): boolean {
-  return parseFlag(process.env.MISCONCEPTION_PROMOTE_ENABLED);
+  // YUK-1007：pinned key——DB 层跳过，直读 env > code-default（compose 强制项；
+  // getConfigFlag 等效 parseFlag 语义，'unset/垃圾值 → false' 保守地板不变）。
+  return getConfigFlag('MISCONCEPTION_PROMOTE_ENABLED');
 }
 
 /**
@@ -88,7 +90,8 @@ export function misconceptionPromoteEnabled(): boolean {
  * for ranking but can never perform the protected mutation.
  */
 export function misconceptionHardConfirmEnabled(): boolean {
-  return parseFlag(process.env.MISCONCEPTION_HARD_CONFIRM_ENABLED);
+  // YUK-1007：DB > env > code-default(false)。
+  return getConfigFlag('MISCONCEPTION_HARD_CONFIRM_ENABLED');
 }
 
 /**
@@ -132,7 +135,7 @@ export async function archiveSoftMisconceptionForConjecture(
     .where(eq(misconception.id, misconceptionId))
     .limit(1);
   const node = nodes[0];
-  if (!node || node.source !== 'soft') return { misconceptionId, archived: false };
+  if (node?.source !== 'soft') return { misconceptionId, archived: false };
 
   if (node.archivedAt === null) {
     await tx

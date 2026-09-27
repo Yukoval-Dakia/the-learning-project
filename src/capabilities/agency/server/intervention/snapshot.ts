@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { and, desc, eq, isNotNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/server/conjecture/probe-evidence';
-import { parseFlag } from '@/core/env-flags';
+import { getConfig, getConfigFlag } from '@/core/config/store';
 import {
   PedagogyMethodId,
   type PedagogyMethodIdT,
@@ -69,12 +69,11 @@ export function precisionBand(thetaPrecision: number | null): PrecisionBandT {
 }
 
 export function disabledPedagogyMethods(env: NodeJS.ProcessEnv): PedagogyMethodIdT[] {
-  const raw = env[INTERVENTION_DISABLED_METHOD_IDS]?.trim();
-  if (!raw) return [];
-  const values = raw
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean);
+  // YUK-1007：DB > env > code-default([])；DB 层存已验证数组（z.array(PedagogyMethodId)），
+  // env 层还是 CSV 原文（registry csvEnv 已展开成 string[]）。
+  const resolved = getConfig(INTERVENTION_DISABLED_METHOD_IDS, env);
+  if (!Array.isArray(resolved)) return [];
+  const values = resolved.map((v) => (typeof v === 'string' ? v.trim() : '')).filter(Boolean);
   const parsed = values.map((value) => PedagogyMethodId.safeParse(value));
   const invalid = parsed.flatMap((result, index) => (result.success ? [] : [values[index]]));
   if (invalid.length > 0) {
@@ -86,9 +85,8 @@ export function disabledPedagogyMethods(env: NodeJS.ProcessEnv): PedagogyMethodI
 }
 
 export function interventionDeliveryMode(env: NodeJS.ProcessEnv): InterventionDeliveryModeT {
-  return parseFlag(env[AUTO_INTERVENTION_EXPANSION_ENABLED], { defaultValue: false })
-    ? 'eligible'
-    : 'shadow';
+  // YUK-1007：DB > env > code-default(false→'shadow')。
+  return getConfigFlag(AUTO_INTERVENTION_EXPANSION_ENABLED, env) ? 'eligible' : 'shadow';
 }
 
 export async function buildInterventionSnapshotFromProbeResult(
@@ -131,7 +129,7 @@ export async function buildInterventionSnapshotFromProbeResult(
   }
 
   const proposal = await getProposalInboxRow(db, probeResult.conjecture_event_id);
-  if (!proposal || proposal.kind !== 'conjecture' || proposal.status !== 'accepted') {
+  if (proposal?.kind !== 'conjecture' || proposal.status !== 'accepted') {
     throw new Error(`conjecture '${probeResult.conjecture_event_id}' is not accepted`);
   }
   const change = ConjectureProposalChange.parse(proposal.payload.proposed_change);
