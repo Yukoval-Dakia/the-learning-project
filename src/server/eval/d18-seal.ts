@@ -55,7 +55,10 @@ export function fileEvidenceSink(path: string): EvalEvidenceSink {
  * id = `d18-<runId>-<item>-a<attempt>`（harness run 重跑幂等：同 id
  * ON CONFLICT 不覆盖 —— 证据行不可变，第二次 run 需要新 runId）。
  */
-export function aiTaskRunEvidenceSink(db: Db, opts: { provider: string }): EvalEvidenceSink {
+export function aiTaskRunEvidenceSink(
+  db: Db,
+  opts: { provider: string; model?: string },
+): EvalEvidenceSink {
   return {
     async record(entry) {
       const runId = `d18-${entry.run_id}-${entry.item_id}-a${entry.attempt}`;
@@ -78,7 +81,7 @@ export function aiTaskRunEvidenceSink(db: Db, opts: { provider: string }): EvalE
         id: runId,
         task_kind: D18_TASK_KIND,
         provider: opts.provider,
-        model: `d18/${entry.lane}`,
+        model: opts.model ?? `d18/${entry.lane}`,
         input_hash: entry.input_digest,
         result_digest: entry.output_digest === '' ? null : entry.output_digest,
         status,

@@ -172,17 +172,28 @@ export async function runEvalHarness(opts: EvalHarnessOptions): Promise<EvalRunR
       output_digest: outcome === 'settled' ? d.output : '',
       usage: result?.usage ?? { inputTokens: 0, outputTokens: 0 },
       cost_usd: result?.reportedCostUsd ?? null,
+      // 成本真相（YUK-1058 live-lane 修正）：只有 settled 调用有成本证据 ——
+      // reported ⇒ 'reported'；未报但有估 ⇒ 'estimated'；都没有 ⇒ 'unknown'。
+      // invoke_failed / gate_rejected 没有实际 wire 结算，写 'unknown'（+ref
+      // 指向估计来源）而不是 'estimated' —— ai_task_runs_cost_truth_ck 要求
+      // estimated/reported 必须带非空 cost_usd，失败调用没有可入账金额。
       cost_basis:
-        result?.reportedCostUsd != null
-          ? 'reported'
-          : estimate?.estimatedCostUsd != null
-            ? 'estimated'
-            : 'unknown',
+        outcome === 'settled'
+          ? result?.reportedCostUsd != null
+            ? 'reported'
+            : estimate?.estimatedCostUsd != null
+              ? 'estimated'
+              : 'unknown'
+          : 'unknown',
       cost_ref:
-        result?.reportedCostUsd != null
-          ? `invoker:${opts.invoker.lane}:reported_cost_usd`
+        outcome === 'settled'
+          ? result?.reportedCostUsd != null
+            ? `invoker:${opts.invoker.lane}:reported_cost_usd`
+            : estimate?.estimatedCostUsd != null
+              ? `invoker:${opts.invoker.lane}:estimate`
+              : `unpriced:${opts.invoker.lane}`
           : estimate?.estimatedCostUsd != null
-            ? `invoker:${opts.invoker.lane}:estimate`
+            ? `invoker:${opts.invoker.lane}:estimate:no-charge`
             : `unpriced:${opts.invoker.lane}`,
       outcome,
       error,

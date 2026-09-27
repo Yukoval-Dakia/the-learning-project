@@ -67,6 +67,11 @@ describe('runEvalHarness', () => {
     expect(sink.entries).toHaveLength(5);
     expect(sink.entries.at(-1)?.outcome).toBe('gate_rejected');
     expect(sink.entries.at(-1)?.output_digest).toBe('');
+    // YUK-1058 live-lane 修正：触顶调用没有结算成本 —— cost_basis 必须写
+    // 'unknown'（cost_usd=null），不能写 'estimated'+null（会违
+    // ai_task_runs_cost_truth_ck：estimated/reported 要求非空 cost_usd）。
+    expect(sink.entries.at(-1)?.cost_basis).toBe('unknown');
+    expect(sink.entries.at(-1)?.cost_usd).toBeNull();
   });
 
   it('invoke_failed 不记 cost、继续下一 item；failures 入报告', async () => {
@@ -98,6 +103,11 @@ describe('runEvalHarness', () => {
     expect(report.failures).toEqual([{ item_id: 'item-1', attempt: 1, error: 'upstream 503' }]);
     expect(report.ledger.spentUsd).toBeCloseTo(0.002); // 失败调用无 reported cost
     expect(sink.entries.map((e) => e.outcome)).toEqual(['settled', 'invoke_failed', 'settled']);
+    // 同上：invoke_failed 无成本证据 → 'unknown'，不是 'estimated'+null。
+    const failed = sink.entries[1];
+    expect(failed?.cost_basis).toBe('unknown');
+    expect(failed?.cost_usd).toBeNull();
+    expect(failed?.cost_ref).toContain('no-charge');
   });
 
   it('retries：maxAttemptsPerItem>1 时失败重试且计入 invocation 上限', async () => {

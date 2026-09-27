@@ -1,8 +1,17 @@
-// YUK-1057 / D18 — eval harness 就绪运行器（stub invoker，无模型 egress）。
+// YUK-1057 / D18 — eval harness 就绪运行器。
 //
 //   pnpm eval:d18 --target=<postgres-url> [--run-id=<id>] [--out=<dir>]
-//                 [--items=<N>] [--attempts=<N>] [--lane=stub]
+//                 [--items=<N>] [--attempts=<N>] [--lane=stub|jev-openrouter]
 //
+// Lane：
+//   - stub（默认）：确定性 echo invoker，零 egress —— harness/gate/metrics/
+//     封存的就绪证明车道。
+//   - jev-openrouter（YUK-1058 owner 授权 live lane）：每 item 经
+//     runTypedPrimitiveTask('JevScoringDecisionTask') 调 OpenRouter
+//     POST /api/v1/systemone（TypeSafe Jev 1.13 pin）。需要
+//     OPENROUTER_API_KEY（本脚本不读 .env，须导出到进程 env）。
+//     双写封存：JevScoringDecisionTask attempt 行（provider 原生 cost）+
+//     D18EvalHarness 证据行（provider='openrouter', model='typesafe/jev-1.13'）。
 // 证明面（D18 gate-ready）：
 //   - EvalBudgetGate 真账本：admit → invoke → settle，触顶 latch + halt。
 //   - 证据双封存：NDJSON（<out>/evidence.ndjson）+ ai_task_runs
@@ -10,11 +19,11 @@
 //     latency 照实入账）。
 //   - 指标聚合（YUK-1058）：error_rate / point_error / severe_error_rate /
 //     upgrade_coverage / cost / latency，按 dev/holdout/all split 出
-//     <out>/d18-metrics.json（stub corpus 无 gold → 判分指标为 null，指标
-//     层正确性由 d18-metrics.test.ts 证明；actual-output run 时自动填充）。
-//   - invoker 目前只有 stub：真实 lane（OpenRouter Jev / MiMo）由评测票实现
-//     并复用本 gate/账本/封存/指标。`--lane` 只接受 'stub'；传其他 lane 名
-//     显式拒绝（防止误启 live egress）。
+//     <out>/d18-metrics.json（stub corpus 无 gold → 判分指标为 null；
+//     jev corpus 每 item 带 expect → 全指标实算）。
+//   - invoker lane：stub + jev-openrouter（src/server/eval/d18-jev-invoker.ts，
+//     复用 YUK-1049 typed runner 的 model pin/重试/成本真相）。未实现 lane
+//     （mimo-*）显式拒绝。jev corpus 是 seal 管线证明，非判分质量结论。
 //
 // 安全：--target 必须显式（写 ai_task_runs 是写路径，不回退 DATABASE_URL）；
 // DATABASE_URL 在 import 前改指不可达占位，防止任何意外单例回退。
@@ -23,7 +32,7 @@ process.env.DATABASE_URL = 'postgres://rehearsal:rehearsal@127.0.0.1:1/rehearsal
 
 import { resolve } from 'node:path';
 
-import type { EvalCorpusItem, EvalEvidenceEntry } from '@/core/eval/d18-harness';
+import type { EvalCorpusItem, EvalEvidenceEntry, EvalInvoker } from '@/core/eval/d18-harness';
 
 interface D18Args {
   target: string | null;
@@ -63,12 +72,20 @@ async function main(): Promise<void> {
     console.error('missing --target=<postgres-url>（ai_task_runs 封存是写路径，必须显式目标）');
     process.exit(1);
   }
-  // YUK-1058：唯一已实现的 lane 是 stub（无 egress）。显式拒绝任何其他 lane
-  // 名——评测票落地真实 invoker 时把该 lane 名加进下表并接 EvalInvoker。
-  if (args.lane !== 'stub') {
+  // YUK-1058：lane 白名单 —— stub（无 egress）与 jev-openrouter（owner-
+  // 授权的 live lane，OPENROUTER_API_KEY 走 typed-primitive-runner）。
+  // 其余名（mimo-text/mimo-vision 等）显式拒绝，防止误启未实现 egress。
+  const KNOWN_LANES = new Set(['stub', 'jev-openrouter']);
+  if (!KNOWN_LANES.has(args.lane)) {
     console.error(
-      `unknown --lane=${args.lane}: this runner only implements 'stub' (no egress). ` +
-        'Real lanes (jev-openrouter/mimo-text/mimo-vision) plug an EvalInvoker in the eval ticket.',
+      `unknown --lane=${args.lane}: implemented lanes are 'stub' (no egress) and ` +
+        `'jev-openrouter' (TypeSafe Jev via OPENROUTER_API_KEY). Other lanes wire later.`,
+    );
+    process.exit(1);
+  }
+  if (args.lane === 'jev-openrouter' && !process.env.OPENROUTER_API_KEY) {
+    console.error(
+      '--lane=jev-openrouter requires OPENROUTER_API_KEY in env (not loaded from .env by this script)',
     );
     process.exit(1);
   }
@@ -82,16 +99,57 @@ async function main(): Promise<void> {
   const { canonicalHash } = await import('@/core/migration/canonical');
   const { writeProof } = await import('@/server/rehearsal/db-proof');
 
-  // 合成语料：dev/holdout 双 split；request 形状由 lane 自行解释（stub echo）。
-  const corpus: EvalCorpusItem[] = Array.from({ length: args.items }, (_, i) => ({
-    id: `d18-item-${String(i).padStart(3, '0')}`,
-    split: (i % 5 === 4 ? 'holdout' : 'dev') as 'dev' | 'holdout',
-    request: {
-      kind: 'judge-verify',
-      item_hash: canonicalHash({ i, seed: 'd18-readiness' }),
-      prompt_excerpt: `synthetic readiness item ${i} — replace with real corpus in eval ticket`,
-    },
-  }));
+  // 语料按 lane 成形：stub 原样合成 echo 请求；jev-openrouter 的 request
+  // 必须是 JevScoringDecisionInput（{state, questions} strict）。jev 语料为
+  // 每 item 一题 noul（二元 claim 判定），state 带学生作答 + 参考标准；
+  // 半数为正确、半数为错误的显然样本并带 gold —— 判分指标全路径跑通
+  // （本 corpus 是 seal/metrics 管线证明，不是判分质量结论）。
+  const corpus: EvalCorpusItem[] = Array.from({ length: args.items }, (_, i) => {
+    const id = `d18-item-${String(i).padStart(3, '0')}`;
+    const split = (i % 5 === 4 ? 'holdout' : 'dev') as 'dev' | 'holdout';
+    if (args.lane === 'jev-openrouter') {
+      const correct = i % 2 === 0;
+      // 半数 item 是真算术错误（答案错 1），gold=0；半数正确，gold=4。
+      // gold 是 seal/metrics 管线的判错锚 —— 不是判分质量结论（runbook）。
+      const claim = `The student asserts that 2+${i} equals ${correct ? 2 + i : 3 + i}`;
+      return {
+        id,
+        split,
+        request: {
+          state: {
+            submission: { entries: [{ slot_id: 's1', kind: 'text', text_md: claim }] },
+            materials: [
+              {
+                material_id: 'ref',
+                kind: 'reference',
+                content_md: `The correct value of 2+${i} is ${2 + i}.`,
+              },
+            ],
+          },
+          questions: {
+            [id]: {
+              type: 'noul' as const,
+              instructions: 'Does the student statement match the reference?',
+              criteria: {
+                true: `The student's claim is arithmetically correct.`,
+                false: `The student's claim is arithmetically wrong.`,
+              },
+            },
+          },
+        },
+        expect: { max_points: 4, gold_points: correct ? 4 : 0 },
+      };
+    }
+    return {
+      id,
+      split,
+      request: {
+        kind: 'judge-verify',
+        item_hash: canonicalHash({ i, seed: 'd18-readiness' }),
+        prompt_excerpt: `synthetic readiness item ${i} — replace with real corpus in eval ticket`,
+      },
+    };
+  });
 
   const client = postgres(args.target, {
     ssl:
@@ -103,7 +161,14 @@ async function main(): Promise<void> {
   const db = drizzle(client, { schema }) as never;
 
   const fileSink = fileEvidenceSink(`${args.out}/evidence.ndjson`);
-  const dbSink = aiTaskRunEvidenceSink(db as never, { provider: 'stub' });
+  // 封存行 provider/model 照 lane 事实入账：stub → 'stub'；jev-openrouter
+  // → openrouter / typesafe/jev-1.13（与 typed runner 的 attempt 行一致）。
+  const sealProvider = args.lane === 'jev-openrouter' ? 'openrouter' : 'stub';
+  const sealModel = args.lane === 'jev-openrouter' ? 'typesafe/jev-1.13' : undefined;
+  const dbSink = aiTaskRunEvidenceSink(db as never, {
+    provider: sealProvider,
+    ...(sealModel !== undefined ? { model: sealModel } : {}),
+  });
   // YUK-1058：证据行内存累积 —— metrics 聚合输入（行数 = invocations，
   // D18 上限 800，内存可忽略）。
   const collected: EvalEvidenceEntry[] = [];
@@ -120,15 +185,21 @@ async function main(): Promise<void> {
   };
 
   try {
+    const invoker: EvalInvoker =
+      args.lane === 'jev-openrouter'
+        ? (await import('@/server/eval/d18-jev-invoker')).jevOpenRouterInvoker({
+            db: db as never,
+          })
+        : stubInvoker({ lane: args.lane });
     const report = await runEvalHarness({
       runId: args.runId,
       corpus,
-      invoker: stubInvoker({ lane: args.lane }),
+      invoker,
       sink,
       maxAttemptsPerItem: args.attempts,
     });
-    // D18 metrics（YUK-1058）：合成 corpus 未带 expect → 判分指标为 null；
-    // 指标层正确性由 d18-metrics.test.ts 证明，actual-output run 自动填充。
+    // D18 metrics（YUK-1058）：jev corpus 带 expect → 判分指标实算；stub
+    // corpus 无 gold → 判分指标 null（正确性由 d18-metrics.test.ts 证明）。
     const expectations = new Map<string, { max_points: number; gold_points: number }>();
     for (const item of corpus) {
       if (item.expect !== undefined) expectations.set(item.id, item.expect);
