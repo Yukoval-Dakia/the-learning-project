@@ -228,22 +228,33 @@ export async function transitionContractEpoch(
  * 「出生在旧 epoch 的 translate payload 绝不按新合同执行」的判别式。
  */
 export async function readJobBirthEpoch(db: Db, createdOn: Date | string): Promise<string> {
-  let rows: { epoch: string }[];
   try {
     // postgres-js 不序列化 Date 参数 → 统一转 ISO 串 + 显式 timestamptz cast。
     // created_on 读出来也可能是 string（postgres-js 对 timestamptz 不构造 Date）。
     const iso = createdOn instanceof Date ? createdOn.toISOString() : String(createdOn);
-    rows = await db.execute<{ epoch: string }>(sql`
-      select epoch
-      from contract_epoch
-      where state = 'active'
-        and entered_at <= ${iso}::timestamptz
-      order by seq desc
-      limit 1
+    // marker_count 与命中行同查询读出：区分「contract_epoch 整张表为空」
+    // （= 隐式当前 epoch，与 readContractEpoch 的 null 路径同一语义）和
+    // 「表有 marker 但 job 早于全部 active marker」（= 真·legacy 出生，marker
+    // 系统之前的旧合同 payload）。resetDb() 会 TRUNCATE contract_epoch，把前者
+    // 误打成 'legacy' 会让一切 translate 类 job 在隔离测试库被误 fence——
+    // YUK-1059 翻转后 durable-session-queue.db.test.ts 即踩中此坑。
+    const rows = await db.execute<{ epoch: string | null; marker_count: number | string }>(sql`
+      select
+        (select count(*)::int from contract_epoch) as marker_count,
+        (select epoch
+           from contract_epoch
+          where state = 'active'
+            and entered_at <= ${iso}::timestamptz
+          order by seq desc
+          limit 1) as epoch
     `);
+    const row = rows[0];
+    if (row === undefined || Number(row.marker_count) === 0) {
+      return CODE_CONTRACT_EPOCH;
+    }
+    return row.epoch ?? 'legacy';
   } catch (err) {
     if (isUndefinedTable(err)) return CODE_CONTRACT_EPOCH;
     throw err;
   }
-  return rows[0]?.epoch ?? 'legacy';
 }
