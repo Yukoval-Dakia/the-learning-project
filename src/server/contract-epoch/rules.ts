@@ -6,7 +6,9 @@
 // 裁决者。DB IO 在 ./epoch.ts；本文件只做判定，永不触连接。
 //
 // Marker 语义（schema.ts `contract_epoch` 表注释同款）：
-//   - 缺表 / 空表 → 隐式 ('legacy', 'active')：pre-cutover DB 天然 runnable。
+//   - 缺表 / 空表 → 隐式 (CODE_CONTRACT_EPOCH, 'active')：无 marker 的 DB
+//     （migrate 首跑建表前的窗口）对本代码天然 runnable——历史「隐式 legacy」
+//     语义是 pre-cutover 时期的表述，翻转后隐式值随代码 epoch 走。
 //   - 'preparing'：迁移维护窗口 —— 任何 epoch 的 runtime 全部 fenced。
 //   - 'ready'：迁移完成待激活 —— 仍 fenced（新旧两侧都停，安静窗口）。
 //   - 'active'：仅 marker.epoch === 代码 contract epoch 才 runnable ——
@@ -15,11 +17,16 @@
 // 「新 guard 不能 fence 旧可执行」（grounding §15）：旧二进制没有本检查，
 // 停旧 writer 是运维动作（cutover runbook）；本 fence 只约束含本代码的进程。
 
-/** 本代码构建所实现的 contract epoch。新版本在统一切换 lane（YUK-1059）改值。 */
-export const CODE_CONTRACT_EPOCH = 'legacy' as const;
-
-/** 全量迁移后代码携带的 epoch 名（契约常量，本 lane 只声明不使用）。 */
+/** 全量迁移后代码携带的 epoch 名（评估契约系列的目标 epoch）。 */
 export const ASSESSMENT_CONTRACT_EPOCH = 'assessment-contract-v1' as const;
+
+/**
+ * 本代码构建所实现的 contract epoch。
+ * YUK-1059 统一切换已把 DB marker 激活为 assessment-contract-v1 —— 常量
+ * 随发布翻转（release-blocker hotfix：翻转前部署的镜像会 epoch_mismatch
+ * 自锁）。下一次 epoch 切换仍在统一切换 lane 改值。
+ */
+export const CODE_CONTRACT_EPOCH = ASSESSMENT_CONTRACT_EPOCH;
 
 export type ContractEpochState = 'preparing' | 'ready' | 'active';
 
@@ -35,8 +42,12 @@ export interface EpochMarker {
   state: ContractEpochState;
 }
 
-/** 缺表（42P01）/ 空表的隐式 marker。 */
-export const IMPLICIT_LEGACY_MARKER: EpochMarker = {
+/**
+ * 缺表（42P01）/ 空表的隐式 marker：无 marker 的 DB 视为在本代码 epoch 下
+ * runnable（隐式 active）。命名不含 'legacy'——pre-cutover 构建里它恰好是
+ * 'legacy'，翻转后随 CODE_CONTRACT_EPOCH 走（fresh DB 可跑 migrate→serve）。
+ */
+export const IMPLICIT_EPOCH_MARKER: EpochMarker = {
   epoch: CODE_CONTRACT_EPOCH,
   state: 'active',
 };
@@ -54,7 +65,7 @@ export function gateContractEpoch(
   marker: EpochMarker | null,
   codeEpoch: string = CODE_CONTRACT_EPOCH,
 ): EpochGateVerdict {
-  const effective = marker ?? IMPLICIT_LEGACY_MARKER;
+  const effective = marker ?? IMPLICIT_EPOCH_MARKER;
   if (effective.state !== 'active') {
     return { runnable: false, marker: effective, reason: 'maintenance' };
   }
@@ -110,7 +121,7 @@ export function validateEpochTransition(
   }
   if (current === null) {
     // 表刚建好/被清空：只有 begin_prepare 能作为首个显式 marker 落地
-    // （等价于从隐式 legacy/active 起窗）。
+    // （等价于从隐式 code-epoch/active 起窗）。
     if (kind === 'begin_prepare') {
       return { ok: true, next: { epoch: targetEpoch, state: 'preparing' } };
     }

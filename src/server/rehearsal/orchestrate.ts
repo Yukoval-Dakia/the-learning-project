@@ -21,8 +21,9 @@
 //                     重跑（pending→resolved supersession）。
 //   08 mark-ready     mark_ready → 'ready' 下 fence 仍拒（安静窗口）。
 //   09 activate       activate('assessment-contract-v1')；本二进制 code epoch
-//                     = legacy → active 后探针给出 epoch_mismatch 拒跑 —— 正是
-//                     演练证据：「旧代码在 post-cutover DB 上不得跑」。
+//                     = assessment-contract-v1（post-flip）→ active 后 gate 放行；
+//                     「旧代码 epoch_mismatch 拒跑」的演练语义由
+//                     rehearsal.db.test.ts 的 legacy-codeEpoch 断言承载。
 //   10 post-writes    新写入（publish/issue/draft/submit；域 seam 不经 API
 //                     middleware/ worker fence —— 与 CLI 直写一致）。
 //   11 delta-export   exportPostWriteDelta（行级 canonical JSON + digest）。
@@ -547,13 +548,13 @@ export async function runRehearsal(opts: RehearsalOptions): Promise<RehearsalRep
       });
     });
 
-    // ── 09 activate（window 关闭；epoch_mismatch 证据 = 旧代码不得跑） ─────
+    // ── 09 activate（window 关闭；post-flip 本代码 runnable） ─────────
     await stepRun(steps, log, 'activate', async () => {
       return clock.step('activate', async (): Promise<Record<string, unknown>> => {
         await transitionContractEpoch(db, 'activate', 'assessment-contract-v1', 'rehearsal');
         const gate = await checkContractEpoch(db);
         return {
-          epoch: gate.marker?.epoch ?? 'legacy(implicit)',
+          epoch: gate.marker?.epoch ?? 'implicit(code-epoch)',
           state: gate.marker?.state ?? 'active',
           code_epoch_fenced: !gate.runnable,
           reason: gate.runnable ? 'runnable' : (gate.reason ?? 'unknown'),
