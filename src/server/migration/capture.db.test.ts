@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { canonicalHash } from '@/core/migration/canonical';
@@ -498,6 +498,10 @@ function categoryOf(
 
 beforeEach(async () => {
   await resetDb();
+  // shard 共享 fork：worker-boot/epoch 等测试会真建 pgboss schema 且不回收，
+  // 本文件的 capture 断言（queues.pgboss_schema_present=false）需要干净前提——
+  // 主动 drop，测试自身自证「无 pgboss」而不是假定别的测试没留下。
+  await testDb().execute(sql`DROP SCHEMA IF EXISTS pgboss CASCADE`);
   await seedRepresentativeShapes();
 });
 

@@ -204,6 +204,13 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'artifact',
+    file: 'src/server/rehearsal/corpus.ts',
+    marker: '.insert(artifact)',
+    role: 'seed',
+    note: 'YUK-1057 isolated-rehearsal corpus: seeds fixture artifacts into an ephemeral container DB (unreachable DATABASE_URL stub); never a production write path.',
+  },
+  {
+    table: 'artifact',
     file: 'src/capabilities/notes/server/note-refine-apply.ts',
     marker: '.update(artifact)',
     role: 'event-native-by-caller',

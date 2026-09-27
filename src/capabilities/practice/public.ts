@@ -8,6 +8,10 @@ export {
   getEffectiveTruths,
 } from '@/kernel/events';
 export type { QuizGenJobData } from './jobs/quiz_gen';
+// YUK-1057 — 隔离演练的 post-cutover writer seam：发题/草稿/提交统一经
+// barrel 透出（import 链为 @kernel + @db 纯链，无 SDK —— migrate bundle 安全）。
+export { issueAssessment } from './server/assessment/issue';
+export { saveResponseDraft, saveSubmission } from './server/assessment/submit';
 export type { AttemptSnapshotBracketsInput } from './server/attempt-snapshot';
 export { writeAttemptSnapshotBrackets } from './server/attempt-snapshot';
 export { retrievabilityForKc } from './server/fsrs';
