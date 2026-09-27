@@ -149,4 +149,45 @@ describe('runEvalHarness', () => {
     expect(a.output).toEqual(b.output); // 确定性
     expect((a.output as { stub: boolean }).stub).toBe(true);
   });
+
+  it('YUK-1058：latency_ms/score/escalated 镜像入证据行（settled 全字段，failed 仅 latency）', async () => {
+    const sink = new MemSink();
+    const scored: EvalInvoker = {
+      lane: 'scored-stub',
+      estimate: () => ({
+        kind: 'verification',
+        inputTokens: 10,
+        outputTokens: 10,
+        estimatedCostUsd: 0.001,
+      }),
+      async invoke(req) {
+        if (req.item.id === 'item-1') throw new Error('upstream 503');
+        return {
+          output: { ok: true },
+          usage: { inputTokens: 10, outputTokens: 10 },
+          reportedCostUsd: 0.001,
+          score: { points_awarded: 7, max_points: 10 },
+          escalated: req.item.id === 'item-0',
+        };
+      },
+    };
+    await runEvalHarness({
+      runId: 'r5',
+      corpus: corpus(3),
+      invoker: scored,
+      sink,
+    });
+    const byItem = new Map(sink.entries.map((e) => [e.item_id, e]));
+    const s0 = byItem.get('item-0');
+    expect(s0?.outcome).toBe('settled');
+    expect(s0?.latency_ms).not.toBeNull();
+    expect(s0?.latency_ms as number).toBeGreaterThanOrEqual(0);
+    expect(s0?.score).toEqual({ points_awarded: 7, max_points: 10 });
+    expect(s0?.escalated).toBe(true);
+    const f1 = byItem.get('item-1');
+    expect(f1?.outcome).toBe('invoke_failed');
+    expect(f1?.latency_ms).not.toBeNull(); // failed 调用也实测耗时
+    expect(f1?.score).toBeNull();
+    expect(f1?.escalated).toBeNull();
+  });
 });

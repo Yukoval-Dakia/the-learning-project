@@ -1550,6 +1550,10 @@ export const ai_task_runs = pgTable(
         outputTokens: number;
         thinkingBlocks?: number;
         thinkingCharacters?: number;
+        /** YUK-1058 — D18 eval 镜像字段（可选；仅 task_kind='D18EvalHarness' 行）。 */
+        d18_score?: { points_awarded: number; max_points: number };
+        d18_escalated?: boolean;
+        d18_latency_ms?: number;
       }>()
       .notNull()
       .default({ inputTokens: 0, outputTokens: 0 }),
@@ -3091,11 +3095,12 @@ export const item_calibration = pgTable(
     //   直到批量重标定首次 firm-up——故 effectiveB 在重标定攒够标签前恒退回 b_anchor ?? b，
     //   零行为变更（read-compat NO-OP today，安全可接线）。
     b_anchor: real('b_anchor'),
-    // - b_calib：**去偏后的 b**（active-PPI/AIPW 校锚标尺后的难度）。**只由批量重标定
-    //   写**（src/server/mastery/recalibration.ts recalibrateQuestion），**绝不**由在线
-    //   attempt 路径写——不变量①（item-半边锁死 G4）：在线 θ̂ 只 READS effectiveB，从不
-    //   WRITES b_calib。nullable：重标定攒够标签（calibration_n ≥ 阈值）前恒 NULL，
-    //   effectiveB 退回 b_anchor ?? b。这是 ADR-0043 §4「b 可在 PPI 框架内随真值去偏而动，
+    // - b_calib：**去偏后的 b**（active-PPI/AIPW 校锚标尺后的难度）。**写只由批量重标定
+    //   （src/server/mastery/recalibration.ts recalibrateQuestion）+ 重建清值
+    //   （clearCalibrationBelowThreshold，YUK-1058：标签跌破阈值时清 stale，不让已撤销作答的
+    //   旧 b_calib 继续喂 effectiveB）**，**绝不**由在线 attempt 路径写——不变量①
+    //   （item-半边锁死 G4）：在线 θ̂ 只 READS effectiveB，从不 WRITES b_calib。nullable：
+    //   重标定攒够标签（calibration_n ≥ 阈值）前恒 NULL，effectiveB 退回 b_anchor ?? b。这是 ADR-0043 §4「b 可在 PPI 框架内随真值去偏而动，
     //   非数值永久冻结」的落点——但动 b 的是慢尺度批量去偏，非单次作答。
     b_calib: real('b_calib'),
     // - calibration_n：折进 b_calib 的 difficulty_calibration_label 条数（该题/家族）。

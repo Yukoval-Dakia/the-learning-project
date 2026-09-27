@@ -101,6 +101,7 @@ import {
   recordFamilyObservationForAttempt,
   unfoldFamilyCalibration,
 } from '@/server/mastery/personalized-difficulty';
+import { clearCalibrationBelowThreshold } from '@/server/mastery/recalibration';
 import {
   type AbilityGlobalByKnowledgeId,
   getMasteryState,
@@ -751,10 +752,24 @@ async function revertSettlementMember(
     }
   }
   // 摘除该成员写入的 difficulty_calibration_label（attempt_event_id 成键）——
-  // 防止 re-apply 换新事件 id 后旧标签残留成双。
-  await tx
+  // 防止 re-apply 换新事件 id 后旧标签残留成双。returning 收集受影响 question，
+  // 重建（标签摘除）后跌破 RECALIBRATION_MIN_LABELS 的题须显式清 stale b_calib
+  // （grounding §8：recalibrateQuestion below_threshold 不清旧值，重建路径必须
+  // 自己显式清——否则已撤销作答留下的 b_calib 继续喂 effectiveB）。
+  const removedLabels = await tx
     .delete(difficulty_calibration_label)
-    .where(eq(difficulty_calibration_label.attempt_event_id, member.id));
+    .where(eq(difficulty_calibration_label.attempt_event_id, member.id))
+    .returning({ question_id: difficulty_calibration_label.question_id });
+  for (const { question_id: questionId } of removedLabels) {
+    try {
+      await clearCalibrationBelowThreshold(tx, questionId);
+    } catch (err) {
+      console.warn(
+        `[assessment-settle] clearCalibrationBelowThreshold failed for ${questionId} (non-fatal):`,
+        err,
+      );
+    }
+  }
   return null;
 }
 

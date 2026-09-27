@@ -24,6 +24,7 @@ import {
 import { resetDb } from '../../../tests/helpers/db';
 import {
   RECALIBRATION_MIN_LABELS,
+  clearCalibrationBelowThreshold,
   effectiveB,
   impliedBLabel,
   recalibrateQuestion,
@@ -780,6 +781,127 @@ describe('effectiveB read-compat (column-level, end-to-end)', () => {
       .where(eq(item_calibration.question_id, q));
     const cal = await readCalibration(q);
     expect(effectiveB(cal)).toBeCloseTo(-0.4, 6);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (C) clearCalibrationBelowThreshold — grounding §8/§13 对偶（YUK-1058）
+// recalibrateQuestion below-threshold 是「不动笔」no-op；重建（settlement revert
+// 摘标签让 count 跌破阈值）必须显式清 stale b_calib —— 由本函数承担，下面验证
+// 清值/幂等/门控三态。
+// ─────────────────────────────────────────────────────────────────────────────
+describe('clearCalibrationBelowThreshold (rebuild stale-b_calib clear)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  /** 先 firm-up 出一个真 b_calib（≥阈值标签），再造「重建后跌破阈值」的场景。 */
+  async function seedFirmedQuestion(pi = 0.5) {
+    const q = createId();
+    await seedQuestion(q, 3);
+    await seedItemCalibration(q, 0.5);
+    await db.insert(difficulty_calibration_label).values(
+      Array.from({ length: RECALIBRATION_MIN_LABELS }, () => ({
+        id: newId(),
+        question_id: q,
+        attempt_event_id: createId(),
+        theta_snapshot: 0,
+        outcome: 0,
+        b_label: 1.5,
+        inclusion_probability: pi,
+        created_at: now(),
+      })),
+    );
+    const firm = await recalibrateQuestion(db, q);
+    expect(firm.updated).toBe(true);
+    return q;
+  }
+
+  async function deleteAllLabels(questionId: string) {
+    await db
+      .delete(difficulty_calibration_label)
+      .where(eq(difficulty_calibration_label.question_id, questionId));
+  }
+
+  it('labels dropped below threshold → clears b_calib/calibration_n/weight/last_calibrated_at', async () => {
+    const q = await seedFirmedQuestion();
+    const before = await readCalibration(q);
+    expect(before?.b_calib).not.toBeNull();
+    expect(before?.calibration_n).toBe(RECALIBRATION_MIN_LABELS);
+
+    // 重建语义：标签被摘除（settlement revert/backfill），跌破阈值。
+    await deleteAllLabels(q);
+
+    const cleared = await clearCalibrationBelowThreshold(db, q);
+    expect(cleared).toEqual({ cleared: true, labelCount: 0 });
+
+    const after = await readCalibration(q);
+    expect(after?.b_calib).toBeNull(); // 幽灵校准清除
+    expect(after?.calibration_n).toBe(0);
+    expect(after?.calibration_weight).toBeNull();
+    expect(after?.last_calibrated_at).toBeNull();
+    // 锚/b 列不受触（b 是原始难度、b_anchor 是冷启锚——两者都不在「清旧值」范围）。
+    expect(after?.b).toBe(0.5);
+    expect(after?.b_anchor).toBe(0.5);
+    // effectiveB 退回 b_anchor ?? b。
+    expect(after === null ? null : effectiveB(after)).toBe(0.5);
+  });
+
+  it('partial label removal but still ≥threshold → reserve (no clear, firm state untouched)', async () => {
+    const q = await seedFirmedQuestion();
+    const before = await readCalibration(q);
+    // 先多种一条再删一条 → 仍在阈值线上（reserve 语义）。
+    await db.insert(difficulty_calibration_label).values({
+      id: newId(),
+      question_id: q,
+      attempt_event_id: createId(),
+      theta_snapshot: 0,
+      outcome: 0,
+      b_label: 1.5,
+      inclusion_probability: 0.5,
+      created_at: now(),
+    });
+    const labels = await readLabels(q);
+    expect(labels.length).toBe(RECALIBRATION_MIN_LABELS + 1);
+    await db
+      .delete(difficulty_calibration_label)
+      .where(eq(difficulty_calibration_label.id, labels[0].id));
+
+    const cleared = await clearCalibrationBelowThreshold(db, q);
+    expect(cleared).toEqual({ cleared: false, labelCount: RECALIBRATION_MIN_LABELS });
+
+    const after = await readCalibration(q);
+    expect(after?.b_calib).toBe(before?.b_calib); // 未动
+    expect(after?.calibration_n).toBe(RECALIBRATION_MIN_LABELS);
+  });
+
+  it('never-firmed row → no-op (cleared=false); idempotent re-clear also no-op', async () => {
+    const q = createId();
+    await seedQuestion(q, 3);
+    await seedItemCalibration(q, 0.5); // 无标签、无 b_calib
+
+    const first = await clearCalibrationBelowThreshold(db, q);
+    expect(first).toEqual({ cleared: false, labelCount: 0 });
+
+    // 幂等：对刚清过的行再调也 no-op。
+    const q2 = await seedFirmedQuestion();
+    await deleteAllLabels(q2);
+    await clearCalibrationBelowThreshold(db, q2);
+    const second = await clearCalibrationBelowThreshold(db, q2);
+    expect(second).toEqual({ cleared: false, labelCount: 0 });
+  });
+
+  it('recalibrateQuestion below-threshold stays a no-clear no-op (分工钉死)', async () => {
+    // grounding §8 分工：clear 是显式独立路径；recalibrateQuestion 跌破阈值时**不**清。
+    const q = await seedFirmedQuestion();
+    await deleteAllLabels(q);
+    const result = await recalibrateQuestion(db, q);
+    expect(result.updated).toBe(false);
+    expect(result.reason).toBe('below_threshold');
+    // 旧的 firm 状态保持原样 —— 清它的是 clearCalibrationBelowThreshold，不是本函数。
+    const cal = await readCalibration(q);
+    expect(cal?.b_calib).not.toBeNull();
+    expect(cal?.calibration_n).toBe(RECALIBRATION_MIN_LABELS);
   });
 });
 

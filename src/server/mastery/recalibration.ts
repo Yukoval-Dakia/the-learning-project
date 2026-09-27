@@ -568,8 +568,9 @@ export async function recordDifficultyCalibrationLabel(
 // 重标定函数 — recalibrateQuestion（Task 11 step 4）。
 //
 // 读该题的全部 difficulty_calibration_label + 锚 b_anchor，运行 PPI++ AIPW →（门控过则）
-// 写 b_calib / calibration_n / calibration_weight / last_calibrated_at。**只此函数写
-// b_calib**（不变量①：在线 attempt 不写）。on-demand 函数（非 cron job，见 Report 决策）。
+// 写 b_calib / calibration_n / calibration_weight / last_calibrated_at。**b_calib 的写只由
+// 本函数（firm-up）+ clearCalibrationBelowThreshold（YUK-1058，重建清旧值）承担**——
+// 在线 attempt 永不写（不变量①）。on-demand 函数（非 cron job，见 Report 决策）。
 //
 // **生产 caller（YUK-372 L1 已接线）**：recalibration_nightly cron（04:50 Asia/Shanghai，
 // practice manifest 注册）逐夜把「攒够标签 + 窗内有新标签」的题喂进本函数 firm-up b_calib——
@@ -717,4 +718,75 @@ export async function recalibrateQuestion(
     minPi,
     maxPi,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 清旧值函数 — clearCalibrationBelowThreshold（YUK-1058，grounding §8/§13 对偶）。
+//
+// recalibrateQuestion 的 below_threshold 是「不动笔」no-op：它**不**清旧 b_calib
+// （数据闸语义——攒够前 idle，攒够后 firm-up，两向都不得让门内逻辑碰已 firm 的
+// 值）。但 grounding §8 的配套要求是：**重建**（settlement revert / 摘标签或批量
+// backfill 删标签让 count 跌破阈值的重算路径）必须**显式**清 stale b_calib，让
+// effectiveB 退回 b_anchor ?? b——否则一条被判撤销的作答留下的 b_calib 仍在喂
+// θ̂ 侧 effectiveB，等于「幽灵校准」。
+//
+// 分工（grounding 钉死）：
+//   - 此函数 = 唯一清旧值 path（显式、审计可见）。
+//   - recalibrateQuestion = 唯一写 b_calib path（不变量①），below_threshold 不清。
+//   - 生产 caller：settle.ts revertSettlementMember 摘除该成员的
+//     difficulty_calibration_label 后对受影响 question 逐个调用（rebuild 场景）；
+//     批量重建 job/backfill 亦可直接调（纯函数式 delete+update，幂等）。
+//
+// 幂等 + fail-open 于「无值可清」：label 仍 ≥ 阈值（reserve）或该行本就没 firm
+// （b_calib/calibration_weight/last_calibrated_at 全 NULL 且 calibration_n=0）
+// 时都 no-op。返回 cleared=true 表示确有 stale 值被清零（审计/观测用）。
+// ─────────────────────────────────────────────────────────────────────────────
+export interface ClearCalibrationResult {
+  cleared: boolean;
+  labelCount: number;
+}
+
+export async function clearCalibrationBelowThreshold(
+  db: DbLike,
+  questionId: string,
+): Promise<ClearCalibrationResult> {
+  const labelRows = await db
+    .select({ id: difficulty_calibration_label.id })
+    .from(difficulty_calibration_label)
+    .where(eq(difficulty_calibration_label.question_id, questionId));
+  const labelCount = labelRows.length;
+  if (labelCount >= RECALIBRATION_MIN_LABELS) {
+    return { cleared: false, labelCount };
+  }
+  const rows = await db
+    .select({
+      b_calib: item_calibration.b_calib,
+      calibration_n: item_calibration.calibration_n,
+      calibration_weight: item_calibration.calibration_weight,
+      last_calibrated_at: item_calibration.last_calibrated_at,
+    })
+    .from(item_calibration)
+    .where(and(eq(item_calibration.question_id, questionId), eq(item_calibration.track, 'hard')))
+    .limit(1);
+  const row = rows[0] ?? null;
+  const hasStale =
+    row !== null &&
+    (row.b_calib !== null ||
+      row.calibration_weight !== null ||
+      row.last_calibrated_at !== null ||
+      row.calibration_n !== 0);
+  if (!hasStale) {
+    return { cleared: false, labelCount };
+  }
+  await db
+    .update(item_calibration)
+    .set({
+      b_calib: null,
+      calibration_n: 0,
+      calibration_weight: null,
+      last_calibrated_at: null,
+      updated_at: new Date(),
+    })
+    .where(and(eq(item_calibration.question_id, questionId), eq(item_calibration.track, 'hard')));
+  return { cleared: true, labelCount };
 }
