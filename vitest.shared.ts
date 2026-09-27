@@ -339,6 +339,9 @@ export const fastTestInclude = [
   // YUK-1055 — contract-epoch 纯规则/分类表（rules.ts / jobs.ts 零 import），
   // *.unit.test.ts 约定进 unit 分区；DB 面在 epoch.db.test.ts（db 分区）。
   'src/server/contract-epoch/**/*.unit.test.ts',
+  // YUK-1059 — release manifest 纯函数（lane 分类 / assertions 表；零 import
+  // DB，仅 type-only）。*.unit.test.ts 约定进 unit 分区。
+  'src/server/release/**/*.unit.test.ts',
   // YUK-406 Phase 0 (关系脑 conjecture engine) — the pure evidence aggregator moved to
   // src/capabilities/agency/server/conjecture/evidence.unit.test.ts and is covered by
   // the capability *.unit.test.ts convention above. Keep only the remaining legacy
