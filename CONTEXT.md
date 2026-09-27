@@ -71,3 +71,14 @@
 
 - **技能包（skill / SKILL.md）**：可移植的**领域方法论指令包**，位于 `src/subjects/<id>/skills/<name>/SKILL.md`，frontmatter 含 `name` + `description`（description 是模型加载的触发钩子），正文是领域知识/规范（出题、笔记、质检标准等）。经 `ctx.skills` 白名单喂进 Claude Agent SDK，由对应 Task 按需加载。**「skill」在本项目只指这一样东西**——它是「把方法论交给模型按需加载」的知识，**不是**代码路由，**不是**在服务层用 enum 静态分流。现有 6 个：`note-{math,physics,yuwen}`、`quiz-gen-{calculation,reading-comprehension,translation}`，被 NoteGenerate/Verify/Refine 与 QuizGen/QuizVerify/Sourcing 共用。一个对应推论：题型规范（如「文言文阅读 = 原文 + 一组小题」）已住在技能包里，是**真相**；若生成产物没遵循，病灶在落库管线（schema / handler）而非知识层。
 - **行为包（behavior pack，≠ skill）**：`src/server/copilot/skills/{teaching,solve}-skill.ts` 与 `COPILOT_SKILL_KINDS` enum 是**服务层 TS 编排**（组一个 `TeachingTurnTask` 调用、绕开 CopilotTask 自由 loop），曾被冠以「skill」之名（AP-4 术语过载）。**它们不是技能包，停止用 skill 指代。** 一个「模式」本质上拆成三样、各有归处：**方法论 → 技能包**、**确定性副作用 → loop 内工具/effect**、**能力范围 → tool allowlist**；没有第四样需要独立代码路。目标形态：teaching/solve 两个 behavior pack 最终**消解**，不保留为独立构造（迁移路径见 `.omc/research/copilot-implementation-audit-2026-06-07.md` AP-1~AP-4 / Step 0~3）。
+
+## 提案中（PROPOSED — 未批准，勿当作已定术语）
+
+> 来源：`docs/planning/2026-09-24-question-assessment-redesign.md` 与 [implementation grounding](docs/planning/2026-09-24-question-assessment-implementation-grounding.md)（YUK-1038）。
+> **owner 已认可五层模型方向并裁决全量迁移（拒绝 LIGHT 分批），但方向认可 ≠ 已实施**：无 schema/数据迁移、无代码实施、无部署。
+> 本节仅登记草案中新出现的候选术语，**不修改也不覆盖**上文任何已批准定义；术语本身仍未定案。
+
+- **响应槽（response slot）**（PROPOSED）：一个可作答小题下学生需要填的单个作答位置（选择集合 / 文本 / 数值 / 匹配对 / 扩展作答）。一个空不是天然一张 question 行，也不是天然一次 attempt。
+- **联合评分组（evaluation group）**（PROPOSED）：需要一起判分的响应槽集合；有依赖的槽要么一起定稿并一起结算，要么在前置缺失时保持 provisional 且不结算。
+- **评分依据（MarkingSpec）**（PROPOSED）：`reference_md` 之外的评分契约，可组合答案键、得分点与等级量表；每个评分单元只贡献一次分数，响应槽是证据位置而非计分权威；区分来源权威、抽取断言与核验准入。
+- **有效判定（effective judgment）**（PROPOSED）：某次 submission 当前唯一生效的判分结果；候选/影子输出不进普通有效判分通道，接受与替代必须显式。

@@ -1,0 +1,151 @@
+{
+  "census_date": "2026-09-25",
+  "total_open": 34,
+  "excluded_from_triage": [
+    "YUK-1038 family (1043-1059): parent epic In Progress, all children already specced+labeled ready-for-agent per Q21 split; 1045/1047/1055 in-flight lanes, 1041/1042 in-flight ops lanes. YUK-1056 Backlog (blocked 1055).",
+    "YUK-1052/1053/1054/1049: ready-for-agent Backlog, blocked on in-flight tickets.",
+    "YUK-1057/1058/1059: ready-for-agent Backlog, terminal chain."
+  ],
+  "parents_state": {
+    "YUK-350": {"title": "B5 统一 verify 契约（Verifier Router）+ plan-then-generate + QuizV", "state": "Backlog(open)", "note": "desc excerpt: scope=三闸收敛统一 verify 契约 + plan-then-generate + QuizVerify 'error' 通道（建议先做，独立无依赖）+ Variant verify-then-promote 翻转 + auto-enroll source-tier 灰度。ADR-0038。"},
+    "YUK-538": {"title": "全项目逻辑打磨 program", "state": "Backlog(open) — desc says 'worklist 14/14 全部 merged', program 收官 2026-07-05 → DRIFT candidate: program epic still open"},
+    "YUK-585": {"title": "红线挑战审查 program", "state": "Backlog(open) — desc: 22 簇终裁 KEEP×5/KEEP-WITH-COST×15/REWRITE×2/DROP×0; 落地 wave 3 PR (#724/#725/#726) 停等 owner merge; 批③工程单见子单"},
+    "YUK-845": {"title": "[FULL/F0 follow-up] 统一 central runner 外 provider 出站 attempt", "state": "Backlog(open) — desc says PR #1189 已在 main (merge-base 验证), 08-15 退回 Todo 系状态漂移 → DRIFT candidate: work landed, epic open"},
+    "YUK-571": {"title": "placement go-live flag 翻转", "state": "Done per PLAN.md (e2e 验收 09-17 全通) — verify; if open it's drift"}
+  },
+  "issues": [
+    {
+      "id": "YUK-369",
+      "title": "A3 步骤级证据切分（限数学/推导型，future）",
+      "state": "Backlog", "labels": ["Improvement"], "parent": "YUK-350",
+      "updatedAt": "2026-09-24",
+      "description": "## 来源\n\n产品对账 §A「真·未决」A3 + owner 2026-06-16 ratify。决策记录见 `docs/superpowers/plans/2026-06-16-A1-A5-ratified-decisions.md`。关联设计 §6.4 / §7.1。\n\n## 背景\n\n是否把答案证据切到**步骤级**（per-step 留痕 + 判分），让复盘能定位到「第几步错」。现成结构在 `StepsJudgeTask`（已对数学/推导型运作）。\n\n## 决策（owner ratify）\n\n* 保持 **future**。\n* 仅限**数学/推导型**（`StepsJudgeTask` 已运作那批），**不向全题型泛化**。\n* 理由：步骤级切分撞开放·主观题天花板（无法可靠切步）；全题型铺开收益不抵成本。数学/推导有现成 step-rubric 结构。\n\n## Scope（future）\n\n* 扩展 `StepsJudgeTask` 的 step-level 证据留痕，限数学/推导型。"
+    },
+    {
+      "id": "YUK-405",
+      "title": "私人教研团：AI-native 学习产品 rethink（关系脑先行 · conjecture 引擎）",
+      "state": "Backlog", "labels": [], "parent": null,
+      "updatedAt": "2026-09-18",
+      "description": "Epic。📌 2026-07-23 勘误+验收现状（owner 拍板）：Phase 0 确定性闭环已 CODE-LIVE：夜会 04:35 归纳 → conjecture 提案 → accept/edit → 一次性 probe → confirm/refute，全链 provenance+测试覆盖。剩余验收是行为性两周真实使用窗口：owner 上传首批冷库内容 + 跑首次真实 placement 后开表。度量：①猜想确认率非退化 ②owner 锚点积累 ③打开欲/delight 主观判定。窗口结束后裁 YUK-406 与本伞收口。Reconstruction 从 North Star 降级为未来产品选项。TRUNCATED — fetch full via get_issue if needed."
+    },
+    {
+      "id": "YUK-406",
+      "title": "Phase 0 — 关系脑 thin slice：conjecture 引擎 + 例会 job + 备课台",
+      "state": "Backlog", "labels": [], "parent": "YUK-405",
+      "updatedAt": "2026-09-18",
+      "description": "Parent YUK-405。愿景文档 docs/superpowers/specs/2026-06-18-private-teaching-research-team-vision.md §11/§12。目标：最小「团队在为我工作」纵切：sleep-time 例会 job 建模+备料，备课台 ≤3 张带证据提案，采纳/改/不要。中心数据类型=一等 conjecture 对象。注意 parent epic desc 说 Phase 0 已 CODE-LIVE → 本票可能实质上只剩行为验收窗口 → drift/closeout 候选。TRUNCATED."
+    },
+    {
+      "id": "YUK-416",
+      "title": "[DEFERRED] 异质双强 de-bias panel + cross-provider wrapper（gated on 第二条 frontier lane = GPT 5.5 级）",
+      "state": "Backlog", "labels": [], "parent": "YUK-405",
+      "updatedAt": "2026-08-26",
+      "description": "owner 2026-06-18 决定：把「跨 provider 异质 de-bias 模式」放一放，per-call provider-override wrapper 也 defer，本 issue 仅作捕获。defer 理由：de-bias 只在两个模型能力相当时成立；mimo 显著弱于 Opus（实测），GLM 只 coding 不错，真能与 Opus 称双强只有 GPT 5.5 级。显式 DEFERRED — triage 应尊重原 defer 而非重新激活。"
+    },
+    {
+      "id": "YUK-438",
+      "title": "A9 LLM step-grading — 解题分步评分，PFA 证据 3-6× 倍增器",
+      "state": "Backlog", "labels": ["Improvement"], "parent": null,
+      "updatedAt": "2026-09-25",
+      "description": "开放题分步按 rubric 评分：一道题→每个 rubric 步一个二元 KC 观测，1 题变 3-6 观测（PFA 输入）。证据 Chen et al. 2025 PR-PER：GPT-4o 无参考答案分步给分与人一致 70-80%；5-run 多数投票+run 间方差当置信。避开多项 IRT 走 LLM 当仪器。诚实边界：LLM 评分有噪/可能有偏；self-consistency 方差当可靠性权重喂 PPI。已关联 YUK-1049（Jev typed 执行器）——检查与 1049/1047 的 overlap 再定态。TRUNCATED."
+    },
+    {
+      "id": "YUK-452",
+      "title": "冷启 day-one MVP — cold-start-first 学习者档案可用（epic）",
+      "state": "Backlog", "labels": [], "parent": null,
+      "updatedAt": "2026-09-18",
+      "description": "Epic。cold-start-first：profile/教研团 day-one 零数据靠先验可用。设计 doc：docs/design/2026-06-20-cold-start-day-one-design.md（n=1-safe 栈映射+首会旅程+n=1 红线+inc A-F）。§6 七问 owner 决策已锁（2026-06-20）：placement 短自述→每科 8 题固定；锚题 5-8 题+粗档映射 logit 等。注意 YUK-571 placement go-live 已 Done、YUK-1009 declared_stage 已 merge——epic 的增量可能大部分已落地 → 核 inc A-F 剩余项做拆票/closeout。TRUNCATED."
+    },
+    {
+      "id": "YUK-492",
+      "title": "整页 holistic 判分 + 同页密集归属（YUK-488 收窄后延迟的终态）",
+      "state": "Backlog", "labels": ["Feature"], "parent": null,
+      "updatedAt": "2026-09-24",
+      "description": "YUK-488 原=完整 holistic 目标，2026-06-23 owner 收窄为 per-question page-scope（已 ship PR #573），明确延迟 holistic。本票=被延迟的终态捕获。关联 YUK-1047 判分收敛 lane（在跑）——holistic 入口将来也走 evaluateSubmission。TRUNCATED."
+    },
+    {
+      "id": "YUK-550",
+      "title": "kg-borrowing × frontier evidence-floor：flag 翻转前必须重审 tracked trigger",
+      "state": "Backlog", "labels": [], "parent": "YUK-538",
+      "updatedAt": "2026-09-14",
+      "description": "打磨 program worklist #4 残留：characterization test 已落地；tracked trigger 归本单元（master register kg-borrowing-prereq-propagation-sprawl）。核心：kg-borrowing flag 翻转前必须重审 tracked trigger 的证据下限。条件触发（flag 翻转前）。TRUNCATED."
+    },
+    {
+      "id": "YUK-572",
+      "title": "背景 agent 运行时 — 议程权分层 + charter 化（例会/dreaming/maintenance）+ 共享 subagent 能力 + shadow 对照翻转",
+      "state": "Backlog", "labels": [], "parent": "YUK-405",
+      "updatedAt": "2026-08-27",
+      "description": "owner 2026-07-06：议程权分层原则——结算层能动性 0 永远；提案层有界 agent（已有 induceConjecture/dreaming）；议程层高=本伞交付层；交互层最高。owner 批准 agent-led 例会 shadow lane，扩展 dreaming/maintenance agent 化+subagent 能力。Epic 级，需拆票。TRUNCATED."
+    },
+    {
+      "id": "YUK-588",
+      "title": "夜间自主 AI 链聚合成本预算/订阅额度机制（X2 红线成本前提已变，cap≠授权）",
+      "state": "Backlog", "labels": [], "parent": "YUK-585",
+      "updatedAt": "2026-09-18",
+      "description": "红线审查 X2 critic 深挖：红线守的是交互式 rescue/抽图授权，但 23+ 个夜间 cron 组成整条自主付费 AI 链完全不经授权口；成本前提（ADR-0002 成本可预测）post-YUK-145 已变。cap≠授权。需聚合预算/额度机制设计。关联 YUK-1028 Astra P2 费用归因。TRUNCATED."
+    },
+    {
+      "id": "YUK-766",
+      "title": "订阅系统灾备恢复语义：备份排除 checkpoint/delivery 导致 restore 后未投递增量被标 skipped",
+      "state": "Backlog", "labels": [], "parent": null,
+      "updatedAt": "2026-09-25",
+      "description": "codex P1 on PR #1044 转票。订阅三表排除在备份外，restore 清空后 worker 重建 checkpoint → bootstrapSubscription 把恢复出的所有匹配 event 标 bootstrap_skipped。后果：备份时刻未投递的 pending/retry delivery 灾备恢复后永不投递。不修理由：唯一生产订阅者 notes.mastery-progress-note-refine 是刻意 no-op。已关联 YUK-1055（启动 fences 在跑 lane）——交叉核对 1055 的 pending 翻译是否已覆盖本票。TRUNCATED."
+    },
+    {
+      "id": "YUK-856",
+      "title": "[FULL/F0.O1] Observe and enforce provider attempts in production",
+      "state": "Backlog", "labels": ["area:ops","ready-for-human"], "parent": "YUK-845",
+      "updatedAt": "2026-09-21",
+      "description": "运维票，excluded from FULL_IMPLEMENTED 35 lanes。前置：F0.5 exact-head CI/no-P0/P1 + owner 部署授权。注意 parent YUK-845 desc 说 PR #1189 已在 main——核实 856 是否仍独立成立（生产观测面可能仍未做）。TRUNCATED."
+    },
+    {
+      "id": "YUK-922",
+      "title": "组卷面信心自评（self_confidence）落地——AttemptOnQuestion 缺槽位，需事件 schema 决策",
+      "state": "Backlog", "labels": [], "parent": null,
+      "updatedAt": "2026-09-24",
+      "description": "YUK-784 实施时证实的前提偏差：写「后端已完全就绪」但 AttemptOnQuestion 实际无 self_confidence 槽位，需事件 schema 决策。known-defer。注意：1038 迁移正重构 attempt/submission 契约——槽位归属可能应并入 1052（提交持久化）而非独立做 → 交叉核对后给合并/独立建议。TRUNCATED."
+    },
+    {
+      "id": "YUK-999",
+      "title": "matcher 接 live caller 后用真实 demand embedding 重跑 axis C 标定（评估 0.45–0.55 带）",
+      "state": "Backlog", "labels": [], "parent": null,
+      "updatedAt": "2026-09-18",
+      "description": "YUK-677（Done #1402）轻量案结论：MATCHER_COSINE_MAX_DISTANCE=0.35 维持，路径 dormant。条件触发：matcher 接 live caller 后用 pnpm audit:calibration 重跑 axis C 评估 0.45-0.55 带；需改常量走代码 PR。验收：一份 axis C 复测报告+阈值结论更新。"
+    },
+    {
+      "id": "YUK-1020",
+      "title": "454-A 跟进：secondary_categories 的 misc cause 显示回填",
+      "state": "Backlog", "labels": [], "parent": null,
+      "updatedAt": "2026-09-18 (approx)",
+      "description": "YUK-1018（PR #1430）review 沉淀 follow-up：misc id 可进 secondary_categories（attribute-retrieve.unit.test.ts 已 pin），但 misc 显示回填只覆盖 primary——CauseBadge 的 +{s} 副标签对 misc 仍渲染裸 misc_<hash> id。范围：wire 形状加 secondary_labels 穿透 question timeline cause、/api/mistakes 投影、copilot attribute_mistake/query_mistakes/get_attempt_context/question_context 输出；CauseBadge 副标签渲染 label ?? 裸 id；resolveMiscCauseLabels 复用并入同一批查询。出处 docs/audit/2026-09-20-yuk-1018-misc-cause-followups.md 观察项 4。规模小、已 grounded → 直接 ready-for-agent 候选。"
+    },
+    {
+      "id": "YUK-1028",
+      "title": "GPT-6 Astra P2：费用归因、缓存与逐次调用预算闭合",
+      "state": "Backlog", "labels": ["area:copilot","ready-for-agent"], "parent": null,
+      "updatedAt": "2026-09-23",
+      "description": "GPT-6 Astra 迁移计划 P2，基线 03a4dd8a9；仅规划未实施。Files: src/server/ai/attempt-cost.ts、pricing.ts、pi-agent-adapter.ts、sdk-terminal.ts、runner/lifecycle/provider-attempt owner 与 scoped tests。Spec: docs/planning/2026-09-22-gpt-6-astra-migration.md §P2。要点：attempt-cost.ts 通用分支把非 xiaomi 正 reportedCostUsd 归为 reported，而 pi usage.cost 是价目表估算；pi 0.85.1 已读 cached_tokens/cache_write_tokens 并从 input_tokens 扣除；接 Astra 后需修归因+缓存+逐次预算闭合。已 ready-for-agent —— 验 brief 质量，不合格则补写。TRUNCATED."
+    },
+    {
+      "id": "YUK-1029",
+      "title": "GPT-6 Astra P3：冻结迁移任务清单并完成真实输出对照与灰度验收",
+      "state": "Backlog", "labels": ["area:copilot","needs-info"], "parent": null,
+      "updatedAt": "2026-09-22",
+      "description": "owner 2026-09-22 要求制定迁移计划。仅规划，未运行 paid probe。Spec §P3–P4。Scope 待 owner 拍：LIGHT（推荐，Copilot/SupplyPlanTask/SolutionGenerationTask 等高质量任务）vs FULL（51 个 TaskSpec 按族分批）。最终清单及 actual-output 预算待 owner 确认。正确保持 needs-info（owner 决策）。验 stale：Astra P1 已 merged（YUK-1027），P2 owner 曾叫停回 Backlog——本票是否仍等同一决策。"
+    },
+    {
+      "id": "YUK-1033",
+      "title": "学段纠正面：goal.declared_stage 的用户可达编辑入口（YUK-1009 follow-up）",
+      "state": "Backlog", "labels": [], "parent": null,
+      "updatedAt": "2026-09-24",
+      "description": "YUK-1009（PR #1450 merged）把 declared_stage 持久化+消费落地，但用户纠正入口未做。owner 已裁决：暂缓，等 YUK-1007 配置面板一并做，届时裁粗档 vs 年级细分——PLAN.md 09-24 条明确「1033 owner 裁决暂缓（等 1007 面板）」→ 应标 needs-info/blocked-on-1007 而非裸 Backlog。"
+    },
+    {
+      "id": "YUK-1040",
+      "title": "seed:*:root 残留处置 — θ̂/mastery 投影过滤 + 存量 FSRS 行与 seed-root 绑题的 owner ops 处置",
+      "state": "Backlog", "labels": [], "parent": null,
+      "updatedAt": "2026-09-24",
+      "description": "YUK-1037（PR merged）抓到 verify-enroll 对 seed:*:root 建 FSRS 卡。本票：θ̂/mastery 投影过滤 + 存量 FSRS 行处置 + seed-root 绑题 4 条处置建议待 owner 批（docs/audit/2026-09-24-question-binding-audit.md）。部分 owner ops 决策 + 部分代码过滤 → 可能拆两票。TRUNCATED."
+    }
+  ]
+}
