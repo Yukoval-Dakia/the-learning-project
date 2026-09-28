@@ -1,5 +1,7 @@
 // Seven structural entities have canonical writers. ItemCalibration alone retains
 // Scheme A (default OFF); rollback of retired writers requires the previous release.
+import { getConfigFlag } from '@/core/config/store';
+
 const PER_ENTITY_FLAG_ENV = {
   item_calibration: 'PROJECTION_IS_WRITER_ITEM_CALIBRATION',
 } as const;
@@ -17,7 +19,8 @@ export type ProjectionEntity = keyof typeof PER_ENTITY_FLAG_ENV | keyof typeof C
 /** Read-only audit policy; business owners do not branch on retired modes. */
 export function projectionIsWriter(entity: ProjectionEntity): boolean {
   if (entity !== 'item_calibration') return true;
-  return process.env[PER_ENTITY_FLAG_ENV[entity]] === '1';
+  // YUK-1007：DB > env > code-default(false)；'1' 字面量语义在 registry envParse。
+  return getConfigFlag(PER_ENTITY_FLAG_ENV[entity]);
 }
 
 /** Printed by both process roles so writer policy can be compared without a new table. */

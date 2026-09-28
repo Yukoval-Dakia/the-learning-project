@@ -14,6 +14,7 @@ import { registerHandlers } from '@/server/boss/handlers';
 import { reconcileStuckAiTaskRuns } from '@/server/boss/handlers/ai_task_run_reconcile';
 import { registerCapabilityJobs } from '@/server/boss/register-capability-jobs';
 import { sendVerifyDispatchStartupRecovery } from '@/server/boss/verify-dispatch-outbox';
+import { hydrateConfigFromDb, startConfigRefresh } from '@/server/config/hydrate';
 import { waitForRunnableEpoch } from '@/server/contract-epoch';
 import { getServerEnv } from '@/server/env';
 import { mountSubscriptionDispatch } from '@/server/event-subscriptions/dispatch-mount';
@@ -40,6 +41,9 @@ export async function startBossWorker(
   // YUK-599（v2 §4）— worker 首个 job 落地前水合 SubjectRegistry（never-throws：
   // hydrate 内部 WARN + 代码种子地板，绝不挡 worker boot）。
   await hydrateSubjectRegistryFromDb(db);
+  // YUK-1007 — 首批 config snapshot 入内存（同 never-throws 先例：表未建/DB down →
+  // 空快照 = 纯 env 行为，天然回滚位；§5.1 序 4）。
+  await hydrateConfigFromDb(db);
   // F-2 (YUK-185) / PR #232 review (FIX #6) — the brief regen handler calls the
   // LLM via runTask, which needs XIAOMI_API_KEY (resolveTaskProvider throws
   // otherwise, providers.ts:88). Surface a missing key at BOOT — not per-scope
@@ -130,6 +134,10 @@ export async function startBossWorker(
   // installShutdownHandler → boss.stop() → 'stopped' → 显式清定时器（v2-test-9）。
   const refresh = startSubjectRefresh(db, 60_000);
   boss.once('stopped', () => refresh.stop());
+  // YUK-1007 — config 15s 周期 refresh（§1.3：epoch 探测 ≈ 0 成本；worker 无写
+  // 路径，纯靠此窗收敛，unref 不阻退出）。
+  const configRefreshHandle = startConfigRefresh(db, 15_000);
+  boss.once('stopped', () => configRefreshHandle.stop());
   // YUK-576 §5.4 — boot-time stuck-run reconcile (PRIMARY trigger): the main
   // stuck cause is a process crash, so the restart converges >1h 'running'
   // ai_task_runs rows within seconds (the 1h threshold guards the previous

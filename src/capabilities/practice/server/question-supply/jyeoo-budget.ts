@@ -12,17 +12,18 @@
 // 无独立表（避免为计数器做迁移）；并发超取窗口由 producer 硬闸兜底，文档化接受。
 
 import { sql } from 'drizzle-orm';
+import { getConfig } from '@/core/config/store';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 
 export const JYEOO_FETCH_CANARY_ACTION = 'experimental:jyeoo_fetch';
 
-/** 日预算（Asia/Shanghai 自然日）。默认 40 = producer 谨慎档；env 可调低做更保守的 loom 侧闸（0 = 当日禁抓，operator kill-switch）。 */
+/** 日预算（Asia/Shanghai 自然日）。默认 40 = producer 谨慎档；0 = 当日禁抓，
+ * operator kill-switch（不得被 coalesce 成默认——registry nonNegIntEnv 保留 0）。
+ * YUK-1007：DB > env > code-default(40)。 */
 export function jyeooDailyFetchBudget(): number {
-  const raw = process.env.JYEOO_DAILY_FETCH_BUDGET;
-  if (!raw) return 40;
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n >= 0 ? n : 40;
+  const v = getConfig('JYEOO_DAILY_FETCH_BUDGET');
+  return typeof v === 'number' ? v : 40;
 }
 
 /** Asia/Shanghai（UTC+8，无 DST）当日 00:00 的 UTC 时刻。producer 预算文件同此自然日口径。 */

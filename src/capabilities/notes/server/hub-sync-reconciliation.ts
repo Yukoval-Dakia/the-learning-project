@@ -28,6 +28,7 @@ import {
   suppressedArtifactIds,
 } from '@/capabilities/notes/server/hub-auto-zone';
 import { NoteRefineApplyError, applyNotePatch } from '@/core/blocks/apply-note-patch';
+import { getConfig } from '@/core/config/store';
 import { ArtifactBodyBlocks, type ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
@@ -681,7 +682,9 @@ async function observeShadowNoApply(
 }
 
 function readHubSyncMode(): HubSyncMode {
-  const raw = process.env.HUB_SYNC_MODE;
+  // YUK-1007：DB > env > code-default('off')；非法值 → 'off'（registry envParse
+  // 收窄到枚举，其余 → undefined → codeDefault）。
+  const raw = getConfig('HUB_SYNC_MODE');
   return raw === 'apply' || raw === 'shadow' ? raw : 'off';
 }
 

@@ -28,9 +28,9 @@
 import { sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import {
-  DEDUP_DISTANCE_MAX,
-  DEDUP_MAX_PAIRS,
-  DEDUP_WINDOW_DAYS,
+  dedupDistanceMax,
+  dedupMaxPairs,
+  dedupWindowDays,
 } from '@/capabilities/knowledge/server/dedup-flags';
 import {
   type WriteProposalEntry,
@@ -55,11 +55,11 @@ export interface KcDedupNightlyResult {
 export type ProposeFn = (db: Db, entry: WriteProposalEntry) => Promise<string>;
 
 export interface RunKcDedupNightlyOpts {
-  /** cosine-distance ceiling; default DEDUP_DISTANCE_MAX. */
+  /** cosine-distance ceiling; default dedupDistanceMax(). */
   distanceMax?: number;
-  /** recent-auto-created lookback window in days; default DEDUP_WINDOW_DAYS. */
+  /** recent-auto-created lookback window in days; default dedupWindowDays(). */
   windowDays?: number;
-  /** per-run proposal cap; default DEDUP_MAX_PAIRS. */
+  /** per-run proposal cap; default dedupMaxPairs(). */
   maxPairs?: number;
   /** propose writer seam; default writeKnowledgeProposeEvent. */
   proposeFn?: ProposeFn;
@@ -96,9 +96,9 @@ export async function runKcDedupNightly(
   db: Db,
   opts: RunKcDedupNightlyOpts = {},
 ): Promise<KcDedupNightlyResult> {
-  const distanceMax = opts.distanceMax ?? DEDUP_DISTANCE_MAX;
-  const windowDays = opts.windowDays ?? DEDUP_WINDOW_DAYS;
-  const maxPairs = opts.maxPairs ?? DEDUP_MAX_PAIRS;
+  const distanceMax = opts.distanceMax ?? dedupDistanceMax();
+  const windowDays = opts.windowDays ?? dedupWindowDays();
+  const maxPairs = opts.maxPairs ?? dedupMaxPairs();
   const proposeFn = opts.proposeFn ?? writeKnowledgeProposeEvent;
 
   // Pairwise SELF-JOIN over non-archived, embedded `knowledge` rows:

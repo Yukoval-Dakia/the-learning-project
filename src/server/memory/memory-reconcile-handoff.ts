@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { and, asc, eq, sql } from 'drizzle-orm';
+import { getConfig } from '@/core/config/store';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import {
@@ -29,7 +30,7 @@ const RECOVERY_SCAN = 200;
 const RECOVERY_PAGE = 25;
 
 export function memoryReconcileHandoffMode(
-  raw = process.env.MEMORY_RECONCILE_HANDOFF_MODE,
+  raw = rawConfigValue('MEMORY_RECONCILE_HANDOFF_MODE'),
 ): MemoryReconcileHandoffMode {
   const value = raw?.trim() || 'observe';
   switch (value) {
@@ -43,6 +44,12 @@ export function memoryReconcileHandoffMode(
         `invalid MEMORY_RECONCILE_HANDOFF_MODE ${JSON.stringify(raw)}`,
       );
   }
+}
+
+/** YUK-1007：resolved config → raw string seam（保原 string-arg 测试注入点）。 */
+function rawConfigValue(key: string): string | undefined {
+  const v = getConfig(key);
+  return typeof v === 'string' ? v : undefined;
 }
 export function modePersistsNewIntents(mode: MemoryReconcileHandoffMode): boolean {
   return mode === 'write' || mode === 'recover';

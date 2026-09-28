@@ -6,7 +6,7 @@
 // `GET /nudges` 必须排除 shadow=true（免翻 flag 时倒出 backlog）。owner 读 shadow 行校准参数后
 // 再翻 surfacing。shadow 行 = 暗窗期 live consumer，直接消解「建成不通电」。
 
-import { parseFlag } from '@/core/env-flags';
+import { getConfigMany } from '@/core/config/store';
 
 export interface NudgeConfig {
   /** surfacing gate。true = 翻开 user-facing；false（默认）= shadow 期，写 shadow=true 证据行。 */
@@ -21,18 +21,28 @@ export interface NudgeConfig {
   kcCooldownHours: number;
 }
 
-function parseIntEnv(raw: string | undefined, fallback: number): number {
-  if (raw === undefined) return fallback;
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
-
 export function loadNudgeConfig(env: NodeJS.ProcessEnv = process.env): NudgeConfig {
+  // YUK-1007：五键经 getConfigMany（DB > env > code-default；env 层保留原
+  // parseIntEnv 语义——无效 → fallback 已由 registry envParse 表达）。
+  const cfg = getConfigMany(
+    [
+      'COPILOT_NUDGE_ENABLED',
+      'COPILOT_NUDGE_DAILY_MAX',
+      'COPILOT_NUDGE_EXPIRES_HOURS',
+      'COPILOT_NUDGE_STREAK_N',
+      'COPILOT_NUDGE_KC_COOLDOWN_HOURS',
+    ],
+    env,
+  );
   return {
-    enabled: parseFlag(env.COPILOT_NUDGE_ENABLED),
-    dailyMax: parseIntEnv(env.COPILOT_NUDGE_DAILY_MAX, 3),
-    expiresHours: parseIntEnv(env.COPILOT_NUDGE_EXPIRES_HOURS, 24),
-    streakN: parseIntEnv(env.COPILOT_NUDGE_STREAK_N, 3),
-    kcCooldownHours: parseIntEnv(env.COPILOT_NUDGE_KC_COOLDOWN_HOURS, 24),
+    enabled: cfg.COPILOT_NUDGE_ENABLED === true,
+    dailyMax: typeof cfg.COPILOT_NUDGE_DAILY_MAX === 'number' ? cfg.COPILOT_NUDGE_DAILY_MAX : 3,
+    expiresHours:
+      typeof cfg.COPILOT_NUDGE_EXPIRES_HOURS === 'number' ? cfg.COPILOT_NUDGE_EXPIRES_HOURS : 24,
+    streakN: typeof cfg.COPILOT_NUDGE_STREAK_N === 'number' ? cfg.COPILOT_NUDGE_STREAK_N : 3,
+    kcCooldownHours:
+      typeof cfg.COPILOT_NUDGE_KC_COOLDOWN_HOURS === 'number'
+        ? cfg.COPILOT_NUDGE_KC_COOLDOWN_HOURS
+        : 24,
   };
 }

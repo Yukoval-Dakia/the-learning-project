@@ -15,13 +15,15 @@ export const JYEOO_FETCH_ROUTE = 'jyeoo_fetch';
 export const JYEOO_SOURCE_HOST = 'www.jyeoo.com';
 
 import { homedir } from 'node:os';
+import { getConfig, resolveConfigValue } from '@/core/config/store';
 
 // Binary resolution: JYEOO_RS_BINARY wins; otherwise use the repo default
 // (~/yukoval-projects/jyeoo-rs/target/release/jyeoo-rs). 本地 smoke 与生产 worker
 // 同一路径约定。
 export function jyeooBinaryPath(): string {
-  const env = process.env.JYEOO_RS_BINARY;
-  if (env && env.trim().length > 0) return env;
+  // YUK-1007：DB > env > code-default(仓库默认路径)。
+  const resolved = getConfig('JYEOO_RS_BINARY');
+  if (typeof resolved === 'string' && resolved.trim().length > 0) return resolved;
   return `${homedir()}/yukoval-projects/jyeoo-rs/target/release/jyeoo-rs`;
 }
 
@@ -40,7 +42,9 @@ export function jyeooBinaryPath(): string {
 // 垃圾值 → NaN、非正值 → spawnJyeooFetch 边界校验拒绝（fail-closed，记 'spawn'
 // failure）——该语义经 YUK-990 裁决接受，仅文档化，不做 env 侧纠偏。
 export function jyeooSpawnTimeoutMs(): number {
-  return Number.parseInt(process.env.JYEOO_SPAWN_TIMEOUT_MS ?? '120000', 10);
+  // YUK-1007：DB > env > code-default(120s)；NaN 直通保 YUK-990 fail-closed。
+  const v = getConfig('JYEOO_SPAWN_TIMEOUT_MS');
+  return typeof v === 'number' ? v : 120_000;
 }
 
 /**
@@ -61,14 +65,27 @@ export const JYEOO_BACKFILL_PER_QUESTION_MS = 90_000;
  * 手动给值的推荐下界：本批 session_max × 90s。
  */
 export function jyeooBackfillSpawnTimeoutMs(sessionMax: number): number {
-  const explicit = process.env.JYEOO_BACKFILL_TIMEOUT_MS || process.env.JYEOO_SPAWN_TIMEOUT_MS;
-  if (explicit) return Number.parseInt(explicit, 10);
+  // YUK-1007：DB(BACKFILL) > env(BACKFILL) > DB(SPAWN) > env(SPAWN) > 派生默认。
+  // 「未设置」= source 非 db/env（code-default）→ 下探一层。
+  const backfill = resolveConfigValue('JYEOO_BACKFILL_TIMEOUT_MS');
+  if (backfill.source === 'db' || backfill.source === 'env') return backfill.value as number;
+  const spawn = resolveConfigValue('JYEOO_SPAWN_TIMEOUT_MS');
+  if (spawn.source === 'db') return spawn.value as number;
+  if (spawn.source === 'env') {
+    // SPAWN 键的双面语义（迁移前 `env.BACKFILL || env.SPAWN` 链）：直读 reader
+    // （jyeooSpawnTimeoutMs）对 '' 是 YUK-990 的 NaN 直通；本链把 '' 当未设置
+    // 下探推导默认。DB 层不可能是 ''（zod int positive），只有 env 层需要这支；
+    // 非数字垃圾仍 NaN 直通 fail-closed（registry envParse 语义）。
+    if (process.env.JYEOO_SPAWN_TIMEOUT_MS !== '') return spawn.value as number;
+  }
   return sessionMax * JYEOO_BACKFILL_PER_QUESTION_MS;
 }
 
 export function jyeooSpawnMaxStdoutBytes(): number {
-  return Number.parseInt(process.env.JYEOO_SPAWN_MAX_STDOUT_BYTES ?? String(8 * 1024 * 1024), 10);
+  const v = getConfig('JYEOO_SPAWN_MAX_STDOUT_BYTES');
+  return typeof v === 'number' ? v : 8 * 1024 * 1024;
 }
 export function jyeooSpawnMaxStderrBytes(): number {
-  return Number.parseInt(process.env.JYEOO_SPAWN_MAX_STDERR_BYTES ?? String(1024 * 1024), 10);
+  const v = getConfig('JYEOO_SPAWN_MAX_STDERR_BYTES');
+  return typeof v === 'number' ? v : 1024 * 1024;
 }

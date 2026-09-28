@@ -1,6 +1,6 @@
 // YUK-734 — boundary coverage for the dedup-flags env-override resolvers. The three
-// thresholds (DEDUP_DISTANCE_MAX / DEDUP_WINDOW_DAYS / DEDUP_MAX_PAIRS) are module-level
-// consts resolved from process.env at IMPORT time by resolvePositive / resolvePositiveInt.
+// thresholds (dedupDistanceMax / dedupWindowDays / dedupMaxPairs — YUK-1007 const→
+// function readers over the config store) resolve env → code-default per call.
 // Those resolvers encode two real past regressions:
 //   - OCR #4:     a ≤0 cosine-distance ceiling would silently DISABLE all KC dedup
 //                 (cosine distance is always > 0), so a non-positive override is rejected.
@@ -48,9 +48,9 @@ afterEach(() => {
 describe('dedup-flags env-override resolvers', () => {
   it('uses the built-in defaults when no override is set', async () => {
     const flags = await loadFlags({});
-    expect(flags.DEDUP_DISTANCE_MAX).toBe(0.1);
-    expect(flags.DEDUP_WINDOW_DAYS).toBe(7);
-    expect(flags.DEDUP_MAX_PAIRS).toBe(50);
+    expect(flags.dedupDistanceMax()).toBe(0.1);
+    expect(flags.dedupWindowDays()).toBe(7);
+    expect(flags.dedupMaxPairs()).toBe(50);
   });
 
   it('honors valid positive overrides (guards against a vacuous always-default resolver)', async () => {
@@ -59,9 +59,9 @@ describe('dedup-flags env-override resolvers', () => {
       KC_DEDUP_WINDOW_DAYS: '14',
       KC_DEDUP_MAX_PAIRS: '10',
     });
-    expect(flags.DEDUP_DISTANCE_MAX).toBe(0.05);
-    expect(flags.DEDUP_WINDOW_DAYS).toBe(14);
-    expect(flags.DEDUP_MAX_PAIRS).toBe(10);
+    expect(flags.dedupDistanceMax()).toBe(0.05);
+    expect(flags.dedupWindowDays()).toBe(14);
+    expect(flags.dedupMaxPairs()).toBe(10);
   });
 
   // OCR #4 regression: a ≤0 cosine-distance ceiling would never match (distance > 0) →
@@ -70,7 +70,7 @@ describe('dedup-flags env-override resolvers', () => {
     'rejects a non-positive KC_DEDUP_DISTANCE_MAX=%s back to the 0.1 default (OCR #4)',
     async (raw) => {
       const flags = await loadFlags({ KC_DEDUP_DISTANCE_MAX: raw });
-      expect(flags.DEDUP_DISTANCE_MAX).toBe(0.1);
+      expect(flags.dedupDistanceMax()).toBe(0.1);
     },
   );
 
@@ -83,7 +83,7 @@ describe('dedup-flags env-override resolvers', () => {
     'rejects a sub-1 fractional %s=%s back to its default (augment #570)',
     async (key, raw, expected) => {
       const flags = await loadFlags({ [key]: raw });
-      const value = key === 'KC_DEDUP_MAX_PAIRS' ? flags.DEDUP_MAX_PAIRS : flags.DEDUP_WINDOW_DAYS;
+      const value = key === 'KC_DEDUP_MAX_PAIRS' ? flags.dedupMaxPairs() : flags.dedupWindowDays();
       expect(value).toBe(expected);
     },
   );
@@ -91,7 +91,7 @@ describe('dedup-flags env-override resolvers', () => {
   // A fractional value ≥ 1 truncates toward zero to a valid positive int (NOT rejected).
   it('truncates a ≥1 fractional integer override toward zero', async () => {
     const flags = await loadFlags({ KC_DEDUP_MAX_PAIRS: '12.9' });
-    expect(flags.DEDUP_MAX_PAIRS).toBe(12);
+    expect(flags.dedupMaxPairs()).toBe(12);
   });
 
   it.each(['abc', '', '   ', 'NaN', 'Infinity'])(
@@ -102,9 +102,9 @@ describe('dedup-flags env-override resolvers', () => {
         KC_DEDUP_WINDOW_DAYS: raw,
         KC_DEDUP_MAX_PAIRS: raw,
       });
-      expect(flags.DEDUP_DISTANCE_MAX).toBe(0.1);
-      expect(flags.DEDUP_WINDOW_DAYS).toBe(7);
-      expect(flags.DEDUP_MAX_PAIRS).toBe(50);
+      expect(flags.dedupDistanceMax()).toBe(0.1);
+      expect(flags.dedupWindowDays()).toBe(7);
+      expect(flags.dedupMaxPairs()).toBe(50);
     },
   );
 });

@@ -1,6 +1,8 @@
 // YUK-573 — judge-calibration sampling config (design doc §3.5). All knobs are
 // env-overridable; the kill switch is a SEPARATE opt-in using the shared flag grammar (YUK-572
 // dark-ship pattern — cron stays registered, handler no-ops, zero spend).
+
+import { getConfig } from '@/core/config/store';
 import type { JudgeCalibrationConfig } from '../server/judge-calibration-sample-core';
 
 /** Opt-in dark-ship flag. Handler reads it through the shared runtime-flag grammar. */
@@ -20,35 +22,32 @@ export const JUDGE_CALIBRATION_DEFAULTS: JudgeCalibrationConfig = {
   windowDays: 7,
 };
 
-function readIntInRange(
-  raw: string | undefined,
-  min: number,
-  max: number,
-  fallback: number,
-): number {
-  const n = Number.parseInt(raw ?? '', 10);
-  if (Number.isNaN(n)) return fallback;
-  return Math.min(max, Math.max(min, n));
-}
-
 export function readJudgeCalibrationConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): JudgeCalibrationConfig {
+  // YUK-1007：四键 DB > env > code-default；clamp 仍在 reader 侧（registry
+  // schema 校验 DB 写入，但 env 层经 numberEnv 来值仍需本地 clamp，与原
+  // readIntInRange 逐位一致）。
+  const batchMax = getConfig('JUDGE_CALIBRATION_BATCH_MAX', env);
+  const windowDays = getConfig('JUDGE_CALIBRATION_WINDOW_DAYS', env);
+  const rejudgeProvider = getConfig('JUDGE_CALIBRATION_REJUDGE_PROVIDER', env);
+  const rejudgeModel = getConfig('JUDGE_CALIBRATION_REJUDGE_MODEL', env);
   return {
     rejudgeProvider:
-      env.JUDGE_CALIBRATION_REJUDGE_PROVIDER || JUDGE_CALIBRATION_DEFAULTS.rejudgeProvider,
-    rejudgeModel: env.JUDGE_CALIBRATION_REJUDGE_MODEL || JUDGE_CALIBRATION_DEFAULTS.rejudgeModel,
-    batchMax: readIntInRange(
-      env.JUDGE_CALIBRATION_BATCH_MAX,
-      1,
-      50,
-      JUDGE_CALIBRATION_DEFAULTS.batchMax,
-    ),
-    windowDays: readIntInRange(
-      env.JUDGE_CALIBRATION_WINDOW_DAYS,
-      1,
-      90,
-      JUDGE_CALIBRATION_DEFAULTS.windowDays,
-    ),
+      typeof rejudgeProvider === 'string' && rejudgeProvider !== ''
+        ? rejudgeProvider
+        : JUDGE_CALIBRATION_DEFAULTS.rejudgeProvider,
+    rejudgeModel:
+      typeof rejudgeModel === 'string' && rejudgeModel !== ''
+        ? rejudgeModel
+        : JUDGE_CALIBRATION_DEFAULTS.rejudgeModel,
+    batchMax:
+      typeof batchMax === 'number'
+        ? Math.min(50, Math.max(1, batchMax))
+        : JUDGE_CALIBRATION_DEFAULTS.batchMax,
+    windowDays:
+      typeof windowDays === 'number'
+        ? Math.min(90, Math.max(1, windowDays))
+        : JUDGE_CALIBRATION_DEFAULTS.windowDays,
   };
 }
