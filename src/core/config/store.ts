@@ -91,6 +91,8 @@ function envValueFor(
 }
 
 function dbValueFor(key: string): { entry?: ConfigSnapshotEntry; test: boolean } {
+  // overlay 在这里再查一次不是重复：getTaskOverride 直读本函数（不经
+  // resolveConfigValue 的顶检），task.<kind>.* 的 setTestConfig 靠这层生效。
   if (testOverlay.has(key)) {
     return {
       entry: { value: testOverlay.get(key) as ConfigValue, revision: -1, updatedAt: null },
@@ -113,6 +115,17 @@ export function resolveConfigValue(
   key: string,
   env: NodeJS.ProcessEnv = process.env,
 ): ResolvedConfig {
+  // 测试 overlay 恒最上层——压过 env pin、pinned、DB、code-default（修 seam-order：
+  // 原先 overlay 只藏在 dbValueFor 里，pinned/priority 的 early-return 会绕过它，
+  // placement 那类 compose-pin 键的 setTestConfig 就被 env 静默压掉）。
+  if (testOverlay.has(key)) {
+    return {
+      value: testOverlay.get(key) as ConfigValue,
+      source: 'db',
+      revision: -1,
+      updatedAt: null,
+    };
+  }
   const def = resolveKeyDef(key);
   if (!def) {
     const raw = env[key];

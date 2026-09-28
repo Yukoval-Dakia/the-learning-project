@@ -14,11 +14,11 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 // Mock just the PLACEMENT_PROBE_ENABLED flag (EARLY_KLP pattern) — keep startPlacementSession /
 // completePlacementSession / abandonPlacementSession real. The default is dark-ship false; we
 // flip it per-test to cover both the gated-off 404 and the live flow.
-const placementFlag = { value: true };
 // YUK-1007：getter-mock 换成 config overlay——setTestConfig 注入的生效值压过
-// env/code-default（pinned 键直读 env 层，overlay 恒最上层）。
+// env/code-default（pinned 键直读 env 层，overlay 恒最上层）。注入是值快照，
+// 不是 live getter——测里翻向必须重新 setTestConfig。
 beforeEach(() => {
-  setTestConfig({ PLACEMENT_PROBE_ENABLED: placementFlag.value });
+  setTestConfig({ PLACEMENT_PROBE_ENABLED: true });
 });
 
 import {
@@ -33,7 +33,6 @@ import { createPlacementSessionResource, POST as startPlacement } from './placem
 const db = testDb();
 
 beforeEach(() => {
-  placementFlag.value = true;
   return resetDb();
 });
 afterEach(() => {
@@ -303,7 +302,7 @@ describe('placement API flow', () => {
   });
 
   it('start 404s when the dark-ship flag is off', async () => {
-    placementFlag.value = false;
+    setTestConfig({ PLACEMENT_PROBE_ENABLED: false });
     const res = await startPlacement(jsonReq({ knowledgeIds: ['kc1'] }));
     expect(res.status).toBe(404);
   });

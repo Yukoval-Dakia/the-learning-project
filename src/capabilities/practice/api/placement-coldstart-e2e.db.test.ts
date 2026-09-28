@@ -22,11 +22,10 @@ import { event, goal, knowledge, mastery_state, question } from '@/db/schema';
 import { migrateCanonicalProjections } from '../../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
-const placementFlag = { value: true };
 // YUK-1007：getter-mock 换成 config overlay——setTestConfig 注入的生效值压过
-// env/code-default（pinned 键直读 env 层，overlay 恒最上层）。
+// env/code-default（pinned 键直读 env 层，overlay 恒最上层）。注入是值快照。
 beforeEach(() => {
-  setTestConfig({ PLACEMENT_PROBE_ENABLED: placementFlag.value });
+  setTestConfig({ PLACEMENT_PROBE_ENABLED: true });
 });
 
 import { seedKnowledge as seedSubjectRoots } from '@/capabilities/knowledge/server/seed';
@@ -38,7 +37,6 @@ import { POST as startPlacement } from './placement-start';
 const db = testDb();
 
 beforeEach(() => {
-  placementFlag.value = true;
   return resetDb();
 });
 afterEach(() => {

@@ -8,8 +8,10 @@
 import { downloadZip } from 'client-zip';
 import { getTableColumns, getTableName, isTable, sql } from 'drizzle-orm';
 import { unzipSync } from 'fflate';
+import { getConfigSnapshot } from '@/core/config/store';
 import type { Db, Tx } from '@/db/client';
 import * as schema from '@/db/schema';
+import { hydrateConfigFromDb } from '@/server/config/hydrate';
 import type { R2Client } from '@/server/r2';
 import {
   BACKUP_EXCLUDED_TABLES,
@@ -295,6 +297,17 @@ const TEXT_ARRAY_COLUMNS: Partial<Record<TableName, ReadonlySet<string>>> = {
   event: new Set(['affected_scopes']),
 };
 
+/**
+ * YUK-1007 (oracle P1-6 修入时带出): jsonb 列里的标量/原始值——dump 里是
+ * `5`、`"x"`、`true` 这类原生值，restoreValue 会绑成 integer/text，PG 认
+ * "expression is of type integer" 拒绝进 jsonb 列。primitive jsonb 列必须
+ * 显式 JSON.stringify + ::jsonb cast（对象走原 JSON.stringify 路径同样安全，
+ * 一并 cast 掉）。
+ */
+const JSONB_COLUMNS: Partial<Record<TableName, ReadonlySet<string>>> = {
+  system_config: new Set(['value']),
+};
+
 export interface ImportManifest {
   schema_version: string;
   exported_at: number;
@@ -349,6 +362,10 @@ function restoreValue(table: TableName, column: string, value: unknown) {
       value.map((item) => sql`${item}`),
       sql`,`,
     )}]::text[]`;
+  }
+  if (JSONB_COLUMNS[table]?.has(column)) {
+    // primitive 也要 JSON.stringify（'5' 才能进 jsonb；裸 5 会撞 integer 类型错）。
+    return sql`${value === undefined ? null : JSON.stringify(value)}::jsonb`;
   }
   const bound =
     Array.isArray(value) || (value !== null && typeof value === 'object')
@@ -638,6 +655,10 @@ export async function restoreFromArchive({
 
   const stats: Record<string, { deleted: number; inserted: number }> = {};
 
+  // YUK-1007 review P1-6：本进程已发布的 config epoch——restore 结尾要写的
+  // 「严格新 epoch」必须大于它，否则本进程 hydrate 的守卫会拒绝收敛。
+  const localConfigEpoch = getConfigSnapshot().epoch;
+
   try {
     // YUK-355 (atomic restore): the ENTIRE restore mutation sequence — FK_ORDER
     // wipe+insert AND the mem0 collection wipe/create/insert — runs inside a SINGLE
@@ -659,6 +680,22 @@ export async function restoreFromArchive({
       // 行序不保证父行在前，推迟到 commit 检查；其余 FK 仍即时按 FK_ORDER 拓扑校验。
       await tx.execute(sql`set local app.assessment_restore_mode = 'on'`);
       await tx.execute(sql`set constraints all deferred`);
+
+      // YUK-1007 review P1-6 — capture the pre-restore epoch axis BEFORE the wipe:
+      // restore re-inserts the archived system_config_epoch verbatim, but the epoch
+      // only means anything relative to this DB lineage's own sequence history. A
+      // restore that lands epoch N onto a process already publishing epoch N looks
+      // "unchanged" to every hydrate probe (every process keeps its pre-restore
+      // values; the probe never fires). We need pre-wipe epoch/sequence position to
+      // write a strictly-newer epoch at the end of this tx.
+      const preMaxRows = (await tx.execute(sql`
+        select greatest(
+          coalesce((select max(epoch) from "system_config_epoch"), 0),
+          coalesce((select last_value from pg_sequences where schemaname = 'public' and sequencename = 'config_change_seq'), 0),
+          ${localConfigEpoch}
+        ) as pre_max
+      `)) as unknown as Array<{ pre_max: number | string }>;
+      const preRestoreConfigMax = Math.max(Number(preMaxRows[0]?.pre_max ?? 0), localConfigEpoch);
       if (archivedInterventionPreparationJobIds.length > 0) {
         if (retireInterventionPreparationJobs) {
           await retireInterventionPreparationJobs(tx, archivedInterventionPreparationJobIds);
@@ -729,6 +766,28 @@ export async function restoreFromArchive({
           `select setval('config_change_seq', (select greatest(coalesce((select max(change_seq) from "system_config_journal"), 0), coalesce((select max(epoch) from "system_config_epoch"), 0)) + 1), false)`,
         ),
       );
+
+      // YUK-1007 review P1-6 — restore MUST NOT leave the archived epoch verbatim:
+      // restore 回插的 epoch 来自另一条时间线/另一份备份，可能与本进程已发布 epoch
+      // 相等甚至更小。那样的话 hydrate 的 epoch 探测永远看到 "unchanged"，所有
+      // 进程永远停在 restore 前的配置（实测：restore 到 epoch=1/val=111，运行中
+      // 的 epoch=1/val=222 进程永不收敛）。修复：在 tx 末尾把 epoch 改写成严格
+      // 大于本 DB 血统曾发过的任何 epoch（pre-wipe 行、序列位、刚回插的备份值）
+      // 且大于本进程快照 epoch 的新值——探测看到严格更大的号 → 必然重新水合。
+      await tx.execute(sql`
+        insert into system_config_epoch (id, epoch, updated_at)
+        values (
+          'global',
+          greatest(
+            coalesce((select max(epoch) from system_config_epoch), 0),
+            ${preRestoreConfigMax}
+          ) + 1,
+          now()
+        )
+        on conflict (id) do update
+          set epoch = greatest(excluded.epoch, system_config_epoch.epoch + 1),
+              updated_at = now()
+      `);
 
       // YUK-751 (codex P1): event.dispatch_seq is re-inserted verbatim from the archive (a FORWARD
       // FK_ORDER table), but event_dispatch_seq is a manual sequence outside pg-dump row semantics.
@@ -856,6 +915,10 @@ export async function restoreFromArchive({
       },
     };
   }
+
+  // YUK-1007 review P1-6 — 恢复成功后让本进程立刻收敛到新快照（never-throws）：
+  // tx 末尾已写入严格新 epoch，这次 hydrate 必然重读；其它进程 ≤15s 经 refresh。
+  await hydrateConfigFromDb(db);
 
   // Re-PUT assets to R2.
   let assetsUploaded = 0;

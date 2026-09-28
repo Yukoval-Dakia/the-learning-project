@@ -12,21 +12,20 @@
  * 快照保证 test 间隔离。
  */
 import { afterEach, describe, expect, it } from 'vitest';
-
+import type { ConfigSnapshot } from './store';
 import {
   getConfig,
   getConfigFlag,
   getConfigSnapshot,
-  getConfigSource,
   getConfigSnapshotEpoch,
-  getTaskOverride,
+  getConfigSource,
   getLaneOverride,
+  getTaskOverride,
   replaceConfigSnapshot,
   resetTestConfig,
   resolveConfigValue,
   setTestConfig,
 } from './store';
-import type { ConfigSnapshot } from './store';
 
 const EMPTY_SNAPSHOT: ConfigSnapshot = { epoch: 0, entries: new Map(), hydratedAt: '' };
 
@@ -88,11 +87,14 @@ describe('resolveConfigValue — fallback mode (DB > env > code)', () => {
 });
 
 describe('resolveConfigValue — priority mode (env > DB > code)', () => {
-  const KEY = 'AI_PROVIDER_OVERRIDE'; // envMode='priority'
+  // lane.global.provider：envMode='priority'，envName=AI_PROVIDER_OVERRIDE
+  // （裸 AI_PROVIDER_OVERRIDE 已不在 registry——resolver 只消费 lane.global.*）。
+  const KEY = 'lane.global.provider';
+  const ENV_NAME = 'AI_PROVIDER_OVERRIDE';
 
   it('env pin beats a DB row', () => {
     replaceConfigSnapshot(snapshotWith({ [KEY]: 'db-pinned' }));
-    const r = resolveConfigValue(KEY, { [KEY]: 'env-pin' });
+    const r = resolveConfigValue(KEY, { [ENV_NAME]: 'env-pin' } as NodeJS.ProcessEnv);
     expect(r.value).toBe('env-pin');
     expect(r.source).toBe('env');
   });
@@ -106,21 +108,33 @@ describe('resolveConfigValue — priority mode (env > DB > code)', () => {
 });
 
 describe('resolveConfigValue — pinned mode (env > code; DB skipped)', () => {
-  // WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD: envMode='pinned' (compose 强制项)。
-  const KEY = 'WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD';
+  // MISCONCEPTION_PROMOTE_ENABLED：envMode='pinned'（compose 强制项）。
+  // （WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD 曾被误当 pinned 样本——review P1-1
+  // 纠正：compose 不设 THRESHOLD，它回落 fallback、DB 可写。）
+  const KEY = 'MISCONCEPTION_PROMOTE_ENABLED';
 
   it('env expressed → compose-forced, beats any DB row', () => {
-    replaceConfigSnapshot(snapshotWith({ [KEY]: 0.3 })); // DB row present
-    const r = resolveConfigValue(KEY, { [KEY]: '0.5' });
-    expect(r.value).toBe(0.5);
+    replaceConfigSnapshot(snapshotWith({ [KEY]: false })); // DB row present
+    const r = resolveConfigValue(KEY, { [KEY]: 'true' } as NodeJS.ProcessEnv);
+    expect(r.value).toBe(true);
     expect(r.source).toBe('compose-forced');
   });
 
   it('DB row is skipped entirely — env absent → codeDefault, not the row', () => {
-    replaceConfigSnapshot(snapshotWith({ [KEY]: 0.3 }));
+    replaceConfigSnapshot(snapshotWith({ [KEY]: true }));
     const r = resolveConfigValue(KEY, {});
-    expect(r.value).toBe(0.85); // codeDefault, NOT the DB row
+    expect(r.value).toBe(false); // codeDefault, NOT the DB row
     expect(r.source).toBe('code-default');
+  });
+
+  it('test overlay still wins over a pinned env value (P2 seam-order regression guard)', () => {
+    // 修 seam-order 前 overlay 在 pinned early-return 之后才被检查，
+    // placement 测试的 setTestConfig 会被 compose env 压掉——overlay 恒最上。
+    const FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED';
+    setTestConfig({ [FLAG]: true });
+    const r = resolveConfigValue(FLAG, { [FLAG]: 'false' } as NodeJS.ProcessEnv);
+    expect(r.value).toBe(true); // overlay beats env AND code default
+    expect(getConfig(FLAG, { [FLAG]: 'false' } as NodeJS.ProcessEnv)).toBe(true);
   });
 });
 

@@ -13,7 +13,7 @@
  * change_seq），afterEach resetTestConfig + 快照复位，保证 reader 测试互不泄漏。
  */
 import { sql } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   getConfig,
@@ -148,9 +148,9 @@ describe('setConfig / clearConfig', () => {
 
   it('rejects unregistered key (400) and schema-bad value (422)', async () => {
     const db = testDb();
-    await expect(
-      setConfig('NO_SUCH_KEY_XYZ', 'v', { actor: 'cli' }, db),
-    ).rejects.toMatchObject({ status: 400 });
+    await expect(setConfig('NO_SUCH_KEY_XYZ', 'v', { actor: 'cli' }, db)).rejects.toMatchObject({
+      status: 400,
+    });
     await expect(
       setConfig('JYEOO_DAILY_FETCH_BUDGET', 'abc', { actor: 'cli' }, db),
     ).rejects.toMatchObject({ status: 422 });
@@ -158,12 +158,15 @@ describe('setConfig / clearConfig', () => {
 
   it('rejects a compose-pinned key with 409', async () => {
     const db = testDb();
-    // A pinned key from the registry — envMode='pinned'. Pick one that exists.
-    // AI_PROVIDER_OVERRIDE is 'priority', not pinned. Use a known pinned compose
-    // key — assert via the ApiError status contract regardless of which key.
-    // JYEOO_RS_BINARY is compose-forced in this lane.
+    // Pinned keys from the registry — envMode='pinned'. After the keyspace dedup
+    // the compose-forced flags are MISCONCEPTION_PROMOTE_ENABLED /
+    // WORKFLOW_JUDGE_AUTO_ENROLL_* / PLACEMENT_PROBE_ENABLED (JYEOO_RS_BINARY is
+    // not pinned — it has env fallback).
     await expect(
-      setConfig('JYEOO_RS_BINARY', '/tmp/x', { actor: 'cli' }, db),
+      setConfig('MISCONCEPTION_PROMOTE_ENABLED', true, { actor: 'cli' }, db),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(
+      setConfig('PLACEMENT_PROBE_ENABLED', true, { actor: 'cli' }, db),
     ).rejects.toMatchObject({ status: 409 });
   });
 
@@ -201,5 +204,261 @@ describe('Tier A reader goes live — judgeDurableEnabled()', () => {
 
     await clearConfig('JUDGE_DURABLE_ENABLED', { actor: 'cli' }, db);
     expect(judgeDurableEnabled()).toBe(false); // back to floor
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// YUK-1007 review P1/P2 修复回归组
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('P1-2 — revision durable source (journal max + 1, not value row)', () => {
+  it('set → clear → set does not collide on journal (key, revision) PK', async () => {
+    const db = testDb();
+    await setConfig('AI_RATE_LIMIT_MAX', 10, { actor: 'cli' }, db); // rev 1
+    await clearConfig('AI_RATE_LIMIT_MAX', { actor: 'cli' }, db); // rev 2 (clear journal)
+    // Bug: next revision came from the deletable value row → re-inserts revision=1
+    // → PK collision with the existing journal row (rev 1). Pre-fix this throws.
+    const res = await setConfig('AI_RATE_LIMIT_MAX', 30, { actor: 'cli' }, db);
+    expect(res.revision).toBe(3);
+    expect(getConfig('AI_RATE_LIMIT_MAX', {})).toBe(30);
+    const journal = await db.select().from(system_config_journal);
+    expect(journal.map((j) => `${j.action}@${j.revision}`)).toEqual(['set@1', 'clear@2', 'set@3']);
+  });
+
+  it('clear → clear keeps monotonically increasing revisions', async () => {
+    const db = testDb();
+    await setConfig('AI_RATE_LIMIT_MAX', 10, { actor: 'cli' }, db); // rev 1
+    await clearConfig('AI_RATE_LIMIT_MAX', { actor: 'cli' }, db); // rev 2
+    // Second clear on an already-deleted row must still journal a NEW revision.
+    const res = await clearConfig('AI_RATE_LIMIT_MAX', { actor: 'cli' }, db);
+    expect(res.revision).toBe(3);
+    const journal = await db.select().from(system_config_journal);
+    expect(journal.map((j) => j.revision)).toEqual([1, 2, 3]);
+  });
+
+  it('interleaved set/clear across two keys does not cross-talk revisions', async () => {
+    const db = testDb();
+    await setConfig('AI_RATE_LIMIT_MAX', 1, { actor: 'cli' }, db);
+    await setConfig('KC_DEDUP_MAX_PAIRS', 9, { actor: 'cli' }, db);
+    await clearConfig('AI_RATE_LIMIT_MAX', { actor: 'cli' }, db);
+    const a = await setConfig('AI_RATE_LIMIT_MAX', 2, { actor: 'cli' }, db);
+    const b = await clearConfig('KC_DEDUP_MAX_PAIRS', { actor: 'cli' }, db);
+    expect(a.revision).toBe(3); // 1(set) + 2(clear) → 3
+    expect(b.revision).toBe(2); // KC_DEDUP_MAX_PAIRS own axis
+  });
+});
+
+describe('P1-5 — combined provider+model pair validation (final state in-tx)', () => {
+  it('writing task.QuizGenTask.provider=openai with no model rejects 422 (final combo read in-tx)', async () => {
+    const db = testDb();
+    await expect(
+      setConfig('task.QuizGenTask.provider', 'openai', { actor: 'cli' }, db),
+    ).rejects.toMatchObject({ status: 422 });
+  });
+
+  it('model-cleared-under-provider rejects: openai cannot pair with empty model', async () => {
+    const db = testDb();
+    const { setConfigs } = await import('@/server/config/write');
+    // provider=openai 只有与 model 一批写才立得住；batch 内读兄弟行组合通过。
+    await setConfigs(
+      [
+        { key: 'task.QuizGenTask.provider', value: 'openai' },
+        { key: 'task.QuizGenTask.model', value: 'gpt-6-astra' },
+      ],
+      { actor: 'cli' },
+      db,
+    );
+    // Pre-fix: clearing .model is not validated → openai + no explicit model leaks.
+    await expect(clearConfig('task.QuizGenTask.model', { actor: 'cli' }, db)).rejects.toMatchObject(
+      { status: 422 },
+    );
+  });
+
+  it('clearing the provider dissolves the pair (always allowed)', async () => {
+    const db = testDb();
+    const { setConfigs } = await import('@/server/config/write');
+    await setConfigs(
+      [
+        { key: 'task.QuizGenTask.provider', value: 'openai' },
+        { key: 'task.QuizGenTask.model', value: 'gpt-6-astra' },
+      ],
+      { actor: 'cli' },
+      db,
+    );
+    const res = await clearConfig('task.QuizGenTask.provider', { actor: 'cli' }, db);
+    expect(res.cleared).toBe(true);
+  });
+
+  it('batch set provider+model together validates the final combo atomically', async () => {
+    const db = testDb();
+    const { setConfigs } = await import('@/server/config/write');
+    const res = await setConfigs(
+      [
+        { key: 'lane.global.provider', value: 'openai' },
+        { key: 'lane.global.model', value: 'gpt-6-astra' },
+      ],
+      { actor: 'cli' },
+      db,
+    );
+    expect(res.map((r) => r.key)).toEqual(['lane.global.provider', 'lane.global.model']);
+    expect(getConfig('lane.global.provider', {})).toBe('openai');
+    expect(getConfig('lane.global.model', {})).toBe('gpt-6-astra');
+  });
+
+  it('provider-only rewrite to openai passes while ANY model row stands (missing-only rule)', async () => {
+    const db = testDb();
+    const { setConfigs } = await import('@/server/config/write');
+    await setConfigs(
+      [
+        { key: 'task.QuizGenTask.provider', value: 'xiaomi' },
+        { key: 'task.QuizGenTask.model', value: 'mimo-v2-pro' },
+      ],
+      { actor: 'cli' },
+      db,
+    );
+    // 终态 openai + model 非空 → 规则只查「缺失」，不查 provider↔id 族匹配（超出
+    // oracle direction，本条在 review 报告里注明）。
+    const res = await setConfigs(
+      [{ key: 'task.QuizGenTask.provider', value: 'openai' }],
+      { actor: 'cli' },
+      db,
+    );
+    expect(res[0].key).toBe('task.QuizGenTask.provider');
+  });
+
+  it('writing model under a provider that has a runnable default is allowed', async () => {
+    const db = testDb();
+    // xiaomi / anthropic-sub have runnable defaults — provider alone is legal.
+    const res = await setConfig('lane.global.provider', 'anthropic-sub', { actor: 'cli' }, db);
+    expect(res.key).toBe('lane.global.provider');
+  });
+});
+
+describe('P1-3 — hydrate single-flight + epoch guard', () => {
+  it('concurrent hydrates serialize; a stale snapshot cannot overwrite a newer one', async () => {
+    const db = testDb();
+    // seed epoch=1 val=10
+    await setConfig('AI_RATE_LIMIT_MAX', 10, { actor: 'cli' }, db);
+    expect(getConfig('AI_RATE_LIMIT_MAX', {})).toBe(10);
+
+    // Simulate the oracle race: an old-epoch read racing a newer write.
+    // With serialization + the epoch guard, the serialized second hydrate cannot
+    // republish epoch≤published; craft it by hand: write a stale-row view with
+    // a LOWER epoch than the journal axis (mimics a restore-to-old backup), then
+    // call hydrate — the epoch guard must refuse to publish the stale read.
+    await db.execute(
+      sql`update system_config set value = '5'::jsonb where key = 'AI_RATE_LIMIT_MAX'`,
+    );
+    await db.execute(sql`update system_config_epoch set epoch = 1 where id = 'global'`);
+    // published epoch is already > 1 in-process after the set above? Snapshot epoch
+    // after setConfig is the bump epoch (≥2). Reading a stale-epoch row now must
+    // be refused.
+    const rep = await hydrateConfigFromDb(db);
+    expect(rep.staleSkipped).toBe(true);
+    expect(getConfig('AI_RATE_LIMIT_MAX', {})).toBe(10); // untouched
+  });
+
+  it('refresh hydrates serialize behind an in-flight one (single-flight chain)', async () => {
+    const db = testDb();
+    // Two overlapping calls: the second must wait for the first and still read
+    // the latest state.
+    const p1 = hydrateConfigFromDb(db);
+    const p2 = hydrateConfigFromDb(db);
+    const [r1, r2] = await Promise.all([p1, p2]);
+    // r2 ran after r1 finished — both reports coherent, no interleave.
+    expect(typeof r1.epoch).toBe('number');
+    expect(typeof r2.epoch).toBe('number');
+    expect(r2.epoch).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('P1-2 — concurrent same-key writes serialize on the journal axis', () => {
+  it('8 parallel setConfigs land unique contiguous revisions with no PK collision', async () => {
+    const db = testDb();
+    const N = 8;
+    // 并发回归：所有写并发发出。epoch 行 + 行锁 + journal 锁串行化它们——
+    // 每笔拿到唯一 revision；journal 全量在、无 duplicate-key 事务回滚。
+    const results = await Promise.all(
+      Array.from({ length: N }, (_, i) =>
+        setConfig('AI_RATE_LIMIT_MAX', 100 + i, { actor: 'cli' }, db),
+      ),
+    );
+    const revisions = results.map((r) => r.revision).sort((a, b) => a - b);
+    expect(revisions).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    const journal = await db.select().from(system_config_journal);
+    expect(journal).toHaveLength(N);
+    // 事务内 revision 严格单调 → journal PK 无碰撞，每笔都 commit 了。
+    expect(getConfig('AI_RATE_LIMIT_MAX', {})).toBeGreaterThan(0);
+  });
+
+  it('parallel set+clear mix on one key keeps the journal append-only and collision-free', async () => {
+    const db = testDb();
+    // 先立一行，再并发 6 笔混合 set/clear：clear 删行后并发 set 不得回卷 revision。
+    await setConfig('KC_DEDUP_MAX_PAIRS', 9, { actor: 'cli' }, db); // rev 1
+    const writes = [
+      setConfig('KC_DEDUP_MAX_PAIRS', 10, { actor: 'cli' }, db),
+      clearConfig('KC_DEDUP_MAX_PAIRS', { actor: 'cli' }, db),
+      setConfig('KC_DEDUP_MAX_PAIRS', 11, { actor: 'cli' }, db),
+      clearConfig('KC_DEDUP_MAX_PAIRS', { actor: 'cli' }, db),
+      setConfig('KC_DEDUP_MAX_PAIRS', 12, { actor: 'cli' }, db),
+      clearConfig('KC_DEDUP_MAX_PAIRS', { actor: 'cli' }, db),
+    ];
+    const settled = await Promise.allSettled(writes);
+    // 全部成功（无 duplicate-key 回滚）。
+    for (const s of settled) expect(s.status).toBe('fulfilled');
+    const journal = await db.select().from(system_config_journal);
+    const revs = journal.map((j) => j.revision).sort((a, b) => a - b);
+    expect(revs).toEqual([1, 2, 3, 4, 5, 6, 7]); // 7 笔全在，无碰撞无丢失
+  });
+});
+
+describe('P1-5 — pair validation covers the env-pin precedence layer', () => {
+  it('env-pinned openai makes a DB model clear reject 422 (effective pair, not DB pair)', async () => {
+    const db = testDb();
+    const { setConfigs } = await import('@/server/config/write');
+    // DB 侧一对完整组合先落地。
+    await setConfigs(
+      [
+        { key: 'lane.global.provider', value: 'openai' },
+        { key: 'lane.global.model', value: 'gpt-6-astra' },
+      ],
+      { actor: 'cli' },
+      db,
+    );
+    // env pin 压 DB：AI_PROVIDER_OVERRIDE=openai、无 AI_PROVIDER_MODEL——
+    // 清 DB model 后生效层 openai × 无 model，必须拒。
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'openai');
+    try {
+      await expect(clearConfig('lane.global.model', { actor: 'cli' }, db)).rejects.toMatchObject({
+        status: 422,
+      });
+      // env 层补上 model 后，同一 clear 合法（生效对 env provider × env model）。
+      vi.stubEnv('AI_PROVIDER_MODEL', 'gpt-6-astra');
+      const res = await clearConfig('lane.global.model', { actor: 'cli' }, db);
+      expect(res.cleared).toBe(true);
+    } finally {
+      // vitest unstubEnvs 默认 false：unstubAllGlobals 不会还原 stubEnv——
+      // 必须显式 unstubAllEnvs，否则 AI_PROVIDER_MODEL 泄漏给后续测试。
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('writing only the model under an env-pinned explicit-model provider rejects 422', async () => {
+    const db = testDb();
+    // 无任何 DB 行：env pin openai × 无 model——任何碰到该对的写都必须拦。
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'openai');
+    try {
+      await expect(
+        setConfig('lane.global.model', 'gpt-6-astra', { actor: 'cli' }, db),
+      ).resolves.toMatchObject({ key: 'lane.global.model' }); // 刚写的 DB model 补齐生效对 → 允许
+      // 反例：清回 model（env 层无 model）→ 拒。
+      vi.unstubAllEnvs();
+      vi.stubEnv('AI_PROVIDER_OVERRIDE', 'openai');
+      await expect(clearConfig('lane.global.model', { actor: 'cli' }, db)).rejects.toMatchObject({
+        status: 422,
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

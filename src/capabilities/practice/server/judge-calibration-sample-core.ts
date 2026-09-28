@@ -348,7 +348,9 @@ export async function runJudgeCalibrationSample(
     return typeof v === 'string' ? v : null;
   })();
   const globalOverrideAtSample = (() => {
-    const v = getConfig('AI_PROVIDER_OVERRIDE');
+    // YUK-1007 review：裸 AI_PROVIDER_OVERRIDE 已从 keyspace 摘除（resolver 只消费
+    // lane.global.*）——读 lane.global.provider 才是 env pin > DB > default 的生效值。
+    const v = getConfig('lane.global.provider');
     return typeof v === 'string' ? v : null;
   })();
 
