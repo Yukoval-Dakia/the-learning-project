@@ -52,7 +52,9 @@ type EpochRow = {
   seq: number;
   epoch: string;
   state: string;
-  entered_at: Date;
+  // postgres-js 把 ::timestamptz 投影成 string（非 Date）。归一化放边界内，
+  // 下游所有消费方拿到的都是真 Date。
+  entered_at: Date | string;
   entered_by: string;
   note: string | null;
 };
@@ -88,7 +90,7 @@ export async function readContractEpoch(db: Db): Promise<ContractEpochMarker | n
     seq: row.seq,
     epoch: row.epoch,
     state: row.state as ContractEpochMarker['state'],
-    enteredAt: row.entered_at,
+    enteredAt: row.entered_at instanceof Date ? row.entered_at : new Date(row.entered_at),
     enteredBy: row.entered_by,
     note: row.note,
   };
