@@ -70,7 +70,14 @@ export function jyeooBackfillSpawnTimeoutMs(sessionMax: number): number {
   const backfill = resolveConfigValue('JYEOO_BACKFILL_TIMEOUT_MS');
   if (backfill.source === 'db' || backfill.source === 'env') return backfill.value as number;
   const spawn = resolveConfigValue('JYEOO_SPAWN_TIMEOUT_MS');
-  if (spawn.source === 'db' || spawn.source === 'env') return spawn.value as number;
+  if (spawn.source === 'db') return spawn.value as number;
+  if (spawn.source === 'env') {
+    // SPAWN 键的双面语义（迁移前 `env.BACKFILL || env.SPAWN` 链）：直读 reader
+    // （jyeooSpawnTimeoutMs）对 '' 是 YUK-990 的 NaN 直通；本链把 '' 当未设置
+    // 下探推导默认。DB 层不可能是 ''（zod int positive），只有 env 层需要这支；
+    // 非数字垃圾仍 NaN 直通 fail-closed（registry envParse 语义）。
+    if (process.env.JYEOO_SPAWN_TIMEOUT_MS !== '') return spawn.value as number;
+  }
   return sessionMax * JYEOO_BACKFILL_PER_QUESTION_MS;
 }
 

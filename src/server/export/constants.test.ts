@@ -11,7 +11,7 @@ import {
 } from './constants';
 
 describe('export constants', () => {
-  it('SCHEMA_VERSION is "4.23" when the response-draft table enters backup', () => {
+  it('SCHEMA_VERSION is "4.24" when the hot-reload config tables enter backup', () => {
     // 4.22 → 4.23 (YUK-1052): NEW FK_ORDER table assessment_response_draft —
     // ResponseSet autosave 活草稿（用户可感知的学习中态，非瞬态 → 备份）。
     // 4.21 → 4.22 (YUK-1055): NEW FK_ORDER table contract_epoch — DB 合同 epoch
@@ -57,14 +57,17 @@ describe('export constants', () => {
     // 列是既有表的 additive 列，随整行 dump/restore，不单独 bump (表=bump，列=不 bump)。
     // 4.19 → 4.20 (YUK-1016 454-B): NEW FK_ORDER table cause_category_overlay —
     // owner-vetted 错因词表层 (authored catalog 行，retract 只置 archived_at，不可重建)。
-    expect(SCHEMA_VERSION).toBe('4.23');
+    // 4.23 → 4.24 (YUK-1007): NEW FK_ORDER tables system_config / system_config_journal /
+    // system_config_epoch — 热加载配置三表（owner 运行时配置行 + append-only 审计 +
+    // 失效轴），同 contract_epoch 先例紧邻 provider_attempt（provider_attempt 恒末位）。
+    expect(SCHEMA_VERSION).toBe('4.24');
   });
 
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
     expect(MAX_INLINE_ASSETS).toBe(45);
   });
 
-  it('FK_ORDER lists all 53 tables in topological order', () => {
+  it('FK_ORDER lists all 67 tables in topological order', () => {
     // 17 → 24: ②d backup-orphan fix added 7 persistent business tables that had
     // silently dropped out of the wipe-then-restore payload (artifact_block_ref,
     // ai_task_runs, mistake_variant, goal, proposal_signals, practice_stream_item,
@@ -122,7 +125,11 @@ describe('export constants', () => {
     // 62 → 63 (YUK-1055): added contract_epoch — durable epoch marker 历史
     // （restore 必须携回「是否已切换」事实），placed just before provider_attempt
     // (provider_attempt stays last)。
-    expect(FK_ORDER.length).toBe(64);
+    // 64 → 67 (YUK-1007): added 热加载配置三表 system_config → system_config_journal
+    // → system_config_epoch（行 + append-only journal + 失效轴；无硬 FK，key 轴
+    // 语义父子排序保持 restore 可读），placed after contract_epoch, before
+    // provider_attempt (provider_attempt stays last)。
+    expect(FK_ORDER.length).toBe(67);
     expect(FK_ORDER[0]).toBe('knowledge');
     expect(FK_ORDER[FK_ORDER.length - 1]).toBe('provider_attempt');
     expect(FK_ORDER.indexOf('note_verification_claim')).toBeGreaterThan(

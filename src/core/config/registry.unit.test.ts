@@ -228,6 +228,17 @@ describe('parser drift compat (P2) — env 层逐位回放迁移前语义', () =
     });
   }
 
+  // ── BACKFILL 键：原 `env.BACKFILL || env.SPAWN` 链——'' 是 falsy = 未设置
+  // （下探 SPAWN 层/推导默认）；非数字 parseInt 直通 NaN。CI 收口（run
+  // 36425519241）：rawParseIntEnv 把 '' 变已表达 NaN，撞断 ''→下探语义。
+  it.each(INPUTS)('JYEOO_BACKFILL_TIMEOUT_MS env=%s == old falsy-chain semantics', (raw) => {
+    const old = raw === undefined || raw.trim() === '' ? undefined : Number.parseInt(raw, 10);
+    expect(
+      getConfig('JYEOO_BACKFILL_TIMEOUT_MS', envFor('JYEOO_BACKFILL_TIMEOUT_MS', raw)),
+      `raw=${JSON.stringify(raw)}`,
+    ).toEqual(old);
+  });
+
   // ── enum 键：原文裸比较（无 trim）。' apply '（带空白）旧 → off。
   it.each(INPUTS)('HUB_SYNC_MODE env=%s == old bare-compare semantics', (raw) => {
     const rawStr = raw as string | undefined;

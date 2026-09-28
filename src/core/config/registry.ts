@@ -145,6 +145,17 @@ const intEnv: EnvParseFn = (raw) => {
  */
 const rawParseIntEnv: EnvParseFn = (raw) => Number.parseInt(raw, 10);
 
+/**
+ * JYEOO_BACKFILL_TIMEOUT_MS 原语义（迁移前 jyeooBackfillSpawnTimeoutMs 的
+ * `env.BACKFILL || env.SPAWN` 链）：'' 是 falsy = 未设置（下探 SPAWN 层/推导
+ * 默认）；非数字 parseInt 直通 NaN（fail-closed）。
+ */
+const backfillTimeoutEnv: EnvParseFn = (raw) => {
+  const v = raw.trim();
+  if (v === '') return undefined;
+  return Number.parseInt(v, 10); // NaN 直通
+};
+
 /** 正有限数 env（可小数；≤0/NaN → 未表达）。dedup DISTANCE_MAX 这类连续旋钮。 */
 const posNumEnv: EnvParseFn = (raw) => {
   const v = raw.trim();
@@ -499,7 +510,14 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     schema: z.number().int().positive(),
     codeDefault: undefined, // 缺省 → sessionMax × 90s（reader 侧推导）
     envName: 'JYEOO_BACKFILL_TIMEOUT_MS',
-    envParse: rawParseIntEnv,
+    // CI 收口（round-2 后）：原 reader（jyeooBackfillSpawnTimeoutMs 迁移前）的
+    // `env.BACKFILL || env.SPAWN` 链把 '' 当 falsy=未设置下探下一层；非数字才
+    // parseInt 直通 NaN（fail-closed）。rawParseIntEnv 把 '' 变成已表达的 NaN，
+    // 撞断了 BACKFILL=''→SPAWN 层的下探（CI run 36425519241 unit 失败）。
+    // SPAWN 键不适用本 parser：它的直读 reader（jyeooSpawnTimeoutMs）语义就是
+    // ''→NaN 直通（YUK-990），与 backfill 链的 ''-下探是同一 env 名的双面——
+    // 注册面取各自主 reader 语义，backfill 链对 SPAWN 层的 '' 已在 reader 侧消化。
+    envParse: backfillTimeoutEnv,
     tier: 'A',
   },
   JYEOO_SPAWN_MAX_STDOUT_BYTES: {

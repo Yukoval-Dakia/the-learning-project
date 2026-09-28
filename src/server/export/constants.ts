@@ -99,7 +99,7 @@
 // FK_ORDER 非 BACKUP_EXCLUDED。NEW FK_ORDER table 必 bump：52 → 53 tables，4.19 → 4.20。
 // YUK-1007: system_config / system_config_journal / system_config_epoch — owner 可调
 // 运行时配置 + 审计 + 失效轴（authored 运营真相，非瞬态）→ FK_ORDER 非 EXCLUDED。
-// NEW FK_ORDER tables 必 bump：63 → 66 tables，4.23 → 4.24。
+// NEW FK_ORDER tables 必 bump：64 → 67 tables，4.23 → 4.24。
 export const SCHEMA_VERSION = '4.24';
 
 // CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
