@@ -301,11 +301,25 @@ export interface ConfigWriteOptions {
 async function bumpEpoch(tx: Tx): Promise<number> {
   // INSERT … ON CONFLICT 幂等首行；每次写 nextval(config_change_seq)——与
   // journal.change_seq 同序列（§1.2「config_change_seq 同序列」）。
+  //
+  // 第二轮 review P1（两轴去重）自愈：序列位可能落后于 epoch 行（restore 把
+  // epoch 抬到恢复前高水位之上、但序列停在归档位；或任何手工/历史漂移）。
+  // 裸 nextval 会让 epoch 倒退——hydrate 的 stale 守卫随后拒绝发布，writer
+  // 却返回成功 → DB 新值 / runtime 旧值永久分叉。conflict 分支取
+  // greatest(nextval, epoch 行+1) 并用 setval 把序列同步到最终值：epoch 行锁
+  // 串行化并发写 tx（各自等前一个 tx commit），保证严格递增；正常路径
+  // nextval > epoch 行时 greatest 退化为 nextval，setval 重设同值无漂移
+  // （is_called=true → 下一次 nextval = 值+1，与直接 nextval 等价）。
   const rows = await tx.execute(sql`
-    insert into system_config_epoch (id, epoch, updated_at)
-    values (${EPOCH_ROW_ID}, nextval('config_change_seq'), now())
-    on conflict (id) do update set epoch = nextval('config_change_seq'), updated_at = now()
-    returning epoch
+    with bumped as (
+      insert into system_config_epoch (id, epoch, updated_at)
+      values (${EPOCH_ROW_ID}, nextval('config_change_seq'), now())
+      on conflict (id) do update
+        set epoch = greatest(nextval('config_change_seq'), system_config_epoch.epoch + 1),
+            updated_at = now()
+      returning epoch
+    )
+    select epoch, setval('config_change_seq', epoch) as seq_synced from bumped
   `);
   const row = (rows as unknown as Array<{ epoch: number | string }>)[0];
   return typeof row.epoch === 'string' ? Number(row.epoch) : row.epoch;

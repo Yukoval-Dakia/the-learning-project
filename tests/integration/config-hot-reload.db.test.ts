@@ -358,17 +358,80 @@ describe('P1-3 — hydrate single-flight + epoch guard', () => {
     expect(getConfig('AI_RATE_LIMIT_MAX', {})).toBe(10); // untouched
   });
 
-  it('refresh hydrates serialize behind an in-flight one (single-flight chain)', async () => {
+  it('deterministic barrier: a stale publish cannot land after a newer write (single-flight chain)', async () => {
     const db = testDb();
-    // Two overlapping calls: the second must wait for the first and still read
-    // the latest state.
-    const p1 = hydrateConfigFromDb(db);
-    const p2 = hydrateConfigFromDb(db);
-    const [r1, r2] = await Promise.all([p1, p2]);
-    // r2 ran after r1 finished — both reports coherent, no interleave.
-    expect(typeof r1.epoch).toBe('number');
-    expect(typeof r2.epoch).toBe('number');
-    expect(r2.epoch).toBeGreaterThanOrEqual(0);
+    // 第二轮 review P2：Oracle 受控实验的确定性编码（无 sleep）。旧版测试只断言
+    // 返回数字，去掉串行链仍能过。用 __hydratePublishGate（epoch 守卫通过后、
+    // 发布前的 barrier）构造精确竞态：
+    //   A（旧 hydrate）读到 (e1,10)、守卫通过后挂起在 barrier；
+    //   写 (e2,20) 的 tx commit，其写后 hydrate B 排在 A 后面（串行链）；
+    //   放行 A → A 先发布 (e1,10) → B 再读再发布 (e2,20)——最终值必须是新值，
+    //   A 的陈旧发布落在 B 之前（reportA.epoch=e1），发布序严格递增。
+    // 去掉串行链时 B 不等 A：B 先发布 (e2,20)、A 恢复后回写 (e1,10)——守卫
+    // 检查早已通过拦不住 → 最终值 10 → 本测试 RED。
+    await setConfig('AI_RATE_LIMIT_MAX', 10, { actor: 'cli' }, db); // e1 / 10
+    const e1 = getConfigSnapshotEpoch();
+    // 模拟「另一进程视角」：已发布快照归零，A 的探测才会走全量读。
+    replaceConfigSnapshot(EMPTY_SNAPSHOT);
+
+    let releaseA: (() => void) | undefined;
+    const gateA = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    let firstHookFired!: () => void;
+    const firstHookFiredP = new Promise<void>((resolve) => {
+      firstHookFired = resolve;
+    });
+    let firstGate = true;
+    const { __hydratePublishGate } = await import('@/server/config/hydrate');
+    __hydratePublishGate.hook = () => {
+      if (firstGate) {
+        firstGate = false; // 只拦第一轮（A）；后续轮次直通
+        firstHookFired();
+        return gateA;
+      }
+      return Promise.resolve();
+    };
+
+    try {
+      // A：旧 hydrate——事件驱动等到它挂进 barrier（读到 (e1,10)、守卫已过）。
+      const hydrateA = hydrateConfigFromDb(db);
+      await firstHookFiredP;
+
+      // 新写 (e2,20)：tx commit 后其写后 hydrate B 入链排在 A 之后。不 await——
+      // 串行模式下它要等 A 放行后才落定。
+
+      // de-serialized 探测窗：事件循环让步（setImmediate，非定时 sleep）直到写落定
+      // （de-serialized 世界里 B 已在这窗口发布）或耗尽。串行实现下 writeSettled
+      // 在 A 放行前恒 false——循环自然耗尽，无 wall-clock 等待。
+      let writeSettled = false;
+      const writeDone = setConfig('AI_RATE_LIMIT_MAX', 20, { actor: 'cli' }, db).then(
+        () => {
+          writeSettled = true;
+        },
+        () => {
+          writeSettled = true;
+        },
+      );
+      for (let i = 0; i < 500 && !writeSettled; i++) {
+        await new Promise<void>((r) => setImmediate(r));
+      }
+
+      // 放行 A：A 发布它读到的一致快照。
+      releaseA?.();
+      await Promise.all([hydrateA, writeDone]);
+
+      // 终态：新值 + 新 epoch。串行：A 先发旧、B 后发新 → 20。
+      // de-serialized：B 已在挂起窗发布 20，A 放行后回写 10 → 这里 RED。
+      expect(getConfig('AI_RATE_LIMIT_MAX', {})).toBe(20);
+      expect(getConfigSnapshotEpoch()).toBeGreaterThan(e1);
+      // A 的陈旧发布确实发生过（reportA 记录 e1，未被守卫拒绝）。
+      const reportA = await hydrateA;
+      expect(reportA.epoch).toBe(e1);
+      expect(reportA.staleSkipped ?? false).toBe(false);
+    } finally {
+      __hydratePublishGate.hook = undefined;
+    }
   });
 });
 

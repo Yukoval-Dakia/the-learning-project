@@ -789,6 +789,20 @@ export async function restoreFromArchive({
               updated_at = now()
       `);
 
+      // 第二轮 review P1（两轴去重）：上面的 setval 只把序列停在「归档高水位+1」，
+      // 而 epoch 行刚被抬到恢复前高水位之上——两条轴不同步时，后续 bumpEpoch 的
+      // 裸 nextval 会拿到低于 epoch 行的号（Oracle 复现：归档 7 → 抬到 39 →
+      // setConfig 拿到 epoch 10 → stale 守卫拒绝发布，writer 却成功）。这里把
+      // 序列同步到抬高后的 epoch（is_called=true → 下一次 nextval = epoch+1）。
+      // greatest(…) 蓄住 pg_sequences.last_value，防止倒退（序列操作不随 tx 回滚，
+      // 失败路径下只可能问前跳号——安全）。write.ts 的 bumpEpoch 另有 greatest 自愈，
+      // 两层互为冗余：并发 writer 在 restore tx 中途 nextval 拿到低位号也能被修正。
+      await tx.execute(
+        sql.raw(
+          `select setval('config_change_seq', (select greatest((select epoch from "system_config_epoch" where id = 'global'), (select last_value from pg_sequences where schemaname = 'public' and sequencename = 'config_change_seq'))))`,
+        ),
+      );
+
       // YUK-751 (codex P1): event.dispatch_seq is re-inserted verbatim from the archive (a FORWARD
       // FK_ORDER table), but event_dispatch_seq is a manual sequence outside pg-dump row semantics.
       // Without this setval the next event INSERT draws a stale nextval and collides with

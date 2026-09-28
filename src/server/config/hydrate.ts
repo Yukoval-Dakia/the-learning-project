@@ -84,6 +84,15 @@ let hydrateChain: Promise<ConfigHydrationReport> = Promise.resolve({
 });
 
 /**
+ * 测试 seam（第二轮 review P2）：epoch 守卫通过后、replaceConfigSnapshot 发布前
+ * 的确定性 barrier。生产恒为 undefined（零开销）；测试用它精确复现「旧 hydrate
+ * 在守卫检查后被挂起、新写 + 写后 hydrate 先行发布、旧 hydrate 恢复后发布旧值」
+ * 的 check-then-act 竞态——串行链是该窗口的唯一闭合手段（守卫检查与发布不是
+ * 原子的）。不用 sleep：barrier 由测试显式放行，时序确定。
+ */
+export const __hydratePublishGate: { hook?: () => Promise<void> } = {};
+
+/**
  * 全量（或 epoch-skip）水合。never-throws；返回报告供 boot 日志 / 测试断言。
  * 提交顺序串行化：promise 链保序，链内单语句一致读 + epoch 守卫挡陈旧发布。
  */
@@ -167,6 +176,12 @@ async function doHydrate(db: Db): Promise<ConfigHydrationReport> {
       return report;
     }
 
+    // 守卫检查与发布之间的确定性 barrier（测试 seam，生产 no-op）：测试用它
+    // 构造「守卫已通过、发布被挂起」的精确窗口；串行链保证链上后续 hydrate
+    // 此时只能排队等本轮，不能插队发布——去串行后 B 会插队、A 恢复后回写旧值。
+    if (__hydratePublishGate.hook) {
+      await __hydratePublishGate.hook();
+    }
     replaceConfigSnapshot({
       epoch: snapshot.epoch,
       entries,
