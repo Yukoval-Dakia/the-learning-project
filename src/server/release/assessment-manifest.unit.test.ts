@@ -221,7 +221,9 @@ describe('buildAssessmentManifest', () => {
     });
     expect(m.kind).toBe('assessment-release-manifest');
     expect(m.contract_epoch).toBe('assessment-contract-v1');
-    expect(m.code_epoch_before).toBe('legacy');
+    // post-flip：发布代码自身的 epoch 即 assessment-contract-v1（code_epoch_before
+    // 记录的是【生成本 manifest 的代码】的 epoch，翻转后等于目标 epoch）。
+    expect(m.code_epoch_before).toBe('assessment-contract-v1');
     expect(m.series_base).toBe('base9');
     expect(m.rollback.boundary_a).toContain('restore');
     expect(m.rollback.boundary_b).toContain('roll-forward');

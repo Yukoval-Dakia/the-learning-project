@@ -4,7 +4,7 @@
 //
 // `contract_epoch` 表：append-only 迁移历史；当前 epoch = seq 最大行。
 // runtime 裁决（rules.ts）：
-//   - 表缺（42P01）/空表 → 隐式 ('legacy','active') —— 只读路径这样解释；
+//   - 表缺（42P01）/空表 → 隐式 (CODE_CONTRACT_EPOCH,'active') —— 只读路径这样解释；
 //     写路径（transitionContractEpoch）对空表只允许 begin_prepare 落首个 marker。
 //   - 'preparing'/'ready' → 一切 runtime fenced。
 //   - 'active' → marker.epoch === CODE_CONTRACT_EPOCH 才放行。
@@ -66,7 +66,7 @@ export interface ContractEpochMarker extends EpochMarker {
 
 /**
  * 读当前 epoch marker。表不存在（42P01：pre-0109 DB）或空表 → null（调用方按
- * rules.ts 的隐式 legacy/active 解释）。其它错误原样抛出——读不出 marker 时
+ * rules.ts 的隐式 code-epoch/active 解释）。其它错误原样抛出——读不出 marker 时
  * 不许猜成可运行（fail-visible）。
  */
 export async function readContractEpoch(db: Db): Promise<ContractEpochMarker | null> {
@@ -105,7 +105,7 @@ export function isUndefinedTable(err: unknown): boolean {
 
 export interface EpochGateStatus {
   runnable: boolean;
-  marker: EpochMarker | null; // null = 隐式 legacy/active（表缺/空）
+  marker: EpochMarker | null; // null = 隐式 code-epoch/active（表缺/空）
   reason?: 'maintenance' | 'epoch_mismatch';
 }
 
@@ -223,26 +223,38 @@ export async function transitionContractEpoch(
 
 /**
  * translate 类 job 的出生 epoch（boss-fence.ts 用）：job 创建时刻处于 'active'
- * 的最新 marker 的 epoch；早于全部 marker（或表缺）→ 'legacy'。
+ * 的最新 marker 的 epoch；早于全部 marker → 'legacy'（marker 系统之前的旧合同
+ * payload）；表缺 → CODE_CONTRACT_EPOCH（隐式 runnable 语义与 gate 对齐）。
  * 「出生在旧 epoch 的 translate payload 绝不按新合同执行」的判别式。
  */
 export async function readJobBirthEpoch(db: Db, createdOn: Date | string): Promise<string> {
-  let rows: { epoch: string }[];
   try {
     // postgres-js 不序列化 Date 参数 → 统一转 ISO 串 + 显式 timestamptz cast。
     // created_on 读出来也可能是 string（postgres-js 对 timestamptz 不构造 Date）。
     const iso = createdOn instanceof Date ? createdOn.toISOString() : String(createdOn);
-    rows = await db.execute<{ epoch: string }>(sql`
-      select epoch
-      from contract_epoch
-      where state = 'active'
-        and entered_at <= ${iso}::timestamptz
-      order by seq desc
-      limit 1
+    // marker_count 与命中行同查询读出：区分「contract_epoch 整张表为空」
+    // （= 隐式当前 epoch，与 readContractEpoch 的 null 路径同一语义）和
+    // 「表有 marker 但 job 早于全部 active marker」（= 真·legacy 出生，marker
+    // 系统之前的旧合同 payload）。resetDb() 会 TRUNCATE contract_epoch，把前者
+    // 误打成 'legacy' 会让一切 translate 类 job 在隔离测试库被误 fence——
+    // YUK-1059 翻转后 durable-session-queue.db.test.ts 即踩中此坑。
+    const rows = await db.execute<{ epoch: string | null; marker_count: number | string }>(sql`
+      select
+        (select count(*)::int from contract_epoch) as marker_count,
+        (select epoch
+           from contract_epoch
+          where state = 'active'
+            and entered_at <= ${iso}::timestamptz
+          order by seq desc
+          limit 1) as epoch
     `);
+    const row = rows[0];
+    if (row === undefined || Number(row.marker_count) === 0) {
+      return CODE_CONTRACT_EPOCH;
+    }
+    return row.epoch ?? 'legacy';
   } catch (err) {
     if (isUndefinedTable(err)) return CODE_CONTRACT_EPOCH;
     throw err;
   }
-  return rows[0]?.epoch ?? 'legacy';
 }

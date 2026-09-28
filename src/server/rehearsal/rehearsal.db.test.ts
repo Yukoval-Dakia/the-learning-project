@@ -10,7 +10,11 @@ import { classifyMigrationCapture } from '@/core/migration/classify';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { ai_task_runs, assessment_submission, migration_apply_run } from '@/db/schema';
-import { checkContractEpoch, transitionContractEpoch } from '@/server/contract-epoch';
+import {
+  checkContractEpoch,
+  gateContractEpoch,
+  transitionContractEpoch,
+} from '@/server/contract-epoch';
 import {
   type MigrationApplyFence,
   assertReconciliationClean,
@@ -219,9 +223,9 @@ describe('rehearsal corpus → capture → apply（orchestrate 同缝）', () =>
     expect(r.recovered_after_terminate).toBe(true);
   });
 
-  it('epoch 栅栏三态：preparing/ready 拒跑，activate 后 legacy 代码 epoch_mismatch', async () => {
+  it('epoch 栅栏三态：preparing/ready 拒跑，activate 后本代码 runnable（旧代码被 epoch_mismatch）', async () => {
     const db = testDb();
-    // 空表 = 隐式 legacy/active → runnable。
+    // 空表 = 隐式 code-epoch/active → runnable。
     const pre = await checkContractEpoch(db);
     expect(pre.runnable).toBe(true);
 
@@ -240,11 +244,17 @@ describe('rehearsal corpus → capture → apply（orchestrate 同缝）', () =>
 
     await transitionContractEpoch(db, 'activate', 'assessment-contract-v1', 'test');
     const post = await checkContractEpoch(db);
-    // 本二进制 code epoch = legacy → active 后仍拒，reason 变 epoch_mismatch
-    // （正是演练证据：旧代码不得在 post-cutover DB 上跑）。
-    expect(post.runnable).toBe(false);
-    expect(post.reason).toBe('epoch_mismatch');
+    // 本二进制 code epoch = assessment-contract-v1 → activate 后 runnable
+    // （post-flip）。旧（legacy）代码视角仍 epoch_mismatch 拒跑——演练证据的两面：
+    // 新代码得跑，旧代码不得跑。
+    expect(post.runnable).toBe(true);
     expect(post.marker?.epoch).toBe('assessment-contract-v1');
+    if (post.marker) {
+      expect(gateContractEpoch(post.marker, 'legacy')).toMatchObject({
+        runnable: false,
+        reason: 'epoch_mismatch',
+      });
+    }
   });
 });
 

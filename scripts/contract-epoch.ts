@@ -95,7 +95,7 @@ async function main(): Promise<void> {
       console.log(
         '[contract-epoch] current:',
         marker === null
-          ? '(implicit legacy/active — table absent or empty)'
+          ? '(implicit code-epoch/active — table absent or empty)'
           : `${marker.epoch}/${marker.state} seq=${marker.seq} ` +
               `entered_at=${marker.enteredAt.toISOString()} by=${marker.enteredBy}` +
               (marker.note ? ` note=${JSON.stringify(marker.note)}` : ''),
