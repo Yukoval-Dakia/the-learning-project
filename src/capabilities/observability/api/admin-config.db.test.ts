@@ -305,3 +305,84 @@ describe('GET /api/admin/config — injected runtime facts over HTTP (real build
     expect(row.effective_note).toBeTruthy();
   });
 });
+
+describe('GET /api/admin/config — P1 honest effective for degraded runtime overrides (real facts builder)', () => {
+  // 验证审反例：VERIFY_SOLVE_PROVIDER_OVERRIDE=anthropic-sub + model=claude-opus-4-8
+  // 且无 OAuth token 时，真实 reader（solve-lane.ts resolveSolveOverrideFromEnv）
+  // 返回 {}（凭据缺失 fail-open 回默认 lane）；修复前 facts 未接该 reader ⇒
+  // keys[].effective 缺席，而读面契约把缺席当「直通生效」= 虚报。同类：孤立
+  // lane.global.model（runtime 不消费，readGlobalProviderSwitch 的 provider 门）。
+  beforeEach(async () => {
+    const [{ buildAdminConfigRuntimeFacts }] = await Promise.all([
+      import('@/server/config/admin-config-facts'),
+    ]);
+    setAdminConfigRuntimeFacts(buildAdminConfigRuntimeFacts);
+  });
+
+  it('REGRESSION (RED pre-fix): solve-lane override pair without credentials reports effective=null with the reader degrade note, not pass-through', async () => {
+    vi.stubEnv('VERIFY_SOLVE_PROVIDER_OVERRIDE', 'anthropic-sub');
+    vi.stubEnv('VERIFY_SOLVE_MODEL_OVERRIDE', 'claude-opus-4-8');
+    vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', '');
+
+    const body = AdminConfigResponseSchema.parse(await (await get()).json());
+    const providerRow = body.keys.find((k) => k.key === 'lane.verify_solve.provider');
+    if (!providerRow) throw new Error('missing lane.verify_solve.provider row');
+    // configured 如实报 env 值……
+    expect(providerRow.value).toBe('anthropic-sub');
+    expect(providerRow.source).toBe('env');
+    // ……effective 必须来自真实 reader：凭据缺席 → 降级（null + reader 自己的降级说明）。
+    expect(providerRow.effective).toBeNull();
+    expect(providerRow.effective_note).toContain('falling back');
+
+    const modelRow = body.keys.find((k) => k.key === 'lane.verify_solve.model');
+    if (!modelRow) throw new Error('missing lane.verify_solve.model row');
+    expect(modelRow.value).toBe('claude-opus-4-8');
+    // model 随 provider 一起被降级丢弃（reader 返回 {}，model 是为该 provider 选的）。
+    expect(modelRow.effective).toBeNull();
+    expect(modelRow.effective_note).toBeTruthy();
+  });
+
+  it('REGRESSION: model-only lane.global row is runtime-inert — effective=null with the inert note, while tasks[].global_pin stays null', async () => {
+    vi.stubEnv('AI_PROVIDER_MODEL', 'claude-opus-4-8');
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
+
+    const body = AdminConfigResponseSchema.parse(await (await get()).json());
+    const modelRow = body.keys.find((k) => k.key === 'lane.global.model');
+    if (!modelRow) throw new Error('missing lane.global.model row');
+    expect(modelRow.value).toBe('claude-opus-4-8');
+    expect(modelRow.source).toBe('env');
+    // readGlobalProviderSwitch 的 provider 门：model-only 配置 runtime 不消费。
+    expect(modelRow.effective).toBeNull();
+    expect(modelRow.effective_note).toBeTruthy();
+    const providerRow = body.keys.find((k) => k.key === 'lane.global.provider');
+    if (!providerRow) throw new Error('missing lane.global.provider row');
+    expect(providerRow.effective).toBeNull();
+    // 任务面一致：无 pin。
+    for (const task of body.tasks) {
+      expect(task.global_pin).toBeNull();
+    }
+  });
+
+  it('valid active scenarios: ready provider pair reports effective from the real readers', async () => {
+    // 全局 pin：xiaomi + 在场凭据（key canary 值，不触网）。
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'xiaomi');
+    vi.stubEnv('AI_PROVIDER_MODEL', 'mimo-v2.5-pro');
+    vi.stubEnv('XIAOMI_API_KEY', 'sk-p1-regression-presence-only');
+    // solve-lane 覆盖：xiaomi（凭据同上在场、自带可跑默认 model 的 provider）+ 显式 model。
+    vi.stubEnv('VERIFY_SOLVE_PROVIDER_OVERRIDE', 'xiaomi');
+    vi.stubEnv('VERIFY_SOLVE_MODEL_OVERRIDE', 'mimo-v2.5-pro');
+
+    const body = AdminConfigResponseSchema.parse(await (await get()).json());
+    const globalProvider = body.keys.find((k) => k.key === 'lane.global.provider');
+    const globalModel = body.keys.find((k) => k.key === 'lane.global.model');
+    expect(globalProvider?.effective).toBe('xiaomi');
+    expect(globalModel?.effective).toBe('mimo-v2.5-pro');
+    const solveProvider = body.keys.find((k) => k.key === 'lane.verify_solve.provider');
+    const solveModel = body.keys.find((k) => k.key === 'lane.verify_solve.model');
+    expect(solveProvider?.effective).toBe('xiaomi');
+    expect(solveModel?.effective).toBe('mimo-v2.5-pro');
+    for (const task of body.tasks) {
+      expect(task.global_pin).toEqual({ provider: 'xiaomi', model: 'mimo-v2.5-pro' });
+    }
+  });
+});

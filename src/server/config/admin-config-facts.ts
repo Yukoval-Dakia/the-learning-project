@@ -26,7 +26,11 @@ import type { ConfigEffectiveFact } from '@/core/config/effective';
 import { DB_POOL_MAX } from '@/db/pool';
 import { projectDagMembers } from '@/kernel/manifest';
 import { piMaxRetries } from '@/server/ai/pi-agent-adapter';
-import { isProviderLaneReady, providerAuthSurface } from '@/server/ai/providers';
+import {
+  isProviderLaneReady,
+  providerAuthSurface,
+  readGlobalProviderSwitch,
+} from '@/server/ai/providers';
 import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
 import { INFRA_HOUSEKEEPING_SCHEDULES } from '@/server/boss/handlers';
 import { EXPIRE_AGENT, EXPIRE_FAST, EXPIRE_LLM, RETENTION_7D } from '@/server/boss/queue-config';
@@ -64,6 +68,18 @@ function buildEffectiveValues(): AdminConfigRuntimeFacts['effective_values'] {
       note: 'reader throws（fail-visible）：非法值在消费点报错，不静默回退',
     };
   }
+  // YUK-1007 P1（验证审反例）：lane.global.* 的 effective 必须来自运行时真相源
+  // readGlobalProviderSwitch（含 env/DB 合层与 provider 门）——model-only 配置
+  // runtime 不消费 ⇒ effective=null；未知 provider 名 ⇒ throw（fail-visible），
+  // 如实标注不虚构。
+  let globalSwitch: ReturnType<typeof readGlobalProviderSwitch> | undefined;
+  let globalSwitchError: string | undefined;
+  try {
+    globalSwitch = readGlobalProviderSwitch();
+  } catch (err) {
+    globalSwitchError = err instanceof Error ? err.message : String(err);
+  }
+  const globalPinActive = globalSwitch !== undefined;
   return {
     ...observabilityConfigEffectiveFacts(),
     ...practiceConfigEffectiveFacts(),
@@ -100,6 +116,27 @@ function buildEffectiveValues(): AdminConfigRuntimeFacts['effective_values'] {
             note: '未设置：vision judge 解析链落到 registry 默认（anthropic-sub 自带 claude-opus-4-8 默认）',
           },
     MEMORY_RECONCILE_HANDOFF_MODE: handoffMode,
+    'lane.global.provider': globalPinActive
+      ? { value: globalSwitch?.provider }
+      : {
+          value: null,
+          note: globalSwitchError
+            ? `reader throws（fail-visible config error）：${globalSwitchError}`
+            : '惰性：无 provider（model-only 配置 runtime 不消费——readGlobalProviderSwitch 的 provider 门），全局 pin 未生效',
+        },
+    'lane.global.model': globalPinActive
+      ? globalSwitch?.model !== undefined
+        ? { value: globalSwitch.model }
+        : {
+            value: null,
+            note: 'pin 仅 provider 生效：model 未设置，各 task 走该 provider 的默认 model 解析链',
+          }
+      : {
+          value: null,
+          note: globalSwitchError
+            ? `reader throws（fail-visible config error）：${globalSwitchError}`
+            : '惰性：model-only 配置 runtime 不消费（readGlobalProviderSwitch 的 provider 门）',
+        },
   };
 }
 

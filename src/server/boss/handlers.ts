@@ -215,6 +215,12 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
 
   // YUK-1007：cron 注册从 INFRA_HOUSEKEEPING_SCHEDULES 静态表循环驱动（单一
   // 真相源——上表即读面投影的同一份声明，队列名一律取各导出常量）。
+  //
+  // 诚实说明（P2，保留现状不改）：相对旧的逐点内联注册，本循环把全部 cron
+  // 注册后移到 registerHandlers 末尾——若某个中途步骤 throw，失败前已启动的
+  // consumer 数量/时序与旧实现不同（旧行为：prune_job_events 的 cron 在早期
+  // 已挂）。验证审裁定为 P2 默认不在本 PR 改；启动尾部完整行为由 worker-boot
+  // （YUK-980）与 QA 独立覆盖。
   for (const decl of INFRA_HOUSEKEEPING_SCHEDULES) {
     await boss.schedule(decl.name, decl.cron, {}, { tz: decl.tz });
   }

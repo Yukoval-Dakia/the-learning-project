@@ -14,11 +14,22 @@ import {
   jyeooSpawnMaxStdoutBytes,
   jyeooSpawnTimeoutMs,
 } from './question-supply/jyeoo-supply-config';
+import { resolveSolveOverrideFromEnv } from './quiz/solve-lane';
 
 export function practiceConfigEffectiveFacts(): ConfigEffectiveFacts {
   const calibration = readJudgeCalibrationConfig();
   const fallbackProvider = judgeFallbackProvider();
   const spawnTimeoutMs = jyeooSpawnTimeoutMs();
+  // YUK-1007 P1（验证审反例）：solve-lane 覆盖的 effective 必须来自真实 reader
+  // （solve-lane.ts resolveSolveOverrideFromEnv——凭据缺失/未知名/缺 model 时
+  // fail-open 返回 {}）。降级说明直接取 reader 自己的 warn 文本（注入收集器，
+  // 读面轮询不重复打 operator 日志；降级事实进 payload）。
+  let solveDegradeNote: string | undefined;
+  const solveOverride = resolveSolveOverrideFromEnv((message) => {
+    solveDegradeNote = message;
+  });
+  const solveProviderActive = solveOverride.provider !== undefined;
+  const solveModelActive = solveOverride.model !== undefined;
   return {
     JUDGE_CALIBRATION_BATCH_MAX: { value: calibration.batchMax },
     JUDGE_CALIBRATION_WINDOW_DAYS: { value: calibration.windowDays },
@@ -44,5 +55,21 @@ export function practiceConfigEffectiveFacts(): ConfigEffectiveFacts {
     JYEOO_BACKFILL_TIMEOUT_MS: {
       note: '按会话动态派生（jyeooBackfillSpawnTimeoutMs(sessionMax)：BACKFILL > SPAWN > sessionMax×90s），无单一标量 effective',
     },
+    'lane.verify_solve.provider': solveProviderActive
+      ? { value: solveOverride.provider }
+      : {
+          value: null,
+          note: solveDegradeNote ?? 'override 未设置（reader 返回空 ⇒ verify_check 走默认 lane）',
+        },
+    'lane.verify_solve.model': solveModelActive
+      ? { value: solveOverride.model }
+      : {
+          value: null,
+          note: solveDegradeNote
+            ? `${solveDegradeNote}（model 随 provider 一起被丢弃——它是为该 provider 选的）`
+            : solveProviderActive
+              ? '仅 provider 生效：model 未设置，走该 provider 的默认 model 解析链'
+              : 'override 未设置（reader 返回空 ⇒ verify_check 走默认 lane）',
+        },
   };
 }
