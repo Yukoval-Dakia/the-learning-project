@@ -1,5 +1,13 @@
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -21,6 +29,100 @@ import {
 } from './db-affected.mjs';
 
 describe('DB affected-test selector', () => {
+  it('keeps one partition strategy when one full shard loses its inventory', () => {
+    const repo = realpathSync(mkdtempSync(path.join(tmpdir(), 'db-shard-inventory-')));
+    try {
+      mkdirSync(path.join(repo, 'cases'));
+      mkdirSync(path.join(repo, 'scripts/ci'), { recursive: true });
+      symlinkSync(path.resolve('node_modules'), path.join(repo, 'node_modules'), 'dir');
+      writeFileSync(
+        path.join(repo, 'package.json'),
+        JSON.stringify({
+          type: 'module',
+          private: true,
+          packageManager: JSON.parse(readFileSync('package.json', 'utf8')).packageManager,
+        }),
+      );
+      writeFileSync(path.join(repo, 'pnpm-workspace.yaml'), 'verifyDepsBeforeRun: false\n');
+      const dependencyPath = path.resolve('node_modules/vitest/package.json');
+      const dependencyBefore = readFileSync(dependencyPath, 'utf8');
+      writeFileSync(
+        path.join(repo, 'vitest.db.config.ts'),
+        "export default { test: { include: ['cases/*.test.ts'], maxWorkers: 1 } };",
+      );
+      const files = [...'abcdefgh'].map((name) => `cases/${name}.db.test.ts`);
+      for (const file of files) {
+        writeFileSync(
+          path.join(repo, file),
+          "import { it, expect } from 'vitest'; it('behavior', () => expect(42).toBe(42));",
+        );
+      }
+      writeFileSync(
+        path.join(repo, 'scripts/ci/db-test-durations.json'),
+        JSON.stringify({
+          schema_version: 1,
+          durations: Object.fromEntries(files.map((file, index) => [file, (index + 1) * 100])),
+        }),
+      );
+      const selection = path.join(repo, 'selection.json');
+      const execution = path.join(repo, 'execution.json');
+      const run = (shard: string) =>
+        spawnSync(
+          process.execPath,
+          [
+            path.resolve('scripts/ci/db-affected.mjs'),
+            'run',
+            '--selection',
+            selection,
+            '--execution',
+            execution,
+            '--shard',
+            shard,
+          ],
+          { cwd: repo, encoding: 'utf8', timeout: 15_000 },
+        );
+      const executed: string[] = [];
+      for (let shard = 1; shard <= 4; shard++) {
+        writeFileSync(
+          selection,
+          JSON.stringify({
+            requested_mode: 'full',
+            effective_mode: 'full',
+            ...(shard === 1 ? {} : { inventory_files: files }),
+          }),
+        );
+        const result = run(`${shard}/4`);
+        expect(result.status, result.stdout + result.stderr).toBe(0);
+        const report = JSON.parse(readFileSync(execution, 'utf8'));
+        expect(report.shard_strategy).toBe('duration-binpack');
+        executed.push(...Object.keys(report.file_durations));
+      }
+      expect(executed.sort()).toEqual(files);
+      writeFileSync(
+        selection,
+        JSON.stringify({
+          requested_mode: 'full',
+          effective_mode: 'full',
+          inventory_files: [files[0]],
+        }),
+      );
+      const empty = run('4/4');
+      expect(empty.status).toBe(1);
+      expect(empty.stderr).toContain('full DB shard 4/4 is empty');
+      writeFileSync(selection, JSON.stringify({ requested_mode: 'full', effective_mode: 'full' }));
+      writeFileSync(
+        path.join(repo, 'vitest.db.config.ts'),
+        'throw new Error("inventory unavailable");',
+      );
+      const failed = run('1/4');
+      expect(failed.status).toBe(1);
+      expect(failed.stderr).toContain('DB inventory unavailable; refusing mixed shard strategies');
+      expect(readFileSync(dependencyPath, 'utf8')).toBe(dependencyBefore);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it('keeps real out-of-graph failed-head regressions as explicit sentinels', () => {
     expect(DB_FAILURE_SENTINEL_TESTS).toEqual([
       'src/capabilities/knowledge/server/propose_edge.db.test.ts',

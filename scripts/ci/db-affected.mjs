@@ -260,9 +260,8 @@ function isSafeMergeBase(base) {
 
 /**
  * One `vitest list` of the whole db partition. Returns the repo-relative file
- * list or null on failure — inventory listing is an optimization input (shard
- * balancing), so failures degrade to the vitest `--shard` fallback instead of
- * failing the selection.
+ * list or null on failure. Execution requires this inventory: mixing duration
+ * bins with Vitest's native sharding can omit files across independent jobs.
  */
 function tryListDbInventoryFiles({ root, directory }) {
   const vitestEntry = path.join(root, 'node_modules', 'vitest', 'vitest.mjs');
@@ -597,21 +596,21 @@ function runRequiredDbTests({ root, selectionPath, executionPath, shardValue }) 
   const argvFallbackReason =
     selectedFiles !== null && !selectedFilesFitCli ? 'affected-argv-too-large' : undefined;
 
-  // YUK-1023 — duration-balanced sharding. Affected mode bins the selected
-  // files; full mode bins the selector's inventory_files listing. Only a
-  // selection missing both lists (legacy artifact, or the inventory listing
-  // failed inside select) falls back to vitest's count-mod --shard.
   const durations = loadDbTestDurations(root);
-  const candidateFiles = runnableFiles ?? sanitizeInventoryFiles(selection);
-  const bins = candidateFiles
-    ? binPackDbShards({ files: candidateFiles, shardCount: shard.count, durations })
-    : null;
-  const bin = bins?.[shard.index - 1] ?? null;
-  const binFiles = bin && affectedFilesFitCli(bin.files) ? bin.files : null;
-  const binOverflowsCli = bin !== null && !affectedFilesFitCli(bin.files);
+  const candidateFiles =
+    runnableFiles ??
+    sanitizeInventoryFiles(selection) ??
+    tryListDbInventoryFiles({ root, directory: path.dirname(executionPath) });
+  if (!candidateFiles) throw new Error('DB inventory unavailable; refusing mixed shard strategies');
+  const bins = binPackDbShards({ files: candidateFiles, shardCount: shard.count, durations });
+  const bin = bins[shard.index - 1];
+  if (!affectedFilesFitCli(bin.files)) {
+    throw new Error(`DB shard ${shard.value} exceeds the argument limit`);
+  }
+  const binFiles = bin.files;
 
   const startedAt = Date.now();
-  const skippedEmptyShard = bin !== null && bin.files.length === 0;
+  const skippedEmptyShard = bin.files.length === 0;
   if (requiredMode === 'full' && skippedEmptyShard) {
     throw new Error(`full DB shard ${shard.value} is empty`);
   }
@@ -633,7 +632,7 @@ function runRequiredDbTests({ root, selectionPath, executionPath, shardValue }) 
       '--reporter=default',
       '--reporter=json',
       `--outputFile.json=${reportPath}`,
-      ...(binFiles ?? [`--shard=${shard.value}`]),
+      ...binFiles,
     ];
     result = spawnSync(process.execPath, args, {
       cwd: root,
@@ -662,13 +661,9 @@ function runRequiredDbTests({ root, selectionPath, executionPath, shardValue }) 
     selector_duration_ms: selection?.selector_duration_ms,
     selected_files: selectedFiles?.length ?? null,
     selected_cli_bytes: selectedCliBytes,
-    shard_strategy: binFiles
-      ? 'duration-binpack'
-      : binOverflowsCli
-        ? 'vitest-shard-cli-overflow'
-        : 'vitest-shard-legacy',
-    shard_files: binFiles?.length ?? null,
-    bin_estimated_ms: bin?.estimatedMs ?? null,
+    shard_strategy: 'duration-binpack',
+    shard_files: binFiles.length,
+    bin_estimated_ms: bin.estimatedMs,
     file_durations: fileDurations,
     test_duration_ms: Date.now() - startedAt,
     exit_code: result.status ?? 1,

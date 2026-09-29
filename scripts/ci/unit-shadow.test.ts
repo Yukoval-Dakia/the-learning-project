@@ -28,7 +28,17 @@ describe('unit affected-test shadow', () => {
     try {
       mkdirSync(path.join(repo, 'cases'));
       symlinkSync(path.resolve('node_modules'), path.join(repo, 'node_modules'), 'dir');
-      writeFileSync(path.join(repo, 'package.json'), '{"type":"module","private":true}');
+      writeFileSync(
+        path.join(repo, 'package.json'),
+        JSON.stringify({
+          type: 'module',
+          private: true,
+          packageManager: JSON.parse(readFileSync('package.json', 'utf8')).packageManager,
+        }),
+      );
+      writeFileSync(path.join(repo, 'pnpm-workspace.yaml'), 'verifyDepsBeforeRun: false\n');
+      const dependencyPath = path.resolve('node_modules/vitest/package.json');
+      const dependencyBefore = readFileSync(dependencyPath, 'utf8');
       writeFileSync(
         path.join(repo, 'vitest.unit.config.ts'),
         "export default { test: { include: ['cases/*.test.js'], maxWorkers: 1 } };",
@@ -76,6 +86,7 @@ describe('unit affected-test shadow', () => {
       }
       expect(run('1/4').status).toBe(1);
       expect(run('5/4').status).toBe(1);
+      expect(readFileSync(dependencyPath, 'utf8')).toBe(dependencyBefore);
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }

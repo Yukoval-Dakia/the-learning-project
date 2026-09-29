@@ -115,8 +115,14 @@ export function buildBaselineDocument(summary) {
 
 function runBiomeJson(repoRoot) {
   const result = spawnSync(
-    'pnpm',
-    ['exec', 'biome', 'check', '.', '--reporter=json', '--max-diagnostics=none'],
+    process.execPath,
+    [
+      path.join(repoRoot, 'node_modules/@biomejs/biome/bin/biome'),
+      'check',
+      '.',
+      '--reporter=json',
+      '--max-diagnostics=none',
+    ],
     {
       cwd: repoRoot,
       encoding: 'utf8',

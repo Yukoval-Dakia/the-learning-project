@@ -3,6 +3,7 @@ import {
   copyFileSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -40,13 +41,20 @@ function baseline(totals: {
 
 describe('lint warning ratchet', () => {
   it.each([
-    { name: 'clean source', source: 'export const answer = 42;\n', expected: 0 },
-    { name: 'formatting error', source: 'export const answer=42\n', expected: 1 },
-    { name: 'parse error', source: 'export const = ;\n', expected: 1 },
+    { name: 'clean source', source: 'export const answer = 42;\n', expected: 0, category: null },
+    {
+      name: 'formatting error',
+      source: 'export const answer=42\n',
+      expected: 1,
+      category: 'format',
+    },
+    { name: 'parse error', source: 'export const = ;\n', expected: 1, category: 'parse' },
   ])(
     'runs the real lint gate for $name without a preceding lint command',
-    ({ source, expected }) => {
+    ({ source, expected, category }) => {
       const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'lint-gate-')));
+      const dependencyPath = path.resolve('node_modules/vitest/package.json');
+      const dependencyBefore = readFileSync(dependencyPath, 'utf8');
       try {
         mkdirSync(path.join(root, 'scripts/ci'), { recursive: true });
         copyFileSync(
@@ -54,7 +62,14 @@ describe('lint warning ratchet', () => {
           path.join(root, 'scripts/ci/lint-ratchet.mjs'),
         );
         symlinkSync(path.resolve('node_modules'), path.join(root, 'node_modules'), 'dir');
-        writeFileSync(path.join(root, 'package.json'), '{"private":true}\n');
+        writeFileSync(
+          path.join(root, 'package.json'),
+          JSON.stringify({
+            private: true,
+            packageManager: JSON.parse(readFileSync('package.json', 'utf8')).packageManager,
+          }),
+        );
+        writeFileSync(path.join(root, 'pnpm-workspace.yaml'), 'verifyDepsBeforeRun: false\n');
         writeFileSync(
           path.join(root, 'biome.json'),
           '{"files":{"includes":["sample.js"]},"json":{"formatter":{"enabled":false}}}\n',
@@ -74,9 +89,10 @@ describe('lint warning ratchet', () => {
           },
         );
         expect(result.error).toBeUndefined();
+        expect(readFileSync(dependencyPath, 'utf8')).toBe(dependencyBefore);
         expect(result.status, result.stdout + result.stderr).toBe(expected);
         if (expected === 0) expect(result.stdout).toContain('[lint-ratchet] OK');
-        else expect(result.stderr).toContain('[lint-ratchet]');
+        else expect(result.stderr).toContain(category);
       } finally {
         rmSync(root, { recursive: true, force: true });
       }

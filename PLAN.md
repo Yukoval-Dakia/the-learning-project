@@ -1,10 +1,11 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-27：**YUK-1038 epic 全线收官** —— 17 主线票（1043–1059）全部 merged，10 矫正票（1091–1100）落地 35 个漏裁 P1。1058 release gates（§18 19/19）+ 1059 集成 release（`scripts/assessment-release-manifest.ts` + `docs/runbooks/2026-09-27-assessment-cutover.md`）已落 main。**剩余**：① 生产部署待 owner 单独授权（1059 AC 明写）；② D18 live-provider eval 是 owner-triggered（stub lane 机制已验证，真实 provider 待授权）；③ 旁线挂起——1007 热加载配置架构/UI preflight 待拍板、YUK-1103 autonomous-product-loop 挂起待启动、YUK-1101（capture 观测缺口 follow-up）Backlog。**infra 教训**已沉淀：TCC 外置卷授权可按进程链剥离（自愈）、gh job-logs 303→Azure flake 用 curl 直取、OpenCode V2 `external_directory` 权限走 `permissions[]` 规则。**PLAN 四栏常态**：每收尾一 lane 立刻更此头部+NOW/进行中/待拍板/阻塞。
+> Linear 是权威 tracker；更新于 2026-09-30：当前 active 为 **YUK-1107 全量 CI ≤120秒**，PR #1512。首轮完整 CI 失败，DB 四片 220–245秒；unit 夹具触发 pnpm 11 重建共享依赖已隔离复现。修复与重新验收进行中，未达标、未合并。Linear 当前不可用，blocker 暂存 PARKED；下方旧日期条目为历史，不代表已核实的当前部署或授权状态。
 
 
 ## NOW
 
+- YUK-1107 / PR #1512：tmpfs、全量 unit 四片、19 audit 三组已提交；修复独立盘点混用分片算法的漏测 P1、pnpm fixture 依赖删除问题后重跑 exact-head full CI。证据与未达标项：`docs/planning/2026-09-30-yuk1107-ci-latency.md`。
 - 09-27 **YUK-1038 epic 收官**：17/17 主线 + 10/10 矫正票 merged。1058 §18 19/19 覆盖（below-threshold calibration 清旧值补全）；1059 交付 `release:manifest`（28 lanes/112 migrations/7 post-release assertions）+ cutover runbook §0–8（含 rollback 两边界）。**owner 待办**：部署授权、D18 live-provider eval、1007 热加载方向拍板、YUK-1103 启动时点。
 - 09-26 **YUK-1038 波次 5 lane + 8-lane 审计纠偏**：wave-2 五 lane（1049 Jev / 1051 UI / 1052 提交 / 1053 结算 / 1056 常量）全交付；**backfill 双波 35 P1** 拆 10 票纠正全落地。
 - 09-24 **YUK-1038 题目契约迁移 grounding + 裁决收口**：realworld 调研 + 独立复核已归并；owner 认可模型方向，明确**全量迁移、任意题目、统一切换，不分批上线**（旧 LIGHT/LIGHT-1 推荐已被取代，保留为决策历史）。grounding 落盘 `docs/planning/2026-09-24-question-assessment-implementation-grounding.md`（§1–§19）；**D1–D19 已全部批准**（`docs/planning/2026-09-24-question-assessment-decisions.md`）。**D12 Jev smoke 已 FINAL**：2/2 paid calls、无 retries、**$0.00003024**（wire/auth/cost only，无 accuracy）。**D19 只读 census 已完成**（REPEATABLE READ READ ONLY、无写入）：**114 questions / 0 physical parts / 0 answers rows / 9 judge events**；pgboss outstanding 27 全为 DLQ recovery。**作答面 UI preflight 已批准**（`docs/design/2026-09-24-assessment-ui-preflight.md`，Q20 2026-09-25 批准）；**Q21 ticket 拆分已批准**——17 张依赖票 **YUK-1043–1059** 已建（blockedBy 按 §17 DAG；YUK-1055 关联 YUK-766，YUK-1049 关联 YUK-438，YUK-1056 关联 YUK-1041/1042）。之后 **final implementation-ready confirmation 仍待 owner**。两个 operational finding 已捕获：**YUK-1041**（daily backup STALE，`loom-daily-20260913.dump`，09-13 后无成功，launchd 疑似停止）与 **YUK-1042**（pgboss 27 DLQ backlog，切换前需处置策略）。provider 偏好 **OpenRouter**（公开文档已核验）；**D18 ≤$5 独立评测预算已批准但未运行**。**无业务实施、schema/数据迁移或部署**；YUK-310 独立交付仍待 review，不混入本线。
@@ -90,6 +91,7 @@
 
 ## PARKED
 
+- YUK-1107 blocker（2026-09-30，Linear 当前不可用，待同步）：PR #1512 head `4460759fe` / CI Gate `36587580067` unit 1/4 在 15:07:28 UTC 起反复报 Vitest `suppress-warnings.cjs` 消失，15 分钟后失败；禁止同 SHA 重跑当修复。首要假设：新增 CLI fixture 的空 manifest + 共享 node_modules symlink 触发 pnpm 自动 reconcile；次要假设：其它并发测试修改依赖。验收：隔离复现删除路径，fixture 不修改共享依赖，exact-head full unit 文件守恒且完整 CI 通过。证据见 `docs/planning/2026-09-30-yuk1107-ci-latency.md`。
 - YUK-1045 初审遗留（非阻塞待归票）：claim 冲突路由未翻译 409 `claim_conflict`（question-restore.ts:49–55，当前 500/泛 conflict）；source_verify 对 part 走 child→root 锁序，与 publisher root→child 反向可能死锁（source_verify.ts:699–717）；1043 lane 已知缺口 `publishQuestionGroup` 不调 `validateStructure`（material_id 重复不被拦）。
 - 两处judge直调已核实为照片作答/独立解答一致性，不为调用形式统一机械删除，无新缺陷证据。
 - 全历史ADR审计仍未完成，不冒充全量通过；971仅覆盖三份已确认冲突的现役指引。
