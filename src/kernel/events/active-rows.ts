@@ -24,6 +24,16 @@ export function newerEventRow(a: EventRow, b: EventRow): boolean {
   );
 }
 
+/**
+ * YUK-1106 — 升序比较器（与 newerEventRow 同一规范序，从它派生，不另立第二
+ * 份排序规则）：供需要确定性处理顺序的读模型对行数组排序。返回 -1/0/1。
+ */
+export function compareEventRowsAsc(a: EventRow, b: EventRow): number {
+  if (newerEventRow(b, a)) return -1;
+  if (newerEventRow(a, b)) return 1;
+  return 0;
+}
+
 export async function takeActiveRows(
   db: DbLike,
   firstRows: EventRow[],
