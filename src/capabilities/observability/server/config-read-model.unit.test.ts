@@ -14,12 +14,30 @@
 //   - 契约等价：装配产物过 AdminConfigResponseSchema.safeParse
 import { existsSync } from 'node:fs';
 
-import { afterEach, describe, expect, it } from 'vitest';
+// db/r2 mock：observabilityConfigEffectiveFacts → backup-import → db/client +
+// r2 的模块链不能进 unit 分区（db/client 顶层校验 DATABASE_URL；先例：
+// api/backup-import.unit.test.ts 同样 mock）。maxBackupUploadBytes 本身零 DB/r2
+// 触碰——mock 只为模块可加载。
+vi.mock('@/db/client', () => ({ db: {} }));
+vi.mock('@/server/r2', () => ({
+  getR2: () => {
+    throw new Error('unused in unit test');
+  },
+  createR2Client: () => {
+    throw new Error('unused in unit test');
+  },
+}));
 
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { tasks } from '@/ai/registry';
+import { capabilities } from '@/capabilities';
 import { CONFIG_REGISTRY, replaceConfigSnapshot, resetTestConfig } from '@/core/config/store';
+import { projectDagMembers } from '@/kernel/manifest';
+import { hasGlobalProviderOverride, resolveTaskProvider } from '@/server/ai/providers';
 
 import { AdminConfigResponseSchema } from '../api/admin-config-contracts';
+import type { AdminConfigRuntimeFacts } from './admin-config-facts';
+import { observabilityConfigEffectiveFacts } from './config-effective-facts';
 import {
   type AdminConfigKeyRow,
   KEY_CONSUMERS,
@@ -31,6 +49,7 @@ const EMPTY_SNAPSHOT = { epoch: 0, entries: new Map(), hydratedAt: '' };
 afterEach(() => {
   resetTestConfig();
   replaceConfigSnapshot(EMPTY_SNAPSHOT);
+  vi.unstubAllEnvs();
 });
 
 function keyRow(
@@ -240,10 +259,64 @@ describe('config read model — task materialization', () => {
     for (const row of pinned.tasks) {
       expect(row.global_pin).toEqual({ provider: 'anthropic-sub' });
     }
-    // 同一 DB model 行在 env pin 缺席时进入 pin（混合对 = getLaneOverride 语义）。
-    const unpinned = buildAdminConfigReadModel({});
-    for (const row of unpinned.tasks) {
-      expect(row.global_pin).toEqual({ model: 'gpt-6-astra' });
+    // 同一 DB model 行在 env pin 缺席时同样是惰性的（见下一个真实 resolver 对照测试）。
+  });
+
+  it('REGRESSION (real-resolver cross-check): a model-only DB lane.global row is inert at runtime — global_pin must be null', () => {
+    // P1 (review + OCR + Standards)：readGlobalProviderSwitch 的 DB 支路以
+    // provider 在场为门（providers.ts `if (!db?.provider) return undefined`）——
+    // 只有 lane.global.model 而无 lane.global.provider 的 DB 行在运行时**不生效**。
+    // 本测试用真实 resolver（providers.ts 导出面）钉住运行时真相，再要求读面
+    // 与之一致；旧的读面实现把 { model } 报成生效中的 global_pin（虚报），
+    // 原单测 243-247 行钉死了该错误形状。
+    replaceConfigSnapshot({
+      epoch: 5,
+      entries: new Map([
+        ['lane.global.model', { value: 'gpt-6-astra', revision: 1, updatedAt: null }],
+      ]),
+      hydratedAt: '2026-09-29T00:00:01Z',
+    });
+    // 运行时真相 #1：无 provider ⇒ 无任何 override（hasGlobalProviderOverride=false）。
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
+    vi.stubEnv('AI_PROVIDER_MODEL', '');
+    expect(hasGlobalProviderOverride()).toBe(false);
+    // 运行时真相 #2：AttributionTask 仍解析到 registry 默认 xiaomi/mimo-v2.5-pro，
+    // 而非孤儿 DB model gpt-6-astra。
+    vi.stubEnv('XIAOMI_API_KEY', 'unit-test-presence-only-key');
+    const resolved = resolveTaskProvider('AttributionTask');
+    expect(resolved.provider).toBe('xiaomi');
+    expect(resolved.model).toBe('mimo-v2.5-pro');
+    // 读面必须与 resolver 一致：global_pin=null（而不是 { model: 'gpt-6-astra' }）。
+    const model = buildAdminConfigReadModel({ XIAOMI_API_KEY: 'unit-test-presence-only-key' });
+    for (const row of model.tasks) {
+      expect(row.global_pin).toBeNull();
+    }
+  });
+
+  it('reports a DB provider+model pair as the global pin, and a provider-only pair without model', () => {
+    replaceConfigSnapshot({
+      epoch: 5,
+      entries: new Map([
+        ['lane.global.provider', { value: 'openai', revision: 1, updatedAt: null }],
+        ['lane.global.model', { value: 'gpt-6-astra', revision: 1, updatedAt: null }],
+      ]),
+      hydratedAt: '2026-09-29T00:00:01Z',
+    });
+    const pair = buildAdminConfigReadModel({});
+    for (const row of pair.tasks) {
+      expect(row.global_pin).toEqual({ provider: 'openai', model: 'gpt-6-astra' });
+    }
+
+    replaceConfigSnapshot({
+      epoch: 6,
+      entries: new Map([
+        ['lane.global.provider', { value: 'openai', revision: 1, updatedAt: null }],
+      ]),
+      hydratedAt: '2026-09-29T00:00:01Z',
+    });
+    const providerOnly = buildAdminConfigReadModel({});
+    for (const row of providerOnly.tasks) {
+      expect(row.global_pin).toEqual({ provider: 'openai' });
     }
   });
 });
@@ -285,6 +358,169 @@ describe('config read model — snapshot + honesty blocks', () => {
     expect(JSON.stringify(buildAdminConfigReadModel(env)).includes('leak-canary-value-7742')).toBe(
       false,
     );
+  });
+});
+
+describe('config read model — schedules (real declaration sources)', () => {
+  it('projects manifest cron rows from capabilities[] (no hand-copied list) and never includes DAG members', () => {
+    const expected = capabilities
+      .flatMap((cap) => (cap.jobs?.handlers ?? []).map((job) => ({ cap, job })))
+      .filter(({ job }) => job.schedule !== undefined)
+      .map(({ cap, job }) => `${job.name}|${job.schedule?.cron}|${job.schedule?.tz}|${cap.name}`)
+      .sort();
+    const model = buildAdminConfigReadModel({});
+    expect(model.facts_injected).toBe(false);
+    const manifestRows = model.schedules.rows.filter((row) => row.source === 'capability-manifest');
+    expect(manifestRows.map((row) => `${row.name}|${row.cron}|${row.tz}|${row.owner}`)).toEqual(
+      expected,
+    );
+    // DAG 成员（dependsOn 存在）无 cron——由 orchestrator 触发，绝不能出现在 cron 表。
+    const dagNames = new Set(projectDagMembers(capabilities).map((member) => member.name));
+    for (const row of manifestRows) {
+      expect(
+        dagNames.has(row.name),
+        `${row.name} is a DAG member and must not carry a cron row`,
+      ).toBe(false);
+    }
+    expect(model.schedules.read_only_note).toContain('只读');
+    expect(model.schedules.read_only_note).toContain('不触发');
+  });
+});
+
+/** 注入 facts 的共享 fixture（divergence 用例复用 runtime 块）。 */
+const FACTS: AdminConfigRuntimeFacts = {
+  providers: [
+    {
+      name: 'xiaomi',
+      auth_mode: 'key',
+      credential_env: 'XIAOMI_API_KEY',
+      key_present: true,
+      implemented: true,
+    },
+    {
+      name: 'openrouter',
+      auth_mode: 'key',
+      credential_env: 'OPENROUTER_API_KEY',
+      key_present: false,
+      implemented: false,
+    },
+  ],
+  infra_schedules: [
+    {
+      name: 'prune_job_events',
+      cron: '0 4 * * *',
+      tz: 'Asia/Shanghai',
+      owner: 'server/boss',
+      queue: 'fast',
+      source: 'server-boss-infra',
+    },
+  ],
+  runtime: {
+    port: 8787,
+    db_pool_max: 10,
+    queue_tiers: {
+      expire_seconds: { fast: 3600, llm: 3600, agent: 7200 },
+      retention_seconds: 604_800,
+    },
+    orchestration: {
+      anchor_cron: '30 2 * * *',
+      tz: 'Asia/Shanghai',
+      queue: 'nightly_orchestrator',
+      catchup_window_seconds: 18_000,
+      tick_interval_seconds: 60,
+      node_timeout_seconds: 25_200,
+      layer_stagger_seconds: 120,
+      dag_members: ['answer_class_materialize'],
+    },
+  },
+  effective_values: {
+    WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD: { value: 1 },
+    AI_PROVIDER_ATTEMPT_ADMISSION_MODE: {
+      note: '按 lane 在读取时解析；无单一标量 effective',
+    },
+  },
+};
+
+describe('config read model — injected runtime facts (providers / runtime / effective)', () => {
+  it('surfaces providers (presence booleans only), infra schedule rows, and runtime when injected', () => {
+    const model = buildAdminConfigReadModel({}, FACTS);
+    expect(model.facts_injected).toBe(true);
+    expect(model.providers.map((row) => row.name)).toEqual(['openrouter', 'xiaomi']); // 排序稳定
+    expect(model.providers[1]).toEqual({
+      name: 'xiaomi',
+      auth_mode: 'key',
+      credential_env: 'XIAOMI_API_KEY',
+      key_present: true,
+      implemented: true,
+    });
+    const infra = model.schedules.rows.filter((row) => row.source === 'server-boss-infra');
+    expect(infra.map((row) => row.name)).toEqual(['prune_job_events']);
+    expect(model.runtime?.port).toBe(8787);
+    expect(model.runtime?.orchestration.dag_members).toEqual(['answer_class_materialize']);
+    // effective：值型上列 value，note 型只给 note（不伪造标量）。
+    expect(keyRow(model, 'WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD').effective).toBe(1);
+    expect(keyRow(model, 'AI_PROVIDER_ATTEMPT_ADMISSION_MODE').effective).toBeUndefined();
+    expect(keyRow(model, 'AI_PROVIDER_ATTEMPT_ADMISSION_MODE').effective_note).toContain('lane');
+  });
+
+  it('reports uninjected honestly: facts_injected=false, empty providers, manifest-only schedules, runtime null, no effective', () => {
+    const model = buildAdminConfigReadModel({});
+    expect(model.facts_injected).toBe(false);
+    expect(model.providers).toEqual([]);
+    expect(model.schedules.rows.every((row) => row.source === 'capability-manifest')).toBe(true);
+    expect(model.runtime).toBeNull();
+    for (const row of model.keys) {
+      expect(row.effective, row.key).toBeUndefined();
+      expect(row.effective_note, row.key).toBeUndefined();
+    }
+  });
+
+  it('never serializes credential VALUES: provider rows carry env names and booleans only', () => {
+    const env = { XIAOMI_API_KEY: 'sk-provider-canary-secret-value-7742' };
+    const model = buildAdminConfigReadModel(env, {
+      ...FACTS,
+      effective_values: {},
+    });
+    const serialized = JSON.stringify(model);
+    expect(serialized.includes('sk-provider-canary-secret-value-7742')).toBe(false);
+    // env 名字（非值）允许且必须在场，供 operator 自查。
+    expect(serialized.includes('XIAOMI_API_KEY')).toBe(true);
+  });
+});
+
+describe('config read model — consumer-effective divergence (real reader)', () => {
+  it('BACKUP_IMPORT_MAX_BYTES: configured 1 vs effective 1_000_000_000 via the real reader (floor fallback)', () => {
+    vi.stubEnv('BACKUP_IMPORT_MAX_BYTES', '1');
+    const facts: AdminConfigRuntimeFacts = {
+      ...FACTS,
+      providers: [],
+      infra_schedules: [],
+      effective_values: observabilityConfigEffectiveFacts(),
+    };
+    const model = buildAdminConfigReadModel({ BACKUP_IMPORT_MAX_BYTES: '1' }, facts);
+    const row = keyRow(model, 'BACKUP_IMPORT_MAX_BYTES');
+    // configured/resolved 值如实报 1（env 层）……
+    expect(row.value).toBe(1);
+    expect(row.source).toBe('env');
+    // ……但真实 reader 因 1MB 地板回退 1GB——effective 必须分列，不再虚报。
+    expect(row.effective).toBe(1_000_000_000);
+    expect(row.effective_note).toContain('1GB');
+  });
+
+  it('BACKUP_IMPORT_MAX_BYTES: NaN env literal resolves to null while the reader still falls back to 1GB', () => {
+    vi.stubEnv('BACKUP_IMPORT_MAX_BYTES', 'not-a-number');
+    const facts: AdminConfigRuntimeFacts = {
+      ...FACTS,
+      providers: [],
+      infra_schedules: [],
+      effective_values: observabilityConfigEffectiveFacts(),
+    };
+    const row = keyRow(
+      buildAdminConfigReadModel({ BACKUP_IMPORT_MAX_BYTES: 'not-a-number' }, facts),
+      'BACKUP_IMPORT_MAX_BYTES',
+    );
+    expect(row.value).toBeNull();
+    expect(row.effective).toBe(1_000_000_000);
   });
 });
 

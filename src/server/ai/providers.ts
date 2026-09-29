@@ -330,12 +330,43 @@ export function isKnownProvider(name: string): name is Provider {
  * provider when the lane isn't wired here (e.g. the subscription token is absent on
  * a given deploy), instead of letting `resolveTaskProvider` throw mid-call. Mirrors
  * the missing-env checks `resolveTaskProvider` performs, without allocating a binding.
+ *
+ * The env-NAME lookup lives in `providerCredentialEnvName` (single source) so the
+ * admin config read face (via the composition-root facts seam) can surface WHICH
+ * env var a lane reads without ever touching its VALUE.
  */
-export function isProviderLaneReady(provider: Provider): boolean {
+export function providerCredentialEnvName(provider: Provider): string | undefined {
   const config = PROVIDERS[provider];
-  if (!config) return false;
-  const envName = config.authMode === 'oauth' ? config.oauthTokenEnv : config.apiKeyEnv;
-  return Boolean(process.env[envName]);
+  if (!config) return undefined;
+  return config.authMode === 'oauth' ? config.oauthTokenEnv : config.apiKeyEnv;
+}
+
+export function isProviderLaneReady(provider: Provider): boolean {
+  const envName = providerCredentialEnvName(provider);
+  return envName !== undefined && Boolean(process.env[envName]);
+}
+
+/**
+ * YUK-1007 — read-only projection of the provider registry's AUTH surface for the
+ * config read face (`GET /api/admin/config` providers[]): one row per PROVIDERS
+ * entry with the credential env NAME (never the value) and the implemented flag
+ * (isProviderImplemented — same predicate resolveTaskProvider enforces). Derived
+ * from PROVIDERS itself so adding a provider cannot drift this list.
+ */
+export interface ProviderAuthSurfaceRow {
+  readonly name: Provider;
+  readonly authMode: 'key' | 'oauth';
+  readonly credentialEnvName: string;
+  readonly implemented: boolean;
+}
+
+export function providerAuthSurface(): readonly ProviderAuthSurfaceRow[] {
+  return (Object.keys(PROVIDERS) as Provider[]).map((name) => ({
+    name,
+    authMode: PROVIDERS[name].authMode,
+    credentialEnvName: providerCredentialEnvName(name) ?? '',
+    implemented: isProviderImplemented(name),
+  }));
 }
 
 // YUK-608 — the KEY-auth providers actually wired to a working endpoint. openrouter / gateway

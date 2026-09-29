@@ -25,6 +25,9 @@ export const AdminConfigKeyRowSchema = z.object({
   value: AdminConfigValueSchema.nullable(),
   source: AdminConfigSourceSchema,
   default: AdminConfigValueSchema.nullable(),
+  /** consumer 实际消费值（真实 reader 产出，facts seam 注入）；缺席 = 直通。 */
+  effective: AdminConfigValueSchema.nullable().optional(),
+  effective_note: z.string().optional(),
   env_name: z.string().nullable(),
   env_mode: AdminConfigEnvModeSchema,
   tier: z.enum(['A', 'B', 'C']),
@@ -68,13 +71,62 @@ export const AdminConfigTaskRowSchema = z.object({
     .nullable(),
 });
 
+/** providers[] 行：唯一 credential 派生事实是 key_present 布尔（绝无 secret）。 */
+export const AdminConfigProviderRowSchema = z.object({
+  name: z.string(),
+  auth_mode: z.enum(['key', 'oauth']),
+  /** credential env 变量**名字**（operator 自查用）；值永不序列化。 */
+  credential_env: z.string(),
+  key_present: z.boolean(),
+  implemented: z.boolean(),
+});
+
+/** schedules[] 行：cron 声明的静态只读投影（不触发任何 worker 行为）。 */
+export const AdminConfigScheduleRowSchema = z.object({
+  name: z.string(),
+  cron: z.string(),
+  tz: z.string(),
+  owner: z.string(),
+  queue: z.string(),
+  source: z.enum(['capability-manifest', 'server-boss-infra', 'server-memory-infra']),
+  note: z.string().optional(),
+});
+
+/** runtime 分区：运行形态常量（设计 §3.2 #6），全部来自单一声明点。 */
+export const AdminConfigRuntimeSectionSchema = z.object({
+  port: z.number().int().nullable(),
+  db_pool_max: z.number().int(),
+  queue_tiers: z.object({
+    expire_seconds: z.object({ fast: z.number(), llm: z.number(), agent: z.number() }),
+    retention_seconds: z.number(),
+  }),
+  orchestration: z.object({
+    anchor_cron: z.string(),
+    tz: z.string(),
+    queue: z.string(),
+    catchup_window_seconds: z.number(),
+    tick_interval_seconds: z.number(),
+    node_timeout_seconds: z.number(),
+    layer_stagger_seconds: z.number(),
+    dag_members: z.array(z.string()),
+  }),
+});
+
 export const AdminConfigResponseSchema = z.object({
   snapshot: z.object({
     epoch: z.number().int().nonnegative(),
     hydrated_at: z.string().nullable(),
   }),
+  /** 运行时事实是否已由组合根注入（false = 对应分区如实置空，不伪造）。 */
+  facts_injected: z.boolean(),
   keys: z.array(AdminConfigKeyRowSchema),
   tasks: z.array(AdminConfigTaskRowSchema),
+  providers: z.array(AdminConfigProviderRowSchema),
+  schedules: z.object({
+    read_only_note: z.string(),
+    rows: z.array(AdminConfigScheduleRowSchema),
+  }),
+  runtime: AdminConfigRuntimeSectionSchema.nullable(),
 });
 
 export type AdminConfigResponse = z.infer<typeof AdminConfigResponseSchema>;

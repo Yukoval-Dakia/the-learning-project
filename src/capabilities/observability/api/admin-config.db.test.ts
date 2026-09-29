@@ -18,8 +18,11 @@ import { replaceConfigSnapshot, resetTestConfig } from '@/core/config/store';
 import { clearConfig, setConfig, setConfigs } from '@/server/config/write';
 import { buildHonoApp } from '../../../../server/app';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-
-import { AdminConfigResponseSchema } from './admin-config-contracts';
+import {
+  __resetAdminConfigRuntimeFactsForTests,
+  setAdminConfigRuntimeFacts,
+} from '../server/admin-config-facts';
+import { AdminConfigResponseSchema, AdminConfigScheduleRowSchema } from './admin-config-contracts';
 
 const INTERNAL_TOKEN = 'admin-config-test-token';
 const EMPTY_SNAPSHOT = { epoch: 0, entries: new Map(), hydratedAt: '' };
@@ -43,6 +46,7 @@ beforeEach(async () => {
 afterEach(() => {
   resetTestConfig();
   replaceConfigSnapshot(EMPTY_SNAPSHOT);
+  __resetAdminConfigRuntimeFactsForTests();
   vi.unstubAllEnvs();
 });
 
@@ -175,5 +179,127 @@ describe('GET /api/admin/config — env layers and secrecy over HTTP', () => {
     expect(text.includes('sk-db-test-secret-xiaomi-3341')).toBe(false);
     expect(text.includes('sk-ant-db-test-secret-3341')).toBe(false);
     expect(text.includes(INTERNAL_TOKEN)).toBe(false);
+  });
+});
+
+describe('GET /api/admin/config — injected runtime facts over HTTP (real builder)', () => {
+  // 真组合根装配（server/config/admin-config-facts.ts）：真实 provider 注册表、
+  // boss/memory cron 静态表、运行形态常量、各 capability 真实 reader 的 effective。
+  beforeEach(async () => {
+    const [{ buildAdminConfigRuntimeFacts }, { observabilityConfigEffectiveFacts }] =
+      await Promise.all([
+        import('@/server/config/admin-config-facts'),
+        import('@/capabilities/observability/public'),
+      ]);
+    expect(observabilityConfigEffectiveFacts().BACKUP_IMPORT_MAX_BYTES?.value).toBe(1_000_000_000);
+    setAdminConfigRuntimeFacts(buildAdminConfigRuntimeFacts);
+  });
+
+  it('serves providers[] with presence booleans only (no credential values) and reserved lanes marked unimplemented', async () => {
+    vi.stubEnv('XIAOMI_API_KEY', 'sk-http-facts-canary-xiaomi-9f1a');
+    const body = AdminConfigResponseSchema.parse(await (await get()).json());
+    expect(body.facts_injected).toBe(true);
+
+    expect(body.providers.length).toBe(8);
+    const byName = new Map(body.providers.map((row) => [row.name, row]));
+    expect(byName.get('xiaomi')).toMatchObject({
+      auth_mode: 'key',
+      credential_env: 'XIAOMI_API_KEY',
+      key_present: true,
+      implemented: true,
+    });
+    expect(byName.get('anthropic-sub')).toMatchObject({
+      auth_mode: 'oauth',
+      credential_env: 'CLAUDE_CODE_OAUTH_TOKEN',
+      key_present: false,
+      implemented: true,
+    });
+    expect(byName.get('openrouter')).toMatchObject({ implemented: false });
+    expect(byName.get('gateway')).toMatchObject({ implemented: false });
+    // 布尔与 env 名之外不得有任何 credential 派生事实；值绝不进响应体。
+    const text = JSON.stringify(body);
+    expect(text.includes('sk-http-facts-canary-xiaomi-9f1a')).toBe(false);
+    for (const row of body.providers) {
+      expect(Object.keys(row).sort()).toEqual([
+        'auth_mode',
+        'credential_env',
+        'implemented',
+        'key_present',
+        'name',
+      ]);
+    }
+  });
+
+  it('serves schedules[] from the real declaration sources (manifest projection + boss/memory infra tables) with the read-only note', async () => {
+    const body = AdminConfigResponseSchema.parse(await (await get()).json());
+    expect(body.schedules.read_only_note).toContain('只读');
+
+    const manifestRows = body.schedules.rows.filter((r) => r.source === 'capability-manifest');
+    const expectedManifest = capabilities
+      .flatMap((cap) => (cap.jobs?.handlers ?? []).filter((job) => job.schedule !== undefined))
+      .map((job) => job.name)
+      .sort();
+    expect(manifestRows.map((r) => r.name)).toEqual(expectedManifest);
+
+    const bossRows = body.schedules.rows.filter((r) => r.source === 'server-boss-infra');
+    expect(bossRows.map((r) => r.name).sort()).toEqual(
+      [
+        'prune_job_events',
+        'prune_orphan_review_sessions',
+        'prune_orphan_placement_sessions',
+        'promote_conversation_idle',
+        'prune_orphan_conversation_sessions',
+        'verify_dispatch_recovery',
+      ].sort(),
+    );
+    const memoryRows = body.schedules.rows.filter((r) => r.source === 'server-memory-infra');
+    expect(memoryRows.map((r) => r.name).sort()).toEqual(
+      ['memory_brief_sweep', 'memory_ingest_outbox_poll', 'memory_ingest_outbox_recover'].sort(),
+    );
+    // 声明源行全部过行契约（cron/tz/owner 真实值非空）。
+    for (const row of body.schedules.rows) {
+      expect(AdminConfigScheduleRowSchema.safeParse(row).success, row.name).toBe(true);
+      expect(row.cron).not.toBe('');
+      expect(row.tz).not.toBe('');
+    }
+  });
+
+  it('serves the runtime partition from the real single-source constants', async () => {
+    const body = AdminConfigResponseSchema.parse(await (await get()).json());
+    expect(body.runtime).not.toBeNull();
+    expect(body.runtime?.port).toBe(8787);
+    expect(body.runtime?.db_pool_max).toBe(10);
+    expect(body.runtime?.queue_tiers).toEqual({
+      expire_seconds: { fast: 3600, llm: 3600, agent: 7200 },
+      retention_seconds: 604_800,
+    });
+    expect(body.runtime?.orchestration).toMatchObject({
+      anchor_cron: '30 2 * * *',
+      tz: 'Asia/Shanghai',
+      queue: 'nightly_orchestrator',
+      catchup_window_seconds: 18_000,
+      tick_interval_seconds: 60,
+      node_timeout_seconds: 25_200,
+      layer_stagger_seconds: 120,
+    });
+    // DAG 成员名单来自 kernel projectDagMembers 同源投影（非空 = 编排面在场）。
+    expect(body.runtime?.orchestration.dag_members.length).toBeGreaterThan(0);
+  });
+
+  it('carries effective over the real DB write path: a valid 5MB row is honored verbatim by the real reader (configured = effective)', async () => {
+    // 写端 schema（min 1MB）与 hydrate 校验保证 DB 层不可能携带低于地板的值——
+    // DB 层分叉在构造上不可能；分叉只在 env 层（unit 测试钉住：envParse 垃圾直通
+    // + reader 回退）。本测试钉 HTTP 面的 effective 列随真实写路径出现且如实。
+    await setConfig('BACKUP_IMPORT_MAX_BYTES', 5_000_000, { actor: 'cli' }, testDb());
+
+    const body = AdminConfigResponseSchema.parse(await (await get()).json());
+    const row = body.keys.find((candidate) => candidate.key === 'BACKUP_IMPORT_MAX_BYTES');
+    if (!row) throw new Error('missing BACKUP_IMPORT_MAX_BYTES row');
+    expect(row.value).toBe(5_000_000);
+    expect(row.source).toBe('db');
+    expect(row.revision).toBe(1);
+    // 真实 reader 直读该值（≥地板不回退）：effective = 5MB，两列一致且都在场。
+    expect(row.effective).toBe(5_000_000);
+    expect(row.effective_note).toBeTruthy();
   });
 });

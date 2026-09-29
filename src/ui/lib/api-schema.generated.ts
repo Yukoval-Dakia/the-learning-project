@@ -2782,11 +2782,16 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        facts_injected: boolean;
                         keys: {
                             consumer: string | null;
                             default: (boolean | number | string | unknown[] | {
                                 [key: string]: unknown;
                             }) | null;
+                            effective?: (boolean | number | string | unknown[] | {
+                                [key: string]: unknown;
+                            }) | null;
+                            effective_note?: string;
                             /** @enum {string} */
                             env_mode: "fallback" | "priority" | "pinned";
                             env_name: string | null;
@@ -2804,6 +2809,49 @@ export interface operations {
                             }) | null;
                             wired: boolean;
                         }[];
+                        providers: {
+                            /** @enum {string} */
+                            auth_mode: "key" | "oauth";
+                            credential_env: string;
+                            implemented: boolean;
+                            key_present: boolean;
+                            name: string;
+                        }[];
+                        runtime: {
+                            db_pool_max: number;
+                            orchestration: {
+                                anchor_cron: string;
+                                catchup_window_seconds: number;
+                                dag_members: string[];
+                                layer_stagger_seconds: number;
+                                node_timeout_seconds: number;
+                                queue: string;
+                                tick_interval_seconds: number;
+                                tz: string;
+                            };
+                            port: number | null;
+                            queue_tiers: {
+                                expire_seconds: {
+                                    agent: number;
+                                    fast: number;
+                                    llm: number;
+                                };
+                                retention_seconds: number;
+                            };
+                        } | null;
+                        schedules: {
+                            read_only_note: string;
+                            rows: {
+                                cron: string;
+                                name: string;
+                                note?: string;
+                                owner: string;
+                                queue: string;
+                                /** @enum {string} */
+                                source: "capability-manifest" | "server-boss-infra" | "server-memory-infra";
+                                tz: string;
+                            }[];
+                        };
                         snapshot: {
                             epoch: number;
                             hydrated_at: string | null;

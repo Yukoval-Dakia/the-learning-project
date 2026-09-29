@@ -85,6 +85,43 @@ export const MEMORY_INGEST_OUTBOX_RECOVER_QUEUE = 'memory_ingest_outbox_recover'
 // ingest-outbox floor instead of registering another queue or cron.
 export { MEMORY_RECONCILE_QUEUE } from './memory-reconcile-handoff';
 
+/**
+ * YUK-1007 — memory 模块 cron 声明的**静态投影表**（单一真相源）：
+ * registerMemoryHandlers 从本表循环 boss.schedule，admin config 读面
+ * （schedules[] 的 infra 行）经组合根 facts seam 投影同一张表。
+ */
+export interface MemoryScheduleDeclaration {
+  readonly name: string;
+  readonly cron: string;
+  readonly tz: string;
+  readonly queue: 'fast';
+  readonly note?: string;
+}
+
+export const MEMORY_INFRA_SCHEDULES: readonly MemoryScheduleDeclaration[] = [
+  {
+    name: MEMORY_BRIEF_SWEEP_QUEUE,
+    cron: '0 3 * * *',
+    tz: 'Asia/Shanghai',
+    queue: 'fast',
+    note: '每日 brief 兜底重算（per-event regen 的 backstop）',
+  },
+  {
+    name: MEMORY_INGEST_OUTBOX_POLL_QUEUE,
+    cron: '* * * * *',
+    tz: 'UTC',
+    queue: 'fast',
+    note: 'ADR-0021 outbox 每分钟 poller（pg-boss cron 最小粒度）',
+  },
+  {
+    name: MEMORY_INGEST_OUTBOX_RECOVER_QUEUE,
+    cron: '0 * * * *',
+    tz: 'UTC',
+    queue: 'fast',
+    note: 'ADR-0021 outbox 每小时恢复扫描（poller 漏网的兜底；YUK-858 reconcile 复用同一小时地板）',
+  },
+];
+
 const OUTBOX_POLL_BATCH = 50;
 const REGEN_SINGLETON_SECONDS = 6 * 60;
 // YUK-729 (#965 round-4, codex P2) — cap the per-event brief-regen fan-out.
@@ -1159,10 +1196,6 @@ export async function registerMemoryHandlers(
     MEMORY_BRIEF_SWEEP_QUEUE,
     fenceAwareJobHandler(db, MEMORY_BRIEF_SWEEP_QUEUE, buildMemoryBriefSweepHandler(db, boss)),
   );
-  await boss.schedule(MEMORY_BRIEF_SWEEP_QUEUE, '0 3 * * *', {}, { tz: 'Asia/Shanghai' });
-
-  // ADR-0021 outbox: per-minute poller drains pending ingest rows; hourly
-  // recovery sweep catches anything missed (worker outage, batch overflow).
   await createOrUpdateQueue(boss, MEMORY_INGEST_OUTBOX_POLL_QUEUE, FAST_QUEUE_OPTS);
   await boss.work(
     MEMORY_INGEST_OUTBOX_POLL_QUEUE,
@@ -1172,8 +1205,6 @@ export async function registerMemoryHandlers(
       buildMemoryIngestOutboxPollHandler(db, boss),
     ),
   );
-  await boss.schedule(MEMORY_INGEST_OUTBOX_POLL_QUEUE, '* * * * *', {}, { tz: 'UTC' });
-
   await createOrUpdateQueue(boss, MEMORY_INGEST_OUTBOX_RECOVER_QUEUE, FAST_QUEUE_OPTS);
   await boss.work(
     MEMORY_INGEST_OUTBOX_RECOVER_QUEUE,
@@ -1183,7 +1214,12 @@ export async function registerMemoryHandlers(
       buildMemoryIngestOutboxRecoverHandler(db, boss),
     ),
   );
-  await boss.schedule(MEMORY_INGEST_OUTBOX_RECOVER_QUEUE, '0 * * * *', {}, { tz: 'UTC' });
+
+  // YUK-1007：memory 侧 cron 从 MEMORY_INFRA_SCHEDULES 静态表循环注册（单一
+  // 真相源——admin config 读面经组合根 facts seam 投影同一张表）。
+  for (const decl of MEMORY_INFRA_SCHEDULES) {
+    await boss.schedule(decl.name, decl.cron, {}, { tz: decl.tz });
+  }
 
   // Reconcile queue — event-driven, with recovery attached to the hourly floor.
   // memory_reconcile is newer than the original YUK-248 inventory but has the

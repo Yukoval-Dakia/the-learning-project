@@ -681,7 +681,7 @@ async function observeShadowNoApply(
   return 'shadowed';
 }
 
-function readHubSyncMode(): HubSyncMode {
+export function readHubSyncMode(): HubSyncMode {
   // YUK-1007：DB > env > code-default('off')；非法值 → 'off'（registry envParse
   // 收窄到枚举，其余 → undefined → codeDefault）。
   const raw = getConfig('HUB_SYNC_MODE');

@@ -4,7 +4,9 @@
 // （读面契约）+ PR #1498 已落地的热加载 store（src/core/config）。本文件只做
 // **装配与分类**，不做任何解析决策——分层（env pin > DB > env fallback > code
 // default / compose-forced 跳 DB）全部复用 store 的 resolveConfigValue，单一真相
-// 源不在此重复。输出直接是 wire 形状（api/admin-config-contracts.ts 的
+// 源不在此重复；effective 值与 providers/schedules/runtime 分区 likewise 来自
+// 组合根注入的真实事实（admin-config-facts.ts，调用真实 reader/注册表，本层
+// 零规则复制）。输出直接是 wire 形状（api/admin-config-contracts.ts 的
 // AdminConfigResponseSchema 与之 1:1，由单测 safeParse 钉住等价）。
 //
 // 诚实性规则（本端点存在的理由）：
@@ -23,6 +25,7 @@
 // 纯同步、零 DB：route 调用点在快照之上，hydrate 由 boot/refresh 周期负责。
 
 import { tasks } from '@/ai/registry';
+import { capabilities } from '@/capabilities';
 import type { ConfigSource, ConfigValue } from '@/core/config/store';
 import {
   CONFIG_REGISTRY,
@@ -31,6 +34,13 @@ import {
   getTaskOverride,
   resolveConfigValue,
 } from '@/core/config/store';
+
+import type {
+  AdminConfigProviderRow,
+  AdminConfigRuntimeFacts,
+  AdminConfigRuntimeSection,
+  AdminConfigScheduleRow,
+} from './admin-config-facts';
 
 /** 读面值的 JSON 形状（ConfigValue 去 undefined；非有限数在装配层归 null）。 */
 export type AdminConfigValue = ConfigValue | null;
@@ -128,6 +138,11 @@ export interface AdminConfigKeyRow {
   readonly value: AdminConfigValue;
   readonly source: ConfigSource;
   readonly default: AdminConfigValue;
+  /** consumer 实际消费的值（真实 reader 调用产出，经 facts seam 注入）；
+   * 缺席 = consumer 直通（configured 即生效）。区分 configured(value) 与
+   * effective 是诚实性要求：reader 有 clamp/floor/降级时两者会分叉。 */
+  readonly effective?: AdminConfigValue;
+  readonly effective_note?: string;
   readonly env_name: string | null;
   readonly env_mode: 'fallback' | 'priority' | 'pinned';
   readonly tier: 'A' | 'B' | 'C';
@@ -163,13 +178,22 @@ export interface AdminConfigReadModel {
     readonly epoch: number;
     readonly hydrated_at: string | null;
   };
+  /** 运行时事实（providers[]/infra schedules/runtime/effective）是否已由组合根
+   * 注入；false 时对应分区如实置空，不伪造。 */
+  readonly facts_injected: boolean;
   readonly keys: readonly AdminConfigKeyRow[];
   readonly tasks: readonly AdminConfigTaskRow[];
+  readonly providers: readonly AdminConfigProviderRow[];
+  readonly schedules: {
+    readonly read_only_note: string;
+    readonly rows: readonly AdminConfigScheduleRow[];
+  };
+  readonly runtime: AdminConfigRuntimeSection | null;
 }
 
 /** ConfigValue → JSON 值：undefined 与非有限数（NaN env 字面量）归 null。 */
-function normalizeValue(value: ConfigValue | undefined): AdminConfigValue {
-  if (value === undefined) return null;
+function normalizeValue(value: ConfigValue | null | undefined): AdminConfigValue {
+  if (value === undefined || value === null) return null;
   if (typeof value === 'number' && !Number.isFinite(value)) return null;
   return value;
 }
@@ -178,8 +202,12 @@ function normalizeValue(value: ConfigValue | undefined): AdminConfigValue {
  * 全局 pin 的**caller 语义**合成（不是逐字段合成）：
  * `readGlobalProviderSwitch`（src/server/ai/providers.ts，运行时唯一真相源）
  * 在 env provider pin 在场时整体返回 env 对（all-or-nothing），不再下探 DB
- * model；env 缺席时才用 getLaneOverride 的 DB/混合对。此处镜像该短路，避免
- * 读面虚报 runtime 不清费的 DB 值（「实际 caller 生效语义 > 表面 DB 值」）。
+ * model；env 缺席时才用 DB 对，且 DB 支路以 **provider 在场为门**
+ * （providers.ts `if (!db?.provider) return undefined`）——只有
+ * lane.global.model 而无 lane.global.provider 的行在运行时**不消费**（惰性）。
+ * 此处镜像这两道门，避免读面虚报 runtime 不消费的 DB 值（「实际 caller
+ * 生效语义 > 表面 DB 值」）。单测用真实 resolver（hasGlobalProviderOverride /
+ * resolveTaskProvider）对照钉住一致性。
  */
 function resolveGlobalPin(env: NodeJS.ProcessEnv): { provider?: string; model?: string } | null {
   const provider = resolveConfigValue('lane.global.provider', env);
@@ -190,15 +218,42 @@ function resolveGlobalPin(env: NodeJS.ProcessEnv): { provider?: string; model?: 
       ...(model.source === 'env' && typeof model.value === 'string' ? { model: model.value } : {}),
     };
   }
-  return getLaneOverride('global', env) ?? null;
+  // Caller gate（providers.ts readGlobalProviderSwitch）：model-only DB 行惰性。
+  const lanePair = getLaneOverride('global', env);
+  return lanePair?.provider !== undefined ? lanePair : null;
 }
 
 /**
+ * capability manifest 声明的 cron 投影（真实声明源：capabilities[] 的
+ * jobs.handlers[].schedule；不手工复制清单）。编排 DAG 成员（dependsOn 存在）
+ * 无 cron——由 orchestrator 触发，成员名单见 runtime.orchestration.dag_members。
+ */
+function manifestScheduleRows(): AdminConfigScheduleRow[] {
+  return capabilities
+    .flatMap((cap) => (cap.jobs?.handlers ?? []).map((job) => ({ cap, job })))
+    .filter(({ job }) => job.schedule !== undefined)
+    .map(({ cap, job }) => ({
+      name: job.name,
+      cron: job.schedule?.cron ?? '',
+      tz: job.schedule?.tz ?? '',
+      owner: cap.name,
+      queue: job.queue,
+      source: 'capability-manifest' as const,
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+const SCHEDULES_READ_ONLY_NOTE =
+  '只读静态投影：cron 的改动是代码改动（capability manifest 声明 / server 注册表），不是热加载配置写；本端点不触发任何 worker 行为。编排 DAG 成员无 cron（由 orchestrator 从 anchor 触发），名单见 runtime.orchestration.dag_members。';
+
+/**
  * 装配读面。`env` 是注入 seam（默认 process.env）——只读 registry 登记过的
- * env 名，从不枚举整个 env。
+ * env 名，从不枚举整个 env。`facts` 是组合根注入的运行时事实
+ * （getAdminConfigRuntimeFacts()；null = 未注入，分区如实置空）。
  */
 export function buildAdminConfigReadModel(
   env: NodeJS.ProcessEnv = process.env,
+  facts: AdminConfigRuntimeFacts | null = null,
 ): AdminConfigReadModel {
   const snap = getConfigSnapshot();
 
@@ -209,11 +264,16 @@ export function buildAdminConfigReadModel(
       const resolved = resolveConfigValue(key, env);
       const consumer = KEY_CONSUMERS[key] ?? null;
       const envMode = def.envMode ?? 'fallback';
+      const effectiveFact = facts?.effective_values[key];
       return {
         key,
         value: normalizeValue(resolved.value),
         source: resolved.source,
         default: normalizeValue(def.codeDefault),
+        ...(effectiveFact !== undefined && effectiveFact.value !== undefined
+          ? { effective: normalizeValue(effectiveFact.value) }
+          : {}),
+        ...(effectiveFact?.note !== undefined ? { effective_note: effectiveFact.note } : {}),
         env_name: def.envName ?? null,
         env_mode: envMode,
         tier: def.tier,
@@ -254,9 +314,22 @@ export function buildAdminConfigReadModel(
     };
   });
 
+  const infraRows = facts?.infra_schedules ?? [];
   return {
     snapshot: { epoch: snap.epoch, hydrated_at: snap.hydratedAt === '' ? null : snap.hydratedAt },
+    facts_injected: facts !== null,
     keys: keyRows,
     tasks: taskRows,
+    providers: [...(facts?.providers ?? [])].sort((left, right) =>
+      left.name.localeCompare(right.name),
+    ),
+    schedules: {
+      read_only_note: SCHEDULES_READ_ONLY_NOTE,
+      rows: [
+        ...manifestScheduleRows(),
+        ...[...infraRows].sort((left, right) => left.name.localeCompare(right.name)),
+      ],
+    },
+    runtime: facts?.runtime ?? null,
   };
 }
