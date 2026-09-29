@@ -27,7 +27,7 @@ import {
 //   - echo（golden E2E，0.5s polling）
 //   - prune_job_events / prune_orphan_* / promote_conversation_idle（FAST housekeeping cron）
 //   - registerMemoryHandlers（memory_* 队列归 memory 模块）
-//   - verify_dispatch_recovery（question-supply 安全网，读 durable intents 只补发 verify）
+//   - verify_dispatch_recover（VERIFY_DISPATCH_RECOVERY_QUEUE，question-supply 安全网，只补发 verify）
 
 /**
  * YUK-1007 — 本簿 cron 声明的**静态投影表**（单一真相源）：registerHandlers
@@ -80,7 +80,11 @@ export const INFRA_HOUSEKEEPING_SCHEDULES: readonly InfraScheduleDeclaration[] =
     note: 'YUK-14: abandon conversation sessions stuck in active/idle >6h（BJT 04:25，与 review prune 错峰 10min）',
   },
   {
-    name: 'verify_dispatch_recovery',
+    // 队列名必须用 verify-dispatch-outbox 导出的常量（值为
+    // 'verify_dispatch_recover'，无尾部 y）——手写字面量会撞 cron FK（CI
+    // run 36557897314 的 RED：pg-boss 报 Queue verify_dispatch_recovery
+    // not found，连锁拖死 worker-boot/verify-dispatch-recovery/extract 三面）。
+    name: VERIFY_DISPATCH_RECOVERY_QUEUE,
     cron: '10 4 * * *',
     tz: 'Asia/Shanghai',
     queue: 'fast',
@@ -210,7 +214,7 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   );
 
   // YUK-1007：cron 注册从 INFRA_HOUSEKEEPING_SCHEDULES 静态表循环驱动（单一
-  // 真相源——上表即读面投影的同一份声明）；顺序与原逐点注册一致，语义零变化。
+  // 真相源——上表即读面投影的同一份声明，队列名一律取各导出常量）。
   for (const decl of INFRA_HOUSEKEEPING_SCHEDULES) {
     await boss.schedule(decl.name, decl.cron, {}, { tz: decl.tz });
   }

@@ -38,6 +38,22 @@ vi.mock('@/kernel/tools/tool-operations', () => ({
     return [];
   }),
 }));
+// YUK-1007 读面 facts 注入（boot 序在 recoverToolOperations 之后、serve 之前）：
+// mock 掉避免拉起真实 admin-config-facts 重组根链（pi-adapter 等重模块会把
+// serve 的可观测时序拖过 vi.waitFor 窗口——CI run 36557897314 的 unit RED）。
+vi.mock('@/server/config/admin-config-facts', () => ({
+  buildAdminConfigRuntimeFacts: vi.fn(async () => ({
+    providers: [],
+    infra_schedules: [],
+    runtime: null,
+    effective_values: {},
+  })),
+}));
+vi.mock('@/capabilities/observability/public', () => ({
+  setAdminConfigRuntimeFacts: vi.fn(() => {
+    mocks.order.push('admin-config-facts-injected');
+  }),
+}));
 
 describe('API startup', () => {
   const handlers = new Map<string | symbol, (...args: unknown[]) => unknown>();
@@ -69,7 +85,11 @@ describe('API startup', () => {
     await import('./index');
     await vi.waitFor(() => expect(mocks.serve).toHaveBeenCalledTimes(1));
 
-    expect(mocks.order).toEqual(['tool-operations-recovered', 'serve']);
+    expect(mocks.order).toEqual([
+      'tool-operations-recovered',
+      'admin-config-facts-injected',
+      'serve',
+    ]);
     expect(mocks.recover).toHaveBeenCalledTimes(1);
     expect(exitSpy).not.toHaveBeenCalled();
     exitSpy.mockRestore();

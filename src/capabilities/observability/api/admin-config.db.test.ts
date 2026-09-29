@@ -15,6 +15,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { capabilities } from '@/capabilities';
 import { replaceConfigSnapshot, resetTestConfig } from '@/core/config/store';
+import { VERIFY_DISPATCH_RECOVERY_QUEUE } from '@/server/boss/verify-dispatch-outbox';
 import { clearConfig, setConfig, setConfigs } from '@/server/config/write';
 import { buildHonoApp } from '../../../../server/app';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -242,6 +243,7 @@ describe('GET /api/admin/config — injected runtime facts over HTTP (real build
     expect(manifestRows.map((r) => r.name)).toEqual(expectedManifest);
 
     const bossRows = body.schedules.rows.filter((r) => r.source === 'server-boss-infra');
+    // 队列名取真实常量（verify_dispatch_recover——verify-dispatch-outbox 导出）。
     expect(bossRows.map((r) => r.name).sort()).toEqual(
       [
         'prune_job_events',
@@ -249,7 +251,7 @@ describe('GET /api/admin/config — injected runtime facts over HTTP (real build
         'prune_orphan_placement_sessions',
         'promote_conversation_idle',
         'prune_orphan_conversation_sessions',
-        'verify_dispatch_recovery',
+        VERIFY_DISPATCH_RECOVERY_QUEUE,
       ].sort(),
     );
     const memoryRows = body.schedules.rows.filter((r) => r.source === 'server-memory-infra');
