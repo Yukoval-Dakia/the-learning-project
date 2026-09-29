@@ -1,5 +1,13 @@
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -15,6 +23,64 @@ import {
 const root = '/repo';
 
 describe('unit affected-test shadow', () => {
+  it('executes every full-suite file exactly once across shards and propagates failures', () => {
+    const repo = realpathSync(mkdtempSync(path.join(tmpdir(), 'unit-shards-')));
+    try {
+      mkdirSync(path.join(repo, 'cases'));
+      symlinkSync(path.resolve('node_modules'), path.join(repo, 'node_modules'), 'dir');
+      writeFileSync(path.join(repo, 'package.json'), '{"type":"module","private":true}');
+      writeFileSync(
+        path.join(repo, 'vitest.unit.config.ts'),
+        "export default { test: { include: ['cases/*.test.js'], maxWorkers: 1 } };",
+      );
+      const files = ['a', 'b', 'c', 'd'].map((name) => `cases/${name}.test.js`);
+      for (const file of files) {
+        writeFileSync(
+          path.join(repo, file),
+          "import { it, expect } from 'vitest'; it('behavior', () => expect(42).toBe(42));",
+        );
+      }
+      const selection = path.join(repo, 'selection.json');
+      writeFileSync(selection, JSON.stringify({ requested_mode: 'full', effective_mode: 'full' }));
+      const run = (shard: string) =>
+        spawnSync(
+          process.execPath,
+          [
+            path.resolve('scripts/ci/unit-shadow.mjs'),
+            'run',
+            '--selection',
+            selection,
+            '--shard',
+            shard,
+            '--results',
+            path.join(repo, 'results.json'),
+            '--execution',
+            path.join(repo, 'execution.json'),
+          ],
+          { cwd: repo, encoding: 'utf8', timeout: 15_000 },
+        );
+      const executed: string[] = [];
+      for (let shard = 1; shard <= 4; shard++) {
+        const result = run(`${shard}/4`);
+        expect(result.status, result.stdout + result.stderr).toBe(0);
+        const report = JSON.parse(readFileSync(path.join(repo, 'results.json'), 'utf8'));
+        expect(report.numTotalTests).toBe(1);
+        for (const file of report.testResults) executed.push(path.relative(repo, file.name));
+      }
+      expect(executed.sort()).toEqual(files);
+      for (const file of files) {
+        writeFileSync(
+          path.join(repo, file),
+          "import { it, expect } from 'vitest'; it('broken', () => expect(41).toBe(42));",
+        );
+      }
+      expect(run('1/4').status).toBe(1);
+      expect(run('5/4').status).toBe(1);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it('normalizes Vitest selections and unions source-scanning sentinels', () => {
     expect(
       mergePredictedFiles(

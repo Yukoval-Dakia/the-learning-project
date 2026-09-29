@@ -129,6 +129,12 @@ function runBiomeJson(repoRoot) {
   if (result.stderr) {
     process.stderr.write(result.stderr);
   }
+  if (result.signal || result.status !== 0) {
+    process.stderr.write(result.stdout ?? '');
+    throw new Error(
+      `[lint-ratchet] biome failed (exit ${result.status}, signal ${result.signal ?? 'none'})`,
+    );
+  }
   let report;
   try {
     report = JSON.parse(result.stdout);
@@ -230,7 +236,7 @@ function main() {
 
   if (current.errors > 0) {
     console.error(
-      `[lint-ratchet] FAIL: biome reported ${current.errors} error diagnostics — errors are gated by \`pnpm lint\` before this step; fix them first.`,
+      `[lint-ratchet] FAIL: biome reported ${current.errors} error diagnostics; fix them first.`,
     );
     process.exitCode = 1;
     return;

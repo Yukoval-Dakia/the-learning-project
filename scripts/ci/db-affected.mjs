@@ -612,6 +612,9 @@ function runRequiredDbTests({ root, selectionPath, executionPath, shardValue }) 
 
   const startedAt = Date.now();
   const skippedEmptyShard = bin !== null && bin.files.length === 0;
+  if (requiredMode === 'full' && skippedEmptyShard) {
+    throw new Error(`full DB shard ${shard.value} is empty`);
+  }
   let result = { status: 0, signal: null, error: undefined };
   const reportPath = path.join(
     path.dirname(executionPath),
@@ -630,7 +633,6 @@ function runRequiredDbTests({ root, selectionPath, executionPath, shardValue }) 
       '--reporter=default',
       '--reporter=json',
       `--outputFile.json=${reportPath}`,
-      '--passWithNoTests',
       ...(binFiles ?? [`--shard=${shard.value}`]),
     ];
     result = spawnSync(process.execPath, args, {
