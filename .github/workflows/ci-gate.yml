@@ -95,9 +95,6 @@ jobs:
       - name: Lint warning ratchet
         if: needs.changes.outputs.static_changed == 'true'
         run: node scripts/ci/lint-ratchet.mjs
-      # OpenCode plugin checks are tooling-only and live outside this required
-      # gate; project-level plugin pinning was removed via YUK-898. Run
-      # `pnpm test:opencode-worktree` locally when touching .opencode/.
       # Audits mirror the standalone pre-PR audits plus the audit prefix of `pnpm test`.
       # The split test lanes below must not call the umbrella script again.
       - name: Audits
