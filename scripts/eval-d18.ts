@@ -163,8 +163,10 @@ async function main(): Promise<void> {
   const fileSink = fileEvidenceSink(`${args.out}/evidence.ndjson`);
   // 封存行 provider/model 照 lane 事实入账：stub → 'stub'；jev-openrouter
   // → openrouter / typesafe/jev-1.13（与 typed runner 的 attempt 行一致）。
-  const sealProvider = args.lane === 'jev-openrouter' ? 'openrouter' : 'stub';
-  const sealModel = args.lane === 'jev-openrouter' ? 'typesafe/jev-1.13' : undefined;
+  const jevLane =
+    args.lane === 'jev-openrouter' ? await import('@/server/eval/d18-jev-invoker') : null;
+  const sealProvider = jevLane?.JEV_LANE_PROVIDER ?? 'stub';
+  const sealModel = jevLane?.JEV_LANE_MODEL;
   const dbSink = aiTaskRunEvidenceSink(db as never, {
     provider: sealProvider,
     ...(sealModel !== undefined ? { model: sealModel } : {}),
@@ -186,8 +188,8 @@ async function main(): Promise<void> {
 
   try {
     const invoker: EvalInvoker =
-      args.lane === 'jev-openrouter'
-        ? (await import('@/server/eval/d18-jev-invoker')).jevOpenRouterInvoker({
+      jevLane !== null
+        ? jevLane.jevOpenRouterInvoker({
             db: db as never,
           })
         : stubInvoker({ lane: args.lane });

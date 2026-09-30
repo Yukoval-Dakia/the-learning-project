@@ -9,7 +9,7 @@ import {
 } from './d18-harness';
 
 // D18 eval harness（unit partition）：预算触顶即停 + gate_rejected 证据行、
-// invoke_failed 不记 cost、retries 计入上限、证据 entry 形状（digest 不
+// invoke_failed 保留预留、retries 计入上限、证据 entry 形状（digest 不
 // 含原文）、stub invoker 确定性。
 
 const corpus = (n: number, split: 'dev' | 'holdout' = 'dev'): EvalCorpusItem[] =>
@@ -31,6 +31,83 @@ class MemSink {
 }
 
 describe('runEvalHarness', () => {
+  it('unknown-cost success seals a non-null conservative amount', async () => {
+    const sink = new MemSink();
+    const invoker: EvalInvoker = {
+      lane: 'unknown-cost',
+      estimate: () => ({
+        kind: 'verification',
+        inputTokens: 10,
+        outputTokens: 5,
+        estimatedCostUsd: 0.005,
+      }),
+      invoke: async () => ({
+        output: { answer: 'correct' },
+        usage: { inputTokens: 10, outputTokens: 5 },
+        reportedCostUsd: null,
+      }),
+    };
+    const report = await runEvalHarness({ runId: 'unknown', corpus: corpus(1), invoker, sink });
+    expect(sink.entries).toHaveLength(1);
+    expect(sink.entries[0]).toMatchObject({
+      outcome: 'settled',
+      cost_basis: 'estimated',
+      cost_usd: 0.005,
+    });
+    expect(report.ledger.spentUsd).toBe(0.005);
+  });
+
+  it('failed invocations consume reserve and stop the next call at the cost ceiling', async () => {
+    const sink = new MemSink();
+    let wires = 0;
+    const invoker: EvalInvoker = {
+      lane: 'failed-wire',
+      estimate: () => ({
+        kind: 'verification',
+        inputTokens: 10,
+        outputTokens: 5,
+        estimatedCostUsd: 0.005,
+      }),
+      invoke: async () => {
+        wires += 1;
+        throw new Error('response contract failure after wire');
+      },
+    };
+    const report = await runEvalHarness({
+      runId: 'failed',
+      corpus: corpus(3),
+      invoker,
+      sink,
+      caps: { ...D18_BUDGET_CAPS, totalCostUsd: 0.025 },
+    });
+    expect(wires).toBe(1);
+    expect(report.ledger.spentUsd).toBe(0.005);
+    expect(report.halt_reason).toBe('cost_ceiling');
+    expect(sink.entries[0]).toMatchObject({
+      outcome: 'invoke_failed',
+      cost_basis: 'estimated',
+      cost_usd: 0.005,
+    });
+  });
+
+  it('sink failures stop the run without relabeling a settled provider call', async () => {
+    const sink = new MemSink();
+    sink.record = async (entry) => {
+      sink.entries.push(entry);
+      throw new Error('seal unavailable');
+    };
+    await expect(
+      runEvalHarness({
+        runId: 'sink-failed',
+        corpus: corpus(2),
+        invoker: stubInvoker({ costUsd: 0.001 }),
+        sink,
+      }),
+    ).rejects.toThrow('seal unavailable');
+    expect(sink.entries.map((entry) => entry.outcome)).toEqual(['settled']);
+    expect(sink.closed).toBe(true);
+  });
+
   it('happy path：全 item settle，账本/证据/关闭齐全', async () => {
     const sink = new MemSink();
     const report = await runEvalHarness({
@@ -74,7 +151,7 @@ describe('runEvalHarness', () => {
     expect(sink.entries.at(-1)?.cost_usd).toBeNull();
   });
 
-  it('invoke_failed 不记 cost、继续下一 item；failures 入报告', async () => {
+  it('invoke_failed 保留估算成本、继续下一 item；failures 入报告', async () => {
     const sink = new MemSink();
     const flaky: EvalInvoker = {
       lane: 'flaky',
@@ -101,13 +178,12 @@ describe('runEvalHarness', () => {
     });
     expect(report.items_attempted).toBe(3);
     expect(report.failures).toEqual([{ item_id: 'item-1', attempt: 1, error: 'upstream 503' }]);
-    expect(report.ledger.spentUsd).toBeCloseTo(0.002); // 失败调用无 reported cost
+    expect(report.ledger.spentUsd).toBeCloseTo(0.003);
     expect(sink.entries.map((e) => e.outcome)).toEqual(['settled', 'invoke_failed', 'settled']);
-    // 同上：invoke_failed 无成本证据 → 'unknown'，不是 'estimated'+null。
     const failed = sink.entries[1];
-    expect(failed?.cost_basis).toBe('unknown');
-    expect(failed?.cost_usd).toBeNull();
-    expect(failed?.cost_ref).toContain('no-charge');
+    expect(failed?.cost_basis).toBe('estimated');
+    expect(failed?.cost_usd).toBe(0.001);
+    expect(failed?.cost_ref).toContain('conservative-reserve');
   });
 
   it('retries：maxAttemptsPerItem>1 时失败重试且计入 invocation 上限', async () => {

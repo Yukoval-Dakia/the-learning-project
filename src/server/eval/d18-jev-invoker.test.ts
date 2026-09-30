@@ -99,7 +99,8 @@ describe('jevOpenRouterInvoker', () => {
     const calls: unknown[] = [];
     const inv = jevOpenRouterInvoker({
       db,
-      run: async (_kind, input, _ctx) => {
+      run: async (_kind, input, ctx) => {
+        expect(ctx.retry).toBe('none');
         calls.push(input);
         return fakeOutcome();
       },
@@ -117,6 +118,20 @@ describe('jevOpenRouterInvoker', () => {
   it('no expect → no score (cost/latency only, no fabricated judgment)', async () => {
     const inv = jevOpenRouterInvoker({ db, run: async () => fakeOutcome() });
     const result = await inv.invoke(item(VALID_INPUT));
+    expect(result.score).toBeUndefined();
+  });
+
+  it('multiple questions do not fabricate an item-level score from the first answer', async () => {
+    const inv = jevOpenRouterInvoker({ db, run: async () => fakeOutcome() });
+    const result = await inv.invoke(
+      item(
+        {
+          ...VALID_INPUT,
+          questions: { q1: VALID_INPUT.questions.q1, q2: VALID_INPUT.questions.q1 },
+        },
+        { max_points: 4, gold_points: 4 },
+      ),
+    );
     expect(result.score).toBeUndefined();
   });
 

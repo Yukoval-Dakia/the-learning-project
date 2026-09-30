@@ -37,6 +37,7 @@ import {
   type JevSystemOneResponseT,
 } from '@/core/schema/jev-systemone';
 import type { Db } from '@/db/client';
+import { JEV_REQUEST_MODEL } from '@/server/ai/pricing';
 import {
   type TypedPrimitiveCtx,
   type TypedPrimitiveOutcome,
@@ -46,12 +47,12 @@ import {
 export const JEV_OPENROUTER_LANE = 'jev-openrouter' as const;
 /** provider/model truth stamped on the D18 seal rows for this lane. */
 export const JEV_LANE_PROVIDER = 'openrouter';
-export const JEV_LANE_MODEL = 'typesafe/jev-1.13';
+export const JEV_LANE_MODEL = JEV_REQUEST_MODEL;
 
 /**
  * 每调用保守预留（admit 用）：typed runner 自己的 $0.005/attempt reserve 是
- * 内部 maxCost 闸，本值喂 EvalBudgetGate —— 取 Jev 官方价上限
- * （prompt $0.042/M）下 ~8k token 的保守量级；未知成本按本值记账
+ * 内部 maxCost 闸，本值喂 EvalBudgetGate。$0.005 是保守预留，
+ * 不是价目表报价；未知成本按本值记账
  * （gate.settle 收到 reportedCostUsd=null 时回退 estimated）。
  */
 export const JEV_ESTIMATE_PER_CALL: EvalCallEstimate = {
@@ -119,10 +120,11 @@ export function jevOpenRouterInvoker(opts: JevOpenRouterInvokerOptions): EvalInv
         db: opts.db,
         deadlineAt: opts.deadlineMs ?? now() + 60_000,
         logScope: 'd18EvalJev',
+        retry: 'none',
       });
       const questionIds = Object.keys(input.questions);
       let score: EvalInvocationResult['score'];
-      if (req.item.expect !== undefined && questionIds.length > 0) {
+      if (req.item.expect !== undefined && questionIds.length === 1) {
         const firstId = questionIds[0];
         score =
           jevAnswerToScore(

@@ -15,6 +15,7 @@
 import { canonicalHash, sha256Hex } from '../migration/canonical';
 import {
   BudgetHaltError,
+  D18_BUDGET_CAPS,
   type EvalBudgetCaps,
   EvalBudgetGate,
   type EvalCallEstimate,
@@ -86,7 +87,7 @@ export interface EvalEvidenceEntry {
   usage: { inputTokens: number; outputTokens: number };
   cost_usd: number | null;
   /** ai_task_runs cost truth 对齐：reported=sdk/invoker 实报，estimated=价目
-   *  表估算，unknown=无报价；ref 指向成本证据来源（pricebook/sdk/stub）。 */
+   *  表估算或 invoker 的保守预留，unknown=无报价；ref 明确标注来源。 */
   cost_basis: 'reported' | 'estimated' | 'unknown' | null;
   cost_ref: string | null;
   /** 本次调用是否被 gate 拒绝（触顶调用没有 output）。 */
@@ -139,11 +140,12 @@ function digests(req: EvalInvocationRequest, output: unknown) {
  * 评测主循环：逐 item、逐 attempt —— admit → invoke → settle → sink.record。
  * 触顶即停：BudgetHaltError 冒泡前记录 gate_rejected 证据并终止整轮
  * （不继续下一个 item —— latch 语义，D18「首次触顶即停」）。
- * invoker 自身错误：该 item 记 invoke_failed 并继续下一 item（语料级失败
- * 不是预算事件）；输出为空也照实入账。
+ * invoker 自身错误：按保守预留计费，记 invoke_failed，再尝试下一 item。
+ * 证据写入错误直接停止，不能冒充模型失败或触发重新调用。
  */
 export async function runEvalHarness(opts: EvalHarnessOptions): Promise<EvalRunReport> {
   const gate = new EvalBudgetGate(opts.caps);
+  const reserveUsd = opts.caps?.reserveUsd ?? D18_BUDGET_CAPS.reserveUsd;
   const kind = opts.kind ?? 'verification';
   const maxAttempts = Math.max(1, opts.maxAttemptsPerItem ?? 1);
   const now = opts.now ?? (() => new Date());
@@ -161,6 +163,17 @@ export async function runEvalHarness(opts: EvalHarnessOptions): Promise<EvalRunR
     latencyMs: number | null,
   ): Promise<void> => {
     const d = digests(req, result?.output ?? null);
+    let costUsd: number | null = null;
+    let costBasis: EvalEvidenceEntry['cost_basis'] = 'unknown';
+    let costRef = `unpriced:${opts.invoker.lane}`;
+    if (outcome !== 'gate_rejected') {
+      costUsd = result?.reportedCostUsd ?? estimate?.estimatedCostUsd ?? reserveUsd;
+      costBasis = result?.reportedCostUsd != null ? 'reported' : 'estimated';
+      costRef =
+        result?.reportedCostUsd != null
+          ? `invoker:${opts.invoker.lane}:reported_cost_usd`
+          : `invoker:${opts.invoker.lane}:conservative-reserve`;
+    }
     await opts.sink.record({
       run_id: opts.runId,
       item_id: req.item.id,
@@ -171,30 +184,9 @@ export async function runEvalHarness(opts: EvalHarnessOptions): Promise<EvalRunR
       input_digest: d.input,
       output_digest: outcome === 'settled' ? d.output : '',
       usage: result?.usage ?? { inputTokens: 0, outputTokens: 0 },
-      cost_usd: result?.reportedCostUsd ?? null,
-      // 成本真相（YUK-1058 live-lane 修正）：只有 settled 调用有成本证据 ——
-      // reported ⇒ 'reported'；未报但有估 ⇒ 'estimated'；都没有 ⇒ 'unknown'。
-      // invoke_failed / gate_rejected 没有实际 wire 结算，写 'unknown'（+ref
-      // 指向估计来源）而不是 'estimated' —— ai_task_runs_cost_truth_ck 要求
-      // estimated/reported 必须带非空 cost_usd，失败调用没有可入账金额。
-      cost_basis:
-        outcome === 'settled'
-          ? result?.reportedCostUsd != null
-            ? 'reported'
-            : estimate?.estimatedCostUsd != null
-              ? 'estimated'
-              : 'unknown'
-          : 'unknown',
-      cost_ref:
-        outcome === 'settled'
-          ? result?.reportedCostUsd != null
-            ? `invoker:${opts.invoker.lane}:reported_cost_usd`
-            : estimate?.estimatedCostUsd != null
-              ? `invoker:${opts.invoker.lane}:estimate`
-              : `unpriced:${opts.invoker.lane}`
-          : estimate?.estimatedCostUsd != null
-            ? `invoker:${opts.invoker.lane}:estimate:no-charge`
-            : `unpriced:${opts.invoker.lane}`,
+      cost_usd: costUsd,
+      cost_basis: costBasis,
+      cost_ref: costRef,
       outcome,
       error,
       latency_ms: latencyMs,
@@ -226,27 +218,32 @@ export async function runEvalHarness(opts: EvalHarnessOptions): Promise<EvalRunR
         if (attempt > 1) retries += 1;
         if (attempt === 1) attempted += 1;
         const invokeStart = Date.now();
+        let result: EvalInvocationResult;
         try {
-          const result = await opts.invoker.invoke(req);
-          const latencyMs = Date.now() - invokeStart;
-          gate.settle({
-            kind,
-            inputTokens: result.usage.inputTokens,
-            outputTokens: result.usage.outputTokens,
-            actualCostUsd: result.reportedCostUsd,
-            estimatedCostUsd: estimate.estimatedCostUsd,
-          });
-          await record(req, 'settled', result, null, estimate, latencyMs);
-          settled = true;
+          result = await opts.invoker.invoke(req);
         } catch (err) {
           const latencyMs = Date.now() - invokeStart;
           const message = err instanceof Error ? err.message : String(err);
+          gate.settle({
+            kind,
+            inputTokens: 0,
+            outputTokens: 0,
+            actualCostUsd: null,
+            estimatedCostUsd: estimate.estimatedCostUsd,
+          });
           await record(req, 'invoke_failed', null, message, estimate, latencyMs);
           failures.push({ item_id: item.id, attempt, error: message });
-          // invoke 失败不收 cost（无 reported usage 可入账）；attempt 已计入
-          // requests —— retries 计入上限的语义保持（下一次 attempt 走新 admit）。
-          if (attempt < maxAttempts) continue;
+          continue;
         }
+        gate.settle({
+          kind,
+          inputTokens: result.usage.inputTokens,
+          outputTokens: result.usage.outputTokens,
+          actualCostUsd: result.reportedCostUsd,
+          estimatedCostUsd: estimate.estimatedCostUsd,
+        });
+        await record(req, 'settled', result, null, estimate, Date.now() - invokeStart);
+        settled = true;
       }
     }
   } catch (err) {
