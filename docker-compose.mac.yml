@@ -1,7 +1,8 @@
 # Mac-local production override (tracked; NOT for NAS). Publishes app + postgres to the host
 # and EXCLUDES cloudflared (no public tunnel — local-only). Use by naming services explicitly:
 #   docker compose -f docker-compose.yml -f docker-compose.mac.yml up -d --build migrate app worker postgres
-# Reach the app at http://localhost:8787 ; host DB access (flip migrations) at localhost:5433.
+# Reach the app at http://localhost:8787 ; host DB access (flip migrations) at localhost:5433
+# (or :5544 — see the postgres ports note below).
 services:
   app:
     ports:
@@ -34,4 +35,10 @@ services:
       MISCONCEPTION_PROMOTE_ENABLED: "true"
   postgres:
     ports:
+      # OrbStack's VM forwarder intermittently retains a stale reservation for
+      # 5433 (process gone, `nc` connection-refused, yet `docker run` still
+      # reports "address already in use", surviving an OrbStack restart). Keep
+      # 5544 as the guaranteed-live host DB path; 5433 resumes working whenever
+      # OrbStack releases its ghost bind. Host CLIs may use either.
       - "127.0.0.1:5433:5432"
+      - "127.0.0.1:5544:5432"

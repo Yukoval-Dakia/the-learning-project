@@ -4,7 +4,7 @@
 // kill-switch、pnpm audit:flags 对账三处引同一 reader，不各写一份 truthiness。
 
 import type { Provider } from '@/ai/registry';
-import { parseFlag } from '@/core/env-flags';
+import { getConfig, getConfigFlag } from '@/core/config/store';
 import {
   isKnownProvider,
   isProviderImplemented,
@@ -26,7 +26,9 @@ export const DEFAULT_JUDGE_FALLBACK_PROVIDER: Provider = 'anthropic-sub';
  * Opt-in / 默认 OFF；经共享 parseFlag（'true'/'1' 开，其余保守 OFF）。
  */
 export function judgeDurableEnabled(): boolean {
-  return parseFlag(process.env.JUDGE_DURABLE_ENABLED);
+  // YUK-1007：DB > env > code-default（setConfig 写入本进程即时生效，他进程 ≤15s
+  // refresh 收敛）。env fallback 层保迁移前 byte-identical 行为。
+  return getConfigFlag('JUDGE_DURABLE_ENABLED');
 }
 
 /**
@@ -49,7 +51,8 @@ export function judgeDurableEnabled(): boolean {
  * 判为不可用（否则 resolveTaskProvider 会把它和 mimo model id 配对 → 必然失败）。
  */
 export function judgeFallbackProvider(): Provider | undefined {
-  const raw = process.env.JUDGE_FALLBACK_PROVIDER?.trim();
+  const resolved = getConfig('JUDGE_FALLBACK_PROVIDER');
+  const raw = typeof resolved === 'string' ? resolved.trim() : undefined;
   if (raw === '') return undefined; // 显式空串 ⇒ 关闭跨 provider 兜底。
   if (raw === undefined) return DEFAULT_JUDGE_FALLBACK_PROVIDER;
   // #10 — real validation with NO `as Provider` cast: `isKnownProvider` is the exported

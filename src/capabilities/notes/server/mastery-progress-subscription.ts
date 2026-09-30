@@ -1,5 +1,5 @@
 import { and, asc, eq } from 'drizzle-orm';
-import { parseFlag } from '@/core/env-flags';
+import { getConfigFlag } from '@/core/config/store';
 import { MASTERY_PROGRESS_ACTION, MasteryProgressExperimental } from '@/core/schema/event';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
@@ -26,11 +26,8 @@ export async function handleMasteryProgressNoteRefineDelivery(
   delivery: EventSubscriptionDelivery,
   deps: MasteryProgressSubscriptionDeps = {},
 ): Promise<EventSubscriptionOutcome> {
-  if (
-    !parseFlag((deps.env ?? process.env)[SUBSCRIPTION_ENABLED_ENV], {
-      defaultValue: true,
-    })
-  ) {
+  // YUK-1007：DB > env > code-default(true)。
+  if (!getConfigFlag(SUBSCRIPTION_ENABLED_ENV, deps.env ?? process.env)) {
     return {
       status: 'skipped',
       reason: 'mastery-progress note-refine subscription disabled by operator',

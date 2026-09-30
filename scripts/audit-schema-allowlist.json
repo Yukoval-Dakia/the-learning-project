@@ -674,6 +674,22 @@
       "expected_by": "2027-01-15"
     }
   },
+  "system_config_journal.change_seq": {
+    "reason": "YUK-1007 配置审计 journal 的全序坐标由 DB 端 DEFAULT nextval('config_change_seq') 写入（drizzle .default(sql`nextval(...)`)）——与 subject_*_journal.change_seq 同款：审计只扫代码侧 INSERT/UPDATE 写点，看不见 DB default。非 stub：每次 setConfig/clearConfig 的 journal insert 都实写；restore 尾另有 setval 同步序列高水位（archive.ts，round-2 P1）。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "audit-schema-writes 支持识别 DB-default 写路径（或配置写面落显式 nextval 取值）",
+      "expected_by": "2027-01-15"
+    }
+  },
+  "system_config_epoch.epoch": {
+    "reason": "YUK-1007 失效轴：唯一写者 = write.ts bumpEpoch 与 archive.ts restore 尾的 RAW SQL upsert（nextval/setval/greatest，含 round-2 两轴去重修复）——审计只扫 drizzle 调用点，看不见 sql`...` 原文里的列写。非 stub：每次配置写/restore 都实写（journal/epoch 共用 config_change_seq 全序轴）。",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "audit-schema-writes 支持识别 raw-SQL 写路径（或 bumpEpoch 改用 drizzle 表达式写法）",
+      "expected_by": "2027-01-15"
+    }
+  },
   "subject_trait_journal.source_trait_id": {
     "reason": "journal 血统/回滚字段（v3 合同 §3.2/§3.3）：唯一写者 = YUK-601 的 fork/fork-and-edit 写面（journal rev-0 'fork_source' 行）。本单（YUK-599 地基）只建表 + 读侧（hydrate 降级链），写面按判词 C 排在 602 之后落。",
     "resolves_when": {

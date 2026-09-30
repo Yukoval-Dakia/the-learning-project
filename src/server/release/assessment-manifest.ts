@@ -149,7 +149,7 @@ export interface ManifestAssertion {
 export interface AssertionContext {
   /** pgboss outstanding（含 failed）；translate/fenced 分别统计。 */
   outstanding: OutstandingJobDisposition[];
-  /** 当前 contract_epoch marker；null = 隐式 legacy/active。 */
+  /** 当前 contract_epoch marker；null = 隐式 code-epoch/active（表缺/空）。 */
   epoch: { epoch: string; state: string; seq: number } | null;
   /** drizzle.__drizzle_migrations 行数。 */
   migrationsApplied: number | null;
@@ -192,7 +192,7 @@ export function buildAssertions(ctx: AssertionContext): ManifestAssertion[] {
       'contract_epoch.marker = assessment-contract-v1/active —— 新契约已激活（旧代码 epoch_mismatch）',
       'pnpm migration:epoch status --target=<pg> ⇒ active / assessment-contract-v1',
       'info',
-      'marker absent（pre-cutover DB；隐式 legacy/active）— 发布前应为 active',
+      'marker absent（无 marker DB；隐式 code-epoch/active）— 发布前应为 active',
     );
   } else {
     const ok = ctx.epoch.state === 'active' && ctx.epoch.epoch === ctx.expectedEpoch;
@@ -310,7 +310,7 @@ export interface AssessmentReleaseManifest {
   kind: 'assessment-release-manifest';
   generated_at: string;
   contract_epoch: string; // 期望激活的 epoch 名
-  code_epoch_before: string; // 发布前运行代码 epoch（'legacy'）
+  code_epoch_before: string; // 生成本 manifest 的代码 epoch（CODE_CONTRACT_EPOCH）
   series_base: string; // 系列起点 commit（1040-首提交 parent）
   lanes: LaneRow[];
   migrations: MigrationRow[];

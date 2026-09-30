@@ -24,24 +24,26 @@ const fakeJob = (id: string): Job => ({ id }) as unknown as Job;
 beforeEach(() => resetDb());
 
 describe('readContractEpoch / gate wiring', () => {
-  it('empty table → implicit legacy/active → runnable', async () => {
+  it('empty table → implicit code-epoch/active → runnable', async () => {
+    // 隐式 marker 随 CODE_CONTRACT_EPOCH 走：空表对本代码 runnable。
     expect(await readContractEpoch(testDb())).toBeNull();
     const status = await checkContractEpoch(testDb());
     expect(status).toEqual({
       runnable: true,
-      marker: { epoch: 'legacy', state: 'active' },
+      marker: { epoch: 'assessment-contract-v1', state: 'active' },
     });
   });
 
   it('reads the latest marker row by seq', async () => {
     await testDb().insert(contract_epoch).values({
       seq: 0,
-      epoch: 'legacy',
+      epoch: 'assessment-contract-v1',
       state: 'active',
       entered_by: 'test',
     });
     const marker = await readContractEpoch(testDb());
-    expect(marker).toMatchObject({ epoch: 'legacy', state: 'active', seq: 0 });
+    expect(marker).toMatchObject({ epoch: 'assessment-contract-v1', state: 'active', seq: 0 });
+    // post-flip 代码在本 epoch active DB 上 runnable（cutover 完成态）。
     expect((await checkContractEpoch(testDb())).runnable).toBe(true);
   });
 
@@ -59,10 +61,12 @@ describe('readContractEpoch / gate wiring', () => {
     );
   });
 
-  it('(new-epoch, active) fences legacy code as epoch_mismatch', async () => {
+  it('(legacy, active) fences post-flip code as epoch_mismatch', async () => {
+    // 旧合同 DB（marker 仍是 legacy/active）上的本代码：拒跑，正是 cutover 栅栏的
+    // 设计语义——post-cutover 二进制绝不在 pre-cutover 数据上执行 runtime。
     await testDb().insert(contract_epoch).values({
       seq: 0,
-      epoch: 'assessment-contract-v1',
+      epoch: 'legacy',
       state: 'active',
       entered_by: 'test',
     });
@@ -70,6 +74,20 @@ describe('readContractEpoch / gate wiring', () => {
       name: 'ContractEpochFenceError',
       reason: 'epoch_mismatch',
     });
+  });
+
+  it('(assessment-contract-v1, active) is runnable for post-flip code', async () => {
+    // 生产当前状态：marker 已激活到 assessment-contract-v1 —— 本代码必须放行
+    // （翻转前本测试的镜像是 legacy 代码 + av1 marker = epoch_mismatch 自锁）。
+    await testDb().insert(contract_epoch).values({
+      seq: 0,
+      epoch: 'assessment-contract-v1',
+      state: 'active',
+      entered_by: 'test',
+    });
+    const status = await checkContractEpoch(testDb());
+    expect(status).toMatchObject({ runnable: true });
+    await expect(assertContractEpochRunnable(testDb(), 'test-surface')).resolves.toBeUndefined();
   });
 });
 
@@ -93,11 +111,9 @@ describe('transitionContractEpoch', () => {
 
     const a = await transitionContractEpoch(db, 'activate', 'assessment-contract-v1', 'op');
     expect(a).toMatchObject({ epoch: 'assessment-contract-v1', state: 'active', seq: 3 });
-    // legacy 代码在新 epoch 下仍 fenced（stale 进程被拒）。
-    expect(await checkContractEpoch(db)).toMatchObject({
-      runnable: false,
-      reason: 'epoch_mismatch',
-    });
+    // 本代码 epoch = assessment-contract-v1 → 激活后 runnable（hotfix 的核心证明：
+    // 部署镜像不再自锁）。stale legacy 二进制在同库被 epoch_mismatch 拒跑。
+    expect(await checkContractEpoch(db)).toMatchObject({ runnable: true });
   });
 
   it('abort path: operator re-enters the window for the old epoch, then same-epoch activates', async () => {
@@ -118,7 +134,9 @@ describe('transitionContractEpoch', () => {
     await transitionContractEpoch(db, 'begin_prepare', 'legacy', 'op');
     const a = await transitionContractEpoch(db, 'activate', 'legacy', 'op');
     expect(a).toMatchObject({ epoch: 'legacy', state: 'active' });
-    expect((await checkContractEpoch(db)).runnable).toBe(true);
+    // 中止 cutover 回到 legacy/active：本代码（av1）仍被 epoch_mismatch 拒跑——
+    // abort 恢复的是旧镜像的可运行性，不是本代码的。
+    expect((await checkContractEpoch(db)).runnable).toBe(false);
   });
 
   it('rejects illegal transitions without writing a row', async () => {
@@ -169,7 +187,7 @@ describe('waitForRunnableEpoch (worker 启动闸门)', () => {
     const db = testDb();
     await db.insert(contract_epoch).values({
       seq: 0,
-      epoch: 'legacy',
+      epoch: 'assessment-contract-v1',
       state: 'preparing',
       entered_by: 'test',
     });
@@ -179,7 +197,7 @@ describe('waitForRunnableEpoch (worker 启动闸门)', () => {
     });
     await new Promise((r) => setTimeout(r, 50));
     expect(released).toBe(false); // 仍 fenced
-    await transitionContractEpoch(db, 'activate', 'legacy', 'test');
+    await transitionContractEpoch(db, 'activate', 'assessment-contract-v1', 'test');
     await waiting;
     expect(released).toBe(true);
   });
@@ -204,9 +222,10 @@ describe('fenceAwareJobHandler (per-delivery fence)', () => {
 
   it('runs drain jobs under a foreign active epoch (epoch-agnostic)', async () => {
     const db = testDb();
+    // foreign epoch（对本代码而言 legacy 是外部 epoch）：drain 类不挑 epoch 名。
     await db.insert(contract_epoch).values({
       seq: 0,
-      epoch: 'assessment-contract-v1',
+      epoch: 'legacy',
       state: 'active',
       entered_by: 'test',
     });
@@ -222,7 +241,7 @@ describe('fenceAwareJobHandler (per-delivery fence)', () => {
     const db = testDb();
     await db.insert(contract_epoch).values({
       seq: 0,
-      epoch: 'assessment-contract-v1',
+      epoch: 'legacy',
       state: 'active',
       entered_by: 'test',
     });
@@ -237,12 +256,11 @@ describe('fenceAwareJobHandler (per-delivery fence)', () => {
     expect(ran).toBe(0);
   });
 
-  it('translate-class job born under an older active epoch is fenced even when epochs match', async () => {
+  it('translate-class job born under the legacy epoch is fenced after the flip', async () => {
     const db = testDb();
-    // marker 历史：legacy active 于 T0；本代码 epoch=legacy，job 出生在 T0 之前
-    // → birth epoch = implicit 'legacy'（同 epoch）→ 放行。为验证反向分支，
-    // 把 marker 的 entered_at 拉到 job created_on 之后没有新 active —— 构造
-    // 「born during preparing（无 active marker 覆盖该时刻）→ 落回上一个 active」。
+    // marker 历史：legacy active 于 T0 → av1 preparing 于 T1 → av1 active 于 T2。
+    // post-flip 代码（CODE_CONTRACT_EPOCH=av1）在 av1 active DB 上 runnable；
+    // 出生在 legacy 活跃期或 preparing 窗口的 translate payload 仍是旧合同 → fenced。
     await db.insert(contract_epoch).values({
       seq: 0,
       epoch: 'legacy',
@@ -257,10 +275,6 @@ describe('fenceAwareJobHandler (per-delivery fence)', () => {
       entered_at: new Date('2026-02-01T00:00:00Z'),
       entered_by: 'test',
     });
-    // job 出生在 preparing 窗口 → birth epoch 落回 legacy（上一个 active）。
-    const birth = await readJobBirthEpoch(db, new Date('2026-02-10T00:00:00Z'));
-    expect(birth).toBe('legacy');
-    // 出生在新 epoch 激活之后 → birth = 新 epoch。
     await db.insert(contract_epoch).values({
       seq: 2,
       epoch: 'assessment-contract-v1',
@@ -268,11 +282,46 @@ describe('fenceAwareJobHandler (per-delivery fence)', () => {
       entered_at: new Date('2026-03-01T00:00:00Z'),
       entered_by: 'test',
     });
+    // 出生 epoch 判别：preparing 窗口内出生 → 落回上一个 active（legacy）；
+    // av1 active 之后出生 → av1；早于一切 marker → 'legacy'。
+    expect(await readJobBirthEpoch(db, new Date('2026-02-10T00:00:00Z'))).toBe('legacy');
     expect(await readJobBirthEpoch(db, new Date('2026-03-10T00:00:00Z'))).toBe(
       'assessment-contract-v1',
     );
-    // 早于一切 marker → 'legacy'。
     expect(await readJobBirthEpoch(db, new Date('2020-01-01T00:00:00Z'))).toBe('legacy');
+
+    // 实跑 per-delivery fence：stub pgboss.job（同下方 reportOutstanding 的
+    // 建表/清理纪律——自建自删，不污染共享 fork）。
+    await db.execute(sql`drop table if exists pgboss.job`);
+    await db.execute(sql`drop schema if exists pgboss cascade`);
+    await db.execute(sql`create schema if not exists pgboss`);
+    try {
+      await db.execute(sql`
+        create table pgboss.job (
+          id text primary key,
+          name text not null,
+          state text not null,
+          created_on timestamptz not null default now()
+        )
+      `);
+      await db.execute(sql`
+        insert into pgboss.job (id, name, state, created_on) values
+          ('old-born', 'judge_run', 'created', '2026-01-15T00:00:00Z'::timestamptz),
+          ('new-born', 'judge_run', 'created', '2026-03-10T00:00:00Z'::timestamptz)
+      `);
+      // 出生在 legacy 活跃期的 job 在 av1 active 下被 per-delivery fence 拒跑。
+      const legacyBorn = fenceAwareJobHandler(db, 'judge_run', async () => 'ran');
+      await expect(legacyBorn([fakeJob('old-born')])).rejects.toMatchObject({
+        name: 'ContractEpochFenceError',
+        reason: 'epoch_mismatch',
+      });
+      // flip 之后投递的同队列 job 照跑：fence 护住的是旧 payload，不是队列本身。
+      const newBorn = fenceAwareJobHandler(db, 'judge_run', async () => 'ran');
+      await expect(newBorn([fakeJob('new-born')])).resolves.toBe('ran');
+    } finally {
+      await db.execute(sql`drop table if exists pgboss.job`);
+      await db.execute(sql`drop schema if exists pgboss cascade`);
+    }
   });
 });
 
