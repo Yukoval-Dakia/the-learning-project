@@ -100,7 +100,7 @@ const OPENCODE_SESSION_HEADER = 'x-opencode-session';
  * short transient absorption while returning control to loom's one deliberate
  * retry layer. An unparseable value falls back to the default, not a throw.
  */
-function piMaxRetries(): number | undefined {
+export function piMaxRetries(): number | undefined {
   // YUK-1007：DB > env > code-default(2)。env 层保留原语义（非有限/负 → 默认）。
   const v = getConfig('CLAUDE_CODE_MAX_RETRIES');
   return typeof v === 'number' ? v : 2;

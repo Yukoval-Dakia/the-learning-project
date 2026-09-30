@@ -330,12 +330,43 @@ export function isKnownProvider(name: string): name is Provider {
  * provider when the lane isn't wired here (e.g. the subscription token is absent on
  * a given deploy), instead of letting `resolveTaskProvider` throw mid-call. Mirrors
  * the missing-env checks `resolveTaskProvider` performs, without allocating a binding.
+ *
+ * The env-NAME lookup lives in `providerCredentialEnvName` (single source) so the
+ * admin config read face (via the composition-root facts seam) can surface WHICH
+ * env var a lane reads without ever touching its VALUE.
  */
-export function isProviderLaneReady(provider: Provider): boolean {
+export function providerCredentialEnvName(provider: Provider): string | undefined {
   const config = PROVIDERS[provider];
-  if (!config) return false;
-  const envName = config.authMode === 'oauth' ? config.oauthTokenEnv : config.apiKeyEnv;
-  return Boolean(process.env[envName]);
+  if (!config) return undefined;
+  return config.authMode === 'oauth' ? config.oauthTokenEnv : config.apiKeyEnv;
+}
+
+export function isProviderLaneReady(provider: Provider): boolean {
+  const envName = providerCredentialEnvName(provider);
+  return envName !== undefined && Boolean(process.env[envName]);
+}
+
+/**
+ * YUK-1007 — read-only projection of the provider registry's AUTH surface for the
+ * config read face (`GET /api/admin/config` providers[]): one row per PROVIDERS
+ * entry with the credential env NAME (never the value) and the implemented flag
+ * (isProviderImplemented — same predicate resolveTaskProvider enforces). Derived
+ * from PROVIDERS itself so adding a provider cannot drift this list.
+ */
+export interface ProviderAuthSurfaceRow {
+  readonly name: Provider;
+  readonly authMode: 'key' | 'oauth';
+  readonly credentialEnvName: string;
+  readonly implemented: boolean;
+}
+
+export function providerAuthSurface(): readonly ProviderAuthSurfaceRow[] {
+  return (Object.keys(PROVIDERS) as Provider[]).map((name) => ({
+    name,
+    authMode: PROVIDERS[name].authMode,
+    credentialEnvName: providerCredentialEnvName(name) ?? '',
+    implemented: isProviderImplemented(name),
+  }));
 }
 
 // YUK-608 — the KEY-auth providers actually wired to a working endpoint. openrouter / gateway
@@ -532,8 +563,12 @@ function readEnvOverride(): { provider: Provider; model?: string } | undefined {
  * DB 值经 hydrate schema + 写端 isKnownProvider 校验，但手工注入行可能在写端
  * 之外落地——这里仍走同一 unknown-name throw（与 env 侧一致的 config-error
  * 语义，让错配立刻可观测而不是静默降级）。
+ *
+ * YUK-1007 读面（P1 诚实修正）：本函数是全局 pin 的**运行时真相源**，导出供
+ * 组合根 facts seam 投影 `lane.global.*` 的 effective（model-only 配置 runtime
+ * 不消费 → effective=null；未知 provider 名 → throw 由调用方如实标 fail-visible）。
  */
-function readGlobalProviderSwitch(): { provider: Provider; model?: string } | undefined {
+export function readGlobalProviderSwitch(): { provider: Provider; model?: string } | undefined {
   const env = readEnvOverride();
   if (env) return env;
   const db = getLaneOverride('global');
