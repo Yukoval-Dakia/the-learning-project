@@ -165,6 +165,20 @@ export function getServerEnv(): ReturnType<typeof createServerEnv> {
   return createServerEnv();
 }
 
+/**
+ * YUK-1007 — API_PORT 的单一解析点（从 server/index.ts 内联逻辑平移，语义
+ * 逐字保留：trim → 空串→默认 8787 → 非正整数 throw）。admin config 读面的
+ * runtime 分区（facts seam）与 API 入口共用本函数，端口事实不会漂移两份。
+ */
+export function resolveApiPort(rawApiPort: string | undefined): number {
+  const trimmed = rawApiPort?.trim();
+  const parsed = trimmed ? Number(trimmed) : 8787;
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`API_PORT must be a positive integer, got: ${JSON.stringify(rawApiPort)}`);
+  }
+  return parsed;
+}
+
 export function requireApiInternalToken(
   runtimeEnv: Record<string, string | undefined> = process.env,
 ): string {

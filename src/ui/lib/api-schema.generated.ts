@@ -36,6 +36,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAdminConfig"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/conjecture-scores": {
         parameters: {
             query?: never;
@@ -2722,6 +2738,226 @@ export interface operations {
             };
             /** @description Unauthorized */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getAdminConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        facts_injected: boolean;
+                        keys: {
+                            consumer: string | null;
+                            default: (boolean | number | string | unknown[] | {
+                                [key: string]: unknown;
+                            }) | null;
+                            effective?: (boolean | number | string | unknown[] | {
+                                [key: string]: unknown;
+                            }) | null;
+                            effective_note?: string;
+                            /** @enum {string} */
+                            env_mode: "fallback" | "priority" | "pinned";
+                            env_name: string | null;
+                            key: string;
+                            note?: string;
+                            read_only: boolean;
+                            revision: number | null;
+                            /** @enum {string} */
+                            source: "db" | "env" | "code-default" | "compose-forced";
+                            /** @enum {string} */
+                            tier: "A" | "B" | "C";
+                            updated_at: string | null;
+                            value: (boolean | number | string | unknown[] | {
+                                [key: string]: unknown;
+                            }) | null;
+                            wired: boolean;
+                        }[];
+                        providers: {
+                            /** @enum {string} */
+                            auth_mode: "key" | "oauth";
+                            credential_env: string;
+                            implemented: boolean;
+                            key_present: boolean;
+                            name: string;
+                        }[];
+                        runtime: {
+                            db_pool_max: number;
+                            orchestration: {
+                                anchor_cron: string;
+                                catchup_window_seconds: number;
+                                dag_members: string[];
+                                layer_stagger_seconds: number;
+                                node_timeout_seconds: number;
+                                queue: string;
+                                tick_interval_seconds: number;
+                                tz: string;
+                            };
+                            port: number | null;
+                            queue_tiers: {
+                                expire_seconds: {
+                                    agent: number;
+                                    fast: number;
+                                    llm: number;
+                                };
+                                retention_seconds: number;
+                            };
+                        } | null;
+                        schedules: {
+                            read_only_note: string;
+                            rows: {
+                                cron: string;
+                                name: string;
+                                note?: string;
+                                owner: string;
+                                queue: string;
+                                /** @enum {string} */
+                                source: "capability-manifest" | "server-boss-infra" | "server-memory-infra";
+                                tz: string;
+                            }[];
+                        };
+                        snapshot: {
+                            epoch: number;
+                            hydrated_at: string | null;
+                        };
+                        tasks: {
+                            default_budget: {
+                                maxCost: number;
+                                maxIterations: number;
+                                timeout: number;
+                                transientRetries: number;
+                            };
+                            default_model: string;
+                            default_provider: string;
+                            global_pin: {
+                                model?: string;
+                                provider?: string;
+                            } | null;
+                            kind: string;
+                            override: {
+                                budget?: {
+                                    [key: string]: unknown;
+                                };
+                                model?: string;
+                                provider?: string;
+                            } | null;
+                            override_wired: {
+                                budget: boolean;
+                                model: boolean;
+                                provider: boolean;
+                            };
+                        }[];
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
