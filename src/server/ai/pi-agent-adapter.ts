@@ -55,6 +55,7 @@ import type {
   Usage as PiUsage,
 } from '@earendil-works/pi-ai';
 import { tasks } from '@/ai/registry';
+import { getConfig } from '@/core/config/store';
 import type {
   ExecutionAdapter,
   ExecutionAdapterStartupArgs,
@@ -99,11 +100,10 @@ const OPENCODE_SESSION_HEADER = 'x-opencode-session';
  * short transient absorption while returning control to loom's one deliberate
  * retry layer. An unparseable value falls back to the default, not a throw.
  */
-function piMaxRetries(): number | undefined {
-  const raw = process.env.CLAUDE_CODE_MAX_RETRIES;
-  if (raw === undefined) return 2;
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 2;
+export function piMaxRetries(): number | undefined {
+  // YUK-1007：DB > env > code-default(2)。env 层保留原语义（非有限/负 → 默认）。
+  const v = getConfig('CLAUDE_CODE_MAX_RETRIES');
+  return typeof v === 'number' ? v : 2;
 }
 
 /**

@@ -199,6 +199,9 @@ const ALL_TABLES = [
   'memory_brief_note',
   'learning_record',
   'artifact',
+  'artifact_block_ref',
+  'artifact_edit_session',
+  'hub_sync_reconciliation',
   'learning_item',
   'mistake_variant',
   // M2 (YUK-316) — 练习流日程表。
@@ -249,6 +252,7 @@ const ALL_TABLES = [
   'evaluation_effective_head',
   'evaluation',
   'assessment_submission',
+  'assessment_response_draft',
   'evaluation_group',
   'assessment_issuance',
   'question_admission_verification',
@@ -263,6 +267,11 @@ const ALL_TABLES = [
   // 破坏 fence/transition 测试的隔离（「缺表/空表 = 隐式 legacy」语义要求
   // 每个用例从空表开始）。
   'contract_epoch',
+  // YUK-1007 — 热加载配置面三表。无 FK，但 TRUNCATE 必须列入——否则跨测泄漏
+  // DB config 值 / journal 行 / epoch，破坏 setConfig/hydrate 测试隔离。
+  'system_config',
+  'system_config_journal',
+  'system_config_epoch',
 ] as const;
 
 export async function resetDb() {

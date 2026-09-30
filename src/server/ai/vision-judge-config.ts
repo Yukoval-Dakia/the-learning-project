@@ -35,6 +35,7 @@
  */
 
 import type { Provider } from '@/ai/registry';
+import { getLaneOverride } from '@/core/config/store';
 import { resolveModelProfile } from '@/server/ai/model-profiles';
 import { ANTHROPIC_SUB_DEFAULT_MODEL, isOauthProvider } from '@/server/ai/providers';
 
@@ -97,7 +98,10 @@ export type VisionJudgeEnv = Record<string, string | undefined>;
 export function visionJudgeProviderOverride(
   env: VisionJudgeEnv = process.env,
 ): { provider: Provider; model?: string } | undefined {
-  const provider = env[VISION_JUDGE_PROVIDER_FLAG];
+  // YUK-1007：DB lane 层 > env（传入 env 只作 fallback，DB 写入优先于它——
+  // 与 resolveTaskProvider 的全局 OVERRIDE 层一致）。
+  const lane = getLaneOverride('vision_judge', env);
+  const provider = lane?.provider;
   if (!provider) return undefined;
 
   if (isOAuthLaneProvider(provider as Provider) && !env[OAUTH_TOKEN_ENV]) {
@@ -107,7 +111,7 @@ export function visionJudgeProviderOverride(
     return undefined;
   }
 
-  const model = env[VISION_JUDGE_MODEL_FLAG] || undefined;
+  const model = lane?.model || undefined;
   const nameableModel = visionJudgeOverrideModel(provider as Provider, model);
   if (
     nameableModel !== undefined &&

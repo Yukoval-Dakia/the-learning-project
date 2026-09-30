@@ -134,9 +134,6 @@ drizzle/.snapshots/
 !.opencode/README.md
 !.opencode/opencode.json
 !.opencode/oh-my-openagent.json
-!.opencode/plugins/
-!.opencode/plugins/**
-
 # Cursor runtime hook state; .cursor/rules remains tracked.
 .cursor/hooks/state/
 
@@ -162,3 +159,8 @@ docs/preflight/*-vision-rejudge.json
 /m4-visual-*.png
 /visual-demo-today.png
 /yuk[0-9]*.png
+
+# BEGIN oh-my-opencode-slim worktrees
+.slim/worktrees/
+.slim/worktrees.json
+# END oh-my-opencode-slim worktrees

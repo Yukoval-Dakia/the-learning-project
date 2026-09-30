@@ -1,10 +1,9 @@
 import { zipSync } from 'fflate';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FK_ORDER, RESTORE_WIPE_ONLY_TABLES, SCHEMA_VERSION } from '@/server/export/constants';
-import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memR2 } from '../../../../tests/helpers/r2';
 import { BackupImportResponseSchema } from './backup-contracts';
-import { MAX_BACKUP_UPLOAD_BYTES, POST } from './backup-import';
+import { POST, maxBackupUploadBytes } from './backup-import';
 
 // Inject in-memory R2 for all tests
 const r2 = memR2();
@@ -178,7 +177,7 @@ describe('POST /api/_/import — guards', () => {
       body: new Uint8Array([1, 2, 3]).buffer as ArrayBuffer,
       headers: {
         'content-type': 'application/zip',
-        'content-length': String(MAX_BACKUP_UPLOAD_BYTES + 1),
+        'content-length': String(maxBackupUploadBytes() + 1),
       },
     });
     const res = await POST(req);
@@ -197,12 +196,12 @@ describe('POST /api/_/import — guards', () => {
   it('returns 413 when a body without Content-Length exceeds the tripwire after buffering, with zero side effects', async () => {
     // 2 MB tripwire (above the 1 MB floor) so the post-read check is exercised with a
     // small, real allocation rather than the ~1 GB default.
+    // YUK-1007：cap 现由 getConfig 运行时读（env 层 live）——stubEnv 后无需重
+    // 灌模块；断言直接调 maxBackupUploadBytes()。
     vi.stubEnv('BACKUP_IMPORT_MAX_BYTES', '2000000');
-    vi.resetModules();
-    const { POST: freshPost, MAX_BACKUP_UPLOAD_BYTES: smallCap } = await import('./backup-import');
-    expect(smallCap).toBe(2_000_000);
+    expect(maxBackupUploadBytes()).toBe(2_000_000);
 
-    const oversized = new Uint8Array(smallCap + 1); // just over the tripwire, no Content-Length
+    const oversized = new Uint8Array(2_000_000 + 1); // just over the tripwire, no Content-Length
     const req = new Request('http://localhost/api/_/import?confirm=wipe-and-reload', {
       method: 'POST',
       body: oversized.buffer as ArrayBuffer,
@@ -212,7 +211,7 @@ describe('POST /api/_/import — guards', () => {
     // Content-Length for an ArrayBuffer body, so the post-read check is what fires.
     expect(req.headers.get('content-length')).toBeNull();
 
-    const res = await freshPost(req);
+    const res = await POST(req);
     expect(res.status).toBe(413);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('payload_too_large');
@@ -221,7 +220,6 @@ describe('POST /api/_/import — guards', () => {
     expect(insertCalls.length).toBe(0);
 
     vi.unstubAllEnvs();
-    vi.resetModules();
   });
 
   // YUK-729 (#965 round-4) — a below-floor BACKUP_IMPORT_MAX_BYTES (operator typo)
@@ -230,17 +228,14 @@ describe('POST /api/_/import — guards', () => {
   it('ignores a below-floor BACKUP_IMPORT_MAX_BYTES, warning and falling back to the default', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.stubEnv('BACKUP_IMPORT_MAX_BYTES', '1000'); // 1 KB — below the 1 MB floor
-    vi.resetModules();
-    const { MAX_BACKUP_UPLOAD_BYTES: resolved } = await import('./backup-import');
-
-    // Fell back to the default (the unstubbed top-level value), not the 1 KB typo.
-    expect(resolved).toBe(MAX_BACKUP_UPLOAD_BYTES);
+    const resolved = maxBackupUploadBytes();
+    // Fell back to the default, not the 1 KB typo.
+    expect(resolved).toBe(1_000_000_000);
     expect(resolved).toBeGreaterThan(1000);
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('BACKUP_IMPORT_MAX_BYTES=1000'));
 
     warnSpy.mockRestore();
     vi.unstubAllEnvs();
-    vi.resetModules();
   });
 });
 

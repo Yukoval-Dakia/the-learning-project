@@ -35,6 +35,9 @@ export {
   batchResolveSubjectIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
+// YUK-1007 — knowledge 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
+// 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
+export { knowledgeConfigEffectiveFacts } from './server/config-effective-facts';
 export type {
   EdgeProposalDecision,
   EdgeProposalDecisionInput,

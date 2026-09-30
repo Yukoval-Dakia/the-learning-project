@@ -87,12 +87,12 @@ import type { Db } from '@/db/client';
 import { goal, placement_starter_attempt, placement_starter_claim } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import {
-  PLACEMENT_PROBE_ENABLED,
   PLACEMENT_QUEUE_EXPIRY_MS,
   dispatchPlacementStarterClaim,
   isPlacementStarterJobLive,
   lockPlacementSupplyScopes,
   markPlacementStarterClaimTerminal,
+  placementProbeEnabled,
   resolvePlacementStarterGoalAuthority,
   terminalizeLostPlacementDelivery,
 } from '@/kernel/placement';
@@ -438,7 +438,7 @@ export async function sweepStalePlacementStarterClaims(
   // entrypoint is dark there is no consumer for a freshly filled placement pool, so paying for
   // one would be pure waste. Reaping is free and unblocks later revisions, so it always runs —
   // and on its OWN query, so this gate can never starve it.
-  const canRedispatch = deps.placementProbeEnabled ?? PLACEMENT_PROBE_ENABLED;
+  const canRedispatch = deps.placementProbeEnabled ?? placementProbeEnabled();
   const result = emptyPlacementStarterRecoveryResult({ redispatchSuppressed: !canRedispatch });
 
   const zombieCutoff = new Date(now.getTime() - PLACEMENT_STARTER_RETRY_ZOMBIE_GRACE_MS);
@@ -880,7 +880,7 @@ async function sweepRetryScheduled(
       .from(placement_starter_claim)
       .where(eq(placement_starter_claim.id, claim.id))
       .for('update');
-    if (!locked || locked.status !== 'retry_scheduled' || locked.updated_at > zombieCutoff) {
+    if (locked?.status !== 'retry_scheduled' || locked.updated_at > zombieCutoff) {
       return false;
     }
     await markPlacementStarterClaimTerminal(tx, claim.id, 'exhausted', now, {

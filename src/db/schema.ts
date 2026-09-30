@@ -4195,3 +4195,65 @@ export const dag_orchestration_node = pgTable(
     ),
   ],
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YUK-1007 — 热加载配置面三表（grounding：
+// docs/planning/2026-09-26-yuk1007-hot-reload-config.md §1）。
+//
+//   system_config         — per-key 行（registry 登记的 canonical key → jsonb 值
+//                           + per-key revision 单调轴）。DB 是 app / worker 两进程
+//                           唯一的共享媒介（无 Redis / IPC）。
+//   system_config_journal — append-only 审计账本（subject_trait_journal 先例），
+//                           (key, revision) PK；change_seq 取独立序列
+//                           config_change_seq（不复用 subject_change_seq）。
+//   system_config_epoch   — 单行失效轴（id='global'）：每次写 bump epoch，刷新侧
+//                           先探测 epoch 相同即跳过全量 SELECT。
+//
+// 并发协议：与 subject 控制面不同，config 写面**不**取 advisory lock（§6.3：行级
+// upsert + journal + epoch 同 tx，最后一次赢；单用户 admin 面）。restore 尾须
+// setval('config_change_seq', max(change_seq)+1)（archive.ts）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const system_config = pgTable('system_config', {
+  // registry（src/core/config/registry.ts）登记的 canonical key。
+  key: text('key').primaryKey(),
+  // boolean | number | string | string[] | {provider?, model?, budget?}。
+  value: jsonb('value').notNull(),
+  // 每次写 +1（= journal 行的 revision 轴）。
+  revision: integer('revision').notNull().default(0),
+  // 自由备注（「谁为什么设」）。
+  source_note: text('source_note'),
+  // 'panel:admin' | 'migrate' | 'cli' 等 actor 标签（枚举在写面 zod 侧，
+  // DDL 保持 loose text —— 同 subject_control_journal.actor 惯例）。
+  updated_by: text('updated_by').notNull(),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+});
+
+export const system_config_journal = pgTable(
+  'system_config_journal',
+  {
+    key: text('key').notNull(),
+    // = 该 key 主行写后 revision（clear 行 = prev.revision+1 占位）。
+    revision: integer('revision').notNull(),
+    // {prev, next, note} —— 完整快照语义同 subject_trait_journal。
+    payload: jsonb('payload').notNull(),
+    action: text('action', { enum: ['set', 'clear', 'seed'] }).notNull(),
+    actor: text('actor').notNull(),
+    // 独立序列 config_change_seq（不复用 subject_change_seq——两域独立）。
+    // 序列不随行备份：restore 尾 setval（archive.ts）。
+    change_seq: bigint('change_seq', { mode: 'number' })
+      .notNull()
+      .default(sql`nextval('config_change_seq')`),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.key, t.revision] })],
+);
+
+export const system_config_epoch = pgTable('system_config_epoch', {
+  // 单行轴：恒 'global'。
+  id: text('id').primaryKey(),
+  // 每次写 +1（同 tx 内 nextval(config_change_seq) 供 journal 与 epoch 共用）。
+  epoch: bigint('epoch', { mode: 'number' }).notNull(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+});

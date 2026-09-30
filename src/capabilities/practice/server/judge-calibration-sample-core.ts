@@ -36,6 +36,7 @@ import {
   MODEL_BACKED_JUDGE_ROUTES,
 } from '@/capabilities/practice/server/judge';
 import { judgeAnswer } from '@/capabilities/practice/server/judge/question-contract';
+import { getConfig } from '@/core/config/store';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
@@ -340,8 +341,18 @@ export async function runJudgeCalibrationSample(
   const batch = shuffleInPlace(candidates).slice(0, cfg.batchMax);
 
   // ── Lane snapshots (MF5) — sample-time env; original lane unrecoverable. ──
-  const visionProviderAtSample = process.env.VISION_JUDGE_PROVIDER ?? null;
-  const globalOverrideAtSample = process.env.AI_PROVIDER_OVERRIDE ?? null;
+  // YUK-1007：lane 快照记「生效值」（env+DB 合并后），不是裸 env——DB 写的
+  // lane pin 也要被审计到。
+  const visionProviderAtSample = (() => {
+    const v = getConfig('VISION_JUDGE_PROVIDER');
+    return typeof v === 'string' ? v : null;
+  })();
+  const globalOverrideAtSample = (() => {
+    // YUK-1007 review：裸 AI_PROVIDER_OVERRIDE 已从 keyspace 摘除（resolver 只消费
+    // lane.global.*）——读 lane.global.provider 才是 env pin > DB > default 的生效值。
+    const v = getConfig('lane.global.provider');
+    return typeof v === 'string' ? v : null;
+  })();
 
   // ── Per-candidate re-judge (per-item isolation; one failure never kills the batch) ──
   for (const candidate of batch) {

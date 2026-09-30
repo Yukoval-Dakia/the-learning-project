@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
+import { getConfig } from '@/core/config/store';
 import { ApiError } from '@/kernel/http';
 
 // YUK-258 — DOCX converter seam. ALL external-process conversion is收口在此文件;
@@ -63,8 +63,9 @@ function onPath(bin: string): Promise<boolean> {
 // Test-only override: `DOCX_CONVERT_ENGINE=docker` forces the docker fallback in
 // dev even when binaries are on PATH (NOT an on/off feature gate — purely a seam
 // probe override). Unset → automatic binary→docker resolution.
+// YUK-1007：DB > env > code-default（DB 写 'docker' 同效）。
 function forceDocker(): boolean {
-  return process.env.DOCX_CONVERT_ENGINE === 'docker';
+  return getConfig('DOCX_CONVERT_ENGINE') === 'docker';
 }
 
 interface SpawnResult {

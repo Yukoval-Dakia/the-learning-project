@@ -26,7 +26,7 @@ import {
   errorResponse,
 } from '@/kernel/http';
 import { Placement } from '@/server/session';
-import { PLACEMENT_PROBE_ENABLED } from '@/server/session/placement';
+import { placementProbeEnabled } from '@/server/session/placement';
 import { resolveGoalPlacementScope } from '../server/placement-scope';
 import { resolveLeaningPreferenceKcs, selectNextPlacementItem } from '../server/placement-select';
 import { CreatePlacementSessionBodySchema } from './placement-contracts';
@@ -34,7 +34,7 @@ import { CreatePlacementSessionBodySchema } from './placement-contracts';
 export async function createPlacementSession(req: Request): Promise<Response> {
   try {
     // Dark-ship gate: the whole placement entrypoint is unreachable until the flag flips.
-    if (!PLACEMENT_PROBE_ENABLED) {
+    if (!placementProbeEnabled()) {
       throw new ApiError('not_found', 'placement probe is not enabled', 404);
     }
 

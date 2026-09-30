@@ -7,6 +7,7 @@
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { capabilities } from '@/capabilities';
+import { resolveApiPort } from '@/server/env';
 import { warnFlipOrder } from '@/server/projections/sot-flag';
 import { buildHonoApp } from './app';
 import { loadApiEnv } from './env';
@@ -16,17 +17,9 @@ const env = loadApiEnv();
 // YUK-548: boot-time SoT-flip flag vector + flip-order WARN (never throws — see warnFlipOrder).
 warnFlipOrder();
 
-// YUK-345: `??` only guards null/undefined, so a bare `API_PORT=` (dotenv loads
-// it as '') would make Number('') === 0 → listen(0) binds a RANDOM port instead
-// of 8787. Trim-then-empty-check + positive-integer guard mirrors the
-// `optionalEnv` (trim → empty=default) fix applied to the mem0 config side in
-// YUK-341. This is the only remaining `Number(process.env.X ?? ...)` site.
-const rawApiPort = env.API_PORT?.trim();
-const parsedApiPort = rawApiPort ? Number(rawApiPort) : 8787;
-if (!Number.isInteger(parsedApiPort) || parsedApiPort <= 0) {
-  throw new Error(`API_PORT must be a positive integer, got: ${JSON.stringify(rawApiPort)}`);
-}
-const port = parsedApiPort;
+// YUK-345 / YUK-1007：API_PORT 解析单一真源在 src/server/env.ts resolveApiPort
+// （trim → 空→默认 8787 → 非正整数 throw；admin config 读面 runtime 分区同源）。
+const port = resolveApiPort(env.API_PORT);
 const app = buildHonoApp(capabilities);
 
 // YUK-599（v2 §4 / v3 §2.2）— hydrate-before-serve：serve 前把 DB 六表装配水合进
@@ -48,6 +41,27 @@ async function hydrateSubjectsBeforeServe(): Promise<void> {
   }
 }
 
+// YUK-1007 — 配置面 hydrate + 15s 周期 refresh（app 侧挂载点，grounding §5.1 序
+// 4/5）。never-throws：hydrate 内部自带 env/code-default 地板；这里再包一层
+// try/catch 双保险。刷新句柄交给 shutdown（server 停下时 clearInterval——dev
+// tsx watch 重启时若不清会漏到旧模块域）。
+let configRefresh: { stop: () => void } | undefined;
+async function hydrateConfigBeforeServe(): Promise<void> {
+  try {
+    const [{ db }, { hydrateConfigFromDb, startConfigRefresh }] = await Promise.all([
+      import('@/db/client'),
+      import('@/server/config/hydrate'),
+    ]);
+    const report = await hydrateConfigFromDb(db);
+    console.log(
+      `[rw:api] config hydrated: +${report.hydrated.length} keys (epoch ${report.epoch}${report.skipped.length ? `, skipped ${report.skipped.length}` : ''})`,
+    );
+    configRefresh = startConfigRefresh(db, 15_000);
+  } catch (err) {
+    console.warn('[rw:api] config hydration failed — serving with env/code-default floor', err);
+  }
+}
+
 // M5-T5b (YUK-321) — prod 静态面：RW_STATIC_DIR 指向 vite build 产物（web/dist）。
 // dev 不设此变量（Vite dev server 承担静态 + /api proxy）。serveStatic 未命中
 // 文件时 next() 放行 /api/*；catch-all GET 回 index.html（TanStack Router
@@ -62,6 +76,25 @@ async function registerToolsBeforeServe(): Promise<void> {
   const { registerCapabilityTools } = await import('@/server/ai/tools/register-capability-tools');
   await registerCapabilityTools(capabilities);
   console.log('[rw:api] capability tools registered');
+}
+
+// YUK-1007 — admin config 读面的运行时事实注入（providers[] / infra schedules /
+// runtime 常量 / consumer-effective 值）。组合根（本进程）聚合一切真相源后经
+// observability/public setter 注入**工厂**：route 每请求重调，跟随 env/热加载
+// store 保持新鲜。必须在首个请求前完成（serve 前）；未注入时读面如实标
+// facts_injected=false。动态 import：facts 模块链含 db/client（顶层读
+// DATABASE_URL），须在 loadApiEnv() 之后加载。
+async function injectAdminConfigFactsBeforeServe(): Promise<void> {
+  try {
+    const [{ buildAdminConfigRuntimeFacts }, { setAdminConfigRuntimeFacts }] = await Promise.all([
+      import('@/server/config/admin-config-facts'),
+      import('@/capabilities/observability/public'),
+    ]);
+    setAdminConfigRuntimeFacts(buildAdminConfigRuntimeFacts);
+  } catch (err) {
+    // 注入失败不拖死 API 面：读面照常服务（facts 分区如实标未注入）。
+    console.warn('[rw:api] admin config facts injection failed — read face serves uninjected', err);
+  }
 }
 
 async function recoverToolOperationsBeforeServe(): Promise<void> {
@@ -89,8 +122,10 @@ async function startInProcessWorker(): Promise<void> {
 // 工具声明/load 错误 fail-fast，不暴露缺工具的残缺 API 面。
 void (async () => {
   await hydrateSubjectsBeforeServe();
+  await hydrateConfigBeforeServe();
   await registerToolsBeforeServe();
   await recoverToolOperationsBeforeServe();
+  await injectAdminConfigFactsBeforeServe();
   const server = serve({ fetch: app.fetch, port }, (info) => {
     const mounted = capabilities.flatMap((c) =>
       (c.api?.routes ?? []).filter((r) => r.load).map((r) => `${r.method} ${r.path}`),
@@ -113,6 +148,7 @@ void (async () => {
       const boss = getRunningBoss();
       if (boss) await stopBossGracefully(boss, 'API shutdown');
     } finally {
+      configRefresh?.stop();
       await db.$client.end({ timeout: 3 });
     }
   });

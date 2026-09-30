@@ -1,3 +1,4 @@
+import { getConfigMany } from '@/core/config/store';
 import { ApiError } from './errors';
 
 // YUK-138 [M2]: In-process rate limiter for the AI funnel.
@@ -19,17 +20,22 @@ import { ApiError } from './errors';
 const DEFAULT_MAX = 30;
 const DEFAULT_WINDOW_MS = 10_000;
 
-function readPositiveInt(raw: string | undefined, fallback: number): number {
+function _readPositiveInt(raw: string | undefined, fallback: number): number {
   if (raw === undefined) return fallback;
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return fallback;
   return Math.floor(n);
 }
 
-function resolveConfig(): { max: number; windowMs: number } {
+export function resolveConfig(): { max: number; windowMs: number } {
+  // YUK-1007：DB > env > code-default（env 层 posIntEnv 保留原正整数语义）。
+  const cfg = getConfigMany(['AI_RATE_LIMIT_MAX', 'AI_RATE_LIMIT_WINDOW_MS']);
   return {
-    max: readPositiveInt(process.env.AI_RATE_LIMIT_MAX, DEFAULT_MAX),
-    windowMs: readPositiveInt(process.env.AI_RATE_LIMIT_WINDOW_MS, DEFAULT_WINDOW_MS),
+    max: typeof cfg.AI_RATE_LIMIT_MAX === 'number' ? cfg.AI_RATE_LIMIT_MAX : DEFAULT_MAX,
+    windowMs:
+      typeof cfg.AI_RATE_LIMIT_WINDOW_MS === 'number'
+        ? cfg.AI_RATE_LIMIT_WINDOW_MS
+        : DEFAULT_WINDOW_MS,
   };
 }
 

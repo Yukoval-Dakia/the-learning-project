@@ -42,14 +42,13 @@
  */
 const DEFAULT_MATCH_THRESHOLD = 0.55;
 
-function resolveMatchThreshold(): number {
-  const raw = process.env.TAGGING_MATCH_THRESHOLD;
-  if (raw == null || raw.trim() === '') return DEFAULT_MATCH_THRESHOLD;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) ? parsed : DEFAULT_MATCH_THRESHOLD;
-}
+import { getConfig } from '@/core/config/store';
 
-export const MATCH_THRESHOLD: number = resolveMatchThreshold();
+export function matchThreshold(): number {
+  // YUK-1007：DB > env > code-default(0.55)；非有限 → 默认（原语义）。
+  const v = getConfig('TAGGING_MATCH_THRESHOLD');
+  return typeof v === 'number' && Number.isFinite(v) ? v : DEFAULT_MATCH_THRESHOLD;
+}
 
 /**
  * Retrieval window for the match-or-propose axis: `tagKnowledge` fetches the

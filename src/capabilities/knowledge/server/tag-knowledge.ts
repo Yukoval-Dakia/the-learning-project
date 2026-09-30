@@ -46,7 +46,7 @@ import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
 import { getKnownSubjects } from '@/subjects/profile';
 import { type KnowledgeSimilarityCandidate, matchKnowledgeBySimilarity } from './match-similarity';
 import { prepareProposedKnowledgeId } from './proposals';
-import { MATCH_THRESHOLD, RETRIEVAL_TOP_K } from './tagging-flags';
+import { RETRIEVAL_TOP_K, matchThreshold } from './tagging-flags';
 
 export function isTagKnowledgeInvariantError(error: unknown): boolean {
   return isDirectProviderAttemptInvariantError(error);
@@ -154,7 +154,7 @@ export async function tagKnowledge(
   const { db } = deps;
   const embedFn = deps.embedFn ?? ((text: string) => embedText(text, deps.providerAttempt));
   const nameKcFn = deps.nameKcFn;
-  const threshold = deps.threshold ?? MATCH_THRESHOLD;
+  const threshold = deps.threshold ?? matchThreshold();
   // Guard the explicit-empty-array case too: `?? default` fires only on `undefined`, so a
   // caller passing `[]` would otherwise leave `knownSubjectIds[0]` undefined and propagate
   // `[undefined]` into the naming invoker (OCR #562). Treat empty as "use the default vocab".
@@ -259,7 +259,7 @@ export async function tagKnowledge(
   // Defensive: nameKcFn is injectable and ultimately model-backed; an empty / whitespace-only
   // name would persist a blank KC (OCR #562). Fail loud instead. The bridge schema already
   // caps length (≤60 chars), so we only guard the empty case here.
-  if (!kc_name || !kc_name.trim()) {
+  if (!kc_name?.trim()) {
     throw new Error('tagKnowledge: nameKcFn returned an empty KC name');
   }
 
@@ -300,7 +300,7 @@ export async function tagKnowledge(
         name: kc_name,
         knowledge_hint: knowledgeHint,
         generated_by: 'tag_knowledge',
-        reasoning: `unified tagging auto-created KC "${kc_name}" under ${input.subjectRootId} (no live KC within MATCH_THRESHOLD=${threshold}); auto-approved day-one, applied as ${createdId}`,
+        reasoning: `unified tagging auto-created KC "${kc_name}" under ${input.subjectRootId} (no live KC within matchThreshold()=${threshold}); auto-approved day-one, applied as ${createdId}`,
       },
       caused_by_event_id: null,
       task_run_id: null,

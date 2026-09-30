@@ -141,6 +141,26 @@ describe('observability diagnostic read contracts', () => {
   });
 });
 
+describe('observability admin config read contract', () => {
+  it('publishes the YUK-1007 config read surface as a single non-paginated GET', () => {
+    const routes = observabilityCapability.api?.routes ?? [];
+    const route = routes.find(
+      (candidate) => `${candidate.method} ${candidate.path}` === 'GET /api/admin/config',
+    );
+    expect(route?.operationId).toBe('getAdminConfig');
+    expect(route?.pagination).toBe('none');
+    expect(route?.responses?.[200]).toBeDefined();
+
+    const document = generateOpenApiDocument([observabilityCapability]) as {
+      paths: Record<string, Record<string, Record<string, unknown>>>;
+    };
+    const operation = document.paths['/api/admin/config'].get;
+    expect(operation).toMatchObject({ operationId: 'getAdminConfig', 'x-pagination': 'none' });
+    const responses = operation?.responses as Record<string, { content: Record<string, unknown> }>;
+    expect(responses[200].content).toHaveProperty('application/json');
+  });
+});
+
 describe('observability subject control contracts', () => {
   it('publishes all control operations and keeps validation overrides partial', () => {
     const routes = observabilityCapability.api?.routes ?? [];
