@@ -1,11 +1,6 @@
-// Verifies that the full chain of drizzle migrations (0000 → 0005) applies cleanly
-// to a fresh pgvector/Postgres 16 testcontainer AND produces the expected post-1c.1-Lane-A
-// schema state. The global vitest setup uses `db:push --force` which bypasses
-// migration files — this test is the only thing that exercises the migrate path.
-//
-// Spawns its own testcontainer (independent of the shared one in tests/global-setup.ts)
-// so it can start from an empty DB. Adds ~30-60s to the test run; worth it because
-// migration regressions are silent until prod.
+// Each migration baseline owns a fresh pgvector/Postgres 16 container,
+// independent of tests/global-setup.ts. Only disposable storage uses tmpfs;
+// SQL, populated backfills, constraints and PostgreSQL durability settings remain.
 
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -30,6 +25,12 @@ function ensureDockerHost() {
   if (existsSync(dockerDesktop)) {
     process.env.DOCKER_HOST = `unix://${dockerDesktop}`;
   }
+}
+
+function migrationContainer() {
+  return new PostgreSqlContainer('pgvector/pgvector:pg16').withTmpFs({
+    '/var/lib/postgresql/data': 'rw,size=2g',
+  });
 }
 
 function orderedMigrations(): { tag: string; sql: string }[] {
@@ -61,17 +62,25 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
 
   beforeAll(async () => {
     ensureDockerHost();
-    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    container = await migrationContainer().start();
     client = postgres(container.getConnectionUri(), { max: 1 });
     db = drizzle(client);
 
     // Apply all migrations from ./drizzle in journal order
     await migrate(db, { migrationsFolder: './drizzle' });
-  }, 90_000); // 90s — container cold start + 6 migrations
+  }, 90_000); // Container cold start and the complete migration chain.
 
   afterAll(async () => {
     await client?.end();
     await container?.stop();
+  });
+
+  it('retains PostgreSQL fsync and synchronous commit on disposable storage', async () => {
+    const [settings] = await client`
+      SELECT current_setting('fsync') AS fsync,
+             current_setting('synchronous_commit') AS synchronous_commit
+    `;
+    expect(settings).toEqual({ fsync: 'on', synchronous_commit: 'on' });
   });
 
   it('creates Phase 1c.1 Lane A new tables (event, learning_session, material_fsrs_state, knowledge_edge)', async () => {
@@ -644,7 +653,7 @@ describe('migration smoke — YUK-384 durable hub sync backfill', () => {
 
   beforeAll(async () => {
     ensureDockerHost();
-    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    container = await migrationContainer().start();
     oldSchemaSql = postgres(container.getConnectionUri(), { max: 1 });
 
     let reachedBaseline = false;
@@ -808,7 +817,7 @@ describe('migration smoke — YUK-751 populated event backfill', () => {
 
   beforeAll(async () => {
     ensureDockerHost();
-    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    container = await migrationContainer().start();
     client = postgres(container.getConnectionUri(), { max: 1 });
     for (const migration of orderedMigrations()) {
       await applyMigrationFile(migration.sql);
@@ -885,7 +894,7 @@ describe('migration smoke — YUK-821 legacy conjecture retirement', () => {
 
   beforeAll(async () => {
     ensureDockerHost();
-    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    container = await migrationContainer().start();
     client = postgres(container.getConnectionUri(), { max: 1 });
     let reachedBaseline = false;
     for (const migration of orderedMigrations()) {
@@ -1021,7 +1030,7 @@ describe('migration smoke — YUK-821 probe-quality audit binding', () => {
 
   beforeAll(async () => {
     ensureDockerHost();
-    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    container = await migrationContainer().start();
     client = postgres(container.getConnectionUri(), { max: 1 });
     let reachedBaseline = false;
     for (const migration of orderedMigrations()) {
@@ -1193,7 +1202,7 @@ describe('migration smoke — YUK-827 response-signature cutover', () => {
 
   beforeAll(async () => {
     ensureDockerHost();
-    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    container = await migrationContainer().start();
     client = postgres(container.getConnectionUri(), { max: 1 });
     let reachedBaseline = false;
     for (const migration of orderedMigrations()) {
@@ -1351,7 +1360,7 @@ describe('migration smoke — YUK-791 intervention preparation', () => {
 
   beforeAll(async () => {
     ensureDockerHost();
-    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    container = await migrationContainer().start();
     client = postgres(container.getConnectionUri(), { max: 1 });
     let reachedBaseline = false;
     for (const migration of orderedMigrations()) {
@@ -1508,7 +1517,7 @@ describe('migration smoke — YUK-792 intervention settlement backfill', () => {
 
   beforeAll(async () => {
     ensureDockerHost();
-    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    container = await migrationContainer().start();
     client = postgres(container.getConnectionUri(), { max: 1 });
     let reachedBaseline = false;
     for (const migration of orderedMigrations()) {
@@ -1617,7 +1626,7 @@ describe('migration smoke — YUK-841 attempt cost truth', () => {
 
   beforeAll(async () => {
     ensureDockerHost();
-    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    container = await migrationContainer().start();
     client = postgres(container.getConnectionUri(), { max: 1 });
     let reachedBaseline = false;
     for (const migration of orderedMigrations()) {
@@ -1775,7 +1784,7 @@ describe('migration smoke — YUK-842 provider query-session admission foundatio
 
   beforeAll(async () => {
     ensureDockerHost();
-    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    container = await migrationContainer().start();
     client = postgres(container.getConnectionUri(), { max: 1 });
     let reachedBaseline = false;
     for (const migration of orderedMigrations()) {
@@ -2027,7 +2036,7 @@ describe('migration smoke — YUK-851 provider attempt lifecycle', () => {
 
   beforeAll(async () => {
     ensureDockerHost();
-    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    container = await migrationContainer().start();
     client = postgres(container.getConnectionUri(), { max: 1 });
     for (const migration of orderedMigrations()) {
       await applyMigrationFile(client, migration.sql);
@@ -2313,7 +2322,7 @@ describe('migration smoke — YUK-844 placement unknown cost', () => {
 
   beforeAll(async () => {
     ensureDockerHost();
-    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    container = await migrationContainer().start();
     client = postgres(container.getConnectionUri(), { max: 1 });
     for (const migration of orderedMigrations()) {
       if (migration.tag === '0090_yuk844_placement_unknown_cost') break;
@@ -2512,7 +2521,7 @@ describe('migration smoke — YUK-855 provider attempt off mode', () => {
 
   beforeAll(async () => {
     ensureDockerHost();
-    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    container = await migrationContainer().start();
     client = postgres(container.getConnectionUri(), { max: 1 });
     for (const migration of orderedMigrations()) {
       await applyMigrationFile(client, migration.sql);
@@ -2615,7 +2624,7 @@ describe('migration smoke — YUK-855 provider attempt start rate index', () => 
 
   beforeAll(async () => {
     ensureDockerHost();
-    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    container = await migrationContainer().start();
     client = postgres(container.getConnectionUri(), { max: 1 });
     for (const migration of orderedMigrations()) {
       await applyMigrationFile(client, migration.sql);
@@ -2652,7 +2661,7 @@ describe('migration smoke — YUK-857 note verification claim', () => {
 
   beforeAll(async () => {
     ensureDockerHost();
-    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    container = await migrationContainer().start();
     client = postgres(container.getConnectionUri(), { max: 1 });
     for (const migration of orderedMigrations()) {
       await applyMigrationFile(client, migration.sql);
@@ -2803,7 +2812,7 @@ describe('migration smoke — YUK-1044 assessment contract truth source', () => 
 
   beforeAll(async () => {
     ensureDockerHost();
-    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    container = await migrationContainer().start();
     client = postgres(container.getConnectionUri(), { max: 1 });
     for (const migration of orderedMigrations()) {
       await applyMigrationFile(client, migration.sql);
@@ -3354,7 +3363,7 @@ describe('migration smoke — YUK-1097 assessment truth guards', () => {
 
   beforeAll(async () => {
     ensureDockerHost();
-    container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
+    container = await migrationContainer().start();
     client = postgres(container.getConnectionUri(), { max: 1 });
     for (const migration of orderedMigrations()) {
       await applyMigrationFile(client, migration.sql);

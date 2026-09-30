@@ -134,9 +134,6 @@ drizzle/.snapshots/
 !.opencode/README.md
 !.opencode/opencode.json
 !.opencode/oh-my-openagent.json
-!.opencode/plugins/
-!.opencode/plugins/**
-
 # Cursor runtime hook state; .cursor/rules remains tracked.
 .cursor/hooks/state/
 

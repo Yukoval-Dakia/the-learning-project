@@ -199,6 +199,9 @@ const ALL_TABLES = [
   'memory_brief_note',
   'learning_record',
   'artifact',
+  'artifact_block_ref',
+  'artifact_edit_session',
+  'hub_sync_reconciliation',
   'learning_item',
   'mistake_variant',
   // M2 (YUK-316) — 练习流日程表。
@@ -249,6 +252,7 @@ const ALL_TABLES = [
   'evaluation_effective_head',
   'evaluation',
   'assessment_submission',
+  'assessment_response_draft',
   'evaluation_group',
   'assessment_issuance',
   'question_admission_verification',

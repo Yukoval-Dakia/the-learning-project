@@ -37,13 +37,13 @@ export default defineConfig({
     setupFiles: isListCommand ? [] : ['./tests/setup.db-fork.ts'],
     testTimeout: 30_000,
     hookTimeout: 60_000,
-    pool: 'forks',
+    pool: 'threads',
     // YUK-252 — template-database parallelisation. The single Postgres
     // testcontainer (started once in tests/global-setup.ts) is migrated once,
     // then cloned into one database per DB_FORK_COUNT worker via
-    // `CREATE DATABASE … TEMPLATE`. Each fork connects to its own clone (wired
+    // `CREATE DATABASE … TEMPLATE`. Each worker connects to its own clone (wired
     // in tests/setup.db-fork.ts), so files run in parallel without racing on
-    // shared rows. Within a single fork, files still share one db and run
+    // shared rows. Within a single worker, files still share one db and run
     // sequentially, so the existing hermetic contract holds: every db test
     // resets state in beforeEach (resetDb) and must not assume cross-file state.
     //
