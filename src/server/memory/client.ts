@@ -304,7 +304,12 @@ export function createMemoryClient(
   let memoryPromise: Promise<Mem0Like> | undefined;
   const getMemory = (): Promise<Mem0Like> => {
     if (injectedMemory) return Promise.resolve(injectedMemory);
-    memoryPromise ??= import('mem0ai/oss').then(({ Memory }) => new Memory(config));
+    memoryPromise ??= import('mem0ai/oss')
+      .then(({ Memory }) => new Memory(config))
+      .catch((error) => {
+        memoryPromise = undefined;
+        throw error;
+      });
     return memoryPromise;
   };
   const findByEventId = async (eventId: string): Promise<MemoryEventResult> => {

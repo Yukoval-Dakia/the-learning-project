@@ -71,12 +71,13 @@ describe('Mem0 SDK loading', () => {
     expect(sdk.history).toHaveBeenCalledWith('memory-1');
   });
 
-  it('propagates a shared SDK initialization failure without attempting memory operations', async () => {
+  it('shares initialization failure without operations and allows a later initialization attempt', async () => {
     const failure = new Error('history storage unavailable');
     sdk.constructed.mockImplementationOnce(() => {
       throw failure;
     });
     const callsBefore = sdk.getAll.mock.calls.length;
+    const constructedBefore = sdk.constructed.mock.calls.length;
     const client = createMemoryClient({ env });
     const results = await Promise.allSettled([
       client.findByEventId('event-2'),
@@ -86,8 +87,10 @@ describe('Mem0 SDK loading', () => {
       { status: 'rejected', reason: failure },
       { status: 'rejected', reason: failure },
     ]);
-    expect(sdk.constructed).toHaveBeenCalledTimes(2);
+    expect(sdk.constructed).toHaveBeenCalledTimes(constructedBefore + 1);
     expect(sdk.getAll.mock.calls.length).toBe(callsBefore);
+    expect(await client.findByEventId('event-3')).toEqual({ results: [] });
+    expect(sdk.constructed).toHaveBeenCalledTimes(constructedBefore + 2);
   });
 
   it('keeps configuration and injected factory failures synchronous', () => {

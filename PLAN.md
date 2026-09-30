@@ -1,11 +1,11 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-09-30：**YUK-1107 / PR #1512** 完整 CI `36706272307`（`04a1b1f3a`）全绿224秒；120秒目标未达、未合并。owner 选择保留 DB4＋unit4。迁移smoke临时存储优化通过81项真实验证，待 full CI；Node缓存和线程实验未采用。Linear 工具不可用，跟进暂存 PARKED；下方旧日期条目为历史。
+> Linear 是权威 tracker；更新于 2026-09-30：**YUK-1107 / PR #1512** 完整 CI `36709090776`（`6b036b80f`）全绿212秒；120秒目标未达、未合并。owner 选择保留 DB4＋unit4。迁移核心步骤已降至42秒；DB线程候选保持4worker，41项兼容回归通过，待 full CI。SDK初始化失败恢复已修；Linear工具不可用，跟进暂存PARKED；下方旧日期条目为历史。
 
 
 ## NOW
 
-- YUK-1107 / PR #1512：完整CI224秒，仍未达120秒。正在验证迁移smoke存储热点优化；原80项用例不变，新加durability guard。本机81项迁移验证/typecheck/lint/build通过；不减覆盖、不增并发，未启动新一轮泛审。证据：`docs/planning/2026-09-30-yuk1107-ci-latency.md`。
+- YUK-1107 / PR #1512：完整CI212秒，仍未达120秒。正在全量验证DB线程候选；SDK初始化失败恢复回归由RED转GREEN，144项unit+41项兼容DB/typecheck/lint/build通过。不减覆盖、不增并发，未启动新一轮泛审。证据：`docs/planning/2026-09-30-yuk1107-ci-latency.md`。
 - 09-27 **YUK-1038 epic 收官**：17/17 主线 + 10/10 矫正票 merged。1058 §18 19/19 覆盖（below-threshold calibration 清旧值补全）；1059 交付 `release:manifest`（28 lanes/112 migrations/7 post-release assertions）+ cutover runbook §0–8（含 rollback 两边界）。**owner 待办**：部署授权、D18 live-provider eval、1007 热加载方向拍板、YUK-1103 启动时点。
 - 09-26 **YUK-1038 波次 5 lane + 8-lane 审计纠偏**：wave-2 五 lane（1049 Jev / 1051 UI / 1052 提交 / 1053 结算 / 1056 常量）全交付；**backfill 双波 35 P1** 拆 10 票纠正全落地。
 - 09-24 **YUK-1038 题目契约迁移 grounding + 裁决收口**：realworld 调研 + 独立复核已归并；owner 认可模型方向，明确**全量迁移、任意题目、统一切换，不分批上线**（旧 LIGHT/LIGHT-1 推荐已被取代，保留为决策历史）。grounding 落盘 `docs/planning/2026-09-24-question-assessment-implementation-grounding.md`（§1–§19）；**D1–D19 已全部批准**（`docs/planning/2026-09-24-question-assessment-decisions.md`）。**D12 Jev smoke 已 FINAL**：2/2 paid calls、无 retries、**$0.00003024**（wire/auth/cost only，无 accuracy）。**D19 只读 census 已完成**（REPEATABLE READ READ ONLY、无写入）：**114 questions / 0 physical parts / 0 answers rows / 9 judge events**；pgboss outstanding 27 全为 DLQ recovery。**作答面 UI preflight 已批准**（`docs/design/2026-09-24-assessment-ui-preflight.md`，Q20 2026-09-25 批准）；**Q21 ticket 拆分已批准**——17 张依赖票 **YUK-1043–1059** 已建（blockedBy 按 §17 DAG；YUK-1055 关联 YUK-766，YUK-1049 关联 YUK-438，YUK-1056 关联 YUK-1041/1042）。之后 **final implementation-ready confirmation 仍待 owner**。两个 operational finding 已捕获：**YUK-1041**（daily backup STALE，`loom-daily-20260913.dump`，09-13 后无成功，launchd 疑似停止）与 **YUK-1042**（pgboss 27 DLQ backlog，切换前需处置策略）。provider 偏好 **OpenRouter**（公开文档已核验）；**D18 ≤$5 独立评测预算已批准但未运行**。**无业务实施、schema/数据迁移或部署**；YUK-310 独立交付仍待 review，不混入本线。
@@ -91,7 +91,7 @@
 
 ## PARKED
 
-- YUK-1107 未完：固定现有并发下完整CI仍224秒；继续验证保持行为的热点优化，禁止削减覆盖凑120秒。pnpm11 fixture和undici历史RED均已修复并有新SHA绿灯，历史证据归 planning doc；Linear恢复后同步原票，不重复开优化票。
+- YUK-1107 未完：固定现有并发下完整CI仍212秒；继续验证保持行为的热点优化，禁止削减覆盖凑120秒。pnpm11 fixture、undici及SDK初始化恢复的RED/修复证据归 planning doc；Linear恢复后同步原票，不重复开优化票。
 - YUK-1045 初审遗留（非阻塞待归票）：claim 冲突路由未翻译 409 `claim_conflict`（question-restore.ts:49–55，当前 500/泛 conflict）；source_verify 对 part 走 child→root 锁序，与 publisher root→child 反向可能死锁（source_verify.ts:699–717）；1043 lane 已知缺口 `publishQuestionGroup` 不调 `validateStructure`（material_id 重复不被拦）。
 - 两处judge直调已核实为照片作答/独立解答一致性，不为调用形式统一机械删除，无新缺陷证据。
 - 全历史ADR审计仍未完成，不冒充全量通过；971仅覆盖三份已确认冲突的现役指引。
