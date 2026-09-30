@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SELECTOR_TIMEOUT_MS = 120_000;
 const DB_RUN_TIMEOUT_MS = 30 * 60_000;
@@ -550,13 +550,14 @@ function sanitizeInventoryFiles(selection) {
   return files.every((file) => isSafeRepoTestFile(file)) ? sortedUnique(files) : null;
 }
 
-/** Per-file wall time from a vitest JSON report — endTime-startTime covers
- *  worker-pool waiting, which is the signal shard balancing needs. Parse
- *  failures degrade to an empty map, never to a failed lane. */
+/** Per-file worker cost, including collection/import, from the DB reporter.
+ * Old JSON reports only cover the test span. Timing failures do not decide
+ * test success, but leave no data to publish as scheduling evidence. */
 function readVitestFileDurations(reportPath, root) {
   try {
     const parsed = JSON.parse(readFileSync(reportPath, 'utf8'));
     const durations = {};
+    const timings = {};
     for (const entry of parsed.testResults ?? []) {
       const file = typeof entry?.name === 'string' ? normalizeRepoFile(entry.name, root) : null;
       const ms = Number.isFinite(entry?.duration)
@@ -565,10 +566,11 @@ function readVitestFileDurations(reportPath, root) {
           ? entry.endTime - entry.startTime
           : null;
       if (file && Number.isFinite(ms)) durations[file] = Math.round(ms);
+      if (file && entry.db_timing) timings[file] = entry.db_timing;
     }
-    return durations;
+    return { durations, timings };
   } catch {
-    return {};
+    return { durations: {}, timings: {} };
   }
 }
 
@@ -630,7 +632,7 @@ function runRequiredDbTests({ root, selectionPath, executionPath, shardValue }) 
       // Keep the console reporter AND emit the JSON report — the per-file
       // durations in it feed the committed baseline used by bin-packing.
       '--reporter=default',
-      '--reporter=json',
+      `--reporter=${fileURLToPath(new URL('./db-json-reporter.mjs', import.meta.url))}`,
       `--outputFile.json=${reportPath}`,
       ...binFiles,
     ];
@@ -641,7 +643,10 @@ function runRequiredDbTests({ root, selectionPath, executionPath, shardValue }) 
     });
   }
 
-  const fileDurations = readVitestFileDurations(reportPath, root);
+  const { durations: fileDurations, timings: fileTimings } = readVitestFileDurations(
+    reportPath,
+    root,
+  );
   try {
     unlinkSync(reportPath);
   } catch {
@@ -665,6 +670,8 @@ function runRequiredDbTests({ root, selectionPath, executionPath, shardValue }) 
     shard_files: binFiles.length,
     bin_estimated_ms: bin.estimatedMs,
     file_durations: fileDurations,
+    duration_metric: 'worker-phases-v1',
+    file_timings: fileTimings,
     test_duration_ms: Date.now() - startedAt,
     exit_code: result.status ?? 1,
     signal: result.signal ?? null,

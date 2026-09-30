@@ -99,6 +99,29 @@ describe('DB affected-test selector', () => {
       }
       expect(executed.sort()).toEqual(files);
       writeFileSync(
+        path.join(repo, files[0]),
+        "import { it, expect } from 'vitest'; await new Promise(resolve => setTimeout(resolve, 250)); it('behavior', () => expect(42).toBe(42));",
+      );
+      writeFileSync(
+        selection,
+        JSON.stringify({
+          requested_mode: 'full',
+          effective_mode: 'full',
+          inventory_files: [files[0]],
+        }),
+      );
+      const timed = run('1/1');
+      expect(timed.status, timed.stdout + timed.stderr).toBe(0);
+      const timingReport = JSON.parse(readFileSync(execution, 'utf8'));
+      const timing = timingReport.file_timings[files[0]];
+      expect(timing.import_ms).toBeGreaterThanOrEqual(200);
+      expect(timingReport.file_durations[files[0]]).toBeGreaterThanOrEqual(200);
+      writeFileSync(
+        path.join(repo, files[0]),
+        "import { it, expect } from 'vitest'; it('behavior', () => expect(41).toBe(42));",
+      );
+      expect(run('1/1').status).toBe(1);
+      writeFileSync(
         selection,
         JSON.stringify({
           requested_mode: 'full',
