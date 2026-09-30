@@ -51,6 +51,10 @@ DB tests use a real Postgres testcontainer and must reset state in `beforeEach`.
 Its disposable data directory uses a 2 GiB tmpfs. PostgreSQL durability settings,
 constraints, and transactions remain enabled. This suite does not establish
 durability across a host reboot or container replacement.
+Migration smoke also uses bounded tmpfs for each of its independently owned
+containers. It runs the unchanged migration/backfill matrix and checks that
+PostgreSQL `fsync` and `synchronous_commit` remain on; it is not a host-reboot
+durability test.
 Files importing DB clients, `postgres`, Drizzle, or live `PgBoss` belong in the
 DB config, not the unit config. DB files run in isolated fork databases. The default
 remains `resetDb()` in `beforeEach`; transaction rollback is opt-in only when every
