@@ -361,57 +361,28 @@ jobs:
         if: needs.changes.outputs.migration_changed == 'true'
         run: pnpm test:migration
 
-  build:
-    name: production build
-    needs: changes
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Build lane skipped
-        if: needs.changes.outputs.build_changed != 'true'
-        run: echo "Build lane not selected — lane is green."
-      - uses: actions/checkout@v5
-        if: needs.changes.outputs.build_changed == 'true'
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-        if: needs.changes.outputs.build_changed == 'true'
-        with:
-          version: 11.13.1
-      - uses: actions/setup-node@v7
-        if: needs.changes.outputs.build_changed == 'true'
-        with:
-          node-version-file: '.node-version'
-          cache: 'pnpm'
-      - name: Install dependencies
-        if: needs.changes.outputs.build_changed == 'true'
-        run: pnpm install --frozen-lockfile
-      - name: Build server, worker, migrate, and web
-        if: needs.changes.outputs.build_changed == 'true'
-        run: pnpm build
-        env:
-          DATABASE_URL: postgres://placeholder
-
   usability:
-    name: usability container (shipped SPA + API fixtures)
+    name: production build and usability (shipped SPA + API fixtures)
     needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Usability lane skipped
-        if: needs.changes.outputs.usability_changed != 'true'
-        run: echo "Usability lane not selected — lane is green."
+        if: needs.changes.outputs.usability_changed != 'true' && needs.changes.outputs.build_changed != 'true'
+        run: echo "Build and usability lanes not selected — lane is green."
       - uses: actions/checkout@v5
-        if: needs.changes.outputs.usability_changed == 'true'
+        if: needs.changes.outputs.usability_changed == 'true' || needs.changes.outputs.build_changed == 'true'
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-        if: needs.changes.outputs.usability_changed == 'true'
+        if: needs.changes.outputs.usability_changed == 'true' || needs.changes.outputs.build_changed == 'true'
         with:
           version: 11.13.1
       - uses: actions/setup-node@v7
-        if: needs.changes.outputs.usability_changed == 'true'
+        if: needs.changes.outputs.usability_changed == 'true' || needs.changes.outputs.build_changed == 'true'
         with:
           node-version-file: '.node-version'
           cache: 'pnpm'
       - name: Install dependencies
-        if: needs.changes.outputs.usability_changed == 'true'
+        if: needs.changes.outputs.usability_changed == 'true' || needs.changes.outputs.build_changed == 'true'
         run: pnpm install --frozen-lockfile
       - name: Cache Playwright browsers
         if: needs.changes.outputs.usability_changed == 'true'
@@ -422,8 +393,8 @@ jobs:
       - name: Install Playwright Chromium
         if: needs.changes.outputs.usability_changed == 'true'
         run: pnpm test:usability:install
-      - name: Build shipped SPA and server
-        if: needs.changes.outputs.usability_changed == 'true'
+      - name: Build server, worker, migrate, and web
+        if: needs.changes.outputs.usability_changed == 'true' || needs.changes.outputs.build_changed == 'true'
         run: pnpm build
         env:
           DATABASE_URL: postgres://placeholder
@@ -472,7 +443,7 @@ jobs:
   gate:
     name: typecheck · lint · audits · test · build
     if: always()
-    needs: [changes, static, audits, unit, db_selection, db, migration, build, usability]
+    needs: [changes, static, audits, unit, db_selection, db, migration, usability]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -487,12 +458,11 @@ jobs:
           DB_CHANGED: ${{ needs.changes.outputs.db_changed }}
           DB_RESULT: ${{ needs.db.result }}
           MIGRATION_RESULT: ${{ needs.migration.result }}
-          BUILD_RESULT: ${{ needs.build.result }}
           USABILITY_RESULT: ${{ needs.usability.result }}
         run: |
           set -euo pipefail
           failed=0
-          for lane in CHANGES STATIC AUDITS UNIT DB_SELECTION DB MIGRATION BUILD USABILITY; do
+          for lane in CHANGES STATIC AUDITS UNIT DB_SELECTION DB MIGRATION USABILITY; do
             result_var="${lane}_RESULT"
             result="${!result_var}"
             printf '%-12s %s\n' "$lane" "$result"
