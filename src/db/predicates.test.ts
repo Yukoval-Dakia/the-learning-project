@@ -8,9 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { isPoolVisible } from './predicates';
 
-// A faithful JS model of the SQL predicate `draft_status IS NULL OR draft_status <> 'draft'`
-// evaluated in Postgres 3-valued logic: NULL → TRUE (via IS NULL), else col <> 'draft'. Used to
-// pin isPoolVisible against the SQL side per value class (spec §5.1 / §5.2).
+// Postgres NULL-safe visibility model, retained alongside the literal truth table.
 function sqlModelVisible(v: string | null): boolean {
   return v === null || v !== 'draft';
 }
@@ -40,7 +38,6 @@ describe('isPoolVisible ⇔ SQL predicate equivalence (guards future divergence)
   for (const c of CLASSES) {
     it(`agrees with the NULL-safe SQL model on ${c.label}`, () => {
       expect(isPoolVisible({ draft_status: c.value })).toBe(sqlModelVisible(c.value));
-      // …and both match the documented §5.1 verdict.
       expect(sqlModelVisible(c.value)).toBe(c.visible);
     });
   }

@@ -2242,7 +2242,9 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
     const questions = await db.select().from(question);
     expect(questions[0]?.image_refs).toEqual(['pa', 'pb', 'pc']);
   });
+});
 
+describe('auto-enroll pure helpers', () => {
   // ---------------------------------------------------------------------------
   // detectStudentWork — pure detection (no DB): Tencent handwriting OR VLM
   // student_answer_present → true; neither → false.
