@@ -1,6 +1,7 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { getServerEnv } from '@/server/env';
+import { DB_POOL_MAX } from './pool';
 import * as schema from './schema';
 
 // Fail fast on missing DATABASE_URL. Empty-string fallback (`?? ''`) would let the
@@ -32,7 +33,9 @@ const queryClient =
   globalForDb.__loomQueryClient ??
   postgres(databaseUrl, {
     ssl: isLocalConnection || hasSslDisable ? false : 'require',
-    max: 10, // pool size per app/worker process
+    // YUK-1007：池上限抽为命名常量（admin config 读面 runtime 分区同源投影，
+    // 不另抄一份 10）。
+    max: DB_POOL_MAX,
   });
 if (env.NODE_ENV !== 'production') {
   globalForDb.__loomQueryClient = queryClient;
