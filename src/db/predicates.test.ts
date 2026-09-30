@@ -8,6 +8,11 @@
 import { describe, expect, it } from 'vitest';
 import { isPoolVisible } from './predicates';
 
+// Postgres NULL-safe visibility model, retained alongside the literal truth table.
+function sqlModelVisible(v: string | null): boolean {
+  return v === null || v !== 'draft';
+}
+
 // §5.1 truth table: a row is POOL-VISIBLE (红线-4, NULL≡active) unless it is literally 'draft'.
 const CLASSES: Array<{ label: string; value: string | null; visible: boolean }> = [
   { label: 'NULL', value: null, visible: true },
@@ -27,4 +32,13 @@ describe('isPoolVisible — §5.1 truth table', () => {
   it('defensive undefined maps to visible (matches SQL NULL; cannot arise from a DB read)', () => {
     expect(isPoolVisible({ draft_status: undefined as unknown as string | null })).toBe(true);
   });
+});
+
+describe('isPoolVisible ⇔ SQL predicate equivalence (guards future divergence)', () => {
+  for (const c of CLASSES) {
+    it(`agrees with the NULL-safe SQL model on ${c.label}`, () => {
+      expect(isPoolVisible({ draft_status: c.value })).toBe(sqlModelVisible(c.value));
+      expect(sqlModelVisible(c.value)).toBe(c.visible);
+    });
+  }
 });
