@@ -457,7 +457,13 @@ function ensureParent(file) {
   mkdirSync(path.dirname(file), { recursive: true });
 }
 
-function runRequiredUnitTests({ root, selectionPath, resultsPath, executionPath }) {
+function runRequiredUnitTests({ root, selectionPath, resultsPath, executionPath, shardValue }) {
+  if (shardValue !== undefined) {
+    const match = /^([1-9]\d*)\/([1-9]\d*)$/.exec(shardValue);
+    if (!match || Number(match[1]) > Number(match[2])) {
+      throw new Error(`invalid --shard value: ${shardValue}`);
+    }
+  }
   let selection;
   let selectionReadError;
   try {
@@ -481,6 +487,7 @@ function runRequiredUnitTests({ root, selectionPath, resultsPath, executionPath 
     '--reporter=default',
     '--reporter=json',
     `--outputFile.json=${resultsPath}`,
+    ...(shardValue ? [`--shard=${shardValue}`] : []),
     // Vitest ignores file filters after a bare `--` and runs the full suite.
     // resolveRequiredUnitFiles rejects option-like and unsafe paths before they reach argv.
     ...(selectedFiles ?? []),
@@ -494,6 +501,7 @@ function runRequiredUnitTests({ root, selectionPath, resultsPath, executionPath 
   const execution = {
     schema_version: 1,
     required_mode: requiredMode,
+    shard: shardValue ?? '1/1',
     requested_mode: selection?.requested_mode ?? 'full',
     effective_mode: selection?.effective_mode ?? 'full',
     fallback_reason: selection?.fallback_reason ?? selectionReadError,
@@ -619,6 +627,7 @@ function main() {
       selectionPath,
       resultsPath,
       executionPath,
+      shardValue: options.shard,
     });
     process.exitCode = execution.exit_code;
     return;
