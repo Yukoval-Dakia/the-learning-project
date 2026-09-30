@@ -91,6 +91,7 @@
 
 ## PARKED
 
+- YUK-1107 当前 CI blocker：`6063cd376` / run `36692908578` contracts audit 因 undici 高危 `GHSA-rfgv-xxqx-mfg5`、`GHSA-w293-vg96-wgc3` 失败；涉及 direct undici 与 mem0ai→qdrant→undici。正在核对锁版本及最小补丁路径；不得 ignore 或重跑冒充修复。其余测试/构建/迁移通过，DB 四片206–240秒，120秒目标未达。
 - YUK-1107 blocker（2026-09-30，Linear 当前不可用，待同步）：PR #1512 head `4460759fe` / CI Gate `36587580067` unit 1/4 在 15:07:28 UTC 起反复报 Vitest `suppress-warnings.cjs` 消失，15 分钟后失败；禁止同 SHA 重跑当修复。首要假设：新增 CLI fixture 的空 manifest + 共享 node_modules symlink 触发 pnpm 自动 reconcile；次要假设：其它并发测试修改依赖。验收：隔离复现删除路径，fixture 不修改共享依赖，exact-head full unit 文件守恒且完整 CI 通过。证据见 `docs/planning/2026-09-30-yuk1107-ci-latency.md`。
 - YUK-1045 初审遗留（非阻塞待归票）：claim 冲突路由未翻译 409 `claim_conflict`（question-restore.ts:49–55，当前 500/泛 conflict）；source_verify 对 part 走 child→root 锁序，与 publisher root→child 反向可能死锁（source_verify.ts:699–717）；1043 lane 已知缺口 `publishQuestionGroup` 不调 `validateStructure`（material_id 重复不被拦）。
 - 两处judge直调已核实为照片作答/独立解答一致性，不为调用形式统一机械删除，无新缺陷证据。
