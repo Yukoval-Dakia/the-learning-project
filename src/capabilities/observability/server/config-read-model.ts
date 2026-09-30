@@ -295,6 +295,7 @@ export function buildAdminConfigReadModel(
   const globalPin = resolveGlobalPin(env);
   const taskRows: AdminConfigTaskRow[] = Object.entries(tasks).map(([kind, def]) => {
     const override = getTaskOverride(kind);
+    const typed = 'execution' in def && def.execution === 'typed';
     return {
       kind,
       default_provider: def.defaultProvider,
@@ -309,8 +310,10 @@ export function buildAdminConfigReadModel(
               : {}),
           }
         : null,
-      override_wired: { ...TASK_OVERRIDE_WIRING },
-      global_pin: globalPin,
+      override_wired: typed
+        ? { provider: false, model: false, budget: false }
+        : { ...TASK_OVERRIDE_WIRING },
+      global_pin: typed ? null : globalPin,
     };
   });
 

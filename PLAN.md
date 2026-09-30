@@ -92,6 +92,8 @@
 
 ## PARKED
 
+- 2026-09-30 PR #1504 合并阻塞（Linear capture 工具不可用，待去重建票）：`server/index.unit.test.ts` scoped 首次运行 RED（shell `sh_0f25ef2d300194W5cmWIcxHHsv`），serve 观测为0→2，config hydrate真实模块读取缺失 db mock methods；不是 rerun GREEN 即修好。假设优先级：① unit遗漏 hydrate边界 mock 导致动态导入越过 teardown；②共享 hydrateChain跨测试残留；③startup实际重入。验收：阻塞 hydrate直到显式释放，释放前 serve/recover=0，释放后各1；每测试hydrate mock重置且refresh.stop在shutdown调用，完整4项startup+新增时序回归通过。
+
 - YUK-1045 初审遗留（非阻塞待归票）：claim 冲突路由未翻译 409 `claim_conflict`（question-restore.ts:49–55，当前 500/泛 conflict）；source_verify 对 part 走 child→root 锁序，与 publisher root→child 反向可能死锁（source_verify.ts:699–717）；1043 lane 已知缺口 `publishQuestionGroup` 不调 `validateStructure`（material_id 重复不被拦）。
 - 两处judge直调已核实为照片作答/独立解答一致性，不为调用形式统一机械删除，无新缺陷证据。
 - 全历史ADR审计仍未完成，不冒充全量通过；971仅覆盖三份已确认冲突的现役指引。

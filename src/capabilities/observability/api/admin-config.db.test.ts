@@ -142,7 +142,9 @@ describe('GET /api/admin/config — env layers and secrecy over HTTP', () => {
     });
     for (const task of body.tasks) {
       // caller 语义：env pin all-or-nothing——DB model 行（gpt-6-astra）不进 pin。
-      expect(task.global_pin).toEqual({ provider: 'anthropic-sub' });
+      expect(task.global_pin).toEqual(
+        task.kind === 'JevScoringDecisionTask' ? null : { provider: 'anthropic-sub' },
+      );
     }
   });
 
@@ -342,6 +344,17 @@ describe('GET /api/admin/config — P1 honest effective for degraded runtime ove
     expect(modelRow.effective_note).toBeTruthy();
   });
 
+  it('vision model rejected with its provider reports effective=null rather than configured pass-through', async () => {
+    vi.stubEnv('VISION_JUDGE_PROVIDER', 'anthropic-sub');
+    vi.stubEnv('VISION_JUDGE_MODEL', 'claude-opus-4-8');
+    vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', '');
+    const response = await get();
+    expect(response.status).toBe(200);
+    const body = AdminConfigResponseSchema.parse(await response.json());
+    const model = body.keys.find((row) => row.key === 'lane.vision_judge.model');
+    expect(model).toMatchObject({ value: 'claude-opus-4-8', source: 'env', effective: null });
+  });
+
   it('REGRESSION: model-only lane.global row is runtime-inert — effective=null with the inert note, while tasks[].global_pin stays null', async () => {
     vi.stubEnv('AI_PROVIDER_MODEL', 'claude-opus-4-8');
     vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
@@ -382,7 +395,11 @@ describe('GET /api/admin/config — P1 honest effective for degraded runtime ove
     expect(solveProvider?.effective).toBe('xiaomi');
     expect(solveModel?.effective).toBe('mimo-v2.5-pro');
     for (const task of body.tasks) {
-      expect(task.global_pin).toEqual({ provider: 'xiaomi', model: 'mimo-v2.5-pro' });
+      expect(task.global_pin).toEqual(
+        task.kind === 'JevScoringDecisionTask'
+          ? null
+          : { provider: 'xiaomi', model: 'mimo-v2.5-pro' },
+      );
     }
   });
 });

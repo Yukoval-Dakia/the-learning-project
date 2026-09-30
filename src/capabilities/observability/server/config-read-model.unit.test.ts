@@ -200,6 +200,32 @@ describe('config read model — wiring census', () => {
 });
 
 describe('config read model — task materialization', () => {
+  it('typed tasks retain their fixed binding and do not claim global or per-task override wiring', () => {
+    replaceConfigSnapshot({
+      epoch: 4,
+      hydratedAt: '2026-09-30T00:00:00Z',
+      entries: new Map([
+        ['task.JevScoringDecisionTask.provider', { value: 'openai', revision: 1, updatedAt: null }],
+        [
+          'task.JevScoringDecisionTask.model',
+          { value: 'gpt-6-astra', revision: 1, updatedAt: null },
+        ],
+      ]),
+    });
+    const model = buildAdminConfigReadModel({
+      AI_PROVIDER_OVERRIDE: 'xiaomi',
+      AI_PROVIDER_MODEL: 'mimo-v2.5-pro',
+    });
+    const typed = model.tasks.find((row) => row.kind === 'JevScoringDecisionTask');
+    expect(typed).toMatchObject({
+      default_provider: 'openrouter',
+      default_model: 'typesafe/jev-1.13',
+      global_pin: null,
+      override_wired: { provider: false, model: false, budget: false },
+      override: { provider: 'openai', model: 'gpt-6-astra' },
+    });
+  });
+
   it('materializes one row per catalog TaskSpec with static defaults kept separate from overrides', () => {
     const model = buildAdminConfigReadModel({});
     expect(model.tasks.map((row) => row.kind).sort()).toEqual(Object.keys(tasks).sort());
@@ -241,7 +267,9 @@ describe('config read model — task materialization', () => {
   it('surfaces the global pin (env > DB) on every task row when set', () => {
     const model = buildAdminConfigReadModel({ AI_PROVIDER_OVERRIDE: 'anthropic-sub' });
     for (const row of model.tasks) {
-      expect(row.global_pin).toEqual({ provider: 'anthropic-sub' });
+      expect(row.global_pin).toEqual(
+        row.kind === 'JevScoringDecisionTask' ? null : { provider: 'anthropic-sub' },
+      );
     }
   });
 
@@ -257,7 +285,9 @@ describe('config read model — task materialization', () => {
     });
     const pinned = buildAdminConfigReadModel({ AI_PROVIDER_OVERRIDE: 'anthropic-sub' });
     for (const row of pinned.tasks) {
-      expect(row.global_pin).toEqual({ provider: 'anthropic-sub' });
+      expect(row.global_pin).toEqual(
+        row.kind === 'JevScoringDecisionTask' ? null : { provider: 'anthropic-sub' },
+      );
     }
     // 同一 DB model 行在 env pin 缺席时同样是惰性的（见下一个真实 resolver 对照测试）。
   });
@@ -304,7 +334,9 @@ describe('config read model — task materialization', () => {
     });
     const pair = buildAdminConfigReadModel({});
     for (const row of pair.tasks) {
-      expect(row.global_pin).toEqual({ provider: 'openai', model: 'gpt-6-astra' });
+      expect(row.global_pin).toEqual(
+        row.kind === 'JevScoringDecisionTask' ? null : { provider: 'openai', model: 'gpt-6-astra' },
+      );
     }
 
     replaceConfigSnapshot({
@@ -316,7 +348,9 @@ describe('config read model — task materialization', () => {
     });
     const providerOnly = buildAdminConfigReadModel({});
     for (const row of providerOnly.tasks) {
-      expect(row.global_pin).toEqual({ provider: 'openai' });
+      expect(row.global_pin).toEqual(
+        row.kind === 'JevScoringDecisionTask' ? null : { provider: 'openai' },
+      );
     }
   });
 });

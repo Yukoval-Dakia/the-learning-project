@@ -113,6 +113,7 @@ function buildEffectiveValues(): AdminConfigRuntimeFacts['effective_values'] {
       visionOverride?.model !== undefined
         ? { value: visionOverride.model }
         : {
+            value: null,
             note: '未设置：vision judge 解析链落到 registry 默认（anthropic-sub 自带 claude-opus-4-8 默认）',
           },
     MEMORY_RECONCILE_HANDOFF_MODE: handoffMode,
