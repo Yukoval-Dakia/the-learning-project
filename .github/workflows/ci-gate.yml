@@ -51,7 +51,7 @@ jobs:
         run: node scripts/ci/gate-plan.mjs
 
   static:
-    name: typecheck · lint · audits
+    name: typecheck · lint
     needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -87,44 +87,78 @@ jobs:
       - name: Typecheck
         if: needs.changes.outputs.static_changed == 'true'
         run: pnpm typecheck
-      - name: Lint
-        if: needs.changes.outputs.static_changed == 'true'
-        run: pnpm lint
       # YUK-909 — warning-count ratchet at the Biome 2 baseline: warning/info totals
       # may only decrease. Lower the baseline after a fixing batch: pnpm lint:ratchet:update
-      - name: Lint warning ratchet
+      - name: Lint and warning ratchet
         if: needs.changes.outputs.static_changed == 'true'
         run: node scripts/ci/lint-ratchet.mjs
+  audits:
+    name: audits (${{ matrix.group }})
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: contracts
+            commands: |
+              pnpm audit:schema
+              pnpm audit:dependencies
+              pnpm audit:partition
+              pnpm audit:question-writers
+              pnpm audit:api-contracts
+              pnpm audit:api-client
+              pnpm audit:api-client-usage
+          - group: architecture
+            commands: |
+              pnpm audit:capability-boundaries
+              pnpm audit:architecture-deepening
+              pnpm audit:profile
+              pnpm audit:learner-copy
+              pnpm audit:no-learning-styles
+              pnpm audit:structured-judge
+          - group: policy
+            commands: |
+              pnpm audit:task-census
+              pnpm audit:draft-status
+              pnpm audit:draft-status-reads --strict
+              pnpm audit:flags --strict
+              pnpm audit:hub-sync-writers
+              pnpm audit:provider-attempt-truth
+    steps:
+      - name: Audit lane skipped
+        if: needs.changes.outputs.static_changed != 'true'
+        run: echo "Audit lane not selected — lane is green."
+      - uses: actions/checkout@v5
+        if: needs.changes.outputs.static_changed == 'true'
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        if: needs.changes.outputs.static_changed == 'true'
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v7
+        if: needs.changes.outputs.static_changed == 'true'
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+      - name: Install dependencies
+        if: needs.changes.outputs.static_changed == 'true'
+        run: pnpm install --frozen-lockfile
       # Audits mirror the standalone pre-PR audits plus the audit prefix of `pnpm test`.
       # The split test lanes below must not call the umbrella script again.
       - name: Audits
         if: needs.changes.outputs.static_changed == 'true'
-        run: |
-          pnpm audit:schema
-          pnpm audit:dependencies
-          pnpm audit:partition
-          pnpm audit:question-writers
-          pnpm audit:api-contracts
-          pnpm audit:api-client
-          pnpm audit:api-client-usage
-          pnpm audit:capability-boundaries
-          pnpm audit:architecture-deepening
-          pnpm audit:profile
-          pnpm audit:learner-copy
-          pnpm audit:no-learning-styles
-          pnpm audit:structured-judge
-          pnpm audit:task-census
-          pnpm audit:draft-status
-          pnpm audit:draft-status-reads --strict
-          pnpm audit:flags --strict
-          pnpm audit:hub-sync-writers
-          pnpm audit:provider-attempt-truth
+        run: ${{ matrix.commands }}
 
   unit:
-    name: unit tests
+    name: unit tests (${{ matrix.shard }}/${{ needs.changes.outputs.unit_selection == 'full' && 4 || 1 }})
     needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.changes.outputs.unit_selection == 'full' && '[1,2,3,4]' || '[1]') }}
     steps:
       - name: Unit lane skipped
         if: needs.changes.outputs.unit_changed != 'true'
@@ -166,21 +200,24 @@ jobs:
         run: |
           node scripts/ci/unit-shadow.mjs run \
             --selection .cache/ci/unit-selection.json \
+            --shard "${{ matrix.shard }}/${{ needs.changes.outputs.unit_selection == 'full' && 4 || 1 }}" \
             --results .cache/ci/unit-results.json \
             --execution .cache/ci/unit-execution.json
       - name: Upload unit selector report
         if: always() && needs.changes.outputs.unit_changed == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: unit-selector-report
+          name: unit-selector-report-shard-${{ matrix.shard }}
           path: |
             .cache/ci/unit-selection.json
             .cache/ci/unit-execution.json
+            .cache/ci/unit-results.json
           if-no-files-found: warn
 
   db_selection:
     name: select DB tests
     needs: changes
+    if: needs.changes.outputs.db_changed == 'true' && needs.changes.outputs.db_selection != 'full'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -239,6 +276,7 @@ jobs:
   db:
     name: DB tests (${{ matrix.shard }}/4)
     needs: [changes, db_selection]
+    if: always() && needs.changes.result == 'success' && (needs.db_selection.result == 'success' || needs.db_selection.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -267,11 +305,16 @@ jobs:
         if: needs.changes.outputs.db_changed == 'true'
         run: pnpm install --frozen-lockfile
       - name: Download shared DB selection
-        if: needs.changes.outputs.db_changed == 'true'
+        if: needs.changes.outputs.db_changed == 'true' && needs.changes.outputs.db_selection != 'full'
         uses: actions/download-artifact@v8
         with:
           name: db-selector-selection
           path: .cache/ci
+      - name: Inventory full DB suite
+        if: needs.changes.outputs.db_changed == 'true' && needs.changes.outputs.db_selection == 'full'
+        run: |
+          mkdir -p .cache/ci
+          node scripts/ci/db-affected.mjs select --mode full --output .cache/ci/db-selection.json
       - name: DB tests (affected on PR, full on canary/fallback)
         if: needs.changes.outputs.db_changed == 'true'
         run: |
@@ -316,57 +359,28 @@ jobs:
         if: needs.changes.outputs.migration_changed == 'true'
         run: pnpm test:migration
 
-  build:
-    name: production build
-    needs: changes
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Build lane skipped
-        if: needs.changes.outputs.build_changed != 'true'
-        run: echo "Build lane not selected — lane is green."
-      - uses: actions/checkout@v5
-        if: needs.changes.outputs.build_changed == 'true'
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        if: needs.changes.outputs.build_changed == 'true'
-        with:
-          version: 11.13.1
-      - uses: actions/setup-node@v7
-        if: needs.changes.outputs.build_changed == 'true'
-        with:
-          node-version-file: '.node-version'
-          cache: 'pnpm'
-      - name: Install dependencies
-        if: needs.changes.outputs.build_changed == 'true'
-        run: pnpm install --frozen-lockfile
-      - name: Build server, worker, migrate, and web
-        if: needs.changes.outputs.build_changed == 'true'
-        run: pnpm build
-        env:
-          DATABASE_URL: postgres://placeholder
-
   usability:
-    name: usability container (shipped SPA + API fixtures)
+    name: production build and usability (shipped SPA + API fixtures)
     needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Usability lane skipped
-        if: needs.changes.outputs.usability_changed != 'true'
-        run: echo "Usability lane not selected — lane is green."
+        if: needs.changes.outputs.usability_changed != 'true' && needs.changes.outputs.build_changed != 'true'
+        run: echo "Build and usability lanes not selected — lane is green."
       - uses: actions/checkout@v5
-        if: needs.changes.outputs.usability_changed == 'true'
+        if: needs.changes.outputs.usability_changed == 'true' || needs.changes.outputs.build_changed == 'true'
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        if: needs.changes.outputs.usability_changed == 'true'
+        if: needs.changes.outputs.usability_changed == 'true' || needs.changes.outputs.build_changed == 'true'
         with:
           version: 11.13.1
       - uses: actions/setup-node@v7
-        if: needs.changes.outputs.usability_changed == 'true'
+        if: needs.changes.outputs.usability_changed == 'true' || needs.changes.outputs.build_changed == 'true'
         with:
           node-version-file: '.node-version'
           cache: 'pnpm'
       - name: Install dependencies
-        if: needs.changes.outputs.usability_changed == 'true'
+        if: needs.changes.outputs.usability_changed == 'true' || needs.changes.outputs.build_changed == 'true'
         run: pnpm install --frozen-lockfile
       - name: Cache Playwright browsers
         if: needs.changes.outputs.usability_changed == 'true'
@@ -377,8 +391,8 @@ jobs:
       - name: Install Playwright Chromium
         if: needs.changes.outputs.usability_changed == 'true'
         run: pnpm test:usability:install
-      - name: Build shipped SPA and server
-        if: needs.changes.outputs.usability_changed == 'true'
+      - name: Build server, worker, migrate, and web
+        if: needs.changes.outputs.usability_changed == 'true' || needs.changes.outputs.build_changed == 'true'
         run: pnpm build
         env:
           DATABASE_URL: postgres://placeholder
@@ -427,7 +441,7 @@ jobs:
   gate:
     name: typecheck · lint · audits · test · build
     if: always()
-    needs: [changes, static, unit, db_selection, db, migration, build, usability]
+    needs: [changes, static, audits, unit, db_selection, db, migration, usability]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -435,19 +449,24 @@ jobs:
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
           STATIC_RESULT: ${{ needs.static.result }}
+          AUDITS_RESULT: ${{ needs.audits.result }}
           UNIT_RESULT: ${{ needs.unit.result }}
           DB_SELECTION_RESULT: ${{ needs.db_selection.result }}
+          DB_SELECTION_MODE: ${{ needs.changes.outputs.db_selection }}
+          DB_CHANGED: ${{ needs.changes.outputs.db_changed }}
           DB_RESULT: ${{ needs.db.result }}
           MIGRATION_RESULT: ${{ needs.migration.result }}
-          BUILD_RESULT: ${{ needs.build.result }}
           USABILITY_RESULT: ${{ needs.usability.result }}
         run: |
           set -euo pipefail
           failed=0
-          for lane in CHANGES STATIC UNIT DB_SELECTION DB MIGRATION BUILD USABILITY; do
+          for lane in CHANGES STATIC AUDITS UNIT DB_SELECTION DB MIGRATION USABILITY; do
             result_var="${lane}_RESULT"
             result="${!result_var}"
             printf '%-12s %s\n' "$lane" "$result"
+            if [ "$lane" = "DB_SELECTION" ] && [ "$result" = "skipped" ] && { [ "$DB_SELECTION_MODE" = "full" ] || [ "$DB_CHANGED" != "true" ]; }; then
+              continue
+            fi
             if [ "$result" != "success" ]; then
               failed=1
             fi

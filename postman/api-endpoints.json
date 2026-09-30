@@ -1236,6 +1236,19 @@
     ]
   },
   {
+    "path": "/api/admin/config",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "热加载配置读面：registry key 生效值/来源分层/默认/接线状态 + TaskSpec 默认与覆盖",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "只读。keys[] 每行：value（env pin > DB > env fallback > code-default 分层合成）、source、default、env_mode、read_only（compose 强制键）、wired/consumer（运行时 reader 是否消费）。tasks[] 每行：静态 catalog 默认 + DB 覆盖（provider/model 已接线、budget 存而不读）+ global_pin。不暴露 secret，不枚举 process.env"
+      }
+    ]
+  },
+  {
     "path": "/api/admin/conjecture-scores",
     "methods": [
       {

@@ -60,6 +60,7 @@ import {
 import {
   type EffectiveTruth,
   activeEffectiveTruth,
+  compareEventRowsAsc,
   filterActiveRows,
   getEffectiveTruths,
   newerEventRow,
@@ -103,7 +104,12 @@ export interface JudgeVerdictPayload {
 /** 一条 judge event 行 + 其链解析状态 + 规范化 payload 视图。 */
 export interface JudgeVerdictProjection {
   judge_event_id: string;
-  /** 该行在事件流里的原始 id；对 effective 投影 = 链端 effective 行 id。 */
+  /**
+   * 该投影对应链的**源**行 id：original 投影 = 该行自身；effective 投影 =
+   * 解析到该 effective 行的**最早链来源**（链根）——例如 j_old supersede→
+   * j_new 时 effective.original_event_id=j_old（改判来源保留，YUK-1106 钉
+   * 死，与候选返回顺序无关）。
+   */
   original_event_id: string;
   created_at: Date;
   /** original 行的链解析状态（effective 投影上 = 指向它的 original 链）。 */
@@ -213,6 +219,14 @@ async function effectiveTruthsChunked(
 // judge 候选行双通道拉取（subject_id ∪ caused_by）。分两查询各自 chunk——
 // or(inArray,inArray) 单语句把两通道的 id 都塞进同一次参数计数，是 104-cap
 // 违规最快路径；拆分后每查询只带一条 ≤64 的 IN 列表。
+//
+// YUK-1106：返回前按规范序（created_at, dispatch_seq, id）**升序排序**。
+// 原实现无 ORDER BY ⇒ 返回顺序由 planner/堆序决定；当多个候选链解析到同一
+// effective 行（j_old supersede→j_new 与 j_new 自链）时，聚合 loop 的
+// comparison 不更新、先到者 truth 保留 ⇒ effective.original_event_id 取决于
+// 返回顺序（CI run 36444482025 的 flaky RED）。升序处理保证同一 effective
+// 端点的**最早链来源**（链根）先到并保留；original（最老）/newest_raw（最新）
+// 在全序下本就与处理顺序无关，排序对它们零语义变化。
 async function judgeCandidatesForAttempts(db: DbLike, attemptIds: string[]): Promise<EventRow[]> {
   const uniqueIds = [...new Set(attemptIds)];
   const byId = new Map<string, EventRow>();
@@ -243,7 +257,8 @@ async function judgeCandidatesForAttempts(db: DbLike, attemptIds: string[]): Pro
     for (const row of bySubject) byId.set(row.id, row);
     for (const row of byCausedBy) byId.set(row.id, row);
   }
-  return [...byId.values()];
+  // YUK-1106：去重后的候选按规范序升序处理（见函数头注释）。
+  return [...byId.values()].sort(compareEventRowsAsc);
 }
 
 /**
