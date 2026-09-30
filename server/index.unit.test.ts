@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   startWorker: vi.fn(async (): Promise<void> => undefined),
   getBoss: vi.fn<() => unknown>(() => null),
   drain: vi.fn(async () => undefined),
+  hydrateConfig: vi.fn(async () => ({ hydrated: [], skipped: [], epoch: 0 })),
+  stopConfigRefresh: vi.fn(),
   serve: vi.fn((_options: unknown, onListen: (info: { port: number }) => void) => {
     mocks.order.push('serve');
     onListen({ port: 8787 });
@@ -29,6 +31,10 @@ vi.mock('@/server/boss/shutdown', () => ({ stopBossGracefully: mocks.drain }));
 vi.mock('@/server/subjects/hydrate', () => ({
   hydrateSubjectRegistryFromDb: vi.fn(async () => ({ hydrated: [], skipped: [] })),
 }));
+vi.mock('@/server/config/hydrate', () => ({
+  hydrateConfigFromDb: mocks.hydrateConfig,
+  startConfigRefresh: vi.fn(() => ({ stop: mocks.stopConfigRefresh })),
+}));
 vi.mock('@/server/ai/tools/register-capability-tools', () => ({
   registerCapabilityTools: vi.fn(async () => undefined),
 }));
@@ -36,6 +42,22 @@ vi.mock('@/kernel/tools/tool-operations', () => ({
   recoverToolOperationsOnBoot: mocks.recover.mockImplementation(async () => {
     mocks.order.push('tool-operations-recovered');
     return [];
+  }),
+}));
+// YUK-1007 读面 facts 注入（boot 序在 recoverToolOperations 之后、serve 之前）：
+// mock 掉避免拉起真实 admin-config-facts 重组根链（pi-adapter 等重模块会把
+// serve 的可观测时序拖过 vi.waitFor 窗口——CI run 36557897314 的 unit RED）。
+vi.mock('@/server/config/admin-config-facts', () => ({
+  buildAdminConfigRuntimeFacts: vi.fn(async () => ({
+    providers: [],
+    infra_schedules: [],
+    runtime: null,
+    effective_values: {},
+  })),
+}));
+vi.mock('@/capabilities/observability/public', () => ({
+  setAdminConfigRuntimeFacts: vi.fn(() => {
+    mocks.order.push('admin-config-facts-injected');
   }),
 }));
 
@@ -58,6 +80,8 @@ describe('API startup', () => {
     mocks.startWorker.mockReset().mockResolvedValue(undefined);
     mocks.getBoss.mockReset().mockReturnValue(null);
     mocks.drain.mockReset().mockResolvedValue(undefined);
+    mocks.hydrateConfig.mockReset().mockResolvedValue({ hydrated: [], skipped: [], epoch: 0 });
+    mocks.stopConfigRefresh.mockClear();
     handlers.clear();
     vi.restoreAllMocks();
     vi.resetModules();
@@ -69,7 +93,11 @@ describe('API startup', () => {
     await import('./index');
     await vi.waitFor(() => expect(mocks.serve).toHaveBeenCalledTimes(1));
 
-    expect(mocks.order).toEqual(['tool-operations-recovered', 'serve']);
+    expect(mocks.order).toEqual([
+      'tool-operations-recovered',
+      'admin-config-facts-injected',
+      'serve',
+    ]);
     expect(mocks.recover).toHaveBeenCalledTimes(1);
     expect(exitSpy).not.toHaveBeenCalled();
     exitSpy.mockRestore();
@@ -87,6 +115,7 @@ describe('API startup', () => {
       await vi.waitFor(() => expect(mocks.serve).toHaveBeenCalledTimes(1));
       expect(handlers.has('SIGTERM')).toBe(true);
       await handlers.get('SIGTERM')?.('SIGTERM');
+      expect(mocks.stopConfigRefresh).toHaveBeenCalledTimes(1);
       expect(mocks.close).toHaveBeenCalledTimes(1);
       expect(mocks.end).toHaveBeenCalledTimes(1);
       expect(mocks.close.mock.invocationCallOrder[0]).toBeLessThan(
@@ -97,6 +126,32 @@ describe('API startup', () => {
       on.mockRestore();
       exit.mockRestore();
     }
+  });
+
+  it('does not recover or serve while config hydration is pending', async () => {
+    let hydrated = () => {};
+    mocks.hydrateConfig.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          hydrated = () => resolve({ hydrated: [], skipped: [], epoch: 4 });
+        }),
+    );
+    await import('./index');
+    try {
+      await vi.waitFor(() => expect(mocks.hydrateConfig).toHaveBeenCalledTimes(1));
+      expect(mocks.recover).not.toHaveBeenCalled();
+      expect(mocks.serve).not.toHaveBeenCalled();
+    } finally {
+      hydrated();
+      await vi.waitFor(() => expect(mocks.serve).toHaveBeenCalledTimes(1));
+    }
+    expect(mocks.order).toEqual([
+      'tool-operations-recovered',
+      'admin-config-facts-injected',
+      'serve',
+    ]);
+    await handlers.get('SIGTERM')?.('SIGTERM');
+    expect(mocks.stopConfigRefresh).toHaveBeenCalledTimes(1);
   });
 
   it('waits for an in-process worker still starting before releasing the DB', async () => {

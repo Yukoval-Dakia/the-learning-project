@@ -27,7 +27,7 @@ function _readPositiveInt(raw: string | undefined, fallback: number): number {
   return Math.floor(n);
 }
 
-function resolveConfig(): { max: number; windowMs: number } {
+export function resolveConfig(): { max: number; windowMs: number } {
   // YUK-1007：DB > env > code-default（env 层 posIntEnv 保留原正整数语义）。
   const cfg = getConfigMany(['AI_RATE_LIMIT_MAX', 'AI_RATE_LIMIT_WINDOW_MS']);
   return {

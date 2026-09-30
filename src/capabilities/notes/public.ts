@@ -20,6 +20,9 @@ export {
 // artifact's body blocks into note sections; expose the single projection
 // instead of a deep import into notes/server.
 export { bodyBlocksToNoteSections } from './server/body-blocks';
+// YUK-1007 — notes 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
+// 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
+export { notesConfigEffectiveFacts } from './server/config-effective-facts';
 export type {
   CreateLearningIntentNoteFn,
   CreateLearningIntentNoteInput,
