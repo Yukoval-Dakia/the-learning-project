@@ -1,0 +1,113 @@
+{
+  "artifact": "d18-live-eval-seal",
+  "run_id": "d18-live-2",
+  "recorded_at": "2026-09-27T13:38:24.011960+00:00",
+  "lane": "jev-openrouter",
+  "provider": "openrouter",
+  "model": "typesafe/jev-1.13 (response pin typesafe/jev-1.13-20260917, provider TypeSafe)",
+  "endpoint": "POST https://openrouter.ai/api/v1/systemone",
+  "owner_authorization": "D18 live-provider eval authorized by owner 2026-09-27; budget cap $5 enforced by EvalBudgetGate (D18_BUDGET_CAPS)",
+  "scope_note": "Seal/metrics plumbing proof on an unambiguous synthetic noul corpus — NOT a scoring-quality conclusion. error_rate=1 is expected: gold is binary (0|4) while Jev returns continuous expectations (|d|>0 always); severe_error_rate=0 is the meaningful signal.",
+  "evidence": {
+    "ndjson": ".remember/rehearsal/d18-live-2/evidence.ndjson",
+    "ndjson_sha256": "113c0e4c6d123da8a2e0662d9e83bb6126f06b92316b40ef2fccf3cc9174c618",
+    "ndjson_rows": 10,
+    "report_json": ".remember/rehearsal/d18-live-2/d18-report.json",
+    "metrics_json": ".remember/rehearsal/d18-live-2/d18-metrics.json"
+  },
+  "db_seal": {
+    "scratch_db": "loom_d18_live on docker dev postgres (dropped after run)",
+    "harness_rows": "10 rows task_kind='D18EvalHarness' provider=openrouter model=typesafe/jev-1.13 input_hash+result_digest+usage_json.d18_*+cost_truth set",
+    "attempt_rows": "10 rows task_kind='JevScoringDecisionTask' (durable attempt truth, provider-reported usage.cost)"
+  },
+  "report": {
+    "run_id": "d18-live-2",
+    "lane": "jev-openrouter",
+    "items_planned": 10,
+    "items_attempted": 10,
+    "invocations": 10,
+    "retries": 0,
+    "ledger": {
+      "spentUsd": 0.00017199,
+      "requests": 10,
+      "verificationCalls": 10,
+      "halted": false,
+      "haltReason": null
+    },
+    "halted": false,
+    "halt_reason": null,
+    "failures": []
+  },
+  "metrics": {
+    "run_id": "d18-live-2",
+    "severe_error_threshold_frac": 0.2,
+    "splits": {
+      "dev": {
+        "items_evaluated": 8,
+        "items_with_gold": 8,
+        "invocations": 8,
+        "settled_invocations": 8,
+        "failed_invocations": 0,
+        "gate_rejected_invocations": 0,
+        "retries": 0,
+        "escalated_invocations": 0,
+        "upgrade_coverage": 0,
+        "error_rate": 1,
+        "severe_error_rate": 0,
+        "point_error": 0.060000000000000026,
+        "normalized_point_error": 0.015000000000000006,
+        "cost_usd_total": 0.00013755,
+        "cost_usd_reported": 0.00013755,
+        "latency_ms": {
+          "p50": 681,
+          "p95": 804,
+          "mean": 646.25
+        }
+      },
+      "holdout": {
+        "items_evaluated": 2,
+        "items_with_gold": 2,
+        "invocations": 2,
+        "settled_invocations": 2,
+        "failed_invocations": 0,
+        "gate_rejected_invocations": 0,
+        "retries": 0,
+        "escalated_invocations": 0,
+        "upgrade_coverage": 0,
+        "error_rate": 1,
+        "severe_error_rate": 0,
+        "point_error": 0.06000000000000002,
+        "normalized_point_error": 0.015000000000000005,
+        "cost_usd_total": 3.444e-5,
+        "cost_usd_reported": 3.444e-5,
+        "latency_ms": {
+          "p50": 495,
+          "p95": 708,
+          "mean": 601.5
+        }
+      },
+      "all": {
+        "items_evaluated": 10,
+        "items_with_gold": 10,
+        "invocations": 10,
+        "settled_invocations": 10,
+        "failed_invocations": 0,
+        "gate_rejected_invocations": 0,
+        "retries": 0,
+        "escalated_invocations": 0,
+        "upgrade_coverage": 0,
+        "error_rate": 1,
+        "severe_error_rate": 0,
+        "point_error": 0.06000000000000002,
+        "normalized_point_error": 0.015000000000000005,
+        "cost_usd_total": 0.00017199,
+        "cost_usd_reported": 0.00017199,
+        "latency_ms": {
+          "p50": 681,
+          "p95": 804,
+          "mean": 637.3
+        }
+      }
+    }
+  }
+}

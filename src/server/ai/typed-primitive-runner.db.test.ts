@@ -60,6 +60,28 @@ afterEach(() => {
 });
 
 describe('runTypedPrimitiveTask — durable rows', () => {
+  it('caller-owned retry policy sends only one wire on a transient failure', async () => {
+    const fetchImpl: typeof fetch = vi.fn(
+      async () => new Response('rate limited', { status: 429 }),
+    );
+    await expect(
+      runTypedPrimitiveTask(KIND, BASE_INPUT, {
+        db: testDb(),
+        fetchImpl,
+        retry: 'none',
+      }),
+    ).rejects.toMatchObject({ subtype: 'api_error_result', apiErrorStatus: 429 });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const runs = await testDb().select().from(ai_task_runs);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({
+      task_kind: KIND,
+      status: 'failure',
+      cost_basis: 'unknown',
+      cost_usd: null,
+    });
+  });
+
   it('success writes one run row with typed provenance + reported cost ledger', async () => {
     const fetchImpl = vi.fn(async () => responseJson(okBody)) as unknown as typeof fetch;
     const out = await runTypedPrimitiveTask(KIND, BASE_INPUT, {

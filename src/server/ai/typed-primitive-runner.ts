@@ -113,6 +113,7 @@ export interface TypedPrimitiveCtx {
   /** Test seam: replace ONLY the wire transport (never the lifecycle). */
   readonly fetchImpl?: typeof fetch;
   readonly logScope?: string;
+  readonly retry?: 'none';
 }
 
 export interface TypedPrimitiveOutcome<Output = unknown> {
@@ -188,7 +189,7 @@ export async function runTypedPrimitiveTask<Output = unknown>(
     ...(parsedInput as Record<string, unknown>),
   };
 
-  const maxAttempts = 1 + def.budget.transientRetries;
+  const maxAttempts = ctx.retry === 'none' ? 1 : 1 + def.budget.transientRetries;
   const reserveUsd = TYPED_RESERVE_PER_CALL_USD;
   const maxCostUsd = def.budget.maxCost;
   const firstAttemptStartedAt = Date.now();

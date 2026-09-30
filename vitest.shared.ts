@@ -134,6 +134,9 @@ export const fastTestInclude = [
   // YUK-1049 — Jev ModelUnitExecutorPort adapter (escalation/admission/
   // criterion mapping). Same no-DB justification as the runner test above.
   'src/server/assessment/jev-model-executor.test.ts',
+  // YUK-1058 — D18 jev-openrouter EvalInvoker lane: `run` seam replaces the
+  // typed runner, `db` is an untouched stub → no live Postgres / no wire.
+  'src/server/eval/d18-jev-invoker.test.ts',
   // YUK-842 — pure config/failure-policy unit. DB coordination lives in the
   // sibling *.db.test.ts and remains in the container partition.
   'src/server/ai/provider-session-admission.test.ts',
