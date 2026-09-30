@@ -1,4 +1,4 @@
-import { Memory, type MemoryConfig, type MemoryItem, type SearchResult } from 'mem0ai/oss';
+import type { MemoryConfig, MemoryItem, SearchResult } from 'mem0ai/oss';
 import {
   type Mem0OpaqueOperationContext,
   executeMem0OpaqueOperation,
@@ -298,11 +298,22 @@ export function createMemoryClient(
   const env = opts.env ?? process.env;
   // P1 (YUK-341)：openai-compat provider 转发 config.baseURL（mem0ai 3.0.6 实证），
   // 凭据全经 config.{llm,embedder}.config.apiKey + baseURL，无需任何 process.env
-  // 改写——构造纯同步、无全局副作用（旧 withXiaomiBaseUrl env-dance + YUK-232 mutex 已删）。
+  // 改写。配置校验与注入工厂保持同步；真实 SDK 首次操作时加载。
   const config = createMem0Config(env);
-  const factory = opts.memoryFactory ?? ((c: MemoryConfig) => new Memory(c));
-  const memory = factory(config);
+  const injectedMemory = opts.memoryFactory?.(config);
+  let memoryPromise: Promise<Mem0Like> | undefined;
+  const getMemory = (): Promise<Mem0Like> => {
+    if (injectedMemory) return Promise.resolve(injectedMemory);
+    memoryPromise ??= import('mem0ai/oss')
+      .then(({ Memory }) => new Memory(config))
+      .catch((error) => {
+        memoryPromise = undefined;
+        throw error;
+      });
+    return memoryPromise;
+  };
   const findByEventId = async (eventId: string): Promise<MemoryEventResult> => {
+    const memory = await getMemory();
     const result = parseEventMemoryResult(
       await memory.getAll({
         topK: EVENT_LOOKUP_COMPLETENESS_BOUND,
@@ -322,6 +333,7 @@ export function createMemoryClient(
     providerOperation: Mem0OpaqueOperationContext,
     beforeProviderAdd: BeforeMemoryProviderAdd,
   ): Promise<SearchResult> => {
+    const memory = await getMemory();
     const add = () =>
       memory.add(eventToText(input), {
         userId: 'self',
@@ -359,6 +371,7 @@ export function createMemoryClient(
       };
     },
     async addVerbatimOnce(text, metadata, projectionKey, providerOperation, beforeProviderAdd) {
+      const memory = await getMemory();
       const filters = { user_id: 'self', projection_key: projectionKey };
       const existing = await memory.getAll({ topK: 2, filters });
       if ((existing.results ?? []).length > 0) return existing;
@@ -378,6 +391,7 @@ export function createMemoryClient(
       );
     },
     async search(query, searchOpts, providerOperation) {
+      const memory = await getMemory();
       const { scope_key: scopeKey, ...filters } = searchOpts.filters ?? {};
       if (typeof scopeKey === 'string') {
         filters.affected_scopes ??= { contains: scopeKey };
@@ -401,6 +415,7 @@ export function createMemoryClient(
     // the SQLSTATE on err.code, not in the message. Cost: one extra get() on the
     // error path only.
     async hardDelete(memoryId) {
+      const memory = await getMemory();
       try {
         await memory.delete(memoryId);
       } catch (err) {
@@ -427,9 +442,10 @@ export function createMemoryClient(
       }
     },
     async history(memoryId) {
-      return memory.history(memoryId);
+      return (await getMemory()).history(memoryId);
     },
     async restoreVerbatim(text, metadata, providerOperation) {
+      const memory = await getMemory();
       // infer:false → mem0's addToVectorStore skips the extraction LLM and calls
       // createMemory(text, {}, metadata) directly (index.mjs:6419-6436): the raw
       // text is embedded and inserted as a single new memory (new UUID), with NO

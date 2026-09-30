@@ -5,15 +5,16 @@ import { jobEpochDisposition } from './jobs';
 import { ContractEpochFenceError, gateContractEpoch, validateEpochTransition } from './rules';
 
 describe('gateContractEpoch', () => {
-  it('absent marker → implicit legacy/active → runnable', () => {
+  it('absent marker → implicit code-epoch/active → runnable', () => {
+    // 无 marker 的 DB 对本代码天然 runnable（fresh install 可跑 migrate→serve）。
     expect(gateContractEpoch(null)).toEqual({
       runnable: true,
-      marker: { epoch: 'legacy', state: 'active' },
+      marker: { epoch: 'assessment-contract-v1', state: 'active' },
     });
   });
 
-  it('(legacy, active) marker → runnable for legacy code', () => {
-    const v = gateContractEpoch({ epoch: 'legacy', state: 'active' });
+  it('(assessment-contract-v1, active) marker → runnable for this code', () => {
+    const v = gateContractEpoch({ epoch: 'assessment-contract-v1', state: 'active' });
     expect(v.runnable).toBe(true);
   });
 
@@ -22,10 +23,11 @@ describe('gateContractEpoch', () => {
       const v = gateContractEpoch({ epoch, state: 'preparing' });
       expect(v).toMatchObject({ runnable: false, reason: 'maintenance' });
     }
-    // 新代码也 fenced（post-cutover app 不在维护窗内跑旧数据）。
-    expect(
-      gateContractEpoch({ epoch: 'legacy', state: 'preparing' }, 'assessment-contract-v1'),
-    ).toMatchObject({ runnable: false, reason: 'maintenance' });
+    // 维护窗对任何 (marker, code) 组合都拒——旧代码视角同样 fenced。
+    expect(gateContractEpoch({ epoch: 'legacy', state: 'preparing' }, 'legacy')).toMatchObject({
+      runnable: false,
+      reason: 'maintenance',
+    });
   });
 
   it('ready → still fenced (安静窗口，未激活)', () => {
@@ -36,24 +38,24 @@ describe('gateContractEpoch', () => {
   });
 
   it('active + epoch mismatch → epoch_mismatch fence', () => {
-    // 新代码在 legacy DB 上：fenced。
-    expect(
-      gateContractEpoch({ epoch: 'legacy', state: 'active' }, 'assessment-contract-v1'),
-    ).toMatchObject({ runnable: false, reason: 'epoch_mismatch' });
-    // 本代码（legacy）在新 epoch DB 上：stale worker 被拒。
-    expect(gateContractEpoch({ epoch: 'assessment-contract-v1', state: 'active' })).toMatchObject({
+    // 本代码（assessment-contract-v1）在 legacy DB 上：pre-cutover 数据拒绝运行。
+    expect(gateContractEpoch({ epoch: 'legacy', state: 'active' })).toMatchObject({
       runnable: false,
       reason: 'epoch_mismatch',
     });
+    // 对称面：legacy 代码在新 epoch DB 上同样被拒（stale worker 不得跑新数据）。
+    expect(
+      gateContractEpoch({ epoch: 'assessment-contract-v1', state: 'active' }, 'legacy'),
+    ).toMatchObject({ runnable: false, reason: 'epoch_mismatch' });
   });
 
   it('active + epoch match → runnable', () => {
-    expect(
-      gateContractEpoch(
-        { epoch: 'assessment-contract-v1', state: 'active' },
-        'assessment-contract-v1',
-      ).runnable,
-    ).toBe(true);
+    // 默认 codeEpoch = CODE_CONTRACT_EPOCH（post-flip = assessment-contract-v1）。
+    expect(gateContractEpoch({ epoch: 'assessment-contract-v1', state: 'active' }).runnable).toBe(
+      true,
+    );
+    // 显式 codeEpoch 参数也可表达旧代码视角下的同 epoch 放行。
+    expect(gateContractEpoch({ epoch: 'legacy', state: 'active' }, 'legacy').runnable).toBe(true);
   });
 });
 

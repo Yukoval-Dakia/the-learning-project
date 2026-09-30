@@ -11,7 +11,9 @@ import { event, knowledge } from '@/db/schema';
 import { projectKnowledgeNode } from '@/server/projections/knowledge';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { tagKnowledge } from './tag-knowledge';
-import { MATCH_THRESHOLD } from './tagging-flags';
+import { matchThreshold } from './tagging-flags';
+
+const MATCH_THRESHOLD = matchThreshold(); // 测试对照常量——模块内 const 只读一次，验「解析默认」
 
 const DIMS = 1024;
 const SUBJECT_ROOT = 'seed:math:root';

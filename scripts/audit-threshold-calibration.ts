@@ -671,10 +671,12 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
   // top, so they must evaluate only once process.env is fully populated. RETRIEVAL_TOP_K
   // comes from the same module (single truth: tag-knowledge.ts imports it from there too)
   // so the axis-A replay uses the live production window, not a driftable copy.
-  const { MATCH_THRESHOLD, RETRIEVAL_TOP_K } = await import(
+  const { RETRIEVAL_TOP_K, matchThreshold } = await import(
     '@/capabilities/knowledge/server/tagging-flags'
   );
-  const { DEDUP_DISTANCE_MAX } = await import('@/capabilities/knowledge/server/dedup-flags');
+  const { dedupDistanceMax } = await import('@/capabilities/knowledge/server/dedup-flags');
+  const MATCH_THRESHOLD = matchThreshold();
+  const DEDUP_DISTANCE_MAX = dedupDistanceMax();
   const { MATCHER_COSINE_MAX_DISTANCE } = await import(
     '@/capabilities/practice/server/quiz/matcher'
   );

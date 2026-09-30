@@ -38,6 +38,7 @@ export async function setup() {
   // comfortable headroom without measurable cost on a single-developer
   // testcontainer. (Previously this guarded a single accumulating fork.)
   container = await new PostgreSqlContainer('pgvector/pgvector:pg16')
+    .withTmpFs({ '/var/lib/postgresql/data': 'rw,size=2g' })
     .withCommand(['postgres', '-c', 'max_connections=500'])
     .start();
   const uri = container.getConnectionUri();

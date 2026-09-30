@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { type ConfigSnapshot, replaceConfigSnapshot, resetTestConfig } from '@/core/config/store';
 import {
   acquireProviderSession,
   resolveProviderSessionAdmissionPlan,
@@ -212,5 +213,103 @@ describe('provider session admission failure policy', () => {
       }),
     ).rejects.toMatchObject({ reason: 'cancelled' });
     expect(transaction).not.toHaveBeenCalled();
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// YUK-1007 review P1-4 — session admission 真实 consumer 的 DB 层生效回归。
+// 迁移前 resolveProviderSessionAdmissionPlan 直读 env 形参：DB 行永不生效。
+// 注入 hydrate 同形快照 + 空 env，证明 DB 行驱动真实 consumer；非法值照旧
+// throw（断流面不 fail-open）。
+// ──────────────────────────────────────────────────────────────────────────
+describe('provider session admission — DB-layer rows drive the real consumer (YUK-1007 P1-4)', () => {
+  const EMPTY: ConfigSnapshot = { epoch: 0, entries: new Map(), hydratedAt: '' };
+
+  afterEach(() => {
+    replaceConfigSnapshot(EMPTY);
+    resetTestConfig();
+  });
+
+  it('DB rows apply with env absent (was red: env-only reader returned off)', () => {
+    replaceConfigSnapshot({
+      epoch: 1,
+      entries: new Map([
+        ['AI_PROVIDER_SESSION_ADMISSION_MODE', { value: 'observe', revision: 1, updatedAt: null }],
+        [
+          'AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON',
+          {
+            value: {
+              xiaomi: {
+                maxConcurrentSessions: 4,
+                maxSessionStartsPerMinute: 30,
+                maxQueuedSessions: 40,
+                maxWaitMs: 20_000,
+              },
+            },
+            revision: 1,
+            updatedAt: null,
+          },
+        ],
+      ]),
+      hydratedAt: 'x',
+    });
+    const plan = resolveProviderSessionAdmissionPlan('xiaomi', {});
+    expect(plan).toMatchObject({
+      mode: 'observe',
+      laneId: 'xiaomi',
+      policy: {
+        maxConcurrentSessions: 4,
+        maxSessionStartsPerMinute: 30,
+        maxQueuedSessions: 40,
+        maxWaitMs: 20_000,
+      },
+    });
+    // 缺 lane：未列出的 lane 显式 off（原语义保留）。
+    expect(resolveProviderSessionAdmissionPlan('anthropic', {})).toEqual({
+      mode: 'off',
+      laneId: 'anthropic',
+    });
+  });
+
+  it('DB mode beats env mode (fallback ordering: DB > env > off)', () => {
+    replaceConfigSnapshot({
+      epoch: 1,
+      entries: new Map([
+        ['AI_PROVIDER_SESSION_ADMISSION_MODE', { value: 'off', revision: 1, updatedAt: null }],
+      ]),
+      hydratedAt: 'x',
+    });
+    expect(
+      resolveProviderSessionAdmissionPlan('xiaomi', {
+        AI_PROVIDER_SESSION_ADMISSION_MODE: 'enforce',
+        AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON: VALID_POLICIES,
+      }),
+    ).toEqual({ mode: 'off', laneId: 'xiaomi' });
+  });
+
+  it('invalid DB mode still throws with the original message (no fail-open)', () => {
+    replaceConfigSnapshot({
+      epoch: 1,
+      entries: new Map([
+        ['AI_PROVIDER_SESSION_ADMISSION_MODE', { value: 'enabled', revision: 1, updatedAt: null }],
+      ]),
+      hydratedAt: 'x',
+    });
+    expect(() => resolveProviderSessionAdmissionPlan('xiaomi', {})).toThrow(
+      /off \| observe \| enforce; received 'enabled'/,
+    );
+  });
+
+  it('DB policies missing while mode is observe/enforce still throws', () => {
+    replaceConfigSnapshot({
+      epoch: 1,
+      entries: new Map([
+        ['AI_PROVIDER_SESSION_ADMISSION_MODE', { value: 'enforce', revision: 1, updatedAt: null }],
+      ]),
+      hydratedAt: 'x',
+    });
+    expect(() => resolveProviderSessionAdmissionPlan('xiaomi', {})).toThrow(
+      /AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON is required when/,
+    );
   });
 });

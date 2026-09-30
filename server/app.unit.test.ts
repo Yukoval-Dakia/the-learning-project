@@ -246,7 +246,7 @@ describe('buildHonoApp', () => {
         runnable: false,
         epoch: 'legacy',
         state: 'preparing',
-        codeEpoch: 'legacy',
+        codeEpoch: 'assessment-contract-v1',
         reason: 'maintenance',
       }),
     });
@@ -259,7 +259,7 @@ describe('buildHonoApp', () => {
       reason: 'maintenance',
       epoch: 'legacy',
       state: 'preparing',
-      code_epoch: 'legacy',
+      code_epoch: 'assessment-contract-v1',
     });
   });
 
@@ -270,7 +270,7 @@ describe('buildHonoApp', () => {
         runnable: false,
         epoch: 'legacy',
         state: 'preparing',
-        codeEpoch: 'legacy',
+        codeEpoch: 'assessment-contract-v1',
         reason: 'maintenance',
       }),
     });
@@ -282,7 +282,7 @@ describe('buildHonoApp', () => {
       ok: false,
       epoch: 'legacy',
       state: 'preparing',
-      code_epoch: 'legacy',
+      code_epoch: 'assessment-contract-v1',
       reason: 'maintenance',
     });
   });
@@ -290,20 +290,22 @@ describe('buildHonoApp', () => {
   it('returns 200 on /api/ready and serves routes when runnable', async () => {
     vi.stubEnv('INTERNAL_TOKEN', 'test-token');
     const app = buildHonoApp([fakeCapability], {
+      // runnable 态的 stub marker 必须与 code epoch 一致（gate 语义：active 且
+      // epoch===codeEpoch 才 runnable）。
       epochGate: async () => ({
         runnable: true,
-        epoch: 'legacy',
+        epoch: 'assessment-contract-v1',
         state: 'active',
-        codeEpoch: 'legacy',
+        codeEpoch: 'assessment-contract-v1',
       }),
     });
     const ready = await app.request('/api/ready');
     expect(ready.status).toBe(200);
     expect(await ready.json()).toEqual({
       ok: true,
-      epoch: 'legacy',
+      epoch: 'assessment-contract-v1',
       state: 'active',
-      code_epoch: 'legacy',
+      code_epoch: 'assessment-contract-v1',
       reason: null,
     });
     const res = await app.request('/api/fake', {

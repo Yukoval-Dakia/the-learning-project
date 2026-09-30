@@ -49,7 +49,7 @@
 //   GAP_KIND_BASE_PRIORITY 常数，本模块不新增需 population 方差的权重。
 
 import { inArray } from 'drizzle-orm';
-import { parseFlag } from '@/core/env-flags';
+import { getConfigFlag } from '@/core/config/store';
 import { newId } from '@/core/ids';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import type { Db } from '@/db/client';
@@ -75,7 +75,8 @@ export const REFILL_MAX_PER_REQUEST = 25;
  * 读 process.env.SELECTION_POLICY 的惯例）。默认 false（dark-ship）。使用全仓统一 flag grammar。
  */
 export function refillEnabled(): boolean {
-  return parseFlag(process.env.QUESTION_SUPPLY_REFILL_ENABLED);
+  // YUK-1007：DB > env > code-default(false)。
+  return getConfigFlag('QUESTION_SUPPLY_REFILL_ENABLED');
 }
 
 /**

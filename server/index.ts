@@ -48,6 +48,27 @@ async function hydrateSubjectsBeforeServe(): Promise<void> {
   }
 }
 
+// YUK-1007 — 配置面 hydrate + 15s 周期 refresh（app 侧挂载点，grounding §5.1 序
+// 4/5）。never-throws：hydrate 内部自带 env/code-default 地板；这里再包一层
+// try/catch 双保险。刷新句柄交给 shutdown（server 停下时 clearInterval——dev
+// tsx watch 重启时若不清会漏到旧模块域）。
+let configRefresh: { stop: () => void } | undefined;
+async function hydrateConfigBeforeServe(): Promise<void> {
+  try {
+    const [{ db }, { hydrateConfigFromDb, startConfigRefresh }] = await Promise.all([
+      import('@/db/client'),
+      import('@/server/config/hydrate'),
+    ]);
+    const report = await hydrateConfigFromDb(db);
+    console.log(
+      `[rw:api] config hydrated: +${report.hydrated.length} keys (epoch ${report.epoch}${report.skipped.length ? `, skipped ${report.skipped.length}` : ''})`,
+    );
+    configRefresh = startConfigRefresh(db, 15_000);
+  } catch (err) {
+    console.warn('[rw:api] config hydration failed — serving with env/code-default floor', err);
+  }
+}
+
 // M5-T5b (YUK-321) — prod 静态面：RW_STATIC_DIR 指向 vite build 产物（web/dist）。
 // dev 不设此变量（Vite dev server 承担静态 + /api proxy）。serveStatic 未命中
 // 文件时 next() 放行 /api/*；catch-all GET 回 index.html（TanStack Router
@@ -89,6 +110,7 @@ async function startInProcessWorker(): Promise<void> {
 // 工具声明/load 错误 fail-fast，不暴露缺工具的残缺 API 面。
 void (async () => {
   await hydrateSubjectsBeforeServe();
+  await hydrateConfigBeforeServe();
   await registerToolsBeforeServe();
   await recoverToolOperationsBeforeServe();
   const server = serve({ fetch: app.fetch, port }, (info) => {
@@ -113,6 +135,7 @@ void (async () => {
       const boss = getRunningBoss();
       if (boss) await stopBossGracefully(boss, 'API shutdown');
     } finally {
+      configRefresh?.stop();
       await db.$client.end({ timeout: 3 });
     }
   });

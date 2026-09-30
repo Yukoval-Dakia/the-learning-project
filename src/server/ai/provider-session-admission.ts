@@ -16,6 +16,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import type { Provider } from '@/ai/registry';
+import { getConfig } from '@/core/config/store';
 import type { Db, Tx } from '@/db/client';
 import { provider_session_admission } from '@/db/schema';
 import { isKnownProvider } from '@/server/ai/providers';
@@ -85,6 +86,9 @@ interface RawLanePolicy {
 
 const MODE_ENV = 'AI_PROVIDER_SESSION_ADMISSION_MODE';
 const POLICIES_ENV = 'AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON';
+// YUK-1007：keyspace 键名 = env 名（registry 登记同名）。
+const MODE_KEY = MODE_ENV;
+const POLICIES_KEY = POLICIES_ENV;
 const RAW_POLICY_KEYS = new Set<keyof RawLanePolicy>([
   'maxConcurrentSessions',
   'maxSessionStartsPerMinute',
@@ -156,16 +160,26 @@ function hardReclaimHorizonMs(executionTimeoutMs: number): number {
   );
 }
 
-function parsePolicies(raw: string | undefined): Map<Provider, ProviderSessionLanePolicy> {
-  if (!raw?.trim()) {
-    throw new Error(`${POLICIES_ENV} is required when ${MODE_ENV} is observe or enforce`);
-  }
-
+function parsePolicies(
+  raw: string | Record<string, unknown> | undefined,
+): Map<Provider, ProviderSessionLanePolicy> {
+  // YUK-1007：env 层是 JSON 原文字符串；DB 层存解析后的对象（registry schema
+  // 已逐域校验形状，写端再拦 provider key）。两者都走这同一个校验环——原
+  // 报错文案不动。
   let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (error) {
-    throw new Error(`${POLICIES_ENV} must be valid JSON`, { cause: error });
+  if (typeof raw === 'string') {
+    if (!raw.trim()) {
+      throw new Error(`${POLICIES_ENV} is required when ${MODE_ENV} is observe or enforce`);
+    }
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      throw new Error(`${POLICIES_ENV} must be valid JSON`, { cause: error });
+    }
+  } else if (raw === undefined) {
+    throw new Error(`${POLICIES_ENV} is required when ${MODE_ENV} is observe or enforce`);
+  } else {
+    parsed = raw;
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error(`${POLICIES_ENV} must be an object keyed by provider lane`);
@@ -223,13 +237,20 @@ export function resolveProviderSessionAdmissionPlan(
   laneId: Provider,
   env: NodeJS.ProcessEnv = process.env,
 ): ProviderSessionAdmissionPlan {
-  const rawMode = env[MODE_ENV]?.trim() || 'off';
+  // YUK-1007：mode/policies 走配置面（DB > env > 'off'）。env 形参仍作
+  // fallback 层传给 getConfig；DB 行在场时恒赢。非法 mode（registry 原文透传
+  // 的 env / 脏 DB 值）照旧 throw——admission 是断流面，不 fail-open。
+  const rawModeValue = getConfig(MODE_KEY, env);
+  const rawMode =
+    typeof rawModeValue === 'string' && rawModeValue !== '' ? rawModeValue.trim() : 'off';
   if (rawMode !== 'off' && rawMode !== 'observe' && rawMode !== 'enforce') {
     throw new Error(`${MODE_ENV} must be one of off | observe | enforce; received '${rawMode}'`);
   }
   if (rawMode === 'off') return { mode: 'off', laneId };
 
-  const policy = parsePolicies(env[POLICIES_ENV]).get(laneId);
+  const policy = parsePolicies(
+    getConfig(POLICIES_KEY, env) as string | Record<string, unknown> | undefined,
+  ).get(laneId);
   if (!policy) return { mode: 'off', laneId };
   return { mode: rawMode, laneId, policy };
 }

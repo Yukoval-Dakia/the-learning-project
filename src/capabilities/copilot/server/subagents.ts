@@ -1,4 +1,4 @@
-import { parseFlag } from '@/core/env-flags';
+import { getConfigFlag } from '@/core/config/store';
 import { READ_TOOLS, toMcpAllowedToolName } from '@/kernel/tools/allowlists';
 import { EXA_MCP_ALLOWED_TOOLS } from '@/server/ai/mcp/exa';
 import type {
@@ -127,7 +127,8 @@ export function buildCopilotNativeResearchConfig(
 export function isCopilotSubagentEnabled(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): boolean {
-  return parseFlag(env[COPILOT_SUBAGENT_ENABLED_ENV], { defaultValue: true });
+  // YUK-1007：DB > env > code-default(true)。
+  return getConfigFlag(COPILOT_SUBAGENT_ENABLED_ENV, env as NodeJS.ProcessEnv);
 }
 
 export type CopilotTaskLifecycleMessage =

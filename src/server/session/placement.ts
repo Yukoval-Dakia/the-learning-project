@@ -1,7 +1,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq, sql } from 'drizzle-orm';
 
-import { parseFlag } from '@/core/env-flags';
+import { getConfigFlag } from '@/core/config/store';
 import type { Db, Tx } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
@@ -39,7 +39,12 @@ import { assertFromState } from './guards';
 // YUK-473 Slice 3: env-driven so the flip is CONFIG, not code (defer-flip-not-build).
 // Default false → prod stays dark until the env var is set; dev opts in via
 // `.env.local` (PLACEMENT_PROBE_ENABLED=true). Same shape as the auto-enroll flag.
-export const PLACEMENT_PROBE_ENABLED = parseFlag(process.env.PLACEMENT_PROBE_ENABLED);
+// YUK-1007：const → function（envPinned 键：env > code-default，DB 层跳过——
+// compose 强制项不得被面板写「静默生效」。仍为 getter-shaped 函数而非 const，
+// 保留运行时判断 + 测试注入 seam）。
+export function placementProbeEnabled(): boolean {
+  return getConfigFlag('PLACEMENT_PROBE_ENABLED');
+}
 
 const SESSION_TABLE = 'learning_session' as const;
 

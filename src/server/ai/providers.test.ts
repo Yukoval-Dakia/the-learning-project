@@ -135,7 +135,7 @@ describe('resolveTaskProvider — non-sub override model guard (Finding 4)', () 
     // The guard fires BEFORE the "reserved but not implemented" branch, so the
     // error is the model-config one, not the not-implemented one.
     expect(() => resolveTaskProvider(KIND)).toThrow(
-      /selects a non-mimo provider, but no AI_PROVIDER_MODEL is set/,
+      /selects a non-mimo provider, but no model is set/,
     );
   });
 
@@ -217,7 +217,7 @@ describe('resolveTaskProvider — openai Responses lane (YUK-1027)', () => {
   it('trips the Finding-4 guard: AI_PROVIDER_OVERRIDE=openai without AI_PROVIDER_MODEL throws', () => {
     vi.stubEnv('AI_PROVIDER_OVERRIDE', 'openai');
     expect(() => resolveTaskProvider(KIND)).toThrow(
-      /selects a non-mimo provider, but no AI_PROVIDER_MODEL is set/,
+      /selects a non-mimo provider, but no model is set/,
     );
   });
 

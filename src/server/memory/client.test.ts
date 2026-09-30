@@ -6,6 +6,26 @@ import {
 } from '../ai/provider-attempt-runtime';
 import { createMem0Config, createMemoryClient } from './client';
 
+const sdk = vi.hoisted(() => ({
+  loaded: vi.fn(),
+  constructed: vi.fn(),
+  getAll: vi.fn(async () => ({ results: [] })),
+  history: vi.fn(async () => []),
+}));
+
+vi.mock('mem0ai/oss', () => {
+  sdk.loaded();
+  return {
+    Memory: class {
+      constructor() {
+        sdk.constructed();
+      }
+      getAll = sdk.getAll;
+      history = sdk.history;
+    },
+  };
+});
+
 // YUK-557 (F1/F7): file-local Mem0Like factory. Mem0Like is the INNER mem0 surface
 // (add/search/delete/history/get) that createMemoryClient wraps — a DIFFERENT type
 // from MemoryClient, so this stays file-local (NOT tests/helpers/memoryClientMock,
@@ -32,6 +52,60 @@ const env = {
   ZHIPU_API_KEY: 'zhipu-key',
   DASHSCOPE_API_KEY: 'dashscope-key',
 };
+
+describe('Mem0 SDK loading', () => {
+  it('does not load for configuration or client creation, then shares initialization across operations', async () => {
+    expect(sdk.loaded).not.toHaveBeenCalled();
+    createMem0Config(env);
+    const client = createMemoryClient({ env });
+    expect(sdk.loaded).not.toHaveBeenCalled();
+    expect(
+      await Promise.all([client.findByEventId('event-1'), client.history('memory-1')]),
+    ).toEqual([{ results: [] }, []]);
+    expect(sdk.loaded).toHaveBeenCalledTimes(1);
+    expect(sdk.constructed).toHaveBeenCalledTimes(1);
+    expect(sdk.getAll).toHaveBeenCalledWith({
+      topK: 100,
+      filters: { user_id: 'self', event_id: 'event-1' },
+    });
+    expect(sdk.history).toHaveBeenCalledWith('memory-1');
+  });
+
+  it('shares initialization failure without operations and allows a later initialization attempt', async () => {
+    const failure = new Error('history storage unavailable');
+    sdk.constructed.mockImplementationOnce(() => {
+      throw failure;
+    });
+    const callsBefore = sdk.getAll.mock.calls.length;
+    const constructedBefore = sdk.constructed.mock.calls.length;
+    const client = createMemoryClient({ env });
+    const results = await Promise.allSettled([
+      client.findByEventId('event-2'),
+      client.history('memory-2'),
+    ]);
+    expect(results).toEqual([
+      { status: 'rejected', reason: failure },
+      { status: 'rejected', reason: failure },
+    ]);
+    expect(sdk.constructed).toHaveBeenCalledTimes(constructedBefore + 1);
+    expect(sdk.getAll.mock.calls.length).toBe(callsBefore);
+    expect(await client.findByEventId('event-3')).toEqual({ results: [] });
+    expect(sdk.constructed).toHaveBeenCalledTimes(constructedBefore + 2);
+  });
+
+  it('keeps configuration and injected factory failures synchronous', () => {
+    expect(() => createMemoryClient({ env: {} })).toThrow('requires DATABASE_URL');
+    const failure = new Error('injected factory failure');
+    expect(() =>
+      createMemoryClient({
+        env,
+        memoryFactory: () => {
+          throw failure;
+        },
+      }),
+    ).toThrow(failure);
+  });
+});
 
 function testProviderOperation() {
   return createMem0OpaqueOperationContext({
