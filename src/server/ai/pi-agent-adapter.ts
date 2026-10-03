@@ -7,7 +7,7 @@
 //   - tools surface under the SAME `mcp__<server>__<tool>` wire names, so
 //     allowedTools filtering / recordToolCall / shouldEmitToolUseForCaller
 //     see identical names;
-//   - maxTurns maps to shouldStopAfterTurn — the terminal frame reports the
+//   - maxTurns maps to finishTurn — the terminal frame reports the
 //     SDK subtype 'error_max_turns';
 //   - beforeToolCall composes the piHooks gate chain (deny →
 //     {block, reason}, interrupt → terminate); arg-rewriting allows
@@ -42,7 +42,7 @@ import type {
   AgentMessage,
   AgentTool,
   BeforeToolCallContext,
-  ShouldStopAfterTurnContext,
+  FinishTurn,
   StreamFn,
   agentLoop as piAgentLoop,
 } from '@earendil-works/pi-agent-core';
@@ -150,7 +150,7 @@ function estimatePiTokens(messages: readonly AgentMessage[]): number {
     cjkChars += text.match(PI_COMPACT_CJK_RE)?.length ?? 0;
   };
   for (const message of messages) {
-    if (message.role === 'user' || message.role === 'toolResult') {
+    if (message.role === 'user' || message.role === 'toolResult' || message.role === 'system') {
       const content = message.content;
       if (typeof content === 'string') {
         addText(content);
@@ -158,6 +158,10 @@ function estimatePiTokens(messages: readonly AgentMessage[]): number {
         for (const block of content) {
           if (block.type === 'text') addText(block.text);
         }
+      }
+      if (message.role === 'system') {
+        if (message.sections) addText(JSON.stringify(message.sections));
+        if (message.toolsAdded) addText(JSON.stringify(message.toolsAdded));
       }
     } else if (message.role === 'assistant') {
       for (const block of message.content) {
@@ -168,6 +172,20 @@ function estimatePiTokens(messages: readonly AgentMessage[]): number {
     }
   }
   return Math.ceil((chars - cjkChars) / PI_COMPACT_CHARS_PER_TOKEN + cjkChars);
+}
+
+/** End at the configured ceiling without turning a clean final answer into failure. */
+function turnLimiter(maxTurns: number, onToolLimit: () => void): FinishTurn {
+  let completed = 0;
+  return ({ message }) => {
+    completed += 1;
+    // Pi calls finishTurn on failures too. Preserve the provider error/abort truth.
+    if (message.stopReason === 'error' || message.stopReason === 'aborted') return;
+    if (completed < maxTurns) return;
+    if (message.content.some((block) => block.type === 'toolCall')) onToolLimit();
+    // Also suppress queue polling after a clean final turn at the ceiling.
+    return { action: 'end' };
+  };
 }
 
 const EMPTY_PI_USAGE: PiUsage = {
@@ -556,7 +574,7 @@ export function piTerminalResultFrame(args: {
   durationMs: number;
   numTurns: number;
   aborted: boolean;
-  /** Set when shouldStopAfterTurn hit the configured turn ceiling — the pi
+  /** Set when finishTurn hit the configured turn ceiling — the pi
    *  equivalent of the SDK's `error_max_turns` terminal subtype. */
   cappedByMaxTurns?: boolean;
   /** P3 — nested-child usage rolled into the run's terminal evidence, the
@@ -574,7 +592,18 @@ export function piTerminalResultFrame(args: {
     uuid: randomUUID(),
     session_id: args.sessionId,
   };
-  const usage = final?.usage;
+  // agent_end contains this invocation's messages (not replay history). Pi usage
+  // is per response, so sum every root turn before adding nested-loop spend.
+  const usage: PiUsage = { ...EMPTY_PI_USAGE, cost: { ...EMPTY_PI_USAGE.cost } };
+  for (const message of args.messages) {
+    if (message.role !== 'assistant' || !message.usage) continue;
+    for (const key of ['input', 'output', 'cacheRead', 'cacheWrite', 'totalTokens'] as const) {
+      usage[key] += message.usage[key];
+    }
+    for (const key of ['input', 'output', 'cacheRead', 'cacheWrite', 'total'] as const) {
+      usage.cost[key] += message.usage.cost[key];
+    }
+  }
   const child = args.childUsage;
   const costUsd = (usage?.cost?.total ?? 0) + (child?.costUsd ?? 0);
   const usageParts = piUsageToResultUsage(usage, args.model);
@@ -837,10 +866,16 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         const startedAt = Date.now();
         // Keep the newest tail that fits the target; the current-turn prompt
         // is the last element and is never dropped.
+        // Pi 1.0 carries instructions and tool declarations in system messages.
+        // Replay their deltas before pruning so neither can disappear with history.
+        const { getCurrentSystemMessage } = await import('@earendil-works/pi-ai');
+        const system = getCurrentSystemMessage(messages);
+        const history = messages.filter((message) => message.role !== 'system');
+        const prefix: AgentMessage[] = [...(system ? [system] : []), piUserMessage(sessionContext)];
         const kept: AgentMessage[] = [];
-        let budget = targetTokens;
-        for (let i = messages.length - 1; i >= 0; i -= 1) {
-          const message = messages[i];
+        let budget = targetTokens - estimatePiTokens(prefix);
+        for (let i = history.length - 1; i >= 0; i -= 1) {
+          const message = history[i];
           const cost = estimatePiTokens([message]);
           if (kept.length > 0 && cost > budget) break;
           kept.unshift(message);
@@ -857,7 +892,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         while (tail.length > 1 && tail[0].role === 'toolResult') {
           tail.shift();
         }
-        const transformed: AgentMessage[] = [piUserMessage(sessionContext), ...tail];
+        const transformed: AgentMessage[] = [...prefix, ...tail];
         this.emitFrame(
           piCompactBoundaryFrame({
             sessionId,
@@ -889,7 +924,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       convertToLlm: (messages): PiMessage[] =>
         messages.filter(
           (m): m is PiMessage =>
-            m.role === 'user' || m.role === 'assistant' || m.role === 'toolResult',
+            m.role === 'system' ||
+            m.role === 'user' ||
+            m.role === 'assistant' ||
+            m.role === 'toolResult',
         ),
       // The x-opencode-session header is an opencode-go wire requirement
       // (400 MissingSessionID without it). Scope it to that lane: forwarding a
@@ -955,12 +993,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       const childTools = this.childToolsFor(spec);
       const childSignal = signal ? AbortSignal.any([this.abort.signal, signal]) : this.abort.signal;
       const childContext: AgentContext = {
-        systemPrompt: spec.prompt,
-        messages: [],
+        messages: [{ role: 'system', content: spec.prompt, timestamp: Date.now() }],
         ...(childTools.length > 0 ? { tools: childTools } : {}),
       };
       const childMaxTurns = spec.maxTurns;
-      let childTurns = 0;
       let childCapped = false;
       let toolUses = 0;
       let totalTokens = 0;
@@ -971,14 +1007,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         ...(childTools.length > 0 ? { toolExecution: 'sequential' as const } : {}),
         ...(childMaxTurns !== undefined
           ? {
-              shouldStopAfterTurn: () => {
-                childTurns += 1;
-                if (childTurns >= childMaxTurns) {
-                  childCapped = true;
-                  return true;
-                }
-                return false;
-              },
+              finishTurn: turnLimiter(childMaxTurns, () => {
+                childCapped = true;
+              }),
             }
           : {}),
         beforeToolCall: this.makeBeforeToolCall(subagentType),
@@ -1138,23 +1169,25 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       systemPrompt = `${systemPrompt}\n\n${docs}`;
     }
     const context: AgentContext = {
-      systemPrompt,
       // sdkSession→本地回放: durable-turn replay seeds context.messages — the
       // pi equivalent of reattaching an SDK session file.
-      messages: piReplayTurnsToMessages(this.args.piSessionReplay ?? [], this.model),
+      messages: [
+        { role: 'system', content: systemPrompt, timestamp: Date.now() },
+        ...piReplayTurnsToMessages(this.args.piSessionReplay ?? [], this.model),
+      ],
       ...(this.allTools.length > 0 ? { tools: this.allTools } : {}),
     };
     // options.maxTurns is the runner's agentic-turn ceiling. Pi has no built-in
-    // equivalent — shouldStopAfterTurn counts completed turns and asks the
+    // equivalent — finishTurn counts completed turns and asks the
     // loop to end; the terminal frame then reports the normalized subtype
     // 'error_max_turns' so lifecycle/finish-reason handling stays identical.
     // YUK-1026 — SDK parity: the ceiling only bites when the agent wants
     // ANOTHER turn. A turn whose assistant message carries no tool calls ends
-    // the loop on its own (pending steering/follow-up aside) and must report
+    // the loop successfully; the ceiling also leaves queued follow-ups undrained.
+    // It must report
     // success, not error_max_turns — under the unconditional counter every
     // maxTurns=1 task deterministically failed after its first clean turn.
     const maxTurns = typeof options.maxTurns === 'number' ? options.maxTurns : undefined;
-    let completedTurns = 0;
     let cappedByMaxTurns = false;
     const config: AgentLoopConfig = {
       model: this.model,
@@ -1164,19 +1197,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       ...(this.allTools.length > 0 ? { toolExecution: 'sequential' as const } : {}),
       ...(maxTurns !== undefined
         ? {
-            shouldStopAfterTurn: (turn: ShouldStopAfterTurnContext) => {
-              completedTurns += 1;
-              if (completedTurns < maxTurns) return false;
-              // The callback cannot observe batch termination (`terminate`
-              // never reaches ToolResultMessage) — toolCall presence is the
-              // faithful "loop intends another turn" signal available here.
-              const wantsAnotherTurn = turn.message.content.some(
-                (block) => block.type === 'toolCall',
-              );
-              if (!wantsAnotherTurn) return false;
+            finishTurn: turnLimiter(maxTurns, () => {
               cappedByMaxTurns = true;
-              return true;
-            },
+            }),
           }
         : {}),
       beforeToolCall: this.makeBeforeToolCall(),

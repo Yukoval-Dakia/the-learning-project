@@ -4,6 +4,8 @@
 
 ## NOW
 
+- YUK-1112：pi-agent-core/pi-ai已升级1.0.0；parent/child迁移finishTurn和system transcript，压缩保留提示/工具；修复terminal只统计父loop最后一轮费用。真实agentLoop与MiMo协议loopback验证进行中，尚未合并/部署。详见 `docs/planning/2026-10-03-yuk1112-pi-1.md`。
+
 - YUK-1115：同PR补齐共享依赖gate：Axios升至1.20.0、移除Mem0误列的Jest测试类型peer及Braces链。51 Mem0 unit、typecheck/lint/build和生产依赖审计通过（0 high/critical，18 low/moderate仍在）；待远端CI。
 - YUK-1111：复核65条到期schema豁免，移除61条已有生产依据的例外；新增direct raw SQL与DB生成值识别。4个真预留字段单独跟进YUK-1113（10月10日复核）；旧scanner将fixture计入writer的问题见YUK-1114。尚待本PR验证与合并，详见 `docs/planning/2026-10-03-yuk1111-schema-producers.md`。
 
