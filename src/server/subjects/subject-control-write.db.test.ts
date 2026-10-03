@@ -285,6 +285,24 @@ describe('resetSubject — 只换绑，永不改共享 payload（§8-8）', () =
 });
 
 describe('validateSubject — 无状态预检（§8-15）', () => {
+  it.each([
+    'charter',
+    'judge_policy',
+    'cause_taxonomy',
+    'source_policy',
+    'render_theme',
+    'scheduling',
+  ] as const)(
+    'rejects an explicitly malformed %s override with its kind in the error',
+    async (kind) => {
+      const id = await createCustom('坏覆盖预检');
+      const result = await validateSubject(db, id, { [kind]: null });
+      expect(result?.valid).toBe(false);
+      expect(result?.errors.join('\n')).toContain(kind);
+      expect((await validateSubject(db, id))?.valid).toBe(true);
+    },
+  );
+
   it('现状 valid；幻 judge override → errors；零落库', async () => {
     const id = await createCustom();
     const clean = await validateSubject(db, id);

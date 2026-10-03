@@ -187,6 +187,29 @@ describe('editSubjectTrait — 主写面（自动 COW，§8-26/25/6/3）', () =>
     expect(subjects).toEqual(expect.arrayContaining(['general', a, b]));
   });
 
+  it('fan-out names an unrelated malformed persisted trait and leaves the edit uncommitted', async () => {
+    const id = await createCustom();
+    const seed = await traitRow('trt_seed_general_charter');
+    const before = await traitCount();
+    await db
+      .update(subject_trait)
+      .set({ payload: { renderConfig: null } })
+      .where(eq(subject_trait.id, 'trt_seed_general_render_theme'));
+    const result = await editSubjectTrait(db, {
+      subjectId: id,
+      kind: 'charter',
+      expectedSubjectRevision: 0,
+      expectedTraitRevision: seed.revision,
+      payload: charterWith(seed.payload, '合法修改，其他绑定损坏'),
+    });
+    expect(result.kind).toBe('invalid');
+    if (result.kind !== 'invalid') return;
+    expect(result.issues?.[0]?.errors.join('\n')).toContain('render_theme');
+    expect(await traitCount()).toBe(before);
+    expect(await boundTraitId(id, 'charter')).toBe(seed.id);
+    expect((await traitRow(seed.id)).payload).toEqual(seed.payload);
+  });
+
   it('fan-out 422：幻 judge id 过 strict parse 被装配校验拒，零残留（§8-3/4）', async () => {
     const id = await createCustom();
     const seed = await traitRow('trt_seed_general_judge_policy');

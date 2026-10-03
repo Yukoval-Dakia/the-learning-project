@@ -457,7 +457,7 @@ export async function validateProposalQuality(
   }
 
   // G2 — both nodes exist + are active.
-  const exist = await assertKnowledgeIdsExist(db as Db, [fromId, toId]);
+  const exist = await assertKnowledgeIdsExist(db, [fromId, toId]);
   if (!exist.ok) {
     return {
       ok: false,
@@ -470,8 +470,8 @@ export async function validateProposalQuality(
   // runtime-compatible with a Tx; cast keeps the validator usable from the
   // legacy MCP transaction path (review.ts writeProposalAfterGate).
   const [fromDomain, toDomain] = await Promise.all([
-    getEffectiveDomain(db as Db, fromId),
-    getEffectiveDomain(db as Db, toId),
+    getEffectiveDomain(db, fromId),
+    getEffectiveDomain(db, toId),
   ]);
   if (fromDomain !== toDomain) {
     return {

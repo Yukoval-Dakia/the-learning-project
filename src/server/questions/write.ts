@@ -303,7 +303,7 @@ export async function editQuestion(
     if (patch.knowledge_ids && patch.knowledge_ids.length > 0) {
       // `tx as Db`: the helper only reads, and a tx satisfies the query surface
       // (same cast as src/server/knowledge/rubric-validator.ts:443).
-      const check = await assertKnowledgeIdsExist(tx as unknown as Db, patch.knowledge_ids);
+      const check = await assertKnowledgeIdsExist(tx, patch.knowledge_ids);
       if (!check.ok) return { status: 'knowledge_invalid', missing_knowledge_ids: check.missing };
     }
 

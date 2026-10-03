@@ -154,3 +154,12 @@ export type SubjectTraitPayloads = {
   render_theme: RenderThemeTrait;
   scheduling: SchedulingTrait;
 };
+
+const SubjectTraitPayloadsSchema = z.object(TRAIT_PAYLOAD_SCHEMAS);
+
+/** Validate the complete persisted/overridden assembly; error paths include the trait kind. */
+export function parseTraitPayloads(
+  raw: Partial<Record<SubjectTraitKind, unknown>>,
+): SubjectTraitPayloads {
+  return SubjectTraitPayloadsSchema.parse(raw);
+}

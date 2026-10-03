@@ -46,8 +46,8 @@ import {
 import {
   SUBJECT_TRAIT_KINDS,
   type SubjectTraitKind,
-  type SubjectTraitPayloads,
   TRAIT_PAYLOAD_SCHEMAS,
+  parseTraitPayloads,
 } from '@/subjects/trait-schemas';
 import { type TraitResolution, replaceSubjectTraitResolutions } from './resolution-cache';
 
@@ -260,7 +260,7 @@ export async function hydrateSubjectRegistryFromDb(
           cause_taxonomy: comp('cause_taxonomy'),
           source_policy: comp('source_policy'),
         }),
-        payloads: payloads as unknown as SubjectTraitPayloads,
+        payloads: parseTraitPayloads(payloads),
       });
 
       const result = registry.upsert(profile, aliasesBySubject.get(row.id) ?? [], {
