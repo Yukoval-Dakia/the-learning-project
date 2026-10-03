@@ -81,16 +81,15 @@ export async function loadPlacementSessionForUpdate(
   leanings: string[] | null;
   pace: string | null;
 } | null> {
-  const rows = await tx.execute(
-    sql`SELECT status, scope_knowledge_ids, placement_leanings, placement_pace FROM learning_session WHERE id = ${sessionId} AND type = 'placement' FOR UPDATE`,
-  );
-  const arr = rows as unknown as Array<{
+  const rows = await tx.execute<{
     status: string;
     scope_knowledge_ids: string[] | null;
     placement_leanings: string[] | null;
     placement_pace: string | null;
-  }>;
-  const row = arr[0];
+  }>(
+    sql`SELECT status, scope_knowledge_ids, placement_leanings, placement_pace FROM learning_session WHERE id = ${sessionId} AND type = 'placement' FOR UPDATE`,
+  );
+  const row = rows[0];
   if (!row) return null;
   return {
     status: row.status,

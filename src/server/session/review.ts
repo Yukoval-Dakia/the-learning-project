@@ -35,11 +35,10 @@ async function loadReviewSessionForUpdate(
   tx: Db | Tx,
   sessionId: string,
 ): Promise<{ status: string } | null> {
-  const rows = await tx.execute(
+  const rows = await tx.execute<{ status: string }>(
     sql`SELECT status FROM learning_session WHERE id = ${sessionId} AND type = 'review' FOR UPDATE`,
   );
-  const arr = rows as unknown as Array<{ status: string }>;
-  const row = arr[0];
+  const row = rows[0];
   if (!row) return null;
   return { status: row.status };
 }

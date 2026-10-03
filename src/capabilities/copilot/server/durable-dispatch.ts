@@ -327,7 +327,7 @@ export async function readCopilotSessionHead(
   db: Db | Tx,
   sessionId: string,
 ): Promise<CopilotSessionHead | null> {
-  const rows = (await db.execute(sql`
+  const rows = await db.execute<{ run_id: string; payload: unknown }>(sql`
     SELECT q.business_id AS run_id, q.payload
     FROM job_events q
     JOIN event ask ON ask.id = q.business_id
@@ -342,7 +342,7 @@ export async function readCopilotSessionHead(
       )
     ORDER BY ask.dispatch_seq ASC, ask.id ASC
     LIMIT 1
-  `)) as unknown as Array<{ run_id: string; payload: unknown }>;
+  `);
   const row = rows[0];
   if (
     !row ||

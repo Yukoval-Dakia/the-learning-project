@@ -15,7 +15,7 @@
 
 import { access, readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { SubjectQuestionKind } from './profile-schema';
+import { type SubjectQuestionKind, SubjectQuestionKindSchema } from './profile-schema';
 // YUK-226 S2-5b (PR #320 验证轮 A) — kind 词表规范化收编进单一权威模块.
 //
 // persisted `question.kind` (QuestionKind) ↔ profile/skill `SubjectQuestionKind` 的双向
@@ -44,7 +44,8 @@ function skillDirName(kind: SubjectQuestionKind): string | null {
   // Normalize a persisted QuestionKind ('computation') to its skill key
   // ('calculation') before lookup, so callers may pass EITHER enum's value
   // (quiz_verify hands the persisted question.kind; quiz_gen hands a profile kind).
-  const key = QUIZ_GEN_SKILL_KIND_KEYS[questionKindToSkillKind(kind)];
+  const parsed = SubjectQuestionKindSchema.safeParse(questionKindToSkillKind(kind));
+  const key = parsed.success ? QUIZ_GEN_SKILL_KIND_KEYS[parsed.data] : undefined;
   return key ? `quiz-gen-${key}` : null;
 }
 

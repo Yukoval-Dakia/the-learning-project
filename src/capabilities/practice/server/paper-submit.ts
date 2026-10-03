@@ -140,14 +140,7 @@ async function lockAndReadPaperSlot(tx: Tx, input: PaperSubmitSlotInput, partRef
   }>(
     sql`SELECT type, status, artifact_id, started_at FROM learning_session WHERE id = ${input.sessionId} FOR UPDATE`,
   );
-  const session = (
-    sessionRows as unknown as Array<{
-      type: string;
-      status: string;
-      artifact_id: string | null;
-      started_at: string;
-    }>
-  )[0];
+  const session = sessionRows[0];
   if (session?.type !== 'review' || session.artifact_id !== input.paperArtifactId) {
     throw new ApiError('validation_error', 'paper review session binding is invalid', 400);
   }

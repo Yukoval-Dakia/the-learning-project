@@ -259,7 +259,7 @@ async function withDisposableDb<T>(run: (db: Db) => Promise<T>): Promise<T> {
       throw new Error(`migration failed in disposable database (exit ${migration.status})`);
     }
     client = postgres(databaseUrl, { max: 4, onnotice: () => {} });
-    const db = drizzle(client, { schema }) as unknown as Db;
+    const db: Db = drizzle(client, { schema });
     return await run(db);
   } finally {
     try {

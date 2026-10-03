@@ -243,14 +243,11 @@ export async function runQuestionContentValidation(
 // satisfy the type), so solve-check cost is answerable from the verify event.
 export type SolveCheckRunTaskFn = TaskTextRunFn;
 
-// The minimal subject-profile shape solve-check threads to the solver / judge. We
-// keep this loose (not the full SubjectProfile import) so the check stays a leaf —
-// callers already hold a resolved profile and pass it through.
+// The resolved subject profile is forwarded unchanged to the solver / judge.
 export interface SolveCheckProfile {
   id: string;
   // passed straight into SemanticJudge's JudgeAnswerParams.subjectProfile.
-  // biome-ignore lint/suspicious/noExplicitAny: caller passes a resolved SubjectProfile; this leaf only forwards it.
-  full: any;
+  full: SubjectProfile;
 }
 
 /**
@@ -360,8 +357,7 @@ export interface IndependentSolutionOptions {
   runTaskFn: SolveCheckRunTaskFn;
   profile: SolveCheckProfile;
   // db is needed whenever SemanticJudge runs, including an exact-mismatch fallback.
-  // biome-ignore lint/suspicious/noExplicitAny: leaf forwards the caller's Db handle to SemanticJudge.
-  db?: any;
+  db?: Db;
   /** OF-4(ii) seam: override the solver model per tier. Threaded into ctx.override.model. */
   solverModelOverride?: string;
   /**
@@ -1297,8 +1293,7 @@ export interface TeachingQualityOptions {
   // itself is subject-neutral (pass-through, registry.ts) and does not consume it.
   profile: {
     id: string;
-    // biome-ignore lint/suspicious/noExplicitAny: caller passes a resolved SubjectProfile; this leaf only forwards it.
-    full: any;
+    full: SubjectProfile;
   };
   placementAuthority?: PlacementVerificationAuthority;
   assertPlacementAuthorityFn?: typeof assertPlacementAuthority;

@@ -46,6 +46,17 @@ async function fetchContent(id: string, headers?: HeadersInit): Promise<Response
 }
 
 describe('GET /api/assets/[id]/content', () => {
+  it.each(['offset', 'shared'] as const)('returns only the visible %s byte view', async (kind) => {
+    const backing = kind === 'shared' ? new SharedArrayBuffer(9) : new ArrayBuffer(9);
+    const all = new Uint8Array(backing);
+    all.set([99, 98, 0, 127, 128, 255, 10, 97, 96]);
+    const bytes = new Uint8Array(backing, 2, 5);
+    await seedAsset(`asset_${kind}`, { storage_key: `assets/${kind}`, mime: 'image/png', bytes });
+    const res = await fetchContent(`asset_${kind}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-length')).toBe('5');
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([0, 127, 128, 255, 10]));
+  });
   beforeEach(async () => {
     await resetDb();
     r2Store.clear();

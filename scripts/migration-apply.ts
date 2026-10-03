@@ -470,7 +470,7 @@ export async function runMigrationApplyCli(args: ApplyCliArgs): Promise<void> {
     ssl: applyTargetSsl(target),
     max: 2,
   });
-  const db = drizzle(client, { schema }) as unknown as Db;
+  const db: Db = drizzle(client, { schema });
   const fence = args.dryRun ? null : advisoryFence(target);
   try {
     const revisionContracts = await loadRevisionContracts(db, registry);

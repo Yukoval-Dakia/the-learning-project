@@ -775,14 +775,7 @@ async function lockPaperSessionAndReadAnswer(
         WHERE id = ${command.paper.sessionId}
         FOR UPDATE`,
   );
-  const session = (
-    rows as unknown as Array<{
-      type: string;
-      status: string;
-      artifact_id: string | null;
-      started_at: string;
-    }>
-  )[0];
+  const session = rows[0];
   if (session?.type !== 'review' || session.artifact_id !== command.paper.artifactId) {
     throw new ApiError('validation_error', 'paper review session binding is invalid', 400);
   }

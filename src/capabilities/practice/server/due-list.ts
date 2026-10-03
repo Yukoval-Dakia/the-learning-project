@@ -97,7 +97,7 @@ async function loadLatestFailureQuestionIds(
   activeDb: DbLike,
   candidateLimit: number,
 ): Promise<string[]> {
-  const rows = (await activeDb.execute(sql<{ question_id: string }>`
+  const rows = await activeDb.execute<{ question_id: string }>(sql`
     SELECT subject_id AS question_id
     FROM (
       SELECT
@@ -113,7 +113,7 @@ async function loadLatestFailureQuestionIds(
     WHERE rn = 1
     ORDER BY created_at DESC, id DESC
     LIMIT ${candidateLimit}
-  `)) as unknown as Array<{ question_id: string }>;
+  `);
   return rows.map((row) => row.question_id);
 }
 
