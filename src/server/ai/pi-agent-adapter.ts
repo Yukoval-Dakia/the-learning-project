@@ -66,6 +66,7 @@ import type {
 } from './execution-adapter';
 import { emitPiAfterToolCall, runPiBeforeToolCall } from './pi-hooks';
 import { createLoomPiModels } from './pi-models';
+import { piProviderId } from './pi-provider-catalog';
 import type { SDKAssistantMessage, SDKResultMessage, SDKUserMessage } from './sdk-types';
 import { isSpawnToolName } from './spawn-contract';
 import {
@@ -1139,7 +1140,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   private childModelFor(spec: PiSubagentSpec): PiModel<PiApi> {
     const declared = spec.model;
     if (declared === undefined || declared === 'inherit') return this.model;
-    const resolved = this.deps.models.getModel(this.args.resolved.provider, declared);
+    const resolved = this.deps.models.getModel(piProviderId(this.args.resolved.provider), declared);
     if (!resolved) {
       throw new Error(
         `pi adapter cannot resolve nested-agent model '${declared}' in provider '${this.args.resolved.provider}' — declare a pi catalog id or 'inherit' (SDK alias names are not portable).`,
@@ -1300,9 +1301,8 @@ export class PiAgentAdapter implements ExecutionAdapter {
       // Each import evaluates only when its injected dep is absent — tests
       // that inject both never load the pi tree at all.
       this.resolved = {
-        // Loom's catalog = pi builtins (opencode-go, anthropic) + custom
-        // providers for the anthropic-compat endpoints (xiaomi/zhipu) and the
-        // OAuth subscription lane (anthropic-sub). See pi-models.ts.
+        // Native pi presets own wire behavior; anthropic-sub selects the
+        // native Anthropic preset with the separately resolved OAuth credential.
         models: this.init.models ?? (await createLoomPiModels()),
         agentLoop: this.init.agentLoop ?? (await import('@earendil-works/pi-agent-core')).agentLoop,
         connectRemoteMcp: this.init.connectRemoteMcp ?? connectPiRemoteMcp,
@@ -1366,7 +1366,7 @@ export class PiAgentAdapter implements ExecutionAdapter {
         'pi adapter cannot serve options.resume without ctx.piSessionReplay — there is no provider session file; replay the durable turns instead.',
       );
     }
-    const model = deps.models.getModel(args.resolved.provider, args.resolved.model);
+    const model = deps.models.getModel(piProviderId(args.resolved.provider), args.resolved.model);
     if (!model) {
       throw new Error(
         `pi adapter has no model '${args.resolved.model}' in provider '${args.resolved.provider}' — check the loom pi catalog (pi-models.ts) for the id.`,

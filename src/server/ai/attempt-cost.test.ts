@@ -103,19 +103,19 @@ describe('resolveAttemptCostTruth', () => {
     for (const reportedCostUsd of [0, undefined, -1, Number.NaN]) {
       expect(
         resolveAttemptCostTruth({
-          provider: 'zhipu',
+          provider: 'zai-coding-cn',
           model: 'glm-5.2',
           tokens,
           reportedCostUsd,
         }),
-      ).toEqual({ basis: 'unknown', amountUsd: null, ref: 'unpriced:zhipu/glm-5.2' });
+      ).toEqual({ basis: 'unknown', amountUsd: null, ref: 'unpriced:zai-coding-cn/glm-5.2' });
     }
   });
 
   it('accepts a positive compatibility SDK amount as reported evidence', () => {
     expect(
       resolveAttemptCostTruth({
-        provider: 'zhipu',
+        provider: 'zai-coding-cn',
         model: 'glm-5.2',
         tokens,
         reportedCostUsd: 0.1,

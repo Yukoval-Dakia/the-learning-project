@@ -23,18 +23,23 @@
 import { eq, inArray, sql } from 'drizzle-orm';
 import type { TaskKind } from '@/ai/registry';
 import { tasks } from '@/ai/registry';
+import type { TaskDefinition } from '@/ai/task-spec';
 import type { ConfigValue } from '@/core/config/store';
 import { resolveKeyDef } from '@/core/config/store';
 import { type Db, type Tx, db as defaultDb } from '@/db/client';
 import { system_config, system_config_journal } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
+import { nativePiModel, piProviderId } from '@/server/ai/pi-provider-catalog';
 import { PROVIDER_ATTEMPT_ADMISSION_LANES } from '@/server/ai/provider-attempt-admission-config';
 import {
+  ANTHROPIC_SUB_DEFAULT_MODEL,
   type Provider,
   isKnownProvider,
   isProviderImplemented,
   isProviderImplementedForTask,
   providerRequiresExplicitModel,
+  resolveGlobalProviderSwitch,
 } from '@/server/ai/providers';
 import { hydrateConfigFromDb } from './hydrate';
 
@@ -248,6 +253,11 @@ async function validateFinalProviderPairs(
   if (scopes.size === 0) return;
   const keys = [
     ...new Set([...scopes.values()].flatMap((s) => [s.providerKey, s.modelKey])),
+    'lane.global.provider',
+    'lane.global.model',
+    ...([...scopes.values()].some((scope) => scope.providerKey === 'lane.global.provider')
+      ? Object.keys(tasks).map((kind) => `task.${kind}.model`)
+      : []),
   ].sort();
   const rows = await tx
     .select({ key: system_config.key, value: system_config.value })
@@ -270,26 +280,96 @@ async function validateFinalProviderPairs(
     const providerPriority = (providerDef?.envMode ?? 'fallback') === 'priority';
     const modelPriority = (modelDef?.envMode ?? 'fallback') === 'priority';
 
-    const effProvider = providerPriority
+    const taskKind = /^task\.([^.]+)\.provider$/.exec(scope.providerKey)?.[1] as
+      | TaskKind
+      | undefined;
+    const configuredProvider = providerPriority
       ? (valueAsNonEmptyString(envProvider) ?? dbProvider)
       : (dbProvider ?? valueAsNonEmptyString(envProvider));
-    const effModel = modelPriority
+    const configuredModel = modelPriority
       ? (valueAsNonEmptyString(envModel) ?? dbModel)
       : (dbModel ?? valueAsNonEmptyString(envModel));
 
+    const isGlobal = scope.providerKey === 'lane.global.provider';
+    const typed = taskKind && (tasks[taskKind] as TaskDefinition).execution === 'typed';
+    const globalSwitch =
+      (taskKind && !typed) || isGlobal
+        ? resolveGlobalProviderSwitch(env, {
+            provider: valueAsNonEmptyString(rowByKey.get('lane.global.provider')),
+            model:
+              valueAsNonEmptyString(env.AI_PROVIDER_MODEL) ??
+              valueAsNonEmptyString(rowByKey.get('lane.global.model')),
+          })
+        : undefined;
+    const effProvider = isGlobal
+      ? globalSwitch?.provider
+      : (globalSwitch?.provider ??
+        configuredProvider ??
+        (taskKind ? tasks[taskKind].defaultProvider : undefined));
+    const effModel = isGlobal ? globalSwitch?.model : (globalSwitch?.model ?? configuredModel);
     if (effProvider === undefined) continue; // 对解散 → 无事可验
     if (typeof effProvider === 'string' && isKnownProvider(effProvider)) {
       const provider = effProvider as Provider;
-      if (providerRequiresExplicitModel(provider) && effModel === undefined) {
+      if (
+        providerRequiresExplicitModel(provider) &&
+        effModel === undefined &&
+        (!taskKind || tasks[taskKind].defaultProvider !== provider)
+      ) {
         throw new ApiError(
           'invalid_config_value',
           `${scope.label} resolves to provider '${provider}' with no explicit model — set '${scope.modelKey}' in the same write, or clear '${scope.providerKey}' to dissolve the pair`,
           422,
         );
       }
+      const model =
+        effModel ??
+        (provider === 'anthropic-sub'
+          ? ANTHROPIC_SUB_DEFAULT_MODEL
+          : taskKind
+            ? tasks[taskKind].defaultModel
+            : undefined);
+      if (model && isProviderImplemented(provider))
+        validateNativeModel(scope.label, provider, model, taskKind);
+      if (isGlobal && isProviderImplemented(provider)) {
+        for (const [kind, definition] of Object.entries(tasks)) {
+          if ((definition as TaskDefinition).execution === 'typed') continue;
+          const effectiveModel =
+            effModel ??
+            valueAsNonEmptyString(rowByKey.get(`task.${kind}.model`)) ??
+            (provider === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : definition.defaultModel);
+          validateNativeModel(scope.label, provider, effectiveModel, kind as TaskKind);
+        }
+      }
     }
     // 未知 provider 不在此拦（写 provider 键本身由 tx 外谓词拦；model-only 写下
     // provider 脏值是读端 fail-open 的既有面）。
+  }
+}
+
+/** Native membership and capability checks apply equally to task and global writes. */
+function validateNativeModel(
+  label: string,
+  provider: Provider,
+  model: string,
+  taskKind?: TaskKind,
+): void {
+  if (!nativePiModel(provider, model)) {
+    throw new ApiError(
+      'invalid_config_value',
+      `${label}: model '${model}' is not in native pi provider '${piProviderId(provider)}'`,
+      422,
+    );
+  }
+  if (taskKind) {
+    try {
+      assertModelProfileCapabilityFit(tasks[taskKind], provider, model);
+    } catch (error) {
+      throw new ApiError(
+        'invalid_config_value',
+        error instanceof Error ? error.message : 'Incompatible task/model',
+        422,
+      );
+    }
   }
 }
 

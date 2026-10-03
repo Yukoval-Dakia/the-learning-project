@@ -27,6 +27,7 @@ import type { ConfigEffectiveFact } from '@/core/config/effective';
 import { DB_POOL_MAX } from '@/db/pool';
 import { projectDagMembers } from '@/kernel/manifest';
 import { piMaxRetries } from '@/server/ai/pi-agent-adapter';
+import { nativePiModels, piProviderId } from '@/server/ai/pi-provider-catalog';
 import {
   isProviderLaneReady,
   providerAuthSurface,
@@ -153,6 +154,12 @@ export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
     credential_env: row.credentialEnvName,
     key_present: isProviderLaneReady(row.name),
     implemented: row.implemented,
+    pi_provider: row.implemented ? piProviderId(row.name) : null,
+    models: Object.entries(nativePiModels(row.name)).map(([id, model]) => ({
+      id,
+      api: model.api,
+      input: model.input,
+    })),
   }));
 
   const infraSchedules: AdminConfigScheduleRow[] = [

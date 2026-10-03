@@ -15,7 +15,7 @@
 | Schema / 校验 | Zod |
 | 数据库 | Postgres（`pgvector/pgvector:pg16`）+ Drizzle ORM（`postgresql` dialect, `postgres` driver） |
 | Blob 存储 | R2 / S3-compatible storage via `@aws-sdk/client-s3` |
-| AI runtime | Pi agent runtime（`@earendil-works/pi-agent-core` in-process agentLoop，`src/server/ai/pi-agent-adapter.ts`）；默认 provider 走 Mimo / 小米（`XIAOMI_API_KEY`，Anthropic-protocol-compat），另有 anthropic-sub OAuth / opencode-go / zhipu lane（`src/server/ai/providers.ts`）。opt-in `openai` lane（`OPENAI_API_KEY`）经 pi builtin provider 走 OpenAI Responses API 服务 gpt-6-astra（YUK-1027，仅显式 binding 可用，生产默认不变） |
+| AI runtime | Pi agent runtime（`@earendil-works/pi-agent-core` in-process agentLoop，`src/server/ai/pi-agent-adapter.ts`）；默认 provider 走 Mimo / 小米（`XIAOMI_API_KEY`，pi 原生 OpenAI Completions），另有 anthropic-sub OAuth / opencode-go / zai-coding-cn lane（`ZAI_CODING_CN_API_KEY`）（`src/server/ai/providers.ts`）。opt-in `openai` lane（`OPENAI_API_KEY`）经 pi builtin provider 走 OpenAI Responses API 服务 gpt-6-astra（YUK-1027，仅显式 binding 可用，生产默认不变） |
 | 记忆 / 事实层 | Mem0 (`mem0ai`) + pgvector store；embedder 默认 OpenAI `text-embedding-3-small`（ADR-0017） |
 | 富文本编辑 | Tiptap（block-tree note 编辑器，slash / cross-link suggestion） |
 | 数学渲染 | KaTeX + mathjs + `react-markdown` / `remark-math` / `rehype-katex` |

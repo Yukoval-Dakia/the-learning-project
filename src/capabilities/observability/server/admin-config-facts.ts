@@ -27,6 +27,9 @@ export interface AdminConfigProviderRow {
   readonly key_present: boolean;
   /** isProviderImplemented（resolveTaskProvider 同一谓词）：reserved-but-unwired 如实标 false。 */
   readonly implemented: boolean;
+  /** Actual native pi identity; null for providers using a non-pi execution path. */
+  readonly pi_provider?: string | null;
+  readonly models?: readonly { id: string; api: string; input: readonly string[] }[];
 }
 
 /** schedules[] 行：cron 声明的静态投影（本表只读，不触发任何 worker 行为）。 */
