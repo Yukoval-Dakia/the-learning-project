@@ -3454,7 +3454,14 @@ describe('runCopilotRun', () => {
       // Cold start: no resume → the model context carries no replayed turns.
       expect(calls).toHaveLength(1);
       expect(calls[0].provider).toBe('xiaomi');
-      expect(calls[0].messages).toEqual([]);
+      expect(calls[0].messages).toHaveLength(1);
+      expect(calls[0].messages[0]).toMatchObject({
+        role: 'system',
+        content: expect.stringContaining('【Owner gate】'),
+      });
+      expect(calls[0].messages[0]).toMatchObject({
+        content: expect.stringContaining('<skill name="_shared--copilot">'),
+      });
 
       // Turn 2 — same session switches to openai/gpt-6-astra: the pi: cursor
       // resumes verbatim and the durable turn-1 pair replays into the Astra
@@ -3474,7 +3481,11 @@ describe('runCopilotRun', () => {
       expect(calls).toHaveLength(2);
       expect(calls[1].provider).toBe('openai');
       expect(calls[1].model).toBe('gpt-6-astra');
-      const replay2 = calls[1].messages;
+      expect(calls[1].messages[0]).toMatchObject({
+        role: 'system',
+        content: calls[0].messages[0].content,
+      });
+      const replay2 = calls[1].messages.slice(1);
       // The real assembler prepends the pinned learner-state header as a
       // 'context' turn (piReplayTurnsToMessages lands it as a user message),
       // then the durable turn-1 pair follows.
@@ -3504,7 +3515,11 @@ describe('runCopilotRun', () => {
       expect(await persistedSdkSessionId(sessionId)).toBe(cursor1);
       expect(calls).toHaveLength(3);
       expect(calls[2].provider).toBe('xiaomi');
-      const replay3 = calls[2].messages;
+      expect(calls[2].messages[0]).toMatchObject({
+        role: 'system',
+        content: calls[0].messages[0].content,
+      });
+      const replay3 = calls[2].messages.slice(1);
       // Pinned context header + both durable turn pairs, oldest→newest.
       expect(replay3.map((m) => m.role)).toEqual([
         'user',
