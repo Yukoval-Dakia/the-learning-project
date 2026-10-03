@@ -162,6 +162,8 @@ export const fastTestInclude = [
   // + ./providers types. Same enumeration requirement as above (no
   // src/server/ai/** unit glob).
   'src/server/ai/pi-agent-adapter.test.ts',
+  // Installed pi engine with a scripted provider stream; no DB or paid requests.
+  'src/server/ai/pi-agent-loop.unit.test.ts',
   // YUK-1027 — openai/gpt-6-astra Responses wire contract: real pi-ai driver +
   // injected fake fetch (no network, no key, no DB). Imports ./pi-models whose
   // pi-ai imports are all dynamic — enumerate like every other
