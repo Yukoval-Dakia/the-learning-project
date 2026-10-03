@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { z } from 'zod';
 
 import type { IngestionOperationKind } from '@/capabilities/ingestion/api/operation-schema';
 import type { Db, Tx } from '@/db/client';
@@ -14,6 +15,10 @@ export interface IngestionOperationError {
   message: string;
   status: number;
 }
+
+const IngestionOperationErrorSchema = z
+  .object({ code: z.string(), message: z.string(), status: z.number() })
+  .passthrough();
 
 export interface IngestionOperationResource {
   id: string;
@@ -260,13 +265,14 @@ export async function readIngestionOperation(
     }
   }
 
-  const errorPayload = failed?.payload.error;
-  const error =
-    errorPayload && typeof errorPayload === 'object'
-      ? (errorPayload as unknown as IngestionOperationError)
-      : operationKind === 'extract' && status === 'failed'
+  const parsedError = IngestionOperationErrorSchema.safeParse(failed?.payload.error);
+  const error = parsedError.success
+    ? parsedError.data
+    : status === 'failed'
+      ? operationKind === 'extract'
         ? { code: 'extraction_failed', message: 'Extraction failed', status: 500 }
-        : undefined;
+        : { code: 'operation_failed', message: 'Operation failed', status: 500 }
+      : undefined;
 
   return {
     id: operationId,

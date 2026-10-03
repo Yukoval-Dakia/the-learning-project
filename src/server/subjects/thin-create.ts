@@ -22,7 +22,7 @@
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, isNull } from 'drizzle-orm';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import {
   subject,
   subject_control_journal,
@@ -61,7 +61,7 @@ function isUniqueViolation(err: unknown): boolean {
 }
 
 async function findLiveCustomByNorm(
-  db: Db,
+  db: Db | Tx,
   norm: string,
 ): Promise<{ id: string; display_name: string; revision: number } | null> {
   const rows = await db
@@ -130,7 +130,7 @@ export async function thinCreateSubject(db: Db, rawDisplayName: string): Promise
           .limit(1);
         const h = holderRow[0];
         if (h && h.origin === 'custom' && h.retired_at === null) {
-          const live = await findLiveCustomByNorm(tx as unknown as Db, norm);
+          const live = await findLiveCustomByNorm(tx, norm);
           if (live) return { kind: 'replayed', payload: replayPayload(live) };
         }
         // builtin 的 canonical/alias（取名 'math'/'wenyan' 之类）、或 retired
@@ -150,7 +150,7 @@ export async function thinCreateSubject(db: Db, rawDisplayName: string): Promise
         .limit(1);
       if (sameName.length > 0) {
         if (sameName[0].origin === 'custom') {
-          const live = await findLiveCustomByNorm(tx as unknown as Db, norm);
+          const live = await findLiveCustomByNorm(tx, norm);
           if (live) return { kind: 'replayed', payload: replayPayload(live) };
         }
         return {

@@ -7,7 +7,7 @@ import {
   planDigestOf,
 } from '@/core/migration/apply';
 import { canonicalHash } from '@/core/migration/canonical';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import {
   assessment_identity_mapping,
   assessment_issuance,
@@ -356,23 +356,7 @@ async function preflight(db: Db, plan: MigrationApplyPlan): Promise<void> {
 
 // ───────────────────────── 存储行内容对账（P1-3） ─────────────────────────
 
-type MappingStoredRow = {
-  mapping_id: string;
-  source_kind: string;
-  source_id: string;
-  source_locator: string;
-  original_question_id: string;
-  legacy_part_ref: string | null;
-  snapshot_digest: string | null;
-  target_revision_id: string | null;
-  target_part_id: string | null;
-  target_slot_id: string | null;
-  evidence: unknown;
-  algorithm_version: string;
-  status: string;
-  is_current: boolean;
-  created_at: Date;
-};
+type MappingStoredRow = typeof assessment_identity_mapping.$inferSelect;
 
 function mappingContentDigest(
   row: Omit<MappingStoredRow, 'mapping_id' | 'is_current' | 'created_at'> & {
@@ -430,12 +414,10 @@ async function applyMappings(
     );
     const result = await db.transaction(async (tx) => {
       // 同 locator 的当前行（含 pending→resolved 接替判断）+ 非当前行（历史链）。
-      const stored = (await tx
+      const stored = await tx
         .select()
         .from(assessment_identity_mapping)
-        .where(
-          inArray(assessment_identity_mapping.source_locator, [...locatorToPlanned.keys()]),
-        )) as unknown as MappingStoredRow[];
+        .where(inArray(assessment_identity_mapping.source_locator, [...locatorToPlanned.keys()]));
       const currentByLocator = new Map<string, MappingStoredRow>();
       for (const row of stored) {
         if (row.is_current) currentByLocator.set(row.source_locator, row);
@@ -676,52 +658,11 @@ async function applySubmissions(
  * 批事务断言与最终/已完成-run 对账复用同一套【完整载荷】比较 —— 任何一处存储
  * 内容与 plan 不符都产生 divergence 描述（批内立即抛，reconcile 汇入报告）。 */
 
-type ChainTx = Parameters<Parameters<Db['transaction']>[0]>[0];
-
-interface StoredIssuance {
-  issuance_id: string;
-  revision_id: string;
-  part_ids: unknown;
-  material_bindings: unknown;
-  option_order: unknown;
-  container_occurrence_ref: string | null;
-  claim_policy: string;
-  issued_at: Date;
-}
-interface StoredGroup {
-  evaluation_group_id: string;
-  submission_ids: unknown;
-  created_at: Date;
-}
-interface StoredSubmission {
-  submission_id: string;
-  issuance_id: string;
-  revision_id: string;
-  evaluation_group_id: string;
-  response_set: unknown;
-  group_evidence: unknown;
-  idempotency_key: string;
-  submitted_at: Date;
-}
-interface StoredEvaluation {
-  evaluation_id: string;
-  evaluation_group_id: string;
-  submission_id: string;
-  attempt: number;
-  status: string;
-  unit_results: unknown;
-  aggregate: unknown;
-  plan_digest: string | null;
-  run_refs: unknown;
-  provenance: unknown;
-  created_at: Date;
-}
-interface StoredHead {
-  evaluation_group_id: string;
-  submission_id: string;
-  effective_evaluation_id: string | null;
-  generation: number;
-}
+type StoredIssuance = typeof assessment_issuance.$inferSelect;
+type StoredGroup = typeof evaluation_group.$inferSelect;
+type StoredSubmission = typeof assessment_submission.$inferSelect;
+type StoredEvaluation = typeof evaluation.$inferSelect;
+type StoredHead = typeof evaluation_effective_head.$inferSelect;
 
 interface ChainRowSnapshot {
   issuances: Map<string, StoredIssuance>;
@@ -732,12 +673,11 @@ interface ChainRowSnapshot {
 }
 
 async function readChainRows(
-  dbOrTx: Db | ChainTx,
+  db: Db | Tx,
   chains: readonly SubmissionChainPlan[],
 ): Promise<ChainRowSnapshot> {
-  const db = dbOrTx as Db;
   const issuanceRows = chains.length
-    ? ((await db
+    ? await db
         .select()
         .from(assessment_issuance)
         .where(
@@ -745,10 +685,10 @@ async function readChainRows(
             assessment_issuance.issuance_id,
             chains.map((c) => c.issuance.issuance_id),
           ),
-        )) as unknown as StoredIssuance[])
+        )
     : [];
   const groupRows = chains.length
-    ? ((await db
+    ? await db
         .select()
         .from(evaluation_group)
         .where(
@@ -756,10 +696,10 @@ async function readChainRows(
             evaluation_group.evaluation_group_id,
             chains.map((c) => c.group.evaluation_group_id),
           ),
-        )) as unknown as StoredGroup[])
+        )
     : [];
   const submissionRows = chains.length
-    ? ((await db
+    ? await db
         .select()
         .from(assessment_submission)
         .where(
@@ -767,10 +707,10 @@ async function readChainRows(
             assessment_submission.submission_id,
             chains.map((c) => c.submission.submission_id),
           ),
-        )) as unknown as StoredSubmission[])
+        )
     : [];
   const evalRows = chains.length
-    ? ((await db
+    ? await db
         .select()
         .from(evaluation)
         .where(
@@ -778,10 +718,10 @@ async function readChainRows(
             evaluation.evaluation_id,
             chains.flatMap((c) => c.evaluations.map((e) => e.evaluation_id)),
           ),
-        )) as unknown as StoredEvaluation[])
+        )
     : [];
   const headRows = chains.length
-    ? ((await db
+    ? await db
         .select()
         .from(evaluation_effective_head)
         .where(
@@ -789,7 +729,7 @@ async function readChainRows(
             evaluation_effective_head.evaluation_group_id,
             chains.map((c) => c.head.evaluation_group_id),
           ),
-        )) as unknown as StoredHead[])
+        )
     : [];
   return {
     issuances: new Map(issuanceRows.map((r) => [r.issuance_id, r] as const)),
@@ -927,7 +867,7 @@ function compareChains(chains: readonly SubmissionChainPlan[], stored: ChainRowS
 
 /** 批事务内断言：先读后比，任何 divergence 在提交前抛出。 */
 async function assertSubmissionBatchContent(
-  tx: ChainTx,
+  tx: Tx,
   batch: readonly SubmissionChainPlan[],
 ): Promise<void> {
   const divergences = compareChains(batch, await readChainRows(tx, batch));
@@ -988,7 +928,7 @@ async function reconcile(
 
   // 映射行：存在性 + 【全内容】对账（P1-1 终轮：不是只数 ID）。
   if (mappingRows.length > 0) {
-    const stored = (await db
+    const stored = await db
       .select()
       .from(assessment_identity_mapping)
       .where(
@@ -996,7 +936,7 @@ async function reconcile(
           assessment_identity_mapping.mapping_id,
           mappingRows.map((m) => m.mapping_id),
         ),
-      )) as unknown as MappingStoredRow[];
+      );
     const plannedById = new Map(mappingRows.map((m) => [m.mapping_id, m] as const));
     for (const row of stored) {
       out.mapping_rows_present += 1;

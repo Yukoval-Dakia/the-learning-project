@@ -40,7 +40,7 @@ import { assembleSubjectProfile } from '@/subjects/trait-compose';
 import {
   SUBJECT_TRAIT_KINDS,
   type SubjectTraitKind,
-  type SubjectTraitPayloads,
+  parseTraitPayloads,
 } from '@/subjects/trait-schemas';
 
 export type ControlWriteResult =
@@ -384,16 +384,19 @@ export async function validateSubject(
   if (bound.length !== SUBJECT_TRAIT_KINDS.length) {
     return { valid: false, errors: ['incomplete trait bindings'], warnings: [] };
   }
-  const payloads = {} as Record<SubjectTraitKind, unknown>;
+  const payloads: Partial<Record<SubjectTraitKind, unknown>> = {};
   for (const b of bound) {
-    payloads[b.kind] = traitPayloadOverrides?.[b.kind] ?? b.payload;
+    payloads[b.kind] =
+      traitPayloadOverrides && Object.hasOwn(traitPayloadOverrides, b.kind)
+        ? traitPayloadOverrides[b.kind]
+        : b.payload;
   }
   try {
     const profile = assembleSubjectProfile({
       id: subjectId,
       displayName: row.displayName,
       version: 'preflight',
-      payloads: payloads as unknown as SubjectTraitPayloads,
+      payloads: parseTraitPayloads(payloads),
     });
     const result = validateProfile(profile, getDefaultRegistry());
     return {
