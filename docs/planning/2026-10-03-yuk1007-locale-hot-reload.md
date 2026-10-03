@@ -16,8 +16,11 @@ The intervention validator's solve/content/review stages share one locale, used
 both for execution and sealed prompt fingerprints. Evaluation captures one locale
 per fixture, including observations after asynchronous calls. This fixes the P1
 found in independent review of the initial dynamic-reader implementation.
-Current-template checks still invalidate historical evidence when the current
-prompt changes, matching the existing prompt-version policy.
+Recovery identifies the execution locale from sealed validator fingerprints and
+requires all stages to match one supported locale of the current templates. A
+configuration language switch does not invalidate a completed attempt; stale
+templates, missing rows, mixed locales and altered input/result digests still fail
+closed. Judge invocation similarly pins execution and provenance to one locale.
 
 Typed tasks have no system prompt and retain their routing guard. UI language,
 per-task budgets, configuration editing routes, and the settings panel remain
@@ -55,7 +58,8 @@ Merged prerequisite branch #1522 (YUK-1111/YUK-1115) into this candidate: the
 65-expiration failure above is historical. 61 obsolete exemptions removed; four
 real reserved fields have explicit bounded follow-up YUK-1113. New SQL/default
 producer support and dependency repairs pass locally. Full exact-head CI reruns
-after push; prerequisite PR and this locale PR are not yet claimed merged.
+after push. Prerequisite #1522 is merged as f750de4012d82d0fd8a2c9ed89ff53097d40922a;
+this locale PR is still pending its final exact-head CI and waiting window.
 
 The final candidate also includes pi 1.0.0 prerequisite #1523. Its system message
 transport now carries the locale-bound prompt. Each prerequisite has its own
@@ -65,3 +69,21 @@ Combined local acceptance after pi/schema/dependency integration: 160 unit cases
 across five files and 55 real-Postgres cases across two files passed. Typecheck,
 lint ratchet (299 warnings), production build and pre-PR audits passed. The
 original locale-specific 252-unit evidence above remains separately scoped.
+
+## Final advisory P1 fixes
+
+- Judge provenance: advisory4172187009 reproduced with a config switch during
+  model execution (1 failed /14 passed before repair). Capture/forward locale
+  before the await and use it for both returned and persisted execution metadata.
+  All42 judge invoker/durable/retry/provenance unit cases pass.
+- Recovery: advisory4172193537 reproduced in real Postgres for both zh-CN→en
+  and en→zh-CN (2 failures before repair). A valid persisted FULL pass now activates
+  with its original attempt and zero new model calls. Infer a single consistent
+  locale from sealed task rows against current prompt templates. Added rejection
+  cases for mixed-locale and stale-template fingerprints; existing missing-row,
+  altered-lineage/input/result and exhausted-budget checks remain intact.
+  All42 intervention-preparation DB cases pass.
+- Final typecheck, lint/ratchet, production build and pre-PR audits pass.
+  Pi's Copilot system-transcript test correction is also integrated.
+- Independent initial + verification review budget is complete. Later advisory
+  findings were reproduced and fixed without starting a third review round.

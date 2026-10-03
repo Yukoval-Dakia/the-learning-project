@@ -7,16 +7,19 @@ pi core. Linear is connected. The current implementation is the three-PR chain:
   61 expired exemptions removed; 4 real reserved fields remain dated under
   YUK-1113. Existing fixture evidence gap is YUK-1114 (not fixed). Axios1.20.0;
   Mem0's unused Jest peer removed, leaving no production Braces path.
-  Head44ed63de CI37106453748 passed. Independent initial + verification review
+  Merged as f750de40; Head44ed63de CI37106453748 passed; both Linear issues Done. Independent initial + verification review
   completed with no P0/P1; advisory4172134135 adjudicated P2/YUK-1114.
 - #1523 / YUK-1112: pi-agent-core/pi-ai1.0.0; finishTurn, system transcript,
   compaction preservation, and full root+child terminal usage. 160 local unit,
-  typecheck/lint/build/audits passed; independent initial review no P0/P1.
+  typecheck/lint/build/audits passed; independent initial + verification review no P0/P1.
+  Copilot model-switch system-transcript regression61 DB passed; current24f9313b CI pending.
   Includes real installed loop and a loopback HTTP MiMo-compatible SSE test.
 - #1521 / YUK-1007: AI output locale hot reload and pinned prompt provenance.
   Original252 unit +55 DB; combined pi/schema/dependency candidate160 unit +55 DB
   passed, with local typecheck/lint/build/audits. Initial P1 fixed; independent
-  verification review found no remaining P0/P1. Epic is not complete.
+  verification review found no remaining P0/P1. Later advisory judge/recovery races
+  reproduced and fixed:42 judge unit +42 recovery DB pass. Recovery accepts one
+  consistent sealed locale, rejects mixed/stale fingerprints. Epic is not complete.
 
 Use GitHub PR merge state and exact-head CI, plus Linear, for current delivery
 status; do not infer merge/deployment from this implementation handoff. Merge only
