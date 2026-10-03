@@ -121,8 +121,7 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   'lane.vision_judge.model': 'src/server/ai/vision-judge-config.ts',
   'lane.global.provider': 'src/server/ai/providers.ts',
   'lane.global.model': 'src/server/ai/providers.ts',
-  // tier B 落点已登记，但 getTaskSystemPrompt 尚未读它（迁移前的诚实标注）。
-  'locale.learner': null,
+  'locale.learner': 'src/ai/task-prompts.ts',
 };
 
 /** task.<kind>.* 覆盖字段的接线状态（runner budget seam 未迁移前 budget 不生效）。 */

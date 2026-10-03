@@ -10,6 +10,7 @@
 // 诚实性：effective 值全部来自真实 reader 调用（不复制规则）；reader 输出非单
 // 一标量的键（admission 按 lane、jyeoo backfill 按会话）只给 note；providers[]
 // 只带 key presence 布尔与 env 名字，值绝不进 payload。
+import { getLearnerLocale } from '@/ai/task-prompts';
 import { capabilities } from '@/capabilities';
 import { copilotConfigEffectiveFacts } from '@/capabilities/copilot/public';
 import { ingestionConfigEffectiveFacts } from '@/capabilities/ingestion/public';
@@ -116,6 +117,10 @@ function buildEffectiveValues(): AdminConfigRuntimeFacts['effective_values'] {
             value: null,
             note: '未设置：vision judge 解析链落到 registry 默认（anthropic-sub 自带 claude-opus-4-8 默认）',
           },
+    'locale.learner': {
+      value: getLearnerLocale(),
+      note: 'AI 输出语言：下次 system prompt 构建时读取本进程快照；跨进程轮询间隔 15s（失败保留旧快照），不改变 UI 语言或 typed task',
+    },
     MEMORY_RECONCILE_HANDOFF_MODE: handoffMode,
     'lane.global.provider': globalPinActive
       ? { value: globalSwitch?.provider }

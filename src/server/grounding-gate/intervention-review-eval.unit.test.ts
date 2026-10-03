@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { reviewInterventionPackageCandidate } from '@/capabilities/practice/server/intervention-author';
+import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import {
   INTERVENTION_REVIEW_AUDIT_PROTOCOL_VERSION,
   buildInterventionPackageReviewTaskInput,
@@ -24,6 +25,7 @@ vi.mock('@/capabilities/practice/server/intervention-author', () => ({
 
 describe('intervention reviewer actual-output regression fixture', () => {
   beforeEach(() => vi.clearAllMocks());
+  afterEach(resetTestConfig);
 
   it('pins complex false-pass regressions and true-pass controls', () => {
     const packet = InterventionReviewRegressionPacket.parse(regressionFixture);
@@ -232,7 +234,11 @@ describe('intervention reviewer actual-output regression fixture', () => {
     const result = await runInterventionReviewActualOutputEval({
       db,
       packet,
-      runTaskFn: async () => ({ text: '', task_run_id: 'paid-before-throw' }),
+      runTaskFn: async (_kind, _input, ctx) => {
+        expect(ctx?.learnerLocale).toBe('zh-CN');
+        setTestConfig({ 'locale.learner': 'en' });
+        return { text: '', task_run_id: 'paid-before-throw' };
+      },
       codeRevision: 'test-revision',
     });
 

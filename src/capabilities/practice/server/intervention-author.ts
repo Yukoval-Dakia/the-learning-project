@@ -1,3 +1,4 @@
+import { getLearnerLocale } from '@/ai/task-prompts';
 import {
   type InterventionAuthoringContextT,
   guardInterventionPreparationStage,
@@ -211,6 +212,7 @@ async function runInterventionIndependentSolutions(input: {
   packageValue: InterventionPackageT;
   subjectProfile: ResolvedSubjectProfile;
   beforeEachPaidCall: () => Promise<string | null>;
+  learnerLocale: 'zh-CN' | 'en';
 }): Promise<
   | {
       status: 'ok';
@@ -224,6 +226,7 @@ async function runInterventionIndependentSolutions(input: {
   const solverPromptFingerprint = taskPromptFingerprint(
     'SolutionGenerateTask',
     input.subjectProfile,
+    input.learnerLocale,
   );
 
   for (const kind of INTERVENTION_DIAGNOSTIC_KINDS) {
@@ -386,6 +389,7 @@ async function runInterventionQuestionContentValidations(input: {
   packageValue: InterventionPackageT;
   subjectProfile: ResolvedSubjectProfile;
   beforeEachPaidCall: () => Promise<string | null>;
+  learnerLocale: 'zh-CN' | 'en';
 }): Promise<
   | { status: 'ok'; audit: InterventionQuestionContentValidationAuditT }
   | { status: 'invalid'; failureCode: string; taskRunIds: string[]; failureDetail?: string }
@@ -393,7 +397,11 @@ async function runInterventionQuestionContentValidations(input: {
   const taskRunIds: string[] = [];
   const diagnostics: InterventionQuestionContentValidationAuditT['diagnostics'] = [];
   const packageDigest = sha256CanonicalJson(input.packageValue);
-  const promptFingerprint = taskPromptFingerprint('QuizVerifyTask', input.subjectProfile);
+  const promptFingerprint = taskPromptFingerprint(
+    'QuizVerifyTask',
+    input.subjectProfile,
+    input.learnerLocale,
+  );
 
   for (const kind of INTERVENTION_DIAGNOSTIC_KINDS) {
     const guardFailure = await input.beforeEachPaidCall();
@@ -711,6 +719,7 @@ async function runPackageReview(
   questionContentValidationAudit: InterventionQuestionContentValidationAuditT,
   beforeEachPaidCall: () => Promise<string | null>,
   reviewRunBindingPolicy: 'require_now' | 'defer_to_preparation_record',
+  learnerLocale: 'zh-CN' | 'en',
 ): Promise<
   | { status: 'ok'; review: InterventionPackageReviewAuditT }
   | { status: 'invalid'; failureCode: string; taskRunIds: string[]; failureDetail?: string }
@@ -737,7 +746,11 @@ async function runPackageReview(
     questionContentValidationAudit,
   });
   const reviewTaskInputSha256 = sha256CanonicalJson(reviewTaskInput);
-  const promptFingerprint = taskPromptFingerprint('InterventionPackageReviewTask', subjectProfile);
+  const promptFingerprint = taskPromptFingerprint(
+    'InterventionPackageReviewTask',
+    subjectProfile,
+    learnerLocale,
+  );
   const reviewAttemptTaskRunIds: string[] = [];
   let failureDetail = '';
   let fatal: { failureCode: string; taskRunIds: string[]; failureDetail?: string } | undefined;
@@ -919,6 +932,7 @@ type InterventionPackageCandidateReviewInput = {
   packageValue: InterventionPackageT;
   subjectProfile: ResolvedSubjectProfile;
   beforeEachPaidCall?: () => Promise<string | null>;
+  learnerLocale?: 'zh-CN' | 'en';
 };
 
 type InterventionPackageCandidateReviewResult =
@@ -935,6 +949,9 @@ async function reviewInterventionPackageCandidateWithPolicy(
     reviewRunBindingPolicy: 'require_now' | 'defer_to_preparation_record';
   },
 ): Promise<InterventionPackageCandidateReviewResult> {
+  const learnerLocale = input.learnerLocale ?? getLearnerLocale();
+  const runTaskFn: TaskTextRunFn = (kind, taskInput, ctx) =>
+    input.runTaskFn(kind, taskInput, { ...ctx, learnerLocale });
   const beforeEachPaidCall = input.beforeEachPaidCall ?? (async () => null);
   // Claim discovery is deterministic and bounded. Run it before any paid solve
   // so an adversarially repetitive answer surface cannot spend six calls and
@@ -953,19 +970,21 @@ async function reviewInterventionPackageCandidateWithPolicy(
   }
   const independentlySolved = await runInterventionIndependentSolutions({
     db: input.db,
-    runTaskFn: input.runTaskFn,
+    runTaskFn,
     packageValue: input.packageValue,
     subjectProfile: input.subjectProfile,
+    learnerLocale,
     beforeEachPaidCall,
   });
   if (independentlySolved.status === 'invalid') return independentlySolved;
 
   const contentValidated = await runInterventionQuestionContentValidations({
     db: input.db,
-    runTaskFn: input.runTaskFn,
+    runTaskFn,
     context: input.context,
     packageValue: input.packageValue,
     subjectProfile: input.subjectProfile,
+    learnerLocale,
     beforeEachPaidCall,
   });
   if (contentValidated.status === 'invalid') {
@@ -982,7 +1001,7 @@ async function reviewInterventionPackageCandidateWithPolicy(
 
   const reviewed = await runPackageReview(
     input.db,
-    input.runTaskFn,
+    runTaskFn,
     input.context,
     input.packageValue,
     input.subjectProfile,
@@ -990,6 +1009,7 @@ async function reviewInterventionPackageCandidateWithPolicy(
     contentValidated.audit,
     beforeEachPaidCall,
     input.reviewRunBindingPolicy,
+    learnerLocale,
   );
   if (reviewed.status === 'invalid') {
     return {

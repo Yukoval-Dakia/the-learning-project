@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> 更新于2026-09-30。本轮先收口现有PR，再回产品主线。本看板须在#1512、#1501、#1504合并后入main，交付状态以各PR的squash记录为准。已有CI提速保留，后续优化暂停，120秒未证明。本轮不部署、不新增付费评测。Linear connector不可用，待同步项先存PARKED，不声称已更新Linear。
+> 更新于2026-10-03。YUK-1007 AI输出语言后端热加载已实现并通过局部验证与两轮独立审查，尚未合入或部署；交付受主分支65条schema豁免到期阻塞，见YUK-1111。Linear连接已恢复。CI提速仍暂停，120秒未证明。
 
 ## NOW
+
+- YUK-1007 locale.learner 接通 prompt reader 与配置 effective；runner 和 intervention 三阶段绑定语言快照，避免热更新使封存指纹失真。252 unit、55 DB、typecheck/lint/build及除schema外相关审计通过；独立验证审无剩余P0/P1。证据见 `docs/planning/2026-10-03-yuk1007-locale-hot-reload.md`。未部署、未新增付费评测。
 
 - #1512保留DB4/unit4、19项审计并行、单次构建、tmpfs、时长统计与SDK懒加载。五个predicate用例已恢复，共11个。局部87 unit、先前67 DB、typecheck、lint、build通过。排序修复后的 `619ac1602` 完整CI `36729120083` 全绿，事件是workflow_dispatch，四个unit和四个DB分片、审计、migration、build/usability均实际运行。详见 `docs/planning/2026-09-30-yuk1107-ci-latency.md`。YUK-1107不标Done。
 - #1501修复D18三个P1。未知费用使用非空保守预留，失败调用记费用，typed runner尊重caller的 `retry:none`，seal写入错误不重发模型。`de2c7911c` 修复后55 unit与6 DB通过，同步main后的 `3b7036b06` 再验55 unit、6 DB、typecheck、lint与build通过，PR gate `36728701979` 全绿。已有Jev实跑属于历史证据，本轮没有重新付费，也没有完成MiMo评测。
@@ -15,17 +17,17 @@
 
 ## NEXT
 
-1. 回到产品主线。YUK-1007下一步仍需确认预算和语言reader迁移、配置写面与面板UI的实施范围；UI preflight未批准，不自行开工。
+1. 先按YUK-1111逐项复核schema豁免并恢复交付gate；再继续YUK-1007预算reader、配置写面与面板UI。语言reader本批已实现，仍待CI和合并。UI preflight未批准。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
 ## PARKED
 
-- Linear capture暂存。当前connector catalog无Linear工具，无法查询远端重复票或更新状态。以下已按本地报告和原票去重；恢复后先查远端重复，再更新原票或归并立票，不把暂存当作完成。
+- Linear已恢复。YUK-1111记录本轮真实阻碍；其余历史PARKED条目仍需逐项对照远端，不把连接恢复当作批量同步完成。
 - #1508的pi0.87.1已移除 `shouldStopAfterTurn`。必须迁移parent/subagent至 `finishTurn`，验证最大turn、tool loop、错误/abort分支的wire计数，不用类型断言掩盖。原分支保留，不是已完成的迁移。
 - #1506的jsdom30要求Node24.15+，仓库pin24.0.0。必须协调运行时与DOM回归。#1505的Biome2.5.14原CI有1error、375warnings，超过305基线。必须修真实diagnostics并证明计数，不抬基线放行。原分支保留。
 - 漂移待办归并一组。同步ADR-0003/0004及0054–0060的SDK→pi机制与0054状态记录；保留产品决策，不恢复SDK、不先宣称全部行为等价。另核对agency/notes manifest概要、根AGENTS的 `/api/ready` token豁免说明、无consumer的 `SKIP_BOSS_INGEST` 声明。证据见 `docs/audit/2026-09-28-drift.md`、`2026-09-29-drift.md`、`2026-09-30-drift.md`，不建三个重复票。
-- 状态同步。YUK-1106在#1504 exact-head gate与合并完成后应收口；YUK-1007仍In Progress，因为预算/语言/UI/写面未完；YUK-1107暂停且未证明120秒，不标Done。D18新付费评测待单独授权。当前未向Linear写入这些状态。
+- 状态同步已于10-03写入Linear：YUK-1106核验#1504合并与CI后Done；YUK-1107按暂停决定回Backlog且未证明120秒；YUK-1007保持In Progress，本批语言实现仍未合并，预算/UI/写面未完。D18新付费评测待单独授权。
 - YUK-1106的#1512阻塞已解除。原 `278a4e936` 的CI `36725357009` 在 `assessment-verdict.db.test.ts:332` 收到j_new、预期j_old。源码diff确认它缺少#1504的候选排序，不是已修代码复发。先合#1504，再同步main，原19项DB用例和新head完整CI `36729120083` 通过。未rerun原SHA，未删断言。原日志封存 `.remember/tmp/pr-closeout-20260930/1512-shard4.log`；Linear恢复后归并原票，不开重复票。
 - YUK-1007读面仍有四项已裁决P2，不在本轮扩面。`providers[].implemented` 未表达typed-task限定的OpenRouter实现；schedules遗漏 `event_subscription_dispatch`；vision对非OAuth错误provider/缺key的effective报告仍偏乐观；tasks的global_pin未标无效provider名。#1504评论4133649105、4133649102、4133649097、4133645669已给跳过理由。合并到原epic跟进，不将providers/schedules读面称为完备，不新建四个重复票。
 - YUK-1045历史待办仍保留。claim冲突路由未翻译409 `claim_conflict`；source_verify child→root锁序与publisher反向；`publishQuestionGroup` 未调 `validateStructure`。实施前核对当前代码和远端票，不把历史发现当作新回归。
@@ -34,6 +36,7 @@
 
 ## BLOCKED-ON
 
+- YUK-1111：未改动main与本批工作树均有同样65条schema豁免到期；未顺延日期或减弱审计。此项阻塞合并。
 - 本轮明确不部署。Mac/NAS生产数据库、容器、flags与provider凭据不动。新paid评测与运行时迁移均需独立授权。
 - 各交付PR须独立review、真实required check与最后push后约17分钟等待窗。本看板最后合并，不能用文档先称业务PR已落main。
 - 原始脏工作树不动。实施和交付使用独立工作树，所有未合入分支保留。不删计费、重试、复杂parser、并发/回滚/恢复、UI安全测试来凑计数。

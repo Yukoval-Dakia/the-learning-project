@@ -24,7 +24,7 @@
 import { createHash } from 'node:crypto';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 import { type TaskKind, tasks } from '@/ai/registry';
-import { getTaskSystemPrompt } from '@/ai/task-prompts';
+import { getLearnerLocale, getTaskSystemPrompt } from '@/ai/task-prompts';
 import type { TaskDefinition } from '@/ai/task-spec';
 import type { Db } from '@/db/client';
 import type { SubjectProfile } from '@/subjects/profile';
@@ -194,6 +194,8 @@ export interface RunTaskCtx {
   allowedTools?: string[];
   /** Subject context for prompts that are rendered from SubjectProfile. */
   subjectProfile?: SubjectProfile;
+  /** Stable prompt language for this execution, including retries and provenance. */
+  learnerLocale?: 'zh-CN' | 'en';
   /**
    * ADR-0060 compaction: the bounded session context the adapter's
    * transformContext re-injects after a budget prune. Never contains raw
@@ -478,7 +480,7 @@ function buildQueryOptions(
   const declaredDef: TaskDefinition = def;
   const options: Options = {
     model: resolved.model,
-    systemPrompt: getTaskSystemPrompt(kind, ctx.subjectProfile),
+    systemPrompt: getTaskSystemPrompt(kind, ctx.subjectProfile, ctx.learnerLocale),
     abortController,
     tools: ctx.allowedTools ?? def.allowedTools,
     // YUK-575 (N5) — durable copilot run overrides the turn ceiling per-call.
@@ -779,8 +781,9 @@ async function runTaskAttempt(args: {
 export async function runTask(
   kind: string,
   input: unknown,
-  ctx: RunTaskCtx,
+  initialCtx: RunTaskCtx,
 ): Promise<RunTaskResult> {
+  const ctx = { ...initialCtx, learnerLocale: initialCtx.learnerLocale ?? getLearnerLocale() };
   if (!isKnownTask(kind)) {
     throw new Error(`Unknown task kind: ${kind}`);
   }
@@ -916,7 +919,8 @@ export async function runAgentTask(
 // deltas to the body. Tool-use blocks land in tool_call_log per turn.
 // ============================================================================
 
-export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Response {
+export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskCtx): Response {
+  const ctx = { ...initialCtx, learnerLocale: initialCtx.learnerLocale ?? getLearnerLocale() };
   if (!isKnownTask(kind)) {
     throw new Error(`Unknown task kind: ${kind}`);
   }
@@ -1081,9 +1085,10 @@ export interface StreamCollectResult extends RunTaskResult {
 export async function streamTaskCollecting(
   kind: string,
   input: unknown,
-  ctx: StreamTaskCtx,
+  initialCtx: StreamTaskCtx,
   onDelta: (text: string) => void,
 ): Promise<StreamCollectResult> {
+  const ctx = { ...initialCtx, learnerLocale: initialCtx.learnerLocale ?? getLearnerLocale() };
   if (!isKnownTask(kind)) {
     throw new Error(`Unknown task kind: ${kind}`);
   }

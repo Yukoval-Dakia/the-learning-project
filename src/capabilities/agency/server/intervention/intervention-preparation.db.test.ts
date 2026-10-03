@@ -1,11 +1,13 @@
 import { and, count, eq, inArray, sql } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { getTaskSystemPrompt } from '@/ai/task-prompts';
 import {
   INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS,
   authorInterventionPackage,
   handleReviewDue,
 } from '@/capabilities/practice/public';
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '@/capabilities/practice/server/judge-run-status';
+import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { PEDAGOGY_METHOD_LIBRARY } from '@/core/pedagogy';
 import { PROBE_QUESTION_KIND, PROBE_QUESTION_SOURCE } from '@/core/schema/conjecture';
 import type { ConjectureProbeResponseJudgementT } from '@/core/schema/conjecture-probe-response';
@@ -631,6 +633,7 @@ function successfulRunTask(
 
 describe('YUK-791 intervention preparation closed loop', () => {
   beforeEach(resetDb);
+  afterEach(resetTestConfig);
 
   it('durably opens shadow preparation, consumes recommendation in the same wave, and activates once', async () => {
     const db = testDb();
@@ -672,7 +675,25 @@ describe('YUK-791 intervention preparation closed loop', () => {
         preparationJobId: preparationJobIdOf(opened),
       },
       {
-        runTaskFn: fn,
+        runTaskFn: async (kind, taskInput, ctx) => {
+          const validator =
+            kind === 'SolutionGenerateTask' ||
+            kind === 'QuizVerifyTask' ||
+            kind === 'InterventionPackageReviewTask';
+          if (validator) {
+            // A real async boundary can refresh config after the fingerprint was captured.
+            setTestConfig({ 'locale.learner': 'en' });
+            expect(ctx?.learnerLocale).toBe('zh-CN');
+            expect(getTaskSystemPrompt(kind, ctx?.subjectProfile, ctx?.learnerLocale)).toBe(
+              getTaskSystemPrompt(kind, ctx?.subjectProfile, 'zh-CN'),
+            );
+          }
+          try {
+            return await fn(kind, taskInput, ctx);
+          } finally {
+            resetTestConfig();
+          }
+        },
         authorPackageFn: authorInterventionPackage,
         now: () => seeded.now,
       },
