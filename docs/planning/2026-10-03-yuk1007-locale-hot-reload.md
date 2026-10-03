@@ -60,3 +60,8 @@ after push; prerequisite PR and this locale PR are not yet claimed merged.
 The final candidate also includes pi 1.0.0 prerequisite #1523. Its system message
 transport now carries the locale-bound prompt. Each prerequisite has its own
 independent review; no review budget is reset by merging the branches.
+
+Combined local acceptance after pi/schema/dependency integration: 160 unit cases
+across five files and 55 real-Postgres cases across two files passed. Typecheck,
+lint ratchet (299 warnings), production build and pre-PR audits passed. The
+original locale-specific 252-unit evidence above remains separately scoped.
