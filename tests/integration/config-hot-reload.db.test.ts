@@ -510,7 +510,7 @@ describe('P1-5 — pair validation covers the env-pin precedence layer', () => {
     try {
       await expect(
         setConfig('lane.global.model', 'gpt-6-astra', { actor: 'cli' }, db),
-      ).resolves.toMatchObject({ key: 'lane.global.model' }); // 刚写的 DB model 补齐生效对 → 允许
+      ).rejects.toMatchObject({ status: 422 }); // env provider 选择整组 env；DB global model 不会生效
       // 反例：清回 model（env 层无 model）→ 拒。
       vi.unstubAllEnvs();
       vi.stubEnv('AI_PROVIDER_OVERRIDE', 'openai');

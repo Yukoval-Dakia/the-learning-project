@@ -54,16 +54,21 @@ not establish production access or model-output quality. No UI completion claim.
 
 Independent initial review found two P1s (stronger-provider precedence; retired legacy
 model IDs) and three P2s (typed default reset, model-only writes under global pins,
-migration lock ordering). Both P1s and two P2s are fixed; the global model-only fix is partial (see below): guard only the selected
-DB provider, reject unsupported legacy models before mutation, preserve typed defaults,
-validate against the global provider/model where active, lock epoch before config/journal.
-Regressions exercise the real config writer and transactional migration.
+migration lock ordering). Two P1s and two P2s were fixed in4e18fec3. The single
+verification review confirmed no remaining P0/P1 but identified an uncovered env/DB
+branch in the global model-only fix.
 
-Final local results: 52 config/migration HTTP+DB tests, 61 Copilot DB tests,
-81 migration smoke tests; 339 unit tests across13 files. Final gate evidence is recorded in the PR.
-Independent verification of4e18fec3 completed with no remaining P0/P1. One nonblocking
-P2 remains in YUK-1007: with env provider set, env model absent and a DB global model
-present, the writer mixes env/DB global fields although runtime ignores the DB global
-object wholesale. This can reject a valid task-model-only write. Follow-up configuration
-write work must unify that branch with runtime and add a DB regression. No third review.
-Exact-head CI and the final-push17-minute window remain delivery requirements.
+Advisory review subsequently found a global-pin P1: a catalog-valid text-only global
+model would disable every multimodal task. The author fix validates each affected chat
+TaskSpec using the in-transaction model rows; typed tasks are excluded. It also shares
+the actual global selection resolver with runtime, fixing the remaining P2: an env
+provider selects the whole env pair and never borrows a DB global model. Tests cover
+atomic rollback, per-task model fallback, compatible native OpenCode Go, typed isolation,
+and actual runtime resolution under mixed env/DB state. No third independent review.
+
+Local baseline:339 unit tests across13 files,52 config/HTTP/DB tests,61 Copilot DB tests,
+81 migration smoke tests, typecheck/lint/build/all pre-PR audits passed. The global-pin
+fix adds4 DB regressions (56 configuration tests total, all passed), with73 related
+unit tests passing; final results and exact-head CI
+are recorded in the PR. CI37128248936 passed forf8663e29 before the advisory fix.
+Final-push17-minute window restarts after the corrective push.

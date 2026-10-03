@@ -487,8 +487,10 @@ export type ResolvedProvider =
  * Returns undefined when unset → callers fall through to the registry default
  * (current mimo behaviour, byte-for-byte).
  */
-function readEnvOverride(): { provider: Provider; model?: string } | undefined {
-  const raw = process.env.AI_PROVIDER_OVERRIDE;
+function readEnvOverride(
+  env: NodeJS.ProcessEnv,
+): { provider: Provider; model?: string } | undefined {
+  const raw = env.AI_PROVIDER_OVERRIDE;
   if (!raw) return undefined;
   const provider = raw as Provider;
   if (!(provider in PROVIDERS)) {
@@ -496,7 +498,7 @@ function readEnvOverride(): { provider: Provider; model?: string } | undefined {
       `AI_PROVIDER_OVERRIDE='${raw}' is not a known provider; expected one of ${Object.keys(PROVIDERS).join(' | ')}`,
     );
   }
-  const model = process.env.AI_PROVIDER_MODEL || undefined;
+  const model = env.AI_PROVIDER_MODEL || undefined;
   return { provider, model };
 }
 
@@ -513,9 +515,16 @@ function readEnvOverride(): { provider: Provider; model?: string } | undefined {
  * 不消费 → effective=null；未知 provider 名 → throw 由调用方如实标 fail-visible）。
  */
 export function readGlobalProviderSwitch(): { provider: Provider; model?: string } | undefined {
-  const env = readEnvOverride();
+  return resolveGlobalProviderSwitch(process.env, getLaneOverride('global'));
+}
+
+/** Shared with transactional config validation; env provider selects the whole env pair. */
+export function resolveGlobalProviderSwitch(
+  envValues: NodeJS.ProcessEnv,
+  db: { provider?: string; model?: string } | undefined,
+): { provider: Provider; model?: string } | undefined {
+  const env = readEnvOverride(envValues);
   if (env) return env;
-  const db = getLaneOverride('global');
   if (!db?.provider) return undefined;
   if (!isKnownProvider(db.provider)) {
     throw new Error(
