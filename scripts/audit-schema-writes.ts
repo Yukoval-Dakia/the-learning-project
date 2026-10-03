@@ -18,6 +18,8 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { extractDatabaseGeneratedWrites, extractExecutedSqlWrites } from './schema-write-producers';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
 const SCHEMA_PATH = resolve(REPO_ROOT, 'src/db/schema.ts');
@@ -731,7 +733,11 @@ function buildIndex(files: string[]): Map<string, WriteStatement[]> {
   const index = new Map<string, WriteStatement[]>();
   for (const f of files) {
     const src = readFileSync(f, 'utf8');
-    index.set(f, extractWriteStatements(src));
+    const runtimeSql =
+      /\.(?:test|spec)\.tsx?$/.test(f) || f.includes('/rehearsal/')
+        ? []
+        : extractExecutedSqlWrites(src);
+    index.set(f, [...extractWriteStatements(src), ...runtimeSql]);
   }
   return index;
 }
@@ -781,6 +787,8 @@ function audit(): WriteHit[] {
     (f) => !f.endsWith('schema.ts') && !f.endsWith('generated.ts'),
   );
   const index = buildIndex(businessFiles);
+  // Generated defaults are schema-owned INSERT producers, not fixture writes.
+  index.set(SCHEMA_PATH, extractDatabaseGeneratedWrites(src));
   const results: WriteHit[] = [];
   for (const f of fields) {
     if (TRIVIAL_FIELDS.has(f.field)) continue;
