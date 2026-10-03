@@ -1,14 +1,17 @@
 # PLAN — 活看板
 
-> 更新于2026-10-03。当前active线为YUK-1112补升级pi1.0.1（registry最新稳定版）；1.0.0、schema与locale三项已合入。TLS候选YUK-1102保留，待本交付完成后恢复。本轮不部署、不新增付费评测。
+> 更新于2026-10-03。当前目标：Linear归零。初盘87个未完成（4进行中/22待审/61积压）；1084→1085、1090→1091已去重，1091漏验的head锚定恢复Todo，当前86项。逐项以真实交付验收收口；既有HOLD/生产与付费边界保持，暂停项范围已向owner询问。
 
 ## NOW
 
-- YUK-1112补丁升级：pi-agent-core/pi-ai/pi-telemetry1.0.1，Anthropic SDK0.129.0；冻结无关AWS锁定版本。108 scoped unit、61 Copilot DB、typecheck/lint/build/全部pre-PR audits通过；独立review无P0/P1或可执行P2；待exact-head CI及最后push后17分钟窗口，尚未合并。详见 `docs/planning/2026-10-03-yuk1112-pi-1.0.1.md`。
+- YUK-1112/#1524：pi-agent-core/pi-ai/pi-telemetry1.0.1已合入main `d58a9614`；108 unit+61 Copilot DB、全部本地gate、独立review及exact-head CI `37123780543`通过，17分钟窗口完成，Linear Done；无生产部署/付费调用。
+
+- YUK-1102 active：迁移capture整URL匹配导致remote TLS降级；复用纯helper接通capture/apply，补编码、多host、多@ authority边界。原回归12 RED/4 PASS，修复后52 scoped unit通过，typecheck/lint/build与全部pre-PR audits通过；独立候选review无P0/P1或可执行P2（额外392组真实driver URL探针无绕过）。同步pi1.0.1主线后52 tests及全部本地gate复验通过；待PR exact-head CI及17分钟窗口；独立worktree `fix/yuk-1102-capture-tls`；未连接任何数据库。
+- 归零核对：YUK-1084与owner批准后的YUK-1085重复；YUK-1090与YUK-1091重复。#1489只修五项并明确排除head锚定，故1091重新Todo，不把未验收项误作Done。详细快照为本地 `.remember/2026-10-03-linear-zero.md` 与Linear。
 
 - YUK-1111/YUK-1115（#1522）：删除61条已有生产依据的schema豁免；补direct SQL/生成值识别；4条真预留按YUK-1113于10月10日复核，旧fixture误计见YUK-1114。Axios1.20.0与移除Mem0无运行时用途的Jest peer修复依赖gate。45 scanner + 51 Mem0 unit、本地gate及exact-head CI `37106453748` 全绿；已合入main `f750de40`，两票Done；独立初审/验证审无P0/P1。生产依赖仍有18项low/moderate。
 - YUK-1112（#1523）：pi-agent-core/pi-ai升至1.0.0；parent/child迁移finishTurn和system transcript，压缩保留提示/工具；terminal统计全部父loop与child用量。160 unit、61 Copilot DB、本地gate与两轮独立review通过；最终head `24f9313b` CI `37107869970` 全绿，已合入main `35415555`，Linear Done。包含真实引擎和本地MiMo协议HTTP双请求。详见 `docs/planning/2026-10-03-yuk1112-pi-1.md`。
-- YUK-1007（#1521）：locale.learner接通prompt reader与effective，runner/intervention/judge按运行快照封存语言，恢复按封存记录识别一致语言，避免热更新让指纹失真或浪费重试。252 unit、55 DB和独立验证审通过；前置gate修复及pi升级已集成到候选，新增judge42 unit、recovery42 DB（含双向切语言、混用语言与过期模板拒绝）通过，候选 `797c2bab` 完整CI `37108030450` 已绿，随后只同步主线并解决看板冲突，运行时代码不变；最终交付状态见PR和Linear。配置面板epic仍In Progress，预算reader/写面/UI未交付。详见 `docs/planning/2026-10-03-yuk1007-locale-hot-reload.md`。
+- YUK-1007（#1521）：locale.learner接通prompt reader与effective，runner/intervention/judge按运行快照封存语言，恢复按封存记录识别一致语言，避免热更新让指纹失真或浪费重试。252 unit、55 DB和独立验证审通过；前置gate修复及pi升级已集成到候选，新增judge42 unit、recovery42 DB（含双向切语言、混用语言与过期模板拒绝）通过，最终 `de129774` CI `37108928306` 已绿，合入main `aa188fe8`；语言reader已交付。配置面板epic仍In Progress，预算reader/写面/UI未交付。详见 `docs/planning/2026-10-03-yuk1007-locale-hot-reload.md`。
 
 - #1512保留DB4/unit4、19项审计并行、单次构建、tmpfs、时长统计与SDK懒加载。五个predicate用例已恢复，共11个。局部87 unit、先前67 DB、typecheck、lint、build通过。排序修复后的 `619ac1602` 完整CI `36729120083` 全绿，事件是workflow_dispatch，四个unit和四个DB分片、审计、migration、build/usability均实际运行。详见 `docs/planning/2026-09-30-yuk1107-ci-latency.md`。YUK-1107不标Done。
 - #1501修复D18三个P1。未知费用使用非空保守预留，失败调用记费用，typed runner尊重caller的 `retry:none`，seal写入错误不重发模型。`de2c7911c` 修复后55 unit与6 DB通过，同步main后的 `3b7036b06` 再验55 unit、6 DB、typecheck、lint与build通过，PR gate `36728701979` 全绿。已有Jev实跑属于历史证据，本轮没有重新付费，也没有完成MiMo评测。
@@ -21,7 +24,7 @@
 
 ## NEXT
 
-1. 先完成pi1.0.1独立交付，再恢复YUK-1102 TLS候选（52 tests与独立审阅通过，未提交）；随后回到产品主线。YUK-1007下一步为预算reader、配置写面与面板UI；语言reader见#1521；UI preflight未批准，不自行开工。
+1. 先收正确性：1091剩余多submission/head激活契约、1061 exact答案归一、1082 θ轴结构root过滤；再按风险/依赖推进类型与边界清理、YUK-1007预算reader/配置写面。UI先preflight。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
