@@ -12,12 +12,13 @@ export function judgePromptFingerprint(input: {
   taskInput: unknown;
   subjectProfile: SubjectProfile;
   judgeRoute: string;
+  learnerLocale?: 'zh-CN' | 'en';
 }): string {
   return sha256Canonical({
     version: JUDGE_PROMPT_ENVELOPE_VERSION,
     task_kind: input.taskKind,
     canonical_model_input: {
-      system: getTaskSystemPrompt(input.taskKind, input.subjectProfile),
+      system: getTaskSystemPrompt(input.taskKind, input.subjectProfile, input.learnerLocale),
       user:
         typeof input.taskInput === 'string'
           ? input.taskInput
