@@ -12,6 +12,7 @@ import {
   createAssistantMessageEventStream,
   getCurrentSystemPrompt,
   getCurrentTools,
+  normalizeContext,
 } from '@earendil-works/pi-ai';
 import { describe, expect, it, vi } from 'vitest';
 import type { ExecutionAdapterStartupArgs, RunnerMessage } from './execution-adapter';
@@ -60,8 +61,9 @@ async function harness(
   const requests: TranscriptContext[] = [];
   const stream = vi.spyOn(models, 'streamSimple').mockImplementation((model, context) => {
     // Capture immutable request evidence before the loop appends later results.
-    requests.push(structuredClone(context) as TranscriptContext);
-    const result = response(model, script(model, context as TranscriptContext, requests.length));
+    const transcript = normalizeContext(context);
+    requests.push(structuredClone(transcript));
+    const result = response(model, script(model, transcript, requests.length));
     const events = createAssistantMessageEventStream();
     events.push({ type: 'start', partial: result });
     if (result.stopReason === 'error' || result.stopReason === 'aborted') {
@@ -147,6 +149,7 @@ describe('pi 1.0 installed agentLoop contract', () => {
       subtype: 'success',
       num_turns: 2,
       usage: { input_tokens: 200, output_tokens: 40 },
+      total_cost_usd: 0.06,
     });
   });
 
@@ -273,6 +276,7 @@ describe('pi 1.0 installed agentLoop contract', () => {
       expect(frames.at(-1)).toMatchObject({
         subtype: 'success',
         usage: { input_tokens: 300, output_tokens: 60 },
+        total_cost_usd: 0.09,
       });
     },
   );

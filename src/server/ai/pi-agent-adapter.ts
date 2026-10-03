@@ -1183,7 +1183,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     // 'error_max_turns' so lifecycle/finish-reason handling stays identical.
     // YUK-1026 — SDK parity: the ceiling only bites when the agent wants
     // ANOTHER turn. A turn whose assistant message carries no tool calls ends
-    // the loop on its own (pending steering/follow-up aside) and must report
+    // the loop successfully; the ceiling also leaves queued follow-ups undrained.
+    // It must report
     // success, not error_max_turns — under the unconditional counter every
     // maxTurns=1 task deterministically failed after its first clean turn.
     const maxTurns = typeof options.maxTurns === 'number' ? options.maxTurns : undefined;
