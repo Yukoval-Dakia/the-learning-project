@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> 更新于2026-10-03。本批交付为共享schema/依赖gate修复（#1522）、pi 1.0.0（#1523）与YUK-1007语言reader（#1521）；代码和验证证据如下，合并终态以各PR与Linear为准。本轮不部署、不新增付费评测。CI提速仍暂停，120秒未证明。
+> 更新于2026-10-03。当前active线为YUK-1112补升级pi1.0.1（registry最新稳定版）；1.0.0、schema与locale三项已合入。TLS候选YUK-1102保留，待本交付完成后恢复。本轮不部署、不新增付费评测。
 
 ## NOW
+
+- YUK-1112补丁升级：pi-agent-core/pi-ai/pi-telemetry1.0.1，Anthropic SDK0.129.0；冻结无关AWS锁定版本。108 scoped unit、61 Copilot DB、typecheck/lint/build/全部pre-PR audits通过；独立review无P0/P1或可执行P2；待exact-head CI及最后push后17分钟窗口，尚未合并。详见 `docs/planning/2026-10-03-yuk1112-pi-1.0.1.md`。
 
 - YUK-1111/YUK-1115（#1522）：删除61条已有生产依据的schema豁免；补direct SQL/生成值识别；4条真预留按YUK-1113于10月10日复核，旧fixture误计见YUK-1114。Axios1.20.0与移除Mem0无运行时用途的Jest peer修复依赖gate。45 scanner + 51 Mem0 unit、本地gate及exact-head CI `37106453748` 全绿；已合入main `f750de40`，两票Done；独立初审/验证审无P0/P1。生产依赖仍有18项low/moderate。
 - YUK-1112（#1523）：pi-agent-core/pi-ai升至1.0.0；parent/child迁移finishTurn和system transcript，压缩保留提示/工具；terminal统计全部父loop与child用量。160 unit、61 Copilot DB、本地gate与两轮独立review通过；最终head `24f9313b` CI `37107869970` 全绿，已合入main `35415555`，Linear Done。包含真实引擎和本地MiMo协议HTTP双请求。详见 `docs/planning/2026-10-03-yuk1112-pi-1.md`。
@@ -19,7 +21,7 @@
 
 ## NEXT
 
-1. 回到产品主线。YUK-1007下一步为预算reader、配置写面与面板UI；语言reader见#1521；UI preflight未批准，不自行开工。
+1. 先完成pi1.0.1独立交付，再恢复YUK-1102 TLS候选（52 tests与独立审阅通过，未提交）；随后回到产品主线。YUK-1007下一步为预算reader、配置写面与面板UI；语言reader见#1521；UI preflight未批准，不自行开工。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
