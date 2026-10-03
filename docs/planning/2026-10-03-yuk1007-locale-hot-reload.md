@@ -56,3 +56,7 @@ Merged prerequisite branch #1522 (YUK-1111/YUK-1115) into this candidate: the
 real reserved fields have explicit bounded follow-up YUK-1113. New SQL/default
 producer support and dependency repairs pass locally. Full exact-head CI reruns
 after push; prerequisite PR and this locale PR are not yet claimed merged.
+
+The final candidate also includes pi 1.0.0 prerequisite #1523. Its system message
+transport now carries the locale-bound prompt. Each prerequisite has its own
+independent review; no review budget is reset by merging the branches.

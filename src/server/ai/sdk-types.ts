@@ -35,7 +35,7 @@ export interface Options {
   systemPrompt?: string;
   /** Caller+lifecycle abort — propagates into the agentLoop signal chain. */
   abortController?: AbortController;
-  /** Agentic-turn ceiling — pi enforces it via `shouldStopAfterTurn`. */
+  /** Agentic-turn ceiling — pi enforces it via `finishTurn`. */
   maxTurns?: number;
   /** allowedTools allowlist — `mcp__<server>__<tool>` wire names. */
   tools?: string[];
