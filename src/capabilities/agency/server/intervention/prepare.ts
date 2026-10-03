@@ -190,7 +190,7 @@ async function bindAttemptToRecord(
     id: string;
     taskKind: 'SolutionGenerateTask' | 'QuizVerifyTask' | 'InterventionPackageReviewTask';
     inputHash: string;
-    promptFingerprint: string;
+    promptFingerprints: Record<'zh-CN' | 'en', string>;
     resultDigest?: string | null;
     failureCode: string;
   }> = [];
@@ -223,12 +223,13 @@ async function bindAttemptToRecord(
     const subjectProfile = await resolveSubjectProfileForKnowledgeIdsStrict(db, [
       record.snapshot.conjecture.knowledge_id,
     ]);
-    const solverPromptFingerprint = taskPromptFingerprint('SolutionGenerateTask', subjectProfile);
-    const reviewPromptFingerprint = taskPromptFingerprint(
-      'InterventionPackageReviewTask',
-      subjectProfile,
-    );
-    const contentPromptFingerprint = taskPromptFingerprint('QuizVerifyTask', subjectProfile);
+    const promptFingerprints = (taskKind: (typeof expectedRuns)[number]['taskKind']) => ({
+      'zh-CN': taskPromptFingerprint(taskKind, subjectProfile, 'zh-CN'),
+      en: taskPromptFingerprint(taskKind, subjectProfile, 'en'),
+    });
+    const solverPromptFingerprints = promptFingerprints('SolutionGenerateTask');
+    const reviewPromptFingerprints = promptFingerprints('InterventionPackageReviewTask');
+    const contentPromptFingerprints = promptFingerprints('QuizVerifyTask');
     if (independentAudit.package_digest_sha256 !== sha256CanonicalJson(attempt.package)) {
       failures.push('agency:independent_solution_package_digest_mismatch');
     }
@@ -254,7 +255,7 @@ async function bindAttemptToRecord(
           id: taskRunId,
           taskKind: 'SolutionGenerateTask',
           inputHash: diagnostic.question_input_sha256,
-          promptFingerprint: solverPromptFingerprint,
+          promptFingerprints: solverPromptFingerprints,
           ...(taskRunId === diagnostic.solver_task_run_id
             ? { resultDigest: diagnostic.solver_output_sha256 }
             : {}),
@@ -291,7 +292,7 @@ async function bindAttemptToRecord(
           id: diagnostic.task_run_id,
           taskKind: 'QuizVerifyTask',
           inputHash: expectedInputHash,
-          promptFingerprint: contentPromptFingerprint,
+          promptFingerprints: contentPromptFingerprints,
           resultDigest: diagnostic.result_sha256,
           failureCode: `agency:${diagnostic.kind}:question_content_validation_task_run_invalid`,
         });
@@ -312,7 +313,7 @@ async function bindAttemptToRecord(
           id: reviewAttempt.task_run_id,
           taskKind: 'InterventionPackageReviewTask',
           inputHash: reviewTaskInputSha256,
-          promptFingerprint: reviewPromptFingerprint,
+          promptFingerprints: reviewPromptFingerprints,
           resultDigest:
             reviewAttempt.outcome === 'valid' ? sha256CanonicalJson(reviewAttempt.result) : null,
           failureCode: 'agency:review_task_run_invalid',
@@ -338,18 +339,31 @@ async function bindAttemptToRecord(
         ),
       );
     const rowById = new Map(rows.map((row) => [row.id, row]));
+    // A recovered run keeps its sealed locale even after a config refresh. All
+    // validator stages must match one locale of the current prompt templates;
+    // accepting each fingerprint independently would admit mixed-locale runs.
+    let matchingLocales: Array<'zh-CN' | 'en'> = ['zh-CN', 'en'];
     for (const expected of expectedRuns) {
       const row = rowById.get(expected.id);
+      matchingLocales = matchingLocales.filter(
+        (locale) => row?.prompt_fingerprint === expected.promptFingerprints[locale],
+      );
       if (
         !row ||
         row.status !== 'success' ||
         row.task_kind !== expected.taskKind ||
         row.input_hash !== expected.inputHash ||
-        row.prompt_fingerprint !== expected.promptFingerprint ||
+        !Object.values(expected.promptFingerprints).includes(row.prompt_fingerprint ?? '') ||
         (expected.resultDigest !== undefined && row.result_digest !== expected.resultDigest)
       ) {
         failures.push(expected.failureCode);
       }
+    }
+    if (
+      matchingLocales.length === 0 &&
+      !expectedRuns.some((run) => failures.includes(run.failureCode))
+    ) {
+      failures.push('agency:validator_prompt_locale_mismatch');
     }
   }
   return InterventionPreparationAttempt.parse({

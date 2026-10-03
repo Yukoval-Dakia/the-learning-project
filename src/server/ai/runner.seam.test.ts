@@ -99,6 +99,8 @@ vi.mock('@/server/ai/log', () => ({
 }));
 
 import { tasks } from '@/ai/registry';
+import { LEARNER_LOCALE_PIN, getTaskSystemPrompt } from '@/ai/task-prompts';
+import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import {
   type ExecutionAdapterStartupArgs,
   type PreparedExecutionQuery,
@@ -1073,4 +1075,59 @@ describe('runTask — YUK-1013 modelBinding (per-run binding seam)', () => {
     ).rejects.toThrow(/retired in YUK-1025/);
     expect(mockPi.queryStarted).not.toHaveBeenCalled();
   });
+});
+
+describe('runner locale execution snapshot', () => {
+  beforeEach(() => {
+    __setPiAdapterForTests(fakePiAdapter());
+    mockPi.messages = [successResult()];
+    vi.stubEnv('XIAOMI_API_KEY', 'test-key');
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
+    vi.stubEnv('AI_PROVIDER_MODEL', '');
+  });
+  afterEach(() => {
+    resetTestConfig();
+    __setPiAdapterForTests(undefined);
+    vi.unstubAllEnvs();
+  });
+
+  it('pins the language before async middleware and reads updates on the next run', async () => {
+    await runTask(
+      'AttributionTask',
+      { question: 'Explain why x² ≥ 0 for real x.' },
+      {
+        db: fakeDb,
+        middleware: {
+          beforeRun: async (_kind, input) => {
+            setTestConfig({ 'locale.learner': 'en' });
+            return input;
+          },
+        },
+      },
+    );
+    expect(capturedOptions().systemPrompt).toBe(
+      getTaskSystemPrompt('AttributionTask', undefined, 'zh-CN'),
+    );
+    expect(String(capturedOptions().systemPrompt).endsWith(LEARNER_LOCALE_PIN)).toBe(true);
+    await runTask(
+      'AttributionTask',
+      { question: 'Explain why x² ≥ 0 for real x.' },
+      { db: fakeDb },
+    );
+    expect(capturedOptions().systemPrompt).toContain('[Output language]');
+  });
+
+  it.each(['run', 'stream', 'collect'] as const)(
+    'honors the provenance locale in %s execution',
+    async (mode) => {
+      setTestConfig({ 'locale.learner': 'en' });
+      const ctx = { db: fakeDb, learnerLocale: 'zh-CN' as const };
+      if (mode === 'run') await runTask('AttributionTask', { q: 1 }, ctx);
+      else if (mode === 'stream') await streamTask('AttributionTask', { q: 1 }, ctx).text();
+      else await streamTaskCollecting('AttributionTask', { q: 1 }, ctx, () => {});
+      expect(capturedOptions().systemPrompt).toBe(
+        getTaskSystemPrompt('AttributionTask', undefined, 'zh-CN'),
+      );
+    },
+  );
 });

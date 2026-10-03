@@ -13,6 +13,7 @@
 // 隔离：beforeEach resetDb（三表在 wipe list）；afterEach resetTestConfig +
 // 快照复位，防止读面测试间泄漏。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { LEARNER_LOCALE_PIN, getTaskSystemPrompt } from '@/ai/task-prompts';
 import { capabilities } from '@/capabilities';
 import { replaceConfigSnapshot, resetTestConfig } from '@/core/config/store';
 import { VERIFY_DISPATCH_RECOVERY_QUEUE } from '@/server/boss/verify-dispatch-outbox';
@@ -401,5 +402,40 @@ describe('GET /api/admin/config — P1 honest effective for degraded runtime ove
           : { provider: 'xiaomi', model: 'mimo-v2.5-pro' },
       );
     }
+  });
+});
+
+describe('learner locale — write, runtime consumer and HTTP facts', () => {
+  it('hot-reloads English and restores the exact default prompt after clear', async () => {
+    const { buildAdminConfigRuntimeFacts } = await import('@/server/config/admin-config-facts');
+    setAdminConfigRuntimeFacts(buildAdminConfigRuntimeFacts);
+    const original = getTaskSystemPrompt('NoteGenerateTask');
+    expect(original.endsWith(LEARNER_LOCALE_PIN)).toBe(true);
+
+    await setConfig('locale.learner', 'en', { actor: 'cli' }, testDb());
+    expect(getTaskSystemPrompt('NoteGenerateTask')).toContain('[Output language]');
+    const english = AdminConfigResponseSchema.parse(await (await get()).json());
+    expect(english.keys.find((row) => row.key === 'locale.learner')).toMatchObject({
+      value: 'en',
+      effective: 'en',
+      source: 'db',
+      wired: true,
+      consumer: 'src/ai/task-prompts.ts',
+    });
+
+    await expect(setConfig('locale.learner', 'fr', { actor: 'cli' }, testDb())).rejects.toThrow();
+    expect(getTaskSystemPrompt('NoteGenerateTask')).toContain('[Output language]');
+    const afterRejected = AdminConfigResponseSchema.parse(await (await get()).json());
+    expect(afterRejected.snapshot.epoch).toBe(english.snapshot.epoch);
+
+    await clearConfig('locale.learner', { actor: 'cli' }, testDb());
+    expect(getTaskSystemPrompt('NoteGenerateTask')).toBe(original);
+    const cleared = AdminConfigResponseSchema.parse(await (await get()).json());
+    expect(cleared.keys.find((row) => row.key === 'locale.learner')).toMatchObject({
+      value: 'zh-CN',
+      effective: 'zh-CN',
+      source: 'code-default',
+      wired: true,
+    });
   });
 });

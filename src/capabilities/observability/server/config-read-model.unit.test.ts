@@ -7,7 +7,7 @@
 //   - pinned 键 DB 层跳过（compose 强制）
 //   - NaN env 字面量归 null（不进 JSON）
 //   - wiring 分类完整性（KEY_CONSUMERS ↔ CONFIG_REGISTRY 集合相等 + consumer
-//     文件真实存在）+ locale.learner 未接线 + task budget 字段未接线
+//     文件真实存在）+ locale.learner 已接线 + task budget 字段未接线
 //   - tasks 物化：kind 集合 = catalog；静态默认与 override 分列；global_pin
 //   - 快照块 epoch/hydrated_at
 //   - secret 不进响应（结构保证 + 实测 marker 不出现）
@@ -181,11 +181,11 @@ describe('config read model — wiring census', () => {
     }
   });
 
-  it('reports locale.learner as registered but unwired (prompt builder not migrated)', () => {
+  it('reports locale.learner as wired to the prompt builder', () => {
     const model = buildAdminConfigReadModel({});
     expect(keyRow(model, 'locale.learner')).toMatchObject({
-      wired: false,
-      consumer: null,
+      wired: true,
+      consumer: 'src/ai/task-prompts.ts',
       value: 'zh-CN',
       source: 'code-default',
     });

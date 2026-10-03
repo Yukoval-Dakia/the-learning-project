@@ -1,11 +1,13 @@
 import { and, count, eq, inArray, sql } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { getTaskSystemPrompt } from '@/ai/task-prompts';
 import {
   INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS,
   authorInterventionPackage,
   handleReviewDue,
 } from '@/capabilities/practice/public';
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '@/capabilities/practice/server/judge-run-status';
+import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { PEDAGOGY_METHOD_LIBRARY } from '@/core/pedagogy';
 import { PROBE_QUESTION_KIND, PROBE_QUESTION_SOURCE } from '@/core/schema/conjecture';
 import type { ConjectureProbeResponseJudgementT } from '@/core/schema/conjecture-probe-response';
@@ -33,7 +35,7 @@ import { eventCorrectionsGlobalLockKey, writeEvent } from '@/kernel/events';
 import type { EventSubscriptionDelivery } from '@/kernel/manifest';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { AgentRunError } from '@/server/ai/agent-run-error';
-import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { type TaskTextRunFn, taskPromptFingerprint } from '@/server/ai/provenance';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { answerProbe } from '../conjecture/probe-lifecycle';
 import { prepareInterventionWave } from './prepare';
@@ -631,6 +633,7 @@ function successfulRunTask(
 
 describe('YUK-791 intervention preparation closed loop', () => {
   beforeEach(resetDb);
+  afterEach(resetTestConfig);
 
   it('durably opens shadow preparation, consumes recommendation in the same wave, and activates once', async () => {
     const db = testDb();
@@ -672,7 +675,25 @@ describe('YUK-791 intervention preparation closed loop', () => {
         preparationJobId: preparationJobIdOf(opened),
       },
       {
-        runTaskFn: fn,
+        runTaskFn: async (kind, taskInput, ctx) => {
+          const validator =
+            kind === 'SolutionGenerateTask' ||
+            kind === 'QuizVerifyTask' ||
+            kind === 'InterventionPackageReviewTask';
+          if (validator) {
+            // A real async boundary can refresh config after the fingerprint was captured.
+            setTestConfig({ 'locale.learner': 'en' });
+            expect(ctx?.learnerLocale).toBe('zh-CN');
+            expect(getTaskSystemPrompt(kind, ctx?.subjectProfile, ctx?.learnerLocale)).toBe(
+              getTaskSystemPrompt(kind, ctx?.subjectProfile, 'zh-CN'),
+            );
+          }
+          try {
+            return await fn(kind, taskInput, ctx);
+          } finally {
+            resetTestConfig();
+          }
+        },
         authorPackageFn: authorInterventionPackage,
         now: () => seeded.now,
       },
@@ -1416,6 +1437,60 @@ describe('YUK-791 intervention preparation closed loop', () => {
     ]);
   });
 
+  it.each(['zh-CN', 'en'] as const)(
+    'recovers a persisted %s FULL pass after the configured locale changes without another model call',
+    async (locale) => {
+      setTestConfig({ 'locale.learner': locale });
+      const db = testDb();
+      const seeded = await seedEvidenceFor('persisted_locale_recovery');
+      await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+        env: {},
+        bossSend: async () => 'prepare_job_locale_recovery',
+      });
+      const [opened] = await db.select().from(intervention);
+      const record = await loadInterventionVersion(db, opened.id, opened.version);
+      if (!record) throw new Error('intervention disappeared');
+      const recommended = await saveRecommendation(
+        db,
+        record,
+        concreteRecommendation('persisted_locale_recommendation'),
+      );
+      const { fn, calls } = successfulRunTask(db);
+      const attempt = await authorInterventionPackage(db, recommended.id, {
+        attempt: 1,
+        runTaskFn: fn,
+        preparationJobId: preparationJobIdOf(recommended),
+      });
+      expect(attempt.kind).toBe('reviewed_package');
+      await appendPreparationAttempt(db, recommended, attempt);
+      setTestConfig({ 'locale.learner': locale === 'en' ? 'zh-CN' : 'en' });
+
+      const result = await prepareInterventionWave(
+        db,
+        {
+          interventionId: opened.id,
+          version: opened.version,
+          idempotencyKey: opened.idempotency_key,
+          preparationJobId: preparationJobIdOf(opened),
+        },
+        {
+          runTaskFn: async () => {
+            throw new Error('valid persisted locale must not call a model again');
+          },
+          authorPackageFn: async () => {
+            throw new Error('valid persisted locale must not spend another attempt');
+          },
+        },
+      );
+
+      expect(result).toMatchObject({ status: 'active' });
+      expect(calls.filter((kind) => kind === 'InterventionPackageAuthorTask')).toHaveLength(1);
+      const active = await loadInterventionVersion(db, opened.id, opened.version);
+      expect(active?.package).toMatchObject({ author_task_run_id: 'author_run_1' });
+      expect(active?.preparation_attempts.map((entry) => entry.attempt)).toEqual([1]);
+    },
+  );
+
   it('rebinds a persisted FULL pass on recovery and spends only the remaining attempt slot', async () => {
     const db = testDb();
     const seeded = await seedEvidenceFor('persisted_full_rebind_retry');
@@ -1528,6 +1603,92 @@ describe('YUK-791 intervention preparation closed loop', () => {
     const failed = await loadInterventionVersion(db, opened.id, opened.version);
     expect(failed?.preparation_attempts.map((attempt) => attempt.attempt)).toEqual([1, 2]);
   });
+
+  it.each(['mixed locale', 'stale template'] as const)(
+    'rejects a recovered FULL pass with %s fingerprints',
+    async (corruption) => {
+      setTestConfig({ 'locale.learner': 'zh-CN' });
+      const db = testDb();
+      const seeded = await seedEvidenceFor('persisted_full_rebind_exhausted');
+      await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+        env: {},
+        bossSend: async () => 'prepare_job_persisted_full_rebind_exhausted',
+      });
+      const [opened] = await db.select().from(intervention);
+      const record = await loadInterventionVersion(db, opened.id, opened.version);
+      if (!record) throw new Error('intervention disappeared');
+      const recommended = await saveRecommendation(
+        db,
+        record,
+        concreteRecommendation('persisted_full_rebind_exhausted_recommendation'),
+      );
+      const withFirst = await appendPreparationAttempt(
+        db,
+        recommended,
+        InterventionPreparationAttempt.parse({
+          kind: 'author_failed',
+          attempt: 1,
+          failure_code: 'seeded_first_attempt_failure',
+        }),
+      );
+      const { fn, contexts } = successfulRunTask(db);
+      const attempt2 = await authorInterventionPackage(db, recommended.id, {
+        attempt: 2,
+        runTaskFn: fn,
+        preparationJobId: preparationJobIdOf(recommended),
+      });
+      if (
+        attempt2.kind !== 'reviewed_package' ||
+        !('independent_solution_audit' in attempt2.review)
+      ) {
+        throw new Error('missing second FULL attempt');
+      }
+      await appendPreparationAttempt(db, withFirst, attempt2);
+      const reviewContext = contexts.find(({ kind }) => kind === 'InterventionPackageReviewTask');
+      if (!reviewContext) throw new Error('missing review context');
+      await db
+        .update(ai_task_runs)
+        .set({
+          prompt_fingerprint:
+            corruption === 'mixed locale'
+              ? taskPromptFingerprint(
+                  'InterventionPackageReviewTask',
+                  reviewContext.ctx?.subjectProfile,
+                  'en',
+                )
+              : 'stale-template-fingerprint',
+        })
+        .where(eq(ai_task_runs.id, attempt2.review.review_task_run_id));
+
+      const result = await prepareInterventionWave(
+        db,
+        {
+          interventionId: opened.id,
+          version: opened.version,
+          idempotencyKey: opened.idempotency_key,
+          preparationJobId: preparationJobIdOf(opened),
+        },
+        {
+          runTaskFn: async () => {
+            throw new Error('exhausted recovery must not call the model');
+          },
+          authorPackageFn: async () => {
+            throw new Error('exhausted recovery must not call QuestionAuthor');
+          },
+        },
+      );
+
+      expect(result).toMatchObject({
+        status: 'preparation_failed',
+        reason_code:
+          corruption === 'mixed locale'
+            ? 'package_quality:agency:validator_prompt_locale_mismatch'
+            : 'package_quality:agency:review_task_run_invalid',
+      });
+      const failed = await loadInterventionVersion(db, opened.id, opened.version);
+      expect(failed?.preparation_attempts.map((attempt) => attempt.attempt)).toEqual([1, 2]);
+    },
+  );
 
   it('reads a historical FULL audit but refuses to activate it as a current FULL review', async () => {
     const db = testDb();
