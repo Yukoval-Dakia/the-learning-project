@@ -25,6 +25,7 @@
 import type { Provider } from '@/ai/registry';
 import type { EffortLevel } from '@/ai/task-spec';
 import rawSnapshot from './model-catalog.snapshot.json' with { type: 'json' };
+import { nativePiModel } from './pi-provider-catalog';
 import { PROVIDER_MODEL_BINDINGS } from './providers';
 
 // ---------------------------------------------------------------------------
@@ -161,7 +162,7 @@ const CATALOG_PROVIDER_BY_INTERNAL: Partial<Record<Provider, string>> = {
   anthropic: 'anthropic',
   'anthropic-sub': 'anthropic',
   xiaomi: 'xiaomi',
-  zhipu: 'zhipuai-coding-plan',
+  'zai-coding-cn': 'zhipuai-coding-plan',
 };
 
 const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
@@ -373,6 +374,14 @@ export function resolveModelProfile(provider: Provider, model: string): ModelPro
   const binding = bindingForProvider(provider);
   applyBindingLayer(profile, binding.modelDefaults);
   applyBindingLayer(profile, binding.models?.[model]);
+  // Native execution facts are authoritative over historical compatibility-lane declarations.
+  const native = nativePiModel(provider, model);
+  if (native) {
+    profile.capabilities.vision = native.input.includes('image');
+    profile.capabilities.reasoning = native.reasoning;
+    profile.limits.contextWindowTokens = native.contextWindow;
+    profile.limits.maxOutputTokens = native.maxTokens;
+  }
   return profile;
 }
 

@@ -2815,7 +2815,13 @@ export interface operations {
                             credential_env: string;
                             implemented: boolean;
                             key_present: boolean;
+                            models?: {
+                                api: string;
+                                id: string;
+                                input: string[];
+                            }[];
                             name: string;
+                            pi_provider?: string | null;
                         }[];
                         runtime: {
                             db_pool_max: number;

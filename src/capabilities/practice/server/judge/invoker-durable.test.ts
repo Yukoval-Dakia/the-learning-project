@@ -125,7 +125,7 @@ describe('JudgeInvokerInputSchema.durable.providerOverride (#14)', () => {
     subjectProfile: mathProfile,
   };
 
-  it.each(['anthropic', 'xiaomi', 'zhipu', 'anthropic-sub', 'openai'])(
+  it.each(['anthropic', 'xiaomi', 'zai-coding-cn', 'anthropic-sub', 'openai'])(
     'accepts the known, IMPLEMENTED provider %s',
     (provider) => {
       expect(

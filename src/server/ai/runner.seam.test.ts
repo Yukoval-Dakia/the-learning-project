@@ -636,7 +636,7 @@ describe('runTask — YUK-365 subscription-OAuth resolution', () => {
       authMode: 'key',
       provider: 'xiaomi',
       apiKey: 'sk-test-key',
-      baseUrl: 'https://api.xiaomimimo.com/anthropic',
+      baseUrl: 'https://api.xiaomimimo.com/v1',
     });
     expect(args.options.model).toBe('mimo-v2.5-pro');
   });
@@ -854,7 +854,7 @@ describe('runTask — YUK-924 model-profile seams', () => {
     logMock.cost.mockClear();
     logMock.tool.mockClear();
     process.env.XIAOMI_API_KEY = 'sk-test-key';
-    process.env.ZHIPU_API_KEY = 'sk-zhipu-test-key';
+    process.env.ZAI_CODING_CN_API_KEY = 'sk-zhipu-test-key';
     process.env.ANTHROPIC_API_KEY = 'sk-anthropic-test-key';
   });
   afterEach(() => {
@@ -877,17 +877,17 @@ describe('runTask — YUK-924 model-profile seams', () => {
     expect(logMock.started).not.toHaveBeenCalled();
   });
 
-  it('REJECTS a multimodal task on a confirmed text-only model (glm-5.2) before any SDK call', async () => {
+  it('REJECTS a multimodal task on a confirmed text-only model (glm-5.3) before any SDK call', async () => {
     await expect(
       runTask(
         'MultimodalDirectJudgeTask',
         { answer_md: 'x' },
         {
           db: fakeDb,
-          override: { provider: 'zhipu', model: 'glm-5.2' },
+          override: { provider: 'zai-coding-cn', model: 'glm-5.3' },
         },
       ),
-    ).rejects.toThrow(/requires vision input.*glm-5.2.*does not support/s);
+    ).rejects.toThrow(/requires vision input.*glm-5.3.*does not support/s);
     expect(mockPi.capturedArgs).toBeUndefined();
   });
 

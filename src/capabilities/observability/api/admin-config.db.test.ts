@@ -218,6 +218,22 @@ describe('GET /api/admin/config — injected runtime facts over HTTP (real build
       key_present: false,
       implemented: true,
     });
+    expect(byName.has('zhipu')).toBe(false);
+    expect(byName.get('zai-coding-cn')).toMatchObject({
+      pi_provider: 'zai-coding-cn',
+      credential_env: 'ZAI_CODING_CN_API_KEY',
+    });
+    expect(byName.get('anthropic-sub')?.pi_provider).toBe('anthropic');
+    expect(byName.get('xiaomi')?.models).toContainEqual({
+      id: 'mimo-v2.5-pro',
+      api: 'openai-completions',
+      input: ['text'],
+    });
+    expect(byName.get('opencode-go')?.models).toContainEqual({
+      id: 'glm-5.3-flash',
+      api: 'openai-completions',
+      input: ['text', 'image'],
+    });
     expect(byName.get('openrouter')).toMatchObject({ implemented: false });
     expect(byName.get('gateway')).toMatchObject({ implemented: false });
     // 布尔与 env 名之外不得有任何 credential 派生事实；值绝不进响应体。
@@ -229,7 +245,9 @@ describe('GET /api/admin/config — injected runtime facts over HTTP (real build
         'credential_env',
         'implemented',
         'key_present',
+        'models',
         'name',
+        'pi_provider',
       ]);
     }
   });

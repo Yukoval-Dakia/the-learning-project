@@ -8,12 +8,12 @@
 | `runner.ts` | 统一把所有 task 送进 ExecutionAdapter（唯一实现是 `PiAgentAdapter`）；调用方用 `piToolMounts` / `piHooks` / `piAgents` / `piSkillDocs` / `piSessionReplay` / `nativeCompaction` / `piQueues` + `allowedTools` / `maxTurns`（`runTask`/`runAgentTask`/`streamTask`）|
 | `execution-adapter.ts` | YUK-921 ExecutionAdapter seam：`PreparedExecutionQuery`/`ExecutionAdapter` 接口 + `ModelBinding` per-run 绑定 + `resolveExecutionAdapter` 决议 + 测试 seam `__setPiAdapterForTests`（P4 起 `ExecutionAdapterId` 只有 `'pi'`）|
 | `pi-agent-adapter.ts` | YUK-921/YUK-1025 唯一执行引擎：`@earendil-works/pi-agent-core` `agentLoop` 同进程执行 + 事件→SDK-frame 归一（`PiRunnerMessage`，`source:'pi'`）+ `x-opencode-session` header 注入 + `pi:` 会话 id、durable 回放种子、`transformContext` 压缩、嵌套 agentLoop、`piHooks`/`piQueues` 转发 |
-| `pi-models.ts` | loom provider → pi catalog 接线：`PROVIDER_PI_CATALOG_SPECS` 把 ResolvedProvider（含 oauth token）编译成 pi `Model`/`createProvider` 条目 |
+| `pi-models.ts` | loom provider → pi catalog 接线：直接使用 `builtinModels()`；`pi-provider-catalog.ts` 提供同步校验/读面元数据，订阅认证 lane 映射原生 anthropic |
 | `pi-hooks.ts` | YUK-1022 hook 面（P4 起唯一的 tool-call 拦截面）：引擎中立 `PiHookBridge`（有序 `beforeToolCall` 闸 + 失败日志吞掉的 `afterToolCall` 观测器，isError 覆盖 failure 语义）|
 | `tools/pi-subagent.ts` | YUK-1022 嵌套子代理：`PiSpawnContract`（`createSpawnDecider` 包成 beforeToolCall 闸）+ `PiSubagentHost`（子 loop 宿主、abort 血统、task_* 帧、usage 归并）+ `Task`/`Agent` AgentTool 构造 |
 | `sdk-types.ts` | YUK-1025 vendored 帧类型：SDKMessage 线形（assistant/result/user/task_*）是 pi 事件的归一化目标形状——纯类型，零运行时依赖 |
 | `sdk-terminal.ts` | 把归一化 assistant/result 帧适配为 lifecycle usage、thinking 元数据与终态证据；不持久化原始 CoT |
-| `providers.ts` | provider 注册表（xiaomi / anthropic / zhipu / opencode-go）+ YUK-924 provider model binding（`models` / `modelDefaults`，config-over-catalog 的 config 层）|
+| `providers.ts` | provider 注册表（xiaomi / anthropic / zai-coding-cn / opencode-go）+ YUK-924 provider model binding（`models` / `modelDefaults`，config-over-catalog 的 config 层）|
 | `model-profiles.ts` + `model-catalog.snapshot.json` | YUK-924 ModelProfile 注册表：models.dev 裁剪快照（`pnpm gen:model-catalog` 重生成，运行时零网络）+ binding→catalog→保守默认三层合并 + needsToolCall/isMultimodal fail-closed 能力门 |
 | `log.ts` | run / event 留痕 |
 | `provenance.ts` | source / `last_modified_by` 标记 |
@@ -26,11 +26,11 @@
 
 ## 关键约束
 - Domain Tool Registry 是源头；pi mount 只是把 registry DomainTool 编译成 `AgentTool`（execute 委托共享的 `executeDomainToolCall` 管线，`tool_call_log`/`tool_use` mirror/`interceptInput`/output-schema 语义不变）。
-- Xiaomi/MiMo 走 Anthropic-compatible 协议：思考内容表现为 assistant
-  `content[]` 的 `thinking` block，不是 OpenAI-compatible 的字面字段
-  `reasoning_content`。以真实返回的 thinking-block metadata 验证运行态，绝不持久化
-  原始 CoT。每次 lifecycle attempt 独占一个 terminal evidence collector；result
-  usage 存在时覆盖 assistant 累加值。
+- Owner 2026-10-03：旧 Xiaomi/Zhipu Anthropic-compatible 线路已移除。
+  Xiaomi 与 `zai-coding-cn` 使用 pi 原生 OpenAI Completions 预设，保留其
+  thinking/tool-stream compat；MiMo Pro 为纯文本，视觉任务使用 mimo-v2.5。
+  Claude 订阅只改变认证，复用原生 anthropic 的目录/协议/compat。
+  原始 CoT 不持久化；每次 lifecycle attempt 独占 terminal evidence collector。
 - skill 注入面（YUK-1022/P4）：pi 无文件系统 skill loader——调用方把 SKILL.md
   正文（`resolveCopilotSkillDocs`/`resolveNoteSkillDocs`/`resolveQuizGenSkillDocs`，
   命名空间名 `<subjectDir>--<pack>`）经 `piSkillDocs` 注入 system prompt；缺包时

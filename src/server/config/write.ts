@@ -28,6 +28,8 @@ import { resolveKeyDef } from '@/core/config/store';
 import { type Db, type Tx, db as defaultDb } from '@/db/client';
 import { system_config, system_config_journal } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
+import { nativePiModel, piProviderId } from '@/server/ai/pi-provider-catalog';
 import { PROVIDER_ATTEMPT_ADMISSION_LANES } from '@/server/ai/provider-attempt-admission-config';
 import {
   type Provider,
@@ -248,6 +250,8 @@ async function validateFinalProviderPairs(
   if (scopes.size === 0) return;
   const keys = [
     ...new Set([...scopes.values()].flatMap((s) => [s.providerKey, s.modelKey])),
+    'lane.global.provider',
+    'lane.global.model',
   ].sort();
   const rows = await tx
     .select({ key: system_config.key, value: system_config.value })
@@ -270,22 +274,70 @@ async function validateFinalProviderPairs(
     const providerPriority = (providerDef?.envMode ?? 'fallback') === 'priority';
     const modelPriority = (modelDef?.envMode ?? 'fallback') === 'priority';
 
-    const effProvider = providerPriority
+    const taskKind = /^task\.([^.]+)\.provider$/.exec(scope.providerKey)?.[1] as
+      | TaskKind
+      | undefined;
+    const configuredProvider = providerPriority
       ? (valueAsNonEmptyString(envProvider) ?? dbProvider)
       : (dbProvider ?? valueAsNonEmptyString(envProvider));
-    const effModel = modelPriority
+    const configuredModel = modelPriority
       ? (valueAsNonEmptyString(envModel) ?? dbModel)
       : (dbModel ?? valueAsNonEmptyString(envModel));
 
+    const globalProvider = taskKind
+      ? (valueAsNonEmptyString(env.AI_PROVIDER_OVERRIDE) ??
+        valueAsNonEmptyString(rowByKey.get('lane.global.provider')))
+      : undefined;
+    const globalModel = globalProvider
+      ? (valueAsNonEmptyString(env.AI_PROVIDER_MODEL) ??
+        valueAsNonEmptyString(rowByKey.get('lane.global.model')))
+      : undefined;
+    const effProvider =
+      globalProvider ??
+      configuredProvider ??
+      (taskKind ? tasks[taskKind].defaultProvider : undefined);
+    const effModel = globalModel ?? configuredModel;
     if (effProvider === undefined) continue; // 对解散 → 无事可验
     if (typeof effProvider === 'string' && isKnownProvider(effProvider)) {
       const provider = effProvider as Provider;
-      if (providerRequiresExplicitModel(provider) && effModel === undefined) {
+      if (
+        providerRequiresExplicitModel(provider) &&
+        effModel === undefined &&
+        (!taskKind || tasks[taskKind].defaultProvider !== provider)
+      ) {
         throw new ApiError(
           'invalid_config_value',
           `${scope.label} resolves to provider '${provider}' with no explicit model — set '${scope.modelKey}' in the same write, or clear '${scope.providerKey}' to dissolve the pair`,
           422,
         );
+      }
+      const model =
+        effModel ??
+        (provider === 'anthropic-sub'
+          ? 'claude-opus-4-8'
+          : taskKind
+            ? tasks[taskKind].defaultModel
+            : undefined);
+      // Typed OpenRouter has its own model contract; chat pairs must exist in the native pi preset.
+      if (model && isProviderImplemented(provider)) {
+        if (!nativePiModel(provider, model)) {
+          throw new ApiError(
+            'invalid_config_value',
+            `${scope.label}: model '${model}' is not in native pi provider '${piProviderId(provider)}'`,
+            422,
+          );
+        }
+        if (taskKind) {
+          try {
+            assertModelProfileCapabilityFit(tasks[taskKind], provider, model);
+          } catch (error) {
+            throw new ApiError(
+              'invalid_config_value',
+              error instanceof Error ? error.message : 'Incompatible task/model',
+              422,
+            );
+          }
+        }
       }
     }
     // 未知 provider 不在此拦（写 provider 键本身由 tx 外谓词拦；model-only 写下

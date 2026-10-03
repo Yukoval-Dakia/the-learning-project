@@ -308,92 +308,117 @@ describe('pi 1.0 installed agentLoop contract', () => {
   });
 });
 
-describe('pi 1.0 Anthropic-compatible HTTP transport', () => {
-  it('sends system/skill/tools and tool results on the primary MiMo wire, with two counted requests', async () => {
-    const bodies: Array<Record<string, unknown>> = [];
-    const server = createServer(async (request, reply) => {
-      let body = '';
-      for await (const chunk of request) body += chunk;
-      bodies.push(JSON.parse(body));
-      const tool = bodies.length === 1;
-      const events = [
-        {
-          type: 'message_start',
-          message: {
-            id: `msg_${bodies.length}`,
-            type: 'message',
-            role: 'assistant',
-            model: 'mimo-v2.5-pro',
-            content: [],
-            stop_reason: null,
-            stop_sequence: null,
-            usage: { input_tokens: 13, output_tokens: 0 },
+describe('pi native OpenAI-completions HTTP transport', () => {
+  it.each(['xiaomi', 'zai-coding-cn', 'opencode-go'] as const)(
+    'sends real native %s tool-loop requests with preset headers and compat',
+    async (provider) => {
+      const bodies: Array<Record<string, unknown>> = [];
+      const wire: Array<{
+        path: string | undefined;
+        ua: string | undefined;
+        session: string | string[] | undefined;
+      }> = [];
+      const modelId = provider === 'xiaomi' ? 'mimo-v2.5-pro' : 'glm-5.3-flash';
+      const server = createServer(async (request, reply) => {
+        let body = '';
+        for await (const chunk of request) body += chunk;
+        bodies.push(JSON.parse(body));
+        wire.push({
+          path: request.url,
+          ua: request.headers['user-agent'],
+          session: request.headers['x-opencode-session'],
+        });
+        const tool = bodies.length === 1;
+        const events = [
+          {
+            id: 'chat_wire',
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: modelId,
+            choices: [
+              {
+                index: 0,
+                delta: tool
+                  ? {
+                      role: 'assistant',
+                      reasoning_content: 'Inspect the source.',
+                      tool_calls: [
+                        {
+                          index: 0,
+                          id: 'lookup_wire',
+                          type: 'function',
+                          function: { name: 'mcp__loom__lookup', arguments: '{}' },
+                        },
+                      ],
+                    }
+                  : { role: 'assistant', content: 'Grounded final answer.' },
+                finish_reason: null,
+              },
+            ],
           },
-        },
-        {
-          type: 'content_block_start',
-          index: 0,
-          content_block: tool
-            ? { type: 'tool_use', id: 'lookup_wire', name: 'mcp__loom__lookup', input: {} }
-            : { type: 'text', text: '' },
-        },
-        {
-          type: 'content_block_delta',
-          index: 0,
-          delta: tool
-            ? { type: 'input_json_delta', partial_json: '{}' }
-            : { type: 'text_delta', text: 'Grounded final answer.' },
-        },
-        { type: 'content_block_stop', index: 0 },
-        {
-          type: 'message_delta',
-          delta: { stop_reason: tool ? 'tool_use' : 'end_turn', stop_sequence: null },
-          usage: { output_tokens: 7 },
-        },
-        { type: 'message_stop' },
-      ];
-      reply.writeHead(200, { 'Content-Type': 'text/event-stream' });
-      reply.end(
-        events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''),
-      );
-    });
-    server.listen(0, '127.0.0.1');
-    await once(server, 'listening');
-    try {
-      const address = server.address();
-      if (!address || typeof address === 'string') throw new Error('Missing test server address');
-      const h = await harness(() => ({}));
-      h.stream.mockRestore(); // Real pi provider and HTTP client, not the scripted stream seam.
-      const model = h.models.getModel('xiaomi', 'mimo-v2.5-pro');
-      if (!model) throw new Error('Missing primary model');
-      model.baseUrl = `http://127.0.0.1:${address.port}`;
-      h.args.piSkillDocs = [{ name: 'wire-check', body: 'Verify source identity.' }];
-      const frames = await h.run();
-      expect(bodies).toHaveLength(2);
-      expect(h.execute).toHaveBeenCalledTimes(1);
-      for (const body of bodies) {
-        expect(JSON.stringify(body.system)).toContain('Preserve source identity');
-        expect(JSON.stringify(body.system)).toContain('Verify source identity.');
-        expect(body.tools).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({
-              name: 'mcp__loom__lookup',
-              input_schema: expect.objectContaining({ type: 'object' }),
-            }),
-          ]),
+          {
+            id: 'chat_wire',
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: modelId,
+            choices: [{ index: 0, delta: {}, finish_reason: tool ? 'tool_calls' : 'stop' }],
+            usage: { prompt_tokens: 13, completion_tokens: 7, total_tokens: 20 },
+          },
+        ];
+        reply.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        reply.end(
+          `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('')}data: [DONE]\n\n`,
+        );
+      });
+      server.listen(0, '127.0.0.1');
+      await once(server, 'listening');
+      try {
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Missing test server address');
+        const h = await harness(() => ({}));
+        h.stream.mockRestore(); // Real pi provider and HTTP client, not the scripted stream seam.
+        h.args.resolved = { provider, authMode: 'key', model: modelId, apiKey: 'local-test-key' };
+        const model = h.models.getModel(provider, modelId);
+        if (!model) throw new Error('Missing primary model');
+        model.baseUrl = `http://127.0.0.1:${address.port}`;
+        h.args.piSkillDocs = [{ name: 'wire-check', body: 'Verify source identity.' }];
+        const frames = await h.run();
+        expect(bodies).toHaveLength(2);
+        expect(h.execute).toHaveBeenCalledTimes(1);
+        for (const body of bodies) {
+          expect(JSON.stringify(body.messages)).toContain('Preserve source identity');
+          expect(JSON.stringify(body.messages)).toContain('Verify source identity.');
+          expect(body.tools).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                type: 'function',
+                function: expect.objectContaining({
+                  name: 'mcp__loom__lookup',
+                  parameters: expect.objectContaining({ type: 'object' }),
+                }),
+              }),
+            ]),
+          );
+        }
+        expect(JSON.stringify(bodies[1].messages)).toContain('Source A: verified finding.');
+        for (const request of wire) {
+          expect(request.path).toBe('/chat/completions');
+          expect(request.ua).toMatch(/^pi \(/);
+          expect(request.session).toBe(provider === 'opencode-go' ? h.args.runId : undefined);
+        }
+        if (provider === 'xiaomi')
+          expect(JSON.stringify(bodies[1].messages)).toContain('reasoning_content');
+        expect(frames.at(-1)).toMatchObject({
+          subtype: 'success',
+          result: 'Grounded final answer.',
+          usage: { input_tokens: 26, output_tokens: 14 },
+        });
+      } finally {
+        server.closeAllConnections();
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
         );
       }
-      expect(JSON.stringify(bodies[1].messages)).toContain('Source A: verified finding.');
-      expect(frames.at(-1)).toMatchObject({
-        subtype: 'success',
-        result: 'Grounded final answer.',
-        usage: { input_tokens: 26, output_tokens: 14 },
-      });
-    } finally {
-      server.closeAllConnections();
-      await new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      );
-    }
-  });
+    },
+  );
 });

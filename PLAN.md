@@ -1,12 +1,16 @@
 # PLAN — 活看板
 
-> 更新于2026-10-03。当前目标：Linear归零。初盘87个未完成（4进行中/22待审/61积压）；1084→1085、1090→1091已去重，1091漏验的head锚定恢复Todo，当前86项。逐项以真实交付验收收口；既有HOLD/生产与付费边界保持，暂停项范围已向owner询问。
+> 更新于2026-10-03。当前目标：Linear归零。初盘87个未完成（4进行中/22待审/61积压）；1084→1085、1090→1091已去重，1091漏验的head锚定恢复Todo，当前85项。逐项以真实交付验收收口；既有HOLD/生产与付费边界保持，暂停项范围已向owner询问。
 
 ## NOW
 
 - YUK-1112/#1524：pi-agent-core/pi-ai/pi-telemetry1.0.1已合入main `d58a9614`；108 unit+61 Copilot DB、全部本地gate、独立review及exact-head CI `37123780543`通过，17分钟窗口完成，Linear Done；无生产部署/付费调用。
 
-- YUK-1102 active：迁移capture整URL匹配导致remote TLS降级；复用纯helper接通capture/apply，补编码、多host、多@ authority边界。原回归12 RED/4 PASS，修复后52 scoped unit通过，typecheck/lint/build与全部pre-PR audits通过；独立候选review无P0/P1或可执行P2（额外392组真实driver URL探针无绕过）。同步pi1.0.1主线后52 tests及全部本地gate复验通过；待PR exact-head CI及17分钟窗口；独立worktree `fix/yuk-1102-capture-tls`；未连接任何数据库。
+- YUK-1007 active：按owner明确裁决，立即迁移旧兼容线路至pi原生预设并移除旧实现。xiaomi恢复原生OpenAI协议；zhipu→zai-coding-cn；Claude OAuth复用原生anthropic。配置迁移、native目录终态校验与读面模型清单同步，UI仍待preflight。当前worktree `feat/yuk-1007-native-pi-providers`。
+- YUK-1061/1082候选暂存 `fix/yuk-1061-yuk-1082-assessment-correctness`：4 unit/6 DB先RED；修复后71unit+18DB通过，尚未完整gate/review/PR。因owner原生provider优先要求暂停交付，票恢复Todo。
+- YUK-1102/#1525已合入main `fcd681cf`：capture/apply共用TLS策略；52 unit、本地gate、独立review与CI `37125040967`全绿，17分钟窗口完成，Linear Done；未连接生产数据库。
+- Owner临时凭据授权opencode-go有限AI测试：已完成2次真实原生preset请求，HTTP200、正确pi UA/session、一次工具循环；目录估值$0.0001601，非账单。仅adapter层验证，无durable task-run。已用完本次探针2请求上限；无凭据落盘。
+
 - 归零核对：YUK-1084与owner批准后的YUK-1085重复；YUK-1090与YUK-1091重复。#1489只修五项并明确排除head锚定，故1091重新Todo，不把未验收项误作Done。详细快照为本地 `.remember/2026-10-03-linear-zero.md` 与Linear。
 
 - YUK-1111/YUK-1115（#1522）：删除61条已有生产依据的schema豁免；补direct SQL/生成值识别；4条真预留按YUK-1113于10月10日复核，旧fixture误计见YUK-1114。Axios1.20.0与移除Mem0无运行时用途的Jest peer修复依赖gate。45 scanner + 51 Mem0 unit、本地gate及exact-head CI `37106453748` 全绿；已合入main `f750de40`，两票Done；独立初审/验证审无P0/P1。生产依赖仍有18项low/moderate。
@@ -24,7 +28,7 @@
 
 ## NEXT
 
-1. 先收正确性：1091剩余多submission/head激活契约、1061 exact答案归一、1082 θ轴结构root过滤；再按风险/依赖推进类型与边界清理、YUK-1007预算reader/配置写面。UI先preflight。
+1. 原生provider迁移交付后恢复1061 exact答案归一、1082 θ轴结构root过滤；随后1091多submission/head激活契约、类型与边界清理、YUK-1007预算reader/配置写面。UI先preflight。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
@@ -43,6 +47,6 @@
 
 ## BLOCKED-ON
 
-- 本轮明确不部署。Mac/NAS生产数据库、容器、flags与provider凭据不动。新paid评测仍需独立授权；pi 1.0.0依赖与执行接口迁移已获本轮明确授权，不含生产部署。
+- 本轮明确不部署。Mac/NAS生产数据库、容器、flags与provider凭据不动。opencode-go临时凭据的两请求授权探针已完成；扩大付费测试上限仍待owner选择。pi升级与原生provider迁移已获明确授权，不含生产部署。
 - 各交付PR须独立review、真实required check与最后push后约17分钟等待窗。本看板最后合并，不能用文档先称业务PR已落main。
 - 原始脏工作树不动。实施和交付使用独立工作树，所有未合入分支保留。不删计费、重试、复杂parser、并发/回滚/恢复、UI安全测试来凑计数。

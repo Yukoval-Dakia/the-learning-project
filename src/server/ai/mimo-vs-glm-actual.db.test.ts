@@ -7,7 +7,7 @@
 // keys are absent — CI never carries them, so the describes skip wholesale.
 //
 // Re-run locally:
-//   XIAOMI_API_KEY=sk-... ZHIPU_API_KEY=... EXA_API_KEY=... \
+//   XIAOMI_API_KEY=sk-... ZAI_CODING_CN_API_KEY=... EXA_API_KEY=... \
 //     pnpm vitest run --config vitest.db.config.ts \
 //     src/server/ai/mimo-vs-glm-actual.db.test.ts
 // Evidence lands in docs/planning/evidence/2026-09-22-yuk346-<kind>-<provider>-<model>.json.
@@ -50,16 +50,16 @@ import { registerCapabilityTools } from './tools/register-capability-tools';
 import { __resetRegistryForTests } from './tools/registry';
 
 const HAS_MIMO = Boolean(process.env.XIAOMI_API_KEY);
-const HAS_GLM = Boolean(process.env.ZHIPU_API_KEY);
+const HAS_GLM = Boolean(process.env.ZAI_CODING_CN_API_KEY);
 const HAS_EXA = Boolean(process.env.EXA_API_KEY);
 const EVIDENCE_DIR = join(process.cwd(), 'docs/planning/evidence');
 const DATE = '2026-09-22';
 
-type Lane = { provider: 'xiaomi' | 'zhipu'; model: string };
+type Lane = { provider: 'xiaomi' | 'zai-coding-cn'; model: string };
 
 const MIMO_PRO: Lane = { provider: 'xiaomi', model: 'mimo-v2.5-pro' };
-const GLM_52: Lane = { provider: 'zhipu', model: 'glm-5.2' };
-const GLM_53_FLASH: Lane = { provider: 'zhipu', model: 'glm-5.3-flash' };
+const GLM_52: Lane = { provider: 'zai-coding-cn', model: 'glm-5.3' };
+const GLM_53_FLASH: Lane = { provider: 'zai-coding-cn', model: 'glm-5.3-flash' };
 
 function sha256(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');

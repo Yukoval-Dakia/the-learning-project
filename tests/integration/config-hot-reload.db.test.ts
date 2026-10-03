@@ -274,7 +274,7 @@ describe('P1-5 — combined provider+model pair validation (final state in-tx)',
     );
   });
 
-  it('clearing the provider dissolves the pair (always allowed)', async () => {
+  it('clearing a provider cannot leave its model under the registry default provider)', async () => {
     const db = testDb();
     const { setConfigs } = await import('@/server/config/write');
     await setConfigs(
@@ -285,8 +285,9 @@ describe('P1-5 — combined provider+model pair validation (final state in-tx)',
       { actor: 'cli' },
       db,
     );
-    const res = await clearConfig('task.QuizGenTask.provider', { actor: 'cli' }, db);
-    expect(res.cleared).toBe(true);
+    await expect(
+      clearConfig('task.QuizGenTask.provider', { actor: 'cli' }, db),
+    ).rejects.toMatchObject({ status: 422 });
   });
 
   it('batch set provider+model together validates the final combo atomically', async () => {
@@ -305,25 +306,21 @@ describe('P1-5 — combined provider+model pair validation (final state in-tx)',
     expect(getConfig('lane.global.model', {})).toBe('gpt-6-astra');
   });
 
-  it('provider-only rewrite to openai passes while ANY model row stands (missing-only rule)', async () => {
+  it('provider-only rewrite rejects a model absent from the target native preset)', async () => {
     const db = testDb();
     const { setConfigs } = await import('@/server/config/write');
     await setConfigs(
       [
         { key: 'task.QuizGenTask.provider', value: 'xiaomi' },
-        { key: 'task.QuizGenTask.model', value: 'mimo-v2-pro' },
+        { key: 'task.QuizGenTask.model', value: 'mimo-v2.5-pro' },
       ],
       { actor: 'cli' },
       db,
     );
-    // 终态 openai + model 非空 → 规则只查「缺失」，不查 provider↔id 族匹配（超出
-    // oracle direction，本条在 review 报告里注明）。
-    const res = await setConfigs(
-      [{ key: 'task.QuizGenTask.provider', value: 'openai' }],
-      { actor: 'cli' },
-      db,
-    );
-    expect(res[0].key).toBe('task.QuizGenTask.provider');
+    await expect(
+      setConfigs([{ key: 'task.QuizGenTask.provider', value: 'openai' }], { actor: 'cli' }, db),
+    ).rejects.toMatchObject({ status: 422 });
+    expect(getConfig('task.QuizGenTask.provider', {})).toBe('xiaomi');
   });
 
   it('writing model under a provider that has a runnable default is allowed', async () => {

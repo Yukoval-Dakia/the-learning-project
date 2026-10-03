@@ -1,43 +1,21 @@
 # Current handoff — 2026-10-03
 
-Owner authorized continued product development and explicitly requested the latest
-pi core. Linear is connected. The current implementation is the three-PR chain:
+Main fcd681cf: pi1.0.1 (#1524/d58a9614) and migration TLS (#1525/fcd681cf) delivered;
+required CI/review/17-minute windows passed. Linear1112/1102 Done. 85 issues remain.
 
-- #1522 / YUK-1111 + YUK-1115: schema producer audit and dependency gate recovery.
-  61 expired exemptions removed; 4 real reserved fields remain dated under
-  YUK-1113. Existing fixture evidence gap is YUK-1114 (not fixed). Axios1.20.0;
-  Mem0's unused Jest peer removed, leaving no production Braces path.
-  Merged as f750de40; Head44ed63de CI37106453748 passed; both Linear issues Done. Independent initial + verification review
-  completed with no P0/P1; advisory4172134135 adjudicated P2/YUK-1114.
-- #1523 / YUK-1112: pi-agent-core/pi-ai1.0.0; finishTurn, system transcript,
-  compaction preservation, and full root+child terminal usage. 160 local unit,
-  typecheck/lint/build/audits passed; independent initial + verification review no P0/P1.
-  Copilot model-switch system-transcript regression61 DB passed; head24f9313b CI37107869970 passed; merged35415555, Linear Done.
-  Includes real installed loop and a loopback HTTP MiMo-compatible SSE test.
-- #1521 / YUK-1007: AI output locale hot reload and pinned prompt provenance.
-  Original252 unit +55 DB; combined pi/schema/dependency candidate160 unit +55 DB
-  passed, with local typecheck/lint/build/audits. Initial P1 fixed; independent
-  verification review found no remaining P0/P1. Later advisory judge/recovery races
-  reproduced and fixed:42 judge unit +42 recovery DB pass. Recovery accepts one
-  consistent sealed locale, rejects mixed/stale fingerprints. Candidate797c2bab CI37108030450 passed; subsequent main sync only resolves
-  the planning-board conflict, with no runtime changes. Epic is not complete.
+Active: YUK-1007 native provider migration in /workspace/tlp-native-providers,
+feat/yuk-1007-native-pi-providers. Owner explicitly chose migrate then delete old
+compatibility routes. Native Xiaomi/OpenAI Completions, canonical zai-coding-cn,
+OAuth maps to native Anthropic. Validate catalog identity/capabilities, migration
+journal/epoch and truthful admin model metadata. No UI edits or deployment.
 
-Use GitHub PR merge state and exact-head CI, plus Linear, for current delivery
-status; do not infer merge/deployment from this implementation handoff. Merge only
-after required CI, P0/P1 adjudication, and ~17min since latest push. Do not rerun
-failed CI merely to obtain a green result; investigate the concrete failure.
+Parked candidate: /workspace/tlp-assessment-correctness,1061/1082; 71 unit +18 DB
+passed after reproductions, no review/full gates/PR yet. Restore after active delivery.
 
-Planning/evidence:
-- docs/planning/2026-10-03-yuk1111-schema-producers.md
-- docs/planning/2026-10-03-yuk1112-pi-1.md
-- docs/planning/2026-10-03-yuk1007-locale-hot-reload.md
-- PLAN.md and local .remember/2026-10-03-delivery-closeout.md when present.
+Owner temporary opencode-go credential authorized a bounded actual test. Two requests,
+HTTP200, correct native pi UA and session, one local tool call, catalog estimate0.0001601USD.
+Adapter-only evidence, not durable task-run. Key never persisted, process exited, request
+cap exhausted. Safe evidence remains root .remember/2026-10-03-opencode-go-actual.json.
 
-Next product slice: YUK-1007 budget readers and configuration mutation routes;
-settings UI still requires its design preflight. No production deployment or paid
-model evaluation occurred or is authorized by this batch. CI-latency work remains
-paused; 120s is not proven. Preserve old branches/worktrees and historical evidence.
-
-The old09-29 handoff is available with git show07187571:.remember/now.md.
-YUK-1109 separately owns removing tracked planning/session files; this batch does
-not implement or cancel that task.
+Do not claim Linear zero: actionable work remains; explicit Astra/autonomous/native-app
+HOLDs await owner scope. Preserve every branch/worktree. UI requires design preflight.

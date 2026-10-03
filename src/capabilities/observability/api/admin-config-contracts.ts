@@ -79,6 +79,10 @@ export const AdminConfigProviderRowSchema = z.object({
   credential_env: z.string(),
   key_present: z.boolean(),
   implemented: z.boolean(),
+  pi_provider: z.string().nullable().optional(),
+  models: z
+    .array(z.object({ id: z.string(), api: z.string(), input: z.array(z.string()) }))
+    .optional(),
 });
 
 /** schedules[] 行：cron 声明的静态只读投影（不触发任何 worker 行为）。 */

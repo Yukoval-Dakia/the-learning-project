@@ -82,7 +82,7 @@ export const mindModelInductionTaskSpec = {
     description:
       'YUK-406 / YUK-821 — induce/update ONE evidence-grounded conjecture and freeze its DiagnosticSpec. This stage emits no probes. Bounded structured-output run; the nightly job runs it on the Opus anthropic-sub lane via per-call override for self-consistency.',
     defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
+    defaultModel: 'mimo-v2.5',
     // YUK-786: 120s (was 60s). MEASURED, not guessed — a 12-cell real-Opus run on
     // the grounded packet took 42–61s per successful sample, and the old 60s cap
     // aborted roughly half the remainder mid-flight ('Claude Code process aborted

@@ -12,7 +12,8 @@
 //   - `pi:` session cursors + durable-turn replay (session resume)
 //
 // Provider wire protocols are the adapter's business (anthropic-messages for
-// xiaomi/zhipu/anthropic/anthropic-sub, openai-* for opencode-go); the runner
+// Anthropic for Claude, OpenAI Completions for Xiaomi/Z.AI, and the native
+// API mix for opencode-go); the runner
 // only ever sees normalized frames.
 //
 // Memory-layer extensibility:
