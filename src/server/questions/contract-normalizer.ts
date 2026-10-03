@@ -447,7 +447,7 @@ function buildUnit(leaf: LeafInput, scoring: LeafScoring) {
           ? {
               kind: 'text_key' as const,
               accepted_texts: scoring.acceptedTexts ?? [],
-              normalization: 'trim' as const,
+              normalization: 'answer_head' as const,
             }
           : {
               kind: 'rule_reference' as const,

@@ -220,6 +220,7 @@ describe('sealed review settlement commands', () => {
     const fsrsRows = await db.select().from(material_fsrs_state);
     expect(fsrsRows).toHaveLength(1);
     expect(fsrsRows[0]).toMatchObject({ subject_kind: 'question', subject_id: questionId });
+    expect(await db.select().from(mastery_state)).toHaveLength(0);
     const reviewRows = await db
       .select({ payload: event.payload })
       .from(event)
@@ -244,6 +245,11 @@ describe('sealed review settlement commands', () => {
     const fsrsRows = await db.select().from(material_fsrs_state);
     expect(fsrsRows.map((r) => r.subject_id)).toEqual(['kc_contract']);
     expect(fsrsRows[0].subject_kind).toBe('knowledge');
+    const thetaRows = await db
+      .select()
+      .from(mastery_state)
+      .where(eq(mastery_state.subject_kind, 'knowledge'));
+    expect(thetaRows.map((r) => r.subject_id)).toEqual(['kc_contract']);
   });
 
   it('a paper slot whose primary KC is a synthetic root settles on the question card', async () => {
@@ -306,6 +312,7 @@ describe('sealed review settlement commands', () => {
     const fsrsRows = await db.select().from(material_fsrs_state);
     expect(fsrsRows).toHaveLength(1);
     expect(fsrsRows[0]).toMatchObject({ subject_kind: 'question', subject_id: questionId });
+    expect(await db.select().from(mastery_state)).toHaveLength(0);
   });
 
   it('a paper slot with a root primary and a real secondary settles on the real KC', async () => {
@@ -370,5 +377,10 @@ describe('sealed review settlement commands', () => {
     const fsrsRows = await db.select().from(material_fsrs_state);
     expect(fsrsRows.map((r) => r.subject_id)).toEqual(['kc_contract']);
     expect(fsrsRows[0].subject_kind).toBe('knowledge');
+    const thetaRows = await db
+      .select()
+      .from(mastery_state)
+      .where(eq(mastery_state.subject_kind, 'knowledge'));
+    expect(thetaRows.map((r) => r.subject_id)).toEqual(['kc_contract']);
   });
 });

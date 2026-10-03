@@ -11,6 +11,7 @@ import {
   validateResponseSpec,
   validateScoringBasis,
 } from '@/core/schema/assessment';
+import { evaluateSubmissionCore } from '@/core/schema/assessment/evaluation';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import {
   type NormalizableQuestionRow,
@@ -40,6 +41,37 @@ function expectValidContract(n: ReturnType<typeof normalizeQuestionRowToContract
   expect(validateResponseSpec(n.response_spec, n.structure)).toEqual([]);
   expect(validateScoringBasis(n.scoring_basis, n.response_spec, n.structure)).toEqual([]);
   expect(validateExecutionPlan(n.execution_plan, n.scoring_basis)).toEqual([]);
+}
+
+async function evaluateNormalizedText(
+  n: ReturnType<typeof normalizeQuestionRowToContract>,
+  given: string,
+) {
+  const revisionId = 'rev-normalized';
+  const now = '2026-10-03T00:00:00.000Z';
+  return evaluateSubmissionCore({
+    evaluation_id: 'eval-normalized',
+    attempt: 1,
+    revision: {
+      ...n,
+      revision_id: revisionId,
+      revision_ordinal: 1,
+      published_at: now,
+      supersedes_revision_id: null,
+    },
+    submission: {
+      submission_id: 'sub-normalized',
+      issuance_id: 'iss-normalized',
+      revision_id: revisionId,
+      evaluation_group_id: 'eg-normalized',
+      idempotency_key: 'idem-normalized',
+      submitted_at: now,
+      response_set: {
+        entries: [{ slot_id: n.response_spec.slots[0].slot_id, kind: 'text', text_md: given }],
+      },
+      group_evidence: [],
+    },
+  });
 }
 
 describe('normalizeQuestionRowToContract — 契约四层可发布', () => {
@@ -118,11 +150,65 @@ describe('normalizeQuestionRowToContract — 契约四层可发布', () => {
     const unit = n.scoring_basis.units[0];
     if (unit.criterion.kind !== 'text_key') throw new Error('expected text_key');
     expect(unit.criterion.accepted_texts).toEqual(['42']);
-    expect(unit.criterion.normalization).toBe('trim');
+    expect(unit.criterion.normalization).toBe('answer_head');
     expect(n.execution_plan.assignments[0].executor).toEqual({
       kind: 'deterministic',
       comparator: 'exact_text',
     });
+  });
+
+  it.each([
+    ['42', '答：４２。\n\n解析：将两项相加即可。', 1],
+    ['答案：ABC', 'ａｂｃ', 1],
+    ['42', '42', 1],
+    ['42', '答案：43\n\n解析：计算有误。', 0],
+  ])(
+    'published exact contract grades reference %s against %s',
+    async (reference, given, points) => {
+      const n = normalizeQuestionRowToContract(
+        baseRow({
+          kind: 'short_answer',
+          choices_md: null,
+          reference_md: reference,
+          judge_kind_override: 'exact',
+        }),
+      );
+      expectValidContract(n);
+      const out = await evaluateNormalizedText(n, given);
+      expect(out.record.status).toBe('completed');
+      expect(out.record.aggregate).toMatchObject({ kind: 'points_total', points });
+    },
+  );
+
+  it('standalone row fallback and structured alternative answers use the same comparator', async () => {
+    for (const answers of [undefined, ['答案：ABC', '答：XYZ']]) {
+      const n = normalizeQuestionRowToContract(
+        baseRow({
+          kind: 'short_answer',
+          choices_md: null,
+          reference_md: 'ABC',
+          judge_kind_override: answers ? 'exact' : null,
+          structured: {
+            id: 'solo',
+            role: 'standalone',
+            prompt_text: '写出缩写。',
+            answers,
+          } as StructuredQuestionT,
+        }),
+      );
+      expectValidContract(n);
+      const before = JSON.stringify(n);
+      for (const given of answers
+        ? ['ａｂｃ', '答案：ｘｙｚ。\n\n解析：另一种写法。']
+        : ['答：ａｂｃ。']) {
+        const out = await evaluateNormalizedText(n, given);
+        expect(out.record.aggregate).toMatchObject({ kind: 'points_total', points: 1 });
+      }
+      expect((await evaluateNormalizedText(n, 'ABD')).record.aggregate).toMatchObject({
+        points: 0,
+      });
+      expect(JSON.stringify(n)).toBe(before);
+    }
   });
 
   it('P1-2: rule_reference provenance maps the ACTUAL answer origin — web_sourced→official, quiz_gen→system_proposed, manual→manual', () => {
