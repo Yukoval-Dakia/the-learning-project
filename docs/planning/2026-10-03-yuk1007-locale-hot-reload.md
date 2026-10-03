@@ -48,3 +48,11 @@ separate YUK-1007 work. No real-model language-quality claim is made.
 Local command logs: `/tmp/yuk1007-locale-*.log` and
 `/tmp/yuk1007-base-schema.log` in the task environment. Full local `pnpm test`
 was not run; remote exact-head CI remains required.
+
+## Shared gate recovery
+
+Merged prerequisite branch #1522 (YUK-1111/YUK-1115) into this candidate: the
+65-expiration failure above is historical. 61 obsolete exemptions removed; four
+real reserved fields have explicit bounded follow-up YUK-1113. New SQL/default
+producer support and dependency repairs pass locally. Full exact-head CI reruns
+after push; prerequisite PR and this locale PR are not yet claimed merged.
