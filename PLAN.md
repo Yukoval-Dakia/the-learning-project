@@ -4,7 +4,9 @@
 
 ## NOW
 
-- YUK-1102 active：迁移capture整URL匹配导致remote TLS降级；复用纯helper接通capture/apply，补编码、多host、多@ authority边界。原回归12 RED/4 PASS，修复后52 scoped unit通过，typecheck/lint/build与全部pre-PR audits通过；独立候选review无P0/P1或可执行P2（额外392组真实driver URL探针无绕过）。独立worktree `fix/yuk-1102-capture-tls`；未连接任何数据库。
+- YUK-1112/#1524：pi-agent-core/pi-ai/pi-telemetry1.0.1已合入main `d58a9614`；108 unit+61 Copilot DB、全部本地gate、独立review及exact-head CI `37123780543`通过，17分钟窗口完成，Linear Done；无生产部署/付费调用。
+
+- YUK-1102 active：迁移capture整URL匹配导致remote TLS降级；复用纯helper接通capture/apply，补编码、多host、多@ authority边界。原回归12 RED/4 PASS，修复后52 scoped unit通过，typecheck/lint/build与全部pre-PR audits通过；独立候选review无P0/P1或可执行P2（额外392组真实driver URL探针无绕过）。同步pi1.0.1主线后复验中；独立worktree `fix/yuk-1102-capture-tls`；未连接任何数据库。
 - 归零核对：YUK-1084与owner批准后的YUK-1085重复；YUK-1090与YUK-1091重复。#1489只修五项并明确排除head锚定，故1091重新Todo，不把未验收项误作Done。详细快照为本地 `.remember/2026-10-03-linear-zero.md` 与Linear。
 
 - YUK-1111/YUK-1115（#1522）：删除61条已有生产依据的schema豁免；补direct SQL/生成值识别；4条真预留按YUK-1113于10月10日复核，旧fixture误计见YUK-1114。Axios1.20.0与移除Mem0无运行时用途的Jest peer修复依赖gate。45 scanner + 51 Mem0 unit、本地gate及exact-head CI `37106453748` 全绿；已合入main `f750de40`，两票Done；独立初审/验证审无P0/P1。生产依赖仍有18项low/moderate。
