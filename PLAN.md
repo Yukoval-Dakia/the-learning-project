@@ -6,8 +6,8 @@
 
 - YUK-1112/#1524：pi-agent-core/pi-ai/pi-telemetry1.0.1已合入main `d58a9614`；108 unit+61 Copilot DB、全部本地gate、独立review及exact-head CI `37123780543`通过，17分钟窗口完成，Linear Done；无生产部署/付费调用。
 
-- YUK-1007 active：按owner明确裁决，立即迁移旧兼容线路至pi原生预设并移除旧实现。xiaomi恢复原生OpenAI协议；zhipu→zai-coding-cn；Claude OAuth复用原生anthropic。配置迁移、native目录终态校验与读面模型清单同步，UI仍待preflight。PR#1526：339unit、52配置DB/HTTP、61CopilotDB、81migration及全部本地gate通过；独立验证审无P0/P1，advisory全局pin P1已补全chat任务能力校验，并共用runtime global resolver修复剩余env/DB P2；新增后56配置DB/HTTP、73相关unit通过；不启第三轮独立review。原f8663e29 CI37128248936全绿；修复后重新跑最终head CI与17分钟窗口。worktree `feat/yuk-1007-native-pi-providers`。
-- YUK-1061/1082候选暂存 `fix/yuk-1061-yuk-1082-assessment-correctness`：4 unit/6 DB先RED；修复后71unit+18DB通过，尚未完整gate/review/PR。因owner原生provider优先要求暂停交付，票恢复Todo。
+- YUK-1007/#1526已合入main `2236c8e2`：原生pi provider迁移，旧Xiaomi/Zhipu兼容注册已移除，活动配置迁移脚本与模型能力校验交付；最终head `6af3b410` CI `37128930722`全绿、17分钟窗口与review完成。Epic预算/写HTTP/UI仍未交付，无生产部署或额外付费调用。
+- YUK-1061/1082 active：恢复 `fix/yuk-1061-yuk-1082-assessment-correctness`，已同步main `2236c8e2`。text_key产answer_head；solo/paper theta排除结构根，deferred晚到判定与冻结domain同范围。71unit+61DB通过，含旧trim契约重新发布新revision、原revision/digest不变；初审pending evidence P1已复现修复，新/旧记录域范围一致；唯一验证审和其余本地gate进行中。存量生产处置分别归1105/1083，本轮不改历史数据。
 - YUK-1102/#1525已合入main `fcd681cf`：capture/apply共用TLS策略；52 unit、本地gate、独立review与CI `37125040967`全绿，17分钟窗口完成，Linear Done；未连接生产数据库。
 - Owner临时凭据授权opencode-go有限AI测试：已完成2次真实原生preset请求，HTTP200、正确pi UA/session、一次工具循环；目录估值$0.0001601，非账单。仅adapter层验证，无durable task-run。已用完本次探针2请求上限；无凭据落盘。
 
@@ -28,12 +28,13 @@
 
 ## NEXT
 
-1. 原生provider迁移交付后恢复1061 exact答案归一、1082 θ轴结构root过滤；随后1091多submission/head激活契约、类型与边界清理、YUK-1007预算reader/配置写面。UI先preflight。
+1. 完成1061/1082代码交付；随后1091多submission/head激活契约、1069剩余ingestion JSON边界、其他已核验类型清理与YUK-1007预算reader/配置写面。UI先preflight。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
 ## PARKED
 
+- YUK-1069旧pi catalog导入/double cast由#1526删除；ingestion持久化error guard仍未实施，票由过期InReview恢复Todo。
 - Linear 已恢复；YUK-1106已同步Done，YUK-1107暂停/Backlog，YUK-1007仍In Progress。历史待办继续逐项核验、去重后同步。
 - #1508旧pi0.87.1依赖PR仍关闭、分支保留。迁移由YUK-1112/#1523替代，见NOW，不重新开启旧PR。
 - #1506的jsdom30要求Node24.15+，仓库pin24.0.0。必须协调运行时与DOM回归。#1505的Biome2.5.14原CI有1error、375warnings，超过305基线。必须修真实diagnostics并证明计数，不抬基线放行。原分支保留。

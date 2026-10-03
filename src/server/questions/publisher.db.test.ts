@@ -19,6 +19,7 @@ import {
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   type NormalizableQuestionRow,
+  contractIntegrityDigest,
   normalizeQuestionRowToContract,
 } from './contract-normalizer';
 import {
@@ -152,6 +153,66 @@ describe('publishQuestionGroup（YUK-1043 统一发布 seam）', () => {
       current_revision_id: first.revision_id,
       reason: 'revision_cas',
     });
+  });
+
+  it('republishing an exact contract upgrades normalization without rewriting its old revision', async () => {
+    const db = testDb();
+    const qid = 'pub_exact_normalization';
+    await seedQuestion(qid, {
+      kind: 'short_answer',
+      choices_md: null,
+      reference_md: '答案：ABC',
+      judge_kind_override: 'exact',
+    });
+    const row = await readRow(qid);
+    const legacy = publishInput(row);
+    const legacyCriterion = legacy.contract.scoring_basis.units[0].criterion;
+    if (legacyCriterion.kind !== 'text_key') throw new Error('expected text_key');
+    legacyCriterion.normalization = 'trim';
+    legacy.contract.integrity_digest = contractIntegrityDigest(legacy.contract);
+    const first = await publishQuestionGroup(db, legacy);
+    if (first.status !== 'published') throw new Error('legacy publish failed');
+    const [original] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, first.revision_id));
+
+    const current = publishInput(row, {
+      expectedCurrentRevision: first.revision_id,
+      expectedAdmissionGeneration: 1,
+    });
+    const second = await publishQuestionGroup(db, current);
+    if (second.status !== 'published') throw new Error('normalization republish failed');
+    const [replacement] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, second.revision_id));
+    expect(replacement.scoring_basis.units[0].criterion).toMatchObject({
+      kind: 'text_key',
+      normalization: 'answer_head',
+    });
+    expect(replacement.revision_ordinal).toBe(2);
+    expect(replacement.supersedes_revision_id).toBe(first.revision_id);
+    expect(replacement.integrity_digest).not.toBe(original.integrity_digest);
+    const [preserved] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, first.revision_id));
+    expect(preserved).toEqual(original);
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(lifecycle.current_revision_id).toBe(second.revision_id);
+    expect(lifecycle.scoring_admission_state).toBe('withheld');
+    expect(lifecycle.scoring_admission_generation).toBe(2);
+    expect(
+      await publishQuestionGroup(db, {
+        ...current,
+        expectedCurrentRevision: second.revision_id,
+        expectedAdmissionGeneration: 2,
+      }),
+    ).toMatchObject({ status: 'noop', current_revision_id: second.revision_id });
   });
 
   it('content edit publishes a new revision with supersedes chain + identity diff', async () => {

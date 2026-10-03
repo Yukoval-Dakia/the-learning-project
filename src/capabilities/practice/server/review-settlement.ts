@@ -310,6 +310,13 @@ export interface DeferredSoloReviewReceipt extends SettlementReceipt {
   };
 }
 
+/** Structural roots remain in evidence, but are never theta write targets. */
+export function thetaKnowledgeIds(ids: string[]): string[] {
+  return Array.from(new Set(ids.map((id) => id.trim()))).filter(
+    (id) => id.length > 0 && !SYNTHETIC_SUBJECT_ROOT_RE.test(id),
+  );
+}
+
 async function detectLateArrival(
   tx: Tx,
   input: {
@@ -338,7 +345,13 @@ async function detectLateArrival(
   const abilityGlobalIds =
     abilityGlobalByKnowledgeId === undefined
       ? await resolveAbilityGlobalSubjectIds(tx, knowledgeIds)
-      : Array.from(new Set(Object.values(abilityGlobalByKnowledgeId)));
+      : Array.from(
+          new Set(
+            knowledgeIds.flatMap((id) =>
+              abilityGlobalByKnowledgeId[id] ? [abilityGlobalByKnowledgeId[id]] : [],
+            ),
+          ),
+        );
 
   // (a) Evidence first — it is both the cheapest to reason about and the only half that
   // survives a preceding skip.
@@ -370,7 +383,7 @@ async function detectLateArrival(
     }
   }
 
-  // θ̂ is written for the question's FULL label set, independent of the FSRS subset.
+  // θ̂ covers all real KC labels, independent of the FSRS subset.
   const thetaSubjectIds = Array.from(new Set(knowledgeIds)).filter((id) => id.length > 0);
   if (thetaSubjectIds.length > 0) {
     const rows = await tx
@@ -424,6 +437,7 @@ async function settleSoloReview(
   const questionKnowledgeIds = Array.from(
     new Set(q.knowledge_ids.map((id) => id.trim()).filter((id) => id.length > 0)),
   );
+  const thetaIds = thetaKnowledgeIds(questionKnowledgeIds);
   const requestedKnowledgeIds = Array.from(
     new Set(body.referenced_knowledge_ids.map((id) => id.trim()).filter((id) => id.length > 0)),
   );
@@ -491,7 +505,7 @@ async function settleSoloReview(
             now,
             fsrsSubjectKind,
             fsrsSubjectIds,
-            knowledgeIds: q.knowledge_ids,
+            knowledgeIds: thetaIds,
             questionId,
             runId: eventId,
             abilityGlobalByKnowledgeId: policy.frozenAbilityGlobalByKnowledgeId,
@@ -517,7 +531,7 @@ async function settleSoloReview(
         fsrs: { subjectKind: fsrsSubjectKind, subjectIds: fsrsSubjectIds },
         theta: {
           enabled: true,
-          knowledgeIds: q.knowledge_ids,
+          knowledgeIds: thetaIds,
           ...(body.latency_ms == null ? {} : { responseTimeMs: body.latency_ms }),
           ...(policy.kind === 'deferred' && policy.frozenAbilityGlobalByKnowledgeId !== undefined
             ? { abilityGlobalByKnowledgeId: policy.frozenAbilityGlobalByKnowledgeId }
@@ -945,7 +959,7 @@ export async function settlePaperSlotReview(
         },
         theta: {
           enabled: graded && coarseOutcome !== 'unsupported',
-          knowledgeIds: referencedKnowledgeIds,
+          knowledgeIds: thetaKnowledgeIds(referencedKnowledgeIds),
         },
         calibration:
           graded && coarseOutcome !== 'unsupported'

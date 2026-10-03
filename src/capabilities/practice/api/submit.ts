@@ -87,7 +87,7 @@ import {
 } from '../server/judge-run-dispatch';
 import { freezeQuestionForJudge } from '../server/judge-run-payload';
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
-import { settleInlineSoloReview } from '../server/review-settlement';
+import { settleInlineSoloReview, thetaKnowledgeIds } from '../server/review-settlement';
 import { type CreateAttemptBody, CreateAttemptBodySchema } from './contracts';
 
 type Rating = CreateAttemptBody['rating'];
@@ -790,10 +790,8 @@ export async function enqueueDurableJudge(
     // throws, the answer genuinely is not recorded anywhere and a 5xx is the truth. It
     // carries the SAME frozen input the job does, so a recovery re-enqueue reproduces this
     // dispatch exactly (D5 profile freeze + the question snapshot survive recovery).
-    const abilityGlobalByKnowledgeId = await resolveAbilityGlobalByKnowledgeId(
-      db,
-      validated.q.knowledge_ids,
-    );
+    const thetaIds = thetaKnowledgeIds(validated.q.knowledge_ids);
+    const abilityGlobalByKnowledgeId = await resolveAbilityGlobalByKnowledgeId(db, thetaIds);
     const abilityGlobalIds = Array.from(new Set(Object.values(abilityGlobalByKnowledgeId)));
     const submitInput = {
       body: validated.body,
@@ -811,9 +809,8 @@ export async function enqueueDurableJudge(
       runId,
       sessionId: validated.body.session_id ?? null,
       questionId: validated.questionId,
-      // The question's OWN labels: the θ̂ write domain, a superset of the FSRS subset. The
-      // late-arrival guard reads this as the material water mark.
-      knowledgeIds: validated.q.knowledge_ids,
+      // Only real KC labels are write targets. The full labels remain in question_snapshot.
+      knowledgeIds: thetaIds,
       abilityGlobalIds,
       submit: submitInput,
       submittedAt: now,
