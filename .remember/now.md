@@ -1,20 +1,21 @@
 # Current handoff — 2026-10-03
 
-Maine2353b3f: assessment correctness1061/1082 delivered#1527 after CI37130707086,
-independent initial+verification review and17-minute final-push window. BothLinearDone.
-83open. Nativeprovider2236c8e2 andpi1.0.1 alreadydelivered. No prodops/additionalpaidcalls.
+Main e1f32e7f: JSON/type boundaries1067/1068/1069/1070 delivered#1528 after
+CI37132443100, independent initial review and17-minute final-push window. Four tickets Done.
+79 open. Assessment#1527, native providers#1526, pi1.0.1 and TLS already delivered.
 
-Active /workspace/tlp-json-type-boundaries,fix/yuk-1067-json-type-boundaries,basee2353b3f.
-1067/1068/1069/1070 InProgress: validate trait aggregate and ingestion error JSON;
-infermigrationqueryrowsfromschema;read-onlyhelpersDb|Tx.18DBfailurecases reproduced beforefix.
-22unit+139DB/9files,typecheck/lint/build/audits pass;independentinitialreview noP0/P1/P2.
-Exact-headCI and17-minute window required beforemerge. API-codegen dependencies linked
-fromroottools/api-codegen/node_modules;no manifest/lockfilechanges.
-SQL, migrationdecision/digest and validpayload semantics remain unchanged. NoUIedits.
+Active /workspace/tlp-type-escapes,fix/yuk-1071-type-escapes,basee1f32e7f.
+1066/1071/1072 InProgress: typed verification params and SQL rows; explicit byte/JSON
+adapters; honest free-label question-kind return/consumers. Golden mesh3unit RED beforefix.
+182unit/5files +254DB/20files pass. Typecheck/lint/build/all10 local audits pass;
+Postman regeneration unchanged. Incomplete test profiles replaced with real resolved
+profiles (production callers already valid). Independent initial review in progress;
+exact-head CI plus17-minute final-push window required beforemerge. Final evidence in PR.
+No UI/dependency/SQL changes.
 
-Historical exactrepublish/registry remains1105; historicalrootops1083. Neitherexecuted.
-1091grouphead needs realjointgroup evaluation/settlement proof, notremovingcoordinatecheck.
-SettingsUIpreflight remains unapproved; existing2026-09-26docneeds currentnativefacts refresh.
-Temporaryopencodeprobe2requests cap exhausted; nosecretstored, noadditionalpaidcalls.
-Explicit Astra/autonomous/native-app HOLDs and1109no-merge-only constraintpersist.
-All branches/worktrees preserved. Do notclaimLinearzero.
+1065 silent timeout advisory-unlock error still unfixed, restoredTodo.1091 joint submission
+head requires coherent group evaluation/settlement (not deleting its guard). Owner ops
+1083/1105 and all explicit HOLDs remain. UI design preflight unapproved.1109 no-merge PR only.
+Temporary opencode-go probe2-request cap exhausted; key never persisted, no further paid
+calls. Native preset wire/tool probe is adapter-only, not durable lifecycle/quality proof.
+Preserve all worktrees/branches. No Linear-zero or production-deployment claim.

@@ -116,10 +116,10 @@ export function answerClassCompatible(a: string, b: string): boolean {
  * （true_false / fill_blank / essay）或词表外的自由标签透传原值，保持降级链
  * 「无 skill 包 → 回退 promptFragments」。
  */
-export function questionKindToSkillKind(persistedKind: string): SubjectQuestionKind {
+export function questionKindToSkillKind(persistedKind: string): string {
   const canonical = normalizeToCanonicalKind(persistedKind);
-  if (canonical === null) return persistedKind as SubjectQuestionKind;
-  return CANONICAL_TO_SKILL[canonical] ?? (canonical as unknown as SubjectQuestionKind);
+  if (canonical === null) return persistedKind;
+  return CANONICAL_TO_SKILL[canonical] ?? canonical;
 }
 
 /**
@@ -127,8 +127,9 @@ export function questionKindToSkillKind(persistedKind: string): SubjectQuestionK
  * 落库的持久 `question.kind` 标签（如 'computation'），让 `WHERE kind = …` 的 few-shot
  * 过滤命中真行。等价于 normalizeToCanonicalKind 走 skill→canonical 分支；不认的值透传。
  */
-export function skillKindToQuestionKind(skillKind: SubjectQuestionKind): string {
-  return SKILL_TO_CANONICAL[skillKind] ?? (skillKind as string);
+export function skillKindToQuestionKind(skillKind: string): string {
+  const parsed = SubjectQuestionKindSchema.safeParse(skillKind);
+  return parsed.success ? SKILL_TO_CANONICAL[parsed.data] : skillKind;
 }
 
 /**

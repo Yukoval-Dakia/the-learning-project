@@ -48,16 +48,15 @@ async function loadSessionForUpdate(
   tx: Db | Tx,
   sessionId: string,
 ): Promise<{ status: string; warnings: string[]; source_document_id: string | null } | null> {
-  const rows = await tx.execute(
-    sql`SELECT status, warnings, source_document_id FROM learning_session WHERE id = ${sessionId} AND type = 'ingestion' FOR UPDATE`,
-  );
-  // postgres-js returns array of objects
-  const arr = rows as unknown as Array<{
+  const rows = await tx.execute<{
     status: string;
     warnings: string[] | null;
     source_document_id: string | null;
-  }>;
-  const row = arr[0];
+  }>(
+    sql`SELECT status, warnings, source_document_id FROM learning_session WHERE id = ${sessionId} AND type = 'ingestion' FOR UPDATE`,
+  );
+  // postgres-js returns array of objects
+  const row = rows[0];
   if (!row) return null;
   return {
     status: row.status,

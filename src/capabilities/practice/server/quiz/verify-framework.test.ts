@@ -215,7 +215,7 @@ describe('normalizeAnswer', () => {
 const fakeProfile = {
   id: 'yuwen',
   // runSemanticJudge's builder reads displayName / languageStyle off subjectProfile.
-  full: { id: 'yuwen', displayName: '语文', languageStyle: 'classical' },
+  full: { ...resolveSubjectProfile('yuwen'), languageStyle: 'classical' },
 };
 
 const exactQuestion: SolveCheckQuestion = {
@@ -287,7 +287,7 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
           runTaskFn,
           profile: {
             id: fixture.subject_id,
-            full: { id: fixture.subject_id, displayName: fixture.subject_id },
+            full: resolveSubjectProfile(fixture.subject_id),
           },
         },
       );
@@ -374,7 +374,7 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
         choices_md: null,
       },
       {
-        profile: { id: 'math', full: { id: 'math', displayName: '数学' } },
+        profile: { id: 'math', full: resolveSubjectProfile('math') },
         runTaskFn: vi.fn(async () => ({
           text: JSON.stringify(output),
           ...(task_run_id ? { task_run_id } : {}),
@@ -409,7 +409,7 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
         choices_md: null,
       },
       {
-        profile: { id: 'general', full: { id: 'general', displayName: '通识' } },
+        profile: { id: 'general', full: resolveSubjectProfile('general') },
         runTaskFn: vi.fn(async () => ({ text: malformed, task_run_id: 'solver-repaired' })),
       },
     );
@@ -431,7 +431,7 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
         choices_md: null,
       },
       {
-        profile: { id: 'general', full: { id: 'general', displayName: '通识' } },
+        profile: { id: 'general', full: resolveSubjectProfile('general') },
         runTaskFn: vi.fn(async () => ({
           text: JSON.stringify({
             reference_solution: {
@@ -494,7 +494,7 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
         choices_md: null,
       },
       {
-        profile: { id: 'yuwen', full: { id: 'yuwen', displayName: '语文' } },
+        profile: { id: 'yuwen', full: resolveSubjectProfile('yuwen') },
         runTaskFn: vi.fn(async () => ({
           text: JSON.stringify(providerShape),
           task_run_id: 'solver-misplaced-confidence',
@@ -519,7 +519,7 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
         choices_md: null,
       },
       {
-        profile: { id: 'general', full: { id: 'general', displayName: '通识' } },
+        profile: { id: 'general', full: resolveSubjectProfile('general') },
         runTaskFn: vi.fn(async () => ({
           text: JSON.stringify({
             reference_solution: {
@@ -561,7 +561,7 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
         choices_md: null,
       },
       {
-        profile: { id: 'math', full: { id: 'math', displayName: '数学' } },
+        profile: { id: 'math', full: resolveSubjectProfile('math') },
         runTaskFn: vi.fn(async () => ({ text: singleQuoted, task_run_id: 'solver-risky' })),
       },
     );
@@ -584,7 +584,7 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
         choices_md: null,
       },
       {
-        profile: { id: 'general', full: { id: 'general', displayName: '通识' } },
+        profile: { id: 'general', full: resolveSubjectProfile('general') },
         runTaskFn: vi.fn(async () => {
           throw new AgentRunError({
             kind: 'SolutionGenerateTask',

@@ -40,11 +40,10 @@ async function loadConversationSessionForUpdate(
   tx: Db | Tx,
   sessionId: string,
 ): Promise<{ status: string; goal_id: string | null } | null> {
-  const rows = await tx.execute(
+  const rows = await tx.execute<{ status: string; goal_id: string | null }>(
     sql`SELECT status, goal_id FROM learning_session WHERE id = ${sessionId} AND type = 'conversation' FOR UPDATE`,
   );
-  const arr = rows as unknown as Array<{ status: string; goal_id: string | null }>;
-  const row = arr[0];
+  const row = rows[0];
   if (!row) return null;
   return { status: row.status, goal_id: row.goal_id };
 }

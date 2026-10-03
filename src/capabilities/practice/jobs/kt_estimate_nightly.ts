@@ -171,7 +171,7 @@ export async function runKtEstimateNightly(
       const estimate = estimateBkt(seq);
       await applyKtEstimate(db, {
         questionId: c.questionId,
-        ktJson: estimate as unknown as Record<string, unknown>,
+        ktJson: { ...estimate },
       });
       result.estimated++;
     } catch (err) {

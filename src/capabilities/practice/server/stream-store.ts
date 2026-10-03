@@ -620,7 +620,7 @@ async function materializePreparedCollect(
         policy: 'softmax_mfi',
         selected: true,
         inclusionProbability: pi,
-        signals: (signal as unknown as Record<string, unknown>) ?? {},
+        signals: toSignalsJson(signal),
       });
     }
   }
@@ -1950,7 +1950,7 @@ export async function reRankAfterAnswer(
               ? newCheckReasoning(labelByRef.get(s.refId))
               : variantReasoning(labelByRef.get(s.refId)),
           added_by: 'composer_live' as const,
-          signals: (signal as unknown as Record<string, unknown>) ?? {},
+          signals: toSignalsJson(signal),
           created_at: now,
           updated_at: now,
         })
@@ -1971,7 +1971,7 @@ export async function reRankAfterAnswer(
         policy: 'softmax_mfi',
         selected: true,
         inclusionProbability: s.inclusionProbability,
-        signals: (signal as unknown as Record<string, unknown>) ?? {},
+        signals: toSignalsJson(signal),
       });
     }
 
@@ -1981,4 +1981,8 @@ export async function reRankAfterAnswer(
   // 事务已提交——锁外 best-effort 写 π_i 观测（FINDING B：遥测失败不回滚重排）。
   await writeObservationsBestEffort(db, observations);
   return added;
+}
+
+function toSignalsJson(signal: CollectedSignal | undefined): Record<string, unknown> {
+  return { ...signal };
 }
