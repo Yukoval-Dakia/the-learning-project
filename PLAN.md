@@ -4,6 +4,7 @@
 
 ## NOW
 
+- YUK-1115：同PR补齐共享依赖gate：Axios升至1.20.0、移除Mem0误列的Jest测试类型peer及Braces链。51 Mem0 unit、typecheck/lint/build和生产依赖审计通过（0 high/critical，18 low/moderate仍在）；待远端CI。
 - YUK-1111：复核65条到期schema豁免，移除61条已有生产依据的例外；新增direct raw SQL与DB生成值识别。4个真预留字段单独跟进YUK-1113（10月10日复核）；旧scanner将fixture计入writer的问题见YUK-1114。尚待本PR验证与合并，详见 `docs/planning/2026-10-03-yuk1111-schema-producers.md`。
 
 - #1512保留DB4/unit4、19项审计并行、单次构建、tmpfs、时长统计与SDK懒加载。五个predicate用例已恢复，共11个。局部87 unit、先前67 DB、typecheck、lint、build通过。排序修复后的 `619ac1602` 完整CI `36729120083` 全绿，事件是workflow_dispatch，四个unit和四个DB分片、审计、migration、build/usability均实际运行。详见 `docs/planning/2026-09-30-yuk1107-ci-latency.md`。YUK-1107不标Done。

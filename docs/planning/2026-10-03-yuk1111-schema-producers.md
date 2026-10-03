@@ -42,3 +42,29 @@ zero unallowed stubs and no hygiene issues. Typecheck, lint ratchet (299 warning
 0 infos; baseline 305), build and all documented pre-PR audits passed. Independent
 review found no P0/P1. Full tests run only in exact-head GitHub CI; pending at
 authoring time. No deployment or paid calls.
+
+## Additional dependency gate blocker (YUK-1115)
+
+Exact-head CI 37105750829 passed schema, static, all unit/DB shards, migration and
+build, but then failed dependency audit on eight high advisories: seven Axios
+(<1.20.0) and one Braces (<=3.0.3). Both were pre-existing Mem0 transitive paths.
+Axios is constrained to the published fixed 1.20.0 release. The advised Braces
+3.0.4 is not published (registry latest is 3.0.3), so no fictitious version is used.
+
+The sole production path to Braces was mem0ai -> @types/jest -> expect ->
+jest-message-util -> micromatch -> braces. Mem0 incorrectly declares its test types
+as a required peer. No installed Mem0 runtime JS or declaration files import Jest;
+this repository uses Vitest. A parent/version-specific pnpm override removes that
+unused peer and its dependency tree. Mem0's runtime dependencies and existing
+atomic/fail-closed patch are preserved. `pnpm why braces` is empty; Axios resolves
+to 1.20.0. Production audit now passes with 0 high/critical (18 low/moderate remain).
+
+Advisory review 4172134135 restates the existing fixture-evidence limitation.
+It is tracked in YUK-1114 and classified non-blocking for this diff: those same
+fields were already exempt from writer checks before this change; the parser
+behavior is not newly weakened. The current production writers were verified.
+A future deletion can still be missed by the old scanner, so this change does not
+claim production-only proof. The limitation is retained as actionable follow-up.
+
+Dependency follow-up validation: 51 Mem0 scoped unit tests, typecheck, lint ratchet
+(299 warnings), and production build passed. Exact-head CI will rerun after push.
