@@ -54,11 +54,16 @@ not establish production access or model-output quality. No UI completion claim.
 
 Independent initial review found two P1s (stronger-provider precedence; retired legacy
 model IDs) and three P2s (typed default reset, model-only writes under global pins,
-migration lock ordering). All are addressed in this candidate: guard only the selected
+migration lock ordering). Both P1s and two P2s are fixed; the global model-only fix is partial (see below): guard only the selected
 DB provider, reject unsupported legacy models before mutation, preserve typed defaults,
 validate against the global provider/model where active, lock epoch before config/journal.
 Regressions exercise the real config writer and transactional migration.
 
 Final local results: 52 config/migration HTTP+DB tests, 61 Copilot DB tests,
 81 migration smoke tests; 339 unit tests across13 files. Final gate evidence is recorded in the PR.
-Independent verification and exact-head CI remain delivery requirements.
+Independent verification of4e18fec3 completed with no remaining P0/P1. One nonblocking
+P2 remains in YUK-1007: with env provider set, env model absent and a DB global model
+present, the writer mixes env/DB global fields although runtime ignores the DB global
+object wholesale. This can reject a valid task-model-only write. Follow-up configuration
+write work must unify that branch with runtime and add a DB regression. No third review.
+Exact-head CI and the final-push17-minute window remain delivery requirements.

@@ -6,7 +6,7 @@
 
 - YUK-1112/#1524：pi-agent-core/pi-ai/pi-telemetry1.0.1已合入main `d58a9614`；108 unit+61 Copilot DB、全部本地gate、独立review及exact-head CI `37123780543`通过，17分钟窗口完成，Linear Done；无生产部署/付费调用。
 
-- YUK-1007 active：按owner明确裁决，立即迁移旧兼容线路至pi原生预设并移除旧实现。xiaomi恢复原生OpenAI协议；zhipu→zai-coding-cn；Claude OAuth复用原生anthropic。配置迁移、native目录终态校验与读面模型清单同步，UI仍待preflight。当前worktree `feat/yuk-1007-native-pi-providers`。
+- YUK-1007 active：按owner明确裁决，立即迁移旧兼容线路至pi原生预设并移除旧实现。xiaomi恢复原生OpenAI协议；zhipu→zai-coding-cn；Claude OAuth复用原生anthropic。配置迁移、native目录终态校验与读面模型清单同步，UI仍待preflight。PR#1526：339unit、52配置DB/HTTP、61CopilotDB、81migration及全部本地gate通过；独立验证审无P0/P1，一个env-provider/DB-global-model混用的writer P2归入1007后续写面。待最终head CI与17分钟窗口。worktree `feat/yuk-1007-native-pi-providers`。
 - YUK-1061/1082候选暂存 `fix/yuk-1061-yuk-1082-assessment-correctness`：4 unit/6 DB先RED；修复后71unit+18DB通过，尚未完整gate/review/PR。因owner原生provider优先要求暂停交付，票恢复Todo。
 - YUK-1102/#1525已合入main `fcd681cf`：capture/apply共用TLS策略；52 unit、本地gate、独立review与CI `37125040967`全绿，17分钟窗口完成，Linear Done；未连接生产数据库。
 - Owner临时凭据授权opencode-go有限AI测试：已完成2次真实原生preset请求，HTTP200、正确pi UA/session、一次工具循环；目录估值$0.0001601，非账单。仅adapter层验证，无durable task-run。已用完本次探针2请求上限；无凭据落盘。
