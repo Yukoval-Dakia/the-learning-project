@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-03。当前目标：Linear归零。初盘87个未完成（4进行中/22待审/61积压）；1084→1085、1090→1091已去重，1091漏验的head锚定恢复Todo，当前79项（1067–1070由#1528真实交付关闭）。逐项以真实交付验收收口；既有HOLD/生产与付费边界保持，暂停项范围已向owner询问。
+> 更新于2026-10-03。当前目标：Linear归零。初盘87个未完成（4进行中/22待审/61积压）；1084→1085、1090→1091已去重，1091漏验的head锚定恢复Todo，当前78项（1066/1072由#1529真实交付关闭，1071全库余项保持打开；新增1116既有时间戳排序问题）。逐项以真实交付验收收口；既有HOLD/生产与付费边界保持，暂停项范围已向owner询问。
 
 ## NOW
 
@@ -9,7 +9,8 @@
 - YUK-1007/#1526已合入main `2236c8e2`：原生pi provider迁移，旧Xiaomi/Zhipu兼容注册已移除，活动配置迁移脚本与模型能力校验交付；最终head `6af3b410` CI `37128930722`全绿、17分钟窗口与review完成。Epic预算/写HTTP/UI仍未交付，无生产部署或额外付费调用。
 - YUK-1061/1082/#1527已合入main `e2353b3f`：exact答案头归一、solo/paper/deferred结构根theta范围与pending evidence一致性修复。71unit+61DB、本地gate、独立初审/唯一验证审与exact-head CI `37130707086`全绿，17分钟等待完成，两票Done。旧revision保持不可变，生产存量处置留1105/1083。
 - YUK-1067/1068/1069/1070/#1528已合入main `e1f32e7f`：trait/ingestion JSON边界、schema推导migration行和Db|Tx。18DB先RED，22unit+139DB、本地gate、独立初审与CI `37132443100`全绿，17分钟窗口完成，四票Done。
-- YUK-1066/1071/1072 active：`fix/yuk-1071-type-escapes`基于main `e1f32e7f`；验证框架参数类型、原始SQL泛型、字节/JSON边界和自由题型标签。golden live mesh坏数据3unit先RED；182unit+254DB/20文件、typecheck/lint/build及10项审计通过；独立初审/CI与17分钟窗口待收口。不改变SQL与锁语义，无生产或付费调用。
+- YUK-1066/1072/#1529已合入main `0dfc37cd`：182unit+254DB、本地gate、独立初审与CI `37134135088`全绿，17分钟窗口完成，两票Done；1071原清单已交付，全库复核另有20处SQL结果断言，仍打开。
+- YUK-1071 active：`fix/yuk-1071-sql-results`基于main `0dfc37cd`，完成余下20处SQL行泛型/15文件。AST核对58个SQL模板逐字不变；27unit+257DB、typecheck/lint/build/10审计通过；独立初审无新增P0/P1或实质P2，待PR/CI/等待窗。无SQL/锁/事务、UI、provider或生产操作变化。
 - YUK-1102/#1525已合入main `fcd681cf`：capture/apply共用TLS策略；52 unit、本地gate、独立review与CI `37125040967`全绿，17分钟窗口完成，Linear Done；未连接生产数据库。
 - Owner临时凭据授权opencode-go有限AI测试：已完成2次真实原生preset请求，HTTP200、正确pi UA/session、一次工具循环；目录估值$0.0001601，非账单。仅adapter层验证，无durable task-run。已用完本次探针2请求上限；无凭据落盘。
 
@@ -30,11 +31,13 @@
 
 ## NEXT
 
-1. 完成1066/1071/1072类型边界交付；随后1065超时解锁日志、1091多submission/head激活契约与YUK-1007预算reader/配置写面。UI先preflight。
+1. 完成1071剩余SQL类型交付；随后YUK-1007预算reader/配置写HTTP，1065超时解锁日志与1091多submission/head激活契约。UI先preflight。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
 ## PARKED
+
+- YUK-1116：独立审查发现既有raw timestamp误声明Date，few-shot最终recency可能失效；已去重建票，真实PG回归与三处类型校正独立交付，不扩大1071纯类型边界。
 
 - YUK-1069旧pi catalog导入/double cast由#1526删除；剩余ingestion guard与1067/1068/1070已核实，过期状态先纠正为Todo，现本批实施（见NOW）。
 - Linear 已恢复；YUK-1106已同步Done，YUK-1107暂停/Backlog，YUK-1007仍In Progress。历史待办继续逐项核验、去重后同步。

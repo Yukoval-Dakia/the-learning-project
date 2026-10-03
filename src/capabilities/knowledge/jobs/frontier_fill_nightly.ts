@@ -179,7 +179,7 @@ function edgeKey(fromId: string, toId: string): string {
  * faults rethrow).
  */
 async function loadKcsLackingPrereq(db: Db): Promise<string[]> {
-  const rows = (await db.execute(sql`
+  const rows = await db.execute<{ id: string }>(sql`
     SELECT k.id AS id
     FROM ${knowledge} k
     LEFT JOIN ${knowledge_edge} e
@@ -190,7 +190,7 @@ async function loadKcsLackingPrereq(db: Db): Promise<string[]> {
       AND k.archived_at IS NULL
     ORDER BY k.id
     LIMIT ${FRONTIER_FILL_CANDIDATE_CAP}
-  `)) as unknown as Array<{ id: string }>;
+  `);
   return rows.map((r) => r.id);
 }
 

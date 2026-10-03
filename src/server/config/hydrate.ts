@@ -49,7 +49,7 @@ async function readDbEpoch(db: Db): Promise<number | null> {
 
 /** 一致读：一条语句取 epoch + 全量行（同一隐式快照，无两半读）。 */
 async function readConsistentSnapshot(db: Db): Promise<{ epoch: number; rows: RawConfigRow[] }> {
-  const result = await db.execute(sql`
+  const result = await db.execute<{ epoch: number | string | null; rows: unknown }>(sql`
     select
       (select epoch from ${system_config_epoch} where id = 'global' limit 1) as epoch,
       (
@@ -57,7 +57,7 @@ async function readConsistentSnapshot(db: Db): Promise<{ epoch: number; rows: Ra
         from ${system_config} as t
       ) as rows
   `);
-  const row = (result as unknown as Array<{ epoch: number | string | null; rows: unknown }>)[0];
+  const row = result[0];
   return {
     epoch: row?.epoch === null || row?.epoch === undefined ? 0 : Number(row.epoch),
     rows: Array.isArray(row?.rows) ? (row.rows as RawConfigRow[]) : [],

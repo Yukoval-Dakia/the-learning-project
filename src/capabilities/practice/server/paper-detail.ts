@@ -368,16 +368,7 @@ export async function getPaperDetail(
     // content_md + image_refs: user's own answer, echoed back unconditionally.
     // att.outcome + unsupported_judge 同行带出 —— YUK-1054 起 right/wrong 复用
     // 本行集（与旧 rwRows 子查询同一 slot 集合语义），不再发第二条 SQL。
-    const frozenRows = await db.execute<{
-      question_id: string;
-      part_ref: string | null;
-      event_id: string | null;
-      submitted_at: Date;
-      content_md: string;
-      image_refs: string[];
-      unsupported_judge: string | null;
-      attempt_outcome: string | null;
-    }>(sql`
+    const frozenRows = await db.execute<SubmittedRow>(sql`
       SELECT
         answer.question_id,
         answer.part_ref,
@@ -402,9 +393,8 @@ export async function getPaperDetail(
             AND a2.submitted_at IS NOT NULL
         )
     `);
-    const frozenArr = frozenRows as unknown as Array<SubmittedRow>;
     const eventIds: string[] = [];
-    for (const f of frozenArr) {
+    for (const f of frozenRows) {
       const key = `${f.question_id}::${f.part_ref ?? ''}`;
       submittedMap.set(key, f);
       if (f.event_id) eventIds.push(f.event_id);
@@ -427,7 +417,7 @@ export async function getPaperDetail(
       FROM answer
       WHERE session_id = ${sid} AND submitted_at IS NOT NULL
     `);
-    const pos = (posRows as unknown as Array<{ pos: number }>)[0]?.pos ?? 0;
+    const pos = posRows[0]?.pos ?? 0;
 
     // Round-4 fix #2 + Round-6 fix #2 (CR 3359820526)：verdict 走 effective 轨
     // （YUK-1054）；visible_to_user 读 effective 判的载荷，buffered 槽位在
@@ -435,7 +425,7 @@ export async function getPaperDetail(
     const sessionStatus = sessionInfo.status;
     let right = 0;
     let wrong = 0;
-    for (const r of frozenArr) {
+    for (const r of frozenRows) {
       // F1 (PR #309 round-4, YUK-215): un-judged attempts (photo-only on a
       // text-only route) are "未判分" — neither right nor wrong. Skip so the
       // summary here stays in lock-step with getPracticeList (practice-read.ts).

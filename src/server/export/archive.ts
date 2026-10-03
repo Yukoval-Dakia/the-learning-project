@@ -688,13 +688,13 @@ export async function restoreFromArchive({
       // "unchanged" to every hydrate probe (every process keeps its pre-restore
       // values; the probe never fires). We need pre-wipe epoch/sequence position to
       // write a strictly-newer epoch at the end of this tx.
-      const preMaxRows = (await tx.execute(sql`
+      const preMaxRows = await tx.execute<{ pre_max: number | string }>(sql`
         select greatest(
           coalesce((select max(epoch) from "system_config_epoch"), 0),
           coalesce((select last_value from pg_sequences where schemaname = 'public' and sequencename = 'config_change_seq'), 0),
           ${localConfigEpoch}
         ) as pre_max
-      `)) as unknown as Array<{ pre_max: number | string }>;
+      `);
       const preRestoreConfigMax = Math.max(Number(preMaxRows[0]?.pre_max ?? 0), localConfigEpoch);
       if (archivedInterventionPreparationJobIds.length > 0) {
         if (retireInterventionPreparationJobs) {

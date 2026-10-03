@@ -65,7 +65,7 @@ export interface RunKcDedupNightlyOpts {
   proposeFn?: ProposeFn;
 }
 
-interface NearDupPairRow {
+type NearDupPairRow = {
   a_id: string;
   b_id: string;
   a_name: string;
@@ -75,7 +75,7 @@ interface NearDupPairRow {
   a_created_at: Date;
   b_created_at: Date;
   distance: number;
-}
+};
 
 /**
  * Detect near-duplicate auto-created KC pairs by cosine distance and PROPOSE a
@@ -115,9 +115,8 @@ export async function runKcDedupNightly(
   // set is materialized inline as a CTE of distinct subject_ids. Bind the window
   // as days via make_interval so the parameter is a plain number (no string
   // interpolation into the SQL text).
-  // drizzle + the `postgres` driver returns the rows array directly (house cast
-  // convention: `as unknown as Array<Row>` — see due-list.ts / mastery/state.ts).
-  const pairRows = (await db.execute(sql`
+  // Drizzle + postgres returns the row array directly; execute carries its selected row type.
+  const pairRows = await db.execute<NearDupPairRow>(sql`
     WITH recent_auto AS (
       SELECT DISTINCT subject_id AS id
       FROM event
@@ -162,7 +161,7 @@ export async function runKcDedupNightly(
       AND (a.embedding <=> b.embedding) <= ${distanceMax}
     ORDER BY distance ASC
     LIMIT ${maxPairs}
-  `)) as unknown as NearDupPairRow[];
+  `);
 
   let merge_proposals_created = 0;
   let skipped = 0;
@@ -176,11 +175,13 @@ export async function runKcDedupNightly(
   // window (respects the rejection); pending → no duplicate. After the window a still-present
   // dup may re-propose (acceptable). The merge event payload carries top-level `into_id` +
   // `from_ids` (proposals.ts generic branch spreads `...rest` into event_override.payload).
-  const priorMergeRows = (await db.execute(sql`
+  const priorMergeRows = await db.execute<{
+    payload: { into_id?: string; from_ids?: string[] } | null;
+  }>(sql`
     SELECT payload FROM event
     WHERE action = 'experimental:knowledge_merge'
       AND created_at > now() - make_interval(days => ${windowDays})
-  `)) as unknown as Array<{ payload: { into_id?: string; from_ids?: string[] } | null }>;
+  `);
   const proposedPairKeys = new Set<string>();
   for (const row of priorMergeRows) {
     const into = row.payload?.into_id;

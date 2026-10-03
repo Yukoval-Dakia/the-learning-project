@@ -322,6 +322,5 @@ export async function countAnsweredSlots(db: DbLike, sessionId: string): Promise
     FROM answer
     WHERE session_id = ${sessionId} AND submitted_at IS NOT NULL
   `);
-  const arr = rows as unknown as Array<{ pos: number }>;
-  return arr[0]?.pos ?? 0;
+  return rows[0]?.pos ?? 0;
 }
