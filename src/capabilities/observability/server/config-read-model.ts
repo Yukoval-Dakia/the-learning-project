@@ -16,15 +16,15 @@
 //     reader 消费」（未接线）。未列入 KEY_CONSUMERS 的 key 一律按未接线报——
 //     新增 registry key 而忘登记时，读面**低估**生效面，不会虚报。
 //   - tasks[] 不把静态 TaskSpec 默认说成运行时覆盖：default 永远标注为 catalog
-//     冻结值；override 单列，且逐字段标注 override_wired（budget 尚未接线——
-//     runner 只认 ctx.budgetOverride 参数，DB budget 行存而不读）。
+//     冻结值；override 单列。预算逐字段报告wired/effective，未消费字段为null。
 //   - 不在此重算 resolveTaskProvider 的合成结果（arg > env pin > DB > registry
 //     链的单一真相源在 src/server/ai/providers.ts）——读面给出分层事实
 //     （default / override / global_pin），合成留给消费方。
 //
 // 纯同步、零 DB：route 调用点在快照之上，hydrate 由 boot/refresh 周期负责。
 
-import { tasks } from '@/ai/registry';
+import { type TaskKind, tasks } from '@/ai/registry';
+import { taskBudgetFacts } from '@/ai/task-budget';
 import { capabilities } from '@/capabilities';
 import type { ConfigSource, ConfigValue } from '@/core/config/store';
 import {
@@ -124,7 +124,7 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   'locale.learner': 'src/ai/task-prompts.ts',
 };
 
-/** task.<kind>.* 覆盖字段的接线状态（runner budget seam 未迁移前 budget 不生效）。 */
+/** budget=false 表示尚未全部接线；细分状态以 budget_wiring 为准。 */
 export const TASK_OVERRIDE_WIRING = {
   provider: true,
   model: true,
@@ -163,6 +163,9 @@ export interface AdminConfigTaskRow {
     readonly transientRetries: number;
     readonly timeout: number;
   };
+  readonly budget_wiring: ReturnType<typeof taskBudgetFacts>['wired'];
+  readonly effective_budget: ReturnType<typeof taskBudgetFacts>['effective'];
+  readonly budget_note: string;
   readonly override: { provider?: string; model?: string; budget?: Record<string, unknown> } | null;
   readonly override_wired: {
     readonly provider: boolean;
@@ -294,12 +297,17 @@ export function buildAdminConfigReadModel(
   const globalPin = resolveGlobalPin(env);
   const taskRows: AdminConfigTaskRow[] = Object.entries(tasks).map(([kind, def]) => {
     const override = getTaskOverride(kind);
+    const budget = taskBudgetFacts(kind as TaskKind);
     const typed = 'execution' in def && def.execution === 'typed';
     return {
       kind,
       default_provider: def.defaultProvider,
       default_model: def.defaultModel,
       default_budget: def.budget,
+      budget_wiring: budget.wired,
+      effective_budget: budget.effective,
+      budget_note:
+        '下次调用的预算基线；显式调用参数优先，执行及重试使用固定快照。chat费用上限/typed轮数未接线（null）；重试还受caller opt-in、路由pin及retry:none约束，流式不自动重试。',
       override: override
         ? {
             ...(override.provider !== undefined ? { provider: override.provider } : {}),

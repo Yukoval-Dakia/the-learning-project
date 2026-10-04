@@ -2863,6 +2863,13 @@ export interface operations {
                             hydrated_at: string | null;
                         };
                         tasks: {
+                            budget_note: string;
+                            budget_wiring: {
+                                maxCost: boolean;
+                                maxIterations: boolean;
+                                timeout: boolean;
+                                transientRetries: boolean;
+                            };
                             default_budget: {
                                 maxCost: number;
                                 maxIterations: number;
@@ -2871,6 +2878,12 @@ export interface operations {
                             };
                             default_model: string;
                             default_provider: string;
+                            effective_budget: {
+                                maxCost: number | null;
+                                maxIterations: number | null;
+                                timeout: number;
+                                transientRetries: number;
+                            };
                             global_pin: {
                                 model?: string;
                                 provider?: string;

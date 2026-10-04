@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-03。当前目标：Linear归零。初盘87个未完成（4进行中/22待审/61积压）；1084→1085、1090→1091已去重，1091漏验的head锚定恢复Todo，当前78项（1066/1072由#1529真实交付关闭，1071全库余项保持打开；新增1116既有时间戳排序问题）。逐项以真实交付验收收口；既有HOLD/生产与付费边界保持，暂停项范围已向owner询问。
+> 更新于2026-10-04。目标Linear归零，当前77项；1071余下SQL类型由#1530交付，新增既有timestamp问题1116保持Todo。1073–1079/1081未实施，已从旧In Review恢复Todo；既有HOLD、UI preflight与生产/付费边界保持。
 
 ## NOW
 
@@ -10,7 +10,8 @@
 - YUK-1061/1082/#1527已合入main `e2353b3f`：exact答案头归一、solo/paper/deferred结构根theta范围与pending evidence一致性修复。71unit+61DB、本地gate、独立初审/唯一验证审与exact-head CI `37130707086`全绿，17分钟等待完成，两票Done。旧revision保持不可变，生产存量处置留1105/1083。
 - YUK-1067/1068/1069/1070/#1528已合入main `e1f32e7f`：trait/ingestion JSON边界、schema推导migration行和Db|Tx。18DB先RED，22unit+139DB、本地gate、独立初审与CI `37132443100`全绿，17分钟窗口完成，四票Done。
 - YUK-1066/1072/#1529已合入main `0dfc37cd`：182unit+254DB、本地gate、独立初审与CI `37134135088`全绿，17分钟窗口完成，两票Done；1071原清单已交付，全库复核另有20处SQL结果断言，仍打开。
-- YUK-1071 active：`fix/yuk-1071-sql-results`基于main `0dfc37cd`，完成余下20处SQL行泛型/15文件。AST核对58个SQL模板逐字不变；27unit+257DB、typecheck/lint/build/10审计通过；独立初审无新增P0/P1或实质P2，待PR/CI/等待窗。无SQL/锁/事务、UI、provider或生产操作变化。
+- YUK-1071/#1530已合入main `08ff7bc7`：27unit+257DB、全部本地gate、独立初审及exact-head CI `37136168710`通过；等待窗完成，票Done，未部署。
+- YUK-1007 active：`feat/yuk-1007-budget-snapshot` / `/workspace/tlp-budget-snapshot`。三类chat入口与typed固定budget快照，显式调用参数优先；管理读面逐字段说明生效范围。5个回归先RED；185unit+67DB、typecheck/lint/build/10审计通过；独立初审无P0/P1。超长timeout与1h回收冲突P2已归并1007，下步写面前处理。待PR/CI/等待窗。写HTTP/atomic reset随后，UI尚未批准。
 - YUK-1102/#1525已合入main `fcd681cf`：capture/apply共用TLS策略；52 unit、本地gate、独立review与CI `37125040967`全绿，17分钟窗口完成，Linear Done；未连接生产数据库。
 - Owner临时凭据授权opencode-go有限AI测试：已完成2次真实原生preset请求，HTTP200、正确pi UA/session、一次工具循环；目录估值$0.0001601，非账单。仅adapter层验证，无durable task-run。已用完本次探针2请求上限；无凭据落盘。
 
@@ -31,7 +32,7 @@
 
 ## NEXT
 
-1. 完成1071剩余SQL类型交付；随后YUK-1007预算reader/配置写HTTP，1065超时解锁日志与1091多submission/head激活契约。UI先preflight。
+1. 完成YUK-1007预算reader/配置写HTTP，1065超时解锁日志与1091多submission/head激活契约。UI先preflight。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 

@@ -7,7 +7,7 @@
 //   - pinned 键 DB 层跳过（compose 强制）
 //   - NaN env 字面量归 null（不进 JSON）
 //   - wiring 分类完整性（KEY_CONSUMERS ↔ CONFIG_REGISTRY 集合相等 + consumer
-//     文件真实存在）+ locale.learner 已接线 + task budget 字段未接线
+//     文件真实存在）+ locale.learner 已接线 + task budget 逐字段接线
 //   - tasks 物化：kind 集合 = catalog；静态默认与 override 分列；global_pin
 //   - 快照块 epoch/hydrated_at
 //   - secret 不进响应（结构保证 + 实测 marker 不出现）
@@ -191,11 +191,21 @@ describe('config read model — wiring census', () => {
     });
   });
 
-  it('marks task override budget as unwired while provider/model are wired', () => {
+  it('keeps the whole-budget flag conservative and reports individual consumers', () => {
     const model = buildAdminConfigReadModel({});
     const attribution = model.tasks.find((row) => row.kind === 'AttributionTask');
     if (!attribution) throw new Error('missing AttributionTask row');
     expect(attribution.override_wired).toEqual({ provider: true, model: true, budget: false });
+    expect(attribution.budget_wiring).toEqual({
+      maxIterations: true,
+      maxCost: false,
+      transientRetries: true,
+      timeout: true,
+    });
+    expect(attribution.effective_budget).toEqual({
+      ...tasks.AttributionTask.budget,
+      maxCost: null,
+    });
   });
 });
 
@@ -223,6 +233,8 @@ describe('config read model — task materialization', () => {
       global_pin: null,
       override_wired: { provider: false, model: false, budget: false },
       override: { provider: 'openai', model: 'gpt-6-astra' },
+      budget_wiring: { maxIterations: false, maxCost: true, transientRetries: true, timeout: true },
+      effective_budget: { ...tasks.JevScoringDecisionTask.budget, maxIterations: null },
     });
   });
 
@@ -259,9 +271,11 @@ describe('config read model — task materialization', () => {
       provider: 'openai',
       budget: { maxIterations: 2 },
     });
-    // 静态默认不动——budget 覆盖存而不读（未接线）由 override_wired 单独标注。
+    // 静态默认不动；maxCost未消费，whole-budget标志仍保守为false。
     expect(attribution.default_provider).toBe(tasks.AttributionTask.defaultProvider);
     expect(attribution.override_wired.budget).toBe(false);
+    expect(attribution.effective_budget.maxIterations).toBe(2);
+    expect(attribution.effective_budget.maxCost).toBeNull();
   });
 
   it('surfaces the global pin (env > DB) on every task row when set', () => {

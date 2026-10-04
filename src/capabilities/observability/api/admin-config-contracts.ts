@@ -57,6 +57,19 @@ export const AdminConfigTaskRowSchema = z.object({
   default_provider: z.string(),
   default_model: z.string(),
   default_budget: AdminConfigTaskBudgetSchema,
+  budget_wiring: z.object({
+    maxIterations: z.boolean(),
+    maxCost: z.boolean(),
+    transientRetries: z.boolean(),
+    timeout: z.boolean(),
+  }),
+  effective_budget: z.object({
+    maxIterations: z.number().nullable(),
+    maxCost: z.number().nullable(),
+    transientRetries: z.number(),
+    timeout: z.number(),
+  }),
+  budget_note: z.string(),
   override: AdminConfigTaskOverrideSchema.nullable(),
   override_wired: z.object({
     provider: z.boolean(),

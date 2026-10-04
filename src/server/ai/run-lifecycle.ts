@@ -691,8 +691,8 @@ export function transientRetryEnabled(ctx: LifecycleRetryContext): boolean {
   return true;
 }
 
-export function maxLifecycleAttempts(kind: TaskKind, ctx: LifecycleRetryContext): number {
-  return 1 + (transientRetryEnabled(ctx) ? tasks[kind].budget.transientRetries : 0);
+export function maxLifecycleAttempts(transientRetries: number, ctx: LifecycleRetryContext): number {
+  return 1 + (transientRetryEnabled(ctx) ? transientRetries : 0);
 }
 
 export function classifyLifecycleRetry(input: {
