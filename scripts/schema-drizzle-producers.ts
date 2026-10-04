@@ -4,7 +4,7 @@ import ts from 'typescript';
 import type { WriteStatement } from './audit-schema-writes';
 
 type FunctionNode = ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction;
-type Binding = { node: ts.Expression; env: Environment };
+type Binding = { node: ts.Expression | undefined; env: Environment };
 type Environment = ReadonlyMap<ts.ParameterDeclaration, Binding>;
 const EMPTY_ENV: Environment = new Map();
 
@@ -99,35 +99,44 @@ export function extractDrizzleWriteIndex(
   };
   const declaration = (node: ts.Node): ts.Declaration | undefined =>
     symbol(node)?.valueDeclaration ?? symbol(node)?.declarations?.[0];
+  const reassigned = new Set<ts.Declaration>();
+  const mutated = new Set<ts.Declaration>();
   function callable(node: ts.Expression, seen = new Set<ts.Node>()): FunctionNode | undefined {
     node = unwrap(node);
     if (seen.has(node)) return undefined;
     seen.add(node);
     if (isFunction(node)) return node;
     const decl = declaration(node);
+    if (decl && reassigned.has(decl)) return undefined;
     if (decl && isFunction(decl)) return decl;
     return decl && ts.isVariableDeclaration(decl) && decl.initializer
       ? callable(decl.initializer, seen)
       : undefined;
   }
-  const reassigned = new Set<ts.Declaration>();
   const calls: ts.CallExpression[] = [];
   const callsTo = new Map<FunctionNode, ts.CallExpression[]>();
   const pushes = new Map<ts.Declaration, ts.CallExpression[]>();
+  function recordMutation(input: ts.Expression): void {
+    let node = unwrap(input);
+    const wholeBinding = ts.isIdentifier(node);
+    while (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+      node = unwrap(node.expression);
+    }
+    const decl = ts.isIdentifier(node) ? declaration(node) : undefined;
+    if (decl) (wholeBinding ? reassigned : mutated).add(decl);
+  }
   for (const file of files.values()) {
     const visit = (node: ts.Node): void => {
       if (
         ts.isBinaryExpression(node) &&
-        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        ts.isIdentifier(node.left)
+        node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
       ) {
-        const decl = declaration(node.left);
-        if (decl) reassigned.add(decl);
+        recordMutation(node.left);
       }
+      if (ts.isDeleteExpression(node)) recordMutation(node.expression);
       if (ts.isCallExpression(node)) {
         calls.push(node);
-        const fn = callable(node.expression);
-        if (fn) callsTo.set(fn, [...(callsTo.get(fn) ?? []), node]);
         if (
           ts.isPropertyAccessExpression(node.expression) &&
           node.expression.name.text === 'push'
@@ -139,6 +148,12 @@ export function extractDrizzleWriteIndex(
       ts.forEachChild(node, visit);
     };
     visit(file);
+  }
+  // Resolve calls only after collecting mutations from every file. A later
+  // reassignment must not leave an earlier call bound to a stale initializer.
+  for (const call of calls) {
+    const fn = callable(call.expression);
+    if (fn) callsTo.set(fn, [...(callsTo.get(fn) ?? []), call]);
   }
   function invokedWithin(
     fn: FunctionNode | ts.SourceFile,
@@ -169,8 +184,13 @@ export function extractDrizzleWriteIndex(
   ): Environment {
     const next = new Map(env);
     fn.parameters.forEach((parameter, index) => {
-      const arg = args[index] ?? parameter.initializer;
-      if (arg) next.set(parameter, { node: arg, env });
+      const arg = args[index];
+      // A missing argument is an explicit unknown, never an unbound parameter
+      // whose evidence may be borrowed from a different call.
+      next.set(parameter, {
+        node: arg ?? parameter.initializer,
+        env: arg ? env : new Map(next),
+      });
     });
     return next;
   }
@@ -192,15 +212,32 @@ export function extractDrizzleWriteIndex(
         for (const field of resolve(expression, context, nextPath, key)) out.add(field);
       };
       if (ts.isObjectLiteralExpression(node)) {
+        if (property !== undefined) {
+          // JavaScript object construction is last-write-wins. A later opaque
+          // spread may override the property, so it also ends the proof.
+          for (const entry of [...node.properties].reverse()) {
+            if (ts.isSpreadAssignment(entry)) {
+              add(entry.expression);
+              return out;
+            }
+            if (
+              (ts.isPropertyAssignment(entry) || ts.isShorthandPropertyAssignment(entry)) &&
+              nameOf(entry.name) === property
+            ) {
+              return resolve(
+                ts.isPropertyAssignment(entry) ? entry.initializer : entry.name,
+                env,
+                nextPath,
+              );
+            }
+          }
+          return out;
+        }
         for (const entry of node.properties) {
           if (ts.isSpreadAssignment(entry)) add(entry.expression);
           else if (ts.isPropertyAssignment(entry) || ts.isShorthandPropertyAssignment(entry)) {
             const key = nameOf(entry.name);
-            if (property === undefined && key !== undefined) out.add(key);
-            else if (property === key) {
-              const value = ts.isPropertyAssignment(entry) ? entry.initializer : entry.name;
-              for (const field of resolve(value, env, nextPath)) out.add(field);
-            }
+            if (key !== undefined) out.add(key);
           }
         }
       } else if (ts.isArrayLiteralExpression(node)) {
@@ -211,7 +248,7 @@ export function extractDrizzleWriteIndex(
         const decl = declaration(node);
         // Reassigned containers require control-flow analysis, outside this
         // bounded construction proof. Never count their stale initializer.
-        if (decl && reassigned.has(decl)) return out;
+        if (decl && (reassigned.has(decl) || mutated.has(decl))) return out;
         if (decl && ts.isVariableDeclaration(decl)) {
           if (decl.initializer) add(decl.initializer);
           for (const push of pushes.get(decl) ?? []) {
@@ -219,8 +256,9 @@ export function extractDrizzleWriteIndex(
           }
         } else if (decl && ts.isParameter(decl)) {
           const bound = env.get(decl);
-          if (bound) add(bound.node, bound.env);
-          else if (isFunction(decl.parent)) {
+          if (bound) {
+            if (bound.node) add(bound.node, bound.env);
+          } else if (isFunction(decl.parent)) {
             const fn = decl.parent;
             const position = fn.parameters.indexOf(decl);
             for (const call of callsTo.get(fn) ?? []) {
@@ -245,17 +283,14 @@ export function extractDrizzleWriteIndex(
         add(node.right);
       } else if (ts.isPropertyAccessExpression(node) && property === undefined) {
         for (const field of resolve(node.expression, env, nextPath, node.name.text)) out.add(field);
-      } else if (
-        ts.isElementAccessExpression(node) &&
-        ts.isNumericLiteral(node.argumentExpression)
-      ) {
-        add(node.expression);
       } else if (ts.isCallExpression(node)) {
         const fn = callable(node.expression);
         if (fn) {
           const context = bindings(fn, node.arguments, env);
           for (const result of returns(fn)) add(result, context);
         } else if (ts.isPropertyAccessExpression(node.expression)) {
+          // A declared own method is not evidence of native array behavior.
+          if (declaration(node.expression)) return out;
           const method = node.expression.name.text;
           if (method === 'map' || method === 'flatMap') {
             const callback = node.arguments[0] && callable(node.arguments[0]);
@@ -279,6 +314,7 @@ export function extractDrizzleWriteIndex(
     const imported = checker.getSymbolAtLocation(arg)?.declarations?.find(ts.isImportSpecifier);
     if (imported) return (imported.propertyName ?? imported.name).text;
     const decl = declaration(arg);
+    if (decl && (reassigned.has(decl) || ts.isParameter(decl))) return undefined;
     if (decl && ts.isVariableDeclaration(decl) && decl.initializer) {
       const value = unwrap(decl.initializer);
       if (ts.isIdentifier(value)) return tableName(value, seen);
@@ -326,18 +362,6 @@ export function extractDrizzleWriteIndex(
       !arg.properties.some(ts.isSpreadAssignment)
     )
       payload = arg.getText();
-    if (method === 'onConflictDoUpdate' && ts.isObjectLiteralExpression(arg)) {
-      const set = arg.properties.find(
-        (entry) => ts.isPropertyAssignment(entry) && nameOf(entry.name) === 'set',
-      );
-      if (
-        set &&
-        ts.isPropertyAssignment(set) &&
-        ts.isObjectLiteralExpression(set.initializer) &&
-        !set.initializer.properties.some(ts.isSpreadAssignment)
-      )
-        payload = set.initializer.getText();
-    }
     index.get(sourcePaths.get(call.getSourceFile().fileName) ?? '')?.push({ kind, table, payload });
   }
   return index;
