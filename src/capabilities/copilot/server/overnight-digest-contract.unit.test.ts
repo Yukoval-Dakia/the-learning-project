@@ -11,6 +11,7 @@ function digest(over: Partial<OvernightDigest> = {}): OvernightDigest {
       from: '2026-07-15T16:00:00.000Z',
       to: '2026-07-16T16:00:00.000Z',
     },
+    cost: { scope: 'all_activity', records: 0, by_currency: [], details: [] },
     has_overnight_activity: false,
     runs: [],
     note_changes_count: 0,
@@ -49,5 +50,12 @@ describe('formatOvernightHandoffSentence', () => {
         }),
       ),
     ).toBe('1 类夜间任务降级；夜间任务 3 次，笔记精炼 2 次，图谱提议 1 条，AI 观察 4 条。');
+  });
+  it('reports cost-only activity without inventing night-cron work or billed quota', () => {
+    expect(
+      formatOvernightHandoffSentence(
+        digest({ cost: { scope: 'all_activity', records: 2, by_currency: [], details: [] } }),
+      ),
+    ).toBe('昨日 AI 费用记录 2 条（含前台与后台，非订阅扣额）。');
   });
 });

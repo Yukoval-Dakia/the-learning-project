@@ -32250,6 +32250,50 @@ export interface operations {
                 content: {
                     "application/json": {
                         agent_notes_count: number;
+                        cost: {
+                            by_currency: {
+                                cost: number;
+                                currency: string;
+                                estimated_attempts: number;
+                                estimated_cost: number;
+                                legacy_cost: number;
+                                legacy_rows: number;
+                                reported_attempts: number;
+                                reported_cost: number;
+                                unknown_attempts: number;
+                            }[];
+                            details: {
+                                amount: number | null;
+                                /** @enum {string|null} */
+                                cost_basis: "reported" | "estimated" | "unknown" | null;
+                                cost_ref: string | null;
+                                currency: string;
+                                /** @enum {string} */
+                                entry_kind: "legacy" | "attempt";
+                                lane_id: string | null;
+                                missing_input_records: number;
+                                missing_output_records: number;
+                                missing_total_records: number;
+                                model: string | null;
+                                provider: string;
+                                records: number;
+                                /** @enum {string} */
+                                source: "provider_attempt" | "cost_ledger";
+                                task_kind: string;
+                                unknown_wire_records: number;
+                                /** @enum {string} */
+                                usage_basis: "reported" | "estimated" | "unknown" | "unclassified";
+                                usage_input: number | null;
+                                usage_output: number | null;
+                                usage_source: string | null;
+                                usage_total: number | null;
+                                usage_unit: string | null;
+                                wire_calls: number | null;
+                            }[];
+                            records: number;
+                            /** @enum {string} */
+                            scope: "all_activity";
+                        };
                         degraded_kinds: {
                             error_count: number;
                             recent_error_messages: string[];

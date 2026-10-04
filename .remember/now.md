@@ -1,16 +1,15 @@
 # Current handoff — 2026-10-04
-Owner goal: continue Linear zero, no dependency chasing, no stopping after one PR.
-1118/#1552 merged14:44:42UTC main36c2460f9dca9137df05f57db76cef448e14132e;61open.
-13DBdefectRED first;54unit90DB/allgates,independent83DB45unit9probes,CI37209336163green.
-17minwindowdone;incrementalmigration/browsernotselected;no new substantivefollowup.
-Active766 /workspace/tlp-subscription-backup fix/yuk-766-subscription-backup base36c2460f.
-OwnerQ766(a) alreadyapproved. Three-table backup,single DBsnapshot inclmem0,resetclaims,preserve terminal/retry/effect.
-8 semantic DB regressions RED on original, now62DB/83unit PASS; typecheck/lint/build and10audits PASS.
-Initial independent review found old import fixtures/export transaction mock release blockers; fixed with original assertions retained, sole verification16unit/15DB passed, no unresolved P0/P1.
-Review budget exhausted. Verified patch SHA256 3ae3de614215927be0d0ee1bd477ca87c2da9167fe9d8923eb4d4203019c96a5; runtime unchanged.
-Next commit/push, exact-head CI and17min window; do not mark whole766Done.
-Fourlivemanifestidentitieswith local transport callbacks,no modelcalls.
-Do not claimqueueddownstreamjobscompleted ordeleteeffects toforcepaidreplay;766remainingqueueclosure keptopen.
-Next588 ownerQ588(b) approved,Todo;windowed costtruth/dedup needed,no newbudgetauthority.
-Root ignored .remember/2026-10-04-backup-next-grounding.md holds scope/evidence.
-PreserveHOLDs/branches/worktrees;no production/paidcalls.
+Owner goal: continue Linear zero; no dependency chasing, no stop after one PR.
+766/#1553 merged15:18:26UTC main69c524df678756596e4f852f908df33122b89b2f.
+8semanticRED;62DB83unit/alllocalgates;independentinitial+soleP1verify16unit15DB;CI37211421697GREEN;17minwindowdone.
+Incremental migration/browser skipped; no production/paidcalls. 766Todo for downstream queue closure.
+Active588 /workspace/tlp-digest-cost feat/yuk-588-digest-cost base69c524df.
+OwnerQ588(b)alreadyapproved;6featureDBRED then52DB50unit/alllocalgates/providertruthPASS.
+Independentinitial52DB40unitPASS, noP0P1/newP2;runtimehasha4e1060968197769fabb88225a0edc4568c5ab3b8b3833903056af91cb32cc31.
+Compositioninjectsreader;debtbaseline450/0/48unchanged. PR1554 initialCI37214953644failed weekly fixture midnight race; fixed with deterministic before/at/after-midnight DB cases,28DB6unit PASS. P1verification and corrected-head CI/17minwindow next. Costwindow uses sharedauthority/dedup, [from,to) BJTday, allforeground/background.
+UIpreflight /tmp/yuk588-ui-preflight.md sentasync, NOresponseyet. Do not infer approval; backend/tests authorized.
+Unknowncost/lane/usage stayunknown; percurrency/basis; recordcounts notphysicalcalls, tokenunitnotassumed.
+Next1119Todo consolidatespiADR/runtimeguidance drift, fourauditPRslinked. 62open total.
+310/738descriptions calibratedremainingtruth; no closedtickets.
+Rootignored .remember/2026-10-04-backup-next-grounding.md detailed588plan/baselines.
+PreserveHOLDs/branches/worktrees, singleimplementationline, localfulltestforbidden,17minlastpushwindow.

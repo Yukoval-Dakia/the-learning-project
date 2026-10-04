@@ -6,6 +6,7 @@
 // share the same quiet/degraded semantics. The dynamic import keeps this contract pure at
 // module-load time and avoids pulling shell's DB graph into no-DB unit tests.
 
+import type { ProviderCostWindow } from '@/core/schema/cost-observation';
 import type { Db, Tx } from '@/db/client';
 
 type DbLike = Db | Tx;
@@ -38,6 +39,8 @@ export interface DegradedKind {
 /** Today 与 Copilot 共用的昨夜五源事实契约。 */
 export interface OvernightDigest {
   window: OvernightWindow;
+  /** All accounting activity in the fixed BJT day; not night-cron-only or billing quota. */
+  cost: ProviderCostWindow;
   /**
    * 5 源任一窗内有事实 → true；全 0 → false。空夜是显式状态，绝不回退为 ColdStart。
    */
@@ -61,9 +64,12 @@ export const OVERNIGHT_HANDOFF_UNAVAILABLE = '夜链数据暂不可用。';
  * Canonical server-side read point for the fixed previous-calendar-day BJT digest.
  * The implementation remains owned by shell; this facade is the public aggregation boundary.
  */
-export const loadTodayOvernightDigest: LoadTodayOvernightDigest = async (db, now) => {
-  const { loadOvernightDigest } = await import('@/capabilities/shell/public');
-  return loadOvernightDigest(db, now);
+export const loadTodayOvernightDigest: LoadTodayOvernightDigest = async (db, now = new Date()) => {
+  const [{ loadOvernightDigest }, { readProviderCostWindow }] = await Promise.all([
+    import('@/capabilities/shell/public'),
+    import('@/capabilities/observability/public'),
+  ]);
+  return loadOvernightDigest(db, now, readProviderCostWindow);
 };
 
 /**
@@ -72,7 +78,7 @@ export const loadTodayOvernightDigest: LoadTodayOvernightDigest = async (db, now
  * so a partially failed night cannot be narrated as an unqualified success.
  */
 export function formatOvernightHandoffSentence(digest: OvernightDigest): string | null {
-  if (!digest.has_overnight_activity) return null;
+  if (!digest.has_overnight_activity && digest.cost.records === 0) return null;
 
   const facts: string[] = [];
   const runsTotal = digest.runs.reduce((sum, group) => sum + group.count, 0);
@@ -81,6 +87,9 @@ export function formatOvernightHandoffSentence(digest: OvernightDigest): string 
   if (digest.new_proposals_count > 0) facts.push(`图谱提议 ${digest.new_proposals_count} 条`);
   if (digest.new_conjectures_count > 0) facts.push(`备课猜想 ${digest.new_conjectures_count} 条`);
   if (digest.agent_notes_count > 0) facts.push(`AI 观察 ${digest.agent_notes_count} 条`);
+
+  if (digest.cost.records > 0)
+    facts.push(`昨日 AI 费用记录 ${digest.cost.records} 条（含前台与后台，非订阅扣额）`);
 
   const detail = facts.length > 0 ? facts.join('，') : '记录到活动，但暂无可展开的交班明细';
   const degraded = digest.degraded_kinds.length;
