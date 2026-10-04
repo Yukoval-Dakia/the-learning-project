@@ -42,6 +42,7 @@ import {
   providerRequiresExplicitModel,
   resolveGlobalProviderSwitch,
 } from '@/server/ai/providers';
+import { VISION_JUDGE_TASK_KINDS } from '@/server/ai/vision-judge-config';
 import { hydrateConfigFromDb } from './hydrate';
 
 export type ConfigActor = 'owner' | 'panel:admin' | 'migrate' | 'cli';
@@ -273,7 +274,7 @@ async function validateFinalProviderPairs(
   }
   if (scopes.size === 0) return;
   const solveTasks = ['SolutionGenerateTask', 'SolutionGenerateVisionTask'] as const;
-  const visionTasks = ['StepsJudgeTask', 'MultimodalDirectJudgeTask'] as const;
+  const visionTasks = VISION_JUDGE_TASK_KINDS;
   if (
     scopes.has('lane.global.provider') ||
     [...solveTasks, ...visionTasks].some((kind) => scopes.has(`task.${kind}.provider`))

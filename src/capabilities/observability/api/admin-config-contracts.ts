@@ -112,7 +112,12 @@ export const AdminConfigScheduleRowSchema = z.object({
   tz: z.string(),
   owner: z.string(),
   queue: z.string(),
-  source: z.enum(['capability-manifest', 'server-boss-infra', 'server-memory-infra']),
+  source: z.enum([
+    'capability-manifest',
+    'server-boss-infra',
+    'server-memory-infra',
+    'server-event-subscriptions',
+  ]),
   note: z.string().optional(),
 });
 

@@ -299,7 +299,7 @@ export function buildAdminConfigReadModel(
       };
     });
 
-  const globalPin = resolveGlobalPin(env);
+  const globalPin = facts?.global_pin !== undefined ? facts.global_pin : resolveGlobalPin(env);
   const taskRows: AdminConfigTaskRow[] = Object.entries(tasks).map(([kind, def]) => {
     const override = getTaskOverride(kind);
     const budget = taskBudgetFacts(kind as TaskKind);

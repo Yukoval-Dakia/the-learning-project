@@ -1,18 +1,17 @@
 # Current handoff — 2026-10-04
 
-Main 92864095: practice correctness #1536 merged, CI37173577957 success, 17min window complete.
-1065/1116/1081 Done; 74 Linear items remain open, including owner HOLDs.
-Owner approved docs/design/2026-10-04-yuk1007-settings-ui-preflight.md.
-Active1007: /workspace/tlp-config-ui, feat/yuk-1007-config-ui, base92864095.
-Six-section /admin/config page: native chat provider/model pairs, wired budgets and output locale editing.
-Typed tasks, flags, thresholds, scoped/global pairs and schedules stay read-only in this approved batch.
-Final-pair validation follows real solve/vision/rejudge readers; 5 new DB regressions first RED.
-Task binding read face projects only provider/model/safe error from the real resolver, never credentials.
-61unit+78DB/typecheck/lint299/build/10audits/static usability passed; independent initial review found no P0/P1 or substantive P2.
-Production-bundle browser: 1280/390px native-pair selection, keyboard confirmation, payload and no page overflow passed (2 tests).
-PR/exact-head CI/17min window pending. No second initial review.
-Capture: fixes and remaining panel scope belong to existing1007; no new actionable finding.
-1091 multi-submission/head contract remains open; no unsafe guard removal.
-Owner direction: stop chasing dependency versions; prioritize main product line.
-No production operations or paid requests. Go 2-request cap remains exhausted.
-Preserve worktrees/branches. Existing1007 readface P2s and owner HOLDs remain.
+Main89b4cacd: settings UI#1537 merged, CI37177562373 success,17min window complete.
+Final prior facts: .remember/2026-10-04-config-ui-delivery.md (root local).
+74 Linear open=12Todo+4InProgress+58Backlog.1007 remains In Progress.
+Active1007: /workspace/tlp-config-facts,fix/yuk-1007-config-facts,base89b4cacd.
+Backend-only: validated global pin, real vision resolver/native/capability facts,
+conditional subscription schedule from the worker's own declaration.
+SourceGroundingVerifyTask is the third live vision consumer; shared list feeds writer and read facts.
+Reject prototype names in global env provider lookup via existing own-property predicate.
+9 first-RED regressions (7 initial +2 prototype);63unit+89DB/typecheck/lint299/build/10audits passed.
+Independent initial review passed: no P0/P1 or substantive new P2; PR/exact-head CI/17min window pending.
+No UI implementation changes. No provider call, production ops, or dependency upgrade.
+Independent review /root/review_config_facts is the unique initial review; no second initial round.
+Follow-ups covered by1007. Typed provider status display and remaining edit controls still open.
+1091 multi-submission/head contract and1062–1064 ready architecture remain next candidates.
+HOLDs preserved; Go2-request cap exhausted; preserve every worktree and branch.
