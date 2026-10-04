@@ -310,3 +310,6 @@ export { jyeooFetchCandidatesTool } from './server/tools/jyeoo-fetch-candidates'
 // YUK-892 — due-review queue reader for non-LLM read paths (today summary).
 export { executeGetReviewDue } from './server/tools/question-context';
 export { storeSourcedQuestionTool } from './server/tools/store-sourced-question';
+
+// YUK-1062 — task composition uses the narrow task-public entry directly.
+export { practiceTaskSpecs } from './task-public';

@@ -21,9 +21,9 @@
 // clear 删行后倒回 1，撞上 journal 的 (key,revision) PK）。
 
 import { eq, inArray, sql } from 'drizzle-orm';
-import type { TaskKind } from '@/ai/registry';
-import { tasks } from '@/ai/registry';
 import type { TaskDefinition } from '@/ai/task-spec';
+import type { TaskKind } from '@/capabilities/task-registry';
+import { tasks } from '@/capabilities/task-registry';
 import type { ConfigMutation, ConfigMutationResult } from '@/core/config/mutations';
 import type { ConfigValue } from '@/core/config/store';
 import { matchDynamicConfigKey, resolveKeyDef } from '@/core/config/store';

@@ -23,9 +23,8 @@
 //
 // 纯同步、零 DB：route 调用点在快照之上，hydrate 由 boot/refresh 周期负责。
 
-import { type TaskKind, tasks } from '@/ai/registry';
-import { taskBudgetFacts } from '@/ai/task-budget';
 import { capabilities } from '@/capabilities';
+import { type TaskKind, taskBudgetFacts, tasks } from '@/capabilities/task-registry';
 import type { ConfigSource, ConfigValue } from '@/core/config/store';
 import {
   CONFIG_REGISTRY,

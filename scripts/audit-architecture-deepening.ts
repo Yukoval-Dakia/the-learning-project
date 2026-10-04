@@ -1287,7 +1287,7 @@ export function auditArchitectureDeepening(
 
 async function runCli(): Promise<void> {
   const { publicReadCycleCatalog } = await import('./capability-public-read-cycles.js');
-  const { taskCatalog } = await import('../src/ai/task-catalog.js');
+  const { taskCatalog } = await import('../src/capabilities/task-catalog.js');
   const { capabilities } = await import('../src/capabilities/index.js');
   const { auditTaskCensus, LIVE_NON_CALLER_CLASSIFICATIONS } = await import(
     './audit-task-census.js'

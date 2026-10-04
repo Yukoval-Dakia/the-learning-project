@@ -17,3 +17,6 @@ export { copilotConfigEffectiveFacts } from './server/config-effective-facts';
 export { assertCopilotLegacyDrained } from './server/legacy-drain-readiness';
 // YUK-892 — memory-brief reader for non-LLM read paths (today summary, demos).
 export { MEMORY_BRIEF_STALE_AFTER_MS, executeMemoryBrief } from './server/tools/memory-brief';
+
+// YUK-1062 — task composition uses the narrow task-public entry directly.
+export { copilotTaskSpecs } from './task-public';

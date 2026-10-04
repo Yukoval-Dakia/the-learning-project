@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { tasks } from '@/ai/registry';
+import { tasks } from '@/capabilities/task-registry';
 import { createLoomPiModels } from './pi-models';
 import { nativePiModel, nativePiModels, piProviderId } from './pi-provider-catalog';
 import { isKnownProvider, providerAuthSurface } from './providers';

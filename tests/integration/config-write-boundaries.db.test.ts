@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { tasks } from '@/ai/registry';
-import { resolveTaskBudget } from '@/ai/task-budget';
+import { resolveTaskBudget, tasks } from '@/capabilities/task-registry';
 import { getConfig, replaceConfigSnapshot } from '@/core/config/store';
 import { system_config, system_config_epoch, system_config_journal } from '@/db/schema';
 import { STUCK_RUN_THRESHOLD_MS } from '@/server/boss/handlers/ai_task_run_reconcile';

@@ -25,8 +25,8 @@
 // authMode:'key', set the env-var name + baseURL. Adding a new task: edit
 // registry.ts only.
 
-import { type Provider, type TaskKind, tasks } from '@/ai/registry';
 import type { TaskDefinition } from '@/ai/task-spec';
+import { type Provider, type TaskKind, tasks } from '@/capabilities/task-registry';
 import { getLaneOverride, getTaskOverride } from '@/core/config/store';
 import type { ProviderModelBinding } from './model-profiles';
 

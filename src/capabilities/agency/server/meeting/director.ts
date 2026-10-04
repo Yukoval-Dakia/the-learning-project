@@ -37,7 +37,6 @@
 // retryable path because provider failure must never count as a quality vote.
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { tasks } from '@/ai/registry';
 import {
   conjectureKey,
   gatherConjectureEvidence,
@@ -54,6 +53,7 @@ import {
 } from '@/capabilities/agency/server/scout/evidence-mcp';
 import { createFindingsCapture } from '@/capabilities/agency/server/scout/report-findings';
 import { buildEvidenceScoutAgentDefinition } from '@/capabilities/agency/server/scout/scout-agent';
+import { tasks } from '@/capabilities/task-registry';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';

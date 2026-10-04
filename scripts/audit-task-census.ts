@@ -162,7 +162,7 @@ export function auditTaskCensus(options: AuditTaskCensusOptions): AuditResult {
 }
 
 async function runCli(): Promise<void> {
-  const { taskCatalog } = await import('../src/ai/task-catalog.js');
+  const { taskCatalog } = await import('../src/capabilities/task-catalog.js');
   const result = auditTaskCensus({
     catalogKinds: Object.keys(taskCatalog),
     sourceRoot: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),

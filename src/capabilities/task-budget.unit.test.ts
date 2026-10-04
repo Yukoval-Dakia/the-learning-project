@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { STUCK_RUN_THRESHOLD_MS } from '@/core/ai-run-limits';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
-import { type TaskKind, tasks } from './registry';
-import { resolveTaskBudget } from './task-budget';
+import { type TaskKind, resolveTaskBudget, tasks } from './task-registry';
 
 afterEach(resetTestConfig);
 

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { tasks } from '@/ai/registry';
 import { capabilities } from '@/capabilities';
+import { tasks } from '@/capabilities/task-registry';
 import { getConfig, replaceConfigSnapshot } from '@/core/config/store';
 import { system_config, system_config_epoch, system_config_journal } from '@/db/schema';
 import { resolveTaskProvider } from '@/server/ai/providers';

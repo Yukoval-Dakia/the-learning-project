@@ -94,3 +94,6 @@ export { seedKnowledge } from './server/seed';
 export type { NameKcFn } from './server/tag-knowledge';
 export { isTagKnowledgeInvariantError, tagKnowledge } from './server/tag-knowledge';
 export { loadTreeSnapshot } from './server/tree';
+
+// YUK-1062 — task composition uses the narrow task-public entry directly.
+export { knowledgeTaskSpecs } from './task-public';

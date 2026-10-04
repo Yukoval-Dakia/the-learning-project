@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { getLearnerLocale } from '@/ai/task-prompts';
 import { reviewInterventionPackageCandidate } from '@/capabilities/practice/public';
+import { getLearnerLocale } from '@/capabilities/task-registry';
 import {
   CurrentInterventionPackageReviewAudit,
   InterventionAuthoringContext,

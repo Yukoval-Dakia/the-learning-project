@@ -29,8 +29,8 @@ vi.mock('@/server/r2', () => ({
 }));
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { tasks } from '@/ai/registry';
 import { capabilities } from '@/capabilities';
+import { tasks } from '@/capabilities/task-registry';
 import { CONFIG_REGISTRY, replaceConfigSnapshot, resetTestConfig } from '@/core/config/store';
 import { projectDagMembers } from '@/kernel/manifest';
 import { hasGlobalProviderOverride, resolveTaskProvider } from '@/server/ai/providers';

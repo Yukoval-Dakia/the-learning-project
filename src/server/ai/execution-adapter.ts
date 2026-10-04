@@ -11,8 +11,8 @@
 // import remains.
 
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
-import type { TaskKind } from '@/ai/registry';
 import type { EffortLevel } from '@/ai/task-spec';
+import type { TaskKind } from '@/capabilities/task-registry';
 import { PiAgentAdapter } from './pi-agent-adapter';
 import type { PiHookBridge } from './pi-hooks';
 import type { ResolvedProvider } from './providers';

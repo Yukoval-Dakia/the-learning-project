@@ -15,8 +15,7 @@
 
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { tasks } from '@/ai/registry';
-import { getTaskSystemPrompt } from '@/ai/task-prompts';
+import { getTaskSystemPrompt, tasks } from '@/capabilities/task-registry';
 import { newId } from '@/core/ids';
 import { parseEvent } from '@/core/schema/event';
 import {

@@ -34,3 +34,6 @@ export {
   AUTO_ENROLL_SINGLETON_SECONDS,
   autoEnrollJobEnabled,
 } from './server/workflow-judge-config';
+
+// YUK-1062 — task composition uses the narrow task-public entry directly.
+export { ingestionTaskSpecs } from './task-public';

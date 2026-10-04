@@ -1,4 +1,4 @@
-import { type AiTaskKind, getTaskSystemPrompt } from '@/ai/task-prompts';
+import { type AiTaskKind, getTaskSystemPrompt } from '@/capabilities/task-registry';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 
 export { costUsdToMicroUsd, sumAllKnownCostUsd } from '@/kernel/cost';

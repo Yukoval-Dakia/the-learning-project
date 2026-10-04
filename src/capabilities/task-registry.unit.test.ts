@@ -23,10 +23,17 @@ import { teachingQualityTaskSpec } from '@/capabilities/practice/tasks/teaching-
 import { variantGenTaskSpec } from '@/capabilities/practice/tasks/variant-gen';
 import { variantVerifyTaskSpec } from '@/capabilities/practice/tasks/variant-verify';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import promptHashOracle from './fixtures/task-prompt-hashes.6b3233b1.json' with { type: 'json' };
-import { type TaskDef, type TaskKind, tasks } from './registry';
+import promptHashOracle from '../ai/fixtures/task-prompt-hashes.6b3233b1.json' with {
+  type: 'json',
+};
 import { taskCatalog } from './task-catalog';
-import { LEARNER_LOCALE_PIN, getTaskSystemPrompt } from './task-prompts';
+import {
+  LEARNER_LOCALE_PIN,
+  type TaskDef,
+  type TaskKind,
+  getTaskSystemPrompt,
+  tasks,
+} from './task-registry';
 
 const YUK949_PROMPT_HASHES = {
   'general:CopilotTask': 'cbf6536bed928b79e8de15f3337fac389d2f0f8909a118e3dac6366953e20a71',
@@ -48,7 +55,7 @@ describe('copilot task dispatch declarations', () => {
   });
 
   it('contains no prompt builders or task business definitions', () => {
-    const source = readFileSync(new URL('./registry.ts', import.meta.url), 'utf8');
+    const source = readFileSync(new URL('../ai/registry.ts', import.meta.url), 'utf8');
     expect(source).not.toMatch(/\bfunction\s+build/);
     expect(source).not.toMatch(/\b(description|defaultProvider|defaultModel|budget|prompt)\s*:/);
     expect(source).not.toContain('DEFAULT_TASK_BUDGET');

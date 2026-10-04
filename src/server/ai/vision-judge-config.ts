@@ -34,7 +34,7 @@
  * YUK-365 (deferred to call time, not validated here).
  */
 
-import type { Provider, TaskKind } from '@/ai/registry';
+import type { Provider, TaskKind } from '@/capabilities/task-registry';
 import { getLaneOverride } from '@/core/config/store';
 import { resolveModelProfile } from '@/server/ai/model-profiles';
 import { ANTHROPIC_SUB_DEFAULT_MODEL, isOauthProvider } from '@/server/ai/providers';

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { tasks } from '@/ai/registry';
+import { tasks } from '@/capabilities/task-registry';
 import {
   type Allowlist,
   type TaskDefLike,

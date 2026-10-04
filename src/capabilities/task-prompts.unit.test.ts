@@ -2,8 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { MetaCauseFields } from '@/core/schema/business';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { tasks } from './registry';
-import { LEARNER_LOCALE_PIN, getTaskSystemPrompt } from './task-prompts';
+import { LEARNER_LOCALE_PIN, getTaskSystemPrompt, tasks } from './task-registry';
 
 afterEach(() => resetTestConfig());
 

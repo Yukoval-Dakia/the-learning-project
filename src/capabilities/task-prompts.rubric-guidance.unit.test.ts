@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { subjectProfiles } from '@/subjects/profile';
-import { type AiTaskKind, getTaskSystemPrompt } from './task-prompts';
+import { type AiTaskKind, getTaskSystemPrompt } from './task-registry';
 
 // biome-ignore lint/style/noNonNullAssertion: builtin 恒在
 const base = subjectProfiles.yuwen!;
