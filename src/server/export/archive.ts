@@ -20,6 +20,7 @@ import {
   MEM0_COLLECTION_COLUMNS,
   RESTORE_WIPE_ONLY_TABLES,
   SCHEMA_VERSION,
+  SUBSCRIPTION_PROGRESS_TABLES,
   type TableName,
   mem0CollectionTable,
 } from './constants';
@@ -199,31 +200,28 @@ export async function buildBackupArchive({
   const tableRows: Record<string, Array<Record<string, unknown>>> = {};
   const rowCounts: Record<string, number> = {};
 
-  for (const t of FK_ORDER) {
-    // Use raw SQL to fetch every column without needing individual table schema imports.
-    const rows = (await db.execute(sql.raw(`select * from "${t}"`))) as Array<
-      Record<string, unknown>
-    >;
-    tableRows[t] = rows;
-    rowCounts[t] = rows.length;
-  }
+  // Event, progress, effects and business parents must describe one committed point.
+  // Release the read-only snapshot before fetching external R2 objects/streaming the ZIP.
+  await db.transaction(
+    async (tx) => {
+      for (const t of FK_ORDER) {
+        const rows = await tx.execute<Record<string, unknown>>(sql.raw(`select * from "${t}"`));
+        tableRows[t] = rows;
+        rowCounts[t] = rows.length;
+      }
 
-  // YUK-355: dump the mem0 collection table (non-drizzle, runtime-created by mem0).
-  // Keyed in data.json by its resolved table name. `vector::text` keeps the pgvector
-  // column a stable string in JSON. Skipped (no key, count 0) if mem0 never created
-  // the table on this DB — a backup of a fresh DB is still valid.
-  const mem0Table = mem0CollectionTable();
-  // Identifier safety (Cursor OCR minor, PR #491): the table name is raw-interpolated
-  // into the dump SELECT, so validate it against the mem0 collection-name shape before
-  // building the query — consistent with the value-bound mem0CollectionExists().
-  assertSafeMem0CollectionName(mem0Table);
-  if (await mem0CollectionExists(db, mem0Table)) {
-    const mem0Rows = (await db.execute(
-      sql.raw(`select id, vector::text as vector, payload from "${mem0Table}"`),
-    )) as Array<Record<string, unknown>>;
-    tableRows[mem0Table] = mem0Rows;
-    rowCounts[mem0Table] = mem0Rows.length;
-  }
+      const mem0Table = mem0CollectionTable();
+      assertSafeMem0CollectionName(mem0Table);
+      if (await mem0CollectionExists(tx, mem0Table)) {
+        const rows = await tx.execute<Record<string, unknown>>(
+          sql.raw(`select id, vector::text as vector, payload from "${mem0Table}"`),
+        );
+        tableRows[mem0Table] = rows;
+        rowCounts[mem0Table] = rows.length;
+      }
+    },
+    { isolationLevel: 'repeatable read', accessMode: 'read only' },
+  );
 
   type Entry = { name: string; input: string | Uint8Array | ReadableStream; lastModified?: Date };
   const entries: Entry[] = [];
@@ -295,6 +293,7 @@ export async function buildBackupArchive({
 const INSERT_BATCH_SIZE = 50;
 const TEXT_ARRAY_COLUMNS: Partial<Record<TableName, ReadonlySet<string>>> = {
   event: new Set(['affected_scopes']),
+  event_subscription_effect: new Set(['mastery_event_ids', 'evidence_ids']),
 };
 
 /**
@@ -616,6 +615,20 @@ export async function restoreFromArchive({
     }
   }
 
+  // A 4.25 archive must carry even empty progress tables. Treating a missing key as
+  // empty would silently erase its activation history and bootstrap-skip pending work.
+  const missingProgress = SUBSCRIPTION_PROGRESS_TABLES.filter((table) => data[table] === undefined);
+  if (missingProgress.length > 0) {
+    return {
+      status: 400,
+      body: {
+        error: 'data_validation_failed',
+        message: 'Subscription progress is missing; DB was NOT wiped.',
+        issues: missingProgress.map((table) => `${table}: required progress table missing`),
+      },
+    };
+  }
+
   // Pre-flight: catch inconsistent column shapes BEFORE we wipe the DB.
   const columnValidationErrors: string[] = [];
   for (const t of FK_ORDER) {
@@ -706,11 +719,7 @@ export async function restoreFromArchive({
         }
       }
 
-      // YUK-751 (codex P1): wipe the operational subscription tables FIRST. They are excluded from
-      // the archive (not restored), but their ON DELETE no action FKs into event/artifact would
-      // otherwise block the FK_ORDER parent wipe below. Child→parent order among themselves
-      // (RESTORE_WIPE_ONLY_TABLES = effect → delivery → checkpoint). Not counted in `stats` (they are
-      // wiped-not-restored; a stats entry would misreport them as a backed-up table).
+      // Discard excluded process/queue ownership before restoring durable business rows.
       for (const t of RESTORE_WIPE_ONLY_TABLES) {
         await tx.execute(sql.raw(`delete from "${t}"`));
       }
@@ -745,6 +754,19 @@ export async function restoreFromArchive({
           stats[t].inserted = (stats[t].inserted ?? 0) + chunk.length;
         }
       }
+
+      // YUK-766: archived leases belong to the source process. Preserve pause/hash,
+      // local ordering, retry budget/backoff, terminal outcomes and causal effect receipts.
+      // The temporary archived claims never become visible outside this restore tx.
+      await tx.execute(sql`
+        update event_subscription_checkpoint
+        set claim_owner = null, claim_token = null, claim_lease_until = null
+      `);
+      await tx.execute(sql`
+        update event_subscription_delivery
+        set status = case when status = 'claimed' then 'pending' else status end,
+            claim_owner = null, claim_token = null, claim_lease_until = null, claimed_at = null
+      `);
 
       // YUK-599 (v3 §6): subject_change_seq 序列不随行备份（pg dump 语义之外的手工
       // 序列），restore 只回插了两本 journal 的 change_seq 列值——不补 setval 的话，

@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。Linear归零持续推进，当前62项未完成；1117/#1551已合入main d02f64f7。当前单线1118发布/核验历史缺口；依赖不追新，既有HOLD与生产/付费边界保持。
+> 更新于2026-10-04。Linear归零持续推进，当前61项未完成；1118/#1552已合入main36c2460f。当前单线766订阅进度备份；依赖不追新，既有HOLD与生产/付费边界保持。
 
 ## NOW
 
@@ -61,17 +61,19 @@
 
 - YUK-1117/#1551已交付main d02f64f7：16语义回归先RED，97unit含7全生产字段删除、全部gate、独立97unit/10负例5正例及CI37207906335（82迁移/34浏览器）通过；17分钟窗完成，Linear Done。882字段分类不变，0未分类，无运行时或allowlist变更。
 
-- YUK-1118 active：fix/yuk-1118-publisher-boundaries /workspace/tlp-publisher-boundaries，base d02f64f7。发布结构校验、source_verify根→子锁序和transient挂起原子性；13项新DB回归全部先RED；修复后54unit/90DB、typecheck/lint299/build/10必需audit及question-writers通过。独立初审进行中；待push/exact-head CI/17分钟窗。
+- YUK-1118/#1552已交付main36c2460f：13DB缺陷回归先RED，54unit/90DB及全部gate通过；独立83DB/45unit/9合法形状探针、CI37209336163通过，17分钟窗完成，Linear Done。增量CI未选迁移/浏览器，不计实际运行；无新增实质follow-up。
+
+- YUK-766 active：fix/yuk-766-subscription-backup /workspace/tlp-subscription-backup，base36c2460f。按既有Q-766(a)批准实现三表一致快照与claim清理；8项真实DB缺陷回归先RED；62DB/83unit、typecheck/lint/build与10项audit通过。初审发现的旧API fixture/mock阻塞已修，唯一验证审16unit/15DB通过，无未裁决P0/P1；待push后exact-head CI及17分钟窗口。effect保留，队列完成/恢复语义仍需独立验证，首批不冒充整票Done。
 
 ## NEXT
 
-1. 交付1118发布/核验历史边界后，继续766灾备等可执行主线；1091联合组模型需完整验收。持续推进Linear归零，不以单批合并作为终点。
+1. 推进766灾备，随后588已批准的overnight-digest费用观测（已校准Todo）；1091联合组模型需完整验收。持续推进Linear归零，不以单批合并作为终点。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
 ## PARKED
 
-- YUK-766已按既有Q-766批准与当前排除表证据校准Todo，需将subscription进度/effect账本纳入备份并清理claim；尚未实施/生产恢复。
+- YUK-766本批只交付三表一致快照及恢复claim清理；pg-boss队列不在逻辑ZIP，enqueued effect不代表业务完成，下游队列恢复闭环仍在原票，未执行生产恢复。
 - YUK-1062基线完整catalog并非浏览器安全：Node crypto纯helper已在旧TaskSpecs闭包内。本批保留定义、修正说明，窄公开入口只保证不初始化应用DB，不承诺新增浏览器支持。
 
 - 1064本批同步audit:relations confusable reader真实路径至kernel/read-models/confusables.ts；原误报DEAD/STALE已消除。既有applied_in/observed_in治理信号不在此批扩面。
