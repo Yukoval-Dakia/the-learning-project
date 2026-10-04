@@ -155,6 +155,11 @@ export interface AdminConfigKeyRow {
 
 export interface AdminConfigTaskRow {
   readonly kind: string;
+  readonly effective_binding: {
+    provider: string | null;
+    model: string | null;
+    error: string | null;
+  } | null;
   readonly default_provider: string;
   readonly default_model: string;
   readonly default_budget: {
@@ -301,6 +306,7 @@ export function buildAdminConfigReadModel(
     const typed = 'execution' in def && def.execution === 'typed';
     return {
       kind,
+      effective_binding: facts?.task_bindings?.[kind] ?? null,
       default_provider: def.defaultProvider,
       default_model: def.defaultModel,
       default_budget: def.budget,

@@ -107,4 +107,83 @@ describe('configuration write boundaries', () => {
     ).rejects.toMatchObject({ status: 422 });
     expect(await testDb().select().from(system_config_journal)).toEqual(before);
   });
+  it.each([
+    ['lane.verify_solve.model', 'gpt-6-astra'],
+    ['JUDGE_CALIBRATION_REJUDGE_MODEL', 'mimo-v2.5'],
+  ])('rejects model-only %s against its actual default provider atomically', async (key, value) => {
+    await expect(
+      setConfigs(
+        [
+          { key: 'locale.learner', value: 'en' },
+          { key, value },
+        ],
+        { actor: 'cli' },
+        testDb(),
+      ),
+    ).rejects.toMatchObject({ status: 422 });
+    await expectNoWrites();
+  });
+
+  it('rejects text-only models for a solve lane shared by vision tasks', async () => {
+    await expect(
+      setConfigs(
+        [
+          { key: 'lane.verify_solve.provider', value: 'xiaomi' },
+          { key: 'lane.verify_solve.model', value: 'mimo-v2.5-pro' },
+        ],
+        { actor: 'cli' },
+        testDb(),
+      ),
+    ).rejects.toMatchObject({ status: 422 });
+    await expectNoWrites();
+  });
+
+  it('rejects clearing a solve provider when its remaining model cannot run on the default', async () => {
+    await setConfigs(
+      [
+        { key: 'lane.verify_solve.provider', value: 'openai' },
+        { key: 'lane.verify_solve.model', value: 'gpt-6-astra' },
+      ],
+      { actor: 'cli' },
+      testDb(),
+    );
+    const before = await testDb().select().from(system_config_journal);
+    await expect(
+      clearConfig('lane.verify_solve.provider', { actor: 'cli' }, testDb()),
+    ).rejects.toMatchObject({ status: 422 });
+    expect(await testDb().select().from(system_config_journal)).toEqual(before);
+  });
+
+  it('rechecks a model-only solve override when its global provider is cleared', async () => {
+    await setConfigs(
+      [
+        { key: 'lane.global.provider', value: 'openai' },
+        { key: 'lane.global.model', value: 'gpt-6-astra' },
+        { key: 'lane.verify_solve.model', value: 'gpt-6-astra' },
+      ],
+      { actor: 'cli' },
+      testDb(),
+    );
+    const before = await testDb().select().from(system_config_journal);
+    await expect(
+      clearConfig('lane.global.provider', { actor: 'cli' }, testDb()),
+    ).rejects.toMatchObject({ status: 422 });
+    expect(await testDb().select().from(system_config_journal)).toEqual(before);
+  });
+
+  it('keeps a vision model-only setting dormant and accepts native solve defaults', async () => {
+    await setConfig(
+      'lane.vision_judge.model',
+      'dormant-until-provider-selected',
+      { actor: 'cli' },
+      testDb(),
+    );
+    await setConfig('lane.verify_solve.model', 'mimo-v2.5', { actor: 'cli' }, testDb());
+    await setConfig(
+      'JUDGE_CALIBRATION_REJUDGE_MODEL',
+      'claude-opus-4-8',
+      { actor: 'cli' },
+      testDb(),
+    );
+  });
 });

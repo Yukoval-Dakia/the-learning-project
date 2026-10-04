@@ -272,10 +272,25 @@ async function validateFinalProviderPairs(
     }
   }
   if (scopes.size === 0) return;
+  const solveTasks = ['SolutionGenerateTask', 'SolutionGenerateVisionTask'] as const;
+  const visionTasks = ['StepsJudgeTask', 'MultimodalDirectJudgeTask'] as const;
+  if (
+    scopes.has('lane.global.provider') ||
+    [...solveTasks, ...visionTasks].some((kind) => scopes.has(`task.${kind}.provider`))
+  ) {
+    for (const key of ['lane.verify_solve.provider', 'lane.vision_judge.provider']) {
+      const scope = pairScopeFor(key);
+      if (scope) scopes.set(scope.providerKey, scope);
+    }
+  }
   const keys = [
     ...new Set([...scopes.values()].flatMap((s) => [s.providerKey, s.modelKey])),
     'lane.global.provider',
     'lane.global.model',
+    ...[...solveTasks, ...visionTasks].flatMap((kind) => [
+      `task.${kind}.provider`,
+      `task.${kind}.model`,
+    ]),
     ...([...scopes.values()].some((scope) => scope.providerKey === 'lane.global.provider')
       ? Object.keys(tasks).map((kind) => `task.${kind}.model`)
       : []),
@@ -310,6 +325,57 @@ async function validateFinalProviderPairs(
     const configuredModel = modelPriority
       ? (valueAsNonEmptyString(envModel) ?? dbModel)
       : (dbModel ?? valueAsNonEmptyString(envModel));
+
+    // Scoped overrides are per-call arguments: model-only solve follows the task/global
+    // provider, while a vision model without a provider remains dormant in its reader.
+    const scopedTasks =
+      scope.providerKey === 'lane.verify_solve.provider'
+        ? solveTasks
+        : scope.providerKey === 'lane.vision_judge.provider'
+          ? visionTasks
+          : undefined;
+    if (scopedTasks) {
+      if (
+        !configuredProvider &&
+        (!configuredModel || scope.providerKey === 'lane.vision_judge.provider')
+      )
+        continue;
+      const global = resolveGlobalProviderSwitch(env, {
+        provider: valueAsNonEmptyString(rowByKey.get('lane.global.provider')),
+        model:
+          valueAsNonEmptyString(env.AI_PROVIDER_MODEL) ??
+          valueAsNonEmptyString(rowByKey.get('lane.global.model')),
+      });
+      for (const kind of scopedTasks) {
+        const provider =
+          configuredProvider ??
+          global?.provider ??
+          valueAsNonEmptyString(rowByKey.get(`task.${kind}.provider`)) ??
+          tasks[kind].defaultProvider;
+        const model =
+          configuredModel ??
+          global?.model ??
+          valueAsNonEmptyString(rowByKey.get(`task.${kind}.model`)) ??
+          (provider === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : tasks[kind].defaultModel);
+        if (!isKnownProvider(provider) || !isProviderImplemented(provider)) {
+          throw new ApiError(
+            'invalid_config_value',
+            `${scope.label} resolves to an unavailable provider '${provider}'`,
+            422,
+          );
+        }
+        validateNativeModel(scope.label, provider, model, kind);
+      }
+      continue;
+    }
+    if (scope.providerKey === 'JUDGE_CALIBRATION_REJUDGE_PROVIDER') {
+      const provider = configuredProvider ?? valueAsNonEmptyString(providerDef?.codeDefault);
+      const model = configuredModel ?? valueAsNonEmptyString(modelDef?.codeDefault);
+      if (provider && model && isKnownProvider(provider) && isProviderImplemented(provider)) {
+        validateNativeModel(scope.label, provider, model, 'SemanticJudgeTask');
+      }
+      continue;
+    }
 
     const isGlobal = scope.providerKey === 'lane.global.provider';
     const typed = taskKind && (tasks[taskKind] as TaskDefinition).execution === 'typed';

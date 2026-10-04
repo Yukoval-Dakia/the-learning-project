@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { type Page, expect, test } from '@playwright/test';
+import { configFixture } from '../../src/capabilities/observability/ui/config-test-fixture';
 import { costTruthFixture, installApiFixtures } from './api-fixtures';
 
 for (const path of ['/today', '/admin/cost']) {
@@ -1109,3 +1110,59 @@ test.describe('shipped-container usability regression', () => {
     ).toEqual([]);
   });
 });
+
+for (const width of [1280, 390]) {
+  test(`configuration native provider editing at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const fixture = await installApiFixtures(page, 'existing-evidence');
+    const data = configFixture();
+    const writes: unknown[] = [];
+    await page.route('**/api/admin/config', async (route) => {
+      if (route.request().method() === 'PATCH') {
+        writes.push(route.request().postDataJSON());
+        data.snapshot.epoch += 1;
+        data.tasks[0].override = { provider: 'opencode-go', model: 'glm-5.3-flash' };
+        data.tasks[0].effective_binding = {
+          provider: 'opencode-go',
+          model: 'glm-5.3-flash',
+          error: null,
+        };
+        return route.fulfill({
+          json: {
+            committed_epoch: data.snapshot.epoch,
+            snapshot_epoch: data.snapshot.epoch,
+            snapshot_current: true,
+            changes: [],
+          },
+        });
+      }
+      return route.fulfill({ json: data });
+    });
+    await page.goto('/admin/config?section=ai-models');
+    await expect(page.getByRole('heading', { name: '配置', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '编辑 QuizGenTask', exact: true }).click();
+    await page.getByRole('combobox', { name: 'Provider', exact: true }).selectOption('opencode-go');
+    await expect(page.getByRole('combobox', { name: '模型', exact: true })).toHaveValue(
+      'glm-5.3-flash',
+    );
+    await page.getByRole('button', { name: '保存模型组合', exact: true }).click();
+    expect(writes).toEqual([]);
+    await page.getByRole('button', { name: '确认变更', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('status').filter({ hasText: '当前进程已刷新' })).toBeVisible();
+    expect(writes).toEqual([
+      {
+        changes: [
+          { action: 'set', key: 'task.QuizGenTask.provider', value: 'opencode-go' },
+          { action: 'set', key: 'task.QuizGenTask.model', value: 'glm-5.3-flash' },
+        ],
+      },
+    ]);
+    await expect(page.getByRole('button', { name: '编辑 JevScoringDecisionTask' })).toBeDisabled();
+    await page.screenshot({ path: `/tmp/config-ui-${width}.png`, fullPage: true });
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    expect(fixture.unexpectedRequests).toEqual([]);
+  });
+}

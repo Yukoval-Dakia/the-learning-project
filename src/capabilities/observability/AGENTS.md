@@ -20,6 +20,7 @@
 | `api/job-events.ts` | 通用异步 job SSE tracker |
 | `server/` | AI observability 读模型、cost 汇总、failure 聚类、覆盖细目、备份/恢复、event correction |
 | `ui/admin-runs.tsx` / `admin-cost.tsx` / `admin-failures.tsx` | 三张独立 lazy admin React 面；共享 chrome/helper 在 `observability-shared.tsx`，`observability.tsx` 仅兼容 barrel |
+| `ui/config.tsx` / `config-sections.tsx` / `config-task-editor.tsx` / `config-model.ts` | `/admin/config`：六区设置页；原生模型组合、已接线预算与AI语言行内确认编辑，其余配置只读，提交与快照刷新分开报告 |
 | `ui/subjects.tsx` / `ui/coverage-lattice.tsx` | subject 与覆盖细目 admin React 面 |
 
 ## CONVENTIONS

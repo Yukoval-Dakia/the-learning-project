@@ -2894,6 +2894,11 @@ export interface operations {
                             };
                             default_model: string;
                             default_provider: string;
+                            effective_binding: {
+                                error: string | null;
+                                model: string | null;
+                                provider: string | null;
+                            } | null;
                             effective_budget: {
                                 maxCost: number | null;
                                 maxIterations: number | null;
