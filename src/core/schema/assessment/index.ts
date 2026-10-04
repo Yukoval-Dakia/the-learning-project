@@ -14,6 +14,7 @@ export * from './coverage';
 export * from './dto';
 export * from './evaluation';
 export * from './execution';
+export * from './group-input';
 export * from './ids';
 export * from './judgment';
 export * from './lifecycle';

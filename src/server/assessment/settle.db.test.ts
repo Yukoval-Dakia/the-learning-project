@@ -846,7 +846,7 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
       expect(rows[0].payload).toMatchObject({
         verdict: { verdict: 'correct', normalized: 1 },
         rating: 'good',
-        scope_version: 2,
+        scope_version: 3,
         effects: { fsrs_applied: ['knowledge:kc_a'], theta_applied: ['kc_a'] },
       });
       expect(await fsrsRow('knowledge', 'kc_b')).toBeUndefined();

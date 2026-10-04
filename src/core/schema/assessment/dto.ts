@@ -1,5 +1,7 @@
 import { z } from 'zod';
+import { projectIssuedScoringBasis } from './evaluation';
 import type { EvaluationRecordT, SubmissionRecordT } from './judgment';
+import { EvaluationInputSnapshot } from './judgment';
 import { SharedMaterialKind, isPublicSharedMaterial } from './materials';
 import { LifecycleQualification, PublishDecision } from './publish';
 import { ResponseSpec } from './response';
@@ -167,7 +169,8 @@ export function projectPracticeIssuance(
 export type FeedbackProjectionViolationCode =
   | 'evaluation_submission_mismatch'
   | 'evaluation_group_mismatch'
-  | 'submission_revision_mismatch';
+  | 'submission_revision_mismatch'
+  | 'invalid_group_input';
 
 export class FeedbackProjectionContractError extends Error {
   override name = 'FeedbackProjectionContractError';
@@ -247,6 +250,8 @@ export const FeedbackUnitResultView = z.object({
 export type FeedbackUnitResultViewT = z.infer<typeof FeedbackUnitResultView>;
 
 export const AssessmentFeedbackDto = z.strictObject({
+  evaluation_group_id: z.string().min(1).optional(),
+  member_submission_ids: z.array(z.string().min(1)).min(1).optional(),
   submission_id: z.string().min(1),
   revision_id: z.string().min(1),
   evaluation_id: z.string().min(1),
@@ -356,7 +361,25 @@ export function projectFeedback(
   // YUK-1096 P1-1：身份交叉校验先行 —— stale/mis-keyed 的 lookup 结果
   // （别的 submission 的 evaluation、别的 group 的 attempt、别的 revision
   // 的题面）绝不投影成这份作答的反馈。fail-closed：抛错，不静默回退。
-  if (evaluation.submission_id !== submission.submission_id) {
+  const rawSnapshot = evaluation.provenance?.input_snapshot;
+  const parsedSnapshot = EvaluationInputSnapshot.safeParse(rawSnapshot);
+  const snapshot = parsedSnapshot.success ? parsedSnapshot.data : null;
+  if (rawSnapshot != null && !snapshot) {
+    throw new FeedbackProjectionContractError('invalid_group_input', 'malformed frozen input');
+  }
+  const memberIds = snapshot?.member_submission_ids;
+  if (
+    snapshot &&
+    (snapshot.revision_id !== revision.revision_id ||
+      new Set(memberIds).size !== memberIds?.length ||
+      !memberIds?.includes(evaluation.submission_id))
+  ) {
+    throw new FeedbackProjectionContractError('invalid_group_input', 'invalid frozen membership');
+  }
+  if (
+    evaluation.submission_id !== submission.submission_id &&
+    !memberIds?.includes(submission.submission_id)
+  ) {
     throw new FeedbackProjectionContractError(
       'evaluation_submission_mismatch',
       `evaluation '${evaluation.evaluation_id}' belongs to submission '${evaluation.submission_id}', not '${submission.submission_id}'`,
@@ -373,6 +396,24 @@ export function projectFeedback(
       'submission_revision_mismatch',
       `submission '${submission.submission_id}' pins revision '${submission.revision_id}', not '${revision.revision_id}'`,
     );
+  }
+  let feedbackBasis = revision.scoring_basis;
+  if (snapshot) {
+    try {
+      feedbackBasis = projectIssuedScoringBasis(revision, snapshot.issued_part_ids);
+    } catch {
+      throw new FeedbackProjectionContractError(
+        'invalid_group_input',
+        'invalid frozen issuance scope',
+      );
+    }
+    const units = new Set(feedbackBasis.units.map((unit) => unit.scoring_unit_id));
+    if (evaluation.unit_results.some((result) => !units.has(result.scoring_unit_id))) {
+      throw new FeedbackProjectionContractError(
+        'invalid_group_input',
+        'results outside frozen scope',
+      );
+    }
   }
   const pending = evaluation.status !== 'completed';
   const aggregate =
@@ -408,19 +449,25 @@ export function projectFeedback(
 
   const answerKeys: RevealedAnswerKeyT[] =
     !pending && policy.reveal_answer_keys
-      ? revision.scoring_basis.units
+      ? feedbackBasis.units
           .map(revealAnswerKey)
           .filter((key): key is RevealedAnswerKeyT => key !== null)
       : [];
 
   const rubricExplanations: RevealedRubricExplanationT[] =
     !pending && policy.reveal_rubric_explanations
-      ? revision.scoring_basis.units
+      ? feedbackBasis.units
           .map(revealRubricExplanation)
           .filter((item): item is RevealedRubricExplanationT => item !== null)
       : [];
 
   return AssessmentFeedbackDto.parse({
+    ...(snapshot
+      ? {
+          evaluation_group_id: evaluation.evaluation_group_id,
+          member_submission_ids: snapshot.member_submission_ids,
+        }
+      : {}),
     submission_id: submission.submission_id,
     revision_id: submission.revision_id,
     evaluation_id: evaluation.evaluation_id,

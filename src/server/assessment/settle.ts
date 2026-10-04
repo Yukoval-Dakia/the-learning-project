@@ -147,7 +147,7 @@ interface SettlementPlan {
   submissionId: string;
   evaluationId: string;
   attempt: number;
-  /** 学习事实时点（§11 occurrence）：submission.submitted_at（ISO）。 */
+  /** 学习事实时点：冻结成员 max(submitted_at)，旧单成员仍为原提交时点。 */
   occurrenceAt: string;
   /** 评估完成时点（evaluation.created_at，ISO）。 */
   evaluatedAt: string;
@@ -285,9 +285,12 @@ async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<Settleme
     );
   }
   const spec = revision.response_spec as ResponseSpecT;
-  const basis = projectIssuedScoringBasis(revision, input.issuance.part_ids);
+  const basis = projectIssuedScoringBasis(
+    revision,
+    input.inputScope?.issued_part_ids ?? input.issuance.part_ids,
+  );
   const plan = revision.execution_plan as ExecutionPlanT;
-  const partIds = input.issuance.part_ids;
+  const partIds = input.inputScope?.issued_part_ids ?? input.issuance.part_ids;
   const fullScope = partIds.length === revision.structure.parts.length;
   const wanted = new Set<string>([input.questionGroupId, ...partIds]);
   const rows = await tx
@@ -413,7 +416,7 @@ function derivePlan(input: ActivationSettleInput, scope: SettlementScope): Settl
     submissionId: input.submission.submission_id,
     evaluationId: input.evaluation.evaluation_id,
     attempt: input.evaluation.attempt,
-    occurrenceAt: input.submission.submitted_at.toISOString(),
+    occurrenceAt: input.inputScope?.occurrence_at ?? input.submission.submitted_at.toISOString(),
     evaluatedAt: input.evaluation.created_at.toISOString(),
     provenance,
     verdict: {
@@ -880,12 +883,14 @@ async function writeSettlementEvent(
 export async function learningSettlement(input: ActivationSettleInput): Promise<ActivationEffect> {
   const { tx } = input;
   const activatedAt = input.now;
-  const occurrenceAt = input.submission.submitted_at;
-  const occurrenceMs = occurrenceAt.getTime();
 
   // ---- 计划（冻结契约 + 组 KC 作用域；纯判定无写）----
   const scope = await loadScope(tx, input);
   const plan = derivePlan(input, scope);
+  // The validated plan owns the joint occurrence. Its anchor may have been
+  // submitted earlier; actual writes, receipts and replay boundaries must agree.
+  const occurrenceAt = new Date(plan.occurrenceAt);
+  const occurrenceMs = occurrenceAt.getTime();
   // θ̂ 依赖域映射（HIERARCHICAL_ELO_ENABLED 开时为真；冻结进 replay 输入，
   // re-apply 不重解析 —— 与 durable judge 的冻结语义同款）。
   if (plan.theta.applied) {

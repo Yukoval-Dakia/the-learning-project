@@ -9,11 +9,11 @@
 // 锁序（§11「先锁 common learning-write，再一致地锁 submission/head」）：
 //   1. `acquireLearningStateWriteLock`（全局学习写锁 G —— 所有学习态写方先取
 //      它，天然与结算串行化）；
-//   2. `evaluation` candidate 行锁（FOR UPDATE —— 读坐标；evaluation 行不在
-//      他人写路径的锁点上，先于 submission/head 取锁不构成环）；
-//   3. `assessment_submission` 行锁（FOR UPDATE）；
-//   4. `evaluation_effective_head` 行锁（FOR UPDATE —— CAS 串行化点）；
-//   5. `question` 组根行锁（FOR UPDATE —— publish/verify 链在
+//   2. 只读 candidate 坐标，取 assessment-evaluation-group advisory 锁；
+//   3. `evaluation` candidate 行锁（FOR UPDATE）；
+//   4. `assessment_submission` 行锁（FOR UPDATE）；
+//   5. `evaluation_effective_head` 行锁（FOR UPDATE —— CAS 串行化点）；
+//   6. `question` 组根行锁（FOR UPDATE —— publish/verify 链在
 //      `publishQuestionGroupFromRow` 内先取同一锁，故 suspension/admission
 //      写与 activation 读在组根行锁上互斥 ⇒ §3.3「发题/激活与 verify 状态
 //      变更串行化」落实为同一锁点，而非额外锁面）。
@@ -56,8 +56,15 @@
 // ====================================================================
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import {
+  evaluationMemberFromRows,
+  freezeEvaluationInput,
+  matchesEvaluationInput,
+  sameMemberSet,
+} from '@/core/assessment-input';
+import { GroupInputContractError } from '@/core/schema/assessment/group-input';
 import type {
   EvaluationGroupIdT,
   EvaluationIdT,
@@ -73,6 +80,7 @@ import {
   assessment_submission,
   evaluation,
   evaluation_effective_head,
+  evaluation_group,
   question,
   question_group_lifecycle,
   question_revision,
@@ -105,6 +113,12 @@ export interface ActivationSettleInput {
   issuance: typeof assessment_issuance.$inferSelect;
   /** 组根 question id（question_revision.group_id）。 */
   questionGroupId: string;
+  /** Validated complete input scope; legacy single-member fixtures retain their issuance. */
+  inputScope?: {
+    issued_part_ids: string[];
+    occurrence_at: string;
+    member_submission_ids: string[];
+  };
   now: Date;
 }
 
@@ -190,6 +204,16 @@ export async function activateEvaluation(
   // 1) common learning-write lock（锁序第一步）。
   await acquireLearningStateWriteLock(tx);
 
+  const [coordinate] = await tx
+    .select({ groupId: evaluation.evaluation_group_id })
+    .from(evaluation)
+    .where(eq(evaluation.evaluation_id, input.evaluation_id))
+    .limit(1);
+  if (!coordinate) return { status: 'not_found' };
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${coordinate.groupId}))`,
+  );
+
   // 2) candidate evaluation 行锁 + 读（先取 opaque id 拿 submission/group
   //    坐标）。
   const [cand] = await tx
@@ -261,12 +285,61 @@ export async function activateEvaluation(
   }
 
   const [revRow] = await tx
-    .select({ group_id: question_revision.group_id })
+    .select()
     .from(question_revision)
     .where(eq(question_revision.revision_id, sub.revision_id))
     .limit(1);
   if (!revRow) return { status: 'not_found' };
   const questionGroupId = revRow.group_id;
+  const [group] = await tx
+    .select()
+    .from(evaluation_group)
+    .where(eq(evaluation_group.evaluation_group_id, cand.evaluation_group_id))
+    .limit(1);
+  const memberRows = await tx
+    .select()
+    .from(assessment_submission)
+    .where(eq(assessment_submission.evaluation_group_id, cand.evaluation_group_id));
+  if (
+    !group ||
+    !sameMemberSet(
+      group.submission_ids,
+      memberRows.map((row) => row.submission_id),
+    )
+  ) {
+    return { status: 'coordinate_mismatch' };
+  }
+  const memberIssuances = await tx
+    .select()
+    .from(assessment_issuance)
+    .where(
+      inArray(
+        assessment_issuance.issuance_id,
+        memberRows.map((row) => row.issuance_id),
+      ),
+    );
+  let inputScope: ActivationSettleInput['inputScope'];
+  try {
+    const members = memberRows.map((row) => {
+      const binding = memberIssuances.find((item) => item.issuance_id === row.issuance_id);
+      if (!binding)
+        throw new GroupInputContractError('invalid_group_input', 'missing member issuance');
+      return evaluationMemberFromRows(row, binding);
+    });
+    const anchor = members.find((member) => member.submission.submission_id === sub.submission_id);
+    if (!anchor) return { status: 'coordinate_mismatch' };
+    const actual = freezeEvaluationInput(anchor.submission, revRow, members);
+    const snapshot = cand.provenance?.input_snapshot;
+    // Old single-member inputs are unambiguous and now sealed against append.
+    // Historical joint candidates never acquire invented evidence at activation.
+    if (snapshot == null ? members.length !== 1 : !matchesEvaluationInput(snapshot, actual)) {
+      return { status: 'coordinate_mismatch' };
+    }
+    inputScope = actual;
+  } catch (error) {
+    if (!(error instanceof GroupInputContractError) && !(error instanceof z.ZodError)) throw error;
+    return { status: 'coordinate_mismatch' };
+  }
 
   // 组根行锁 —— 与 publish/verify 生命周期写互斥的线性化点。
   await tx
@@ -323,6 +396,7 @@ export async function activateEvaluation(
     head,
     issuance,
     questionGroupId,
+    inputScope,
     now,
   });
 

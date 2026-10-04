@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { extractAnswerHead } from '../judge-routing';
 import { type ExecutorDescriptorT, type ModelExecutorT, validateExecutionPlan } from './execution';
+import { type EvaluationInputMember, combineEvaluationMembers } from './group-input';
 import {
   type AggregateOutcomeT,
   type EvaluationProvenanceT,
@@ -102,6 +103,8 @@ export type ModelUnitOutcomeT = z.infer<typeof ModelUnitOutcome>;
 /** 单次模型单元判定的冻结输入（执行器只见它需要的槽位/证据/材料）。 */
 export interface ModelExecutorRequest {
   submission_id: string;
+  /** Complete frozen member identities; submission_id remains the stable anchor. */
+  submission_ids?: string[];
   evaluation_group_id: string;
   revision_id: string;
   attempt: number;
@@ -146,6 +149,8 @@ export interface EvaluateSubmissionCoreInput {
   evaluation_id: string;
   /** 冻结作答（D5：原文不改写）。 */
   submission: SubmissionRecordT;
+  /** Explicit original members for joint scoring; never a synthesized submission. */
+  member_inputs?: readonly EvaluationInputMember[];
   /** 不可变发布 revision（submission.revision_id 指向）。 */
   revision: PublishedQuestionRevisionT;
   /**
@@ -386,7 +391,7 @@ function unjudgeableMismatch(unit: ScoringUnitT, detail: string): ScoringUnitRes
 
 /** 模型引用证据的完整性校验：cited evidence_id 必须真实存在于本提交内（D17 严重错误防线）。 */
 function collectKnownEvidenceIds(
-  submission: SubmissionRecordT,
+  groupEvidence: readonly GroupEvidenceT[],
   slotResponses: readonly SlotResponseT[],
 ): Set<string> {
   const ids = new Set<string>();
@@ -395,8 +400,8 @@ function collectKnownEvidenceIds(
       for (const evidence of entry.evidence) ids.add(evidence.evidence_id);
     }
   }
-  for (const groupEvidence of submission.group_evidence) {
-    ids.add(groupEvidence.evidence.evidence_id);
+  for (const evidence of groupEvidence) {
+    ids.add(evidence.evidence.evidence_id);
   }
   return ids;
 }
@@ -457,12 +462,17 @@ export async function evaluateSubmissionCore(
     }
   }
 
+  const joint = input.member_inputs
+    ? combineEvaluationMembers(submission, revision, input.member_inputs)
+    : null;
+  const responseSet = joint?.response_set ?? submission.response_set;
+  const groupEvidence = joint?.group_evidence ?? submission.group_evidence;
   const spec = revision.response_spec;
   const basis = revision.scoring_basis;
   const plan = revision.execution_plan;
 
   // ---- 结构一致性：冻结响应集合对发出 spec 的静态校验（错 ⇒ 拒绝评估，不逐单元猜）。----
-  const setIssues = validateResponseSet(spec, submission.response_set);
+  const setIssues = validateResponseSet(spec, responseSet);
   if (setIssues.length > 0) {
     throw new EvaluationContractError(
       'invalid_response_set',
@@ -493,7 +503,9 @@ export async function evaluateSubmissionCore(
   // ---- 发出范围投影：只评估作答面落在 issued parts 内的 unit。----
   const scopedBasis = projectIssuedScoringBasis(
     revision,
-    input.issued_part_ids ?? revision.structure.parts.map((part) => part.part_id),
+    joint?.issued_part_ids ??
+      input.issued_part_ids ??
+      revision.structure.parts.map((part) => part.part_id),
   );
   const inScopeUnits = scopedBasis.units;
   const inScopeUnitIds = new Set(inScopeUnits.map((unit) => unit.scoring_unit_id));
@@ -502,9 +514,7 @@ export async function evaluateSubmissionCore(
   //      的 cap/阈值绑死全量 unit 集，子集评估会改义 —— fail-closed。----
   // 上述 projectIssuedScoringBasis 同时执行该聚合 policy 守卫。
 
-  const entryBySlot = new Map(
-    submission.response_set.entries.map((entry) => [entry.slot_id, entry] as const),
-  );
+  const entryBySlot = new Map(responseSet.entries.map((entry) => [entry.slot_id, entry] as const));
   const materialById = new Map(
     revision.structure.materials.map((material) => [material.material_id, material] as const),
   );
@@ -627,7 +637,7 @@ export async function evaluateSubmissionCore(
 
     // group 证据：声明消费但本提交没有覆盖本 unit 的 group 证据 ⇒ 证据不足。
     if (unit.requires_group_evidence) {
-      const covering = submission.group_evidence.some(
+      const covering = groupEvidence.some(
         (evidence) =>
           evidence.target.scope === 'all_units' ||
           evidence.target.scoring_unit_ids.includes(unitId),
@@ -768,7 +778,7 @@ export async function evaluateSubmissionCore(
       continue;
     }
 
-    const unitGroupEvidence = submission.group_evidence.filter(
+    const unitGroupEvidence = groupEvidence.filter(
       (evidence) =>
         evidence.target.scope === 'all_units' || evidence.target.scoring_unit_ids.includes(unitId),
     );
@@ -777,6 +787,7 @@ export async function evaluateSubmissionCore(
     try {
       const raw = await input.model_executor({
         submission_id: submission.submission_id,
+        submission_ids: joint?.member_submission_ids ?? [submission.submission_id],
         evaluation_group_id: submission.evaluation_group_id,
         revision_id: revision.revision_id,
         attempt: input.attempt,
@@ -830,7 +841,7 @@ export async function evaluateSubmissionCore(
         ? citationsResolve(
             outcome.evidence_citations,
             new Set(slotIds),
-            collectKnownEvidenceIds(submission, entries),
+            collectKnownEvidenceIds(unitGroupEvidence, entries),
           )
         : null;
     if (citationIssue != null) {

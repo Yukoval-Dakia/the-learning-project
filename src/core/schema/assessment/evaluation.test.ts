@@ -12,6 +12,7 @@
 //   - retryable infra_failure ⇒ 记录 status=pending + aggregate=null。
 
 import { describe, expect, it, vi } from 'vitest';
+import { freezeEvaluationInput } from '../../assessment-input';
 
 import {
   type EvaluateSubmissionCoreInput,
@@ -1027,5 +1028,187 @@ describe('evaluateSubmissionCore — contract enforcement', () => {
     expect(new EvaluationContractError('invalid_response_set', 'x').name).toBe(
       'EvaluationContractError',
     );
+  });
+});
+
+describe('joint evaluation preserves original member inputs', () => {
+  function jointInput() {
+    const revision = revisionFor({
+      parts: [
+        { part_id: 'p1', prompt_md: '读表：第一组在相同水量下流速为 2 m/s。', material_ids: [] },
+        {
+          part_id: 'p2',
+          prompt_md: '第二组流速为 4 m/s，结合第一组解释坡度关系。',
+          material_ids: [],
+        },
+      ],
+      slots: [
+        { slot_id: 'p1::r', part_id: 'p1', kind: 'text', math_preview: false },
+        { slot_id: 'p2::r', part_id: 'p2', kind: 'text', math_preview: false },
+      ],
+      units: ['p1', 'p2'].map((part, i) => ({
+        scoring_unit_id: `${part}::u`,
+        slot_refs: [`${part}::r`],
+        material_refs: [],
+        evidence_slot_refs: [],
+        requires_group_evidence: false,
+        criterion: {
+          kind: 'text_key' as const,
+          accepted_texts: [String((i + 1) * 2)],
+          normalization: 'trim' as const,
+        },
+        points: 1,
+      })),
+    });
+    const first = submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '2' }]);
+    const second = {
+      ...submissionFor([{ slot_id: 'p2::r', kind: 'text', text_md: '4' }]),
+      submission_id: 'sub-2',
+      issuance_id: 'iss-2',
+      submitted_at: '2026-09-25T00:00:01.000Z',
+    };
+    return inputFor(first, revision, {
+      member_inputs: [
+        { submission: first, issued_part_ids: ['p1'] },
+        { submission: second, issued_part_ids: ['p2'] },
+      ],
+    });
+  }
+
+  it('scores every selected unit once without rewriting either submission', async () => {
+    const input = jointInput();
+    const before = structuredClone(input.member_inputs);
+    const result = await evaluateSubmissionCore(input);
+    expect(result.record.submission_id).toBe(input.submission.submission_id);
+    expect(result.record.unit_results.map((r) => r.scoring_unit_id)).toEqual(['p1::u', 'p2::u']);
+    expect(result.record.aggregate).toMatchObject({ kind: 'points_total', points: 2 });
+    expect(input.member_inputs).toEqual(before);
+  });
+
+  it.each(['revision', 'group', 'overlap', 'foreign_response', 'duplicate', 'anchor_missing'])(
+    'rejects ambiguous %s membership before any model call',
+    async (scenario) => {
+      const input = jointInput();
+      const members = [...(input.member_inputs ?? [])].map((m) => structuredClone(m));
+      if (scenario === 'revision') members[1].submission.revision_id = 'other-revision';
+      if (scenario === 'group') members[1].submission.evaluation_group_id = 'other-group';
+      if (scenario === 'overlap') members[1].issued_part_ids = ['p1'];
+      if (scenario === 'foreign_response')
+        members[1].submission.response_set.entries[0].slot_id = 'p1::r';
+      if (scenario === 'duplicate') members.push(members[1]);
+      if (scenario === 'anchor_missing') members.shift();
+      const executor = vi.fn();
+      await expect(
+        evaluateSubmissionCore({ ...input, member_inputs: members, model_executor: executor }),
+      ).rejects.toMatchObject({ code: 'invalid_group_input' });
+      expect(executor).not.toHaveBeenCalled();
+    },
+  );
+
+  it('a declared cross-part model unit receives both responses and exact member identities once', async () => {
+    const input = jointInput();
+    input.revision.scoring_basis.units = [
+      {
+        scoring_unit_id: 'joint',
+        slot_refs: ['p1::r', 'p2::r'],
+        material_refs: [],
+        evidence_slot_refs: [],
+        requires_group_evidence: false,
+        criterion: {
+          kind: 'rule_reference',
+          rule_id: 'relation',
+          source: 'official',
+          statement_md: '以两组读数共同支持比例关系，不能只看一个读数。',
+        },
+        points: 2,
+      },
+    ];
+    input.revision.execution_plan.assignments = [
+      {
+        scoring_unit_ids: ['joint'],
+        executor: {
+          kind: 'model_executor',
+          task_kind: 'JevScoringDecisionTask',
+          admitted_slice_id: 'joint-admitted',
+        },
+      },
+    ];
+    const executor = vi.fn(
+      async (): Promise<ModelUnitOutcomeT> => ({
+        kind: 'scored',
+        points_awarded: 2,
+        evidence_citations: [{ slot_id: 'p1::r' }, { slot_id: 'p2::r' }],
+        run_refs: ['unit:joint'],
+      }),
+    );
+    const output = await evaluateSubmissionCore({ ...input, model_executor: executor });
+    expect(output.record.aggregate).toMatchObject({ points: 2 });
+    expect(executor).toHaveBeenCalledOnce();
+    expect(executor.mock.calls[0]).toBeDefined();
+    expect(executor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        submission_ids: [SUBMISSION_ID, 'sub-2'].sort(),
+        slot_responses: [
+          expect.objectContaining({ slot_id: 'p1::r' }),
+          expect.objectContaining({ slot_id: 'p2::r' }),
+        ],
+      }),
+    );
+  });
+  it('preserves a full-revision cap across disjoint member issuances', async () => {
+    const input = jointInput();
+    input.revision.scoring_basis.aggregation = { kind: 'capped_sum', cap: 1.5 };
+    expect((await evaluateSubmissionCore(input)).record.aggregate).toMatchObject({ points: 1.5 });
+  });
+
+  it('seals a stable digest across member enumeration order and detects answer changes', () => {
+    const input = jointInput();
+    const members = (input.member_inputs ?? []).map((member) => ({
+      ...member,
+      binding: {
+        revision_id: member.submission.revision_id,
+        part_ids: [...member.issued_part_ids],
+        material_bindings: [],
+        option_order: [],
+      },
+      issued_at: NOW,
+    }));
+    const first = freezeEvaluationInput(input.submission, input.revision, members);
+    expect(freezeEvaluationInput(input.submission, input.revision, [...members].reverse())).toEqual(
+      first,
+    );
+    members[1].submission.response_set.entries = [
+      { slot_id: 'p2::r', kind: 'text', text_md: '修改后的不同答案' },
+    ];
+    expect(freezeEvaluationInput(input.submission, input.revision, members).digest).not.toBe(
+      first.digest,
+    );
+  });
+
+  it('rejects a shared evidence identity when member attachments disagree', async () => {
+    const input = jointInput();
+    const members = structuredClone(input.member_inputs ?? []);
+    for (const [i, member] of members.entries()) {
+      member.submission.group_evidence = [
+        {
+          target: { scope: 'all_units' },
+          evidence: {
+            evidence_id: 'page-1',
+            kind: 'image',
+            asset: { asset_id: 'page-asset', digest: `sha256:${String(i).repeat(64)}` },
+            mime_type: 'image/png',
+            bytes: 1200,
+            uploaded_at: NOW,
+          },
+        },
+      ];
+    }
+    await expect(
+      evaluateSubmissionCore({
+        ...input,
+        submission: members[0].submission,
+        member_inputs: members,
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_group_input' });
   });
 });

@@ -35,7 +35,8 @@ import type { ScoringBasisT, ScoringUnitT } from './scoring';
 //     用户已确认评级（守卫在 server settle 层；本层只暴露评级来源）。
 //     group scheduler scope 显式版本化：SCOPE_V2 = 「冻结发题范围内的非合成
 //     KC 作为 knowledge 卡主体；无 KC 时落 group root 的 question 卡」，
-//     版本常量随结算证据封存。
+//     SCOPE_V3 使用冻结联合成员的范围并集与最后一个成员的原始提交时点；
+//     旧 v1/v2 结算按原 replay_inputs 重放，不回填或重释。
 //
 //   D15 — provenance.source ∈ {automatic, manual, self_report}：
 //     manual/self_report ⇒ 仅 FSRS 评级生效（用户评级）；θ̂ / calibration
@@ -53,7 +54,7 @@ import type { ScoringBasisT, ScoringUnitT } from './scoring';
 // 消费投影调 deriveCoarseVerdict，结算读同一函数，判定语义不会分裂。
 
 /** D14 group scheduler scope 版本（随结算证据封存；改 scope = 新版本号）。 */
-export const SETTLEMENT_SCOPE_VERSION = 2 as const;
+export const SETTLEMENT_SCOPE_VERSION = 3 as const;
 
 /** 组级判定（与 1047 消费投影同一 coarse 面）。 */
 export type AssessmentVerdict = 'correct' | 'partial' | 'incorrect' | 'unsupported';

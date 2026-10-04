@@ -21,7 +21,12 @@
 // 模型执行器是注入端口（ModelUnitExecutorPort）：本文件【不】含 provider/LLM
 // 调用 —— typed transport 归 src/server/ai/ 后续 lane（YUK-1049）。
 
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import {
+  evaluationMemberFromRows,
+  freezeEvaluationInput,
+  sameMemberSet,
+} from '@/core/assessment-input';
 import { canonicalHash } from '@/core/migration/canonical';
 import {
   EvaluationContractError,
@@ -38,6 +43,8 @@ import {
   assessment_issuance,
   assessment_submission,
   evaluation,
+  evaluation_effective_head,
+  evaluation_group,
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
@@ -68,6 +75,8 @@ export interface JevModelExecutorSpec {
 export interface EvaluateSubmissionRequest {
   submission_id: string;
   evaluation_group_id: string;
+  /** Exact complete member set; omission explicitly selects only submission_id. */
+  expected_submission_ids?: string[];
   /** 执行期 policy（不改给分规则；仅低置信 gate 等执行面旋钮）。 */
   policy?: EvaluationExecutionPolicyT;
   /**
@@ -107,6 +116,7 @@ export class EvaluateSubmissionError extends Error {
       | 'issuance_not_found'
       | 'revision_not_found'
       | 'group_scope_mismatch'
+      | 'group_membership_mismatch'
       | 'attempt_conflict'
       | 'invalid_executor_spec',
     detail: string,
@@ -195,7 +205,7 @@ function evaluationPayloadEquals(a: EvaluationRowPayload, b: EvaluationRowPayloa
 
 /**
  * §4.3 evaluateSubmission：读冻结契约 → 纯内核评估 → candidate 行落库。
- * 全程单事务：submission 行 FOR UPDATE 串行化 attempt 序号。
+ * 全程单事务：group advisory 锁串行化完整成员输入和固定锚点 attempt 序号。
  */
 export async function evaluateSubmission(
   db: Db | Tx,
@@ -206,27 +216,81 @@ export async function evaluateSubmission(
   const modelExecutor = resolveModelExecutor(db, request.model_executor);
 
   const run = async (tx: Tx): Promise<EvaluateSubmissionResult> => {
-    // ---- 冻结输入装载（锁序：submission → 派生维度；发题事实不可变） ----
-    const [submissionRow] = await tx
+    // The same group lock serializes submissions, all member evaluators and activation.
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${request.evaluation_group_id}))`,
+    );
+    // ---- 冻结输入装载（锁序：group advisory → submission → 派生维度；发题事实不可变） ----
+    const [requestedSubmission] = await tx
       .select()
       .from(assessment_submission)
       .where(eq(assessment_submission.submission_id, request.submission_id))
       .for('update')
       .limit(1);
-    if (submissionRow == null) {
+    if (requestedSubmission == null) {
       throw new EvaluateSubmissionError(
         'submission_not_found',
         `submission '${request.submission_id}' does not exist`,
       );
     }
-    if (submissionRow.evaluation_group_id !== request.evaluation_group_id) {
+    if (requestedSubmission.evaluation_group_id !== request.evaluation_group_id) {
       // (submission, group) 复合 FK 的兜底前先显式拒绝 —— 跨组评估引用是调用方 bug。
       throw new EvaluateSubmissionError(
         'group_scope_mismatch',
-        `submission '${request.submission_id}' belongs to group '${submissionRow.evaluation_group_id}', not '${request.evaluation_group_id}'`,
+        `submission '${request.submission_id}' belongs to group '${requestedSubmission.evaluation_group_id}', not '${request.evaluation_group_id}'`,
       );
     }
 
+    const [group] = await tx
+      .select()
+      .from(evaluation_group)
+      .where(eq(evaluation_group.evaluation_group_id, request.evaluation_group_id))
+      .limit(1);
+    const memberRows = await tx
+      .select()
+      .from(assessment_submission)
+      .where(eq(assessment_submission.evaluation_group_id, request.evaluation_group_id));
+    const ids = memberRows.map((row) => row.submission_id);
+    if (
+      !group ||
+      !sameMemberSet(group.submission_ids, ids) ||
+      !sameMemberSet(request.expected_submission_ids ?? [request.submission_id], ids)
+    ) {
+      throw new EvaluateSubmissionError(
+        'group_membership_mismatch',
+        'declare the exact complete frozen group membership',
+      );
+    }
+    const [head] = await tx
+      .select()
+      .from(evaluation_effective_head)
+      .where(eq(evaluation_effective_head.evaluation_group_id, request.evaluation_group_id))
+      .limit(1);
+    const submissionRow = memberRows.find(
+      (row) =>
+        row.submission_id ===
+        (head?.submission_id ??
+          (memberRows.length === 1 ? requestedSubmission.submission_id : undefined)),
+    );
+    if (!submissionRow)
+      throw new EvaluateSubmissionError(
+        'group_membership_mismatch',
+        'group anchor is not a member',
+      );
+    const issuances = await tx
+      .select()
+      .from(assessment_issuance)
+      .where(
+        inArray(
+          assessment_issuance.issuance_id,
+          memberRows.map((row) => row.issuance_id),
+        ),
+      );
+    const members = memberRows.map((row) => {
+      const issuance = issuances.find((item) => item.issuance_id === row.issuance_id);
+      if (!issuance) throw new EvaluateSubmissionError('issuance_not_found', row.issuance_id);
+      return evaluationMemberFromRows(row, issuance);
+    });
     const [issuanceRow] = await tx
       .select()
       .from(assessment_issuance)
@@ -288,11 +352,13 @@ export async function evaluateSubmission(
       supersedes_revision_id: revisionRow.supersedes_revision_id,
     };
 
-    // ---- attempt 序号（submission 行锁内分配 ⇒ 并发评估串行化） ----
+    const inputSnapshot = freezeEvaluationInput(submission, revision, members);
+
+    // ---- attempt 序号（group 锁内、固定 head 锚点分配） ----
     const [latest] = await tx
       .select({ attempt: evaluation.attempt })
       .from(evaluation)
-      .where(eq(evaluation.submission_id, request.submission_id))
+      .where(eq(evaluation.submission_id, submissionRow.submission_id))
       .orderBy(desc(evaluation.attempt))
       .limit(1);
     const attempt = (latest?.attempt ?? 0) + 1;
@@ -301,11 +367,13 @@ export async function evaluateSubmission(
       evaluation_id: 'pending', // 占位：内容寻址 id 在 record 产生后重铸（不参与评估语义）
       submission,
       revision,
-      issued_part_ids: issuanceRow.part_ids,
+      issued_part_ids: inputSnapshot.issued_part_ids,
+      member_inputs: members,
       attempt,
       provenance: {
         ...(request.provenance ?? { source: 'automatic', assisted: false }),
         admission_snapshot: admissionSnapshot ?? null,
+        input_snapshot: inputSnapshot,
       },
       plan_digest: planDigestOf(revision),
       policy: request.policy,
@@ -340,14 +408,17 @@ export async function evaluateSubmission(
         .select()
         .from(evaluation)
         .where(
-          and(eq(evaluation.submission_id, request.submission_id), eq(evaluation.attempt, attempt)),
+          and(
+            eq(evaluation.submission_id, submissionRow.submission_id),
+            eq(evaluation.attempt, attempt),
+          ),
         )
         .limit(1);
       if (existing == null) {
         // 不可能形状（unique 冲突但行不可见）—— fail-loud，绝不当 replay。
         throw new EvaluateSubmissionError(
           'attempt_conflict',
-          `attempt ${attempt} conflicted but no row is visible for submission '${request.submission_id}'`,
+          `attempt ${attempt} conflicted but no row is visible for submission '${submissionRow.submission_id}'`,
         );
       }
       const existingPayload: EvaluationRowPayload = {
@@ -365,7 +436,7 @@ export async function evaluateSubmission(
       if (!evaluationPayloadEquals(existingPayload, payload)) {
         throw new EvaluateSubmissionError(
           'attempt_conflict',
-          `attempt ${attempt} for submission '${request.submission_id}' already committed with divergent content (existing evaluation '${existing.evaluation_id}') — concurrent evaluators diverged; resolve and retry as a new attempt`,
+          `attempt ${attempt} for submission '${submissionRow.submission_id}' already committed with divergent content (existing evaluation '${existing.evaluation_id}') — concurrent evaluators diverged; resolve and retry as a new attempt`,
         );
       }
       return {

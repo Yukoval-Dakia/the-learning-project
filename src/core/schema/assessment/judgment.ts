@@ -180,11 +180,23 @@ export const EvaluationAdmissionSnapshot = z.object({
 });
 export type EvaluationAdmissionSnapshotT = z.infer<typeof EvaluationAdmissionSnapshot>;
 
-/** Shared candidate provenance; no default/backfill for historical admission evidence. */
+/** Server-sealed membership and input identity; absent historical facts stay absent. */
+export const EvaluationInputSnapshot = z.object({
+  version: z.literal(1),
+  revision_id: RevisionId,
+  member_submission_ids: z.array(SubmissionId).min(1),
+  issued_part_ids: z.array(z.string().min(1)).min(1),
+  occurrence_at: z.string().datetime(),
+  digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+});
+export type EvaluationInputSnapshotT = z.infer<typeof EvaluationInputSnapshot>;
+
+/** Shared provenance; historical missing snapshots remain absent. */
 export const EvaluationProvenance = z.object({
   source: z.enum(['automatic', 'manual', 'self_report']),
   assisted: z.boolean().default(false),
   admission_snapshot: EvaluationAdmissionSnapshot.nullable().optional(),
+  input_snapshot: EvaluationInputSnapshot.nullable().optional(),
 });
 export type EvaluationProvenanceT = z.infer<typeof EvaluationProvenance>;
 
