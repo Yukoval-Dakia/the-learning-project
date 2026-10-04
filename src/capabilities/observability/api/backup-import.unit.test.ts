@@ -84,6 +84,14 @@ function validManifest(overrides: Record<string, unknown> = {}) {
   });
 }
 
+function emptySubscriptionProgress() {
+  return {
+    event_subscription_checkpoint: [],
+    event_subscription_delivery: [],
+    event_subscription_effect: [],
+  };
+}
+
 function knowledgeRow(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: 'k1',
@@ -250,7 +258,7 @@ describe('POST /api/_/import — wipe + reinsert', () => {
   it('issues DELETE FROM in REVERSE FK order before any INSERT', async () => {
     const zip = buildZip({
       'manifest.json': validManifest(),
-      'data.json': JSON.stringify({}),
+      'data.json': JSON.stringify(emptySubscriptionProgress()),
     });
     await POST(makePostRequest(zip, '?confirm=wipe-and-reload'));
     // YUK-751: the wipe-only operational tables are deleted FIRST, then the FK_ORDER reverse wipe.
@@ -272,7 +280,7 @@ describe('POST /api/_/import — wipe + reinsert', () => {
   it('wipes the subscription operational tables BEFORE event/artifact so their FKs do not block the wipe (YUK-751 P1)', async () => {
     const zip = buildZip({
       'manifest.json': validManifest(),
-      'data.json': JSON.stringify({}),
+      'data.json': JSON.stringify(emptySubscriptionProgress()),
     });
     await POST(makePostRequest(zip, '?confirm=wipe-and-reload'));
     const idxOf = (re: RegExp) => deleteCalls.findIndex((s) => re.test(s));
@@ -293,7 +301,7 @@ describe('POST /api/_/import — wipe + reinsert', () => {
   it('re-syncs event_dispatch_seq on restore so post-restore INSERTs do not collide (YUK-751 P1)', async () => {
     const zip = buildZip({
       'manifest.json': validManifest(),
-      'data.json': JSON.stringify({}),
+      'data.json': JSON.stringify(emptySubscriptionProgress()),
     });
     await POST(makePostRequest(zip, '?confirm=wipe-and-reload'));
     expect(setvalCalls.some((s) => /setval\('event_dispatch_seq'/i.test(s))).toBe(true);
@@ -302,7 +310,7 @@ describe('POST /api/_/import — wipe + reinsert', () => {
   it('inserts data in FORWARD FK order', async () => {
     const zip = buildZip({
       'manifest.json': validManifest({ row_counts: { knowledge: 1 } }),
-      'data.json': JSON.stringify({ knowledge: [knowledgeRow()] }),
+      'data.json': JSON.stringify({ ...emptySubscriptionProgress(), knowledge: [knowledgeRow()] }),
     });
     await POST(makePostRequest(zip, '?confirm=wipe-and-reload'));
     const knowledgeInserts = insertCalls.filter((c) => /insert into "knowledge"/i.test(c.table));
@@ -312,7 +320,7 @@ describe('POST /api/_/import — wipe + reinsert', () => {
   it('PUTs assets to R2 when assets are present', async () => {
     const zip = buildZip({
       'manifest.json': validManifest({ include_assets: true, asset_count: 2 }),
-      'data.json': JSON.stringify({}),
+      'data.json': JSON.stringify(emptySubscriptionProgress()),
       'assets/sk-1': 'IMG-A',
       'assets/sk-2': 'IMG-B',
     });
@@ -326,7 +334,7 @@ describe('POST /api/_/import — wipe + reinsert', () => {
   it('returns ok:true with stats per table', async () => {
     const zip = buildZip({
       'manifest.json': validManifest({ row_counts: { knowledge: 1 } }),
-      'data.json': JSON.stringify({ knowledge: [knowledgeRow()] }),
+      'data.json': JSON.stringify({ ...emptySubscriptionProgress(), knowledge: [knowledgeRow()] }),
     });
     const res = await POST(makePostRequest(zip, '?confirm=wipe-and-reload'));
     if (res.status !== 200) {
@@ -350,6 +358,7 @@ describe('POST /api/_/import — pre-flight validation', () => {
     const zip = buildZip({
       'manifest.json': validManifest({ row_counts: { knowledge: 2 } }),
       'data.json': JSON.stringify({
+        ...emptySubscriptionProgress(),
         knowledge: [
           { id: 'k1', name: 'x', parent_id: null },
           { id: 'k2', name: 'y' }, // missing parent_id!
@@ -360,7 +369,7 @@ describe('POST /api/_/import — pre-flight validation', () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string; issues: string[] };
     expect(body.error).toBe('data_validation_failed');
-    expect(body.issues.length).toBeGreaterThan(0);
+    expect(body.issues.some((issue) => issue.includes('column'))).toBe(true);
     // CRITICAL: no DELETE issued — DB NOT touched.
     expect(deleteCalls.length).toBe(0);
   });
