@@ -922,6 +922,28 @@ describe('determinism / idempotency 基座', () => {
 });
 
 describe('closeout 自验（终轮 oracle repro）', () => {
+  it('keeps coordinate and snapshot downgrade reasons in order, including repeated slot errors', () => {
+    const contract = contractOf('rev-q-1');
+    contract.structure.parts[0].prompt_md = '2+2=?';
+    const capture = withEvents(emptyCapture(), [COMPLETE_ATTEMPT, HEAD_JUDGE]);
+    const registry = registryOf([REGISTRY_ENTRY('q-1', { slot_id: 'missing-slot' })]);
+    const plan = buildMigrationApplyPlan(
+      planInput(capture, registry, new Map([['rev-q-1', contract]])),
+    );
+    const anchor = recordOf(plan, 'event:attempt:att-1');
+    expect(anchor.mapping?.status).toBe('conflicted');
+    expect(anchor.mapping?.evidence.resolution).toEqual({
+      status: 'conflicted',
+      binding: null,
+      reason:
+        "registry 绑定未过内容/坐标验证：slot 'missing-slot' 不在 revision 契约内; scoring_unit 'u1' 不消费绑定槽位 'missing-slot'（其 slot_refs=[s1]）—— 不允许拿他槽单元判本题; 题干不一致：snapshot='1+1=?…' vs revision part='2+2=?…'（归一后逐字比对）; slot 'missing-slot' 不在 revision 契约内",
+    });
+    expect(anchor.submission).toBeNull();
+    const mirror = recordOf(plan, 'event:judge:jud-1');
+    expect(mirror.mapping?.status).toBe('conflicted');
+    expect(mirror.submission).toBeNull();
+  });
+
   it('P1-2：snapshot digest 命中但题干/选项内容推不出目标 revision → conflicted，不产 submission', () => {
     const capture = withEvents(emptyCapture(), [COMPLETE_ATTEMPT, HEAD_JUDGE]);
     const registry = registryOf([REGISTRY_ENTRY('q-1')]);

@@ -508,6 +508,7 @@ export const fastTestInclude = [
   'src/server/memory/memory-reconcile-handoff.unit.test.ts',
   // P2 (YUK-342) — pure (no-DB) GLM reconcile LLM unit: mocks fetch, no live DB.
   'src/server/memory/reconcile-llm.test.ts',
+  'src/server/memory/reconcile-decisions.test.ts',
   // P3 (YUK-351) — pure (no-DB) mem0 READ wrapper: stubbed MemoryClient.search,
   // asserts soft-superseded filtering + per-kind recency rerank. No live DB.
   'src/server/memory/read.test.ts',

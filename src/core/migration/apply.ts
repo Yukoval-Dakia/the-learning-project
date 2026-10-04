@@ -1208,6 +1208,57 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
   // 解析 judge/answer 镜像 —— 镜像继承的是锚【最终】裁决（含降级），不会出现
   // 锚 historical 而镜像 mapped 的分叉。
   const mirrorRecords: RecordClassification[] = [];
+  function collectBindingDowngradeReasons(
+    entry: RevisionRegistryEntry,
+    binding: Resolution['binding'],
+    record: RecordClassification,
+  ): string[] {
+    const contract = input.revisionContracts.get(entry.revision_id);
+    if (contract === undefined) {
+      return [`revision ${entry.revision_id} 的五层契约未随 plan 提供（语料导入/装载不完整）`];
+    }
+    const reasons = validateEntryCoordinates(entry, contract).map((issue) => issue.detail);
+    if (binding !== 'digest_verified') return reasons;
+    const view = snapshotContentViewOf(record, eventById, pendingByRunId);
+    if (view === null) {
+      reasons.push('digest_verified 绑定缺少可机械比对的 snapshot 内容面');
+      return reasons;
+    }
+    for (const issue of verifySnapshotTransformation(
+      view,
+      contract,
+      entry.part_ids,
+      entry.slot_id,
+      entry.scoring_unit_id,
+    ))
+      reasons.push(issue.detail);
+    return reasons;
+  }
+
+  function collectDowngradeReasons(
+    entry: RevisionRegistryEntry,
+    binding: Resolution['binding'],
+    record: RecordClassification,
+    anchorResolution: Resolution | undefined,
+    recordPartRef: string | null,
+  ): string[] {
+    // Mirrors inherit the anchor's coordinate/content validation; their own part_ref
+    // still applies. Do not re-read an answer mirror's absent snapshot content.
+    const reasons =
+      anchorResolution === undefined ? collectBindingDowngradeReasons(entry, binding, record) : [];
+    if (
+      recordPartRef === null ||
+      recordPartRef.length === 0 ||
+      entry.part_ids.includes(recordPartRef)
+    ) {
+      return reasons;
+    }
+    reasons.push(
+      `answer.part_ref '${recordPartRef}' 不在绑定 part 集 [${entry.part_ids.join(',')}] 内 —— occurrence 的 part 不在绑定范围`,
+    );
+    return reasons;
+  }
+
   const buildRecordIntent = (record: RecordClassification): void => {
     if (!MAPPING_BEARING_CATEGORIES.has(record.category)) {
       if (record.category === 'live_draft' && record.source_kind === 'answer') {
@@ -1289,48 +1340,13 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
     // digest_verified 的内容可推导性（题干/选项机械比对）、part_ref 兼容性。
     // 任一不通过 ⇒ conflicted（registry 缺陷可见可修），镜像随后继承降级裁决。
     if (resolution.status === 'mapped' && resolution.entry !== null) {
-      const downgradeReasons: string[] = [];
-      // 内容可推导性只在【裁决归属记录】上执行：镜像记录的冻结 snapshot 属于锚
-      // occurrence（answer 镜像自身没有 snapshot —— view 必为 null），锚已验过；
-      // 在此重查只会把合法继承误判为「缺内容面」。坐标/part_ref 校验仍普适。
-      if (anchorResolution === undefined) {
-        const contract = input.revisionContracts.get(resolution.entry.revision_id);
-        if (contract === undefined) {
-          downgradeReasons.push(
-            `revision ${resolution.entry.revision_id} 的五层契约未随 plan 提供（语料导入/装载不完整）`,
-          );
-        } else {
-          for (const issue of validateEntryCoordinates(resolution.entry, contract)) {
-            downgradeReasons.push(issue.detail);
-          }
-          if (resolution.binding === 'digest_verified') {
-            const view = snapshotContentViewOf(record, eventById, pendingByRunId);
-            if (view === null) {
-              downgradeReasons.push('digest_verified 绑定缺少可机械比对的 snapshot 内容面');
-            } else {
-              for (const issue of verifySnapshotTransformation(
-                view,
-                contract,
-                resolution.entry.part_ids,
-                resolution.entry.slot_id,
-                resolution.entry.scoring_unit_id,
-              )) {
-                downgradeReasons.push(issue.detail);
-              }
-            }
-          }
-        }
-      }
-      const recordPartRef = answerRow?.part_ref ?? null;
-      if (
-        recordPartRef !== null &&
-        recordPartRef.length > 0 &&
-        !resolution.entry.part_ids.includes(recordPartRef)
-      ) {
-        downgradeReasons.push(
-          `answer.part_ref '${recordPartRef}' 不在绑定 part 集 [${resolution.entry.part_ids.join(',')}] 内 —— occurrence 的 part 不在绑定范围`,
-        );
-      }
+      const downgradeReasons = collectDowngradeReasons(
+        resolution.entry,
+        resolution.binding,
+        record,
+        anchorResolution,
+        answerRow?.part_ref ?? null,
+      );
       if (downgradeReasons.length > 0) {
         resolution = {
           status: 'conflicted',
