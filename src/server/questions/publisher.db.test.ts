@@ -92,6 +92,61 @@ describe('publishQuestionGroup（YUK-1043 统一发布 seam）', () => {
   beforeEach(resetDb);
   afterEach(resetDb);
 
+  for (const existing of [false, true]) {
+    it.each([
+      'duplicate_part_id',
+      'duplicate_material_id',
+      'unresolved_material_ref',
+      'empty_prompt',
+    ] as const)(`YUK-1118 rejects %s without writes (existing=${existing})`, async (code) => {
+      const db = testDb();
+      const qid = 'pub_structure_boundary';
+      await seedQuestion(qid);
+      const row = await readRow(qid);
+      const input = publishInput(row);
+      if (existing) {
+        const first = await publishQuestionGroup(db, input);
+        if (first.status !== 'published') throw new Error('initial publish failed');
+        input.expectedCurrentRevision = first.revision_id;
+        input.expectedAdmissionGeneration = 1;
+      }
+      const snapshot = async () => ({
+        revisions: await db.select().from(question_revision),
+        lifecycles: await db.select().from(question_group_lifecycle),
+        events: await db.select().from(event),
+        verifications: await db.select().from(question_admission_verification),
+      });
+      const before = await snapshot();
+      const structure = input.contract.structure;
+      switch (code) {
+        case 'duplicate_part_id':
+          structure.parts.push(structuredClone(structure.parts[0]));
+          break;
+        case 'duplicate_material_id': {
+          const material = {
+            material_id: 'shared-passage',
+            kind: 'plaintext' as const,
+            asset: { asset_id: 'txt-passage', digest: 'passage-digest' },
+            content_md: '阅读材料：学而时习之，不亦说乎？请结合上下文辨析代词的指代。',
+          };
+          structure.materials = [material, structuredClone(material)];
+          structure.parts[0].material_ids = [material.material_id];
+          break;
+        }
+        case 'unresolved_material_ref':
+          structure.parts[0].material_ids = ['missing-passage'];
+          break;
+        case 'empty_prompt':
+          structure.parts[0].prompt_md = ' \n\t ';
+          break;
+      }
+      // A valid digest must not disguise an invalid structure at the write barrier.
+      input.contract.integrity_digest = contractIntegrityDigest(input.contract);
+      await expect(publishQuestionGroup(db, input)).rejects.toThrow(code);
+      expect(await snapshot()).toEqual(before);
+    });
+  }
+
   it('atomically writes revision + lifecycle + publish event; CAS digest noop on republish', async () => {
     const db = testDb();
     const qid = 'pub_q1';

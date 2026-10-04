@@ -52,6 +52,7 @@ import {
   validateExecutionPlan,
   validateResponseSpec,
   validateScoringBasis,
+  validateStructure,
 } from '@/core/schema/assessment';
 import {
   QUESTION_AVAILABILITY,
@@ -486,6 +487,12 @@ export async function publishQuestionGroup(
     }
 
     // 契约确定性校验 fail-closed（referential integrity / 恰好一次覆盖）。
+    const structureIssues = validateStructure(contract.structure);
+    if (structureIssues.length > 0) {
+      throw new Error(
+        `publishQuestionGroup: structure invalid: ${structureIssues.map((i) => i.code).join(',')}`,
+      );
+    }
     const specIssues = validateResponseSpec(contract.response_spec, contract.structure);
     if (specIssues.length > 0) {
       throw new Error(

@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。Linear归零持续推进，当前63项未完成（1114已Done，已捕获1118）；1114/#1550已合入main83bd1290。当前单线1117 AST证据边界，随后1118发布/核验历史缺口；依赖不追新，既有HOLD与生产/付费边界保持。
+> 更新于2026-10-04。Linear归零持续推进，当前62项未完成；1117/#1551已合入main d02f64f7。当前单线1118发布/核验历史缺口；依赖不追新，既有HOLD与生产/付费边界保持。
 
 ## NOW
 
@@ -59,11 +59,13 @@
 
 - YUK-1114/#1550已交付main83bd1290：84unit/63DB/82migration、全部gate、独立初审与唯一P1验证审及CI37206456705（82迁移/34浏览器）通过；17分钟窗完成，Linear Done。Sharp顶层导入导致CJS迁移启动失败已动态加载修复，原断言先RED后GREEN；AST非阻塞边界跟进1117。
 
-- YUK-1117 active：fix/yuk-1117-schema-soundness /workspace/tlp-schema-soundness，base83bd1290。缺参显式unknown、表/函数重赋值与字段变异保守拒绝、下标不并集、set覆盖按最终属性、声明自有map/filter不假定数组。16语义回归先RED；97unit含7字段全生产源码删除、typecheck/lint299/build/10必需audit通过，882字段分类不变且0未分类；独立初审进行中，待push/exact-headCI/17分钟窗。无业务代码/新豁免。
+- YUK-1117/#1551已交付main d02f64f7：16语义回归先RED，97unit含7全生产字段删除、全部gate、独立97unit/10负例5正例及CI37207906335（82迁移/34浏览器）通过；17分钟窗完成，Linear Done。882字段分类不变，0未分类，无运行时或allowlist变更。
+
+- YUK-1118 active：fix/yuk-1118-publisher-boundaries /workspace/tlp-publisher-boundaries，base d02f64f7。发布结构校验、source_verify根→子锁序和transient挂起原子性；13项新DB回归全部先RED；修复后54unit/90DB、typecheck/lint299/build/10必需audit及question-writers通过。独立初审进行中；待push/exact-head CI/17分钟窗。
 
 ## NEXT
 
-1. 交付1117后收口1118发布/核验历史边界，再继续766灾备等可执行主线；1091联合组模型需完整验收。持续推进Linear归零，不以单批合并作为终点。
+1. 交付1118发布/核验历史边界后，继续766灾备等可执行主线；1091联合组模型需完整验收。持续推进Linear归零，不以单批合并作为终点。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
