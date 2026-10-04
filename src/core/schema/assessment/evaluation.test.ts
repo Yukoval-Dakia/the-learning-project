@@ -1388,3 +1388,121 @@ it('group-only scoring receives only the issued question scope', async () => {
     }),
   );
 });
+
+describe('whole-page evidence is not a blank response', () => {
+  const attachment = {
+    evidence_id: 'page-original',
+    kind: 'image' as const,
+    asset: { asset_id: 'page-original', digest: `sha256:${'d'.repeat(64)}` },
+    mime_type: 'image/png',
+    bytes: 2048,
+    uploaded_at: NOW,
+  };
+  it.each(['all_units', 'units'] as const)(
+    'holds an empty exact slot with %s original media instead of blank-marking it zero',
+    async (scope) => {
+      const submission = submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '' }]);
+      submission.group_evidence = [
+        {
+          evidence: attachment,
+          target: scope === 'all_units' ? { scope } : { scope, scoring_unit_ids: ['p1::u'] },
+        },
+      ];
+      const out = await evaluateSubmissionCore(
+        inputFor(submission, revisionFor({ blank_scores_zero: true })),
+      );
+      expect(out.record.status).toBe('completed');
+      expect(out.record.unit_results).toMatchObject([
+        { status: 'pending', pending: { reason: 'unjudgeable' } },
+      ]);
+      expect(out.record.aggregate).toMatchObject({ kind: 'unresolved', reason: 'pending_units' });
+    },
+  );
+  it('keeps the published blank policy for a unit outside the evidence target', async () => {
+    const base = revisionFor({});
+    const first = base.scoring_basis.units[0];
+    const revision = revisionFor({
+      slots: [
+        ...base.response_spec.slots,
+        { slot_id: 'second', part_id: 'p1', kind: 'text', math_preview: false },
+      ],
+      units: [first, { ...first, scoring_unit_id: 'second-unit', slot_refs: ['second'] }],
+    });
+    const submission = submissionFor([
+      { slot_id: 'p1::r', kind: 'text', text_md: '' },
+      { slot_id: 'second', kind: 'text', text_md: '2' },
+    ]);
+    submission.group_evidence = [
+      { evidence: attachment, target: { scope: 'units', scoring_unit_ids: ['second-unit'] } },
+    ];
+    const out = await evaluateSubmissionCore(inputFor(submission, revision));
+    expect(out.record.unit_results).toMatchObject([
+      {
+        scoring_unit_id: 'p1::u',
+        status: 'scored',
+        scored_because: 'blank_marked_zero',
+        points_awarded: 0,
+      },
+      {
+        scoring_unit_id: 'second-unit',
+        status: 'scored',
+        scored_because: 'response',
+        points_awarded: 2,
+      },
+    ]);
+  });
+  it('dispatches a declared model unit with a photo and empty text to its evidence-aware port', async () => {
+    const revision = revisionFor({
+      units: [
+        {
+          scoring_unit_id: 'p1::u',
+          slot_refs: ['p1::r'],
+          evidence_slot_refs: [],
+          material_refs: [],
+          requires_group_evidence: true,
+          criterion: {
+            kind: 'rule_reference',
+            rule_id: 'shown-work',
+            statement_md: 'Check the algebra and domain restriction in the handwritten original.',
+            source: 'official',
+          },
+          points: 2,
+        },
+      ],
+      assignments: [
+        {
+          scoring_unit_ids: ['p1::u'],
+          executor: {
+            kind: 'model_executor',
+            task_kind: 'AssessmentRuleJudgeTask',
+            admitted_slice_id: 'handwriting-accepted',
+            max_cost_usd_micros: 1000,
+          },
+        },
+      ],
+    });
+    const submission = submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '' }]);
+    submission.group_evidence = [{ evidence: attachment, target: { scope: 'all_units' } }];
+    const port = vi.fn(
+      async (
+        _request: import('./evaluation').ModelExecutorRequest,
+      ): Promise<ModelUnitOutcomeT> => ({
+        kind: 'scored',
+        points_awarded: 2,
+        confidence: 0.99,
+        matched: { rule_id: 'shown-work', option_ids: [] },
+        evidence_citations: [{ evidence_id: 'page-original' }],
+        cost_usd_micros: 12,
+        run_refs: ['original-photo-run'],
+      }),
+    );
+    const out = await evaluateSubmissionCore(
+      inputFor(submission, revision, { model_executor: port }),
+    );
+    expect(port).toHaveBeenCalledOnce();
+    expect(port.mock.calls[0]?.[0]).toMatchObject({ group_evidence: submission.group_evidence });
+    expect(out.record.unit_results).toMatchObject([
+      { status: 'scored', scored_because: 'response', points_awarded: 2 },
+    ]);
+  });
+});

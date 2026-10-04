@@ -322,17 +322,18 @@ export const RestoreQuestionResponseSchema = z
   .passthrough();
 
 export const StartSolveBodySchema = z
-  .object({ regenerate: z.boolean().optional(), issuance_id: z.string().min(1).optional() })
+  .object({ issuance_id: z.string().min(1).optional() })
+  .strict()
   .nullable();
-export const CreateSolveSessionBodySchema = z.object({
-  question_id: z.string().trim().min(1),
-  regenerate: z.boolean().optional(),
-  issuance_id: z.string().min(1).optional(),
-});
+export const CreateSolveSessionBodySchema = z
+  .object({
+    question_id: z.string().trim().min(1),
+    issuance_id: z.string().min(1).optional(),
+  })
+  .strict();
 export const SolveSessionCreatedSchema = z.object({
   session_id: z.string(),
-  generated: z.boolean(),
-  generation_error: z.boolean(),
+  issuance_id: z.string(),
   evaluation_group_id: z.string().optional(),
   idempotency_key: z.string().optional(),
 });

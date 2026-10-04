@@ -105,7 +105,9 @@ export async function previewFormalAttempt(
       !assisted &&
       candidate.result.coarse_outcome !== 'unsupported' &&
       revision.execution_plan.assignments
-        .filter((assignment) => assignment.scoring_unit_ids.some(unitId => scopedUnitIds.has(unitId)))
+        .filter((assignment) =>
+          assignment.scoring_unit_ids.some((unitId) => scopedUnitIds.has(unitId)),
+        )
         .every((assignment) => assignment.executor.kind === 'deterministic'),
     activation_intent: {
       evaluation_id: candidate.evaluation.record.evaluation_id,
@@ -214,7 +216,10 @@ export async function commitFormalAttempt(
       created_at: new Date(submission.submitted_at),
     });
   };
-  if (candidate.evaluation.record.status !== 'completed') {
+  if (
+    candidate.evaluation.record.status !== 'completed' ||
+    (!options.selfReport && candidate.result.coarse_outcome === 'unsupported')
+  ) {
     await database.transaction(record);
     return { status: 'review_required' as const, attempt_id: attemptId, ...prepared };
   }

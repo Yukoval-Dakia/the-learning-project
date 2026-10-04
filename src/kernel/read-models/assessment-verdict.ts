@@ -686,6 +686,7 @@ export async function resolveVerdictForGroup(db: DbLike, groupId: string): Promi
  * coordinates before reading the group's currently selected evaluation. */
 export type NativeAttemptVerdict = GroupVerdict & {
   submission: typeof assessment_submission.$inferSelect;
+  original_evaluation_id: string | null;
 };
 
 export async function resolveVerdictsForNativeAttempts(
@@ -725,6 +726,27 @@ export async function resolveVerdictsForNativeAttempts(
         )),
     );
   }
+  const originalIds = [
+    ...new Set(
+      anchors.flatMap((row) =>
+        typeof row.payload.original_evaluation_id === 'string'
+          ? [row.payload.original_evaluation_id]
+          : [],
+      ),
+    ),
+  ];
+  const originals = new Map<string, { submission_id: string; evaluation_group_id: string }>();
+  for (let offset = 0; offset < originalIds.length; offset += QUERY_ID_CHUNK) {
+    const found = await db
+      .select({
+        evaluation_id: evaluation.evaluation_id,
+        submission_id: evaluation.submission_id,
+        evaluation_group_id: evaluation.evaluation_group_id,
+      })
+      .from(evaluation)
+      .where(inArray(evaluation.evaluation_id, originalIds.slice(offset, offset + QUERY_ID_CHUNK)));
+    for (const item of found) originals.set(item.evaluation_id, item);
+  }
   const coordinateById = new Map(
     coordinates.map((value) => [value.submission.submission_id, value]),
   );
@@ -742,14 +764,25 @@ export async function resolveVerdictsForNativeAttempts(
       (row.subject_id !== revision.group_id && !issuance.part_ids.includes(row.subject_id))
     )
       return [];
-    return [{ row, submission, groupId: submission.evaluation_group_id }];
+    const originalId =
+      typeof p.original_evaluation_id === 'string' ? p.original_evaluation_id : null;
+    const original = originalId ? originals.get(originalId) : undefined;
+    const originalEvaluationId =
+      original?.submission_id === submission.submission_id &&
+      original?.evaluation_group_id === submission.evaluation_group_id
+        ? originalId
+        : null;
+    return [{ row, submission, groupId: submission.evaluation_group_id, originalEvaluationId }];
   });
   const groups = await resolveVerdictsForGroups(
     db,
     valid.map((entry) => entry.groupId),
   );
   return new Map(
-    valid.map(({ row, groupId, submission }) => [row.id, { ...groups.get(groupId)!, submission }]),
+    valid.map(({ row, groupId, submission, originalEvaluationId }) => [
+      row.id,
+      { ...groups.get(groupId)!, submission, original_evaluation_id: originalEvaluationId },
+    ]),
   );
 }
 

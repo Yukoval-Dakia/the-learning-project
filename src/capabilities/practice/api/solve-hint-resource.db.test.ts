@@ -1,9 +1,9 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-
 import { event, question } from '@/db/schema';
 import { Tutor } from '@/server/session';
+import { freezeSolveQuestion } from '../../../../tests/fixtures/assessment-solve';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 vi.mock('@/server/ai/runner', () => ({
@@ -54,7 +54,8 @@ describe('hint-request resource', () => {
 
   it('returns a durable hint request id and appends an audit event', async () => {
     const questionId = await seedQuestion();
-    const { sessionId } = await Tutor.startTutorSession(db, { questionId });
+    const { issuanceId } = await freezeSolveQuestion(db, questionId, true);
+    const { sessionId } = await Tutor.startTutorSession(db, { questionId, issuanceId });
     const { createHintRequest } = await import('./solve-hint');
 
     const response = await createHintRequest(

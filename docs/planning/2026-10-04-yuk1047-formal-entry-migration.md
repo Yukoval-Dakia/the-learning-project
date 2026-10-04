@@ -158,3 +158,35 @@ execution, durable submit/worker, paper, probe and ingestion grading; migrate
 native failure-learning/diagnostic restore/tool consumers; complete hint visual
 context and evidence subset selection. Registry remains honestly legacy until
 all eight actual entry sites have switched. No production or paid provider calls.
+
+## 22:50 UTC local checkpoint (unshipped)
+
+Removed the solve-tutor legacy evaluator and current-reference generation path.
+Unbound historical sessions now report historical_unknown; new sessions require
+an issued snapshot. Removed the regeneration input and obsolete generation-result
+flags. Service and HTTP fixtures now use real publisher/issuance/submission
+contracts; no mocked legacy judge supplies the verdict. Partial-credit mistake
+thresholds remain covered with four actual independently scored question parts.
+
+The photo-only migration test found a real core defect: whole-page evidence plus
+an empty text slot was marked blank/zero, ending the session and revealing the
+answer. DB regression failed 1/23; core regressions failed 3/56. The core now
+considers only evidence targeting the unit before applying blank policy, forwards
+photo originals to declared model units, and leaves text comparators unable to
+read those originals unjudgeable. An unrelated unit still follows its published
+blank policy. Terminal unresolved automatic candidates now return review_required
+without activation, session completion or reference disclosure; appeals also hold
+such candidates instead of replacing an earlier effective score.
+
+The photo regression additionally exercises explicit self-report after the held
+candidate: one FSRS practice, no inferred correctness, one participation anchor,
+and original pending candidate retained alongside the selected manual evaluation.
+Native history validates that original reference against its submission/group;
+it does not confuse first activation with the first execution receipt.
+
+Latest scoped verification: 64 DB across six solve/API/submission files; 64 unit
+across core evaluation, solve contracts and real HintLadder interactions; typecheck,
+changed-file Biome and production build passed. Native/Jev tests from the previous
+checkpoint remain evidence for their unchanged code. No PR/review/CI/paid calls or
+production changes. Next: durable submission/job/poll/outbox migration, then the
+remaining paper/probe/ingestion and downstream readers before final legacy removal.

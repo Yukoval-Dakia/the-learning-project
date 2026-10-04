@@ -147,7 +147,10 @@ export async function rejudgeNativeAppeal(database: Db, appeal: typeof event.$in
     },
   });
   const candidateId = candidate.evaluation.record.evaluation_id;
-  if (candidate.evaluation.record.status !== 'completed')
+  if (
+    candidate.evaluation.record.status !== 'completed' ||
+    candidate.result.coarse_outcome === 'unsupported'
+  )
     return hold('review_required', candidateId);
   const activation = await activateSubmissionCandidate(
     database,

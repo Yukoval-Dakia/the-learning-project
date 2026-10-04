@@ -595,6 +595,11 @@ export async function evaluateSubmissionCore(
       .map((slotId) => entryBySlot.get(slotId))
       .filter((entry): entry is SlotResponseT => entry != null);
 
+    const unitGroupEvidence = groupEvidence.filter(
+      (evidence) =>
+        evidence.target.scope === 'all_units' || evidence.target.scoring_unit_ids.includes(unitId),
+    );
+
     // missing：声明作答面里存在缺条目（区别于主动空白）。
     const missingSlotIds = slotIds.filter((slotId) => !entryBySlot.has(slotId));
     if (missingSlotIds.length > 0) {
@@ -605,7 +610,11 @@ export async function evaluateSubmissionCore(
     }
 
     // 空白：全部作答面显式空 —— 政策明确才计零，否则人工复核（绝不伪零分）。
-    if (entries.length > 0 && entries.every(isBlankSlotResponse)) {
+    if (
+      entries.length > 0 &&
+      entries.every(isBlankSlotResponse) &&
+      unitGroupEvidence.length === 0
+    ) {
       if (basis.blank_scores_zero) {
         unitResults.push(
           withUnit(
@@ -710,6 +719,19 @@ export async function evaluateSubmissionCore(
         );
         continue;
       }
+      if (isBlankSlotResponse(primaryEntry) && unitGroupEvidence.length > 0) {
+        unitResults.push(
+          withUnit(
+            pending({
+              reason: 'unjudgeable',
+              detail:
+                'original group evidence is present but the deterministic comparator cannot read it',
+            }),
+            unitId,
+          ),
+        );
+        continue;
+      }
       unitResults.push(runDeterministicComparator(executor.comparator, unit, primaryEntry));
       continue;
     }
@@ -783,10 +805,6 @@ export async function evaluateSubmissionCore(
       continue;
     }
 
-    const unitGroupEvidence = groupEvidence.filter(
-      (evidence) =>
-        evidence.target.scope === 'all_units' || evidence.target.scoring_unit_ids.includes(unitId),
-    );
     // A slot reference identifies its question conditions, not just an answer.
     // Group-only units consume the issued group context; unissued parts stay out.
     const unitSlotIds = new Set(slotIds);

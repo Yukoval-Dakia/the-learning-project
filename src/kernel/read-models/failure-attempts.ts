@@ -290,7 +290,7 @@ function nativeFailureReference(
     response_set: sub.response_set,
     group_evidence: sub.group_evidence,
     evaluation_group_id: value.evaluation_group_id,
-    original_evaluation_id: value.original?.evaluation_id ?? null,
+    original_evaluation_id: value.original_evaluation_id,
     effective_evaluation_id: value.effective?.evaluation_id ?? null,
   };
 }

@@ -1255,16 +1255,11 @@ describe('formal manual candidate and atomic activation', () => {
     const pub = await publishAdmitted('study_native');
     const issued = await issueAssessment(testDb(), { group_id: pub.groupId });
     if (issued.status !== 'issued') throw new Error(issued.status);
-    const generate = vi
-      .fn()
-      .mockRejectedValue(new Error('native start must not generate a new solution'));
     const session = await startSolveSession({
       db: testDb(),
       questionId: pub.qid,
       issuanceId: issued.issuance.issuance_id,
-      runTaskFn: generate,
     });
-    expect(generate).not.toHaveBeenCalled();
     await testDb()
       .update(question)
       .set({

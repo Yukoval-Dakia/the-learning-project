@@ -239,7 +239,7 @@ export async function getQuestionTimeline(
           ? {
               assessment: {
                 evaluation_group_id: group.evaluation_group_id,
-                original_evaluation_id: group.original?.evaluation_id ?? null,
+                original_evaluation_id: group.original_evaluation_id,
                 effective_evaluation_id: group.effective?.evaluation_id ?? null,
               },
             }

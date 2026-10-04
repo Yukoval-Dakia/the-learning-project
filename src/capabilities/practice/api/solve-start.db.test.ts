@@ -1,8 +1,8 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-
 import { learning_session, question } from '@/db/schema';
+import { freezeSolveQuestion } from '../../../../tests/fixtures/assessment-solve';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 vi.mock('@/server/ai/runner', () => ({
@@ -48,14 +48,21 @@ describe('POST /api/questions/[id]/solve', () => {
     await resetDb();
   });
 
-  it('starts a tutor session and lazily generates a reference solution', async () => {
+  it('starts a tutor session bound to its issuance without inventing a reference solution', async () => {
     const { POST } = await import('./solve-start');
     const id = await seedBareQuestion();
-    const res = await POST(new Request('http://t/x', { method: 'POST' }), { id });
+    const { issuanceId } = await freezeSolveQuestion(db, id, true);
+    const res = await POST(
+      new Request('http://t/x', {
+        method: 'POST',
+        body: JSON.stringify({ issuance_id: issuanceId }),
+      }),
+      { id },
+    );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { session_id: string; generated: boolean };
+    const body = (await res.json()) as { session_id: string; issuance_id: string };
     expect(body.session_id).toBeTruthy();
-    expect(body.generated).toBe(true);
+    expect(body.issuance_id).toBe(issuanceId);
     const [s] = await db
       .select()
       .from(learning_session)

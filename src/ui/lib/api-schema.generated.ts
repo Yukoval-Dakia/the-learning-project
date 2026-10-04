@@ -27699,7 +27699,6 @@ export interface operations {
             content: {
                 "application/json": {
                     issuance_id?: string;
-                    regenerate?: boolean;
                 } | null;
             };
         };
@@ -27712,9 +27711,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         evaluation_group_id?: string;
-                        generated: boolean;
-                        generation_error: boolean;
                         idempotency_key?: string;
+                        issuance_id: string;
                         session_id: string;
                     };
                 };
@@ -32029,7 +32027,6 @@ export interface operations {
                 "application/json": {
                     issuance_id?: string;
                     question_id: string;
-                    regenerate?: boolean;
                 };
             };
         };
@@ -32042,9 +32039,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         evaluation_group_id?: string;
-                        generated: boolean;
-                        generation_error: boolean;
                         idempotency_key?: string;
+                        issuance_id: string;
                         session_id: string;
                     };
                 };
