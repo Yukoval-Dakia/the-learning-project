@@ -891,6 +891,28 @@ export async function createAttempt(req: Request): Promise<Response> {
     }
     if (validated.body.assessment) {
       const { body, questionId } = validated;
+      if (!body.self_report && !body.activation_intent) {
+        const { dispatchNativeAttempt } = await import('../server/assessment/durable-attempt');
+        const runId = await dispatchNativeAttempt(
+          db,
+          questionId,
+          { ...body.assessment!, now: validated.now },
+          {
+            enabled:
+              judgeDurableEnabled() &&
+              shouldEnqueueBackgroundJobs() &&
+              (await sessionAdmitsDurableDivert(body.session_id ?? null)),
+            capture: body,
+            userRating: body.auto_rate ? undefined : body.rating,
+            requireUnassistedModelEvidence:
+              validated.q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+          },
+        );
+        if (runId) {
+          retainDiagnosticClaim = true;
+          return durablePendingResponse(runId);
+        }
+      }
       const committed = await commitFormalAttempt(
         db,
         'solo_submit',

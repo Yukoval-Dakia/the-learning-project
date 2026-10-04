@@ -190,3 +190,42 @@ changed-file Biome and production build passed. Native/Jev tests from the previo
 checkpoint remain evidence for their unchanged code. No PR/review/CI/paid calls or
 production changes. Next: durable submission/job/poll/outbox migration, then the
 remaining paper/probe/ingestion and downstream readers before final legacy removal.
+
+## 2026-10-04 23:11 UTC — native durable submission checkpoint
+
+Native submit now uses the existing judge_run outbox/queue/reconcile/poll protocol
+when the scoped frozen execution plan contains model work and the session gate
+admits it. Stable submission-derived run/job identities collapse HTTP retries;
+accepted options are immutable, while capture observations remain first-write-wins.
+The original submission and neutral participation anchor precede queue dispatch.
+A refused admission leaves no pending outbox; dispatch failure preserves the
+accepted outbox for existing reconciliation. Flag changes do not turn an already
+queued retry into another synchronous operation.
+
+The worker validates the delivery against the accepted outbox and immutable
+submission. It uses the formal recorded model port and frozen task identity, with
+no implicit provider switch or second enqueue admission. A later effective manual
+choice blocks obsolete work before model dispatch. Activation, learning writes
+and the durable completion receipt commit together; lost terminal notifications
+recover from domain records, and lost activation transactions reuse the candidate.
+Unjudgeable work completes the job as review_required without creating a grade.
+
+Queued history resolves its first genuine evaluation independently of its first
+activation. Poll recovery projects the current effective evaluation and explicit
+rating through the common frozen scoring basis, retaining separate original and
+effective references. PfSolo holds unresolved results and exposes self-rating,
+while successful native poll responses use evaluation anchors for appeals.
+
+Verification: eight new native DB cases cover concurrent HTTP/delivery replay,
+queue failure, rejected admission, completion rollback, terminal notification
+failure, original/effective references, queue tampering, later self-report and a
+real HTTP202→worker→poll path. The six-file regression completed 117 DB tests;
+35 unit tests passed. After the current-effective poll projection change, 46 DB
+(native + verdict resolver + status route) passed. Typecheck, changed-file Biome,
+API/Postman regeneration passed. Final typecheck and production build also passed
+after the projection adjustment. All provider outputs
+are offline fixture results; no paid call or production operation occurred.
+
+Legacy queued-job execution is still present and must be removed with the old
+submit producer. Paper/probe/ingestion and diagnostic/failure-learning consumers
+remain release blockers. This checkpoint is not a PR, cutover or completed ticket.

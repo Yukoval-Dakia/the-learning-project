@@ -16891,6 +16891,15 @@ export interface operations {
                     "application/json": {
                         result: ({
                             already_persisted?: boolean;
+                            assessment?: {
+                                candidate_id: string;
+                                effective_evaluation_id?: string | null;
+                                evaluation_group_id: string;
+                                original_evaluation_id?: string | null;
+                                submission_id: string;
+                            } & {
+                                [key: string]: unknown;
+                            };
                             attempt_event_id: string;
                             capability_ref?: {
                                 id: string;
@@ -16910,6 +16919,8 @@ export interface operations {
                             route?: string | null;
                             score?: number | null;
                             score_meaning?: string;
+                            /** @enum {string} */
+                            status?: "effective" | "review_required";
                             task_run_id?: string;
                             telemetry?: unknown;
                         } & {

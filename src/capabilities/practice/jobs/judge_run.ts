@@ -105,10 +105,22 @@ export async function runJudgeRun(
   // redelivers and the idempotency guard reconstructs the real DONE.
   let persistedOk = false;
   try {
+    if (data.caller === 'native_assessment') {
+      const { executeNativeAttempt } = await import('../server/assessment/durable-attempt');
+      const committed = await executeNativeAttempt(db, data);
+      persistedOk = true;
+      await recoverAlreadyPersisted(db, runId, meta.deliveryId);
+      return {
+        status: 'done',
+        run_id: runId,
+        coarse_outcome: committed.candidate.result.coarse_outcome,
+        judge_event_id: null,
+      };
+    }
     if (data.caller !== 'submit') {
       // W2 只支持 submit 面；其它面 W3 落地。收到未知面 → 不重投（rethrow 只会
       // 3 次重跑同样失败），写终态 FAILED 后早返（deriveJudgeRunStatus → failed）。
-      throw new NonRetryableJudgeRunError(`unsupported judge_run caller '${data.caller}'`);
+      throw new NonRetryableJudgeRunError('unsupported judge_run caller');
     }
 
     const submitModule = await import('../api/submit');
@@ -307,7 +319,10 @@ export async function runJudgeRun(
     const nonRetryable =
       err instanceof NonRetryableJudgeRunError ||
       err instanceof ZodError ||
-      isPermanentPersistError(err);
+      isPermanentPersistError(err) ||
+      (data.caller === 'native_assessment' &&
+        err instanceof ApiError &&
+        ['coordinate_mismatch', 'stale_head', 'unsupported_judge_route'].includes(err.code));
     // W4 #TtWiB — will pg-boss deliver this job again? Only when the failure is retryable AND
     // the budget is not spent. That question, not "did something fail", decides whether the
     // trace we write is TERMINAL. Round 3 over-generalized the "terminal writes must throw"

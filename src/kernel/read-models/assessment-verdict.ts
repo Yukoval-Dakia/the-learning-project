@@ -430,6 +430,7 @@ export async function resolveVerdictForAttempt(
 // ============================================================================
 
 export interface EvaluationVerdict {
+  scoring_basis: ScoringBasisT | null;
   evaluation_id: string;
   /** evaluation.attempt（重试序号）。 */
   attempt: number;
@@ -622,6 +623,7 @@ export async function resolveVerdictsForGroups(
     const basis = basisForEvaluation(row);
     return {
       evaluation_id: row.evaluation_id,
+      scoring_basis: basis ?? null,
       attempt: row.attempt,
       status: row.status,
       verdict: basis
@@ -747,6 +749,25 @@ export async function resolveVerdictsForNativeAttempts(
       .where(inArray(evaluation.evaluation_id, originalIds.slice(offset, offset + QUERY_ID_CHUNK)));
     for (const item of found) originals.set(item.evaluation_id, item);
   }
+  // Queued anchors predate evaluation. Resolve the first actual candidate, never
+  // the first activation (a later self-report may be the first effective record).
+  const firstBySubmission = new Map<string, string>();
+  for (let offset = 0; offset < ids.length; offset += QUERY_ID_CHUNK) {
+    const found = await db
+      .select({
+        evaluation_id: evaluation.evaluation_id,
+        submission_id: evaluation.submission_id,
+        evaluation_group_id: evaluation.evaluation_group_id,
+      })
+      .from(evaluation)
+      .where(inArray(evaluation.submission_id, ids.slice(offset, offset + QUERY_ID_CHUNK)))
+      .orderBy(asc(evaluation.attempt), asc(evaluation.evaluation_id));
+    for (const item of found) {
+      originals.set(item.evaluation_id, item);
+      if (!firstBySubmission.has(item.submission_id))
+        firstBySubmission.set(item.submission_id, item.evaluation_id);
+    }
+  }
   const coordinateById = new Map(
     coordinates.map((value) => [value.submission.submission_id, value]),
   );
@@ -765,7 +786,9 @@ export async function resolveVerdictsForNativeAttempts(
     )
       return [];
     const originalId =
-      typeof p.original_evaluation_id === 'string' ? p.original_evaluation_id : null;
+      typeof p.original_evaluation_id === 'string'
+        ? p.original_evaluation_id
+        : (firstBySubmission.get(submission.submission_id) ?? null);
     const original = originalId ? originals.get(originalId) : undefined;
     const originalEvaluationId =
       original?.submission_id === submission.submission_id &&

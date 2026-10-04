@@ -79,7 +79,7 @@
 - YUK-1047/#1562已交付main ad8dad75（20:18UTC）：94unit72DB/全部本地gate；初审1项内嵌图P1先RED后修，唯一验证3原探针5分支探针94unit通过；exact-head CI37230475644实际82迁移34浏览器/17分钟窗通过。八入口仍legacy，票In Progress。
 - YUK-1047/#1563已合入main448ffe42：281unit30DB/本地gates、独立初审2P1修复及唯一验证100unit+3DB/真实driver、exact-head CI37232936402（82迁移34浏览器）与17分钟窗通过。冻结原生pi执行、已知失败费与真实missing usage保真已交付；八入口仍legacy。
 
-- YUK-1047/#1564已合入main6e5d93ac：显式用户FSRS与自动theta独立，历史评级/两次晚到/再次重评保真。94DB/107unit、本地gate、初审+唯一验证问题处置、exactCI37234688601与17分钟窗完成。CI增量未运行migration/browser。当前未发布正式入口worktree：散题原生提交/手动FSRS/帮助快照/冻结解答与提示已接线；新增模型调用持久化认领、原生申诉、时间线/错题读面与解题会话原子提交，此前101DB/91unit通过；本检查点移除旧solve执行/临时生成分支，整页图误判空白先RED后修，64DB/64unit及typecheck/build通过。自动保存3RED→6GREEN。仍须后台/paper/probe/ingestion与下游诊断/归因迁移、余下旧入口移除，未发布。详见 formal-entry-migration 记录，1047仍In Progress。
+- YUK-1047/#1564已合入main6e5d93ac：显式用户FSRS与自动theta独立，历史评级/两次晚到/再次重评保真。94DB/107unit、本地gate、初审+唯一验证问题处置、exactCI37234688601与17分钟窗完成。CI增量未运行migration/browser。当前未发布正式入口worktree：散题原生提交/手动FSRS/帮助快照/冻结解答与提示已接线；新增模型调用持久化认领、原生申诉、时间线/错题读面与解题会话原子提交，此前101DB/91unit通过；本检查点移除旧solve执行/临时生成分支，整页图误判空白先RED后修，64DB/64unit及typecheck/build通过。自动保存3RED→6GREEN。新增原生后台提交/队列恢复/当前生效轮询，117DB/35unit及最终投影46DB通过；仍须paper/probe/ingestion与下游诊断/归因迁移、余下旧入口移除，未发布。详见 formal-entry-migration 记录，1047仍In Progress。
 
 ## NEXT
 

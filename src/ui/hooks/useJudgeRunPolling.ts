@@ -17,6 +17,14 @@ export type JudgeRunPollStatus = 'queued' | 'started' | 'done' | 'failed';
 /** JudgeRunTerminalResultSchema 的 UI 侧最小投影（passthrough 字段不逐一建模）。 */
 export interface JudgeRunTerminalResult {
   attempt_event_id?: string;
+  status?: 'effective' | 'review_required';
+  assessment?: {
+    submission_id: string;
+    evaluation_group_id: string;
+    candidate_id: string;
+    original_evaluation_id?: string | null;
+    effective_evaluation_id?: string | null;
+  };
   judge_event_id?: string | null;
   coarse_outcome?: string;
   feedback_md?: string;

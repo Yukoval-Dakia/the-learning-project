@@ -198,7 +198,9 @@ export async function reconcileStalledJudgeAttempts(
         }
 
         const jobId = await enqueueJudgeRun(
-          { run_id: runId, caller: pending.payload.caller, submit: pending.payload.submit },
+          pending.payload.caller === 'native_assessment'
+            ? { run_id: runId, caller: 'native_assessment', submit: pending.payload.submit }
+            : { run_id: runId, caller: 'submit', submit: pending.payload.submit },
           deps,
           { jobId: recoveryJobId, acceptExistingJobId: true },
         );

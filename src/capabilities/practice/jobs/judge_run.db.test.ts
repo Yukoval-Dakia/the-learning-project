@@ -89,8 +89,8 @@ async function seedQuestion(id: string) {
 function jobData(
   runId: string,
   questionId: string,
-  over: Partial<JudgeRunJobData> = {},
-): JudgeRunJobData {
+  over: Partial<import('../server/judge-run-payload').LegacyJudgeRunJobData> = {},
+): import('../server/judge-run-payload').LegacyJudgeRunJobData {
   return {
     run_id: runId,
     caller: 'submit',

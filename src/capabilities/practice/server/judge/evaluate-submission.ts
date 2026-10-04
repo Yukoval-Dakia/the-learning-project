@@ -149,12 +149,16 @@ export class EvaluateSubmissionError extends Error {
 }
 
 /** Published task identity selects a registered native executor; no URL/key override. */
-export function createFormalModelExecutor(db: Db, signal?: AbortSignal): ModelUnitExecutorPort {
+export function createFormalModelExecutor(
+  db: Db,
+  signal?: AbortSignal,
+  admission?: 'durable',
+): ModelUnitExecutorPort {
   const deadlineAt = Date.now() + 90_000;
   let admitted = false;
   return createRecordedModelExecutor(db, (request, callerSignal, taskRunId) => {
     if (!admitted) {
-      checkRateLimit();
+      if (admission !== 'durable') checkRateLimit();
       admitted = true;
     }
     if (request.executor.task_kind === 'AssessmentRuleJudgeTask') {

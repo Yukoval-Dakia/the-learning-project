@@ -507,6 +507,20 @@ export function PfSolo({
     if (!pendingRun) return;
     if (pendingPoll.status !== 'done') return;
     const r = pendingPoll.result;
+    if (r?.status === 'review_required') {
+      setCommittedPreview({
+        route: 'durable',
+        coarse_outcome: 'unsupported',
+        confidence: 0,
+        feedback_md: typeof r.feedback_md === 'string' ? r.feedback_md : '',
+        suggested_rating: null,
+      });
+      setAutoCommitted(false);
+      setAutoCommitJudgeEventId(null);
+      setPendingRun(null);
+      addToast('作答已保存，判定尚未完成；可选择自行评级安排复习。', 'info', 'clock');
+      return;
+    }
     const outcome =
       r && typeof r.coarse_outcome === 'string' && r.coarse_outcome in VERDICT_OF
         ? (r.coarse_outcome as keyof typeof VERDICT_OF)
@@ -525,10 +539,17 @@ export function PfSolo({
       });
       setRating(fr);
       setAutoCommitted(true);
-      setAutoCommitJudgeEventId(typeof r?.judge_event_id === 'string' ? r.judge_event_id : null);
+      committedAppealKind.current = r?.assessment ? 'evaluation' : 'judge';
+      setAutoCommitJudgeEventId(
+        r?.assessment
+          ? (r.assessment.effective_evaluation_id ?? r.assessment.candidate_id)
+          : typeof r?.judge_event_id === 'string'
+            ? r.judge_event_id
+            : null,
+      );
     }
     setPendingRun(null);
-  }, [pendingRun, pendingPoll.status, pendingPoll.result]);
+  }, [pendingRun, pendingPoll.status, pendingPoll.result, addToast]);
 
   // commit 接受显式 rating + autoRate：客观题自动流不依赖手动 `rating` state（直接用 judge 的
   // suggested_rating + auto_rate:true）；手动流（开放题/申诉）走 body.rating + auto_rate 缺省 false。

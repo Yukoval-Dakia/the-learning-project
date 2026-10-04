@@ -1,6 +1,8 @@
 import { eq, sql } from 'drizzle-orm';
 import {
   type ActivateEvaluationIntentT,
+  type AssessmentAttemptCaptureT,
+  type SubmissionRecordT,
   projectIssuedScoringBasis,
 } from '@/core/schema/assessment';
 import type { Db, Tx } from '@/db/client';
@@ -21,14 +23,12 @@ import { type GradingEntryPoint, evaluateAttempt } from '../judge/evaluation-aut
 import { submissionWasAssisted } from './assistance';
 import { type SaveSubmissionRequest, saveSubmission } from './submit';
 
-/** Formal entry input already carries the issuance served to the learner. */
-export async function previewFormalAttempt(
+/** Persist the served original before a synchronous evaluation or durable dispatch. */
+export async function prepareFormalAttemptSubmission(
   database: Db,
   entry: GradingEntryPoint,
   questionId: string,
   request: SaveSubmissionRequest,
-  signal?: AbortSignal,
-  options: { selfReport?: boolean; candidateId?: string; expectedSubmissionIds?: string[] } = {},
 ) {
   const [issuance] = await database
     .select()
@@ -55,13 +55,32 @@ export async function previewFormalAttempt(
     );
   }
   const assisted = await submissionWasAssisted(database, saved.submission.submission_id);
+  return { issuance, revision, scopedBasis, scopedUnitIds, submission: saved.submission, assisted };
+}
+
+/** Formal entry input already carries the issuance served to the learner. */
+export async function previewFormalAttempt(
+  database: Db,
+  entry: GradingEntryPoint,
+  questionId: string,
+  request: SaveSubmissionRequest,
+  signal?: AbortSignal,
+  options: {
+    selfReport?: boolean;
+    candidateId?: string;
+    expectedSubmissionIds?: string[];
+    modelAdmission?: 'durable';
+  } = {},
+) {
+  const { revision, scopedBasis, scopedUnitIds, submission, assisted } =
+    await prepareFormalAttemptSubmission(database, entry, questionId, request);
   const candidate = await evaluateAttempt({
     db: database,
     entry,
     contract: {
-      submission_id: saved.submission.submission_id,
-      evaluation_group_id: saved.submission.evaluation_group_id,
-      evaluation_key: `${options.selfReport ? 'self-report' : 'submission'}:${saved.submission.submission_id}`,
+      submission_id: submission.submission_id,
+      evaluation_group_id: submission.evaluation_group_id,
+      evaluation_key: `${options.selfReport ? 'self-report' : 'submission'}:${submission.submission_id}`,
       expected_evaluation_id: options.candidateId,
       expected_submission_ids: options.expectedSubmissionIds,
       ...(options.selfReport
@@ -79,7 +98,7 @@ export async function previewFormalAttempt(
           }
         : {
             provenance: { source: 'automatic' as const, assisted },
-            model_executor: createFormalModelExecutor(database, signal),
+            model_executor: createFormalModelExecutor(database, signal, options.modelAdmission),
           }),
     },
   }).catch((error: unknown) => {
@@ -95,11 +114,11 @@ export async function previewFormalAttempt(
   const [head] = await database
     .select()
     .from(evaluation_effective_head)
-    .where(eq(evaluation_effective_head.evaluation_group_id, saved.submission.evaluation_group_id))
+    .where(eq(evaluation_effective_head.evaluation_group_id, submission.evaluation_group_id))
     .limit(1);
   return {
     candidate,
-    submission: saved.submission,
+    submission: submission,
     automatic_commit:
       !options.selfReport &&
       !assisted &&
@@ -117,15 +136,54 @@ export async function previewFormalAttempt(
   };
 }
 
-export interface FormalAttemptCapture {
-  session_id?: string | null;
-  stream_item_id?: string | null;
-  response_md?: string | null;
-  reasoning_trace?: string | null;
-  self_confidence?: number | null;
-  latency_ms?: number | null;
-  hints_used?: number;
-  final_hint_level?: number;
+export type FormalAttemptCapture = AssessmentAttemptCaptureT;
+
+/** One immutable participation anchor, including while a durable run is queued. */
+export async function recordFormalAttemptCapture(
+  tx: Tx,
+  entry: GradingEntryPoint,
+  questionId: string,
+  submission: SubmissionRecordT,
+  candidateId: string | null,
+  capture: FormalAttemptCapture = {},
+) {
+  const attemptId = `evt_assessment_${submission.submission_id}`;
+  // Pending receipts and retries share the same occurrence anchor. Capture is
+  // first-write-wins; a retry's wall-clock latency cannot rewrite the attempt.
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${attemptId}))`);
+  const [existing] = await tx.select({ id: event.id }).from(event).where(eq(event.id, attemptId));
+  if (existing) return;
+  await writeEvent(tx, {
+    id: attemptId,
+    session_id: capture.session_id ?? null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'experimental:assessment_attempt',
+    subject_kind: 'question',
+    subject_id: questionId,
+    // This event records participation. The group's effective evaluation owns
+    // its verdict; self-report and a pending evaluation have no right/wrong bit.
+    outcome: null,
+    payload: {
+      version: 1,
+      submission_id: submission.submission_id,
+      evaluation_group_id: submission.evaluation_group_id,
+      issuance_id: submission.issuance_id,
+      revision_id: submission.revision_id,
+      original_evaluation_id: candidateId,
+      entry,
+      response_md: capture.response_md ?? null,
+      ...(capture.stream_item_id ? { stream_item_id: capture.stream_item_id } : {}),
+      ...(capture.reasoning_trace?.trim() ? { reasoning_trace: capture.reasoning_trace } : {}),
+      ...(capture.self_confidence != null ? { self_confidence: capture.self_confidence } : {}),
+      ...(capture.latency_ms != null ? { duration_ms: capture.latency_ms } : {}),
+      ...(capture.hints_used !== undefined ? { hints_used: capture.hints_used } : {}),
+      ...(capture.final_hint_level !== undefined
+        ? { final_hint_level: capture.final_hint_level }
+        : {}),
+    },
+    created_at: new Date(submission.submitted_at),
+  });
 }
 
 /** The response and candidate are immutable; the activation is the only learning writer. */
@@ -136,7 +194,9 @@ export async function commitFormalAttempt(
   request: SaveSubmissionRequest,
   options: {
     activationIntent?: ActivateEvaluationIntentT;
+    expectedHead?: Pick<ActivateEvaluationIntentT, 'expected_effective_id' | 'expected_generation'>;
     selfReport?: boolean;
+    modelAdmission?: 'durable';
     userRating?: 'again' | 'hard' | 'good';
     capture?: FormalAttemptCapture;
     signal?: AbortSignal;
@@ -159,6 +219,7 @@ export async function commitFormalAttempt(
     options.signal,
     {
       selfReport: options.selfReport,
+      modelAdmission: options.modelAdmission,
       candidateId: options.activationIntent?.evaluation_id,
     },
   );
@@ -178,44 +239,15 @@ export async function commitFormalAttempt(
   }
   const attemptId = `evt_assessment_${submission.submission_id}`;
   const capture = options.capture ?? {};
-  const record = async (tx: Tx) => {
-    // Pending receipts and retries share the same occurrence anchor. Capture is
-    // first-write-wins; a retry's wall-clock latency cannot rewrite the attempt.
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${attemptId}))`);
-    const [existing] = await tx.select({ id: event.id }).from(event).where(eq(event.id, attemptId));
-    if (existing) return;
-    await writeEvent(tx, {
-      id: attemptId,
-      session_id: capture.session_id ?? null,
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'experimental:assessment_attempt',
-      subject_kind: 'question',
-      subject_id: questionId,
-      // This event records participation. The group's effective evaluation owns
-      // its verdict; self-report and a pending evaluation have no right/wrong bit.
-      outcome: null,
-      payload: {
-        version: 1,
-        submission_id: submission.submission_id,
-        evaluation_group_id: submission.evaluation_group_id,
-        issuance_id: submission.issuance_id,
-        revision_id: submission.revision_id,
-        original_evaluation_id: candidate.evaluation.record.evaluation_id,
-        entry,
-        response_md: capture.response_md ?? null,
-        ...(capture.stream_item_id ? { stream_item_id: capture.stream_item_id } : {}),
-        ...(capture.reasoning_trace?.trim() ? { reasoning_trace: capture.reasoning_trace } : {}),
-        ...(capture.self_confidence != null ? { self_confidence: capture.self_confidence } : {}),
-        ...(capture.latency_ms != null ? { duration_ms: capture.latency_ms } : {}),
-        ...(capture.hints_used !== undefined ? { hints_used: capture.hints_used } : {}),
-        ...(capture.final_hint_level !== undefined
-          ? { final_hint_level: capture.final_hint_level }
-          : {}),
-      },
-      created_at: new Date(submission.submitted_at),
-    });
-  };
+  const record = (tx: Tx) =>
+    recordFormalAttemptCapture(
+      tx,
+      entry,
+      questionId,
+      submission,
+      candidate.evaluation.record.evaluation_id,
+      capture,
+    );
   if (
     candidate.evaluation.record.status !== 'completed' ||
     (!options.selfReport && candidate.result.coarse_outcome === 'unsupported')
@@ -230,6 +262,7 @@ export async function commitFormalAttempt(
         evaluation_id: candidate.evaluation.record.evaluation_id,
         expected_effective_id: null,
         expected_generation: 0,
+        ...options.expectedHead,
       }),
       user_rating: options.userRating,
     },
