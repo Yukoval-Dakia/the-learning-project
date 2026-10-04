@@ -14,6 +14,7 @@ import { Artifact } from '@/core/schema/index';
 import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
+import { submitNativePaperAttempt } from '../server/assessment/paper-attempt';
 import { LegacyPaperSubmissionBodySchema } from './paper-contracts';
 
 export async function createPaperSubmission(
@@ -31,6 +32,38 @@ export async function createPaperSubmission(
       throw new ApiError('validation_error', message, 400);
     }
     const body = parsed.data;
+
+    if (body.assessment) {
+      const result = await submitNativePaperAttempt(db, {
+        sessionId: body.session_id,
+        paperArtifactId,
+        questionId: body.question_id,
+        partRef: body.part_ref,
+        assessment: body.assessment,
+        answerMd: body.answer_md,
+        answerImageRefs: body.image_refs,
+        latencyMs: body.latency_ms,
+        reasoningTrace: body.reasoning_trace,
+        selfConfidence: body.self_confidence,
+      });
+      const identity = {
+        attempt_event_id: result.attemptEventId,
+        judge_event_id: null,
+        evaluation_id: result.evaluationId,
+        answer_id: result.answerId,
+      };
+      return Response.json(
+        result.visibleToUser
+          ? {
+              ...identity,
+              status: result.status,
+              visible_to_user: true,
+              coarse_outcome: result.coarseOutcome,
+              score: result.score,
+            }
+          : { ...identity, visible_to_user: false, feedback_buffered: true },
+      );
+    }
 
     // Load the paper + resolve the slot assignment from the auditable plan.
     const rows = await db.select().from(artifact).where(eq(artifact.id, paperArtifactId)).limit(1);

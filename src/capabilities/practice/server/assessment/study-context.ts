@@ -46,6 +46,15 @@ export async function loadFrozenStudyContext(
       409,
     );
   }
+  return projectFrozenStudyContext(row, issuance, questionId);
+}
+
+/** Pure frozen projection; callers enforce their own disclosure boundary. */
+export function projectFrozenStudyContext(
+  row: typeof question_revision.$inferSelect,
+  issuance: typeof assessment_issuance.$inferSelect,
+  questionId?: string,
+) {
   const revision = revisionRowToContract(row);
   const face = projectPracticeIssuance(revision, issuanceRowToContract(issuance));
   const basis = projectIssuedScoringBasis(revision, issuance.part_ids);

@@ -65,7 +65,7 @@ type ReviewTransitionOptions = {
 };
 
 async function applyReviewSessionTransition(
-  db: Db,
+  db: Db | Tx,
   sessionId: string,
   target: ReviewSessionStatus,
   options: ReviewTransitionOptions,
@@ -152,7 +152,7 @@ async function applyReviewSessionTransition(
  * Replaying the same target returns changed=false and emits no duplicate job event.
  */
 export async function transitionReviewSession(
-  db: Db,
+  db: Db | Tx,
   sessionId: string,
   target: ReviewSessionStatus,
 ): Promise<ReviewSessionTransition> {
@@ -302,7 +302,7 @@ export async function resumeReviewSession(db: Db, sessionId: string): Promise<vo
  * ended_at because the session is live again; per-question review events remain
  * chained by session_id.
  */
-export async function reopenAbandonedReviewSession(db: Db, sessionId: string): Promise<void> {
+export async function reopenAbandonedReviewSession(db: Db | Tx, sessionId: string): Promise<void> {
   await applyReviewSessionTransition(db, sessionId, 'started', {
     allowedFrom: ['abandoned'],
     idempotent: false,

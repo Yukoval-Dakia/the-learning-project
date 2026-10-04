@@ -229,3 +229,51 @@ are offline fixture results; no paid call or production operation occurred.
 Legacy queued-job execution is still present and must be removed with the old
 submit producer. Paper/probe/ingestion and diagnostic/failure-learning consumers
 remain release blockers. This checkpoint is not a PR, cutover or completed ticket.
+
+## 2026-10-04 23:38 UTC — native paper opening/submission/read checkpoint
+
+Opening a new paper now issues every published slot in the same transaction as
+its review session. The opening receipt freezes slot scope/order, feedback policy,
+question display metadata and independent per-slot issuance/group/key identities.
+A missing/unadmitted slot rolls the entire opening back; no mutable-row grading
+fallback is invented. Reopening an abandoned paper creates a fresh occurrence in
+the transition transaction; pause/resume and same-state replay keep the old one.
+
+Native paper requests validate those exact coordinates, save original responses
+before evaluation, and freeze the neutral participation/answer-sheet records.
+Concurrent retries reuse the original and the formal model execution receipt.
+Original changes conflict before another evaluation. A session reopened during
+execution cannot activate the old occurrence. Canonical response drafts and the
+answer-sheet capture save atomically, with save-epoch conflicts and submission
+archival preventing stale/autosave resurrection.
+
+Paper detail reconstructs public materials, native response slots and original
+references from issued revisions. The existing PfPaper controls now send canonical
+responses and complete attachment originals; options use published IDs. Each
+question keeps its own evaluation group. Draft restore/save/exit/keepalive share
+the native payload, and a new occurrence resets client capture/timing state.
+
+Buffered policy is enforced in submit, paper detail, the shelf counts and generic
+question history/failure reads. A native regression first demonstrated timeline
+leakage (failure visible before completion); the immutable capture now includes
+policy plus occurrence time, and the reader holds the verdict until that exact
+occurrence completes. Completing a later reopened session cannot reveal an older
+abandoned occurrence. Advice/solo cannot use a bound paper issuance to bypass the
+paper disclosure boundary. Original/effective evaluation references stay distinct.
+
+Verification: 47 DB tests across paper/native submission/durable/session reopen;
+58 UI tests across native paper interaction, autosave, capture, lifecycle and
+timing passed. After shelf/current-occurrence changes, the five paper DB tests
+passed again, including atomic opening failure, response changes, buffered/public
+reads, draft conflicts and abandoned-generation isolation. Typecheck, changed-file
+Biome, API/Postman generation and production build passed; final formatting and
+typecheck were repeated. No paid invocation, deployment, PR, independent review or
+CI for this worktree.
+
+The legacy paper producer/executor and its old fixtures are the immediate next
+removal step. Broader paper fixture migration is still required (including model
+claim/provenance, KC/family/mastery and snapshot invariants). Legacy deterministic
+or historical observations must not be confused with authorization to re-execute
+old scoring. Remaining release blockers still include legacy solo/durable/rejudge
+execution removal, probe/ingestion cutover, diagnostic/failure-learning consumers,
+full evidence target editing/media acceptance and complete frozen teaching input.

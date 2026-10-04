@@ -1,7 +1,8 @@
 import { z } from 'zod';
-
+import { GroupEvidence, PracticeIssuanceDto, ResponseSet } from '@/core/schema/assessment';
 import { ApiPageSchema } from '@/kernel/http-contracts';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
+import { CreateSubmissionBodySchema } from './assessment-contracts';
 
 /** Bound answer text copied into judge prompts and immutable paper events. */
 export const MAX_PAPER_ANSWER_CHARS = 12_000;
@@ -46,6 +47,8 @@ export const PaperAnswerDraftParamsSchema = z.object({
 });
 
 const PaperAnswerDraftBodyFields = {
+  assessment: CreateSubmissionBodySchema.optional(),
+  expected_save_epoch: z.number().int().nonnegative().optional(),
   question_id: z.string().min(1),
   part_ref: z.string().min(1).nullable().optional(),
   input_kind: z.enum(['text', 'option', 'image', 'voice']).default('text'),
@@ -66,6 +69,7 @@ export const CreatePaperAnswerDraftBodySchema = z.object({
 export const PaperAnswerDraftCreatedSchema = z.object({
   answer_id: z.string(),
   created: z.boolean(),
+  save_epoch: z.number().int().nonnegative().optional(),
 });
 
 export const PaperAnswerDraftSchema = z.object({
@@ -83,6 +87,7 @@ export const PaperAnswerDraftSchema = z.object({
 });
 
 const PaperSubmissionBodyFields = {
+  assessment: CreateSubmissionBodySchema.optional(),
   question_id: z.string().min(1),
   part_ref: z.string().min(1).nullable().optional(),
   answer_md: z.string().max(MAX_PAPER_ANSWER_CHARS),
@@ -111,7 +116,9 @@ export const CreatePaperSubmissionBodySchema = z.object({
 
 const PaperSubmissionIdentitySchema = z.object({
   attempt_event_id: z.string(),
-  judge_event_id: z.string(),
+  judge_event_id: z.string().nullable(),
+  evaluation_id: z.string().optional(),
+  status: z.enum(['effective', 'review_required']).optional(),
   answer_id: z.string(),
 });
 
@@ -174,7 +181,19 @@ const PaperSlotStateSchema = z.object({
     .nullable(),
 });
 
+export const PaperSlotAssessmentSchema = z.object({
+  issuance_id: z.string(),
+  evaluation_group_id: z.string(),
+  idempotency_key: z.string(),
+  save_epoch: z.number().int().nonnegative(),
+  practice_dto: PracticeIssuanceDto,
+  response_set: ResponseSet,
+  group_evidence: z.array(GroupEvidence),
+});
+export type PaperSlotAssessment = z.infer<typeof PaperSlotAssessmentSchema>;
+
 const PaperDetailSlotSchema = z.object({
+  assessment: PaperSlotAssessmentSchema.optional(),
   question_id: z.string(),
   part_ref: z.string().nullable(),
   section_index: z.number().int().nonnegative(),

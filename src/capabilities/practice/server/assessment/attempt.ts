@@ -36,6 +36,13 @@ export async function prepareFormalAttemptSubmission(
     .where(eq(assessment_issuance.issuance_id, request.issuance_id))
     .limit(1);
   if (!issuance) throw new ApiError('not_found', 'issued assessment not found', 404);
+  if (issuance.container_occurrence_ref?.startsWith('paper_') && entry !== 'paper_submit') {
+    throw new ApiError(
+      'paper_entry_required',
+      'paper issuance must use its bound submission entry',
+      409,
+    );
+  }
   const [revision] = await database
     .select()
     .from(question_revision)
@@ -172,6 +179,12 @@ export async function recordFormalAttemptCapture(
       revision_id: submission.revision_id,
       original_evaluation_id: candidateId,
       entry,
+      ...(capture.paper_artifact_id ? { paper_artifact_id: capture.paper_artifact_id } : {}),
+      ...(capture.paper_started_at ? { paper_started_at: capture.paper_started_at } : {}),
+      ...(capture.paper_feedback_policy
+        ? { paper_feedback_policy: capture.paper_feedback_policy }
+        : {}),
+      ...(capture.part_ref !== undefined ? { part_ref: capture.part_ref } : {}),
       response_md: capture.response_md ?? null,
       ...(capture.stream_item_id ? { stream_item_id: capture.stream_item_id } : {}),
       ...(capture.reasoning_trace?.trim() ? { reasoning_trace: capture.reasoning_trace } : {}),

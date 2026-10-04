@@ -492,6 +492,7 @@ export const startPaperSession = (artifactId: string): Promise<{ session_id: str
   });
 
 export interface PaperSlot {
+  assessment?: import('../api/paper-contracts').PaperSlotAssessment;
   question_id: string;
   part_ref: string | null;
   section_index: number;
@@ -559,6 +560,10 @@ export const getPaperDetail = (artifactId: string): Promise<PaperDetail> =>
   });
 
 type PaperWriteInput = {
+  assessment?: import('zod').infer<
+    typeof import('../api/assessment-contracts').CreateSubmissionBodySchema
+  >;
+  expected_save_epoch?: number;
   session_id: string;
   question_id: string;
   part_ref: string | null;
@@ -578,6 +583,9 @@ type PaperWriteInput = {
 
 export function buildPaperAnswerDraftBody(artifactId: string, input: PaperWriteInput) {
   return {
+    ...(input.assessment
+      ? { assessment: input.assessment, expected_save_epoch: input.expected_save_epoch }
+      : {}),
     paper_id: artifactId,
     question_id: input.question_id,
     part_ref: input.part_ref,
@@ -588,6 +596,7 @@ export function buildPaperAnswerDraftBody(artifactId: string, input: PaperWriteI
 
 export function buildPaperSubmissionBody(artifactId: string, input: PaperWriteInput) {
   return {
+    ...(input.assessment ? { assessment: input.assessment } : {}),
     paper_id: artifactId,
     question_id: input.question_id,
     part_ref: input.part_ref,

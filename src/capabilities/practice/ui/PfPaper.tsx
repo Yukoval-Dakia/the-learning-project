@@ -1,3 +1,4 @@
+import type { ResponseSetT, SlotResponseT } from '@/core/schema/assessment';
 // M2 练习面 — 卷模式（YUK-316）。
 // 设计基准 docs/design/loom-refresh/project/pface-paper.jsx：§6.4 缓冲反馈——
 // 作答全程零语义色（pip 只有「已答」的中性墨点），颜色在交卷瞬间才进场。
@@ -7,14 +8,19 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
-// YUK-1051 — 卷面作答换成通用 response 组件族。§6.4 缓冲反馈：作答全程零语义色
-// （ChoiceSetResponse 恒 feedback='none'，对错色只在交卷后的复盘出现）；草稿附件
-// 走既有 image_refs wire（服务端早已接受，UI 此前丢弃）。
+import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
 import { ChoiceSetResponse } from '@/ui/components/response/ChoiceSetResponse';
 import { EvaluationGroupPanel } from '@/ui/components/response/EvaluationGroupPanel';
 import { EvidenceComposer } from '@/ui/components/response/EvidenceComposer';
+// YUK-1051 — 卷面作答换成通用 response 组件族。§6.4 缓冲反馈：作答全程零语义色
+// （ChoiceSetResponse 恒 feedback='none'，对错色只在交卷后的复盘出现）；草稿附件
+// 走既有 image_refs wire（服务端早已接受，UI 此前丢弃）。
+import { ResponseSlotField, nativeSlotFieldSpec } from '@/ui/components/response/ResponseSlotField';
 import {
   type EvidenceAttachment,
+  isSlotResponseAnswered,
+  nativeResponseEntry,
+  nativeResponseValue,
   optionsFromChoicesMd,
 } from '@/ui/components/response/response-types';
 import { SaveStateChip } from '@/ui/components/response/SaveStateChip';
@@ -64,7 +70,9 @@ export function restoreEvidenceFromSlots(slots: readonly PaperSlot[]): EvidenceA
   const seen = new Map<string, string[]>();
   for (const s of slots) {
     const key = slotKey(s);
-    const refs = s.slot_state.submission?.answer_image_refs ?? s.slot_state.draft?.image_refs ?? [];
+    const refs = s.assessment
+      ? s.assessment.group_evidence.map((item) => item.evidence.asset.asset_id)
+      : (s.slot_state.submission?.answer_image_refs ?? s.slot_state.draft?.image_refs ?? []);
     for (const id of refs) {
       const list = seen.get(id);
       if (list) list.push(key);
@@ -73,6 +81,15 @@ export function restoreEvidenceFromSlots(slots: readonly PaperSlot[]): EvidenceA
   }
   return [...seen.entries()].map(([asset_id, keys]) => ({
     asset_id,
+    ...(slots
+      .flatMap((slot) => slot.assessment?.group_evidence ?? [])
+      .find((item) => item.evidence.asset.asset_id === asset_id)
+      ? {
+          original: slots
+            .flatMap((slot) => slot.assessment?.group_evidence ?? [])
+            .find((item) => item.evidence.asset.asset_id === asset_id)!.evidence,
+        }
+      : {}),
     // kind 留给 AssetEvidencePreview 按 content-type 解析（不猜）。
     slot_ids: allKeys.length > 0 && keys.length === allKeys.length ? null : keys,
   }));
@@ -175,8 +192,14 @@ export function PfPaper({
   const detail: PaperDetail | null = detailQ.data ?? null;
   const slots = useMemo(() => detail?.sections.flatMap((s) => s.slots) ?? [], [detail]);
 
+  const nativeOccurrenceId = slots[0]?.assessment?.issuance_id;
+  const previousNativeOccurrence = useRef<string | undefined>(undefined);
   const [pos, setPos] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [nativeResponses, setNativeResponses] = useState<Record<string, ResponseSetT>>({});
+  const nativeResponsesRef = useRef<Record<string, ResponseSetT>>({});
+  const nativeEpochs = useRef<Record<string, number>>({});
+  const nativeRestored = useRef<Record<string, string>>({});
   // YUK-1051 — 卷级证据附件（整页解题照默认绑定整个 evaluation group=本卷；可在
   // EvaluationGroupPanel 改绑子集）。slot 草稿/提交的 image_refs 从这里按绑定范围展开。
   const [evidence, setEvidence] = useState<EvidenceAttachment[]>([]);
@@ -269,8 +292,17 @@ export function PfPaper({
   // in place (keep the map identity so the unmount cleanup below always sees live timers).
   // answers must reset too: the backfill effect only fills undefined keys, so without this
   // a shared slot key would keep paper A's answer and skip paper B's server draft.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: artifactId is the reset trigger (reset-on-prop-change), not read in the body.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: artifactId and nativeOccurrenceId identify a fresh paper attempt.
   useEffect(() => {
+    if (
+      previousNativeOccurrence.current &&
+      nativeOccurrenceId &&
+      previousNativeOccurrence.current !== nativeOccurrenceId &&
+      sessionRef.current
+    ) {
+      clearPaperTiming(sessionRef.current, artifactId);
+    }
+    previousNativeOccurrence.current = nativeOccurrenceId;
     setAnswers({});
     setTrace({});
     setTraceOpen({});
@@ -285,6 +317,10 @@ export function PfPaper({
     exitingRef.current = false;
     submittingRef.current = false;
     answersRef.current = {};
+    nativeResponsesRef.current = {};
+    nativeEpochs.current = {};
+    nativeRestored.current = {};
+    setNativeResponses({});
     saveSeq.current = {};
     saveGen.current += 1;
     // Drop the previous paper's session so a pre-session autosave on the new paper flags
@@ -301,7 +337,7 @@ export function PfPaper({
     timingMsRef.current = {};
     timingSegmentRef.current = null;
     submittedDuringAttemptsRef.current.clear();
-  }, [artifactId]);
+  }, [artifactId, nativeOccurrenceId]);
 
   // Clear any pending debounce timers on unmount (no setState after teardown).
   useEffect(() => {
@@ -334,16 +370,33 @@ export function PfPaper({
         sessionOpenRef.current = true;
         timingMsRef.current = readPaperTiming(r.session_id, artifactId);
         setSessionReadyVersion((version) => version + 1);
+        void qc.invalidateQueries({ queryKey: ['paper', artifactId] });
       })
       .catch((e) => {
         if (saveGen.current !== gen) return;
         addToast(`开卷失败：${(e as Error).message}`, 'info', 'alert');
       });
-  }, [detail, artifactId, addToast]);
+  }, [detail, artifactId, addToast, qc]);
 
   // 草稿初值：服务端 draft / 已提交 answer 回填。
   useEffect(() => {
     if (slots.length === 0) return;
+    const nextNative = { ...nativeResponsesRef.current };
+    let changedNative = false;
+    for (const slot of slots) {
+      const bound = slot.assessment,
+        key = slotKey(slot);
+      if (bound && nativeRestored.current[key] !== bound.issuance_id) {
+        nextNative[key] = bound.response_set;
+        nativeEpochs.current[key] = bound.save_epoch;
+        nativeRestored.current[key] = bound.issuance_id;
+        changedNative = true;
+      }
+    }
+    if (changedNative) {
+      nativeResponsesRef.current = nextNative;
+      setNativeResponses(nextNative);
+    }
     setAnswers((cur) => {
       const next = { ...cur };
       for (const s of slots) {
@@ -418,6 +471,31 @@ export function PfPaper({
   // 草稿 PUT：成功清掉该 slot 的失败标记，失败则点亮——不再静默吞掉错误。返回本次是否
   // 落库（true=成功/无需保存，false=失败），供退出/关页 flush 如实计数未保存草稿。
   // Defined above the early return so the pagehide handler and exitPaper can reach it.
+  const nativePayloadFor = (key: string) => {
+    const bound = slots.find((slot) => slotKey(slot) === key)?.assessment;
+    if (!bound) return undefined;
+    return {
+      issuance_id: bound.issuance_id,
+      evaluation_group_id: bound.evaluation_group_id,
+      idempotency_key: bound.idempotency_key,
+      response_set: nativeResponsesRef.current[key] ?? bound.response_set,
+      group_evidence: evidenceRef.current
+        .filter((item) => item.slot_ids === null || item.slot_ids.includes(key))
+        .flatMap((item) =>
+          item.original
+            ? [
+                {
+                  evidence: item.original,
+                  target: bound.group_evidence.find(
+                    (saved) => saved.evidence.asset.asset_id === item.asset_id,
+                  )?.target ?? { scope: 'all_units' as const },
+                },
+              ]
+            : [],
+        ),
+    };
+  };
+
   const runSave = (
     key: string,
     questionId: string,
@@ -460,10 +538,14 @@ export function PfPaper({
             part_ref: partRef,
             answer_md: v,
             image_refs: refs,
+            assessment: nativePayloadFor(key),
+            expected_save_epoch: nativeEpochs.current[key],
           },
           { keepalive },
         )
-          .then(() => {
+          .then((ack) => {
+            if (saveGen.current === gen && ack?.save_epoch !== undefined)
+              nativeEpochs.current[key] = Math.max(nativeEpochs.current[key] ?? 0, ack.save_epoch);
             if (isLatest()) setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
             return true;
           })
@@ -529,6 +611,9 @@ export function PfPaper({
               question_id: d.questionId,
               part_ref: d.partRef,
               answer_md: d.answer,
+              image_refs: evidenceIdsForSlot(evidenceRef.current, d.key),
+              assessment: nativePayloadFor(d.key),
+              expected_save_epoch: nativeEpochs.current[d.key],
             }),
           ),
         )
@@ -656,6 +741,10 @@ export function PfPaper({
   const curSelectedIds = curOptions.filter((o) => o.text_md === curAnswerText).map((o) => o.id);
   const answeredCount = slots.filter(
     (s) =>
+      (nativeResponses[slotKey(s)]?.entries.some((entry) =>
+        isSlotResponseAnswered(nativeResponseValue(entry)),
+      ) ??
+        false) ||
       (answers[slotKey(s)] ?? '').trim().length > 0 ||
       evidenceIdsForSlot(evidence, slotKey(s)).length > 0,
   ).length;
@@ -799,6 +888,7 @@ export function PfPaper({
           question_id: s.question_id,
           part_ref: s.part_ref,
           answer_md: answers[key] ?? '',
+          assessment: nativePayloadFor(key),
           // YUK-1051 — 该 slot 绑定范围内的证据附件随提交冻结（与草稿同源展开）。
           image_refs: evidenceIdsForSlot(evidenceRef.current, key),
           latency_ms: timingMsRef.current[key] ?? 0,
@@ -874,6 +964,10 @@ export function PfPaper({
         {slots.map((s, i) => {
           // YUK-1051 — pip 的「已答」中性墨点也把绑定到该 slot 的证据算上（仍零语义色）。
           const has =
+            (nativeResponses[slotKey(s)]?.entries.some((entry) =>
+              isSlotResponseAnswered(nativeResponseValue(entry)),
+            ) ??
+              false) ||
             (answers[slotKey(s)] ?? '').trim().length > 0 ||
             evidenceIdsForSlot(evidence, slotKey(s)).length > 0;
           return (
@@ -898,18 +992,104 @@ export function PfPaper({
           </span>
         </div>
         {/* YUK-1051 — 结构化配图/共享材料与题面同版渲染（wire image_refs 恢复后）。 */}
-        {(cur.question.image_refs ?? []).map((assetId) => (
-          <StimulusFigure key={assetId} assetId={assetId} />
-        ))}
-        {/* YUK-1005 — same MathMarkdown convention as PfSolo; notation is resolved
-            per-question server-side on the paper face (see paper-detail.ts). */}
-        <MathMarkdown notation={cur.question.notation} className="pfs-stem">
-          {cur.question.prompt_md}
-        </MathMarkdown>
+        {cur.assessment ? (
+          <>
+            {cur.assessment.practice_dto.materials.map((material) => (
+              <div key={material.material_id}>
+                {material.content_md !== undefined ? (
+                  <MathMarkdown notation={cur.question.notation}>
+                    {material.content_md}
+                  </MathMarkdown>
+                ) : (
+                  <AssetEvidencePreview
+                    assetId={material.asset_id}
+                    label={material.caption ?? material.alt_text}
+                  />
+                )}
+              </div>
+            ))}
+            {cur.assessment.practice_dto.faces.map((face) => (
+              <MathMarkdown
+                key={face.part_id}
+                notation={cur.question.notation}
+                className="pfs-stem"
+              >
+                {face.prompt_md}
+              </MathMarkdown>
+            ))}
+          </>
+        ) : (
+          <>
+            {(cur.question.image_refs ?? []).map((assetId) => (
+              <StimulusFigure key={assetId} assetId={assetId} />
+            ))}
+            <MathMarkdown notation={cur.question.notation} className="pfs-stem">
+              {cur.question.prompt_md}
+            </MathMarkdown>
+          </>
+        )}
 
         {/* YUK-1051 — 作答控件换组件族。§6.4 缓冲反馈：恒 feedback='none'，作答全程
             零对错色（导航 pip 只有「已答」中性墨点）；对错色只属于交卷后的 PfRetro。 */}
-        {isChoice ? (
+        {cur.assessment ? (
+          <>
+            {cur.assessment.practice_dto.response_spec.slots.map((slot) => {
+              const spec = nativeSlotFieldSpec(slot);
+              if (!spec) return null;
+              const entry = nativeResponses[curKey]?.entries.find(
+                (item) => item.slot_id === slot.slot_id,
+              );
+              return (
+                <ResponseSlotField
+                  key={slot.slot_id}
+                  spec={spec}
+                  value={nativeResponseValue(entry)}
+                  label={slot.placement?.label}
+                  notation={cur.question.notation}
+                  feedback="none"
+                  ariaLabel={slot.placement?.label ?? '作答'}
+                  disabled={submittedKeys.has(curKey) || exiting}
+                  onChange={(value) => {
+                    const updated: SlotResponseT = nativeResponseEntry(slot, value, entry);
+                    const response: ResponseSetT = {
+                      entries: [
+                        ...(nativeResponsesRef.current[curKey]?.entries ?? []).filter(
+                          (item) => item.slot_id !== slot.slot_id,
+                        ),
+                        updated,
+                      ],
+                    };
+                    nativeResponsesRef.current = {
+                      ...nativeResponsesRef.current,
+                      [curKey]: response,
+                    };
+                    setNativeResponses(nativeResponsesRef.current);
+                    setAnswer(
+                      response.entries
+                        .map((item) => {
+                          const value = nativeResponseValue(item);
+                          return value?.kind === 'text' ? value.text : JSON.stringify(value);
+                        })
+                        .join('\n'),
+                    );
+                  }}
+                />
+              );
+            })}
+            <EvidenceComposer
+              text=""
+              onTextChange={() => {}}
+              showText={false}
+              attachments={evidence}
+              onAttachmentsChange={onEvidenceChange}
+              disabled={submittedKeys.has(curKey) || exiting}
+              onUploadingChange={setUploading}
+              slotLabels={Object.fromEntries(
+                slots.map((slot, i) => [slotKey(slot), `第 ${i + 1} 题`]),
+              )}
+            />
+          </>
+        ) : isChoice ? (
           <ChoiceSetResponse
             options={curOptions}
             mode="single"

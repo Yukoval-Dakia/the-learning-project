@@ -65,6 +65,7 @@ import {
   evaluation,
   evaluation_effective_head,
   event,
+  learning_session,
   question_revision,
 } from '@/db/schema';
 import {
@@ -801,10 +802,44 @@ export async function resolveVerdictsForNativeAttempts(
     db,
     valid.map((entry) => entry.groupId),
   );
+  const bufferedSessionIds = [
+    ...new Set(
+      anchors.flatMap((row) =>
+        row.payload.paper_feedback_policy === 'judge_now_show_later' && row.session_id
+          ? [row.session_id]
+          : [],
+      ),
+    ),
+  ];
+  const completedSessions = new Map<string, string>();
+  for (let offset = 0; offset < bufferedSessionIds.length; offset += QUERY_ID_CHUNK) {
+    const sessions = await db
+      .select({
+        id: learning_session.id,
+        status: learning_session.status,
+        started_at: learning_session.started_at,
+      })
+      .from(learning_session)
+      .where(
+        inArray(learning_session.id, bufferedSessionIds.slice(offset, offset + QUERY_ID_CHUNK)),
+      );
+    for (const session of sessions)
+      if (session.status === 'completed')
+        completedSessions.set(session.id, session.started_at.toISOString());
+  }
   return new Map(
     valid.map(({ row, groupId, submission, originalEvaluationId }) => [
       row.id,
-      { ...groups.get(groupId)!, submission, original_evaluation_id: originalEvaluationId },
+      {
+        ...groups.get(groupId)!,
+        submission,
+        original_evaluation_id: originalEvaluationId,
+        ...(row.payload.paper_feedback_policy === 'judge_now_show_later' &&
+        (typeof row.payload.paper_started_at !== 'string' ||
+          completedSessions.get(row.session_id ?? '') !== row.payload.paper_started_at)
+          ? { original: null, effective: null }
+          : {}),
+      },
     ]),
   );
 }

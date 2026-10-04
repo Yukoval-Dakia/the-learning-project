@@ -12,9 +12,13 @@ import { PAPER_INTENT_SOURCES } from '@/capabilities/practice/server/paper-inten
 import { countPaperSlots, readPaperSections } from '@/capabilities/practice/server/paper-sections';
 import { Artifact } from '@/core/schema/index';
 import type { Db, Tx } from '@/db/client';
-import { artifact, knowledge, learning_session } from '@/db/schema';
+import { artifact, event, knowledge, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
+import {
+  resolveVerdictsForAttempts,
+  resolveVerdictsForNativeAttempts,
+} from '@/kernel/read-models/assessment-verdict';
+import { PaperAssessmentBinding, paperBindingId } from './assessment/paper-issuance';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Shared knowledge name resolver (used by practice-read + paper-detail)
@@ -225,6 +229,7 @@ export async function getPracticeList(
       status: learning_session.status,
       artifact_id: learning_session.artifact_id,
       created_at: learning_session.created_at,
+      started_at: learning_session.started_at,
     })
     .from(learning_session)
     .where(
@@ -245,6 +250,38 @@ export async function getPracticeList(
   }
   const sessionIds = [...sessionByPaper.values()].map((s) => s.id);
 
+  const bindingIds = sessionRows
+    .filter((row) => sessionIds.includes(row.id))
+    .map((row) => paperBindingId(row.id, row.started_at));
+  const bindingRows = bindingIds.length
+    ? await db.select().from(event).where(inArray(event.id, bindingIds))
+    : [];
+  const nativeBindings = new Map(
+    bindingRows.map((row) => {
+      const binding = PaperAssessmentBinding.parse(row.payload);
+      return [binding.session_id, binding] as const;
+    }),
+  );
+  const nativeAnchors = sessionIds.length
+    ? await db
+        .select()
+        .from(event)
+        .where(
+          and(
+            inArray(event.session_id, sessionIds),
+            eq(event.action, 'experimental:assessment_attempt'),
+          ),
+        )
+    : [];
+  const currentNativeAnchors = nativeAnchors.filter((row) =>
+    nativeBindings
+      .get(row.session_id ?? '')
+      ?.slots.some((slot) => slot.issuance_id === row.payload.issuance_id),
+  );
+  const currentNativeIds = new Set(currentNativeAnchors.map((row) => row.id));
+  const nativeIds = new Set(nativeAnchors.map((row) => row.id));
+  const nativeVerdicts = await resolveVerdictsForNativeAttempts(db, currentNativeAnchors);
+
   // 3) Answered-slot counts per session: COUNT(DISTINCT slot) WHERE submitted
   //    (§4.10 Q9 — DISTINCT so append-only re-submits don't double-count).
   const posBySession = new Map<string, number>();
@@ -258,6 +295,13 @@ export async function getPracticeList(
     for (const r of posRows) {
       posBySession.set(r.session_id, r.pos);
     }
+  }
+
+  for (const sessionId of nativeBindings.keys()) {
+    posBySession.set(
+      sessionId,
+      currentNativeAnchors.filter((row) => row.session_id === sessionId).length,
+    );
   }
 
   // 4) Right/wrong per session, distinct by slot. We use the answer table as the
@@ -311,6 +355,16 @@ export async function getPracticeList(
     );
     for (const r of rwRows) {
       if (!r.session_id) continue;
+      if (nativeBindings.has(r.session_id) && !currentNativeIds.has(r.attempt_event_id)) continue;
+      if (nativeIds.has(r.attempt_event_id)) {
+        if (!currentNativeIds.has(r.attempt_event_id)) continue;
+        const outcome = nativeVerdicts.get(r.attempt_event_id)?.effective?.verdict.verdict;
+        const bucket = rightWrongBySession.get(r.session_id) ?? { right: 0, wrong: 0 };
+        if (outcome === 'correct' || outcome === 'partial') bucket.right++;
+        else if (outcome === 'incorrect') bucket.wrong++;
+        rightWrongBySession.set(r.session_id, bucket);
+        continue;
+      }
       // F1 (PR #309 round-4, YUK-215): an UN-JUDGED attempt (photo-only on a
       // text-only route — `unsupported_judge='true'`, no judge event) is neither
       // right nor wrong; it is "未判分". Skip it entirely so it never pollutes the
@@ -352,7 +406,9 @@ export async function getPracticeList(
   const papers: PracticePaperItem[] = paperRows.map((row) => {
     const parsed = Artifact.safeParse(row);
     const toolState = parsed.success ? parsed.data.tool_state : null;
-    const totalSlots = countPaperSlots(toolState);
+    const totalSlots =
+      nativeBindings.get(sessionByPaper.get(row.id)?.id ?? '')?.slots.length ??
+      countPaperSlots(toolState);
 
     const session = sessionByPaper.get(row.id) ?? null;
     const kIds = row.knowledge_ids ?? [];

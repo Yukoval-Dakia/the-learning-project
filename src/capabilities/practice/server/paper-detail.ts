@@ -114,6 +114,7 @@ export interface PaperSlotState {
 }
 
 export interface PaperDetailSlot {
+  assessment?: import('../api/paper-contracts').PaperSlotAssessment;
   /** The slot's question_id */
   question_id: string;
   /** StructuredQuestion part id; null for atomic questions */
@@ -249,6 +250,15 @@ export async function getPaperDetail(
     .limit(1);
   if (sessionRows[0]) {
     sessionInfo = { id: sessionRows[0].id, status: sessionRows[0].status };
+  }
+
+  if (sessionInfo) {
+    const { readPaperAssessmentBinding } = await import('./assessment/paper-issuance');
+    const binding = await readPaperAssessmentBinding(db, sessionInfo.id);
+    if (binding) {
+      const { getFrozenPaperDetail } = await import('./assessment/paper-detail');
+      return getFrozenPaperDetail(db, artifactRow, binding, sessionInfo.status);
+    }
   }
 
   // 4) Question faces — one IN query for all distinct question_ids.
