@@ -25,8 +25,10 @@ export interface AdminConfigProviderRow {
   /** credential env 变量**名字**（operator 自查用）；值永不序列化。 */
   readonly credential_env: string;
   readonly key_present: boolean;
-  /** isProviderImplemented（resolveTaskProvider 同一谓词）：reserved-but-unwired 如实标 false。 */
+  /** Chat availability only; typed-only providers can be wired while this is false. */
   readonly implemented: boolean;
+  /** Actual execution paths; absent for an older/uninjected facts source. */
+  readonly implemented_for?: { readonly chat: boolean; readonly typed: boolean };
   /** Actual native pi identity; null for providers using a non-pi execution path. */
   readonly pi_provider?: string | null;
   readonly models?: readonly { id: string; api: string; input: readonly string[] }[];

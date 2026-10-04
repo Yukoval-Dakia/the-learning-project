@@ -36,6 +36,7 @@ import {
   readGlobalProviderSwitch,
   resolveTaskProvider,
 } from '@/server/ai/providers';
+import { registeredTypedTaskBindings } from '@/server/ai/typed-primitive-runner';
 import {
   VISION_JUDGE_TASK_KINDS,
   visionJudgeProviderOverride,
@@ -76,25 +77,46 @@ function visionOverrideFacts(): { provider: ConfigEffectiveFact; model: ConfigEf
       return { provider: absent, model: absent };
     }
     const bindings = VISION_JUDGE_TASK_KINDS.map((kind) => {
-      const binding = resolveTaskProvider(kind, override);
-      if (!nativePiModel(binding.provider, binding.model))
-        throw new Error('native model unavailable');
-      assertModelProfileCapabilityFit(tasks[kind], binding.provider, binding.model);
-      return binding;
+      try {
+        const binding = resolveTaskProvider(kind, override);
+        if (!nativePiModel(binding.provider, binding.model))
+          throw new Error('native model unavailable');
+        assertModelProfileCapabilityFit(tasks[kind], binding.provider, binding.model);
+        // Project only public catalog identities; never return an auth-bearing binding.
+        return { kind, provider: binding.provider, model: binding.model };
+      } catch {
+        return { kind, provider: null, model: null };
+      }
     });
+    const diagnostic = bindings
+      .map((binding) =>
+        binding.provider === null
+          ? `${binding.kind}: 解析失败（请检查 provider、模型能力与服务端凭据）`
+          : `${binding.kind}: 可用（${binding.provider} / ${binding.model}）`,
+      )
+      .join('；');
+    if (bindings.some((binding) => binding.provider === null)) {
+      // A failed consumer prevents a single lane-wide effective value, but does
+      // not invalidate other consumers that independently resolved successfully.
+      const incomplete = { value: null, note: diagnostic };
+      return { provider: incomplete, model: incomplete };
+    }
     const models = new Set(bindings.map((binding) => binding.model));
     return {
-      provider: { value: override.provider },
+      provider: { value: override.provider, note: diagnostic },
       model:
         models.size === 1
-          ? { value: bindings[0].model }
-          : { value: null, note: '各视觉任务按自身配置解析到不同模型；没有单一 effective model。' },
+          ? { value: bindings[0].model, note: diagnostic }
+          : {
+              value: null,
+              note: `各视觉任务按自身配置解析到不同模型；没有单一 effective model。${diagnostic}`,
+            },
     };
   } catch {
     // Never serialize a binding or arbitrary error: either can contain credentials.
     const failed = {
       value: null,
-      note: '视觉通道解析失败：请检查 provider、模型能力与服务端凭据；运行时会报错，不会静默降级。',
+      note: '视觉 override reader 解析失败：请检查 provider、模型能力与服务端凭据；尚未取得各任务的解析结果。',
     };
     return { provider: failed, model: failed };
   }
@@ -179,12 +201,17 @@ function buildEffectiveValues(): AdminConfigRuntimeFacts['effective_values'] {
 }
 
 export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
+  const typedBindings = registeredTypedTaskBindings();
   const providers: AdminConfigProviderRow[] = providerAuthSurface().map((row) => ({
     name: row.name,
     auth_mode: row.authMode,
     credential_env: row.credentialEnvName,
     key_present: isProviderLaneReady(row.name),
     implemented: row.implemented,
+    implemented_for: {
+      chat: row.implemented,
+      typed: typedBindings.some((binding) => binding.provider === row.name),
+    },
     pi_provider: row.implemented ? piProviderId(row.name) : null,
     models: Object.entries(nativePiModels(row.name)).map(([id, model]) => ({
       id,

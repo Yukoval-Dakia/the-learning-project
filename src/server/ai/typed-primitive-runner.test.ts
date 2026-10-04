@@ -23,7 +23,7 @@ vi.mock('@/server/ai/log', () => ({
 
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
 
-import { runTypedPrimitiveTask } from './typed-primitive-runner';
+import { registeredTypedTaskBindings, runTypedPrimitiveTask } from './typed-primitive-runner';
 
 const KIND = 'JevScoringDecisionTask';
 const BASE_INPUT = {
@@ -77,6 +77,14 @@ afterEach(() => {
 });
 
 describe('runTypedPrimitiveTask — request contract', () => {
+  it('projects only registered typed bindings without resolving credentials or making requests', () => {
+    vi.stubEnv('OPENROUTER_API_KEY', '');
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'xiaomi');
+    expect(registeredTypedTaskBindings()).toEqual([
+      { kind: KIND, provider: 'openrouter', model: 'typesafe/jev-1.13' },
+    ]);
+    expect(logMocks.started).not.toHaveBeenCalled();
+  });
   it('posts the canonical typed body with pinned provider constraints and reports success', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {

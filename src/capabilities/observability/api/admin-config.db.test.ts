@@ -253,6 +253,7 @@ describe('GET /api/admin/config — injected runtime facts over HTTP (real build
         'auth_mode',
         'credential_env',
         'implemented',
+        'implemented_for',
         'key_present',
         'models',
         'name',
@@ -260,6 +261,28 @@ describe('GET /api/admin/config — injected runtime facts over HTTP (real build
       ]);
     }
   });
+
+  it.each([true, false])(
+    'distinguishes typed OpenRouter wiring with credential presence=%s',
+    async (present) => {
+      vi.stubEnv('OPENROUTER_API_KEY', present ? 'typed-capability-canary' : '');
+      const body = AdminConfigResponseSchema.parse(await (await get()).json());
+      expect(body.providers.find((row) => row.name === 'openrouter')).toMatchObject({
+        implemented: false,
+        implemented_for: { chat: false, typed: true },
+        pi_provider: null,
+        key_present: present,
+      });
+      expect(body.providers.find((row) => row.name === 'xiaomi')).toMatchObject({
+        implemented: true,
+        implemented_for: { chat: true, typed: false },
+      });
+      expect(body.providers.find((row) => row.name === 'gateway')).toMatchObject({
+        implemented_for: { chat: false, typed: false },
+      });
+      expect(JSON.stringify(body)).not.toContain('typed-capability-canary');
+    },
+  );
 
   it('serves schedules[] from the real declaration sources (manifest projection + boss/memory infra tables) with the read-only note', async () => {
     const body = AdminConfigResponseSchema.parse(await (await get()).json());
@@ -420,6 +443,16 @@ describe('GET /api/admin/config — P1 honest effective for degraded runtime ove
         expect(row?.effective).toBeNull();
         expect(row?.effective_note).toContain('解析失败');
       }
+      const diagnostic = body.keys.find(
+        (item) => item.key === 'lane.vision_judge.model',
+      )?.effective_note;
+      for (const kind of [
+        'StepsJudgeTask',
+        'MultimodalDirectJudgeTask',
+        'SourceGroundingVerifyTask',
+      ]) {
+        expect(diagnostic).toContain(`${kind}: 解析失败`);
+      }
       expect(JSON.stringify(body)).not.toContain('presence-only-openrouter-canary');
     },
   );
@@ -452,6 +485,12 @@ describe('GET /api/admin/config — P1 honest effective for degraded runtime ove
     expect(
       body.keys.find((row) => row.key === 'lane.vision_judge.model')?.effective_note,
     ).toContain('解析失败');
+    const diagnostic = body.keys.find(
+      (row) => row.key === 'lane.vision_judge.model',
+    )?.effective_note;
+    expect(diagnostic).toContain('StepsJudgeTask: 可用（xiaomi / mimo-v2.5）');
+    expect(diagnostic).toContain('MultimodalDirectJudgeTask: 可用（xiaomi / mimo-v2.5）');
+    expect(diagnostic).toContain('SourceGroundingVerifyTask: 解析失败');
     expect(JSON.stringify(body)).not.toContain('presence-only-xiaomi-canary');
   });
 

@@ -77,6 +77,26 @@ describe('configuration page', () => {
     await user.click(screen.getByRole('button', { name: '总览' }));
     expect(screen.getByText(/没有 worker 确认信息/)).toBeTruthy();
   });
+  it('shows typed wiring and per-consumer diagnostics while the chat option stays disabled', async () => {
+    const data = configFixture();
+    const diagnostic =
+      'StepsJudgeTask: 可用（xiaomi / mimo-v2.5）；SourceGroundingVerifyTask: 解析失败（请检查 provider、模型能力与服务端凭据）';
+    data.keys.push({
+      ...data.keys[0],
+      key: 'lane.vision_judge.model',
+      value: 'mimo-v2.5',
+      effective: null,
+      effective_note: diagnostic,
+    });
+    const { user, fetch } = setup(data);
+    expect(await screen.findByText('typed 已接线 · 凭据已配置')).toBeTruthy();
+    expect(screen.getByText('typed 专用通道')).toBeTruthy();
+    expect(screen.getByText(diagnostic)).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: '编辑 QuizGenTask' }));
+    const option = screen.getByRole('option', { name: /openrouter/ }) as HTMLOptionElement;
+    expect(option.disabled).toBe(true);
+    expect(fetch.mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
+  });
   it('distinguishes committed writes from stale snapshots and then refreshes', async () => {
     const data = configFixture();
     let refreshEpoch = 4;

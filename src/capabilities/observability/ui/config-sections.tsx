@@ -10,7 +10,7 @@ import {
   displayValue,
   inputClass,
   matchesSearch,
-  providerUnavailable,
+  providerStatus,
   tableClass,
   taskEditable,
 } from './config-model';
@@ -202,7 +202,7 @@ function Models({ data, query, save }: { data: ConfigData; query: string; save: 
               <th scope="col">Provider</th>
               <th scope="col">pi 原生身份</th>
               <th scope="col">状态</th>
-              <th scope="col">模型数</th>
+              <th scope="col">pi 模型数</th>
             </tr>
           </thead>
           <tbody>
@@ -211,8 +211,10 @@ function Models({ data, query, save }: { data: ConfigData; query: string; save: 
               .map((p) => (
                 <tr key={p.name}>
                   <th scope="row">{p.name}</th>
-                  <td>{p.pi_provider ?? '专用或未接线'}</td>
-                  <td>{providerUnavailable(p) ?? `已配置 · ${p.auth_mode}`}</td>
+                  <td>
+                    {p.pi_provider ?? (p.implemented_for?.typed ? 'typed 专用通道' : '未接线')}
+                  </td>
+                  <td>{providerStatus(p)}</td>
                   <td>{p.models?.length ?? 0}</td>
                 </tr>
               ))}

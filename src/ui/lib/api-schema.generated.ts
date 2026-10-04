@@ -2830,6 +2830,10 @@ export interface operations {
                             auth_mode: "key" | "oauth";
                             credential_env: string;
                             implemented: boolean;
+                            implemented_for?: {
+                                chat: boolean;
+                                typed: boolean;
+                            };
                             key_present: boolean;
                             models?: {
                                 api: string;

@@ -35,6 +35,13 @@ export function providerUnavailable(provider: ConfigProvider): string | null {
     return '未开放原生 chat 通道';
   return provider.key_present ? null : '服务端尚未配置凭据';
 }
+/** Catalog status is broader than the native chat editor's availability guard. */
+export function providerStatus(provider: ConfigProvider): string {
+  if (provider.implemented_for?.typed && !provider.implemented_for.chat) {
+    return provider.key_present ? 'typed 已接线 · 凭据已配置' : 'typed 已接线 · 服务端尚未配置凭据';
+  }
+  return providerUnavailable(provider) ?? `已配置 · ${provider.auth_mode}`;
+}
 export function taskEditable(task: ConfigTask): boolean {
   return task.override_wired.provider && task.override_wired.model;
 }
