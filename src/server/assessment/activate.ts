@@ -123,6 +123,8 @@ export interface ActivationSettleInput {
   };
   /** Explicit scheduling choice; never alters the candidate's grading evidence. */
   userRating?: z.infer<typeof FsrsRating>;
+  /** Server-observed receipt: reactivating an old candidate is not new practice. */
+  reusesActivation?: boolean;
   now: Date;
 }
 
@@ -253,6 +255,39 @@ export async function activateEvaluation(
   if (!head) return { status: 'head_missing' };
   if (head.submission_id !== sub.submission_id) return { status: 'coordinate_mismatch' };
 
+  // The choice belongs to the candidate's first activation, not only to its
+  // current effective tenure. Validate every old receipt before allowing ABA.
+  const receipts = await tx
+    .select({ payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, ASSESSMENT_ACTIVATION_ACTION),
+        eq(event.subject_kind, 'evaluation_group'),
+        eq(event.subject_id, cand.evaluation_group_id),
+        sql`${event.payload}->>'evaluation_id' = ${cand.evaluation_id}`,
+      ),
+    );
+  const firstChoice = receipts[0]?.payload?.user_rating;
+  if (
+    receipts.some((row) => row.payload?.user_rating !== firstChoice) ||
+    (firstChoice !== undefined && !FsrsRating.safeParse(firstChoice).success)
+  ) {
+    return { status: 'rating_conflict' };
+  }
+  const previouslyActivated = receipts.length > 0;
+  if (
+    input.user_rating !== undefined &&
+    (previouslyActivated || head.effective_evaluation_id === cand.evaluation_id) &&
+    input.user_rating !== firstChoice
+  )
+    return { status: 'rating_conflict' };
+  const userRating = previouslyActivated
+    ? firstChoice === undefined
+      ? undefined
+      : FsrsRating.parse(firstChoice)
+    : input.user_rating;
+
   // 5) 幂等重放：candidate 已是当前 effective ⇒ 已结算过，如实返回不重写。
   const cas = resolveActivationCas(
     {
@@ -269,23 +304,6 @@ export async function activateEvaluation(
   );
   if (!cas.ok) {
     if (cas.conflict === 'already_effective') {
-      // A retry cannot change the already committed scheduling choice. Omission
-      // is a read/replay; explicit choices must match the original receipt.
-      if (input.user_rating !== undefined) {
-        const [receipt] = await tx
-          .select({ payload: event.payload })
-          .from(event)
-          .where(
-            and(
-              eq(event.action, ASSESSMENT_ACTIVATION_ACTION),
-              eq(event.subject_id, cand.evaluation_group_id),
-              sql`${event.payload}->>'evaluation_id' = ${cand.evaluation_id}`,
-            ),
-          )
-          .limit(1);
-        if (receipt?.payload?.user_rating !== input.user_rating)
-          return { status: 'rating_conflict' };
-      }
       // 幂等重放：candidate 已是当前 effective ⇒ 已结算过，如实返回不重写。
       return {
         status: 'already_effective',
@@ -420,7 +438,8 @@ export async function activateEvaluation(
     issuance,
     questionGroupId,
     inputScope,
-    userRating: input.user_rating,
+    userRating,
+    reusesActivation: previouslyActivated,
     now,
   });
 
@@ -479,7 +498,7 @@ export async function activateEvaluation(
       generation: nextGeneration,
       effect,
       attempt: cand.attempt,
-      ...(input.user_rating === undefined ? {} : { user_rating: input.user_rating }),
+      ...(userRating === undefined ? {} : { user_rating: userRating }),
     } satisfies Record<string, unknown>,
   });
 

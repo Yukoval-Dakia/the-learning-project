@@ -521,6 +521,95 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     });
   });
 
+  it.each(['again', 'hard', undefined] as const)(
+    '历史候选重激活保留首次评级，重复不新增复习：%s',
+    async (rating) => {
+      await seedKnowledge('kc_a', { domain: 'dom_x' });
+      const seed = await seedChain('rating_history', { kcs: ['kc_a'] });
+      await seedEvaluation(seed, 'rating_a', { unitResults: [unitResult(`${seed.qid}::u`, 1)] });
+      await seedEvaluation(seed, 'rating_b', {
+        attempt: 2,
+        unitResults: [unitResult(`${seed.qid}::u`, 0)],
+        aggregate: { kind: 'points_total', points: 0, policy: { kind: 'sum' } },
+      });
+      expect(
+        await activate('rating_a', { effectiveId: null, generation: 0 }, undefined, 'hard'),
+      ).toMatchObject({ status: 'activated' });
+      expect(await activate('rating_b', { effectiveId: 'rating_a', generation: 1 })).toMatchObject({
+        status: 'activated',
+      });
+      const before = await fsrsRow('knowledge', 'kc_a');
+      const changed = await activate(
+        'rating_a',
+        { effectiveId: 'rating_b', generation: 2 },
+        undefined,
+        rating,
+      );
+      expect
+        .soft(changed)
+        .toMatchObject({ status: rating === 'again' ? 'rating_conflict' : 'activated' });
+      expect.soft(await fsrsRow('knowledge', 'kc_a')).toEqual(before);
+      const repeat = await activate(
+        'rating_a',
+        { effectiveId: 'rating_b', generation: 2 },
+        undefined,
+        rating,
+      );
+      expect
+        .soft(repeat)
+        .toMatchObject({ status: rating === 'again' ? 'rating_conflict' : 'already_effective' });
+      expect.soft(await fsrsRow('knowledge', 'kc_a')).toEqual(before);
+      expect
+        .soft(await masteryRow('kc_a'))
+        .toMatchObject({ evidence_count: 1, success_count: rating === 'again' ? 0 : 1 });
+    },
+  );
+
+  it('独立新练习不受上次用户评级守卫影响，FSRS 与 theta 均累计', async () => {
+    await seedKnowledge('kc_a', { domain: 'dom_x' });
+    const first = await seedChain('first_rating', { kcs: ['kc_a'] });
+    await seedEvaluation(first, 'first_ev', { unitResults: [unitResult(`${first.qid}::u`, 1)] });
+    await activate('first_ev', { effectiveId: null, generation: 0 }, undefined, 'hard');
+    const laterTime = new Date(NOW.getTime() + 86400000);
+    const later = await seedChain('later_rating', { kcs: ['kc_a'], submittedAt: laterTime });
+    await seedEvaluation(later, 'later_ev', { unitResults: [unitResult(`${later.qid}::u`, 1)] });
+    expect(
+      await activate('later_ev', { effectiveId: null, generation: 0 }, laterTime),
+    ).toMatchObject({ status: 'activated', effect: 'applied' });
+    const row = await fsrsRow('knowledge', 'kc_a');
+    expect.soft(row?.state?.reps).toBe(2);
+    expect.soft(new Date(row?.state?.last_review ?? 0).toISOString()).toBe(laterTime.toISOString());
+    expect.soft(await masteryRow('kc_a')).toMatchObject({ evidence_count: 2, success_count: 2 });
+    expect((await settlementEvents(later.groupId))[0].payload).toMatchObject({
+      rating_source: 'verdict',
+      effects: { fsrs_applied: ['knowledge:kc_a'] },
+    });
+  });
+
+  it('后续独立练习之后再重评旧用户评级，按原评级重放后续排程', async () => {
+    await seedKnowledge('kc_a', { domain: 'dom_x' });
+    const first = await seedChain('past_rating', { kcs: ['kc_a'] });
+    await seedEvaluation(first, 'past_ev', { unitResults: [unitResult(`${first.qid}::u`, 1)] });
+    await activate('past_ev', { effectiveId: null, generation: 0 }, undefined, 'hard');
+    const laterTime = new Date(NOW.getTime() + 86400000);
+    const later = await seedChain('newer_rating', { kcs: ['kc_a'], submittedAt: laterTime });
+    await seedEvaluation(later, 'newer_ev', { unitResults: [unitResult(`${later.qid}::u`, 1)] });
+    await activate('newer_ev', { effectiveId: null, generation: 0 }, laterTime);
+    const before = await fsrsRow('knowledge', 'kc_a');
+    await seedEvaluation(first, 'past_regrade', {
+      attempt: 2,
+      unitResults: [unitResult(`${first.qid}::u`, 0)],
+      aggregate: { kind: 'points_total', points: 0, policy: { kind: 'sum' } },
+    });
+    expect(
+      await activate('past_regrade', { effectiveId: 'past_ev', generation: 1 }, laterTime),
+    ).toMatchObject({ status: 'activated', effect: 'applied' });
+    expect.soft((await fsrsRow('knowledge', 'kc_a'))?.state).toEqual(before?.state);
+    expect
+      .soft(await masteryRow('kc_a'))
+      .toMatchObject({ evidence_count: 2, success_count: 1, fail_count: 1 });
+  });
+
   it('D15 manual/self_report：只写 FSRS，θ̂ 不写（无 self-report θ̂）', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
     const seed = await seedChain('s5', { kcs: ['kc_a'] });

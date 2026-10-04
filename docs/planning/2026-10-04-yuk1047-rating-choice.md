@@ -17,8 +17,8 @@ The activation receipt freezes the explicit choice in the same transaction as
 learning effects and the effective head. Repeating the same choice is idempotent;
 an omitted choice is a replay/read. Supplying a different choice for an already
 active candidate returns `rating_conflict`, including concurrent first activation.
-A later automatic regrade preserves the last user FSRS writer while independently
-correcting theta. This does not add an edit-existing-rating operation.
+A later automatic regrade preserves the scheduling choice for that occurrence
+while independently correcting theta. Other occurrences continue scheduling normally. This does not add an edit-existing-rating operation.
 
 No historical rows or frozen replay plans are rewritten. Existing replay uses
 its stored rating and source. No admission bypass, model execution, API/UI
@@ -31,3 +31,18 @@ Three formal DB regressions failed first. After the fix, 107 scoped unit cases,
 evaluation), typecheck, lint (299 existing warnings), production build and ten
 audits passed. Tests additionally cover the three-value schema and concurrent
 conflicting ratings. Independent initial review and exact-head CI are pending.
+
+Initial review confirmed two P1 defects: rating checks covered only the currently
+effective candidate, and the old shared-card user guard also blocked later
+independent practices. Formal ABA/new-occurrence regressions failed first.
+Activation now validates all previous receipts for the candidate, reuses its
+original choice on reactivation and rejects contradictory or changed choices.
+Reactivation does not treat the old choice as a new scheduling event.
+
+The FSRS guard now reads actual user-write receipts for this evaluation group,
+including segments preserved across supersession. It does not protect other
+groups. An additional interleaved regression first failed: user-rated A, later
+automatic B, then regrade A changed the FSRS trajectory. Preserving A's segment
+while replaying B from its stored plan fixes that case without an extra practice.
+All 93 scoped DB cases pass after the consolidated repair, including historical
+replay, joint scope, concurrency, automatic theta and manual scheduling.

@@ -933,15 +933,9 @@ export async function learningSettlement(input: ActivationSettleInput): Promise<
     return 'failed_pending';
   }
   const replacedMember = replaced[0] ?? null;
-  // user-rating 守卫（D4 对偶，YUK-1093 P1-2）：被覆写侧的 live FSRS 状态若
-  // 最后一次由 user rating（manual/self_report）结算写入 ⇒ 其 FSRS 段不被本
-  // 层静默覆盖；本次 FSRS 也不再写（保持用户评级）。θ̂ 段照常 revert/更正
-  // （判分证据独立）。
-  //
-  // 「直接前驱」不足以判明：manual→auto→auto 链上中间那环经守卫只写了 θ̂，
-  // 卡面仍是 manual 那环的；只看直接前驱会让第二次纠正静默覆盖用户调度。
-  // 检查面 = 我【将写】的 FSRS 主体 ∪ 被替换结算【写过】的 FSRS 主体（事件
-  // 已死/非结算写者 ⇒ 不算用户来源，照旧让位 / 由 unattributed 检测接管）。
+  // A scheduling choice belongs to this occurrence. Preserve it across its
+  // regrades even after later occurrences have advanced the shared card; those
+  // later occurrences are reverted/replayed below from their own frozen plans.
   const fsrsAtRisk = new Set<string>();
   if (plan.rating !== null) {
     for (const s of plan.fsrsSubjects) fsrsAtRisk.add(subjectKey(s.kind, s.id));
@@ -949,10 +943,11 @@ export async function learningSettlement(input: ActivationSettleInput): Promise<
   if (replacedMember !== null) {
     for (const s of replacedMember.fsrsApplied) fsrsAtRisk.add(s);
   }
-  const lastWriterIsUser = await preservedUserRatingExists(tx, rows, [...fsrsAtRisk]);
+  const occurrenceHasUserRating = preservedUserRatingExists(rows, [...fsrsAtRisk], plan.groupId);
   // 评级 provenance 随链携带「直到显式被另一个用户评级替换」：本次评级同样
   // 来自用户 ⇒ 不保留（新评级正常落位）；verdict 评级 ⇒ 保留用户排程。
-  const preserveUserRating = plan.ratingSource !== 'user' && lastWriterIsUser;
+  const preserveUserRating =
+    (plan.ratingSource !== 'user' || input.reusesActivation === true) && occurrenceHasUserRating;
 
   // ---- replay 闭包：occurrence ≥ mine 且与我的写入主体相交的 live 结算 ----
   // YUK-1093 P1-3 — 种子 = 本结算主体 ∪ 被替换结算主体。全量 regrade（如
@@ -1140,51 +1135,22 @@ async function writeReplayRequired(
   });
 }
 
-/**
- * D4 对偶 — user-rating provenance 回溯（YUK-1093 P1-2）。
- *
- * live FSRS 卡的【最后结算写入者】是 `material_fsrs_state.last_review_event_id`：
- * skip-FSRS 事件（前次守卫触发）从不写卡，自然不会出现在该字段上 —— 所以
- * 「沿 settlement 链回溯到最近真正落 FSRS 的事件」恰好落在这枚指针上，
- * supersedes/replay 链都已经由它浓缩（写者是 live 或 dead 均可，只看
- * rating_source）。本次结算若覆写这些主体中的任意一行，且该行的最后结算
- * 写入是 user rating（manual/self_report）⇒ 守卫成立。
- */
-async function preservedUserRatingExists(
-  tx: Tx,
+/** User FSRS writes remain the scheduling authority for their own occurrence.
+ * A later correction can supersede the event without undoing its FSRS segment,
+ * so both live and preserved historical receipts matter. Other groups never
+ * qualify; their schedules continue normally and are replayed in occurrence order. */
+function preservedUserRatingExists(
   rows: SettlementEventRow[],
   subjectKeys: readonly string[],
-): Promise<boolean> {
-  if (subjectKeys.length === 0) return false;
-  const ratingSourceById = new Map<string, SettlementPlan['ratingSource']>();
-  for (const row of rows) {
-    if (row.inputs !== null) ratingSourceById.set(row.id, row.inputs.ratingSource);
-  }
-  const wanted = new Map<string, string>();
-  for (const key of subjectKeys) {
-    const i = key.indexOf(':');
-    if (i > 0) wanted.set(key.slice(i + 1), key.slice(0, i));
-  }
-  if (wanted.size === 0) return false;
-  const fsrsRows = await tx
-    .select({
-      subject_kind: material_fsrs_state.subject_kind,
-      subject_id: material_fsrs_state.subject_id,
-      last_review_event_id: material_fsrs_state.last_review_event_id,
-    })
-    .from(material_fsrs_state)
-    .where(
-      and(
-        inArray(material_fsrs_state.subject_kind, ['knowledge', 'question']),
-        inArray(material_fsrs_state.subject_id, [...wanted.keys()]),
-      ),
-    );
-  for (const row of fsrsRows) {
-    if (wanted.get(row.subject_id) !== row.subject_kind) continue;
-    const writer = row.last_review_event_id;
-    if (writer !== null && ratingSourceById.get(writer) === 'user') return true;
-  }
-  return false;
+  groupId: string,
+): boolean {
+  const wanted = new Set(subjectKeys);
+  return rows.some(
+    (row) =>
+      row.groupId === groupId &&
+      row.inputs?.ratingSource === 'user' &&
+      row.fsrsApplied.some((key) => wanted.has(key)),
+  );
 }
 
 /**

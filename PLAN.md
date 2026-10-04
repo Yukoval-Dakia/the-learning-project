@@ -79,7 +79,7 @@
 - YUK-1047/#1562已交付main ad8dad75（20:18UTC）：94unit72DB/全部本地gate；初审1项内嵌图P1先RED后修，唯一验证3原探针5分支探针94unit通过；exact-head CI37230475644实际82迁移34浏览器/17分钟窗通过。八入口仍legacy，票In Progress。
 - YUK-1047/#1563：初审确认失败已知费用低估、成功缺usage误记零两项P1，正式3DB先RED后修。修复后281unit30DB/typecheck/lint299/build/11audits通过；真实pi离线SSE覆盖缺usage/明确零/非零。初次CI任务清单四→五断言已修；唯一验证审100unit+原3DB/真实driver探针通过，新CI37232936402（82迁移34浏览器）已绿，17分钟窗至20:56:36。八正式入口仍legacy。
 
-- YUK-1047后续评级片：独立worktree修复D14手动FSRS与自动theta独立、D16 assisted须显式手动FSRS；3DB先RED，107unit88DB/全部本地gates通过，独立初审待收口。
+- YUK-1047后续评级片：独立worktree修复D14手动FSRS与自动theta独立、D16 assisted须显式手动FSRS；3DB先RED，107unit88DB/本地gates通过；初审2P1（历史重激活改评级、用户守卫吞新练习）正式回归先RED后修，交错新练习后重评再补1RED。修复后93DB通过，唯一验证审待收口。
 
 ## NEXT
 
