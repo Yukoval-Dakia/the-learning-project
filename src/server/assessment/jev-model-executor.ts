@@ -125,6 +125,7 @@ function typedState(
 ): Record<string, unknown> {
   return {
     submission: {
+      member_submission_ids: request.submission_ids ?? [request.submission_id],
       entries: entries.map((entry) => projectSlotResponse(entry)),
       group_evidence: groupEvidence.map((item) => ({
         evidence_id: item.evidence.evidence_id,

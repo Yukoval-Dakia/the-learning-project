@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。Linear归零持续推进，当前62项未完成；1047/#1559材料片已合入main093c0c24。当前单线1045准入快照与激活保护；766恢复取舍与588 UI具体方案待回复，依赖不追新。
+> 更新于2026-10-04。Linear归零持续推进，当前61项未完成；1045/#1560已合入main d815df4b。当前单线1091联合组冻结输入、完整评估与结算读面；766恢复取舍与588 UI具体方案待回复，依赖不追新。
 
 ## NOW
 
@@ -73,11 +73,13 @@
 - YUK-1120/#1557已合入main d8e57a80：76unit/50DB、本地gates、独立61unit/50DB、exact-head CI37220574124（82migration/34browser实际运行）通过，17分钟窗完成，Linear Done。修复契约路径冻结发题分母/读面/结算；正式入口仍legacy，原1047已按源码证据重新打开。
 - YUK-1047/#1558已交付main6de53239：30unit/全部本地gate/独立初审/exact-head CI37222377773（82迁移34浏览器）/17分钟窗通过；发布证据不再将epoch冒充迁移完成。八入口仍legacy，票保持In Progress。材料片#1559已交付main093c0c24：72unit51DB/全部本地gates/独立初审/CI37224007026（82迁移34浏览器）/17分钟窗通过，历史revision/binding不重写。
 
-- YUK-1045重新打开并实施：实际candidate缺准入快照，withheld/changed generation被跳过，两条隔离DB探针及9项正式断言先RED。服务端执行前快照与activation保护已实现；手动/自评/历史重放保留；初审来源伪装P1已修，116unit77DB与全部本地gates通过，唯一验证审/CI/17分钟窗待完成。
+- YUK-1045/#1560已交付main d815df4b（19:08UTC）：116unit77DB/全部本地gates/独立初审与唯一P1验证审/CI37226077585（82迁移34浏览器）/17分钟窗通过，Linear Done。缺准入快照与来源伪装已修，历史不回填。
+
+- YUK-1091当前实施：正式联合组4项断言先RED；固定head锚定、完整成员快照与core联判、DB seal、结算v3/读面/反馈已接线；138unit136DB（含迁移导入/备份）及本地gates通过；82项完整迁移通过；独立review/CI待完成。
 
 ## NEXT
 
-1. 先交付1045服务端准入快照与激活保护，再推进1047正式入口迁移；1091联合成员定稿仍前置，八入口未完成前不标Done。766恢复LIGHT/FULL与588 UI具体预审待owner回复，1091联合组模型仍Todo；不以单批合并为终点。
+1. 先交付1091联合成员定稿、完整评估与结算读面，再推进1047正式入口迁移；八入口未完成前不标Done。766恢复LIGHT/FULL与588 UI具体预审待owner回复，1091联合组模型仍Todo；不以单批合并为终点。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 

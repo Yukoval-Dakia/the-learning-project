@@ -39,10 +39,17 @@
 //   replay 产生的新行做判定。
 
 import { and, asc, eq, inArray } from 'drizzle-orm';
+import { ZodError } from 'zod';
+import {
+  evaluationMemberFromRows,
+  freezeEvaluationInput,
+  matchesEvaluationInput,
+} from '@/core/assessment-input';
 import {
   EvaluationContractError,
   projectIssuedScoringBasis,
 } from '@/core/schema/assessment/evaluation';
+import { GroupInputContractError } from '@/core/schema/assessment/group-input';
 import type { EvaluationRecordT } from '@/core/schema/assessment/judgment';
 import type { ScoringBasisT } from '@/core/schema/assessment/scoring';
 import {
@@ -512,13 +519,14 @@ export async function resolveVerdictsForGroups(
   const revisionIds = [...new Set(submissions.map((s) => s.revision_id))];
   const revisionRows: Pick<
     typeof question_revision.$inferSelect,
-    'revision_id' | 'structure' | 'response_spec' | 'scoring_basis'
+    'revision_id' | 'integrity_digest' | 'structure' | 'response_spec' | 'scoring_basis'
   >[] = [];
   for (let offset = 0; offset < revisionIds.length; offset += QUERY_ID_CHUNK) {
     const chunk = revisionIds.slice(offset, offset + QUERY_ID_CHUNK);
     const rows = await db
       .select({
         revision_id: question_revision.revision_id,
+        integrity_digest: question_revision.integrity_digest,
         scoring_basis: question_revision.scoring_basis,
         structure: question_revision.structure,
         response_spec: question_revision.response_spec,
@@ -529,18 +537,11 @@ export async function resolveVerdictsForGroups(
   }
   const revisionById = new Map(revisionRows.map((r) => [r.revision_id, r]));
   const issuanceIds = [...new Set(submissions.map((s) => s.issuance_id))];
-  const issuanceRows: Pick<
-    typeof assessment_issuance.$inferSelect,
-    'issuance_id' | 'revision_id' | 'part_ids'
-  >[] = [];
+  const issuanceRows: (typeof assessment_issuance.$inferSelect)[] = [];
   for (let offset = 0; offset < issuanceIds.length; offset += QUERY_ID_CHUNK) {
     issuanceRows.push(
       ...(await db
-        .select({
-          issuance_id: assessment_issuance.issuance_id,
-          revision_id: assessment_issuance.revision_id,
-          part_ids: assessment_issuance.part_ids,
-        })
+        .select()
         .from(assessment_issuance)
         .where(
           inArray(
@@ -551,22 +552,39 @@ export async function resolveVerdictsForGroups(
     );
   }
   const issuanceById = new Map(issuanceRows.map((r) => [r.issuance_id, r]));
-  // 同 revision 可以有不同 issuance 子集，缓存键必须是 submission 坐标。
-  const basisBySubmission = new Map<string, ScoringBasisT>();
-  for (const sub of submissions) {
-    const revision = revisionById.get(sub.revision_id);
-    const issuance = issuanceById.get(sub.issuance_id);
-    if (!revision || !issuance || issuance.revision_id !== sub.revision_id) continue;
+  const basisForEvaluation = (row: EvaluationRow): ScoringBasisT | undefined => {
+    const groupMembers = submissions.filter(
+      (sub) => sub.evaluation_group_id === row.evaluation_group_id,
+    );
+    const anchorRow = groupMembers.find((sub) => sub.submission_id === row.submission_id);
+    const revision = anchorRow && revisionById.get(anchorRow.revision_id);
+    if (!anchorRow || !revision) return undefined;
     try {
-      basisBySubmission.set(
-        sub.submission_id,
-        projectIssuedScoringBasis(revision, issuance.part_ids),
+      const members = groupMembers.map((sub) => {
+        const issuance = issuanceById.get(sub.issuance_id);
+        if (!issuance)
+          throw new GroupInputContractError('invalid_group_input', 'missing member issuance');
+        return evaluationMemberFromRows(sub, issuance);
+      });
+      const anchor = members.find(
+        (member) => member.submission.submission_id === row.submission_id,
       );
+      if (!anchor) return undefined;
+      const actual = freezeEvaluationInput(anchor.submission, revision, members);
+      const snapshot = row.provenance?.input_snapshot;
+      if (snapshot == null ? members.length !== 1 : !matchesEvaluationInput(snapshot, actual))
+        return undefined;
+      return projectIssuedScoringBasis(revision, actual.issued_part_ids);
     } catch (error) {
-      if (!(error instanceof EvaluationContractError)) throw error;
-      // 已存记录的 scope 不可投影：读面明确 unavailable，不退回整题分母。
+      if (
+        !(error instanceof EvaluationContractError) &&
+        !(error instanceof GroupInputContractError) &&
+        !(error instanceof ZodError)
+      )
+        throw error;
+      return undefined;
     }
-  }
+  };
 
   // original 轨：第一条 active activation 事件的 evaluation_id（retract 的
   // activation 收据不算「第一判生效」）。
@@ -601,7 +619,7 @@ export async function resolveVerdictsForGroups(
   }
 
   const project = (row: EvaluationRow): EvaluationVerdict | null => {
-    const basis = basisBySubmission.get(row.submission_id);
+    const basis = basisForEvaluation(row);
     return {
       evaluation_id: row.evaluation_id,
       attempt: row.attempt,
