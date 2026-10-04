@@ -74,6 +74,7 @@ import type {
 } from '@/core/schema/assessment/ids';
 import { ActivateEvaluationIntent, resolveActivationCas } from '@/core/schema/assessment/ids';
 import { EvaluationProvenance, type EvaluationRecordT } from '@/core/schema/assessment/judgment';
+import { FsrsRating } from '@/core/schema/business';
 import type { Tx } from '@/db/client';
 import {
   assessment_issuance,
@@ -81,6 +82,7 @@ import {
   evaluation,
   evaluation_effective_head,
   evaluation_group,
+  event,
   question,
   question_group_lifecycle,
   question_revision,
@@ -119,6 +121,10 @@ export interface ActivationSettleInput {
     occurrence_at: string;
     member_submission_ids: string[];
   };
+  /** Explicit scheduling choice; never alters the candidate's grading evidence. */
+  userRating?: z.infer<typeof FsrsRating>;
+  /** Server-observed receipt: reactivating an old candidate is not new practice. */
+  reusesActivation?: boolean;
   now: Date;
 }
 
@@ -147,6 +153,7 @@ export const settlementUnavailable: LearningSettlementPort = () => {
 // ---------- 输入契约（zod 沿用 REQUIRED-null CAS 语义） ----------
 
 export const ActivateEvaluationRequest = ActivateEvaluationIntent.extend({
+  user_rating: FsrsRating.optional(),
   /**
    * 调用方的附加 generation 约束。自动评分的权威证据来自 candidate 内
    * 服务端封存的 admission_snapshot；本字段不能覆盖或补造缺失快照。
@@ -165,7 +172,8 @@ export type ActivateEvaluationResult =
         | 'not_completed'
         | 'head_missing'
         | 'coordinate_mismatch'
-        | 'stale_admission';
+        | 'stale_admission'
+        | 'rating_conflict';
     }
   | { status: 'cas_conflict'; conflict: 'stale_head' | 'generation_mismatch' };
 
@@ -246,6 +254,39 @@ export async function activateEvaluation(
     .limit(1);
   if (!head) return { status: 'head_missing' };
   if (head.submission_id !== sub.submission_id) return { status: 'coordinate_mismatch' };
+
+  // The choice belongs to the candidate's first activation, not only to its
+  // current effective tenure. Validate every old receipt before allowing ABA.
+  const receipts = await tx
+    .select({ payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, ASSESSMENT_ACTIVATION_ACTION),
+        eq(event.subject_kind, 'evaluation_group'),
+        eq(event.subject_id, cand.evaluation_group_id),
+        sql`${event.payload}->>'evaluation_id' = ${cand.evaluation_id}`,
+      ),
+    );
+  const firstChoice = receipts[0]?.payload?.user_rating;
+  if (
+    receipts.some((row) => row.payload?.user_rating !== firstChoice) ||
+    (firstChoice !== undefined && !FsrsRating.safeParse(firstChoice).success)
+  ) {
+    return { status: 'rating_conflict' };
+  }
+  const previouslyActivated = receipts.length > 0;
+  if (
+    input.user_rating !== undefined &&
+    (previouslyActivated || head.effective_evaluation_id === cand.evaluation_id) &&
+    input.user_rating !== firstChoice
+  )
+    return { status: 'rating_conflict' };
+  const userRating = previouslyActivated
+    ? firstChoice === undefined
+      ? undefined
+      : FsrsRating.parse(firstChoice)
+    : input.user_rating;
 
   // 5) 幂等重放：candidate 已是当前 effective ⇒ 已结算过，如实返回不重写。
   const cas = resolveActivationCas(
@@ -397,6 +438,8 @@ export async function activateEvaluation(
     issuance,
     questionGroupId,
     inputScope,
+    userRating,
+    reusesActivation: previouslyActivated,
     now,
   });
 
@@ -455,6 +498,7 @@ export async function activateEvaluation(
       generation: nextGeneration,
       effect,
       attempt: cand.attempt,
+      ...(userRating === undefined ? {} : { user_rating: userRating }),
     } satisfies Record<string, unknown>,
   });
 

@@ -155,7 +155,7 @@ interface SettlementPlan {
   verdict: { verdict: string; reason: string; points: number | null; normalized: number | null };
   /** D14 评级；null = 不调度（unsupported/无 ratable verdict）。 */
   rating: 'again' | 'hard' | 'good' | null;
-  /** 评级来源：'user' = manual/self_report provenance（用户已确认评级）。 */
+  /** 'user' = explicit activation choice or manual/self_report provenance. */
   ratingSource: 'verdict' | 'user' | 'none';
   scopeVersion: number;
   scopeKcIds: string[];
@@ -169,6 +169,8 @@ interface SettlementPlan {
 }
 
 interface AppliedSettlementEvent {
+  /** A retained scheduling segment; its former theta/calibration is already undone. */
+  fsrsOnly: boolean;
   id: string;
   groupId: string;
   evaluationId: string;
@@ -358,9 +360,17 @@ function derivePlan(input: ActivationSettleInput, scope: SettlementScope): Settl
   });
   const thetaDecision = resolveThetaDecision(observations, provenance);
 
-  const rating = ratingForVerdict(verdict.verdict);
+  const rating =
+    input.userRating ??
+    (provenance.assisted && provenance.source === 'automatic'
+      ? null
+      : ratingForVerdict(verdict.verdict));
   const ratingSource: SettlementPlan['ratingSource'] =
-    rating === null ? 'none' : provenance.source === 'automatic' ? 'verdict' : 'user';
+    rating === null
+      ? 'none'
+      : input.userRating !== undefined || provenance.source !== 'automatic'
+        ? 'user'
+        : 'verdict';
   const fsrsSubjects: FsrsSubject[] =
     scopeKcIds.length > 0
       ? scopeKcIds.map((id) => ({ kind: 'knowledge' as const, id }))
@@ -454,6 +464,7 @@ function planSubjects(plan: SettlementPlan): Set<string> {
 }
 
 interface SettlementEventRow {
+  fsrsOnly: boolean;
   id: string;
   createdMs: number;
   groupId: string | null;
@@ -487,6 +498,7 @@ async function loadSettlementEvents(tx: Tx): Promise<SettlementEventRow[]> {
     );
     out.push({
       id: row.id,
+      fsrsOnly: p.fsrs_only === true,
       createdMs: coerceMs(row.created_at) ?? 0,
       groupId: typeof p.evaluation_group_id === 'string' ? p.evaluation_group_id : null,
       evaluationId: typeof p.evaluation_id === 'string' ? p.evaluation_id : null,
@@ -514,29 +526,48 @@ async function loadSettlementEvents(tx: Tx): Promise<SettlementEventRow[]> {
   return out;
 }
 
-/** live applied 结算（applied 且未被任何后续事件 revert/supersede/replay）。 */
+/** Live settlements plus user FSRS segments retained after their verdict was superseded. */
 function liveAppliedSettlements(rows: SettlementEventRow[]): AppliedSettlementEvent[] {
   const dead = new Set<string>();
+  const deadFsrs = new Set<string>();
   for (const row of rows) {
+    // A replacement with no FSRS effect kept its predecessor's scheduling
+    // bracket. All other reverted/replayed scheduling brackets are gone.
+    for (const id of row.revertedIds) {
+      if (id !== row.supersedesSettlementEventId || row.fsrsApplied.length > 0) {
+        deadFsrs.add(id);
+      }
+    }
+    if (row.replayOf) deadFsrs.add(row.replayOf);
     if (row.supersedesSettlementEventId) dead.add(row.supersedesSettlementEventId);
     for (const id of row.revertedIds) dead.add(id);
     if (row.replayOf) dead.add(row.replayOf);
   }
   const live: AppliedSettlementEvent[] = [];
   for (const row of rows) {
-    if (row.effect !== 'applied' || dead.has(row.id) || row.occurrenceMs === null) continue;
+    if (row.effect !== 'applied' || row.occurrenceMs === null) continue;
+    const retainedFsrs =
+      dead.has(row.id) &&
+      !deadFsrs.has(row.id) &&
+      row.inputs?.ratingSource === 'user' &&
+      row.fsrsApplied.length > 0;
+    if (dead.has(row.id) && !retainedFsrs) continue;
     if (row.inputs === null) continue; // 无 replay 输入的 applied 行不可参与闭包
+    const fsrsOnly = retainedFsrs || row.fsrsOnly;
     live.push({
+      fsrsOnly,
       id: row.id,
       groupId: row.groupId ?? '',
       evaluationId: row.evaluationId ?? '',
       occurrenceMs: row.occurrenceMs,
       createdMs: row.createdMs,
-      subjects: row.subjects,
+      subjects: fsrsOnly ? new Set(row.fsrsApplied) : row.subjects,
       fsrsApplied: row.fsrsApplied,
-      familyObservationRecorded: row.familyObservationRecorded,
-      familyFold: row.familyFold,
-      inputs: row.inputs,
+      familyObservationRecorded: !fsrsOnly && row.familyObservationRecorded,
+      familyFold: fsrsOnly ? null : row.familyFold,
+      inputs: fsrsOnly
+        ? { ...row.inputs, theta: { applied: false, abstainReason: 'retained_user_rating' } }
+        : row.inputs,
     });
   }
   return live;
@@ -752,7 +783,11 @@ async function revertSettlementMember(
       return { kind: 'family_fold_drift', settlementEventId: member.id };
     }
   }
-  const segments: Array<'theta' | 'fsrs'> = options.skipFsrsSegment ? ['theta'] : ['theta', 'fsrs'];
+  const segments: Array<'theta' | 'fsrs'> = member.fsrsOnly
+    ? ['fsrs']
+    : options.skipFsrsSegment
+      ? ['theta']
+      : ['theta', 'fsrs'];
   for (const segment of segments) {
     const checkpointId = `${member.id}:checkpoint:${segment}`;
     const result = await orchestrateCascadeRevert(tx, checkpointId, {
@@ -776,6 +811,7 @@ async function revertSettlementMember(
   // 重建（标签摘除）后跌破 RECALIBRATION_MIN_LABELS 的题须显式清 stale b_calib
   // （grounding §8：recalibrateQuestion below_threshold 不清旧值，重建路径必须
   // 自己显式清——否则已撤销作答留下的 b_calib 继续喂 effectiveB）。
+  if (member.fsrsOnly) return null;
   const removedLabels = await tx
     .delete(difficulty_calibration_label)
     .where(eq(difficulty_calibration_label.attempt_event_id, member.id))
@@ -811,6 +847,7 @@ async function writeSettlementEvent(
     revertedIds: string[];
     appliedOutcome: ApplyOutcome | null;
     reasonDetail?: Record<string, unknown>;
+    fsrsOnly?: boolean;
   },
 ): Promise<void> {
   const plan = input.plan;
@@ -863,6 +900,7 @@ async function writeSettlementEvent(
       // replay_required 时是 replay 消费者需要的冲突域，不是空集）。
       planned_subjects: plan ? [...planSubjects(plan)].sort() : [],
       replay_inputs: plan ?? null,
+      ...(input.fsrsOnly ? { fsrs_only: true } : {}),
       ...(input.reasonDetail ?? {}),
     },
     caused_by_event_id: null,
@@ -907,7 +945,9 @@ export async function learningSettlement(input: ActivationSettleInput): Promise<
   const live = liveAppliedSettlements(rows);
   const priorEffectiveId = input.head.effective_evaluation_id;
   const replaced: AppliedSettlementEvent[] = priorEffectiveId
-    ? live.filter((m) => m.groupId === plan.groupId && m.evaluationId === priorEffectiveId)
+    ? live.filter(
+        (m) => !m.fsrsOnly && m.groupId === plan.groupId && m.evaluationId === priorEffectiveId,
+      )
     : [];
   if (replaced.length > 1) {
     // 同一 effective evaluation 有 >1 live applied 结算 = 数据不一致（CAS 应
@@ -925,15 +965,9 @@ export async function learningSettlement(input: ActivationSettleInput): Promise<
     return 'failed_pending';
   }
   const replacedMember = replaced[0] ?? null;
-  // user-rating 守卫（D4 对偶，YUK-1093 P1-2）：被覆写侧的 live FSRS 状态若
-  // 最后一次由 user rating（manual/self_report）结算写入 ⇒ 其 FSRS 段不被本
-  // 层静默覆盖；本次 FSRS 也不再写（保持用户评级）。θ̂ 段照常 revert/更正
-  // （判分证据独立）。
-  //
-  // 「直接前驱」不足以判明：manual→auto→auto 链上中间那环经守卫只写了 θ̂，
-  // 卡面仍是 manual 那环的；只看直接前驱会让第二次纠正静默覆盖用户调度。
-  // 检查面 = 我【将写】的 FSRS 主体 ∪ 被替换结算【写过】的 FSRS 主体（事件
-  // 已死/非结算写者 ⇒ 不算用户来源，照旧让位 / 由 unattributed 检测接管）。
+  // A scheduling choice belongs to this occurrence. Preserve it across its
+  // regrades even after later occurrences have advanced the shared card; those
+  // later occurrences are reverted/replayed below from their own frozen plans.
   const fsrsAtRisk = new Set<string>();
   if (plan.rating !== null) {
     for (const s of plan.fsrsSubjects) fsrsAtRisk.add(subjectKey(s.kind, s.id));
@@ -941,10 +975,11 @@ export async function learningSettlement(input: ActivationSettleInput): Promise<
   if (replacedMember !== null) {
     for (const s of replacedMember.fsrsApplied) fsrsAtRisk.add(s);
   }
-  const lastWriterIsUser = await preservedUserRatingExists(tx, rows, [...fsrsAtRisk]);
+  const occurrenceHasUserRating = preservedUserRatingExists(rows, [...fsrsAtRisk], plan.groupId);
   // 评级 provenance 随链携带「直到显式被另一个用户评级替换」：本次评级同样
   // 来自用户 ⇒ 不保留（新评级正常落位）；verdict 评级 ⇒ 保留用户排程。
-  const preserveUserRating = plan.ratingSource !== 'user' && lastWriterIsUser;
+  const preserveUserRating =
+    (plan.ratingSource !== 'user' || input.reusesActivation === true) && occurrenceHasUserRating;
 
   // ---- replay 闭包：occurrence ≥ mine 且与我的写入主体相交的 live 结算 ----
   // YUK-1093 P1-3 — 种子 = 本结算主体 ∪ 被替换结算主体。全量 regrade（如
@@ -1060,6 +1095,7 @@ export async function learningSettlement(input: ActivationSettleInput): Promise<
           replayOf: member.id,
           revertedIds: [member.id],
           appliedOutcome: reOutcome,
+          fsrsOnly: member.fsrsOnly,
         });
       }
       return mine;
@@ -1132,51 +1168,22 @@ async function writeReplayRequired(
   });
 }
 
-/**
- * D4 对偶 — user-rating provenance 回溯（YUK-1093 P1-2）。
- *
- * live FSRS 卡的【最后结算写入者】是 `material_fsrs_state.last_review_event_id`：
- * skip-FSRS 事件（前次守卫触发）从不写卡，自然不会出现在该字段上 —— 所以
- * 「沿 settlement 链回溯到最近真正落 FSRS 的事件」恰好落在这枚指针上，
- * supersedes/replay 链都已经由它浓缩（写者是 live 或 dead 均可，只看
- * rating_source）。本次结算若覆写这些主体中的任意一行，且该行的最后结算
- * 写入是 user rating（manual/self_report）⇒ 守卫成立。
- */
-async function preservedUserRatingExists(
-  tx: Tx,
+/** User FSRS writes remain the scheduling authority for their own occurrence.
+ * A later correction can supersede the event without undoing its FSRS segment,
+ * so both live and preserved historical receipts matter. Other groups never
+ * qualify; their schedules continue normally and are replayed in occurrence order. */
+function preservedUserRatingExists(
   rows: SettlementEventRow[],
   subjectKeys: readonly string[],
-): Promise<boolean> {
-  if (subjectKeys.length === 0) return false;
-  const ratingSourceById = new Map<string, SettlementPlan['ratingSource']>();
-  for (const row of rows) {
-    if (row.inputs !== null) ratingSourceById.set(row.id, row.inputs.ratingSource);
-  }
-  const wanted = new Map<string, string>();
-  for (const key of subjectKeys) {
-    const i = key.indexOf(':');
-    if (i > 0) wanted.set(key.slice(i + 1), key.slice(0, i));
-  }
-  if (wanted.size === 0) return false;
-  const fsrsRows = await tx
-    .select({
-      subject_kind: material_fsrs_state.subject_kind,
-      subject_id: material_fsrs_state.subject_id,
-      last_review_event_id: material_fsrs_state.last_review_event_id,
-    })
-    .from(material_fsrs_state)
-    .where(
-      and(
-        inArray(material_fsrs_state.subject_kind, ['knowledge', 'question']),
-        inArray(material_fsrs_state.subject_id, [...wanted.keys()]),
-      ),
-    );
-  for (const row of fsrsRows) {
-    if (wanted.get(row.subject_id) !== row.subject_kind) continue;
-    const writer = row.last_review_event_id;
-    if (writer !== null && ratingSourceById.get(writer) === 'user') return true;
-  }
-  return false;
+  groupId: string,
+): boolean {
+  const wanted = new Set(subjectKeys);
+  return rows.some(
+    (row) =>
+      row.groupId === groupId &&
+      row.inputs?.ratingSource === 'user' &&
+      row.fsrsApplied.some((key) => wanted.has(key)),
+  );
 }
 
 /**
