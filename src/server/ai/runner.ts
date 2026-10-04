@@ -25,8 +25,9 @@
 import { createHash } from 'node:crypto';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 import { type TaskKind, tasks } from '@/ai/registry';
+import { type TaskBudgetOverride, resolveTaskBudget } from '@/ai/task-budget';
 import { getLearnerLocale, getTaskSystemPrompt } from '@/ai/task-prompts';
-import type { TaskDefinition } from '@/ai/task-spec';
+import type { TaskBudget, TaskDefinition } from '@/ai/task-spec';
 import type { Db } from '@/db/client';
 import type { SubjectProfile } from '@/subjects/profile';
 import { resolveProviderSessionDeadlineAt } from '../http/provider-session-deadline';
@@ -233,16 +234,11 @@ export interface RunTaskCtx {
    * below cloudflared idle-100s. A durable pg-boss run needs a much larger
    * ceiling but MUST NOT mutate the shared registry default (YUK-458 revert lesson:
    * a raised inline budget only turned error_max_turns into an inline-request abort).
-   * NARROW: only `maxIterations` (→ runner maxTurns) and `timeoutMs` (→ the abort timer).
-   * The THIRD durable knob — the tool-call ceiling (maxToolCalls) — is NOT here: it
-   * lives in the ContextBudgetTracker (budgets.ts, surface-keyed) and is overridden
-   * at the handler when constructing the tracker (MF-A). OMITTED (the default) ⇒
-   * buildQueryOptions / the runTask and collecting lifecycle timers read
-   * `def.budget` verbatim ⇒
-   * byte-identical to pre-seam (zero regression); only the copilot_run handler sets
-   * it. It is consumed into maxTurns / the timer and is never an Options key.
+   * Overrides the configured task budget per field. Each entry point snapshots
+   * the budget before middleware/admission/startup; retries retain that snapshot.
+   * Tool-call limits remain owned by ContextBudgetTracker, not this seam.
    */
-  budgetOverride?: { maxIterations?: number; timeoutMs?: number };
+  budgetOverride?: TaskBudgetOverride;
   /**
    * Optional caller-owned correlation id shared with an in-process MCP server.
    * Omitted callers keep runner-generated ids. `runTask` uses it for the first
@@ -472,6 +468,7 @@ function buildQueryOptions(
   // single resolution per attempt keeps the retry loop's env/model provably
   // per-attempt-consistent.
   resolved: ResolvedProvider,
+  budget: TaskBudget,
 ): Options {
   // The registry map's value type is the union of every spec's inferred literal
   // shape. Optional fields (reasoningEffort) only exist on declaring members, so
@@ -485,7 +482,7 @@ function buildQueryOptions(
     abortController,
     tools: ctx.allowedTools ?? def.allowedTools,
     // YUK-575 (N5) — durable copilot run overrides the turn ceiling per-call.
-    maxTurns: (ctx.budgetOverride?.maxIterations ?? def.budget.maxIterations) || 1,
+    maxTurns: budget.maxIterations || 1,
   };
   // YUK-923 — reasoning effort tier: per-run modelBinding wins over the
   // task-kind declaration; unset → the provider default applies.
@@ -698,6 +695,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
 async function runTaskAttempt(args: {
   kind: TaskKind;
   actualInput: unknown;
+  budget: TaskBudget;
   ctx: RunTaskCtx;
   lifecycle: AiRunLifecycle<RunTaskResult>;
   /** Effective binding after the env rollout pin — resolved once by the caller. */
@@ -705,7 +703,7 @@ async function runTaskAttempt(args: {
   onProviderQueryStarted?: () => Promise<void>;
   warnMissingMcp?: boolean;
 }): Promise<RunTaskResult> {
-  const { kind, actualInput, ctx, lifecycle, modelBinding } = args;
+  const { kind, actualInput, budget, ctx, lifecycle, modelBinding } = args;
 
   let resultText = '';
   // Purely local preparation can perform cold-start filesystem work (notably
@@ -714,7 +712,13 @@ async function runTaskAttempt(args: {
   // heartbeat beyond its DB-derived deadline even though no provider work has
   // started yet.
   const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
-  const callOptions = buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved);
+  const callOptions = buildQueryOptions(
+    kind,
+    ctx,
+    lifecycle.abortController,
+    lifecycle.resolved,
+    budget,
+  );
   const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
     if (args.warnMissingMcp) {
       logMissingToolMountsWarning({
@@ -789,6 +793,7 @@ export async function runTask(
     throw new Error(`Unknown task kind: ${kind}`);
   }
   assertChatExecutionKind(kind);
+  const budget = resolveTaskBudget(kind, ctx.budgetOverride);
   const def = tasks[kind];
 
   // beforeRun runs exactly once, OUTSIDE the attempt loop — every attempt sees
@@ -800,14 +805,14 @@ export async function runTask(
   const modelBinding = ctx.modelBinding;
   // Narrow pass, not {...ctx}: RunTaskCtx consumers may define lazy getters
   // (allowedTools et al.) whose evaluation must stay single-shot and ordered.
-  const maxAttempts = maxLifecycleAttempts(kind, {
+  const maxAttempts = maxLifecycleAttempts(budget.transientRetries, {
     enableTransientRetry: ctx.enableTransientRetry,
     override: ctx.override,
     modelBinding,
   });
   const firstAttemptStartedAt = Date.now();
   const retryingSyncDeadlineAt =
-    maxAttempts > 1 ? firstAttemptStartedAt + RETRY_ELAPSED_CAP_MS + def.budget.timeout : undefined;
+    maxAttempts > 1 ? firstAttemptStartedAt + RETRY_ELAPSED_CAP_MS + budget.timeout : undefined;
   const callerProviderSessionDeadlineAt = resolveProviderSessionDeadlineAt(
     ctx.providerSessionDeadlineAt,
   );
@@ -824,7 +829,7 @@ export async function runTask(
     const lifecycle = createRunLifecycle<RunTaskResult>({
       db: ctx.db,
       kind,
-      timeoutMs: ctx.budgetOverride?.timeoutMs ?? def.budget.timeout,
+      timeoutMs: budget.timeout,
       abortController: ctx.lifecycleAbortController,
       override: ctx.override,
       modelBinding,
@@ -847,6 +852,7 @@ export async function runTask(
       return await runTaskAttempt({
         kind,
         actualInput,
+        budget,
         ctx,
         lifecycle,
         modelBinding,
@@ -926,12 +932,12 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
     throw new Error(`Unknown task kind: ${kind}`);
   }
   assertChatExecutionKind(kind);
-  const def = tasks[kind];
+  const budget = resolveTaskBudget(kind, ctx.budgetOverride);
   const modelBinding = ctx.modelBinding;
   const lifecycle = createRunLifecycle<RunTaskResult>({
     db: ctx.db,
     kind,
-    timeoutMs: def.budget.timeout,
+    timeoutMs: budget.timeout,
     abortController: ctx.lifecycleAbortController,
     override: ctx.override,
     modelBinding,
@@ -963,6 +969,7 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
           ctx,
           lifecycle.abortController,
           lifecycle.resolved,
+          budget,
         );
         const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
           await consumeProviderAttempt({
@@ -1094,12 +1101,12 @@ export async function streamTaskCollecting(
     throw new Error(`Unknown task kind: ${kind}`);
   }
   assertChatExecutionKind(kind);
-  const def = tasks[kind];
+  const budget = resolveTaskBudget(kind, ctx.budgetOverride);
   const modelBinding = ctx.modelBinding;
   const lifecycle = createRunLifecycle<StreamCollectResult>({
     db: ctx.db,
     kind,
-    timeoutMs: ctx.budgetOverride?.timeoutMs ?? def.budget.timeout,
+    timeoutMs: budget.timeout,
     abortController: ctx.lifecycleAbortController,
     override: ctx.override,
     modelBinding,
@@ -1121,7 +1128,13 @@ export async function streamTaskCollecting(
       ? await ctx.middleware.beforeRun(kind, input, ctx)
       : input;
     const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
-    const callOptions = buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved);
+    const callOptions = buildQueryOptions(
+      kind,
+      ctx,
+      lifecycle.abortController,
+      lifecycle.resolved,
+      budget,
+    );
     const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
       await consumeProviderAttempt({
         query: q,

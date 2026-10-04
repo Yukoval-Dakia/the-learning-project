@@ -13,6 +13,7 @@
 // 隔离：beforeEach resetDb（三表在 wipe list）；afterEach resetTestConfig +
 // 快照复位，防止读面测试间泄漏。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resolveTaskBudget } from '@/ai/task-budget';
 import { LEARNER_LOCALE_PIN, getTaskSystemPrompt } from '@/ai/task-prompts';
 import { capabilities } from '@/capabilities';
 import { replaceConfigSnapshot, resetTestConfig } from '@/core/config/store';
@@ -116,7 +117,7 @@ describe('GET /api/admin/config — DB-layer resolution over real write path', (
     const task = body.tasks.find((candidate) => candidate.kind === 'AttributionTask');
     if (!task) throw new Error('missing AttributionTask row');
     expect(task.override).toEqual({ provider: 'openai', model: 'gpt-6-astra' });
-    // 静态 catalog 默认不受 DB 覆盖影响；budget 未接线如实标注。
+    // 静态 catalog 默认不变；预算并非所有字段均已接线。
     expect(task.override_wired).toEqual({ provider: true, model: true, budget: false });
   });
 });
@@ -455,5 +456,49 @@ describe('learner locale — write, runtime consumer and HTTP facts', () => {
       source: 'code-default',
       wired: true,
     });
+  });
+});
+
+describe('GET /api/admin/config — runtime budget facts', () => {
+  it('reports the same real DB budget consumed by each execution lane, with unsupported fields null', async () => {
+    await setConfigs(
+      [
+        {
+          key: 'task.AttributionTask.budget',
+          value: { maxIterations: 12, maxCost: 0.25, transientRetries: 2, timeout: 123_456 },
+        },
+        {
+          key: 'task.JevScoringDecisionTask.budget',
+          value: { maxIterations: 8, maxCost: 0.03, transientRetries: 0, timeout: 234_567 },
+        },
+      ],
+      { actor: 'cli' },
+      testDb(),
+    );
+    const frozen = resolveTaskBudget('AttributionTask');
+    const body = AdminConfigResponseSchema.parse(await (await get()).json());
+    expect(body.tasks.find((row) => row.kind === 'AttributionTask')).toMatchObject({
+      effective_budget: { ...frozen, maxCost: null },
+      budget_wiring: { maxIterations: true, maxCost: false, transientRetries: true, timeout: true },
+    });
+    expect(body.tasks.find((row) => row.kind === 'JevScoringDecisionTask')).toMatchObject({
+      effective_budget: { ...resolveTaskBudget('JevScoringDecisionTask'), maxIterations: null },
+      budget_wiring: { maxIterations: false, maxCost: true, transientRetries: true, timeout: true },
+      override_wired: { provider: false, model: false, budget: false },
+      global_pin: null,
+    });
+    await setConfig(
+      'task.AttributionTask.budget',
+      { timeout: 345_678 },
+      { actor: 'cli' },
+      testDb(),
+    );
+    expect(frozen.timeout).toBe(123_456);
+    expect(resolveTaskBudget('AttributionTask').timeout).toBe(345_678);
+    await clearConfig('task.AttributionTask.budget', { actor: 'cli' }, testDb());
+    const cleared = AdminConfigResponseSchema.parse(await (await get()).json()).tasks.find(
+      (row) => row.kind === 'AttributionTask',
+    );
+    expect(cleared?.effective_budget.timeout).toBe(cleared?.default_budget.timeout);
   });
 });

@@ -21,6 +21,7 @@
 // frozen against them, and the mock must match what the SDK actually emits.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetTestConfig, setTestConfig } from '@/core/config/store';
 
 const mockPi = vi.hoisted(() => ({
   capturedOptions: [] as unknown[],
@@ -739,5 +740,39 @@ describe('runTask — GLOBAL stream_no_terminal guard (YUK-576, deliberate behav
     });
     expect((error as Error).message).toContain('adapter exploded after lifecycle start');
     expect(logMock.finished.mock.calls[0]?.[1]).toMatchObject({ status: 'failure' });
+  });
+});
+
+describe('configured retry budget snapshots', () => {
+  beforeEach(resetAll);
+  afterEach(() => {
+    resetTestConfig();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
+  });
+  it('retries with the original turns/timeout/count after a refresh, then reads the new budget', async () => {
+    setTestConfig({
+      'task.AttributionTask.budget': { maxIterations: 11, timeout: 123_456, transientRetries: 1 },
+    });
+    mockPi.messageQueues = [[API_ERROR_500_RESULT], [successResult()]];
+    mockPi.beforeYield = () =>
+      setTestConfig({
+        'task.AttributionTask.budget': { maxIterations: 19, timeout: 234_567, transientRetries: 0 },
+      });
+    const timers = vi.spyOn(global, 'setTimeout');
+    await runTask(
+      NO_RETRY_KIND,
+      { q: '含参方程与根的边界条件' },
+      { db: fakeDb, enableTransientRetry: true },
+    );
+    expect(mockPi.capturedArgs.map((args) => args.options.maxTurns)).toEqual([11, 11]);
+    expect(timers.mock.calls.filter(([, ms]) => ms === 123_456)).toHaveLength(2);
+    mockPi.messageQueues = [[API_ERROR_500_RESULT], [successResult()]];
+    await expect(
+      runTask(NO_RETRY_KIND, { q: '再次检查' }, { db: fakeDb, enableTransientRetry: true }),
+    ).rejects.toBeInstanceOf(AgentRunError);
+    expect(mockPi.queryCalls).toBe(3);
+    expect(mockPi.capturedArgs[2].options.maxTurns).toBe(19);
   });
 });

@@ -31,6 +31,7 @@
 
 import type { ZodTypeAny } from 'zod';
 import { type TaskKind, tasks } from '@/ai/registry';
+import { resolveTaskBudget } from '@/ai/task-budget';
 import type { TaskDefinition } from '@/ai/task-spec';
 import { JevScoringDecisionInput, JevSystemOneResponse } from '@/core/schema/jev-systemone';
 import type { Db } from '@/db/client';
@@ -156,7 +157,7 @@ const ERROR_SNIPPET_MAX = 500;
  * PERMANENT — no blind retry; 429/529/5xx and connection-class transport
  * failures retry only inside the shared wall-clock bound (RETRY_ELAPSED_CAP_MS
  * start gate + session deadline), never multiplied by SDK/queue retries —
- * this path performs at most def.budget.transientRetries extra wire calls.
+ * this path performs at most budget.transientRetries extra wire calls.
  */
 export async function runTypedPrimitiveTask<Output = unknown>(
   kind: string,
@@ -175,6 +176,7 @@ export async function runTypedPrimitiveTask<Output = unknown>(
   if ((def.execution ?? 'chat') !== 'typed') {
     throw new Error(`typed primitive runner: '${kind}' is not a typed-execution task`);
   }
+  const budget = resolveTaskBudget(kind);
   // Input is schema-parsed directly — a failure is a caller contract bug,
   // thrown BEFORE any lifecycle/admission/cost work exists (no task_run row).
   const parsedInput = registration.inputSchema.parse(input);
@@ -189,15 +191,15 @@ export async function runTypedPrimitiveTask<Output = unknown>(
     ...(parsedInput as Record<string, unknown>),
   };
 
-  const maxAttempts = ctx.retry === 'none' ? 1 : 1 + def.budget.transientRetries;
+  const maxAttempts = ctx.retry === 'none' ? 1 : 1 + budget.transientRetries;
   const reserveUsd = TYPED_RESERVE_PER_CALL_USD;
-  const maxCostUsd = def.budget.maxCost;
+  const maxCostUsd = budget.maxCost;
   const firstAttemptStartedAt = Date.now();
   // runTask parity: the in-process session bound covers retries inside one
   // wall clock; the caller deadline bounds the whole invocation INCLUDING the
   // application-layer advanced fallback.
   const retryingDeadlineAt =
-    maxAttempts > 1 ? firstAttemptStartedAt + RETRY_ELAPSED_CAP_MS + def.budget.timeout : undefined;
+    maxAttempts > 1 ? firstAttemptStartedAt + RETRY_ELAPSED_CAP_MS + budget.timeout : undefined;
   const providerSessionDeadlineAt =
     ctx.deadlineAt === undefined
       ? retryingDeadlineAt
@@ -230,7 +232,7 @@ export async function runTypedPrimitiveTask<Output = unknown>(
     const lifecycle = createRunLifecycle<LifecycleResult>({
       db: ctx.db,
       kind,
-      timeoutMs: def.budget.timeout,
+      timeoutMs: budget.timeout,
       abortController: ctx.abortController,
       // Pin provider+model explicitly: a global AI_PROVIDER_OVERRIDE must never
       // redirect the typed lane onto a chat-incompatible provider, and the

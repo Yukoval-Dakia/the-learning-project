@@ -21,6 +21,8 @@ vi.mock('@/server/ai/log', () => ({
   writeToolCallLog: logMocks.tool,
 }));
 
+import { resetTestConfig, setTestConfig } from '@/core/config/store';
+
 import { runTypedPrimitiveTask } from './typed-primitive-runner';
 
 const KIND = 'JevScoringDecisionTask';
@@ -68,6 +70,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetTestConfig();
   vi.unstubAllEnvs();
   Date.now = realDateNow;
   vi.restoreAllMocks();
@@ -384,5 +387,50 @@ describe('runTypedPrimitiveTask — timeout, cancellation, budget', () => {
       (call) => call[1] as { outcome: string },
     );
     expect(terminalCalls.every((c) => c.outcome === 'failed_retryable')).toBe(true);
+  });
+});
+
+describe('typed task budget configuration', () => {
+  it('enforces configured cumulative cost and retains the invocation snapshot after refresh', async () => {
+    setTestConfig({
+      [`task.${KIND}.budget`]: { maxCost: 0.006, transientRetries: 3, timeout: 123_456 },
+    });
+    const timers = vi.spyOn(global, 'setTimeout');
+    const fetchImpl = vi.fn(async () => {
+      setTestConfig({
+        [`task.${KIND}.budget`]: { maxCost: 1, transientRetries: 0, timeout: 234_567 },
+      });
+      return responseJson({ error: 'rate' }, 429);
+    });
+    await expect(runTypedPrimitiveTask(KIND, BASE_INPUT, ctx(fetchImpl))).rejects.toThrow();
+    expect(fetchImpl).toHaveBeenCalledTimes(1); // reserve + next reserve exceeds original cap
+    expect(timers).toHaveBeenCalledWith(expect.any(Function), 123_456);
+    const nextFetch = vi.fn(async () => responseJson({ error: 'rate' }, 429));
+    await expect(runTypedPrimitiveTask(KIND, BASE_INPUT, ctx(nextFetch))).rejects.toThrow();
+    expect(nextFetch).toHaveBeenCalledTimes(1); // next invocation sees retries=0
+    expect(timers).toHaveBeenCalledWith(expect.any(Function), 234_567);
+  });
+
+  it('freezes retry count and timeout through an in-flight configuration change', async () => {
+    setTestConfig({ [`task.${KIND}.budget`]: { transientRetries: 1, timeout: 123_456 } });
+    const timers = vi.spyOn(global, 'setTimeout');
+    let attempt = 0;
+    const fetchImpl = vi.fn(async () => {
+      setTestConfig({ [`task.${KIND}.budget`]: { transientRetries: 0, timeout: 234_567 } });
+      return ++attempt === 1 ? responseJson({ error: 'rate' }, 429) : responseJson(okBody());
+    });
+    const result = await runTypedPrimitiveTask(KIND, BASE_INPUT, ctx(fetchImpl));
+    expect(result.attempts).toBe(2);
+    expect(timers.mock.calls.filter(([, ms]) => ms === 123_456)).toHaveLength(2);
+    expect(timers).not.toHaveBeenCalledWith(expect.any(Function), 234_567);
+  });
+
+  it('retains retry:none even when the task configuration enables retries', async () => {
+    setTestConfig({ [`task.${KIND}.budget`]: { transientRetries: 3 } });
+    const fetchImpl = vi.fn(async () => responseJson({ error: 'rate' }, 429));
+    await expect(
+      runTypedPrimitiveTask(KIND, BASE_INPUT, ctx(fetchImpl, { retry: 'none' })),
+    ).rejects.toThrow();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 });

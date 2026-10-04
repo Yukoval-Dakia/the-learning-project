@@ -1131,3 +1131,52 @@ describe('runner locale execution snapshot', () => {
     },
   );
 });
+
+describe('task budget configuration snapshots', () => {
+  beforeEach(() => {
+    __setPiAdapterForTests(fakePiAdapter());
+    mockPi.messages = [successResult()];
+    vi.stubEnv('XIAOMI_API_KEY', 'test-key');
+  });
+  afterEach(() => {
+    resetTestConfig();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    __setPiAdapterForTests(undefined);
+  });
+
+  it.each(['ordinary', 'sse', 'collecting'] as const)(
+    '%s freezes configuration before middleware and refreshes on the next invocation',
+    async (mode) => {
+      const configured = { maxIterations: 13, timeout: 123_456 };
+      setTestConfig({ 'task.CopilotTask.budget': configured });
+      const timers = vi.spyOn(global, 'setTimeout');
+      const invoke = async (beforeRun?: () => Promise<unknown>, explicit = false) => {
+        const ctx = {
+          db: fakeDb,
+          ...(beforeRun ? { middleware: { beforeRun } } : {}),
+          ...(explicit ? { budgetOverride: { maxIterations: 21, timeoutMs: 345_678 } } : {}),
+        };
+        if (mode === 'ordinary') await runTask('CopilotTask', { text: '求解并核对定义域' }, ctx);
+        else if (mode === 'sse')
+          await streamTask('CopilotTask', { text: '求解并核对定义域' }, ctx).text();
+        else await streamTaskCollecting('CopilotTask', { text: '求解并核对定义域' }, ctx, () => {});
+      };
+      await invoke(async () => {
+        configured.maxIterations = 99;
+        setTestConfig({ 'task.CopilotTask.budget': { maxIterations: 17, timeout: 234_567 } });
+        return { text: '求解并核对定义域' };
+      });
+      expect(capturedOptions().maxTurns).toBe(13);
+      expect(timers).toHaveBeenCalledWith(expect.any(Function), 123_456);
+      timers.mockClear();
+      await invoke();
+      expect(capturedOptions().maxTurns).toBe(17);
+      expect(timers).toHaveBeenCalledWith(expect.any(Function), 234_567);
+      timers.mockClear();
+      await invoke(undefined, true);
+      expect(capturedOptions().maxTurns).toBe(21);
+      expect(timers).toHaveBeenCalledWith(expect.any(Function), 345_678);
+    },
+  );
+});
