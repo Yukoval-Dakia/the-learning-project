@@ -77,7 +77,7 @@
 
 - YUK-1091/#1561已交付main cd61afab（19:51UTC）：138unit136DB82migration/本地gates；初审1项联合时点P1先RED后修，修复后50DB，唯一验证审2探针39DB，最终joint20DB/typecheck/lint/build通过。exact-head CI37228786465（82迁移34浏览器）/17分钟窗完成，Linear Done。
 - YUK-1047/#1562已交付main ad8dad75（20:18UTC）：94unit72DB/全部本地gate；初审1项内嵌图P1先RED后修，唯一验证3原探针5分支探针94unit通过；exact-head CI37230475644实际82迁移34浏览器/17分钟窗通过。八入口仍legacy，票In Progress。
-- YUK-1047当前：独立worktree实施原生pi契约任务、资产digest/原证据核验与明确未决，未新增自动准入。新descriptor先RED；真实runner发现missing MiMo usage被估$0，数据库回归先RED后修，真实zero保留；374distinctunit48DB通过，最终gate与独立初审待收口。
+- YUK-1047/#1563：初审确认失败已知费用低估、成功缺usage误记零两项P1，正式3DB先RED后修。修复后281unit30DB/typecheck/lint299/build/11audits通过；真实pi离线SSE覆盖缺usage/明确零/非零。初次CI任务清单四→五断言已修；唯一验证审与修复后CI待完成。八正式入口仍legacy。
 
 ## NEXT
 

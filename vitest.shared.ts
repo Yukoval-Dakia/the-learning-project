@@ -162,6 +162,8 @@ export const fastTestInclude = [
   // + ./providers types. Same enumeration requirement as above (no
   // src/server/ai/** unit glob).
   'src/server/ai/pi-agent-adapter.test.ts',
+  // Real pi driver with offline SSE; no DB or paid provider calls.
+  'src/server/ai/pi-usage-evidence.test.ts',
   // Installed pi engine with a scripted provider stream; no DB or paid requests.
   'src/server/ai/pi-agent-loop.unit.test.ts',
   'src/server/ai/pi-provider-catalog.test.ts',

@@ -17,3 +17,5 @@ Active1091 /workspace/tlp-assessment-joint fix/yuk-1091-joint-input. Formalvalid
 Active1047native worktree/workspace/tlp-assessment-native-model branchfix/yuk-1047-native-model basedb7239b81 pendingrebase. Explicitnative task+descriptor, frozenassetguard, standalone(noautomaticJevfallback/admission). RealrunnerDB missingMiMousagecost firstRED1failed5passed thenfixusagepresence;unknownvsactualzero preserved. Finalgatesrunning. No paid/prod/dependency.
 
 Nativecost proof extended to realpi normalization: /tmp/yuk1047-native-adapter-red.log 2failed1passed41skipped then44adapterPASS. usage_observed false onfailedplaceholderzero/noassistant; collector+price resolver distinguishmissing fromactualzero.374distinctunit48DB; finalgatesrunning, initialreviewnotstartedyet.
+
+1047/#1563 initialreview2P1 fixed: failedknowncost via AgentRunError; missing successfulusage via native onProviderStreamEvent observation.3formalDBfirstRED then10DBGREEN. Postfix281unit30DB/typecheck/lint299/build/11auditsPASS. InitialCI37232144534failed exactjudgeinventory four→five; assertion fixed. Soleverification+newheadCI pending.60open, eightformalentriesstilllegacy.

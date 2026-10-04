@@ -880,6 +880,7 @@ export async function runTask(
         kind,
         taskRunId: lifecycle.taskRunId,
         aborted: lifecycle.aborted,
+        costUsd: lifecycle.costUsd,
       });
       lastErr = boundError;
       const retry = classifyLifecycleRetry({
@@ -1021,6 +1022,7 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
             kind,
             taskRunId: lifecycle.taskRunId,
             aborted: lifecycle.aborted,
+            costUsd: lifecycle.costUsd,
           });
           const settled = await lifecycle.finishFailure(boundError);
           if (!settled) {
@@ -1210,6 +1212,7 @@ export async function streamTaskCollecting(
       kind,
       taskRunId: lifecycle.taskRunId,
       aborted: lifecycle.aborted,
+      costUsd: lifecycle.costUsd,
     });
     const settled = await lifecycle.finishFailure(boundError);
     // A provider-success payload whose success projection failed must never be

@@ -74,6 +74,8 @@ export interface AgentRunErrorFields {
   apiErrorStatus?: number | null;
   /** SDKResultError.errors, or [result error text] for api_error_result. */
   errors: string[];
+  /** Known attempt cost; absent means unknown, not zero. */
+  costUsd?: number;
 }
 
 /**
@@ -88,6 +90,7 @@ export class AgentRunError extends Error {
   readonly subtype: AgentFailureSubtype;
   readonly apiErrorStatus?: number | null;
   readonly errors: string[];
+  readonly costUsd?: number;
 
   constructor(fields: AgentRunErrorFields) {
     const http =
@@ -100,6 +103,7 @@ export class AgentRunError extends Error {
     this.subtype = fields.subtype;
     this.apiErrorStatus = fields.apiErrorStatus;
     this.errors = fields.errors;
+    this.costUsd = fields.costUsd;
   }
 }
 
@@ -138,8 +142,13 @@ export function bindAgentRunError(input: {
   kind: string;
   taskRunId: string;
   aborted: boolean;
+  costUsd?: number;
 }): AgentRunError {
-  if (input.error instanceof AgentRunError) return input.error;
+  if (input.error instanceof AgentRunError) {
+    return input.costUsd === undefined
+      ? input.error
+      : new AgentRunError({ ...input.error, costUsd: input.costUsd });
+  }
   if (input.error instanceof ProviderSessionAdmissionError) {
     return new AgentRunError({
       kind: input.kind,
@@ -151,6 +160,7 @@ export function bindAgentRunError(input: {
   return new AgentRunError({
     kind: input.kind,
     taskRunId: input.taskRunId,
+    costUsd: input.costUsd,
     subtype: input.aborted ? 'budget_timeout' : 'runner_error',
     errors: [input.error instanceof Error ? input.error.message : String(input.error)],
   });

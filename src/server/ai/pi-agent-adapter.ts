@@ -67,6 +67,7 @@ import type {
 import { emitPiAfterToolCall, runPiBeforeToolCall } from './pi-hooks';
 import { createLoomPiModels } from './pi-models';
 import { piProviderId } from './pi-provider-catalog';
+import { hasPiUsageEvidence, withPiUsageEvidence } from './pi-usage-evidence';
 import type { SDKAssistantMessage, SDKResultMessage, SDKUserMessage } from './sdk-types';
 import { isSpawnToolName } from './spawn-contract';
 import {
@@ -451,20 +452,6 @@ function piContentToSdk(content: PiAssistantMessage['content']): ContentBlock[] 
     }
   }
   return blocks;
-}
-
-/** Pi initializes error usage to zeros even when the provider never reports it.
- * Successful zero usage remains usable; failed all-zero placeholders are unknown. */
-function hasPiUsageEvidence(message: PiAssistantMessage): boolean {
-  if (!message.usage) return false;
-  if (message.stopReason !== 'error' && message.stopReason !== 'aborted') return true;
-  return [
-    message.usage.input,
-    message.usage.output,
-    message.usage.cacheRead,
-    message.usage.cacheWrite,
-    message.usage.cost?.total,
-  ].some((value) => value !== undefined && value > 0);
 }
 
 /**
@@ -979,7 +966,12 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   }
 
   private readonly streamFn: StreamFn = (model, llmContext, streamOptions) =>
-    this.deps.models.streamSimple(model, llmContext, streamOptions);
+    withPiUsageEvidence(
+      (m, context, options) => this.deps.models.streamSimple(m, context, options),
+      model,
+      llmContext,
+      streamOptions,
+    );
 
   /**
    * Child tool set: the spec's allowlist over the parent's mounted wire names,

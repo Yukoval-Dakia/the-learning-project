@@ -1,3 +1,4 @@
+import { normalizeContext } from '@earendil-works/pi-ai';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
@@ -255,4 +256,150 @@ describe('default frozen asset loader uses database identity and original bytes'
     expect(r2.get).not.toHaveBeenCalled();
     expect(query).not.toHaveBeenCalled();
   });
+});
+
+it('independent failure must retain observed over-cap actual cost', async () => {
+  frames = [
+    {
+      type: 'result',
+      source: 'pi',
+      subtype: 'error_during_execution',
+      usage_observed: true,
+      usage: { input_tokens: 1000000, output_tokens: 100000 },
+      total_cost_usd: 1,
+      errors: ['provider stream failed after billed tokens'],
+    } as RunnerMessage,
+  ];
+  const out = await port()(fixture());
+  const runs = await testDb().select().from(ai_task_runs);
+  expect(runs).toHaveLength(1);
+  const actual = Math.ceil(Number(runs[0].cost_usd) * 1000000);
+  expect(actual).toBeGreaterThan(20000);
+  expect(out.cost_usd_micros).toBe(actual);
+});
+
+import { stream as nativeStream } from '@earendil-works/pi-ai/api/openai-completions';
+import { evaluateSubmissionCore } from '@/core/schema/assessment/evaluation';
+import { piTerminalResultFrame } from '@/server/ai/pi-agent-adapter';
+
+it('independent failed cost blocks the next unit after plan cap is exceeded', async () => {
+  frames = [
+    {
+      type: 'result',
+      source: 'pi',
+      subtype: 'error_during_execution',
+      usage_observed: true,
+      usage: { input_tokens: 1000000, output_tokens: 100000 },
+      total_cost_usd: 1,
+      errors: ['provider stream failed after billed tokens'],
+    } as RunnerMessage,
+  ];
+  const f = fixture();
+  const now = '2026-10-04T12:00:00Z';
+  const revision: import('@/core/schema/assessment').PublishedQuestionRevisionT = {
+    revision_id: f.revision_id,
+    group_id: 'qgroup',
+    revision_ordinal: 1,
+    integrity_digest: 'sha256:fixture',
+    published_at: now,
+    supersedes_revision_id: null,
+    structure: { group_id: 'qgroup', parts: f.question_parts, materials: f.materials },
+    response_spec: { slots: f.response_slots },
+    scoring_basis: {
+      units: [f.unit, { ...f.unit, scoring_unit_id: 'u2' }],
+      aggregation: { kind: 'sum' },
+      blank_scores_zero: true,
+    },
+    execution_plan: {
+      plan_version: 1,
+      assignments: [{ scoring_unit_ids: ['u1', 'u2'], executor: f.executor }],
+      escalation: { on_unadmitted_model: 'withhold', on_low_confidence: 'human_review' },
+      max_total_cost_usd_micros: 40000,
+    },
+  };
+  const out = await evaluateSubmissionCore({
+    evaluation_id: 'eval-budget',
+    attempt: 1,
+    revision,
+    submission: {
+      submission_id: f.submission_id,
+      issuance_id: 'iss-budget',
+      revision_id: f.revision_id,
+      evaluation_group_id: f.evaluation_group_id,
+      idempotency_key: 'budget-key',
+      submitted_at: now,
+      response_set: { entries: f.slot_responses },
+      group_evidence: [],
+    },
+    model_executor: port(),
+  });
+  const runs = await testDb().select().from(ai_task_runs);
+  expect(query).toHaveBeenCalledTimes(1);
+  expect(runs).toHaveLength(1);
+  expect(out.spent_cost_usd_micros).toBe(Math.ceil(Number(runs[0].cost_usd) * 1_000_000));
+});
+it('independent successful real pi missing usage reserves budget in real runner', async () => {
+  const model: import('@earendil-works/pi-ai').Model<'openai-completions'> = {
+    id: 'mimo-v2.5',
+    name: 'MiMo',
+    provider: 'xiaomi',
+    api: 'openai-completions',
+    reasoning: false,
+    baseUrl: 'https://offline.invalid',
+    input: ['text'],
+    contextWindow: 100000,
+    maxTokens: 1000,
+    cost: { input: 0.1, output: 0.2, cacheRead: 0.01, cacheWrite: 0 },
+  };
+  const fetch = vi.fn(
+    async () =>
+      new Response(
+        `${[
+          {
+            id: 'offline',
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: 'mimo-v2.5',
+            choices: [
+              {
+                index: 0,
+                delta: { role: 'assistant', content: JSON.stringify(defaultOutput()) },
+                finish_reason: null,
+              },
+            ],
+          },
+          {
+            id: 'offline',
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: 'mimo-v2.5',
+            choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+          },
+        ]
+          .map((x) => `data: ${JSON.stringify(x)}\n\n`)
+          .join('')}data: [DONE]\n\n`,
+        { headers: { 'Content-Type': 'text/event-stream' } },
+      ),
+  );
+  const message = await nativeStream(
+    model,
+    normalizeContext({ messages: [{ role: 'user', content: 'Answer', timestamp: 1 }] }),
+    { apiKey: 'offline-fixture', fetch },
+  ).result();
+  expect(message.stopReason).toBe('stop');
+  const terminal = piTerminalResultFrame({
+    messages: [message],
+    model,
+    sessionId: 'offline-session',
+    durationMs: 10,
+    numTurns: 1,
+    aborted: false,
+  });
+  if (!terminal) throw new Error('expected terminal');
+  frames = [terminal];
+  const out = await port()(fixture());
+  const runs = await testDb().select().from(ai_task_runs);
+  expect.soft(out.cost_usd_micros).toBe(20000);
+  expect.soft(runs[0].cost_basis).toBe('unknown');
+  expect.soft(runs[0].cost_usd).toBeNull();
 });

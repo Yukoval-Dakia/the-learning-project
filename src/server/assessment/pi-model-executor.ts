@@ -233,6 +233,14 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
         cost,
       );
     } catch (error) {
+      if (
+        error instanceof AgentRunError &&
+        error.costUsd !== undefined &&
+        Number.isFinite(error.costUsd) &&
+        error.costUsd >= 0
+      ) {
+        cost = Math.ceil(error.costUsd * 1_000_000);
+      }
       const runRefs = result
         ? [result.task_run_id]
         : error instanceof AgentRunError
