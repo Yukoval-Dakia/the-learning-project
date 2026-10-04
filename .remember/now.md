@@ -1,13 +1,13 @@
 # Current handoff — 2026-10-04
 
-Main1e4053e2:pi1.0.2/#1534merged,CI37170062890success,17minwindowcomplete,1112Done.
+Main b6b5565d: config write #1535 merged, CI37171996264 success, 17min window complete.
+1007 stays In Progress: atomic set/reset HTTP is delivered; UI preflight awaits explicit approval.
 Owner latest direction: stop chasing dependency versions; prioritize main product line.
-Active1007/workspace/tlp-config-write,feat/yuk-1007-config-write,base1e4053e2.
-Atomicset/reset/sharedjournal+epoch,livekeyvalidation,timeoutboundaryincludingoldhydration,
-globalpinresetvalidatesrevealedtaskmodels.11DBregressionsfirstRED;55serviceDBpassed.
-HTTPPATCH /api/admin/config +POST /api/admin/config/reset via injectedwriter port.
-Fixedactorpanel:admin,authgate,committed/snapshotepochsseparate. 314unit+158DB/typecheck/lint299/build/10auditspass;independentinitialnoP0/P1.
-Inheritedscopedlane/rejudgemodel-onlyvalidationP2captured1007,notfixed.
-Commit/push/CI/windowpending. UIpreflightrefreshindocs/design/2026-10-04-yuk1007-settings-ui-preflight.md.
-NoUIapproval.No production or paidrequests. Go2requestcap remains exhausted.
-Preserveworktrees/branches. Existing1007readfaceP2s and ownerHOLDs remain.
+Active1065/1116/1081: /workspace/tlp-practice-correctness, fix/yuk-1065-practice-correctness, base b6b5565d.
+Timeout unlock errors logged without lock semantic changes; fewshot timestamps decoded after full tier validation;
+store_sourced_question requires explicit subject_id and describes the subject whitelist contract.
+All three regressions first RED. 8unit+77DB/typecheck/lint299/build/10audits passed; independent initial review found no P0/P1 or substantive P2. PR/CI/window pending.
+Capture: current fixes fully covered by existing three tickets; no new actionable finding so far.
+1091 multi-submission/head contract remains open; no unsafe guard removal.
+No UI approval, production operations or paid requests. Go 2-request cap remains exhausted.
+Preserve worktrees/branches. Existing1007 readface and scoped provider/model P2s and owner HOLDs remain.

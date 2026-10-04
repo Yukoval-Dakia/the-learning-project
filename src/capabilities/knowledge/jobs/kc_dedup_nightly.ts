@@ -72,8 +72,8 @@ type NearDupPairRow = {
   b_name: string;
   a_version: number;
   b_version: number;
-  a_created_at: Date;
-  b_created_at: Date;
+  a_created_at: string;
+  b_created_at: string;
   distance: number;
 };
 
