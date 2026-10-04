@@ -65,7 +65,7 @@
 
 - YUK-766/#1553已交付main69c524df：8语义DB回归先RED，62DB/83unit与全部本地gate通过；初审旧API fixture/mock阻塞修复后唯一验证审16unit/15DB通过，CI37211421697及17分钟窗完成。增量迁移/浏览器未实际运行；下游队列恢复仍Todo。
 
-- YUK-588 active：feat/yuk-588-digest-cost /workspace/tlp-digest-cost，base69c524df。6新增功能DB先RED；52DB/50unit、全部本地gate与provider-attempt-truth通过，独立52DB/40unit初审无P0/P1。共享入口注入reader保持架构基线450/0/48；固定日窗费用/用量后端就绪，待push后CI/17分钟窗。具体UI预审待回复，整票不标Done。
+- YUK-588 active：feat/yuk-588-digest-cost /workspace/tlp-digest-cost，base69c524df。6新增功能DB先RED；52DB/50unit、全部本地gate与provider-attempt-truth通过，独立52DB/40unit初审无P0/P1。共享入口注入reader保持架构基线450/0/48；固定日窗费用/用量后端就绪；初次CI37214953644唯一失败为周报测试跨午夜竞态，固定Date复现后补午夜前/整点/后用例，28DB6unit通过，待修复验证审与新head CI/17分钟窗。具体UI预审待回复，整票不标Done。
 
 
 ## NEXT

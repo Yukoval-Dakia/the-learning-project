@@ -28,3 +28,9 @@ The HTTP response schema, generated client and Postman descriptions carry the sa
 Six feature regressions first failed on the original digest because cost evidence was absent. Real PostgreSQL tests cover empty/zero/unknown, exact BJT boundaries, UUID-linked echoes across window edges, unrelated historical records, failed/retried spending, currency and lane separation, non-token/partial usage, unfinished/no-wire exclusion, opaque unknown call counts, repeated-row aggregation and invalid windows. Existing digest, admin/Today cost and learner-state consumers are included in scoped regression verification. Local typecheck/lint/build, required audits, independent review and exact-head CI precede merge.
 
 UI acceptance remains pending: keep the existing activity disclosure, render honest currency/basis/unknown detail, preserve loading/error/empty and independent probes, and verify desktop/mobile. Backend delivery alone does not complete the whole issue.
+
+## CI release-blocker correction
+
+Initial exact-head CI `37214953644` found one unrelated weekly-report fixture race at Beijing midnight: its `now - 1 second` event belonged to yesterday while the assertion required today's bucket. The production endpoint returned the correct calendar date. Freezing only `Date` at `2026-10-04T16:00:00.500Z` reproduced the original failure locally. The test now freezes before/at/just after midnight, seeds current and previous local-day events, and checks explicit dates and both unchanged count/correct contracts. Network timers remain real and `afterEach` restores the clock. No endpoint or statistics behavior changes.
+
+The corrected weekly file plus digest DB regressions pass 28 tests; the calendar-window unit file passes 6. CI must run on the corrected head; the failed SHA is not rerun as a substitute for the fix.
