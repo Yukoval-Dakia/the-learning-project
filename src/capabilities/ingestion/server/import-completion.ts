@@ -236,9 +236,11 @@ export async function completeIngestionImport(
       // enrollCapturedBlock attribution below.
       const blockKnowledgeIds = effectiveKnowledgeIds[blockIndex];
       let importedBlockId: string;
+      let importedVisualComplexity: string | null = null;
 
       if (block.block_id !== undefined) {
         importedBlockId = block.block_id;
+        importedVisualComplexity = sourceBlockRows.get(block.block_id)?.visual_complexity ?? null;
       } else {
         // Virtual card (merged or split): INSERT new question_block
         importedBlockId = createId();
@@ -250,6 +252,7 @@ export async function completeIngestionImport(
           : sourceRows.some((r) => r.visual_complexity === 'medium')
             ? 'medium'
             : 'low';
+        if (sourceRows.length > 0) importedVisualComplexity = visualComplexity;
         // YUK-221 (#919 review) — extraction order is authoritative (ordinal = true
         // reading position). This else-branch serves TWO block kinds, so the ordinal
         // source differs by which one we're inserting:
@@ -377,6 +380,7 @@ export async function completeIngestionImport(
           reference_md: block.final_reference_md,
           knowledge_ids: blockKnowledgeIds,
           difficulty: block.difficulty,
+          visual_complexity: importedVisualComplexity,
           source: sessionEntrypoint,
           draft_status: null,
           variant_depth: 0,
