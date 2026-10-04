@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。Linear归零持续推进，当前72项；1064/#1540已交付。当前单线1062任务目录反转；依赖不追新，既有HOLD与生产/付费边界保持。
+> 更新于2026-10-04。Linear归零持续推进，当前71项未完成；1062/#1541已合入main9a076c12。当前单线为1060内存摄取告警与显式恢复；依赖不追新，既有HOLD与生产/付费边界保持。
 
 ## NOW
 
@@ -39,11 +39,13 @@
 
 - YUK-1064/#1540已合入main `52298f44`：38unit+368DB+82migration、本地gate、独立初审与唯一P1验证审、CI37190266253（34浏览器/82迁移）通过，17分钟窗口完成，Linear Done。离线CLI启动回归已修，20冻结cases CLEAN。
 
-- YUK-1062 active：`refactor/yuk-1062-task-catalog` / `/workspace/tlp-task-catalog`，base52298f44。具体53任务目录与精确类型移至capabilities组合根，共享registry/预算/prompt接收不可变catalog；六个窄task-public出口避免应用barrel初始化。6组原测试迁移保留断言，新增隔离/启动/边界回归；本地核心/消费者/runtime及232DB通过，真实migration bundle回归通过（1执行/81跳过），全部本地gate通过（lint299）。独立初审124unit及CJS闭包检查通过，无P0/P1或实质P2；PR/CI/window待完成。
+- YUK-1062/#1541已交付main9a076c12：232DB、本地gate、独立review与exact-head CI37191848104（34浏览器/82迁移）通过，17分钟窗口完成，Linear Done。
+
+- YUK-1060 active：fix/yuk-1060-memory-ingest /workspace/tlp-memory-ingest，base9a076c12；observe空投递告警与append-only单事件operator授权恢复。历史8条不重放，所有provider边界以mock验证。54unit+42DB、本地typecheck/lint299/build与十项审计通过；独立初审13unit/31DB通过，无P0/P1/实质P2，PR/CI/window待完成。
 
 ## NEXT
 
-1. 交付1062任务目录反转后，继续1060/1073–1079及766等已就绪主线。持续推进Linear归零，不以单批合并作为终点。
+1. 交付1060内存摄取恢复后，继续1073–1079及766等已就绪主线。持续推进Linear归零，不以单批合并作为终点。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 

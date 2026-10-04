@@ -33,6 +33,12 @@ import {
   scopeHasNewEvidence,
 } from './brief';
 import { type MemoryClient, type MemoryEventInput, createMemoryClient } from './client';
+import type { MemoryIngestReplayGrant } from './memory-ingest-recovery-contract';
+import {
+  assertMemoryIngestReplayGrant,
+  claimMemoryIngestReplay,
+  memoryIngestReplayAnchor,
+} from './memory-ingest-recovery-store';
 import {
   MEMORY_RECONCILE_QUEUE,
   type MemoryReconcileHandoffMode,
@@ -320,8 +326,10 @@ export function buildMemoryEventIngestHandler(
     loadEvent?: (db: Db, eventId: string) => Promise<MemoryEventInput | null>;
     memoryClient?: MemoryClient;
     handoffMode?: MemoryReconcileHandoffMode;
+    /** Explicit synchronous operator invocation only; never read from worker job data. */
+    replayGrant?: MemoryIngestReplayGrant;
   } = {},
-): (jobs: Job<{ event_id: string }>[]) => Promise<void> {
+): (jobs: Pick<Job<{ event_id: string }>, 'data'>[]) => Promise<void> {
   const loadEvent = deps.loadEvent ?? defaultLoadEvent;
   const handoffMode = deps.handoffMode ?? memoryReconcileHandoffMode();
   let memoryClient = deps.memoryClient;
@@ -330,6 +338,11 @@ export function buildMemoryEventIngestHandler(
     const client = memoryClient;
     for (const job of jobs) {
       const row = await loadEvent(db, job.data.event_id);
+      if (deps.replayGrant) {
+        await assertMemoryIngestReplayGrant(db, deps.replayGrant, job.data.event_id);
+        if (!row || row.id !== job.data.event_id)
+          throw new MemoryReconcileHandoffError('operator source unavailable');
+      }
       if (!row) continue;
 
       // P3 (YUK-351) extraction gate (ADR-0039 §决定 7 (i) / Phase 2 §6.3 C3 / §7 H6):
@@ -350,7 +363,13 @@ export function buildMemoryEventIngestHandler(
         if (completed?.memory_count === 0) {
           return { result: { results: [] }, resolution: completed.resolution } as const;
         }
+        const operationAnchor = (anchor: string) =>
+          deps.replayGrant ? memoryIngestReplayAnchor(deps.replayGrant, anchor) : anchor;
         const beforeProviderAdd = async () => {
+          if (deps.replayGrant) {
+            await claimMemoryIngestReplay(db, deps.replayGrant, row.id);
+            return;
+          }
           const claim = await claimMemoryIngest(db, row.id);
           if (claim !== 'winner')
             throw new MemoryReconcileHandoffError(
@@ -386,7 +405,7 @@ export function buildMemoryEventIngestHandler(
               db,
               caller: 'worker',
               deadlineAt: new Date(Date.now() + 65_000),
-              operationAnchor: projectionKey,
+              operationAnchor: operationAnchor(projectionKey),
             }),
             beforeProviderAdd,
           );
@@ -398,7 +417,7 @@ export function buildMemoryEventIngestHandler(
             db,
             caller: 'worker',
             deadlineAt: new Date(Date.now() + 65_000),
-            operationAnchor: row.id,
+            operationAnchor: operationAnchor(row.id),
           }),
           beforeProviderAdd,
         );
@@ -421,6 +440,7 @@ export function buildMemoryEventIngestHandler(
           persistIntents,
         });
         reconcileDispatch = {
+          mode: handoffMode,
           sourceEventId: row.id,
           memories: newMemories,
           ...(persistIntents ? { completion } : {}),
@@ -1173,7 +1193,7 @@ export async function registerMemoryHandlers(
     MEMORY_EVENT_INGEST_QUEUE,
     { pollingIntervalSeconds: 2, batchSize: 1 },
     // YUK-1055 — per-delivery epoch fence（disposition 'drain'：epoch-agnostic）。
-    fenceAwareJobHandler(
+    fenceAwareJobHandler<Job<{ event_id: string }>>(
       db,
       MEMORY_EVENT_INGEST_QUEUE,
       buildMemoryEventIngestHandler(db, boss, { memoryClient: deps.memoryClient }),
