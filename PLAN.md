@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。Linear归零持续推进，当前70项未完成；1060/#1542已合入mainf6b9926a。当前单线为1073工具执行阶段拆分；依赖不追新，既有HOLD与生产/付费边界保持。
+> 更新于2026-10-04。Linear归零持续推进，当前69项未完成；1073/#1543已合入main7859164b。当前单线为1074验题付费回调与子题FSRS提取；依赖不追新，既有HOLD与生产/付费边界保持。
 
 ## NOW
 
@@ -43,11 +43,13 @@
 
 - YUK-1060/#1542已交付mainf6b9926a：54unit+42DB、独立13unit/31DB、本地gate与exact-head CI37193674168（34浏览器/82迁移）通过，17分钟窗口完成，Linear Done；原marker/attempt保留，历史8条未重放。
 
-- YUK-1073 active：refactor/yuk-1073-tool-phases /workspace/tlp-tool-phases，basef6b9926a；具名阶段+显式结果对象替代共享errorReason突变，保留原始/执行输入、safe-handoff和日志/镜像/settle顺序。现有59unit/11DB基线通过，新阶段顺序用例在重构前后通过，61unit/11DB、typecheck/lint299/build与十项审计通过，独立初审66unit/11DB与24个新旧差分场景通过，无P0/P1或实质P2；待push后CI/17分钟窗。
+- YUK-1073/#1543已交付main7859164b：61unit/11DB、本地gate、独立66unit/11DB与24个差分场景、exact-head CI37195232638通过，17分钟窗口完成，Linear Done；增量CI未选migration/browser，未计为实际运行。
+
+- YUK-1074 active：refactor/yuk-1074-quiz-verify /workspace/tlp-quiz-verify，base7859164b；buildPlacementPaidCallHandlers共用reserve/settle/release，保留semantic_judge键与solution_check预算类型；composite-child promotion/FSRS独立函数与early-continue，判定/并发/事务/事件顺序不变。84DB基线通过；108unit/84DB、typecheck/lint299/build与十项audit通过，独立初审108unit/84DB通过，无P0/P1或实质P2；待push后CI/17分钟窗。
 
 ## NEXT
 
-1. 交付1073工具阶段拆分后，继续1074–1079及766等已就绪主线。持续推进Linear归零，不以单批合并作为终点。
+1. 交付1074验题helper提取后，继续1075–1079及766等已就绪主线。持续推进Linear归零，不以单批合并作为终点。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 

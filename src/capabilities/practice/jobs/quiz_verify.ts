@@ -56,7 +56,7 @@ import {
   type VerifyFailureClass,
   toUnifiedVerifyResult,
 } from '@/core/schema/verify-contract';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question, question_group_lifecycle, source_document } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
@@ -72,7 +72,7 @@ import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectQuestionKind } from '@/subjects/profile-schema';
 import { resolveQuizGenSkillDocs } from '@/subjects/quiz-gen-skills';
-import { initialFsrsState } from '../server/fsrs';
+import { type InitialFsrsState, initialFsrsState } from '../server/fsrs';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '../server/placement-scope';
 import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
 import {
@@ -168,6 +168,167 @@ export interface RunQuizVerifyResult {
   // never returned on the success path because the catch re-throws).
   overall?: QuizVerifyOverall;
   copy_safety_verdict?: QuizGenMetadataT['copy_safety']['verdict'];
+}
+
+type PlacementInvocationKind = 'solution_check' | 'semantic_judge' | 'teaching_quality';
+
+/** The semantic judge has its own invocation key but shares the solver's budget kind. */
+function buildPlacementPaidCallHandlers(
+  kind: 'solution_check' | 'teaching_quality',
+  input: { db: Db; questionId: string; authority: PlacementVerificationAuthority },
+) {
+  const { db, questionId, authority } = input;
+  const reservationKey = (invocationId: string, invocationKind: PlacementInvocationKind) =>
+    `${authority.attempt_id}:${questionId}:${invocationKind}:${invocationId}`;
+  return {
+    async beforePaidCall(invocationId: string, invocationKind: PlacementInvocationKind = kind) {
+      await db.transaction(async (tx) =>
+        reserveAuthorizedPaidCall(tx, {
+          authority,
+          kind,
+          reservationKey: reservationKey(invocationId, invocationKind),
+        }),
+      );
+    },
+    async settlePaidCall(
+      invocationId: string,
+      paidResult: Pick<TaskTextResult, 'task_run_id' | 'cost_usd'>,
+      invocationKind: PlacementInvocationKind = kind,
+    ) {
+      const providerTaskRunId = requirePlacementProviderTaskRunId(paidResult, invocationKind);
+      const settlement = await db.transaction(async (tx) =>
+        settleAuthorizedPaidCall(tx, {
+          authority,
+          reservationKey: reservationKey(invocationId, invocationKind),
+          providerTaskRunId,
+          costMicroUsd: costUsdToMicroUsd(paidResult.cost_usd),
+        }),
+      );
+      if (settlement.costUnknown) {
+        throw new PlacementStarterUnknownCostError(`placement ${invocationKind} cost is unknown`);
+      }
+      if (settlement.overCap) {
+        throw new PlacementStarterAdmissionError(
+          `placement ${invocationKind} paid invocation exceeded authorized reservation`,
+        );
+      }
+    },
+    async releasePaidCall(invocationId: string, invocationKind: PlacementInvocationKind = kind) {
+      await db.transaction(async (tx) =>
+        releaseAuthorizedPaidCall(tx, {
+          claimId: authority.claim_id,
+          reservationKey: reservationKey(invocationId, invocationKind),
+        }),
+      );
+    },
+  };
+}
+
+async function promoteCompositeChildren(
+  tx: Tx,
+  input: {
+    questionId: string;
+    now: Date;
+    verifiedBy: QuizGenVerificationT['verified_by'];
+    initial: InitialFsrsState;
+    verifyEventId: string;
+  },
+): Promise<void> {
+  const { questionId, now, verifiedBy, initial, verifyEventId } = input;
+  const childRows = await tx
+    .select({
+      id: question.id,
+      draftStatus: question.draft_status,
+      metadata: question.metadata,
+      knowledgeIds: question.knowledge_ids,
+    })
+    .from(question)
+    .where(eq(question.parent_question_id, questionId));
+  for (const child of childRows) {
+    if (child.draftStatus !== 'draft') continue;
+    const childMeta =
+      child.metadata && typeof child.metadata === 'object'
+        ? (child.metadata as Record<string, unknown>)
+        : {};
+    // Read-side tombstone skip (fast path for rows already dead when read;
+    // the write-side WHERE below enforces the same check atomically).
+    if (childMeta.archived_at != null || childMeta.dismissed_at != null) continue;
+    // Stamp the child's own verification block — honest provenance: the
+    // part was not independently verified; it inherits the parent's
+    // verdict (the group was judged as a unit). Same contract as the
+    // verified parent: every child this cascade promotes was written by the
+    // Q3 path and always carries a parseable metadata.quiz_gen — anything
+    // else is a contract violation → throw rather than silently promote
+    // an unverifiable draft.
+    const childQuizGen = QuizGenMetadata.safeParse(childMeta.quiz_gen);
+    if (!childQuizGen.success) {
+      throw new Error(
+        `runQuizVerify: composite child ${child.id} of ${questionId} has no valid metadata.quiz_gen: ${childQuizGen.error.issues
+          .map((i) => i.message)
+          .join('; ')}`,
+      );
+    }
+    const childMetadata = {
+      ...childMeta,
+      quiz_gen: {
+        ...childQuizGen.data,
+        verification: {
+          status: 'verified' as const,
+          summary: 'composite child promoted with verified parent',
+          verified_by: verifiedBy,
+        },
+      },
+    };
+    // The draft/tombstone predicates are enforced in the UPDATE's WHERE
+    // (not only the SELECT above) so a concurrent archive/dismiss landing
+    // between read and write cannot be overwritten back to 'active' — the
+    // "a dead part must not resurrect" invariant holds at write time, and
+    // a zero-row result also skips the FSRS enroll below.
+    const promotedChildren = await tx
+      .update(question)
+      .set({
+        draft_status: LEGACY_DRAFT_STATUS.ACTIVE,
+        metadata: childMetadata as never,
+        updated_at: now,
+      })
+      .where(
+        and(
+          eq(question.id, child.id),
+          eq(question.draft_status, LEGACY_DRAFT_STATUS.DRAFT),
+          sql`${question.metadata}->>'archived_at' IS NULL`,
+          sql`${question.metadata}->>'dismissed_at' IS NULL`,
+        ),
+      )
+      .returning({ id: question.id });
+    if (promotedChildren.length === 0) continue;
+    const childKnowledgeIds = Array.from(new Set(child.knowledgeIds ?? []));
+    if (childKnowledgeIds.length === 0) {
+      const childExisting = await getFsrsState(tx, 'question', child.id);
+      if (childExisting) continue;
+      await upsertFsrsState(tx, {
+        subject_kind: 'question',
+        subject_id: child.id,
+        state: initial.state,
+        due_at: initial.dueAt,
+        last_review_event_id: verifyEventId,
+      });
+      continue;
+    }
+    for (const knowledgeId of childKnowledgeIds) {
+      // YUK-1037 — same anchor-not-content exclusion as the parent loop:
+      // an inherited 'seed:<subj>:root' binding must not mint a card.
+      if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
+      const childExisting = await getFsrsState(tx, 'knowledge', knowledgeId);
+      if (childExisting) continue;
+      await upsertFsrsState(tx, {
+        subject_kind: 'knowledge',
+        subject_id: knowledgeId,
+        state: initial.state,
+        due_at: initial.dueAt,
+        last_review_event_id: verifyEventId,
+      });
+    }
+  }
 }
 
 /**
@@ -472,6 +633,13 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     // rubber-stamp itself. Scoped env, fail-open to the default lane (see solve-lane.ts). Resolved
     // once here; {} when the env is unset → no override keys → default-lane behavior unchanged.
     const solveOverride = resolveSolveOverrideFromEnv();
+    const solvePaidCalls = placementAuthority
+      ? buildPlacementPaidCallHandlers('solution_check', {
+          db,
+          questionId,
+          authority: placementAuthority,
+        })
+      : undefined;
     const [solveSettled, teachingSettled] = await Promise.allSettled([
       freeChecksPass && tierChecks.includes('solve_check')
         ? runSolveCheck(
@@ -493,46 +661,14 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
               placementAuthority,
               ...(solveOverride.provider ? { solverProviderOverride: solveOverride.provider } : {}),
               ...(solveOverride.model ? { solverModelOverride: solveOverride.model } : {}),
-              ...(placementAuthority
+              ...(solvePaidCalls
                 ? {
-                    beforePaidCall: async (kind, invocationId) => {
-                      await db.transaction(async (tx) =>
-                        reserveAuthorizedPaidCall(tx, {
-                          authority: placementAuthority,
-                          kind: 'solution_check',
-                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:${kind}:${invocationId}`,
-                        }),
-                      );
-                    },
-                    settlePaidCall: async (kind, invocationId, paidResult) => {
-                      const providerTaskRunId = requirePlacementProviderTaskRunId(paidResult, kind);
-                      const settlement = await db.transaction(async (tx) =>
-                        settleAuthorizedPaidCall(tx, {
-                          authority: placementAuthority,
-                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:${kind}:${invocationId}`,
-                          providerTaskRunId,
-                          costMicroUsd: costUsdToMicroUsd(paidResult.cost_usd),
-                        }),
-                      );
-                      if (settlement.costUnknown) {
-                        throw new PlacementStarterUnknownCostError(
-                          `placement ${kind} cost is unknown`,
-                        );
-                      }
-                      if (settlement.overCap) {
-                        throw new PlacementStarterAdmissionError(
-                          `placement ${kind} paid invocation exceeded authorized reservation`,
-                        );
-                      }
-                    },
-                    releasePaidCall: async (kind, invocationId) => {
-                      await db.transaction(async (tx) =>
-                        releaseAuthorizedPaidCall(tx, {
-                          claimId: placementAuthority.claim_id,
-                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:${kind}:${invocationId}`,
-                        }),
-                      );
-                    },
+                    beforePaidCall: (kind, invocationId) =>
+                      solvePaidCalls.beforePaidCall(invocationId, kind),
+                    settlePaidCall: (kind, invocationId, paidResult) =>
+                      solvePaidCalls.settlePaidCall(invocationId, paidResult, kind),
+                    releasePaidCall: (kind, invocationId) =>
+                      solvePaidCalls.releasePaidCall(invocationId, kind),
                   }
                 : {}),
             },
@@ -555,49 +691,11 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
               profile: { id: subjectProfile.id, full: subjectProfile },
               placementAuthority,
               ...(placementAuthority
-                ? {
-                    beforePaidCall: async (invocationId) => {
-                      await db.transaction(async (tx) =>
-                        reserveAuthorizedPaidCall(tx, {
-                          authority: placementAuthority,
-                          kind: 'teaching_quality',
-                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:teaching_quality:${invocationId}`,
-                        }),
-                      );
-                    },
-                    settlePaidCall: async (invocationId, paidResult) => {
-                      const providerTaskRunId = requirePlacementProviderTaskRunId(
-                        paidResult,
-                        'teaching_quality',
-                      );
-                      const settlement = await db.transaction(async (tx) =>
-                        settleAuthorizedPaidCall(tx, {
-                          authority: placementAuthority,
-                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:teaching_quality:${invocationId}`,
-                          providerTaskRunId,
-                          costMicroUsd: costUsdToMicroUsd(paidResult.cost_usd),
-                        }),
-                      );
-                      if (settlement.costUnknown) {
-                        throw new PlacementStarterUnknownCostError(
-                          'placement teaching_quality cost is unknown',
-                        );
-                      }
-                      if (settlement.overCap) {
-                        throw new PlacementStarterAdmissionError(
-                          'placement teaching_quality paid invocation exceeded authorized reservation',
-                        );
-                      }
-                    },
-                    releasePaidCall: async (invocationId) => {
-                      await db.transaction(async (tx) =>
-                        releaseAuthorizedPaidCall(tx, {
-                          claimId: placementAuthority.claim_id,
-                          reservationKey: `${placementAuthority.attempt_id}:${questionId}:teaching_quality:${invocationId}`,
-                        }),
-                      );
-                    },
-                  }
+                ? buildPlacementPaidCallHandlers('teaching_quality', {
+                    db,
+                    questionId,
+                    authority: placementAuthority,
+                  })
                 : {}),
             },
           )
@@ -850,101 +948,13 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         // (per-KC enroll-if-absent — usually a no-op since the parent's loop
         // above just enrolled those ids); the question-level fallback stays
         // reserved for a genuinely unlabeled legacy part.
-        const childRows = await tx
-          .select({
-            id: question.id,
-            draftStatus: question.draft_status,
-            metadata: question.metadata,
-            knowledgeIds: question.knowledge_ids,
-          })
-          .from(question)
-          .where(eq(question.parent_question_id, questionId));
-        for (const child of childRows) {
-          if (child.draftStatus !== 'draft') continue;
-          const childMeta =
-            child.metadata && typeof child.metadata === 'object'
-              ? (child.metadata as Record<string, unknown>)
-              : {};
-          // Read-side tombstone skip (fast path for rows already dead when read;
-          // the write-side WHERE below enforces the same check atomically).
-          if (childMeta.archived_at != null || childMeta.dismissed_at != null) continue;
-          // Stamp the child's own verification block — honest provenance: the
-          // part was not independently verified; it inherits the parent's
-          // verdict (the group was judged as a unit). Same contract as the
-          // parent above: every child this cascade promotes was written by the
-          // Q3 path and always carries a parseable metadata.quiz_gen — anything
-          // else is a contract violation → throw rather than silently promote
-          // an unverifiable draft.
-          const childQuizGen = QuizGenMetadata.safeParse(childMeta.quiz_gen);
-          if (!childQuizGen.success) {
-            throw new Error(
-              `runQuizVerify: composite child ${child.id} of ${questionId} has no valid metadata.quiz_gen: ${childQuizGen.error.issues
-                .map((i) => i.message)
-                .join('; ')}`,
-            );
-          }
-          const childMetadata = {
-            ...childMeta,
-            quiz_gen: {
-              ...childQuizGen.data,
-              verification: {
-                status: 'verified' as const,
-                summary: 'composite child promoted with verified parent',
-                verified_by: verifiedBy,
-              },
-            },
-          };
-          // The draft/tombstone predicates are enforced in the UPDATE's WHERE
-          // (not only the SELECT above) so a concurrent archive/dismiss landing
-          // between read and write cannot be overwritten back to 'active' — the
-          // "a dead part must not resurrect" invariant holds at write time, and
-          // a zero-row result also skips the FSRS enroll below.
-          const promotedChildren = await tx
-            .update(question)
-            .set({
-              draft_status: LEGACY_DRAFT_STATUS.ACTIVE,
-              metadata: childMetadata as never,
-              updated_at: now,
-            })
-            .where(
-              and(
-                eq(question.id, child.id),
-                eq(question.draft_status, LEGACY_DRAFT_STATUS.DRAFT),
-                sql`${question.metadata}->>'archived_at' IS NULL`,
-                sql`${question.metadata}->>'dismissed_at' IS NULL`,
-              ),
-            )
-            .returning({ id: question.id });
-          if (promotedChildren.length === 0) continue;
-          const childKnowledgeIds = Array.from(new Set(child.knowledgeIds ?? []));
-          if (childKnowledgeIds.length > 0) {
-            for (const knowledgeId of childKnowledgeIds) {
-              // YUK-1037 — same anchor-not-content exclusion as the parent loop:
-              // an inherited 'seed:<subj>:root' binding must not mint a card.
-              if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
-              const childExisting = await getFsrsState(tx, 'knowledge', knowledgeId);
-              if (childExisting) continue;
-              await upsertFsrsState(tx, {
-                subject_kind: 'knowledge',
-                subject_id: knowledgeId,
-                state: initial.state,
-                due_at: initial.dueAt,
-                last_review_event_id: verifyEventId,
-              });
-            }
-          } else {
-            const childExisting = await getFsrsState(tx, 'question', child.id);
-            if (!childExisting) {
-              await upsertFsrsState(tx, {
-                subject_kind: 'question',
-                subject_id: child.id,
-                state: initial.state,
-                due_at: initial.dueAt,
-                last_review_event_id: verifyEventId,
-              });
-            }
-          }
-        }
+        await promoteCompositeChildren(tx, {
+          questionId,
+          now,
+          verifiedBy,
+          initial,
+          verifyEventId,
+        });
 
         // YUK-1043 — 统一发布链：verified promote 即 §3.3 的 admission 时刻
         //（同事务，位于级联之后 ⇒ 组契约含最终子 part 状态）。quiz_gen 内容为
