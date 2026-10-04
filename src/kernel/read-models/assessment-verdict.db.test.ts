@@ -26,6 +26,7 @@ import {
   evaluation_group,
   event,
   question,
+  question_group_lifecycle,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import {
@@ -226,6 +227,20 @@ async function seedEvaluation(
   opts: { status?: 'pending' | 'completed'; attempt?: number; points?: number | null } = {},
 ) {
   const db = testDb();
+  const [submission] = await db
+    .select()
+    .from(assessment_submission)
+    .where(eq(assessment_submission.submission_id, submissionId));
+  const [admissionSnapshot] = await db
+    .select({
+      current_revision_id: question_group_lifecycle.current_revision_id,
+      generation: question_group_lifecycle.scoring_admission_generation,
+      state: question_group_lifecycle.scoring_admission_state,
+      suspended: question_group_lifecycle.suspended,
+      withdrawn: question_group_lifecycle.withdrawn,
+    })
+    .from(question_group_lifecycle)
+    .where(eq(question_group_lifecycle.current_revision_id, submission.revision_id));
   await db.insert(evaluation).values({
     evaluation_id: evalId,
     evaluation_group_id: groupId,
@@ -239,7 +254,7 @@ async function seedEvaluation(
         : { kind: 'level', level_id: 'pass', points: opts.points ?? 1 },
     plan_digest: null,
     run_refs: [],
-    provenance: { source: 'automatic', assisted: false },
+    provenance: { source: 'automatic', assisted: false, admission_snapshot: admissionSnapshot },
     created_at: T0,
   });
 }

@@ -3,6 +3,7 @@ import { extractAnswerHead } from '../judge-routing';
 import { type ExecutorDescriptorT, type ModelExecutorT, validateExecutionPlan } from './execution';
 import {
   type AggregateOutcomeT,
+  type EvaluationProvenanceT,
   EvaluationRecord,
   type EvaluationRecordT,
   type EvidenceCitationT,
@@ -41,14 +42,6 @@ import { type ScoringBasisT, type ScoringUnitT, validateScoringBasis } from './s
 //
 // 候选语义：评估结果只是 candidate，activation（CAS + admission generation
 // 复核 + 学习结算事务）由 YUK-1045/1053 接管。candidate 永不进显示通道。
-
-// ---------- 评估 provenance（D9/D15/D16） ----------
-
-export const EvaluationProvenance = z.object({
-  source: z.enum(['automatic', 'manual', 'self_report']),
-  assisted: z.boolean().default(false),
-});
-export type EvaluationProvenanceT = z.infer<typeof EvaluationProvenance>;
 
 // ---------- 执行期 policy（不改给分规则，只控执行面） ----------
 
@@ -202,6 +195,7 @@ export class EvaluationContractError extends Error {
       | 'invalid_scoring_basis'
       | 'invalid_execution_plan'
       | 'unprojectable_aggregation'
+      | 'execute_mode_requires_automatic_provenance'
       | 'manual_mode_requires_manual_provenance'
       | 'manual_mode_requires_asserted_results'
       | 'manual_result_set_mismatch',
@@ -442,6 +436,12 @@ export async function evaluateSubmissionCore(
 
   const provenance = input.provenance ?? { source: 'automatic' as const, assisted: false };
   const mode = input.mode ?? 'execute';
+  if (mode === 'execute' && provenance.source !== 'automatic') {
+    throw new EvaluationContractError(
+      'execute_mode_requires_automatic_provenance',
+      'execute requires provenance.source automatic; manual/self_report require manual_assert',
+    );
+  }
   if (mode === 'manual_assert') {
     if (provenance.source === 'automatic') {
       throw new EvaluationContractError(

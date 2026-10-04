@@ -11,7 +11,7 @@
 //   - capped_sum/threshold_levels 在部分 scope 下 fail-closed；
 //   - retryable infra_failure ⇒ 记录 status=pending + aggregate=null。
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   type EvaluateSubmissionCoreInput,
@@ -939,6 +939,36 @@ describe('evaluateSubmissionCore — contract enforcement', () => {
       evaluateSubmissionCore(inputFor(submission, revisionFor({}))),
     ).rejects.toMatchObject({ code: 'invalid_response_set' });
   });
+
+  it.each(['manual', 'self_report'] as const)(
+    'rejects executed scoring labeled as %s before invoking the model',
+    async (source) => {
+      const model_executor = vi.fn();
+      for (const mode of [undefined, 'execute'] as const) {
+        await expect(
+          evaluateSubmissionCore(
+            inputFor(
+              submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '2' }]),
+              revisionFor({
+                assignments: [
+                  {
+                    scoring_unit_ids: ['p1::u'],
+                    executor: {
+                      kind: 'model_executor',
+                      task_kind: 'JevScoringDecisionTask',
+                      admitted_slice_id: 'test:admitted-slice',
+                    },
+                  },
+                ],
+              }),
+              { mode, provenance: { source, assisted: false }, model_executor },
+            ),
+          ),
+        ).rejects.toMatchObject({ code: 'execute_mode_requires_automatic_provenance' });
+      }
+      expect(model_executor).not.toHaveBeenCalled();
+    },
+  );
 
   it('manual_assert requires manual provenance + asserted results', async () => {
     await expect(
