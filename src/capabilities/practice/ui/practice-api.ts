@@ -345,11 +345,15 @@ export async function submitReview(input: SubmitReviewInput): Promise<SubmitOutc
 export const fileAppeal = (
   judgeEventId: string,
   reasonMd: string,
+  anchorKind: 'judge' | 'evaluation' = 'judge',
 ): Promise<{ appeal_event_id: string }> =>
   apiOperationJson('createAppeal', {
     url: '/api/appeals',
     method: 'POST',
-    body: { judge_event_id: judgeEventId, reason_md: reasonMd },
+    body:
+      anchorKind === 'evaluation'
+        ? { evaluation_id: judgeEventId, reason_md: reasonMd }
+        : { judge_event_id: judgeEventId, reason_md: reasonMd },
   });
 
 export const solveStart = (

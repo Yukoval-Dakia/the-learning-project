@@ -38,6 +38,12 @@ export async function createSolveSession(
 
     return Response.json({
       session_id: result.sessionId,
+      ...(parsed.data?.issuance_id
+        ? {
+            evaluation_group_id: `solve_${result.sessionId}`,
+            idempotency_key: `solve_${result.sessionId}`,
+          }
+        : {}),
       generated: result.generated,
       generation_error: result.generationError,
     });

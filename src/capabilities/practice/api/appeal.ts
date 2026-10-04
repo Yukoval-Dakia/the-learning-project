@@ -4,8 +4,9 @@ import { REJUDGE_SINGLETON_SECONDS } from '@/capabilities/practice/jobs/rejudge-
 import { db } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { canonicalResourceResponse, deprecatedRouteResponse } from '@/kernel/http';
+import { canonicalResourceResponse, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
+import { createNativeAppeal } from '../server/assessment/appeal';
 import { getPracticeBoss } from '../server/queue-runtime';
 import { CreateAppealBodySchema } from './contracts';
 
@@ -29,6 +30,22 @@ export async function createAppeal(req: Request) {
   const parsed = CreateAppealBodySchema.safeParse(body);
   if (!parsed.success) {
     return Response.json({ error: 'invalid_body', issues: parsed.error.issues }, { status: 400 });
+  }
+  if ('evaluation_id' in parsed.data) {
+    try {
+      const appealEventId = await createNativeAppeal(db, parsed.data);
+      if (shouldEnqueueBackgroundJobs()) {
+        const boss = await getPracticeBoss();
+        await boss.send(
+          'rejudge',
+          { appeal_event_id: appealEventId },
+          { singletonKey: appealEventId, singletonSeconds: REJUDGE_SINGLETON_SECONDS },
+        );
+      }
+      return Response.json({ appeal_event_id: appealEventId });
+    } catch (error) {
+      return errorResponse(error);
+    }
   }
   const { judge_event_id, reason_md } = parsed.data;
 

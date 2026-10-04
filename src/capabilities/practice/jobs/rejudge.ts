@@ -36,6 +36,7 @@ import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
+import { rejudgeNativeAppeal } from '../server/assessment/appeal';
 
 export interface RejudgeJobInput {
   appeal_event_id: string;
@@ -49,6 +50,7 @@ export interface RejudgeDeps {
 }
 
 export type RejudgeOutcome =
+  | Awaited<ReturnType<typeof rejudgeNativeAppeal>>
   | { status: 'skipped'; reason: string }
   | { status: 'upheld'; appeal_event_id: string; upheld_event_id: string }
   | {
@@ -113,6 +115,7 @@ export async function handleRejudge(
   if (await appealAlreadyResolved(db, appeal.id)) {
     return { status: 'skipped', reason: 'already_resolved' };
   }
+  if (appeal.subject_kind === 'evaluation') return rejudgeNativeAppeal(db, appeal);
 
   const [judgeEvent] = await db
     .select()

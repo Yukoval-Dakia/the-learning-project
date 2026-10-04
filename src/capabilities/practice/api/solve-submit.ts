@@ -38,6 +38,7 @@ export async function createSolveSubmission(
     });
 
     return Response.json({
+      ...(result.status ? { status: result.status, assessment: result.assessment } : {}),
       attempt_event_id: result.attempt_event_id,
       judge: result.judge,
       revealed_solution_md: result.revealed_solution_md,

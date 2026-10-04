@@ -125,6 +125,11 @@ export interface QuestionDetailTimelineEntry {
   created_at_sec: number;
   outcome: string;
   duration_ms: number | null;
+  assessment?: {
+    evaluation_group_id: string;
+    original_evaluation_id: string | null;
+    effective_evaluation_id: string | null;
+  };
   // attempt-only
   cause?: {
     primary: string;
@@ -470,7 +475,13 @@ function toTimelineEntry(entry: QuestionTimelineEntry): QuestionDetailTimelineEn
     duration_ms: entry.duration_ms,
   };
   if (entry.kind === 'attempt') {
-    return { kind: 'attempt', ...base, outcome: entry.outcome, cause: entry.cause };
+    return {
+      kind: 'attempt',
+      ...base,
+      outcome: entry.outcome,
+      cause: entry.cause,
+      ...(entry.assessment ? { assessment: entry.assessment } : {}),
+    };
   }
   return {
     kind: 'review',

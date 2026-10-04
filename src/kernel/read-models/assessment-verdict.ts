@@ -681,3 +681,93 @@ export async function resolveVerdictForGroup(db: DbLike, groupId: string): Promi
     }
   );
 }
+
+/** Native participation anchors carry no verdict bit. Resolve their frozen
+ * coordinates before reading the group's currently selected evaluation. */
+export type NativeAttemptVerdict = GroupVerdict & {
+  submission: typeof assessment_submission.$inferSelect;
+};
+
+export async function resolveVerdictsForNativeAttempts(
+  db: DbLike,
+  rows: EventRow[],
+): Promise<Map<string, NativeAttemptVerdict>> {
+  const anchors = rows.filter(
+    (row) => row.action === 'experimental:assessment_attempt' && row.subject_kind === 'question',
+  );
+  const ids = [
+    ...new Set(
+      anchors.flatMap((row) =>
+        typeof row.payload.submission_id === 'string' ? [row.payload.submission_id] : [],
+      ),
+    ),
+  ];
+  const coordinates = [];
+  for (let offset = 0; offset < ids.length; offset += QUERY_ID_CHUNK) {
+    coordinates.push(
+      ...(await db
+        .select({
+          submission: assessment_submission,
+          issuance: assessment_issuance,
+          revision: question_revision,
+        })
+        .from(assessment_submission)
+        .innerJoin(
+          assessment_issuance,
+          eq(assessment_issuance.issuance_id, assessment_submission.issuance_id),
+        )
+        .innerJoin(
+          question_revision,
+          eq(question_revision.revision_id, assessment_submission.revision_id),
+        )
+        .where(
+          inArray(assessment_submission.submission_id, ids.slice(offset, offset + QUERY_ID_CHUNK)),
+        )),
+    );
+  }
+  const coordinateById = new Map(
+    coordinates.map((value) => [value.submission.submission_id, value]),
+  );
+  const valid = anchors.flatMap((row) => {
+    const p = row.payload;
+    const coordinate =
+      typeof p.submission_id === 'string' ? coordinateById.get(p.submission_id) : undefined;
+    if (!coordinate) return [];
+    const { submission, issuance, revision } = coordinate;
+    if (
+      p.evaluation_group_id !== submission.evaluation_group_id ||
+      p.issuance_id !== submission.issuance_id ||
+      p.revision_id !== submission.revision_id ||
+      issuance.revision_id !== revision.revision_id ||
+      (row.subject_id !== revision.group_id && !issuance.part_ids.includes(row.subject_id))
+    )
+      return [];
+    return [{ row, submission, groupId: submission.evaluation_group_id }];
+  });
+  const groups = await resolveVerdictsForGroups(
+    db,
+    valid.map((entry) => entry.groupId),
+  );
+  return new Map(
+    valid.map(({ row, groupId, submission }) => [row.id, { ...groups.get(groupId)!, submission }]),
+  );
+}
+
+export function nativeAttemptOutcome(
+  group: GroupVerdict | undefined,
+): 'success' | 'failure' | 'partial' | 'pending' | 'unsupported' {
+  const selected = group?.effective;
+  if (!selected || selected.status === 'pending') return 'pending';
+  // Self-report owns a practice rating, never an inferred score.
+  if (selected.row.provenance?.source === 'self_report') return 'unsupported';
+  switch (selected.verdict.verdict) {
+    case 'correct':
+      return 'success';
+    case 'incorrect':
+      return 'failure';
+    case 'partial':
+      return 'partial';
+    default:
+      return 'unsupported';
+  }
+}

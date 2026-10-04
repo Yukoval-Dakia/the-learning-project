@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { type JudgeInvokerOutput, evaluateAttempt } from '@/capabilities/practice/server/judge';
 import type { JudgeAnswerParams } from '@/capabilities/practice/server/judge/question-contract';
 import { canonicalHash } from '@/core/migration/canonical';
+import type { ActivateEvaluationIntentT } from '@/core/schema/assessment';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
@@ -27,7 +28,9 @@ import {
 import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import { Tutor } from '@/server/session';
 import { recordAssistanceExposure } from './assessment/assistance';
-import { loadFrozenStudyContext } from './assessment/study-context';
+import { commitFormalAttempt } from './assessment/attempt';
+import { loadFrozenStudyContext, revealFrozenStudyReference } from './assessment/study-context';
+import type { SaveSubmissionRequest } from './assessment/submit';
 import { enqueueWrongStreakNudge } from './enqueue-wrong-streak-nudge';
 import {
   QuestionEvidenceSnapshotError,
@@ -264,6 +267,10 @@ export async function planSolveHint(params: PlanSolveHintParams): Promise<PlanSo
 }
 
 export interface SolveSubmission {
+  assessment?: SaveSubmissionRequest;
+  activation_intent?: ActivateEvaluationIntentT;
+  self_report?: boolean;
+  user_rating?: 'again' | 'hard' | 'good';
   student_text_steps?: string[];
   student_final_answer_text?: string;
   student_image_refs?: string[];
@@ -299,6 +306,14 @@ export interface SubmitSolveAttemptParams {
 }
 
 export interface SubmitSolveAttemptResult {
+  status?: 'effective' | 'review_required';
+  assessment?: {
+    submission_id: string;
+    evaluation_group_id: string;
+    candidate_id: string;
+    activation_intent: ActivateEvaluationIntentT;
+    effect: string | null;
+  };
   attempt_event_id: string;
   judge: {
     route: string;
@@ -334,14 +349,14 @@ export async function submitSolveAttempt(
 ): Promise<SubmitSolveAttemptResult> {
   const { db, sessionId, submission } = params;
 
-  if (!hasNonEmptyCarrier(submission)) {
+  if (!submission.assessment && !hasNonEmptyCarrier(submission)) {
     throw new SolveError(
       'empty_submission',
       'at least one of student_text_steps / student_final_answer_text / student_image_refs must be non-empty',
     );
   }
 
-  const { questionId, status } = await Tutor.getTutorQuestionId(db, sessionId);
+  const { questionId, status, issuanceId } = await Tutor.getTutorQuestionId(db, sessionId);
   if (!questionId) {
     throw new SolveError('session_not_found', `tutor session ${sessionId} missing question link`);
   }
@@ -350,6 +365,120 @@ export async function submitSolveAttempt(
       'session_not_found',
       `tutor session ${sessionId} is not bound to question ${params.expectedQuestionId}`,
     );
+  }
+  if (submission.assessment || issuanceId) {
+    if (!issuanceId || !submission.assessment || submission.assessment.issuance_id !== issuanceId) {
+      throw new ApiError(
+        'coordinate_mismatch',
+        'solve submission must use the session frozen issuance',
+        409,
+      );
+    }
+    const stableKey = `solve_${sessionId}`;
+    if (
+      submission.assessment.evaluation_group_id !== stableKey ||
+      submission.assessment.idempotency_key !== stableKey
+    ) {
+      throw new ApiError(
+        'coordinate_mismatch',
+        'use the session evaluation_group_id and idempotency_key',
+        409,
+      );
+    }
+    if (status !== 'active' && status !== 'judged') {
+      throw new SolveError('session_not_active', `tutor session ${sessionId} status=${status}`);
+    }
+    const steps = (submission.student_text_steps ?? []).filter((step) => step.trim());
+    const displayAnswer = [...steps, submission.student_final_answer_text]
+      .filter(Boolean)
+      .join('\n');
+    const mistakeId = `mistake_${stableKey}`;
+    const committed = await commitFormalAttempt(
+      db,
+      'solve_tutor',
+      questionId,
+      submission.assessment,
+      {
+        activationIntent: submission.activation_intent,
+        selfReport: submission.self_report,
+        userRating: submission.user_rating,
+        capture: {
+          session_id: sessionId,
+          response_md: displayAnswer || null,
+          reasoning_trace: steps.join('\n').slice(0, REASONING_TRACE_MAX_LEN),
+          hints_used: params.hintsUsed,
+          final_hint_level: params.finalHintLevel,
+        },
+        onActivated: async (tx, prepared, attemptId) => {
+          await Tutor.markSubmittedTx(tx, sessionId);
+          const score = prepared.candidate.result;
+          const belowMastery =
+            !submission.self_report &&
+            score.score !== null &&
+            score.score < SOLVE_MASTERY_THRESHOLD;
+          const attachments = [
+            ...prepared.submission.group_evidence.map((item) => item.evidence),
+            ...prepared.submission.response_set.entries.flatMap((entry) =>
+              entry.kind === 'open' ? entry.evidence : [],
+            ),
+          ];
+          const assetRefs = [...new Set(attachments.map((item) => item.asset.asset_id))];
+          if (belowMastery)
+            await createLearningRecord(tx, {
+              id: mistakeId,
+              kind: 'mistake',
+              title: null,
+              content_md: displayAnswer || JSON.stringify(prepared.submission.response_set),
+              source: 'manual',
+              capture_mode: attachments.some((item) => item.kind === 'image') ? 'image' : 'text',
+              activity_kind: 'attempt',
+              processing_status: 'raw',
+              origin_event_id: attemptId,
+              knowledge_ids: [],
+              question_id: questionId,
+              attempt_event_id: attemptId,
+              asset_refs: assetRefs,
+              payload: {
+                from: 'solve_tutor',
+                assessment: {
+                  submission_id: prepared.submission.submission_id,
+                  revision_id: prepared.submission.revision_id,
+                  evaluation_id: prepared.candidate.evaluation.record.evaluation_id,
+                },
+              },
+            });
+          await Tutor.markJudgedTx(tx, sessionId);
+        },
+      },
+    );
+    const score = committed.candidate.result;
+    const belowMastery =
+      !submission.self_report && score.score !== null && score.score < SOLVE_MASTERY_THRESHOLD;
+    const revealed =
+      committed.status === 'effective'
+        ? await revealFrozenStudyReference(db, issuanceId)
+        : { reference_md: null };
+    return {
+      status: committed.status,
+      attempt_event_id: committed.attempt_id,
+      assessment: {
+        submission_id: committed.submission.submission_id,
+        evaluation_group_id: committed.submission.evaluation_group_id,
+        candidate_id: committed.candidate.evaluation.record.evaluation_id,
+        activation_intent: committed.activation_intent,
+        effect: committed.status === 'effective' ? committed.activation.effect : null,
+      },
+      judge: {
+        route: 'evaluate_submission',
+        score: score.score,
+        coarse_outcome: score.coarse_outcome,
+        confidence: score.confidence,
+        reason_md: score.feedback_md,
+        evidence_json: score.evidence_json,
+      },
+      revealed_solution_md: revealed.reference_md,
+      ...(committed.status === 'effective' && belowMastery ? { mistake_id: mistakeId } : {}),
+    };
   }
   if (status !== 'active') {
     throw new SolveError('session_not_active', `tutor session ${sessionId} status=${status}`);

@@ -195,6 +195,13 @@ export type EvaluationInputSnapshotT = z.infer<typeof EvaluationInputSnapshot>;
 export const EvaluationProvenance = z.object({
   source: z.enum(['automatic', 'manual', 'self_report']),
   assisted: z.boolean().default(false),
+  review_context: z
+    .object({
+      appeal_event_id: z.string().min(1),
+      prior_evaluation_id: EvaluationId,
+      reason_md: z.string().max(2000),
+    })
+    .optional(),
   admission_snapshot: EvaluationAdmissionSnapshot.nullable().optional(),
   input_snapshot: EvaluationInputSnapshot.nullable().optional(),
   /** Server-owned execution identity: preview/commit/delivery share a candidate. */

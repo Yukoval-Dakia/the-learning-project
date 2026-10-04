@@ -245,6 +245,23 @@ describe('createJevModelExecutor — admission boundaries', () => {
 });
 
 describe('createJevModelExecutor — Jev lane', () => {
+  it('retains appeal context and the durable claimed run identity', async () => {
+    const fetchImpl = vi.fn(async (_url: unknown, _options?: RequestInit) =>
+      responseJson(jevOk(0.96)),
+    );
+    const review_context = {
+      appeal_event_id: 'appeal_typed',
+      prior_evaluation_id: 'eva_original',
+      reason_md: 'Reconsider the unit conversion in the original work.',
+    };
+    const out = await createJevModelExecutor(
+      executorOptions({ fetchImpl, taskRunId: 'assessment_claimed_typed' }),
+    )(request({ review_context }));
+    expect(out.run_refs).toEqual(['assessment_claimed_typed']);
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body)).state.review_context).toEqual(
+      review_context,
+    );
+  });
   it('rule_reference satisfied ⇒ scored with unit points, distribution-shape confidence', async () => {
     const fetchImpl = vi.fn(async () => responseJson(jevOk(0.96))) as unknown as typeof fetch;
     const port = createJevModelExecutor(executorOptions({ fetchImpl }));

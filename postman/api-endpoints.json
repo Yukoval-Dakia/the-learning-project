@@ -388,7 +388,9 @@
         "bodyExample": {
           "title": "高中文言文",
           "subjectId": "yuwen",
-          "knowledgeIds": ["kc-1"],
+          "knowledgeIds": [
+            "kc-1"
+          ],
           "declaredStage": "high_school"
         },
         "notes": "冷启入口直写 goal（source=manual），与 ADR-0025 proposal-materialize 路径并存。scope 解析：knowledgeIds 优先，否则 subjectId 经 effective-domain 轴派生；空 scope 允许（冷启 north-star）。title 必填。declaredStage 可选（middle_school|high_school|university|custom，YUK-1009 学习者自述学段，落 goal.declared_stage 供供给侧课程范围约束消费，不作能力判定）。返回 {id,title,subjectId,scopeKnowledgeIds,declaredStage,status}"
@@ -798,7 +800,9 @@
           "prompt_md": "下列句子中「而」字的用法是？",
           "reference_md": "《劝学》原文片段",
           "wrong_answer_md": "我认为是转折用法",
-          "knowledge_ids": ["kid_abc123"],
+          "knowledge_ids": [
+            "kid_abc123"
+          ],
           "cause": {
             "primary_category": "misunderstanding",
             "user_notes": "混淆了顺承与转折"
@@ -970,9 +974,16 @@
           "version": 0,
           "prompt_md": "新题目文本",
           "reference_md": "参考答案",
-          "choices_md": ["A", "B", "C", "D"],
+          "choices_md": [
+            "A",
+            "B",
+            "C",
+            "D"
+          ],
           "difficulty": 3,
-          "knowledge_ids": ["kn_abc"],
+          "knowledge_ids": [
+            "kn_abc"
+          ],
           "kind": "short_answer",
           "draft_status": "active"
         },
@@ -1167,7 +1178,9 @@
         "contentType": "application/json",
         "bodyExample": {
           "goalId": null,
-          "knowledgeIds": ["kc-1"]
+          "knowledgeIds": [
+            "kc-1"
+          ]
         },
         "notes": "dark-ship：gated on PLACEMENT_PROBE_ENABLED（默认 false → 404）。goalId 省略时用 knowledgeIds；二者皆缺/不可解析 → 400。返回 {sessionId, knowledgeIds, question, sourcingNeeded}"
       }
@@ -1182,7 +1195,9 @@
         "query": [],
         "contentType": "application/json",
         "bodyExample": {
-          "knowledgeIds": ["kc-1"],
+          "knowledgeIds": [
+            "kc-1"
+          ],
           "cap": 8,
           "seThreshold": null
         },
@@ -1279,7 +1294,10 @@
         "query": [],
         "contentType": "application/json",
         "bodyExample": {
-          "keys": ["task.QuizGenTask.provider", "task.QuizGenTask.model"],
+          "keys": [
+            "task.QuizGenTask.provider",
+            "task.QuizGenTask.model"
+          ],
           "note": "Restore defaults"
         },
         "notes": "需 x-internal-token。按整批删除后的原生组合校验，失败全部回滚。历史journal保留；清理后重新写入revision持续递增。响应与PATCH配置相同。"
@@ -1335,7 +1353,9 @@
         "contentType": "application/json",
         "bodyExample": {
           "group_id": "REPLACE_group_root",
-          "part_ids": ["p1"],
+          "part_ids": [
+            "p1"
+          ],
           "mode": "auto_score",
           "container_occurrence_ref": null,
           "claim": {
@@ -1375,7 +1395,9 @@
               {
                 "slot_id": "p1::r",
                 "kind": "choice",
-                "option_ids": ["opt-a"]
+                "option_ids": [
+                  "opt-a"
+                ]
               }
             ]
           },
@@ -1403,7 +1425,9 @@
               {
                 "slot_id": "p1::r",
                 "kind": "choice",
-                "option_ids": ["opt-a"]
+                "option_ids": [
+                  "opt-a"
+                ]
               }
             ]
           },
@@ -1489,6 +1513,69 @@
           }
         },
         "notes": "返回 candidate_id/activation_intent/automatic_commit；不激活学习效应。响应没有评级建议时保留未决态，不补造评级。"
+      }
+    ]
+  },
+  {
+    "path": "/api/appeals",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "请求复核当前生效的原生评估",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "evaluation_id": "REPLACE_effective_evaluation",
+          "reason_md": "请复核原始推导中的单位换算。",
+          "idempotency_key": "REPLACE_appeal_key"
+        },
+        "notes": "只接受当前生效自动评估；原始作答和评分依据保持冻结，理由不替代作答。重复 key 复用请求，后台重判通过 CAS 激活；过时请求保持 held，不产生第二次练习。"
+      }
+    ]
+  },
+  {
+    "path": "/api/solve-sessions",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "使用已发题快照开始解题会话",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "question_id": "REPLACE_question",
+          "issuance_id": "REPLACE_issuance"
+        },
+        "notes": "返回 session_id、evaluation_group_id 与 idempotency_key，提交必须回传该稳定身份。正式原生会话不临时生成或改写参考解答。"
+      }
+    ]
+  },
+  {
+    "path": "/api/solve-sessions/:sid/submissions",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "提交冻结解题作答并原子结束会话",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "question_id": "REPLACE_question",
+          "assessment": {
+            "issuance_id": "REPLACE_issuance",
+            "evaluation_group_id": "REPLACE_session_evaluation_group_id",
+            "idempotency_key": "REPLACE_session_idempotency_key",
+            "response_set": {
+              "entries": [
+                {
+                  "slot_id": "REPLACE_slot",
+                  "kind": "text",
+                  "text_md": "original response"
+                }
+              ]
+            },
+            "group_evidence": []
+          }
+        },
+        "notes": "正式作答与学习结算、会话 judged、错题记录同事务；相同原始输入重复提交复用结果，修改已接受作答返回409。待评估保持 review_required，不揭示答案。"
       }
     ]
   }

@@ -35,6 +35,14 @@ const review = (o: Partial<QFullTimelineEntry> = {}): QFullTimelineEntry => ({
 });
 
 describe('toAttemptTimelineEvents', () => {
+  it('keeps ungraded native participation visible without a failure bit', () => {
+    expect(
+      toAttemptTimelineEvents([
+        attempt({ outcome: 'pending', cause: null }),
+        attempt({ outcome: 'unsupported', cause: null }),
+      ]).map((e) => e.outcome),
+    ).toEqual(['pending', 'unsupported']);
+  });
   it('maps a valid attempt (outcome + cause preserved)', () => {
     const [e] = toAttemptTimelineEvents([attempt()]);
     expect(e).toEqual({

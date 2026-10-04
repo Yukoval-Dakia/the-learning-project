@@ -23,6 +23,8 @@ export interface PiModelExecutorOptions {
   /** Caller cap, intersected with the published unit cap and task budget. */
   maxCostUsdMicros: number;
   signal?: AbortSignal;
+  /** Pre-call durable claim identity supplied by formal entry orchestration. */
+  taskRunId?: string;
   /** Tests replace bytes/runner boundaries, not frozen interpretation. */
   loadAsset?: AssessmentAssetLoader;
   runTask?: (
@@ -125,7 +127,7 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
         (value): value is AbortSignal => value !== undefined,
       ),
     ]);
-    const taskRunId = randomUUID();
+    const taskRunId = options.taskRunId ?? randomUUID();
     let providerStarted = false;
     let result: RunTaskResult | undefined;
     let cost: number | undefined;

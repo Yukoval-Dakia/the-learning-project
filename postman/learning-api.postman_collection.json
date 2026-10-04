@@ -831,6 +831,39 @@
       ]
     },
     {
+      "name": "appeals",
+      "item": [
+        {
+          "name": "POST /api/appeals",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/appeals",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "appeals"]
+            },
+            "description": "请求复核当前生效的原生评估\n\n**Notes:** 只接受当前生效自动评估；原始作答和评分依据保持冻结，理由不替代作答。重复 key 复用请求，后台重判通过 CAS 激活；过时请求保持 held，不产生第二次练习。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"evaluation_id\": \"REPLACE_effective_evaluation\",\n  \"reason_md\": \"请复核原始推导中的单位换算。\",\n  \"idempotency_key\": \"REPLACE_appeal_key\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "attempts",
       "item": [
         {
@@ -2265,6 +2298,73 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"reason\": \"owner 判断这题质量足够，跳过 AI 验证\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "solve-sessions",
+      "item": [
+        {
+          "name": "POST /api/solve-sessions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/solve-sessions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "solve-sessions"]
+            },
+            "description": "使用已发题快照开始解题会话\n\n**Notes:** 返回 session_id、evaluation_group_id 与 idempotency_key，提交必须回传该稳定身份。正式原生会话不临时生成或改写参考解答。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question_id\": \"REPLACE_question\",\n  \"issuance_id\": \"REPLACE_issuance\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/solve-sessions/:sid/submissions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/solve-sessions/:sid/submissions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "solve-sessions", ":sid", "submissions"],
+              "variable": [
+                {
+                  "key": "sid",
+                  "value": "REPLACE_sid"
+                }
+              ]
+            },
+            "description": "提交冻结解题作答并原子结束会话\n\n**Path vars:** `:sid` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 正式作答与学习结算、会话 judged、错题记录同事务；相同原始输入重复提交复用结果，修改已接受作答返回409。待评估保持 review_required，不揭示答案。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question_id\": \"REPLACE_question\",\n  \"assessment\": {\n    \"issuance_id\": \"REPLACE_issuance\",\n    \"evaluation_group_id\": \"REPLACE_session_evaluation_group_id\",\n    \"idempotency_key\": \"REPLACE_session_idempotency_key\",\n    \"response_set\": {\n      \"entries\": [\n        {\n          \"slot_id\": \"REPLACE_slot\",\n          \"kind\": \"text\",\n          \"text_md\": \"original response\"\n        }\n      ]\n    },\n    \"group_evidence\": []\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"

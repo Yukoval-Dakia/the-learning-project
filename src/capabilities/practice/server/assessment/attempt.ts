@@ -44,6 +44,8 @@ export async function previewFormalAttempt(
   if (!revision || (revision.group_id !== questionId && !issuance.part_ids.includes(questionId))) {
     throw new ApiError('coordinate_mismatch', 'question is outside the frozen issuance', 409);
   }
+  const scopedBasis = projectIssuedScoringBasis(revision, issuance.part_ids);
+  const scopedUnitIds = new Set(scopedBasis.units.map((unit) => unit.scoring_unit_id));
   const saved = await saveSubmission(database, { ...request, actorRef: `assessment:${entry}` });
   if (!('submission' in saved)) {
     throw new ApiError(
@@ -66,16 +68,14 @@ export async function previewFormalAttempt(
         ? {
             mode: 'manual_assert' as const,
             provenance: { source: 'self_report' as const, assisted },
-            asserted_unit_results: projectIssuedScoringBasis(revision, issuance.part_ids).units.map(
-              (unit) => ({
-                status: 'pending' as const,
-                scoring_unit_id: unit.scoring_unit_id,
-                pending: {
-                  reason: 'unjudgeable' as const,
-                  detail: 'Explicit self-report schedules practice; no score was asserted.',
-                },
-              }),
-            ),
+            asserted_unit_results: scopedBasis.units.map((unit) => ({
+              status: 'pending' as const,
+              scoring_unit_id: unit.scoring_unit_id,
+              pending: {
+                reason: 'unjudgeable' as const,
+                detail: 'Explicit self-report schedules practice; no score was asserted.',
+              },
+            })),
           }
         : {
             provenance: { source: 'automatic' as const, assisted },
@@ -104,9 +104,9 @@ export async function previewFormalAttempt(
       !options.selfReport &&
       !assisted &&
       candidate.result.coarse_outcome !== 'unsupported' &&
-      revision.execution_plan.assignments.every(
-        (assignment) => assignment.executor.kind === 'deterministic',
-      ),
+      revision.execution_plan.assignments
+        .filter((assignment) => assignment.scoring_unit_ids.some(unitId => scopedUnitIds.has(unitId)))
+        .every((assignment) => assignment.executor.kind === 'deterministic'),
     activation_intent: {
       evaluation_id: candidate.evaluation.record.evaluation_id,
       expected_effective_id: head?.effective_evaluation_id ?? null,
@@ -122,6 +122,8 @@ export interface FormalAttemptCapture {
   reasoning_trace?: string | null;
   self_confidence?: number | null;
   latency_ms?: number | null;
+  hints_used?: number;
+  final_hint_level?: number;
 }
 
 /** The response and candidate are immutable; the activation is the only learning writer. */
@@ -137,6 +139,11 @@ export async function commitFormalAttempt(
     capture?: FormalAttemptCapture;
     signal?: AbortSignal;
     requireUnassistedModelEvidence?: boolean;
+    onActivated?: (
+      tx: Tx,
+      prepared: Awaited<ReturnType<typeof previewFormalAttempt>>,
+      attemptId: string,
+    ) => Promise<void>;
   } = {},
 ) {
   if (options.selfReport && !options.userRating) {
@@ -199,6 +206,10 @@ export async function commitFormalAttempt(
         ...(capture.reasoning_trace?.trim() ? { reasoning_trace: capture.reasoning_trace } : {}),
         ...(capture.self_confidence != null ? { self_confidence: capture.self_confidence } : {}),
         ...(capture.latency_ms != null ? { duration_ms: capture.latency_ms } : {}),
+        ...(capture.hints_used !== undefined ? { hints_used: capture.hints_used } : {}),
+        ...(capture.final_hint_level !== undefined
+          ? { final_hint_level: capture.final_hint_level }
+          : {}),
       },
       created_at: new Date(submission.submitted_at),
     });
@@ -217,7 +228,13 @@ export async function commitFormalAttempt(
       }),
       user_rating: options.userRating,
     },
-    { actorRef: `assessment:${entry}`, record },
+    {
+      actorRef: `assessment:${entry}`,
+      record: async (tx) => {
+        await record(tx);
+        await options.onActivated?.(tx, prepared, attemptId);
+      },
+    },
   );
   if (activation.status !== 'activated' && activation.status !== 'already_effective') {
     throw new ApiError(activation.status, 'candidate could not become effective', 409);

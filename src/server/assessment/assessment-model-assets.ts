@@ -190,6 +190,7 @@ export async function prepareAssessmentModelInput(
         evaluation_group_id: request.evaluation_group_id,
         revision_id: request.revision_id,
         scoring_unit: request.unit,
+        ...(request.review_context ? { review_context: request.review_context } : {}),
         question_parts: request.question_parts,
         response_slots: request.response_slots,
         slot_responses: request.slot_responses,

@@ -306,6 +306,7 @@ export function PfSolo({
   const [judging, setJudging] = useState(false);
   const [preview, setPreview] = useState<JudgePreview | null>(null);
   const activationIntent = useRef<SubmitReviewInput['activation_intent']>(undefined);
+  const committedAppealKind = useRef<'judge' | 'evaluation'>('judge');
   // intervention_diagnostic skips the repeatable advice preview and is committed
   // by the first /api/attempts call. Its response is sufficient for the feedback
   // card, but intentionally lacks advice-only provenance fields used by commit().
@@ -586,9 +587,13 @@ export function PfSolo({
         return;
       }
       if (opts.withAppeal) {
-        const anchor = res.judge?.judge_event_id;
+        const anchor = res.judge
+          ? 'assessment' in res
+            ? res.assessment.candidate_id
+            : res.judge.judge_event_id
+          : null;
         if (anchor) {
-          await fileAppeal(anchor, appealText.trim());
+          await fileAppeal(anchor, appealText.trim(), 'assessment' in res ? 'evaluation' : 'judge');
           addToast('已提交重判——异步跑，结果回来我会提醒你。', 'info', 'clock');
         } else {
           addToast('这次判定没有可申诉的锚点（无服务端判分）。', 'info', 'alert');
@@ -599,7 +604,14 @@ export function PfSolo({
       // 只在写入成功后置位：失败时保持手动评级行可见，用户可重试/手动评级（不丢答）。
       if (opts.autoRate && opts.advance === false) {
         setAutoCommitted(true);
-        setAutoCommitJudgeEventId(res.judge?.judge_event_id ?? null);
+        committedAppealKind.current = 'assessment' in res ? 'evaluation' : 'judge';
+        setAutoCommitJudgeEventId(
+          res.judge
+            ? 'assessment' in res
+              ? res.assessment.candidate_id
+              : res.judge.judge_event_id
+            : null,
+        );
       }
       // advance=false（客观题自动 commit）→ 留在反馈卡让用户先看判定，「下一项」再 onDone()。
       if (opts.advance !== false) onDone();
@@ -623,7 +635,7 @@ export function PfSolo({
     if (!autoCommitJudgeEventId || committing) return;
     setCommitting(true);
     try {
-      await fileAppeal(autoCommitJudgeEventId, appealText.trim());
+      await fileAppeal(autoCommitJudgeEventId, appealText.trim(), committedAppealKind.current);
       addToast('已提交重判——异步跑，结果回来我会提醒你。', 'info', 'clock');
       setAppealOpen(false);
     } catch (e) {

@@ -58,6 +58,7 @@ import {
   learningSettlement,
 } from '@/server/assessment/runtime';
 import { checkRateLimit } from '@/server/http/rate-limit';
+import { createRecordedModelExecutor } from './recorded-model-executor';
 
 /**
  * YUK-1092 — 装配描述符：在本模块组合点按 descriptor 铸
@@ -150,9 +151,8 @@ export class EvaluateSubmissionError extends Error {
 /** Published task identity selects a registered native executor; no URL/key override. */
 export function createFormalModelExecutor(db: Db, signal?: AbortSignal): ModelUnitExecutorPort {
   const deadlineAt = Date.now() + 90_000;
-  const jev = createJevModelExecutor({ db, deadlineAt, signal });
   let admitted = false;
-  return (request, callerSignal) => {
+  return createRecordedModelExecutor(db, (request, callerSignal, taskRunId) => {
     if (!admitted) {
       checkRateLimit();
       admitted = true;
@@ -162,11 +162,12 @@ export function createFormalModelExecutor(db: Db, signal?: AbortSignal): ModelUn
         db,
         deadlineAt,
         signal,
+        taskRunId,
         maxCostUsdMicros: request.executor.max_cost_usd_micros ?? 0,
       })(request, callerSignal);
     }
-    return jev(request, callerSignal);
-  };
+    return createJevModelExecutor({ db, deadlineAt, signal, taskRunId })(request, callerSignal);
+  });
 }
 
 /**
@@ -416,6 +417,7 @@ export async function evaluateSubmission(
               policy: request.policy ?? {},
               source: request.provenance?.source ?? 'automatic',
               assisted: request.provenance?.assisted ?? false,
+              review_context: request.provenance?.review_context ?? null,
               asserted_unit_results: request.asserted_unit_results ?? null,
             })}`,
           };

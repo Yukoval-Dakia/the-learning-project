@@ -7536,6 +7536,10 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    evaluation_id: string;
+                    idempotency_key?: string;
+                    reason_md?: string;
+                } | {
                     judge_event_id: string;
                     reason_md?: string;
                 };
@@ -27143,6 +27147,11 @@ export interface operations {
                         };
                         subject: string | null;
                         timeline: {
+                            assessment?: {
+                                effective_evaluation_id: string | null;
+                                evaluation_group_id: string;
+                                original_evaluation_id: string | null;
+                            };
                             cause?: {
                                 confidence: number | null;
                                 primary: string;
@@ -27702,8 +27711,10 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        evaluation_group_id?: string;
                         generated: boolean;
                         generation_error: boolean;
+                        idempotency_key?: string;
                         session_id: string;
                     };
                 };
@@ -27967,11 +27978,117 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    activation_intent?: {
+                        evaluation_id: string;
+                        expected_effective_id: string | null;
+                        expected_generation: number;
+                    };
+                    assessment?: {
+                        evaluation_group_id: string;
+                        /** @default [] */
+                        group_evidence?: {
+                            evidence: {
+                                asset: {
+                                    asset_id: string;
+                                    digest: string;
+                                };
+                                bytes: number;
+                                evidence_id: string;
+                                /** @enum {string} */
+                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                mime_type: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            };
+                            target: {
+                                /** @enum {string} */
+                                scope: "all_units";
+                            } | {
+                                /** @enum {string} */
+                                scope: "units";
+                                scoring_unit_ids: string[];
+                            };
+                        }[];
+                        idempotency_key: string;
+                        issuance_id: string;
+                        response_set: {
+                            /** @default [] */
+                            entries?: ({
+                                /** @enum {string} */
+                                kind: "choice";
+                                /** @default [] */
+                                option_ids?: string[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "text";
+                                self_confidence?: number;
+                                slot_id: string;
+                                text_md: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "numeric";
+                                raw_input?: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                                value: number | null;
+                            } | {
+                                /** @enum {string} */
+                                kind: "formula";
+                                latex: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "matching";
+                                /** @default [] */
+                                pairs?: {
+                                    item_id: string;
+                                    option_id: string;
+                                }[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_order?: string[];
+                                /** @enum {string} */
+                                kind: "ordering";
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                evidence?: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                }[];
+                                /** @enum {string} */
+                                kind: "open";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @default  */
+                                text_md?: string;
+                            })[];
+                        };
+                        submission_id?: string;
+                    };
                     final_hint_level?: number;
                     hints_used?: number;
+                    self_report?: boolean;
                     student_final_answer_text?: string;
                     student_image_refs?: string[];
                     student_text_steps?: string[];
+                    /** @enum {string} */
+                    user_rating?: "again" | "hard" | "good";
                 };
             };
         };
@@ -29396,6 +29513,10 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    evaluation_id: string;
+                    idempotency_key?: string;
+                    reason_md?: string;
+                } | {
                     judge_event_id: string;
                     reason_md?: string;
                 };
@@ -31920,8 +32041,10 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        evaluation_group_id?: string;
                         generated: boolean;
                         generation_error: boolean;
+                        idempotency_key?: string;
                         session_id: string;
                     };
                 };
@@ -32311,12 +32434,118 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    activation_intent?: {
+                        evaluation_id: string;
+                        expected_effective_id: string | null;
+                        expected_generation: number;
+                    };
+                    assessment?: {
+                        evaluation_group_id: string;
+                        /** @default [] */
+                        group_evidence?: {
+                            evidence: {
+                                asset: {
+                                    asset_id: string;
+                                    digest: string;
+                                };
+                                bytes: number;
+                                evidence_id: string;
+                                /** @enum {string} */
+                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                mime_type: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            };
+                            target: {
+                                /** @enum {string} */
+                                scope: "all_units";
+                            } | {
+                                /** @enum {string} */
+                                scope: "units";
+                                scoring_unit_ids: string[];
+                            };
+                        }[];
+                        idempotency_key: string;
+                        issuance_id: string;
+                        response_set: {
+                            /** @default [] */
+                            entries?: ({
+                                /** @enum {string} */
+                                kind: "choice";
+                                /** @default [] */
+                                option_ids?: string[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "text";
+                                self_confidence?: number;
+                                slot_id: string;
+                                text_md: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "numeric";
+                                raw_input?: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                                value: number | null;
+                            } | {
+                                /** @enum {string} */
+                                kind: "formula";
+                                latex: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "matching";
+                                /** @default [] */
+                                pairs?: {
+                                    item_id: string;
+                                    option_id: string;
+                                }[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_order?: string[];
+                                /** @enum {string} */
+                                kind: "ordering";
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                evidence?: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                }[];
+                                /** @enum {string} */
+                                kind: "open";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @default  */
+                                text_md?: string;
+                            })[];
+                        };
+                        submission_id?: string;
+                    };
                     final_hint_level?: number;
                     hints_used?: number;
                     question_id: string;
+                    self_report?: boolean;
                     student_final_answer_text?: string;
                     student_image_refs?: string[];
                     student_text_steps?: string[];
+                    /** @enum {string} */
+                    user_rating?: "again" | "hard" | "good";
                 };
             };
         };

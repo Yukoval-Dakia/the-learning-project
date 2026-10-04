@@ -103,6 +103,7 @@ export type ModelUnitOutcomeT = z.infer<typeof ModelUnitOutcome>;
 
 /** 单次模型单元判定的冻结输入（执行器只见它需要的槽位/证据/材料）。 */
 export interface ModelExecutorRequest {
+  review_context?: EvaluationProvenanceT['review_context'];
   submission_id: string;
   /** Complete frozen member identities; submission_id remains the stable anchor. */
   submission_ids?: string[];
@@ -805,6 +806,7 @@ export async function evaluateSubmissionCore(
     let outcome: ModelUnitOutcomeT;
     try {
       const raw = await input.model_executor({
+        ...(provenance.review_context ? { review_context: provenance.review_context } : {}),
         submission_id: submission.submission_id,
         submission_ids: joint?.member_submission_ids ?? [submission.submission_id],
         evaluation_group_id: submission.evaluation_group_id,

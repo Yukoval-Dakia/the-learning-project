@@ -109,3 +109,52 @@ and changing the registry. Model operation-key reuse only covers sealed
 candidates: the next implementation must persist a pre-call claim and result so
 a crash before candidate persistence cannot silently repeat a paid execution.
 This is not a claim that existing candidate caching already solves that gap.
+
+## 22:33 UTC local checkpoint (unshipped)
+
+Persistent model claims now commit before dispatch on a separate connection.
+Their operation identity binds group, submission, evaluation attempt and unit;
+the immutable input digest and reserved cap prevent changed-input reuse. A
+missing result after dispatch remains held with its original reservation, even
+if a retry supplies a smaller cap. Sealed results survive candidate transaction
+rollback. Native pi and Jev receive the claimed task-run identity. This prevents
+automatic repeat dispatch; it does not claim automatic recovery of lost results.
+
+Native appeals identify the current effective evaluation and retain the original
+submission/revision/criterion. The learner objection travels as review context,
+not replacement response text. Rejudge activation and its resolution receipt
+share a transaction; a stale competing appeal is held before invoking a model.
+The existing historical judge-event branch still awaits final entry cutover.
+
+The real question timeline and failure readers now include neutral native
+participation anchors. Their verdict comes from the current effective head,
+with original/effective evaluation references kept separate from judge-event
+IDs. Pending and self-report remain visible without becoming incorrect.
+Pagination filters native verdicts before applying global/per-question caps.
+Failure projections carry native response/evidence and revision coordinates;
+legacy snapshot-dependent downstream attribution is still held rather than
+reading the current question. Those attribution/tool consumers remain to migrate.
+
+Native solve submission is now reachable through the canonical HTTP resource.
+The bound session supplies stable group/key coordinates; replay reuses the first
+submission. Candidate activation, participation capture, low-score learning
+record and active→submitted→judged transitions are atomic. The returned solution
+is the frozen original. A forced transition failure rolls back learning and
+capture, while retry reuses the candidate. The old unbound session branch is
+still present and must be removed with its obsolete API fixtures.
+
+Verification: timeline regressions first failed 2/29, failure-reader regression
+first failed 1/29, then the combined five-file DB run passed 101 tests (including
+31 submission/entry tests and five durable-claim tests). A further native regrade
+case exercises paging past five correct attempts and removing the corrected
+failure. Four unit files passed 91 tests, including native/Jev review-context and
+stable-run-ID assertions and neutral timeline rendering. Production build passed; typecheck caught an assignment-field typo in scoped
+auto-commit eligibility, corrected to scoring_unit_ids membership, then passed.
+No independent review or exact-head CI yet.
+API/Postman generated artifacts include native appeal and solve coordinates.
+
+Remaining release blockers: migrate/remove unbound solve and historical appeal
+execution, durable submit/worker, paper, probe and ingestion grading; migrate
+native failure-learning/diagnostic restore/tool consumers; complete hint visual
+context and evidence subset selection. Registry remains honestly legacy until
+all eight actual entry sites have switched. No production or paid provider calls.

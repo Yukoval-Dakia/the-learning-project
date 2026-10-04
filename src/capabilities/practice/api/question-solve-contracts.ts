@@ -1,6 +1,8 @@
 import { z } from 'zod';
+import { ActivateEvaluationIntent } from '@/core/schema/assessment';
 import { QuestionKind } from '@/core/schema/business';
 import { MAX_HINT_COUNT, MAX_HINT_INDEX } from '@/core/schema/event/known';
+import { CreateSubmissionBodySchema } from './assessment-contracts';
 
 export const QuestionParamsSchema = z.object({ id: z.string().trim().min(1) });
 export const SolveSessionParamsSchema = z.object({ sid: z.string().trim().min(1) });
@@ -221,6 +223,13 @@ export const QuestionDetailResponseSchema = z
           })
           .nullable()
           .optional(),
+        assessment: z
+          .object({
+            evaluation_group_id: z.string(),
+            original_evaluation_id: z.string().nullable(),
+            effective_evaluation_id: z.string().nullable(),
+          })
+          .optional(),
         fsrs_rating: z.enum(['again', 'hard', 'good']).optional(),
       }),
     ),
@@ -324,6 +333,8 @@ export const SolveSessionCreatedSchema = z.object({
   session_id: z.string(),
   generated: z.boolean(),
   generation_error: z.boolean(),
+  evaluation_group_id: z.string().optional(),
+  idempotency_key: z.string().optional(),
 });
 
 export const SolveSessionResponseSchema = z
@@ -352,6 +363,10 @@ export const HintRequestResponseSchema = z.object({
 });
 
 export const SolveSubmissionBodySchema = z.object({
+  assessment: CreateSubmissionBodySchema.optional(),
+  activation_intent: ActivateEvaluationIntent.optional(),
+  self_report: z.boolean().optional(),
+  user_rating: z.enum(['again', 'hard', 'good']).optional(),
   student_text_steps: z.array(z.string()).optional(),
   student_final_answer_text: z.string().optional(),
   student_image_refs: z.array(z.string()).optional(),
