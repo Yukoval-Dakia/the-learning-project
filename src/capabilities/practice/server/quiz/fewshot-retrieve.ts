@@ -67,7 +67,8 @@ type CandidateRow = {
   knowledge_ids: string[];
   source: string;
   metadata: Record<string, unknown> | null;
-  created_at: Date;
+  // Raw postgres-js execute results carry timestamp strings.
+  created_at: string;
 };
 
 function overlapCount(a: string[], b: Set<string>): number {
@@ -151,7 +152,7 @@ export async function retrieveFewShotExamples(
         row,
         tier,
         overlap: overlapCount(row.knowledge_ids ?? [], knowledgeSet),
-        createdAt: row.created_at instanceof Date ? row.created_at.getTime() : 0,
+        createdAt: new Date(row.created_at).getTime(),
       };
     })
     .sort((a, b) => {

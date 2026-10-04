@@ -321,7 +321,7 @@ export async function getPaperDetail(
     question_id: string;
     part_ref: string | null;
     event_id: string | null;
-    submitted_at: Date;
+    submitted_at: string;
     content_md: string;
     image_refs: string[];
     // F1 (PR #309 round-4, YUK-215) — 'true' when the frozen attempt was the
