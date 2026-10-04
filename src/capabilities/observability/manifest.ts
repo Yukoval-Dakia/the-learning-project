@@ -3,6 +3,11 @@ import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import { AdminConfigResponseSchema } from './api/admin-config-contracts';
 import {
+  AdminConfigResetBodySchema,
+  AdminConfigWriteBodySchema,
+  AdminConfigWriteResponseSchema,
+} from './api/admin-config-write-contracts';
+import {
   AdminCostQuerySchema,
   AdminCostResponseSchema,
   AdminFailuresQuerySchema,
@@ -477,6 +482,32 @@ export const observabilityCapability = defineCapability({
         successStatus: 200,
         pagination: 'none',
         load: () => import('./api/admin-config').then((m) => m.GET),
+      },
+      {
+        method: 'PATCH',
+        path: '/api/admin/config',
+        operationId: 'writeAdminConfig',
+        request: { body: AdminConfigWriteBodySchema },
+        responses: {
+          200: AdminConfigWriteResponseSchema,
+          ...API_ERROR_RESPONSES,
+          503: ApiErrorResponseSchema,
+        },
+        successStatus: 200,
+        load: () => import('./api/admin-config-write').then((m) => m.PATCH),
+      },
+      {
+        method: 'POST',
+        path: '/api/admin/config/reset',
+        operationId: 'resetAdminConfig',
+        request: { body: AdminConfigResetBodySchema },
+        responses: {
+          200: AdminConfigWriteResponseSchema,
+          ...API_ERROR_RESPONSES,
+          503: ApiErrorResponseSchema,
+        },
+        successStatus: 200,
+        load: () => import('./api/admin-config-write').then((m) => m.RESET),
       },
     ],
   },

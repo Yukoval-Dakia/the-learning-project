@@ -20,4 +20,6 @@ export {
   getAdminConfigRuntimeFacts,
   setAdminConfigRuntimeFacts,
 } from './server/admin-config-facts';
+export type { AdminConfigWriteResult, AdminConfigWriter } from './server/admin-config-writer';
+export { setAdminConfigWriter } from './server/admin-config-writer';
 export { observabilityConfigEffectiveFacts } from './server/config-effective-facts';

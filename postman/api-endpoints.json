@@ -1245,6 +1245,44 @@
         "contentType": null,
         "bodyExample": null,
         "notes": "只读。keys[] 每行：value（env pin > DB > env fallback > code-default 分层合成）、source、default、env_mode、read_only（compose 强制键）、wired/consumer（运行时 reader 是否消费）。tasks[] 每行：静态 catalog 默认 + DB 覆盖（provider/model 按执行类型接线；budget_wiring/effective_budget 逐字段报告，chat费用与typed轮数未消费为null，调用参数及重试门仍优先）+ global_pin。providers[] 包含 pi_provider 原生身份及 models[] 的 id/api/input，模型清单与执行预设一致。不暴露 secret，不枚举 process.env"
+      },
+      {
+        "method": "PATCH",
+        "summary": "原子写入或重置注册配置（原生 provider/model 终态校验）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "changes": [
+            {
+              "action": "set",
+              "key": "task.QuizGenTask.provider",
+              "value": "opencode-go"
+            },
+            {
+              "action": "set",
+              "key": "task.QuizGenTask.model",
+              "value": "glm-5.3-flash"
+            }
+          ],
+          "note": "Use the native Go preset"
+        },
+        "notes": "需 x-internal-token。整批行+journal+epoch 同事务；固定 actor=panel:admin。重复/未知键400、部署固定键409、非法模型/预算422、未注入writer503。返回 committed_epoch、snapshot_epoch、snapshot_current及changes；snapshot_current只指本进程观测到提交或更新版本，不代表worker确认或值未被后续写覆盖。"
+      }
+    ]
+  },
+  {
+    "path": "/api/admin/config/reset",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "原子恢复一组配置到 env/registry 默认",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "keys": ["task.QuizGenTask.provider", "task.QuizGenTask.model"],
+          "note": "Restore defaults"
+        },
+        "notes": "需 x-internal-token。按整批删除后的原生组合校验，失败全部回滚。历史journal保留；清理后重新写入revision持续递增。响应与PATCH配置相同。"
       }
     ]
   },

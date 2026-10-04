@@ -332,6 +332,34 @@
           "response": []
         },
         {
+          "name": "PATCH /api/admin/config",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/config",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "config"]
+            },
+            "description": "原子写入或重置注册配置（原生 provider/model 终态校验）\n\n**Notes:** 需 x-internal-token。整批行+journal+epoch 同事务；固定 actor=panel:admin。重复/未知键400、部署固定键409、非法模型/预算422、未注入writer503。返回 committed_epoch、snapshot_epoch、snapshot_current及changes；snapshot_current只指本进程观测到提交或更新版本，不代表worker确认或值未被后续写覆盖。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"changes\": [\n    {\n      \"action\": \"set\",\n      \"key\": \"task.QuizGenTask.provider\",\n      \"value\": \"opencode-go\"\n    },\n    {\n      \"action\": \"set\",\n      \"key\": \"task.QuizGenTask.model\",\n      \"value\": \"glm-5.3-flash\"\n    }\n  ],\n  \"note\": \"Use the native Go preset\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
           "name": "PATCH /api/admin/subjects/:id",
           "request": {
             "method": "PATCH",
@@ -356,6 +384,34 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"expectedRevision\": 0,\n  \"displayName\": \"化学基础\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/admin/config/reset",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/config/reset",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "config", "reset"]
+            },
+            "description": "原子恢复一组配置到 env/registry 默认\n\n**Notes:** 需 x-internal-token。按整批删除后的原生组合校验，失败全部回滚。历史journal保留；清理后重新写入revision持续递增。响应与PATCH配置相同。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"keys\": [\n    \"task.QuizGenTask.provider\",\n    \"task.QuizGenTask.model\"\n  ],\n  \"note\": \"Restore defaults\"\n}",
               "options": {
                 "raw": {
                   "language": "json"

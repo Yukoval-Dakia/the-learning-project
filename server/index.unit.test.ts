@@ -55,7 +55,11 @@ vi.mock('@/server/config/admin-config-facts', () => ({
     effective_values: {},
   })),
 }));
+vi.mock('@/server/config/admin-config-write', () => ({ createAdminConfigWriter: vi.fn() }));
 vi.mock('@/capabilities/observability/public', () => ({
+  setAdminConfigWriter: vi.fn(() => {
+    mocks.order.push('admin-config-writer-injected');
+  }),
   setAdminConfigRuntimeFacts: vi.fn(() => {
     mocks.order.push('admin-config-facts-injected');
   }),
@@ -96,6 +100,7 @@ describe('API startup', () => {
     expect(mocks.order).toEqual([
       'tool-operations-recovered',
       'admin-config-facts-injected',
+      'admin-config-writer-injected',
       'serve',
     ]);
     expect(mocks.recover).toHaveBeenCalledTimes(1);
@@ -148,6 +153,7 @@ describe('API startup', () => {
     expect(mocks.order).toEqual([
       'tool-operations-recovered',
       'admin-config-facts-injected',
+      'admin-config-writer-injected',
       'serve',
     ]);
     await handlers.get('SIGTERM')?.('SIGTERM');

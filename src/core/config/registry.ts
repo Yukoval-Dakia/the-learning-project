@@ -21,6 +21,7 @@
 // 「不建 key」清单）。task.<kind>.* / lane.<lane>.* 用模式定义（§1.5 动态前缀）。
 
 import { z } from 'zod';
+import { STUCK_RUN_THRESHOLD_MS } from '@/core/ai-run-limits';
 import { PedagogyMethodId } from '@/core/pedagogy/method-library';
 
 /** DB 层值的运行时形状（jsonb 载荷）。 */
@@ -186,7 +187,7 @@ const budgetOverrideSchema = z
     maxIterations: z.number().int().positive().optional(),
     maxCost: z.number().positive().optional(),
     transientRetries: z.number().int().min(0).optional(),
-    timeout: z.number().positive().optional(),
+    timeout: z.number().positive().lt(STUCK_RUN_THRESHOLD_MS).optional(),
   })
   .strict();
 
@@ -776,10 +777,11 @@ export function dynamicKeySchema(def: DynamicKeyDef): z.ZodTypeAny | null {
 
 /** 查 registry：静态 key 或动态前缀 key 都返回 def；未登记 → null。 */
 export function resolveKeyDef(key: string): ConfigKeyDef | null {
-  const staticDef = CONFIG_REGISTRY[key];
+  const staticDef = Object.hasOwn(CONFIG_REGISTRY, key) ? CONFIG_REGISTRY[key] : undefined;
   if (staticDef) return staticDef;
   const dyn = matchDynamicConfigKey(key);
-  if (!dyn) return null;
+  // Every live lane key is registered explicitly above; no arbitrary lane or lane budget.
+  if (!dyn || dyn.kind === 'lane') return null;
   const schema = dynamicKeySchema(dyn);
   if (!schema) return null;
   return { schema, codeDefault: undefined, tier: 'B' };

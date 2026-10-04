@@ -24,8 +24,9 @@ import { eq, inArray, sql } from 'drizzle-orm';
 import type { TaskKind } from '@/ai/registry';
 import { tasks } from '@/ai/registry';
 import type { TaskDefinition } from '@/ai/task-spec';
+import type { ConfigMutation, ConfigMutationResult } from '@/core/config/mutations';
 import type { ConfigValue } from '@/core/config/store';
-import { resolveKeyDef } from '@/core/config/store';
+import { matchDynamicConfigKey, resolveKeyDef } from '@/core/config/store';
 import { type Db, type Tx, db as defaultDb } from '@/db/client';
 import { system_config, system_config_journal } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
@@ -55,7 +56,25 @@ export interface ConfigWriteResult {
 
 /** tx 外校验：登记性 / pinned / zod / 纯值谓词（不需要读兄弟行）。never-throws 不适用。 */
 function validateEntryBasics(key: string, value: ConfigValue): void {
+  const def = validateWritableKey(key);
+  const parsed = def.schema.safeParse(value);
+  if (!parsed.success) {
+    throw new ApiError(
+      'invalid_config_value',
+      `config key '${key}' failed schema validation: ${JSON.stringify(parsed.error.issues.slice(0, 5))}`,
+      422,
+    );
+  }
+  validateStaticSemantics(key, parsed.data as ConfigValue);
+}
+
+/** Set and reset share the same registered, live keyspace. */
+function validateWritableKey(key: string) {
   const def = resolveKeyDef(key);
+  const dynamic = matchDynamicConfigKey(key);
+  if (dynamic?.kind === 'task' && !Object.hasOwn(tasks, dynamic.scope)) {
+    throw new ApiError('unknown_config_key', `unknown task '${dynamic.scope}'`, 400);
+  }
   if (!def) {
     throw new ApiError(
       'unknown_config_key',
@@ -70,15 +89,7 @@ function validateEntryBasics(key: string, value: ConfigValue): void {
       409,
     );
   }
-  const parsed = def.schema.safeParse(value);
-  if (!parsed.success) {
-    throw new ApiError(
-      'invalid_config_value',
-      `config key '${key}' failed schema validation: ${JSON.stringify(parsed.error.issues.slice(0, 5))}`,
-      422,
-    );
-  }
-  validateStaticSemantics(key, parsed.data as ConfigValue);
+  return def;
 }
 
 /** tx 外的纯值谓词（不读兄弟行）：JUDGE_FALLBACK / task-kind 存在性 / provider 已知+已实现。 */
@@ -108,7 +119,7 @@ function validateStaticSemantics(key: string, value: ConfigValue): void {
   const m = /^task\.([^.]+)\.provider$/.exec(key);
   if (m && typeof value === 'string' && value !== '') {
     const scope = m[1];
-    if (!(scope in tasks)) {
+    if (!Object.hasOwn(tasks, scope)) {
       throw new ApiError(
         'unknown_config_key',
         `task kind '${scope}' is not in the TaskSpec registry`,
@@ -248,8 +259,18 @@ function valueAsNonEmptyString(v: unknown): string | undefined {
  */
 async function validateFinalProviderPairs(
   tx: Tx,
-  scopes: ReadonlyMap<string, PairScope>,
+  touchedScopes: ReadonlyMap<string, PairScope>,
 ): Promise<void> {
+  const scopes = new Map(touchedScopes);
+  // A global reset exposes task-level configuration previously hidden by the pin.
+  // Validate every resulting chat binding, including when the global pair dissolves.
+  if (scopes.has('lane.global.provider')) {
+    for (const [kind, task] of Object.entries(tasks)) {
+      if ((task as TaskDefinition).execution === 'typed') continue;
+      const scope = pairScopeFor(`task.${kind}.provider`);
+      if (scope) scopes.set(scope.providerKey, scope);
+    }
+  }
   if (scopes.size === 0) return;
   const keys = [
     ...new Set([...scopes.values()].flatMap((s) => [s.providerKey, s.modelKey])),
@@ -330,6 +351,10 @@ async function validateFinalProviderPairs(
             : undefined);
       if (model && isProviderImplemented(provider))
         validateNativeModel(scope.label, provider, model, taskKind);
+      if (model && scope.providerKey === 'lane.vision_judge.provider') {
+        validateNativeModel(scope.label, provider, model, 'StepsJudgeTask');
+        validateNativeModel(scope.label, provider, model, 'MultimodalDirectJudgeTask');
+      }
       if (isGlobal && isProviderImplemented(provider)) {
         for (const [kind, definition] of Object.entries(tasks)) {
           if ((definition as TaskDefinition).execution === 'typed') continue;
@@ -423,47 +448,51 @@ export async function setConfig(
   return first;
 }
 
-/** 多 key 原子写（同 tx 行级 upsert + journal + 一次 epoch bump + 终态对校验）。 */
-export async function setConfigs(
-  entries: ReadonlyArray<{ key: string; value: ConfigValue }>,
+export async function mutateConfigs(
+  mutations: readonly ConfigMutation[],
   opts: ConfigWriteOptions,
   db: Db = defaultDb,
-): Promise<ConfigWriteResult[]> {
-  if (entries.length === 0) return [];
-  for (const { key, value } of entries) validateEntryBasics(key, value);
-
+): Promise<ConfigMutationResult[]> {
+  if (mutations.length === 0) return [];
+  const seen = new Set<string>();
   const touchedPairs = new Map<string, PairScope>();
-  for (const { key } of entries) {
-    const scope = pairScopeFor(key);
+  for (const mutation of mutations) {
+    if (seen.has(mutation.key)) {
+      throw new ApiError('duplicate_config_key', `duplicate config key '${mutation.key}'`, 400);
+    }
+    seen.add(mutation.key);
+    if (mutation.action === 'set') validateEntryBasics(mutation.key, mutation.value);
+    else validateWritableKey(mutation.key);
+    const scope = pairScopeFor(mutation.key);
     if (scope) touchedPairs.set(scope.providerKey, scope);
   }
 
   const now = new Date();
   const results = await db.transaction(async (tx) => {
+    // This epoch row lock serializes all config batches before any key or journal write.
     const epoch = await bumpEpoch(tx);
-    const out: ConfigWriteResult[] = [];
-    for (const { key, value } of entries) {
-      const prev = await tx
+    const out: ConfigMutationResult[] = [];
+    for (const mutation of mutations) {
+      const { key, action } = mutation;
+      const [prevRow] = await tx
         .select()
         .from(system_config)
         .where(eq(system_config.key, key))
         .for('update')
         .limit(1);
-      const prevRow = prev[0];
-      // P1-2：下一段 revision 从 append-only journal 的最新行取——clear 删掉
-      // value 行后 revision 不倒回，set→clear→set 不再撞 (key,revision) PK。
-      // 锁最新 journal 行（FOR UPDATE 不能打在聚合上——锁定最新行即可串行同 key 写）。
       const maxRows = await tx.execute<{ revision: number | string }>(
         sql`select revision from ${system_config_journal} where ${system_config_journal.key} = ${key} order by revision desc limit 1 for update`,
       );
       const maxRevision = Number(maxRows[0]?.revision ?? 0);
       const revision =
         Math.max(Number.isFinite(maxRevision) ? maxRevision : 0, prevRow?.revision ?? 0) + 1;
-      if (prevRow) {
+      if (mutation.action === 'clear') {
+        if (prevRow) await tx.delete(system_config).where(eq(system_config.key, key));
+      } else if (prevRow) {
         await tx
           .update(system_config)
           .set({
-            value,
+            value: mutation.value,
             revision,
             source_note: opts.note ?? prevRow.source_note,
             updated_by: opts.actor,
@@ -473,7 +502,7 @@ export async function setConfigs(
       } else {
         await tx.insert(system_config).values({
           key,
-          value,
+          value: mutation.value,
           revision,
           source_note: opts.note ?? null,
           updated_by: opts.actor,
@@ -484,77 +513,70 @@ export async function setConfigs(
       await tx.insert(system_config_journal).values({
         key,
         revision,
-        payload: { prev: prevRow?.value ?? null, next: value, note: opts.note ?? null },
-        action: 'set',
+        action,
         actor: opts.actor,
         created_at: now,
+        payload: {
+          prev: prevRow?.value ?? null,
+          next: mutation.action === 'set' ? mutation.value : null,
+          note: opts.note ?? null,
+        },
       });
-      out.push({ key, revision, epoch });
+      out.push({
+        key,
+        revision,
+        epoch,
+        action,
+        ...(action === 'clear' ? { cleared: Boolean(prevRow) } : {}),
+      });
     }
-    // P1-5：写全部落库后按 tx 内终态校验 provider/model 对（model-only 写、
-    // clear-only 批、多 key 原子批都在这层）。失败 → 整 tx 回滚。
     await validateFinalProviderPairs(tx, touchedPairs);
     return out;
   });
-
-  await hydrateConfigFromDb(db); // 本进程即时生效；他进程 ≤15s 经 refresh 收敛
+  // Hydration is best-effort. HTTP reports both committed and observed epochs separately.
+  await hydrateConfigFromDb(db);
   return results;
 }
 
-/** 删除行 = 回退 env/default。journal 留 clear 快照（prev + note）。 */
+/** Preserve the existing service contract while sharing atomic mutation semantics. */
+export async function setConfigs(
+  entries: ReadonlyArray<{ key: string; value: ConfigValue }>,
+  opts: ConfigWriteOptions,
+  db: Db = defaultDb,
+): Promise<ConfigWriteResult[]> {
+  const results = await mutateConfigs(
+    entries.map((entry) => ({ ...entry, action: 'set' })),
+    opts,
+    db,
+  );
+  return results.map(({ key, revision, epoch }) => ({ key, revision, epoch }));
+}
+
+/** Reset a group only after its final native provider/model bindings have been validated. */
+export async function clearConfigs(
+  keys: readonly string[],
+  opts: ConfigWriteOptions,
+  db: Db = defaultDb,
+): Promise<Array<ConfigWriteResult & { cleared: boolean }>> {
+  const results = await mutateConfigs(
+    keys.map((key) => ({ key, action: 'clear' })),
+    opts,
+    db,
+  );
+  return results.map(({ key, revision, epoch, cleared }) => ({
+    key,
+    revision,
+    epoch,
+    cleared: cleared === true,
+  }));
+}
+
 export async function clearConfig(
   key: string,
   opts: ConfigWriteOptions,
   db: Db = defaultDb,
-): Promise<{ key: string; cleared: boolean; epoch: number; revision: number }> {
-  const def = resolveKeyDef(key);
-  if (!def) {
-    throw new ApiError('unknown_config_key', `config key '${key}' is not registered`, 400);
-  }
-  if ((def.envMode ?? 'fallback') === 'pinned') {
-    throw new ApiError(
-      'config_key_compose_pinned',
-      `config key '${key}' is compose-forced — nothing to clear (DB writes never take effect)`,
-      409,
-    );
-  }
-
-  const touchedPairs = new Map<string, PairScope>();
-  const scope = pairScopeFor(key);
-  if (scope) touchedPairs.set(scope.providerKey, scope);
-
-  const now = new Date();
-  const result = await db.transaction(async (tx) => {
-    const epoch = await bumpEpoch(tx);
-    const prev = await tx
-      .select()
-      .from(system_config)
-      .where(eq(system_config.key, key))
-      .for('update')
-      .limit(1);
-    const prevRow = prev[0];
-    if (prevRow) {
-      await tx.delete(system_config).where(eq(system_config.key, key));
-    }
-    const maxRows = await tx.execute<{ revision: number | string }>(
-      sql`select revision from ${system_config_journal} where ${system_config_journal.key} = ${key} order by revision desc limit 1 for update`,
-    );
-    const maxRevision = Number(maxRows[0]?.revision ?? 0);
-    const revision =
-      Math.max(Number.isFinite(maxRevision) ? maxRevision : 0, prevRow?.revision ?? 0) + 1;
-    await tx.insert(system_config_journal).values({
-      key,
-      revision,
-      payload: { prev: prevRow?.value ?? null, next: null, note: opts.note ?? null },
-      action: 'clear',
-      actor: opts.actor,
-      created_at: now,
-    });
-    // P1-5：clear 也走终态校验——例如 provider 行还在但 model 被清。
-    await validateFinalProviderPairs(tx, touchedPairs);
-    return { key, cleared: Boolean(prevRow), epoch, revision };
-  });
-
-  await hydrateConfigFromDb(db);
+): Promise<ConfigWriteResult & { cleared: boolean }> {
+  const [result] = await clearConfigs([key], opts, db);
+  if (!result) throw new Error('clearConfig: empty result for non-empty reset');
   return result;
 }
