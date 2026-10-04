@@ -97,6 +97,16 @@ export function configFixture(): ConfigData {
         implemented: true,
         models: [{ id: 'claude-opus-4-8', api: 'anthropic-messages', input: ['text', 'image'] }],
       },
+      {
+        name: 'openrouter',
+        pi_provider: null,
+        auth_mode: 'key',
+        credential_env: 'OPENROUTER_API_KEY',
+        key_present: true,
+        implemented: false,
+        implemented_for: { chat: false, typed: true },
+        models: [],
+      },
     ],
     schedules: {
       read_only_note: '只读调度声明，不代表任务已执行。',

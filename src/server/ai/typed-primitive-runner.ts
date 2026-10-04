@@ -53,6 +53,8 @@ import {
 export const TYPED_RESERVE_PER_CALL_USD = 0.005;
 /** Native typed decisions endpoint — NOT the chat completions façade. */
 export const SYSTEMONE_ENDPOINT_URL = 'https://openrouter.ai/api/v1/systemone';
+/** The actual typed transport provider, shared by execution and read-only facts. */
+const TYPED_PRIMITIVE_PROVIDER = 'openrouter' as const;
 /** TypeSafe is the only provider ever allowed to serve this lane. */
 export const TYPESAFE_PROVIDER_CONSTRAINTS = {
   only: ['TypeSafe'],
@@ -91,6 +93,14 @@ const TYPED_TASKS: Record<string, RegisteredTypedTask> = {
 
 export function isRegisteredTypedTask(kind: string): kind is TaskKind {
   return Object.hasOwn(TYPED_TASKS, kind);
+}
+
+/** Registered executable bindings only; never infer typed support from chat routing. */
+export function registeredTypedTaskBindings() {
+  return Object.keys(TYPED_TASKS)
+    .filter(isRegisteredTypedTask)
+    .filter((kind) => (tasks[kind] as TaskDefinition).execution === 'typed')
+    .map((kind) => ({ kind, provider: TYPED_PRIMITIVE_PROVIDER, model: tasks[kind].defaultModel }));
 }
 
 export interface TypedPrimitiveCtx {
@@ -236,7 +246,7 @@ export async function runTypedPrimitiveTask<Output = unknown>(
       // Pin provider+model explicitly: a global AI_PROVIDER_OVERRIDE must never
       // redirect the typed lane onto a chat-incompatible provider, and the
       // model pin is the verified request id, not an alias (spec §5.2).
-      override: { provider: 'openrouter', model: def.defaultModel },
+      override: { provider: TYPED_PRIMITIVE_PROVIDER, model: def.defaultModel },
       parentTaskRunId: ctx.parentTaskRunId,
       providerStartDeadlineAt:
         retrySource !== undefined ? firstAttemptStartedAt + RETRY_ELAPSED_CAP_MS : undefined,

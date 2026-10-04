@@ -4,6 +4,7 @@ import {
   configSection,
   initialBudget,
   modelChanges,
+  providerStatus,
   providerUnavailable,
   resetTaskChanges,
   taskEditable,
@@ -17,6 +18,15 @@ describe('configuration projections', () => {
     expect(configSection('garbage')).toBe('overview');
     expect(taskEditable(data.tasks[1])).toBe(false);
     expect(providerUnavailable(data.providers[2])).toContain('凭据');
+  });
+  it('reports typed-only wiring independently from native chat selection', () => {
+    const provider = configFixture().providers[3];
+    expect(providerStatus(provider)).toBe('typed 已接线 · 凭据已配置');
+    expect(providerUnavailable(provider)).toBe('未开放原生 chat 通道');
+    expect(providerStatus({ ...provider, key_present: false })).toContain('尚未配置凭据');
+    expect(providerStatus({ ...provider, implemented_for: { chat: false, typed: false } })).toBe(
+      '未开放原生 chat 通道',
+    );
   });
   it('saves and clears the complete provider/model pair', () => {
     const task = configFixture().tasks[0];

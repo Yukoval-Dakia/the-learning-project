@@ -98,7 +98,9 @@ export const AdminConfigProviderRowSchema = z.object({
   /** credential env 变量**名字**（operator 自查用）；值永不序列化。 */
   credential_env: z.string(),
   key_present: z.boolean(),
+  /** Legacy chat-only availability; see implemented_for for typed execution. */
   implemented: z.boolean(),
+  implemented_for: z.object({ chat: z.boolean(), typed: z.boolean() }).optional(),
   pi_provider: z.string().nullable().optional(),
   models: z
     .array(z.object({ id: z.string(), api: z.string(), input: z.array(z.string()) }))
