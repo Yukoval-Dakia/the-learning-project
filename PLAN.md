@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。Linear归零持续推进，当前61项未完成；181/#1556已合入main0ab54920。当前单线1120发题范围计分与结算修复；766恢复取舍与588 UI具体方案待回复，依赖不追新。
+> 更新于2026-10-04。Linear归零持续推进，当前61项未完成；1120/#1557已合入main d8e57a80。当前单线1047发布清单证据纠偏与实际入口迁移；766恢复取舍与588 UI待回复，依赖不追新。
 
 ## NOW
 
@@ -70,11 +70,12 @@
 
 - YUK-1119/#1555已交付maine3001200：22 Markdown文件，pi机制ADR0065、历史说明和四份漂移报告归并；本地gates/独立初审/exact-head CI37216925990及17分钟窗通过。docs-only CI测试步骤跳过，不计实际测试。旧报告PR1515/1517/1519/1531关闭且保留分支。
 - YUK-181/#1556已交付main0ab54920（17:14:45UTC）：24DB/本地gates/独立24DB/exact-head CI37218682914及17分钟窗通过；增量migration/browser未执行。Linear Done。
-- YUK-1120 active：冻结发题范围统一计分分母、effective/original读面及结算；69unit/40DB基线通过，3项正式缺陷回归先RED。最终76unit50DB/typecheck/lint299/build/10audits通过；独立初审61unit50DB通过，无P0/P1或实质P2；待push/CI/等待窗，旧v1封存重放不改写。
+- YUK-1120/#1557已合入main d8e57a80：76unit/50DB、本地gates、独立61unit/50DB、exact-head CI37220574124（82migration/34browser实际运行）通过，17分钟窗完成，Linear Done。修复契约路径冻结发题分母/读面/结算；正式入口仍legacy，原1047已按源码证据重新打开。
+- YUK-1047 active：当前八入口仍legacy，release manifest只凭epoch active报no-fallback ok已先RED复现。本批从真实源码采集入口/执行分支，附文件SHA256与未解析项；不把本地源码当部署镜像证明，后续继续实际入口迁移。
 
 ## NEXT
 
-1. 修复1120部分发题分母与结算范围（69unit/40DB基线，四语义断言RED）；766下游恢复LIGHT/FULL待owner裁决，1091联合组模型保持Todo，588费用UI具体预审待回复。持续推进Linear归零，不以单批合并作为终点。
+1. 交付1047发布清单证据纠偏后继续原验收的八入口迁移；1091联合组模型是联合路径前置。766恢复LIGHT/FULL及588费用UI仍待owner回复。持续推进Linear归零，不以单批合并作为终点。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 

@@ -132,11 +132,11 @@ describe('isSeriesMigration / migrationFileTicket', () => {
 });
 
 describe('buildAssertions', () => {
-  it('all-healthy post-release context → ok across the board', () => {
+  it('healthy database context cannot prove runtime migration', () => {
     const m = byId(CTX_BASE);
     expect(m['epoch-active'].status).toBe('ok');
     expect(m['epoch-history'].status).toBe('ok');
-    expect(m['no-runtime-fallback'].status).toBe('ok');
+    expect(m['no-runtime-fallback'].status).toBe('info');
     expect(m['subscription-translations-zero'].status).toBe('ok');
     expect(m['pending-evaluations-zero'].status).toBe('ok');
     expect(m['migrations-applied'].status).toBe('ok');
