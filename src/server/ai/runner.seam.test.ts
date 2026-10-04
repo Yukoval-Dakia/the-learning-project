@@ -98,8 +98,7 @@ vi.mock('@/server/ai/log', () => ({
   writeToolCallLog: logMock.tool,
 }));
 
-import { tasks } from '@/ai/registry';
-import { LEARNER_LOCALE_PIN, getTaskSystemPrompt } from '@/ai/task-prompts';
+import { LEARNER_LOCALE_PIN, getTaskSystemPrompt, tasks } from '@/capabilities/task-registry';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import {
   type ExecutionAdapterStartupArgs,

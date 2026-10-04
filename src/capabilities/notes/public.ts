@@ -53,3 +53,6 @@ export {
 } from './server/notes-read';
 export type { NoteUpdateAcceptResult } from './server/proposal-accept-applier';
 export { archiveProposalArtifacts } from './server/proposal-artifacts';
+
+// YUK-1062 — task composition uses the narrow task-public entry directly.
+export { notesTaskSpecs } from './task-public';

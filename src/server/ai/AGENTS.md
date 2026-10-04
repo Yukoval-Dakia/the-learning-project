@@ -1,6 +1,6 @@
 # server/ai — runner + domain tools
 
-> Server 侧 AI 执行层。浏览器侧 task registry + prompt builder 在 [`src/ai/`](../../ai/README.md)（不持 key）。长期 tool 设计见 [docs/superpowers/specs/2026-05-17-agent-context-tools-design.md](../../../docs/superpowers/specs/2026-05-17-agent-context-tools-design.md)。
+> Server 侧 AI 执行层。共享 task 契约与注入式 reader 在 [`src/ai/`](../../ai/README.md)，具体目录由 `src/capabilities/task-registry.ts` 组合（不持 key）。长期 tool 设计见 [docs/superpowers/specs/2026-05-17-agent-context-tools-design.md](../../../docs/superpowers/specs/2026-05-17-agent-context-tools-design.md)。
 
 ## WHERE TO LOOK
 | 文件 | 职责 |

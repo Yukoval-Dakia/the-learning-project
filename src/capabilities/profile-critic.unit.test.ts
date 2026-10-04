@@ -5,8 +5,7 @@ import {
 } from '@/capabilities/ingestion/tasks/profile-critic';
 import { physicsProfile } from '@/subjects/physics/profile';
 import { yuwenProfile } from '@/subjects/yuwen/profile';
-import { tasks } from './registry';
-import { getTaskSystemPrompt } from './task-prompts';
+import { getTaskSystemPrompt, tasks } from './task-registry';
 
 // Mock the runner's trace-write layer so the unit test can positively assert the
 // ai-run trace rows are written WITHOUT a live Postgres (log.ts imports @/db/client

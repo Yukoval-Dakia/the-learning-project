@@ -12,8 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { tasks } from '../src/ai/registry';
-import { getTaskSystemPrompt } from '../src/ai/task-prompts';
+import { getTaskSystemPrompt, tasks } from '../src/capabilities/task-registry';
 
 const FIXTURE_PATH = 'src/ai/fixtures/task-prompt-hashes.6b3233b1.json';
 

@@ -24,10 +24,15 @@
 
 import { createHash } from 'node:crypto';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
-import { type TaskKind, tasks } from '@/ai/registry';
-import { type TaskBudgetOverride, resolveTaskBudget } from '@/ai/task-budget';
-import { getLearnerLocale, getTaskSystemPrompt } from '@/ai/task-prompts';
 import type { TaskBudget, TaskDefinition } from '@/ai/task-spec';
+import {
+  type TaskBudgetOverride,
+  type TaskKind,
+  getLearnerLocale,
+  getTaskSystemPrompt,
+  resolveTaskBudget,
+  tasks,
+} from '@/capabilities/task-registry';
 import type { Db } from '@/db/client';
 import type { SubjectProfile } from '@/subjects/profile';
 import { resolveProviderSessionDeadlineAt } from '../http/provider-session-deadline';

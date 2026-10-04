@@ -1,7 +1,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getTaskSystemPrompt } from '@/ai/task-prompts';
+import { getTaskSystemPrompt } from '@/capabilities/task-registry';
 import {
   cost_ledger,
   event,

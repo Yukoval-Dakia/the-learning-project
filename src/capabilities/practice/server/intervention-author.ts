@@ -1,8 +1,8 @@
-import { getLearnerLocale } from '@/ai/task-prompts';
 import {
   type InterventionAuthoringContextT,
   guardInterventionPreparationStage,
 } from '@/capabilities/agency/public';
+import { getLearnerLocale } from '@/capabilities/task-registry';
 import {
   CurrentInterventionPackageReviewAudit,
   INTERVENTION_CONTRACT_VERSION,

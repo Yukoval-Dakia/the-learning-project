@@ -1,6 +1,5 @@
 import { and, count, eq, inArray, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { getTaskSystemPrompt } from '@/ai/task-prompts';
 import {
   INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS,
   JUDGE_RUN_EVENTS,
@@ -8,6 +7,7 @@ import {
   authorInterventionPackage,
   handleReviewDue,
 } from '@/capabilities/practice/public';
+import { getTaskSystemPrompt } from '@/capabilities/task-registry';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { PEDAGOGY_METHOD_LIBRARY } from '@/core/pedagogy';
 import { PROBE_QUESTION_KIND, PROBE_QUESTION_SOURCE } from '@/core/schema/conjecture';

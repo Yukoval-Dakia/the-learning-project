@@ -1,7 +1,7 @@
 // Both attempts are pinned, so runner transient retry stays disabled and this
 // helper remains the only cross-lane retry layer.
 
-import { type Provider, tasks } from '@/ai/registry';
+import { type Provider, tasks } from '@/capabilities/task-registry';
 import { getLaneOverride } from '@/core/config/store';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import type { RunTaskCtx } from '@/server/ai/runner';

@@ -6,7 +6,7 @@
 // CLAUDE_CODE_OAUTH_TOKEN (in .env.local) is never read, printed, or relied upon.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { tasks } from '@/ai/registry';
+import { tasks } from '@/capabilities/task-registry';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import {
   ANTHROPIC_SUB_DEFAULT_MODEL,

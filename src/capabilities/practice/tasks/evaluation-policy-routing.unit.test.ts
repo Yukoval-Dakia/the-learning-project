@@ -4,9 +4,9 @@
 // physics vs yuwen vocabulary) plus historical/undeclared fallback behavior.
 
 import { describe, expect, it } from 'vitest';
-import { getTaskSystemPrompt } from '@/ai/task-prompts';
 import { ratingFromCoarseOutcome } from '@/capabilities/practice/server/judge-rating';
 import { judgeResultToRatingAdvice } from '@/capabilities/practice/server/rating-advisor';
+import { getTaskSystemPrompt } from '@/capabilities/task-registry';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import { UNIVERSAL_RATING_FROM_OUTCOME } from '@/core/schema/profile-decl';
 import { mathProfile } from '@/subjects/math/profile';

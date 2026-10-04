@@ -126,17 +126,18 @@ FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
 
 ### 5.1 Task 注册
 
-> **Canonical source**: `src/ai/task-catalog.ts` 的 `taskCatalog`。六个 capability owner maps
-> 保存 staged semantic ownership：52 个完整 owned TaskSpec（20 Practice + 3 Notes + 8 Ingestion + 3 Knowledge
-> + 13 Agency + 5 Copilot）与 0 个 identity-backed transitional entry（YUK-870 后中央 semantic
-> quarry 为空）；composer 把每个 entry 的精确 `definition` 投影为冻结的
-> runtime map。`src/ai/registry.ts` 仅是带 Copilot dispatch overlay 的 compatibility projection。
-> 当前恰有 **52 个 registered/runnable kinds、51 个静态 production invocation kinds、1 个显式
-> compatibility kind**：`AttributionTask` 为持久历史/registry 兼容而保留，现行 Failure Learning
-> 在 deterministic retrieval 后调用 `AttributionRerankTask`，不伪造 `AttributionTask` caller。
-> `pnpm audit:task-census` 同时验证 capability manifest/job 与 legacy handler 注册可达性，以及
-> `ai_task_runs.task_kind` → catalog guard → typed lifecycle → start writer 的 run-log contract。
-> 本节为同步快照（2026-08-14）。**这是主要 task 的人读概览，不是完整清单**——精确数量、
+
+> **Canonical source**: `src/capabilities/task-catalog.ts` 的 `taskCatalog`。六个 capability owner maps
+> 经各自 `task-public.ts` 静态贡献完整 owned TaskSpec；`public.ts` 同时公开相同 map。
+> 共享 `src/ai/task-catalog.ts` 保留 composer 与类型，接收 owner maps 后将精确 `definition`
+> 投影为冻结 runtime map。`src/ai/registry.ts` 接收 catalog，`src/capabilities/task-registry.ts`
+> 提供同一 map 的 compatibility projection 及绑定的预算/prompt reader；没有 Copilot overlay、
+> 可变全局注册或动态发现。TaskKind 从组合结果推导，共享 ai/ 不反向依赖能力实现。
+> 当前为 **53 个 registered kinds、51 个静态 production invocation kinds、2 个显式分类**：
+> `AttributionTask` 保留历史兼容，`JevScoringDecisionTask` 经 typed runner 动态调用。
+> `pnpm audit:task-census` 验证 manifest/job 注册可达性及 run-log contract。
+> 具体 TaskSpec 仍含 Node helper；无 DB 初始化并不等于完整目录可直接在浏览器运行。
+> 本节为同步快照（2026-10-04）。**这是主要 task 的人读概览，不是完整清单**——精确数量、
 > ownership 与字段以 owner maps / `taskCatalog` 为准。
 
 **当前 registry**（runner + registry 都通；实际触发看 route / pg-boss handler）：

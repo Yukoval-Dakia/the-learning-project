@@ -1,5 +1,5 @@
 /**
- * task-catalog.ts — central composition root for owned TaskDefinition specs.
+ * task-catalog.ts — shared immutable composer for injected owner TaskDefinition specs.
  *
  * YUK-863 / YUK-939 — Census and compose owner TaskSpecs.
  *
@@ -17,12 +17,6 @@
  *  - dynamic import() task discovery
  */
 
-import { agencyTaskSpecs } from '@/capabilities/agency/tasks/index';
-import { copilotTaskSpecs } from '@/capabilities/copilot/tasks/index';
-import { ingestionTaskSpecs } from '@/capabilities/ingestion/tasks/index';
-import { knowledgeTaskSpecs } from '@/capabilities/knowledge/tasks/index';
-import { notesTaskSpecs } from '@/capabilities/notes/tasks/index';
-import { practiceTaskSpecs } from '@/capabilities/practice/tasks/index';
 import type { TaskOwner } from './owned-task-specs';
 import type { TaskDefinition } from './task-spec';
 
@@ -96,23 +90,3 @@ export function composeTaskCatalog<const OwnerMaps extends readonly OwnerTaskSpe
 
   return Object.freeze(result) as Readonly<CatalogFromOwnerMaps<OwnerMaps>>;
 }
-
-/**
- * The composed, frozen catalog of all owned TaskDefinitions.
- * Indexed by TaskKind string. Runtime may index this by kind.
- */
-export const taskCatalog = composeTaskCatalog(
-  [
-    { owner: 'practice', specs: practiceTaskSpecs },
-    { owner: 'ingestion', specs: ingestionTaskSpecs },
-    { owner: 'knowledge', specs: knowledgeTaskSpecs },
-    { owner: 'notes', specs: notesTaskSpecs },
-    { owner: 'agency', specs: agencyTaskSpecs },
-    { owner: 'copilot', specs: copilotTaskSpecs },
-  ] as const,
-  // YUK-987: +SupplyPlanTask（供给需求层 planner）→ 50。
-  // YUK-1016: +CauseCategoryProposeTask（cause catalog 增长提议）→ 51。
-  // YUK-376: +ItemPriorLlasaTask（LLaSA 学生模拟冷启锚 opt-in 变体）→ 52。
-  // YUK-1049: +JevScoringDecisionTask（首个 typed execution spec）→ 53。
-  53,
-);

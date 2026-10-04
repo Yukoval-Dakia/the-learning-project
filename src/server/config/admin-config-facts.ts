@@ -10,8 +10,7 @@
 // 诚实性：effective 值全部来自真实 reader 调用（不复制规则）；reader 输出非单
 // 一标量的键（admission 按 lane、jyeoo backfill 按会话）只给 note；providers[]
 // 只带 key presence 布尔与 env 名字，值绝不进 payload。
-import { type TaskKind, tasks } from '@/ai/registry';
-import { getLearnerLocale } from '@/ai/task-prompts';
+
 import { capabilities } from '@/capabilities';
 import { copilotConfigEffectiveFacts } from '@/capabilities/copilot/public';
 import { ingestionConfigEffectiveFacts } from '@/capabilities/ingestion/public';
@@ -24,6 +23,7 @@ import type {
 } from '@/capabilities/observability/public';
 import { observabilityConfigEffectiveFacts } from '@/capabilities/observability/public';
 import { practiceConfigEffectiveFacts } from '@/capabilities/practice/public';
+import { type TaskKind, getLearnerLocale, tasks } from '@/capabilities/task-registry';
 import type { ConfigEffectiveFact } from '@/core/config/effective';
 import { DB_POOL_MAX } from '@/db/pool';
 import { projectDagMembers } from '@/kernel/manifest';

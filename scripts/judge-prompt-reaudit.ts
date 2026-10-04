@@ -19,7 +19,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { type AiTaskKind, getTaskSystemPrompt } from '@/ai/task-prompts';
+import { type AiTaskKind, getTaskSystemPrompt } from '@/capabilities/task-registry';
 import { subjectProfiles } from '@/subjects/profile';
 
 /** The three outcome-bit-producing judge tasks (design doc §0). */

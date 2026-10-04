@@ -2,8 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { taskCatalog } from '../src/ai/task-catalog';
 import { copilotTaskSpecs } from '../src/capabilities/copilot/tasks';
+import { taskCatalog } from '../src/capabilities/task-catalog';
 import { auditTaskCensus } from './audit-task-census';
 import { scanForbiddenTaskCatalogPatterns } from './lib/task-census-guards';
 import {
@@ -261,6 +261,19 @@ describe('task catalog executable-pattern guard', () => {
     });
     expect(scanForbiddenTaskCatalogPatterns(root)).toEqual([]);
   });
+
+  it.each(['src/capabilities/task-catalog.ts', 'src/capabilities/task-registry.ts'])(
+    'keeps the injected composition guarded against mutable discovery: %s',
+    (file) => {
+      const root = createSourceFixture({ [file]: 'registerTask(process.env.TASK_OWNER);' });
+      expect(scanForbiddenTaskCatalogPatterns(root).map((violation) => violation.reason)).toEqual(
+        expect.arrayContaining([
+          'mutable registerTask registration',
+          'environment-selected task owner',
+        ]),
+      );
+    },
+  );
 
   it('does not inspect registry Copilot prepare imports outside the guarded composition files', () => {
     const root = createSourceFixture({

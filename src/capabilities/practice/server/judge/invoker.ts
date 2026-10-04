@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import type { Provider, TaskKind } from '@/ai/registry';
-import { getLearnerLocale, isAiTaskKind } from '@/ai/task-prompts';
+import type { Provider, TaskKind } from '@/capabilities/task-registry';
+import { getLearnerLocale, isAiTaskKind } from '@/capabilities/task-registry';
 import { getDefaultRegistry } from '@/core/capability/judges';
 import type { CapabilityRegistry } from '@/core/capability/registry';
 import { JudgeKind as JudgeKindSchema } from '@/core/schema/business';

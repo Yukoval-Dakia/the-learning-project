@@ -6,7 +6,8 @@ Task 层抽象。**不是 chat()** —— 每种产物一个 Task；tool-calling
 
 ## 边界
 
-- **浏览器端** (`src/ai/`)：owner maps + task catalog + registry compatibility projection + SubjectProfile prompt builders。不持 API key，也没有通用 `runTask()` client helper。
+- **共享契约** (`src/ai/`)：TaskSpec 类型、不可变 catalog composer、接收 catalog 的 registry / budget / prompt reader。没有 capability import、API key 或通用 `runTask()` client helper。
+- **任务组合** (`src/capabilities/task-catalog.ts` + `task-registry.ts`)：通过六个 `task-public.ts` 入口静态装配，再注入共享 reader。具体 TaskSpecs 包含 Node helper，不能将完整目录承诺为浏览器 bundle。
 - **Server 端** (`server/` + `src/server/ai/`)：generic `/api/ai/[task]` route 已退场。所有 task 都走 capability 领域 route / worker，由该入口解析 profile、注入工具或补齐 ingestion context。
 - **Async worker** (`scripts/worker.ts` / pg-boss handlers)：复用同一个 runner 处理 OCR、归因、note generation、maintenance 等后台任务。
 
@@ -17,12 +18,13 @@ Task 层抽象。**不是 chat()** —— 每种产物一个 Task；tool-calling
 - 六个 capability owner index 用 `defineOwnedTaskSpecs()` 声明 staged ownership；owner map 保存完整 entry，不是只保存 definition 的别名表。
 - Copilot 保留 `CopilotTask` / `TeachingTurnTask`；旧独立 ResearchTask 已随 mailbox 执行退休，原生子 agent 留在父回合。题目、解题与教学内容仍由 Practice 的专用质量 Task 校验。
 - owner entry 均为完整 TaskSpec；Copilot 的两个事后 evidence TaskKind 已退场，不保留 compatibility 占位。
-- `composeTaskCatalog()` 只把每个 entry 的精确 `definition` 投影成冻结的 runtime map。`src/ai/registry.ts` 再为 `GoalScopeTask` 与 `QuestionAuthorTask` 加两个 Copilot invocation overlay，作为 runner 的 compatibility projection；它不是 semantic source。
+- `composeTaskCatalog()` 留在共享层，只把注入的 owner entry 精确 `definition` 投影成冻结的 runtime map。`src/capabilities/task-registry.ts` 绑定预算与 prompt reader，`tasks` 与 catalog 保持同一对象，`TaskKind` 由实际键推导；不加 invocation overlay，不做可变全局注册。
+- 各包 `public.ts` 同时导出 task map；组合根使用窄 `task-public.ts`，避免应用 barrel 提前初始化 DB 或形成 runtime cycle。只有任务组合根可消费这个声明入口。
 - `pnpm audit:task-census` 从当前 catalog 与生产调用点派生数量，并检查 manifest/legacy handler reachability 与 `ai_task_runs.task_kind` run-log path。唯一非 live caller 分类为 `AttributionTask`。
 
 ## 加新 Task
 
-1. 在 owner capability 的 `tasks/` 建真实 `TaskSpec`（definition + parser + output schema），并登记到该 owner index；不要往 `registry.ts` 写业务定义
+1. 在 owner capability 的 `tasks/` 建真实 `TaskSpec`（definition + parser + output schema），并登记到该 owner index（经 `task-public.ts` 暴露）；不要往 `registry.ts` 写业务定义
 2. 在领域 route 或 pg-boss handler 中解析 `SubjectProfile`，再调用 `runTask()` / `runAgentTask()` / `streamTask()`
 3. 如需 HTTP 入口，建 capability 领域入口；不要复活 generic `/api/ai/[task]`
 4. 写 `event` / `tool_call_log` / `cost_ledger` 留痕
@@ -36,7 +38,7 @@ Task 层抽象。**不是 chat()** —— 每种产物一个 Task；tool-calling
 当前已落地的 MCP/tool-call 状态：
 
 - `src/server/ai/runner.ts` 支持 `piToolMounts`、`allowedTools`、`maxTurns`，并把所有 task 统一送进 pi in-process `agentLoop`（`pi-agent-adapter.ts`）。
-- `src/ai/registry.ts` 仍只给 legacy `KnowledgeReviewTask` 开了 `allowedTools: ['mcp__loom__write_proposal']`；新 DomainTool callers 应使用 `src/server/ai/tools/allowlists.ts` 生成 surface-specific `mcp__loom__*` allowlist。
+- Knowledge-owned TaskSpec 仍只给 legacy `KnowledgeReviewTask` 开了 `allowedTools: ['mcp__loom__write_proposal']`；新 DomainTool callers 应使用 `src/server/ai/tools/allowlists.ts` 生成 surface-specific `mcp__loom__*` allowlist。
 - `src/server/knowledge/review.ts` 在每次 `/api/knowledge/review` 请求内经 `piCustomTool` 暴露 `write_proposal` 一个 proposal tool。
 - capability manifests 经 `src/server/ai/tools/register-capability-tools.ts` 在 API/worker 启动期注册完整 DomainTools；`piDomainMount` 把 registry 工具编译成 pi `AgentTool`，并写 `tool_call_log` / `tool_use` mirror（ADR-0011 §1.1 promote 自 `experimental:tool_use`）。
 - Concrete DomainTools live with their owning capabilities（knowledge / agency / ingestion / practice / copilot 包内 `tools`）；`src/server/ai/tools/` 只保留共享基础设施（registry、mcp-bridge、types、allowlists、budgets、context-throttle）。YUK-885 过渡期仍居中央的 7 个工具文件（proposal-tools / context-readers / get-attempt-context / query-mistakes / query-questions / write-quiz / tool-quiz-core）由 `audit-architecture-ownership` 的 transitional allowlist 显式登记，新增中央工具会被审计拒绝。

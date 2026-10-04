@@ -71,6 +71,44 @@ afterEach(() => {
 });
 
 describe('capability boundary dependency parsing', () => {
+  it.each([
+    "import { alpha } from '@/capabilities/alpha/public';",
+    "import type { Alpha } from '../capabilities/alpha/public';",
+    "export { alpha } from '@/capabilities/alpha/public';",
+    "const load = () => import('@/capabilities/alpha/public');",
+    "type Alpha = import('../capabilities/alpha/public').Alpha;",
+  ])('rejects shared ai dependencies on capabilities: %s', (code) => {
+    const root = makeFixture();
+    write(root, 'src/ai/example.ts', code);
+    expect(auditCapabilityBoundaries(root).violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          file: 'src/ai/example.ts',
+          reason: expect.stringContaining('shared ai must receive an injected catalog'),
+        }),
+      ]),
+    );
+  });
+
+  it('allows only the task composition root to consume task declaration ports', () => {
+    const root = makeFixture();
+    write(root, 'src/capabilities/alpha/task-public.ts', 'export const alphaTaskSpecs = {};');
+    write(
+      root,
+      'src/capabilities/task-catalog.ts',
+      "import { alphaTaskSpecs } from './alpha/task-public';",
+    );
+    expect(auditCapabilityBoundaries(root).violations).toEqual([]);
+    write(
+      root,
+      'src/capabilities/beta/server/tasks.ts',
+      "import { alphaTaskSpecs } from '@/capabilities/alpha/task-public';",
+    );
+    expect(auditCapabilityBoundaries(root).violations).toEqual([
+      expect.objectContaining({ file: 'src/capabilities/beta/server/tasks.ts' }),
+    ]);
+  });
+
   it('classifies type, mixed, side-effect, dynamic, and re-export dependencies', () => {
     const references = importedReferences(
       `import type { A } from './types';

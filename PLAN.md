@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。Linear归零目标持续推进，当前73项；1063/#1539已交付。当前单线为1064脚本/跨包测试公开接口整理；依赖不追新，既有HOLD与生产/付费边界保持。
+> 更新于2026-10-04。Linear归零持续推进，当前72项；1064/#1540已交付。当前单线1062任务目录反转；依赖不追新，既有HOLD与生产/付费边界保持。
 
 ## NOW
 
@@ -37,15 +37,20 @@
 
 - YUK-1063/#1539已合入main `4344fb20`：100unit+67DB、独立30unit/46subjectDB、本地gate与exact-head CI37183602484（34浏览器/81迁移）通过，17分钟窗口完成，Linear Done；纯topology下沉与judge公开面交付。
 
-- YUK-1064 active：`refactor/yuk-1064-public-consumers` / `/workspace/tlp-public-consumers`，base4344fb20。脚本/跨包测试经显式public，独立运维/开发入口保留有理由隔离；迁移包空库启动与二次幂等新增回归通过。38unit+368DB+82migration通过；全部本地gate通过（lint299）。独立初审发现离线CLI启动失败，裁决P1后恢复隔离，新子进程回归先RED后GREEN、20冻结cases CLEAN；唯一验证审通过，PR/CI/window待完成。
+- YUK-1064/#1540已合入main `52298f44`：38unit+368DB+82migration、本地gate、独立初审与唯一P1验证审、CI37190266253（34浏览器/82迁移）通过，17分钟窗口完成，Linear Done。离线CLI启动回归已修，20冻结cases CLEAN。
+
+- YUK-1062 active：`refactor/yuk-1062-task-catalog` / `/workspace/tlp-task-catalog`，base52298f44。具体53任务目录与精确类型移至capabilities组合根，共享registry/预算/prompt接收不可变catalog；六个窄task-public出口避免应用barrel初始化。6组原测试迁移保留断言，新增隔离/启动/边界回归；本地核心/消费者/runtime及232DB通过，真实migration bundle回归通过（1执行/81跳过），全部本地gate通过（lint299）。独立初审124unit及CJS闭包检查通过，无P0/P1或实质P2；PR/CI/window待完成。
 
 ## NEXT
 
-1. 交付1064脚本/跨包测试边界批次后，继续1062 task-catalog反转或其余已就绪主线。持续推进Linear归零，不以单批合并作为终点。
+1. 交付1062任务目录反转后，继续1060/1073–1079及766等已就绪主线。持续推进Linear归零，不以单批合并作为终点。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
 ## PARKED
+
+- YUK-766已按既有Q-766批准与当前排除表证据校准Todo，需将subscription进度/effect账本纳入备份并清理claim；尚未实施/生产恢复。
+- YUK-1062基线完整catalog并非浏览器安全：Node crypto纯helper已在旧TaskSpecs闭包内。本批保留定义、修正说明，窄公开入口只保证不初始化应用DB，不承诺新增浏览器支持。
 
 - 1064本批同步audit:relations confusable reader真实路径至kernel/read-models/confusables.ts；原误报DEAD/STALE已消除。既有applied_in/observed_in治理信号不在此批扩面。
 

@@ -1,18 +1,6 @@
 import { getConfig } from '@/core/config/store';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
-import { type TaskKind, type TaskPrompt, tasks } from './registry';
-
-export type AiTaskKind = TaskKind;
-
-// YUK-589 (High-sec) — boundary validation for an untrusted task-kind string.
-// The judge invoker receives `kind` as a plain string from the runner seam and
-// must NOT `as AiTaskKind`-cast it before feeding it to fingerprinting: an
-// unknown kind would silently produce a bogus prompt fingerprint (fail-open).
-// `tasks` is the single registry whose keys ARE the AiTaskKind union, so an own
-// key is the authoritative membership test.
-export function isAiTaskKind(kind: string): kind is AiTaskKind {
-  return Object.hasOwn(tasks, kind);
-}
+import type { TaskCatalog, TaskKindOf, TaskPrompt } from './registry';
 
 function assertNever(value: never): never {
   throw new Error(
@@ -38,23 +26,38 @@ function learnerLocalePin(locale: 'zh-CN' | 'en'): string {
   return locale === 'en' ? ENGLISH_LEARNER_LOCALE_PIN : LEARNER_LOCALE_PIN;
 }
 
-export function getTaskSystemPrompt(
-  task: AiTaskKind,
-  profile: SubjectProfile = resolveSubjectProfile(),
-  learnerLocale: 'zh-CN' | 'en' = getLearnerLocale(),
-): string {
-  const prompt: TaskPrompt = tasks[task].prompt;
-  switch (prompt.kind) {
-    case 'inline':
-      return prompt.text + learnerLocalePin(learnerLocale);
-    case 'profile':
-      return prompt.build(profile) + learnerLocalePin(learnerLocale);
-    case 'none':
-      // YUK-1049 — typed tasks have no system prompt; runTask/streamTask
-      // reject execution:'typed' before reaching this seam, so reaching here
-      // is a routing bug, not a legitimate prompt.
-      throw new Error(`task ${task} is a typed task with no system prompt`);
-    default:
-      return assertNever(prompt);
+/** Bind prompt lookup and exact membership checks to the supplied catalog. */
+export function createTaskPromptReaders<const Catalog extends TaskCatalog>(tasks: Catalog) {
+  // YUK-589 (High-sec) — boundary validation for an untrusted task-kind string.
+  // The judge invoker receives `kind` as a plain string from the runner seam and
+  // must NOT `as AiTaskKind`-cast it before feeding it to fingerprinting: an
+  // unknown kind would silently produce a bogus prompt fingerprint (fail-open).
+  // `tasks` is the single registry whose keys ARE the AiTaskKind union, so an own
+  // key is the authoritative membership test.
+  function isAiTaskKind(kind: string): kind is TaskKindOf<Catalog> {
+    return Object.hasOwn(tasks, kind);
   }
+
+  function getTaskSystemPrompt(
+    task: TaskKindOf<Catalog>,
+    profile: SubjectProfile = resolveSubjectProfile(),
+    learnerLocale: 'zh-CN' | 'en' = getLearnerLocale(),
+  ): string {
+    const prompt: TaskPrompt = tasks[task].prompt;
+    switch (prompt.kind) {
+      case 'inline':
+        return prompt.text + learnerLocalePin(learnerLocale);
+      case 'profile':
+        return prompt.build(profile) + learnerLocalePin(learnerLocale);
+      case 'none':
+        // YUK-1049 — typed tasks have no system prompt; runTask/streamTask
+        // reject execution:'typed' before reaching this seam, so reaching here
+        // is a routing bug, not a legitimate prompt.
+        throw new Error(`task ${task} is a typed task with no system prompt`);
+      default:
+        return assertNever(prompt);
+    }
+  }
+
+  return Object.freeze({ isAiTaskKind, getTaskSystemPrompt });
 }

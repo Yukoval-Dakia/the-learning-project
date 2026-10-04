@@ -30,9 +30,8 @@
 // their truth (unknown cost counts as the reserve — never zero).
 
 import type { ZodTypeAny } from 'zod';
-import { type TaskKind, tasks } from '@/ai/registry';
-import { resolveTaskBudget } from '@/ai/task-budget';
 import type { TaskDefinition } from '@/ai/task-spec';
+import { type TaskKind, resolveTaskBudget, tasks } from '@/capabilities/task-registry';
 import { JevScoringDecisionInput, JevSystemOneResponse } from '@/core/schema/jev-systemone';
 import type { Db } from '@/db/client';
 import {

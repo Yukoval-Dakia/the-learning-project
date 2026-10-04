@@ -1,7 +1,11 @@
 // allow: SIZE_OK — central 52-task catalog contract suite.
+import { execFile } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
+import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { type TaskOwner, composeTaskCatalog, defineOwnedTaskSpecs } from '@/ai/task-catalog';
+import type { TaskDefinition, TaskSpec } from '@/ai/task-spec';
 import { coachTaskSpec } from '@/capabilities/agency/tasks/coach';
 import {
   conjectureGroupingTaskSpec,
@@ -78,14 +82,8 @@ import { supplyPlanTaskSpec } from '@/capabilities/practice/tasks/supply-plannin
 import { teachingQualityTaskSpec } from '@/capabilities/practice/tasks/teaching-quality';
 import { variantGenTaskSpec } from '@/capabilities/practice/tasks/variant-gen';
 import { variantVerifyTaskSpec } from '@/capabilities/practice/tasks/variant-verify';
-import type { TaskKind } from './registry';
-import {
-  type TaskOwner,
-  composeTaskCatalog,
-  defineOwnedTaskSpecs,
-  taskCatalog,
-} from './task-catalog';
-import type { TaskDefinition, TaskSpec } from './task-spec';
+import { taskCatalog } from './task-catalog';
+import type { TaskKind } from './task-registry';
 
 const EXPECTED_KINDS = [
   'AttributionTask',
@@ -259,6 +257,24 @@ function invokeEntryValidation(entry: object): void {
 }
 
 describe('taskCatalog', () => {
+  it('initializes the concrete registry without application database configuration', async () => {
+    const env = { ...process.env };
+    delete env.DATABASE_URL;
+    delete env.VITEST;
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      [
+        '--import',
+        'tsx',
+        '--input-type=module',
+        '-e',
+        "const { tasks } = await import('./src/capabilities/task-registry.ts'); process.stdout.write(JSON.stringify(Object.keys(tasks).sort()));",
+      ],
+      { env, timeout: 20_000 },
+    );
+    expect(JSON.parse(stdout)).toEqual([...EXPECTED_KINDS].sort());
+  }, 25_000);
+
   it('has the exact closed 53-kind compile-time and runtime census', () => {
     expect(TASK_KIND_IS_CLOSED).toBe(true);
     expect(Object.keys(taskCatalog).sort()).toEqual([...EXPECTED_KINDS].sort());
@@ -358,7 +374,7 @@ describe('taskCatalog', () => {
       expect('outputSchema' in entry && entry.outputSchema.safeParse, kind).toBeTypeOf('function');
     }
 
-    expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
+    expect(existsSync(new URL('../ai/legacy-task-definitions.ts', import.meta.url))).toBe(false);
   });
 
   it('owns the three Knowledge TaskSpecs without central quarry definitions', () => {
@@ -416,7 +432,7 @@ describe('taskCatalog', () => {
       'KnowledgeReviewTask',
     ]);
 
-    expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
+    expect(existsSync(new URL('../ai/legacy-task-definitions.ts', import.meta.url))).toBe(false);
   });
 
   it('owns the thirteen agency TaskSpecs without quarry definitions', () => {
@@ -472,7 +488,7 @@ describe('taskCatalog', () => {
       expect(Object.hasOwn(knowledgeTaskSpecs, kind), kind).toBe(false);
     }
 
-    expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
+    expect(existsSync(new URL('../ai/legacy-task-definitions.ts', import.meta.url))).toBe(false);
   });
 
   // YUK-870 (F3.5b) — the last transitional quarry entry is now Practice-owned.
@@ -506,7 +522,7 @@ describe('taskCatalog', () => {
       expect(() => entry.parseText('   ')).toThrow();
     }
 
-    expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
+    expect(existsSync(new URL('../ai/legacy-task-definitions.ts', import.meta.url))).toBe(false);
   });
 
   it('owns the seven Practice sourcing and generation TaskSpecs without quarry definitions', () => {
@@ -529,7 +545,7 @@ describe('taskCatalog', () => {
       expect(entry.outputSchema.safeParse, kind).toBeTypeOf('function');
     }
 
-    expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
+    expect(existsSync(new URL('../ai/legacy-task-definitions.ts', import.meta.url))).toBe(false);
   });
 
   it('owns the three Copilot TaskSpecs without central quarry definitions', () => {
@@ -547,7 +563,7 @@ describe('taskCatalog', () => {
       expect(entry.outputSchema.safeParse, kind).toBeTypeOf('function');
     }
 
-    expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
+    expect(existsSync(new URL('../ai/legacy-task-definitions.ts', import.meta.url))).toBe(false);
   });
 
   it('retains full owned TaskSpecs without the retired research executor', () => {
@@ -592,12 +608,12 @@ describe('taskCatalog', () => {
 
   it('keeps semantic definitions out of all six owner index files', () => {
     const ownerIndexUrls = [
-      new URL('../capabilities/practice/tasks/index.ts', import.meta.url),
-      new URL('../capabilities/notes/tasks/index.ts', import.meta.url),
-      new URL('../capabilities/ingestion/tasks/index.ts', import.meta.url),
-      new URL('../capabilities/knowledge/tasks/index.ts', import.meta.url),
-      new URL('../capabilities/agency/tasks/index.ts', import.meta.url),
-      new URL('../capabilities/copilot/tasks/index.ts', import.meta.url),
+      new URL('./practice/tasks/index.ts', import.meta.url),
+      new URL('./notes/tasks/index.ts', import.meta.url),
+      new URL('./ingestion/tasks/index.ts', import.meta.url),
+      new URL('./knowledge/tasks/index.ts', import.meta.url),
+      new URL('./agency/tasks/index.ts', import.meta.url),
+      new URL('./copilot/tasks/index.ts', import.meta.url),
     ];
     for (const url of ownerIndexUrls) {
       const source = readFileSync(url, 'utf8');

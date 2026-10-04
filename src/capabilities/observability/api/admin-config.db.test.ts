@@ -13,9 +13,12 @@
 // 隔离：beforeEach resetDb（三表在 wipe list）；afterEach resetTestConfig +
 // 快照复位，防止读面测试间泄漏。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { resolveTaskBudget } from '@/ai/task-budget';
-import { LEARNER_LOCALE_PIN, getTaskSystemPrompt } from '@/ai/task-prompts';
 import { capabilities } from '@/capabilities';
+import {
+  LEARNER_LOCALE_PIN,
+  getTaskSystemPrompt,
+  resolveTaskBudget,
+} from '@/capabilities/task-registry';
 import { replaceConfigSnapshot, resetTestConfig } from '@/core/config/store';
 import { VERIFY_DISPATCH_RECOVERY_QUEUE } from '@/server/boss/verify-dispatch-outbox';
 import { clearConfig, setConfig, setConfigs } from '@/server/config/write';

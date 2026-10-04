@@ -62,5 +62,7 @@ export type {
   LearningItemAcceptResult,
   RelearnAcceptResult,
 } from './server/proposal-appliers';
+// YUK-1062 — task composition uses the narrow task-public entry directly.
+export { agencyTaskSpecs } from './task-public';
 export type { BriefDraftOutput } from './tasks/memory-brief';
 export { BriefDraftOutputSchema, parseBriefDraftOutput } from './tasks/memory-brief';

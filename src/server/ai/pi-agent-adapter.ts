@@ -54,7 +54,7 @@ import type {
   MutableModels as PiMutableModels,
   Usage as PiUsage,
 } from '@earendil-works/pi-ai';
-import { tasks } from '@/ai/registry';
+import { tasks } from '@/capabilities/task-registry';
 import { getConfig } from '@/core/config/store';
 import type {
   ExecutionAdapter,
