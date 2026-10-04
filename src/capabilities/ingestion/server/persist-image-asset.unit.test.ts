@@ -83,19 +83,22 @@ describe('persistImageAsset compensation', () => {
     };
   }
 
-  it('locks the storage key and deletes a failed put only when no owner exists', async () => {
-    const r2 = r2Spy();
-    await expect(
-      persistImageAsset(failingDb([]), r2, {
-        bytes: new Uint8Array([1, 2, 3]),
-        mime: 'image/png',
-        compensatePutOnInsertFailure: true,
-      }),
-    ).rejects.toThrow('injected source_asset insert failure');
+  it.each([new Uint8Array([1, 2, 3]), new Uint8Array()])(
+    'locks and compensates even when image metadata cannot be read (%s)',
+    async (bytes) => {
+      const r2 = r2Spy();
+      await expect(
+        persistImageAsset(failingDb([]), r2, {
+          bytes,
+          mime: 'image/png',
+          compensatePutOnInsertFailure: true,
+        }),
+      ).rejects.toThrow('injected source_asset insert failure');
 
-    expect(r2.put).toHaveBeenCalledOnce();
-    expect(r2.delete).toHaveBeenCalledWith(expect.stringMatching(/^assets\/[0-9a-f]{64}$/));
-  });
+      expect(r2.put).toHaveBeenCalledOnce();
+      expect(r2.delete).toHaveBeenCalledWith(expect.stringMatching(/^assets\/[0-9a-f]{64}$/));
+    },
+  );
 
   it('keeps a content-addressed object when another source_asset row owns the key', async () => {
     const r2 = r2Spy();
