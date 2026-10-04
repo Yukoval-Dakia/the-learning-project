@@ -387,8 +387,8 @@ describe('registered infrastructure evidence', () => {
 
 describe('live taskCatalog census', () => {
   it('derives the catalog census from the frozen live composition root', () => {
-    // YUK-1049: 53 = 52 chat tasks + JevScoringDecisionTask (first typed-execution spec).
-    expect(Object.keys(taskCatalog)).toHaveLength(53);
+    // YUK-1047: 54 = 53 chat tasks (including native assessment) + Jev typed task.
+    expect(Object.keys(taskCatalog)).toHaveLength(54);
     expect(Object.isFrozen(taskCatalog)).toBe(true);
   });
 
@@ -408,9 +408,9 @@ describe('live taskCatalog census', () => {
     });
 
     expect(result.ok, result.errors.join('\n')).toBe(true);
-    // 51 discovered (Jev's dynamic executor.task_kind arg isn't statically
+    // 52 discovered (Jev's dynamic executor.task_kind arg isn't statically
     // resolvable — that's exactly why it carries a non-live classification).
-    expect(result.discoveredKinds).toHaveLength(51);
+    expect(result.discoveredKinds).toHaveLength(52);
     expect(Object.keys(copilotTaskSpecs).sort()).toEqual(['CopilotTask', 'TeachingTurnTask']);
     expect(result.registrationEvidence.some((item) => item.registration === 'manifest-job')).toBe(
       true,

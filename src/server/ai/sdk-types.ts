@@ -90,6 +90,8 @@ export interface SDKPermissionDenial {
 
 export interface SDKAssistantMessage {
   type: 'assistant';
+  /** Native error counters may be placeholders without usage/cost evidence. */
+  usage_observed?: boolean;
   message: BetaMessage;
   parent_tool_use_id: string | null;
   uuid: UUID;
@@ -108,6 +110,7 @@ export interface SDKUserMessage {
 
 export interface SDKResultSuccess {
   type: 'result';
+  usage_observed?: boolean;
   subtype: 'success';
   duration_ms: number;
   duration_api_ms: number;
@@ -128,6 +131,7 @@ export interface SDKResultSuccess {
 
 export interface SDKResultError {
   type: 'result';
+  usage_observed?: boolean;
   subtype:
     | 'error_during_execution'
     | 'error_max_turns'

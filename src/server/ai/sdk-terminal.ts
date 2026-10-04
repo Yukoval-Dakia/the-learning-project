@@ -46,7 +46,8 @@ function accumulateUsage(usage: RawSdkUsage | undefined, aggregate: SdkUsageAccu
 function usageWithThinking(
   aggregate: SdkUsageAccumulator,
   thinking: ThinkingObservation,
-  compaction?: LifecycleUsage['compaction'],
+  compaction: LifecycleUsage['compaction'],
+  tokenUsageObserved: boolean,
 ): ObservedRunUsage {
   const usage: LifecycleUsage = {
     inputTokens: aggregate.inputTokens + aggregate.cacheReadTokens,
@@ -57,6 +58,7 @@ function usageWithThinking(
       : {}),
   };
   return {
+    tokenUsageObserved,
     usage,
     tokenCounts: {
       inputTokens: aggregate.inputTokens,
@@ -76,6 +78,7 @@ export function createSdkTerminalEvidenceCollector(): Readonly<{
 }> {
   const thinking: ThinkingObservation = { blocks: 0, characters: 0 };
   const observedUsage = emptyUsage();
+  let hasObservedUsage = false;
   let compaction: LifecycleUsage['compaction'];
 
   return {
@@ -89,7 +92,7 @@ export function createSdkTerminalEvidenceCollector(): Readonly<{
           ...(metadata.post_tokens !== undefined ? { postTokens: metadata.post_tokens } : {}),
         },
       };
-      return usageWithThinking(observedUsage, thinking, compaction);
+      return usageWithThinking(observedUsage, thinking, compaction, hasObservedUsage);
     },
     observeAssistant(message) {
       for (const block of message.message.content ?? []) {
@@ -97,17 +100,27 @@ export function createSdkTerminalEvidenceCollector(): Readonly<{
         thinking.blocks += 1;
         thinking.characters += typeof block.thinking === 'string' ? block.thinking.length : 0;
       }
-      return accumulateUsage(message.message.usage, observedUsage)
-        ? usageWithThinking(observedUsage, thinking, compaction)
-        : undefined;
+      if (
+        message.usage_observed === false ||
+        !accumulateUsage(message.message.usage, observedUsage)
+      )
+        return undefined;
+      hasObservedUsage = true;
+      return usageWithThinking(observedUsage, thinking, compaction, true);
     },
     fromResult(message) {
       const terminalUsage = emptyUsage();
-      const hasTerminalUsage = accumulateUsage(message.usage, terminalUsage);
+      const hasTerminalUsage =
+        message.usage_observed !== false && accumulateUsage(message.usage, terminalUsage);
       const aggregate = hasTerminalUsage ? terminalUsage : observedUsage;
       return {
-        ...usageWithThinking(aggregate, thinking, compaction),
-        costUsd: typeof message.total_cost_usd === 'number' ? message.total_cost_usd : undefined,
+        ...usageWithThinking(aggregate, thinking, compaction, hasTerminalUsage || hasObservedUsage),
+        costUsd:
+          message.usage_observed === false && message.total_cost_usd === 0
+            ? undefined
+            : typeof message.total_cost_usd === 'number'
+              ? message.total_cost_usd
+              : undefined,
         finishReason:
           message.stop_reason ?? (message.subtype === 'success' ? 'stop' : message.subtype),
         structuredOutput: message.subtype === 'success' ? message.structured_output : undefined,

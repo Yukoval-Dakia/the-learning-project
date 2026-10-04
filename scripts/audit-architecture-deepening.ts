@@ -1408,10 +1408,10 @@ async function runCli(): Promise<void> {
     // YUK-1016: 51（+CauseCategoryProposeTask cause catalog 增长提议）。
     // YUK-376: 52（+ItemPriorLlasaTask LLaSA 学生模拟冷启锚 opt-in 变体）。
     // YUK-1049: 53（+JevScoringDecisionTask 首个 typed execution spec）。
-    expectedTaskCount: 53,
+    expectedTaskCount: 54,
     taskCensus: {
       catalogCount: census.catalogCount,
-      expectedCount: 53,
+      expectedCount: 54,
       errors: census.errors,
       profileCriticCallerPresent: census.profileCriticCaller !== null,
       forbiddenPatternViolations: scanForbiddenTaskCatalogPatterns(projectRoot).map(

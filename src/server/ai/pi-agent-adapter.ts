@@ -67,6 +67,7 @@ import type {
 import { emitPiAfterToolCall, runPiBeforeToolCall } from './pi-hooks';
 import { createLoomPiModels } from './pi-models';
 import { piProviderId } from './pi-provider-catalog';
+import { hasPiUsageEvidence, withPiUsageEvidence } from './pi-usage-evidence';
 import type { SDKAssistantMessage, SDKResultMessage, SDKUserMessage } from './sdk-types';
 import { isSpawnToolName } from './spawn-contract';
 import {
@@ -475,6 +476,7 @@ export function piAssistantToSdkFrame(
   return {
     source: 'pi',
     type: 'assistant',
+    usage_observed: hasPiUsageEvidence(message),
     message: sdkMessage as unknown as SDKAssistantMessage['message'],
     parent_tool_use_id: null,
     uuid: randomUUID(),
@@ -586,6 +588,18 @@ export function piTerminalResultFrame(args: {
   const base = {
     source: 'pi' as const,
     type: 'result' as const,
+    usage_observed:
+      args.messages.some(
+        (message) =>
+          message.role === 'assistant' && hasPiUsageEvidence(message as PiAssistantMessage),
+      ) ||
+      [
+        args.childUsage?.input,
+        args.childUsage?.output,
+        args.childUsage?.cacheRead,
+        args.childUsage?.cacheWrite,
+        args.childUsage?.costUsd,
+      ].some((value) => value !== undefined && value > 0),
     duration_ms: args.durationMs,
     duration_api_ms: args.durationMs,
     num_turns: Math.max(1, args.numTurns),
@@ -952,7 +966,12 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   }
 
   private readonly streamFn: StreamFn = (model, llmContext, streamOptions) =>
-    this.deps.models.streamSimple(model, llmContext, streamOptions);
+    withPiUsageEvidence(
+      (m, context, options) => this.deps.models.streamSimple(m, context, options),
+      model,
+      llmContext,
+      streamOptions,
+    );
 
   /**
    * Child tool set: the spec's allowlist over the parent's mounted wire names,

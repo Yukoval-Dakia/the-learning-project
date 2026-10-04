@@ -52,12 +52,17 @@ export interface LifecycleResult {
 export interface TerminalResultEvidence {
   usage: LifecycleUsage;
   tokenCounts: TokenCounts;
+  /** Distinguishes missing usage from explicitly observed zero token counts. */
+  tokenUsageObserved?: boolean;
   costUsd?: number;
   finishReason: string;
   structuredOutput?: unknown;
 }
 
-export type ObservedRunUsage = Pick<TerminalResultEvidence, 'usage' | 'tokenCounts' | 'costUsd'>;
+export type ObservedRunUsage = Pick<
+  TerminalResultEvidence,
+  'usage' | 'tokenCounts' | 'tokenUsageObserved' | 'costUsd'
+>;
 
 interface LifecycleConfig<TResult extends LifecycleResult> {
   db: Db;
@@ -228,6 +233,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
             provider: this.resolved.provider,
             model: this.resolved.model,
             tokens: evidence.tokenCounts,
+            tokensObserved: evidence.tokenUsageObserved,
             reportedCostUsd: evidence.costUsd,
           })
         : unknownAttemptCostTruth(this.resolved.provider, this.resolved.model);
@@ -479,6 +485,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       provider: this.resolved.provider,
       model: this.resolved.model,
       tokens: terminal.tokenCounts,
+      tokensObserved: terminal.tokenUsageObserved,
       reportedCostUsd: terminal.costUsd,
     });
   }

@@ -380,6 +380,29 @@ describe('PiPreparedQuery.query — frame normalization', () => {
     expect(result.errors).toEqual(['upstream 500']);
   });
 
+  it('marks failed native placeholder zero usage as unknown', async () => {
+    const failed = piAssistant({
+      stopReason: 'error',
+      errorMessage: 'upstream disconnected',
+      usage: piUsage({
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      }),
+    });
+    const deps = makeDeps([
+      { type: 'message_end', message: failed },
+      { type: 'agent_end', messages: [failed] },
+    ]);
+    const prepared = await new PiAgentAdapter(deps as never).startup(startupArgs());
+    const frames = (await drain(prepared.query('go'))) as Record<string, unknown>[];
+    expect(frames.find((frame) => frame.type === 'assistant')?.usage_observed).toBe(false);
+    expect(frames.at(-1)?.usage_observed).toBe(false);
+  });
+
   it('reports agent_end with no assistant message as an engine error', async () => {
     const deps = makeDeps([{ type: 'agent_end', messages: [] }]);
     const adapter = new PiAgentAdapter(deps as never);
@@ -390,6 +413,7 @@ describe('PiPreparedQuery.query — frame normalization', () => {
     const result = frames[1] as Record<string, unknown>;
     expect(result.subtype).toBe('error_during_execution');
     expect(result.errors).toEqual(['pi agent_loop ended without an assistant message']);
+    expect(result.usage_observed).toBe(false);
   });
 });
 

@@ -49,6 +49,7 @@ import {
 import { notesTaskSpecs } from '@/capabilities/notes/tasks/index';
 import { noteRefineTaskSpec } from '@/capabilities/notes/tasks/note-refine';
 import { noteGenerateTaskSpec, noteVerifyTaskSpec } from '@/capabilities/notes/tasks/note-tasks';
+import { assessmentRuleTaskSpec } from '@/capabilities/practice/tasks/assessment-rule';
 import {
   attributionRerankTaskSpec,
   attributionTaskSpec,
@@ -138,6 +139,7 @@ const EXPECTED_KINDS = [
   'SupplyPlanTask',
   'BlockAssemblyTask',
   'JevScoringDecisionTask',
+  'AssessmentRuleJudgeTask',
   'CauseCategoryProposeTask',
 ] as const;
 
@@ -160,7 +162,7 @@ const OWNER_MAPS = {
 } as const;
 
 const EXPECTED_OWNER_COUNTS = {
-  practice: 24,
+  practice: 25,
   notes: 3,
   ingestion: 8,
   knowledge: 3,
@@ -172,6 +174,7 @@ const OWNED_SPECS: ReadonlySet<object> = new Set([
   attributionTaskSpec,
   attributionRerankTaskSpec,
   causeCategoryProposeTaskSpec,
+  assessmentRuleTaskSpec,
   variantGenTaskSpec,
   semanticJudgeTaskSpec,
   unitDimensionFallbackTaskSpec,

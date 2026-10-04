@@ -159,9 +159,10 @@ describe('real registry + shipped allowlist', () => {
     readFileSync(join(__dirname, 'audit-structured-judge-allowlist.json'), 'utf-8'),
   ) as Allowlist;
 
-  it('has exactly the four known judge tasks and all declare structured output', () => {
+  it('has exactly the five known judge tasks and all declare structured output', () => {
     const judgeTasks = collectJudgeTasks(tasks as Record<string, TaskDefLike>);
     expect(judgeTasks).toEqual([
+      { kind: 'AssessmentRuleJudgeTask', hasStructuredOutput: true },
       { kind: 'MultimodalDirectJudgeTask', hasStructuredOutput: true },
       { kind: 'SemanticJudgeTask', hasStructuredOutput: true },
       { kind: 'StepsJudgeTask', hasStructuredOutput: true },

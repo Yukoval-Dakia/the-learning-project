@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。Linear归零持续推进，当前60项未完成；1091/#1561已合入main cd61afab。当前单线1047冻结模型上下文与正式入口迁移；766恢复取舍与588 UI具体方案待回复，依赖不追新。
+> 更新于2026-10-04。Linear归零持续推进，当前60项未完成；1047/#1562已合入main ad8dad75。当前单线1047原生pi执行与正式入口迁移；766恢复取舍与588 UI具体方案待回复，依赖不追新。
 
 ## NOW
 
@@ -76,11 +76,12 @@
 - YUK-1045/#1560已交付main d815df4b（19:08UTC）：116unit77DB/全部本地gates/独立初审与唯一P1验证审/CI37226077585（82迁移34浏览器）/17分钟窗通过，Linear Done。缺准入快照与来源伪装已修，历史不回填。
 
 - YUK-1091/#1561已交付main cd61afab（19:51UTC）：138unit136DB82migration/本地gates；初审1项联合时点P1先RED后修，修复后50DB，唯一验证审2探针39DB，最终joint20DB/typecheck/lint/build通过。exact-head CI37228786465（82迁移34浏览器）/17分钟窗完成，Linear Done。
-- YUK-1047当前实施：模型原题干/native选项缺口4测试先RED；材料不可见7测试先RED，冻结上下文与Jev材料守卫已修；#1562：初审84unit21DB发现1项内嵌图P1，3正式回归先RED后修（45soft失败）；修复后94unit72distinctDB及全部本地gates通过，唯一验证审中。八正式入口仍legacy，保持In Progress。
+- YUK-1047/#1562已交付main ad8dad75（20:18UTC）：94unit72DB/全部本地gate；初审1项内嵌图P1先RED后修，唯一验证3原探针5分支探针94unit通过；exact-head CI37230475644实际82迁移34浏览器/17分钟窗通过。八入口仍legacy，票In Progress。
+- YUK-1047/#1563：初审确认失败已知费用低估、成功缺usage误记零两项P1，正式3DB先RED后修。修复后281unit30DB/typecheck/lint299/build/11audits通过；真实pi离线SSE覆盖缺usage/明确零/非零。初次CI任务清单四→五断言已修；唯一验证审与修复后CI待完成。八正式入口仍legacy。
 
 ## NEXT
 
-1. 继续1047冻结上下文与正式入口迁移；八入口未完成前不标Done。766恢复LIGHT/FULL与588 UI具体预审待owner回复，1091已Done；不以单批合并为终点。
+1. 继续1047原生pi执行与正式入口迁移；八入口未完成前不标Done。766恢复LIGHT/FULL与588 UI具体预审待owner回复，1091已Done；不以单批合并为终点。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
