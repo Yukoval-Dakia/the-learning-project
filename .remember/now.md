@@ -12,3 +12,8 @@ Active1091 /workspace/tlp-assessment-joint fix/yuk-1091-joint-input. Formalvalid
 1047 model-context inworktree/workspace/tlp-assessment-model-context branchfix/yuk-1047-model-context.4contexttestsRED+7materialtestsRED then84unit72distinctDB/localgatespassed. Frozenpatch/tmp/review-yuk1047-context-frozen.patch ed0c645f initialreviewrunning. Existing8caller216DBbaselinegreen, fullmigrationstillopen. No production/paid/dependency. Groundingignoredroot/.remember/2026-10-04-assessment-entry-grounding.md.
 
 1047/#1562 initial review84unit21DB found1P1 inline original images in prompts/materials/options. Formal3location tests firstRED45soft failures, parser-based fix94unitPASS/alllocalgatesPASS. CommonMark existingreact-markdown nofetch/noadditionaldependencies. Soleverificationrunning. Lastnewhead pendingpush.
+
+1047/#1562 merged2026-10-04 20:18UTC mainad8dad7598eb75e278c77a0f9f5c208e42e9842c.94unit72DB/localgates/initialreview1P1+soleverification3old5new94unit/exactCI37230475644actual82migration34browser/17minwindow PASS.1047stillInProgress60open.
+Active1047native worktree/workspace/tlp-assessment-native-model branchfix/yuk-1047-native-model basedb7239b81 pendingrebase. Explicitnative task+descriptor, frozenassetguard, standalone(noautomaticJevfallback/admission). RealrunnerDB missingMiMousagecost firstRED1failed5passed thenfixusagepresence;unknownvsactualzero preserved. Finalgatesrunning. No paid/prod/dependency.
+
+Nativecost proof extended to realpi normalization: /tmp/yuk1047-native-adapter-red.log 2failed1passed41skipped then44adapterPASS. usage_observed false onfailedplaceholderzero/noassistant; collector+price resolver distinguishmissing fromactualzero.374distinctunit48DB; finalgatesrunning, initialreviewnotstartedyet.

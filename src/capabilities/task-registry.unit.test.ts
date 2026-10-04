@@ -51,7 +51,7 @@ describe('copilot task dispatch declarations', () => {
     for (const kind of Object.keys(taskCatalog) as TaskKind[]) {
       expect(tasks[kind], kind).toBe(taskCatalog[kind]);
     }
-    expect(Object.keys(tasks)).toHaveLength(53);
+    expect(Object.keys(tasks)).toHaveLength(54);
   });
 
   it('contains no prompt builders or task business definitions', () => {
@@ -88,7 +88,7 @@ describe('task prompt definitions', () => {
   });
 
   it('defines one non-empty inline or profile prompt for every task', () => {
-    expect(Object.keys(tasks)).toHaveLength(53);
+    expect(Object.keys(tasks)).toHaveLength(54);
 
     for (const task of Object.values(tasks)) {
       switch (task.prompt.kind) {
@@ -158,6 +158,7 @@ describe('task prompt definitions', () => {
           task === 'SupplyPlanTask' ||
           task === 'MistakeEnrollTask' ||
           task === 'TeachingTurnTask' ||
+          task === 'AssessmentRuleJudgeTask' || // New task; no pre-refactor prompt exists.
           task === 'JevScoringDecisionTask' // YUK-1049 — typed task, no prompt to hash
         ) {
           continue;

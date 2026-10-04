@@ -48,7 +48,7 @@ import {
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
-import { createJevModelExecutor } from '@/server/assessment/jev-model-executor';
+import { createJevModelExecutor, createPiModelExecutor } from '@/server/assessment/model-executors';
 
 /**
  * YUK-1092 — 装配描述符：在本模块组合点按 descriptor 铸
@@ -68,6 +68,13 @@ export interface JevModelExecutorSpec {
   /** Jev 不可服务时调用的已批准高级执行器（同 ModelExecutorRequest，共享 deadline）。 */
   readonly advanced_executor?: ModelUnitExecutorPort;
   /** 调用方取消信号（转发进 typed runner 与 advanced executor）。 */
+  readonly signal?: AbortSignal;
+}
+
+export interface PiModelExecutorSpec {
+  readonly kind: 'pi';
+  readonly deadline_at: number;
+  readonly max_cost_usd_micros: number;
   readonly signal?: AbortSignal;
 }
 
@@ -92,7 +99,7 @@ export interface EvaluateSubmissionRequest {
    * infra_failure。描述符形态要求 db 为池化 Db 句柄（非 Tx）—— 模型
    * run/cost 台账行是独立证据，不能随评估事务回滚而丢失。
    */
-  model_executor?: ModelUnitExecutorPort | JevModelExecutorSpec;
+  model_executor?: ModelUnitExecutorPort | JevModelExecutorSpec | PiModelExecutorSpec;
 }
 
 export interface EvaluateSubmissionResult {
@@ -134,10 +141,10 @@ export class EvaluateSubmissionError extends Error {
  */
 export function resolveModelExecutor(
   db: Db | Tx,
-  executor: ModelUnitExecutorPort | JevModelExecutorSpec | undefined,
+  executor: ModelUnitExecutorPort | JevModelExecutorSpec | PiModelExecutorSpec | undefined,
 ): ModelUnitExecutorPort | undefined {
   if (executor === undefined || typeof executor === 'function') return executor;
-  if (executor.kind !== 'jev') {
+  if (executor.kind !== 'jev' && executor.kind !== 'pi') {
     throw new EvaluateSubmissionError(
       'invalid_executor_spec',
       `model_executor spec kind '${String((executor as { kind: unknown }).kind)}' has no registered lane`,
@@ -148,6 +155,14 @@ export function resolveModelExecutor(
       'invalid_executor_spec',
       'model_executor spec requires the pool Db handle (not Tx): model run/cost ledger rows are independent evidence and must not roll back with the evaluation transaction',
     );
+  }
+  if (executor.kind === 'pi') {
+    return createPiModelExecutor({
+      db,
+      deadlineAt: executor.deadline_at,
+      maxCostUsdMicros: executor.max_cost_usd_micros,
+      signal: executor.signal,
+    });
   }
   return createJevModelExecutor({
     db,

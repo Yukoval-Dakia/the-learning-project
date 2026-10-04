@@ -453,6 +453,20 @@ function piContentToSdk(content: PiAssistantMessage['content']): ContentBlock[] 
   return blocks;
 }
 
+/** Pi initializes error usage to zeros even when the provider never reports it.
+ * Successful zero usage remains usable; failed all-zero placeholders are unknown. */
+function hasPiUsageEvidence(message: PiAssistantMessage): boolean {
+  if (!message.usage) return false;
+  if (message.stopReason !== 'error' && message.stopReason !== 'aborted') return true;
+  return [
+    message.usage.input,
+    message.usage.output,
+    message.usage.cacheRead,
+    message.usage.cacheWrite,
+    message.usage.cost?.total,
+  ].some((value) => value !== undefined && value > 0);
+}
+
 /**
  * pi AssistantMessage → SDKAssistantMessage-shaped frame. Every field carries
  * real data (id from responseId, model from responseModel, usage from the pi
@@ -475,6 +489,7 @@ export function piAssistantToSdkFrame(
   return {
     source: 'pi',
     type: 'assistant',
+    usage_observed: hasPiUsageEvidence(message),
     message: sdkMessage as unknown as SDKAssistantMessage['message'],
     parent_tool_use_id: null,
     uuid: randomUUID(),
@@ -586,6 +601,18 @@ export function piTerminalResultFrame(args: {
   const base = {
     source: 'pi' as const,
     type: 'result' as const,
+    usage_observed:
+      args.messages.some(
+        (message) =>
+          message.role === 'assistant' && hasPiUsageEvidence(message as PiAssistantMessage),
+      ) ||
+      [
+        args.childUsage?.input,
+        args.childUsage?.output,
+        args.childUsage?.cacheRead,
+        args.childUsage?.cacheWrite,
+        args.childUsage?.costUsd,
+      ].some((value) => value !== undefined && value > 0),
     duration_ms: args.durationMs,
     duration_api_ms: args.durationMs,
     num_turns: Math.max(1, args.numTurns),

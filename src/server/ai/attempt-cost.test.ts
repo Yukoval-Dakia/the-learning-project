@@ -169,3 +169,27 @@ describe('resolveAttemptCostTruth', () => {
     }
   });
 });
+
+describe('observed zero vs missing token usage', () => {
+  it.each([false, true])('keeps the distinction for MiMo: observed=%s', (tokensObserved) => {
+    const truth = resolveAttemptCostTruth({
+      provider: 'xiaomi',
+      model: 'mimo-v2.5',
+      tokens: { inputTokens: 0, outputTokens: 0 },
+      tokensObserved,
+    });
+    expect(truth.basis).toBe(tokensObserved ? 'estimated' : 'unknown');
+    expect(truth.amountUsd).toBe(tokensObserved ? 0 : null);
+  });
+  it('retains genuine reported zero without requiring token counts', () => {
+    expect(
+      resolveAttemptCostTruth({
+        provider: 'anthropic',
+        model: 'claude-opus-4-8',
+        tokens: { inputTokens: 0, outputTokens: 0 },
+        tokensObserved: false,
+        reportedCostUsd: 0,
+      }),
+    ).toMatchObject({ basis: 'reported', amountUsd: 0 });
+  });
+});

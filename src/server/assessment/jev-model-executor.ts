@@ -46,7 +46,7 @@ const NO_JEV_DETAIL =
  * code/escaped examples remain text, and raw HTML is not enabled. Calling this
  * synchronous parser builds elements only; it neither mounts nor fetches assets.
  */
-function containsRenderedImage(markdown: string): boolean {
+export function containsRenderedImage(markdown: string): boolean {
   let found = false;
   Markdown({
     children: markdown,
@@ -58,7 +58,7 @@ function containsRenderedImage(markdown: string): boolean {
   return found;
 }
 
-function hasInlineQuestionImage(request: ModelExecutorRequest): boolean {
+export function hasInlineQuestionImage(request: ModelExecutorRequest): boolean {
   if (request.question_parts.some((part) => containsRenderedImage(part.prompt_md))) return true;
   return request.response_slots.some((slot) => {
     switch (slot.kind) {
