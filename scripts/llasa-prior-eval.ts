@@ -39,10 +39,10 @@ if ((process.env.DATABASE_URL ?? '').includes('@postgres:')) {
 }
 
 const { db } = await import('@/db/client');
-const { resolveSubjectProfileForKnowledgeIds } = await import(
-  '@/capabilities/practice/server/knowledge-runtime'
-);
+const { resolveSubjectProfileForKnowledgeIds } = await import('@/capabilities/knowledge/public');
 const { parseItemPriorLlasaOutput, parseItemPriorOutput } = await import('@/server/ai/item-prior');
+// YUK-1064 dev-only exception: opt-in evaluation calls the concrete runtime directly;
+// keep model execution out of the general practice public barrel (YUK-988).
 const { makePracticeTaskRunFn } = await import('@/capabilities/practice/server/task-runtime');
 
 const DRY_RUN = process.argv.includes('--dry-run');

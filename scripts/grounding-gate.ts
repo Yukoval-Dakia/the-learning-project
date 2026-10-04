@@ -14,9 +14,11 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { unzipSync } from 'fflate';
 import postgres from 'postgres';
 import { z } from 'zod';
+// YUK-1064 dev-only exception: this opt-in evidence harness uses the concrete
+// meeting-job image loader; exposing the job through agency/public expands its runtime closure.
 import { defaultLoadEvidenceImages } from '@/capabilities/agency/jobs/research_meeting_nightly';
+import type { ConjectureEvidenceImageSource } from '@/capabilities/agency/public';
 import { induceConjecture } from '@/capabilities/agency/public';
-import type { ConjectureEvidenceImageSource } from '@/capabilities/agency/server/conjecture/evidence';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { source_asset } from '@/db/schema';

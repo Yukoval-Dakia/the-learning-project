@@ -7,7 +7,7 @@
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { serveProbeOnce } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
+import { serveProbeOnce } from '@/capabilities/agency/public';
 import { newId } from '@/core/ids';
 import { BRIEF_ACK_ACTION } from '@/core/schema/conjecture';
 import { event, material_fsrs_state, question } from '@/db/schema';

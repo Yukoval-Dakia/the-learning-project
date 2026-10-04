@@ -4,6 +4,8 @@
 // accelerator regressions as deterministic drift. Runs in the unit partition
 // (scripts/**/*.test.ts): the replay is pure — db is a throwing-Proxy sentinel,
 // the LLM is a frozen-text stub, images come from an injected stub fetcher.
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -19,6 +21,25 @@ import {
 } from './judge-golden-reaudit';
 
 describe('judge-golden reaudit (leg A)', () => {
+  it('runs the real offline CLI without database configuration', async () => {
+    const env = { ...process.env };
+    delete env.DATABASE_URL;
+    // The CLI must validate its real environment, not inherit Vitest's bypass.
+    delete env.VITEST;
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      ['--import', 'tsx', 'scripts/judge-golden-reaudit.ts', '--strict'],
+      { env, timeout: 20_000 },
+    );
+    const expectedCases = listGoldenFixtureFiles().reduce(
+      (count, file) => count + loadGoldenFixture(file).cases.length,
+      0,
+    );
+    expect(stdout).toContain(
+      `CLEAN — ${expectedCases} case(s) replay to their frozen expectations.`,
+    );
+  }, 25_000);
+
   it('has at least one committed fixture file', () => {
     expect(listGoldenFixtureFiles().length).toBeGreaterThan(0);
   });

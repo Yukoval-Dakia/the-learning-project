@@ -28,8 +28,7 @@ beforeEach(() => {
   setTestConfig({ PLACEMENT_PROBE_ENABLED: true });
 });
 
-import { seedKnowledge as seedSubjectRoots } from '@/capabilities/knowledge/server/seed';
-import { tagKnowledge } from '@/capabilities/knowledge/server/tag-knowledge';
+import { seedKnowledge as seedSubjectRoots, tagKnowledge } from '@/capabilities/knowledge/public';
 import { EMBED_DIMS } from '@/server/ai/embed';
 import { GET as getProfile } from './placement-profile';
 import { POST as startPlacement } from './placement-start';

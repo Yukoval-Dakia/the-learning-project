@@ -17,7 +17,7 @@ export { writeAttemptSnapshotBrackets } from './server/attempt-snapshot';
 // YUK-1007 — practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
 // 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
 export { practiceConfigEffectiveFacts } from './server/config-effective-facts';
-export { retrievabilityForKc } from './server/fsrs';
+export { retrievabilityForKc, scheduleReview } from './server/fsrs';
 export type { FrontierResolution } from './server/learnable-frontier';
 export {
   isMasteredForFrontier,
@@ -52,7 +52,11 @@ export const handleReviewDue: HandleReviewDue = async (...args) => {
   const dueList = await import('./server/due-list');
   return dueList.handleReviewDue(...args);
 };
+
+// YUK-1064 — explicit operations used by scripts and integration consumers.
+export type { FailureLearningBossSend } from './jobs/failure-learning-jobs';
 export type { CollectedSignal } from './server/candidate-signals';
+export { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } from './server/cause-overlay';
 export type {
   ProposeFailureVariantInput,
   VariantProposalResult,
@@ -111,10 +115,14 @@ export {
   resolveQuestionJudgeRoute,
   runMultimodalDirectJudge,
 } from './server/judge';
+export { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './server/judge-run-status';
 export {
   rewriteLearningItemKnowledgeIds,
   rewriteQuestionKnowledgeIds,
 } from './server/merge-attribution';
+export { submitPaperSlot } from './server/paper-submit';
+export { selectNextPlacementItem } from './server/placement-select';
+export { getPracticeList } from './server/practice-read';
 export type {
   EnqueueVariantVerifyFn,
   QuestionDraftAcceptResult,

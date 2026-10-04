@@ -27,6 +27,8 @@
 // construction). Scripts load `.env`, NOT `.env.local`.
 import './load-env';
 
+// YUK-1064 CLI exception: isolated one-off repair command, not an application port.
+// Keep its narrow parser/repair import independent of knowledge/public runtime initialization.
 import { runMergeAttributionBackfill } from '@/capabilities/knowledge/server/merge-attribution-backfill';
 import { db } from '@/db/client';
 

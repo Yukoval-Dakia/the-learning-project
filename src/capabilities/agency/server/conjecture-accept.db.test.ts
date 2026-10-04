@@ -23,8 +23,8 @@ import {
   misconceptionIdForConjecture,
   promoteConjectureToMisconception,
 } from '@/capabilities/agency/server/misconception-promote';
-import { createMisconceptionEdge } from '@/capabilities/knowledge/server/misconception-edges';
-import { loadPrepDeskConjectures } from '@/capabilities/shell/server/prep-desk';
+import { createMisconceptionEdge } from '@/capabilities/knowledge/public';
+import { loadPrepDeskConjectures } from '@/capabilities/shell/public';
 import {
   event,
   material_fsrs_state,

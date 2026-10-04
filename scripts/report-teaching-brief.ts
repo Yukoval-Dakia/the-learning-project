@@ -20,14 +20,8 @@ import './load-env';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { and, eq, gte, inArray, lt, sql } from 'drizzle-orm';
-import {
-  isCandidateError,
-  validateAckableOutcome,
-} from '@/capabilities/shell/server/teaching-brief';
-import type {
-  BriefSeenPayload,
-  PrimaryActionStartedPayload,
-} from '@/capabilities/shell/server/teaching-brief-interactions';
+import type { BriefSeenPayload, PrimaryActionStartedPayload } from '@/capabilities/shell/public';
+import { isCandidateError, validateAckableOutcome } from '@/capabilities/shell/public';
 import { isLearnerLocalDay, learnerDayWindowUtc, learnerLocalDay } from '@/core/learner-day';
 import {
   BRIEF_ACK_ACTION,
