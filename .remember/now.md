@@ -1,16 +1,18 @@
 # Current handoff — 2026-10-04
 
 Owner goal: continue Linear zero, do not stop after one batch; no dependency chasing.
-YUK1075/#1545 merged11:33:49UTC maina544a4226c883ef9009ff993191790cdf02b8378.
-107DB/15unit, all local gates + question-writers, independentinitial+onlyverification and CI37198178024 passed.
-17minute window completed,1075Done;67open. Incremental migration/browser skipped.
-PR-Agent excluded quiz_gen.ts; actualdiff independentreview covers it. No new actionablefollowup.
+1076/#1546 merged11:57:11UTC mainfaaca3ad1f1a19efdc24223c5ab6ceccee09839a;66open.
+49unit/58DB/allgates299warnings, independent41unit50DB+209952differential0diff,
+CI37199502237 actual82migration34browser passed.17minwindowcompleted;LinearDone.
 No production/paidcalls;1042ops and otherowner HOLDs remain gated.
-Active1076: /workspace/tlp-provider-lifecycle,refactor/yuk-1076-provider-lifecycle,basea544a422.
-Named operation-kind locks/fence, rate, deadline, policy and persistence helpers; callbacks are guardsequences.
-Pure existing-attempt decision tests cover immutablefields, precedence, nullablejoins andmode/deadline cases.
-50DB/18unit baseline;49unit(31new)/50DB passed; final49unit/58DB,typecheck/lint299/build/10audits+provider-attempt-truth passed;independentreview pending.
-54SQLtemplateliterals unchanged;external-ID/finish byteidentical.
-Preserve SQL, locks andorder; durabledenials mustcommit beforepublicthrow. No provider/prompt/schema/UIchange.
-Next1077–1079/766; readonly grounding in root ignored .remember/2026-10-04-ready-tail-grounding.md.
+Activebatch1077/1078/1079: /workspace/tlp-decision-tail,refactor/yuk-1077-1078-1079-decision-tail,basefaaca3ad.
+1077 collectDowngradeReasons preservesreasonorder/duplicates, anchormirror skip andpart_ref.
+1078 exhaustive20kind mappedpresenters keepgenericpayloadcorrelation withoutcasts;shareddefault/difficulty/relearn details.
+1079 gatherCandidates/judgeBatch/WALrows plusDB-freegatepolicies preservewarnorder, retrytaxonomy andhumanapproval.
+Newmigrationordercase and20kindpresentation snapshot passed originalbefore refactoring;existingtestsunchanged.
+Local gates PASS:172unit/85DB,typecheck/lint299warnings/build/10required audits plus provider-attempt-truth.
+Independent initial review PASS:87unit/38DB,1440memory+84presentation differential cases zero differences; no P0/P1 or substantive P2.
+Review verification unused; next commit/push, exact-head CI and 17min last-push window. No new follow-up: behavior preserved and no actionable findings.
+Next1007readfacts/766/1088;1091jointgroup stillneedsfullcorrectnessclosure.
+Grounding in root ignored .remember/2026-10-04-ready-tail-grounding.md.
 Preserve branches/worktrees, Astra/autonomous/night/native HOLDs, two-probe paid cap exhausted.

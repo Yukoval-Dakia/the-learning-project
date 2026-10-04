@@ -54,16 +54,12 @@ import {
   persistIngestCompleted,
   readIngestCompleted,
 } from './memory-reconcile-handoff-store';
+import { applyDecisionGates, deduplicateDecisions } from './reconcile-decisions';
 import {
   type CandidateEntry,
   type NewMemoryEntry,
-  type ReconcileAction,
   ReconcileParseError,
-  isHardDelete,
   judgeReconciliation,
-  kindForbidsMerge,
-  needsOldTarget,
-  passesStructuralCorroboration,
 } from './reconcile-llm';
 import {
   type PlannedRow,
@@ -648,39 +644,158 @@ export function buildMemoryBriefRegenHandler(
   };
 }
 
-/**
- * YUK-557 (Q1) — max candidate score for the RETRACT_NEW null-old_index fallback.
- * outlier-permissive approximation: `max` is the statistic MOST sensitive to a
- * single entity-boosted candidate spiking to ~0.99, so it biases toward PASSING
- * the floor. Acceptable because the null-old_index path is the noise∪duplicate
- * fallback where floor-skip (undefined → gate abstains + log) is the safe
- * alternative. No scored candidates → undefined (caller logs "floor skipped").
- */
-/**
- * YUK-557 (F6) — single downgrade primitive for the action-synthesis loop. Every
- * downgrade (bad-target / per-kind / score-floor) forces KEEP_BOTH and prepends a
- * cause prefix to the prior reason with a "`. `" join, so action↔reason never
- * diverges in the WAL (spec Q1 论证 #6 / Lens A A5-1). The warn (Q3 detection) stays
- * at each call site — it is an observability side effect, not part of the reason.
- */
-function downgradeToKeepBoth(
-  prefix: string,
-  orig: string,
-): { action: ReconcileAction; reason: string } {
-  return { action: 'KEEP_BOTH', reason: `${prefix}. ${orig}` };
+async function gatherCandidates(
+  db: Db,
+  client: MemoryClient,
+  job: Job<{ memories: ReconcileMemInput[]; user_id: string }>,
+) {
+  const userId = job.data.user_id;
+  const newMemInputs = job.data.memories ?? [];
+  // Build the prompt inputs. The new memory's text/kind/created_ms are
+  // THREADED from the ingest job (ReconcileMemInput) — NOT re-derived by
+  // searching the opaque UUID (which embeds noise and rarely retrieves the
+  // memory itself). Candidates ARE found by searching mem0 with the new
+  // memory's extracted text (semantic neighbors), excluding this batch's
+  // own new memories.
+  const newMems: NewMemoryEntry[] = [];
+  const candidatesByNew = new Map<number, CandidateEntry[]>();
+  const newIdSet = new Set(newMemInputs.map((m) => m.id));
+  for (let i = 0; i < newMemInputs.length; i++) {
+    const input = newMemInputs[i];
+    newMems.push({
+      index: i,
+      kind: input.kind,
+      text: input.text,
+      memory_id: input.id,
+      created_ms: input.created_ms,
+    });
+
+    const cands: CandidateEntry[] = [];
+    // Empty text → skip search (would embed ''); leaves no candidates → KEEP_BOTH.
+    if (input.text.trim().length > 0) {
+      const searchResult = await client.search(
+        input.text,
+        {
+          topK: RECONCILE_TOP_K + 1,
+          filters: { user_id: userId },
+        },
+        createMem0OpaqueOperationContext({
+          db,
+          caller: 'worker',
+          deadlineAt: new Date(Date.now() + 65_000),
+          operationAnchor: `memory-reconcile:${job.id}:${input.id}`,
+        }),
+      );
+      for (const r of searchResult?.results ?? []) {
+        if (newIdSet.has(r.id)) continue; // exclude this batch's own new memories
+        const cms = (r.metadata as Record<string, unknown> | undefined)?.created_ms;
+        cands.push({
+          index: cands.length,
+          text: r.memory,
+          memory_id: r.id,
+          created_ms: typeof cms === 'number' ? cms : undefined,
+          // YUK-557 (Q1): carry mem0's fused score for the structural gate.
+          score: typeof r.score === 'number' ? r.score : undefined,
+        });
+      }
+    }
+    candidatesByNew.set(i, cands);
+  }
+
+  return { newMems, candidatesByNew };
 }
 
-/**
- * YUK-557 (Q1) — max candidate score for the RETRACT_NEW null-old_index fallback.
- * outlier-permissive approximation: `max` is the statistic MOST sensitive to a
- * single entity-boosted candidate spiking to ~0.99, so it biases toward PASSING
- * the floor. Acceptable because the null-old_index path is the noise∪duplicate
- * fallback where floor-skip (undefined → gate abstains + log) is the safe
- * alternative. No scored candidates → undefined (caller logs "floor skipped").
- */
-function topCandidateScore(cands: CandidateEntry[]): number | undefined {
-  const scores = cands.map((c) => c.score).filter((s): s is number => typeof s === 'number');
-  return scores.length > 0 ? Math.max(...scores) : undefined;
+async function judgeBatch(
+  db: Db,
+  job: Pick<Job, 'id'>,
+  userId: string,
+  newMems: NewMemoryEntry[],
+  candidatesByNew: Map<number, CandidateEntry[]>,
+  judge: typeof judgeReconciliation,
+): Promise<Awaited<ReturnType<typeof judgeReconciliation>> | null> {
+  // GLM judgment — single call for all new memories + their candidates.
+  try {
+    return await judge(newMems, candidatesByNew, {
+      providerAttempt: createDirectProviderOperationContext({
+        db,
+        caller: 'worker',
+        deadlineAt: new Date(Date.now() + 65_000),
+        operationAnchor: job.id,
+      }),
+    });
+  } catch (err) {
+    if (err instanceof ReconcileParseError) {
+      // Failure mode 1: LLM parse failure → degrade entire batch to KEEP_BOTH.
+      console.warn(
+        `[memory_reconcile] LLM parse failed; degrading ${newMems.length} memories to KEEP_BOTH`,
+        err.message,
+      );
+      const keepRows = newMems.map((m) =>
+        makePlannedRow({
+          user_id: userId,
+          new_memory_id: m.memory_id,
+          old_memory_id: null,
+          action: 'KEEP_BOTH',
+          reason: `LLM parse failure degraded: ${err.message}`,
+          llm_raw: { error: err.message, raw: err.raw },
+        }),
+      );
+      await insertPlannedRows(db, keepRows);
+      for (const r of keepRows) await markApplied(db, r.id);
+      return null;
+    }
+    // RetryableError/PermanentError — rethrow for pg-boss retry (or archive).
+    throw err;
+  }
+}
+
+function buildReconcilePlannedRows(
+  userId: string,
+  newMems: NewMemoryEntry[],
+  candidatesByNew: Map<number, CandidateEntry[]>,
+  uniqueDecisions: Awaited<ReturnType<typeof judgeReconciliation>>,
+): PlannedRow[] {
+  // Write-ahead: insert planned rows BEFORE applying (crash safety).
+  // Single UNIFIED action synthesis per decision, in fixed order:
+  //   badTarget → per-kind (Q1b) → score-floor (Q1) → final.
+  // reason / old_memory_id / prev_text ALL read the SAME final action, and
+  // every downgrade rewrites `reason` symmetrically so action↔reason never
+  // diverges in the WAL (spec M1 / Lens A A5-1/A5-2). Out-of-range indices
+  // (LLM hallucination) degrade to KEEP_BOTH (existing semantics).
+  const plannedRows: PlannedRow[] = [];
+  for (const d of uniqueDecisions) {
+    const newMem = newMems[d.new_index];
+    const cands = candidatesByNew.get(d.new_index) ?? [];
+    const { action, reason, oldMem, referencedScore, corroborated } = applyDecisionGates(
+      d,
+      newMem,
+      cands,
+      (message) => console.warn(message),
+    );
+
+    plannedRows.push(
+      makePlannedRow({
+        user_id: userId,
+        new_memory_id: newMem?.memory_id ?? null,
+        old_memory_id: action === 'KEEP_BOTH' ? null : (oldMem?.memory_id ?? null),
+        action,
+        reason,
+        // Persist recency + the LLM decision (incl. merged_text for MERGE) +
+        // Q1 gate observability (for future data-driven floor calibration).
+        llm_raw: {
+          ...d,
+          execution_policy: 'human_approval_required',
+          recommended_action: d.action,
+          new_created_ms: newMem?.created_ms ?? null,
+          referenced_score: referencedScore ?? null,
+          structurally_corroborated: corroborated,
+        },
+        prev_text: null,
+        prev_metadata: null,
+      }),
+    );
+  }
+  return plannedRows;
 }
 
 /**
@@ -744,237 +859,26 @@ export function buildMemoryReconcileHandler(
           }
         }
 
-        // Build the prompt inputs. The new memory's text/kind/created_ms are
-        // THREADED from the ingest job (ReconcileMemInput) — NOT re-derived by
-        // searching the opaque UUID (which embeds noise and rarely retrieves the
-        // memory itself). Candidates ARE found by searching mem0 with the new
-        // memory's extracted text (semantic neighbors), excluding this batch's
-        // own new memories.
-        const newMems: NewMemoryEntry[] = [];
-        const candidatesByNew = new Map<number, CandidateEntry[]>();
-        const newIdSet = new Set(newMemInputs.map((m) => m.id));
-        for (let i = 0; i < newMemInputs.length; i++) {
-          const input = newMemInputs[i];
-          newMems.push({
-            index: i,
-            kind: input.kind,
-            text: input.text,
-            memory_id: input.id,
-            created_ms: input.created_ms,
-          });
-
-          const cands: CandidateEntry[] = [];
-          // Empty text → skip search (would embed ''); leaves no candidates → KEEP_BOTH.
-          if (input.text.trim().length > 0) {
-            const searchResult = await client.search(
-              input.text,
-              {
-                topK: RECONCILE_TOP_K + 1,
-                filters: { user_id: userId },
-              },
-              createMem0OpaqueOperationContext({
-                db,
-                caller: 'worker',
-                deadlineAt: new Date(Date.now() + 65_000),
-                operationAnchor: `memory-reconcile:${job.id}:${input.id}`,
-              }),
-            );
-            for (const r of searchResult?.results ?? []) {
-              if (newIdSet.has(r.id)) continue; // exclude this batch's own new memories
-              const cms = (r.metadata as Record<string, unknown> | undefined)?.created_ms;
-              cands.push({
-                index: cands.length,
-                text: r.memory,
-                memory_id: r.id,
-                created_ms: typeof cms === 'number' ? cms : undefined,
-                // YUK-557 (Q1): carry mem0's fused score for the structural gate.
-                score: typeof r.score === 'number' ? r.score : undefined,
-              });
-            }
-          }
-          candidatesByNew.set(i, cands);
-        }
+        const { newMems, candidatesByNew } = await gatherCandidates(db, client, job);
 
         if (newMems.length === 0) continue;
 
-        // GLM judgment — single call for all new memories + their candidates.
-        let decisions: Awaited<ReturnType<typeof judge>>;
-        try {
-          decisions = await judge(newMems, candidatesByNew, {
-            providerAttempt: createDirectProviderOperationContext({
-              db,
-              caller: 'worker',
-              deadlineAt: new Date(Date.now() + 65_000),
-              operationAnchor: job.id,
-            }),
-          });
-        } catch (err) {
-          if (err instanceof ReconcileParseError) {
-            // Failure mode 1: LLM parse failure → degrade entire batch to KEEP_BOTH.
-            console.warn(
-              `[memory_reconcile] LLM parse failed; degrading ${newMems.length} memories to KEEP_BOTH`,
-              err.message,
-            );
-            const keepRows = newMems.map((m) =>
-              makePlannedRow({
-                user_id: userId,
-                new_memory_id: m.memory_id,
-                old_memory_id: null,
-                action: 'KEEP_BOTH',
-                reason: `LLM parse failure degraded: ${err.message}`,
-                llm_raw: { error: err.message, raw: err.raw },
-              }),
-            );
-            await insertPlannedRows(db, keepRows);
-            for (const r of keepRows) await markApplied(db, r.id);
-            continue;
-          }
-          // RetryableError/PermanentError — rethrow for pg-boss retry (or archive).
-          throw err;
-        }
+        const decisions = await judgeBatch(db, job, userId, newMems, candidatesByNew, judge);
+        if (decisions === null) continue;
 
         // Dedup decisions by new_index: if GLM returns multiple decisions for the
         // same new memory, only the first wins. A second planned row for the same
         // new_index would apply against already-mutated state (e.g. supersede a row
         // a prior decision already deleted), corrupting the batch. Keep the first,
         // warn-drop the rest.
-        const seenNewIndex = new Set<number>();
-        const uniqueDecisions = decisions.filter((d) => {
-          if (seenNewIndex.has(d.new_index)) {
-            console.warn(
-              `[memory_reconcile] duplicate new_index ${d.new_index} dropped (action=${d.action}); first decision wins`,
-            );
-            return false;
-          }
-          seenNewIndex.add(d.new_index);
-          return true;
-        });
+        const uniqueDecisions = deduplicateDecisions(decisions, (message) => console.warn(message));
 
-        // Write-ahead: insert planned rows BEFORE applying (crash safety).
-        // Single UNIFIED action synthesis per decision, in fixed order:
-        //   badTarget → per-kind (Q1b) → score-floor (Q1) → final.
-        // reason / old_memory_id / prev_text ALL read the SAME final action, and
-        // every downgrade rewrites `reason` symmetrically so action↔reason never
-        // diverges in the WAL (spec M1 / Lens A A5-1/A5-2). Out-of-range indices
-        // (LLM hallucination) degrade to KEEP_BOTH (existing semantics).
-        const plannedRows: PlannedRow[] = [];
-        for (const d of uniqueDecisions) {
-          const newMem = newMems[d.new_index];
-          const cands = candidatesByNew.get(d.new_index) ?? [];
-          const oldMem = d.old_index != null ? cands[d.old_index] : undefined;
-          // YUK-557 (PR #699 CR-4): an explicitly-provided old_index that fails to
-          // resolve to a candidate (LLM-hallucinated out-of-range index) is invalid
-          // for EVERY action — fail-safe downgrade to KEEP_BOTH before any deletion
-          // decision. Without this, RETRACT_NEW (NOT in needsOldTarget) would let a
-          // bogus old_index slip past badTarget and delete the new memory on a top-
-          // score/abstain path. Pairs with F3/V3: after this guard the RETRACT_NEW
-          // topCandidateScore fallback only ever sees the legal old_index===null state.
-          const invalidOldIndex = d.old_index != null && !oldMem;
-          const badTarget =
-            !newMem ||
-            invalidOldIndex ||
-            (needsOldTarget(d.action) && !oldMem) ||
-            (d.action === 'RETRACT_NEW' && !newMem);
-
-          // Unified synthesis: badTarget → per-kind (Q1b) → score-floor (Q1) →
-          // final. Every downgrade routes through downgradeToKeepBoth so
-          // action↔reason never diverge in the WAL (F6 / Lens A A5-1/A5-2).
-          let action: ReconcileAction = d.action;
-          let reason = d.reason;
-
-          // 1) bad-target degrade (out-of-range / unresolved old index → KEEP_BOTH)
-          if (badTarget) {
-            ({ action, reason } = downgradeToKeepBoth(
-              `out-of-range index downgraded from ${d.action}`,
-              d.reason,
-            ));
-          }
-
-          // 2) per-kind gate (Q1b): weakness/event forbid MERGE
-          if (action === 'MERGE' && newMem && kindForbidsMerge(newMem.kind)) {
-            ({ action, reason } = downgradeToKeepBoth(
-              `Per-kind guard (kind=${newMem.kind} forbids MERGE); downgraded from MERGE`,
-              reason,
-            ));
-            console.warn(
-              `[memory_reconcile] per-kind MERGE suppressed (kind=${newMem.kind}) new_index=${d.new_index}`,
-            ); // Q3 detection
-          }
-
-          // 3) score floor (Q1): MERGE keys on the referenced candidate's score;
-          // RETRACT_NEW keys on the referenced candidate, else the topCandidateScore
-          // fallback ONLY when there is NO referenced candidate (old_index=null). A
-          // referenced candidate that carries no score must NOT fall through to max —
-          // it abstains (undefined → gate passes) + logs m8, symmetric with MERGE
-          // (F3: max fallback is authorized only for old_index=null).
-          // OCR (PR #699, triggers.ts:743) — if/else chain (repo bans nested
-          // ternaries; semantics unchanged): MERGE keys on the referenced candidate;
-          // RETRACT_NEW keys on the referenced candidate, else the topCandidateScore
-          // fallback ONLY when there is NO referenced candidate (old_index===null);
-          // every other action abstains (undefined).
-          let referencedScore: number | undefined;
-          if (action === 'MERGE') {
-            referencedScore = oldMem?.score;
-          } else if (action === 'RETRACT_NEW') {
-            referencedScore = oldMem ? oldMem.score : topCandidateScore(cands);
-          }
-          const corroborated = passesStructuralCorroboration(action, referencedScore);
-          // !corroborated already implies isHardDelete(action): passesStructural-
-          // Corroboration only returns false for MERGE/RETRACT_NEW (dead action
-          // conjunct removed, F6/V7).
-          if (!corroborated) {
-            ({ action, reason } = downgradeToKeepBoth(
-              `Low structural corroboration (score=${referencedScore}); downgraded from ${action}`,
-              reason,
-            ));
-            console.warn(
-              `[memory_reconcile] score-floor downgrade (score=${referencedScore}) new_index=${d.new_index}`,
-            ); // Q3 detection
-          } else if (isHardDelete(action) && referencedScore === undefined) {
-            console.warn(
-              `[memory_reconcile] score-floor skipped (no candidate score) action=${action} new_index=${d.new_index}`,
-            ); // m8
-          }
-
-          // 4) YUK-690 execution policy: model output is advisory only. Memory
-          // events are user-authored text and therefore an untrusted prompt
-          // boundary; no LLM recommendation may supersede, rewrite or delete a
-          // stored memory without a separate human-approval surface. Preserve the
-          // original decision in llm_raw below, but deterministically make the WAL
-          // action non-destructive.
-          if (action !== 'KEEP_BOTH') {
-            const recommendedAction = action;
-            ({ action, reason } = downgradeToKeepBoth(
-              `Human approval required; blocked model-recommended ${recommendedAction}`,
-              reason,
-            ));
-            console.warn(
-              `[memory_reconcile] destructive recommendation blocked action=${recommendedAction} new_index=${d.new_index}`,
-            );
-          }
-
-          plannedRows.push(
-            makePlannedRow({
-              user_id: userId,
-              new_memory_id: newMem?.memory_id ?? null,
-              old_memory_id: action === 'KEEP_BOTH' ? null : (oldMem?.memory_id ?? null),
-              action,
-              reason,
-              // Persist recency + the LLM decision (incl. merged_text for MERGE) +
-              // Q1 gate observability (for future data-driven floor calibration).
-              llm_raw: {
-                ...d,
-                execution_policy: 'human_approval_required',
-                recommended_action: d.action,
-                new_created_ms: newMem?.created_ms ?? null,
-                referenced_score: referencedScore ?? null,
-                structurally_corroborated: corroborated,
-              },
-              prev_text: null,
-              prev_metadata: null,
-            }),
-          );
-        }
+        const plannedRows = buildReconcilePlannedRows(
+          userId,
+          newMems,
+          candidatesByNew,
+          uniqueDecisions,
+        );
         await insertPlannedRows(db, plannedRows);
 
         // Apply phase: consume recommendations without mutating mem0.

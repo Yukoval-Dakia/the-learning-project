@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。Linear归零持续推进，当前67项未完成；1075/#1545已合入maina544a422。当前单线为1076 provider attempt事务拆分；依赖不追新，既有HOLD与生产/付费边界保持。
+> 更新于2026-10-04。Linear归零持续推进，当前66项未完成；1076/#1546已合入mainfaaca3ad。当前单线为1077/1078/1079决策重构尾项；依赖不追新，既有HOLD与生产/付费边界保持。
 
 ## NOW
 
@@ -49,11 +49,13 @@
 
 - YUK-1075/#1545已交付maina544a422：107DB/15unit、全部本地gate及question-writers、独立初审/唯一修复验证审及exact-head CI37198178024通过；17分钟窗口完成，Linear Done。retry INSERT保留publisher同scope；增量迁移/浏览器未实际运行。
 
-- YUK-1076 active：refactor/yuk-1076-provider-lifecycle /workspace/tlp-provider-lifecycle，basea544a422；具名锁/fence/rate/deadline/policy/persist步骤与纯existing-attempt决策。原50DB/18unit基线通过；新增31个多冲突/错误优先级用例，49unit/50DB通过；保持SQL、锁序、事务外抛拒绝及off/observe/enforce规则。最终49unit/58DB、typecheck/lint299/build及十项audit+provider-attempt-truth通过；54个SQL模板逐字一致，external-ID/finish实现逐字未变。独立初审中。
+- YUK-1076/#1546已交付mainfaaca3ad：49unit/58DB、全部本地gate、独立41unit/50DB及209952组合零差异对拍、CI37199502237（82迁移/34浏览器）通过；17分钟窗完成，Linear Done。54SQL模板与external-ID/finish原文未变。
+
+- YUK-1077/1078/1079 active：refactor/yuk-1077-1078-1079-decision-tail /workspace/tlp-decision-tail，basefaaca3ad。迁移降级理由guard提取、20kind穷尽presenter map、memory gather/judge/gates阶段提取；规则/文案/脱敏/锁/重试/人工批准门不变。新增迁移理由顺序case与20kind展示快照先在原实现通过；最终172unit/85DB、typecheck/lint299/build/10项必需audit及provider-attempt-truth通过；独立87unit/38DB、1440memory+84presentation差分零差异，无P0/P1或实质P2。待提交、exact-head CI及17分钟窗口；无新增可执行follow-up。
 
 ## NEXT
 
-1. 交付1076后，继续1077–1079及766等已就绪主线。持续推进Linear归零，不以单批合并作为终点。
+1. 交付1077/1078/1079后，继续1007读面、766灾备、1088台账等可执行主线；1091联合组模型需完整验收。持续推进Linear归零，不以单批合并作为终点。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
