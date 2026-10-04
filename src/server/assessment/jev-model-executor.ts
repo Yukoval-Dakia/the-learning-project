@@ -23,6 +23,8 @@
 // guessed judgment. Jev is text-only: units whose answers carry attachment
 // evidence escalate to the advanced executor or pending (never pretend).
 
+import Markdown from 'react-markdown';
+
 import type {
   GroupEvidenceT,
   ModelExecutorRequest,
@@ -39,6 +41,41 @@ const OPENROUTER_KEY_ENV = 'OPENROUTER_API_KEY';
 /** Admission/credentials-adjacent pending when no Jev lane can serve a unit. */
 const NO_JEV_DETAIL =
   'no credentialed Jev lane (OPENROUTER_API_KEY absent) and no approved advanced executor supplied';
+
+/** Use the same CommonMark parser as the question renderer: references resolve,
+ * code/escaped examples remain text, and raw HTML is not enabled. Calling this
+ * synchronous parser builds elements only; it neither mounts nor fetches assets.
+ */
+function containsRenderedImage(markdown: string): boolean {
+  let found = false;
+  Markdown({
+    children: markdown,
+    allowElement(element) {
+      if (element.tagName === 'img') found = true;
+      return true;
+    },
+  });
+  return found;
+}
+
+function hasInlineQuestionImage(request: ModelExecutorRequest): boolean {
+  if (request.question_parts.some((part) => containsRenderedImage(part.prompt_md))) return true;
+  return request.response_slots.some((slot) => {
+    switch (slot.kind) {
+      case 'single_choice':
+      case 'multi_choice':
+        return slot.options.some((option) => containsRenderedImage(option.text));
+      case 'matching':
+        return [...slot.left_items, ...slot.right_options].some((item) =>
+          containsRenderedImage(item.text),
+        );
+      case 'ordering':
+        return slot.items.some((item) => containsRenderedImage(item.text));
+      default:
+        return false;
+    }
+  });
+}
 
 export interface JevModelExecutorOptions {
   readonly db: Db;
@@ -124,6 +161,11 @@ function typedState(
   groupEvidence: GroupEvidenceT[],
 ): Record<string, unknown> {
   return {
+    question: {
+      revision_id: request.revision_id,
+      parts: request.question_parts,
+      response_slots: request.response_slots,
+    },
     submission: {
       member_submission_ids: request.submission_ids ?? [request.submission_id],
       entries: entries.map((entry) => projectSlotResponse(entry)),
@@ -315,6 +357,34 @@ export function createJevModelExecutor(options: JevModelExecutorOptions): ModelU
         reason: 'unjudgeable',
         detail: `executor task_kind '${request.executor.task_kind}' is not a registered Jev typed task`,
       });
+    }
+
+    // Captions/transcripts do not make an original image/audio/video/PDF visible
+    // to this text-only transport. Text assets also need their frozen bytes.
+    const unreadableMaterials = request.materials.filter(
+      (material) =>
+        !['plaintext', 'passage', 'table'].includes(material.kind) ||
+        material.content_md === undefined ||
+        containsRenderedImage(material.content_md),
+    );
+    if (unreadableMaterials.length > 0) {
+      return (
+        (await escalate(request)) ??
+        pendingOutcome({
+          reason: 'missing_materials',
+          material_ids: unreadableMaterials.map((material) => material.material_id),
+        })
+      );
+    }
+
+    if (hasInlineQuestionImage(request)) {
+      return (
+        (await escalate(request)) ??
+        pendingOutcome({
+          reason: 'unjudgeable',
+          detail: 'frozen question context contains original images not visible to text-only Jev',
+        })
+      );
     }
 
     const questions = questionsForUnit(request);

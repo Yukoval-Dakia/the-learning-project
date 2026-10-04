@@ -65,6 +65,10 @@ function request(overrides: Partial<ModelExecutorRequest> = {}): ModelExecutorRe
       admitted_slice_id: 'slice_en_short_answer_v1',
     },
     unit: ruleUnit(),
+    question_parts: [
+      { part_id: 'p1', prompt_md: '解方程：2x+3=11，写出移项步骤。', material_ids: [] },
+    ],
+    response_slots: [{ slot_id: 's1', part_id: 'p1', kind: 'text', math_preview: true }],
     slot_responses: [textEntry('x = 4')],
     group_evidence: [],
     materials: [],
@@ -261,6 +265,11 @@ describe('createJevModelExecutor — Jev lane', () => {
     expect(body.questions.u1.type).toBe('noul');
     expect(body.questions.u1.criteria.true).toContain('final answer is 4');
     expect(body.state.submission.entries[0].text_md).toBe('x = 4');
+    expect(body.state.question).toEqual({
+      revision_id: 'rev_1',
+      parts: request().question_parts,
+      response_slots: request().response_slots,
+    });
   });
 
   it('rule_reference below threshold ⇒ scored 0 (real counter-evidence, not pending)', async () => {
@@ -480,5 +489,162 @@ describe('createJevModelExecutor — Jev lane', () => {
       pending: { reason: 'infra_failure', retryable: false },
     });
     expect(advanced).not.toHaveBeenCalled();
+  });
+});
+
+describe('frozen question material visibility', () => {
+  it.each(['figure', 'audio', 'video', 'pdf', 'passage', 'table', 'plaintext'] as const)(
+    'requires an asset-capable executor for %s without readable original bytes',
+    async (kind) => {
+      const fetchImpl = vi.fn(async () => responseJson(jevOk(0.96))) as unknown as typeof fetch;
+      const input = request({
+        materials: [
+          {
+            material_id: 'source',
+            kind,
+            asset: { asset_id: 'original-asset', digest: 'sha256:frozen' },
+            caption: '原图表或音频材料；此说明不是材料的完整内容。',
+            alt_text: '对照材料作答',
+            ...(['figure', 'audio', 'video', 'pdf'].includes(kind)
+              ? { content_md: '只是标题或转写，不能替代原始图像/发音/时序。' }
+              : {}),
+          },
+        ],
+      });
+      const unavailable = await createJevModelExecutor(executorOptions({ fetchImpl }))(input);
+      expect
+        .soft(unavailable)
+        .toMatchObject({ kind: 'pending', pending: { reason: 'missing_materials' } });
+      const advanced = vi.fn(
+        async (): Promise<ModelUnitOutcomeT> => ({
+          kind: 'pending',
+          pending: {
+            reason: 'needs_review',
+            trigger: 'flagged',
+            detail: 'Context transport fixture; no grading performed.',
+          },
+          run_refs: [],
+        }),
+      );
+      await createJevModelExecutor(executorOptions({ fetchImpl, advancedExecutor: advanced }))(
+        input,
+      );
+      expect.soft(advanced).toHaveBeenCalledWith(input, expect.any(AbortSignal));
+      expect(fetchImpl).not.toHaveBeenCalled();
+    },
+  );
+  it('passes frozen inline text material bytes to Jev unchanged', async () => {
+    const content =
+      '|航段|距离|时间|\n|顺流|18 km|1 h|\n|逆流|12 km|1 h|\n静水速度按两式相加计算。';
+    const fetchImpl = vi.fn(async () => responseJson(jevOk(0.96))) as unknown as typeof fetch;
+    const input = request({
+      materials: [
+        {
+          material_id: 'table',
+          kind: 'table',
+          asset: { asset_id: 'text-asset', digest: 'sha256:table' },
+          content_md: content,
+        },
+      ],
+    });
+    const advanced = vi.fn();
+    await createJevModelExecutor(executorOptions({ fetchImpl, advancedExecutor: advanced }))(input);
+    const body = JSON.parse(
+      String((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1]?.body),
+    );
+    expect(body.state.materials[0].content_md).toBe(content);
+    expect(advanced).not.toHaveBeenCalled();
+  });
+});
+
+describe('inline original images in frozen context', () => {
+  const images = [
+    '依据电路图判断方向。![原图](https://assets.example/circuit.png)',
+    '依据电路图判断方向。![原图][circuit]\n\n[circuit]: https://assets.example/circuit.png "电路"',
+    '依据电路图判断方向。![circuit][]\n\n[circuit]: /api/assets/circuit',
+    '> 依据电路图判断方向。![circuit]\n\n[circuit]: /api/assets/circuit',
+    '[![原图](/api/assets/circuit)](/api/assets/full)',
+  ];
+  it.each(['prompt', 'material', 'option'] as const)(
+    'holds every rendered image form in %s before Jev, or delegates original context',
+    async (location) => {
+      for (const md of images) {
+        const input = request();
+        if (location === 'prompt') input.question_parts[0].prompt_md = md;
+        if (location === 'material') {
+          input.question_parts[0].material_ids = ['inline-circuit'];
+          input.materials = [
+            {
+              material_id: 'inline-circuit',
+              kind: 'plaintext',
+              asset: { asset_id: 'text1', digest: 'sha256:abc' },
+              content_md: md,
+            },
+          ];
+        }
+        if (location === 'option') {
+          input.response_slots = [
+            {
+              slot_id: 's1',
+              part_id: 'p1',
+              kind: 'single_choice',
+              options: [
+                { option_id: 'opaque_a', label: 'A', text: md },
+                { option_id: 'opaque_b', label: 'B', text: '电流逆时针' },
+              ],
+            },
+          ];
+          input.slot_responses = [{ slot_id: 's1', kind: 'choice', option_ids: ['opaque_a'] }];
+        }
+        const original = structuredClone(input);
+        const fetchImpl = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) =>
+          responseJson(jevOk(0.96)),
+        );
+        const out = await createJevModelExecutor(executorOptions({ fetchImpl }))(input);
+        expect.soft(out.kind, `${location}: ${md}`).toBe('pending');
+        const advanced = vi.fn(
+          async (): Promise<ModelUnitOutcomeT> => ({
+            kind: 'pending',
+            pending: {
+              reason: 'needs_review',
+              trigger: 'flagged',
+              detail: 'original image required',
+            },
+            run_refs: [],
+          }),
+        );
+        await createJevModelExecutor(executorOptions({ fetchImpl, advancedExecutor: advanced }))(
+          input,
+        );
+        expect.soft(advanced).toHaveBeenCalledWith(original, expect.any(AbortSignal));
+        expect.soft(fetchImpl).not.toHaveBeenCalled();
+        expect(input).toEqual(original);
+      }
+    },
+  );
+  it.each([
+    '解释代码：`![示例](/image.png)`',
+    '解释代码：\n\n```markdown\n![示例](/image.png)\n```',
+    '解释代码：\n\n    ![示例](/image.png)',
+    '转义语法：\\![示例](/image.png)',
+    '未解析的引用：![missing]',
+    '<img src="/image.png">', // Raw HTML is literal text in the project renderer.
+    '[图片链接](/image.png)',
+  ])('keeps literal Markdown text gradable: %s', async (md) => {
+    const input = request();
+    input.question_parts[0].prompt_md = md;
+    const fetchImpl = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) =>
+      responseJson(jevOk(0.96)),
+    );
+    const advanced = vi.fn();
+    const out = await createJevModelExecutor(
+      executorOptions({ fetchImpl, advancedExecutor: advanced }),
+    )(input);
+    expect(out.kind).toBe('scored');
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(advanced).not.toHaveBeenCalled();
+    expect(
+      JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body)).state.question.parts[0].prompt_md,
+    ).toBe(md);
   });
 });

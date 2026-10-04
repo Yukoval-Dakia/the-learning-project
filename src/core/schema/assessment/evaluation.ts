@@ -20,6 +20,7 @@ import type { ResponseSlotT, ResponseSpecT, SlotResponseT } from './response';
 import { isBlankSlotResponse, validateResponseSet } from './response';
 import type { PublishedQuestionRevisionT } from './revision';
 import { type ScoringBasisT, type ScoringUnitT, validateScoringBasis } from './scoring';
+import type { QuestionPartT } from './structure';
 
 // ====================================================================
 // YUK-1047 — 判分执行器统一 · 确定性评估引擎（grounding §4.2–§4.4、D4/D13–D17）
@@ -118,6 +119,10 @@ export interface ModelExecutorRequest {
    * score.
    */
   unit: ScoringUnitT;
+  /** Frozen question conditions for the parts referenced by this unit. */
+  question_parts: QuestionPartT[];
+  /** Original slot/option meanings and layout for those parts; never inferred from answers. */
+  response_slots: ResponseSlotT[];
   /** 该 unit 声明读取的槽位响应（已按 spec 校验过）。 */
   slot_responses: SlotResponseT[];
   /** 该 unit 命中的 group 级证据（all_units 或显式子集）。 */
@@ -501,12 +506,11 @@ export async function evaluateSubmissionCore(
   }
 
   // ---- 发出范围投影：只评估作答面落在 issued parts 内的 unit。----
-  const scopedBasis = projectIssuedScoringBasis(
-    revision,
+  const issuedPartIds =
     joint?.issued_part_ids ??
-      input.issued_part_ids ??
-      revision.structure.parts.map((part) => part.part_id),
-  );
+    input.issued_part_ids ??
+    revision.structure.parts.map((part) => part.part_id);
+  const scopedBasis = projectIssuedScoringBasis(revision, issuedPartIds);
   const inScopeUnits = scopedBasis.units;
   const inScopeUnitIds = new Set(inScopeUnits.map((unit) => unit.scoring_unit_id));
 
@@ -782,6 +786,21 @@ export async function evaluateSubmissionCore(
       (evidence) =>
         evidence.target.scope === 'all_units' || evidence.target.scoring_unit_ids.includes(unitId),
     );
+    // A slot reference identifies its question conditions, not just an answer.
+    // Group-only units consume the issued group context; unissued parts stay out.
+    const unitSlotIds = new Set(slotIds);
+    const contextPartIds = new Set(
+      slotIds.length === 0
+        ? issuedPartIds
+        : spec.slots.filter((slot) => unitSlotIds.has(slot.slot_id)).map((slot) => slot.part_id),
+    );
+    const questionParts = revision.structure.parts.filter((part) =>
+      contextPartIds.has(part.part_id),
+    );
+    const contextMaterialIds = new Set([
+      ...unit.material_refs,
+      ...questionParts.flatMap((part) => part.material_ids),
+    ]);
     modelUnitsInvoked += 1;
     let outcome: ModelUnitOutcomeT;
     try {
@@ -794,9 +813,11 @@ export async function evaluateSubmissionCore(
         scoring_unit_id: unitId,
         executor,
         unit,
+        question_parts: questionParts,
+        response_slots: spec.slots.filter((slot) => contextPartIds.has(slot.part_id)),
         slot_responses: entries,
         group_evidence: unitGroupEvidence,
-        materials: unit.material_refs
+        materials: [...contextMaterialIds]
           .map((id) => materialById.get(id))
           .filter((material): material is SharedMaterialT => material != null),
         spent_cost_usd_micros: spentCostMicros,

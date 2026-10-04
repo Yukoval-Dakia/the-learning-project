@@ -13,6 +13,7 @@ import {
   evaluateSubmission,
 } from '@/capabilities/practice/server/judge/evaluate-submission';
 import {
+  type ModelExecutorRequest,
   type ModelUnitOutcomeT,
   type SubmissionRecordT,
   projectFeedback,
@@ -177,6 +178,50 @@ const scored = (): Promise<ModelUnitOutcomeT> =>
 
 describe('YUK-1091 frozen joint input', () => {
   beforeEach(resetDb);
+
+  it('model context keeps the issued question and native options after a newer revision is published', async () => {
+    const s = await seed({ model: true });
+    const updated = structuredClone(s.contract);
+    updated.structure.parts[0].prompt_md = '新版本完全不同的题面：请解释电路中的电流关系。';
+    const slot = updated.response_spec.slots[0];
+    if (slot.kind !== 'single_choice') throw new Error('choice fixture required');
+    slot.options[1].text = '新版本选项，不得解释旧作答中的同一个option ID。';
+    updated.integrity_digest = contractIntegrityDigest(updated);
+    const next = await publishQuestionGroup(testDb(), {
+      group_id: 'joint-root',
+      contract: updated,
+      expectedCurrentRevision: s.pub.revision_id,
+      expectedAdmissionGeneration: s.pub.admission_generation,
+      availability: 'general_pool',
+      admission: { state: 'admitted', evidence: EVIDENCE },
+      actorRef: 'test:context-republish',
+      now: LATER,
+    });
+    expect(next.status).toBe('published');
+    const originalSubmissions = await testDb().select().from(assessment_submission);
+    const requests: ModelExecutorRequest[] = [];
+    await evaluate(s, {
+      model_executor: async (request) => {
+        requests.push(request);
+        return scored();
+      },
+    });
+    expect(requests).toHaveLength(2);
+    for (const request of requests) {
+      expect(request.revision_id).toBe(s.pub.revision_id);
+      const part = s.contract.structure.parts.find(
+        (part) => part.part_id === request.question_parts[0]?.part_id,
+      );
+      expect(part).toBeDefined();
+      expect(request.question_parts).toEqual([part]);
+      expect(request.response_slots).toEqual(
+        s.contract.response_spec.slots.filter((slot) => slot.part_id === part?.part_id),
+      );
+      expect(JSON.stringify(request)).not.toContain('新版本');
+    }
+    expect(await testDb().select().from(assessment_submission)).toEqual(originalSubmissions);
+    await noLearning();
+  });
 
   it('scores both members through the fixed anchor, settles once per KC and reads the full denominator', async () => {
     const s = await seed();
