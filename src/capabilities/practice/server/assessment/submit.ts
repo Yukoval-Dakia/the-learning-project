@@ -173,6 +173,9 @@ export interface IssuanceState {
     submission_id: SubmissionIdT;
     evaluation_group_id: EvaluationGroupIdT;
     submitted_at: string;
+    idempotency_key: string;
+    response_set: ResponseSetT;
+    group_evidence: GroupEvidenceT[];
   }>;
 }
 
@@ -638,6 +641,9 @@ export async function getIssuanceState(
       submission_id: assessment_submission.submission_id,
       evaluation_group_id: assessment_submission.evaluation_group_id,
       submitted_at: assessment_submission.submitted_at,
+      idempotency_key: assessment_submission.idempotency_key,
+      response_set: assessment_submission.response_set,
+      group_evidence: assessment_submission.group_evidence,
     })
     .from(assessment_submission)
     .where(eq(assessment_submission.issuance_id, issuanceId))
@@ -703,6 +709,9 @@ export async function getIssuanceState(
       submission_id: row.submission_id,
       evaluation_group_id: row.evaluation_group_id,
       submitted_at: row.submitted_at.toISOString(),
+      idempotency_key: row.idempotency_key,
+      response_set: row.response_set,
+      group_evidence: row.group_evidence,
     })),
   };
 }

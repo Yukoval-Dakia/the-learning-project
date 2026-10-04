@@ -197,6 +197,14 @@ export const EvaluationProvenance = z.object({
   assisted: z.boolean().default(false),
   admission_snapshot: EvaluationAdmissionSnapshot.nullable().optional(),
   input_snapshot: EvaluationInputSnapshot.nullable().optional(),
+  /** Server-owned execution identity: preview/commit/delivery share a candidate. */
+  execution_receipt: z
+    .object({
+      key: z.string().min(1),
+      intent_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    })
+    .nullable()
+    .optional(),
 });
 export type EvaluationProvenanceT = z.infer<typeof EvaluationProvenance>;
 

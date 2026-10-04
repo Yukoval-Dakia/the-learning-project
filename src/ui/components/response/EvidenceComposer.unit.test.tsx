@@ -12,7 +12,15 @@ describe('EvidenceComposer', () => {
   it('preserves text and adds uploaded evidence with MIME-derived kind and group binding', async () => {
     const onTextChange = vi.fn();
     const onAttachmentsChange = vi.fn();
-    const upload = vi.fn().mockResolvedValue({ id: 'asset-image', mime_type: 'image/png' });
+    const upload = vi
+      .fn()
+      .mockResolvedValue({
+        id: 'asset-image',
+        mime_type: 'image/png',
+        byte_size: 11,
+        sha256: 'a'.repeat(64),
+        created_at: '2026-10-04T00:00:00.000Z',
+      });
     render(
       <EvidenceComposer
         text="原始回答"
@@ -35,6 +43,14 @@ describe('EvidenceComposer', () => {
         kind: 'image',
         label: 'worksheet.png',
         slot_ids: null,
+        original: {
+          evidence_id: 'evidence_asset-image',
+          kind: 'image',
+          asset: { asset_id: 'asset-image', digest: `sha256:${'a'.repeat(64)}` },
+          mime_type: 'image/png',
+          bytes: 11,
+          uploaded_at: '2026-10-04T00:00:00.000Z',
+        },
       }),
     ]);
   });

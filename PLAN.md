@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。Linear归零持续推进，当前60项未完成；1047/#1563已合入main 448ffe42。当前单线1047评级结算与正式入口迁移；766恢复取舍与588 UI具体方案待回复，依赖不追新。
+> 更新于2026-10-04。Linear归零持续推进，当前60项未完成；1047/#1564已合入main 6e5d93ac。当前单线1047正式入口迁移；766恢复取舍与588 UI具体方案待回复，依赖不追新。
 
 ## NOW
 
@@ -79,7 +79,7 @@
 - YUK-1047/#1562已交付main ad8dad75（20:18UTC）：94unit72DB/全部本地gate；初审1项内嵌图P1先RED后修，唯一验证3原探针5分支探针94unit通过；exact-head CI37230475644实际82迁移34浏览器/17分钟窗通过。八入口仍legacy，票In Progress。
 - YUK-1047/#1563已合入main448ffe42：281unit30DB/本地gates、独立初审2P1修复及唯一验证100unit+3DB/真实driver、exact-head CI37232936402（82迁移34浏览器）与17分钟窗通过。冻结原生pi执行、已知失败费与真实missing usage保真已交付；八入口仍legacy。
 
-- YUK-1047评级片：显式用户FSRS选择与自动theta独立；D16 assisted须显式选择。初审2P1已修；唯一验证原探针/61DB通过但发现更早练习晚到时遗漏保留FSRS段。作者正式回归先RED，再修独立FSRS段重放；两次晚到+再次重评保持4次复习与4条theta。最终94DB/typecheck/lint299/build/schema/partition通过，前107unit及其余8audits通过；审查预算已用完，不宣称第三审。准备推送exact-head CI。
+- YUK-1047/#1564已合入main6e5d93ac：显式用户FSRS与自动theta独立，历史评级/两次晚到/再次重评保真。94DB/107unit、本地gate、初审+唯一验证问题处置、exactCI37234688601与17分钟窗完成。CI增量未运行migration/browser。当前正式入口迁移worktree已有候选复用19DB、作答恢复21DB、核心/响应105unit；散题宿主接线未验收，其余入口与提交/手动/提示持久化仍待完成。详见 formal-entry-migration 记录，1047仍In Progress。
 
 ## NEXT
 

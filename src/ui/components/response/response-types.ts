@@ -1,3 +1,5 @@
+import type { EvidenceAttachmentT, ResponseSlotT, SlotResponseT } from '@/core/schema/assessment';
+
 // YUK-1051 — 通用 response 组件族的共享类型与纯函数。
 //
 // 依据 docs/design/2026-09-24-assessment-ui-preflight.md §2–§3 与
@@ -202,6 +204,8 @@ export function evidenceKindFromMime(mime: string | null | undefined): EvidenceK
 }
 
 export interface EvidenceAttachment {
+  /** Full original upload receipt for immutable assessment submissions. */
+  original?: EvidenceAttachmentT;
   asset_id: string;
   /**
    * 展示类别。新上传的附件由 upload 回执的 mime 决定；从 wire 恢复的引用只有 id，
@@ -263,3 +267,84 @@ export const COARSE_OUTCOME_META: Record<
   incorrect: { label: '错', tone: 'again' },
   unsupported: { label: '无法判定', tone: 'hard' },
 };
+
+/** Render a frozen response without replacing native IDs or normalizing text. */
+export function nativeResponseValue(
+  entry: SlotResponseT | undefined,
+): SlotResponseValue | undefined {
+  if (!entry) return undefined;
+  switch (entry.kind) {
+    case 'choice':
+      return { kind: 'choice', option_ids: entry.option_ids };
+    case 'text':
+    case 'open':
+      return { kind: 'text', text: entry.text_md };
+    case 'numeric':
+      return {
+        kind: 'text',
+        text: entry.raw_input ?? (entry.value === null ? '' : String(entry.value)),
+      };
+    case 'formula':
+      return { kind: 'text', text: entry.latex };
+    case 'matching':
+      return {
+        kind: 'matching',
+        pairs: Object.fromEntries(entry.pairs.map((p) => [p.item_id, p.option_id])),
+      };
+    case 'ordering':
+      return { kind: 'ordering', ordered_ids: entry.item_order };
+  }
+}
+
+/** Editing one slot keeps original evidence/confidence; table slots are layout only. */
+export function nativeResponseEntry(
+  slot: ResponseSlotT,
+  value: SlotResponseValue,
+  previous?: SlotResponseT,
+): SlotResponseT {
+  const base = {
+    slot_id: slot.slot_id,
+    ...(previous?.self_confidence === undefined
+      ? {}
+      : { self_confidence: previous.self_confidence }),
+  };
+  if ((slot.kind === 'single_choice' || slot.kind === 'multi_choice') && value.kind === 'choice') {
+    return { ...base, kind: 'choice', option_ids: value.option_ids };
+  }
+  if (slot.kind === 'matching' && value.kind === 'matching') {
+    return {
+      ...base,
+      kind: 'matching',
+      pairs: Object.entries(value.pairs).flatMap(([item_id, option_id]) =>
+        option_id === null ? [] : [{ item_id, option_id }],
+      ),
+    };
+  }
+  if (slot.kind === 'ordering' && value.kind === 'ordering') {
+    return { ...base, kind: 'ordering', item_order: value.ordered_ids };
+  }
+  if (value.kind === 'text') {
+    if (slot.kind === 'text') return { ...base, kind: 'text', text_md: value.text };
+    if (slot.kind === 'formula') return { ...base, kind: 'formula', latex: value.text };
+    if (slot.kind === 'open_response')
+      return {
+        ...base,
+        kind: 'open',
+        text_md: value.text,
+        evidence: previous?.kind === 'open' ? previous.evidence : [],
+      };
+    if (slot.kind === 'numeric') {
+      const raw = value.text.trim();
+      const numeric = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(raw)
+        ? Number(raw)
+        : NaN;
+      return {
+        ...base,
+        kind: 'numeric',
+        raw_input: value.text,
+        value: Number.isFinite(numeric) ? numeric : null,
+      };
+    }
+  }
+  throw new Error(`Response value does not match frozen slot ${slot.slot_id}`);
+}

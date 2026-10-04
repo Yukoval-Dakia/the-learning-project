@@ -1,3 +1,4 @@
+import { previewFormalAttempt } from './assessment/attempt';
 // YUK-1047 — evaluateSubmission 持久化路径 DB 测试（testcontainer Postgres）。
 //
 // 断言（§4.3 Interface + grounding §4.2）：
@@ -543,6 +544,82 @@ describe('evaluateSubmission (persisted §4.3 path)', () => {
     expect(rows.map((r) => r.attempt).sort()).toEqual([1, 2]);
   });
 
+  it('a keyed model candidate is reused without another invocation, including a pending result', async () => {
+    await seedContractChain({
+      groupId: 'paid_g',
+      revisionId: 'paid_r',
+      issuanceId: 'paid_i',
+      submissionId: 'paid_s',
+      evalGroupId: 'paid_eg',
+      slots: [{ slot_id: 'p1::r', part_id: 'p1', kind: 'text', math_preview: false }],
+      units: [
+        {
+          scoring_unit_id: 'p1::u',
+          slot_refs: ['p1::r'],
+          material_refs: [],
+          evidence_slot_refs: [],
+          requires_group_evidence: false,
+          criterion: {
+            kind: 'rule_reference',
+            rule_id: 'r1',
+            statement_md: 'Explain the mechanism with original evidence',
+            source: 'manual',
+          },
+          points: 10,
+        },
+      ],
+      assignments: [
+        {
+          scoring_unit_ids: ['p1::u'],
+          executor: {
+            kind: 'model_executor',
+            task_kind: 'RuleJudgeTask',
+            admitted_slice_id: 'slice-zh-text-v1',
+          },
+        },
+      ],
+      entries: [
+        {
+          slot_id: 'p1::r',
+          kind: 'text',
+          text_md:
+            'A detailed response with multiple clauses; preserve original punctuation and evidence.',
+        },
+      ],
+    });
+    let calls = 0;
+    const request = {
+      submission_id: 'paid_s',
+      evaluation_group_id: 'paid_eg',
+      evaluation_key: 'preview:paid_s',
+      model_executor: async () => {
+        calls++;
+        return {
+          kind: 'pending' as const,
+          pending: {
+            reason: 'infra_failure' as const,
+            retryable: true,
+            detail: 'offline transport failed after dispatch',
+          },
+          run_refs: ['run_paid'],
+          cost_usd_micros: 1200,
+        };
+      },
+    };
+    const first = await evaluateSubmission(db, request);
+    const second = await evaluateSubmission(db, request);
+    expect.soft(calls).toBe(1);
+    expect.soft(first.record.status).toBe('pending');
+    expect.soft(second.record).toEqual(first.record);
+    expect
+      .soft(second)
+      .toMatchObject({ replayed: true, model_units_invoked: 0, spent_cost_usd_micros: 0 });
+    // Recovery must be a new explicitly identified operation, not an HTTP retry.
+    const third = await evaluateSubmission(db, { ...request, evaluation_key: 'retry:paid_s:1' });
+    expect.soft(calls).toBe(2);
+    expect.soft(third.record.attempt).toBe(2);
+  });
+
   it('model_executor {kind:"jev"} descriptor ⇒ Jev port assembled at the composition point (YUK-1092)', async () => {
     await seedContractChain({
       groupId: 'g4b',
@@ -683,5 +760,68 @@ describe('evaluateAttempt — contract lane end-to-end', () => {
     expect(out.evaluation.record.attempt).toBe(1);
     expect(out.result.coarse_outcome).toBe('correct');
     expect(out.result.score).toBe(1);
+  });
+});
+
+describe('YUK-1047 formal entry candidate reuse', () => {
+  it('reuses the same frozen candidate for preview and commit; changed execution intent conflicts', async () => {
+    await seedContractChain({
+      groupId: 'reuse_g',
+      revisionId: 'reuse_r',
+      issuanceId: 'reuse_i',
+      submissionId: 'reuse_s',
+      evalGroupId: 'reuse_eg',
+    });
+    const request = {
+      submission_id: 'reuse_s',
+      evaluation_group_id: 'reuse_eg',
+      evaluation_key: 'submission:reuse_s',
+    };
+    const preview = await evaluateSubmission(db, request);
+    const commit = await evaluateSubmission(db, request);
+    expect.soft(commit.replayed).toBe(true);
+    expect.soft(commit.record).toEqual(preview.record);
+    expect.soft(commit.created_at).toEqual(preview.created_at);
+    expect.soft(await db.select().from(evaluation)).toHaveLength(1);
+    await expect(
+      evaluateSubmission(db, { ...request, provenance: { source: 'automatic', assisted: true } }),
+    ).rejects.toMatchObject({ code: 'evaluation_key_conflict' });
+  });
+});
+
+describe('formal preview entry service', () => {
+  it('reuses the immutable response and candidate; wrong question or changed answer cannot use them', async () => {
+    await seedContractChain({
+      groupId: 'entry_g',
+      revisionId: 'entry_r',
+      issuanceId: 'entry_i',
+      submissionId: 'entry_s',
+      evalGroupId: 'entry_eg',
+    });
+    const request = {
+      issuance_id: 'entry_i',
+      submission_id: 'entry_s',
+      evaluation_group_id: 'entry_eg',
+      idempotency_key: 'idem-entry_s',
+      response_set: {
+        entries: [{ slot_id: 'p1::r', kind: 'choice' as const, option_ids: ['opt-a'] }],
+      },
+      group_evidence: [],
+    };
+    const first = await previewFormalAttempt(db, 'advice_preview', 'entry_g', request);
+    const second = await previewFormalAttempt(db, 'solo_submit', 'entry_g', request);
+    expect.soft(first.candidate.lane).toBe('contract');
+    expect.soft(second.candidate.evaluation.replayed).toBe(true);
+    expect.soft(second.candidate.evaluation.record).toEqual(first.candidate.evaluation.record);
+    await expect(
+      previewFormalAttempt(db, 'advice_preview', 'unrelated_question', request),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(
+      previewFormalAttempt(db, 'advice_preview', 'entry_g', {
+        ...request,
+        response_set: { entries: [{ slot_id: 'p1::r', kind: 'choice', option_ids: ['opt-b'] }] },
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect.soft(await db.select().from(evaluation)).toHaveLength(1);
   });
 });

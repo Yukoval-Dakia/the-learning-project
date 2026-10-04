@@ -459,6 +459,15 @@ describe('saveResponseDraft / pending restore', () => {
     const state = await getIssuanceState(testDb(), iid);
     expect(state.draft).toBeNull();
     expect(state.submissions).toHaveLength(1);
+    const [stored] = await testDb()
+      .select()
+      .from(assessment_submission)
+      .where(eq(assessment_submission.submission_id, state.submissions[0].submission_id));
+    expect(state.submissions[0]).toMatchObject({
+      response_set: stored.response_set,
+      group_evidence: stored.group_evidence,
+      idempotency_key: stored.idempotency_key,
+    });
 
     // 另一次尝试（新组锚点）仍允许新草稿 —— tombstone 不误伤下一题面。
     const next = await saveResponseDraft(testDb(), {

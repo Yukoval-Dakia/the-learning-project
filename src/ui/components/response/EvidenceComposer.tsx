@@ -26,6 +26,7 @@ export const EVIDENCE_ACCEPT =
 export interface EvidenceComposerProps {
   /** 文字部分原文；null = 从未作答。 */
   text: string | null;
+  showText?: boolean;
   onTextChange: (text: string) => void;
   attachments: EvidenceAttachment[];
   onAttachmentsChange: (next: EvidenceAttachment[]) => void;
@@ -52,6 +53,7 @@ export interface EvidenceComposerProps {
 
 export function EvidenceComposer({
   text,
+  showText = true,
   onTextChange,
   attachments,
   onAttachmentsChange,
@@ -87,6 +89,23 @@ export function EvidenceComposer({
         return [
           {
             asset_id: asset.id,
+            ...(asset.created_at && /^image\//.test(asset.mime_type)
+              ? {
+                  original: {
+                    evidence_id: `evidence_${asset.id}`,
+                    kind: 'image' as const,
+                    asset: {
+                      asset_id: asset.id,
+                      digest: asset.sha256.startsWith('sha256:')
+                        ? asset.sha256
+                        : `sha256:${asset.sha256}`,
+                    },
+                    mime_type: asset.mime_type,
+                    bytes: asset.byte_size,
+                    uploaded_at: asset.created_at,
+                  },
+                }
+              : {}),
             kind: evidenceKindFromMime(asset.mime_type || file.type || null),
             label: file.name || undefined,
             // 默认绑定整个 evaluation group（§3「整页证据附件」）；子集在组面板里改。
@@ -106,15 +125,17 @@ export function EvidenceComposer({
 
   return (
     <div>
-      <TextResponse
-        value={text}
-        onChange={onTextChange}
-        disabled={disabled || uploading}
-        notation={notation}
-        placeholder={placeholder}
-        ariaLabel={ariaLabel}
-        showPreview={false}
-      />
+      {showText && (
+        <TextResponse
+          value={text}
+          onChange={onTextChange}
+          disabled={disabled || uploading}
+          notation={notation}
+          placeholder={placeholder}
+          ariaLabel={ariaLabel}
+          showPreview={false}
+        />
+      )}
       <AttachmentStrip
         attachments={attachments}
         onRemove={

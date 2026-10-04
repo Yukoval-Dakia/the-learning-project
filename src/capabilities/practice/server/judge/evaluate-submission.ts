@@ -32,11 +32,13 @@ import {
   EvaluationContractError,
   type EvaluationExecutionPolicyT,
   type EvaluationProvenanceT,
+  EvaluationRecord,
   type EvaluationRecordT,
   type ModelUnitExecutorPort,
   type ScoringBasisT,
   SubmissionRecord,
   evaluateSubmissionCore,
+  projectIssuedScoringBasis,
 } from '@/core/schema/assessment';
 import type { Db, Tx } from '@/db/client';
 import {
@@ -82,6 +84,8 @@ export interface PiModelExecutorSpec {
 export interface EvaluateSubmissionRequest {
   submission_id: string;
   evaluation_group_id: string;
+  /** Same operation across preview/commit/redelivery. A regrade uses a new key. */
+  evaluation_key?: string;
   /** Exact complete member set; omission explicitly selects only submission_id. */
   expected_submission_ids?: string[];
   /** 执行期 policy（不改给分规则；仅低置信 gate 等执行面旋钮）。 */
@@ -125,11 +129,29 @@ export class EvaluateSubmissionError extends Error {
       | 'group_scope_mismatch'
       | 'group_membership_mismatch'
       | 'attempt_conflict'
+      | 'evaluation_key_conflict'
       | 'invalid_executor_spec',
     detail: string,
   ) {
     super(`evaluateSubmission: ${code} — ${detail}`);
   }
+}
+
+/** Published task identity selects a registered native executor; no URL/key override. */
+export function createFormalModelExecutor(db: Db, signal?: AbortSignal): ModelUnitExecutorPort {
+  const deadlineAt = Date.now() + 90_000;
+  const jev = createJevModelExecutor({ db, deadlineAt, signal });
+  return (request, callerSignal) => {
+    if (request.executor.task_kind === 'AssessmentRuleJudgeTask') {
+      return createPiModelExecutor({
+        db,
+        deadlineAt,
+        signal,
+        maxCostUsdMicros: request.executor.max_cost_usd_micros ?? 0,
+      })(request, callerSignal);
+    }
+    return jev(request, callerSignal);
+  };
 }
 
 /**
@@ -368,6 +390,57 @@ export async function evaluateSubmission(
     };
 
     const inputSnapshot = freezeEvaluationInput(submission, revision, members);
+    const executionReceipt =
+      request.evaluation_key === undefined
+        ? null
+        : {
+            key: request.evaluation_key,
+            intent_digest: `sha256:${canonicalHash({
+              input: inputSnapshot,
+              mode: request.mode ?? 'execute',
+              policy: request.policy ?? {},
+              source: request.provenance?.source ?? 'automatic',
+              assisted: request.provenance?.assisted ?? false,
+              asserted_unit_results: request.asserted_unit_results ?? null,
+            })}`,
+          };
+    if (executionReceipt !== null) {
+      if (executionReceipt.key.trim().length === 0) {
+        throw new EvaluateSubmissionError('evaluation_key_conflict', 'empty execution key');
+      }
+      // The group lock is also held by other delivery paths; check before any
+      // model invocation or new attempt allocation. Admission remains frozen
+      // on the original candidate and is rechecked by activation.
+      const [existing] = await tx
+        .select()
+        .from(evaluation)
+        .where(
+          and(
+            eq(evaluation.evaluation_group_id, request.evaluation_group_id),
+            sql`${evaluation.provenance}->'execution_receipt'->>'key' = ${executionReceipt.key}`,
+          ),
+        )
+        .limit(1);
+      if (existing) {
+        const record = EvaluationRecord.parse(existing);
+        if (
+          record.provenance?.execution_receipt?.intent_digest !== executionReceipt.intent_digest
+        ) {
+          throw new EvaluateSubmissionError(
+            'evaluation_key_conflict',
+            'execution key already binds different frozen inputs or grading intent',
+          );
+        }
+        return {
+          record,
+          created_at: existing.created_at,
+          replayed: true,
+          scoring_basis: projectIssuedScoringBasis(revision, inputSnapshot.issued_part_ids),
+          model_units_invoked: 0,
+          spent_cost_usd_micros: 0,
+        };
+      }
+    }
 
     // ---- attempt 序号（group 锁内、固定 head 锚点分配） ----
     const [latest] = await tx
@@ -389,6 +462,7 @@ export async function evaluateSubmission(
         ...(request.provenance ?? { source: 'automatic', assisted: false }),
         admission_snapshot: admissionSnapshot ?? null,
         input_snapshot: inputSnapshot,
+        execution_receipt: executionReceipt,
       },
       plan_digest: planDigestOf(revision),
       policy: request.policy,

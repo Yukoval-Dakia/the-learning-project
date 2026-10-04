@@ -120,6 +120,9 @@ export const IssuanceStateSchema = z.object({
       submission_id: z.string().min(1),
       evaluation_group_id: z.string().min(1),
       submitted_at: z.string(),
+      idempotency_key: z.string(),
+      response_set: ResponseSet,
+      group_evidence: z.array(GroupEvidence),
     }),
   ),
 });

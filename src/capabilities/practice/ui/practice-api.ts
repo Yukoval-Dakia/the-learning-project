@@ -293,12 +293,14 @@ export async function getAdvice(
   responseMd: string,
   // YUK-1094 — 已上传的附件 asset refs；随 advice 预览一并送 judge，让预览判词与提交
   // 使用同一份证据。空值不发字段（既有纯文本 advice wire 逐字不变）。
-  imageRefs: readonly string[] = [],
+  imageRefs: readonly string[],
+  assessment: ApiOperationRequestBody<'createSubmission'>,
 ): Promise<Omit<ReviewAdviceWire, 'judge'> & { judge: JudgePreview }> {
   const response = await apiOperationJson('previewReviewAdvice', {
     url: '/api/review/advice',
     method: 'POST',
     body: {
+      assessment,
       question_id: questionId,
       response_md: responseMd,
       ...(imageRefs.length > 0 ? { answer_image_refs: [...imageRefs] } : {}),

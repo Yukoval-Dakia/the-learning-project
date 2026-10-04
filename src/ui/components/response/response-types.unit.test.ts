@@ -1,7 +1,6 @@
 // YUK-1051 — response-types 纯函数单测：stable option ids、空集合≠missing、
 // 配对/排序纯操作、六态元信息、MIME→证据类别。
 import { describe, expect, it } from 'vitest';
-
 import {
   COARSE_OUTCOME_META,
   SUBMISSION_LIFECYCLE_META,
@@ -12,6 +11,8 @@ import {
   isSlotResponseAnswered,
   moveOrderedItem,
   moveOrderedItemTo,
+  nativeResponseEntry,
+  nativeResponseValue,
   optionLabel,
   optionsFromChoicesMd,
   serializeResponseSet,
@@ -188,5 +189,108 @@ describe('serializeResponseSet — autosave 脏检查', () => {
     expect(a).toBe(b);
     const c = serializeResponseSet({ s1: { kind: 'choice', option_ids: ['x'] } });
     expect(a).not.toBe(c);
+  });
+});
+
+describe('native frozen response editing', () => {
+  it('keeps opaque published option IDs even when option text is duplicated', () => {
+    const slot = {
+      kind: 'multi_choice' as const,
+      slot_id: 'r-opaque',
+      part_id: 'p',
+      min_select: 1,
+      max_select: 2,
+      options: [
+        { option_id: 'id-first', label: '甲', text: '相同正文' },
+        { option_id: 'id-second', label: '乙', text: '相同正文' },
+      ],
+    };
+    const entry = nativeResponseEntry(slot, { kind: 'choice', option_ids: ['id-second'] });
+    expect(entry).toEqual({ slot_id: 'r-opaque', kind: 'choice', option_ids: ['id-second'] });
+    expect(nativeResponseValue(entry)).toEqual({ kind: 'choice', option_ids: ['id-second'] });
+    expect(nativeResponseValue(undefined)).toBeUndefined();
+    expect(nativeResponseEntry(slot, { kind: 'choice', option_ids: [] })).toMatchObject({
+      option_ids: [],
+    });
+  });
+  it.each(['', '  ', '1/2', '12 kg', 'Infinity', '0x10'])(
+    'retains unparsed numeric original %j without pretending it was zero',
+    (raw) => {
+      const entry = nativeResponseEntry(
+        { kind: 'numeric', slot_id: 'numeric', part_id: 'p' },
+        { kind: 'text', text: raw },
+      );
+      expect(entry).toEqual({ kind: 'numeric', slot_id: 'numeric', raw_input: raw, value: null });
+      expect(nativeResponseValue(entry)).toEqual({ kind: 'text', text: raw });
+    },
+  );
+  it('keeps numeric zero, surrounding whitespace and confidence separately', () => {
+    const entry = nativeResponseEntry(
+      { kind: 'numeric', slot_id: 'n', part_id: 'p' },
+      { kind: 'text', text: ' 0 ' },
+      { kind: 'numeric', slot_id: 'n', value: null, self_confidence: 3 },
+    );
+    expect(entry).toEqual({
+      kind: 'numeric',
+      slot_id: 'n',
+      raw_input: ' 0 ',
+      value: 0,
+      self_confidence: 3,
+    });
+  });
+  it('preserves original open evidence while changing text', () => {
+    const previous = {
+      kind: 'open' as const,
+      slot_id: 'open',
+      text_md: 'old',
+      evidence: [
+        {
+          evidence_id: 'page-1',
+          kind: 'image' as const,
+          mime_type: 'image/png',
+          bytes: 127,
+          uploaded_at: '2026-10-04T00:00:00.000Z',
+          asset: {
+            asset_id: 'asset-original',
+            digest: `sha256:${'a'.repeat(64)}`,
+          },
+        },
+      ],
+    };
+    expect(
+      nativeResponseEntry(
+        {
+          kind: 'open_response',
+          slot_id: 'open',
+          part_id: 'p',
+          accepted_evidence: [],
+          evidence_required: false,
+        },
+        { kind: 'text', text: '  原文\n第二行  ' },
+        previous,
+      ),
+    ).toEqual({ ...previous, text_md: '  原文\n第二行  ' });
+  });
+  it('matching and ordering round-trip native item identities; wrong field kinds fail', () => {
+    const matching = {
+      kind: 'matching' as const,
+      slot_id: 'm',
+      pairs: [{ item_id: 'left-opaque', option_id: 'right-opaque' }],
+    };
+    expect(nativeResponseValue(matching)).toEqual({
+      kind: 'matching',
+      pairs: { 'left-opaque': 'right-opaque' },
+    });
+    const ordering = { kind: 'ordering' as const, slot_id: 'o', item_order: ['second', 'first'] };
+    expect(nativeResponseValue(ordering)).toEqual({
+      kind: 'ordering',
+      ordered_ids: ['second', 'first'],
+    });
+    expect(() =>
+      nativeResponseEntry(
+        { kind: 'text', slot_id: 't', part_id: 'p', math_preview: false },
+        { kind: 'choice', option_ids: ['opaque'] },
+      ),
+    ).toThrow();
   });
 });

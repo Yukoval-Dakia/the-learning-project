@@ -1,3 +1,4 @@
+import type { ResponseSetT, SlotResponseT } from '@/core/schema/assessment';
 // M2 练习面 — 散题作答态（YUK-316）。
 // 设计基准 docs/design/loom-refresh/project/pface-solo.jsx：即时反馈（§6.4 着色
 // 即判定）· 评级建议可改 · 不服判（异步重判，不阻塞流）· 解题会话（苏格拉底
@@ -22,16 +23,21 @@ import { createPortal } from 'react-dom';
 // 见 src/kernel/limits.ts 头注释的实测表。
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { AttemptTimeline } from '@/ui/components/AttemptTimeline';
+import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
+import { EvidenceComposer } from '@/ui/components/response/EvidenceComposer';
 // YUK-1051 — 作答面换成通用 response 组件族（stable option IDs / 原文保留 / 证据附件）；
 // 202-pending 成为返回 union + UI 状态（同一次 submission 继续查询，不重交）。
-import { ChoiceSetResponse } from '@/ui/components/response/ChoiceSetResponse';
-import { EvidenceComposer } from '@/ui/components/response/EvidenceComposer';
+import { ResponseSlotField, nativeSlotFieldSpec } from '@/ui/components/response/ResponseSlotField';
 import {
   type EvidenceAttachment,
-  optionsFromChoicesMd,
+  isSlotResponseAnswered,
+  nativeResponseEntry,
+  nativeResponseValue,
 } from '@/ui/components/response/response-types';
+import { SaveStateChip } from '@/ui/components/response/SaveStateChip';
 import { SlotResultBadge } from '@/ui/components/response/SlotResultBadge';
 import { useJudgeRunPolling } from '@/ui/hooks/useJudgeRunPolling';
+import { useResponseDraftAutosave } from '@/ui/hooks/useResponseDraftAutosave';
 import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
@@ -53,8 +59,11 @@ import {
   computeLatencyMs,
   fileAppeal,
   getAdvice,
+  getIssuanceState,
   getQuestionFull,
   isSubmitPending,
+  issueAssessment,
+  saveResponseDraft,
   submitReview,
 } from './practice-api';
 
@@ -280,8 +289,8 @@ export function PfSolo({
   });
   // YUK-1051 — 选项身份从数组下标换成内容派生的 stable option id（response-types）：
   // 重渲染 / 草稿恢复 / 复盘里同一选项文本恒同 id；选项数不硬编码（1–9 数字键随选项数）。
-  const [selIds, setSelIds] = useState<string[] | null>(null);
-  const [text, setText] = useState('');
+  const [nativeResponses, setNativeResponses] = useState<ResponseSetT>({ entries: [] });
+  const [issuanceMode, setIssuanceMode] = useState<'auto_score' | 'manual'>('auto_score');
   // YUK-1051 (D10) — 开放作答的证据附件（通用文字+附件）；asset ids 随提交走
   // answer_image_refs（CreateAttempt 契约早就有，UI 此前丢弃）。
   const [evidence, setEvidence] = useState<EvidenceAttachment[]>([]);
@@ -333,21 +342,97 @@ export function PfSolo({
   // 取自题面加载那刻 → 恒是本次作答**之前**的历史（不含刚提交的这次，客观题自动 commit 也不竞态），
   // 正合「卡在同一误区」信号意图。反馈卡里 length>0 才渲染。
   const timelineEvents = q ? toAttemptTimelineEvents(q.timeline) : [];
-  const isChoice = (q?.choices_md?.length ?? 0) > 0;
-  const choiceOptions = useMemo(
-    () => optionsFromChoicesMd(q?.choices_md ?? [], q?.id ?? ''),
-    [q?.choices_md, q?.id],
+  const issuanceId = `iss_stream_${item.id}`;
+  const frozenQ = useQuery({
+    queryKey: ['practice-issuance', issuanceId, issuanceMode],
+    enabled: q !== null,
+    retry: false,
+    queryFn: async () => {
+      try {
+        return await getIssuanceState(issuanceId);
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 404) throw error;
+      }
+      if (!q) throw new Error('question unavailable');
+      await issueAssessment({
+        issuance_id: issuanceId,
+        group_id: q.parent_question_id ?? q.id,
+        ...(q.parent_question_id ? { part_ids: [q.id] } : {}),
+        mode: issuanceMode,
+      });
+      return getIssuanceState(issuanceId);
+    },
+  });
+  const frozen = frozenQ.data?.practice_dto;
+  const draftEpoch = useRef<number | undefined>(undefined);
+  const hydratedIssuance = useRef<string | null>(null);
+  useEffect(() => {
+    if (!frozenQ.data?.issuance || hydratedIssuance.current === frozenQ.data.issuance.issuance_id)
+      return;
+    hydratedIssuance.current = frozenQ.data.issuance.issuance_id;
+    const restored = frozenQ.data.draft ?? frozenQ.data.submissions[0];
+    setNativeResponses(restored?.response_set ?? { entries: [] });
+    setEvidence(
+      (restored?.group_evidence ?? []).map((item) => ({
+        asset_id: item.evidence.asset.asset_id,
+        original: item.evidence,
+        slot_ids: null,
+      })),
+    );
+    draftEpoch.current = frozenQ.data.draft?.save_epoch;
+  }, [frozenQ.data]);
+  const nativeEvidence = useMemo(
+    () =>
+      evidence.flatMap((item) =>
+        item.original ? [{ evidence: item.original, target: { scope: 'all_units' as const } }] : [],
+      ),
+    [evidence],
   );
+  const accepted = frozenQ.data?.submissions[0];
+  const assessmentInput = {
+    issuance_id: issuanceId,
+    evaluation_group_id: accepted?.evaluation_group_id ?? `group_stream_${item.id}`,
+    submission_id: accepted?.submission_id ?? `submission_stream_${item.id}`,
+    idempotency_key: accepted?.idempotency_key ?? `submit_stream_${item.id}`,
+    response_set: nativeResponses,
+    group_evidence: nativeEvidence,
+  };
+  const autosave = useResponseDraftAutosave({
+    value: { response_set: nativeResponses, group_evidence: nativeEvidence },
+    enabled: !!frozen && !accepted && !judging && !preview && !pendingPreview,
+    save: async (value) => {
+      const ack = await saveResponseDraft(issuanceId, {
+        ...value,
+        evaluation_group_ref: assessmentInput.evaluation_group_id,
+        expected_save_epoch: draftEpoch.current,
+      });
+      draftEpoch.current = ack.save_epoch;
+    },
+  });
+  const updateNativeResponse = (entry: SlotResponseT) =>
+    setNativeResponses((previous) => ({
+      entries: [...previous.entries.filter((item) => item.slot_id !== entry.slot_id), entry],
+    }));
+  const isChoice =
+    !!frozen?.response_spec.slots.length &&
+    frozen.response_spec.slots.every(
+      (slot) => slot.kind === 'single_choice' || slot.kind === 'multi_choice',
+    );
   const imageRefs = useMemo(() => evidence.map((a) => a.asset_id), [evidence]);
-  const answerMd =
-    isChoice && selIds && selIds.length > 0
-      ? (choiceOptions.find((o) => o.id === selIds[0])?.text_md ?? '')
-      : text;
+  const answerMd = nativeResponses.entries
+    .map((entry) => {
+      const value = nativeResponseValue(entry);
+      return value?.kind === 'text' ? value.text : JSON.stringify(value);
+    })
+    .join('\n');
   const canSubmit =
+    !!frozen &&
     !judging &&
     !pendingRun &&
     !uploading &&
-    (isChoice ? (selIds?.length ?? 0) > 0 : text.trim().length > 0 || imageRefs.length > 0);
+    evidence.every((item) => item.original !== undefined) &&
+    (nativeResponses.entries.some((entry) => isSlotResponseAnswered(nativeResponseValue(entry))) ||
+      imageRefs.length > 0);
   // YUK-444 — 三相：answering（作答）→ confidence（judge 结果暂存、信心自评插拍、判定未揭晓）→
   // feedback（判定卡）。confidence 只在非客观流出现；客观题 answering 直接跳到 feedback（auto-commit）。
   const phase = committedPreview ? 'feedback' : derivePhase(preview, pendingPreview);
@@ -557,7 +642,7 @@ export function PfSolo({
         setAutoCommitJudgeEventId(res.judge?.judge_event_id ?? null);
         return;
       }
-      const r = await getAdvice(q.id, answerMd, imageRefs);
+      const r = await getAdvice(q.id, answerMd, imageRefs, assessmentInput);
       // YUK-444 (PR #1069 thread 修复) — 分流判据是 shouldOfferConfidenceGate(route) 本体，不再在这里
       // 重新拼一遍 isObjectiveQuestion(route)。两者语义严格互补（gate = !isObjectiveQuestion，见上方定义
       // 与 capture 单测的互补断言），但**判据必须只有一处**：单测断言的正是这个生产分支所调的谓词，
@@ -626,7 +711,7 @@ export function PfSolo({
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  if (qQ.isLoading) return <p className="quiet-empty">取题中…</p>;
+  if (qQ.isLoading || frozenQ.isLoading) return <p className="quiet-empty">取题中…</p>;
   if (qQ.isError || !q)
     return (
       <div className="pfs">
@@ -634,6 +719,21 @@ export function PfSolo({
           返回流
         </Btn>
         <p className="quiet-empty">题面加载失败：{(qQ.error as Error | null)?.message ?? '未知'}</p>
+      </div>
+    );
+
+  if (frozenQ.isError || !frozen)
+    return (
+      <div className="pfs">
+        <Btn size="sm" variant="ghost" onClick={onBack}>
+          返回流
+        </Btn>
+        <p className="quiet-empty">{(frozenQ.error as Error | null)?.message ?? '正在恢复作答'}</p>
+        {frozenQ.error instanceof ApiError && frozenQ.error.code === 'not_admitted' && (
+          <Btn variant="secondary" onClick={() => setIssuanceMode('manual')}>
+            按自行评级练习
+          </Btn>
+        )}
       </div>
     );
 
@@ -672,9 +772,28 @@ export function PfSolo({
         {/* YUK-1005 — stem/options render through the shared markdown+KaTeX
             pipeline (same convention as QuestionsPage/DraftReviewPage); notation
             comes from the server-resolved subject projection, never assumed. */}
-        <MathMarkdown notation={q.notation} className="pfs-stem">
-          {q.prompt_md}
-        </MathMarkdown>
+        {frozen.materials.map((material) => (
+          <div key={material.material_id}>
+            {material.content_md !== undefined ? (
+              <MathMarkdown notation={q.notation}>{material.content_md}</MathMarkdown>
+            ) : (
+              <AssetEvidencePreview
+                assetId={material.asset_id}
+                label={material.caption ?? material.alt_text}
+              />
+            )}
+          </div>
+        ))}
+        {frozen.faces.map((face) => (
+          <MathMarkdown key={face.part_id} notation={q.notation} className="pfs-stem">
+            {face.prompt_md}
+          </MathMarkdown>
+        ))}
+        <SaveStateChip
+          state={autosave.state}
+          generation={autosave.generation}
+          onRetry={autosave.retry}
+        />
 
         {/* YUK-1051 — 作答面 = 通用 response 组件族。选择题：stable option IDs +
             radiogroup 语义不变；对错色仍只在 feedback 相位（§6.4 即时着色即判定），
@@ -699,35 +818,44 @@ export function PfSolo({
               </Btn>
             </div>
           </div>
-        ) : isChoice ? (
-          <ChoiceSetResponse
-            options={choiceOptions}
-            mode="single"
-            value={selIds}
-            onChange={setSelIds}
-            disabled={phase !== 'answering'}
-            notation={q.notation}
-            feedback={phase === 'feedback' ? 'graded' : 'none'}
-            selectionOutcome={
-              displayedPreview?.coarse_outcome === 'correct' ? 'correct' : 'not_correct'
-            }
-            hotkeys={phase === 'answering' && !coach}
-            ariaLabel="选项"
-          />
         ) : (
-          // 开放作答：通用文字 + 附件（EvidenceComposer）。文本原文进 response_md；
-          // 附件 asset ids 进 answer_image_refs（D10 口径）。
-          <EvidenceComposer
-            text={text}
-            onTextChange={setText}
-            attachments={evidence}
-            onAttachmentsChange={setEvidence}
-            disabled={phase !== 'answering'}
-            notation={q.notation}
-            placeholder="写下你的解答…"
-            ariaLabel="作答"
-            onUploadingChange={setUploading}
-          />
+          <>
+            {frozen.response_spec.slots.map((slot) => {
+              const spec = nativeSlotFieldSpec(slot);
+              if (!spec) return null;
+              const entry = nativeResponses.entries.find((item) => item.slot_id === slot.slot_id);
+              return (
+                <ResponseSlotField
+                  key={slot.slot_id}
+                  spec={spec}
+                  value={nativeResponseValue(entry)}
+                  label={slot.placement?.label}
+                  notation={q.notation}
+                  disabled={phase !== 'answering' || !!accepted}
+                  onChange={(value) =>
+                    updateNativeResponse(nativeResponseEntry(slot, value, entry))
+                  }
+                  feedback={phase === 'feedback' ? 'graded' : 'none'}
+                  hotkeys={
+                    frozen.response_spec.slots.length === 1 &&
+                    isChoice &&
+                    phase === 'answering' &&
+                    !coach
+                  }
+                  ariaLabel={slot.placement?.label ?? '作答'}
+                />
+              );
+            })}
+            <EvidenceComposer
+              text=""
+              onTextChange={() => {}}
+              showText={false}
+              attachments={evidence}
+              onAttachmentsChange={setEvidence}
+              disabled={phase !== 'answering' || !!accepted}
+              onUploadingChange={setUploading}
+            />
+          </>
         )}
 
         {/* YUK-562 — 过程框「记下你的思路」：作答面与提交 CTA 之间，仅开放/文本作答题（!isChoice）显示，

@@ -1,5 +1,4 @@
 import { z } from 'zod';
-
 import {
   ActivityRef,
   CauseCategory,
@@ -8,6 +7,7 @@ import {
   ScoreMeaning,
 } from '@/kernel/capability-contract-schemas';
 import { ANCHOR_BUCKETS, type AnchorBucket } from '@/server/mastery/fixed-anchor';
+import { CreateSubmissionBodySchema } from './assessment-contracts';
 import { AttemptCorrectionStateSchema, FsrsStateWireSchema } from './contracts';
 
 // The handlers deliberately accept parseInt-compatible strings (for example,
@@ -42,6 +42,7 @@ export const ReviewDueResponseSchema = z.object({
 });
 
 export const ReviewAdviceBodySchema = z.object({
+  assessment: CreateSubmissionBodySchema,
   activity_ref: ActivityRef.optional(),
   question_id: z.string().min(1).optional(),
   mistake_id: z.string().min(1).optional(),
@@ -77,6 +78,9 @@ const ReviewAdviceJudgeSchema = z.object({
 export const ReviewAdviceResponseSchema = z.object({
   activity_ref: ActivityRef,
   question_id: z.string(),
+  submission_id: z.string(),
+  evaluation_group_id: z.string(),
+  candidate_id: z.string(),
   judge: ReviewAdviceJudgeSchema,
   advice: z.object({
     rating: FsrsRating.nullable(),

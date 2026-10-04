@@ -1,7 +1,7 @@
 // T-RA — pre-submit RatingAdvisor preview route (YUK-98).
 //
-// This endpoint runs the same JudgeInvoker path as submit, returns the derived
-// advisory, and deliberately avoids event/FSRS writes. The committed review
+// This endpoint stores the frozen submission and candidate, returns the derived
+// advisory, and deliberately avoids activation/FSRS writes. The committed review
 // rating remains user-controlled through /api/review/submit.
 //
 // YUK-100 (W-05 follow-up, 2026-05-27): cause SoT wiring.
@@ -15,12 +15,6 @@ import { eq } from 'drizzle-orm';
 import { normalizeReviewSubmitActivityRef } from '@/capabilities/practice/server/activity-ref';
 import { resolveAdviceCauseForQuestion } from '@/capabilities/practice/server/cause-context';
 import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
-import {
-  evaluateAttempt,
-  issueJudgePreviewProvenanceToken,
-  judgeProvenanceSigningSecret,
-  sha256Canonical,
-} from '@/capabilities/practice/server/judge';
 import { ratingFromCoarseOutcome } from '@/capabilities/practice/server/judge-rating';
 import { judgeResultToRatingAdvice } from '@/capabilities/practice/server/rating-advisor';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
@@ -28,6 +22,7 @@ import { db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
+import { previewFormalAttempt } from '../server/assessment/attempt';
 import { ReviewAdviceBodySchema } from './review-planning-contracts';
 
 export async function POST(req: Request): Promise<Response> {
@@ -42,17 +37,6 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const body = parsed.data;
-    const answerMd = body.response_md.trim();
-    // YUK-1094 — 允许纯附件作答（与 createAttempt 同口径：response_md 或
-    // answer_image_refs 至少一个非空）；否则拍照/手写稿的开放题在预览阶段被 422 拒绝。
-    if (answerMd.length === 0 && body.answer_image_refs.length === 0) {
-      throw new ApiError(
-        'missing_answer',
-        'rating advice requires response_md or answer_image_refs to be non-empty',
-        422,
-      );
-    }
-
     const identity = normalizeReviewSubmitActivityRef(body);
     const questionId = identity.question_id;
     const qRows = await db.select().from(question).where(eq(question.id, questionId)).limit(1);
@@ -72,18 +56,13 @@ export async function POST(req: Request): Promise<Response> {
       db,
       questionKnowledgeIdsForJudge(q),
     );
-    const invoked = await evaluateAttempt({
-      entry: 'advice_preview',
-      legacy: {
-        db,
-        question: q,
-        answer_md: answerMd,
-        // YUK-1094 — 手写/拍照附件交给 judge（与提交同一条 student_image_refs 缝）；
-        // 空数组等价于缺席，纯文本 advice 路径行为不变。
-        student_image_refs: body.answer_image_refs,
-        subjectProfile,
-      },
-    });
+    const { candidate: invoked, submission } = await previewFormalAttempt(
+      db,
+      'advice_preview',
+      questionId,
+      body.assessment,
+      req.signal,
+    );
     const suggestedRating = ratingFromCoarseOutcome(invoked.result.coarse_outcome);
 
     // YUK-100 (W-05) + YUK-101 (iter2 F8 / F13) — Resolve effective cause via
@@ -101,34 +80,14 @@ export async function POST(req: Request): Promise<Response> {
       subjectProfile,
     });
 
-    // YUK-589 — sign with the dedicated server-only secret, never INTERNAL_TOKEN
-    // (which every client holds). When the secret is unconfigured we issue no
-    // token; the submit side then treats the supplied result as unverified.
-    const signingSecret = judgeProvenanceSigningSecret();
-    const provenanceToken =
-      signingSecret && invoked.execution && invoked.task_run_id
-        ? issueJudgePreviewProvenanceToken(
-            {
-              version: 1,
-              task_run_id: invoked.task_run_id,
-              task_kind: invoked.execution.task_kind,
-              input_hash: invoked.execution.input_hash,
-              prompt_fingerprint: invoked.execution.prompt_fingerprint,
-              prompt_template_revision: invoked.execution.prompt_template_revision,
-              subject_profile_id: subjectProfile.id,
-              subject_profile_version: subjectProfile.version,
-              judge_route: invoked.route,
-              result_digest: sha256Canonical(invoked.result),
-            },
-            signingSecret,
-          )
-        : undefined;
-
     return Response.json({
       activity_ref: identity.activity_ref,
       question_id: questionId,
+      submission_id: submission.submission_id,
+      evaluation_group_id: submission.evaluation_group_id,
+      candidate_id: invoked.evaluation.record.evaluation_id,
       judge: {
-        route: invoked.route,
+        route: 'evaluate_submission',
         score: invoked.result.score,
         score_meaning: invoked.result.score_meaning,
         coarse_outcome: invoked.result.coarse_outcome,
@@ -137,9 +96,6 @@ export async function POST(req: Request): Promise<Response> {
         evidence_json: invoked.result.evidence_json,
         capability_ref: invoked.result.capability_ref,
         suggested_rating: suggestedRating,
-        telemetry: invoked.telemetry,
-        ...(invoked.task_run_id ? { task_run_id: invoked.task_run_id } : {}),
-        ...(provenanceToken ? { provenance_token: provenanceToken } : {}),
       },
       advice,
     });
