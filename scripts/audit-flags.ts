@@ -8,6 +8,12 @@
  * 曾混用 `=== '1'` / `=== 'true'` / 双字面量 / 大小写不敏感等写法。YUK-586 已把 runtime
  * reader 收敛到 shared parseFlag；本审计继续清点它们、抓「代码有 / 登记无」和未来语法漂移。
  *
+ * YUK-1088: also covers the 11 explicitly named non-ENABLED controls in
+ * SCOPED_CONTROL_NAMES. Boolean controls keep env grammar; enum/CSV/JSON controls
+ * use kind=config with their actual value shape and live reader marker. This
+ * bounded census is independent of the ledger, so deleting registration fails.
+ * It does not discover every arbitrary future configuration knob.
+ *
  * ── 什么是「flag」───────────────────────────────────────────────────────────
  *
  * 全仓以 `_ENABLED` 结尾的标识符（`[A-Z][A-Z0-9_]*_ENABLED`，末尾 word-boundary 排除
@@ -71,6 +77,24 @@ const EXCLUDE_FILES = new Set(['scripts/audit-flags.ts', 'scripts/audit-flags.te
 // flag). Leading (?<![A-Z0-9_]) keeps the match to a whole token.
 export const FLAG_TOKEN_RE = /(?<![A-Z0-9_])[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_ENABLED(?![A-Z0-9_])/g;
 
+// YUK-1088 census is deliberately bounded and INDEPENDENT of ledger membership.
+// Removing a ledger entry cannot remove its name from source discovery. New controls
+// outside *_ENABLED and this list still require a census update; this is not an
+// arbitrary configuration discovery engine. Retired SKIP_BOSS_INGEST is not live.
+export const SCOPED_CONTROL_NAMES = [
+  'PROJECTION_IS_WRITER_ITEM_CALIBRATION',
+  'HUB_SYNC_MODE',
+  'SELECTION_POLICY',
+  'MEMORY_RECONCILE_HANDOFF_MODE',
+  'INTERVENTION_DISABLED_METHOD_IDS',
+  'EXTRACT_OCR_ENGINE',
+  'DOCX_CONVERT_ENGINE',
+  'AI_PROVIDER_SESSION_ADMISSION_MODE',
+  'AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON',
+  'AI_PROVIDER_ATTEMPT_ADMISSION_MODE',
+  'AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON',
+] as const;
+
 // ── ledger schema ────────────────────────────────────────────────────────────────────────────
 
 export type FlagPolarity = 'opt-in' | 'opt-out';
@@ -89,7 +113,14 @@ export type ConstFlagEntry = {
   file: string;
   notes: string;
 };
-export type FlagEntry = EnvFlagEntry | ConstFlagEntry;
+/** Non-boolean controls have their own value grammar, never an enabled-literal set. */
+export type ConfigControlEntry = {
+  kind: 'config';
+  reader_marker: string;
+  file: string;
+  notes: string;
+} & ({ value_type: 'enum'; values: string[] } | { value_type: 'csv' | 'json' });
+export type FlagEntry = EnvFlagEntry | ConstFlagEntry | ConfigControlEntry;
 export type Ledger = Record<string, FlagEntry>;
 
 export type LedgerProblem = { name: string; detail: string };
@@ -124,12 +155,34 @@ export function validateLedgerEntry(name: string, entry: unknown): LedgerProblem
     if (typeof e.reader_marker !== 'string' || e.reader_marker.trim() === '') {
       problems.push({ name, detail: 'env flag needs a non-empty reader_marker' });
     }
+  } else if (e.kind === 'config') {
+    if (e.value_type !== 'enum' && e.value_type !== 'csv' && e.value_type !== 'json') {
+      problems.push({ name, detail: "config control value_type must be 'enum', 'csv' or 'json'" });
+    }
+    if (e.value_type === 'enum') {
+      if (
+        !Array.isArray(e.values) ||
+        e.values.length === 0 ||
+        !e.values.every((value) => typeof value === 'string' && value.trim() !== '') ||
+        new Set(e.values).size !== e.values.length
+      ) {
+        problems.push({ name, detail: 'enum control needs non-empty distinct string values' });
+      }
+    } else if ('values' in e) {
+      problems.push({ name, detail: 'only enum controls may declare values' });
+    }
+    if ('literals' in e || 'case_insensitive' in e || 'polarity' in e) {
+      problems.push({ name, detail: 'config controls must not declare boolean flag grammar' });
+    }
+    if (typeof e.reader_marker !== 'string' || e.reader_marker.trim() === '') {
+      problems.push({ name, detail: 'config control needs a non-empty reader_marker' });
+    }
   } else if (e.kind === 'const') {
     if (typeof e.value !== 'boolean') {
       problems.push({ name, detail: 'const flag needs a boolean value' });
     }
   } else {
-    problems.push({ name, detail: "kind must be 'env' or 'const'" });
+    problems.push({ name, detail: "kind must be 'env', 'const' or 'config'" });
   }
   return problems;
 }
@@ -266,7 +319,7 @@ export function walkSource(root: string, out: string[] = []): string[] {
   return out;
 }
 
-/** All `*_ENABLED` flag names present in code (comment-stripped, strings KEPT). Pure. */
+/** Live *_ENABLED tokens plus the bounded control census; comments excluded, strings kept. */
 export function scanFlagTokens(
   files: string[],
   readFile: (relPath: string) => string | null,
@@ -278,6 +331,9 @@ export function scanFlagTokens(
     const code = stripComments(raw);
     FLAG_TOKEN_RE.lastIndex = 0;
     for (const m of code.matchAll(FLAG_TOKEN_RE)) found.add(m[0]);
+    for (const name of SCOPED_CONTROL_NAMES) {
+      if (hasLiveFlagReference(code, name, true)) found.add(name);
+    }
   }
   return found;
 }
@@ -299,7 +355,7 @@ export type FlagReconciliation = {
   unregistered: string[];
   /** ledger entries whose declared `file` no longer contains the flag name (registry ↔ code drift). */
   stale: { name: string; file: string; problem: 'file-missing' | 'name-missing' }[];
-  /** env entries whose declared file no longer contains the shared-reader marker. */
+  /** Runtime entries whose declared file no longer contains their reader marker. */
   readerDrift: { name: string; file: string; marker: string }[];
   ledgerProblems: LedgerProblem[];
   /** true iff no unregistered, stale, reader drift, or ledger problems. */
@@ -340,12 +396,12 @@ export function reconcileFlags(
     }
 
     const code = stripComments(src);
-    if (!hasLiveFlagReference(code, name, entry.kind === 'env')) {
+    if (!hasLiveFlagReference(code, name, entry.kind !== 'const')) {
       stale.push({ name, file, problem: 'name-missing' });
       continue;
     }
 
-    if (entry.kind === 'env') {
+    if (entry.kind === 'env' || entry.kind === 'config') {
       const marker = entry.reader_marker;
       // Keep the runtime guard because the JSON ledger is untrusted at load time even though the
       // public TypeScript type is precise; validateLedgerEntry reports malformed shapes above.
@@ -446,13 +502,14 @@ function main(): void {
   // kind tallies for the header.
   const envFlags = Object.values(ledger).filter((e) => e.kind === 'env').length;
   const constFlags = Object.values(ledger).filter((e) => e.kind === 'const').length;
+  const controls = Object.values(ledger).filter((e) => e.kind === 'config').length;
 
   if (isJson) {
     console.log(JSON.stringify({ found: [...found].sort(), recon, variance }, null, 2));
   } else {
     console.log('audit:flags — 全仓 flag 双轨清点对账 (红线审查 wave F / A5)\n');
     console.log(
-      `  ledger: ${Object.keys(ledger).length} flags (env×${envFlags}, const×${constFlags}); code found: ${found.size} flag-name tokens.\n`,
+      `  ledger: ${Object.keys(ledger).length} flags (env×${envFlags}, const×${constFlags}, config×${controls}); code found: ${found.size} flag-name tokens.\n`,
     );
 
     if (recon.unregistered.length === 0) {
@@ -460,7 +517,9 @@ function main(): void {
     } else {
       console.log(`  UNREGISTERED (in code, not in ledger):  ${recon.unregistered.length}`);
       for (const n of recon.unregistered)
-        console.log(`    - ${n}: add to audit-flags-ledger.json with kind/literals/file/notes.`);
+        console.log(
+          `    - ${n}: add to audit-flags-ledger.json with its value grammar, reader marker, file and notes.`,
+        );
     }
     console.log('');
 
@@ -475,10 +534,10 @@ function main(): void {
     console.log('');
 
     if (recon.readerDrift.length === 0) {
-      console.log('  READER-DRIFT (env flag no longer uses its shared reader marker):  (none)');
+      console.log('  READER-DRIFT (runtime control no longer contains its reader marker):  (none)');
     } else {
       console.log(
-        `  READER-DRIFT (env flag no longer uses its shared reader marker):  ${recon.readerDrift.length}`,
+        `  READER-DRIFT (runtime control no longer contains its reader marker):  ${recon.readerDrift.length}`,
       );
       for (const drift of recon.readerDrift) {
         console.log(`    - ${drift.name} (${drift.file}): missing ${drift.marker}`);
@@ -500,7 +559,7 @@ function main(): void {
       for (const f of g.flags) console.log(`        ${f}`);
     }
     console.log(
-      `\n  ${variance.length} distinct env-flag literal conventions across the repo. YUK-586 established one shared grammar; more than one group indicates parsing drift. This audit remains OBSERVABILITY ONLY and never changes runtime behavior.`,
+      `\n  ${variance.length} distinct env-flag literal conventions across the repo. Compare differences against the declared reader semantics; intentionally exact-literal controls retain their own grammar. This audit remains OBSERVABILITY ONLY and never changes runtime behavior.`,
     );
 
     console.log(

@@ -1,18 +1,16 @@
 # Current handoff — 2026-10-04
 
-Owner goal: continue Linear zero, do not stop after one batch; no dependency chasing.
-1076/#1546 merged11:57:11UTC mainfaaca3ad1f1a19efdc24223c5ab6ceccee09839a;66open.
-49unit/58DB/allgates299warnings, independent41unit50DB+209952differential0diff,
-CI37199502237 actual82migration34browser passed.17minwindowcompleted;LinearDone.
-No production/paidcalls;1042ops and otherowner HOLDs remain gated.
-Activebatch1077/1078/1079: /workspace/tlp-decision-tail,refactor/yuk-1077-1078-1079-decision-tail,basefaaca3ad.
-1077 collectDowngradeReasons preservesreasonorder/duplicates, anchormirror skip andpart_ref.
-1078 exhaustive20kind mappedpresenters keepgenericpayloadcorrelation withoutcasts;shareddefault/difficulty/relearn details.
-1079 gatherCandidates/judgeBatch/WALrows plusDB-freegatepolicies preservewarnorder, retrytaxonomy andhumanapproval.
-Newmigrationordercase and20kindpresentation snapshot passed originalbefore refactoring;existingtestsunchanged.
-Local gates PASS:172unit/85DB,typecheck/lint299warnings/build/10required audits plus provider-attempt-truth.
-Independent initial review PASS:87unit/38DB,1440memory+84presentation differential cases zero differences; no P0/P1 or substantive P2.
-Review verification unused; next commit/push, exact-head CI and 17min last-push window. No new follow-up: behavior preserved and no actionable findings.
-Next1007readfacts/766/1088;1091jointgroup stillneedsfullcorrectnessclosure.
+Owner goal: continue Linear zero; do not stop after one batch; no dependency chasing.
+1077/1078/1079 PR1547 merged12:30:24UTC main6fc41c84f51c9484dc498c608804db9c8634ef3b;63open.
+172unit/85DB/allgates299warnings; independent87unit38DB+1524differential0diff.
+CI37201373349 actual82migration34browser passed;17minwindowcomplete;threeLinearDone.
+Active1088: /workspace/tlp-flags-ledger,fix/yuk-1088-flags-ledger,base6fc41c84.
+11 scoped controls independent of ledger membership; config enum/CSV/JSON entry shapes and live reader markers.
+Projection exact1 and placement exacttrue metadata preserved; retired SKIP_BOSS_INGEST declarations/stub removed.
+Runtime parsing/defaults/productionflags unchanged. Bounded census, not arbitrary config discovery.
+11 coverage regressions RED before implementation.207unit/4DB and typecheck/lint299/build/10required audits plus strict flags PASS.
+42ledger entries reconcile;33 real-source deletion/reader/comment mutations covered.Independent initial review running.
+Next commit/push/PR, exact-head CI and17min last-push window; no extra review unless P0/P1 fix.
+Next1007readfacts/1114/766;1091jointgroup still needs full correctness closure.
 Grounding in root ignored .remember/2026-10-04-ready-tail-grounding.md.
-Preserve branches/worktrees, Astra/autonomous/night/native HOLDs, two-probe paid cap exhausted.
+Preserve branches/worktrees, owner HOLDs and production boundaries; two-probe paid cap exhausted.

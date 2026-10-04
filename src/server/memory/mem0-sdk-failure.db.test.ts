@@ -61,7 +61,6 @@ beforeEach(async () => {
   calls = 0;
   failExtraction = true;
   vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', 'observe');
-  vi.stubEnv('SKIP_BOSS_INGEST', '1');
 });
 afterEach(() => vi.unstubAllEnvs());
 afterAll(async () => {

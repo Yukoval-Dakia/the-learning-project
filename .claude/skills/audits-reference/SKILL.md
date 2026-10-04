@@ -25,7 +25,7 @@ description: Full mechanics of this repo's pnpm audit:* scripts and their allowl
 
 - `audit:dependencies`：`pnpm audit --prod --audit-level=high`，CI standalone hard gate。
 - `audit:fold-writes`：fold-owned projection 表写者 registry ↔ 源码反查；默认 report-only，`--strict` 对未授权写点/陈旧 registry fail。
-- `audit:flags`：`*_ENABLED` 代码 ↔ `audit-flags-ledger.json` 对账；默认 report-only，`--strict` 对漏登记/陈旧/坏 ledger fail，字面量差异只报告。
+- `audit:flags`：`*_ENABLED` 加 `SCOPED_CONTROL_NAMES` 有界控制项 ↔ `audit-flags-ledger.json` 对账（布尔 env/const 与 enum/CSV/JSON 分别声明真实值域和 reader marker）；默认 report-only，`--strict` 对漏登记/陈旧/坏 ledger fail，字面量差异只报告。
 - `audit:projection`：连接目标 DB，把全部 projection 由 event 重放并与 live row deep-diff；非 allowlist drift 直接 fail，只应对 prod clone / 明确目标库运行。
 - `audit:golden --kind=<kind>`：用当前 reducer/gather 重放保留的 imperative golden；适用于已翻 ON entity 的 reducer/gather 变更，drift 直接 fail。
 - `audit:judge-golden`：冻结 raw LLM 输出到 `JudgeResultV2` 的离线规范化回放；默认 report-only，`--strict` fail，不覆盖 prompt/model 变化。
