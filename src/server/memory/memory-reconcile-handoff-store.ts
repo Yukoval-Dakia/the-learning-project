@@ -54,14 +54,15 @@ const IntentSchema = z
   .strict();
 export type IngestCompleted = z.infer<typeof CompletedSchema>;
 
-async function writeRecord(
+export async function writeMemoryHandoffRecord(
   tx: Tx,
   sourceId: string,
   kind: string,
   payload: Record<string, unknown>,
   memoryId = '',
+  recordId?: string,
 ): Promise<void> {
-  const id = memoryReconcileHandoffEventId(kind, sourceId, memoryId);
+  const id = recordId ?? memoryReconcileHandoffEventId(kind, sourceId, memoryId);
   const rows = await tx
     .select({ payload: event.payload })
     .from(event)
@@ -112,7 +113,7 @@ export async function claimMemoryIngest(
         throw new MemoryReconcileHandoffError(`invalid add marker ${sourceId}`);
       return 'started';
     }
-    await writeRecord(tx, sourceId, 'add_started', {
+    await writeMemoryHandoffRecord(tx, sourceId, 'add_started', {
       version: 1,
       handoff_kind: 'add_started',
       source_event_id: sourceId,
@@ -172,10 +173,10 @@ export async function persistIngestCompleted(
           `missing or invalid add marker ${input.sourceEventId}`,
         );
     }
-    await writeRecord(tx, input.sourceEventId, 'ingest_completed', completed);
+    await writeMemoryHandoffRecord(tx, input.sourceEventId, 'ingest_completed', completed);
     if (!input.persistIntents) return;
     for (const memory of memories)
-      await writeRecord(
+      await writeMemoryHandoffRecord(
         tx,
         input.sourceEventId,
         'reconcile_intent',
@@ -236,7 +237,7 @@ export async function persistDispatchCompleted(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`memory:dispatch:${completion.source_event_id}`}, 0))`,
     );
     for (const memory of normalized)
-      await writeRecord(
+      await writeMemoryHandoffRecord(
         tx,
         completion.source_event_id,
         'reconcile_dispatch_complete',
@@ -251,4 +252,47 @@ export async function persistDispatchCompleted(
         memory.id,
       );
   });
+}
+
+/** An advisory skip is durable evidence, never a queue receipt. */
+export async function persistObserveDispatchSkipped(
+  db: Db,
+  sourceId: string,
+  memories: readonly ReconcileMemInput[],
+  jobId: string,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`memory:dispatch:${sourceId}`}, 0))`,
+    );
+    await writeMemoryHandoffRecord(
+      tx,
+      sourceId,
+      'reconcile_observe_skipped',
+      {
+        version: 1,
+        handoff_kind: 'reconcile_observe_skipped',
+        source_event_id: sourceId,
+        level: 'warn',
+        reason: 'singleton_send_null',
+        mode: 'observe',
+        intent_digest: memoryIntentDigest(memories),
+        job_id: jobId,
+      },
+      jobId,
+    );
+  });
+}
+
+export async function readMemoryIngestStarted(db: Db | Tx, sourceId: string): Promise<Date | null> {
+  const rows = await db
+    .select({ payload: event.payload, createdAt: event.created_at })
+    .from(event)
+    .where(eq(event.id, memoryReconcileHandoffEventId('add_started', sourceId)))
+    .limit(1);
+  if (!rows[0]) return null;
+  const parsed = StartedSchema.safeParse(rows[0].payload);
+  if (!parsed.success || parsed.data.source_event_id !== sourceId)
+    throw new MemoryReconcileHandoffError(`invalid add marker ${sourceId}`);
+  return rows[0].createdAt;
 }

@@ -17,3 +17,11 @@
   cursor by `(dispatch_seq,id)`, carrying bigint `dispatch_seq` across the JS boundary as a
   canonical decimal string. Wrap once without crossing the starting cursor, and preserve the
   200-scanned/50-success budget even when candidate dispatch fails.
+- An unconfirmed null reconcile send is advisory only in the captured `observe` mode: append
+  `reconcile_observe_skipped`, never a dispatch receipt. Other modes and unconfirmed send/readback
+  errors stay fail-closed.
+- `scripts/memory-ingest-recovery.ts` is the explicit single-event operator exception to a stalled
+  paid-start fence. Preserve original markers/attempts, append a request-id/CAS authorization, and
+  give that grant its own deterministic operation anchor. Ordinary worker retries must never
+  discover or consume grants. Verify the latest grant under the source lock in the post-reserve
+  callback; reject known live attempts before authorizing a new grant. No automatic/batch replay.

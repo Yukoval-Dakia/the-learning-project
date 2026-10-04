@@ -132,6 +132,7 @@ describe('memory reconcile append-only handoff', () => {
     };
     await expect(
       dispatchMemoryReconcile(db, boss, {
+        mode: 'observe',
         sourceEventId: 'source-ack',
         memories: [second, first],
       }),
@@ -163,6 +164,7 @@ describe('memory reconcile append-only handoff', () => {
     };
     await expect(
       dispatchMemoryReconcile(testDb(), boss, {
+        mode: 'observe',
         sourceEventId: 'source-failure',
         memories: [first],
       }),
@@ -175,7 +177,7 @@ describe('memory reconcile append-only handoff', () => {
       dispatchMemoryReconcile(
         testDb(),
         { send: vi.fn(async () => 'different-job-id'), getJobById },
-        { sourceEventId: 'source-wrong-ack', memories: [first] },
+        { mode: 'observe', sourceEventId: 'source-wrong-ack', memories: [first] },
       ),
     ).rejects.toThrow(/enqueue unconfirmed/);
     expect(getJobById).toHaveBeenCalledWith(
@@ -198,7 +200,7 @@ describe('memory reconcile append-only handoff', () => {
     await dispatchMemoryReconcile(
       db,
       { send: vi.fn(async () => jobId) },
-      { sourceEventId: sourceId, memories: [first] },
+      { mode: 'write', sourceEventId: sourceId, memories: [first] },
     );
     const send = vi.fn(async () => jobId);
     const getJobById = vi.fn(async () => ({ state: 'failed' }));
@@ -212,6 +214,69 @@ describe('memory reconcile append-only handoff', () => {
     );
     expect(send).not.toHaveBeenCalled();
     expect(completion.intent_digest).toHaveLength(64);
+  });
+
+  it('records repeated observe singleton misses once without forging a dispatch receipt', async () => {
+    const boss = { send: vi.fn(async () => null), getJobById: vi.fn(async () => null) };
+    const input = {
+      sourceEventId: 'observe-null',
+      memories: [first, second],
+      mode: 'observe' as const,
+    };
+    await expect(dispatchMemoryReconcile(testDb(), boss, input)).resolves.toBeNull();
+    await expect(dispatchMemoryReconcile(testDb(), boss, input)).resolves.toBeNull();
+    const records = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.subject_id, input.sourceEventId));
+    expect(records).toEqual([
+      expect.objectContaining({
+        actor_kind: 'system',
+        ingest_at: expect.any(Date),
+        payload: expect.objectContaining({
+          handoff_kind: 'reconcile_observe_skipped',
+          level: 'warn',
+          reason: 'singleton_send_null',
+        }),
+      }),
+    ]);
+  });
+
+  it('does not turn a readback error after a null send into an advisory skip', async () => {
+    const boss = {
+      send: vi.fn(async () => null),
+      getJobById: vi.fn(async () => {
+        throw new Error('readback offline');
+      }),
+    };
+    await expect(
+      dispatchMemoryReconcile(testDb(), boss, {
+        sourceEventId: 'observe-error',
+        memories: [first],
+        mode: 'observe',
+      }),
+    ).rejects.toThrow('readback offline');
+    expect(
+      await testDb().select().from(event).where(eq(event.subject_id, 'observe-error')),
+    ).toHaveLength(0);
+  });
+
+  it('confirms null send by exact readback without an observe warning', async () => {
+    const sourceEventId = 'observe-receipt';
+    const boss = {
+      send: vi.fn(async () => null),
+      getJobById: vi.fn(async () => ({ state: 'completed' })),
+    };
+    await expect(
+      dispatchMemoryReconcile(testDb(), boss, {
+        sourceEventId,
+        memories: [first],
+        mode: 'observe',
+      }),
+    ).resolves.toBe(memoryReconcileJobId(sourceEventId, [first]));
+    expect(
+      await testDb().select().from(event).where(eq(event.subject_id, sourceEventId)),
+    ).toHaveLength(0);
   });
 
   it('fails closed when a post-start event lookup is still empty', async () => {

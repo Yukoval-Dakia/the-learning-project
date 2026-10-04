@@ -1,18 +1,15 @@
 # Current handoff — 2026-10-04
 
-Owner goal: continue Linear zero without stopping after a batch.
-Main52298f44: YUK1064/#1540 merged09:08:16UTC, CI37190266253success (34browser/82migration),17min window complete;1064Done.
-72open;766correctedTodo from existing owner approval and still-excluded subscription tables.
-Active1062: /workspace/tlp-task-catalog,refactor/yuk-1062-task-catalog,base52298f44.
-Concrete53-kind catalog and inferred TaskKind now live in capabilities composition.
-Six task-public ports also re-exported from public.ts; only task-catalog root may consume narrow ports.
-Shared ai registry/budget/prompt accept immutable catalogs, no capability imports, no global registration.
-TaskSpec content unchanged; six concrete suites moved to capability composition with assertions/hashes retained.
-New factory-isolation/subprocess-startup tests; boundary regression6RED thenGREEN.
-Core307unit pass; consumer249pass plus cumulative mock fixed/rechecked (budget reader bound to fixture catalog), runtime165pass. Sets overlap; do not add counts.
-232DB across10files pass; actual migration bundle startup/idempotency1pass,81skipped.
-All10audits plusarchitecture pass; typecheck/lint299/build pass. Independent initialreview /root/review_task_catalog passed124unit andCJS closure: noappbarrel/dbclient/runner/manifest. NoP0/P1 ornewsubstantiveP2; PR/CI/window pending.
-Browser-safety claim predates this patch and is false in baseline (node:crypto helpers); documented, no spec-semantic expansion.
-No new paid model requests, dependency upgrades or production ops. Go2requestcap exhausted.
-Preserve Astra/autonomous/night/nativeHOLDs,1109NO MERGE, allbranches/worktrees.
-Next1060/1073–1079/766 and otherready mainline after delivery; no second implementation in merge window.
+Owner goal: continue Linear zero, no dependency chasing or production/paid expansion.
+YUK1062/#1541 merged via GitHub connector; main9a076c12863463a6fe37710049bd1a190da56193.
+Exact-head CI37191848104 success, independent initialreview passed, 17min window fulfilled.
+GitHub CLI API401 at09:35, connector works and gitfetch still works; no auth changes.
+Active1060: /workspace/tlp-memory-ingest,fix/yuk-1060-memory-ingest,base9a076c12.
+Observe nullsend regression RED1/10pass then GREEN. 54unit+42DB/6files pass.
+Typecheck/lint299/build and10required audits passed. Independent initialreview passed13unit/31DB; noP0/P1/substantiveP2.
+Linear fresh census71open: Todo9/InProgress5/Backlog57.
+Operator recovery append-only grants, request-id/CAS fencing, original marker/attempts preserved.
+No automatic worker authorization reuse; strict lookup before grant-specific provider reservation.
+No production queries/replay/deployment or paid calls; YUK1042 historical8 stay owner-gated.
+Next: finish scoped DB/CLI regression, local gates, independent review, CI and17min merge window.
+Preserve all worktrees/branches and existing Astra/autonomous/night/native HOLDs.
