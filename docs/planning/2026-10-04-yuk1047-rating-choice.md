@@ -30,7 +30,7 @@ Three formal DB regressions failed first. After the fix, 107 scoped unit cases,
 88 DB cases (including activation, settlement, joint input, admission and persisted
 evaluation), typecheck, lint (299 existing warnings), production build and ten
 audits passed. Tests additionally cover the three-value schema and concurrent
-conflicting ratings. Independent initial review and exact-head CI are pending.
+conflicting ratings. Independent review results and the final repair are recorded below; exact-head CI follows push.
 
 Initial review confirmed two P1 defects: rating checks covered only the currently
 effective candidate, and the old shared-card user guard also blocked later
@@ -46,3 +46,29 @@ automatic B, then regrade A changed the FSRS trajectory. Preserving A's segment
 while replaying B from its stored plan fixes that case without an extra practice.
 All 93 scoped DB cases pass after the consolidated repair, including historical
 replay, joint scope, concurrency, automatic theta and manual scheduling.
+
+The sole verification passed the two original probes and 61 DB cases but exposed
+one remaining form of the second P1: A/user hard, A/regrade, B/new practice,
+then an earlier C arriving late. The retained A FSRS bracket was excluded with
+its superseded settlement, leaving a future card during replay (`Invalid delta_t`).
+The author's formal regression reproduced the failure (1 failed / 29 passed).
+
+The live replay set now includes retained user FSRS segments separately. They
+revert/reapply only FSRS; superseded theta and calibration are never revived.
+New replay receipts identify `fsrs_only` so another late arrival preserves the
+same separation. Such segments cannot masquerade as a second effective
+settlement during regrade. Existing frozen receipts and plans remain unchanged;
+non-user FSRS segments that were actually reverted are not retained.
+
+The regression now covers two successive earlier arrivals followed by another
+regrade: four actual practices remain four FSRS repetitions, and theta evidence
+is replaced without double-counting. Final author validation: 94 DB cases across
+settlement, activation, joint input, admission and persisted evaluation; typecheck,
+lint (299 existing warnings), build, schema/partition audits all pass. The earlier
+107 unit cases and eight other local audits also passed. Independent review budget
+is exhausted (initial + sole verification); the final repair is author-verified,
+not represented as a third independent review.
+
+Prerequisite #1563 merged at 21:00 UTC as 448ffe42 after exact-head CI37232936402
+(82 migration, 34 browser), independent verification and its 17-minute window.
+This branch was rebased onto that main before first push; no remote rewrite.

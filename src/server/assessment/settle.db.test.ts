@@ -1332,3 +1332,70 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect(revertedIds).toContain(g2Live?.id);
   });
 });
+
+describe('independent interleaved preserved rating segment replay', () => {
+  beforeEach(resetDb);
+  it('replays a retained user FSRS segment when an older distinct occurrence arrives late', async () => {
+    await seedKnowledge('kc_a', { domain: 'dom_x' });
+    const a = await seedChain('preserved_a', { kcs: ['kc_a'] });
+    await seedEvaluation(a, 'preserved_a1', { unitResults: [unitResult(`${a.qid}::u`, 1)] });
+    expect(
+      await activate('preserved_a1', { effectiveId: null, generation: 0 }, undefined, 'hard'),
+    ).toMatchObject({ status: 'activated', effect: 'applied' });
+    await seedEvaluation(a, 'preserved_a2', {
+      attempt: 2,
+      unitResults: [unitResult(`${a.qid}::u`, 0)],
+      aggregate: { kind: 'points_total', points: 0, policy: { kind: 'sum' } },
+    });
+    expect(
+      await activate('preserved_a2', { effectiveId: 'preserved_a1', generation: 1 }),
+    ).toMatchObject({ status: 'activated', effect: 'applied' });
+    const laterTime = new Date(NOW.getTime() + 86400000);
+    const b = await seedChain('preserved_b', { kcs: ['kc_a'], submittedAt: laterTime });
+    await seedEvaluation(b, 'preserved_b1', { unitResults: [unitResult(`${b.qid}::u`, 1)] });
+    expect(
+      await activate('preserved_b1', { effectiveId: null, generation: 0 }, laterTime),
+    ).toMatchObject({ status: 'activated', effect: 'applied' });
+    const c = await seedChain('older_c', {
+      kcs: ['kc_a'],
+      submittedAt: new Date(NOW.getTime() - 86400000),
+    });
+    await seedEvaluation(c, 'older_c1', { unitResults: [unitResult(`${c.qid}::u`, 1)] });
+    const result = await activate('older_c1', { effectiveId: null, generation: 0 }, laterTime);
+    const row = await fsrsRow('knowledge', 'kc_a');
+    const receipts = await settlementEvents(c.groupId);
+    expect.soft(receipts[0]?.payload.effect).toBe('applied');
+    expect
+      .soft(await masteryRow('kc_a'))
+      .toMatchObject({ evidence_count: 3, success_count: 2, fail_count: 1 });
+    expect.soft(result).toMatchObject({ status: 'activated', effect: 'applied' });
+    expect.soft(row?.state?.reps).toBe(3);
+    expect.soft(new Date(row?.state?.last_review ?? 0).toISOString()).toBe(laterTime.toISOString());
+    // A second late arrival must use the replayed FSRS-only receipt, without
+    // reviving A's superseded success or replaying its rating twice.
+    const d = await seedChain('oldest_d', {
+      kcs: ['kc_a'],
+      submittedAt: new Date(NOW.getTime() - 2 * 86400000),
+    });
+    await seedEvaluation(d, 'oldest_d1', { unitResults: [unitResult(`${d.qid}::u`, 1)] });
+    expect(
+      await activate('oldest_d1', { effectiveId: null, generation: 0 }, laterTime),
+    ).toMatchObject({ status: 'activated', effect: 'applied' });
+    const beforeRegrade = await fsrsRow('knowledge', 'kc_a');
+    expect.soft(beforeRegrade?.state?.reps).toBe(4);
+    expect
+      .soft(await masteryRow('kc_a'))
+      .toMatchObject({ evidence_count: 4, success_count: 3, fail_count: 1 });
+    await seedEvaluation(a, 'preserved_a3', {
+      attempt: 3,
+      unitResults: [unitResult(`${a.qid}::u`, 1)],
+    });
+    expect(
+      await activate('preserved_a3', { effectiveId: 'preserved_a2', generation: 2 }, laterTime),
+    ).toMatchObject({ status: 'activated', effect: 'applied' });
+    expect.soft((await fsrsRow('knowledge', 'kc_a'))?.state).toEqual(beforeRegrade?.state);
+    expect
+      .soft(await masteryRow('kc_a'))
+      .toMatchObject({ evidence_count: 4, success_count: 4, fail_count: 0 });
+  });
+});

@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。Linear归零持续推进，当前60项未完成；1047/#1562已合入main ad8dad75。当前单线1047原生pi执行与正式入口迁移；766恢复取舍与588 UI具体方案待回复，依赖不追新。
+> 更新于2026-10-04。Linear归零持续推进，当前60项未完成；1047/#1563已合入main 448ffe42。当前单线1047评级结算与正式入口迁移；766恢复取舍与588 UI具体方案待回复，依赖不追新。
 
 ## NOW
 
@@ -77,9 +77,9 @@
 
 - YUK-1091/#1561已交付main cd61afab（19:51UTC）：138unit136DB82migration/本地gates；初审1项联合时点P1先RED后修，修复后50DB，唯一验证审2探针39DB，最终joint20DB/typecheck/lint/build通过。exact-head CI37228786465（82迁移34浏览器）/17分钟窗完成，Linear Done。
 - YUK-1047/#1562已交付main ad8dad75（20:18UTC）：94unit72DB/全部本地gate；初审1项内嵌图P1先RED后修，唯一验证3原探针5分支探针94unit通过；exact-head CI37230475644实际82迁移34浏览器/17分钟窗通过。八入口仍legacy，票In Progress。
-- YUK-1047/#1563：初审确认失败已知费用低估、成功缺usage误记零两项P1，正式3DB先RED后修。修复后281unit30DB/typecheck/lint299/build/11audits通过；真实pi离线SSE覆盖缺usage/明确零/非零。初次CI任务清单四→五断言已修；唯一验证审100unit+原3DB/真实driver探针通过，新CI37232936402（82迁移34浏览器）已绿，17分钟窗至20:56:36。八正式入口仍legacy。
+- YUK-1047/#1563已合入main448ffe42：281unit30DB/本地gates、独立初审2P1修复及唯一验证100unit+3DB/真实driver、exact-head CI37232936402（82迁移34浏览器）与17分钟窗通过。冻结原生pi执行、已知失败费与真实missing usage保真已交付；八入口仍legacy。
 
-- YUK-1047后续评级片：独立worktree修复D14手动FSRS与自动theta独立、D16 assisted须显式手动FSRS；3DB先RED，107unit88DB/本地gates通过；初审2P1（历史重激活改评级、用户守卫吞新练习）正式回归先RED后修，交错新练习后重评再补1RED。修复后93DB通过，唯一验证审待收口。
+- YUK-1047评级片：显式用户FSRS选择与自动theta独立；D16 assisted须显式选择。初审2P1已修；唯一验证原探针/61DB通过但发现更早练习晚到时遗漏保留FSRS段。作者正式回归先RED，再修独立FSRS段重放；两次晚到+再次重评保持4次复习与4条theta。最终94DB/typecheck/lint299/build/schema/partition通过，前107unit及其余8audits通过；审查预算已用完，不宣称第三审。准备推送exact-head CI。
 
 ## NEXT
 

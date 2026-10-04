@@ -169,6 +169,8 @@ interface SettlementPlan {
 }
 
 interface AppliedSettlementEvent {
+  /** A retained scheduling segment; its former theta/calibration is already undone. */
+  fsrsOnly: boolean;
   id: string;
   groupId: string;
   evaluationId: string;
@@ -462,6 +464,7 @@ function planSubjects(plan: SettlementPlan): Set<string> {
 }
 
 interface SettlementEventRow {
+  fsrsOnly: boolean;
   id: string;
   createdMs: number;
   groupId: string | null;
@@ -495,6 +498,7 @@ async function loadSettlementEvents(tx: Tx): Promise<SettlementEventRow[]> {
     );
     out.push({
       id: row.id,
+      fsrsOnly: p.fsrs_only === true,
       createdMs: coerceMs(row.created_at) ?? 0,
       groupId: typeof p.evaluation_group_id === 'string' ? p.evaluation_group_id : null,
       evaluationId: typeof p.evaluation_id === 'string' ? p.evaluation_id : null,
@@ -522,29 +526,48 @@ async function loadSettlementEvents(tx: Tx): Promise<SettlementEventRow[]> {
   return out;
 }
 
-/** live applied 结算（applied 且未被任何后续事件 revert/supersede/replay）。 */
+/** Live settlements plus user FSRS segments retained after their verdict was superseded. */
 function liveAppliedSettlements(rows: SettlementEventRow[]): AppliedSettlementEvent[] {
   const dead = new Set<string>();
+  const deadFsrs = new Set<string>();
   for (const row of rows) {
+    // A replacement with no FSRS effect kept its predecessor's scheduling
+    // bracket. All other reverted/replayed scheduling brackets are gone.
+    for (const id of row.revertedIds) {
+      if (id !== row.supersedesSettlementEventId || row.fsrsApplied.length > 0) {
+        deadFsrs.add(id);
+      }
+    }
+    if (row.replayOf) deadFsrs.add(row.replayOf);
     if (row.supersedesSettlementEventId) dead.add(row.supersedesSettlementEventId);
     for (const id of row.revertedIds) dead.add(id);
     if (row.replayOf) dead.add(row.replayOf);
   }
   const live: AppliedSettlementEvent[] = [];
   for (const row of rows) {
-    if (row.effect !== 'applied' || dead.has(row.id) || row.occurrenceMs === null) continue;
+    if (row.effect !== 'applied' || row.occurrenceMs === null) continue;
+    const retainedFsrs =
+      dead.has(row.id) &&
+      !deadFsrs.has(row.id) &&
+      row.inputs?.ratingSource === 'user' &&
+      row.fsrsApplied.length > 0;
+    if (dead.has(row.id) && !retainedFsrs) continue;
     if (row.inputs === null) continue; // 无 replay 输入的 applied 行不可参与闭包
+    const fsrsOnly = retainedFsrs || row.fsrsOnly;
     live.push({
+      fsrsOnly,
       id: row.id,
       groupId: row.groupId ?? '',
       evaluationId: row.evaluationId ?? '',
       occurrenceMs: row.occurrenceMs,
       createdMs: row.createdMs,
-      subjects: row.subjects,
+      subjects: fsrsOnly ? new Set(row.fsrsApplied) : row.subjects,
       fsrsApplied: row.fsrsApplied,
-      familyObservationRecorded: row.familyObservationRecorded,
-      familyFold: row.familyFold,
-      inputs: row.inputs,
+      familyObservationRecorded: !fsrsOnly && row.familyObservationRecorded,
+      familyFold: fsrsOnly ? null : row.familyFold,
+      inputs: fsrsOnly
+        ? { ...row.inputs, theta: { applied: false, abstainReason: 'retained_user_rating' } }
+        : row.inputs,
     });
   }
   return live;
@@ -760,7 +783,11 @@ async function revertSettlementMember(
       return { kind: 'family_fold_drift', settlementEventId: member.id };
     }
   }
-  const segments: Array<'theta' | 'fsrs'> = options.skipFsrsSegment ? ['theta'] : ['theta', 'fsrs'];
+  const segments: Array<'theta' | 'fsrs'> = member.fsrsOnly
+    ? ['fsrs']
+    : options.skipFsrsSegment
+      ? ['theta']
+      : ['theta', 'fsrs'];
   for (const segment of segments) {
     const checkpointId = `${member.id}:checkpoint:${segment}`;
     const result = await orchestrateCascadeRevert(tx, checkpointId, {
@@ -784,6 +811,7 @@ async function revertSettlementMember(
   // 重建（标签摘除）后跌破 RECALIBRATION_MIN_LABELS 的题须显式清 stale b_calib
   // （grounding §8：recalibrateQuestion below_threshold 不清旧值，重建路径必须
   // 自己显式清——否则已撤销作答留下的 b_calib 继续喂 effectiveB）。
+  if (member.fsrsOnly) return null;
   const removedLabels = await tx
     .delete(difficulty_calibration_label)
     .where(eq(difficulty_calibration_label.attempt_event_id, member.id))
@@ -819,6 +847,7 @@ async function writeSettlementEvent(
     revertedIds: string[];
     appliedOutcome: ApplyOutcome | null;
     reasonDetail?: Record<string, unknown>;
+    fsrsOnly?: boolean;
   },
 ): Promise<void> {
   const plan = input.plan;
@@ -871,6 +900,7 @@ async function writeSettlementEvent(
       // replay_required 时是 replay 消费者需要的冲突域，不是空集）。
       planned_subjects: plan ? [...planSubjects(plan)].sort() : [],
       replay_inputs: plan ?? null,
+      ...(input.fsrsOnly ? { fsrs_only: true } : {}),
       ...(input.reasonDetail ?? {}),
     },
     caused_by_event_id: null,
@@ -915,7 +945,9 @@ export async function learningSettlement(input: ActivationSettleInput): Promise<
   const live = liveAppliedSettlements(rows);
   const priorEffectiveId = input.head.effective_evaluation_id;
   const replaced: AppliedSettlementEvent[] = priorEffectiveId
-    ? live.filter((m) => m.groupId === plan.groupId && m.evaluationId === priorEffectiveId)
+    ? live.filter(
+        (m) => !m.fsrsOnly && m.groupId === plan.groupId && m.evaluationId === priorEffectiveId,
+      )
     : [];
   if (replaced.length > 1) {
     // 同一 effective evaluation 有 >1 live applied 结算 = 数据不一致（CAS 应
@@ -1063,6 +1095,7 @@ export async function learningSettlement(input: ActivationSettleInput): Promise<
           replayOf: member.id,
           revertedIds: [member.id],
           appliedOutcome: reOutcome,
+          fsrsOnly: member.fsrsOnly,
         });
       }
       return mine;
