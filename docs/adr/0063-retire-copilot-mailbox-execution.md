@@ -4,6 +4,9 @@ status: accepted
 
 # Retire the drained Copilot mailbox execution path
 
+> **2026-10-04 mechanism amendment (YUK-1119):** Mailbox retirement, retained physical names, installation drain and live remote ToolOperations ownership remain accepted. Native children now execute as nested pi loops in the same parent; SDK wording below is historical and does not authorize reviving the old runtime or continuation handlers.
+> See [ADR-0065](./0065-pi-execution-and-conversation-replay.md) for the approved migration and current source evidence.
+
 ADR-0062 makes every Copilot message part of one persistent conversation; therefore
 ADR-0056's foreground-only exception and separate durable worker child no longer
 apply. After a deployed full drain window, remove the old mailbox researcher,

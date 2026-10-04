@@ -235,25 +235,26 @@ interface DomainTool<Input, Output> {
 }
 ```
 
-`src/server/ai/tools/registry.ts` 静态装配 capability manifests；MCP bridge 把选中的 DomainTool
-包成 in-process server。独立远程 MCP server 仍推后，不作为当前产品内 tool 架构核心。
+`src/server/ai/tools/registry.ts` 接收 capability manifests 在启动期注册的 DomainTools；
+pi mount 将选中的工具编译为 `AgentTool`，执行委托共享 `executeDomainToolCall` 管线。
+远程 MCP 是现役工具来源之一，不等同于向外发布产品级 MCP server。
 
-当前所有注册工具均阻塞到结果返回；`search_memory_facts` 不再产生新的 `tool_operation`，
-七个旧 operation/subagent 控制工具也不再向模型注册。独立研究使用只读 depth-1 原生 Task，
-结果回到同一个父请求；只有显式 Mission 使用持久化根任务。
-历史 safeHandoff/ToolOperations 的 ownership、取消、lost/side-effect-risk 与队列恢复代码仅保留
-排空兼容义务；删除它们须先取得部署后的零未结算记录、零 queued/active jobs 证据。
-`generate_goal_outline`、`generate_question_candidate`、所有 propose/write 与外部 MCP 都不会自动后台化。
+当前工具阻塞到结果或取消/期限终态，不向模型返回旧 45 秒 yield 句柄。
+Copilot 由服务端持久受理和顺序执行，浏览器只订阅；没有独立 Mission 会话入口
+（ADR-0062）。只读 depth-one pi child 在原父执行内返回结果，不生成自动付费根续接。
+旧 mailbox researcher/continuation 执行路径已退役；`subagent_run` 保留原生子任务投影，
+ToolOperations 仍拥有真实远程工具执行、租约、取消和终态审计，不能笼统视为 drain-only
+历史代码。安装排空与保留名称的边界见 ADR-0063，pi 机制见 ADR-0065。
 
 **循环控制现状**：
 
-`TaskBudget.maxIterations` 映射到 runner `maxTurns`（pi adapter 的 `shouldStopAfterTurn` 计数，超限出 `error_max_turns` 终态），`timeout` 由 runner 的 `AbortController` 执行（cooperative abort）。`TaskBudget.maxCost` 当前不落任何 per-run 美元闸——pi catalog 成本是估算值，从不作 contractual USD 使用；mimo（不回 cost）与 subscription OAuth（flat quota）同样不挂伪美元闸。`TaskBudget.transientRetries` 控制 runner 对**同一已解析目标**的进程内瞬时重试（仅两个 vision judge opt-in，六道门控：ctx opt-in / 无 override 钉死 / 无全局 env 钉死 / 白名单瞬时分类 / 次数封顶 / elapsed 墙钟门）。durable job 的 transient 层是 pg-boss 队列显式重投（`queue-config.ts` retryLimit=2 + 30s 退避），二者互斥不叠加。YUK-590 另把 provider API retry 默认收窄到 2（运维可用 `CLAUDE_CODE_MAX_RETRIES` 覆盖，pi adapter 进程内 `maxRetries`），让 5xx 终态在任务预算内回到 loom 分类层。YUK-842 在 resolved provider 后，用 Postgres 短事务为完整 pi session 做跨 app/worker 的 active session-family/parallel-branch 与 start-reservation admission：本地 prompt/options 先物化，随后在 admission slot 内以 45s initial lease 调用 adapter `startup()`（不发送 prompt 的 model/auth 预检）；startup 成功后先以 claim-token CAS 显式切换到 15s steady lease，才创建 `ai_task_runs`、启动剩余 model timeout 并调用一次 `query()`。lease protocol v2 进入 policy fingerprint；只有 steady heartbeat 以 15s horizon 单调续租、不缩短已确认 expiry。排队和 startup 不计 model timeout，也不制造未调用模型的 unknown-cost attempt；`hard_reclaim_at` 显式包含 startup budget + model timeout + abort grace。Hono 组合根为每个已鉴权 `/api/*` 请求创建同一个 90s absolute provider-session deadline，request 内所有 central runner 的串行、并行与嵌套调用都自动取该 deadline 与显式 caller deadline 的较早者；adapter startup 与 model timer 只能消费剩余预算，adapter 返回后还会重新栅栏 lease、abort 与 absolute deadline，不能把迟到 success 记成成功。Copilot 另用同一个 kernel 常量生成显式 fallback deadline 并传给 teaching/free-form 主调用与 nested central task，以覆盖直接 handler 测试及可能脱离 handler 的工作；生产 runner 仍以更早的 request scope 为准。durable worker 没有 HTTP request scope，保留 task 的完整执行预算。同 lane tool 内嵌 task 的一条 descendant chain 借父 family 槽以避免自锁，parallel sibling 必须排队或占另一 root 槽，且每个 child 仍独立记录 start reservation；父先结束时仍运行的 child 接管该 family 槽。短 lease 丢失会 abort，外部 provider 无真实 fencing，故 active family 在 `hard_reclaim_at` 前继续隔离。
+`TaskBudget.maxIterations` 映射到 runner `maxTurns`（pi 1.0 adapter 的 `finishTurn` 计数，超限出 `error_max_turns` 终态），`timeout` 由 runner 的 `AbortController` 执行（cooperative abort）。`TaskBudget.maxCost` 当前不落任何 per-run 美元闸——pi catalog 成本是估算值，从不作 contractual USD 使用；mimo（不回 cost）与 subscription OAuth（flat quota）同样不挂伪美元闸。`TaskBudget.transientRetries` 控制 runner 对**同一已解析目标**的进程内瞬时重试（仅两个 vision judge opt-in，六道门控：ctx opt-in / 无 override 钉死 / 无全局 env 钉死 / 白名单瞬时分类 / 次数封顶 / elapsed 墙钟门）。durable job 的 transient 层是 pg-boss 队列显式重投（`queue-config.ts` retryLimit=2 + 30s 退避），二者互斥不叠加。YUK-590 另把 provider API retry 默认收窄到 2（运维可用 `CLAUDE_CODE_MAX_RETRIES` 覆盖，pi adapter 进程内 `maxRetries`），让 5xx 终态在任务预算内回到 loom 分类层。YUK-842 在 resolved provider 后，用 Postgres 短事务为完整 pi session 做跨 app/worker 的 active session-family/parallel-branch 与 start-reservation admission：本地 prompt/options 先物化，随后在 admission slot 内以 45s initial lease 调用 adapter `startup()`（不发送 prompt 的 model/auth 预检）；startup 成功后先以 claim-token CAS 显式切换到 15s steady lease，才创建 `ai_task_runs`、启动剩余 model timeout 并调用一次 `query()`。lease protocol v2 进入 policy fingerprint；只有 steady heartbeat 以 15s horizon 单调续租、不缩短已确认 expiry。排队和 startup 不计 model timeout，也不制造未调用模型的 unknown-cost attempt；`hard_reclaim_at` 显式包含 startup budget + model timeout + abort grace。Hono 组合根为每个已鉴权 `/api/*` 请求创建同一个 90s absolute provider-session deadline，request 内所有 central runner 的串行、并行与嵌套调用都自动取该 deadline 与显式 caller deadline 的较早者；adapter startup 与 model timer 只能消费剩余预算，adapter 返回后还会重新栅栏 lease、abort 与 absolute deadline，不能把迟到 success 记成成功。Copilot 另用同一个 kernel 常量生成显式 fallback deadline 并传给 teaching/free-form 主调用与 nested central task，以覆盖直接 handler 测试及可能脱离 handler 的工作；生产 runner 仍以更早的 request scope 为准。durable worker 没有 HTTP request scope，保留 task 的完整执行预算。同 lane tool 内嵌 task 的一条 descendant chain 借父 family 槽以避免自锁，parallel sibling 必须排队或占另一 root 槽，且每个 child 仍独立记录 start reservation；父先结束时仍运行的 child 接管该 family 槽。短 lease 丢失会 abort，外部 provider 无真实 fencing，故 active family 在 `hard_reclaim_at` 前继续隔离。
 
 ### 5.3 成本控制
 
 - 同步任务（用户操作时跑）：归因、学习意图、review intent、teaching turn 等。
 - 异步任务（pg-boss）：OCR、session summary、knowledge proposal、knowledge edge proposal、note generation、variant generation、review-session pruning。
-- 模型分级：registry 用 `defaultProvider/defaultModel` 指定当前模型，Provider Manager 解析到 `ResolvedProvider`（credential/baseUrl/model），pi adapter 映射到 loom catalog 条目（`pi-models.ts`）。
+- 模型分级：registry 用 `defaultProvider/defaultModel` 指定当前模型，Provider Manager 解析到 `ResolvedProvider`（credential/baseUrl/model），pi adapter 解析原生 `builtinModels()` provider/model 条目（`pi-models.ts`），包括协议、compat 与原生认证/请求头规则。
 - 每次调用写 `ai_task_runs` / `ai_cost_ledger`；tool 调用写 `ai_tool_calls`。
 - **尚未实现**：per-run 美元硬预算（pi catalog 成本为估算值，无 contractual USD 信号可闸）、跨 provider fallback（owner 决策项，落点是 VISION_JUDGE_* 式 env 杆而非 registry 字段）、结果缓存、prompt caching 策略，以及 YUK-845 所列 non-runner DashScope/Mem0/GLM/OCR/Tencent 出站 admission。已实现：同目标瞬时重试（vision judges）、队列显式 retryLimit、stuck-run reconcile sweeper、central pi query-session admission（默认 off，`off → observe → enforce` 运维见 `docs/runbooks/provider-session-admission.md`），以及 Hono request-scope 的 90s central-session wall-clock fence。后者是 deadline，不是逐 HTTP wire request 的 RPM/并发限流。
 
@@ -329,12 +330,16 @@ Dreaming 和 Maintenance lane 当前跑在 self-hosted Node worker + pg-boss 上
 ### 5.7 Persistent Copilot and native research
 
 Copilot durably accepts every message into one persistent conversation; transport disconnect only
-detaches observation, while explicit Stop cancels execution. Native SDK `Task` performs bounded
-read-only research inside its parent and returns to that same parent. SDK session reuse requires
-the execution owner to retain the matching live cursor; process restart uses causal product history.
-The drained legacy mailbox researcher and automatic continuation have been removed. Historical rows,
-native child projections and parent-owned recovery remain; no separate Mission conversation is created.
-See ADR-0062 and ADR-0063.
+detaches observation, while explicit Stop cancels execution. Bounded read-only research uses a depth-one
+nested pi loop and returns to the same parent. The process-owned `pi:` cursor occupies the retained
+`agent_sdk_session_id` column; resume seeds bounded durable turns into pi context. Cold execution folds
+history into its prompt once. There are no SDK session files, and retaining a cursor does not prove
+cross-process storage or authorize replay of paid work. The drained legacy mailbox researcher and
+automatic continuation are removed. Historical rows, native child projections, live remote ToolOperations
+and parent-owned recovery remain; no separate Mission conversation is created.
+See [ADR-0062](adr/0062-unified-copilot-conversation-lifecycle.md),
+[ADR-0063](adr/0063-retire-copilot-mailbox-execution.md) and
+[ADR-0065](adr/0065-pi-execution-and-conversation-replay.md).
 
 ## 六、技术栈
 

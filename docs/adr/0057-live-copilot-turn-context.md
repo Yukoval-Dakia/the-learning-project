@@ -1,5 +1,8 @@
 # ADR-0057 — Capability-owned live Copilot turn context
 
+> **2026-10-04 mechanism amendment (YUK-1119):** Capability-owned turn context and correction binding remain. SDK session files and the transport claim “resume never replays history” are historical: pi resume seeds bounded durable turns, while cold prompts fold history once. ADR-0060 replaces learner-state omission; current learner state is delivered every turn, with proposal feedback still digest-gated. ADR-0062 supersedes the three product execution forms below.
+> See [ADR-0065](./0065-pi-execution-and-conversation-replay.md) for the approved migration and current source evidence.
+
 **Status:** Accepted
 **Decision source:** owner 2026-09-05 delegated architecture decisions for low token use, modern structure, and advanced agent capability; YUK-939
 **Related:** ADR-0051 · ADR-0054 · ADR-0055 · ADR-0056

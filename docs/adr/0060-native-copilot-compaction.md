@@ -1,5 +1,8 @@
 # ADR-0060: Native Copilot compaction remains in one live session
 
+> **2026-10-04 mechanism amendment (YUK-1119):** The decision below records the retired SDK implementation. Current nativeCompaction is deterministic pi transformContext history pruning (85% trigger / 60% target), with current system/tool replay and bounded session-context reinjection. It does not generate a model summary. Pi resume does replay bounded durable history. ADR-0062 governs current execution lifecycle/budgets; this record does not reinstate a six-iteration inline product mode.
+> See [ADR-0065](./0065-pi-execution-and-conversation-replay.md) for the approved migration and current source evidence.
+
 ## Decision
 
 Copilot foreground live sessions explicitly enable the Claude Agent SDK's
