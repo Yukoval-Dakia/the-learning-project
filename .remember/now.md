@@ -1,13 +1,10 @@
 # Current handoff — 2026-10-04
-Ownergoal Linearzero; no dependency chasing, no stop afteronePR. 62open.
-588backend/#1554merged16:22:45UTC main8ecb4f640739c6263a3d242389d6624a6b6d79c7.
-52DB50unit/alllocalgates. InitialCIweeklymidnightfixtureRED reproducedwithDate-only clock; fixed3boundarycases,28DB6unitPASS.
-Independentinitial+soleP1verification6DB6unitPASS, runtimehashunchanged; reviewbudgetexhausted.
-Finalhead6185e457 CI37215466305SUCCESS actual82migration34browser;17minwindowdone.
-588Todo: UIpreflight /tmp/yuk588-ui-preflight.md stillNOreply. BackenddeliverynotwholeissueDone.
-Active1119 /workspace/tlp-pi-docs docs/yuk-1119-pi-mechanisms base8ecb4f64.
-Docs-onlyADR0065: approvedmigration/nativerouting/replay/pruning/estimatedcost/retainedhistory;oldADRmechanismannotations;0054AcceptedproofPR1313ownerLGTM+merge;roothealth+ready andagency/notesmanifestguides;architecture5.2/5.7.
-Fourdriftreports1515/1517/1519/1531includedwithsourcecorrections;closereportPRsassupersededonlyafterdelivery,preservebranches.
-Nextlocalgates/independentreview/exactheadCI17minwindow. NoUI/runtime/schema/lockfilechange.
-Then766downstreamqueueclosure/1091groupfinalization remainTodo. Groundingrootignored .remember/2026-10-04-backup-next-grounding.md andyuk1119-grounding.md.
-PreserveHOLDs/branches/worktrees, singleimplementationline, no prod/paidcalls, localfulltestforbidden.
+Owner goal: continue Linear zero; no dependency chasing, no stop after one PR.
+1119/#1555 merged16:46:08UTC main e3001200a0324d699700ab582112c284c5c1e94f.
+22Markdownonly;localtypecheck/lint299/build/10auditsPASS,independentinitialnoP0P1,CI37216925990green,17minwindowdone. Docs-only CI test steps skipped, not actualtests. FourreportPRs1515/1517/1519/1531closed;branchespreserved.1119Done,61open.
+Active181 /workspace/tlp-tool-fixtures test/yuk-181-tool-scenarios basee3001200.
+182Doneunblocks;18baselineDBPASS,6newcurrentchainfixtures24DBPASSincludingnegativecitationchecks. Final24DB/typecheck/lint299/build/10auditsPASS. Independentinitial24DBPASS,noP0P1/substantiveP2;frozenpatchSHAf13ad7b60d413f20800993b66d67d225d23bac998418e6b7a0da4a6e4ea63071. Push/exactheadCI/17minwindownext. No model/prod/UI/route/schema changes. Modelstubs mandatory, not realmodelqualityevidence.
+766Todo:three-tablebackup#1553alreadydelivered. RemainingLIGHT/FULLproducttradeoff sentasync with/tmp/yuk766-recovery-options.md;NOanswer. Do notinferapproval. LIGHT rejectunsafe logicalrestorebeforewipe, FULL durableworkreceipts/recovery;fullpgdump existingDR.
+588backend#1554main8ecb4f64delivered;UIpreflight/tmp/yuk588-ui-preflight.md stillNOanswer,588Todo.
+1091Todo:jointmulti-submissionmodelstillunfixed;41DBbaseline3filesPASS.1051LinearprovesoriginalUIpreflightAPPROVED, olddocheaderstale;nonewapprovalneededwithinoriginalscope. Cannotjustmoveheadorcollapseindependentquestions.
+AllHOLDs/production/paidboundsremain. Singleline,keepbranches/worktrees;fullpnpmtestlocalforbidden. Rootignoredhandoffsfor1119/588/backupcontainfullsourcefacts.

@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。Linear归零持续推进，62项未完成；588后端/#1554已合入main8ecb4f64，UI待预审回复。当前单线1119 pi机制文档校准；不追依赖，既有HOLD与生产/付费边界保持。
+> 更新于2026-10-04。Linear归零持续推进，当前61项未完成；1119/#1555已合入maine3001200。当前单线181工具链场景；766恢复取舍与588 UI具体方案待回复，依赖不追新。
 
 ## NOW
 
@@ -66,18 +66,20 @@
 - YUK-766/#1553已交付main69c524df：8语义DB回归先RED，62DB/83unit与全部本地gate通过；初审旧API fixture/mock阻塞修复后唯一验证审16unit/15DB通过，CI37211421697及17分钟窗完成。增量迁移/浏览器未实际运行；下游队列恢复仍Todo。
 
 - YUK-588/#1554后端已交付main8ecb4f64：52DB/50unit、全部本地gate；初次CI发现旧周报午夜fixture竞态，固定Date先RED再修，28DB6unit通过。独立初审及唯一验证审6DB6unit通过，最终head6185e457的CI37215466305全绿（82迁移/34浏览器），17分钟窗完成；588Todo，UI具体预审仍待回复。
-- YUK-1119 active：/workspace/tlp-pi-docs，docs/yuk-1119-pi-mechanisms，base8ecb4f64。新增现行pi机制ADR与历史替代注记，校准runtime指引，归并1515/1517/1519/1531四份报告并保留历史；纯文档，无运行时/依赖/生产操作。待本地gate、独立review、exact-head CI与17分钟窗。
 
+
+- YUK-1119/#1555已交付maine3001200：22 Markdown文件，pi机制ADR0065、历史说明和四份漂移报告归并；本地gates/独立初审/exact-head CI37216925990及17分钟窗通过。docs-only CI测试步骤跳过，不计实际测试。旧报告PR1515/1517/1519/1531关闭且保留分支。
+- YUK-181 active：/workspace/tlp-tool-fixtures，test/yuk-181-tool-scenarios，basee3001200；182已Done解除前置。六类现役工具链与多语料fixture；24DB含负向引用校验、typecheck/lint299/build/10audits通过；独立初审24DB通过且无P0/P1或实质P2，待push/exact-head CI与17分钟窗。模型全部stub，不新增生产能力。
 
 ## NEXT
 
-1. 完成1119文档归并；588具体UI预审待回复；随后继续766下游队列恢复与1091联合组模型的完整验收。持续推进Linear归零，不以单批合并作为终点。
+1. 完成181现役工具链场景；766下游恢复LIGHT/FULL待owner裁决，1091联合组模型保持Todo，588费用UI具体预审待回复。持续推进Linear归零，不以单批合并作为终点。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
 ## PARKED
 
-- YUK-766本批只交付三表一致快照及恢复claim清理；pg-boss队列不在逻辑ZIP，enqueued effect不代表业务完成，下游队列恢复闭环仍在原票，未执行生产恢复。
+- YUK-766本批只交付三表一致快照及恢复claim清理；pg-boss队列不在逻辑ZIP，enqueued effect不代表业务完成，下游队列恢复闭环仍在原票。LIGHT清库前拒绝不安全逻辑恢复/FULL执行回执与自动恢复的具体取舍已提交owner，待回复；未执行生产恢复。
 - YUK-1062基线完整catalog并非浏览器安全：Node crypto纯helper已在旧TaskSpecs闭包内。本批保留定义、修正说明，窄公开入口只保证不初始化应用DB，不承诺新增浏览器支持。
 
 - 1064本批同步audit:relations confusable reader真实路径至kernel/read-models/confusables.ts；原误报DEAD/STALE已消除。既有applied_in/observed_in治理信号不在此批扩面。
@@ -88,7 +90,6 @@
 - Linear 已恢复；YUK-1106已同步Done，YUK-1107暂停/Backlog，YUK-1007仍In Progress。历史待办继续逐项核验、去重后同步。
 - #1508旧pi0.87.1依赖PR仍关闭、分支保留。迁移由YUK-1112/#1523替代，见NOW，不重新开启旧PR。
 - #1506的jsdom30要求Node24.15+，仓库pin24.0.0。必须协调运行时与DOM回归。#1505的Biome2.5.14原CI有1error、375warnings，超过305基线。必须修真实diagnostics并证明计数，不抬基线放行。原分支保留。
-- 漂移待办归并YUK-1119（Todo，PR1531/1519/1517/1515等报告同源）。同步ADR-0003/0004及0054–0060的SDK→pi机制与0054状态记录；保留产品决策，不恢复SDK、不先宣称全部行为等价。另核对agency/notes manifest概要、根AGENTS的 `/api/ready` token豁免说明；无consumer的 `SKIP_BOSS_INGEST` 声明已由1088/#1548清理。证据见 `docs/audit/2026-09-28-drift.md`、`2026-09-29-drift.md`、`2026-09-30-drift.md`，不建三个重复票。
 - 状态同步：1007预算/写HTTP/首批设置UI/三项读面修复已交付；epic剩余范围保持In Progress。1107暂停且未证明120秒，不标Done。D18新付费评测待单独授权。
 - YUK-1106的#1512阻塞已解除。原 `278a4e936` 的CI `36725357009` 在 `assessment-verdict.db.test.ts:332` 收到j_new、预期j_old。源码diff确认它缺少#1504的候选排序，不是已修代码复发。先合#1504，再同步main，原19项DB用例和新head完整CI `36729120083` 通过。未rerun原SHA，未删断言。原日志封存 `.remember/tmp/pr-closeout-20260930/1512-shard4.log`；Linear恢复后归并原票，不开重复票。
 - YUK-1007两项读面P2已由#1549交付：typed provider实现展示，以及vision逐consumer诊断。原global pin、vision有效性、subscription调度三项由#1538交付。其他未批准编辑控件保持只读。
