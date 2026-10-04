@@ -70,6 +70,16 @@ export interface AdminConfigRuntimeSection {
 
 /** 组合根注入的完整事实束（每请求重算——工厂形态保热加载新鲜度）。 */
 export interface AdminConfigRuntimeFacts {
+  readonly task_bindings?: Readonly<
+    Record<
+      string,
+      {
+        provider: string | null;
+        model: string | null;
+        error: string | null;
+      }
+    >
+  >;
   readonly providers: readonly AdminConfigProviderRow[];
   readonly infra_schedules: readonly AdminConfigScheduleRow[];
   readonly runtime: AdminConfigRuntimeSection;

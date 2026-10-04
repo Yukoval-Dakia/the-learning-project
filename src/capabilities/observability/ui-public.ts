@@ -15,3 +15,6 @@ export const loadAdminCoverageLatticeSurface = () =>
   import('./ui/coverage-lattice').then((module) => module.AdminCoverageLatticeSurface);
 export const loadAdminConjectureScoresSurface = () =>
   import('./ui/conjecture-scores').then((module) => module.AdminConjectureScoresSurface);
+
+export const loadAdminConfigSurface = () =>
+  import('./ui/config').then((module) => module.AdminConfigSurface);

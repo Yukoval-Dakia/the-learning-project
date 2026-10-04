@@ -10,6 +10,7 @@
 // 诚实性：effective 值全部来自真实 reader 调用（不复制规则）；reader 输出非单
 // 一标量的键（admission 按 lane、jyeoo backfill 按会话）只给 note；providers[]
 // 只带 key presence 布尔与 env 名字，值绝不进 payload。
+import { type TaskKind, tasks } from '@/ai/registry';
 import { getLearnerLocale } from '@/ai/task-prompts';
 import { capabilities } from '@/capabilities';
 import { copilotConfigEffectiveFacts } from '@/capabilities/copilot/public';
@@ -32,6 +33,7 @@ import {
   isProviderLaneReady,
   providerAuthSurface,
   readGlobalProviderSwitch,
+  resolveTaskProvider,
 } from '@/server/ai/providers';
 import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
 import { INFRA_HOUSEKEEPING_SCHEDULES } from '@/server/boss/handlers';
@@ -193,6 +195,24 @@ export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
   }
 
   return {
+    task_bindings: Object.fromEntries(
+      Object.keys(tasks).map((kind) => {
+        const task = tasks[kind as TaskKind];
+        if ('execution' in task && task.execution === 'typed') {
+          return [kind, { provider: task.defaultProvider, model: task.defaultModel, error: null }];
+        }
+        try {
+          const binding = resolveTaskProvider(kind as TaskKind);
+          // Explicit allowlist: never expose the binding's auth, headers or URLs.
+          return [kind, { provider: binding.provider, model: binding.model, error: null }];
+        } catch {
+          return [
+            kind,
+            { provider: null, model: null, error: '当前配置不可用，请检查模型目录与服务端凭据。' },
+          ];
+        }
+      }),
+    ),
     providers,
     infra_schedules: infraSchedules,
     runtime: {

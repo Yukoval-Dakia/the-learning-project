@@ -221,6 +221,15 @@ export const UI_SURFACES = [
     search: { label: 'Coach', keywords: '周报 教练' },
   },
   {
+    id: 'admin-config',
+    route: '/admin/config',
+    owner: 'observability',
+    kind: 'page',
+    title: '配置',
+    activeId: 'admin',
+    search: { label: 'Admin · 配置', keywords: 'settings config provider model 语言 模型' },
+  },
+  {
     id: 'admin-runs',
     route: '/admin/runs',
     owner: 'observability',

@@ -204,6 +204,11 @@ describe('GET /api/admin/config — injected runtime facts over HTTP (real build
     vi.stubEnv('XIAOMI_API_KEY', 'sk-http-facts-canary-xiaomi-9f1a');
     const body = AdminConfigResponseSchema.parse(await (await get()).json());
     expect(body.facts_injected).toBe(true);
+    expect(body.tasks.find((task) => task.kind === 'QuizGenTask')?.effective_binding).toEqual({
+      provider: 'xiaomi',
+      model: 'mimo-v2.5-pro',
+      error: null,
+    });
 
     expect(body.providers.length).toBe(8);
     const byName = new Map(body.providers.map((row) => [row.name, row]));

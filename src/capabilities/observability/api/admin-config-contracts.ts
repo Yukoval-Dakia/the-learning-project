@@ -54,6 +54,13 @@ export const AdminConfigTaskOverrideSchema = z.object({
 
 export const AdminConfigTaskRowSchema = z.object({
   kind: z.string(),
+  effective_binding: z
+    .object({
+      provider: z.string().nullable(),
+      model: z.string().nullable(),
+      error: z.string().nullable(),
+    })
+    .nullable(),
   default_provider: z.string(),
   default_model: z.string(),
   default_budget: AdminConfigTaskBudgetSchema,
