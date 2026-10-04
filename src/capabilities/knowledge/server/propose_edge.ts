@@ -17,6 +17,7 @@ import {
 } from '@/capabilities/knowledge/tasks/knowledge-tasks';
 import type { ActivityRefT } from '@/core/schema/activity';
 import { parseAiProposalPayload } from '@/core/schema/proposal';
+import { type TopologyEdge, checkEdgeTopology } from '@/core/topology-gate';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -42,7 +43,6 @@ import {
   markEdgeReconcileApplied,
 } from './edge-reconcile-store';
 import { archiveKnowledgeEdgeFromEvents, createKnowledgeEdge } from './edges';
-import { type TopologyEdge, checkEdgeTopology } from './topology-gate';
 import { loadTreeSnapshot } from './tree';
 
 export type { EdgeProposeOutput } from '@/capabilities/knowledge/tasks/knowledge-tasks';

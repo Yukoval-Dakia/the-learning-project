@@ -3,6 +3,8 @@
 // YUK-876 / FULL F3.7b — the failure-attempt evidence + attribution read models
 // (moved from src/server/events/queries.ts) are part of this contract.
 
+// YUK-885 — public read-model ports repointed from central deep imports.
+export { isDirectTreePair } from '@/core/topology-gate';
 export { loadConfusablePairs } from '@/kernel/read-models/confusables';
 export type {
   FailureAttempt,
@@ -85,6 +87,4 @@ export {
 } from './server/proposals';
 export type { NameKcFn } from './server/tag-knowledge';
 export { isTagKnowledgeInvariantError, tagKnowledge } from './server/tag-knowledge';
-// YUK-885 — public read-model ports repointed from central deep imports.
-export { isDirectTreePair } from './server/topology-gate';
 export { loadTreeSnapshot } from './server/tree';

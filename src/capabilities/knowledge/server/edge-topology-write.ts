@@ -26,13 +26,12 @@
 //                                  propagates.
 
 import { inArray } from 'drizzle-orm';
-
+import { isDirectTreePair } from '@/core/topology-gate';
 import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
-import { isDirectTreePair } from './topology-gate';
 
 /**
  * YUK-546 — the edge-accept endpoint invariants (both endpoints live + not a direct tree pair),

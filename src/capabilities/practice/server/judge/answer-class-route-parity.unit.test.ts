@@ -23,8 +23,6 @@
 //      (without) stay behavior-synced on the profile-free dimension.
 
 import { describe, expect, it } from 'vitest';
-import { resolveQuestionJudgeRoute } from '@/capabilities/practice/server/judge/route-resolve';
-import { subjectProfiles } from '@/subjects/profile';
 import {
   ANSWER_CLASSES,
   type AnswerClass,
@@ -33,8 +31,10 @@ import {
   isKeywordConditionalAnswerKind,
   isLlmGradedAnswerKind,
   isObjectiveAnswerKind,
-} from './answer-class';
-import { defaultJudgeKindForQuestion } from './judge-routing';
+} from '@/core/schema/answer-class';
+import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
+import { subjectProfiles } from '@/subjects/profile';
+import { resolveQuestionJudgeRoute } from './route-resolve';
 
 // All 9 KNOWN kind labels (business.ts KNOWN_QUESTION_KIND_IDS order; kind is a
 // free-form label since YUK-386 — these are the recognised ids, not an enum).
