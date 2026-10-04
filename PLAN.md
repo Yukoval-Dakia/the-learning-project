@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。Linear归零持续推进，当前71项未完成；1062/#1541已合入main9a076c12。当前单线为1060内存摄取告警与显式恢复；依赖不追新，既有HOLD与生产/付费边界保持。
+> 更新于2026-10-04。Linear归零持续推进，当前70项未完成；1060/#1542已合入mainf6b9926a。当前单线为1073工具执行阶段拆分；依赖不追新，既有HOLD与生产/付费边界保持。
 
 ## NOW
 
@@ -41,11 +41,13 @@
 
 - YUK-1062/#1541已交付main9a076c12：232DB、本地gate、独立review与exact-head CI37191848104（34浏览器/82迁移）通过，17分钟窗口完成，Linear Done。
 
-- YUK-1060 active：fix/yuk-1060-memory-ingest /workspace/tlp-memory-ingest，base9a076c12；observe空投递告警与append-only单事件operator授权恢复。历史8条不重放，所有provider边界以mock验证。54unit+42DB、本地typecheck/lint299/build与十项审计通过；独立初审13unit/31DB通过，无P0/P1/实质P2，PR/CI/window待完成。
+- YUK-1060/#1542已交付mainf6b9926a：54unit+42DB、独立13unit/31DB、本地gate与exact-head CI37193674168（34浏览器/82迁移）通过，17分钟窗口完成，Linear Done；原marker/attempt保留，历史8条未重放。
+
+- YUK-1073 active：refactor/yuk-1073-tool-phases /workspace/tlp-tool-phases，basef6b9926a；具名阶段+显式结果对象替代共享errorReason突变，保留原始/执行输入、safe-handoff和日志/镜像/settle顺序。现有59unit/11DB基线通过，新阶段顺序用例在重构前后通过，61unit/11DB、typecheck/lint299/build与十项审计通过，独立初审66unit/11DB与24个新旧差分场景通过，无P0/P1或实质P2；待push后CI/17分钟窗。
 
 ## NEXT
 
-1. 交付1060内存摄取恢复后，继续1073–1079及766等已就绪主线。持续推进Linear归零，不以单批合并作为终点。
+1. 交付1073工具阶段拆分后，继续1074–1079及766等已就绪主线。持续推进Linear归零，不以单批合并作为终点。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 

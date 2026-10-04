@@ -1,15 +1,14 @@
 # Current handoff — 2026-10-04
 
-Owner goal: continue Linear zero, no dependency chasing or production/paid expansion.
-YUK1062/#1541 merged via GitHub connector; main9a076c12863463a6fe37710049bd1a190da56193.
-Exact-head CI37191848104 success, independent initialreview passed, 17min window fulfilled.
-GitHub CLI API401 at09:35, connector works and gitfetch still works; no auth changes.
-Active1060: /workspace/tlp-memory-ingest,fix/yuk-1060-memory-ingest,base9a076c12.
-Observe nullsend regression RED1/10pass then GREEN. 54unit+42DB/6files pass.
-Typecheck/lint299/build and10required audits passed. Independent initialreview passed13unit/31DB; noP0/P1/substantiveP2.
-Linear fresh census71open: Todo9/InProgress5/Backlog57.
-Operator recovery append-only grants, request-id/CAS fencing, original marker/attempts preserved.
-No automatic worker authorization reuse; strict lookup before grant-specific provider reservation.
-No production queries/replay/deployment or paid calls; YUK1042 historical8 stay owner-gated.
-Next: finish scoped DB/CLI regression, local gates, independent review, CI and17min merge window.
-Preserve all worktrees/branches and existing Astra/autonomous/night/native HOLDs.
+Owner goal: continue Linear zero, do not stop after one batch; no dependency chasing.
+YUK1060/#1542 merged10:11:48UTC mainf6b9926ae7eb14f404320891a2cf049885fbd6b7.
+54unit+42DB, all local gates, independent13unit/31DB and CI37193674168 passed;
+17minute window completed, review suggestions adjudicated5978776944,1060Done.
+No production/historical8replay or paidcalls;1042ops remains gated. 70open.
+Active1073: /workspace/tlp-tool-phases,refactor/yuk-1073-tool-phases,basef6b9926a.
+executeDomainToolCall now named phases with explicit outcomes and separate original/execution inputs.
+Preserve safe-handoff dual schema parses, proposal contract decoration, all callbacks/log/mirror/settle.
+Existing59unit/11DB baseline passed; two full-order characterization cases passed pre-refactor.
+61unit+11DB passed; typecheck/lint299/build/10audits passed. Independent initialreview66unit/11DB and24 differential scenarios passed, noP0/P1 or substantiveP2. Pendingpush/CI/17minwindow.
+Next1074–1079/766; readonly grounding in root ignored .remember/2026-10-04-*-grounding.md.
+Preserve branches/worktrees, Astra/autonomous/night/native HOLDs, two-probe paid cap exhausted.

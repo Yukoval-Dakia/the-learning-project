@@ -273,8 +273,8 @@ export interface DomainToolCallOptions {
 
 /**
  * The engine-neutral DomainTool call pipeline — parse → beforeExecute gate →
- * interceptInput → execute (+ safe-handoff) → output schema → summary →
- * onResult/onToolComplete → tool_call_log → tool_use mirror → settle. The pi
+ * interceptInput → execute (+ safe-handoff) → output schema → onResult →
+ * summary → onToolComplete → tool_call_log → tool_use mirror → settle. The pi
  * AgentTool bridge wraps this verbatim via `AgentTool.execute` in
  * pi-tools.ts. Errors never throw — they encode into the returned text
  * payload exactly as the MCP convention requires.
@@ -284,137 +284,220 @@ export async function executeDomainToolCall(
   rawArgs: unknown,
   opts: DomainToolCallOptions,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
-  const { ctx } = opts;
-  const taskKind = opts.taskKind ?? ctx.callerActor.ref;
-  const startedAt = Date.now();
-  let output: unknown = null;
-  let errorReason: string | undefined;
-  let summary = '';
-  let parsedInput: unknown = rawArgs;
-  // P5.1 / YUK-143 — input the tool actually executes with (possibly
-  // limit-capped by the context-budget interceptor) + the truncation note
-  // to merge into the output. parsedInput stays the agent-visible request
-  // for logging / mirror payloads; execInput is what runs.
-  let execInput: unknown = rawArgs;
-  let truncationNote: object | null = null;
+  const call: ToolCallContext = {
+    dt,
+    opts,
+    ctx: opts.ctx,
+    taskKind: opts.taskKind ?? opts.ctx.callerActor.ref,
+    startedAt: Date.now(),
+    gateInput: { name: dt.name, effect: dt.effect },
+    safeHandoffEnabled: Boolean(
+      dt.safeHandoff && dt.effect === 'read' && opts.ctx.sessionId !== undefined,
+    ),
+    effectContract: proposalEffectContract(dt.name, dt.effect),
+  };
+  const parsed = parseInput(call, rawArgs);
+  const gated = await runBeforeExecuteGate(call, parsed);
+  const intercepted = applyInterceptInput(call, gated);
+  const execution = decorateOutput(intercepted.input, await runExecute(call, intercepted));
+  // Failed preparation/execution still goes through every bookkeeping phase.
+  await notifyResult(call, intercepted.input, execution);
+  const summary = summarizeResult(call, intercepted.input, execution);
+  notifyToolComplete(call, intercepted.input, execution, summary);
+  const toolCallLogId = await persistToolCallLog(call, intercepted.input, execution);
+  await mirrorToolUse(call, intercepted.input, execution, summary, toolCallLogId);
+  await settleExecution(call, execution);
+  return formatToolResponse(intercepted.input, execution, summary);
+}
+
+type PhaseResult<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly error: string };
+type ToolInputState = {
+  readonly parsedInput: unknown;
+  readonly execInput: unknown;
+  readonly truncationNote: object | null;
+  readonly correlatedToolUseId?: string;
+};
+type InputPhase = { readonly input: ToolInputState; readonly result: PhaseResult<undefined> };
+type ExecutionPhase = {
+  readonly result: PhaseResult<undefined>;
+  readonly output: unknown;
+  readonly executionStarted: boolean;
+  readonly safeOperation?: ToolOperationRecord;
+  readonly safeToolOperations?: ToolOperations;
+  readonly effectContract?: ProposalEffectContract;
+};
+type ToolCallContext = {
+  readonly dt: DomainTool<unknown, unknown>;
+  readonly opts: DomainToolCallOptions;
+  readonly ctx: ToolContext;
+  readonly taskKind: string;
+  readonly startedAt: number;
+  readonly gateInput: ToolExecutionGateInput;
+  readonly safeHandoffEnabled: boolean;
+  readonly effectContract?: ProposalEffectContract;
+};
+
+function phaseError(error: unknown): { readonly ok: false; readonly error: string } {
+  return { ok: false, error: error instanceof Error ? error.message : String(error) };
+}
+
+/** Keep defined-but-empty error strings distinct from a successful phase. */
+function errorReasonOf(result: PhaseResult<unknown>): string | undefined {
+  return result.ok ? undefined : result.error;
+}
+
+function parseInput(call: ToolCallContext, rawArgs: unknown): InputPhase {
+  try {
+    const parsedInput = call.dt.inputSchema.parse(rawArgs);
+    return {
+      input: {
+        parsedInput,
+        execInput: parsedInput,
+        truncationNote: null,
+        correlatedToolUseId: call.opts.correlatedToolUseId,
+      },
+      result: { ok: true, value: undefined },
+    };
+  } catch (error) {
+    // Parse failure logs the raw request and does not claim call correlation.
+    return {
+      input: { parsedInput: rawArgs, execInput: rawArgs, truncationNote: null },
+      result: phaseError(error),
+    };
+  }
+}
+
+async function runBeforeExecuteGate(call: ToolCallContext, phase: InputPhase): Promise<InputPhase> {
+  if (!phase.result.ok) return phase;
+  try {
+    const reason = await call.opts.beforeExecute?.(call.gateInput);
+    return typeof reason === 'string' && reason.length > 0
+      ? { ...phase, result: { ok: false, error: reason } }
+      : phase;
+  } catch (error) {
+    return { ...phase, result: phaseError(error) };
+  }
+}
+
+function applyInterceptInput(call: ToolCallContext, phase: InputPhase): InputPhase {
+  if (!phase.result.ok || !call.opts.interceptInput) return phase;
+  try {
+    const intercepted = call.opts.interceptInput(
+      { name: call.dt.name, effect: call.dt.effect },
+      phase.input.execInput,
+    );
+    if (typeof intercepted.softStop === 'string' && intercepted.softStop.length > 0)
+      return { ...phase, result: { ok: false, error: intercepted.softStop } };
+    return {
+      ...phase,
+      input: {
+        ...phase.input,
+        execInput: intercepted.args,
+        truncationNote: intercepted.truncationNote ?? null,
+      },
+    };
+  } catch (error) {
+    return { ...phase, result: phaseError(error) };
+  }
+}
+
+function enforceOutputSchema(
+  dt: DomainTool<unknown, unknown>,
+  output: unknown,
+): PhaseResult<unknown> {
+  const parsed = dt.outputSchema.safeParse(output);
+  if (parsed.success) return { ok: true, value: parsed.data };
+  // Values stay redacted; field paths and their order are the error contract.
+  const paths = parsed.error.issues.map((issue) => issue.path.join('.') || '(root)').join(', ');
+  return { ok: false, error: `output_schema_invalid: ${paths}` };
+}
+
+async function runExecute(call: ToolCallContext, phase: InputPhase): Promise<ExecutionPhase> {
+  const { dt, opts, ctx, gateInput } = call;
+  const { execInput, correlatedToolUseId } = phase.input;
   let executionStarted = false;
   let safeOperation: ToolOperationRecord | undefined;
   let safeToolOperations: ToolOperations | undefined;
-  let correlatedToolUseId: string | undefined;
-  const gateInput = { name: dt.name, effect: dt.effect };
-  const safeHandoffEnabled = dt.safeHandoff && dt.effect === 'read' && ctx.sessionId !== undefined;
-  let effectContract = proposalEffectContract(dt.name, dt.effect);
-
+  let output: unknown = null;
+  let effectContract = call.effectContract;
+  const result = (outcome: PhaseResult<undefined>): ExecutionPhase => ({
+    result: outcome,
+    output,
+    executionStarted,
+    safeOperation,
+    safeToolOperations,
+    effectContract,
+  });
+  if (!phase.result.ok) return result(phase.result);
   try {
-    parsedInput = dt.inputSchema.parse(rawArgs);
-    execInput = parsedInput;
-    correlatedToolUseId = opts.correlatedToolUseId;
-  } catch (err) {
-    errorReason = err instanceof Error ? err.message : String(err);
+    await opts.onExecuteStart?.(gateInput);
+    executionStarted = true;
+    safeToolOperations = call.safeHandoffEnabled
+      ? (opts.toolOperations ?? getProcessToolOperations(ctx.db))
+      : undefined;
+    const safeExecution = safeToolOperations
+      ? await executeSafeToolOperation({
+          toolOperations: safeToolOperations,
+          sessionId: ctx.sessionId as string,
+          taskRunId: ctx.taskRunId,
+          toolName: dt.name,
+          toolUseId: correlatedToolUseId,
+          input: execInput as Record<string, unknown>,
+          ...(ctx.providerSessionDeadlineAt !== undefined
+            ? { hardDeadlineAt: new Date(ctx.providerSessionDeadlineAt) }
+            : {}),
+          cancellationSignals: opts.cancellationSignals,
+          execute: async (signal) => {
+            const remoteOutput = await dt.execute({ ...ctx, signal }, execInput as never);
+            const parsed = enforceOutputSchema(dt, remoteOutput);
+            if (parsed.ok) return parsed.value;
+            throw new Error(parsed.error);
+          },
+        })
+      : undefined;
+    safeOperation = safeExecution?.record;
+    const rawOutput = safeOperation
+      ? safeOperation.status === 'succeeded'
+        ? safeOperation.result
+        : null
+      : await dt.execute(ctx, execInput as never);
+    if (safeOperation && safeOperation.status !== 'succeeded')
+      return result({ ok: false, error: formatToolOperationFailure(safeOperation) });
+    // Preserve the outer parse even for a safe operation: transforms ran at both
+    // boundaries before this extraction, and terminal evidence uses the inner one.
+    const parsed = enforceOutputSchema(dt, rawOutput);
+    if (!parsed.ok) return result(parsed);
+    output = parsed.value;
+    effectContract = proposalEffectContract(dt.name, dt.effect, output);
+    return result({ ok: true, value: undefined });
+  } catch (error) {
+    return result(phaseError(error));
   }
+}
 
-  if (errorReason === undefined) {
-    try {
-      const gateReason = await opts.beforeExecute?.(gateInput);
-      if (typeof gateReason === 'string' && gateReason.length > 0) {
-        errorReason = gateReason;
-      }
-    } catch (err) {
-      errorReason = err instanceof Error ? err.message : String(err);
-    }
-  }
+function decorateOutput(input: ToolInputState, execution: ExecutionPhase): ExecutionPhase {
+  if (!execution.result.ok || !input.truncationNote) return execution;
+  const { output } = execution;
+  return {
+    ...execution,
+    output:
+      output !== null && typeof output === 'object' && !Array.isArray(output)
+        ? { ...(output as Record<string, unknown>), context_budget: input.truncationNote }
+        : { value: output, context_budget: input.truncationNote },
+  };
+}
 
-  if (errorReason === undefined && opts.interceptInput) {
-    try {
-      const intercepted = opts.interceptInput({ name: dt.name, effect: dt.effect }, execInput);
-      // P5.1 / YUK-143 FIX 1 — budget-exhaustion soft-stop. When the
-      // interceptor signals exhaustion it returns a `softStop` reason
-      // instead of capped args; treat it exactly like a beforeExecute gate
-      // reason so the tool does NOT run (no limit:0 → no Zod throw) and the
-      // agent reads the string as the tool result. Graceful, never a throw.
-      if (typeof intercepted.softStop === 'string' && intercepted.softStop.length > 0) {
-        errorReason = intercepted.softStop;
-      } else {
-        execInput = intercepted.args;
-        truncationNote = intercepted.truncationNote ?? null;
-      }
-    } catch (err) {
-      errorReason = err instanceof Error ? err.message : String(err);
-    }
-  }
-
-  if (errorReason === undefined) {
-    try {
-      await opts.onExecuteStart?.(gateInput);
-      executionStarted = true;
-      const toolOperations = safeHandoffEnabled
-        ? (opts.toolOperations ?? getProcessToolOperations(ctx.db))
-        : undefined;
-      safeToolOperations = toolOperations;
-      const safeExecution = toolOperations
-        ? await executeSafeToolOperation({
-            toolOperations,
-            sessionId: ctx.sessionId as string,
-            taskRunId: ctx.taskRunId,
-            toolName: dt.name,
-            toolUseId: correlatedToolUseId,
-            input: execInput as Record<string, unknown>,
-            ...(ctx.providerSessionDeadlineAt !== undefined
-              ? { hardDeadlineAt: new Date(ctx.providerSessionDeadlineAt) }
-              : {}),
-            cancellationSignals: opts.cancellationSignals,
-            execute: async (signal) => {
-              const remoteOutput = await dt.execute({ ...ctx, signal }, execInput as never);
-              const parsed = dt.outputSchema.safeParse(remoteOutput);
-              if (parsed.success) return parsed.data;
-              const paths = parsed.error.issues
-                .map((issue) => issue.path.join('.') || '(root)')
-                .join(', ');
-              throw new Error(`output_schema_invalid: ${paths}`);
-            },
-          })
-        : undefined;
-      safeOperation = safeExecution?.record;
-      const rawOutput = safeOperation
-        ? safeOperation.status === 'succeeded'
-          ? safeOperation.result
-          : null
-        : await dt.execute(ctx, execInput as never);
-      if (safeOperation && safeOperation.status !== 'succeeded') {
-        errorReason = formatToolOperationFailure(safeOperation);
-      }
-      if (errorReason !== undefined) throw new Error(errorReason);
-      // YUK-862 / F3.1 — global output schema enforcement. Runs immediately
-      // after execute, before context-budget decoration, onResult, summarize,
-      // logging, mirroring, or the tool result return.
-      const parseResult = dt.outputSchema.safeParse(rawOutput);
-      if (parseResult.success) {
-        output = parseResult.data;
-        effectContract = proposalEffectContract(dt.name, dt.effect, output);
-      } else {
-        // Redact actual values; only emit field paths for machine readability.
-        const paths = parseResult.error.issues
-          .map((iss) => iss.path.join('.') || '(root)')
-          .join(', ');
-        errorReason = `output_schema_invalid: ${paths}`;
-      }
-    } catch (err) {
-      errorReason = err instanceof Error ? err.message : String(err);
-    }
-  }
-
-  // P5.1 / YUK-143 + YUK-290 — surface warning/hard state inside the tool
-  // output so the agent can self-regulate before the hard cap intervenes.
-  // Object outputs gain a `context_budget` field; non-object outputs are
-  // wrapped. Only attaches on the happy path (no error).
-  if (errorReason === undefined && truncationNote) {
-    if (output !== null && typeof output === 'object' && !Array.isArray(output)) {
-      output = { ...(output as Record<string, unknown>), context_budget: truncationNote };
-    } else {
-      output = { value: output, context_budget: truncationNote };
-    }
-  }
-
+async function notifyResult(
+  call: ToolCallContext,
+  input: ToolInputState,
+  execution: ExecutionPhase,
+): Promise<void> {
+  const { dt, opts, ctx, gateInput } = call;
+  const { execInput, correlatedToolUseId } = input;
+  const { output, executionStarted, effectContract } = execution;
+  const errorReason = errorReasonOf(execution.result);
   try {
     await opts.onResult?.({
       ...gateInput,
@@ -437,7 +520,18 @@ export async function executeDomainToolCall(
       err: observationErr,
     });
   }
+}
 
+function summarizeResult(
+  call: ToolCallContext,
+  input: ToolInputState,
+  execution: ExecutionPhase,
+): string {
+  const { dt, ctx } = call;
+  const { parsedInput } = input;
+  const { output } = execution;
+  const errorReason = errorReasonOf(execution.result);
+  let summary = '';
   if (errorReason === undefined) {
     try {
       summary = dt.summarize(parsedInput as never, output as never);
@@ -454,6 +548,18 @@ export async function executeDomainToolCall(
     summary = `error: ${errorReason}`;
   }
 
+  return summary;
+}
+
+function notifyToolComplete(
+  call: ToolCallContext,
+  input: ToolInputState,
+  execution: ExecutionPhase,
+  summary: string,
+): void {
+  const { dt, opts, ctx } = call;
+  const { execInput, correlatedToolUseId } = input;
+  const errorReason = errorReasonOf(execution.result);
   // YUK-457 — same resolution as the persisted mirror below: a call that
   // will not mirror must not emit a live done-state card either.
   if (opts.onToolComplete && __resolveMirrorPolicy(dt.mirrorEvent, ctx.callerActor, dt.effect)) {
@@ -469,7 +575,17 @@ export async function executeDomainToolCall(
       // Visibility failures must never abort paid work.
     }
   }
+}
 
+async function persistToolCallLog(
+  call: ToolCallContext,
+  input: ToolInputState,
+  execution: ExecutionPhase,
+): Promise<string | undefined> {
+  const { dt, ctx, taskKind, startedAt } = call;
+  const { parsedInput } = input;
+  const { output, safeOperation, safeToolOperations } = execution;
+  const errorReason = errorReasonOf(execution.result);
   const latencyMs = Date.now() - startedAt;
   let toolCallLogId: string | undefined;
   try {
@@ -507,6 +623,19 @@ export async function executeDomainToolCall(
     }
   }
 
+  return toolCallLogId;
+}
+
+async function mirrorToolUse(
+  call: ToolCallContext,
+  input: ToolInputState,
+  execution: ExecutionPhase,
+  summary: string,
+  toolCallLogId: string | undefined,
+): Promise<void> {
+  const { dt, ctx } = call;
+  const { parsedInput } = input;
+  const errorReason = errorReasonOf(execution.result);
   // YUK-82 + ADR-0011 §1.1 (T-D7 / YUK-126): tool_use KnownEvent mirror
   // per mirrorEvent policy. Schema (`ToolUseQuery`) requires
   // actor_kind='agent', so user-fired calls never mirror regardless of
@@ -556,7 +685,11 @@ export async function executeDomainToolCall(
       });
     }
   }
+}
 
+async function settleExecution(call: ToolCallContext, execution: ExecutionPhase): Promise<void> {
+  const { dt, opts, ctx, gateInput } = call;
+  const { executionStarted } = execution;
   if (executionStarted) {
     try {
       await opts.onExecuteSettled?.(gateInput);
@@ -571,7 +704,16 @@ export async function executeDomainToolCall(
       });
     }
   }
+}
 
+function formatToolResponse(
+  input: ToolInputState,
+  execution: ExecutionPhase,
+  summary: string,
+): { content: Array<{ type: 'text'; text: string }> } {
+  const { correlatedToolUseId } = input;
+  const { output, effectContract } = execution;
+  const errorReason = errorReasonOf(execution.result);
   return {
     content: [
       {
