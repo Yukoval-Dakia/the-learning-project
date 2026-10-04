@@ -556,3 +556,95 @@ describe('frozen question material visibility', () => {
     expect(advanced).not.toHaveBeenCalled();
   });
 });
+
+describe('inline original images in frozen context', () => {
+  const images = [
+    '依据电路图判断方向。![原图](https://assets.example/circuit.png)',
+    '依据电路图判断方向。![原图][circuit]\n\n[circuit]: https://assets.example/circuit.png "电路"',
+    '依据电路图判断方向。![circuit][]\n\n[circuit]: /api/assets/circuit',
+    '> 依据电路图判断方向。![circuit]\n\n[circuit]: /api/assets/circuit',
+    '[![原图](/api/assets/circuit)](/api/assets/full)',
+  ];
+  it.each(['prompt', 'material', 'option'] as const)(
+    'holds every rendered image form in %s before Jev, or delegates original context',
+    async (location) => {
+      for (const md of images) {
+        const input = request();
+        if (location === 'prompt') input.question_parts[0].prompt_md = md;
+        if (location === 'material') {
+          input.question_parts[0].material_ids = ['inline-circuit'];
+          input.materials = [
+            {
+              material_id: 'inline-circuit',
+              kind: 'plaintext',
+              asset: { asset_id: 'text1', digest: 'sha256:abc' },
+              content_md: md,
+            },
+          ];
+        }
+        if (location === 'option') {
+          input.response_slots = [
+            {
+              slot_id: 's1',
+              part_id: 'p1',
+              kind: 'single_choice',
+              options: [
+                { option_id: 'opaque_a', label: 'A', text: md },
+                { option_id: 'opaque_b', label: 'B', text: '电流逆时针' },
+              ],
+            },
+          ];
+          input.slot_responses = [{ slot_id: 's1', kind: 'choice', option_ids: ['opaque_a'] }];
+        }
+        const original = structuredClone(input);
+        const fetchImpl = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) =>
+          responseJson(jevOk(0.96)),
+        );
+        const out = await createJevModelExecutor(executorOptions({ fetchImpl }))(input);
+        expect.soft(out.kind, `${location}: ${md}`).toBe('pending');
+        const advanced = vi.fn(
+          async (): Promise<ModelUnitOutcomeT> => ({
+            kind: 'pending',
+            pending: {
+              reason: 'needs_review',
+              trigger: 'flagged',
+              detail: 'original image required',
+            },
+            run_refs: [],
+          }),
+        );
+        await createJevModelExecutor(executorOptions({ fetchImpl, advancedExecutor: advanced }))(
+          input,
+        );
+        expect.soft(advanced).toHaveBeenCalledWith(original, expect.any(AbortSignal));
+        expect.soft(fetchImpl).not.toHaveBeenCalled();
+        expect(input).toEqual(original);
+      }
+    },
+  );
+  it.each([
+    '解释代码：`![示例](/image.png)`',
+    '解释代码：\n\n```markdown\n![示例](/image.png)\n```',
+    '解释代码：\n\n    ![示例](/image.png)',
+    '转义语法：\\![示例](/image.png)',
+    '未解析的引用：![missing]',
+    '<img src="/image.png">', // Raw HTML is literal text in the project renderer.
+    '[图片链接](/image.png)',
+  ])('keeps literal Markdown text gradable: %s', async (md) => {
+    const input = request();
+    input.question_parts[0].prompt_md = md;
+    const fetchImpl = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) =>
+      responseJson(jevOk(0.96)),
+    );
+    const advanced = vi.fn();
+    const out = await createJevModelExecutor(
+      executorOptions({ fetchImpl, advancedExecutor: advanced }),
+    )(input);
+    expect(out.kind).toBe('scored');
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(advanced).not.toHaveBeenCalled();
+    expect(
+      JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body)).state.question.parts[0].prompt_md,
+    ).toBe(md);
+  });
+});

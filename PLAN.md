@@ -76,7 +76,7 @@
 - YUK-1045/#1560已交付main d815df4b（19:08UTC）：116unit77DB/全部本地gates/独立初审与唯一P1验证审/CI37226077585（82迁移34浏览器）/17分钟窗通过，Linear Done。缺准入快照与来源伪装已修，历史不回填。
 
 - YUK-1091/#1561已交付main cd61afab（19:51UTC）：138unit136DB82migration/本地gates；初审1项联合时点P1先RED后修，修复后50DB，唯一验证审2探针39DB，最终joint20DB/typecheck/lint/build通过。exact-head CI37228786465（82迁移34浏览器）/17分钟窗完成，Linear Done。
-- YUK-1047当前实施：模型原题干/native选项缺口4测试先RED；材料不可见7测试先RED，冻结上下文与Jev材料守卫已修；84unit72distinctDB及全部本地gates通过，独立初审中。八正式入口仍legacy，保持In Progress。
+- YUK-1047当前实施：模型原题干/native选项缺口4测试先RED；材料不可见7测试先RED，冻结上下文与Jev材料守卫已修；#1562：初审84unit21DB发现1项内嵌图P1，3正式回归先RED后修（45soft失败）；修复后94unit72distinctDB及全部本地gates通过，唯一验证审中。八正式入口仍legacy，保持In Progress。
 
 ## NEXT
 

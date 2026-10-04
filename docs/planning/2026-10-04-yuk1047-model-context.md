@@ -29,10 +29,18 @@ publisher/issuance/submission DB regression changes the current published prompt
 and option text before evaluation; the old submissions still send their original
 frozen context and remain unchanged. Candidate evaluation writes no learning.
 
-84 scoped unit tests and 72 distinct DB cases across four files pass (55 initial
+94 scoped unit tests and 72 distinct DB cases across four files pass (55 initial
 DB cases, then 37 evaluator/joint cases including the new revision regression).
 Typecheck, lint (299 existing warnings), build and ten local audits pass. Independent
-initial review and final-head CI are pending.
+initial review passed 84 unit / 21 DB and found one P1: rendered inline images
+in prompts, native option text or text materials bypassed the material-kind
+guard. Three formal location regressions first failed (45 soft assertions); the
+fix uses the already-installed renderer’s synchronous CommonMark parser, without
+mounting or fetching. It covers inline/reference/nested images and preserves
+code, escapes, unresolved references and raw HTML as literal text. Matching and
+ordering item text also uses this guard. Inline question images have no synthetic
+material IDs: they delegate or return unjudgeable. Seven literal-text negatives
+remain gradable. The sole P1 verification review and final-head CI are pending.
 
 This is part of the original eight-entry-point migration. Those callers still use
 the legacy evaluator and YUK-1047 remains open until the full serve/draft/submit/

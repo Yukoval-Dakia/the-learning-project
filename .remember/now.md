@@ -10,3 +10,5 @@ Active1091 /workspace/tlp-assessment-joint fix/yuk-1091-joint-input. Formalvalid
 
 1091/#1561 merged2026-10-04 19:51UTC maincd61afabdff84cda6b8260ec3cc9107137e863e4. exactCI37228786465 actual82migration34browser +17minwindow done. Initial96unit64DB found1P1; soleverification original2probes+39DB passed, authorfinal20DB/typecheck/lint/build passed. LinearDone60open.
 1047 model-context inworktree/workspace/tlp-assessment-model-context branchfix/yuk-1047-model-context.4contexttestsRED+7materialtestsRED then84unit72distinctDB/localgatespassed. Frozenpatch/tmp/review-yuk1047-context-frozen.patch ed0c645f initialreviewrunning. Existing8caller216DBbaselinegreen, fullmigrationstillopen. No production/paid/dependency. Groundingignoredroot/.remember/2026-10-04-assessment-entry-grounding.md.
+
+1047/#1562 initial review84unit21DB found1P1 inline original images in prompts/materials/options. Formal3location tests firstRED45soft failures, parser-based fix94unitPASS/alllocalgatesPASS. CommonMark existingreact-markdown nofetch/noadditionaldependencies. Soleverificationrunning. Lastnewhead pendingpush.
