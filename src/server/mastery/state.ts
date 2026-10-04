@@ -928,7 +928,7 @@ export async function getRepresentativeKcBeta(
     ids.map((id) => sql`${id}`),
     sql`, `,
   );
-  const rows = (await db.execute(sql`
+  const rows = await db.execute<{ kc: string; beta: number | null }>(sql`
     SELECT
       kc,
       percentile_cont(0.5) WITHIN GROUP (
@@ -940,7 +940,7 @@ export async function getRepresentativeKcBeta(
       AND ic.track = 'hard'
       AND COALESCE(ic.b_calib, ic.b_anchor, ic.b) IS NOT NULL
     GROUP BY kc
-  `)) as unknown as Array<{ kc: string; beta: number | null }>;
+  `);
   const map = new Map<string, number>();
   for (const r of rows) {
     if (r.beta !== null && r.beta !== undefined) {

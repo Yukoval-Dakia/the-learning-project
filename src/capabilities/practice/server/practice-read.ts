@@ -255,7 +255,7 @@ export async function getPracticeList(
       WHERE session_id IN (${sql.join(sessionIds, sql`, `)}) AND submitted_at IS NOT NULL
       GROUP BY session_id
     `);
-    for (const r of posRows as unknown as Array<{ session_id: string; pos: number }>) {
+    for (const r of posRows) {
       posBySession.set(r.session_id, r.pos);
     }
   }
@@ -304,18 +304,12 @@ export async function getPracticeList(
             AND a2.submitted_at IS NOT NULL
         )
     `);
-    const slotRows = rwRows as unknown as Array<{
-      session_id: string;
-      attempt_event_id: string;
-      attempt_outcome: string | null;
-      unsupported_judge: string | null;
-    }>;
     // 一次性批量解析本页全部 slot 的 effective 裁决（固定 3 个 round-trip）。
     const verdicts = await resolveVerdictsForAttempts(
       db,
-      slotRows.map((r) => r.attempt_event_id).filter((id): id is string => typeof id === 'string'),
+      rwRows.map((r) => r.attempt_event_id).filter((id): id is string => typeof id === 'string'),
     );
-    for (const r of slotRows) {
+    for (const r of rwRows) {
       if (!r.session_id) continue;
       // F1 (PR #309 round-4, YUK-215): an UN-JUDGED attempt (photo-only on a
       // text-only route — `unsupported_judge='true'`, no judge event) is neither

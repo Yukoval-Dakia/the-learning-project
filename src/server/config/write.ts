@@ -390,7 +390,7 @@ async function bumpEpoch(tx: Tx): Promise<number> {
   // 串行化并发写 tx（各自等前一个 tx commit），保证严格递增；正常路径
   // nextval > epoch 行时 greatest 退化为 nextval，setval 重设同值无漂移
   // （is_called=true → 下一次 nextval = 值+1，与直接 nextval 等价）。
-  const rows = await tx.execute(sql`
+  const rows = await tx.execute<{ epoch: number | string; seq_synced: number | string }>(sql`
     with bumped as (
       insert into system_config_epoch (id, epoch, updated_at)
       values (${EPOCH_ROW_ID}, nextval('config_change_seq'), now())
@@ -401,7 +401,7 @@ async function bumpEpoch(tx: Tx): Promise<number> {
     )
     select epoch, setval('config_change_seq', epoch) as seq_synced from bumped
   `);
-  const row = (rows as unknown as Array<{ epoch: number | string }>)[0];
+  const row = rows[0];
   return typeof row.epoch === 'string' ? Number(row.epoch) : row.epoch;
 }
 
@@ -453,9 +453,9 @@ export async function setConfigs(
       // P1-2：下一段 revision 从 append-only journal 的最新行取——clear 删掉
       // value 行后 revision 不倒回，set→clear→set 不再撞 (key,revision) PK。
       // 锁最新 journal 行（FOR UPDATE 不能打在聚合上——锁定最新行即可串行同 key 写）。
-      const maxRows = (await tx.execute(
+      const maxRows = await tx.execute<{ revision: number | string }>(
         sql`select revision from ${system_config_journal} where ${system_config_journal.key} = ${key} order by revision desc limit 1 for update`,
-      )) as unknown as Array<{ revision: number | string }>;
+      );
       const maxRevision = Number(maxRows[0]?.revision ?? 0);
       const revision =
         Math.max(Number.isFinite(maxRevision) ? maxRevision : 0, prevRow?.revision ?? 0) + 1;
@@ -536,9 +536,9 @@ export async function clearConfig(
     if (prevRow) {
       await tx.delete(system_config).where(eq(system_config.key, key));
     }
-    const maxRows = (await tx.execute(
+    const maxRows = await tx.execute<{ revision: number | string }>(
       sql`select revision from ${system_config_journal} where ${system_config_journal.key} = ${key} order by revision desc limit 1 for update`,
-    )) as unknown as Array<{ revision: number | string }>;
+    );
     const maxRevision = Number(maxRows[0]?.revision ?? 0);
     const revision =
       Math.max(Number.isFinite(maxRevision) ? maxRevision : 0, prevRow?.revision ?? 0) + 1;
