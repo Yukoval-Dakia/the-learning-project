@@ -1,21 +1,18 @@
 # Current handoff — 2026-10-04
 
-Main08ff7bc7: PR1530 merged after exact-head CI37136168710, independent initial review,
-17-minute window and final empty-thread check.1071Done;1116 inherited timestamp issue
-remainsTodo.77open total.1073-1079/1081 restoredTodo after current-code/openPR checks.
+Main40eca54b:1533budgetreader merged after185unit+67DB, localgates, independentinitial,
+exact-headCI37168569802 and17minwindow.1007InProgress: writes/atomicreset/UI remain.
+P2configuredtimeout>=1h vsstuckreconcile captured1007, mustfixbeforewriteHTTP inclstoredvalues.
+Earlier1530closed1071 at08ff7bc7.78opennowbecause1112reopenedforjustreleased1.0.2.
 
-Active /workspace/tlp-budget-snapshot,feat/yuk-1007-budget-snapshot,base08ff7bc7.
-1007 budget reader: shared pure resolver snapshots before middleware/admission/startup;
-ordinary/SSE/collecting/typed consumers use snapshot, retry keeps it. Explicit call
-iterations/timeout wins; typed retry:none and cumulative unknown-cost reserve unchanged.
-Admin wire adds budget_wiring/effective_budget/budget_note. Unsupported chat maxCost and
-typed maxIterations are null; whole-budget override_wired stays conservativelyfalse.
-5 regressions firstRED;185unit/9files+67DB/4files, typecheck/lint299warnings/build/10audits pass.
-Independent initial review:noP0/P1. OneP2:configuredtimeout>=1h conflicts withstuck-run
-sweeper, captured1007 fornextwriteHTTP slice includingexistingstoredvalues.
-PR/exact-headCI/17-minute window pending.
-Generated API schema reflects backend contract; no component/UI changes.
+Active /workspace/tlp-pi-1.0.2,chore/yuk-1112-pi-1.0.2,base40eca54b.
+pi-agent-core/pi-ai pinned1.0.2;pi-telemetry1.0.2transitive. Upstreamagent+telemetryruntime
+byte-identical;pi-aiadds thinking-levelsampling;nativefourproviderJSONunchanged.
+pnpmupdate generatedunrelatedAWS/Smithy/ws upgrades; trimmedonlythoseunsolicitedchanges,
+keptpnpmgeneratedpi metadata/integrities. Frozeninstall passes with1026policycheckedentries.
+Releaseage exceptions onlythreeexact1.0.2packages; globalpolicyunchanged.
+Freshisolatednode_modules installed1.0.2;113unit+61DB,typecheck/lint/build/all10auditspass.
+Dependency audit:0high/critical,2low+16moderateexisting.Independentreview/CI/windowpending. No paid/productioncalls.
 
-Next1007writeHTTP + atomic batch reset (sequential clears cannot resetcross-providerpair).
-UIpreflight unapproved; no production/extra paidcalls. Go2requestcap exhausted.
-ExplicitHOLDs remain. Keepallbranches/worktrees.1109separate no-mergePRonly.
+Next1007writeHTTP/atomicreset/timeoutbound. NoUIapproval. ExplicitHOLDsremain.
+Go2-requestcap exhausted, no credentials persisted. Keepallbranches/worktrees.

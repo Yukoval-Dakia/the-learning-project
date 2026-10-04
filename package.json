@@ -126,8 +126,8 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
     "@aws-sdk/client-s3": "^3.1095.0",
-    "@earendil-works/pi-agent-core": "1.0.1",
-    "@earendil-works/pi-ai": "1.0.1",
+    "@earendil-works/pi-agent-core": "1.0.2",
+    "@earendil-works/pi-ai": "1.0.2",
     "@hono/node-server": "^2.0.12",
     "@hyzyla/pdfium": "^2.1.13",
     "@modelcontextprotocol/sdk": "^1.29.0",
