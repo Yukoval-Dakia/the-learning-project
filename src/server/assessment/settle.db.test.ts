@@ -39,7 +39,11 @@ import {
 } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { activateEvaluation, insertInitialEvaluationHead } from './activate';
+import {
+  ActivateEvaluationRequest,
+  activateEvaluation,
+  insertInitialEvaluationHead,
+} from './activate';
 import { ASSESSMENT_SETTLEMENT_ACTION, learningSettlement } from './settle';
 
 const NOW = new Date('2026-09-26T00:00:00Z');
@@ -228,6 +232,7 @@ async function activate(
   evalId: string,
   expected: { effectiveId: string | null; generation: number },
   now?: Date,
+  userRating?: 'again' | 'hard' | 'good',
 ) {
   const db = testDb();
   return db.transaction((tx) =>
@@ -237,6 +242,7 @@ async function activate(
         evaluation_id: evalId,
         expected_effective_id: expected.effectiveId,
         expected_generation: expected.generation,
+        ...(userRating === undefined ? {} : { user_rating: userRating }),
       },
       { settle: learningSettlement, actorRef: 'test', now: now ?? NOW },
     ),
@@ -363,7 +369,7 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect(obs?.bit).toBe('abstain');
   });
 
-  it('D16 assisted：评级保留（FSRS 落位），θ̂/family/calibration 全排除', async () => {
+  it('D16 assisted：显式用户评级保留（FSRS 落位），θ̂/family/calibration 全排除', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
     const seed = await seedChain('s4', { kcs: ['kc_a'] });
     const unitId = `${seed.qid}::u`;
@@ -372,7 +378,12 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
       provenance: { source: 'automatic', assisted: true },
     });
 
-    const result = await activate('s4_ev1', { effectiveId: null, generation: 0 });
+    const result = await activate(
+      's4_ev1',
+      { effectiveId: null, generation: 0 },
+      undefined,
+      'hard',
+    );
     expect((result as { effect: string }).effect).toBe('applied');
     expect((await fsrsRow('knowledge', 'kc_a'))?.state?.reps).toBe(1);
     expect(await masteryRow('kc_a')).toBeUndefined();
@@ -382,6 +393,132 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
       }
     ).payload.theta_decision;
     expect(theta?.abstainReason).toBe('provenance_excluded');
+    expect((await settlementEvents(seed.groupId))[0].payload).toMatchObject({
+      rating: 'hard',
+      rating_source: 'user',
+    });
+  });
+
+  it('D14 用户 hard 与正确自动证据独立；重放不重复，改评级冲突，regrade 保留用户排程', async () => {
+    await seedKnowledge('kc_a', { domain: 'dom_x' });
+    const seed = await seedChain('user_override', { kcs: ['kc_a'] });
+    await seedEvaluation(seed, 'user_ev1', { unitResults: [unitResult(`${seed.qid}::u`, 1)] });
+    expect(
+      await activate('user_ev1', { effectiveId: null, generation: 0 }, undefined, 'hard'),
+    ).toEqual({ status: 'activated', effect: 'applied', generation: 1 });
+    const first = await fsrsRow('knowledge', 'kc_a');
+    const rows = await settlementEvents(seed.groupId);
+    expect(rows[0].payload).toMatchObject({
+      rating: 'hard',
+      rating_source: 'user',
+      provenance: { source: 'automatic' },
+    });
+    expect(await masteryRow('kc_a')).toMatchObject({ evidence_count: 1, success_count: 1 });
+    expect(
+      await activate('user_ev1', { effectiveId: null, generation: 0 }, undefined, 'hard'),
+    ).toMatchObject({ status: 'already_effective' });
+    expect(
+      await activate('user_ev1', { effectiveId: null, generation: 0 }, undefined, 'again'),
+    ).toMatchObject({ status: 'rating_conflict' });
+    expect(await settlementEvents(seed.groupId)).toHaveLength(1);
+    expect(await fsrsRow('knowledge', 'kc_a')).toEqual(first);
+    await seedEvaluation(seed, 'user_ev2', {
+      attempt: 2,
+      unitResults: [unitResult(`${seed.qid}::u`, 0)],
+      aggregate: { kind: 'points_total', points: 0, policy: { kind: 'sum' } },
+    });
+    expect(await activate('user_ev2', { effectiveId: 'user_ev1', generation: 1 })).toMatchObject({
+      status: 'activated',
+      effect: 'applied',
+    });
+    expect(await fsrsRow('knowledge', 'kc_a')).toEqual(first);
+    expect(await masteryRow('kc_a')).toMatchObject({
+      evidence_count: 1,
+      success_count: 0,
+      fail_count: 1,
+    });
+  });
+
+  it('D16 assisted 自动结果无显式用户选择时不写 FSRS，也不写 theta', async () => {
+    await seedKnowledge('kc_a', { domain: 'dom_x' });
+    const seed = await seedChain('assisted_no_rating', { kcs: ['kc_a'] });
+    await seedEvaluation(seed, 'assisted_auto', {
+      unitResults: [unitResult(`${seed.qid}::u`, 1)],
+      provenance: { source: 'automatic', assisted: true },
+    });
+    expect(await activate('assisted_auto', { effectiveId: null, generation: 0 })).toMatchObject({
+      status: 'activated',
+      effect: 'ineligible',
+    });
+    expect(await fsrsRow('knowledge', 'kc_a')).toBeUndefined();
+    expect(await masteryRow('kc_a')).toBeUndefined();
+    expect((await settlementEvents(seed.groupId))[0].payload).toMatchObject({
+      rating: null,
+      rating_source: 'none',
+      verdict: { verdict: 'correct' },
+    });
+  });
+
+  it('D9/D15 unresolved 自评只按显式评级写 FSRS，不伪造正确性', async () => {
+    await seedKnowledge('kc_a', { domain: 'dom_x' });
+    const seed = await seedChain('self_unresolved', { kcs: ['kc_a'] });
+    await seedEvaluation(seed, 'self_ev', {
+      aggregate: {
+        kind: 'unresolved',
+        reason: 'pending_units',
+        detail: 'original cannot be graded',
+      },
+      provenance: { source: 'self_report', assisted: false },
+    });
+    expect(
+      await activate('self_ev', { effectiveId: null, generation: 0 }, undefined, 'again'),
+    ).toMatchObject({ status: 'activated', effect: 'applied' });
+    expect((await fsrsRow('knowledge', 'kc_a'))?.state?.reps).toBe(1);
+    expect(await masteryRow('kc_a')).toBeUndefined();
+    expect((await settlementEvents(seed.groupId))[0].payload).toMatchObject({
+      rating: 'again',
+      rating_source: 'user',
+      theta_decision: { applied: false },
+    });
+  });
+
+  it('评级请求只接受现有三等级；不接受 null、任意字符串或数字', () => {
+    const base = {
+      evaluation_id: 'candidate',
+      expected_effective_id: null,
+      expected_generation: 0,
+    };
+    for (const user_rating of [null, '', 'easy', 1, {}, []]) {
+      expect(ActivateEvaluationRequest.safeParse({ ...base, user_rating }).success).toBe(false);
+    }
+    expect(ActivateEvaluationRequest.parse(base)).toEqual(base);
+    for (const user_rating of ['again', 'hard', 'good']) {
+      expect(ActivateEvaluationRequest.parse({ ...base, user_rating }).user_rating).toBe(
+        user_rating,
+      );
+    }
+  });
+
+  it('并发首次激活的不同用户评级只结算一次，另一个明确冲突', async () => {
+    await seedKnowledge('kc_a');
+    const seed = await seedChain('rating_race', { kcs: ['kc_a'] });
+    await seedEvaluation(seed, 'rating_race_ev', {
+      unitResults: [unitResult(`${seed.qid}::u`, 1)],
+    });
+    const results = await Promise.all([
+      activate('rating_race_ev', { effectiveId: null, generation: 0 }, undefined, 'hard'),
+      activate('rating_race_ev', { effectiveId: null, generation: 0 }, undefined, 'again'),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual(['activated', 'rating_conflict']);
+    const winner = results[0].status === 'activated' ? 'hard' : 'again';
+    const rows = await settlementEvents(seed.groupId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].payload).toMatchObject({ rating: winner, rating_source: 'user' });
+    expect((await fsrsRow('knowledge', 'kc_a'))?.state?.reps).toBe(1);
+    expect(await masteryRow('kc_a')).toMatchObject({ evidence_count: 1, success_count: 1 });
+    expect(await activate('rating_race_ev', { effectiveId: null, generation: 0 })).toMatchObject({
+      status: 'already_effective',
+    });
   });
 
   it('D15 manual/self_report：只写 FSRS，θ̂ 不写（无 self-report θ̂）', async () => {

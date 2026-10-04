@@ -155,7 +155,7 @@ interface SettlementPlan {
   verdict: { verdict: string; reason: string; points: number | null; normalized: number | null };
   /** D14 评级；null = 不调度（unsupported/无 ratable verdict）。 */
   rating: 'again' | 'hard' | 'good' | null;
-  /** 评级来源：'user' = manual/self_report provenance（用户已确认评级）。 */
+  /** 'user' = explicit activation choice or manual/self_report provenance. */
   ratingSource: 'verdict' | 'user' | 'none';
   scopeVersion: number;
   scopeKcIds: string[];
@@ -358,9 +358,17 @@ function derivePlan(input: ActivationSettleInput, scope: SettlementScope): Settl
   });
   const thetaDecision = resolveThetaDecision(observations, provenance);
 
-  const rating = ratingForVerdict(verdict.verdict);
+  const rating =
+    input.userRating ??
+    (provenance.assisted && provenance.source === 'automatic'
+      ? null
+      : ratingForVerdict(verdict.verdict));
   const ratingSource: SettlementPlan['ratingSource'] =
-    rating === null ? 'none' : provenance.source === 'automatic' ? 'verdict' : 'user';
+    rating === null
+      ? 'none'
+      : input.userRating !== undefined || provenance.source !== 'automatic'
+        ? 'user'
+        : 'verdict';
   const fsrsSubjects: FsrsSubject[] =
     scopeKcIds.length > 0
       ? scopeKcIds.map((id) => ({ kind: 'knowledge' as const, id }))
