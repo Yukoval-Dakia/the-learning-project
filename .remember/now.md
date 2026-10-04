@@ -9,6 +9,6 @@ Active1075: /workspace/tlp-quiz-gen,refactor/yuk-1075-quiz-gen-phases,basefb94e5
 Named prepare/plan/generate/persist/event/dispatch/failure phases; explicit partialrun evidence preserves
 failurestage and costs. Racedduplicate returns small taggedresult, mainloop earlycontinues; authority
 helper sameTx. Promptcontent, admissionrules andevent order unchanged. 64DB/15unit baseline passed.
-Six added failure/provenance cases passed beforeandafter extraction;107DB/15unit,typecheck/lint299/build/10audits passed. Independent initial review70DB/15unit passed,noP0/P1 orsubstantiveP2. Pendingpush/CI/17minwindow.
+Six added failure/provenance cases passed beforeandafter extraction;107DB/15unit,typecheck/lint299/build/10audits passed. Initialreview70DB/15unitpassed. PR1545 head dd944ec2 CI37197867011failedquestion-writers P1-7 because retryINSERT helper scope lackedpublisher. Moved retryINSERTbacktopersist samepublisher scope, helperreturnsretry_insert. Auditpassed;107DB/typecheck/lint299/build/10audits and onlyverificationreview70DB/question-writers passed. Nextpushresetswindow.
 Next1076–1079/766; readonly grounding in root ignored .remember/2026-10-04-ready-tail-grounding.md.
 Preserve branches/worktrees, Astra/autonomous/night/native HOLDs, two-probe paid cap exhausted.

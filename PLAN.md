@@ -47,7 +47,7 @@
 
 - YUK-1074/#1544已交付mainfb94e567：108unit/84DB、全部本地gate、独立108unit/84DB及exact-head CI37196444302通过，17分钟窗口完成，Linear Done；增量迁移/浏览器测试未选，现有断言未改。
 
-- YUK-1075 active：refactor/yuk-1075-quiz-gen-phases /workspace/tlp-quiz-gen，basefb94e567；提示上下文、计划、生成解析、持久化、事件/派发/失败处理具名提取，raced duplicate小结果与early-continue。64DB/15unit基线通过，新增6个失败阶段/费用证据场景在原实现和重构后通过；107DB/15unit、typecheck/lint299/build与十项audit通过，独立初审70DB/15unit通过，无P0/P1或实质P2；待push后CI/17分钟窗。
+- YUK-1075 active：refactor/yuk-1075-quiz-gen-phases /workspace/tlp-quiz-gen，basefb94e567；提示上下文、计划、生成解析、持久化、事件/派发/失败处理具名提取，raced duplicate小结果与early-continue。64DB/15unit基线通过，新增6个失败阶段/费用证据场景在原实现和重构后通过；107DB/15unit、typecheck/lint299/build与十项audit通过，独立初审70DB/15unit通过；首CI question-writers门要求retry INSERT与publisher同scope，已回移该写入，audit已绿；107DB/本地gate与独立70DB/question-writers唯一验证审通过，后续push重算窗口。
 
 ## NEXT
 

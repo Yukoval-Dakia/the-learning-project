@@ -1113,16 +1113,15 @@ async function reconcileRacedDuplicate(
   tx: Tx,
   input: {
     id: string;
-    questionRow: typeof question.$inferInsert;
     canonicalContentHash: string;
     duplicateKnowledgeIds: string[];
     taskRunId: string | undefined;
     now: Date;
   },
 ): Promise<
-  { kind: 'inserted' } | { kind: 'merged'; duplicate: ExactQuestionDuplicateKnowledgeMerge }
+  { kind: 'retry_insert' } | { kind: 'merged'; duplicate: ExactQuestionDuplicateKnowledgeMerge }
 > {
-  const { id, questionRow, canonicalContentHash, duplicateKnowledgeIds, taskRunId, now } = input;
+  const { id, canonicalContentHash, duplicateKnowledgeIds, taskRunId, now } = input;
   const racedDuplicate = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
     canonicalContentHash,
     knowledgeIds: duplicateKnowledgeIds,
@@ -1136,18 +1135,7 @@ async function reconcileRacedDuplicate(
   if (racedDuplicate.disposition !== 'released_terminal_draft') {
     return { kind: 'merged', duplicate: racedDuplicate };
   }
-  const inserted = await tx
-    .insert(question)
-    .values({ ...questionRow, draft_status: 'draft' })
-    .onConflictDoNothing({
-      target: question.canonical_content_hash,
-      where: sql`${question.canonical_content_hash} is not null`,
-    })
-    .returning({ id: question.id });
-  if (inserted.length === 0) {
-    throw new Error(`quiz_gen canonical hash retry still conflicted for ${id}`);
-  }
-  return { kind: 'inserted' };
+  return { kind: 'retry_insert' };
 }
 
 async function persistQuizDrafts(
@@ -1424,13 +1412,26 @@ async function persistQuizDrafts(
         inserted.length === 0
           ? await reconcileRacedDuplicate(tx, {
               id,
-              questionRow,
               canonicalContentHash,
               duplicateKnowledgeIds,
               taskRunId: result.task_run_id,
               now,
             })
           : undefined;
+      if (raced?.kind === 'retry_insert') {
+        // Keep the content write in the same publisher-owned scope as the initial INSERT.
+        const retried = await tx
+          .insert(question)
+          .values({ ...questionRow, draft_status: 'draft' })
+          .onConflictDoNothing({
+            target: question.canonical_content_hash,
+            where: sql`${question.canonical_content_hash} is not null`,
+          })
+          .returning({ id: question.id });
+        if (retried.length === 0) {
+          throw new Error(`quiz_gen canonical hash retry still conflicted for ${id}`);
+        }
+      }
       if (raced?.kind === 'merged') {
         const racedDuplicate = raced.duplicate;
         syncOwnedDuplicateKnowledge(racedDuplicate);
