@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。目标Linear归零，当前74项；设置UI #1537已合并。当前单线为1007后端配置读面修正；依赖不再追新，既有HOLD与生产/付费边界保持。
+> 更新于2026-10-04。目标Linear归零；#1538配置读面修复已合并。当前单线为YUK-1063共享边界清理；不追依赖，既有HOLD与生产/付费边界保持。
 
 ## NOW
 
@@ -16,7 +16,7 @@
 - YUK-1007/#1535已合入main `b6b5565d`：314unit+158DB、本地gate、独立初审与exact-head CI `37171996264`通过，17分钟窗口完成。原子配置set/reset、timeout边界与HTTP写面交付；既有scoped lane/rejudge model-only校验P2归并1007，设置UI方案仍待批准。
 - YUK-1065/1116/1081/#1536已合入main `92864095`：8unit+77DB、本地gate、独立初审及exact-head CI `37173577957`通过，17分钟窗口完成，三票Done。超时解锁错误日志、few-shot时间排序与工具学科必填已交付。
 - YUK-1007/#1537已合入main `89b4cacd`：61unit+78DB、本地gate、独立初审及exact-head CI `37177562373`通过，17分钟窗口完成。获批六区设置页、原生模型组合/预算/语言编辑与scoped终态校验交付；epic剩余读面/编辑范围保持打开。
-- YUK-1007 active：`fix/yuk-1007-config-facts` / `/workspace/tlp-config-facts`，base89b4cacd。后端修正global pin无效provider、vision真实解析与subscription调度缺失；补SourceGrounding第三vision consumer终态校验及原型provider名拒绝。9项回归先RED；63unit+89DB、typecheck/lint299/build/10audits通过，独立初审通过，无P0/P1或新增实质P2；PR/CI/窗口待完成，无UI扩面。
+- YUK-1007/#1538已合入main `4bea5288`：63unit+89DB、全部本地gate、独立初审与exact-head CI37179026108通过，17分钟窗口完成。三项读面P2及第三vision consumer验证交付；typed展示、逐consumer诊断P2和其余编辑范围保持打开。
 - YUK-1102/#1525已合入main `fcd681cf`：capture/apply共用TLS策略；52 unit、本地gate、独立review与CI `37125040967`全绿，17分钟窗口完成，Linear Done；未连接生产数据库。
 - Owner临时凭据授权opencode-go有限AI测试：已完成2次真实原生preset请求，HTTP200、正确pi UA/session、一次工具循环；目录估值$0.0001601，非账单。仅adapter层验证，无durable task-run。已用完本次探针2请求上限；无凭据落盘。
 
@@ -35,13 +35,17 @@
 - #1498热加载foundation的六个P1已随main `30353105d` 修复。#1504只交付读取端点、providers/schedules/runtime与configured/effective说明。YUK-1007 epic仍未完成。
 - YUK-1038的17主线票和10矫正票交付记录仍保留于cutover runbook、各PR与旧版看板。旧NOW叙事归档到本机 `.remember/2026-09-30-plan-before-closeout-merge.md`，该文件保留本次合并前的原文，含当时冲突块；不是当前操作指引。
 
+- YUK-1063 active：`refactor/yuk-1063-shared-boundaries` / `/workspace/tlp-shared-boundaries`，base4bea5288。纯topology原样下沉core，judge门面经practice/public显式导出，路由一致性测试迁至practice。100unit+67DB、typecheck/lint299/build通过；10必需审计与architecture审计通过，独立初审通过，无P0/P1或新增实质P2（另独立46 subject DB通过）；PR/CI/窗口待完成。
+
 ## NEXT
 
-1. 交付1007后端读面修正；随后继续已就绪1062–1064架构主线或1091多submission/head激活契约。依赖不主动追新。
+1. 交付1063共享边界批次；随后1064脚本/跨包测试公开接口整理。1062 task-catalog反转与1091多submission/head契约仍待单独实施。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
 ## PARKED
+
+- 1064已归并既有audit:relations confusable reader路径漂移：真实路径kernel/read-models/confusables.ts，registry仍指旧capability文件。基线与候选均告警、退出0；非1063回归，不称已修。
 
 - YUK-1116已由#1536完成few-shot排序与三处raw timestamp声明修复，不扩大为全库类型清理。
 
@@ -50,9 +54,9 @@
 - #1508旧pi0.87.1依赖PR仍关闭、分支保留。迁移由YUK-1112/#1523替代，见NOW，不重新开启旧PR。
 - #1506的jsdom30要求Node24.15+，仓库pin24.0.0。必须协调运行时与DOM回归。#1505的Biome2.5.14原CI有1error、375warnings，超过305基线。必须修真实diagnostics并证明计数，不抬基线放行。原分支保留。
 - 漂移待办归并一组。同步ADR-0003/0004及0054–0060的SDK→pi机制与0054状态记录；保留产品决策，不恢复SDK、不先宣称全部行为等价。另核对agency/notes manifest概要、根AGENTS的 `/api/ready` token豁免说明、无consumer的 `SKIP_BOSS_INGEST` 声明。证据见 `docs/audit/2026-09-28-drift.md`、`2026-09-29-drift.md`、`2026-09-30-drift.md`，不建三个重复票。
-- 状态同步。YUK-1106在#1504 exact-head gate与合并完成后应收口；YUK-1007仍In Progress，预算与写HTTP已交付，UI本批推进，剩余编辑范围与读面P2未完；YUK-1107暂停且未证明120秒，不标Done。D18新付费评测待单独授权。上述状态已同步Linear。
+- 状态同步：1007预算/写HTTP/首批设置UI/三项读面修复已交付；epic剩余范围保持In Progress。1107暂停且未证明120秒，不标Done。D18新付费评测待单独授权。
 - YUK-1106的#1512阻塞已解除。原 `278a4e936` 的CI `36725357009` 在 `assessment-verdict.db.test.ts:332` 收到j_new、预期j_old。源码diff确认它缺少#1504的候选排序，不是已修代码复发。先合#1504，再同步main，原19项DB用例和新head完整CI `36729120083` 通过。未rerun原SHA，未删断言。原日志封存 `.remember/tmp/pr-closeout-20260930/1512-shard4.log`；Linear恢复后归并原票，不开重复票。
-- YUK-1007读面四项既有P2中，本批NOW处理global pin、vision与subscription调度三项；typed实现展示区分仍待后续。历史记录：`providers[].implemented` 未表达typed-task限定的OpenRouter实现；schedules遗漏 `event_subscription_dispatch`；vision对非OAuth错误provider/缺key的effective报告仍偏乐观；tasks的global_pin未标无效provider名。#1504评论4133649105、4133649102、4133649097、4133645669已给跳过理由。合并到原epic跟进，不将providers/schedules读面称为完备，不新建四个重复票。
+- YUK-1007剩余读面P2：typed provider实现展示，以及vision逐consumer诊断。原global pin、vision有效性、subscription调度三项由#1538交付。其他未批准编辑控件保持只读。
 - YUK-1045历史待办仍保留。claim冲突路由未翻译409 `claim_conflict`；source_verify child→root锁序与publisher反向；`publishQuestionGroup` 未调 `validateStructure`。实施前核对当前代码和远端票，不把历史发现当作新回归。
 - Astra P2/P3仍叫停。YUK-1028 Backlog，YUK-1029 needs-info。921多provider、572夜间教研、832 HOLD不解锁。全历史ADR审计没有完成。951按ADR0063保留的历史表、native投影与live remote ToolOperations不做通用表名合并。
 - #1504 startup RED已修。根因是unit没有mock新增hydrate边界，造成真实DB读取及动态导入越过teardown。阻塞hydrate、释放前recover/serve=0、释放后各1的回归与完整startup文件已通过，不另建已解决的重复票。

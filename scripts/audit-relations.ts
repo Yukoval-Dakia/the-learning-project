@@ -142,7 +142,7 @@ export type ConsumerEntry = {
 //     copilot（诊断/推荐上下文）。generic-read，覆盖全 5 type。
 //   - src/capabilities/knowledge/server/tools/knowledge-readers.ts:829 paths 工具对 related_to /
 //     contrasts_with 加反向邻接（双向语义）⇒ 这两 type 的 specialized 路径消费。
-//   - src/capabilities/knowledge/server/topology-gate.ts:52 ORDERED_RELATION =
+//   - src/core/topology-gate.ts:52 ORDERED_RELATION =
 //     'prerequisite'，环/传递冗余检测**仅**对 prerequisite ⇒ prerequisite specialized。
 //   - src/capabilities/knowledge/server/hub-mesh.ts:63 RELATION_PRIORITY +
 //     :72 EXCLUDED_RELATIONS。笔记 hub 自动同步按 prerequisite/derived_from/
@@ -170,7 +170,7 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
   {
     relation: 'prerequisite',
     tier: 'specialized',
-    file: 'src/capabilities/knowledge/server/topology-gate.ts',
+    file: 'src/core/topology-gate.ts',
     marker: "const ORDERED_RELATION = 'prerequisite'",
     surface: 'diagnosis',
     evidence:

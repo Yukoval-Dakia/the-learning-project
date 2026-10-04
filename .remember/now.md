@@ -1,17 +1,14 @@
 # Current handoff — 2026-10-04
 
-Main89b4cacd: settings UI#1537 merged, CI37177562373 success,17min window complete.
-Final prior facts: .remember/2026-10-04-config-ui-delivery.md (root local).
-74 Linear open=12Todo+4InProgress+58Backlog.1007 remains In Progress.
-Active1007: /workspace/tlp-config-facts,fix/yuk-1007-config-facts,base89b4cacd.
-Backend-only: validated global pin, real vision resolver/native/capability facts,
-conditional subscription schedule from the worker's own declaration.
-SourceGroundingVerifyTask is the third live vision consumer; shared list feeds writer and read facts.
-Reject prototype names in global env provider lookup via existing own-property predicate.
-9 first-RED regressions (7 initial +2 prototype);63unit+89DB/typecheck/lint299/build/10audits passed.
-Independent initial review passed: no P0/P1 or substantive new P2; PR/exact-head CI/17min window pending.
-No UI implementation changes. No provider call, production ops, or dependency upgrade.
-Independent review /root/review_config_facts is the unique initial review; no second initial round.
-Follow-ups covered by1007. Typed provider status display and remaining edit controls still open.
-1091 multi-submission/head contract and1062–1064 ready architecture remain next candidates.
-HOLDs preserved; Go2-request cap exhausted; preserve every worktree and branch.
+Main4bea5288: config facts#1538 merged05:26:42UTC, exact-head CI37179026108 success.
+1007 still In Progress; typed provider display/per-consumer vision diagnostics/editing scope remain.
+Environment and GitHub CLI restored; root work branch fast-forwarded to main4bea5288.
+Active1063: /workspace/tlp-shared-boundaries, refactor/yuk-1063-shared-boundaries.
+Pure topology gate moved verbatim to core with existing tests and every live import.
+Kernel judge now reexports explicit practice/public contract; public callers unchanged.
+Route parity test moved from core to practice; core now has zero capability imports.
+100 scoped unit +67 DB pass; typecheck/lint299/build pass. Ten required audits and architecture-deepening passed; independent initial review passed, no P0/P1 or new substantive P2.
+Independent 30 moved unit +46 subject facade DB passed. PR/CI/17-minute window pending.
+Existing relations-audit stale confusable reader path captured on1064; baseline also warns(exit0).
+No next implementation lane. No dependency upgrades, paid requests or production operations.
+Go two-request cap exhausted. Preserve HOLDs, branches and worktrees.

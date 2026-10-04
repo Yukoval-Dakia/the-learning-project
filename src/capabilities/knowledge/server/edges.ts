@@ -4,6 +4,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { RelationTypeSchema, type RelationTypeSchemaT } from '@/core/schema/event/blocks';
+import { isDirectTreePair } from '@/core/topology-gate';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -12,7 +13,6 @@ import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree'
 import { gatherAndFoldKnowledgeEdge } from '@/server/projections/gather';
 import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
 import { runEdgeTopologyGate } from './edge-topology-write';
-import { isDirectTreePair } from './topology-gate';
 
 type DbLike = Db | Tx;
 

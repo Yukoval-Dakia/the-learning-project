@@ -43,7 +43,6 @@
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { loadPendingEdgeProposalKeys } from '@/capabilities/knowledge/server/propose_edge';
-import { isDirectTreePair } from '@/capabilities/knowledge/server/topology-gate';
 // loadTreeSnapshot is the knowledge package's own tree reader (same-package import).
 import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 import { parseFrontierProposals } from '@/capabilities/knowledge/tasks/knowledge-tasks';
@@ -55,6 +54,7 @@ import { parseFrontierProposals } from '@/capabilities/knowledge/tasks/knowledge
 // knowledge (loadTreeSnapshot). Mirrors that documented precedent; flip if M5
 // tightens package boundaries.
 import { type FrontierResolution, learnableFrontierResolved } from '@/capabilities/practice/public';
+import { isDirectTreePair } from '@/core/topology-gate';
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
