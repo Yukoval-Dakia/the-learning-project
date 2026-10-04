@@ -635,7 +635,7 @@
         "query": [],
         "contentType": null,
         "bodyExample": null,
-        "notes": "窗口=Asia/Shanghai 日界前一日历日（昨日 00:00 BJT 含 → 今日 00:00 BJT 不含；owner 可调，默认前一日历日）。返回 { window:{from,to}, has_overnight_activity, runs:[{task_kind,count,status_breakdown}], note_changes_count, new_proposals_count, new_conjectures_count, agent_notes_count }。5 夜间事实源任一窗内有事实 → has_overnight_activity=true（空夜显式信号，与加载中/失败可区分）。new_proposals 不含 conjecture（两数不重叠）。纯读零写；prep-desk confidence/predicted_p 等内部校准数永不过 wire（只取 count）。需 x-internal-token"
+        "notes": "窗口=Asia/Shanghai 日界前一日历日（昨日 00:00 BJT 含 → 今日 00:00 BJT 不含；owner 可调，默认前一日历日）。返回 { window:{from,to}, has_overnight_activity, runs:[{task_kind,count,status_breakdown}], note_changes_count, new_proposals_count, new_conjectures_count, agent_notes_count }。另返回 degraded_kinds 与 cost:{scope:all_activity,records,by_currency,details}。cost覆盖该日全部前台/后台账本记录，按provider/model/lane/task与费用/用量来源分组；reported/estimated/unknown/legacy及币种分开，未知lane/用量保留；记录数不是物理请求数，目录估算不是订阅额度扣减。5 原有事实源任一窗内有事实 → has_overnight_activity=true；费用记录独立在cost中展示，不冒充任务/业务产出（空夜显式信号，与加载中/失败可区分）。new_proposals 不含 conjecture（两数不重叠）。纯读零写；prep-desk confidence/predicted_p 等内部校准数永不过 wire（只取 count）。需 x-internal-token"
       }
     ]
   },

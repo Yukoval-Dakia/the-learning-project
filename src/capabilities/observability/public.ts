@@ -25,3 +25,5 @@ export { setAdminConfigWriter } from './server/admin-config-writer';
 export { observabilityConfigEffectiveFacts } from './server/config-effective-facts';
 
 export { readHubSyncHealth } from './server/hub-sync';
+
+export { readProviderCostWindow } from './server/provider-cost-projection';

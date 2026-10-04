@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。Linear归零持续推进，当前61项未完成；1118/#1552已合入main36c2460f。当前单线766订阅进度备份；依赖不追新，既有HOLD与生产/付费边界保持。
+> 更新于2026-10-04。Linear归零持续推进，当前62项未完成（新增归并文档债1119）；766/#1553已合入main69c524df。当前单线588费用观测；依赖不追新，既有HOLD与生产/付费边界保持。
 
 ## NOW
 
@@ -63,11 +63,14 @@
 
 - YUK-1118/#1552已交付main36c2460f：13DB缺陷回归先RED，54unit/90DB及全部gate通过；独立83DB/45unit/9合法形状探针、CI37209336163通过，17分钟窗完成，Linear Done。增量CI未选迁移/浏览器，不计实际运行；无新增实质follow-up。
 
-- YUK-766 active：fix/yuk-766-subscription-backup /workspace/tlp-subscription-backup，base36c2460f。按既有Q-766(a)批准实现三表一致快照与claim清理；8项真实DB缺陷回归先RED；62DB/83unit、typecheck/lint/build与10项audit通过。初审发现的旧API fixture/mock阻塞已修，唯一验证审16unit/15DB通过，无未裁决P0/P1；待push后exact-head CI及17分钟窗口。effect保留，队列完成/恢复语义仍需独立验证，首批不冒充整票Done。
+- YUK-766/#1553已交付main69c524df：8语义DB回归先RED，62DB/83unit与全部本地gate通过；初审旧API fixture/mock阻塞修复后唯一验证审16unit/15DB通过，CI37211421697及17分钟窗完成。增量迁移/浏览器未实际运行；下游队列恢复仍Todo。
+
+- YUK-588 active：feat/yuk-588-digest-cost /workspace/tlp-digest-cost，base69c524df。6新增功能DB先RED；52DB/50unit、全部本地gate与provider-attempt-truth通过，独立52DB/40unit初审无P0/P1。共享入口注入reader保持架构基线450/0/48；固定日窗费用/用量后端就绪，待push后CI/17分钟窗。具体UI预审待回复，整票不标Done。
+
 
 ## NEXT
 
-1. 推进766灾备，随后588已批准的overnight-digest费用观测（已校准Todo）；1091联合组模型需完整验收。持续推进Linear归零，不以单批合并作为终点。
+1. 完成588已批准的overnight-digest费用观测，随后1119归并pi迁移文档债；766下游队列与1091联合组模型需完整验收。持续推进Linear归零，不以单批合并作为终点。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
@@ -84,7 +87,7 @@
 - Linear 已恢复；YUK-1106已同步Done，YUK-1107暂停/Backlog，YUK-1007仍In Progress。历史待办继续逐项核验、去重后同步。
 - #1508旧pi0.87.1依赖PR仍关闭、分支保留。迁移由YUK-1112/#1523替代，见NOW，不重新开启旧PR。
 - #1506的jsdom30要求Node24.15+，仓库pin24.0.0。必须协调运行时与DOM回归。#1505的Biome2.5.14原CI有1error、375warnings，超过305基线。必须修真实diagnostics并证明计数，不抬基线放行。原分支保留。
-- 漂移待办归并一组。同步ADR-0003/0004及0054–0060的SDK→pi机制与0054状态记录；保留产品决策，不恢复SDK、不先宣称全部行为等价。另核对agency/notes manifest概要、根AGENTS的 `/api/ready` token豁免说明；无consumer的 `SKIP_BOSS_INGEST` 声明已由1088/#1548清理。证据见 `docs/audit/2026-09-28-drift.md`、`2026-09-29-drift.md`、`2026-09-30-drift.md`，不建三个重复票。
+- 漂移待办归并YUK-1119（Todo，PR1531/1519/1517/1515等报告同源）。同步ADR-0003/0004及0054–0060的SDK→pi机制与0054状态记录；保留产品决策，不恢复SDK、不先宣称全部行为等价。另核对agency/notes manifest概要、根AGENTS的 `/api/ready` token豁免说明；无consumer的 `SKIP_BOSS_INGEST` 声明已由1088/#1548清理。证据见 `docs/audit/2026-09-28-drift.md`、`2026-09-29-drift.md`、`2026-09-30-drift.md`，不建三个重复票。
 - 状态同步：1007预算/写HTTP/首批设置UI/三项读面修复已交付；epic剩余范围保持In Progress。1107暂停且未证明120秒，不标Done。D18新付费评测待单独授权。
 - YUK-1106的#1512阻塞已解除。原 `278a4e936` 的CI `36725357009` 在 `assessment-verdict.db.test.ts:332` 收到j_new、预期j_old。源码diff确认它缺少#1504的候选排序，不是已修代码复发。先合#1504，再同步main，原19项DB用例和新head完整CI `36729120083` 通过。未rerun原SHA，未删断言。原日志封存 `.remember/tmp/pr-closeout-20260930/1512-shard4.log`；Linear恢复后归并原票，不开重复票。
 - YUK-1007两项读面P2已由#1549交付：typed provider实现展示，以及vision逐consumer诊断。原global pin、vision有效性、subscription调度三项由#1538交付。其他未批准编辑控件保持只读。
