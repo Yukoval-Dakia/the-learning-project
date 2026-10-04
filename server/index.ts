@@ -97,6 +97,18 @@ async function injectAdminConfigFactsBeforeServe(): Promise<void> {
   }
 }
 
+async function injectAdminConfigWriterBeforeServe(): Promise<void> {
+  try {
+    const [{ createAdminConfigWriter }, { setAdminConfigWriter }] = await Promise.all([
+      import('@/server/config/admin-config-write'),
+      import('@/capabilities/observability/public'),
+    ]);
+    setAdminConfigWriter(createAdminConfigWriter());
+  } catch (error) {
+    console.warn('[rw:api] config writer unavailable — writes return 503', error);
+  }
+}
+
 async function recoverToolOperationsBeforeServe(): Promise<void> {
   const [{ db }, { recoverToolOperationsOnBoot }] = await Promise.all([
     import('@/db/client'),
@@ -126,6 +138,7 @@ void (async () => {
   await registerToolsBeforeServe();
   await recoverToolOperationsBeforeServe();
   await injectAdminConfigFactsBeforeServe();
+  await injectAdminConfigWriterBeforeServe();
   const server = serve({ fetch: app.fetch, port }, (info) => {
     const mounted = capabilities.flatMap((c) =>
       (c.api?.routes ?? []).filter((r) => r.load).map((r) => `${r.method} ${r.path}`),

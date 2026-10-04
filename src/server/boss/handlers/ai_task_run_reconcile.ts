@@ -18,17 +18,11 @@
 //     finish_reason='reconciled_stuck', which the overnight watchdog EXCLUDES
 //     from degraded-kind alerting (not a logical task failure) while the admin
 //     Failures page keeps it browsable (alerting-excluded, browse-retained).
-//   - threshold 1h vs the largest EFFECTIVE run lifetime (bounded by the
-//     cooperative abort timer) = margin: a >1h 'running' row cannot be a live run,
-//     so false convergence is structurally excluded. The largest *registry*
-//     budget.timeout is 300s (12× margin), BUT YUK-575's durable copilot run
-//     overrides its abort timer per-call to DURABLE_BUDGET.timeoutMs (12min, via
-//     the runner budgetOverride seam), so the largest EFFECTIVE run lifetime is
-//     12min → margin 5×. Still structurally safe (12min < 1h). LOAD-BEARING
-//     invariant (YUK-575 S6): DURABLE_BUDGET.timeoutMs — and any future per-call
-//     budget override — MUST stay < STUCK_RUN_THRESHOLD_MS; a ≥1h durable budget
-//     would let this sweeper converge a LIVE run into a false failure.
-//     (copilot_run.test.ts asserts DURABLE_BUDGET.timeoutMs < STUCK_RUN_THRESHOLD_MS.)
+//   - threshold 1h is shared with config validation and the task-budget reader.
+//     Persisted budgets >= the threshold are rejected at write/hydration; caller
+//     overrides are checked by the reader too. Registry defaults currently max
+//     at 300s; the durable copilot override is 12min. The timer remains cooperative.
+//     (copilot_run.test.ts also asserts the durable lifetime bound.)
 //
 // Triggers (design doc §5.4):
 //   - PRIMARY: one boot-time sweep in start-worker.ts (process crash is the
@@ -40,13 +34,14 @@
 
 import { and, eq, lt } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
+import { STUCK_RUN_THRESHOLD_MS } from '@/core/ai-run-limits';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
 import { unknownAttemptCostTruth } from '@/server/ai/attempt-cost';
 import { writeAiTaskAttemptFinished } from '@/server/ai/log';
 
-/** 1h — 5× the largest effective per-call timeout (12min); see module doc. */
-export const STUCK_RUN_THRESHOLD_MS = 3_600_000;
+/** Shared lifetime boundary, also enforced by configuration and caller overrides. */
+export { STUCK_RUN_THRESHOLD_MS };
 
 /** finish_reason discriminator for sweeper-converged rows. */
 export const RECONCILED_STUCK_FINISH_REASON = 'reconciled_stuck';

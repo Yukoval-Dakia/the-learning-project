@@ -1,18 +1,13 @@
 # Current handoff — 2026-10-04
 
-Main40eca54b:1533budgetreader merged after185unit+67DB, localgates, independentinitial,
-exact-headCI37168569802 and17minwindow.1007InProgress: writes/atomicreset/UI remain.
-P2configuredtimeout>=1h vsstuckreconcile captured1007, mustfixbeforewriteHTTP inclstoredvalues.
-Earlier1530closed1071 at08ff7bc7.78opennowbecause1112reopenedforjustreleased1.0.2.
-
-Active /workspace/tlp-pi-1.0.2,chore/yuk-1112-pi-1.0.2,base40eca54b.
-pi-agent-core/pi-ai pinned1.0.2;pi-telemetry1.0.2transitive. Upstreamagent+telemetryruntime
-byte-identical;pi-aiadds thinking-levelsampling;nativefourproviderJSONunchanged.
-pnpmupdate generatedunrelatedAWS/Smithy/ws upgrades; trimmedonlythoseunsolicitedchanges,
-keptpnpmgeneratedpi metadata/integrities. Frozeninstall passes with1026policycheckedentries.
-Releaseage exceptions onlythreeexact1.0.2packages; globalpolicyunchanged.
-Freshisolatednode_modules installed1.0.2;113unit+61DB,typecheck/lint/build/all10auditspass.
-Dependency audit:0high/critical,2low+16moderateexisting.Independentreview/CI/windowpending. No paid/productioncalls.
-
-Next1007writeHTTP/atomicreset/timeoutbound. NoUIapproval. ExplicitHOLDsremain.
-Go2-requestcap exhausted, no credentials persisted. Keepallbranches/worktrees.
+Main1e4053e2:pi1.0.2/#1534merged,CI37170062890success,17minwindowcomplete,1112Done.
+Owner latest direction: stop chasing dependency versions; prioritize main product line.
+Active1007/workspace/tlp-config-write,feat/yuk-1007-config-write,base1e4053e2.
+Atomicset/reset/sharedjournal+epoch,livekeyvalidation,timeoutboundaryincludingoldhydration,
+globalpinresetvalidatesrevealedtaskmodels.11DBregressionsfirstRED;55serviceDBpassed.
+HTTPPATCH /api/admin/config +POST /api/admin/config/reset via injectedwriter port.
+Fixedactorpanel:admin,authgate,committed/snapshotepochsseparate. 314unit+158DB/typecheck/lint299/build/10auditspass;independentinitialnoP0/P1.
+Inheritedscopedlane/rejudgemodel-onlyvalidationP2captured1007,notfixed.
+Commit/push/CI/windowpending. UIpreflightrefreshindocs/design/2026-10-04-yuk1007-settings-ui-preflight.md.
+NoUIapproval.No production or paidrequests. Go2requestcap remains exhausted.
+Preserveworktrees/branches. Existing1007readfaceP2s and ownerHOLDs remain.

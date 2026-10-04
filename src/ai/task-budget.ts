@@ -1,3 +1,4 @@
+import { STUCK_RUN_THRESHOLD_MS } from '@/core/ai-run-limits';
 import { getTaskOverride } from '@/core/config/store';
 import { type TaskKind, tasks } from './registry';
 import type { TaskBudget, TaskDefinition } from './task-spec';
@@ -12,11 +13,15 @@ export interface TaskBudgetOverride {
 export function resolveTaskBudget(kind: TaskKind, explicit?: TaskBudgetOverride): TaskBudget {
   const defaults = tasks[kind].budget;
   const configured = getTaskOverride(kind)?.budget;
+  const timeout = explicit?.timeoutMs ?? configured?.timeout ?? defaults.timeout;
+  if (!Number.isFinite(timeout) || timeout <= 0 || timeout >= STUCK_RUN_THRESHOLD_MS) {
+    throw new RangeError(`Task timeout must be positive and below ${STUCK_RUN_THRESHOLD_MS}ms`);
+  }
   return Object.freeze({
     maxIterations: explicit?.maxIterations ?? configured?.maxIterations ?? defaults.maxIterations,
     maxCost: configured?.maxCost ?? defaults.maxCost,
     transientRetries: configured?.transientRetries ?? defaults.transientRetries,
-    timeout: explicit?.timeoutMs ?? configured?.timeout ?? defaults.timeout,
+    timeout,
   });
 }
 
