@@ -27,18 +27,23 @@ import { practiceConfigEffectiveFacts } from '@/capabilities/practice/public';
 import type { ConfigEffectiveFact } from '@/core/config/effective';
 import { DB_POOL_MAX } from '@/db/pool';
 import { projectDagMembers } from '@/kernel/manifest';
+import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
 import { piMaxRetries } from '@/server/ai/pi-agent-adapter';
-import { nativePiModels, piProviderId } from '@/server/ai/pi-provider-catalog';
+import { nativePiModel, nativePiModels, piProviderId } from '@/server/ai/pi-provider-catalog';
 import {
   isProviderLaneReady,
   providerAuthSurface,
   readGlobalProviderSwitch,
   resolveTaskProvider,
 } from '@/server/ai/providers';
-import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
+import {
+  VISION_JUDGE_TASK_KINDS,
+  visionJudgeProviderOverride,
+} from '@/server/ai/vision-judge-config';
 import { INFRA_HOUSEKEEPING_SCHEDULES } from '@/server/boss/handlers';
 import { EXPIRE_AGENT, EXPIRE_FAST, EXPIRE_LLM, RETENTION_7D } from '@/server/boss/queue-config';
 import { resolveApiPort } from '@/server/env';
+import { EVENT_SUBSCRIPTION_DISPATCH_SCHEDULE } from '@/server/event-subscriptions/dispatch-mount';
 import { resolveConfig as resolveAiRateLimitConfig } from '@/server/http/rate-limit';
 import { memoryReconcileHandoffMode } from '@/server/memory/memory-reconcile-handoff';
 import { MEMORY_INFRA_SCHEDULES } from '@/server/memory/triggers';
@@ -59,10 +64,46 @@ function laneResolvedNote(reader: string): ConfigEffectiveFact {
   };
 }
 
+/** Check the same binding/catalog/capability gates as execution, without making a request. */
+function visionOverrideFacts(): { provider: ConfigEffectiveFact; model: ConfigEffectiveFact } {
+  try {
+    const override = visionJudgeProviderOverride();
+    if (!override) {
+      const absent = {
+        value: null,
+        note: 'override 未设置或被 reader 降级；使用标准 provider 解析链。',
+      };
+      return { provider: absent, model: absent };
+    }
+    const bindings = VISION_JUDGE_TASK_KINDS.map((kind) => {
+      const binding = resolveTaskProvider(kind, override);
+      if (!nativePiModel(binding.provider, binding.model))
+        throw new Error('native model unavailable');
+      assertModelProfileCapabilityFit(tasks[kind], binding.provider, binding.model);
+      return binding;
+    });
+    const models = new Set(bindings.map((binding) => binding.model));
+    return {
+      provider: { value: override.provider },
+      model:
+        models.size === 1
+          ? { value: bindings[0].model }
+          : { value: null, note: '各视觉任务按自身配置解析到不同模型；没有单一 effective model。' },
+    };
+  } catch {
+    // Never serialize a binding or arbitrary error: either can contain credentials.
+    const failed = {
+      value: null,
+      note: '视觉通道解析失败：请检查 provider、模型能力与服务端凭据；运行时会报错，不会静默降级。',
+    };
+    return { provider: failed, model: failed };
+  }
+}
+
 /** 各 capability public 面透出的 consumer-effective 事实 + server 自有键。 */
 function buildEffectiveValues(): AdminConfigRuntimeFacts['effective_values'] {
   const rateLimit = resolveAiRateLimitConfig();
-  const visionOverride = visionJudgeProviderOverride();
+  const vision = visionOverrideFacts();
   let handoffMode: ConfigEffectiveFact;
   try {
     handoffMode = { value: memoryReconcileHandoffMode() };
@@ -106,20 +147,8 @@ function buildEffectiveValues(): AdminConfigRuntimeFacts['effective_values'] {
     AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON: laneResolvedNote(
       'resolveProviderSessionAdmissionPlan（src/server/ai/provider-session-admission.ts）',
     ),
-    'lane.vision_judge.provider':
-      visionOverride === undefined
-        ? {
-            value: null,
-            note: 'override 惰性：未设置，或 OAuth token 缺席/模型无视觉能力被 reader 降级（vision-judge-config.ts）',
-          }
-        : { value: visionOverride.provider },
-    'lane.vision_judge.model':
-      visionOverride?.model !== undefined
-        ? { value: visionOverride.model }
-        : {
-            value: null,
-            note: '未设置：vision judge 解析链落到 registry 默认（anthropic-sub 自带 claude-opus-4-8 默认）',
-          },
+    'lane.vision_judge.provider': vision.provider,
+    'lane.vision_judge.model': vision.model,
     'locale.learner': {
       value: getLearnerLocale(),
       note: 'AI 输出语言：下次 system prompt 构建时读取本进程快照；跨进程轮询间隔 15s（失败保留旧快照），不改变 UI 语言或 typed task',
@@ -165,6 +194,11 @@ export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
   }));
 
   const infraSchedules: AdminConfigScheduleRow[] = [
+    {
+      ...EVENT_SUBSCRIPTION_DISPATCH_SCHEDULE,
+      owner: 'server/event-subscriptions',
+      source: 'server-event-subscriptions',
+    },
     ...INFRA_HOUSEKEEPING_SCHEDULES.map((decl) => ({
       name: decl.name,
       cron: decl.cron,
@@ -194,7 +228,17 @@ export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
     port = null;
   }
 
+  const effectiveValues = buildEffectiveValues();
+  const globalProvider = effectiveValues['lane.global.provider']?.value;
+  const globalModel = effectiveValues['lane.global.model']?.value;
   return {
+    global_pin:
+      typeof globalProvider === 'string'
+        ? {
+            provider: globalProvider,
+            ...(typeof globalModel === 'string' ? { model: globalModel } : {}),
+          }
+        : null,
     task_bindings: Object.fromEntries(
       Object.keys(tasks).map((kind) => {
         const task = tasks[kind as TaskKind];
@@ -235,6 +279,6 @@ export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
         dag_members: projectDagMembers(capabilities).map((member) => member.name),
       },
     },
-    effective_values: buildEffectiveValues(),
+    effective_values: effectiveValues,
   };
 }

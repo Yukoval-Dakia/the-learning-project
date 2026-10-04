@@ -21,6 +21,39 @@ async function expectNoWrites() {
 }
 
 describe('configuration write boundaries', () => {
+  it('validates the vision override against source-grounding as well as both judge tasks', async () => {
+    await setConfigs(
+      [
+        { key: 'task.SourceGroundingVerifyTask.provider', value: 'anthropic-sub' },
+        { key: 'task.SourceGroundingVerifyTask.model', value: 'claude-opus-4-8' },
+      ],
+      { actor: 'cli' },
+      testDb(),
+    );
+    const before = await testDb().select().from(system_config_journal);
+    await expect(
+      setConfig('lane.vision_judge.provider', 'xiaomi', { actor: 'cli' }, testDb()),
+    ).rejects.toMatchObject({ status: 422 });
+    expect(await testDb().select().from(system_config_journal)).toEqual(before);
+    expect(getConfig('lane.vision_judge.provider', {})).toBeUndefined();
+  });
+
+  it('revalidates active vision overrides when the source-grounding task model changes', async () => {
+    await setConfig('lane.vision_judge.provider', 'xiaomi', { actor: 'cli' }, testDb());
+    const before = await testDb().select().from(system_config_journal);
+    await expect(
+      setConfigs(
+        [
+          { key: 'task.SourceGroundingVerifyTask.provider', value: 'anthropic-sub' },
+          { key: 'task.SourceGroundingVerifyTask.model', value: 'claude-opus-4-8' },
+        ],
+        { actor: 'cli' },
+        testDb(),
+      ),
+    ).rejects.toMatchObject({ status: 422 });
+    expect(await testDb().select().from(system_config_journal)).toEqual(before);
+  });
+
   it.each([STUCK_RUN_THRESHOLD_MS, STUCK_RUN_THRESHOLD_MS * 2])(
     'rejects timeout %s before it can outlive stuck-run reconciliation',
     async (timeout) => {

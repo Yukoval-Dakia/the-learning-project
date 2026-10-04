@@ -39,7 +39,11 @@ export interface AdminConfigScheduleRow {
   readonly tz: string;
   readonly owner: string;
   readonly queue: string;
-  readonly source: 'capability-manifest' | 'server-boss-infra' | 'server-memory-infra';
+  readonly source:
+    | 'capability-manifest'
+    | 'server-boss-infra'
+    | 'server-memory-infra'
+    | 'server-event-subscriptions';
   readonly note?: string;
 }
 
@@ -70,6 +74,8 @@ export interface AdminConfigRuntimeSection {
 
 /** 组合根注入的完整事实束（每请求重算——工厂形态保热加载新鲜度）。 */
 export interface AdminConfigRuntimeFacts {
+  /** Runtime global switch, validated by its real reader. Null includes an invalid switch. */
+  readonly global_pin?: { provider: string; model?: string } | null;
   readonly task_bindings?: Readonly<
     Record<
       string,

@@ -380,6 +380,92 @@ describe('GET /api/admin/config — P1 honest effective for degraded runtime ove
     expect(model).toMatchObject({ value: 'claude-opus-4-8', source: 'env', effective: null });
   });
 
+  it.each(['unregistered-lane', 'constructor', 'toString'])(
+    'does not advertise invalid global provider %s as an active task pin',
+    async (provider) => {
+      vi.stubEnv('AI_PROVIDER_OVERRIDE', provider);
+      const res = await get();
+      expect(res.status).toBe(200);
+      const body = AdminConfigResponseSchema.parse(await res.json());
+      expect(body.keys.find((row) => row.key === 'lane.global.provider')).toMatchObject({
+        value: provider,
+        effective: null,
+      });
+      for (const task of body.tasks) expect(task.global_pin).toBeNull();
+      expect(
+        body.tasks.find((task) => task.kind === 'StepsJudgeTask')?.effective_binding?.error,
+      ).toBeTruthy();
+    },
+  );
+
+  it.each([
+    ['unregistered-lane', 'mimo-v2.5'],
+    ['xiaomi', 'mimo-v2.5'],
+    ['openrouter', 'mimo-v2.5'],
+  ])(
+    'reports unusable vision override %s without claiming it is effective',
+    async (provider, model) => {
+      vi.stubEnv('VISION_JUDGE_PROVIDER', provider);
+      vi.stubEnv('VISION_JUDGE_MODEL', model);
+      vi.stubEnv('XIAOMI_API_KEY', '');
+      vi.stubEnv('OPENROUTER_API_KEY', 'presence-only-openrouter-canary');
+      const res = await get();
+      expect(res.status).toBe(200);
+      const body = AdminConfigResponseSchema.parse(await res.json());
+      for (const key of ['lane.vision_judge.provider', 'lane.vision_judge.model']) {
+        const row = body.keys.find((item) => item.key === key);
+        expect(row?.effective).toBeNull();
+        expect(row?.effective_note).toContain('解析失败');
+      }
+      expect(JSON.stringify(body)).not.toContain('presence-only-openrouter-canary');
+    },
+  );
+
+  it('resolves the active vision model through the real provider fallback', async () => {
+    vi.stubEnv('VISION_JUDGE_PROVIDER', 'anthropic-sub');
+    vi.stubEnv('VISION_JUDGE_MODEL', '');
+    vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'presence-only-oauth-canary');
+    const body = AdminConfigResponseSchema.parse(await (await get()).json());
+    expect(body.keys.find((row) => row.key === 'lane.vision_judge.model')?.effective).toBe(
+      'claude-opus-4-8',
+    );
+    expect(JSON.stringify(body)).not.toContain('presence-only-oauth-canary');
+  });
+
+  it('rejects native model mismatch in the source-grounding vision consumer read face', async () => {
+    await setConfigs(
+      [
+        { key: 'task.SourceGroundingVerifyTask.provider', value: 'anthropic-sub' },
+        { key: 'task.SourceGroundingVerifyTask.model', value: 'claude-opus-4-8' },
+      ],
+      { actor: 'cli' },
+      testDb(),
+    );
+    vi.stubEnv('VISION_JUDGE_PROVIDER', 'xiaomi');
+    vi.stubEnv('VISION_JUDGE_MODEL', '');
+    vi.stubEnv('XIAOMI_API_KEY', 'presence-only-xiaomi-canary');
+    const body = AdminConfigResponseSchema.parse(await (await get()).json());
+    expect(body.keys.find((row) => row.key === 'lane.vision_judge.provider')?.effective).toBeNull();
+    expect(
+      body.keys.find((row) => row.key === 'lane.vision_judge.model')?.effective_note,
+    ).toContain('解析失败');
+    expect(JSON.stringify(body)).not.toContain('presence-only-xiaomi-canary');
+  });
+
+  it('includes conditional subscription dispatch with its actual cron and timezone', async () => {
+    const body = AdminConfigResponseSchema.parse(await (await get()).json());
+    expect(
+      body.schedules.rows.find((row) => row.name === 'event_subscription_dispatch'),
+    ).toMatchObject({
+      queue: 'event_subscription_dispatch',
+      cron: '* * * * *',
+      tz: 'Asia/Shanghai',
+      owner: 'server/event-subscriptions',
+      source: 'server-event-subscriptions',
+      note: expect.stringContaining('订阅'),
+    });
+  });
+
   it('REGRESSION: model-only lane.global row is runtime-inert — effective=null with the inert note, while tasks[].global_pin stays null', async () => {
     vi.stubEnv('AI_PROVIDER_MODEL', 'claude-opus-4-8');
     vi.stubEnv('AI_PROVIDER_OVERRIDE', '');

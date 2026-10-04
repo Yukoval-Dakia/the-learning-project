@@ -493,7 +493,7 @@ function readEnvOverride(
   const raw = env.AI_PROVIDER_OVERRIDE;
   if (!raw) return undefined;
   const provider = raw as Provider;
-  if (!(provider in PROVIDERS)) {
+  if (!isKnownProvider(provider)) {
     throw new Error(
       `AI_PROVIDER_OVERRIDE='${raw}' is not a known provider; expected one of ${Object.keys(PROVIDERS).join(' | ')}`,
     );

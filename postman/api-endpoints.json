@@ -1244,7 +1244,7 @@
         "query": [],
         "contentType": null,
         "bodyExample": null,
-        "notes": "只读。keys[] 每行：value（env pin > DB > env fallback > code-default 分层合成）、source、default、env_mode、read_only（compose 强制键）、wired/consumer（运行时 reader 是否消费）。tasks[] 每行：静态 catalog 默认 + DB 覆盖（provider/model 按执行类型接线；budget_wiring/effective_budget 逐字段报告，chat费用与typed轮数未消费为null，调用参数及重试门仍优先）+ global_pin；effective_binding由真实resolver给出provider/model基线或安全错误（无凭据字段），未注入时null。providers[] 包含 pi_provider 原生身份及 models[] 的 id/api/input，模型清单与执行预设一致。不暴露 secret，不枚举 process.env"
+        "notes": "只读。keys[] 每行：value（env pin > DB > env fallback > code-default 分层合成）、source、default、env_mode、read_only（compose 强制键）、wired/consumer（运行时 reader 是否消费）。tasks[] 每行：静态 catalog 默认 + DB 覆盖（provider/model 按执行类型接线；budget_wiring/effective_budget 逐字段报告，chat费用与typed轮数未消费为null，调用参数及重试门仍优先）+ global_pin；effective_binding由真实resolver给出provider/model基线或安全错误（无凭据字段），未注入时null。providers[] 包含 pi_provider 原生身份及 models[] 的 id/api/input，模型清单与执行预设一致。不暴露 secret，不枚举 process.env 注入运行事实时无效global pin为null；视觉lane逐消费者解析、原生目录及能力校验，失败为null与安全说明。schedules包含server-event-subscriptions条件调度声明，不代表worker实际挂载。"
       },
       {
         "method": "PATCH",

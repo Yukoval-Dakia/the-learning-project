@@ -56,7 +56,12 @@ describe('mountSubscriptionDispatch', () => {
     expect(boss.work).toHaveBeenCalledTimes(1);
     expect(boss.work.mock.calls[0][0]).toBe(EVENT_SUBSCRIPTION_DISPATCH_QUEUE);
     expect(boss.schedule).toHaveBeenCalledTimes(1);
-    expect(boss.schedule.mock.calls[0][0]).toBe(EVENT_SUBSCRIPTION_DISPATCH_QUEUE);
+    expect(boss.schedule).toHaveBeenCalledWith(
+      EVENT_SUBSCRIPTION_DISPATCH_QUEUE,
+      '* * * * *',
+      {},
+      { tz: 'Asia/Shanghai' },
+    );
   });
 
   it('mounts nothing (returns false) when no capability declares a subscription', async () => {

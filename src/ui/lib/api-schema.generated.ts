@@ -2870,7 +2870,7 @@ export interface operations {
                                 owner: string;
                                 queue: string;
                                 /** @enum {string} */
-                                source: "capability-manifest" | "server-boss-infra" | "server-memory-infra";
+                                source: "capability-manifest" | "server-boss-infra" | "server-memory-infra" | "server-event-subscriptions";
                                 tz: string;
                             }[];
                         };
