@@ -75,6 +75,8 @@ describe('resolveModelExecutor — model_executor assembly (YUK-1092)', () => {
           },
           points: 4,
         },
+        question_parts: [{ part_id: 'p1', prompt_md: 'Explain the answer.', material_ids: [] }],
+        response_slots: [{ slot_id: 's1', part_id: 'p1', kind: 'text', math_preview: false }],
         slot_responses: [{ slot_id: 's1', kind: 'text', text_md: 'answer' }],
         group_evidence: [],
         materials: [],

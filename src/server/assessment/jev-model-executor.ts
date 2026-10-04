@@ -124,6 +124,11 @@ function typedState(
   groupEvidence: GroupEvidenceT[],
 ): Record<string, unknown> {
   return {
+    question: {
+      revision_id: request.revision_id,
+      parts: request.question_parts,
+      response_slots: request.response_slots,
+    },
     submission: {
       member_submission_ids: request.submission_ids ?? [request.submission_id],
       entries: entries.map((entry) => projectSlotResponse(entry)),
@@ -315,6 +320,23 @@ export function createJevModelExecutor(options: JevModelExecutorOptions): ModelU
         reason: 'unjudgeable',
         detail: `executor task_kind '${request.executor.task_kind}' is not a registered Jev typed task`,
       });
+    }
+
+    // Captions/transcripts do not make an original image/audio/video/PDF visible
+    // to this text-only transport. Text assets also need their frozen bytes.
+    const unreadableMaterials = request.materials.filter(
+      (material) =>
+        !['plaintext', 'passage', 'table'].includes(material.kind) ||
+        material.content_md === undefined,
+    );
+    if (unreadableMaterials.length > 0) {
+      return (
+        (await escalate(request)) ??
+        pendingOutcome({
+          reason: 'missing_materials',
+          material_ids: unreadableMaterials.map((material) => material.material_id),
+        })
+      );
     }
 
     const questions = questionsForUnit(request);

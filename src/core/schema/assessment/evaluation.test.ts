@@ -1148,6 +1148,8 @@ describe('joint evaluation preserves original member inputs', () => {
     expect(executor).toHaveBeenCalledWith(
       expect.objectContaining({
         submission_ids: [SUBMISSION_ID, 'sub-2'].sort(),
+        question_parts: input.revision.structure.parts,
+        response_slots: input.revision.response_spec.slots,
         slot_responses: [
           expect.objectContaining({ slot_id: 'p1::r' }),
           expect.objectContaining({ slot_id: 'p2::r' }),
@@ -1211,4 +1213,178 @@ describe('joint evaluation preserves original member inputs', () => {
       }),
     ).rejects.toMatchObject({ code: 'invalid_group_input' });
   });
+});
+
+it('model request preserves the actual issued question conditions and native option meanings', async () => {
+  const prompt =
+    '一艘船沿河航行：顺流18千米用时1小时，逆流12千米用时1小时。求静水速度，并说明两式相加如何消去水速。';
+  const instruction = '静水速度15千米/时，水流速度3千米/时，两式相加消去水流速度。';
+  const revision = revisionFor({
+    parts: [
+      { part_id: 'p1', prompt_md: prompt, material_ids: ['stimulus'] },
+      { part_id: 'unissued', prompt_md: '不应泄入当前评分的另一问题', material_ids: ['other'] },
+    ],
+    materials: [
+      {
+        material_id: 'stimulus',
+        kind: 'table',
+        asset: { asset_id: 'table-frozen', digest: 'sha256:original' },
+        content_md: '|航段|航程|\n|顺流|18 km|\n|逆流|12 km|',
+      },
+      {
+        material_id: 'other',
+        kind: 'plaintext',
+        asset: { asset_id: 'other-private', digest: 'sha256:other' },
+        content_md: '另一单元的私有评分依据',
+        visibility: 'private',
+      },
+    ],
+    slots: [
+      {
+        slot_id: 'p1::r',
+        part_id: 'p1',
+        kind: 'single_choice',
+        options: [
+          { option_id: 'opaque-a', label: 'A', text: '静水速度30千米/时。' },
+          { option_id: 'opaque-b', label: 'B', text: instruction },
+        ],
+      },
+    ],
+    units: [
+      {
+        scoring_unit_id: 'p1::u',
+        slot_refs: ['p1::r'],
+        material_refs: [],
+        evidence_slot_refs: [],
+        requires_group_evidence: false,
+        criterion: {
+          kind: 'rule_reference',
+          rule_id: 'relation',
+          statement_md: '正确运用题中数量关系并解释消元过程。',
+          source: 'official',
+        },
+        points: 4,
+      },
+    ],
+    assignments: [
+      {
+        scoring_unit_ids: ['p1::u'],
+        executor: {
+          kind: 'model_executor',
+          task_kind: 'JevScoringDecisionTask',
+          admitted_slice_id: 'approved-slice',
+        },
+      },
+    ],
+  });
+
+  const before = structuredClone(revision);
+  let captured: unknown;
+  await evaluateSubmissionCore(
+    inputFor(
+      submissionFor([{ slot_id: 'p1::r', kind: 'choice', option_ids: ['opaque-b'] }]),
+      revision,
+      {
+        issued_part_ids: ['p1'],
+        model_executor: async (req) => {
+          captured = req;
+          return {
+            kind: 'pending',
+            pending: {
+              reason: 'needs_review',
+              trigger: 'flagged',
+              detail: 'Context transport fixture; no grading performed.',
+            },
+            run_refs: [],
+          };
+        },
+      },
+    ),
+  );
+  expect(captured).toBeDefined();
+  expect(captured).toMatchObject({ materials: [revision.structure.materials[0]] });
+  expect(revision).toEqual(before);
+  expect(JSON.stringify(captured)).not.toContain('另一单元的私有评分依据');
+  expect.soft(JSON.stringify(captured)).toContain(prompt);
+  expect.soft(JSON.stringify(captured)).toContain(instruction);
+  expect(JSON.stringify(captured)).not.toContain('不应泄入当前评分的另一问题');
+});
+
+it('group-only scoring receives only the issued question scope', async () => {
+  const revision = revisionFor({
+    parts: [
+      {
+        part_id: 'p1',
+        prompt_md: '阅读下列完整推导并说明条件：一、保持水量；二、比较坡度；三、结合表格。',
+        material_ids: [],
+      },
+      { part_id: 'p2', prompt_md: '另一张未发出的题目', material_ids: [] },
+    ],
+    slots: [
+      { slot_id: 'p1::r', part_id: 'p1', kind: 'text', math_preview: false },
+      { slot_id: 'p2::r', part_id: 'p2', kind: 'text', math_preview: false },
+    ],
+    units: [
+      {
+        scoring_unit_id: 'group',
+        slot_refs: [],
+        material_refs: [],
+        evidence_slot_refs: [],
+        requires_group_evidence: true,
+        criterion: {
+          kind: 'rule_reference',
+          rule_id: 'group-rule',
+          statement_md: '整页推导能支持题目所需结论。',
+          source: 'official',
+        },
+        points: 2,
+      },
+    ],
+    assignments: [
+      {
+        scoring_unit_ids: ['group'],
+        executor: {
+          kind: 'model_executor',
+          task_kind: 'JevScoringDecisionTask',
+          admitted_slice_id: 'approved',
+        },
+      },
+    ],
+  });
+  const submission = submissionFor([]);
+  submission.group_evidence = [
+    {
+      target: { scope: 'all_units' },
+      evidence: {
+        evidence_id: 'page',
+        kind: 'image',
+        asset: { asset_id: 'page-asset', digest: `sha256:${'a'.repeat(64)}` },
+        mime_type: 'image/png',
+        bytes: 1200,
+        uploaded_at: NOW,
+      },
+    },
+  ];
+  const executor = vi.fn(
+    async (): Promise<ModelUnitOutcomeT> => ({
+      kind: 'pending',
+      pending: {
+        reason: 'needs_review',
+        trigger: 'flagged',
+        detail: 'Context transport fixture; no grading performed.',
+      },
+      run_refs: [],
+    }),
+  );
+  await evaluateSubmissionCore(
+    inputFor(submission, revision, { issued_part_ids: ['p1'], model_executor: executor }),
+  );
+  expect(executor).toHaveBeenCalledOnce();
+  expect(executor).toHaveBeenCalledWith(
+    expect.objectContaining({
+      question_parts: [revision.structure.parts[0]],
+      response_slots: [revision.response_spec.slots[0]],
+      group_evidence: submission.group_evidence,
+    }),
+  );
 });

@@ -65,6 +65,10 @@ function request(overrides: Partial<ModelExecutorRequest> = {}): ModelExecutorRe
       admitted_slice_id: 'slice_en_short_answer_v1',
     },
     unit: ruleUnit(),
+    question_parts: [
+      { part_id: 'p1', prompt_md: '解方程：2x+3=11，写出移项步骤。', material_ids: [] },
+    ],
+    response_slots: [{ slot_id: 's1', part_id: 'p1', kind: 'text', math_preview: true }],
     slot_responses: [textEntry('x = 4')],
     group_evidence: [],
     materials: [],
@@ -261,6 +265,11 @@ describe('createJevModelExecutor — Jev lane', () => {
     expect(body.questions.u1.type).toBe('noul');
     expect(body.questions.u1.criteria.true).toContain('final answer is 4');
     expect(body.state.submission.entries[0].text_md).toBe('x = 4');
+    expect(body.state.question).toEqual({
+      revision_id: 'rev_1',
+      parts: request().question_parts,
+      response_slots: request().response_slots,
+    });
   });
 
   it('rule_reference below threshold ⇒ scored 0 (real counter-evidence, not pending)', async () => {
@@ -479,6 +488,71 @@ describe('createJevModelExecutor — Jev lane', () => {
       kind: 'pending',
       pending: { reason: 'infra_failure', retryable: false },
     });
+    expect(advanced).not.toHaveBeenCalled();
+  });
+});
+
+describe('frozen question material visibility', () => {
+  it.each(['figure', 'audio', 'video', 'pdf', 'passage', 'table', 'plaintext'] as const)(
+    'requires an asset-capable executor for %s without readable original bytes',
+    async (kind) => {
+      const fetchImpl = vi.fn(async () => responseJson(jevOk(0.96))) as unknown as typeof fetch;
+      const input = request({
+        materials: [
+          {
+            material_id: 'source',
+            kind,
+            asset: { asset_id: 'original-asset', digest: 'sha256:frozen' },
+            caption: '原图表或音频材料；此说明不是材料的完整内容。',
+            alt_text: '对照材料作答',
+            ...(['figure', 'audio', 'video', 'pdf'].includes(kind)
+              ? { content_md: '只是标题或转写，不能替代原始图像/发音/时序。' }
+              : {}),
+          },
+        ],
+      });
+      const unavailable = await createJevModelExecutor(executorOptions({ fetchImpl }))(input);
+      expect
+        .soft(unavailable)
+        .toMatchObject({ kind: 'pending', pending: { reason: 'missing_materials' } });
+      const advanced = vi.fn(
+        async (): Promise<ModelUnitOutcomeT> => ({
+          kind: 'pending',
+          pending: {
+            reason: 'needs_review',
+            trigger: 'flagged',
+            detail: 'Context transport fixture; no grading performed.',
+          },
+          run_refs: [],
+        }),
+      );
+      await createJevModelExecutor(executorOptions({ fetchImpl, advancedExecutor: advanced }))(
+        input,
+      );
+      expect.soft(advanced).toHaveBeenCalledWith(input, expect.any(AbortSignal));
+      expect(fetchImpl).not.toHaveBeenCalled();
+    },
+  );
+  it('passes frozen inline text material bytes to Jev unchanged', async () => {
+    const content =
+      '|航段|距离|时间|\n|顺流|18 km|1 h|\n|逆流|12 km|1 h|\n静水速度按两式相加计算。';
+    const fetchImpl = vi.fn(async () => responseJson(jevOk(0.96))) as unknown as typeof fetch;
+    const input = request({
+      materials: [
+        {
+          material_id: 'table',
+          kind: 'table',
+          asset: { asset_id: 'text-asset', digest: 'sha256:table' },
+          content_md: content,
+        },
+      ],
+    });
+    const advanced = vi.fn();
+    await createJevModelExecutor(executorOptions({ fetchImpl, advancedExecutor: advanced }))(input);
+    const body = JSON.parse(
+      String((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1]?.body),
+    );
+    expect(body.state.materials[0].content_md).toBe(content);
     expect(advanced).not.toHaveBeenCalled();
   });
 });
