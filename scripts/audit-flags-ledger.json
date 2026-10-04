@@ -46,12 +46,12 @@
   },
   "PLACEMENT_PROBE_ENABLED": {
     "kind": "env",
-    "literals": ["true", "1"],
-    "case_insensitive": true,
+    "literals": ["true"],
+    "case_insensitive": false,
     "polarity": "opt-in",
     "reader_marker": "getConfigFlag('PLACEMENT_PROBE_ENABLED')",
     "file": "src/server/session/placement.ts",
-    "notes": "gates the placement probe. Opt-in/default OFF; module-load read via shared parseFlag."
+    "notes": "Placement probe gate, default OFF. Registry preserves only exact env 'true' (not '1', case variants or whitespace); compose-pinned and DB override ignored. Metadata correction only; reader unchanged."
   },
   "QUESTION_SUPPLY_REFILL_ENABLED": {
     "kind": "env",
@@ -241,5 +241,91 @@
     "reader_marker": "getConfigFlag('JUDGE_DURABLE_ENABLED')",
     "file": "src/capabilities/practice/server/judge-durable-config.ts",
     "notes": "YUK-594 async-main judge kill switch. Opt-in/default OFF (dark-ship); parsed via shared parseFlag. ON ⇒ practice submit's server-side judge call diverts to the durable judge_run lane (202-pending + backfill); OFF ⇒ byte-identical synchronous judging (D8 flag-gated fallback)."
+  },
+  "HUB_SYNC_MODE": {
+    "kind": "config",
+    "value_type": "enum",
+    "reader_marker": "getConfig('HUB_SYNC_MODE')",
+    "file": "src/capabilities/notes/server/hub-sync-reconciliation.ts",
+    "notes": "Default off. Exact env literals (no trim); invalid falls back to off. Off retains trigger bookkeeping. No production flip.",
+    "values": ["off", "shadow", "apply"]
+  },
+  "SELECTION_POLICY": {
+    "kind": "config",
+    "value_type": "enum",
+    "reader_marker": "getConfig('SELECTION_POLICY')",
+    "file": "src/capabilities/practice/server/stream-store.ts",
+    "notes": "Default softmax_mfi; exact env literals (no trim). Unknown values fall back to default; legacy selects deterministic composition.",
+    "values": ["legacy", "softmax_mfi"]
+  },
+  "MEMORY_RECONCILE_HANDOFF_MODE": {
+    "kind": "config",
+    "value_type": "enum",
+    "reader_marker": "rawConfigValue('MEMORY_RECONCILE_HANDOFF_MODE')",
+    "file": "src/server/memory/memory-reconcile-handoff.ts",
+    "notes": "Default observe; consumer trims then validates, invalid non-empty values throw. write/recover persist new intents; recover/drain run recovery.",
+    "values": ["observe", "write", "recover", "drain"]
+  },
+  "INTERVENTION_DISABLED_METHOD_IDS": {
+    "kind": "config",
+    "value_type": "csv",
+    "reader_marker": "getConfig(INTERVENTION_DISABLED_METHOD_IDS, env)",
+    "file": "src/capabilities/agency/server/intervention/snapshot.ts",
+    "notes": "Default empty list. Env is comma-separated, trimmed, empty members removed; DB is a method-id array. Consumer rejects unknown pedagogy method IDs."
+  },
+  "EXTRACT_OCR_ENGINE": {
+    "kind": "config",
+    "value_type": "enum",
+    "reader_marker": "getConfig('EXTRACT_OCR_ENGINE')",
+    "file": "src/capabilities/ingestion/jobs/tencent_ocr_extract.ts",
+    "notes": "Default glm; exact env literals (no trim), invalid falls back to glm. Explicit dependency injection can override the engine for a call.",
+    "values": ["glm", "tencent"]
+  },
+  "DOCX_CONVERT_ENGINE": {
+    "kind": "config",
+    "value_type": "enum",
+    "reader_marker": "getConfig('DOCX_CONVERT_ENGINE') === 'docker'",
+    "file": "src/capabilities/ingestion/server/docx/convert.ts",
+    "notes": "Only docker is an explicit configured value. Unset/other env values select the automatic path; viareader is not a configurable enum value.",
+    "values": ["docker"]
+  },
+  "AI_PROVIDER_ATTEMPT_ADMISSION_MODE": {
+    "kind": "config",
+    "value_type": "enum",
+    "reader_marker": "getConfig('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', env)",
+    "file": "src/server/ai/provider-attempt-admission-config.ts",
+    "notes": "Default off; trimmed mode, invalid throws. Off bypasses policy parsing; missing per-lane policy also resolves off.",
+    "values": ["off", "observe", "enforce"]
+  },
+  "AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON": {
+    "kind": "config",
+    "value_type": "json",
+    "reader_marker": "getConfig('AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON', env)",
+    "file": "src/server/ai/provider-attempt-admission-config.ts",
+    "notes": "Env JSON / DB object keyed by known attempt lane; strict positive maxConcurrentAttempts and maxAttemptStartsPerMinute. Invalid JSON/shape/unknown lane throws when active; absent policy bypasses lane."
+  },
+  "AI_PROVIDER_SESSION_ADMISSION_MODE": {
+    "kind": "config",
+    "value_type": "enum",
+    "reader_marker": "getConfig(MODE_KEY, env)",
+    "file": "src/server/ai/provider-session-admission.ts",
+    "notes": "Default off; trimmed mode, invalid throws. Off skips policies; an unlisted provider lane resolves off.",
+    "values": ["off", "observe", "enforce"]
+  },
+  "AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON": {
+    "kind": "config",
+    "value_type": "json",
+    "reader_marker": "getConfig(POLICIES_KEY, env)",
+    "file": "src/server/ai/provider-session-admission.ts",
+    "notes": "Required non-empty provider-keyed object in observe/enforce; env JSON or DB object. Consumer validates known providers, strict fields and integer bounds for concurrency/start rate/queue/wait. Off ignores policies; missing lane bypasses."
+  },
+  "PROJECTION_IS_WRITER_ITEM_CALIBRATION": {
+    "kind": "env",
+    "literals": ["1"],
+    "case_insensitive": false,
+    "polarity": "opt-in",
+    "reader_marker": "getConfigFlag(PER_ENTITY_FLAG_ENV[entity])",
+    "file": "src/server/projections/sot-flag.ts",
+    "notes": "Default OFF write-ownership switch. Shared config reader preserves registry's exact env literal '1'; other env strings fall back to false. DB boolean override remains supported. No production flip."
   }
 }

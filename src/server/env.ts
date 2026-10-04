@@ -121,7 +121,6 @@ const server = {
   RW_WORKER: optionalString,
   SEED_SYNTHETIC_OK: optionalString,
   SELECTION_POLICY: optionalString,
-  SKIP_BOSS_INGEST: optionalString,
   TAGGING_MATCH_THRESHOLD: optionalString,
   EXA_API_KEY: optionalString,
   TENCENT_OCR_REGION: optionalString,
