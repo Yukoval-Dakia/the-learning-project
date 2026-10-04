@@ -531,50 +531,11 @@ export async function runSourceVerify(
         };
       }
       if (outcome.status === 'transient_error') {
-        // TRANSIENT image-fetch / VLM / parse failure (or a bare throw, above) — NOT a content
-        // verdict. FAIL-CLOSED (thread 1): the row was pre-promoted 'active', and throwing to
-        // retry would otherwise leave it pool-selectable during the retry window, bypassing
-        // this gate. Demote it to 'draft' FIRST — a bare UPDATE scoped to THIS single-source
-        // row, committed independently of the throwing verify tx so it survives the throw —
-        // then throw so the catch-bottom writes the retriable outcome='error' event and
-        // pg-boss re-runs; a later 'grounded' re-check re-promotes it. Scope is limited to this
-        // single_source_grounding row: no other verify error semantics change.
-        //
-        // OVERLAPPING-DELIVERY GUARD (thread 2, codex): pg-boss can have TWO deliveries of the
-        // same question in flight (this run passed the top idempotency check before a
-        // concurrent run committed). If that concurrent run has SINCE terminally verified +
-        // promoted this question (a source_verify outcome='success' event now exists), it owns
-        // the row's 'active' state — this stale run must NOT yank it back out. The NOT EXISTS
-        // subquery makes the check atomic with the demote (no check-then-act TOCTOU): the
-        // UPDATE demotes ONLY when no success verify event exists.
-        //
-        // VERSION GUARD (thread 2 round-2, codex): mirror the normal promote/demote branch's
-        // `current.version !== row.version` staleness check. This run's grounding verdict was
-        // computed against `row.version`; if the question was EDITED (version bumped) during the
-        // VLM call, this delivery is stale and must NOT act on the newer row — pin the demote to
-        // `version = row.version` so a bumped row is untouched (this run then throws and is
-        // re-run against the fresh version). Without it, a stale delivery could yank a freshly
-        // re-verified newer version out of the pool.
-        await db
-          .update(question)
-          .set({ draft_status: LEGACY_DRAFT_STATUS.DRAFT, updated_at: new Date() })
-          .where(
-            and(
-              eq(question.id, questionId),
-              eq(question.draft_status, LEGACY_DRAFT_STATUS.ACTIVE),
-              eq(question.version, row.version),
-              sql`NOT EXISTS (SELECT 1 FROM ${event} WHERE ${event.action} = 'experimental:source_verify' AND ${event.subject_kind} = 'question' AND ${event.subject_id} = ${questionId} AND ${event.outcome} = 'success')`,
-            ),
-          );
-        // YUK-1045 — verify 挂起串行化（§3.3）：transient demote 必须同时把
-        // contract 维度翻 suspended（verify_hold）+ admission 折叠 withheld，
-        // 否则「未发出的题」在 contract 读面仍可见为可用。复审 P1：demote 与
-        // suspend 在【同一事务】原子提交（不再先交 demote 再交 suspend ——
-        // 中间窗口会让挂起丢失），且在【组根行锁下重读】版本/终验状态：
-        // 并发 promote 在 publishQuestionGroup 里先取同一锁，锁内读就是
-        // 线性化点（committed success / 版本漂移 ⇒ 本投递 stale，demote 与
-        // suspend 双双跳过，且不写核验记录 —— §3.3「旧验证不能改变较新
-        // admission 决定」）。
+        // Transient grounding is retriable, not a content verdict. Commit legacy draft
+        // and contract suspended/withheld together before throwing to retry. Root→child
+        // locks serialize with editing/publishing; re-read version and terminal success
+        // under those locks so a stale delivery cannot undo a newer admission.
+        // A failed suspension rolls back the demotion too; catch-bottom records an error.
         try {
           await db.transaction(async (suspendTx) => {
             const groupRootId = row.parent_question_id ?? questionId;
@@ -587,7 +548,6 @@ export async function runSourceVerify(
             const [post] = await suspendTx
               .select({
                 version: question.version,
-                draftStatus: question.draft_status,
                 promotedElsewhere: sql<boolean>`EXISTS (
                   SELECT 1 FROM ${event}
                   WHERE ${event.action} = 'experimental:source_verify'
@@ -598,12 +558,10 @@ export async function runSourceVerify(
               })
               .from(question)
               .where(eq(question.id, questionId))
+              .for('update')
               .limit(1);
             const maySuspendContract =
-              post != null &&
-              post.version === row.version &&
-              !post.promotedElsewhere &&
-              post.draftStatus !== LEGACY_DRAFT_STATUS.ACTIVE;
+              post != null && post.version === row.version && !post.promotedElsewhere;
             if (!maySuspendContract) return;
             await suspendTx
               .update(question)
@@ -714,6 +672,16 @@ export async function runSourceVerify(
       // race. Locking row.knowledge_ids (pre-tx snapshot) is safe: on attribution drift the version
       // guard below throws and pg-boss reruns against the fresh scope.
       await lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
+      // Match editing/archive/publisher order even when this delivery targets a child.
+      // Keep the global learning-write and placement-supply locks ahead of all row locks.
+      if (row.parent_question_id != null) {
+        await tx
+          .select({ id: question.id })
+          .from(question)
+          .where(eq(question.id, row.parent_question_id))
+          .for('update')
+          .limit(1);
+      }
       // The checks above ran against `row.version`. Cross-KC reconciliation bumps that version
       // under the same row lock; a mismatch makes this verdict stale, so abort before writing a
       // terminal event/promotion. The catch records a retriable outcome='error' and pg-boss reruns
@@ -724,8 +692,8 @@ export async function runSourceVerify(
           version: question.version,
           knowledgeIds: question.knowledge_ids,
           draftStatus: question.draft_status,
-          // YUK-1045 — 并发终验成功（transient 分支 demote 的 NOT EXISTS guard
-          // 同款）归锁内读：它已提交 ⇒ 本投递 stale，demote 与 suspend 都跳过。
+          // As in the transient branch, a committed terminal success makes a failed
+          // overlapping delivery stale: it must skip both demotion and suspension.
           promotedElsewhere: sql<boolean>`EXISTS (
             SELECT 1 FROM ${event}
             WHERE ${event.action} = 'experimental:source_verify'
@@ -964,8 +932,8 @@ export async function runSourceVerify(
     return { status: promote ? 'verified' : 'failed', checks };
   } catch (err) {
     // failure-bottom: write a TRANSIENT-error event so pg-boss redelivery re-runs the
-    // verify (idempotency guard treats outcome='error' as retriable). The draft stays
-    // draft_status='draft' — the catch path NEVER promotes (mirrors quiz_verify).
+    // verify (idempotency guard treats outcome='error' as retriable). A failed write
+    // transaction preserves its prior state; the catch path never promotes.
     // YUK-350 (RL1) — error-safe: promotion happens only inside the try (post-LLM
     // gate), so reaching this catch guarantees the question was never promoted. The
     // unified system_error projection now ALSO gives tier-2 a symmetric result-layer
