@@ -75,11 +75,11 @@
 
 - YUK-1045/#1560已交付main d815df4b（19:08UTC）：116unit77DB/全部本地gates/独立初审与唯一P1验证审/CI37226077585（82迁移34浏览器）/17分钟窗通过，Linear Done。缺准入快照与来源伪装已修，历史不回填。
 
-- YUK-1091当前实施：正式联合组4项断言先RED；固定head锚定、完整成员快照与core联判、DB seal、结算v3/读面/反馈已接线；138unit136DB（含迁移导入/备份）及本地gates通过；82项完整迁移通过；独立review/CI待完成。
+- YUK-1091当前实施：正式联合组4项断言先RED；固定head锚定、完整成员快照与core联判、DB seal、结算v3/读面/反馈已接线；138unit136DB（含迁移导入/备份）及本地gates通过；82项完整迁移通过；初审1项联合时点P1已用2个DB回归先RED后修，50DB通过；唯一验证审原2探针+39DB通过，正式joint20DB/类型lint构建通过；最终CI待完成。
 
 ## NEXT
 
-1. 先交付1091联合成员定稿、完整评估与结算读面，再推进1047正式入口迁移；八入口未完成前不标Done。766恢复LIGHT/FULL与588 UI具体预审待owner回复，1091联合组模型仍Todo；不以单批合并为终点。
+1. 先交付1091联合成员定稿、完整评估与结算读面，再推进1047正式入口迁移；八入口未完成前不标Done。766恢复LIGHT/FULL与588 UI具体预审待owner回复，1091处于In Review；不以单批合并为终点。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 

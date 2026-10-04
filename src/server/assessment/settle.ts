@@ -883,12 +883,14 @@ async function writeSettlementEvent(
 export async function learningSettlement(input: ActivationSettleInput): Promise<ActivationEffect> {
   const { tx } = input;
   const activatedAt = input.now;
-  const occurrenceAt = input.submission.submitted_at;
-  const occurrenceMs = occurrenceAt.getTime();
 
   // ---- 计划（冻结契约 + 组 KC 作用域；纯判定无写）----
   const scope = await loadScope(tx, input);
   const plan = derivePlan(input, scope);
+  // The validated plan owns the joint occurrence. Its anchor may have been
+  // submitted earlier; actual writes, receipts and replay boundaries must agree.
+  const occurrenceAt = new Date(plan.occurrenceAt);
+  const occurrenceMs = occurrenceAt.getTime();
   // θ̂ 依赖域映射（HIERARCHICAL_ELO_ENABLED 开时为真；冻结进 replay 输入，
   // re-apply 不重解析 —— 与 durable judge 的冻结语义同款）。
   if (plan.theta.applied) {

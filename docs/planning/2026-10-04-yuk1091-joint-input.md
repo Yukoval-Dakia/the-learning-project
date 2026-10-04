@@ -76,4 +76,18 @@ checks, independent review and exact-head CI results are recorded in the PR.
 
 Author verification: 138 scoped unit and 136 DB tests pass, including migration
 apply and assessment backup/restore. Typecheck, lint (299 existing warnings), build
-and ten local audits pass. All 82 migration smoke tests pass. Independent initial review is running; CI is pending.
+and ten local audits pass. All 82 migration smoke tests pass. Independent initial review ran 96 unit and 64 DB tests and found one P1:
+the actual settlement still used the anchor time despite the plan's last-member
+time. Two independent DB probes (nine failing assertions) were adopted as formal
+regressions before fixing it. Actual FSRS/theta writes, receipts and replay bounds
+now use the validated plan time; 50 scoped DB tests pass after the fix. The sole
+P1 verification review passed the original two independent probes and 39 DB tests,
+including historical v1/v2 replay. The formal joint file passes all 20 tests after
+an explicit null guard and Date normalization for the JSON FSRS timestamp;
+typecheck, lint and build also pass. Final-head CI remains pending.
+
+PR-Agent's partial-group reader concern was checked: the public reader accepts
+only group IDs and loads all submissions by group, with chunks over group IDs,
+not member rows. Its digest-format suggestion describes a future schema-change
+risk; no current serialization mismatch was demonstrated. Both are nonblocking,
+with no speculative runtime changes or new duplicate tickets.

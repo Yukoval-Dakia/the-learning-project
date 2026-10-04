@@ -521,3 +521,63 @@ describe('YUK-1091 frozen joint input', () => {
     expect(await testDb().select().from(assessment_submission)).toHaveLength(2);
   });
 });
+
+describe('joint occurrence settlement', () => {
+  beforeEach(resetDb);
+  it('uses last-member time for actual receipt and learning writes', async () => {
+    const s = await seed();
+    const candidate = await evaluate(s);
+    expect((await activate(candidate.record.evaluation_id)).status).toBe('activated');
+    const [receipt] = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_settlement'));
+    expect.soft(receipt.payload).toMatchObject({ occurrence_at: LATER.toISOString() });
+    const [fsrs] = await testDb().select().from(material_fsrs_state);
+    const lastReview = fsrs.state.last_review;
+    if (lastReview === null) throw new Error('settlement must persist an FSRS review time');
+    expect.soft(new Date(lastReview).toISOString()).toBe(LATER.toISOString());
+    const mastery = await testDb().select().from(mastery_state);
+    expect(mastery).toHaveLength(2);
+    for (const row of mastery)
+      expect.soft(row.last_outcome_at?.toISOString()).toBe(LATER.toISOString());
+  });
+});
+
+describe('joint occurrence replay boundary', () => {
+  beforeEach(resetDb);
+  it('orders an intervening occurrence before the joint occurrence, including regrade', async () => {
+    const db = testDb();
+    const s = await seed();
+    const joint = await evaluate(s);
+    expect((await activate(joint.record.evaluation_id)).status).toBe('activated');
+    const mid = new Date(NOW.getTime() + 500);
+    const saved = await saveSubmission(db, {
+      ...s.requests[0],
+      evaluation_group_id: 'between',
+      idempotency_key: 'mid',
+      now: mid,
+    });
+    if (saved.status !== 'saved') throw new Error(saved.status);
+    const candidate = await evaluateSubmission(db, {
+      submission_id: saved.submission.submission_id,
+      evaluation_group_id: 'between',
+    });
+    expect((await activate(candidate.record.evaluation_id)).status).toBe('activated');
+    const receipts = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_settlement'));
+    expect.soft(receipts.filter((r) => r.payload.replay_of)).toHaveLength(1);
+    for (const row of await db.select().from(mastery_state))
+      expect.soft(row.last_outcome_at?.toISOString()).toBe(LATER.toISOString());
+    const next = await evaluate(s);
+    expect((await activate(next.record.evaluation_id, joint.record.evaluation_id, 1)).status).toBe(
+      'activated',
+    );
+    for (const row of await db.select().from(mastery_state)) {
+      expect.soft(row.last_outcome_at?.toISOString()).toBe(LATER.toISOString());
+      expect.soft(row.evidence_count).toBe(2);
+    }
+  });
+});
