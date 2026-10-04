@@ -28,6 +28,7 @@ import {
   mastery_state,
   material_fsrs_state,
   question,
+  question_group_lifecycle,
 } from '@/db/schema';
 import { resolveVerdictForGroup } from '@/kernel/read-models/assessment-verdict';
 import {
@@ -175,6 +176,21 @@ interface EvalOpts {
   attempt?: number;
 }
 
+async function admissionSnapshot(groupId: string) {
+  const [snapshot] = await testDb()
+    .select({
+      current_revision_id: question_group_lifecycle.current_revision_id,
+      generation: question_group_lifecycle.scoring_admission_generation,
+      state: question_group_lifecycle.scoring_admission_state,
+      suspended: question_group_lifecycle.suspended,
+      withdrawn: question_group_lifecycle.withdrawn,
+    })
+    .from(question_group_lifecycle)
+    .where(eq(question_group_lifecycle.group_id, groupId));
+  if (!snapshot) throw new Error('missing fixture admission');
+  return snapshot;
+}
+
 async function seedEvaluation(seed: SeedIds, evalId: string, opts: EvalOpts = {}) {
   const db = testDb();
   await db.insert(evaluation).values({
@@ -191,7 +207,10 @@ async function seedEvaluation(seed: SeedIds, evalId: string, opts: EvalOpts = {}
     },
     plan_digest: null,
     run_refs: [],
-    provenance: opts.provenance ?? { source: 'automatic', assisted: false },
+    provenance: {
+      ...(opts.provenance ?? { source: 'automatic', assisted: false }),
+      admission_snapshot: await admissionSnapshot(seed.qid),
+    },
     created_at: NOW,
   });
 }
@@ -698,7 +717,11 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
       aggregate: { kind: 'points_total', points: 1, policy: { kind: 'sum' } } as never,
       plan_digest: null,
       run_refs: [],
-      provenance: { source: 'automatic', assisted: false },
+      provenance: {
+        source: 'automatic',
+        assisted: false,
+        admission_snapshot: await admissionSnapshot('mp_q'),
+      },
       created_at: NOW,
     });
 
@@ -807,7 +830,11 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
         aggregate: { kind: 'points_total', points: 1, policy: { kind: 'sum' } } as never,
         plan_digest: null,
         run_refs: [],
-        provenance: { source: 'automatic', assisted: false },
+        provenance: {
+          source: 'automatic',
+          assisted: false,
+          admission_snapshot: await admissionSnapshot('mp_q'),
+        },
         created_at: NOW,
       });
 

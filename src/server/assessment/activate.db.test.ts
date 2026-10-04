@@ -162,7 +162,13 @@ async function seedEvaluation(
   const db = testDb();
   const provenance: Record<string, unknown> = { source: 'automatic', assisted: false };
   if (opts.observedGeneration !== 'omit') {
-    provenance.admission_generation = opts.observedGeneration ?? seed.admissionGeneration;
+    provenance.admission_snapshot = {
+      current_revision_id: seed.revisionId,
+      generation: opts.observedGeneration ?? seed.admissionGeneration,
+      state: 'admitted',
+      suspended: false,
+      withdrawn: false,
+    };
   }
   await db.insert(evaluation).values({
     evaluation_id: evalId,

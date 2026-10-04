@@ -170,6 +170,24 @@ export const AggregateOutcome = z.discriminatedUnion('kind', [
 ]);
 export type AggregateOutcomeT = z.infer<typeof AggregateOutcome>;
 
+/** Server observation before candidate execution; absent historical facts stay unknown. */
+export const EvaluationAdmissionSnapshot = z.object({
+  current_revision_id: RevisionId.nullable(),
+  generation: z.number().int().min(0),
+  state: z.enum(['admitted', 'withheld']),
+  suspended: z.boolean(),
+  withdrawn: z.boolean(),
+});
+export type EvaluationAdmissionSnapshotT = z.infer<typeof EvaluationAdmissionSnapshot>;
+
+/** Shared candidate provenance; no default/backfill for historical admission evidence. */
+export const EvaluationProvenance = z.object({
+  source: z.enum(['automatic', 'manual', 'self_report']),
+  assisted: z.boolean().default(false),
+  admission_snapshot: EvaluationAdmissionSnapshot.nullable().optional(),
+});
+export type EvaluationProvenanceT = z.infer<typeof EvaluationProvenance>;
+
 // ---------- evaluation record ----------
 
 /**
@@ -203,12 +221,7 @@ export const EvaluationRecord = z
      * 绝不推断 AI 正确性）；assisted 保留分数但排除 hard mastery/calibration。
      * 缺省 = automatic。
      */
-    provenance: z
-      .object({
-        source: z.enum(['automatic', 'manual', 'self_report']),
-        assisted: z.boolean().default(false),
-      })
-      .optional(),
+    provenance: EvaluationProvenance.optional(),
   })
   .superRefine((record, ctx) => {
     const pendingUnits = record.unit_results.filter((unit) => unit.status === 'pending');

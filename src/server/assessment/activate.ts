@@ -22,11 +22,10 @@
 // admission 校验（§3.3「已排队/正在评估：可以保存 candidate，activation
 // 重新核对 admission generation」）：
 //   - 组根在组根行锁下读 lifecycle：suspended 或 withdrawn ⇒ stale_admission；
-//   - 评估时观察到的 admission generation（请求显式值优先，否则回退读
-//     `evaluation.provenance.admission_generation`，由 1047 写方盖上）与
-//     当前 generation 不一致 ⇒ stale_admission；观察值缺省 = 不比对
-//     该维度（仍做 suspended/withdrawn 校验）。
-//   - legacy 组（无 lifecycle 行）不阻断（§3.3 同源：无 lifecycle = 未接线面）。
+//   - 自动评分必须有服务端在执行前封存的 admission_snapshot；同 revision、
+//     admitted、同 generation 且无 hold，才可生效。缺证据历史保持 held。
+//   - 请求 generation 仅附加约束，不能覆盖/补造候选证据；无 lifecycle 拒绝。
+//   - D9/D15 显式手动/自评不要求规则准入，仍受现有 hold/withdrawn 守卫。
 //
 // 原子提交（§11「receipt + 学习结算 + effective head + outbox 同事务原子」）：
 //   - 结算经注入端口 `LearningSettlementPort`（YUK-1047 evaluator convergence
@@ -67,7 +66,7 @@ import type {
   SubmissionIdT,
 } from '@/core/schema/assessment/ids';
 import { ActivateEvaluationIntent, resolveActivationCas } from '@/core/schema/assessment/ids';
-import type { EvaluationRecordT } from '@/core/schema/assessment/judgment';
+import { EvaluationProvenance, type EvaluationRecordT } from '@/core/schema/assessment/judgment';
 import type { Tx } from '@/db/client';
 import {
   assessment_issuance,
@@ -135,9 +134,8 @@ export const settlementUnavailable: LearningSettlementPort = () => {
 
 export const ActivateEvaluationRequest = ActivateEvaluationIntent.extend({
   /**
-   * 评估时观察到的 admission generation（§3.3「旧验证不能改变较新
-   * admission 决定」的对偶面：旧评估不能盖过新 admission）。缺省则回退读
-   * `evaluation.provenance.admission_generation`；两者都缺 = 不校验该维度。
+   * 调用方的附加 generation 约束。自动评分的权威证据来自 candidate 内
+   * 服务端封存的 admission_snapshot；本字段不能覆盖或补造缺失快照。
    */
   admission_generation_observed: z.number().int().min(0).optional(),
 });
@@ -284,16 +282,34 @@ export async function activateEvaluation(
     .where(eq(question_group_lifecycle.group_id, questionGroupId))
     .limit(1);
 
-  const provenanceGeneration =
-    typeof cand.provenance?.admission_generation === 'number'
-      ? cand.provenance.admission_generation
-      : undefined;
-  const observedGeneration = input.admission_generation_observed ?? provenanceGeneration;
-  if (lifecycle) {
-    if (lifecycle.suspended || lifecycle.withdrawn) return { status: 'stale_admission' };
+  // Missing lifecycle is unknown, not a legacy bypass. A caller token is only
+  // an additional constraint; it cannot replace the candidate's frozen evidence.
+  if (!lifecycle || lifecycle.suspended || lifecycle.withdrawn) {
+    return { status: 'stale_admission' };
+  }
+  if (
+    input.admission_generation_observed !== undefined &&
+    lifecycle.scoring_admission_generation !== input.admission_generation_observed
+  ) {
+    return { status: 'stale_admission' };
+  }
+  const parsedProvenance = EvaluationProvenance.safeParse(cand.provenance ?? {});
+  if (!parsedProvenance.success) return { status: 'stale_admission' };
+  const provenance = parsedProvenance.data;
+  // D9/D15: explicitly asserted user ratings do not need admitted marking rules.
+  // Automatic scores require the server snapshot and current admission to agree
+  // on the exact immutable revision and generation before any learning write.
+  if (provenance.source === 'automatic') {
+    const snapshot = provenance.admission_snapshot;
     if (
-      observedGeneration !== undefined &&
-      lifecycle.scoring_admission_generation !== observedGeneration
+      !snapshot ||
+      snapshot.current_revision_id !== sub.revision_id ||
+      snapshot.state !== 'admitted' ||
+      snapshot.suspended ||
+      snapshot.withdrawn ||
+      lifecycle.current_revision_id !== sub.revision_id ||
+      lifecycle.scoring_admission_state !== 'admitted' ||
+      snapshot.generation !== lifecycle.scoring_admission_generation
     ) {
       return { status: 'stale_admission' };
     }

@@ -38,6 +38,7 @@ import {
   assessment_issuance,
   assessment_submission,
   evaluation,
+  question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
 import { createJevModelExecutor } from '@/server/assessment/jev-model-executor';
@@ -249,6 +250,21 @@ export async function evaluateSubmission(
       );
     }
 
+    // Observe before execution. Never let activation's caller supply a missing
+    // admission fact or refresh stale evidence after a concurrent verification.
+    // No lifecycle lock across a model call: activation rechecks under the root lock.
+    const [admissionSnapshot] = await tx
+      .select({
+        current_revision_id: question_group_lifecycle.current_revision_id,
+        generation: question_group_lifecycle.scoring_admission_generation,
+        state: question_group_lifecycle.scoring_admission_state,
+        suspended: question_group_lifecycle.suspended,
+        withdrawn: question_group_lifecycle.withdrawn,
+      })
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, revisionRow.group_id))
+      .limit(1);
+
     const submission = SubmissionRecord.parse({
       submission_id: submissionRow.submission_id,
       issuance_id: submissionRow.issuance_id,
@@ -287,7 +303,10 @@ export async function evaluateSubmission(
       revision,
       issued_part_ids: issuanceRow.part_ids,
       attempt,
-      provenance: request.provenance,
+      provenance: {
+        ...(request.provenance ?? { source: 'automatic', assisted: false }),
+        admission_snapshot: admissionSnapshot ?? null,
+      },
       plan_digest: planDigestOf(revision),
       policy: request.policy,
       mode: request.mode,
