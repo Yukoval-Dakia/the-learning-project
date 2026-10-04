@@ -1,6 +1,11 @@
 # ADR-0054 - Persist and resume Copilot Agent SDK session across HTTP turns
 
-**Status:** Proposed
+> **2026-10-04 mechanism amendment (YUK-1119):** The SDK session-file and foreground-only mechanisms below are historical. ADR-0062 owns the unified persistent conversation; pi uses an owned pi: cursor plus bounded durable-turn replay, not a provider session file. Resume is not free admission or zero-token history.
+> See [ADR-0065](./0065-pi-execution-and-conversation-replay.md) for the approved migration and current source evidence.
+
+**Status:** Accepted (2026-08-29; status corrected 2026-10-04)
+
+Acceptance evidence: [ADR PR #1313](https://github.com/Yukoval-Dakia/the-learning-project/pull/1313) merged 2026-08-29 after the owner's COMMENT LGTM on `fbab86f`; implementation [PR #1314](https://github.com/Yukoval-Dakia/the-learning-project/pull/1314) followed. This status correction does not infer approval merely from implementation.
 **Decision source:** YUK-936; Eng Lead architecture pass at main `2b22d5d70d46f487592f6966a9b7ad980e3bd40e`
 **Related:** ADR-0041 · ADR-0051 · ADR-0052 · ADR-0053 (F5 2B) · YUK-842 · YUK-575 · YUK-927 (F5 1A;
 `PLAN.md`; do not reopen)

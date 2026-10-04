@@ -1,5 +1,8 @@
 # ADR-0004 — Pattern C — 两类 Agent + 共享薄 harness
 
+> **2026-10-04 mechanism amendment (YUK-1119):** The SDK runner, settings directory, MCP adapter and model defaults below are historical. The current chat/agent engine is pi agentLoop with native provider presets and DomainTool mounts. Later ADRs govern current Copilot lifecycle and mutation safety.
+> See [ADR-0065](./0065-pi-execution-and-conversation-replay.md) for the approved migration and current source evidence.
+
 **状态**：accepted（product shape 部分被 supersede，见下方 2026-06-04 update note）
 **日期**：2026-05-15
 
@@ -8,7 +11,7 @@
 > supersede：新形态是**一个用户面全能 Copilot + 三个后台专职 agent（Coach 规划 / Dreaming 综合 / Maintenance 维护）+ 窄任务**，各 agent 的 objective 速查见
 > [docs/agents/objectives.md](../agents/objectives.md)。本 ADR 下文仍把 Coach/Dreaming/Maintenance 笼统归为"后端目的型一类"、并把 Copilot 描述成侧边栏 orchestrator，这些**产品描述已过时**，以 AF spec 为准。
 > 同步裁决簇记录于 [ADR-0029](./0029-review-engine-lands-on-existing-primitives.md)。
-> **仍然有效**（不被 supersede）：本 ADR 的 **runner / tooling 事实**——不自建 tool-calling loop、用 Claude Agent SDK query loop、Provider Manager / Task Model Selector、`TaskDef.allowedTools` + 审计表镜像、proposal-only 破坏性操作原则（正主 [ADR-0025 ND-5](./0025-north-star-goal-entity-and-coach-coexistence.md)）——继续是现行实现。
+> **2026-06-04 的 runner/tooling 保留范围（历史记录，执行机制现已替代）**：不自建 tool-calling loop、用 Claude Agent SDK query loop、Provider Manager / Task Model Selector、`TaskDef.allowedTools` + 审计表镜像、proposal-only 破坏性操作原则（正主 [ADR-0025 ND-5](./0025-north-star-goal-entity-and-coach-coexistence.md)）——是当时的实现记录；当前执行机制已由上方 ADR-0065 注记替代。
 
 **决策**：Agent 分两类：**后端目的型（Backend Purpose）** 和 **用户副驾驶（User Copilot）**。两类共享 task registry、provider/model selection、budget、tool allowlist 和审计表，但生命周期和会话语义不同。
 

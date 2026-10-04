@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。Linear归零持续推进，当前62项未完成（新增归并文档债1119）；766/#1553已合入main69c524df。当前单线588费用观测；依赖不追新，既有HOLD与生产/付费边界保持。
+> 更新于2026-10-04。Linear归零持续推进，62项未完成；588后端/#1554已合入main8ecb4f64，UI待预审回复。当前单线1119 pi机制文档校准；不追依赖，既有HOLD与生产/付费边界保持。
 
 ## NOW
 
@@ -65,12 +65,13 @@
 
 - YUK-766/#1553已交付main69c524df：8语义DB回归先RED，62DB/83unit与全部本地gate通过；初审旧API fixture/mock阻塞修复后唯一验证审16unit/15DB通过，CI37211421697及17分钟窗完成。增量迁移/浏览器未实际运行；下游队列恢复仍Todo。
 
-- YUK-588 active：feat/yuk-588-digest-cost /workspace/tlp-digest-cost，base69c524df。6新增功能DB先RED；52DB/50unit、全部本地gate与provider-attempt-truth通过，独立52DB/40unit初审无P0/P1。共享入口注入reader保持架构基线450/0/48；固定日窗费用/用量后端就绪；初次CI37214953644唯一失败为周报测试跨午夜竞态，固定Date复现后补午夜前/整点/后用例，28DB6unit通过，待修复验证审与新head CI/17分钟窗。具体UI预审待回复，整票不标Done。
+- YUK-588/#1554后端已交付main8ecb4f64：52DB/50unit、全部本地gate；初次CI发现旧周报午夜fixture竞态，固定Date先RED再修，28DB6unit通过。独立初审及唯一验证审6DB6unit通过，最终head6185e457的CI37215466305全绿（82迁移/34浏览器），17分钟窗完成；588Todo，UI具体预审仍待回复。
+- YUK-1119 active：/workspace/tlp-pi-docs，docs/yuk-1119-pi-mechanisms，base8ecb4f64。新增现行pi机制ADR与历史替代注记，校准runtime指引，归并1515/1517/1519/1531四份报告并保留历史；纯文档，无运行时/依赖/生产操作。待本地gate、独立review、exact-head CI与17分钟窗。
 
 
 ## NEXT
 
-1. 完成588已批准的overnight-digest费用观测，随后1119归并pi迁移文档债；766下游队列与1091联合组模型需完整验收。持续推进Linear归零，不以单批合并作为终点。
+1. 完成1119文档归并；588具体UI预审待回复；随后继续766下游队列恢复与1091联合组模型的完整验收。持续推进Linear归零，不以单批合并作为终点。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 

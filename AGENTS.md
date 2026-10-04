@@ -58,7 +58,7 @@ nested `AGENTS.md` / `.claude/rules`，机械约束放在 hooks。
 - 后端 route/job/copilotTool 只能经
   `src/capabilities/<name>/manifest.ts` 贡献到组合根。
 - `server/app.ts` 对 `/api/*` 校验 `x-internal-token`，仅
-  `/api/health` 豁免。
+  `/api/health` 与 `/api/ready` 豁免。
 - 浏览器不持 provider key；AI 调用只经 Hono route 或 worker。
 - `core/` 只放跨科目逻辑；科目专属逻辑留在 `subjects/<name>/`。
 - AI 动作须可追踪、可逆，并保留现有 run logging。

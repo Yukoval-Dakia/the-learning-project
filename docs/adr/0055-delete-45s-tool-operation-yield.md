@@ -1,5 +1,8 @@
 # ADR-0055 — Delete 45s tool_operation yield; block in live SDK query
 
+> **2026-10-04 mechanism amendment (YUK-1119):** The no-45-second-yield decision remains; SDK WarmQuery and HTTP-only lifecycle details below are historical. ADR-0062 owns durable conversation execution and ADR-0063 owns mailbox retirement/retained ToolOperations. Pi tools block within their admitted execution until settlement or cancellation/deadline.
+> See [ADR-0065](./0065-pi-execution-and-conversation-replay.md) for the approved migration and current source evidence.
+
 **Status:** Accepted
 **Decision source:** YUK-937; Eng Lead architecture pass at main `24b84d4491b0195a0eb863b36d24863c2553c905`
 **Related:** ADR-0041 · ADR-0052 · ADR-0053 · ADR-0054 · YUK-842 · YUK-575 · YUK-927 / YUK-931
