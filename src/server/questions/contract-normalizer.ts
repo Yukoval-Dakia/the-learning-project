@@ -247,6 +247,7 @@ function buildSharedMaterials(ctx: {
       material_id: mintMaterialId('rubric', rubricText),
       kind: 'plaintext',
       asset: { asset_id: `rub_${shortHash(rubricText)}`, digest: sha256Hex(rubricText) },
+      visibility: 'private',
       caption: 'rubric (authoritative scoring input)',
       content_md: rubricText,
     });

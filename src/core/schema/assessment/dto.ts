@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { EvaluationRecordT, SubmissionRecordT } from './judgment';
-import { SharedMaterialKind } from './materials';
+import { SharedMaterialKind, isPublicSharedMaterial } from './materials';
 import { LifecycleQualification, PublishDecision } from './publish';
 import { ResponseSpec } from './response';
 import type { AssessmentIssuanceT, PublishedQuestionRevisionT } from './revision';
@@ -34,6 +34,8 @@ export const PublicMaterialView = z.object({
   asset_id: z.string().min(1),
   caption: z.string().optional(),
   alt_text: z.string().optional(),
+  /** Exact inline bytes from the frozen public material; never from a mutable question row. */
+  content_md: z.string().optional(),
 });
 export type PublicMaterialViewT = z.infer<typeof PublicMaterialView>;
 
@@ -121,6 +123,14 @@ export function projectPracticeIssuance(
       }
     }
   }
+  // Binding keeps all frozen evidence, including old private-rubric references, for
+  // immutable replay. Only the public projection removes private material and face refs.
+  const publicMaterials = revision.structure.materials.filter(
+    (material) =>
+      isPublicSharedMaterial(material) &&
+      digestByMaterial.get(material.material_id) === material.asset.digest,
+  );
+  const publicMaterialIds = new Set(publicMaterials.map((material) => material.material_id));
   return PracticeIssuanceDto.parse({
     issuance_id: issuance.issuance_id,
     revision_id: revision.revision_id,
@@ -131,18 +141,16 @@ export function projectPracticeIssuance(
         part_id: part.part_id,
         question_no: part.question_no,
         prompt_md: part.prompt_md,
-        material_ids: part.material_ids,
+        material_ids: part.material_ids.filter((id) => publicMaterialIds.has(id)),
       })),
-    materials: revision.structure.materials
-      // 只发 issuance 实际绑定（同 digest）的材料 —— 学生所见即判分所引。
-      .filter((material) => digestByMaterial.get(material.material_id) === material.asset.digest)
-      .map((material) => ({
-        material_id: material.material_id,
-        kind: material.kind,
-        asset_id: material.asset.asset_id,
-        caption: material.caption,
-        alt_text: material.alt_text,
-      })),
+    materials: publicMaterials.map((material) => ({
+      material_id: material.material_id,
+      kind: material.kind,
+      asset_id: material.asset.asset_id,
+      caption: material.caption,
+      alt_text: material.alt_text,
+      content_md: material.content_md,
+    })),
     response_spec: {
       slots: projectedSlots,
     },

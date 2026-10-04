@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。Linear归零持续推进，当前61项未完成；1120/#1557已合入main d8e57a80。当前单线1047发布清单证据纠偏与实际入口迁移；766恢复取舍与588 UI待回复，依赖不追新。
+> 更新于2026-10-04。Linear归零持续推进，当前61项未完成；1047/#1558已合入main6de53239。当前单线1047冻结材料公开正文与私有rubric隔离；766恢复取舍与588 UI具体方案待回复，依赖不追新。
 
 ## NOW
 
@@ -71,11 +71,11 @@
 - YUK-1119/#1555已交付maine3001200：22 Markdown文件，pi机制ADR0065、历史说明和四份漂移报告归并；本地gates/独立初审/exact-head CI37216925990及17分钟窗通过。docs-only CI测试步骤跳过，不计实际测试。旧报告PR1515/1517/1519/1531关闭且保留分支。
 - YUK-181/#1556已交付main0ab54920（17:14:45UTC）：24DB/本地gates/独立24DB/exact-head CI37218682914及17分钟窗通过；增量migration/browser未执行。Linear Done。
 - YUK-1120/#1557已合入main d8e57a80：76unit/50DB、本地gates、独立61unit/50DB、exact-head CI37220574124（82migration/34browser实际运行）通过，17分钟窗完成，Linear Done。修复契约路径冻结发题分母/读面/结算；正式入口仍legacy，原1047已按源码证据重新打开。
-- YUK-1047 active：当前八入口仍legacy，release manifest只凭epoch active报no-fallback ok已先RED复现。本批从真实源码采集入口/执行分支，附文件SHA256与未解析项；不把本地源码当部署镜像证明，后续继续实际入口迁移。
+- YUK-1047/#1558已交付main6de53239：30unit/全部本地gate/独立初审/exact-head CI37222377773（82迁移34浏览器）/17分钟窗通过；发布证据不再将epoch冒充迁移完成。八入口仍legacy，票保持In Progress。当前修复冻结材料正文公开投影与私有rubric隔离，历史revision/binding不重写。
 
 ## NEXT
 
-1. 交付1047发布清单证据纠偏后继续原验收的八入口迁移；1091联合组模型是联合路径前置。766恢复LIGHT/FULL及588费用UI仍待owner回复。持续推进Linear归零，不以单批合并作为终点。
+1. 推进1047：冻结材料公开正文/私有rubric隔离→正式入口迁移；八入口未完成前不标Done。766恢复LIGHT/FULL与588 UI具体预审待owner回复，1091联合组模型仍Todo；不以单批合并为终点。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
