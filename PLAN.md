@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。Linear归零持续推进，当前62项未完成；1007两项读面/#1549已合入mainfd8d3319。当前单线为1114生产writer审计；依赖不追新，既有HOLD与生产/付费边界保持。
+> 更新于2026-10-04。Linear归零持续推进，当前63项未完成（含已捕获1117）；1007两项读面/#1549已合入mainfd8d3319。当前单线为1114生产writer审计；依赖不追新，既有HOLD与生产/付费边界保持。
 
 ## NOW
 
@@ -57,11 +57,11 @@
 
 - YUK-1007/#1549已交付mainfd8d3319：101unit/52DB、本地gate、独立33unit/29HTTP DB与exact-head CI37204062168（34浏览器实际运行，迁移增量跳过）通过；17分钟窗完成。typed执行能力展示与vision逐consumer诊断交付，epic其余编辑范围仍In Progress。PR-Agent不确定import提示已裁决，无新实质follow-up。
 
-- YUK-1114 active：fix/yuk-1114-production-writes /workspace/tlp-schema-production，basefd8d3319。生产过滤统一排除tests/fixtures/rehearsal，AST实际对象/调用/数组/spread证据替换字符串启发式；保留表身份，未知/重赋值容器不计。question视觉复杂度真实透传，source_asset从图片metadata保存宽高；ADR0063历史continuation五字段按既有10/08期限保留。10审计+4DB先RED；83unit/63DB、typecheck/lint299/build/10必需audit通过，独立初审中。
+- YUK-1114 active：fix/yuk-1114-production-writes /workspace/tlp-schema-production，basefd8d3319。生产过滤统一排除tests/fixtures/rehearsal，AST实际对象/调用/数组/spread证据替换字符串启发式；保留表身份，未知/重赋值容器不计。question视觉复杂度真实透传，source_asset从图片metadata保存宽高；ADR0063历史continuation五字段按既有10/08期限保留。10审计+4DB先RED；84unit/63DB/82migration、typecheck/lint299/build/10必需audit通过；独立初审83unit/51DB及1336生产文件7字段变异通过，P2归并1117。PR1550原CI发现Sharp顶层import破坏CJS迁移启动，已动态加载修复，原启动用例先RED后GREEN；唯一验证审7unit/10DB/1原启动测试通过（其余81迁移未重跑）；待新head CI与重算窗口。
 
 ## NEXT
 
-1. 交付1114后，继续766灾备等可执行主线；1091联合组模型需完整验收。持续推进Linear归零，不以单批合并作为终点。
+1. 交付1114后，先收口1117 AST边界P2，再继续766灾备等可执行主线；1091联合组模型需完整验收。持续推进Linear归零，不以单批合并作为终点。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 

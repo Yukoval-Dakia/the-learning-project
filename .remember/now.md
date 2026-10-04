@@ -14,7 +14,12 @@ Current static evidence includes supported offline projection shells, not a clai
 Question visual_complexity now inherits source block facts; source-free manual staysnull.
 Image dimensions come from recognizable stored bytes; unknown input remainsnull; no transforms/acceptance change.
 ADR0063 continuation five historical columns match existing10/08retention, no resurrected producer.
-10scanner+1questionDB+3imageDB regressions RED first;83unit/63DB and typecheck/lint299/build/10required audits PASS; independent initial review running.
-Next independent initial review, commit/push/PR, exact-headCI and17minwindow.
-Then766backup/1091jointgroup; existing owner HOLDs retained. No production/paid calls.
+10scanner+1questionDB+3imageDB regressions RED first;84unit/63DB/82migration and typecheck/lint299/build/10required audits PASS.
+Initial review83unit51DB +1336sources/7field-deletionmutationsPASS; P2 capturedYUK1117,63open.
+PR1550 initialhead a67b9fdc CI37205949750RED: top-levelSharp breaksCJS migration startup.
+Fixed by lazy import inside imageDimensions; original CLI testREDthenGREEN,82migrationPASS.
+Only P1verificationPASS:7unit/10DB/1migrationstartup(81skipped); reviewbudget exhausted.
+Newpush/exactheadCI/17minwindowstillrequired.
+Next fixcommit/push, finish the only verification review, exact-headCI and new17minwindow.
+Then1117ASTsoundness,766backup/1091jointgroup; existing owner HOLDs retained. No production/paid calls.
 Preserve branches/worktrees;two-probe paid cap exhausted.

@@ -1,6 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, ne, sql } from 'drizzle-orm';
-import sharp from 'sharp';
 import type { Db, Tx } from '@/db/client';
 import { source_asset } from '@/db/schema';
 import type { R2Client } from '@/server/r2';
@@ -50,6 +49,9 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
 
 async function imageDimensions(bytes: Uint8Array) {
   try {
+    // Public ingestion ports are also imported by migration/CLI bundles. Load
+    // the native image package only when an asset actually needs inspection.
+    const { default: sharp } = await import('sharp');
     return await sharp(Buffer.from(bytes)).metadata();
   } catch {
     return null;
