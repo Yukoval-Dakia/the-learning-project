@@ -12,7 +12,7 @@
 //                 文件不在此列表）。
 //   assertions  — post-release 断言表（§15 三个验证点展开）：每条带
 //                 sql/command + 评估状态（ok/fail/info/skip）。目标库可达时
-//                 真实评估；不可达时全部 status='skip'（manifest 仍可产出
+//                 真实评估；源码证据独立于目标库（manifest 仍可产出
 //                 —— 边界语义与门禁表本身是交付物）。
 //
 // 单测只测纯函数（lane 分类 / assertions 定义表）；DB 评估由
@@ -146,6 +146,16 @@ export interface ManifestAssertion {
   detail: string;
 }
 
+/** Evidence describes the checkout read by the CLI, never the target deployment. */
+export interface EvaluationSourceEvidence {
+  scope: 'checkout-source';
+  files: { file: string; sha256: string }[];
+  calls: { entry: string; lane: 'legacy' | 'contract' | 'unknown'; file: string; line: number }[];
+  legacyExecutor: string[];
+  unresolved: string[];
+  missingEntries: string[];
+}
+
 export interface AssertionContext {
   /** pgboss outstanding（含 failed）；translate/fenced 分别统计。 */
   outstanding: OutstandingJobDisposition[];
@@ -166,7 +176,10 @@ export interface AssertionContext {
 }
 
 /** 断言定义（statement/verify 静态；status 由 evaluate 填）。 */
-export function buildAssertions(ctx: AssertionContext): ManifestAssertion[] {
+export function buildAssertions(
+  ctx: AssertionContext,
+  source: EvaluationSourceEvidence | null = null,
+): ManifestAssertion[] {
   const out: ManifestAssertion[] = [];
   const push = (
     id: string,
@@ -219,16 +232,32 @@ export function buildAssertions(ctx: AssertionContext): ManifestAssertion[] {
       : `seq=${ctx.epoch.seq} state=${ctx.epoch.state}（历史行须人工复核 ≥3）`,
   );
 
-  // ── no-fallback：运行时无对旧 route/路径的猜测（静态证明 + fence 活证据）─
+  // A DB epoch fences old binaries; it says nothing about legacy branches in this binary.
+  const legacyCalls = source?.calls.filter((call) => call.lane === 'legacy') ?? [];
+  const sourceBlocked = legacyCalls.length > 0 || (source?.legacyExecutor.length ?? 0) > 0;
+  const sourceIncomplete =
+    source === null ||
+    source.files.length === 0 ||
+    source.calls.length === 0 ||
+    source.unresolved.length > 0 ||
+    source.missingEntries.length > 0 ||
+    source.calls.some((call) => call.lane === 'unknown');
   push(
     'no-runtime-fallback',
     'no-fallback',
-    '无 runtime fallback 猜测旧路由 —— 1097 组缓存/映射冻结、1099 结构化发布、1055 epoch 栅栏共同钉死（静态：fenceAwareJobHandler/epoch gate 覆盖所有写口；旧代码经 epoch_mismatch 拒跑）',
-    'src/server/contract-epoch/epoch.db.test.ts + boss-fence 覆盖；rehearsal step 09 epoch 栅栏三态实证',
-    ctx.epoch !== null && ctx.epoch.state === 'active' ? 'ok' : 'info',
-    ctx.epoch !== null && ctx.epoch.state === 'active'
-      ? 'active marker 已立——fence 生效中'
-      : 'active marker 未立（fence 未激活；发布前须为 active）',
+    '权威评分入口旧执行路径已移除；epoch 栅栏与源码/部署证据须分别核验',
+    'pnpm release:manifest --out=<file> ⇒ evaluation_source；再核验实际部署镜像与端到端迁移证据',
+    sourceBlocked ? 'fail' : 'info',
+    source === null
+      ? '未采集检出源码；active epoch 不能证明入口迁移，部署未核验'
+      : `checkout-source: legacy calls=${legacyCalls.length}, legacy executor sites=${source.legacyExecutor.length}; ` +
+          `unresolved=${source.unresolved.length}, missing entries=${source.missingEntries.join(',') || 'none'}; ` +
+          (sourceBlocked
+            ? '检出源码仍有旧执行路径，迁移未完成；'
+            : sourceIncomplete
+              ? '源码证据不完整；'
+              : '有界源码扫描未发现旧执行路径；') +
+          '部署镜像身份/运行时迁移未核验，不能报告 runtime ok',
   );
 
   // ── translations：队列与订阅 pending 翻译全部处置完 ──
@@ -315,6 +344,7 @@ export interface AssessmentReleaseManifest {
   lanes: LaneRow[];
   migrations: MigrationRow[];
   assertions: ManifestAssertion[];
+  evaluation_source: EvaluationSourceEvidence | null;
   rollback: {
     boundary_a: string;
     boundary_b: string;
@@ -382,6 +412,7 @@ export function buildAssessmentManifest(args: {
   migrations: MigrationRow[];
   seriesBase: string;
   assertions: ManifestAssertion[];
+  evaluationSource?: EvaluationSourceEvidence | null;
 }): AssessmentReleaseManifest {
   return {
     kind: 'assessment-release-manifest',
@@ -392,6 +423,7 @@ export function buildAssessmentManifest(args: {
     lanes: args.lanes,
     migrations: args.migrations,
     assertions: args.assertions,
+    evaluation_source: args.evaluationSource ?? null,
     rollback: {
       boundary_a:
         '新写入之前：restore 一致的冻结 data/queues/subscriptions/assets + 旧 images ' +
@@ -403,9 +435,9 @@ export function buildAssessmentManifest(args: {
         '旧 app 无法表示新 shape —— 不存在无损 image rollback。',
     },
     notes: [
-      '本 manifest 只证明「已发布的 lanes + migrations + post-release 断言面」；',
+      'lanes 来自本地 git 历史；源码 census 来自当前检出文件，均不证明部署镜像身份。',
       '部署/activate 本身不授权 —— runbook §窗口步骤由 owner 拍板执行。',
-      'assertions 状态在目标库可达时实时评估；不可达时全部 info/skip。',
+      'DB 断言仅在目标库可达时评估；源码证据独立采集，旧执行路径可在离线时报告 fail。',
     ],
   };
 }

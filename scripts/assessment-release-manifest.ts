@@ -12,17 +12,15 @@
 //                 migration zero drift。
 //
 // 纪律（与 contract-epoch.ts 同款）：--target 必须是可解析 postgres URL，
-// 绝不回退 DATABASE_URL；无 --target → 纯 git/文件视图，断言面全 skip/info。
-// 库不可达 → 断言全部标 info/skip 落盘（fail-visible），不假装评估过。
-// exit code：有 --target 且库可达时出现 fail 断言 → 1；否则 0。
+// 绝不回退 DATABASE_URL；无 --target 时仍采集检出源码，DB 断言 info/skip。
+// 库不可达时保留独立源码证据；源码不证明目标库对应的部署镜像。
+// exit code：任何实际 fail（包括离线旧执行路径）→ 1；否则 0；CLI 错误 → 2。
 
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
-
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import {
@@ -36,6 +34,7 @@ import {
   isSeriesMigration,
   parseLaneLog,
 } from '@/server/release/assessment-manifest';
+import { collectAssessmentSourceEvidence } from './lib/assessment-entrypoint-source';
 
 const USAGE = `usage:
   release-manifest [--target=<postgres-url>] [--out=<file>] [--no-git]`;
@@ -156,6 +155,7 @@ function printSummary(m: AssessmentReleaseManifest, out: string, seriesCount: nu
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const notes: string[] = [];
+  const evaluationSource = collectAssessmentSourceEvidence(process.cwd());
 
   const { lanes, seriesBase } = args.noGit
     ? { lanes: [] as LaneRow[], seriesBase: null }
@@ -168,32 +168,8 @@ async function main(): Promise<void> {
 
   let assertions: ReturnType<typeof buildAssertions>;
   if (args.target === null) {
-    assertions = buildAssertions({
-      outstanding: [],
-      epoch: null,
-      migrationsApplied: null,
-      migrationFilesTotal: migrations.length,
-      seriesMigrationFiles: seriesFiles,
-      staleSubscriptionDeliveries: null,
-      pendingEvaluations: null,
-      expectedEpoch: 'assessment-contract-v1',
-    });
-    notes.push('无 --target：断言面为静态定义（info/skip），未对库评估');
-  } else {
-    const target = requireTarget(args.target);
-    const client = postgres(target, { max: 1, connect_timeout: 10, prepare: false });
-    try {
-      const ctx: AssertionContext = await collectAssertionContext(
-        drizzle(client, { schema }) as unknown as Db,
-        { migrationFilesTotal: migrations.length, seriesMigrationFiles: seriesFiles },
-      );
-      assertions = buildAssertions(ctx);
-    } catch (err) {
-      // 库不可达：断言面仍产出（全 info/skip），错误进 notes —— fail-visible。
-      notes.push(
-        `--target 连接失败（${err instanceof Error ? err.message : String(err)}）——断言未评估`,
-      );
-      assertions = buildAssertions({
+    assertions = buildAssertions(
+      {
         outstanding: [],
         epoch: null,
         migrationsApplied: null,
@@ -202,7 +178,37 @@ async function main(): Promise<void> {
         staleSubscriptionDeliveries: null,
         pendingEvaluations: null,
         expectedEpoch: 'assessment-contract-v1',
-      });
+      },
+      evaluationSource,
+    );
+    notes.push('无 --target：DB 断言未评估；检出源码 census 已独立采集。');
+  } else {
+    const target = requireTarget(args.target);
+    const client = postgres(target, { max: 1, connect_timeout: 10, prepare: false });
+    try {
+      const ctx: AssertionContext = await collectAssertionContext(
+        drizzle(client, { schema }) as unknown as Db,
+        { migrationFilesTotal: migrations.length, seriesMigrationFiles: seriesFiles },
+      );
+      assertions = buildAssertions(ctx, evaluationSource);
+    } catch (err) {
+      // 库不可达：DB 断言未评估；独立的源码 census 仍保留。
+      notes.push(
+        `--target 连接失败（${err instanceof Error ? err.message : String(err)}）——DB 断言未评估`,
+      );
+      assertions = buildAssertions(
+        {
+          outstanding: [],
+          epoch: null,
+          migrationsApplied: null,
+          migrationFilesTotal: migrations.length,
+          seriesMigrationFiles: seriesFiles,
+          staleSubscriptionDeliveries: null,
+          pendingEvaluations: null,
+          expectedEpoch: 'assessment-contract-v1',
+        },
+        evaluationSource,
+      );
     } finally {
       await client.end({ timeout: 5 }).catch(() => undefined);
     }
@@ -213,6 +219,7 @@ async function main(): Promise<void> {
     migrations,
     seriesBase: seriesBase ?? '',
     assertions,
+    evaluationSource,
   });
   manifest.notes.push(...notes);
 
@@ -221,10 +228,8 @@ async function main(): Promise<void> {
   writeFileSync(outPath, `${JSON.stringify(manifest, null, 2)}\n`);
   printSummary(manifest, outPath, seriesFiles.length);
 
-  // 只在「库真的评估过」时把 fail 断言升级为非零退出。
-  if (args.target !== null && !notes.some((n) => n.includes('连接失败'))) {
-    if (assertions.some((a) => a.status === 'fail')) process.exit(1);
-  }
+  // Source failures remain failures even without a reachable database.
+  if (assertions.some((a) => a.status === 'fail')) process.exitCode = 1;
 }
 
 main().catch((err) => {
