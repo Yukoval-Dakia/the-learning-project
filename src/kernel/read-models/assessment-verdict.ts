@@ -29,9 +29,7 @@
 //       evaluation 行；original = 第一条 active
 //       `experimental:assessment_activation` 事件的 evaluation_id（回退：最早
 //       applied settlement 的 evaluation_id，再退 attempt=1 行）。verdict 经
-//       deriveCoarseVerdict（需 submission.revision_id → question_revision.
-//       scoring_basis）。今日无 live contract activation（EVALUATION_ENTRY_POINTS
-//       全 lane:'legacy'）——本轨为前向接线，行为已由测试钉住。
+//       deriveCoarseVerdict（submission 的冻结 revision + issuance 范围）。
 //
 // replay 结构性保证（read 侧约束）：settlement replay 只写
 //   `experimental:assessment_settlement`（replay_of + reverted_settlement_event_ids
@@ -41,6 +39,10 @@
 //   replay 产生的新行做判定。
 
 import { and, asc, eq, inArray } from 'drizzle-orm';
+import {
+  EvaluationContractError,
+  projectIssuedScoringBasis,
+} from '@/core/schema/assessment/evaluation';
 import type { EvaluationRecordT } from '@/core/schema/assessment/judgment';
 import type { ScoringBasisT } from '@/core/schema/assessment/scoring';
 import {
@@ -51,6 +53,7 @@ import {
 import type { CauseSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import {
+  assessment_issuance,
   assessment_submission,
   evaluation,
   evaluation_effective_head,
@@ -440,10 +443,9 @@ export interface GroupVerdict {
 
 /**
  * 批量解析 evaluation_group 的 original/effective 裁决。
- * verdict 经 deriveCoarseVerdict（basis 来自 submission.revision_id →
- * question_revision.scoring_basis；缺 revision/basis ⇒ verdict=null，如实
- * 返回行不造判定 —— deriveCoarseVerdict 不处理「无 basis」面，调用方拿
- * verdict=null 当 unsupported 语义处理）。
+ * verdict 经 deriveCoarseVerdict；分母来自 submission 冻结 revision 与
+ * issuance 范围。缺失或不可投影的范围返回 unsupported/issuance_scope_unavailable，
+ * 不退回完整 revision，也不从缺少的 unit result 猜发题范围。
  */
 export async function resolveVerdictsForGroups(
   db: DbLike,
@@ -505,23 +507,66 @@ export async function resolveVerdictsForGroups(
     list.push(row);
     evalsByGroup.set(row.evaluation_group_id, list);
   }
-  const subById = new Map(submissions.map((s) => [s.submission_id, s]));
 
-  // revision basis：submission.revision_id → question_revision.scoring_basis。
+  // 冻结 revision + issuance：不能只用完整 revision 的分母。
   const revisionIds = [...new Set(submissions.map((s) => s.revision_id))];
-  const revisionRows: { revision_id: string; scoring_basis: unknown }[] = [];
+  const revisionRows: Pick<
+    typeof question_revision.$inferSelect,
+    'revision_id' | 'structure' | 'response_spec' | 'scoring_basis'
+  >[] = [];
   for (let offset = 0; offset < revisionIds.length; offset += QUERY_ID_CHUNK) {
     const chunk = revisionIds.slice(offset, offset + QUERY_ID_CHUNK);
     const rows = await db
       .select({
         revision_id: question_revision.revision_id,
         scoring_basis: question_revision.scoring_basis,
+        structure: question_revision.structure,
+        response_spec: question_revision.response_spec,
       })
       .from(question_revision)
       .where(inArray(question_revision.revision_id, chunk));
     revisionRows.push(...rows);
   }
-  const basisByRevision = new Map(revisionRows.map((r) => [r.revision_id, r.scoring_basis]));
+  const revisionById = new Map(revisionRows.map((r) => [r.revision_id, r]));
+  const issuanceIds = [...new Set(submissions.map((s) => s.issuance_id))];
+  const issuanceRows: Pick<
+    typeof assessment_issuance.$inferSelect,
+    'issuance_id' | 'revision_id' | 'part_ids'
+  >[] = [];
+  for (let offset = 0; offset < issuanceIds.length; offset += QUERY_ID_CHUNK) {
+    issuanceRows.push(
+      ...(await db
+        .select({
+          issuance_id: assessment_issuance.issuance_id,
+          revision_id: assessment_issuance.revision_id,
+          part_ids: assessment_issuance.part_ids,
+        })
+        .from(assessment_issuance)
+        .where(
+          inArray(
+            assessment_issuance.issuance_id,
+            issuanceIds.slice(offset, offset + QUERY_ID_CHUNK),
+          ),
+        )),
+    );
+  }
+  const issuanceById = new Map(issuanceRows.map((r) => [r.issuance_id, r]));
+  // 同 revision 可以有不同 issuance 子集，缓存键必须是 submission 坐标。
+  const basisBySubmission = new Map<string, ScoringBasisT>();
+  for (const sub of submissions) {
+    const revision = revisionById.get(sub.revision_id);
+    const issuance = issuanceById.get(sub.issuance_id);
+    if (!revision || !issuance || issuance.revision_id !== sub.revision_id) continue;
+    try {
+      basisBySubmission.set(
+        sub.submission_id,
+        projectIssuedScoringBasis(revision, issuance.part_ids),
+      );
+    } catch (error) {
+      if (!(error instanceof EvaluationContractError)) throw error;
+      // 已存记录的 scope 不可投影：读面明确 unavailable，不退回整题分母。
+    }
+  }
 
   // original 轨：第一条 active activation 事件的 evaluation_id（retract 的
   // activation 收据不算「第一判生效」）。
@@ -556,10 +601,7 @@ export async function resolveVerdictsForGroups(
   }
 
   const project = (row: EvaluationRow): EvaluationVerdict | null => {
-    const sub = subById.get(row.submission_id);
-    const basis = sub
-      ? (basisByRevision.get(sub.revision_id) as ScoringBasisT | undefined)
-      : undefined;
+    const basis = basisBySubmission.get(row.submission_id);
     return {
       evaluation_id: row.evaluation_id,
       attempt: row.attempt,
@@ -569,7 +611,7 @@ export async function resolveVerdictsForGroups(
         : // 无 basis 无法派生 —— 如实回 unsupported/pending 面，不造判定。
           {
             verdict: 'unsupported' as AssessmentVerdict,
-            reason: 'evaluation_pending' as const,
+            reason: 'issuance_scope_unavailable' as const,
             points: null,
             maxPoints: null,
             normalized: null,

@@ -72,7 +72,6 @@ import { scheduleReview } from '@/core/fsrs';
 import type {
   ExecutionPlanT,
   KcObservation,
-  QuestionGroupStructureT,
   ResponseSpecT,
   ScoringBasisT,
 } from '@/core/schema/assessment';
@@ -81,6 +80,7 @@ import {
   SETTLEMENT_SCOPE_VERSION,
   deriveCoarseVerdict,
   localizeKcObservations,
+  projectIssuedScoringBasis,
   ratingForVerdict,
   resolveThetaDecision,
 } from '@/core/schema/assessment';
@@ -269,6 +269,8 @@ interface SettlementScope {
   spec: ResponseSpecT;
   basis: ScoringBasisT;
   plan: ExecutionPlanT;
+  issuedPartIds: string[];
+  fullScope: boolean;
 }
 
 async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<SettlementScope> {
@@ -283,11 +285,10 @@ async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<Settleme
     );
   }
   const spec = revision.response_spec as ResponseSpecT;
-  const basis = revision.scoring_basis as ScoringBasisT;
+  const basis = projectIssuedScoringBasis(revision, input.issuance.part_ids);
   const plan = revision.execution_plan as ExecutionPlanT;
-  const structure = revision.structure as QuestionGroupStructureT;
-
-  const partIds = structure.parts.map((part) => part.part_id);
+  const partIds = input.issuance.part_ids;
+  const fullScope = partIds.length === revision.structure.parts.length;
   const wanted = new Set<string>([input.questionGroupId, ...partIds]);
   const rows = await tx
     .select({
@@ -305,7 +306,15 @@ async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<Settleme
     const row = byId.get(partId);
     if (row) partRows.set(partId, row);
   }
-  return { groupRow: byId.get(input.questionGroupId) ?? null, partRows, spec, basis, plan };
+  return {
+    groupRow: byId.get(input.questionGroupId) ?? null,
+    partRows,
+    spec,
+    basis,
+    plan,
+    issuedPartIds: partIds,
+    fullScope,
+  };
 }
 
 // ---------- 计划推导 ----------
@@ -313,13 +322,21 @@ async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<Settleme
 function derivePlan(input: ActivationSettleInput, scope: SettlementScope): SettlementPlan {
   const groupKcs = contentKcs(scope.groupRow?.knowledge_ids ?? []);
   const partKcIds = new Map<string, string[]>();
-  const scopeSet = new Set<string>(groupKcs);
+  // 完整发题保留组级标签；子集仅取发出的 part 标签。虚拟 part / 无局部
+  // 标签及真正 group-only 单元仍使用组级回落，不把未发物理 part 的标签并入。
+  const groupEvidence = scope.basis.units.some(
+    (unit) => unit.slot_refs.length === 0 && unit.evidence_slot_refs.length === 0,
+  );
+  const scopeSet = new Set<string>(scope.fullScope || groupEvidence ? groupKcs : []);
   // part → KC：物理 part 行用自身 knowledge_ids；虚拟 part（structured 叶，
   // 无行）回落组级。空数组回落组级（该 part 无独立标签语义）。
-  for (const [partId, row] of scope.partRows) {
-    const kcs = contentKcs(row.knowledge_ids);
-    partKcIds.set(partId, kcs.length > 0 ? kcs : groupKcs);
-    for (const kc of kcs) scopeSet.add(kc);
+  // Full-scope virtual-part fallback and theta anchors retain the v1 mapping.
+  const localizedParts = scope.fullScope ? [...scope.partRows.keys()] : scope.issuedPartIds;
+  for (const partId of localizedParts) {
+    const kcs = contentKcs(scope.partRows.get(partId)?.knowledge_ids ?? []);
+    const localized = kcs.length > 0 ? kcs : groupKcs;
+    partKcIds.set(partId, localized);
+    for (const kc of localized) scopeSet.add(kc);
   }
   const scopeKcIds = [...scopeSet].sort();
 

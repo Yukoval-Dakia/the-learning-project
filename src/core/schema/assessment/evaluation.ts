@@ -184,6 +184,8 @@ export interface EvaluateSubmissionCoreInput {
 
 export interface EvaluateSubmissionCoreOutput {
   record: EvaluationRecordT;
+  /** 与 aggregate 同一冻结发题范围的分母，不是完整 revision 的分母。 */
+  scoring_basis: ScoringBasisT;
   /** 本次实际调用了模型执行器的单元数（观测/成本审计）。 */
   model_units_invoked: number;
   /** 本次模型调用累计成本（micro USD；仅端口如实上报的合计）。 */
@@ -196,6 +198,7 @@ export class EvaluationContractError extends Error {
     public readonly code:
       | 'submission_revision_mismatch'
       | 'invalid_response_set'
+      | 'invalid_issuance_scope'
       | 'invalid_scoring_basis'
       | 'invalid_execution_plan'
       | 'unprojectable_aggregation'
@@ -488,18 +491,16 @@ export async function evaluateSubmissionCore(
   }
 
   // ---- 发出范围投影：只评估作答面落在 issued parts 内的 unit。----
-  const issuedParts =
-    input.issued_part_ids == null
-      ? new Set(revision.structure.parts.map((part) => part.part_id))
-      : new Set(input.issued_part_ids);
-  const inScopeSlots = answerableSlots(spec, issuedParts);
-  const slotById = new Map(inScopeSlots.map((slot) => [slot.slot_id, slot] as const));
-  const inScopeUnits = basis.units.filter((unit) => unitInScope(unit, slotById));
+  const scopedBasis = projectIssuedScoringBasis(
+    revision,
+    input.issued_part_ids ?? revision.structure.parts.map((part) => part.part_id),
+  );
+  const inScopeUnits = scopedBasis.units;
   const inScopeUnitIds = new Set(inScopeUnits.map((unit) => unit.scoring_unit_id));
 
   // ---- 聚合 policy 投影：sum/weighted_sum 可按子集评估；capped/threshold
   //      的 cap/阈值绑死全量 unit 集，子集评估会改义 —— fail-closed。----
-  const scopedBasis: ScoringBasisT = scopedBasisFor(basis, inScopeUnitIds);
+  // 上述 projectIssuedScoringBasis 同时执行该聚合 policy 守卫。
 
   const entryBySlot = new Map(
     submission.response_set.entries.map((entry) => [entry.slot_id, entry] as const),
@@ -565,6 +566,7 @@ export async function evaluateSubmissionCore(
         run_refs: runRefs,
         provenance,
       }),
+      scoring_basis: scopedBasis,
       model_units_invoked: modelUnitsInvoked,
       spent_cost_usd_micros: spentCostMicros,
     };
@@ -910,9 +912,37 @@ export async function evaluateSubmissionCore(
   });
   return {
     record,
+    scoring_basis: scopedBasis,
     model_units_invoked: modelUnitsInvoked,
     spent_cost_usd_micros: spentCostMicros,
   };
+}
+
+/**
+ * 冻结发题范围的唯一计分投影。分子、分母、读模型和学习结算共享此规则；
+ * 不从 unit_results 反推范围，未评分/未决不等于未发题。
+ */
+export function projectIssuedScoringBasis(
+  revision: Pick<PublishedQuestionRevisionT, 'structure' | 'response_spec' | 'scoring_basis'>,
+  issuedPartIds: readonly string[],
+): ScoringBasisT {
+  const parts = new Set(issuedPartIds);
+  const known = new Set(revision.structure.parts.map((part) => part.part_id));
+  if (
+    parts.size === 0 ||
+    parts.size !== issuedPartIds.length ||
+    [...parts].some((id) => !known.has(id))
+  ) {
+    throw new EvaluationContractError(
+      'invalid_issuance_scope',
+      'issued parts must be a nonempty, unique subset of the frozen revision',
+    );
+  }
+  const slots = new Map(
+    answerableSlots(revision.response_spec, parts).map((slot) => [slot.slot_id, slot]),
+  );
+  const units = revision.scoring_basis.units.filter((unit) => unitInScope(unit, slots));
+  return scopedBasisFor(revision.scoring_basis, new Set(units.map((unit) => unit.scoring_unit_id)));
 }
 
 /** 聚合 policy 按 in-scope unit 集投影；不可投影的聚合 fail-closed。 */

@@ -29,6 +29,7 @@ import {
   material_fsrs_state,
   question,
 } from '@/db/schema';
+import { resolveVerdictForGroup } from '@/kernel/read-models/assessment-verdict';
 import {
   type NormalizableQuestionRow,
   type PartRow,
@@ -134,7 +135,7 @@ async function seedChain(
   await db.insert(assessment_issuance).values({
     issuance_id: issuanceId,
     revision_id: revisionId,
-    part_ids: [],
+    part_ids: [qid],
     material_bindings: [],
     option_order: [],
     claim_policy: 'one_time',
@@ -447,51 +448,75 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect(newPayload.reverted_settlement_event_ids).toContain(oldEv?.id);
   });
 
-  it('有序 replay：早期证据晚到 ⇒ revert 更晚结算 → 落位 → 原 occurrence 重放', async () => {
-    await seedKnowledge('kc_a', { domain: 'dom_x' });
-    const t1 = new Date('2026-09-20T00:00:00Z');
-    const t2 = new Date('2026-09-21T00:00:00Z');
-    // 组 A（t2，晚 occurrence）先结算成功。
-    const seedA = await seedChain('sA', { kcs: ['kc_a'], submittedAt: t2 });
-    const unitA = `${seedA.qid}::u`;
-    await seedEvaluation(seedA, 'evA', {
-      unitResults: [unitResult(unitA, 1)],
-    });
-    await activate('evA', { effectiveId: null, generation: 0 }, t2);
-    // 组 B（t1 < t2，早 occurrence）后到 —— 同一 KC。
-    const seedB = await seedChain('sB', { kcs: ['kc_a'], submittedAt: t1 });
-    const unitB = `${seedB.qid}::u`;
-    await seedEvaluation(seedB, 'evB', {
-      unitResults: [unitResult(unitB, 1)],
-    });
+  it.each([1, 2])(
+    '有序 replay：早期证据晚到，保留封存 scope v%i 和原 occurrence',
+    async (scopeVersion) => {
+      await seedKnowledge('kc_a', { domain: 'dom_x' });
+      const t1 = new Date('2026-09-20T00:00:00Z');
+      const t2 = new Date('2026-09-21T00:00:00Z');
+      // 组 A（t2，晚 occurrence）先结算成功。
+      const seedA = await seedChain('sA', { kcs: ['kc_a'], submittedAt: t2 });
+      const unitA = `${seedA.qid}::u`;
+      await seedEvaluation(seedA, 'evA', {
+        unitResults: [unitResult(unitA, 1)],
+      });
+      await activate('evA', { effectiveId: null, generation: 0 }, t2);
+      // Historical v1 receipts retain their frozen replay inputs after upgrading.
+      const original = (await settlementEvents(seedA.groupId))[0];
+      if (!original) throw new Error('settlement receipt missing');
+      const payload = original.payload as Record<string, unknown>;
+      const inputs = payload.replay_inputs;
+      if (!inputs || typeof inputs !== 'object') throw new Error('replay inputs missing');
+      await testDb()
+        .update(event)
+        .set({
+          payload: {
+            ...payload,
+            scope_version: scopeVersion,
+            replay_inputs: { ...inputs, scopeVersion },
+          },
+        })
+        .where(eq(event.id, original.id));
 
-    const result = await activate(
-      'evB',
-      { effectiveId: null, generation: 0 },
-      new Date('2026-09-22T00:00:00Z'),
-    );
-    expect(result.status).toBe('activated');
-    expect((result as { effect: string }).effect).toBe('applied');
+      // 组 B（t1 < t2，早 occurrence）后到 —— 同一 KC。
+      const seedB = await seedChain('sB', { kcs: ['kc_a'], submittedAt: t1 });
+      const unitB = `${seedB.qid}::u`;
+      await seedEvaluation(seedB, 'evB', {
+        unitResults: [unitResult(unitB, 1)],
+      });
 
-    // A 被 revert 后按其原 occurrence 重放：last_review_event_id 指向新 re-apply 事件。
-    const fsrs = await fsrsRow('knowledge', 'kc_a');
-    const settleA = (await settlementEvents(seedA.groupId))[0];
-    const reApplied = (await settlementEvents()).filter(
-      (e) => (e.payload as { replay_of?: string }).replay_of === settleA?.id,
-    );
-    expect(reApplied).toHaveLength(1);
-    expect(fsrs?.last_review_event_id).toBe(reApplied[0]?.id);
-    // A 的原事件已被标记 dead（在 B 的 reverted 列表内）。
-    const bPayload = ((await settlementEvents(seedB.groupId))[0]?.payload ?? {}) as {
-      reverted_settlement_event_ids?: string[];
-    };
-    expect(bPayload.reverted_settlement_event_ids).toContain(settleA?.id);
-    // θ̂：B(t1) + A(t2) 两条 success obs ⇒ evidence_count=2（不重放丢增量）。
-    const m = await masteryRow('kc_a');
-    expect(m?.evidence_count).toBe(2);
-    expect(m?.success_count).toBe(2);
-    expect(new Date(m?.last_outcome_at ?? 0).toISOString()).toBe(t2.toISOString());
-  });
+      const result = await activate(
+        'evB',
+        { effectiveId: null, generation: 0 },
+        new Date('2026-09-22T00:00:00Z'),
+      );
+      expect(result.status).toBe('activated');
+      expect((result as { effect: string }).effect).toBe('applied');
+
+      // A 被 revert 后按其原 occurrence 重放：last_review_event_id 指向新 re-apply 事件。
+      const fsrs = await fsrsRow('knowledge', 'kc_a');
+      const settleA = (await settlementEvents(seedA.groupId))[0];
+      const reApplied = (await settlementEvents()).filter(
+        (e) => (e.payload as { replay_of?: string }).replay_of === settleA?.id,
+      );
+      expect(reApplied).toHaveLength(1);
+      expect(reApplied[0]?.payload).toMatchObject({
+        scope_version: scopeVersion,
+        replay_inputs: { scopeVersion },
+      });
+      expect(fsrs?.last_review_event_id).toBe(reApplied[0]?.id);
+      // A 的原事件已被标记 dead（在 B 的 reverted 列表内）。
+      const bPayload = ((await settlementEvents(seedB.groupId))[0]?.payload ?? {}) as {
+        reverted_settlement_event_ids?: string[];
+      };
+      expect(bPayload.reverted_settlement_event_ids).toContain(settleA?.id);
+      // θ̂：B(t1) + A(t2) 两条 success obs ⇒ evidence_count=2（不重放丢增量）。
+      const m = await masteryRow('kc_a');
+      expect(m?.evidence_count).toBe(2);
+      expect(m?.success_count).toBe(2);
+      expect(new Date(m?.last_outcome_at ?? 0).toISOString()).toBe(t2.toISOString());
+    },
+  );
 
   it('非结算 writer 的更晚痕迹 ⇒ failed_pending + replay_required 事件（不静默追加）', async () => {
     await seedKnowledge('kc_a', { domain: 'dom_x' });
@@ -700,6 +725,121 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect((await fsrsRow('knowledge', 'kc_a'))?.state?.reps).toBe(1);
     expect((await fsrsRow('knowledge', 'kc_b'))?.state?.reps).toBe(1);
   });
+
+  it.each([false, true])(
+    'issued subset: full credit and scoped FSRS/theta even with root union tags=%s',
+    async (rootUnion) => {
+      const db = testDb();
+      // 复合组：root + 两个物理 part（各 1 KC、各 1 单元）。
+      await seedKnowledge('kc_a', { domain: 'dom_x' });
+      await seedKnowledge('kc_b', { domain: 'dom_x' });
+      await seedQuestionRow('mp_q', { kcs: rootUnion ? ['kc_a', 'kc_b'] : [] });
+      await seedQuestionRow('mp_p1', { kcs: ['kc_a'], parentId: 'mp_q' });
+      await seedQuestionRow('mp_p2', { kcs: ['kc_b'], parentId: 'mp_q' });
+      const [root] = await db.select().from(question).where(eq(question.id, 'mp_q'));
+      const [p1] = await db.select().from(question).where(eq(question.id, 'mp_p1'));
+      const [p2] = await db.select().from(question).where(eq(question.id, 'mp_p2'));
+      const n = normalizeQuestionGroupToContract(root as NormalizableQuestionRow, [
+        p1 as PartRow,
+        p2 as PartRow,
+      ]);
+      const pub = await publishQuestionGroup(db, {
+        group_id: n.group_id,
+        contract: {
+          structure: n.structure,
+          response_spec: n.response_spec,
+          scoring_basis: n.scoring_basis,
+          execution_plan: n.execution_plan,
+          integrity_digest: n.integrity_digest,
+        },
+        expectedCurrentRevision: null,
+        expectedAdmissionGeneration: null,
+        availability: 'general_pool',
+        admission: { state: 'admitted', evidence: ADMITTED_EVIDENCE },
+        actorRef: 'test:publish',
+        now: NOW,
+      });
+      if (pub.status !== 'published') throw new Error(`publish: ${pub.status}`);
+      const groupId = 'mp_grp';
+      const submissionId = 'mp_sub';
+      const issuanceId = 'mp_iss';
+      await db.insert(assessment_issuance).values({
+        issuance_id: issuanceId,
+        revision_id: pub.revision_id,
+        part_ids: ['mp_p1'],
+        material_bindings: [],
+        option_order: [],
+        claim_policy: 'one_time',
+        claim_status: 'claimed',
+        claimed_by_ref: 'occ_1',
+        issued_at: NOW,
+      });
+      await db.transaction(async (tx) => {
+        await tx.insert(evaluation_group).values({
+          evaluation_group_id: groupId,
+          submission_ids: [submissionId],
+          created_at: NOW,
+        });
+        await tx.insert(assessment_submission).values({
+          submission_id: submissionId,
+          issuance_id: issuanceId,
+          revision_id: pub.revision_id,
+          evaluation_group_id: groupId,
+          response_set: { entries: [] },
+          group_evidence: [],
+          idempotency_key: 'mp_idem',
+          submitted_at: NOW,
+        });
+        await insertInitialEvaluationHead(tx, {
+          evaluation_group_id: groupId,
+          submission_id: submissionId,
+          now: NOW,
+        });
+      });
+      // 仅发 p1 且全对；p2 不产生结果，不参与分母或其独有 KC 的结算。
+      await db.insert(evaluation).values({
+        evaluation_id: 'mp_ev1',
+        evaluation_group_id: groupId,
+        submission_id: submissionId,
+        attempt: 1,
+        status: 'completed',
+        unit_results: [unitResult('mp_p1::u', 1)] as never,
+        aggregate: { kind: 'points_total', points: 1, policy: { kind: 'sum' } } as never,
+        plan_digest: null,
+        run_refs: [],
+        provenance: { source: 'automatic', assisted: false },
+        created_at: NOW,
+      });
+
+      const result = await activate('mp_ev1', { effectiveId: null, generation: 0 });
+      expect(result.status).toBe('activated');
+
+      const rows = await settlementEvents(groupId);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].payload).toMatchObject({
+        verdict: { verdict: 'correct', normalized: 1 },
+        rating: 'good',
+        scope_version: 2,
+        effects: { fsrs_applied: ['knowledge:kc_a'], theta_applied: ['kc_a'] },
+      });
+      expect(await fsrsRow('knowledge', 'kc_b')).toBeUndefined();
+      expect(await masteryRow('kc_b')).toBeUndefined();
+      expect((await fsrsRow('knowledge', 'kc_a'))?.state?.reps).toBe(1);
+      expect((await masteryRow('kc_a'))?.evidence_count).toBe(1);
+      expect((await masteryRow('dom_x', 'ability_global'))?.evidence_count).toBe(1);
+      const read = await resolveVerdictForGroup(db, groupId);
+      expect(read.effective?.verdict).toMatchObject({
+        verdict: 'correct',
+        normalized: 1,
+        maxPoints: 1,
+      });
+      expect(read.original?.verdict).toMatchObject({
+        verdict: 'correct',
+        normalized: 1,
+        maxPoints: 1,
+      });
+    },
+  );
 
   // YUK-1054 — replay 付费 fanout 抑制（ticket: 「replay 不重发 models/nudges/
   // memory」）。读侧结构性保证由本测试钉住：
