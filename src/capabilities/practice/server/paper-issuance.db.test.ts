@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   artifact,
   assessment_issuance,
+  evaluation,
+  evaluation_effective_head,
   event,
   learning_session,
   material_fsrs_state,
@@ -20,6 +22,7 @@ import { previewFormalAttempt } from './assessment/attempt';
 import { submitNativePaperAttempt } from './assessment/paper-attempt';
 import { readPaperAssessmentBinding } from './assessment/paper-issuance';
 import { getIssuanceState } from './assessment/submit';
+import { activateSubmissionCandidate, evaluateSubmission } from './judge/evaluate-submission';
 import { getPaperDetail } from './paper-detail';
 import { getPracticeList } from './practice-read';
 
@@ -224,6 +227,94 @@ describe('paper opening freezes actual assessment occurrences', () => {
       coarse_outcome: 'incorrect',
       score: 0,
     });
+  });
+
+  it('replays the current corrected grade without reactivating the original or rescheduling', async () => {
+    const db = testDb();
+    const q = await seedFrozenSolveQuestion(db);
+    const paperId = await paper([q.id]);
+    const { sessionId } = await createPaperReviewSession(paperId);
+    const binding = await readPaperAssessmentBinding(db, sessionId);
+    if (!binding) throw new Error('binding absent');
+    const input = {
+      sessionId,
+      paperArtifactId: paperId,
+      questionId: q.id,
+      assessment: { ...binding.slots[0], response_set: q.responseSet('a-b') },
+      answerMd: 'a-b',
+    };
+    const original = await submitNativePaperAttempt(db, input);
+    expect(original.coarseOutcome).toBe('incorrect');
+    if (!original.evaluationId) throw new Error('original candidate missing');
+    const [row] = await db
+      .select()
+      .from(evaluation)
+      .where(eq(evaluation.evaluation_id, original.evaluationId));
+    const corrected = await evaluateSubmission(db, {
+      submission_id: row.submission_id,
+      evaluation_group_id: row.evaluation_group_id,
+      evaluation_key: 'paper-manual-correction',
+      mode: 'manual_assert',
+      provenance: { source: 'manual', assisted: false },
+      asserted_unit_results: row.unit_results.map((unit) => ({
+        status: 'scored' as const,
+        scoring_unit_id: unit.scoring_unit_id,
+        points_awarded: 1,
+        scored_because: 'response' as const,
+        evidence_citations: [],
+      })),
+    });
+    const [head] = await db
+      .select()
+      .from(evaluation_effective_head)
+      .where(eq(evaluation_effective_head.evaluation_group_id, row.evaluation_group_id));
+    expect(
+      await activateSubmissionCandidate(
+        db,
+        {
+          evaluation_id: corrected.record.evaluation_id,
+          expected_effective_id: head.effective_evaluation_id,
+          expected_generation: head.generation,
+        },
+        { actorRef: 'test:teacher' },
+      ),
+    ).toMatchObject({ status: 'activated' });
+    await db
+      .update(learning_session)
+      .set({ status: 'completed' })
+      .where(eq(learning_session.id, sessionId));
+    const beforeFsrs = await db.select().from(material_fsrs_state);
+    const beforeHead = await db.select().from(evaluation_effective_head);
+    const replay = await createPaperSubmission(
+      new Request('http://localhost/paper-submit', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          question_id: q.id,
+          answer_md: input.answerMd,
+          assessment: input.assessment,
+        }),
+      }),
+      { id: paperId },
+    );
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({
+      visible_to_user: true,
+      coarse_outcome: 'correct',
+      score: 1,
+      evaluation_id: corrected.record.evaluation_id,
+    });
+    expect(await db.select().from(evaluation_effective_head)).toEqual(beforeHead);
+    expect(await db.select().from(material_fsrs_state)).toEqual(beforeFsrs);
+    expect(beforeFsrs[0].state.reps).toBe(1);
+    await expect(
+      submitNativePaperAttempt(db, {
+        ...input,
+        assessment: { ...input.assessment, response_set: q.responseSet('a+b') },
+        answerMd: 'a+b',
+      }),
+    ).rejects.toMatchObject({ status: 409 });
   });
 
   it('stores canonical paper drafts atomically, rejects stale saves and never resurrects submitted drafts', async () => {

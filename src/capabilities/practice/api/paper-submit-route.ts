@@ -1,20 +1,10 @@
-// U5 (YUK-203, §4.6) — POST /api/practice/[id]/submit: submit ONE paper slot.
-// `id` is the paper artifact id. Per-slot, UI-sequential (Q6). Resolves the
-// slot's assignment (primary knowledge + section feedback_policy) from the
-// auditable plan SERVER-side — the client never supplies knowledge ids or the
-// visibility policy. Writes attempt + independent judge events + FSRS upsert and
-// freezes the draft via submitPaperSlot.
-//
-// Distinct from /api/review/submit (single-question FSRS流, untouched).
+// Submit one slot using its original issuance and server-frozen feedback policy.
+// Accepted responses are immutable; only a native effective evaluation settles learning.
+// Buffered replies expose receipt identities without grading feedback.
 
-import { eq } from 'drizzle-orm';
-import { resolveSlotAssignment } from '@/capabilities/practice/server/paper-sections';
-import { submitPaperSlot } from '@/capabilities/practice/server/paper-submit';
-import { Artifact } from '@/core/schema/index';
 import { db } from '@/db/client';
-import { artifact } from '@/db/schema';
 import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
-import { submitNativePaperAttempt } from '../server/assessment/paper-attempt';
+import { submitPaperSlot } from '../server/paper-submit';
 import { LegacyPaperSubmissionBodySchema } from './paper-contracts';
 
 export async function createPaperSubmission(
@@ -33,8 +23,8 @@ export async function createPaperSubmission(
     }
     const body = parsed.data;
 
-    if (body.assessment) {
-      const result = await submitNativePaperAttempt(db, {
+    const result = await submitPaperSlot(
+      {
         sessionId: body.session_id,
         paperArtifactId,
         questionId: body.question_id,
@@ -45,90 +35,25 @@ export async function createPaperSubmission(
         latencyMs: body.latency_ms,
         reasoningTrace: body.reasoning_trace,
         selfConfidence: body.self_confidence,
-      });
-      const identity = {
-        attempt_event_id: result.attemptEventId,
-        judge_event_id: null,
-        evaluation_id: result.evaluationId,
-        answer_id: result.answerId,
-      };
-      return Response.json(
-        result.visibleToUser
-          ? {
-              ...identity,
-              status: result.status,
-              visible_to_user: true,
-              coarse_outcome: result.coarseOutcome,
-              score: result.score,
-            }
-          : { ...identity, visible_to_user: false, feedback_buffered: true },
-      );
-    }
-
-    // Load the paper + resolve the slot assignment from the auditable plan.
-    const rows = await db.select().from(artifact).where(eq(artifact.id, paperArtifactId)).limit(1);
-    const row = rows[0];
-    if (!row) {
-      throw new ApiError('not_found', `paper artifact ${paperArtifactId} not found`, 404);
-    }
-    const paper = Artifact.parse(row);
-    const slot = resolveSlotAssignment(paper.tool_state, body.question_id, body.part_ref ?? null);
-    if (!slot) {
-      throw new ApiError(
-        'validation_error',
-        `slot (question ${body.question_id}, part ${body.part_ref ?? '-'}) is not in paper ${paperArtifactId}`,
-        400,
-      );
-    }
-
-    const result = await submitPaperSlot(
-      {
-        sessionId: body.session_id,
-        paperArtifactId,
-        questionId: body.question_id,
-        partRef: body.part_ref ?? null,
-        answerMd: body.answer_md,
-        answerImageRefs: body.image_refs,
-        primaryKnowledgeId: slot.primaryKnowledgeId,
-        secondaryKnowledgeIds: slot.secondaryKnowledgeIds,
-        feedbackPolicy: slot.feedbackPolicy,
-        // YUK-448 — cumulative foreground-visible slot time, capture-only. Thread it into
-        // attempt payload.duration_ms; do not wire it into theta/mastery/SRT credit.
-        latencyMs: body.latency_ms ?? undefined,
-        // YUK-784 — 过程框采集文本（observe-only）：conditional-spread 落 attempt payload，
-        // 不进任何判分链。空值/缺省 → payload 无该键（byte-identical）。
-        reasoningTrace: body.reasoning_trace ?? undefined,
-        // YUK-1051 / Q-922 — 信心自评（1–5，observe-only）：同上，conditional-spread 落
-        // attempt payload；null/缺省 → payload 无该键。
-        selfConfidence: body.self_confidence ?? undefined,
       },
       db,
     );
-
-    // Derived visibility (§4.9). The independent judge event carries the gate;
-    // the read layer derives 可见. The submit response echoes whether THIS slot's
-    // feedback is immediately visible so the answering page can show the judge
-    // panel or a "feedback buffered" placeholder.
-    //
-    // When visible_to_user:false, coarse_outcome and score are structurally
-    // ABSENT — same discipline as the GET buffered variant (§4.9 server boundary).
+    const identity = {
+      attempt_event_id: result.attemptEventId,
+      judge_event_id: null,
+      evaluation_id: result.evaluationId,
+      answer_id: result.answerId,
+    };
     return Response.json(
       result.visibleToUser
         ? {
-            attempt_event_id: result.attemptEventId,
-            judge_event_id: result.judgeEventId,
-            answer_id: result.answerId,
+            ...identity,
+            status: result.status,
             visible_to_user: true,
             coarse_outcome: result.coarseOutcome,
             score: result.score,
           }
-        : {
-            attempt_event_id: result.attemptEventId,
-            judge_event_id: result.judgeEventId,
-            answer_id: result.answerId,
-            visible_to_user: false,
-            feedback_buffered: true,
-          },
+        : { ...identity, visible_to_user: false, feedback_buffered: true },
     );
   } catch (err) {
     return errorResponse(err);

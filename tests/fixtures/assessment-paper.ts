@@ -1,0 +1,169 @@
+import { createHash } from 'node:crypto';
+import { eq } from 'drizzle-orm';
+import { createPaperReviewSession } from '@/capabilities/practice/api/paper-session-create';
+import { readPaperAssessmentBinding } from '@/capabilities/practice/server/assessment/paper-issuance';
+import { getIssuanceState } from '@/capabilities/practice/server/assessment/submit';
+import {
+  type PaperSubmitSlotInput,
+  submitPaperSlot,
+} from '@/capabilities/practice/server/paper-submit';
+import { Artifact } from '@/core/schema';
+import type { SlotResponseT } from '@/core/schema/assessment';
+import type { Db } from '@/db/client';
+import { artifact, question, question_group_lifecycle } from '@/db/schema';
+import {
+  normalizeQuestionGroupToContract,
+  normalizeQuestionRowToContract,
+} from '@/server/questions/contract-normalizer';
+import { publishQuestionGroup } from '@/server/questions/publisher';
+
+/** Real publication/opening for migrated fixtures; never freezes lazily at submit time. */
+export async function startFrozenPaperFixture(db: Db, paperId: string) {
+  const [paper] = await db.select().from(artifact).where(eq(artifact.id, paperId));
+  if (!paper) throw new Error('paper fixture missing');
+  const state = Artifact.parse(paper).tool_state;
+  const ids = [
+    ...new Set([
+      ...(state?.question_ids ?? []),
+      ...(state?.sections ?? []).flatMap((section) =>
+        section.assignments.map((a) => a.question_id),
+      ),
+    ]),
+  ];
+  for (const id of ids) {
+    const [row] = await db.select().from(question).where(eq(question.id, id));
+    if (!row) throw new Error(`question fixture missing: ${id}`);
+    const rootId = row.parent_question_id ?? row.id;
+    const [published] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, rootId));
+    if (published?.current_revision_id) continue;
+    const [root] = await db.select().from(question).where(eq(question.id, rootId));
+    if (!root) throw new Error('shared parent fixture missing');
+    const children = await db
+      .select()
+      .from(question)
+      .where(eq(question.parent_question_id, rootId));
+    const contract = children.length
+      ? normalizeQuestionGroupToContract(root, children)
+      : normalizeQuestionRowToContract(root);
+    const result = await publishQuestionGroup(db, {
+      group_id: rootId,
+      contract,
+      expectedCurrentRevision: null,
+      expectedAdmissionGeneration: null,
+      availability: 'general_pool',
+      actorRef: 'test:paper-publication',
+      now: new Date(),
+      admission: {
+        state: 'admitted',
+        evidence: {
+          marking_provenance: 'official',
+          verification: { structural_check_passed: true, independent_verification: null },
+          model_slice: null,
+        },
+      },
+    });
+    if (result.status !== 'published')
+      throw new Error(`fixture publication failed: ${result.status}`);
+  }
+  return createPaperReviewSession(paperId);
+}
+
+/** Translate historical test input into the actual issued response shape, not a scoring mock. */
+export async function paperFixtureAssessment(
+  db: Db,
+  sessionId: string,
+  questionId: string,
+  text: string,
+  partRef?: string | null,
+  images: string[] = [],
+) {
+  const binding = await readPaperAssessmentBinding(db, sessionId);
+  const bound = binding?.slots.find(
+    (slot) => slot.question_id === questionId && slot.part_ref === (partRef ?? null),
+  );
+  if (!bound) throw new Error('test must open a frozen paper before submitting');
+  const state = await getIssuanceState(db, bound.issuance_id);
+  const slots =
+    state.practice_dto?.response_spec.slots.filter((slot) => slot.kind !== 'table') ?? [];
+  if (slots.length !== 1)
+    throw new Error('fixture text input must identify exactly one response slot');
+  const slot = slots[0];
+  let entry: SlotResponseT;
+  switch (slot.kind) {
+    case 'text':
+      entry = { slot_id: slot.slot_id, kind: 'text', text_md: text };
+      break;
+    case 'open_response':
+      entry = { slot_id: slot.slot_id, kind: 'open', text_md: text, evidence: [] };
+      break;
+    case 'single_choice':
+    case 'multi_choice': {
+      const selected = slot.options.filter(
+        (option) => option.label === text || option.text === text,
+      );
+      if (text && selected.length !== 1)
+        throw new Error(`test choice does not identify a published option: ${text}`);
+      entry = {
+        slot_id: slot.slot_id,
+        kind: 'choice',
+        option_ids: selected.map((option) => option.option_id),
+      };
+      break;
+    }
+    case 'numeric':
+      entry = {
+        slot_id: slot.slot_id,
+        kind: 'numeric',
+        raw_input: text,
+        value: text.trim() && Number.isFinite(Number(text)) ? Number(text) : null,
+      };
+      break;
+    case 'formula':
+      entry = { slot_id: slot.slot_id, kind: 'formula', latex: text };
+      break;
+    default:
+      throw new Error(`fixture needs an explicit native response for ${slot.kind}`);
+  }
+  return {
+    issuance_id: bound.issuance_id,
+    evaluation_group_id: bound.evaluation_group_id,
+    idempotency_key: bound.idempotency_key,
+    response_set: { entries: [entry] },
+    group_evidence: images.map((assetId) => ({
+      target: { scope: 'all_units' as const },
+      evidence: {
+        evidence_id: `evidence_${assetId}`,
+        kind: 'image' as const,
+        asset: {
+          asset_id: assetId,
+          digest: `sha256:${createHash('sha256').update(assetId).digest('hex')}`,
+        },
+        mime_type: 'image/png',
+        bytes: 1024,
+        uploaded_at: '2026-10-04T00:00:00.000Z',
+      },
+    })),
+  };
+}
+
+export async function submitPaperFixture(input: PaperSubmitSlotInput, db: Db) {
+  return submitPaperSlot(
+    {
+      ...input,
+      assessment:
+        input.assessment ??
+        (await paperFixtureAssessment(
+          db,
+          input.sessionId,
+          input.questionId,
+          input.answerMd,
+          input.partRef,
+          input.answerImageRefs,
+        )),
+    },
+    db,
+  );
+}

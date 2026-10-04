@@ -1,8 +1,11 @@
 import { and, eq, gte, sql } from 'drizzle-orm';
+import { EvaluationRecord } from '@/core/schema/assessment';
 import type { Db } from '@/db/client';
 import { answer, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { resolveVerdictForGroup } from '@/kernel/read-models/assessment-verdict';
 import { assertSessionMutable, freezeAnswerDraft } from '../answer-draft';
+import { projectEvaluationToJudgeResult } from '../judge/evaluation-authority';
 import {
   commitFormalAttempt,
   prepareFormalAttemptSubmission,
@@ -87,11 +90,14 @@ export async function submitNativePaperAttempt(db: Db, input: NativePaperAttempt
     self_confidence: input.selfConfidence,
   };
   const answerId = await db.transaction(async (tx) => {
-    await tx
-      .select({ id: learning_session.id })
+    const [lockedSession] = await tx
+      .select({ id: learning_session.id, started_at: learning_session.started_at })
       .from(learning_session)
       .where(eq(learning_session.id, input.sessionId))
       .for('update');
+    if (lockedSession?.started_at.toISOString() !== binding.started_at) {
+      throw new ApiError('stale_occurrence', 'paper was reopened before capture', 409);
+    }
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtext(${`paper-native:${slot.issuance_id}`}))`,
     );
@@ -122,34 +128,68 @@ export async function submitNativePaperAttempt(db: Db, input: NativePaperAttempt
     });
     return frozen.answerId;
   });
-  // Accepted original and paid-call claim both survive activation failures.
-  const committed = await commitFormalAttempt(
-    db,
-    'paper_submit',
-    input.questionId,
-    input.assessment,
-    {
-      capture,
-      onActivated: async (tx) => {
-        const [current] = await tx
-          .select({ started_at: learning_session.started_at })
-          .from(learning_session)
-          .where(eq(learning_session.id, input.sessionId))
-          .for('update');
-        if (current?.started_at.toISOString() !== binding.started_at) {
-          throw new ApiError(
-            'stale_occurrence',
-            'paper was reopened before this evaluation committed',
-            409,
-          );
-        }
+  // Validate the immutable original before replaying the current head. A later
+  // correction (or retraction) must never reactivate the original candidate.
+  const currentVerdict = await resolveVerdictForGroup(db, slot.evaluation_group_id);
+  let receipt: {
+    coarseOutcome: 'correct' | 'partial' | 'incorrect' | 'unsupported';
+    score: number | null;
+    status: 'effective' | 'review_required';
+    evaluationId?: string;
+  };
+  if (currentVerdict.head && currentVerdict.head.generation > 0) {
+    const effective = currentVerdict.effective;
+    const result = effective?.scoring_basis
+      ? projectEvaluationToJudgeResult(
+          EvaluationRecord.parse(effective.row),
+          effective.scoring_basis,
+        )
+      : null;
+    receipt = {
+      coarseOutcome: result?.coarse_outcome ?? 'unsupported',
+      score: result?.score ?? null,
+      status: result ? 'effective' : 'review_required',
+      evaluationId: effective?.evaluation_id,
+    };
+  } else {
+    // Accepted original and paid-call claim both survive activation failures.
+    const committed = await commitFormalAttempt(
+      db,
+      'paper_submit',
+      input.questionId,
+      input.assessment,
+      {
+        capture,
+        onActivated: async (tx) => {
+          const [current] = await tx
+            .select({ started_at: learning_session.started_at })
+            .from(learning_session)
+            .where(eq(learning_session.id, input.sessionId))
+            .for('update');
+          if (current?.started_at.toISOString() !== binding.started_at) {
+            throw new ApiError(
+              'stale_occurrence',
+              'paper was reopened before this evaluation committed',
+              409,
+            );
+          }
+        },
       },
-    },
-  );
+    );
+    receipt = {
+      coarseOutcome: committed.candidate.result.coarse_outcome,
+      score: committed.candidate.result.score,
+      status: committed.status,
+      evaluationId: committed.candidate.evaluation.record.evaluation_id,
+    };
+  }
   const [currentSession] = await db
-    .select({ status: learning_session.status })
+    .select({ status: learning_session.status, started_at: learning_session.started_at })
     .from(learning_session)
     .where(eq(learning_session.id, input.sessionId));
+  if (currentSession?.started_at.toISOString() !== binding.started_at) {
+    throw new ApiError('stale_occurrence', 'paper was reopened before acknowledgement', 409);
+  }
   const visibleToUser =
     slot.feedback_policy !== 'judge_now_show_later' || currentSession?.status === 'completed';
   return {
@@ -157,9 +197,6 @@ export async function submitNativePaperAttempt(db: Db, input: NativePaperAttempt
     judgeEventId: null,
     answerId,
     visibleToUser,
-    coarseOutcome: committed.candidate.result.coarse_outcome,
-    score: committed.candidate.result.score,
-    status: committed.status,
-    evaluationId: committed.candidate.evaluation.record.evaluation_id,
+    ...receipt,
   };
 }

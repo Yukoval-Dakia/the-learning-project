@@ -277,3 +277,12 @@ or historical observations must not be confused with authorization to re-execute
 old scoring. Remaining release blockers still include legacy solo/durable/rejudge
 execution removal, probe/ingestion cutover, diagnostic/failure-learning consumers,
 full evidence target editing/media acceptance and complete frozen teaching input.
+
+## 23:55 UTC — 旧 paper 执行删除与学习信号恢复（未发布）
+
+- 删除 paper-submit 中旧 evaluateAttempt/invoker、当前题行评分和旧付费 TTL claim 分支。缺原始发题绑定返回 historical_unknown；不按提交时的题目补造原件。旧 fixtures 逐项迁移中，整个旧 paper suite 尚未通过。
+- 原生改判后重交原响应原先409，DB先RED再修：返回当前有效成绩，原答案变更仍409，不重新激活旧candidate或重复FSRS。capture/ack增加started_at代际检查。
+- 真实评分成功却遗漏 mastery_progress、笔记 subscriber 不识别 native anchor 均已先RED后修。结算观察端口在原 occurrence 的有序位置读真实Δθ，后续重放不再发信号；信号与激活同事务，optional失败隔离。笔记验证冻结坐标后消费neutral native anchor，重复投递不重复入队。
+- 原生未知评分不再自动推断again；snapshot回归改为断言零FSRS/零theta/零快照且原件保留；已评分快照仍对照实际学习状态验证。
+- scoped DB：68例（settlement/submission/learning/snapshot/capture）+26例（durable/telemetry/notes/paper issuance/family）通过；包括有序晚到信号不误读后续状态。typecheck、changed Biome（0 errors/8 warnings）、build通过。没有新增付费模型请求。
+- 继续迁移 paper-cycle/provenance/API fixtures；旧unit_dimension数学单位加速尚未映射原生冻结规则，必须保留本地确定性能力（不能以unsupported冒充完成，也不把旧固定分数梯度变成新默认）。其他入口和下游消费范围按原计划继续。无PR/push/review/CI/部署，1047仍In Progress。

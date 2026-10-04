@@ -9,6 +9,7 @@ import type {
   EventSubscriptionHandlerFactory,
   EventSubscriptionOutcome,
 } from '@/kernel/manifest';
+import { resolveVerdictsForNativeAttempts } from '@/kernel/read-models/assessment-verdict';
 import { getNotesBoss } from './boss-port';
 import { reserveAndEnqueueMasteryRefineEffect } from './mastery-refine-effect';
 import { collectMasteryRefineTargets } from './mastery-refine-targets';
@@ -53,13 +54,21 @@ export async function handleMasteryProgressNoteRefineDelivery(
   const attempt = await getEventById(db, attemptEventId);
   if (
     !attempt ||
-    !['attempt', 'review'].includes(attempt.action) ||
+    !['attempt', 'review', 'experimental:assessment_attempt'].includes(attempt.action) ||
     !('subject_kind' in attempt) ||
     attempt.subject_kind !== 'question' ||
     !('subject_id' in attempt) ||
     typeof attempt.subject_id !== 'string'
   ) {
     return { status: 'skipped', reason: 'invalid causal attempt' };
+  }
+  if (attempt.action === 'experimental:assessment_attempt') {
+    const [anchor] = await db.select().from(event).where(eq(event.id, attemptEventId));
+    // Native participation is neutral; its frozen coordinates, not a legacy
+    // success bit or a freshly edited question, establish the causal identity.
+    if (!anchor || !(await resolveVerdictsForNativeAttempts(db, [anchor])).has(attemptEventId)) {
+      return { status: 'skipped', reason: 'invalid native causal attempt' };
+    }
   }
   const questionId = attempt.subject_id;
   if (masteryEvent.payload.question_id && masteryEvent.payload.question_id !== questionId) {

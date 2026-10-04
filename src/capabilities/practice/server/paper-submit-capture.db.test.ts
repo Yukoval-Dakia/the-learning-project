@@ -6,11 +6,13 @@
 
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { AttemptOnQuestion } from '@/core/schema/event/known';
+import { AssessmentAttemptCapture } from '@/core/schema/assessment';
 import { artifact, event, question } from '@/db/schema';
-import { Review } from '@/server/session';
+import {
+  startFrozenPaperFixture,
+  submitPaperFixture as submitPaperSlot,
+} from '../../../../tests/fixtures/assessment-paper';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { submitPaperSlot } from './paper-submit';
 
 async function seedQuestion(id: string) {
   const db = testDb();
@@ -79,11 +81,11 @@ describe('YUK-784 — paper submit reasoning_trace conditional write', () => {
     await resetDb();
   });
 
-  it('带上过程文本 → attempt event payload.reasoning_trace 原样落库，且 payload 过 AttemptOnQuestion 校验', async () => {
+  it('带上过程文本 → attempt event payload.reasoning_trace 原样落库，且原生参与记录与采集 schema 一致', async () => {
     const db = testDb();
     await seedQuestion('pq_a');
     await seedPaper('paper_cap', ['pq_a']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_cap' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper_cap');
 
     const result = await submitPaperSlot(
       {
@@ -102,18 +104,9 @@ describe('YUK-784 — paper submit reasoning_trace conditional write', () => {
     expect((row.payload as Record<string, unknown>).reasoning_trace).toBe(
       '先判断命题真假，再对照定义',
     );
-    // 事件 payload 形状仍过读侧 schema（槽位已在 AttemptOnQuestion 上，YUK-562 先行铺）。
-    const parsed = AttemptOnQuestion.safeParse({
-      actor_kind: row.actor_kind,
-      actor_ref: row.actor_ref,
-      action: row.action,
-      subject_kind: row.subject_kind,
-      subject_id: row.subject_id,
-      outcome: row.outcome,
-      payload: row.payload,
-      caused_by_event_id: row.caused_by_event_id ?? undefined,
-    });
-    expect(parsed.success).toBe(true);
+    expect(row.action).toBe('experimental:assessment_attempt');
+    expect(row.outcome).toBeNull();
+    expect(AssessmentAttemptCapture.safeParse(row.payload).success).toBe(true);
   });
 
   it('未带 / 纯空白 → payload 无 reasoning_trace 键（既有卷提交 byte-identical）', async () => {
@@ -121,7 +114,7 @@ describe('YUK-784 — paper submit reasoning_trace conditional write', () => {
     await seedQuestion('pq_a');
     await seedQuestion('pq_b');
     await seedPaper('paper_cap', ['pq_a', 'pq_b']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_cap' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper_cap');
 
     const withBlank = await submitPaperSlot(
       {

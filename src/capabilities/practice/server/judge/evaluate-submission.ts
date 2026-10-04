@@ -609,11 +609,12 @@ export async function activateSubmissionCandidate(
     actorRef: string;
     now?: Date;
     record?: (tx: Tx) => Promise<void>;
+    onThetaApplied?: import('@/server/assessment/settle').SettlementObservers['onThetaApplied'];
   },
 ) {
   return database.transaction(async (tx) => {
     const result = await activateEvaluation(tx, intent, {
-      settle: learningSettlement,
+      settle: (input) => learningSettlement(input, { onThetaApplied: options.onThetaApplied }),
       actorRef: options.actorRef,
       now: options.now,
     });

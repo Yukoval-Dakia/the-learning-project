@@ -640,12 +640,17 @@ interface ApplyOutcome {
  * 先 FSRS（评级），再 θ̂（bounded adapter 单次共享 update），再 brackets，
  * 最后 calibration（family 观测仅在 objective + θ̂ applied 时折进）。
  */
+export interface SettlementObservers {
+  /** Runs once for the new occurrence at its own ordered position, never for replayed neighbors. */
+  onThetaApplied?: (tx: Tx, input: { knowledgeIds: string[]; outcome: 0 | 1 }) => Promise<void>;
+}
+
 async function executePlan(
   tx: Tx,
   plan: SettlementPlan,
   settlementEventId: string,
   occurrenceAt: Date,
-  options: { skipFsrs?: boolean } = {},
+  options: { skipFsrs?: boolean } & SettlementObservers = {},
 ): Promise<ApplyOutcome> {
   const outcome: ApplyOutcome = {
     fsrsApplied: [],
@@ -762,6 +767,12 @@ async function executePlan(
         err,
       );
     }
+  }
+  if (plan.theta.applied) {
+    await options.onThetaApplied?.(tx, {
+      knowledgeIds: plan.theta.knowledgeIds,
+      outcome: plan.theta.outcome,
+    });
   }
   return outcome;
 }
@@ -918,7 +929,10 @@ async function writeSettlementEvent(
  * learning-state 写锁 G 的事务内调用（端口契约）；本函数不另开顶层事务，
  * replay 段用嵌套 savepoint 保护。
  */
-export async function learningSettlement(input: ActivationSettleInput): Promise<ActivationEffect> {
+export async function learningSettlement(
+  input: ActivationSettleInput,
+  observers: SettlementObservers = {},
+): Promise<ActivationEffect> {
   const { tx } = input;
   const activatedAt = input.now;
 
@@ -1027,7 +1041,7 @@ export async function learningSettlement(input: ActivationSettleInput): Promise<
   }
 
   if (revertSet.length === 0 && !preserveUserRating) {
-    const applied = await executePlan(tx, plan, settlementEventId, occurrenceAt);
+    const applied = await executePlan(tx, plan, settlementEventId, occurrenceAt, observers);
     const effect: ActivationEffect =
       applied.fsrsApplied.length > 0 || applied.thetaApplied.length > 0 ? 'applied' : 'ineligible';
     await writeSettlementEvent(tx, {
@@ -1064,6 +1078,7 @@ export async function learningSettlement(input: ActivationSettleInput): Promise<
       }
       const mine = await executePlan(sp, plan, settlementEventId, occurrenceAt, {
         skipFsrs: preserveUserRating,
+        ...observers,
       });
       for (const member of reapplySet) {
         const newIdFor = `stl_${createId()}`;

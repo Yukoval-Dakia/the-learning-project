@@ -17,9 +17,11 @@ import { StateSnapshotExperimental } from '@/core/schema/event/state-snapshot';
 import { artifact, event, mastery_state, question } from '@/db/schema';
 import { getFsrsState } from '@/server/fsrs/state';
 import { getMasteryState } from '@/server/mastery/state';
-import { Review } from '@/server/session';
+import {
+  startFrozenPaperFixture,
+  submitPaperFixture as submitPaperSlot,
+} from '../../../../tests/fixtures/assessment-paper';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { submitPaperSlot } from './paper-submit';
 
 async function seedQuestion(id: string, reference: string, knowledgeIds: string[]) {
   const db = testDb();
@@ -27,6 +29,7 @@ async function seedQuestion(id: string, reference: string, knowledgeIds: string[
   await db.insert(question).values({
     id,
     kind: 'true_false',
+    judge_kind_override: 'exact',
     prompt_md: `Prompt ${id}`,
     reference_md: reference,
     knowledge_ids: knowledgeIds,
@@ -143,7 +146,7 @@ describe('YUK-471 W0 — paper submit appends experimental:state_snapshot (test 
     await seedQuestion('pq1', 'true', ['kc_paper']);
     await seedPaper('paper_snap', ['pq1'], 'kc_paper');
 
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_snap' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper_snap');
 
     // cold-start precondition: no prior mastery_state row.
     expect(await getMasteryState(db, 'kc_paper')).toBeNull();
@@ -159,7 +162,13 @@ describe('YUK-471 W0 — paper submit appends experimental:state_snapshot (test 
       },
       db,
     );
-    const attemptEventId = result.attemptEventId;
+    const settlements = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_settlement'));
+    const settlement = settlements.find((row) => row.payload.evaluation_id === result.evaluationId);
+    expect(settlement).toBeDefined();
+    const attemptEventId = settlement!.id;
 
     // YUK-561 S2 — a graded paper slot moves BOTH axes → two sibling snapshots.
     const snaps = await db
@@ -196,108 +205,36 @@ describe('YUK-471 W0 — paper submit appends experimental:state_snapshot (test 
     expect(theta?.after).toBeCloseTo(livePosterior, 6);
   });
 
-  // YUK-471 W0 invariant — the MEDIUM gap the driver just fixed: on the PAPER
-  // path a NON-photo `unsupported` answer (judge route unregistered / semantic
-  // provider call failed) maps to FSRS rating 'again' → scheduleReview runs →
-  // material_fsrs_state is overwritten at (c). The OLD code skipped the
-  // state_snapshot for unsupported (the θ̂+snapshot block was gated
-  // `coarseOutcome !== 'unsupported'`); the fix lifted the snapshot to a single
-  // (e) append point gated on `(fsrsWrote || thetaSnapshots.length > 0)`, so this
-  // path now writes a snapshot with theta_snapshots: [] (θ̂ correctly skipped per
-  // SF-3) + fsrs_snapshots: [<the FSRS transition>]. This test locks that
-  // invariant: every imperative material_fsrs_state overwrite on the paper path
-  // is snapshot-bracketed, even when θ̂ is skipped.
-  //
-  // DETERMINISTIC TRIGGER (no LLM / no mock): seed a short_answer question with
-  // `judge_kind_override: 'rubric'`. route-resolve.ts:121 honours the override →
-  // resolvedRoute === 'rubric'. 'rubric' is NOT in RUNNABLE_ROUTES
-  // (question-contract.ts:17), so JudgeInvoker.dispatch short-circuits to
-  // unsupportedResult (invoker.ts:148) → coarse_outcome='unsupported' WITHOUT
-  // any LLM call. The answer is plain text (non-photo) so photoOnlyUnsupported
-  // stays false → the (c) FSRS gate fires (rating 'again') → fsrsWrote=true →
-  // the (e) snapshot append fires, while (d) θ̂ is skipped (coarseOutcome ===
-  // 'unsupported', SF-3).
-  it('non-photo unsupported answer still snapshot-brackets the FSRS overwrite (θ̂ skipped per SF-3)', async () => {
+  // The native contract never invents an "again" rating from an unsupported
+  // automatic evaluation. Only an explicit user choice may write FSRS.
+  it('unsupported automatic paper response preserves the original without an inferred FSRS overwrite', async () => {
     const db = testDb();
-    // judge_kind_override='rubric' → route 'rubric' → not runnable → unsupported, no LLM.
     await seedQuestionWithOverride('pq_unsup', 'anything', ['kc_unsup'], 'rubric');
     await seedPaper('paper_unsup', ['pq_unsup'], 'kc_unsup');
-
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_unsup' });
-
-    // cold-start preconditions: no prior FSRS nor mastery state for the slot's KC.
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper_unsup');
     expect(await getFsrsState(db, 'knowledge', 'kc_unsup')).toBeNull();
     expect(await getMasteryState(db, 'kc_unsup')).toBeNull();
-
     const result = await submitPaperSlot(
       {
         sessionId,
         paperArtifactId: 'paper_unsup',
         questionId: 'pq_unsup',
-        answerMd: 'a normal text answer', // NON-photo → photoOnlyUnsupported stays false
-        primaryKnowledgeId: 'kc_unsup',
-        secondaryKnowledgeIds: [],
+        answerMd: 'a normal text answer',
       },
       db,
     );
-    const attemptEventId = result.attemptEventId;
-
-    // (1) coarseOutcome is unsupported (observable via the returned result + the
-    // persisted attempt maps it to failure). This is the path whose FSRS
-    // overwrite must be bracketed.
-    expect(result.coarseOutcome).toBe('unsupported');
-
-    // (2) material_fsrs_state row for the slot's subject WAS overwritten — the
-    // imperative write that must be bracketed. Oracle: the live row exists
-    // (cold-start → written) and pins this attempt as its last review.
-    const liveFsrs = await getFsrsState(db, 'knowledge', 'kc_unsup');
-    expect(liveFsrs).not.toBeNull();
-    if (!liveFsrs) throw new Error('liveFsrs should exist after the unsupported attempt');
-    expect(liveFsrs.last_review_event_id).toBe(attemptEventId);
-
-    // (3) YUK-561 S2 — θ̂ skipped (SF-3), so ONLY the FSRS segment is bracketed: exactly
-    // ONE state_snapshot (`:fsrs`), and NEITHER the θ̂ checkpoint NOR the θ̂ snapshot
-    // exists (per-segment same-condition write invariant — θ̂ array empty → no θ̂ bracket).
-    const snaps = await db
-      .select()
-      .from(event)
-      .where(
-        and(eq(event.action, 'experimental:state_snapshot'), eq(event.subject_id, attemptEventId)),
-      );
-    expect(snaps).toHaveLength(1);
-    expect(snaps[0].id).toBe(`${attemptEventId}:snapshot:fsrs`);
-    expect(await readCheckpoint(attemptEventId, 'theta')).toBeNull();
-
-    const { row: snap, payload } = await snapshotSegment(attemptEventId, 'fsrs');
-    expect(snap.subject_kind).toBe('event');
-    expect(snap.subject_id).toBe(attemptEventId);
-    expect(snap.caused_by_event_id).toBe(`${attemptEventId}:checkpoint:fsrs`);
-    expect(snap.actor_kind).toBe('system');
-    // (6) HARD REQ 2 — skips the memory outbox.
-    expect(snap.ingest_at).not.toBeNull();
-    expect(payload.attempt_event_id).toBe(attemptEventId);
-
-    // (4) θ̂ skipped on unsupported (SF-3) — this FSRS-segment snapshot carries an
-    // EMPTY θ̂ array, and the live mastery_state row was never created.
-    expect(payload.theta_snapshots).toEqual([]);
+    expect(result).toMatchObject({ coarseOutcome: 'unsupported', status: 'review_required' });
+    expect(await getFsrsState(db, 'knowledge', 'kc_unsup')).toBeNull();
     expect(await getMasteryState(db, 'kc_unsup')).toBeNull();
-
-    // (5) fsrs_snapshots brackets the EXACT FSRS transition. length 1; `before`
-    // is null (cold-start); `after` matches the LIVE material_fsrs_state row
-    // (independent oracle — NOT read from the payload; anti-tautology).
-    expect(payload.fsrs_snapshots).toHaveLength(1);
-    const fsrsSnap = payload.fsrs_snapshots[0];
-    expect(fsrsSnap.subject_kind).toBe('knowledge');
-    expect(fsrsSnap.subject_id).toBe('kc_unsup');
-    expect(fsrsSnap.before).toBeNull(); // cold-start → revert would DELETE the row
-    // `after` is jsonb-roundtripped; compare the load-bearing FSRS Card scalars
-    // against the live row (independent oracle), not against the payload itself.
-    expect(fsrsSnap.after.stability).toBe(liveFsrs?.state.stability);
-    expect(fsrsSnap.after.difficulty).toBe(liveFsrs?.state.difficulty);
-    expect(fsrsSnap.after.reps).toBe(liveFsrs?.state.reps);
-    // `due` is jsonb-roundtripped; normalize both sides through Date and compare
-    // the epoch ms (the live row's state.due may be a raw string/number from the
-    // jsonb cast, not a Date instance — coerce both for an apples-to-apples compare).
-    expect(new Date(fsrsSnap.after.due).getTime()).toBe(new Date(liveFsrs.state.due).getTime());
+    expect(
+      await db.select().from(event).where(eq(event.action, 'experimental:state_snapshot')),
+    ).toEqual([]);
+    expect(await db.select().from(event).where(eq(event.id, result.attemptEventId))).toMatchObject([
+      {
+        action: 'experimental:assessment_attempt',
+        outcome: null,
+        payload: { response_md: 'a normal text answer' },
+      },
+    ]);
   });
 });

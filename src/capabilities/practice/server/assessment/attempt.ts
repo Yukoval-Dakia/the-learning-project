@@ -20,6 +20,7 @@ import {
   createFormalModelExecutor,
 } from '../judge/evaluate-submission';
 import { type GradingEntryPoint, evaluateAttempt } from '../judge/evaluation-authority';
+import { emitMasteryProgressSignal } from '../mastery-progress-signal';
 import { submissionWasAssisted } from './assistance';
 import { type SaveSubmissionRequest, saveSubmission } from './submit';
 
@@ -281,6 +282,24 @@ export async function commitFormalAttempt(
     },
     {
       actorRef: `assessment:${entry}`,
+      onThetaApplied: async (tx, observation) => {
+        if (observation.outcome !== 1) return;
+        // Isolate optional telemetry failures without poisoning the activation.
+        try {
+          await tx.transaction(async (sp) => {
+            await emitMasteryProgressSignal({
+              db: sp,
+              knowledgeIds: observation.knowledgeIds,
+              questionId,
+              attemptEventId: attemptId,
+              sourceArtifactId: capture.paper_artifact_id ?? null,
+              now: new Date(submission.submitted_at),
+            });
+          });
+        } catch (error) {
+          console.warn('[assessment] mastery progress signal failed (non-fatal):', error);
+        }
+      },
       record: async (tx) => {
         await record(tx);
         await options.onActivated?.(tx, prepared, attemptId);
