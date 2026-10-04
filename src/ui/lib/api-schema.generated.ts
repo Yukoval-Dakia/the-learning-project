@@ -15124,6 +15124,7 @@ export interface operations {
                                 alt_text?: string;
                                 asset_id: string;
                                 caption?: string;
+                                content_md?: string;
                                 /** @enum {string} */
                                 kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                 material_id: string;
@@ -15330,6 +15331,7 @@ export interface operations {
                                 alt_text?: string;
                                 asset_id: string;
                                 caption?: string;
+                                content_md?: string;
                                 /** @enum {string} */
                                 kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                 material_id: string;
@@ -15743,6 +15745,7 @@ export interface operations {
                                 alt_text?: string;
                                 asset_id: string;
                                 caption?: string;
+                                content_md?: string;
                                 /** @enum {string} */
                                 kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                 material_id: string;

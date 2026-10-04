@@ -25,7 +25,14 @@ const practiceDto = {
   revision_id: 'rev_1',
   issued_at: ISSUED_AT,
   faces: [{ part_id: 'part_1', prompt_md: '题面', material_ids: [] }],
-  materials: [],
+  materials: [
+    {
+      material_id: 'mat_reading',
+      kind: 'passage',
+      asset_id: 'txt_reading',
+      content_md: '共享阅读\n|量|值|\n|速度|0.4 m/s|',
+    },
+  ],
   response_spec: {
     slots: [{ slot_id: 'slot_1', part_id: 'part_1', kind: 'text' }],
   },
@@ -39,6 +46,7 @@ describe('assessment issuance wire contracts (YUK-1091)', () => {
       practice_dto: practiceDto,
       admission_generation_observed: 3,
     });
+    expect(parsed.practice_dto.materials).toEqual(practiceDto.materials);
     expect(parsed.issuance.binding.revision_id).toBe('rev_1');
     expect(parsed.issuance.binding.option_order).toEqual([
       { slot_id: 'slot_1', option_ids: ['o1', 'o2'] },
@@ -75,6 +83,7 @@ describe('assessment issuance wire contracts (YUK-1091)', () => {
       draft: null,
       submissions: [],
     });
+    expect(parsed.practice_dto?.materials).toEqual(practiceDto.materials);
     expect(parsed.practice_dto?.faces).toHaveLength(1);
     expect(parsed.admission_generation_observed).toBe(7);
 

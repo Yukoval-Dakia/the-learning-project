@@ -468,6 +468,7 @@ describe('第二轮复审 P1-2/P1-3 — 保真与身份（先红后绿）', () =
     const rubricMat = n.structure.materials.find((m) => m.caption?.startsWith('rubric'));
     if (!rubricMat) throw new Error('rubric material missing');
     expect((rubricMat as { content_md?: string }).content_md).toContain('论点');
+    expect(rubricMat).toHaveProperty('visibility', 'private');
   });
 
   it('P1-2b: structured leaf WITHOUT its own answer is unresolved — root reference must NOT become its key', () => {
