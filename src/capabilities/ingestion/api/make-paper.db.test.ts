@@ -13,9 +13,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-
-import { submitPaperSlot } from '@/capabilities/practice/server/paper-submit';
-import { getPracticeList } from '@/capabilities/practice/server/practice-read';
+import { getPracticeList, submitPaperSlot } from '@/capabilities/practice/public';
 import {
   artifact,
   event,

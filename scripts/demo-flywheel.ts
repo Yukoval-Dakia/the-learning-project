@@ -17,12 +17,14 @@
 // loopback DATABASE_URL wins; @/db/client then targets loom_demo.
 import './load-env';
 
+// YUK-1064 dev-only exception: this sandbox demo explicitly orchestrates jobs.
+// Keep these three concrete runners out of agency/public; production dispatch uses manifests.
 import { runCoach } from '@/capabilities/agency/jobs/coach_daily';
 import { runDreamingNightly } from '@/capabilities/agency/jobs/dreaming_nightly';
 import { runGoalScopeProposeNightly } from '@/capabilities/agency/jobs/goal_scope_propose_nightly';
-import { listActiveGoals } from '@/capabilities/agency/server/goals/queries';
-import { executeMemoryBrief } from '@/capabilities/copilot/server/tools/memory-brief';
-import { runKnowledgeEdgeProposeNightly } from '@/capabilities/knowledge/jobs/knowledge_edge_propose_nightly';
+import { listActiveGoals } from '@/capabilities/agency/public';
+import { executeMemoryBrief } from '@/capabilities/copilot/public';
+import { runKnowledgeEdgeProposeNightly } from '@/capabilities/knowledge/public';
 import { db } from '@/db/client';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { loadSubjectBriefEvents } from '@/server/memory/active-subjects';

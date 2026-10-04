@@ -334,7 +334,7 @@ const MISCONCEPTION_CONSUMER_REGISTRY: ConsumerEntry[] = [
   {
     relation: 'confusable_with',
     tier: 'specialized',
-    file: 'src/capabilities/knowledge/server/misconception-confusable-read.ts',
+    file: 'src/kernel/read-models/confusables.ts',
     marker: "eq(misconception_edge.relation_type, 'confusable_with')",
     surface: 'recommendation',
     evidence:

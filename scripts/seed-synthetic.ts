@@ -38,9 +38,9 @@
 import './load-env';
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { runKnowledgeEdgeProposeNightly } from '@/capabilities/knowledge/jobs/knowledge_edge_propose_nightly';
-import type { RubricGate } from '@/capabilities/knowledge/server/rubric-validator';
-import { scheduleReview } from '@/capabilities/practice/server/fsrs';
+import type { RubricGate } from '@/capabilities/knowledge/public';
+import { runKnowledgeEdgeProposeNightly } from '@/capabilities/knowledge/public';
+import { scheduleReview } from '@/capabilities/practice/public';
 import { CauseSchema } from '@/core/schema/cause';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { AiProposalPayloadInputT } from '@/core/schema/proposal';

@@ -2,13 +2,12 @@
 
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createLearningIntentKnowledgeNode } from '@/capabilities/knowledge/public';
 import {
   acceptProposal,
+  createLearningIntentKnowledgeNode,
   writeKnowledgeProposeEvent,
-} from '@/capabilities/knowledge/server/proposals';
-import { createLearningIntentNote } from '@/capabilities/notes/public';
-import { NOTE_HANDOFF_ACTION } from '@/capabilities/notes/server/note-handoff';
+} from '@/capabilities/knowledge/public';
+import { NOTE_HANDOFF_ACTION, createLearningIntentNote } from '@/capabilities/notes/public';
 import { artifact, event, knowledge, learning_item, materialized_id_index } from '@/db/schema';
 import { writeLearningItemProposal } from '@/kernel/proposals/producers';
 import { gatherAndFoldKnowledgeNode } from '@/server/projections/gather';

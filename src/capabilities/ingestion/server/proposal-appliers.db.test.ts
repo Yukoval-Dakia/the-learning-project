@@ -6,8 +6,8 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { seedKnowledge } from '@/capabilities/knowledge/server/seed';
-import { selectNextPlacementItem } from '@/capabilities/practice/server/placement-select';
+import { seedKnowledge } from '@/capabilities/knowledge/public';
+import { selectNextPlacementItem } from '@/capabilities/practice/public';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import {
   ai_task_runs,

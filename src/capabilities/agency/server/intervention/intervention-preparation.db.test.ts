@@ -3,10 +3,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getTaskSystemPrompt } from '@/ai/task-prompts';
 import {
   INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS,
+  JUDGE_RUN_EVENTS,
+  JUDGE_RUN_TABLE,
   authorInterventionPackage,
   handleReviewDue,
 } from '@/capabilities/practice/public';
-import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '@/capabilities/practice/server/judge-run-status';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { PEDAGOGY_METHOD_LIBRARY } from '@/core/pedagogy';
 import { PROBE_QUESTION_KIND, PROBE_QUESTION_SOURCE } from '@/core/schema/conjecture';

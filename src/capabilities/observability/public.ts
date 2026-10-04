@@ -23,3 +23,5 @@ export {
 export type { AdminConfigWriteResult, AdminConfigWriter } from './server/admin-config-writer';
 export { setAdminConfigWriter } from './server/admin-config-writer';
 export { observabilityConfigEffectiveFacts } from './server/config-effective-facts';
+
+export { readHubSyncHealth } from './server/hub-sync';

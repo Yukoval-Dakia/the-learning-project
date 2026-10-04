@@ -1,14 +1,22 @@
 # Current handoff — 2026-10-04
 
-Main4bea5288: config facts#1538 merged05:26:42UTC, exact-head CI37179026108 success.
-1007 still In Progress; typed provider display/per-consumer vision diagnostics/editing scope remain.
-Environment and GitHub CLI restored; root work branch fast-forwarded to main4bea5288.
-Active1063: /workspace/tlp-shared-boundaries, refactor/yuk-1063-shared-boundaries.
-Pure topology gate moved verbatim to core with existing tests and every live import.
-Kernel judge now reexports explicit practice/public contract; public callers unchanged.
-Route parity test moved from core to practice; core now has zero capability imports.
-100 scoped unit +67 DB pass; typecheck/lint299/build pass. Ten required audits and architecture-deepening passed; independent initial review passed, no P0/P1 or new substantive P2.
-Independent 30 moved unit +46 subject facade DB passed. PR/CI/17-minute window pending.
-Existing relations-audit stale confusable reader path captured on1064; baseline also warns(exit0).
-No next implementation lane. No dependency upgrades, paid requests or production operations.
-Go two-request cap exhausted. Preserve HOLDs, branches and worktrees.
+Owner /goal: continue Linear zero without stopping; do not stop after one delivered batch.
+Main4344fb20: YUK1063/#1539 merged07:00:03UTC, CI37183602484success;1063Done.
+73open at last count; preserve ownerHOLD/production/paid boundaries.
+Active1064: /workspace/tlp-public-consumers,refactor/yuk-1064-public-consumers,base4344fb20.
+Scripts and cross-capability tests now consume explicit public exports.
+Preserve documented CLI/dev/audit exceptions where app-barrel init or concrete job isolation matters.
+ASTinventory /tmp/public-consumers-inventory.cjs lists only documented script exceptions;
+no remaining cross-capability server/jobs imports in capability tests (static/dynamic).
+Relations audit now points to realconfusable reader; noSTALE/falseconfusableDEAD.
+38unit+368DB+82migration pass. New migration bundle regression runs shippedCJS twice against emptyDB,
+verifies legacy-drain/epoch startup and stable subject roots, no production DB.
+Final typecheck/lint299/build/10audits+architecture passed; bundle startup rerun passed.
+Independent initialreview found offline CLI DB initialization regression; author adjudicated correctness blocker.
+Restored documented narrow imports for offline replay and opt-in sanity harness.
+New subprocess regression excludes DATABASE_URL and VITEST: RED then GREEN; real CLI20cases CLEAN.
+Unique verificationreview passed9unit/CLI; initialreview also passed61DB and actual migrationbundle.
+Final typecheck/build rerun passed; lint299 and boundary/partition rechecks passed.
+PR/CI/window pending. No new model requests, dependency upgrades or deployments.
+Next1062/remainingready tasks after current merge; no second implementation while awaitingreview window.
+Go2requestcap exhausted; allbranches/worktrees preserved.

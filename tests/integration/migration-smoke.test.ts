@@ -2,9 +2,11 @@
 // independent of tests/global-setup.ts. Only disposable storage uses tmpfs;
 // SQL, populated backfills, constraints and PostgreSQL durability settings remain.
 
+import { execFile } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
@@ -12,6 +14,55 @@ import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres, { type JSONValue } from 'postgres';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { InterventionSettlement } from '@/core/schema/intervention';
+import { KNOWN_SUBJECT_IDS } from '@/subjects/profile';
+
+const execFileAsync = promisify(execFile);
+
+// Public barrel changes must also survive the shipped CJS startup, not just
+// source-level imports or drizzle's SQL-only migration path below.
+describe('migration bundle — public ports and repeated startup', () => {
+  let container: StartedPostgreSqlContainer;
+  let client: ReturnType<typeof postgres>;
+
+  beforeAll(async () => {
+    ensureDockerHost();
+    await execFileAsync('pnpm', ['--config.verify-deps-before-run=false', 'build:migrate'], {
+      timeout: 60_000,
+    });
+    container = await migrationContainer().start();
+    client = postgres(container.getConnectionUri(), { max: 1 });
+  }, 90_000);
+
+  afterAll(async () => {
+    await client?.end();
+    await container?.stop();
+  });
+
+  it('starts against an empty DB and preserves subject roots on a second run', async () => {
+    const run = () =>
+      execFileAsync(process.execPath, ['dist/migrate.cjs'], {
+        env: { ...process.env, DATABASE_URL: container.getConnectionUri() },
+        timeout: 60_000,
+      });
+    const first = await run();
+    expect(first.stdout).toContain('[migrate] Copilot legacy drain readiness: clear');
+    expect(first.stdout).toContain('[migrate] contract epoch:');
+    const roots = () => client`
+      SELECT id, name, parent_id, created_at, updated_at, version
+      FROM knowledge WHERE id = ANY(${KNOWN_SUBJECT_IDS.map((id) => `seed:${id}:root`)})
+      ORDER BY id
+    `;
+    const before = await roots();
+    expect(before.map((row) => row.id)).toEqual(
+      KNOWN_SUBJECT_IDS.map((id) => `seed:${id}:root`).sort(),
+    );
+    expect(before.every((row) => row.parent_id === null)).toBe(true);
+
+    const second = await run();
+    expect(second.stdout).toContain('[migrate] subject-root seed: +0 inserted');
+    expect(await roots()).toEqual(before);
+  }, 120_000);
+});
 
 // Mirror tests/global-setup.ts docker socket auto-detection (OrbStack / Docker Desktop)
 function ensureDockerHost() {

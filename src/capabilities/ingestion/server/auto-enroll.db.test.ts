@@ -874,7 +874,7 @@ describe('runAutoEnrollForSession', () => {
     // Use the REAL tagKnowledge default but stub its model seams: an embedFn returning an
     // orthogonal vector (→ no match → PROPOSE) + a nameKcFn returning a FIXED name (so both
     // siblings propose the same name → the batchCache dedups the second).
-    const { tagKnowledge } = await import('@/capabilities/knowledge/server/tag-knowledge');
+    const { tagKnowledge } = await import('@/capabilities/knowledge/public');
     const fixedVec = new Array<number>(1024).fill(0);
     fixedVec[3] = 1; // orthogonal to the root's seeded embedding (none here → no candidates anyway)
     const tagKnowledgeFn: RunAutoEnrollParams['tagKnowledgeFn'] = (deps, input) =>

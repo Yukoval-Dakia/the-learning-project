@@ -20,7 +20,7 @@
 
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { answerProbe } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
+import { answerProbe } from '@/capabilities/agency/public';
 import { TeachingBriefResponseSchema } from '@/capabilities/shell/api/contracts';
 import { loadTeachingBrief } from '@/capabilities/shell/server/teaching-brief';
 import { classifyConjectureProbeResponseFromJudgeMatch } from '@/core/schema/conjecture-probe-response';

@@ -3,10 +3,7 @@
 // answered it drops out. Ordered newest-first, capped at ACTIVE_PROBES_MAX.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import {
-  answerProbe,
-  serveProbeOnce,
-} from '@/capabilities/agency/server/conjecture/probe-lifecycle';
+import { answerProbe, serveProbeOnce } from '@/capabilities/agency/public';
 import { PrepDeskProbesResponseSchema } from '@/capabilities/shell/api/contracts';
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';

@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。目标Linear归零；#1538配置读面修复已合并。当前单线为YUK-1063共享边界清理；不追依赖，既有HOLD与生产/付费边界保持。
+> 更新于2026-10-04。Linear归零目标持续推进，当前73项；1063/#1539已交付。当前单线为1064脚本/跨包测试公开接口整理；依赖不追新，既有HOLD与生产/付费边界保持。
 
 ## NOW
 
@@ -35,17 +35,19 @@
 - #1498热加载foundation的六个P1已随main `30353105d` 修复。#1504只交付读取端点、providers/schedules/runtime与configured/effective说明。YUK-1007 epic仍未完成。
 - YUK-1038的17主线票和10矫正票交付记录仍保留于cutover runbook、各PR与旧版看板。旧NOW叙事归档到本机 `.remember/2026-09-30-plan-before-closeout-merge.md`，该文件保留本次合并前的原文，含当时冲突块；不是当前操作指引。
 
-- YUK-1063 active：`refactor/yuk-1063-shared-boundaries` / `/workspace/tlp-shared-boundaries`，base4bea5288。纯topology原样下沉core，judge门面经practice/public显式导出，路由一致性测试迁至practice。100unit+67DB、typecheck/lint299/build通过；10必需审计与architecture审计通过，独立初审通过，无P0/P1或新增实质P2（另独立46 subject DB通过）；PR/CI/窗口待完成。
+- YUK-1063/#1539已合入main `4344fb20`：100unit+67DB、独立30unit/46subjectDB、本地gate与exact-head CI37183602484（34浏览器/81迁移）通过，17分钟窗口完成，Linear Done；纯topology下沉与judge公开面交付。
+
+- YUK-1064 active：`refactor/yuk-1064-public-consumers` / `/workspace/tlp-public-consumers`，base4344fb20。脚本/跨包测试经显式public，独立运维/开发入口保留有理由隔离；迁移包空库启动与二次幂等新增回归通过。38unit+368DB+82migration通过；全部本地gate通过（lint299）。独立初审发现离线CLI启动失败，裁决P1后恢复隔离，新子进程回归先RED后GREEN、20冻结cases CLEAN；唯一验证审通过，PR/CI/window待完成。
 
 ## NEXT
 
-1. 交付1063共享边界批次；随后1064脚本/跨包测试公开接口整理。1062 task-catalog反转与1091多submission/head契约仍待单独实施。
+1. 交付1064脚本/跨包测试边界批次后，继续1062 task-catalog反转或其余已就绪主线。持续推进Linear归零，不以单批合并作为终点。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
 ## PARKED
 
-- 1064已归并既有audit:relations confusable reader路径漂移：真实路径kernel/read-models/confusables.ts，registry仍指旧capability文件。基线与候选均告警、退出0；非1063回归，不称已修。
+- 1064本批同步audit:relations confusable reader真实路径至kernel/read-models/confusables.ts；原误报DEAD/STALE已消除。既有applied_in/observed_in治理信号不在此批扩面。
 
 - YUK-1116已由#1536完成few-shot排序与三处raw timestamp声明修复，不扩大为全库类型清理。
 

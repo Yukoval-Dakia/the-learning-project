@@ -29,7 +29,11 @@ export type {
 } from './server/learning-intent-note';
 export { createLearningIntentNote } from './server/learning-intent-note';
 export { getLiveArtifactType } from './server/live-artifact-reference';
-export { dispatchNoteGeneration, writeNoteGenerationIntent } from './server/note-handoff';
+export {
+  NOTE_HANDOFF_ACTION,
+  dispatchNoteGeneration,
+  writeNoteGenerationIntent,
+} from './server/note-handoff';
 export {
   type PersistNoteRefineApplyResult,
   listNoteRefineChanges,
@@ -39,6 +43,7 @@ export {
 export {
   enqueueDreamingNoteRefine,
   enqueueMasteryNoteRefine,
+  enqueueNoteRefineTrigger,
 } from './server/note-refine-triggers';
 export type { NoteSummary } from './server/notes-read';
 export {
