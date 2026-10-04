@@ -41,7 +41,7 @@ Remaining on this branch before any release claim:
 1. Solo commit and durable dispatch/worker must consume the same persisted
    candidate and activate through contract settlement, preserving once-only
    diagnostics, capture fields, pending recovery and appeal anchors. Remove the
-   current URL/key-era/legacy judge branch only after all actual callers move.
+   current legacy judge branch only after all actual callers move.
 2. Explicit manual issuance needs its actual self-report candidate/FSRS-only
    confirmation flow. Advice currently executes automatic evaluation; a manual
    host must not silently send that request. No invented unit scores.
@@ -61,3 +61,51 @@ Remaining on this branch before any release claim:
 The baseline still reports the original eight legacy dispositions. One advice
 implementation has been changed in this unshipped branch; the other consumers
 and publication evidence are intentionally not marked done from a partial edit.
+
+## 22:02 UTC local checkpoint (unshipped)
+
+The native request branch now reaches the actual solo HTTP commit handler.
+Preview returns a CAS intent and commit verifies/reuses the sealed candidate;
+unknown IDs cannot dispatch a model. Direct first commit expects the empty head,
+so omission of an intent cannot silently replace a later regrade. A stable
+`experimental:assessment_attempt` event captures participation without a fake
+right/wrong bit or FSRS snapshot. Activation and the first capture share a
+transaction; duplicates preserve the first capture and learning occurrence.
+Explicit self-report uses unresolved scoring and updates FSRS only.
+
+Assistance is written before hint/reference disclosure and snapshotted in the
+submission receipt under its issuance lock. Unknown help abstains, verified
+harmless clarification remains independent, and later help cannot rewrite an
+accepted response. Tutor sessions bind their issuance in the existing start
+receipt and read frozen question/reference bytes. New publications retain
+per-part reference originals as private `sol_` materials. Old revisions are not
+rewritten and a missing frozen solution returns null rather than current-row
+fallback. Ordinary practice detail no longer includes reference/rubric/metadata.
+The solution endpoint currently rejects container and intervention diagnostics;
+paper release policies remain to be connected.
+
+Native PfSolo submits its immutable input and CAS intent, supports explicit
+manual practice, preserves restored evidence targets, and keeps undecided
+ratings nullable. Its real interaction tests preserve process/confidence/upload
+assertions and additionally verify native slot IDs and candidate binding.
+
+Autosave integration exposed three reproducible defects: queued saves surviving
+finalization, equivalent object values repeatedly counted as edits, and an older
+ACK marking a newer failed save clean. All three failed before repair; all six
+hook tests then passed. Host values are memoized and draft writes wait for
+server restoration. These fixes belong to the same original autosave migration.
+
+Latest checks: 61 DB across five files; 71 unit across normalizer, public DTO,
+real PfSolo interactions and autosave; typecheck and production build passed.
+API client and Postman spec/collection regenerated. No paid calls/deployment.
+New private materials required count assertions to include the originals; all
+prior public-material and per-part isolation assertions remain, with additional
+private-byte checks. No independent review or exact-head CI has begun.
+
+Still not release-ready: old non-native submit/worker paths remain; new neutral
+attempt anchors need their history/failure/probe/durable consumers and native
+appeal wiring. All eight entries must migrate before removing the legacy lane
+and changing the registry. Model operation-key reuse only covers sealed
+candidates: the next implementation must persist a pre-call claim and result so
+a crash before candidate persistence cannot silently repeat a paid execution.
+This is not a claim that existing candidate caching already solves that gap.

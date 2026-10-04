@@ -1356,7 +1356,7 @@
         "query": [],
         "contentType": null,
         "bodyExample": null,
-        "notes": "返回 {issuance,draft,submissions}；issuance 不存在 → 404"
+        "notes": "返回 issuance/practice_dto/draft/submissions；已接收 submission 带原始 response_set/group_evidence/idempotency_key，恢复不泄漏候选反馈。不存在返回404。"
       }
     ]
   },
@@ -1410,6 +1410,85 @@
           "group_evidence": []
         },
         "notes": "单事务：evaluation_group upsert→assessment_submission 不可变行→初始 head→清对应 draft→事件。返回 {status,submission,revision_id,issuance_id}。错误：issuance_not_found(404)/invalid_response(422)/revision_not_found|group_conflict|idempotency_conflict(409)"
+      }
+    ]
+  },
+  {
+    "path": "/api/issuances/:id/reference-reveals",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "按需查看已发题范围的冻结参考解答",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "返回 reference_md（历史未封存时为 null）；返回正文前持久化 answer_help；不读取 current question 参考，不揭示其他 part。一次性诊断及容器发题不从此接口揭示。"
+      }
+    ]
+  },
+  {
+    "path": "/api/attempts",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "提交原生作答并激活候选",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "question_id": "REPLACE_question",
+          "rating": "hard",
+          "assessment": {
+            "issuance_id": "REPLACE_issuance",
+            "evaluation_group_id": "REPLACE_evaluation_group",
+            "idempotency_key": "REPLACE_attempt_key",
+            "response_set": {
+              "entries": [
+                {
+                  "slot_id": "REPLACE_slot",
+                  "kind": "text",
+                  "text_md": "original learner response"
+                }
+              ]
+            },
+            "group_evidence": []
+          },
+          "activation_intent": {
+            "evaluation_id": "REPLACE_candidate",
+            "expected_effective_id": null,
+            "expected_generation": 0
+          }
+        },
+        "notes": "原生请求返回 effective/review_required，assessment 带 submission/group/candidate 与学习 effect；重复提交复用原始回执，不产生第二次练习。self_report=true 仅显式 FSRS；auto_rate=true 不把 rating fallback 当用户选择。迁移中的无 assessment 旧请求仍待其余入口切换后移除。"
+      }
+    ]
+  },
+  {
+    "path": "/api/review/advice",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "保存冻结原始作答并预览候选",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "question_id": "REPLACE_question",
+          "assessment": {
+            "issuance_id": "REPLACE_issuance",
+            "evaluation_group_id": "REPLACE_evaluation_group",
+            "idempotency_key": "REPLACE_attempt_key",
+            "response_set": {
+              "entries": [
+                {
+                  "slot_id": "REPLACE_slot",
+                  "kind": "text",
+                  "text_md": "original learner response"
+                }
+              ]
+            },
+            "group_evidence": []
+          }
+        },
+        "notes": "返回 candidate_id/activation_intent/automatic_commit；不激活学习效应。响应没有评级建议时保留未决态，不补造评级。"
       }
     ]
   }

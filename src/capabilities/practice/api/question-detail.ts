@@ -131,6 +131,17 @@ export async function GET(req: Request, params: Record<string, string>): Promise
         committed_attempt: committedAttempt,
       });
     }
+    if (surface === 'practice') {
+      return Response.json({
+        ...detail,
+        reference_md: null,
+        rubric_json: null,
+        metadata: {},
+        source_ref: null,
+        backlinks: [],
+        backlinks_by_intent_source: {},
+      });
+    }
     return Response.json(detail);
   } catch (err) {
     return errorResponse(err);

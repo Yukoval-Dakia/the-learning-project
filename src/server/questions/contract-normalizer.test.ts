@@ -295,10 +295,17 @@ describe('normalizeQuestionRowToContract — 契约四层可发布', () => {
       },
     ] as unknown as FigureRefT[];
     const n = normalizeQuestionRowToContract(baseRow({ figures }));
-    expect(n.structure.materials).toHaveLength(1);
+    expect(n.structure.materials).toHaveLength(2);
     expect(n.structure.materials[0].kind).toBe('figure');
     expect(n.structure.materials[0].asset.asset_id).toBe('ast_fig1');
-    expect(n.structure.parts[0].material_ids).toEqual([n.structure.materials[0].material_id]);
+    expect(n.structure.parts[0].material_ids).toEqual(
+      n.structure.materials.map((material) => material.material_id),
+    );
+    expect(n.structure.materials[1]).toMatchObject({
+      visibility: 'private',
+      caption: 'reference solution',
+      content_md: baseRow().reference_md,
+    });
     expectValidContract(n);
   });
 });
@@ -327,10 +334,14 @@ describe('structured 树归一（P1-2 保真）', () => {
   it('leaf node ids become part identities; stem prompt becomes a shared plaintext material', () => {
     const n = normalizeQuestionRowToContract(baseRow({ structured: tree(), choices_md: null }));
     expect(n.structure.parts.map((p) => p.part_id)).toEqual(['node_a', 'node_b']);
-    expect(n.structure.materials).toHaveLength(1);
+    expect(n.structure.materials).toHaveLength(3);
     expect(n.structure.materials[0].kind).toBe('plaintext');
     expect(n.structure.materials[0].asset.digest).toMatch(/^sha256:/);
-    expect(n.structure.parts.every((p) => p.material_ids.length === 1)).toBe(true);
+    expect(n.structure.parts.every((p) => p.material_ids.length === 2)).toBe(true);
+    expect(n.structure.parts[0].material_ids[1]).not.toBe(n.structure.parts[1].material_ids[1]);
+    expect(
+      n.structure.materials.slice(1).every((material) => material.visibility === 'private'),
+    ).toBe(true);
     expectValidContract(n);
   });
 
@@ -391,10 +402,15 @@ describe('物理多 part 组归一（P1-2 保真）', () => {
       },
     ]);
     expect(n.group_id).toBe('grp');
-    expect(n.structure.materials).toHaveLength(1);
+    expect(n.structure.materials).toHaveLength(3);
     expect(n.structure.materials[0].kind).toBe('plaintext');
     expect(n.structure.parts.map((p) => p.part_id)).toEqual(['p1', 'p2']);
-    expect(n.structure.parts.every((p) => p.material_ids.length === 1)).toBe(true);
+    expect(n.structure.parts.every((p) => p.material_ids.length === 2)).toBe(true);
+    expect(n.structure.materials.slice(1).map((material) => material.content_md)).toEqual([
+      '42',
+      'B',
+    ]);
+    expect(n.structure.parts[0].material_ids[1]).not.toBe(n.structure.parts[1].material_ids[1]);
     const unitP2 = n.scoring_basis.units.find((u) => u.scoring_unit_id === 'p2::u');
     if (unitP2?.criterion.kind !== 'option_set_key') {
       throw new Error('expected p2 option_set_key from ITS OWN reference');
@@ -694,7 +710,7 @@ describe('第二轮复审 P1-2/P1-3 — 保真与身份（先红后绿）', () =
     const assetIds = n.structure.materials.map((m) => m.asset.asset_id);
     expect(assetIds).toContain('ast_part');
     expect(assetIds).toContain('ast_root');
-    expect(n.structure.parts[0].material_ids).toHaveLength(3); // stem + root figure + part figure
+    expect(n.structure.parts[0].material_ids).toHaveLength(4); // stem + root figure + part figure + private solution
   });
 
   it('YUK-1099 #2: physical part prompt derives from its edited structured leaf, not the stale prompt_md column', () => {

@@ -29,7 +29,12 @@ export async function createSolveSession(
     }
     const regenerate = parsed.data ? parsed.data.regenerate : undefined;
 
-    const result = await startSolveSession({ db, questionId: id, regenerate });
+    const result = await startSolveSession({
+      db,
+      questionId: id,
+      regenerate,
+      issuanceId: parsed.data?.issuance_id,
+    });
 
     return Response.json({
       session_id: result.sessionId,

@@ -56,13 +56,12 @@ export async function POST(req: Request): Promise<Response> {
       db,
       questionKnowledgeIdsForJudge(q),
     );
-    const { candidate: invoked, submission } = await previewFormalAttempt(
-      db,
-      'advice_preview',
-      questionId,
-      body.assessment,
-      req.signal,
-    );
+    const {
+      candidate: invoked,
+      submission,
+      activation_intent,
+      automatic_commit,
+    } = await previewFormalAttempt(db, 'advice_preview', questionId, body.assessment, req.signal);
     const suggestedRating = ratingFromCoarseOutcome(invoked.result.coarse_outcome);
 
     // YUK-100 (W-05) + YUK-101 (iter2 F8 / F13) — Resolve effective cause via
@@ -86,6 +85,8 @@ export async function POST(req: Request): Promise<Response> {
       submission_id: submission.submission_id,
       evaluation_group_id: submission.evaluation_group_id,
       candidate_id: invoked.evaluation.record.evaluation_id,
+      activation_intent,
+      automatic_commit,
       judge: {
         route: 'evaluate_submission',
         score: invoked.result.score,

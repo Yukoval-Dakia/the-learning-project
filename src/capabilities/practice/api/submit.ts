@@ -75,6 +75,7 @@ import { resolveAbilityGlobalByKnowledgeId } from '@/server/mastery/state';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import type { SubjectProfile } from '@/subjects/profile';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
+import { commitFormalAttempt } from '../server/assessment/attempt';
 import { resolveAdviceCauseForQuestion } from '../server/cause-context';
 import { judgeDurableEnabled } from '../server/judge-durable-config';
 import { ratingFromCoarseOutcome } from '../server/judge-rating';
@@ -887,6 +888,51 @@ export async function createAttempt(req: Request): Promise<Response> {
     const validated = await validateSubmit(req);
     if (await claimInterventionDiagnosticSubmission(validated)) {
       claimedDiagnostic = validated;
+    }
+    if (validated.body.assessment) {
+      const { body, questionId } = validated;
+      const committed = await commitFormalAttempt(
+        db,
+        'solo_submit',
+        questionId,
+        validated.body.assessment,
+        {
+          activationIntent: body.activation_intent,
+          selfReport: body.self_report,
+          userRating: body.auto_rate ? undefined : body.rating,
+          capture: body,
+          signal: req.signal,
+          requireUnassistedModelEvidence:
+            validated.q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+        },
+      );
+      retainDiagnosticClaim = true;
+      const judged = committed.candidate.result;
+      return Response.json({
+        status: committed.status,
+        assessment: {
+          submission_id: committed.submission.submission_id,
+          evaluation_group_id: committed.submission.evaluation_group_id,
+          candidate_id: committed.candidate.evaluation.record.evaluation_id,
+          activation_intent: committed.activation_intent,
+          effect: committed.status === 'effective' ? committed.activation.effect : null,
+        },
+        review_event: { id: committed.attempt_id },
+        judge: body.self_report
+          ? null
+          : {
+              route: 'evaluate_submission',
+              score: judged.score,
+              coarse_outcome: judged.coarse_outcome,
+              confidence: judged.confidence,
+              feedback_md: judged.feedback_md,
+              evidence_json: judged.evidence_json,
+              capability_ref: judged.capability_ref,
+              suggested_rating: ratingFromCoarseOutcome(judged.coarse_outcome),
+              auto_rated: body.auto_rate,
+              judge_event_id: null,
+            },
+      });
     }
     // YUK-594 (W2) — async-main divert (dark-ship). When JUDGE_DURABLE_ENABLED is on
     // AND this submit would spend a synchronous server-side judge call, move the judge

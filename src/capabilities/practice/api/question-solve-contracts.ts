@@ -312,10 +312,13 @@ export const RestoreQuestionResponseSchema = z
   })
   .passthrough();
 
-export const StartSolveBodySchema = z.object({ regenerate: z.boolean().optional() }).nullable();
+export const StartSolveBodySchema = z
+  .object({ regenerate: z.boolean().optional(), issuance_id: z.string().min(1).optional() })
+  .nullable();
 export const CreateSolveSessionBodySchema = z.object({
   question_id: z.string().trim().min(1),
   regenerate: z.boolean().optional(),
+  issuance_id: z.string().min(1).optional(),
 });
 export const SolveSessionCreatedSchema = z.object({
   session_id: z.string(),
@@ -333,11 +336,15 @@ export const SolveSessionResponseSchema = z
   .passthrough();
 
 export const HintRequestBodySchema = z
-  .object({ hint_index: z.number().int().min(0).max(MAX_HINT_INDEX).default(0) })
+  .object({
+    hint_index: z.number().int().min(0).max(MAX_HINT_INDEX).default(0),
+    issuance_id: z.string().min(1).optional(),
+  })
   .nullable();
 export const CreateHintRequestBodySchema = z.object({
   question_id: z.string().trim().min(1),
   hint_index: z.number().int().min(0).max(MAX_HINT_INDEX).optional(),
+  issuance_id: z.string().min(1).optional(),
 });
 export const HintRequestResponseSchema = z.object({
   hint_request_id: z.string(),

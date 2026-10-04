@@ -50,7 +50,14 @@ import {
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
-import { createJevModelExecutor, createPiModelExecutor } from '@/server/assessment/model-executors';
+import {
+  type ActivateEvaluationRequestT,
+  activateEvaluation,
+  createJevModelExecutor,
+  createPiModelExecutor,
+  learningSettlement,
+} from '@/server/assessment/runtime';
+import { checkRateLimit } from '@/server/http/rate-limit';
 
 /**
  * YUK-1092 — 装配描述符：在本模块组合点按 descriptor 铸
@@ -86,6 +93,8 @@ export interface EvaluateSubmissionRequest {
   evaluation_group_id: string;
   /** Same operation across preview/commit/redelivery. A regrade uses a new key. */
   evaluation_key?: string;
+  /** Commit may only read this existing candidate, never dispatch another execution. */
+  expected_evaluation_id?: string;
   /** Exact complete member set; omission explicitly selects only submission_id. */
   expected_submission_ids?: string[];
   /** 执行期 policy（不改给分规则；仅低置信 gate 等执行面旋钮）。 */
@@ -130,6 +139,7 @@ export class EvaluateSubmissionError extends Error {
       | 'group_membership_mismatch'
       | 'attempt_conflict'
       | 'evaluation_key_conflict'
+      | 'candidate_not_found'
       | 'invalid_executor_spec',
     detail: string,
   ) {
@@ -141,7 +151,12 @@ export class EvaluateSubmissionError extends Error {
 export function createFormalModelExecutor(db: Db, signal?: AbortSignal): ModelUnitExecutorPort {
   const deadlineAt = Date.now() + 90_000;
   const jev = createJevModelExecutor({ db, deadlineAt, signal });
+  let admitted = false;
   return (request, callerSignal) => {
+    if (!admitted) {
+      checkRateLimit();
+      admitted = true;
+    }
     if (request.executor.task_kind === 'AssessmentRuleJudgeTask') {
       return createPiModelExecutor({
         db,
@@ -422,6 +437,15 @@ export async function evaluateSubmission(
         )
         .limit(1);
       if (existing) {
+        if (
+          request.expected_evaluation_id !== undefined &&
+          request.expected_evaluation_id !== existing.evaluation_id
+        ) {
+          throw new EvaluateSubmissionError(
+            'evaluation_key_conflict',
+            'candidate ID does not belong to this operation',
+          );
+        }
         const record = EvaluationRecord.parse(existing);
         if (
           record.provenance?.execution_receipt?.intent_digest !== executionReceipt.intent_digest
@@ -440,6 +464,13 @@ export async function evaluateSubmission(
           spent_cost_usd_micros: 0,
         };
       }
+    }
+
+    if (request.expected_evaluation_id !== undefined) {
+      throw new EvaluateSubmissionError(
+        'candidate_not_found',
+        'commit requires a previously sealed candidate',
+      );
     }
 
     // ---- attempt 序号（group 锁内、固定 head 锚点分配） ----
@@ -563,3 +594,24 @@ export async function evaluateSubmission(
 // EvaluationContractError 经本模块透传：结构违背（revision 不匹配 / response_set
 // 非法 / basis/plan 非法 / 聚合不可投影）是【请求级拒绝】，不落任何行。
 export { EvaluationContractError };
+
+/** Activation and the entry's immutable receipt share one transaction. */
+export async function activateSubmissionCandidate(
+  database: Db,
+  intent: ActivateEvaluationRequestT,
+  options: {
+    actorRef: string;
+    now?: Date;
+    record?: (tx: Tx) => Promise<void>;
+  },
+) {
+  return database.transaction(async (tx) => {
+    const result = await activateEvaluation(tx, intent, {
+      settle: learningSettlement,
+      actorRef: options.actorRef,
+      now: options.now,
+    });
+    if (result.status === 'activated') await options.record?.(tx);
+    return result;
+  });
+}

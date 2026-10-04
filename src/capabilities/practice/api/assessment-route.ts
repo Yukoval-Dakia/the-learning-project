@@ -6,12 +6,24 @@ import type { ZodType } from 'zod';
 import { db } from '@/db/client';
 import { ApiError, errorResponse, resourceResponse } from '@/kernel/http';
 import { issueAssessment } from '../server/assessment/issue';
+import { revealFrozenStudyReference } from '../server/assessment/study-context';
 import { getIssuanceState, saveResponseDraft, saveSubmission } from '../server/assessment/submit';
 import {
   CreateSubmissionBodySchema,
   IssueAssessmentBodySchema,
   SaveResponseDraftBodySchema,
 } from './assessment-contracts';
+
+export async function revealStudyReference(
+  _req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
+  try {
+    return Response.json(await revealFrozenStudyReference(db, params.id));
+  } catch (error) {
+    return errorResponse(error);
+  }
+}
 
 async function parseBody<T>(req: Request, schema: ZodType<T>): Promise<T> {
   const raw = await req.json().catch(() => null);

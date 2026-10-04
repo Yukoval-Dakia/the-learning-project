@@ -606,8 +606,18 @@ describe('evaluateSubmission (persisted §4.3 path)', () => {
         };
       },
     };
+    await expect(
+      evaluateSubmission(db, { ...request, expected_evaluation_id: 'unknown-candidate' }),
+    ).rejects.toMatchObject({ code: 'candidate_not_found' });
+    expect(calls).toBe(0);
     const first = await evaluateSubmission(db, request);
-    const second = await evaluateSubmission(db, request);
+    await expect(
+      evaluateSubmission(db, { ...request, expected_evaluation_id: 'unrelated-candidate' }),
+    ).rejects.toMatchObject({ code: 'evaluation_key_conflict' });
+    const second = await evaluateSubmission(db, {
+      ...request,
+      expected_evaluation_id: first.record.evaluation_id,
+    });
     expect.soft(calls).toBe(1);
     expect.soft(first.record.status).toBe('pending');
     expect.soft(second.record).toEqual(first.record);

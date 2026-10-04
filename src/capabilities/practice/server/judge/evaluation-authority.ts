@@ -134,6 +134,7 @@ export interface ContractGradingRef {
   submission_id: string;
   evaluation_group_id: string;
   evaluation_key?: string;
+  expected_evaluation_id?: string;
   /** 覆盖 evaluateSubmission 的执行面/来源/manually-asserted 结果。 */
   expected_submission_ids?: EvaluateSubmissionRequest['expected_submission_ids'];
   policy?: EvaluateSubmissionRequest['policy'];
@@ -335,6 +336,7 @@ export async function evaluateAttempt(
       submission_id: input.contract.submission_id,
       evaluation_group_id: input.contract.evaluation_group_id,
       evaluation_key: input.contract.evaluation_key,
+      expected_evaluation_id: input.contract.expected_evaluation_id,
       expected_submission_ids: input.contract.expected_submission_ids,
       policy: input.contract.policy,
       mode: input.contract.mode,

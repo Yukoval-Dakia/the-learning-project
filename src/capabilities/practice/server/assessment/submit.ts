@@ -70,6 +70,7 @@ import {
   question_revision,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { snapshotIssuanceAssistance } from './assistance';
 // （初始 head 插入已内联 —— 原 insertInitialEvaluationHead 归 server/activate，
 //  capability 边界不允许 server import；语义等价：空 effective、generation 0。）
 import {
@@ -591,6 +592,7 @@ export async function saveSubmission(
         response_set: request.response_set,
         group_evidence: groupEvidence,
         submitted_at: now.toISOString(),
+        assistance: await snapshotIssuanceAssistance(tx, request.issuance_id),
       } satisfies Record<string, unknown>,
       created_at: now,
     });

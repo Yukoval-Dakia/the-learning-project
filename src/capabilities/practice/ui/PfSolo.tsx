@@ -63,6 +63,7 @@ import {
   getQuestionFull,
   isSubmitPending,
   issueAssessment,
+  revealStudyReference,
   saveResponseDraft,
   submitReview,
 } from './practice-api';
@@ -91,7 +92,9 @@ export function feedbackFromCommittedAttempt(result: SubmitResult): JudgeFeedbac
     feedback_md: result.judge.feedback_md,
     // auto_rate 的正常回执恒带 suggested_rating；旧/滚动部署响应若漏掉，
     // review_event.rating 仍是服务端最终实际采用的评级，不能在 UI 侧猜。
-    suggested_rating: result.judge.suggested_rating ?? result.review_event.rating,
+    suggested_rating:
+      result.judge.suggested_rating ??
+      ('rating' in result.review_event ? result.review_event.rating : null),
   };
 }
 
@@ -302,6 +305,7 @@ export function PfSolo({
   const [pendingRun, setPendingRun] = useState<{ runId: string; pollUrl: string } | null>(null);
   const [judging, setJudging] = useState(false);
   const [preview, setPreview] = useState<JudgePreview | null>(null);
+  const activationIntent = useRef<SubmitReviewInput['activation_intent']>(undefined);
   // intervention_diagnostic skips the repeatable advice preview and is committed
   // by the first /api/attempts call. Its response is sufficient for the feedback
   // card, but intentionally lacks advice-only provenance fields used by commit().
@@ -366,6 +370,7 @@ export function PfSolo({
   const frozen = frozenQ.data?.practice_dto;
   const draftEpoch = useRef<number | undefined>(undefined);
   const hydratedIssuance = useRef<string | null>(null);
+  const [restoredIssuanceId, setRestoredIssuanceId] = useState<string | null>(null);
   useEffect(() => {
     if (!frozenQ.data?.issuance || hydratedIssuance.current === frozenQ.data.issuance.issuance_id)
       return;
@@ -376,15 +381,24 @@ export function PfSolo({
       (restored?.group_evidence ?? []).map((item) => ({
         asset_id: item.evidence.asset.asset_id,
         original: item.evidence,
+        originalTarget: item.target,
         slot_ids: null,
       })),
     );
     draftEpoch.current = frozenQ.data.draft?.save_epoch;
+    setRestoredIssuanceId(frozenQ.data.issuance.issuance_id);
   }, [frozenQ.data]);
   const nativeEvidence = useMemo(
     () =>
       evidence.flatMap((item) =>
-        item.original ? [{ evidence: item.original, target: { scope: 'all_units' as const } }] : [],
+        item.original
+          ? [
+              {
+                evidence: item.original,
+                target: item.originalTarget ?? { scope: 'all_units' as const },
+              },
+            ]
+          : [],
       ),
     [evidence],
   );
@@ -397,9 +411,20 @@ export function PfSolo({
     response_set: nativeResponses,
     group_evidence: nativeEvidence,
   };
+  const draftValue = useMemo(
+    () => ({ response_set: nativeResponses, group_evidence: nativeEvidence }),
+    [nativeResponses, nativeEvidence],
+  );
   const autosave = useResponseDraftAutosave({
-    value: { response_set: nativeResponses, group_evidence: nativeEvidence },
-    enabled: !!frozen && !accepted && !judging && !preview && !pendingPreview,
+    value: draftValue,
+    enabled:
+      restoredIssuanceId === issuanceId &&
+      !!frozen &&
+      !accepted &&
+      !judging &&
+      !preview &&
+      !pendingPreview &&
+      !committing,
     save: async (value) => {
       const ack = await saveResponseDraft(issuanceId, {
         ...value,
@@ -517,11 +542,14 @@ export function PfSolo({
     previewOverride?: JudgePreview;
   }) => {
     const pv = opts.previewOverride ?? preview;
-    if (!q || !pv || committing) return;
+    if (!q || (!pv && issuanceMode !== 'manual') || committing) return;
     setCommitting(true);
     try {
       const res = await submitReview({
         question_id: q.id,
+        assessment: assessmentInput,
+        activation_intent: issuanceMode === 'manual' ? undefined : activationIntent.current,
+        self_report: issuanceMode === 'manual',
         session_id: sessionId ?? undefined,
         rating: opts.rating,
         response_md: answerMd,
@@ -544,10 +572,6 @@ export function PfSolo({
         latency_ms: computeLatencyMs(questionShownAtRef.current, Date.now()),
         // YUK-1051 (D10) — 开放作答的证据附件随提交冻结；空值不发（既有 wire 逐字不变）。
         ...(imageRefs.length > 0 ? { answer_image_refs: imageRefs } : {}),
-        judge_task_run_id: pv.task_run_id,
-        judge_provenance_token: pv.provenance_token,
-        // YUK-589 — echo the digested result VERBATIM (see toSubmittedJudgeResult).
-        judge_result_v2: toSubmittedJudgeResult(pv),
       });
       // YUK-1051 — 202-pending 是返回 union（不是错误）：答案已随提交持久化，判分走
       // durable lane。记下 run 锚点进 pending 卡；轮询到终态再揭晓反馈（见 pendingPoll effect）。
@@ -555,6 +579,10 @@ export function PfSolo({
       // 分支暂不发 appeal（反馈卡出现后「不服判」入口照常可用）。
       if (isSubmitPending(res)) {
         setPendingRun({ runId: res.run_id, pollUrl: res.backfill.poll_url });
+        return;
+      }
+      if ('status' in res && res.status === 'review_required') {
+        addToast('作答已保存，判定尚未完成；可选择自行评级安排复习。', 'info', 'clock');
         return;
       }
       if (opts.withAppeal) {
@@ -606,7 +634,7 @@ export function PfSolo({
   };
 
   const runJudge = async () => {
-    if (!q || !canSubmit) return;
+    if (!q || !canSubmit || issuanceMode === 'manual') return;
     setJudging(true);
     try {
       if (isInterventionDiagnostic) {
@@ -616,6 +644,7 @@ export function PfSolo({
         // the probe, and uses its suggested rating via auto_rate.
         const res = await submitReview({
           question_id: q.id,
+          assessment: assessmentInput,
           session_id: sessionId ?? undefined,
           // Required wire fallback only; auto_rate replaces it with the server
           // judge's suggested rating before persistence.
@@ -643,11 +672,12 @@ export function PfSolo({
         return;
       }
       const r = await getAdvice(q.id, answerMd, imageRefs, assessmentInput);
+      activationIntent.current = r.activation_intent;
       // YUK-444 (PR #1069 thread 修复) — 分流判据是 shouldOfferConfidenceGate(route) 本体，不再在这里
       // 重新拼一遍 isObjectiveQuestion(route)。两者语义严格互补（gate = !isObjectiveQuestion，见上方定义
       // 与 capture 单测的互补断言），但**判据必须只有一处**：单测断言的正是这个生产分支所调的谓词，
       // 否则谓词被单独测绿、生产路径却走另一份拷贝 = 假绿（本 PR review finding）。
-      if (shouldOfferConfidenceGate(r.judge.route)) {
+      if (!r.automatic_commit || r.judge.suggested_rating === null) {
         // YUK-444 — 开放题（含 semantic-override 的客观题型）：推迟揭晓。judge 结果暂存 pendingPreview
         // → 进 confidence 相位渲 1-5 自评 interstitial，**不 setPreview**（判定卡不渲染）。用户选 1-5 或
         // 「跳过」后经 revealVerdict 才 setPreview 揭晓（先自评再看结果的元认知语义）。评级仍走既有手动流。
@@ -886,14 +916,27 @@ export function PfSolo({
 
         {phase === 'answering' && !pendingRun && (
           <div className="pfs-actions">
-            <Btn
-              variant="primary"
-              icon="check"
-              onClick={() => void runJudge()}
-              disabled={!canSubmit}
-            >
-              {judging ? '判分中…' : '提交 · 即时判分'}
-            </Btn>
+            {issuanceMode === 'manual' ? (
+              (['again', 'hard', 'good'] as const).map((grade) => (
+                <Btn
+                  key={grade}
+                  variant="secondary"
+                  disabled={!canSubmit || committing}
+                  onClick={() => void commit({ withAppeal: false, rating: grade })}
+                >
+                  {RATING_LABEL[grade]} · 自行评级
+                </Btn>
+              ))
+            ) : (
+              <Btn
+                variant="primary"
+                icon="check"
+                onClick={() => void runJudge()}
+                disabled={!canSubmit}
+              >
+                {judging ? '判分中…' : '提交 · 即时判分'}
+              </Btn>
+            )}
             <span className="key-hints mono" style={{ marginLeft: 'auto' }}>
               {isChoice ? '数字键直选 · ⌘Enter 提交' : '⌘Enter 提交'}
             </span>
@@ -987,12 +1030,28 @@ export function PfSolo({
                   </button>
                 ))}
                 <span className="pfs-rate-advised">
-                  建议：{RATING_LABEL[displayedPreview.suggested_rating]}
+                  建议：
+                  {displayedPreview.suggested_rating
+                    ? RATING_LABEL[displayedPreview.suggested_rating]
+                    : '暂无评级建议'}
                 </span>
               </div>
             )}
 
             <div className="pfs-fb-foot">
+              {displayedPreview.coarse_outcome === 'unsupported' && (
+                <Btn
+                  variant="secondary"
+                  onClick={() => {
+                    setIssuanceMode('manual');
+                    setPreview(null);
+                    setPendingPreview(null);
+                    activationIntent.current = undefined;
+                  }}
+                >
+                  仅自行评级
+                </Btn>
+              )}
               {autoCommitted ? (
                 // 客观题：已自动判分+评级，「下一项」只推进（不再二次 commit）。
                 <Btn variant="primary" icon="arrow" disabled={committing} onClick={() => onDone()}>
@@ -1077,7 +1136,12 @@ export function PfSolo({
         )}
       </Card>
 
-      <PfCoach open={coach} onClose={() => setCoach(false)} question={q} />
+      <PfCoach
+        open={coach}
+        onClose={() => setCoach(false)}
+        question={q}
+        issuanceId={frozen ? issuanceId : undefined}
+      />
     </div>
   );
 }
@@ -1089,10 +1153,12 @@ function PfCoach({
   open,
   onClose,
   question,
+  issuanceId,
 }: {
   open: boolean;
   onClose: () => void;
   question: QuestionDetail;
+  issuanceId?: string;
 }) {
   const panelRef = useRef<HTMLElement | null>(null);
   useFocusTrap(open, onClose, panelRef);
@@ -1131,7 +1197,17 @@ function PfCoach({
           <p className="pfs-coach-note">
             一级一级加力，每阶更近一步；想直接看完整解也行（记为非独立完成）。会话不计入判分。
           </p>
-          <HintLadder open={open} question={question} onReturnToAnswer={onClose} />
+          <HintLadder
+            open={open}
+            question={question}
+            onReturnToAnswer={onClose}
+            issuanceId={issuanceId}
+            requestFullSolution={
+              issuanceId
+                ? async () => (await revealStudyReference(issuanceId)).reference_md
+                : undefined
+            }
+          />
         </div>
       </aside>
     </>,

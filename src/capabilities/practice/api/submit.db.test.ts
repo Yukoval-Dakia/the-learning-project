@@ -380,6 +380,7 @@ describe('POST /api/review/submit', () => {
     expect(res.status).toBe(200);
     const body = AttemptResponseSchema.parse(await res.json());
 
+    if ('status' in body) throw new Error('expected historical review response');
     expect(typeof body.next_due_at).toBe('number');
     expect(body.next_due_at).toBeGreaterThan(0);
     expect(body.new_state.reps).toBeGreaterThanOrEqual(1);

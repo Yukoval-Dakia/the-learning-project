@@ -1243,6 +1243,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/issuances/{id}/reference-reveals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["revealStudyReference"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/issuances/{id}/responses": {
         parameters: {
             query?: never;
@@ -9329,6 +9345,11 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    activation_intent?: {
+                        evaluation_id: string;
+                        expected_effective_id: string | null;
+                        expected_generation: number;
+                    };
                     activity_ref: {
                         id: string;
                         /** @enum {string} */
@@ -9336,6 +9357,104 @@ export interface operations {
                     };
                     /** @default [] */
                     answer_image_refs?: string[];
+                    assessment?: {
+                        evaluation_group_id: string;
+                        /** @default [] */
+                        group_evidence?: {
+                            evidence: {
+                                asset: {
+                                    asset_id: string;
+                                    digest: string;
+                                };
+                                bytes: number;
+                                evidence_id: string;
+                                /** @enum {string} */
+                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                mime_type: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            };
+                            target: {
+                                /** @enum {string} */
+                                scope: "all_units";
+                            } | {
+                                /** @enum {string} */
+                                scope: "units";
+                                scoring_unit_ids: string[];
+                            };
+                        }[];
+                        idempotency_key: string;
+                        issuance_id: string;
+                        response_set: {
+                            /** @default [] */
+                            entries?: ({
+                                /** @enum {string} */
+                                kind: "choice";
+                                /** @default [] */
+                                option_ids?: string[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "text";
+                                self_confidence?: number;
+                                slot_id: string;
+                                text_md: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "numeric";
+                                raw_input?: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                                value: number | null;
+                            } | {
+                                /** @enum {string} */
+                                kind: "formula";
+                                latex: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "matching";
+                                /** @default [] */
+                                pairs?: {
+                                    item_id: string;
+                                    option_id: string;
+                                }[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_order?: string[];
+                                /** @enum {string} */
+                                kind: "ordering";
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                evidence?: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                }[];
+                                /** @enum {string} */
+                                kind: "open";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @default  */
+                                text_md?: string;
+                            })[];
+                        };
+                        submission_id?: string;
+                    };
                     /** @default false */
                     auto_rate?: boolean;
                     judge_provenance_token?: string;
@@ -9415,9 +9534,15 @@ export interface operations {
                     referenced_knowledge_ids?: string[];
                     response_md?: string | null;
                     self_confidence?: number | null;
+                    self_report?: boolean;
                     session_id?: string | null;
                     stream_item_id?: string | null;
                 } | {
+                    activation_intent?: {
+                        evaluation_id: string;
+                        expected_effective_id: string | null;
+                        expected_generation: number;
+                    };
                     activity_ref?: {
                         id: string;
                         /** @enum {string} */
@@ -9425,6 +9550,104 @@ export interface operations {
                     };
                     /** @default [] */
                     answer_image_refs?: string[];
+                    assessment?: {
+                        evaluation_group_id: string;
+                        /** @default [] */
+                        group_evidence?: {
+                            evidence: {
+                                asset: {
+                                    asset_id: string;
+                                    digest: string;
+                                };
+                                bytes: number;
+                                evidence_id: string;
+                                /** @enum {string} */
+                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                mime_type: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            };
+                            target: {
+                                /** @enum {string} */
+                                scope: "all_units";
+                            } | {
+                                /** @enum {string} */
+                                scope: "units";
+                                scoring_unit_ids: string[];
+                            };
+                        }[];
+                        idempotency_key: string;
+                        issuance_id: string;
+                        response_set: {
+                            /** @default [] */
+                            entries?: ({
+                                /** @enum {string} */
+                                kind: "choice";
+                                /** @default [] */
+                                option_ids?: string[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "text";
+                                self_confidence?: number;
+                                slot_id: string;
+                                text_md: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "numeric";
+                                raw_input?: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                                value: number | null;
+                            } | {
+                                /** @enum {string} */
+                                kind: "formula";
+                                latex: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "matching";
+                                /** @default [] */
+                                pairs?: {
+                                    item_id: string;
+                                    option_id: string;
+                                }[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_order?: string[];
+                                /** @enum {string} */
+                                kind: "ordering";
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                evidence?: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                }[];
+                                /** @enum {string} */
+                                kind: "open";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @default  */
+                                text_md?: string;
+                            })[];
+                        };
+                        submission_id?: string;
+                    };
                     /** @default false */
                     auto_rate?: boolean;
                     judge_provenance_token?: string;
@@ -9504,9 +9727,15 @@ export interface operations {
                     referenced_knowledge_ids?: string[];
                     response_md?: string | null;
                     self_confidence?: number | null;
+                    self_report?: boolean;
                     session_id?: string | null;
                     stream_item_id?: string | null;
                 } | {
+                    activation_intent?: {
+                        evaluation_id: string;
+                        expected_effective_id: string | null;
+                        expected_generation: number;
+                    };
                     activity_ref?: {
                         id: string;
                         /** @enum {string} */
@@ -9514,6 +9743,104 @@ export interface operations {
                     };
                     /** @default [] */
                     answer_image_refs?: string[];
+                    assessment?: {
+                        evaluation_group_id: string;
+                        /** @default [] */
+                        group_evidence?: {
+                            evidence: {
+                                asset: {
+                                    asset_id: string;
+                                    digest: string;
+                                };
+                                bytes: number;
+                                evidence_id: string;
+                                /** @enum {string} */
+                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                mime_type: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            };
+                            target: {
+                                /** @enum {string} */
+                                scope: "all_units";
+                            } | {
+                                /** @enum {string} */
+                                scope: "units";
+                                scoring_unit_ids: string[];
+                            };
+                        }[];
+                        idempotency_key: string;
+                        issuance_id: string;
+                        response_set: {
+                            /** @default [] */
+                            entries?: ({
+                                /** @enum {string} */
+                                kind: "choice";
+                                /** @default [] */
+                                option_ids?: string[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "text";
+                                self_confidence?: number;
+                                slot_id: string;
+                                text_md: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "numeric";
+                                raw_input?: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                                value: number | null;
+                            } | {
+                                /** @enum {string} */
+                                kind: "formula";
+                                latex: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "matching";
+                                /** @default [] */
+                                pairs?: {
+                                    item_id: string;
+                                    option_id: string;
+                                }[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_order?: string[];
+                                /** @enum {string} */
+                                kind: "ordering";
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                evidence?: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                }[];
+                                /** @enum {string} */
+                                kind: "open";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @default  */
+                                text_md?: string;
+                            })[];
+                        };
+                        submission_id?: string;
+                    };
                     /** @default false */
                     auto_rate?: boolean;
                     judge_provenance_token?: string;
@@ -9593,6 +9920,7 @@ export interface operations {
                     referenced_knowledge_ids?: string[];
                     response_md?: string | null;
                     self_confidence?: number | null;
+                    self_report?: boolean;
                     session_id?: string | null;
                     stream_item_id?: string | null;
                 };
@@ -9606,6 +9934,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        assessment: {
+                            activation_intent: {
+                                evaluation_id: string;
+                                expected_effective_id: string | null;
+                                expected_generation: number;
+                            };
+                            candidate_id: string;
+                            /** @enum {string|null} */
+                            effect: "applied" | "ineligible" | "failed_pending" | "idempotent_replay" | null;
+                            evaluation_group_id: string;
+                            submission_id: string;
+                        };
+                        judge: ({
+                            auto_rated: boolean;
+                            capability_ref: {
+                                id: string;
+                                version: string;
+                            };
+                            /** @enum {string} */
+                            coarse_outcome: "correct" | "partial" | "incorrect" | "unsupported";
+                            confidence: number;
+                            evidence_json: {
+                                [key: string]: unknown;
+                            };
+                            feedback_md: string;
+                            judge_event_id: string | null;
+                            route: string;
+                            score: number | null;
+                            /** @enum {string|null} */
+                            suggested_rating: "again" | "hard" | "good" | null;
+                            telemetry?: unknown;
+                        } & {
+                            [key: string]: unknown;
+                        }) | null;
+                        review_event: {
+                            id: string;
+                        };
+                        /** @enum {string} */
+                        status: "effective" | "review_required";
+                    } | {
                         judge: ({
                             auto_rated: boolean;
                             capability_ref: {
@@ -15996,6 +16364,128 @@ export interface operations {
                             submission_id: string;
                             submitted_at: string;
                         }[];
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    revealStudyReference: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        reference_md: string | null;
                     };
                 };
             };
@@ -27199,6 +27689,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    issuance_id?: string;
                     regenerate?: boolean;
                 } | null;
             };
@@ -27332,6 +27823,7 @@ export interface operations {
                 "application/json": {
                     /** @default 0 */
                     hint_index?: number;
+                    issuance_id?: string;
                 } | null;
             };
         };
@@ -28735,7 +29227,8 @@ export interface operations {
                     };
                     mistake_id?: string;
                     question_id?: string;
-                    response_md: string;
+                    /** @default  */
+                    response_md?: string;
                 };
             };
         };
@@ -28747,6 +29240,11 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        activation_intent: {
+                            evaluation_id: string;
+                            expected_effective_id: string | null;
+                            expected_generation: number;
+                        };
                         activity_ref: {
                             id: string;
                             /** @enum {string} */
@@ -28758,6 +29256,7 @@ export interface operations {
                             rating: "again" | "hard" | "good" | null;
                             reason: string;
                         };
+                        automatic_commit: boolean;
                         candidate_id: string;
                         evaluation_group_id: string;
                         judge: {
@@ -30398,6 +30897,11 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    activation_intent?: {
+                        evaluation_id: string;
+                        expected_effective_id: string | null;
+                        expected_generation: number;
+                    };
                     activity_ref: {
                         id: string;
                         /** @enum {string} */
@@ -30405,6 +30909,104 @@ export interface operations {
                     };
                     /** @default [] */
                     answer_image_refs?: string[];
+                    assessment?: {
+                        evaluation_group_id: string;
+                        /** @default [] */
+                        group_evidence?: {
+                            evidence: {
+                                asset: {
+                                    asset_id: string;
+                                    digest: string;
+                                };
+                                bytes: number;
+                                evidence_id: string;
+                                /** @enum {string} */
+                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                mime_type: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            };
+                            target: {
+                                /** @enum {string} */
+                                scope: "all_units";
+                            } | {
+                                /** @enum {string} */
+                                scope: "units";
+                                scoring_unit_ids: string[];
+                            };
+                        }[];
+                        idempotency_key: string;
+                        issuance_id: string;
+                        response_set: {
+                            /** @default [] */
+                            entries?: ({
+                                /** @enum {string} */
+                                kind: "choice";
+                                /** @default [] */
+                                option_ids?: string[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "text";
+                                self_confidence?: number;
+                                slot_id: string;
+                                text_md: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "numeric";
+                                raw_input?: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                                value: number | null;
+                            } | {
+                                /** @enum {string} */
+                                kind: "formula";
+                                latex: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "matching";
+                                /** @default [] */
+                                pairs?: {
+                                    item_id: string;
+                                    option_id: string;
+                                }[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_order?: string[];
+                                /** @enum {string} */
+                                kind: "ordering";
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                evidence?: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                }[];
+                                /** @enum {string} */
+                                kind: "open";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @default  */
+                                text_md?: string;
+                            })[];
+                        };
+                        submission_id?: string;
+                    };
                     /** @default false */
                     auto_rate?: boolean;
                     judge_provenance_token?: string;
@@ -30484,9 +31086,15 @@ export interface operations {
                     referenced_knowledge_ids?: string[];
                     response_md?: string | null;
                     self_confidence?: number | null;
+                    self_report?: boolean;
                     session_id?: string | null;
                     stream_item_id?: string | null;
                 } | {
+                    activation_intent?: {
+                        evaluation_id: string;
+                        expected_effective_id: string | null;
+                        expected_generation: number;
+                    };
                     activity_ref?: {
                         id: string;
                         /** @enum {string} */
@@ -30494,6 +31102,104 @@ export interface operations {
                     };
                     /** @default [] */
                     answer_image_refs?: string[];
+                    assessment?: {
+                        evaluation_group_id: string;
+                        /** @default [] */
+                        group_evidence?: {
+                            evidence: {
+                                asset: {
+                                    asset_id: string;
+                                    digest: string;
+                                };
+                                bytes: number;
+                                evidence_id: string;
+                                /** @enum {string} */
+                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                mime_type: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            };
+                            target: {
+                                /** @enum {string} */
+                                scope: "all_units";
+                            } | {
+                                /** @enum {string} */
+                                scope: "units";
+                                scoring_unit_ids: string[];
+                            };
+                        }[];
+                        idempotency_key: string;
+                        issuance_id: string;
+                        response_set: {
+                            /** @default [] */
+                            entries?: ({
+                                /** @enum {string} */
+                                kind: "choice";
+                                /** @default [] */
+                                option_ids?: string[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "text";
+                                self_confidence?: number;
+                                slot_id: string;
+                                text_md: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "numeric";
+                                raw_input?: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                                value: number | null;
+                            } | {
+                                /** @enum {string} */
+                                kind: "formula";
+                                latex: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "matching";
+                                /** @default [] */
+                                pairs?: {
+                                    item_id: string;
+                                    option_id: string;
+                                }[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_order?: string[];
+                                /** @enum {string} */
+                                kind: "ordering";
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                evidence?: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                }[];
+                                /** @enum {string} */
+                                kind: "open";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @default  */
+                                text_md?: string;
+                            })[];
+                        };
+                        submission_id?: string;
+                    };
                     /** @default false */
                     auto_rate?: boolean;
                     judge_provenance_token?: string;
@@ -30573,9 +31279,15 @@ export interface operations {
                     referenced_knowledge_ids?: string[];
                     response_md?: string | null;
                     self_confidence?: number | null;
+                    self_report?: boolean;
                     session_id?: string | null;
                     stream_item_id?: string | null;
                 } | {
+                    activation_intent?: {
+                        evaluation_id: string;
+                        expected_effective_id: string | null;
+                        expected_generation: number;
+                    };
                     activity_ref?: {
                         id: string;
                         /** @enum {string} */
@@ -30583,6 +31295,104 @@ export interface operations {
                     };
                     /** @default [] */
                     answer_image_refs?: string[];
+                    assessment?: {
+                        evaluation_group_id: string;
+                        /** @default [] */
+                        group_evidence?: {
+                            evidence: {
+                                asset: {
+                                    asset_id: string;
+                                    digest: string;
+                                };
+                                bytes: number;
+                                evidence_id: string;
+                                /** @enum {string} */
+                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                mime_type: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            };
+                            target: {
+                                /** @enum {string} */
+                                scope: "all_units";
+                            } | {
+                                /** @enum {string} */
+                                scope: "units";
+                                scoring_unit_ids: string[];
+                            };
+                        }[];
+                        idempotency_key: string;
+                        issuance_id: string;
+                        response_set: {
+                            /** @default [] */
+                            entries?: ({
+                                /** @enum {string} */
+                                kind: "choice";
+                                /** @default [] */
+                                option_ids?: string[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "text";
+                                self_confidence?: number;
+                                slot_id: string;
+                                text_md: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "numeric";
+                                raw_input?: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                                value: number | null;
+                            } | {
+                                /** @enum {string} */
+                                kind: "formula";
+                                latex: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "matching";
+                                /** @default [] */
+                                pairs?: {
+                                    item_id: string;
+                                    option_id: string;
+                                }[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_order?: string[];
+                                /** @enum {string} */
+                                kind: "ordering";
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                evidence?: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                }[];
+                                /** @enum {string} */
+                                kind: "open";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @default  */
+                                text_md?: string;
+                            })[];
+                        };
+                        submission_id?: string;
+                    };
                     /** @default false */
                     auto_rate?: boolean;
                     judge_provenance_token?: string;
@@ -30662,6 +31472,7 @@ export interface operations {
                     referenced_knowledge_ids?: string[];
                     response_md?: string | null;
                     self_confidence?: number | null;
+                    self_report?: boolean;
                     session_id?: string | null;
                     stream_item_id?: string | null;
                 };
@@ -30675,6 +31486,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        assessment: {
+                            activation_intent: {
+                                evaluation_id: string;
+                                expected_effective_id: string | null;
+                                expected_generation: number;
+                            };
+                            candidate_id: string;
+                            /** @enum {string|null} */
+                            effect: "applied" | "ineligible" | "failed_pending" | "idempotent_replay" | null;
+                            evaluation_group_id: string;
+                            submission_id: string;
+                        };
+                        judge: ({
+                            auto_rated: boolean;
+                            capability_ref: {
+                                id: string;
+                                version: string;
+                            };
+                            /** @enum {string} */
+                            coarse_outcome: "correct" | "partial" | "incorrect" | "unsupported";
+                            confidence: number;
+                            evidence_json: {
+                                [key: string]: unknown;
+                            };
+                            feedback_md: string;
+                            judge_event_id: string | null;
+                            route: string;
+                            score: number | null;
+                            /** @enum {string|null} */
+                            suggested_rating: "again" | "hard" | "good" | null;
+                            telemetry?: unknown;
+                        } & {
+                            [key: string]: unknown;
+                        }) | null;
+                        review_event: {
+                            id: string;
+                        };
+                        /** @enum {string} */
+                        status: "effective" | "review_required";
+                    } | {
                         judge: ({
                             auto_rated: boolean;
                             capability_ref: {
@@ -31055,6 +31906,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    issuance_id?: string;
                     question_id: string;
                     regenerate?: boolean;
                 };
@@ -31315,6 +32167,7 @@ export interface operations {
             content: {
                 "application/json": {
                     hint_index?: number;
+                    issuance_id?: string;
                     question_id: string;
                 };
             };

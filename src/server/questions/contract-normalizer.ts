@@ -480,13 +480,35 @@ function assemble(
   leaves: LeafInput[],
   extraIssues: ConversionIssue[],
 ): NormalizedContract {
+  // Preserve the actual per-part reference bytes for an explicit later reveal.
+  // Comparators may extract an answer head, but teaching must not fetch a newer
+  // mutable reference or synthesize a worked solution from that head.
+  const frozenMaterials = [...materials];
+  const frozenIdsByPart = materialIdsByPart.map((ids) => [...ids]);
+  for (const [index, leaf] of leaves.entries()) {
+    const text = leaf.answerTexts.filter((answer) => answer.trim().length > 0).join('\n\n');
+    if (!text) continue;
+    const materialId = mintMaterialId('solution', text);
+    if (!frozenMaterials.some((material) => material.material_id === materialId)) {
+      frozenMaterials.push({
+        material_id: materialId,
+        kind: 'plaintext',
+        visibility: 'private',
+        asset: { asset_id: `sol_${shortHash(text)}`, digest: sha256Hex(text) },
+        caption: 'reference solution',
+        content_md: text,
+      });
+    }
+    frozenIdsByPart[index] ??= [];
+    frozenIdsByPart[index].push(materialId);
+  }
   const structure = QuestionGroupStructure.parse({
     group_id: groupId,
-    materials,
+    materials: frozenMaterials,
     parts: leaves.map((leaf, i) => ({
       part_id: leaf.partId,
       prompt_md: leaf.prompt,
-      material_ids: materialIdsByPart[i] ?? [],
+      material_ids: frozenIdsByPart[i] ?? [],
     })),
   });
   const scorings = leaves.map((leaf) => normalizeLeafScoring(leaf));

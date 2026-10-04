@@ -831,6 +831,39 @@
       ]
     },
     {
+      "name": "attempts",
+      "item": [
+        {
+          "name": "POST /api/attempts",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/attempts",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "attempts"]
+            },
+            "description": "提交原生作答并激活候选\n\n**Notes:** 原生请求返回 effective/review_required，assessment 带 submission/group/candidate 与学习 effect；重复提交复用原始回执，不产生第二次练习。self_report=true 仅显式 FSRS；auto_rate=true 不把 rating fallback 当用户选择。迁移中的无 assessment 旧请求仍待其余入口切换后移除。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question_id\": \"REPLACE_question\",\n  \"rating\": \"hard\",\n  \"assessment\": {\n    \"issuance_id\": \"REPLACE_issuance\",\n    \"evaluation_group_id\": \"REPLACE_evaluation_group\",\n    \"idempotency_key\": \"REPLACE_attempt_key\",\n    \"response_set\": {\n      \"entries\": [\n        {\n          \"slot_id\": \"REPLACE_slot\",\n          \"kind\": \"text\",\n          \"text_md\": \"original learner response\"\n        }\n      ]\n    },\n    \"group_evidence\": []\n  },\n  \"activation_intent\": {\n    \"evaluation_id\": \"REPLACE_candidate\",\n    \"expected_effective_id\": null,\n    \"expected_generation\": 0\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "conjecture",
       "item": [
         {
@@ -1289,7 +1322,7 @@
                 }
               ]
             },
-            "description": "pending 恢复读面：issuance + live draft + 已接收提交（draft=null 即服务端无未保存草稿）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 返回 {issuance,draft,submissions}；issuance 不存在 → 404"
+            "description": "pending 恢复读面：issuance + live draft + 已接收提交（draft=null 即服务端无未保存草稿）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 返回 issuance/practice_dto/draft/submissions；已接收 submission 带原始 response_set/group_evidence/idempotency_key，恢复不泄漏候选反馈。不存在返回404。"
           },
           "response": []
         },
@@ -1318,6 +1351,26 @@
                 }
               }
             }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/issuances/:id/reference-reveals",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/issuances/:id/reference-reveals",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "issuances", ":id", "reference-reveals"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "按需查看已发题范围的冻结参考解答\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 返回 reference_md（历史未封存时为 null）；返回正文前持久化 answer_help；不读取 current question 参考，不揭示其他 part。一次性诊断及容器发题不从此接口揭示。"
           },
           "response": []
         },
@@ -2136,6 +2189,34 @@
               ]
             },
             "description": "owner 手动 gate 草稿全文预览：单条 draft 的题面/材料/选项/答案/难度/知识点（loom preview pane 数据源）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 仅 draft_status='draft' 且非软归档；投影 id/kind/source/created_at/difficulty/knowledge([{id,label}])/prompt_md(全文非截断)/passage(stem 结构树材料,无则 null)/options(choices_md,无则 null)/answer(reference_md,无则 null)/verify_status/verify_reason；非 draft / 软归档 / 不存在 → 404；空 id → 400"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/review/advice",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/review/advice",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "review", "advice"]
+            },
+            "description": "保存冻结原始作答并预览候选\n\n**Notes:** 返回 candidate_id/activation_intent/automatic_commit；不激活学习效应。响应没有评级建议时保留未决态，不补造评级。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question_id\": \"REPLACE_question\",\n  \"assessment\": {\n    \"issuance_id\": \"REPLACE_issuance\",\n    \"evaluation_group_id\": \"REPLACE_evaluation_group\",\n    \"idempotency_key\": \"REPLACE_attempt_key\",\n    \"response_set\": {\n      \"entries\": [\n        {\n          \"slot_id\": \"REPLACE_slot\",\n          \"kind\": \"text\",\n          \"text_md\": \"original learner response\"\n        }\n      ]\n    },\n    \"group_evidence\": []\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           },
           "response": []
         },

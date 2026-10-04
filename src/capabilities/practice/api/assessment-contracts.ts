@@ -128,3 +128,4 @@ export const IssuanceStateSchema = z.object({
 });
 
 export const IssuanceParamsSchema = z.object({ id: z.string().min(1) });
+export const StudyReferenceResponseSchema = z.object({ reference_md: z.string().nullable() });

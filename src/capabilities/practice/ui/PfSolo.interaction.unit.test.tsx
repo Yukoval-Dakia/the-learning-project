@@ -42,6 +42,57 @@ const QUESTION = {
   timeline: [],
 };
 
+const ACTIVATION = {
+  evaluation_id: 'eva_preview',
+  expected_effective_id: null,
+  expected_generation: 0,
+};
+const ISSUANCE_STATE = {
+  issuance: {
+    issuance_id: 'iss_stream_si_1',
+    issued_at: '2026-10-04T00:00:00.000Z',
+    binding: {
+      revision_id: 'rev_original',
+      part_ids: ['q_1'],
+      material_bindings: [],
+      option_order: [],
+    },
+    claim: { policy: 'unbounded', status: 'unclaimed', claimed_by_ref: null },
+  },
+  practice_dto: {
+    issuance_id: 'iss_stream_si_1',
+    revision_id: 'rev_original',
+    issued_at: '2026-10-04T00:00:00.000Z',
+    materials: [],
+    faces: [{ part_id: 'q_1', prompt_md: QUESTION.prompt_md, material_ids: [] }],
+    response_spec: {
+      slots: [
+        {
+          slot_id: 'original_slot',
+          part_id: 'q_1',
+          kind: 'text',
+          placement: { label: '作答' },
+          math_preview: false,
+        },
+      ],
+    },
+  },
+  admission_generation_observed: 1,
+  draft: null,
+  submissions: [],
+};
+
+function issuanceResponse(url: string): Response | undefined {
+  if (url.endsWith('/responses'))
+    return Response.json({
+      status: 'saved',
+      save_epoch: 1,
+      issuance_id: 'iss_stream_si_1',
+      updated_at: '2026-10-04T00:00:00.000Z',
+    });
+  if (url.includes('/api/issuances/')) return Response.json(ISSUANCE_STATE);
+}
+
 function memoryStorage(): Storage {
   const store = new Map<string, string>();
   return {
@@ -95,6 +146,8 @@ describe('PfSolo — real-component 422 judge failure (YUK-895 QA lane)', () => 
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
+        const issuance = issuanceResponse(url);
+        if (issuance) return issuance;
         if (url.includes('/api/review/advice')) return adviceGate;
         if (url.includes('/api/questions/')) return Response.json(QUESTION);
         return Response.json({});
@@ -155,10 +208,17 @@ describe('PfSolo — stream answering capture regression pin (YUK-784)', () => {
       'fetch',
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
+        const issuance = issuanceResponse(url);
+        if (issuance) return issuance;
         if (url.includes('/api/review/advice'))
           return Response.json({
             activity_ref: { id: 'act_1' },
             question_id: 'q_1',
+            activation_intent: ACTIVATION,
+            automatic_commit: false,
+            candidate_id: 'eva_preview',
+            submission_id: 'submission_stream_si_1',
+            evaluation_group_id: 'group_stream_si_1',
             judge: adviceJudge,
             advice: { rating: 'good', reason: 'ok', evidence_score: null },
           });
@@ -256,6 +316,14 @@ describe('PfSolo — stream answering capture regression pin (YUK-784)', () => {
     const init = attemptRequestBody(attemptCalls);
     expect(init.reasoning_trace).toBe('先想变化率');
     expect(init.self_confidence).toBe(3);
+    expect(init.activation_intent).toEqual(ACTIVATION);
+    expect(init.assessment).toMatchObject({
+      issuance_id: 'iss_stream_si_1',
+      response_set: {
+        entries: [{ slot_id: 'original_slot', kind: 'text', text_md: '导数表示变化率' }],
+      },
+    });
+    expect(init).not.toHaveProperty('judge_result_v2');
   });
 });
 
@@ -272,6 +340,8 @@ describe('PfSolo — 附件上传中提交入口 gating (YUK-1094)', () => {
       'fetch',
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
+        const issuance = issuanceResponse(url);
+        if (issuance) return issuance;
         const method = init?.method ?? 'GET';
         if (url.includes('/api/assets') && method === 'POST') return uploadGate;
         if (url.includes('/api/review/advice')) {
@@ -319,7 +389,8 @@ describe('PfSolo — 附件上传中提交入口 gating (YUK-1094)', () => {
             storage_key: 'k',
             mime_type: 'image/png',
             byte_size: 3,
-            sha256: 'x',
+            sha256: 'a'.repeat(64),
+            created_at: '2026-10-04T00:00:00.000Z',
           },
         }),
       );

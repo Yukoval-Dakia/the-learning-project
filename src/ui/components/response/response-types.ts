@@ -1,4 +1,9 @@
-import type { EvidenceAttachmentT, ResponseSlotT, SlotResponseT } from '@/core/schema/assessment';
+import type {
+  EvidenceAttachmentT,
+  GroupEvidenceTargetT,
+  ResponseSlotT,
+  SlotResponseT,
+} from '@/core/schema/assessment';
 
 // YUK-1051 — 通用 response 组件族的共享类型与纯函数。
 //
@@ -206,6 +211,7 @@ export function evidenceKindFromMime(mime: string | null | undefined): EvidenceK
 export interface EvidenceAttachment {
   /** Full original upload receipt for immutable assessment submissions. */
   original?: EvidenceAttachmentT;
+  originalTarget?: GroupEvidenceTargetT;
   asset_id: string;
   /**
    * 展示类别。新上传的附件由 upload 回执的 mime 决定；从 wire 恢复的引用只有 id，

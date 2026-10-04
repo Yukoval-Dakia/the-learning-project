@@ -14,6 +14,7 @@ import {
   IssueAssessmentBodySchema,
   SaveResponseDraftBodySchema,
   SaveResponseDraftResponseSchema,
+  StudyReferenceResponseSchema,
   SubmissionCreatedSchema,
 } from './api/assessment-contracts';
 import {
@@ -845,6 +846,15 @@ export const practiceCapability = defineCapability({
         },
         successStatus: [200, 201],
         load: () => import('./api/assessment-route').then((m) => m.createSubmission),
+      },
+      {
+        method: 'POST',
+        path: '/api/issuances/[id]/reference-reveals',
+        operationId: 'revealStudyReference',
+        request: { params: IssuanceParamsSchema },
+        responses: { 200: StudyReferenceResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/assessment-route').then((m) => m.revealStudyReference),
       },
     ],
   },

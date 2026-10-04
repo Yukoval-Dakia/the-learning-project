@@ -9,10 +9,12 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { type JudgeInvokerOutput, evaluateAttempt } from '@/capabilities/practice/server/judge';
 import type { JudgeAnswerParams } from '@/capabilities/practice/server/judge/question-contract';
+import { canonicalHash } from '@/core/migration/canonical';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { ApiError } from '@/kernel/http';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { createLearningRecord } from '@/kernel/records/queries';
@@ -24,6 +26,8 @@ import {
 } from '@/server/ai/solution-generate';
 import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import { Tutor } from '@/server/session';
+import { recordAssistanceExposure } from './assessment/assistance';
+import { loadFrozenStudyContext } from './assessment/study-context';
 import { enqueueWrongStreakNudge } from './enqueue-wrong-streak-nudge';
 import {
   QuestionEvidenceSnapshotError,
@@ -57,6 +61,7 @@ export class SolveError extends Error {
 export interface StartSolveSessionParams {
   db: Db;
   questionId: string;
+  issuanceId?: string;
   /** Injected in tests; forwarded to generateReferenceSolution. */
   runTaskFn?: SolutionGenerateRunTaskFn;
   /** Force regeneration of the reference solution. */
@@ -83,6 +88,15 @@ export async function startSolveSession(
     .limit(1);
   if (!q || q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
     throw new SolveError('question_not_found', `question ${questionId} not found`);
+  }
+
+  if (params.issuanceId) {
+    await loadFrozenStudyContext(db, params.issuanceId, questionId);
+    const { sessionId } = await Tutor.startTutorSession(db, {
+      questionId,
+      issuanceId: params.issuanceId,
+    });
+    return { sessionId, generated: false, generationError: false };
   }
 
   let gen: GenerateReferenceSolutionResult;
@@ -115,6 +129,7 @@ export async function startSolveSession(
 const HintTurn = z.object({ text_md: z.string().min(1) }).passthrough();
 
 export interface PlanSolveHintParams {
+  issuanceId?: string;
   db: Db;
   sessionId: string;
   /** 0-based hint count so far in this session — escalates the ask. */
@@ -201,7 +216,10 @@ export async function planSolveHint(params: PlanSolveHintParams): Promise<PlanSo
   const { db, sessionId, hintIndex } = params;
   const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(db);
 
-  const { questionId, status } = await Tutor.getTutorQuestionId(db, sessionId);
+  const { questionId, status, issuanceId } = await Tutor.getTutorQuestionId(db, sessionId);
+  if (params.issuanceId !== undefined && params.issuanceId !== issuanceId) {
+    throw new ApiError('coordinate_mismatch', 'hint session is bound to a different issuance', 409);
+  }
   if (!questionId) {
     throw new SolveError('session_not_found', `tutor session ${sessionId} missing question link`);
   }
@@ -230,9 +248,19 @@ export async function planSolveHint(params: PlanSolveHintParams): Promise<PlanSo
 
   const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
 
-  const input = buildSolveHintInput(q, hintIndex);
+  const context = issuanceId ? await loadFrozenStudyContext(db, issuanceId, questionId) : q;
+  const input = buildSolveHintInput(context, hintIndex);
   const { text } = await runTaskFn('TeachingTurnTask', input, { subjectProfile });
-  return parseHintTurn(text);
+  const result = parseHintTurn(text);
+  if (issuanceId)
+    await recordAssistanceExposure(db, {
+      issuanceId,
+      questionId,
+      kind: 'hint',
+      impact: 'unknown',
+      contentDigest: `sha256:${canonicalHash(result.text_md)}`,
+    });
+  return result;
 }
 
 export interface SolveSubmission {

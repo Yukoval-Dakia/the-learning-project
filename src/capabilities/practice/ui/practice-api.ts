@@ -284,9 +284,7 @@ export async function deleteQuestion(
 }
 
 type ReviewAdviceWire = ApiOperationJsonResponse<'previewReviewAdvice'>;
-export type JudgePreview = Omit<ReviewAdviceWire['judge'], 'suggested_rating'> & {
-  suggested_rating: NonNullable<ReviewAdviceWire['judge']['suggested_rating']>;
-};
+export type JudgePreview = ReviewAdviceWire['judge'];
 
 export async function getAdvice(
   questionId: string,
@@ -306,17 +304,7 @@ export async function getAdvice(
       ...(imageRefs.length > 0 ? { answer_image_refs: [...imageRefs] } : {}),
     },
   });
-  if (response.judge.suggested_rating === null) {
-    throw new ApiError(
-      '本次判定没有可提交的 FSRS 评级，请重试判分。',
-      422,
-      'judge_rating_unavailable',
-    );
-  }
-  return {
-    ...response,
-    judge: { ...response.judge, suggested_rating: response.judge.suggested_rating },
-  };
+  return response;
 }
 
 // YUK-433 — solo 路径 per-attempt response-time（RT）capture 的纯计算核。
@@ -364,22 +352,34 @@ export const fileAppeal = (
     body: { judge_event_id: judgeEventId, reason_md: reasonMd },
   });
 
-export const solveStart = (questionId: string): Promise<{ session_id: string }> =>
+export const solveStart = (
+  questionId: string,
+  issuanceId?: string,
+): Promise<{ session_id: string }> =>
   apiOperationJson('createSolveSession', {
     url: '/api/solve-sessions',
     method: 'POST',
-    body: { question_id: questionId },
+    body: { question_id: questionId, issuance_id: issuanceId },
+  });
+
+export const revealStudyReference = (
+  issuanceId: string,
+): Promise<{ reference_md: string | null }> =>
+  apiOperationJson('revealStudyReference', {
+    url: `/api/issuances/${encodeURIComponent(issuanceId)}/reference-reveals`,
+    method: 'POST',
   });
 
 export const solveHint = (
   questionId: string,
   sessionId: string,
   hintIndex: number,
+  issuanceId?: string,
 ): Promise<{ text_md: string }> =>
   apiOperationJson('createSolveHintRequest', {
     url: `/api/solve-sessions/${encodeURIComponent(sessionId)}/hint-requests`,
     method: 'POST',
-    body: { question_id: questionId, hint_index: hintIndex },
+    body: { question_id: questionId, hint_index: hintIndex, issuance_id: issuanceId },
   });
 
 // ── 题库面 /questions（YUK-409, loom screen-questions）─────────────────────────

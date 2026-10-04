@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ActivateEvaluationIntent } from '@/core/schema/assessment';
 import {
   ActivityRef,
   CauseCategory,
@@ -46,7 +47,7 @@ export const ReviewAdviceBodySchema = z.object({
   activity_ref: ActivityRef.optional(),
   question_id: z.string().min(1).optional(),
   mistake_id: z.string().min(1).optional(),
-  response_md: z.string(),
+  response_md: z.string().default(''),
   // YUK-1094 — 附件证据（手写/拍照）随 advice 预览一并交给 judge，与提交提交契约
   // CreateAttemptBodySchema.answer_image_refs 同口径。OPTIONAL（default []）：省略即字段
   // 存在但为空，纯文本 advice 的判分路径 / wire 逐字不变；有值时 preview 与 committed
@@ -81,6 +82,8 @@ export const ReviewAdviceResponseSchema = z.object({
   submission_id: z.string(),
   evaluation_group_id: z.string(),
   candidate_id: z.string(),
+  activation_intent: ActivateEvaluationIntent,
+  automatic_commit: z.boolean(),
   judge: ReviewAdviceJudgeSchema,
   advice: z.object({
     rating: FsrsRating.nullable(),
