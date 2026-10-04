@@ -445,8 +445,14 @@ These fixtures test whether the agent can understand context, not just whether S
 > the spec; the test is the gate. When a tool's `Output` shape, status enum,
 > key-insight fields, or `costClass` changes, update the matching scenario in
 > `fixtures.test.ts` in the same change (LD-7 — process expectation, not new
-> automation). The remaining brief-named scenarios + multi-subject corpus are
-> Phase 2, deferred and blocked on subject-graph seeding (P5.8).
+> automation). Phase 2 / YUK-181 is executable in
+> `src/server/ai/tools/fixtures-phase2.db.test.ts`: six scenarios cover due review,
+> record linking, standalone variants, memory briefs, learning intents and
+> prerequisite traversal. The corpus includes math, English, programming text
+> and reading notes; reading notes are a record category, not a new subject.
+> P5.8 / YUK-182 supplied the former prerequisite. Models remain stubbed: these
+> tests establish output shape, reference integrity and owner-service handoffs,
+> not actual model comprehension or new subject judge support.
 
 ---
 
