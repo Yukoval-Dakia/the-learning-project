@@ -361,7 +361,7 @@ export async function evaluateSubmission(
         },
         created_at: existing.created_at,
         replayed: true,
-        scoring_basis: revision.scoring_basis,
+        scoring_basis: core.scoring_basis,
         model_units_invoked: core.model_units_invoked,
         spent_cost_usd_micros: core.spent_cost_usd_micros,
       };
@@ -370,7 +370,7 @@ export async function evaluateSubmission(
       record,
       created_at: now,
       replayed: false,
-      scoring_basis: revision.scoring_basis,
+      scoring_basis: core.scoring_basis,
       model_units_invoked: core.model_units_invoked,
       spent_cost_usd_micros: core.spent_cost_usd_micros,
     };

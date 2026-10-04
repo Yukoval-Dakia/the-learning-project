@@ -18,6 +18,7 @@ import {
   EvaluationContractError,
   type ModelUnitOutcomeT,
   evaluateSubmissionCore,
+  projectIssuedScoringBasis,
 } from './evaluation';
 import type {
   ExecutionPlanT,
@@ -25,6 +26,7 @@ import type {
   ScoringBasisT,
   SubmissionRecordT,
 } from './index';
+import { deriveCoarseVerdict } from './settlement';
 
 // ---------- fixtures ----------
 
@@ -587,6 +589,105 @@ describe('evaluateSubmissionCore — issuance scope projection', () => {
         },
       ],
     });
+
+  it.each([{ issued: [] }, { issued: ['unknown'] }, { issued: ['p1', 'p1'] }])(
+    'refuses invalid issued scope $issued instead of treating it as full scope',
+    async ({ issued }) => {
+      await expect(
+        evaluateSubmissionCore(
+          inputFor(submissionFor([]), twoPartRevision(), { issued_part_ids: issued }),
+        ),
+      ).rejects.toMatchObject({ code: 'invalid_issuance_scope' });
+    },
+  );
+
+  it('keeps full scoring policy immutable and excludes cross-part/evidence-only units correctly', () => {
+    const revision = twoPartRevision();
+    const first = revision.scoring_basis.units[0];
+    if (!first) throw new Error('fixture unit missing');
+    revision.scoring_basis.units.push(
+      { ...first, scoring_unit_id: 'cross', evidence_slot_refs: ['p2::r'] },
+      {
+        ...first,
+        scoring_unit_id: 'evidence',
+        slot_refs: [],
+        evidence_slot_refs: ['p2::r'],
+        criterion: {
+          kind: 'rule_reference',
+          rule_id: 'r',
+          statement_md: 'cited response',
+          source: 'official',
+        },
+      },
+      {
+        ...first,
+        scoring_unit_id: 'group',
+        slot_refs: [],
+        requires_group_evidence: true,
+        criterion: {
+          kind: 'rule_reference',
+          rule_id: 'g',
+          statement_md: 'group evidence',
+          source: 'official',
+        },
+      },
+    );
+    const frozen = structuredClone(revision);
+    expect(projectIssuedScoringBasis(revision, ['p1']).units.map((u) => u.scoring_unit_id)).toEqual(
+      ['p1::u', 'group'],
+    );
+    expect(projectIssuedScoringBasis(revision, ['p2']).units.map((u) => u.scoring_unit_id)).toEqual(
+      ['p2::u', 'evidence', 'group'],
+    );
+    expect(projectIssuedScoringBasis(revision, ['p1', 'p2'])).toBe(revision.scoring_basis);
+    expect(revision).toEqual(frozen);
+  });
+
+  it('manual assertion returns the same scoped denominator as automatic scoring', async () => {
+    const revision = twoPartRevision();
+    const result = await evaluateSubmissionCore(
+      inputFor(submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '1' }]), revision, {
+        issued_part_ids: ['p1'],
+        mode: 'manual_assert',
+        provenance: { source: 'manual', assisted: false },
+        asserted_unit_results: [
+          {
+            status: 'scored',
+            scoring_unit_id: 'p1::u',
+            points_awarded: 1,
+            scored_because: 'response',
+            evidence_citations: [],
+          },
+        ],
+      }),
+    );
+    expect(deriveCoarseVerdict(result.record, result.scoring_basis)).toMatchObject({
+      verdict: 'correct',
+      maxPoints: 1,
+      normalized: 1,
+    });
+  });
+
+  it('does not shrink the denominator to only units with scored results', async () => {
+    const revision = twoPartRevision();
+    const result = await evaluateSubmissionCore(
+      inputFor(submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '1' }]), revision, {
+        issued_part_ids: ['p1', 'p2'],
+      }),
+    );
+    expect(result.scoring_basis).toEqual(revision.scoring_basis);
+    expect(deriveCoarseVerdict(result.record, result.scoring_basis).verdict).toBe('unsupported');
+  });
+
+  it('threshold levels cannot project a subset, while its full scope is unchanged', () => {
+    const revision = twoPartRevision();
+    revision.scoring_basis.aggregation = {
+      kind: 'threshold_levels',
+      thresholds: [{ level_id: 'pass', min_points: 3 }],
+    };
+    expect(() => projectIssuedScoringBasis(revision, ['p1'])).toThrow(/unprojectable_aggregation/);
+    expect(projectIssuedScoringBasis(revision, ['p1', 'p2'])).toBe(revision.scoring_basis);
+  });
 
   it('issued subset evaluates only in-scope units (sum projects)', async () => {
     const revision = twoPartRevision();

@@ -186,7 +186,7 @@ async function seedChain(prefix: string) {
   await db.insert(assessment_issuance).values({
     issuance_id: issuanceId,
     revision_id: revisionId,
-    part_ids: [],
+    part_ids: [qid],
     material_bindings: [],
     option_order: [],
     claim_policy: 'one_time',

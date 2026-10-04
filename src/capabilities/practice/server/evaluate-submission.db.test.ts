@@ -9,10 +9,13 @@
 //   4. evaluateAttempt contract lane 端到端（登记 → 落库 → 投影）；
 //   5. 绝不触碰 evaluation_effective_head（activation = YUK-1045 的范围）。
 
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { evaluateSubmission } from '@/capabilities/practice/server/judge/evaluate-submission';
-import { evaluateAttempt } from '@/capabilities/practice/server/judge/evaluation-authority';
+import {
+  evaluateAttempt,
+  projectEvaluationToJudgeResult,
+} from '@/capabilities/practice/server/judge/evaluation-authority';
 import { canonicalHash } from '@/core/migration/canonical';
 import type {
   ExecutionPlanT,
@@ -30,6 +33,7 @@ import {
   evaluation_group,
   question_revision,
 } from '@/db/schema';
+import { resolveVerdictsForGroups } from '@/kernel/read-models/assessment-verdict';
 import {
   beginTestTransaction,
   resetDb,
@@ -67,6 +71,8 @@ interface SeedSpec {
   entries?: ResponseSetT['entries'];
   partIds?: string[];
   blankScoresZero?: boolean;
+  issuedPartIds?: string[];
+  aggregation?: ScoringBasisT['aggregation'];
 }
 
 async function seedContractChain(spec: SeedSpec): Promise<void> {
@@ -119,7 +125,7 @@ async function seedContractChain(spec: SeedSpec): Promise<void> {
       response_spec: { slots },
       scoring_basis: {
         units,
-        aggregation: { kind: 'sum' },
+        aggregation: spec.aggregation ?? { kind: 'sum' },
         blank_scores_zero: spec.blankScoresZero ?? true,
       },
       execution_plan: {
@@ -138,7 +144,7 @@ async function seedContractChain(spec: SeedSpec): Promise<void> {
     .values({
       issuance_id: spec.issuanceId,
       revision_id: spec.revisionId,
-      part_ids: partIds,
+      part_ids: spec.issuedPartIds ?? partIds,
       material_bindings: [],
       option_order: [{ slot_id: `${partIds[0]}::r`, option_ids: ['opt-a', 'opt-b'] }],
       container_occurrence_ref: null,
@@ -177,6 +183,191 @@ async function seedContractChain(spec: SeedSpec): Promise<void> {
 // ---------- tests ----------
 
 describe('evaluateSubmission (persisted §4.3 path)', () => {
+  it.each([
+    { weighted: false, subset: true, maximum: 1, score: 1 },
+    { weighted: true, subset: true, maximum: 2, score: 1 },
+    { weighted: false, subset: false, maximum: 4, score: 0.25 },
+    { weighted: true, subset: false, maximum: 17, score: 2 / 17 },
+  ])(
+    'frozen issuance projection $weighted/$subset survives repeated evaluation',
+    async ({ weighted, subset, maximum, score }) => {
+      await seedContractChain({
+        groupId: 'scope_q',
+        revisionId: 'scope_rev',
+        issuanceId: 'scope_iss',
+        submissionId: 'scope_sub',
+        evalGroupId: 'scope_group',
+        partIds: ['p1', 'p2'],
+        issuedPartIds: subset ? ['p1'] : ['p1', 'p2'],
+        slots: ['p1', 'p2'].map((part_id) => ({
+          slot_id: `${part_id}::r`,
+          part_id,
+          kind: 'text',
+          math_preview: false,
+        })),
+        units: ['p1', 'p2'].map((part, i) => ({
+          scoring_unit_id: `${part}::u`,
+          slot_refs: [`${part}::r`],
+          material_refs: [],
+          evidence_slot_refs: [],
+          requires_group_evidence: false,
+          criterion: { kind: 'text_key', accepted_texts: [String(i + 1)], normalization: 'trim' },
+          points: i === 0 ? 1 : 3,
+        })),
+        assignments: [
+          {
+            scoring_unit_ids: ['p1::u', 'p2::u'],
+            executor: { kind: 'deterministic', comparator: 'exact_text' },
+          },
+        ],
+        aggregation: weighted
+          ? { kind: 'weighted_sum', weights: { 'p1::u': 2, 'p2::u': 5 } }
+          : { kind: 'sum' },
+        entries: subset
+          ? [{ slot_id: 'p1::r', kind: 'text', text_md: ' 1 ' }]
+          : [
+              { slot_id: 'p1::r', kind: 'text', text_md: ' 1 ' },
+              { slot_id: 'p2::r', kind: 'text', text_md: 'wrong' },
+            ],
+      });
+      const [frozen] = await db
+        .select()
+        .from(question_revision)
+        .where(eq(question_revision.revision_id, 'scope_rev'));
+      for (const attempt of [1, 2]) {
+        const out = await evaluateSubmission(db, {
+          submission_id: 'scope_sub',
+          evaluation_group_id: 'scope_group',
+        });
+        expect(out.record.attempt).toBe(attempt);
+        const projected = projectEvaluationToJudgeResult(out.record, out.scoring_basis);
+        expect.soft(projected.score).toBe(score);
+        expect.soft(projected.coarse_outcome).toBe(subset ? 'correct' : 'partial');
+        expect.soft(projected.evidence_json).toMatchObject({ max_points: maximum });
+        expect
+          .soft(out.scoring_basis.units.map((u) => u.scoring_unit_id))
+          .toEqual(subset ? ['p1::u'] : ['p1::u', 'p2::u']);
+      }
+      const [after] = await db
+        .select()
+        .from(question_revision)
+        .where(eq(question_revision.revision_id, 'scope_rev'));
+      expect(after).toEqual(frozen);
+      // Exercise the protected INSERT-conflict replay with a database trigger:
+      // preserve the exact inserted payload, but make the outer RETURNING empty.
+      // This is the existing defensive replay branch, not a second model call.
+      await db.execute(sql`CREATE FUNCTION scope_replay_probe() RETURNS trigger AS $$
+        BEGIN
+          IF pg_trigger_depth() = 1 AND NEW.submission_id = 'scope_sub' THEN
+            INSERT INTO evaluation SELECT NEW.*;
+            RETURN NULL;
+          END IF;
+          RETURN NEW;
+        END;
+      $$ LANGUAGE plpgsql`);
+      await db.execute(sql`CREATE TRIGGER scope_replay_probe BEFORE INSERT ON evaluation
+        FOR EACH ROW EXECUTE FUNCTION scope_replay_probe()`);
+      try {
+        const replay = await evaluateSubmission(db, {
+          submission_id: 'scope_sub',
+          evaluation_group_id: 'scope_group',
+        });
+        expect(replay.replayed).toBe(true);
+        expect(replay.record.attempt).toBe(3);
+        expect(projectEvaluationToJudgeResult(replay.record, replay.scoring_basis).score).toBe(
+          score,
+        );
+      } finally {
+        await db.execute(sql`DROP TRIGGER scope_replay_probe ON evaluation`);
+        await db.execute(sql`DROP FUNCTION scope_replay_probe()`);
+      }
+      // Another issuance of the SAME revision has a different denominator.
+      await db.insert(assessment_issuance).values({
+        issuance_id: 'other_iss',
+        revision_id: 'scope_rev',
+        part_ids: ['p1', 'p2'],
+        material_bindings: [],
+        option_order: [],
+        claim_policy: 'one_time',
+        claim_status: 'unclaimed',
+        issued_at: NOW,
+      });
+      await db.insert(evaluation_group).values({
+        evaluation_group_id: 'other_group',
+        submission_ids: ['other_sub'],
+        created_at: NOW,
+      });
+      await db.insert(assessment_submission).values({
+        submission_id: 'other_sub',
+        issuance_id: 'other_iss',
+        revision_id: 'scope_rev',
+        evaluation_group_id: 'other_group',
+        response_set: {
+          entries: [
+            { slot_id: 'p1::r', kind: 'text', text_md: '1' },
+            { slot_id: 'p2::r', kind: 'text', text_md: 'wrong' },
+          ],
+        },
+        group_evidence: [],
+        idempotency_key: 'other_idem',
+        submitted_at: NOW,
+      });
+      await evaluateSubmission(db, {
+        submission_id: 'other_sub',
+        evaluation_group_id: 'other_group',
+      });
+      const read = await resolveVerdictsForGroups(db, ['scope_group', 'other_group']);
+      expect(read.get('scope_group')?.original?.verdict).toMatchObject({
+        normalized: score,
+        maxPoints: maximum,
+      });
+      expect(read.get('other_group')?.original?.verdict).toMatchObject({
+        normalized: weighted ? 2 / 17 : 0.25,
+        maxPoints: weighted ? 17 : 4,
+      });
+    },
+  );
+
+  it.each([{ parts: [] }, { parts: ['ghost'] }, { parts: ['p1', 'p1'] }])(
+    'stored invalid issuance $parts is unavailable, never a full-revision grade',
+    async ({ parts }) => {
+      await seedContractChain({
+        groupId: 'invalid_q',
+        revisionId: 'invalid_rev',
+        issuanceId: 'invalid_iss',
+        submissionId: 'invalid_sub',
+        evalGroupId: 'invalid_group',
+        issuedPartIds: parts,
+      });
+      // Seed an already-stored invalid record directly; frozen bindings may not
+      // be mutated, and the current evaluator correctly refuses this input.
+      await db.insert(evaluation).values({
+        evaluation_id: 'invalid_ev',
+        evaluation_group_id: 'invalid_group',
+        submission_id: 'invalid_sub',
+        attempt: 1,
+        status: 'completed',
+        unit_results: [],
+        aggregate: { kind: 'points_total', points: 4, policy: { kind: 'sum' } },
+        run_refs: [],
+        created_at: NOW,
+      });
+      await expect(
+        evaluateSubmission(db, {
+          submission_id: 'invalid_sub',
+          evaluation_group_id: 'invalid_group',
+        }),
+      ).rejects.toMatchObject({ code: 'invalid_issuance_scope' });
+      const read = await resolveVerdictsForGroups(db, ['invalid_group']);
+      expect(read.get('invalid_group')?.original?.verdict).toMatchObject({
+        verdict: 'unsupported',
+        reason: 'issuance_scope_unavailable',
+        normalized: null,
+        maxPoints: null,
+      });
+    },
+  );
+
   it('deterministic hit: writes a completed candidate with points_total aggregate', async () => {
     await seedContractChain({
       groupId: 'g1',

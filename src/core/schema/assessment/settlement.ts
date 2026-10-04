@@ -33,8 +33,8 @@ import type { ScoringBasisT, ScoringUnitT } from './scoring';
 //     （不调度）。手动覆盖（user-sourced provenance）承载在 evaluation.
 //     provenance.source 上 —— 评级来自判分记录本身，judge 纠正绝不静默覆盖
 //     用户已确认评级（守卫在 server settle 层；本层只暴露评级来源）。
-//     group scheduler scope 显式版本化：SCOPE_V1 = 「判分组内全部非合成
-//     KC 作为 knowledge 卡主体；组无 KC 时落 group root 的 question 卡」，
+//     group scheduler scope 显式版本化：SCOPE_V2 = 「冻结发题范围内的非合成
+//     KC 作为 knowledge 卡主体；无 KC 时落 group root 的 question 卡」，
 //     版本常量随结算证据封存。
 //
 //   D15 — provenance.source ∈ {automatic, manual, self_report}：
@@ -53,7 +53,7 @@ import type { ScoringBasisT, ScoringUnitT } from './scoring';
 // 消费投影调 deriveCoarseVerdict，结算读同一函数，判定语义不会分裂。
 
 /** D14 group scheduler scope 版本（随结算证据封存；改 scope = 新版本号）。 */
-export const SETTLEMENT_SCOPE_VERSION = 1 as const;
+export const SETTLEMENT_SCOPE_VERSION = 2 as const;
 
 /** 组级判定（与 1047 消费投影同一 coarse 面）。 */
 export type AssessmentVerdict = 'correct' | 'partial' | 'incorrect' | 'unsupported';
@@ -61,6 +61,7 @@ export type AssessmentVerdict = 'correct' | 'partial' | 'incorrect' | 'unsupport
 /** verdict 派生的结构化理由 —— 消费/结算两侧如实上报，不吞细节。 */
 export type VerdictReason =
   | 'evaluation_pending'
+  | 'issuance_scope_unavailable'
   | 'aggregate_unresolved'
   | 'level_unmapped'
   | 'no_denominator'

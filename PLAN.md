@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。Linear归零持续推进，当前61项未完成；1119/#1555已合入maine3001200。当前单线181工具链场景；766恢复取舍与588 UI具体方案待回复，依赖不追新。
+> 更新于2026-10-04。Linear归零持续推进，当前61项未完成；181/#1556已合入main0ab54920。当前单线1120发题范围计分与结算修复；766恢复取舍与588 UI具体方案待回复，依赖不追新。
 
 ## NOW
 
@@ -69,11 +69,12 @@
 
 
 - YUK-1119/#1555已交付maine3001200：22 Markdown文件，pi机制ADR0065、历史说明和四份漂移报告归并；本地gates/独立初审/exact-head CI37216925990及17分钟窗通过。docs-only CI测试步骤跳过，不计实际测试。旧报告PR1515/1517/1519/1531关闭且保留分支。
-- YUK-181 active：/workspace/tlp-tool-fixtures，test/yuk-181-tool-scenarios，basee3001200；182已Done解除前置。六类现役工具链与多语料fixture；24DB含负向引用校验、typecheck/lint299/build/10audits通过；独立初审24DB通过且无P0/P1或实质P2，待push/exact-head CI与17分钟窗。模型全部stub，不新增生产能力。
+- YUK-181/#1556已交付main0ab54920（17:14:45UTC）：24DB/本地gates/独立24DB/exact-head CI37218682914及17分钟窗通过；增量migration/browser未执行。Linear Done。
+- YUK-1120 active：冻结发题范围统一计分分母、effective/original读面及结算；69unit/40DB基线通过，3项正式缺陷回归先RED。最终76unit50DB/typecheck/lint299/build/10audits通过；独立初审61unit50DB通过，无P0/P1或实质P2；待push/CI/等待窗，旧v1封存重放不改写。
 
 ## NEXT
 
-1. 完成181现役工具链场景；766下游恢复LIGHT/FULL待owner裁决，1091联合组模型保持Todo，588费用UI具体预审待回复。持续推进Linear归零，不以单批合并作为终点。
+1. 修复1120部分发题分母与结算范围（69unit/40DB基线，四语义断言RED）；766下游恢复LIGHT/FULL待owner裁决，1091联合组模型保持Todo，588费用UI具体预审待回复。持续推进Linear归零，不以单批合并作为终点。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
