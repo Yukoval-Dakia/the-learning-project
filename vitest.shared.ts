@@ -180,6 +180,7 @@ export const fastTestInclude = [
   'src/server/ai/model-profiles.test.ts',
   'src/server/ai/attempt-cost.test.ts',
   'src/server/ai/provider-attempt-lifecycle.test.ts',
+  'src/server/ai/provider-attempt-decisions.test.ts',
   // YUK-365 — provider resolution (key vs oauth authMode, AI_PROVIDER_OVERRIDE
   // switch). Pure no-DB: imports only ./providers (→ @/ai/registry) + stubs env;
   // no @/db/client / postgres / SDK. src/server/ai/** has no unit glob, so this

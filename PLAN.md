@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。Linear归零持续推进，当前68项未完成；1074/#1544已合入mainfb94e567。当前单线为1075生成阶段拆分；依赖不追新，既有HOLD与生产/付费边界保持。
+> 更新于2026-10-04。Linear归零持续推进，当前67项未完成；1075/#1545已合入maina544a422。当前单线为1076 provider attempt事务拆分；依赖不追新，既有HOLD与生产/付费边界保持。
 
 ## NOW
 
@@ -47,11 +47,13 @@
 
 - YUK-1074/#1544已交付mainfb94e567：108unit/84DB、全部本地gate、独立108unit/84DB及exact-head CI37196444302通过，17分钟窗口完成，Linear Done；增量迁移/浏览器测试未选，现有断言未改。
 
-- YUK-1075 active：refactor/yuk-1075-quiz-gen-phases /workspace/tlp-quiz-gen，basefb94e567；提示上下文、计划、生成解析、持久化、事件/派发/失败处理具名提取，raced duplicate小结果与early-continue。64DB/15unit基线通过，新增6个失败阶段/费用证据场景在原实现和重构后通过；107DB/15unit、typecheck/lint299/build与十项audit通过，独立初审70DB/15unit通过；首CI question-writers门要求retry INSERT与publisher同scope，已回移该写入，audit已绿；107DB/本地gate与独立70DB/question-writers唯一验证审通过，后续push重算窗口。
+- YUK-1075/#1545已交付maina544a422：107DB/15unit、全部本地gate及question-writers、独立初审/唯一修复验证审及exact-head CI37198178024通过；17分钟窗口完成，Linear Done。retry INSERT保留publisher同scope；增量迁移/浏览器未实际运行。
+
+- YUK-1076 active：refactor/yuk-1076-provider-lifecycle /workspace/tlp-provider-lifecycle，basea544a422；具名锁/fence/rate/deadline/policy/persist步骤与纯existing-attempt决策。原50DB/18unit基线通过；新增31个多冲突/错误优先级用例，49unit/50DB通过；保持SQL、锁序、事务外抛拒绝及off/observe/enforce规则。最终49unit/58DB、typecheck/lint299/build及十项audit+provider-attempt-truth通过；54个SQL模板逐字一致，external-ID/finish实现逐字未变。独立初审中。
 
 ## NEXT
 
-1. 交付1075生成阶段拆分后，继续1076–1079及766等已就绪主线。持续推进Linear归零，不以单批合并作为终点。
+1. 交付1076后，继续1077–1079及766等已就绪主线。持续推进Linear归零，不以单批合并作为终点。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
