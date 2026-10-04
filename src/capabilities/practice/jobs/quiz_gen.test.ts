@@ -40,6 +40,7 @@ import {
   question,
   source_document,
 } from '@/db/schema';
+import * as eventWriter from '@/kernel/events';
 import { toMcpAllowedToolName } from '@/kernel/tools/allowlists';
 import { EXA_MCP_ALLOWED_TOOLS, EXA_MCP_SERVER_NAME } from '@/server/ai/mcp/exa';
 import type { PiToolMount } from '@/server/ai/tools/pi-tools';
@@ -611,6 +612,91 @@ describe('runQuizGen', () => {
   beforeEach(async () => {
     await resetDb();
   });
+
+  it.each(['plan', 'plan_retry', 'producer', 'parse', 'persist', 'event'] as const)(
+    'retains failure stage and completed provider evidence when %s fails',
+    async (failurePoint) => {
+      await seedKnowledge({ id: 'k1' });
+      const failure = new Error(`injected ${failurePoint} failure`);
+      let planCalls = 0;
+      const runAgentTaskFn = vi.fn(async (kind: string, input: unknown) => {
+        if (kind === 'QuizPlanTask') {
+          planCalls += 1;
+          if (failurePoint === 'plan' || (failurePoint === 'plan_retry' && planCalls > 1)) {
+            throw failure;
+          }
+          return {
+            text:
+              failurePoint === 'plan_retry' ? '{}' : planTextFor(VALID_OUTPUT, input as PlanInput),
+            task_run_id: 'tr-phase-plan',
+            cost_usd: 0.001,
+          };
+        }
+        if (failurePoint === 'producer') throw failure;
+        return {
+          text: failurePoint === 'parse' ? 'no JSON payload' : VALID_OUTPUT,
+          task_run_id: 'tr-phase-producer',
+          cost_usd: 0.002,
+        };
+      });
+      const enqueueQuizVerify = vi.fn(async () => {});
+      const originalWriteEvent = eventWriter.writeEvent;
+      const eventSpy = vi.spyOn(eventWriter, 'writeEvent').mockImplementation(async (db, input) => {
+        if (
+          failurePoint === 'event' &&
+          input.action === 'experimental:quiz_gen' &&
+          input.outcome === 'success'
+        )
+          throw failure;
+        return originalWriteEvent(db, input);
+      });
+      try {
+        await expect(
+          runQuizGen({
+            db: testDb(),
+            trigger: 'knowledge',
+            refId: 'k1',
+            runAgentTaskFn,
+            enqueueQuizVerify,
+            buildExaMcpServerFn: () => null,
+            retrieveFewShotFn: async () => [],
+            afterExactDuplicateLookupMiss: async () => {
+              if (failurePoint === 'persist') throw failure;
+            },
+          }),
+        ).rejects.toThrow(failurePoint === 'parse' ? /parseOutput/ : failure.message);
+      } finally {
+        eventSpy.mockRestore();
+      }
+      const rows = await testDb()
+        .select()
+        .from(event)
+        .where(eq(event.action, 'experimental:quiz_gen'));
+      expect(rows).toHaveLength(1);
+      const produced = ['parse', 'persist', 'event'].includes(failurePoint);
+      expect(rows[0]).toMatchObject({
+        outcome: 'failure',
+        task_run_id: produced ? 'tr-phase-producer' : null,
+        cost_micro_usd: produced ? 2000 : null,
+        payload: {
+          failure_stage:
+            failurePoint === 'plan_retry'
+              ? 'plan'
+              : failurePoint === 'parse'
+                ? 'producer'
+                : failurePoint,
+          plan_task_run_id: failurePoint === 'plan' ? null : 'tr-phase-plan',
+        },
+      });
+      if (failurePoint === 'plan_retry') {
+        expect(rows[0].payload).toMatchObject({ plan_rejections: [expect.any(Array)] });
+      }
+      expect(planCalls).toBe(failurePoint === 'plan_retry' ? 2 : 1);
+      expect(await testDb().select().from(question)).toHaveLength(failurePoint === 'event' ? 2 : 0);
+      expect(await testDb().select().from(artifact)).toHaveLength(failurePoint === 'event' ? 1 : 0);
+      expect(enqueueQuizVerify).not.toHaveBeenCalled();
+    },
+  );
 
   it('inserts draft questions with source=quiz_gen + metadata.quiz_gen, and enqueues quiz_verify', async () => {
     await seedKnowledge({ id: 'k1' });
