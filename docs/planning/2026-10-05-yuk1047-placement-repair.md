@@ -252,3 +252,73 @@ is open and linked to T3. Exact-head CI and the last-push merge window remain pe
 
 The parent stopped its isolated API and removed its disposable runtime database
 container after acceptance. Screenshots and logs remain under `/tmp/`.
+
+
+## PR #1568 remaining exact-head CI repairs
+
+Implementation-only lane on 2026-10-05, starting at parent commit
+`226cca21ff09d504528cbeb081a1b324c5d81151`. Parent had already repaired the
+separate audit count failure. This lane addressed the remaining **9 failed tests
+in 7 files** from PR head `4a59b5821055838449f65e59a69cf3fb405039ea`.
+The supplied raw log records GitHub's merge checkout `c633d0be`; it is not a
+new verification of the repair commit. Sources:
+`/tmp/yuk1047-ci-failed.log` and `/tmp/yuk1047-ci-failed-clean.log`.
+
+Original failures reproduced unchanged: 2/24 unit failures and 7/58 DB failures,
+plus the advisory-lock test's unhandled connection-close error. Logs:
+`/tmp/yuk1047-ci-repair-unit-red.log` and
+`/tmp/yuk1047-ci-repair-db-red.log`.
+
+| Failure owner | Cause and preserved guarantee |
+| --- | --- |
+| `resource-routes.unit.test.ts` | `regenerate` is no longer a valid solve creation field. Forward the actual `issuance_id`, retaining 201, Location and question-path authority assertions. |
+| `step9-invariant-audit.test.ts` | Native `assessment-capture.ts` was absent from the sanctioned writer inventory. Its existing block UPDATE and lifecycle event share the activation transaction. Register that owner, with real enrollment/revert fold parity below. The invariant still rejects every unsanctioned writer. |
+| `parity-writers-c3.db.test.ts` | Old enrollment used a nonexistent `asset_1` and legacy mistake-result injection; old revert omitted the actual attempt link. Create trusted asset metadata, persist a real frozen capture, explicitly publish its local deterministic fixture reference, then run native auto-enrollment and its real withdrawal. Both lifecycle transitions preserve imported links, version increments and byte-for-byte fold/live parity; the linked learning record is archived on revert. |
+| `advisory-locks.db.test.ts` | Legacy submit bodies were rejected before reaching learning writes. Real published/issued answers still wait behind the separate connection's global lock for the original 600 ms probe, then write FSRS and theta. Six submit/merge races retain the caller subset versus frozen superset and real merge writers, require successful effective correct/incorrect results, and reject deadlocks. Failed assertions now release and drain the lock holder before closing its connection. |
+| `make-paper.db.test.ts` | Direct session opening did not freeze paper issuances; direct legacy slot submission omitted the original assessment. Use the existing frozen-paper helpers and explicit local exact reference. The closed loop retains list/slot/feedback/FSRS assertions and now checks both opening issuances, native participation, independent evaluation, original submission, effective head and activation links. |
+| `appeal.enqueue.db.test.ts` | An isolated historical judge event has no frozen native original and correctly receives 409. Appeal a real effective native evaluation. Keep the exact singleton key/window send assertion and verify its persisted evaluation target and expected head. This remains an enqueue-options test, not a real pg-boss dedup execution claim. |
+| `proposal-appliers.db.test.ts` | Structural active status does not confer automatic scoring admission. Preserve the no-KC match, new approved child KC and absent OCR reference assertions, then verify withheld means unselectable. Author a reviewed local choice key through the existing question editor, run actual source verification/publication with offline solver/grounding ports, and prove placement selection, native issuance, correct evaluation and effective activation. No direct lifecycle/admission-row writes or invented model slice. |
+
+The cold-start source fixture now contains a longer multi-line quadratic problem,
+with factorization, both roots and substitution requirements. The initial short
+fixture failed the existing source-consistency overlap check, **0.12 < 0.15**,
+when compared with its raw VLM JSON envelope. The richer source fixture passes
+that unchanged check; the raw-output provenance policy and independent image
+verification remain intact. Missing references still require review before
+admission. Offline solver/grounding ports establish wiring, not paid-provider
+quality or production model admission.
+
+No production behavior repair was required after valid frozen inputs reached the
+real writers. The only non-test code change is the event-native writer inventory.
+No legacy scoring fallback, admission bypass or audit allowlist was added.
+
+### Final scoped evidence
+
+All DB commands used disposable testcontainers and
+`DOCKER_HOST=unix:///Users/yuqi/.orbstack/run/docker.sock`.
+
+| Check | Verified result | Log under `/tmp/` |
+| --- | --- | --- |
+| Scoped unit: resource routes, Step 9 invariants and fold-write scanner | 3 files / **51 passed**, exit 0 | `yuk1047-ci-repair-unit-pass.log` |
+| Native enrollment/revert parity and appeal enqueue | 2 files / **13 passed** in the first repair run | `yuk1047-ci-repair-db-first.log` |
+| Advisory locks and make-paper closed loop | 2 files / **18 passed** in the second repair run | `yuk1047-ci-repair-db-second.log` |
+| Image-candidate proposal appliers, including cold-start issue/submit/activate | 1 file / **27 passed**, exit 0 | `yuk1047-ci-repair-coldstart-pass.log` |
+| `pnpm typecheck` | exit 0 | `yuk1047-ci-repair-typecheck-final.log` |
+| `pnpm lint:ratchet` | exit 0, **298 warnings / 0 infos**, baseline unchanged at 305 / 0 | `yuk1047-ci-repair-lint-ratchet.log` |
+| `pnpm build` | exit 0, Vite + server/worker/migrate bundles | `yuk1047-ci-repair-build.log` |
+| Biome on touched source files; `git diff --check` | exit 0; four existing warnings only | `yuk1047-ci-repair-biome-final.log` |
+
+These are **58 distinct DB tests**, not a sum of repeated executions. The first
+repair command passed 29/31 but exposed an intermediate fixture insertion mistake
+and the paper's missing explicit exact policy; the second passed 44/45 with only
+the cold-start fixture still failing. After corrections, only the still-failing
+cold-start file was rerun, all 27 passed, and all required gates passed. The final
+runs contain no unhandled rejection. Already passing files were not rerun for a
+single combined green log.
+
+Parent owns tracker capture/status, PR linking, push and fresh exact-head CI.
+No independent review was started; its budget remains exhausted. No full local
+test, delegation, paid call, production access, PR/comment or push ran here.
+There is no separate actionable follow-up from this bounded repair; these fixes
+belong to the existing YUK-1047 task. `.serena/project.yml` remains unrelated and
+unstaged. Writer ownership returns to parent after this lane's evidence commit.

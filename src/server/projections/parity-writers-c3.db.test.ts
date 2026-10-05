@@ -2,8 +2,9 @@
 // Public writers must preserve event/live equality and reject unprepared legacy data.
 
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
+import { captureIngestionOriginal } from '@/capabilities/ingestion/server/assessment-capture';
 import { runAutoEnrollForSession } from '@/capabilities/ingestion/server/auto-enroll';
 import {
   reassignFigure,
@@ -12,15 +13,18 @@ import {
 import { revertAutoEnrolledBlock } from '@/capabilities/ingestion/server/revert-auto-enroll';
 import { editArtifactBodyBlocks } from '@/capabilities/notes/server/body-blocks-edit';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
-import type { MistakeEnrollOutputT } from '@/core/schema/mistake_enroll';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import {
   artifact,
+  assessment_submission,
+  evaluation,
   knowledge,
   learning_record,
   learning_session,
   question_block,
+  source_asset,
 } from '@/db/schema';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import {
   backfillArtifactGenesis,
   backfillQuestionBlockGenesis,
@@ -374,19 +378,98 @@ const setStatusTagging = async () => ({
   reasoning: 'high',
 });
 
-const SET_STATUS_FAILURE_DRAFT: MistakeEnrollOutputT = {
-  wrong_answer: 'failure',
-  question_type: 'computation',
-  difficulty: 3,
-  cause: {
-    primary_category: 'other',
-    secondary_categories: [],
-    analysis_md: 'drafted',
-    confidence: 0.7,
-  },
-  overall_confidence: 0.66,
-  reasoning: 'wrong',
-};
+async function seedNativeSetStatusBlock(sessionId: string, blockId: string) {
+  const db = testDb();
+  await db.insert(knowledge).values({
+    id: 'k1',
+    name: '虚词',
+    domain: 'yuwen',
+    created_at: T0,
+    updated_at: T0,
+  });
+  await db.insert(source_asset).values({
+    id: 'asset_1',
+    kind: 'image',
+    storage_key: 'offline/parity-page',
+    mime_type: 'image/png',
+    byte_size: 4096,
+    sha256: 'a'.repeat(64),
+    created_at: T0,
+  });
+  await db.insert(learning_session).values({
+    id: sessionId,
+    type: 'ingestion',
+    status: 'extracted',
+    source_document_id: 'doc_enroll',
+    source_asset_ids: ['asset_1'],
+    entrypoint: 'vision_paper',
+    created_at: T0,
+    updated_at: T0,
+  });
+  const [block] = await db
+    .insert(question_block)
+    .values({
+      id: blockId,
+      ingestion_session_id: sessionId,
+      source_asset_ids: ['asset_1'],
+      extracted_prompt_md: '阅读「学而时习之」。\n指出「之」所指的内容，保留原图以便复核上下文。',
+      structured: {
+        id: blockId,
+        role: 'standalone',
+        source: 'vlm_structure',
+        prompt_text: '阅读「学而时习之」。\n指出「之」所指的内容，保留原图以便复核上下文。',
+      },
+      reference_md: '所学的内容',
+      wrong_answer_md: '前往某地，是动词。',
+      image_refs: ['asset_1'],
+      layout_quality: 'structured',
+      extraction_confidence: 1,
+      status: 'draft',
+      knowledge_hint: '之',
+      created_at: T0,
+      updated_at: T0,
+      version: 0,
+    })
+    .returning();
+  if (!block) throw new Error('native parity block missing');
+  await backfillQuestionBlockGenesis(db, T0);
+  const captured = await captureIngestionOriginal(db, {
+    block,
+    knowledgeIds: ['k1'],
+    difficulty: 3,
+    confidence: 1,
+    canEnroll: true,
+    pageRefs: ['asset_1'],
+    now: T0,
+  });
+  if (!captured) throw new Error('native parity original missing');
+  const publication = await publishQuestionGroupFromRow(db, {
+    rootId: captured.questionId,
+    actorRef: 'test:local-parity-reference',
+    now: T0,
+    admission: {
+      state: 'admitted',
+      evidence: {
+        marking_provenance: 'official',
+        verification: { structural_check_passed: true, independent_verification: null },
+        model_slice: null,
+      },
+    },
+  });
+  expect(publication.status).toBe('admission_updated');
+  return { db, captured };
+}
+
+async function enrollSetStatusBlock(sessionId: string) {
+  return runAutoEnrollForSession({
+    db: testDb(),
+    sessionId,
+    subjectId: 'yuwen',
+    env: { [SET_STATUS_FLAG]: 'true' },
+    runTaggingFn: setStatusTagging,
+    tagKnowledgeFn: async () => ({ kind: 'match' as const, knowledge_ids: ['k1'] }),
+  });
+}
 
 describe('W3-D — question_block set_status parity through runAutoEnrollForSession (real writer)', () => {
   beforeEach(async () => {
@@ -394,82 +477,22 @@ describe('W3-D — question_block set_status parity through runAutoEnrollForSess
   });
 
   it('a clean auto-enroll folds == row (status=auto_enrolled + imported_* + version bumped)', async () => {
-    const db = testDb();
-    await db.insert(knowledge).values({
-      id: 'k1',
-      name: '虚词',
-      domain: 'yuwen',
-      parent_id: null,
-      archived_at: null,
-      created_at: T0,
-      updated_at: T0,
-      version: 0,
-    });
     const sessionId = 'sess_enroll';
-    await db.insert(learning_session).values({
-      id: sessionId,
-      type: 'ingestion',
-      status: 'extracted',
-      source_document_id: 'doc_enroll',
-      source_asset_ids: ['asset_1'],
-      entrypoint: 'vision_paper',
-      warnings: [],
-      created_at: T0,
-      updated_at: T0,
-      version: 0,
-    });
-    // ONE answered draft block (the PRE-writer state).
-    await testDb()
-      .insert(question_block)
-      .values({
-        id: 'qbe_1',
-        ingestion_session_id: sessionId,
-        source_document_id: null,
-        source_asset_ids: ['asset_1'],
-        page_spans: [],
-        extracted_prompt_md: 'legacy prompt md',
-        structured: {
-          id: 'qbe_1',
-          role: 'standalone',
-          prompt_text: '下列句中「之」的用法',
-          source: 'vlm_structure',
-        },
-        figures: [],
-        layout_quality: 'structured',
-        reference_md: '参考',
-        wrong_answer_md: '学生错答',
-        image_refs: ['asset_1'],
-        crop_refs: [],
-        visual_complexity: 'low',
-        extraction_confidence: 1,
-        status: 'draft',
-        knowledge_hint: '之',
-        merged_from_block_ids: [],
-        imported_question_id: null,
-        imported_attempt_event_id: null,
-        created_at: T0,
-        updated_at: T0,
-        version: 0,
-      });
-
-    // Anchor the DRAFT (PRE-writer) state as the event-sourced BASE BEFORE auto-enroll runs.
-    await backfillQuestionBlockGenesis(db, T0);
-
-    const result = await runAutoEnrollForSession({
-      db,
-      sessionId,
-      subjectId: 'yuwen',
-      env: { [SET_STATUS_FLAG]: 'true' },
-      runTaggingFn: setStatusTagging,
-      tagKnowledgeFn: async () => ({ kind: 'match' as const, knowledge_ids: ['k1'] }),
-      runMistakeEnrollFn: vi.fn(async () => SET_STATUS_FAILURE_DRAFT),
-    });
+    const { db, captured } = await seedNativeSetStatusBlock(sessionId, 'qbe_1');
+    const result = await enrollSetStatusBlock(sessionId);
     expect(result.enrolled).toBe(1);
 
     const row = await liveBlockRow('qbe_1');
     expect(row?.status).toBe('auto_enrolled');
     expect(row?.imported_question_id).not.toBeNull();
     expect(row?.version).toBe(1);
+
+    expect(row?.imported_question_id).toBe(captured.questionId);
+    const [original] = await db.select().from(assessment_submission);
+    const [judgment] = await db.select().from(evaluation);
+    expect(judgment.submission_id).toBe(original.submission_id);
+    const [record] = await db.select().from(learning_record);
+    expect(record.attempt_event_id).toBe(row?.imported_attempt_event_id);
 
     // The fold reproduces the live row byte-for-byte through the set_status lifecycle branch.
     const qlive = await liveBlockRow('qbe_1');
@@ -486,66 +509,31 @@ describe('W3-D — question_block set_status parity through revertAutoEnrolledBl
   });
 
   it('a clean revert folds == row (status reset to draft + imported_* cleared + version bumped)', async () => {
-    const db = testDb();
     const sessionId = 'sess_revert';
-    const questionId = 'q_revert';
-    const originEventId = 'evt_origin_revert';
-    // PRE-state: an auto_enrolled block linked to a question + its origin (attempt) event.
-    await testDb()
-      .insert(question_block)
-      .values({
-        id: 'qbr_1',
-        ingestion_session_id: sessionId,
-        source_document_id: null,
-        source_asset_ids: [],
-        page_spans: [],
-        extracted_prompt_md: 'legacy prompt md',
-        structured: node('qbr_1', 'reverted prompt'),
-        figures: [],
-        layout_quality: 'structured',
-        reference_md: null,
-        wrong_answer_md: null,
-        image_refs: [],
-        crop_refs: [],
-        visual_complexity: 'low',
-        extraction_confidence: 1,
-        status: 'auto_enrolled',
-        knowledge_hint: null,
-        merged_from_block_ids: [],
-        imported_question_id: questionId,
-        imported_attempt_event_id: originEventId,
-        created_at: T0,
-        updated_at: T0,
-        version: 0,
-      });
-    // The active learning_record revert looks up (by question_id) + archives; origin_event_id is the
-    // retract target. None of these columns carry an FK, so a minimal row suffices.
-    await db.insert(learning_record).values({
-      id: 'lr_revert',
-      kind: 'mistake',
-      source: 'ingestion',
-      capture_mode: 'image',
-      activity_kind: 'capture',
-      question_id: questionId,
-      origin_event_id: originEventId,
-      created_at: T0,
-      updated_at: T0,
-    });
-
-    // Anchor the auto_enrolled (PRE-revert) state as the event-sourced BASE.
-    await backfillQuestionBlockGenesis(db, T0);
+    const { db, captured } = await seedNativeSetStatusBlock(sessionId, 'qbr_1');
+    const enrollment = await enrollSetStatusBlock(sessionId);
+    expect(enrollment.enrolled).toBe(1);
+    const before = await liveBlockRow('qbr_1');
+    expect(before?.status).toBe('auto_enrolled');
+    expectFoldEqualsRow(
+      await gatherAndFoldQuestionBlock(db, 'qbr_1'),
+      before ? questionBlockLiveRowToSnapshot(before) : null,
+    );
 
     const res = await revertAutoEnrolledBlock(db, { blockId: 'qbr_1', sessionId });
-    expect(res.questionId).toBe(questionId);
+    expect(res.questionId).toBe(captured.questionId);
 
     const row = await liveBlockRow('qbr_1');
     expect(row?.status).toBe('draft');
     expect(row?.imported_question_id).toBeNull();
     expect(row?.imported_attempt_event_id).toBeNull();
-    expect(row?.version).toBe(1);
+    expect(row?.version).toBe((before?.version ?? 0) + 1);
 
-    // The fold reproduces the live row byte-for-byte: genesis(auto_enrolled, imported_* set) +
-    // set_status(draft, imported_* explicitly cleared).
+    const [record] = await db.select().from(learning_record);
+    expect(record.archived_at).not.toBeNull();
+    expect(res.retractedEventId).toBe(before?.imported_attempt_event_id);
+
+    // Genesis plus both native lifecycle transitions reproduce the live row.
     const qlive = await liveBlockRow('qbr_1');
     expectFoldEqualsRow(
       await gatherAndFoldQuestionBlock(db, 'qbr_1'),
