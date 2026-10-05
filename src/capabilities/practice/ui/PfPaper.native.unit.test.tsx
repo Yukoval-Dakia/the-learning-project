@@ -146,3 +146,33 @@ it('autosaves and submits stable native responses separately for each paper occu
     },
   });
 });
+
+it('shows an unbound historical paper without accepting edits or claiming it can be submitted', async () => {
+  const historical = slot('historical', false);
+  delete historical.assessment;
+  mocks.getPaperDetail.mockResolvedValue({
+    artifact_id: 'paper-history',
+    title: '历史试卷',
+    session: { id: 'session-history', status: 'started', pos: 0, right: 0, wrong: 0 },
+    sections: [{ section_index: 0, knowledge_focus_names: [], slots: [historical] }],
+  });
+  render(
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <PfPaper
+        artifactId="paper-history"
+        onExit={vi.fn()}
+        onSubmitted={vi.fn()}
+        addToast={vi.fn()}
+      />
+    </QueryClientProvider>,
+  );
+  expect(
+    ((await screen.findByRole('textbox', { name: '作答' })) as HTMLTextAreaElement).disabled,
+  ).toBe(true);
+  expect((screen.getByRole('button', { name: /交卷/ }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByText('这份历史试卷缺少原始发题记录，当前只能查看。')).not.toBeNull();
+  expect(mocks.savePaperAnswer).not.toHaveBeenCalled();
+  expect(mocks.submitPaperSlot).not.toHaveBeenCalled();
+});

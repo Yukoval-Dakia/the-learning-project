@@ -17,12 +17,16 @@
 
 import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { autosaveAnswerDraft } from '@/capabilities/practice/server/answer-draft';
-import { submitPaperSlot } from '@/capabilities/practice/server/paper-submit';
 import { newId } from '@/core/ids';
 import { artifact, event, knowledge, learning_session, question } from '@/db/schema';
-import { Review } from '@/server/session';
+import {
+  correctPaperFixture,
+  paperFixtureAssessment,
+  startFrozenPaperFixture,
+  submitPaperFixture as submitPaperSlot,
+} from '../../../../tests/fixtures/assessment-paper';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { createAnswerDraft } from './paper-answer-route';
 import { PaperDetailResponseSchema } from './paper-contracts';
 import { GET } from './paper-detail-route';
 
@@ -32,6 +36,7 @@ async function seedQuestion(id: string, reference: string, kind = 'true_false') 
   await db.insert(question).values({
     id,
     kind,
+    judge_kind_override: 'exact',
     prompt_md: `Prompt for ${id}`,
     reference_md: reference,
     knowledge_ids: ['k1'],
@@ -154,33 +159,33 @@ describe('GET /api/practice/[id]', () => {
     await seedQuestion('q1', 'true');
     await seedPaper('p1', { questionIds: ['q1'] });
     const db = testDb();
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'p1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'p1');
 
-    await autosaveAnswerDraft(db, {
-      sessionId,
-      questionId: 'q1',
-      inputKind: 'text',
-      contentMd: 'my draft answer',
-      paperArtifactId: 'p1',
-    });
+    const saved = await createAnswerDraft(
+      new Request('http://localhost/paper-draft', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          question_id: 'q1',
+          content_md: 'my draft answer',
+          assessment: await paperFixtureAssessment(db, sessionId, 'q1', 'my draft answer'),
+          expected_save_epoch: 0,
+        }),
+      }),
+      { id: 'p1' },
+    );
+    expect(saved.status).toBe(200);
 
     const [req, ctx] = makeRequest('p1');
     const res = await GET(req, ctx);
-    const body = (await res.json()) as {
-      sections: Array<{
-        slots: Array<{
-          question_id: string;
-          slot_state: {
-            draft: { content_md: string; input_kind: string } | null;
-            submission: null;
-          };
-        }>;
-      }>;
-    };
+    const body = PaperDetailResponseSchema.parse(await res.json());
 
     const slot = body.sections[0]?.slots.find((s) => s.question_id === 'q1');
-    expect(slot?.slot_state.draft?.content_md).toBe('my draft answer');
-    expect(slot?.slot_state.draft?.input_kind).toBe('text');
+    expect(slot?.assessment?.response_set.entries).toMatchObject([
+      { kind: 'text', text_md: 'my draft answer' },
+    ]);
+    expect(slot?.assessment?.save_epoch).toBe(1);
     expect(slot?.slot_state.submission).toBeNull();
   });
 
@@ -188,7 +193,7 @@ describe('GET /api/practice/[id]', () => {
     await seedQuestion('q1', 'true'); // reference_md = 'true'
     await seedPaper('p1', { questionIds: ['q1'], feedbackPolicy: 'immediate' });
     const db = testDb();
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'p1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'p1');
 
     await submitPaperSlot(
       {
@@ -227,7 +232,7 @@ describe('GET /api/practice/[id]', () => {
     await seedQuestion('q1', 'true');
     await seedPaper('p1', { questionIds: ['q1'], feedbackPolicy: 'judge_now_show_later' });
     const db = testDb();
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'p1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'p1');
 
     await submitPaperSlot(
       {
@@ -264,7 +269,7 @@ describe('GET /api/practice/[id]', () => {
     await seedQuestion('q1', 'true'); // reference_md = 'true'
     await seedPaper('p1', { questionIds: ['q1'], feedbackPolicy: 'judge_now_show_later' });
     const db = testDb();
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'p1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'p1');
 
     // Submit the correct answer so coarse_outcome='correct' after reveal.
     await submitPaperSlot(
@@ -425,7 +430,7 @@ describe('GET /api/practice/[id]', () => {
     await seedQuestion('q1', 'true');
     await seedPaper('p_rj', { questionIds: ['q1'], feedbackPolicy: 'immediate' });
     const db = testDb();
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'p_rj' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'p_rj');
 
     const sub = await submitPaperSlot(
       {
@@ -448,20 +453,7 @@ describe('GET /api/practice/[id]', () => {
     expect(before.session?.right).toBe(1);
     expect(before.session?.wrong).toBe(0);
 
-    // Insert a superseding judge event: coarse_outcome='incorrect'.
-    await db.insert(event).values({
-      id: newId(),
-      session_id: sessionId,
-      actor_kind: 'agent',
-      actor_ref: 'rejudge',
-      action: 'judge',
-      subject_kind: 'event',
-      subject_id: sub.attemptEventId,
-      outcome: 'success',
-      payload: { coarse_outcome: 'incorrect', referenced_knowledge_ids: [] },
-      caused_by_event_id: sub.attemptEventId,
-      created_at: new Date(),
-    });
+    await correctPaperFixture(db, sub.attemptEventId, 0);
 
     // After rejudge: detail summary must use newest judge event → wrong=1.
     const [req1, ctx1] = makeRequest('p_rj');

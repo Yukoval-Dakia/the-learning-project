@@ -21,7 +21,15 @@ const mocks = vi.hoisted(() => ({
 // paperAnswerDraftBodyBytes) that flushDirtySlots calls; only the network functions are mocked.
 vi.mock('./practice-api', async () => {
   const actual = await vi.importActual<typeof import('./practice-api')>('./practice-api');
-  return { ...actual, ...mocks };
+  const { nativePaperDetailFixture } = await import(
+    '../../../../tests/fixtures/assessment-paper-ui'
+  );
+  return {
+    ...actual,
+    ...mocks,
+    getPaperDetail: (...args: unknown[]) =>
+      mocks.getPaperDetail(...args).then(nativePaperDetailFixture),
+  };
 });
 
 const textDetail = {

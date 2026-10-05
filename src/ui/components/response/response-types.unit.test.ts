@@ -12,6 +12,7 @@ import {
   moveOrderedItem,
   moveOrderedItemTo,
   nativeResponseEntry,
+  nativeResponseText,
   nativeResponseValue,
   optionLabel,
   optionsFromChoicesMd,
@@ -209,6 +210,8 @@ describe('native frozen response editing', () => {
     expect(entry).toEqual({ slot_id: 'r-opaque', kind: 'choice', option_ids: ['id-second'] });
     expect(nativeResponseValue(entry)).toEqual({ kind: 'choice', option_ids: ['id-second'] });
     expect(nativeResponseValue(undefined)).toBeUndefined();
+    expect(nativeResponseText(entry, slot)).toBe('乙. 相同正文');
+    expect(nativeResponseText(entry, slot)).not.toContain('id-second');
     expect(nativeResponseEntry(slot, { kind: 'choice', option_ids: [] })).toMatchObject({
       option_ids: [],
     });
@@ -293,4 +296,34 @@ describe('native frozen response editing', () => {
       ),
     ).toThrow();
   });
+});
+
+it('renders frozen matching and ordering meanings without changing their original identities', () => {
+  const items = [
+    { item_id: 'id-up', label: '一', text: '逆水' },
+    { item_id: 'id-down', label: '二', text: '顺水' },
+  ];
+  const options = [
+    { option_id: 'id-slow', label: '甲', text: '速度较慢' },
+    { option_id: 'id-fast', label: '乙', text: '速度较快' },
+  ];
+  expect(
+    nativeResponseText(
+      { slot_id: 'match', kind: 'matching', pairs: [{ item_id: 'id-up', option_id: 'id-slow' }] },
+      {
+        slot_id: 'match',
+        part_id: 'p',
+        kind: 'matching',
+        left_items: items,
+        right_options: options,
+        allow_left_unmatched: true,
+      },
+    ),
+  ).toBe('一. 逆水 → 甲. 速度较慢');
+  expect(
+    nativeResponseText(
+      { slot_id: 'order', kind: 'ordering', item_order: ['id-down', 'id-up'] },
+      { slot_id: 'order', part_id: 'p', kind: 'ordering', items },
+    ),
+  ).toBe('二. 顺水 → 一. 逆水');
 });

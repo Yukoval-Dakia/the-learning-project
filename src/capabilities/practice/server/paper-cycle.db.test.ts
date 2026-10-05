@@ -16,11 +16,14 @@
 // reference_md) — no LLM / runTask mock needed.
 
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import * as invokerModule from '@/capabilities/practice/server/judge/invoker';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ModelExecutorRequest, ModelUnitOutcomeT } from '@/core/schema/assessment';
+import type { Db } from '@/db/client';
 import {
   answer,
   artifact,
+  assessment_submission,
+  evaluation,
   event,
   learning_session,
   mastery_state,
@@ -30,10 +33,18 @@ import {
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import * as masteryStateModule from '@/server/mastery/state';
 import { Review } from '@/server/session';
+import {
+  publishPaperModelFixture,
+  reopenFrozenPaperFixture,
+  startFrozenPaperFixture,
+  submitPaperFixture as submitPaperSlot,
+} from '../../../../tests/fixtures/assessment-paper';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { createPaperReviewSession } from '../api/paper-session-create';
 import { autosaveAnswerDraft, countAnsweredSlots, freezeAnswerDraft } from './answer-draft';
+import * as evaluationService from './judge/evaluate-submission';
+import { createRecordedModelExecutor } from './judge/recorded-model-executor';
 import { getPaperDetail } from './paper-detail';
-import { submitPaperSlot } from './paper-submit';
 import { getPracticeList, isJudgementVisibleToUser } from './practice-read';
 
 async function seedQuestion(id: string, reference: string) {
@@ -42,6 +53,7 @@ async function seedQuestion(id: string, reference: string) {
   await db.insert(question).values({
     id,
     kind: 'true_false',
+    judge_kind_override: 'exact',
     prompt_md: `Prompt ${id}`,
     reference_md: reference,
     knowledge_ids: ['k1'],
@@ -54,7 +66,12 @@ async function seedQuestion(id: string, reference: string) {
   });
 }
 
-async function seedPaper(id: string, questionIds: string[]) {
+async function seedPaper(
+  id: string,
+  questionIds: string[],
+  partRefs: string[] = [],
+  feedbackPolicy = 'immediate',
+) {
   const db = testDb();
   const now = new Date();
   await db.insert(artifact).values({
@@ -70,15 +87,18 @@ async function seedPaper(id: string, questionIds: string[]) {
       sections: [
         {
           knowledge_focus: ['k1'],
-          feedback_policy: 'immediate',
+          feedback_policy: feedbackPolicy,
           adaptation_policy: 'none',
-          assignments: questionIds.map((qid) => ({
-            question_id: qid,
-            primary_knowledge_id: 'k1',
-            secondary_knowledge_ids: [],
-            selection_reason: 'test',
-            review_profile_snapshot: {},
-          })),
+          assignments: questionIds.flatMap((qid) =>
+            (partRefs.length ? partRefs : [null]).map((part_ref) => ({
+              ...(part_ref ? { part_ref } : {}),
+              question_id: qid,
+              primary_knowledge_id: 'k1',
+              secondary_knowledge_ids: [],
+              selection_reason: 'test',
+              review_profile_snapshot: {},
+            })),
+          ),
         },
       ],
     } as never,
@@ -90,6 +110,68 @@ async function seedPaper(id: string, questionIds: string[]) {
     version: 0,
   });
 }
+
+async function submissionForAttempt(attemptId: string) {
+  const [anchor] = await testDb().select().from(event).where(eq(event.id, attemptId));
+  if (typeof anchor?.payload.submission_id !== 'string') throw new Error('native capture absent');
+  const [submission] = await testDb()
+    .select()
+    .from(assessment_submission)
+    .where(eq(assessment_submission.submission_id, anchor.payload.submission_id));
+  return submission;
+}
+
+async function candidatesForAttempt(attemptId: string) {
+  const submission = await submissionForAttempt(attemptId);
+  return testDb()
+    .select()
+    .from(evaluation)
+    .where(eq(evaluation.submission_id, submission.submission_id));
+}
+
+function scored(input: ModelExecutorRequest, runId: string, points = 1): ModelUnitOutcomeT {
+  return {
+    kind: 'scored',
+    points_awarded: points,
+    confidence: 0.95,
+    matched: {
+      rule_id:
+        input.unit.criterion.kind === 'rule_reference' ? input.unit.criterion.rule_id : undefined,
+      option_ids: [],
+    },
+    evidence_citations: input.group_evidence.length
+      ? [{ evidence_id: input.group_evidence[0].evidence.evidence_id }]
+      : [{ slot_id: input.slot_responses[0].slot_id }],
+    run_refs: [runId],
+    cost_usd_micros: 80,
+  };
+}
+
+function installExecutor(db: Db, execute: Parameters<typeof createRecordedModelExecutor>[1]) {
+  return vi
+    .spyOn(evaluationService, 'createFormalModelExecutor')
+    .mockImplementation(() => createRecordedModelExecutor(db, execute));
+}
+
+async function modelPaper() {
+  const db = testDb();
+  await seedQuestion('q1', '必须列出方程、解释消元并保留速度单位。');
+  await db.update(question).set({ judge_kind_override: 'semantic' }).where(eq(question.id, 'q1'));
+  await publishPaperModelFixture(db, 'q1');
+  await seedPaper('paper1', ['q1']);
+  const { sessionId } = await startFrozenPaperFixture(db, 'paper1');
+  return {
+    db,
+    input: {
+      sessionId,
+      paperArtifactId: 'paper1',
+      questionId: 'q1',
+      answerMd: 'v+c=18，v-c=12，得2v=30，静水船速15 km/h。',
+    },
+  };
+}
+
+afterEach(() => vi.restoreAllMocks());
 
 describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', () => {
   beforeEach(async () => {
@@ -103,7 +185,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     await seedQuestion('q2', 'true');
     await seedPaper('paper1', ['q1', 'q2']);
 
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper1');
 
     // ── 1. DRAFT q1 (autosave). One live draft, no frozen rows, pos=0. ──
     await autosaveAnswerDraft(db, {
@@ -154,20 +236,18 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     expect(frozen1[0].event_id).toBe(submit1.attemptEventId);
     expect(await countAnsweredSlots(db, sessionId)).toBe(1);
 
-    // attempt + independent judge event written, judge chains the attempt.
-    const judge1 = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'judge'), eq(event.subject_kind, 'event')));
+    // The candidate refers to the immutable original submission behind the capture.
+    const judge1 = await db.select().from(evaluation);
     expect(judge1).toHaveLength(1);
-    expect(judge1[0].subject_id).toBe(submit1.attemptEventId);
-    expect(judge1[0].caused_by_event_id).toBe(submit1.attemptEventId);
+    expect(judge1[0].submission_id).toBe(
+      (await submissionForAttempt(submit1.attemptEventId)).submission_id,
+    );
 
     // ── 3. ABANDON the session. ──
     await Review.abandonReviewSession(db, sessionId);
 
     // ── 4. REOPEN (abandoned → started ONLY). ──
-    await Review.reopenAbandonedReviewSession(db, sessionId);
+    await reopenFrozenPaperFixture(db, sessionId);
 
     // ── 5. NEW DRAFT on the SAME slot q1 — allowed (old row frozen, excluded
     //       from the partial index). Two rows now: one frozen + one live. ──
@@ -212,13 +292,9 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     expect(frozenCount).toBe(2);
     expect(await countAnsweredSlots(db, sessionId)).toBe(1); // NOT 2
 
-    // Two judge events for q1's two attempts (rejudge = new event, D6). The
-    // read layer takes newest-per-attempt; the practice-list right/wrong takes
-    // newest-attempt-per-slot.
-    const allJudges = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'judge'), eq(event.subject_kind, 'event')));
+    // Reopening issues a new occurrence: both immutable candidates remain.
+    // The practice list projects only the current occurrence's effective verdict.
+    const allJudges = await db.select().from(evaluation);
     expect(allJudges).toHaveLength(2);
 
     // ── 7. Practice list aggregation: pos=1 (q1 answered once distinct),
@@ -253,31 +329,18 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
       .set({ parent_question_id: 'missing_parent' })
       .where(eq(question.id, 'q_orphan'));
     await seedPaper('paper_orphan', ['q_orphan']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_orphan' });
-
-    await expect(
-      submitPaperSlot(
-        {
-          sessionId,
-          paperArtifactId: 'paper_orphan',
-          questionId: 'q_orphan',
-          answerMd: 'true',
-          primaryKnowledgeId: 'k1',
-          feedbackPolicy: 'immediate',
-        },
-        db,
-      ),
-    ).rejects.toMatchObject({
-      code: 'question_evidence_unavailable',
+    await expect(createPaperReviewSession('paper_orphan')).rejects.toMatchObject({
       status: 409,
+      code: 'unpublished',
     });
+    expect(await db.select().from(learning_session)).toHaveLength(0);
   });
 
   it('partial index rejects a second live draft on the same slot (DB-level guard)', async () => {
     const db = testDb();
     await seedQuestion('q1', 'true');
     await seedPaper('paper1', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper1');
 
     await autosaveAnswerDraft(db, {
       sessionId,
@@ -312,10 +375,22 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     const db = testDb();
     await seedQuestion('q1', 'true');
     // Part A and Part B are submitted on the same question_id but distinct part_refs.
-    await seedPaper('paper_composite', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, {
-      artifactId: 'paper_composite',
-    });
+    await db
+      .update(question)
+      .set({
+        structured: {
+          id: 'stem',
+          role: 'stem',
+          prompt_text: '根据给定条件分别判断两项陈述。',
+          sub_questions: [
+            { id: 'part_a', role: 'sub', prompt_text: '第一项陈述', answers: ['true'] },
+            { id: 'part_b', role: 'sub', prompt_text: '第二项陈述', answers: ['true'] },
+          ],
+        },
+      })
+      .where(eq(question.id, 'q1'));
+    await seedPaper('paper_composite', ['q1'], ['part_a', 'part_b']);
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper_composite');
 
     // Submit part A: correct.
     const submitA = await submitPaperSlot(
@@ -364,10 +439,22 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     // frozen row (not the original).
     const db = testDb();
     await seedQuestion('q1', 'true');
-    await seedPaper('paper_composite', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, {
-      artifactId: 'paper_composite',
-    });
+    await db
+      .update(question)
+      .set({
+        structured: {
+          id: 'stem',
+          role: 'stem',
+          prompt_text: '根据给定条件分别判断两项陈述。',
+          sub_questions: [
+            { id: 'part_a', role: 'sub', prompt_text: '第一项陈述', answers: ['true'] },
+            { id: 'part_b', role: 'sub', prompt_text: '第二项陈述', answers: ['true'] },
+          ],
+        },
+      })
+      .where(eq(question.id, 'q1'));
+    await seedPaper('paper_composite', ['q1'], ['part_a', 'part_b']);
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper_composite');
 
     // First attempt on part_a: correct.
     await submitPaperSlot(
@@ -384,7 +471,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
 
     // Abandon then reopen.
     await Review.abandonReviewSession(db, sessionId);
-    await Review.reopenAbandonedReviewSession(db, sessionId);
+    await reopenFrozenPaperFixture(db, sessionId);
 
     // Second attempt on SAME part_a: now incorrect (changed answer).
     await submitPaperSlot(
@@ -424,9 +511,8 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     // outcome, then verify the aggregation.
     await seedQuestion('q1', 'true');
     await seedPaper('paper_partial', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, {
-      artifactId: 'paper_partial',
-    });
+    // Historical partial records retain their read semantics after execution cutover.
+    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_partial' });
 
     // Insert a frozen answer row + a synthetic attempt event with outcome='partial'
     // to simulate what submitPaperSlot would write for a partial judge outcome.
@@ -472,7 +558,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     const db = testDb();
     await seedQuestion('q1', 'true');
     await seedPaper('paper_f1', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_f1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper_f1');
 
     const submit = await submitPaperSlot(
       {
@@ -502,11 +588,10 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     const attemptEvents = await db
       .select()
       .from(event)
-      .where(and(eq(event.action, 'attempt'), eq(event.subject_id, 'q1')));
+      .where(and(eq(event.action, 'experimental:assessment_attempt'), eq(event.subject_id, 'q1')));
     expect(attemptEvents).toHaveLength(1);
-    expect((attemptEvents[0].payload as { unsupported_judge?: boolean }).unsupported_judge).toBe(
-      true,
-    );
+    expect(attemptEvents[0].outcome).toBeNull();
+    expect(submit.status).toBe('review_required');
 
     // NO FSRS state written for the un-judged slot.
     const fsrsRows = await db
@@ -546,8 +631,8 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
   it('hidden judgement (feedback_policy=judge_now_show_later) is buffered until completion', async () => {
     const db = testDb();
     await seedQuestion('q1', 'true');
-    await seedPaper('paper1', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+    await seedPaper('paper1', ['q1'], [], 'judge_now_show_later');
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper1');
 
     const submit = await submitPaperSlot(
       {
@@ -562,15 +647,8 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     );
     expect(submit.visibleToUser).toBe(false);
 
-    // The judge event carries visible_to_user:false.
-    const judge = (
-      await db
-        .select()
-        .from(event)
-        .where(and(eq(event.action, 'judge'), eq(event.subject_kind, 'event')))
-    )[0];
-    const payload = judge.payload as { visible_to_user?: boolean };
-    expect(payload.visible_to_user).toBe(false);
+    const [capture] = await db.select().from(event).where(eq(event.id, submit.attemptEventId));
+    expect(capture.payload.paper_feedback_policy).toBe('judge_now_show_later');
 
     // Derived visibility (§4.9):
     // started session → hidden to user, always visible to Coach.
@@ -596,7 +674,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     const db = testDb();
     await seedQuestion('q1', 'true');
     await seedPaper('paper1', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper1');
 
     // Autosave a draft, then freeze it (simulates normal submit path).
     await autosaveAnswerDraft(db, {
@@ -643,7 +721,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     const db = testDb();
     await seedQuestion('q1', 'true');
     await seedPaper('paper1', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper1');
 
     // Pre-insert a live draft directly (bypassing helper), simulating the
     // concurrent winner that committed before our INSERT runs.
@@ -698,7 +776,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     await seedPaper('paper1', ['q1']);
     await seedPaper('paper2', ['q1']);
     // Start a session against paper2 but try to submit against paper1.
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper2' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper2');
 
     await expect(
       submitPaperSlot(
@@ -711,14 +789,14 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
         },
         db,
       ),
-    ).rejects.toThrow(/not bound to paper/i);
+    ).rejects.toMatchObject({ status: 409, code: 'historical_unknown' });
   });
 
   it('fix #3: submitPaperSlot rejects a completed session (400)', async () => {
     const db = testDb();
     await seedQuestion('q1', 'true');
     await seedPaper('paper1', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper1');
 
     // Force session to completed.
     await db
@@ -738,7 +816,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
         },
         db,
       ),
-    ).rejects.toThrow(/status.*completed|cannot accept submissions/i);
+    ).rejects.toMatchObject({ status: 409, code: 'session_closed' });
   });
 
   // ── fix #5 (round-2 P1): duplicate submit is idempotent ─────────────────────
@@ -746,7 +824,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     const db = testDb();
     await seedQuestion('q1', 'true');
     await seedPaper('paper1', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper1');
 
     // First submit.
     const first = await submitPaperSlot(
@@ -776,7 +854,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
 
     // Same ids returned.
     expect(second.attemptEventId).toBe(first.attemptEventId);
-    expect(second.judgeEventId).toBe(first.judgeEventId);
+    expect(second.evaluationId).toBe(first.evaluationId);
     expect(second.answerId).toBe(first.answerId);
 
     // No duplicate frozen rows — exactly one frozen row for the slot.
@@ -798,17 +876,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
       .where(and(eq(answer.session_id, sessionId), eq(answer.question_id, 'q1')));
     expect(allRows).toHaveLength(1); // exactly one frozen row, not two
 
-    // No duplicate events.
-    const judgeEvents = await db
-      .select()
-      .from(event)
-      .where(
-        and(
-          eq(event.action, 'judge'),
-          eq(event.subject_kind, 'event'),
-          eq(event.subject_id, first.attemptEventId),
-        ),
-      );
+    const judgeEvents = await candidatesForAttempt(first.attemptEventId);
     expect(judgeEvents).toHaveLength(1);
   });
 
@@ -817,7 +885,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     const db = testDb();
     await seedQuestion('q1', 'true');
     await seedPaper('paper1', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper1');
 
     await submitPaperSlot(
       {
@@ -832,7 +900,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
 
     // Reopen, then resubmit with different content.
     await Review.abandonReviewSession(db, sessionId);
-    await Review.reopenAbandonedReviewSession(db, sessionId);
+    await reopenFrozenPaperFixture(db, sessionId);
     const second = await submitPaperSlot(
       {
         sessionId,
@@ -860,7 +928,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     const db = testDb();
     await seedQuestion('q1', 'true');
     await seedPaper('paper1', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper1');
 
     // First submit: text 'true' + photo A.
     await submitPaperSlot(
@@ -901,7 +969,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     const db = testDb();
     await seedQuestion('q1', 'true');
     await seedPaper('paper1', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper1');
 
     const first = await submitPaperSlot(
       {
@@ -919,7 +987,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     // refs are part of "content", this is not idempotent: a new attempt+judge
     // row is appended and the answer is re-judged (new attempt id).
     await Review.abandonReviewSession(db, sessionId);
-    await Review.reopenAbandonedReviewSession(db, sessionId);
+    await reopenFrozenPaperFixture(db, sessionId);
     const second = await submitPaperSlot(
       {
         sessionId,
@@ -967,7 +1035,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
       updated_at: now,
       version: 0,
     });
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'flat_paper' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'flat_paper');
 
     // submitPaperSlot with primaryKnowledgeId=null (flat path — question-keyed FSRS).
     const result = await submitPaperSlot(
@@ -1000,18 +1068,16 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     const db = testDb();
     await seedQuestion('q1', 'true');
     await seedPaper('paper1', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper1');
 
     await db
       .update(learning_session)
       .set({ status: 'completed' })
       .where(eq(learning_session.id, sessionId));
 
-    // Spy on the invoker factory — if judge runs, invokeSpy will be called.
+    // Observe evaluation: rejecting this request must happen before grading.
     const invokeSpy = vi.fn();
-    vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockReturnValue({
-      invoke: invokeSpy,
-    } as never);
+    vi.spyOn(evaluationService, 'evaluateSubmission').mockImplementation(invokeSpy);
 
     try {
       await expect(
@@ -1039,7 +1105,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     const db = testDb();
     await seedQuestion('q1', 'true');
     await seedPaper('paper1', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper1');
 
     // First submit (judge runs normally).
     const first = await submitPaperSlot(
@@ -1053,11 +1119,9 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
       db,
     );
 
-    // Now spy on the invoker AFTER the first submit so only the second is watched.
+    // Observe evaluation only after the accepted original submission.
     const invokeSpy = vi.fn();
-    vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockReturnValue({
-      invoke: invokeSpy,
-    } as never);
+    vi.spyOn(evaluationService, 'evaluateSubmission').mockImplementation(invokeSpy);
 
     try {
       // Second submit with identical content — pre-check finds the frozen row,
@@ -1075,111 +1139,66 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
 
       expect(invokeSpy).not.toHaveBeenCalled();
       expect(second.attemptEventId).toBe(first.attemptEventId);
-      expect(second.judgeEventId).toBe(first.judgeEventId);
+      expect(second.evaluationId).toBe(first.evaluationId);
       expect(second.answerId).toBe(first.answerId);
     } finally {
       vi.restoreAllMocks();
     }
   });
 
-  it('YUK-695: concurrent paid judge requests for one slot are single-claimed', async () => {
-    const db = testDb();
-    await seedQuestion('q1', 'true');
-    await db.update(question).set({ judge_kind_override: 'semantic' }).where(eq(question.id, 'q1'));
-    await seedPaper('paper1', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
-
-    let releaseJudge!: (value: unknown) => void;
-    const judgeGate = new Promise((resolve) => {
-      releaseJudge = resolve;
+  it('YUK-695: concurrent model requests share one durable execution and one accepted receipt', async () => {
+    const { db, input } = await modelPaper();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
     });
-    const invoke = vi.fn(() => judgeGate);
-    vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockReturnValue({ invoke } as never);
-
+    const execute = vi.fn(
+      async (request: ModelExecutorRequest, _signal: AbortSignal | undefined, runId: string) => {
+        await gate;
+        return scored(request, runId);
+      },
+    );
+    installExecutor(db, execute);
+    const first = submitPaperSlot(input, db);
     try {
-      const first = submitPaperSlot(
-        {
-          sessionId,
-          paperArtifactId: 'paper1',
-          questionId: 'q1',
-          answerMd: 'true',
-          primaryKnowledgeId: 'k1',
-        },
-        db,
-      );
-      await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
-
-      await expect(
-        submitPaperSlot(
-          {
-            sessionId,
-            paperArtifactId: 'paper1',
-            questionId: 'q1',
-            answerMd: 'true',
-            primaryKnowledgeId: 'k1',
-          },
-          db,
-        ),
-      ).rejects.toThrow(/recent judge claim/i);
-      expect(invoke).toHaveBeenCalledTimes(1);
-
-      releaseJudge({
-        route: 'semantic',
-        result: {
-          coarse_outcome: 'correct',
-          score: 1,
-          score_meaning: 'percentage',
-          confidence: 0.9,
-          feedback_md: 'ok',
-          evidence_json: {},
-          capability_ref: { id: 'semantic', version: '1' },
-        },
-        telemetry: {},
-      });
-      await expect(first).resolves.toMatchObject({ coarseOutcome: 'correct' });
+      await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(1));
+      const second = submitPaperSlot(input, db);
+      release();
+      const results = await Promise.all([first, second]);
+      expect(results[0]).toMatchObject({ coarseOutcome: 'correct' });
+      expect(results[1]).toEqual(results[0]);
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(await db.select().from(evaluation)).toHaveLength(1);
+      expect((await db.select().from(material_fsrs_state))[0].state.reps).toBe(1);
     } finally {
-      vi.restoreAllMocks();
+      release();
+      await first;
     }
   });
 
-  it('YUK-695: failed paid judge releases its claim for an immediate retry', async () => {
-    const db = testDb();
-    await seedQuestion('q1', 'true');
-    await db.update(question).set({ judge_kind_override: 'semantic' }).where(eq(question.id, 'q1'));
-    await seedPaper('paper1', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
-    const invoke = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('transient judge failure'))
-      .mockResolvedValueOnce({
-        route: 'semantic',
-        result: {
-          coarse_outcome: 'correct',
-          score: 1,
-          score_meaning: 'percentage',
-          confidence: 0.9,
-          feedback_md: 'ok',
-          evidence_json: {},
-          capability_ref: { id: 'semantic', version: '1' },
-        },
-        telemetry: {},
-      });
-    vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockReturnValue({ invoke } as never);
-    const input = {
-      sessionId,
-      paperArtifactId: 'paper1',
-      questionId: 'q1',
-      answerMd: 'true',
-      primaryKnowledgeId: 'k1',
-    };
-
-    try {
-      await expect(submitPaperSlot(input, db)).rejects.toThrow(/transient judge failure/);
-      await expect(submitPaperSlot(input, db)).resolves.toMatchObject({ coarseOutcome: 'correct' });
-      expect(invoke).toHaveBeenCalledTimes(2);
-    } finally {
-      vi.restoreAllMocks();
-    }
+  it('YUK-695: failed model claim is held on retry; a newly opened occurrence has its own execution', async () => {
+    const { db, input } = await modelPaper();
+    const execute = vi.fn(
+      async (request: ModelExecutorRequest, _signal: AbortSignal | undefined, runId: string) =>
+        scored(request, runId),
+    );
+    execute.mockRejectedValueOnce(new Error('provider unavailable after claim'));
+    installExecutor(db, execute);
+    const first = await submitPaperSlot(input, db);
+    expect(first).toMatchObject({ status: 'review_required', coarseOutcome: 'unsupported' });
+    expect(await submitPaperSlot(input, db)).toEqual(first);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(await db.select().from(material_fsrs_state)).toHaveLength(0);
+    await Review.abandonReviewSession(db, input.sessionId);
+    await reopenFrozenPaperFixture(db, input.sessionId);
+    const next = await submitPaperSlot(input, db);
+    expect(next).toMatchObject({ status: 'effective', coarseOutcome: 'correct' });
+    expect(next.evaluationId).not.toBe(first.evaluationId);
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(
+      await db.select().from(event).where(eq(event.action, 'experimental:assessment_model_claim')),
+    ).toHaveLength(2);
+    expect(await db.select().from(answer)).toHaveLength(2);
   });
 
   // ── round-3 fix #2 (P2): changed-content resubmit in active session → 409 ───
@@ -1187,7 +1206,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     const db = testDb();
     await seedQuestion('q1', 'true');
     await seedPaper('paper1', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper1');
 
     // First submit — freezes the slot in this session attempt.
     await submitPaperSlot(
@@ -1202,9 +1221,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     );
 
     const invokeSpy = vi.fn();
-    vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockReturnValue({
-      invoke: invokeSpy,
-    } as never);
+    vi.spyOn(evaluationService, 'evaluateSubmission').mockImplementation(invokeSpy);
     try {
       // Second submit with different content — session is still started (no reopen).
       // It must be rejected before another judge invocation.
@@ -1219,7 +1236,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
           },
           db,
         ),
-      ).rejects.toThrow(/already submitted in this session attempt|abandon and reopen/i);
+      ).rejects.toMatchObject({ status: 409 });
       expect(invokeSpy).not.toHaveBeenCalled();
     } finally {
       vi.restoreAllMocks();
@@ -1227,67 +1244,27 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
   });
 
   // ── round-4 fix #3 (P2): locked race loser returns persisted judge payload ─────
-  it('round-4 fix #3: locked duplicate path returns persisted judge payload (not loser computed)', async () => {
-    // Simulates the race scenario: a second submitPaperSlot call with identical
-    // content arrives after the first has already frozen the row and written the
-    // judge event. The transaction's FOR UPDATE locked path must reload the winner's
-    // judge event payload and return those values — not the loser's freshly-computed
-    // (non-persisted) coarseOutcome/score/visibleToUser.
-    //
-    // We set up the scenario by:
-    //   1. First submit (winner) — writes frozen row + judge event.
-    //   2. Overwrite the judge event payload with a known sentinel (coarse_outcome
-    //      changed to 'incorrect') via direct DB update — simulates a different
-    //      judge outcome that the loser would not have computed locally.
-    //   3. Second submit with identical content (loser path) — must return the
-    //      sentinel outcome from the DB, NOT the locally-computed 'correct'.
-    const db = testDb();
-    await seedQuestion('q1', 'true');
-    await seedPaper('paper1', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
-
-    // First submit: correct answer → coarseOutcome='correct'.
-    const first = await submitPaperSlot(
-      {
-        sessionId,
-        paperArtifactId: 'paper1',
-        questionId: 'q1',
-        answerMd: 'true',
-        primaryKnowledgeId: 'k1',
-        feedbackPolicy: 'immediate',
-      },
-      db,
+  it('round-4 fix #3: duplicate response returns the persisted winner rather than another computed grade', async () => {
+    const { db, input } = await modelPaper();
+    const execute = vi.fn(
+      async (request: ModelExecutorRequest, _signal: AbortSignal | undefined, runId: string) =>
+        scored(request, runId, 0.5),
     );
-    expect(first.coarseOutcome).toBe('correct');
-
-    // Directly overwrite the persisted judge event payload to simulate a different
-    // (non-deterministic) outcome from the winner's judge. The loser would have
-    // computed 'correct' locally (same question/answer), but the persisted payload
-    // now says 'incorrect'. The locked duplicate path must return 'incorrect'.
-    await db.execute(
-      sql`UPDATE event SET payload = payload || '{"coarse_outcome":"incorrect","score":0}'::jsonb WHERE id = ${first.judgeEventId}`,
-    );
-
-    // Second submit with identical content — hits the locked duplicate path.
-    const second = await submitPaperSlot(
-      {
-        sessionId,
-        paperArtifactId: 'paper1',
-        questionId: 'q1',
-        answerMd: 'true',
-        primaryKnowledgeId: 'k1',
-        feedbackPolicy: 'immediate',
-      },
-      db,
-    );
-
-    // Same ids (idempotent).
-    expect(second.attemptEventId).toBe(first.attemptEventId);
-    expect(second.judgeEventId).toBe(first.judgeEventId);
-    expect(second.answerId).toBe(first.answerId);
-    // Return value must come from the persisted payload, not loser's computed value.
-    expect(second.coarseOutcome).toBe('incorrect'); // from persisted payload
-    expect(second.score).toBe(0); // from persisted payload
+    installExecutor(db, execute);
+    const first = await submitPaperSlot(input, db);
+    expect(first).toMatchObject({ coarseOutcome: 'partial', score: 0.5 });
+    execute.mockImplementation(async (request, _signal, runId) => scored(request, runId, 0));
+    const second = await submitPaperSlot(input, db);
+    expect(second).toEqual(first);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect((await candidatesForAttempt(first.attemptEventId))[0].aggregate).toMatchObject({
+      points: 0.5,
+    });
+    expect((await getPracticeList(db)).papers[0].session).toMatchObject({
+      pos: 1,
+      right: 1,
+      wrong: 0,
+    });
   });
 
   // ── round-6 fix #4 (CR 3359820529): reopen + same-content resubmit is NOT idempotent ──
@@ -1299,7 +1276,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     const db = testDb();
     await seedQuestion('q1', 'true');
     await seedPaper('paper1', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper1');
 
     // First submit: correct → frozen row + attempt + judge.
     const first = await submitPaperSlot(
@@ -1317,7 +1294,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
 
     // Abandon then reopen (started_at advances past first frozen row's submitted_at).
     await Review.abandonReviewSession(db, sessionId);
-    await Review.reopenAbandonedReviewSession(db, sessionId);
+    await reopenFrozenPaperFixture(db, sessionId);
 
     // Second submit with THE SAME content ('true') after reopen.
     // The fix: submitted_at < started_at (frozen before reopen) → not same attempt
@@ -1346,17 +1323,16 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     const frozenRows = allRows.filter((r) => r.submitted_at !== null);
     expect(frozenRows).toHaveLength(2);
 
-    // Two attempt events + two judge events (one per attempt).
+    // Two original submissions and their separate immutable candidates.
     const attempts = await db
       .select()
       .from(event)
-      .where(and(eq(event.action, 'attempt'), eq(event.session_id, sessionId)));
+      .where(
+        and(eq(event.action, 'experimental:assessment_attempt'), eq(event.session_id, sessionId)),
+      );
     expect(attempts).toHaveLength(2);
 
-    const judges = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'judge'), eq(event.subject_kind, 'event')));
+    const judges = await db.select().from(evaluation);
     expect(judges).toHaveLength(2);
   });
 
@@ -1366,7 +1342,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     await seedQuestion('q1', 'true');
     await seedPaper('paper1', ['q1']);
     await seedPaper('paper2', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper2' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper2');
 
     await expect(
       autosaveAnswerDraft(db, {
@@ -1376,59 +1352,30 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
         contentMd: 'draft',
         paperArtifactId: 'paper1', // mismatch
       }),
-    ).rejects.toThrow(/not bound to paper/i);
+    ).rejects.toMatchObject({ status: 400, code: 'validation_error' });
   });
 
   // ── YUK-215: handwriting-photo refs reach the judge ───────────────────────────
-  it('YUK-215: submitPaperSlot passes answerImageRefs to the judge as student_image_refs', async () => {
-    const db = testDb();
-    await seedQuestion('q1', 'true');
-    await seedPaper('paper1', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
-
-    // Wrap the REAL invoker so submit still completes (FSRS / events write), but
-    // capture the input the judge received.
-    const realFactory = invokerModule.createDefaultJudgeInvoker;
-    const captured: Array<{ student_image_refs?: string[] }> = [];
-    vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockImplementation((deps) => {
-      const real = realFactory(deps);
-      return {
-        invoke: (input: Parameters<typeof real.invoke>[0]) => {
-          captured.push(input as { student_image_refs?: string[] });
-          return real.invoke(input);
-        },
-      } as never;
-    });
-
-    try {
-      const res = await submitPaperSlot(
-        {
-          sessionId,
-          paperArtifactId: 'paper1',
-          questionId: 'q1',
-          answerMd: 'true',
-          answerImageRefs: ['asset_photo_1', 'asset_photo_2'],
-          primaryKnowledgeId: 'k1',
-          feedbackPolicy: 'immediate',
-        },
-        db,
-      );
-      expect(res.coarseOutcome).toBe('correct');
-      expect(captured).toHaveLength(1);
-      expect(captured[0].student_image_refs).toEqual(['asset_photo_1', 'asset_photo_2']);
-
-      // The refs are also frozen into the attempt event payload (evidence trail).
-      const attempt = await db
-        .select()
-        .from(event)
-        .where(and(eq(event.action, 'attempt'), eq(event.subject_id, 'q1')));
-      expect((attempt[0].payload as { answer_image_refs?: string[] }).answer_image_refs).toEqual([
-        'asset_photo_1',
-        'asset_photo_2',
-      ]);
-    } finally {
-      vi.restoreAllMocks();
-    }
+  it('YUK-215: the native model receives original scoped photos and the accepted submission preserves them', async () => {
+    const { db, input } = await modelPaper();
+    const execute = vi.fn(
+      async (request: ModelExecutorRequest, _signal: AbortSignal | undefined, runId: string) =>
+        scored(request, runId),
+    );
+    installExecutor(db, execute);
+    const result = await submitPaperSlot(
+      { ...input, answerImageRefs: ['asset_photo_1', 'asset_photo_2'] },
+      db,
+    );
+    expect(result.coarseOutcome).toBe('correct');
+    expect(execute).toHaveBeenCalledTimes(1);
+    const sent = execute.mock.calls[0][0].group_evidence;
+    expect(sent.map((item) => item.evidence.asset.asset_id)).toEqual([
+      'asset_photo_1',
+      'asset_photo_2',
+    ]);
+    expect(sent.every((item) => item.target.scope === 'all_units')).toBe(true);
+    expect((await submissionForAttempt(result.attemptEventId)).group_evidence).toEqual(sent);
   });
 
   // ── F1 (PR #309 round-3, YUK-215): photo-only on a text-only route is NOT judged ──
@@ -1438,14 +1385,12 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     // (text-only, NOT in IMAGE_CONSUMING_JUDGE_ROUTES).
     await seedQuestion('q1', 'true');
     await seedPaper('paper1', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper1');
 
-    // Spy on the invoker factory — the judge must NOT run for a photo-only answer
+    // Observe the model port — it must NOT run for a photo-only answer
     // headed to a text-only route (it would score the empty string as wrong).
     const invokeSpy = vi.fn();
-    vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockReturnValue({
-      invoke: invokeSpy,
-    } as never);
+    installExecutor(db, invokeSpy);
 
     try {
       const res = await submitPaperSlot(
@@ -1472,10 +1417,12 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
       const attempts = await db
         .select()
         .from(event)
-        .where(and(eq(event.action, 'attempt'), eq(event.subject_id, 'q1')));
+        .where(
+          and(eq(event.action, 'experimental:assessment_attempt'), eq(event.subject_id, 'q1')),
+        );
       expect(attempts).toHaveLength(1);
-      expect((attempts[0].payload as { answer_image_refs?: string[] }).answer_image_refs).toEqual([
-        'asset_photo_only',
+      expect((await submissionForAttempt(res.attemptEventId)).group_evidence).toMatchObject([
+        { evidence: { asset: { asset_id: 'asset_photo_only' } } },
       ]);
       const frozen = await db
         .select()
@@ -1508,102 +1455,29 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     }
   });
 
-  it('F1: photo-only answer on an image-consuming route (multimodal_direct) IS judged', async () => {
-    const db = testDb();
-    const now = new Date();
-    // A question forced onto the image-consuming `multimodal_direct` route via
-    // judge_kind_override — a photo-only answer here IS judgeable.
-    await db.insert(question).values({
-      id: 'qmm',
-      kind: 'short_answer',
-      prompt_md: 'Prompt qmm',
-      reference_md: null,
-      judge_kind_override: 'multimodal_direct',
-      knowledge_ids: ['k1'],
-      difficulty: 3,
-      source: 'manual',
-      variant_depth: 0,
-      version: 0,
-      created_at: now,
-      updated_at: now,
-    });
-    await seedPaper('paper1', ['qmm']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper1' });
-
-    // Wrap the real invoker so we can confirm it WAS called for the image route,
-    // returning a stubbed verdict (the real multimodal judge needs R2 + an LLM).
-    const captured: Array<{ student_image_refs?: string[] }> = [];
-    vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockReturnValue({
-      invoke: (input: { student_image_refs?: string[] }) => {
-        captured.push(input);
-        return Promise.resolve({
-          route: 'multimodal_direct',
-          result: {
-            score: 0.9,
-            score_meaning: 'correctness',
-            coarse_outcome: 'correct',
-            confidence: 0.9,
-            capability_ref: { id: 'multimodal_direct', version: '1.0.0' },
-            feedback_md: 'looks right',
-            evidence_json: {},
-          },
-          telemetry: {
-            route: 'multimodal_direct',
-            capability_ref: { id: 'multimodal_direct', version: '1.0.0' },
-            coarse_outcome: 'correct',
-            confidence: 0.9,
-            elapsed_ms: 1,
-            question_id: 'qmm',
-            subject_id: 'yuwen',
-            profile_version: '1.0.0',
-          },
-        });
-      },
-    } as never);
-
-    try {
-      const res = await submitPaperSlot(
-        {
-          sessionId,
-          paperArtifactId: 'paper1',
-          questionId: 'qmm',
-          answerMd: '', // photo-only
-          answerImageRefs: ['asset_photo_only'],
-          primaryKnowledgeId: 'k1',
-          feedbackPolicy: 'immediate',
-        },
-        db,
-      );
-
-      // The judge WAS invoked with the photo refs, and the verdict flows through.
-      expect(captured).toHaveLength(1);
-      expect(captured[0].student_image_refs).toEqual(['asset_photo_only']);
-      expect(res.coarseOutcome).toBe('correct');
-      expect(res.score).toBe(0.9);
-
-      // A judge event WAS written + FSRS WAS scheduled (normal judged path).
-      const attempts = await db
-        .select()
-        .from(event)
-        .where(and(eq(event.action, 'attempt'), eq(event.subject_id, 'qmm')));
-      const judgeEvents = await db
-        .select()
-        .from(event)
-        .where(and(eq(event.action, 'judge'), eq(event.subject_id, attempts[0].id)));
-      expect(judgeEvents).toHaveLength(1);
-      const fsrsRows = await db
-        .select()
-        .from(material_fsrs_state)
-        .where(
-          and(
-            eq(material_fsrs_state.subject_kind, 'knowledge'),
-            eq(material_fsrs_state.subject_id, 'k1'),
-          ),
-        );
-      expect(fsrsRows).toHaveLength(1);
-    } finally {
-      vi.restoreAllMocks();
-    }
+  it('F1: a photo-only original reaches the declared native model and settles its actual verdict', async () => {
+    const { db, input } = await modelPaper();
+    const execute = vi.fn(
+      async (request: ModelExecutorRequest, _signal: AbortSignal | undefined, runId: string) =>
+        scored(request, runId),
+    );
+    installExecutor(db, execute);
+    const result = await submitPaperSlot(
+      { ...input, answerMd: '', answerImageRefs: ['asset_photo_only'] },
+      db,
+    );
+    expect(result).toMatchObject({ coarseOutcome: 'correct', score: 1 });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0][0].group_evidence[0].evidence.asset.asset_id).toBe(
+      'asset_photo_only',
+    );
+    const original = await submissionForAttempt(result.attemptEventId);
+    expect(original.response_set.entries).toMatchObject([{ kind: 'text', text_md: '' }]);
+    expect(original.group_evidence).toMatchObject([
+      { evidence: { asset: { asset_id: 'asset_photo_only' } } },
+    ]);
+    expect(await candidatesForAttempt(result.attemptEventId)).toHaveLength(1);
+    expect((await db.select().from(material_fsrs_state))[0].state.reps).toBe(1);
   });
 
   // YUK-448 — paper-path RT capture. Mirrors the solo /api/review/submit latency
@@ -1613,7 +1487,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     const db = testDb();
     await seedQuestion('q1', 'true');
     await seedPaper('paper_rt', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_rt' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper_rt');
 
     const submit = await submitPaperSlot(
       {
@@ -1636,11 +1510,10 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     const payload = rows[0].payload as Record<string, unknown>;
     expect(payload.duration_ms).toBe(12_500);
     expect(payload).toMatchObject({
-      question_snapshot: {
-        schema_version: 1,
-        question: { question_id: 'q1' },
-        parent_question: null,
-      },
+      version: 1,
+      submission_id: expect.any(String),
+      revision_id: expect.any(String),
+      issuance_id: expect.any(String),
     });
   });
 
@@ -1652,7 +1525,7 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     const db = testDb();
     await seedQuestion('q1', 'true');
     await seedPaper('paper_rt', ['q1']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_rt' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper_rt');
 
     const submit = await submitPaperSlot(
       {
@@ -1678,20 +1551,20 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
   // ── YUK-212 + YUK-484(B) "Lane C cut 1": per-sub verdict 落点 + B proof ───────
   //
   // A composite (stem + single sub) question submitted with part_ref='p1' must:
-  //   (1) stamp sub_ref='p1' on the independent judge event;
+  //   (1) preserve part_ref='p1' on the original native attempt capture;
   //   (2) still call updateThetaForAttempt EXACTLY ONCE, keyed on the slot's
   //       referenced_knowledge_ids — NO per-sub θ̂ fan-out (Option B proof).
-  // An atomic slot (no part_ref) must leave sub_ref ABSENT (not null).
+  // An atomic slot has an explicit null part_ref on its native capture.
   //
-  // Uses the deterministic `exact` judge: kind=true_false routes to exact, and
-  // narrowing reduces reference_md to the sub's stored answer ('true'), so the
-  // text answer 'true' grades `correct` with no LLM.
+  // Uses an explicitly published exact key for each structured leaf; the
+  // selected leaf's frozen answer grades locally without a model call.
   async function seedCompositeQuestion(id: string, subAnswer: string) {
     const db = testDb();
     const now = new Date();
     await db.insert(question).values({
       id,
       kind: 'true_false',
+      judge_kind_override: 'exact',
       prompt_md: `Prompt ${id}`,
       reference_md: `${subAnswer}\n\nother`,
       structured: {
@@ -1713,11 +1586,11 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     });
   }
 
-  it('cut1: composite slot submit with part_ref stamps sub_ref + keeps θ̂ per-KC (one call)', async () => {
+  it('cut1: composite slot submit preserves part_ref + keeps θ̂ per-KC (one call)', async () => {
     const db = testDb();
     await seedCompositeQuestion('qc', 'true');
-    await seedPaper('paper_sub', ['qc']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_sub' });
+    await seedPaper('paper_sub', ['qc'], ['p1']);
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper_sub');
 
     // Spy θ̂ — assert it fires exactly once for the attempt, NOT once-per-sub.
     // Mocked to a no-op resolve so it never touches real mastery_state (the rest
@@ -1746,14 +1619,14 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
       // The exact judge graded the NARROWED sub (reference_md → 'true') correct.
       expect(submit.coarseOutcome).toBe('correct');
 
-      // (1) the independent judge event carries sub_ref='p1'.
+      // (1) The original native capture preserves the issued part_ref.
       const judgeRows = await db
         .select({ payload: event.payload })
         .from(event)
-        .where(and(eq(event.action, 'judge'), eq(event.subject_id, submit.attemptEventId)))
+        .where(eq(event.id, submit.attemptEventId))
         .limit(1);
       const judgePayload = judgeRows[0].payload as Record<string, unknown>;
-      expect(judgePayload.sub_ref).toBe('p1');
+      expect(judgePayload.part_ref).toBe('p1');
 
       // (2) B proof — θ̂ called EXACTLY ONCE, keyed on the slot's referenced KCs
       // (primary k1, no secondaries). No per-sub fan-out.
@@ -1764,11 +1637,11 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     }
   });
 
-  it('cut1: atomic slot submit (no part_ref) leaves sub_ref ABSENT', async () => {
+  it('cut1: atomic slot submit preserves null part_ref', async () => {
     const db = testDb();
     await seedQuestion('qa', 'true');
     await seedPaper('paper_atomic', ['qa']);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_atomic' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper_atomic');
 
     const submit = await submitPaperSlot(
       {
@@ -1785,10 +1658,10 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     const judgeRows = await db
       .select({ payload: event.payload })
       .from(event)
-      .where(and(eq(event.action, 'judge'), eq(event.subject_id, submit.attemptEventId)))
+      .where(eq(event.id, submit.attemptEventId))
       .limit(1);
     const judgePayload = judgeRows[0].payload as Record<string, unknown>;
-    // Conditional spread keeps the key ABSENT (not null) for atomic verdicts.
-    expect('sub_ref' in judgePayload).toBe(false);
+    // Atomic captures preserve the explicit null part coordinate.
+    expect(judgePayload.part_ref).toBeNull();
   });
 });

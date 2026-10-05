@@ -32,6 +32,7 @@ import {
   type EvidenceAttachment,
   isSlotResponseAnswered,
   nativeResponseEntry,
+  nativeResponseText,
   nativeResponseValue,
 } from '@/ui/components/response/response-types';
 import { SaveStateChip } from '@/ui/components/response/SaveStateChip';
@@ -446,10 +447,12 @@ export function PfSolo({
     );
   const imageRefs = useMemo(() => evidence.map((a) => a.asset_id), [evidence]);
   const answerMd = nativeResponses.entries
-    .map((entry) => {
-      const value = nativeResponseValue(entry);
-      return value?.kind === 'text' ? value.text : JSON.stringify(value);
-    })
+    .map((entry) =>
+      nativeResponseText(
+        entry,
+        frozen?.response_spec.slots.find((slot) => slot.slot_id === entry.slot_id),
+      ),
+    )
     .join('\n');
   const canSubmit =
     !!frozen &&

@@ -8,6 +8,11 @@ import { sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { newId } from '@/core/ids';
 import { artifact, event, knowledge, question } from '@/db/schema';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
+import {
+  correctPaperFixture,
+  paperFixtureAssessment,
+} from '../../../../tests/fixtures/assessment-paper';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET as answerGet, POST as answerPost } from './paper-answer-route';
 import {
@@ -25,6 +30,7 @@ async function seedQuestion(id: string, reference: string) {
   await db.insert(question).values({
     id,
     kind: 'true_false',
+    judge_kind_override: 'exact',
     prompt_md: `Prompt ${id}`,
     reference_md: reference,
     knowledge_ids: ['k1'],
@@ -35,6 +41,20 @@ async function seedQuestion(id: string, reference: string) {
     created_at: now,
     updated_at: now,
   });
+  const published = await publishQuestionGroupFromRow(db, {
+    rootId: id,
+    actorRef: 'test:api-paper',
+    now,
+    admission: {
+      state: 'admitted',
+      evidence: {
+        marking_provenance: 'official',
+        verification: { structural_check_passed: true, independent_verification: null },
+        model_slice: null,
+      },
+    },
+  });
+  if (published.status !== 'published') throw new Error('API fixture publication failed');
 }
 
 async function seedPaper(
@@ -185,6 +205,8 @@ describe('GET /api/practice', () => {
         session_id,
         question_id: 'q1',
         content_md: 'true',
+        assessment: await paperFixtureAssessment(testDb(), session_id, 'q1', 'true'),
+        expected_save_epoch: 0,
       }),
       { id: 'p1' },
     );
@@ -208,6 +230,7 @@ describe('GET /api/practice', () => {
         session_id,
         question_id: 'q1',
         answer_md: 'true',
+        assessment: await paperFixtureAssessment(testDb(), session_id, 'q1', 'true'),
       }),
       { id: 'p1' },
     );
@@ -217,7 +240,8 @@ describe('GET /api/practice', () => {
     expect(sub.coarse_outcome).toBe('correct');
     expect(sub.visible_to_user).toBe(true);
     expect(sub.attempt_event_id).toBeTruthy();
-    expect(sub.judge_event_id).toBeTruthy();
+    expect(sub.judge_event_id).toBeNull();
+    expect(sub.evaluation_id).toBeTruthy();
 
     // list now reflects the linked session + pos=1 + right=1
     const listRes = await GET();
@@ -344,6 +368,7 @@ describe('GET /api/practice', () => {
         session_id,
         question_id: 'q1',
         answer_md: 'true',
+        assessment: await paperFixtureAssessment(testDb(), session_id, 'q1', 'true'),
       }),
       { id: 'p_buffered' },
     );
@@ -357,7 +382,7 @@ describe('GET /api/practice', () => {
     expect('score' in body).toBe(false);
   });
 
-  it('submit rejects a slot not in the paper plan (400)', async () => {
+  it('submit rejects a slot not in the paper plan (409)', async () => {
     await seedQuestion('q1', 'true');
     await seedPaper('p1', 'review_plan', ['q1']);
     const startRes = await POST(jsonReq('http://localhost/api/practice', { artifact_id: 'p1' }));
@@ -368,10 +393,11 @@ describe('GET /api/practice', () => {
         session_id,
         question_id: 'q_not_in_plan',
         answer_md: 'x',
+        assessment: await paperFixtureAssessment(testDb(), session_id, 'q1', 'x'),
       }),
       { id: 'p1' },
     );
-    expect(subRes.status).toBe(400);
+    expect(subRes.status).toBe(409);
   });
 
   it('fix #2 (round-4): rejudge event supersedes original verdict in practice list right/wrong', async () => {
@@ -387,6 +413,7 @@ describe('GET /api/practice', () => {
         session_id,
         question_id: 'q1',
         answer_md: 'true',
+        assessment: await paperFixtureAssessment(testDb(), session_id, 'q1', 'true'),
       }),
       { id: 'p1' },
     );
@@ -398,22 +425,7 @@ describe('GET /api/practice', () => {
     };
     expect(beforeList.papers.find((p) => p.artifact_id === 'p1')?.session?.right).toBe(1);
 
-    // Insert a superseding judge event with coarse_outcome='incorrect' to simulate
-    // the rejudge (D6: rejudge = new event, never rewrites old; read layer takes newest).
-    const db = testDb();
-    await db.insert(event).values({
-      id: newId(),
-      session_id,
-      actor_kind: 'agent',
-      actor_ref: 'rejudge',
-      action: 'judge',
-      subject_kind: 'event',
-      subject_id: sub.attempt_event_id,
-      outcome: 'success',
-      payload: { coarse_outcome: 'incorrect', referenced_knowledge_ids: [] },
-      caused_by_event_id: sub.attempt_event_id,
-      created_at: new Date(),
-    });
+    await correctPaperFixture(testDb(), sub.attempt_event_id, 0);
 
     // After rejudge: list must reflect the newest judge event → wrong=1, right=0.
     const afterList = (await (await GET()).json()) as {
@@ -457,6 +469,7 @@ describe('GET /api/practice', () => {
         session_id,
         question_id: 'q1',
         answer_md: 'true',
+        assessment: await paperFixtureAssessment(testDb(), session_id, 'q1', 'true'),
       }),
       { id: 'p_flat' },
     );
@@ -626,6 +639,7 @@ describe('GET /api/practice', () => {
         session_id,
         question_id: 'q1',
         answer_md: 'true',
+        assessment: await paperFixtureAssessment(testDb(), session_id, 'q1', 'true'),
       }),
       { id: 'p_buffered_r6' },
     );

@@ -388,9 +388,7 @@
         "bodyExample": {
           "title": "高中文言文",
           "subjectId": "yuwen",
-          "knowledgeIds": [
-            "kc-1"
-          ],
+          "knowledgeIds": ["kc-1"],
           "declaredStage": "high_school"
         },
         "notes": "冷启入口直写 goal（source=manual），与 ADR-0025 proposal-materialize 路径并存。scope 解析：knowledgeIds 优先，否则 subjectId 经 effective-domain 轴派生；空 scope 允许（冷启 north-star）。title 必填。declaredStage 可选（middle_school|high_school|university|custom，YUK-1009 学习者自述学段，落 goal.declared_stage 供供给侧课程范围约束消费，不作能力判定）。返回 {id,title,subjectId,scopeKnowledgeIds,declaredStage,status}"
@@ -800,9 +798,7 @@
           "prompt_md": "下列句子中「而」字的用法是？",
           "reference_md": "《劝学》原文片段",
           "wrong_answer_md": "我认为是转折用法",
-          "knowledge_ids": [
-            "kid_abc123"
-          ],
+          "knowledge_ids": ["kid_abc123"],
           "cause": {
             "primary_category": "misunderstanding",
             "user_notes": "混淆了顺承与转折"
@@ -974,16 +970,9 @@
           "version": 0,
           "prompt_md": "新题目文本",
           "reference_md": "参考答案",
-          "choices_md": [
-            "A",
-            "B",
-            "C",
-            "D"
-          ],
+          "choices_md": ["A", "B", "C", "D"],
           "difficulty": 3,
-          "knowledge_ids": [
-            "kn_abc"
-          ],
+          "knowledge_ids": ["kn_abc"],
           "kind": "short_answer",
           "draft_status": "active"
         },
@@ -1178,9 +1167,7 @@
         "contentType": "application/json",
         "bodyExample": {
           "goalId": null,
-          "knowledgeIds": [
-            "kc-1"
-          ]
+          "knowledgeIds": ["kc-1"]
         },
         "notes": "dark-ship：gated on PLACEMENT_PROBE_ENABLED（默认 false → 404）。goalId 省略时用 knowledgeIds；二者皆缺/不可解析 → 400。返回 {sessionId, knowledgeIds, question, sourcingNeeded}"
       }
@@ -1195,9 +1182,7 @@
         "query": [],
         "contentType": "application/json",
         "bodyExample": {
-          "knowledgeIds": [
-            "kc-1"
-          ],
+          "knowledgeIds": ["kc-1"],
           "cap": 8,
           "seThreshold": null
         },
@@ -1294,10 +1279,7 @@
         "query": [],
         "contentType": "application/json",
         "bodyExample": {
-          "keys": [
-            "task.QuizGenTask.provider",
-            "task.QuizGenTask.model"
-          ],
+          "keys": ["task.QuizGenTask.provider", "task.QuizGenTask.model"],
           "note": "Restore defaults"
         },
         "notes": "需 x-internal-token。按整批删除后的原生组合校验，失败全部回滚。历史journal保留；清理后重新写入revision持续递增。响应与PATCH配置相同。"
@@ -1353,9 +1335,7 @@
         "contentType": "application/json",
         "bodyExample": {
           "group_id": "REPLACE_group_root",
-          "part_ids": [
-            "p1"
-          ],
+          "part_ids": ["p1"],
           "mode": "auto_score",
           "container_occurrence_ref": null,
           "claim": {
@@ -1395,9 +1375,7 @@
               {
                 "slot_id": "p1::r",
                 "kind": "choice",
-                "option_ids": [
-                  "opt-a"
-                ]
+                "option_ids": ["opt-a"]
               }
             ]
           },
@@ -1425,9 +1403,7 @@
               {
                 "slot_id": "p1::r",
                 "kind": "choice",
-                "option_ids": [
-                  "opt-a"
-                ]
+                "option_ids": ["opt-a"]
               }
             ]
           },
@@ -1576,6 +1552,91 @@
           }
         },
         "notes": "正式作答与学习结算、会话 judged、错题记录同事务；相同原始输入重复提交复用结果，修改已接受作答返回409。待评估保持 review_required，不揭示答案。"
+      }
+    ]
+  },
+  {
+    "path": "/api/review-sessions",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "创建试卷会话并固定发题绑定",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "paper_id": "REPLACE_paper"
+        },
+        "notes": "paper_id 可省略以创建普通复习会话；试卷必须已发布，创建会话与固定各槽位绑定在同一事务。新建返回201，复用活动会话返回200；返回 session_id。"
+      }
+    ]
+  },
+  {
+    "path": "/api/review-sessions/:id/answer-drafts",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "保存原生试卷作答草稿",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "paper_id": "REPLACE_paper",
+          "question_id": "REPLACE_question",
+          "part_ref": null,
+          "content_md": "original learner response",
+          "input_kind": "text",
+          "image_refs": [],
+          "expected_save_epoch": 0,
+          "assessment": {
+            "issuance_id": "REPLACE_issuance",
+            "evaluation_group_id": "REPLACE_evaluation_group",
+            "idempotency_key": "REPLACE_attempt_key",
+            "response_set": {
+              "entries": [
+                {
+                  "slot_id": "REPLACE_slot",
+                  "kind": "text",
+                  "text_md": "original learner response"
+                }
+              ]
+            },
+            "group_evidence": []
+          }
+        },
+        "notes": "必须先读取 /api/papers/:id，将该槽位 assessment 的 issuance_id/evaluation_group_id/idempotency_key 和 practice_dto 中的槽位、选项原样用于请求；示例 text 仅适用于对应已发布文本槽位。缺少原始发题绑定返回 historical_unknown(409)，不可在提交时补建历史绑定。 expected_save_epoch 使用最近一次服务端 ack 或详情返回的 save_epoch；过期返回 stale_draft(409)。返回 answer_id/created/save_epoch；恢复以详情 assessment.response_set/group_evidence 为准。"
+      }
+    ]
+  },
+  {
+    "path": "/api/review-sessions/:id/submissions",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "提交原生试卷作答",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "paper_id": "REPLACE_paper",
+          "question_id": "REPLACE_question",
+          "part_ref": null,
+          "answer_md": "original learner response",
+          "image_refs": [],
+          "assessment": {
+            "issuance_id": "REPLACE_issuance",
+            "evaluation_group_id": "REPLACE_evaluation_group",
+            "idempotency_key": "REPLACE_attempt_key",
+            "response_set": {
+              "entries": [
+                {
+                  "slot_id": "REPLACE_slot",
+                  "kind": "text",
+                  "text_md": "original learner response"
+                }
+              ]
+            },
+            "group_evidence": []
+          }
+        },
+        "notes": "必须先读取 /api/papers/:id，将该槽位 assessment 的 issuance_id/evaluation_group_id/idempotency_key 和 practice_dto 中的槽位、选项原样用于请求；示例 text 仅适用于对应已发布文本槽位。缺少原始发题绑定返回 historical_unknown(409)，不可在提交时补建历史绑定。 重复请求必须保持原始作答不变；回执投影当前生效候选。缓冲反馈仅返回身份字段和 visible_to_user=false/feedback_buffered=true，不返回 status/coarse_outcome/score。"
       }
     ]
   }

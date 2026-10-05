@@ -302,6 +302,46 @@ export function nativeResponseValue(
   }
 }
 
+/** Human-readable capture from the served definitions; stable IDs remain in ResponseSet. */
+export function nativeResponseText(entry: SlotResponseT, spec: ResponseSlotT | undefined): string {
+  const value = nativeResponseValue(entry);
+  if (value?.kind === 'text') return value.text;
+  const label = (item: { label: string; text: string } | undefined) =>
+    item ? `${item.label}. ${item.text}` : '原选项不可用';
+  if (entry.kind === 'choice') {
+    const options =
+      spec?.kind === 'single_choice' || spec?.kind === 'multi_choice' ? spec.options : [];
+    return entry.option_ids
+      .map((id) => label(options.find((option) => option.option_id === id)))
+      .join('；');
+  }
+  if (entry.kind === 'matching') {
+    return entry.pairs
+      .map((pair) => {
+        const left =
+          spec?.kind === 'matching'
+            ? spec.left_items.find((item) => item.item_id === pair.item_id)
+            : undefined;
+        const right =
+          spec?.kind === 'matching'
+            ? spec.right_options.find((option) => option.option_id === pair.option_id)
+            : undefined;
+        return `${label(left)} → ${label(right)}`;
+      })
+      .join('；');
+  }
+  if (entry.kind === 'ordering') {
+    return entry.item_order
+      .map((id) =>
+        label(
+          spec?.kind === 'ordering' ? spec.items.find((item) => item.item_id === id) : undefined,
+        ),
+      )
+      .join(' → ');
+  }
+  return '';
+}
+
 /** Editing one slot keeps original evidence/confidence; table slots are layout only. */
 export function nativeResponseEntry(
   slot: ResponseSlotT,

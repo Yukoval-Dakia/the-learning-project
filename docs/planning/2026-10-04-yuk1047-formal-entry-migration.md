@@ -294,3 +294,11 @@ full evidence target editing/media acceptance and complete frozen teaching input
 - 10个纯回归先RED、发布子题及缺参考单位校验各1回归先RED后修。128unit/39DB、typecheck、changedBiome、build通过；gen:api-client和gen:postman通过（无生成差异）。
 - paper provenance旧测试迁移：模型失败保留独立claim/result与保守预留，不把计划run ID当实际run，也不自动重付；重复提交执行一次。真实发布→开卷→提交验证30m/s和108km/h均本地给分，编辑当前元数据不影响冻结答案。无真实付费模型调用。
 - 旧paper-cycle/API fixtures、其他正式入口和消费侧仍继续迁移；本分支尚未PR/push/review/CI，1047仍In Progress。
+
+## 2026-10-05 00:25 UTC — 试卷生命周期/API/UI fixtures 切换（未发布）
+
+- 32个paper-cycle用例改走真实发布/发题/原始提交；并发、失败保留认领、重开新代际、改判回执、缓冲、照片原件、KC单次theta均保留承重断言。模型端口为离线录制fixture，不是实际模型质量证据。历史只读partial案例仍保留原事件读取。
+- paper detail/list API改用真实原生payload、候选和effective head；草稿恢复从assessment读取。旧格式草稿写入原先200的回归先RED后修为historical_unknown409；没有原始绑定的历史试卷仅可查看，不能编辑或交卷。
+- UI原有自动保存、采集、生命周期和计时测试使用带原始发题记录的transport fixture。选择/配对/排序的观察文本映射到冻结标签与正文，保留原始ResponseSet身份，不再把opaque ID当可读答案。
+- 63DB（cycle32/detail10/list15/issuance6）、93unit（paper59/response/solo interaction）通过；typecheck通过，changedBiome零errors/12warnings，build通过。补三项canonical review-session Postman示例并成功生成。UI新readonly测试首轮因matcher不可用失败，修matcher后通过，不计作语义RED证据。
+- 仍为未发布WIP，无PR/push/review/CI/部署或付费调用。下一步继续solo/durable/rejudge旧执行移除、probe/ingestion与下游消费者，1047保持In Progress。

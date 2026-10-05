@@ -104,16 +104,11 @@ export async function createAnswerDraft(
       });
       return Response.json(result);
     }
-    const { answerId, created } = await autosaveAnswerDraft(db, {
-      sessionId: body.session_id,
-      questionId: body.question_id,
-      partRef: body.part_ref ?? null,
-      inputKind: body.input_kind,
-      contentMd: body.content_md,
-      imageRefs: body.image_refs,
-      paperArtifactId,
-    });
-    return Response.json({ answer_id: answerId, created });
+    throw new ApiError(
+      'historical_unknown',
+      'paper draft requires its original assessment binding',
+      409,
+    );
   } catch (err) {
     return errorResponse(err);
   }

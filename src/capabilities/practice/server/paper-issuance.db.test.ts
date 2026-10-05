@@ -340,6 +340,20 @@ describe('paper opening freezes actual assessment occurrences', () => {
         }),
         { id: paperId },
       );
+    const unbound = await createAnswerDraft(
+      new Request('http://localhost/draft', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          question_id: q.id,
+          content_md: '旧格式不能静默丢失原生作答',
+        }),
+      }),
+      { id: paperId },
+    );
+    expect(unbound.status).toBe(409);
+    expect(await unbound.json()).toMatchObject({ error: 'historical_unknown' });
     const first = await save(0, 'a+b');
     expect(first.status).toBe(200);
     expect(await first.json()).toMatchObject({ save_epoch: 1 });

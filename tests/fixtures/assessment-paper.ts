@@ -2,7 +2,12 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { createPaperReviewSession } from '@/capabilities/practice/api/paper-session-create';
 import { readPaperAssessmentBinding } from '@/capabilities/practice/server/assessment/paper-issuance';
+import { withFrozenPaperReopen } from '@/capabilities/practice/server/assessment/paper-session-transition';
 import { getIssuanceState } from '@/capabilities/practice/server/assessment/submit';
+import {
+  activateSubmissionCandidate,
+  evaluateSubmission,
+} from '@/capabilities/practice/server/judge/evaluate-submission';
 import {
   type PaperSubmitSlotInput,
   submitPaperSlot,
@@ -10,13 +15,21 @@ import {
 import { Artifact } from '@/core/schema';
 import type { SlotResponseT } from '@/core/schema/assessment';
 import type { Db } from '@/db/client';
-import { artifact, question, question_group_lifecycle } from '@/db/schema';
+import {
+  artifact,
+  evaluation,
+  evaluation_effective_head,
+  event,
+  question,
+  question_group_lifecycle,
+} from '@/db/schema';
 import {
   contractIntegrityDigest,
   normalizeQuestionGroupToContract,
   normalizeQuestionRowToContract,
 } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
+import { Review } from '@/server/session';
 
 /** Real publication/opening for migrated fixtures; never freezes lazily at submit time. */
 export async function startFrozenPaperFixture(db: Db, paperId: string) {
@@ -217,4 +230,58 @@ export async function publishPaperModelFixture(db: Db, questionId: string) {
   if (published.status !== 'published')
     throw new Error(`fixture publication failed: ${published.status}`);
   return contract;
+}
+
+export async function reopenFrozenPaperFixture(db: Db, sessionId: string) {
+  return withFrozenPaperReopen(db, sessionId, (tx) =>
+    Review.reopenAbandonedReviewSession(tx, sessionId),
+  );
+}
+
+/** Append a real correction and activate it with the current-head CAS. */
+export async function correctPaperFixture(db: Db, attemptId: string, points: number) {
+  const [anchor] = await db.select().from(event).where(eq(event.id, attemptId));
+  const submissionId = anchor?.payload.submission_id;
+  const groupId = anchor?.payload.evaluation_group_id;
+  const issuanceId = anchor?.payload.issuance_id;
+  if (
+    typeof submissionId !== 'string' ||
+    typeof groupId !== 'string' ||
+    typeof issuanceId !== 'string'
+  )
+    throw new Error('native attempt missing');
+  const [head] = await db
+    .select()
+    .from(evaluation_effective_head)
+    .where(eq(evaluation_effective_head.evaluation_group_id, groupId));
+  if (!head.effective_evaluation_id) throw new Error('effective candidate absent');
+  const [current] = await db
+    .select()
+    .from(evaluation)
+    .where(eq(evaluation.evaluation_id, head.effective_evaluation_id));
+  const candidate = await evaluateSubmission(db, {
+    submission_id: submissionId,
+    evaluation_group_id: groupId,
+    evaluation_key: `test-correction:${attemptId}:${points}`,
+    mode: 'manual_assert',
+    provenance: { source: 'manual', assisted: false },
+    asserted_unit_results: current.unit_results.map((unit) => ({
+      scoring_unit_id: unit.scoring_unit_id,
+      status: 'scored',
+      points_awarded: points,
+      scored_because: 'response',
+      evidence_citations: [],
+    })),
+  });
+  const activated = await activateSubmissionCandidate(
+    db,
+    {
+      evaluation_id: candidate.record.evaluation_id,
+      expected_effective_id: head.effective_evaluation_id,
+      expected_generation: head.generation,
+    },
+    { actorRef: 'test:paper-teacher' },
+  );
+  if (activated.status !== 'activated') throw new Error(`correction failed: ${activated.status}`);
+  return candidate.record;
 }

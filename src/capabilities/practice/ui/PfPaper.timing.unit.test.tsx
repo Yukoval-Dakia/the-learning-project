@@ -18,7 +18,16 @@ const mocks = vi.hoisted(() => ({
   submitPaperSlot: vi.fn(),
 }));
 
-vi.mock('./practice-api', () => mocks);
+vi.mock('./practice-api', async () => {
+  const { nativePaperDetailFixture } = await import(
+    '../../../../tests/fixtures/assessment-paper-ui'
+  );
+  return {
+    ...mocks,
+    getPaperDetail: (...args: unknown[]) =>
+      mocks.getPaperDetail(...args).then(nativePaperDetailFixture),
+  };
+});
 
 const detail = {
   artifact_id: 'paper_1',

@@ -27,7 +27,15 @@ const mocks = vi.hoisted(() => ({
 // 与 autosave 测试同款：只 mock 网络函数，纯 helper（buildPaperSubmissionBody 等）保持真实。
 vi.mock('./practice-api', async () => {
   const actual = await vi.importActual<typeof import('./practice-api')>('./practice-api');
-  return { ...actual, ...mocks };
+  const { nativePaperDetailFixture } = await import(
+    '../../../../tests/fixtures/assessment-paper-ui'
+  );
+  return {
+    ...actual,
+    ...mocks,
+    getPaperDetail: (...args: unknown[]) =>
+      mocks.getPaperDetail(...args).then(nativePaperDetailFixture),
+  };
 });
 
 function textSlot(id: string, prompt: string) {

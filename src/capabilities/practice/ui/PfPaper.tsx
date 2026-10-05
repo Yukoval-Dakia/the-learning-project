@@ -20,6 +20,7 @@ import {
   type EvidenceAttachment,
   isSlotResponseAnswered,
   nativeResponseEntry,
+  nativeResponseText,
   nativeResponseValue,
   optionsFromChoicesMd,
 } from '@/ui/components/response/response-types';
@@ -192,6 +193,7 @@ export function PfPaper({
   const detail: PaperDetail | null = detailQ.data ?? null;
   const slots = useMemo(() => detail?.sections.flatMap((s) => s.slots) ?? [], [detail]);
 
+  const hasNativeBindings = slots.length > 0 && slots.every((slot) => slot.assessment != null);
   const nativeOccurrenceId = slots[0]?.assessment?.issuance_id;
   const previousNativeOccurrence = useRef<string | undefined>(undefined);
   const [pos, setPos] = useState(0);
@@ -863,7 +865,8 @@ export function PfPaper({
     const sid = sessionRef.current;
     // Mutual exclusion with exitPaper (submittingRef/exitingRef are synchronous): a submit and
     // an exit must not both fire a terminal transition.
-    if (!sid || submittingRef.current || exitingRef.current || uploading) return;
+    if (!hasNativeBindings || !sid || submittingRef.current || exitingRef.current || uploading)
+      return;
     submittingRef.current = true;
     setSubmitting(true);
     stopTimingSegment();
@@ -943,21 +946,29 @@ export function PfPaper({
           onClick={exitPaper}
           disabled={exiting || submitting}
         >
-          {exiting ? '保存中…' : anySaveFailed ? '退出' : '退出 · 进度保留'}
+          {exiting ? '保存中…' : anySaveFailed || !hasNativeBindings ? '退出' : '退出 · 进度保留'}
         </Btn>
         <span className="pfp-title">{detail.title}</span>
         {/* YUK-1051 — 保存状态 chip 换成组件族 SaveStateChip（同文案/同重试交互）；
             saved 仅在 server ack 后出现的纪律由组件族承载。 */}
-        <SaveStateChip
-          state={anySaveFailed ? 'error' : 'idle'}
-          onRetry={anySaveFailed ? retryFailedSaves : undefined}
-          retrying={retrying}
-        />
+        {hasNativeBindings && (
+          <SaveStateChip
+            state={anySaveFailed ? 'error' : 'idle'}
+            onRetry={anySaveFailed ? retryFailedSaves : undefined}
+            retrying={retrying}
+          />
+        )}
       </div>
 
       <div className="pfp-buffer">
         <LoomIcon name="clock" size={14} className="ico" />
-        <span>反馈缓冲：这张卷不给即时对错——交卷后统一判分。和散题的节奏是反着的，刻意的。</span>
+        <span>
+          {hasNativeBindings
+            ? '反馈缓冲：这张卷不给即时对错——交卷后统一判分。和散题的节奏是反着的，刻意的。'
+            : detail.session
+              ? '这份历史试卷缺少原始发题记录，当前只能查看。'
+              : '正在准备题目，请稍候。'}
+        </span>
       </div>
 
       <div className="pfp-pips" role="tablist" aria-label="题目导航">
@@ -1048,7 +1059,7 @@ export function PfPaper({
                   notation={cur.question.notation}
                   feedback="none"
                   ariaLabel={slot.placement?.label ?? '作答'}
-                  disabled={submittedKeys.has(curKey) || exiting}
+                  disabled={!hasNativeBindings || submittedKeys.has(curKey) || exiting}
                   onChange={(value) => {
                     const updated: SlotResponseT = nativeResponseEntry(slot, value, entry);
                     const response: ResponseSetT = {
@@ -1066,10 +1077,14 @@ export function PfPaper({
                     setNativeResponses(nativeResponsesRef.current);
                     setAnswer(
                       response.entries
-                        .map((item) => {
-                          const value = nativeResponseValue(item);
-                          return value?.kind === 'text' ? value.text : JSON.stringify(value);
-                        })
+                        .map((item) =>
+                          nativeResponseText(
+                            item,
+                            cur.assessment?.practice_dto.response_spec.slots.find(
+                              (field) => field.slot_id === item.slot_id,
+                            ),
+                          ),
+                        )
                         .join('\n'),
                     );
                   }}
@@ -1082,7 +1097,7 @@ export function PfPaper({
               showText={false}
               attachments={evidence}
               onAttachmentsChange={onEvidenceChange}
-              disabled={submittedKeys.has(curKey) || exiting}
+              disabled={!hasNativeBindings || submittedKeys.has(curKey) || exiting}
               onUploadingChange={setUploading}
               slotLabels={Object.fromEntries(
                 slots.map((slot, i) => [slotKey(slot), `第 ${i + 1} 题`]),
@@ -1099,7 +1114,7 @@ export function PfPaper({
               const opt = curOptions.find((o) => o.id === ids[0]);
               setAnswer(opt?.text_md ?? '');
             }}
-            disabled={submittedKeys.has(curKey) || exiting}
+            disabled={!hasNativeBindings || submittedKeys.has(curKey) || exiting}
             notation={cur.question.notation}
             feedback="none"
             ariaLabel="选项"
@@ -1112,7 +1127,7 @@ export function PfPaper({
             onTextChange={setAnswer}
             attachments={evidence}
             onAttachmentsChange={onEvidenceChange}
-            disabled={submittedKeys.has(curKey) || exiting}
+            disabled={!hasNativeBindings || submittedKeys.has(curKey) || exiting}
             notation={cur.question.notation}
             placeholder="写下你的解答。交卷前都可以改。"
             ariaLabel="作答"
@@ -1120,46 +1135,53 @@ export function PfPaper({
             onUploadingChange={setUploading}
           />
         )}
-        {!isChoice && evidence.length > 0 && !submittedKeys.has(curKey) && !exiting && (
-          <EvaluationGroupPanel
-            slots={slots.map((s, i) => ({ id: slotKey(s), label: `第 ${i + 1} 题` }))}
-            attachments={evidence}
-            onAttachmentChange={onEvidenceRebind}
-          />
-        )}
+        {hasNativeBindings &&
+          !isChoice &&
+          evidence.length > 0 &&
+          !submittedKeys.has(curKey) &&
+          !exiting && (
+            <EvaluationGroupPanel
+              slots={slots.map((s, i) => ({ id: slotKey(s), label: `第 ${i + 1} 题` }))}
+              attachments={evidence}
+              onAttachmentChange={onEvidenceRebind}
+            />
+          )}
 
         {/* YUK-784 — 过程框「记下你的思路」扩到组卷面（镜像 PfSolo #1069 先例）：仅开放/文本
             作答题（shouldOfferProcessBox 复用，不重写判据）、默认折叠 opt-in、零强制——不挡
             交卷、折叠即跳过、空值不发字段（submitAll 里 buildCaptureFields trim 判空）。与散题
             不同点：组卷面多题连续作答，采集是 per-slot 状态，换题不丢，交卷时随各自 slot 发出。
             已提交 slot / 退出 flush 期间不渲染（作答面已冻结，采集无处可挂）。 */}
-        {shouldOfferProcessBox(isChoice) && !submittedKeys.has(curKey) && !exiting && (
-          <div className="pfs-trace">
-            {traceOpen[curKey] ? (
-              <div className="composer pfs-trace-composer">
-                <textarea
-                  rows={2}
-                  value={trace[curKey] ?? ''}
-                  // 硬闸同 PfSolo：maxLength 挡越界输入撞 400 软死锁，buildCaptureFields
-                  // 发送前再防御性截断兜底粘贴/IME 绕过。
-                  maxLength={REASONING_TRACE_MAX_LEN}
-                  placeholder="随手记下你是怎么想的——不评分，也可以留空。"
-                  onChange={(e) => setTrace((t) => ({ ...t, [curKey]: e.target.value }))}
-                  aria-label="解题思路（可选）"
-                />
-              </div>
-            ) : (
-              <button
-                type="button"
-                className="pfs-trace-toggle"
-                onClick={() => setTraceOpen((o) => ({ ...o, [curKey]: true }))}
-              >
-                ＋ 记下你的思路（可选）
-              </button>
-            )}
-          </div>
-        )}
-        {!submittedKeys.has(curKey) && !exiting && (
+        {hasNativeBindings &&
+          shouldOfferProcessBox(isChoice) &&
+          !submittedKeys.has(curKey) &&
+          !exiting && (
+            <div className="pfs-trace">
+              {traceOpen[curKey] ? (
+                <div className="composer pfs-trace-composer">
+                  <textarea
+                    rows={2}
+                    value={trace[curKey] ?? ''}
+                    // 硬闸同 PfSolo：maxLength 挡越界输入撞 400 软死锁，buildCaptureFields
+                    // 发送前再防御性截断兜底粘贴/IME 绕过。
+                    maxLength={REASONING_TRACE_MAX_LEN}
+                    placeholder="随手记下你是怎么想的——不评分，也可以留空。"
+                    onChange={(e) => setTrace((t) => ({ ...t, [curKey]: e.target.value }))}
+                    aria-label="解题思路（可选）"
+                  />
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="pfs-trace-toggle"
+                  onClick={() => setTraceOpen((o) => ({ ...o, [curKey]: true }))}
+                >
+                  ＋ 记下你的思路（可选）
+                </button>
+              )}
+            </div>
+          )}
+        {hasNativeBindings && !submittedKeys.has(curKey) && !exiting && (
           <SelfConfidenceField
             value={selfConfidence[curKey]}
             onChange={(next) =>
@@ -1206,7 +1228,7 @@ export function PfPaper({
               size="sm"
               variant="primary"
               icon="send"
-              disabled={submitting || exiting || uploading}
+              disabled={!hasNativeBindings || submitting || exiting || uploading}
               onClick={() => void submitAll()}
             >
               {submitting ? '判分中…' : '交卷'}
@@ -1220,7 +1242,7 @@ export function PfPaper({
             size="sm"
             variant="primary"
             icon="send"
-            disabled={submitting || exiting || uploading}
+            disabled={!hasNativeBindings || submitting || exiting || uploading}
             onClick={() => (unanswered > 0 ? setConfirm(true) : void submitAll())}
           >
             {submitting ? '判分中…' : '交卷 · 统一判分'}
@@ -1228,9 +1250,11 @@ export function PfPaper({
         )}
       </div>
       <div className="key-hints mono" style={{ marginTop: 'var(--s-3)' }}>
-        {anySaveFailed
-          ? '有草稿没保存上——退出前先点「保存失败 · 重试」'
-          : '中途退出进度保留 · 交卷后到复盘看逐题判定'}
+        {!hasNativeBindings
+          ? '历史作答保留，当前不可提交。'
+          : anySaveFailed
+            ? '有草稿没保存上——退出前先点「保存失败 · 重试」'
+            : '中途退出进度保留 · 交卷后到复盘看逐题判定'}
       </div>
     </div>
   );
