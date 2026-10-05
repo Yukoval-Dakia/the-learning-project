@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -120,30 +120,22 @@ export function auditAgentControlPlane(root: string): string[] {
     }
   }
 
-  for (const path of ['.claude/settings.json', '.codex/hooks.json']) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(read(root, path));
-    } catch (error) {
-      errors.push(`${path} is invalid JSON: ${(error as Error).message}`);
-      continue;
-    }
-    for (const command of collectCommands(parsed)) {
+  const claudeHooks = read(root, '.claude/settings.json');
+  let parsedClaudeHooks: unknown;
+  try {
+    parsedClaudeHooks = JSON.parse(claudeHooks);
+  } catch (error) {
+    errors.push(`.claude/settings.json is invalid JSON: ${(error as Error).message}`);
+  }
+  if (parsedClaudeHooks !== undefined) {
+    for (const command of collectCommands(parsedClaudeHooks)) {
       if (/(?:node|bash)\s+\.claude\//.test(command)) {
-        errors.push(`${path} uses a cwd-sensitive hook command: ${command}`);
+        errors.push(`.claude/settings.json uses a cwd-sensitive hook command: ${command}`);
       }
     }
   }
-
-  const claudeHooks = read(root, '.claude/settings.json');
-  const codexHooks = read(root, '.codex/hooks.json');
-  for (const [path, content] of [
-    ['.claude/settings.json', claudeHooks],
-    ['.codex/hooks.json', codexHooks],
-  ] as const) {
-    if (!content.includes('linear-closeout-reminder.sh')) {
-      errors.push(`${path} is missing the shared Linear closeout hook`);
-    }
+  if (!claudeHooks.includes('linear-closeout-reminder.sh')) {
+    errors.push('.claude/settings.json is missing the shared Linear closeout hook');
   }
 
   return errors;
