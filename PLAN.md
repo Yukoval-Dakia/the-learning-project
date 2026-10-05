@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-05。YUK-1047 PR #1568：Placement逐槽覆盖80d1ccb09、partial DTO/订阅者/Probe闭环CI修复88f6ba36d完成；parent补齐Placement fixture字段，98unit/26DB/typecheck/lint通过。修复lane158unit/85DB/build/8audits通过。待push后exact-head CI与17分钟窗；review预算用尽，不部署/付费。
+> 更新于2026-10-05。YUK-1047 PR #1568：2164c42完整CI已绿；晚到paper反馈P1修复4fd2263d7，参考答案用冻结派生值，详情/列表独立按冻结策略隐藏buffered摘要。92DB/43unit/typecheck/lint/build/8audits通过，parent复验26DB通过。待新push的CI与17分钟窗；review预算用尽，不部署/付费。
 
 ## NOW
 

@@ -681,3 +681,16 @@ findings on existing YUK-1047. Parent retains Linear capture/status ownership.
 Writer ownership returns to parent after the local repair commit; this lane then
 stops. These checks establish local source/DB behavior, not exact-head CI,
 deployment or external delivery acceptance.
+
+
+### Parent paper feedback acceptance
+
+Parent inspected both production diffs in `4fd2263d7` and independently ran
+the paper detail API and paper issuance DB suites: **26 tests passed**. Log:
+`/tmp/yuk1047-parent-paper-feedback-db.log`. The optional capture annotation
+caveat above is retained; ordinary annotated submissions were already hidden
+by the verdict resolver. The new reader guards enforce the frozen opening
+policy independently. Parent also checked the successful typecheck, lint and
+build logs. Only documentation changed after this acceptance.
+
+Push, review replies and exact-head CI remain the next delivery steps.
