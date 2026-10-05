@@ -39,7 +39,11 @@ export async function handleFailureLearningAttemptDelivery(
       source?.action === 'experimental:assessment_activation' &&
       typeof source.payload.submission_id === 'string'
         ? `evt_assessment_${source.payload.submission_id}`
-        : delivery.sourceEventId;
+        : source?.action === 'experimental:assessment_feedback_released' &&
+            source.subject_kind === 'event' &&
+            source.payload.attempt_event_id === source.subject_id
+          ? source.subject_id
+          : delivery.sourceEventId;
     const result = await requestFailureLearning(
       {
         db: tx,

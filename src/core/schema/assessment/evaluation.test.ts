@@ -1637,58 +1637,99 @@ describe('whole-page evidence is not a blank response', () => {
       },
     ]);
   });
-  it('dispatches a declared model unit with a photo and empty text to its evidence-aware port', async () => {
-    const revision = revisionFor({
-      units: [
-        {
-          scoring_unit_id: 'p1::u',
-          slot_refs: ['p1::r'],
-          evidence_slot_refs: [],
-          material_refs: [],
-          requires_group_evidence: true,
-          criterion: {
-            kind: 'rule_reference',
-            rule_id: 'shown-work',
-            statement_md: 'Check the algebra and domain restriction in the handwritten original.',
-            source: 'official',
+  it.each([true, false])(
+    'dispatches original photo evidence with an explicit text entry: %s',
+    async (explicitText) => {
+      const revision = revisionFor({
+        units: [
+          {
+            scoring_unit_id: 'p1::u',
+            slot_refs: ['p1::r'],
+            evidence_slot_refs: [],
+            material_refs: [],
+            requires_group_evidence: true,
+            criterion: {
+              kind: 'rule_reference',
+              rule_id: 'shown-work',
+              statement_md: 'Check the algebra and domain restriction in the handwritten original.',
+              source: 'official',
+            },
+            points: 2,
           },
-          points: 2,
-        },
-      ],
-      assignments: [
-        {
-          scoring_unit_ids: ['p1::u'],
-          executor: {
-            kind: 'model_executor',
-            task_kind: 'AssessmentRuleJudgeTask',
-            admitted_slice_id: 'handwriting-accepted',
-            max_cost_usd_micros: 1000,
+        ],
+        assignments: [
+          {
+            scoring_unit_ids: ['p1::u'],
+            executor: {
+              kind: 'model_executor',
+              task_kind: 'AssessmentRuleJudgeTask',
+              admitted_slice_id: 'handwriting-accepted',
+              max_cost_usd_micros: 1000,
+            },
           },
+        ],
+      });
+      const submission = submissionFor(
+        explicitText ? [{ slot_id: 'p1::r', kind: 'text', text_md: '' }] : [],
+      );
+      submission.group_evidence = [{ evidence: attachment, target: { scope: 'all_units' } }];
+      const port = vi.fn(
+        async (
+          _request: import('./evaluation').ModelExecutorRequest,
+        ): Promise<ModelUnitOutcomeT> => ({
+          kind: 'scored',
+          points_awarded: 2,
+          confidence: 0.99,
+          matched: { rule_id: 'shown-work', option_ids: [] },
+          evidence_citations: [{ evidence_id: 'page-original' }],
+          cost_usd_micros: 12,
+          run_refs: ['original-photo-run'],
+        }),
+      );
+      const out = await evaluateSubmissionCore(
+        inputFor(submission, revision, { model_executor: port }),
+      );
+      expect(port).toHaveBeenCalledOnce();
+      expect(port.mock.calls[0]?.[0]).toMatchObject({ group_evidence: submission.group_evidence });
+      expect(out.record.unit_results).toMatchObject([
+        { status: 'scored', scored_because: 'response', points_awarded: 2 },
+      ]);
+
+      port.mockClear();
+      const scopedRevision = structuredClone(revision);
+      scopedRevision.scoring_basis.units.push({
+        ...scopedRevision.scoring_basis.units[0],
+        scoring_unit_id: 'uncovered',
+      });
+      scopedRevision.execution_plan.assignments[0].scoring_unit_ids.push('uncovered');
+      const scopedSubmission = submissionFor([]);
+      scopedSubmission.group_evidence = [
+        { evidence: attachment, target: { scope: 'units', scoring_unit_ids: ['p1::u'] } },
+      ];
+      const scoped = await evaluateSubmissionCore(
+        inputFor(scopedSubmission, scopedRevision, { model_executor: port }),
+      );
+      expect(port).toHaveBeenCalledOnce();
+      expect(scoped.record.unit_results).toMatchObject([
+        { scoring_unit_id: 'p1::u', status: 'scored' },
+        {
+          scoring_unit_id: 'uncovered',
+          status: 'pending',
+          pending: { reason: 'missing_response' },
         },
-      ],
-    });
-    const submission = submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '' }]);
-    submission.group_evidence = [{ evidence: attachment, target: { scope: 'all_units' } }];
-    const port = vi.fn(
-      async (
-        _request: import('./evaluation').ModelExecutorRequest,
-      ): Promise<ModelUnitOutcomeT> => ({
-        kind: 'scored',
-        points_awarded: 2,
-        confidence: 0.99,
-        matched: { rule_id: 'shown-work', option_ids: [] },
-        evidence_citations: [{ evidence_id: 'page-original' }],
-        cost_usd_micros: 12,
-        run_refs: ['original-photo-run'],
-      }),
-    );
-    const out = await evaluateSubmissionCore(
-      inputFor(submission, revision, { model_executor: port }),
-    );
-    expect(port).toHaveBeenCalledOnce();
-    expect(port.mock.calls[0]?.[0]).toMatchObject({ group_evidence: submission.group_evidence });
-    expect(out.record.unit_results).toMatchObject([
-      { status: 'scored', scored_because: 'response', points_awarded: 2 },
-    ]);
-  });
+      ]);
+      port.mockClear();
+      const unadmitted = structuredClone(revision);
+      const executor = unadmitted.execution_plan.assignments[0].executor;
+      if (executor.kind !== 'model_executor') throw new Error('fixture must use model scoring');
+      executor.admitted_slice_id = null;
+      const held = await evaluateSubmissionCore(
+        inputFor(submission, unadmitted, { model_executor: port }),
+      );
+      expect(port).not.toHaveBeenCalled();
+      expect(held.record.unit_results).toMatchObject([
+        { status: 'pending', pending: { reason: 'unjudgeable' } },
+      ]);
+    },
+  );
 });

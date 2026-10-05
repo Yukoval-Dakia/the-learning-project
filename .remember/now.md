@@ -1,3 +1,7 @@
+# 当前交接 — 2026-10-05 原主线恢复
+
+主线程2b3fe612接手8989635f。4dc02c77收尾线程已释放写入权。工作树/Volumes/YukovalSBak/yukoval-projects/tlp-assessment-entries，fix/yuk-1047-formal-entries。原会话全文与两路初审保存在/Users/yuqi/Documents/Codex/recovered-sessions/2026-10-05-assessment/。初审3 P1，已修buffer completion durable release与photo-only missing guard，40 DB/100 unit通过；placement仍待，只有一次修复验证审预算。无PR/CI/生产/新付费。详细状态见PLAN与2026-10-04-yuk1047-formal-entry-migration.md。保留.serena/project.yml外部修改。
+
 # Current handoff — 2026-10-05 resumed on Mac
 
 Owner已要求接手并推送迁移分支；此前stop已撤销。当前工作树/Volumes/YukovalSBak/yukoval-projects/tlp-assessment-entries，分支fix/yuk-1047-formal-entries，恢复head9beca1aff。旧review-settlement writer与JudgedSubmit删除，ValidatedSubmit保留；源码快照审计迁真实native settle owner。23DB/19unit/typecheck/build通过，边界依赖446→440，未部署/付费。生产诊断发布、probe、ingestion及消费者继续同一1047主线，尚未PR/review/CI，不标Done。历史交接与逐批记录仍见docs/planning/2026-10-05-yuk1047-handoff.md及2026-10-04-yuk1047-formal-entry-migration.md。

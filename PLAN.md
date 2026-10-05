@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-05。YUK-1047在fix/yuk-1047-formal-entries：八入口、诊断/Probe、ingestion原件捕获、native归因/报表/CSV及获批Coach修正已接线；旧评分writer/fallback退出。冻结教学原图已接线并通过47父会话DB复验；边界437/0/48。52入口/manifest unit与44native DB通过，准备独立初审和最终gate。无部署、付费provider测试或依赖追新；无模型准入的计划仍withheld。
+> 更新于2026-10-05。YUK-1047原会话已恢复，当前主线fix/yuk-1047-formal-entries。初审3项P1：缓冲试卷归因释放、纯图片missing guard已修并经40 DB/100 unit验证；placement旧提交/发题/自动保存/进度迁移待完成。初审预算已用，只余一次P0/P1验证审。未部署、未新增付费provider测试、未追依赖；无准入模型仍withheld。
 
 ## NOW
 
@@ -83,11 +83,13 @@
 
 ## NEXT
 
-1. YUK-1047完成最终scoped gate、独立初审及必要P0/P1修复，然后PR/CI；交付前保持In Progress。源码八入口收口不代替生产部署或模型actual-output准入。766恢复LIGHT/FULL与588 UI仍待owner，其他主线不启动。
+1. YUK-1047完成placement迁移P1、最终scoped gate与唯一P0/P1验证审，然后PR/CI；交付前保持In Progress。源码八入口收口不代替生产部署或模型actual-output准入。766恢复LIGHT/FULL与588 UI仍待owner，其他主线不启动。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
 ## PARKED
+
+- YUK-1047初审非阻塞P2：native failure读面混入未发子题KC；PfSolo快速退出取消未ack自动保存尾部。已归并Linear原票，未声称修复。
 
 - YUK-1047生产模型质量actual-output准入仍缺新证据；本轮禁止新增付费provider测试，未准入模型计划保持withheld。Coach最小修正与CSV已实施，不再是未批准/待实施项。
 

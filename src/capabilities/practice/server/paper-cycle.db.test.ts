@@ -30,10 +30,12 @@ import {
   material_fsrs_state,
   question,
 } from '@/db/schema';
+import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import * as masteryStateModule from '@/server/mastery/state';
 import { Review } from '@/server/session';
 import {
+  paperFixtureAssessment,
   publishPaperModelFixture,
   reopenFrozenPaperFixture,
   startFrozenPaperFixture,
@@ -41,7 +43,9 @@ import {
 } from '../../../../tests/fixtures/assessment-paper';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { createPaperReviewSession } from '../api/paper-session-create';
+import { PATCH as completeReview } from '../api/review-session-detail';
 import { autosaveAnswerDraft, countAnsweredSlots, freezeAnswerDraft } from './answer-draft';
+import { handleFailureLearningAttemptDelivery } from './failure-learning-subscription';
 import * as evaluationService from './judge/evaluate-submission';
 import { createRecordedModelExecutor } from './judge/recorded-model-executor';
 import { getPaperDetail } from './paper-detail';
@@ -177,6 +181,86 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
   beforeEach(async () => {
     await resetDb();
     __resetRateLimitForTests();
+  });
+
+  it('durably releases buffered failures on canonical completion without duplicate jobs', async () => {
+    const db = testDb();
+    await seedQuestion('q_buffered', 'true');
+    await seedPaper('paper_buffered', ['q_buffered'], [], 'judge_now_show_later');
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper_buffered');
+    await submitPaperSlot(
+      {
+        sessionId,
+        paperArtifactId: 'paper_buffered',
+        questionId: 'q_buffered',
+        answerMd: 'false',
+        primaryKnowledgeId: 'k1',
+        feedbackPolicy: 'judge_now_show_later',
+      },
+      db,
+    );
+    const [anchor] = await db
+      .select()
+      .from(event)
+      .where(
+        and(eq(event.session_id, sessionId), eq(event.action, 'experimental:assessment_attempt')),
+      );
+    const [activation] = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:assessment_activation'),
+          eq(event.subject_id, String(anchor.payload.evaluation_group_id)),
+        ),
+      );
+    const jobs = new Set<string>();
+    const bossSend = vi.fn(async (_queue: string, _data: unknown, options: { id: string }) => {
+      if (jobs.has(options.id)) return null;
+      jobs.add(options.id);
+      return options.id;
+    });
+    const deliver = (id: string) =>
+      handleFailureLearningAttemptDelivery(
+        db,
+        {
+          subscriberId: 'practice.failure-learning-attempt',
+          subscriberVersion: 3,
+          deliverySeq: '1',
+          sourceEventId: id,
+        },
+        { bossSend },
+      );
+    expect((await deliver(anchor.id)).status).toBe('skipped');
+    expect((await deliver(activation.id)).status).toBe('skipped');
+    expect(jobs.size).toBe(0);
+    expect(await getCurrentFailureAttempts(db)).toHaveLength(0);
+    const complete = () =>
+      completeReview(
+        new Request(`http://test/api/review-sessions/${sessionId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'completed' }),
+        }),
+        { id: sessionId },
+      );
+    expect((await complete()).status).toBe(200);
+    expect((await complete()).status).toBe(200);
+    const releases = await db
+      .select()
+      .from(event)
+      .where(
+        and(
+          eq(event.session_id, sessionId),
+          eq(event.action, 'experimental:assessment_feedback_released'),
+        ),
+      );
+    expect(releases).toHaveLength(1);
+    expect((await deliver(releases[0].id)).status).toBe('succeeded');
+    expect((await deliver(releases[0].id)).status).toBe('succeeded');
+    expect(jobs.size).toBe(1);
+    expect(bossSend.mock.calls[0][1]).toEqual({ attempt_event_id: anchor.id });
+    expect(await getCurrentFailureAttempts(db)).toHaveLength(1);
   });
 
   it('full cycle: pos never double-counts, partial index constrains only live drafts', async () => {
@@ -1455,30 +1539,44 @@ describe('U5 paper lifecycle — draft/freeze/abandon/reopen/refreeze/rejudge', 
     }
   });
 
-  it('F1: a photo-only original reaches the declared native model and settles its actual verdict', async () => {
-    const { db, input } = await modelPaper();
-    const execute = vi.fn(
-      async (request: ModelExecutorRequest, _signal: AbortSignal | undefined, runId: string) =>
-        scored(request, runId),
-    );
-    installExecutor(db, execute);
-    const result = await submitPaperSlot(
-      { ...input, answerMd: '', answerImageRefs: ['asset_photo_only'] },
-      db,
-    );
-    expect(result).toMatchObject({ coarseOutcome: 'correct', score: 1 });
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(execute.mock.calls[0][0].group_evidence[0].evidence.asset.asset_id).toBe(
-      'asset_photo_only',
-    );
-    const original = await submissionForAttempt(result.attemptEventId);
-    expect(original.response_set.entries).toMatchObject([{ kind: 'text', text_md: '' }]);
-    expect(original.group_evidence).toMatchObject([
-      { evidence: { asset: { asset_id: 'asset_photo_only' } } },
-    ]);
-    expect(await candidatesForAttempt(result.attemptEventId)).toHaveLength(1);
-    expect((await db.select().from(material_fsrs_state))[0].state.reps).toBe(1);
-  });
+  it.each([true, false])(
+    'photo-only native submission settles with explicit text entry: %s',
+    async (explicitText) => {
+      const { db, input } = await modelPaper();
+      const execute = vi.fn(
+        async (request: ModelExecutorRequest, _signal: AbortSignal | undefined, runId: string) =>
+          scored(request, runId),
+      );
+      installExecutor(db, execute);
+      const assessment = await paperFixtureAssessment(
+        db,
+        input.sessionId,
+        input.questionId,
+        '',
+        undefined,
+        ['asset_photo_only'],
+      );
+      if (!explicitText) assessment.response_set.entries = [];
+      const result = await submitPaperSlot(
+        { ...input, assessment, answerMd: '', answerImageRefs: ['asset_photo_only'] },
+        db,
+      );
+      expect(result).toMatchObject({ coarseOutcome: 'correct', score: 1 });
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(execute.mock.calls[0][0].group_evidence[0].evidence.asset.asset_id).toBe(
+        'asset_photo_only',
+      );
+      const original = await submissionForAttempt(result.attemptEventId);
+      expect(original.response_set.entries).toMatchObject(
+        explicitText ? [{ kind: 'text', text_md: '' }] : [],
+      );
+      expect(original.group_evidence).toMatchObject([
+        { evidence: { asset: { asset_id: 'asset_photo_only' } } },
+      ]);
+      expect(await candidatesForAttempt(result.attemptEventId)).toHaveLength(1);
+      expect((await db.select().from(material_fsrs_state))[0].state.reps).toBe(1);
+    },
+  );
 
   // YUK-448 — paper-path RT capture. Mirrors the solo /api/review/submit latency
   // capture: `latencyMs` lands in the attempt event payload as `duration_ms`.

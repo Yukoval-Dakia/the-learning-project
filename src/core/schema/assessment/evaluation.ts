@@ -672,9 +672,11 @@ export async function evaluateSubmissionCore(
         evidence.target.scope === 'all_units' || evidence.target.scoring_unit_ids.includes(unitId),
     );
 
-    // missing：声明作答面里存在缺条目（区别于主动空白）。
+    // Scoped original evidence can supply a model-evaluated answer without a text entry.
+    const evidenceOnlyModelAnswer =
+      unitGroupEvidence.length > 0 && assignmentByUnit.get(unitId)?.kind === 'model_executor';
     const missingSlotIds = slotIds.filter((slotId) => !entryBySlot.has(slotId));
-    if (missingSlotIds.length > 0) {
+    if (missingSlotIds.length > 0 && !evidenceOnlyModelAnswer) {
       unitResults.push(
         withUnit(pending({ reason: 'missing_response', slot_ids: missingSlotIds }), unitId),
       );

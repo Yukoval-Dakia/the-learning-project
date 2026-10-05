@@ -419,3 +419,28 @@ full evidence target editing/media acceptance and complete frozen teaching input
 - `5a208053e` retires the unused legacy evaluation-authority branch/types and registers all eight native entries. Bounded AST evidence follows the actual imported preview/commit bridges, rejects changed forwarding and shadowed/unbound wrappers, and retains an `info` release result because source wiring does not establish deployed identity. 52 source/authority/manifest unit tests and 44 native/capture/report DB tests passed. Teacher QA and report-only calibration keep their independent deterministic/legacy-compatible judge APIs.
 - Frozen solve hints now load only issued public figure bytes, validate asset digests and media types, and reject unbound Markdown, missing/unsupported/private media before model invocation. An explicit TeachingTurnVisionTask preserves ordinary text teaching configuration; offline runner evidence verifies actual image blocks, vision routing, logs and incompatible-model rejection. Assistance recording remains separate from grading and learning. Parent reran 47 solve/media/native-executor DB tests after extracting shared asset metadata/loading and abort handling; storage access remains in its existing server adapter.
 - Final source state has no student-authority legacy fallback. Unadmitted production model plans remain withheld; no admission evidence was manufactured. No deployment or new paid provider calls. Independent review and exact-head PR/CI are still required before delivery. Actual model-output quality remains outside these offline results.
+
+### 2026-10-05 recovered initial review and P1 repair
+
+The deleted main thread was recovered from T3's retained records. Initial review
+at c53c8e189 found three P1s: buffered completion never resumes failure learning,
+placement still uses legacy request/counting paths, and image-only host responses
+with no text entries are stopped by the missing-slot guard. This was one review
+round across two scopes; only the sole repair verification round remains.
+
+Completion now emits idempotent feedback-release events in its transaction; the
+subscriber resolves the original attempt and reuses its stable job identity. The
+raw SQL timestamp is normalized to the ISO identity in original paper attempts.
+The recovered repair passed 33 paper-cycle DB tests; the new parent reran paper
+and subscriber suites together (40 tests including an additional photo case).
+
+The photo regression first failed with zero model calls. A model-assigned unit
+with covering original evidence can now execute without fabricated empty text.
+Uncovered units still report missing response, admission still withholds models,
+and deterministic comparators do not gain an image fallback. The actual PfSolo
+request shape and immutable paper submission are covered. Core/UI/manifest tests
+passed 100 cases; DB coverage includes both explicit empty text and absent entries.
+
+Placement remains unimplemented at this checkpoint. P2 sibling knowledge scope
+and unacknowledged solo draft tail are captured in Linear YUK-1047 and PARKED.
+No paid provider, deployment or full local test run was performed.

@@ -330,7 +330,7 @@ describe('PfSolo — stream answering capture regression pin (YUK-784)', () => {
 // YUK-1094 — 附件上传中提交入口必须 disable（否则判分跑在旧的空 evidence 上）。上传 settle
 // 后恢复可提交，且已上传的 asset id 随 advice 预览一并送到 judge（answer_image_refs）。
 describe('PfSolo — 附件上传中提交入口 gating (YUK-1094)', () => {
-  it('disables submit while an attachment upload is in flight, then carries its ref into advice', async () => {
+  it.each([true, false])('preserves uploaded originals with typed text: %s', async (withText) => {
     let resolveUpload!: (res: Response) => void;
     const uploadGate = new Promise<Response>((resolve) => {
       resolveUpload = resolve;
@@ -372,7 +372,7 @@ describe('PfSolo — 附件上传中提交入口 gating (YUK-1094)', () => {
     await screen.findByText('用一句话解释导数。');
 
     // 先填文字，让 canSubmit 的作答项为真——这样「上传中 disable」只可能来自 upload-pending。
-    await user.type(screen.getByRole('textbox', { name: '作答' }), '导数表示变化率');
+    if (withText) await user.type(screen.getByRole('textbox', { name: '作答' }), '导数表示变化率');
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(fileInput, new File(['bytes'], 'work.png', { type: 'image/png' }));
 
@@ -407,8 +407,20 @@ describe('PfSolo — 附件上传中提交入口 gating (YUK-1094)', () => {
     await waitFor(() => expect(adviceCalls).toHaveLength(1));
     const body = JSON.parse((adviceCalls[0][1] as RequestInit).body as string);
     expect(body).toMatchObject({
-      response_md: '导数表示变化率',
+      response_md: withText ? '导数表示变化率' : '',
       answer_image_refs: ['asset_1'],
+      assessment: {
+        response_set: {
+          entries: withText ? [expect.objectContaining({ text_md: '导数表示变化率' })] : [],
+        },
+        group_evidence: [
+          expect.objectContaining({
+            evidence: expect.objectContaining({
+              asset: expect.objectContaining({ asset_id: 'asset_1' }),
+            }),
+          }),
+        ],
+      },
     });
   });
 });
