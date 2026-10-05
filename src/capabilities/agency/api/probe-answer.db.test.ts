@@ -18,7 +18,7 @@
 // mock the same chokepoint. serveProbeOnce (the producer half, wired in S2) is real,
 // so the probe question row is genuine.
 
-import { and, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -26,6 +26,7 @@ import {
   PROBE_JUDGE_STARTED_ACTION,
   countActiveProbes,
   serveProbeOnce,
+  servePublishedProbe,
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
@@ -51,6 +52,7 @@ import { writeAiProposal } from '@/kernel/proposals/writer';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { agencyCapability } from '../manifest';
 import { ProbeAnswerResponseSchema } from './contracts';
 import { POST } from './probe-answer';
 
@@ -241,7 +243,7 @@ async function issueOfflineProbe(probeQuestionId: string) {
   const [row] = await testDb().select().from(question).where(eq(question.id, probeQuestionId));
   if (!existing && row?.source === 'mind_probe') {
     await publishPaperModelFixture(testDb(), probeQuestionId);
-    await loadActiveProbes(testDb());
+    await servePublishedProbe(testDb(), probeQuestionId);
   }
 }
 
@@ -378,6 +380,67 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
   // YUK-567 slice-2 — probes are served with judge_kind_override='multimodal_direct'
   // (an IMAGE_CONSUMING route), so a photo / photo-only answer is graded (not 422'd)
   // and the student image refs thread through to the judge invoke.
+  it('delayed admission delivers through the registered publication command before GET and answer', async () => {
+    const db = testDb();
+    const id = await serveResponseAwareProbe();
+    const subscription = agencyCapability.subscriptions?.handlers.find(
+      (handler) => handler.id === 'agency.probe-publication-serve',
+    );
+    if (!subscription) throw new Error('production probe publication subscription absent');
+    const handler = (await subscription.load())(db);
+    const subscriberId = subscription.id,
+      subscriberVersion = subscription.version;
+    async function deliverLatest() {
+      const rows = await db
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'experimental:assessment_publish'), eq(event.subject_id, id)))
+        .orderBy(desc(event.created_at), desc(event.id))
+        .limit(1);
+      const publication = rows[0];
+      if (!publication) throw new Error('publication receipt absent');
+      return handler({
+        subscriberId,
+        subscriberVersion,
+        deliverySeq: '1',
+        sourceEventId: publication.id,
+      });
+    }
+    expect(await deliverLatest()).toMatchObject({ status: 'skipped', reason: 'not_admitted' });
+    expect(await loadActiveProbes(db)).toEqual({ probes: [] });
+    expect(await db.select().from(assessment_issuance)).toHaveLength(0);
+    await publishPaperModelFixture(db, id);
+    expect(await loadActiveProbes(db)).toEqual({ probes: [] });
+    expect(await db.select().from(assessment_issuance)).toHaveLength(0);
+    expect(await deliverLatest()).toMatchObject({ status: 'succeeded' });
+    const issued = await db.select().from(assessment_issuance);
+    const read = await loadActiveProbes(db);
+    expect(read.probes.map((probe) => probe.probe_question_id)).toEqual([id]);
+    expect(await deliverLatest()).toMatchObject({ status: 'succeeded' });
+    expect(await loadActiveProbes(db)).toEqual(read);
+    expect(await db.select().from(assessment_issuance)).toEqual(issued);
+    mockInvoke.mockResolvedValue(
+      invokeResult('correct', {
+        match: 'gold',
+        explanation_md: '原始答案包含内层导数 2x，与冻结 gold 签名一致。',
+      }),
+    );
+    const response = await POST(
+      new Request(`http://local/api/conjecture/probe/${id}/answer`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ answer_md: '2x·cos(x²)' }),
+      }),
+      { id },
+    );
+    expect({ status: response.status, body: await response.json() }).toMatchObject({ status: 200 });
+    expect(await probeResultEvents(id)).toHaveLength(1);
+    expect(await loadActiveProbes(db)).toEqual({ probes: [] });
+    expect(await deliverLatest()).toMatchObject({ status: 'skipped', reason: 'already_answered' });
+    expect(await db.select().from(assessment_issuance)).toEqual(issued);
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+  });
+
   it('does not issue or grade a production probe without model admission', async () => {
     const id = await serveResponseAwareProbe();
     expect(await loadActiveProbes(testDb())).toEqual({ probes: [] });

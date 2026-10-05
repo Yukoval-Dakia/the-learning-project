@@ -26,7 +26,7 @@ import { type SaveSubmissionRequest, saveSubmission } from './submit';
 
 /** Persist the served original before a synchronous evaluation or durable dispatch. */
 export async function prepareFormalAttemptSubmission(
-  database: Db,
+  database: Db | Tx,
   entry: GradingEntryPoint,
   questionId: string,
   request: SaveSubmissionRequest,
@@ -231,6 +231,7 @@ export async function commitFormalAttempt(
     capture?: FormalAttemptCapture;
     signal?: AbortSignal;
     requireUnassistedModelEvidence?: boolean;
+    beforeActivate?: (tx: Tx) => Promise<void>;
     onActivated?: (
       tx: Tx,
       prepared: Awaited<ReturnType<typeof previewFormalAttempt>>,
@@ -298,6 +299,7 @@ export async function commitFormalAttempt(
     },
     {
       actorRef: `assessment:${entry}`,
+      beforeActivate: options.beforeActivate,
       allowCapturedOriginal: entry === 'ingestion_grading' && options.onActivated !== undefined,
       onThetaApplied: async (tx, observation) => {
         if (observation.outcome !== 1) return;

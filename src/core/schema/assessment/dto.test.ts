@@ -116,6 +116,30 @@ describe('PracticeIssuanceDto — 公开面是 strict schema，不是渲染约�
     expect(dto.response_spec.slots[0]).toMatchObject({ slot_id: 'mc', kind: 'single_choice' });
   });
 
+  it('projects evidence substitution only when every unit for the slot uses a model', () => {
+    const rev = revision();
+    expect(projectPracticeIssuance(rev, issuance()).response_requirements).toEqual([
+      { slot_id: 'mc', evidence_unit_ids: [] },
+    ]);
+    rev.execution_plan.assignments[0].executor = {
+      kind: 'model_executor',
+      task_kind: 'AssessmentRuleJudgeTask',
+      admitted_slice_id: 'slice_private',
+    };
+    const dto = projectPracticeIssuance(rev, issuance());
+    expect(dto.response_requirements).toEqual([{ slot_id: 'mc', evidence_unit_ids: ['u_mc'] }]);
+    expect(JSON.stringify(dto)).not.toContain('slice_private');
+    expect(JSON.stringify(dto)).not.toContain('AssessmentRuleJudgeTask');
+    rev.scoring_basis.units.push({ ...rev.scoring_basis.units[0], scoring_unit_id: 'u_second' });
+    rev.execution_plan.assignments.push({
+      scoring_unit_ids: ['u_second'],
+      executor: { kind: 'deterministic', comparator: 'exact_option_set' },
+    });
+    expect(projectPracticeIssuance(rev, issuance()).response_requirements).toEqual([
+      { slot_id: 'mc', evidence_unit_ids: [] },
+    ]);
+  });
+
   it('injected answer keys / rubric / execution plans / metadata fail parse', () => {
     const dto = projectPracticeIssuance(revision(), issuance());
     expect(() =>

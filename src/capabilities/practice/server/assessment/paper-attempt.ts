@@ -1,6 +1,7 @@
 import { and, eq, gte, sql } from 'drizzle-orm';
 import { EvaluationRecord } from '@/core/schema/assessment';
 import type { Db } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { answer, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { resolveVerdictForGroup } from '@/kernel/read-models/assessment-verdict';
@@ -48,36 +49,6 @@ export async function submitNativePaperAttempt(db: Db, input: NativePaperAttempt
   ) {
     throw new ApiError('coordinate_mismatch', 'submission differs from the issued paper slot', 409);
   }
-  const [session] = await db
-    .select()
-    .from(learning_session)
-    .where(eq(learning_session.id, input.sessionId));
-  if (!session || session.started_at.toISOString() !== binding.started_at) {
-    throw new ApiError('coordinate_mismatch', 'paper occurrence changed', 409);
-  }
-  // A completed paper may replay an accepted slot but cannot introduce a new answer.
-  if (!['started', 'paused'].includes(session.status)) {
-    const [prior] = await db
-      .select({ id: answer.id })
-      .from(answer)
-      .where(
-        and(
-          eq(answer.session_id, input.sessionId),
-          eq(answer.question_id, input.questionId),
-          sql`coalesce(${answer.part_ref}, '') = ${input.partRef ?? ''}`,
-          gte(answer.submitted_at, session.started_at),
-        ),
-      );
-    if (!prior) throw new ApiError('session_closed', 'paper cannot accept another answer', 409);
-  }
-  const prepared = await prepareFormalAttemptSubmission(
-    db,
-    'paper_submit',
-    input.questionId,
-    input.assessment,
-  );
-  const submission = prepared.submission;
-  const attemptId = `evt_assessment_${submission.submission_id}`;
   const capture = {
     session_id: input.sessionId,
     paper_artifact_id: input.paperArtifactId,
@@ -89,9 +60,14 @@ export async function submitNativePaperAttempt(db: Db, input: NativePaperAttempt
     reasoning_trace: input.reasoningTrace,
     self_confidence: input.selfConfidence,
   };
-  const answerId = await db.transaction(async (tx) => {
+  const { prepared, answerId } = await db.transaction(async (tx) => {
+    await acquireLearningStateWriteLock(tx);
     const [lockedSession] = await tx
-      .select({ id: learning_session.id, started_at: learning_session.started_at })
+      .select({
+        id: learning_session.id,
+        started_at: learning_session.started_at,
+        status: learning_session.status,
+      })
       .from(learning_session)
       .where(eq(learning_session.id, input.sessionId))
       .for('update');
@@ -101,11 +77,38 @@ export async function submitNativePaperAttempt(db: Db, input: NativePaperAttempt
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtext(${`paper-native:${slot.issuance_id}`}))`,
     );
+    const [prior] = await tx
+      .select({ id: answer.id })
+      .from(answer)
+      .where(
+        and(
+          eq(answer.session_id, input.sessionId),
+          eq(answer.question_id, input.questionId),
+          sql`coalesce(${answer.part_ref}, '') = ${input.partRef ?? ''}`,
+          gte(answer.submitted_at, lockedSession.started_at),
+        ),
+      );
+    if (!prior) {
+      if (!['started', 'paused'].includes(lockedSession.status)) {
+        throw new ApiError('session_closed', 'paper cannot accept another answer', 409);
+      }
+      await assertSessionMutable(tx, input.sessionId, input.paperArtifactId);
+    }
+    // Learning writes -> session occurrence -> paper slot -> submission group -> issuance -> draft.
+    // No evaluation/model work runs while these locks are held.
+    const prepared = await prepareFormalAttemptSubmission(
+      tx,
+      'paper_submit',
+      input.questionId,
+      input.assessment,
+    );
+    const submission = prepared.submission;
+    const attemptId = `evt_assessment_${submission.submission_id}`;
     const [existing] = await tx
       .select({ id: answer.id })
       .from(answer)
       .where(eq(answer.event_id, attemptId));
-    if (existing) return existing.id;
+    if (existing) return { prepared, answerId: existing.id };
     await assertSessionMutable(tx, input.sessionId, input.paperArtifactId);
     await recordFormalAttemptCapture(
       tx,
@@ -126,8 +129,10 @@ export async function submitNativePaperAttempt(db: Db, input: NativePaperAttempt
       contentMd: input.answerMd,
       imageRefs: input.answerImageRefs ?? [],
     });
-    return frozen.answerId;
+    return { prepared, answerId: frozen.answerId };
   });
+  const submission = prepared.submission;
+  const attemptId = `evt_assessment_${submission.submission_id}`;
   // Validate the immutable original before replaying the current head. A later
   // correction (or retraction) must never reactivate the original candidate.
   const currentVerdict = await resolveVerdictForGroup(db, slot.evaluation_group_id);
@@ -160,7 +165,7 @@ export async function submitNativePaperAttempt(db: Db, input: NativePaperAttempt
       input.assessment,
       {
         capture,
-        onActivated: async (tx) => {
+        beforeActivate: async (tx) => {
           const [current] = await tx
             .select({ started_at: learning_session.started_at })
             .from(learning_session)

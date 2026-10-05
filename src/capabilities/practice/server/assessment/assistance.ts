@@ -80,7 +80,10 @@ export async function snapshotIssuanceAssistance(tx: Db | Tx, issuanceId: string
   };
 }
 
-export async function submissionWasAssisted(database: Db, submissionId: string): Promise<boolean> {
+export async function submissionWasAssisted(
+  database: Db | Tx,
+  submissionId: string,
+): Promise<boolean> {
   const [receipt] = await database
     .select({ payload: event.payload })
     .from(event)

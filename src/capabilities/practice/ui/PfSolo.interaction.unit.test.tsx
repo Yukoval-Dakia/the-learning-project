@@ -65,6 +65,7 @@ const ISSUANCE_STATE = {
     issued_at: '2026-10-04T00:00:00.000Z',
     materials: [],
     faces: [{ part_id: 'q_1', prompt_md: QUESTION.prompt_md, material_ids: [] }],
+    response_requirements: [{ slot_id: 'original_slot', evidence_unit_ids: ['unit_original'] }],
     response_spec: {
       slots: [
         {
@@ -422,5 +423,196 @@ describe('PfSolo — 附件上传中提交入口 gating (YUK-1094)', () => {
         ],
       },
     });
+  });
+});
+
+describe('PfSolo issued response coverage', () => {
+  it.each([false, true])(
+    'blocks a partial deterministic answer, including with photo=%s',
+    async (withPhoto) => {
+      const state = structuredClone(ISSUANCE_STATE);
+      state.practice_dto.response_spec.slots.push({
+        ...state.practice_dto.response_spec.slots[0],
+        slot_id: 'second_slot',
+        placement: { label: '第二问' },
+      });
+      state.practice_dto.response_requirements = [
+        { slot_id: 'original_slot', evidence_unit_ids: [] },
+        { slot_id: 'second_slot', evidence_unit_ids: [] },
+      ];
+      const advice = vi.fn();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: RequestInfo | URL) => {
+          const url = String(input);
+          if (url.endsWith('/responses')) return issuanceResponse(url);
+          if (url.includes('/api/issuances/')) return Response.json(state);
+          if (url.includes('/api/review/advice')) {
+            advice();
+            return Response.json({});
+          }
+          if (url.includes('/api/questions/')) return Response.json(QUESTION);
+          if (url.includes('/api/assets'))
+            return Response.json({
+              asset: {
+                id: 'photo_multi',
+                storage_key: 'k',
+                mime_type: 'image/png',
+                byte_size: 3,
+                sha256: 'b'.repeat(64),
+                created_at: '2026-10-04T00:00:00.000Z',
+              },
+            });
+          return Response.json({});
+        }),
+      );
+      const user = userEvent.setup();
+      const { container } = renderSolo(vi.fn());
+      await user.type(
+        await screen.findByRole('textbox', { name: '作答' }),
+        '第一问的完整解释，尚未回答第二问。',
+      );
+      if (withPhoto) {
+        const fileInput = container.querySelector('input[type="file"]');
+        if (!(fileInput instanceof HTMLInputElement)) throw new Error('file input absent');
+        await user.upload(fileInput, new File(['png'], 'work.png', { type: 'image/png' }));
+        await waitFor(() =>
+          expect(screen.getByRole('button', { name: '添加附件' })).toHaveProperty(
+            'disabled',
+            false,
+          ),
+        );
+      }
+      const submit = screen.getByRole('button', { name: '提交 · 即时判分' });
+      expect(submit).toHaveProperty('disabled', true);
+      await user.click(submit);
+      expect(advice).not.toHaveBeenCalled();
+      await user.type(
+        screen.getByRole('textbox', { name: '第二问' }),
+        '第二问也保留推导过程与边界条件。',
+      );
+      expect(submit).toHaveProperty('disabled', false);
+    },
+  );
+});
+
+describe('PfSolo frozen photo requirements', () => {
+  it.each([
+    {
+      label: 'whole-group evidence',
+      target: { scope: 'all_units' },
+      covered: true,
+      declared: true,
+    },
+    {
+      label: 'fully scoped evidence',
+      target: { scope: 'units', scoring_unit_ids: ['unit_original', 'unit_second'] },
+      covered: true,
+      declared: true,
+    },
+    {
+      label: 'partially scoped evidence',
+      target: { scope: 'units', scoring_unit_ids: ['unit_original'] },
+      covered: false,
+      declared: true,
+    },
+    {
+      label: 'missing public requirements',
+      target: { scope: 'all_units' },
+      covered: false,
+      declared: false,
+    },
+  ])('$label: photo-only submission covered=$covered', async ({ target, covered, declared }) => {
+    const state = {
+      ...structuredClone(ISSUANCE_STATE),
+      draft: {
+        response_set: { entries: [] },
+        save_epoch: 4,
+        group_evidence: [
+          {
+            evidence: {
+              evidence_id: 'page_original',
+              kind: 'image',
+              asset: { asset_id: 'page_original', digest: `sha256:${'c'.repeat(64)}` },
+              mime_type: 'image/png',
+              bytes: 1024,
+              uploaded_at: '2026-10-04T00:00:00.000Z',
+            },
+            target,
+          },
+        ],
+      },
+    };
+    state.practice_dto.response_spec.slots.push({
+      ...state.practice_dto.response_spec.slots[0],
+      slot_id: 'second_slot',
+      placement: { label: '第二问' },
+    });
+    state.practice_dto.response_requirements = [
+      { slot_id: 'original_slot', evidence_unit_ids: ['unit_original'] },
+      { slot_id: 'second_slot', evidence_unit_ids: ['unit_second'] },
+    ];
+    const dto = declared
+      ? state.practice_dto
+      : {
+          ...state.practice_dto,
+          response_requirements: undefined,
+        };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith('/responses')) return issuanceResponse(url);
+        if (url.includes('/api/issuances/')) return Response.json({ ...state, practice_dto: dto });
+        if (url.includes('/api/questions/')) return Response.json(QUESTION);
+        return Response.json({});
+      }),
+    );
+    renderSolo(vi.fn());
+    await screen.findByRole('textbox', { name: '第二问' });
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '提交 · 即时判分' })).toHaveProperty(
+        'disabled',
+        !covered,
+      ),
+    );
+  });
+
+  it('preserves the explicit manual path for a partial response', async () => {
+    let requests = 0;
+    const state = structuredClone(ISSUANCE_STATE);
+    state.practice_dto.response_spec.slots.push({
+      ...state.practice_dto.response_spec.slots[0],
+      slot_id: 'second_slot',
+      placement: { label: '第二问' },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith('/responses')) return issuanceResponse(url);
+        if (url.includes('/api/issuances/')) {
+          requests += 1;
+          return requests === 1
+            ? Response.json(
+                { error: 'not_admitted', message: 'requires manual practice' },
+                { status: 422 },
+              )
+            : Response.json(state);
+        }
+        if (url.includes('/api/questions/')) return Response.json(QUESTION);
+        return Response.json({});
+      }),
+    );
+    const user = userEvent.setup();
+    renderSolo(vi.fn());
+    await user.click(await screen.findByRole('button', { name: '按自行评级练习' }));
+    await user.type(
+      await screen.findByRole('textbox', { name: '作答' }),
+      '手动保留部分原始回答与自评。',
+    );
+    const buttons = screen.getAllByRole('button', { name: /自行评级/ });
+    expect(buttons).toHaveLength(3);
+    for (const button of buttons) expect(button).toHaveProperty('disabled', false);
   });
 });

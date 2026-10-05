@@ -15501,6 +15501,10 @@ export interface operations {
                                 kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                 material_id: string;
                             }[];
+                            response_requirements?: {
+                                evidence_unit_ids: string[];
+                                slot_id: string;
+                            }[];
                             response_spec: {
                                 slots: ({
                                     /** @enum {string} */
@@ -15707,6 +15711,10 @@ export interface operations {
                                 /** @enum {string} */
                                 kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                 material_id: string;
+                            }[];
+                            response_requirements?: {
+                                evidence_unit_ids: string[];
+                                slot_id: string;
                             }[];
                             response_spec: {
                                 slots: ({
@@ -16121,6 +16129,10 @@ export interface operations {
                                 /** @enum {string} */
                                 kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                 material_id: string;
+                            }[];
+                            response_requirements?: {
+                                evidence_unit_ids: string[];
+                                slot_id: string;
                             }[];
                             response_spec: {
                                 slots: ({
@@ -20217,6 +20229,10 @@ export interface operations {
                                             kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                             material_id: string;
                                         }[];
+                                        response_requirements?: {
+                                            evidence_unit_ids: string[];
+                                            slot_id: string;
+                                        }[];
                                         response_spec: {
                                             slots: ({
                                                 /** @enum {string} */
@@ -20773,6 +20789,10 @@ export interface operations {
                                             /** @enum {string} */
                                             kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                             material_id: string;
+                                        }[];
+                                        response_requirements?: {
+                                            evidence_unit_ids: string[];
+                                            slot_id: string;
                                         }[];
                                         response_spec: {
                                             slots: ({
@@ -21593,6 +21613,10 @@ export interface operations {
                                             kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                             material_id: string;
                                         }[];
+                                        response_requirements?: {
+                                            evidence_unit_ids: string[];
+                                            slot_id: string;
+                                        }[];
                                         response_spec: {
                                             slots: ({
                                                 /** @enum {string} */
@@ -22274,6 +22298,10 @@ export interface operations {
                                             /** @enum {string} */
                                             kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                             material_id: string;
+                                        }[];
+                                        response_requirements?: {
+                                            evidence_unit_ids: string[];
+                                            slot_id: string;
                                         }[];
                                         response_spec: {
                                             slots: ({
@@ -23021,6 +23049,10 @@ export interface operations {
                                             kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                             material_id: string;
                                         }[];
+                                        response_requirements?: {
+                                            evidence_unit_ids: string[];
+                                            slot_id: string;
+                                        }[];
                                         response_spec: {
                                             slots: ({
                                                 /** @enum {string} */
@@ -23752,6 +23784,10 @@ export interface operations {
                                             /** @enum {string} */
                                             kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                             material_id: string;
+                                        }[];
+                                        response_requirements?: {
+                                            evidence_unit_ids: string[];
+                                            slot_id: string;
                                         }[];
                                         response_spec: {
                                             slots: ({

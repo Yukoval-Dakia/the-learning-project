@@ -35,6 +35,15 @@ export const agencyCapability = defineCapability({
   subscriptions: {
     handlers: [
       {
+        id: 'agency.probe-publication-serve',
+        version: 1,
+        actions: ['experimental:assessment_publish'],
+        load: () =>
+          import('./server/conjecture/probe-lifecycle').then(
+            (m) => m.buildProbePublicationSubscriber,
+          ),
+      },
+      {
         id: 'agency.probe-evidence-intervention-prepare',
         version: 1,
         actions: [PROBE_RESULT_ACTION],

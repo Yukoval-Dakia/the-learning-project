@@ -29,9 +29,16 @@ import {
 } from '@/core/schema/conjecture-probe-response';
 import { AiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
-import { event, question, question_group_lifecycle } from '@/db/schema';
-import { getCorrectionStatus, getCorrectionStatuses, writeEvent } from '@/kernel/events';
+import { assessment_issuance, event, question, question_group_lifecycle } from '@/db/schema';
+import {
+  getCorrectionStatus,
+  getCorrectionStatuses,
+  getEventById,
+  writeEvent,
+} from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import type { EventSubscriptionHandlerFactory } from '@/kernel/manifest';
+import { issueAssessment } from '@/kernel/records/assessment-issuance';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import {
   acquireProposalDecisionLock,
@@ -222,9 +229,58 @@ export async function serveProbeOnce(params: ServeProbeOnceParams): Promise<Serv
       actorRef: 'conjecture:probe-publication',
       now,
     });
+    await servePublishedProbe(tx, probeQuestionId);
     return { status: 'served', probe_question_id: probeQuestionId, active_count: activeBefore + 1 };
   });
 }
+
+/** Explicit delivery command. Publication may precede model admission; GET never serves. */
+export async function servePublishedProbe(db: DbOrTx, probeQuestionId: string) {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${PROBE_SERVE_LOCK_KEY})`);
+    const [probe] = await tx.select().from(question).where(eq(question.id, probeQuestionId));
+    if (probe?.source !== PROBE_QUESTION_SOURCE) return { status: 'not_a_probe' as const };
+    const [result] = await tx
+      .select({ id: event.id })
+      .from(event)
+      .where(
+        and(
+          eq(event.subject_kind, 'question'),
+          eq(event.subject_id, probeQuestionId),
+          eq(event.action, PROBE_RESULT_ACTION),
+        ),
+      );
+    if (result) return { status: 'already_answered' as const };
+    const [original] = await tx
+      .select({ revision_id: assessment_issuance.revision_id })
+      .from(assessment_issuance)
+      .where(eq(assessment_issuance.issuance_id, `iss_probe_${probeQuestionId}`));
+    return issueAssessment(tx, {
+      group_id: probeQuestionId,
+      revision_id: original?.revision_id,
+      issuance_id: `iss_probe_${probeQuestionId}`,
+      container_occurrence_ref: `probe:${probeQuestionId}`,
+      actorRef: 'conjecture:probe-serve',
+    });
+  });
+}
+
+/** Existing durable publication deliveries activate probes admitted after initial creation. */
+export const buildProbePublicationSubscriber: EventSubscriptionHandlerFactory =
+  (db: Db) => async (delivery) => {
+    const publication = await getEventById(db, delivery.sourceEventId);
+    if (!publication) throw new Error(`probe publication '${delivery.sourceEventId}' not found`);
+    if (
+      publication.action !== 'experimental:assessment_publish' ||
+      publication.subject_kind !== 'question'
+    ) {
+      return { status: 'skipped', reason: 'not a question publication' };
+    }
+    const served = await servePublishedProbe(db, publication.subject_id);
+    return served.status === 'issued' || served.status === 'replayed'
+      ? { status: 'succeeded', detail: { issuance_id: served.issuance.issuance_id } }
+      : { status: 'skipped', reason: served.status };
+  };
 
 export interface AnswerProbeParams {
   db: Db;

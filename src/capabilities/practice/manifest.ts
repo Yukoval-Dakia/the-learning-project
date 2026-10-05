@@ -141,6 +141,7 @@ export const practiceCapability = defineCapability({
       'judge',
       // Native head transitions are the authoritative trigger for diagnostic consumers.
       'experimental:assessment_activation',
+      'experimental:assessment_publish',
       'experimental:assessment_attempt',
       'experimental:assessment_feedback_released',
       'experimental:assessment_placement_issued',

@@ -3,7 +3,15 @@
 
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { artifact, evaluation, event, question } from '@/db/schema';
+import {
+  answer,
+  artifact,
+  assessment_submission,
+  evaluation,
+  event,
+  learning_session,
+  question,
+} from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
 import {
   publishPaperModelFixture,
@@ -139,6 +147,63 @@ describe('paper native execution provenance', () => {
       evaluationId: result.evaluationId,
       status: 'review_required',
     });
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('capture commits before slow model work, survives terminal transition, and retries never pay twice', async () => {
+    const db = testDb();
+    await seedQuestion('pq_terminal', {
+      judge_kind_override: 'semantic',
+      prompt_md: '结合两句原文解释人物态度变化，并比较相反解释。',
+      reference_md: '由犹疑到承担责任，结合原句举证，不能仅复述情节。',
+    });
+    await publishPaperModelFixture(db, 'pq_terminal');
+    await seedPaper('paper_terminal', ['pq_terminal'], 'kc_prov');
+    let start = () => {},
+      release = () => {};
+    const started = new Promise<void>((resolve) => {
+      start = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const execute = vi.fn(async () => {
+      start();
+      await gate;
+      throw new Error('offline provider stopped after capture');
+    });
+    vi.spyOn(evaluationService, 'createFormalModelExecutor').mockImplementation(() =>
+      createRecordedModelExecutor(db, execute),
+    );
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper_terminal');
+    const input = {
+      sessionId,
+      paperArtifactId: 'paper_terminal',
+      questionId: 'pq_terminal',
+      answerMd: '先犹疑后承担责任，“我来”与迟疑对照，排除只复述情节的解释。',
+    };
+    const submit = submitPaperSlot(input, db);
+    try {
+      await started;
+      expect(await db.select().from(assessment_submission)).toHaveLength(1);
+      expect(await db.select().from(answer)).toHaveLength(1);
+      expect(
+        await db.select().from(event).where(eq(event.action, 'experimental:assessment_attempt')),
+      ).toHaveLength(1);
+      await db
+        .update(learning_session)
+        .set({ status: 'completed' })
+        .where(eq(learning_session.id, sessionId));
+    } finally {
+      release();
+    }
+    const result = await submit;
+    expect(result.status).toBe('review_required');
+    const original = await db.select().from(assessment_submission);
+    const capture = await db.select().from(answer);
+    expect(await submitPaperSlot(input, db)).toMatchObject({ answerId: result.answerId });
+    expect(await db.select().from(assessment_submission)).toEqual(original);
+    expect(await db.select().from(answer)).toEqual(capture);
     expect(execute).toHaveBeenCalledTimes(1);
   });
 

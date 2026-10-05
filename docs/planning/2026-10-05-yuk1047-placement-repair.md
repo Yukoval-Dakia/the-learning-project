@@ -368,3 +368,100 @@ while reading directories for about three minutes; parent captured a process
 sample and terminated that attempt. Retrying server, worker and migrate bundles
 succeeded (exit0), recorded in `/tmp/yuk1047-reveal-build-retry.log`. All four
 bundles completed; the interrupted attempt is not counted as passing.
+
+
+## Bounded repair of the three latest PR1568 findings
+
+Implementation lane starts at `ed53594cd` in
+`/Volumes/YukovalSBak/yukoval-projects/tlp-assessment-entries`. Parent released
+writer ownership; this lane runs no delegation or review round. Parent retains
+PR/tracker/CI/delivery ownership. The performance-only
+`getCurrentFailureAttempts` comment 4183803000 is excluded;
+`failure-attempts.ts` is unchanged.
+
+Existing UI authorization remains Q20 / D11, with
+`docs/design/2026-09-24-assessment-ui-preflight.md` sections 2–9 approved.
+Section 2 says "共享作答组件为**现有 route 内的 other**". Section 3 says
+"默认绑定当前 evaluation group，**关联子集可编辑**". PfSolo remains the
+existing component; only `PfSolo.tsx` and its interaction test change in the UI.
+There is no new UI concept or route.
+
+### Reproduced failures and corrections
+
+- **Solo response coverage.** The real PfSolo component enabled final submission
+  after answering only the first of two issued deterministic slots. RED is the
+  `photo=false` case in `/tmp/yuk1047-latest-solo-red.log` and
+  `/tmp/yuk1047-latest-solo-red-final.log`. The initial photo fixture had an upload
+  URL/attachment-label error; those failures are not counted as causal evidence.
+  Automatic submission now requires every issued non-table slot to be answered
+  or covered by the evaluator's permitted evidence substitution. The frozen
+  public DTO projects opaque slot/unit input requirements from the actual scoped
+  basis and executor assignments, without criteria, executor descriptors, task
+  names or admitted slice IDs. Missing public requirements never imply a model
+  assignment. Whole-group and complete scoped model evidence retain photo-only
+  submission; partial scoped evidence and photos over missing deterministic
+  responses remain blocked. Explicit manual practice retains partial evidence
+  and self-rating. API client types were regenerated.
+- **Probe GET writes.** An admitted but unissued probe acquired a permanent
+  `iss_probe_*` row and claim during GET. The DB RED log below shows the new row.
+  Shell now only reads persisted issuance and its pinned revision. Agency's
+  production serve path owns issuance; its registered publication subscriber
+  invokes the same delivery command when later admission becomes available.
+  Withheld probes remain hidden and unissued. Existing issued probes replay their
+  original revision even after a newer revision is published. Answered probes
+  cannot acquire a new issuance. No endpoint was added. Postman regeneration
+  completed with no artifact diff.
+- **Paper original/capture race.** Separate connections held the session row
+  while submission ran, then let completion, abandonment or a reopened occurrence
+  win. All three produced an accepted immutable original without capture before
+  the repair. The submission, draft clearing, participation receipt and answer
+  capture now commit in one transaction under the learning/session/occurrence
+  locks. Terminal wins retain the draft and accept no new original. Submission
+  wins retain capture across completion and immutable retries. `Db | Tx` helpers
+  reuse the transaction; evaluation/model work remains outside it. Paper
+  activation locks the session before group/root locks, preserving the common
+  learning-lock order and avoiding a capture/activation inversion. Concurrent
+  duplicate submissions share one original and capture.
+
+### Scoped verification
+
+All DB runs use disposable testcontainers and
+`DOCKER_HOST=unix:///Users/yuqi/.orbstack/run/docker.sock`. No full `pnpm test`,
+provider payment, production access or external delivery ran.
+
+| Check | Result | Exact log under `/tmp/` |
+| --- | --- | --- |
+| GET mutation + completed/abandoned/reopened races, before repair | 4 failed, 7 skipped | `yuk1047-latest-db-red.log` |
+| Final PfSolo interaction, DTO privacy/requirements, core evaluation and manifest unit suites | 4 files / 146 passed, exit 0 | `yuk1047-latest-unit-final.log` |
+| Paper issuance/provenance and Agency lifecycle regression suites | 36 passed in the first six-file run; no failures in those three files | `yuk1047-latest-db-green.log` |
+| Final concurrent/race and full probe-answer suites | 32 passed; the reader suite alone had a new test import error | `yuk1047-latest-db-final.log` |
+| Reader suite after fixing that test import, including actual GET purity and later publication replay | 7 passed, exit 0 | `yuk1047-latest-probe-reader-final.log` |
+| Registered publication handler: withheld, then admitted, serve, read, answer, duplicate delivery | 1 passed, 26 skipped in the focused repair run; also passed in the final full answer suite | `yuk1047-latest-delayed-probe.log` |
+| `pnpm typecheck` | exit 0 | `yuk1047-latest-typecheck-pass.log` |
+| `pnpm lint:ratchet` | exit 0, 298 warnings / 0 infos, baseline 305 / 0 unchanged | `yuk1047-latest-lint-pass.log` |
+| Final `pnpm build` | exit 0; Vite and server/worker/migrate all complete | `yuk1047-latest-build-final.log` |
+| API client / Postman generation | exit 0; client requirements added, Postman unchanged | `yuk1047-latest-gen-api.log`, `yuk1047-latest-postman.log` |
+
+These are **75 distinct passing DB tests across scoped runs**, not the sum of
+repeated executions. The first broad DB run had a new offline signature-fixture
+failure; the final reader run had a wrong digest-helper import. Both were fixed
+and their affected suites rerun. All final affected suites are green. The first
+34-unit run was superseded by the final 146-unit run. No unhandled rejection
+remains in the final logs.
+
+The final server build took about 150 seconds; worker/migrate took about 23/9
+seconds. The earlier complete build took about 216/41/45 seconds for those three
+bundles. Process samples under `/tmp/yuk1047-latest-{esbuild,vitest}-sample.txt`
+show filesystem stat/read activity during the long waits. Neither build is
+reported as interrupted. Bundle-size warnings are unchanged advisory output.
+
+Offline recorded model ports validate the original/capture/claim and probe
+signature wiring. They do not establish provider quality or production model
+admission. The registered publication handler was exercised through its real
+manifest loader; this lane did not operate a production worker or a live browser.
+Parent owns any additional runtime acceptance and external delivery.
+
+No new independent actionable follow-up was found beyond these existing YUK-1047
+findings. Parent owns Linear capture/status. `.serena/project.yml` is preserved
+and excluded from the commit. Writer ownership returns to parent with the repair
+commit; this lane stops after reporting its result.

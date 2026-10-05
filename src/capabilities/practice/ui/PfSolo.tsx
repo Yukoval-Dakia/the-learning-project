@@ -460,8 +460,29 @@ export function PfSolo({
     !pendingRun &&
     !uploading &&
     evidence.every((item) => item.original !== undefined) &&
-    (nativeResponses.entries.some((entry) => isSlotResponseAnswered(nativeResponseValue(entry))) ||
-      imageRefs.length > 0);
+    (issuanceMode === 'manual'
+      ? nativeResponses.entries.some((entry) =>
+          isSlotResponseAnswered(nativeResponseValue(entry)),
+        ) || nativeEvidence.length > 0
+      : frozen.response_spec.slots
+          .filter((slot) => slot.kind !== 'table')
+          .every((slot) => {
+            const entry = nativeResponses.entries.find((entry) => entry.slot_id === slot.slot_id);
+            if (isSlotResponseAnswered(nativeResponseValue(entry))) return true;
+            const units = frozen.response_requirements?.find(
+              (requirement) => requirement.slot_id === slot.slot_id,
+            )?.evidence_unit_ids;
+            return (
+              !!units?.length &&
+              units.every((unitId) =>
+                nativeEvidence.some(
+                  (item) =>
+                    item.target.scope === 'all_units' ||
+                    item.target.scoring_unit_ids.includes(unitId),
+                ),
+              )
+            );
+          }));
   // YUK-444 — 三相：answering（作答）→ confidence（judge 结果暂存、信心自评插拍、判定未揭晓）→
   // feedback（判定卡）。confidence 只在非客观流出现；客观题 answering 直接跳到 feedback（auto-commit）。
   const phase = committedPreview ? 'feedback' : derivePhase(preview, pendingPreview);

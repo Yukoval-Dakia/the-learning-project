@@ -42,6 +42,7 @@ import {
   projectIssuedScoringBasis,
 } from '@/core/schema/assessment';
 import type { Db, Tx } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import {
   assessment_issuance,
   assessment_submission,
@@ -663,10 +664,16 @@ export async function activateSubmissionCandidate(
     record?: (tx: Tx) => Promise<void>;
     /** Persist immutable participation before settlement reads its capture, in the same transaction. */
     recordOriginal?: (tx: Tx) => Promise<void>;
+    /** Lock an entry's container occurrence before activation locks its group/root. */
+    beforeActivate?: (tx: Tx) => Promise<void>;
     onThetaApplied?: SettlementObservers['onThetaApplied'];
   },
 ) {
   return database.transaction(async (tx) => {
+    if (options.beforeActivate) {
+      await acquireLearningStateWriteLock(tx);
+      await options.beforeActivate(tx);
+    }
     const result = await activateEvaluation(tx, intent, {
       settle: async (input) => {
         await options.recordOriginal?.(input.tx);

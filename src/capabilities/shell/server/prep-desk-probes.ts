@@ -14,15 +14,22 @@
 // "we think you're wrong about X" primer.
 
 import { and, desc, eq, sql } from 'drizzle-orm';
+import { projectPracticeIssuance } from '@/core/schema/assessment';
 import {
   MAX_CONCURRENT_ACTIVE_PROBES,
   PROBE_QUESTION_SOURCE,
   PROBE_RESULT_ACTION,
 } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
-import { event, question, question_group_lifecycle } from '@/db/schema';
+import {
+  assessment_issuance,
+  event,
+  question,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
 
-import { issueAssessment } from '@/kernel/records/assessment-issuance';
+import { issuanceRowToContract, revisionRowToContract } from '@/kernel/records/assessment-issuance';
 
 // Single-source the persisted probe contract from core without reaching into the
 // agency capability's server implementation.
@@ -48,11 +55,20 @@ export async function loadActiveProbes(db: Db): Promise<ActiveProbesResult> {
   const rows = await db
     .select({
       id: question.id,
-      prompt_md: question.prompt_md,
       knowledge_ids: question.knowledge_ids,
+      issuance: assessment_issuance,
+      revision: question_revision,
     })
     .from(question)
     .innerJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
+    .innerJoin(
+      assessment_issuance,
+      eq(assessment_issuance.issuance_id, sql<string>`'iss_probe_' || ${question.id}`),
+    )
+    .innerJoin(
+      question_revision,
+      eq(question_revision.revision_id, assessment_issuance.revision_id),
+    )
     .where(
       and(
         eq(question.source, PROBE_QUESTION_SOURCE),
@@ -94,16 +110,13 @@ export async function loadActiveProbes(db: Db): Promise<ActiveProbesResult> {
     .limit(ACTIVE_PROBES_MAX);
   const probes: ActiveProbe[] = [];
   for (const row of rows) {
-    const issued = await issueAssessment(db, {
-      group_id: row.id,
-      issuance_id: `iss_probe_${row.id}`,
-      container_occurrence_ref: `probe:${row.id}`,
-      actorRef: 'conjecture:probe-serve',
-    });
-    if (issued.status !== 'issued' && issued.status !== 'replayed') continue;
+    const frozen = projectPracticeIssuance(
+      revisionRowToContract(row.revision),
+      issuanceRowToContract(row.issuance),
+    );
     probes.push({
       probe_question_id: row.id,
-      prompt_md: issued.practice_dto.faces.map((part) => part.prompt_md).join('\n\n'),
+      prompt_md: frozen.faces.map((part) => part.prompt_md).join('\n\n'),
       knowledge_id: row.knowledge_ids?.[0] ?? null,
     });
   }

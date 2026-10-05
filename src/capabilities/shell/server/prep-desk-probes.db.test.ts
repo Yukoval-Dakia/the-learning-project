@@ -4,14 +4,17 @@
 
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { answerProbe, serveProbeOnce } from '@/capabilities/agency/public';
+import { answerProbe, serveProbeOnce, servePublishedProbe } from '@/capabilities/agency/public';
 import { PrepDeskProbesResponseSchema } from '@/capabilities/shell/api/contracts';
-import { assessment_issuance, question, question_group_lifecycle } from '@/db/schema';
+import { assessment_issuance, event, question, question_group_lifecycle } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
+import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { GET } from '../api/prep-desk-probes';
 import { loadActiveProbes } from './prep-desk-probes';
 
 let seq = 0;
@@ -70,7 +73,10 @@ async function serve(
     now,
   });
   if (served.status !== 'served') throw new Error(`expected served, got ${served.status}`);
-  if (admitted) await publishPaperModelFixture(testDb(), served.probe_question_id);
+  if (admitted) {
+    await publishPaperModelFixture(testDb(), served.probe_question_id);
+    await servePublishedProbe(testDb(), served.probe_question_id);
+  }
   return { probeQuestionId: served.probe_question_id, conjectureProposalId };
 }
 
@@ -95,7 +101,8 @@ describe('loadActiveProbes', () => {
           ),
         ),
     ).toHaveLength(1);
-    await publishPaperModelFixture(testDb(), probe.probeQuestionId);
+    const nextContract = await publishPaperModelFixture(testDb(), probe.probeQuestionId);
+    await servePublishedProbe(testDb(), probe.probeQuestionId);
     const served = await loadActiveProbes(testDb());
     expect(served.probes).toHaveLength(1);
     await testDb()
@@ -104,6 +111,44 @@ describe('loadActiveProbes', () => {
       .where(eq(question.id, probe.probeQuestionId));
     expect(await loadActiveProbes(testDb())).toEqual(served);
     expect(await testDb().select().from(assessment_issuance)).toHaveLength(1);
+    const [lifecycle] = await testDb()
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, probe.probeQuestionId));
+    nextContract.structure.parts[0].prompt_md = '下一版题干：不能替换已经送达的探针。';
+    nextContract.integrity_digest = contractIntegrityDigest(nextContract);
+    expect(
+      await publishQuestionGroup(testDb(), {
+        group_id: probe.probeQuestionId,
+        contract: nextContract,
+        expectedCurrentRevision: lifecycle.current_revision_id,
+        expectedAdmissionGeneration: lifecycle.scoring_admission_generation,
+        availability: lifecycle.availability,
+        actorRef: 'test:later-probe-publication',
+        now: new Date(),
+        admission: { state: 'admitted', evidence: lifecycle.scoring_admission_evidence },
+      }),
+    ).toMatchObject({ status: 'published' });
+    expect(await servePublishedProbe(testDb(), probe.probeQuestionId)).toMatchObject({
+      status: 'replayed',
+    });
+    expect(await loadActiveProbes(testDb())).toEqual(served);
+    expect(await testDb().select().from(assessment_issuance)).toHaveLength(1);
+  });
+
+  it('reading an admitted, unissued probe never writes an issuance', async () => {
+    const probe = await serve('等待显式发题的探针：请解释非零分母的条件。', new Date(), false);
+    await publishPaperModelFixture(testDb(), probe.probeQuestionId);
+    const before = await testDb().select().from(assessment_issuance);
+    const eventsBefore = await testDb().select().from(event);
+    const lifecycleBefore = await testDb().select().from(question_group_lifecycle);
+    const response = await GET();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ probes: [] });
+    await GET();
+    expect(await testDb().select().from(assessment_issuance)).toEqual(before);
+    expect(await testDb().select().from(event)).toEqual(eventsBefore);
+    expect(await testDb().select().from(question_group_lifecycle)).toEqual(lifecycleBefore);
   });
 
   it('lists served-but-unanswered probes, newest first', async () => {
