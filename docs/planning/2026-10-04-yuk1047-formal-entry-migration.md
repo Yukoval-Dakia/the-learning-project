@@ -302,3 +302,12 @@ full evidence target editing/media acceptance and complete frozen teaching input
 - UI原有自动保存、采集、生命周期和计时测试使用带原始发题记录的transport fixture。选择/配对/排序的观察文本映射到冻结标签与正文，保留原始ResponseSet身份，不再把opaque ID当可读答案。
 - 63DB（cycle32/detail10/list15/issuance6）、93unit（paper59/response/solo interaction）通过；typecheck通过，changedBiome零errors/12warnings，build通过。补三项canonical review-session Postman示例并成功生成。UI新readonly测试首轮因matcher不可用失败，修matcher后通过，不计作语义RED证据。
 - 仍为未发布WIP，无PR/push/review/CI/部署或付费调用。下一步继续solo/durable/rejudge旧执行移除、probe/ingestion与下游消费者，1047保持In Progress。
+
+## 2026-10-05 00:45 UTC — 单题 HTTP 旧分支与旧队列 producer 删除（未发布）
+
+- 单题HTTP缺assessment的旧请求现明确409 historical_unknown；原先仍写FSRS的回归先RED后修，不在提交时补造原件。删除旧同步settle调用分支、resolveDurableDivert和enqueueDurableJudge producer；worker仍引用旧judgeSubmit，待下一步迁移后删除，整个旧执行器尚未退出。
+- 队列fixture改为真实发布/发题/原件/认领。保留会话准入、显式手动不入队、队列失败/空返回不丢答案、准入退款、独立重答、原请求复用run、稳定queue ID与完成通知恢复。空send回归揭示native错误写queued：首次发送不再把空返回无条件当已存在任务；原件保留给reconcile，退款且不伪造queued。
+- 迁移复核发现原生激活时读当前KC/domain导致排队后修改学习写目标：3项真实DB断言先RED。原始submission事务现封存learning_scope（组与物理part的KC/难度/类型/来源以及学科映射）；激活只取已发范围，改判复用原组锚点快照。显式空学科映射也不能回查后来归属。历史无此字段仍按原读取语义，不改写历史原件。
+- 后台冻结/改判/空学科边界、原件恢复、退款等60DB通过；会话/历史晚到/原生提交/联合组73DB通过；单题快照7DB通过（合计140distinct DB）。最后公共接口收敛后native/dispatch26DB再验通过。模型全为离线recorded端口，不作实际质量验收。
+- typecheck、changedBiome（零errors/12warnings）、build、Postman通过。capability边界审计最初失败后收敛既有runtime装配/准入接口，删除未注册旧sessions handler、测试改测canonical路由；baseline只收紧450→448（practice→ai65→64、mastery23→22），无新增豁免，最终审计通过。
+- 无PR/push/review/CI/部署或付费调用。仍需worker/rejudge、probe/ingestion、diagnostic一次认领恢复与native订阅、其他消费者，以及余下旧solo主suite迁移；1047保持In Progress，继续推进。

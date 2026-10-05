@@ -110,6 +110,7 @@ import {
 } from '@/server/mastery/state';
 import { orchestrateCascadeRevert } from '@/server/revert/cascade-revert';
 import type { ActivationEffect, ActivationSettleInput } from './activate';
+import { loadAssessmentLearningScope } from './learning-scope';
 
 export const ASSESSMENT_SETTLEMENT_ACTION = 'experimental:assessment_settlement';
 export const ASSESSMENT_SETTLEMENT_VERSION = 1 as const;
@@ -266,6 +267,7 @@ function parseFamilyFold(raw: unknown): FamilyFoldRecord | null {
 }
 
 interface SettlementScope {
+  frozenAbilityGlobalByKnowledgeId?: AbilityGlobalByKnowledgeId;
   groupRow: QuestionLite | null;
   partRows: Map<string, QuestionLite>;
   spec: ResponseSpecT;
@@ -295,16 +297,23 @@ async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<Settleme
   const partIds = input.inputScope?.issued_part_ids ?? input.issuance.part_ids;
   const fullScope = partIds.length === revision.structure.parts.length;
   const wanted = new Set<string>([input.questionGroupId, ...partIds]);
-  const rows = await tx
-    .select({
-      id: question.id,
-      knowledge_ids: question.knowledge_ids,
-      difficulty: question.difficulty,
-      kind: question.kind,
-      source: question.source,
-    })
-    .from(question)
-    .where(inArray(question.id, [...wanted]));
+  const frozen = await loadAssessmentLearningScope(
+    tx,
+    input.submission.submission_id,
+    input.questionGroupId,
+  );
+  const rows = frozen
+    ? frozen.questions.filter((row) => wanted.has(row.id))
+    : await tx
+        .select({
+          id: question.id,
+          knowledge_ids: question.knowledge_ids,
+          difficulty: question.difficulty,
+          kind: question.kind,
+          source: question.source,
+        })
+        .from(question)
+        .where(inArray(question.id, [...wanted]));
   const byId = new Map<string, QuestionLite>(rows.map((r) => [r.id, r as QuestionLite]));
   const partRows = new Map<string, QuestionLite>();
   for (const partId of partIds) {
@@ -312,6 +321,7 @@ async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<Settleme
     if (row) partRows.set(partId, row);
   }
   return {
+    frozenAbilityGlobalByKnowledgeId: frozen?.ability_global_by_knowledge_id,
     groupRow: byId.get(input.questionGroupId) ?? null,
     partRows,
     spec,
@@ -723,9 +733,7 @@ async function executePlan(
       kind: theta.anchorKind,
       source: theta.anchorSource,
       familyPrimaryKnowledgeId: familyPrimary,
-      ...(Object.keys(theta.abilityGlobalByKnowledgeId).length > 0
-        ? { abilityGlobalByKnowledgeId: theta.abilityGlobalByKnowledgeId }
-        : {}),
+      abilityGlobalByKnowledgeId: theta.abilityGlobalByKnowledgeId,
     });
     thetaSnapshots.push(...result.theta_snapshots);
     outcome.thetaApplied = [...theta.knowledgeIds];
@@ -946,10 +954,14 @@ export async function learningSettlement(
   // θ̂ 依赖域映射（HIERARCHICAL_ELO_ENABLED 开时为真；冻结进 replay 输入，
   // re-apply 不重解析 —— 与 durable judge 的冻结语义同款）。
   if (plan.theta.applied) {
-    plan.theta.abilityGlobalByKnowledgeId = await resolveAbilityGlobalByKnowledgeId(
-      tx,
-      plan.theta.knowledgeIds,
-    );
+    plan.theta.abilityGlobalByKnowledgeId =
+      scope.frozenAbilityGlobalByKnowledgeId === undefined
+        ? await resolveAbilityGlobalByKnowledgeId(tx, plan.theta.knowledgeIds)
+        : Object.fromEntries(
+            Object.entries(scope.frozenAbilityGlobalByKnowledgeId).filter(
+              ([kc]) => plan.theta.applied && plan.theta.knowledgeIds.includes(kc),
+            ),
+          );
   }
   const mySubjects = planSubjects(plan);
   const settlementEventId = `stl_${createId()}`;

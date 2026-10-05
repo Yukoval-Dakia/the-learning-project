@@ -184,6 +184,10 @@ export interface JudgeRunEnqueueDeps {
  * attempt behind a 429 would have the sweeper judge it minutes later — quietly turning a
  * refusal into a deferral and letting every rejected submit through the budget after all.
  */
+export function refundJudgeRunAdmission(token: number, deps: JudgeRunEnqueueDeps = {}): void {
+  (deps.refundRateLimit ?? refundRateLimit)(token);
+}
+
 export function admitJudgeRun(deps: JudgeRunEnqueueDeps = {}): number {
   return (deps.checkRateLimit ?? checkRateLimit)();
 }

@@ -1458,7 +1458,7 @@
             "expected_generation": 0
           }
         },
-        "notes": "原生请求返回 effective/review_required，assessment 带 submission/group/candidate 与学习 effect；重复提交复用原始回执，不产生第二次练习。self_report=true 仅显式 FSRS；auto_rate=true 不把 rating fallback 当用户选择。迁移中的无 assessment 旧请求仍待其余入口切换后移除。"
+        "notes": "原生请求返回 effective/review_required，assessment 带 submission/group/candidate 与学习 effect；重复提交复用原始回执，不产生第二次练习。self_report=true 仅显式 FSRS；auto_rate=true 不把 rating fallback 当用户选择。无 assessment 的旧请求返回 historical_unknown(409)，不会补造发题或写入学习状态。原始提交事务冻结学习知识点/难度/学科目标，排队后的标签编辑不改变本次学习范围。"
       }
     ]
   },

@@ -881,7 +881,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "attempts"]
             },
-            "description": "提交原生作答并激活候选\n\n**Notes:** 原生请求返回 effective/review_required，assessment 带 submission/group/candidate 与学习 effect；重复提交复用原始回执，不产生第二次练习。self_report=true 仅显式 FSRS；auto_rate=true 不把 rating fallback 当用户选择。迁移中的无 assessment 旧请求仍待其余入口切换后移除。",
+            "description": "提交原生作答并激活候选\n\n**Notes:** 原生请求返回 effective/review_required，assessment 带 submission/group/candidate 与学习 effect；重复提交复用原始回执，不产生第二次练习。self_report=true 仅显式 FSRS；auto_rate=true 不把 rating fallback 当用户选择。无 assessment 的旧请求返回 historical_unknown(409)，不会补造发题或写入学习状态。原始提交事务冻结学习知识点/难度/学科目标，排队后的标签编辑不改变本次学习范围。",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"question_id\": \"REPLACE_question\",\n  \"rating\": \"hard\",\n  \"assessment\": {\n    \"issuance_id\": \"REPLACE_issuance\",\n    \"evaluation_group_id\": \"REPLACE_evaluation_group\",\n    \"idempotency_key\": \"REPLACE_attempt_key\",\n    \"response_set\": {\n      \"entries\": [\n        {\n          \"slot_id\": \"REPLACE_slot\",\n          \"kind\": \"text\",\n          \"text_md\": \"original learner response\"\n        }\n      ]\n    },\n    \"group_evidence\": []\n  },\n  \"activation_intent\": {\n    \"evaluation_id\": \"REPLACE_candidate\",\n    \"expected_effective_id\": null,\n    \"expected_generation\": 0\n  }\n}",

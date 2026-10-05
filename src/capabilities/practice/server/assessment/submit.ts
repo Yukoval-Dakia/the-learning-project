@@ -70,6 +70,7 @@ import {
   question_revision,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { snapshotAssessmentLearningScope } from '../judge/evaluate-submission';
 import { snapshotIssuanceAssistance } from './assistance';
 // （初始 head 插入已内联 —— 原 insertInitialEvaluationHead 归 server/activate，
 //  capability 边界不允许 server import；语义等价：空 effective、generation 0。）
@@ -356,7 +357,11 @@ export async function saveSubmission(
     const revisionId = issuance.revision_id;
 
     const [revRow] = await tx
-      .select({ response_spec: question_revision.response_spec })
+      .select({
+        response_spec: question_revision.response_spec,
+        group_id: question_revision.group_id,
+        structure: question_revision.structure,
+      })
       .from(question_revision)
       .where(eq(question_revision.revision_id, revisionId))
       .limit(1);
@@ -593,6 +598,11 @@ export async function saveSubmission(
         group_evidence: groupEvidence,
         submitted_at: now.toISOString(),
         assistance: await snapshotIssuanceAssistance(tx, request.issuance_id),
+        learning_scope: await snapshotAssessmentLearningScope(
+          tx,
+          revRow.group_id,
+          revRow.structure.parts.map((part) => part.part_id),
+        ),
       } satisfies Record<string, unknown>,
       created_at: now,
     });

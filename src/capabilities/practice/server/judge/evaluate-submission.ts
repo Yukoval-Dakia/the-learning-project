@@ -52,13 +52,18 @@ import {
 } from '@/db/schema';
 import {
   type ActivateEvaluationRequestT,
+  type SettlementObservers,
   activateEvaluation,
   createJevModelExecutor,
   createPiModelExecutor,
   learningSettlement,
+  snapshotAssessmentLearningScope,
 } from '@/server/assessment/runtime';
 import { checkRateLimit } from '@/server/http/rate-limit';
 import { createRecordedModelExecutor } from './recorded-model-executor';
+
+// Native assessment runtime ports are assembled at this existing capability boundary.
+export { snapshotAssessmentLearningScope };
 
 /**
  * YUK-1092 — 装配描述符：在本模块组合点按 descriptor 铸
@@ -609,7 +614,7 @@ export async function activateSubmissionCandidate(
     actorRef: string;
     now?: Date;
     record?: (tx: Tx) => Promise<void>;
-    onThetaApplied?: import('@/server/assessment/settle').SettlementObservers['onThetaApplied'];
+    onThetaApplied?: SettlementObservers['onThetaApplied'];
   },
 ) {
   return database.transaction(async (tx) => {

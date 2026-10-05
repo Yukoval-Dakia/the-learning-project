@@ -13,7 +13,7 @@
   },
   "debts": {
     "capabilityToServer": {
-      "total": 450,
+      "total": 448,
       "byOwnerPair": {
         "agency -> ai": 28,
         "agency -> boss": 10,
@@ -73,7 +73,7 @@
         "observability -> r2": 2,
         "observability -> subjects": 14,
         "practice -> advisory-locks": 6,
-        "practice -> ai": 65,
+        "practice -> ai": 64,
         "practice -> assessment": 1,
         "practice -> boss": 15,
         "practice -> calibration": 3,
@@ -81,7 +81,7 @@
         "practice -> events": 4,
         "practice -> fsrs": 7,
         "practice -> http": 4,
-        "practice -> mastery": 23,
+        "practice -> mastery": 22,
         "practice -> memory": 1,
         "practice -> orchestrator": 1,
         "practice -> projections": 4,

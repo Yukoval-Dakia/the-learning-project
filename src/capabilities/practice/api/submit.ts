@@ -51,7 +51,6 @@ import {
   taskInputHash,
   verifyJudgePreviewProvenanceToken,
 } from '@/capabilities/practice/server/judge';
-import { newId } from '@/core/ids';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 // YUK-471 Wave 0 (ADR-0044 §3) — FSRS Card type for the per-subject snapshot `before`.
 import type { JudgeExecutionProvenanceT } from '@/core/schema/event/known';
@@ -61,7 +60,6 @@ import {
 } from '@/core/schema/intervention';
 import { type Db, db } from '@/db/client';
 import { learning_session, question } from '@/db/schema';
-import { activeEffectiveTruth } from '@/kernel/events';
 import {
   ApiError,
   canonicalResourceResponse,
@@ -69,9 +67,7 @@ import {
   errorResponse,
 } from '@/kernel/http';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
-import { writeJobEvent } from '@/server/events/writer';
-import { checkRateLimit, refundRateLimit } from '@/server/http/rate-limit';
-import { resolveAbilityGlobalByKnowledgeId } from '@/server/mastery/state';
+import { checkRateLimit } from '@/server/http/rate-limit';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import type { SubjectProfile } from '@/subjects/profile';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
@@ -79,16 +75,7 @@ import { commitFormalAttempt } from '../server/assessment/attempt';
 import { resolveAdviceCauseForQuestion } from '../server/cause-context';
 import { judgeDurableEnabled } from '../server/judge-durable-config';
 import { ratingFromCoarseOutcome } from '../server/judge-rating';
-import {
-  type JudgeRunEnqueueDeps,
-  admitJudgeRun,
-  enqueueJudgeRun,
-  judgeRunJobId,
-  recordJudgePendingAttempt,
-} from '../server/judge-run-dispatch';
-import { freezeQuestionForJudge } from '../server/judge-run-payload';
-import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
-import { settleInlineSoloReview, thetaKnowledgeIds } from '../server/review-settlement';
+import { JUDGE_RUN_TABLE } from '../server/judge-run-status';
 import { type CreateAttemptBody, CreateAttemptBodySchema } from './contracts';
 
 type Rating = CreateAttemptBody['rating'];
@@ -583,65 +570,6 @@ export async function judgeSubmit(
 // ../server/review-settlement. This module retains request validation, judging,
 // durable admission, and HTTP response shaping.
 
-interface DurableDivert {
-  /** true ⇒ this submit's server-side judge call must run on the durable lane. */
-  divert: boolean;
-  /** the D5-frozen profile (resolved once here, reused as the enqueue payload). */
-  subjectProfile: SubjectProfile | null;
-}
-
-/**
- * Decide whether this submit's judging should divert to the durable `judge_run`
- * lane (async-main) instead of the in-request synchronous invoke. The predicate
- * mirrors judgeSubmit's server-invoke condition EXACTLY (submit.ts:318): only a
- * submit that WOULD spend a synchronous server-side judge call diverts —
- *   auto_rate && no client-supplied verdict && has an answer && not photo-only on a
- *   text-only route && the subject profile resolves.
- * Every other submit (manual rating, client-supplied verdict, no-answer 422,
- * photo-only-unsupported 422) has NO in-request LLM call, so there is nothing to
- * move off the request window — it stays on the synchronous path unchanged.
- *
- * Cheap checks short-circuit BEFORE the profile DB read so a non-diverting submit
- * pays no extra round-trip. Only reached when JUDGE_DURABLE_ENABLED is on.
- *
- * W4 #TtWh_ — `/api/attempts` is a SHARED entry point, not the practice-solo face alone, so
- * "would spend a judge call" is necessary but NOT sufficient to divert. See
- * {@link sessionAdmitsDurableDivert}.
- */
-export async function resolveDurableDivert(validated: ValidatedSubmit): Promise<DurableDivert> {
-  const { body, q } = validated;
-  if (!body.auto_rate) return { divert: false, subjectProfile: null };
-  if (body.judge_result_v2) return { divert: false, subjectProfile: null };
-  const answerMd = body.response_md?.trim() ?? '';
-  const hasImageAnswer = body.answer_image_refs.length > 0;
-  const hasAnswer = answerMd.length > 0 || hasImageAnswer;
-  if (!hasAnswer) return { divert: false, subjectProfile: null };
-  const subjectProfile = await resolveSubjectProfileForKnowledgeIds(
-    db,
-    questionKnowledgeIdsForJudge(q),
-  );
-  if (subjectProfile === null) return { divert: false, subjectProfile: null };
-  const route = resolveQuestionJudgeRoute(q, subjectProfile);
-  const photoOnly = answerMd.length === 0 && hasImageAnswer;
-  const photoOnlyUnsupported = photoOnly && !IMAGE_CONSUMING_JUDGE_ROUTES.has(route);
-  // Shared predicate with judgeSubmit's invoke gate (#7) — photo-only-unsupported →
-  // divert:false (its 422 is a route-resolution check, no LLM call) but still return
-  // the resolved profile for the caller to reuse (#8).
-  // W4 #TtZ8c — `!== undefined && !== null` (the repo bans loose `!=`) and now identical to
-  // judgeSubmit's `judgeResult !== null` call site, so the two gates read the same.
-  const wouldJudge = wouldServerInvokeJudge({
-    autoRate: body.auto_rate,
-    hasSuppliedResult: body.judge_result_v2 !== undefined && body.judge_result_v2 !== null,
-    photoOnlyUnsupported,
-    hasProfile: subjectProfile !== null,
-  });
-  if (!wouldJudge) return { divert: false, subjectProfile };
-  // W2 scope is the PRACTICE submit face only; the session gate keeps every other caller on
-  // this shared route synchronous until W3 gives it the async protocol.
-  const divert = await sessionAdmitsDurableDivert(body.session_id ?? null);
-  return { divert, subjectProfile };
-}
-
 /**
  * W4 #TtWh_ (codex P1) — may a submit from THIS session be answered with a 202-pending?
  *
@@ -718,178 +646,22 @@ function durablePendingResponse(runId: string): Response {
   });
 }
 
-export interface EnqueueDurableJudgeDeps extends JudgeRunEnqueueDeps {
-  now?: Date;
-}
-
-/**
- * Reserve a run_id, RECORD THE ANSWER, enqueue the `judge_run` job, record the queued marker,
- * and return the 202-pending contract.
- *
- * run_id ≡ the (worker-written) attempt/outcome event id — a submit-face contract
- * (NOT universal; W3 faces define their own anchor). The pg-boss job id is DERIVED from it via
- * `judgeRunJobId` rather than equal to it (pg-boss job ids are uuid columns; run handles are
- * cuid2s — see that function), which still lets the poll route resolve a marker-less run by
- * primary key.
- *
- * **Ordering (YUK-777 A2): checkRateLimit → pending-attempt EVENT → boss.send → queued marker
- * → 202.** W1/W2 sent first and wrote no domain evidence at all, which made the pg-boss
- * payload the only home of the learner's answer until a delivery succeeded: a run that
- * exhausted its retries into `judge_run_dlq`, or whose question was deleted before pickup,
- * lost the answer permanently (codex #Tu71c). Evidence-first inverts that — the answer is
- * committed to the permanent domain log BEFORE anything depends on the queue, so the queue is
- * only a delivery mechanism and every one of its failure modes is recoverable
- * (`judge_pending_reconcile`, design §3.6b).
- *
- * That reordering is also why a failed `boss.send` now still returns **202**. It is no longer
- * a lie: the answer is durably recorded and the sweeper will judge it. The alternative —
- * reporting a submission failure for an answer we have in fact accepted — pushes the learner
- * to answer again and manufactures the duplicate attempt we have no idempotency key to
- * collapse. The dispatch failure is loud in the logs, where it belongs.
- *
- * **Idempotency is NOT solved here.** A client HTTP retry after a lost 202 mints a second
- * run_id, which the worker's run_id-keyed guard cannot collapse → a second paid judge + a
- * second attempt. W4 #TtWiC removed the short-window answer-hash dedupe that briefly stood in
- * for a real key: without a stable per-request idempotency key it could not tell a retry from
- * a genuine re-answer, and PfSolo explicitly supports re-answering the same question, so it
- * swallowed real attempts (no new immutable attempt, no FSRS advance). Closing this needs a
- * client-supplied `Idempotency-Key` threaded onto the run — a HARD prerequisite before
- * `JUDGE_DURABLE_ENABLED` is flipped on (YUK-800).
- */
-export async function enqueueDurableJudge(
-  validated: ValidatedSubmit,
-  subjectProfile: SubjectProfile,
-  deps: EnqueueDurableJudgeDeps = {},
-): Promise<Response> {
-  // W5 #Tunns — the answer time is the one captured at request parse (`validateSubmit`),
-  // NOT a fresh clock read here. Between those two points this path awaits profile
-  // resolution, the session-type lookup and possibly a cold pg-boss start, so two concurrent
-  // submits can reach this line in the opposite order they arrived — handing the EARLIER
-  // answer the LATER `submitted_at`. That stamp is what the worker's late-arrival detection
-  // and FSRS/θ̂ scheduling order by, so an inverted pair would skip the genuinely newer
-  // attempt or apply the older one on top of it. `deps.now` still overrides for tests.
-  const now = deps.now ?? validated.now;
-  const runId = newId();
-
-  // ── (0) ADMISSION, before anything durable ──────────────────────────────────────────
-  // Order matters here specifically because step (1) is now durable. A 429 must leave NO
-  // pending attempt behind: the reconcile sweeper judges recorded-but-unjudged answers, so a
-  // refusal that still recorded the answer would come back minutes later as a deferral, and
-  // every rate-limited submit would get its paid judge anyway. Charging first keeps "refused"
-  // and "accepted" disjoint. The token is handed to `enqueueJudgeRun` below rather than
-  // charged twice, and comes back on any failure before the job is durable.
-  let rateLimitToken: number;
-  try {
-    rateLimitToken = admitJudgeRun(deps);
-  } catch (err) {
-    return errorResponse(err);
-  }
-
-  try {
-    // ── (1) RECORD THE ANSWER (YUK-777 A2) ────────────────────────────────────────────
-    // The first durable act, and the only one whose failure may reject the submit: if this
-    // throws, the answer genuinely is not recorded anywhere and a 5xx is the truth. It
-    // carries the SAME frozen input the job does, so a recovery re-enqueue reproduces this
-    // dispatch exactly (D5 profile freeze + the question snapshot survive recovery).
-    const thetaIds = thetaKnowledgeIds(validated.q.knowledge_ids);
-    const abilityGlobalByKnowledgeId = await resolveAbilityGlobalByKnowledgeId(db, thetaIds);
-    const abilityGlobalIds = Array.from(new Set(Object.values(abilityGlobalByKnowledgeId)));
-    const submitInput = {
-      body: validated.body,
-      question_id: validated.questionId,
-      subject_profile: subjectProfile,
-      // #2 (codex) — freeze the question state the learner ANSWERED into the payload.
-      // Without it the worker re-reads a mutable row at pickup, so an edit to
-      // prompt/reference/choices/knowledge/difficulty between the 202 and pickup judges
-      // (and schedules) a different question than the one on screen.
-      question_snapshot: freezeQuestionForJudge(validated.q),
-      ability_global_by_knowledge_id: abilityGlobalByKnowledgeId,
-      submitted_at: now.toISOString(),
-    };
-    const pendingEventId = await recordJudgePendingAttempt(db, {
-      runId,
-      sessionId: validated.body.session_id ?? null,
-      questionId: validated.questionId,
-      // Only real KC labels are write targets. The full labels remain in question_snapshot.
-      knowledgeIds: thetaIds,
-      abilityGlobalIds,
-      submit: submitInput,
-      submittedAt: now,
-    });
-
-    // ── (2) DISPATCH ──────────────────────────────────────────────────────────────────
-    // Through the shared rate-limited face (server/judge-run-dispatch.ts) — the same one the
-    // reconcile sweeper uses, so no producer of paid judge work exists without a budget gate.
-    // `jobId: runId` pins the pg-boss job id to the run handle so the poll route can do a PK
-    // lookup instead of guessing from marker presence.
-    try {
-      await enqueueJudgeRun({ run_id: runId, caller: 'submit', submit: submitInput }, deps, {
-        // The DERIVED uuid, not the run handle — pg-boss job ids are uuid columns and our
-        // handles are cuid2s. See `judgeRunJobId`.
-        jobId: judgeRunJobId(runId),
-        token: rateLimitToken,
-      });
-    } catch (enqueueErr) {
-      // The answer is recorded; only its delivery failed. `judge_pending_reconcile` scans the
-      // domain log and re-enqueues it, so this is a DELAY, not a loss — and reporting a
-      // failure here would push the learner to re-answer and mint a duplicate attempt we
-      // have no idempotency key to collapse (YUK-800). Return the pending contract and make
-      // the dispatch failure loud server-side.
-      console.error(
-        '[submit] durable judge enqueue failed — the answer is recorded; the reconcile sweeper will re-enqueue it',
-        { runId, pendingEventId },
-        enqueueErr,
-      );
-      return durablePendingResponse(runId);
-    }
-
-    // ── (3) Advisory queued marker ────────────────────────────────────────────────────
-    // Consumers see 'queued' before the worker's STARTED. Best-effort: the job is already
-    // durable AND the answer is already recorded, so a marker-write failure loses nothing —
-    // the worker still writes its own started/done/failed, and the poll route falls back to
-    // pg-boss for the window where neither exists (W4 #TtWiD).
-    try {
-      await writeJobEvent(db, {
-        business_table: JUDGE_RUN_TABLE,
-        business_id: runId,
-        event_type: JUDGE_RUN_EVENTS.QUEUED,
-        payload: {
-          caller: 'submit',
-          question_id: validated.questionId,
-          session_id: validated.body.session_id ?? null,
-        },
-      });
-    } catch (markerErr) {
-      console.error(
-        '[submit] durable judge queued-marker write failed (non-fatal; poll falls back to pg-boss)',
-        runId,
-        markerErr,
-      );
-    }
-
-    return durablePendingResponse(runId);
-  } catch (err) {
-    // Only the pending-attempt write reaches here (the enqueue has its own catch and the
-    // marker never throws out), so nothing was recorded and nothing was enqueued — give the
-    // admission token back.
-    (deps.refundRateLimit ?? refundRateLimit)(rateLimitToken);
-    return errorResponse(err);
-  }
-}
-
-// ============================================================================
-// Route — compose the three phases and shape the wire response.
-// ============================================================================
-
 export async function createAttempt(req: Request): Promise<Response> {
   let claimedDiagnostic: ValidatedSubmit | null = null;
   let retainDiagnosticClaim = false;
   try {
     const validated = await validateSubmit(req);
+    if (!validated.body.assessment) {
+      throw new ApiError(
+        'historical_unknown',
+        'solo submission requires its original issued assessment',
+        409,
+      );
+    }
     if (await claimInterventionDiagnosticSubmission(validated)) {
       claimedDiagnostic = validated;
     }
-    if (validated.body.assessment) {
+    {
       const { body, questionId } = validated;
       if (!body.self_report && !body.activation_intent) {
         const { dispatchNativeAttempt } = await import('../server/assessment/durable-attempt');
@@ -956,94 +728,6 @@ export async function createAttempt(req: Request): Promise<Response> {
             },
       });
     }
-    // YUK-594 (W2) — async-main divert (dark-ship). When JUDGE_DURABLE_ENABLED is on
-    // AND this submit would spend a synchronous server-side judge call, move the judge
-    // to the durable `judge_run` lane and return 202-pending; the verdict + FSRS land
-    // on the worker's backfill event. Flag OFF (default) → the whole block is skipped
-    // → byte-identical synchronous behavior (the flag-off regression anchor).
-    // `shouldEnqueueBackgroundJobs()` keeps the test/CI env on the synchronous path
-    // (no worker to drain the queue), same guard the copilot durable dispatch uses.
-    // #8 — when the divert gate already resolved the subject profile (the
-    // photo-only-unsupported non-divert branch), reuse it for the synchronous
-    // judgeSubmit below instead of resolving it a second time.
-    let reusedProfile: SubjectProfile | null = null;
-    if (judgeDurableEnabled() && shouldEnqueueBackgroundJobs()) {
-      const gate = await resolveDurableDivert(validated);
-      if (gate.divert && gate.subjectProfile !== null) {
-        const pending = await enqueueDurableJudge(validated, gate.subjectProfile);
-        if (pending.status !== 202 && claimedDiagnostic !== null) {
-          await releaseInterventionDiagnosticSubmissionClaim({
-            questionId: claimedDiagnostic.questionId,
-            claimedAt: claimedDiagnostic.now,
-          });
-          claimedDiagnostic = null;
-        }
-        retainDiagnosticClaim = true;
-        return pending;
-      }
-      reusedProfile = gate.subjectProfile;
-    }
-    const judged = await judgeSubmit(
-      validated,
-      reusedProfile ? { subjectProfile: reusedProfile } : {},
-    );
-    assertTrustedInterventionDiagnosticJudgment(validated.q, judged);
-    const persisted = await settleInlineSoloReview(db, { validated, judged });
-    retainDiagnosticClaim = true;
-    const { body, now, questionId, activityRef } = validated;
-    const { judgeResult, judgeRoute, judgeTelemetry, suggestedRating, finalRating } = judged;
-    const {
-      attemptEventId: eventId,
-      fsrsSubjectKind,
-      fsrsSubjectIds,
-      finalResult,
-      finalFsrsStateAfter,
-    } = persisted;
-
-    // Response shape kept: review_event is now the event row (shape changed
-    // but documented as opaque to clients).
-    //
-    // YUK-56 — additive `judge` field carries auto-rating provenance + the
-    // suggested_rating so the UI can highlight which button corresponds to
-    // the judge suggestion. `judge` is null when no answer was submitted
-    // (manual-only path).
-    const judgeResponse =
-      judgeResult !== null && judgeRoute !== null
-        ? {
-            route: judgeRoute,
-            score: judgeResult.score,
-            coarse_outcome: judgeResult.coarse_outcome,
-            confidence: judgeResult.confidence,
-            feedback_md: judgeResult.feedback_md,
-            evidence_json: judgeResult.evidence_json,
-            capability_ref: judgeResult.capability_ref,
-            suggested_rating: suggestedRating,
-            auto_rated: body.auto_rate,
-            // M2 (YUK-316) — 申诉锚点 id（流 UI「不服判」直接对它发 appeal）。
-            judge_event_id: persisted.judgeEventId,
-            ...(judgeTelemetry !== null ? { telemetry: judgeTelemetry } : {}),
-          }
-        : null;
-
-    return Response.json({
-      next_due_at: Math.floor(finalResult.dueAt.getTime() / 1000),
-      new_state: finalResult.nextState,
-      review_event: {
-        id: eventId,
-        activity_ref: activityRef,
-        question_id: questionId,
-        rating: finalRating,
-        fsrs_subject_kind: fsrsSubjectKind,
-        fsrs_subject_ids: fsrsSubjectIds,
-        response_md: body.response_md ?? null,
-        latency_ms: body.latency_ms ?? null,
-        fsrs_state_after: finalFsrsStateAfter,
-        due_at_next: finalResult.dueAt,
-        created_at: now,
-        correction_state: activeEffectiveTruth(eventId),
-      },
-      judge: judgeResponse,
-    });
   } catch (err) {
     if (claimedDiagnostic !== null && !retainDiagnosticClaim) {
       await releaseInterventionDiagnosticSubmissionClaim({

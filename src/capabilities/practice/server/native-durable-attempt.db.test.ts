@@ -2,7 +2,15 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ModelExecutorRequest, ModelUnitOutcomeT } from '@/core/schema/assessment';
-import { evaluation, event, job_events, material_fsrs_state, question } from '@/db/schema';
+import {
+  evaluation,
+  event,
+  job_events,
+  knowledge,
+  mastery_state,
+  material_fsrs_state,
+  question,
+} from '@/db/schema';
 import * as domainEvents from '@/kernel/events';
 import { resolveVerdictsForNativeAttempts } from '@/kernel/read-models/assessment-verdict';
 import * as jobEvents from '@/server/events/writer';
@@ -27,7 +35,7 @@ import type { NativeJudgeRunJobData } from './judge-run-payload';
 import { reconstructDoneFromDomainEvents } from './judge-run-payload';
 import { JudgeRunTerminalResultSchema } from './judge-run-status';
 
-async function fixture() {
+async function fixture(knowledgeIds: string[] = []) {
   const db = testDb();
   const id = createId();
   await db.insert(question).values({
@@ -36,7 +44,7 @@ async function fixture() {
     prompt_md: '顺流18 km/h，逆流12 km/h。列方程求静水船速并解释相加消元。',
     reference_md: '15 km/h',
     judge_kind_override: 'exact',
-    knowledge_ids: [],
+    knowledge_ids: knowledgeIds,
     difficulty: 3,
     source: 'web_sourced',
     created_at: new Date(),
@@ -144,6 +152,106 @@ beforeEach(resetDb);
 afterEach(() => vi.restoreAllMocks());
 
 describe('native durable assessment', () => {
+  it('keeps answer-time knowledge and ability targets when tags and domains change before pickup', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(knowledge).values([
+      { id: 'original-kc', name: '原始知识', domain: 'math', created_at: now, updated_at: now },
+      { id: 'edited-kc', name: '后来知识', domain: 'physics', created_at: now, updated_at: now },
+    ]);
+    const f = await fixture(['original-kc']);
+    await dispatchNativeAttempt(db, f.id, f.request, f.options, f.deps);
+    await db
+      .update(question)
+      .set({ knowledge_ids: ['edited-kc'], difficulty: 5 })
+      .where(eq(question.id, f.id));
+    await db.update(knowledge).set({ domain: 'physics' }).where(eq(knowledge.id, 'original-kc'));
+    await runJudgeRun(db, f.jobs[0], meta);
+    const cards = await db.select().from(material_fsrs_state);
+    expect.soft(cards.map((row) => row.subject_id)).toEqual(['original-kc']);
+    const mastery = await db.select().from(mastery_state);
+    expect
+      .soft(mastery.filter((row) => row.subject_kind === 'knowledge').map((row) => row.subject_id))
+      .toEqual(['original-kc']);
+    expect
+      .soft(
+        mastery.filter((row) => row.subject_kind === 'ability_global').map((row) => row.subject_id),
+      )
+      .toEqual(['math']);
+    expect(f.execute).toHaveBeenCalledTimes(1);
+    const [initial] = await db.select().from(evaluation);
+    const correction = await evaluationService.evaluateSubmission(db, {
+      submission_id: initial.submission_id,
+      evaluation_group_id: initial.evaluation_group_id,
+      evaluation_key: 'correct-with-original-learning-scope',
+      model_executor: createRecordedModelExecutor(db, async (input, _signal, runId) => ({
+        kind: 'scored',
+        points_awarded: 0,
+        matched: { rule_id: 'speed', option_ids: [] },
+        feedback_md: '更正原作答评分',
+        confidence: 0.95,
+        evidence_citations: [],
+        run_refs: [runId],
+        cost_usd_micros: 100,
+      })),
+      provenance: { source: 'automatic', assisted: false },
+    });
+    const activation = await evaluationService.activateSubmissionCandidate(
+      db,
+      {
+        evaluation_id: correction.record.evaluation_id,
+        expected_effective_id: initial.evaluation_id,
+        expected_generation: 1,
+      },
+      { actorRef: 'test:scope-correction' },
+    );
+    expect(activation).toMatchObject({ status: 'activated', effect: 'applied' });
+    expect(
+      (await db.select().from(material_fsrs_state)).map((row) => ({
+        id: row.subject_id,
+        reps: row.state.reps,
+      })),
+    ).toEqual([{ id: 'original-kc', reps: 1 }]);
+    expect((await db.select().from(mastery_state)).map((row) => row.subject_id).sort()).toEqual([
+      'math',
+      'original-kc',
+    ]);
+    const receipts = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_settlement'));
+    expect(receipts).toHaveLength(2);
+    for (const receipt of receipts)
+      expect(receipt.payload.replay_inputs).toMatchObject({
+        theta: {
+          anchorDifficulty: 3,
+          knowledgeIds: ['original-kc'],
+          abilityGlobalByKnowledgeId: { 'original-kc': 'math' },
+        },
+      });
+  });
+
+  it('preserves an absent answer-time ability domain instead of resolving a newly added one', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db
+      .insert(knowledge)
+      .values({
+        id: 'orphan-kc',
+        name: '未归属知识',
+        domain: null,
+        created_at: now,
+        updated_at: now,
+      });
+    const f = await fixture(['orphan-kc']);
+    await dispatchNativeAttempt(db, f.id, f.request, f.options, f.deps);
+    await db.update(knowledge).set({ domain: 'math' }).where(eq(knowledge.id, 'orphan-kc'));
+    await runJudgeRun(db, f.jobs[0], meta);
+    expect((await db.select().from(mastery_state)).map((row) => row.subject_id)).toEqual([
+      'orphan-kc',
+    ]);
+  });
+
   it('freezes originals before enqueue; concurrent HTTP retries and worker redelivery settle once', async () => {
     const f = await fixture();
     const runs = await Promise.all([

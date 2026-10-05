@@ -1195,6 +1195,31 @@ describe('formal manual candidate and atomic activation', () => {
       failure: 0,
     });
   });
+  it('rejects unbound solo writes without inventing an original or scheduling a review', async () => {
+    const pub = await publishAdmitted('unbound_solo');
+    const originalEvents = await testDb().select().from(event);
+    for (const autoRate of [false, true]) {
+      const response = await createAttempt(
+        new Request('http://local/api/attempts', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            question_id: pub.qid,
+            rating: 'good',
+            response_md: 'B',
+            auto_rate: autoRate,
+          }),
+        }),
+      );
+      expect.soft(response.status).toBe(409);
+      expect.soft(await response.json()).toMatchObject({ error: 'historical_unknown' });
+    }
+    expect(await testDb().select().from(assessment_submission)).toHaveLength(0);
+    expect(await testDb().select().from(evaluation)).toHaveLength(0);
+    expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
+    expect(await testDb().select().from(event)).toEqual(originalEvents);
+  });
+
   it('preview and commit use one frozen candidate through the actual HTTP handlers', async () => {
     const pub = await publishAdmitted('preview_commit_api');
     const issued = await issueAssessment(testDb(), { group_id: pub.groupId });

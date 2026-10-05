@@ -27,7 +27,6 @@ import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { recordJudgePendingAttempt } from '../server/judge-run-dispatch';
 import { settleDeferredSoloReview } from '../server/review-settlement';
 import { CreateAttemptBodySchema } from './contracts';
-import { enqueueDurableJudge } from './submit';
 
 const MINUTE = 60_000;
 
@@ -92,11 +91,11 @@ describe('late-arrival guard — evidence water mark (YUK-777 B2)', () => {
   });
 
   it.each([
-    ['new root only', false, false, false, true],
+    ['historical filtered root only', false, false, false, true],
     ['legacy root only', true, false, false, true],
     ['legacy root only without frozen map', true, false, false, false],
     ['legacy mixed unrelated KC', true, true, false, true],
-    ['new real sibling', false, true, true, true],
+    ['historical filtered real sibling', false, true, true, true],
     ['legacy real sibling', true, true, true, true],
   ] as const)(
     'pending domain evidence follows real theta targets: %s',
@@ -143,12 +142,23 @@ describe('late-arrival guard — evidence water mark (YUK-777 B2)', () => {
           submittedAt: newer,
         });
       } else {
-        const sent = vi.fn(async () => newId());
-        const response = await enqueueDurableJudge(validated, resolveSubjectProfile('math'), {
-          boss: { send: sent },
+        // Frozen historical outbox fixture; live dispatch is covered by the native suite.
+        await recordJudgePendingAttempt(db, {
+          runId: newId(),
+          sessionId: null,
+          questionId: newQuestion,
+          knowledgeIds: mixed ? ['k2'] : [],
+          abilityGlobalIds: sameDomain ? ['math'] : [],
+          submit: {
+            body: validated.body,
+            question_id: newQuestion,
+            subject_profile: resolveSubjectProfile('math'),
+            question_snapshot: { knowledge_ids: labels },
+            ability_global_by_knowledge_id: sameDomain ? { k2: 'math' } : {},
+            submitted_at: newer.toISOString(),
+          },
+          submittedAt: newer,
         });
-        expect(response.status).toBe(202);
-        expect(sent).toHaveBeenCalledOnce();
       }
       const [pending] = await db.select().from(event).where(eq(event.subject_id, newQuestion));
       expect(pending.payload).toMatchObject({

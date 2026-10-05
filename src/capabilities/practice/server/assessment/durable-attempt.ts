@@ -10,7 +10,6 @@ import { assessment_submission, evaluation, evaluation_effective_head, event } f
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/server/events/writer';
-import { refundRateLimit } from '@/server/http/rate-limit';
 import { ratingFromCoarseOutcome } from '../judge-rating';
 import {
   JUDGE_PENDING_ATTEMPT_ACTION,
@@ -18,6 +17,7 @@ import {
   admitJudgeRun,
   enqueueJudgeRun,
   judgeRunJobId,
+  refundJudgeRunAdmission,
 } from '../judge-run-dispatch';
 import type { NativeJudgeRunJobData } from '../judge-run-payload';
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../judge-run-status';
@@ -123,7 +123,7 @@ export async function dispatchNativeAttempt(
       return { run_id: runId, caller: 'native_assessment' as const, submit: input };
     });
   } catch (error) {
-    if (token !== undefined) (deps.refundRateLimit ?? refundRateLimit)(token);
+    if (token !== undefined) refundJudgeRunAdmission(token, deps);
     throw error;
   }
   if (!job) return null;
@@ -133,7 +133,6 @@ export async function dispatchNativeAttempt(
     await enqueueJudgeRun(job, deps, {
       jobId: judgeRunJobId(runId),
       token,
-      acceptExistingJobId: true,
     });
   } catch (error) {
     console.error(

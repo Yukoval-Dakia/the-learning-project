@@ -14,6 +14,7 @@ import {
 } from '@/core/schema/intervention';
 import { event, material_fsrs_state, question } from '@/db/schema';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
+import { issueSoloFixture } from '../../../../tests/fixtures/assessment-solo';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 vi.mock('@/server/runtime-env', async (importOriginal) => {
@@ -60,6 +61,7 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
   it('passes the 202-pending response through the resource wrapper untouched (no review_event crash)', async () => {
     const questionId = `q_${newId()}`;
     await seedQuestion(questionId);
+    const issued = await issueSoloFixture(testDb(), questionId, true);
     const res = await createAttemptResource(
       new Request('http://localhost/api/attempts', {
         method: 'POST',
@@ -67,6 +69,7 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
           question_id: questionId,
           rating: 'good',
           response_md: 'my answer',
+          assessment: issued.assessment('my answer'),
           auto_rate: true,
         }),
         headers: { 'content-type': 'application/json' },
@@ -85,19 +88,28 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
   it('flag-ON but MANUAL rating (no server judge) does NOT divert — FSRS advances immediately, not 202', async () => {
     const questionId = `q_${newId()}`;
     await seedQuestion(questionId);
+    const issued = await issueSoloFixture(testDb(), questionId, true);
     // auto_rate omitted → no server-side judge call → nothing to move off the request
     // window → the manual rating writes the review event + FSRS synchronously.
     const res = await createAttemptResource(
       new Request('http://localhost/api/attempts', {
         method: 'POST',
-        body: JSON.stringify({ question_id: questionId, rating: 'good' }),
+        body: JSON.stringify({
+          question_id: questionId,
+          rating: 'good',
+          self_report: true,
+          assessment: issued.assessment(''),
+        }),
         headers: { 'content-type': 'application/json' },
       }),
     );
     expect(res.status).not.toBe(202);
     expect(bossSend).not.toHaveBeenCalled();
     // The attempt review event + FSRS state landed immediately (no deferral).
-    const reviews = await testDb().select().from(event).where(eq(event.action, 'review'));
+    const reviews = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_attempt'));
     expect(reviews).toHaveLength(1);
     const fsrs = await testDb()
       .select()
@@ -110,6 +122,7 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
     vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
     const firstQuestionId = `q_${newId()}`;
     await seedQuestion(firstQuestionId);
+    const firstIssued = await issueSoloFixture(testDb(), firstQuestionId, true);
     const accepted = await createAttempt(
       new Request('http://localhost/api/attempts', {
         method: 'POST',
@@ -117,6 +130,7 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
           question_id: firstQuestionId,
           rating: 'good',
           response_md: 'first answer',
+          assessment: firstIssued.assessment('first answer'),
           auto_rate: true,
         }),
         headers: { 'content-type': 'application/json' },
@@ -154,6 +168,7 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
         updated_at: now,
       });
 
+    const diagnosticIssued = await issueSoloFixture(testDb(), diagnosticId, true);
     const rejected = await createAttempt(
       new Request('http://localhost/api/attempts', {
         method: 'POST',
@@ -161,6 +176,7 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
           question_id: diagnosticId,
           rating: 'good',
           response_md: 'diagnostic answer',
+          assessment: diagnosticIssued.assessment('diagnostic answer'),
           auto_rate: true,
         }),
         headers: { 'content-type': 'application/json' },
