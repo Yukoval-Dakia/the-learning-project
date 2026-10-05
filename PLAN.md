@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-05。YUK-1047 PR #1568首轮完整CI暴露任务计数及9项旧fixture/写者清单失败，已修于226cca21f/480580028。架构227unit、迁移51unit/58distinctDB、typecheck/build、lint298≤305通过；父线程复验后推送新head重跑CI及17分钟窗。既有浏览器验收/三P1修复与唯一验证审结论保留，review预算已用尽。未部署/新付费。详见placement-repair。
+> 更新于2026-10-05。YUK-1047 PR #1568首轮CI修复已推送163d3b71d，第二轮发现新测试跨Practice深导入；现改用公开source verification seam，3unit/27DB和边界通过，typecheck/build后重新push验CI。既有51unit/58DB及父复验51unit/22DB保留；review预算已用尽，不部署/付费。详见placement-repair。
 
 ## NOW
 

@@ -329,3 +329,17 @@ activation transaction, independently reran 24 resource/invariant unit tests,
 27 fold scanner unit tests, and 22 parity/global-lock DB tests; all passed.
 Logs: `/tmp/yuk1047-parent-ci-repair-{unit,scanner,db}.log`. This is author
 acceptance, not an additional independent review round.
+
+## Follow-up CI ownership repair
+
+CI run 37302850917 on 163d3b71d found one new ownership assertion:
+`proposal-appliers.db.test.ts` imported Practice's private source verification
+job directly. Expose the existing `runSourceVerify` through Practice's public
+module and consume that seam in the ingestion test. No verification behavior,
+fixture assertions, or ownership scan rules change. The real cold-start flow
+still runs source verification and publication. Scoped ownership tests (3) and
+cold-start DB suite (27) passed; capability boundaries remain exact 437/0/48.
+Logs are `/tmp/yuk1047-ci2-{ownership,coldstart,typecheck,build,biome}.log`.
+
+Typecheck and build passed after this import-seam change. Touched-file Biome
+reported no errors and one existing warning. No extra review or provider calls.

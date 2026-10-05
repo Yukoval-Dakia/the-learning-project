@@ -1,5 +1,8 @@
 # 当前交接 — 2026-10-05 PR准备
 
+第二轮CI37302850917在163d3b71d发现新增测试深导入source_verify。改由Practice public导出并由ingestion消费；3ownership unit/27DB/边界/typecheck/build通过，待新push精确CI。未改评分行为或放宽审计。
+
+
 PR #1568首轮CI37298719939失败，任务计数54→55已修226cca21f，7文件9测试迁原生契约和已验证写者清单已修480580028。51unit/58distinctDB/typecheck/build/lint298≤305通过；父线程复验后推送新head。完整CI与最后push17分钟窗重新验收，禁止第三审；原浏览器/模型准入边界不变。
 
 
