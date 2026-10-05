@@ -1,5 +1,9 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
+import {
+  INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+  InterventionDiagnosticQuestionMetadata,
+} from '@/core/schema/intervention';
 import type { Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { resolveAbilityGlobalByKnowledgeId } from '@/server/mastery/state';
@@ -14,6 +18,7 @@ const LearningScope = z.object({
       difficulty: z.number(),
       kind: z.string(),
       source: z.string(),
+      intervention_diagnostic: InterventionDiagnosticQuestionMetadata.optional(),
     }),
   ),
   ability_global_by_knowledge_id: z.record(z.string(), z.string()),
@@ -28,13 +33,25 @@ export async function snapshotAssessmentLearningScope(tx: Tx, groupId: string, p
       difficulty: question.difficulty,
       kind: question.kind,
       source: question.source,
+      metadata: question.metadata,
     })
     .from(question)
     .where(inArray(question.id, [...new Set([groupId, ...partIds])]));
   return LearningScope.parse({
     version: 1,
     group_id: groupId,
-    questions: rows.sort((a, b) => a.id.localeCompare(b.id)),
+    questions: rows
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map(({ metadata, ...row }) => ({
+        ...row,
+        ...(row.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE
+          ? {
+              intervention_diagnostic: InterventionDiagnosticQuestionMetadata.parse(
+                metadata?.intervention_diagnostic,
+              ),
+            }
+          : {}),
+      })),
     ability_global_by_knowledge_id: await resolveAbilityGlobalByKnowledgeId(tx, [
       ...new Set(rows.flatMap((row) => row.knowledge_ids)),
     ]),

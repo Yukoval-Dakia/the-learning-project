@@ -47,8 +47,8 @@ export const agencyCapability = defineCapability({
         // YUK-792 — trusted canonical judge events advance the Agency-owned
         // settlement aggregate. Rejudge events recompute the same diagnostic.
         id: 'agency.intervention-diagnostic-review-settlement',
-        version: 2,
-        actions: ['judge'],
+        version: 3,
+        actions: ['judge', 'experimental:assessment_activation'],
         load: () =>
           import('./server/intervention/settlement-subscription').then(
             (m) => m.buildInterventionDiagnosticJudgeSubscriber,

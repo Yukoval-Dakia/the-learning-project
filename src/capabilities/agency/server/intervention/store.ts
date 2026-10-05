@@ -28,6 +28,7 @@ import {
   reanchorInterventionFollowupDiagnostics,
 } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
+import { withLearningStateLock } from '@/db/learning-state-lock';
 import { event, intervention } from '@/db/schema';
 import { eventCorrectionLockKey, eventCorrectionsGlobalLockKey, writeEvent } from '@/kernel/events';
 
@@ -346,7 +347,7 @@ export async function activateIntervention(
   const now = input.now ?? new Date();
   const packageValue = InterventionPackage.parse(input.package);
 
-  return db.transaction(async (tx) => {
+  return withLearningStateLock(db, async (tx) => {
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`intervention:${input.interventionId}:${input.version}`}, 0))`,
     );
@@ -548,8 +549,32 @@ export type RecordInterventionDiagnosticReviewResult =
  * A later rejudge can replace that verdict; the intervention is recomputed from
  * all three current window outcomes under the same aggregate lock.
  */
+/** Read the current head and advance the aggregate under the same learning lock
+ * as native activation. A delayed delivery cannot overwrite a newer verdict. */
+export async function recordNativeInterventionDiagnosticReview(db: Db, attemptId: string) {
+  return withLearningStateLock(db, async (tx) => {
+    const { loadNativeInterventionDiagnosticVerdict } = await import(
+      '@/capabilities/practice/public'
+    );
+    const native = await loadNativeInterventionDiagnosticVerdict(tx, attemptId);
+    if (!native) return null;
+    const result = await recordInterventionDiagnosticReview(tx, {
+      interventionId: native.metadata.intervention_id,
+      version: native.metadata.intervention_version,
+      diagnosticKind: native.metadata.diagnostic_kind,
+      questionId: native.review.subject_id,
+      reviewEventId: native.review.id,
+      verdictEventId: native.activation.id,
+      passed: native.effective.verdict.verdict === 'correct',
+      reviewedAt: native.review.created_at,
+      now: native.activation.created_at,
+    });
+    return { result, verdictEventId: native.activation.id };
+  });
+}
+
 export async function recordInterventionDiagnosticReview(
-  db: Db,
+  db: DbLike,
   input: {
     interventionId: string;
     version: number;
@@ -563,7 +588,7 @@ export async function recordInterventionDiagnosticReview(
   },
 ): Promise<RecordInterventionDiagnosticReviewResult> {
   const now = input.now ?? new Date();
-  return db.transaction(async (tx) => {
+  return withLearningStateLock(db, async (tx) => {
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`intervention:${input.interventionId}:${input.version}`}, 0))`,
     );

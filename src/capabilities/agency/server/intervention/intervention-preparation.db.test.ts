@@ -1,5 +1,6 @@
 import { and, count, eq, inArray, sql } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { handleRejudge } from '@/capabilities/practice/jobs/rejudge';
 import {
   INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS,
   JUDGE_RUN_EVENTS,
@@ -7,9 +8,14 @@ import {
   authorInterventionPackage,
   handleReviewDue,
 } from '@/capabilities/practice/public';
+import { createNativeAppeal } from '@/capabilities/practice/server/assessment/appeal';
+import { commitFormalAttempt } from '@/capabilities/practice/server/assessment/attempt';
+import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
+import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
 import { getTaskSystemPrompt } from '@/capabilities/task-registry';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { PEDAGOGY_METHOD_LIBRARY } from '@/core/pedagogy';
+import type { ModelExecutorRequest, ModelUnitOutcomeT } from '@/core/schema/assessment';
 import { PROBE_QUESTION_KIND, PROBE_QUESTION_SOURCE } from '@/core/schema/conjecture';
 import type { ConjectureProbeResponseJudgementT } from '@/core/schema/conjecture-probe-response';
 import {
@@ -37,6 +43,7 @@ import type { EventSubscriptionDelivery } from '@/kernel/manifest';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import { type TaskTextRunFn, taskPromptFingerprint } from '@/server/ai/provenance';
+import { issueSoloFixture } from '../../../../../tests/fixtures/assessment-solo';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { answerProbe } from '../conjecture/probe-lifecycle';
 import { prepareInterventionWave } from './prepare';
@@ -634,7 +641,10 @@ function successfulRunTask(
 
 describe('YUK-791 intervention preparation closed loop', () => {
   beforeEach(resetDb);
-  afterEach(resetTestConfig);
+  afterEach(async () => {
+    await resetTestConfig();
+    vi.restoreAllMocks();
+  });
 
   it('durably opens shadow preparation, consumes recommendation in the same wave, and activates once', async () => {
     const db = testDb();
@@ -1803,6 +1813,130 @@ describe('YUK-791 intervention preparation closed loop', () => {
       failure_code: 'package_quality:agency:current_full_review_required',
     });
     expect(failed?.preparation_attempts[1]).toMatchObject({ kind: 'reviewed_package' });
+  });
+
+  it('consumes native activation and appeal from the same immutable diagnostic original', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('native_settlement');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      env: { AUTO_INTERVENTION_EXPANSION_ENABLED: 'true' },
+      bossSend: async (_name, _data, options) => options.id,
+    });
+    const [opened] = await db.select().from(intervention);
+    const { fn } = successfulRunTask(db);
+    const now = new Date(Math.floor(Date.now() / 1000) * 1000);
+    await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      { runTaskFn: fn, authorPackageFn: authorInterventionPackage, now: () => now },
+    );
+    const active = await loadInterventionVersion(db, opened.id, opened.version);
+    if (!active?.settlement) throw new Error('active diagnostics missing');
+    const qid = active.settlement.diagnostics.immediate.question_id;
+    const issued = await issueSoloFixture(db, qid, true);
+    let fullCredit = false;
+    const execute = vi.fn(
+      async (
+        input: ModelExecutorRequest,
+        _signal: AbortSignal | undefined,
+        runId: string,
+      ): Promise<ModelUnitOutcomeT> => ({
+        kind: 'scored',
+        points_awarded: fullCredit ? input.unit.points : 0,
+        matched: {
+          rule_id:
+            input.unit.criterion.kind === 'rule_reference'
+              ? input.unit.criterion.rule_id
+              : 'fixture',
+          option_ids: [],
+        },
+        feedback_md: '依据原始链式法则推导复核。',
+        confidence: 0.95,
+        evidence_citations: [{ slot_id: input.response_slots[0].slot_id, quote: '2x cos(x²)' }],
+        run_refs: [runId],
+        cost_usd_micros: 100,
+      }),
+    );
+    vi.spyOn(evaluationService, 'createFormalModelExecutor').mockImplementation(() =>
+      createRecordedModelExecutor(db, execute),
+    );
+    const committed = await commitFormalAttempt(
+      db,
+      'solo_submit',
+      qid,
+      { ...issued.assessment('2x cos(x²)，外层导数与内层导数相乘。'), now },
+      { requireUnassistedModelEvidence: true },
+    );
+    const activations = () =>
+      db
+        .select()
+        .from(event)
+        .where(
+          and(
+            eq(event.action, 'experimental:assessment_activation'),
+            eq(event.subject_id, committed.submission.evaluation_group_id),
+          ),
+        )
+        .orderBy(event.created_at);
+    const originalActivation = (await activations())[0];
+    const deliver = (id: string) =>
+      handleInterventionDiagnosticJudgeDelivery(db, {
+        subscriberId: 'agency.intervention-diagnostic-review-settlement',
+        subscriberVersion: 3,
+        deliverySeq: id,
+        sourceEventId: id,
+      });
+    // A committed native original must fence lease recovery even if subscriber delivery is late.
+    await db
+      .update(question)
+      .set({
+        draft_status: 'draft',
+        updated_at: new Date(now.getTime() - INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS - 1),
+      })
+      .where(eq(question.id, qid));
+    await recoverEligibleInterventionDiagnostics(db, now);
+    expect((await db.select().from(question).where(eq(question.id, qid)))[0].draft_status).toBe(
+      'draft',
+    );
+    expect(await deliver(originalActivation.id)).toMatchObject({ status: 'succeeded' });
+    const recorded = await loadInterventionVersion(db, opened.id, opened.version);
+    expect(recorded?.settlement?.diagnostics.immediate).toMatchObject({
+      status: 'failed',
+      review_event_id: committed.attempt_id,
+      verdict_event_id: originalActivation.id,
+    });
+    expect(
+      await db.select().from(material_fsrs_state).where(eq(material_fsrs_state.subject_id, qid)),
+    ).toHaveLength(0);
+    const dueAt = recorded?.settlement?.diagnostics.delayed.due_at;
+    fullCredit = true;
+    const appealId = await createNativeAppeal(db, {
+      evaluation_id: committed.candidate.evaluation.record.evaluation_id,
+      reason_md: '原答使用相乘，请重新核对。',
+    });
+    expect(await handleRejudge(db, { appeal_event_id: appealId })).toMatchObject({
+      status: 'reassessed',
+    });
+    const latest = (await activations()).at(-1);
+    if (!latest) throw new Error('appeal activation missing');
+    expect(await deliver(latest.id)).toMatchObject({ status: 'succeeded' });
+    const corrected = await loadInterventionVersion(db, opened.id, opened.version);
+    expect(corrected?.settlement?.diagnostics.immediate).toMatchObject({
+      status: 'passed',
+      review_event_id: committed.attempt_id,
+      verdict_event_id: latest.id,
+    });
+    expect(corrected?.settlement?.diagnostics.delayed.due_at).toBe(dueAt);
+    expect(await deliver(originalActivation.id)).toMatchObject({
+      status: 'succeeded',
+      detail: { idempotent: true, verdict_event_id: latest.id },
+    });
+    expect(execute).toHaveBeenCalledTimes(2);
   });
 
   it('consumes one real review per window, retires one-shot cards, and settles deterministically', async () => {

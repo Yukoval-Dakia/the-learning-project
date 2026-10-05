@@ -243,12 +243,13 @@ export const QuestionDetailResponseSchema = z
           .strict(),
         judge: z
           .object({
-            route: z.literal('multimodal_direct'),
+            route: z.enum(['multimodal_direct', 'evaluate_submission']),
             coarse_outcome: z.enum(['correct', 'partial', 'incorrect']),
             confidence: z.number().min(0).max(1),
             feedback_md: z.string(),
             suggested_rating: z.enum(['again', 'hard', 'good']),
-            judge_event_id: z.string(),
+            judge_event_id: z.string().nullable(),
+            evaluation_id: z.string().optional(),
           })
           .strict(),
       })

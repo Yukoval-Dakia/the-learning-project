@@ -27812,10 +27812,11 @@ export interface operations {
                                 /** @enum {string} */
                                 coarse_outcome: "correct" | "partial" | "incorrect";
                                 confidence: number;
+                                evaluation_id?: string;
                                 feedback_md: string;
-                                judge_event_id: string;
+                                judge_event_id: string | null;
                                 /** @enum {string} */
-                                route: "multimodal_direct";
+                                route: "multimodal_direct" | "evaluate_submission";
                                 /** @enum {string} */
                                 suggested_rating: "again" | "hard" | "good";
                             };

@@ -30,13 +30,13 @@ describe('agency scheduled jobs', () => {
 });
 
 describe('agency event subscriptions', () => {
-  it('settles intervention diagnostics from canonical trusted judge events', () => {
+  it('settles intervention diagnostics from native activations and historical judge events', () => {
     const handlers = agencyCapability.subscriptions?.handlers ?? [];
     expect(
       handlers.find((handler) => handler.id === 'agency.intervention-diagnostic-review-settlement'),
     ).toMatchObject({
-      version: 2,
-      actions: ['judge'],
+      version: 3,
+      actions: ['judge', 'experimental:assessment_activation'],
     });
   });
 });

@@ -72,6 +72,7 @@ export {
   INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS,
   loadCommittedInterventionDiagnosticAttempt,
   loadLatestTrustedInterventionDiagnosticVerdict,
+  loadNativeInterventionDiagnosticVerdict,
   materializeInterventionDiagnostics,
   retireInterventionDiagnosticQuestion,
 } from './server/intervention-diagnostics';

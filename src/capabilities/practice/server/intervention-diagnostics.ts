@@ -1,5 +1,19 @@
-import { and, desc, eq, gt, inArray, isNull, lte, notExists, sql } from 'drizzle-orm';
+import {
+  and,
+  desc,
+  eq,
+  exists,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  notExists,
+  or,
+  sql,
+} from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
+import { z } from 'zod';
 import { newId } from '@/core/ids';
 import { JudgeOnEvent, ReviewOnQuestion } from '@/core/schema/event/known';
 import {
@@ -14,8 +28,15 @@ import {
   type InterventionSnapshotT,
 } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
-import { event, job_events, practice_stream_item, question } from '@/db/schema';
+import {
+  evaluation_effective_head,
+  event,
+  job_events,
+  practice_stream_item,
+  question,
+} from '@/db/schema';
 import { getEventById } from '@/kernel/events';
+import { resolveVerdictsForNativeAttempts } from '@/kernel/read-models/assessment-verdict';
 import { enrollFsrsStateIfAbsent, retireQuestionFsrsState } from '@/server/fsrs/state';
 import { initialFsrsState } from './fsrs';
 import { JUDGE_PENDING_ATTEMPT_ACTION } from './judge-run-dispatch';
@@ -23,6 +44,31 @@ import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './judge-run-status';
 import { streamLocalDate } from './stream-date';
 
 export const INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS = 10 * 60 * 1000;
+
+/** Recovery treats an effective native original like a committed historical review. */
+function committedDiagnosticAttempt(tx: Tx) {
+  return or(
+    eq(event.action, 'review'),
+    and(
+      eq(event.action, 'experimental:assessment_attempt'),
+      exists(
+        tx
+          .select({ id: evaluation_effective_head.evaluation_group_id })
+          .from(evaluation_effective_head)
+          .where(
+            and(
+              eq(
+                evaluation_effective_head.evaluation_group_id,
+                sql`${event.payload}->>'evaluation_group_id'`,
+              ),
+              eq(evaluation_effective_head.submission_id, sql`${event.payload}->>'submission_id'`),
+              isNotNull(evaluation_effective_head.effective_evaluation_id),
+            ),
+          ),
+      ),
+    ),
+  );
+}
 
 function diagnosticMetadata(input: {
   interventionId: string;
@@ -124,18 +170,91 @@ export async function loadLatestTrustedInterventionDiagnosticVerdict(
   return null;
 }
 
+/** Immutable original metadata plus the currently effective native model verdict. */
+export async function loadNativeInterventionDiagnosticVerdict(db: Db | Tx, attemptId: string) {
+  const review = await getEventById(db, attemptId);
+  if (!review || review.correction_status.state !== 'active') return null;
+  const [anchor] = await db.select().from(event).where(eq(event.id, attemptId));
+  if (!anchor) return null;
+  const resolved = (await resolveVerdictsForNativeAttempts(db, [anchor])).get(attemptId);
+  const effective = resolved?.effective;
+  if (
+    !resolved ||
+    !effective ||
+    effective.status !== 'completed' ||
+    effective.row.provenance?.source !== 'automatic' ||
+    effective.row.provenance.assisted !== false ||
+    effective.row.run_refs.length === 0 ||
+    effective.verdict.verdict === 'unsupported'
+  )
+    return null;
+  const [original] = await db
+    .select({ payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:assessment_submission'),
+        eq(event.subject_kind, 'submission'),
+        eq(event.subject_id, resolved.submission.submission_id),
+      ),
+    )
+    .limit(1);
+  const scope = z
+    .object({
+      version: z.literal(1),
+      group_id: z.string(),
+      questions: z.array(
+        z.object({
+          id: z.string(),
+          source: z.string(),
+          intervention_diagnostic: InterventionDiagnosticQuestionMetadata.optional(),
+        }),
+      ),
+    })
+    .safeParse(original?.payload.learning_scope);
+  if (!scope.success) return null;
+  const frozenQuestion = scope.data.questions.find((row) => row.id === review.subject_id);
+  if (
+    frozenQuestion?.source !== INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE ||
+    !frozenQuestion.intervention_diagnostic
+  )
+    return null;
+  const [activation] = await db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:assessment_activation'),
+        eq(event.subject_kind, 'evaluation_group'),
+        eq(event.subject_id, resolved.evaluation_group_id),
+        sql`${event.payload}->>'effective_evaluation_id' = ${effective.evaluation_id}`,
+        sql`${event.payload}->>'generation' = ${String(resolved.head?.generation)}`,
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(1);
+  if (
+    !activation ||
+    activation.payload.question_group_id !== scope.data.group_id ||
+    activation.payload.submission_id !== resolved.submission.submission_id
+  )
+    return null;
+  return { review, metadata: frozenQuestion.intervention_diagnostic, effective, activation };
+}
+
 export interface CommittedInterventionDiagnosticAttempt {
   review_event: {
     id: string;
     rating: 'again' | 'hard' | 'good';
   };
   judge: {
-    route: 'multimodal_direct';
+    route: 'multimodal_direct' | 'evaluate_submission';
     coarse_outcome: 'correct' | 'partial' | 'incorrect';
     confidence: number;
     feedback_md: string;
     suggested_rating: 'again' | 'hard' | 'good';
-    judge_event_id: string;
+    judge_event_id: string | null;
+    evaluation_id?: string;
   };
 }
 
@@ -149,6 +268,40 @@ export async function loadCommittedInterventionDiagnosticAttempt(
   db: Db,
   questionId: string,
 ): Promise<CommittedInterventionDiagnosticAttempt | null> {
+  const nativeAttempts = await db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:assessment_attempt'),
+        eq(event.subject_kind, 'question'),
+        eq(event.subject_id, questionId),
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(50);
+  for (const attempt of nativeAttempts) {
+    const native = await loadNativeInterventionDiagnosticVerdict(db, attempt.id);
+    if (!native) continue;
+    const verdict = native.effective.verdict.verdict;
+    if (verdict === 'unsupported') continue;
+    const rating = verdict === 'correct' ? 'good' : verdict === 'partial' ? 'hard' : 'again';
+    const units = native.effective.row.unit_results.filter((unit) => unit.status === 'scored');
+    return {
+      review_event: { id: attempt.id, rating },
+      judge: {
+        route: 'evaluate_submission',
+        coarse_outcome: verdict,
+        confidence: 0, // Native candidate records do not assert model confidence.
+        feedback_md: units
+          .flatMap((unit) => (unit.feedback_md ? [unit.feedback_md] : []))
+          .join('\n\n'),
+        suggested_rating: rating,
+        judge_event_id: null,
+        evaluation_id: native.effective.evaluation_id,
+      },
+    };
+  }
   const candidates = await db
     .select({ id: event.id })
     .from(event)
@@ -238,7 +391,7 @@ async function appendImmediateDiagnosticToLiveStream(
         .from(event)
         .where(
           and(
-            eq(event.action, 'review'),
+            committedDiagnosticAttempt(tx),
             eq(event.subject_kind, 'question'),
             eq(event.subject_id, input.questionId),
             sql`${event.payload} ->> 'stream_item_id' = ${existingDelivery.id}`,
@@ -391,7 +544,7 @@ export async function materializeInterventionDiagnostics(
               and(
                 eq(event.subject_kind, 'question'),
                 eq(event.subject_id, question.id),
-                eq(event.action, 'review'),
+                committedDiagnosticAttempt(tx),
               ),
             ),
         ),

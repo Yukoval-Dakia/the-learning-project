@@ -326,3 +326,13 @@ full evidence target editing/media acceptance and complete frozen teaching input
 - 删除rejudge旧current-row/model/revert分支，只保留原生冻结original→新candidate→head CAS与结算。真实发布/原件/recorded离线端口替换旧judgeFn fixture，覆盖改判/同分/确定性/冻结输入/并发/试卷/明确用户FSRS/自动theta/失败回滚/晚到有序重放/KC合并保护。partial原生规则为未局部化则abstain，随后full才写一次success；不恢复已否决的旧partial→1。
 - 59DB（API7/worker20/native提交32）、typecheck、changedBiome、build、Postman通过。边界去掉旧revert边，baseline收紧447→446，无新增豁免。所有模型为离线fixture，不代表真实质量验证。
 - probe检查确认目标错误签名是独立承重语义，后续必须冻结并保留，不能只移植coarse score。剩余probe/ingestion/diagnostic生产与消费、旧solo主测试仍在1047主线。未PR/push/review/CI/部署/付费，不停止检查点。
+
+## 2026-10-05 01:29 UTC — 诊断原生提交/消费/恢复（未发布）
+
+- 原生ResponseSet可独立通过诊断答案校验；观察用response_md不再替代原答。已接收相同issuance/group/key的重试可恢复原candidate或202 outbox，改答/第二身份仍拒绝，不重付；尚无原件的并发认领仍只有一个成功。测试先RED后修。
+- 原始submission的learning_scope冻结诊断归属元数据；保留空KC标签/题目级单次卡语义，不把canonical诊断KC误当普通学习调度目标。刷新读面从当前生效automatic/unassisted/model candidate恢复，返回真实evaluation_id而不伪造judge event；当前题metadata编辑不能改写原始诊断归属。
+- Agency订阅version3增加真实assessment_activation；Practice注册其事件所有权（API生成组合校验先发现漏登记，修后通过）。消费在共享learning写锁内读取current head并推进原干预记录，迟到旧通知不会回写旧分数；申诉保持相同原review/暴露时点与follow-up due。首个真实原生消费用例先RED后修。
+- 租约回收/日流恢复识别已有effective head的native attempt，已提交题不会因订阅延迟重新开放；回归先RED（draft被恢复成active）后修。无头pending仍由原durable pending/FAILED/REQUEUED护栏控制。
+- 为保持锁序，干预activate/review/reconcile先取既有全局learning锁，再取干预锁。把原有无表SQL锁实现移到db/learning-state-lock.ts，server入口仅重导出同一实现，Agency直接消费db基础设施；没有复制锁namespace或隐藏server依赖。曾尝试新增server import的审计不通过，已收敛，baseline保持446/0/48不抬高。
+- 128 distinct DB + 最后锁模块55DB、84 distinct unit（UI恢复/manifest/组合）、typecheck、changedBiome（零error/12warning）、build、API client/Postman生成和边界审计通过。全部模型均离线fixture；这不等于生产诊断producer已发布或模型质量准入通过。
+- 仍需：生产诊断发题契约、native head转为manual/assisted/unsupported时撤销旧干预通过判定的显式未决态；probe签名/发题、ingestion先持久化发布、旧solo主suite及归因消费者。此后继续同一1047主线；无PR/push/review/CI/生产/付费。

@@ -139,6 +139,8 @@ export const practiceCapability = defineCapability({
       // Canonical judge publisher (submit + rejudge); Agency consumes trusted
       // verdicts for intervention settlement.
       'judge',
+      // Native head transitions are the authoritative trigger for diagnostic consumers.
+      'experimental:assessment_activation',
       'experimental:judge_calibration_sample',
       'experimental:judge_calibration_run_summary',
       'experimental:hint_request',

@@ -1,6 +1,7 @@
 // Solo submissions require the original issued assessment. Candidate activation
 // is the only learning writer; durable work uses the same immutable original.
 import { and, eq } from 'drizzle-orm';
+import { isBlankSlotResponse } from '@/core/schema/assessment/response';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import type { JudgeExecutionProvenanceT } from '@/core/schema/event/known';
@@ -9,7 +10,7 @@ import {
   InterventionDiagnosticQuestionMetadata,
 } from '@/core/schema/intervention';
 import { type Db, db } from '@/db/client';
-import { learning_session, question } from '@/db/schema';
+import { assessment_submission, learning_session, question } from '@/db/schema';
 import {
   ApiError,
   canonicalResourceResponse,
@@ -84,7 +85,11 @@ async function validateSubmit(req: Request): Promise<ValidatedSubmit> {
         409,
       );
     }
-    if ((body.response_md?.trim().length ?? 0) === 0 && body.answer_image_refs.length === 0) {
+    if (
+      body.assessment &&
+      body.assessment.response_set.entries.every(isBlankSlotResponse) &&
+      (body.assessment.group_evidence?.length ?? 0) === 0
+    ) {
       throw new ApiError(
         'validation_error',
         `intervention diagnostic ${questionId} requires an answer`,
@@ -111,6 +116,23 @@ async function claimInterventionDiagnosticSubmission(validated: ValidatedSubmit)
     )
     .returning({ id: question.id });
   if (!claimed) {
+    // The claim protects the original, not its transport retries. The formal
+    // writer still compares every accepted byte and rejects changed coordinates.
+    const original = validated.body.assessment;
+    if (original) {
+      const [accepted] = await db
+        .select({ id: assessment_submission.submission_id })
+        .from(assessment_submission)
+        .where(
+          and(
+            eq(assessment_submission.issuance_id, original.issuance_id),
+            eq(assessment_submission.evaluation_group_id, original.evaluation_group_id),
+            eq(assessment_submission.idempotency_key, original.idempotency_key),
+          ),
+        )
+        .limit(1);
+      if (accepted) return false;
+    }
     throw new ApiError(
       'conflict',
       `intervention diagnostic ${validated.questionId} has already been submitted`,
