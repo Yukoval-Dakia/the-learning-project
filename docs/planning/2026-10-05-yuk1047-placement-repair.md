@@ -590,3 +590,94 @@ their pushed repair. Placement review remains to resolve after this push.
 Exact-head CI and the 17-minute last-push window still gate merge. Existing
 three P2 follow-ups remain on YUK-1047; no additional issue, independent review,
 production deployment or paid provider call was introduced.
+
+## Paper feedback repair for late P1 comments 4184804038 and 4184804047
+
+This writer started at `2164c4247c837d7ff738a990b213f8017124ee33` in
+`/Volumes/YukovalSBak/yukoval-projects/tlp-assessment-entries`, branch
+`fix/yuk-1047-formal-entries`. Scope is the two paper read implementations,
+their DB regressions and this evidence append. Parent owns final acceptance,
+push, PR replies and tracker status.
+
+### Causal evidence and correction
+
+The initial 41-test DB run passed despite the missing read-side guards. Source
+and runtime inspection explained both blind spots. Row normalization creates
+private `sol_*` materials even for a simple answer, so those fixtures never
+exercise a reference supplied only by the scoring basis. Also,
+`resolveVerdictsForNativeAttempts` already hides grades when the capture carries
+`paper_feedback_policy=judge_now_show_later`. Normal fully annotated captures
+therefore do not reproduce the summary leak. The capture schema makes this
+annotation optional; it cannot replace the immutable opening receipt's policy.
+
+The new test-local publication helper removes solution materials before real
+publication, updates the contract digest, and retains the deterministic text
+criterion. Tests inspect the actual issued revision to prove that no `sol_*`
+material exists and that its scoring basis still holds `true`. They then use
+real publication, issuance, submission, evaluation, activation, detail HTTP and
+list HTTP code. Partial grades use the existing real manual correction/CAS
+helper. No model port or verdict resolver is mocked.
+
+Buffered fixtures also omit the optional capture-policy annotation using an
+explicit DB fixture update. Frozen submission/issuance/revision identities and
+the opening receipt stay intact. This isolates whether the paper reads enforce
+the receipt themselves. The current normal submission producer continues to
+populate the annotation. No ordinary fully annotated producer leak is claimed.
+
+Before either product edit, the verified causal run reported **8 failed and
+33 passed DB tests**. It exposed null references for immediate and completed
+submissions without solution materials, plus buffered right/wrong leakage in
+started and paused detail/list summaries. The same cases pass after these fixes:
+
+- Detail returns the existing frozen `context.reference_md` projection, matching
+  study reference reveal and preserving complete solution material precedence.
+- Detail counts right/wrong only when the slot is visible. List native counting
+  independently checks the matching frozen slot's policy and session completion.
+  Both preserve submitted progress in `pos`; correct/partial still count as
+  right, incorrect as wrong, and absent/unresolved adjudications count as neither.
+
+Six matrix cases cover immediate/buffered and correct/incorrect/partial across
+started, paused and completed, followed by a completed reload. They edit the hot
+question prompt/reference and replace the paper's hot policy after opening,
+then assert the frozen content and policy. Two mixed-policy cases keep immediate
+correct/incorrect visible while buffered partial stays hidden until completion.
+Two further cases cover absent effective adjudication and a real activated
+terminal unresolved candidate. The absent-head fixture explicitly clears the
+mutable effective-head pointer; it verifies the read state, not a retraction
+command. The existing real abandoned-to-started reopen test now checks detail
+progress/summary reset and absence of the previous occurrence's submission as
+well as its existing list/issuance assertions.
+
+### Verification and handoff
+
+All logs are in `/tmp/` with prefix `yuk1047-paper-feedback-`.
+
+| Check | Result | Log suffix |
+| --- | --- | --- |
+| Verified causal DB RED, before product edits | 8 failed, 33 passed, 3 files | `db-red-verified.log` |
+| Same detail API, list API and issuance DB GREEN | 41 passed, 3 files | `db-green.log` |
+| Paper cycle, snapshot, provenance, session race, capture and mastery progress DB | 51 passed, 6 files | `db-extended.log` |
+| Practice read, paper contracts/sections, frozen study context and evaluation authority unit | 43 passed, 5 files | `unit.log` |
+| Typecheck | exit 0 | `typecheck.log` |
+| Changed-file Biome | exit 0, 4 existing warnings | `biome.log` |
+| Lint ratchet | exit 0, 297 warnings within unchanged 305 baseline | `lint-ratchet.log` |
+| Build | exit 0, web/server/worker/migrate built | `build.log` |
+| API contracts/client usage, capability boundaries, structured judge | all exit 0 | `audit-{api-contracts,api-client-usage,capability-boundaries,structured-judge}.log` |
+| Test partition, schema, task census and provider lanes | all exit 0 | `audit-{partition,schema,task-census,provider-lanes}.log` |
+
+The final total is **92 distinct DB tests and 43 distinct unit tests**. RED and
+earlier diagnostic reruns are not added to the final count. Only
+`db-red-verified.log` is claimed as the causal RED; earlier diagnostic and fixture
+adjustment logs remain available. Every accepted DB run used
+`DOCKER_HOST=unix:///Users/yuqi/.orbstack/run/docker.sock` with disposable
+Postgres testcontainers. Capability debt counts remain `437/0/48`.
+
+No route schema, generated client, Postman definition, dependency or migration
+changed. PLAN, `.remember` and the pre-existing `.serena/project.yml` modification
+were preserved. No full local `pnpm test`, delegation, independent review, push,
+PR communication/link/watch, production access or paid provider call ran.
+This lane introduces no additional actionable follow-up beyond the two fixed
+findings on existing YUK-1047. Parent retains Linear capture/status ownership.
+Writer ownership returns to parent after the local repair commit; this lane then
+stops. These checks establish local source/DB behavior, not exact-head CI,
+deployment or external delivery acceptance.

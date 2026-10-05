@@ -358,6 +358,16 @@ export async function getPracticeList(
       if (nativeBindings.has(r.session_id) && !currentNativeIds.has(r.attempt_event_id)) continue;
       if (nativeIds.has(r.attempt_event_id)) {
         if (!currentNativeIds.has(r.attempt_event_id)) continue;
+        const capture = currentNativeAnchors.find((row) => row.id === r.attempt_event_id);
+        const slot = nativeBindings
+          .get(r.session_id)
+          ?.slots.find((slot) => slot.issuance_id === capture?.payload.issuance_id);
+        if (
+          !slot ||
+          (slot.feedback_policy === 'judge_now_show_later' &&
+            sessionStatusById.get(r.session_id) !== 'completed')
+        )
+          continue;
         const outcome = nativeVerdicts.get(r.attempt_event_id)?.effective?.verdict.verdict;
         const bucket = rightWrongBySession.get(r.session_id) ?? { right: 0, wrong: 0 };
         if (outcome === 'correct' || outcome === 'partial') bucket.right++;

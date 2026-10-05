@@ -113,8 +113,10 @@ export async function getFrozenPaperDetail(
     let submission: PaperDetailSlot['slot_state']['submission'] = null;
     if (original && capture) {
       pos++;
-      if (grade?.coarse_outcome === 'correct' || grade?.coarse_outcome === 'partial') right++;
-      else if (grade?.coarse_outcome === 'incorrect') wrong++;
+      if (visible) {
+        if (grade?.coarse_outcome === 'correct' || grade?.coarse_outcome === 'partial') right++;
+        else if (grade?.coarse_outcome === 'incorrect') wrong++;
+      }
       const common = {
         submitted: true as const,
         answer_md: frozenAnswer?.content_md ?? '',
@@ -127,7 +129,7 @@ export async function getFrozenPaperDetail(
             outcome: grade?.coarse_outcome ?? 'unsupported',
             score: grade?.score ?? null,
             feedback_md: grade?.feedback_md ?? null,
-            reference_md: context.solution_md,
+            reference_md: context.reference_md,
           }
         : { ...common, visible_to_user: false, feedback_buffered: true };
     }

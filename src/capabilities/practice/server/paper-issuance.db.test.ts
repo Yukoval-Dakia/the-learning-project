@@ -418,6 +418,14 @@ describe('paper opening freezes actual assessment occurrences', () => {
       right: 0,
       wrong: 0,
     });
+    const reopenedDetail = await getPaperDetail(db, paperId);
+    expect(reopenedDetail?.session).toMatchObject({
+      status: 'started',
+      pos: 0,
+      right: 0,
+      wrong: 0,
+    });
+    expect(reopenedDetail?.sections[0].slots[0].slot_state.submission).toBeNull();
     await db
       .update(learning_session)
       .set({ status: 'completed' })
