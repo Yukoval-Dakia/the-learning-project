@@ -1,13 +1,19 @@
 // Solo submissions require the original issued assessment. Candidate activation
 // is the only learning writer; durable work uses the same immutable original.
-import { and, eq } from 'drizzle-orm';
+import { and, eq, exists, notExists } from 'drizzle-orm';
 import { isBlankSlotResponse } from '@/core/schema/assessment/response';
 import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
   InterventionDiagnosticQuestionMetadata,
 } from '@/core/schema/intervention';
 import { type Db, db } from '@/db/client';
-import { assessment_submission, learning_session, question } from '@/db/schema';
+import {
+  assessment_submission,
+  learning_session,
+  question,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
 import {
   ApiError,
   canonicalResourceResponse,
@@ -149,6 +155,29 @@ export async function releaseInterventionDiagnosticSubmissionClaim(
         eq(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE),
         eq(question.draft_status, 'draft'),
         eq(question.updated_at, input.claimedAt),
+        exists(
+          database
+            .select({ id: question_group_lifecycle.group_id })
+            .from(question_group_lifecycle)
+            .where(
+              and(
+                eq(question_group_lifecycle.group_id, input.questionId),
+                eq(question_group_lifecycle.scoring_admission_state, 'admitted'),
+                eq(question_group_lifecycle.suspended, false),
+                eq(question_group_lifecycle.withdrawn, false),
+              ),
+            ),
+        ),
+        notExists(
+          database
+            .select({ id: assessment_submission.submission_id })
+            .from(assessment_submission)
+            .innerJoin(
+              question_revision,
+              eq(question_revision.revision_id, assessment_submission.revision_id),
+            )
+            .where(eq(question_revision.group_id, input.questionId)),
+        ),
       ),
     );
 }

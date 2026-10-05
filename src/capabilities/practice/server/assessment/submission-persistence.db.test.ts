@@ -283,6 +283,31 @@ describe('issueAssessment', () => {
 
   // P1-2（YUK-1091）：one_time claim 的重试命中自己持有的 issuance —— 幂等
   // 解析必须先于 claim 互斥判，否则正常重试被误报 claim_unavailable。
+  it('atomically claims one-time issuance even when callers omit claim', async () => {
+    const pub = await publishAdmitted('implicitClaim', { claimPolicy: 'one_time' });
+    const requests = ['implicit_a', 'implicit_b'].map((issuance_id) => ({
+      group_id: pub.groupId,
+      issuance_id,
+    }));
+    const results = await Promise.all(
+      requests.map((request) => issueAssessment(testDb(), request)),
+    );
+    expect(results.map((result) => result.status).sort()).toEqual(['claim_unavailable', 'issued']);
+    const winner = results.find((result) => result.status === 'issued');
+    if (!winner || winner.status !== 'issued') throw new Error('missing issuance');
+    expect(winner.issuance.claim).toEqual({
+      policy: 'one_time',
+      status: 'claimed',
+      claimed_by_ref: winner.issuance.issuance_id,
+    });
+    expect(
+      await issueAssessment(testDb(), {
+        group_id: pub.groupId,
+        issuance_id: winner.issuance.issuance_id,
+      }),
+    ).toMatchObject({ status: 'replayed', issuance: winner.issuance });
+  });
+
   it('one_time claim retry with same issuance_id replays instead of claim_unavailable', async () => {
     const pub = await publishAdmitted('issClaim', { claimPolicy: 'one_time' });
     const first = await issueAssessment(testDb(), {

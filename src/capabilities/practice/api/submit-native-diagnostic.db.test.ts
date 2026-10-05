@@ -233,7 +233,7 @@ describe('native diagnostic HTTP submission', () => {
     expect(await testDb().select().from(assessment_submission)).toHaveLength(1);
   });
 
-  it('holds unavailable model evidence, releases the operational claim, and never retries the sealed call', async () => {
+  it('holds unavailable model evidence and fences new originals without retrying the sealed call', async () => {
     const f = await fixture();
     f.execute.mockResolvedValue({
       kind: 'pending',
@@ -244,7 +244,8 @@ describe('native diagnostic HTTP submission', () => {
     expect((await f.submit()).status).toBe(422);
     expect(
       (await testDb().select().from(question).where(eq(question.id, f.id)))[0].draft_status,
-    ).toBe('active');
+    ).toBe('draft');
+    expect((await f.submit({ assessment: { ...f.assessment, evaluation_group_id: 'different-original', idempotency_key: 'different-key' } })).status).toBe(409);
     expect((await f.submit()).status).toBe(422);
     expect(f.execute).toHaveBeenCalledTimes(1);
     expect(

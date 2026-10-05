@@ -50,6 +50,7 @@ import {
   projectPracticeIssuance,
   validateIssuanceBinding,
 } from '@/core/schema/assessment';
+import { InterventionDiagnosticQuestionMetadata } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
 import {
   assessment_issuance,
@@ -239,7 +240,12 @@ export async function issueAssessment(
   return await db.transaction(async (tx) => {
     // 1) 组根行锁（锁序与 publish/verify 一致：question → lifecycle/快照读）。
     const [root] = await tx
-      .select({ id: question.id })
+      .select({
+        id: question.id,
+        source: question.source,
+        draft_status: question.draft_status,
+        metadata: question.metadata,
+      })
       .from(question)
       .where(eq(question.id, request.group_id))
       .for('update')
@@ -252,7 +258,14 @@ export async function issueAssessment(
       .from(question_group_lifecycle)
       .where(eq(question_group_lifecycle.group_id, request.group_id))
       .limit(1);
-    const revisionId = request.revision_id ?? lifecycle?.current_revision_id ?? null;
+    const existingIssuance = request.issuance_id
+      ? await loadIssuanceById(tx, request.issuance_id)
+      : null;
+    const revisionId =
+      request.revision_id ??
+      existingIssuance?.revision_id ??
+      lifecycle?.current_revision_id ??
+      null;
     if (revisionId == null) {
       return { status: 'unpublished' };
     }
@@ -282,8 +295,14 @@ export async function issueAssessment(
     // 4) 绑定推导 + 校验（revision 快照 → 发出范围/材料/呈现顺序）。
     const revision = revisionRowToContract(revRow);
     const binding = deriveIssuanceBinding(revision, {
-      part_ids: request.part_ids,
-      option_order_overrides: request.option_order_overrides,
+      part_ids: request.part_ids ?? existingIssuance?.part_ids,
+      option_order_overrides:
+        request.option_order_overrides ??
+        (existingIssuance
+          ? Object.fromEntries(
+              existingIssuance.option_order.map((order) => [order.slot_id, order.option_ids]),
+            )
+          : undefined),
     });
     const bindingIssues = validateIssuanceBinding(binding, revision);
     if (bindingIssues.length > 0) {
@@ -322,11 +341,25 @@ export async function issueAssessment(
       }
     }
 
-    // 6) 一次性 claim（one_time 组请求占用时）：同组存在未释放 claimed
+    if (root.source === 'intervention_diagnostic') {
+      if (mode !== 'auto_score') return { status: 'not_admitted' };
+      const diagnostic = InterventionDiagnosticQuestionMetadata.safeParse(
+        root.metadata?.intervention_diagnostic,
+      );
+      if (
+        !diagnostic.success ||
+        root.draft_status !== 'active' ||
+        new Date(diagnostic.data.due_at) > now
+      ) {
+        return { status: 'claim_unavailable' };
+      }
+    }
+
+    // 6) 一次性 claim（one_time 组始终占用）：同组存在未释放 claimed
     //    issuance ⇒ claim_unavailable。unbounded 组始终可发（claim 只是记录）。
     //    同 id 重试已在上面收敛——这里查到的 holder 必属另一 issuance。
     const claimPolicy = lifecycle?.claim_policy ?? 'unbounded';
-    const claimRequested = request.claim != null;
+    const claimRequested = claimPolicy === 'one_time' || request.claim != null;
     if (claimRequested && claimPolicy === 'one_time') {
       const [holder] = await tx
         .select({ issuance_id: assessment_issuance.issuance_id })
@@ -348,7 +381,7 @@ export async function issueAssessment(
     // 7) issuance 行（不可变绑定；claim 列随后可改）。
     const issuanceId = request.issuance_id ?? `iss_${createId()}`;
     const claimStatus: 'claimed' | 'unclaimed' = claimRequested ? 'claimed' : 'unclaimed';
-    const claimedByRef = claimRequested ? (request.claim?.claimed_by_ref ?? null) : null;
+    const claimedByRef = claimRequested ? (request.claim?.claimed_by_ref ?? issuanceId) : null;
 
     const insertPayload = {
       issuance_id: issuanceId,

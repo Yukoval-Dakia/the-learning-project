@@ -13,6 +13,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { freezeEvaluationInput } from '../../assessment-input';
+import { ConjectureProbeSpecV2 } from '../business';
 
 import {
   type EvaluateSubmissionCoreInput,
@@ -130,6 +131,108 @@ function inputFor(
 }
 
 // ---------- tests ----------
+
+describe('native probe response signatures', () => {
+  const probe = ConjectureProbeSpecV2.parse({
+    schema_version: 2,
+    prompt_md: '求 sin(3x²) 的导数，并说明内外层如何组合。',
+    reference_md: '6x cos(3x²)，外层导数与内层导数相乘。',
+    expected_target_error_answer_md: 'cos(3x²)，遗漏内层导数。',
+    elicits_target_error_reason_md: '区分链式法则遗漏与其他计算错误。',
+    context_kind: 'abstract',
+    representation_kind: 'symbolic',
+    response_mode: 'short_answer',
+    gold_response_signature: { kind: 'text', response_md: '6x cos(3x²)' },
+    target_error_response_signature: { kind: 'text', response_md: 'cos(3x²)' },
+  });
+
+  it.each([
+    { match: 'gold', points: 2, status: 'scored', reason: 'gold_signature_matched' },
+    {
+      match: 'target_error',
+      points: 0,
+      status: 'scored',
+      reason: 'target_error_signature_matched',
+    },
+    { match: 'neither', points: 0, status: 'scored', reason: 'response_matches_neither_signature' },
+    { match: 'ambiguous', points: 0, status: 'pending', reason: 'signature_match_ambiguous' },
+    { match: undefined, points: 0, status: 'pending', reason: 'signature_judgement_missing' },
+    { match: 'gold', points: 0, status: 'pending', reason: 'correctness_signature_conflict' },
+    {
+      match: 'target_error',
+      points: 2,
+      status: 'pending',
+      reason: 'correctness_signature_conflict',
+    },
+    { match: 'gold', points: 1, status: 'pending', reason: 'correctness_judge_ungradable' },
+  ] as const)(
+    'preserves $match / $points as $reason',
+    async ({ match, points, status, reason }) => {
+      const revision = revisionFor({
+        parts: [{ part_id: 'p1', prompt_md: probe.prompt_md, material_ids: [] }],
+        blank_scores_zero: false,
+        units: [
+          {
+            scoring_unit_id: 'p1::u',
+            slot_refs: ['p1::r'],
+            material_refs: [],
+            evidence_slot_refs: [],
+            requires_group_evidence: false,
+            points: 2,
+            criterion: {
+              kind: 'rule_reference',
+              rule_id: 'chain-rule',
+              source: 'system_proposed',
+              statement_md: probe.reference_md,
+              probe_spec: probe,
+            },
+          },
+        ],
+        assignments: [
+          {
+            scoring_unit_ids: ['p1::u'],
+            executor: {
+              kind: 'model_executor',
+              task_kind: 'AssessmentRuleJudgeTask',
+              admitted_slice_id: 'offline-probe-fixture',
+            },
+          },
+        ],
+      });
+      const out = await evaluateSubmissionCore(
+        inputFor(
+          submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: 'cos(3x²)' }]),
+          revision,
+          {
+            model_executor: async (request) => {
+              expect(request.unit.criterion).toMatchObject({ probe_spec: probe });
+              return {
+                kind: 'scored',
+                points_awarded: points,
+                matched: { rule_id: 'chain-rule', option_ids: [] },
+                evidence_citations: [{ slot_id: 'p1::r', quote: 'cos(3x²)' }],
+                run_refs: ['offline-run'],
+                ...(match
+                  ? {
+                      probe_signature_match: {
+                        match,
+                        explanation_md: '比较冻结正确和目标错误签名。',
+                      },
+                    }
+                  : {}),
+              };
+            },
+          },
+        ),
+      );
+      expect(out.record.unit_results[0]).toMatchObject({
+        status,
+        probe_judgement: { gradable: status === 'scored', reason_code: reason },
+      });
+      if (status === 'pending') expect(out.record.aggregate?.kind).toBe('unresolved');
+    },
+  );
+});
 
 describe('evaluateSubmissionCore — deterministic comparators', () => {
   it('exact_text: accepted answer scores full published points', async () => {

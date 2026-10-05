@@ -75,6 +75,51 @@ async function evaluateNormalizedText(
 }
 
 describe('normalizeQuestionRowToContract — 契约四层可发布', () => {
+  it('freezes private probe signatures into the digest without admitting a model slice', () => {
+    const probe = {
+      schema_version: 2,
+      prompt_md: '求 sin(3x²) 的导数，并说明内外层如何组合。',
+      reference_md: '6x cos(3x²)，外层导数与内层导数相乘。',
+      expected_target_error_answer_md: 'cos(3x²)，遗漏内层导数。',
+      elicits_target_error_reason_md: '区分链式法则遗漏与其他计算错误。',
+      context_kind: 'abstract',
+      representation_kind: 'symbolic',
+      response_mode: 'short_answer',
+      gold_response_signature: { kind: 'text', response_md: '6x cos(3x²)' },
+      target_error_response_signature: { kind: 'text', response_md: 'cos(3x²)' },
+    };
+    const row = baseRow({
+      kind: 'short_answer',
+      choices_md: null,
+      prompt_md: probe.prompt_md,
+      reference_md: probe.reference_md,
+      source: 'intervention_diagnostic',
+      metadata: { probe_spec: probe },
+    });
+    const original = normalizeQuestionRowToContract(row);
+    expect(original.scoring_basis.units[0].criterion).toMatchObject({ probe_spec: probe });
+    expect(original.scoring_basis.blank_scores_zero).toBe(false);
+    expect(original.execution_plan.assignments[0].executor).toEqual({
+      kind: 'model_executor',
+      task_kind: 'AssessmentRuleJudgeTask',
+      admitted_slice_id: null,
+    });
+    expect(
+      validateExecutionPlan(original.execution_plan, original.scoring_basis).map(
+        (issue) => issue.code,
+      ),
+    ).toEqual(['unadmitted_model_executor']);
+    expect(JSON.stringify(original.response_spec)).not.toContain('target_error_response_signature');
+    expect(JSON.stringify(original.structure)).not.toContain('target_error_response_signature');
+    probe.target_error_response_signature.response_md = '6 cos(3x²)，遗漏 x 因子。';
+    expect(normalizeQuestionRowToContract(row).integrity_digest).not.toBe(
+      original.integrity_digest,
+    );
+    expect(original.scoring_basis.units[0].criterion).toMatchObject({
+      probe_spec: { target_error_response_signature: { response_md: 'cos(3x²)' } },
+    });
+  });
+
   it('produces a contract that passes all three deterministic validators', () => {
     const n = normalizeQuestionRowToContract(baseRow());
     expectValidContract(n);

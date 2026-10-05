@@ -12,6 +12,7 @@ import {
 } from '@/capabilities/practice/public';
 import { createNativeAppeal } from '@/capabilities/practice/server/assessment/appeal';
 import { commitFormalAttempt } from '@/capabilities/practice/server/assessment/attempt';
+import { issueAssessment } from '@/capabilities/practice/server/assessment/issue';
 import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
 import { getTaskSystemPrompt } from '@/capabilities/task-registry';
@@ -40,6 +41,8 @@ import {
   material_fsrs_state,
   practice_stream_item,
   question,
+  question_group_lifecycle,
+  question_revision,
 } from '@/db/schema';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { eventCorrectionsGlobalLockKey, writeEvent } from '@/kernel/events';
@@ -47,6 +50,7 @@ import type { EventSubscriptionDelivery } from '@/kernel/manifest';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import { type TaskTextRunFn, taskPromptFingerprint } from '@/server/ai/provenance';
+import { publishPaperModelFixture } from '../../../../../tests/fixtures/assessment-paper';
 import { issueSoloFixture } from '../../../../../tests/fixtures/assessment-solo';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { answerProbe } from '../conjecture/probe-lifecycle';
@@ -648,6 +652,60 @@ describe('YUK-791 intervention preparation closed loop', () => {
   afterEach(async () => {
     await resetTestConfig();
     vi.restoreAllMocks();
+  });
+
+  it('publishes production diagnostic signatures but withholds automatic delivery without model admission', async () => {
+    const db = testDb();
+    const seeded = await seedEvidenceFor('native_publication');
+    await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+      env: { AUTO_INTERVENTION_EXPANSION_ENABLED: 'true' },
+      bossSend: async (_name, _data, options) => options.id,
+    });
+    const [opened] = await db.select().from(intervention);
+    const { fn } = successfulRunTask(db);
+    await prepareInterventionWave(
+      db,
+      {
+        interventionId: opened.id,
+        version: opened.version,
+        idempotencyKey: opened.idempotency_key,
+        preparationJobId: preparationJobIdOf(opened),
+      },
+      { runTaskFn: fn, authorPackageFn: authorInterventionPackage },
+    );
+    const active = await loadInterventionVersion(db, opened.id, opened.version);
+    if (!active?.settlement || !active.package) throw new Error('missing prepared diagnostics');
+    for (const kind of ['immediate', 'delayed', 'transfer'] as const) {
+      const id = active.settlement.diagnostics[kind].question_id;
+      const [lifecycle] = await db
+        .select()
+        .from(question_group_lifecycle)
+        .where(eq(question_group_lifecycle.group_id, id));
+      expect(lifecycle).toMatchObject({
+        scoring_admission_state: 'withheld',
+        scoring_admission_withheld_reason: 'no_admitted_executor',
+        claim_policy: 'one_time',
+      });
+      const [revision] = await db
+        .select()
+        .from(question_revision)
+        .where(eq(question_revision.group_id, id));
+      expect(revision.scoring_basis.units[0].criterion).toMatchObject({
+        kind: 'rule_reference',
+        probe_spec: active.package.diagnostics[kind].probe_spec,
+      });
+      expect(revision.execution_plan.assignments[0].executor).toMatchObject({
+        kind: 'model_executor',
+        admitted_slice_id: null,
+      });
+      expect(await issueAssessment(db, { group_id: id })).toEqual({ status: 'not_admitted' });
+      expect(
+        await db.select().from(material_fsrs_state).where(eq(material_fsrs_state.subject_id, id)),
+      ).toHaveLength(0);
+      expect(
+        await db.select().from(practice_stream_item).where(eq(practice_stream_item.ref_id, id)),
+      ).toHaveLength(0);
+    }
   });
 
   it('durably opens shadow preparation, consumes recommendation in the same wave, and activates once', async () => {
@@ -1842,6 +1900,8 @@ describe('YUK-791 intervention preparation closed loop', () => {
     const active = await loadInterventionVersion(db, opened.id, opened.version);
     if (!active?.settlement) throw new Error('active diagnostics missing');
     const qid = active.settlement.diagnostics.immediate.question_id;
+    await publishPaperModelFixture(db, qid);
+    await recoverEligibleInterventionDiagnostics(db, now);
     const issued = await issueSoloFixture(db, qid, true);
     let fullCredit = false;
     const execute = vi.fn(
@@ -1852,6 +1912,10 @@ describe('YUK-791 intervention preparation closed loop', () => {
       ): Promise<ModelUnitOutcomeT> => ({
         kind: 'scored',
         points_awarded: fullCredit ? input.unit.points : 0,
+        probe_signature_match: {
+          match: fullCredit ? 'gold' : 'target_error',
+          explanation_md: '离线诊断签名 fixture，独立于分数断言。',
+        },
         matched: {
           rule_id:
             input.unit.criterion.kind === 'rule_reference'
@@ -2161,6 +2225,10 @@ describe('YUK-791 intervention preparation closed loop', () => {
     expect(active?.status).toBe('active');
     expect(active?.delivery_mode).toBe('eligible');
     if (!active?.settlement) throw new Error('active intervention has no settlement schedule');
+    for (const diagnostic of Object.values(active.settlement.diagnostics)) {
+      await publishPaperModelFixture(db, diagnostic.question_id);
+    }
+    await recoverEligibleInterventionDiagnostics(db, activationNow);
     const diagnosticQuestions = await db
       .select({
         id: question.id,
@@ -2789,17 +2857,18 @@ describe('YUK-791 intervention preparation closed loop', () => {
       .from(material_fsrs_state)
       .where(eq(material_fsrs_state.subject_kind, 'question'));
     expect(recoveredQuestions[0]?.value).toBe(303);
-    // Only the immediate delivery is due before exposure; +7/+21 follow-ups
-    // remain draft questions with no FSRS card until that review is recorded.
-    expect(recoveredCards[0]?.value).toBe(101);
+    // Recovery publishes all pages, but author/reviewer approval is not scoring admission.
+    expect(recoveredCards[0]?.value).toBe(0);
+    const withheld = await db
+      .select({ value: count() })
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.scoring_admission_state, 'withheld'));
+    expect(withheld[0]?.value).toBe(303);
     const [recoveredImmediateStreamRow] = await db
       .select({ date: practice_stream_item.date, source: practice_stream_item.source })
       .from(practice_stream_item)
       .where(eq(practice_stream_item.ref_id, active.settlement.diagnostics.immediate.question_id));
-    expect(recoveredImmediateStreamRow).toEqual({
-      date: recoveryDate,
-      source: 'intervention',
-    });
+    expect(recoveredImmediateStreamRow).toBeUndefined();
   });
 
   it('retries the whole package once then fails closed without a partial package', async () => {

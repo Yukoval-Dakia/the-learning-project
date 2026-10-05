@@ -29,14 +29,19 @@ import {
 } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
 import {
+  assessment_issuance,
+  assessment_submission,
   evaluation_effective_head,
   event,
   job_events,
   practice_stream_item,
   question,
+  question_group_lifecycle,
+  question_revision,
 } from '@/db/schema';
 import { getEventById } from '@/kernel/events';
 import { resolveVerdictsForNativeAttempts } from '@/kernel/read-models/assessment-verdict';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { enrollFsrsStateIfAbsent, retireQuestionFsrsState } from '@/server/fsrs/state';
 import { initialFsrsState } from './fsrs';
 import { JUDGE_PENDING_ATTEMPT_ACTION } from './judge-run-dispatch';
@@ -44,6 +49,19 @@ import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './judge-run-status';
 import { streamLocalDate } from './stream-date';
 
 export const INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS = 10 * 60 * 1000;
+
+function acceptedDiagnosticOriginal(tx: Tx) {
+  return exists(
+    tx
+      .select({ id: assessment_submission.submission_id })
+      .from(assessment_submission)
+      .innerJoin(
+        question_revision,
+        eq(question_revision.revision_id, assessment_submission.revision_id),
+      )
+      .where(eq(question_revision.group_id, question.id)),
+  );
+}
 
 /** Recovery treats an effective native original like a committed historical review. */
 function committedDiagnosticAttempt(tx: Tx) {
@@ -395,7 +413,11 @@ async function appendImmediateDiagnosticToLiveStream(
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${date}`}))`);
   await tx.execute(sql.raw("SET LOCAL lock_timeout = '0'"));
   const [existingDelivery] = await tx
-    .select({ id: practice_stream_item.id, status: practice_stream_item.status })
+    .select({
+      id: practice_stream_item.id,
+      status: practice_stream_item.status,
+      date: practice_stream_item.date,
+    })
     .from(practice_stream_item)
     .where(
       and(
@@ -406,6 +428,31 @@ async function appendImmediateDiagnosticToLiveStream(
     )
     .limit(1);
   if (existingDelivery) {
+    const [issued] = await tx
+      .select({ id: assessment_issuance.issuance_id })
+      .from(assessment_issuance)
+      .innerJoin(
+        question_revision,
+        eq(question_revision.revision_id, assessment_issuance.revision_id),
+      )
+      .where(eq(question_revision.group_id, input.questionId))
+      .limit(1);
+    if (!issued && existingDelivery.date !== date) {
+      const [current] = await tx
+        .select({ position: sql<number>`coalesce(max(${practice_stream_item.position}), 0)::int` })
+        .from(practice_stream_item)
+        .where(and(eq(practice_stream_item.date, date), isNull(practice_stream_item.session_id)));
+      await tx
+        .update(practice_stream_item)
+        .set({
+          date,
+          position: (current?.position ?? 0) + 1,
+          status: 'pending',
+          updated_at: input.now,
+        })
+        .where(eq(practice_stream_item.id, existingDelivery.id));
+      return;
+    }
     let restorePending = existingDelivery.status === 'skipped';
     if (existingDelivery.status === 'done') {
       const [attempt] = await tx
@@ -558,6 +605,7 @@ export async function materializeInterventionDiagnostics(
         eq(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE),
         eq(question.draft_status, 'draft'),
         lte(question.updated_at, staleClaimBefore),
+        sql`NOT ${acceptedDiagnosticOriginal(tx)}`,
         notExists(
           tx
             .select({ id: event.id })
@@ -622,6 +670,7 @@ export async function materializeInterventionDiagnostics(
     .from(question)
     .where(inArray(question.id, ids));
   const byId = new Map(rows.map((row) => [row.id, row]));
+  let immediateAdmitted = false;
   for (const kind of kinds) {
     const scheduled = settlement.diagnostics[kind];
     const row = byId.get(scheduled.question_id);
@@ -667,13 +716,103 @@ export async function materializeInterventionDiagnostics(
             : scheduled.status === 'scheduled' && kind !== 'immediate' && !followupsReady
               ? { draft_status: 'draft' as const }
               : {}),
-          updated_at: input.now,
+          ...(shouldActivateAnchoredFollowup ? { updated_at: input.now } : {}),
         })
         .where(eq(question.id, scheduled.question_id));
     }
 
+    let [lifecycle] = await tx
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, scheduled.question_id));
+    if (!lifecycle?.current_revision_id) {
+      await publishQuestionGroupFromRow(tx, {
+        rootId: scheduled.question_id,
+        admission: { state: 'withheld', reason: 'no_admitted_executor' },
+        claimPolicy: 'one_time',
+        availability: 'general_pool',
+        actorRef: 'intervention:diagnostic-publication',
+        now: input.now,
+      });
+      [lifecycle] = await tx
+        .select()
+        .from(question_group_lifecycle)
+        .where(eq(question_group_lifecycle.group_id, scheduled.question_id));
+    }
+    const admitted =
+      lifecycle?.scoring_admission_state === 'admitted' &&
+      !lifecycle.suspended &&
+      !lifecycle.withdrawn;
+    if (kind === 'immediate') immediateAdmitted = admitted;
+    if (!admitted) {
+      if (scheduled.status === 'scheduled') {
+        await tx
+          .update(question)
+          .set({ draft_status: 'draft', updated_at: input.now })
+          .where(and(eq(question.id, scheduled.question_id), eq(question.draft_status, 'active')));
+        await retireQuestionFsrsState(tx, scheduled.question_id);
+        await tx
+          .update(practice_stream_item)
+          .set({ status: 'skipped', updated_at: input.now })
+          .where(
+            and(
+              eq(practice_stream_item.ref_id, scheduled.question_id),
+              eq(practice_stream_item.item_kind, 'question'),
+              eq(practice_stream_item.status, 'pending'),
+              notExists(
+                tx
+                  .select({ id: assessment_issuance.issuance_id })
+                  .from(assessment_issuance)
+                  .innerJoin(
+                    question_revision,
+                    eq(question_revision.revision_id, assessment_issuance.revision_id),
+                  )
+                  .where(eq(question_revision.group_id, scheduled.question_id)),
+              ),
+            ),
+          );
+      }
+      continue;
+    }
     const ready = kind === 'immediate' || followupsReady;
     if (scheduled.status === 'scheduled' && ready) {
+      // Admission can arrive after authoring. Only an unissued card is freshly
+      // released here; issued cards retain the submission/recovery lease above.
+      await tx
+        .update(question)
+        .set({ draft_status: 'active', updated_at: input.now })
+        .where(
+          and(
+            eq(question.id, scheduled.question_id),
+            eq(question.draft_status, 'draft'),
+            sql`NOT ${acceptedDiagnosticOriginal(tx)}`,
+            notExists(
+              tx
+                .select({ id: assessment_issuance.issuance_id })
+                .from(assessment_issuance)
+                .innerJoin(
+                  question_revision,
+                  eq(question_revision.revision_id, assessment_issuance.revision_id),
+                )
+                .where(eq(question_revision.group_id, scheduled.question_id)),
+            ),
+            notExists(
+              tx
+                .select({ id: event.id })
+                .from(event)
+                .where(
+                  and(
+                    eq(event.subject_kind, 'question'),
+                    eq(event.subject_id, scheduled.question_id),
+                    or(
+                      committedDiagnosticAttempt(tx),
+                      eq(event.action, JUDGE_PENDING_ATTEMPT_ACTION),
+                    ),
+                  ),
+                ),
+            ),
+          ),
+        );
       const dueAt = new Date(scheduled.due_at);
       const initial = initialFsrsState(dueAt);
       // A pre-fix installation may already have activation-anchored follow-up
@@ -696,7 +835,7 @@ export async function materializeInterventionDiagnostics(
     }
   }
 
-  if (settlement.diagnostics.immediate.status === 'scheduled') {
+  if (settlement.diagnostics.immediate.status === 'scheduled' && immediateAdmitted) {
     await appendImmediateDiagnosticToLiveStream(tx, {
       questionId: settlement.diagnostics.immediate.question_id,
       interventionId: snapshot.intervention_id,

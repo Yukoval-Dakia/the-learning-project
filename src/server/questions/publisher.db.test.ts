@@ -7,6 +7,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { issueAssessment } from '@/capabilities/practice/server/assessment/issue';
 
 import type { AdmissionEvidenceT } from '@/core/schema/assessment';
 import {
@@ -91,6 +92,35 @@ async function readRow(id: string): Promise<NormalizableQuestionRow> {
 describe('publishQuestionGroup（YUK-1043 统一发布 seam）', () => {
   beforeEach(resetDb);
   afterEach(resetDb);
+
+  it('freezes an unadmitted model plan as withheld without allowing automatic issuance', async () => {
+    const db = testDb();
+    await seedQuestion('unadmitted-model', {
+      kind: 'short_answer',
+      choices_md: [],
+      reference_md: '解释推导过程',
+    });
+    const input = publishInput(await readRow('unadmitted-model'));
+    for (const assignment of input.contract.execution_plan.assignments) {
+      assignment.executor = {
+        kind: 'model_executor',
+        task_kind: 'AssessmentRuleJudgeTask',
+        admitted_slice_id: null,
+      };
+    }
+    input.contract.integrity_digest = contractIntegrityDigest(input.contract);
+    const published = await publishQuestionGroup(db, input);
+    expect(published.status).toBe('published');
+    expect(await issueAssessment(db, { group_id: 'unadmitted-model' })).toEqual({
+      status: 'not_admitted',
+    });
+    await expect(
+      publishQuestionGroup(db, {
+        ...input,
+        admission: { state: 'admitted', evidence: ADMITTED_EVIDENCE },
+      }),
+    ).rejects.toThrow('unadmitted_model_executor');
+  });
 
   for (const existing of [false, true]) {
     it.each([

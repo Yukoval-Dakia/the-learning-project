@@ -375,3 +375,13 @@ full evidence target editing/media acceptance and complete frozen teaching input
 - 收尾最后两套旧settlement/late-arrival测试到native fixture；23DB、typecheck、两文件Biome与diff check通过。仅测试/文档改变，沿用上一实现提交build结果，不声称重跑。
 - 旧review-settlement writer与JudgedSubmit尚未删除，已全仓确认只剩定义/内部类型引用；ValidatedSubmit仍live，不能一起删。生产诊断/probe/ingestion/消费者继续留1047未完成。
 - 完整接手入口：`2026-10-05-yuk1047-handoff.md`。本地提交后停下；无PR/push/review/CI/生产/付费。1047维持In Progress，不新增重复票。
+
+## 2026-10-05 本机续接：诊断生产发布与签名契约
+
+- 恢复工作树后删除旧 `review-settlement.ts` writer 与无消费者的 `JudgedSubmit`；保留 live `ValidatedSubmit`。静态审计转向真实 native settlement。提交 `8588e31bb`；23 DB、19 invariant unit、typecheck、build 通过，boundary 446→440。
+- 发布与归一化实现下沉到 `kernel/records/assessment-publication.ts`、`assessment-normalization.ts`，原 `server/questions` 路径仅显式兼容出口。两个实现只依赖共享 core/db/kernel，无 capability/server 反向依赖；诊断与接下来的 probe/ingestion 共用同一实现，不增加 deep import 债务。
+- V2 probe 的完整正确/目标错误签名随私有评分契约冻结并参与 digest。原生 rule executor 保留独立 signature match；缺失、含糊、分数冲突或部分分产生待复核，不能由分数推断目标错误。公开 structure/response spec 不泄露签名。
+- 诊断 materializer 原子发布三个诊断 revision，默认 withheld/no_admitted_executor；author/reviewer 审核不冒充模型评分准入。未准入不入 FSRS、不产生可执行 stream；已有 revision 与准入状态不被 reconciliation 重写。模型计划仅在 withheld 时允许 null slice，admitted 仍拒绝。
+- 一次性发题在服务端强制 claim，即使调用方未显式传 claim；同 issuance ID 重试保留旧 revision/binding。诊断自动发题检查 due/draft，不允许 manual 绕过。提交处理租约独立于发题 claim，已持久化原答即使没有有效评分也阻止另开原答，允许原答幂等重试。
+- 证据：44 intervention preparation DB、33 issuance/persistence DB、12 native diagnostic HTTP DB、30 publisher DB、151 scoped unit，通过；typecheck、build、boundary 440/0/48 通过。日志在 `/tmp/yuk1047-diag-*`、`/tmp/yuk1047-claim-regress.log`、`/tmp/yuk1047-native-publication-unit2.log` 与 `/tmp/yuk1047-withheld.log`。
+- 未完成：Probe route/lifecycle、ingestion 原件先落库、native failure consumers、准入和入口登记。未调用付费 provider，未部署，未开 PR；1047 仍 In Progress。

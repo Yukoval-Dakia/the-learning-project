@@ -22,6 +22,7 @@ import {
   event,
   question,
   question_group_lifecycle,
+  question_revision,
 } from '@/db/schema';
 import {
   contractIntegrityDigest,
@@ -186,8 +187,27 @@ export async function submitPaperFixture(input: PaperSubmitSlotInput, db: Db) {
 export async function publishPaperModelFixture(db: Db, questionId: string) {
   const [row] = await db.select().from(question).where(eq(question.id, questionId));
   if (!row) throw new Error('model question fixture missing');
-  const contract = normalizeQuestionRowToContract(row);
+  const [lifecycle] = await db
+    .select()
+    .from(question_group_lifecycle)
+    .where(eq(question_group_lifecycle.group_id, questionId));
+  const [revision] = lifecycle?.current_revision_id
+    ? await db
+        .select()
+        .from(question_revision)
+        .where(eq(question_revision.revision_id, lifecycle.current_revision_id))
+    : [];
+  const contract = revision
+    ? {
+        integrity_digest: revision.integrity_digest,
+        structure: revision.structure,
+        response_spec: revision.response_spec,
+        scoring_basis: revision.scoring_basis,
+        execution_plan: revision.execution_plan,
+      }
+    : normalizeQuestionRowToContract(row);
   for (const unit of contract.scoring_basis.units) {
+    if (unit.criterion.kind === 'rule_reference' && unit.criterion.probe_spec) continue;
     unit.criterion = {
       kind: 'rule_reference',
       rule_id: `${unit.scoring_unit_id}:rule`,
@@ -207,8 +227,8 @@ export async function publishPaperModelFixture(db: Db, questionId: string) {
   const published = await publishQuestionGroup(db, {
     group_id: row.id,
     contract,
-    expectedCurrentRevision: null,
-    expectedAdmissionGeneration: null,
+    expectedCurrentRevision: lifecycle?.current_revision_id ?? null,
+    expectedAdmissionGeneration: lifecycle?.scoring_admission_generation ?? null,
     availability: 'general_pool',
     actorRef: 'test:paper-model',
     now: new Date(),

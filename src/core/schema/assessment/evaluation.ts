@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import {
+  ConjectureProbeSignatureMatch,
+  classifyConjectureProbeResponseFromJudgeMatch,
+} from '../conjecture-probe-response';
 import { extractAnswerHead } from '../judge-routing';
 import {
   type DeterministicComparatorIdT,
@@ -83,6 +87,7 @@ export const ModelUnitOutcome = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('scored'),
     points_awarded: z.number().min(0).nullable(),
+    probe_signature_match: ConjectureProbeSignatureMatch.optional(),
     matched: z
       .object({
         rule_id: z.string().min(1).optional(),
@@ -996,6 +1001,26 @@ export async function evaluateSubmissionCore(
       );
       continue;
     }
+    const probeJudgement =
+      unit.criterion.kind === 'rule_reference' && unit.criterion.probe_spec
+        ? classifyConjectureProbeResponseFromJudgeMatch(
+            unit.points !== null && unit.points > 0 && outcome.points_awarded === unit.points
+              ? 'correct'
+              : outcome.points_awarded === 0
+                ? 'incorrect'
+                : 'partial',
+            outcome.probe_signature_match,
+          )
+        : undefined;
+    if (probeJudgement && !probeJudgement.gradable) {
+      unitResults.push({
+        status: 'pending',
+        scoring_unit_id: unitId,
+        pending: { reason: 'needs_review', trigger: 'flagged', detail: probeJudgement.reason_code },
+        probe_judgement: probeJudgement,
+      });
+      continue;
+    }
     unitResults.push(
       withUnit(
         {
@@ -1006,6 +1031,7 @@ export async function evaluateSubmissionCore(
           ...(outcome.matched ? { matched: outcome.matched } : {}),
           ...(outcome.feedback_md ? { feedback_md: outcome.feedback_md } : {}),
           evidence_citations: outcome.evidence_citations,
+          ...(probeJudgement ? { probe_judgement: probeJudgement } : {}),
         },
         unitId,
       ),

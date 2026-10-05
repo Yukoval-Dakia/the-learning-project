@@ -211,6 +211,9 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
           kind: 'scored',
           points_awarded: decision.points_awarded,
           matched: { rule_id: decision.rule_id, option_ids: [] },
+          ...(decision.probe_signature_match
+            ? { probe_signature_match: decision.probe_signature_match }
+            : {}),
           ...common,
         };
       }

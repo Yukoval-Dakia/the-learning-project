@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-05。YUK-1047 已恢复到推送分支 fix/yuk-1047-formal-entries，当前工作树 /Volumes/YukovalSBak/yukoval-projects/tlp-assessment-entries。旧结算 writer 已删除，23 DB / 19 invariant unit / typecheck / build 通过；诊断、probe、ingestion 与消费者仍在实施，八入口未完成，不标 Done。依赖不追新。
+> 更新于2026-10-05。YUK-1047 已恢复到推送分支 fix/yuk-1047-formal-entries，当前工作树 /Volumes/YukovalSBak/yukoval-projects/tlp-assessment-entries。旧结算 writer 已删除，23 DB / 19 invariant unit / typecheck / build 通过；诊断生产冻结发布/签名/one-time claim已接通（未准入仍withheld）；probe、ingestion与消费者仍在实施，八入口未完成，不标Done。依赖不追新。
 
 ## NOW
 
