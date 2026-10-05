@@ -78,7 +78,9 @@ describe('paper opening freezes actual assessment occurrences', () => {
     ]);
     expect(first.sessionId).toBe(second.sessionId);
     const binding = await readPaperAssessmentBinding(db, first.sessionId);
-    expect(binding?.slots).toHaveLength(2);
+    expect(binding).not.toBeNull();
+    if (!binding) throw new Error('expected frozen paper binding');
+    expect(binding.slots).toHaveLength(2);
     expect(new Set(binding?.slots.map((s) => s.evaluation_group_id)).size).toBe(2);
     expect(binding?.slots.map((s) => s.feedback_policy)).toEqual([
       'judge_now_show_later',
@@ -101,7 +103,7 @@ describe('paper opening freezes actual assessment occurrences', () => {
       'a≠b',
     );
     expect(JSON.stringify(detail)).not.toContain('新的答案');
-    const state = await getIssuanceState(db, binding!.slots[0].issuance_id);
+    const state = await getIssuanceState(db, binding.slots[0].issuance_id);
     expect(state.practice_dto?.faces[0].prompt_md).toContain('a≠b');
     expect(JSON.stringify(state.practice_dto)).not.toContain('解析');
     expect(

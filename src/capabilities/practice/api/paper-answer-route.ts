@@ -56,7 +56,8 @@ export async function createAnswerDraft(
       throw new ApiError('validation_error', message, 400);
     }
     const body = parsed.data;
-    if (body.assessment) {
+    const assessment = body.assessment;
+    if (assessment) {
       const result = await db.transaction(async (tx) => {
         await tx
           .select({ id: learning_session.id })
@@ -68,7 +69,6 @@ export async function createAnswerDraft(
           (slot) =>
             slot.question_id === body.question_id && slot.part_ref === (body.part_ref ?? null),
         );
-        const assessment = body.assessment!;
         if (
           binding?.paper_id !== paperArtifactId ||
           !slot ||

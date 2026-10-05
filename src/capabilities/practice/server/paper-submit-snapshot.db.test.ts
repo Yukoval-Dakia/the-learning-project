@@ -168,7 +168,8 @@ describe('YUK-471 W0 — paper submit appends experimental:state_snapshot (test 
       .where(eq(event.action, 'experimental:assessment_settlement'));
     const settlement = settlements.find((row) => row.payload.evaluation_id === result.evaluationId);
     expect(settlement).toBeDefined();
-    const attemptEventId = settlement!.id;
+    if (!settlement) throw new Error('expected assessment settlement');
+    const attemptEventId = settlement.id;
 
     // YUK-561 S2 — a graded paper slot moves BOTH axes → two sibling snapshots.
     const snaps = await db

@@ -80,20 +80,17 @@ export function restoreEvidenceFromSlots(slots: readonly PaperSlot[]): EvidenceA
       else seen.set(id, [key]);
     }
   }
-  return [...seen.entries()].map(([asset_id, keys]) => ({
-    asset_id,
-    ...(slots
+  return [...seen.entries()].map(([asset_id, keys]) => {
+    const original = slots
       .flatMap((slot) => slot.assessment?.group_evidence ?? [])
-      .find((item) => item.evidence.asset.asset_id === asset_id)
-      ? {
-          original: slots
-            .flatMap((slot) => slot.assessment?.group_evidence ?? [])
-            .find((item) => item.evidence.asset.asset_id === asset_id)!.evidence,
-        }
-      : {}),
-    // kind 留给 AssetEvidencePreview 按 content-type 解析（不猜）。
-    slot_ids: allKeys.length > 0 && keys.length === allKeys.length ? null : keys,
-  }));
+      .find((item) => item.evidence.asset.asset_id === asset_id)?.evidence;
+    return {
+      asset_id,
+      ...(original ? { original } : {}),
+      // kind 留给 AssetEvidencePreview 按 content-type 解析（不猜）。
+      slot_ids: allKeys.length > 0 && keys.length === allKeys.length ? null : keys,
+    };
+  });
 }
 
 const PAPER_TIMING_STORAGE_VERSION = 1;
@@ -294,7 +291,6 @@ export function PfPaper({
   // in place (keep the map identity so the unmount cleanup below always sees live timers).
   // answers must reset too: the backfill effect only fills undefined keys, so without this
   // a shared slot key would keep paper A's answer and skip paper B's server draft.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: artifactId and nativeOccurrenceId identify a fresh paper attempt.
   useEffect(() => {
     if (
       previousNativeOccurrence.current &&

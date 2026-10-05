@@ -119,10 +119,12 @@ describe('native HTTP calibration follows automatic evidence', () => {
       expect(labels).toHaveLength(1);
       expect(labels[0]).toMatchObject({ outcome, inclusion_probability: 0.3 });
       expect(Number.isFinite(labels[0].b_label)).toBe(true);
+      expect(labels[0].attempt_event_id).toBeTruthy();
+      if (!labels[0].attempt_event_id) throw new Error('expected label settlement ID');
       const [settlement] = await testDb()
         .select()
         .from(event)
-        .where(eq(event.id, labels[0].attempt_event_id!));
+        .where(eq(event.id, labels[0].attempt_event_id));
       expect(settlement.action).toBe('experimental:assessment_settlement');
       expect(settlement.payload).toMatchObject({
         replay_inputs: { difficultyLabelStreamItemId: f.streamId },
@@ -152,10 +154,12 @@ describe('native HTTP calibration follows automatic evidence', () => {
       .where(eq(mastery_state.subject_id, f.knowledgeId));
     expect(mastery.theta_hat).toBeGreaterThan(0);
     const [card] = await testDb().select().from(material_fsrs_state);
+    expect(card.last_review_event_id).toBeTruthy();
+    if (!card.last_review_event_id) throw new Error('expected card settlement ID');
     const [settlement] = await testDb()
       .select()
       .from(event)
-      .where(eq(event.id, card.last_review_event_id!));
+      .where(eq(event.id, card.last_review_event_id));
     expect(settlement.payload).toMatchObject({ rating: 'again', rating_source: 'user' });
   });
 
@@ -232,10 +236,12 @@ describe('native HTTP calibration follows automatic evidence', () => {
       .where(
         eq(evaluation_effective_head.evaluation_group_id, first.assessment.evaluation_group_id),
       );
+    expect(head.effective_evaluation_id).toBeTruthy();
+    if (!head.effective_evaluation_id) throw new Error('expected effective evaluation ID');
     const [original] = await testDb()
       .select()
       .from(evaluation)
-      .where(eq(evaluation.evaluation_id, head.effective_evaluation_id!));
+      .where(eq(evaluation.evaluation_id, head.effective_evaluation_id));
     const manual = await evaluateSubmission(testDb(), {
       submission_id: original.submission_id,
       evaluation_group_id: original.evaluation_group_id,
@@ -266,10 +272,12 @@ describe('native HTTP calibration follows automatic evidence', () => {
     expect(laterLabels).toHaveLength(1);
     expect(laterLabels[0]).toMatchObject({ outcome: 1, inclusion_probability: 0.3 });
     expect(laterLabels[0].attempt_event_id).not.toBe(originalLaterLabels[0].attempt_event_id);
+    expect(laterLabels[0].attempt_event_id).toBeTruthy();
+    if (!laterLabels[0].attempt_event_id) throw new Error('expected later settlement ID');
     const [laterSettlement] = await testDb()
       .select()
       .from(event)
-      .where(eq(event.id, laterLabels[0].attempt_event_id!));
+      .where(eq(event.id, laterLabels[0].attempt_event_id));
     expect(laterSettlement.payload).toMatchObject({
       replay_inputs: { difficultyLabelStreamItemId: later.streamId },
     });

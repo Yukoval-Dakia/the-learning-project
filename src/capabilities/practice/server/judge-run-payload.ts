@@ -214,20 +214,21 @@ export async function reconstructDoneFromDomainEvents(
       ? (await resolveVerdictsForNativeAttempts(db, [anchor])).get(anchor.id)
       : null;
     const effective = resolved?.effective;
-    const [activation] = effective
-      ? await db
-          .select({ payload: event.payload })
-          .from(event)
-          .where(
-            and(
-              eq(event.action, 'experimental:assessment_activation'),
-              eq(event.subject_id, resolved!.evaluation_group_id),
-              sql`${event.payload}->>'evaluation_id' = ${effective.evaluation_id}`,
-            ),
-          )
-          .orderBy(desc(event.created_at), desc(event.id))
-          .limit(1)
-      : [];
+    const [activation] =
+      resolved && effective
+        ? await db
+            .select({ payload: event.payload })
+            .from(event)
+            .where(
+              and(
+                eq(event.action, 'experimental:assessment_activation'),
+                eq(event.subject_id, resolved.evaluation_group_id),
+                sql`${event.payload}->>'evaluation_id' = ${effective.evaluation_id}`,
+              ),
+            )
+            .orderBy(desc(event.created_at), desc(event.id))
+            .limit(1)
+        : [];
     const explicitRating = activation?.payload.user_rating;
     const currentRating =
       explicitRating === 'again' || explicitRating === 'hard' || explicitRating === 'good'

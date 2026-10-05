@@ -185,7 +185,7 @@ describe('native durable assessment', () => {
       submission_id: initial.submission_id,
       evaluation_group_id: initial.evaluation_group_id,
       evaluation_key: 'correct-with-original-learning-scope',
-      model_executor: createRecordedModelExecutor(db, async (input, _signal, runId) => ({
+      model_executor: createRecordedModelExecutor(db, async (_input, _signal, runId) => ({
         kind: 'scored',
         points_awarded: 0,
         matched: { rule_id: 'speed', option_ids: [] },
@@ -296,7 +296,10 @@ describe('native durable assessment', () => {
         f.deps,
       ),
     ]);
-    expect(runs[0]).toBe(runs[1]);
+    const [runId] = runs;
+    expect(runId).toBeTruthy();
+    if (!runId) throw new Error('expected durable run ID');
+    expect(runId).toBe(runs[1]);
     expect(f.deps.checkRateLimit).toHaveBeenCalledTimes(1);
     expect(f.jobs).toHaveLength(1);
     expect(f.execute).not.toHaveBeenCalled();
@@ -322,7 +325,7 @@ describe('native durable assessment', () => {
     const [card] = await f.db.select().from(material_fsrs_state);
     expect(card.state.reps).toBe(1);
     const restored = JudgeRunTerminalResultSchema.parse(
-      await reconstructDoneFromDomainEvents(f.db, runs[0]!),
+      await reconstructDoneFromDomainEvents(f.db, runId),
     );
     expect(restored.status).toBe('effective');
     expect(restored.judge_event_id).toBeNull();
@@ -353,6 +356,7 @@ describe('native durable assessment', () => {
     f.deps.boss.send.mockRejectedValueOnce(new Error('queue unavailable'));
     const run = await dispatchNativeAttempt(f.db, f.id, f.request, f.options, f.deps);
     expect(run).toBeTruthy();
+    if (!run) throw new Error('expected durable run ID');
     expect(f.deps.refundRateLimit).toHaveBeenCalledTimes(1);
     const [pending] = await f.db
       .select()
@@ -360,7 +364,7 @@ describe('native durable assessment', () => {
       .where(eq(event.action, 'experimental:judge_pending_attempt'));
     expect(pending.payload).toMatchObject({ run_id: run, caller: 'native_assessment' });
     const job = {
-      run_id: run!,
+      run_id: run,
       caller: 'native_assessment' as const,
       submit: pending.payload.submit as NativeJudgeRunJobData['submit'],
     };
@@ -371,13 +375,15 @@ describe('native durable assessment', () => {
   it('recovers a failed DONE notification from atomic domain completion without another model call', async () => {
     const f = await fixture();
     const run = await dispatchNativeAttempt(f.db, f.id, f.request, f.options, f.deps);
+    expect(run).toBeTruthy();
+    if (!run) throw new Error('expected durable run ID');
     const original = jobEvents.writeJobEvent;
     const spy = vi.spyOn(jobEvents, 'writeJobEvent').mockImplementation(async (...args) => {
       if (args[1].event_type === 'judge_run.done') throw new Error('DONE failed');
       return original(...args);
     });
     await expect(runJudgeRun(f.db, f.jobs[0], meta)).rejects.toThrow('DONE failed');
-    expect(await f.db.select().from(event).where(eq(event.id, run!))).toHaveLength(1);
+    expect(await f.db.select().from(event).where(eq(event.id, run))).toHaveLength(1);
     spy.mockRestore();
     await runJudgeRun(f.db, f.jobs[0], { ...meta, retryCount: 1 });
     expect(f.execute).toHaveBeenCalledTimes(1);
@@ -410,9 +416,11 @@ describe('native durable assessment', () => {
       cost_usd_micros: 0,
     });
     const run = await dispatchNativeAttempt(f.db, f.id, f.request, f.options, f.deps);
+    expect(run).toBeTruthy();
+    if (!run) throw new Error('expected durable run ID');
     await runJudgeRun(f.db, f.jobs[0], meta);
     const first = JudgeRunTerminalResultSchema.parse(
-      await reconstructDoneFromDomainEvents(f.db, run!),
+      await reconstructDoneFromDomainEvents(f.db, run),
     );
     expect(first.status).toBe('review_required');
     expect(first.coarse_outcome).toBe('unsupported');
@@ -422,7 +430,7 @@ describe('native durable assessment', () => {
       userRating: 'hard',
     });
     const later = JudgeRunTerminalResultSchema.parse(
-      await reconstructDoneFromDomainEvents(f.db, run!),
+      await reconstructDoneFromDomainEvents(f.db, run),
     );
     expect(later.assessment?.original_evaluation_id).toBe(first.assessment?.candidate_id);
     expect(later.final_rating).toBe('hard');

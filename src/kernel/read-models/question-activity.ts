@@ -19,7 +19,6 @@ import {
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 
 type DbLike = Db | Tx;
-type EventRow = typeof event.$inferSelect;
 // ============================================================================
 // ReviewEvent — FSRS review log view.
 // ============================================================================

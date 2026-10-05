@@ -240,6 +240,7 @@ describe('YUK-459 — paper submit fires mastery-change signals on success', () 
       (row) => row.payload.attempt_event_id === completed.attemptEventId,
     );
     expect(ownSignal).toBeDefined();
+    if (!ownSignal) throw new Error('expected ownSignal');
     const settlements = await db
       .select()
       .from(event)
@@ -248,10 +249,11 @@ describe('YUK-459 — paper submit fires mastery-change signals on success', () 
       (row) => row.payload.evaluation_id === completed.evaluationId,
     );
     expect(ownSettlement).toBeDefined();
+    if (!ownSettlement) throw new Error('expected ownSettlement');
     const [snapshot] = await db
       .select()
       .from(event)
-      .where(eq(event.id, `${ownSettlement!.id}:snapshot:theta`));
+      .where(eq(event.id, `${ownSettlement.id}:snapshot:theta`));
     const transitions = snapshot.payload.theta_snapshots as Array<{
       kc_id: string;
       before: number | null;
@@ -259,8 +261,9 @@ describe('YUK-459 — paper submit fires mastery-change signals on success', () 
     }>;
     const transition = transitions.find((row) => row.kc_id === 'k_ordered');
     expect(transition).toBeDefined();
-    expect(ownSignal!.payload.theta_delta).toBeCloseTo(
-      transition!.after - (transition!.before ?? 0),
+    if (!transition) throw new Error('expected transition');
+    expect(ownSignal.payload.theta_delta).toBeCloseTo(
+      transition.after - (transition.before ?? 0),
       6,
     );
     const [state] = await db
@@ -268,7 +271,7 @@ describe('YUK-459 — paper submit fires mastery-change signals on success', () 
       .from(mastery_state)
       .where(eq(mastery_state.subject_id, 'k_ordered'));
     expect(state.evidence_count).toBe(2);
-    expect(state.last_theta_delta).not.toBeCloseTo(ownSignal!.payload.theta_delta as number, 6);
+    expect(state.last_theta_delta).not.toBeCloseTo(ownSignal.payload.theta_delta as number, 6);
   });
 
   it('does NOT emit mastery_progress on a failed paper answer (gate = success, mirror solo)', async () => {

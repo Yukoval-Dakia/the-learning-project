@@ -119,35 +119,72 @@ their logs are `/tmp/yuk1047-placement-api-client-audit.log` and
 Offline model-port tests establish plumbing and recovery, not real provider output
 quality or production admission.
 
-## Failing checks and parent-owned gaps
+## Remaining gate repair evidence
 
-1. `submit-durable-resource.db.test.ts` still fails
-   “releases a diagnostic claim when durable admission returns an error response”:
-   expected question `draft_status=active`, received `draft`. The broader 10-file
-   run had 150/152 pass before the new historical-event fixture was corrected;
-   the corrected placement suite is now green as shown above. Its other failure
-   was this unchanged diagnostic assertion.
-   Log: `/tmp/yuk1047-placement-db-final.log`.
-   Attribution check restored **only** `submit.ts` from starting HEAD `04f0bcaf7`,
-   ran the single diagnostic test and restored the current file in `finally`.
-   The same failure reproduced (1 failed, 2 skipped, exit 1):
-   `/tmp/yuk1047-placement-diagnostic-baseline.log`.
-   Exact baseline test command:
-   `DOCKER_HOST=unix:///Users/yuqi/.orbstack/run/docker.sock pnpm vitest run --config vitest.db.config.ts src/capabilities/practice/api/submit-durable-resource.db.test.ts -t 'releases a diagnostic claim'`.
-   Source shows dispatch captures the original before durable admission; claim
-   release requires no assessment submission. This explains the retained draft,
-   but parent must decide the correct diagnostic recovery contract.
-   No diagnostic expectation was weakened and no unrelated repair was made.
-2. `pnpm lint:ratchet` exits 1: baseline 305 warnings versus current 328.
-   Log: `/tmp/yuk1047-placement-lint-ratchet.log`.
-   Full JSON: `/tmp/yuk1047-placement-biome.json`. The three diagnostics touching
-   task-owned files are two existing lines in submit.ts and the existing
-   AttachmentStrip group role, all present at starting HEAD. The broader migration
-   debt includes 25 non-null assertion warnings. No lint/audit baseline was raised.
-   Parent must disposition this before exact-head CI; ordinary lint passes.
-3. Parent still needs real API/browser placement acceptance, its sole independent
-   repair review, Linear capture/status, PR and exact-head CI. This lane did not
-   initiate a review or perform push/PR/merge/deployment. YUK-1047 remains open.
+The bounded gate repair starts at `573765a9b4e3f570a37c61fb5156a7166b98d7fc`.
+The previous failure and attribution logs above remain historical evidence.
+Both assigned gates are now repaired. No claim-release production behavior changed.
+
+1. The old durable-resource assertion expected `draft_status=active` after 429.
+   That expectation contradicts the saved-original contract documented in
+   `2026-10-04-yuk1047-formal-entry-migration.md:332`: same issuance/group/key retries
+   recover the original, while changed answers and second identities are rejected.
+   `submit.ts` claim release excludes any persisted submission for the question
+   group; durable dispatch saves that submission before rate admission.
+   The replacement test uses real publication with `claimPolicy=one_time`, actual
+   issuance, HTTP submit, persisted originals and the native worker. It verifies:
+   - 429 keeps the exact native original and the claimed issuance; there is no
+     pending receipt, candidate or model execution yet.
+   - A second issuance is `claim_unavailable`; changed bytes or an independent
+     idempotency identity receive 409 without replacing the original.
+   - After rate-limit reset, the same original returns 202; repeated HTTP delivery
+     uses the same pending submission and adds no queue delivery.
+   - Worker execution and redelivery preserve all issuances and original bytes,
+     create one candidate, one participation anchor and one model-execution claim,
+     and call the offline recorded model port exactly once.
+   The scoped worker suite exposed the same stale `active` assertion after a model
+   failure. Its updated test verifies that the original and draft claim remain,
+   redelivery makes no second execution claim or model call, and FSRS stays empty.
+   No paid provider calls were made.
+2. Removed all 25 branch-added `noNonNullAssertion` warnings with captured narrowed
+   values or explicit test presence guards. Evidence restoration performs one
+   lookup, the verdict reader supplies its existing null verdict shape when absent,
+   and the frozen criterion projection has an exhaustive return. Removed the new
+   unused read-model type and the obsolete paper-effect suppression. All edited
+   code files belong to the diff from
+   `6e5d93ac337b89a7732cda71d68352f5d1385f13` to starting HEAD.
+   `pnpm lint:ratchet` passes at **299 warnings / 0 infos**, below **305 / 0**.
+   The initial JSON identified four rule increases: 25 non-null assertions, one
+   unused variable, one unused suppression and one iterable callback return.
+   These increases were removed structurally. The baseline was not changed and
+   no new suppression was added. Existing unrelated warnings remain.
+
+| Bounded check | Result | Log under `/tmp/` |
+| --- | --- | --- |
+| Scoped DB, 11 files | 105 distinct tests pass across the initial run and repair run | `yuk1047-gate-db.log`, `yuk1047-gate-db-corrected.log` |
+| Scoped unit, study context and paper capture/native/autosave | 4 files / 57 tests pass | `yuk1047-gate-unit.log` |
+| `pnpm typecheck` | exit 0 | `yuk1047-gate-typecheck.log` |
+| `pnpm lint:ratchet` | exit 0, 299 warnings, unchanged baseline 305 | `yuk1047-gate-lint-ratchet.log` |
+| `pnpm build` | exit 0, Vite and server/worker/migrate bundles | `yuk1047-gate-build.log` |
+| Touched Biome formatting and `git diff --check` | exit 0 | `yuk1047-gate-biome-touched.log`, `yuk1047-gate-biome-corrected.log` |
+
+The initial DB run passed 103/105. The new fixture first expected `published`
+instead of the correct `admission_updated` lifecycle transition, and the worker
+suite exposed the stale claim-release assertion described above. Only those two
+files were rerun after correction: **27/27 passed**. Already passing checks were
+not repeated. Typecheck, lint and build each ran once; subsequent corrections
+were confined to those two tests.
+
+DB tests used their own disposable testcontainers with
+`DOCKER_HOST=unix:///Users/yuqi/.orbstack/run/docker.sock`. Parent API/Vite port
+18789 and DB port 18790 were not controlled or altered. `.serena/project.yml`
+remains unrelated and unstaged. No delegation, formal review, full local test,
+push, PR, deployment or paid calls ran in this lane. No separate actionable
+follow-up was created; these are repairs to the existing YUK-1047 contract.
+
+Parent still owns browser/runtime acceptance, the sole repair verification
+review, Linear capture/status, PR and exact-head CI. YUK-1047 remains open.
+The writer is released after this lane's evidence commit.
 
 ## Parent's no-paid-call runtime fixture
 

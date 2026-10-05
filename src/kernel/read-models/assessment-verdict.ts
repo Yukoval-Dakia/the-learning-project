@@ -888,7 +888,12 @@ export async function resolveVerdictsForNativeAttempts(
     valid.map(({ row, groupId, submission, issuance, revision, originalEvaluationId }) => [
       row.id,
       {
-        ...groups.get(groupId)!,
+        ...(groups.get(groupId) ?? {
+          evaluation_group_id: groupId,
+          original: null,
+          effective: null,
+          head: null,
+        }),
         submission,
         issuance,
         revision,

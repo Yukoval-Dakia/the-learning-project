@@ -291,7 +291,8 @@ export async function createAttempt(req: Request): Promise<Response> {
   let retainDiagnosticClaim = false;
   try {
     const validated = await validateSubmit(req);
-    if (!validated.body.assessment) {
+    const assessment = validated.body.assessment;
+    if (!assessment) {
       throw new ApiError(
         'historical_unknown',
         'solo submission requires its original issued assessment',
@@ -308,7 +309,7 @@ export async function createAttempt(req: Request): Promise<Response> {
         const runId = await dispatchNativeAttempt(
           db,
           questionId,
-          { ...body.assessment!, now: validated.now },
+          { ...assessment, now: validated.now },
           {
             enabled:
               judgeDurableEnabled() &&
@@ -325,21 +326,15 @@ export async function createAttempt(req: Request): Promise<Response> {
           return durablePendingResponse(runId);
         }
       }
-      const committed = await commitFormalAttempt(
-        db,
-        'solo_submit',
-        questionId,
-        validated.body.assessment,
-        {
-          activationIntent: body.activation_intent,
-          selfReport: body.self_report,
-          userRating: body.auto_rate ? undefined : body.rating,
-          capture: body,
-          signal: req.signal,
-          requireUnassistedModelEvidence:
-            validated.q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
-        },
-      );
+      const committed = await commitFormalAttempt(db, 'solo_submit', questionId, assessment, {
+        activationIntent: body.activation_intent,
+        selfReport: body.self_report,
+        userRating: body.auto_rate ? undefined : body.rating,
+        capture: body,
+        signal: req.signal,
+        requireUnassistedModelEvidence:
+          validated.q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      });
       retainDiagnosticClaim = true;
       const judged = committed.candidate.result;
       return Response.json({

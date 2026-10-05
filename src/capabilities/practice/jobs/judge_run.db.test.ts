@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import type { JobWithMetadata } from 'pg-boss';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  assessment_submission,
   evaluation,
   event,
   job_events,
@@ -108,7 +109,7 @@ describe('native judge worker', () => {
     expect(f.execute).not.toHaveBeenCalled();
   });
 
-  it('releases a one-shot diagnostic claim when no independent model verdict is available', async () => {
+  it('retains the diagnostic original claim after model failure and never redispatches on redelivery', async () => {
     const db = testDb();
     const f = await nativeJudgeRunFixture(db, { requireUnassistedModelEvidence: true });
     await db
@@ -119,10 +120,18 @@ describe('native judge worker', () => {
         updated_at: new Date(f.job.submit.submitted_at),
       })
       .where(eq(question.id, f.questionId));
+    const original = await db.select().from(assessment_submission);
+    expect(original).toHaveLength(1);
     f.execute.mockRejectedValue(new Error('offline model unavailable'));
     expect((await runJudgeRun(db, f.job, first)).status).toBe('failed');
     const [q] = await db.select().from(question).where(eq(question.id, f.questionId));
-    expect(q.draft_status).toBe('active');
+    expect(q.draft_status).toBe('draft');
+    expect(await db.select().from(assessment_submission)).toEqual(original);
+    await runJudgeRun(db, f.job, { ...first, retryCount: 1 });
+    expect(await db.select().from(assessment_submission)).toEqual(original);
+    expect(
+      await db.select().from(event).where(eq(event.action, 'experimental:assessment_model_claim')),
+    ).toHaveLength(1);
     expect(await db.select().from(material_fsrs_state)).toHaveLength(0);
     expect(f.execute).toHaveBeenCalledTimes(1);
   });
@@ -283,7 +292,9 @@ describe('native judge worker', () => {
     await runJudgeRun(db, older.job, first);
     const [card] = await db.select().from(material_fsrs_state);
     expect(card.state.reps).toBe(2);
-    expect(new Date(card.state.last_review!).toISOString()).toBe(newer.job.submit.submitted_at);
+    expect(card.state.last_review).toBeTruthy();
+    if (!card.state.last_review) throw new Error('expected last review time');
+    expect(new Date(card.state.last_review).toISOString()).toBe(newer.job.submit.submitted_at);
   });
 
   it('late replay includes overlapping KC writes beyond one selected primary target', async () => {

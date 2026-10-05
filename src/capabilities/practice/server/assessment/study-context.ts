@@ -100,6 +100,10 @@ export function projectFrozenStudyContext(
           return criterion.statement_md;
         case 'holistic_level':
           return criterion.levels.map((level) => level.descriptor_md).join('\n\n');
+        default: {
+          const exhaustive: never = criterion;
+          return exhaustive;
+        }
       }
     })
     .join('\n\n');

@@ -127,11 +127,12 @@ describe('native submit durable dispatch', () => {
       boss: { send: f.send },
     });
     expect(runId).toBeTruthy();
+    if (!runId) throw new Error('expected durable run ID');
     expect(
       deriveJudgeRunStatus(
         await computeReplay(f.db, {
           businessTable: 'judge_run',
-          businessId: runId!,
+          businessId: runId,
           lastEventId: 0,
         }),
       ),
@@ -161,7 +162,7 @@ describe('native submit durable dispatch', () => {
       questions: [{ id: f.id, knowledge_ids: ['k1'], difficulty: 3 }],
     });
     expect(f.issued.practice_dto.faces[0].prompt_md).toContain('顺流18');
-    expect(await f.db.select().from(event).where(eq(event.id, runId!))).toHaveLength(0);
+    expect(await f.db.select().from(event).where(eq(event.id, runId))).toHaveLength(0);
   });
 
   it('a boss.send failure preserves the accepted answer without a misleading queued marker', async () => {
@@ -257,7 +258,9 @@ describe('native submit durable dispatch', () => {
     const run = await dispatchNativeAttempt(f.db, f.id, f.request, f.options, {
       boss: { send: f.send },
     });
-    expect(f.send.mock.calls[0]?.[2]).toEqual({ id: judgeRunJobId(run!) });
+    expect(run).toBeTruthy();
+    if (!run) throw new Error('expected durable run ID');
+    expect(f.send.mock.calls[0]?.[2]).toEqual({ id: judgeRunJobId(run) });
   });
 
   it.each(['throw', 'null'] as const)(
