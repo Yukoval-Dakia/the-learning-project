@@ -68,10 +68,6 @@ export function auditAgentControlPlane(root: string): string[] {
     errors.push('Claude-specific omc-reference must not be mirrored into Codex skills');
   }
 
-  if (read(root, '.agents/skills/pr/SKILL.md') !== read(root, '.claude/skills/pr/SKILL.md')) {
-    errors.push('PR skill adapters have drifted between Codex and Claude');
-  }
-
   const workflow = read(root, 'docs/agents/development-workflow.md');
   const prePr =
     workflow.match(

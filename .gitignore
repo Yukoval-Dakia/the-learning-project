@@ -115,6 +115,9 @@ drizzle/.snapshots/
 **/.claude/first-run
 **/.claude/assistant-daemon-state.json
 .codex/
+.qoder/
+.cortexkit/
+.qoderignore
 .devin/config.local.json
 .serena/project.local.yml
 .codegraph/

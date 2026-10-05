@@ -17,6 +17,14 @@ description: 启动 phase 多 lane 实施 —— 把 phase spec 拆成独立 lan
 
 本 skill 只管 **orchestration 顺序 + lane state 表 + worktree 污染 guard + chain-merge 安全**。底层 git 危险操作由 `.claude/hooks/git-guard.mjs` 兜底。
 
+## Harness 适配
+
+orchestration 状态工具按运行 harness 取用，其余内容对两个 harness 一致：
+
+- Claude Code：用 `TaskCreate`/`TaskUpdate` 维护 lane 任务，依赖用 `addBlockedBy` 串起来；subagent 派发走 `superpowers:subagent-driven-development`。
+- Codex：用 `update_plan` 维护 orchestration 状态；需要 lane 级并发状态时，在工作回复中维护 lane state 表。multi-agent 工具可用时派 lane subagent，否则在当前会话逐 lane 顺序执行。
+- git guard 由 `.claude/settings.json` 挂载（Claude Code 侧自动生效；Codex 侧按同规则自律）。触发或对应到等价操作时停下查原因，不绕过。
+
 ## 何时用 / 何时不用
 
 ✅ 用：
@@ -42,7 +50,7 @@ description: 启动 phase 多 lane 实施 —— 把 phase spec 拆成独立 lan
 
 **Lane status 取值**（单向推进）：`pending` → `implemented`（impl + review loop 完成）→ `local-verified`（pre-PR gate 通过）→ `ci-passed`（exact-head CI Gate 绿）→ `merged`；任一步失败标 `blocked` 并记原因。
 
-`TaskCreate` 把每条 lane 建成任务，metadata 写 spec 引用，依赖用 `addBlockedBy` 串起来。
+把每条 lane 建成 orchestration 任务，metadata 写 spec 引用，依赖串成 chain（工具映射见「Harness 适配」）。
 
 ### 2. Per-lane loop（按依赖拓扑顺序）
 
@@ -54,7 +62,7 @@ description: 启动 phase 多 lane 实施 —— 把 phase spec 拆成独立 lan
 4. **Pre-merge gate**：`superpowers:verification-before-completion` 执行
    `docs/agents/development-workflow.md` 的 **Pre-PR gate**。该文档是命令清单唯一真相源；
    不在 skill 内复制另一份易漂移的命令。任一失败 → 回 step 3，**不进 step 5**。
-5. **TaskUpdate** 标 lane `local-verified`，**不删 worktree 不删 branch**（merge 成功后统一清理）。
+5. 标 lane `local-verified`，**不删 worktree 不删 branch**（merge 成功后统一清理）。
 
 ### 3. 顺序 chain-merge（PR + CI Gate）
 

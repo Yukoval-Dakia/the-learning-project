@@ -51,7 +51,7 @@ description: 检测 ADR / planning-doc ↔ 代码实现之间的漂移。支持�
 # Drift Audit — YYYY-MM-DD
 
 **Scope**: ADR-NNNN..ADR-MMMM, plans/<active>, AGENTS.md
-**Run by**: Codex (interactive / scheduled /audit-drift)
+**Run by**: agent (interactive / scheduled /audit-drift)
 
 ## Summary
 - Aligned: N（不展开）

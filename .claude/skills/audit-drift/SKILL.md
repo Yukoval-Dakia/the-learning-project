@@ -20,7 +20,7 @@ description: 检测 ADR / planning-doc ↔ 代码实现之间的漂移。支持�
 
 读：
 - `docs/adr/*.md`（所有 ADR）
-- `CLAUDE.md`（Architecture / Layering / Design principles 三段）
+- `AGENTS.md`（Architecture / Layering / Design principles 三段）
 - `docs/superpowers/plans/*.md`（活跃 plan）
 - `docs/design/*.md`（最近 30 天）
 
@@ -50,8 +50,8 @@ description: 检测 ADR / planning-doc ↔ 代码实现之间的漂移。支持�
 ```markdown
 # Drift Audit — YYYY-MM-DD
 
-**Scope**: ADR-NNNN..ADR-MMMM, plans/<active>, CLAUDE.md
-**Run by**: Claude Code (interactive / scheduled /audit-drift)
+**Scope**: ADR-NNNN..ADR-MMMM, plans/<active>, AGENTS.md
+**Run by**: agent (interactive / scheduled /audit-drift)
 
 ## Summary
 - Aligned: N（不展开）
