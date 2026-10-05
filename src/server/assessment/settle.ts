@@ -101,7 +101,10 @@ import {
   recordFamilyObservationForAttempt,
   unfoldFamilyCalibration,
 } from '@/server/mastery/personalized-difficulty';
-import { clearCalibrationBelowThreshold } from '@/server/mastery/recalibration';
+import {
+  clearCalibrationBelowThreshold,
+  recordDifficultyCalibrationLabel,
+} from '@/server/mastery/recalibration';
 import {
   type AbilityGlobalByKnowledgeId,
   getMasteryState,
@@ -267,6 +270,7 @@ function parseFamilyFold(raw: unknown): FamilyFoldRecord | null {
 }
 
 interface SettlementScope {
+  difficultyLabelStreamItemId: string | null;
   frozenAbilityGlobalByKnowledgeId?: AbilityGlobalByKnowledgeId;
   groupRow: QuestionLite | null;
   partRows: Map<string, QuestionLite>;
@@ -320,7 +324,18 @@ async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<Settleme
     const row = byId.get(partId);
     if (row) partRows.set(partId, row);
   }
+  const [original] = await tx
+    .select({ payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.id, `evt_assessment_${input.submission.submission_id}`),
+        eq(event.action, 'experimental:assessment_attempt'),
+      ),
+    );
   return {
+    difficultyLabelStreamItemId:
+      typeof original?.payload.stream_item_id === 'string' ? original.payload.stream_item_id : null,
     frozenAbilityGlobalByKnowledgeId: frozen?.ability_global_by_knowledge_id,
     groupRow: byId.get(input.questionGroupId) ?? null,
     partRows,
@@ -453,7 +468,7 @@ function derivePlan(input: ActivationSettleInput, scope: SettlementScope): Settl
     kcObservations: observations,
     theta,
     judgeRoute,
-    difficultyLabelStreamItemId: null,
+    difficultyLabelStreamItemId: scope.difficultyLabelStreamItemId,
   };
 }
 
@@ -777,6 +792,24 @@ async function executePlan(
     }
   }
   if (plan.theta.applied) {
+    const theta = plan.theta;
+    try {
+      await tx.transaction(async (sp) => {
+        await recordDifficultyCalibrationLabel(sp, {
+          questionId: theta.anchorQuestionId,
+          attemptEventId: settlementEventId,
+          difficulty: theta.anchorDifficulty,
+          outcome: theta.outcome,
+          attemptOutcome: theta.outcome === 1 ? 'success' : 'failure',
+          judgeRoute: plan.judgeRoute,
+          thetaBefore,
+          now: occurrenceAt,
+          streamItemId: plan.difficultyLabelStreamItemId,
+        });
+      });
+    } catch (error) {
+      console.warn('[assessment-settle] difficulty calibration label failed (non-fatal):', error);
+    }
     await options.onThetaApplied?.(tx, {
       knowledgeIds: plan.theta.knowledgeIds,
       outcome: plan.theta.outcome,

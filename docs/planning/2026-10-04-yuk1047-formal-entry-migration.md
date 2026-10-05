@@ -352,3 +352,11 @@ full evidence target editing/media acceptance and complete frozen teaching input
 - 评分参考按每个unit的slot_refs解析选项/条目，修复matching字段遗漏及跨槽同ID串用选择/排序正文的错误；真实输出原先把坡度配成设定坡度的回归先RED后修。
 - 2纯投影回归、实际提示调用缺frozen_question的DB回归先RED；最终2unit+42DB、typecheck、changedBiome零error1warning、build、边界446通过。仅结构与文本上下文修复；TeachingTurnTask仍为文本输入，图像原始字节/多模态教学尚待接通，不能把alt_text冒充读图证据。
 - 下一步迁移旧submit suite并核对校准/归因消费者，已发现native difficulty label尚未调用现有hook（plan字段为null）；归并1047，不通过删除旧断言掩盖遗漏。仍无PR/push/review/CI/生产/付费。
+
+
+## 2026-10-05 01:59 UTC — 原生难度校准标签接线（未发布）
+
+- 4项原生HTTP回归先RED：首次自动评估无label、显式FSRS评级下自动校准缺失、optional标签端口从未调用、改判重放无label。原始参与回执现于activation同事务的settle前写入；onActivated仍在成功激活后，两者失败均同事务回滚。
+- central settle从原始native attempt读取实际stream_item_id，冻结到既有replay_inputs；现有校准hook用真实selection probability，标签绑定可撤销的settlement事件ID。改判删旧标签，晚于原判的其他自动作答有序重放时使用其自己的流身份。无流/错误题流不借概率，不回退按日期猜测。
+- 正确和错误都产真实标签；显式FSRS评级不改自动θ/校准；self-report与assisted不进入校准。标签SQL除零故障在savepoint内真实失败，主原件/θ/FSRS/family仍提交。首次测试误把层级全局mastery行计入单KC计数，改为明确KC范围后验证，不当生产修复。
+- 157 distinct DB（新校准9/settle30/native提交32/申诉20/诊断12/干预43/durable11）、typecheck、changedBiome零error4warning、build与边界446通过。无PR/push/review/CI/生产/付费；下一步旧submit/advice测试迁移及剩余正式入口/消费者。

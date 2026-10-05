@@ -614,12 +614,17 @@ export async function activateSubmissionCandidate(
     actorRef: string;
     now?: Date;
     record?: (tx: Tx) => Promise<void>;
+    /** Persist immutable participation before settlement reads its capture, in the same transaction. */
+    recordOriginal?: (tx: Tx) => Promise<void>;
     onThetaApplied?: SettlementObservers['onThetaApplied'];
   },
 ) {
   return database.transaction(async (tx) => {
     const result = await activateEvaluation(tx, intent, {
-      settle: (input) => learningSettlement(input, { onThetaApplied: options.onThetaApplied }),
+      settle: async (input) => {
+        await options.recordOriginal?.(input.tx);
+        return learningSettlement(input, { onThetaApplied: options.onThetaApplied });
+      },
       actorRef: options.actorRef,
       now: options.now,
     });

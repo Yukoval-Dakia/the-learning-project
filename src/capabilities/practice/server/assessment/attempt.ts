@@ -300,8 +300,8 @@ export async function commitFormalAttempt(
           console.warn('[assessment] mastery progress signal failed (non-fatal):', error);
         }
       },
+      recordOriginal: record,
       record: async (tx) => {
-        await record(tx);
         await options.onActivated?.(tx, prepared, attemptId);
       },
     },
