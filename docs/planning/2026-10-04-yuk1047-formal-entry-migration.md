@@ -360,3 +360,12 @@ full evidence target editing/media acceptance and complete frozen teaching input
 - central settle从原始native attempt读取实际stream_item_id，冻结到既有replay_inputs；现有校准hook用真实selection probability，标签绑定可撤销的settlement事件ID。改判删旧标签，晚于原判的其他自动作答有序重放时使用其自己的流身份。无流/错误题流不借概率，不回退按日期猜测。
 - 正确和错误都产真实标签；显式FSRS评级不改自动θ/校准；self-report与assisted不进入校准。标签SQL除零故障在savepoint内真实失败，主原件/θ/FSRS/family仍提交。首次测试误把层级全局mastery行计入单KC计数，改为明确KC范围后验证，不当生产修复。
 - 157 distinct DB（新校准9/settle30/native提交32/申诉20/诊断12/干预43/durable11）、typecheck、changedBiome零error4warning、build与边界446通过。无PR/push/review/CI/生产/付费；下一步旧submit/advice测试迁移及剩余正式入口/消费者。
+
+
+## 2026-10-05 02:11 UTC — 单题/预览测试迁移与限流恢复（未发布）
+
+- 旧submit/advice基线72项中64失败、8通过，主要为仍调用已退休flat/supplied-result路径，不当64个新生产缺陷。两套改为真实发布/发题/original/candidate/activation，55项新HTTP测试覆盖身份/校验/201定位/并发与幂等/FSRS日期与重答/显式评级与自动θ独立/真实run refs/照片原件/待复核/冻结参考/历史及native失败的cause建议。新增tests/fixtures/native-solo-http.ts仅录制离线模型，不冒充质量评测。
+- 旧diagnostic场景由相邻12项原生套件覆盖，旧family/difficulty场景由9项新校准套件覆盖；旧手动评级写θ、未带原件却重建答案、供应判词/token直接成为分数、空白自动拒绝等已废弃语义改验显式self-report/原生评分/冻结空白政策。cause建议仍在preview测试，不能覆盖用户明确FSRS选择；不删除历史读面。
+- 限流复核发现真实接线bug，原断言先RED实际200：checkRateLimit在认领后抛出，被封为不可重试pending。现recorded executor在锁内、写claim前做本地准入；纯core识别明确未启动拒绝，不封评分record；service保留原ApiError 429与Retry-After。原submission已存，稍后同原件重试可执行；已封存candidate重试不再耗token。调用已开始/结果失踪仍保守held，绝不放宽自动重付。
+- 139distinctDB（最终128+后台11）、66评估core unit、typecheck、changedBiome最终零error/warning、build与边界446通过。新增限流测试通过真实formal executor，仅pi实际driver替换离线返回；无真实付费。类型检查曾发现fixture points可null，改为明确拒绝非points fixture，不填伪零分。
+- 下一步迁移只剩测试引用的review-settlement及late-arrival套件后删除旧writer/types，继续probe/ingestion/诊断producer和消费者。仍无PR/push/review/CI/生产，不在检查点停止。

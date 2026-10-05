@@ -17,6 +17,7 @@ import { freezeEvaluationInput } from '../../assessment-input';
 import {
   type EvaluateSubmissionCoreInput,
   EvaluationContractError,
+  ModelExecutionNotStartedError,
   type ModelUnitOutcomeT,
   evaluateSubmissionCore,
   projectIssuedScoringBasis,
@@ -898,6 +899,19 @@ describe('evaluateSubmissionCore — model_executor lane (D17 gate, injected por
       status: 'pending',
       pending: { reason: 'infra_failure', retryable: true },
     });
+  });
+
+  it('propagates an explicit pre-execution refusal without turning it into a grading record', async () => {
+    const refusal = new ModelExecutionNotStartedError(new Error('local admission refused'));
+    await expect(
+      evaluateSubmissionCore(
+        inputFor(answered(), modelRevision('slice-math-zh-v1'), {
+          model_executor: async () => {
+            throw refusal;
+          },
+        }),
+      ),
+    ).rejects.toBe(refusal);
   });
 
   it('executor throw ⇒ retryable infra_failure, record stays pending for retry', async () => {

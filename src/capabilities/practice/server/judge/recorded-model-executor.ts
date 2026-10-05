@@ -22,6 +22,7 @@ type Executor = (
 export function createRecordedModelExecutor(
   database: Db,
   execute: Executor,
+  options: { beforeClaim?: () => void } = {},
 ): ModelUnitExecutorPort {
   return async (request, signal) => {
     const cap = request.executor.max_cost_usd_micros;
@@ -75,6 +76,9 @@ export function createRecordedModelExecutor(
           cost_usd_micros: 0,
         };
       }
+      // Admission runs only for fresh work, under the same claim lock and before any receipt.
+      // Throwing here rolls back without an ambiguous execution claim or sealed result.
+      options.beforeClaim?.();
       const now = new Date();
       await writeEvent(tx, {
         id: claimId,

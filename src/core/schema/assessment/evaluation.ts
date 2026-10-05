@@ -64,6 +64,15 @@ export type EvaluationExecutionPolicyT = z.infer<typeof EvaluationExecutionPolic
 
 // ---------- 模型执行器端口（无 LLM；调用方注入实现） ----------
 
+/** Explicit pre-execution refusal. Ports may throw this only before claiming or starting work.
+ * Unlike an uncertain executor failure, this must not become a sealed grading result. */
+export class ModelExecutionNotStartedError extends Error {
+  constructor(cause: Error) {
+    super(cause.message, { cause });
+    this.name = 'ModelExecutionNotStartedError';
+  }
+}
+
 /**
  * 模型单元裁决。`scored` 只报告判据层面的【规则/档位命中】与发布口径分数
  * （additive 单元必须给 points_awarded；holistic 单元必须给 matched.level_id
@@ -922,6 +931,7 @@ export async function evaluateSubmissionCore(
       }
       outcome = parsed.data;
     } catch (err) {
+      if (err instanceof ModelExecutionNotStartedError) throw err;
       unitResults.push(
         withUnit(
           pending({

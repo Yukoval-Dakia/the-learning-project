@@ -34,6 +34,7 @@ import {
   type EvaluationProvenanceT,
   EvaluationRecord,
   type EvaluationRecordT,
+  ModelExecutionNotStartedError,
   type ModelUnitExecutorPort,
   type ScoringBasisT,
   SubmissionRecord,
@@ -161,22 +162,33 @@ export function createFormalModelExecutor(
 ): ModelUnitExecutorPort {
   const deadlineAt = Date.now() + 90_000;
   let admitted = false;
-  return createRecordedModelExecutor(db, (request, callerSignal, taskRunId) => {
-    if (!admitted) {
-      if (admission !== 'durable') checkRateLimit();
-      admitted = true;
-    }
-    if (request.executor.task_kind === 'AssessmentRuleJudgeTask') {
-      return createPiModelExecutor({
-        db,
-        deadlineAt,
-        signal,
-        taskRunId,
-        maxCostUsdMicros: request.executor.max_cost_usd_micros ?? 0,
-      })(request, callerSignal);
-    }
-    return createJevModelExecutor({ db, deadlineAt, signal, taskRunId })(request, callerSignal);
-  });
+  return createRecordedModelExecutor(
+    db,
+    (request, callerSignal, taskRunId) => {
+      if (request.executor.task_kind === 'AssessmentRuleJudgeTask') {
+        return createPiModelExecutor({
+          db,
+          deadlineAt,
+          signal,
+          taskRunId,
+          maxCostUsdMicros: request.executor.max_cost_usd_micros ?? 0,
+        })(request, callerSignal);
+      }
+      return createJevModelExecutor({ db, deadlineAt, signal, taskRunId })(request, callerSignal);
+    },
+    {
+      beforeClaim: () => {
+        if (admitted) return;
+        try {
+          if (admission !== 'durable') checkRateLimit();
+        } catch (error) {
+          if (!(error instanceof Error)) throw error;
+          throw new ModelExecutionNotStartedError(error);
+        }
+        admitted = true;
+      },
+    },
+  );
 }
 
 /**
@@ -511,6 +523,9 @@ export async function evaluateSubmission(
       mode: request.mode,
       asserted_unit_results: request.asserted_unit_results,
       model_executor: modelExecutor,
+    }).catch((error: unknown) => {
+      if (error instanceof ModelExecutionNotStartedError) throw error.cause;
+      throw error;
     });
 
     const record = { ...core.record, evaluation_id: evaluationIdFor(core.record) };

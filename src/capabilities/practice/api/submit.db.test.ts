@@ -1,2495 +1,477 @@
-// Phase 1c.1 Step 9.A — `/api/review/submit` over event stream.
-//
-// Pre-Step-9 tests seeded `mistake` + `review_event`. Post-Step-9 the legacy
-// tables are gone; seed question rows + (optionally) material_fsrs_state.
-//
-// YUK-56 (2026-05-24) — auto-rating via JudgeInvoker (CC-3). Tests cover:
-//   - exact / keyword / semantic judges → coarse_outcome → suggested_rating
-//   - auto_rate=true uses suggestion; manual rating wins when auto_rate=false
-//   - unsupported route → 422 in auto_rate mode
-//   - no answer (response_md null/empty) → no judge invoked, no payload.judge
-//   - CC-1 invariant: rating-only override does NOT write experimental:user_cause
-
-import { createId } from '@paralleldrive/cuid2';
-import { and, eq } from 'drizzle-orm';
+// YUK-1047: real issued originals replace retired flat-answer/supplied-judge execution.
+// Diagnostic lifecycle and calibration are exercised in the adjacent native suites.
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-// YUK-589 (J1/J2) — execution-provenance regression helpers.
+import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import {
-  JUDGE_PROMPT_TEMPLATE_REVISION,
-  issueJudgePreviewProvenanceToken,
-  sha256Canonical,
-} from '@/capabilities/practice/server/judge';
-// YUK-215 — spy on the judge invoker to assert handwriting-photo refs are
-// threaded through (student_image_refs).
-import * as invokerModule from '@/capabilities/practice/server/judge/invoker';
-// ADR-0040 决定2 — assert the p(L) delta telemetry event is emitted on a graded success.
-import { MASTERY_PROGRESS_ACTION } from '@/capabilities/practice/server/mastery-progress-signal';
-// YUK-432 — softmax 选题观测 seeder（label hook 的 π_i 直 join 需要一条 softmax_mfi selected 观测 +
-// 一个真物化 slot 才产标签）。
-import { recordSelectionObservation } from '@/capabilities/practice/server/selection-observations';
-import { newId } from '@/core/ids';
-import {
-  INTERVENTION_CONTRACT_VERSION,
-  INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
-} from '@/core/schema/intervention';
-import {
-  ai_task_runs,
-  difficulty_calibration_label,
+  assessment_submission,
+  evaluation,
   event,
-  item_calibration,
   item_family_calibration,
-  knowledge,
-  knowledge_edge,
   mastery_state,
   material_fsrs_state,
-  practice_stream_item,
-  question,
 } from '@/db/schema';
-import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
-import { runTask } from '@/server/ai/runner';
+import * as piExecutor from '@/server/assessment/runtime';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
-// YUK-455 inc-E — flag-off byte-identical 回归锚：seed prereq 图 + 答错 → 断言零 prereq_risk 事件。
-import { PREREQ_RISK_ACTION } from '@/server/mastery/prereq-propagation';
-import { resolveSubjectProfile } from '@/subjects/profile';
+import { issueSoloFixture } from '../../../../tests/fixtures/assessment-solo';
+import {
+  handwritingFixture,
+  nativeHttpRequest,
+  nativeSoloHttpFixture,
+} from '../../../../tests/fixtures/native-solo-http';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-// YUK-101 (iter2 fix F12) — shared seeders from tests/helpers/event-seed.
 import { seedAttempt, seedUserCause } from '../../../../tests/helpers/event-seed';
+import * as evaluationService from '../server/judge/evaluate-submission';
+import { MASTERY_PROGRESS_ACTION } from '../server/mastery-progress-signal';
 import { AttemptResponseSchema, MAX_REVIEW_RESPONSE_CHARS } from './contracts';
-import { POST, createAttemptResource } from './submit';
+import { POST, createAttempt, createAttemptResource } from './submit';
 
-vi.mock('@/server/ai/runner', () => ({
-  runTask: vi.fn(),
-}));
-
-// D6 (U4 L-stamp): mock the profile resolver so a single test can inject a
-// '2.0.0' profile. importOriginal keeps the default behaviour (real registry
-// profiles) for every other test in this file; only the D6 e2e test overrides
-// the return with mockResolvedValueOnce.
-vi.mock('@/kernel/read-models/subject-profile', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/kernel/read-models/subject-profile')>();
-  return {
-    ...actual,
-    resolveSubjectProfileForKnowledgeIds: vi.fn(actual.resolveSubjectProfileForKnowledgeIds),
-  };
+beforeEach(async () => {
+  await resetDb();
+  __resetRateLimitForTests();
+  resetTestConfig();
 });
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  resetTestConfig();
+});
+const send = (body: unknown) => createAttempt(nativeHttpRequest(body));
+const events = (action: string) => testDb().select().from(event).where(eq(event.action, action));
+const cards = () => testDb().select().from(material_fsrs_state);
+const candidates = () => testDb().select().from(evaluation);
+const originals = () => testDb().select().from(assessment_submission);
 
-const QUESTION_BASE = {
-  kind: 'short_answer' as const,
-  reference_md: null,
-  knowledge_ids: ['k1'],
-  difficulty: 3,
-  source: 'manual' as const,
-  variant_depth: 0,
-  version: 0,
-};
-
-async function seedQuestion(id: string, overrides: Partial<typeof question.$inferInsert> = {}) {
-  const db = testDb();
-  const now = new Date();
-  await db.insert(question).values({
-    id,
-    prompt_md: `Prompt for ${id}`,
-    created_at: now,
-    updated_at: now,
-    ...QUESTION_BASE,
-    ...overrides,
-  });
+async function parsed(response: Response) {
+  expect(response.status).toBe(200);
+  return AttemptResponseSchema.parse(await response.json());
 }
 
-async function seedFsrsState(question_id: string, state: unknown, due_at: Date) {
-  const db = testDb();
-  const now = new Date();
-  await db.insert(material_fsrs_state).values({
-    id: `f_${question_id}`,
-    subject_kind: 'question',
-    subject_id: question_id,
-    state: state as never,
-    due_at,
-    last_review_event_id: null,
-    updated_at: now,
-  });
-}
-
-function submitReq(body: unknown) {
-  return new Request('http://localhost/api/review/submit', {
-    method: 'POST',
-    body: JSON.stringify(body),
-    headers: { 'content-type': 'application/json' },
-  });
-}
-
-describe('POST /api/review/submit', () => {
-  beforeEach(async () => {
-    await resetDb();
-    __resetRateLimitForTests();
-    vi.mocked(runTask).mockReset();
-    vi.mocked(resolveSubjectProfileForKnowledgeIds).mockClear();
+describe('native attempt HTTP contract', () => {
+  it.each([
+    { rating: 'easy' },
+    { response_md: 'x'.repeat(MAX_REVIEW_RESPONSE_CHARS + 1) },
+    { latency_ms: -1 },
+    { latency_ms: 3_600_001 },
+    { self_confidence: 6 },
+    { self_confidence: 1.5 },
+    { judge_result_v2: { coarse_outcome: 'correct' } },
+  ])('rejects malformed capture before accepting an original: %j', async (invalid) => {
+    const f = await nativeSoloHttpFixture(testDb());
+    expect((await send(f.body(invalid))).status).toBe(400);
+    expect(await originals()).toHaveLength(0);
+    expect(await cards()).toHaveLength(0);
   });
 
-  afterEach(() => vi.unstubAllEnvs());
-
-  it('rejects response text beyond the bounded judge/event payload size', async () => {
-    const response = await POST(
-      submitReq({
-        question_id: 'q_oversized',
-        rating: 'good',
-        response_md: 'x'.repeat(MAX_REVIEW_RESPONSE_CHARS + 1),
-      }),
-    );
-
-    expect(response.status).toBe(400);
+  it('requires an identity and rejects conflicting or unsupported activity references', async () => {
+    const f = await nativeSoloHttpFixture(testDb());
+    for (const extra of [
+      { question_id: undefined },
+      { activity_ref: { kind: 'knowledge', id: 'kc' } },
+      { activity_ref: { kind: 'question', id: 'different' } },
+    ])
+      expect((await send(f.body(extra))).status).toBe(400);
+    expect(await originals()).toHaveLength(0);
   });
 
-  it('rejects a fixed-window intervention diagnostic before its due time', async () => {
-    const dueAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-    await seedQuestion('q_intervention_future', {
-      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
-      judge_kind_override: 'multimodal_direct',
-      knowledge_ids: [],
-      metadata: {
-        intervention_diagnostic: {
-          schema_version: INTERVENTION_CONTRACT_VERSION,
-          intervention_id: 'int_future',
-          intervention_version: 1,
-          diagnostic_kind: 'delayed',
-          knowledge_id: 'kc_future',
-          due_at: dueAt,
-        },
-      },
-    });
-
-    const response = await POST(
-      submitReq({
-        question_id: 'q_intervention_future',
-        rating: 'good',
-        response_md: '提前作答',
-      }),
-    );
-
-    expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toMatchObject({ error: 'conflict' });
-    const reviews = await testDb()
-      .select({ id: event.id })
-      .from(event)
-      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_intervention_future')));
-    expect(reviews).toHaveLength(0);
+  it('returns 404 for an unknown question without creating an original', async () => {
+    expect((await send({ question_id: 'missing', rating: 'good' })).status).toBe(404);
+    expect(await originals()).toHaveLength(0);
   });
 
-  it('resolves a diagnostic judge profile from canonical intervention metadata', async () => {
-    await seedQuestion('q_intervention_profile', {
-      kind: 'fill_blank',
-      reference_md: '答案',
-      judge_kind_override: 'multimodal_direct',
-      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
-      draft_status: 'active',
-      knowledge_ids: [],
-      metadata: {
-        intervention_diagnostic: {
-          schema_version: INTERVENTION_CONTRACT_VERSION,
-          intervention_id: 'int_profile',
-          intervention_version: 1,
-          diagnostic_kind: 'immediate',
-          knowledge_id: 'kc_math',
-          due_at: '2026-07-01T00:00:00.000Z',
-        },
-      },
-    });
-
-    const response = await POST(
-      submitReq({
-        question_id: 'q_intervention_profile',
-        rating: 'good',
-        response_md: '答案',
-        auto_rate: true,
-      }),
-    );
-
-    expect(response.status).toBe(422);
-    expect(vi.mocked(resolveSubjectProfileForKnowledgeIds)).toHaveBeenCalledWith(
-      expect.anything(),
-      ['kc_math'],
-    );
-  });
-
-  it('atomically accepts only one submission for a one-shot intervention diagnostic', async () => {
-    const secret = 'test-one-shot-provenance-secret-32bytes';
-    vi.stubEnv('JUDGE_PROVENANCE_SECRET', secret);
-    vi.stubEnv('INTERNAL_TOKEN', 'a-different-internal-token');
-    const profile = resolveSubjectProfile('general');
-    vi.mocked(resolveSubjectProfileForKnowledgeIds).mockResolvedValueOnce(profile);
-    const suppliedResult = {
-      coarse_outcome: 'correct' as const,
-      score: 1,
-      score_meaning: 'correctness' as const,
-      confidence: 0.9,
-      feedback_md: 'Response-aware diagnostic verdict.',
-      evidence_json: {},
-      capability_ref: { id: 'multimodal_direct', version: profile.version },
-    };
-    const inputHash = 'a'.repeat(64);
-    const promptFingerprint = 'b'.repeat(64);
-    const resultDigest = sha256Canonical(suppliedResult);
-    const taskRunId = newId();
-    await testDb().insert(ai_task_runs).values({
-      id: taskRunId,
-      task_kind: 'MultimodalDirectJudgeTask',
-      provider: 'xiaomi',
-      model: 'mock',
-      input_hash: inputHash,
-      prompt_fingerprint: promptFingerprint,
-      result_digest: resultDigest,
-      status: 'success',
-      started_at: new Date(),
-      finished_at: new Date(),
-    });
-    const provenanceToken = issueJudgePreviewProvenanceToken(
-      {
-        version: 1,
-        task_run_id: taskRunId,
-        task_kind: 'MultimodalDirectJudgeTask',
-        input_hash: inputHash,
-        prompt_fingerprint: promptFingerprint,
-        prompt_template_revision: JUDGE_PROMPT_TEMPLATE_REVISION,
-        subject_profile_id: profile.id,
-        subject_profile_version: profile.version,
-        judge_route: 'multimodal_direct',
-        result_digest: resultDigest,
-      },
-      secret,
-    );
-    await seedQuestion('q_intervention_one_shot', {
-      kind: 'short_answer',
-      reference_md: '答案',
-      judge_kind_override: 'multimodal_direct',
-      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
-      draft_status: 'active',
-      knowledge_ids: [],
-      metadata: {
-        intervention_diagnostic: {
-          schema_version: INTERVENTION_CONTRACT_VERSION,
-          intervention_id: 'int_one_shot',
-          intervention_version: 1,
-          diagnostic_kind: 'immediate',
-          knowledge_id: 'kc_math',
-          due_at: '2026-07-01T00:00:00.000Z',
-        },
-      },
-    });
-
-    const responses = await Promise.all([
-      POST(
-        submitReq({
-          question_id: 'q_intervention_one_shot',
-          rating: 'good',
-          response_md: '答案',
-          auto_rate: true,
-          judge_result_v2: suppliedResult,
-          judge_provenance_token: provenanceToken,
-          judge_task_run_id: taskRunId,
+  it.each([true, false])(
+    'rejects the retired flat submission, auto_rate=%s, without learning writes',
+    async (autoRate) => {
+      const f = await nativeSoloHttpFixture(testDb());
+      const response = await send(
+        f.body({
+          assessment: undefined,
+          auto_rate: autoRate,
+          response_md: 'A',
+          answer_image_refs: ['legacy-photo'],
         }),
-      ),
-      POST(
-        submitReq({
-          question_id: 'q_intervention_one_shot',
-          rating: 'good',
-          response_md: '答案',
-          auto_rate: true,
-          judge_result_v2: suppliedResult,
-          judge_provenance_token: provenanceToken,
-          judge_task_run_id: taskRunId,
-        }),
-      ),
-    ]);
+      );
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ error: 'historical_unknown' });
+      expect(await originals()).toHaveLength(0);
+      expect(await candidates()).toHaveLength(0);
+      expect(await cards()).toHaveLength(0);
+      expect(f.execute).not.toHaveBeenCalled();
+    },
+  );
 
-    expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
-    const reviews = await testDb()
-      .select({ id: event.id })
-      .from(event)
-      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_intervention_one_shot')));
-    expect(reviews).toHaveLength(1);
-  });
-
-  it('releases the one-shot claim when a supplied diagnostic verdict is unverified', async () => {
-    await seedQuestion('q_intervention_unverified', {
-      kind: 'short_answer',
-      reference_md: '答案',
-      judge_kind_override: 'multimodal_direct',
-      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
-      draft_status: 'active',
-      knowledge_ids: [],
-      metadata: {
-        intervention_diagnostic: {
-          schema_version: INTERVENTION_CONTRACT_VERSION,
-          intervention_id: 'int_unverified',
-          intervention_version: 1,
-          diagnostic_kind: 'immediate',
-          knowledge_id: 'kc_math',
-          due_at: '2026-07-01T00:00:00.000Z',
-        },
-      },
-    });
-
-    const response = await POST(
-      submitReq({
-        question_id: 'q_intervention_unverified',
-        rating: 'good',
-        response_md: '答案',
-        auto_rate: true,
-        judge_result_v2: {
-          coarse_outcome: 'correct',
-          score: 1,
-          score_meaning: 'correctness',
-          confidence: 0.9,
-          feedback_md: 'looks right',
-          evidence_json: {},
-          capability_ref: { id: 'multimodal_direct', version: '1' },
-        },
-      }),
-    );
-
-    expect(response.status).toBe(422);
-    const [row] = await testDb()
-      .select({ draftStatus: question.draft_status })
-      .from(question)
-      .where(eq(question.id, 'q_intervention_unverified'));
-    expect(row.draftStatus).toBe('active');
-    const reviews = await testDb()
-      .select({ id: event.id })
-      .from(event)
-      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_intervention_unverified')));
-    expect(reviews).toHaveLength(0);
-  });
-
-  it('canonical attempt creation returns 201 with the review event Location', async () => {
-    await seedQuestion('q1');
-
-    const response = await createAttemptResource(
-      submitReq({ mistake_id: 'q1', rating: 'good', latency_ms: 5000 }),
-    );
-
+  it('canonical creation returns 201 and a Location for the immutable native occurrence', async () => {
+    const f = await nativeSoloHttpFixture(testDb());
+    const response = await createAttemptResource(nativeHttpRequest(f.body()));
     expect(response.status).toBe(201);
     const body = AttemptResponseSchema.parse(await response.json());
-    expect(response.headers.get('content-type')).toContain('application/json');
     expect(response.headers.get('Location')).toBe(`/api/events/${body.review_event.id}`);
-  });
-
-  it('first review (no prior fsrs_state) → writes review event + upserts material_fsrs_state', async () => {
-    await seedQuestion('q1');
-
-    const res = await POST(submitReq({ mistake_id: 'q1', rating: 'good', latency_ms: 5000 }));
-    expect(res.status).toBe(200);
-    const body = AttemptResponseSchema.parse(await res.json());
-
-    if ('status' in body) throw new Error('expected historical review response');
-    expect(typeof body.next_due_at).toBe('number');
-    expect(body.next_due_at).toBeGreaterThan(0);
-    expect(body.new_state.reps).toBeGreaterThanOrEqual(1);
-    expect(body.review_event.rating).toBe('good');
-    expect(body.review_event.latency_ms).toBe(5000);
-    expect(body.review_event.correction_state).toEqual(
-      expect.objectContaining({ state: 'active', terminal_state: 'active' }),
-    );
-
-    const db = testDb();
-    const events = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q1')));
-    expect(events).toHaveLength(1);
-    expect(events[0].outcome).toBe('success');
-    expect((events[0].payload as Record<string, unknown>).fsrs_rating).toBe('good');
-    // 2026-05-17 wire `latency_ms` lands as `duration_ms` in event.payload
-    expect((events[0].payload as Record<string, unknown>).duration_ms).toBe(5000);
-
-    const fsrs = await db
-      .select()
-      .from(material_fsrs_state)
-      // CodeRabbit (PR #295) — pin subject_kind so a future same-id question/
-      // legacy row can't falsely satisfy the assertion.
-      .where(
-        and(
-          eq(material_fsrs_state.subject_id, 'k1'),
-          eq(material_fsrs_state.subject_kind, 'knowledge'),
-        ),
-      );
-    expect(fsrs).toHaveLength(1);
-    expect(fsrs[0].subject_kind).toBe('knowledge');
-    expect(fsrs[0].last_review_event_id).toBe(events[0].id);
-  });
-
-  // B1-W1 (ADR-0035) — a graded review also updates the p(L) diagnostic axis
-  // (mastery_state.θ̂) in the same tx, orthogonal to the FSRS R axis above.
-  it('updates mastery_state θ̂ for the question knowledge on a graded review', async () => {
-    await seedQuestion('q_theta', { knowledge_ids: ['k_theta'], difficulty: 3 });
-
-    const res = await POST(
-      submitReq({ activity_ref: { kind: 'question', id: 'q_theta' }, rating: 'good' }),
-    );
-    expect(res.status).toBe(200);
-
-    const db = testDb();
-    const rows = await db
-      .select()
-      .from(mastery_state)
-      .where(
-        and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, 'k_theta')),
-      );
-    expect(rows).toHaveLength(1);
-    // rating 'good' → outcome=success → θ̂ rises above the cold-start 0 origin.
-    expect(rows[0].theta_hat).toBeGreaterThan(0);
-    expect(rows[0].evidence_count).toBe(1);
-    expect(rows[0].success_count).toBe(1);
-    expect(rows[0].fail_count).toBe(0);
-  });
-
-  it('lowers mastery_state θ̂ on a failed review (rating again)', async () => {
-    await seedQuestion('q_theta_fail', { knowledge_ids: ['k_theta_fail'], difficulty: 3 });
-
-    const res = await POST(
-      submitReq({ activity_ref: { kind: 'question', id: 'q_theta_fail' }, rating: 'again' }),
-    );
-    expect(res.status).toBe(200);
-
-    const rows = await testDb()
-      .select()
-      .from(mastery_state)
-      .where(eq(mastery_state.subject_id, 'k_theta_fail'));
-    expect(rows).toHaveLength(1);
-    expect(rows[0].theta_hat).toBeLessThan(0);
-    expect(rows[0].fail_count).toBe(1);
-  });
-
-  // ADR-0040 决定2 — a graded SUCCESS reads the real p(L)/Δθ̂ from mastery_state and
-  // emits an `experimental:mastery_progress` telemetry event carrying the delta. The
-  // trigger CONDITION is unchanged (still fires on outcome===success); this埋点 is the
-  // read-only side channel that lets the cross-threshold gating be set after N weeks.
-  it('emits experimental:mastery_progress carrying the real Δθ̂ on a graded success', async () => {
-    await seedQuestion('q_mp', { knowledge_ids: ['k_mp'], difficulty: 3 });
-
-    const res = await POST(
-      submitReq({ activity_ref: { kind: 'question', id: 'q_mp' }, rating: 'good' }),
-    );
-    expect(res.status).toBe(200);
-
-    const db = testDb();
-    // The mastery_state row has the freshly-written Δθ̂ (success → θ̂ rose above 0).
-    const stateRows = await db
-      .select()
-      .from(mastery_state)
-      .where(
-        and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, 'k_mp')),
-      );
-    expect(stateRows).toHaveLength(1);
-    expect(stateRows[0].last_theta_delta).not.toBeNull();
-    const realDelta = stateRows[0].last_theta_delta as number;
-    expect(realDelta).toBeGreaterThan(0);
-
-    const mpEvents = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, MASTERY_PROGRESS_ACTION), eq(event.subject_id, 'k_mp')));
-    expect(mpEvents).toHaveLength(1);
-    const payload = mpEvents[0].payload as Record<string, unknown>;
-    // The emitted event carries the SAME real delta read from mastery_state.
-    expect(payload.theta_delta).toBeCloseTo(realDelta, 5);
-    expect(payload.p_learned).not.toBeNull();
-    expect(payload.question_id).toBe('q_mp');
-    expect(payload.threshold_deferred).toBe(true);
-    // RED LINE: this is observation only — no success/failure judging semantics.
-    expect(mpEvents[0].outcome).toBeNull();
-  });
-
-  // ADR-0040 决定2 — behavior UNCHANGED: a FAILED review fires NEITHER the mastery
-  // note-refine trigger NOR the progress telemetry (both gate on outcome===success,
-  // exactly as before — no new threshold gating was introduced).
-  it('does NOT emit mastery_progress on a failed review (trigger condition unchanged)', async () => {
-    await seedQuestion('q_mp_fail', { knowledge_ids: ['k_mp_fail'], difficulty: 3 });
-
-    const res = await POST(
-      submitReq({ activity_ref: { kind: 'question', id: 'q_mp_fail' }, rating: 'again' }),
-    );
-    expect(res.status).toBe(200);
-
-    const mpEvents = await testDb()
-      .select()
-      .from(event)
-      .where(eq(event.action, MASTERY_PROGRESS_ACTION));
-    expect(mpEvents).toHaveLength(0);
-  });
-
-  // YUK-455 inc-E — flag-off BYTE-IDENTICAL 回归锚. prereq 诊断「向后传播」producer 默认 dark
-  // (PREREQ_RISK_EMIT_ENABLED=false). 即便 seed 了 prereq 图（A 是答错 KC 的前置，翻 flag
-  // 后 WOULD emit）+ 答错（rating again → outcome=failure），submit 仍**零** experimental:
-  // prereq_risk 事件 — 因为 call site `PREREQ_RISK_EMIT_ENABLED && outcome==='failure'` 在
-  // flag-off 时短路。这就是 dark-ship 的 byte-identical 保证。
-  it('does NOT emit prereq_risk on a failed review while PREREQ_RISK_EMIT_ENABLED is dark', async () => {
-    const now = new Date();
-    // Seed a prereq edge: k_pre is a prerequisite of k_dep (the failed question's KC).
-    for (const id of ['k_pre', 'k_dep']) {
-      await testDb()
-        .insert(knowledge)
-        .values({
-          id,
-          name: id,
-          domain: 'yuwen',
-          parent_id: null,
-          merged_from: [],
-          proposed_by_ai: false,
-          approval_status: 'approved',
-          created_at: now,
-          updated_at: now,
-          version: 0,
-        })
-        .onConflictDoNothing();
-    }
-    await testDb()
-      .insert(knowledge_edge)
-      .values({
-        id: createId(),
-        from_knowledge_id: 'k_pre',
-        to_knowledge_id: 'k_dep',
-        relation_type: 'prerequisite',
-        weight: 1,
-        created_by: 'user' as never,
-        reasoning: null,
-        created_at: now,
-        archived_at: null,
-      });
-    await seedQuestion('q_prereq_fail', { knowledge_ids: ['k_dep'], difficulty: 3 });
-
-    const res = await POST(
-      submitReq({ activity_ref: { kind: 'question', id: 'q_prereq_fail' }, rating: 'again' }),
-    );
-    expect(res.status).toBe(200);
-
-    // Dark: the would-be propagation target (k_pre) gets ZERO prereq_risk events.
-    const prereqEvents = await testDb()
-      .select()
-      .from(event)
-      .where(eq(event.action, PREREQ_RISK_ACTION));
-    expect(prereqEvents).toHaveLength(0);
-  });
-
-  it('writes FSRS projection per knowledge id, not per reviewed question', async () => {
-    await seedQuestion('q_knowledge_card', { knowledge_ids: ['k_fsrs'] });
-
-    const res = await POST(
-      submitReq({
-        activity_ref: { kind: 'question', id: 'q_knowledge_card' },
-        rating: 'good',
-      }),
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      review_event: {
-        fsrs_subject_kind?: string;
-        fsrs_subject_ids?: string[];
-        question_id: string;
-      };
-    };
-
-    expect(body.review_event.question_id).toBe('q_knowledge_card');
-    expect(body.review_event.fsrs_subject_kind).toBe('knowledge');
-    expect(body.review_event.fsrs_subject_ids).toEqual(['k_fsrs']);
-
-    const rows = await testDb().select().from(material_fsrs_state);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      subject_kind: 'knowledge',
-      subject_id: 'k_fsrs',
-    });
-  });
-
-  // Codex / CodeRabbit (PR #295) — referenced_knowledge_ids that exceed the
-  // question's own labels must NOT steer FSRS scheduling onto unrelated
-  // knowledge points. The FSRS projection is keyed only by requested ∩
-  // q.knowledge_ids; the event payload still records the original requested
-  // ids (judge evidence may legitimately cite knowledge beyond the tags).
-  it('superset referenced_knowledge_ids only schedules the question tags (intersection)', async () => {
-    await seedQuestion('q_superset', { knowledge_ids: ['k_tagged'] });
-
-    const res = await POST(
-      submitReq({
-        activity_ref: { kind: 'question', id: 'q_superset' },
-        rating: 'good',
-        // 'k_orphan' is NOT a label of q_superset — must not get a projection.
-        referenced_knowledge_ids: ['k_tagged', 'k_orphan'],
-      }),
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      review_event: { fsrs_subject_kind?: string; fsrs_subject_ids?: string[] };
-    };
-    // Scheduling scoped to the intersection only.
-    expect(body.review_event.fsrs_subject_kind).toBe('knowledge');
-    expect(body.review_event.fsrs_subject_ids).toEqual(['k_tagged']);
-
-    const db = testDb();
-    const rows = await db.select().from(material_fsrs_state);
-    // Exactly one projection row, for the tagged knowledge — no orphan row.
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ subject_kind: 'knowledge', subject_id: 'k_tagged' });
-
-    // Event payload preserves the original requested ids (audit trail).
-    const events = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_superset')));
-    expect((events[0].payload as Record<string, unknown>).referenced_knowledge_ids).toEqual([
-      'k_tagged',
-      'k_orphan',
+    expect(await events('experimental:assessment_attempt')).toMatchObject([
+      { id: body.review_event.id, outcome: null },
     ]);
+    expect(await events('review')).toHaveLength(0);
+    expect(await events('judge')).toHaveLength(0);
   });
 
-  it('empty intersection with a labeled question falls back to the question tags', async () => {
-    await seedQuestion('q_disjoint', { knowledge_ids: ['k_real'] });
+  it('the deprecated URL delegates to the same native writer and marks deprecation', async () => {
+    const f = await nativeSoloHttpFixture(testDb());
+    const response = await POST(nativeHttpRequest(f.body()));
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Deprecation')).toBeTruthy();
+    expect(await events('experimental:assessment_attempt')).toHaveLength(1);
+  });
 
-    const res = await POST(
-      submitReq({
-        activity_ref: { kind: 'question', id: 'q_disjoint' },
-        rating: 'good',
-        // None of the requested ids tag the question → fall back to q tags.
-        referenced_knowledge_ids: ['k_bogus'],
-      }),
+  it('accepts activity_ref as the primary identity with the original issuance', async () => {
+    const f = await nativeSoloHttpFixture(testDb());
+    await parsed(
+      await send(f.body({ question_id: undefined, activity_ref: { kind: 'question', id: f.id } })),
     );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      review_event: { fsrs_subject_kind?: string; fsrs_subject_ids?: string[] };
-    };
-    expect(body.review_event.fsrs_subject_kind).toBe('knowledge');
-    expect(body.review_event.fsrs_subject_ids).toEqual(['k_real']);
-
-    const rows = await testDb().select().from(material_fsrs_state);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ subject_kind: 'knowledge', subject_id: 'k_real' });
+    expect(await events('experimental:assessment_attempt')).toMatchObject([{ subject_id: f.id }]);
   });
 
-  it('second review (existing fsrs_state with ISO string dates) → Plan F1 coercion works', async () => {
-    await seedQuestion('q1');
-    const dueIso = '2026-05-09T12:00:00.000Z';
-    const dueDate = new Date(dueIso);
-    await seedFsrsState(
-      'q1',
+  it('preserves optional observation bytes once while grading only the ResponseSet', async () => {
+    const f = await nativeSoloHttpFixture(testDb());
+    await parsed(
+      await send(
+        f.body({
+          response_md: '观察文本不是实际选项',
+          reasoning_trace: '先固定水量\n再比较不同坡度',
+          self_confidence: 2,
+          latency_ms: 1234,
+          part_ref: 'display-part',
+        }),
+      ),
+    );
+    const original = await events('experimental:assessment_attempt');
+    expect(original).toMatchObject([
       {
-        due: dueIso,
-        stability: 1.5,
-        difficulty: 5,
-        elapsed_days: 0,
-        scheduled_days: 1,
-        learning_steps: 0,
-        reps: 1,
-        lapses: 0,
-        state: 'review',
-        last_review: '2026-05-08T12:00:00.000Z',
+        payload: {
+          response_md: '观察文本不是实际选项',
+          reasoning_trace: '先固定水量\n再比较不同坡度',
+          self_confidence: 2,
+          duration_ms: 1234,
+          part_ref: 'display-part',
+        },
       },
-      dueDate,
-    );
-
-    const res = await POST(submitReq({ mistake_id: 'q1', rating: 'again' }));
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      next_due_at: number;
-      new_state: { scheduled_days: number; stability: number; lapses: number };
-    };
-    expect(Number.isFinite(body.next_due_at)).toBe(true);
-    expect(body.next_due_at).toBeGreaterThan(0);
-    expect(Number.isFinite(body.new_state.scheduled_days)).toBe(true);
-    expect(Number.isFinite(body.new_state.stability)).toBe(true);
-    expect(body.new_state.lapses).toBeGreaterThanOrEqual(1);
-
-    const db = testDb();
-    const events = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q1')));
-    expect(events).toHaveLength(1);
-    expect(events[0].outcome).toBe('failure'); // again → failure invariant
-  });
-
-  it('accepts activity_ref as the primary review identity', async () => {
-    await seedQuestion('q1');
-
-    const res = await POST(
-      submitReq({
-        activity_ref: { kind: 'question', id: 'q1' },
-        rating: 'good',
-        latency_ms: 5000,
-      }),
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      review_event: {
-        activity_ref: { kind: string; id: string };
-        question_id: string;
-        rating: string;
-      };
-    };
-
-    expect(body.review_event.activity_ref).toEqual({ kind: 'question', id: 'q1' });
-    expect(body.review_event.question_id).toBe('q1');
-    expect(body.review_event.rating).toBe('good');
-
-    const db = testDb();
-    const events = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q1')));
-    expect(events).toHaveLength(1);
-  });
-
-  it('returns 400 when rating is invalid (e.g. "easy")', async () => {
-    await seedQuestion('q1');
-    const res = await POST(submitReq({ mistake_id: 'q1', rating: 'easy' }));
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('validation_error');
-  });
-
-  it('returns 400 when review identity is missing', async () => {
-    const res = await POST(submitReq({ rating: 'good' }));
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string; message: string };
-    expect(body.error).toBe('validation_error');
-    expect(body.message).toContain('activity_ref, question_id, or mistake_id is required');
-  });
-
-  it('returns 400 when activity_ref kind is not supported by the question adapter', async () => {
-    const res = await POST(
-      submitReq({
-        activity_ref: { kind: 'record', id: 'r1' },
-        rating: 'good',
-      }),
-    );
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string; message: string };
-    expect(body.error).toBe('unsupported_activity_kind');
-    expect(body.message).toContain('question activities only');
-  });
-
-  it('returns 400 when activity_ref conflicts with legacy identity fields', async () => {
-    const res = await POST(
-      submitReq({
-        activity_ref: { kind: 'question', id: 'q1' },
-        question_id: 'q2',
-        rating: 'good',
-      }),
-    );
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string; message: string };
-    expect(body.error).toBe('validation_error');
-    expect(body.message).toContain('must reference the same question');
-  });
-
-  it('returns 404 when question not found', async () => {
-    const res = await POST(submitReq({ mistake_id: 'q_missing', rating: 'good' }));
-    expect(res.status).toBe(404);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('not_found');
-  });
-
-  it('returns null for response_md and latency_ms when not provided', async () => {
-    await seedQuestion('q1');
-    const res = await POST(submitReq({ mistake_id: 'q1', rating: 'good' }));
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      review_event: { response_md: string | null; latency_ms: number | null };
-    };
-    expect(body.review_event.response_md).toBeNull();
-    expect(body.review_event.latency_ms).toBeNull();
-  });
-
-  it('includes response_md when provided', async () => {
-    await seedQuestion('q1');
-    const res = await POST(
-      submitReq({
-        mistake_id: 'q1',
-        rating: 'hard',
-        response_md: 'my answer',
-        referenced_knowledge_ids: ['k1', 'k2'],
-      }),
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { review_event: { response_md: string | null } };
-    expect(body.review_event.response_md).toBe('my answer');
-
-    const db = testDb();
-    const events = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q1')));
-    expect((events[0].payload as Record<string, unknown>).user_response_md).toBe('my answer');
-    expect((events[0].payload as Record<string, unknown>).referenced_knowledge_ids).toEqual([
-      'k1',
-      'k2',
     ]);
+    await parsed(await send(f.body({ response_md: '重试改写', latency_ms: 999 })));
+    expect(await events('experimental:assessment_attempt')).toEqual(original);
   });
 
-  it('rating transitions: again increases lapses, good increases reps', async () => {
-    await seedQuestion('q1');
-    const dueDate = new Date(Date.now() - 86400 * 1000);
-    await seedFsrsState(
-      'q1',
-      {
-        due: dueDate.toISOString(),
-        stability: 2,
-        difficulty: 5,
-        elapsed_days: 1,
-        scheduled_days: 2,
-        learning_steps: 0,
-        reps: 2,
-        lapses: 0,
-        state: 'review',
-        last_review: null,
-      },
-      dueDate,
-    );
-
-    const res = await POST(submitReq({ mistake_id: 'q1', rating: 'again' }));
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { new_state: { lapses: number; reps: number } };
-    expect(body.new_state.lapses).toBeGreaterThan(0);
+  it('accepts native answers without flat text and keeps omitted observation fields absent', async () => {
+    const f = await nativeSoloHttpFixture(testDb());
+    const body = await parsed(await send(f.body()));
+    expect(body.judge).toMatchObject({ coarse_outcome: 'correct' });
+    const [original] = await events('experimental:assessment_attempt');
+    expect(original.payload.response_md).toBeNull();
+    expect(original.payload).not.toHaveProperty('duration_ms');
+    expect(original.payload).not.toHaveProperty('self_confidence');
+    expect(original.payload).not.toHaveProperty('reasoning_trace');
   });
 
-  it('multiple reviews on same question keep one material_fsrs_state row (upsert behaviour)', async () => {
-    await seedQuestion('q1');
-    await POST(submitReq({ mistake_id: 'q1', rating: 'good' }));
-    await POST(submitReq({ mistake_id: 'q1', rating: 'hard' }));
-
-    const db = testDb();
-    const rows = await db
-      .select()
-      .from(material_fsrs_state)
-      // CodeRabbit (PR #295) — pin subject_kind on the assertion query.
-      .where(
-        and(
-          eq(material_fsrs_state.subject_id, 'k1'),
-          eq(material_fsrs_state.subject_kind, 'knowledge'),
-        ),
-      );
-    expect(rows).toHaveLength(1);
-    expect(rows[0].subject_kind).toBe('knowledge');
-    const events = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q1')));
-    expect(events).toHaveLength(2);
-  });
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // YUK-56 — auto-rating via JudgeInvoker (CC-3)
-  // ──────────────────────────────────────────────────────────────────────────
-
-  describe('YUK-56 auto-rating via JudgeInvoker', () => {
-    it('exact judge auto-rate correct → final rating="good" + payload.judge embedded', async () => {
-      await seedQuestion('q_exact_correct', {
-        kind: 'fill_blank',
-        reference_md: '答案',
-        knowledge_ids: [],
+  it.each([
+    { answer: 'A', verdict: 'correct', rating: 'good', progress: 1 },
+    { answer: 'B', verdict: 'incorrect', rating: 'again', progress: 0 },
+  ])(
+    'grades $answer with deterministic provenance and independent learning effects',
+    async ({ answer, verdict, rating, progress }) => {
+      const f = await nativeSoloHttpFixture(testDb());
+      const body = await parsed(await send(f.body({ assessment: f.issued.assessment(answer) })));
+      expect(body.judge).toMatchObject({
+        route: 'evaluate_submission',
+        coarse_outcome: verdict,
+        suggested_rating: rating,
+        judge_event_id: null,
       });
-
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q_exact_correct' },
-          rating: 'again', // ignored — auto_rate overrides
-          response_md: '答案',
-          auto_rate: true,
-        }),
-      );
-      expect(res.status).toBe(200);
-      const rawBody = await res.json();
-      expect(AttemptResponseSchema.safeParse(rawBody).success).toBe(true);
-      const body = rawBody as {
-        review_event: { rating: string };
-        judge: {
-          route: string;
-          coarse_outcome: string;
-          suggested_rating: string;
-          auto_rated: boolean;
-          telemetry: { route: string; question_id: string; subject_id: string };
-        };
-      };
-      expect(body.review_event.rating).toBe('good');
-      expect(body.judge.route).toBe('exact');
-      expect(body.judge.coarse_outcome).toBe('correct');
-      expect(body.judge.suggested_rating).toBe('good');
-      expect(body.judge.auto_rated).toBe(true);
-      // CC-3 invariant — telemetry comes from the invoker (only path that
-      // populates question_id + subject_id on the telemetry block).
-      expect(body.judge.telemetry.route).toBe('exact');
-      expect(body.judge.telemetry.question_id).toBe('q_exact_correct');
-      // knowledge_ids:[] → no domain → neutral default subject (general,
-      // post yuwen-deprotagonist — was yuwen).
-      expect(body.judge.telemetry.subject_id).toBe('general');
-
-      const events = await testDb()
-        .select()
-        .from(event)
-        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_exact_correct')));
-      expect(events).toHaveLength(1);
-      expect((events[0].payload as Record<string, unknown>).fsrs_rating).toBe('good');
-      const payloadJudge = (events[0].payload as Record<string, unknown>).judge as Record<
-        string,
-        unknown
-      >;
-      expect(payloadJudge).toMatchObject({
-        route: 'exact',
-        coarse_outcome: 'correct',
-        suggested_rating: 'good',
-        auto_rated: true,
-      });
-    });
-
-    // D6 (U4 L-stamp, critic-R2 HIGH) — end-to-end proof that the result-side
-    // version override reaches the persisted review event. The judge result is
-    // embedded at submit/route.ts:306 as `judgeResult.capability_ref`; a
-    // telemetry-only override would leave `payload.judge.capability_ref.version`
-    // at the runner's '1.0.0'. Inject a '2.0.0' profile and assert the event
-    // stream carries it on BOTH the embedded judge block and the telemetry.
-    it('D6: review event payload.judge.capability_ref.version == SubjectProfile.version (2.0.0)', async () => {
-      vi.mocked(resolveSubjectProfileForKnowledgeIds).mockResolvedValueOnce({
-        ...resolveSubjectProfile('yuwen'),
-        version: '2.0.0',
-      });
-      await seedQuestion('q_d6_version', {
-        kind: 'fill_blank',
-        reference_md: '答案',
-        knowledge_ids: [],
-      });
-
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q_d6_version' },
-          rating: 'again',
-          response_md: '答案',
-          auto_rate: true,
-        }),
-      );
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        judge: { capability_ref: { id: string; version: string } };
-      };
-      // Response side (mirrors the embedded event payload).
-      expect(body.judge.capability_ref.version).toBe('2.0.0');
-
-      const events = await testDb()
-        .select()
-        .from(event)
-        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_d6_version')));
-      expect(events).toHaveLength(1);
-      const payloadJudge = (events[0].payload as Record<string, unknown>).judge as {
-        capability_ref: { version: string };
-        telemetry: { capability_ref: { version: string }; profile_version: string };
-      };
-      // Event-stream side — the persisted, traceable record.
-      expect(payloadJudge.capability_ref.version).toBe('2.0.0');
-      expect(payloadJudge.telemetry.capability_ref.version).toBe('2.0.0');
-      expect(payloadJudge.telemetry.profile_version).toBe('2.0.0');
-    });
-
-    it('exact judge auto-rate wrong → final rating="again" + outcome=failure', async () => {
-      await seedQuestion('q_exact_wrong', {
-        kind: 'fill_blank',
-        reference_md: '答案',
-        knowledge_ids: [],
-      });
-
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q_exact_wrong' },
-          rating: 'good', // ignored
-          response_md: '错',
-          auto_rate: true,
-        }),
-      );
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        review_event: { rating: string };
-        judge: { coarse_outcome: string; suggested_rating: string };
-      };
-      expect(body.review_event.rating).toBe('again');
-      expect(body.judge.coarse_outcome).toBe('incorrect');
-      expect(body.judge.suggested_rating).toBe('again');
-
-      const events = await testDb()
-        .select()
-        .from(event)
-        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_exact_wrong')));
-      expect(events[0].outcome).toBe('failure');
-    });
-
-    it('keyword judge partial → suggested_rating="hard"', async () => {
-      await seedQuestion('q_keyword', {
-        kind: 'fill_blank',
-        reference_md: '虚词；代词；连词',
-        judge_kind_override: 'keyword',
-        knowledge_ids: [],
-        rubric_json: {
-          criteria: [{ name: 'correctness', weight: 1, descriptor: '命中关键词' }],
-          keywords: ['虚词', '代词', '连词'],
-        },
-      });
-
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q_keyword' },
-          rating: 'good',
-          response_md: '虚词和代词',
-          auto_rate: true,
-        }),
-      );
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        review_event: { rating: string };
-        judge: { route: string; coarse_outcome: string; suggested_rating: string };
-      };
-      expect(body.judge.route).toBe('keyword');
-      expect(body.judge.coarse_outcome).toBe('partial');
-      expect(body.judge.suggested_rating).toBe('hard');
-      expect(body.review_event.rating).toBe('hard');
-    });
-
-    it('semantic judge runs SemanticJudgeTask via runTask and respects auto_rate', async () => {
-      await seedQuestion('q_semantic', {
-        kind: 'short_answer',
-        reference_md: '之在这里作代词，指代前文的人或事。',
-        judge_kind_override: 'semantic',
-        knowledge_ids: [],
-        rubric_json: {
-          criteria: [{ name: 'correctness', weight: 1, descriptor: '覆盖核心要点' }],
-          required_points: ['说明之作代词', '说明指代前文'],
-        },
-      });
-      vi.mocked(runTask).mockResolvedValueOnce({
-        text: JSON.stringify({
-          score: 0.9,
-          coarse_outcome: 'correct',
-          confidence: 0.85,
-          feedback_md: '要点完整。',
-          evidence_json: { matched_points: ['说明之作代词'], missing_points: [] },
-        }),
-        cost: 0,
-        usage: null,
-        model: 'mock',
-      } as never);
-
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q_semantic' },
-          rating: 'again',
-          response_md: '之作代词。',
-          auto_rate: true,
-        }),
-      );
-      expect(res.status).toBe(200);
-      expect(vi.mocked(runTask)).toHaveBeenCalledTimes(1);
-      const body = (await res.json()) as {
-        review_event: { rating: string };
-        judge: { route: string; suggested_rating: string };
-      };
-      expect(body.judge.route).toBe('semantic');
-      expect(body.judge.suggested_rating).toBe('good');
-      expect(body.review_event.rating).toBe('good');
-    });
-
-    it('semantic judge failure → unsupported in auto_rate mode → 422', async () => {
-      await seedQuestion('q_semantic_unsupported', {
-        kind: 'short_answer',
-        reference_md: '之作代词。',
-        judge_kind_override: 'semantic',
-        knowledge_ids: [],
-      });
-      vi.mocked(runTask).mockRejectedValueOnce(new Error('provider down'));
-
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q_semantic_unsupported' },
-          rating: 'good',
-          response_md: '之作代词。',
-          auto_rate: true,
-        }),
-      );
-      expect(res.status).toBe(422);
-      const body = (await res.json()) as { error: string; message: string };
-      expect(body.error).toBe('unsupported_judge_route');
-      expect(body.message).toContain("'semantic'");
-
-      // No review event written — txn never opened.
-      const events = await testDb()
-        .select()
-        .from(event)
-        .where(eq(event.subject_id, 'q_semantic_unsupported'));
-      expect(events).toHaveLength(0);
-    });
-
-    it('manual rating (auto_rate=false): records user rating without spending a server judge call', async () => {
-      await seedQuestion('q_override', {
-        kind: 'fill_blank',
-        reference_md: '答案',
-        knowledge_ids: [],
-      });
-
-      // Judge would say 'correct' → suggest 'good', but user picks 'again'.
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q_override' },
-          rating: 'again',
-          response_md: '答案',
-          // auto_rate defaults to false
-        }),
-      );
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        review_event: { rating: string };
-        judge: unknown;
-      };
-      expect(body.review_event.rating).toBe('again');
-      expect(body.judge).toBeNull();
-
-      // CC-1 invariant — rating-only override must NOT write
-      // experimental:user_cause; cause overrides happen via a separate channel.
-      const userCauseEvents = await testDb()
-        .select()
-        .from(event)
-        .where(eq(event.action, 'experimental:user_cause'));
-      expect(userCauseEvents).toHaveLength(0);
-    });
-
-    it('bounds explicit auto-rate judge calls with the shared AI limiter', async () => {
-      vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
-      vi.stubEnv('AI_RATE_LIMIT_WINDOW_MS', '60000');
-      await seedQuestion('q_rate_1', { kind: 'fill_blank', reference_md: 'A', knowledge_ids: [] });
-      await seedQuestion('q_rate_2', { kind: 'fill_blank', reference_md: 'B', knowledge_ids: [] });
-
-      const first = await POST(
-        submitReq({ question_id: 'q_rate_1', rating: 'again', response_md: 'A', auto_rate: true }),
-      );
-      expect(first.status).toBe(200);
-
-      const blocked = await POST(
-        submitReq({ question_id: 'q_rate_2', rating: 'again', response_md: 'B', auto_rate: true }),
-      );
-      expect(blocked.status).toBe(429);
-      expect(blocked.headers.get('Retry-After')).toBeTruthy();
-    });
-
-    it('no response_md → no judge invoked, response.judge=null, no payload.judge', async () => {
-      await seedQuestion('q_no_answer', {
-        kind: 'fill_blank',
-        reference_md: '答案',
-        knowledge_ids: [],
-      });
-
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q_no_answer' },
-          rating: 'good',
-          // response_md omitted
-        }),
-      );
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as { judge: unknown };
-      expect(body.judge).toBeNull();
-
-      const events = await testDb()
-        .select()
-        .from(event)
-        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_no_answer')));
-      expect((events[0].payload as Record<string, unknown>).judge).toBeUndefined();
-    });
-
-    it('empty response_md (whitespace) → no judge invoked', async () => {
-      await seedQuestion('q_blank_answer', {
-        kind: 'fill_blank',
-        reference_md: '答案',
-        knowledge_ids: [],
-      });
-
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q_blank_answer' },
-          rating: 'good',
-          response_md: '   ',
-        }),
-      );
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as { judge: unknown };
-      expect(body.judge).toBeNull();
-    });
-
-    it('auto_rate=true with no response_md → 422 unsupported_judge_route', async () => {
-      await seedQuestion('q_no_answer_auto', {
-        kind: 'fill_blank',
-        reference_md: '答案',
-        knowledge_ids: [],
-      });
-
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q_no_answer_auto' },
-          rating: 'good',
-          auto_rate: true,
-          // response_md omitted
-        }),
-      );
-      expect(res.status).toBe(422);
-      const body = (await res.json()) as { error: string; message: string };
-      expect(body.error).toBe('unsupported_judge_route');
-      expect(body.message).toContain('response_md');
-    });
-  });
-
-  // Codex P1-G — concurrent double-submit must not produce torn FSRS state.
-  // Previously the FSRS read (getFsrsState) ran OUTSIDE the write transaction:
-  // two concurrent submissions both read the same prior state, both compute
-  // their `nextState` from it, and both upsert. The projection then reflects
-  // exactly one of the two — but it's not the state that should result from
-  // *both* reviews applied serially (lapses get lost, reps misincrement, etc).
-  it('concurrent double-submit: material_fsrs_state reflects exactly one review serially', async () => {
-    await seedQuestion('q1');
-    const db = testDb();
-
-    const [resA, resB] = await Promise.all([
-      POST(submitReq({ mistake_id: 'q1', rating: 'again' })),
-      POST(submitReq({ mistake_id: 'q1', rating: 'again' })),
-    ]);
-
-    expect(resA.status).toBe(200);
-    expect(resB.status).toBe(200);
-
-    // Both reviews must have written their event rows (event log is append-only).
-    const events = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q1')));
-    expect(events).toHaveLength(2);
-
-    // The projection row reflects exactly one review's final state — NOT a
-    // torn merge of both. With row-level locking, the second review computes
-    // its nextState from the first's (locked) result, so reps=2 (not 1).
-    const stateRows = await db
-      .select()
-      .from(material_fsrs_state)
-      // CodeRabbit (PR #295) — pin subject_kind on the assertion query.
-      .where(
-        and(
-          eq(material_fsrs_state.subject_id, 'k1'),
-          eq(material_fsrs_state.subject_kind, 'knowledge'),
-        ),
-      );
-    expect(stateRows).toHaveLength(1);
-    expect(stateRows[0].subject_kind).toBe('knowledge');
-    const finalState = stateRows[0].state as { reps: number };
-    // Without locking, both reads see reps=0 and both write reps=1 → finalState.reps=1 (torn).
-    // With locking, second sees reps=1 and writes reps=2.
-    expect(finalState.reps).toBe(2);
-  });
-
-  // YUK-98 (T-RA) — RatingAdvisor wiring on /api/review/submit. Body schema
-  // accepts an optional `judge_result_v2` so the UI can ship the prior judge
-  // result back for advisory derivation + event-payload trace. Old clients
-  // that do not send it stay green (backward-compat); the advisor never
-  // overrides body.rating (informational only).
-  describe('YUK-98 — judge_result_v2 advisory wiring', () => {
-    it('backward-compat: submit without judge_result_v2 still 200 and writes event without judge_advice', async () => {
-      await seedQuestion('q_ra_bc');
-
-      const res = await POST(submitReq({ mistake_id: 'q_ra_bc', rating: 'good' }));
-      expect(res.status).toBe(200);
-
-      const events = await testDb()
-        .select()
-        .from(event)
-        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_ra_bc')));
-      expect(events).toHaveLength(1);
-      const payload = events[0].payload as Record<string, unknown>;
-      expect(payload.judge_advice).toBeUndefined();
-    });
-
-    it('submits judge_result_v2=partial → event payload contains judge_advice with rating + reason + evidence_score', async () => {
-      await seedQuestion('q_ra_partial');
-
-      const res = await POST(
-        submitReq({
-          mistake_id: 'q_ra_partial',
-          rating: 'hard',
-          response_md: 'partial answer',
-          judge_result_v2: {
-            coarse_outcome: 'partial',
-            score: 0.6,
-            score_meaning: 'steps_v1_weighted',
-            confidence: 0.85,
-            capability_ref: { id: 'steps', version: '1' },
-            feedback_md: 'partial credit on step 2',
-            evidence_json: {},
-          },
-        }),
-      );
-      expect(res.status).toBe(200);
-
-      const events = await testDb()
-        .select()
-        .from(event)
-        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_ra_partial')));
-      expect(events).toHaveLength(1);
-      const payload = events[0].payload as {
-        judge_advice?: {
-          rating: string | null;
-          reason: string;
-          evidence_score: number | null;
-        };
-        fsrs_rating: string;
-      };
-      expect(payload.judge_advice).toBeDefined();
-      expect(payload.judge_advice?.rating).toBe('hard');
-      expect(payload.judge_advice?.evidence_score).toBe(0.6);
-      expect(payload.judge_advice?.reason).toMatch(/partial/i);
-      // CC-1 / advisor invariant: user's body.rating is the committed rating;
-      // advisor does NOT override the user's choice.
-      expect(payload.fsrs_rating).toBe('hard');
-    });
-
-    it('reuses supplied judge_result_v2 with response_md instead of re-running the deterministic judge', async () => {
-      await seedQuestion('q_ra_reuse', {
-        kind: 'fill_blank',
-        reference_md: '答案',
-        knowledge_ids: [],
-      });
-
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q_ra_reuse' },
-          rating: 'again',
-          response_md: '答案',
-          judge_result_v2: {
-            coarse_outcome: 'partial',
-            score: 0.6,
-            score_meaning: 'correctness',
-            confidence: 0.85,
-            capability_ref: { id: 'advice', version: '1' },
-            feedback_md: 'partial result generated by advice endpoint',
-            evidence_json: { source: 'advice' },
-          },
-        }),
-      );
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        review_event: { rating: string };
-        judge: { coarse_outcome: string; suggested_rating: string; telemetry?: unknown };
-      };
-      expect(body.review_event.rating).toBe('again');
-      expect(body.judge.coarse_outcome).toBe('partial');
-      expect(body.judge.suggested_rating).toBe('hard');
-      expect(body.judge.telemetry).toBeUndefined();
-
-      const events = await testDb()
-        .select()
-        .from(event)
-        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_ra_reuse')));
-      expect(events).toHaveLength(1);
-      const payload = events[0].payload as {
-        fsrs_rating: string;
-        judge?: { coarse_outcome: string; suggested_rating: string; telemetry?: unknown };
-        judge_advice?: { rating: string | null };
-      };
-      // If the route ignored the supplied judge result, the exact judge would
-      // mark response_md='答案' as correct. Persisting partial proves reuse.
-      expect(payload.fsrs_rating).toBe('again');
-      expect(payload.judge?.coarse_outcome).toBe('partial');
-      expect(payload.judge?.suggested_rating).toBe('hard');
-      expect(payload.judge?.telemetry).toBeUndefined();
-      expect(payload.judge_advice?.rating).toBe('hard');
-    });
-
-    it('rejects malformed judge_result_v2 with 400 (zod validation)', async () => {
-      await seedQuestion('q_ra_bad');
-
-      const res = await POST(
-        submitReq({
-          mistake_id: 'q_ra_bad',
-          rating: 'good',
-          // coarse_outcome 'correct' requires score ≥ 0.85; 0.1 is invalid.
-          judge_result_v2: {
-            coarse_outcome: 'correct',
-            score: 0.1,
-            score_meaning: 'correctness',
-            confidence: 0.9,
-            capability_ref: { id: 'exact', version: '1' },
-            feedback_md: 'mismatched score',
-            evidence_json: {},
-          },
-        }),
-      );
-      expect(res.status).toBe(400);
-    });
-  });
-
-  // ── YUK-589 (J1/J2) — execution provenance is an audit stamp; it must be honest ──
-  // J1: an absent invoked.execution on a deterministic route (exact/keyword) stays
-  //     'deterministic' (no model was ever meant to run). A model route whose execution
-  //     is absent is 'historical_unknown' — covered on the paper-submit path where an
-  //     unsupported model verdict is still persisted (the solo auto_rate path 422s first).
-  // J2: a client-supplied result on a signed model route (steps/multimodal_direct/
-  //     unit_dimension — not just semantic) is verified against its provenance token +
-  //     the persisted ai_task_runs digests; a valid token → supplied_verified, an
-  //     absent/tampered token → supplied_unverified (fail-closed).
-  describe('YUK-589 — execution provenance honesty (J1/J2)', () => {
-    async function readJudgeExecutionProvenance(
-      questionId: string,
-    ): Promise<Record<string, unknown> | undefined> {
-      const [judgeEvent] = await testDb()
-        .select()
-        .from(event)
-        .where(and(eq(event.action, 'judge'), eq(event.subject_kind, 'event')));
-      const payload = judgeEvent?.payload as Record<string, unknown> | undefined;
-      return payload?.execution_provenance as Record<string, unknown> | undefined;
-    }
-
-    // Build a signed-token + persisted-run fixture for a model-backed supplied result.
-    async function seedSignedSuppliedRun(opts: {
-      questionId: string;
-      judgeRoute: string;
-      taskKind: string;
-      subjectProfileId: string;
-      subjectProfileVersion: string;
-      suppliedResult: JudgeResultV2Fixture;
-      secret: string;
-    }): Promise<{ token: string; taskRunId: string }> {
-      const inputHash = 'a'.repeat(64);
-      const promptFingerprint = 'b'.repeat(64);
-      const resultDigest = sha256Canonical(opts.suppliedResult);
-      const taskRunId = newId();
-      await testDb().insert(ai_task_runs).values({
-        id: taskRunId,
-        task_kind: opts.taskKind,
-        provider: 'xiaomi',
-        model: 'mock',
-        input_hash: inputHash,
-        prompt_fingerprint: promptFingerprint,
-        result_digest: resultDigest,
-        status: 'success',
-        started_at: new Date(),
-        finished_at: new Date(),
-      });
-      const token = issueJudgePreviewProvenanceToken(
-        {
-          version: 1,
-          task_run_id: taskRunId,
-          task_kind: opts.taskKind,
-          input_hash: inputHash,
-          prompt_fingerprint: promptFingerprint,
-          prompt_template_revision: JUDGE_PROMPT_TEMPLATE_REVISION,
-          subject_profile_id: opts.subjectProfileId,
-          subject_profile_version: opts.subjectProfileVersion,
-          judge_route: opts.judgeRoute,
-          result_digest: resultDigest,
-        },
-        opts.secret,
-      );
-      return { token, taskRunId };
-    }
-
-    type JudgeResultV2Fixture = {
-      coarse_outcome: 'correct';
-      score: number;
-      score_meaning: 'correctness';
-      confidence: number;
-      capability_ref: { id: string; version: string };
-      feedback_md: string;
-      evidence_json: Record<string, unknown>;
-    };
-
-    const SECRET = 'test-judge-provenance-secret-32bytes';
-
-    // J1 — a genuinely deterministic route with absent execution stays 'deterministic'.
-    it('J1: exact auto_rate (no model run) stamps execution_provenance kind=deterministic', async () => {
-      await seedQuestion('q_prov_exact', {
-        kind: 'fill_blank',
-        reference_md: '答案',
-        knowledge_ids: [],
-      });
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q_prov_exact' },
-          rating: 'again',
-          response_md: '答案',
-          auto_rate: true,
-        }),
-      );
-      expect(res.status).toBe(200);
-      const prov = await readJudgeExecutionProvenance('q_prov_exact');
-      expect(prov?.kind).toBe('deterministic');
-    });
-
-    // J2 — a signed steps result WITH a valid token + matching persisted run →
-    // supplied_verified. This is the core asymmetry fix: pre-J2 only 'semantic'
-    // was verified; steps/multimodal_direct/unit_dimension fell straight to
-    // supplied_unverified even with a valid token.
-    it('J2: signed steps supplied result with a valid provenance token → supplied_verified', async () => {
-      vi.stubEnv('JUDGE_PROVENANCE_SECRET', SECRET);
-      vi.stubEnv('INTERNAL_TOKEN', 'a-different-internal-token');
-      const profile = resolveSubjectProfile('general');
-      vi.mocked(resolveSubjectProfileForKnowledgeIds).mockResolvedValueOnce(profile);
-      await seedQuestion('q_prov_steps', {
-        kind: 'derivation',
-        reference_md: '推导过程',
-        knowledge_ids: [],
-      });
-      const suppliedResult: JudgeResultV2Fixture = {
-        coarse_outcome: 'correct',
-        score: 0.9,
-        score_meaning: 'correctness',
-        confidence: 0.85,
-        capability_ref: { id: 'steps', version: profile.version },
-        feedback_md: '推导正确。',
-        evidence_json: { source: 'advice' },
-      };
-      const { token, taskRunId } = await seedSignedSuppliedRun({
-        questionId: 'q_prov_steps',
-        judgeRoute: 'steps',
-        taskKind: 'StepsJudgeTask',
-        subjectProfileId: profile.id,
-        subjectProfileVersion: profile.version,
-        suppliedResult,
-        secret: SECRET,
-      });
-
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q_prov_steps' },
-          rating: 'good',
-          response_md: 'x=1，所以答案是 1',
-          judge_result_v2: suppliedResult,
-          judge_provenance_token: token,
-          judge_task_run_id: taskRunId,
-        }),
-      );
-      expect(res.status).toBe(200);
-      const prov = await readJudgeExecutionProvenance('q_prov_steps');
-      expect(prov?.kind).toBe('supplied_verified');
-      expect(prov?.task_run_id).toBe(taskRunId);
-    });
-
-    // J2 fail-closed — a tampered token → supplied_unverified (never promoted).
-    it('J2: signed steps supplied result with a tampered token → supplied_unverified', async () => {
-      vi.stubEnv('JUDGE_PROVENANCE_SECRET', SECRET);
-      vi.stubEnv('INTERNAL_TOKEN', 'a-different-internal-token');
-      const profile = resolveSubjectProfile('general');
-      vi.mocked(resolveSubjectProfileForKnowledgeIds).mockResolvedValueOnce(profile);
-      await seedQuestion('q_prov_steps_tampered', {
-        kind: 'derivation',
-        reference_md: '推导过程',
-        knowledge_ids: [],
-      });
-      const suppliedResult: JudgeResultV2Fixture = {
-        coarse_outcome: 'correct',
-        score: 0.9,
-        score_meaning: 'correctness',
-        confidence: 0.85,
-        capability_ref: { id: 'steps', version: profile.version },
-        feedback_md: '推导正确。',
-        evidence_json: { source: 'advice' },
-      };
-      const { token, taskRunId } = await seedSignedSuppliedRun({
-        questionId: 'q_prov_steps_tampered',
-        judgeRoute: 'steps',
-        taskKind: 'StepsJudgeTask',
-        subjectProfileId: profile.id,
-        subjectProfileVersion: profile.version,
-        suppliedResult,
-        secret: SECRET,
-      });
-      // Flip the final character of the signature so the round-trip verify fails.
-      const tamperedToken = token.slice(0, -1) + (token.at(-1) === 'A' ? 'B' : 'A');
-
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q_prov_steps_tampered' },
-          rating: 'good',
-          response_md: 'x=1，所以答案是 1',
-          judge_result_v2: suppliedResult,
-          judge_provenance_token: tamperedToken,
-          judge_task_run_id: taskRunId,
-        }),
-      );
-      expect(res.status).toBe(200);
-      const prov = await readJudgeExecutionProvenance('q_prov_steps_tampered');
-      expect(prov?.kind).toBe('supplied_unverified');
-      expect(prov?.task_run_id).toBeUndefined();
-    });
-
-    // J2 fail-closed — an absent token → supplied_unverified.
-    it('J2: signed steps supplied result with NO provenance token → supplied_unverified', async () => {
-      vi.stubEnv('JUDGE_PROVENANCE_SECRET', SECRET);
-      vi.stubEnv('INTERNAL_TOKEN', 'a-different-internal-token');
-      const profile = resolveSubjectProfile('general');
-      vi.mocked(resolveSubjectProfileForKnowledgeIds).mockResolvedValueOnce(profile);
-      await seedQuestion('q_prov_steps_notoken', {
-        kind: 'derivation',
-        reference_md: '推导过程',
-        knowledge_ids: [],
-      });
-      const suppliedResult: JudgeResultV2Fixture = {
-        coarse_outcome: 'correct',
-        score: 0.9,
-        score_meaning: 'correctness',
-        confidence: 0.85,
-        capability_ref: { id: 'steps', version: profile.version },
-        feedback_md: '推导正确。',
-        evidence_json: { source: 'advice' },
-      };
-
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q_prov_steps_notoken' },
-          rating: 'good',
-          response_md: 'x=1，所以答案是 1',
-          judge_result_v2: suppliedResult,
-          // no judge_provenance_token / judge_task_run_id
-        }),
-      );
-      expect(res.status).toBe(200);
-      const prov = await readJudgeExecutionProvenance('q_prov_steps_notoken');
-      expect(prov?.kind).toBe('supplied_unverified');
-    });
-
-    // YUK-589 (K1c) — the inverse hole. A supplied MODEL result whose subject
-    // profile is unresolved (null) must NEVER fall to `deterministic` (which would
-    // falsely trust a client verdict as a no-model local compare). With no profile
-    // the model claim cannot be verified, so it fails closed to supplied_unverified.
-    it('K1c: supplied MODEL result with an unresolved (null) profile → supplied_unverified, NOT deterministic', async () => {
-      vi.stubEnv('JUDGE_PROVENANCE_SECRET', SECRET);
-      vi.stubEnv('INTERNAL_TOKEN', 'a-different-internal-token');
-      // Force the profile resolution to yield null even though there is an answer.
-      vi.mocked(resolveSubjectProfileForKnowledgeIds).mockResolvedValueOnce(null as never);
-      await seedQuestion('q_prov_nullprofile', {
-        kind: 'derivation',
-        reference_md: '推导过程',
-        knowledge_ids: [],
-      });
-      const suppliedResult: JudgeResultV2Fixture = {
-        coarse_outcome: 'correct',
-        score: 0.9,
-        score_meaning: 'correctness',
-        confidence: 0.85,
-        capability_ref: { id: 'steps', version: '1.0.0' },
-        feedback_md: '推导正确。',
-        evidence_json: { source: 'advice' },
-      };
-
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q_prov_nullprofile' },
-          rating: 'good',
-          response_md: 'x=1，所以答案是 1',
-          judge_result_v2: suppliedResult,
-        }),
-      );
-      expect(res.status).toBe(200);
-      const prov = await readJudgeExecutionProvenance('q_prov_nullprofile');
-      expect(prov?.kind).toBe('supplied_unverified');
-      expect(prov?.kind).not.toBe('deterministic');
-    });
-  });
-
-  // ── YUK-361 finding #2 — 手动覆盖的评分不当客观 b 校准折进 ──────────────────────
-  // /api/review/submit 里 finalRating 仅在 body.auto_rate=true 时来自 judge 的 suggested
-  // rating；否则 finalRating = 用户手动 body.rating（advisor 信息性，永不自动 commit）。
-  // 旧 hook 只要 judgeRoute 是客观串（client 传了 keyword/exact 的预览 judge_result_v2）
-  // 就把 outcome 折进家族校准——但 auto_rate=false 时 outcome 实际来自**手评**，把手评当
-  // 客观 b 真值是错的（污染 b 通道）。修复：family 折进 gate 在 body.auto_rate=true。
-  describe('YUK-361 finding #2 — 家族校准只折客观 auto-judge，不折手动覆盖', () => {
-    it('客观 judge_route + auto_rate=false（手动覆盖）→ 不折进家族校准', async () => {
-      // fill_blank + reference → 客观 exact 路由；带 knowledge_id 让家族可成键。
-      await seedQuestion('q_f2_manual', {
-        kind: 'fill_blank',
-        reference_md: '答案',
-        knowledge_ids: ['k_f2'],
-      });
-
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q_f2_manual' },
-          rating: 'good', // 手动评分（auto_rate=false → 它是 finalRating）
-          response_md: '答案',
-          auto_rate: false,
-          // client 传了客观 keyword 路由的预览 judge_result_v2——旧 bug 会因这个客观
-          // route 串就把 outcome 折进家族校准，即便评分实际是手动的。
-          judge_result_v2: {
-            coarse_outcome: 'correct',
-            score: 1,
-            score_meaning: 'correctness',
-            confidence: 0.9,
-            capability_ref: { id: 'keyword', version: '1' },
-            feedback_md: 'preview keyword match',
-            evidence_json: {},
-          },
-        }),
-      );
-      expect(res.status).toBe(200);
-
-      // finding #2：auto_rate=false → family 折进被 gate 掉 → 一条家族行都没写。
-      expect(await testDb().select().from(item_family_calibration)).toHaveLength(0);
-    });
-
-    it('（对照）客观 auto-judge + auto_rate=true → 折进家族校准（evidence_count=1）', async () => {
-      await seedQuestion('q_f2_auto', {
-        kind: 'fill_blank',
-        reference_md: '答案',
-        knowledge_ids: ['k_f2_auto'],
-      });
-
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q_f2_auto' },
-          rating: 'again', // 被 auto_rate 覆盖
-          response_md: '答案',
-          auto_rate: true, // outcome 真正来自客观 exact auto-judge
-        }),
-      );
-      expect(res.status).toBe(200);
-
-      // auto_rate=true 且 route 客观（exact）→ 折进 → 写家族行（单条门控未过 → b_delta 0）。
-      const fam = await testDb().select().from(item_family_calibration);
-      expect(fam).toHaveLength(1);
-      expect(fam[0].evidence_count).toBe(1);
-      expect(fam[0].b_delta).toBe(0); // 单条 → 门控未过
-    });
-  });
-
-  // ── YUK-432 — 客观题 auto_rate 自动判分流过 difficulty_calibration_label hook ──────
-  // VERIFIED ROOT CAUSE：label hook 在 submit.ts ~line 648 被 `if (body.auto_rate)` 闸住，
-  // auto_rate 默认 false 且旧 UI 从不传 → label 恒空 → recalibrateQuestion labelCount<12 永不过
-  // → item_calibration.b_calib 恒 NULL → 难度冻在冷启锚。修复 = 让客观题送 auto_rate:true。
-  // 本块从 POST 整路证：客观 auto_rate:true + 一个带 π_i 的被答 slot → 恰好一条标签（非空 impliedB
-  // + inclusion_probability）；开放手动评级 → 零标签；主 attempt tx（θ̂/FSRS/event）不被标签写毒化。
-  describe('YUK-432 — 客观 auto_rate 产 difficulty_calibration_label，开放手动不产', () => {
-    // 物化一个被答 slot + 一条 softmax_mfi selected 观测（真 π_i），返回 slot id 供作为
-    // stream_item_id 透传。label hook 的 π_i 直 join 需要二者皆在。
-    async function seedAnsweredSlotWithPi(questionId: string, pi: number): Promise<string> {
-      const db = testDb();
-      const now = new Date();
-      const slotId = newId();
-      await db.insert(practice_stream_item).values({
-        id: slotId,
-        date: '2026-06-19',
-        position: 0,
-        item_kind: 'question',
-        ref_id: questionId,
-        source: 'decay',
-        status: 'in_progress',
-        reasoning: 'test slot',
-        added_by: 'composer_live',
-        signals: {},
-        created_at: now,
-        updated_at: now,
-      });
-      await recordSelectionObservation(db, {
-        date: '2026-06-19',
-        streamItemId: slotId,
-        refKind: 'question',
-        refId: questionId,
-        policy: 'softmax_mfi',
-        selected: true,
-        inclusionProbability: pi,
-        signals: {},
-      });
-      return slotId;
-    }
-
-    async function seedAnchor(questionId: string, bAnchor: number) {
-      const db = testDb();
-      const now = new Date();
-      await db.insert(item_calibration).values({
-        id: newId(),
-        question_id: questionId,
-        b: bAnchor,
-        b_anchor: bAnchor,
-        confidence: 0.5,
-        track: 'hard',
-        source: 'llm_prior',
-        created_at: now,
-        updated_at: now,
-      });
-    }
-
-    function readLabels(questionId: string) {
-      return testDb()
-        .select()
-        .from(difficulty_calibration_label)
-        .where(eq(difficulty_calibration_label.question_id, questionId));
-    }
-
-    it('(a) 客观 auto_rate:true + 被答 slot（有 π_i）→ 恰好一条标签（非空 impliedB + inclusion_probability）', async () => {
-      // fill_blank + reference → 客观 exact 路由；带 knowledge_id 让 θ̂ 锚可成立。
-      await seedQuestion('q432_obj', {
-        kind: 'fill_blank',
-        reference_md: '答案',
-        knowledge_ids: ['k432'],
-      });
-      await seedAnchor('q432_obj', 0.5);
-      const slotId = await seedAnsweredSlotWithPi('q432_obj', 0.3);
-
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q432_obj' },
-          rating: 'again', // 被 auto_rate 覆盖（exact correct → good）
-          response_md: '答案', // 与 reference 完全匹配 → exact correct
-          auto_rate: true,
-          stream_item_id: slotId, // 被答 slot id → label hook π_i 直 join
-        }),
-      );
-      expect(res.status).toBe(200);
-
-      const labels = await readLabels('q432_obj');
-      expect(labels).toHaveLength(1);
-      expect(labels[0].inclusion_probability).toBeCloseTo(0.3, 6); // 直 join 取到被答 slot 的 π_i
-      expect(labels[0].b_label).not.toBeNull(); // IRT-reverse 反推的非空 impliedB
-      expect(labels[0].outcome).toBe(1); // exact correct → success → outcome 1
-      expect(labels[0].attempt_event_id).not.toBeNull(); // provenance 锚
-      const [review] = await testDb()
-        .select({ payload: event.payload })
-        .from(event)
-        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q432_obj')));
-      expect((review.payload as Record<string, unknown>).stream_item_id).toBe(slotId);
-    });
-
-    it('(b) 开放题手动评级（无 auto_rate）→ 零标签（流不变）', async () => {
-      // short_answer + 客观 slot 都在，但 auto_rate 缺省 false → label hook 整段被 gate 掉。
-      await seedQuestion('q432_open', {
-        kind: 'short_answer',
-        reference_md: '答案',
-        knowledge_ids: ['k432o'],
-      });
-      await seedAnchor('q432_open', 0.5);
-      const slotId = await seedAnsweredSlotWithPi('q432_open', 0.3);
-
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q432_open' },
-          rating: 'good', // 手动评级（auto_rate=false → 它是 finalRating）
-          response_md: '答案',
-          // auto_rate 缺省 false
-          stream_item_id: slotId,
-        }),
-      );
-      expect(res.status).toBe(200);
-
-      // auto_rate=false → 整个 label 分支（含 family + 标签）被 `if (body.auto_rate)` gate 掉。
-      expect(await readLabels('q432_open')).toHaveLength(0);
-    });
-
-    it('(c) 主 attempt tx（θ̂/FSRS/event）不被标签写毒化——标签是独立 family 写（SAVEPOINT 隔离）', async () => {
-      await seedQuestion('q432_tx', {
-        kind: 'fill_blank',
-        reference_md: '答案',
-        knowledge_ids: ['k432tx'],
-      });
-      await seedAnchor('q432_tx', 0.5);
-      const slotId = await seedAnsweredSlotWithPi('q432_tx', 0.3);
-
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q432_tx' },
-          rating: 'again',
-          response_md: '答案',
-          auto_rate: true,
-          stream_item_id: slotId,
-        }),
-      );
-      expect(res.status).toBe(200);
-
-      const db = testDb();
-      // 标签写成功（一条）。
-      expect(await readLabels('q432_tx')).toHaveLength(1);
-      // 主 attempt tx 完整提交：review event 落库（exact correct → outcome success）。
-      const events = await db
-        .select()
-        .from(event)
-        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q432_tx')));
-      expect(events).toHaveLength(1);
-      expect(events[0].outcome).toBe('success');
-      // FSRS R 轴落库（material_fsrs_state for the knowledge）。
-      const fsrs = await db
-        .select()
-        .from(material_fsrs_state)
-        .where(
-          and(
-            eq(material_fsrs_state.subject_id, 'k432tx'),
-            eq(material_fsrs_state.subject_kind, 'knowledge'),
-          ),
-        );
-      expect(fsrs).toHaveLength(1);
-      expect(fsrs[0].last_review_event_id).toBe(events[0].id);
-      // θ̂ 诊断轴落库（mastery_state，与 FSRS R 轴正交）。
-      const theta = await db
+      expect(await candidates()).toMatchObject([
+        { run_refs: [], provenance: { source: 'automatic', assisted: false } },
+      ]);
+      expect(f.execute).not.toHaveBeenCalled();
+      expect(await cards()).toMatchObject([
+        { subject_kind: 'knowledge', subject_id: f.knowledgeIds[0], state: { reps: 1 } },
+      ]);
+      const [mastery] = await testDb()
         .select()
         .from(mastery_state)
-        .where(
-          and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, 'k432tx')),
-        );
-      expect(theta).toHaveLength(1);
+        .where(eq(mastery_state.subject_id, f.knowledgeIds[0]));
+      expect(verdict === 'correct' ? mastery.theta_hat > 0 : mastery.theta_hat < 0).toBe(true);
+      expect(await events(MASTERY_PROGRESS_ACTION)).toHaveLength(progress);
+      expect(await events('experimental:prereq_risk')).toHaveLength(0);
+      expect(await events('experimental:user_cause')).toHaveLength(0);
+    },
+  );
+
+  it('explicit rating wins scheduling without replacing an automatic correct verdict', async () => {
+    const f = await nativeSoloHttpFixture(testDb());
+    const body = await parsed(await send(f.body({ auto_rate: false, rating: 'again' })));
+    expect(body.judge).toMatchObject({
+      coarse_outcome: 'correct',
+      suggested_rating: 'good',
+      auto_rated: false,
     });
-
-    it('(d) 422 guard：auto_rate + unsupported verdict 仍被拒（客观 correct/incorrect 不误拒）', async () => {
-      // 无 response_md、无 image → 没有答案 → judge 不跑 → suggestedRating null → auto_rate 422。
-      await seedQuestion('q432_422', {
-        kind: 'fill_blank',
-        reference_md: '答案',
-        knowledge_ids: ['k432_422'],
-      });
-
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q432_422' },
-          rating: 'good',
-          auto_rate: true,
-          // response_md 省略 → 无答案 → unsupported
-        }),
-      );
-      expect(res.status).toBe(422);
-      // 无标签（422 在 persist 前抛）。
-      expect(await readLabels('q432_422')).toHaveLength(0);
-    });
-  });
-
-  // YUK-100 (W-05) — Cause wiring fix. Driver T-RA §1.1 says the partial-
-  // credit advisor must apply carelessness/conceptual lean using CC-1's
-  // effectiveCauseCategoryForFailureAttempt() helper. Pre-fix the submit
-  // route never threaded cause into `judgeResultToRatingAdvice()`, so the
-  // event payload's `judge_advice.rating` ignored prior cause and YUK-98's
-  // stated goal "cause-aware RatingAdvisor" was dead code in production.
-  // These tests pin the wiring at the route layer using prior user_cause
-  // events. See `docs/audit/2026-05-27-wave1-postship-drift.md` §W-05.
-  describe('YUK-100 — partial-credit cause lean on judge_advice (W-05 wiring)', () => {
-    it('applies carelessness lean → judge_advice.rating="good" when prior user_cause=carelessness', async () => {
-      await seedQuestion('q_sub_careless');
-      await seedAttempt({
-        id: 'a_sub_careless',
-        question_id: 'q_sub_careless',
-      });
-      await seedUserCause({
-        id: 'uc_sub_careless',
-        attempt_event_id: 'a_sub_careless',
-        primary_category: 'carelessness',
-      });
-
-      // Score 0.6 → default 'hard'; carelessness lean should promote to 'good'.
-      const res = await POST(
-        submitReq({
-          mistake_id: 'q_sub_careless',
-          rating: 'hard',
-          response_md: 'partial answer',
-          judge_result_v2: {
-            coarse_outcome: 'partial',
-            score: 0.6,
-            score_meaning: 'steps_v1_weighted',
-            confidence: 0.85,
-            capability_ref: { id: 'steps', version: '1' },
-            feedback_md: 'partial credit',
-            evidence_json: {},
-          },
-        }),
-      );
-      expect(res.status).toBe(200);
-
-      const events = await testDb()
-        .select()
-        .from(event)
-        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_sub_careless')));
-      expect(events).toHaveLength(1);
-      const payload = events[0].payload as {
-        judge_advice?: { rating: string | null; reason: string };
-        fsrs_rating: string;
-      };
-      expect(payload.judge_advice?.rating).toBe('good');
-      expect(payload.judge_advice?.reason).toMatch(/careless|carelessness/i);
-      // CC-1 / advisor invariant: user's body.rating still wins.
-      expect(payload.fsrs_rating).toBe('hard');
-    });
-
-    it('applies conceptual lean → judge_advice.rating="again" when prior user_cause=conceptual_error', async () => {
-      await seedQuestion('q_sub_concept');
-      await seedAttempt({
-        id: 'a_sub_concept',
-        question_id: 'q_sub_concept',
-      });
-      await seedUserCause({
-        id: 'uc_sub_concept',
-        attempt_event_id: 'a_sub_concept',
-        primary_category: 'conceptual_error',
-      });
-
-      // Score 0.6 → default 'hard'; conceptual lean should demote to 'again'.
-      const res = await POST(
-        submitReq({
-          mistake_id: 'q_sub_concept',
-          rating: 'hard',
-          response_md: 'partial answer',
-          judge_result_v2: {
-            coarse_outcome: 'partial',
-            score: 0.6,
-            score_meaning: 'steps_v1_weighted',
-            confidence: 0.85,
-            capability_ref: { id: 'steps', version: '1' },
-            feedback_md: 'partial credit',
-            evidence_json: {},
-          },
-        }),
-      );
-      expect(res.status).toBe(200);
-
-      const events = await testDb()
-        .select()
-        .from(event)
-        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_sub_concept')));
-      expect(events).toHaveLength(1);
-      const payload = events[0].payload as {
-        judge_advice?: { rating: string | null; reason: string };
-        fsrs_rating: string;
-      };
-      expect(payload.judge_advice?.rating).toBe('again');
-      expect(payload.judge_advice?.reason).toMatch(/concept|conceptual/i);
-      // CC-1 / advisor invariant: user's body.rating still wins.
-      expect(payload.fsrs_rating).toBe('hard');
-    });
-
-    it('keeps default bucket when question has no prior failure attempt (causeCategory=null fallback)', async () => {
-      await seedQuestion('q_sub_nocause');
-
-      const res = await POST(
-        submitReq({
-          mistake_id: 'q_sub_nocause',
-          rating: 'hard',
-          response_md: 'partial answer',
-          judge_result_v2: {
-            coarse_outcome: 'partial',
-            score: 0.6,
-            score_meaning: 'steps_v1_weighted',
-            confidence: 0.85,
-            capability_ref: { id: 'steps', version: '1' },
-            feedback_md: 'partial credit',
-            evidence_json: {},
-          },
-        }),
-      );
-      expect(res.status).toBe(200);
-
-      const events = await testDb()
-        .select()
-        .from(event)
-        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_sub_nocause')));
-      expect(events).toHaveLength(1);
-      const payload = events[0].payload as {
-        judge_advice?: { rating: string | null; reason: string };
-      };
-      // No prior cause → default partial-credit bucket for 0.6 is 'hard'.
-      expect(payload.judge_advice?.rating).toBe('hard');
-      expect(payload.judge_advice?.reason).not.toMatch(/careless|conceptual/i);
-    });
-
-    // YUK-101 (iter2 fix F1) — pre-iter2 the judge_advice payload was gated on
-    // `suppliedJudgeResult` (body.judge_result_v2). When the client did not
-    // pre-supply a judge result and the server invoked its own judge inside
-    // the route, the gate was false → `judgeAdvicePayload = {}` → judge_advice
-    // never landed on the event row. The cause-aware advisor was dead code
-    // for every server-judge caller. This test exercises the server-judge
-    // path: POST with auto_rate and without judge_result_v2, server runs keyword judge, prior
-    // user_cause=carelessness still threads into the advisor and judge_advice
-    // appears on the event payload with the lean applied.
-    it('threads cause into judge_advice when SERVER runs the judge (no judge_result_v2 in body)', async () => {
-      await seedQuestion('q_sub_server_judge_careless', {
-        kind: 'fill_blank',
-        reference_md: '虚词；代词；连词',
-        judge_kind_override: 'keyword',
-        rubric_json: {
-          criteria: [{ name: 'correctness', weight: 1, descriptor: '命中关键词' }],
-          keywords: ['虚词', '代词', '连词'],
+    expect(await events('experimental:assessment_settlement')).toMatchObject([
+      {
+        payload: {
+          rating: 'again',
+          rating_source: 'user',
+          theta_decision: { applied: true, outcome: 1 },
         },
-      });
-      await seedAttempt({
-        id: 'a_sub_server_judge_careless',
-        question_id: 'q_sub_server_judge_careless',
-      });
-      await seedUserCause({
-        id: 'uc_sub_server_judge_careless',
-        attempt_event_id: 'a_sub_server_judge_careless',
-        primary_category: 'carelessness',
-      });
-
-      // No judge_result_v2 in body — explicit auto_rate runs keyword judge against
-      // response '虚词和代词' (2/3 keywords) → partial credit ~0.67.
-      // Default partial-credit bucket for score ≥ 0.5 is 'hard'; carelessness
-      // lean promotes to 'good'.
-      const res = await POST(
-        submitReq({
-          mistake_id: 'q_sub_server_judge_careless',
-          rating: 'hard',
-          response_md: '虚词和代词',
-          auto_rate: true,
-        }),
-      );
-      expect(res.status).toBe(200);
-
-      const events = await testDb()
-        .select()
-        .from(event)
-        .where(
-          and(eq(event.action, 'review'), eq(event.subject_id, 'q_sub_server_judge_careless')),
-        );
-      expect(events).toHaveLength(1);
-      const payload = events[0].payload as {
-        judge_advice?: { rating: string | null; reason: string };
-        judge?: { route: string; coarse_outcome: string };
-        fsrs_rating: string;
-      };
-      // Server ran the judge — judge envelope must be present on the payload.
-      expect(payload.judge?.route).toBe('keyword');
-      expect(payload.judge?.coarse_outcome).toBe('partial');
-      // Pre-iter2: judge_advice was missing entirely. Post-iter2: it lands
-      // with the carelessness lean from the prior user_cause attempt.
-      expect(payload.judge_advice?.rating).toBe('good');
-      expect(payload.judge_advice?.reason).toMatch(/careless|carelessness/i);
-      // Partial auto-judge maps to hard; cause-aware advice remains separately visible.
-      expect(payload.fsrs_rating).toBe('hard');
-    });
+      },
+    ]);
+    expect(await testDb().select().from(item_family_calibration)).toMatchObject([
+      { evidence_count: 1 },
+    ]);
   });
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // YUK-215 — handwriting-photo refs reach the judge + are frozen on the event
-  // ──────────────────────────────────────────────────────────────────────────
-  describe('YUK-215 handwriting-photo pass-through', () => {
-    it('passes answer_image_refs to the judge as student_image_refs + freezes them on the review event', async () => {
-      await seedQuestion('q_215', {
-        kind: 'fill_blank',
-        reference_md: '答案',
-        knowledge_ids: [],
-      });
-
-      // Wrap the real invoker so the judge still runs (real exact match) while we
-      // capture the input it received.
-      const realFactory = invokerModule.createDefaultJudgeInvoker;
-      const captured: Array<{ student_image_refs?: string[] }> = [];
-      vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockImplementation((deps) => {
-        const real = realFactory(deps);
-        return {
-          invoke: (input: Parameters<typeof real.invoke>[0]) => {
-            captured.push(input as { student_image_refs?: string[] });
-            return real.invoke(input);
-          },
-        } as never;
-      });
-
-      try {
-        const res = await POST(
-          submitReq({
-            activity_ref: { kind: 'question', id: 'q_215' },
-            rating: 'good',
-            response_md: '答案',
-            answer_image_refs: ['asset_hw_1', 'asset_hw_2'],
-            auto_rate: true,
+  it.each(['again', 'hard', 'good'])(
+    'explicit self-report %s schedules without inventing scores or model work',
+    async (rating) => {
+      const f = await nativeSoloHttpFixture(testDb(), { model: true });
+      const body = await parsed(
+        await send(
+          f.body({
+            assessment: f.issued.assessment(''),
+            self_report: true,
+            auto_rate: false,
+            rating,
           }),
-        );
-        expect(res.status).toBe(200);
-
-        // (1) the judge received the photo refs
-        expect(captured).toHaveLength(1);
-        expect(captured[0].student_image_refs).toEqual(['asset_hw_1', 'asset_hw_2']);
-
-        // (2) the refs are frozen onto the review event payload (evidence trail)
-        const events = await testDb()
-          .select()
-          .from(event)
-          .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_215')));
-        expect(events).toHaveLength(1);
-        expect((events[0].payload as { answer_image_refs?: string[] }).answer_image_refs).toEqual([
-          'asset_hw_1',
-          'asset_hw_2',
-        ]);
-      } finally {
-        vi.restoreAllMocks();
-      }
-    });
-
-    it('defaults answer_image_refs to [] for old callers (no regression)', async () => {
-      await seedQuestion('q_215_default');
-      const res = await POST(
-        submitReq({ activity_ref: { kind: 'question', id: 'q_215_default' }, rating: 'good' }),
+        ),
       );
-      expect(res.status).toBe(200);
-      const events = await testDb()
-        .select()
-        .from(event)
-        .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_215_default')));
-      expect((events[0].payload as { answer_image_refs?: string[] }).answer_image_refs).toEqual([]);
-    });
+      expect(body.judge).toBeNull();
+      expect(f.execute).not.toHaveBeenCalled();
+      expect(await events('experimental:assessment_settlement')).toMatchObject([
+        { payload: { rating, rating_source: 'user', theta_decision: { applied: false } } },
+      ]);
+      expect(await testDb().select().from(mastery_state)).toHaveLength(0);
+      expect(await testDb().select().from(item_family_calibration)).toHaveLength(0);
+      expect(await cards()).toHaveLength(1);
+    },
+  );
 
-    // F1 (PR #309 round-1) — a photo-only answer (no typed response_md, only
-    // answer_image_refs) is a real answer and MUST be judged WHEN it is routed to
-    // a judge that actually consumes the image (steps / multimodal_direct).
-    //
-    // F4 (PR #309 round-2) narrows this: an image-only answer is only judgeable by
-    // an image-consuming route. Here we force `multimodal_direct` (an image route)
-    // via `judge_kind_override` so the invoker is still called on the photo-only
-    // answer. The runner's R2 image fetch fails in-test (no asset) → it returns a
-    // graceful `unsupported` result rather than throwing — but the point of THIS
-    // test is that F4 did NOT skip the judge: the invoker WAS invoked with the
-    // image refs. (The text-only-route skip is covered by the F4 tests below.)
-    it('photo-only auto-rate routed to multimodal_direct invokes the image judge', async () => {
-      await seedQuestion('q_215_photo_only', {
-        kind: 'short_answer',
-        reference_md: '答案',
-        judge_kind_override: 'multimodal_direct',
-        knowledge_ids: [],
-      });
+  it('self-report cannot infer an explicit scheduling choice from auto_rate', async () => {
+    const f = await nativeSoloHttpFixture(testDb());
+    expect((await send(f.body({ self_report: true, auto_rate: true }))).status).toBe(400);
+    expect(await cards()).toHaveLength(0);
+  });
 
-      const realFactory = invokerModule.createDefaultJudgeInvoker;
-      const captured: Array<{ answer_md?: string; student_image_refs?: string[] }> = [];
-      vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockImplementation((deps) => {
-        const real = realFactory(deps);
-        return {
-          invoke: (input: Parameters<typeof real.invoke>[0]) => {
-            captured.push(input as { answer_md?: string; student_image_refs?: string[] });
-            return real.invoke(input);
-          },
-        } as never;
-      });
+  it('schedules all frozen KC targets and ignores client-supplied extra or disjoint references', async () => {
+    for (const refs of [['kc-a', 'unrelated'], ['unrelated']]) {
+      await resetDb();
+      const f = await nativeSoloHttpFixture(testDb(), { knowledgeIds: ['kc-a', 'kc-b'] });
+      await parsed(await send(f.body({ referenced_knowledge_ids: refs })));
+      expect((await cards()).map((row) => row.subject_id).sort()).toEqual(['kc-a', 'kc-b']);
+    }
+  });
 
-      try {
-        const res = await POST(
-          submitReq({
-            activity_ref: { kind: 'question', id: 'q_215_photo_only' },
-            rating: 'good',
-            // response_md omitted → photo is the only answer.
-            answer_image_refs: ['asset_photo_only_1'],
-            auto_rate: true,
-          }),
-        );
-        // The in-test image fetch cannot resolve the fake asset, so the real
-        // multimodal judge returns unsupported and auto-rate correctly fails 422.
-        expect(res.status).toBe(422);
+  it('uses a question card when the original has no KC targets', async () => {
+    const f = await nativeSoloHttpFixture(testDb(), { knowledgeIds: [] });
+    await parsed(await send(f.body()));
+    expect(await cards()).toMatchObject([{ subject_kind: 'question', subject_id: f.id }]);
+  });
 
-        // F4: the judge ran on the photo-only answer because the route consumes
-        // images (multimodal_direct) — it was NOT skipped.
-        expect(captured).toHaveLength(1);
-        expect(captured[0].answer_md).toBe('');
-        expect(captured[0].student_image_refs).toEqual(['asset_photo_only_1']);
+  it('round-trips stored ISO FSRS dates and upserts across independent originals', async () => {
+    const f = await nativeSoloHttpFixture(testDb());
+    await parsed(await send(f.body()));
+    const [first] = await cards();
+    expect(first.state.last_review).toEqual(expect.any(String));
+    const issuedAgain = await issueSoloFixture(testDb(), f.id);
+    await parsed(await send(f.body({ assessment: issuedAgain.assessment('B') })));
+    const [second] = await cards();
+    expect(second.id).toBe(first.id);
+    expect(second.state.reps).toBe(2);
+    expect(second.last_review_event_id).not.toBe(first.last_review_event_id);
+    expect(await originals()).toHaveLength(2);
+  });
 
-        // 422 happens before persistence.
-        const events = await testDb()
-          .select()
-          .from(event)
-          .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_215_photo_only')));
-        expect(events).toHaveLength(0);
-      } finally {
-        vi.restoreAllMocks();
-      }
-    });
+  it('concurrent retries share the original, effective candidate and one FSRS update', async () => {
+    const f = await nativeSoloHttpFixture(testDb());
+    const responses = await Promise.all([send(f.body()), send(f.body())]);
+    expect(responses.map((r) => r.status)).toEqual([200, 200]);
+    expect(await originals()).toHaveLength(1);
+    expect(await candidates()).toHaveLength(1);
+    expect(await cards()).toMatchObject([{ state: { reps: 1 } }]);
+    expect(await events(MASTERY_PROGRESS_ACTION)).toHaveLength(1);
+  });
 
-    // F4 (PR #309 round-2) — a photo-only answer routed to a TEXT-ONLY judge
-    // (exact for a fill_blank) must NOT be judged: the judge reads only the
-    // (empty) text and would score it wrong, polluting FSRS. In auto_rate mode
-    // this is a 422 (the question type can't grade a pure image), and NO review
-    // event / FSRS row is written.
-    it('photo-only + text-only route (exact) + auto_rate → 422, judge not invoked, no FSRS write', async () => {
-      await seedQuestion('q_215_photo_exact_auto', {
-        kind: 'fill_blank',
-        reference_md: '答案',
-        knowledge_ids: ['k_215_photo'],
-      });
+  it('rejects changed answer bytes under the accepted identity', async () => {
+    const f = await nativeSoloHttpFixture(testDb());
+    await parsed(await send(f.body()));
+    const before = await originals();
+    expect((await send(f.body({ assessment: f.issued.assessment('B') }))).status).toBe(409);
+    expect(await originals()).toEqual(before);
+    expect(await cards()).toMatchObject([{ state: { reps: 1 } }]);
+  });
 
-      const realFactory = invokerModule.createDefaultJudgeInvoker;
-      const captured: unknown[] = [];
-      vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockImplementation((deps) => {
-        const real = realFactory(deps);
-        return {
-          invoke: (input: Parameters<typeof real.invoke>[0]) => {
-            captured.push(input);
-            return real.invoke(input);
-          },
-        } as never;
-      });
+  it('deterministic evaluation does not spend the paid-model rate budget', async () => {
+    setTestConfig({ AI_RATE_LIMIT_MAX: 1, AI_RATE_LIMIT_WINDOW_MS: 60_000 });
+    for (let i = 0; i < 2; i++) {
+      const f = await nativeSoloHttpFixture(testDb(), { knowledgeIds: [] });
+      await parsed(await send(f.body()));
+      expect(f.execute).not.toHaveBeenCalled();
+    }
+  });
 
-      try {
-        const res = await POST(
-          submitReq({
-            activity_ref: { kind: 'question', id: 'q_215_photo_exact_auto' },
-            rating: 'good',
-            auto_rate: true,
-            // photo is the only answer; exact judge would read empty text.
-            answer_image_refs: ['asset_photo_exact_1'],
-          }),
-        );
-        expect(res.status).toBe(422);
-        const body = (await res.json()) as { error: string; message: string };
-        expect(body.error).toBe('unsupported_judge_route');
-        expect(body.message).toContain('photo-only');
+  it('rejects paid-model admission with 429 before any execution claim and allows a later original retry', async () => {
+    setTestConfig({ AI_RATE_LIMIT_MAX: 1, AI_RATE_LIMIT_WINDOW_MS: 60_000 });
+    const first = await nativeSoloHttpFixture(testDb(), { model: true });
+    const blocked = await nativeSoloHttpFixture(testDb(), { model: true });
+    vi.mocked(evaluationService.createFormalModelExecutor).mockRestore();
+    const driver = vi
+      .spyOn(piExecutor, 'createPiModelExecutor')
+      .mockImplementation(
+        (options) => (input, signal) =>
+          first.execute(input, signal, options.taskRunId ?? 'offline-run'),
+      );
+    await parsed(await send(first.body()));
+    await parsed(await send(first.body())); // sealed retries do not consume another token
+    expect(driver.mock.calls[0][0].taskRunId).toMatch(/^assessment_/);
+    const response = await send(blocked.body());
+    expect(response.status).toBe(429);
+    expect(response.headers.get('Retry-After')).toBeTruthy();
+    expect(driver).toHaveBeenCalledOnce();
+    expect(await originals()).toHaveLength(2);
+    expect(await candidates()).toHaveLength(1);
+    expect(await events('experimental:assessment_model_claim')).toHaveLength(1);
+    expect(await events('experimental:assessment_model_result')).toHaveLength(1);
+    __resetRateLimitForTests();
+    await parsed(await send(blocked.body()));
+    expect(driver).toHaveBeenCalledTimes(2);
+    expect(await originals()).toHaveLength(2);
+    expect(await candidates()).toHaveLength(2);
+  });
 
-        // F4: the judge was NOT invoked (route is text-only) — so no wrong-text
-        // scoring happened.
-        expect(captured).toHaveLength(0);
-
-        // No review event written (txn never opened) and no FSRS pollution.
-        const events = await testDb()
-          .select()
-          .from(event)
-          .where(eq(event.subject_id, 'q_215_photo_exact_auto'));
-        expect(events).toHaveLength(0);
-        const fsrs = await testDb()
-          .select()
-          .from(material_fsrs_state)
-          .where(eq(material_fsrs_state.subject_id, 'k_215_photo'));
-        expect(fsrs).toHaveLength(0);
-      } finally {
-        vi.restoreAllMocks();
-      }
-    });
-
-    // F3 (PR #309 round-4, YUK-215) — a client that SUPPLIES `judge_result_v2`
-    // for a photo-only + text-only-route answer must NOT bypass the photo-only
-    // gate. Pre-fix the gate only ran on the server-invoke branch (judgeResult
-    // === null); a supplied verdict was trusted and, with auto_rate, written to
-    // FSRS — exactly the text-only-route pollution F4 stops for the invoke path.
-    // The supplied result is now ignored for this case (same 422, no FSRS).
-    it('F3: photo-only + text-only route + SUPPLIED judge_result_v2 + auto_rate → 422, no FSRS', async () => {
-      await seedQuestion('q_215_photo_supplied', {
-        kind: 'fill_blank',
-        reference_md: '答案',
-        knowledge_ids: ['k_215_supplied'],
-      });
-
-      const realFactory = invokerModule.createDefaultJudgeInvoker;
-      const captured: unknown[] = [];
-      vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockImplementation((deps) => {
-        const real = realFactory(deps);
-        return {
-          invoke: (input: Parameters<typeof real.invoke>[0]) => {
-            captured.push(input);
-            return real.invoke(input);
-          },
-        } as never;
-      });
-
-      try {
-        const res = await POST(
-          submitReq({
-            activity_ref: { kind: 'question', id: 'q_215_photo_supplied' },
-            rating: 'good',
-            auto_rate: true,
-            // photo is the only answer; exact judge would read empty text.
-            answer_image_refs: ['asset_photo_supplied_1'],
-            // The attack vector: a client-supplied 'correct' verdict that would,
-            // pre-fix, be trusted and written to FSRS despite the text-only route.
+  it.each([undefined, 'tampered-preview-token', 'obsolete-signed-format'])(
+    'never treats supplied legacy advice/token %s as the authoritative score',
+    async (token) => {
+      const f = await nativeSoloHttpFixture(testDb());
+      const body = await parsed(
+        await send(
+          f.body({
+            assessment: f.issued.assessment('B'),
+            judge_provenance_token: token,
+            judge_task_run_id: 'client-claimed-run',
             judge_result_v2: {
               coarse_outcome: 'correct',
-              score: 0.95,
+              score: 1,
               score_meaning: 'correctness',
-              confidence: 0.9,
-              feedback_md: 'looks right',
+              confidence: 1,
+              capability_ref: { id: 'steps', version: 'client-version' },
+              feedback_md: '客户端建议不能替代冻结原答',
               evidence_json: {},
-              capability_ref: { id: 'exact', version: '1' },
             },
           }),
-        );
-        expect(res.status).toBe(422);
-        const body = (await res.json()) as { error: string; message: string };
-        expect(body.error).toBe('unsupported_judge_route');
-        expect(body.message).toContain('photo-only');
-
-        // The supplied verdict was ignored — no review event, no FSRS pollution.
-        const events = await testDb()
-          .select()
-          .from(event)
-          .where(eq(event.subject_id, 'q_215_photo_supplied'));
-        expect(events).toHaveLength(0);
-        const fsrs = await testDb()
-          .select()
-          .from(material_fsrs_state)
-          .where(eq(material_fsrs_state.subject_id, 'k_215_supplied'));
-        expect(fsrs).toHaveLength(0);
-      } finally {
-        vi.restoreAllMocks();
-      }
-    });
-
-    // F4 — the same photo-only + text-only route WITHOUT auto_rate records the
-    // attempt on the user's manual rating but DOES NOT run the judge (no judge
-    // envelope on the payload, no wrong-text scoring).
-    it('photo-only + text-only route (exact), non-auto_rate → attempt recorded, judge not invoked', async () => {
-      await seedQuestion('q_215_photo_exact_manual', {
-        kind: 'fill_blank',
-        reference_md: '答案',
-        knowledge_ids: ['k_215_manual'],
-      });
-
-      const realFactory = invokerModule.createDefaultJudgeInvoker;
-      const captured: unknown[] = [];
-      vi.spyOn(invokerModule, 'createDefaultJudgeInvoker').mockImplementation((deps) => {
-        const real = realFactory(deps);
-        return {
-          invoke: (input: Parameters<typeof real.invoke>[0]) => {
-            captured.push(input);
-            return real.invoke(input);
-          },
-        } as never;
-      });
-
-      try {
-        const res = await POST(
-          submitReq({
-            activity_ref: { kind: 'question', id: 'q_215_photo_exact_manual' },
-            rating: 'good',
-            answer_image_refs: ['asset_photo_manual_1'],
-          }),
-        );
-        expect(res.status).toBe(200);
-        const body = (await res.json()) as {
-          review_event: { rating: string };
-          judge: unknown;
-        };
-        // User's manual rating is committed; judge result is null (not run).
-        expect(body.review_event.rating).toBe('good');
-        expect(body.judge).toBeNull();
-        // F4: the judge was NOT invoked.
-        expect(captured).toHaveLength(0);
-
-        const events = await testDb()
-          .select()
-          .from(event)
-          .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_215_photo_exact_manual')));
-        expect(events).toHaveLength(1);
-        // No judge envelope on the payload (judge never ran), but the photo refs
-        // are still frozen as the evidence trail.
-        expect((events[0].payload as { judge?: unknown }).judge).toBeUndefined();
-        expect((events[0].payload as { answer_image_refs?: string[] }).answer_image_refs).toEqual([
-          'asset_photo_manual_1',
-        ]);
-      } finally {
-        vi.restoreAllMocks();
-      }
-    });
-
-    // F1 — a truly empty submit (neither text nor image) with auto_rate STILL
-    // 422s, now with a message naming both inputs.
-    it('auto_rate with no answer at all (no text, no image) → 422 naming both inputs', async () => {
-      await seedQuestion('q_215_empty_autorate', {
-        kind: 'fill_blank',
-        reference_md: '答案',
-        knowledge_ids: [],
-      });
-
-      const res = await POST(
-        submitReq({
-          activity_ref: { kind: 'question', id: 'q_215_empty_autorate' },
-          rating: 'good',
-          auto_rate: true,
-          // no response_md, no answer_image_refs
-        }),
+        ),
       );
-      expect(res.status).toBe(422);
-      const body = (await res.json()) as { error: string; message: string };
-      expect(body.error).toBe('unsupported_judge_route');
-      expect(body.message).toContain('response_md');
-      expect(body.message).toContain('answer_image_refs');
-    });
+      expect(body.judge).toMatchObject({ coarse_outcome: 'incorrect', suggested_rating: 'again' });
+      expect(await candidates()).toMatchObject([
+        { run_refs: [], provenance: { source: 'automatic' } },
+      ]);
+      expect(await events('judge')).toHaveLength(0);
+    },
+  );
+
+  it.each([
+    { points: 1, verdict: 'correct', rating: 'good' },
+    { points: 0.5, verdict: 'partial', rating: 'hard' },
+    { points: 0, verdict: 'incorrect', rating: 'again' },
+  ])(
+    'records actual model evidence for $verdict once across retries',
+    async ({ points, verdict, rating }) => {
+      const f = await nativeSoloHttpFixture(testDb(), { model: true, points });
+      const body = await parsed(await send(f.body()));
+      expect(body.judge).toMatchObject({ coarse_outcome: verdict, suggested_rating: rating });
+      const [candidate] = await candidates();
+      expect(candidate.run_refs).toHaveLength(1);
+      expect(candidate.provenance).toMatchObject({ source: 'automatic', assisted: false });
+      await parsed(await send(f.body()));
+      expect(f.execute).toHaveBeenCalledOnce();
+      expect(await cards()).toMatchObject([{ state: { reps: 1 } }]);
+    },
+  );
+
+  it.each(['pending', 'throw'] as const)(
+    'holds model %s while preserving the original and sealed execution, without automatic repayment',
+    async (outcome) => {
+      const f = await nativeSoloHttpFixture(testDb(), { model: true });
+      f.setOutcome(outcome);
+      const body = await parsed(await send(f.body()));
+      expect(body).toMatchObject({
+        status: 'review_required',
+        judge: { coarse_outcome: 'unsupported', suggested_rating: null },
+      });
+      expect(await originals()).toHaveLength(1);
+      expect(await cards()).toHaveLength(0);
+      await parsed(await send(f.body()));
+      expect(f.execute).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(['carelessness', 'conceptual_error'])(
+    'prior %s cannot silently overwrite an explicit scheduling rating',
+    async (category) => {
+      const f = await nativeSoloHttpFixture(testDb(), { model: true, points: 0.5 });
+      const attemptId = `prior_${f.id}`;
+      await seedAttempt({
+        id: attemptId,
+        question_id: f.id,
+        knowledge_ids: f.knowledgeIds,
+        outcome: 'failure',
+        created_at: new Date(Date.now() - 60_000),
+      });
+      await seedUserCause({ attempt_event_id: attemptId, primary_category: category });
+      const priorCauses = await events('experimental:user_cause');
+      await parsed(await send(f.body({ auto_rate: false, rating: 'hard' })));
+      expect(await events('experimental:assessment_settlement')).toMatchObject([
+        { payload: { rating: 'hard', rating_source: 'user' } },
+      ]);
+      expect(await events('experimental:user_cause')).toEqual(priorCauses);
+    },
+  );
+
+  it.each([true, false])(
+    'keeps photo-only originals with model=%s and never substitutes observation text',
+    async (model) => {
+      const f = await nativeSoloHttpFixture(testDb(), { model });
+      const photo = await handwritingFixture(testDb());
+      const assessment = { ...f.issued.assessment(''), group_evidence: [photo] };
+      const body = await parsed(
+        await send(
+          f.body({
+            assessment,
+            response_md: '这只是观察文本',
+            answer_image_refs: ['not-the-original'],
+          }),
+        ),
+      );
+      expect(body).toMatchObject({
+        status: model ? 'effective' : 'review_required',
+        judge: { coarse_outcome: model ? 'correct' : 'unsupported' },
+      });
+      expect(await originals()).toMatchObject([{ group_evidence: [photo] }]);
+      if (model)
+        expect(f.execute.mock.calls[0][0]).toMatchObject({
+          group_evidence: [photo],
+          slot_responses: [{ text_md: '' }],
+        });
+      else {
+        expect(f.execute).not.toHaveBeenCalled();
+        expect(await cards()).toHaveLength(0);
+        const self = await parsed(
+          await send(f.body({ assessment, self_report: true, auto_rate: false, rating: 'hard' })),
+        );
+        expect(self.judge).toBeNull();
+        expect(await cards()).toMatchObject([{ state: { reps: 1 } }]);
+      }
+    },
+  );
+
+  it('a blank issued response follows the frozen blank policy without a model call', async () => {
+    const f = await nativeSoloHttpFixture(testDb());
+    const body = await parsed(await send(f.body({ assessment: f.issued.assessment('') })));
+    expect(body.judge).toMatchObject({ coarse_outcome: 'incorrect' });
+    expect(f.execute).not.toHaveBeenCalled();
+    expect(await candidates()).toMatchObject([
+      { unit_results: [{ scored_because: 'blank_marked_zero' }] },
+    ]);
   });
 });
