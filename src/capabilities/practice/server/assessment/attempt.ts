@@ -37,6 +37,12 @@ export async function prepareFormalAttemptSubmission(
     .where(eq(assessment_issuance.issuance_id, request.issuance_id))
     .limit(1);
   if (!issuance) throw new ApiError('not_found', 'issued assessment not found', 404);
+  if (
+    issuance.container_occurrence_ref?.startsWith('ingestion:') &&
+    entry !== 'ingestion_grading'
+  ) {
+    throw new ApiError('capture_entry_required', 'captured original belongs to ingestion', 409);
+  }
   if (issuance.container_occurrence_ref?.startsWith('probe:') && entry !== 'conjecture_probe') {
     throw new ApiError(
       'probe_entry_required',
@@ -187,6 +193,9 @@ export async function recordFormalAttemptCapture(
       revision_id: submission.revision_id,
       original_evaluation_id: candidateId,
       entry,
+      ...(entry === 'ingestion_grading' && capture.ingestion
+        ? { ingestion: capture.ingestion, generated_by: capture.ingestion.generated_by }
+        : {}),
       ...(capture.paper_artifact_id ? { paper_artifact_id: capture.paper_artifact_id } : {}),
       ...(capture.paper_started_at ? { paper_started_at: capture.paper_started_at } : {}),
       ...(capture.paper_feedback_policy
@@ -289,6 +298,7 @@ export async function commitFormalAttempt(
     },
     {
       actorRef: `assessment:${entry}`,
+      allowCapturedOriginal: entry === 'ingestion_grading' && options.onActivated !== undefined,
       onThetaApplied: async (tx, observation) => {
         if (observation.outcome !== 1) return;
         // Isolate optional telemetry failures without poisoning the activation.

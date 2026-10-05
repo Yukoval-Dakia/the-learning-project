@@ -40,38 +40,34 @@ async function fixture(knowledgeId = `kc_${createId()}`) {
       updated_at: now,
     })
     .onConflictDoNothing();
-  await db
-    .insert(question)
-    .values({
-      id,
-      kind: 'choice',
-      prompt_md: '水量和坡面相同，哪项反映实验控制变量？',
-      reference_md: 'A',
-      choices_md: ['固定水量，只改变坡度', '同时改变水量和坡度'],
-      knowledge_ids: [knowledgeId],
-      difficulty: 3,
-      source: 'manual',
-      created_at: now,
-      updated_at: now,
-      version: 0,
-    });
+  await db.insert(question).values({
+    id,
+    kind: 'choice',
+    prompt_md: '水量和坡面相同，哪项反映实验控制变量？',
+    reference_md: 'A',
+    choices_md: ['固定水量，只改变坡度', '同时改变水量和坡度'],
+    knowledge_ids: [knowledgeId],
+    difficulty: 3,
+    source: 'manual',
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
   const streamId = `stream_${id}`;
-  await db
-    .insert(practice_stream_item)
-    .values({
-      id: streamId,
-      date: '2026-10-04',
-      position: 0,
-      item_kind: 'question',
-      ref_id: id,
-      source: 'decay',
-      status: 'in_progress',
-      reasoning: 'native calibration fixture',
-      added_by: 'composer_live',
-      signals: {},
-      created_at: now,
-      updated_at: now,
-    });
+  await db.insert(practice_stream_item).values({
+    id: streamId,
+    date: '2026-10-04',
+    position: 0,
+    item_kind: 'question',
+    ref_id: id,
+    source: 'decay',
+    status: 'in_progress',
+    reasoning: 'native calibration fixture',
+    added_by: 'composer_live',
+    signals: {},
+    created_at: now,
+    updated_at: now,
+  });
   await recordSelectionObservation(db, {
     date: '2026-10-04',
     streamItemId: streamId,

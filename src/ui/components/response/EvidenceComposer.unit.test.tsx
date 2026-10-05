@@ -12,15 +12,13 @@ describe('EvidenceComposer', () => {
   it('preserves text and adds uploaded evidence with MIME-derived kind and group binding', async () => {
     const onTextChange = vi.fn();
     const onAttachmentsChange = vi.fn();
-    const upload = vi
-      .fn()
-      .mockResolvedValue({
-        id: 'asset-image',
-        mime_type: 'image/png',
-        byte_size: 11,
-        sha256: 'a'.repeat(64),
-        created_at: '2026-10-04T00:00:00.000Z',
-      });
+    const upload = vi.fn().mockResolvedValue({
+      id: 'asset-image',
+      mime_type: 'image/png',
+      byte_size: 11,
+      sha256: 'a'.repeat(64),
+      created_at: '2026-10-04T00:00:00.000Z',
+    });
     render(
       <EvidenceComposer
         text="原始回答"

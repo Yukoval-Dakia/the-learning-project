@@ -13,7 +13,7 @@
   },
   "debts": {
     "capabilityToServer": {
-      "total": 439,
+      "total": 437,
       "byOwnerPair": {
         "agency -> ai": 28,
         "agency -> boss": 10,
@@ -44,7 +44,6 @@
         "ingestion -> ai": 10,
         "ingestion -> boss": 6,
         "ingestion -> events": 5,
-        "ingestion -> mastery": 2,
         "ingestion -> projections": 9,
         "ingestion -> proposals": 3,
         "ingestion -> questions": 10,

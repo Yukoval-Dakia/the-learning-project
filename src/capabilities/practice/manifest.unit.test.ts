@@ -195,8 +195,12 @@ describe('practice manifest events', () => {
     expect(practiceCapability.subscriptions?.handlers).toContainEqual(
       expect.objectContaining({
         id: 'practice.failure-learning-attempt',
-        version: 1,
-        actions: ['attempt'],
+        version: 2,
+        actions: [
+          'attempt',
+          'experimental:assessment_attempt',
+          'experimental:assessment_activation',
+        ],
         load: expect.any(Function),
       }),
     );

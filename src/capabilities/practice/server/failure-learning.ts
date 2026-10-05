@@ -8,6 +8,7 @@ import {
   type AttributionOutcome,
   runAttributionAndWriteJudgeEvent,
 } from './failure-learning-attribution';
+import { loadNativeFailureContext } from './failure-learning-native';
 import { type RunVariantGenResult, runVariantGen } from './failure-learning-variant';
 import { loadFailureLearningKnowledgeContext } from './knowledge-runtime';
 import type { PracticeTaskRunFn } from './task-runtime';
@@ -32,7 +33,7 @@ export type AttributionResult =
       judgeEventId: string;
       modelInvoked: boolean;
     }
-  | { status: 'skipped'; reason: FailureLearningSkipReason; modelInvoked: false }
+  | { status: 'skipped'; reason: FailureLearningSkipReason; modelInvoked: boolean }
   | { status: 'failed_permanent'; error: unknown; modelInvoked: boolean }
   | { status: 'failed_retryable'; error: unknown; modelInvoked: boolean };
 
@@ -94,7 +95,11 @@ async function classifyAttempt(
     .where(eq(event.id, attemptEventId))
     .limit(1);
   if (!row) return { status: 'skipped', reason: 'attempt_not_found' };
-  if (row.action !== 'attempt' || row.subject_kind !== 'question' || row.outcome !== 'failure') {
+  if (
+    row.subject_kind !== 'question' ||
+    (row.action !== 'experimental:assessment_attempt' &&
+      (row.action !== 'attempt' || row.outcome !== 'failure'))
+  ) {
     return { status: 'skipped', reason: 'not_failure_attempt' };
   }
   return { status: 'eligible', payload: (row.payload ?? {}) as Record<string, unknown> };
@@ -168,7 +173,12 @@ async function attributeFailure(
   if (options.automatic && failure.user_cause) {
     return { status: 'skipped', reason: 'user_cause_present', modelInvoked: false };
   }
-  if (failure.question_snapshot === null) {
+  const native = failure.assessment
+    ? await loadNativeFailureContext(deps.db, attemptEventId)
+    : null;
+  if (failure.assessment && !native)
+    return { status: 'skipped', reason: 'question_not_found', modelInvoked: false };
+  if (!native && failure.question_snapshot === null) {
     return { status: 'skipped', reason: 'question_not_found', modelInvoked: false };
   }
 
@@ -183,7 +193,7 @@ async function attributeFailure(
     .where(eq(question.id, failure.question_id))
     .limit(1);
   const frozenQuestion = failure.question_snapshot?.question;
-  if (!frozenQuestion && !questionRow) {
+  if (!native && !frozenQuestion && !questionRow) {
     return { status: 'skipped', reason: 'question_not_found', modelInvoked: false };
   }
   if (
@@ -195,11 +205,12 @@ async function attributeFailure(
   }
 
   const referencedKnowledgeIds =
-    failure.referenced_knowledge_ids.length > 0
+    native?.knowledge_ids ??
+    (failure.referenced_knowledge_ids.length > 0
       ? failure.referenced_knowledge_ids
       : failure.question_snapshot === undefined
         ? (questionRow?.knowledge_ids ?? [])
-        : [];
+        : []);
   const knowledgeContext = await loadFailureLearningKnowledgeContext(
     deps.db,
     referencedKnowledgeIds,
@@ -214,15 +225,20 @@ async function attributeFailure(
       db: deps.db,
       attemptEventId,
       input: {
-        prompt_md: frozenQuestion ? frozenQuestion.prompt_md : (questionRow?.prompt_md ?? ''),
-        reference_md: frozenQuestion
-          ? frozenQuestion.reference_md
-          : (questionRow?.reference_md ?? null),
-        wrong_answer_md: failure.answer_md ?? '',
+        prompt_md:
+          native?.prompt_md ??
+          (frozenQuestion ? frozenQuestion.prompt_md : (questionRow?.prompt_md ?? '')),
+        reference_md: native
+          ? native.reference_md
+          : frozenQuestion
+            ? frozenQuestion.reference_md
+            : (questionRow?.reference_md ?? null),
+        wrong_answer_md: native?.answer_md ?? failure.answer_md ?? '',
         knowledge_context: knowledgeContext,
         ...(reasoningTraceMd !== undefined ? { reasoning_trace_md: reasoningTraceMd } : {}),
       },
       referencedKnowledgeIds,
+      ...(native ? { nativeExpectation: native } : {}),
       subjectProfile,
       runTaskFn(kind, input, ctx) {
         modelInvoked = true;
@@ -233,6 +249,8 @@ async function attributeFailure(
     return { status: 'failed_retryable', error, modelInvoked };
   }
 
+  if (outcome.outcome === 'superseded')
+    return { status: 'skipped', reason: 'verdict_overturned', modelInvoked };
   if (outcome.outcome === 'retryable') {
     return { status: 'failed_retryable', error: outcome.error, modelInvoked };
   }

@@ -120,6 +120,9 @@ export const ReviewWeeklyResponseSchema = z.object({
       date: z.string(),
       count: z.number().int().nonnegative(),
       correct: z.number().int().nonnegative(),
+      incorrect: z.number().int().nonnegative(),
+      partial: z.number().int().nonnegative(),
+      ungraded: z.number().int().nonnegative(),
     }),
   ),
   top_causes: z.array(

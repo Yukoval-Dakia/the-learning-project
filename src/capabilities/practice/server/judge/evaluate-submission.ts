@@ -60,12 +60,13 @@ import {
   createPiModelExecutor,
   learningSettlement,
   snapshotAssessmentLearningScope,
+  withdrawCapturedOccurrence,
 } from '@/server/assessment/runtime';
 import { checkRateLimit } from '@/server/http/rate-limit';
 import { createRecordedModelExecutor } from './recorded-model-executor';
 
 // Native assessment runtime ports are assembled at this existing capability boundary.
-export { snapshotAssessmentLearningScope };
+export { snapshotAssessmentLearningScope, withdrawCapturedOccurrence };
 
 /**
  * YUK-1092 — 装配描述符：在本模块组合点按 descriptor 铸
@@ -657,6 +658,7 @@ export async function activateSubmissionCandidate(
   intent: ActivateEvaluationRequestT,
   options: {
     actorRef: string;
+    allowCapturedOriginal?: boolean;
     now?: Date;
     record?: (tx: Tx) => Promise<void>;
     /** Persist immutable participation before settlement reads its capture, in the same transaction. */
@@ -670,6 +672,7 @@ export async function activateSubmissionCandidate(
         await options.recordOriginal?.(input.tx);
         return learningSettlement(input, { onThetaApplied: options.onThetaApplied });
       },
+      allowCapturedOriginal: options.allowCapturedOriginal,
       actorRef: options.actorRef,
       now: options.now,
     });

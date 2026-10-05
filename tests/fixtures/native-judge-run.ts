@@ -25,20 +25,18 @@ export async function nativeJudgeRunFixture(
   const [existing] = await db.select().from(question).where(eq(question.id, questionId));
   if (!existing) {
     const now = new Date();
-    await db
-      .insert(question)
-      .values({
-        id: questionId,
-        prompt_md: '顺流18 km/h、逆流12 km/h，列方程说明如何求静水船速。',
-        kind: 'short_answer',
-        reference_md: 'v+c=18，v-c=12，相加得v=15 km/h。',
-        knowledge_ids: options.knowledgeIds ?? [],
-        difficulty: 3,
-        source: 'manual',
-        version: 0,
-        created_at: now,
-        updated_at: now,
-      });
+    await db.insert(question).values({
+      id: questionId,
+      prompt_md: '顺流18 km/h、逆流12 km/h，列方程说明如何求静水船速。',
+      kind: 'short_answer',
+      reference_md: 'v+c=18，v-c=12，相加得v=15 km/h。',
+      knowledge_ids: options.knowledgeIds ?? [],
+      difficulty: 3,
+      source: 'manual',
+      version: 0,
+      created_at: now,
+      updated_at: now,
+    });
   }
   const issued = await issueSoloFixture(db, questionId, true);
   const request = {

@@ -54,7 +54,9 @@ import { InterventionDiagnosticQuestionMetadata } from '@/core/schema/interventi
 import type { Db, Tx } from '@/db/client';
 import {
   assessment_issuance,
+  learning_session,
   question,
+  question_block,
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
@@ -230,6 +232,61 @@ export async function issueAssessment(
   db: Db | Tx,
   request: IssueAssessmentRequest,
 ): Promise<IssueAssessmentResult> {
+  return issueAssessmentInternal(db, request);
+}
+
+interface IngestionCaptureSource {
+  session_id: string;
+  block_id: string;
+  block_version: number;
+}
+
+/** Capture receipt for already-existing work, not evidence of prior service or admission. */
+export async function issueCapturedAssessment(
+  db: Db | Tx,
+  request: Pick<IssueAssessmentRequest, 'group_id' | 'now'> & {
+    revision_id?: string;
+    issuance_id: string;
+    source: IngestionCaptureSource;
+  },
+): Promise<IssueAssessmentResult> {
+  return db.transaction(async (tx) => {
+    const [block] = await tx
+      .select()
+      .from(question_block)
+      .where(eq(question_block.id, request.source.block_id))
+      .for('update');
+    const [session] = await tx
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, request.source.session_id));
+    if (
+      !block ||
+      block.ingestion_session_id !== request.source.session_id ||
+      block.version !== request.source.block_version ||
+      block.status !== 'draft' ||
+      session?.type !== 'ingestion' ||
+      session.status !== 'extracted'
+    ) {
+      return { status: 'binding_invalid', issues: ['capture source is no longer available'] };
+    }
+    return issueAssessmentInternal(
+      tx,
+      {
+        ...request,
+        container_occurrence_ref: `ingestion:${request.source.session_id}:${block.id}:${block.version}`,
+        actorRef: 'ingestion:capture',
+      },
+      request.source,
+    );
+  });
+}
+
+async function issueAssessmentInternal(
+  db: Db | Tx,
+  request: IssueAssessmentRequest,
+  capture?: IngestionCaptureSource,
+): Promise<IssueAssessmentResult> {
   if (request.part_ids != null && request.part_ids.length === 0) {
     throw new Error('issueAssessment: part_ids may not be an empty array');
   }
@@ -251,6 +308,14 @@ export async function issueAssessment(
       .for('update')
       .limit(1);
     if (!root) return { status: 'not_found' };
+    if (
+      capture &&
+      (root.metadata?.ingestion_session_id !== capture.session_id ||
+        root.metadata?.question_block_id !== capture.block_id ||
+        root.metadata?.capture_block_version !== capture.block_version)
+    ) {
+      return { status: 'binding_invalid', issues: ['question does not belong to this capture'] };
+    }
 
     // 2) lifecycle + 目标 revision 解析（显式 revision_id 优先 —— 不发 latest）。
     const [lifecycle] = await tx
@@ -293,7 +358,7 @@ export async function issueAssessment(
       if (request.container_occurrence_ref !== `probe:${root.id}`)
         return { status: 'container_ref_required' };
     }
-    if (mode === 'auto_score' && lifecycle?.scoring_admission_state !== 'admitted') {
+    if (!capture && mode === 'auto_score' && lifecycle?.scoring_admission_state !== 'admitted') {
       return { status: 'not_admitted' };
     }
 
@@ -463,7 +528,8 @@ export async function issueAssessment(
         claim_status: claimStatus,
         claimed_by_ref: claimedByRef,
         admission_generation_observed: lifecycle?.scoring_admission_generation ?? null,
-        mode,
+        mode: capture ? 'capture_existing' : mode,
+        ...(capture ? { capture_source: capture, scheduling_policy: 'preserve' } : {}),
       } satisfies Record<string, unknown>,
       created_at: now,
     });

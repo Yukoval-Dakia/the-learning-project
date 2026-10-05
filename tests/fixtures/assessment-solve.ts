@@ -48,22 +48,20 @@ export async function freezeSolveQuestion(db: Db, questionId: string, manual = f
 
 export async function seedFrozenSolveQuestion(db: Db) {
   const id = createId();
-  await db
-    .insert(question)
-    .values({
-      id,
-      kind: 'derivation',
-      prompt_md:
-        '已知 a≠b，化简 (a²−b²)/(a−b)。请保留因式分解、约分条件及最后结果。\n条件只保证分母非零，不能随意令 a=b。',
-      reference_md: 'a+b\n\n解析：先因式分解为 (a−b)(a+b)，由 a≠b 才可约分。',
-      judge_kind_override: 'exact',
-      knowledge_ids: [],
-      difficulty: 3,
-      source: 'web_sourced',
-      created_at: new Date(),
-      updated_at: new Date(),
-      version: 0,
-    });
+  await db.insert(question).values({
+    id,
+    kind: 'derivation',
+    prompt_md:
+      '已知 a≠b，化简 (a²−b²)/(a−b)。请保留因式分解、约分条件及最后结果。\n条件只保证分母非零，不能随意令 a=b。',
+    reference_md: 'a+b\n\n解析：先因式分解为 (a−b)(a+b)，由 a≠b 才可约分。',
+    judge_kind_override: 'exact',
+    knowledge_ids: [],
+    difficulty: 3,
+    source: 'web_sourced',
+    created_at: new Date(),
+    updated_at: new Date(),
+    version: 0,
+  });
   const frozen = await freezeSolveQuestion(db, id);
   const slot = frozen.contract.response_spec.slots[0];
   return {

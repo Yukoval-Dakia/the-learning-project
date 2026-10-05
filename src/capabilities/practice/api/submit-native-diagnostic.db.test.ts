@@ -245,7 +245,17 @@ describe('native diagnostic HTTP submission', () => {
     expect(
       (await testDb().select().from(question).where(eq(question.id, f.id)))[0].draft_status,
     ).toBe('draft');
-    expect((await f.submit({ assessment: { ...f.assessment, evaluation_group_id: 'different-original', idempotency_key: 'different-key' } })).status).toBe(409);
+    expect(
+      (
+        await f.submit({
+          assessment: {
+            ...f.assessment,
+            evaluation_group_id: 'different-original',
+            idempotency_key: 'different-key',
+          },
+        })
+      ).status,
+    ).toBe(409);
     expect((await f.submit()).status).toBe(422);
     expect(f.execute).toHaveBeenCalledTimes(1);
     expect(

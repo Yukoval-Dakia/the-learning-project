@@ -25,21 +25,19 @@ async function fixture(model = true) {
   const db = testDb();
   const id = `q_${newId()}`;
   const now = new Date();
-  await db
-    .insert(question)
-    .values({
-      id,
-      prompt_md: `原题 ${id}：顺流18、逆流12，解释如何消去水速。`,
-      kind: 'short_answer',
-      reference_md: '两式相加，静水速度15 km/h',
-      judge_kind_override: 'exact',
-      knowledge_ids: ['k1'],
-      difficulty: 3,
-      source: 'manual',
-      version: 0,
-      created_at: now,
-      updated_at: now,
-    });
+  await db.insert(question).values({
+    id,
+    prompt_md: `原题 ${id}：顺流18、逆流12，解释如何消去水速。`,
+    kind: 'short_answer',
+    reference_md: '两式相加，静水速度15 km/h',
+    judge_kind_override: 'exact',
+    knowledge_ids: ['k1'],
+    difficulty: 3,
+    source: 'manual',
+    version: 0,
+    created_at: now,
+    updated_at: now,
+  });
   const issued = await issueSoloFixture(db, id, model);
   const request = issued.assessment('v+c=18，v-c=12。相加得2v=30，因此v=15 km/h。');
   const options = { enabled: true, capture: { response_md: '原始观察文本', latency_ms: 321 } };
@@ -52,17 +50,15 @@ async function pending(db: ReturnType<typeof testDb>) {
 async function seedSession(type: string) {
   const id = newId();
   const now = new Date();
-  await testDb()
-    .insert(learning_session)
-    .values({
-      id,
-      type,
-      status: 'started',
-      warnings: [],
-      created_at: now,
-      updated_at: now,
-      version: 0,
-    });
+  await testDb().insert(learning_session).values({
+    id,
+    type,
+    status: 'started',
+    warnings: [],
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
   return id;
 }
 beforeEach(async () => {

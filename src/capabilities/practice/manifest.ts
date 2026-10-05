@@ -155,8 +155,12 @@ export const practiceCapability = defineCapability({
     handlers: [
       {
         id: 'practice.failure-learning-attempt',
-        version: 1,
-        actions: ['attempt'],
+        version: 2,
+        actions: [
+          'attempt',
+          'experimental:assessment_attempt',
+          'experimental:assessment_activation',
+        ],
         load: () =>
           import('./server/failure-learning-subscription').then(
             (m) => m.buildFailureLearningAttemptSubscriber,

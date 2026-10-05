@@ -2,6 +2,15 @@ import { z } from 'zod';
 
 /** Learner process observations; none of these fields replace original responses. */
 export const AssessmentAttemptCapture = z.object({
+  ingestion: z
+    .object({
+      block_id: z.string(),
+      block_version: z.number().int().nonnegative(),
+      source_document_id: z.string(),
+      source_asset_ids: z.array(z.string()),
+      generated_by: z.literal('workflow_judge'),
+    })
+    .optional(),
   paper_artifact_id: z.string().optional(),
   paper_started_at: z.string().datetime().optional(),
   paper_feedback_policy: z.string().optional(),

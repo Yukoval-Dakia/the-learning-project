@@ -51,3 +51,5 @@ Nativecost proof extended to realpi normalization: /tmp/yuk1047-native-adapter-r
 2026-10-05 Probe native production接线完成：draft publication→admitted queue实际issuance→图片/文本原件→native candidate→独立签名probe_result。无练习activation，通用激活拒绝probe容器；70DB+151unit/25lifecycle/6queue/18真实代码闭环离线模型端口、typecheck/build/Postman/boundary439通过。继续ingestion先持久化/native failure consumers/准入registry；无PR/paid/prod。
 
 YUK-1047续：共享原生评分已拆为短事务读/事务外模型/短事务封存，同组session锁保留幂等与attempt串行；22+34 scoped DB、typecheck/build通过。ingestion原件捕获与消费者仍未完成。
+
+2026-10-05 续接：ingestion原件捕获/原revision重试/确定性收录/撤回重放；native归因与变式冻结内容+晚到有效判复核；失败统计/知识工具/待复习候选/关联计数/cache接线。12capture44diagnostic40attribution30variant80reporting4native（重叠）通过；typecheck/build/boundary437通过。余native复习次数/rating与CSV纯快照、registry准入census/最终gates/reviewPRCI。T3 occurrence-export-design任务完成已读，提出按evaluation_group存活FSRS效果去重，不将rating当correctness。CoachHub现有UI语义问题已PARKED待Linear去重。全部工作仍未部署/付费，主writer未动.serena。

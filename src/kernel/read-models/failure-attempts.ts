@@ -24,6 +24,7 @@ import { filterActiveRows, newerEventRow } from '@/kernel/events';
 import {
   type NativeAttemptVerdict,
   nativeAttemptOutcome,
+  resolveVerdictsForAttempts,
   resolveVerdictsForNativeAttempts,
 } from './assessment-verdict';
 
@@ -518,7 +519,8 @@ async function loadFailureAttempts(
       question_id: a.subject_id,
       answer_md: evidence.answer_md,
       answer_image_refs: evidence.answer_image_refs,
-      referenced_knowledge_ids: evidence.referenced_knowledge_ids,
+      referenced_knowledge_ids:
+        nativeVerdicts.get(a.id)?.knowledge_ids ?? evidence.referenced_knowledge_ids,
       question_snapshot: evidence.question_snapshot,
       created_at: a.created_at,
       correction_state: attemptTruths.get(a.id) ?? activeEffectiveTruth(a.id),
@@ -784,7 +786,8 @@ async function loadFailureAttemptById(
     question_id: attempt.subject_id,
     answer_md: evidence.answer_md,
     answer_image_refs: evidence.answer_image_refs,
-    referenced_knowledge_ids: evidence.referenced_knowledge_ids,
+    referenced_knowledge_ids:
+      native.get(attempt.id)?.knowledge_ids ?? evidence.referenced_knowledge_ids,
     question_snapshot: evidence.question_snapshot,
     created_at: attempt.created_at,
     correction_state: attemptTruth,
@@ -868,4 +871,19 @@ async function getPartitionedFailureRows(
     )
     .orderBy(desc(event.created_at), desc(event.id));
   return rows as EventRow[];
+}
+
+/** Reporting view: omit historical failures whose effective legacy verdict became correct. */
+export async function getCurrentFailureAttempts(db: DbLike, opts: GetFailureAttemptsOpts = {}) {
+  const failures = await getFailureAttempts(db, { ...opts, limit: null });
+  const legacy = await resolveVerdictsForAttempts(
+    db,
+    failures.filter((row) => !row.assessment).map((row) => row.attempt_event_id),
+  );
+  const current = failures.filter(
+    (row) =>
+      row.assessment ||
+      legacy.get(row.attempt_event_id)?.effective?.verdict.coarse_outcome !== 'correct',
+  );
+  return opts.limit == null ? current : current.slice(0, opts.limit);
 }

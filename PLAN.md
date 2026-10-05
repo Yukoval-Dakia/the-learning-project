@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-05。YUK-1047 已恢复到推送分支 fix/yuk-1047-formal-entries，当前工作树 /Volumes/YukovalSBak/yukoval-projects/tlp-assessment-entries。旧结算 writer 已删除，23 DB / 19 invariant unit / typecheck / build 通过；诊断生产冻结发布/签名/one-time claim已接通（未准入仍withheld）；Probe原生发题/图片原件/签名与ND-5隔离已接通；ingestion与消费者仍在实施，八入口未完成，不标Done。依赖不追新。
+> 更新于2026-10-05。YUK-1047在fix/yuk-1047-formal-entries继续：旧writer已删，诊断与Probe原生发布/签名已接通；ingestion原件先持久化、确定性收录与撤回重放已实现，12捕获DB和44诊断DB本轮通过。原生归因/变式与失败统计消费者已接线，40归因/30变式/80读面及4原生贯穿DB通过（套件重叠）；复习次数去重与获批Coach正确性显示已接线（9UI/5投影unit、10DB通过）；CSV仍待完成；尚未独立review/PR/CI，不标Done。未部署/付费/追依赖。
 
 ## NOW
 
@@ -83,11 +83,13 @@
 
 ## NEXT
 
-1. 继续1047 ingestion原件持久化及原生消费者/准入registry；诊断与Probe生产发布/发题/签名已接通；旧writer与JudgedSubmit已删除，ValidatedSubmit保留。八入口未完成前不标Done。766恢复LIGHT/FULL与588 UI具体预审待owner回复，1091已Done；不以单批合并为终点。
+1. 继续1047原生归因/变式、统计消费者与准入registry；ingestion原件捕获/冻结重试/撤回已实现待最终整体验证；诊断与Probe生产发布/发题/签名已接通；旧writer与JudgedSubmit已删除，ValidatedSubmit保留。八入口未完成前不标Done。766恢复LIGHT/FULL与588 UI具体预审待owner回复，1091已Done；不以单批合并为终点。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
 ## PARKED
+
+- YUK-1047：owner已批准现有CoachReport最小修正，按判决正确率、错误/部分正确/未判分分列，评级独立；已实施并通过9UI测试，不再列为未批准阻塞。余CSV/准入census与最终gate。
 
 - YUK-766本批只交付三表一致快照及恢复claim清理；pg-boss队列不在逻辑ZIP，enqueued effect不代表业务完成，下游队列恢复闭环仍在原票。LIGHT清库前拒绝不安全逻辑恢复/FULL执行回执与自动恢复的具体取舍已提交owner，待回复；未执行生产恢复。
 - YUK-1062基线完整catalog并非浏览器安全：Node crypto纯helper已在旧TaskSpecs闭包内。本批保留定义、修正说明，窄公开入口只保证不初始化应用DB，不承诺新增浏览器支持。

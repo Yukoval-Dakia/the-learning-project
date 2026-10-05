@@ -153,41 +153,35 @@ describe('YUK-459 — paper submit fires mastery-change signals on success', () 
     expect(
       await db.select().from(event).where(eq(event.action, MASTERY_PROGRESS_ACTION)),
     ).toHaveLength(1);
-    await db
-      .insert(artifact)
-      .values({
-        id: 'note_native_mastery',
-        type: 'note_atomic',
-        title: '判断命题笔记',
-        knowledge_ids: ['k_pmp'],
-        generation_status: 'ready',
-        intent_source: 'test',
-        source: 'test',
-        verification_status: 'not_required',
-        created_at: new Date(),
-        updated_at: new Date(),
-      });
-    await db
-      .insert(event_subscription_checkpoint)
-      .values({
-        subscriber_id: 'notes.mastery-progress-note-refine',
-        subscriber_version: 1,
-        declaration_hash: 'test-native',
-        status: 'active',
-        next_delivery_seq: 2,
-        bootstrapped_at: new Date(),
-        activated_at: new Date(),
-      });
-    await db
-      .insert(event_subscription_delivery)
-      .values({
-        subscriber_id: 'notes.mastery-progress-note-refine',
-        subscriber_version: 1,
-        source_event_id: mpEvents[0].id,
-        source_dispatch_seq: mpEvents[0].dispatch_seq,
-        delivery_seq: 1,
-        status: 'pending',
-      });
+    await db.insert(artifact).values({
+      id: 'note_native_mastery',
+      type: 'note_atomic',
+      title: '判断命题笔记',
+      knowledge_ids: ['k_pmp'],
+      generation_status: 'ready',
+      intent_source: 'test',
+      source: 'test',
+      verification_status: 'not_required',
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+    await db.insert(event_subscription_checkpoint).values({
+      subscriber_id: 'notes.mastery-progress-note-refine',
+      subscriber_version: 1,
+      declaration_hash: 'test-native',
+      status: 'active',
+      next_delivery_seq: 2,
+      bootstrapped_at: new Date(),
+      activated_at: new Date(),
+    });
+    await db.insert(event_subscription_delivery).values({
+      subscriber_id: 'notes.mastery-progress-note-refine',
+      subscriber_version: 1,
+      source_event_id: mpEvents[0].id,
+      source_dispatch_seq: mpEvents[0].dispatch_seq,
+      delivery_seq: 1,
+      status: 'pending',
+    });
     const bossSend = vi.fn(async () => 'native-note-refine-job');
     const delivery = {
       subscriberId: 'notes.mastery-progress-note-refine',

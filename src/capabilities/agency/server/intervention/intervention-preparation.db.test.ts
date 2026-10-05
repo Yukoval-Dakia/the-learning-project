@@ -2862,7 +2862,13 @@ describe('YUK-791 intervention preparation closed loop', () => {
     const withheld = await db
       .select({ value: count() })
       .from(question_group_lifecycle)
-      .where(eq(question_group_lifecycle.scoring_admission_state, 'withheld'));
+      .innerJoin(question, eq(question.id, question_group_lifecycle.group_id))
+      .where(
+        and(
+          eq(question_group_lifecycle.scoring_admission_state, 'withheld'),
+          eq(question.source, 'intervention_diagnostic'),
+        ),
+      );
     expect(withheld[0]?.value).toBe(303);
     const [recoveredImmediateStreamRow] = await db
       .select({ date: practice_stream_item.date, source: practice_stream_item.source })

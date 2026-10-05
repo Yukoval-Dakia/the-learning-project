@@ -1,3 +1,4 @@
+import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts';
 // YUK-281 (YUK-203) — question-bank WRITE path: edit (PATCH) + archive (DELETE).
 //
 // Companion to the YUK-280 read aggregator (src/server/questions/detail.ts).
@@ -36,7 +37,7 @@
 // event carrying before/after values, so changes are traceable and reversible.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 
 import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/public';
 import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
@@ -107,28 +108,18 @@ export async function countQuestionAssociations(
   questionId: string,
 ): Promise<QuestionAssociationCounts> {
   // The five counts are independent reads — run them concurrently.
-  const [[attemptRow], [mistakeRow], [fsrsRow], [paperRow], [childrenRow]] = await Promise.all([
+  const [[attemptRow], mistakes, [fsrsRow], [paperRow], [childrenRow]] = await Promise.all([
     db
       .select({ n: sql<number>`count(*)::int` })
       .from(event)
       .where(
         and(
-          eq(event.action, 'attempt'),
+          inArray(event.action, ['attempt', 'experimental:assessment_attempt']),
           eq(event.subject_kind, 'question'),
           eq(event.subject_id, questionId),
         ),
       ),
-    db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(event)
-      .where(
-        and(
-          eq(event.action, 'attempt'),
-          eq(event.subject_kind, 'question'),
-          eq(event.subject_id, questionId),
-          eq(event.outcome, 'failure'),
-        ),
-      ),
+    getCurrentFailureAttempts(db, { questionIds: [questionId] }),
     db
       .select({ n: sql<number>`count(*)::int` })
       .from(material_fsrs_state)
@@ -150,7 +141,7 @@ export async function countQuestionAssociations(
 
   return {
     attempts: attemptRow?.n ?? 0,
-    mistakes: mistakeRow?.n ?? 0,
+    mistakes: mistakes.length,
     fsrs_cards: fsrsRow?.n ?? 0,
     paper_refs: paperRow?.n ?? 0,
     children: childrenRow?.n ?? 0,

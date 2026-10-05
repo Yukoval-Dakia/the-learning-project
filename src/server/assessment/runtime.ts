@@ -4,4 +4,4 @@ export { type ActivateEvaluationRequestT, activateEvaluation } from './activate'
 export { createJevModelExecutor } from './jev-model-executor';
 export { snapshotAssessmentLearningScope } from './learning-scope';
 export { createPiModelExecutor } from './pi-model-executor';
-export { type SettlementObservers, learningSettlement } from './settle';
+export { type SettlementObservers, learningSettlement, withdrawCapturedOccurrence } from './settle';

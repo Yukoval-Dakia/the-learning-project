@@ -518,20 +518,22 @@ async function appendImmediateDiagnosticToLiveStream(
  * review surface. Each is a one-shot question-scoped FSRS card so the exact
  * authored probe—not a same-KC substitute—appears when its fixed due time arrives.
  */
+interface MaterializeInterventionDiagnosticsInput {
+  package: InterventionPackageT;
+  settlement: InterventionSettlementT;
+  snapshot: InterventionSnapshotT;
+  now: Date;
+  /**
+   * Set only by the aggregate transaction that records the first immediate
+   * review. It activates and re-enrolls the newly anchored follow-ups in the
+   * same transaction as the settlement update.
+   */
+  activateAnchoredFollowups?: boolean;
+}
+
 export async function materializeInterventionDiagnostics(
   tx: Tx,
-  input: {
-    package: InterventionPackageT;
-    settlement: InterventionSettlementT;
-    snapshot: InterventionSnapshotT;
-    now: Date;
-    /**
-     * Set only by the aggregate transaction that records the first immediate
-     * review. It activates and re-enrolls the newly anchored follow-ups in the
-     * same transaction as the settlement update.
-     */
-    activateAnchoredFollowups?: boolean;
-  },
+  input: MaterializeInterventionDiagnosticsInput,
 ): Promise<void> {
   const packageValue = InterventionPackage.parse(input.package);
   const settlement = InterventionSettlement.parse(input.settlement);
@@ -547,44 +549,42 @@ export async function materializeInterventionDiagnostics(
     )
     .map((kind) => settlement.diagnostics[kind].question_id);
 
-  await tx
-    .insert(question)
-    .values(
-      kinds.map((kind) => {
-        const diagnostic = packageValue.diagnostics[kind];
-        const scheduled = settlement.diagnostics[kind];
-        return {
-          id: scheduled.question_id,
-          kind: 'short_answer',
-          prompt_md: learnerFacingInterventionDiagnosticPrompt(packageValue, kind),
-          reference_md: diagnostic.probe_spec.reference_md,
-          judge_kind_override: 'multimodal_direct',
-          knowledge_ids: [],
-          difficulty: 3,
-          source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
-          source_ref: sourceRef,
-          // Product-owned diagnostics have already passed package authoring,
-          // independent review, deterministic validation, and the lineage proof below.
-          draft_status:
-            scheduled.status === 'scheduled' && (kind === 'immediate' || followupsReady)
-              ? 'active'
-              : 'draft',
-          metadata: diagnosticMetadata({
-            interventionId: snapshot.intervention_id,
-            version: snapshot.intervention_version,
-            knowledgeId: snapshot.conjecture.knowledge_id,
-            kind,
-            dueAt: scheduled.due_at,
-            probeSpec: diagnostic.probe_spec,
-          }),
-          figures: [],
-          image_refs: [],
-          created_at: input.now,
-          updated_at: input.now,
-        };
-      }),
-    )
-    .onConflictDoNothing();
+  for (const kind of kinds) {
+    const diagnostic = packageValue.diagnostics[kind];
+    const scheduled = settlement.diagnostics[kind];
+    await tx
+      .insert(question)
+      .values({
+        id: scheduled.question_id,
+        kind: 'short_answer',
+        prompt_md: learnerFacingInterventionDiagnosticPrompt(packageValue, kind),
+        reference_md: diagnostic.probe_spec.reference_md,
+        judge_kind_override: 'multimodal_direct',
+        knowledge_ids: [],
+        difficulty: 3,
+        source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+        source_ref: sourceRef,
+        // Product-owned diagnostics have already passed package authoring,
+        // independent review, deterministic validation, and the lineage proof below.
+        draft_status:
+          scheduled.status === 'scheduled' && (kind === 'immediate' || followupsReady)
+            ? 'active'
+            : 'draft',
+        metadata: diagnosticMetadata({
+          interventionId: snapshot.intervention_id,
+          version: snapshot.intervention_version,
+          knowledgeId: snapshot.conjecture.knowledge_id,
+          kind,
+          dueAt: scheduled.due_at,
+          probeSpec: diagnostic.probe_spec,
+        }),
+        figures: [],
+        image_refs: [],
+        created_at: input.now,
+        updated_at: input.now,
+      })
+      .onConflictDoNothing();
+  }
 
   const ids = kinds.map((kind) => settlement.diagnostics[kind].question_id);
   // A synchronous process can die after the active→draft one-shot claim but

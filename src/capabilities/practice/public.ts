@@ -55,7 +55,11 @@ export const handleReviewDue: HandleReviewDue = async (...args) => {
 
 // YUK-1064 — explicit operations used by scripts and integration consumers.
 export type { FailureLearningBossSend } from './jobs/failure-learning-jobs';
-export { previewFormalAttempt } from './server/assessment/attempt';
+export {
+  commitFormalAttempt,
+  previewFormalAttempt,
+  recordFormalAttemptCapture,
+} from './server/assessment/attempt';
 export type { CollectedSignal } from './server/candidate-signals';
 export { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } from './server/cause-overlay';
 export type {
@@ -118,6 +122,7 @@ export {
   resolveQuestionJudgeRoute,
   runMultimodalDirectJudge,
 } from './server/judge';
+export { withdrawCapturedOccurrence } from './server/judge/evaluate-submission';
 export { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './server/judge-run-status';
 export {
   rewriteLearningItemKnowledgeIds,

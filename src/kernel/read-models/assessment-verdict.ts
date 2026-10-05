@@ -1,3 +1,4 @@
+import { loadAssessmentLearningScopes } from './assessment-learning-scope';
 // YUK-1054 — 双轨裁决读模型（grounding §9–§10 read-model 切分）。
 //
 // 所有「某次作答/评估最终判了什么」的消费面共享这一个 resolver：
@@ -508,15 +509,6 @@ export async function resolveVerdictsForGroups(
     .from(event)
     .where(eq(event.action, ASSESSMENT_SETTLEMENT_ACTION));
 
-  const headByGroup = new Map(heads.map((h) => [h.evaluation_group_id, h]));
-  const evalById = new Map(evalRows.map((r) => [r.evaluation_id, r]));
-  const evalsByGroup = new Map<string, EvaluationRow[]>();
-  for (const row of evalRows) {
-    const list = evalsByGroup.get(row.evaluation_group_id) ?? [];
-    list.push(row);
-    evalsByGroup.set(row.evaluation_group_id, list);
-  }
-
   // 冻结 revision + issuance：不能只用完整 revision 的分母。
   const revisionIds = [...new Set(submissions.map((s) => s.revision_id))];
   const revisionRows: Pick<
@@ -537,7 +529,6 @@ export async function resolveVerdictsForGroups(
       .where(inArray(question_revision.revision_id, chunk));
     revisionRows.push(...rows);
   }
-  const revisionById = new Map(revisionRows.map((r) => [r.revision_id, r]));
   const issuanceIds = [...new Set(submissions.map((s) => s.issuance_id))];
   const issuanceRows: (typeof assessment_issuance.$inferSelect)[] = [];
   for (let offset = 0; offset < issuanceIds.length; offset += QUERY_ID_CHUNK) {
@@ -553,6 +544,59 @@ export async function resolveVerdictsForGroups(
         )),
     );
   }
+  const activeActivationRows = await filterActiveRows(db, activationRows);
+  return projectGroupVerdicts({
+    groupIds: uniqueIds,
+    heads,
+    evaluations: evalRows,
+    submissions,
+    revisions: revisionRows,
+    issuances: issuanceRows,
+    activeActivations: activeActivationRows,
+    settlements: settlementRows,
+  });
+}
+
+/** Shared synchronous projection for live reads and exported database snapshots. */
+export function projectGroupVerdicts(input: {
+  groupIds: string[];
+  heads: (typeof evaluation_effective_head.$inferSelect)[];
+  evaluations: EvaluationRow[];
+  submissions: (typeof assessment_submission.$inferSelect)[];
+  revisions: Pick<
+    typeof question_revision.$inferSelect,
+    'revision_id' | 'integrity_digest' | 'structure' | 'response_spec' | 'scoring_basis'
+  >[];
+  issuances: (typeof assessment_issuance.$inferSelect)[];
+  activeActivations: Pick<EventRow, 'subject_id' | 'payload'>[];
+  settlements: Pick<EventRow, 'id' | 'created_at' | 'payload'>[];
+}): Map<string, GroupVerdict> {
+  const {
+    heads,
+    evaluations: evalRows,
+    submissions,
+    revisions: revisionRows,
+    issuances: issuanceRows,
+    activeActivations: activeActivationRows,
+    settlements: settlementRows,
+  } = input;
+  const uniqueIds = [...new Set(input.groupIds)];
+  const out = new Map<string, GroupVerdict>(
+    uniqueIds.map((id) => [
+      id,
+      { evaluation_group_id: id, effective: null, original: null, head: null },
+    ]),
+  );
+  const headByGroup = new Map(heads.map((h) => [h.evaluation_group_id, h]));
+  const evalById = new Map(evalRows.map((r) => [r.evaluation_id, r]));
+  const evalsByGroup = new Map<string, EvaluationRow[]>();
+  for (const row of evalRows) {
+    const list = evalsByGroup.get(row.evaluation_group_id) ?? [];
+    list.push(row);
+    evalsByGroup.set(row.evaluation_group_id, list);
+  }
+
+  const revisionById = new Map(revisionRows.map((r) => [r.revision_id, r]));
   const issuanceById = new Map(issuanceRows.map((r) => [r.issuance_id, r]));
   const basisForEvaluation = (row: EvaluationRow): ScoringBasisT | undefined => {
     const groupMembers = submissions.filter(
@@ -590,7 +634,7 @@ export async function resolveVerdictsForGroups(
 
   // original 轨：第一条 active activation 事件的 evaluation_id（retract 的
   // activation 收据不算「第一判生效」）。
-  const activeActivationRows = await filterActiveRows(db, activationRows);
+
   const firstActivationByGroup = new Map<string, string>();
   for (const row of activeActivationRows) {
     const p = (row.payload ?? {}) as Record<string, unknown>;
@@ -688,6 +732,9 @@ export async function resolveVerdictForGroup(db: DbLike, groupId: string): Promi
 /** Native participation anchors carry no verdict bit. Resolve their frozen
  * coordinates before reading the group's currently selected evaluation. */
 export type NativeAttemptVerdict = GroupVerdict & {
+  knowledge_ids: string[];
+  issuance: typeof assessment_issuance.$inferSelect;
+  revision: typeof question_revision.$inferSelect;
   submission: typeof assessment_submission.$inferSelect;
   original_evaluation_id: string | null;
 };
@@ -769,6 +816,7 @@ export async function resolveVerdictsForNativeAttempts(
         firstBySubmission.set(item.submission_id, item.evaluation_id);
     }
   }
+  const learningScopes = await loadAssessmentLearningScopes(db, ids);
   const coordinateById = new Map(
     coordinates.map((value) => [value.submission.submission_id, value]),
   );
@@ -796,7 +844,16 @@ export async function resolveVerdictsForNativeAttempts(
       original?.evaluation_group_id === submission.evaluation_group_id
         ? originalId
         : null;
-    return [{ row, submission, groupId: submission.evaluation_group_id, originalEvaluationId }];
+    return [
+      {
+        row,
+        submission,
+        issuance,
+        revision,
+        groupId: submission.evaluation_group_id,
+        originalEvaluationId,
+      },
+    ];
   });
   const groups = await resolveVerdictsForGroups(
     db,
@@ -828,11 +885,23 @@ export async function resolveVerdictsForNativeAttempts(
         completedSessions.set(session.id, session.started_at.toISOString());
   }
   return new Map(
-    valid.map(({ row, groupId, submission, originalEvaluationId }) => [
+    valid.map(({ row, groupId, submission, issuance, revision, originalEvaluationId }) => [
       row.id,
       {
         ...groups.get(groupId)!,
         submission,
+        issuance,
+        revision,
+        knowledge_ids:
+          learningScopes.get(submission.submission_id)?.group_id === revision.group_id
+            ? [
+                ...new Set(
+                  learningScopes
+                    .get(submission.submission_id)
+                    ?.questions.flatMap((q) => q.knowledge_ids) ?? [],
+                ),
+              ]
+            : [],
         original_evaluation_id: originalEvaluationId,
         ...(row.payload.paper_feedback_policy === 'judge_now_show_later' &&
         (typeof row.payload.paper_started_at !== 'string' ||

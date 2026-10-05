@@ -1,3 +1,4 @@
+import { loadNativeReviewOccurrences } from '@/kernel/read-models/assessment-review-occurrences';
 // Phase 1d — weekly review report endpoint.
 //
 // Aggregates review event activity over a sliding window (default 7d, max 90d):
@@ -12,14 +13,11 @@
 
 import { and, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 
-import {
-  effectiveCauseForFailureAttempt,
-  getFailureAttempts,
-} from '@/capabilities/practice/server/attempt-events';
+import { effectiveCauseForFailureAttempt } from '@/capabilities/practice/server/attempt-events';
 import { db } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
+import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { buildCalendarReportWindow, localDateKey, resolveReportTimeZone } from './weekly-window';
 
@@ -57,21 +55,24 @@ export async function GET(req: Request): Promise<Response> {
       .from(event)
       .where(and(eq(event.action, 'review'), eq(event.subject_kind, 'question'), inWindow));
 
+    const nativeReviews = await loadNativeReviewOccurrences(db);
+    for (const occurrence of nativeReviews) {
+      if (occurrence.occurredAt < cutoff || occurrence.occurredAt > now) continue;
+      reviews.push({
+        id: occurrence.id,
+        created_at: occurrence.occurredAt,
+        outcome:
+          occurrence.outcome === 'pending' || occurrence.outcome === 'unsupported'
+            ? null
+            : occurrence.outcome,
+        payload: { fsrs_rating: occurrence.rating },
+      });
+    }
+
     // 2) Failure attempts in window — for top struggling knowledge_ids + cause.
-    const failures = await db
-      .select({
-        id: event.id,
-        payload: event.payload,
-      })
-      .from(event)
-      .where(
-        and(
-          eq(event.action, 'attempt'),
-          eq(event.subject_kind, 'question'),
-          eq(event.outcome, 'failure'),
-          inWindow,
-        ),
-      );
+    const failures = (await getCurrentFailureAttempts(db, { since: cutoff })).filter(
+      (row) => row.created_at <= now,
+    );
 
     // 3) Cost — sum cost_micro_usd over any event in window.
     const costRows = await db
@@ -81,29 +82,11 @@ export async function GET(req: Request): Promise<Response> {
     const totalCostMicroUsd = Number(costRows[0]?.sum ?? 0);
 
     // 4) Effective causes from in-window failure attempts.
-    const failureIds = failures.map((f) => f.id);
-    const failureIdSet = new Set(failureIds);
     const causeCounts = new Map<string, number>();
-    if (failureIds.length > 0) {
-      const activeFailures = await getFailureAttempts(db, {
-        since: cutoff,
-        limit: Math.max(failureIds.length * 2, 100),
-      });
-      for (const failure of activeFailures) {
-        if (!failureIdSet.has(failure.attempt_event_id)) continue;
-        const cat = effectiveCauseForFailureAttempt(failure)?.primary_category;
-        if (cat) causeCounts.set(cat, (causeCounts.get(cat) ?? 0) + 1);
-      }
+    for (const failure of failures) {
+      const cat = effectiveCauseForFailureAttempt(failure)?.primary_category;
+      if (cat) causeCounts.set(cat, (causeCounts.get(cat) ?? 0) + 1);
     }
-    // YUK-1054 (§9)— struggle 统计只看【当前仍判错】的 attempt：attempt.outcome
-    // 是 immutable 执行事实（永远 'failure'），改判翻转为 correct 的行不应再算
-    // 「这周错得多」。deterministic 评分分布（ratings/daily）仍用 immutable 原始
-    // 事实（rating / outcome），不走本过滤。
-    const verdicts = await resolveVerdictsForAttempts(db, failureIds);
-    const stillFailingIds = failureIds.filter(
-      (id) => verdicts.get(id)?.effective?.verdict.coarse_outcome !== 'correct',
-    );
-    const stillFailing = failures.filter((f) => stillFailingIds.includes(f.id));
     // YUK-1018 — misc_ category id 的显示回填（active misconception title）。
     const topCauseLabels = await resolveMiscCauseLabels(db, [...causeCounts.keys()]);
     const topCauses = [...causeCounts.entries()]
@@ -124,9 +107,19 @@ export async function GET(req: Request): Promise<Response> {
 
     // 6) Daily trend buckets use the learner's calendar days. A seven-day report
     //    includes today plus the six preceding local dates, including across DST.
-    const dailyMap = new Map<string, { date: string; count: number; correct: number }>();
+    const dailyMap = new Map<
+      string,
+      {
+        date: string;
+        count: number;
+        correct: number;
+        incorrect: number;
+        partial: number;
+        ungraded: number;
+      }
+    >();
     for (const key of reportWindow.dateKeys) {
-      dailyMap.set(key, { date: key, count: 0, correct: 0 });
+      dailyMap.set(key, { date: key, count: 0, correct: 0, incorrect: 0, partial: 0, ungraded: 0 });
     }
     for (const r of reviews) {
       const key = localDateKey(r.created_at, timeZone);
@@ -134,6 +127,9 @@ export async function GET(req: Request): Promise<Response> {
       if (bucket) {
         bucket.count += 1;
         if (r.outcome === 'success') bucket.correct += 1;
+        else if (r.outcome === 'failure') bucket.incorrect += 1;
+        else if (r.outcome === 'partial') bucket.partial += 1;
+        else bucket.ungraded += 1;
       }
     }
     const daily = [...dailyMap.values()].sort((a, b) => a.date.localeCompare(b.date));
@@ -141,8 +137,8 @@ export async function GET(req: Request): Promise<Response> {
     // 7) Top struggling knowledge_ids — referenced_knowledge_ids on failure
     //    attempts; resolve names via knowledge table.
     const knowledgeCounts = new Map<string, number>();
-    for (const f of stillFailing) {
-      const ids = (f.payload as { referenced_knowledge_ids?: string[] }).referenced_knowledge_ids;
+    for (const f of failures) {
+      const ids = f.referenced_knowledge_ids;
       if (!Array.isArray(ids)) continue;
       for (const kid of ids) {
         knowledgeCounts.set(kid, (knowledgeCounts.get(kid) ?? 0) + 1);
@@ -177,7 +173,7 @@ export async function GET(req: Request): Promise<Response> {
         reviews: reviews.length,
         // YUK-1054 — failures 计【当前仍 effective 判错】的 attempt；已翻转的
         // 原始执行收据不计入（双轨：原始 raw attempts 仍在流里，不改写历史）。
-        failures: stillFailingIds.length,
+        failures: failures.length,
         cost_usd: totalCostMicroUsd / 1e6,
       },
       ratings: ratingCounts,

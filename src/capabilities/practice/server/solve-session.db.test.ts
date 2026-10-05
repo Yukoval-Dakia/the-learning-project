@@ -239,17 +239,15 @@ describe('frozen solve session lifecycle', () => {
     const s = await seed();
     const now = new Date();
     const sha = 'b'.repeat(64);
-    await db
-      .insert(source_asset)
-      .values({
-        id: 'original-handwriting',
-        kind: 'image',
-        storage_key: 'test/original-handwriting',
-        mime_type: 'image/png',
-        byte_size: 120,
-        sha256: sha,
-        created_at: now,
-      });
+    await db.insert(source_asset).values({
+      id: 'original-handwriting',
+      kind: 'image',
+      storage_key: 'test/original-handwriting',
+      mime_type: 'image/png',
+      byte_size: 120,
+      sha256: sha,
+      created_at: now,
+    });
     const evidence = {
       evidence_id: 'handwriting',
       kind: 'image' as const,

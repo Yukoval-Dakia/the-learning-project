@@ -36,23 +36,21 @@ export async function nativeSoloHttpFixture(
         updated_at: now,
       })
       .onConflictDoNothing();
-  await db
-    .insert(question)
-    .values({
-      id,
-      kind: options.model ? 'short_answer' : 'choice',
-      prompt_md: '比较坡度与流速时如何控制变量？说明理由。',
-      reference_md: options.model ? ORIGINAL_RESPONSE : 'A',
-      choices_md: options.model
-        ? null
-        : ['固定水量，只改变坡度', '同时改变坡度与水量', '只看最后一次流速'],
-      knowledge_ids: knowledgeIds,
-      difficulty: 3,
-      source: 'manual',
-      version: 0,
-      created_at: now,
-      updated_at: now,
-    });
+  await db.insert(question).values({
+    id,
+    kind: options.model ? 'short_answer' : 'choice',
+    prompt_md: '比较坡度与流速时如何控制变量？说明理由。',
+    reference_md: options.model ? ORIGINAL_RESPONSE : 'A',
+    choices_md: options.model
+      ? null
+      : ['固定水量，只改变坡度', '同时改变坡度与水量', '只看最后一次流速'],
+    knowledge_ids: knowledgeIds,
+    difficulty: 3,
+    source: 'manual',
+    version: 0,
+    created_at: now,
+    updated_at: now,
+  });
   const issued = await issueSoloFixture(db, id, options.model);
   let outcome: number | 'pending' | 'throw' = options.points ?? 1;
   const execute = vi.fn(
@@ -118,17 +116,15 @@ export async function handwritingFixture(db: Db) {
   const id = `handwriting_${createId()}`;
   const now = new Date();
   const sha = 'b'.repeat(64);
-  await db
-    .insert(source_asset)
-    .values({
-      id,
-      kind: 'image',
-      storage_key: `test/${id}`,
-      mime_type: 'image/png',
-      byte_size: 120,
-      sha256: sha,
-      created_at: now,
-    });
+  await db.insert(source_asset).values({
+    id,
+    kind: 'image',
+    storage_key: `test/${id}`,
+    mime_type: 'image/png',
+    byte_size: 120,
+    sha256: sha,
+    created_at: now,
+  });
   return {
     evidence: {
       evidence_id: id,
