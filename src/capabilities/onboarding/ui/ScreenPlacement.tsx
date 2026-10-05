@@ -485,8 +485,25 @@ function PlacementQuestionCard({
   const unavailable =
     !frozen || frozen.response_spec.slots.some((slot) => !nativeSlotFieldSpec(slot));
   const answered =
-    responses.entries.some((entry) => isSlotResponseAnswered(nativeResponseValue(entry))) ||
-    evidence.length > 0;
+    !!frozen &&
+    frozen.response_spec.slots
+      .filter((slot) => slot.kind !== 'table')
+      .every((slot) => {
+        const entry = responses.entries.find((entry) => entry.slot_id === slot.slot_id);
+        if (isSlotResponseAnswered(nativeResponseValue(entry))) return true;
+        const units = frozen.response_requirements?.find(
+          (requirement) => requirement.slot_id === slot.slot_id,
+        )?.evidence_unit_ids;
+        return (
+          !!units?.length &&
+          units.every((unitId) =>
+            nativeEvidence.some(
+              (item) =>
+                item.target.scope === 'all_units' || item.target.scoring_unit_ids.includes(unitId),
+            ),
+          )
+        );
+      });
   const canSubmit =
     !unavailable &&
     answered &&
