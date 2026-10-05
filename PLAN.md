@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-05。YUK-1047 PR #1568晚到三项正确性修复已提交1c1401022：solo逐槽覆盖、Probe GET只读/Agency发题、paper原件与capture同锁事务。146unit/75distinctDB/typecheck/lint/build通过，parent复验后push新head执行CI与17分钟窗。review预算已用尽；不部署/付费。详见placement-repair。
+> 更新于2026-10-05。YUK-1047 PR #1568：Placement逐槽覆盖80d1ccb09、partial DTO/订阅者/Probe闭环CI修复88f6ba36d完成；parent补齐Placement fixture字段，98unit/26DB/typecheck/lint通过。修复lane158unit/85DB/build/8audits通过。待push后exact-head CI与17分钟窗；review预算用尽，不部署/付费。
 
 ## NOW
 

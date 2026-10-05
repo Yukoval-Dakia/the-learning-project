@@ -560,7 +560,7 @@ Typecheck remains blocked at
 purging without a TTY; that attempt is preserved in `baseline-preflight.log`.
 The active dependency tree was not purged.
 
-The user explicitly excluded Placement edits from this writer's scope, so no
+The parent task brief explicitly excluded Placement edits from this writer's scope, so no
 fixture workaround or type relaxation was made. Parent must repair those
 three fixtures and rerun typecheck before claiming all local gates green.
 There is no remaining failure among the eleven assigned CI tests. These are
@@ -568,3 +568,25 @@ local results; exact-head CI and external delivery remain parent-owned.
 Parent also owns Linear capture/status for the existing YUK-1047 repair.
 No new unrelated follow-up was introduced. Writer ownership returns to parent
 with this repair commit, and this lane stops after reporting its result.
+
+
+### Parent acceptance after CI and Placement repairs
+
+Placement coverage commit `80d1ccb09` passed its five causal RED assertions and
+36 scoped component tests. Parent independently reran the 15 new coverage tests.
+The three draft fixtures were then completed with `evaluation_group_ref: null`
+and a fixed `updated_at`; no runtime contract was relaxed.
+
+On top of `88f6ba36d`, parent inspected the DTO unit scope and the real durable
+publication delivery used by the closed-loop fixture, then independently passed
+98 unit tests across Placement coverage, DTO, assessment contract and CSV, plus
+26 DB tests across backup/restore and the research closed loop. Typecheck and
+lint:ratchet passed, with 298 warnings within the unchanged 305 baseline.
+Logs: `/tmp/yuk1047-parent-final-{unit,db,typecheck,lint}.log`. The lane build
+and eight audits passed before the fixture-only parent edit.
+
+Previous solo/probe/paper review threads were replied to and resolved after
+their pushed repair. Placement review remains to resolve after this push.
+Exact-head CI and the 17-minute last-push window still gate merge. Existing
+three P2 follow-ups remain on YUK-1047; no additional issue, independent review,
+production deployment or paid provider call was introduced.

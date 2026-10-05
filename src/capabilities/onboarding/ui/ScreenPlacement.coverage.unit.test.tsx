@@ -251,6 +251,8 @@ describe('ScreenPlacement issued response coverage (YUK-1047)', () => {
         target,
       }));
       question.assessment.state.draft = {
+        evaluation_group_ref: null,
+        updated_at: '2026-10-05T12:00:00.000Z',
         response_set: { entries: [] },
         group_evidence: groupEvidence,
         save_epoch: 4,
@@ -336,6 +338,8 @@ describe('ScreenPlacement issued response coverage (YUK-1047)', () => {
       },
     ];
     question.assessment.state.draft = {
+      evaluation_group_ref: null,
+      updated_at: '2026-10-05T12:00:00.000Z',
       response_set: { entries: [] },
       group_evidence: groupEvidence,
       save_epoch: 4,
@@ -384,6 +388,8 @@ describe('ScreenPlacement issued response coverage (YUK-1047)', () => {
       question.assessment.state.submissions = [accepted];
       if (hasNewerDraft) {
         question.assessment.state.draft = {
+          evaluation_group_ref: null,
+          updated_at: '2026-10-05T12:00:00.000Z',
           response_set: {
             entries: [
               {
