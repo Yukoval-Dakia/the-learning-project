@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-05。YUK-1047初审3项P1的placement实施已完成：pinned发题/冻结控件/自动保存与恢复/native进度和pending held gating；67 unit/149 DB及typecheck/lint/build/API边界审计通过。既有诊断claim释放DB失败和lint ratchet 305→328尚待parent裁决。初审预算已用，仅余parent唯一修复验证审；无push/PR/部署/新付费。详见2026-10-05-yuk1047-placement-repair.md。
+> 更新于2026-10-05。YUK-1047八入口迁移及初审3项P1已修；唯一验证审确认无P0/P1，独立30unit通过。105DB/57unit gate修复、typecheck/build、lint299≤305通过；真实浏览器8题完成、长文刷新恢复、双页CAS冲突及保存失败退出门禁通过。已合入最新origin/main工具配置；下一步PR与exact-head CI，未部署/新付费。详见2026-10-05-yuk1047-placement-repair.md。
 
 ## NOW
 
@@ -79,17 +79,16 @@
 - YUK-1047/#1562已交付main ad8dad75（20:18UTC）：94unit72DB/全部本地gate；初审1项内嵌图P1先RED后修，唯一验证3原探针5分支探针94unit通过；exact-head CI37230475644实际82迁移34浏览器/17分钟窗通过。八入口仍legacy，票In Progress。
 - YUK-1047/#1563已合入main448ffe42：281unit30DB/本地gates、独立初审2P1修复及唯一验证100unit+3DB/真实driver、exact-head CI37232936402（82迁移34浏览器）与17分钟窗通过。冻结原生pi执行、已知失败费与真实missing usage保真已交付；八入口仍legacy。
 
-- YUK-1047/#1564已合入main6e5d93ac：显式用户FSRS与自动theta独立，历史评级/两次晚到/再次重评保真。94DB/107unit、本地gate、初审+唯一验证问题处置、exactCI37234688601与17分钟窗完成。CI增量未运行migration/browser。当前未发布正式入口worktree：散题原生提交/手动FSRS/帮助快照/冻结解答与提示已接线；新增模型调用持久化认领、原生申诉、时间线/错题读面与解题会话原子提交，此前101DB/91unit通过；本检查点移除旧solve执行/临时生成分支，整页图误判空白先RED后修，64DB/64unit及typecheck/build通过。自动保存3RED→6GREEN。新增原生后台提交/队列恢复/当前生效轮询，117DB/35unit及最终投影46DB通过；新增试卷原子发题/原生控件草稿提交/缓冲读面/重开代际，47DB/58unit及最终5DB通过；旧paper执行已删；改判回放/掌握度进展与笔记消费修复，94DB及typecheck/build通过，旧paper fixtures仍迁移中，原生单位确定性能力已接通（128unit39DB/typecheck/build）；paper-cycle/API/UI fixtures已迁移、旧草稿写入拒绝、无绑定历史卷只读，63DB/93unit/typecheck/changedBiome/build/Postman通过；旧solo HTTP/队列producer已删，作答时KC/domain冻结与空send queued修复（140distinctDB/typecheck/build/边界448通过）；旧solo scorer/worker执行也已删，历史队列原件保留不重评，118DB/30unit/typecheck/build与边界447通过；申诉旧执行已删，历史409/held，59DB/typecheck/build及边界446通过；诊断提交/刷新/订阅/租约恢复已接原生，128DB+最终55DB/84unit/本地gates通过，边界保持446；诊断无效head与原答更正现转held并保留暴露时点（65DB/22unit/本地gates通过），producer仍待接线；冻结提示DTO与按槽参考已修（2unit42DB/本地gates），多模态教学字节仍待接；solo/advice主suite已原生55HTTP，认领前限流429恢复已修（139DB/66unit/本地gates）；native难度label已接线并覆盖改判重放（157DB/本地gates）；仍须probe/ingestion与诊断/归因消费侧及其他旧执行移除，未发布。详见 formal-entry-migration 记录，1047仍In Progress。
+- YUK-1047/#1564评级前置已交付。当前正式迁移分支完成八入口冻结发题/原件/候选/激活、生产诊断与Probe、ingestion及native消费者；原始评分执行已移除。三项初审P1和两个本地gate已修，真实定位浏览器验收与唯一验证审通过。各批定向证据见formal-entry-migration与placement-repair；PR/CI待收口，1047保持In Progress。
 
 ## NEXT
 
-1. YUK-1047由parent验收placement真实runtime、处置既有诊断claim与lint ratchet缺口，执行唯一P0/P1验证审，然后PR/CI；placement实施检查点见2026-10-05-yuk1047-placement-repair.md，交付前保持In Progress。源码八入口收口不代替生产部署或模型actual-output准入。766恢复LIGHT/FULL与588 UI仍待owner，其他主线不启动。
+1. YUK-1047创建PR，完成exact-head CI和最后push后17分钟窗口，裁决已有P0/P1。独立review预算已用尽，不开第三审。源码迁移不代替生产部署或模型actual-output准入；其他主线不启动。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
 ## PARKED
 
-- YUK-1047 placement实施lane发现：诊断durable admission拒绝后claim恢复用例在起始HEAD也失败（expected active/actual draft）；lint ratchet 305→328。已落盘placement-repair handoff与日志，parent负责Linear去重/capture及处置，未改断言或抬基线。
 
 - YUK-1047初审非阻塞P2：native failure读面混入未发子题KC；PfSolo快速退出取消未ack自动保存尾部。已归并Linear原票，未声称修复。
 

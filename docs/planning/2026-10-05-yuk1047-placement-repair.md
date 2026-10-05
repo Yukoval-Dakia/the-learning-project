@@ -217,3 +217,35 @@ requires. Do not infer provider quality from the synthetic exact fixture.
 No dev server was started in this lane. All owned test/build/generation processes
 finish before handoff; code + DB/build ownership returns to parent. Unrelated
 `.serena/project.yml` remains unmodified and uncommitted by this lane.
+
+## Parent acceptance and sole repair verification
+
+On 2026-10-05 the parent ran the built app against its isolated migrated
+Postgres fixture on ports 18789/18790. The database epoch was explicitly
+initialized through the official CLI. No production database or provider was used.
+
+- Real Chrome UI saved 1,118 characters including Chinese, newlines and symbols,
+  then recovered the same text and session URL after refresh.
+- Eight local-exact answers submitted successfully with HTTP 201. Native progress
+  advanced through all eight and completion navigated to `/profile`; no page errors.
+- Two tabs produced a real CAS 409. Explicit reload restored the server draft.
+- A deliberately intercepted draft request returned 503. Exit remained blocked;
+  after removing interception, retry saved and ended the session before `/today`.
+- Harness corrections: draft writes use POST, and initial attempts return 201.
+  Earlier harness expectations of PUT/200 failed; these were not product failures.
+
+Logs: `/tmp/yuk1047-runtime-accept.{log,json}` and
+`/tmp/yuk1047-runtime-conflict.{log,json}`. Screenshots:
+`/tmp/yuk1047-runtime-restored.png`, `yuk1047-runtime-complete.png`,
+`yuk1047-runtime-save-failure.png`. Synthetic text-only local-exact acceptance
+does not establish model output quality or image interpretation.
+
+The sole repair verification reviewed `c53c8e189..f6f8f638a`, confirmed all three
+original P1s resolved and found no new P0/P1. It independently passed 30 focused
+unit tests and inspected the DB regressions without rerunning them. Both parked
+P2s remain unfixed. Initial plus repair review budget is exhausted.
+
+Latest `origin/main` tooling-only changes merged without conflict as `bb269d9aa`.
+Assessment source and test configurations were unchanged. Parent reran build
+and agent-control-plane/skill-mirror audits successfully. PR/exact-head CI and
+merge window remain pending; YUK-1047 remains open. No deployment or paid calls.

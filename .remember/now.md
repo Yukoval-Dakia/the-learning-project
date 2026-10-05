@@ -1,6 +1,6 @@
-# 当前交接 — 2026-10-05 placement 实施检查点
+# 当前交接 — 2026-10-05 PR准备
 
-YUK-1047 placement P1已实施：会话锁下pinned发题与恢复、冻结原生控件、CAS自动保存/原件证据恢复、URL session恢复、诚实保存退出和native进度/pending held门禁。67 unit/149 DB/typecheck/lint/build及API/边界/schema/partition审计通过。诊断claim释放测试在起始04f0bcaf7 submit也失败；lint ratchet305→328尚未清理，未抬基线。Parent仍拥有唯一修复验证审、真实runtime、Linear/PR/CI；本lane不push/PR/部署/付费。详见docs/planning/2026-10-05-yuk1047-placement-repair.md。代码与DB/build lane收尾后释放，保留.serena/project.yml。
+YUK-1047正式迁移与三P1修复已提交f6f8f638a，最新main无冲突合入bb269d9aa。唯一验证审确认三P1解决、无新P0/P1，独立30unit通过；review预算用尽。gate修复105DB/57unit、typecheck/build、lint299≤305；同步main后build和两项工具审计再次通过。真实隔离浏览器长文保存刷新、8题到profile、双标签CAS409恢复、模拟503阻止退出及重试成功通过。下一步PR/exact-head CI和17分钟窗；不部署/新付费，不改.serena/project.yml。详见docs/planning/2026-10-05-yuk1047-placement-repair.md。
 
 # 当前交接 — 2026-10-05 原主线恢复
 
