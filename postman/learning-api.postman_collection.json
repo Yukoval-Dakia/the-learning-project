@@ -831,6 +831,72 @@
       ]
     },
     {
+      "name": "appeals",
+      "item": [
+        {
+          "name": "POST /api/appeals",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/appeals",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "appeals"]
+            },
+            "description": "请求复核当前生效的原生评估\n\n**Notes:** 只接受当前生效自动评估；原始作答和评分依据保持冻结，理由不替代作答。重复 key 复用请求，后台重判通过 CAS 激活；过时请求保持 held，不产生第二次练习。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"evaluation_id\": \"REPLACE_effective_evaluation\",\n  \"reason_md\": \"请复核原始推导中的单位换算。\",\n  \"idempotency_key\": \"REPLACE_appeal_key\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "attempts",
+      "item": [
+        {
+          "name": "POST /api/attempts",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/attempts",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "attempts"]
+            },
+            "description": "提交原生作答并激活候选\n\n**Notes:** 原生请求返回 effective/review_required，assessment 带 submission/group/candidate 与学习 effect；重复提交复用原始回执，不产生第二次练习。self_report=true 仅显式 FSRS；auto_rate=true 不把 rating fallback 当用户选择。无 assessment 的旧请求返回 historical_unknown(409)，不会补造发题或写入学习状态。原始提交事务冻结学习知识点/难度/学科目标，排队后的标签编辑不改变本次学习范围。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question_id\": \"REPLACE_question\",\n  \"rating\": \"hard\",\n  \"assessment\": {\n    \"issuance_id\": \"REPLACE_issuance\",\n    \"evaluation_group_id\": \"REPLACE_evaluation_group\",\n    \"idempotency_key\": \"REPLACE_attempt_key\",\n    \"response_set\": {\n      \"entries\": [\n        {\n          \"slot_id\": \"REPLACE_slot\",\n          \"kind\": \"text\",\n          \"text_md\": \"original learner response\"\n        }\n      ]\n    },\n    \"group_evidence\": []\n  },\n  \"activation_intent\": {\n    \"evaluation_id\": \"REPLACE_candidate\",\n    \"expected_effective_id\": null,\n    \"expected_generation\": 0\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "conjecture",
       "item": [
         {
@@ -854,7 +920,7 @@
                 }
               ]
             },
-            "description": "猜测探针作答（conjecture-wire #13 / YUK-538 ⑬）：owner 回答已派发的判别探针，judge 纯评价 → outcome → resolution 分流\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** conjecture-wire #13 (spec §6 S3)。隔离路径：defaultJudgeKindForQuestion → capability registry resolveJudge → runner.run() PURE（不触 FSRS/attempt/θ̂，ND-5）→ answerProbe 写唯一 experimental:probe_result event。v2 复验分流：judge 'incorrect' → outcome=0；第一次为 'evidence_for' 并原子派发预先独立创作的 sequence-2 probe，第二道独立 probe 也 incorrect 才为 'confirmed'。历史 v1 proposal 无 follow-up，保留单题 incorrect → 'confirmed' 的终态规则。任一 probe judge 'correct' → outcome=1 → 'retired'（猜测被反驳）。fail-closed：'partial'/'unsupported' → 422，不写 probe_result，探针保持 active（slot 未消费，owner 可重答或走 admin S4）。幂等：重答返回记录的 outcome/resolution（不覆盖）。需 x-internal-token。响应：{ status, resolution, outcome, probe_result_event_id, coarse_outcome, idempotent }",
+            "description": "猜测探针作答（conjecture-wire #13 / YUK-538 ⑬）：owner 回答已派发的判别探针，judge 纯评价 → outcome → resolution 分流\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** YUK-1047：已准入探针在备课台实际发题时冻结 native issuance；服务端保存 ResponseSet 与原始图片 digest 后经 evaluateSubmission 产出 candidate，answerProbe 仅写唯一 experimental:probe_result，不激活练习结算/FSRS/θ̂。未准入探针 withheld，不自动降级 manual。v2 复验分流：judge 'incorrect' → outcome=0；第一次为 'evidence_for' 并原子派发预先独立创作的 sequence-2 probe，第二道独立 probe 也 incorrect 才为 'confirmed'。历史 v1 proposal 无 follow-up，保留单题 incorrect → 'confirmed' 的终态规则。任一 probe judge 'correct' → outcome=1 → 'retired'（猜测被反驳）。fail-closed：'partial'/'unsupported' → 422，不写 probe_result，探针保持 active（slot 未消费，owner 可重答或走 admin S4）。幂等：重答返回记录的 outcome/resolution（不覆盖）。需 x-internal-token。响应：{ status, resolution, outcome, probe_result_event_id, coarse_outcome, idempotent }",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"answer_md\": \"2x·cos(x^2)\"\n}",
@@ -1289,7 +1355,7 @@
                 }
               ]
             },
-            "description": "pending 恢复读面：issuance + live draft + 已接收提交（draft=null 即服务端无未保存草稿）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 返回 {issuance,draft,submissions}；issuance 不存在 → 404"
+            "description": "pending 恢复读面：issuance + live draft + 已接收提交（draft=null 即服务端无未保存草稿）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 返回 issuance/practice_dto/draft/submissions；已接收 submission 带原始 response_set/group_evidence/idempotency_key，恢复不泄漏候选反馈。不存在返回404。"
           },
           "response": []
         },
@@ -1318,6 +1384,26 @@
                 }
               }
             }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/issuances/:id/reference-reveals",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/issuances/:id/reference-reveals",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "issuances", ":id", "reference-reveals"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "按需查看已发题范围的冻结参考解答\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 返回 reference_md（历史未封存时为 null）；返回正文前持久化 answer_help；不读取 current question 参考，不揭示其他 part。一次性诊断及容器发题不从此接口揭示。"
           },
           "response": []
         },
@@ -1621,7 +1707,7 @@
                 }
               ]
             },
-            "description": "placement probe 取下一题 + 终止判定\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 答题经 /api/review/submit（session_id=本 probe）后调。cap 仅接受 1..8，服务端有效上限恒为 8。返回 {done, reason?, question?, answeredCount, sourcingNeeded?}。未知 session→404，已关闭→409",
+            "description": "placement probe 取下一题 + 终止判定\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 答题经 /api/attempts（session_id=本 probe，auto_rate=true，携带首题返回的 assessment 身份与原始 response_set/group_evidence）后调。未完成的 issuance 优先恢复；pending/held 在 cap 前阻止推进。cap 仅接受 1..8，服务端有效上限恒为 8。返回 {done, reason?, question?, answeredCount, sourcingNeeded?}。未知 session→404，已关闭→409",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"knowledgeIds\": [\n    \"kc-1\"\n  ],\n  \"cap\": 8,\n  \"seThreshold\": null\n}",
@@ -1649,10 +1735,131 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "placement", "start"]
             },
-            "description": "启动 placement probe 会话（冷启 inc-B），返回首题\n\n**Notes:** dark-ship：gated on PLACEMENT_PROBE_ENABLED（默认 false → 404）。goalId 省略时用 knowledgeIds；二者皆缺/不可解析 → 400。返回 {sessionId, knowledgeIds, question, sourcingNeeded}",
+            "description": "启动 placement probe 会话（冷启 inc-B），返回首题\n\n**Notes:** dark-ship：gated on PLACEMENT_PROBE_ENABLED（默认 false → 404）。goalId 省略时用 knowledgeIds；二者皆缺/不可解析 → 400。返回 {sessionId, knowledgeIds, question, answeredCount, sourcingNeeded}；question.assessment 包含固定 issuance/提交身份、公开 practice_dto 与恢复状态",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"goalId\": null,\n  \"knowledgeIds\": [\n    \"kc-1\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "placement-sessions",
+      "item": [
+        {
+          "name": "GET /api/placement-sessions/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/placement-sessions/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "placement-sessions", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "恢复 placement 会话生命周期\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 读取 status、goal_id 和 scope_knowledge_ids。终态不自动重新开始。"
+          },
+          "response": []
+        },
+        {
+          "name": "PATCH /api/placement-sessions/:id",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/placement-sessions/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "placement-sessions", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "明确完成或放弃 placement 会话\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 显式退出先等待必要上传及服务端草稿 ACK。刷新/pagehide 只尝试保存，保留 active session。完成成功后再导航档案。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"completed\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/placement-sessions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/placement-sessions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "placement-sessions"]
+            },
+            "description": "创建 placement 会话并固定首题原始发题\n\n**Notes:** 201 + Location。返回 sessionId/answeredCount/question.assessment；question.assessment.state.practice_dto 为冻结公开题面，phase 为 answering/retry/pending/held。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"goalId\": \"REPLACE_goal\",\n  \"pace\": \"light\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/placement-sessions/:id/question-selections",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/placement-sessions/:id/question-selections",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "placement-sessions", ":id", "question-selections"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "恢复固定 issuance 或选择下一道自适应题\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 先恢复未完成的 issuance。pending/held 不推进、不重交；retry 仅重发已接收的相同原始 response_set、group_evidence、submission_id 和 idempotency_key。answeredCount 按不同 question ID 统计原生和历史参与。有效 head 且结算成功后才选择或结束。",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -2140,6 +2347,34 @@
           "response": []
         },
         {
+          "name": "POST /api/review/advice",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/review/advice",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "review", "advice"]
+            },
+            "description": "保存冻结原始作答并预览候选\n\n**Notes:** 返回 candidate_id/activation_intent/automatic_commit；不激活学习效应。响应没有评级建议时保留未决态，不补造评级。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question_id\": \"REPLACE_question\",\n  \"assessment\": {\n    \"issuance_id\": \"REPLACE_issuance\",\n    \"evaluation_group_id\": \"REPLACE_evaluation_group\",\n    \"idempotency_key\": \"REPLACE_attempt_key\",\n    \"response_set\": {\n      \"entries\": [\n        {\n          \"slot_id\": \"REPLACE_slot\",\n          \"kind\": \"text\",\n          \"text_md\": \"original learner response\"\n        }\n      ]\n    },\n    \"group_evidence\": []\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
           "name": "POST /api/review/drafts/:id/enable",
           "request": {
             "method": "POST",
@@ -2184,6 +2419,174 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"reason\": \"owner 判断这题质量足够，跳过 AI 验证\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "review-sessions",
+      "item": [
+        {
+          "name": "POST /api/review-sessions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/review-sessions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "review-sessions"]
+            },
+            "description": "创建试卷会话并固定发题绑定\n\n**Notes:** paper_id 可省略以创建普通复习会话；试卷必须已发布，创建会话与固定各槽位绑定在同一事务。新建返回201，复用活动会话返回200；返回 session_id。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paper_id\": \"REPLACE_paper\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/review-sessions/:id/answer-drafts",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/review-sessions/:id/answer-drafts",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "review-sessions", ":id", "answer-drafts"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "保存原生试卷作答草稿\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 必须先读取 /api/papers/:id，将该槽位 assessment 的 issuance_id/evaluation_group_id/idempotency_key 和 practice_dto 中的槽位、选项原样用于请求；示例 text 仅适用于对应已发布文本槽位。缺少原始发题绑定返回 historical_unknown(409)，不可在提交时补建历史绑定。 expected_save_epoch 使用最近一次服务端 ack 或详情返回的 save_epoch；过期返回 stale_draft(409)。返回 answer_id/created/save_epoch；恢复以详情 assessment.response_set/group_evidence 为准。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paper_id\": \"REPLACE_paper\",\n  \"question_id\": \"REPLACE_question\",\n  \"part_ref\": null,\n  \"content_md\": \"original learner response\",\n  \"input_kind\": \"text\",\n  \"image_refs\": [],\n  \"expected_save_epoch\": 0,\n  \"assessment\": {\n    \"issuance_id\": \"REPLACE_issuance\",\n    \"evaluation_group_id\": \"REPLACE_evaluation_group\",\n    \"idempotency_key\": \"REPLACE_attempt_key\",\n    \"response_set\": {\n      \"entries\": [\n        {\n          \"slot_id\": \"REPLACE_slot\",\n          \"kind\": \"text\",\n          \"text_md\": \"original learner response\"\n        }\n      ]\n    },\n    \"group_evidence\": []\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/review-sessions/:id/submissions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/review-sessions/:id/submissions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "review-sessions", ":id", "submissions"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "提交原生试卷作答\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 必须先读取 /api/papers/:id，将该槽位 assessment 的 issuance_id/evaluation_group_id/idempotency_key 和 practice_dto 中的槽位、选项原样用于请求；示例 text 仅适用于对应已发布文本槽位。缺少原始发题绑定返回 historical_unknown(409)，不可在提交时补建历史绑定。 重复请求必须保持原始作答不变；回执投影当前生效候选。缓冲反馈仅返回身份字段和 visible_to_user=false/feedback_buffered=true，不返回 status/coarse_outcome/score。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paper_id\": \"REPLACE_paper\",\n  \"question_id\": \"REPLACE_question\",\n  \"part_ref\": null,\n  \"answer_md\": \"original learner response\",\n  \"image_refs\": [],\n  \"assessment\": {\n    \"issuance_id\": \"REPLACE_issuance\",\n    \"evaluation_group_id\": \"REPLACE_evaluation_group\",\n    \"idempotency_key\": \"REPLACE_attempt_key\",\n    \"response_set\": {\n      \"entries\": [\n        {\n          \"slot_id\": \"REPLACE_slot\",\n          \"kind\": \"text\",\n          \"text_md\": \"original learner response\"\n        }\n      ]\n    },\n    \"group_evidence\": []\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "solve-sessions",
+      "item": [
+        {
+          "name": "POST /api/solve-sessions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/solve-sessions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "solve-sessions"]
+            },
+            "description": "使用已发题快照开始解题会话\n\n**Notes:** 返回 session_id、evaluation_group_id 与 idempotency_key，提交必须回传该稳定身份。正式原生会话不临时生成或改写参考解答。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question_id\": \"REPLACE_question\",\n  \"issuance_id\": \"REPLACE_issuance\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/solve-sessions/:sid/submissions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/solve-sessions/:sid/submissions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "solve-sessions", ":sid", "submissions"],
+              "variable": [
+                {
+                  "key": "sid",
+                  "value": "REPLACE_sid"
+                }
+              ]
+            },
+            "description": "提交冻结解题作答并原子结束会话\n\n**Path vars:** `:sid` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 正式作答与学习结算、会话 judged、错题记录同事务；相同原始输入重复提交复用结果，修改已接受作答返回409。待评估保持 review_required，不揭示答案。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question_id\": \"REPLACE_question\",\n  \"assessment\": {\n    \"issuance_id\": \"REPLACE_issuance\",\n    \"evaluation_group_id\": \"REPLACE_session_evaluation_group_id\",\n    \"idempotency_key\": \"REPLACE_session_idempotency_key\",\n    \"response_set\": {\n      \"entries\": [\n        {\n          \"slot_id\": \"REPLACE_slot\",\n          \"kind\": \"text\",\n          \"text_md\": \"original response\"\n        }\n      ]\n    },\n    \"group_evidence\": []\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"

@@ -101,6 +101,7 @@ export interface JevModelExecutorOptions {
   readonly ruleThreshold?: number;
   /** Caller cancellation forwarded to the typed runner. */
   readonly signal?: AbortSignal;
+  readonly taskRunId?: string;
   /** Test seam: replace ONLY the wire transport (never the lifecycle). */
   readonly fetchImpl?: typeof fetch;
   /** Test seam: clock override. */
@@ -161,6 +162,7 @@ function typedState(
   groupEvidence: GroupEvidenceT[],
 ): Record<string, unknown> {
   return {
+    ...(request.review_context ? { review_context: request.review_context } : {}),
     question: {
       revision_id: request.revision_id,
       parts: request.question_parts,
@@ -435,6 +437,7 @@ export function createJevModelExecutor(options: JevModelExecutorOptions): ModelU
         },
         {
           db: options.db,
+          taskRunId: options.taskRunId,
           deadlineAt: options.deadlineAt,
           signal: options.signal,
           fetchImpl: options.fetchImpl,

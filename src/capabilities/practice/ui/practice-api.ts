@@ -284,37 +284,27 @@ export async function deleteQuestion(
 }
 
 type ReviewAdviceWire = ApiOperationJsonResponse<'previewReviewAdvice'>;
-export type JudgePreview = Omit<ReviewAdviceWire['judge'], 'suggested_rating'> & {
-  suggested_rating: NonNullable<ReviewAdviceWire['judge']['suggested_rating']>;
-};
+export type JudgePreview = ReviewAdviceWire['judge'];
 
 export async function getAdvice(
   questionId: string,
   responseMd: string,
   // YUK-1094 — 已上传的附件 asset refs；随 advice 预览一并送 judge，让预览判词与提交
   // 使用同一份证据。空值不发字段（既有纯文本 advice wire 逐字不变）。
-  imageRefs: readonly string[] = [],
+  imageRefs: readonly string[],
+  assessment: ApiOperationRequestBody<'createSubmission'>,
 ): Promise<Omit<ReviewAdviceWire, 'judge'> & { judge: JudgePreview }> {
   const response = await apiOperationJson('previewReviewAdvice', {
     url: '/api/review/advice',
     method: 'POST',
     body: {
+      assessment,
       question_id: questionId,
       response_md: responseMd,
       ...(imageRefs.length > 0 ? { answer_image_refs: [...imageRefs] } : {}),
     },
   });
-  if (response.judge.suggested_rating === null) {
-    throw new ApiError(
-      '本次判定没有可提交的 FSRS 评级，请重试判分。',
-      422,
-      'judge_rating_unavailable',
-    );
-  }
-  return {
-    ...response,
-    judge: { ...response.judge, suggested_rating: response.judge.suggested_rating },
-  };
+  return response;
 }
 
 // YUK-433 — solo 路径 per-attempt response-time（RT）capture 的纯计算核。
@@ -355,29 +345,45 @@ export async function submitReview(input: SubmitReviewInput): Promise<SubmitOutc
 export const fileAppeal = (
   judgeEventId: string,
   reasonMd: string,
+  anchorKind: 'judge' | 'evaluation' = 'judge',
 ): Promise<{ appeal_event_id: string }> =>
   apiOperationJson('createAppeal', {
     url: '/api/appeals',
     method: 'POST',
-    body: { judge_event_id: judgeEventId, reason_md: reasonMd },
+    body:
+      anchorKind === 'evaluation'
+        ? { evaluation_id: judgeEventId, reason_md: reasonMd }
+        : { judge_event_id: judgeEventId, reason_md: reasonMd },
   });
 
-export const solveStart = (questionId: string): Promise<{ session_id: string }> =>
+export const solveStart = (
+  questionId: string,
+  issuanceId?: string,
+): Promise<{ session_id: string }> =>
   apiOperationJson('createSolveSession', {
     url: '/api/solve-sessions',
     method: 'POST',
-    body: { question_id: questionId },
+    body: { question_id: questionId, issuance_id: issuanceId },
+  });
+
+export const revealStudyReference = (
+  issuanceId: string,
+): Promise<{ reference_md: string | null }> =>
+  apiOperationJson('revealStudyReference', {
+    url: `/api/issuances/${encodeURIComponent(issuanceId)}/reference-reveals`,
+    method: 'POST',
   });
 
 export const solveHint = (
   questionId: string,
   sessionId: string,
   hintIndex: number,
+  issuanceId?: string,
 ): Promise<{ text_md: string }> =>
   apiOperationJson('createSolveHintRequest', {
     url: `/api/solve-sessions/${encodeURIComponent(sessionId)}/hint-requests`,
     method: 'POST',
-    body: { question_id: questionId, hint_index: hintIndex },
+    body: { question_id: questionId, hint_index: hintIndex, issuance_id: issuanceId },
   });
 
 // ── 题库面 /questions（YUK-409, loom screen-questions）─────────────────────────
@@ -486,6 +492,7 @@ export const startPaperSession = (artifactId: string): Promise<{ session_id: str
   });
 
 export interface PaperSlot {
+  assessment?: import('../api/paper-contracts').PaperSlotAssessment;
   question_id: string;
   part_ref: string | null;
   section_index: number;
@@ -553,6 +560,10 @@ export const getPaperDetail = (artifactId: string): Promise<PaperDetail> =>
   });
 
 type PaperWriteInput = {
+  assessment?: import('zod').infer<
+    typeof import('../api/assessment-contracts').CreateSubmissionBodySchema
+  >;
+  expected_save_epoch?: number;
   session_id: string;
   question_id: string;
   part_ref: string | null;
@@ -572,6 +583,9 @@ type PaperWriteInput = {
 
 export function buildPaperAnswerDraftBody(artifactId: string, input: PaperWriteInput) {
   return {
+    ...(input.assessment
+      ? { assessment: input.assessment, expected_save_epoch: input.expected_save_epoch }
+      : {}),
     paper_id: artifactId,
     question_id: input.question_id,
     part_ref: input.part_ref,
@@ -582,6 +596,7 @@ export function buildPaperAnswerDraftBody(artifactId: string, input: PaperWriteI
 
 export function buildPaperSubmissionBody(artifactId: string, input: PaperWriteInput) {
   return {
+    ...(input.assessment ? { assessment: input.assessment } : {}),
     paper_id: artifactId,
     question_id: input.question_id,
     part_ref: input.part_ref,
@@ -835,11 +850,13 @@ export const getIssuanceState = (issuanceId: string) =>
 export const saveResponseDraft = (
   issuanceId: string,
   body: import('@/ui/lib/api').ApiOperationRequestBody<'saveResponseDraft'>,
+  options: { keepalive?: boolean } = {},
 ) =>
   apiOperationJson('saveResponseDraft', {
     url: `/api/issuances/${encodeURIComponent(issuanceId)}/responses`,
     method: 'POST',
     body,
+    init: options.keepalive ? { keepalive: true } : undefined,
   });
 
 /**

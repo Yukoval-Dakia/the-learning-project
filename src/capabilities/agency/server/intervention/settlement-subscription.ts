@@ -10,7 +10,10 @@ import type {
   EventSubscriptionHandlerFactory,
   EventSubscriptionOutcome,
 } from '@/kernel/manifest';
-import { recordInterventionDiagnosticReview } from './store';
+import {
+  recordInterventionDiagnosticReview,
+  recordNativeInterventionDiagnosticReview,
+} from './store';
 
 export async function handleInterventionDiagnosticJudgeDelivery(
   db: Db,
@@ -18,6 +21,39 @@ export async function handleInterventionDiagnosticJudgeDelivery(
 ): Promise<EventSubscriptionOutcome> {
   const source = await getEventById(db, delivery.sourceEventId);
   if (!source) throw new Error(`judge event '${delivery.sourceEventId}' was not found`);
+  if (
+    source.action === 'experimental:assessment_activation' ||
+    (source.action === 'correct' && source.subject_kind === 'event')
+  ) {
+    let attemptId: string;
+    if (source.action === 'correct') {
+      attemptId = source.subject_id;
+    } else {
+      const submissionId = 'submission_id' in source.payload ? source.payload.submission_id : null;
+      if (source.subject_kind !== 'evaluation_group' || typeof submissionId !== 'string')
+        return { status: 'skipped', reason: 'native activation coordinates unavailable' };
+      attemptId = `evt_assessment_${submissionId}`;
+    }
+    const native = await recordNativeInterventionDiagnosticReview(db, attemptId);
+    if (!native)
+      return {
+        status: 'skipped',
+        reason: 'native diagnostic coordinates or effective state unavailable',
+      };
+    const { result, verdictEventId } = native;
+    if (result.status === 'skipped') return { status: 'skipped', reason: result.reason };
+    return {
+      status: 'succeeded',
+      detail: {
+        intervention_id: result.intervention.id,
+        intervention_version: result.intervention.version,
+        diagnostic_kind: result.diagnostic_kind,
+        intervention_status: result.intervention.status,
+        verdict_event_id: verdictEventId,
+        idempotent: result.status === 'already_recorded',
+      },
+    };
+  }
   const sourceJudge = JudgeOnEvent.safeParse(source);
   if (!sourceJudge.success) {
     return { status: 'skipped', reason: `source '${source.action}' is not a canonical judge` };

@@ -42,6 +42,13 @@ const statuses = [
   'retry_wait',
   'pending',
 ] as const;
+const liveSubscriberIdentities = [
+  ['agency.intervention-diagnostic-review-settlement', 4],
+  ['agency.probe-evidence-intervention-prepare', 1],
+  ['agency.probe-publication-serve', 1],
+  ['notes.mastery-progress-note-refine', 1],
+  ['practice.failure-learning-attempt', 3],
+];
 const collection = 'test_subscription_snapshot_memory';
 const now = new Date('2026-10-04T12:00:00Z');
 const future = new Date('2099-01-01T00:00:00Z');
@@ -100,7 +107,9 @@ async function seedProgress() {
     })),
     db,
   );
-  expect(registry.subscriptions).toHaveLength(4);
+  expect(registry.subscriptions.map((sub) => [sub.id, sub.version])).toEqual(
+    liveSubscriberIdentities,
+  );
   const leases = [];
   for (const sub of registry.subscriptions) {
     await bootstrapSubscription(db, registry, sub);
@@ -183,11 +192,25 @@ describe('YUK-766 subscription progress backup', () => {
     await testDb().execute(sql`DROP TABLE IF EXISTS test_subscription_snapshot_memory`);
   });
 
-  it('archives all four live subscriber identities, seven delivery states and effect provenance', async () => {
-    await seedProgress();
+  it('archives all five live subscriber identities, seven delivery states and effect provenance', async () => {
+    const { registry } = await seedProgress();
     const data = decode(await archive());
-    expect(data.event_subscription_checkpoint).toHaveLength(4);
-    expect(data.event_subscription_delivery).toHaveLength(28);
+    expect(data.event_subscription_checkpoint).toHaveLength(5);
+    expect(data.event_subscription_delivery).toHaveLength(35);
+    for (const sub of registry.subscriptions) {
+      expect(
+        data.event_subscription_checkpoint.find((row) => row.subscriber_id === sub.id),
+      ).toMatchObject({
+        subscriber_id: sub.id,
+        subscriber_version: sub.version,
+        declaration_hash: sub.declarationHash,
+      });
+      expect(
+        data.event_subscription_delivery
+          .filter((row) => row.subscriber_id === sub.id)
+          .map((row) => row.status),
+      ).toEqual(statuses);
+    }
     expect(data.event_subscription_effect).toHaveLength(4);
     expect(data.event_subscription_effect.find((r) => r.status === 'enqueued')).toMatchObject({
       downstream_job_id: 'archived-downstream-job',
@@ -221,7 +244,12 @@ describe('YUK-766 subscription progress backup', () => {
     const result = await restoreFromArchive({ db, r2: memR2(), bytes: await archive() });
     expect(result).toMatchObject({ status: 200 });
     const checkpoints = await db.select().from(checkpoint);
-    expect(checkpoints).toHaveLength(4);
+    expect(checkpoints).toHaveLength(5);
+    expect(
+      checkpoints
+        .map((row) => [row.subscriber_id, row.subscriber_version])
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    ).toEqual(liveSubscriberIdentities);
     for (const row of checkpoints) {
       expect(row).toMatchObject({
         claim_owner: null,
@@ -333,7 +361,7 @@ describe('YUK-766 subscription progress backup', () => {
     await seedProgress();
     const bytes = rewrite(await archive(), (data) => {
       const rows = data.event_subscription_delivery;
-      expect(rows).toHaveLength(28);
+      expect(rows).toHaveLength(35);
       rows[0].source_dispatch_seq = -1;
     });
     await source('rollback-canary', 'test:canary');

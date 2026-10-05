@@ -1,6 +1,8 @@
 import { z } from 'zod';
+import { ActivateEvaluationIntent } from '@/core/schema/assessment';
 import { QuestionKind } from '@/core/schema/business';
 import { MAX_HINT_COUNT, MAX_HINT_INDEX } from '@/core/schema/event/known';
+import { CreateSubmissionBodySchema } from './assessment-contracts';
 
 export const QuestionParamsSchema = z.object({ id: z.string().trim().min(1) });
 export const SolveSessionParamsSchema = z.object({ sid: z.string().trim().min(1) });
@@ -221,6 +223,13 @@ export const QuestionDetailResponseSchema = z
           })
           .nullable()
           .optional(),
+        assessment: z
+          .object({
+            evaluation_group_id: z.string(),
+            original_evaluation_id: z.string().nullable(),
+            effective_evaluation_id: z.string().nullable(),
+          })
+          .optional(),
         fsrs_rating: z.enum(['again', 'hard', 'good']).optional(),
       }),
     ),
@@ -229,17 +238,18 @@ export const QuestionDetailResponseSchema = z
         review_event: z
           .object({
             id: z.string(),
-            rating: z.enum(['again', 'hard', 'good']),
+            rating: z.enum(['again', 'hard', 'good']).nullable(),
           })
           .strict(),
         judge: z
           .object({
-            route: z.literal('multimodal_direct'),
-            coarse_outcome: z.enum(['correct', 'partial', 'incorrect']),
+            route: z.enum(['multimodal_direct', 'evaluate_submission']),
+            coarse_outcome: z.enum(['correct', 'partial', 'incorrect', 'unsupported']),
             confidence: z.number().min(0).max(1),
             feedback_md: z.string(),
-            suggested_rating: z.enum(['again', 'hard', 'good']),
-            judge_event_id: z.string(),
+            suggested_rating: z.enum(['again', 'hard', 'good']).nullable(),
+            judge_event_id: z.string().nullable(),
+            evaluation_id: z.string().optional(),
           })
           .strict(),
       })
@@ -312,15 +322,21 @@ export const RestoreQuestionResponseSchema = z
   })
   .passthrough();
 
-export const StartSolveBodySchema = z.object({ regenerate: z.boolean().optional() }).nullable();
-export const CreateSolveSessionBodySchema = z.object({
-  question_id: z.string().trim().min(1),
-  regenerate: z.boolean().optional(),
-});
+export const StartSolveBodySchema = z
+  .object({ issuance_id: z.string().min(1).optional() })
+  .strict()
+  .nullable();
+export const CreateSolveSessionBodySchema = z
+  .object({
+    question_id: z.string().trim().min(1),
+    issuance_id: z.string().min(1).optional(),
+  })
+  .strict();
 export const SolveSessionCreatedSchema = z.object({
   session_id: z.string(),
-  generated: z.boolean(),
-  generation_error: z.boolean(),
+  issuance_id: z.string(),
+  evaluation_group_id: z.string().optional(),
+  idempotency_key: z.string().optional(),
 });
 
 export const SolveSessionResponseSchema = z
@@ -333,11 +349,15 @@ export const SolveSessionResponseSchema = z
   .passthrough();
 
 export const HintRequestBodySchema = z
-  .object({ hint_index: z.number().int().min(0).max(MAX_HINT_INDEX).default(0) })
+  .object({
+    hint_index: z.number().int().min(0).max(MAX_HINT_INDEX).default(0),
+    issuance_id: z.string().min(1).optional(),
+  })
   .nullable();
 export const CreateHintRequestBodySchema = z.object({
   question_id: z.string().trim().min(1),
   hint_index: z.number().int().min(0).max(MAX_HINT_INDEX).optional(),
+  issuance_id: z.string().min(1).optional(),
 });
 export const HintRequestResponseSchema = z.object({
   hint_request_id: z.string(),
@@ -345,6 +365,10 @@ export const HintRequestResponseSchema = z.object({
 });
 
 export const SolveSubmissionBodySchema = z.object({
+  assessment: CreateSubmissionBodySchema.optional(),
+  activation_intent: ActivateEvaluationIntent.optional(),
+  self_report: z.boolean().optional(),
+  user_rating: z.enum(['again', 'hard', 'good']).optional(),
   student_text_steps: z.array(z.string()).optional(),
   student_final_answer_text: z.string().optional(),
   student_image_refs: z.array(z.string()).optional(),

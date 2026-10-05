@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ConjectureProbeSignatureMatch } from '../conjecture-probe-response';
 import { EvidenceCitation } from './judgment';
 
 // Models report a published rule decision or a published level. They never
@@ -14,6 +15,7 @@ export const AssessmentRuleDecision = z.discriminatedUnion('kind', [
       kind: z.literal('rule'),
       rule_id: z.string().min(1),
       points_awarded: z.number().min(0),
+      probe_signature_match: ConjectureProbeSignatureMatch.optional(),
       ...support,
     })
     .strict(),

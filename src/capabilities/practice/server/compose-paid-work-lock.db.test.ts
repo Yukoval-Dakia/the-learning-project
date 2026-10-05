@@ -49,7 +49,7 @@ describe('Practice compose paid-work reserved adapter', () => {
         `stream:compose-paid:${DATE}`,
       ]);
       expect(error).toHaveBeenCalledWith(
-        '[compose_paid] advisory unlock failed after timeout',
+        '[session_lock] advisory unlock failed after timeout',
         `stream:compose-paid:${DATE}`,
         expect.objectContaining({ code: '42883' }),
       );

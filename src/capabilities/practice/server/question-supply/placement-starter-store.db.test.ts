@@ -13,6 +13,7 @@ import {
   question,
 } from '@/db/schema';
 import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
+import { publishPlacementFixture } from '../../../../../tests/fixtures/assessment-placement';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { insertLegacyGoal as insertGoal } from '../../../../../tests/helpers/legacy-goal';
 import { dispatchSupplyTarget } from './dispatcher';
@@ -573,6 +574,7 @@ describe('placement starter store', () => {
         .update(question)
         .set({ draft_status: 'active', updated_at: new Date() })
         .where(eq(question.id, 'question-race'));
+      await publishPlacementFixture(tx, 'question-race');
     });
     await promotionLocked;
 

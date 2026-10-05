@@ -1,8 +1,9 @@
 import { createId } from '@paralleldrive/cuid2';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
-import { learning_session } from '@/db/schema';
+import { event, learning_session } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/server/events/writer';
 
@@ -23,7 +24,8 @@ import { assertFromState } from './guards';
 // Review sessions in Phase 1c.1 are state envelopes only. Per-question review
 // events (FSRS rating + state) are written by the review route in Step 6 using
 // `writeEvent` directly with session_id chained back to this session. NO domain
-// event writes happen inside these transitions — they are purely state-tracking.
+// grading writes happen inside these transitions. Completion releases buffered
+// native feedback through a durable notification in the same transaction.
 //
 // Per-transition `job_events` are emitted for SSE / observability parity with
 // IngestionSession, using business_table='learning_session' (no legacy table
@@ -34,13 +36,13 @@ const SESSION_TABLE = 'learning_session' as const;
 async function loadReviewSessionForUpdate(
   tx: Db | Tx,
   sessionId: string,
-): Promise<{ status: string } | null> {
-  const rows = await tx.execute<{ status: string }>(
-    sql`SELECT status FROM learning_session WHERE id = ${sessionId} AND type = 'review' FOR UPDATE`,
+): Promise<{ status: string; started_at: string | Date } | null> {
+  const rows = await tx.execute<{ status: string; started_at: string | Date }>(
+    sql`SELECT status, started_at FROM learning_session WHERE id = ${sessionId} AND type = 'review' FOR UPDATE`,
   );
   const row = rows[0];
   if (!row) return null;
-  return { status: row.status };
+  return { status: row.status, started_at: row.started_at };
 }
 
 export type ReviewSessionStatus = 'started' | 'paused' | 'completed' | 'abandoned';
@@ -65,7 +67,7 @@ type ReviewTransitionOptions = {
 };
 
 async function applyReviewSessionTransition(
-  db: Db,
+  db: Db | Tx,
   sessionId: string,
   target: ReviewSessionStatus,
   options: ReviewTransitionOptions,
@@ -125,6 +127,42 @@ async function applyReviewSessionTransition(
         .where(eq(learning_session.id, sessionId));
     }
 
+    if (target === 'completed') {
+      // Raw drizzle `execute` returns timestamptz in PG text form (not a Date);
+      // attempt payloads store `started_at.toISOString()` (see paper-attempt.ts),
+      // so normalize to ISO for the comparison either way.
+      const paperStartedAt = new Date(current.started_at).toISOString();
+      const attempts = await tx
+        .select()
+        .from(event)
+        .where(
+          and(
+            eq(event.session_id, sessionId),
+            eq(event.action, 'experimental:assessment_attempt'),
+            sql`${event.payload}->>'paper_feedback_policy' = 'judge_now_show_later'`,
+            sql`${event.payload}->>'paper_started_at' = ${paperStartedAt}`,
+          ),
+        );
+      for (const attempt of attempts) {
+        await writeEvent(tx, {
+          id: `feedback_released:${attempt.id}`,
+          session_id: sessionId,
+          actor_kind: 'system',
+          actor_ref: 'review_session',
+          action: 'experimental:assessment_feedback_released',
+          subject_kind: 'event',
+          subject_id: attempt.id,
+          caused_by_event_id: attempt.id,
+          outcome: null,
+          payload: {
+            attempt_event_id: attempt.id,
+            paper_started_at: paperStartedAt,
+          },
+          created_at: now,
+        });
+      }
+    }
+
     const eventType =
       target === 'started'
         ? previousStatus === 'abandoned'
@@ -152,7 +190,7 @@ async function applyReviewSessionTransition(
  * Replaying the same target returns changed=false and emits no duplicate job event.
  */
 export async function transitionReviewSession(
-  db: Db,
+  db: Db | Tx,
   sessionId: string,
   target: ReviewSessionStatus,
 ): Promise<ReviewSessionTransition> {
@@ -302,7 +340,7 @@ export async function resumeReviewSession(db: Db, sessionId: string): Promise<vo
  * ended_at because the session is live again; per-question review events remain
  * chained by session_id.
  */
-export async function reopenAbandonedReviewSession(db: Db, sessionId: string): Promise<void> {
+export async function reopenAbandonedReviewSession(db: Db | Tx, sessionId: string): Promise<void> {
   await applyReviewSessionTransition(db, sessionId, 'started', {
     allowedFrom: ['abandoned'],
     idempotent: false,

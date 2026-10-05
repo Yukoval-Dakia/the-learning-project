@@ -1,6 +1,15 @@
 import { z } from 'zod';
+import {
+  ConjectureProbeSignatureMatch,
+  classifyConjectureProbeResponseFromJudgeMatch,
+} from '../conjecture-probe-response';
 import { extractAnswerHead } from '../judge-routing';
-import { type ExecutorDescriptorT, type ModelExecutorT, validateExecutionPlan } from './execution';
+import {
+  type DeterministicComparatorIdT,
+  type ExecutorDescriptorT,
+  type ModelExecutorT,
+  validateExecutionPlan,
+} from './execution';
 import { type EvaluationInputMember, combineEvaluationMembers } from './group-input';
 import {
   type AggregateOutcomeT,
@@ -59,6 +68,15 @@ export type EvaluationExecutionPolicyT = z.infer<typeof EvaluationExecutionPolic
 
 // ---------- 模型执行器端口（无 LLM；调用方注入实现） ----------
 
+/** Explicit pre-execution refusal. Ports may throw this only before claiming or starting work.
+ * Unlike an uncertain executor failure, this must not become a sealed grading result. */
+export class ModelExecutionNotStartedError extends Error {
+  constructor(cause: Error) {
+    super(cause.message, { cause });
+    this.name = 'ModelExecutionNotStartedError';
+  }
+}
+
 /**
  * 模型单元裁决。`scored` 只报告判据层面的【规则/档位命中】与发布口径分数
  * （additive 单元必须给 points_awarded；holistic 单元必须给 matched.level_id
@@ -69,6 +87,7 @@ export const ModelUnitOutcome = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('scored'),
     points_awarded: z.number().min(0).nullable(),
+    probe_signature_match: ConjectureProbeSignatureMatch.optional(),
     matched: z
       .object({
         rule_id: z.string().min(1).optional(),
@@ -103,6 +122,7 @@ export type ModelUnitOutcomeT = z.infer<typeof ModelUnitOutcome>;
 
 /** 单次模型单元判定的冻结输入（执行器只见它需要的槽位/证据/材料）。 */
 export interface ModelExecutorRequest {
+  review_context?: EvaluationProvenanceT['review_context'];
   submission_id: string;
   /** Complete frozen member identities; submission_id remains the stable anchor. */
   submission_ids?: string[];
@@ -273,11 +293,11 @@ function extractUnitSuffix(rawInput: string): string | null {
 
 /** 确定性比较器：单槽命中判定（全对=发布 points，否则 0；无部分分）。
  * 判据/槽位不配对是契约违背 —— 返回 pending unjudgeable，绝不落伪零分。 */
-function runDeterministicComparator(
-  comparator: 'exact_option_set' | 'exact_text' | 'numeric_tolerance' | 'exact_matching_pairs',
+async function runDeterministicComparator(
+  comparator: DeterministicComparatorIdT,
   unit: ScoringUnitT,
   entry: SlotResponseT,
-): ScoringUnitResultT {
+): Promise<ScoringUnitResultT> {
   const full = unit.points ?? 0;
   switch (comparator) {
     case 'exact_option_set': {
@@ -310,6 +330,59 @@ function runDeterministicComparator(
             unit.criterion.kind === 'text_key' ? unit.criterion.normalization : 'trim',
           ) === given,
       );
+      return {
+        status: 'scored',
+        scoring_unit_id: unit.scoring_unit_id,
+        points_awarded: hit ? full : 0,
+        scored_because: 'response',
+        evidence_citations: [{ slot_id: entry.slot_id }],
+      };
+    }
+    case 'numeric_unit_conversion': {
+      if (
+        entry.kind !== 'numeric' ||
+        unit.criterion.kind !== 'numeric_key' ||
+        !unit.criterion.expected_unit
+      ) {
+        return unjudgeableMismatch(
+          unit,
+          'numeric unit conversion requires a numeric slot and an explicit reference unit',
+        );
+      }
+      const { expected, tolerance, expected_unit } = unit.criterion;
+      const raw = entry.raw_input?.trim();
+      if (!raw) return unjudgeableMismatch(unit, 'unit conversion requires original raw input');
+      const { unit: parseUnit } = await import('mathjs');
+      let referenceUnit: import('mathjs').Unit;
+      try {
+        referenceUnit = parseUnit(1, expected_unit);
+      } catch {
+        return unjudgeableMismatch(unit, 'published reference unit is not supported');
+      }
+      let converted: number | null = null;
+      try {
+        const studentUnit = parseUnit(raw);
+        if (studentUnit.equalBase(referenceUnit)) converted = studentUnit.toNumber(expected_unit);
+      } catch {
+        return withUnit(
+          pending({
+            reason: 'unparseable_response',
+            slot_id: entry.slot_id,
+            detail: 'original numeric response cannot be interpreted as a supported value/unit',
+          }),
+          unit.scoring_unit_id,
+        );
+      }
+      const difference =
+        converted === null ? Number.POSITIVE_INFINITY : Math.abs(converted - expected);
+      const hit =
+        converted !== null &&
+        Number.isFinite(converted) &&
+        (tolerance.kind === 'absolute'
+          ? difference <= tolerance.value
+          : expected === 0
+            ? difference === 0
+            : difference / Math.abs(expected) <= tolerance.ratio);
       return {
         status: 'scored',
         scoring_unit_id: unit.scoring_unit_id,
@@ -589,14 +662,21 @@ export async function evaluateSubmissionCore(
   // ---- execute 模式：逐 unit 分发执行器。----
   for (const unit of inScopeUnits) {
     const unitId = unit.scoring_unit_id;
-    const slotIds = [...unit.slot_refs, ...unit.evidence_slot_refs];
+    const slotIds = [...new Set([...unit.slot_refs, ...unit.evidence_slot_refs])];
     const entries = slotIds
       .map((slotId) => entryBySlot.get(slotId))
       .filter((entry): entry is SlotResponseT => entry != null);
 
-    // missing：声明作答面里存在缺条目（区别于主动空白）。
+    const unitGroupEvidence = groupEvidence.filter(
+      (evidence) =>
+        evidence.target.scope === 'all_units' || evidence.target.scoring_unit_ids.includes(unitId),
+    );
+
+    // Scoped original evidence can supply a model-evaluated answer without a text entry.
+    const evidenceOnlyModelAnswer =
+      unitGroupEvidence.length > 0 && assignmentByUnit.get(unitId)?.kind === 'model_executor';
     const missingSlotIds = slotIds.filter((slotId) => !entryBySlot.has(slotId));
-    if (missingSlotIds.length > 0) {
+    if (missingSlotIds.length > 0 && !evidenceOnlyModelAnswer) {
       unitResults.push(
         withUnit(pending({ reason: 'missing_response', slot_ids: missingSlotIds }), unitId),
       );
@@ -604,7 +684,11 @@ export async function evaluateSubmissionCore(
     }
 
     // 空白：全部作答面显式空 —— 政策明确才计零，否则人工复核（绝不伪零分）。
-    if (entries.length > 0 && entries.every(isBlankSlotResponse)) {
+    if (
+      entries.length > 0 &&
+      entries.every(isBlankSlotResponse) &&
+      unitGroupEvidence.length === 0
+    ) {
       if (basis.blank_scores_zero) {
         unitResults.push(
           withUnit(
@@ -667,7 +751,11 @@ export async function evaluateSubmissionCore(
         entry.value === null &&
         (entry.raw_input ?? '').trim().length > 0,
     );
-    if (unparseable != null && unparseable.kind === 'numeric') {
+    const declaredExecutor = assignmentByUnit.get(unitId);
+    const convertsOriginalUnits =
+      declaredExecutor?.kind === 'deterministic' &&
+      declaredExecutor.comparator === 'numeric_unit_conversion';
+    if (unparseable != null && unparseable.kind === 'numeric' && !convertsOriginalUnits) {
       unitResults.push(
         withUnit(
           pending({
@@ -709,7 +797,20 @@ export async function evaluateSubmissionCore(
         );
         continue;
       }
-      unitResults.push(runDeterministicComparator(executor.comparator, unit, primaryEntry));
+      if (isBlankSlotResponse(primaryEntry) && unitGroupEvidence.length > 0) {
+        unitResults.push(
+          withUnit(
+            pending({
+              reason: 'unjudgeable',
+              detail:
+                'original group evidence is present but the deterministic comparator cannot read it',
+            }),
+            unitId,
+          ),
+        );
+        continue;
+      }
+      unitResults.push(await runDeterministicComparator(executor.comparator, unit, primaryEntry));
       continue;
     }
 
@@ -782,10 +883,6 @@ export async function evaluateSubmissionCore(
       continue;
     }
 
-    const unitGroupEvidence = groupEvidence.filter(
-      (evidence) =>
-        evidence.target.scope === 'all_units' || evidence.target.scoring_unit_ids.includes(unitId),
-    );
     // A slot reference identifies its question conditions, not just an answer.
     // Group-only units consume the issued group context; unissued parts stay out.
     const unitSlotIds = new Set(slotIds);
@@ -805,6 +902,7 @@ export async function evaluateSubmissionCore(
     let outcome: ModelUnitOutcomeT;
     try {
       const raw = await input.model_executor({
+        ...(provenance.review_context ? { review_context: provenance.review_context } : {}),
         submission_id: submission.submission_id,
         submission_ids: joint?.member_submission_ids ?? [submission.submission_id],
         evaluation_group_id: submission.evaluation_group_id,
@@ -840,6 +938,7 @@ export async function evaluateSubmissionCore(
       }
       outcome = parsed.data;
     } catch (err) {
+      if (err instanceof ModelExecutionNotStartedError) throw err;
       unitResults.push(
         withUnit(
           pending({
@@ -904,6 +1003,26 @@ export async function evaluateSubmissionCore(
       );
       continue;
     }
+    const probeJudgement =
+      unit.criterion.kind === 'rule_reference' && unit.criterion.probe_spec
+        ? classifyConjectureProbeResponseFromJudgeMatch(
+            unit.points !== null && unit.points > 0 && outcome.points_awarded === unit.points
+              ? 'correct'
+              : outcome.points_awarded === 0
+                ? 'incorrect'
+                : 'partial',
+            outcome.probe_signature_match,
+          )
+        : undefined;
+    if (probeJudgement && !probeJudgement.gradable) {
+      unitResults.push({
+        status: 'pending',
+        scoring_unit_id: unitId,
+        pending: { reason: 'needs_review', trigger: 'flagged', detail: probeJudgement.reason_code },
+        probe_judgement: probeJudgement,
+      });
+      continue;
+    }
     unitResults.push(
       withUnit(
         {
@@ -914,6 +1033,7 @@ export async function evaluateSubmissionCore(
           ...(outcome.matched ? { matched: outcome.matched } : {}),
           ...(outcome.feedback_md ? { feedback_md: outcome.feedback_md } : {}),
           evidence_citations: outcome.evidence_citations,
+          ...(probeJudgement ? { probe_judgement: probeJudgement } : {}),
         },
         unitId,
       ),

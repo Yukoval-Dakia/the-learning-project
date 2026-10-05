@@ -61,7 +61,9 @@ export type SharedMaterialT = z.infer<typeof SharedMaterial>;
  * Old revisions lack visibility, so that namespace remains private even if mislabeled public.
  */
 export function isPublicSharedMaterial(material: SharedMaterialT): boolean {
-  return material.visibility !== 'private' && !/^rub_[0-9a-f]{12}$/.test(material.asset.asset_id);
+  return (
+    material.visibility !== 'private' && !/^(?:rub|sol)_[0-9a-f]{12}$/.test(material.asset.asset_id)
+  );
 }
 
 // ---------- D10 原始证据 ----------

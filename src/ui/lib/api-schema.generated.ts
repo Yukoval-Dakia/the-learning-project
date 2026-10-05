@@ -1243,6 +1243,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/issuances/{id}/reference-reveals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["revealStudyReference"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/issuances/{id}/responses": {
         parameters: {
             query?: never;
@@ -7520,6 +7536,10 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    evaluation_id: string;
+                    idempotency_key?: string;
+                    reason_md?: string;
+                } | {
                     judge_event_id: string;
                     reason_md?: string;
                 };
@@ -9329,6 +9349,11 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    activation_intent?: {
+                        evaluation_id: string;
+                        expected_effective_id: string | null;
+                        expected_generation: number;
+                    };
                     activity_ref: {
                         id: string;
                         /** @enum {string} */
@@ -9336,6 +9361,104 @@ export interface operations {
                     };
                     /** @default [] */
                     answer_image_refs?: string[];
+                    assessment?: {
+                        evaluation_group_id: string;
+                        /** @default [] */
+                        group_evidence?: {
+                            evidence: {
+                                asset: {
+                                    asset_id: string;
+                                    digest: string;
+                                };
+                                bytes: number;
+                                evidence_id: string;
+                                /** @enum {string} */
+                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                mime_type: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            };
+                            target: {
+                                /** @enum {string} */
+                                scope: "all_units";
+                            } | {
+                                /** @enum {string} */
+                                scope: "units";
+                                scoring_unit_ids: string[];
+                            };
+                        }[];
+                        idempotency_key: string;
+                        issuance_id: string;
+                        response_set: {
+                            /** @default [] */
+                            entries?: ({
+                                /** @enum {string} */
+                                kind: "choice";
+                                /** @default [] */
+                                option_ids?: string[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "text";
+                                self_confidence?: number;
+                                slot_id: string;
+                                text_md: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "numeric";
+                                raw_input?: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                                value: number | null;
+                            } | {
+                                /** @enum {string} */
+                                kind: "formula";
+                                latex: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "matching";
+                                /** @default [] */
+                                pairs?: {
+                                    item_id: string;
+                                    option_id: string;
+                                }[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_order?: string[];
+                                /** @enum {string} */
+                                kind: "ordering";
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                evidence?: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                }[];
+                                /** @enum {string} */
+                                kind: "open";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @default  */
+                                text_md?: string;
+                            })[];
+                        };
+                        submission_id?: string;
+                    };
                     /** @default false */
                     auto_rate?: boolean;
                     judge_provenance_token?: string;
@@ -9415,9 +9538,15 @@ export interface operations {
                     referenced_knowledge_ids?: string[];
                     response_md?: string | null;
                     self_confidence?: number | null;
+                    self_report?: boolean;
                     session_id?: string | null;
                     stream_item_id?: string | null;
                 } | {
+                    activation_intent?: {
+                        evaluation_id: string;
+                        expected_effective_id: string | null;
+                        expected_generation: number;
+                    };
                     activity_ref?: {
                         id: string;
                         /** @enum {string} */
@@ -9425,6 +9554,104 @@ export interface operations {
                     };
                     /** @default [] */
                     answer_image_refs?: string[];
+                    assessment?: {
+                        evaluation_group_id: string;
+                        /** @default [] */
+                        group_evidence?: {
+                            evidence: {
+                                asset: {
+                                    asset_id: string;
+                                    digest: string;
+                                };
+                                bytes: number;
+                                evidence_id: string;
+                                /** @enum {string} */
+                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                mime_type: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            };
+                            target: {
+                                /** @enum {string} */
+                                scope: "all_units";
+                            } | {
+                                /** @enum {string} */
+                                scope: "units";
+                                scoring_unit_ids: string[];
+                            };
+                        }[];
+                        idempotency_key: string;
+                        issuance_id: string;
+                        response_set: {
+                            /** @default [] */
+                            entries?: ({
+                                /** @enum {string} */
+                                kind: "choice";
+                                /** @default [] */
+                                option_ids?: string[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "text";
+                                self_confidence?: number;
+                                slot_id: string;
+                                text_md: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "numeric";
+                                raw_input?: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                                value: number | null;
+                            } | {
+                                /** @enum {string} */
+                                kind: "formula";
+                                latex: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "matching";
+                                /** @default [] */
+                                pairs?: {
+                                    item_id: string;
+                                    option_id: string;
+                                }[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_order?: string[];
+                                /** @enum {string} */
+                                kind: "ordering";
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                evidence?: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                }[];
+                                /** @enum {string} */
+                                kind: "open";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @default  */
+                                text_md?: string;
+                            })[];
+                        };
+                        submission_id?: string;
+                    };
                     /** @default false */
                     auto_rate?: boolean;
                     judge_provenance_token?: string;
@@ -9504,9 +9731,15 @@ export interface operations {
                     referenced_knowledge_ids?: string[];
                     response_md?: string | null;
                     self_confidence?: number | null;
+                    self_report?: boolean;
                     session_id?: string | null;
                     stream_item_id?: string | null;
                 } | {
+                    activation_intent?: {
+                        evaluation_id: string;
+                        expected_effective_id: string | null;
+                        expected_generation: number;
+                    };
                     activity_ref?: {
                         id: string;
                         /** @enum {string} */
@@ -9514,6 +9747,104 @@ export interface operations {
                     };
                     /** @default [] */
                     answer_image_refs?: string[];
+                    assessment?: {
+                        evaluation_group_id: string;
+                        /** @default [] */
+                        group_evidence?: {
+                            evidence: {
+                                asset: {
+                                    asset_id: string;
+                                    digest: string;
+                                };
+                                bytes: number;
+                                evidence_id: string;
+                                /** @enum {string} */
+                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                mime_type: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            };
+                            target: {
+                                /** @enum {string} */
+                                scope: "all_units";
+                            } | {
+                                /** @enum {string} */
+                                scope: "units";
+                                scoring_unit_ids: string[];
+                            };
+                        }[];
+                        idempotency_key: string;
+                        issuance_id: string;
+                        response_set: {
+                            /** @default [] */
+                            entries?: ({
+                                /** @enum {string} */
+                                kind: "choice";
+                                /** @default [] */
+                                option_ids?: string[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "text";
+                                self_confidence?: number;
+                                slot_id: string;
+                                text_md: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "numeric";
+                                raw_input?: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                                value: number | null;
+                            } | {
+                                /** @enum {string} */
+                                kind: "formula";
+                                latex: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "matching";
+                                /** @default [] */
+                                pairs?: {
+                                    item_id: string;
+                                    option_id: string;
+                                }[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_order?: string[];
+                                /** @enum {string} */
+                                kind: "ordering";
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                evidence?: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                }[];
+                                /** @enum {string} */
+                                kind: "open";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @default  */
+                                text_md?: string;
+                            })[];
+                        };
+                        submission_id?: string;
+                    };
                     /** @default false */
                     auto_rate?: boolean;
                     judge_provenance_token?: string;
@@ -9593,6 +9924,7 @@ export interface operations {
                     referenced_knowledge_ids?: string[];
                     response_md?: string | null;
                     self_confidence?: number | null;
+                    self_report?: boolean;
                     session_id?: string | null;
                     stream_item_id?: string | null;
                 };
@@ -9606,6 +9938,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        assessment: {
+                            activation_intent: {
+                                evaluation_id: string;
+                                expected_effective_id: string | null;
+                                expected_generation: number;
+                            };
+                            candidate_id: string;
+                            /** @enum {string|null} */
+                            effect: "applied" | "ineligible" | "failed_pending" | "idempotent_replay" | null;
+                            evaluation_group_id: string;
+                            submission_id: string;
+                        };
+                        judge: ({
+                            auto_rated: boolean;
+                            capability_ref: {
+                                id: string;
+                                version: string;
+                            };
+                            /** @enum {string} */
+                            coarse_outcome: "correct" | "partial" | "incorrect" | "unsupported";
+                            confidence: number;
+                            evidence_json: {
+                                [key: string]: unknown;
+                            };
+                            feedback_md: string;
+                            judge_event_id: string | null;
+                            route: string;
+                            score: number | null;
+                            /** @enum {string|null} */
+                            suggested_rating: "again" | "hard" | "good" | null;
+                            telemetry?: unknown;
+                        } & {
+                            [key: string]: unknown;
+                        }) | null;
+                        review_event: {
+                            id: string;
+                        };
+                        /** @enum {string} */
+                        status: "effective" | "review_required";
+                    } | {
                         judge: ({
                             auto_rated: boolean;
                             capability_ref: {
@@ -15129,6 +15501,10 @@ export interface operations {
                                 kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                 material_id: string;
                             }[];
+                            response_requirements?: {
+                                evidence_unit_ids: string[];
+                                slot_id: string;
+                            }[];
                             response_spec: {
                                 slots: ({
                                     /** @enum {string} */
@@ -15335,6 +15711,10 @@ export interface operations {
                                 /** @enum {string} */
                                 kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                 material_id: string;
+                            }[];
+                            response_requirements?: {
+                                evidence_unit_ids: string[];
+                                slot_id: string;
                             }[];
                             response_spec: {
                                 slots: ({
@@ -15750,6 +16130,10 @@ export interface operations {
                                 kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
                                 material_id: string;
                             }[];
+                            response_requirements?: {
+                                evidence_unit_ids: string[];
+                                slot_id: string;
+                            }[];
                             response_spec: {
                                 slots: ({
                                     /** @enum {string} */
@@ -15901,9 +16285,223 @@ export interface operations {
                         } | null;
                         submissions: {
                             evaluation_group_id: string;
+                            group_evidence: {
+                                evidence: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                };
+                                target: {
+                                    /** @enum {string} */
+                                    scope: "all_units";
+                                } | {
+                                    /** @enum {string} */
+                                    scope: "units";
+                                    scoring_unit_ids: string[];
+                                };
+                            }[];
+                            idempotency_key: string;
+                            response_set: {
+                                /** @default [] */
+                                entries: ({
+                                    /** @enum {string} */
+                                    kind: "choice";
+                                    /** @default [] */
+                                    option_ids: string[];
+                                    self_confidence?: number;
+                                    slot_id: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "text";
+                                    self_confidence?: number;
+                                    slot_id: string;
+                                    text_md: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "numeric";
+                                    raw_input?: string;
+                                    self_confidence?: number;
+                                    slot_id: string;
+                                    value: number | null;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "formula";
+                                    latex: string;
+                                    self_confidence?: number;
+                                    slot_id: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "matching";
+                                    /** @default [] */
+                                    pairs: {
+                                        item_id: string;
+                                        option_id: string;
+                                    }[];
+                                    self_confidence?: number;
+                                    slot_id: string;
+                                } | {
+                                    /** @default [] */
+                                    item_order: string[];
+                                    /** @enum {string} */
+                                    kind: "ordering";
+                                    self_confidence?: number;
+                                    slot_id: string;
+                                } | {
+                                    /** @default [] */
+                                    evidence: {
+                                        asset: {
+                                            asset_id: string;
+                                            digest: string;
+                                        };
+                                        bytes: number;
+                                        evidence_id: string;
+                                        /** @enum {string} */
+                                        kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                        mime_type: string;
+                                        /** Format: date-time */
+                                        uploaded_at: string;
+                                    }[];
+                                    /** @enum {string} */
+                                    kind: "open";
+                                    self_confidence?: number;
+                                    slot_id: string;
+                                    /** @default  */
+                                    text_md: string;
+                                })[];
+                            };
                             submission_id: string;
                             submitted_at: string;
                         }[];
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    revealStudyReference: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        reference_md: string | null;
                     };
                 };
             };
@@ -16305,6 +16903,15 @@ export interface operations {
                     "application/json": {
                         result: ({
                             already_persisted?: boolean;
+                            assessment?: {
+                                candidate_id: string;
+                                effective_evaluation_id?: string | null;
+                                evaluation_group_id: string;
+                                original_evaluation_id?: string | null;
+                                submission_id: string;
+                            } & {
+                                [key: string]: unknown;
+                            };
                             attempt_event_id: string;
                             capability_ref?: {
                                 id: string;
@@ -16324,6 +16931,8 @@ export interface operations {
                             route?: string | null;
                             score?: number | null;
                             score_meaning?: string;
+                            /** @enum {string} */
+                            status?: "effective" | "review_required";
                             task_run_id?: string;
                             telemetry?: unknown;
                         } & {
@@ -19574,6 +20183,275 @@ export interface operations {
                             knowledge_focus_names: string[];
                             section_index: number;
                             slots: {
+                                assessment?: {
+                                    evaluation_group_id: string;
+                                    group_evidence: {
+                                        evidence: {
+                                            asset: {
+                                                asset_id: string;
+                                                digest: string;
+                                            };
+                                            bytes: number;
+                                            evidence_id: string;
+                                            /** @enum {string} */
+                                            kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                            mime_type: string;
+                                            /** Format: date-time */
+                                            uploaded_at: string;
+                                        };
+                                        target: {
+                                            /** @enum {string} */
+                                            scope: "all_units";
+                                        } | {
+                                            /** @enum {string} */
+                                            scope: "units";
+                                            scoring_unit_ids: string[];
+                                        };
+                                    }[];
+                                    idempotency_key: string;
+                                    issuance_id: string;
+                                    practice_dto: {
+                                        faces: {
+                                            material_ids: string[];
+                                            part_id: string;
+                                            prompt_md: string;
+                                            question_no?: string;
+                                        }[];
+                                        issuance_id: string;
+                                        /** Format: date-time */
+                                        issued_at: string;
+                                        materials: {
+                                            alt_text?: string;
+                                            asset_id: string;
+                                            caption?: string;
+                                            content_md?: string;
+                                            /** @enum {string} */
+                                            kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
+                                            material_id: string;
+                                        }[];
+                                        response_requirements?: {
+                                            evidence_unit_ids: string[];
+                                            slot_id: string;
+                                        }[];
+                                        response_spec: {
+                                            slots: ({
+                                                /** @enum {string} */
+                                                kind: "single_choice";
+                                                options: {
+                                                    label: string;
+                                                    option_id: string;
+                                                    text: string;
+                                                }[];
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "multi_choice";
+                                                max_select: number;
+                                                min_select: number;
+                                                options: {
+                                                    label: string;
+                                                    option_id: string;
+                                                    text: string;
+                                                }[];
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "text";
+                                                /** @default false */
+                                                math_preview: boolean;
+                                                max_chars?: number;
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "numeric";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                precision?: number;
+                                                slot_id: string;
+                                                unit_hint?: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "formula";
+                                                /** @enum {string} */
+                                                notation: "latex";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                cells: {
+                                                    col: number;
+                                                    row: number;
+                                                    slot_id: string;
+                                                }[];
+                                                column_headers: string[];
+                                                /** @enum {string} */
+                                                kind: "table";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                row_labels: string[];
+                                                slot_id: string;
+                                            } | {
+                                                /** @default false */
+                                                allow_left_unmatched: boolean;
+                                                /** @enum {string} */
+                                                kind: "matching";
+                                                left_items: {
+                                                    item_id: string;
+                                                    label: string;
+                                                    text: string;
+                                                }[];
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                right_options: {
+                                                    label: string;
+                                                    option_id: string;
+                                                    text: string;
+                                                }[];
+                                                slot_id: string;
+                                            } | {
+                                                items: {
+                                                    item_id: string;
+                                                    label: string;
+                                                    text: string;
+                                                }[];
+                                                /** @enum {string} */
+                                                kind: "ordering";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @default [] */
+                                                accepted_evidence: {
+                                                    allowed_mime_patterns: string[];
+                                                    /** @enum {string} */
+                                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                    max_bytes: number;
+                                                    requires_security_scan: boolean;
+                                                }[];
+                                                /** @default false */
+                                                evidence_required: boolean;
+                                                /** @enum {string} */
+                                                kind: "open_response";
+                                                max_chars?: number;
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            })[];
+                                        };
+                                        revision_id: string;
+                                    };
+                                    response_set: {
+                                        /** @default [] */
+                                        entries: ({
+                                            /** @enum {string} */
+                                            kind: "choice";
+                                            /** @default [] */
+                                            option_ids: string[];
+                                            self_confidence?: number;
+                                            slot_id: string;
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "text";
+                                            self_confidence?: number;
+                                            slot_id: string;
+                                            text_md: string;
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "numeric";
+                                            raw_input?: string;
+                                            self_confidence?: number;
+                                            slot_id: string;
+                                            value: number | null;
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "formula";
+                                            latex: string;
+                                            self_confidence?: number;
+                                            slot_id: string;
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "matching";
+                                            /** @default [] */
+                                            pairs: {
+                                                item_id: string;
+                                                option_id: string;
+                                            }[];
+                                            self_confidence?: number;
+                                            slot_id: string;
+                                        } | {
+                                            /** @default [] */
+                                            item_order: string[];
+                                            /** @enum {string} */
+                                            kind: "ordering";
+                                            self_confidence?: number;
+                                            slot_id: string;
+                                        } | {
+                                            /** @default [] */
+                                            evidence: {
+                                                asset: {
+                                                    asset_id: string;
+                                                    digest: string;
+                                                };
+                                                bytes: number;
+                                                evidence_id: string;
+                                                /** @enum {string} */
+                                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                mime_type: string;
+                                                /** Format: date-time */
+                                                uploaded_at: string;
+                                            }[];
+                                            /** @enum {string} */
+                                            kind: "open";
+                                            self_confidence?: number;
+                                            slot_id: string;
+                                            /** @default  */
+                                            text_md: string;
+                                        })[];
+                                    };
+                                    save_epoch: number;
+                                };
                                 knowledge_focus: string[];
                                 part_ref: string | null;
                                 question: {
@@ -19756,8 +20634,415 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        answeredCount: number;
                         knowledgeIds: string[];
                         question: {
+                            assessment: {
+                                evaluation_group_id: string;
+                                idempotency_key: string;
+                                issuance_id: string;
+                                pending_run: {
+                                    poll_url: string;
+                                    run_id: string;
+                                } | null;
+                                /** @enum {string} */
+                                phase: "answering" | "retry" | "pending" | "held";
+                                state: {
+                                    admission_generation_observed: number | null;
+                                    draft: {
+                                        evaluation_group_ref: string | null;
+                                        group_evidence: {
+                                            evidence: {
+                                                asset: {
+                                                    asset_id: string;
+                                                    digest: string;
+                                                };
+                                                bytes: number;
+                                                evidence_id: string;
+                                                /** @enum {string} */
+                                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                mime_type: string;
+                                                /** Format: date-time */
+                                                uploaded_at: string;
+                                            };
+                                            target: {
+                                                /** @enum {string} */
+                                                scope: "all_units";
+                                            } | {
+                                                /** @enum {string} */
+                                                scope: "units";
+                                                scoring_unit_ids: string[];
+                                            };
+                                        }[];
+                                        response_set: {
+                                            /** @default [] */
+                                            entries: ({
+                                                /** @enum {string} */
+                                                kind: "choice";
+                                                /** @default [] */
+                                                option_ids: string[];
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "text";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                text_md: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "numeric";
+                                                raw_input?: string;
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                value: number | null;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "formula";
+                                                latex: string;
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "matching";
+                                                /** @default [] */
+                                                pairs: {
+                                                    item_id: string;
+                                                    option_id: string;
+                                                }[];
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @default [] */
+                                                item_order: string[];
+                                                /** @enum {string} */
+                                                kind: "ordering";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @default [] */
+                                                evidence: {
+                                                    asset: {
+                                                        asset_id: string;
+                                                        digest: string;
+                                                    };
+                                                    bytes: number;
+                                                    evidence_id: string;
+                                                    /** @enum {string} */
+                                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                    mime_type: string;
+                                                    /** Format: date-time */
+                                                    uploaded_at: string;
+                                                }[];
+                                                /** @enum {string} */
+                                                kind: "open";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                /** @default  */
+                                                text_md: string;
+                                            })[];
+                                        };
+                                        save_epoch: number;
+                                        updated_at: string;
+                                    } | null;
+                                    issuance: {
+                                        binding: {
+                                            /** @default [] */
+                                            material_bindings: {
+                                                asset_digest: string;
+                                                material_id: string;
+                                            }[];
+                                            /** @default [] */
+                                            option_order: {
+                                                option_ids: string[];
+                                                slot_id: string;
+                                            }[];
+                                            part_ids: string[];
+                                            revision_id: string;
+                                        };
+                                        claim: {
+                                            claimed_by_ref: string | null;
+                                            /** @enum {string} */
+                                            policy: "one_time" | "unbounded";
+                                            /** @enum {string} */
+                                            status: "unclaimed" | "claimed" | "released";
+                                        };
+                                        issuance_id: string;
+                                        /** Format: date-time */
+                                        issued_at: string;
+                                    } | null;
+                                    practice_dto: {
+                                        faces: {
+                                            material_ids: string[];
+                                            part_id: string;
+                                            prompt_md: string;
+                                            question_no?: string;
+                                        }[];
+                                        issuance_id: string;
+                                        /** Format: date-time */
+                                        issued_at: string;
+                                        materials: {
+                                            alt_text?: string;
+                                            asset_id: string;
+                                            caption?: string;
+                                            content_md?: string;
+                                            /** @enum {string} */
+                                            kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
+                                            material_id: string;
+                                        }[];
+                                        response_requirements?: {
+                                            evidence_unit_ids: string[];
+                                            slot_id: string;
+                                        }[];
+                                        response_spec: {
+                                            slots: ({
+                                                /** @enum {string} */
+                                                kind: "single_choice";
+                                                options: {
+                                                    label: string;
+                                                    option_id: string;
+                                                    text: string;
+                                                }[];
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "multi_choice";
+                                                max_select: number;
+                                                min_select: number;
+                                                options: {
+                                                    label: string;
+                                                    option_id: string;
+                                                    text: string;
+                                                }[];
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "text";
+                                                /** @default false */
+                                                math_preview: boolean;
+                                                max_chars?: number;
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "numeric";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                precision?: number;
+                                                slot_id: string;
+                                                unit_hint?: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "formula";
+                                                /** @enum {string} */
+                                                notation: "latex";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                cells: {
+                                                    col: number;
+                                                    row: number;
+                                                    slot_id: string;
+                                                }[];
+                                                column_headers: string[];
+                                                /** @enum {string} */
+                                                kind: "table";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                row_labels: string[];
+                                                slot_id: string;
+                                            } | {
+                                                /** @default false */
+                                                allow_left_unmatched: boolean;
+                                                /** @enum {string} */
+                                                kind: "matching";
+                                                left_items: {
+                                                    item_id: string;
+                                                    label: string;
+                                                    text: string;
+                                                }[];
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                right_options: {
+                                                    label: string;
+                                                    option_id: string;
+                                                    text: string;
+                                                }[];
+                                                slot_id: string;
+                                            } | {
+                                                items: {
+                                                    item_id: string;
+                                                    label: string;
+                                                    text: string;
+                                                }[];
+                                                /** @enum {string} */
+                                                kind: "ordering";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @default [] */
+                                                accepted_evidence: {
+                                                    allowed_mime_patterns: string[];
+                                                    /** @enum {string} */
+                                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                    max_bytes: number;
+                                                    requires_security_scan: boolean;
+                                                }[];
+                                                /** @default false */
+                                                evidence_required: boolean;
+                                                /** @enum {string} */
+                                                kind: "open_response";
+                                                max_chars?: number;
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            })[];
+                                        };
+                                        revision_id: string;
+                                    } | null;
+                                    submissions: {
+                                        evaluation_group_id: string;
+                                        group_evidence: {
+                                            evidence: {
+                                                asset: {
+                                                    asset_id: string;
+                                                    digest: string;
+                                                };
+                                                bytes: number;
+                                                evidence_id: string;
+                                                /** @enum {string} */
+                                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                mime_type: string;
+                                                /** Format: date-time */
+                                                uploaded_at: string;
+                                            };
+                                            target: {
+                                                /** @enum {string} */
+                                                scope: "all_units";
+                                            } | {
+                                                /** @enum {string} */
+                                                scope: "units";
+                                                scoring_unit_ids: string[];
+                                            };
+                                        }[];
+                                        idempotency_key: string;
+                                        response_set: {
+                                            /** @default [] */
+                                            entries: ({
+                                                /** @enum {string} */
+                                                kind: "choice";
+                                                /** @default [] */
+                                                option_ids: string[];
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "text";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                text_md: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "numeric";
+                                                raw_input?: string;
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                value: number | null;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "formula";
+                                                latex: string;
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "matching";
+                                                /** @default [] */
+                                                pairs: {
+                                                    item_id: string;
+                                                    option_id: string;
+                                                }[];
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @default [] */
+                                                item_order: string[];
+                                                /** @enum {string} */
+                                                kind: "ordering";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @default [] */
+                                                evidence: {
+                                                    asset: {
+                                                        asset_id: string;
+                                                        digest: string;
+                                                    };
+                                                    bytes: number;
+                                                    evidence_id: string;
+                                                    /** @enum {string} */
+                                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                    mime_type: string;
+                                                    /** Format: date-time */
+                                                    uploaded_at: string;
+                                                }[];
+                                                /** @enum {string} */
+                                                kind: "open";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                /** @default  */
+                                                text_md: string;
+                                            })[];
+                                        };
+                                        submission_id: string;
+                                        submitted_at: string;
+                                    }[];
+                                };
+                                submission_id: string;
+                            };
                             questionId: string;
                             score: number;
                             /** @enum {string} */
@@ -20175,6 +21460,412 @@ export interface operations {
                         /** @enum {boolean} */
                         done: false;
                         question: {
+                            assessment: {
+                                evaluation_group_id: string;
+                                idempotency_key: string;
+                                issuance_id: string;
+                                pending_run: {
+                                    poll_url: string;
+                                    run_id: string;
+                                } | null;
+                                /** @enum {string} */
+                                phase: "answering" | "retry" | "pending" | "held";
+                                state: {
+                                    admission_generation_observed: number | null;
+                                    draft: {
+                                        evaluation_group_ref: string | null;
+                                        group_evidence: {
+                                            evidence: {
+                                                asset: {
+                                                    asset_id: string;
+                                                    digest: string;
+                                                };
+                                                bytes: number;
+                                                evidence_id: string;
+                                                /** @enum {string} */
+                                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                mime_type: string;
+                                                /** Format: date-time */
+                                                uploaded_at: string;
+                                            };
+                                            target: {
+                                                /** @enum {string} */
+                                                scope: "all_units";
+                                            } | {
+                                                /** @enum {string} */
+                                                scope: "units";
+                                                scoring_unit_ids: string[];
+                                            };
+                                        }[];
+                                        response_set: {
+                                            /** @default [] */
+                                            entries: ({
+                                                /** @enum {string} */
+                                                kind: "choice";
+                                                /** @default [] */
+                                                option_ids: string[];
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "text";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                text_md: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "numeric";
+                                                raw_input?: string;
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                value: number | null;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "formula";
+                                                latex: string;
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "matching";
+                                                /** @default [] */
+                                                pairs: {
+                                                    item_id: string;
+                                                    option_id: string;
+                                                }[];
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @default [] */
+                                                item_order: string[];
+                                                /** @enum {string} */
+                                                kind: "ordering";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @default [] */
+                                                evidence: {
+                                                    asset: {
+                                                        asset_id: string;
+                                                        digest: string;
+                                                    };
+                                                    bytes: number;
+                                                    evidence_id: string;
+                                                    /** @enum {string} */
+                                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                    mime_type: string;
+                                                    /** Format: date-time */
+                                                    uploaded_at: string;
+                                                }[];
+                                                /** @enum {string} */
+                                                kind: "open";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                /** @default  */
+                                                text_md: string;
+                                            })[];
+                                        };
+                                        save_epoch: number;
+                                        updated_at: string;
+                                    } | null;
+                                    issuance: {
+                                        binding: {
+                                            /** @default [] */
+                                            material_bindings: {
+                                                asset_digest: string;
+                                                material_id: string;
+                                            }[];
+                                            /** @default [] */
+                                            option_order: {
+                                                option_ids: string[];
+                                                slot_id: string;
+                                            }[];
+                                            part_ids: string[];
+                                            revision_id: string;
+                                        };
+                                        claim: {
+                                            claimed_by_ref: string | null;
+                                            /** @enum {string} */
+                                            policy: "one_time" | "unbounded";
+                                            /** @enum {string} */
+                                            status: "unclaimed" | "claimed" | "released";
+                                        };
+                                        issuance_id: string;
+                                        /** Format: date-time */
+                                        issued_at: string;
+                                    } | null;
+                                    practice_dto: {
+                                        faces: {
+                                            material_ids: string[];
+                                            part_id: string;
+                                            prompt_md: string;
+                                            question_no?: string;
+                                        }[];
+                                        issuance_id: string;
+                                        /** Format: date-time */
+                                        issued_at: string;
+                                        materials: {
+                                            alt_text?: string;
+                                            asset_id: string;
+                                            caption?: string;
+                                            content_md?: string;
+                                            /** @enum {string} */
+                                            kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
+                                            material_id: string;
+                                        }[];
+                                        response_requirements?: {
+                                            evidence_unit_ids: string[];
+                                            slot_id: string;
+                                        }[];
+                                        response_spec: {
+                                            slots: ({
+                                                /** @enum {string} */
+                                                kind: "single_choice";
+                                                options: {
+                                                    label: string;
+                                                    option_id: string;
+                                                    text: string;
+                                                }[];
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "multi_choice";
+                                                max_select: number;
+                                                min_select: number;
+                                                options: {
+                                                    label: string;
+                                                    option_id: string;
+                                                    text: string;
+                                                }[];
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "text";
+                                                /** @default false */
+                                                math_preview: boolean;
+                                                max_chars?: number;
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "numeric";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                precision?: number;
+                                                slot_id: string;
+                                                unit_hint?: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "formula";
+                                                /** @enum {string} */
+                                                notation: "latex";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                cells: {
+                                                    col: number;
+                                                    row: number;
+                                                    slot_id: string;
+                                                }[];
+                                                column_headers: string[];
+                                                /** @enum {string} */
+                                                kind: "table";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                row_labels: string[];
+                                                slot_id: string;
+                                            } | {
+                                                /** @default false */
+                                                allow_left_unmatched: boolean;
+                                                /** @enum {string} */
+                                                kind: "matching";
+                                                left_items: {
+                                                    item_id: string;
+                                                    label: string;
+                                                    text: string;
+                                                }[];
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                right_options: {
+                                                    label: string;
+                                                    option_id: string;
+                                                    text: string;
+                                                }[];
+                                                slot_id: string;
+                                            } | {
+                                                items: {
+                                                    item_id: string;
+                                                    label: string;
+                                                    text: string;
+                                                }[];
+                                                /** @enum {string} */
+                                                kind: "ordering";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @default [] */
+                                                accepted_evidence: {
+                                                    allowed_mime_patterns: string[];
+                                                    /** @enum {string} */
+                                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                    max_bytes: number;
+                                                    requires_security_scan: boolean;
+                                                }[];
+                                                /** @default false */
+                                                evidence_required: boolean;
+                                                /** @enum {string} */
+                                                kind: "open_response";
+                                                max_chars?: number;
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            })[];
+                                        };
+                                        revision_id: string;
+                                    } | null;
+                                    submissions: {
+                                        evaluation_group_id: string;
+                                        group_evidence: {
+                                            evidence: {
+                                                asset: {
+                                                    asset_id: string;
+                                                    digest: string;
+                                                };
+                                                bytes: number;
+                                                evidence_id: string;
+                                                /** @enum {string} */
+                                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                mime_type: string;
+                                                /** Format: date-time */
+                                                uploaded_at: string;
+                                            };
+                                            target: {
+                                                /** @enum {string} */
+                                                scope: "all_units";
+                                            } | {
+                                                /** @enum {string} */
+                                                scope: "units";
+                                                scoring_unit_ids: string[];
+                                            };
+                                        }[];
+                                        idempotency_key: string;
+                                        response_set: {
+                                            /** @default [] */
+                                            entries: ({
+                                                /** @enum {string} */
+                                                kind: "choice";
+                                                /** @default [] */
+                                                option_ids: string[];
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "text";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                text_md: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "numeric";
+                                                raw_input?: string;
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                value: number | null;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "formula";
+                                                latex: string;
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "matching";
+                                                /** @default [] */
+                                                pairs: {
+                                                    item_id: string;
+                                                    option_id: string;
+                                                }[];
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @default [] */
+                                                item_order: string[];
+                                                /** @enum {string} */
+                                                kind: "ordering";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @default [] */
+                                                evidence: {
+                                                    asset: {
+                                                        asset_id: string;
+                                                        digest: string;
+                                                    };
+                                                    bytes: number;
+                                                    evidence_id: string;
+                                                    /** @enum {string} */
+                                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                    mime_type: string;
+                                                    /** Format: date-time */
+                                                    uploaded_at: string;
+                                                }[];
+                                                /** @enum {string} */
+                                                kind: "open";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                /** @default  */
+                                                text_md: string;
+                                            })[];
+                                        };
+                                        submission_id: string;
+                                        submitted_at: string;
+                                    }[];
+                                };
+                                submission_id: string;
+                            };
                             questionId: string;
                             score: number;
                             /** @enum {string} */
@@ -20455,6 +22146,412 @@ export interface operations {
                         /** @enum {boolean} */
                         done: false;
                         question: {
+                            assessment: {
+                                evaluation_group_id: string;
+                                idempotency_key: string;
+                                issuance_id: string;
+                                pending_run: {
+                                    poll_url: string;
+                                    run_id: string;
+                                } | null;
+                                /** @enum {string} */
+                                phase: "answering" | "retry" | "pending" | "held";
+                                state: {
+                                    admission_generation_observed: number | null;
+                                    draft: {
+                                        evaluation_group_ref: string | null;
+                                        group_evidence: {
+                                            evidence: {
+                                                asset: {
+                                                    asset_id: string;
+                                                    digest: string;
+                                                };
+                                                bytes: number;
+                                                evidence_id: string;
+                                                /** @enum {string} */
+                                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                mime_type: string;
+                                                /** Format: date-time */
+                                                uploaded_at: string;
+                                            };
+                                            target: {
+                                                /** @enum {string} */
+                                                scope: "all_units";
+                                            } | {
+                                                /** @enum {string} */
+                                                scope: "units";
+                                                scoring_unit_ids: string[];
+                                            };
+                                        }[];
+                                        response_set: {
+                                            /** @default [] */
+                                            entries: ({
+                                                /** @enum {string} */
+                                                kind: "choice";
+                                                /** @default [] */
+                                                option_ids: string[];
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "text";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                text_md: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "numeric";
+                                                raw_input?: string;
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                value: number | null;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "formula";
+                                                latex: string;
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "matching";
+                                                /** @default [] */
+                                                pairs: {
+                                                    item_id: string;
+                                                    option_id: string;
+                                                }[];
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @default [] */
+                                                item_order: string[];
+                                                /** @enum {string} */
+                                                kind: "ordering";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @default [] */
+                                                evidence: {
+                                                    asset: {
+                                                        asset_id: string;
+                                                        digest: string;
+                                                    };
+                                                    bytes: number;
+                                                    evidence_id: string;
+                                                    /** @enum {string} */
+                                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                    mime_type: string;
+                                                    /** Format: date-time */
+                                                    uploaded_at: string;
+                                                }[];
+                                                /** @enum {string} */
+                                                kind: "open";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                /** @default  */
+                                                text_md: string;
+                                            })[];
+                                        };
+                                        save_epoch: number;
+                                        updated_at: string;
+                                    } | null;
+                                    issuance: {
+                                        binding: {
+                                            /** @default [] */
+                                            material_bindings: {
+                                                asset_digest: string;
+                                                material_id: string;
+                                            }[];
+                                            /** @default [] */
+                                            option_order: {
+                                                option_ids: string[];
+                                                slot_id: string;
+                                            }[];
+                                            part_ids: string[];
+                                            revision_id: string;
+                                        };
+                                        claim: {
+                                            claimed_by_ref: string | null;
+                                            /** @enum {string} */
+                                            policy: "one_time" | "unbounded";
+                                            /** @enum {string} */
+                                            status: "unclaimed" | "claimed" | "released";
+                                        };
+                                        issuance_id: string;
+                                        /** Format: date-time */
+                                        issued_at: string;
+                                    } | null;
+                                    practice_dto: {
+                                        faces: {
+                                            material_ids: string[];
+                                            part_id: string;
+                                            prompt_md: string;
+                                            question_no?: string;
+                                        }[];
+                                        issuance_id: string;
+                                        /** Format: date-time */
+                                        issued_at: string;
+                                        materials: {
+                                            alt_text?: string;
+                                            asset_id: string;
+                                            caption?: string;
+                                            content_md?: string;
+                                            /** @enum {string} */
+                                            kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
+                                            material_id: string;
+                                        }[];
+                                        response_requirements?: {
+                                            evidence_unit_ids: string[];
+                                            slot_id: string;
+                                        }[];
+                                        response_spec: {
+                                            slots: ({
+                                                /** @enum {string} */
+                                                kind: "single_choice";
+                                                options: {
+                                                    label: string;
+                                                    option_id: string;
+                                                    text: string;
+                                                }[];
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "multi_choice";
+                                                max_select: number;
+                                                min_select: number;
+                                                options: {
+                                                    label: string;
+                                                    option_id: string;
+                                                    text: string;
+                                                }[];
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "text";
+                                                /** @default false */
+                                                math_preview: boolean;
+                                                max_chars?: number;
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "numeric";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                precision?: number;
+                                                slot_id: string;
+                                                unit_hint?: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "formula";
+                                                /** @enum {string} */
+                                                notation: "latex";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                cells: {
+                                                    col: number;
+                                                    row: number;
+                                                    slot_id: string;
+                                                }[];
+                                                column_headers: string[];
+                                                /** @enum {string} */
+                                                kind: "table";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                row_labels: string[];
+                                                slot_id: string;
+                                            } | {
+                                                /** @default false */
+                                                allow_left_unmatched: boolean;
+                                                /** @enum {string} */
+                                                kind: "matching";
+                                                left_items: {
+                                                    item_id: string;
+                                                    label: string;
+                                                    text: string;
+                                                }[];
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                right_options: {
+                                                    label: string;
+                                                    option_id: string;
+                                                    text: string;
+                                                }[];
+                                                slot_id: string;
+                                            } | {
+                                                items: {
+                                                    item_id: string;
+                                                    label: string;
+                                                    text: string;
+                                                }[];
+                                                /** @enum {string} */
+                                                kind: "ordering";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @default [] */
+                                                accepted_evidence: {
+                                                    allowed_mime_patterns: string[];
+                                                    /** @enum {string} */
+                                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                    max_bytes: number;
+                                                    requires_security_scan: boolean;
+                                                }[];
+                                                /** @default false */
+                                                evidence_required: boolean;
+                                                /** @enum {string} */
+                                                kind: "open_response";
+                                                max_chars?: number;
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            })[];
+                                        };
+                                        revision_id: string;
+                                    } | null;
+                                    submissions: {
+                                        evaluation_group_id: string;
+                                        group_evidence: {
+                                            evidence: {
+                                                asset: {
+                                                    asset_id: string;
+                                                    digest: string;
+                                                };
+                                                bytes: number;
+                                                evidence_id: string;
+                                                /** @enum {string} */
+                                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                mime_type: string;
+                                                /** Format: date-time */
+                                                uploaded_at: string;
+                                            };
+                                            target: {
+                                                /** @enum {string} */
+                                                scope: "all_units";
+                                            } | {
+                                                /** @enum {string} */
+                                                scope: "units";
+                                                scoring_unit_ids: string[];
+                                            };
+                                        }[];
+                                        idempotency_key: string;
+                                        response_set: {
+                                            /** @default [] */
+                                            entries: ({
+                                                /** @enum {string} */
+                                                kind: "choice";
+                                                /** @default [] */
+                                                option_ids: string[];
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "text";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                text_md: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "numeric";
+                                                raw_input?: string;
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                value: number | null;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "formula";
+                                                latex: string;
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "matching";
+                                                /** @default [] */
+                                                pairs: {
+                                                    item_id: string;
+                                                    option_id: string;
+                                                }[];
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @default [] */
+                                                item_order: string[];
+                                                /** @enum {string} */
+                                                kind: "ordering";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @default [] */
+                                                evidence: {
+                                                    asset: {
+                                                        asset_id: string;
+                                                        digest: string;
+                                                    };
+                                                    bytes: number;
+                                                    evidence_id: string;
+                                                    /** @enum {string} */
+                                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                    mime_type: string;
+                                                    /** Format: date-time */
+                                                    uploaded_at: string;
+                                                }[];
+                                                /** @enum {string} */
+                                                kind: "open";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                /** @default  */
+                                                text_md: string;
+                                            })[];
+                                        };
+                                        submission_id: string;
+                                        submitted_at: string;
+                                    }[];
+                                };
+                                submission_id: string;
+                            };
                             questionId: string;
                             score: number;
                             /** @enum {string} */
@@ -20796,8 +22893,415 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        answeredCount: number;
                         knowledgeIds: string[];
                         question: {
+                            assessment: {
+                                evaluation_group_id: string;
+                                idempotency_key: string;
+                                issuance_id: string;
+                                pending_run: {
+                                    poll_url: string;
+                                    run_id: string;
+                                } | null;
+                                /** @enum {string} */
+                                phase: "answering" | "retry" | "pending" | "held";
+                                state: {
+                                    admission_generation_observed: number | null;
+                                    draft: {
+                                        evaluation_group_ref: string | null;
+                                        group_evidence: {
+                                            evidence: {
+                                                asset: {
+                                                    asset_id: string;
+                                                    digest: string;
+                                                };
+                                                bytes: number;
+                                                evidence_id: string;
+                                                /** @enum {string} */
+                                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                mime_type: string;
+                                                /** Format: date-time */
+                                                uploaded_at: string;
+                                            };
+                                            target: {
+                                                /** @enum {string} */
+                                                scope: "all_units";
+                                            } | {
+                                                /** @enum {string} */
+                                                scope: "units";
+                                                scoring_unit_ids: string[];
+                                            };
+                                        }[];
+                                        response_set: {
+                                            /** @default [] */
+                                            entries: ({
+                                                /** @enum {string} */
+                                                kind: "choice";
+                                                /** @default [] */
+                                                option_ids: string[];
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "text";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                text_md: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "numeric";
+                                                raw_input?: string;
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                value: number | null;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "formula";
+                                                latex: string;
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "matching";
+                                                /** @default [] */
+                                                pairs: {
+                                                    item_id: string;
+                                                    option_id: string;
+                                                }[];
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @default [] */
+                                                item_order: string[];
+                                                /** @enum {string} */
+                                                kind: "ordering";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @default [] */
+                                                evidence: {
+                                                    asset: {
+                                                        asset_id: string;
+                                                        digest: string;
+                                                    };
+                                                    bytes: number;
+                                                    evidence_id: string;
+                                                    /** @enum {string} */
+                                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                    mime_type: string;
+                                                    /** Format: date-time */
+                                                    uploaded_at: string;
+                                                }[];
+                                                /** @enum {string} */
+                                                kind: "open";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                /** @default  */
+                                                text_md: string;
+                                            })[];
+                                        };
+                                        save_epoch: number;
+                                        updated_at: string;
+                                    } | null;
+                                    issuance: {
+                                        binding: {
+                                            /** @default [] */
+                                            material_bindings: {
+                                                asset_digest: string;
+                                                material_id: string;
+                                            }[];
+                                            /** @default [] */
+                                            option_order: {
+                                                option_ids: string[];
+                                                slot_id: string;
+                                            }[];
+                                            part_ids: string[];
+                                            revision_id: string;
+                                        };
+                                        claim: {
+                                            claimed_by_ref: string | null;
+                                            /** @enum {string} */
+                                            policy: "one_time" | "unbounded";
+                                            /** @enum {string} */
+                                            status: "unclaimed" | "claimed" | "released";
+                                        };
+                                        issuance_id: string;
+                                        /** Format: date-time */
+                                        issued_at: string;
+                                    } | null;
+                                    practice_dto: {
+                                        faces: {
+                                            material_ids: string[];
+                                            part_id: string;
+                                            prompt_md: string;
+                                            question_no?: string;
+                                        }[];
+                                        issuance_id: string;
+                                        /** Format: date-time */
+                                        issued_at: string;
+                                        materials: {
+                                            alt_text?: string;
+                                            asset_id: string;
+                                            caption?: string;
+                                            content_md?: string;
+                                            /** @enum {string} */
+                                            kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
+                                            material_id: string;
+                                        }[];
+                                        response_requirements?: {
+                                            evidence_unit_ids: string[];
+                                            slot_id: string;
+                                        }[];
+                                        response_spec: {
+                                            slots: ({
+                                                /** @enum {string} */
+                                                kind: "single_choice";
+                                                options: {
+                                                    label: string;
+                                                    option_id: string;
+                                                    text: string;
+                                                }[];
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "multi_choice";
+                                                max_select: number;
+                                                min_select: number;
+                                                options: {
+                                                    label: string;
+                                                    option_id: string;
+                                                    text: string;
+                                                }[];
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "text";
+                                                /** @default false */
+                                                math_preview: boolean;
+                                                max_chars?: number;
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "numeric";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                precision?: number;
+                                                slot_id: string;
+                                                unit_hint?: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "formula";
+                                                /** @enum {string} */
+                                                notation: "latex";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                cells: {
+                                                    col: number;
+                                                    row: number;
+                                                    slot_id: string;
+                                                }[];
+                                                column_headers: string[];
+                                                /** @enum {string} */
+                                                kind: "table";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                row_labels: string[];
+                                                slot_id: string;
+                                            } | {
+                                                /** @default false */
+                                                allow_left_unmatched: boolean;
+                                                /** @enum {string} */
+                                                kind: "matching";
+                                                left_items: {
+                                                    item_id: string;
+                                                    label: string;
+                                                    text: string;
+                                                }[];
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                right_options: {
+                                                    label: string;
+                                                    option_id: string;
+                                                    text: string;
+                                                }[];
+                                                slot_id: string;
+                                            } | {
+                                                items: {
+                                                    item_id: string;
+                                                    label: string;
+                                                    text: string;
+                                                }[];
+                                                /** @enum {string} */
+                                                kind: "ordering";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @default [] */
+                                                accepted_evidence: {
+                                                    allowed_mime_patterns: string[];
+                                                    /** @enum {string} */
+                                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                    max_bytes: number;
+                                                    requires_security_scan: boolean;
+                                                }[];
+                                                /** @default false */
+                                                evidence_required: boolean;
+                                                /** @enum {string} */
+                                                kind: "open_response";
+                                                max_chars?: number;
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            })[];
+                                        };
+                                        revision_id: string;
+                                    } | null;
+                                    submissions: {
+                                        evaluation_group_id: string;
+                                        group_evidence: {
+                                            evidence: {
+                                                asset: {
+                                                    asset_id: string;
+                                                    digest: string;
+                                                };
+                                                bytes: number;
+                                                evidence_id: string;
+                                                /** @enum {string} */
+                                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                mime_type: string;
+                                                /** Format: date-time */
+                                                uploaded_at: string;
+                                            };
+                                            target: {
+                                                /** @enum {string} */
+                                                scope: "all_units";
+                                            } | {
+                                                /** @enum {string} */
+                                                scope: "units";
+                                                scoring_unit_ids: string[];
+                                            };
+                                        }[];
+                                        idempotency_key: string;
+                                        response_set: {
+                                            /** @default [] */
+                                            entries: ({
+                                                /** @enum {string} */
+                                                kind: "choice";
+                                                /** @default [] */
+                                                option_ids: string[];
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "text";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                text_md: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "numeric";
+                                                raw_input?: string;
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                value: number | null;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "formula";
+                                                latex: string;
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "matching";
+                                                /** @default [] */
+                                                pairs: {
+                                                    item_id: string;
+                                                    option_id: string;
+                                                }[];
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @default [] */
+                                                item_order: string[];
+                                                /** @enum {string} */
+                                                kind: "ordering";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                            } | {
+                                                /** @default [] */
+                                                evidence: {
+                                                    asset: {
+                                                        asset_id: string;
+                                                        digest: string;
+                                                    };
+                                                    bytes: number;
+                                                    evidence_id: string;
+                                                    /** @enum {string} */
+                                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                    mime_type: string;
+                                                    /** Format: date-time */
+                                                    uploaded_at: string;
+                                                }[];
+                                                /** @enum {string} */
+                                                kind: "open";
+                                                self_confidence?: number;
+                                                slot_id: string;
+                                                /** @default  */
+                                                text_md: string;
+                                            })[];
+                                        };
+                                        submission_id: string;
+                                        submitted_at: string;
+                                    }[];
+                                };
+                                submission_id: string;
+                            };
                             questionId: string;
                             score: number;
                             /** @enum {string} */
@@ -21235,6 +23739,275 @@ export interface operations {
                             knowledge_focus_names: string[];
                             section_index: number;
                             slots: {
+                                assessment?: {
+                                    evaluation_group_id: string;
+                                    group_evidence: {
+                                        evidence: {
+                                            asset: {
+                                                asset_id: string;
+                                                digest: string;
+                                            };
+                                            bytes: number;
+                                            evidence_id: string;
+                                            /** @enum {string} */
+                                            kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                            mime_type: string;
+                                            /** Format: date-time */
+                                            uploaded_at: string;
+                                        };
+                                        target: {
+                                            /** @enum {string} */
+                                            scope: "all_units";
+                                        } | {
+                                            /** @enum {string} */
+                                            scope: "units";
+                                            scoring_unit_ids: string[];
+                                        };
+                                    }[];
+                                    idempotency_key: string;
+                                    issuance_id: string;
+                                    practice_dto: {
+                                        faces: {
+                                            material_ids: string[];
+                                            part_id: string;
+                                            prompt_md: string;
+                                            question_no?: string;
+                                        }[];
+                                        issuance_id: string;
+                                        /** Format: date-time */
+                                        issued_at: string;
+                                        materials: {
+                                            alt_text?: string;
+                                            asset_id: string;
+                                            caption?: string;
+                                            content_md?: string;
+                                            /** @enum {string} */
+                                            kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
+                                            material_id: string;
+                                        }[];
+                                        response_requirements?: {
+                                            evidence_unit_ids: string[];
+                                            slot_id: string;
+                                        }[];
+                                        response_spec: {
+                                            slots: ({
+                                                /** @enum {string} */
+                                                kind: "single_choice";
+                                                options: {
+                                                    label: string;
+                                                    option_id: string;
+                                                    text: string;
+                                                }[];
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "multi_choice";
+                                                max_select: number;
+                                                min_select: number;
+                                                options: {
+                                                    label: string;
+                                                    option_id: string;
+                                                    text: string;
+                                                }[];
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "text";
+                                                /** @default false */
+                                                math_preview: boolean;
+                                                max_chars?: number;
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "numeric";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                precision?: number;
+                                                slot_id: string;
+                                                unit_hint?: string;
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "formula";
+                                                /** @enum {string} */
+                                                notation: "latex";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                cells: {
+                                                    col: number;
+                                                    row: number;
+                                                    slot_id: string;
+                                                }[];
+                                                column_headers: string[];
+                                                /** @enum {string} */
+                                                kind: "table";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                row_labels: string[];
+                                                slot_id: string;
+                                            } | {
+                                                /** @default false */
+                                                allow_left_unmatched: boolean;
+                                                /** @enum {string} */
+                                                kind: "matching";
+                                                left_items: {
+                                                    item_id: string;
+                                                    label: string;
+                                                    text: string;
+                                                }[];
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                right_options: {
+                                                    label: string;
+                                                    option_id: string;
+                                                    text: string;
+                                                }[];
+                                                slot_id: string;
+                                            } | {
+                                                items: {
+                                                    item_id: string;
+                                                    label: string;
+                                                    text: string;
+                                                }[];
+                                                /** @enum {string} */
+                                                kind: "ordering";
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            } | {
+                                                /** @default [] */
+                                                accepted_evidence: {
+                                                    allowed_mime_patterns: string[];
+                                                    /** @enum {string} */
+                                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                    max_bytes: number;
+                                                    requires_security_scan: boolean;
+                                                }[];
+                                                /** @default false */
+                                                evidence_required: boolean;
+                                                /** @enum {string} */
+                                                kind: "open_response";
+                                                max_chars?: number;
+                                                part_id: string;
+                                                placement?: {
+                                                    col?: number;
+                                                    label?: string;
+                                                    row?: number;
+                                                };
+                                                slot_id: string;
+                                            })[];
+                                        };
+                                        revision_id: string;
+                                    };
+                                    response_set: {
+                                        /** @default [] */
+                                        entries: ({
+                                            /** @enum {string} */
+                                            kind: "choice";
+                                            /** @default [] */
+                                            option_ids: string[];
+                                            self_confidence?: number;
+                                            slot_id: string;
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "text";
+                                            self_confidence?: number;
+                                            slot_id: string;
+                                            text_md: string;
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "numeric";
+                                            raw_input?: string;
+                                            self_confidence?: number;
+                                            slot_id: string;
+                                            value: number | null;
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "formula";
+                                            latex: string;
+                                            self_confidence?: number;
+                                            slot_id: string;
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "matching";
+                                            /** @default [] */
+                                            pairs: {
+                                                item_id: string;
+                                                option_id: string;
+                                            }[];
+                                            self_confidence?: number;
+                                            slot_id: string;
+                                        } | {
+                                            /** @default [] */
+                                            item_order: string[];
+                                            /** @enum {string} */
+                                            kind: "ordering";
+                                            self_confidence?: number;
+                                            slot_id: string;
+                                        } | {
+                                            /** @default [] */
+                                            evidence: {
+                                                asset: {
+                                                    asset_id: string;
+                                                    digest: string;
+                                                };
+                                                bytes: number;
+                                                evidence_id: string;
+                                                /** @enum {string} */
+                                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                                mime_type: string;
+                                                /** Format: date-time */
+                                                uploaded_at: string;
+                                            }[];
+                                            /** @enum {string} */
+                                            kind: "open";
+                                            self_confidence?: number;
+                                            slot_id: string;
+                                            /** @default  */
+                                            text_md: string;
+                                        })[];
+                                    };
+                                    save_epoch: number;
+                                };
                                 knowledge_focus: string[];
                                 part_ref: string | null;
                                 question: {
@@ -21403,8 +24176,107 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    assessment?: {
+                        evaluation_group_id: string;
+                        /** @default [] */
+                        group_evidence?: {
+                            evidence: {
+                                asset: {
+                                    asset_id: string;
+                                    digest: string;
+                                };
+                                bytes: number;
+                                evidence_id: string;
+                                /** @enum {string} */
+                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                mime_type: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            };
+                            target: {
+                                /** @enum {string} */
+                                scope: "all_units";
+                            } | {
+                                /** @enum {string} */
+                                scope: "units";
+                                scoring_unit_ids: string[];
+                            };
+                        }[];
+                        idempotency_key: string;
+                        issuance_id: string;
+                        response_set: {
+                            /** @default [] */
+                            entries?: ({
+                                /** @enum {string} */
+                                kind: "choice";
+                                /** @default [] */
+                                option_ids?: string[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "text";
+                                self_confidence?: number;
+                                slot_id: string;
+                                text_md: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "numeric";
+                                raw_input?: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                                value: number | null;
+                            } | {
+                                /** @enum {string} */
+                                kind: "formula";
+                                latex: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "matching";
+                                /** @default [] */
+                                pairs?: {
+                                    item_id: string;
+                                    option_id: string;
+                                }[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_order?: string[];
+                                /** @enum {string} */
+                                kind: "ordering";
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                evidence?: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                }[];
+                                /** @enum {string} */
+                                kind: "open";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @default  */
+                                text_md?: string;
+                            })[];
+                        };
+                        submission_id?: string;
+                    };
                     /** @default  */
                     content_md?: string;
+                    expected_save_epoch?: number;
                     /** @default [] */
                     image_refs?: string[];
                     /**
@@ -21428,6 +24300,7 @@ export interface operations {
                     "application/json": {
                         answer_id: string;
                         created: boolean;
+                        save_epoch?: number;
                     };
                 };
             };
@@ -21544,6 +24417,104 @@ export interface operations {
             content: {
                 "application/json": {
                     answer_md: string;
+                    assessment?: {
+                        evaluation_group_id: string;
+                        /** @default [] */
+                        group_evidence?: {
+                            evidence: {
+                                asset: {
+                                    asset_id: string;
+                                    digest: string;
+                                };
+                                bytes: number;
+                                evidence_id: string;
+                                /** @enum {string} */
+                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                mime_type: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            };
+                            target: {
+                                /** @enum {string} */
+                                scope: "all_units";
+                            } | {
+                                /** @enum {string} */
+                                scope: "units";
+                                scoring_unit_ids: string[];
+                            };
+                        }[];
+                        idempotency_key: string;
+                        issuance_id: string;
+                        response_set: {
+                            /** @default [] */
+                            entries?: ({
+                                /** @enum {string} */
+                                kind: "choice";
+                                /** @default [] */
+                                option_ids?: string[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "text";
+                                self_confidence?: number;
+                                slot_id: string;
+                                text_md: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "numeric";
+                                raw_input?: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                                value: number | null;
+                            } | {
+                                /** @enum {string} */
+                                kind: "formula";
+                                latex: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "matching";
+                                /** @default [] */
+                                pairs?: {
+                                    item_id: string;
+                                    option_id: string;
+                                }[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_order?: string[];
+                                /** @enum {string} */
+                                kind: "ordering";
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                evidence?: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                }[];
+                                /** @enum {string} */
+                                kind: "open";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @default  */
+                                text_md?: string;
+                            })[];
+                        };
+                        submission_id?: string;
+                    };
                     /** @default [] */
                     image_refs?: string[];
                     latency_ms?: number | null;
@@ -21566,16 +24537,22 @@ export interface operations {
                         answer_id: string;
                         attempt_event_id: string;
                         coarse_outcome: string;
-                        judge_event_id: string;
+                        evaluation_id?: string;
+                        judge_event_id: string | null;
                         score: number | null;
+                        /** @enum {string} */
+                        status?: "effective" | "review_required";
                         /** @enum {boolean} */
                         visible_to_user: true;
                     } | {
                         answer_id: string;
                         attempt_event_id: string;
+                        evaluation_id?: string;
                         /** @enum {boolean} */
                         feedback_buffered: true;
-                        judge_event_id: string;
+                        judge_event_id: string | null;
+                        /** @enum {string} */
+                        status?: "effective" | "review_required";
                         /** @enum {boolean} */
                         visible_to_user: false;
                     };
@@ -26479,19 +29456,20 @@ export interface operations {
                         committed_attempt?: {
                             judge: {
                                 /** @enum {string} */
-                                coarse_outcome: "correct" | "partial" | "incorrect";
+                                coarse_outcome: "correct" | "partial" | "incorrect" | "unsupported";
                                 confidence: number;
+                                evaluation_id?: string;
                                 feedback_md: string;
-                                judge_event_id: string;
+                                judge_event_id: string | null;
                                 /** @enum {string} */
-                                route: "multimodal_direct";
-                                /** @enum {string} */
-                                suggested_rating: "again" | "hard" | "good";
+                                route: "multimodal_direct" | "evaluate_submission";
+                                /** @enum {string|null} */
+                                suggested_rating: "again" | "hard" | "good" | null;
                             };
                             review_event: {
                                 id: string;
-                                /** @enum {string} */
-                                rating: "again" | "hard" | "good";
+                                /** @enum {string|null} */
+                                rating: "again" | "hard" | "good" | null;
                             };
                         } | null;
                         computed_at_sec: number;
@@ -26561,6 +29539,11 @@ export interface operations {
                         };
                         subject: string | null;
                         timeline: {
+                            assessment?: {
+                                effective_evaluation_id: string | null;
+                                evaluation_group_id: string;
+                                original_evaluation_id: string | null;
+                            };
                             cause?: {
                                 confidence: number | null;
                                 primary: string;
@@ -27107,7 +30090,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    regenerate?: boolean;
+                    issuance_id?: string;
                 } | null;
             };
         };
@@ -27119,8 +30102,9 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        generated: boolean;
-                        generation_error: boolean;
+                        evaluation_group_id?: string;
+                        idempotency_key?: string;
+                        issuance_id: string;
                         session_id: string;
                     };
                 };
@@ -27240,6 +30224,7 @@ export interface operations {
                 "application/json": {
                     /** @default 0 */
                     hint_index?: number;
+                    issuance_id?: string;
                 } | null;
             };
         };
@@ -27383,11 +30368,117 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    activation_intent?: {
+                        evaluation_id: string;
+                        expected_effective_id: string | null;
+                        expected_generation: number;
+                    };
+                    assessment?: {
+                        evaluation_group_id: string;
+                        /** @default [] */
+                        group_evidence?: {
+                            evidence: {
+                                asset: {
+                                    asset_id: string;
+                                    digest: string;
+                                };
+                                bytes: number;
+                                evidence_id: string;
+                                /** @enum {string} */
+                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                mime_type: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            };
+                            target: {
+                                /** @enum {string} */
+                                scope: "all_units";
+                            } | {
+                                /** @enum {string} */
+                                scope: "units";
+                                scoring_unit_ids: string[];
+                            };
+                        }[];
+                        idempotency_key: string;
+                        issuance_id: string;
+                        response_set: {
+                            /** @default [] */
+                            entries?: ({
+                                /** @enum {string} */
+                                kind: "choice";
+                                /** @default [] */
+                                option_ids?: string[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "text";
+                                self_confidence?: number;
+                                slot_id: string;
+                                text_md: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "numeric";
+                                raw_input?: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                                value: number | null;
+                            } | {
+                                /** @enum {string} */
+                                kind: "formula";
+                                latex: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "matching";
+                                /** @default [] */
+                                pairs?: {
+                                    item_id: string;
+                                    option_id: string;
+                                }[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_order?: string[];
+                                /** @enum {string} */
+                                kind: "ordering";
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                evidence?: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                }[];
+                                /** @enum {string} */
+                                kind: "open";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @default  */
+                                text_md?: string;
+                            })[];
+                        };
+                        submission_id?: string;
+                    };
                     final_hint_level?: number;
                     hints_used?: number;
+                    self_report?: boolean;
                     student_final_answer_text?: string;
                     student_image_refs?: string[];
                     student_text_steps?: string[];
+                    /** @enum {string} */
+                    user_rating?: "again" | "hard" | "good";
                 };
             };
         };
@@ -28101,8 +31192,107 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    assessment?: {
+                        evaluation_group_id: string;
+                        /** @default [] */
+                        group_evidence?: {
+                            evidence: {
+                                asset: {
+                                    asset_id: string;
+                                    digest: string;
+                                };
+                                bytes: number;
+                                evidence_id: string;
+                                /** @enum {string} */
+                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                mime_type: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            };
+                            target: {
+                                /** @enum {string} */
+                                scope: "all_units";
+                            } | {
+                                /** @enum {string} */
+                                scope: "units";
+                                scoring_unit_ids: string[];
+                            };
+                        }[];
+                        idempotency_key: string;
+                        issuance_id: string;
+                        response_set: {
+                            /** @default [] */
+                            entries?: ({
+                                /** @enum {string} */
+                                kind: "choice";
+                                /** @default [] */
+                                option_ids?: string[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "text";
+                                self_confidence?: number;
+                                slot_id: string;
+                                text_md: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "numeric";
+                                raw_input?: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                                value: number | null;
+                            } | {
+                                /** @enum {string} */
+                                kind: "formula";
+                                latex: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "matching";
+                                /** @default [] */
+                                pairs?: {
+                                    item_id: string;
+                                    option_id: string;
+                                }[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_order?: string[];
+                                /** @enum {string} */
+                                kind: "ordering";
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                evidence?: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                }[];
+                                /** @enum {string} */
+                                kind: "open";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @default  */
+                                text_md?: string;
+                            })[];
+                        };
+                        submission_id?: string;
+                    };
                     /** @default  */
                     content_md?: string;
+                    expected_save_epoch?: number;
                     /** @default [] */
                     image_refs?: string[];
                     /**
@@ -28126,6 +31316,7 @@ export interface operations {
                     "application/json": {
                         answer_id: string;
                         created: boolean;
+                        save_epoch?: number;
                     };
                 };
             };
@@ -28138,6 +31329,7 @@ export interface operations {
                     "application/json": {
                         answer_id: string;
                         created: boolean;
+                        save_epoch?: number;
                     };
                 };
             };
@@ -28389,6 +31581,104 @@ export interface operations {
             content: {
                 "application/json": {
                     answer_md: string;
+                    assessment?: {
+                        evaluation_group_id: string;
+                        /** @default [] */
+                        group_evidence?: {
+                            evidence: {
+                                asset: {
+                                    asset_id: string;
+                                    digest: string;
+                                };
+                                bytes: number;
+                                evidence_id: string;
+                                /** @enum {string} */
+                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                mime_type: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            };
+                            target: {
+                                /** @enum {string} */
+                                scope: "all_units";
+                            } | {
+                                /** @enum {string} */
+                                scope: "units";
+                                scoring_unit_ids: string[];
+                            };
+                        }[];
+                        idempotency_key: string;
+                        issuance_id: string;
+                        response_set: {
+                            /** @default [] */
+                            entries?: ({
+                                /** @enum {string} */
+                                kind: "choice";
+                                /** @default [] */
+                                option_ids?: string[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "text";
+                                self_confidence?: number;
+                                slot_id: string;
+                                text_md: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "numeric";
+                                raw_input?: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                                value: number | null;
+                            } | {
+                                /** @enum {string} */
+                                kind: "formula";
+                                latex: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "matching";
+                                /** @default [] */
+                                pairs?: {
+                                    item_id: string;
+                                    option_id: string;
+                                }[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_order?: string[];
+                                /** @enum {string} */
+                                kind: "ordering";
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                evidence?: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                }[];
+                                /** @enum {string} */
+                                kind: "open";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @default  */
+                                text_md?: string;
+                            })[];
+                        };
+                        submission_id?: string;
+                    };
                     /** @default [] */
                     image_refs?: string[];
                     latency_ms?: number | null;
@@ -28411,16 +31701,22 @@ export interface operations {
                         answer_id: string;
                         attempt_event_id: string;
                         coarse_outcome: string;
-                        judge_event_id: string;
+                        evaluation_id?: string;
+                        judge_event_id: string | null;
                         score: number | null;
+                        /** @enum {string} */
+                        status?: "effective" | "review_required";
                         /** @enum {boolean} */
                         visible_to_user: true;
                     } | {
                         answer_id: string;
                         attempt_event_id: string;
+                        evaluation_id?: string;
                         /** @enum {boolean} */
                         feedback_buffered: true;
-                        judge_event_id: string;
+                        judge_event_id: string | null;
+                        /** @enum {string} */
+                        status?: "effective" | "review_required";
                         /** @enum {boolean} */
                         visible_to_user: false;
                     };
@@ -28543,9 +31839,108 @@ export interface operations {
                     };
                     /** @default [] */
                     answer_image_refs?: string[];
+                    assessment: {
+                        evaluation_group_id: string;
+                        /** @default [] */
+                        group_evidence?: {
+                            evidence: {
+                                asset: {
+                                    asset_id: string;
+                                    digest: string;
+                                };
+                                bytes: number;
+                                evidence_id: string;
+                                /** @enum {string} */
+                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                mime_type: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            };
+                            target: {
+                                /** @enum {string} */
+                                scope: "all_units";
+                            } | {
+                                /** @enum {string} */
+                                scope: "units";
+                                scoring_unit_ids: string[];
+                            };
+                        }[];
+                        idempotency_key: string;
+                        issuance_id: string;
+                        response_set: {
+                            /** @default [] */
+                            entries?: ({
+                                /** @enum {string} */
+                                kind: "choice";
+                                /** @default [] */
+                                option_ids?: string[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "text";
+                                self_confidence?: number;
+                                slot_id: string;
+                                text_md: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "numeric";
+                                raw_input?: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                                value: number | null;
+                            } | {
+                                /** @enum {string} */
+                                kind: "formula";
+                                latex: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "matching";
+                                /** @default [] */
+                                pairs?: {
+                                    item_id: string;
+                                    option_id: string;
+                                }[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_order?: string[];
+                                /** @enum {string} */
+                                kind: "ordering";
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                evidence?: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                }[];
+                                /** @enum {string} */
+                                kind: "open";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @default  */
+                                text_md?: string;
+                            })[];
+                        };
+                        submission_id?: string;
+                    };
                     mistake_id?: string;
                     question_id?: string;
-                    response_md: string;
+                    /** @default  */
+                    response_md?: string;
                 };
             };
         };
@@ -28557,6 +31952,11 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        activation_intent: {
+                            evaluation_id: string;
+                            expected_effective_id: string | null;
+                            expected_generation: number;
+                        };
                         activity_ref: {
                             id: string;
                             /** @enum {string} */
@@ -28568,6 +31968,9 @@ export interface operations {
                             rating: "again" | "hard" | "good" | null;
                             reason: string;
                         };
+                        automatic_commit: boolean;
+                        candidate_id: string;
+                        evaluation_group_id: string;
                         judge: {
                             capability_ref: {
                                 id: string;
@@ -28591,6 +31994,7 @@ export interface operations {
                             telemetry?: unknown;
                         };
                         question_id: string;
+                        submission_id: string;
                     };
                 };
             };
@@ -28704,6 +32108,10 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    evaluation_id: string;
+                    idempotency_key?: string;
+                    reason_md?: string;
+                } | {
                     judge_event_id: string;
                     reason_md?: string;
                 };
@@ -30205,6 +33613,11 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    activation_intent?: {
+                        evaluation_id: string;
+                        expected_effective_id: string | null;
+                        expected_generation: number;
+                    };
                     activity_ref: {
                         id: string;
                         /** @enum {string} */
@@ -30212,6 +33625,104 @@ export interface operations {
                     };
                     /** @default [] */
                     answer_image_refs?: string[];
+                    assessment?: {
+                        evaluation_group_id: string;
+                        /** @default [] */
+                        group_evidence?: {
+                            evidence: {
+                                asset: {
+                                    asset_id: string;
+                                    digest: string;
+                                };
+                                bytes: number;
+                                evidence_id: string;
+                                /** @enum {string} */
+                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                mime_type: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            };
+                            target: {
+                                /** @enum {string} */
+                                scope: "all_units";
+                            } | {
+                                /** @enum {string} */
+                                scope: "units";
+                                scoring_unit_ids: string[];
+                            };
+                        }[];
+                        idempotency_key: string;
+                        issuance_id: string;
+                        response_set: {
+                            /** @default [] */
+                            entries?: ({
+                                /** @enum {string} */
+                                kind: "choice";
+                                /** @default [] */
+                                option_ids?: string[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "text";
+                                self_confidence?: number;
+                                slot_id: string;
+                                text_md: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "numeric";
+                                raw_input?: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                                value: number | null;
+                            } | {
+                                /** @enum {string} */
+                                kind: "formula";
+                                latex: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "matching";
+                                /** @default [] */
+                                pairs?: {
+                                    item_id: string;
+                                    option_id: string;
+                                }[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_order?: string[];
+                                /** @enum {string} */
+                                kind: "ordering";
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                evidence?: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                }[];
+                                /** @enum {string} */
+                                kind: "open";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @default  */
+                                text_md?: string;
+                            })[];
+                        };
+                        submission_id?: string;
+                    };
                     /** @default false */
                     auto_rate?: boolean;
                     judge_provenance_token?: string;
@@ -30291,9 +33802,15 @@ export interface operations {
                     referenced_knowledge_ids?: string[];
                     response_md?: string | null;
                     self_confidence?: number | null;
+                    self_report?: boolean;
                     session_id?: string | null;
                     stream_item_id?: string | null;
                 } | {
+                    activation_intent?: {
+                        evaluation_id: string;
+                        expected_effective_id: string | null;
+                        expected_generation: number;
+                    };
                     activity_ref?: {
                         id: string;
                         /** @enum {string} */
@@ -30301,6 +33818,104 @@ export interface operations {
                     };
                     /** @default [] */
                     answer_image_refs?: string[];
+                    assessment?: {
+                        evaluation_group_id: string;
+                        /** @default [] */
+                        group_evidence?: {
+                            evidence: {
+                                asset: {
+                                    asset_id: string;
+                                    digest: string;
+                                };
+                                bytes: number;
+                                evidence_id: string;
+                                /** @enum {string} */
+                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                mime_type: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            };
+                            target: {
+                                /** @enum {string} */
+                                scope: "all_units";
+                            } | {
+                                /** @enum {string} */
+                                scope: "units";
+                                scoring_unit_ids: string[];
+                            };
+                        }[];
+                        idempotency_key: string;
+                        issuance_id: string;
+                        response_set: {
+                            /** @default [] */
+                            entries?: ({
+                                /** @enum {string} */
+                                kind: "choice";
+                                /** @default [] */
+                                option_ids?: string[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "text";
+                                self_confidence?: number;
+                                slot_id: string;
+                                text_md: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "numeric";
+                                raw_input?: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                                value: number | null;
+                            } | {
+                                /** @enum {string} */
+                                kind: "formula";
+                                latex: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "matching";
+                                /** @default [] */
+                                pairs?: {
+                                    item_id: string;
+                                    option_id: string;
+                                }[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_order?: string[];
+                                /** @enum {string} */
+                                kind: "ordering";
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                evidence?: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                }[];
+                                /** @enum {string} */
+                                kind: "open";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @default  */
+                                text_md?: string;
+                            })[];
+                        };
+                        submission_id?: string;
+                    };
                     /** @default false */
                     auto_rate?: boolean;
                     judge_provenance_token?: string;
@@ -30380,9 +33995,15 @@ export interface operations {
                     referenced_knowledge_ids?: string[];
                     response_md?: string | null;
                     self_confidence?: number | null;
+                    self_report?: boolean;
                     session_id?: string | null;
                     stream_item_id?: string | null;
                 } | {
+                    activation_intent?: {
+                        evaluation_id: string;
+                        expected_effective_id: string | null;
+                        expected_generation: number;
+                    };
                     activity_ref?: {
                         id: string;
                         /** @enum {string} */
@@ -30390,6 +34011,104 @@ export interface operations {
                     };
                     /** @default [] */
                     answer_image_refs?: string[];
+                    assessment?: {
+                        evaluation_group_id: string;
+                        /** @default [] */
+                        group_evidence?: {
+                            evidence: {
+                                asset: {
+                                    asset_id: string;
+                                    digest: string;
+                                };
+                                bytes: number;
+                                evidence_id: string;
+                                /** @enum {string} */
+                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                mime_type: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            };
+                            target: {
+                                /** @enum {string} */
+                                scope: "all_units";
+                            } | {
+                                /** @enum {string} */
+                                scope: "units";
+                                scoring_unit_ids: string[];
+                            };
+                        }[];
+                        idempotency_key: string;
+                        issuance_id: string;
+                        response_set: {
+                            /** @default [] */
+                            entries?: ({
+                                /** @enum {string} */
+                                kind: "choice";
+                                /** @default [] */
+                                option_ids?: string[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "text";
+                                self_confidence?: number;
+                                slot_id: string;
+                                text_md: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "numeric";
+                                raw_input?: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                                value: number | null;
+                            } | {
+                                /** @enum {string} */
+                                kind: "formula";
+                                latex: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "matching";
+                                /** @default [] */
+                                pairs?: {
+                                    item_id: string;
+                                    option_id: string;
+                                }[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_order?: string[];
+                                /** @enum {string} */
+                                kind: "ordering";
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                evidence?: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                }[];
+                                /** @enum {string} */
+                                kind: "open";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @default  */
+                                text_md?: string;
+                            })[];
+                        };
+                        submission_id?: string;
+                    };
                     /** @default false */
                     auto_rate?: boolean;
                     judge_provenance_token?: string;
@@ -30469,6 +34188,7 @@ export interface operations {
                     referenced_knowledge_ids?: string[];
                     response_md?: string | null;
                     self_confidence?: number | null;
+                    self_report?: boolean;
                     session_id?: string | null;
                     stream_item_id?: string | null;
                 };
@@ -30482,6 +34202,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        assessment: {
+                            activation_intent: {
+                                evaluation_id: string;
+                                expected_effective_id: string | null;
+                                expected_generation: number;
+                            };
+                            candidate_id: string;
+                            /** @enum {string|null} */
+                            effect: "applied" | "ineligible" | "failed_pending" | "idempotent_replay" | null;
+                            evaluation_group_id: string;
+                            submission_id: string;
+                        };
+                        judge: ({
+                            auto_rated: boolean;
+                            capability_ref: {
+                                id: string;
+                                version: string;
+                            };
+                            /** @enum {string} */
+                            coarse_outcome: "correct" | "partial" | "incorrect" | "unsupported";
+                            confidence: number;
+                            evidence_json: {
+                                [key: string]: unknown;
+                            };
+                            feedback_md: string;
+                            judge_event_id: string | null;
+                            route: string;
+                            score: number | null;
+                            /** @enum {string|null} */
+                            suggested_rating: "again" | "hard" | "good" | null;
+                            telemetry?: unknown;
+                        } & {
+                            [key: string]: unknown;
+                        }) | null;
+                        review_event: {
+                            id: string;
+                        };
+                        /** @enum {string} */
+                        status: "effective" | "review_required";
+                    } | {
                         judge: ({
                             auto_rated: boolean;
                             capability_ref: {
@@ -30721,6 +34481,9 @@ export interface operations {
                             correct: number;
                             count: number;
                             date: string;
+                            incorrect: number;
+                            partial: number;
+                            ungraded: number;
                         }[];
                         ratings: {
                             again: number;
@@ -30862,8 +34625,8 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    issuance_id?: string;
                     question_id: string;
-                    regenerate?: boolean;
                 };
             };
         };
@@ -30875,8 +34638,9 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        generated: boolean;
-                        generation_error: boolean;
+                        evaluation_group_id?: string;
+                        idempotency_key?: string;
+                        issuance_id: string;
                         session_id: string;
                     };
                 };
@@ -31122,6 +34886,7 @@ export interface operations {
             content: {
                 "application/json": {
                     hint_index?: number;
+                    issuance_id?: string;
                     question_id: string;
                 };
             };
@@ -31265,12 +35030,118 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    activation_intent?: {
+                        evaluation_id: string;
+                        expected_effective_id: string | null;
+                        expected_generation: number;
+                    };
+                    assessment?: {
+                        evaluation_group_id: string;
+                        /** @default [] */
+                        group_evidence?: {
+                            evidence: {
+                                asset: {
+                                    asset_id: string;
+                                    digest: string;
+                                };
+                                bytes: number;
+                                evidence_id: string;
+                                /** @enum {string} */
+                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                mime_type: string;
+                                /** Format: date-time */
+                                uploaded_at: string;
+                            };
+                            target: {
+                                /** @enum {string} */
+                                scope: "all_units";
+                            } | {
+                                /** @enum {string} */
+                                scope: "units";
+                                scoring_unit_ids: string[];
+                            };
+                        }[];
+                        idempotency_key: string;
+                        issuance_id: string;
+                        response_set: {
+                            /** @default [] */
+                            entries?: ({
+                                /** @enum {string} */
+                                kind: "choice";
+                                /** @default [] */
+                                option_ids?: string[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "text";
+                                self_confidence?: number;
+                                slot_id: string;
+                                text_md: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "numeric";
+                                raw_input?: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                                value: number | null;
+                            } | {
+                                /** @enum {string} */
+                                kind: "formula";
+                                latex: string;
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @enum {string} */
+                                kind: "matching";
+                                /** @default [] */
+                                pairs?: {
+                                    item_id: string;
+                                    option_id: string;
+                                }[];
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                item_order?: string[];
+                                /** @enum {string} */
+                                kind: "ordering";
+                                self_confidence?: number;
+                                slot_id: string;
+                            } | {
+                                /** @default [] */
+                                evidence?: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                }[];
+                                /** @enum {string} */
+                                kind: "open";
+                                self_confidence?: number;
+                                slot_id: string;
+                                /** @default  */
+                                text_md?: string;
+                            })[];
+                        };
+                        submission_id?: string;
+                    };
                     final_hint_level?: number;
                     hints_used?: number;
                     question_id: string;
+                    self_report?: boolean;
                     student_final_answer_text?: string;
                     student_image_refs?: string[];
                     student_text_steps?: string[];
+                    /** @enum {string} */
+                    user_rating?: "again" | "hard" | "good";
                 };
             };
         };

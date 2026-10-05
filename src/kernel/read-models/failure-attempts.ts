@@ -19,7 +19,14 @@ import {
 } from '@/core/schema/question-evidence-snapshot';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import { filterActiveRows, newerEventRow, takeActiveRows } from '@/kernel/events';
+import { filterActiveRows, newerEventRow } from '@/kernel/events';
+
+import {
+  type NativeAttemptVerdict,
+  nativeAttemptOutcome,
+  resolveVerdictsForAttempts,
+  resolveVerdictsForNativeAttempts,
+} from './assessment-verdict';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
@@ -67,6 +74,14 @@ export type FailureAttempt = {
    * `judge` 语义。
    */
   original_judge?: FailureAttemptJudge | null;
+  assessment?: Pick<
+    NativeAttemptVerdict['submission'],
+    'submission_id' | 'revision_id' | 'response_set' | 'group_evidence'
+  > & {
+    evaluation_group_id: string;
+    original_evaluation_id: string | null;
+    effective_evaluation_id: string | null;
+  };
   user_cause?: FailureAttemptUserCause;
 };
 
@@ -169,6 +184,15 @@ function failureEvidenceFromRow(row: EventRow): {
   /** undefined = historical absence; null = present but invalid/corrupt. */
   question_snapshot: AttemptQuestionSnapshotT | null | undefined;
 } {
+  if (row.action === 'experimental:assessment_attempt') {
+    return {
+      answer_md: typeof row.payload.response_md === 'string' ? row.payload.response_md : null,
+      answer_image_refs: [],
+      referenced_knowledge_ids: [],
+      // Never substitute today's question for a native frozen assessment.
+      question_snapshot: null,
+    };
+  }
   const payload = row.payload as {
     answer_md?: string | null;
     user_response_md?: string | null;
@@ -256,6 +280,51 @@ export type FailureAttemptWithReasoningTrace = {
   reasoning_trace: string | null;
 };
 
+function nativeFailureReference(
+  value: NativeAttemptVerdict | undefined,
+): FailureAttempt['assessment'] {
+  if (!value) return undefined;
+  const sub = value.submission;
+  return {
+    submission_id: sub.submission_id,
+    revision_id: sub.revision_id,
+    response_set: sub.response_set,
+    group_evidence: sub.group_evidence,
+    evaluation_group_id: value.evaluation_group_id,
+    original_evaluation_id: value.original_evaluation_id,
+    effective_evaluation_id: value.effective?.evaluation_id ?? null,
+  };
+}
+
+async function filterActiveFailureRows(db: DbLike, rows: EventRow[]): Promise<EventRow[]> {
+  const active = await filterActiveRows(db, rows);
+  const native = await resolveVerdictsForNativeAttempts(db, active);
+  return active.filter(
+    (row) =>
+      row.action !== 'experimental:assessment_attempt' ||
+      nativeAttemptOutcome(native.get(row.id)) === 'failure',
+  );
+}
+
+async function takeActiveFailureRows(
+  db: DbLike,
+  firstRows: EventRow[],
+  limit: number,
+  fetchNextRows: (limit: number, offset: number) => Promise<EventRow[]>,
+): Promise<EventRow[]> {
+  const result: EventRow[] = [];
+  const batchSize = limit * 3;
+  let rows = firstRows;
+  let offset = rows.length;
+  while (rows.length > 0) {
+    result.push(...(await filterActiveFailureRows(db, rows)));
+    if (result.length >= limit || rows.length < batchSize) break;
+    rows = await fetchNextRows(batchSize, offset);
+    offset += rows.length;
+  }
+  return result.slice(0, limit);
+}
+
 async function loadFailureAttempts(
   db: DbLike,
   opts: GetFailureAttemptsOpts = {},
@@ -266,11 +335,16 @@ async function loadFailureAttempts(
   if (perQuestionLimit !== undefined && perQuestionLimit <= 0) return [];
   if (perQuestionLimit === undefined && !unbounded && limit <= 0) return [];
   const conditions = [
-    opts.includeReviewFailures
-      ? inArray(event.action, ['attempt', 'review'])
-      : eq(event.action, 'attempt'),
+    or(
+      and(
+        opts.includeReviewFailures
+          ? inArray(event.action, ['attempt', 'review'])
+          : eq(event.action, 'attempt'),
+        eq(event.outcome, 'failure'),
+      ),
+      eq(event.action, 'experimental:assessment_attempt'),
+    ),
     eq(event.subject_kind, 'question'),
-    eq(event.outcome, 'failure'),
   ];
   if (opts.questionIds && opts.questionIds.length > 0) {
     conditions.push(inArray(event.subject_id, opts.questionIds));
@@ -318,7 +392,7 @@ async function loadFailureAttempts(
         partitionBatchLimit,
       );
       if (attemptRows.length === 0) break;
-      const filtered = await filterActiveRows(db, attemptRows);
+      const filtered = await filterActiveFailureRows(db, attemptRows);
       for (const row of filtered) {
         const rows = activeRowsByQuestion.get(row.subject_id) ?? [];
         if (rows.length >= perQuestionLimit) continue;
@@ -357,8 +431,8 @@ async function loadFailureAttempts(
     if (attemptRows.length === 0) return [];
 
     activeAttemptRows = unbounded
-      ? await filterActiveRows(db, attemptRows)
-      : await takeActiveRows(db, attemptRows, limit, async (nextLimit, offset) =>
+      ? await filterActiveFailureRows(db, attemptRows)
+      : await takeActiveFailureRows(db, attemptRows, limit, async (nextLimit, offset) =>
           db
             .select()
             .from(event)
@@ -434,14 +508,19 @@ async function loadFailureAttempts(
     [...originalJudgeRowByAttempt.values()].map((r) => r.id),
   );
 
+  const nativeVerdicts = await resolveVerdictsForNativeAttempts(db, activeAttemptRows);
   return activeAttemptRows.map((a) => {
     const evidence = failureEvidenceFromRow(a);
     const result: FailureAttempt = {
+      ...(nativeVerdicts.has(a.id)
+        ? { assessment: nativeFailureReference(nativeVerdicts.get(a.id)) }
+        : {}),
       attempt_event_id: a.id,
       question_id: a.subject_id,
       answer_md: evidence.answer_md,
       answer_image_refs: evidence.answer_image_refs,
-      referenced_knowledge_ids: evidence.referenced_knowledge_ids,
+      referenced_knowledge_ids:
+        nativeVerdicts.get(a.id)?.knowledge_ids ?? evidence.referenced_knowledge_ids,
       question_snapshot: evidence.question_snapshot,
       created_at: a.created_at,
       correction_state: attemptTruths.get(a.id) ?? activeEffectiveTruth(a.id),
@@ -622,9 +701,11 @@ async function loadFailureAttemptById(
   const attempt = rows[0];
   if (!attempt) return null;
   if (
-    (attempt.action !== 'attempt' && attempt.action !== 'review') ||
+    (attempt.action !== 'attempt' &&
+      attempt.action !== 'review' &&
+      attempt.action !== 'experimental:assessment_attempt') ||
     attempt.subject_kind !== 'question' ||
-    attempt.outcome !== 'failure'
+    (attempt.action !== 'experimental:assessment_attempt' && attempt.outcome !== 'failure')
   ) {
     return null;
   }
@@ -636,6 +717,10 @@ async function loadFailureAttemptById(
     return null;
   }
 
+  const native = await resolveVerdictsForNativeAttempts(db, [attempt]);
+  if (attempt.action === 'experimental:assessment_attempt') {
+    if (nativeAttemptOutcome(native.get(attempt.id)) !== 'failure') return null;
+  }
   const evidence = failureEvidenceFromRow(attempt);
   // YUK-1054 — 一次拉全 judge 行（subject_id ∪ caused_by 双锚、最老排序），
   // 同批做链解析分出 original（earliest 原始收据）+ effective（最新 live 判）。
@@ -694,11 +779,15 @@ async function loadFailureAttemptById(
     }
   }
   const failure: FailureAttempt = {
+    ...(native.has(attempt.id)
+      ? { assessment: nativeFailureReference(native.get(attempt.id)) }
+      : {}),
     attempt_event_id: attempt.id,
     question_id: attempt.subject_id,
     answer_md: evidence.answer_md,
     answer_image_refs: evidence.answer_image_refs,
-    referenced_knowledge_ids: evidence.referenced_knowledge_ids,
+    referenced_knowledge_ids:
+      native.get(attempt.id)?.knowledge_ids ?? evidence.referenced_knowledge_ids,
     question_snapshot: evidence.question_snapshot,
     created_at: attempt.created_at,
     correction_state: attemptTruth,
@@ -782,4 +871,19 @@ async function getPartitionedFailureRows(
     )
     .orderBy(desc(event.created_at), desc(event.id));
   return rows as EventRow[];
+}
+
+/** Reporting view: omit historical failures whose effective legacy verdict became correct. */
+export async function getCurrentFailureAttempts(db: DbLike, opts: GetFailureAttemptsOpts = {}) {
+  const failures = await getFailureAttempts(db, { ...opts, limit: null });
+  const legacy = await resolveVerdictsForAttempts(
+    db,
+    failures.filter((row) => !row.assessment).map((row) => row.attempt_event_id),
+  );
+  const current = failures.filter(
+    (row) =>
+      row.assessment ||
+      legacy.get(row.attempt_event_id)?.effective?.verdict.coarse_outcome !== 'correct',
+  );
+  return opts.limit == null ? current : current.slice(0, opts.limit);
 }

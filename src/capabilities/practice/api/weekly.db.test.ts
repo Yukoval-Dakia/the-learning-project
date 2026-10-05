@@ -183,8 +183,22 @@ describe('GET /api/review/weekly', () => {
     expect(res.status).toBe(200);
     expect(body.window).toMatchObject({ days: 7, time_zone: 'Asia/Shanghai' });
     expect(body.daily).toHaveLength(7);
-    expect(body.daily.at(-1)).toEqual({ date: today, count: 1, correct: 1 });
-    expect(body.daily.at(-2)).toEqual({ date: yesterday, count: 1, correct: 1 });
+    expect(body.daily.at(-1)).toEqual({
+      date: today,
+      count: 1,
+      correct: 1,
+      incorrect: 0,
+      partial: 0,
+      ungraded: 0,
+    });
+    expect(body.daily.at(-2)).toEqual({
+      date: yesterday,
+      count: 1,
+      correct: 1,
+      incorrect: 0,
+      partial: 0,
+      ungraded: 0,
+    });
   });
 
   it('rejects an invalid time zone before querying report data', async () => {

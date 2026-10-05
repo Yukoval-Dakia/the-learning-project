@@ -42,6 +42,58 @@ const QUESTION = {
   timeline: [],
 };
 
+const ACTIVATION = {
+  evaluation_id: 'eva_preview',
+  expected_effective_id: null,
+  expected_generation: 0,
+};
+const ISSUANCE_STATE = {
+  issuance: {
+    issuance_id: 'iss_stream_si_1',
+    issued_at: '2026-10-04T00:00:00.000Z',
+    binding: {
+      revision_id: 'rev_original',
+      part_ids: ['q_1'],
+      material_bindings: [],
+      option_order: [],
+    },
+    claim: { policy: 'unbounded', status: 'unclaimed', claimed_by_ref: null },
+  },
+  practice_dto: {
+    issuance_id: 'iss_stream_si_1',
+    revision_id: 'rev_original',
+    issued_at: '2026-10-04T00:00:00.000Z',
+    materials: [],
+    faces: [{ part_id: 'q_1', prompt_md: QUESTION.prompt_md, material_ids: [] }],
+    response_requirements: [{ slot_id: 'original_slot', evidence_unit_ids: ['unit_original'] }],
+    response_spec: {
+      slots: [
+        {
+          slot_id: 'original_slot',
+          part_id: 'q_1',
+          kind: 'text',
+          placement: { label: '作答' },
+          math_preview: false,
+        },
+      ],
+    },
+  },
+  admission_generation_observed: 1,
+  draft: null,
+  submissions: [],
+};
+
+function issuanceResponse(url: string): Response | undefined {
+  if (url.endsWith('/responses'))
+    return Response.json({
+      status: 'saved',
+      save_epoch: 1,
+      issuance_id: 'iss_stream_si_1',
+      updated_at: '2026-10-04T00:00:00.000Z',
+    });
+  if (url.includes('/api/issuances/')) return Response.json(ISSUANCE_STATE);
+}
+
 function memoryStorage(): Storage {
   const store = new Map<string, string>();
   return {
@@ -95,6 +147,8 @@ describe('PfSolo — real-component 422 judge failure (YUK-895 QA lane)', () => 
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
+        const issuance = issuanceResponse(url);
+        if (issuance) return issuance;
         if (url.includes('/api/review/advice')) return adviceGate;
         if (url.includes('/api/questions/')) return Response.json(QUESTION);
         return Response.json({});
@@ -155,10 +209,17 @@ describe('PfSolo — stream answering capture regression pin (YUK-784)', () => {
       'fetch',
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
+        const issuance = issuanceResponse(url);
+        if (issuance) return issuance;
         if (url.includes('/api/review/advice'))
           return Response.json({
             activity_ref: { id: 'act_1' },
             question_id: 'q_1',
+            activation_intent: ACTIVATION,
+            automatic_commit: false,
+            candidate_id: 'eva_preview',
+            submission_id: 'submission_stream_si_1',
+            evaluation_group_id: 'group_stream_si_1',
             judge: adviceJudge,
             advice: { rating: 'good', reason: 'ok', evidence_score: null },
           });
@@ -256,13 +317,21 @@ describe('PfSolo — stream answering capture regression pin (YUK-784)', () => {
     const init = attemptRequestBody(attemptCalls);
     expect(init.reasoning_trace).toBe('先想变化率');
     expect(init.self_confidence).toBe(3);
+    expect(init.activation_intent).toEqual(ACTIVATION);
+    expect(init.assessment).toMatchObject({
+      issuance_id: 'iss_stream_si_1',
+      response_set: {
+        entries: [{ slot_id: 'original_slot', kind: 'text', text_md: '导数表示变化率' }],
+      },
+    });
+    expect(init).not.toHaveProperty('judge_result_v2');
   });
 });
 
 // YUK-1094 — 附件上传中提交入口必须 disable（否则判分跑在旧的空 evidence 上）。上传 settle
 // 后恢复可提交，且已上传的 asset id 随 advice 预览一并送到 judge（answer_image_refs）。
 describe('PfSolo — 附件上传中提交入口 gating (YUK-1094)', () => {
-  it('disables submit while an attachment upload is in flight, then carries its ref into advice', async () => {
+  it.each([true, false])('preserves uploaded originals with typed text: %s', async (withText) => {
     let resolveUpload!: (res: Response) => void;
     const uploadGate = new Promise<Response>((resolve) => {
       resolveUpload = resolve;
@@ -272,6 +341,8 @@ describe('PfSolo — 附件上传中提交入口 gating (YUK-1094)', () => {
       'fetch',
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
+        const issuance = issuanceResponse(url);
+        if (issuance) return issuance;
         const method = init?.method ?? 'GET';
         if (url.includes('/api/assets') && method === 'POST') return uploadGate;
         if (url.includes('/api/review/advice')) {
@@ -302,7 +373,7 @@ describe('PfSolo — 附件上传中提交入口 gating (YUK-1094)', () => {
     await screen.findByText('用一句话解释导数。');
 
     // 先填文字，让 canSubmit 的作答项为真——这样「上传中 disable」只可能来自 upload-pending。
-    await user.type(screen.getByRole('textbox', { name: '作答' }), '导数表示变化率');
+    if (withText) await user.type(screen.getByRole('textbox', { name: '作答' }), '导数表示变化率');
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(fileInput, new File(['bytes'], 'work.png', { type: 'image/png' }));
 
@@ -319,7 +390,8 @@ describe('PfSolo — 附件上传中提交入口 gating (YUK-1094)', () => {
             storage_key: 'k',
             mime_type: 'image/png',
             byte_size: 3,
-            sha256: 'x',
+            sha256: 'a'.repeat(64),
+            created_at: '2026-10-04T00:00:00.000Z',
           },
         }),
       );
@@ -336,8 +408,211 @@ describe('PfSolo — 附件上传中提交入口 gating (YUK-1094)', () => {
     await waitFor(() => expect(adviceCalls).toHaveLength(1));
     const body = JSON.parse((adviceCalls[0][1] as RequestInit).body as string);
     expect(body).toMatchObject({
-      response_md: '导数表示变化率',
+      response_md: withText ? '导数表示变化率' : '',
       answer_image_refs: ['asset_1'],
+      assessment: {
+        response_set: {
+          entries: withText ? [expect.objectContaining({ text_md: '导数表示变化率' })] : [],
+        },
+        group_evidence: [
+          expect.objectContaining({
+            evidence: expect.objectContaining({
+              asset: expect.objectContaining({ asset_id: 'asset_1' }),
+            }),
+          }),
+        ],
+      },
     });
+  });
+});
+
+describe('PfSolo issued response coverage', () => {
+  it.each([false, true])(
+    'blocks a partial deterministic answer, including with photo=%s',
+    async (withPhoto) => {
+      const state = structuredClone(ISSUANCE_STATE);
+      state.practice_dto.response_spec.slots.push({
+        ...state.practice_dto.response_spec.slots[0],
+        slot_id: 'second_slot',
+        placement: { label: '第二问' },
+      });
+      state.practice_dto.response_requirements = [
+        { slot_id: 'original_slot', evidence_unit_ids: [] },
+        { slot_id: 'second_slot', evidence_unit_ids: [] },
+      ];
+      const advice = vi.fn();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: RequestInfo | URL) => {
+          const url = String(input);
+          if (url.endsWith('/responses')) return issuanceResponse(url);
+          if (url.includes('/api/issuances/')) return Response.json(state);
+          if (url.includes('/api/review/advice')) {
+            advice();
+            return Response.json({});
+          }
+          if (url.includes('/api/questions/')) return Response.json(QUESTION);
+          if (url.includes('/api/assets'))
+            return Response.json({
+              asset: {
+                id: 'photo_multi',
+                storage_key: 'k',
+                mime_type: 'image/png',
+                byte_size: 3,
+                sha256: 'b'.repeat(64),
+                created_at: '2026-10-04T00:00:00.000Z',
+              },
+            });
+          return Response.json({});
+        }),
+      );
+      const user = userEvent.setup();
+      const { container } = renderSolo(vi.fn());
+      await user.type(
+        await screen.findByRole('textbox', { name: '作答' }),
+        '第一问的完整解释，尚未回答第二问。',
+      );
+      if (withPhoto) {
+        const fileInput = container.querySelector('input[type="file"]');
+        if (!(fileInput instanceof HTMLInputElement)) throw new Error('file input absent');
+        await user.upload(fileInput, new File(['png'], 'work.png', { type: 'image/png' }));
+        await waitFor(() =>
+          expect(screen.getByRole('button', { name: '添加附件' })).toHaveProperty(
+            'disabled',
+            false,
+          ),
+        );
+      }
+      const submit = screen.getByRole('button', { name: '提交 · 即时判分' });
+      expect(submit).toHaveProperty('disabled', true);
+      await user.click(submit);
+      expect(advice).not.toHaveBeenCalled();
+      await user.type(
+        screen.getByRole('textbox', { name: '第二问' }),
+        '第二问也保留推导过程与边界条件。',
+      );
+      expect(submit).toHaveProperty('disabled', false);
+    },
+  );
+});
+
+describe('PfSolo frozen photo requirements', () => {
+  it.each([
+    {
+      label: 'whole-group evidence',
+      target: { scope: 'all_units' },
+      covered: true,
+      declared: true,
+    },
+    {
+      label: 'fully scoped evidence',
+      target: { scope: 'units', scoring_unit_ids: ['unit_original', 'unit_second'] },
+      covered: true,
+      declared: true,
+    },
+    {
+      label: 'partially scoped evidence',
+      target: { scope: 'units', scoring_unit_ids: ['unit_original'] },
+      covered: false,
+      declared: true,
+    },
+    {
+      label: 'missing public requirements',
+      target: { scope: 'all_units' },
+      covered: false,
+      declared: false,
+    },
+  ])('$label: photo-only submission covered=$covered', async ({ target, covered, declared }) => {
+    const state = {
+      ...structuredClone(ISSUANCE_STATE),
+      draft: {
+        response_set: { entries: [] },
+        save_epoch: 4,
+        group_evidence: [
+          {
+            evidence: {
+              evidence_id: 'page_original',
+              kind: 'image',
+              asset: { asset_id: 'page_original', digest: `sha256:${'c'.repeat(64)}` },
+              mime_type: 'image/png',
+              bytes: 1024,
+              uploaded_at: '2026-10-04T00:00:00.000Z',
+            },
+            target,
+          },
+        ],
+      },
+    };
+    state.practice_dto.response_spec.slots.push({
+      ...state.practice_dto.response_spec.slots[0],
+      slot_id: 'second_slot',
+      placement: { label: '第二问' },
+    });
+    state.practice_dto.response_requirements = [
+      { slot_id: 'original_slot', evidence_unit_ids: ['unit_original'] },
+      { slot_id: 'second_slot', evidence_unit_ids: ['unit_second'] },
+    ];
+    const dto = declared
+      ? state.practice_dto
+      : {
+          ...state.practice_dto,
+          response_requirements: undefined,
+        };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith('/responses')) return issuanceResponse(url);
+        if (url.includes('/api/issuances/')) return Response.json({ ...state, practice_dto: dto });
+        if (url.includes('/api/questions/')) return Response.json(QUESTION);
+        return Response.json({});
+      }),
+    );
+    renderSolo(vi.fn());
+    await screen.findByRole('textbox', { name: '第二问' });
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '提交 · 即时判分' })).toHaveProperty(
+        'disabled',
+        !covered,
+      ),
+    );
+  });
+
+  it('preserves the explicit manual path for a partial response', async () => {
+    let requests = 0;
+    const state = structuredClone(ISSUANCE_STATE);
+    state.practice_dto.response_spec.slots.push({
+      ...state.practice_dto.response_spec.slots[0],
+      slot_id: 'second_slot',
+      placement: { label: '第二问' },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith('/responses')) return issuanceResponse(url);
+        if (url.includes('/api/issuances/')) {
+          requests += 1;
+          return requests === 1
+            ? Response.json(
+                { error: 'not_admitted', message: 'requires manual practice' },
+                { status: 422 },
+              )
+            : Response.json(state);
+        }
+        if (url.includes('/api/questions/')) return Response.json(QUESTION);
+        return Response.json({});
+      }),
+    );
+    const user = userEvent.setup();
+    renderSolo(vi.fn());
+    await user.click(await screen.findByRole('button', { name: '按自行评级练习' }));
+    await user.type(
+      await screen.findByRole('textbox', { name: '作答' }),
+      '手动保留部分原始回答与自评。',
+    );
+    const buttons = screen.getAllByRole('button', { name: /自行评级/ });
+    expect(buttons).toHaveLength(3);
+    for (const button of buttons) expect(button).toHaveProperty('disabled', false);
   });
 });

@@ -1,3 +1,4 @@
+import { publishPlacementFixture } from '../../../../tests/fixtures/assessment-placement';
 // YUK-761 — placement starter recovery sweeper db tests (real Postgres).
 //
 // hermetic 契约：每个 db 测在 beforeEach resetDb()，不假设跨文件状态/执行序。
@@ -317,6 +318,7 @@ describe('sweepStalePlacementStarterClaims — pending_dispatch re-drive', () =>
       created_at: new Date('2026-07-21T00:00:00Z'),
       updated_at: new Date('2026-07-21T00:00:00Z'),
     });
+    await publishPlacementFixture(db, 'question-warm');
     const { calls, dispatch } = recordingDispatch();
 
     const result = await sweepStalePlacementStarterClaims(db, {

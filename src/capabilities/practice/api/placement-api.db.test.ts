@@ -1,3 +1,4 @@
+import { publishPlacementFixture } from '../../../../tests/fixtures/assessment-placement';
 // Placement probe API flow DB test — cold-start inc-B (YUK-468, PR-2b).
 //
 // Drives the three route handlers (start / next / end) over a seeded goal subgraph, simulating
@@ -74,6 +75,7 @@ async function seedQuestion(id: string, kcs: string[], difficulty = 3): Promise<
     updated_at: now,
     version: 0,
   });
+  await publishPlacementFixture(db, id);
 }
 
 // Simulate one answered probe question (what /api/review/submit writes: a review event on the
@@ -512,7 +514,8 @@ describe('placement API flow', () => {
     await seedQuestion('q-kc2', ['kc2'], 3);
     // Start scoped to kc1 only.
     const start = await (await startPlacement(jsonReq({ knowledgeIds: ['kc1'] }))).json();
-    // Override to kc2 — the route honors the explicit override.
+    // Answer the pinned issuance before widening the next selection's scope.
+    await seedAnswer(start.sessionId, 'q-kc1');
     const res = await nextPlacement(jsonReq({ knowledgeIds: ['kc2'] }), { id: start.sessionId });
     const body = await res.json();
     expect(res.status).toBe(200);

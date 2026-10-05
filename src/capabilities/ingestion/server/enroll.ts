@@ -73,6 +73,8 @@ export interface EnrollCapturedBlockInput {
    * passes `'workflow_judge'`. See `EnrollProvenance` + ADR-0026.
    */
   generatedBy?: EnrollProvenance;
+  /** Native activation already owns this immutable participation anchor. */
+  nativeAttemptEventId?: string;
 }
 
 export interface EnrollCapturedBlockResult {
@@ -176,29 +178,31 @@ export async function enrollCapturedBlock(
   // (src/core/schema/event/known.ts) — we simply stop hardcoding 'failure'.
   // A success attempt feeds the knowledge_mastery view (ADR-0012); it does NOT
   // advance FSRS (no `review` event written) — see ADR-0024.
-  const attemptEventId = createId();
-  const questionSnapshot = await loadAttemptQuestionSnapshot(tx, input.questionId);
-  await writeEvent(tx, {
-    id: attemptEventId,
-    session_id: null,
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'attempt',
-    subject_kind: 'question',
-    subject_id: input.questionId,
-    outcome: input.outcome,
-    payload: {
-      answer_md: input.answerMd,
-      answer_image_refs: input.answerImageRefs,
-      referenced_knowledge_ids: input.knowledgeIds,
-      question_snapshot: questionSnapshot,
-      generated_by: generatedBy,
-    },
-    caused_by_event_id: null,
-    task_run_id: null,
-    cost_micro_usd: null,
-    created_at: input.now,
-  });
+  const attemptEventId = input.nativeAttemptEventId ?? createId();
+  if (!input.nativeAttemptEventId) {
+    const questionSnapshot = await loadAttemptQuestionSnapshot(tx, input.questionId);
+    await writeEvent(tx, {
+      id: attemptEventId,
+      session_id: null,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'attempt',
+      subject_kind: 'question',
+      subject_id: input.questionId,
+      outcome: input.outcome,
+      payload: {
+        answer_md: input.answerMd,
+        answer_image_refs: input.answerImageRefs,
+        referenced_knowledge_ids: input.knowledgeIds,
+        question_snapshot: questionSnapshot,
+        generated_by: generatedBy,
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: input.now,
+    });
+  }
 
   // Mirror the /api/mistakes write path so the enrolled capture is visible via
   // GET /api/mistakes (failure) / the records list (success/partial). The

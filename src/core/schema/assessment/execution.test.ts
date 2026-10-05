@@ -195,3 +195,25 @@ describe('validateExecutionPlan — 恰好覆盖一次', () => {
     expect(issues.map((issue) => issue.code)).not.toContain('unit_not_covered');
   });
 });
+
+it('unit conversion requires the published reference unit before it can be admitted', () => {
+  const assignments: ExecutionPlanT['assignments'] = [
+    {
+      scoring_unit_ids: ['u_choice'],
+      executor: { kind: 'deterministic', comparator: 'exact_option_set' },
+    },
+    {
+      scoring_unit_ids: ['u_num'],
+      executor: { kind: 'deterministic', comparator: 'numeric_unit_conversion' },
+    },
+    { scoring_unit_ids: ['u_essay'], executor: { kind: 'human_review' } },
+  ];
+  expect(validateExecutionPlan(plan(assignments), basis())).toMatchObject([
+    { code: 'comparator_criterion_mismatch' },
+  ]);
+  const valid = basis();
+  const numeric = valid.units[1].criterion;
+  if (numeric.kind !== 'numeric_key') throw new Error('numeric fixture missing');
+  numeric.expected_unit = 'm/s';
+  expect(validateExecutionPlan(plan(assignments), valid)).toEqual([]);
+});

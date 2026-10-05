@@ -28,7 +28,10 @@ import { memoryBriefTaskSpec } from '@/capabilities/agency/tasks/memory-brief';
 import { researchMeetingDirectorTaskSpec } from '@/capabilities/agency/tasks/research-meeting-director';
 import { copilotTaskSpec } from '@/capabilities/copilot/tasks/agent';
 import { copilotTaskSpecs } from '@/capabilities/copilot/tasks/index';
-import { teachingTurnTaskSpec } from '@/capabilities/copilot/tasks/teaching-turn';
+import {
+  teachingTurnTaskSpec,
+  teachingTurnVisionTaskSpec,
+} from '@/capabilities/copilot/tasks/teaching-turn';
 import { blockAssemblyTaskSpec } from '@/capabilities/ingestion/tasks/block-assembly';
 import { coldStartPlacementBridgeTaskSpec } from '@/capabilities/ingestion/tasks/cold-start-bridge';
 import { ingestionTaskSpecs } from '@/capabilities/ingestion/tasks/index';
@@ -108,6 +111,7 @@ const EXPECTED_KINDS = [
   'VariantVerifyTask',
   'VariantGenTask',
   'TeachingTurnTask',
+  'TeachingTurnVisionTask',
   'ProfileCriticTask',
   'DreamingTask',
   'CoachTask',
@@ -167,7 +171,7 @@ const EXPECTED_OWNER_COUNTS = {
   ingestion: 8,
   knowledge: 3,
   agency: 13,
-  copilot: 2,
+  copilot: 3,
 } as const;
 
 const OWNED_SPECS: ReadonlySet<object> = new Set([
@@ -193,6 +197,7 @@ const OWNED_SPECS: ReadonlySet<object> = new Set([
   supplyPlanTaskSpec,
   copilotTaskSpec,
   teachingTurnTaskSpec,
+  teachingTurnVisionTaskSpec,
   noteGenerateTaskSpec,
   noteRefineTaskSpec,
   noteVerifyTaskSpec,
@@ -555,6 +560,7 @@ describe('taskCatalog', () => {
     const expected = {
       CopilotTask: copilotTaskSpec,
       TeachingTurnTask: teachingTurnTaskSpec,
+      TeachingTurnVisionTask: teachingTurnVisionTaskSpec,
     } as const;
 
     for (const [kind, spec] of Object.entries(expected)) {

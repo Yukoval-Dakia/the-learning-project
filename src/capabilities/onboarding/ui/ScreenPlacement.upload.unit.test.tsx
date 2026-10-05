@@ -7,6 +7,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { UploadedAsset } from '@/ui/lib/assets';
+import { placementStartFixture } from './placement-fixtures';
 import ScreenPlacement from './ScreenPlacement';
 
 const mocks = vi.hoisted(() => ({
@@ -15,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   startPlacement: vi.fn(),
   submitProbeAnswer: vi.fn(),
   getQuestion: vi.fn(),
+  saveResponseDraft: vi.fn(),
+  getPlacementSession: vi.fn(),
   uploadAsset: vi.fn(),
 }));
 
@@ -23,25 +27,18 @@ vi.mock('./placement-api', () => ({
   placementNext: mocks.placementNext,
   startPlacement: mocks.startPlacement,
   submitProbeAnswer: mocks.submitProbeAnswer,
+  getPlacementSession: mocks.getPlacementSession,
 }));
 
 vi.mock('@/capabilities/practice/ui/practice-api', async (importActual) => {
   const actual = await importActual<typeof import('@/capabilities/practice/ui/practice-api')>();
-  return { ...actual, getQuestion: mocks.getQuestion };
+  return { ...actual, getQuestion: mocks.getQuestion, saveResponseDraft: mocks.saveResponseDraft };
 });
 
 vi.mock('@/ui/lib/assets', async (importActual) => {
   const actual = await importActual<typeof import('@/ui/lib/assets')>();
   return { ...actual, uploadAsset: mocks.uploadAsset };
 });
-
-const TEXT_QUESTION = {
-  id: 'q1',
-  kind: 'short',
-  prompt_md: '用一句话解释导数。',
-  choices_md: [],
-  labels: [{ id: 'kn_1', name: '导数' }],
-};
 
 function renderPlacement() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -55,13 +52,8 @@ function renderPlacement() {
 beforeEach(() => {
   vi.clearAllMocks();
   window.history.replaceState({}, '', '/placement?goal=goal_1');
-  mocks.startPlacement.mockResolvedValue({
-    sessionId: 'placement_1',
-    knowledgeIds: ['kn_1'],
-    question: { questionId: 'q1' },
-    sourcingNeeded: false,
-  });
-  mocks.getQuestion.mockResolvedValue(TEXT_QUESTION);
+  mocks.startPlacement.mockResolvedValue(placementStartFixture());
+  mocks.saveResponseDraft.mockResolvedValue({ save_epoch: 1 });
   mocks.placementEnd.mockResolvedValue({ ok: true });
 });
 
@@ -85,7 +77,14 @@ describe('ScreenPlacement handwriting upload failure (YUK-713)', () => {
   });
 
   it('lets the learner re-pick the same file after a failure, then attaches it on retry', async () => {
-    mocks.uploadAsset.mockRejectedValueOnce(new Error('500')).mockResolvedValue({ id: 'asset_1' });
+    mocks.uploadAsset.mockRejectedValueOnce(new Error('500')).mockResolvedValue({
+      id: 'asset_1',
+      storage_key: 'fixture/image',
+      mime_type: 'image/png',
+      sha256: 'a'.repeat(64),
+      byte_size: 5,
+      created_at: '2026-10-05T00:00:00.000Z',
+    });
     const user = userEvent.setup();
     const { container } = renderPlacement();
 
@@ -106,10 +105,10 @@ describe('ScreenPlacement handwriting upload failure (YUK-713)', () => {
 
   // YUK-1094 — 手写稿上传在途时推进按钮必须 disable（onAnswered 带的是旧 image refs）。
   it('disables 下一题 while a handwriting upload is in flight, then re-enables (YUK-1094)', async () => {
-    let settle!: (asset: { id: string }) => void;
+    let settle!: (asset: UploadedAsset) => void;
     mocks.uploadAsset.mockImplementation(
       () =>
-        new Promise<{ id: string }>((resolve) => {
+        new Promise<UploadedAsset>((resolve) => {
           settle = resolve;
         }),
     );
@@ -127,7 +126,14 @@ describe('ScreenPlacement handwriting upload failure (YUK-713)', () => {
     );
 
     await act(async () => {
-      settle({ id: 'asset_1' });
+      settle({
+        id: 'asset_1',
+        storage_key: 'fixture/image',
+        mime_type: 'image/png',
+        sha256: 'a'.repeat(64),
+        byte_size: 5,
+        created_at: '2026-10-05T00:00:00.000Z',
+      });
     });
     await waitFor(() =>
       expect((screen.getByRole('button', { name: '下一题' }) as HTMLButtonElement).disabled).toBe(

@@ -18,6 +18,8 @@ export interface UploadedAsset {
   mime_type: string;
   byte_size: number;
   sha256: string;
+  /** Original asset-row timestamp, available on server upload receipts. */
+  created_at?: string;
 }
 
 export async function uploadAsset(file: File): Promise<UploadedAsset> {

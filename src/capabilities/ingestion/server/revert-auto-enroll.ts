@@ -19,9 +19,11 @@ import { and, eq, isNull, sql } from 'drizzle-orm';
 
 import { questionRef } from '@/core/schema/activity';
 import type { Db } from '@/db/client';
-import { learning_record, question_block } from '@/db/schema';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
+import { event, learning_record, question_block } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { withdrawCapturedOccurrence } from '@/kernel/judge';
 import { archiveLearningRecord } from '@/kernel/records/queries';
 import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 
@@ -47,6 +49,7 @@ export async function revertAutoEnrolledBlock(
 ): Promise<RevertAutoEnrolledBlockResult> {
   return db.transaction(async (tx) => {
     const now = new Date();
+    await acquireLearningStateWriteLock(tx);
 
     // FOR UPDATE serialises concurrent reverts of the same block: the second to
     // acquire the lock re-reads `status='draft'` and cleanly 409s (rather than
@@ -90,7 +93,15 @@ export async function revertAutoEnrolledBlock(
     const [record] = await tx
       .select()
       .from(learning_record)
-      .where(and(eq(learning_record.question_id, questionId), isNull(learning_record.archived_at)))
+      .where(
+        and(
+          eq(learning_record.question_id, questionId),
+          isNull(learning_record.archived_at),
+          block.imported_attempt_event_id
+            ? eq(learning_record.attempt_event_id, block.imported_attempt_event_id)
+            : undefined,
+        ),
+      )
       .limit(1);
     if (!record) {
       throw new ApiError(
@@ -111,6 +122,19 @@ export async function revertAutoEnrolledBlock(
     }
 
     const retractEventId = createId();
+    const [original] = await tx
+      .select({ action: event.action })
+      .from(event)
+      .where(eq(event.id, retractedEventId));
+    if (original?.action === 'experimental:assessment_attempt') {
+      await withdrawCapturedOccurrence(tx, {
+        originalAttemptEventId: retractedEventId,
+        correctionEventId: retractEventId,
+        blockId: block.id,
+        sessionId: params.sessionId,
+        now,
+      });
+    }
     await writeEvent(tx, {
       id: retractEventId,
       session_id: null,

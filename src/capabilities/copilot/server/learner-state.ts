@@ -342,6 +342,10 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
     .where(
       or(
         eq(event.action, 'attempt'),
+        eq(event.action, 'experimental:assessment_attempt'),
+        eq(event.action, 'experimental:assessment_activation'),
+        eq(event.action, 'experimental:assessment_settlement'),
+        eq(event.action, 'correct'),
         // Review-verdict fix #1 (MAJOR) — the FSRS review-queue clearing write
         // (src/capabilities/practice/api/submit.ts) uses a DISTINCT action='review',
         // NOT 'attempt'. It directly moves review_due_count (the header's "今日
@@ -364,7 +368,14 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
     // (a distinct action, same intent) — folding (vs. a 5th named watermark) keeps
     // the invalidation-category shape unchanged (still 3 named fields) since this
     // is a same-intent union, not a new invalidation category.
-    attempt_at: maxIso(iso('attempt'), iso('review')),
+    attempt_at: [
+      'attempt',
+      'review',
+      'experimental:assessment_attempt',
+      'experimental:assessment_activation',
+      'experimental:assessment_settlement',
+      'correct',
+    ].reduce<string | null>((latest, action) => maxIso(latest, iso(action)), null),
     dreaming_at: iso('experimental:dreaming_scan'),
     proposal_decision_at: iso('rate'),
   };

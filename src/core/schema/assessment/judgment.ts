@@ -1,9 +1,9 @@
 import { z } from 'zod';
-
 // YUK-1052 — 幂等载荷比对必须规范化：持久层存 jsonb，PostgreSQL 重排对象键序
 // （按长度+字典序），原样 JSON.stringify(existing) 永远 ≠ 同内容 incoming →
 // 每次重试都被误判成 conflict。canonical 排序键序后再比对才是“逐字相同”。
 import { stableStringify } from '../../migration/canonical';
+import { ConjectureProbeResponseJudgement } from '../conjecture-probe-response';
 import { EvaluationGroupId, EvaluationId, IssuanceId, RevisionId, SubmissionId } from './ids';
 import { EvidenceAttachment } from './materials';
 import { PendingState } from './pending';
@@ -122,6 +122,7 @@ export const ScoredUnitResult = z.object({
     .optional(),
   feedback_md: z.string().optional(),
   evidence_citations: z.array(EvidenceCitation).default([]),
+  probe_judgement: ConjectureProbeResponseJudgement.optional(),
 });
 export type ScoredUnitResultT = z.infer<typeof ScoredUnitResult>;
 
@@ -130,6 +131,7 @@ export const PendingUnitResult = z.object({
   status: z.literal('pending'),
   scoring_unit_id: z.string().min(1),
   pending: PendingState,
+  probe_judgement: ConjectureProbeResponseJudgement.optional(),
 });
 export type PendingUnitResultT = z.infer<typeof PendingUnitResult>;
 
@@ -195,8 +197,23 @@ export type EvaluationInputSnapshotT = z.infer<typeof EvaluationInputSnapshot>;
 export const EvaluationProvenance = z.object({
   source: z.enum(['automatic', 'manual', 'self_report']),
   assisted: z.boolean().default(false),
+  review_context: z
+    .object({
+      appeal_event_id: z.string().min(1),
+      prior_evaluation_id: EvaluationId,
+      reason_md: z.string().max(2000),
+    })
+    .optional(),
   admission_snapshot: EvaluationAdmissionSnapshot.nullable().optional(),
   input_snapshot: EvaluationInputSnapshot.nullable().optional(),
+  /** Server-owned execution identity: preview/commit/delivery share a candidate. */
+  execution_receipt: z
+    .object({
+      key: z.string().min(1),
+      intent_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    })
+    .nullable()
+    .optional(),
 });
 export type EvaluationProvenanceT = z.infer<typeof EvaluationProvenance>;
 

@@ -13,10 +13,12 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { freezeEvaluationInput } from '../../assessment-input';
+import { ConjectureProbeSpecV2 } from '../business';
 
 import {
   type EvaluateSubmissionCoreInput,
   EvaluationContractError,
+  ModelExecutionNotStartedError,
   type ModelUnitOutcomeT,
   evaluateSubmissionCore,
   projectIssuedScoringBasis,
@@ -129,6 +131,108 @@ function inputFor(
 }
 
 // ---------- tests ----------
+
+describe('native probe response signatures', () => {
+  const probe = ConjectureProbeSpecV2.parse({
+    schema_version: 2,
+    prompt_md: '求 sin(3x²) 的导数，并说明内外层如何组合。',
+    reference_md: '6x cos(3x²)，外层导数与内层导数相乘。',
+    expected_target_error_answer_md: 'cos(3x²)，遗漏内层导数。',
+    elicits_target_error_reason_md: '区分链式法则遗漏与其他计算错误。',
+    context_kind: 'abstract',
+    representation_kind: 'symbolic',
+    response_mode: 'short_answer',
+    gold_response_signature: { kind: 'text', response_md: '6x cos(3x²)' },
+    target_error_response_signature: { kind: 'text', response_md: 'cos(3x²)' },
+  });
+
+  it.each([
+    { match: 'gold', points: 2, status: 'scored', reason: 'gold_signature_matched' },
+    {
+      match: 'target_error',
+      points: 0,
+      status: 'scored',
+      reason: 'target_error_signature_matched',
+    },
+    { match: 'neither', points: 0, status: 'scored', reason: 'response_matches_neither_signature' },
+    { match: 'ambiguous', points: 0, status: 'pending', reason: 'signature_match_ambiguous' },
+    { match: undefined, points: 0, status: 'pending', reason: 'signature_judgement_missing' },
+    { match: 'gold', points: 0, status: 'pending', reason: 'correctness_signature_conflict' },
+    {
+      match: 'target_error',
+      points: 2,
+      status: 'pending',
+      reason: 'correctness_signature_conflict',
+    },
+    { match: 'gold', points: 1, status: 'pending', reason: 'correctness_judge_ungradable' },
+  ] as const)(
+    'preserves $match / $points as $reason',
+    async ({ match, points, status, reason }) => {
+      const revision = revisionFor({
+        parts: [{ part_id: 'p1', prompt_md: probe.prompt_md, material_ids: [] }],
+        blank_scores_zero: false,
+        units: [
+          {
+            scoring_unit_id: 'p1::u',
+            slot_refs: ['p1::r'],
+            material_refs: [],
+            evidence_slot_refs: [],
+            requires_group_evidence: false,
+            points: 2,
+            criterion: {
+              kind: 'rule_reference',
+              rule_id: 'chain-rule',
+              source: 'system_proposed',
+              statement_md: probe.reference_md,
+              probe_spec: probe,
+            },
+          },
+        ],
+        assignments: [
+          {
+            scoring_unit_ids: ['p1::u'],
+            executor: {
+              kind: 'model_executor',
+              task_kind: 'AssessmentRuleJudgeTask',
+              admitted_slice_id: 'offline-probe-fixture',
+            },
+          },
+        ],
+      });
+      const out = await evaluateSubmissionCore(
+        inputFor(
+          submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: 'cos(3x²)' }]),
+          revision,
+          {
+            model_executor: async (request) => {
+              expect(request.unit.criterion).toMatchObject({ probe_spec: probe });
+              return {
+                kind: 'scored',
+                points_awarded: points,
+                matched: { rule_id: 'chain-rule', option_ids: [] },
+                evidence_citations: [{ slot_id: 'p1::r', quote: 'cos(3x²)' }],
+                run_refs: ['offline-run'],
+                ...(match
+                  ? {
+                      probe_signature_match: {
+                        match,
+                        explanation_md: '比较冻结正确和目标错误签名。',
+                      },
+                    }
+                  : {}),
+              };
+            },
+          },
+        ),
+      );
+      expect(out.record.unit_results[0]).toMatchObject({
+        status,
+        probe_judgement: { gradable: status === 'scored', reason_code: reason },
+      });
+      if (status === 'pending') expect(out.record.aggregate?.kind).toBe('unresolved');
+    },
+  );
+});
 
 describe('evaluateSubmissionCore — deterministic comparators', () => {
   it('exact_text: accepted answer scores full published points', async () => {
@@ -290,6 +394,75 @@ describe('evaluateSubmissionCore — deterministic comparators', () => {
       feedback_md: 'unit_mismatch',
     });
   });
+
+  it.each([
+    ['30 m/s', 1],
+    ['108 km/h', 1],
+    ['3000 cm/s', 1],
+    ['31.5 m/s', 1],
+    ['31.5001 m/s', 0],
+    ['30 kg', 0],
+    ['30', 0],
+    ['速度约三十米每秒', null],
+  ])(
+    'frozen numeric unit conversion judges original %s locally with explicit tolerance',
+    async (raw, points) => {
+      const revision = revisionFor({
+        slots: [{ slot_id: 'p1::r', part_id: 'p1', kind: 'numeric' }],
+        units: [
+          {
+            scoring_unit_id: 'p1::u',
+            slot_refs: ['p1::r'],
+            material_refs: [],
+            evidence_slot_refs: [],
+            requires_group_evidence: false,
+            points: 1,
+            criterion: {
+              kind: 'numeric_key',
+              expected: 30,
+              expected_unit: 'm/s',
+              tolerance: { kind: 'relative', ratio: 0.05 },
+            },
+          },
+        ],
+        assignments: [
+          {
+            scoring_unit_ids: ['p1::u'],
+            executor: { kind: 'deterministic', comparator: 'numeric_unit_conversion' },
+          },
+        ],
+      });
+      const execute = vi.fn();
+      const evaluated = await evaluateSubmissionCore({
+        ...inputFor(
+          submissionFor([
+            // A client-derived value is deliberately wrong: original raw input owns the interpretation.
+            {
+              slot_id: 'p1::r',
+              kind: 'numeric',
+              value: raw === '30 m/s' ? 999 : null,
+              raw_input: raw,
+            },
+          ]),
+          revision,
+        ),
+        model_executor: execute,
+      });
+      expect(execute).not.toHaveBeenCalled();
+      if (points === null) {
+        expect(evaluated.record.unit_results[0]).toMatchObject({
+          status: 'pending',
+          pending: { reason: 'unparseable_response' },
+        });
+      } else {
+        expect(evaluated.record.unit_results[0]).toMatchObject({
+          status: 'scored',
+          points_awarded: points,
+        });
+      }
+      expect(evaluated.record.run_refs).toEqual([]);
+    },
+  );
 
   it('matching_pairs: explicit pair mapping, not a set masquerade', async () => {
     const revision = revisionFor({
@@ -829,6 +1002,19 @@ describe('evaluateSubmissionCore — model_executor lane (D17 gate, injected por
       status: 'pending',
       pending: { reason: 'infra_failure', retryable: true },
     });
+  });
+
+  it('propagates an explicit pre-execution refusal without turning it into a grading record', async () => {
+    const refusal = new ModelExecutionNotStartedError(new Error('local admission refused'));
+    await expect(
+      evaluateSubmissionCore(
+        inputFor(answered(), modelRevision('slice-math-zh-v1'), {
+          model_executor: async () => {
+            throw refusal;
+          },
+        }),
+      ),
+    ).rejects.toBe(refusal);
   });
 
   it('executor throw ⇒ retryable infra_failure, record stays pending for retry', async () => {
@@ -1386,5 +1572,164 @@ it('group-only scoring receives only the issued question scope', async () => {
       response_slots: [revision.response_spec.slots[0]],
       group_evidence: submission.group_evidence,
     }),
+  );
+});
+
+describe('whole-page evidence is not a blank response', () => {
+  const attachment = {
+    evidence_id: 'page-original',
+    kind: 'image' as const,
+    asset: { asset_id: 'page-original', digest: `sha256:${'d'.repeat(64)}` },
+    mime_type: 'image/png',
+    bytes: 2048,
+    uploaded_at: NOW,
+  };
+  it.each(['all_units', 'units'] as const)(
+    'holds an empty exact slot with %s original media instead of blank-marking it zero',
+    async (scope) => {
+      const submission = submissionFor([{ slot_id: 'p1::r', kind: 'text', text_md: '' }]);
+      submission.group_evidence = [
+        {
+          evidence: attachment,
+          target: scope === 'all_units' ? { scope } : { scope, scoring_unit_ids: ['p1::u'] },
+        },
+      ];
+      const out = await evaluateSubmissionCore(
+        inputFor(submission, revisionFor({ blank_scores_zero: true })),
+      );
+      expect(out.record.status).toBe('completed');
+      expect(out.record.unit_results).toMatchObject([
+        { status: 'pending', pending: { reason: 'unjudgeable' } },
+      ]);
+      expect(out.record.aggregate).toMatchObject({ kind: 'unresolved', reason: 'pending_units' });
+    },
+  );
+  it('keeps the published blank policy for a unit outside the evidence target', async () => {
+    const base = revisionFor({});
+    const first = base.scoring_basis.units[0];
+    const revision = revisionFor({
+      slots: [
+        ...base.response_spec.slots,
+        { slot_id: 'second', part_id: 'p1', kind: 'text', math_preview: false },
+      ],
+      units: [first, { ...first, scoring_unit_id: 'second-unit', slot_refs: ['second'] }],
+    });
+    const submission = submissionFor([
+      { slot_id: 'p1::r', kind: 'text', text_md: '' },
+      { slot_id: 'second', kind: 'text', text_md: '2' },
+    ]);
+    submission.group_evidence = [
+      { evidence: attachment, target: { scope: 'units', scoring_unit_ids: ['second-unit'] } },
+    ];
+    const out = await evaluateSubmissionCore(inputFor(submission, revision));
+    expect(out.record.unit_results).toMatchObject([
+      {
+        scoring_unit_id: 'p1::u',
+        status: 'scored',
+        scored_because: 'blank_marked_zero',
+        points_awarded: 0,
+      },
+      {
+        scoring_unit_id: 'second-unit',
+        status: 'scored',
+        scored_because: 'response',
+        points_awarded: 2,
+      },
+    ]);
+  });
+  it.each([true, false])(
+    'dispatches original photo evidence with an explicit text entry: %s',
+    async (explicitText) => {
+      const revision = revisionFor({
+        units: [
+          {
+            scoring_unit_id: 'p1::u',
+            slot_refs: ['p1::r'],
+            evidence_slot_refs: [],
+            material_refs: [],
+            requires_group_evidence: true,
+            criterion: {
+              kind: 'rule_reference',
+              rule_id: 'shown-work',
+              statement_md: 'Check the algebra and domain restriction in the handwritten original.',
+              source: 'official',
+            },
+            points: 2,
+          },
+        ],
+        assignments: [
+          {
+            scoring_unit_ids: ['p1::u'],
+            executor: {
+              kind: 'model_executor',
+              task_kind: 'AssessmentRuleJudgeTask',
+              admitted_slice_id: 'handwriting-accepted',
+              max_cost_usd_micros: 1000,
+            },
+          },
+        ],
+      });
+      const submission = submissionFor(
+        explicitText ? [{ slot_id: 'p1::r', kind: 'text', text_md: '' }] : [],
+      );
+      submission.group_evidence = [{ evidence: attachment, target: { scope: 'all_units' } }];
+      const port = vi.fn(
+        async (
+          _request: import('./evaluation').ModelExecutorRequest,
+        ): Promise<ModelUnitOutcomeT> => ({
+          kind: 'scored',
+          points_awarded: 2,
+          confidence: 0.99,
+          matched: { rule_id: 'shown-work', option_ids: [] },
+          evidence_citations: [{ evidence_id: 'page-original' }],
+          cost_usd_micros: 12,
+          run_refs: ['original-photo-run'],
+        }),
+      );
+      const out = await evaluateSubmissionCore(
+        inputFor(submission, revision, { model_executor: port }),
+      );
+      expect(port).toHaveBeenCalledOnce();
+      expect(port.mock.calls[0]?.[0]).toMatchObject({ group_evidence: submission.group_evidence });
+      expect(out.record.unit_results).toMatchObject([
+        { status: 'scored', scored_because: 'response', points_awarded: 2 },
+      ]);
+
+      port.mockClear();
+      const scopedRevision = structuredClone(revision);
+      scopedRevision.scoring_basis.units.push({
+        ...scopedRevision.scoring_basis.units[0],
+        scoring_unit_id: 'uncovered',
+      });
+      scopedRevision.execution_plan.assignments[0].scoring_unit_ids.push('uncovered');
+      const scopedSubmission = submissionFor([]);
+      scopedSubmission.group_evidence = [
+        { evidence: attachment, target: { scope: 'units', scoring_unit_ids: ['p1::u'] } },
+      ];
+      const scoped = await evaluateSubmissionCore(
+        inputFor(scopedSubmission, scopedRevision, { model_executor: port }),
+      );
+      expect(port).toHaveBeenCalledOnce();
+      expect(scoped.record.unit_results).toMatchObject([
+        { scoring_unit_id: 'p1::u', status: 'scored' },
+        {
+          scoring_unit_id: 'uncovered',
+          status: 'pending',
+          pending: { reason: 'missing_response' },
+        },
+      ]);
+      port.mockClear();
+      const unadmitted = structuredClone(revision);
+      const executor = unadmitted.execution_plan.assignments[0].executor;
+      if (executor.kind !== 'model_executor') throw new Error('fixture must use model scoring');
+      executor.admitted_slice_id = null;
+      const held = await evaluateSubmissionCore(
+        inputFor(submission, unadmitted, { model_executor: port }),
+      );
+      expect(port).not.toHaveBeenCalled();
+      expect(held.record.unit_results).toMatchObject([
+        { status: 'pending', pending: { reason: 'unjudgeable' } },
+      ]);
+    },
   );
 });

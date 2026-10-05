@@ -17,13 +17,15 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { newId } from '@/core/ids';
 import { artifact, event, item_family_calibration, knowledge, question } from '@/db/schema';
-import { Review } from '@/server/session';
+import {
+  startFrozenPaperFixture,
+  submitPaperFixture as submitPaperSlot,
+} from '../../../../tests/fixtures/assessment-paper';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   countDistinctQuestionsInFamily,
   familyKey,
 } from '../../../server/mastery/personalized-difficulty';
-import { submitPaperSlot } from './paper-submit';
 
 /**
  * finding #1：observed-distinct 计数从 judged 事件流派生。为 `questionId` 写一个
@@ -81,6 +83,7 @@ async function seedTrueFalseQuestion(id: string, knowledgeIds: string[], referen
   await db.insert(question).values({
     id,
     kind: 'true_false',
+    judge_kind_override: 'exact',
     prompt_md: `Prompt ${id}`,
     reference_md: reference,
     knowledge_ids: knowledgeIds,
@@ -144,7 +147,7 @@ describe('finding #3b — paper family_key / distinct 计数基一致 (slot.prim
     await seedTrueFalseQuestion('q1', ['kQ'], 'true');
     await seedPaper('paper_3b', ['q1'], 'kSlot');
 
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_3b' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper_3b');
 
     // objective(exact) 提交 → family hook 触发。slot.primaryKnowledgeId=kSlot 传入路由，
     // 但 family 必须按 q.knowledge_ids[0]=kQ 成键（修复后）。

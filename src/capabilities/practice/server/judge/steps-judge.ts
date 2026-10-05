@@ -1,9 +1,11 @@
-import { eq } from 'drizzle-orm';
+import { defaultImageFetch } from '../assets';
+
+export { defaultImageFetch } from '../assets';
+
 import { StepsLlmOutput, type StepsLlmOutputT } from '@/core/capability/judges/steps';
 import { Rubric } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
-import { source_asset } from '@/db/schema';
 import type { SubjectProfile } from '@/subjects/profile';
 import { defaultStructuredRunTaskFn, parseStructuredTaskOutput } from './judge-output-parse';
 import { type LaneDegradationEvidence, runTaskWithLaneFallback } from './provider-lane-fallback';
@@ -59,36 +61,6 @@ function unsupportedResult(reason: string, evidence: Record<string, unknown>): J
 
 function normalize(value: string): string {
   return value.normalize('NFKC').trim().toLowerCase();
-}
-
-/**
- * Default R2 image fetcher: for each asset_id, look up storage_key + mime,
- * fetch bytes via getR2().get(key), base64-encode.
- *
- * Split as an injectable so tests can stub. Also reused by T9 sanity script.
- */
-export async function defaultImageFetch(
-  assetIds: string[],
-  db: Db,
-): Promise<Array<{ data: string; mediaType: string }>> {
-  if (assetIds.length === 0) return [];
-  const { getR2 } = await import('@/server/r2');
-  const r2 = getR2();
-  const out: Array<{ data: string; mediaType: string }> = [];
-  for (const id of assetIds) {
-    const [row] = await db
-      .select({ storage_key: source_asset.storage_key, mime_type: source_asset.mime_type })
-      .from(source_asset)
-      .where(eq(source_asset.id, id));
-    if (!row) continue;
-    const bytes = await r2.get(row.storage_key);
-    if (!bytes) continue;
-    out.push({
-      data: Buffer.from(bytes).toString('base64'),
-      mediaType: row.mime_type,
-    });
-  }
-  return out;
 }
 
 /**

@@ -170,6 +170,7 @@ export type ActivateEvaluationResult =
       status:
         | 'not_found'
         | 'not_completed'
+        | 'occurrence_withdrawn'
         | 'head_missing'
         | 'coordinate_mismatch'
         | 'stale_admission'
@@ -202,7 +203,12 @@ export async function insertInitialEvaluationHead(
 export async function activateEvaluation(
   tx: Tx,
   rawInput: ActivateEvaluationRequestT,
-  options: { settle?: LearningSettlementPort; actorRef?: string; now?: Date } = {},
+  options: {
+    settle?: LearningSettlementPort;
+    actorRef?: string;
+    now?: Date;
+    allowCapturedOriginal?: boolean;
+  } = {},
 ): Promise<ActivateEvaluationResult> {
   const input = ActivateEvaluationRequest.parse(rawInput);
   const settle = options.settle ?? settlementUnavailable;
@@ -221,6 +227,19 @@ export async function activateEvaluation(
   await tx.execute(
     sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${coordinate.groupId}))`,
   );
+
+  const [withdrawal] = await tx
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:assessment_settlement'),
+        eq(event.subject_id, coordinate.groupId),
+        sql`${event.payload}->>'effect' = 'withdrawn'`,
+      ),
+    )
+    .limit(1);
+  if (withdrawal) return { status: 'occurrence_withdrawn' };
 
   // 2) candidate evaluation 行锁 + 读（先取 opaque id 拿 submission/group
   //    坐标）。
@@ -321,7 +340,12 @@ export async function activateEvaluation(
     .from(assessment_issuance)
     .where(eq(assessment_issuance.issuance_id, sub.issuance_id))
     .limit(1);
-  if (!issuance || issuance.revision_id !== sub.revision_id) {
+  if (
+    !issuance ||
+    issuance.revision_id !== sub.revision_id ||
+    issuance.container_occurrence_ref?.startsWith('probe:') ||
+    (issuance.container_occurrence_ref?.startsWith('ingestion:') && !options.allowCapturedOriginal)
+  ) {
     return { status: 'coordinate_mismatch' };
   }
 

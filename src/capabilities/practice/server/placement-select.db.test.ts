@@ -1,3 +1,4 @@
+import { publishPlacementFixture } from '../../../../tests/fixtures/assessment-placement';
 // Placement item selection DB test — cold-start inc-B (YUK-468, PR-2a).
 //
 // selectNextPlacementItem finds active, non-draft questions over a goal subgraph KC set and
@@ -50,6 +51,7 @@ async function seedQuestion(
     updated_at: now,
     version: 0,
   });
+  await publishPlacementFixture(db, id);
 }
 
 describe('selectNextPlacementItem', () => {

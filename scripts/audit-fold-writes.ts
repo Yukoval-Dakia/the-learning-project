@@ -332,6 +332,13 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'question_block',
+    file: 'src/capabilities/ingestion/server/assessment-capture.ts',
+    marker: '.update(question_block)',
+    role: 'event-native-by-caller',
+    note: 'Native activation pairs imported block links/status/version with the matching lifecycle event in its settlement transaction; parity is covered by parity-writers-c3.db.test.ts.',
+  },
+  {
+    table: 'question_block',
     file: 'src/capabilities/ingestion/server/import-completion.ts',
     marker: '.insert(question_block)',
     role: 'event-native-by-caller',

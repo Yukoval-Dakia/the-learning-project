@@ -1,7 +1,7 @@
 // Onboarding ③ · placement probe API client (YUK-473 Slice 3).
 // Wraps the inc-B placement backend (YUK-468): start → next → end, plus a probe
 // answer submit that threads session_id=<probeId> into the shared /api/attempts resource
-// (which runs judge + θ̂ + FSRS — there is NO separate placement submit). The probe's
+// (which runs native activation + θ̂ + FSRS). The probe's
 // answer trail is keyed by that session_id (placement-next.ts counts events WHERE
 // session_id=<probe>), so it MUST be sent or /next can't advance/terminate.
 
@@ -12,8 +12,7 @@ import {
 } from '@/ui/lib/api';
 import type { SessionTransitionRequestOptions } from '@/ui/lib/session-transition';
 
-/** start/next return only the question REF (id + info score), not the full row — the
- * caller fetches the renderable question via GET /api/questions/[id] (getQuestion). */
+// Start/next return the pinned public DTO and its recovery state.
 export type PlacementStartResult = ApiOperationJsonResponse<'createPlacementSession'>;
 export type PlacementQuestionRef = NonNullable<PlacementStartResult['question']>;
 
@@ -61,20 +60,23 @@ export const placementEnd = (
     init: options.keepalive ? { keepalive: true } : undefined,
   });
 
+export const getPlacementSession = (sessionId: string) =>
+  apiOperationJson('getPlacementSession', {
+    url: `/api/placement-sessions/${encodeURIComponent(sessionId)}`,
+    method: 'GET',
+  });
+
 export interface SubmitProbeAnswerInput {
   sessionId: string;
   questionId: string;
+  assessment: NonNullable<ApiOperationRequestBody<'createAttempt'>['assessment']>;
   responseMd: string;
   referencedKnowledgeIds: string[];
   answerImageRefs?: string[];
   latencyMs?: number | null;
 }
 
-// Submit one probe answer through the shared review/submit. `auto_rate:true` → the
-// judge's objective outcome sets the rating + drives θ̂ (the probe estimates ability;
-// the user never self-rates). The verdict is deliberately NOT surfaced mid-probe
-// (design: 答完统一反馈, 先别急着看对错) — we ignore the response body except for error
-// handling. `rating:'good'` is a placeholder the server overrides under auto_rate.
+// auto_rate keeps the placeholder rating observational. Activation owns θ and FSRS.
 export const submitProbeAnswer = (input: SubmitProbeAnswerInput) =>
   apiOperationJson('createAttempt', {
     url: '/api/attempts',
@@ -82,6 +84,7 @@ export const submitProbeAnswer = (input: SubmitProbeAnswerInput) =>
     body: {
       question_id: input.questionId,
       session_id: input.sessionId,
+      assessment: input.assessment,
       rating: 'good',
       response_md: input.responseMd,
       referenced_knowledge_ids: input.referencedKnowledgeIds,

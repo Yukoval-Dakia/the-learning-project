@@ -40,7 +40,7 @@ import { getStartedBoss } from '@/server/boss/client';
 import { observeBossJob } from '@/server/boss/job-observation';
 import { checkRateLimit, refundRateLimit } from '@/server/http/rate-limit';
 import { JUDGE_RUN_QUEUE } from './judge-durable-config';
-import type { JudgeRunJobData } from './judge-run-payload';
+import type { JudgeRunJobData, LegacyJudgeRunJobData } from './judge-run-payload';
 import {
   JUDGE_RUN_EVENTS,
   JUDGE_RUN_TABLE,
@@ -103,7 +103,7 @@ export interface RecordJudgePendingAttemptInput {
   /** Frozen hierarchical-Elo domain rows this attempt can write. */
   abilityGlobalIds?: string[];
   /** The frozen judge input, stored verbatim so recovery re-judges the same inputs (D5). */
-  submit: JudgeRunJobData['submit'];
+  submit: LegacyJudgeRunJobData['submit'];
   /** The answer instant — the ordering water mark. Also the row's `created_at`. */
   submittedAt: Date;
 }
@@ -184,6 +184,10 @@ export interface JudgeRunEnqueueDeps {
  * attempt behind a 429 would have the sweeper judge it minutes later — quietly turning a
  * refusal into a deferral and letting every rejected submit through the budget after all.
  */
+export function refundJudgeRunAdmission(token: number, deps: JudgeRunEnqueueDeps = {}): void {
+  (deps.refundRateLimit ?? refundRateLimit)(token);
+}
+
 export function admitJudgeRun(deps: JudgeRunEnqueueDeps = {}): number {
   return (deps.checkRateLimit ?? checkRateLimit)();
 }

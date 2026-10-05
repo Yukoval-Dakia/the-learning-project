@@ -31,6 +31,21 @@ function mkReview(
 }
 
 describe('AttemptTimeline', () => {
+  it('renders pending and self-reported participation without wrong-answer labels', () => {
+    const html = renderToString(
+      <AttemptTimeline
+        events={[
+          mkAttempt({ event_id: 'pending', outcome: 'pending' }),
+          mkAttempt({ event_id: 'manual', outcome: 'unsupported' }),
+        ]}
+        now_sec={NOW_SEC}
+      />,
+    );
+    expect(html).toContain('待评估');
+    expect(html).toContain('未判分');
+    expect(html).not.toContain('答错');
+    expect(html).not.toContain('答对');
+  });
   it('renders empty state when there are no events', () => {
     const html = renderToString(<AttemptTimeline events={[]} now_sec={NOW_SEC} />);
     expect(html).toContain('暂无历史记录');

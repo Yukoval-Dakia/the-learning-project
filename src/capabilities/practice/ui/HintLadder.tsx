@@ -68,6 +68,7 @@ export function HintLadder({
   // YUK-1051 — 按需拉取的完整解正文（requestFullSolution 注入时）；null=未取。
   const [fetchedFull, setFetchedFull] = useState<string | null>(null);
   const [fetchingFull, setFetchingFull] = useState(false);
+  const [fullError, setFullError] = useState<string | null>(null);
   // owner 点了「我自己来 · 交还控制」—— 控制权回到作答。
   const [returned, setReturned] = useState(false);
 
@@ -83,6 +84,7 @@ export function HintLadder({
       setRevealedFull(false);
       setFetchedFull(null);
       setFetchingFull(false);
+      setFullError(null);
       setReturned(false);
     }
   }, [open]);
@@ -101,10 +103,10 @@ export function HintLadder({
     try {
       let sid = sessionId;
       if (!sid) {
-        sid = (await solveStart(question.id)).session_id;
+        sid = (await solveStart(question.id, issuanceId ?? undefined)).session_id;
         setSessionId(sid);
       }
-      const h = await solveHint(question.id, sid, targetIdx);
+      const h = await solveHint(question.id, sid, targetIdx, issuanceId ?? undefined);
       if (h.text_md) {
         setHints((m) => ({ ...m, [targetIdx]: h.text_md }));
         setReached(targetIdx);
@@ -131,12 +133,17 @@ export function HintLadder({
     if (requestFullSolution && fetchedFull === null) {
       if (fetchingFull) return;
       setFetchingFull(true);
+      setFullError(null);
       try {
         const full = await requestFullSolution();
-        if (full === null) return; // 未取到 → 不揭示，留在确认门
+        if (full === null) {
+          setFullError('这次发题没有封存参考解答，暂不可查看。');
+          return;
+        }
         setFetchedFull(full);
       } catch {
-        return; // 拉取失败 → 不揭示（failAt 不适用：这不是 hint 阶生成失败）
+        setFullError('暂时无法取得参考解答，请重试。');
+        return;
       } finally {
         setFetchingFull(false);
       }
@@ -233,6 +240,7 @@ export function HintLadder({
         </div>
       )}
 
+      {fullError && <p role="status">{fullError}</p>}
       {loading && (
         <div className="ladder-loading">
           <span className="ladder-spin" />

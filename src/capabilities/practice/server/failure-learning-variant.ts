@@ -22,9 +22,10 @@
 //      retrying variant_gen never produces a second proposal.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, count, eq, inArray } from 'drizzle-orm';
+import { and, count, eq, inArray, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { event, knowledge, mistake_variant, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 // Runtime creation records its complete base, including cause_category, before
@@ -43,6 +44,7 @@ import { type VariantGenInput, parseVariantOutput } from '../tasks/variant-gen';
 import { effectiveCauseForFailureAttempt, getFailureAttemptById } from './attempt-events';
 import { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } from './cause-overlay';
 import { hasVariantPermanent, recordVariantPermanent } from './failure-learning-ledger';
+import { loadNativeFailureContext } from './failure-learning-native';
 import { getMisconceptionsByIds } from './knowledge-runtime';
 import type { PracticeTaskRunFn } from './task-runtime';
 
@@ -97,16 +99,19 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
   const attempt = attemptRows[0];
   if (!attempt) return { status: 'skipped:attempt_not_found' };
   if (
-    attempt.action !== 'attempt' ||
     attempt.subject_kind !== 'question' ||
-    attempt.outcome !== 'failure'
+    (attempt.action !== 'experimental:assessment_attempt' &&
+      (attempt.action !== 'attempt' || attempt.outcome !== 'failure'))
   ) {
     return { status: 'skipped:not_a_failure_attempt' };
   }
 
   const failure = await getFailureAttemptById(db, attemptEventId);
   if (!failure) return { status: 'skipped:attempt_not_active' };
-  if (failure.question_snapshot === null) return { status: 'skipped:question_not_found' };
+  const native = failure.assessment ? await loadNativeFailureContext(db, attemptEventId) : null;
+  if (failure.assessment && !native) return { status: 'skipped:question_not_found' };
+  if (!native && failure.question_snapshot === null)
+    return { status: 'skipped:question_not_found' };
   const cause = effectiveCauseForFailureAttempt(failure);
   if (!cause) return { status: 'skipped:no_judge_yet' };
   if (!cause.primary_category) return { status: 'skipped:cause_not_targetable' };
@@ -171,11 +176,12 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
 
   const payload = attempt.payload as { answer_md?: string | null };
   const sourceKnowledgeIds =
-    failure.referenced_knowledge_ids.length > 0
+    native?.knowledge_ids ??
+    (failure.referenced_knowledge_ids.length > 0
       ? failure.referenced_knowledge_ids
       : failure.question_snapshot === undefined
         ? parent.knowledge_ids
-        : [];
+        : []);
   const firstKnowledgeId = sourceKnowledgeIds[0];
   const knowledgeRows = firstKnowledgeId
     ? await db
@@ -232,12 +238,16 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
   const input: VariantGenInput = {
     original_question: {
       id: parent.id,
-      kind: parent.kind,
-      prompt_md: frozenQuestion?.prompt_md ?? parent.prompt_md,
-      reference_md: frozenQuestion ? frozenQuestion.reference_md : parent.reference_md,
+      kind: native?.question?.kind ?? parent.kind,
+      prompt_md: native?.prompt_md ?? frozenQuestion?.prompt_md ?? parent.prompt_md,
+      reference_md: native
+        ? native.reference_md
+        : frozenQuestion
+          ? frozenQuestion.reference_md
+          : parent.reference_md,
       knowledge_ids: sourceKnowledgeIds,
     },
-    attempt: { wrong_answer_md: payload.answer_md ?? '' },
+    attempt: { wrong_answer_md: native?.answer_md ?? payload.answer_md ?? '' },
     cause: {
       // YUK-1015 — for a misc_ primary the prompt's strategy selector carries
       // the misc TITLE (a meaningful cause description) instead of the opaque
@@ -272,7 +282,22 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
 
   let proposalId = '';
   const mistakeVariantId = createId();
-  await db.transaction(async (tx) => {
+  const persisted = await db.transaction(async (tx) => {
+    if (native) {
+      await acquireLearningStateWriteLock(tx);
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${native.evaluationGroupId}))`,
+      );
+      const current = await loadNativeFailureContext(tx, attemptEventId);
+      const currentFailure = await getFailureAttemptById(tx, attemptEventId);
+      if (
+        !current ||
+        current.evaluationId !== native.evaluationId ||
+        !currentFailure ||
+        effectiveCauseForFailureAttempt(currentFailure)?.event_id !== cause.event_id
+      )
+        return false;
+    }
     proposalId = await writeVariantQuestionProposal(tx, {
       source_question_id: parent.id,
       source_attempt_event_id: attemptEventId,
@@ -332,7 +357,9 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
     await anchorMistakeVariant(tx, mistakeVariantId, createEventId);
     // Materialize canonical structural state from the events in this transaction.
     await projectMistakeVariant(tx, mistakeVariantId);
+    return true;
   });
+  if (!persisted) return { status: 'skipped:attempt_not_active' };
 
   return {
     status: 'proposed',

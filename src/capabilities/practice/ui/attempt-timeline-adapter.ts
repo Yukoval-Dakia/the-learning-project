@@ -6,7 +6,7 @@
 import type { AttemptTimelineEvent } from '@/ui/components/AttemptTimeline';
 import type { QFullTimelineEntry } from './practice-api';
 
-const ATTEMPT_OUTCOMES = new Set(['success', 'failure', 'partial']);
+const ATTEMPT_OUTCOMES = new Set(['success', 'failure', 'partial', 'pending', 'unsupported']);
 const REVIEW_OUTCOMES = new Set(['success', 'failure']);
 const RATINGS = new Set(['again', 'hard', 'good']);
 
@@ -19,7 +19,7 @@ export function toAttemptTimelineEvents(entries: QFullTimelineEntry[]): AttemptT
         kind: 'attempt',
         event_id: e.event_id,
         created_at_sec: e.created_at_sec,
-        outcome: e.outcome as 'success' | 'failure' | 'partial',
+        outcome: e.outcome as 'success' | 'failure' | 'partial' | 'pending' | 'unsupported',
         duration_ms: e.duration_ms,
         cause: e.cause ?? null,
       });

@@ -1,12 +1,17 @@
 import { z } from 'zod';
+import { ActivateEvaluationIntent } from '@/core/schema/assessment';
 
 import { ActivityRef, FsrsRating, JudgeResultV2 } from '@/kernel/capability-contract-schemas';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
+import { CreateSubmissionBodySchema } from './assessment-contracts';
 
 /** Bound text copied into judge prompts and immutable attempt events. */
 export const MAX_REVIEW_RESPONSE_CHARS = 12_000;
 
 const CreateAttemptBodyBaseSchema = z.object({
+  assessment: CreateSubmissionBodySchema.optional(),
+  activation_intent: ActivateEvaluationIntent.optional(),
+  self_report: z.boolean().optional(),
   activity_ref: ActivityRef.optional(),
   question_id: z.string().min(1).optional(),
   mistake_id: z.string().min(1).optional(),
@@ -100,7 +105,7 @@ const AttemptJudgeResponseSchema = z
   })
   .passthrough();
 
-export const AttemptResponseSchema = z.object({
+const LegacyAttemptResponseSchema = z.object({
   next_due_at: z.number().int().nonnegative(),
   new_state: FsrsStateWireSchema,
   review_event: z.object({
@@ -120,10 +125,39 @@ export const AttemptResponseSchema = z.object({
   judge: AttemptJudgeResponseSchema.nullable(),
 });
 
-export const CreateAppealBodySchema = z.object({
-  judge_event_id: z.string().min(1),
-  reason_md: z.string().max(2000).optional(),
+const FormalAttemptResponseSchema = z.object({
+  status: z.enum(['effective', 'review_required']),
+  assessment: z.object({
+    submission_id: z.string(),
+    evaluation_group_id: z.string(),
+    candidate_id: z.string(),
+    activation_intent: ActivateEvaluationIntent,
+    effect: z.enum(['applied', 'ineligible', 'failed_pending', 'idempotent_replay']).nullable(),
+  }),
+  // The immutable native receipt is an occurrence anchor, not an FSRS snapshot.
+  review_event: z.object({ id: z.string() }),
+  judge: AttemptJudgeResponseSchema.nullable(),
 });
+export const AttemptResponseSchema = z.union([
+  FormalAttemptResponseSchema,
+  LegacyAttemptResponseSchema,
+]);
+
+export const CreateAppealBodySchema = z.union([
+  z
+    .object({
+      evaluation_id: z.string().min(1),
+      reason_md: z.string().max(2000).optional(),
+      idempotency_key: z.string().min(1).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      judge_event_id: z.string().min(1),
+      reason_md: z.string().max(2000).optional(),
+    })
+    .strict(),
+]);
 
 export const AppealResponseSchema = z.object({ appeal_event_id: z.string() });
 

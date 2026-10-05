@@ -1,10 +1,11 @@
+import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts';
 // YUK-102 / Foundation D M2
 //
 // Knowledge graph read tools. These keep graph traversal on the server side so
 // Copilot / Dreaming callers receive bounded, named context instead of raw SQL
 // row dumps.
 
-import { and, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, inArray, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 // P5.4 §5-Q5 / YUK-175 — single source of truth for the recent-failure /
 // evidence window. Reusing the rubric validator's constant keeps the readers'
@@ -12,7 +13,7 @@ import { z } from 'zod';
 // import cycle: rubric-validator does not import this module).
 import { RUBRIC_EVIDENCE_WINDOW_DAYS } from '@/capabilities/knowledge/server/rubric-validator';
 import type { Db } from '@/db/client';
-import { event, knowledge, knowledge_edge, knowledge_mastery } from '@/db/schema';
+import { knowledge, knowledge_edge, knowledge_mastery } from '@/db/schema';
 // P5.1 / YUK-143 — excerpt cap + courtesy defaults sourced from the single
 // budgets.ts source of truth. KNOWLEDGE_EXCERPT_MAX is 180 (byte-unchanged from
 // the prior file-local TEXT_SNIPPET_MAX); the courtesy defaults below are the
@@ -136,19 +137,6 @@ function recentFailureCutoff(now = new Date()): Date {
   return new Date(now.getTime() - RECENT_FAILURE_WINDOW_MS);
 }
 
-function knowledgePayloadContainsAny(ids: string[]) {
-  const conditions = ids.map(
-    (id) => sql`${event.payload}->'referenced_knowledge_ids' @> ${JSON.stringify([id])}::jsonb`,
-  );
-  return or(...conditions) ?? sql`FALSE`;
-}
-
-function payloadKnowledgeIds(payload: unknown): string[] {
-  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return [];
-  const ids = (payload as { referenced_knowledge_ids?: unknown }).referenced_knowledge_ids;
-  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];
-}
-
 async function loadMasteryMap(
   db: Db,
   ids: string[],
@@ -196,34 +184,16 @@ async function loadRecentFailures(
   }>
 > {
   if (ids.length === 0) return [];
-  const rows = await db
-    .select({
-      id: event.id,
-      subject_id: event.subject_id,
-      payload: event.payload,
-      created_at: event.created_at,
-    })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'attempt'),
-        eq(event.subject_kind, 'question'),
-        eq(event.outcome, 'failure'),
-        knowledgePayloadContainsAny(ids),
-      ),
-    )
-    .orderBy(sql`${event.created_at} DESC`)
-    .limit(limit);
-  return rows.map((row) => {
-    const payload = row.payload as { answer_md?: string | null };
-    return {
-      event_id: row.id,
-      question_id: row.subject_id,
-      cause: null,
-      created_at: row.created_at.toISOString(),
-      excerpt: excerpt(payload.answer_md),
-    };
-  });
+  const rows = (await getCurrentFailureAttempts(db))
+    .filter((row) => row.referenced_knowledge_ids.some((id) => ids.includes(id)))
+    .slice(0, limit);
+  return rows.map((row) => ({
+    event_id: row.attempt_event_id,
+    question_id: row.question_id,
+    cause: null,
+    created_at: row.created_at.toISOString(),
+    excerpt: excerpt(row.answer_md),
+  }));
 }
 
 async function loadRecentFailureCounts(
@@ -235,22 +205,11 @@ async function loadRecentFailureCounts(
   const counts = new Map(uniqueIds.map((id) => [id, 0]));
   if (uniqueIds.length === 0) return counts;
 
-  const rows = await db
-    .select({ payload: event.payload })
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'attempt'),
-        eq(event.subject_kind, 'question'),
-        eq(event.outcome, 'failure'),
-        gte(event.created_at, since),
-        knowledgePayloadContainsAny(uniqueIds),
-      ),
-    );
+  const rows = await getCurrentFailureAttempts(db, { since });
 
   const idSet = new Set(uniqueIds);
   for (const row of rows) {
-    for (const id of payloadKnowledgeIds(row.payload)) {
+    for (const id of row.referenced_knowledge_ids) {
       if (idSet.has(id)) counts.set(id, (counts.get(id) ?? 0) + 1);
     }
   }

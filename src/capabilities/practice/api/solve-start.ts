@@ -1,8 +1,4 @@
-// YUK-193 — POST /api/questions/[id]/solve
-//
-// Start a solve session on a question. If rubric_json.reference_solution is
-// missing, lazily generate it (spec §3.2). Creates learning_session(type='tutor',
-// status='active'). Returns { session_id, generated }.
+// Start a tutor session bound to the already issued assessment snapshot.
 import { SolveError, startSolveSession } from '@/capabilities/practice/server/solve-session';
 import { db } from '@/db/client';
 import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
@@ -27,14 +23,22 @@ export async function createSolveSession(
         ),
       );
     }
-    const regenerate = parsed.data ? parsed.data.regenerate : undefined;
 
-    const result = await startSolveSession({ db, questionId: id, regenerate });
+    const result = await startSolveSession({
+      db,
+      questionId: id,
+      issuanceId: parsed.data?.issuance_id,
+    });
 
     return Response.json({
       session_id: result.sessionId,
-      generated: result.generated,
-      generation_error: result.generationError,
+      ...(parsed.data?.issuance_id
+        ? {
+            evaluation_group_id: `solve_${result.sessionId}`,
+            idempotency_key: `solve_${result.sessionId}`,
+          }
+        : {}),
+      issuance_id: parsed.data?.issuance_id,
     });
   } catch (err) {
     if (err instanceof SolveError && err.code === 'question_not_found') {

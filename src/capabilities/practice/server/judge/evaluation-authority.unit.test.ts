@@ -1,24 +1,7 @@
-// YUK-1047 — evaluateAttempt 漏斗 + contract→JudgeResultV2 投影单测（无 DB、无 LLM）。
-//
-// 断言：
-//   1. EVALUATION_ENTRY_POINTS 恰好登记 grounding §4.2 的八个权威入口；
-//   2. lane 互斥：同传 contract+legacy fail-loud；
-//   3. legacy lane 透传 JudgeInvokerOutput 并打 lane/entry 标签；
-//   4. contract lane 经 evaluateSubmission 落库 + JudgeResultV2 投影；
-//   5. 投影纪律：pending/unresolved/未映射档位绝不造伪分（全部 unsupported），
-//      points_total 只在有分母时归一化。
-
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ScoringBasisT } from '@/core/schema/assessment';
 
-// 隔离 invoker / evaluate-submission：漏斗的 lane 分派与投影是纯协调逻辑，
-// 真实的判分/落库分别由各自测试覆盖（invoker.test.ts /
-// evaluate-submission.db.test.ts）。
-const invokeSpy = vi.fn();
-vi.mock('./invoker', () => ({
-  createDefaultJudgeInvoker: () => ({ invoke: invokeSpy }),
-}));
 const evaluateSubmissionSpy = vi.fn();
 vi.mock('./evaluate-submission', () => ({
   EvaluateSubmissionError: class extends Error {},
@@ -32,7 +15,6 @@ import {
 } from './evaluation-authority';
 
 beforeEach(() => {
-  invokeSpy.mockReset();
   evaluateSubmissionSpy.mockReset();
 });
 
@@ -66,57 +48,14 @@ const SUM_BASIS: ScoringBasisT = {
 describe('EVALUATION_ENTRY_POINTS registry', () => {
   it('registers exactly the eight §4.2 authoritative grading entries', () => {
     expect(EVALUATION_ENTRY_POINTS.map((e) => e.entry).sort()).toEqual([...ENTRY_POINTS].sort());
-    // Every entry honestly records its current lane + blocking tickets — no
-    // entry claims 'wired' while contract writers (YUK-1052) have not landed.
     for (const disposition of EVALUATION_ENTRY_POINTS) {
-      expect(disposition.lane).toBe('legacy');
-      expect(disposition.contract_wiring).toBe('pending_writer');
-      expect(disposition.blocked_by).toContain('YUK-1052');
+      expect(disposition.lane).toBe('contract');
+      expect(disposition.contract_wiring).toBe('wired');
     }
   });
 });
 
 describe('evaluateAttempt — lane dispatch', () => {
-  it('legacy lane passes through the invoker output verbatim + tags lane/entry', async () => {
-    const invoked = {
-      route: 'exact',
-      result: {
-        score: 0,
-        score_meaning: 'correctness',
-        coarse_outcome: 'incorrect',
-        confidence: 1,
-        capability_ref: { id: 'exact', version: '1.0.0' },
-        feedback_md: 'no match',
-        evidence_json: {},
-      },
-      telemetry: {
-        route: 'exact',
-        capability_ref: { id: 'exact', version: '1.0.0' },
-        coarse_outcome: 'incorrect',
-        confidence: 1,
-        elapsed_ms: 1,
-        question_id: 'q1',
-        subject_id: 'math',
-        profile_version: '1',
-      },
-      modelAttempted: false,
-    };
-    invokeSpy.mockResolvedValue(invoked);
-    const params = {
-      db: {},
-      question: { id: 'q1', kind: 'single_choice' },
-      answer_md: 'A',
-      subjectProfile: {},
-    } as never;
-    const out = await evaluateAttempt({ entry: 'solo_submit', legacy: params });
-    expect(out.lane).toBe('legacy');
-    expect(out.entry).toBe('solo_submit');
-    expect(out.result).toEqual(invoked.result);
-    expect(out.telemetry).toEqual(invoked.telemetry);
-    expect(invokeSpy).toHaveBeenCalledWith(params);
-    expect(evaluateSubmissionSpy).not.toHaveBeenCalled();
-  });
-
   it('contract lane delegates to evaluateSubmission and returns the projection', async () => {
     evaluateSubmissionSpy.mockResolvedValue({
       record: {
@@ -158,7 +97,6 @@ describe('evaluateAttempt — lane dispatch', () => {
     expect(out.result.coarse_outcome).toBe('correct');
     expect(out.result.score).toBe(1);
     expect(out.result.capability_ref.id).toBe('evaluate_submission');
-    expect(invokeSpy).not.toHaveBeenCalled();
   });
 
   it('contract lane forwards a {kind:"jev"} executor descriptor to evaluateSubmission (YUK-1092)', async () => {
@@ -203,7 +141,7 @@ describe('evaluateAttempt — lane dispatch', () => {
         contract: { submission_id: 's', evaluation_group_id: 'g' },
         legacy: { db: {}, question: {}, answer_md: 'x', subjectProfile: {} } as never,
       } as never),
-    ).rejects.toThrow(/both contract and legacy/);
+    ).rejects.toThrow(/legacy grading input is retired/);
   });
 });
 

@@ -11,11 +11,14 @@ import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { filterActiveRows, takeActiveRows } from '@/kernel/events';
-import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
+import {
+  nativeAttemptOutcome,
+  resolveVerdictsForAttempts,
+  resolveVerdictsForNativeAttempts,
+} from '@/kernel/read-models/assessment-verdict';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 
 type DbLike = Db | Tx;
-type EventRow = typeof event.$inferSelect;
 // ============================================================================
 // ReviewEvent — FSRS review log view.
 // ============================================================================
@@ -113,7 +116,12 @@ export type QuestionTimelineEntry =
       event_id: string;
       dispatch_seq: number;
       created_at: Date;
-      outcome: 'success' | 'failure' | 'partial';
+      outcome: 'success' | 'failure' | 'partial' | 'pending' | 'unsupported';
+      assessment?: {
+        evaluation_group_id: string;
+        original_evaluation_id: string | null;
+        effective_evaluation_id: string | null;
+      };
       duration_ms: number | null;
       cause: {
         primary: string;
@@ -167,7 +175,7 @@ export async function getQuestionTimeline(
   const conditions = [
     eq(event.subject_kind, 'question'),
     eq(event.subject_id, questionId),
-    inArray(event.action, ['attempt', 'review']),
+    inArray(event.action, ['attempt', 'review', 'experimental:assessment_attempt']),
   ];
 
   const firstRows = await db
@@ -202,6 +210,8 @@ export async function getQuestionTimeline(
   const verdicts =
     attemptIds.length > 0 ? await resolveVerdictsForAttempts(db, attemptIds) : new Map();
 
+  const nativeVerdicts = await resolveVerdictsForNativeAttempts(db, activeRows);
+
   // YUK-1018/1020 — misc_ primary + secondary id 的 title 回填（同一批查询，
   // 一次批量解析，不进循环）。
   const miscLabels = await resolveMiscCauseLabels(
@@ -213,6 +223,28 @@ export async function getQuestionTimeline(
   );
 
   return activeRows.map((row): QuestionTimelineEntry => {
+    if (row.action === 'experimental:assessment_attempt') {
+      const group = nativeVerdicts.get(row.id);
+      return {
+        kind: 'attempt',
+        event_id: row.id,
+        dispatch_seq: row.dispatch_seq,
+        created_at: row.created_at,
+        outcome: nativeAttemptOutcome(group),
+        duration_ms: typeof row.payload.duration_ms === 'number' ? row.payload.duration_ms : null,
+        cause: null,
+        judge: null,
+        ...(group
+          ? {
+              assessment: {
+                evaluation_group_id: group.evaluation_group_id,
+                original_evaluation_id: group.original_evaluation_id,
+                effective_evaluation_id: group.effective?.evaluation_id ?? null,
+              },
+            }
+          : {}),
+      };
+    }
     if (row.action === 'attempt') {
       const payload = row.payload as {
         answer_md: string | null;
@@ -297,7 +329,7 @@ export async function getQuestionAttemptOutcomeCounts(
       and(
         eq(event.subject_kind, 'question'),
         eq(event.subject_id, questionId),
-        eq(event.action, 'attempt'),
+        inArray(event.action, ['attempt', 'experimental:assessment_attempt']),
       ),
     )
     .orderBy(desc(event.created_at), desc(event.id));
@@ -305,10 +337,15 @@ export async function getQuestionAttemptOutcomeCounts(
   if (attemptRows.length === 0) return counts;
 
   const activeRows = await filterActiveRows(db, attemptRows);
+  const nativeVerdicts = await resolveVerdictsForNativeAttempts(db, activeRows);
   for (const row of activeRows) {
-    if (row.outcome === 'success') counts.success += 1;
-    else if (row.outcome === 'partial') counts.partial += 1;
-    else counts.failure += 1;
+    const outcome =
+      row.action === 'experimental:assessment_attempt'
+        ? nativeAttemptOutcome(nativeVerdicts.get(row.id))
+        : row.outcome;
+    if (outcome === 'success') counts.success += 1;
+    else if (outcome === 'partial') counts.partial += 1;
+    else if (outcome === 'failure') counts.failure += 1;
   }
   return counts;
 }

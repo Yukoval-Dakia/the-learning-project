@@ -1,75 +1,38 @@
+// Native boundary regressions replacing tests of the old solo/paper settlement writer.
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
-import { artifact, event, mastery_state, material_fsrs_state, question } from '@/db/schema';
-import { Review } from '@/server/session';
-import { resolveSubjectProfile } from '@/subjects/profile';
+import {
+  artifact,
+  assessment_submission,
+  event,
+  mastery_state,
+  material_fsrs_state,
+} from '@/db/schema';
+import {
+  paperFixtureAssessment,
+  startFrozenPaperFixture,
+  submitPaperFixture,
+} from '../../../../tests/fixtures/assessment-paper';
+import {
+  handwritingFixture,
+  nativeSoloHttpFixture,
+} from '../../../../tests/fixtures/native-solo-http';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { CreateAttemptBodySchema } from '../api/contracts';
-import type { JudgedSubmit, ValidatedSubmit } from '../api/submit';
-import { normalizeReviewSubmitActivityRef } from './activity-ref';
-import { deterministicExecutionProvenance } from './judge';
-import { loadQuestionWithAttemptSnapshot } from './question-evidence-snapshot';
-import { settleInlineSoloReview, settlePaperSlotReview } from './review-settlement';
+import { commitFormalAttempt } from './assessment/attempt';
 
-async function seedQuestion(id: string, knowledgeIds: string[] = ['kc_contract']) {
-  const now = new Date();
-  await testDb()
-    .insert(question)
-    .values({
-      id,
-      prompt_md: `Prompt for ${id}`,
-      kind: 'true_false',
-      reference_md: 'true',
-      knowledge_ids: knowledgeIds,
-      difficulty: 3,
-      source: 'manual',
-      variant_depth: 0,
-      version: 0,
-      created_at: now,
-      updated_at: now,
-    });
-}
-
-async function validated(questionId: string): Promise<ValidatedSubmit> {
-  const body = CreateAttemptBodySchema.parse({
-    question_id: questionId,
-    rating: 'good',
-    response_md: 'true',
-    auto_rate: false,
-  });
-  const [q] = await testDb().select().from(question).where(eq(question.id, questionId));
-  return {
-    body,
-    now: new Date(),
-    questionId,
-    activityRef: normalizeReviewSubmitActivityRef(body).activity_ref,
-    q,
-  };
-}
-
-function manualJudged(): JudgedSubmit {
-  return {
-    judgeResult: null,
-    judgeRoute: null,
-    judgeTelemetry: null,
-    executionProvenance: null,
-    suggestedRating: null,
-    finalRating: 'good',
-    adviceCauseCategory: null,
-    adviceSubjectProfile: null,
-  };
-}
-
-async function seedPaper(id: string, questionId: string) {
+beforeEach(resetDb);
+afterEach(() => vi.restoreAllMocks());
+async function paperFor(questionId: string, knowledgeIds: string[]) {
+  const id = newId();
   const now = new Date();
   await testDb()
     .insert(artifact)
     .values({
       id,
       type: 'tool_quiz',
-      title: 'settlement contract paper',
-      knowledge_ids: ['kc_contract'],
+      title: 'native settlement boundary paper',
+      knowledge_ids: knowledgeIds,
       intent_source: 'review_plan',
       source: 'ai_generated',
       tool_kind: 'review_plan',
@@ -77,21 +40,21 @@ async function seedPaper(id: string, questionId: string) {
         question_ids: [questionId],
         sections: [
           {
-            knowledge_focus: ['kc_contract'],
+            knowledge_focus: knowledgeIds,
             feedback_policy: 'immediate',
             adaptation_policy: 'none',
             assignments: [
               {
                 question_id: questionId,
-                primary_knowledge_id: 'kc_contract',
-                secondary_knowledge_ids: [],
-                selection_reason: 'contract test',
+                primary_knowledge_id: knowledgeIds[0],
+                secondary_knowledge_ids: knowledgeIds.slice(1),
+                selection_reason: 'frozen boundary fixture',
                 review_profile_snapshot: {},
               },
             ],
           },
         ],
-      } as never,
+      },
       generation_status: 'ready',
       verification_status: 'not_required',
       history: [],
@@ -99,288 +62,112 @@ async function seedPaper(id: string, questionId: string) {
       updated_at: now,
       version: 0,
     });
+  const { sessionId } = await startFrozenPaperFixture(testDb(), id);
+  return { paperArtifactId: id, sessionId, questionId, answerMd: 'A' };
 }
 
-describe('sealed review settlement commands', () => {
-  beforeEach(async () => {
-    await resetDb();
-  });
-
-  it('inline owns FSRS, theta, sibling snapshots, and the success signal as one effect', async () => {
+describe('native settlement boundaries', () => {
+  it('owns FSRS, theta, independent snapshots and progress in one effective settlement', async () => {
     const db = testDb();
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-
-    const receipt = await settleInlineSoloReview(db, {
-      validated: await validated(questionId),
-      judged: manualJudged(),
-    });
-
-    expect(receipt.effect).toBe('applied');
+    const f = await nativeSoloHttpFixture(db);
+    const receipt = await commitFormalAttempt(db, 'solo_submit', f.id, f.assessment);
+    if (receipt.status !== 'effective') throw new Error('automatic original did not settle');
+    expect(receipt.activation.effect).toBe('applied');
     expect(await db.select().from(material_fsrs_state)).toHaveLength(1);
-    expect(await db.select().from(mastery_state)).toHaveLength(1);
+    expect(
+      await db.select().from(mastery_state).where(eq(mastery_state.subject_kind, 'knowledge')),
+    ).toHaveLength(1);
+    const [settlement] = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_settlement'));
     const snapshots = await db
-      .select({ id: event.id })
+      .select()
       .from(event)
       .where(
-        and(
-          eq(event.action, 'experimental:state_snapshot'),
-          eq(event.subject_id, receipt.attemptEventId),
-        ),
+        and(eq(event.action, 'experimental:state_snapshot'), eq(event.subject_id, settlement.id)),
       );
     expect(snapshots.map((row) => row.id).sort()).toEqual([
-      `${receipt.attemptEventId}:snapshot:fsrs`,
-      `${receipt.attemptEventId}:snapshot:theta`,
+      `${settlement.id}:snapshot:fsrs`,
+      `${settlement.id}:snapshot:theta`,
     ]);
-    const progress = await db
-      .select({ id: event.id })
-      .from(event)
-      .where(
-        and(
-          eq(event.action, 'experimental:mastery_progress'),
-          eq(event.caused_by_event_id, receipt.attemptEventId),
+    expect(
+      await db
+        .select()
+        .from(event)
+        .where(
+          and(
+            eq(event.action, 'experimental:mastery_progress'),
+            eq(event.caused_by_event_id, receipt.attempt_id),
+          ),
         ),
-      );
-    expect(progress).toHaveLength(1);
+    ).toHaveLength(1);
   });
 
-  it('paper ungraded freezes once, replays by content, and never mutates learning state', async () => {
+  it('holds photo-only deterministic paper work, retains one original and rejects changed retries', async () => {
     const db = testDb();
-    const questionId = `q_${newId()}`;
-    const paperId = `paper_${newId()}`;
-    await seedQuestion(questionId);
-    await seedPaper(paperId, questionId);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: paperId });
-    const loaded = await loadQuestionWithAttemptSnapshot(db, questionId);
-    const command = {
-      paper: {
-        sessionId,
-        artifactId: paperId,
-        partRef: null,
-        feedbackPolicy: 'immediate',
-      },
-      answerSnapshot: {
-        markdown: '',
-        imageRefs: ['asset://handwriting'],
-        question: loaded.question_snapshot,
-      },
-      question: loaded.question,
-      knowledge: {
-        primaryId: 'kc_contract',
-        secondaryIds: [],
-      },
-      judgement: {
-        kind: 'ungraded' as const,
-        reason: 'photo_only_unsupported' as const,
-      },
-      submittedAt: new Date(),
+    const f = await nativeSoloHttpFixture(db);
+    const paper = await paperFor(f.id, f.knowledgeIds);
+    const photo = await handwritingFixture(db);
+    const assessment = {
+      ...(await paperFixtureAssessment(db, paper.sessionId, f.id, '')),
+      group_evidence: [photo],
     };
-
-    const first = await settlePaperSlotReview(db, command);
-    const second = await settlePaperSlotReview(db, { ...command, submittedAt: new Date() });
-
-    expect(first).toMatchObject({ effect: 'ungraded', replayed: false });
-    expect(second).toMatchObject({
-      effect: 'ungraded',
-      replayed: true,
+    const first = await submitPaperFixture({ ...paper, answerMd: '', assessment }, db);
+    expect(first).toMatchObject({ status: 'review_required', coarseOutcome: 'unsupported' });
+    const replay = await submitPaperFixture({ ...paper, answerMd: '', assessment }, db);
+    expect(replay).toMatchObject({
       attemptEventId: first.attemptEventId,
       answerId: first.answerId,
     });
+    const changed = await paperFixtureAssessment(db, paper.sessionId, f.id, 'A');
+    await expect(submitPaperFixture({ ...paper, assessment: changed }, db)).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(await db.select().from(assessment_submission)).toMatchObject([
+      { group_evidence: [photo] },
+    ]);
+    expect(
+      await db.select().from(event).where(eq(event.action, 'experimental:assessment_attempt')),
+    ).toHaveLength(1);
     expect(await db.select().from(material_fsrs_state)).toHaveLength(0);
     expect(await db.select().from(mastery_state)).toHaveLength(0);
-    const attemptRows = await db
-      .select({ id: event.id })
-      .from(event)
-      .where(and(eq(event.action, 'attempt'), eq(event.subject_id, questionId)));
-    expect(attemptRows).toHaveLength(1);
-    const derived = await db
-      .select({ id: event.id })
-      .from(event)
-      .where(eq(event.caused_by_event_id, first.attemptEventId));
-    expect(derived).toHaveLength(0);
+    expect(f.execute).not.toHaveBeenCalled();
   });
 
-  // ── YUK-1037 — a synthetic subject root ('seed:<subj>:root', the plan-executor
-  // coarse-fallback binding) is a structural anchor, never a content KC. An attempt
-  // on a seed-root-bound question still settles — on the question-level card, the
-  // same unlabeled fallback a knowledgeless row uses — instead of writing or
-  // refreshing a card for an id the subject read axis already excludes
-  // (resolveSubjectKnowledgeIds).
-  it('a seed-root-only question settles FSRS on the question-level card, never the anchor', async () => {
-    const db = testDb();
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId, ['seed:math:root']);
-
-    const receipt = await settleInlineSoloReview(db, {
-      validated: await validated(questionId),
-      judged: manualJudged(),
-    });
-
-    expect(receipt.effect).toBe('applied');
-    const fsrsRows = await db.select().from(material_fsrs_state);
-    expect(fsrsRows).toHaveLength(1);
-    expect(fsrsRows[0]).toMatchObject({ subject_kind: 'question', subject_id: questionId });
-    expect(await db.select().from(mastery_state)).toHaveLength(0);
-    const reviewRows = await db
-      .select({ payload: event.payload })
-      .from(event)
-      .where(and(eq(event.action, 'review'), eq(event.subject_id, questionId)));
-    expect(reviewRows[0].payload).toMatchObject({
-      fsrs_subject_kind: 'question',
-      fsrs_subject_ids: [questionId],
-    });
-  });
-
-  it('mixed bindings settle FSRS on the real KC only, never the synthetic root', async () => {
-    const db = testDb();
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId, ['seed:math:root', 'kc_contract']);
-
-    const receipt = await settleInlineSoloReview(db, {
-      validated: await validated(questionId),
-      judged: manualJudged(),
-    });
-
-    expect(receipt.effect).toBe('applied');
-    const fsrsRows = await db.select().from(material_fsrs_state);
-    expect(fsrsRows.map((r) => r.subject_id)).toEqual(['kc_contract']);
-    expect(fsrsRows[0].subject_kind).toBe('knowledge');
-    const thetaRows = await db
-      .select()
-      .from(mastery_state)
-      .where(eq(mastery_state.subject_kind, 'knowledge'));
-    expect(thetaRows.map((r) => r.subject_id)).toEqual(['kc_contract']);
-  });
-
-  it('a paper slot whose primary KC is a synthetic root settles on the question card', async () => {
-    const db = testDb();
-    const questionId = `q_${newId()}`;
-    const paperId = `paper_${newId()}`;
-    await seedQuestion(questionId, ['seed:math:root']);
-    await seedPaper(paperId, questionId);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: paperId });
-    const loaded = await loadQuestionWithAttemptSnapshot(db, questionId);
-    const subjectProfile = resolveSubjectProfile('math');
-    const capabilityRef = { id: 'judge:exact', version: '1' };
-
-    const receipt = await settlePaperSlotReview(db, {
-      paper: {
-        sessionId,
-        artifactId: paperId,
-        partRef: null,
-        feedbackPolicy: 'immediate',
-      },
-      answerSnapshot: {
-        markdown: 'true',
-        imageRefs: [],
-        question: loaded.question_snapshot,
-      },
-      question: loaded.question,
-      knowledge: { primaryId: 'seed:math:root', secondaryIds: [] },
-      judgement: {
-        kind: 'graded',
-        invocation: {
-          route: 'exact',
-          result: {
-            coarse_outcome: 'correct',
-            score: 1,
-            score_meaning: 'correctness',
-            confidence: 0.9,
-            capability_ref: capabilityRef,
-            feedback_md: 'ok',
-            evidence_json: {},
-          },
-          telemetry: {
-            route: 'exact',
-            capability_ref: capabilityRef,
-            coarse_outcome: 'correct',
-            confidence: 0.9,
-            elapsed_ms: 1,
-            question_id: questionId,
-            subject_id: questionId,
-            profile_version: subjectProfile.version,
-          },
-          modelAttempted: false,
+  it.each([
+    { paper: false, mixed: false },
+    { paper: false, mixed: true },
+    { paper: true, mixed: false },
+    { paper: true, mixed: true },
+  ])(
+    'excludes synthetic roots from paper=$paper mixed=$mixed learning targets',
+    async ({ paper, mixed }) => {
+      const db = testDb();
+      const knowledgeIds = mixed ? ['seed:math:root', 'kc_contract'] : ['seed:math:root'];
+      const f = await nativeSoloHttpFixture(db, { knowledgeIds });
+      if (paper)
+        expect(await submitPaperFixture(await paperFor(f.id, knowledgeIds), db)).toMatchObject({
+          status: 'effective',
+        });
+      else
+        expect(await commitFormalAttempt(db, 'solo_submit', f.id, f.assessment)).toMatchObject({
+          status: 'effective',
+        });
+      expect(await db.select().from(material_fsrs_state)).toMatchObject([
+        {
+          subject_kind: mixed ? 'knowledge' : 'question',
+          subject_id: mixed ? 'kc_contract' : f.id,
         },
-        executionProvenance: deterministicExecutionProvenance('exact'),
-        subjectProfile,
-      },
-      submittedAt: new Date(),
-    });
-
-    expect(receipt.effect).toBe('applied');
-    const fsrsRows = await db.select().from(material_fsrs_state);
-    expect(fsrsRows).toHaveLength(1);
-    expect(fsrsRows[0]).toMatchObject({ subject_kind: 'question', subject_id: questionId });
-    expect(await db.select().from(mastery_state)).toHaveLength(0);
-  });
-
-  it('a paper slot with a root primary and a real secondary settles on the real KC', async () => {
-    const db = testDb();
-    const questionId = `q_${newId()}`;
-    const paperId = `paper_${newId()}`;
-    // write_quiz stores knowledge_ids[0] as primary_knowledge_id, so a mixed
-    // binding surfaces exactly this shape: root primary + real secondary.
-    await seedQuestion(questionId, ['seed:math:root', 'kc_contract']);
-    await seedPaper(paperId, questionId);
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: paperId });
-    const loaded = await loadQuestionWithAttemptSnapshot(db, questionId);
-    const subjectProfile = resolveSubjectProfile('math');
-    const capabilityRef = { id: 'judge:exact', version: '1' };
-
-    const receipt = await settlePaperSlotReview(db, {
-      paper: {
-        sessionId,
-        artifactId: paperId,
-        partRef: null,
-        feedbackPolicy: 'immediate',
-      },
-      answerSnapshot: {
-        markdown: 'true',
-        imageRefs: [],
-        question: loaded.question_snapshot,
-      },
-      question: loaded.question,
-      knowledge: { primaryId: 'seed:math:root', secondaryIds: ['kc_contract'] },
-      judgement: {
-        kind: 'graded',
-        invocation: {
-          route: 'exact',
-          result: {
-            coarse_outcome: 'correct',
-            score: 1,
-            score_meaning: 'correctness',
-            confidence: 0.9,
-            capability_ref: capabilityRef,
-            feedback_md: 'ok',
-            evidence_json: {},
-          },
-          telemetry: {
-            route: 'exact',
-            capability_ref: capabilityRef,
-            coarse_outcome: 'correct',
-            confidence: 0.9,
-            elapsed_ms: 1,
-            question_id: questionId,
-            subject_id: questionId,
-            profile_version: subjectProfile.version,
-          },
-          modelAttempted: false,
-        },
-        executionProvenance: deterministicExecutionProvenance('exact'),
-        subjectProfile,
-      },
-      submittedAt: new Date(),
-    });
-
-    expect(receipt.effect).toBe('applied');
-    const fsrsRows = await db.select().from(material_fsrs_state);
-    expect(fsrsRows.map((r) => r.subject_id)).toEqual(['kc_contract']);
-    expect(fsrsRows[0].subject_kind).toBe('knowledge');
-    const thetaRows = await db
-      .select()
-      .from(mastery_state)
-      .where(eq(mastery_state.subject_kind, 'knowledge'));
-    expect(thetaRows.map((r) => r.subject_id)).toEqual(['kc_contract']);
-  });
+      ]);
+      const kcMastery = await db
+        .select()
+        .from(mastery_state)
+        .where(eq(mastery_state.subject_kind, 'knowledge'));
+      expect(kcMastery.map((row) => row.subject_id)).toEqual(mixed ? ['kc_contract'] : []);
+      expect(
+        await db.select().from(mastery_state).where(eq(mastery_state.subject_id, 'seed:math:root')),
+      ).toHaveLength(0);
+    },
+  );
 });

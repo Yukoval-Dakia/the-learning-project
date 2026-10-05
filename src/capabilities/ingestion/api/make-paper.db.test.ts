@@ -13,9 +13,13 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getPracticeList, submitPaperSlot } from '@/capabilities/practice/public';
+import { getPracticeList } from '@/capabilities/practice/public';
 import {
   artifact,
+  assessment_issuance,
+  assessment_submission,
+  evaluation,
+  evaluation_effective_head,
   event,
   knowledge,
   learning_session,
@@ -23,7 +27,10 @@ import {
   source_document,
 } from '@/db/schema';
 import { getFsrsState } from '@/server/fsrs/state';
-import { Review } from '@/server/session';
+import {
+  startFrozenPaperFixture,
+  submitPaperFixture,
+} from '../../../../tests/fixtures/assessment-paper';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './make-paper';
 
@@ -82,6 +89,7 @@ async function seedImportedSession(opts: {
     await db.insert(question).values({
       id: q.id,
       kind: 'true_false',
+      judge_kind_override: 'exact',
       prompt_md: `Prompt ${q.id}`,
       reference_md: q.reference_md ?? 'true',
       knowledge_ids: q.knowledge_ids,
@@ -246,11 +254,11 @@ describe('POST /api/ingestion/[id]/make-paper (YUK-214)', () => {
     expect(paper?.source).toBe('other');
 
     // 3. start a review session bound to the paper (mirrors POST /api/practice)
-    const { sessionId: reviewSessionId } = await Review.startReviewSession(db, { artifactId });
+    const { sessionId: reviewSessionId } = await startFrozenPaperFixture(db, artifactId);
     expect(reviewSessionId).toBeTruthy();
 
     // 4. submit one slot — correct answer → attempt(success) + judge + FSRS
-    const submit = await submitPaperSlot(
+    const submit = await submitPaperFixture(
       {
         sessionId: reviewSessionId,
         paperArtifactId: artifactId,
@@ -264,20 +272,35 @@ describe('POST /api/ingestion/[id]/make-paper (YUK-214)', () => {
     expect(submit.coarseOutcome).toBe('correct');
     expect(submit.visibleToUser).toBe(true);
 
-    // attempt + independent judge events written, judge chains the attempt
+    // The original native capture and independent evaluation retain the issued binding.
     const attempt = await db
       .select()
       .from(event)
-      .where(and(eq(event.action, 'attempt'), eq(event.subject_id, 'lq1')));
+      .where(and(eq(event.action, 'experimental:assessment_attempt'), eq(event.subject_id, 'lq1')));
     expect(attempt).toHaveLength(1);
-    expect(attempt[0].outcome).toBe('success');
+    expect(attempt[0].id).toBe(submit.attemptEventId);
+    expect(attempt[0].session_id).toBe(reviewSessionId);
+    expect(submit.status).toBe('effective');
 
-    const judge = await db
+    const judge = await db.select().from(evaluation);
+    expect(judge).toHaveLength(1);
+    expect(judge[0].evaluation_id).toBe(submit.evaluationId);
+    const [original] = await db.select().from(assessment_submission);
+    expect(judge[0].submission_id).toBe(original.submission_id);
+    expect(attempt[0].payload.submission_id).toBe(original.submission_id);
+    const issued = await db.select().from(assessment_issuance);
+    expect(issued).toHaveLength(2);
+    expect(issued.find((row) => row.issuance_id === original.issuance_id)?.revision_id).toBe(
+      original.revision_id,
+    );
+    const [head] = await db.select().from(evaluation_effective_head);
+    expect(head.effective_evaluation_id).toBe(judge[0].evaluation_id);
+    const [activation] = await db
       .select()
       .from(event)
-      .where(and(eq(event.action, 'judge'), eq(event.subject_kind, 'event')));
-    expect(judge).toHaveLength(1);
-    expect(judge[0].subject_id).toBe(submit.attemptEventId);
+      .where(eq(event.action, 'experimental:assessment_activation'));
+    expect(activation.subject_id).toBe(original.evaluation_group_id);
+    expect(activation.payload.evaluation_id).toBe(judge[0].evaluation_id);
 
     // knowledge-keyed FSRS projection updated for the slot's primary knowledge
     const fsrs = await getFsrsState(db, 'knowledge', 'k1');

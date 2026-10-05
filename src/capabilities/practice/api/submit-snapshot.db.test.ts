@@ -19,12 +19,14 @@ import { StateSnapshotExperimental } from '@/core/schema/event/state-snapshot';
 import { event, mastery_state, material_fsrs_state, question } from '@/db/schema';
 import { getFsrsState } from '@/server/fsrs/state';
 import { getMasteryState } from '@/server/mastery/state';
+import { issueSoloFixture } from '../../../../tests/fixtures/assessment-solo';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './submit';
 
 const QUESTION_BASE = {
   kind: 'short_answer' as const,
-  reference_md: null,
+  reference_md: 'true',
+  judge_kind_override: 'exact',
   knowledge_ids: ['k1'],
   difficulty: 3,
   source: 'manual' as const,
@@ -45,12 +47,27 @@ async function seedQuestion(id: string, overrides: Partial<typeof question.$infe
   });
 }
 
-function submitReq(body: unknown) {
+async function submitReq(body: { activity_ref: { kind: string; id: string }; rating: string }) {
+  const issued = await issueSoloFixture(testDb(), body.activity_ref.id);
   return new Request('http://localhost/api/review/submit', {
     method: 'POST',
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, auto_rate: true, assessment: issued.assessment('true') }),
     headers: { 'content-type': 'application/json' },
   });
+}
+
+async function settlementId(response: Response) {
+  const body = await response.json();
+  expect(body).toMatchObject({ status: 'effective', assessment: { effect: 'applied' } });
+  const receipts = await testDb()
+    .select()
+    .from(event)
+    .where(eq(event.action, 'experimental:assessment_settlement'));
+  const receipt = receipts.find(
+    (row) => row.payload.evaluation_id === body.assessment.candidate_id,
+  );
+  if (!receipt) throw new Error('native activation settlement missing');
+  return receipt.id;
 }
 
 /** All state_snapshot rows for an attempt (YUK-561 S2: θ̂ + FSRS sibling snapshots). */
@@ -107,11 +124,10 @@ describe('YUK-471 W0 — solo submit appends experimental:state_snapshot', () =>
     await seedQuestion('q_snap1', { knowledge_ids: ['kc_snap1'] });
 
     const res = await POST(
-      submitReq({ activity_ref: { kind: 'question', id: 'q_snap1' }, rating: 'good' }),
+      await submitReq({ activity_ref: { kind: 'question', id: 'q_snap1' }, rating: 'good' }),
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { review_event: { id: string } };
-    const reviewEventId = body.review_event.id;
+    const reviewEventId = await settlementId(res);
 
     // Exactly two state_snapshots (θ̂ + FSRS), both anchored to the review event.
     const snaps = await readSnapshotRows(reviewEventId);
@@ -156,10 +172,10 @@ describe('YUK-471 W0 — solo submit appends experimental:state_snapshot', () =>
     await seedQuestion('q_nokc', { knowledge_ids: [] });
 
     const res = await POST(
-      submitReq({ activity_ref: { kind: 'question', id: 'q_nokc' }, rating: 'good' }),
+      await submitReq({ activity_ref: { kind: 'question', id: 'q_nokc' }, rating: 'good' }),
     );
     expect(res.status).toBe(200);
-    const reviewEventId = ((await res.json()) as { review_event: { id: string } }).review_event.id;
+    const reviewEventId = await settlementId(res);
 
     // θ̂ segment: NEITHER row (no KC moved).
     expect(await readCheckpoint(reviewEventId, 'theta')).toBeNull();
@@ -197,11 +213,10 @@ describe('YUK-471 W0 — solo submit appends experimental:state_snapshot', () =>
     });
 
     const resSeeded = await POST(
-      submitReq({ activity_ref: { kind: 'question', id: 'q_seeded' }, rating: 'good' }),
+      await submitReq({ activity_ref: { kind: 'question', id: 'q_seeded' }, rating: 'good' }),
     );
     expect(resSeeded.status).toBe(200);
-    const reviewSeeded = ((await resSeeded.json()) as { review_event: { id: string } }).review_event
-      .id;
+    const reviewSeeded = await settlementId(resSeeded);
 
     // ORACLE: read the live posterior row (independent of the snapshot payload).
     const liveSeeded = await getMasteryState(db, 'kc_seeded');
@@ -237,10 +252,10 @@ describe('YUK-471 W0 — solo submit appends experimental:state_snapshot', () =>
     expect(preCold).toBeNull(); // confirm cold-start precondition
 
     const resCold = await POST(
-      submitReq({ activity_ref: { kind: 'question', id: 'q_cold' }, rating: 'good' }),
+      await submitReq({ activity_ref: { kind: 'question', id: 'q_cold' }, rating: 'good' }),
     );
     expect(resCold.status).toBe(200);
-    const reviewCold = ((await resCold.json()) as { review_event: { id: string } }).review_event.id;
+    const reviewCold = await settlementId(resCold);
 
     const liveCold = await getMasteryState(db, 'kc_cold');
     expect(liveCold).not.toBeNull();
@@ -263,10 +278,10 @@ describe('YUK-471 W0 — solo submit appends experimental:state_snapshot', () =>
     expect(preFsrs).toBeNull(); // confirm cold-start precondition
 
     const res = await POST(
-      submitReq({ activity_ref: { kind: 'question', id: 'q_fsrs' }, rating: 'good' }),
+      await submitReq({ activity_ref: { kind: 'question', id: 'q_fsrs' }, rating: 'good' }),
     );
     expect(res.status).toBe(200);
-    const reviewEventId = ((await res.json()) as { review_event: { id: string } }).review_event.id;
+    const reviewEventId = await settlementId(res);
 
     // ORACLE: the live FSRS row after commit (independent of snapshot payload).
     const liveFsrs = await getFsrsState(db, 'knowledge', 'kc_fsrs');
@@ -292,7 +307,7 @@ describe('YUK-471 W0 — solo submit appends experimental:state_snapshot', () =>
 
     // First submit creates the card.
     const res1 = await POST(
-      submitReq({ activity_ref: { kind: 'question', id: 'q_fsrs2' }, rating: 'good' }),
+      await submitReq({ activity_ref: { kind: 'question', id: 'q_fsrs2' }, rating: 'good' }),
     );
     expect(res1.status).toBe(200);
     // ORACLE: the card after the first submit is the `before` for the SECOND submit.
@@ -300,10 +315,10 @@ describe('YUK-471 W0 — solo submit appends experimental:state_snapshot', () =>
     expect(cardAfter1).toBeDefined();
 
     const res2 = await POST(
-      submitReq({ activity_ref: { kind: 'question', id: 'q_fsrs2' }, rating: 'good' }),
+      await submitReq({ activity_ref: { kind: 'question', id: 'q_fsrs2' }, rating: 'good' }),
     );
     expect(res2.status).toBe(200);
-    const review2 = ((await res2.json()) as { review_event: { id: string } }).review_event.id;
+    const review2 = await settlementId(res2);
 
     const payload = await snapshotSegment(review2, 'fsrs');
     const fsrsSnap = payload.fsrs_snapshots.find(
@@ -353,10 +368,10 @@ describe('YUK-471 W0 — solo submit appends experimental:state_snapshot', () =>
     expect(await getFsrsState(db, 'question', 'q_fb')).not.toBeNull();
 
     const res = await POST(
-      submitReq({ activity_ref: { kind: 'question', id: 'q_fb' }, rating: 'good' }),
+      await submitReq({ activity_ref: { kind: 'question', id: 'q_fb' }, rating: 'good' }),
     );
     expect(res.status).toBe(200);
-    const reviewEventId = ((await res.json()) as { review_event: { id: string } }).review_event.id;
+    const reviewEventId = await settlementId(res);
 
     // The knowledge row was created by THIS attempt (seeded from the question card).
     expect(await getFsrsState(db, 'knowledge', 'kc_fb')).not.toBeNull();
@@ -374,14 +389,14 @@ describe('YUK-471 W0 — solo submit appends experimental:state_snapshot', () =>
 
   // Test 12 (Group C) — HARD REQ 2: the snapshot row skips the outbox (ingest_at
   //   non-NULL at INSERT), while the attempt's own review event has ingest_at NULL.
-  it('snapshot event has ingest_at non-null at INSERT; the review event has ingest_at NULL', async () => {
+  it('snapshot event has ingest_at non-null at INSERT; the native participation event has ingest_at NULL', async () => {
     await seedQuestion('q_outbox', { knowledge_ids: ['kc_outbox'] });
 
     const res = await POST(
-      submitReq({ activity_ref: { kind: 'question', id: 'q_outbox' }, rating: 'good' }),
+      await submitReq({ activity_ref: { kind: 'question', id: 'q_outbox' }, rating: 'good' }),
     );
     expect(res.status).toBe(200);
-    const reviewEventId = ((await res.json()) as { review_event: { id: string } }).review_event.id;
+    const reviewEventId = await settlementId(res);
 
     const db = testDb();
     // YUK-561 S2 — two sibling snapshots (θ̂ + FSRS); BOTH skip the outbox.
@@ -412,7 +427,9 @@ describe('YUK-471 W0 — solo submit appends experimental:state_snapshot', () =>
     const reviewRows = await db
       .select({ ingest_at: event.ingest_at })
       .from(event)
-      .where(eq(event.id, reviewEventId));
+      .where(
+        and(eq(event.action, 'experimental:assessment_attempt'), eq(event.subject_id, 'q_outbox')),
+      );
     expect(reviewRows).toHaveLength(1);
     expect(reviewRows[0].ingest_at).toBeNull();
   });

@@ -8,6 +8,7 @@ export {
   getEffectiveTruths,
 } from '@/kernel/events';
 export type { QuizGenJobData } from './jobs/quiz_gen';
+export { runSourceVerify } from './jobs/source_verify';
 // YUK-1057 — 隔离演练的 post-cutover writer seam：发题/草稿/提交统一经
 // barrel 透出（import 链为 @kernel + @db 纯链，无 SDK —— migrate bundle 安全）。
 export { issueAssessment } from './server/assessment/issue';
@@ -55,6 +56,11 @@ export const handleReviewDue: HandleReviewDue = async (...args) => {
 
 // YUK-1064 — explicit operations used by scripts and integration consumers.
 export type { FailureLearningBossSend } from './jobs/failure-learning-jobs';
+export {
+  commitFormalAttempt,
+  previewFormalAttempt,
+  recordFormalAttemptCapture,
+} from './server/assessment/attempt';
 export type { CollectedSignal } from './server/candidate-signals';
 export { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } from './server/cause-overlay';
 export type {
@@ -72,6 +78,8 @@ export {
   INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS,
   loadCommittedInterventionDiagnosticAttempt,
   loadLatestTrustedInterventionDiagnosticVerdict,
+  loadNativeInterventionDiagnosticState,
+  loadNativeInterventionDiagnosticVerdict,
   materializeInterventionDiagnostics,
   retireInterventionDiagnosticQuestion,
 } from './server/intervention-diagnostics';
@@ -99,8 +107,6 @@ export {
   type JudgeRoute,
   type JudgeRouteQuestionRow,
   type JudgeRouterInput,
-  type LegacyAttemptInput,
-  type LegacyAttemptOutcome,
   MODEL_BACKED_JUDGE_ROUTES,
   type MultimodalDirectImageFetchFn,
   type MultimodalDirectRunTaskFn,
@@ -115,6 +121,7 @@ export {
   resolveQuestionJudgeRoute,
   runMultimodalDirectJudge,
 } from './server/judge';
+export { withdrawCapturedOccurrence } from './server/judge/evaluate-submission';
 export { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './server/judge-run-status';
 export {
   rewriteLearningItemKnowledgeIds,
@@ -310,6 +317,5 @@ export { jyeooFetchCandidatesTool } from './server/tools/jyeoo-fetch-candidates'
 // YUK-892 — due-review queue reader for non-LLM read paths (today summary).
 export { executeGetReviewDue } from './server/tools/question-context';
 export { storeSourcedQuestionTool } from './server/tools/store-sourced-question';
-
 // YUK-1062 — task composition uses the narrow task-public entry directly.
 export { practiceTaskSpecs } from './task-public';

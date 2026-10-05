@@ -9,15 +9,13 @@
 // permanently: not in the domain event log, and no pending attempt for a sweeper or a
 // human to recover from.
 
-import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
-import { event, knowledge, question } from '@/db/schema';
+import { assessment_submission, event, knowledge, question } from '@/db/schema';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
+import { issueSoloFixture } from '../../../../tests/fixtures/assessment-solo';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
-import { CreateAttemptBodySchema } from './contracts';
-import { enqueueDurableJudge } from './submit';
+import { dispatchNativeAttempt } from '../server/assessment/durable-attempt';
 
 const ANSWER = 'the learner wrote this and it must never disappear';
 
@@ -48,18 +46,6 @@ async function seedQuestion(id: string) {
     });
 }
 
-async function buildValidated(questionId: string, body: Record<string, unknown>) {
-  const parsed = CreateAttemptBodySchema.parse({ question_id: questionId, ...body });
-  const q = (await testDb().select().from(question).where(eq(question.id, questionId)))[0];
-  return {
-    body: parsed,
-    now: new Date(),
-    questionId,
-    activityRef: normalizeReviewSubmitActivityRef(parsed).activity_ref,
-    q,
-  };
-}
-
 describe('YUK-777 A2 — the answer survives a judge that never lands', () => {
   beforeEach(async () => {
     await resetDb();
@@ -70,37 +56,43 @@ describe('YUK-777 A2 — the answer survives a judge that never lands', () => {
   it('a 202-pending submit whose judging NEVER completes still leaves the answer in the domain event log', async () => {
     const questionId = `q_${newId()}`;
     await seedQuestion(questionId);
-    const validated = await buildValidated(questionId, {
-      rating: 'good',
-      response_md: ANSWER,
-      auto_rate: true,
-    });
-
-    // The dispatch succeeds: pg-boss accepts the job and the learner gets a 202.
+    const issued = await issueSoloFixture(testDb(), questionId, true);
+    const assessment = issued.assessment(ANSWER);
     const sent: unknown[] = [];
-    const res = await enqueueDurableJudge(validated, { subject: 'wenyan', version: 1 } as never, {
-      boss: {
-        send: async (_name, data) => {
-          sent.push(data);
-          return newId();
+    const runId = await dispatchNativeAttempt(
+      testDb(),
+      questionId,
+      assessment,
+      { enabled: true, capture: { response_md: ANSWER } },
+      {
+        boss: {
+          send: async (_name, data) => {
+            sent.push(data);
+            return newId();
+          },
         },
       },
-    });
-    expect(res.status).toBe(202);
+    );
+    expect(runId).toBeTruthy();
     expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({
-      submit: { ability_global_by_knowledge_id: { k1: 'math' } },
-    });
+    expect(sent[0]).toMatchObject({ caller: 'native_assessment', run_id: runId });
 
     // …and then judging NEVER completes. Every delivery fails, the job lands in
     // `judge_run_dlq`, and no worker ever writes the backfill. The queue payload is
     // gone as far as the domain is concerned. What is left of this learner's answer?
     const rows = await testDb().select().from(event);
     const carriesTheAnswer = rows.filter((r) => JSON.stringify(r.payload).includes(ANSWER));
-    expect(rows[0]?.payload).toMatchObject({
-      ability_global_ids: ['math'],
-      submit: { ability_global_by_knowledge_id: { k1: 'math' } },
+    const original = rows.find((row) => row.action === 'experimental:assessment_submission');
+    expect(original?.payload).toMatchObject({
+      response_set: assessment.response_set,
+      learning_scope: {
+        questions: [{ id: questionId, knowledge_ids: ['k1'] }],
+        ability_global_by_knowledge_id: { k1: 'math' },
+      },
     });
+    expect(await testDb().select().from(assessment_submission)).toMatchObject([
+      { response_set: assessment.response_set, issuance_id: assessment.issuance_id },
+    ]);
 
     expect(
       carriesTheAnswer.length,

@@ -1,3 +1,4 @@
+import type { ResponseSetT, SlotResponseT } from '@/core/schema/assessment';
 // M2 练习面 — 卷模式（YUK-316）。
 // 设计基准 docs/design/loom-refresh/project/pface-paper.jsx：§6.4 缓冲反馈——
 // 作答全程零语义色（pip 只有「已答」的中性墨点），颜色在交卷瞬间才进场。
@@ -7,14 +8,20 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
-// YUK-1051 — 卷面作答换成通用 response 组件族。§6.4 缓冲反馈：作答全程零语义色
-// （ChoiceSetResponse 恒 feedback='none'，对错色只在交卷后的复盘出现）；草稿附件
-// 走既有 image_refs wire（服务端早已接受，UI 此前丢弃）。
+import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
 import { ChoiceSetResponse } from '@/ui/components/response/ChoiceSetResponse';
 import { EvaluationGroupPanel } from '@/ui/components/response/EvaluationGroupPanel';
 import { EvidenceComposer } from '@/ui/components/response/EvidenceComposer';
+// YUK-1051 — 卷面作答换成通用 response 组件族。§6.4 缓冲反馈：作答全程零语义色
+// （ChoiceSetResponse 恒 feedback='none'，对错色只在交卷后的复盘出现）；草稿附件
+// 走既有 image_refs wire（服务端早已接受，UI 此前丢弃）。
+import { ResponseSlotField, nativeSlotFieldSpec } from '@/ui/components/response/ResponseSlotField';
 import {
   type EvidenceAttachment,
+  isSlotResponseAnswered,
+  nativeResponseEntry,
+  nativeResponseText,
+  nativeResponseValue,
   optionsFromChoicesMd,
 } from '@/ui/components/response/response-types';
 import { SaveStateChip } from '@/ui/components/response/SaveStateChip';
@@ -64,18 +71,26 @@ export function restoreEvidenceFromSlots(slots: readonly PaperSlot[]): EvidenceA
   const seen = new Map<string, string[]>();
   for (const s of slots) {
     const key = slotKey(s);
-    const refs = s.slot_state.submission?.answer_image_refs ?? s.slot_state.draft?.image_refs ?? [];
+    const refs = s.assessment
+      ? s.assessment.group_evidence.map((item) => item.evidence.asset.asset_id)
+      : (s.slot_state.submission?.answer_image_refs ?? s.slot_state.draft?.image_refs ?? []);
     for (const id of refs) {
       const list = seen.get(id);
       if (list) list.push(key);
       else seen.set(id, [key]);
     }
   }
-  return [...seen.entries()].map(([asset_id, keys]) => ({
-    asset_id,
-    // kind 留给 AssetEvidencePreview 按 content-type 解析（不猜）。
-    slot_ids: allKeys.length > 0 && keys.length === allKeys.length ? null : keys,
-  }));
+  return [...seen.entries()].map(([asset_id, keys]) => {
+    const original = slots
+      .flatMap((slot) => slot.assessment?.group_evidence ?? [])
+      .find((item) => item.evidence.asset.asset_id === asset_id)?.evidence;
+    return {
+      asset_id,
+      ...(original ? { original } : {}),
+      // kind 留给 AssetEvidencePreview 按 content-type 解析（不猜）。
+      slot_ids: allKeys.length > 0 && keys.length === allKeys.length ? null : keys,
+    };
+  });
 }
 
 const PAPER_TIMING_STORAGE_VERSION = 1;
@@ -175,8 +190,15 @@ export function PfPaper({
   const detail: PaperDetail | null = detailQ.data ?? null;
   const slots = useMemo(() => detail?.sections.flatMap((s) => s.slots) ?? [], [detail]);
 
+  const hasNativeBindings = slots.length > 0 && slots.every((slot) => slot.assessment != null);
+  const nativeOccurrenceId = slots[0]?.assessment?.issuance_id;
+  const previousNativeOccurrence = useRef<string | undefined>(undefined);
   const [pos, setPos] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [nativeResponses, setNativeResponses] = useState<Record<string, ResponseSetT>>({});
+  const nativeResponsesRef = useRef<Record<string, ResponseSetT>>({});
+  const nativeEpochs = useRef<Record<string, number>>({});
+  const nativeRestored = useRef<Record<string, string>>({});
   // YUK-1051 — 卷级证据附件（整页解题照默认绑定整个 evaluation group=本卷；可在
   // EvaluationGroupPanel 改绑子集）。slot 草稿/提交的 image_refs 从这里按绑定范围展开。
   const [evidence, setEvidence] = useState<EvidenceAttachment[]>([]);
@@ -269,8 +291,16 @@ export function PfPaper({
   // in place (keep the map identity so the unmount cleanup below always sees live timers).
   // answers must reset too: the backfill effect only fills undefined keys, so without this
   // a shared slot key would keep paper A's answer and skip paper B's server draft.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: artifactId is the reset trigger (reset-on-prop-change), not read in the body.
   useEffect(() => {
+    if (
+      previousNativeOccurrence.current &&
+      nativeOccurrenceId &&
+      previousNativeOccurrence.current !== nativeOccurrenceId &&
+      sessionRef.current
+    ) {
+      clearPaperTiming(sessionRef.current, artifactId);
+    }
+    previousNativeOccurrence.current = nativeOccurrenceId;
     setAnswers({});
     setTrace({});
     setTraceOpen({});
@@ -285,6 +315,10 @@ export function PfPaper({
     exitingRef.current = false;
     submittingRef.current = false;
     answersRef.current = {};
+    nativeResponsesRef.current = {};
+    nativeEpochs.current = {};
+    nativeRestored.current = {};
+    setNativeResponses({});
     saveSeq.current = {};
     saveGen.current += 1;
     // Drop the previous paper's session so a pre-session autosave on the new paper flags
@@ -301,7 +335,7 @@ export function PfPaper({
     timingMsRef.current = {};
     timingSegmentRef.current = null;
     submittedDuringAttemptsRef.current.clear();
-  }, [artifactId]);
+  }, [artifactId, nativeOccurrenceId]);
 
   // Clear any pending debounce timers on unmount (no setState after teardown).
   useEffect(() => {
@@ -334,16 +368,33 @@ export function PfPaper({
         sessionOpenRef.current = true;
         timingMsRef.current = readPaperTiming(r.session_id, artifactId);
         setSessionReadyVersion((version) => version + 1);
+        void qc.invalidateQueries({ queryKey: ['paper', artifactId] });
       })
       .catch((e) => {
         if (saveGen.current !== gen) return;
         addToast(`开卷失败：${(e as Error).message}`, 'info', 'alert');
       });
-  }, [detail, artifactId, addToast]);
+  }, [detail, artifactId, addToast, qc]);
 
   // 草稿初值：服务端 draft / 已提交 answer 回填。
   useEffect(() => {
     if (slots.length === 0) return;
+    const nextNative = { ...nativeResponsesRef.current };
+    let changedNative = false;
+    for (const slot of slots) {
+      const bound = slot.assessment,
+        key = slotKey(slot);
+      if (bound && nativeRestored.current[key] !== bound.issuance_id) {
+        nextNative[key] = bound.response_set;
+        nativeEpochs.current[key] = bound.save_epoch;
+        nativeRestored.current[key] = bound.issuance_id;
+        changedNative = true;
+      }
+    }
+    if (changedNative) {
+      nativeResponsesRef.current = nextNative;
+      setNativeResponses(nextNative);
+    }
     setAnswers((cur) => {
       const next = { ...cur };
       for (const s of slots) {
@@ -418,6 +469,31 @@ export function PfPaper({
   // 草稿 PUT：成功清掉该 slot 的失败标记，失败则点亮——不再静默吞掉错误。返回本次是否
   // 落库（true=成功/无需保存，false=失败），供退出/关页 flush 如实计数未保存草稿。
   // Defined above the early return so the pagehide handler and exitPaper can reach it.
+  const nativePayloadFor = (key: string) => {
+    const bound = slots.find((slot) => slotKey(slot) === key)?.assessment;
+    if (!bound) return undefined;
+    return {
+      issuance_id: bound.issuance_id,
+      evaluation_group_id: bound.evaluation_group_id,
+      idempotency_key: bound.idempotency_key,
+      response_set: nativeResponsesRef.current[key] ?? bound.response_set,
+      group_evidence: evidenceRef.current
+        .filter((item) => item.slot_ids === null || item.slot_ids.includes(key))
+        .flatMap((item) =>
+          item.original
+            ? [
+                {
+                  evidence: item.original,
+                  target: bound.group_evidence.find(
+                    (saved) => saved.evidence.asset.asset_id === item.asset_id,
+                  )?.target ?? { scope: 'all_units' as const },
+                },
+              ]
+            : [],
+        ),
+    };
+  };
+
   const runSave = (
     key: string,
     questionId: string,
@@ -460,10 +536,14 @@ export function PfPaper({
             part_ref: partRef,
             answer_md: v,
             image_refs: refs,
+            assessment: nativePayloadFor(key),
+            expected_save_epoch: nativeEpochs.current[key],
           },
           { keepalive },
         )
-          .then(() => {
+          .then((ack) => {
+            if (saveGen.current === gen && ack?.save_epoch !== undefined)
+              nativeEpochs.current[key] = Math.max(nativeEpochs.current[key] ?? 0, ack.save_epoch);
             if (isLatest()) setSaveFailed((f) => (f[key] ? { ...f, [key]: false } : f));
             return true;
           })
@@ -529,6 +609,9 @@ export function PfPaper({
               question_id: d.questionId,
               part_ref: d.partRef,
               answer_md: d.answer,
+              image_refs: evidenceIdsForSlot(evidenceRef.current, d.key),
+              assessment: nativePayloadFor(d.key),
+              expected_save_epoch: nativeEpochs.current[d.key],
             }),
           ),
         )
@@ -656,6 +739,10 @@ export function PfPaper({
   const curSelectedIds = curOptions.filter((o) => o.text_md === curAnswerText).map((o) => o.id);
   const answeredCount = slots.filter(
     (s) =>
+      (nativeResponses[slotKey(s)]?.entries.some((entry) =>
+        isSlotResponseAnswered(nativeResponseValue(entry)),
+      ) ??
+        false) ||
       (answers[slotKey(s)] ?? '').trim().length > 0 ||
       evidenceIdsForSlot(evidence, slotKey(s)).length > 0,
   ).length;
@@ -774,7 +861,8 @@ export function PfPaper({
     const sid = sessionRef.current;
     // Mutual exclusion with exitPaper (submittingRef/exitingRef are synchronous): a submit and
     // an exit must not both fire a terminal transition.
-    if (!sid || submittingRef.current || exitingRef.current || uploading) return;
+    if (!hasNativeBindings || !sid || submittingRef.current || exitingRef.current || uploading)
+      return;
     submittingRef.current = true;
     setSubmitting(true);
     stopTimingSegment();
@@ -799,6 +887,7 @@ export function PfPaper({
           question_id: s.question_id,
           part_ref: s.part_ref,
           answer_md: answers[key] ?? '',
+          assessment: nativePayloadFor(key),
           // YUK-1051 — 该 slot 绑定范围内的证据附件随提交冻结（与草稿同源展开）。
           image_refs: evidenceIdsForSlot(evidenceRef.current, key),
           latency_ms: timingMsRef.current[key] ?? 0,
@@ -853,27 +942,39 @@ export function PfPaper({
           onClick={exitPaper}
           disabled={exiting || submitting}
         >
-          {exiting ? '保存中…' : anySaveFailed ? '退出' : '退出 · 进度保留'}
+          {exiting ? '保存中…' : anySaveFailed || !hasNativeBindings ? '退出' : '退出 · 进度保留'}
         </Btn>
         <span className="pfp-title">{detail.title}</span>
         {/* YUK-1051 — 保存状态 chip 换成组件族 SaveStateChip（同文案/同重试交互）；
             saved 仅在 server ack 后出现的纪律由组件族承载。 */}
-        <SaveStateChip
-          state={anySaveFailed ? 'error' : 'idle'}
-          onRetry={anySaveFailed ? retryFailedSaves : undefined}
-          retrying={retrying}
-        />
+        {hasNativeBindings && (
+          <SaveStateChip
+            state={anySaveFailed ? 'error' : 'idle'}
+            onRetry={anySaveFailed ? retryFailedSaves : undefined}
+            retrying={retrying}
+          />
+        )}
       </div>
 
       <div className="pfp-buffer">
         <LoomIcon name="clock" size={14} className="ico" />
-        <span>反馈缓冲：这张卷不给即时对错——交卷后统一判分。和散题的节奏是反着的，刻意的。</span>
+        <span>
+          {hasNativeBindings
+            ? '反馈缓冲：这张卷不给即时对错——交卷后统一判分。和散题的节奏是反着的，刻意的。'
+            : detail.session
+              ? '这份历史试卷缺少原始发题记录，当前只能查看。'
+              : '正在准备题目，请稍候。'}
+        </span>
       </div>
 
       <div className="pfp-pips" role="tablist" aria-label="题目导航">
         {slots.map((s, i) => {
           // YUK-1051 — pip 的「已答」中性墨点也把绑定到该 slot 的证据算上（仍零语义色）。
           const has =
+            (nativeResponses[slotKey(s)]?.entries.some((entry) =>
+              isSlotResponseAnswered(nativeResponseValue(entry)),
+            ) ??
+              false) ||
             (answers[slotKey(s)] ?? '').trim().length > 0 ||
             evidenceIdsForSlot(evidence, slotKey(s)).length > 0;
           return (
@@ -898,18 +999,108 @@ export function PfPaper({
           </span>
         </div>
         {/* YUK-1051 — 结构化配图/共享材料与题面同版渲染（wire image_refs 恢复后）。 */}
-        {(cur.question.image_refs ?? []).map((assetId) => (
-          <StimulusFigure key={assetId} assetId={assetId} />
-        ))}
-        {/* YUK-1005 — same MathMarkdown convention as PfSolo; notation is resolved
-            per-question server-side on the paper face (see paper-detail.ts). */}
-        <MathMarkdown notation={cur.question.notation} className="pfs-stem">
-          {cur.question.prompt_md}
-        </MathMarkdown>
+        {cur.assessment ? (
+          <>
+            {cur.assessment.practice_dto.materials.map((material) => (
+              <div key={material.material_id}>
+                {material.content_md !== undefined ? (
+                  <MathMarkdown notation={cur.question.notation}>
+                    {material.content_md}
+                  </MathMarkdown>
+                ) : (
+                  <AssetEvidencePreview
+                    assetId={material.asset_id}
+                    label={material.caption ?? material.alt_text}
+                  />
+                )}
+              </div>
+            ))}
+            {cur.assessment.practice_dto.faces.map((face) => (
+              <MathMarkdown
+                key={face.part_id}
+                notation={cur.question.notation}
+                className="pfs-stem"
+              >
+                {face.prompt_md}
+              </MathMarkdown>
+            ))}
+          </>
+        ) : (
+          <>
+            {(cur.question.image_refs ?? []).map((assetId) => (
+              <StimulusFigure key={assetId} assetId={assetId} />
+            ))}
+            <MathMarkdown notation={cur.question.notation} className="pfs-stem">
+              {cur.question.prompt_md}
+            </MathMarkdown>
+          </>
+        )}
 
         {/* YUK-1051 — 作答控件换组件族。§6.4 缓冲反馈：恒 feedback='none'，作答全程
             零对错色（导航 pip 只有「已答」中性墨点）；对错色只属于交卷后的 PfRetro。 */}
-        {isChoice ? (
+        {cur.assessment ? (
+          <>
+            {cur.assessment.practice_dto.response_spec.slots.map((slot) => {
+              const spec = nativeSlotFieldSpec(slot);
+              if (!spec) return null;
+              const entry = nativeResponses[curKey]?.entries.find(
+                (item) => item.slot_id === slot.slot_id,
+              );
+              return (
+                <ResponseSlotField
+                  key={slot.slot_id}
+                  spec={spec}
+                  value={nativeResponseValue(entry)}
+                  label={slot.placement?.label}
+                  notation={cur.question.notation}
+                  feedback="none"
+                  ariaLabel={slot.placement?.label ?? '作答'}
+                  disabled={!hasNativeBindings || submittedKeys.has(curKey) || exiting}
+                  onChange={(value) => {
+                    const updated: SlotResponseT = nativeResponseEntry(slot, value, entry);
+                    const response: ResponseSetT = {
+                      entries: [
+                        ...(nativeResponsesRef.current[curKey]?.entries ?? []).filter(
+                          (item) => item.slot_id !== slot.slot_id,
+                        ),
+                        updated,
+                      ],
+                    };
+                    nativeResponsesRef.current = {
+                      ...nativeResponsesRef.current,
+                      [curKey]: response,
+                    };
+                    setNativeResponses(nativeResponsesRef.current);
+                    setAnswer(
+                      response.entries
+                        .map((item) =>
+                          nativeResponseText(
+                            item,
+                            cur.assessment?.practice_dto.response_spec.slots.find(
+                              (field) => field.slot_id === item.slot_id,
+                            ),
+                          ),
+                        )
+                        .join('\n'),
+                    );
+                  }}
+                />
+              );
+            })}
+            <EvidenceComposer
+              text=""
+              onTextChange={() => {}}
+              showText={false}
+              attachments={evidence}
+              onAttachmentsChange={onEvidenceChange}
+              disabled={!hasNativeBindings || submittedKeys.has(curKey) || exiting}
+              onUploadingChange={setUploading}
+              slotLabels={Object.fromEntries(
+                slots.map((slot, i) => [slotKey(slot), `第 ${i + 1} 题`]),
+              )}
+            />
+          </>
+        ) : isChoice ? (
           <ChoiceSetResponse
             options={curOptions}
             mode="single"
@@ -919,7 +1110,7 @@ export function PfPaper({
               const opt = curOptions.find((o) => o.id === ids[0]);
               setAnswer(opt?.text_md ?? '');
             }}
-            disabled={submittedKeys.has(curKey) || exiting}
+            disabled={!hasNativeBindings || submittedKeys.has(curKey) || exiting}
             notation={cur.question.notation}
             feedback="none"
             ariaLabel="选项"
@@ -932,7 +1123,7 @@ export function PfPaper({
             onTextChange={setAnswer}
             attachments={evidence}
             onAttachmentsChange={onEvidenceChange}
-            disabled={submittedKeys.has(curKey) || exiting}
+            disabled={!hasNativeBindings || submittedKeys.has(curKey) || exiting}
             notation={cur.question.notation}
             placeholder="写下你的解答。交卷前都可以改。"
             ariaLabel="作答"
@@ -940,46 +1131,53 @@ export function PfPaper({
             onUploadingChange={setUploading}
           />
         )}
-        {!isChoice && evidence.length > 0 && !submittedKeys.has(curKey) && !exiting && (
-          <EvaluationGroupPanel
-            slots={slots.map((s, i) => ({ id: slotKey(s), label: `第 ${i + 1} 题` }))}
-            attachments={evidence}
-            onAttachmentChange={onEvidenceRebind}
-          />
-        )}
+        {hasNativeBindings &&
+          !isChoice &&
+          evidence.length > 0 &&
+          !submittedKeys.has(curKey) &&
+          !exiting && (
+            <EvaluationGroupPanel
+              slots={slots.map((s, i) => ({ id: slotKey(s), label: `第 ${i + 1} 题` }))}
+              attachments={evidence}
+              onAttachmentChange={onEvidenceRebind}
+            />
+          )}
 
         {/* YUK-784 — 过程框「记下你的思路」扩到组卷面（镜像 PfSolo #1069 先例）：仅开放/文本
             作答题（shouldOfferProcessBox 复用，不重写判据）、默认折叠 opt-in、零强制——不挡
             交卷、折叠即跳过、空值不发字段（submitAll 里 buildCaptureFields trim 判空）。与散题
             不同点：组卷面多题连续作答，采集是 per-slot 状态，换题不丢，交卷时随各自 slot 发出。
             已提交 slot / 退出 flush 期间不渲染（作答面已冻结，采集无处可挂）。 */}
-        {shouldOfferProcessBox(isChoice) && !submittedKeys.has(curKey) && !exiting && (
-          <div className="pfs-trace">
-            {traceOpen[curKey] ? (
-              <div className="composer pfs-trace-composer">
-                <textarea
-                  rows={2}
-                  value={trace[curKey] ?? ''}
-                  // 硬闸同 PfSolo：maxLength 挡越界输入撞 400 软死锁，buildCaptureFields
-                  // 发送前再防御性截断兜底粘贴/IME 绕过。
-                  maxLength={REASONING_TRACE_MAX_LEN}
-                  placeholder="随手记下你是怎么想的——不评分，也可以留空。"
-                  onChange={(e) => setTrace((t) => ({ ...t, [curKey]: e.target.value }))}
-                  aria-label="解题思路（可选）"
-                />
-              </div>
-            ) : (
-              <button
-                type="button"
-                className="pfs-trace-toggle"
-                onClick={() => setTraceOpen((o) => ({ ...o, [curKey]: true }))}
-              >
-                ＋ 记下你的思路（可选）
-              </button>
-            )}
-          </div>
-        )}
-        {!submittedKeys.has(curKey) && !exiting && (
+        {hasNativeBindings &&
+          shouldOfferProcessBox(isChoice) &&
+          !submittedKeys.has(curKey) &&
+          !exiting && (
+            <div className="pfs-trace">
+              {traceOpen[curKey] ? (
+                <div className="composer pfs-trace-composer">
+                  <textarea
+                    rows={2}
+                    value={trace[curKey] ?? ''}
+                    // 硬闸同 PfSolo：maxLength 挡越界输入撞 400 软死锁，buildCaptureFields
+                    // 发送前再防御性截断兜底粘贴/IME 绕过。
+                    maxLength={REASONING_TRACE_MAX_LEN}
+                    placeholder="随手记下你是怎么想的——不评分，也可以留空。"
+                    onChange={(e) => setTrace((t) => ({ ...t, [curKey]: e.target.value }))}
+                    aria-label="解题思路（可选）"
+                  />
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="pfs-trace-toggle"
+                  onClick={() => setTraceOpen((o) => ({ ...o, [curKey]: true }))}
+                >
+                  ＋ 记下你的思路（可选）
+                </button>
+              )}
+            </div>
+          )}
+        {hasNativeBindings && !submittedKeys.has(curKey) && !exiting && (
           <SelfConfidenceField
             value={selfConfidence[curKey]}
             onChange={(next) =>
@@ -1026,7 +1224,7 @@ export function PfPaper({
               size="sm"
               variant="primary"
               icon="send"
-              disabled={submitting || exiting || uploading}
+              disabled={!hasNativeBindings || submitting || exiting || uploading}
               onClick={() => void submitAll()}
             >
               {submitting ? '判分中…' : '交卷'}
@@ -1040,7 +1238,7 @@ export function PfPaper({
             size="sm"
             variant="primary"
             icon="send"
-            disabled={submitting || exiting || uploading}
+            disabled={!hasNativeBindings || submitting || exiting || uploading}
             onClick={() => (unanswered > 0 ? setConfirm(true) : void submitAll())}
           >
             {submitting ? '判分中…' : '交卷 · 统一判分'}
@@ -1048,9 +1246,11 @@ export function PfPaper({
         )}
       </div>
       <div className="key-hints mono" style={{ marginTop: 'var(--s-3)' }}>
-        {anySaveFailed
-          ? '有草稿没保存上——退出前先点「保存失败 · 重试」'
-          : '中途退出进度保留 · 交卷后到复盘看逐题判定'}
+        {!hasNativeBindings
+          ? '历史作答保留，当前不可提交。'
+          : anySaveFailed
+            ? '有草稿没保存上——退出前先点「保存失败 · 重试」'
+            : '中途退出进度保留 · 交卷后到复盘看逐题判定'}
       </div>
     </div>
   );

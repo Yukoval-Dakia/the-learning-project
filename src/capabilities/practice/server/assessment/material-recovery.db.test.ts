@@ -119,14 +119,19 @@ describe('YUK-1047 frozen public material recovery', () => {
       );
       expect(privateMaterial?.content_md).toContain('PRIVATE ANSWER');
       expect(privateMaterial?.visibility).toBe(legacy ? undefined : 'private');
-      expect(issued.issuance.binding.material_bindings).toHaveLength(2);
+      expect(issued.issuance.binding.material_bindings).toHaveLength(3);
+      expect(
+        frozenRevision.structure.materials.find((material) =>
+          material.asset.asset_id.startsWith('sol_'),
+        ),
+      ).toMatchObject({ content_md: 'A' });
       expect(issued.practice_dto.materials).toHaveLength(1);
       expect(issued.practice_dto.materials[0].content_md).toBe(ORIGINAL);
       expect(issued.practice_dto.faces[0].prompt_md).toBe('哪项解释最符合材料？');
       expect(issued.practice_dto.faces[0].material_ids).toEqual([
         issued.practice_dto.materials[0].material_id,
       ]);
-      expect(JSON.stringify(issued.practice_dto)).not.toMatch(/PRIVATE|rub_/);
+      expect(JSON.stringify(issued.practice_dto)).not.toMatch(/PRIVATE|rub_|sol_/);
 
       await testDb()
         .update(question)

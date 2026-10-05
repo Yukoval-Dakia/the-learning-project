@@ -82,6 +82,11 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
   // 注：quiz_verify / source_verify / verify-and-promote 的 promote 分支虽非内容列
   // 写者（只写 draft_status/metadata），但作为 §2 矩阵的 admission 时刻已在
   // YUK-1043 同事务接 publisher（见各文件 YUK-1043 注释），无需内容列登记。
+  'src/capabilities/ingestion/server/assessment-capture.ts': {
+    status: 'publisher-converged',
+    tickets: ['YUK-1047'],
+    note: 'Captured originals publish and bind a frozen revision before evaluation; withheld originals stay draft without learning effects.',
+  },
   'src/capabilities/ingestion/server/auto-enroll.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1043'],
@@ -126,10 +131,9 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     note: 'YUK-1057 演练的 post-cutover writer-seam 证明：对 ephemeral 库的受控写入，验证切换后写入路径；非生产路径，YUK-1059 收敛后演练改走 publisher。',
   },
   'src/capabilities/agency/server/conjecture/probe-lifecycle.ts': {
-    status: 'working-copy-pending',
-    tickets: ['YUK-1059'],
-    pendingClass: 'blocked-by:YUK-1051',
-    note: '§2 矩阵 probe 行：container-only；revision 与容器 occurrence 同事务绑定（§3.3）依赖 issuance 契约（YUK-1052 提交持久化 / YUK-1051）—— 相同文本不同 probe occurrence 不能被去重掉。',
+    status: 'publisher-converged',
+    tickets: ['YUK-1047'],
+    note: 'Probe producer publishes withheld one-time container contracts; queue issuance and native evaluation preserve the frozen signature.',
   },
   'src/capabilities/copilot/server/teaching/materialize-ask-check.ts': {
     status: 'working-copy-pending',
@@ -138,9 +142,8 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     note: '§2 矩阵 teaching_check 行：container-only 不免迁；教学 turn 与 revision/issuance 原子绑定依赖 pinned issuance（YUK-1052）。',
   },
   'src/capabilities/practice/server/intervention-diagnostics.ts': {
-    status: 'working-copy-pending',
-    tickets: ['YUK-1059'],
-    pendingClass: 'blocked-by:YUK-1052',
-    note: '§2 矩阵 intervention diagnostic 行（闭包修正后发现：map 回调体内的内容列曾被窗口截断漏检）：一次性 claim 与题目审核状态分离依赖 issuance claim 契约（YUK-1052）；教学材料版本冻结随 YUK-1051。',
+    status: 'publisher-converged',
+    tickets: ['YUK-1047'],
+    note: 'Diagnostic producer publishes frozen contracts and withholds unadmitted cards; native issuance and recovery preserve one-time exposure.',
   },
 };

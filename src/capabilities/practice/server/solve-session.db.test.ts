@@ -1,467 +1,373 @@
-import { createId } from '@paralleldrive/cuid2';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-import type { JudgeInvokerOutput } from '@/capabilities/practice/server/judge/invoker';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
-import { event, learning_record, learning_session, question } from '@/db/schema';
+import {
+  ai_task_runs,
+  assessment_submission,
+  event,
+  learning_record,
+  learning_session,
+  material_fsrs_state,
+  question,
+  source_asset,
+} from '@/db/schema';
+import { getQuestionTimeline } from '@/kernel/read-models/question-activity';
 import { Tutor } from '@/server/session';
+import {
+  seedFrozenCompositeSolveQuestion,
+  seedFrozenSolveQuestion,
+} from '../../../../tests/fixtures/assessment-solve';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { recordAssistanceExposure } from './assessment/assistance';
 import { planSolveHint, startSolveSession, submitSolveAttempt } from './solve-session';
 
 const db = testDb();
-
-async function seedQuestion(opts: { rubric_json?: unknown; source?: string }): Promise<string> {
-  const id = createId();
-  const now = new Date();
-  await db.insert(question).values({
-    id,
-    kind: 'derivation',
-    prompt_md: '化简 (a^2 - b^2)/(a - b)',
-    reference_md: null,
-    rubric_json: (opts.rubric_json ?? null) as never,
-    knowledge_ids: [],
-    difficulty: 3,
-    source: opts.source ?? 'manual',
-    created_at: now,
-    updated_at: now,
-    version: 0,
+async function seed() {
+  const frozen = await seedFrozenSolveQuestion(db);
+  const session = await startSolveSession({
+    db,
+    questionId: frozen.id,
+    issuanceId: frozen.issuanceId,
   });
-  return id;
-}
-
-const VALID_GEN = JSON.stringify({
-  reference_solution: {
-    expected_signals: ['s1'],
-    final_answer: 'a + b',
-    answer_equivalents: ['a+b'],
-  },
-  worked_solution_md: '解：a+b。',
-  confidence: 0.9,
-});
-
-describe('startSolveSession', () => {
-  beforeEach(async () => {
-    await resetDb();
-  });
-
-  it('lazily generates a reference solution then creates a tutor session', async () => {
-    const id = await seedQuestion({});
-    const runTaskFn = vi.fn(async () => ({ text: VALID_GEN }));
-
-    const { sessionId, generated } = await startSolveSession({ db, questionId: id, runTaskFn });
-
-    expect(generated).toBe(true);
-    const [s] = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
-    expect(s.type).toBe('tutor');
-    expect(s.status).toBe('active');
-    expect(s.goal_id).toBe(id);
-    const [q] = await db.select().from(question).where(eq(question.id, id));
-    expect(
-      (q.rubric_json as { reference_solution: { final_answer: string } }).reference_solution
-        .final_answer,
-    ).toBe('a + b');
-  });
-
-  it('skips generation when reference_solution already present', async () => {
-    const id = await seedQuestion({
-      rubric_json: {
-        criteria: [],
-        reference_solution: { expected_signals: ['s'], final_answer: 'A', answer_equivalents: [] },
-      },
-    });
-    const runTaskFn = vi.fn(async () => ({ text: VALID_GEN }));
-
-    const { generated } = await startSolveSession({ db, questionId: id, runTaskFn });
-
-    expect(generated).toBe(false);
-    expect(runTaskFn).not.toHaveBeenCalled();
-  });
-
-  it('still creates a session (degraded) when generation fails', async () => {
-    const id = await seedQuestion({});
-    const runTaskFn = vi.fn(async () => {
-      throw new Error('LLM down');
-    });
-
-    const { sessionId, generated, generationError } = await startSolveSession({
-      db,
-      questionId: id,
-      runTaskFn,
-    });
-
-    expect(generated).toBe(false);
-    expect(generationError).toBe(true);
-    const [s] = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
-    expect(s.status).toBe('active'); // session opens; judge will degrade later
-  });
-
-  it('throws SolveError(question_not_found) for an unknown question', async () => {
-    const runTaskFn = vi.fn();
-    await expect(startSolveSession({ db, questionId: 'nope', runTaskFn })).rejects.toMatchObject({
-      code: 'question_not_found',
-    });
-  });
-
-  it('hides intervention diagnostics from solve sessions', async () => {
-    const id = await seedQuestion({ source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE });
-    const runTaskFn = vi.fn();
-
-    await expect(startSolveSession({ db, questionId: id, runTaskFn })).rejects.toMatchObject({
-      code: 'question_not_found',
-    });
-    expect(runTaskFn).not.toHaveBeenCalled();
-  });
-});
-
-describe('planSolveHint', () => {
-  beforeEach(async () => {
-    await resetDb();
-  });
-
-  it('returns a non-revealing hint via TeachingTurnTask', async () => {
-    const id = await seedQuestion({
-      rubric_json: {
-        criteria: [],
-        reference_solution: {
-          expected_signals: ['s'],
-          final_answer: 'a + b',
-          answer_equivalents: [],
-        },
-      },
-    });
-    await db
-      .update(question)
-      .set({ reference_md: '完整解：先因式分解，再约分得 a+b。' })
-      .where(eq(question.id, id));
-    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
-
-    const turnText = JSON.stringify({
-      kind: 'explain',
-      text_md: '想想分子能不能因式分解？',
-      suggested_next: 'continue',
-    });
-    const runTaskFn = vi.fn(async () => ({ text: turnText }));
-
-    const hint = await planSolveHint({ db, sessionId, hintIndex: 0, runTaskFn });
-
-    expect(hint.text_md).toContain('因式分解');
-    expect(hint.text_md).not.toContain('a+b'); // does not reveal the final answer
-    expect(runTaskFn).toHaveBeenCalledWith(
-      'TeachingTurnTask',
-      expect.anything(),
-      expect.anything(),
-    );
-  });
-
-  it('throws for an unknown session', async () => {
-    const runTaskFn = vi.fn();
-    await expect(
-      planSolveHint({ db, sessionId: 'nope', hintIndex: 0, runTaskFn }),
-    ).rejects.toThrow();
-  });
-
-  it('rejects a hint when expectedQuestionId does not match the session', async () => {
-    const id = await seedQuestion(seededRubricQuestion());
-    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
-    const runTaskFn = vi.fn();
-
-    await expect(
-      planSolveHint({ db, sessionId, hintIndex: 0, expectedQuestionId: 'other_q', runTaskFn }),
-    ).rejects.toMatchObject({ code: 'session_not_found' });
-    expect(runTaskFn).not.toHaveBeenCalled();
-  });
-
-  it('rejects a hint once the session is no longer active', async () => {
-    const id = await seedQuestion(seededRubricQuestion());
-    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
-    await Tutor.markSubmitted(db, sessionId);
-    await Tutor.markJudged(db, sessionId);
-    const runTaskFn = vi.fn();
-
-    await expect(planSolveHint({ db, sessionId, hintIndex: 0, runTaskFn })).rejects.toMatchObject({
-      code: 'session_not_active',
-    });
-    expect(runTaskFn).not.toHaveBeenCalled();
-  });
-});
-
-function seededRubricQuestion() {
-  return {
-    rubric_json: {
-      criteria: [],
-      reference_solution: {
-        expected_signals: ['s1', 's2'],
-        final_answer: 'a + b',
-        answer_equivalents: ['a+b'],
-      },
+  const key = `solve_${session.sessionId}`;
+  const submission = (answer = 'a+b') => ({
+    assessment: {
+      issuance_id: frozen.issuanceId,
+      evaluation_group_id: key,
+      idempotency_key: key,
+      response_set: frozen.responseSet(answer),
     },
-  };
+    student_text_steps: ['分解为 (a−b)(a+b)', '确认 a≠b 后约分'],
+    student_final_answer_text: answer,
+  });
+  return { ...frozen, ...session, submission };
 }
+const hintRunner = () =>
+  vi.fn(async () => ({
+    text: JSON.stringify({
+      kind: 'explain',
+      text_md: '先检查分子能否因式分解，再检查约分条件。',
+      suggested_next: 'continue',
+    }),
+  }));
 
-function judgeStub(outcome: 'correct' | 'incorrect' | 'partial', score: number) {
-  // Cast to JudgeInvokerOutput: the real result is a discriminated union on
-  // coarse_outcome with score bounds per arm (correct ≥0.85, incorrect ===0),
-  // which a parameterised stub can't satisfy structurally. The orchestrator
-  // only reads route/result.{coarse_outcome,score,confidence,feedback_md,
-  // evidence_json}, so the cast is runtime-faithful.
-  return vi.fn(
-    async () =>
-      ({
-        route: 'steps' as const,
-        result: {
-          score,
-          score_meaning: 'steps_v1_weighted',
-          coarse_outcome: outcome,
-          confidence: 0.9,
-          capability_ref: { id: 'steps', version: '1.0.0' },
-          feedback_md: 'fb',
-          evidence_json: {},
-        },
-        telemetry: {
-          route: 'steps' as const,
-          capability_ref: { id: 'steps', version: '1.0.0' },
-          coarse_outcome: outcome,
-          confidence: 0.9,
-          elapsed_ms: 1,
-          question_id: 'q',
-          subject_id: 'math',
-        },
-      }) as unknown as JudgeInvokerOutput,
-  );
-}
-
-describe('submitSolveAttempt', () => {
-  beforeEach(async () => {
-    await resetDb();
-  });
-
-  it('typed submit → judge → attempt event written → session judged → reveals worked solution', async () => {
-    const id = await seedQuestion(seededRubricQuestion());
-    await db.update(question).set({ reference_md: '完整解：a+b。' }).where(eq(question.id, id));
-    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
-
-    const judgeFn = judgeStub('correct', 0.95);
-    const res = await submitSolveAttempt({
+beforeEach(resetDb);
+describe('frozen solve session lifecycle', () => {
+  it('starts with an immutable issuance, without generating or rewriting a solution', async () => {
+    const frozen = await seedFrozenSolveQuestion(db);
+    const result = await startSolveSession({
       db,
-      sessionId,
-      submission: { student_text_steps: ['因式分解', '约分'], student_final_answer_text: 'a+b' },
-      judgeFn,
+      questionId: frozen.id,
+      issuanceId: frozen.issuanceId,
     });
-
-    expect(res.judge.coarse_outcome).toBe('correct');
-    expect(res.revealed_solution_md).toContain('a+b');
-    expect(res.mistake_id).toBeUndefined();
-
-    const [s] = await db.select().from(learning_session).where(eq(learning_session.id, sessionId));
-    expect(s.status).toBe('judged');
-
-    const attempts = await db.select().from(event).where(eq(event.subject_id, id));
-    const attempt = attempts.find((e) => e.action === 'attempt');
-    expect(attempt).toBeTruthy();
-    expect(attempt?.payload).toMatchObject({
-      question_snapshot: {
-        schema_version: 1,
-        question: {
-          question_id: id,
-          prompt_md: '化简 (a^2 - b^2)/(a - b)',
-          reference_md: '完整解：a+b。',
-        },
-        parent_question: null,
-      },
+    expect(await db.select().from(ai_task_runs)).toHaveLength(0);
+    expect(await Tutor.getTutorQuestionId(db, result.sessionId)).toMatchObject({
+      questionId: frozen.id,
+      issuanceId: frozen.issuanceId,
+      status: 'active',
     });
   });
-
-  it('YUK-352 — captures hints_used / final_hint_level onto the attempt payload when supplied', async () => {
-    const id = await seedQuestion(seededRubricQuestion());
-    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
-    const judgeFn = judgeStub('correct', 0.95);
-
-    await submitSolveAttempt({
-      db,
-      sessionId,
-      submission: { student_final_answer_text: 'a+b' },
-      hintsUsed: 2,
-      finalHintLevel: 1,
-      judgeFn,
+  it('rejects a missing issuance instead of generating a current-row substitute', async () => {
+    const frozen = await seedFrozenSolveQuestion(db);
+    await expect(startSolveSession({ db, questionId: frozen.id })).rejects.toMatchObject({
+      code: 'issuance_required',
     });
-
-    const [attempt] = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.subject_id, id), eq(event.action, 'attempt')));
-    const payload = attempt.payload as Record<string, unknown>;
-    expect(payload.hints_used).toBe(2);
-    expect(payload.final_hint_level).toBe(1);
+    expect(await db.select().from(ai_task_runs)).toHaveLength(0);
+    expect(await db.select().from(learning_session)).toHaveLength(0);
   });
-
-  it('YUK-352 — omits hint fields when not supplied (byte-identical legacy attempt payload)', async () => {
-    const id = await seedQuestion(seededRubricQuestion());
-    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
-    const judgeFn = judgeStub('correct', 0.95);
-
-    await submitSolveAttempt({
-      db,
-      sessionId,
-      submission: { student_final_answer_text: 'a+b' },
-      judgeFn,
-    });
-
-    const [attempt] = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.subject_id, id), eq(event.action, 'attempt')));
-    const payload = attempt.payload as Record<string, unknown>;
-    expect('hints_used' in payload).toBe(false);
-    expect('final_hint_level' in payload).toBe(false);
-  });
-
-  it('handwritten-photo submit (student_image_refs) follows the same path', async () => {
-    const id = await seedQuestion(seededRubricQuestion());
-    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
-    const judgeFn = judgeStub('correct', 0.9);
-
-    const res = await submitSolveAttempt({
-      db,
-      sessionId,
-      submission: { student_image_refs: ['asset_1'] },
-      judgeFn,
-    });
-
-    expect(res.judge.coarse_outcome).toBe('correct');
-    expect(judgeFn).toHaveBeenCalledWith(
-      expect.objectContaining({ student_image_refs: ['asset_1'] }),
-    );
-  });
-
-  it('low score (incorrect) enrolls a mistake learning_record', async () => {
-    const id = await seedQuestion(seededRubricQuestion());
-    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
-    const judgeFn = judgeStub('incorrect', 0);
-
-    const res = await submitSolveAttempt({
-      db,
-      sessionId,
-      submission: { student_final_answer_text: 'wrong' },
-      judgeFn,
-    });
-
-    expect(res.mistake_id).toBeDefined();
-    const records = await db
-      .select()
-      .from(learning_record)
-      .where(eq(learning_record.question_id, id));
-    expect(records).toHaveLength(1);
-    expect(records[0].kind).toBe('mistake');
-  });
-
-  it('enrolls a mistake for a partial attempt scoring below mastery threshold', async () => {
-    const id = await seedQuestion(seededRubricQuestion());
-    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
-    const judgeFn = judgeStub('partial', 0.4); // < 0.7 mastery threshold
-
-    const res = await submitSolveAttempt({
-      db,
-      sessionId,
-      submission: { student_final_answer_text: 'a+b' },
-      judgeFn,
-    });
-
-    expect(res.mistake_id).toBeDefined();
-    const records = await db
-      .select()
-      .from(learning_record)
-      .where(eq(learning_record.question_id, id));
-    expect(records).toHaveLength(1);
-  });
-
-  it('does not enroll a mistake for a partial attempt at or above mastery threshold', async () => {
-    const id = await seedQuestion(seededRubricQuestion());
-    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
-    const judgeFn = judgeStub('partial', 0.8); // ≥ 0.7 mastery threshold
-
-    const res = await submitSolveAttempt({
-      db,
-      sessionId,
-      submission: { student_final_answer_text: 'a+b' },
-      judgeFn,
-    });
-
-    expect(res.mistake_id).toBeUndefined();
-    const records = await db
-      .select()
-      .from(learning_record)
-      .where(eq(learning_record.question_id, id));
-    expect(records).toHaveLength(0);
-  });
-
-  it('rejects a submit when expectedQuestionId does not match the session', async () => {
-    const id = await seedQuestion(seededRubricQuestion());
-    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
-    const judgeFn = judgeStub('correct', 1);
-
+  it('rejects a missing question', async () => {
     await expect(
-      submitSolveAttempt({
-        db,
-        sessionId,
-        submission: { student_final_answer_text: 'a+b' },
-        expectedQuestionId: 'other_q',
-        judgeFn,
-      }),
-    ).rejects.toMatchObject({ code: 'session_not_found' });
-    expect(judgeFn).not.toHaveBeenCalled();
+      startSolveSession({ db, questionId: 'missing', issuanceId: 'missing' }),
+    ).rejects.toMatchObject({ code: 'question_not_found' });
   });
-
-  it('fails closed with a structured error when question evidence is incomplete', async () => {
-    const id = await seedQuestion(seededRubricQuestion());
+  it('hides intervention diagnostics from solve assistance', async () => {
+    const frozen = await seedFrozenSolveQuestion(db);
     await db
       .update(question)
-      .set({ parent_question_id: 'missing_parent' })
-      .where(eq(question.id, id));
-    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
-    const judgeFn = judgeStub('correct', 1);
-
+      .set({ source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE })
+      .where(eq(question.id, frozen.id));
     await expect(
-      submitSolveAttempt({
-        db,
-        sessionId,
-        submission: { student_final_answer_text: 'a+b' },
-        judgeFn,
-      }),
-    ).rejects.toMatchObject({ code: 'question_evidence_unavailable' });
-    expect(judgeFn).not.toHaveBeenCalled();
+      startSolveSession({ db, questionId: frozen.id, issuanceId: frozen.issuanceId }),
+    ).rejects.toMatchObject({ code: 'question_not_found' });
   });
-
-  it('rejects a second submit on an already-judged session', async () => {
-    const id = await seedQuestion(seededRubricQuestion());
-    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
-    const judgeFn = judgeStub('correct', 0.95);
-
-    await submitSolveAttempt({
-      db,
-      sessionId,
-      submission: { student_final_answer_text: 'a+b' },
-      judgeFn,
-    });
-
+  it('rejects a different question issuance before session creation', async () => {
+    const a = await seedFrozenSolveQuestion(db);
+    const b = await seedFrozenSolveQuestion(db);
     await expect(
-      submitSolveAttempt({
+      startSolveSession({ db, questionId: a.id, issuanceId: b.issuanceId }),
+    ).rejects.toMatchObject({ code: 'coordinate_mismatch' });
+  });
+  it('uses frozen hint context after edits and persists help before returning', async () => {
+    const s = await seed();
+    const runTaskFn = hintRunner();
+    await db
+      .update(question)
+      .set({ prompt_md: 'MUTATED PROMPT', reference_md: 'MUTATED REFERENCE' })
+      .where(eq(question.id, s.id));
+    const result = await planSolveHint({ db, sessionId: s.sessionId, hintIndex: 0, runTaskFn });
+    expect(result.text_md).toContain('因式分解');
+    expect(result.text_md).not.toContain('a+b');
+    expect(JSON.stringify(runTaskFn.mock.calls)).not.toContain('MUTATED');
+    expect(
+      await db.select().from(event).where(eq(event.action, 'experimental:assessment_assistance')),
+    ).toMatchObject([{ payload: { impact: 'unknown' } }]);
+  });
+  it('rejects a missing hint session without a model call', async () => {
+    const runTaskFn = hintRunner();
+    await expect(
+      planSolveHint({ db, sessionId: 'missing', hintIndex: 0, runTaskFn }),
+    ).rejects.toMatchObject({ code: 'not_found' });
+    expect(runTaskFn).not.toHaveBeenCalled();
+  });
+  it('rejects a hint for the wrong question', async () => {
+    const s = await seed();
+    const runTaskFn = hintRunner();
+    await expect(
+      planSolveHint({
         db,
-        sessionId,
-        submission: { student_final_answer_text: 'a+b' },
-        judgeFn,
+        sessionId: s.sessionId,
+        expectedQuestionId: 'other',
+        hintIndex: 0,
+        runTaskFn,
       }),
+    ).rejects.toMatchObject({ code: 'session_not_found' });
+    expect(runTaskFn).not.toHaveBeenCalled();
+  });
+  it('refuses historical unbound hint sessions instead of reading today’s question', async () => {
+    const f = await seedFrozenSolveQuestion(db);
+    const s = await Tutor.startTutorSession(db, { questionId: f.id });
+    const runTaskFn = hintRunner();
+    await expect(
+      planSolveHint({ db, sessionId: s.sessionId, hintIndex: 0, runTaskFn }),
+    ).rejects.toMatchObject({ code: 'historical_unknown' });
+    expect(runTaskFn).not.toHaveBeenCalled();
+  });
+  it('rejects hints after judgment', async () => {
+    const s = await seed();
+    const runTaskFn = hintRunner();
+    await submitSolveAttempt({ db, sessionId: s.sessionId, submission: s.submission() });
+    await expect(
+      planSolveHint({ db, sessionId: s.sessionId, hintIndex: 0, runTaskFn }),
     ).rejects.toMatchObject({ code: 'session_not_active' });
+    expect(runTaskFn).not.toHaveBeenCalled();
   });
-
-  it('rejects an all-empty submission', async () => {
-    const id = await seedQuestion(seededRubricQuestion());
-    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
-    const judgeFn = judgeStub('correct', 1);
-
+  it('judges original native text, captures process separately and reveals the frozen solution', async () => {
+    const s = await seed();
+    const result = await submitSolveAttempt({
+      db,
+      sessionId: s.sessionId,
+      submission: { ...s.submission(), student_final_answer_text: 'WRONG DISPLAY TEXT' },
+    });
+    expect(result).toMatchObject({ status: 'effective', judge: { coarse_outcome: 'correct' } });
+    expect(result.revealed_solution_md).toContain('a≠b');
+    expect(result.mistake_id).toBeUndefined();
+    const [capture] = await db.select().from(event).where(eq(event.id, result.attempt_event_id));
+    expect(capture).toMatchObject({
+      action: 'experimental:assessment_attempt',
+      outcome: null,
+      payload: { reasoning_trace: '分解为 (a−b)(a+b)\n确认 a≠b 后约分' },
+    });
+    expect(capture.payload.response_md).toContain('WRONG DISPLAY TEXT');
+    expect(await Tutor.getTutorQuestionId(db, s.sessionId)).toMatchObject({ status: 'judged' });
+  });
+  it('keeps client hint counts as capture while server help determines learning eligibility', async () => {
+    const s = await seed();
+    await recordAssistanceExposure(db, {
+      issuanceId: s.issuanceId,
+      questionId: s.id,
+      kind: 'hint',
+      impact: 'unknown',
+      contentDigest: `sha256:${'a'.repeat(64)}`,
+    });
+    const result = await submitSolveAttempt({
+      db,
+      sessionId: s.sessionId,
+      submission: s.submission(),
+      hintsUsed: 0,
+      finalHintLevel: 0,
+    });
+    expect(result.judge.coarse_outcome).toBe('correct');
+    expect(await db.select().from(material_fsrs_state)).toHaveLength(0);
+    const [capture] = await db.select().from(event).where(eq(event.id, result.attempt_event_id));
+    expect(capture.payload).toMatchObject({ hints_used: 0, final_hint_level: 0 });
+  });
+  it('omits absent process and hint capture fields', async () => {
+    const s = await seed();
+    const result = await submitSolveAttempt({
+      db,
+      sessionId: s.sessionId,
+      submission: { assessment: s.submission().assessment },
+    });
+    const [capture] = await db.select().from(event).where(eq(event.id, result.attempt_event_id));
+    expect(capture.payload).not.toHaveProperty('reasoning_trace');
+    expect(capture.payload).not.toHaveProperty('hints_used');
+    expect(capture.payload).not.toHaveProperty('final_hint_level');
+  });
+  it('enrolls an incorrect native answer once and binds its exact revision', async () => {
+    const s = await seed();
+    const result = await submitSolveAttempt({
+      db,
+      sessionId: s.sessionId,
+      submission: s.submission('a-b'),
+    });
+    expect(result.judge.coarse_outcome).toBe('incorrect');
+    expect(result.mistake_id).toBeTruthy();
+    const [record] = await db.select().from(learning_record);
+    expect(record).toMatchObject({
+      id: result.mistake_id,
+      origin_event_id: result.attempt_event_id,
+      payload: { assessment: { revision_id: s.revisionId } },
+    });
+  });
+  it('replays an already judged answer without a second FSRS occurrence', async () => {
+    const s = await seed();
+    const params = { db, sessionId: s.sessionId, submission: s.submission() };
+    const first = await submitSolveAttempt(params);
+    const second = await submitSolveAttempt(params);
+    expect(second.attempt_event_id).toBe(first.attempt_event_id);
+    expect(second.assessment?.effect).toBe('idempotent_replay');
+    expect(await db.select().from(material_fsrs_state)).toMatchObject([{ state: { reps: 1 } }]);
+  });
+  it('rejects changed accepted response bytes', async () => {
+    const s = await seed();
+    await submitSolveAttempt({ db, sessionId: s.sessionId, submission: s.submission() });
     await expect(
-      submitSolveAttempt({ db, sessionId, submission: {}, judgeFn }),
-    ).rejects.toMatchObject({ code: 'empty_submission' });
-    expect(judgeFn).not.toHaveBeenCalled();
+      submitSolveAttempt({ db, sessionId: s.sessionId, submission: s.submission('changed') }),
+    ).rejects.toMatchObject({ code: 'idempotency_conflict' });
+  });
+  it('preserves an original handwritten attachment without scoring an empty text field as wrong', async () => {
+    const s = await seed();
+    const now = new Date();
+    const sha = 'b'.repeat(64);
+    await db.insert(source_asset).values({
+      id: 'original-handwriting',
+      kind: 'image',
+      storage_key: 'test/original-handwriting',
+      mime_type: 'image/png',
+      byte_size: 120,
+      sha256: sha,
+      created_at: now,
+    });
+    const evidence = {
+      evidence_id: 'handwriting',
+      kind: 'image' as const,
+      asset: { asset_id: 'original-handwriting', digest: `sha256:${sha}` },
+      mime_type: 'image/png',
+      bytes: 120,
+      uploaded_at: now.toISOString(),
+    };
+    const result = await submitSolveAttempt({
+      db,
+      sessionId: s.sessionId,
+      submission: {
+        assessment: {
+          ...s.submission('').assessment,
+          group_evidence: [{ evidence, target: { scope: 'all_units' } }],
+        },
+      },
+    });
+    expect(result).toMatchObject({
+      status: 'review_required',
+      judge: { coarse_outcome: 'unsupported', score: null },
+      revealed_solution_md: null,
+    });
+    expect(result.mistake_id).toBeUndefined();
+    expect(await db.select().from(material_fsrs_state)).toHaveLength(0);
+    expect(await db.select().from(learning_record)).toHaveLength(0);
+    expect(await Tutor.getTutorQuestionId(db, s.sessionId)).toMatchObject({ status: 'active' });
+    expect(await db.select().from(assessment_submission)).toMatchObject([
+      { group_evidence: [{ evidence, target: { scope: 'all_units' } }] },
+    ]);
+    const manual = await submitSolveAttempt({
+      db,
+      sessionId: s.sessionId,
+      submission: {
+        self_report: true,
+        user_rating: 'hard',
+        assessment: {
+          ...s.submission('').assessment,
+          group_evidence: [{ evidence, target: { scope: 'all_units' } }],
+        },
+      },
+    });
+    expect(manual.status).toBe('effective');
+    expect(await db.select().from(material_fsrs_state)).toMatchObject([{ state: { reps: 1 } }]);
+    expect(await getQuestionTimeline(db, s.id)).toMatchObject([
+      {
+        outcome: 'unsupported',
+        assessment: {
+          original_evaluation_id: result.assessment?.candidate_id,
+          effective_evaluation_id: manual.assessment?.candidate_id,
+        },
+      },
+    ]);
+  });
+  it.each([
+    { correct: 2, score: 0.5, mistake: true },
+    { correct: 3, score: 0.75, mistake: false },
+  ])(
+    'preserves partial-credit mastery threshold at $score using four real scored units',
+    async ({ correct, score, mistake }) => {
+      const frozen = await seedFrozenCompositeSolveQuestion(db);
+      const { sessionId } = await startSolveSession({
+        db,
+        questionId: frozen.id,
+        issuanceId: frozen.issuanceId,
+      });
+      const key = `solve_${sessionId}`;
+      const result = await submitSolveAttempt({
+        db,
+        sessionId,
+        submission: {
+          assessment: {
+            issuance_id: frozen.issuanceId,
+            evaluation_group_id: key,
+            idempotency_key: key,
+            response_set: frozen.responseSet(correct),
+          },
+        },
+      });
+      expect(result.judge).toMatchObject({ coarse_outcome: 'partial', score });
+      expect(Boolean(result.mistake_id)).toBe(mistake);
+      expect(await db.select().from(learning_record)).toHaveLength(mistake ? 1 : 0);
+    },
+  );
+  it('rejects a submit for the wrong question', async () => {
+    const s = await seed();
+    await expect(
+      submitSolveAttempt({
+        db,
+        sessionId: s.sessionId,
+        submission: s.submission(),
+        expectedQuestionId: 'other',
+      }),
+    ).rejects.toMatchObject({ code: 'session_not_found' });
+  });
+  it('rejects changed group coordinates before creating a candidate', async () => {
+    const s = await seed();
+    const submission = s.submission();
+    submission.assessment.evaluation_group_id = 'other_group';
+    await expect(
+      submitSolveAttempt({ db, sessionId: s.sessionId, submission }),
+    ).rejects.toMatchObject({ code: 'coordinate_mismatch' });
+  });
+  it('rejects old flat-only submission on an unbound historical session', async () => {
+    const f = await seedFrozenSolveQuestion(db);
+    const s = await Tutor.startTutorSession(db, { questionId: f.id });
+    await expect(
+      submitSolveAttempt({
+        db,
+        sessionId: s.sessionId,
+        submission: { student_final_answer_text: 'a+b' },
+      }),
+    ).rejects.toMatchObject({ code: 'historical_unknown' });
+    expect(await db.select().from(learning_record)).toHaveLength(0);
+  });
+  it('rejects an empty request on a bound session without interpreting it as a wrong answer', async () => {
+    const s = await seed();
+    await expect(
+      submitSolveAttempt({ db, sessionId: s.sessionId, submission: {} }),
+    ).rejects.toMatchObject({ code: 'coordinate_mismatch' });
+    expect(await db.select().from(material_fsrs_state)).toHaveLength(0);
   });
 });

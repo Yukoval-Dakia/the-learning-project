@@ -80,6 +80,7 @@ import {
 // src/server/admin）。ui.pages 随 T4b（admin 四页 SPA，ui/ 目录）声明。
 export const observabilityCapability = defineCapability({
   name: 'observability',
+  events: { actions: ['correct'] },
   description:
     'AI 可观测性：runs 列表/时间线、cost 汇总、failure 聚类、subject registry ' +
     '只读视图、今日成本条（cost_ledger + tool_call_log）。',

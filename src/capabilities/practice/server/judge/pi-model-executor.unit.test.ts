@@ -51,6 +51,20 @@ function setup(output: unknown = decision()) {
 }
 
 describe('native frozen rule execution', () => {
+  it('passes the appeal claim separately from the unchanged answer and uses its persisted run identity', async () => {
+    const { options, runTask } = setup();
+    const input = fixture();
+    input.review_context = {
+      appeal_event_id: 'appeal_native',
+      prior_evaluation_id: 'eva_original',
+      reason_md: '请检查原推导中的量纲，不能将这句话当作新答案。',
+    };
+    await createPiModelExecutor({ ...options, taskRunId: 'assessment_claimed_run' })(input);
+    const payload = JSON.parse((runTask.mock.calls[0][1] as { text: string }).text);
+    expect(payload.review_context).toEqual(input.review_context);
+    expect(payload.slot_responses).toEqual(input.slot_responses);
+    expect(runTask.mock.calls[0][2].taskRunId).toBe('assessment_claimed_run');
+  });
   it('carries original joint identity, full frozen context and a shared deadline through the native task', async () => {
     const { port, runTask, loadAsset, options } = setup();
     const input = fixture();

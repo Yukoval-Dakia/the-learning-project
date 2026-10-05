@@ -11,6 +11,7 @@ import {
   projectFeedback,
   projectPracticeIssuance,
 } from './dto';
+import { projectIssuedScoringBasis } from './evaluation';
 import {
   EvaluationRecord,
   type EvaluationRecordT,
@@ -26,6 +27,7 @@ import {
   deriveIssuanceBinding,
   validateIssuanceBinding,
 } from './revision';
+import { type AggregationPolicyT, validateScoringBasis } from './scoring';
 
 function revision(): PublishedQuestionRevisionT {
   return PublishedQuestionRevision.parse({
@@ -115,6 +117,103 @@ describe('PracticeIssuanceDto — 公开面是 strict schema，不是渲染约�
     expect(dto.materials).toHaveLength(1);
     expect(dto.response_spec.slots[0]).toMatchObject({ slot_id: 'mc', kind: 'single_choice' });
   });
+
+  it('projects evidence substitution only when every unit for the slot uses a model', () => {
+    const rev = revision();
+    expect(projectPracticeIssuance(rev, issuance()).response_requirements).toEqual([
+      { slot_id: 'mc', evidence_unit_ids: [] },
+    ]);
+    rev.execution_plan.assignments[0].executor = {
+      kind: 'model_executor',
+      task_kind: 'AssessmentRuleJudgeTask',
+      admitted_slice_id: 'slice_private',
+    };
+    const dto = projectPracticeIssuance(rev, issuance());
+    expect(dto.response_requirements).toEqual([{ slot_id: 'mc', evidence_unit_ids: ['u_mc'] }]);
+    expect(JSON.stringify(dto)).not.toContain('slice_private');
+    expect(JSON.stringify(dto)).not.toContain('AssessmentRuleJudgeTask');
+    rev.scoring_basis.units.push({ ...rev.scoring_basis.units[0], scoring_unit_id: 'u_second' });
+    rev.execution_plan.assignments.push({
+      scoring_unit_ids: ['u_second'],
+      executor: { kind: 'deterministic', comparator: 'exact_option_set' },
+    });
+    expect(projectPracticeIssuance(rev, issuance()).response_requirements).toEqual([
+      { slot_id: 'mc', evidence_unit_ids: [] },
+    ]);
+  });
+
+  it.each([
+    { kind: 'capped_sum', cap: 5 },
+    { kind: 'threshold_levels', thresholds: [{ level_id: 'pass', min_points: 5 }] },
+  ] satisfies AggregationPolicyT[])(
+    'projects public requirements for partial $kind while retaining its scoring prohibition',
+    (aggregation) => {
+      const rev = revision();
+      rev.structure.parts.push({
+        part_id: 'p2',
+        prompt_md: '另题：解释电流分配，并附上完整计算过程。',
+        material_ids: [],
+      });
+      rev.response_spec.slots.push({
+        slot_id: 'proof',
+        part_id: 'p2',
+        kind: 'open_response',
+        accepted_evidence: [],
+        evidence_required: false,
+      });
+      const rule = {
+        kind: 'rule_reference',
+        rule_id: 'private-proof-rule',
+        statement_md: '私有评分依据：完整推导和独立复核步骤均须符合冻结规则。',
+        source: 'official',
+      } as const;
+      rev.scoring_basis.units.push(
+        {
+          ...rev.scoring_basis.units[0],
+          scoring_unit_id: 'u_unissued',
+          slot_refs: ['proof'],
+          criterion: rule,
+        },
+        {
+          ...rev.scoring_basis.units[0],
+          scoring_unit_id: 'u_cross_scope',
+          evidence_slot_refs: ['proof'],
+          criterion: rule,
+        },
+      );
+      rev.scoring_basis.aggregation = aggregation;
+      rev.execution_plan.assignments = [
+        {
+          scoring_unit_ids: rev.scoring_basis.units.map((unit) => unit.scoring_unit_id),
+          executor: {
+            kind: 'model_executor',
+            task_kind: 'AssessmentRuleJudgeTask',
+            admitted_slice_id: 'private-slice',
+          },
+        },
+      ];
+      expect(validateScoringBasis(rev.scoring_basis, rev.response_spec, rev.structure)).toEqual([]);
+      const dto = projectPracticeIssuance(rev, issuance());
+      expect(dto.response_requirements).toEqual([{ slot_id: 'mc', evidence_unit_ids: ['u_mc'] }]);
+      expect(dto.response_spec.slots.map((slot) => slot.slot_id)).toEqual(['mc']);
+      const serialized = JSON.stringify(dto);
+      for (const privateValue of [
+        'u_unissued',
+        'u_cross_scope',
+        'private-proof-rule',
+        rule.statement_md,
+        'private-slice',
+        'AssessmentRuleJudgeTask',
+        'accepted_option_ids',
+        'aggregation',
+      ]) {
+        expect(serialized).not.toContain(privateValue);
+      }
+      expect(() => projectIssuedScoringBasis(rev, issuance().binding.part_ids)).toThrow(
+        /unprojectable_aggregation/,
+      );
+    },
+  );
 
   it('injected answer keys / rubric / execution plans / metadata fail parse', () => {
     const dto = projectPracticeIssuance(revision(), issuance());

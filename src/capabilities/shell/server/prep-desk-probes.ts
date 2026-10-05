@@ -14,13 +14,22 @@
 // "we think you're wrong about X" primer.
 
 import { and, desc, eq, sql } from 'drizzle-orm';
+import { projectPracticeIssuance } from '@/core/schema/assessment';
 import {
   MAX_CONCURRENT_ACTIVE_PROBES,
   PROBE_QUESTION_SOURCE,
   PROBE_RESULT_ACTION,
 } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
-import { event, question } from '@/db/schema';
+import {
+  assessment_issuance,
+  event,
+  question,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
+
+import { issuanceRowToContract, revisionRowToContract } from '@/kernel/records/assessment-issuance';
 
 // Single-source the persisted probe contract from core without reaching into the
 // agency capability's server implementation.
@@ -46,13 +55,26 @@ export async function loadActiveProbes(db: Db): Promise<ActiveProbesResult> {
   const rows = await db
     .select({
       id: question.id,
-      prompt_md: question.prompt_md,
       knowledge_ids: question.knowledge_ids,
+      issuance: assessment_issuance,
+      revision: question_revision,
     })
     .from(question)
+    .innerJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
+    .innerJoin(
+      assessment_issuance,
+      eq(assessment_issuance.issuance_id, sql<string>`'iss_probe_' || ${question.id}`),
+    )
+    .innerJoin(
+      question_revision,
+      eq(question_revision.revision_id, assessment_issuance.revision_id),
+    )
     .where(
       and(
         eq(question.source, PROBE_QUESTION_SOURCE),
+        eq(question_group_lifecycle.scoring_admission_state, 'admitted'),
+        eq(question_group_lifecycle.suspended, false),
+        eq(question_group_lifecycle.withdrawn, false),
         sql`NOT EXISTS (
           SELECT 1 FROM ${event}
           WHERE ${event.subject_kind} = 'question'
@@ -86,10 +108,17 @@ export async function loadActiveProbes(db: Db): Promise<ActiveProbesResult> {
     )
     .orderBy(desc(question.created_at), desc(question.id))
     .limit(ACTIVE_PROBES_MAX);
-  const probes = rows.map((row) => ({
-    probe_question_id: row.id,
-    prompt_md: row.prompt_md ?? '',
-    knowledge_id: row.knowledge_ids?.[0] ?? null,
-  }));
+  const probes: ActiveProbe[] = [];
+  for (const row of rows) {
+    const frozen = projectPracticeIssuance(
+      revisionRowToContract(row.revision),
+      issuanceRowToContract(row.issuance),
+    );
+    probes.push({
+      probe_question_id: row.id,
+      prompt_md: frozen.faces.map((part) => part.prompt_md).join('\n\n'),
+      knowledge_id: row.knowledge_ids?.[0] ?? null,
+    });
+  }
   return { probes };
 }

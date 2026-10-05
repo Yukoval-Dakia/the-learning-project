@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。Linear归零持续推进，当前60项未完成；1047/#1563已合入main 448ffe42。当前单线1047评级结算与正式入口迁移；766恢复取舍与588 UI具体方案待回复，依赖不追新。
+> 更新于2026-10-05。YUK-1047 PR #1568：2164c42完整CI已绿；晚到paper反馈P1修复4fd2263d7，参考答案用冻结派生值，详情/列表独立按冻结策略隐藏buffered摘要。92DB/43unit/typecheck/lint/build/8audits通过，parent复验26DB通过。待新push的CI与17分钟窗；review预算用尽，不部署/付费。
 
 ## NOW
 
@@ -79,15 +79,22 @@
 - YUK-1047/#1562已交付main ad8dad75（20:18UTC）：94unit72DB/全部本地gate；初审1项内嵌图P1先RED后修，唯一验证3原探针5分支探针94unit通过；exact-head CI37230475644实际82迁移34浏览器/17分钟窗通过。八入口仍legacy，票In Progress。
 - YUK-1047/#1563已合入main448ffe42：281unit30DB/本地gates、独立初审2P1修复及唯一验证100unit+3DB/真实driver、exact-head CI37232936402（82迁移34浏览器）与17分钟窗通过。冻结原生pi执行、已知失败费与真实missing usage保真已交付；八入口仍legacy。
 
-- YUK-1047评级片：显式用户FSRS选择与自动theta独立；D16 assisted须显式选择。初审2P1已修；唯一验证原探针/61DB通过但发现更早练习晚到时遗漏保留FSRS段。作者正式回归先RED，再修独立FSRS段重放；两次晚到+再次重评保持4次复习与4条theta。最终94DB/typecheck/lint299/build/schema/partition通过，前107unit及其余8audits通过；审查预算已用完，不宣称第三审。准备推送exact-head CI。
+- YUK-1047/#1564评级前置已交付。当前正式迁移分支完成八入口冻结发题/原件/候选/激活、生产诊断与Probe、ingestion及native消费者；原始评分执行已移除。三项初审P1和两个本地gate已修，真实定位浏览器验收与唯一验证审通过。各批定向证据见formal-entry-migration与placement-repair；PR #1568/CI待收口，1047保持In Progress。
 
 ## NEXT
 
-1. 继续1047原生pi执行与正式入口迁移；八入口未完成前不标Done。766恢复LIGHT/FULL与588 UI具体预审待owner回复，1091已Done；不以单批合并为终点。
+1. YUK-1047推进PR #1568，完成exact-head CI和最后push后17分钟窗口，裁决已有P0/P1。独立review预算已用尽，不开第三审。源码迁移不代替生产部署或模型actual-output准入；其他主线不启动。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
 ## PARKED
+
+- YUK-1047非阻塞性能跟进：getCurrentFailureAttempts强制limit:null后解析全历史再slice。已在Linear/PR回复，未有实测超时或结果错误，按性能默认P2延期。后续保留DB/keyset分页边界、改判过滤增量补页，覆盖长前缀/同时间戳/每题limit和查询行数。
+
+
+- YUK-1047初审非阻塞P2：native failure读面混入未发子题KC；PfSolo快速退出取消未ack自动保存尾部。已归并Linear原票，未声称修复。
+
+- YUK-1047生产模型质量actual-output准入仍缺新证据；本轮禁止新增付费provider测试，未准入模型计划保持withheld。Coach最小修正与CSV已实施，不再是未批准/待实施项。
 
 - YUK-766本批只交付三表一致快照及恢复claim清理；pg-boss队列不在逻辑ZIP，enqueued effect不代表业务完成，下游队列恢复闭环仍在原票。LIGHT清库前拒绝不安全逻辑恢复/FULL执行回执与自动恢复的具体取舍已提交owner，待回复；未执行生产恢复。
 - YUK-1062基线完整catalog并非浏览器安全：Node crypto纯helper已在旧TaskSpecs闭包内。本批保留定义、修正说明，窄公开入口只保证不初始化应用DB，不承诺新增浏览器支持。

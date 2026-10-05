@@ -9,11 +9,18 @@
 // 依赖轻：db schema 行类型 + zod + drizzle 算子；`Db` 只作参数类型传入，不 import db client
 // 单例（保持本模块可被 api/ 与 jobs/ 双向复用而不牵入运行时连接）。
 
-import { eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { EvaluationRecord } from '@/core/schema/assessment';
+import type { NativeJudgePendingSubmitInputT } from '@/core/schema/event/judge-pending-events';
 import type { Db } from '@/db/client';
 import { event, type question } from '@/db/schema';
-import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
+import {
+  resolveVerdictForAttempt,
+  resolveVerdictsForNativeAttempts,
+} from '@/kernel/read-models/assessment-verdict';
+import { projectEvaluationToJudgeResult } from './judge/evaluation-authority';
+import { ratingFromCoarseOutcome } from './judge-rating';
 
 type QuestionRow = typeof question.$inferSelect;
 
@@ -25,7 +32,7 @@ type QuestionRow = typeof question.$inferSelect;
  * `api/` 与 `server/` 都不该反向依赖 `jobs/`。此文件本就是「job payload 契约 + 冻结/还原
  * helper」的家，类型跟着契约走。
  */
-export interface JudgeRunJobData {
+export interface LegacyJudgeRunJobData {
   /**
    * run handle + job_events business_id。**W2 submit 面**：= 该次作答 attempt/outcome
    * event id（deferred settlement 以它做 attemptEventId）。此「= attempt
@@ -62,6 +69,13 @@ export interface JudgeRunJobData {
     submitted_at: string;
   };
 }
+
+export interface NativeJudgeRunJobData {
+  run_id: string;
+  caller: 'native_assessment';
+  submit: NativeJudgePendingSubmitInputT;
+}
+export type JudgeRunJobData = LegacyJudgeRunJobData | NativeJudgeRunJobData;
 
 export const FrozenAbilityGlobalByKnowledgeIdSchema = z.record(z.string(), z.string().min(1));
 export type FrozenAbilityGlobalByKnowledgeId = z.infer<
@@ -192,6 +206,60 @@ export async function reconstructDoneFromDomainEvents(
 ): Promise<Record<string, unknown> | null> {
   const [attempt] = await db.select().from(event).where(eq(event.id, runId)).limit(1);
   if (!attempt) return null;
+  if (attempt.action === 'experimental:assessment_judge_resolution') {
+    const [anchor] = attempt.caused_by_event_id
+      ? await db.select().from(event).where(eq(event.id, attempt.caused_by_event_id))
+      : [];
+    const resolved = anchor
+      ? (await resolveVerdictsForNativeAttempts(db, [anchor])).get(anchor.id)
+      : null;
+    const effective = resolved?.effective;
+    const [activation] =
+      resolved && effective
+        ? await db
+            .select({ payload: event.payload })
+            .from(event)
+            .where(
+              and(
+                eq(event.action, 'experimental:assessment_activation'),
+                eq(event.subject_id, resolved.evaluation_group_id),
+                sql`${event.payload}->>'evaluation_id' = ${effective.evaluation_id}`,
+              ),
+            )
+            .orderBy(desc(event.created_at), desc(event.id))
+            .limit(1)
+        : [];
+    const explicitRating = activation?.payload.user_rating;
+    const currentRating =
+      explicitRating === 'again' || explicitRating === 'hard' || explicitRating === 'good'
+        ? explicitRating
+        : effective
+          ? ratingFromCoarseOutcome(effective.verdict.verdict)
+          : null;
+    const assessment = attempt.payload.assessment;
+    return {
+      ...attempt.payload,
+      ...(effective?.scoring_basis
+        ? {
+            ...projectEvaluationToJudgeResult(
+              EvaluationRecord.parse(effective.row),
+              effective.scoring_basis,
+            ),
+            status: 'effective',
+            final_rating: currentRating ?? undefined,
+          }
+        : { status: 'review_required', coarse_outcome: 'unsupported', score: null }),
+      ...(assessment && typeof assessment === 'object'
+        ? {
+            assessment: {
+              ...assessment,
+              original_evaluation_id: resolved?.original_evaluation_id ?? null,
+              effective_evaluation_id: effective?.evaluation_id ?? null,
+            },
+          }
+        : {}),
+    };
+  }
   const verdicts = await resolveVerdictForAttempt(db, runId);
   const judgeEvent = verdicts.effective?.row ?? null;
   const judgePayload = (judgeEvent?.payload ?? {}) as Record<string, unknown>;

@@ -1,3 +1,4 @@
+import { loadAssessmentLearningScopes } from './assessment-learning-scope';
 // YUK-1054 — 双轨裁决读模型（grounding §9–§10 read-model 切分）。
 //
 // 所有「某次作答/评估最终判了什么」的消费面共享这一个 resolver：
@@ -65,6 +66,7 @@ import {
   evaluation,
   evaluation_effective_head,
   event,
+  learning_session,
   question_revision,
 } from '@/db/schema';
 import {
@@ -430,6 +432,7 @@ export async function resolveVerdictForAttempt(
 // ============================================================================
 
 export interface EvaluationVerdict {
+  scoring_basis: ScoringBasisT | null;
   evaluation_id: string;
   /** evaluation.attempt（重试序号）。 */
   attempt: number;
@@ -506,15 +509,6 @@ export async function resolveVerdictsForGroups(
     .from(event)
     .where(eq(event.action, ASSESSMENT_SETTLEMENT_ACTION));
 
-  const headByGroup = new Map(heads.map((h) => [h.evaluation_group_id, h]));
-  const evalById = new Map(evalRows.map((r) => [r.evaluation_id, r]));
-  const evalsByGroup = new Map<string, EvaluationRow[]>();
-  for (const row of evalRows) {
-    const list = evalsByGroup.get(row.evaluation_group_id) ?? [];
-    list.push(row);
-    evalsByGroup.set(row.evaluation_group_id, list);
-  }
-
   // 冻结 revision + issuance：不能只用完整 revision 的分母。
   const revisionIds = [...new Set(submissions.map((s) => s.revision_id))];
   const revisionRows: Pick<
@@ -535,7 +529,6 @@ export async function resolveVerdictsForGroups(
       .where(inArray(question_revision.revision_id, chunk));
     revisionRows.push(...rows);
   }
-  const revisionById = new Map(revisionRows.map((r) => [r.revision_id, r]));
   const issuanceIds = [...new Set(submissions.map((s) => s.issuance_id))];
   const issuanceRows: (typeof assessment_issuance.$inferSelect)[] = [];
   for (let offset = 0; offset < issuanceIds.length; offset += QUERY_ID_CHUNK) {
@@ -551,6 +544,59 @@ export async function resolveVerdictsForGroups(
         )),
     );
   }
+  const activeActivationRows = await filterActiveRows(db, activationRows);
+  return projectGroupVerdicts({
+    groupIds: uniqueIds,
+    heads,
+    evaluations: evalRows,
+    submissions,
+    revisions: revisionRows,
+    issuances: issuanceRows,
+    activeActivations: activeActivationRows,
+    settlements: settlementRows,
+  });
+}
+
+/** Shared synchronous projection for live reads and exported database snapshots. */
+export function projectGroupVerdicts(input: {
+  groupIds: string[];
+  heads: (typeof evaluation_effective_head.$inferSelect)[];
+  evaluations: EvaluationRow[];
+  submissions: (typeof assessment_submission.$inferSelect)[];
+  revisions: Pick<
+    typeof question_revision.$inferSelect,
+    'revision_id' | 'integrity_digest' | 'structure' | 'response_spec' | 'scoring_basis'
+  >[];
+  issuances: (typeof assessment_issuance.$inferSelect)[];
+  activeActivations: Pick<EventRow, 'subject_id' | 'payload'>[];
+  settlements: Pick<EventRow, 'id' | 'created_at' | 'payload'>[];
+}): Map<string, GroupVerdict> {
+  const {
+    heads,
+    evaluations: evalRows,
+    submissions,
+    revisions: revisionRows,
+    issuances: issuanceRows,
+    activeActivations: activeActivationRows,
+    settlements: settlementRows,
+  } = input;
+  const uniqueIds = [...new Set(input.groupIds)];
+  const out = new Map<string, GroupVerdict>(
+    uniqueIds.map((id) => [
+      id,
+      { evaluation_group_id: id, effective: null, original: null, head: null },
+    ]),
+  );
+  const headByGroup = new Map(heads.map((h) => [h.evaluation_group_id, h]));
+  const evalById = new Map(evalRows.map((r) => [r.evaluation_id, r]));
+  const evalsByGroup = new Map<string, EvaluationRow[]>();
+  for (const row of evalRows) {
+    const list = evalsByGroup.get(row.evaluation_group_id) ?? [];
+    list.push(row);
+    evalsByGroup.set(row.evaluation_group_id, list);
+  }
+
+  const revisionById = new Map(revisionRows.map((r) => [r.revision_id, r]));
   const issuanceById = new Map(issuanceRows.map((r) => [r.issuance_id, r]));
   const basisForEvaluation = (row: EvaluationRow): ScoringBasisT | undefined => {
     const groupMembers = submissions.filter(
@@ -588,7 +634,7 @@ export async function resolveVerdictsForGroups(
 
   // original 轨：第一条 active activation 事件的 evaluation_id（retract 的
   // activation 收据不算「第一判生效」）。
-  const activeActivationRows = await filterActiveRows(db, activationRows);
+
   const firstActivationByGroup = new Map<string, string>();
   for (const row of activeActivationRows) {
     const p = (row.payload ?? {}) as Record<string, unknown>;
@@ -622,6 +668,7 @@ export async function resolveVerdictsForGroups(
     const basis = basisForEvaluation(row);
     return {
       evaluation_id: row.evaluation_id,
+      scoring_basis: basis ?? null,
       attempt: row.attempt,
       status: row.status,
       verdict: basis
@@ -680,4 +727,212 @@ export async function resolveVerdictForGroup(db: DbLike, groupId: string): Promi
       head: null,
     }
   );
+}
+
+/** Native participation anchors carry no verdict bit. Resolve their frozen
+ * coordinates before reading the group's currently selected evaluation. */
+export type NativeAttemptVerdict = GroupVerdict & {
+  knowledge_ids: string[];
+  issuance: typeof assessment_issuance.$inferSelect;
+  revision: typeof question_revision.$inferSelect;
+  submission: typeof assessment_submission.$inferSelect;
+  original_evaluation_id: string | null;
+};
+
+export async function resolveVerdictsForNativeAttempts(
+  db: DbLike,
+  rows: EventRow[],
+): Promise<Map<string, NativeAttemptVerdict>> {
+  const anchors = rows.filter(
+    (row) => row.action === 'experimental:assessment_attempt' && row.subject_kind === 'question',
+  );
+  const ids = [
+    ...new Set(
+      anchors.flatMap((row) =>
+        typeof row.payload.submission_id === 'string' ? [row.payload.submission_id] : [],
+      ),
+    ),
+  ];
+  const coordinates = [];
+  for (let offset = 0; offset < ids.length; offset += QUERY_ID_CHUNK) {
+    coordinates.push(
+      ...(await db
+        .select({
+          submission: assessment_submission,
+          issuance: assessment_issuance,
+          revision: question_revision,
+        })
+        .from(assessment_submission)
+        .innerJoin(
+          assessment_issuance,
+          eq(assessment_issuance.issuance_id, assessment_submission.issuance_id),
+        )
+        .innerJoin(
+          question_revision,
+          eq(question_revision.revision_id, assessment_submission.revision_id),
+        )
+        .where(
+          inArray(assessment_submission.submission_id, ids.slice(offset, offset + QUERY_ID_CHUNK)),
+        )),
+    );
+  }
+  const originalIds = [
+    ...new Set(
+      anchors.flatMap((row) =>
+        typeof row.payload.original_evaluation_id === 'string'
+          ? [row.payload.original_evaluation_id]
+          : [],
+      ),
+    ),
+  ];
+  const originals = new Map<string, { submission_id: string; evaluation_group_id: string }>();
+  for (let offset = 0; offset < originalIds.length; offset += QUERY_ID_CHUNK) {
+    const found = await db
+      .select({
+        evaluation_id: evaluation.evaluation_id,
+        submission_id: evaluation.submission_id,
+        evaluation_group_id: evaluation.evaluation_group_id,
+      })
+      .from(evaluation)
+      .where(inArray(evaluation.evaluation_id, originalIds.slice(offset, offset + QUERY_ID_CHUNK)));
+    for (const item of found) originals.set(item.evaluation_id, item);
+  }
+  // Queued anchors predate evaluation. Resolve the first actual candidate, never
+  // the first activation (a later self-report may be the first effective record).
+  const firstBySubmission = new Map<string, string>();
+  for (let offset = 0; offset < ids.length; offset += QUERY_ID_CHUNK) {
+    const found = await db
+      .select({
+        evaluation_id: evaluation.evaluation_id,
+        submission_id: evaluation.submission_id,
+        evaluation_group_id: evaluation.evaluation_group_id,
+      })
+      .from(evaluation)
+      .where(inArray(evaluation.submission_id, ids.slice(offset, offset + QUERY_ID_CHUNK)))
+      .orderBy(asc(evaluation.attempt), asc(evaluation.evaluation_id));
+    for (const item of found) {
+      originals.set(item.evaluation_id, item);
+      if (!firstBySubmission.has(item.submission_id))
+        firstBySubmission.set(item.submission_id, item.evaluation_id);
+    }
+  }
+  const learningScopes = await loadAssessmentLearningScopes(db, ids);
+  const coordinateById = new Map(
+    coordinates.map((value) => [value.submission.submission_id, value]),
+  );
+  const valid = anchors.flatMap((row) => {
+    const p = row.payload;
+    const coordinate =
+      typeof p.submission_id === 'string' ? coordinateById.get(p.submission_id) : undefined;
+    if (!coordinate) return [];
+    const { submission, issuance, revision } = coordinate;
+    if (
+      p.evaluation_group_id !== submission.evaluation_group_id ||
+      p.issuance_id !== submission.issuance_id ||
+      p.revision_id !== submission.revision_id ||
+      issuance.revision_id !== revision.revision_id ||
+      (row.subject_id !== revision.group_id && !issuance.part_ids.includes(row.subject_id))
+    )
+      return [];
+    const originalId =
+      typeof p.original_evaluation_id === 'string'
+        ? p.original_evaluation_id
+        : (firstBySubmission.get(submission.submission_id) ?? null);
+    const original = originalId ? originals.get(originalId) : undefined;
+    const originalEvaluationId =
+      original?.submission_id === submission.submission_id &&
+      original?.evaluation_group_id === submission.evaluation_group_id
+        ? originalId
+        : null;
+    return [
+      {
+        row,
+        submission,
+        issuance,
+        revision,
+        groupId: submission.evaluation_group_id,
+        originalEvaluationId,
+      },
+    ];
+  });
+  const groups = await resolveVerdictsForGroups(
+    db,
+    valid.map((entry) => entry.groupId),
+  );
+  const bufferedSessionIds = [
+    ...new Set(
+      anchors.flatMap((row) =>
+        row.payload.paper_feedback_policy === 'judge_now_show_later' && row.session_id
+          ? [row.session_id]
+          : [],
+      ),
+    ),
+  ];
+  const completedSessions = new Map<string, string>();
+  for (let offset = 0; offset < bufferedSessionIds.length; offset += QUERY_ID_CHUNK) {
+    const sessions = await db
+      .select({
+        id: learning_session.id,
+        status: learning_session.status,
+        started_at: learning_session.started_at,
+      })
+      .from(learning_session)
+      .where(
+        inArray(learning_session.id, bufferedSessionIds.slice(offset, offset + QUERY_ID_CHUNK)),
+      );
+    for (const session of sessions)
+      if (session.status === 'completed')
+        completedSessions.set(session.id, session.started_at.toISOString());
+  }
+  return new Map(
+    valid.map(({ row, groupId, submission, issuance, revision, originalEvaluationId }) => [
+      row.id,
+      {
+        ...(groups.get(groupId) ?? {
+          evaluation_group_id: groupId,
+          original: null,
+          effective: null,
+          head: null,
+        }),
+        submission,
+        issuance,
+        revision,
+        knowledge_ids:
+          learningScopes.get(submission.submission_id)?.group_id === revision.group_id
+            ? [
+                ...new Set(
+                  learningScopes
+                    .get(submission.submission_id)
+                    ?.questions.flatMap((q) => q.knowledge_ids) ?? [],
+                ),
+              ]
+            : [],
+        original_evaluation_id: originalEvaluationId,
+        ...(row.payload.paper_feedback_policy === 'judge_now_show_later' &&
+        (typeof row.payload.paper_started_at !== 'string' ||
+          completedSessions.get(row.session_id ?? '') !== row.payload.paper_started_at)
+          ? { original: null, effective: null }
+          : {}),
+      },
+    ]),
+  );
+}
+
+export function nativeAttemptOutcome(
+  group: GroupVerdict | undefined,
+): 'success' | 'failure' | 'partial' | 'pending' | 'unsupported' {
+  const selected = group?.effective;
+  if (!selected || selected.status === 'pending') return 'pending';
+  // Self-report owns a practice rating, never an inferred score.
+  if (selected.row.provenance?.source === 'self_report') return 'unsupported';
+  switch (selected.verdict.verdict) {
+    case 'correct':
+      return 'success';
+    case 'incorrect':
+      return 'failure';
+    case 'partial':
+      return 'partial';
+    default:
+      return 'unsupported';
+  }
 }

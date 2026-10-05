@@ -185,6 +185,17 @@ export function terminalJudgeRunResult(events: JudgeRunReplayEvent[]): unknown {
 export const JudgeRunTerminalResultSchema = z
   .object({
     attempt_event_id: z.string(),
+    status: z.enum(['effective', 'review_required']).optional(),
+    assessment: z
+      .object({
+        submission_id: z.string(),
+        evaluation_group_id: z.string(),
+        candidate_id: z.string(),
+        original_evaluation_id: z.string().nullable().optional(),
+        effective_evaluation_id: z.string().nullable().optional(),
+      })
+      .passthrough()
+      .optional(),
     judge_event_id: z.string().nullable().optional(),
     outcome: z.string().optional(),
     final_rating: z.string().optional(),

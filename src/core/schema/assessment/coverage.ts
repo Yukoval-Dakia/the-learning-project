@@ -113,7 +113,7 @@ export const CAPABILITY_COVERAGE_MATRIX: readonly ResponsePrimitiveCoverage[] = 
     deterministic_comparator: 'numeric_tolerance',
     manual_evidence_required: false,
     notes:
-      'numeric_key + numeric_tolerance；value=null 且 raw_input 非空 = unparseable_response 未决，不当空白计零（P1-4）。collectable=partial 同上。',
+      'numeric_key 支持 numeric_tolerance（原字面单位）与显式 numeric_unit_conversion（mathjs解释原文/换算，仅用发布容差，无固定部分分）。不可解析原文保持未决；collectable=partial 同上。',
   },
   {
     slot_kind: 'formula',

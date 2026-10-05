@@ -9,9 +9,10 @@
 // skip + warn (mirrors the legacy "cause already set" check). Single-owner write path
 // per ADR-0005 — never INSERT the event row directly; goes through writeEvent.
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { event as eventTable } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
@@ -37,6 +38,7 @@ import {
   recordAttributionPermanent,
   recordAttributionRetryable,
 } from './failure-learning-ledger';
+import { loadNativeFailureContext } from './failure-learning-native';
 import { listActiveMisconceptionsForKcs } from './knowledge-runtime';
 import { type PracticeTaskRunFn, practiceCostUsdToMicroUsd } from './task-runtime';
 
@@ -52,6 +54,7 @@ export interface RunAttributionAndWriteJudgeEventParams {
    * passes the attempt's referenced knowledge so the mastery view picks them up.
    */
   referencedKnowledgeIds?: string[];
+  nativeExpectation?: { evaluationGroupId: string; evaluationId: string };
 }
 
 /**
@@ -77,6 +80,7 @@ export interface RunAttributionAndWriteJudgeEventParams {
 export type AttributionOutcome =
   | { outcome: 'written' }
   | { outcome: 'skipped' }
+  | { outcome: 'superseded' }
   | { outcome: 'retryable'; error: unknown }
   | { outcome: 'permanent'; error: unknown };
 
@@ -274,49 +278,62 @@ export async function runAttributionAndWriteJudgeEvent(
     // undefined (attribution has no routed judge capability) — both remain
     // optional on JudgeOnEvent.payload. See docs/design/2026-06-04-u0-decisions.md D6.
     const profileVersion = profile.version;
-    await writeEvent(params.db, {
-      id: judgeId,
-      session_id: null,
-      actor_kind: 'agent',
-      actor_ref: 'attribution',
-      action: 'judge',
-      subject_kind: 'event',
-      subject_id: params.attemptEventId,
-      outcome: 'success',
-      payload: {
-        cause: {
-          primary_category: parsed.primary_category,
-          secondary_categories: parsed.secondary_categories,
-          analysis_md: parsed.analysis_md,
-          confidence: parsed.confidence,
-          meta_cause: parsed.meta_cause,
-          meta_cause_secondary: parsed.meta_cause_secondary,
-          metacog_flag: parsed.metacog_flag,
-          bloom_level: parsed.bloom_level,
-          self_corrected_on_hint: parsed.self_corrected_on_hint,
-          recurred_cross_item: parsed.recurred_cross_item,
+    const persisted = await params.db.transaction(async (tx) => {
+      if (params.nativeExpectation) {
+        await acquireLearningStateWriteLock(tx);
+        await tx.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${params.nativeExpectation.evaluationGroupId}))`,
+        );
+        const current = await loadNativeFailureContext(tx, params.attemptEventId);
+        if (!current || current.evaluationId !== params.nativeExpectation.evaluationId)
+          return false;
+      }
+      await writeEvent(tx, {
+        id: judgeId,
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'attribution',
+        action: 'judge',
+        subject_kind: 'event',
+        subject_id: params.attemptEventId,
+        outcome: 'success',
+        payload: {
+          cause: {
+            primary_category: parsed.primary_category,
+            secondary_categories: parsed.secondary_categories,
+            analysis_md: parsed.analysis_md,
+            confidence: parsed.confidence,
+            meta_cause: parsed.meta_cause,
+            meta_cause_secondary: parsed.meta_cause_secondary,
+            metacog_flag: parsed.metacog_flag,
+            bloom_level: parsed.bloom_level,
+            self_corrected_on_hint: parsed.self_corrected_on_hint,
+            recurred_cross_item: parsed.recurred_cross_item,
+          },
+          referenced_knowledge_ids: params.referencedKnowledgeIds ?? [],
+          profile_version: profileVersion,
+          // Round-6 fix #1 (CR 3359820520): inherit paper placeholder's visibility
+          // gate and verdict fields so the newest-wins read layer does not treat the
+          // absence of visible_to_user as "visible" and prematurely expose buffered
+          // feedback. coarse_outcome/score are preserved so the paper-detail and
+          // practice-list summaries remain accurate after attribution runs.
+          // attribution_pending is intentionally NOT inherited (attribution is done).
+          ...(inheritedVisibility?.visible_to_user !== undefined
+            ? { visible_to_user: inheritedVisibility.visible_to_user }
+            : {}),
+          ...(inheritedVisibility?.coarse_outcome !== undefined
+            ? { coarse_outcome: inheritedVisibility.coarse_outcome }
+            : {}),
+          ...(inheritedVisibility?.score !== undefined ? { score: inheritedVisibility.score } : {}),
         },
-        referenced_knowledge_ids: params.referencedKnowledgeIds ?? [],
-        profile_version: profileVersion,
-        // Round-6 fix #1 (CR 3359820520): inherit paper placeholder's visibility
-        // gate and verdict fields so the newest-wins read layer does not treat the
-        // absence of visible_to_user as "visible" and prematurely expose buffered
-        // feedback. coarse_outcome/score are preserved so the paper-detail and
-        // practice-list summaries remain accurate after attribution runs.
-        // attribution_pending is intentionally NOT inherited (attribution is done).
-        ...(inheritedVisibility?.visible_to_user !== undefined
-          ? { visible_to_user: inheritedVisibility.visible_to_user }
-          : {}),
-        ...(inheritedVisibility?.coarse_outcome !== undefined
-          ? { coarse_outcome: inheritedVisibility.coarse_outcome }
-          : {}),
-        ...(inheritedVisibility?.score !== undefined ? { score: inheritedVisibility.score } : {}),
-      },
-      caused_by_event_id: params.attemptEventId,
-      task_run_id: result.task_run_id ?? null,
-      cost_micro_usd: practiceCostUsdToMicroUsd(result.cost_usd),
-      created_at: new Date(),
+        caused_by_event_id: params.attemptEventId,
+        task_run_id: result.task_run_id ?? null,
+        cost_micro_usd: practiceCostUsdToMicroUsd(result.cost_usd),
+        created_at: new Date(),
+      });
+      return true;
     });
+    if (!persisted) return { outcome: 'superseded' };
   } catch (err) {
     console.error(
       'runAttributionAndWriteJudgeEvent: retryable write failure (attempt unaffected)',

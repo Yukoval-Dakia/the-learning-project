@@ -60,6 +60,16 @@ export const PracticeIssuanceDto = z.strictObject({
   faces: z.array(PublicQuestionFace).min(1),
   materials: z.array(PublicMaterialView),
   response_spec: ResponseSpec,
+  /** Public input requirements, without executor descriptors or marking criteria. */
+  response_requirements: z
+    .array(
+      z.object({
+        slot_id: z.string().min(1),
+        /** Evidence must cover every listed unit to substitute for this slot's response. */
+        evidence_unit_ids: z.array(z.string().min(1)),
+      }),
+    )
+    .optional(),
 });
 export type PracticeIssuanceDtoT = z.infer<typeof PracticeIssuanceDto>;
 
@@ -133,6 +143,13 @@ export function projectPracticeIssuance(
       digestByMaterial.get(material.material_id) === material.asset.digest,
   );
   const publicMaterialIds = new Set(publicMaterials.map((material) => material.material_id));
+  const answerableSlotIds = new Set(
+    projectedSlots.filter((slot) => slot.kind !== 'table').map((slot) => slot.slot_id),
+  );
+  // Public input requirements need unit scope, not an independently scoreable aggregation.
+  const scopedUnits = revision.scoring_basis.units.filter((unit) =>
+    [...unit.slot_refs, ...unit.evidence_slot_refs].every((id) => answerableSlotIds.has(id)),
+  );
   return PracticeIssuanceDto.parse({
     issuance_id: issuance.issuance_id,
     revision_id: revision.revision_id,
@@ -156,6 +173,26 @@ export function projectPracticeIssuance(
     response_spec: {
       slots: projectedSlots,
     },
+    response_requirements: projectedSlots
+      .filter((slot) => slot.kind !== 'table')
+      .map((slot) => {
+        const units = scopedUnits.filter((unit) =>
+          [...unit.slot_refs, ...unit.evidence_slot_refs].includes(slot.slot_id),
+        );
+        const evidenceMaySubstitute =
+          units.length > 0 &&
+          units.every((unit) =>
+            revision.execution_plan.assignments.some(
+              (assignment) =>
+                assignment.scoring_unit_ids.includes(unit.scoring_unit_id) &&
+                assignment.executor.kind === 'model_executor',
+            ),
+          );
+        return {
+          slot_id: slot.slot_id,
+          evidence_unit_ids: evidenceMaySubstitute ? units.map((unit) => unit.scoring_unit_id) : [],
+        };
+      }),
   });
 }
 

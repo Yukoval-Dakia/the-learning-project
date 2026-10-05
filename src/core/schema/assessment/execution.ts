@@ -27,6 +27,7 @@ export const DeterministicComparatorId = z.enum([
   'exact_option_set',
   'exact_text',
   'numeric_tolerance',
+  'numeric_unit_conversion',
   'exact_matching_pairs',
 ]);
 export type DeterministicComparatorIdT = z.infer<typeof DeterministicComparatorId>;
@@ -38,6 +39,7 @@ export const COMPARATOR_CRITERION: Readonly<
   exact_option_set: 'option_set_key',
   exact_text: 'text_key',
   numeric_tolerance: 'numeric_key',
+  numeric_unit_conversion: 'numeric_key',
   exact_matching_pairs: 'matching_pairs_key',
 };
 
@@ -135,6 +137,17 @@ export function validateExecutionPlan(
         issues.push({
           code: 'comparator_criterion_mismatch',
           detail: `comparator '${assignment.executor.comparator}' cannot judge unit '${unitId}' of criterion '${unit.criterion.kind}'`,
+        });
+      }
+      if (
+        assignment.executor.kind === 'deterministic' &&
+        assignment.executor.comparator === 'numeric_unit_conversion' &&
+        unit.criterion.kind === 'numeric_key' &&
+        !unit.criterion.expected_unit
+      ) {
+        issues.push({
+          code: 'comparator_criterion_mismatch',
+          detail: `numeric unit conversion requires an explicit reference unit for '${unitId}'`,
         });
       }
     }
