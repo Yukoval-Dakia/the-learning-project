@@ -1,3 +1,10 @@
+# Current handoff — 2026-10-05 03:18 UTC
+
+Owner最新要求：尽快停在干净位置，handoff；覆盖此前/goal不要停止。本轮结束后不要自主继续。
+唯一接手入口：docs/planning/2026-10-05-yuk1047-handoff.md。工作树/workspace/tlp-assessment-entries，分支fix/yuk-1047-formal-entries；本地未发布，主仓库main/work仍6e5d93ac，不能从主仓库误判实现丢失。两份最后测试迁移纳入handoff提交；旧review-settlement writer尚未删除，ValidatedSubmit仍live。YUK-1047仍In Progress，不标Done。
+
+以下为历史检查点，旧“继续/不要停止”不覆盖上述owner最新指令。
+
 # Current handoff — 2026-10-04
 1120/#1557 merged2026-10-04T17:46:45Z main d8e57a805e69e21ffb3fe26bad2bec42acce12e0. 76unit50DB/localgates/independent61unit50DB/exactCI37220574124/17minwindow done. CI82migration34browser actually ran.1120Done,61open after original1047reopened. GitHub CLI401 this turn; connector works, used expected-head squash. git fetch works.
 1047/#1558 merged2026-10-04 18:12UTC main6de5323959f36c2e0a752787d0684b46a9ea269f. 30unit/localgates/independent30unit+2CLI/exactCI37222377773/17minwindow done. CI82migration34browser actually ran. Bounded source evidence still8legacycalls1executor;1047InProgress.

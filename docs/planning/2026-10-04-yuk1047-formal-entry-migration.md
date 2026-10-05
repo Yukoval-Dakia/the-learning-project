@@ -369,3 +369,9 @@ full evidence target editing/media acceptance and complete frozen teaching input
 - 限流复核发现真实接线bug，原断言先RED实际200：checkRateLimit在认领后抛出，被封为不可重试pending。现recorded executor在锁内、写claim前做本地准入；纯core识别明确未启动拒绝，不封评分record；service保留原ApiError 429与Retry-After。原submission已存，稍后同原件重试可执行；已封存candidate重试不再耗token。调用已开始/结果失踪仍保守held，绝不放宽自动重付。
 - 139distinctDB（最终128+后台11）、66评估core unit、typecheck、changedBiome最终零error/warning、build与边界446通过。新增限流测试通过真实formal executor，仅pi实际driver替换离线返回；无真实付费。类型检查曾发现fixture points可null，改为明确拒绝非points fixture，不填伪零分。
 - 下一步迁移只剩测试引用的review-settlement及late-arrival套件后删除旧writer/types，继续probe/ingestion/诊断producer和消费者。仍无PR/push/review/CI/生产，不在检查点停止。
+
+## 2026-10-05 03:18 UTC — owner要求停止并handoff
+
+- 收尾最后两套旧settlement/late-arrival测试到native fixture；23DB、typecheck、两文件Biome与diff check通过。仅测试/文档改变，沿用上一实现提交build结果，不声称重跑。
+- 旧review-settlement writer与JudgedSubmit尚未删除，已全仓确认只剩定义/内部类型引用；ValidatedSubmit仍live，不能一起删。生产诊断/probe/ingestion/消费者继续留1047未完成。
+- 完整接手入口：`2026-10-05-yuk1047-handoff.md`。本地提交后停下；无PR/push/review/CI/生产/付费。1047维持In Progress，不新增重复票。

@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-04。Linear归零持续推进，当前60项未完成；1047/#1564已合入main 6e5d93ac。当前单线1047正式入口迁移；766恢复取舍与588 UI具体方案待回复，依赖不追新。
+> 更新于2026-10-05。Owner要求尽快停在干净位置并handoff；1047正式入口迁移暂停于本地未发布分支，八入口未完成，仍In Progress。最后统计60项未完成（本次未重扫）；main 6e5d93ac。接手入口：docs/planning/2026-10-05-yuk1047-handoff.md；依赖不追新。
 
 ## NOW
 
@@ -83,7 +83,7 @@
 
 ## NEXT
 
-1. 继续1047原生pi执行与正式入口迁移；八入口未完成前不标Done。766恢复LIGHT/FULL与588 UI具体预审待owner回复，1091已Done；不以单批合并为终点。
+1. 等owner恢复后从handoff继续1047原生pi与正式入口迁移；先删除已无调用的旧review-settlement writer及仅供它使用的JudgedSubmit，保留live ValidatedSubmit。八入口未完成前不标Done。766恢复LIGHT/FULL与588 UI具体预审待owner回复，1091已Done；不以单批合并为终点。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
