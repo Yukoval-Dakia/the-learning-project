@@ -21,18 +21,24 @@ export async function handleInterventionDiagnosticJudgeDelivery(
 ): Promise<EventSubscriptionOutcome> {
   const source = await getEventById(db, delivery.sourceEventId);
   if (!source) throw new Error(`judge event '${delivery.sourceEventId}' was not found`);
-  if (source.action === 'experimental:assessment_activation') {
-    const submissionId = source.payload.submission_id;
-    if (source.subject_kind !== 'evaluation_group' || typeof submissionId !== 'string')
-      return { status: 'skipped', reason: 'native activation coordinates unavailable' };
-    const native = await recordNativeInterventionDiagnosticReview(
-      db,
-      `evt_assessment_${submissionId}`,
-    );
+  if (
+    source.action === 'experimental:assessment_activation' ||
+    (source.action === 'correct' && source.subject_kind === 'event')
+  ) {
+    let attemptId: string;
+    if (source.action === 'correct') {
+      attemptId = source.subject_id;
+    } else {
+      const submissionId = 'submission_id' in source.payload ? source.payload.submission_id : null;
+      if (source.subject_kind !== 'evaluation_group' || typeof submissionId !== 'string')
+        return { status: 'skipped', reason: 'native activation coordinates unavailable' };
+      attemptId = `evt_assessment_${submissionId}`;
+    }
+    const native = await recordNativeInterventionDiagnosticReview(db, attemptId);
     if (!native)
       return {
         status: 'skipped',
-        reason: 'diagnostic has no current trusted frozen model verdict',
+        reason: 'native diagnostic coordinates or effective state unavailable',
       };
     const { result, verdictEventId } = native;
     if (result.status === 'skipped') return { status: 'skipped', reason: result.reason };

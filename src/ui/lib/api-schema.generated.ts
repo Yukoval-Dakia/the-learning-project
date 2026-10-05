@@ -27810,20 +27810,20 @@ export interface operations {
                         committed_attempt?: {
                             judge: {
                                 /** @enum {string} */
-                                coarse_outcome: "correct" | "partial" | "incorrect";
+                                coarse_outcome: "correct" | "partial" | "incorrect" | "unsupported";
                                 confidence: number;
                                 evaluation_id?: string;
                                 feedback_md: string;
                                 judge_event_id: string | null;
                                 /** @enum {string} */
                                 route: "multimodal_direct" | "evaluate_submission";
-                                /** @enum {string} */
-                                suggested_rating: "again" | "hard" | "good";
+                                /** @enum {string|null} */
+                                suggested_rating: "again" | "hard" | "good" | null;
                             };
                             review_event: {
                                 id: string;
-                                /** @enum {string} */
-                                rating: "again" | "hard" | "good";
+                                /** @enum {string|null} */
+                                rating: "again" | "hard" | "good" | null;
                             };
                         } | null;
                         computed_at_sec: number;

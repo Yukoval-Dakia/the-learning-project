@@ -336,3 +336,11 @@ full evidence target editing/media acceptance and complete frozen teaching input
 - 为保持锁序，干预activate/review/reconcile先取既有全局learning锁，再取干预锁。把原有无表SQL锁实现移到db/learning-state-lock.ts，server入口仅重导出同一实现，Agency直接消费db基础设施；没有复制锁namespace或隐藏server依赖。曾尝试新增server import的审计不通过，已收敛，baseline保持446/0/48不抬高。
 - 128 distinct DB + 最后锁模块55DB、84 distinct unit（UI恢复/manifest/组合）、typecheck、changedBiome（零error/12warning）、build、API client/Postman生成和边界审计通过。全部模型均离线fixture；这不等于生产诊断producer已发布或模型质量准入通过。
 - 仍需：生产诊断发题契约、native head转为manual/assisted/unsupported时撤销旧干预通过判定的显式未决态；probe签名/发题、ingestion先持久化发布、旧solo主suite及归因消费者。此后继续同一1047主线；无PR/push/review/CI/生产/付费。
+
+
+## 2026-10-05 01:44 UTC — 诊断结论失效与原答更正（未发布）
+
+- 原生当前评估变为manual/assisted/unsupported时，显式held撤销旧通过/失败结论；干预outcome清空，可信评估可恢复。原始作答、暴露时间、后续复查日期与一次性卡退休状态保留；详情刷新返回原答及unsupported/null评级，不丢原件。core与真实aggregate回归先RED后修。
+- 原答mark_wrong/retract/restore通过统一correct事件联动，订阅升v4，observability登记实际已有correct写面所有权。读取当前head和原答更正状态在learning锁→correction锁→干预锁内；更正事件ID成为held依据，旧激活/更正迟到或重复不覆盖当前状态。恢复可复用原activation，aggregate更新时间使用当前消费时间，不能倒退。
+- 真实原生提交/申诉/手动改判/受帮助重评/可信恢复/原答更正组合覆盖，65DB与22组合/schema unit通过；此前held阶段25unit通过。typecheck、changedBiome（零error/8warning）、build、API生成、Postman及边界446/0/48通过，无baseline提高。
+- 仍未发布，无PR/push/review/CI/生产或付费调用。生产诊断发布准入、probe签名/发题、ingestion、旧solo suite与其余消费者仍在1047；继续修冻结讲解上下文遗漏原生选项/配对/布局。

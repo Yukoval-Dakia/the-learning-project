@@ -35,8 +35,8 @@ describe('agency event subscriptions', () => {
     expect(
       handlers.find((handler) => handler.id === 'agency.intervention-diagnostic-review-settlement'),
     ).toMatchObject({
-      version: 3,
-      actions: ['judge', 'experimental:assessment_activation'],
+      version: 4,
+      actions: ['judge', 'experimental:assessment_activation', 'correct'],
     });
   });
 });

@@ -61,9 +61,9 @@ describe('intervention settlement policy', () => {
       activatedAt,
     });
     const withStatuses = (
-      immediate: 'passed' | 'failed',
-      delayed: 'passed' | 'failed',
-      transfer: 'passed' | 'failed',
+      immediate: 'passed' | 'failed' | 'held',
+      delayed: 'passed' | 'failed' | 'held',
+      transfer: 'passed' | 'failed' | 'held',
     ) => ({
       ...base,
       diagnostics: {
@@ -73,6 +73,9 @@ describe('intervention settlement policy', () => {
       },
     });
 
+    expect(interventionOutcomeFromSettlement(withStatuses('held', 'passed', 'passed'))).toBeNull();
+    expect(interventionOutcomeFromSettlement(withStatuses('passed', 'held', 'passed'))).toBeNull();
+    expect(interventionOutcomeFromSettlement(withStatuses('passed', 'failed', 'held'))).toBeNull();
     expect(interventionOutcomeFromSettlement(base)).toBeNull();
     expect(interventionOutcomeFromSettlement(withStatuses('passed', 'passed', 'passed'))).toBe(
       'effective',

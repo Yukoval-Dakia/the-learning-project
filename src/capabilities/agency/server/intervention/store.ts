@@ -553,10 +553,13 @@ export type RecordInterventionDiagnosticReviewResult =
  * as native activation. A delayed delivery cannot overwrite a newer verdict. */
 export async function recordNativeInterventionDiagnosticReview(db: Db, attemptId: string) {
   return withLearningStateLock(db, async (tx) => {
-    const { loadNativeInterventionDiagnosticVerdict } = await import(
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionsGlobalLockKey()}, 0))`,
+    );
+    const { loadNativeInterventionDiagnosticState } = await import(
       '@/capabilities/practice/public'
     );
-    const native = await loadNativeInterventionDiagnosticVerdict(tx, attemptId);
+    const native = await loadNativeInterventionDiagnosticState(tx, attemptId);
     if (!native) return null;
     const result = await recordInterventionDiagnosticReview(tx, {
       interventionId: native.metadata.intervention_id,
@@ -564,12 +567,13 @@ export async function recordNativeInterventionDiagnosticReview(db: Db, attemptId
       diagnosticKind: native.metadata.diagnostic_kind,
       questionId: native.review.subject_id,
       reviewEventId: native.review.id,
-      verdictEventId: native.activation.id,
-      passed: native.effective.verdict.verdict === 'correct',
+      verdictEventId: native.verdictEvent.id,
+      passed: native.trusted ? native.effective.verdict.verdict === 'correct' : null,
       reviewedAt: native.review.created_at,
-      now: native.activation.created_at,
+      // A restore can reuse an older activation; aggregate update time must not move backwards.
+      now: new Date(),
     });
-    return { result, verdictEventId: native.activation.id };
+    return { result, verdictEventId: native.verdictEvent.id };
   });
 }
 
@@ -582,7 +586,7 @@ export async function recordInterventionDiagnosticReview(
     questionId: string;
     reviewEventId: string;
     verdictEventId: string;
-    passed: boolean;
+    passed: boolean | null;
     reviewedAt: Date;
     now?: Date;
   },
@@ -634,7 +638,7 @@ export async function recordInterventionDiagnosticReview(
         ...current.settlement.diagnostics,
         [input.diagnosticKind]: {
           ...diagnostic,
-          status: input.passed ? 'passed' : 'failed',
+          status: input.passed === null ? 'held' : input.passed ? 'passed' : 'failed',
           review_event_id: diagnostic.review_event_id ?? input.reviewEventId,
           verdict_event_id: input.verdictEventId,
           completed_at: diagnostic.completed_at ?? input.reviewedAt.toISOString(),

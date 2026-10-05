@@ -214,7 +214,7 @@ export type InterventionDiagnosticQuestionMetadataT = z.infer<
   typeof InterventionDiagnosticQuestionMetadata
 >;
 
-export const InterventionDiagnosticStatus = z.enum(['scheduled', 'passed', 'failed']);
+export const InterventionDiagnosticStatus = z.enum(['scheduled', 'passed', 'failed', 'held']);
 export type InterventionDiagnosticStatusT = z.infer<typeof InterventionDiagnosticStatus>;
 
 const InterventionScheduledDiagnostic = z
@@ -342,7 +342,8 @@ export function interventionOutcomeFromSettlement(
   settlement: InterventionSettlementT,
 ): InterventionOutcomeT | null {
   const diagnostics = Object.values(settlement.diagnostics);
-  if (diagnostics.some((entry) => entry.status === 'scheduled')) return null;
+  if (diagnostics.some((entry) => entry.status === 'scheduled' || entry.status === 'held'))
+    return null;
   if (
     settlement.diagnostics.immediate.status === 'passed' &&
     settlement.diagnostics.delayed.status === 'passed' &&

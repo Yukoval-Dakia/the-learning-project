@@ -238,16 +238,16 @@ export const QuestionDetailResponseSchema = z
         review_event: z
           .object({
             id: z.string(),
-            rating: z.enum(['again', 'hard', 'good']),
+            rating: z.enum(['again', 'hard', 'good']).nullable(),
           })
           .strict(),
         judge: z
           .object({
             route: z.enum(['multimodal_direct', 'evaluate_submission']),
-            coarse_outcome: z.enum(['correct', 'partial', 'incorrect']),
+            coarse_outcome: z.enum(['correct', 'partial', 'incorrect', 'unsupported']),
             confidence: z.number().min(0).max(1),
             feedback_md: z.string(),
-            suggested_rating: z.enum(['again', 'hard', 'good']),
+            suggested_rating: z.enum(['again', 'hard', 'good']).nullable(),
             judge_event_id: z.string().nullable(),
             evaluation_id: z.string().optional(),
           })

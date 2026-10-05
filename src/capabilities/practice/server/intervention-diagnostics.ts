@@ -170,24 +170,22 @@ export async function loadLatestTrustedInterventionDiagnosticVerdict(
   return null;
 }
 
-/** Immutable original metadata plus the currently effective native model verdict. */
-export async function loadNativeInterventionDiagnosticVerdict(db: Db | Tx, attemptId: string) {
+/** Immutable original metadata and current head, including a non-diagnostic replacement. */
+export async function loadNativeInterventionDiagnosticState(db: Db | Tx, attemptId: string) {
   const review = await getEventById(db, attemptId);
-  if (!review || review.correction_status.state !== 'active') return null;
+  if (!review) return null;
   const [anchor] = await db.select().from(event).where(eq(event.id, attemptId));
   if (!anchor) return null;
   const resolved = (await resolveVerdictsForNativeAttempts(db, [anchor])).get(attemptId);
   const effective = resolved?.effective;
-  if (
-    !resolved ||
-    !effective ||
-    effective.status !== 'completed' ||
-    effective.row.provenance?.source !== 'automatic' ||
-    effective.row.provenance.assisted !== false ||
-    effective.row.run_refs.length === 0 ||
-    effective.verdict.verdict === 'unsupported'
-  )
-    return null;
+  if (!resolved || !effective) return null;
+  const trusted =
+    review.correction_status.state === 'active' &&
+    effective.status === 'completed' &&
+    effective.row.provenance?.source === 'automatic' &&
+    effective.row.provenance.assisted === false &&
+    effective.row.run_refs.length > 0 &&
+    effective.verdict.verdict !== 'unsupported';
   const [original] = await db
     .select({ payload: event.payload })
     .from(event)
@@ -239,20 +237,38 @@ export async function loadNativeInterventionDiagnosticVerdict(db: Db | Tx, attem
     activation.payload.submission_id !== resolved.submission.submission_id
   )
     return null;
-  return { review, metadata: frozenQuestion.intervention_diagnostic, effective, activation };
+  // Invalidating the original changes the aggregate even if its evaluation head did not move.
+  const verdictEvent =
+    review.correction_status.state === 'active'
+      ? activation
+      : await getEventById(db, review.correction_status.correction_event_id);
+  if (!verdictEvent) return null;
+  return {
+    review,
+    metadata: frozenQuestion.intervention_diagnostic,
+    effective,
+    activation,
+    verdictEvent,
+    trusted,
+  };
+}
+
+export async function loadNativeInterventionDiagnosticVerdict(db: Db | Tx, attemptId: string) {
+  const state = await loadNativeInterventionDiagnosticState(db, attemptId);
+  return state?.trusted ? state : null;
 }
 
 export interface CommittedInterventionDiagnosticAttempt {
   review_event: {
     id: string;
-    rating: 'again' | 'hard' | 'good';
+    rating: 'again' | 'hard' | 'good' | null;
   };
   judge: {
     route: 'multimodal_direct' | 'evaluate_submission';
-    coarse_outcome: 'correct' | 'partial' | 'incorrect';
+    coarse_outcome: 'correct' | 'partial' | 'incorrect' | 'unsupported';
     confidence: number;
     feedback_md: string;
-    suggested_rating: 'again' | 'hard' | 'good';
+    suggested_rating: 'again' | 'hard' | 'good' | null;
     judge_event_id: string | null;
     evaluation_id?: string;
   };
@@ -281,11 +297,17 @@ export async function loadCommittedInterventionDiagnosticAttempt(
     .orderBy(desc(event.created_at), desc(event.id))
     .limit(50);
   for (const attempt of nativeAttempts) {
-    const native = await loadNativeInterventionDiagnosticVerdict(db, attempt.id);
+    const native = await loadNativeInterventionDiagnosticState(db, attempt.id);
     if (!native) continue;
-    const verdict = native.effective.verdict.verdict;
-    if (verdict === 'unsupported') continue;
-    const rating = verdict === 'correct' ? 'good' : verdict === 'partial' ? 'hard' : 'again';
+    const verdict = native.trusted ? native.effective.verdict.verdict : 'unsupported';
+    const rating =
+      verdict === 'unsupported'
+        ? null
+        : verdict === 'correct'
+          ? 'good'
+          : verdict === 'partial'
+            ? 'hard'
+            : 'again';
     const units = native.effective.row.unit_results.filter((unit) => unit.status === 'scored');
     return {
       review_event: { id: attempt.id, rating },
@@ -293,9 +315,9 @@ export async function loadCommittedInterventionDiagnosticAttempt(
         route: 'evaluate_submission',
         coarse_outcome: verdict,
         confidence: 0, // Native candidate records do not assert model confidence.
-        feedback_md: units
-          .flatMap((unit) => (unit.feedback_md ? [unit.feedback_md] : []))
-          .join('\n\n'),
+        feedback_md: native.trusted
+          ? units.flatMap((unit) => (unit.feedback_md ? [unit.feedback_md] : [])).join('\n\n')
+          : '本次作答已保存，当前评估尚不能用于诊断结论，等待复核。',
         suggested_rating: rating,
         judge_event_id: null,
         evaluation_id: native.effective.evaluation_id,

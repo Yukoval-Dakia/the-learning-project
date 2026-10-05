@@ -1,5 +1,7 @@
 import { and, count, eq, inArray, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { GET as getDiagnosticDetail } from '@/capabilities/practice/api/question-detail';
+import { QuestionDetailResponseSchema } from '@/capabilities/practice/api/question-solve-contracts';
 import { handleRejudge } from '@/capabilities/practice/jobs/rejudge';
 import {
   INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS,
@@ -14,6 +16,7 @@ import * as evaluationService from '@/capabilities/practice/server/judge/evaluat
 import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
 import { getTaskSystemPrompt } from '@/capabilities/task-registry';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
+import { newId } from '@/core/ids';
 import { PEDAGOGY_METHOD_LIBRARY } from '@/core/pedagogy';
 import type { ModelExecutorRequest, ModelUnitOutcomeT } from '@/core/schema/assessment';
 import { PROBE_QUESTION_KIND, PROBE_QUESTION_SOURCE } from '@/core/schema/conjecture';
@@ -28,6 +31,7 @@ import {
 } from '@/core/schema/intervention';
 import {
   ai_task_runs,
+  evaluation_effective_head,
   event,
   intervention,
   job_events,
@@ -1887,7 +1891,7 @@ describe('YUK-791 intervention preparation closed loop', () => {
     const deliver = (id: string) =>
       handleInterventionDiagnosticJudgeDelivery(db, {
         subscriberId: 'agency.intervention-diagnostic-review-settlement',
-        subscriberVersion: 3,
+        subscriberVersion: 4,
         deliverySeq: id,
         sourceEventId: id,
       });
@@ -1937,6 +1941,166 @@ describe('YUK-791 intervention preparation closed loop', () => {
       detail: { idempotent: true, verdict_event_id: latest.id },
     });
     expect(execute).toHaveBeenCalledTimes(2);
+    const readHead = async () =>
+      (
+        await db
+          .select()
+          .from(evaluation_effective_head)
+          .where(
+            eq(
+              evaluation_effective_head.evaluation_group_id,
+              committed.submission.evaluation_group_id,
+            ),
+          )
+      )[0];
+    const current = await readHead();
+    const manual = await evaluationService.evaluateSubmission(db, {
+      submission_id: committed.submission.submission_id,
+      evaluation_group_id: committed.submission.evaluation_group_id,
+      evaluation_key: 'diagnostic-owner-self-report',
+      mode: 'manual_assert',
+      provenance: { source: 'manual', assisted: false },
+      asserted_unit_results: committed.candidate.evaluation.record.unit_results.map((unit) => ({
+        scoring_unit_id: unit.scoring_unit_id,
+        status: 'scored',
+        points_awarded: 1,
+        scored_because: 'response',
+        evidence_citations: [],
+      })),
+    });
+    expect(
+      await evaluationService.activateSubmissionCandidate(
+        db,
+        {
+          evaluation_id: manual.record.evaluation_id,
+          expected_effective_id: current.effective_evaluation_id,
+          expected_generation: current.generation,
+        },
+        { actorRef: 'test:diagnostic-manual' },
+      ),
+    ).toMatchObject({ status: 'activated' });
+    const manualActivation = (await activations()).at(-1);
+    if (!manualActivation) throw new Error('manual activation missing');
+    expect(await deliver(manualActivation.id)).toMatchObject({ status: 'succeeded' });
+    const held = await loadInterventionVersion(db, opened.id, opened.version);
+    expect(held?.settlement?.diagnostics.immediate).toMatchObject({
+      status: 'held',
+      review_event_id: committed.attempt_id,
+      verdict_event_id: manualActivation.id,
+      completed_at: corrected?.settlement?.diagnostics.immediate.completed_at,
+    });
+    expect(held?.outcome).toBeNull();
+    expect(held?.settlement?.diagnostics.delayed.due_at).toBe(dueAt);
+    expect(await deliver(latest.id)).toMatchObject({
+      status: 'succeeded',
+      detail: { idempotent: true, verdict_event_id: manualActivation.id },
+    });
+    expect(
+      await db.select().from(material_fsrs_state).where(eq(material_fsrs_state.subject_id, qid)),
+    ).toHaveLength(0);
+    expect(execute).toHaveBeenCalledTimes(2);
+    const detail = await getDiagnosticDetail(
+      new Request(`http://local/api/questions/${qid}?surface=practice`),
+      { id: qid },
+    );
+    expect(detail.status).toBe(200);
+    expect(QuestionDetailResponseSchema.parse(await detail.json()).committed_attempt).toMatchObject(
+      {
+        review_event: { id: committed.attempt_id, rating: null },
+        judge: {
+          coarse_outcome: 'unsupported',
+          suggested_rating: null,
+          evaluation_id: manual.record.evaluation_id,
+        },
+      },
+    );
+    await recoverEligibleInterventionDiagnostics(
+      db,
+      new Date(now.getTime() + INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS + 1),
+    );
+    expect((await db.select().from(question).where(eq(question.id, qid)))[0].draft_status).toBe(
+      'draft',
+    );
+    expect(
+      await db.select().from(material_fsrs_state).where(eq(material_fsrs_state.subject_id, qid)),
+    ).toHaveLength(0);
+
+    for (const assisted of [true, false]) {
+      const before = await readHead();
+      const rechecked = await evaluationService.evaluateSubmission(db, {
+        submission_id: committed.submission.submission_id,
+        evaluation_group_id: committed.submission.evaluation_group_id,
+        evaluation_key: `diagnostic-recheck:${assisted}`,
+        provenance: { source: 'automatic', assisted },
+        model_executor: createRecordedModelExecutor(db, execute),
+      });
+      expect(
+        await evaluationService.activateSubmissionCandidate(
+          db,
+          {
+            evaluation_id: rechecked.record.evaluation_id,
+            expected_effective_id: before.effective_evaluation_id,
+            expected_generation: before.generation,
+          },
+          { actorRef: 'test:diagnostic-recheck' },
+        ),
+      ).toMatchObject({ status: 'activated' });
+      const activation = (await activations()).at(-1);
+      if (!activation) throw new Error('recheck activation missing');
+      expect(await deliver(activation.id)).toMatchObject({ status: 'succeeded' });
+      const recheckedAggregate = await loadInterventionVersion(db, opened.id, opened.version);
+      expect(recheckedAggregate?.settlement?.diagnostics.immediate).toMatchObject({
+        status: assisted ? 'held' : 'passed',
+        review_event_id: committed.attempt_id,
+        verdict_event_id: activation.id,
+        completed_at: corrected?.settlement?.diagnostics.immediate.completed_at,
+      });
+      expect(recheckedAggregate?.settlement?.diagnostics.delayed.due_at).toBe(dueAt);
+    }
+    const trustedActivation = (await activations()).at(-1);
+    if (!trustedActivation) throw new Error('trusted activation missing');
+    let firstCorrectionId: string | undefined;
+    for (const correctionKind of ['mark_wrong', 'restore', 'retract', 'restore'] as const) {
+      const correctionId = await writeEvent(db, {
+        id: newId(),
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'correct',
+        subject_kind: 'event',
+        subject_id: committed.attempt_id,
+        outcome: 'success',
+        payload: {
+          correction_kind: correctionKind,
+          reason_md: '核验原始诊断作答的有效性，保留原答与评估历史。',
+          affected_refs: [{ kind: 'question', id: qid }],
+        },
+        created_at: new Date(),
+      });
+      firstCorrectionId ??= correctionId;
+      const verdictId = correctionKind === 'restore' ? trustedActivation.id : correctionId;
+      expect(await deliver(correctionId)).toMatchObject({ status: 'succeeded' });
+      const afterCorrection = await loadInterventionVersion(db, opened.id, opened.version);
+      expect(afterCorrection?.settlement?.diagnostics.immediate).toMatchObject({
+        status: correctionKind === 'restore' ? 'passed' : 'held',
+        review_event_id: committed.attempt_id,
+        verdict_event_id: verdictId,
+        completed_at: corrected?.settlement?.diagnostics.immediate.completed_at,
+      });
+      expect(afterCorrection?.settlement?.diagnostics.delayed.due_at).toBe(dueAt);
+      expect(await deliver(originalActivation.id)).toMatchObject({
+        status: 'succeeded',
+        detail: { idempotent: true, verdict_event_id: verdictId },
+      });
+      expect(await deliver(correctionId)).toMatchObject({
+        status: 'succeeded',
+        detail: { idempotent: true, verdict_event_id: verdictId },
+      });
+      expect(await deliver(firstCorrectionId)).toMatchObject({
+        status: 'succeeded',
+        detail: { idempotent: true, verdict_event_id: verdictId },
+      });
+    }
+    expect(execute).toHaveBeenCalledTimes(4);
   });
 
   it('consumes one real review per window, retires one-shot cards, and settles deterministically', async () => {
