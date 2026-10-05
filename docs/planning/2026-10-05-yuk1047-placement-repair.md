@@ -478,3 +478,93 @@ Performance comment 4183803000 is deferred as P2 under the owner policy: the
 unbounded historical load is confirmed, but no measured timeout or result error
 was supplied. It is recorded in YUK-1047/PLAN PARKED with bounded keyset and
 corrected-prefix/per-question regression acceptance. It remains unfixed.
+
+## CI 37314297861 repair of the eleven e1d5f651c failures
+
+This bounded writer started from `80d1ccb0965098c5ca6c8b109664accefc17f1ed`
+in `/Volumes/YukovalSBak/yukoval-projects/tlp-assessment-entries`. The original
+CI failure log is `/tmp/yuk1047-e1-ci-failed.log`. All eleven reported failures
+were reproduced before edits: two unit failures and nine DB failures.
+
+### Causes and corrections
+
+- `projectPracticeIssuance` used `projectIssuedScoringBasis` merely to obtain
+  units for public response requirements. That helper also rejects partial
+  `capped_sum` and `threshold_levels` scoring. Consequently a legal partial
+  public issuance threw, and native CSV reporting caught the DTO failure and
+  excluded the entire joint group, producing zero rows instead of two.
+  The DTO now selects units only when all their response and evidence slots
+  belong to the issued answerable slot set. Aggregation is untouched. Existing
+  CSV expectations are unchanged. New DTO regressions verify both policies,
+  cross-scope evidence exclusion, private rule/executor exclusion, and the
+  continuing partial-scoring prohibition. The original P1-6 scope assertion
+  also verifies that public projection succeeds while scoring still rejects.
+- The real registry now contains `agency.probe-publication-serve@1`. Backup
+  fixtures still required four subscribers, so four backup tests stopped at
+  their obsolete registry assertion. The fixture now requires all five exact
+  identities/versions, all five declaration hashes, and 35 deliveries covering
+  seven states per subscriber. Restore lease fencing, retry history, terminal
+  and effect idempotency, paused state, and transactional rollback assertions
+  remain in place.
+- The research closed-loop fixture admitted its probe through
+  `publishPaperModelFixture`, then called `loadActiveProbes` to serve it. The
+  reader is intentionally read-only. No issuance existed, so the real answer
+  route correctly returned 409 in five cases. The fixture now bootstraps the
+  real registered publication subscriber before admission and runs its actual
+  durable dispatch cycle. It verifies the admitted publication's delivery is
+  `succeeded`, the issuance exists, and reads leave issuance rows unchanged
+  both before and after delivery. Only then does it call the existing Hono
+  answer route. Publication, checkpoint/discovery/claim/completion, issuance,
+  native judging and reconciliation are real code; the existing offline model
+  adapter remains the only replaced model port. No GET writer was restored.
+
+Production changes are confined to `src/core/schema/assessment/dto.ts`.
+The other changes are its contract/DTO tests, the two failing DB fixture files,
+and this evidence document. `csv.test.ts` required no edit. Placement, PfSolo,
+PLAN, `.remember`, and the external `.serena/project.yml` change were untouched.
+
+### Verification and remaining blocker
+
+Every log below is under `/tmp/` with the prefix `yuk1047-e1-ci-repair-`.
+
+| Check | Result | Log suffix |
+| --- | --- | --- |
+| Original contract + CSV unit RED | 2 failed, 56 passed | `unit-red.log` |
+| Original backup + closed-loop DB RED | 9 failed, 17 passed | `db-red.log` |
+| Contract + DTO + evaluator + CSV unit | 158 passed, 4 files | `unit-green.log` |
+| First repaired backup + closed-loop DB | 26 passed, 2 files | `db-green.log` |
+| Final backup + closed-loop + Probe API/lifecycle + shell reader DB | 85 passed, 5 files | `db-final.log` |
+| Changed-file Biome | exit 0, no errors/warnings | `biome-final.log` |
+| `pnpm lint:ratchet` | exit 0, 298 warnings within 305 baseline | `lint-ratchet.log` |
+| `pnpm build` | exit 0, web/server/worker/migrate built | `build.log` |
+| API contracts/client/client usage | all exit 0, generated client unchanged | `audit-{api-contracts,api-client,api-client-usage}.log` |
+| Capability boundaries | exit 0, 437/0/48 unchanged | `audit-capability-boundaries.log` |
+| Structured judge/partition/schema/task census | all exit 0 | `audit-{structured-judge,partition,schema,task-census}.log` |
+| `pnpm typecheck` | exit 1, three existing Placement fixture errors | `typecheck.log` |
+| Starting HEAD compiler reproduction | exit 1, identical three diagnostics | `typecheck-baseline.log`, `typecheck-comparison.log` |
+
+The final counts are **158 distinct unit tests and 85 distinct DB tests**.
+The 26-test DB run is included in the final 85, not added to it. DB runs used
+`DOCKER_HOST=unix:///Users/yuqi/.orbstack/run/docker.sock` and isolated testcontainers.
+No full local test suite, independent review, live model call, deployment,
+PR communication, push, or user-service interruption ran in this lane.
+
+Typecheck remains blocked at
+`src/capabilities/onboarding/ui/ScreenPlacement.coverage.unit.test.tsx` lines
+253, 338 and 386. Its three draft fixtures omit `evaluation_group_ref` and
+`updated_at`, required by the existing generated response contract. A clean
+`git archive` snapshot of the starting HEAD, using the checkout's existing
+`node_modules/.bin/tsc --noEmit`, produced the exact same three diagnostics;
+`typecheck-comparison.log` records equality. The snapshot path is recorded in
+`baseline-path.log`. The snapshot's first pnpm invocation refused dependency
+purging without a TTY; that attempt is preserved in `baseline-preflight.log`.
+The active dependency tree was not purged.
+
+The user explicitly excluded Placement edits from this writer's scope, so no
+fixture workaround or type relaxation was made. Parent must repair those
+three fixtures and rerun typecheck before claiming all local gates green.
+There is no remaining failure among the eleven assigned CI tests. These are
+local results; exact-head CI and external delivery remain parent-owned.
+Parent also owns Linear capture/status for the existing YUK-1047 repair.
+No new unrelated follow-up was introduced. Writer ownership returns to parent
+with this repair commit, and this lane stops after reporting its result.

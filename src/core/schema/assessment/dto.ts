@@ -143,7 +143,13 @@ export function projectPracticeIssuance(
       digestByMaterial.get(material.material_id) === material.asset.digest,
   );
   const publicMaterialIds = new Set(publicMaterials.map((material) => material.material_id));
-  const scopedUnits = projectIssuedScoringBasis(revision, issuance.binding.part_ids).units;
+  const answerableSlotIds = new Set(
+    projectedSlots.filter((slot) => slot.kind !== 'table').map((slot) => slot.slot_id),
+  );
+  // Public input requirements need unit scope, not an independently scoreable aggregation.
+  const scopedUnits = revision.scoring_basis.units.filter((unit) =>
+    [...unit.slot_refs, ...unit.evidence_slot_refs].every((id) => answerableSlotIds.has(id)),
+  );
   return PracticeIssuanceDto.parse({
     issuance_id: issuance.issuance_id,
     revision_id: revision.revision_id,

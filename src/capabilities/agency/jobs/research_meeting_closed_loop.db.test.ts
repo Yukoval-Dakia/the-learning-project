@@ -35,7 +35,7 @@
 // making `mapOutcome` return null (S3 fails). A closed-loop E2E that cannot go red is just
 // another silently-passing test — exactly what this ticket exists to eliminate.
 
-import { and, eq, or, sql } from 'drizzle-orm';
+import { and, desc, eq, or, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ── THE SINGLE REPLACED PORT ────────────────────────────────────────────────────
@@ -88,7 +88,16 @@ import { z } from 'zod';
 import { capabilities } from '@/capabilities';
 import { PROBE_QUESTION_SOURCE } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { loadActiveProbes } from '@/capabilities/shell/server/prep-desk-probes';
-import { ai_task_runs, cost_ledger, event, kc_typed_state, knowledge, question } from '@/db/schema';
+import {
+  ai_task_runs,
+  assessment_issuance,
+  cost_ledger,
+  event,
+  event_subscription_delivery,
+  kc_typed_state,
+  knowledge,
+  question,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { writeAiProposal } from '@/kernel/proposals/writer';
@@ -97,6 +106,11 @@ import {
   PREDICTION_SCORE_ACTION,
   PROBE_RESULT_PROJECTED_ACTION,
 } from '@/server/conjectures/reconcile';
+import { loadEventSubscriptionRegistry } from '@/server/event-subscriptions/registry';
+import {
+  bootstrapSubscription,
+  runSubscriptionDispatchCycle,
+} from '@/server/event-subscriptions/runtime';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { buildHonoApp } from '../../../../server/app';
 import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
@@ -372,8 +386,65 @@ async function apiRequest(path: string, body: unknown): Promise<Response> {
 }
 
 async function answerProbeViaRoute(probeQuestionId: string, answerMd: string): Promise<Response> {
-  await publishPaperModelFixture(testDb(), probeQuestionId);
-  await loadActiveProbes(testDb());
+  const db = testDb();
+  const registry = await loadEventSubscriptionRegistry(capabilities, db);
+  const subscription = registry.subscriptions.find(
+    (sub) => sub.id === 'agency.probe-publication-serve',
+  );
+  if (!subscription) throw new Error('registered probe publication subscriber missing');
+  await bootstrapSubscription(db, registry, subscription);
+  await publishPaperModelFixture(db, probeQuestionId);
+  const beforeRead = await db.select().from(assessment_issuance);
+  expect((await loadActiveProbes(db)).probes.map((probe) => probe.probe_question_id)).not.toContain(
+    probeQuestionId,
+  );
+  expect(await db.select().from(assessment_issuance)).toEqual(beforeRead);
+  const [publication] = await db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:assessment_publish'),
+        eq(event.subject_id, probeQuestionId),
+      ),
+    )
+    .orderBy(desc(event.dispatch_seq))
+    .limit(1);
+  if (!publication) throw new Error('admitted probe publication receipt missing');
+  const dispatchRegistry = { ...registry, subscriptions: [subscription] };
+  for (let cycle = 0; cycle < 8; cycle += 1) {
+    const result = await runSubscriptionDispatchCycle(db, dispatchRegistry, {
+      owner: 'closed-loop-publication-worker',
+      maxAttempts: 1,
+    });
+    expect(result).toMatchObject({ retryScheduled: 0, deadLettered: 0, lostLease: 0 });
+    if (result.dispatched === 0) break;
+  }
+  const [delivery] = await db
+    .select()
+    .from(event_subscription_delivery)
+    .where(
+      and(
+        eq(event_subscription_delivery.subscriber_id, subscription.id),
+        eq(event_subscription_delivery.subscriber_version, subscription.version),
+        eq(event_subscription_delivery.source_event_id, publication.id),
+      ),
+    );
+  expect(delivery).toMatchObject({ status: 'succeeded', source_event_id: publication.id });
+  const issued = await db
+    .select()
+    .from(assessment_issuance)
+    .where(eq(assessment_issuance.issuance_id, `iss_probe_${probeQuestionId}`));
+  expect(issued).toHaveLength(1);
+  expect((await loadActiveProbes(db)).probes.map((probe) => probe.probe_question_id)).toContain(
+    probeQuestionId,
+  );
+  expect(
+    await db
+      .select()
+      .from(assessment_issuance)
+      .where(eq(assessment_issuance.issuance_id, `iss_probe_${probeQuestionId}`)),
+  ).toEqual(issued);
   return apiRequest(`/api/conjecture/probe/${probeQuestionId}/answer`, { answer_md: answerMd });
 }
 
