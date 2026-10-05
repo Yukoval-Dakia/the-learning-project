@@ -54,12 +54,26 @@ if [ -z "$up" ]; then exit 0; fi
 ah=$(git "${git_args[@]}" rev-list --count "$up..HEAD" 2>/dev/null || echo 0)
 be=$(git "${git_args[@]}" rev-list --count "HEAD..$up" 2>/dev/null || echo 0)
 
-if [ "${ah:-0}" -eq 0 ] && [ "${be:-0}" -eq 0 ]; then exit 0; fi
+if [ "${ah:-0}" -eq 0 ] && [ "${be:-0}" -eq 0 ]; then
+  : # no upstream delta to report; fall through to the stale-base check
+else
+  echo "branch-delta: $br vs $up — ahead $ah / behind $be" >&2
+  if [ "${be:-0}" -gt 0 ]; then
+    authors=$(git "${git_args[@]}" log --format='%an' "HEAD..$up" 2>/dev/null | sort -u | tr '\n' ',' | sed 's/,$//')
+    echo "  upstream authors: $authors" >&2
+  fi
+fi
 
-echo "branch-delta: $br vs $up — ahead $ah / behind $be" >&2
-if [ "${be:-0}" -gt 0 ]; then
-  authors=$(git "${git_args[@]}" log --format='%an' "HEAD..$up" 2>/dev/null | sort -u | tr '\n' ',' | sed 's/,$//')
-  echo "  upstream authors: $authors" >&2
+# Stale-base guard (retro 2026-10-05): the branch's own upstream says nothing
+# about how far this checkout trails main — PR #1565 was cut 277 commits behind
+# and its green exact-head gate validated the wrong integration tree. Echo the
+# trail distance whenever origin/main is known.
+main_ref="refs/remotes/origin/main"
+if git "${git_args[@]}" rev-parse --verify -q "$main_ref" >/dev/null 2>&1; then
+  behind_main=$(git "${git_args[@]}" rev-list --count "HEAD..$main_ref" 2>/dev/null || echo 0)
+  if [ "${behind_main:-0}" -gt 0 ]; then
+    echo "stale-base: HEAD is ${behind_main} commit(s) behind origin/main — branch from origin/main, not from local HEAD" >&2
+  fi
 fi
 
 exit 0

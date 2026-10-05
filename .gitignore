@@ -114,8 +114,10 @@ drizzle/.snapshots/
 **/.claude/agent-memory-local
 **/.claude/first-run
 **/.claude/assistant-daemon-state.json
-.codex/tmp/
-.codex/logs/
+.codex/
+.qoder/
+.cortexkit/
+.qoderignore
 .devin/config.local.json
 .serena/project.local.yml
 .codegraph/
