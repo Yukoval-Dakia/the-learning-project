@@ -444,3 +444,21 @@ passed 100 cases; DB coverage includes both explicit empty text and absent entri
 Placement remains unimplemented at this checkpoint. P2 sibling knowledge scope
 and unacknowledged solo draft tail are captured in Linear YUK-1047 and PARKED.
 No paid provider, deployment or full local test run was performed.
+
+
+### 2026-10-05 placement P1 implementation checkpoint (unpublished)
+
+Placement now issues and recovers pinned native assessments under the existing
+session lock, restores frozen controls and original evidence, autosaves with CAS,
+preserves session recovery in the URL, and gates new selection/profile navigation
+on evaluation/settlement and acknowledged completion. Native/historical progress
+is distinct by question ID. Existing theta/FSRS ownership and both prior P1 fixes
+are preserved. No placement durable diversion, schema migration or paid calls.
+
+67 unit and 149 DB tests, typecheck, lint, build, API/boundary/schema/partition audits
+passed. A diagnostic claim-release DB failure reproduced using the starting HEAD's
+submit.ts; lint warning ratchet is still 305→328. Neither assertion nor baseline
+was weakened. Exact commands, logs and an isolated local-exact runtime fixture are
+in `2026-10-05-yuk1047-placement-repair.md`. Parent owns remaining runtime acceptance,
+the sole repair verification review, Linear, PR and exact-head CI. This is not a
+YUK-1047 completion or deployment claim.

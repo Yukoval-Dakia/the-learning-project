@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-05。YUK-1047原会话已恢复，当前主线fix/yuk-1047-formal-entries。初审3项P1：缓冲试卷归因释放、纯图片missing guard已修并经40 DB/100 unit验证；placement旧提交/发题/自动保存/进度迁移待完成。初审预算已用，只余一次P0/P1验证审。未部署、未新增付费provider测试、未追依赖；无准入模型仍withheld。
+> 更新于2026-10-05。YUK-1047初审3项P1的placement实施已完成：pinned发题/冻结控件/自动保存与恢复/native进度和pending held gating；67 unit/149 DB及typecheck/lint/build/API边界审计通过。既有诊断claim释放DB失败和lint ratchet 305→328尚待parent裁决。初审预算已用，仅余parent唯一修复验证审；无push/PR/部署/新付费。详见2026-10-05-yuk1047-placement-repair.md。
 
 ## NOW
 
@@ -83,11 +83,13 @@
 
 ## NEXT
 
-1. YUK-1047完成placement迁移P1、最终scoped gate与唯一P0/P1验证审，然后PR/CI；交付前保持In Progress。源码八入口收口不代替生产部署或模型actual-output准入。766恢复LIGHT/FULL与588 UI仍待owner，其他主线不启动。
+1. YUK-1047由parent验收placement真实runtime、处置既有诊断claim与lint ratchet缺口，执行唯一P0/P1验证审，然后PR/CI；placement实施检查点见2026-10-05-yuk1047-placement-repair.md，交付前保持In Progress。源码八入口收口不代替生产部署或模型actual-output准入。766恢复LIGHT/FULL与588 UI仍待owner，其他主线不启动。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
 ## PARKED
+
+- YUK-1047 placement实施lane发现：诊断durable admission拒绝后claim恢复用例在起始HEAD也失败（expected active/actual draft）；lint ratchet 305→328。已落盘placement-repair handoff与日志，parent负责Linear去重/capture及处置，未改断言或抬基线。
 
 - YUK-1047初审非阻塞P2：native failure读面混入未发子题KC；PfSolo快速退出取消未ack自动保存尾部。已归并Linear原票，未声称修复。
 

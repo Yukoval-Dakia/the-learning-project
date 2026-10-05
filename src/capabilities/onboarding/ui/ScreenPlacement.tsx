@@ -1,37 +1,24 @@
-// Onboarding ③ · placement probe (YUK-473 Slice 3).
-// Ported from docs/design/loom-refresh/project/screen-onboarding.jsx (ScreenPlacement
-// + PlacementShell + PlacementAnswer), made real over the inc-B placement backend
-// (YUK-468): start → fetch question (GET /api/questions/[id]) → submit answer
-// (/api/attempts, session_id=<probe>, auto_rate → judge + θ̂) → selection → … → PATCH end state.
-//
-// Replaces the Slice-1 PlacementStubPage at /placement. The goalId is threaded from the
-// Welcome flow via the `?goal=<id>` query param (Welcome creates the goal; OnboardRecord
-// forwards it). The probe scopes to that goal's scope_knowledge_ids server-side.
-//
-// DESIGN (no per-item verdict): the probe judges each answer (auto_rate) to estimate θ̂
-// but does NOT surface correct/wrong mid-probe — "答完才统一给反馈，先别急着看对错"
-// (design §). Results land in the profile (Slice 4); for now `done` lands on /today.
-//
-// COLD TREE: an empty/root-only goal scope → /start 400 or sourcingNeeded → the sourcing
-// state ("子图还冷 · 去上传"). Real cold-start end-to-end (upload → auto-populate → probe)
-// still needs the cold-start bridge on the upload path (YUK-482); this screen renders all
-// states and works fully on a warm tree / post-bridge.
-
-import { useQuery } from '@tanstack/react-query';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { computeLatencyMs, getQuestion } from '@/capabilities/practice/ui-public';
-// YUK-1051 — 定位面换成通用 response 组件族（stable option IDs；开放作答 = 通用文字+附件）。
-// D11 autosave 缝：placement 今天没有草稿端点（saveSubmission 是 YUK-1052 的服务端 lane）——
-// 本面不接假自动保存；提交仍是整段提交（submitProbeAnswer），切换到新题不承接旧答案。
-import { ChoiceSetResponse } from '@/ui/components/response/ChoiceSetResponse';
+// Placement waits for native evaluation and settlement before the next adaptive selection.
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { computeLatencyMs, saveResponseDraft } from '@/capabilities/practice/ui-public';
+import type { GroupEvidenceT, ResponseSetT, SlotResponseT } from '@/core/schema/assessment';
+import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
 import { EvidenceComposer } from '@/ui/components/response/EvidenceComposer';
+import { ResponseSlotField, nativeSlotFieldSpec } from '@/ui/components/response/ResponseSlotField';
 import {
   type EvidenceAttachment,
-  optionsFromChoicesMd,
+  isSlotResponseAnswered,
+  nativeResponseEntry,
+  nativeResponseText,
+  nativeResponseValue,
 } from '@/ui/components/response/response-types';
+import { SaveStateChip } from '@/ui/components/response/SaveStateChip';
+import { useJudgeRunPolling } from '@/ui/hooks/useJudgeRunPolling';
 import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
+import { useResponseDraftAutosave } from '@/ui/hooks/useResponseDraftAutosave';
 import { ApiError } from '@/ui/lib/api';
 import { uploadAsset } from '@/ui/lib/assets';
+import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { ErrorState } from '@/ui/primitives/ErrorState';
@@ -42,6 +29,8 @@ import { ObSteps } from './ObSteps';
 import {
   type PlacementQuestionRef,
   type PlacementSelfReport,
+  type PlacementStartResult,
+  getPlacementSession,
   placementEnd,
   placementNext,
   startPlacement,
@@ -49,281 +38,268 @@ import {
 } from './placement-api';
 import './onboarding.css';
 
-// Upper bound of the placement progress track. Mirrors backend PLACEMENT_DEFAULT_CAP
-// (placement-termination.ts). YUK-480: pace shortens the actual server cap (light → 5) but never
-// raises it above this ceiling — the 8-segment track + last-question gate stay valid (a
-// pace-driven cap ABOVE 8 would need a dynamic-cap UI = separate design pre-flight, deferred).
 const CAP = 8;
-
 const VALID_PACES = ['light', 'medium', 'dense'] as const;
-
-// Parse the self-report query params threaded from Welcome (YUK-480). leanings = comma list;
-// pace validated against the allowed set (anything else → undefined → server default cap).
 function readSelfReport(search: string): PlacementSelfReport {
   const sp = new URLSearchParams(search);
-  const leaningsParam = sp.get('leanings');
-  const leanings = leaningsParam ? leaningsParam.split(',').filter((s) => s.length > 0) : [];
-  const paceParam = sp.get('pace');
-  const pace = VALID_PACES.find((p) => p === paceParam);
-  return { leanings, pace };
+  return {
+    leanings: sp.get('leanings')?.split(',').filter(Boolean) ?? [],
+    pace: VALID_PACES.find((p) => p === sp.get('pace')),
+  };
 }
-
-type Phase = 'loading' | 'answer' | 'sourcing' | 'settling' | 'judgefail' | 'nogoal' | 'error';
-
+type Phase = 'loading' | 'answer' | 'sourcing' | 'settling' | 'terminal' | 'nogoal' | 'error';
+type ExitSave = () => Promise<void>;
 export interface ScreenPlacementProps {
   navigate: (to: string) => void;
 }
 
 export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
   const [phase, setPhase] = useState<Phase>('loading');
-  const [sessionId, setSessionId] = useState<string | null>(null);
   const [qRef, setQRef] = useState<PlacementQuestionRef | null>(null);
   const [answeredCount, setAnsweredCount] = useState(0);
+  const [restoreVersion, setRestoreVersion] = useState(0);
   const [errMsg, setErrMsg] = useState<string | null>(null);
-  // Captured at mount from ?goal; reused to land on /profile?goal after the probe.
-  const goalIdRef = useRef<string | null>(null);
+  const [leaving, setLeaving] = useState(false);
+  const [exitFailure, setExitFailure] = useState<{ destination: string; message: string } | null>(
+    null,
+  );
+  const goalIdRef = useRef(new URLSearchParams(window.location.search).get('goal'));
   const sessionIdRef = useRef<string | null>(null);
   const sessionOpenRef = useRef(false);
+  const saveForExit = useRef<ExitSave | null>(null);
+  const initialRequest = useRef<Promise<PlacementStartResult | 'terminal'> | null>(null);
 
-  const transitionPlacement = useCallback(
-    (status: 'completed' | 'abandoned', keepalive = false) => {
-      const sid = sessionIdRef.current;
-      if (!sid || !sessionOpenRef.current) return Promise.resolve();
-      // Claim before dispatch so explicit exit, settling, and repeated pagehide
-      // events cannot race duplicate terminal transitions.
-      sessionOpenRef.current = false;
-      return placementEnd(sid, status, { keepalive }).catch((error) => {
-        sessionOpenRef.current = true;
-        throw error;
-      });
-    },
+  const profileDest = useCallback(
+    () => (goalIdRef.current ? `/profile?goal=${encodeURIComponent(goalIdRef.current)}` : '/today'),
     [],
   );
+  const transition = useCallback(async (status: 'completed' | 'abandoned') => {
+    const sid = sessionIdRef.current;
+    if (!sid || !sessionOpenRef.current) return;
+    await placementEnd(sid, status, { keepalive: false });
+    sessionOpenRef.current = false;
+  }, []);
+  const loadNext = useCallback(async () => {
+    const sid = sessionIdRef.current;
+    if (!sid || !sessionOpenRef.current) return;
+    const next = await placementNext(sid);
+    setAnsweredCount(next.answeredCount);
+    setRestoreVersion((v) => v + 1);
+    if (next.done) {
+      setQRef(null);
+      setPhase('settling');
+    } else {
+      setQRef(next.question);
+      setPhase(next.question ? 'answer' : 'sourcing');
+    }
+  }, []);
 
-  usePagehideTransition((event) => {
-    // A bfcache page is suspended, not discarded. Placement has no paused
-    // state, so abandoning here would restore a live UI backed by a terminal
-    // session when the user navigates forward/back.
-    if (event.persisted) return;
-    return transitionPlacement('abandoned', true);
-  });
-
-  // Mount: read ?goal and start the probe. The probe's scope is the goal's
-  // scope_knowledge_ids (server-side). 400 = empty scope (cold) → sourcing; 404 =
-  // flag off (PLACEMENT_PROBE_ENABLED) → error with a clear message.
   useEffect(() => {
-    const goal = new URLSearchParams(window.location.search).get('goal');
+    const goal = goalIdRef.current;
     if (!goal) {
       setPhase('nogoal');
       return;
     }
-    goalIdRef.current = goal;
-    // YUK-480 — carry the Welcome self-report into the probe (ordering/amount only).
-    const selfReport = readSelfReport(window.location.search);
     let cancelled = false;
-    (async () => {
-      try {
-        const res = await startPlacement(goal, selfReport);
+    initialRequest.current ??= (async () => {
+      const existing = new URLSearchParams(window.location.search).get('session');
+      if (existing) {
+        const session = await getPlacementSession(existing);
+        if (session.goal_id !== goal) throw new Error('定位练习与当前目标不一致。');
+        sessionIdRef.current = existing;
+        if (session.status !== 'started') return 'terminal';
+        sessionOpenRef.current = true;
+        const next = await placementNext(existing);
+        if (next.done)
+          return {
+            sessionId: existing,
+            knowledgeIds: session.scope_knowledge_ids ?? [],
+            answeredCount: next.answeredCount,
+            question: null,
+            sourcingNeeded: false,
+          };
+        return { sessionId: existing, knowledgeIds: session.scope_knowledge_ids ?? [], ...next };
+      }
+      return startPlacement(goal, readSelfReport(window.location.search));
+    })();
+    void initialRequest.current
+      .then((res) => {
         if (cancelled) return;
+        if (res === 'terminal') {
+          setPhase('terminal');
+          return;
+        }
         sessionIdRef.current = res.sessionId;
         sessionOpenRef.current = true;
-        setSessionId(res.sessionId);
-        if (res.sourcingNeeded || !res.question) {
-          setPhase('sourcing');
-          return;
-        }
+        const url = new URL(window.location.href);
+        url.searchParams.set('session', res.sessionId);
+        window.history.replaceState(
+          window.history.state,
+          '',
+          `${url.pathname}${url.search}${url.hash}`,
+        );
+        setAnsweredCount(res.answeredCount);
         setQRef(res.question);
-        setPhase('answer');
-      } catch (e) {
+        setPhase(res.question ? 'answer' : res.sourcingNeeded ? 'sourcing' : 'settling');
+      })
+      .catch((error: unknown) => {
         if (cancelled) return;
-        if (e instanceof ApiError && e.status === 400) {
-          // empty goal scope (cold tree) — no probe to run yet.
-          setPhase('sourcing');
-          return;
-        }
-        if (e instanceof ApiError && e.status === 404) {
-          setErrMsg('定位探针尚未启用（PLACEMENT_PROBE_ENABLED）。');
-          setPhase('error');
-          return;
-        }
-        setErrMsg(e instanceof Error ? e.message : String(e));
+        setErrMsg(error instanceof Error ? error.message : String(error));
         setPhase('error');
-      }
-    })();
+      });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Land on the starter profile (?goal threaded) after the probe; /today fallback.
-  const profileDest = () =>
-    goalIdRef.current ? `/profile?goal=${encodeURIComponent(goalIdRef.current)}` : '/today';
-
-  // After the probe completes (settling): end it, then navigate to the profile (Slice 4).
-  // profileDest only reads goalIdRef (a ref) and returns a string; the real triggers are
-  // phase/sessionId/navigate (listed). Re-running on its render-fresh identity would
-  // needlessly re-arm the 1700ms timer.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: profileDest reads only a ref; see above.
   useEffect(() => {
-    if (phase !== 'settling' || !sessionId) return;
+    if (phase !== 'settling') return;
     let cancelled = false;
-    const dest = profileDest();
-    const t = setTimeout(() => {
-      if (!cancelled) navigate(dest);
-    }, 1700);
-    void transitionPlacement('completed').catch(() => {});
+    void transition('completed')
+      .then(() => {
+        if (!cancelled) navigate(profileDest());
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setErrMsg(error instanceof Error ? error.message : String(error));
+        setPhase('error');
+      });
     return () => {
       cancelled = true;
-      clearTimeout(t);
     };
-  }, [phase, sessionId, navigate, transitionPlacement]);
+  }, [phase, navigate, profileDest, transition]);
 
-  const leaveProbe = (destination: string) => {
-    void transitionPlacement('abandoned').catch(() => {});
-    navigate(destination);
-  };
-
-  const exitProbe = () => leaveProbe('/today');
-
-  // Answer committed for the current question → submit (judge + θ̂) → /next.
-  const onAnswered = async (payload: {
-    responseMd: string;
-    referencedKnowledgeIds: string[];
-    answerImageRefs: string[];
-    latencyMs: number | null;
-  }) => {
-    if (!sessionId || !qRef) return;
+  const leaveProbe = async (destination: string, discard = false) => {
+    if (leaving) return;
+    setLeaving(true);
+    setExitFailure(null);
     try {
-      await submitProbeAnswer({ sessionId, questionId: qRef.questionId, ...payload });
-      setAnsweredCount((c) => c + 1);
-      const nx = await placementNext(sessionId);
-      if (nx.done) {
-        setPhase('settling');
-        return;
-      }
-      if (nx.sourcingNeeded || !nx.question) {
-        setPhase('sourcing');
-        return;
-      }
-      setQRef(nx.question);
-    } catch (e) {
-      // submit 422 (judge unsupported) or network — the probe can't score this answer.
-      // Slice-3 review: abandon the probe so it doesn't dangle in 'started' (the orphan
-      // sweep would catch it eventually, but closing it now is cleaner).
-      void transitionPlacement('abandoned').catch(() => {});
-      setErrMsg(e instanceof Error ? e.message : String(e));
-      setPhase('judgefail');
+      if (!discard) await saveForExit.current?.();
+      await transition('abandoned');
+      navigate(destination);
+    } catch (error) {
+      setExitFailure({
+        destination,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setLeaving(false);
     }
   };
+  const exitProbe = () => {
+    void leaveProbe('/today');
+  };
+  const shellExit =
+    phase === 'terminal' || phase === 'nogoal' ? () => navigate('/today') : exitProbe;
 
-  if (phase === 'nogoal') {
-    return (
-      <PlacementShell answeredCount={0} onExit={() => navigate('/today')}>
+  return (
+    <PlacementShell answeredCount={answeredCount} done={phase === 'settling'} onExit={shellExit}>
+      {exitFailure && (
+        <LoomCard pad>
+          <ErrorState text={`退出前未能确认保存或结束：${exitFailure.message}`} />
+          <Btn variant="secondary" onClick={() => void leaveProbe(exitFailure.destination)}>
+            重试保存并退出
+          </Btn>
+          <Btn variant="ghost" onClick={() => void leaveProbe(exitFailure.destination, true)}>
+            放弃未保存修改并退出
+          </Btn>
+        </LoomCard>
+      )}
+      {phase === 'loading' && (
+        <LoomCard pad padLg>
+          <SkLines rows={3} />
+        </LoomCard>
+      )}
+      {phase === 'nogoal' && (
         <LoomCard pad padLg>
           <EmptyState
             icon="target"
             title="还没设定目标"
-            text="定位练习需要先有一个学习目标来圈定范围。回到设定，用一句话说说你想学什么。"
+            text="定位练习需要先有一个学习目标来圈定范围。"
             action={
-              <Btn variant="primary" iconEnd="arrow" onClick={() => navigate('/welcome')}>
+              <Btn variant="primary" onClick={() => navigate('/welcome')}>
                 去设定
               </Btn>
             }
           />
         </LoomCard>
-      </PlacementShell>
-    );
-  }
-
-  if (phase === 'error') {
-    return (
-      <PlacementShell answeredCount={0} onExit={() => navigate('/today')}>
+      )}
+      {phase === 'error' && (
         <LoomCard pad padLg>
           <ErrorState
-            text={errMsg ?? '定位练习无法开始。'}
+            text={errMsg ?? '定位练习无法恢复。'}
             onRetry={() => window.location.reload()}
           />
         </LoomCard>
-      </PlacementShell>
-    );
-  }
-
-  if (phase === 'loading') {
-    return (
-      <PlacementShell answeredCount={0} onExit={exitProbe}>
-        <LoomCard pad padLg>
-          <div className="ob-pl-meta">
-            <span className="ob-pl-kind">loading first question</span>
-          </div>
-          <SkLines rows={3} />
-        </LoomCard>
-      </PlacementShell>
-    );
-  }
-
-  if (phase === 'sourcing') {
-    return (
-      <PlacementShell answeredCount={answeredCount} onExit={exitProbe}>
+      )}
+      {phase === 'terminal' && (
         <LoomCard pad padLg>
           <EmptyState
-            icon="clock"
-            title="备题中 · 子图还冷"
-            text="这个目标的知识子图还没有可定位的题。先上传一份你的材料，AI 抽出的题就能拿来定位；或稍后再来。"
+            icon="check"
+            title="这次定位练习已结束"
+            text="这次定位练习不会自动重新开始。"
             action={
-              <Btn variant="primary" icon="record" onClick={() => leaveProbe('/onboarding/upload')}>
-                改为上传材料
+              <Btn variant="primary" onClick={() => navigate(profileDest())}>
+                看档案
               </Btn>
             }
           />
         </LoomCard>
-      </PlacementShell>
-    );
-  }
-
-  if (phase === 'judgefail') {
-    return (
-      <PlacementShell answeredCount={answeredCount} done onExit={() => navigate('/today')}>
+      )}
+      {phase === 'sourcing' && (
         <LoomCard pad padLg>
-          <ErrorState text="评分管道暂时不可用 · judge 降级。你已答的题会保留，画像稍后补算。" />
-          <div className="hero-cta" style={{ justifyContent: 'center', marginTop: 'var(--s-3)' }}>
-            <Btn variant="primary" iconEnd="arrow" onClick={() => navigate(profileDest())}>
-              先看初步档案
-            </Btn>
-          </div>
+          <EmptyState
+            icon="clock"
+            title="备题中 · 子图还冷"
+            text="这个目标还没有可定位的题。可以上传材料，或稍后回来继续。"
+            action={
+              <Btn
+                variant="primary"
+                icon="record"
+                onClick={() => void leaveProbe('/onboarding/upload')}
+              >
+                改为上传材料
+              </Btn>
+            }
+          />
+          <Btn
+            variant="secondary"
+            onClick={() =>
+              void loadNext().catch((e: unknown) =>
+                setErrMsg(e instanceof Error ? e.message : String(e)),
+              )
+            }
+          >
+            重新查询题目
+          </Btn>
+          {errMsg && <ErrorState text={errMsg} />}
         </LoomCard>
-      </PlacementShell>
-    );
-  }
-
-  if (phase === 'settling') {
-    return (
-      <PlacementShell answeredCount={answeredCount} done onExit={() => navigate('/today')}>
+      )}
+      {phase === 'settling' && (
         <LoomCard pad padLg>
           <div className="ob-settle">
             <div className="ob-settle-ring" />
             <div className="ob-settle-t serif">正在收紧你的画像…</div>
-            <div className="ob-settle-s mono">judge · θ̂ · FSRS · 写入 mastery_state</div>
           </div>
         </LoomCard>
-      </PlacementShell>
-    );
-  }
-
-  // phase === 'answer'
-  return (
-    <PlacementShell answeredCount={answeredCount} onExit={exitProbe}>
-      {qRef && (
-        <PlacementQuestionCard
-          key={qRef.questionId}
-          qRef={qRef}
-          answeredCount={answeredCount}
-          onAnswered={onAnswered}
-        />
       )}
-      <div className="ob-pl-reassure">
-        <LoomIcon name="clock" size={14} />
-        这是有界的——最多 {CAP} 题、几分钟就结束。答完才统一给反馈，先别急着看对错。
-      </div>
+      {phase === 'answer' && qRef && (
+        <>
+          <PlacementQuestionCard
+            key={`${qRef.assessment.issuance_id}:${restoreVersion}`}
+            sessionId={sessionIdRef.current ?? ''}
+            qRef={qRef}
+            answeredCount={answeredCount}
+            onAccepted={loadNext}
+            saveForExit={saveForExit}
+            leaving={leaving}
+          />
+          <div className="ob-pl-reassure">
+            <LoomIcon name="clock" size={14} />
+            最多 {CAP} 题。答完才统一给反馈，先别急着看对错。
+          </div>
+        </>
+      )}
     </PlacementShell>
   );
 }
@@ -339,7 +315,7 @@ function PlacementShell({
   onExit: () => void;
   children: React.ReactNode;
 }) {
-  const shown = Math.min(answeredCount + 1, CAP);
+  const shown = Math.min(done ? answeredCount : answeredCount + 1, CAP);
   return (
     <div className="page ob-pl">
       <div className="page-head">
@@ -356,7 +332,7 @@ function PlacementShell({
         <div className="ob-pl-prog">
           <div className="ob-pl-prog-h">
             <span className="ob-pl-prog-k">
-              第 <b>{done ? CAP : shown}</b> / 最多 {CAP} 题
+              第 <b>{shown}</b> / 最多 {CAP} 题
             </span>
             <span className="ob-pl-prog-cap">{done ? '已答完' : '答到 cap 或收敛即止'}</span>
           </div>
@@ -366,7 +342,7 @@ function PlacementShell({
                 // biome-ignore lint/suspicious/noArrayIndexKey: fixed-length cap track, index is the stable identity
                 key={i}
                 className={`ob-pl-seg${
-                  done || i < answeredCount ? ' is-done' : i === answeredCount ? ' is-cur' : ''
+                  i < answeredCount ? ' is-done' : !done && i === answeredCount ? ' is-cur' : ''
                 }`}
               />
             ))}
@@ -379,143 +355,301 @@ function PlacementShell({
 }
 
 function PlacementQuestionCard({
+  sessionId,
   qRef,
   answeredCount,
-  onAnswered,
+  onAccepted,
+  saveForExit,
+  leaving,
 }: {
+  sessionId: string;
   qRef: PlacementQuestionRef;
   answeredCount: number;
-  onAnswered: (payload: {
-    responseMd: string;
-    referencedKnowledgeIds: string[];
-    answerImageRefs: string[];
-    latencyMs: number | null;
-  }) => Promise<void>;
+  onAccepted: () => Promise<void>;
+  saveForExit: React.MutableRefObject<ExitSave | null>;
+  leaving: boolean;
 }) {
-  const qQ = useQuery({
-    queryKey: ['question', qRef.questionId],
-    queryFn: () => getQuestion(qRef.questionId),
-  });
-  const q = qQ.data ?? null;
-
-  // YUK-1051 — stable option id 选择（内容派生，非下标）+ 通用证据附件（EvidenceComposer）。
-  const [selIds, setSelIds] = useState<string[] | null>(null);
-  const [text, setText] = useState('');
-  const [evidence, setEvidence] = useState<EvidenceAttachment[]>([]);
-  const [submitting, setSubmitting] = useState(false);
-  // YUK-1094 — 附件上传中：作答未落定前禁止推进（onAnswered 带的是旧 image refs）。
+  const binding = qRef.assessment;
+  const frozen = binding.state.practice_dto;
+  const accepted = binding.state.submissions[0];
+  const restored = binding.state.draft ?? accepted;
+  const [responses, setResponses] = useState<ResponseSetT>(
+    restored?.response_set ?? { entries: [] },
+  );
+  const [evidence, setEvidence] = useState<EvidenceAttachment[]>(() =>
+    (restored?.group_evidence ?? []).map((item) => ({
+      asset_id: item.evidence.asset.asset_id,
+      original: item.evidence,
+      originalTarget: item.target,
+      kind: item.evidence.kind === 'plaintext' ? 'text' : item.evidence.kind,
+      slot_ids: null,
+    })),
+  );
+  const [status, setStatus] = useState<
+    'answering' | 'retry' | 'pending' | 'held' | 'waiting' | 'uncertain'
+  >(binding.phase);
+  const [pendingRun, setPendingRun] = useState(binding.pending_run);
   const [uploading, setUploading] = useState(false);
-  const shownAtRef = useRef<number | null>(null);
-
-  // Stamp the question-shown time once the row is loaded (per question — the card is
-  // keyed by questionId so this remounts each question). Drives latency_ms.
-  useLayoutEffect(() => {
-    if (q?.id) shownAtRef.current = Date.now();
-  }, [q?.id]);
-
-  if (qQ.isLoading) {
-    return (
-      <LoomCard pad padLg>
-        <SkLines rows={3} />
-      </LoomCard>
-    );
-  }
-  if (qQ.isError || !q) {
-    return (
-      <LoomCard pad padLg>
-        <ErrorState
-          text={`取题失败：${(qQ.error as Error | null)?.message ?? '未知'}`}
-          onRetry={() => qQ.refetch()}
-        />
-      </LoomCard>
-    );
-  }
-
-  const choices = q.choices_md ?? [];
-  const isChoice = choices.length > 0;
-  const options = optionsFromChoicesMd(choices, q.id);
-  const imageRefs = evidence.map((a) => a.asset_id);
-  const answered =
-    (isChoice ? (selIds?.length ?? 0) > 0 : text.trim().length > 0) || imageRefs.length > 0;
-  const last = answeredCount + 1 >= CAP;
-
-  const commit = async () => {
-    if (!answered || submitting || uploading) return;
-    setSubmitting(true);
-    const responseMd =
-      isChoice && selIds && selIds.length > 0
-        ? (options.find((o) => o.id === selIds[0])?.text_md ?? '')
-        : text.trim();
-    try {
-      await onAnswered({
-        responseMd,
-        referencedKnowledgeIds: q.labels.map((l) => l.id),
-        answerImageRefs: imageRefs,
-        latencyMs: computeLatencyMs(shownAtRef.current, Date.now()),
+  const [submitting, setSubmitting] = useState(false);
+  const [conflict, setConflict] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const epoch = useRef(binding.state.draft?.save_epoch ?? 0);
+  const shownAt = useRef(Date.now());
+  const nativeEvidence = useMemo<GroupEvidenceT[]>(
+    () =>
+      evidence.flatMap((item) =>
+        item.original
+          ? [{ evidence: item.original, target: item.originalTarget ?? { scope: 'all_units' } }]
+          : [],
+      ),
+    [evidence],
+  );
+  const draftValue = useMemo(
+    () => ({ response_set: responses, group_evidence: nativeEvidence }),
+    [responses, nativeEvidence],
+  );
+  const currentValue = useRef(draftValue);
+  currentValue.current = draftValue;
+  const savedBytes = useRef(JSON.stringify(draftValue));
+  const inFlight = useRef<Promise<void> | null>(null);
+  const persist = useCallback(
+    async (value: typeof draftValue, keepalive: boolean) => {
+      while (inFlight.current) await inFlight.current;
+      if (JSON.stringify(value) === savedBytes.current) return;
+      const saving = (async () => {
+        try {
+          const ack = await saveResponseDraft(
+            binding.issuance_id,
+            {
+              ...value,
+              evaluation_group_ref: binding.evaluation_group_id,
+              expected_save_epoch: epoch.current,
+            },
+            { keepalive },
+          );
+          epoch.current = ack.save_epoch;
+          savedBytes.current = JSON.stringify(value);
+        } catch (e) {
+          if (e instanceof ApiError && e.status === 409) setConflict(true);
+          throw e;
+        }
+      })();
+      inFlight.current = saving;
+      try {
+        await saving;
+      } finally {
+        if (inFlight.current === saving) inFlight.current = null;
+      }
+    },
+    [binding.issuance_id, binding.evaluation_group_id],
+  );
+  const autosave = useResponseDraftAutosave({
+    value: draftValue,
+    enabled: !!frozen && status === 'answering' && !submitting && !leaving && !conflict,
+    save: (value, ctx) => persist(value, ctx.keepalive),
+  });
+  usePagehideTransition(() => autosave.flush({ keepalive: true }));
+  useEffect(() => {
+    const save: ExitSave = async () => {
+      if (uploading) throw new Error('附件仍在上传，请等待上传完成。');
+      if (conflict) throw new Error('草稿版本冲突，请先重新加载服务端草稿或明确放弃修改。');
+      if (status === 'answering') await persist(currentValue.current, false);
+    };
+    saveForExit.current = save;
+    return () => {
+      if (saveForExit.current === save) saveForExit.current = null;
+    };
+  }, [uploading, conflict, status, persist, saveForExit]);
+  const poll = useJudgeRunPolling({
+    runId: pendingRun?.run_id ?? null,
+    pollUrl: pendingRun?.poll_url,
+    enabled: status === 'pending',
+  });
+  useEffect(() => {
+    if (!pendingRun || !poll.settled) return;
+    if (poll.status === 'done') {
+      setStatus('waiting');
+      void onAccepted().catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : String(e));
+        setStatus('uncertain');
       });
+    } else {
+      setStatus('held');
+      setError('作答已接收，暂时无法完成定位评估。请重新查询状态。');
+    }
+  }, [pendingRun, poll.settled, poll.status, onAccepted]);
+  const updateResponse = (entry: SlotResponseT) =>
+    setResponses((previous) => ({
+      entries: [...previous.entries.filter((e) => e.slot_id !== entry.slot_id), entry],
+    }));
+  const unavailable =
+    !frozen || frozen.response_spec.slots.some((slot) => !nativeSlotFieldSpec(slot));
+  const answered =
+    responses.entries.some((entry) => isSlotResponseAnswered(nativeResponseValue(entry))) ||
+    evidence.length > 0;
+  const canSubmit =
+    !unavailable &&
+    answered &&
+    !uploading &&
+    !submitting &&
+    !leaving &&
+    !conflict &&
+    evidence.every((item) => item.original !== undefined);
+  const commit = async () => {
+    if (submitting || (status !== 'retry' && !canSubmit)) return;
+    setSubmitting(true);
+    setError(null);
+    let dispatched = false;
+    try {
+      // Stop queued autosaves; an ordinary save ACK precedes finalization.
+      if (!accepted) await persist(currentValue.current, false);
+      const responseSet = accepted?.response_set ?? responses;
+      const groupEvidence = accepted?.group_evidence ?? nativeEvidence;
+      dispatched = true;
+      const result = await submitProbeAnswer({
+        sessionId,
+        questionId: qRef.questionId,
+        assessment: {
+          issuance_id: binding.issuance_id,
+          evaluation_group_id: accepted?.evaluation_group_id ?? binding.evaluation_group_id,
+          submission_id: accepted?.submission_id ?? binding.submission_id,
+          idempotency_key: accepted?.idempotency_key ?? binding.idempotency_key,
+          response_set: responseSet,
+          group_evidence: groupEvidence,
+        },
+        responseMd: responseSet.entries
+          .map((entry) =>
+            nativeResponseText(
+              entry,
+              frozen?.response_spec.slots.find((slot) => slot.slot_id === entry.slot_id),
+            ),
+          )
+          .join('\n'),
+        referencedKnowledgeIds: [],
+        answerImageRefs: groupEvidence
+          .filter((item) => item.evidence.kind === 'image')
+          .map((item) => item.evidence.asset.asset_id),
+        latencyMs: accepted ? null : computeLatencyMs(shownAt.current, Date.now()),
+      });
+      if ('run_id' in result) {
+        setPendingRun({ run_id: result.run_id, poll_url: result.backfill.poll_url });
+        setStatus('pending');
+      } else {
+        setStatus('waiting');
+        await onAccepted();
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setStatus(dispatched ? 'uncertain' : 'answering');
     } finally {
       setSubmitting(false);
     }
   };
-
+  const recover = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await onAccepted();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
   return (
     <LoomCard pad padLg className="fade-key">
       <div className="ob-pl-meta">
-        {q.labels.map((l) => (
-          <span key={l.id} className="chip chip-k">
-            {l.name}
-          </span>
-        ))}
-        <span className="ob-pl-kind">{q.kind}</span>
-        <span className="meta mono">{q.id.slice(0, 12)}</span>
+        <span className="meta mono">{qRef.questionId.slice(0, 12)}</span>
       </div>
-
-      <div className="ob-pl-stem">{q.prompt_md}</div>
-
-      {isChoice ? (
-        <ChoiceSetResponse
-          options={options}
-          mode="single"
-          value={selIds}
-          onChange={setSelIds}
-          disabled={submitting}
-          ariaLabel="选项"
-        />
+      {frozen?.materials.map((material) => (
+        <div key={material.material_id}>
+          {material.content_md !== undefined ? (
+            <MathMarkdown>{material.content_md}</MathMarkdown>
+          ) : (
+            <AssetEvidencePreview
+              assetId={material.asset_id}
+              label={material.caption ?? material.alt_text}
+            />
+          )}
+        </div>
+      ))}
+      {frozen?.faces.map((face) => (
+        <MathMarkdown key={face.part_id} className="ob-pl-stem">
+          {face.prompt_md}
+        </MathMarkdown>
+      ))}
+      {unavailable ? (
+        <ErrorState text="这道题需要当前页面尚不支持的作答控件。可以退出并保留这次定位练习的记录。" />
       ) : (
-        <div className="ob-pl-answer">
+        <>
+          <SaveStateChip
+            state={conflict ? 'conflict' : autosave.state}
+            generation={autosave.generation}
+            onRetry={autosave.retry}
+          />
+          {conflict && (
+            <Btn variant="secondary" onClick={() => void recover()}>
+              重新加载服务端草稿 · 放弃本地修改
+            </Btn>
+          )}
+          {frozen.response_spec.slots.map((slot) => {
+            const spec = nativeSlotFieldSpec(slot);
+            if (!spec) return null;
+            const entry = responses.entries.find((item) => item.slot_id === slot.slot_id);
+            return (
+              <ResponseSlotField
+                key={slot.slot_id}
+                spec={spec}
+                label={slot.placement?.label}
+                ariaLabel={slot.placement?.label ?? '作答'}
+                value={nativeResponseValue(entry)}
+                onChange={(value) => updateResponse(nativeResponseEntry(slot, value, entry))}
+                disabled={status !== 'answering' || submitting || leaving || conflict}
+                feedback="none"
+              />
+            );
+          })}
           <EvidenceComposer
-            text={text}
-            onTextChange={setText}
+            text=""
+            onTextChange={() => {}}
+            showText={false}
             attachments={evidence}
             onAttachmentsChange={setEvidence}
-            disabled={submitting}
-            placeholder="写下你的作答——也可以拍照上传手写。"
-            ariaLabel="作答"
+            disabled={status !== 'answering' || submitting || leaving || conflict}
             upload={uploadAsset}
             uploadErrorMessage="图片上传失败，请重试"
             onUploadingChange={setUploading}
           />
-        </div>
+        </>
       )}
-
+      {error && <ErrorState text={error} />}
       <div className="ob-pl-foot">
-        <Btn
-          variant="primary"
-          iconEnd={last ? 'check' : 'arrow'}
-          disabled={!answered || submitting || uploading}
-          onClick={() => void commit()}
-        >
-          {submitting ? '记录中…' : last ? '完成定位 · 看档案' : '下一题'}
-        </Btn>
-        {answered && (
-          <span className="ob-pl-saved">
-            <LoomIcon name="check" size={12} />
-            已作答
-          </span>
+        {status === 'answering' && (
+          <Btn
+            variant="primary"
+            iconEnd="arrow"
+            disabled={!canSubmit}
+            onClick={() => void commit()}
+          >
+            {submitting ? '记录中…' : answeredCount + 1 >= CAP ? '完成定位 · 看档案' : '下一题'}
+          </Btn>
         )}
-        <span className="ob-pl-hint">
-          {isChoice ? '选择即记录 · 攒到末尾统一判分' : '作答攒到末尾统一判分'}
-        </span>
+        {status === 'retry' && (
+          <Btn variant="primary" disabled={submitting || leaving} onClick={() => void commit()}>
+            继续处理已接收作答
+          </Btn>
+        )}
+        {(status === 'pending' || status === 'waiting') && (
+          <span role="status">作答已接收 · 等待定位结果</span>
+        )}
+        {(status === 'held' || status === 'uncertain') && (
+          <>
+            <span role="status">等待确认作答状态</span>
+            <Btn variant="secondary" disabled={submitting} onClick={() => void recover()}>
+              重新查询状态
+            </Btn>
+          </>
+        )}
       </div>
     </LoomCard>
   );

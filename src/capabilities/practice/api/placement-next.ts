@@ -22,13 +22,15 @@
 // param survives only as an optional override (e.g. inc-E prereq-walk widening); when omitted,
 // the persisted scope is authoritative.
 
-import { and, eq, inArray } from 'drizzle-orm';
 import { db } from '@/db/client';
-import { event } from '@/db/schema';
 import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
 import { getMasteryState } from '@/server/mastery/state';
 import { loadPlacementSessionForUpdate } from '@/server/session/placement';
-import { resolveLeaningPreferenceKcs, selectNextPlacementItem } from '../server/placement-select';
+import {
+  ensurePlacementAssessment,
+  placementAssessmentProgress,
+} from '../server/placement-assessment';
+import { resolveLeaningPreferenceKcs } from '../server/placement-select';
 import {
   PLACEMENT_DEFAULT_CAP,
   capForPace,
@@ -91,29 +93,16 @@ export async function createPlacementQuestionSelection(
         );
       }
 
-      // The probe's ANSWER trail: review (solo) / attempt (paper) events on questions, chained
-      // by session_id. answeredCount = answers so far; answeredIds = questions already answered.
-      // The exclusion below is over the answer trail (not "served"): it relies on the answer-
-      // before-next protocol (the client submits an answer via /api/review/submit, then calls
-      // /next), so a question is never re-selected once answered. (event.subject_id is NOT NULL,
-      // schema.ts.) Read inside the tx so it reflects answers committed before the lock was
-      // acquired.
-      const answeredRows = await tx
-        .select({ subjectId: event.subject_id })
-        .from(event)
-        .where(
-          and(
-            eq(event.session_id, id),
-            eq(event.subject_kind, 'question'),
-            inArray(event.action, ['review', 'attempt']),
-          ),
-        );
-      // DISTINCT answered questions: the cap counts QUESTIONS, not raw events. A question may
-      // emit multiple review/attempt events (paper retry, client double-submit), which must NOT
-      // inflate the count and prematurely terminate the probe. answeredIds drives both the cap
-      // evaluation and the reported answeredCount.
-      const answeredIds = Array.from(new Set(answeredRows.map((r) => r.subjectId)));
-      const answeredCount = answeredIds.length;
+      const progress = await placementAssessmentProgress(tx, id);
+      const { answeredIds, answeredCount } = progress;
+      if (progress.outstanding) {
+        return {
+          done: false as const,
+          question: progress.outstanding,
+          answeredCount,
+          sourcingNeeded: false,
+        };
+      }
 
       // Per-KC θ precision (cold KC with no mastery_state row → precision 1, the weak-prior cold
       // value the engine uses). Feeds the SE-convergence early stop. Fan out the independent
@@ -144,11 +133,16 @@ export async function createPlacementQuestionSelection(
       // lock serialization — the locked session row (session.leanings) is already in hand. Empty
       // → byte-identical to the no-preference selection. Ordering-only; never feeds θ̂/p(L).
       const preferKnowledgeIds = await resolveLeaningPreferenceKcs(db, session.leanings);
-      const next = await selectNextPlacementItem(tx, {
-        knowledgeIds,
-        excludeQuestionIds: answeredIds,
-        preferKnowledgeIds,
-      });
+      const next = await ensurePlacementAssessment(
+        tx,
+        id,
+        {
+          knowledgeIds,
+          excludeQuestionIds: answeredIds,
+          preferKnowledgeIds,
+        },
+        progress,
+      );
       return {
         done: false as const,
         question: next,

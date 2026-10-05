@@ -1169,7 +1169,7 @@
           "goalId": null,
           "knowledgeIds": ["kc-1"]
         },
-        "notes": "dark-ship：gated on PLACEMENT_PROBE_ENABLED（默认 false → 404）。goalId 省略时用 knowledgeIds；二者皆缺/不可解析 → 400。返回 {sessionId, knowledgeIds, question, sourcingNeeded}"
+        "notes": "dark-ship：gated on PLACEMENT_PROBE_ENABLED（默认 false → 404）。goalId 省略时用 knowledgeIds；二者皆缺/不可解析 → 400。返回 {sessionId, knowledgeIds, question, answeredCount, sourcingNeeded}；question.assessment 包含固定 issuance/提交身份、公开 practice_dto 与恢复状态"
       }
     ]
   },
@@ -1186,7 +1186,7 @@
           "cap": 8,
           "seThreshold": null
         },
-        "notes": "答题经 /api/review/submit（session_id=本 probe）后调。cap 仅接受 1..8，服务端有效上限恒为 8。返回 {done, reason?, question?, answeredCount, sourcingNeeded?}。未知 session→404，已关闭→409"
+        "notes": "答题经 /api/attempts（session_id=本 probe，auto_rate=true，携带首题返回的 assessment 身份与原始 response_set/group_evidence）后调。未完成的 issuance 优先恢复；pending/held 在 cap 前阻止推进。cap 仅接受 1..8，服务端有效上限恒为 8。返回 {done, reason?, question?, answeredCount, sourcingNeeded?}。未知 session→404，已关闭→409"
       }
     ]
   },
@@ -1637,6 +1637,58 @@
           }
         },
         "notes": "必须先读取 /api/papers/:id，将该槽位 assessment 的 issuance_id/evaluation_group_id/idempotency_key 和 practice_dto 中的槽位、选项原样用于请求；示例 text 仅适用于对应已发布文本槽位。缺少原始发题绑定返回 historical_unknown(409)，不可在提交时补建历史绑定。 重复请求必须保持原始作答不变；回执投影当前生效候选。缓冲反馈仅返回身份字段和 visible_to_user=false/feedback_buffered=true，不返回 status/coarse_outcome/score。"
+      }
+    ]
+  },
+  {
+    "path": "/api/placement-sessions",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "创建 placement 会话并固定首题原始发题",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "goalId": "REPLACE_goal",
+          "pace": "light"
+        },
+        "notes": "201 + Location。返回 sessionId/answeredCount/question.assessment；question.assessment.state.practice_dto 为冻结公开题面，phase 为 answering/retry/pending/held。"
+      }
+    ]
+  },
+  {
+    "path": "/api/placement-sessions/:id",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "恢复 placement 会话生命周期",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "读取 status、goal_id 和 scope_knowledge_ids。终态不自动重新开始。"
+      },
+      {
+        "method": "PATCH",
+        "summary": "明确完成或放弃 placement 会话",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "status": "completed"
+        },
+        "notes": "显式退出先等待必要上传及服务端草稿 ACK。刷新/pagehide 只尝试保存，保留 active session。完成成功后再导航档案。"
+      }
+    ]
+  },
+  {
+    "path": "/api/placement-sessions/:id/question-selections",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "恢复固定 issuance 或选择下一道自适应题",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {},
+        "notes": "先恢复未完成的 issuance。pending/held 不推进、不重交；retry 仅重发已接收的相同原始 response_set、group_evidence、submission_id 和 idempotency_key。answeredCount 按不同 question ID 统计原生和历史参与。有效 head 且结算成功后才选择或结束。"
       }
     ]
   }

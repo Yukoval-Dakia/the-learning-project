@@ -850,11 +850,13 @@ export const getIssuanceState = (issuanceId: string) =>
 export const saveResponseDraft = (
   issuanceId: string,
   body: import('@/ui/lib/api').ApiOperationRequestBody<'saveResponseDraft'>,
+  options: { keepalive?: boolean } = {},
 ) =>
   apiOperationJson('saveResponseDraft', {
     url: `/api/issuances/${encodeURIComponent(issuanceId)}/responses`,
     method: 'POST',
     body,
+    init: options.keepalive ? { keepalive: true } : undefined,
   });
 
 /**

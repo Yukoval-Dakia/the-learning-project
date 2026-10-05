@@ -1,3 +1,4 @@
+import { publishPlacementFixture } from '../../../../tests/fixtures/assessment-placement';
 // Cold-start day-one e2e — 方向 B「可开始用」S2 verify (Refs YUK-478 / YUK-571).
 //
 // Pins the FULL upload→placement→profile chain across the seams the per-module suites never
@@ -88,6 +89,7 @@ async function seedUploadedQuestion(id: string, kcs: string[]): Promise<void> {
     updated_at: now,
     version: 0,
   });
+  await publishPlacementFixture(db, id);
 }
 
 // The answered trail /api/review/submit leaves behind: a review event chained to the probe

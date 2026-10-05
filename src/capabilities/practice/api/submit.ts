@@ -8,6 +8,7 @@ import {
 } from '@/core/schema/intervention';
 import { type Db, db } from '@/db/client';
 import {
+  assessment_issuance,
   assessment_submission,
   learning_session,
   question,
@@ -26,6 +27,7 @@ import { commitFormalAttempt } from '../server/assessment/attempt';
 import { judgeDurableEnabled } from '../server/judge-durable-config';
 import { ratingFromCoarseOutcome } from '../server/judge-rating';
 import { JUDGE_RUN_TABLE } from '../server/judge-run-status';
+import { validatePlacementSubmission } from '../server/placement-assessment';
 import { type CreateAttemptBody, CreateAttemptBodySchema } from './contracts';
 
 type SubmitBodyT = CreateAttemptBody;
@@ -98,6 +100,32 @@ async function validateSubmit(req: Request): Promise<ValidatedSubmit> {
     }
   }
 
+  if (body.assessment) {
+    await validatePlacementSubmission(db, questionId, body.session_id, body.assessment);
+    const [issued] = await db
+      .select({ container: assessment_issuance.container_occurrence_ref })
+      .from(assessment_issuance)
+      .where(eq(assessment_issuance.issuance_id, body.assessment.issuance_id));
+    if (issued?.container?.startsWith('placement:')) {
+      if (issued.container !== `placement:${body.session_id ?? ''}`)
+        throw new ApiError(
+          'coordinate_mismatch',
+          'placement issuance belongs to another session',
+          409,
+        );
+      const [session] = await db
+        .select({ status: learning_session.status })
+        .from(learning_session)
+        .where(
+          and(
+            eq(learning_session.id, body.session_id ?? ''),
+            eq(learning_session.type, 'placement'),
+          ),
+        );
+      if (session?.status !== 'started')
+        throw new ApiError('conflict', 'placement session is no longer active', 409);
+    }
+  }
   return { body, now, questionId, activityRef: identity.activity_ref, q };
 }
 

@@ -86,14 +86,16 @@ export function EvidenceComposer({
         if (r.status !== 'fulfilled') return [];
         const file = Array.from(files)[i];
         const asset = r.value;
+        const kind = evidenceKindFromMime(asset.mime_type);
+        const nativeKind = kind === 'text' ? 'plaintext' : kind === 'other' ? null : kind;
         return [
           {
             asset_id: asset.id,
-            ...(asset.created_at && /^image\//.test(asset.mime_type)
+            ...(asset.created_at && nativeKind
               ? {
                   original: {
                     evidence_id: `evidence_${asset.id}`,
-                    kind: 'image' as const,
+                    kind: nativeKind,
                     asset: {
                       asset_id: asset.id,
                       digest: asset.sha256.startsWith('sha256:')
