@@ -224,7 +224,7 @@ On 2026-10-05 the parent ran the built app against its isolated migrated
 Postgres fixture on ports 18789/18790. The database epoch was explicitly
 initialized through the official CLI. No production database or provider was used.
 
-- Real Chrome UI saved 1,118 characters including Chinese, newlines and symbols,
+- Real Chrome UI saved 962 characters including Chinese, newlines and symbols,
   then recovered the same text and session URL after refresh.
 - Eight local-exact answers submitted successfully with HTTP 201. Native progress
   advanced through all eight and completion navigated to `/profile`; no page errors.
