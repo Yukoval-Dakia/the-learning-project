@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-05。YUK-1047 PR #1568 head630df36完整CI37303447957已绿；晚到P1揭示接口丢失评分依据参考答案已复现并修复，34DB/16unit/typecheck/lint298≤305及全部build通过，现新push与CI/17分钟窗。未开第三审；重复PfSolo P2保留。未部署/付费。详见placement-repair。
+> 更新于2026-10-05。YUK-1047 PR #1568晚到三项正确性修复已提交1c1401022：solo逐槽覆盖、Probe GET只读/Agency发题、paper原件与capture同锁事务。146unit/75distinctDB/typecheck/lint/build通过，parent复验后push新head执行CI与17分钟窗。review预算已用尽；不部署/付费。详见placement-repair。
 
 ## NOW
 
@@ -88,6 +88,8 @@
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
 ## PARKED
+
+- YUK-1047非阻塞性能跟进：getCurrentFailureAttempts强制limit:null后解析全历史再slice。已在Linear/PR回复，未有实测超时或结果错误，按性能默认P2延期。后续保留DB/keyset分页边界、改判过滤增量补页，覆盖长前缀/同时间戳/每题limit和查询行数。
 
 
 - YUK-1047初审非阻塞P2：native failure读面混入未发子题KC；PfSolo快速退出取消未ack自动保存尾部。已归并Linear原票，未声称修复。

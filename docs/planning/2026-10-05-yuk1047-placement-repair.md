@@ -465,3 +465,16 @@ No new independent actionable follow-up was found beyond these existing YUK-1047
 findings. Parent owns Linear capture/status. `.serena/project.yml` is preserved
 and excluded from the commit. Writer ownership returns to parent with the repair
 commit; this lane stops after reporting its result.
+
+Parent acceptance of 1c1401022: inspected the actual lock ordering, public
+response requirements, Agency delivery/subscriber, and shell read-only diff.
+Independently reran 34 PfSolo/DTO unit tests and 12 paper race/Probe reader DB
+tests, all passed. Capability boundaries, API contract and regenerated-client
+consistency audits passed. Logs: `/tmp/yuk1047-parent-late-{unit,db,audits}.log`.
+These checks exercise real components and database handlers; no new browser or
+production worker acceptance is claimed. No additional independent review ran.
+
+Performance comment 4183803000 is deferred as P2 under the owner policy: the
+unbounded historical load is confirmed, but no measured timeout or result error
+was supplied. It is recorded in YUK-1047/PLAN PARKED with bounded keyset and
+corrected-prefix/per-question regression acceptance. It remains unfixed.
