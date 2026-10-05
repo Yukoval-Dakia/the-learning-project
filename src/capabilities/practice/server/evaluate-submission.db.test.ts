@@ -11,7 +11,7 @@ import { previewFormalAttempt } from './assessment/attempt';
 //   5. 绝不触碰 evaluation_effective_head（activation = YUK-1045 的范围）。
 
 import { eq, sql } from 'drizzle-orm';
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { evaluateSubmission } from '@/capabilities/practice/server/judge/evaluate-submission';
 import {
   evaluateAttempt,
@@ -35,24 +35,11 @@ import {
   question_revision,
 } from '@/db/schema';
 import { resolveVerdictsForGroups } from '@/kernel/read-models/assessment-verdict';
-import {
-  beginTestTransaction,
-  resetDb,
-  rollbackTestTransaction,
-  testDb,
-} from '../../../../tests/helpers/db';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 let db: Db = testDb();
-
-beforeAll(resetDb);
-
 beforeEach(async () => {
-  await beginTestTransaction();
-  db = testDb();
-});
-
-afterEach(async () => {
-  await rollbackTestTransaction();
+  await resetDb();
   db = testDb();
 });
 
@@ -594,6 +581,15 @@ describe('evaluateSubmission (persisted §4.3 path)', () => {
       evaluation_key: 'preview:paid_s',
       model_executor: async () => {
         calls++;
+        const holders = await db.execute(sql`
+          SELECT a.xact_start, a.state FROM pg_locks l
+          JOIN pg_stat_activity a ON a.pid = l.pid
+          WHERE l.locktype = 'advisory' AND l.granted
+            AND l.classid::bigint = (hashtext('assessment-evaluation-group')::bigint & 4294967295)
+            AND l.objid::bigint = (hashtext('paid_eg')::bigint & 4294967295)
+        `);
+        expect(holders).toHaveLength(1);
+        expect(holders[0]).toMatchObject({ xact_start: null, state: 'idle' });
         return {
           kind: 'pending' as const,
           pending: {
@@ -610,7 +606,16 @@ describe('evaluateSubmission (persisted §4.3 path)', () => {
       evaluateSubmission(db, { ...request, expected_evaluation_id: 'unknown-candidate' }),
     ).rejects.toMatchObject({ code: 'candidate_not_found' });
     expect(calls).toBe(0);
-    const first = await evaluateSubmission(db, request);
+    await expect(db.transaction((tx) => evaluateSubmission(tx, request))).rejects.toMatchObject({
+      code: 'invalid_executor_spec',
+    });
+    expect(calls).toBe(0);
+    const [first, concurrent] = await Promise.all([
+      evaluateSubmission(db, request),
+      evaluateSubmission(db, request),
+    ]);
+    expect(concurrent.record.evaluation_id).toBe(first.record.evaluation_id);
+    expect([first.replayed, concurrent.replayed].sort()).toEqual([false, true]);
     await expect(
       evaluateSubmission(db, { ...request, expected_evaluation_id: 'unrelated-candidate' }),
     ).rejects.toMatchObject({ code: 'evaluation_key_conflict' });

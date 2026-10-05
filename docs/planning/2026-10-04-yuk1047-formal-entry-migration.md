@@ -394,3 +394,9 @@ full evidence target editing/media acceptance and complete frozen teaching input
 - 不调用练习 activation。probe occurrence 只能走 conjecture 入口；中央 activate 拒绝 probe container，避免通用 endpoint 旁路写 FSRS/theta。单一槽兼任答案/证据时按并集送模型，修复此前重复传递。
 - scoped 验证：Probe route 26 DB、生命周期25 DB、队列6 DB、真实运行链替换模型端口的18 closed-loop DB，以及33 issuance/11 activation DB；最终合跑70 DB与151unit通过。typecheck/build/Postman生成、boundary 439/0/48通过。全程无新付费provider调用、无部署、无PR。
 - 下一步 ingestion 持久化先于评分、native failure消费者及准入/入口census。仅已完成代码接线，不以离线fixture准入冒充生产actual-output证据。
+
+### 2026-10-05 shared evaluation transaction boundary
+
+- Extracted the existing reserved-session advisory lock adapter into `src/db/session-advisory-lock.ts`; compose retains its prior lock key and busy contract. Native evaluation holds the group session lock across short input and candidate transactions, with model execution between transactions. Model ports reject an enclosing transaction.
+- Exact membership, anchor, attempt allocation, admission snapshot and execution receipt replay retain the same group serialization. Added concurrent keyed replay and direct `pg_stat_activity` evidence that the model callback sees its group-lock holder idle with no open transaction.
+- Scoped evaluation/compose lock suites: 22 DB passed; final evaluation/reserved-connection/provider-lock suites: 34 DB passed. Typecheck and build passed. No paid provider calls or deployment. Ingestion capture and native consumers remain in progress.

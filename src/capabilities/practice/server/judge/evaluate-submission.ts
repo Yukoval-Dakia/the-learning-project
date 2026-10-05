@@ -12,8 +12,8 @@
 //     YUK-1045），绝不写学习状态（settlement = YUK-1053）；
 //   - 坐标一致性 fail-closed：submission.evaluation_group_id 必须等于请求
 //     的 group（复合 FK (submission, group) 兜底前先在应用层明确拦截）；
-//   - attempt 身份 = max(attempt)+1，在单事务内锁 submission 行（FOR UPDATE）
-//     串行化重试者；(submission_id, attempt) 唯一键是最后防线；
+//   - group session lock serializes frozen input loading, execution and sealing;
+//     no transaction remains open while a model runs. The unique attempt key is the final fence.
 //   - 幂等：同 attempt 冲突时读回全载荷比对 —— 逐字相同 = replay（返回已存在
 //     行），不同 = 真并发发散（attempt_conflict 抛出，绝不覆盖）。
 //   - evaluation_id 内容寻址（eva_<sha256-48>）：重试同输入 ⇒ 同身份。
@@ -51,6 +51,7 @@ import {
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
+import { withinSessionAdvisoryLock } from '@/db/session-advisory-lock';
 import {
   type ActivateEvaluationRequestT,
   type SettlementObservers,
@@ -144,6 +145,7 @@ export class EvaluateSubmissionError extends Error {
       | 'revision_not_found'
       | 'group_scope_mismatch'
       | 'group_membership_mismatch'
+      | 'evaluation_busy'
       | 'attempt_conflict'
       | 'evaluation_key_conflict'
       | 'candidate_not_found'
@@ -279,7 +281,7 @@ function evaluationPayloadEquals(a: EvaluationRowPayload, b: EvaluationRowPayloa
 
 /**
  * §4.3 evaluateSubmission：读冻结契约 → 纯内核评估 → candidate 行落库。
- * 全程单事务：group advisory 锁串行化完整成员输入和固定锚点 attempt 序号。
+ * Short load/seal transactions share a session group lock; model work runs between them.
  */
 export async function evaluateSubmission(
   db: Db | Tx,
@@ -289,332 +291,360 @@ export async function evaluateSubmission(
   // resolveModelExecutor 的 db 句柄纪律）。
   const modelExecutor = resolveModelExecutor(db, request.model_executor);
 
-  const run = async (tx: Tx): Promise<EvaluateSubmissionResult> => {
-    // The same group lock serializes submissions, all member evaluators and activation.
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${request.evaluation_group_id}))`,
+  if (
+    modelExecutor !== undefined &&
+    (!('$client' in db) || typeof db.$client.reserve !== 'function')
+  ) {
+    throw new EvaluateSubmissionError(
+      'invalid_executor_spec',
+      'model execution requires a pool Db handle, never an enclosing transaction',
     );
-    // ---- 冻结输入装载（锁序：group advisory → submission → 派生维度；发题事实不可变） ----
-    const [requestedSubmission] = await tx
-      .select()
-      .from(assessment_submission)
-      .where(eq(assessment_submission.submission_id, request.submission_id))
-      .for('update')
-      .limit(1);
-    if (requestedSubmission == null) {
-      throw new EvaluateSubmissionError(
-        'submission_not_found',
-        `submission '${request.submission_id}' does not exist`,
-      );
-    }
-    if (requestedSubmission.evaluation_group_id !== request.evaluation_group_id) {
-      // (submission, group) 复合 FK 的兜底前先显式拒绝 —— 跨组评估引用是调用方 bug。
-      throw new EvaluateSubmissionError(
-        'group_scope_mismatch',
-        `submission '${request.submission_id}' belongs to group '${requestedSubmission.evaluation_group_id}', not '${request.evaluation_group_id}'`,
-      );
-    }
+  }
 
-    const [group] = await tx
-      .select()
-      .from(evaluation_group)
-      .where(eq(evaluation_group.evaluation_group_id, request.evaluation_group_id))
-      .limit(1);
-    const memberRows = await tx
-      .select()
-      .from(assessment_submission)
-      .where(eq(assessment_submission.evaluation_group_id, request.evaluation_group_id));
-    const ids = memberRows.map((row) => row.submission_id);
-    if (
-      !group ||
-      !sameMemberSet(group.submission_ids, ids) ||
-      !sameMemberSet(request.expected_submission_ids ?? [request.submission_id], ids)
-    ) {
-      throw new EvaluateSubmissionError(
-        'group_membership_mismatch',
-        'declare the exact complete frozen group membership',
-      );
-    }
-    const [head] = await tx
-      .select()
-      .from(evaluation_effective_head)
-      .where(eq(evaluation_effective_head.evaluation_group_id, request.evaluation_group_id))
-      .limit(1);
-    const submissionRow = memberRows.find(
-      (row) =>
-        row.submission_id ===
-        (head?.submission_id ??
-          (memberRows.length === 1 ? requestedSubmission.submission_id : undefined)),
-    );
-    if (!submissionRow)
-      throw new EvaluateSubmissionError(
-        'group_membership_mismatch',
-        'group anchor is not a member',
-      );
-    const issuances = await tx
-      .select()
-      .from(assessment_issuance)
-      .where(
-        inArray(
-          assessment_issuance.issuance_id,
-          memberRows.map((row) => row.issuance_id),
-        ),
-      );
-    const members = memberRows.map((row) => {
-      const issuance = issuances.find((item) => item.issuance_id === row.issuance_id);
-      if (!issuance) throw new EvaluateSubmissionError('issuance_not_found', row.issuance_id);
-      return evaluationMemberFromRows(row, issuance);
-    });
-    const [issuanceRow] = await tx
-      .select()
-      .from(assessment_issuance)
-      .where(eq(assessment_issuance.issuance_id, submissionRow.issuance_id))
-      .limit(1);
-    if (issuanceRow == null) {
-      throw new EvaluateSubmissionError(
-        'issuance_not_found',
-        `issuance '${submissionRow.issuance_id}' referenced by submission '${request.submission_id}' does not exist`,
-      );
-    }
-    const [revisionRow] = await tx
-      .select()
-      .from(question_revision)
-      .where(eq(question_revision.revision_id, submissionRow.revision_id))
-      .limit(1);
-    if (revisionRow == null) {
-      throw new EvaluateSubmissionError(
-        'revision_not_found',
-        `revision '${submissionRow.revision_id}' referenced by submission '${request.submission_id}' does not exist`,
-      );
-    }
-
-    // Observe before execution. Never let activation's caller supply a missing
-    // admission fact or refresh stale evidence after a concurrent verification.
-    // No lifecycle lock across a model call: activation rechecks under the root lock.
-    const [admissionSnapshot] = await tx
-      .select({
-        current_revision_id: question_group_lifecycle.current_revision_id,
-        generation: question_group_lifecycle.scoring_admission_generation,
-        state: question_group_lifecycle.scoring_admission_state,
-        suspended: question_group_lifecycle.suspended,
-        withdrawn: question_group_lifecycle.withdrawn,
-      })
-      .from(question_group_lifecycle)
-      .where(eq(question_group_lifecycle.group_id, revisionRow.group_id))
-      .limit(1);
-
-    const submission = SubmissionRecord.parse({
-      submission_id: submissionRow.submission_id,
-      issuance_id: submissionRow.issuance_id,
-      revision_id: submissionRow.revision_id,
-      evaluation_group_id: submissionRow.evaluation_group_id,
-      response_set: submissionRow.response_set,
-      group_evidence: submissionRow.group_evidence,
-      idempotency_key: submissionRow.idempotency_key,
-      submitted_at: submissionRow.submitted_at.toISOString(),
-    });
-    const revision = {
-      revision_id: revisionRow.revision_id,
-      group_id: revisionRow.group_id,
-      revision_ordinal: revisionRow.revision_ordinal,
-      integrity_digest: revisionRow.integrity_digest,
-      structure: revisionRow.structure,
-      response_spec: revisionRow.response_spec,
-      scoring_basis: revisionRow.scoring_basis,
-      execution_plan: revisionRow.execution_plan,
-      published_at: revisionRow.published_at.toISOString(),
-      supersedes_revision_id: revisionRow.supersedes_revision_id,
-    };
-
-    const inputSnapshot = freezeEvaluationInput(submission, revision, members);
-    const executionReceipt =
-      request.evaluation_key === undefined
-        ? null
-        : {
-            key: request.evaluation_key,
-            intent_digest: `sha256:${canonicalHash({
-              input: inputSnapshot,
-              mode: request.mode ?? 'execute',
-              policy: request.policy ?? {},
-              source: request.provenance?.source ?? 'automatic',
-              assisted: request.provenance?.assisted ?? false,
-              review_context: request.provenance?.review_context ?? null,
-              asserted_unit_results: request.asserted_unit_results ?? null,
-            })}`,
-          };
-    if (executionReceipt !== null) {
-      if (executionReceipt.key.trim().length === 0) {
-        throw new EvaluateSubmissionError('evaluation_key_conflict', 'empty execution key');
-      }
-      // The group lock is also held by other delivery paths; check before any
-      // model invocation or new attempt allocation. Admission remains frozen
-      // on the original candidate and is rechecked by activation.
-      const [existing] = await tx
-        .select()
-        .from(evaluation)
-        .where(
-          and(
-            eq(evaluation.evaluation_group_id, request.evaluation_group_id),
-            sql`${evaluation.provenance}->'execution_receipt'->>'key' = ${executionReceipt.key}`,
-          ),
-        )
-        .limit(1);
-      if (existing) {
-        if (
-          request.expected_evaluation_id !== undefined &&
-          request.expected_evaluation_id !== existing.evaluation_id
-        ) {
+  const run = async (database: Db | Tx): Promise<EvaluateSubmissionResult> => {
+    const execute = await database.transaction(
+      async (tx): Promise<() => Promise<EvaluateSubmissionResult>> => {
+        // The same group lock serializes submissions, all member evaluators and activation.
+        await tx.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${request.evaluation_group_id}))`,
+        );
+        // ---- 冻结输入装载（锁序：group advisory → submission → 派生维度；发题事实不可变） ----
+        const [requestedSubmission] = await tx
+          .select()
+          .from(assessment_submission)
+          .where(eq(assessment_submission.submission_id, request.submission_id))
+          .for('update')
+          .limit(1);
+        if (requestedSubmission == null) {
           throw new EvaluateSubmissionError(
-            'evaluation_key_conflict',
-            'candidate ID does not belong to this operation',
+            'submission_not_found',
+            `submission '${request.submission_id}' does not exist`,
           );
         }
-        const record = EvaluationRecord.parse(existing);
-        if (
-          record.provenance?.execution_receipt?.intent_digest !== executionReceipt.intent_digest
-        ) {
+        if (requestedSubmission.evaluation_group_id !== request.evaluation_group_id) {
+          // (submission, group) 复合 FK 的兜底前先显式拒绝 —— 跨组评估引用是调用方 bug。
           throw new EvaluateSubmissionError(
-            'evaluation_key_conflict',
-            'execution key already binds different frozen inputs or grading intent',
+            'group_scope_mismatch',
+            `submission '${request.submission_id}' belongs to group '${requestedSubmission.evaluation_group_id}', not '${request.evaluation_group_id}'`,
           );
         }
-        return {
-          record,
-          created_at: existing.created_at,
-          replayed: true,
-          scoring_basis: projectIssuedScoringBasis(revision, inputSnapshot.issued_part_ids),
-          model_units_invoked: 0,
-          spent_cost_usd_micros: 0,
+
+        const [group] = await tx
+          .select()
+          .from(evaluation_group)
+          .where(eq(evaluation_group.evaluation_group_id, request.evaluation_group_id))
+          .limit(1);
+        const memberRows = await tx
+          .select()
+          .from(assessment_submission)
+          .where(eq(assessment_submission.evaluation_group_id, request.evaluation_group_id));
+        const ids = memberRows.map((row) => row.submission_id);
+        if (
+          !group ||
+          !sameMemberSet(group.submission_ids, ids) ||
+          !sameMemberSet(request.expected_submission_ids ?? [request.submission_id], ids)
+        ) {
+          throw new EvaluateSubmissionError(
+            'group_membership_mismatch',
+            'declare the exact complete frozen group membership',
+          );
+        }
+        const [head] = await tx
+          .select()
+          .from(evaluation_effective_head)
+          .where(eq(evaluation_effective_head.evaluation_group_id, request.evaluation_group_id))
+          .limit(1);
+        const submissionRow = memberRows.find(
+          (row) =>
+            row.submission_id ===
+            (head?.submission_id ??
+              (memberRows.length === 1 ? requestedSubmission.submission_id : undefined)),
+        );
+        if (!submissionRow)
+          throw new EvaluateSubmissionError(
+            'group_membership_mismatch',
+            'group anchor is not a member',
+          );
+        const issuances = await tx
+          .select()
+          .from(assessment_issuance)
+          .where(
+            inArray(
+              assessment_issuance.issuance_id,
+              memberRows.map((row) => row.issuance_id),
+            ),
+          );
+        const members = memberRows.map((row) => {
+          const issuance = issuances.find((item) => item.issuance_id === row.issuance_id);
+          if (!issuance) throw new EvaluateSubmissionError('issuance_not_found', row.issuance_id);
+          return evaluationMemberFromRows(row, issuance);
+        });
+        const [issuanceRow] = await tx
+          .select()
+          .from(assessment_issuance)
+          .where(eq(assessment_issuance.issuance_id, submissionRow.issuance_id))
+          .limit(1);
+        if (issuanceRow == null) {
+          throw new EvaluateSubmissionError(
+            'issuance_not_found',
+            `issuance '${submissionRow.issuance_id}' referenced by submission '${request.submission_id}' does not exist`,
+          );
+        }
+        const [revisionRow] = await tx
+          .select()
+          .from(question_revision)
+          .where(eq(question_revision.revision_id, submissionRow.revision_id))
+          .limit(1);
+        if (revisionRow == null) {
+          throw new EvaluateSubmissionError(
+            'revision_not_found',
+            `revision '${submissionRow.revision_id}' referenced by submission '${request.submission_id}' does not exist`,
+          );
+        }
+
+        // Observe before execution. Never let activation's caller supply a missing
+        // admission fact or refresh stale evidence after a concurrent verification.
+        // No lifecycle lock across a model call: activation rechecks under the root lock.
+        const [admissionSnapshot] = await tx
+          .select({
+            current_revision_id: question_group_lifecycle.current_revision_id,
+            generation: question_group_lifecycle.scoring_admission_generation,
+            state: question_group_lifecycle.scoring_admission_state,
+            suspended: question_group_lifecycle.suspended,
+            withdrawn: question_group_lifecycle.withdrawn,
+          })
+          .from(question_group_lifecycle)
+          .where(eq(question_group_lifecycle.group_id, revisionRow.group_id))
+          .limit(1);
+
+        const submission = SubmissionRecord.parse({
+          submission_id: submissionRow.submission_id,
+          issuance_id: submissionRow.issuance_id,
+          revision_id: submissionRow.revision_id,
+          evaluation_group_id: submissionRow.evaluation_group_id,
+          response_set: submissionRow.response_set,
+          group_evidence: submissionRow.group_evidence,
+          idempotency_key: submissionRow.idempotency_key,
+          submitted_at: submissionRow.submitted_at.toISOString(),
+        });
+        const revision = {
+          revision_id: revisionRow.revision_id,
+          group_id: revisionRow.group_id,
+          revision_ordinal: revisionRow.revision_ordinal,
+          integrity_digest: revisionRow.integrity_digest,
+          structure: revisionRow.structure,
+          response_spec: revisionRow.response_spec,
+          scoring_basis: revisionRow.scoring_basis,
+          execution_plan: revisionRow.execution_plan,
+          published_at: revisionRow.published_at.toISOString(),
+          supersedes_revision_id: revisionRow.supersedes_revision_id,
         };
-      }
-    }
 
-    if (request.expected_evaluation_id !== undefined) {
-      throw new EvaluateSubmissionError(
-        'candidate_not_found',
-        'commit requires a previously sealed candidate',
-      );
-    }
+        const inputSnapshot = freezeEvaluationInput(submission, revision, members);
+        const executionReceipt =
+          request.evaluation_key === undefined
+            ? null
+            : {
+                key: request.evaluation_key,
+                intent_digest: `sha256:${canonicalHash({
+                  input: inputSnapshot,
+                  mode: request.mode ?? 'execute',
+                  policy: request.policy ?? {},
+                  source: request.provenance?.source ?? 'automatic',
+                  assisted: request.provenance?.assisted ?? false,
+                  review_context: request.provenance?.review_context ?? null,
+                  asserted_unit_results: request.asserted_unit_results ?? null,
+                })}`,
+              };
+        if (executionReceipt !== null) {
+          if (executionReceipt.key.trim().length === 0) {
+            throw new EvaluateSubmissionError('evaluation_key_conflict', 'empty execution key');
+          }
+          // The group lock is also held by other delivery paths; check before any
+          // model invocation or new attempt allocation. Admission remains frozen
+          // on the original candidate and is rechecked by activation.
+          const [existing] = await tx
+            .select()
+            .from(evaluation)
+            .where(
+              and(
+                eq(evaluation.evaluation_group_id, request.evaluation_group_id),
+                sql`${evaluation.provenance}->'execution_receipt'->>'key' = ${executionReceipt.key}`,
+              ),
+            )
+            .limit(1);
+          if (existing) {
+            if (
+              request.expected_evaluation_id !== undefined &&
+              request.expected_evaluation_id !== existing.evaluation_id
+            ) {
+              throw new EvaluateSubmissionError(
+                'evaluation_key_conflict',
+                'candidate ID does not belong to this operation',
+              );
+            }
+            const record = EvaluationRecord.parse(existing);
+            if (
+              record.provenance?.execution_receipt?.intent_digest !== executionReceipt.intent_digest
+            ) {
+              throw new EvaluateSubmissionError(
+                'evaluation_key_conflict',
+                'execution key already binds different frozen inputs or grading intent',
+              );
+            }
+            return async () => ({
+              record,
+              created_at: existing.created_at,
+              replayed: true,
+              scoring_basis: projectIssuedScoringBasis(revision, inputSnapshot.issued_part_ids),
+              model_units_invoked: 0,
+              spent_cost_usd_micros: 0,
+            });
+          }
+        }
 
-    // ---- attempt 序号（group 锁内、固定 head 锚点分配） ----
-    const [latest] = await tx
-      .select({ attempt: evaluation.attempt })
-      .from(evaluation)
-      .where(eq(evaluation.submission_id, submissionRow.submission_id))
-      .orderBy(desc(evaluation.attempt))
-      .limit(1);
-    const attempt = (latest?.attempt ?? 0) + 1;
+        if (request.expected_evaluation_id !== undefined) {
+          throw new EvaluateSubmissionError(
+            'candidate_not_found',
+            'commit requires a previously sealed candidate',
+          );
+        }
 
-    const core = await evaluateSubmissionCore({
-      evaluation_id: 'pending', // 占位：内容寻址 id 在 record 产生后重铸（不参与评估语义）
-      submission,
-      revision,
-      issued_part_ids: inputSnapshot.issued_part_ids,
-      member_inputs: members,
-      attempt,
-      provenance: {
-        ...(request.provenance ?? { source: 'automatic', assisted: false }),
-        admission_snapshot: admissionSnapshot ?? null,
-        input_snapshot: inputSnapshot,
-        execution_receipt: executionReceipt,
+        // ---- attempt 序号（group 锁内、固定 head 锚点分配） ----
+        const [latest] = await tx
+          .select({ attempt: evaluation.attempt })
+          .from(evaluation)
+          .where(eq(evaluation.submission_id, submissionRow.submission_id))
+          .orderBy(desc(evaluation.attempt))
+          .limit(1);
+        const attempt = (latest?.attempt ?? 0) + 1;
+
+        return async () => {
+          const core = await evaluateSubmissionCore({
+            evaluation_id: 'pending', // 占位：内容寻址 id 在 record 产生后重铸（不参与评估语义）
+            submission,
+            revision,
+            issued_part_ids: inputSnapshot.issued_part_ids,
+            member_inputs: members,
+            attempt,
+            provenance: {
+              ...(request.provenance ?? { source: 'automatic', assisted: false }),
+              admission_snapshot: admissionSnapshot ?? null,
+              input_snapshot: inputSnapshot,
+              execution_receipt: executionReceipt,
+            },
+            plan_digest: planDigestOf(revision),
+            policy: request.policy,
+            mode: request.mode,
+            asserted_unit_results: request.asserted_unit_results,
+            model_executor: modelExecutor,
+          }).catch((error: unknown) => {
+            if (error instanceof ModelExecutionNotStartedError) throw error.cause;
+            throw error;
+          });
+
+          return database.transaction(async (tx) => {
+            const record = { ...core.record, evaluation_id: evaluationIdFor(core.record) };
+            const payload: EvaluationRowPayload = {
+              evaluation_id: record.evaluation_id,
+              evaluation_group_id: record.evaluation_group_id,
+              submission_id: record.submission_id,
+              attempt: record.attempt,
+              status: record.status,
+              unit_results: record.unit_results,
+              aggregate: record.aggregate,
+              plan_digest: record.plan_digest ?? null,
+              run_refs: record.run_refs,
+              provenance: (record.provenance as Record<string, unknown> | undefined) ?? null,
+            };
+            const now = new Date();
+            const inserted = await tx
+              .insert(evaluation)
+              .values({ ...payload, created_at: now })
+              .onConflictDoNothing({ target: [evaluation.submission_id, evaluation.attempt] })
+              .returning({ id: evaluation.evaluation_id });
+
+            if (inserted.length === 0) {
+              // (submission_id, attempt) 冲突：读回全载荷比对 —— 一致 = replay，发散 = conflict。
+              const [existing] = await tx
+                .select()
+                .from(evaluation)
+                .where(
+                  and(
+                    eq(evaluation.submission_id, submissionRow.submission_id),
+                    eq(evaluation.attempt, attempt),
+                  ),
+                )
+                .limit(1);
+              if (existing == null) {
+                // 不可能形状（unique 冲突但行不可见）—— fail-loud，绝不当 replay。
+                throw new EvaluateSubmissionError(
+                  'attempt_conflict',
+                  `attempt ${attempt} conflicted but no row is visible for submission '${submissionRow.submission_id}'`,
+                );
+              }
+              const existingPayload: EvaluationRowPayload = {
+                evaluation_id: existing.evaluation_id,
+                evaluation_group_id: existing.evaluation_group_id,
+                submission_id: existing.submission_id,
+                attempt: existing.attempt,
+                status: existing.status,
+                unit_results: existing.unit_results,
+                aggregate: existing.aggregate,
+                plan_digest: existing.plan_digest,
+                run_refs: existing.run_refs,
+                provenance: existing.provenance,
+              };
+              if (!evaluationPayloadEquals(existingPayload, payload)) {
+                throw new EvaluateSubmissionError(
+                  'attempt_conflict',
+                  `attempt ${attempt} for submission '${submissionRow.submission_id}' already committed with divergent content (existing evaluation '${existing.evaluation_id}') — concurrent evaluators diverged; resolve and retry as a new attempt`,
+                );
+              }
+              return {
+                record: {
+                  ...record,
+                  evaluation_id: existing.evaluation_id,
+                  status: existing.status,
+                  unit_results: existing.unit_results,
+                  aggregate: existing.aggregate,
+                  plan_digest: existing.plan_digest,
+                  run_refs: existing.run_refs,
+                },
+                created_at: existing.created_at,
+                replayed: true,
+                scoring_basis: core.scoring_basis,
+                model_units_invoked: core.model_units_invoked,
+                spent_cost_usd_micros: core.spent_cost_usd_micros,
+              };
+            }
+            return {
+              record,
+              created_at: now,
+              replayed: false,
+              scoring_basis: core.scoring_basis,
+              model_units_invoked: core.model_units_invoked,
+              spent_cost_usd_micros: core.spent_cost_usd_micros,
+            };
+          });
+        };
       },
-      plan_digest: planDigestOf(revision),
-      policy: request.policy,
-      mode: request.mode,
-      asserted_unit_results: request.asserted_unit_results,
-      model_executor: modelExecutor,
-    }).catch((error: unknown) => {
-      if (error instanceof ModelExecutionNotStartedError) throw error.cause;
-      throw error;
-    });
-
-    const record = { ...core.record, evaluation_id: evaluationIdFor(core.record) };
-    const payload: EvaluationRowPayload = {
-      evaluation_id: record.evaluation_id,
-      evaluation_group_id: record.evaluation_group_id,
-      submission_id: record.submission_id,
-      attempt: record.attempt,
-      status: record.status,
-      unit_results: record.unit_results,
-      aggregate: record.aggregate,
-      plan_digest: record.plan_digest ?? null,
-      run_refs: record.run_refs,
-      provenance: (record.provenance as Record<string, unknown> | undefined) ?? null,
-    };
-    const now = new Date();
-    const inserted = await tx
-      .insert(evaluation)
-      .values({ ...payload, created_at: now })
-      .onConflictDoNothing({ target: [evaluation.submission_id, evaluation.attempt] })
-      .returning({ id: evaluation.evaluation_id });
-
-    if (inserted.length === 0) {
-      // (submission_id, attempt) 冲突：读回全载荷比对 —— 一致 = replay，发散 = conflict。
-      const [existing] = await tx
-        .select()
-        .from(evaluation)
-        .where(
-          and(
-            eq(evaluation.submission_id, submissionRow.submission_id),
-            eq(evaluation.attempt, attempt),
-          ),
-        )
-        .limit(1);
-      if (existing == null) {
-        // 不可能形状（unique 冲突但行不可见）—— fail-loud，绝不当 replay。
-        throw new EvaluateSubmissionError(
-          'attempt_conflict',
-          `attempt ${attempt} conflicted but no row is visible for submission '${submissionRow.submission_id}'`,
-        );
-      }
-      const existingPayload: EvaluationRowPayload = {
-        evaluation_id: existing.evaluation_id,
-        evaluation_group_id: existing.evaluation_group_id,
-        submission_id: existing.submission_id,
-        attempt: existing.attempt,
-        status: existing.status,
-        unit_results: existing.unit_results,
-        aggregate: existing.aggregate,
-        plan_digest: existing.plan_digest,
-        run_refs: existing.run_refs,
-        provenance: existing.provenance,
-      };
-      if (!evaluationPayloadEquals(existingPayload, payload)) {
-        throw new EvaluateSubmissionError(
-          'attempt_conflict',
-          `attempt ${attempt} for submission '${submissionRow.submission_id}' already committed with divergent content (existing evaluation '${existing.evaluation_id}') — concurrent evaluators diverged; resolve and retry as a new attempt`,
-        );
-      }
-      return {
-        record: {
-          ...record,
-          evaluation_id: existing.evaluation_id,
-          status: existing.status,
-          unit_results: existing.unit_results,
-          aggregate: existing.aggregate,
-          plan_digest: existing.plan_digest,
-          run_refs: existing.run_refs,
-        },
-        created_at: existing.created_at,
-        replayed: true,
-        scoring_basis: core.scoring_basis,
-        model_units_invoked: core.model_units_invoked,
-        spent_cost_usd_micros: core.spent_cost_usd_micros,
-      };
-    }
-    return {
-      record,
-      created_at: now,
-      replayed: false,
-      scoring_basis: core.scoring_basis,
-      model_units_invoked: core.model_units_invoked,
-      spent_cost_usd_micros: core.spent_cost_usd_micros,
-    };
+    );
+    return execute();
   };
 
-  // 调用方传入 Db 时开启单事务；传入 Tx 时 transaction() 落到嵌套 savepoint
-  // （drizzle 语义）—— 两种调用形态共用同一实现，不产生第二套执行路径。
-  return await db.transaction(run);
+  // Deterministic callers may already own a transaction; model callers must not.
+  if (!('$client' in db) || typeof db.$client.reserve !== 'function') return run(db);
+  return withinSessionAdvisoryLock(
+    db,
+    {
+      namespace: 'assessment-evaluation-group',
+      key: request.evaluation_group_id,
+      busy: () => new EvaluateSubmissionError('evaluation_busy', 'evaluation group is busy; retry'),
+    },
+    new Date(Date.now() + 30_000),
+    run,
+  );
 }
 
 // EvaluationContractError 经本模块透传：结构违背（revision 不匹配 / response_set

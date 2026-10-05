@@ -49,3 +49,5 @@ Nativecost proof extended to realpi normalization: /tmp/yuk1047-native-adapter-r
 2026-10-05 本机续接诊断生产发布：kernel共享publisher/normalizer、V2冻结签名、缺签名待复核、未准入withheld无FSRS/stream、one-time强制claim与原件租约守恒完成。44+33+12+30 DB/151unit/typecheck/build/boundary440通过。下一步Probe/ingestion/native consumers/registry；无PR/paid/prod，1047继续。
 
 2026-10-05 Probe native production接线完成：draft publication→admitted queue实际issuance→图片/文本原件→native candidate→独立签名probe_result。无练习activation，通用激活拒绝probe容器；70DB+151unit/25lifecycle/6queue/18真实代码闭环离线模型端口、typecheck/build/Postman/boundary439通过。继续ingestion先持久化/native failure consumers/准入registry；无PR/paid/prod。
+
+YUK-1047续：共享原生评分已拆为短事务读/事务外模型/短事务封存，同组session锁保留幂等与attempt串行；22+34 scoped DB、typecheck/build通过。ingestion原件捕获与消费者仍未完成。
