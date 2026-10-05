@@ -55,6 +55,7 @@ export const handleReviewDue: HandleReviewDue = async (...args) => {
 
 // YUK-1064 — explicit operations used by scripts and integration consumers.
 export type { FailureLearningBossSend } from './jobs/failure-learning-jobs';
+export { previewFormalAttempt } from './server/assessment/attempt';
 export type { CollectedSignal } from './server/candidate-signals';
 export { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } from './server/cause-overlay';
 export type {
@@ -312,6 +313,5 @@ export { jyeooFetchCandidatesTool } from './server/tools/jyeoo-fetch-candidates'
 // YUK-892 — due-review queue reader for non-LLM read paths (today summary).
 export { executeGetReviewDue } from './server/tools/question-context';
 export { storeSourcedQuestionTool } from './server/tools/store-sourced-question';
-
 // YUK-1062 — task composition uses the narrow task-public entry directly.
 export { practiceTaskSpecs } from './task-public';

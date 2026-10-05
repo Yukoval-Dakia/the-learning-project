@@ -385,3 +385,12 @@ full evidence target editing/media acceptance and complete frozen teaching input
 - 一次性发题在服务端强制 claim，即使调用方未显式传 claim；同 issuance ID 重试保留旧 revision/binding。诊断自动发题检查 due/draft，不允许 manual 绕过。提交处理租约独立于发题 claim，已持久化原答即使没有有效评分也阻止另开原答，允许原答幂等重试。
 - 证据：44 intervention preparation DB、33 issuance/persistence DB、12 native diagnostic HTTP DB、30 publisher DB、151 scoped unit，通过；typecheck、build、boundary 440/0/48 通过。日志在 `/tmp/yuk1047-diag-*`、`/tmp/yuk1047-claim-regress.log`、`/tmp/yuk1047-native-publication-unit2.log` 与 `/tmp/yuk1047-withheld.log`。
 - 未完成：Probe route/lifecycle、ingestion 原件先落库、native failure consumers、准入和入口登记。未调用付费 provider，未部署，未开 PR；1047 仍 In Progress。
+
+## 2026-10-05 本机续接：Probe 原生链
+
+- `serveProbeOnce` 在原事务冻结 publication，保留 pool-invisible draft 与三题上限。没有真实模型准入时 withheld；备课台只展示 admitted probe，并在实际送达时创建稳定 `iss_probe_<questionId>`，从公开 frozen DTO 读取题干。既有 ProbeAnswers UI/wire 未修改。
+- 共享 issuance 实现下沉到 `kernel/records/assessment-issuance.ts`，practice 旧路径显式 re-export；可信 source_asset→EvidenceAttachment 解析供现有服务端入口复用。Probe 原件保存文本和图片 digest/MIME/大小/上传时间，再经原生 evaluateSubmission 产 candidate；响应 digest 保证同答重试不重复付费，改答保留独立原件，既有 per-probe claim 继续串行化。
+- `answerProbe` 消费原生独立签名并持久化 issuance/submission/evaluation 关联。neither 为 terminal non-evidence，缺签名/含糊/冲突不产生猜测证据。提交或评估后撤回准入保留原件，但不写 probe_result。
+- 不调用练习 activation。probe occurrence 只能走 conjecture 入口；中央 activate 拒绝 probe container，避免通用 endpoint 旁路写 FSRS/theta。单一槽兼任答案/证据时按并集送模型，修复此前重复传递。
+- scoped 验证：Probe route 26 DB、生命周期25 DB、队列6 DB、真实运行链替换模型端口的18 closed-loop DB，以及33 issuance/11 activation DB；最终合跑70 DB与151unit通过。typecheck/build/Postman生成、boundary 439/0/48通过。全程无新付费provider调用、无部署、无PR。
+- 下一步 ingestion 持久化先于评分、native failure消费者及准入/入口census。仅已完成代码接线，不以离线fixture准入冒充生产actual-output证据。

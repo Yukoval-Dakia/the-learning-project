@@ -662,7 +662,7 @@ export async function evaluateSubmissionCore(
   // ---- execute 模式：逐 unit 分发执行器。----
   for (const unit of inScopeUnits) {
     const unitId = unit.scoring_unit_id;
-    const slotIds = [...unit.slot_refs, ...unit.evidence_slot_refs];
+    const slotIds = [...new Set([...unit.slot_refs, ...unit.evidence_slot_refs])];
     const entries = slotIds
       .map((slotId) => entryBySlot.get(slotId))
       .filter((entry): entry is SlotResponseT => entry != null);

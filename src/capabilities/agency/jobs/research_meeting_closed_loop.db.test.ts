@@ -84,8 +84,10 @@ function fakePiAdapter() {
   };
 }
 
+import { z } from 'zod';
 import { capabilities } from '@/capabilities';
 import { PROBE_QUESTION_SOURCE } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
+import { loadActiveProbes } from '@/capabilities/shell/server/prep-desk-probes';
 import { ai_task_runs, cost_ledger, event, kc_typed_state, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
@@ -97,6 +99,7 @@ import {
 } from '@/server/conjectures/reconcile';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { buildHonoApp } from '../../../../server/app';
+import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { RESEARCH_MEETING_SAMPLES, runResearchMeetingNightly } from './research_meeting_nightly';
 
@@ -212,6 +215,30 @@ function sdkSuccess(structured: unknown) {
  * rather than as a silently-correct canned answer.
  */
 function fakeModel(prompt: string): unknown {
+  if (prompt.includes('"scoring_unit":')) {
+    const start = prompt.indexOf('{"submission_id":');
+    const input = z
+      .object({
+        scoring_unit: z.object({ criterion: z.object({ rule_id: z.string() }) }),
+        slot_responses: z.array(z.object({ slot_id: z.string(), text_md: z.string() })),
+      })
+      .parse(JSON.parse(prompt.slice(start).split('\n')[0]));
+    return {
+      ...sdkSuccess({
+        kind: 'rule',
+        rule_id: input.scoring_unit.criterion.rule_id,
+        points_awarded: 0,
+        confidence: 0.95,
+        feedback_md: JUDGE_INCORRECT.feedback_md,
+        probe_signature_match: JUDGE_INCORRECT.probe_signature_match,
+        evidence_citations: input.slot_responses.map((slot) => ({
+          slot_id: slot.slot_id,
+          quote: slot.text_md,
+        })),
+      }),
+      total_cost_usd: 0.0001,
+    };
+  }
   if (prompt.includes('"probe_package":')) {
     return sdkSuccess({
       review: {
@@ -236,7 +263,7 @@ function fakeModel(prompt: string): unknown {
 
 /** The prompt the vision judge sent to the model (exactly one per run). */
 function judgePrompts(): string[] {
-  return sdk.prompts.filter((p) => p.includes('"student_final_answer_text"'));
+  return sdk.prompts.filter((p) => p.includes('"scoring_unit":'));
 }
 
 async function seedKnowledge(): Promise<void> {
@@ -345,6 +372,8 @@ async function apiRequest(path: string, body: unknown): Promise<Response> {
 }
 
 async function answerProbeViaRoute(probeQuestionId: string, answerMd: string): Promise<Response> {
+  await publishPaperModelFixture(testDb(), probeQuestionId);
+  await loadActiveProbes(testDb());
   return apiRequest(`/api/conjecture/probe/${probeQuestionId}/answer`, { answer_md: answerMd });
 }
 
@@ -514,7 +543,7 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     expect(judgeCalls[0]).toContain(PROBE_MD);
     expect(judgeCalls[0]).toContain('使动用法，译作「使他感到奇异」');
     // …and `judge_kind_override` resolved to a real, runnable route (not a validation stub).
-    expect(await taskKindCounts()).toMatchObject({ MultimodalDirectJudgeTask: 1 });
+    expect(await taskKindCounts()).toMatchObject({ AssessmentRuleJudgeTask: 1 });
 
     const [probeResult] = await db
       .select()

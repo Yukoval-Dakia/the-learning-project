@@ -34,6 +34,7 @@ export {
   createDefaultJudgeInvoker,
   defaultImageFetch,
   evaluateAttempt,
+  previewFormalAttempt,
   evaluateSubmission,
   isModelBackedJudgeRoute,
   judgeAnswer,

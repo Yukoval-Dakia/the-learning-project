@@ -1,51 +1,7 @@
-// Phase 0 关系脑 (YUK-406 / YUK-440) — U3 probe one-shot lifecycle. This is the
-// A13 conjecture-engine "dark-loop producer": the surface that materializes a
-// probe question and emits the single canonical `experimental:probe_result`
-// outcome event. YUK-691 additionally writes a short-lived judge-claim marker to
-// close the concurrent HTTP read-then-paid-invoke race; it is audit metadata, not
-// an outcome or learner-state event.
-//
-// THREE LOAD-BEARING INVARIANTS (the whole point of this unit):
-//
-//   1. POOL-INVISIBILITY — the probe question is inserted `draft_status='draft'`
-//      + `source='mind_probe'`. The shared pool filter `notDraftPredicate`
-//      (src/db/predicates.ts = `or(isNull(draft_status), ne(draft_status, 'draft'))`) excludes every
-//      'draft' row from EVERY review pool, so a served probe NEVER appears in
-//      /api/review/due. This is the recurrence regression-lock (roadmap U3).
-//
-//   2. ≤3 CONCURRENT ACTIVE PROBES — `MAX_CONCURRENT_ACTIVE_PROBES`. serveProbeOnce
-//      reads countActiveProbes INSIDE a db.transaction and (to truly serialize two
-//      concurrent serves on the count-read + insert) takes a transaction-scoped
-//      advisory lock first, so the cap can never be raced past. When the cap is hit
-//      it returns {status:'cap_reached'} WITHOUT inserting.
-//
-//   3. ND-5 — this module NEVER writes FSRS. It NEVER imports/calls upsertFsrsState
-//      / scheduleReview, NEVER inserts material_fsrs_state, NEVER writes an
-//      action='attempt' event. The probe question row stays draft forever, served
-//      exactly once, inert thereafter. Only a CONFIRMED weakness's remediation
-//      enters FSRS — via a SEPARATE question through the normal proposal
-//      accept→promote path — which is NOT this module's job.
-//
-// CANONICAL EVENT (cross-doc reconciliation — newer roadmap WINS): the older plan
-// (docs/superpowers/plans/2026-06-18-phase0-relationship-brain.md, Task 11) shows a
-// two-event vocabulary `experimental:probe_served` + `experimental:probe_answered`.
-// THAT IS DEPRECATED. The canonical model (docs/planning/2026-06-27-relationship-
-// brain-roadmap.md U3 + docs/design/2026-06-27-a13-ts-half-design.md §2.2) is a
-// SINGLE outcome event `experimental:probe_result`. There is NO serve event: the
-// "served" state IS the draft question row existing. serveProbeOnce writes ONLY the
-// question row. answerProbe writes exactly ONE probe_result event; on the first
-// `evidence_for` it also atomically serves the pre-authored second probe so the
-// recurrence gate is reachable in production. The separate judge-claim marker is
-// never folded as probe evidence.
-//
-// Escape-hatch (a13 design §2.2): `experimental:probe_result` is NOT in
-// RESERVED_EXPERIMENTAL_ACTIONS — it validates through the loose generic
-// ExperimentalEvent (experimental.ts:203-214) with zero schema-file change.
-// Do NOT reserve it (that would force a locked schema branch).
-//
-// Identity (verified from U2, conjecture-accept.ts:93-94): the conjecture has NO
-// separate DB row — it IS the `experimental:proposal` event, so its stable id is
-// the proposalId. conjecture_event_id === conjectureProposalId.
+// Probe drafts remain outside practice pools. Publication freezes their question
+// and response signatures; actual queue delivery creates the native issuance.
+// The per-probe paid claim serializes evaluation. Only answerProbe writes the
+// terminal conjecture result, never practice attempts, FSRS or theta.
 
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
@@ -73,9 +29,10 @@ import {
 } from '@/core/schema/conjecture-probe-response';
 import { AiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
-import { event, question } from '@/db/schema';
+import { event, question, question_group_lifecycle } from '@/db/schema';
 import { getCorrectionStatus, getCorrectionStatuses, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import {
   acquireProposalDecisionLock,
   findExistingRateEvent,
@@ -202,7 +159,7 @@ export async function countActiveProbes(db: DbOrTx): Promise<number> {
 }
 
 /**
- * Materialize a probe question for a conjecture. Writes ONLY the question row (no
+ * Materialize and publish a probe question for a conjecture (no
  * event — the "served" state IS the draft row existing). The cap check + insert run
  * inside a transaction guarded by an advisory lock so concurrent serves serialize.
  * Returns {status:'cap_reached'} without inserting when MAX_CONCURRENT_ACTIVE_PROBES
@@ -257,6 +214,14 @@ export async function serveProbeOnce(params: ServeProbeOnceParams): Promise<Serv
       }),
     );
 
+    await publishQuestionGroupFromRow(tx, {
+      rootId: probeQuestionId,
+      admission: { state: 'withheld', reason: 'no_admitted_executor' },
+      claimPolicy: 'one_time',
+      availability: 'container_only',
+      actorRef: 'conjecture:probe-publication',
+      now,
+    });
     return { status: 'served', probe_question_id: probeQuestionId, active_count: activeBefore + 1 };
   });
 }
@@ -286,6 +251,7 @@ export interface AnswerProbeParams {
   answer_image_refs?: string[];
   /** Authoritative judge run correlation id for cost / execution attribution. */
   taskRunId?: string;
+  assessment?: { issuance_id: string; submission_id: string; evaluation_id: string };
   /** Response-signature verdict for v2 probes; absent only on historical probes. */
   response_judgement?: ConjectureProbeResponseJudgementT | null;
   now?: Date;
@@ -679,6 +645,23 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
     if (probe.source !== PROBE_QUESTION_SOURCE) {
       throw new ApiError('not_a_probe', `question ${probeQuestionId} is not a mind_probe`, 409);
     }
+    if (params.assessment) {
+      const [lifecycle] = await tx
+        .select()
+        .from(question_group_lifecycle)
+        .where(eq(question_group_lifecycle.group_id, probeQuestionId));
+      if (
+        lifecycle?.scoring_admission_state !== 'admitted' ||
+        lifecycle.suspended ||
+        lifecycle.withdrawn
+      ) {
+        throw new ApiError(
+          'not_admitted',
+          'probe admission changed; original evaluation retained for review',
+          409,
+        );
+      }
+    }
     const conjectureEventId = extractConjectureId(probe.metadata);
     if (!conjectureEventId) {
       throw new ApiError(
@@ -873,6 +856,7 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
         // Provenance for a photo answer: the team can later see WHAT was submitted for
         // a confirmed probe ("教研团据此备练"), not just the text (evidence-first).
         answer_image_refs: answerImageRefs,
+        ...(params.assessment ? { assessment: params.assessment } : {}),
       },
       caused_by_event_id: conjectureEventId,
       task_run_id: taskRunId,

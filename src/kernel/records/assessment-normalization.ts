@@ -1,3 +1,4 @@
+import { MAX_IMAGE_UPLOAD_BYTES } from '@/core/limits';
 // YUK-1043 — 统一发布链 · 契约 normalizer（grounding §3.1/§4.4；复审 P1-2/P1-3）。
 //
 // 把 legacy `question` 工作副本（flat 列）转换为 YUK-1046 评估契约四层
@@ -59,7 +60,7 @@ import {
   ResponseSpec,
   ScoringBasis,
 } from '@/core/schema/assessment';
-import { ConjectureProbeSpecV2 } from '@/core/schema/business';
+import { ConjectureProbeSpec, ConjectureProbeSpecV2 } from '@/core/schema/business';
 import { extractAnswerHead, isExactCapableReference } from '@/core/schema/judge-routing';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 
@@ -701,8 +702,37 @@ function normalizeQuestionRowBase(row: NormalizableQuestionRow): NormalizedContr
 
 export function normalizeQuestionRowToContract(row: NormalizableQuestionRow): NormalizedContract {
   const contract = normalizeQuestionRowBase(row);
+  if (row.source === 'mind_probe' || row.metadata?.probe_spec != null) {
+    const slot = contract.response_spec.slots[0];
+    if (contract.response_spec.slots.length !== 1 || !slot)
+      throw new Error('probe requires one response slot');
+    contract.response_spec.slots = [
+      {
+        slot_id: slot.slot_id,
+        part_id: slot.part_id,
+        kind: 'open_response',
+        accepted_evidence: [
+          {
+            kind: 'image',
+            allowed_mime_patterns: ['image/png', 'image/jpeg', 'image/webp'],
+            max_bytes: MAX_IMAGE_UPLOAD_BYTES,
+            requires_security_scan: false,
+          },
+        ],
+        evidence_required: false,
+        max_chars: 10000,
+      },
+    ];
+    contract.scoring_basis.units[0].evidence_slot_refs = [slot.slot_id];
+    contract.scoring_basis.blank_scores_zero = false;
+    contract.integrity_digest = contractIntegrityDigest(contract);
+  }
   if (row.metadata?.probe_spec == null) return contract;
-  const probe = ConjectureProbeSpecV2.parse(row.metadata.probe_spec);
+  const parsed = ConjectureProbeSpecV2.safeParse(
+    ConjectureProbeSpec.parse(row.metadata.probe_spec),
+  );
+  if (!parsed.success) return contract;
+  const probe = parsed.data;
   if (contract.scoring_basis.units.length !== 1 || contract.structure.parts.length !== 1) {
     throw new Error('response-aware probe requires one published scoring unit');
   }

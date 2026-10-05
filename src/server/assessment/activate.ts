@@ -321,7 +321,11 @@ export async function activateEvaluation(
     .from(assessment_issuance)
     .where(eq(assessment_issuance.issuance_id, sub.issuance_id))
     .limit(1);
-  if (!issuance || issuance.revision_id !== sub.revision_id) {
+  if (
+    !issuance ||
+    issuance.revision_id !== sub.revision_id ||
+    issuance.container_occurrence_ref?.startsWith('probe:')
+  ) {
     return { status: 'coordinate_mismatch' };
   }
 

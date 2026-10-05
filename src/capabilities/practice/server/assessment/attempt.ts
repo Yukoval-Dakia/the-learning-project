@@ -37,6 +37,13 @@ export async function prepareFormalAttemptSubmission(
     .where(eq(assessment_issuance.issuance_id, request.issuance_id))
     .limit(1);
   if (!issuance) throw new ApiError('not_found', 'issued assessment not found', 404);
+  if (issuance.container_occurrence_ref?.startsWith('probe:') && entry !== 'conjecture_probe') {
+    throw new ApiError(
+      'probe_entry_required',
+      'probe original belongs to its conjecture result writer',
+      409,
+    );
+  }
   if (issuance.container_occurrence_ref?.startsWith('paper_') && entry !== 'paper_submit') {
     throw new ApiError(
       'paper_entry_required',

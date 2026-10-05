@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-05。YUK-1047 已恢复到推送分支 fix/yuk-1047-formal-entries，当前工作树 /Volumes/YukovalSBak/yukoval-projects/tlp-assessment-entries。旧结算 writer 已删除，23 DB / 19 invariant unit / typecheck / build 通过；诊断生产冻结发布/签名/one-time claim已接通（未准入仍withheld）；probe、ingestion与消费者仍在实施，八入口未完成，不标Done。依赖不追新。
+> 更新于2026-10-05。YUK-1047 已恢复到推送分支 fix/yuk-1047-formal-entries，当前工作树 /Volumes/YukovalSBak/yukoval-projects/tlp-assessment-entries。旧结算 writer 已删除，23 DB / 19 invariant unit / typecheck / build 通过；诊断生产冻结发布/签名/one-time claim已接通（未准入仍withheld）；Probe原生发题/图片原件/签名与ND-5隔离已接通；ingestion与消费者仍在实施，八入口未完成，不标Done。依赖不追新。
 
 ## NOW
 
@@ -83,7 +83,7 @@
 
 ## NEXT
 
-1. 继续1047诊断生产发布/发题、probe签名与ingestion原件持久化及原生消费者；旧writer与JudgedSubmit已删除，ValidatedSubmit保留。八入口未完成前不标Done。766恢复LIGHT/FULL与588 UI具体预审待owner回复，1091已Done；不以单批合并为终点。
+1. 继续1047 ingestion原件持久化及原生消费者/准入registry；诊断与Probe生产发布/发题/签名已接通；旧writer与JudgedSubmit已删除，ValidatedSubmit保留。八入口未完成前不标Done。766恢复LIGHT/FULL与588 UI具体预审待owner回复，1091已Done；不以单批合并为终点。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
