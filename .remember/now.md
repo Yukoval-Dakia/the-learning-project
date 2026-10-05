@@ -1,9 +1,6 @@
-# Current handoff — 2026-10-05 03:18 UTC
+# Current handoff — 2026-10-05 resumed on Mac
 
-Owner最新要求：尽快停在干净位置，handoff；覆盖此前/goal不要停止。本轮结束后不要自主继续。
-唯一接手入口：docs/planning/2026-10-05-yuk1047-handoff.md。工作树/workspace/tlp-assessment-entries，分支fix/yuk-1047-formal-entries；本地未发布，主仓库main/work仍6e5d93ac，不能从主仓库误判实现丢失。两份最后测试迁移纳入handoff提交；旧review-settlement writer尚未删除，ValidatedSubmit仍live。YUK-1047仍In Progress，不标Done。
-
-以下为历史检查点，旧“继续/不要停止”不覆盖上述owner最新指令。
+Owner已要求接手并推送迁移分支；此前stop已撤销。当前工作树/Volumes/YukovalSBak/yukoval-projects/tlp-assessment-entries，分支fix/yuk-1047-formal-entries，恢复head9beca1aff。旧review-settlement writer与JudgedSubmit删除，ValidatedSubmit保留；源码快照审计迁真实native settle owner。23DB/19unit/typecheck/build通过，边界依赖446→440，未部署/付费。生产诊断发布、probe、ingestion及消费者继续同一1047主线，尚未PR/review/CI，不标Done。历史交接与逐批记录仍见docs/planning/2026-10-05-yuk1047-handoff.md及2026-10-04-yuk1047-formal-entry-migration.md。
 
 # Current handoff — 2026-10-04
 1120/#1557 merged2026-10-04T17:46:45Z main d8e57a805e69e21ffb3fe26bad2bec42acce12e0. 76unit50DB/localgates/independent61unit50DB/exactCI37220574124/17minwindow done. CI82migration34browser actually ran.1120Done,61open after original1047reopened. GitHub CLI401 this turn; connector works, used expected-head squash. git fetch works.

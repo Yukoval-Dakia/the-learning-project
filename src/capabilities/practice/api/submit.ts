@@ -2,9 +2,6 @@
 // is the only learning writer; durable work uses the same immutable original.
 import { and, eq } from 'drizzle-orm';
 import { isBlankSlotResponse } from '@/core/schema/assessment/response';
-import type { JudgeResultV2T } from '@/core/schema/capability';
-import type { CauseCategoryT } from '@/core/schema/event/blocks';
-import type { JudgeExecutionProvenanceT } from '@/core/schema/event/known';
 import {
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
   InterventionDiagnosticQuestionMetadata,
@@ -18,16 +15,13 @@ import {
   errorResponse,
 } from '@/kernel/http';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
-import type { SubjectProfile } from '@/subjects/profile';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { commitFormalAttempt } from '../server/assessment/attempt';
-import type { JudgeInvokerOutput } from '../server/judge';
 import { judgeDurableEnabled } from '../server/judge-durable-config';
 import { ratingFromCoarseOutcome } from '../server/judge-rating';
 import { JUDGE_RUN_TABLE } from '../server/judge-run-status';
 import { type CreateAttemptBody, CreateAttemptBodySchema } from './contracts';
 
-type Rating = CreateAttemptBody['rating'];
 type SubmitBodyT = CreateAttemptBody;
 type QuestionRow = typeof question.$inferSelect;
 
@@ -157,22 +151,6 @@ export async function releaseInterventionDiagnosticSubmissionClaim(
         eq(question.updated_at, input.claimedAt),
       ),
     );
-}
-
-/** Historical settlement fixture shape; no live submit or worker invokes the old scorer. */
-export interface JudgedSubmit {
-  judgeResult: JudgeResultV2T | null;
-  judgeRoute: string | null;
-  judgeTelemetry: JudgeInvokerOutput['telemetry'] | null;
-  executionProvenance: JudgeExecutionProvenanceT | null;
-  suggestedRating: Rating | null;
-  finalRating: Rating;
-  adviceCauseCategory: CauseCategoryT | null;
-  /**
-   * YUK-739 — the profile the rating-advisory lean/ratingPolicy resolves
-   * through in historical settlement records (null when no answer was submitted).
-   */
-  adviceSubjectProfile: SubjectProfile | null;
 }
 
 /**
