@@ -106,8 +106,6 @@ export {
   type JudgeRoute,
   type JudgeRouteQuestionRow,
   type JudgeRouterInput,
-  type LegacyAttemptInput,
-  type LegacyAttemptOutcome,
   MODEL_BACKED_JUDGE_ROUTES,
   type MultimodalDirectImageFetchFn,
   type MultimodalDirectRunTaskFn,

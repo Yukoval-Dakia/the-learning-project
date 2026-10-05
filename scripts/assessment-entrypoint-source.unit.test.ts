@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { buildAssertions } from '../src/server/release/assessment-manifest';
 import {
@@ -28,11 +29,80 @@ describe('assessment checkout source evidence', () => {
     expect(source.calls.map((call) => call.entry).sort()).toEqual(
       [...EXPECTED_GRADING_ENTRIES].sort(),
     );
-    expect(source.calls.every((call) => call.lane === 'legacy')).toBe(true);
-    expect(source.legacyExecutor).toHaveLength(1);
-    expect(source.files).toHaveLength(8);
+    expect(source.calls.every((call) => call.lane === 'contract')).toBe(true);
+    expect(source.legacyExecutor).toHaveLength(0);
+    expect(source.files.length).toBeGreaterThanOrEqual(9);
     expect(source.files.every((file) => /^[a-f0-9]{64}$/.test(file.sha256))).toBe(true);
-    expect(assertion(source)?.status).toBe('fail');
+    expect(assertion(source)?.status).toBe('info');
+  });
+
+  it.each([
+    [
+      'missing evaluator edge',
+      (source: string) => source.replace('await evaluateAttempt({', 'await unrelated({'),
+    ],
+    ['legacy bridge', (source: string) => source.replace('contract: {', 'legacy: {')],
+    [
+      'changed forwarded entry',
+      (source: string) =>
+        source.replace('    entry,\n    questionId,', "    'solo_submit',\n    questionId,"),
+    ],
+    [
+      'reassigned parameter',
+      (source: string) =>
+        source.replace(
+          '  const prepared = await previewFormalAttempt(',
+          "  entry = 'solo_submit';\n  const prepared = await previewFormalAttempt(",
+        ),
+    ],
+    [
+      'spread evaluator input',
+      (source: string) => source.replace('    contract: {', '    ...override,\n    contract: {'),
+    ],
+  ])('does not certify a broken shared bridge: %s', (_label, mutate) => {
+    const bridge = 'src/capabilities/practice/server/assessment/attempt.ts';
+    const source = inspectAssessmentSources({
+      [authority]: readFileSync(authority, 'utf8'),
+      [bridge]: mutate(readFileSync(bridge, 'utf8')),
+      'src/caller.ts':
+        "import {commitFormalAttempt} from '@/capabilities/practice/server/assessment/attempt'; commitFormalAttempt(db, 'solo_submit', id, request);",
+    });
+    expect(source.unresolved.length).toBeGreaterThan(0);
+    expect(source.calls.some((call) => call.entry === 'solo_submit')).toBe(false);
+    expect(assertion(source)?.status).not.toBe('ok');
+  });
+
+  it.each([
+    [
+      "import {commitFormalAttempt} from '@/capabilities/practice/server/assessment/attempt'; commitFormalAttempt(db, 'solo_submit', id, request);",
+      true,
+    ],
+    [
+      "import {commitFormalAttempt as commit} from '@/capabilities/practice/server/assessment/attempt'; commit(db, 'solo_submit', id, request);",
+      true,
+    ],
+    ["commitFormalAttempt(db, 'solo_submit', id, request);", false],
+    [
+      "import {commitFormalAttempt} from './unrelated'; commitFormalAttempt(db, 'solo_submit', id, request);",
+      false,
+    ],
+    [
+      "import {commitFormalAttempt} from '@/capabilities/practice/server/assessment/attempt'; function bad(commitFormalAttempt) { commitFormalAttempt(db, 'solo_submit', id, request); }",
+      false,
+    ],
+    [
+      "import {commitFormalAttempt} from '@/capabilities/practice/server/assessment/attempt'; const commit = commitFormalAttempt; commit(db, 'solo_submit', id, request);",
+      false,
+    ],
+  ])('requires a bound wrapper import: %s', (caller, proven) => {
+    const bridge = 'src/capabilities/practice/server/assessment/attempt.ts';
+    const source = inspectAssessmentSources({
+      [authority]: readFileSync(authority, 'utf8'),
+      [bridge]: readFileSync(bridge, 'utf8'),
+      'src/caller.ts': caller,
+    });
+    expect(source.calls.some((call) => call.entry === 'solo_submit')).toBe(proven);
+    expect(source.unresolved.length === 0).toBe(proven);
   });
 
   it('ignores misleading registry labels, comments and string snippets', () => {
