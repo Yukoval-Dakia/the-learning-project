@@ -1315,7 +1315,13 @@ describe('formal manual candidate and atomic activation', () => {
     expect(hintRunner.mock.calls[0][1]).toMatchObject({
       learning_item: { one_line_intent: `题面 ${pub.qid}` },
       atomic_sections: { worked_solution: 'B' },
+      frozen_question: {
+        issuance_id: issued.issuance.issuance_id,
+        faces: [{ prompt_md: `题面 ${pub.qid}` }],
+        response_spec: { slots: [{ options: [{ text: '甲' }, { text: '乙' }, { text: '丙' }] }] },
+      },
     });
+    expect(JSON.stringify(hintRunner.mock.calls[0][1])).not.toContain('NEW PRIVATE');
     await expect(
       planSolveHint({
         db: testDb(),

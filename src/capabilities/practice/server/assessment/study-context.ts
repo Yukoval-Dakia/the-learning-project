@@ -58,17 +58,23 @@ export function projectFrozenStudyContext(
   const revision = revisionRowToContract(row);
   const face = projectPracticeIssuance(revision, issuanceRowToContract(issuance));
   const basis = projectIssuedScoringBasis(revision, issuance.part_ids);
-  const options = new Map<string, string>();
-  const items = new Map<string, string>();
-  for (const slot of face.response_spec.slots) {
-    if ('options' in slot)
-      for (const option of slot.options)
-        options.set(option.option_id, `${option.label}. ${option.text}`);
-    if ('items' in slot)
-      for (const item of slot.items) items.set(item.item_id, `${item.label}. ${item.text}`);
-  }
   const reference = basis.units
     .map((unit) => {
+      // Option/item IDs are unique inside a slot, not globally across the issuance.
+      const slots = face.response_spec.slots.filter((slot) =>
+        unit.slot_refs.includes(slot.slot_id),
+      );
+      const options = new Map<string, string>();
+      const items = new Map<string, string>();
+      for (const slot of slots) {
+        const slotOptions =
+          'options' in slot ? slot.options : slot.kind === 'matching' ? slot.right_options : [];
+        const slotItems =
+          slot.kind === 'matching' ? slot.left_items : 'items' in slot ? slot.items : [];
+        for (const option of slotOptions)
+          options.set(option.option_id, `${option.label}. ${option.text}`);
+        for (const item of slotItems) items.set(item.item_id, `${item.label}. ${item.text}`);
+      }
       const criterion = unit.criterion;
       switch (criterion.kind) {
         case 'option_set_key':
@@ -108,6 +114,8 @@ export function projectFrozenStudyContext(
     .join('\n\n');
   return {
     question_id: questionId ?? row.group_id,
+    // Teaching needs the complete served controls/material metadata, not just flattened prose.
+    practice_dto: face,
     prompt_md: [
       ...face.materials.flatMap((material) => (material.content_md ? [material.content_md] : [])),
       ...face.faces.map((part) => part.prompt_md),

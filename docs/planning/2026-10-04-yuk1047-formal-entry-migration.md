@@ -344,3 +344,11 @@ full evidence target editing/media acceptance and complete frozen teaching input
 - 原答mark_wrong/retract/restore通过统一correct事件联动，订阅升v4，observability登记实际已有correct写面所有权。读取当前head和原答更正状态在learning锁→correction锁→干预锁内；更正事件ID成为held依据，旧激活/更正迟到或重复不覆盖当前状态。恢复可复用原activation，aggregate更新时间使用当前消费时间，不能倒退。
 - 真实原生提交/申诉/手动改判/受帮助重评/可信恢复/原答更正组合覆盖，65DB与22组合/schema unit通过；此前held阶段25unit通过。typecheck、changedBiome（零error/8warning）、build、API生成、Postman及边界446/0/48通过，无baseline提高。
 - 仍未发布，无PR/push/review/CI/生产或付费调用。生产诊断发布准入、probe签名/发题、ingestion、旧solo suite与其余消费者仍在1047；继续修冻结讲解上下文遗漏原生选项/配对/布局。
+
+
+## 2026-10-05 01:52 UTC — 冻结讲解上下文完整性（未发布）
+
+- 提示任务携带公开的完整practice DTO：冻结选项顺序、配对/排序/表格与输入辅助、共享材料正文/说明都随已发题进入上下文；页面prompt不混入机器结构。私有评分材料和未发小题不进入该DTO。
+- 评分参考按每个unit的slot_refs解析选项/条目，修复matching字段遗漏及跨槽同ID串用选择/排序正文的错误；真实输出原先把坡度配成设定坡度的回归先RED后修。
+- 2纯投影回归、实际提示调用缺frozen_question的DB回归先RED；最终2unit+42DB、typecheck、changedBiome零error1warning、build、边界446通过。仅结构与文本上下文修复；TeachingTurnTask仍为文本输入，图像原始字节/多模态教学尚待接通，不能把alt_text冒充读图证据。
+- 下一步迁移旧submit suite并核对校准/归因消费者，已发现native difficulty label尚未调用现有hook（plan字段为null）；归并1047，不通过删除旧断言掩盖遗漏。仍无PR/push/review/CI/生产/付费。

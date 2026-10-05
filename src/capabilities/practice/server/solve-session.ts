@@ -2,7 +2,7 @@
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { canonicalHash } from '@/core/migration/canonical';
-import type { ActivateEvaluationIntentT } from '@/core/schema/assessment';
+import type { ActivateEvaluationIntentT, PracticeIssuanceDtoT } from '@/core/schema/assessment';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
@@ -110,7 +110,7 @@ export interface PlanSolveHintResult {
 // minimal hint, not the answer. NO prior-attempt summary, NO memory content
 // (R4/R6: the hint turn is not memory-bearing).
 export function buildSolveHintInput(
-  q: { prompt_md: string; reference_md: string | null },
+  q: { prompt_md: string; reference_md: string | null; practice_dto?: PracticeIssuanceDtoT },
   hintIndex: number,
 ): unknown {
   return {
@@ -120,6 +120,7 @@ export function buildSolveHintInput(
       knowledge_node: null,
     },
     parent_hub_summary: null,
+    ...(q.practice_dto ? { frozen_question: q.practice_dto } : {}),
     atomic_sections: q.reference_md ? { worked_solution: q.reference_md } : null,
     messages: [
       {
