@@ -247,5 +247,8 @@ P2s remain unfixed. Initial plus repair review budget is exhausted.
 
 Latest `origin/main` tooling-only changes merged without conflict as `bb269d9aa`.
 Assessment source and test configurations were unchanged. Parent reran build
-and agent-control-plane/skill-mirror audits successfully. PR/exact-head CI and
-merge window remain pending; YUK-1047 remains open. No deployment or paid calls.
+and agent-control-plane/skill-mirror audits successfully. PR [#1568](https://github.com/Yukoval-Dakia/the-learning-project/pull/1568)
+is open and linked to T3. Exact-head CI and the last-push merge window remain pending; YUK-1047 remains open. No deployment or paid calls.
+
+The parent stopped its isolated API and removed its disposable runtime database
+container after acceptance. Screenshots and logs remain under `/tmp/`.

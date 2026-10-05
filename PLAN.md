@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-05。YUK-1047八入口迁移及初审3项P1已修；唯一验证审确认无P0/P1，独立30unit通过。105DB/57unit gate修复、typecheck/build、lint299≤305通过；真实浏览器8题完成、长文刷新恢复、双页CAS冲突及保存失败退出门禁通过。已合入最新origin/main工具配置；下一步PR与exact-head CI，未部署/新付费。详见2026-10-05-yuk1047-placement-repair.md。
+> 更新于2026-10-05。YUK-1047八入口迁移及初审3项P1已修；唯一验证审确认无P0/P1，独立30unit通过。105DB/57unit gate修复、typecheck/build、lint299≤305通过；真实浏览器8题完成、长文刷新恢复、双页CAS冲突及保存失败退出门禁通过。已合入最新origin/main工具配置；PR #1568已打开，等待exact-head CI，未部署/新付费。详见2026-10-05-yuk1047-placement-repair.md。
 
 ## NOW
 
@@ -79,11 +79,11 @@
 - YUK-1047/#1562已交付main ad8dad75（20:18UTC）：94unit72DB/全部本地gate；初审1项内嵌图P1先RED后修，唯一验证3原探针5分支探针94unit通过；exact-head CI37230475644实际82迁移34浏览器/17分钟窗通过。八入口仍legacy，票In Progress。
 - YUK-1047/#1563已合入main448ffe42：281unit30DB/本地gates、独立初审2P1修复及唯一验证100unit+3DB/真实driver、exact-head CI37232936402（82迁移34浏览器）与17分钟窗通过。冻结原生pi执行、已知失败费与真实missing usage保真已交付；八入口仍legacy。
 
-- YUK-1047/#1564评级前置已交付。当前正式迁移分支完成八入口冻结发题/原件/候选/激活、生产诊断与Probe、ingestion及native消费者；原始评分执行已移除。三项初审P1和两个本地gate已修，真实定位浏览器验收与唯一验证审通过。各批定向证据见formal-entry-migration与placement-repair；PR/CI待收口，1047保持In Progress。
+- YUK-1047/#1564评级前置已交付。当前正式迁移分支完成八入口冻结发题/原件/候选/激活、生产诊断与Probe、ingestion及native消费者；原始评分执行已移除。三项初审P1和两个本地gate已修，真实定位浏览器验收与唯一验证审通过。各批定向证据见formal-entry-migration与placement-repair；PR #1568/CI待收口，1047保持In Progress。
 
 ## NEXT
 
-1. YUK-1047创建PR，完成exact-head CI和最后push后17分钟窗口，裁决已有P0/P1。独立review预算已用尽，不开第三审。源码迁移不代替生产部署或模型actual-output准入；其他主线不启动。
+1. YUK-1047推进PR #1568，完成exact-head CI和最后push后17分钟窗口，裁决已有P0/P1。独立review预算已用尽，不开第三审。源码迁移不代替生产部署或模型actual-output准入；其他主线不启动。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
