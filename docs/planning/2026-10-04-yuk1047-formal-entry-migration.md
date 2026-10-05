@@ -311,3 +311,11 @@ full evidence target editing/media acceptance and complete frozen teaching input
 - 后台冻结/改判/空学科边界、原件恢复、退款等60DB通过；会话/历史晚到/原生提交/联合组73DB通过；单题快照7DB通过（合计140distinct DB）。最后公共接口收敛后native/dispatch26DB再验通过。模型全为离线recorded端口，不作实际质量验收。
 - typecheck、changedBiome（零errors/12warnings）、build、Postman通过。capability边界审计最初失败后收敛既有runtime装配/准入接口，删除未注册旧sessions handler、测试改测canonical路由；baseline只收紧450→448（practice→ai65→64、mastery23→22），无新增豁免，最终审计通过。
 - 无PR/push/review/CI/部署或付费调用。仍需worker/rejudge、probe/ingestion、diagnostic一次认领恢复与native订阅、其他消费者，以及余下旧solo主suite迁移；1047保持In Progress，继续推进。
+
+## 2026-10-05 00:55 UTC — 旧 solo scorer / worker 执行删除（未发布）
+
+- 从submit.ts删除judgeSubmit及旧供应结果/旧provenance评分执行；worker删除current-row补造、旧deferred评分、末次自动provider fallback分支。仅保留历史结算fixture所用类型，旧原件/完成回执读取不删。
+- 新回归先RED证明旧队列仍会执行并写FSRS；现未完成caller=submit旧任务终态historical_unknown，已接收答案原事件保留且不调用旧评分器。原生worker仅执行已持久化输入指针/实际一致性校验；已完成历史run仍走既有回执恢复。
+- worker主suite24例迁到真实native原件/录制executor/真实结算；terminal五例实际注入job_event写失败，验证提交后通知失败不写FAILED、最终投递瞬时失败有界补写、原始失败仍进入DLQ。原有旧provider自动fallback/读current补造断言按已批准退出方向替换为不重付/不补造；晚到由原生有序重放覆盖，不靠吞掉练习维持计数。
+- 118distinctDB（native11/worker24/terminal5/poll+reconcile+真实boss合同43/solo原生35）及30status unit通过；typecheck、changedBiome（零errors/8warnings）、build、Postman、capability边界审计通过，baseline再收紧448→447（practice→http4→3）。
+- 仍未PR/push/review/CI/部署/付费；旧solo大suite与diagnostic/下游尚待迁移，rejudge/probe/ingestion旧执行仍在，不称八入口已完成。下一步申诉旧分支和诊断消费链。

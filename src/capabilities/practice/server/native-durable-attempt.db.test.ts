@@ -20,6 +20,7 @@ import {
 } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
 import * as runtimeEnv from '@/server/runtime-env';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET as pollStatus } from '../api/judge-run-status-route';
 import { createAttempt } from '../api/submit';
@@ -234,15 +235,13 @@ describe('native durable assessment', () => {
   it('preserves an absent answer-time ability domain instead of resolving a newly added one', async () => {
     const db = testDb();
     const now = new Date();
-    await db
-      .insert(knowledge)
-      .values({
-        id: 'orphan-kc',
-        name: '未归属知识',
-        domain: null,
-        created_at: now,
-        updated_at: now,
-      });
+    await db.insert(knowledge).values({
+      id: 'orphan-kc',
+      name: '未归属知识',
+      domain: null,
+      created_at: now,
+      updated_at: now,
+    });
     const f = await fixture(['orphan-kc']);
     await dispatchNativeAttempt(db, f.id, f.request, f.options, f.deps);
     await db.update(knowledge).set({ domain: 'math' }).where(eq(knowledge.id, 'orphan-kc'));
@@ -250,6 +249,39 @@ describe('native durable assessment', () => {
     expect((await db.select().from(mastery_state)).map((row) => row.subject_id)).toEqual([
       'orphan-kc',
     ]);
+  });
+
+  it('preserves an old queued answer but refuses to execute the retired scoring route', async () => {
+    const f = await fixture();
+    const legacy = {
+      run_id: 'retired_legacy_run',
+      caller: 'submit' as const,
+      submit: {
+        body: { question_id: f.id, rating: 'good', auto_rate: true, response_md: '15 km/h' },
+        question_id: f.id,
+        subject_profile: resolveSubjectProfile(),
+        submitted_at: new Date().toISOString(),
+      },
+    };
+    await dispatch.recordJudgePendingAttempt(f.db, {
+      runId: legacy.run_id,
+      sessionId: null,
+      questionId: f.id,
+      knowledgeIds: [],
+      submit: legacy.submit,
+      submittedAt: new Date(legacy.submit.submitted_at),
+    });
+    const before = await f.db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:judge_pending_attempt'));
+    const result = await runJudgeRun(f.db, legacy, meta);
+    expect.soft(result.status).toBe('failed');
+    expect.soft(await f.db.select().from(material_fsrs_state)).toHaveLength(0);
+    expect(
+      await f.db.select().from(event).where(eq(event.action, 'experimental:judge_pending_attempt')),
+    ).toEqual(before);
+    expect(f.execute).not.toHaveBeenCalled();
   });
 
   it('freezes originals before enqueue; concurrent HTTP retries and worker redelivery settle once', async () => {
