@@ -11,7 +11,7 @@ Codex 迁移约束：
 
 - 用 Codex `update_plan` 维护当前 orchestration 状态；需要 lane 级并发状态时，在工作回复中维护 lane state 表。
 - 如果可用 multi-agent tools，按 `superpowers:subagent-driven-development` 的要求派 lane subagent；否则在当前会话逐 lane 执行。
-- 项目 git guard 由 `.codex/hooks.json` 复用 `.claude/hooks/git-guard.mjs`；触发 hook 时停下来查原因，不绕过。
+- 项目 git guard 由 `.claude/settings.json` 挂 `.claude/hooks/git-guard.mjs`；触发 hook 时停下来查原因，不绕过。
 
 核心原则：不重复造轮子。所有实际工作 delegate 给 superpowers 既有 skill：
 
