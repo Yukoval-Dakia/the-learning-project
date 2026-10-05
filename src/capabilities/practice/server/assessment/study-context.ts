@@ -140,15 +140,15 @@ export function projectFrozenStudyContext(
 
 export async function revealFrozenStudyReference(database: Db, issuanceId: string) {
   const context = await loadFrozenStudyContext(database, issuanceId);
-  if (context.solution_md)
+  if (context.reference_md)
     await recordAssistanceExposure(database, {
       issuanceId,
       questionId: context.question_id,
       kind: 'solution',
       impact: 'answer_help',
-      contentDigest: `sha256:${canonicalHash(context.solution_md)}`,
+      contentDigest: `sha256:${canonicalHash(context.reference_md)}`,
     });
-  return { reference_md: context.solution_md };
+  return { reference_md: context.reference_md };
 }
 
 /** Only issued public figure bindings authorize byte reads, including Markdown images. */

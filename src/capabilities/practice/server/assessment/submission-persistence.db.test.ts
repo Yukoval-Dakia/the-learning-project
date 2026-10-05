@@ -13,6 +13,7 @@ import { commitFormalAttempt, previewFormalAttempt } from './attempt';
 
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { canonicalHash } from '@/core/migration/canonical';
 import type { ResponseSetT } from '@/core/schema/assessment';
 import {
   assessment_issuance,
@@ -37,6 +38,7 @@ import {
 } from '@/kernel/read-models/question-activity';
 import {
   type NormalizableQuestionRow,
+  contractIntegrityDigest,
   normalizeQuestionRowToContract,
 } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
@@ -44,6 +46,7 @@ import { Tutor } from '@/server/session';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { POST as previewAdvice } from '../../api/advice';
 import { createAppeal } from '../../api/appeal';
+import { revealStudyReference } from '../../api/assessment-route';
 import { AttemptResponseSchema } from '../../api/contracts';
 import { GET as questionDetail } from '../../api/question-detail';
 import { createSolveSubmissionResource } from '../../api/resource-routes';
@@ -98,12 +101,26 @@ interface Published {
 /** 种子 + 发布 admitted 单题组，返回发题/作答所需的真实坐标。 */
 async function publishAdmitted(
   qid: string,
-  opts?: { claimPolicy?: 'one_time' | 'unbounded' },
+  opts?: { claimPolicy?: 'one_time' | 'unbounded'; referenceOnly?: boolean },
 ): Promise<Published> {
   const db = testDb();
   await seedQuestion(qid);
   const [row] = await db.select().from(question).where(eq(question.id, qid)).limit(1);
   const n = normalizeQuestionRowToContract(row as NormalizableQuestionRow);
+  if (opts?.referenceOnly) {
+    const solutions = new Set(
+      n.structure.materials
+        .filter((material) => /^sol_[0-9a-f]{12}$/.test(material.asset.asset_id))
+        .map((material) => material.material_id),
+    );
+    n.structure.materials = n.structure.materials.filter(
+      (material) => !solutions.has(material.material_id),
+    );
+    for (const part of n.structure.parts)
+      part.material_ids = part.material_ids.filter((id) => !solutions.has(id));
+    n.integrity_digest = contractIntegrityDigest(n);
+  }
+
   const result = await publishQuestionGroup(db, {
     group_id: n.group_id,
     contract: {
@@ -1299,6 +1316,32 @@ describe('formal manual candidate and atomic activation', () => {
         )
       ).status,
     ).toBe(409);
+  });
+
+  it('reveals a frozen scoring-basis answer without solution material and records its digest', async () => {
+    const pub = await publishAdmitted('study_reference_only', { referenceOnly: true });
+    const issued = await issueAssessment(testDb(), { group_id: pub.groupId });
+    if (issued.status !== 'issued') throw new Error(issued.status);
+    await testDb()
+      .update(question)
+      .set({ reference_md: 'NEW PRIVATE ANSWER', choices_md: ['NEW A', 'NEW B'] })
+      .where(eq(question.id, pub.qid));
+    const response = await revealStudyReference(
+      new Request('http://local/reveal', { method: 'POST' }),
+      { id: issued.issuance.issuance_id },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ reference_md: 'B. 乙' });
+    const exposures = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_assistance'));
+    expect(exposures).toHaveLength(1);
+    expect(exposures[0].payload).toMatchObject({
+      kind: 'solution',
+      impact: 'answer_help',
+      content_digest: `sha256:${canonicalHash('B. 乙')}`,
+    });
   });
 
   it('teaches and reveals the issued reference after current-row edits, with server assistance recorded', async () => {

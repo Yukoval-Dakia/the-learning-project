@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-05。YUK-1047 PR #1568首轮CI修复已推送163d3b71d，第二轮发现新测试跨Practice深导入；现改用公开source verification seam，3unit/27DB和边界通过，typecheck/build后重新push验CI。既有51unit/58DB及父复验51unit/22DB保留；review预算已用尽，不部署/付费。详见placement-repair。
+> 更新于2026-10-05。YUK-1047 PR #1568 head630df36完整CI37303447957已绿；晚到P1揭示接口丢失评分依据参考答案已复现并修复，34DB/16unit/typecheck/lint298≤305及全部build通过，现新push与CI/17分钟窗。未开第三审；重复PfSolo P2保留。未部署/付费。详见placement-repair。
 
 ## NOW
 

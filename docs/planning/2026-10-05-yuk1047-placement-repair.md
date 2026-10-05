@@ -343,3 +343,28 @@ Logs are `/tmp/yuk1047-ci2-{ownership,coldstart,typecheck,build,biome}.log`.
 
 Typecheck and build passed after this import-seam change. Touched-file Biome
 reported no errors and one existing warning. No extra review or provider calls.
+
+## Late advisory P1: derived reference reveal
+
+Codex comment 4183568332 identified a real reveal regression after CI passed.
+The frozen context derives reference text from scoped scoring criteria, but the
+reveal endpoint returned only separate solution material. A real published/issued
+choice fixture without solution material reproduced HTTP200 with reference null
+instead of frozen `B. 乙`, despite the scoring basis holding the answer.
+The regression edits current-row answer/options after issuance and checks both
+the frozen response and the assistance receipt digest.
+
+Reveal now returns `context.reference_md` and records that exact content as
+answer-help before returning. Existing complete solution material still has
+priority; disclosure guards remain unchanged. RED:1failed/33skipped, then full
+submission persistence DB34passed and study-context unit16passed. Typecheck and
+lint298≤305 passed. Logs: `/tmp/yuk1047-reveal-{red,green,unit,types,lint,build}.log`.
+No additional independent review round was started; this is author repair of a
+validated P1. The repeated PfSolo autosave P2 remains deferred as already tracked.
+New push requires fresh exact-head CI and a new17-minute merge window.
+
+Build evidence: Vite passed in the initial build. Server esbuild then stalled
+while reading directories for about three minutes; parent captured a process
+sample and terminated that attempt. Retrying server, worker and migrate bundles
+succeeded (exit0), recorded in `/tmp/yuk1047-reveal-build-retry.log`. All four
+bundles completed; the interrupted attempt is not counted as passing.
