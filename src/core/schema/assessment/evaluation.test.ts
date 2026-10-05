@@ -291,6 +291,75 @@ describe('evaluateSubmissionCore — deterministic comparators', () => {
     });
   });
 
+  it.each([
+    ['30 m/s', 1],
+    ['108 km/h', 1],
+    ['3000 cm/s', 1],
+    ['31.5 m/s', 1],
+    ['31.5001 m/s', 0],
+    ['30 kg', 0],
+    ['30', 0],
+    ['速度约三十米每秒', null],
+  ])(
+    'frozen numeric unit conversion judges original %s locally with explicit tolerance',
+    async (raw, points) => {
+      const revision = revisionFor({
+        slots: [{ slot_id: 'p1::r', part_id: 'p1', kind: 'numeric' }],
+        units: [
+          {
+            scoring_unit_id: 'p1::u',
+            slot_refs: ['p1::r'],
+            material_refs: [],
+            evidence_slot_refs: [],
+            requires_group_evidence: false,
+            points: 1,
+            criterion: {
+              kind: 'numeric_key',
+              expected: 30,
+              expected_unit: 'm/s',
+              tolerance: { kind: 'relative', ratio: 0.05 },
+            },
+          },
+        ],
+        assignments: [
+          {
+            scoring_unit_ids: ['p1::u'],
+            executor: { kind: 'deterministic', comparator: 'numeric_unit_conversion' },
+          },
+        ],
+      });
+      const execute = vi.fn();
+      const evaluated = await evaluateSubmissionCore({
+        ...inputFor(
+          submissionFor([
+            // A client-derived value is deliberately wrong: original raw input owns the interpretation.
+            {
+              slot_id: 'p1::r',
+              kind: 'numeric',
+              value: raw === '30 m/s' ? 999 : null,
+              raw_input: raw,
+            },
+          ]),
+          revision,
+        ),
+        model_executor: execute,
+      });
+      expect(execute).not.toHaveBeenCalled();
+      if (points === null) {
+        expect(evaluated.record.unit_results[0]).toMatchObject({
+          status: 'pending',
+          pending: { reason: 'unparseable_response' },
+        });
+      } else {
+        expect(evaluated.record.unit_results[0]).toMatchObject({
+          status: 'scored',
+          points_awarded: points,
+        });
+      }
+      expect(evaluated.record.run_refs).toEqual([]);
+    },
+  );
+
   it('matching_pairs: explicit pair mapping, not a set masquerade', async () => {
     const revision = revisionFor({
       slots: [

@@ -1,6 +1,11 @@
 import { z } from 'zod';
 import { extractAnswerHead } from '../judge-routing';
-import { type ExecutorDescriptorT, type ModelExecutorT, validateExecutionPlan } from './execution';
+import {
+  type DeterministicComparatorIdT,
+  type ExecutorDescriptorT,
+  type ModelExecutorT,
+  validateExecutionPlan,
+} from './execution';
 import { type EvaluationInputMember, combineEvaluationMembers } from './group-input';
 import {
   type AggregateOutcomeT,
@@ -274,11 +279,11 @@ function extractUnitSuffix(rawInput: string): string | null {
 
 /** 确定性比较器：单槽命中判定（全对=发布 points，否则 0；无部分分）。
  * 判据/槽位不配对是契约违背 —— 返回 pending unjudgeable，绝不落伪零分。 */
-function runDeterministicComparator(
-  comparator: 'exact_option_set' | 'exact_text' | 'numeric_tolerance' | 'exact_matching_pairs',
+async function runDeterministicComparator(
+  comparator: DeterministicComparatorIdT,
   unit: ScoringUnitT,
   entry: SlotResponseT,
-): ScoringUnitResultT {
+): Promise<ScoringUnitResultT> {
   const full = unit.points ?? 0;
   switch (comparator) {
     case 'exact_option_set': {
@@ -311,6 +316,59 @@ function runDeterministicComparator(
             unit.criterion.kind === 'text_key' ? unit.criterion.normalization : 'trim',
           ) === given,
       );
+      return {
+        status: 'scored',
+        scoring_unit_id: unit.scoring_unit_id,
+        points_awarded: hit ? full : 0,
+        scored_because: 'response',
+        evidence_citations: [{ slot_id: entry.slot_id }],
+      };
+    }
+    case 'numeric_unit_conversion': {
+      if (
+        entry.kind !== 'numeric' ||
+        unit.criterion.kind !== 'numeric_key' ||
+        !unit.criterion.expected_unit
+      ) {
+        return unjudgeableMismatch(
+          unit,
+          'numeric unit conversion requires a numeric slot and an explicit reference unit',
+        );
+      }
+      const { expected, tolerance, expected_unit } = unit.criterion;
+      const raw = entry.raw_input?.trim();
+      if (!raw) return unjudgeableMismatch(unit, 'unit conversion requires original raw input');
+      const { unit: parseUnit } = await import('mathjs');
+      let referenceUnit: import('mathjs').Unit;
+      try {
+        referenceUnit = parseUnit(1, expected_unit);
+      } catch {
+        return unjudgeableMismatch(unit, 'published reference unit is not supported');
+      }
+      let converted: number | null = null;
+      try {
+        const studentUnit = parseUnit(raw);
+        if (studentUnit.equalBase(referenceUnit)) converted = studentUnit.toNumber(expected_unit);
+      } catch {
+        return withUnit(
+          pending({
+            reason: 'unparseable_response',
+            slot_id: entry.slot_id,
+            detail: 'original numeric response cannot be interpreted as a supported value/unit',
+          }),
+          unit.scoring_unit_id,
+        );
+      }
+      const difference =
+        converted === null ? Number.POSITIVE_INFINITY : Math.abs(converted - expected);
+      const hit =
+        converted !== null &&
+        Number.isFinite(converted) &&
+        (tolerance.kind === 'absolute'
+          ? difference <= tolerance.value
+          : expected === 0
+            ? difference === 0
+            : difference / Math.abs(expected) <= tolerance.ratio);
       return {
         status: 'scored',
         scoring_unit_id: unit.scoring_unit_id,
@@ -677,7 +735,11 @@ export async function evaluateSubmissionCore(
         entry.value === null &&
         (entry.raw_input ?? '').trim().length > 0,
     );
-    if (unparseable != null && unparseable.kind === 'numeric') {
+    const declaredExecutor = assignmentByUnit.get(unitId);
+    const convertsOriginalUnits =
+      declaredExecutor?.kind === 'deterministic' &&
+      declaredExecutor.comparator === 'numeric_unit_conversion';
+    if (unparseable != null && unparseable.kind === 'numeric' && !convertsOriginalUnits) {
       unitResults.push(
         withUnit(
           pending({
@@ -732,7 +794,7 @@ export async function evaluateSubmissionCore(
         );
         continue;
       }
-      unitResults.push(runDeterministicComparator(executor.comparator, unit, primaryEntry));
+      unitResults.push(await runDeterministicComparator(executor.comparator, unit, primaryEntry));
       continue;
     }
 

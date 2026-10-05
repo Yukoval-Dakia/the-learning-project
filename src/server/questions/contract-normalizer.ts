@@ -46,6 +46,7 @@
 import { createHash } from 'node:crypto';
 import type {
   ExecutionPlanT,
+  NumericKeyCriterionT,
   QuestionGroupStructureT,
   ResponseOptionT,
   ResponseSlotT,
@@ -82,6 +83,7 @@ export interface NormalizableQuestionRow {
   rubric_json: JsonObject | null;
   choices_md: string[] | null;
   judge_kind_override: string | null;
+  metadata?: JsonObject | null;
   structured: StructuredQuestionT | null;
   /** 语义不变的编辑会保留这些身份来源。 */
   parent_question_id?: string | null;
@@ -271,6 +273,7 @@ interface LeafInput {
    */
   answerFromRowReference?: boolean;
   judgeKindOverride: string | null;
+  numericKey?: NumericKeyCriterionT;
   provenance: RuleProvenance;
   rubric: JsonObject | null;
 }
@@ -278,7 +281,8 @@ interface LeafInput {
 /** 判分依据归一结果（criterion + 该 part 的槽位定型）。 */
 interface LeafScoring {
   slot: ResponseSlotT;
-  criterionKind: 'option_set_key' | 'text_key' | 'rule_reference';
+  criterionKind: 'option_set_key' | 'text_key' | 'numeric_key' | 'rule_reference';
+  numericKey?: NumericKeyCriterionT;
   acceptedOptionIds?: string[];
   acceptedTexts?: string[];
   ruleStatement?: string;
@@ -298,6 +302,44 @@ function mintSlotOptions(texts: string[]): ResponseOptionT[] {
       text,
     };
   });
+}
+
+/** Migration reads known numeric metadata once; evaluation only reads the published key.
+ * No inherited 5% tolerance or legacy partial-grade ladder is invented for new rules. */
+function numericKeyFor(row: {
+  kind?: string;
+  judge_kind_override?: string | null;
+  metadata?: JsonObject | null;
+}): NumericKeyCriterionT | undefined {
+  if (
+    row.judge_kind_override !== 'unit_dimension' &&
+    !(row.judge_kind_override == null && row.kind === 'calculation')
+  )
+    return;
+  const meta = row.metadata;
+  if (
+    !meta ||
+    typeof meta.reference_value !== 'number' ||
+    !Number.isFinite(meta.reference_value) ||
+    typeof meta.reference_unit !== 'string' ||
+    !meta.reference_unit.trim()
+  )
+    return;
+  const tolerance = meta.reference_tolerance;
+  if (
+    tolerance !== undefined &&
+    (typeof tolerance !== 'number' || !Number.isFinite(tolerance) || tolerance < 0)
+  )
+    return;
+  return {
+    kind: 'numeric_key',
+    expected: meta.reference_value,
+    expected_unit: meta.reference_unit.trim(),
+    tolerance:
+      typeof tolerance === 'number' && meta.reference_value !== 0
+        ? { kind: 'relative', ratio: tolerance }
+        : { kind: 'absolute', value: typeof tolerance === 'number' ? tolerance : 0 },
+  };
 }
 
 function normalizeLeafScoring(leaf: LeafInput): LeafScoring {
@@ -349,6 +391,14 @@ function normalizeLeafScoring(leaf: LeafInput): LeafScoring {
                 detail: `row reference_md head does not parse as an option letter for slot '${slotId}' — withheld rather than minting a fabricated key`,
               }
             : undefined,
+    };
+  }
+
+  if (leaf.numericKey) {
+    return {
+      slot: { slot_id: slotId, part_id: leaf.partId, kind: 'numeric' },
+      criterionKind: 'numeric_key',
+      numericKey: leaf.numericKey,
     };
   }
 
@@ -444,18 +494,20 @@ function buildUnit(leaf: LeafInput, scoring: LeafScoring) {
             kind: 'option_set_key' as const,
             accepted_option_ids: scoring.acceptedOptionIds ?? [],
           }
-        : scoring.criterionKind === 'text_key'
-          ? {
-              kind: 'text_key' as const,
-              accepted_texts: scoring.acceptedTexts ?? [],
-              normalization: 'answer_head' as const,
-            }
-          : {
-              kind: 'rule_reference' as const,
-              rule_id: `${leaf.partId}::ref`,
-              statement_md: scoring.ruleStatement ?? '',
-              source: (scoring.ruleProvenance ?? 'system_proposed') as RuleProvenance,
-            },
+        : scoring.numericKey
+          ? scoring.numericKey
+          : scoring.criterionKind === 'text_key'
+            ? {
+                kind: 'text_key' as const,
+                accepted_texts: scoring.acceptedTexts ?? [],
+                normalization: 'answer_head' as const,
+              }
+            : {
+                kind: 'rule_reference' as const,
+                rule_id: `${leaf.partId}::ref`,
+                statement_md: scoring.ruleStatement ?? '',
+                source: (scoring.ruleProvenance ?? 'system_proposed') as RuleProvenance,
+              },
     points: 1,
   };
 }
@@ -464,6 +516,8 @@ function executorFor(criterionKind: LeafScoring['criterionKind']) {
   switch (criterionKind) {
     case 'option_set_key':
       return { kind: 'deterministic', comparator: 'exact_option_set' } as const;
+    case 'numeric_key':
+      return { kind: 'deterministic', comparator: 'numeric_unit_conversion' } as const;
     case 'text_key':
       return { kind: 'deterministic', comparator: 'exact_text' } as const;
     default:
@@ -601,6 +655,8 @@ export function normalizeQuestionRowToContract(row: NormalizableQuestionRow): No
           : [],
       answerFromRowReference: rowReference != null && !hasNonBlankAnswer(leaf.answers),
       judgeKindOverride: row.judge_kind_override,
+      numericKey:
+        (structuredRoot.sub_questions ?? []).length === 0 ? numericKeyFor(row) : undefined,
       provenance,
       rubric: row.rubric_json,
     }));
@@ -633,6 +689,7 @@ export function normalizeQuestionRowToContract(row: NormalizableQuestionRow): No
         choices: row.choices_md,
         answerTexts: row.reference_md != null ? [row.reference_md] : [],
         judgeKindOverride: row.judge_kind_override,
+        numericKey: numericKeyFor(row),
         provenance,
         rubric: row.rubric_json,
       },
@@ -668,6 +725,9 @@ function collectLeaves(node: StructuredQuestionT, out: LeafNode[] = []): LeafNod
 // ---- 物理多 part 组（parent_question_id 子行） ----
 
 export interface PartRow {
+  kind?: string;
+  judge_kind_override?: string | null;
+  metadata?: JsonObject | null;
   id: string;
   prompt_md: string;
   reference_md: string | null;
@@ -763,6 +823,10 @@ export function normalizeQuestionGroupToContract(
       choices,
       answerTexts,
       judgeKindOverride: root.judge_kind_override,
+      numericKey: numericKeyFor({
+        ...p,
+        judge_kind_override: p.judge_kind_override ?? root.judge_kind_override,
+      }),
       provenance,
       rubric: null, // rubric 是 root 级的；part 无自己的 rubric 列
     };

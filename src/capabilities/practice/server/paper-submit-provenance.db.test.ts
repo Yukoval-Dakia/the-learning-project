@@ -1,25 +1,18 @@
-// YUK-589 (J1) — paper-submit execution-provenance honesty.
-//
-// execution_provenance is an AUDIT STAMP on the judge event, not a gate on the
-// verdict. It must not lie about whether a model ran:
-//   - a MODEL-backed route (semantic/steps/multimodal_direct/unit_dimension) whose
-//     LLM call FAILED (provider down → coarse_outcome='unsupported', invoked.execution
-//     absent) must stamp `historical_unknown`, NOT `deterministic` (a provider timeout
-//     masquerading as a no-model deterministic verdict);
-//   - a genuinely deterministic route (exact/true_false/keyword — no model ever runs)
-//     stays `deterministic`.
-//
-// The paper path (unlike the solo auto_rate path, which 422s on an unsupported model
-// verdict before persisting) records the unsupported judge event, so this is the
-// reachable site for the model-route branch of the J1 fix.
+// Native paper execution provenance: original model claims and actual run refs
+// remain distinct from deterministic evaluations and from a planned run identity.
 
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { artifact, event, question } from '@/db/schema';
+import { eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { artifact, evaluation, event, question } from '@/db/schema';
 import { runTask } from '@/server/ai/runner';
-import { Review } from '@/server/session';
+import {
+  publishPaperModelFixture,
+  startFrozenPaperFixture,
+  submitPaperFixture as submitPaperSlot,
+} from '../../../../tests/fixtures/assessment-paper';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { submitPaperSlot } from './paper-submit';
+import * as evaluationService from './judge/evaluate-submission';
+import { createRecordedModelExecutor } from './judge/recorded-model-executor';
 
 vi.mock('@/server/ai/runner', () => ({
   runTask: vi.fn(),
@@ -84,113 +77,123 @@ async function seedPaper(id: string, questionIds: string[], primaryKc: string): 
   });
 }
 
-async function readJudgeProvenance(
-  attemptEventId: string,
-): Promise<Record<string, unknown> | undefined> {
-  const [judgeEvent] = await testDb()
+async function readCandidate(evaluationId: string | undefined) {
+  if (!evaluationId) throw new Error('expected a native candidate');
+  const [candidate] = await testDb()
     .select()
-    .from(event)
-    .where(and(eq(event.action, 'judge'), eq(event.subject_id, attemptEventId)));
-  const payload = judgeEvent?.payload as Record<string, unknown> | undefined;
-  return payload?.execution_provenance as Record<string, unknown> | undefined;
+    .from(evaluation)
+    .where(eq(evaluation.evaluation_id, evaluationId));
+  return candidate;
 }
 
-describe('YUK-589 — paper-submit execution provenance (J1)', () => {
+afterEach(() => vi.restoreAllMocks());
+describe('paper native execution provenance', () => {
   beforeEach(async () => {
     await resetDb();
     vi.mocked(runTask).mockReset();
   });
 
-  it('model route whose LLM call FAILED → execution_provenance kind=historical_unknown (not deterministic)', async () => {
+  it('a failed model execution keeps its claim and pending receipt, without fabricating an actual run or retrying payment', async () => {
     const db = testDb();
-    // judge_kind_override='semantic' forces the model-backed route; the mocked
-    // runTask rejects → runSemanticJudge returns coarse_outcome='unsupported' with
-    // NO execution identity (the LLM call never completed).
-    await seedQuestion('pq_sem_fail', { judge_kind_override: 'semantic' });
-    await seedPaper('paper_sem_fail', ['pq_sem_fail'], 'kc_prov');
-    vi.mocked(runTask).mockRejectedValue(new Error('provider down'));
-
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_sem_fail' });
-    const result = await submitPaperSlot(
-      {
-        sessionId,
-        paperArtifactId: 'paper_sem_fail',
-        questionId: 'pq_sem_fail',
-        answerMd: '我的作答',
-        primaryKnowledgeId: 'kc_prov',
-        secondaryKnowledgeIds: [],
-      },
-      db,
-    );
-
-    expect(result.coarseOutcome).toBe('unsupported');
-    const prov = await readJudgeProvenance(result.attemptEventId);
-    // The model call failed — an honest audit stamp is historical_unknown, never
-    // deterministic (which would claim no model was ever meant to run).
-    expect(prov?.kind).toBe('historical_unknown');
-  });
-
-  it('genuinely deterministic route (true_false) → execution_provenance kind=deterministic', async () => {
-    const db = testDb();
-    await seedQuestion('pq_tf', { kind: 'true_false', reference_md: 'true' });
-    await seedPaper('paper_tf', ['pq_tf'], 'kc_prov');
-
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_tf' });
-    const result = await submitPaperSlot(
-      {
-        sessionId,
-        paperArtifactId: 'paper_tf',
-        questionId: 'pq_tf',
-        answerMd: 'true',
-        primaryKnowledgeId: 'kc_prov',
-        secondaryKnowledgeIds: [],
-      },
-      db,
-    );
-
-    expect(result.coarseOutcome).toBe('correct');
-    const prov = await readJudgeProvenance(result.attemptEventId);
-    // No model was ever meant to run for an exact/true_false compare.
-    expect(prov?.kind).toBe('deterministic');
-    // runTask must never be spent on a deterministic route.
-    expect(vi.mocked(runTask)).not.toHaveBeenCalled();
-  });
-
-  // YUK-589 (K1) — the CORE fix. unit_dimension is in the MODEL_BACKED set, but on
-  // the common path it resolves via the LOCAL accelerator and never calls the LLM.
-  // Wave-1 stamped `historical_unknown` off route membership alone (route ∈ model
-  // set AND execution absent) — a lie: no model was attempted. The honest stamp is
-  // `deterministic`, keyed on the model-attempt signal (modelAttempted:false), NOT
-  // route membership.
-  it('accelerator-resolved unit_dimension → execution_provenance kind=deterministic (no model attempted)', async () => {
-    const db = testDb();
-    await seedQuestion('pq_unit_accel', {
-      judge_kind_override: 'unit_dimension',
-      kind: 'calculation',
-      prompt_md: '速度是多少？',
-      reference_md: '30 m/s',
-      metadata: { reference_value: 30, reference_unit: 'm/s' },
+    await seedQuestion('pq_sem_fail', {
+      judge_kind_override: 'semantic',
+      prompt_md: '结合两句原文，解释人物态度的转变，并指出相反解释的问题。',
+      reference_md: '必须说明由犹疑到承担责任，并结合原句举证；只复述情节不能替代态度分析。',
     });
-    await seedPaper('paper_unit_accel', ['pq_unit_accel'], 'kc_prov');
+    await publishPaperModelFixture(db, 'pq_sem_fail');
+    await seedPaper('paper_sem_fail', ['pq_sem_fail'], 'kc_prov');
+    const execute = vi.fn(async () => {
+      throw new Error('provider unavailable before a result');
+    });
+    vi.spyOn(evaluationService, 'createFormalModelExecutor').mockImplementation(() =>
+      createRecordedModelExecutor(db, execute),
+    );
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper_sem_fail');
+    const input = {
+      sessionId,
+      paperArtifactId: 'paper_sem_fail',
+      questionId: 'pq_sem_fail',
+      answerMd: '他先担心承担责任，后来主动接受；“我来”与前文的迟疑对照，不能只解释成情节推进。',
+    };
+    const result = await submitPaperSlot(input, db);
+    expect(result).toMatchObject({ coarseOutcome: 'unsupported', status: 'review_required' });
+    const candidate = await readCandidate(result.evaluationId);
+    expect(candidate.run_refs).toEqual([]);
+    expect(candidate.unit_results[0]).toMatchObject({
+      status: 'pending',
+      pending: { reason: 'infra_failure', retryable: false },
+    });
+    const claims = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_model_claim'));
+    expect(claims).toHaveLength(1);
+    expect(claims[0].payload).toMatchObject({
+      reserved_cost_usd_micros: 1000,
+      planned_task_run_id: expect.any(String),
+    });
+    expect(
+      await db.select().from(event).where(eq(event.action, 'experimental:assessment_model_result')),
+    ).toHaveLength(1);
+    expect(await submitPaperSlot(input, db)).toMatchObject({
+      evaluationId: result.evaluationId,
+      status: 'review_required',
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
 
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'paper_unit_accel' });
+  it('a published exact answer uses no model and creates no model claim', async () => {
+    const db = testDb();
+    await seedQuestion('pq_tf', {
+      kind: 'true_false',
+      reference_md: 'true',
+      judge_kind_override: 'exact',
+    });
+    await seedPaper('paper_tf', ['pq_tf'], 'kc_prov');
+    const { sessionId } = await startFrozenPaperFixture(db, 'paper_tf');
     const result = await submitPaperSlot(
-      {
-        sessionId,
-        paperArtifactId: 'paper_unit_accel',
-        questionId: 'pq_unit_accel',
-        // A directly parseable numeric+unit answer → accelerator resolves, no LLM fallback.
-        answerMd: '30 m/s',
-        primaryKnowledgeId: 'kc_prov',
-        secondaryKnowledgeIds: [],
-      },
+      { sessionId, paperArtifactId: 'paper_tf', questionId: 'pq_tf', answerMd: 'true' },
       db,
     );
-
     expect(result.coarseOutcome).toBe('correct');
-    const prov = await readJudgeProvenance(result.attemptEventId);
-    expect(prov?.kind).toBe('deterministic');
-    // The local accelerator produced the verdict — the LLM was never called.
-    expect(vi.mocked(runTask)).not.toHaveBeenCalled();
+    expect((await readCandidate(result.evaluationId)).run_refs).toEqual([]);
+    expect(
+      await db.select().from(event).where(eq(event.action, 'experimental:assessment_model_claim')),
+    ).toEqual([]);
+    expect(runTask).not.toHaveBeenCalled();
   });
+
+  it.each(['30 m/s', '108 km/h'])(
+    'frozen unit conversion evaluates %s deterministically with no model attempt',
+    async (answerMd) => {
+      const db = testDb();
+      await seedQuestion('pq_unit_accel', {
+        judge_kind_override: 'unit_dimension',
+        kind: 'calculation',
+        prompt_md: '速度是多少？',
+        reference_md: '30 m/s',
+        metadata: { reference_value: 30, reference_unit: 'm/s' },
+      });
+      await seedPaper('paper_unit_accel', ['pq_unit_accel'], 'kc_prov');
+      const { sessionId } = await startFrozenPaperFixture(db, 'paper_unit_accel');
+      // Current metadata edits cannot change the original published numeric key.
+      await db
+        .update(question)
+        .set({ metadata: { reference_value: 100, reference_unit: 'kg' } })
+        .where(eq(question.id, 'pq_unit_accel'));
+      const result = await submitPaperSlot(
+        { sessionId, paperArtifactId: 'paper_unit_accel', questionId: 'pq_unit_accel', answerMd },
+        db,
+      );
+      expect(result.coarseOutcome).toBe('correct');
+      expect((await readCandidate(result.evaluationId)).run_refs).toEqual([]);
+      expect(
+        await db
+          .select()
+          .from(event)
+          .where(eq(event.action, 'experimental:assessment_model_claim')),
+      ).toEqual([]);
+      expect(runTask).not.toHaveBeenCalled();
+    },
+  );
 });

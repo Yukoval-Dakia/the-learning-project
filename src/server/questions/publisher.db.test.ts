@@ -1273,3 +1273,70 @@ describe('YUK-1045 — suspension 维度 + verify 记录（§3.3 verify 挂起�
     expect(afterEdit.suspension_reason).toBe('verify_hold');
   });
 });
+
+describe('native unit comparator publication through physical child rows', () => {
+  beforeEach(resetDb);
+  it('keeps each child numeric reference separate from root metadata and publishes a new basis when it changes', async () => {
+    const db = testDb();
+    await seedQuestion('numeric_root', {
+      kind: 'composite',
+      choices_md: null,
+      reference_md: null,
+      metadata: { reference_value: 999, reference_unit: 'kg' },
+    });
+    await seedQuestion('numeric_child', {
+      parent_question_id: 'numeric_root',
+      part_index: 0,
+      kind: 'calculation',
+      choices_md: null,
+      reference_md: '30 m/s',
+      judge_kind_override: 'unit_dimension',
+      metadata: { reference_value: 30, reference_unit: 'm/s', reference_tolerance: 0.01 },
+    });
+    const first = await publishQuestionGroupFromRow(db, {
+      rootId: 'numeric_root',
+      actorRef: 'test:numeric',
+      now: new Date(),
+      admission: { state: 'admitted', evidence: ADMITTED_EVIDENCE },
+    });
+    if (first.status !== 'published') throw new Error('publication failed');
+    const [original] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, first.revision_id));
+    expect(original.scoring_basis.units[0].criterion).toMatchObject({
+      kind: 'numeric_key',
+      expected: 30,
+      expected_unit: 'm/s',
+    });
+    expect(original.execution_plan.assignments[0].executor).toMatchObject({
+      kind: 'deterministic',
+      comparator: 'numeric_unit_conversion',
+    });
+    await db
+      .update(question)
+      .set({ metadata: { reference_value: 40, reference_unit: 'm/s', reference_tolerance: 0.01 } })
+      .where(eq(question.id, 'numeric_child'));
+    const second = await publishQuestionGroupFromRow(db, {
+      rootId: 'numeric_root',
+      actorRef: 'test:numeric-edit',
+      now: new Date(),
+    });
+    expect(second.status).toBe('published');
+    expect(
+      await db
+        .select()
+        .from(question_revision)
+        .where(eq(question_revision.revision_id, first.revision_id)),
+    ).toEqual([original]);
+    const revisions = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.group_id, 'numeric_root'));
+    expect(revisions).toHaveLength(2);
+    expect(
+      revisions.find((row) => row.revision_id !== first.revision_id)?.scoring_basis.units[0]
+        .criterion,
+    ).toMatchObject({ expected: 40 });
+  });
+});

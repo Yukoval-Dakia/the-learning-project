@@ -286,3 +286,11 @@ full evidence target editing/media acceptance and complete frozen teaching input
 - 原生未知评分不再自动推断again；snapshot回归改为断言零FSRS/零theta/零快照且原件保留；已评分快照仍对照实际学习状态验证。
 - scoped DB：68例（settlement/submission/learning/snapshot/capture）+26例（durable/telemetry/notes/paper issuance/family）通过；包括有序晚到信号不误读后续状态。typecheck、changed Biome（0 errors/8 warnings）、build通过。没有新增付费模型请求。
 - 继续迁移 paper-cycle/provenance/API fixtures；旧unit_dimension数学单位加速尚未映射原生冻结规则，必须保留本地确定性能力（不能以unsupported冒充完成，也不把旧固定分数梯度变成新默认）。其他入口和下游消费范围按原计划继续。无PR/push/review/CI/部署，1047仍In Progress。
+
+## 2026-10-05 00:05 UTC — 原生数值/单位确定性执行（未发布）
+
+- 按已锁 grounding §4.2 保留 mathjs 数值/单位校验：新增显式 numeric_unit_conversion executor，评分依据仍为冻结 numeric_key 的 expected/unit/tolerance。旧 numeric_tolerance 字面单位语义不变；不重写历史revision。新执行器只解析原始raw_input，不信任客户端派生value，不调用模型；格式不能解析保持unparseable_response。
+- normalizer在原题确有数值/单位元数据时冻结numeric槽和规则；缺显式容差按精确匹配，不发明原unit_dimension默认5%或固定1/.7/.4/.3梯度。多小题不继承父题数值键，物理part发布载入各自metadata/kind/override；改元数据生成新revision，原版保持不可变。
+- 10个纯回归先RED、发布子题及缺参考单位校验各1回归先RED后修。128unit/39DB、typecheck、changedBiome、build通过；gen:api-client和gen:postman通过（无生成差异）。
+- paper provenance旧测试迁移：模型失败保留独立claim/result与保守预留，不把计划run ID当实际run，也不自动重付；重复提交执行一次。真实发布→开卷→提交验证30m/s和108km/h均本地给分，编辑当前元数据不影响冻结答案。无真实付费模型调用。
+- 旧paper-cycle/API fixtures、其他正式入口和消费侧仍继续迁移；本分支尚未PR/push/review/CI，1047仍In Progress。

@@ -857,6 +857,8 @@ export async function publishQuestionGroupFromRow(
     const partRows = await tx
       .select({
         id: question.id,
+        kind: question.kind,
+        judge_kind_override: question.judge_kind_override,
         prompt_md: question.prompt_md,
         reference_md: question.reference_md,
         choices_md: question.choices_md,
@@ -899,6 +901,9 @@ export async function publishQuestionGroupFromRow(
       { ...(root as Parameters<typeof normalizeQuestionGroupToContract>[0]), figureDigests },
       liveParts.map((p) => ({
         id: p.id,
+        kind: p.kind,
+        judge_kind_override: p.judge_kind_override,
+        metadata: p.metadata,
         prompt_md: p.prompt_md,
         reference_md: p.reference_md,
         choices_md: p.choices_md,

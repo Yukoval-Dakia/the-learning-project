@@ -826,3 +826,53 @@ describe('身份纪律（§3.1）', () => {
     expect(mintOptionId('A', 'text')).not.toBe(mintOptionId('B', 'text'));
   });
 });
+
+describe('native local numeric/unit publication', () => {
+  it('freezes explicit numeric metadata and its tolerance without a runtime route resolver', () => {
+    const input = baseRow({
+      kind: 'calculation',
+      choices_md: null,
+      reference_md: '30 m/s',
+      judge_kind_override: 'unit_dimension',
+      metadata: { reference_value: 30, reference_unit: 'm/s', reference_tolerance: 0.05 },
+    });
+    const contract = normalizeQuestionRowToContract(input);
+    expectValidContract(contract);
+    expect(contract.response_spec.slots[0]).toMatchObject({ kind: 'numeric' });
+    expect(contract.scoring_basis.units[0].criterion).toEqual({
+      kind: 'numeric_key',
+      expected: 30,
+      expected_unit: 'm/s',
+      tolerance: { kind: 'relative', ratio: 0.05 },
+    });
+    expect(contract.execution_plan.assignments[0].executor).toEqual({
+      kind: 'deterministic',
+      comparator: 'numeric_unit_conversion',
+    });
+    expect(
+      normalizeQuestionRowToContract({
+        ...input,
+        metadata: { ...input.metadata, reference_value: 31 },
+      }).integrity_digest,
+    ).not.toBe(contract.integrity_digest);
+  });
+
+  it('does not invent legacy partial grades or a default 5% tolerance', () => {
+    const contract = normalizeQuestionRowToContract(
+      baseRow({
+        kind: 'calculation',
+        choices_md: null,
+        reference_md: '30 m/s',
+        judge_kind_override: 'unit_dimension',
+        metadata: { reference_value: 30, reference_unit: 'm/s' },
+      }),
+    );
+    expectValidContract(contract);
+    expect(contract.scoring_basis.units[0].criterion).toMatchObject({
+      kind: 'numeric_key',
+      tolerance: { kind: 'absolute', value: 0 },
+    });
+    expect(contract.scoring_basis.units).toHaveLength(1);
+    expect(contract.scoring_basis.units[0].points).toBe(1);
+  });
+});

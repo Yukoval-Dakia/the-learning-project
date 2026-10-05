@@ -12,6 +12,7 @@ import type { SlotResponseT } from '@/core/schema/assessment';
 import type { Db } from '@/db/client';
 import { artifact, question, question_group_lifecycle } from '@/db/schema';
 import {
+  contractIntegrityDigest,
   normalizeQuestionGroupToContract,
   normalizeQuestionRowToContract,
 } from '@/server/questions/contract-normalizer';
@@ -166,4 +167,54 @@ export async function submitPaperFixture(input: PaperSubmitSlotInput, db: Db) {
     },
     db,
   );
+}
+
+/** Explicitly admitted offline model task for paper driver tests, never a live provider call. */
+export async function publishPaperModelFixture(db: Db, questionId: string) {
+  const [row] = await db.select().from(question).where(eq(question.id, questionId));
+  if (!row) throw new Error('model question fixture missing');
+  const contract = normalizeQuestionRowToContract(row);
+  for (const unit of contract.scoring_basis.units) {
+    unit.criterion = {
+      kind: 'rule_reference',
+      rule_id: `${unit.scoring_unit_id}:rule`,
+      source: 'official',
+      statement_md: row.reference_md ?? 'No reference supplied',
+    };
+  }
+  for (const assignment of contract.execution_plan.assignments) {
+    assignment.executor = {
+      kind: 'model_executor',
+      task_kind: 'AssessmentRuleJudgeTask',
+      admitted_slice_id: 'offline-paper-fixture-slice',
+      max_cost_usd_micros: 1000,
+    };
+  }
+  contract.integrity_digest = contractIntegrityDigest(contract);
+  const published = await publishQuestionGroup(db, {
+    group_id: row.id,
+    contract,
+    expectedCurrentRevision: null,
+    expectedAdmissionGeneration: null,
+    availability: 'general_pool',
+    actorRef: 'test:paper-model',
+    now: new Date(),
+    admission: {
+      state: 'admitted',
+      evidence: {
+        marking_provenance: 'official',
+        verification: { structural_check_passed: true, independent_verification: null },
+        model_slice: {
+          slice_id: 'offline-paper-fixture-slice',
+          holdout_cases: 35,
+          severe_errors_observed: 0,
+          per_criterion_agreement: 1,
+          pipeline_coverage: 1,
+        },
+      },
+    },
+  });
+  if (published.status !== 'published')
+    throw new Error(`fixture publication failed: ${published.status}`);
+  return contract;
 }
