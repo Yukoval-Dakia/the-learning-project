@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
+import { describe, expect, it, vi } from 'vitest';
 import { PublishedQuestionRevision, deriveIssuanceBinding } from '@/core/schema/assessment';
 import type { assessment_issuance, question_revision } from '@/db/schema';
-import { projectFrozenStudyContext } from './study-context';
+import { loadFrozenStudyImages, projectFrozenStudyContext } from './study-context';
 
 function fixture() {
   const revision = PublishedQuestionRevision.parse({
@@ -238,5 +239,77 @@ describe('frozen study context', () => {
     expect(reference_md).toContain('乙. 水量 → Ⅱ. 控制量');
     expect(reference_md).not.toContain('①. 设定坡度 →');
     expect(reference_md).not.toMatch(/PRIVATE|UNISSUED/);
+  });
+});
+
+function mediaFixture() {
+  const { row, issuance } = fixture();
+  const context = projectFrozenStudyContext(row, issuance);
+  const bytes = new Uint8Array([137, 80, 78, 71, 1, 2, 3]);
+  for (const material of context.public_materials) {
+    material.asset.digest = `sha256:${createHash('sha256')
+      .update(material.kind === 'figure' ? bytes : (material.content_md ?? ''))
+      .digest('hex')}`;
+  }
+  const load = vi.fn(async () => ({ bytes, mime_type: 'image/png' }));
+  return { context, bytes, load, signal: new AbortController().signal };
+}
+
+describe('frozen study image resolution', () => {
+  it.each(['face', 'material', 'choice', 'matching', 'ordering', 'table', 'reference'])(
+    'holds unbound inline images in %s before loading assets',
+    async (location) => {
+      const { context, load, signal } = mediaFixture();
+      const text = '![图][original]\n\n[original]: /api/assets/private/content';
+      const slots = context.practice_dto.response_spec.slots;
+      if (location === 'face') context.practice_dto.faces[0].prompt_md = text;
+      if (location === 'material') context.practice_dto.materials[0].content_md = text;
+      if (location === 'reference') context.reference_md = text;
+      for (const slot of slots) {
+        if (location === 'choice' && slot.kind === 'multi_choice') slot.options[0].text = text;
+        if (location === 'matching' && slot.kind === 'matching') slot.left_items[0].text = text;
+        if (location === 'ordering' && slot.kind === 'ordering') slot.items[0].text = text;
+        if (location === 'table' && slot.kind === 'table') slot.column_headers[0] = text;
+      }
+      await expect(loadFrozenStudyImages(context, load, signal)).rejects.toMatchObject({
+        code: 'study_media_unavailable',
+      });
+      expect(load).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    '![图](/api/assets/frozen-figure/content)',
+    '![图][ref]\n\n[ref]: /api/assets/frozen-figure/content',
+    '> ![图][]\n\n[图]: /api/assets/frozen-figure/content',
+    '[![图](/api/assets/frozen-figure/content)](https://example.com)',
+    '`![not an image](https://example.com)`',
+    '\\![escaped](https://example.com)',
+  ])(
+    'resolves trusted rendered references and leaves code/escaped examples as text: %s',
+    async (text) => {
+      const { context, bytes, load, signal } = mediaFixture();
+      context.practice_dto.faces[0].prompt_md = text;
+      const result = await loadFrozenStudyImages(context, load, signal);
+      expect(result.images).toEqual([
+        { data: Buffer.from(bytes).toString('base64'), mediaType: 'image/png' },
+      ]);
+      expect(load).toHaveBeenCalledOnce();
+      expect(load.mock.calls[0]).toEqual([context.public_materials[1].asset, signal]);
+    },
+  );
+
+  it('refuses altered inline material bytes and cancellation before a model can run', async () => {
+    const { context, load, signal } = mediaFixture();
+    context.public_materials[0].content_md = 'changed';
+    await expect(loadFrozenStudyImages(context, load, signal)).rejects.toMatchObject({
+      code: 'study_media_unavailable',
+    });
+    expect(load).not.toHaveBeenCalled();
+    const fresh = mediaFixture();
+    await expect(
+      loadFrozenStudyImages(fresh.context, fresh.load, AbortSignal.abort()),
+    ).rejects.toMatchObject({ code: 'study_media_unavailable' });
+    expect(fresh.load).not.toHaveBeenCalled();
   });
 });

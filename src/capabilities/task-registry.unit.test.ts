@@ -51,7 +51,7 @@ describe('copilot task dispatch declarations', () => {
     for (const kind of Object.keys(taskCatalog) as TaskKind[]) {
       expect(tasks[kind], kind).toBe(taskCatalog[kind]);
     }
-    expect(Object.keys(tasks)).toHaveLength(54);
+    expect(Object.keys(tasks)).toHaveLength(55);
   });
 
   it('contains no prompt builders or task business definitions', () => {
@@ -88,7 +88,7 @@ describe('task prompt definitions', () => {
   });
 
   it('defines one non-empty inline or profile prompt for every task', () => {
-    expect(Object.keys(tasks)).toHaveLength(54);
+    expect(Object.keys(tasks)).toHaveLength(55);
 
     for (const task of Object.values(tasks)) {
       switch (task.prompt.kind) {
@@ -158,6 +158,7 @@ describe('task prompt definitions', () => {
           task === 'SupplyPlanTask' ||
           task === 'MistakeEnrollTask' ||
           task === 'TeachingTurnTask' ||
+          task === 'TeachingTurnVisionTask' ||
           task === 'AssessmentRuleJudgeTask' || // New task; no pre-refactor prompt exists.
           task === 'JevScoringDecisionTask' // YUK-1049 — typed task, no prompt to hash
         ) {
@@ -1055,5 +1056,23 @@ describe('budget.transientRetries (YUK-576)', () => {
       if (optedIn.has(kind)) continue;
       expect(def.budget.transientRetries, `${kind} must not opt into in-process retry`).toBe(0);
     }
+  });
+});
+
+describe('frozen solve teaching vision routing', () => {
+  it('preserves text teaching defaults and gives images a capability-gated vision sibling', () => {
+    expect(tasks.TeachingTurnTask).toMatchObject({
+      defaultProvider: 'xiaomi',
+      defaultModel: 'mimo-v2.5-pro',
+      isMultimodal: false,
+    });
+    expect(tasks.TeachingTurnVisionTask).toMatchObject({
+      defaultProvider: 'xiaomi',
+      defaultModel: 'mimo-v2.5',
+      isMultimodal: true,
+      needsToolCall: false,
+      allowedTools: [],
+    });
+    expect(tasks.TeachingTurnVisionTask.budget).toEqual(tasks.TeachingTurnTask.budget);
   });
 });

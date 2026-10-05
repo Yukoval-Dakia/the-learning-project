@@ -15,8 +15,13 @@ import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize'
 import { Tutor } from '@/server/session';
 import { recordAssistanceExposure } from './assessment/assistance';
 import { commitFormalAttempt } from './assessment/attempt';
-import { loadFrozenStudyContext, revealFrozenStudyReference } from './assessment/study-context';
+import {
+  loadFrozenStudyContext,
+  loadFrozenStudyImages,
+  revealFrozenStudyReference,
+} from './assessment/study-context';
 import type { SaveSubmissionRequest } from './assessment/submit';
+import { createAssessmentAssetLoader } from './assets';
 export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
 
 // Default mastery threshold for solve-tutor: a judged attempt scoring below this
@@ -112,7 +117,7 @@ export interface PlanSolveHintResult {
 export function buildSolveHintInput(
   q: { prompt_md: string; reference_md: string | null; practice_dto?: PracticeIssuanceDtoT },
   hintIndex: number,
-): unknown {
+) {
   return {
     learning_item: {
       title: '解题陪练',
@@ -213,7 +218,23 @@ export async function planSolveHint(params: PlanSolveHintParams): Promise<PlanSo
     );
   const context = await loadFrozenStudyContext(db, issuanceId, questionId);
   const input = buildSolveHintInput(context, hintIndex);
-  const { text } = await runTaskFn('TeachingTurnTask', input, { subjectProfile });
+  const signal = AbortSignal.timeout(60_000);
+  const { images, image_manifest } = await loadFrozenStudyImages(
+    context,
+    createAssessmentAssetLoader(db),
+    signal,
+  );
+  const { text } =
+    images.length > 0
+      ? await runTaskFn(
+          'TeachingTurnVisionTask',
+          {
+            text: JSON.stringify({ ...input, image_manifest }),
+            images,
+          },
+          { subjectProfile, signal },
+        )
+      : await runTaskFn('TeachingTurnTask', input, { subjectProfile });
   const result = parseHintTurn(text);
   if (issuanceId)
     await recordAssistanceExposure(db, {

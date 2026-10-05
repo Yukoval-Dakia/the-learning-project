@@ -205,3 +205,21 @@ export const teachingTurnTaskSpec = {
   outputSchema: TeachingTurnOutput,
   parseText: parseTurnOutput,
 } satisfies TaskSpec<unknown, TeachingTurnOutputT>;
+
+export const teachingTurnVisionTaskSpec = {
+  ...teachingTurnTaskSpec,
+  definition: {
+    ...teachingTurnTaskSpec.definition,
+    kind: 'TeachingTurnVisionTask',
+    description:
+      'Frozen solve hint with issued original images and the teaching-turn output contract.',
+    defaultModel: 'mimo-v2.5',
+    isMultimodal: true,
+    prompt: {
+      kind: 'profile',
+      build: (profile: SubjectProfile) => `${buildTeachingTurnPrompt(profile)}
+本轮为解题提示。image_manifest 按从 0 开始的 index 对应附带原图；必须结合 frozen_question 的题面和控件读取图形、标注及关系，不得把图片说明当作原图内容。
+只提供用户要求的下一步最小提示，不透露最终答案或完整解法，不输出参考答案、评分键或私有解析。无法读清必要图像时明确说明，禁止猜测。`,
+    },
+  },
+} satisfies TaskSpec<unknown, TeachingTurnOutputT>;

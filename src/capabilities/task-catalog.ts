@@ -25,5 +25,6 @@ export const taskCatalog = composeTaskCatalog(
   // YUK-376: +ItemPriorLlasaTask（LLaSA 学生模拟冷启锚 opt-in 变体）→ 52。
   // YUK-1049: +JevScoringDecisionTask（首个 typed execution spec）→ 53。
   // YUK-1047: native frozen-rule pi task → 54.
-  54,
+  // YUK-1047: frozen solve hint vision sibling → 55.
+  55,
 );

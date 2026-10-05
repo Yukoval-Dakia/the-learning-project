@@ -1,10 +1,16 @@
+import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
+import Markdown from 'react-markdown';
 import { canonicalHash } from '@/core/migration/canonical';
 import { projectIssuedScoringBasis, projectPracticeIssuance } from '@/core/schema/assessment';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { assessment_issuance, question, question_revision } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import {
+  type AssessmentAssetLoader,
+  withinAssessmentSignal,
+} from '@/kernel/records/assessment-assets';
 import { recordAssistanceExposure } from './assistance';
 import { issuanceRowToContract, revisionRowToContract } from './issue';
 
@@ -116,6 +122,9 @@ export function projectFrozenStudyContext(
     question_id: questionId ?? row.group_id,
     // Teaching needs the complete served controls/material metadata, not just flattened prose.
     practice_dto: face,
+    public_materials: revision.structure.materials.filter((material) =>
+      face.materials.some((publicMaterial) => publicMaterial.material_id === material.material_id),
+    ),
     prompt_md: [
       ...face.materials.flatMap((material) => (material.content_md ? [material.content_md] : [])),
       ...face.faces.map((part) => part.prompt_md),
@@ -136,4 +145,81 @@ export async function revealFrozenStudyReference(database: Db, issuanceId: strin
       contentDigest: `sha256:${canonicalHash(context.solution_md)}`,
     });
   return { reference_md: context.solution_md };
+}
+
+/** Only issued public figure bindings authorize byte reads, including Markdown images. */
+export async function loadFrozenStudyImages(
+  context: ReturnType<typeof projectFrozenStudyContext>,
+  load: AssessmentAssetLoader,
+  signal: AbortSignal,
+) {
+  const unavailable = () =>
+    new ApiError(
+      'study_media_unavailable',
+      'required frozen study media is missing, unsupported or unbound',
+      409,
+    );
+  const figures = context.public_materials.filter((material) => material.kind === 'figure');
+  const trustedUrls = new Set(
+    figures.map((material) => `/api/assets/${encodeURIComponent(material.asset.asset_id)}/content`),
+  );
+  // Parse strings separately so CommonMark reference definitions retain their line breaks.
+  const checkImages = (value: unknown): void => {
+    if (typeof value === 'string') {
+      Markdown({
+        children: value,
+        allowElement(element) {
+          if (element.tagName === 'img' && !trustedUrls.has(String(element.properties.src)))
+            throw unavailable();
+          return true;
+        },
+      });
+    } else if (Array.isArray(value)) {
+      for (const item of value) checkImages(item);
+    } else if (value && typeof value === 'object') {
+      for (const item of Object.values(value)) checkImages(item);
+    }
+  };
+  checkImages(context.practice_dto);
+  checkImages(context.reference_md);
+  const digest = (value: string | Uint8Array) =>
+    `sha256:${createHash('sha256').update(value).digest('hex')}`;
+  // Validate the whole requirement before loading any bytes or calling a model.
+  for (const material of context.public_materials) {
+    if (material.kind === 'figure') {
+      if (!/^sha256:[0-9a-f]{64}$/.test(material.asset.digest)) throw unavailable();
+    } else if (
+      !['plaintext', 'passage', 'table'].includes(material.kind) ||
+      material.content_md === undefined ||
+      digest(material.content_md) !== material.asset.digest
+    ) {
+      throw unavailable();
+    }
+  }
+  const images: Array<{ data: string; mediaType: string }> = [];
+  const image_manifest: Array<{ index: number; material_id: string; asset_id: string }> = [];
+  try {
+    for (const material of figures) {
+      const asset = await withinAssessmentSignal(() => load(material.asset, signal), signal);
+      if (
+        !asset ||
+        digest(asset.bytes) !== material.asset.digest ||
+        !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(asset.mime_type)
+      )
+        throw unavailable();
+      image_manifest.push({
+        index: images.length,
+        material_id: material.material_id,
+        asset_id: material.asset.asset_id,
+      });
+      images.push({
+        data: Buffer.from(asset.bytes).toString('base64'),
+        mediaType: asset.mime_type,
+      });
+    }
+    signal.throwIfAborted();
+  } catch {
+    throw unavailable();
+  }
+  return { images, image_manifest };
 }

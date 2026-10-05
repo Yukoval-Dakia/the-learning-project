@@ -101,8 +101,8 @@ export function auditTaskCensus(options: AuditTaskCensusOptions): AuditResult {
     // YUK-1016: 51（+CauseCategoryProposeTask cause catalog 增长提议）。
     // YUK-376: 52（+ItemPriorLlasaTask LLaSA 学生模拟冷启锚 opt-in 变体）。
     // YUK-1049: 53（+JevScoringDecisionTask 首个 typed execution task）。
-    ...(validateInfrastructure && catalogSet.size !== 54
-      ? [`Task catalog must contain exactly 54 kinds, received ${catalogSet.size}`]
+    ...(validateInfrastructure && catalogSet.size !== 55
+      ? [`Task catalog must contain exactly 55 kinds, received ${catalogSet.size}`]
       : []),
     ...unresolvedCallers.map(
       (caller) =>
